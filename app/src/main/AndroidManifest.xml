@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <attribution
+        android:tag="@string/empty_attribution_tag"
+        android:label="@string/attribution_label" />
+
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="AllFilesAccessPolicy,ScopedStorage" />
+    <uses-permission android:name="android.permission.VIBRATE" />
+
+    <application
+        android:name="com.ninthsoft.ime.ImeApplication"
+        android:allowBackup="true"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="@xml/backup_rules"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:largeHeap="true"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:supportsRtl="true"
+        android:theme="@style/Theme.Ime">
+
+        <uses-library
+            android:name="libcdsprpc.so"
+            android:required="false" />
+
+        <activity
+            android:name=".ui.MainActivity"
+            android:exported="true"
+            android:theme="@style/Theme.Ime">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".ui.InitActivity"
+            android:exported="false"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.SetupActivity"
+            android:exported="false"
+            android:label="@string/ime_setup_title"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.KeyboardSettingsActivity"
+            android:exported="false"
+            android:label="@string/keyboard_settings"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.SchemaSettingsActivity"
+            android:exported="false"
+            android:label="@string/schema_settings"
+            android:theme="@style/Theme.Ime" />
+
+        <provider
+            android:name=".ui.AppFilesDocumentsProvider"
+            android:authorities="com.ninthsoft.ime.files.documents"
+            android:exported="true"
+            android:grantUriPermissions="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/app_name"
+            android:permission="android.permission.MANAGE_DOCUMENTS">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+
+        <activity
+            android:name=".ui.ClipboardActivity"
+            android:exported="false"
+            android:label="@string/clipboard_manager"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.AboutActivity"
+            android:exported="false"
+            android:label="@string/about_us"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.LogActivity"
+            android:exported="false"
+            android:label="@string/app_logs"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.PredictionSettingsActivity"
+            android:exported="false"
+            android:label="@string/prediction_candidates"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.VoiceSettingsActivity"
+            android:exported="false"
+            android:label="@string/voice_settings"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".base.speech.SpeechPermissionActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <service
+            android:name=".input.ImeInputMethodService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_INPUT_METHOD">
+            <intent-filter>
+                <action android:name="android.view.InputMethod" />
+            </intent-filter>
+            <meta-data
+                android:name="android.view.im"
+                android:resource="@xml/ime_input_method" />
+        </service>
+
+        <service
+            android:name=".base.speech.SpeechRecognitionService"
+            android:exported="false"
+            android:process=":speech" />
+    </application>
+
+</manifest>

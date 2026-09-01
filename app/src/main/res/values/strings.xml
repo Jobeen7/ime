@@ -1,0 +1,192 @@
+<resources>
+    <string name="app_name">简意输入法</string>
+    <string name="done">done</string>
+    <string name="rime_deploy_success">引擎部署成功</string>
+    <string name="rime_deploy_failure">引擎部署失败</string>
+    <string name="deploy_progress">引擎部署进度</string>
+    <string name="rime_restarting">引擎重启中</string>
+
+    <string name="basic_settings">基本设置</string>
+    <string name="theme">应用主题</string>
+    <string name="theme_follow_system">跟随系统</string>
+    <string name="theme_light">浅色</string>
+    <string name="theme_dark">深色</string>
+
+    <string name="key_feedback">按键设置</string>
+    <string name="key_sound">启用按键音</string>
+    <string name="key_vibration">点击时振动</string>
+    <string name="key_x_gap">X轴间隔</string>
+    <string name="key_y_gap">Y轴间隔</string>
+    <string name="key_ripple_effect">水波纹特效</string>
+    <string name="key_corner_radius">按键圆角</string>
+    <string name="key_border">隐藏键边框</string>
+    <string name="expand_borderless">展开键无边框</string>
+
+
+    <string name="keyboard_layout">键盘布局</string>
+    <string name="keyboard_height">键盘高度（竖屏）</string>
+    <string name="keyboard_height_landscape">键盘高度（横屏）</string>
+
+    <!-- IME Setup -->
+    <string name="initializing">正在初始化…</string>
+    <string name="initializing_desc">正在释放资源文件</string>
+    <string name="starting_engine">正在启动引擎…</string>
+    <string name="starting_engine_desc">正在初始化输入法引擎</string>
+    <string name="ime_setup_title">输入法设置</string>
+    <string name="ime_setup_description">使用前需要进行以下设置</string>
+    <string name="enable_ime">启用输入法</string>
+    <string name="enable_ime_desc">在系统设置中启用此输入法</string>
+    <string name="set_default_ime">设为默认输入法</string>
+    <string name="set_default_ime_desc">将本输入法设置为系统当前输入法</string>
+    <string name="not_enabled">未启用</string>
+    <string name="enabled">已启用</string>
+    <string name="not_default">未设置为默认输入法</string>
+    <string name="is_default">当前输入法</string>
+    <string name="go_to_settings">前往设置</string>
+    <string name="select_ime">选择输入法</string>
+    <string name="start_using">开始使用</string>
+    <string name="enter_settings">进入设置</string>
+
+    <!-- Keyboard Settings -->
+    <string name="input_settings">方案布局</string>
+    <string name="keyboard_settings">键盘布局</string>
+    <string name="keyboard_settings_desc">键盘主题、按键设置、按键布局</string>
+    <string name="horizontal_padding">两侧边距</string>
+    <string name="bottom_padding">底部边距</string>
+    <string name="ignore_system_insets">忽略系统边衬区</string>
+    <string name="keyboard_theme">键盘主题</string>
+    <string name="keyboard_theme_follow_system">跟随系统</string>
+    <string name="keyboard_theme_light">浅色模式主题</string>
+    <string name="keyboard_theme_dark">深色模式主题</string>
+
+    <!-- General -->
+    <string name="cancel">取消</string>
+    <string name="back">返回</string>
+
+    <!-- Schema Settings -->
+    <string name="schema_settings">输入方案</string>
+    <string name="schema_settings_desc">启用方案、可选方案</string>
+    <string name="enabled_schemas">当前启用的方案</string>
+    <string name="available_schemas">所有可选的方案</string>
+    <string name="remove">移除</string>
+    <string name="add">添加</string>
+    <string name="drag_to_reorder">长按拖动排序</string>
+    <string name="extended_features">组件功能</string>
+    <string name="clipboard_manager">剪切板</string>
+    <string name="clipboard_manager_desc">云同步、历史记录</string>
+
+    <string name="about">关于</string>
+    <string name="about_us">关于我们</string>
+    <string name="about_us_desc">应用信息、版本更新</string>
+    <string name="about_app_info">应用信息</string>
+    <string name="about_description">应用简介</string>
+    <string name="about_description_text">简意输入法是一款简洁、高效的智能拼音输入法，支持多种输入方案，致力于提供流畅舒适的输入体验。</string>
+    <string name="about_update">版本更新</string>
+    <string name="check_update">检查更新</string>
+    <string name="current_version">当前版本 v%1$s</string>
+    <string name="checking_update">检查中</string>
+    <string name="update_available">发现新版本</string>
+    <string name="update_latest">当前已是最新版本</string>
+    <string name="update_check_failed">检查更新失败</string>
+    <string name="update_open_failed">无法打开更新地址</string>
+    <string name="app_logs">运行日志</string>
+    <string name="copy_logs">复制日志</string>
+    <string name="clear_logs">清空日志</string>
+    <string name="clipboard_history">历史记录</string>
+    <string name="clipboard_max_entries">记录数量上限</string>
+    <string name="clipboard_retention_days">保留天数</string>
+    <string name="clipboard_poll_interval">读取剪切板间隔</string>
+    <string name="schema_model">模型管理</string>
+    <string name="schema_model_grammar">语法模型</string>
+    <string name="schema_grammar_model_desc">启用语法模型以提升整句输入准确率</string>
+    <string name="schema_grammar_model_ready">已就绪</string>
+    <string name="schema_grammar_model_failed">下载失败，请重试</string>
+    <string name="schema_grammar_model_unavailable">当前方案未配置语法模型</string>
+
+    <!-- Text Editing Panel -->
+    <string name="move_cursor_up">上移光标</string>
+    <string name="move_cursor_down">下移光标</string>
+    <string name="move_cursor_left">左移光标</string>
+    <string name="move_cursor_right">右移光标</string>
+    <string name="move_cursor_to_start">移至行首</string>
+    <string name="move_cursor_to_end">移至行尾</string>
+    <string name="select">选择</string>
+    <string name="select_all">全选</string>
+    <string name="cut">剪切</string>
+    <string name="copy">复制</string>
+    <string name="paste">粘贴</string>
+    <string name="newline">换行</string>
+    <string name="backspace">删除</string>
+    <string name="clipboard">剪切板</string>
+
+    <!-- Clipboard Panel -->
+    <string name="clipboard_clear">清空</string>
+    <string name="clipboard_empty">剪切板暂无记录</string>
+    <string name="clipboard_clear_confirm_title">确定要清空吗？</string>
+    <string name="clipboard_delete_confirm">确定要删除 \"%1$s\" 吗？</string>
+    <string name="clipboard_confirm">确定</string>
+    <string name="clipboard_cancel">取消</string>
+
+    <!-- Clipboard / Phrase capsule -->
+    <string name="clipboard_tab">剪切板</string>
+    <string name="phrase_tab">常用语</string>
+    <string name="phrase_empty">暂无常用语</string>
+    <string name="phrase_add">新建常用语</string>
+    <string name="phrase_add_title">常用语</string>
+    <string name="phrase_add_success">常用语添加成功</string>
+    <string name="phrase_edit_title">编辑常用语</string>
+    <string name="phrase_label_hint">标签（用于展示与搜索）</string>
+    <string name="phrase_text_hint">常用语内容</string>
+    <string name="phrase_input_hint">请输入常用语内容</string>
+    <string name="phrase_save">保存</string>
+    <string name="phrase_cancel">取消</string>
+    <string name="phrase_delete_confirm">确定要删除 \"%1$s\" 吗？</string>
+    <string name="phrase_clear_confirm">确定要删除全部常用语吗？</string>
+    <string name="candidate_forget_confirm">确定要忘记 \"%1$s\" 吗？</string>
+
+    <!-- Menu Grid -->
+    <string name="menu_emoji">表情</string>
+    <string name="menu_clipboard">剪贴板</string>
+    <string name="menu_voice">语音转文字</string>
+    <string name="voice_permission_message">语音转文字功能需要录音权限，是否前往授权？</string>
+    <string name="voice_model_missing_message">语音转文字功能需要下载识别模型，是否前往下载？</string>
+    <string name="menu_cursor">光标</string>
+    <string name="menu_settings">设置</string>
+    <string name="menu_schema">方案管理</string>
+    <string name="schema_files">文件管理</string>
+    <string name="schema_files_desc">浏览、管理文件</string>
+    <string name="menu_theme">主题设置</string>
+    <string name="menu_about">关于</string>
+    <string name="choose_schema">选择输入方案</string>
+    <string name="tag_default">默认</string>
+    <string name="tag_layout_t9">九宫格</string>
+    <string name="tag_layout_full">全键盘</string>
+    <string name="tag_punctuation_full">全角符号</string>
+    <string name="tag_punctuation_half">半角符号</string>
+
+    <string name="model_prediction">候选词预测</string>
+    <string name="model_prediction_enable">启用预测</string>
+    <string name="menu_traditional_chinese">繁体输入</string>
+    <string name="prediction_candidates">候选词</string>
+    <string name="prediction_candidates_desc">候选词预测、模型增强、候选词布局</string>
+    <string name="voice_settings">语音转文字</string>
+    <string name="voice_settings_desc">语音识别模型</string>
+    <string name="voice_model_group">语音识别模型</string>
+    <string name="voice_recognition_model">识别模型</string>
+    <string name="voice_model_ready">已就绪</string>
+    <string name="voice_model_not_ready">未下载，请先下载模型</string>
+    <string name="voice_model_download_start">模型下载功能即将上线</string>
+    <string name="voice_model_downloading">正在下载 %1$d/%2$d</string>
+    <string name="voice_model_download_failed">下载失败，请重试</string>
+    <string name="download">下载</string>
+    <string name="downloading">下载中</string>
+    <string name="model_enhance">模型增强</string>
+    <string name="model_rerank_enable">启用重排增强</string>
+    <string name="candidate_layout">候选词布局</string>
+    <string name="candidate_show_index">显示序列号</string>
+    <string name="candidate_show_comment">显示注释</string>
+    <string name="candidate_borderless">候选无边框</string>
+    <string name="menu_reload_engine">重启引擎</string>
+    <string name="empty_attribution_tag"/>
+    <string name="attribution_label">键盘震动反馈</string>
+</resources>

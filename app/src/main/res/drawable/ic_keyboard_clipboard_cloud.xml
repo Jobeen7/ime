@@ -1,0 +1,30 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="1024"
+    android:viewportHeight="1024">
+  <!-- 原来的文件夹部分 -->
+  <path
+      android:fillColor="#ffffff"
+      android:pathData="M167.5,759.2L167.5,221.4c0,-32.3 21.6,-53.8 53.8,-53.8h443.8v107.6h107.5v107.6h53.8L826.5,248.3c0,-16.2 -5.3,-26.9 -16.2,-37.7l-80.7,-80.7c-5.3,-10.8 -21.5,-16.2 -37.7,-16.2L221.4,113.8C162.2,113.8 113.8,162.1 113.8,221.3v537.9c0,59.2 48.4,107.6 107.6,107.6h182.5v-53.8L221.3,813a53.9,53.9 0,0 1,-53.8 -53.8z"
+      android:strokeWidth="8"
+      android:strokeColor="#ffffff"
+      android:strokeLineCap="round"
+      android:strokeLineJoin="round" />
+
+  <!-- 白云形状：通过 group 整体定位到右3下角 -->
+  <group
+      android:scaleX="18"
+      android:scaleY="18"
+      android:translateX="460"
+      android:translateY="530">
+    <!-- 白云外轮廓（已将底部收短） -->
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M7.5,20Q5.22,20 3.61,18.43 2,16.85 2,14.58 2,12.63 3.17,11.1 4.35,9.57 6.25,9.15 6.88,6.85 8.75,5.43 10.63,4 13,4 Q15.93,4 17.96,6.04 20,8.07 20,11 Q21.73,11.2 22.86,12.5 24,13.78 24,15.5 24,17.38 22.69,18.69 21.38,20 19.5,20H7.5Z" />
+    <!-- 内部线条 -->
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M6.5,18H18.5Q19.55,18 20.27,17.27 21,16.55 21,15.5 21,14.45 20.27,13.73 19.55,13 18.5,13H17V11Q17,8.93 15.54,7.46 14.08,6 12,6 9.93,6 8.46,7.46 7,8.93 7,11H6.5Q5.05,11 4.03,12.03 3,13.05 3,14.5 3,15.95 4.03,17 5.05,18 6.5,18M12,12Z" />
+  </group>
+</vector>
