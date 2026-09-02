@@ -4,12 +4,14 @@ import android.content.Context
 import androidx.core.content.edit
 
 object CandidateManager {
-    private const val PREFS_NAME = "candidate_settings"
+    const val PREFS_NAME = "candidate_settings"
+    const val KEY_TRADITIONAL_ENABLED = "traditional_chinese_enabled"
+    const val KEY_EMOJI_ENABLED = "emoji_enabled"
+    const val KEY_ASCII_MODE_ENABLED = "ascii_mode_enabled"
     private const val KEY_PREDICTION_ENABLED = "prediction_enabled"
-    private const val KEY_TRADITIONAL_ENABLED = "enableTraditionalChinese"
     private const val KEY_RERANK_ENABLED = "rerank_enabled"
     private const val KEY_SHOW_INDEX = "show_index"
-    private const val KEY_SHOW_COMMENT = "show_comment"
+    const val KEY_SHOW_COMMENT = "show_comment"
     private const val KEY_BORDERLESS = "borderless"
 
     fun isPredictionEnabled(context: Context): Boolean {
@@ -30,6 +32,26 @@ object CandidateManager {
     fun setTraditionalChineseEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
             putBoolean(KEY_TRADITIONAL_ENABLED, enabled)
+        }
+    }
+
+    fun isEmojiEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_EMOJI_ENABLED, false)
+
+    fun setEmojiEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_EMOJI_ENABLED, enabled)
+        }
+    }
+
+    fun isAsciiModeEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_ASCII_MODE_ENABLED, true)
+
+    fun setAsciiModeEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_ASCII_MODE_ENABLED, enabled)
         }
     }
 

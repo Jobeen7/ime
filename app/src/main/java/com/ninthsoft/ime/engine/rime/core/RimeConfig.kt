@@ -12,6 +12,8 @@ class RimeConfig private constructor(
 
     fun getString(key: String): String? = getRimeConfigString(peer, key)
 
+    fun getBool(key: String): Boolean? = getRimeConfigBool(peer, key)
+
     fun <E : Any> getList(key: String, getAction: RimeConfig.(String) -> E?): List<E> {
         val paths = getRimeConfigListItemPath(peer, key)
         val result = ArrayList<E>(paths.size)
@@ -56,6 +58,9 @@ class RimeConfig private constructor(
 
         @JvmStatic
         private external fun getRimeConfigString(peer: Long, key: String): String?
+
+        @JvmStatic
+        private external fun getRimeConfigBool(peer: Long, key: String): Boolean?
 
         @JvmStatic
         private external fun getRimeConfigListItemPath(peer: Long, key: String): Array<String>

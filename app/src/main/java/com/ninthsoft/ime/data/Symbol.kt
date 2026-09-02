@@ -6,6 +6,7 @@ object Symbol {
 
     val Symbol: List<Pair<Category, Array<String>>> = listOf(
         Category("常规") to arrayOf(
+            "~",
             "!",
             "@",
             "#",
@@ -16,20 +17,20 @@ object Symbol {
             "*",
             "(",
             ")",
+            ":",
+            ";",
+            ",",
+            "?",
+            "/",
             "'",
             "\"",
             "=",
             "_",
             "`",
-            ":",
-            ";",
-            "?",
-            "~",
             "|",
             "+",
             "-",
             "\\",
-            "/",
             "[",
             "]",
             "{",
@@ -80,7 +81,11 @@ object Symbol {
             "›",
             "«",
             "»",
-            "ß"
+            "ß",
+            "★",
+            "☆",
+            "∞",
+            "→"
         ),
         Category("数字") to arrayOf(
             "1",

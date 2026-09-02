@@ -113,6 +113,9 @@ namespace jni {
         jclass Integer;
         jmethodID IntegerCtor;
 
+        jclass Boolean;
+        jmethodID BooleanCtor;
+
         jclass Rime;
         jmethodID HandleRimeMessage;
 
@@ -155,6 +158,10 @@ namespace jni {
             Integer = static_cast<jclass>(
                     env->NewGlobalRef(env->FindClass("java/lang/Integer")));
             IntegerCtor = env->GetMethodID(Integer, "<init>", "(I)V");
+
+            Boolean = static_cast<jclass>(
+                    env->NewGlobalRef(env->FindClass("java/lang/Boolean")));
+            BooleanCtor = env->GetMethodID(Boolean, "<init>", "(Z)V");
 
             Rime = static_cast<jclass>(env->NewGlobalRef(
                     env->FindClass("com/ninthsoft/ime/engine/rime/core/Rime")));

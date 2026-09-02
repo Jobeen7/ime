@@ -19,6 +19,7 @@ import com.ninthsoft.ime.input.keyboard.key.schemaSwitchKey
 import com.ninthsoft.ime.input.keyboard.key.segmentKey
 import com.ninthsoft.ime.input.keyboard.key.sidePannelKey
 import com.ninthsoft.ime.input.keyboard.key.spaceKey
+import com.ninthsoft.ime.input.keyboard.key.zeroKey
 
 @SuppressLint("ViewConstructor")
 class T9Keyboard(
@@ -88,7 +89,7 @@ class T9Keyboard(
                 mixedAlphabetKey("7", "PQRS"),
                 mixedAlphabetKey("8", "TUV"),
                 mixedAlphabetKey("9", "WXYZ"),
-                infiniteKey(),
+                zeroKey()
             ),
             listOf(
                 layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f),

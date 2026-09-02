@@ -1,6 +1,7 @@
 package com.ninthsoft.ime.input.keyboard.key
 
 import android.graphics.Typeface
+import android.graphics.Typeface.BOLD
 import android.view.KeyEvent
 import com.ninthsoft.ime.R
 import com.ninthsoft.ime.input.keyboard.impl.NumberKeyboard
@@ -250,13 +251,34 @@ fun clearKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
 )
 
 
+fun zeroKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+    appearance = KeyDef.Appearance.AltText(
+        displayText = "@",
+        altText = "0",
+        textSize = 15f,
+        percentWidth = percentWidth,
+        mainTextTranslationY = 3,
+        altTextTranslationY = 4,
+        variant = Variant.Alternative
+    ),
+    behaviors = setOf(
+        KeyDef.Behavior.Press(KeyboardAction.CommitAction("0")),
+        KeyDef.Behavior.LongPress(KeyboardAction.CommitAction("@")),
+    ),
+)
+
 fun infiniteKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
-    appearance = KeyDef.Appearance.Image(
+    appearance = KeyDef.Appearance.ImageText(
+        displayText = "0",
+        textSize = 11f,
         src = R.drawable.ic_keyboard_infinite,
         percentWidth = percentWidth,
         variant = Variant.Alternative,
     ),
-    behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction("0"))),
+    behaviors = setOf(
+        KeyDef.Behavior.Press(KeyboardAction.CommitAction("0")),
+        KeyDef.Behavior.LongPress(KeyboardAction.CommitAction("∞")),
+    ),
 )
 
 fun miniSpaceKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
@@ -269,8 +291,9 @@ fun miniSpaceKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
 )
 
 fun atKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
-    appearance = KeyDef.Appearance.Image(
-        src = R.drawable.ic_keyboard_at,
+    appearance = KeyDef.Appearance.Text(
+        displayText = "@",
+        textSize = 22f,
         percentWidth = percentWidth,
         variant = Variant.Alternative,
     ), behaviors = setOf(

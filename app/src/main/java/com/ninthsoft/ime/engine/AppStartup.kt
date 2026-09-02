@@ -12,6 +12,7 @@ import kotlinx.coroutines.runBlocking
 import splitties.views.dsl.core.BuildConfig
 import timber.log.Timber
 import java.io.File
+import java.security.MessageDigest
 
 /**
  * 手动启动入口，取代 androidx.startup 的 Initializer 链。
@@ -73,7 +74,10 @@ object AppStartup {
 
     private fun releaseResourcesIfNeeded(context: Context) {
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        if (File(destDir, VERSION_FILE).exists()) {
+        val md5 = assetMd5(context, RESOURCE_ASSET) ?: return
+        val versionFile = File(destDir, VERSION_FILE)
+        if (versionFile.isFile && versionFile.readText().trim() == md5) {
+            Timber.d("Resources up to date (md5=%s), skip extraction", md5)
             return
         }
 
@@ -81,6 +85,22 @@ object AppStartup {
         app.notifyState(ImeApplication.AppState.ResourcePreparing)
         runBlocking(Dispatchers.IO) {
             ResourceExtractorUtil.extract(context, RESOURCE_ASSET, destDir)
+            versionFile.writeText(md5)
         }
+    }
+
+    private fun assetMd5(context: Context, assetName: String): String? {
+        val digest = MessageDigest.getInstance("MD5")
+        return runCatching {
+            context.assets.open(assetName).use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read > 0) digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        }.getOrNull()
     }
 }

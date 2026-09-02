@@ -1,6 +1,7 @@
 package com.ninthsoft.ime.engine
 
 import android.content.Context
+import android.content.SharedPreferences
 import android.inputmethodservice.InputMethodService
 import android.view.KeyEvent.*
 import android.view.inputmethod.InputConnection
@@ -33,10 +34,13 @@ import com.ninthsoft.ime.engine.rime.daemon.RimeSession
 import com.ninthsoft.ime.engine.manager.CandidateRerankManager
 import com.ninthsoft.ime.engine.manager.PredictionManager
 import com.ninthsoft.ime.engine.rime.core.KeyMapping
+import com.ninthsoft.ime.engine.rime.core.Rime.Companion.getCurrentSchema
 import com.ninthsoft.ime.engine.rime.core.RimeConfig
 import com.ninthsoft.ime.engine.rime.core.RimeMessage
+import com.ninthsoft.ime.engine.rime.core.RimeSchema
 import com.ninthsoft.ime.engine.rime.data.DataManager.modelDir
 import com.ninthsoft.ime.engine.rime.data.DataManager.sharedDataDir
+import com.ninthsoft.ime.engine.rime.util.OptionsApplier
 import com.ninthsoft.ime.input.ImeInputMethodService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -61,6 +65,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var context: Context? = null
     private var inputConnection: InputConnection? = null
     private var serviceRef: ImeInputMethodService? = null
+    //引擎相关配置监控
+    private var prefs: SharedPreferences? = null
+    private val prefsListener =
+        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (OptionsApplier.isOptionDependency(key)) {
+                sendJob { RimeSchema(getCurrentSchema()).applyOptions(this) }
+            }
+        }
 
     /** 桥接模式下返回虚拟连接，否则返回真实连接。 */
     private fun inputConnection(): InputConnection? =
@@ -94,14 +106,23 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 session?.runOnReady(job)
             }
         }
+        //监听引擎注册事件
+        prefs = appContext.getSharedPreferences(
+            CandidateManager.PREFS_NAME, Context.MODE_PRIVATE
+        ).also {
+            it.registerOnSharedPreferenceChangeListener(prefsListener)
+        }
         //以结束为号
         sendJob {
             joinMaintenanceThread()
             onMessage(RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish))
+            RimeSchema(getCurrentSchema()).applyOptions(this)
         }
     }
 
     override fun finalize() {
+        prefs?.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        prefs = null
         jobs.close()
         scope.cancel()
         predictionManager?.destroy()
@@ -115,8 +136,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             return
         }
         sendJob {
-            Timber.d("ssss %s", currentSchema().switches)
-
             when (key) {
                 is KeyEvent.SequenceEvent -> {
                     this@RimeEngine.flowed(InputString(key.sequence))

@@ -146,11 +146,12 @@
 
     <!-- Menu Grid -->
     <string name="menu_emoji">表情</string>
+    <string name="menu_symbol">符号</string>
     <string name="menu_clipboard">剪贴板</string>
     <string name="menu_voice">语音转文字</string>
     <string name="voice_permission_message">语音转文字功能需要录音权限，是否前往授权？</string>
     <string name="voice_model_missing_message">语音转文字功能需要下载识别模型，是否前往下载？</string>
-    <string name="menu_cursor">光标</string>
+    <string name="menu_cursor">编辑模式</string>
     <string name="menu_settings">设置</string>
     <string name="menu_schema">方案管理</string>
     <string name="schema_files">文件管理</string>
@@ -165,8 +166,11 @@
     <string name="tag_punctuation_half">半角符号</string>
 
     <string name="model_prediction">候选词预测</string>
+    <string name="menu_candidate_comment">候选词注释</string>
     <string name="model_prediction_enable">启用预测</string>
     <string name="menu_traditional_chinese">繁体输入</string>
+    <string name="menu_emoji_input">表情输入</string>
+    <string name="menu_ascii_mode">字符模式</string>
     <string name="prediction_candidates">候选词</string>
     <string name="prediction_candidates_desc">候选词预测、模型增强、候选词布局</string>
     <string name="voice_settings">语音转文字</string>

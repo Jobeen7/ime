@@ -160,8 +160,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
     override suspend fun selectedSchemaId(): String = withRimeContext { getCurrentSchema() }
 
-    override suspend fun selectSchema(schemaId: String) =
-        withRimeContext { Companion.selectSchema(schemaId) }
+    override suspend fun selectSchema(schemaId: String) = withRimeContext {
+        Companion.selectSchema(schemaId).also {
+            RimeSchema(getCurrentSchema()).applyOptions(this@Rime)
+        }
+    }
 
     override suspend fun currentSchema(): RimeSchema = withRimeContext {
         RimeSchema(getCurrentSchema())

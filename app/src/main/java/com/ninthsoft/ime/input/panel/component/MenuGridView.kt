@@ -50,6 +50,43 @@ class MenuGridView(
                 PanelAction.EmojiKeyboard
             ),
             MenuItem(
+                context.getString(R.string.menu_symbol),
+                R.drawable.ic_keyboard_symbol,
+                PanelAction.SymbolKeyboard
+            ),
+            MenuItem(
+                context.getString(R.string.model_prediction),
+                R.drawable.ic_keyboard_lightbulb_on_outline,
+                PanelAction.TogglePrediction
+            ),
+            MenuItem(
+                context.getString(R.string.menu_candidate_comment),
+                R.drawable.ic_keyboard_bubble,
+                PanelAction.ToggleShowComment
+            ),
+            MenuItem(
+                context.getString(R.string.menu_traditional_chinese),
+                R.drawable.ic_keyboard_traditional_ch,
+                PanelAction.ToggleTraditionalChinese
+            ),
+            MenuItem(
+                context.getString(R.string.menu_emoji_input),
+                R.drawable.ic_keyboard_sticker_emoji,
+                PanelAction.ToggleEmojiInput
+            ),
+            MenuItem(
+                context.getString(R.string.menu_ascii_mode),
+                R.drawable.ic_keyboard_alphabet_a,
+                PanelAction.ToggleAsciiMode
+            ),
+            MenuItem(
+                context.getString(R.string.menu_voice),
+                R.drawable.ic_keyboard_voice,
+                PanelAction.ToggleVoice
+            ),
+        ),
+        arrayOf(
+            MenuItem(
                 context.getString(R.string.menu_clipboard),
                 R.drawable.ic_keyboard_clipboard,
                 PanelAction.Clipboard
@@ -60,19 +97,19 @@ class MenuGridView(
                 PanelAction.CommonPhrases
             ),
             MenuItem(
-                context.getString(R.string.menu_voice),
-                R.drawable.ic_keyboard_voice,
-                PanelAction.ToggleVoice
-            ),
-            MenuItem(
-                context.getString(R.string.menu_settings),
-                R.drawable.ic_keyboard_setting,
-                PanelAction.Settings
+                context.getString(R.string.menu_cursor),
+                R.drawable.ic_keyboard_cursor_move,
+                PanelAction.CursorMove
             ),
             MenuItem(
                 context.getString(R.string.menu_schema),
                 R.drawable.ic_keyboard_tune,
                 PanelAction.SchemaSettings
+            ),
+            MenuItem(
+                context.getString(R.string.menu_settings),
+                R.drawable.ic_keyboard_setting,
+                PanelAction.Settings
             ),
             MenuItem(
                 context.getString(R.string.menu_theme),
@@ -84,27 +121,10 @@ class MenuGridView(
                 R.drawable.ic_keyboard_reload,
                 PanelAction.ReloadEngine
             ),
-        ),
-        arrayOf(
-            MenuItem(
-                context.getString(R.string.menu_cursor),
-                R.drawable.ic_keyboard_cursor_move,
-                PanelAction.CursorMove
-            ),
             MenuItem(
                 context.getString(R.string.menu_about),
                 R.drawable.ic_keyboard_information_outline,
                 PanelAction.About
-            ),
-            MenuItem(
-                context.getString(R.string.model_prediction),
-                R.drawable.ic_keyboard_lightbulb_on_outline,
-                PanelAction.TogglePrediction
-            ),
-            MenuItem(
-                context.getString(R.string.menu_traditional_chinese),
-                R.drawable.ic_keyboard_traditional_ch,
-                PanelAction.ToggleTraditionalChinese
             ),
         ),
     )
@@ -384,18 +404,28 @@ class MenuGridView(
     }
 
     private fun isToggleAction(action: PanelAction?): Boolean =
-        action == PanelAction.TogglePrediction || action == PanelAction.ToggleTraditionalChinese
+        action == PanelAction.TogglePrediction ||
+            action == PanelAction.ToggleShowComment ||
+            action == PanelAction.ToggleTraditionalChinese ||
+            action == PanelAction.ToggleEmojiInput ||
+            action == PanelAction.ToggleAsciiMode
 
     private fun isEnabled(action: PanelAction): Boolean = when (action) {
         PanelAction.TogglePrediction -> CandidateManager.isPredictionEnabled(context)
+        PanelAction.ToggleShowComment -> CandidateManager.isShowComment(context)
         PanelAction.ToggleTraditionalChinese -> CandidateManager.isTraditionalChineseEnabled(context)
+        PanelAction.ToggleEmojiInput -> CandidateManager.isEmojiEnabled(context)
+        PanelAction.ToggleAsciiMode -> CandidateManager.isAsciiModeEnabled(context)
         else -> false
     }
 
 
     private fun toggleIcon(action: PanelAction): Int = when (action) {
         PanelAction.TogglePrediction ->  R.drawable.ic_keyboard_lightbulb_on_outline
+        PanelAction.ToggleShowComment -> R.drawable.ic_keyboard_bubble
         PanelAction.ToggleTraditionalChinese -> R.drawable.ic_keyboard_traditional_ch
+        PanelAction.ToggleEmojiInput -> R.drawable.ic_keyboard_sticker_emoji
+        PanelAction.ToggleAsciiMode -> R.drawable.ic_keyboard_alphabet_a
         else -> android.R.drawable.ic_menu_help
     }
 

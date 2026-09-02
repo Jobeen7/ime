@@ -12,6 +12,7 @@ import com.ninthsoft.ime.input.keyboard.key.atKey
 import com.ninthsoft.ime.input.keyboard.key.backspaceKey
 import com.ninthsoft.ime.input.keyboard.key.clearKey
 import com.ninthsoft.ime.input.keyboard.key.commitKey
+import com.ninthsoft.ime.input.keyboard.key.layoutSwitchKey
 import com.ninthsoft.ime.input.keyboard.key.symbolSwitchKey
 import com.ninthsoft.ime.input.keyboard.key.miniSpaceKey
 import com.ninthsoft.ime.input.keyboard.key.resumeLayoutKey

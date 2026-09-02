@@ -216,10 +216,31 @@ class KawaiiPanel(
                     )
                     menuGridView.refreshPredictionState()
                 }
+                PanelAction.ToggleShowComment -> {
+                    CandidateManager.setShowComment(
+                        context,
+                        !CandidateManager.isShowComment(context),
+                    )
+                    menuGridView.refreshPredictionState()
+                }
                 PanelAction.ToggleTraditionalChinese -> {
                     CandidateManager.setTraditionalChineseEnabled(
                         context,
                         !CandidateManager.isTraditionalChineseEnabled(context),
+                    )
+                    menuGridView.refreshPredictionState()
+                }
+                PanelAction.ToggleEmojiInput -> {
+                    CandidateManager.setEmojiEnabled(
+                        context,
+                        !CandidateManager.isEmojiEnabled(context),
+                    )
+                    menuGridView.refreshPredictionState()
+                }
+                PanelAction.ToggleAsciiMode -> {
+                    CandidateManager.setAsciiModeEnabled(
+                        context,
+                        !CandidateManager.isAsciiModeEnabled(context),
                     )
                     menuGridView.refreshPredictionState()
                 }

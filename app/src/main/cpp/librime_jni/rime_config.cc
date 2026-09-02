@@ -81,6 +81,20 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigString(
     return jni::makeString(env, value);
 }
 
+JNIEXPORT jobject JNICALL
+Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigBool(
+        JNIEnv *env, jclass, jlong peer, jstring key) {
+    auto *api = rime_get_api();
+    jni::StringChars k(env, key);
+    Bool value = False;
+    if (!api->config_get_bool(reinterpret_cast<RimeConfig *>(peer), k.get(),
+                              &value)) {
+        return nullptr;
+    }
+    return env->NewObject(jni::g_refs->Boolean, jni::g_refs->BooleanCtor,
+                          static_cast<jboolean>(value != False));
+}
+
 JNIEXPORT jobjectArray JNICALL
 Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigListItemPath(
         JNIEnv *env, jclass, jlong peer, jstring key) {

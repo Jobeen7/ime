@@ -6,6 +6,7 @@ import com.ninthsoft.ime.data.manager.PhraseManager
 import com.ninthsoft.ime.R
 import com.ninthsoft.ime.engine.data.EngineMessage
 import com.ninthsoft.ime.input.keyboard.impl.EmojiKeyboard
+import com.ninthsoft.ime.input.keyboard.impl.SymbolKeyboard
 import com.ninthsoft.ime.input.keyboard.key.KeyboardAction
 import com.ninthsoft.ime.input.panel.PanelAction
 import com.ninthsoft.ime.input.panel.PanelListener
@@ -29,6 +30,10 @@ class PanelActionListener(
             PanelAction.SwitchKeyboard -> service.keyboardWindow?.view?.toggleMenu()
             PanelAction.EmojiKeyboard -> service.keyboardWindow?.view?.switchKeyboard(
                 EmojiKeyboard.NAME
+            )
+
+            PanelAction.SymbolKeyboard -> service.keyboardWindow?.view?.switchKeyboard(
+                SymbolKeyboard.NAME
             )
 
             PanelAction.ReloadEngine -> service.engine?.reload()
