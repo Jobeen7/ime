@@ -451,6 +451,14 @@ class KeyboardWindowView(
         )
     }
 
+    // 仅当解析出的配色与当前缓存不一致时才全量刷新（主题/跟随系统深浅变化等场景）。
+    fun refreshColorsIfChanged() {
+        val resolved = KeyboardColors.resolve(context)
+        if (resolved != cachedColors) {
+            refreshColors()
+        }
+    }
+
     fun refreshLayout() = requestLayout()
 
     private var currentKeyboard: IKeyboard? = null

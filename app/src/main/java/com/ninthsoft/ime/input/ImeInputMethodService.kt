@@ -98,6 +98,9 @@ class ImeInputMethodService : InputMethodService() {
         )
         keyboardWindow = window
         window.setKeyActionListener(keyActionListener)
+        // KeyboardStateManager 是进程级单例，其键盤注册表可能残留上一实例（旧配色）的键盘；
+        // 新建窗口（销毁重建路径）时重建一次，让键盘用本次实例解析出的新配色生成。
+        KeyboardStateManager.rebuild()
         return window.view
     }
 

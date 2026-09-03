@@ -72,6 +72,9 @@ class KeyboardWindow(
     }
 
     fun onStartInputView(info: EditorInfo, restarting: Boolean) {
+        if (!restarting) {
+            view.refreshColorsIfChanged()
+        }
         currentEditorInfo = info
         view.onStartInput(info)
         view.refreshLayout()
