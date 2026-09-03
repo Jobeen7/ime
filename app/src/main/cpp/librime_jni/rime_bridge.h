@@ -66,7 +66,7 @@ namespace rime_jni {
         return env->NewObject(
                 jni::g_refs->CandidateProto, jni::g_refs->CandidateProtoCtor,
                 jni::makeString(env, cand.text), jni::makeString(env, cand.comment),
-                jni::makeString(env, cand.label));
+                jni::makeString(env, cand.label), jni::makeString(env, cand.type));
     }
 
     inline jobjectArray toJavaCandidateArray(JNIEnv *env,

@@ -53,7 +53,10 @@ object AppStartup {
     }
 
     private fun setupLogger(context: Context) {
-        AppLogBuffer.install(context)
+        // 仅 debug 构建开启日志：内部缓冲收集 + logcat 读取 + DebugTree。
+        // release（assembleRelease）不装任何 timber Tree → Timber 全部 no-op，不输出、零开销；
+        // 崩溃兜底（crash.log）仍保留。
+        AppLogBuffer.install(context, enableLogging = BuildConfig.DEBUG)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }

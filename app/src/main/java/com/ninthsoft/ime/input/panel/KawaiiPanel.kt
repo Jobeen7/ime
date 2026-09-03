@@ -11,6 +11,7 @@ import com.ninthsoft.ime.data.manager.KeyboardManager
 import com.ninthsoft.ime.data.manager.CandidateManager
 import com.ninthsoft.ime.engine.data.CandidatePinYin
 import com.ninthsoft.ime.engine.data.EngineMessage
+import com.ninthsoft.ime.engine.data.EngineMessage.Candidate
 import com.ninthsoft.ime.input.panel.component.CandidateGridView
 import com.ninthsoft.ime.input.panel.component.ClipboardView
 import com.ninthsoft.ime.input.panel.component.ClipboardTab
@@ -138,17 +139,19 @@ class KawaiiPanel(
         },
         onSidePanelAction = { listener?.onSidePanelAction(it) },
     ).apply {
-        /*onWordForget = { candidate, x, y ->
-            confirmOverlay.confirm(
-                message = context.getString(
-                    R.string.candidate_forget_confirm,
-                    if (candidate.text.length > 5) candidate.text.take(5) + "..." else candidate.text
-                ),
-                onConfirm = { handleCandidateForget(candidate) },
-                cardX = x,
-                cardY = y,
-            )
-        }*/
+        onWordForget = { candidate, x, y ->
+            if (candidate.type == Candidate.TYPE_USER_PHRASE) {
+                confirmOverlay.confirm(
+                    message = context.getString(
+                        R.string.candidate_forget_confirm,
+                        if (candidate.text.length > 5) candidate.text.take(5) + "..." else candidate.text
+                    ),
+                    onConfirm = { handleCandidateForget(candidate) },
+                    cardX = x,
+                    cardY = y,
+                )
+            }
+        }
         onDragComplete = { candidates ->
             (view.currentRenderer as? ComposingRenderer)?.candidates = candidates
             this@KawaiiPanel.listener?.onCandidateGridDragComplete(candidates)
@@ -421,7 +424,7 @@ class KawaiiPanel(
                         val candidates = (state as State.Prediction).candidates
                         var predictions = true
                         candidates.forEach {
-                            if (it.type != EngineMessage.Candidate.CandidateType.Prediction) {
+                            if (it.type != Candidate.TYPE_IME_PREDICTION) {
                                 predictions = false
                                 return@forEach
                             }
@@ -542,7 +545,7 @@ class KawaiiPanel(
             view.scrollX = 0f
             var predictions = true
             list.forEach {
-                if (it.type != EngineMessage.Candidate.CandidateType.Prediction) {
+                if (it.type != Candidate.TYPE_IME_PREDICTION) {
                     predictions = false
                     return@forEach
                 }

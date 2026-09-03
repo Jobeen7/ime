@@ -31,7 +31,7 @@ object AppLogBuffer {
     private var crashFile: File? = null
     private var installed = false
 
-    fun install(context: android.content.Context) {
+    fun install(context: android.content.Context, enableLogging: Boolean = true) {
         synchronized(lock) {
             if (installed) return
             installed = true
@@ -42,8 +42,10 @@ object AppLogBuffer {
             migrateFile(oldCrashFile, crashFile!!)
             File(DataManager.logDir, "app.log").delete()
             loadLastCrash()
-            Timber.plant(BufferTree())
-            startLogcatReader()
+            if (enableLogging) {
+                Timber.plant(BufferTree())
+                startLogcatReader()
+            }
             val previous = Thread.getDefaultUncaughtExceptionHandler()
             Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
                 recordCrash(thread, throwable)

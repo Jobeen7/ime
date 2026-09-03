@@ -66,14 +66,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var context: Context? = null
     private var inputConnection: InputConnection? = null
     private var serviceRef: ImeInputMethodService? = null
+
     //引擎相关配置监控
     private var prefs: SharedPreferences? = null
-    private val prefsListener =
-        SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-            if (OptionsApplier.isOptionDependency(key)) {
-                sendJob { RimeSchema(getCurrentSchema()).applyOptions(this) }
-            }
+    private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (OptionsApplier.isOptionDependency(key)) {
+            sendJob { RimeSchema(getCurrentSchema()).applyOptions(this) }
         }
+    }
 
     /** 桥接模式下返回虚拟连接，否则返回真实连接。 */
     private fun inputConnection(): InputConnection? =
@@ -200,7 +200,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     override fun selectCandidate(candidate: Candidate) {
         sendJob {
-            if (candidate.type == Candidate.CandidateType.Prediction) {
+            if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
                 messages.emit(EngineMessage.Commit(candidate.text))
                 this@RimeEngine.predict(candidate.text)
                 return@sendJob
@@ -436,7 +436,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     inputContext.last()
                 )
             ) {
-                Timber.d("cccc %s", predictionManager?.makePredictions(inputContext))
                 candidates = predictionManager?.makePredictions(inputContext) ?: emptyList()
             }
             if (context?.let { CandidateManager.isTraditionalChineseEnabled(it) } == true) {

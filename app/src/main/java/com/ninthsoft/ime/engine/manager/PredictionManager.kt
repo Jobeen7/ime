@@ -85,7 +85,7 @@ class PredictionManager(private val context: Context) {
                     Candidate(
                         index = index,
                         text = it.word,
-                        type = Candidate.CandidateType.Prediction,
+                        type = Candidate.TYPE_IME_PREDICTION,
                         score = score
                     )
                 }.sortedByDescending { it.score }

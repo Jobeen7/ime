@@ -172,7 +172,7 @@ namespace jni {
                     env->FindClass("com/ninthsoft/ime/engine/rime/core/CandidateProto")));
             CandidateProtoCtor = env->GetMethodID(
                     CandidateProto, "<init>",
-                    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+                    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
 
             CommitProto = static_cast<jclass>(env->NewGlobalRef(
                     env->FindClass("com/ninthsoft/ime/engine/rime/core/CommitProto")));

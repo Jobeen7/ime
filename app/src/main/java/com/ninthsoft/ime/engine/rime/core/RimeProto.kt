@@ -10,6 +10,7 @@ data class CandidateProto(
     val text: String,
     val comment: String,
     val label: String,
+    val type: String = "",
 )
 
 data class SyllableProto(

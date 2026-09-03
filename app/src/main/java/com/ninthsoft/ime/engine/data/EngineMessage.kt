@@ -41,7 +41,8 @@ sealed class EngineMessage {
         val candidates: List<Candidate>,
     ) : EngineMessage() {
         data class Candidate(
-            val index: Int, val text: String, val comment: String, val label: String
+            val index: Int, val text: String, val comment: String, val label: String,
+            val type: String = "",
         )
     }
 
@@ -51,9 +52,12 @@ sealed class EngineMessage {
         val index: Int,
         val text: String,
         val comment: String = "",
-        val type: CandidateType = CandidateType.Engine,
-        var score: Double = 0.0
+        val type: String = "",
+        var score: Double = 0.0,
     ) {
-        enum class CandidateType { Engine, Prediction }
+companion object {
+            const val TYPE_IME_PREDICTION = "imePrediction"
+            const val TYPE_USER_PHRASE = "user_phrase"
+        }
     }
 }

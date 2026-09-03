@@ -60,13 +60,15 @@ namespace rime_jni {
         std::string text;
         std::string comment;
         std::string label;
+        std::string type;
 
         CandidateData() = default;
 
         CandidateData(const RimeCandidate &c, std::string_view lbl)
                 : text(c.text ? c.text : ""),
                   comment(c.comment ? c.comment : ""),
-                  label(lbl) {}
+                  label(lbl),
+                  type(c.type ? c.type : "") {}
     };
 
     struct SyllableData {

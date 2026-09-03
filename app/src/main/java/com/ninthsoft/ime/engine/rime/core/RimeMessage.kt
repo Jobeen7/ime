@@ -203,6 +203,7 @@ fun RimeMessage<*>.EngineMessage(): EngineMessage = when (this) {
                 index = i,
                 text = c.text,
                 comment = c.comment,
+                type = c.type,
             )
         }
         EngineMessage.Candidates(
@@ -233,6 +234,7 @@ fun RimeMessage<*>.EngineMessage(): EngineMessage = when (this) {
                     text = item.text,
                     comment = item.comment,
                     label = item.label,
+                    type = item.type,
                 )
             })
     }

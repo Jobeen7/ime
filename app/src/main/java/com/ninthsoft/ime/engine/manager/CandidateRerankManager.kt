@@ -7,14 +7,13 @@ import com.ninthsoft.ime.base.priority.PriorityCalculator
 import com.ninthsoft.ime.base.priority.WeightConfig
 import com.ninthsoft.ime.data.database.AppDatabase
 import com.ninthsoft.ime.engine.data.EngineMessage.Candidate
+import timber.log.Timber
 
 class CandidateRerankManager(private val context: Context) {
     private val calculator = PriorityCalculator()
 
     suspend fun rerank(
-        candidates: List<Candidate>,
-        inputContext: String,
-        gramDb: GramDb?
+        candidates: List<Candidate>, inputContext: String, gramDb: GramDb?
     ): List<Candidate> {
         if (candidates.size <= 1) return candidates
 
@@ -23,9 +22,7 @@ class CandidateRerankManager(private val context: Context) {
         if (restoreEnd <= restoreStart) return candidates
 
         val texts = candidates.subList(restoreStart, restoreEnd).map { it.text }
-        val prefers = AppDatabase.getInstance(context)
-            .candidatePreferDao()
-            .getAllByTextIn(texts)
+        val prefers = AppDatabase.getInstance(context).candidatePreferDao().getAllByTextIn(texts)
             .associate { it.text to it.count }
 
         val cfg = WeightConfig()
@@ -51,10 +48,7 @@ class CandidateRerankManager(private val context: Context) {
             )
             restored.add(
                 Candidate(
-                    index = index,
-                    text = it.text,
-                    type = Candidate.CandidateType.Engine,
-                    score = score
+                    index = index, text = it.text, type = it.type, score = score
                 )
             )
         }
