@@ -6,8 +6,11 @@ import com.ninthsoft.ime.base.log.AppLogBuffer
 import com.ninthsoft.ime.base.speech.SherpaSpeechClient
 import com.ninthsoft.ime.base.feedback.InputFeedbacks
 import com.ninthsoft.ime.base.util.ResourceExtractorUtil
+import com.ninthsoft.ime.base.util.appScope
 import com.ninthsoft.ime.input.keyboard.window.KeyboardStateManager
+import com.github.houbb.opencc4j.util.ZhConverterUtil
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import splitties.views.dsl.core.BuildConfig
 import timber.log.Timber
@@ -41,6 +44,7 @@ object AppStartup {
                     ::setupInputFeedbacks,
                     ::setupEngine,
                     ::setupSherpaSpeech,
+                    ::prewarmOpencc,
                 )
                 funcs.forEach { it(context) }
                 initialized = true
@@ -70,6 +74,12 @@ object AppStartup {
 
     private fun setupInputFeedbacks(context: Context) {
         InputFeedbacks.initSoundPool(context)
+    }
+
+    private fun prewarmOpencc(context: Context) {
+        appScope.launch(Dispatchers.IO) {
+            runCatching { ZhConverterUtil.toTraditional("汉字") }
+        }
     }
 
     private fun releaseResourcesIfNeeded(context: Context) {

@@ -13,6 +13,7 @@ coroutines = "1.11.0"
 #noinspection NewerVersionAvailable
 lottie = "6.7.1"
 material = "1.14.0"
+opencc4j = "1.14.0"
 splitties = "3.0.0"
 timber = "5.0.1"
     kotlinxSerialization = "1.11.0"
@@ -42,6 +43,7 @@ androidx-compose-material-icons-extended = { group = "androidx.compose.material"
 kotlinpoet = { module = "com.squareup:kotlinpoet", version.ref = "kotlinpoet" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
+opencc4j = { module = "com.github.houbb:opencc4j", version.ref = "opencc4j" }
 splitties-bitflags = { module = "com.louiscad.splitties:splitties-bitflags", version.ref = "splitties" }
 splitties-systemservices = { module = "com.louiscad.splitties:splitties-systemservices", version.ref = "splitties" }
 splitties-views-dsl = { module = "com.louiscad.splitties:splitties-views-dsl", version.ref = "splitties" }

@@ -13,7 +13,9 @@ import android.os.Messenger
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
+import com.github.houbb.opencc4j.util.ZhConverterUtil
 import com.ninthsoft.ime.base.util.appContext
+import com.ninthsoft.ime.data.manager.CandidateManager
 import com.ninthsoft.ime.engine.rime.data.DataManager
 import com.ninthsoft.ime.input.ImeInputMethodService
 import kotlinx.coroutines.Dispatchers
@@ -129,6 +131,14 @@ object SherpaSpeechClient {
         runCatching { SpeechUiBridge.onAmplitude?.invoke(value) }
     }
 
+    // 上屏前按繁体开关做 s2t 转换；默认简体不做处理。
+    private fun toDisplayText(text: String): String =
+        if (CandidateManager.isTraditionalChineseEnabled(appContext)) {
+            ZhConverterUtil.toTraditional(text)
+        } else {
+            text
+        }
+
     private fun onError() {
         Timber.e("SpeechCli %s", "onError from speech service")
         cancelSession()
@@ -170,7 +180,7 @@ object SherpaSpeechClient {
         uiJob = service.scope?.launch(Dispatchers.Main) {
             while (isActive && holding.get()) {
                 composingText.getAndSet(null)?.let { text ->
-                    service.activeInputConnection()?.setComposingText(text, 1)
+                    service.activeInputConnection()?.setComposingText(toDisplayText(text), 1)
                 }
                 delay(50)
             }
@@ -219,7 +229,7 @@ object SherpaSpeechClient {
         service?.scope?.launch(Dispatchers.Main) {
             val text = composingText.getAndSet(null)
             if (!discarding.get() && !text.isNullOrBlank()) {
-                service.activeInputConnection()?.setComposingText(text, 1)
+                service.activeInputConnection()?.setComposingText(toDisplayText(text), 1)
             }
             service.activeInputConnection()?.finishComposingText()
             SpeechUiBridge.onDone?.invoke()

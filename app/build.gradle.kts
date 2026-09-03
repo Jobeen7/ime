@@ -15,7 +15,7 @@ plugins {
         //noinspection OldTargetApi
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0.1"
+        versionName = "1.0.2"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -75,6 +75,7 @@ plugins {
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     // implementation(libs.tokenizer)
+    implementation(libs.opencc4j)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.timber)
     implementation(libs.okhttp)

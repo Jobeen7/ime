@@ -41,6 +41,7 @@ import com.ninthsoft.ime.engine.rime.core.RimeSchema
 import com.ninthsoft.ime.engine.rime.data.DataManager.modelDir
 import com.ninthsoft.ime.engine.rime.data.DataManager.sharedDataDir
 import com.ninthsoft.ime.engine.rime.util.OptionsApplier
+import com.github.houbb.opencc4j.util.ZhConverterUtil
 import com.ninthsoft.ime.input.ImeInputMethodService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -437,6 +438,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             ) {
                 Timber.d("cccc %s", predictionManager?.makePredictions(inputContext))
                 candidates = predictionManager?.makePredictions(inputContext) ?: emptyList()
+            }
+            if (context?.let { CandidateManager.isTraditionalChineseEnabled(it) } == true) {
+                candidates = candidates.map {
+                    it.copy(
+                        text = ZhConverterUtil.toTraditional(it.text),
+                        comment = it.comment.takeIf(String::isNotEmpty)
+                            ?.let(ZhConverterUtil::toTraditional) ?: it.comment,
+                    )
+                }
             }
             showPredictionCandidates = candidates.isNotEmpty()
             messages.emit(EngineMessage.Candidates(candidates, 0, 0))

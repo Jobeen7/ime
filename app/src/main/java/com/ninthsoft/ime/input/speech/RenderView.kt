@@ -176,8 +176,8 @@ abstract class RenderView @JvmOverloads constructor(
         }
     }
 
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        if (hasFocus && isStartAnim) startThread() else onPause()
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        if (hasWindowFocus && isStartAnim) startThread() else onPause()
     }
 
     fun startAnim() {

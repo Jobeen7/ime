@@ -546,9 +546,9 @@ class ParticleWaveView @JvmOverloads constructor(
         release()
     }
 
-    override fun onWindowFocusChanged(hasFocus: Boolean) {
-        super.onWindowFocusChanged(hasFocus)
-        if (!hasFocus) {
+    override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
+        super.onWindowFocusChanged(hasWindowFocus)
+        if (!hasWindowFocus) {
             stopAnim()
         } else {
             renderLock.withLock {

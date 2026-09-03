@@ -529,7 +529,7 @@ class KeyboardWindowView(
         if (isVoiceRecording) {
             isVoiceRecording = false
             panel.recording = false
-            SherpaSpeechClient.stopHoldSession()
+            SherpaSpeechClient.stopHoldSession(discard = true)
             voiceOverlay.hide()
         }
         keyboardStateManager.onDetach()
