@@ -421,21 +421,25 @@ abstract class BaseKeyboard(
     }
 
 
-    override fun updateEditorInfo(info: EditorInfo, empty: Boolean) {
+    override fun updateEditorInfo(info: EditorInfo, empty: Boolean, isComposing: Boolean) {
         val action = info.imeOptions and EditorInfo.IME_MASK_ACTION
-        returnKeyIcon = when (action) {
-            EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
-            EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
-            EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
-            EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
-            EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
-            EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
-            else -> R.drawable.ic_keyboard_return
+        val icon = if (empty || isComposing) {
+            R.drawable.ic_keyboard_return
+        } else {
+            when (action) {
+                EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
+                EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
+                EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
+                EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
+                EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
+                EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
+                else -> R.drawable.ic_keyboard_return
+            }
         }
-        if (empty) {
-            returnKeyIcon = R.drawable.ic_keyboard_return
+        if (icon != returnKeyIcon) {
+            returnKeyIcon = icon
+            returnKeyView?.img?.imageResource = returnKeyIcon
         }
-        returnKeyView?.img?.imageResource = returnKeyIcon
     }
 
     override fun updatePunctuationMode(mode: PunctuationMode) {

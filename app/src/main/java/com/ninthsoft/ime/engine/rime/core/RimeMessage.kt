@@ -215,8 +215,7 @@ fun RimeMessage<*>.EngineMessage(): EngineMessage = when (this) {
 
     is StatusMessage -> {
         EngineMessage.Status(
-            schemaName = data.schemaName,
-            isAsciiMode = data.isAsciiMode,
+            isComposing = data.isComposing
         )
     }
 

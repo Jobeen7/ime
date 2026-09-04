@@ -9,7 +9,7 @@ sealed class EngineMessage {
         val page: Int,
     ) : EngineMessage() {}
 
-    data class Status(val schemaName: String, val isAsciiMode: Boolean) : EngineMessage()
+    data class Status(val isComposing: Boolean = false) : EngineMessage()
     data class InlinePreedit(val preedit: String) : EngineMessage()
 
     data class DynamicPreedit(val preedits: List<DynamicPreeditItem>) : EngineMessage() {
@@ -55,7 +55,7 @@ sealed class EngineMessage {
         val type: String = "",
         var score: Double = 0.0,
     ) {
-companion object {
+        companion object {
             const val TYPE_IME_PREDICTION = "imePrediction"
             const val TYPE_USER_PHRASE = "user_phrase"
         }

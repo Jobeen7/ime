@@ -37,6 +37,15 @@ object KeyboardStateManager {
     private var currentSchema: EngineMessage.Schema? = null
     private var defaultKeyboardName = QwertyKeyboard.NAME
 
+    // 打字状态：由 Status 消息驱动（RimeEngine 不参与）
+    private var isComposing = false
+    private var lastEditorInfo: EditorInfo? = null
+    private var lastInputEmpty = true
+    // 上次实际应用到键盘的入参，用于避免无变化时的重复刷新
+    private var lastImeAction = -1
+    private var lastAppliedEmpty = true
+    private var lastAppliedComposing = false
+
     var keyActionListener: KeyActionListener = KeyActionListener.Empty
         set(value) {
             field = value
@@ -192,12 +201,19 @@ object KeyboardStateManager {
             } else {
                 info
             }
-            currentKeyboardName?.let { keyboards[it]?.updateEditorInfo(effectiveInfo, text.isEmpty()) }
+            lastEditorInfo = effectiveInfo
+            lastInputEmpty = text.isEmpty()
+            updateReturnKeyIfNeeded()
         }
     }
 
     fun handleEngineMessage(message: EngineMessage) {
         when (message) {
+            is EngineMessage.Status -> {
+                isComposing = message.isComposing
+                updateReturnKeyIfNeeded()
+            }
+
             is EngineMessage.Depoly -> {
                 Timber.d("handleEngineMessage EngineMessage.Depoly ")
                 if (message.state == EngineMessage.Depoly.State.Finish) {
@@ -207,5 +223,22 @@ object KeyboardStateManager {
 
             else -> {}
         }
+    }
+
+    // 仅当 (imeAction, empty, isComposing) 三者有实际变化时才刷新回车键。
+    private fun updateReturnKeyIfNeeded() {
+        val info = lastEditorInfo ?: return
+        val keyboard = currentKeyboardName?.let { keyboards[it] } ?: return
+        val action = info.imeOptions and EditorInfo.IME_MASK_ACTION
+        if (action == lastImeAction &&
+            lastInputEmpty == lastAppliedEmpty &&
+            isComposing == lastAppliedComposing
+        ) {
+            return
+        }
+        lastImeAction = action
+        lastAppliedEmpty = lastInputEmpty
+        lastAppliedComposing = isComposing
+        keyboard.updateEditorInfo(info, lastInputEmpty, isComposing)
     }
 }

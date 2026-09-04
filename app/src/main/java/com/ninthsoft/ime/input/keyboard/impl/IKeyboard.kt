@@ -10,6 +10,6 @@ interface IKeyboard : IManagedView {
     fun name(): String
     fun updateSpaceKeyText(text: String)
     fun updatePunctuationMode(mode: PunctuationMode)
-    fun updateEditorInfo(info: EditorInfo, empty: Boolean)
+    fun updateEditorInfo(info: EditorInfo, empty: Boolean, isComposing: Boolean)
     fun setRippleEnabled(enabled: Boolean)
 }

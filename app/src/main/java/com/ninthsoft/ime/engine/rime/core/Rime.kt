@@ -223,7 +223,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
         if (c.text?.isNotEmpty() == true) {
             handleMessage(RimeMessage.MessageType.Commit.ordinal, arrayOf(c))
         }
+        getStatus()
         val context = getContext()
+        handleMessage(RimeMessage.MessageType.Status.ordinal, arrayOf(StatusProto(
+            isComposing = !context.input.isEmpty()
+        )))
         //候选词列表
         if (context.menu.pageSize <= 0 && context.input.isNotEmpty() && !context.input.startsWith(
                 CommandSymbol
