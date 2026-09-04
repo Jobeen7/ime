@@ -13,7 +13,7 @@ import android.os.Messenger
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
-import com.github.houbb.opencc4j.util.ZhConverterUtil
+import com.ninthsoft.ime.base.util.TraditionalConverter
 import com.ninthsoft.ime.base.util.appContext
 import com.ninthsoft.ime.data.manager.CandidateManager
 import com.ninthsoft.ime.engine.rime.data.DataManager
@@ -134,7 +134,7 @@ object SherpaSpeechClient {
     // 上屏前按繁体开关做 s2t 转换；默认简体不做处理。
     private fun toDisplayText(text: String): String =
         if (CandidateManager.isTraditionalChineseEnabled(appContext)) {
-            ZhConverterUtil.toTraditional(text)
+            TraditionalConverter.toTraditional(text)
         } else {
             text
         }

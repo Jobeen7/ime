@@ -40,8 +40,8 @@ import com.ninthsoft.ime.engine.rime.core.RimeMessage
 import com.ninthsoft.ime.engine.rime.core.RimeSchema
 import com.ninthsoft.ime.engine.rime.data.DataManager.modelDir
 import com.ninthsoft.ime.engine.rime.data.DataManager.sharedDataDir
+import com.ninthsoft.ime.base.util.TraditionalConverter
 import com.ninthsoft.ime.engine.rime.util.OptionsApplier
-import com.github.houbb.opencc4j.util.ZhConverterUtil
 import com.ninthsoft.ime.input.ImeInputMethodService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
@@ -424,8 +424,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun predict(commit: String) {
-        val inputContext =
+        // 预测模型基于简体训练；先转成简体再推导，以支持繁体输入下的候选预测。
+        val inputContext = TraditionalConverter.toSimplified(
             (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "") + commit
+        )
         sendJob {
             if (context?.let { !CandidateManager.isPredictionEnabled(it) } == true) {
                 messages.emit(EngineMessage.Candidates(emptyList(), 0, 0))
@@ -441,9 +443,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             if (context?.let { CandidateManager.isTraditionalChineseEnabled(it) } == true) {
                 candidates = candidates.map {
                     it.copy(
-                        text = ZhConverterUtil.toTraditional(it.text),
+                        text = TraditionalConverter.toTraditional(it.text),
                         comment = it.comment.takeIf(String::isNotEmpty)
-                            ?.let(ZhConverterUtil::toTraditional) ?: it.comment,
+                            ?.let(TraditionalConverter::toTraditional) ?: it.comment,
                     )
                 }
             }

@@ -75,7 +75,6 @@ plugins {
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     // implementation(libs.tokenizer)
-    implementation(libs.opencc4j)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.timber)
     implementation(libs.okhttp)

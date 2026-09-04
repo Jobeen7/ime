@@ -6,9 +6,9 @@ import com.ninthsoft.ime.base.log.AppLogBuffer
 import com.ninthsoft.ime.base.speech.SherpaSpeechClient
 import com.ninthsoft.ime.base.feedback.InputFeedbacks
 import com.ninthsoft.ime.base.util.ResourceExtractorUtil
+import com.ninthsoft.ime.base.util.TraditionalConverter
 import com.ninthsoft.ime.base.util.appScope
 import com.ninthsoft.ime.input.keyboard.window.KeyboardStateManager
-import com.github.houbb.opencc4j.util.ZhConverterUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -81,7 +81,8 @@ object AppStartup {
 
     private fun prewarmOpencc(context: Context) {
         appScope.launch(Dispatchers.IO) {
-            runCatching { ZhConverterUtil.toTraditional("汉字") }
+            // 触发一次简繁词库加载，避免首次繁体转换卡顿
+            runCatching { TraditionalConverter.toTraditional("汉字") }
         }
     }
 
