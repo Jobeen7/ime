@@ -53,6 +53,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import kotlin.lazy
@@ -372,10 +373,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     showPredictionCandidates = false
                     messages.emit(EngineMessage.Candidates(emptyList(), 0, 0))
                 }
-                inputConnection()?.let {
-                    val p0 = it.getTextBeforeCursor(Int.MAX_VALUE, 0)?.length ?: 0
-                    val p1 = it.getTextAfterCursor(Int.MAX_VALUE, 0)?.length ?: 0
-                    it.deleteSurroundingTextInCodePoints(p0, p1)
+                withContext(Dispatchers.Main.immediate) {
+                    inputConnection()?.let {
+                        val hasText =
+                            !it.getSelectedText(0).isNullOrEmpty() || !it.getTextBeforeCursor(1, 0)
+                                .isNullOrEmpty() || !it.getTextAfterCursor(1, 0).isNullOrEmpty()
+                        if (!hasText) return@let
+                        it.performContextMenuAction(android.R.id.selectAll)
+                        it.commitText("", 1)
+                    }
                 }
             }
         }
@@ -466,6 +472,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     //前端提交
     override fun commit(text: String) {
         sendJob {
+            if (compositionCached.preedit?.isNotEmpty() == true) {
+                commitCurrentSelection(text)
+                this@RimeEngine.predict(text)
+                return@sendJob
+            }
             messages.emit(EngineMessage.Commit(text))
             this@RimeEngine.predict(text)
         }

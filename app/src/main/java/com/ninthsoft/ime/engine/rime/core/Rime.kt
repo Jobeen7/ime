@@ -173,6 +173,9 @@ class Rime : RimeApi, RimeLifecycleOwner {
     override suspend fun commitComposition(): Boolean =
         withRimeContext { Companion.commitComposition().also { if (it) emitResponse() } }
 
+    override suspend fun commitCurrentSelection(append: String): Boolean =
+        withRimeContext { Companion.commitCurrentSelection(append).also { if (it) emitResponse() } }
+
     override suspend fun clearComposition() = withRimeContext {
         Companion.clearComposition().also { emitResponse() }
     }
@@ -386,6 +389,9 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
         @JvmStatic
         external fun commitComposition(): Boolean
+
+        @JvmStatic
+        external fun commitCurrentSelection(append: String): Boolean
 
         @JvmStatic
         external fun clearComposition()

@@ -70,14 +70,14 @@ class MenuGridView(
                 PanelAction.ToggleTraditionalChinese
             ),
             MenuItem(
+                context.getString(R.string.menu_ascii_mode),
+                R.drawable.ic_keyboard_english_mode,
+                PanelAction.ToggleAsciiMode
+            ),
+            MenuItem(
                 context.getString(R.string.menu_emoji_input),
                 R.drawable.ic_keyboard_sticker_emoji,
                 PanelAction.ToggleEmojiInput
-            ),
-            MenuItem(
-                context.getString(R.string.menu_ascii_mode),
-                R.drawable.ic_keyboard_alphabet_a,
-                PanelAction.ToggleAsciiMode
             ),
             MenuItem(
                 context.getString(R.string.menu_voice),
@@ -425,7 +425,7 @@ class MenuGridView(
         PanelAction.ToggleShowComment -> R.drawable.ic_keyboard_bubble
         PanelAction.ToggleTraditionalChinese -> R.drawable.ic_keyboard_traditional_ch
         PanelAction.ToggleEmojiInput -> R.drawable.ic_keyboard_sticker_emoji
-        PanelAction.ToggleAsciiMode -> R.drawable.ic_keyboard_alphabet_a
+        PanelAction.ToggleAsciiMode -> R.drawable.ic_keyboard_english_mode
         else -> android.R.drawable.ic_menu_help
     }
 

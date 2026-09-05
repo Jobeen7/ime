@@ -68,6 +68,8 @@ interface RimeApi {
 
     suspend fun commitComposition(): Boolean
 
+    suspend fun commitCurrentSelection(append: String = ""): Boolean
+
     suspend fun clearComposition()
 
     suspend fun setInput(input: String, emit: Boolean = true): Boolean

@@ -135,6 +135,10 @@ namespace {
             return api_->commit_composition(sessionId());
         }
 
+        bool commitCurrentSelection(const std::string &append) {
+            return api_->commit_current_selection(sessionId(), append.empty() ? nullptr : append.c_str());
+        }
+
         void clearComposition() { api_->clear_composition(sessionId()); }
 
         void freeContext() {
@@ -363,6 +367,13 @@ JNIEXPORT jboolean JNICALL
 Java_com_ninthsoft_ime_engine_rime_core_Rime_commitComposition(
         JNIEnv *, jclass) {
     return RimeEngine::instance().commitComposition();
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_ninthsoft_ime_engine_rime_core_Rime_commitCurrentSelection(
+        JNIEnv *env, jclass, jstring append) {
+    jni::StringChars suffix(env, append);
+    return RimeEngine::instance().commitCurrentSelection(suffix.str());
 }
 
 JNIEXPORT void JNICALL

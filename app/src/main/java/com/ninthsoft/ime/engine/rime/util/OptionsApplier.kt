@@ -15,7 +15,7 @@ object OptionsApplier {
             CandidateManager.isEmojiEnabled(appContext)
         },
         CandidateManager.KEY_ASCII_MODE_ENABLED to {
-            CandidateManager.isAsciiModeEnabled(appContext)
+            !CandidateManager.isAsciiModeEnabled(appContext)
         },
     )
 
