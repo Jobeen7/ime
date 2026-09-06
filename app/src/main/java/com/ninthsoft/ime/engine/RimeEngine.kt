@@ -12,8 +12,8 @@ import com.ninthsoft.ime.base.util.TextUtil
 import com.ninthsoft.ime.engine.behavior.IBehavior
 import com.ninthsoft.ime.engine.rime.behavior.Segmentation
 import com.ninthsoft.ime.data.database.AppDatabase
-import com.ninthsoft.ime.data.database.CandidateSorting
 import com.ninthsoft.ime.data.manager.CandidateManager
+import com.ninthsoft.ime.data.manager.CandidateSortingManager
 import com.ninthsoft.ime.data.manager.SchemaManager
 import com.ninthsoft.ime.engine.event.KeyEvent
 import com.ninthsoft.ime.engine.rime.host.BehaviorHost
@@ -26,7 +26,6 @@ import com.ninthsoft.ime.engine.rime.behavior.InputString
 import com.ninthsoft.ime.engine.rime.behavior.Reset
 import com.ninthsoft.ime.engine.rime.behavior.SelectPinYin
 import com.ninthsoft.ime.engine.rime.behavior.Selection
-import com.ninthsoft.ime.engine.rime.core.EngineMessage
 import com.ninthsoft.ime.engine.rime.core.IRimeJob
 import com.ninthsoft.ime.engine.rime.core.RimeApi
 import com.ninthsoft.ime.engine.rime.daemon.RimeDaemon
@@ -35,6 +34,7 @@ import com.ninthsoft.ime.engine.manager.CandidateRerankManager
 import com.ninthsoft.ime.engine.manager.PredictionManager
 import com.ninthsoft.ime.engine.rime.core.KeyMapping
 import com.ninthsoft.ime.engine.rime.core.Rime.Companion.getCurrentSchema
+import com.ninthsoft.ime.engine.rime.core.EngineMessageConverter
 import com.ninthsoft.ime.engine.rime.core.RimeConfig
 import com.ninthsoft.ime.engine.rime.core.RimeMessage
 import com.ninthsoft.ime.engine.rime.core.RimeSchema
@@ -245,13 +245,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     override fun resortCandidates(candidates: List<Candidate>) {
         val ctx = context ?: return
+        if (candidates.isEmpty()) return
         val db = AppDatabase.getInstance(ctx)
         sendJob {
-            val preedit = getRawInput().replace("'", " ")
-            if (preedit.isNotEmpty()) {
-                db.candidateSortingDao()
-                    .saveSorting(CandidateSorting(preedit, candidates.map { it.index }))
-            }
+            CandidateSortingManager(db).save(candidates)
         }
     }
 
@@ -275,7 +272,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private suspend fun onMessage(message: RimeMessage<*>) {
-        val msg = message.EngineMessage()
+        val msg = EngineMessageConverter.convert(message)
         when (msg) {
             is EngineMessage.InlinePreedit -> {
                 if (msg.preedit.isEmpty()) {
@@ -409,16 +406,45 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private fun restoreCandidates(msg: EngineMessage.Candidates) {
         sendJob {
             context?.let {
+                val db = AppDatabase.getInstance(it)
                 val rerankEnabled = CandidateManager.isRerankEnabled(it)
-                if (!rerankEnabled) {
+                if (rerankEnabled) {
+                    // 开启重排：使用重排结果，不还原用户排序
+                    val inputContext =
+                        (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
+                    val sortedList = rerankManager?.rerank(msg.list, inputContext, null)
+                    messages.emit(EngineMessage.Candidates(sortedList ?: msg.list, 0, 0))
+                    return@sendJob
+                }
+                // 关闭重排：还原用户拖拽保存的排序；无记录则原样展示
+                val savedIds = CandidateSortingManager(db).load(msg.list)
+                if (savedIds.isNullOrEmpty()) {
                     messages.emit(msg)
                     return@sendJob
                 }
-                val inputContext = (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
-                val sortedList = rerankManager?.rerank(msg.list, inputContext, null)
-                messages.emit(EngineMessage.Candidates(sortedList ?: msg.list, 0, 0))
+                messages.emit(
+                    EngineMessage.Candidates(
+                        restoreCandidateOrder(msg.list, savedIds), 0, 0
+                    )
+                )
             }
         }
+    }
+
+    /** 按保存的原始序号顺序重排候选；不在保存列表中的候选保持原有相对顺序追加到末尾。 */
+    private fun restoreCandidateOrder(
+        list: List<Candidate>, savedIds: List<Int>
+    ): List<Candidate> {
+        val byId = list.associateBy { it.index }
+        val savedSet = savedIds.toSet()
+        val restored = ArrayList<Candidate>(list.size)
+        for (id in savedIds) {
+            byId[id]?.let { restored.add(it) }
+        }
+        for (c in list) {
+            if (c.index !in savedSet) restored.add(c)
+        }
+        return restored
     }
 
     override fun onFinishInputView() {

@@ -9,7 +9,6 @@ interface RimeApi {
     val isReady: Boolean
 
     val schemaCached: RimeSchema
-
     val statusCached: StatusProto
 
     val compositionCached: CompositionProto

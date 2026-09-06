@@ -217,34 +217,58 @@ class CandidateGridView(
             canvas.withSave {
                 clipRect(0f, 0f, rowWidth, h)
                 for (i in positions.indices) {
-                    if (i == dragIndex) continue
-
                     val pos = positions[i]
                     if (pos.row < firstRow) continue
                     val y = (pos.row - firstRow) * rowH + yOff
                     if (y > h) break
-                    val c = allCandidates[i]
-                    val tw = textPaint.measureText(c.text)
-                    val isTarget = i == dragTargetIndex && dragIndex >= 0
 
-                    val shakeOff = if (dragIndex >= 0 && i != dragIndex) {
-                        kotlin.math.sin(shakePhase + i * 1.9f) * 0.8f * resources.displayMetrics.density
-                    } else 0f
-                    val shakeAngle = if (dragIndex >= 0 && i != dragIndex) {
-                        kotlin.math.sin(shakePhase + i * 1.9f) * shakeMaxAngle
-                    } else 0f
+                    // 被拖动项仅隐藏内容，其右侧分割线仍需绘制
+                    if (i != dragIndex) {
+                        val c = allCandidates[i]
+                        val tw = textPaint.measureText(c.text)
+                        val isTarget = i == dragTargetIndex && dragIndex >= 0
 
-                    if (pos.extraWide) {
-                        val sx = rowScrollX[pos.row] ?: 0f
-                        canvas.withSave {
-                            clipRect(0f, y, rowWidth, y + rowH)
+                        val shakeOff = if (dragIndex >= 0) {
+                            kotlin.math.sin(shakePhase + i * 1.9f) * 0.8f * resources.displayMetrics.density
+                        } else 0f
+                        val shakeAngle = if (dragIndex >= 0) {
+                            kotlin.math.sin(shakePhase + i * 1.9f) * shakeMaxAngle
+                        } else 0f
+
+                        if (pos.extraWide) {
+                            val sx = rowScrollX[pos.row] ?: 0f
+                            canvas.withSave {
+                                clipRect(0f, y, rowWidth, y + rowH)
+                                if (isTarget) {
+                                    val d = resources.displayMetrics.density
+                                    canvas.drawRoundRect(
+                                        0f, y, rowWidth, y + rowH, 6f * d, 6f * d, pressPaint
+                                    )
+                                }
+                                val textX = cellPad - sx + shakeOff
+                                val textY =
+                                    y + rowH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+                                if (shakeAngle != 0f) {
+                                    val cx = textX + tw / 2f
+                                    val cy = textY
+                                    canvas.withRotation(shakeAngle, cx, cy) {
+                                        drawText(c.text, textX, textY, textPaint)
+                                    }
+                                } else {
+                                    drawText(c.text, textX, textY, textPaint)
+                                }
+                            }
+                        } else {
+                            val rectLeft = pos.xStart + shakeOff
+                            val rectRight = pos.xStart + pos.width + shakeOff
                             if (isTarget) {
                                 val d = resources.displayMetrics.density
                                 canvas.drawRoundRect(
-                                    0f, y, rowWidth, y + rowH, 6f * d, 6f * d, pressPaint
+                                    rectLeft, y, rectRight, y + rowH, 6f * d, 6f * d, pressPaint
                                 )
                             }
-                            val textX = cellPad - sx + shakeOff
+                            val txtLeft = pos.xStart + shakeOff + (pos.width - tw) / 2f
+                            val textX = txtLeft.coerceAtLeast(rectLeft)
                             val textY =
                                 y + rowH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
                             if (shakeAngle != 0f) {
@@ -254,29 +278,8 @@ class CandidateGridView(
                                     drawText(c.text, textX, textY, textPaint)
                                 }
                             } else {
-                                drawText(c.text, textX, textY, textPaint)
+                                canvas.drawText(c.text, textX, textY, textPaint)
                             }
-                        }
-                    } else {
-                        val rectLeft = pos.xStart + shakeOff
-                        val rectRight = pos.xStart + pos.width + shakeOff
-                        if (isTarget) {
-                            val d = resources.displayMetrics.density
-                            canvas.drawRoundRect(
-                                rectLeft, y, rectRight, y + rowH, 6f * d, 6f * d, pressPaint
-                            )
-                        }
-                        val txtLeft = pos.xStart + shakeOff + (pos.width - tw) / 2f
-                        val textX = txtLeft.coerceAtLeast(rectLeft)
-                        val textY = y + rowH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
-                        if (shakeAngle != 0f) {
-                            val cx = textX + tw / 2f
-                            val cy = textY
-                            canvas.withRotation(shakeAngle, cx, cy) {
-                                drawText(c.text, textX, textY, textPaint)
-                            }
-                        } else {
-                            canvas.drawText(c.text, textX, textY, textPaint)
                         }
                     }
 

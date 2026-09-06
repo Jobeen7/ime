@@ -252,18 +252,15 @@ fun clearKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
 
 
 fun zeroKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
-    appearance = KeyDef.Appearance.AltText(
+    appearance = KeyDef.Appearance.Text(
         displayText = "@",
-        altText = "0",
-        textSize = 15f,
+        textSize = 18f,
         percentWidth = percentWidth,
-        mainTextTranslationY = 3,
-        altTextTranslationY = 4,
         variant = Variant.Alternative
     ),
     behaviors = setOf(
-        KeyDef.Behavior.Press(KeyboardAction.CommitAction("0")),
-        KeyDef.Behavior.LongPress(KeyboardAction.CommitAction("@")),
+        KeyDef.Behavior.Press(KeyboardAction.CommitAction("@")),
+        KeyDef.Behavior.LongPress(KeyboardAction.CommitAction("0")),
     ),
 )
 
@@ -293,7 +290,7 @@ fun miniSpaceKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
 fun atKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
     appearance = KeyDef.Appearance.Text(
         displayText = "@",
-        textSize = 22f,
+        textSize = 18f,
         percentWidth = percentWidth,
         variant = Variant.Alternative,
     ), behaviors = setOf(

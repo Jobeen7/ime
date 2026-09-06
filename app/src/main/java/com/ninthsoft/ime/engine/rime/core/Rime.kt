@@ -228,9 +228,13 @@ class Rime : RimeApi, RimeLifecycleOwner {
         }
         getStatus()
         val context = getContext()
-        handleMessage(RimeMessage.MessageType.Status.ordinal, arrayOf(StatusProto(
-            isComposing = !context.input.isEmpty()
-        )))
+        handleMessage(
+            RimeMessage.MessageType.Status.ordinal, arrayOf(
+                StatusProto(
+                    isComposing = !context.input.isEmpty()
+                )
+            )
+        )
         //候选词列表
         if (context.menu.pageSize <= 0 && context.input.isNotEmpty() && !context.input.startsWith(
                 CommandSymbol
@@ -280,6 +284,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
             is RimeMessage.SchemaMessage -> {
                 statusCached = getStatus()
                 schemaCached = RimeSchema(it.data.id)
+                EngineMessageConverter.applySchemaKind(it.data.kind)
             }
 
             is RimeMessage.OptionMessage -> {

@@ -11,6 +11,6 @@ interface CandidateSortingDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveSorting(sorting: CandidateSorting)
 
-    @Query("SELECT * FROM candidate_sorting WHERE preedit = :preedit")
-    suspend fun loadSorting(preedit: String): CandidateSorting?
+    @Query("SELECT * FROM candidate_sorting_v2 WHERE sorting_key = :key")
+    suspend fun loadSorting(key: String): CandidateSorting?
 }
