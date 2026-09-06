@@ -33,6 +33,7 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -49,18 +50,21 @@
             android:name=".ui.SetupActivity"
             android:exported="false"
             android:label="@string/ime_setup_title"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
         <activity
             android:name=".ui.KeyboardSettingsActivity"
             android:exported="false"
             android:label="@string/keyboard_settings"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
         <activity
             android:name=".ui.SchemaSettingsActivity"
             android:exported="false"
             android:label="@string/schema_settings"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
         <provider
@@ -80,30 +84,35 @@
             android:name=".ui.ClipboardActivity"
             android:exported="false"
             android:label="@string/clipboard_manager"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
         <activity
             android:name=".ui.AboutActivity"
             android:exported="false"
             android:label="@string/about_us"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
         <activity
             android:name=".ui.LogActivity"
             android:exported="false"
             android:label="@string/app_logs"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
         <activity
             android:name=".ui.PredictionSettingsActivity"
             android:exported="false"
             android:label="@string/prediction_candidates"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
         <activity
             android:name=".ui.VoiceSettingsActivity"
             android:exported="false"
             android:label="@string/voice_settings"
+            android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
         <activity
