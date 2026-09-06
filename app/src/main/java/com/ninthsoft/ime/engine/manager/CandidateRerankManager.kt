@@ -48,7 +48,7 @@ class CandidateRerankManager(private val context: Context) {
             )
             restored.add(
                 Candidate(
-                    index = index, text = it.text, type = it.type, score = score
+                    index = index, text = it.text, comment = it.comment, type = it.type, score = score
                 )
             )
         }

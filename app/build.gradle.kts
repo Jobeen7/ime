@@ -15,7 +15,7 @@ plugins {
         //noinspection OldTargetApi
         targetSdk = 36
         versionCode = 1
-        versionName = "1.0.5"
+        versionName = "1.0.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -66,7 +66,7 @@ plugins {
         getByName("main") {
             jniLibs.directories.add("src/main/libs")
             assets {
-                srcDirs("src/main/assets")
+                directories.add("src/main/assets")
             }
         }
     }
