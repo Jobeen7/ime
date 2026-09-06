@@ -27,6 +27,7 @@ namespace rime_jni {
         std::string name;
         std::string layout;
         std::string punctuation;
+        std::string kind;
 
         SchemaEntry() = default;
 
@@ -34,7 +35,8 @@ namespace rime_jni {
                 : id(item.schema_id ? item.schema_id : ""),
                   name(item.name ? item.name : ""),
                   layout(item.layout ? item.layout : ""),
-                  punctuation(item.punctuation ? item.punctuation : "") {}
+                  punctuation(item.punctuation ? item.punctuation : ""),
+                  kind(item.kind ? item.kind : "") {}
 
         static std::vector<SchemaEntry> fromList(const RimeSchemaList &list) {
             std::vector<SchemaEntry> out;

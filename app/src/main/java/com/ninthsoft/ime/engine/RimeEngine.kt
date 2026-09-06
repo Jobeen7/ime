@@ -356,7 +356,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         awaitJob(emptyList()) {
             enabledSchemata().map {
                 EngineMessage.Schema(
-                    it.id, it.name, it.layout, it.punctuation
+                    it.id, it.name, it.layout, it.punctuation, it.kind
                 )
             }
         }

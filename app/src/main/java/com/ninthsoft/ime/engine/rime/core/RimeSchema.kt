@@ -29,6 +29,7 @@ class RimeSchema(val schemaId: String) {
     val switches: List<Switch>
     val options: List<Option>
     val alphabet: String
+    var kind: String
 
     init {
         val config = when {
@@ -55,6 +56,7 @@ class RimeSchema(val schemaId: String) {
                 )
             }
             alphabet = it.getString("speller/alphabet") ?: ""
+            kind = it.getString("schema/kind") ?: ""
         }
     }
 }

@@ -145,6 +145,7 @@ sealed class RimeMessage<T>(val data: T) {
                         name = schema?.name ?: parts.getOrElse(1) { "" },
                         layout = schema?.layout ?: parts.getOrElse(2) { "" },
                         punctuation = schema?.punctuation ?: parts.getOrElse(3) { "" },
+                        kind = schema?.kind.orEmpty(),
                     )
                 )
             }
@@ -321,7 +322,7 @@ fun RimeMessage<*>.EngineMessage(): EngineMessage = when (this) {
     }
 
     is SchemaMessage -> {
-        EngineMessage.Schema(data.id, data.name, data.layout, data.punctuation)
+        EngineMessage.Schema(data.id, data.name, data.layout, data.punctuation, data.kind)
     }
 
     is RimeMessage.DeployMessage -> {

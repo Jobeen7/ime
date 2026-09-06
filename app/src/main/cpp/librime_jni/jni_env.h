@@ -214,7 +214,7 @@ namespace jni {
             SchemaItem = static_cast<jclass>(env->NewGlobalRef(
                     env->FindClass("com/ninthsoft/ime/engine/rime/core/SchemaItem")));
             SchemaItemCtor = env->GetMethodID(SchemaItem, "<init>",
-                                              "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+                                              "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
 
             KeyEvent = static_cast<jclass>(env->NewGlobalRef(
                     env->FindClass("com/ninthsoft/ime/engine/rime/core/RimeKeyEvent")));

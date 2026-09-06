@@ -18,7 +18,8 @@ namespace rime_jni {
                               jni::makeString(env, entry.id),
                               jni::makeString(env, entry.name),
                               jni::makeString(env, entry.layout),
-                              jni::makeString(env, entry.punctuation));
+                              jni::makeString(env, entry.punctuation),
+                              jni::makeString(env, entry.kind));
     }
 
     inline jobjectArray toJavaSchemaArray(JNIEnv *env,

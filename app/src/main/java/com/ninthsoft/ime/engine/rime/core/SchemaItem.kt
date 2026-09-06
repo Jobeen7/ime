@@ -7,4 +7,5 @@ data class SchemaItem(
     val name: String = "",
     val layout: String = "",
     val punctuation: String = "",
+    val kind: String = "",
 )

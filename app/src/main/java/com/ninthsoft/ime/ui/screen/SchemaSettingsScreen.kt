@@ -111,7 +111,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
 
     val allSchemas = EngineFactory.current()?.schemasList() ?: emptyList()
     if (!loaded && allSchemas.isNotEmpty()) {
-        val allItems = allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation) }
+        val allItems = allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
         val enabledIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
             ?.filter { it.isNotBlank() } ?: emptyList()
         val byId = allItems.associateBy { it.id }

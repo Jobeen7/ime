@@ -21,7 +21,7 @@ sealed class EngineMessage {
     }
 
     data class Schema(
-        val id: String, val name: String, val layout: String = "", val punctuation: String = ""
+        val id: String, val name: String, val layout: String = "", val punctuation: String = "", val kind: String = ""
     ) : EngineMessage()
 
     data class Depoly(val state: State) : EngineMessage() {
