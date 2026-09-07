@@ -12,6 +12,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.util.ArrayDeque
 import java.util.concurrent.TimeUnit
@@ -138,6 +139,8 @@ object ModelDownloader {
             true
         }.onFailure { e ->
             Timber.e(e, "Failed to extract/install speech model")
+            // 失败时清理阶段目录残存，避免后续解压受到干扰
+            runCatching { stageDir.deleteRecursively() }
         }.getOrDefault(false)
     }
 
@@ -188,23 +191,29 @@ object ModelDownloader {
     }
 
     private fun installModel(model: ModelFiles, modelDir: File) {
-        modelDir.mkdirs()
-        clearExistingModel(modelDir)
-        moveTo(modelDir, model.tokens)
-        moveTo(modelDir, model.encoder)
-        moveTo(modelDir, model.decoder)
-        moveTo(modelDir, model.joiner)
+        val parent = modelDir.parentFile
+            ?: error("Model directory has no parent: ${modelDir.absolutePath}")
+        parent.mkdirs()
+        // 先把完整的新模型组装到同目录临时目录，确认完整后再整体替换目标，
+        // 避免把半套文件写进最终目录。
+        val staging = File(parent, modelDir.name + ".tmp")
+        staging.deleteRecursively()
+        check(staging.mkdirs()) { "Failed to create install staging: ${staging.absolutePath}" }
+        moveTo(staging, model.tokens)
+        moveTo(staging, model.encoder)
+        moveTo(staging, model.decoder)
+        moveTo(staging, model.joiner)
+        // 替换前再次校验新模型已完整
+        if (findModel(staging) == null) {
+            staging.deleteRecursively()
+            throw IOException("New model is incomplete before installation")
+        }
+        if (modelDir.exists()) modelDir.deleteRecursively()
+        if (!staging.renameTo(modelDir)) {
+            staging.deleteRecursively()
+            throw IOException("Failed to move new model into place: $staging")
+        }
         Timber.i("Speech model installed: %s", modelDir.absolutePath)
-    }
-
-    private fun clearExistingModel(dir: File) {
-        dir.listFiles().orEmpty().filter(File::isFile).filter { file ->
-            file.name.equals(TOKENS_FILE, true) || MODEL_COMPONENTS.any {
-                isModelFile(
-                    file.name, it
-                )
-            }
-        }.forEach(File::delete)
     }
 
     private fun moveTo(destination: File, source: File) {

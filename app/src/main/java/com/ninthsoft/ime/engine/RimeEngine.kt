@@ -154,7 +154,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         }
 
                         KEYCODE_DEL -> {
-                            if (showPredictionCandidates) {
+                            // A composing Rime input must be deleted by Rime even if
+                            // the prediction state was left stale by an earlier commit.
+                            if (showPredictionCandidates && getRawInput().isEmpty()) {
                                 showPredictionCandidates = false
                                 messages.emit(EngineMessage.Candidates(emptyList(), 0, 0))
                                 return@sendJob
@@ -200,17 +202,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun selectCandidate(candidate: Candidate) {
-        sendJob {
-            if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
+        if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
+            sendJob {
                 messages.emit(EngineMessage.Commit(candidate.text))
                 this@RimeEngine.predict(candidate.text)
-                return@sendJob
             }
+            return
+        }
+
+        // Only Rime selection produces the empty candidate response that must be hidden.
+        // Prediction candidates bypass Rime and must not arm this flag.
+        notEmitNextEmptyCandidates = true
+        sendJob {
             val ctx = context ?: return@sendJob
             val inputContext = (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
             AppDatabase.getInstance(ctx).candidatePreferDao().upsert(candidate.text, inputContext)
         }
-        notEmitNextEmptyCandidates = true
         this@RimeEngine.flowed(Selection(candidate.index))
     }
 
@@ -288,9 +295,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
 
             is EngineMessage.Candidates -> {
-                if (notEmitNextEmptyCandidates && msg.list.isEmpty()) {
+                if (msg.list.isNotEmpty()) {
+                    // Rime candidates take over the panel from prediction candidates.
+                    showPredictionCandidates = false
+                }
+                if (notEmitNextEmptyCandidates) {
                     notEmitNextEmptyCandidates = false
-                    return
+                    if (msg.list.isEmpty()) {
+                        return
+                    }
                 }
                 restoreCandidates(msg)
                 return
@@ -405,28 +418,34 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private fun restoreCandidates(msg: EngineMessage.Candidates) {
         sendJob {
-            context?.let {
-                val db = AppDatabase.getInstance(it)
-                val rerankEnabled = CandidateManager.isRerankEnabled(it)
+            try {
+                val ctx = context
+                if (ctx == null) {
+                    messages.emit(msg)
+                    return@sendJob
+                }
+
+                val db = AppDatabase.getInstance(ctx)
+                val rerankEnabled = CandidateManager.isRerankEnabled(ctx)
                 if (rerankEnabled) {
                     // 开启重排：使用重排结果，不还原用户排序
                     val inputContext =
                         (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
                     val sortedList = rerankManager?.rerank(msg.list, inputContext, null)
                     messages.emit(EngineMessage.Candidates(sortedList ?: msg.list, 0, 0))
-                    return@sendJob
-                }
-                // 关闭重排：还原用户拖拽保存的排序；无记录则原样展示
-                val savedIds = CandidateSortingManager(db).load(msg.list)
-                if (savedIds.isNullOrEmpty()) {
-                    messages.emit(msg)
-                    return@sendJob
-                }
-                messages.emit(
-                    EngineMessage.Candidates(
-                        restoreCandidateOrder(msg.list, savedIds), 0, 0
+                } else {
+                    // 关闭重排：还原用户拖拽保存的排序；无记录则原样展示
+                    val savedIds = CandidateSortingManager(db).load(msg.list)
+                    messages.emit(
+                        if (savedIds.isNullOrEmpty()) msg
+                        else EngineMessage.Candidates(
+                            restoreCandidateOrder(msg.list, savedIds), 0, 0
+                        )
                     )
-                )
+                }
+            } catch (error: Exception) {
+                Timber.e(error, "Failed to restore candidates; using original list")
+                messages.emit(msg)
             }
         }
     }

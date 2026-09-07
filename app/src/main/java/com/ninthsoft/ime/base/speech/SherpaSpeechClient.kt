@@ -85,9 +85,9 @@ object SherpaSpeechClient {
             if (holding.get()) cancelSession()
 
             //异常退出。清理资源
-            runCatching {
-                DataManager.speechModelDir.listFiles()?.forEach { it.deleteRecursively() }
-            }.onFailure { Timber.d("SpeechCli clearSpeechModelDir failed %s", it.message) }
+//            runCatching {
+//                DataManager.speechModelDir.listFiles()?.forEach { it.deleteRecursively() }
+//            }.onFailure { Timber.d("SpeechCli clearSpeechModelDir failed %s", it.message) }
         }
     }
 
