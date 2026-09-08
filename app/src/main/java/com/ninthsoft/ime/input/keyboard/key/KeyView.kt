@@ -13,6 +13,7 @@ import android.graphics.drawable.Drawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
 import android.util.TypedValue
+import android.widget.TextView
 import androidx.annotation.FloatRange
 import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.graphics.drawable.toDrawable
@@ -40,6 +41,20 @@ import splitties.views.imageResource
 import splitties.views.padding
 import kotlin.math.min
 import kotlin.math.roundToInt
+
+private fun TextView.alignVisibleTextCenter() {
+    val text = text?.toString().orEmpty()
+    val container = parent as? android.view.View ?: return
+    if (text.isEmpty() || width == 0 || container.width == 0) {
+        translationX = 0f
+        return
+    }
+
+    val bounds = Rect()
+    paint.getTextBounds(text, 0, text.length, bounds)
+    val glyphCenter = left + (bounds.left + bounds.right) / 2f
+    translationX = container.width / 2f - glyphCenter
+}
 
 abstract class KeyView(
     ctx: Context,
@@ -397,29 +412,11 @@ class AltTextKeyView(
     }
 
     private fun updateMainTextPosition() {
-        val text = mainText.text?.toString() ?: return
-        if (text.isEmpty()) {
-            mainText.translationX = 0f
-            return
-        }
-        val rect = Rect()
-        mainText.paint.getTextBounds(text, 0, text.length, rect)
-        val viewCenter = mainText.width / 2f
-        val glyphCenter = (rect.left + rect.right) / 2f
-        mainText.translationX = viewCenter - glyphCenter
+        mainText.alignVisibleTextCenter()
     }
 
     private fun updateAltTextPosition() {
-        val text = altText.text?.toString() ?: return
-        if (text.isEmpty()) {
-            altText.translationX = 0f
-            return
-        }
-        val rect = Rect()
-        altText.paint.getTextBounds(text, 0, text.length, rect)
-        val viewCenter = altText.width / 2f
-        val glyphCenter = (rect.left + rect.right) / 2f
-        altText.translationX = viewCenter - glyphCenter
+        altText.alignVisibleTextCenter()
     }
 }
 
@@ -577,17 +574,6 @@ class ImageTextKeyView(
     }
 
     private fun updateTextPosition() {
-        val text = mainText.text?.toString() ?: return
-        if (text.isEmpty()) {
-            mainText.translationX = 0f
-            return
-        }
-        val rect = Rect()
-        mainText.paint.getTextBounds(
-            text, 0, text.length, rect
-        )
-        val viewCenter = mainText.width / 2f
-        val glyphCenter = (rect.left + rect.right) / 2f
-        mainText.translationX = viewCenter - glyphCenter
+        mainText.alignVisibleTextCenter()
     }
 }
