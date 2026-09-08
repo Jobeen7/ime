@@ -20,7 +20,7 @@ class ComposingRenderer(
     var showIndex: Boolean = true,
     var showComment: Boolean = true,
     var borderless: Boolean = false,
-    var expandBorderless: Boolean = false,
+    var expandBorder: Boolean = true,
     override var recording: Boolean = false,
 ) : IRenderer {
 
@@ -131,7 +131,7 @@ class ComposingRenderer(
                     val textY =
                         pillY + pillH / 2f - (layout.textPaint.descent() + layout.textPaint.ascent()) / 2f
 
-                    if (!borderless) {
+                    if (expandBorder) {
                         drawRoundRect(
                             pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
                             paints.candidateBgPaint,
@@ -181,7 +181,7 @@ class ComposingRenderer(
         canvas.drawLine(
             dividerX, pillY + pillH / 4f, dividerX, pillY + pillH * 3f / 4f, paints.dividerPaint
         )
-        if (!expandBorderless) {
+        if (expandBorder) {
             canvas.drawRoundRect(
                 expandBtnLeft, pillY, expandBtnRight, pillY + pillH, pillR, pillR,
                 paints.candidateBgPaint,

@@ -2,8 +2,8 @@ package com.ninthsoft.ime.base.speech
 
 import android.content.Context
 import com.ninthsoft.ime.base.net.HttpUtil
+import com.ninthsoft.ime.data.App
 import com.ninthsoft.ime.base.util.TarBz2ExtractorUtil
-import com.ninthsoft.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
@@ -66,8 +66,8 @@ object ModelDownloader {
             Timber.w("Speech model manifest has no download link")
             return@withContext false
         }
-        val tempDir = DataManager.downloadDir
-        val modelDir = DataManager.speechModelDir
+        val tempDir = App.downloadDir
+        val modelDir = App.speechModelDir
         val archiveName = link.substringAfterLast('/').ifBlank { DEFAULT_ARCHIVE_NAME }
         val archiveFile = File(tempDir, archiveName)
         val stageDir = File(tempDir, STAGE_DIR)

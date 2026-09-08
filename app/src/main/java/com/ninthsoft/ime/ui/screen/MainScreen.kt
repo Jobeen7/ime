@@ -108,7 +108,7 @@ fun MainScreen(
                 title = stringResource(R.string.theme),
                 subtitle = themes[currentThemeMode],
                 onClick = { showThemeDialog = true },
-                icon = Icons.Filled.Palette,
+                icon = Icons.Filled.Brush,
                 showSpacer = true,
             )
 
@@ -134,7 +134,7 @@ fun MainScreen(
                 title = stringResource(R.string.keyboard_theme),
                 subtitle = stringResource(R.string.keyboard_theme_desc),
                 onClick = onOpenKeyboardThemeSettings,
-                icon = Icons.Filled.Brush,
+                icon = Icons.Filled.Palette,
                 showSpacer = true,
             )
 

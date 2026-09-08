@@ -204,7 +204,7 @@ abstract class BaseKeyboard(
             onPressedChanged = { key ->
                 if (key.isPressed) {
                     val isSwitchAction = def.behaviors.any { b ->
-                        b is KeyDef.Behavior.Press && (b.action is KeyboardAction.LayoutSwitchAction || b.action is KeyboardAction.RotateSchema)
+                        b is KeyDef.Behavior.Press && (b.action is KeyboardAction.LayoutSwitchAction || b.action is KeyboardAction.RotateSchema || b.action is KeyboardAction.ResumeAction)
                     }
                     if (!isSwitchAction) {
                         val keyLoc = IntArray(2)

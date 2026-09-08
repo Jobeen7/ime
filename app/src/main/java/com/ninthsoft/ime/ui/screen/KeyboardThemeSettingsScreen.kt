@@ -40,6 +40,8 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -52,12 +54,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
 import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.ninthsoft.ime.R
+import com.ninthsoft.ime.data.ThemeStore
 import com.ninthsoft.ime.data.keyboard.theme.KeyboardTheme
+import com.ninthsoft.ime.data.keyboard.theme.KeyboardThemePresets
 import com.ninthsoft.ime.data.manager.KeyboardManager
+import com.ninthsoft.ime.data.theme.CompactTheme
+import kotlinx.serialization.json.Json
 import com.ninthsoft.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.ninthsoft.ime.ui.screen.ScreenComponent.SwitchRow
 import com.ninthsoft.ime.ui.screen.ScreenComponent.ThemeChip
@@ -65,19 +72,34 @@ import com.ninthsoft.ime.ui.screen.ScreenComponent.barFontSize
 import com.ninthsoft.ime.ui.screen.ScreenComponent.rowSubFontSize
 import java.io.File
 import java.io.FileOutputStream
+import java.util.EnumMap
 
 private object ThemeCode {
     const val PREFIX = "IMEKBTHEME:"
 
-    fun encode(themeId: String): String = PREFIX + themeId
+    private val json = Json { ignoreUnknownKeys = true }
 
-    fun decode(raw: String): String? {
-        val id = raw.removePrefix(PREFIX)
-        return id.takeIf { it.isNotBlank() && it != raw }
+    fun encode(theme: KeyboardTheme): String =
+        PREFIX + json.encodeToString(CompactTheme.from(theme))
+
+    fun decode(raw: String): KeyboardTheme? {
+        val content = raw.trim()
+        if (!content.startsWith(PREFIX)) return null
+        val body = content.removePrefix(PREFIX)
+        runCatching {
+            return json.decodeFromString<CompactTheme>(body).toKeyboardTheme()
+        }
+        // 兼容旧版「IMEKBTHEME:主题id」格式
+        return KeyboardTheme.byId(body).takeIf { it.id == body }
     }
 
-    fun toBitmap(text: String): Bitmap =
-        BarcodeEncoder().encodeBitmap(text, BarcodeFormat.QR_CODE, 512, 512)
+    fun toBitmap(text: String): Bitmap {
+        val hints = EnumMap<EncodeHintType, Any>(EncodeHintType::class.java).apply {
+            this[EncodeHintType.CHARACTER_SET] = "UTF-8"
+            this[EncodeHintType.MARGIN] = 1
+        }
+        return BarcodeEncoder().encodeBitmap(text, BarcodeFormat.QR_CODE, 512, 512, hints)
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -99,7 +121,13 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
     }
 
     var showQrDialog by remember { mutableStateOf(false) }
+    var showThemePicker by remember { mutableStateOf(false) }
+    var showOverwriteDialog by remember { mutableStateOf(false) }
+    var pendingImport by remember { mutableStateOf<KeyboardTheme?>(null) }
     var qrCodeText by remember { mutableStateOf("") }
+    var themeVersion by remember { mutableIntStateOf(0) }
+
+    val customThemeIds = KeyboardThemePresets.customThemes.map { it.id }.toSet()
 
     val isDark = isSystemInDarkTheme()
 
@@ -115,20 +143,27 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
 
     fun currentTheme(): KeyboardTheme = KeyboardTheme.byId(currentThemeId())
 
-    fun shareCodeText(): String =
-        context.getString(R.string.keyboard_theme_share_text, currentTheme().name, qrCodeText)
+    fun sharedTheme(): KeyboardTheme? = ThemeCode.decode(qrCodeText)
+
+    fun shareCodeText(): String {
+        val theme = sharedTheme()
+        return context.getString(
+            R.string.keyboard_theme_share_text, theme?.name.orEmpty(), qrCodeText
+        )
+    }
 
     fun regenerateQr() {
-        qrCodeText = ThemeCode.encode(currentThemeId())
+        qrCodeText = ThemeCode.encode(currentTheme())
     }
 
     fun refresh() {
+        ThemeStore.refresh()
+        themeVersion++
         followSystem = KeyboardManager.Keyboard.getFollowSystem(context)
         selectedThemeId = KeyboardManager.Keyboard.getThemeId(context)
         selectedLightThemeId = KeyboardManager.Keyboard.getLightThemeId(context)
         selectedDarkThemeId = KeyboardManager.Keyboard.getDarkThemeId(context)
-        regenerateQr()
-        showQrDialog = true
+        Toast.makeText(context, R.string.keyboard_theme_refreshed, Toast.LENGTH_SHORT).show()
     }
 
     fun copyThemeCode() {
@@ -168,23 +203,45 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
             setBeepEnabled(false)
         }
     }
+    fun finishImport(theme: KeyboardTheme) {
+        KeyboardManager.Keyboard.setFollowSystem(context, false)
+        KeyboardManager.Keyboard.setThemeId(context, theme.id)
+        followSystem = false
+        selectedThemeId = theme.id
+        themeVersion++
+        Toast.makeText(
+            context,
+            context.getString(R.string.keyboard_theme_imported, theme.name),
+            Toast.LENGTH_SHORT,
+        ).show()
+    }
+
+    fun importTheme(theme: KeyboardTheme) {
+        val customs = KeyboardThemePresets.customThemes
+        val existingIndex = customs.indexOfFirst { it.id == theme.id }
+        if (existingIndex >= 0) {
+            ThemeStore.overwrite(existingIndex, theme)
+            finishImport(theme)
+        } else if (customs.size < ThemeStore.MAX_CUSTOM_THEMES) {
+            ThemeStore.import(theme)
+            finishImport(theme)
+        } else {
+            pendingImport = theme
+            showOverwriteDialog = true
+            Toast.makeText(
+                context, R.string.keyboard_theme_overwrite_need, Toast.LENGTH_SHORT
+            ).show()
+        }
+    }
+
     val scanLauncher = rememberLauncherForActivityResult(ScanContract()) { result ->
         val contents = result.contents ?: return@rememberLauncherForActivityResult
-        val themeId = ThemeCode.decode(contents)
-        val valid = themeId != null && KeyboardTheme.byId(themeId).id == themeId
-        if (!valid) {
+        val importedTheme = ThemeCode.decode(contents)
+        if (importedTheme == null) {
             Toast.makeText(context, R.string.keyboard_theme_invalid_qr, Toast.LENGTH_SHORT).show()
             return@rememberLauncherForActivityResult
         }
-        KeyboardManager.Keyboard.setFollowSystem(context, false)
-        KeyboardManager.Keyboard.setThemeId(context, themeId)
-        followSystem = false
-        selectedThemeId = themeId
-        Toast.makeText(
-            context,
-            context.getString(R.string.keyboard_theme_imported, KeyboardTheme.byId(themeId).name),
-            Toast.LENGTH_SHORT,
-        ).show()
+        importTheme(importedTheme)
     }
 
     val qrBitmap = qrCodeText.takeIf { it.isNotEmpty() }?.let {
@@ -226,10 +283,7 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                             tint = MaterialTheme.colorScheme.onSurface,
                         )
                     }
-                    IconButton(onClick = {
-                        regenerateQr()
-                        showQrDialog = true
-                    }) {
+                    IconButton(onClick = { showThemePicker = true }) {
                         Icon(
                             Icons.Filled.Share,
                             contentDescription = stringResource(R.string.keyboard_theme_share),
@@ -253,7 +307,8 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
         ) {
             Spacer(Modifier.height(4.dp))
 
-            SettingsGroup(title = stringResource(R.string.keyboard_theme)) {
+            key(themeVersion) {
+                SettingsGroup(title = stringResource(R.string.keyboard_theme_setting)) {
                 Spacer(Modifier.height(4.dp))
                 SwitchRow(
                     title = stringResource(R.string.keyboard_theme_follow_system),
@@ -282,6 +337,7 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                             ThemeChip(
                                 theme = theme,
                                 selected = isSelected,
+                                isCustom = theme.id in customThemeIds,
                                 onClick = {
                                     selectedLightThemeId = theme.id
                                     KeyboardManager.Keyboard.setLightThemeId(context, theme.id)
@@ -310,6 +366,7 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                             ThemeChip(
                                 theme = theme,
                                 selected = isSelected,
+                                isCustom = theme.id in customThemeIds,
                                 onClick = {
                                     selectedDarkThemeId = theme.id
                                     KeyboardManager.Keyboard.setDarkThemeId(context, theme.id)
@@ -326,6 +383,7 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                             ThemeChip(
                                 theme = theme,
                                 selected = isSelected,
+                                isCustom = theme.id in customThemeIds,
                                 onClick = {
                                     selectedThemeId = theme.id
                                     KeyboardManager.Keyboard.setThemeId(context, theme.id)
@@ -335,8 +393,91 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
+            }
             Spacer(Modifier.height(14.dp))
         }
+    }
+
+    if (showThemePicker) {
+        val customThemes = KeyboardThemePresets.customThemes
+        AlertDialog(
+            onDismissRequest = { showThemePicker = false },
+            title = { Text(stringResource(R.string.keyboard_theme_export_title)) },
+            text = {
+                if (customThemes.isEmpty()) {
+                    Text(
+                        text = stringResource(R.string.keyboard_theme_export_empty),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        customThemes.forEach { theme ->
+                            TextButton(
+                                onClick = {
+                                    qrCodeText = ThemeCode.encode(theme)
+                                    showThemePicker = false
+                                    showQrDialog = true
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = theme.name,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showThemePicker = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    if (showOverwriteDialog && pendingImport != null) {
+        val existing = KeyboardThemePresets.customThemes
+        AlertDialog(
+            onDismissRequest = { showOverwriteDialog = false },
+            title = { Text(stringResource(R.string.keyboard_theme_overwrite_title)) },
+            text = {
+                if (existing.isEmpty()) {
+                    Text(stringResource(R.string.keyboard_theme_overwrite_empty))
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        existing.forEachIndexed { index, theme ->
+                            TextButton(
+                                onClick = {
+                                    pendingImport?.let {
+                                        ThemeStore.overwrite(index, it)
+                                        finishImport(it)
+                                    }
+                                    pendingImport = null
+                                    showOverwriteDialog = false
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = theme.name,
+                                    modifier = Modifier.fillMaxWidth(),
+                                )
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    pendingImport = null
+                    showOverwriteDialog = false
+                }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 
     if (showQrDialog && qrBitmap != null) {
@@ -351,7 +492,7 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Text(
-                        text = currentTheme().name,
+                        text = sharedTheme()?.name.orEmpty(),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )

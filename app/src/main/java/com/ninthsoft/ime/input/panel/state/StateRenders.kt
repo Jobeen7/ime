@@ -66,7 +66,7 @@ class ComposingStateRender(
             showIndex = CandidateManager.isShowIndex(ctx.context),
             showComment = CandidateManager.isShowComment(ctx.context),
             borderless = CandidateManager.isBorderless(ctx.context),
-            expandBorderless = KeyboardManager.Keyboard.ExpandBorderless.isEnabled(ctx.context),
+            expandBorder = KeyboardManager.Keyboard.ExpandBorder.isEnabled(ctx.context),
         ).also { it.recording = ctx.recording }
     }
 
@@ -92,7 +92,7 @@ class PredictionStateRender(
             showIndex = CandidateManager.isShowIndex(ctx.context),
             showComment = CandidateManager.isShowComment(ctx.context),
             borderless = CandidateManager.isBorderless(ctx.context),
-            expandBorderless = KeyboardManager.Keyboard.ExpandBorderless.isEnabled(ctx.context),
+            expandBorder = KeyboardManager.Keyboard.ExpandBorder.isEnabled(ctx.context),
         ).also { it.recording = ctx.recording }
     }
 

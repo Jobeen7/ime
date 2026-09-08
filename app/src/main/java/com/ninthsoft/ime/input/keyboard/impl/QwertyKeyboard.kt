@@ -53,7 +53,7 @@ class QwertyKeyboard(
                     alphabetKey("s", "!"),
                     alphabetKey("d", "@"),
                     alphabetKey("f", "#"),
-                    alphabetKey("g", "$", mainTextTranslationY = -4),
+                    alphabetKey("g", "$", mainTextTranslationY = -2),
                     alphabetKey("h", "%"),
                     alphabetKey("j", "^", altTextTranslationY = 4),
                     alphabetKey("k", "&"),

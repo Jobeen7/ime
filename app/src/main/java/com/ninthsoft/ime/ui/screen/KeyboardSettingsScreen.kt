@@ -49,6 +49,9 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
     var keyVibrationEnabled by remember {
         mutableStateOf(KeyboardManager.Keyboard.Feedback.getVibrationEnabled(context))
     }
+    var keyBorderEnabled by remember {
+        mutableStateOf(KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context))
+    }
     var keyXGap by remember {
         mutableFloatStateOf(KeyboardManager.Keyboard.Gap.getHorizontalDp(context).toFloat())
     }
@@ -76,8 +79,8 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
     var rippleEnabled by remember {
         mutableStateOf(KeyboardManager.Keyboard.RippleEffect.isEnabled(context))
     }
-    var expandBorderless by remember {
-        mutableStateOf(KeyboardManager.Keyboard.ExpandBorderless.isEnabled(context))
+    var expandBorder by remember {
+        mutableStateOf(KeyboardManager.Keyboard.ExpandBorder.isEnabled(context))
     }
 
     Scaffold(
@@ -142,14 +145,22 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                     },
                 )
                 SwitchRow(
-                    title = stringResource(R.string.expand_borderless),
-                    checked = expandBorderless,
+                    title = stringResource(R.string.key_border_show),
+                    checked = keyBorderEnabled,
                     onCheckedChange = {
-                        expandBorderless = it
-                        KeyboardManager.Keyboard.ExpandBorderless.setEnabled(context, it)
+                        keyBorderEnabled = it
+                        KeyboardManager.Keyboard.KeyBorderStroke.setEnabled(context, it)
                     },
                 )
-            Spacer(Modifier.height(14.dp))
+                SwitchRow(
+                    title = stringResource(R.string.expand_border),
+                    checked = expandBorder,
+                    onCheckedChange = {
+                        expandBorder = it
+                        KeyboardManager.Keyboard.ExpandBorder.setEnabled(context, it)
+                    },
+                )
+                Spacer(Modifier.height(14.dp))
                 SliderRow(
                     title = stringResource(R.string.key_corner_radius),
                     value = keyRadius,

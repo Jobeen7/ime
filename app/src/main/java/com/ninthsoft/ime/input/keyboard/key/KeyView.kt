@@ -94,6 +94,8 @@ abstract class KeyView(
 
     protected val appearanceView = constraintLayout {
         isDuplicateParentStateEnabled = true
+        setClipChildren(false)
+        setClipToPadding(false)
     }
 
     init {
@@ -275,7 +277,7 @@ class TextKeyView(
         })
     }
 
-    val mainText = android.widget.TextView(ctx).apply {
+    val mainText = TextView(ctx).apply {
         isClickable = false
         isFocusable = false
         background = null
@@ -334,7 +336,8 @@ class AltTextKeyView(
         isClickable = false
         isFocusable = false
         background = null
-        includeFontPadding = false
+        includeFontPadding = true
+        maxLines = 1
         text = def.displayText
         setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.textSize)
         gravity = android.view.Gravity.CENTER
@@ -354,7 +357,8 @@ class AltTextKeyView(
         isClickable = false
         isFocusable = false
         background = null
-        includeFontPadding = false
+        includeFontPadding = true
+        maxLines = 1
         setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.altTextSize)
         setTypeface(typeface, Typeface.BOLD)
         text = def.altText

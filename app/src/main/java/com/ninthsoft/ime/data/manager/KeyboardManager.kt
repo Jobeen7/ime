@@ -84,7 +84,7 @@ object KeyboardManager {
 
         fun getThemeId(context: Context): String {
             return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString("$PREFIX.theme", KeyboardTheme.DEFAULT.id) ?: KeyboardTheme.DEFAULT.id
+                .getString("$PREFIX.theme", KeyboardTheme.DEFAULT_ID) ?: KeyboardTheme.DEFAULT_ID
         }
 
         fun setThemeId(context: Context, themeId: String) {
@@ -95,8 +95,8 @@ object KeyboardManager {
 
         fun getLightThemeId(context: Context): String {
             return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(KEY_LIGHT_THEME, KeyboardTheme.LIGHT_DEFAULT.id)
-                    ?: KeyboardTheme.LIGHT_DEFAULT.id
+                .getString(KEY_LIGHT_THEME, KeyboardTheme.LIGHT_DEFAULT_ID)
+                    ?: KeyboardTheme.LIGHT_DEFAULT_ID
         }
 
         fun setLightThemeId(context: Context, themeId: String) {
@@ -107,8 +107,8 @@ object KeyboardManager {
 
         fun getDarkThemeId(context: Context): String {
             return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getString(KEY_DARK_THEME, KeyboardTheme.DARK_DEFAULT.id)
-                    ?: KeyboardTheme.DARK_DEFAULT.id
+                .getString(KEY_DARK_THEME, KeyboardTheme.DARK_DEFAULT_ID)
+                    ?: KeyboardTheme.DARK_DEFAULT_ID
         }
 
         fun setDarkThemeId(context: Context, themeId: String) {
@@ -248,17 +248,17 @@ object KeyboardManager {
             }
         }
 
-        object ExpandBorderless {
-            const val KEY = "keyboard.expand_borderless"
+        object ExpandBorder {
+            const val KEY = "keyboard.expand_borders"
 
             fun isEnabled(context: Context): Boolean {
-                return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                return !context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .getBoolean(KEY, false)
             }
 
             fun setEnabled(context: Context, enabled: Boolean) {
                 context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-                    putBoolean(KEY, enabled)
+                    putBoolean(KEY, !enabled)
                 }
             }
         }

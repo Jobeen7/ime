@@ -24,7 +24,7 @@ import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import com.k2fsa.sherpa.onnx.QnnConfig
-import com.ninthsoft.ime.engine.rime.data.DataManager
+import com.ninthsoft.ime.data.App
 import com.ninthsoft.ime.base.util.appContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -227,7 +227,7 @@ class SpeechRecognitionService : Service() {
         synchronized(audioLock) {
             if (recognizerRef.get() != null) return true
 
-            val dir = DataManager.speechModelDir
+            val dir = App.speechModelDir
             val qnnSupported = isQnnRuntimeSupported(context)
             val qnnFiles = if (qnnSupported) findModelFiles(dir, qnn = true) else null
 

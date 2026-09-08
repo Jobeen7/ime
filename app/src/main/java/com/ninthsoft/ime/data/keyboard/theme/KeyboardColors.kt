@@ -3,14 +3,17 @@ package com.ninthsoft.ime.data.keyboard.theme
 import android.content.Context
 import android.content.res.Configuration
 import com.ninthsoft.ime.data.manager.KeyboardManager
+import kotlinx.serialization.Serializable
 
 object KeyboardColors {
 
+    @Serializable
     enum class SurfaceStyle {
         Raised,
         Flat,
     }
 
+    @Serializable
     data class ColorScheme(
         val keyBackground: Int,
         val keyPressed: Int,
@@ -35,6 +38,7 @@ object KeyboardColors {
         val toastBackground: Int = specialKeyBackground,
         val toastText: Int = keyText,
     ) {
+        @Serializable
         data class PanelColors(
             val background: Int,
             val toolbarText: Int,
@@ -61,6 +65,7 @@ object KeyboardColors {
             }
         }
 
+        @Serializable
         data class PinnerColors(
             val background: Int,
             val textColor: Int,

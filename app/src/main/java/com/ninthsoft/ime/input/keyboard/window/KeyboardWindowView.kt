@@ -192,7 +192,9 @@ class KeyboardWindowView(
                 )
             }
 
-            KeyboardManager.Keyboard.KeyBorderStroke.KEY -> post { refreshColors() }
+            KeyboardManager.Keyboard.KeyBorderStroke.KEY,
+            KeyboardManager.Keyboard.ExpandBorder.KEY,
+                -> post { refreshColors() }
         }
     }
 

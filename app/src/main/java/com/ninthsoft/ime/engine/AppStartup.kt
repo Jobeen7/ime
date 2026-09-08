@@ -8,6 +8,7 @@ import com.ninthsoft.ime.base.feedback.InputFeedbacks
 import com.ninthsoft.ime.base.util.ResourceExtractorUtil
 import com.ninthsoft.ime.base.util.TraditionalConverter
 import com.ninthsoft.ime.base.util.appScope
+import com.ninthsoft.ime.data.ThemeStore
 import com.ninthsoft.ime.input.keyboard.window.KeyboardStateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -40,6 +41,7 @@ object AppStartup {
             if (!initialized) {
                 val funcs = listOf(
                     ::setupLogger,
+                    ::setupThemeStore,
                     ::releaseResourcesIfNeeded,
                     ::setupInputFeedbacks,
                     ::setupEngine,
@@ -50,6 +52,10 @@ object AppStartup {
                 initialized = true
             }
         }
+    }
+
+    private fun setupThemeStore(context: Context) {
+        ThemeStore.refresh()
     }
 
     private fun setupLogger(context: Context) {

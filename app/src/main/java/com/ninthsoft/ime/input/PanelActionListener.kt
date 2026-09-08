@@ -12,7 +12,7 @@ import com.ninthsoft.ime.input.panel.PanelAction
 import com.ninthsoft.ime.input.panel.PanelListener
 import com.ninthsoft.ime.input.panel.component.TextEditView
 import com.ninthsoft.ime.ui.AboutActivity
-import com.ninthsoft.ime.ui.KeyboardSettingsActivity
+import com.ninthsoft.ime.ui.KeyboardThemeSettingsActivity
 import com.ninthsoft.ime.ui.MainActivity
 import com.ninthsoft.ime.ui.SchemaSettingsActivity
 
@@ -41,7 +41,7 @@ class PanelActionListener(
             PanelAction.Redo -> service.engine?.redo(service)
 
             PanelAction.Palette -> service.startActivity(
-                Intent(service, KeyboardSettingsActivity::class.java).apply {
+                Intent(service, KeyboardThemeSettingsActivity::class.java).apply {
                     addFlags(
                         Intent.FLAG_ACTIVITY_NEW_TASK or
                             Intent.FLAG_ACTIVITY_CLEAR_TOP or

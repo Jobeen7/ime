@@ -52,8 +52,6 @@ fun commitKey(
         displayText = character, textSize = fontSize, variant = variant, percentWidth = percentWidth
     ), behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.CommitAction(character)),
-    ), popups = arrayOf(
-        KeyDef.Popup.Preview(character)
     )
 )
 
@@ -126,8 +124,8 @@ fun resumeLayoutKey(
     percentWidth: Float = 0.15f,
 ): KeyDef = KeyDef(
     appearance = KeyDef.Appearance.Text(
-        displayText = displayText, textSize = 15f,
-        textStyle = Typeface.BOLD,
+        displayText = displayText,
+        textSize = 15f,
         percentWidth = percentWidth,
         variant = Variant.Alternative,
     ),

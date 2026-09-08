@@ -51,6 +51,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.text.font.FontWeight
@@ -463,6 +464,7 @@ object ScreenComponent {
     fun ThemeChip(
         theme: KeyboardTheme,
         selected: Boolean,
+        isCustom: Boolean = false,
         onClick: () -> Unit,
     ) {
         val colors = theme.colors
@@ -561,6 +563,24 @@ object ScreenComponent {
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(2.dp))
                                 .background(Color(colors.accentKeyBackground)),
+                        )
+                    }
+                }
+                if (isCustom) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopEnd)
+                            .padding(1.dp)
+                            .size(16.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.primary),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            painter = painterResource(R.drawable.ic_keyboard_user),
+                            contentDescription = stringResource(R.string.custom_theme_marker),
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(10.dp),
                         )
                     }
                 }

@@ -15,8 +15,8 @@ import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.ninthsoft.ime.base.util.TraditionalConverter
 import com.ninthsoft.ime.base.util.appContext
+import com.ninthsoft.ime.data.App
 import com.ninthsoft.ime.data.manager.CandidateManager
-import com.ninthsoft.ime.engine.rime.data.DataManager
 import com.ninthsoft.ime.input.ImeInputMethodService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -86,7 +86,7 @@ object SherpaSpeechClient {
 
             //异常退出。清理资源
 //            runCatching {
-//                DataManager.speechModelDir.listFiles()?.forEach { it.deleteRecursively() }
+//                App.speechModelDir.listFiles()?.forEach { it.deleteRecursively() }
 //            }.onFailure { Timber.d("SpeechCli clearSpeechModelDir failed %s", it.message) }
         }
     }
@@ -160,7 +160,7 @@ object SherpaSpeechClient {
     }
 
     fun isModelReady(context: Context): Boolean {
-        val dir = DataManager.speechModelDir
+        val dir = App.speechModelDir
         return findModelFiles(dir, qnn = true) || findModelFiles(dir, qnn = false)
     }
 

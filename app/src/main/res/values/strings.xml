@@ -20,7 +20,8 @@
     <string name="key_ripple_effect">水波纹特效</string>
     <string name="key_corner_radius">按键圆角</string>
     <string name="key_border">隐藏键边框</string>
-    <string name="expand_borderless">展开键无边框</string>
+    <string name="key_border_show">绘制按键边框</string>
+    <string name="expand_border">绘制展开键边框</string>
 
 
     <string name="keyboard_layout">键盘布局</string>
@@ -55,19 +56,27 @@
     <string name="bottom_padding">底部边距</string>
     <string name="ignore_system_insets">忽略系统边衬区</string>
     <string name="keyboard_theme">键盘主题</string>
-    <string name="keyboard_theme_desc">跟随系统、浅色/深色主题</string>
+    <string name="keyboard_theme_setting">主题设置</string>
+    <string name="custom_theme_marker">用户自定义主题</string>
+    <string name="keyboard_theme_desc">主题设置、分享、导入</string>
     <string name="keyboard_theme_follow_system">跟随系统</string>
     <string name="keyboard_theme_light">浅色模式主题</string>
     <string name="keyboard_theme_dark">深色模式主题</string>
     <string name="keyboard_theme_scan">扫码</string>
     <string name="keyboard_theme_refresh">刷新</string>
     <string name="keyboard_theme_share">分享</string>
+    <string name="keyboard_theme_export_title">选择要导出的主题</string>
+    <string name="keyboard_theme_export_empty">暂无用户主题，请先导入后再导出</string>
+    <string name="keyboard_theme_overwrite_title">用户主题已满，选择要覆盖的主题</string>
+    <string name="keyboard_theme_overwrite_empty">暂无可覆盖的用户主题</string>
+    <string name="keyboard_theme_overwrite_need">用户主题已满，请选择要覆盖的主题</string>
     <string name="keyboard_theme_scan_prompt">将二维码放入框内，即可自动扫描导入键盘主题</string>
     <string name="keyboard_theme_share_title">键盘主题二维码</string>
     <string name="keyboard_theme_share_subtitle">用另一台设备扫码即可导入该主题</string>
     <string name="keyboard_theme_share_text">键盘主题：%1$s\n主题码：%2$s</string>
     <string name="keyboard_theme_copy_code">复制主题码</string>
     <string name="keyboard_theme_copied">主题码已复制</string>
+    <string name="keyboard_theme_refreshed">主题已刷新</string>
     <string name="keyboard_theme_imported">已导入主题：%1$s</string>
     <string name="keyboard_theme_invalid_qr">无效的主题二维码</string>
 

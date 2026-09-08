@@ -4,6 +4,14 @@ import android.graphics.Color
 
 object KeyboardThemePresets {
 
+    @Volatile
+    var customThemes: List<KeyboardTheme> = emptyList()
+        private set
+
+    fun setCustomThemes(themes: List<KeyboardTheme>) {
+        customThemes = themes
+    }
+
     val Amoled = KeyboardTheme(
         id = "amoled",
         name = "暗夜",
@@ -83,84 +91,6 @@ object KeyboardThemePresets {
         ),
     )
 
-    val Forest = KeyboardTheme(
-        id = "forest",
-        name = "森林",
-        colors = KeyboardColors.ColorScheme(
-            keyBackground = Color.rgb(33, 52, 46),
-            keyPressed = Color.rgb(46, 66, 58),
-            keyBorderStroke = Color.rgb(46, 66, 58),
-            specialKeyBackground = Color.rgb(46, 66, 58),
-            specialKeyPressed = Color.rgb(60, 80, 72),
-            specialKeyBorderStroke = Color.rgb(46, 66, 58),
-            accentKeyBackground = Color.rgb(46, 160, 94),
-            accentKeyPressed = Color.rgb(56, 180, 108),
-            accentKeyBorderStroke = Color.rgb(46, 160, 94),
-            keyText = Color.rgb(224, 235, 228),
-            specialKeyText = Color.rgb(145, 175, 155),
-            accentKeyText = Color.rgb(255, 255, 255),
-            altText = Color.rgb(120, 155, 130),
-            background = Color.rgb(22, 36, 30),
-            panel = KeyboardColors.ColorScheme.PanelColors(
-                background = Color.rgb(22, 36, 30),
-                toolbarText = Color.rgb(224, 235, 228),
-                toolbarActived = Color.rgb(46, 160, 94),
-                toolbarIcon = Color.rgb(145, 175, 155),
-                candidateBackground = Color.rgb(46, 66, 58),
-                candidateText = Color.rgb(224, 235, 228),
-                candidateIndex = Color.rgb(120, 155, 130),
-                candidateDivider = Color.rgb(120, 155, 130),
-                toolbarPressed = Color.rgb(46, 66, 58),
-            ),
-            pinner = KeyboardColors.ColorScheme.PinnerColors(
-                background = Color.rgb(33, 52, 46),
-                textColor = Color.rgb(255, 255, 255),
-                secondaryTextColor = Color.rgb(145, 175, 155),
-            ),
-            toastBackground = Color.rgb(35, 62, 51),
-            toastText = Color.rgb(235, 248, 240),
-        ),
-    )
-
-    val Ocean = KeyboardTheme(
-        id = "ocean",
-        name = "海洋",
-        colors = KeyboardColors.ColorScheme(
-            keyBackground = Color.rgb(24, 38, 56),
-            keyPressed = Color.rgb(35, 52, 75),
-            keyBorderStroke = Color.rgb(40, 60, 85),
-            specialKeyBackground = Color.rgb(32, 48, 70),
-            specialKeyPressed = Color.rgb(45, 65, 92),
-            specialKeyBorderStroke = Color.rgb(40, 60, 85),
-            accentKeyBackground = Color.rgb(0, 168, 204),
-            accentKeyPressed = Color.rgb(0, 190, 230),
-            accentKeyBorderStroke = Color.rgb(0, 168, 204),
-            keyText = Color.rgb(225, 235, 245),
-            specialKeyText = Color.rgb(130, 160, 190),
-            accentKeyText = Color.rgb(255, 255, 255),
-            altText = Color.rgb(110, 140, 170),
-            background = Color.rgb(14, 24, 38),
-            panel = KeyboardColors.ColorScheme.PanelColors(
-                background = Color.rgb(14, 24, 38),
-                toolbarText = Color.rgb(225, 235, 245),
-                toolbarActived = Color.rgb(0, 168, 204),
-                toolbarIcon = Color.rgb(130, 160, 190),
-                candidateBackground = Color.rgb(24, 38, 56),
-                candidateText = Color.rgb(225, 235, 245),
-                candidateIndex = Color.rgb(110, 140, 170),
-                candidateDivider = Color.argb(120, 50, 80, 110),
-                toolbarPressed = Color.rgb(35, 52, 75),
-            ),
-            pinner = KeyboardColors.ColorScheme.PinnerColors(
-                background = Color.rgb(24, 38, 56),
-                textColor = Color.rgb(225, 235, 245),
-                secondaryTextColor = Color.rgb(130, 160, 190),
-            ),
-            toastBackground = Color.rgb(28, 48, 72),
-            toastText = Color.rgb(235, 245, 255),
-        ),
-    )
-
     val Sunset = KeyboardTheme(
         id = "sunset",
         name = "落日",
@@ -201,9 +131,10 @@ object KeyboardThemePresets {
         ),
     )
 
-    val ALL: List<KeyboardTheme> = listOf(
-        Amoled,
-        Light,
-        Sunset,
-    )
+    val ALL: List<KeyboardTheme>
+        get() = listOf(
+            Amoled,
+            Light,
+            Sunset,
+        ) + customThemes
 }

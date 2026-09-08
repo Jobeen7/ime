@@ -21,7 +21,7 @@ data class SpeechModelManifest(
  * 语音识别模型信息接口。
  *
  * 下载前先请求服务器 API（/speech/model），由服务端在信封 `data` 中返回本次需要下载的
- * 归档包地址 `link`（.tar.bz2），再下载并解包到 DataManager.speechModelDir。
+ * 归档包地址 `link`（.tar.bz2），再下载并解包到 App.speechModelDir。
  *
  * 请求参数：
  * - version：应用版本号（由 [com.ninthsoft.ime.base.net.HttpUtil] 统一追加）

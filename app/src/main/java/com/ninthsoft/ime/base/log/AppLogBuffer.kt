@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
-import com.ninthsoft.ime.engine.rime.data.DataManager
+import com.ninthsoft.ime.data.App
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -37,10 +37,10 @@ object AppLogBuffer {
             installed = true
             val appContext = context.applicationContext
             val oldCrashFile = File(appContext.filesDir, CRASH_LOG_NAME)
-            DataManager.logDir.mkdirs()
-            crashFile = File(DataManager.logDir, CRASH_LOG_NAME)
+            App.logDir.mkdirs()
+            crashFile = File(App.logDir, CRASH_LOG_NAME)
             migrateFile(oldCrashFile, crashFile!!)
-            File(DataManager.logDir, "app.log").delete()
+            File(App.logDir, "app.log").delete()
             loadLastCrash()
             if (enableLogging) {
                 Timber.plant(BufferTree())
@@ -63,7 +63,7 @@ object AppLogBuffer {
         synchronized(lock) {
             _entries.value = emptyList()
             crashFile?.delete()
-            File(DataManager.logDir, "app.log").delete()
+            File(App.logDir, "app.log").delete()
         }
     }
 

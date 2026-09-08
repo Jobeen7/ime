@@ -38,7 +38,7 @@ import com.ninthsoft.ime.engine.rime.core.EngineMessageConverter
 import com.ninthsoft.ime.engine.rime.core.RimeConfig
 import com.ninthsoft.ime.engine.rime.core.RimeMessage
 import com.ninthsoft.ime.engine.rime.core.RimeSchema
-import com.ninthsoft.ime.engine.rime.data.DataManager.modelDir
+import com.ninthsoft.ime.data.App.modelDir
 import com.ninthsoft.ime.engine.rime.data.DataManager.sharedDataDir
 import com.ninthsoft.ime.base.util.TraditionalConverter
 import com.ninthsoft.ime.engine.rime.util.OptionsApplier
