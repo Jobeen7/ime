@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
@@ -50,6 +51,7 @@ fun MainScreen(
     onOpenImeSetup: () -> Unit,
     onOpenSchemaSettings: () -> Unit,
     onOpenKeyboardSettings: () -> Unit,
+    onOpenKeyboardThemeSettings: () -> Unit,
     onOpenClipboard: () -> Unit,
     onOpenModelSettings: () -> Unit,
     onOpenVoiceSettings: () -> Unit,
@@ -125,6 +127,14 @@ fun MainScreen(
                 subtitle = stringResource(R.string.keyboard_settings_desc),
                 onClick = onOpenKeyboardSettings,
                 icon = Icons.Filled.Keyboard,
+                showSpacer = true,
+            )
+
+            ClickableSettingItem(
+                title = stringResource(R.string.keyboard_theme),
+                subtitle = stringResource(R.string.keyboard_theme_desc),
+                onClick = onOpenKeyboardThemeSettings,
+                icon = Icons.Filled.Brush,
                 showSpacer = true,
             )
 

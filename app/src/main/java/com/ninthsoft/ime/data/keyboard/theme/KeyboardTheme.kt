@@ -6,19 +6,12 @@ data class KeyboardTheme(
     val colors: KeyboardColors.ColorScheme,
 ) {
     companion object {
-        val PRESETS = listOf(
-            KeyboardThemePresets.Amoled,
-            KeyboardThemePresets.Light,
-            KeyboardThemePresets.Forest,
-            KeyboardThemePresets.Ocean,
-            KeyboardThemePresets.Sunset,
-            KeyboardThemePresets.Plum,
-        )
+        val PRESETS: List<KeyboardTheme> = KeyboardThemePresets.ALL.take(6)
 
         val DEFAULT = KeyboardThemePresets.Amoled
         val LIGHT_DEFAULT = KeyboardThemePresets.Light
         val DARK_DEFAULT = KeyboardThemePresets.Amoled
 
-        fun byId(id: String) = PRESETS.find { it.id == id } ?: DEFAULT
+        fun byId(id: String) = KeyboardThemePresets.ALL.find { it.id == id } ?: DEFAULT
     }
 }

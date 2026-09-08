@@ -21,6 +21,7 @@ timber = "5.0.1"
     room = "2.8.4"
     okhttp = "4.12.0"
     commonsCompress = "1.27.1"
+    zxing = "4.3.0"
 
 
 [libraries]
@@ -57,6 +58,7 @@ androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
     androidx-room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
     okhttp = { module = "com.squareup.okhttp3:okhttp", version.ref = "okhttp" }
     commons-compress = { module = "org.apache.commons:commons-compress", version.ref = "commonsCompress" }
+    zxing-android-embedded = { module = "com.journeyapps:zxing-android-embedded", version.ref = "zxing" }
 
 
 [plugins]

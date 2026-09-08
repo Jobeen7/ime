@@ -79,6 +79,7 @@ dependencies {
     implementation(libs.timber)
     implementation(libs.okhttp)
     implementation(libs.commons.compress)
+    implementation(libs.zxing.android.embedded)
     implementation(libs.kotlinpoet)
     implementation(libs.kotlinpoet.ksp)
     implementation(libs.splitties.bitflags)

@@ -50,14 +50,26 @@
     <!-- Keyboard Settings -->
     <string name="input_settings">方案布局</string>
     <string name="keyboard_settings">键盘布局</string>
-    <string name="keyboard_settings_desc">键盘主题、按键设置、按键布局</string>
+    <string name="keyboard_settings_desc">按键设置、按键布局</string>
     <string name="horizontal_padding">两侧边距</string>
     <string name="bottom_padding">底部边距</string>
     <string name="ignore_system_insets">忽略系统边衬区</string>
     <string name="keyboard_theme">键盘主题</string>
+    <string name="keyboard_theme_desc">跟随系统、浅色/深色主题</string>
     <string name="keyboard_theme_follow_system">跟随系统</string>
     <string name="keyboard_theme_light">浅色模式主题</string>
     <string name="keyboard_theme_dark">深色模式主题</string>
+    <string name="keyboard_theme_scan">扫码</string>
+    <string name="keyboard_theme_refresh">刷新</string>
+    <string name="keyboard_theme_share">分享</string>
+    <string name="keyboard_theme_scan_prompt">将二维码放入框内，即可自动扫描导入键盘主题</string>
+    <string name="keyboard_theme_share_title">键盘主题二维码</string>
+    <string name="keyboard_theme_share_subtitle">用另一台设备扫码即可导入该主题</string>
+    <string name="keyboard_theme_share_text">键盘主题：%1$s\n主题码：%2$s</string>
+    <string name="keyboard_theme_copy_code">复制主题码</string>
+    <string name="keyboard_theme_copied">主题码已复制</string>
+    <string name="keyboard_theme_imported">已导入主题：%1$s</string>
+    <string name="keyboard_theme_invalid_qr">无效的主题二维码</string>
 
     <!-- General -->
     <string name="cancel">取消</string>
