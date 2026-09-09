@@ -76,6 +76,7 @@ import com.ninthsoft.ime.engine.rime.data.DataManager
 import com.ninthsoft.ime.data.manager.SchemaManager
 import com.ninthsoft.ime.engine.EngineFactory
 import com.ninthsoft.ime.engine.rime.core.SchemaItem
+import com.ninthsoft.ime.data.schemaLayoutTag
 import com.ninthsoft.ime.ui.screen.ScreenComponent.SectionHeader
 import com.ninthsoft.ime.ui.screen.ScreenComponent.ActionRow
 import com.ninthsoft.ime.ui.screen.ScreenComponent.ProgressButton
@@ -111,7 +112,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
 
     val allSchemas = EngineFactory.current()?.schemasList() ?: emptyList()
     if (!loaded && allSchemas.isNotEmpty()) {
-        val allItems = allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
+        val allItems =
+            allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
         val enabledIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
             ?.filter { it.isNotBlank() } ?: emptyList()
         val byId = allItems.associateBy { it.id }
@@ -219,7 +221,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                 modifier = Modifier.size(22.dp),
                             )
 
-                            grammarDownloading -> ProgressButton(grammarProgress, width = grammarButtonWidth)
+                            grammarDownloading -> ProgressButton(
+                                grammarProgress, width = grammarButtonWidth
+                            )
 
                             grammarLanguage != null -> Button(
                                 onClick = { downloadGrammar(grammarLanguage!!) },
@@ -404,6 +408,7 @@ private fun SchemaListItem(
     leadingIcon: @Composable () -> Unit,
     trailingIcon: @Composable () -> Unit,
 ) {
+    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -431,8 +436,7 @@ private fun SchemaListItem(
                         )
                         Spacer(Modifier.width(4.dp))
                     }
-                    val tagText = if (schema.layout == "T9") stringResource(R.string.tag_layout_t9)
-                    else stringResource(R.string.tag_layout_full)
+                    val tagText = schemaLayoutTag(context, schema.layout)
                     TagBadge(
                         tagText,
                         MaterialTheme.colorScheme.primaryContainer,

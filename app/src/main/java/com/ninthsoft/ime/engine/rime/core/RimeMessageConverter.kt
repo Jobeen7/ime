@@ -233,7 +233,7 @@ object EngineMessageConverter : BaseRimeMessageConverter() {
 
     /** kind 属于双拼方案时使用声母/韵母切分，否则保持全拼固定长度切分。 */
     fun applySchemaKind(kind: String) {
-        activeSplitter = if (kind.contains("double-pinyin", ignoreCase = true)) {
+        activeSplitter = if (kind.contains("DoublePinyin", ignoreCase = true)) {
             ShuangPinSpellingSplitter
         } else {
             PinYinSpellingSplitter

@@ -182,6 +182,7 @@
     <string name="choose_schema">选择输入方案</string>
     <string name="tag_default">默认</string>
     <string name="tag_layout_t9">九宫格</string>
+    <string name="tag_layout_t15">15键</string>
     <string name="tag_layout_full">全键盘</string>
     <string name="tag_punctuation_full">全角符号</string>
     <string name="tag_punctuation_half">半角符号</string>

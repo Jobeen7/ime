@@ -88,11 +88,11 @@ fun capsLockKey(): KeyDef = KeyDef(
 )
 
 
-fun backspaceKey(): KeyDef = KeyDef(
+fun backspaceKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_backspace,
         viewId = KeyView.button_backspace,
-        percentWidth = 0.15f,
+        percentWidth = percentWidth,
         variant = Variant.Alternative,
     ),
     behaviors = setOf(

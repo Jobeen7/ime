@@ -193,7 +193,9 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
      * （confirmedLen，对应 fcitx getRimeInputConfirmPosition === RimeApi.getInputConfirmedPosition）
      * 构造可能候选拼音。手动选择拼音时插入的分隔符会修正 confirmedLen。
      */
-    fun possiblePinYin(currentInput: String, confirmedLen: Int): List<CandidatePinYin> {
+    fun possiblePinYin(
+        candidatePinYinType: String, currentInput: String, confirmedLen: Int
+    ): List<CandidatePinYin> {
         if (inputStringQueue.isEmpty()) return emptyList()
         // 因为手动选择拼音插入分隔符的缘故，此处需要先修正已确认的内容长度
         var len = confirmedLen
@@ -212,7 +214,7 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
         val position = nextSequencePosition(len)
         if (position < 0) return emptyList()
         val sequence = inputStringQueue.joinToString("").substring(position)
-        return PinYinUtil.possibleCombinations(sequence).map { pinYin ->
+        return PinYinUtil.possibleCombinations(candidatePinYinType, sequence).map { pinYin ->
             var raw = sequence.substring(0, pinYin.length)
             // 如果候选拼音以分词标记结束，必须把分词标记加入 raw
             if (segmentKeyChar == sequence.getOrNull(pinYin.length)) {

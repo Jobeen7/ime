@@ -11,6 +11,7 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.ninthsoft.ime.R
 import com.ninthsoft.ime.data.keyboard.theme.KeyboardColors
+import com.ninthsoft.ime.data.schemaLayoutTag
 import com.ninthsoft.ime.engine.data.EngineMessage
 import com.ninthsoft.ime.ui.theme.OnPrimaryContainerDark
 import com.ninthsoft.ime.ui.theme.OnPrimaryContainerLight
@@ -197,9 +198,7 @@ object SchemaPickerDialog {
                                 topMargin = context.dp(4)
                             }
                         }
-                        val layoutText =
-                            if (schema.layout == "T9") context.getString(R.string.tag_layout_t9)
-                            else context.getString(R.string.tag_layout_full)
+                        val layoutText = schemaLayoutTag(context, schema.layout)
                         val layoutBg = if (dark) PrimaryContainerDark.toArgb()
                         else PrimaryContainerLight.toArgb()
                         val layoutFg = if (dark) OnPrimaryContainerDark.toArgb()

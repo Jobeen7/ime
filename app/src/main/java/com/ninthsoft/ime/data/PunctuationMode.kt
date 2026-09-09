@@ -4,7 +4,7 @@ sealed class PunctuationMode {
     companion object {
         fun from(punctuation: String): PunctuationMode {
             return when (punctuation) {
-                "full-width" -> FullWidth
+                "FullWidth" -> FullWidth
                 else -> HalfWidth
             }
         }

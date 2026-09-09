@@ -13,6 +13,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import splitties.views.dsl.core.BuildConfig
 import timber.log.Timber
@@ -27,6 +28,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
     override val isReady: Boolean
         get() = lifecycle.currentState == RimeLifecycle.State.READY
 
+    @Volatile
     override var schemaCached = RimeSchema(".default")
         private set
 
@@ -321,8 +323,10 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     private fun updateSchemaCached(status: StatusProto) {
-        val (schemaId, schemaName) = status
-        if (schemaId != schemaCached.schemaId) {
+        val schemaId = status.schemaId
+        if (schemaId.isNotBlank() && schemaId != schemaCached.schemaId) {
+            // 状态消息中的 schemaId 即为权威当前方案，同步重建缓存即可，
+            // 与 SchemaMessage 分支保持一致，避免异步 currentSchema() 的竞态/乱序。
             schemaCached = RimeSchema(schemaId)
         }
     }

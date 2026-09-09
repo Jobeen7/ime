@@ -8,6 +8,7 @@ import android.view.inputmethod.InputConnection
 import androidx.core.content.edit
 import com.ninthsoft.ime.ImeApplication
 import com.ninthsoft.ime.base.util.InputConnectionUtil
+import com.ninthsoft.ime.base.util.PinYinUtil
 import com.ninthsoft.ime.base.util.TextUtil
 import com.ninthsoft.ime.engine.behavior.IBehavior
 import com.ninthsoft.ime.engine.rime.behavior.Segmentation
@@ -87,6 +88,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             Action
 
         data class PossibleCandidatePinYinSnapshot(
+            val candidatePinYinType: String,
             val currentInput: String,
             val confirmedLen: Int,
         ) : Action
@@ -311,9 +313,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private fun possibleCandidatePinYin() {
         sendJob {
+            if (!PinYinUtil.isValidType(schemaCached.candidateKind)) {
+                return@sendJob
+            }
             val currentInput = getRawInput()
             val confirmedLen = getInputConfirmedPosition()
-            actions.trySend(Action.PossibleCandidatePinYinSnapshot(currentInput, confirmedLen))
+            actions.trySend(
+                Action.PossibleCandidatePinYinSnapshot(
+                    schemaCached.candidateKind, currentInput, confirmedLen
+                )
+            )
         }
     }
 
@@ -346,7 +355,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             is Action.PossibleCandidatePinYinSnapshot -> {
                 val pinYins = behaviorHosted?.possiblePinYin(
-                    action.currentInput, action.confirmedLen
+                    action.candidatePinYinType, action.currentInput, action.confirmedLen
                 ) ?: emptyList()
                 messages.emit(EngineMessage.PossibleCandidatePinYin(pinYins))
             }

@@ -41,6 +41,7 @@ import com.ninthsoft.ime.base.speech.SpeechUiBridge
 import com.ninthsoft.ime.input.ImeInputMethodService
 import com.ninthsoft.ime.input.ImeInputConnection
 import com.ninthsoft.ime.input.dialog.SchemaPickerDialog
+import com.ninthsoft.ime.input.keyboard.impl.T15Keyboard
 import com.ninthsoft.ime.input.panel.PanelListener
 import kotlin.math.roundToInt
 
@@ -223,6 +224,7 @@ class KeyboardWindowView(
 
     private fun createKeyboard(name: String): IKeyboard {
         val b = when (name) {
+            T15Keyboard.NAME -> T15Keyboard(context, cachedColors)
             T9Keyboard.NAME -> T9Keyboard(context, cachedColors)
             SymbolKeyboard.NAME -> SymbolKeyboard(context, cachedColors)
             EmojiKeyboard.NAME -> EmojiKeyboard(context, cachedColors)
