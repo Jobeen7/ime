@@ -10,9 +10,9 @@ object CandidateManager {
     const val KEY_ASCII_MODE_ENABLED = "ascii_mode_enabled"
     private const val KEY_PREDICTION_ENABLED = "prediction_enabled"
     private const val KEY_RERANK_ENABLED = "rerank_enabled"
-    private const val KEY_SHOW_INDEX = "show_index"
+    const val KEY_SHOW_INDEX = "show_index"
     const val KEY_SHOW_COMMENT = "show_comment"
-    private const val KEY_BORDERLESS = "borderless"
+    const val KEY_BORDER = "show_border"
 
     fun isPredictionEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -88,14 +88,14 @@ object CandidateManager {
         }
     }
 
-    fun isBorderless(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_BORDERLESS, false)
+    fun isBorderEnabled(context: Context): Boolean {
+        return !context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_BORDER, false)
     }
 
-    fun setBorderless(context: Context, enabled: Boolean) {
+    fun setBorderEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putBoolean(KEY_BORDERLESS, enabled)
+            putBoolean(KEY_BORDER, !enabled)
         }
     }
 }

@@ -21,6 +21,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isGone
 import com.ninthsoft.ime.R
 import com.ninthsoft.ime.data.keyboard.theme.KeyboardColors
+import com.ninthsoft.ime.data.manager.CandidateManager
 import com.ninthsoft.ime.data.manager.SchemaManager
 import com.ninthsoft.ime.data.manager.KeyboardManager
 import com.ninthsoft.ime.engine.data.CandidatePinYin
@@ -194,6 +195,9 @@ class KeyboardWindowView(
 
             KeyboardManager.Keyboard.KeyBorderStroke.KEY,
             KeyboardManager.Keyboard.ExpandBorder.KEY,
+            CandidateManager.KEY_BORDER,
+            CandidateManager.KEY_SHOW_INDEX,
+            CandidateManager.KEY_SHOW_COMMENT,
                 -> post { refreshColors() }
         }
     }

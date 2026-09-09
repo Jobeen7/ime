@@ -5,7 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.ninthsoft.ime.data.manager.KeyboardManager
-import com.ninthsoft.ime.ui.screen.PredictionSettingsScreen
+import com.ninthsoft.ime.ui.screen.CandidateSettingsScreen
 import com.ninthsoft.ime.ui.theme.ImeTheme
 
 class PredictionSettingsActivity : ComponentActivity() {
@@ -18,7 +18,7 @@ class PredictionSettingsActivity : ComponentActivity() {
 
         setContent {
             ImeTheme(themeMode = themeMode) {
-                PredictionSettingsScreen(onBack = { finish() })
+                CandidateSettingsScreen(onBack = { finish() })
             }
         }
     }

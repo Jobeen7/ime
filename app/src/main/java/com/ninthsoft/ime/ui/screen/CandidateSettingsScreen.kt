@@ -35,7 +35,7 @@ import com.ninthsoft.ime.ui.screen.ScreenComponent.barFontSize
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PredictionSettingsScreen(onBack: () -> Unit) {
+fun CandidateSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     var predictionEnabled by remember {
         mutableStateOf(CandidateManager.isPredictionEnabled(context))
@@ -49,8 +49,8 @@ fun PredictionSettingsScreen(onBack: () -> Unit) {
     var showComment by remember {
         mutableStateOf(CandidateManager.isShowComment(context))
     }
-    var borderless by remember {
-        mutableStateOf(CandidateManager.isBorderless(context))
+    var borderEnabled by remember {
+        mutableStateOf(CandidateManager.isBorderEnabled(context))
     }
 
     Scaffold(
@@ -128,11 +128,11 @@ fun PredictionSettingsScreen(onBack: () -> Unit) {
                     },
                 )
                 SwitchRow(
-                    title = stringResource(R.string.candidate_borderless),
-                    checked = borderless,
+                    title = stringResource(R.string.candidate_border),
+                    checked = borderEnabled,
                     onCheckedChange = {
-                        borderless = it
-                        CandidateManager.setBorderless(context, it)
+                        borderEnabled = it
+                        CandidateManager.setBorderEnabled(context, it)
                     },
                 )
             }

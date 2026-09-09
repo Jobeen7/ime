@@ -10,6 +10,7 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import com.ninthsoft.ime.ImeApplication
 import com.ninthsoft.ime.base.util.InputConnectionUtil
+import com.ninthsoft.ime.data.manager.CandidateManager
 import com.ninthsoft.ime.data.manager.ClipboardManager
 import com.ninthsoft.ime.data.manager.KeyboardManager
 import com.ninthsoft.ime.data.manager.SchemaManager
@@ -50,6 +51,10 @@ class ImeInputMethodService : InputMethodService() {
         getSharedPreferences(SchemaManager.PREFS_NAME, MODE_PRIVATE)
     }
 
+    private val candidatePrefs: SharedPreferences by lazy {
+        getSharedPreferences(CandidateManager.PREFS_NAME, MODE_PRIVATE)
+    }
+
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         keyboardWindow?.onConfigChanged(key.orEmpty())
     }
@@ -77,6 +82,7 @@ class ImeInputMethodService : InputMethodService() {
         keyActionListener = KeyActionListener(service = this)
         themePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         schemaPrefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        candidatePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -147,6 +153,7 @@ class ImeInputMethodService : InputMethodService() {
         ClipboardManager.stopMonitoring(this)
         themePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         schemaPrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        candidatePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         super.onDestroy()
     }
 

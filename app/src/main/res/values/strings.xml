@@ -210,7 +210,7 @@
     <string name="candidate_layout">候选词布局</string>
     <string name="candidate_show_index">显示序列号</string>
     <string name="candidate_show_comment">显示注释</string>
-    <string name="candidate_borderless">候选无边框</string>
+    <string name="candidate_border">绘制候选词边框</string>
     <string name="menu_reload_engine">重启引擎</string>
     <string name="empty_attribution_tag"/>
     <string name="attribution_label">键盘震动反馈</string>

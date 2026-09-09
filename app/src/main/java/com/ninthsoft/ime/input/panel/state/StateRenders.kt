@@ -65,7 +65,7 @@ class ComposingStateRender(
             ctx.idleHorizontalPaddingDp(),
             showIndex = CandidateManager.isShowIndex(ctx.context),
             showComment = CandidateManager.isShowComment(ctx.context),
-            borderless = CandidateManager.isBorderless(ctx.context),
+            candidateBorder = CandidateManager.isBorderEnabled(ctx.context),
             expandBorder = KeyboardManager.Keyboard.ExpandBorder.isEnabled(ctx.context),
         ).also { it.recording = ctx.recording }
     }
@@ -91,7 +91,7 @@ class PredictionStateRender(
             ctx.idleHorizontalPaddingDp(),
             showIndex = CandidateManager.isShowIndex(ctx.context),
             showComment = CandidateManager.isShowComment(ctx.context),
-            borderless = CandidateManager.isBorderless(ctx.context),
+            candidateBorder = CandidateManager.isBorderEnabled(ctx.context),
             expandBorder = KeyboardManager.Keyboard.ExpandBorder.isEnabled(ctx.context),
         ).also { it.recording = ctx.recording }
     }

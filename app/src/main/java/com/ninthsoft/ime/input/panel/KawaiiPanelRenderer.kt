@@ -19,7 +19,7 @@ class ComposingRenderer(
     var iconScale: Float = 1f,
     var showIndex: Boolean = true,
     var showComment: Boolean = true,
-    var borderless: Boolean = false,
+    var candidateBorder: Boolean = true,
     var expandBorder: Boolean = true,
     override var recording: Boolean = false,
 ) : IRenderer {
@@ -131,7 +131,7 @@ class ComposingRenderer(
                     val textY =
                         pillY + pillH / 2f - (layout.textPaint.descent() + layout.textPaint.ascent()) / 2f
 
-                    if (expandBorder) {
+                    if (candidateBorder) {
                         drawRoundRect(
                             pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
                             paints.candidateBgPaint,
