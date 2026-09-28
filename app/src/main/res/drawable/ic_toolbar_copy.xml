@@ -3,20 +3,7 @@
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
-  <!-- 后页（右上露出部分） -->
-  <path
-      android:fillColor="#00000000"
-      android:strokeColor="#FFFFFF"
-      android:strokeWidth="1.7"
-      android:strokeLineCap="round"
-      android:strokeLineJoin="round"
-      android:pathData="M10,4.5 H17.5 A1.5,1.5 0 0,1 19,6 V13.5" />
-  <!-- 前页 -->
-  <path
-      android:fillColor="#00000000"
-      android:strokeColor="#FFFFFF"
-      android:strokeWidth="1.7"
-      android:strokeLineCap="round"
-      android:strokeLineJoin="round"
-      android:pathData="M6.5,8 H13.5 A1.5,1.5 0 0,1 15,9.5 V18.5 A1.5,1.5 0 0,1 13.5,20 H6.5 A1.5,1.5 0 0,1 5,18.5 V9.5 A1.5,1.5 0 0,1 6.5,8 Z" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 16H8V7h11v14z" />
 </vector>
