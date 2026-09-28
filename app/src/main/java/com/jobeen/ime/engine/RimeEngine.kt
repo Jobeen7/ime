@@ -81,6 +81,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class Behavior(val behavior: IBehavior) : Action
         data class SelectCandidate(val candidate: Candidate) : Action
         data class Clear(val service: InputMethodService) : Action
+        data class Undo(val service: InputMethodService) : Action
         data class Predict(val commit: String) : Action
         data class PredictionReady(val requestId: Long, val candidates: List<Candidate>) : Action
         data class EmitMessage(val message: EngineMessage) : Action
@@ -276,7 +277,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun undo(service: InputMethodService) {
-        InputConnectionUtil.sendCombinationKeyEvent(inputConnection(), KEYCODE_Z, ctrl = true)
+        actions.trySend(Action.Undo(service))
     }
 
     override fun redo(service: InputMethodService) {
@@ -341,6 +342,23 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is Action.Clear -> {
                 serviceRef = action.service as? ImeInputMethodService
                 clearInternal()
+            }
+
+            is Action.Undo -> {
+                serviceRef = action.service as? ImeInputMethodService
+                sendJob {
+                    if (compositionCached.preedit?.isNotEmpty() == true) {
+                        // 正在输入拼音：上滑撤销=清除当前正在打的拼音。
+                        // 不能给编辑器发 Ctrl+Z，拼音在输入法内部，编辑器撤销够不着还会产生副作用。
+                        actions.send(Action.Reset)
+                    } else {
+                        withContext(Dispatchers.Main.immediate) {
+                            InputConnectionUtil.sendCombinationKeyEvent(
+                                inputConnection(), KEYCODE_Z, ctrl = true
+                            )
+                        }
+                    }
+                }
             }
 
             is Action.Predict -> requestPrediction(action.commit)
