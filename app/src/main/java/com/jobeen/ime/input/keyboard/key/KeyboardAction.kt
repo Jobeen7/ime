@@ -57,4 +57,8 @@ sealed class KeyboardAction {
     data object VoiceDragUp : KeyboardAction()
 
     data class MultiReturnAction(val text: String) : KeyboardAction()
+
+    data object UndoAction : KeyboardAction()
+
+    data object RedoAction : KeyboardAction()
 }

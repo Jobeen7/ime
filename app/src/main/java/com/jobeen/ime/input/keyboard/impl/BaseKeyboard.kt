@@ -334,9 +334,16 @@ abstract class BaseKeyboard(
                         onGestureListener = CustomGestureView.OnGestureListener { _, event ->
                             when (event.type) {
                                 CustomGestureView.GestureType.Up -> {
-                                    if (!event.consumed && event.totalY < 0) {
-                                        onAction(behavior.action)
-                                        true
+                                    if (!event.consumed) {
+                                        val action = when {
+                                            event.totalY < 0 -> behavior.upAction
+                                            event.totalY > 0 -> behavior.downAction
+                                            else -> null
+                                        }
+                                        if (action != null) {
+                                            onAction(action)
+                                            true
+                                        } else false
                                     } else false
                                 }
 
