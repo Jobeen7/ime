@@ -1,0 +1,28 @@
+package com.jobeen.ime.input.panel
+
+sealed class PanelAction {
+    data object SwitchKeyboard : PanelAction()
+    data object EmojiKeyboard : PanelAction()
+    data object SymbolKeyboard : PanelAction()
+    data object Clipboard : PanelAction()
+    data object CommonPhrases : PanelAction()
+    data object TogglePrediction : PanelAction()
+    data object ToggleShowComment : PanelAction()
+    data object ToggleTraditionalChinese : PanelAction()
+    data object ToggleEmojiInput : PanelAction()
+    data object ToggleAsciiMode : PanelAction()
+    data object AddPhrase : PanelAction()
+    data class ClipTab(val isClipboard: Boolean) : PanelAction()
+    data object ToggleVoice : PanelAction()
+    data object Settings : PanelAction()
+    data object SchemaSettings : PanelAction()
+    data object About : PanelAction()
+    data object ReloadEngine : PanelAction()
+    data object Undo : PanelAction()
+    data object Redo : PanelAction()
+    data object Palette : PanelAction()
+    data object CursorMove : PanelAction()
+    data object CloseKeyboard : PanelAction()
+    data object ClearClipboard : PanelAction()
+    data object ClearPhrases : PanelAction()
+}

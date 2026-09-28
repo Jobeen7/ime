@@ -11,7 +11,7 @@
 extern "C" {
 
 JNIEXPORT jobject JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeKeyEvent_parse(
+Java_com_jobeen_ime_engine_rime_core_RimeKeyEvent_parse(
         JNIEnv *env, jclass, jstring repr) {
     jni::StringChars chars(env, repr);
     rime::KeyEvent event;
@@ -22,14 +22,14 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeKeyEvent_parse(
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeKeyEvent_getModifierByName(
+Java_com_jobeen_ime_engine_rime_core_RimeKeyEvent_getModifierByName(
         JNIEnv *env, jclass, jstring name) {
     jni::StringChars chars(env, name);
     return RimeGetModifierByName(chars.get());
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeKeyEvent_getKeycodeByName(
+Java_com_jobeen_ime_engine_rime_core_RimeKeyEvent_getKeycodeByName(
         JNIEnv *env, jclass, jstring name) {
     jni::StringChars chars(env, name);
     return RimeGetKeycodeByName(chars.get());

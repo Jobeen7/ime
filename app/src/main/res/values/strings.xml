@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">简意输入法</string>
+    <string name="app_name">Jime</string>
     <string name="done">done</string>
     <string name="rime_deploy_success">引擎部署成功</string>
     <string name="rime_deploy_failure">引擎部署失败</string>
@@ -101,7 +101,7 @@
     <string name="about_us_desc">应用信息、版本更新</string>
     <string name="about_app_info">应用信息</string>
     <string name="about_description">应用简介</string>
-    <string name="about_description_text">简意输入法是一款简洁、高效的智能拼音输入法，支持多种输入方案，致力于提供流畅舒适的输入体验。</string>
+    <string name="about_description_text">Jime 是一款简洁、高效的智能拼音输入法，支持多种输入方案，致力于提供流畅舒适的输入体验。</string>
     <string name="about_update">版本更新</string>
     <string name="check_update">检查更新</string>
     <string name="current_version">当前版本 v%1$s</string>

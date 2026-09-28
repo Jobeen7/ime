@@ -1,0 +1,126 @@
+package com.jobeen.ime.engine
+
+import android.content.Context
+import com.jobeen.ime.ImeApplication
+import com.jobeen.ime.base.log.AppLogBuffer
+import com.jobeen.ime.base.speech.SherpaSpeechClient
+import com.jobeen.ime.base.feedback.InputFeedbacks
+import com.jobeen.ime.base.util.ResourceExtractorUtil
+import com.jobeen.ime.base.util.TraditionalConverter
+import com.jobeen.ime.base.util.appScope
+import com.jobeen.ime.data.ThemeStore
+import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import splitties.views.dsl.core.BuildConfig
+import timber.log.Timber
+import java.io.File
+import java.security.MessageDigest
+
+/**
+ * 手动启动入口，取代 androidx.startup 的 Initializer 链。
+ *
+ * 调用 [initialize] 会按顺序完成：
+ * 1. 初始化日志（Timber）
+ * 2. 按需解压资源（resource.zip）
+ * 3. 创建并切换到 [RimeEngine]
+ *
+ * 该过程是幂等的，可被多次调用，仅首次调用时实际执行。
+ */
+object AppStartup {
+    private const val VERSION_FILE = "version.txt"
+    private const val RESOURCE_ASSET = "resource.zip"
+
+    @Volatile
+    private var initialized = false
+    private val lock = Any()
+
+    fun initialize(context: Context) {
+        synchronized(lock) {
+            if (!initialized) {
+                val funcs = listOf(
+                    ::setupLogger,
+                    ::setupThemeStore,
+                    ::releaseResourcesIfNeeded,
+                    ::setupInputFeedbacks,
+                    ::setupEngine,
+                    ::setupSherpaSpeech,
+                    ::prewarmOpencc,
+                )
+                funcs.forEach { it(context) }
+                initialized = true
+            }
+        }
+    }
+
+    private fun setupThemeStore(context: Context) {
+        ThemeStore.refresh()
+    }
+
+    private fun setupLogger(context: Context) {
+        // 仅 debug 构建开启日志：内部缓冲收集 + logcat 读取 + DebugTree。
+        // release（assembleRelease）不装任何 timber Tree → Timber 全部 no-op，不输出、零开销；
+        // 崩溃兜底（crash.log）仍保留。
+        AppLogBuffer.install(context, enableLogging = BuildConfig.DEBUG)
+        if (BuildConfig.DEBUG) {
+            Timber.plant(Timber.DebugTree())
+        }
+    }
+
+    private fun setupEngine(context: Context) {
+        val app = context.applicationContext as ImeApplication
+        val engine = EngineFactory.switchTo(context, RimeEngine::class)
+        engine.observeMessages(app.applicationScope) {
+            KeyboardStateManager.handleEngineMessage(it)
+        }
+        engine.initialize(context)
+    }
+
+    private fun setupSherpaSpeech(context: Context) {
+        SherpaSpeechClient.preStartSync(context)
+    }
+
+    private fun setupInputFeedbacks(context: Context) {
+        InputFeedbacks.initSoundPool(context)
+    }
+
+    private fun prewarmOpencc(context: Context) {
+        appScope.launch(Dispatchers.IO) {
+            // 触发一次简繁词库加载，避免首次繁体转换卡顿
+            runCatching { TraditionalConverter.toTraditional("汉字") }
+        }
+    }
+
+    private fun releaseResourcesIfNeeded(context: Context) {
+        val destDir = context.getExternalFilesDir(null) ?: context.filesDir
+        val md5 = assetMd5(context, RESOURCE_ASSET) ?: return
+        val versionFile = File(destDir, VERSION_FILE)
+        if (versionFile.isFile && versionFile.readText().trim() == md5) {
+            Timber.d("Resources up to date (md5=%s), skip extraction", md5)
+            return
+        }
+
+        val app = context.applicationContext as ImeApplication
+        app.notifyState(ImeApplication.AppState.ResourcePreparing)
+        runBlocking(Dispatchers.IO) {
+            ResourceExtractorUtil.extract(context, RESOURCE_ASSET, destDir)
+            versionFile.writeText(md5)
+        }
+    }
+
+    private fun assetMd5(context: Context, assetName: String): String? {
+        val digest = MessageDigest.getInstance("MD5")
+        return runCatching {
+            context.assets.open(assetName).use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read > 0) digest.update(buffer, 0, read)
+                }
+            }
+            digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+        }.getOrNull()
+    }
+}

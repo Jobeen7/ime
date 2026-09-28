@@ -95,28 +95,28 @@ namespace {
 extern "C" {
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getAvailableSchemaList(
+Java_com_jobeen_ime_engine_rime_core_Rime_getAvailableSchemaList(
         JNIEnv *env, jclass) {
     SwitcherSettings sw;
     return toJavaSchemaArray(env, sw.availableSchemas());
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getSelectedSchemaList(
+Java_com_jobeen_ime_engine_rime_core_Rime_getSelectedSchemaList(
         JNIEnv *env, jclass) {
     SwitcherSettings sw;
     return toJavaSchemaArray(env, sw.selectedSchemas());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_selectSchemas(
+Java_com_jobeen_ime_engine_rime_core_Rime_selectSchemas(
         JNIEnv *env, jclass, jobjectArray array) {
     SwitcherSettings sw;
     return sw.selectSchemas(javaStringArrayToVector(env, array));
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_engine_rime_data_userdict_UserDictManager_getUserDictList(
+Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_getUserDictList(
         JNIEnv *env, jclass) {
     auto *api = leversApi();
     std::vector<std::string> dicts;
@@ -133,21 +133,21 @@ Java_com_ninthsoft_ime_engine_rime_data_userdict_UserDictManager_getUserDictList
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_data_userdict_UserDictManager_backupUserDict(
+Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_backupUserDict(
         JNIEnv *env, jclass, jstring dict_name) {
     jni::StringChars name(env, dict_name);
     return leversApi()->backup_user_dict(name.get());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_data_userdict_UserDictManager_restoreUserDict(
+Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_restoreUserDict(
         JNIEnv *env, jclass, jstring snapshot_file) {
     jni::StringChars path(env, snapshot_file);
     return leversApi()->restore_user_dict(path.get());
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_engine_rime_data_userdict_UserDictManager_exportUserDict(
+Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_exportUserDict(
         JNIEnv *env, jclass, jstring dict_name, jstring text_file) {
     jni::StringChars name(env, dict_name);
     jni::StringChars file(env, text_file);
@@ -155,7 +155,7 @@ Java_com_ninthsoft_ime_engine_rime_data_userdict_UserDictManager_exportUserDict(
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_engine_rime_data_userdict_UserDictManager_importUserDict(
+Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_importUserDict(
         JNIEnv *env, jclass, jstring dict_name, jstring text_file) {
     jni::StringChars name(env, dict_name);
     jni::StringChars file(env, text_file);

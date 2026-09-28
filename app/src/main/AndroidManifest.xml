@@ -16,7 +16,7 @@
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
-        android:name="com.ninthsoft.ime.ImeApplication"
+        android:name="com.jobeen.ime.ImeApplication"
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
@@ -93,7 +93,7 @@
 
         <provider
             android:name=".ui.AppFilesDocumentsProvider"
-            android:authorities="com.ninthsoft.ime.files.documents"
+            android:authorities="com.jobeen.ime.files.documents"
             android:exported="true"
             android:grantUriPermissions="true"
             android:icon="@mipmap/ic_launcher"

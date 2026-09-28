@@ -20,24 +20,24 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
 extern "C" {
 
 JNIEXPORT jlong JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_create(JNIEnv *, jclass) {
+Java_com_jobeen_ime_base_marisa_MarisaJNI_create(JNIEnv *, jclass) {
     return reinterpret_cast<jlong>(new marisa::Trie());
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_destroy(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_destroy(JNIEnv *, jclass,
                                                              jlong ptr) {
     delete reinterpret_cast<marisa::Trie *>(ptr);
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_clear(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_clear(JNIEnv *, jclass,
                                                            jlong ptr) {
     reinterpret_cast<marisa::Trie *>(ptr)->clear();
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_build(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_build(
     JNIEnv *env, jclass, jlong ptr, jobjectArray keys, jfloatArray weights,
     jint config_flags) {
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
@@ -68,7 +68,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_build(
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_mmap(JNIEnv *env, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_mmap(JNIEnv *env, jclass,
                                                           jlong ptr,
                                                           jstring filename) {
     StringChars path(env, filename);
@@ -80,7 +80,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_mmap(JNIEnv *env, jclass,
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_load(JNIEnv *env, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_load(JNIEnv *env, jclass,
                                                           jlong ptr,
                                                           jstring filename) {
     StringChars path(env, filename);
@@ -92,7 +92,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_load(JNIEnv *env, jclass,
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_save(JNIEnv *env, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_save(JNIEnv *env, jclass,
                                                           jlong ptr,
                                                           jstring filename) {
     StringChars path(env, filename);
@@ -104,7 +104,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_save(JNIEnv *env, jclass,
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_lookup(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_lookup(
     JNIEnv *env, jclass, jlong ptr, jstring query) {
     StringChars q(env, query);
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
@@ -120,7 +120,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_lookup(
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_commonPrefixSearch(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_commonPrefixSearch(
     JNIEnv *env, jclass, jlong ptr, jstring query) {
     StringChars q(env, query);
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
@@ -154,7 +154,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_commonPrefixSearch(
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_predictiveSearch(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_predictiveSearch(
     JNIEnv *env, jclass, jlong ptr, jstring query, jint limit) {
     StringChars q(env, query);
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
@@ -189,55 +189,55 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_predictiveSearch(
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_numKeys(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_numKeys(JNIEnv *, jclass,
                                                              jlong ptr) {
     return static_cast<jint>(
         reinterpret_cast<marisa::Trie *>(ptr)->num_keys());
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_numTries(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_numTries(JNIEnv *, jclass,
                                                               jlong ptr) {
     return static_cast<jint>(
         reinterpret_cast<marisa::Trie *>(ptr)->num_tries());
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_numNodes(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_numNodes(JNIEnv *, jclass,
                                                               jlong ptr) {
     return static_cast<jint>(
         reinterpret_cast<marisa::Trie *>(ptr)->num_nodes());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_empty(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_empty(JNIEnv *, jclass,
                                                            jlong ptr) {
     return reinterpret_cast<marisa::Trie *>(ptr)->empty();
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_size(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_size(JNIEnv *, jclass,
                                                           jlong ptr) {
     return static_cast<jlong>(
         reinterpret_cast<marisa::Trie *>(ptr)->size());
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_totalSize(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_totalSize(JNIEnv *, jclass,
                                                                jlong ptr) {
     return static_cast<jlong>(
         reinterpret_cast<marisa::Trie *>(ptr)->total_size());
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_ioSize(JNIEnv *, jclass,
+Java_com_jobeen_ime_base_marisa_MarisaJNI_ioSize(JNIEnv *, jclass,
                                                             jlong ptr) {
     return static_cast<jlong>(
         reinterpret_cast<marisa::Trie *>(ptr)->io_size());
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_reverseLookup(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_reverseLookup(
     JNIEnv *env, jclass, jlong ptr, jint keyId) {
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     marisa::Agent agent;
@@ -251,7 +251,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_reverseLookup(
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_reverseLookupKey(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_reverseLookupKey(
     JNIEnv *env, jclass, jlong ptr, jint keyId) {
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     marisa::Agent agent;
@@ -266,7 +266,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_reverseLookupKey(
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_commonPrefixSearchBytes(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_commonPrefixSearchBytes(
     JNIEnv *env, jclass, jlong ptr, jbyteArray query) {
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     jsize queryLen = env->GetArrayLength(query);
@@ -305,7 +305,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_commonPrefixSearchBytes(
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_predictiveSearchBytes(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_predictiveSearchBytes(
     JNIEnv *env, jclass, jlong ptr, jbyteArray query, jint limit) {
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     jsize queryLen = env->GetArrayLength(query);
@@ -344,7 +344,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_predictiveSearchBytes(
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_dumpKeys(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_dumpKeys(
     JNIEnv *env, jclass, jlong ptr, jint limit) {
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     int count = static_cast<int>(trie->num_keys());
@@ -373,7 +373,7 @@ Java_com_ninthsoft_ime_base_marisa_MarisaJNI_dumpKeys(
 }
 
 JNIEXPORT jbyteArray JNICALL
-Java_com_ninthsoft_ime_base_marisa_MarisaJNI_lookupBytes(
+Java_com_jobeen_ime_base_marisa_MarisaJNI_lookupBytes(
     JNIEnv *env, jclass, jlong ptr, jbyteArray query) {
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     jsize queryLen = env->GetArrayLength(query);
