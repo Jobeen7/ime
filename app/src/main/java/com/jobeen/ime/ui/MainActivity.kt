@@ -92,6 +92,11 @@ class MainActivity : ComponentActivity() {
                             Intent(this@MainActivity, VoiceSettingsActivity::class.java)
                         )
                     },
+                    onOpenUserDict = {
+                        startActivity(
+                            Intent(this@MainActivity, UserDictActivity::class.java)
+                        )
+                    },
                     onOpenFiles = {
                         startActivity(
                             Intent(

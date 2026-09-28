@@ -119,6 +119,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.UserDictActivity"
+            android:exported="false"
+            android:label="@string/user_dict"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.LogActivity"
             android:exported="false"
             android:label="@string/app_logs"

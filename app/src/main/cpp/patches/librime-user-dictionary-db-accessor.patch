@@ -1,0 +1,15 @@
+diff --git a/src/rime/dict/user_dictionary.h b/src/rime/dict/user_dictionary.h
+index 7060aa8..7bfaabf 100644
+--- a/src/rime/dict/user_dictionary.h
++++ b/src/rime/dict/user_dictionary.h
+@@ -78,6 +78,10 @@ class UserDictionary : public Class<UserDictionary, const Ticket&> {
+ 
+   const string& name() const { return name_; }
+   TickCount tick() const { return tick_; }
++  // The underlying database, possibly shared with the running engine through
++  // the component's db pool. Added for hot import/export without shutting
++  // Rime down (Jime user dict sync).
++  an<Db> db() const { return db_; }
+ 
+   RIME_DLL static an<DictEntry> CreateDictEntry(const string& key,
+                                                 const string& value,
