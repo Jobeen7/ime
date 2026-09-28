@@ -92,11 +92,11 @@ class ToolbarRenderer(
     }
 
     private val centerButtons = listOf(
-        ImageButton(resources.undo, PanelAction.Undo, iconScale = iconScale),
-        ImageButton(resources.redo, PanelAction.Redo, iconScale = iconScale),
-        ImageButton(resources.cursorMove, PanelAction.CursorMove, iconScale = iconScale),
+        ImageButton(resources.emoji, PanelAction.EmojiKeyboard, iconScale = iconScale),
+        ImageButton(resources.selectAll, PanelAction.SelectAll, iconScale = iconScale),
+        ImageButton(resources.copy, PanelAction.Copy, iconScale = iconScale),
+        ImageButton(resources.paste, PanelAction.Paste, iconScale = iconScale),
         ImageButton(resources.clipboard, PanelAction.Clipboard, iconScale = iconScale),
-        ImageButton(resources.palette, PanelAction.Palette, iconScale = iconScale),
     )
 
     var pressAlpha: Int = 0

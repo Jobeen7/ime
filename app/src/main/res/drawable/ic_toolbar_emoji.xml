@@ -1,0 +1,27 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+  <!-- 笑脸外圈 -->
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFF"
+      android:strokeWidth="1.7"
+      android:strokeLineCap="round"
+      android:pathData="M20.5,12 a8.5,8.5 0 1,1 -17,0 a8.5,8.5 0 1,1 17,0" />
+  <!-- 眼睛 -->
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFF"
+      android:strokeWidth="1.7"
+      android:strokeLineCap="round"
+      android:pathData="M9,9.2 L9,11 M15,9.2 L15,11" />
+  <!-- 微笑 -->
+  <path
+      android:fillColor="#00000000"
+      android:strokeColor="#FFFFFF"
+      android:strokeWidth="1.7"
+      android:strokeLineCap="round"
+      android:pathData="M8.6,13.6 Q12,16.9 15.4,13.6" />
+</vector>
