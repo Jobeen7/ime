@@ -12,6 +12,8 @@ import com.jobeen.ime.input.keyboard.impl.IKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
+import com.jobeen.ime.base.util.appScope
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 object KeyboardStateManager {
@@ -110,18 +112,20 @@ object KeyboardStateManager {
     }
 
     fun refreshSchemas() {
-        val prefs = appContext.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE)
-        val schemaIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
-            ?.filter { it.isNotBlank() } ?: emptyList()
-        val schemaList = EngineFactory.current()?.schemasList() ?: emptyList()
-        val byId = schemaList.associateBy { it.id }
-        schemas = schemaIds.mapNotNull { byId[it] }
-        currentSchema = schemas.firstOrNull()
-        currentSchema?.id?.let { EngineFactory.current()?.selectSchema(it) }
+        appScope.launch {
+            val prefs = appContext.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE)
+            val schemaIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
+                ?.filter { it.isNotBlank() } ?: emptyList()
+            val schemaList = EngineFactory.current()?.schemasList() ?: emptyList()
+            val byId = schemaList.associateBy { it.id }
+            schemas = schemaIds.mapNotNull { byId[it] }
+            currentSchema = schemas.firstOrNull()
+            currentSchema?.id?.let { EngineFactory.current()?.selectSchema(it) }
 
-        // 只有在已经挂载到窗口时才切换键盘布局，避免在 factory 尚未注入、
-        if (keyboardAttached) {
-            switchTo(currentSchema?.layout ?: defaultKeyboardName)
+            // 只有在已经挂载到窗口时才切换键盘布局，避免在 factory 尚未注入、
+            if (keyboardAttached) {
+                switchTo(currentSchema?.layout ?: defaultKeyboardName)
+            }
         }
     }
 

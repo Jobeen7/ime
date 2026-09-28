@@ -16,6 +16,9 @@ interface ClipboardDao {
     @Query("SELECT * FROM clipboard_records WHERE deleted = 0 ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatest(): ClipboardRecord?
 
+    @Query("SELECT EXISTS(SELECT 1 FROM clipboard_records WHERE text = :text AND deleted = 0 LIMIT 1)")
+    suspend fun existsByText(text: String): Boolean
+
     @Query("SELECT * FROM clipboard_records ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestIncludingDeleted(): ClipboardRecord?
 

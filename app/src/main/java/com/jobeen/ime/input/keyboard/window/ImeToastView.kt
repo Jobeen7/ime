@@ -19,15 +19,23 @@ class ImeToastView(context: Context) : androidx.appcompat.widget.AppCompatTextVi
         minHeight = dp(48)
         setPadding(dp(16), dp(10), dp(16), dp(10))
         compoundDrawablePadding = dp(10)
-        context.applicationInfo.loadIcon(context.packageManager).apply {
-            setBounds(0, 0, dp(28), dp(28))
-            setCompoundDrawables(this, null, null, null)
-        }
         elevation = dp(6).toFloat()
         visibility = GONE
     }
 
+    // 图标延迟到首次显示时加载，避免构造时阻塞主线程做 PackageManager binder 调用
+    private var iconLoaded = false
+    private fun ensureIcon() {
+        if (iconLoaded) return
+        iconLoaded = true
+        context.applicationInfo.loadIcon(context.packageManager).apply {
+            setBounds(0, 0, dp(28), dp(28))
+            setCompoundDrawables(this, null, null, null)
+        }
+    }
+
     fun showToast(message: CharSequence, colors: KeyboardColors.ColorScheme) {
+        ensureIcon()
         applyColors(colors)
         text = message
         visibility = VISIBLE

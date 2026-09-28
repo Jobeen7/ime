@@ -30,6 +30,8 @@ import com.jobeen.ime.input.panel.state.ClipboardStateRender
 import com.jobeen.ime.input.panel.state.PredictionStateRender
 import com.jobeen.ime.input.panel.state.StateRenderContext
 import com.jobeen.ime.input.panel.state.TextEditingStateRender
+import com.jobeen.ime.base.util.appScope
+import kotlinx.coroutines.launch
 import timber.log.Timber
 
 class KawaiiPanel(
@@ -291,8 +293,10 @@ class KawaiiPanel(
             confirmOverlay.confirm(
                 message = context.getString(R.string.phrase_delete_confirm, phrase.label),
                 onConfirm = {
-                    PhraseManager.delete(context, phrase.id)
-                    clipboardView.refresh()
+                    appScope.launch {
+                        PhraseManager.delete(context, phrase.id)
+                        clipboardView.refresh()
+                    }
                 },
                 cardX = Float.NaN,
                 cardY = 0f,
@@ -319,8 +323,10 @@ class KawaiiPanel(
         confirmOverlay.confirm(
             message = context.getString(R.string.phrase_clear_confirm),
             onConfirm = {
-                PhraseManager.deleteAll(context)
-                clipboardView.refresh()
+                appScope.launch {
+                    PhraseManager.deleteAll(context)
+                    clipboardView.refresh()
+                }
             },
             cardX = Float.NaN,
             cardY = 0f,
@@ -498,17 +504,23 @@ class KawaiiPanel(
         if (clipboardCheckRunnable == null) {
             clipboardCheckRunnable = object : Runnable {
                 override fun run() {
-                    ClipboardManager.checkCurrentClipboard(context)
-                    checkPendingCopy()
+                    appScope.launch {
+                        ClipboardManager.checkCurrentClipboard(context)
+                        checkPendingCopy()
+                    }
                     view.postDelayed(this, 2000L)
                 }
             }
         }
-        ClipboardManager.checkCurrentClipboard(context)
-        checkPendingCopy()
-        view.postDelayed({
+        appScope.launch {
             ClipboardManager.checkCurrentClipboard(context)
             checkPendingCopy()
+        }
+        view.postDelayed({
+            appScope.launch {
+                ClipboardManager.checkCurrentClipboard(context)
+                checkPendingCopy()
+            }
         }, 500L)
         view.removeCallbacks(clipboardCheckRunnable!!)
         view.postDelayed(clipboardCheckRunnable!!, 2000L)

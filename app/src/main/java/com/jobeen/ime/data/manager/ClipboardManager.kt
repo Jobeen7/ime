@@ -13,7 +13,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import com.jobeen.ime.base.util.appScope
 import timber.log.Timber
 
@@ -75,25 +75,26 @@ object ClipboardManager {
         val cloud: Boolean = false,
     )
 
-    fun getEntries(context: Context): List<Entry> = db(context) { db ->
+    suspend fun getEntries(context: Context): List<Entry> = db(context) { db ->
         val cutoff = System.currentTimeMillis() - getRetentionDays(context) * 86400000L
         db.clipboardDao().getAllActiveSince(cutoff).map { Entry(it.text, it.timestamp, it.cloud) }
     } ?: emptyList()
 
-    fun addEntry(context: Context, text: String, notify: Boolean = true) {
+    suspend fun addEntry(context: Context, text: String, notify: Boolean = true) {
         if (text.isBlank()) return
-        val existing = getEntries(context).firstOrNull { it.text == text }
         val now = System.currentTimeMillis()
         val retentionCutoff = now - getRetentionDays(context) * 86400000L
-        db(context) { db ->
+        val isNew = db(context) { db ->
             val dao = db.clipboardDao()
+            val existed = dao.existsByText(text)
             dao.deleteByText(text)
             dao.insert(ClipboardRecord(text = text, timestamp = now, cloud = false))
             trimExcess(dao, getMaxEntries(context))
             dao.deleteOlderThan(retentionCutoff)
             dao.purgeDeletedOlderThan(retentionCutoff)
+            !existed
         } ?: return
-        if (notify && existing == null) onNewEntry?.invoke(Entry(text, now))
+        if (notify && isNew) onNewEntry?.invoke(Entry(text, now))
     }
 
     private suspend fun trimExcess(dao: ClipboardDao, limit: Int) {
@@ -101,7 +102,7 @@ object ClipboardManager {
         if (excess > 0) dao.deleteOldest(excess)
     }
 
-    fun clearAll(context: Context) {
+    suspend fun clearAll(context: Context) {
         val now = System.currentTimeMillis()
         val retentionCutoff = now - getRetentionDays(context) * 86400000L
         db(context) { db ->
@@ -113,7 +114,7 @@ object ClipboardManager {
         clearTimestamp = now
     }
 
-    fun removeEntry(context: Context, text: String) {
+    suspend fun removeEntry(context: Context, text: String) {
         db(context) { db -> db.clipboardDao().softDeleteByText(text, System.currentTimeMillis()) }
     }
 
@@ -131,11 +132,15 @@ object ClipboardManager {
         if (Build.VERSION.SDK_INT >= 33) clip.description?.timestamp?.takeIf { it > 0 } ?: -1L
         else -1L
 
-    fun checkCurrentClipboard(context: Context) {
-        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clip = cm.primaryClip ?: return
-        if (clip.itemCount == 0) return
-        val text = clipText(clip, context) ?: return
+    /**
+     * 检查系统剪贴板，有新内容则入库。返回 true 表示有新条目。
+     * suspend：在 IO 线程做查询，调用方负责把回调切回主线程。
+     */
+    suspend fun checkCurrentClipboard(context: Context): Boolean {
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val clip = cm.primaryClip ?: return false
+        if (clip.itemCount == 0) return false
+        val text = clipText(clip, context) ?: return false
 
         val ts = clipTimestamp(clip)
         if (ts > 0) lastClipTimestamp = ts
@@ -144,22 +149,30 @@ object ClipboardManager {
         // 与“最新一条记录（含软删除）”比对：清空后该记录变为软删除状态，
         // 若仍与系统剪贴板内容一致，则视为没有新记录，避免被监控轮询重新插入。
         val latest = db(context) { db -> db.clipboardDao().getLatestIncludingDeleted() }
-        if (latest?.text == text) return
+        if (latest?.text == text) return false
 
-        if (getEntries(context).none { it.text == text }) {
+        val isNew = db(context) { db -> !db.clipboardDao().existsByText(text) } ?: false
+        if (isNew) {
             lastCopyText = text
             lastCopyTimestamp = System.currentTimeMillis()
-            addEntry(context, text)
-            onContentChanged?.invoke()
+            addEntry(context, text, notify = false)
+            return true
         }
+        return false
     }
 
     fun startMonitoring(context: Context) {
         monitoringJob?.cancel()
-        monitoringJob = appScope.launch {
+        monitoringJob = appScope.launch(Dispatchers.IO) {
             while (isActive) {
                 delay(getPollIntervalSeconds(context) * 1000L)
-                if (isActive) checkCurrentClipboard(context)
+                if (!isActive) break
+                val changed = checkCurrentClipboard(context)
+                if (changed) {
+                    withContext(Dispatchers.Main) {
+                        onContentChanged?.invoke()
+                    }
+                }
             }
         }
     }
@@ -183,9 +196,9 @@ object ClipboardManager {
     @Volatile var clearTimestamp: Long = 0L
         private set
 
-    private fun <T> db(context: Context, block: suspend (com.jobeen.ime.data.database.AppDatabase) -> T): T? =
+    private suspend fun <T> db(context: Context, block: suspend (com.jobeen.ime.data.database.AppDatabase) -> T): T? =
         try {
-            runBlocking(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 val db = AppDatabase.getInstance(context)
                 block(db)
             }

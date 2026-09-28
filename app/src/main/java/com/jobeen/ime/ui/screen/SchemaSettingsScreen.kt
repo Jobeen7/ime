@@ -110,19 +110,22 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
-    val allSchemas = EngineFactory.current()?.schemasList() ?: emptyList()
-    if (!loaded && allSchemas.isNotEmpty()) {
-        val allItems =
-            allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
-        val enabledIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
-            ?.filter { it.isNotBlank() } ?: emptyList()
-        val byId = allItems.associateBy { it.id }
-        val seen = mutableSetOf<String>()
-        enabledSchemas.clear()
-        enabledSchemas.addAll(enabledIds.mapNotNull { byId[it]?.also { seen.add(it.id) } })
-        availableSchemas.clear()
-        availableSchemas.addAll(allItems.filter { it.id !in seen })
-        loaded = true
+    // 异步加载输入方案，避免阻塞主线程（schemasList 内部走引擎线程）
+    LaunchedEffect(Unit) {
+        val allSchemas = EngineFactory.current()?.schemasList() ?: emptyList()
+        if (allSchemas.isNotEmpty()) {
+            val allItems =
+                allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
+            val enabledIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
+                ?.filter { it.isNotBlank() } ?: emptyList()
+            val byId = allItems.associateBy { it.id }
+            val seen = mutableSetOf<String>()
+            enabledSchemas.clear()
+            enabledSchemas.addAll(enabledIds.mapNotNull { byId[it]?.also { seen.add(it.id) } })
+            availableSchemas.clear()
+            availableSchemas.addAll(allItems.filter { it.id !in seen })
+            loaded = true
+        }
     }
 
     fun downloadGrammar(language: String) {

@@ -71,6 +71,7 @@ class ImeInputMethodService : InputMethodService() {
                 // 监听应用状态，当引擎启动的时候时开始绑定消息
                 app?.state?.collectLatest { state ->
                     if (state == ImeApplication.AppState.EngineStarting) {
+                        messageObserveJob?.cancel()
                         messageObserveJob = engine?.observeMessages(this) { message ->
                             keyboardWindow?.handleEngineMessage(message)
                         }

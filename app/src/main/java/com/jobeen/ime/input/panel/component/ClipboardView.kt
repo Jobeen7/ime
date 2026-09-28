@@ -15,6 +15,11 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.ClipboardManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
 import com.jobeen.ime.data.manager.PhraseManager
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -33,6 +38,13 @@ class ClipboardView(
     var onPhraseDelete: ((PhraseManager.Phrase) -> Unit)? = null
 
     private val density = resources.displayMetrics.density
+
+    private val viewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    override fun onDetachedFromWindow() {
+        viewScope.cancel()
+        super.onDetachedFromWindow()
+    }
 
     private val headerH = 0f
     private val hMargin = 10f * density
@@ -118,11 +130,13 @@ class ClipboardView(
     }
 
     private fun reload() {
-        clipboardEntries = ClipboardManager.getEntries(context)
-        phrases = PhraseManager.getAll(context)
-        resetScroll()
-        computeRowLayouts()
-        invalidate()
+        viewScope.launch {
+            clipboardEntries = ClipboardManager.getEntries(context)
+            phrases = PhraseManager.getAll(context)
+            resetScroll()
+            computeRowLayouts()
+            invalidate()
+        }
     }
 
     private fun resetScroll() {

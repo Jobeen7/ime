@@ -6,6 +6,9 @@ import com.jobeen.ime.data.theme.CompactTheme
 import com.jobeen.ime.data.theme.ReadableTheme
 import kotlinx.serialization.json.Json
 import java.io.File
+import com.jobeen.ime.base.util.appScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 object ThemeStore {
     private const val THEMES_FILE = "themes.json"
@@ -73,12 +76,15 @@ object ThemeStore {
     }
 
     private fun applyCustomThemes(themes: List<KeyboardTheme>) {
-        val file = File(App.themesDir, THEMES_FILE)
-        runCatching {
-            file.writeText(
-                readableJson.encodeToString(themes.map { ReadableTheme.from(it) })
-            )
-        }
         KeyboardThemePresets.setCustomThemes(themes.take(MAX_CUSTOM_THEMES))
+        // 文件写放 IO 线程，避免阻塞主线程
+        appScope.launch(Dispatchers.IO) {
+            val file = File(App.themesDir, THEMES_FILE)
+            runCatching {
+                file.writeText(
+                    readableJson.encodeToString(themes.map { ReadableTheme.from(it) })
+                )
+            }
+        }
     }
 }

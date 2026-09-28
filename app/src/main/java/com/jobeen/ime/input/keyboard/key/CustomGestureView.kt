@@ -303,6 +303,7 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     }
 
     override fun onDetachedFromWindow() {
+        repeatHandler.removeCallbacks(repeatRunnable)
         lifecycleScope.cancel()
         super.onDetachedFromWindow()
     }

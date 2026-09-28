@@ -15,6 +15,20 @@ class KeyPreviewPopup(private val context: Context) {
 
     private var popupWindow: PopupWindow? = null
 
+    // 复用 contentView，避免长按预览高频创建 View 导致 GC 抖动
+    private val popupSize = context.dp(52)
+    private val bgDrawable = GradientDrawable().apply {
+        cornerRadius = context.dp(8f)
+    }
+    private val contentView = TextView(context).apply {
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
+        gravity = Gravity.CENTER
+        typeface = Typeface.DEFAULT
+        setIncludeFontPadding(false)
+        background = bgDrawable
+    }
+    private val loc = IntArray(2)
+
     fun show(
         anchor: View,
         text: String,
@@ -23,22 +37,10 @@ class KeyPreviewPopup(private val context: Context) {
     ) {
         dismiss()
 
-        val popupSize = context.dp(52)
+        contentView.setText(text)
+        contentView.setTextColor(textColor)
+        bgDrawable.setColor(bgColor)
 
-        val contentView = TextView(context).apply {
-            setText(text)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 30f)
-            setTextColor(textColor)
-            gravity = Gravity.CENTER
-            typeface = Typeface.DEFAULT
-            setIncludeFontPadding(false)
-            background = GradientDrawable().apply {
-                setColor(bgColor)
-                cornerRadius = context.dp(8f)
-            }
-        }
-
-        val loc = IntArray(2)
         anchor.getLocationInWindow(loc)
         val anchorCenterX = loc[0] + anchor.width / 2
         val anchorTop = loc[1]
