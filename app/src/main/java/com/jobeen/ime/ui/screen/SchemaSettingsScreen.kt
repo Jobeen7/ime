@@ -120,6 +120,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var updateStageText by remember { mutableStateOf("") }
     var updateDone by remember { mutableStateOf(false) }
     var updateFailed by remember { mutableStateOf(false) }
+    var checkingUpdate by remember { mutableStateOf(false) }
+    var updateCheckFailed by remember { mutableStateOf(false) }
     var updateButtonWidth by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -138,6 +140,22 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             enabledSchemas.addAll(enabledIds.mapNotNull { byId[it]?.also { seen.add(it.id) } })
             availableSchemas.clear()
             availableSchemas.addAll(allItems.filter { it.id !in seen })
+            // 将当前正在使用的方案置顶（顶部的方案即为"默认"方案）
+            val currentId = withContext(Dispatchers.IO) {
+                runCatching {
+                    (EngineFactory.current() as? IRimeJob)?.awaitJob<String?>(null) {
+                        currentSchema().schemaId
+                    }
+                }.getOrNull()
+            }
+            if (currentId != null) {
+                val idx = enabledSchemas.indexOfFirst { it.id == currentId }
+                if (idx > 0) {
+                    val item = enabledSchemas.removeAt(idx)
+                    enabledSchemas.add(0, item)
+                    saveOrder(prefs, enabledSchemas)
+                }
+            }
             loaded = true
         }
     }
@@ -198,7 +216,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     }.getOrNull() ?: -1L
 
     fun checkWanxiangUpdate() {
-        if (updating) return
+        if (updating || checkingUpdate) return
         // App 升级后内置词库可能已变化：若 versionCode 变了，清除旧的更新记录，
         // 避免"已是最新"的版本号与实际被 DataManager.sync() 还原的文件不一致
         val appVersionCode = currentAppVersionCode()
@@ -207,10 +225,20 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             updatePrefs.edit().clear().apply()
             updateInfo = null
         }
-        // 固定地址版本比对，无需网络请求
-        updateInfo = WanxiangUpdateManager.checkForUpdates(updatePrefs)
+        // 联网查询 GitHub 最新版本，与本地记录比对
+        checkingUpdate = true
         updateDone = false
         updateFailed = false
+        updateCheckFailed = false
+        scope.launch {
+            val result = WanxiangUpdateManager.checkForUpdates(updatePrefs)
+            checkingUpdate = false
+            result.onSuccess { info ->
+                updateInfo = info
+            }.onFailure {
+                updateCheckFailed = true
+            }
+        }
     }
 
     fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
@@ -246,7 +274,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     updatePrefs.edit().putLong(KEY_APP_VERSION_CODE, it).apply()
                 }
                 // 更新本地版本显示
-                updateInfo = WanxiangUpdateManager.checkForUpdates(updatePrefs)
+                WanxiangUpdateManager.checkForUpdates(updatePrefs).onSuccess { info ->
+                    updateInfo = info
+                }
                 // 词库与模型已替换，触发 Rime 完整重新部署
                 updateStageText = context.getString(R.string.schema_update_deploying)
                 EngineFactory.current()?.reload()
@@ -292,7 +322,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         ) {
             Spacer(Modifier.height(4.dp))
 
-            SettingsGroup(title = stringResource(R.string.schema_model)) {
+            SettingsGroup(title = stringResource(R.string.schema_update_title)) {
+                // 语法模型（原"模型管理"分组已合并至此）
                 ActionRow(
                     title = stringResource(R.string.schema_model_grammar),
                     subtitle = when {
@@ -329,9 +360,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         }
                     },
                 )
-            }
 
-            SettingsGroup(title = stringResource(R.string.schema_update_title)) {
                 val info = updateInfo
                 ActionRow(
                     title = stringResource(R.string.schema_update_title),
@@ -350,12 +379,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         }
                         updateDone -> stringResource(R.string.schema_update_success)
                         updateFailed -> stringResource(R.string.schema_update_failed)
+                        updateCheckFailed -> stringResource(R.string.schema_update_check_failed)
+                        checkingUpdate -> stringResource(R.string.schema_update_checking)
                         info == null -> stringResource(R.string.schema_update_desc)
                         info.hasUpdate ->
                             "${stringResource(R.string.schema_update_available)} " +
-                                WanxiangUpdateManager.SCHEMA_VERSION
+                                info.schemaRemoteVersion
                         else -> "${stringResource(R.string.schema_update_latest)} " +
-                            "(${WanxiangUpdateManager.SCHEMA_VERSION})"
+                            "(${info.schemaRemoteVersion})"
                     },
                     trailing = {
                         when {
@@ -372,6 +403,21 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                 } ?: 0f,
                                 width = updateButtonWidth,
                             )
+
+                            checkingUpdate -> Button(
+                                onClick = {},
+                                enabled = false,
+                                modifier = Modifier
+                                    .height(32.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.schema_update_checking),
+                                    fontSize = rowSubFontSize,
+                                    maxLines = 1,
+                                )
+                            }
 
                             info?.hasUpdate == true -> Button(
                                 onClick = { startWanxiangUpdate(info) },
@@ -412,9 +458,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 if (info != null && !updating) {
                     val builtin = stringResource(R.string.schema_update_builtin)
                     ActionRow(
-                        title = "词库 ${info.schemaLocalVersion ?: builtin}",
+                        title = "版本 ${info.schemaLocalVersion ?: builtin}",
                         subtitle = "语法模型 ${
-                            if (info.gramDownloaded)
+                            if (info.gramLocalPublishedAt != null)
                                 stringResource(R.string.schema_grammar_model_ready)
                             else builtin
                         }",

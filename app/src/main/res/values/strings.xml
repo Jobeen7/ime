@@ -126,6 +126,8 @@
     <string name="schema_update_title">方案更新</string>
     <string name="schema_update_desc">检查词库与语法模型的在线更新</string>
     <string name="schema_update_check">检查更新</string>
+    <string name="schema_update_checking">检查中…</string>
+    <string name="schema_update_check_failed">检查失败，请稍后重试</string>
     <string name="schema_update_latest">已是最新版本</string>
     <string name="schema_update_available">发现新版本</string>
     <string name="schema_update_start">开始更新</string>
