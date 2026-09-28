@@ -26,7 +26,7 @@ class RimeDispatcher(
     }
 
     class WrappedRunnable(
-        private val runnable: Runnable,
+        val runnable: Runnable,
         private val name: String? = null,
     ) : Runnable by runnable {
         private val time = System.currentTimeMillis()
@@ -116,6 +116,12 @@ class RimeDispatcher(
         if (!isRunning.get()) {
             throw IllegalStateException("Dispatcher is not in running state!")
         }
-        queue.offer(WrappedRunnable(block))
+        val wrapped = WrappedRunnable(block)
+        queue.offer(wrapped)
+        // 入队后复查：stop() 可能在检查与入队之间执行，避免任务入队后无人消费导致挂起
+        if (!isRunning.get()) {
+            queue.remove(wrapped)
+            throw IllegalStateException("Dispatcher is not in running state!")
+        }
     }
 }

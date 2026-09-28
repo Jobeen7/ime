@@ -4,9 +4,12 @@ import com.jobeen.ime.base.util.appContext
 import java.io.File
 
 object App {
-    var themesDir =  File(appContext.getExternalFilesDir(null), "themes").also { it.mkdirs() }
-    var logDir =  File(appContext.getExternalFilesDir(null), "log").also { it.mkdirs() }
-    var downloadDir =  File(appContext.getExternalFilesDir(null), "download").also { it.mkdirs() }
-    val modelDir = File(appContext.getExternalFilesDir(null), "model").also { it.mkdirs() }
-    val speechModelDir = File(appContext.getExternalFilesDir(null), "model/speech").also { it.mkdirs() }
+    private fun extDir(name: String): File =
+        File(appContext.getExternalFilesDir(null) ?: appContext.filesDir, name).also { it.mkdirs() }
+
+    var themesDir = extDir("themes")
+    var logDir = extDir("log")
+    var downloadDir = extDir("download")
+    val modelDir = extDir("model")
+    val speechModelDir = File(modelDir, "speech").also { it.mkdirs() }
 }

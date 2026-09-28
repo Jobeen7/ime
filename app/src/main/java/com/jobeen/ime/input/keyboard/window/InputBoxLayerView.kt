@@ -62,13 +62,15 @@ class InputBoxLayerView(
 
     private var cursorOn = true
     private val handler = Handler(Looper.getMainLooper())
-    private val blinkInterval: Long
-        get() = try {
+    // 缓存光标闪烁间隔，避免每 500ms 一次 Settings IPC 查询
+    private val blinkInterval: Long by lazy {
+        try {
             Settings.System.getInt(context.contentResolver, "cursor_blink_ms", 500)
                 .coerceAtLeast(100).toLong()
         } catch (_: Exception) {
             500L
         }
+    }
 
     private fun startBlink() {
         handler.removeCallbacks(blinkRunnable)
@@ -136,14 +138,27 @@ class InputBoxLayerView(
     private var closeIcon: Drawable? = null
     private var enterIcon: Drawable? = null
 
+    private var changeListener: (() -> Unit)? = null
+
     fun bind(buffer: ImeInputConnection) {
+        // 先移除旧监听器，避免多次 bind 导致监听器累积
+        changeListener?.let { this.buffer?.removeOnChangeListener(it) }
         this.buffer = buffer
-        buffer.addOnChangeListener {
+        val listener: () -> Unit = {
             cursorOn = true
             userScrolled = false
             invalidate()
         }
+        changeListener = listener
+        buffer.addOnChangeListener(listener)
         startBlink()
+    }
+
+    override fun onDetachedFromWindow() {
+        changeListener?.let { buffer?.removeOnChangeListener(it) }
+        changeListener = null
+        stopBlink()
+        super.onDetachedFromWindow()
     }
 
     fun refreshTheme(newColors: KeyboardColors.ColorScheme) {

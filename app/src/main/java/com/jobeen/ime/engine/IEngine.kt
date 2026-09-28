@@ -14,7 +14,7 @@ interface IEngine {
     fun finalize()
     fun processKey(service: InputMethodService, key: KeyEvent): Unit?
     fun selectCandidate(candidate: EngineMessage.Candidate)
-    fun schemasList(): List<EngineMessage.Schema>
+    suspend fun schemasList(): List<EngineMessage.Schema>
     fun clear(service: InputMethodService)
     fun resetComposition()
     fun selectSchema(schemaId: String)

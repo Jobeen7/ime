@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.CopyOnWriteArrayList
 import splitties.views.dsl.core.BuildConfig
 import timber.log.Timber
 
@@ -32,15 +33,19 @@ class Rime : RimeApi, RimeLifecycleOwner {
     override var schemaCached = RimeSchema(".default")
         private set
 
+    @Volatile
     override var statusCached = StatusProto()
         private set
 
+    @Volatile
     override var compositionCached = CompositionProto()
         private set
 
+    @Volatile
     override var hasMenu: Boolean = false
         private set
 
+    @Volatile
     override var paging: Boolean = false
         private set
 
@@ -363,11 +368,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
     companion object {
         private val messageFlow_ = MutableSharedFlow<RimeMessage<*>>(
-            extraBufferCapacity = 15,
+            extraBufferCapacity = 64,
             onBufferOverflow = BufferOverflow.DROP_OLDEST,
         )
 
-        private val rimeMessageHandlers = ArrayList<(RimeMessage<*>) -> Unit>()
+        private val rimeMessageHandlers = CopyOnWriteArrayList<(RimeMessage<*>) -> Unit>()
 
         init {
             System.loadLibrary("rime_jni")

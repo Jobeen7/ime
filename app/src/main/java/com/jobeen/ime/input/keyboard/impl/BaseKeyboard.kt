@@ -49,6 +49,9 @@ abstract class BaseKeyboard(
     var expandKeypressArea = false
     private val previewPopup = KeyPreviewPopup(context)
     private val keyboardPopup = KeyboardPopup(context)
+    // 复用坐标数组，避免每次按键分配
+    private val keyLoc = IntArray(2)
+    private val boardLoc = IntArray(2)
     protected val keyRows: List<ConstraintLayout>
     val rippleView: KeyboardRippleView
 
@@ -220,8 +223,6 @@ abstract class BaseKeyboard(
                         b is KeyDef.Behavior.Press && (b.action is KeyboardAction.LayoutSwitchAction || b.action is KeyboardAction.RotateSchema || b.action is KeyboardAction.ResumeAction)
                     }
                     if (!isSwitchAction) {
-                        val keyLoc = IntArray(2)
-                        val boardLoc = IntArray(2)
                         key.getLocationOnScreen(keyLoc)
                         this@BaseKeyboard.getLocationOnScreen(boardLoc)
                         val cx = keyLoc[0] + key.width / 2f - boardLoc[0]

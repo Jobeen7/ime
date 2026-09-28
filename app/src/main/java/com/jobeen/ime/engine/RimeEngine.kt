@@ -54,7 +54,6 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
@@ -525,7 +524,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
     }
 
-    override fun schemasList(): List<EngineMessage.Schema> = runBlocking {
+    override suspend fun schemasList(): List<EngineMessage.Schema> =
         awaitJob(emptyList()) {
             enabledSchemata().map {
                 EngineMessage.Schema(
@@ -533,7 +532,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 )
             }
         }
-    }
 
 
     override fun clear(service: InputMethodService) {
