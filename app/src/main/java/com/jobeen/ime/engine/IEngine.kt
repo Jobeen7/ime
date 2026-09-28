@@ -2,6 +2,7 @@ package com.jobeen.ime.engine
 
 import android.content.Context
 import android.inputmethodservice.InputMethodService
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
@@ -27,7 +28,7 @@ interface IEngine {
     fun deleteCandidate(index: Int): Unit?
     fun predict(commit: String = "")
     fun reload()
-    fun onStartInputView(ic: InputConnection)
+    fun onStartInputView(ic: InputConnection, info: EditorInfo)
     fun onFinishInputView()
     fun onInputCleared()
     fun observeMessages(scope: CoroutineScope, onMessage: suspend (EngineMessage) -> Unit): Job
