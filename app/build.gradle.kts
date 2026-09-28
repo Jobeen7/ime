@@ -14,7 +14,7 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 2
+        versionCode = 3
         versionName = "1.0.7"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -39,7 +39,28 @@ plugins {
         }
     }
 
+    // Jime 专用持久签名：VM 重置会丢 /root/.android 下的 debug key，
+    // 为避免签名变化导致无法覆盖安装，所有构建统一用此 key。
+    // 密码放在 ~/.gradle/gradle.properties（JIME_*），不进仓库；没有配置时回退默认 debug 签名。
+    signingConfigs {
+        create("jimeStable") {
+            val ksPath = project.findProperty("JIME_STORE_FILE") as String?
+            if (ksPath != null && file(ksPath).exists()) {
+                storeFile = file(ksPath)
+                storePassword = project.findProperty("JIME_STORE_PASSWORD") as String?
+                keyAlias = project.findProperty("JIME_KEY_ALIAS") as String?
+                keyPassword = project.findProperty("JIME_KEY_PASSWORD") as String?
+            }
+        }
+    }
+
     buildTypes {
+        debug {
+            val ksPath = project.findProperty("JIME_STORE_FILE") as String?
+            if (ksPath != null && file(ksPath).exists()) {
+                signingConfig = signingConfigs.getByName("jimeStable")
+            }
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(
