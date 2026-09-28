@@ -17,6 +17,7 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -55,6 +56,7 @@ fun MainScreen(
     onOpenClipboard: () -> Unit,
     onOpenModelSettings: () -> Unit,
     onOpenVoiceSettings: () -> Unit,
+    onOpenUserDict: () -> Unit,
     onOpenFiles: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
@@ -169,6 +171,14 @@ fun MainScreen(
                 subtitle = stringResource(R.string.schema_files_desc),
                 onClick = onOpenFiles,
                 icon = Icons.Filled.FolderOpen,
+                showSpacer = true,
+            )
+
+            ClickableSettingItem(
+                title = stringResource(R.string.user_dict),
+                subtitle = stringResource(R.string.user_dict_desc),
+                onClick = onOpenUserDict,
+                icon = Icons.Filled.MenuBook,
                 showSpacer = true,
             )
 

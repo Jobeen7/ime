@@ -6,6 +6,13 @@
 
 #include <rime_levers_api.h>
 
+#include <rime/dict/db_utils.h>
+#include <rime/dict/table_db.h>
+#include <rime/dict/tsv.h>
+#include <rime/dict/user_db.h>
+#include <rime/dict/user_dictionary.h>
+#include <rime/registry.h>
+
 #include <memory>
 #include <string>
 #include <string_view>
@@ -92,6 +99,84 @@ namespace {
 
 }  // namespace
 
+namespace {
+
+// Hot import/export (Jime user dict sync): merge into / read from the
+// already-open shared user db while the engine is running, without shutting
+// Rime down.
+//
+// Background: the classic levers import/export opens a second LevelDB handle,
+// which fails while the engine holds the db open; stopping Rime first is not
+// an option either, because native finalize clears the component registry and
+// unloads modules, crashing any later levers call (and it blocks on the
+// maintenance thread). So instead we reuse the shared Db instance from the
+// user_dictionary component's pool and run the exact same TsvReader ->
+// UserDbImporter / DbSource -> TsvWriter pipeline on it. When the db isn't
+// currently open (engine idle or dict not in use), fall back to the classic
+// levers API, which can safely open it itself.
+rime::an<rime::Db> GetOpenUserDb(const std::string &dict_name) {
+    auto *udc = dynamic_cast<rime::UserDictionaryComponent *>(
+            rime::Registry::instance().Find("user_dictionary"));
+    if (!udc) {
+        return nullptr;
+    }
+    rime::the<rime::UserDictionary> dict(udc->Create(dict_name, "userdb"));
+    if (!dict) {
+        return nullptr;
+    }
+    rime::an<rime::Db> db = dict->db();
+    if (!db) {
+        return nullptr;
+    }
+    // The component pool shares one Db per dict with the running engine, but
+    // the handle may not be opened yet (the engine loads it lazily). Open it
+    // here so the import lands in the same store the translator reads from.
+    // Open() is a no-op when already loaded.
+    if (!db->loaded()) {
+        db->Open();
+    }
+    return db->loaded() ? db : nullptr;
+}
+
+jint HotImportUserDict(const char *dict_name, const char *text_file) {
+    if (rime::an<rime::Db> db = GetOpenUserDb(dict_name)) {
+        if (!rime::UserDbHelper(db).IsUserDb())
+            return -1;
+        rime::TsvReader reader(rime::path(text_file), rime::TableDb::format.parser);
+        rime::UserDbImporter importer(db.get());
+        int num_entries = 0;
+        try {
+            num_entries = reader >> importer;
+        } catch (std::exception &) {
+            return -1;
+        }
+        return num_entries;
+    }
+    auto *api = leversApi();
+    return api->import_user_dict(dict_name, text_file);
+}
+
+jint HotExportUserDict(const char *dict_name, const char *text_file) {
+    if (rime::an<rime::Db> db = GetOpenUserDb(dict_name)) {
+        if (!rime::UserDbHelper(db).IsUserDb())
+            return -1;
+        rime::TsvWriter writer(rime::path(text_file), rime::TableDb::format.formatter);
+        writer.file_description = "Rime user dictionary export";
+        rime::DbSource source(db.get());
+        int num_entries = 0;
+        try {
+            num_entries = writer << source;
+        } catch (std::exception &) {
+            return -1;
+        }
+        return num_entries;
+    }
+    auto *api = leversApi();
+    return api->export_user_dict(dict_name, text_file);
+}
+
+}  // namespace
+
 extern "C" {
 
 JNIEXPORT jobjectArray JNICALL
@@ -160,6 +245,23 @@ Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_importUserDict(
     jni::StringChars name(env, dict_name);
     jni::StringChars file(env, text_file);
     return leversApi()->import_user_dict(name.get(), file.get());
+}
+
+
+JNIEXPORT jint JNICALL
+Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_importUserDictLive(
+        JNIEnv *env, jclass, jstring dict_name, jstring text_file) {
+    jni::StringChars name(env, dict_name);
+    jni::StringChars file(env, text_file);
+    return HotImportUserDict(name.get(), file.get());
+}
+
+JNIEXPORT jint JNICALL
+Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_exportUserDictLive(
+        JNIEnv *env, jclass, jstring dict_name, jstring text_file) {
+    jni::StringChars name(env, dict_name);
+    jni::StringChars file(env, text_file);
+    return HotExportUserDict(name.get(), file.get());
 }
 
 }  // extern "C"

@@ -138,6 +138,7 @@ object RimeDaemon {
         }
     }
 
+
     private suspend fun handleRimeMessage(it: RimeMessage<*>) {
         if (it is RimeMessage.DeployMessage) {
             val buildNotification: NotificationCompat.Builder.() -> Unit

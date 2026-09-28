@@ -9,6 +9,29 @@ project(rime_jni VERSION 3.0.0)
 # for reproducible build
 add_link_options("LINKER:--hash-style=gnu,--build-id=none")
 
+# Jime: hot user-dict import/export needs a tiny accessor on librime's
+# UserDictionary (see patches/librime-user-dictionary-db-accessor.patch).
+# deps/ is untracked, so apply the vendored patch automatically when missing.
+set(_jime_ud_header "${CMAKE_CURRENT_SOURCE_DIR}/deps/librime/src/rime/dict/user_dictionary.h")
+set(_jime_ud_patch "${CMAKE_CURRENT_SOURCE_DIR}/patches/librime-user-dictionary-db-accessor.patch")
+if(EXISTS "${_jime_ud_header}" AND EXISTS "${_jime_ud_patch}")
+  file(READ "${_jime_ud_header}" _jime_ud_content)
+  if(NOT _jime_ud_content MATCHES "an<Db> db\\(\\) const")
+    message(STATUS "Jime: applying vendored librime patch (UserDictionary db() accessor)")
+    execute_process(
+      COMMAND patch -p1 --forward --silent -i "${_jime_ud_patch}"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/deps/librime"
+      RESULT_VARIABLE _jime_patch_result)
+    if(NOT _jime_patch_result EQUAL 0)
+      message(FATAL_ERROR "Jime: failed to apply librime user_dictionary patch")
+    endif()
+  endif()
+endif()
+unset(_jime_ud_header)
+unset(_jime_ud_patch)
+unset(_jime_ud_content)
+unset(_jime_patch_result)
+
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 # general options
@@ -34,6 +57,9 @@ add_subdirectory(deps/boost EXCLUDE_FROM_ALL)
 option(WITH_GFLAGS "Use gflags" OFF)
 option(WITH_GTEST "Use googletest" OFF)
 option(WITH_UNWIND "Enable libunwind support" OFF)
+# glog examples don't link under the Android NDK (host libunwind picked up);
+# they're not needed for the app anyway.
+set(BUILD_EXAMPLES OFF)
 add_subdirectory(deps/librime/deps/glog)
 target_compile_options(
   glog_internal PRIVATE "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.")
