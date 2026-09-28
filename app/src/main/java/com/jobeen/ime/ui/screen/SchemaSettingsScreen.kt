@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.jobeen.ime.R
 import com.jobeen.ime.base.ngram.GramModelDownloader
+import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
@@ -92,6 +93,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+private const val KEY_APP_VERSION_CODE = "app_version_code"
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SchemaSettingsScreen(onBack: () -> Unit) {
@@ -107,6 +110,17 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var grammarProgress by remember { mutableFloatStateOf(0f) }
     var grammarFailed by remember { mutableStateOf(false) }
     var grammarButtonWidth by remember { mutableStateOf(0.dp) }
+    // 万象方案更新状态
+    val updatePrefs = remember {
+        context.getSharedPreferences(WanxiangUpdateManager.PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    var updateInfo by remember { mutableStateOf<WanxiangUpdateManager.UpdateInfo?>(null) }
+    var updating by remember { mutableStateOf(false) }
+    var updateProgress by remember { mutableStateOf<WanxiangUpdateManager.UpdateProgress?>(null) }
+    var updateStageText by remember { mutableStateOf("") }
+    var updateDone by remember { mutableStateOf(false) }
+    var updateFailed by remember { mutableStateOf(false) }
+    var updateButtonWidth by remember { mutableStateOf(0.dp) }
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
@@ -167,6 +181,78 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         grammarLanguage = language
         if (language != null) {
             grammarReady = File(DataManager.sharedDataDir, "$language.gram").isFile
+        }
+    }
+
+    fun formatSize(bytes: Long): String = when {
+        bytes <= 0L -> ""
+        bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
+        bytes >= 1024L -> "%.0f KB".format(bytes / 1024.0)
+        else -> "$bytes B"
+    }
+
+    fun currentAppVersionCode(): Long = runCatching {
+        val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+        if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode
+        else @Suppress("DEPRECATION") pi.versionCode.toLong()
+    }.getOrNull() ?: -1L
+
+    fun checkWanxiangUpdate() {
+        if (updating) return
+        // App 升级后内置词库可能已变化：若 versionCode 变了，清除旧的更新记录，
+        // 避免"已是最新"的版本号与实际被 DataManager.sync() 还原的文件不一致
+        val appVersionCode = currentAppVersionCode()
+        val recordedCode = updatePrefs.getLong(KEY_APP_VERSION_CODE, -1L)
+        if (appVersionCode != -1L && recordedCode != -1L && recordedCode != appVersionCode) {
+            updatePrefs.edit().clear().apply()
+            updateInfo = null
+        }
+        // 固定地址版本比对，无需网络请求
+        updateInfo = WanxiangUpdateManager.checkForUpdates(updatePrefs)
+        updateDone = false
+        updateFailed = false
+    }
+
+    fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
+        if (updating) return
+        updating = true
+        updateFailed = false
+        updateDone = false
+        updateProgress = null
+        scope.launch {
+            val success = WanxiangUpdateManager.downloadAndApply(
+                updatePrefs,
+                info,
+                context.cacheDir,
+            ) { progress ->
+                scope.launch(Dispatchers.Main.immediate) {
+                    updateProgress = progress
+                    updateStageText = when (progress.stage) {
+                        WanxiangUpdateManager.UpdateProgress.Stage.SCHEMA_DOWNLOAD ->
+                            context.getString(R.string.schema_update_downloading_schema)
+                        WanxiangUpdateManager.UpdateProgress.Stage.DICTS_EXTRACT ->
+                            context.getString(R.string.schema_update_extracting)
+                        WanxiangUpdateManager.UpdateProgress.Stage.GRAM_DOWNLOAD ->
+                            context.getString(R.string.schema_update_downloading_gram)
+                    }
+                }
+            }
+            updating = false
+            updateProgress = null
+            if (success) {
+                updateDone = true
+                // 记录 App 版本号，用于下次检查时判断内置词库是否被升级覆盖
+                currentAppVersionCode().takeIf { it != -1L }?.let {
+                    updatePrefs.edit().putLong(KEY_APP_VERSION_CODE, it).apply()
+                }
+                // 更新本地版本显示
+                updateInfo = WanxiangUpdateManager.checkForUpdates(updatePrefs)
+                // 词库与模型已替换，触发 Rime 完整重新部署
+                updateStageText = context.getString(R.string.schema_update_deploying)
+                EngineFactory.current()?.reload()
+            } else {
+                updateFailed = true
+            }
         }
     }
 
@@ -243,6 +329,98 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         }
                     },
                 )
+            }
+
+            SettingsGroup(title = stringResource(R.string.schema_update_title)) {
+                val info = updateInfo
+                ActionRow(
+                    title = stringResource(R.string.schema_update_title),
+                    subtitle = when {
+                        updating && updateProgress != null -> {
+                            val p = updateProgress!!
+                            val pct = if (p.total > 0L) {
+                                (p.downloaded * 100 / p.total).toInt()
+                            } else {
+                                0
+                            }
+                            "$updateStageText $pct%"
+                        }
+                        updating -> updateStageText.ifEmpty {
+                            stringResource(R.string.schema_update_deploying)
+                        }
+                        updateDone -> stringResource(R.string.schema_update_success)
+                        updateFailed -> stringResource(R.string.schema_update_failed)
+                        info == null -> stringResource(R.string.schema_update_desc)
+                        info.hasUpdate ->
+                            "${stringResource(R.string.schema_update_available)} " +
+                                WanxiangUpdateManager.SCHEMA_VERSION
+                        else -> "${stringResource(R.string.schema_update_latest)} " +
+                            "(${WanxiangUpdateManager.SCHEMA_VERSION})"
+                    },
+                    trailing = {
+                        when {
+                            updateDone -> Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp),
+                            )
+
+                            updating -> ProgressButton(
+                                progress = updateProgress?.let {
+                                    if (it.total > 0L) it.downloaded.toFloat() / it.total.toFloat() else 0f
+                                } ?: 0f,
+                                width = updateButtonWidth,
+                            )
+
+                            info?.hasUpdate == true -> Button(
+                                onClick = { startWanxiangUpdate(info) },
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .onSizeChanged {
+                                        updateButtonWidth = with(density) { it.width.toDp() }
+                                    },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.schema_update_start),
+                                    fontSize = rowSubFontSize,
+                                )
+                            }
+
+                            else -> Button(
+                                onClick = { checkWanxiangUpdate() },
+                                modifier = Modifier
+                                    .height(32.dp)
+                                    .onSizeChanged {
+                                        updateButtonWidth = with(density) { it.width.toDp() }
+                                    },
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.schema_update_check),
+                                    fontSize = rowSubFontSize,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    },
+                )
+                // 本地版本信息行
+                if (info != null && !updating) {
+                    val builtin = stringResource(R.string.schema_update_builtin)
+                    ActionRow(
+                        title = "词库 ${info.schemaLocalVersion ?: builtin}",
+                        subtitle = "语法模型 ${
+                            if (info.gramDownloaded)
+                                stringResource(R.string.schema_grammar_model_ready)
+                            else builtin
+                        }",
+                        trailing = {},
+                    )
+                }
             }
 
             SectionHeader(stringResource(R.string.enabled_schemas))
