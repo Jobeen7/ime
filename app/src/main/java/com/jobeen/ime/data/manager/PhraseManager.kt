@@ -4,7 +4,7 @@ import android.content.Context
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.PhraseRecord
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import com.jobeen.ime.base.util.appScope
 import timber.log.Timber
 
@@ -22,31 +22,31 @@ object PhraseManager {
         val createdAt: Long,
     )
 
-    fun getAll(context: Context): List<Phrase> = db(context) { db ->
+    suspend fun getAll(context: Context): List<Phrase> = db(context) { db ->
         ensureSeeded(context, db)
         db.phraseDao().getAll().map { Phrase(it.id, it.text, it.label, it.createdAt) }
     } ?: emptyList()
 
-    fun getById(context: Context, id: Long): Phrase? = db(context) { db ->
+    suspend fun getById(context: Context, id: Long): Phrase? = db(context) { db ->
         db.phraseDao().getById(id)?.let { Phrase(it.id, it.text, it.label, it.createdAt) }
     }
 
-    fun search(context: Context, query: String): List<Phrase> = db(context) { db ->
+    suspend fun search(context: Context, query: String): List<Phrase> = db(context) { db ->
         db.phraseDao().search(query).map { Phrase(it.id, it.text, it.label, it.createdAt) }
     } ?: emptyList()
 
-    fun insert(context: Context, text: String, label: String): Long {
+    suspend fun insert(context: Context, text: String, label: String): Long {
         val t = text.trim()
         if (t.isEmpty()) return -1
         val l = label.trim().ifEmpty { t.take(12) }
         val id = db(context) { db ->
             db.phraseDao().insert(PhraseRecord(text = t, label = l, createdAt = System.currentTimeMillis()))
         } ?: -1
-        if (id > 0) onContentChanged?.invoke()
+        if (id > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
         return id
     }
 
-    fun update(context: Context, phrase: Phrase) {
+    suspend fun update(context: Context, phrase: Phrase) {
         val t = phrase.text.trim()
         if (t.isEmpty()) return
         val l = phrase.label.trim().ifEmpty { t.take(12) }
@@ -55,17 +55,17 @@ object PhraseManager {
                 PhraseRecord(id = phrase.id, text = t, label = l, createdAt = phrase.createdAt)
             )
         }
-        onContentChanged?.invoke()
+        withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }
 
-    fun delete(context: Context, id: Long) {
+    suspend fun delete(context: Context, id: Long) {
         db(context) { db -> db.phraseDao().deleteById(id) }
-        onContentChanged?.invoke()
+        withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }
 
-    fun deleteAll(context: Context) {
+    suspend fun deleteAll(context: Context) {
         db(context) { db -> db.phraseDao().deleteAll() }
-        onContentChanged?.invoke()
+        withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }
 
     private suspend fun ensureSeeded(context: Context, db: AppDatabase) {
@@ -87,9 +87,9 @@ object PhraseManager {
         prefs.edit().putBoolean(KEY_SEEDED, true).apply()
     }
 
-    private fun <T> db(context: Context, block: suspend (AppDatabase) -> T): T? =
+    private suspend fun <T> db(context: Context, block: suspend (AppDatabase) -> T): T? =
         try {
-            runBlocking(Dispatchers.IO) {
+            withContext(Dispatchers.IO) {
                 val db = AppDatabase.getInstance(context)
                 block(db)
             }

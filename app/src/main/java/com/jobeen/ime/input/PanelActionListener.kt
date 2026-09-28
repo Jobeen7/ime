@@ -15,6 +15,8 @@ import com.jobeen.ime.ui.AboutActivity
 import com.jobeen.ime.ui.KeyboardThemeSettingsActivity
 import com.jobeen.ime.ui.MainActivity
 import com.jobeen.ime.ui.SchemaSettingsActivity
+import com.jobeen.ime.base.util.appScope
+import kotlinx.coroutines.launch
 
 class PanelActionListener(
     private val service: ImeInputMethodService,
@@ -105,11 +107,11 @@ class PanelActionListener(
     }
 
     override fun onClipboardClear() {
-        ClipboardManager.clearAll(service)
+        appScope.launch { ClipboardManager.clearAll(service) }
     }
 
     override fun onClipboardItemDelete(entry: ClipboardManager.Entry) {
-        ClipboardManager.removeEntry(service, entry.text)
+        appScope.launch { ClipboardManager.removeEntry(service, entry.text) }
     }
 
     override fun onCopyTextCommit(text: String) {
@@ -132,14 +134,16 @@ class PanelActionListener(
     }
 
     override fun onAddPhraseSave(text: String) {
-        val id = PhraseManager.insert(service, text, text.take(12))
-        if (id > 0) {
-            service.keyboardWindow?.showToast(service.getString(R.string.phrase_add_success))
+        appScope.launch {
+            val id = PhraseManager.insert(service, text, text.take(12))
+            if (id > 0) {
+                service.keyboardWindow?.showToast(service.getString(R.string.phrase_add_success))
+            }
+            service.phraseAddBridgeActive = false
+            service.keyboardWindow?.view?.exitAddPhraseMode()
+            service.keyboardWindow?.panel?.exitAddPhraseMode()
+            service.engine?.onInputCleared()
         }
-        service.phraseAddBridgeActive = false
-        service.keyboardWindow?.view?.exitAddPhraseMode()
-        service.keyboardWindow?.panel?.exitAddPhraseMode()
-        service.engine?.onInputCleared()
     }
 
     override fun onAddPhraseCancel() {

@@ -29,7 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ime_database"
-                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).fallbackToDestructiveMigration().build().also { INSTANCE = it }
+                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).fallbackToDestructiveMigration().build().also { INSTANCE = it }
             }
         }
 
@@ -111,5 +111,11 @@ abstract class AppDatabase : RoomDatabase() {
                 """
             )
         }
+
+        // v8 仅随包名改版 bump，无结构变更；空迁移避免 fallbackToDestructiveMigration 清库
+        private val MIGRATION_7_8: Migration = Migration(
+            startVersion = 7,
+            endVersion = 8,
+        ) { _ -> }
     }
 }
