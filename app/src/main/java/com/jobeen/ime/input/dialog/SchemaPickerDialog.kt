@@ -208,7 +208,7 @@ object SchemaPickerDialog {
                             layoutParams = LinearLayout.LayoutParams(context.dp(4), 1)
                         })
                         val punctText =
-                            if (schema.punctuation == "full-width") context.getString(R.string.tag_punctuation_full)
+                            if (schema.punctuation == "FullWidth") context.getString(R.string.tag_punctuation_full)
                             else context.getString(R.string.tag_punctuation_half)
                         val punctBg = if (dark) TertiaryContainerDark.toArgb()
                         else TertiaryContainerLight.toArgb()

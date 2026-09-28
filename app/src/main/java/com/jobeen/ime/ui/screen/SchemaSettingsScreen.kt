@@ -447,7 +447,7 @@ private fun SchemaListItem(
                     )
                     Spacer(Modifier.width(4.dp))
                     val punctText =
-                        if (schema.punctuation == "full-width") stringResource(R.string.tag_punctuation_full)
+                        if (schema.punctuation == "FullWidth") stringResource(R.string.tag_punctuation_full)
                         else stringResource(R.string.tag_punctuation_half)
                     TagBadge(
                         punctText,

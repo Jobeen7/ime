@@ -38,6 +38,7 @@ class ImeInputMethodService : InputMethodService() {
 
     fun activeInputConnection(): android.view.inputmethod.InputConnection? =
         if (phraseAddBridgeActive) virtualInputConnection else currentInputConnection
+
     var scope: CoroutineScope? = null
     var messageObserveJob: Job? = null
     private var showingDialog: android.app.Dialog? = null
@@ -113,7 +114,7 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         keyboardWindow?.onStartInputView(info, restarting)
-        engine?.onStartInputView(currentInputConnection)
+        engine?.onStartInputView(currentInputConnection, info)
         notifyInputChanged()
         super.onStartInputView(info, restarting)
     }
@@ -260,8 +261,10 @@ class ImeInputMethodService : InputMethodService() {
         else lastSelectionStart to lastSelectionEnd
         keyboardWindow?.onSelectionUpdate(selection.first, selection.second)
         keyboardWindow?.onInputChanged(
-            ic.getTextBeforeCursor(Int.MAX_VALUE, 0)?.toString().orEmpty() +
-                ic.getTextAfterCursor(Int.MAX_VALUE, 0)?.toString().orEmpty(),
+            ic.getTextBeforeCursor(Int.MAX_VALUE, 0)?.toString().orEmpty() + ic.getTextAfterCursor(
+                Int.MAX_VALUE,
+                0
+            )?.toString().orEmpty(),
             virtualInputConnection = phraseAddBridgeActive,
         )
     }

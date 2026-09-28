@@ -218,6 +218,13 @@ object KeyboardStateManager {
                 updateReturnKeyIfNeeded()
             }
 
+            is EngineMessage.Commit -> {
+                if (isComposing) {
+                    isComposing = false
+                    updateReturnKeyIfNeeded()
+                }
+            }
+
             is EngineMessage.Depoly -> {
                 Timber.d("handleEngineMessage EngineMessage.Depoly ")
                 if (message.state == EngineMessage.Depoly.State.Finish) {
