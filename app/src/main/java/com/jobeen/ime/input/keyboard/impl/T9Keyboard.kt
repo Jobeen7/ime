@@ -9,7 +9,7 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.backspaceKey
-import com.jobeen.ime.input.keyboard.key.clearKey
+import com.jobeen.ime.input.keyboard.key.newlineKey
 import com.jobeen.ime.input.keyboard.key.infiniteKey
 import com.jobeen.ime.input.keyboard.key.layoutSwitchKey
 import com.jobeen.ime.input.keyboard.key.mixedAlphabetKey
@@ -82,7 +82,7 @@ class T9Keyboard(
                 mixedAlphabetKey("4", "GHI"),
                 mixedAlphabetKey("5", "JKL"),
                 mixedAlphabetKey("6", "MNO"),
-                clearKey(0.15f),
+                newlineKey(0.15f),
             ),
             listOf(
                 mixedAlphabetKey("7", "PQRS"),
