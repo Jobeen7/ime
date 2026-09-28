@@ -25,4 +25,7 @@ sealed class PanelAction {
     data object CloseKeyboard : PanelAction()
     data object ClearClipboard : PanelAction()
     data object ClearPhrases : PanelAction()
+    data object SelectAll : PanelAction()
+    data object Copy : PanelAction()
+    data object Paste : PanelAction()
 }
