@@ -64,6 +64,14 @@ class KeyActionListener(
                 engine?.selectCandidatePinYin(action.pinYin)
             }
 
+            is KeyboardAction.UndoAction -> {
+                engine?.undo(service)
+            }
+
+            is KeyboardAction.RedoAction -> {
+                engine?.redo(service)
+            }
+
             is KeyboardAction.MultiReturnAction -> {
                 engine?.resetComposition()
 

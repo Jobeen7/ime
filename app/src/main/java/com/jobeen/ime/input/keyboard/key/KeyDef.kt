@@ -99,7 +99,10 @@ open class KeyDef(
         class Press(val action: KeyboardAction) : Behavior()
         class LongPress(val action: KeyboardAction) : Behavior()
         class Repeat(val action: KeyboardAction) : Behavior()
-        class Swipe(val action: KeyboardAction) : Behavior()
+        class Swipe(
+            val upAction: KeyboardAction? = null,
+            val downAction: KeyboardAction? = null,
+        ) : Behavior()
         class DoubleTap(val action: KeyboardAction) : Behavior()
     }
 
