@@ -123,6 +123,19 @@
     <string name="schema_grammar_model_ready">已就绪</string>
     <string name="schema_grammar_model_failed">下载失败，请重试</string>
     <string name="schema_grammar_model_unavailable">当前方案未配置语法模型</string>
+    <string name="schema_update_title">方案更新</string>
+    <string name="schema_update_desc">检查词库与语法模型的在线更新</string>
+    <string name="schema_update_check">检查更新</string>
+    <string name="schema_update_latest">已是最新版本</string>
+    <string name="schema_update_available">发现新版本</string>
+    <string name="schema_update_start">开始更新</string>
+    <string name="schema_update_downloading_schema">正在下载方案包…</string>
+    <string name="schema_update_extracting">正在更新词库…</string>
+    <string name="schema_update_downloading_gram">正在下载语法模型…</string>
+    <string name="schema_update_deploying">正在重新部署…</string>
+    <string name="schema_update_success">更新完成，已重新部署</string>
+    <string name="schema_update_failed">更新失败，请重试</string>
+    <string name="schema_update_builtin">内置版本</string>
 
     <!-- Text Editing Panel -->
     <string name="move_cursor_up">上移光标</string>
