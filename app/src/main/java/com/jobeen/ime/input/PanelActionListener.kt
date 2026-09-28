@@ -39,6 +39,12 @@ class PanelActionListener(
             PanelAction.ReloadEngine -> service.engine?.reload()
             PanelAction.Undo -> service.engine?.undo(service)
             PanelAction.Redo -> service.engine?.redo(service)
+            PanelAction.SelectAll ->
+                service.activeInputConnection()?.performContextMenuAction(android.R.id.selectAll)
+            PanelAction.Copy ->
+                service.activeInputConnection()?.performContextMenuAction(android.R.id.copy)
+            PanelAction.Paste ->
+                service.activeInputConnection()?.performContextMenuAction(android.R.id.paste)
 
             PanelAction.Palette -> service.startActivity(
                 Intent(service, KeyboardThemeSettingsActivity::class.java).apply {
