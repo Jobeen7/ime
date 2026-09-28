@@ -5,6 +5,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import timber.log.Timber
@@ -14,6 +16,10 @@ import java.util.zip.ZipInputStream
 
 /**
  * 万象输入方案在线更新管理器。
+ *
+ * 下载地址（Jobeen 指定，只用 lite 版，不用 Base/Pro/Pure）：
+ * - 方案包：https://github.com/amzxyz/rime-wanxiang/releases/download/{tag}/rime-wanxiang-lite.zip
+ * - 语法模型：https://github.com/amzxyz/RIME-LMDG/releases/download/LTS/wanxiang-lts-zh-hans.gram
  *
  * 安全策略（修改时必须遵守）：
  * 1. 只更新纯数据文件：dicts/ 下的词库 + 语法模型 .gram。
@@ -28,15 +34,18 @@ import java.util.zip.ZipInputStream
  */
 object WanxiangUpdateManager {
 
-    /** 方案包固定下载地址（Jobeen 指定，只用 lite 版） */
-    const val SCHEMA_URL =
-        "https://github.com/amzxyz/rime-wanxiang/releases/download/v18.0.14/rime-wanxiang-lite.zip"
-    const val SCHEMA_VERSION = "v18.0.14"
+    private const val SCHEMA_REPO = "amzxyz/rime-wanxiang"
+    private const val GRAM_REPO = "amzxyz/RIME-LMDG"
+    private const val GRAM_TAG = "LTS"
 
-    /** 语法模型固定下载地址（Jobeen 指定，LTS 版） */
-    const val GRAM_URL =
+    /** 语法模型固定下载地址（LTS 标签恒指向最新） */
+    private const val GRAM_URL =
         "https://github.com/amzxyz/RIME-LMDG/releases/download/LTS/wanxiang-lts-zh-hans.gram"
-    const val GRAM_FILE_NAME = "wanxiang-lts-zh-hans.gram"
+    private const val GRAM_FILE_NAME = "wanxiang-lts-zh-hans.gram"
+
+    /** 方案包下载地址模式：只取 lite 版 */
+    private fun schemaUrl(tag: String): String =
+        "https://github.com/amzxyz/rime-wanxiang/releases/download/$tag/rime-wanxiang-lite.zip"
 
     /** zip 中只允许更新此前缀下的词库文件，其余一律跳过 */
     private val ALLOWED_PREFIXES = listOf("dicts/")
@@ -44,7 +53,7 @@ object WanxiangUpdateManager {
 
     const val PREFS_NAME = "wanxiang_update"
     private const val KEY_SCHEMA_VERSION = "schema_version"
-    private const val KEY_GRAM_DOWNLOADED = "gram_downloaded"
+    private const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
 
     private const val PART_SUFFIX = ".part"
     private const val BUFFER_SIZE = 32 * 1024
@@ -55,12 +64,34 @@ object WanxiangUpdateManager {
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
 
+    private val json = Json { ignoreUnknownKeys = true }
+
+    @Serializable
+    private data class GhAsset(
+        val name: String = "",
+        val browser_download_url: String = "",
+        val size: Long = 0L,
+    )
+
+    @Serializable
+    private data class GhRelease(
+        val tag_name: String = "",
+        val published_at: String = "",
+        val assets: List<GhAsset> = emptyList(),
+    )
+
     data class UpdateInfo(
+        /** 远端方案版本，如 v18.0.14 */
+        val schemaRemoteVersion: String,
+        /** 本地已下载版本，null=未更新过 */
         val schemaLocalVersion: String?,
-        val gramDownloaded: Boolean,
+        /** 远端模型发布时间 */
+        val gramRemotePublishedAt: String,
+        /** 本地已下载模型的发布时间，null=未下载过 */
+        val gramLocalPublishedAt: String?,
     ) {
-        val schemaUpdateAvailable: Boolean get() = schemaLocalVersion != SCHEMA_VERSION
-        val gramUpdateAvailable: Boolean get() = !gramDownloaded
+        val schemaUpdateAvailable: Boolean get() = schemaLocalVersion != schemaRemoteVersion
+        val gramUpdateAvailable: Boolean get() = gramLocalPublishedAt != gramRemotePublishedAt
         val hasUpdate: Boolean get() = schemaUpdateAvailable || gramUpdateAvailable
     }
 
@@ -72,21 +103,41 @@ object WanxiangUpdateManager {
         enum class Stage { SCHEMA_DOWNLOAD, DICTS_EXTRACT, GRAM_DOWNLOAD }
     }
 
-    fun getLocalVersions(prefs: android.content.SharedPreferences): Pair<String?, Boolean> =
-        prefs.getString(KEY_SCHEMA_VERSION, null) to
-            prefs.getBoolean(KEY_GRAM_DOWNLOADED, false)
-
     /**
-     * 检查更新：比对本地已记录版本与固定地址版本，无需网络请求。
+     * 检查远端更新：查询 GitHub Releases 获取最新版本号，与本地记录比对。
+     * 必须在协程中调用（内部已切换到 IO）。
+     * @return Result 包装的 UpdateInfo，网络失败时携带异常
      */
-    fun checkForUpdates(
+    suspend fun checkForUpdates(
         prefs: android.content.SharedPreferences,
-    ): UpdateInfo {
-        val (localSchema, gramDownloaded) = getLocalVersions(prefs)
-        return UpdateInfo(
-            schemaLocalVersion = localSchema,
-            gramDownloaded = gramDownloaded,
-        )
+    ): Result<UpdateInfo> = withContext(Dispatchers.IO) {
+        runCatching {
+            val schemaRelease = fetchRelease("$SCHEMA_REPO/releases/latest")
+            val gramRelease = fetchRelease("$GRAM_REPO/releases/tags/$GRAM_TAG")
+            if (schemaRelease.tag_name.isBlank()) error("远端方案版本无效")
+            if (gramRelease.published_at.isBlank()) error("远端模型版本无效")
+
+            UpdateInfo(
+                schemaRemoteVersion = schemaRelease.tag_name,
+                schemaLocalVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
+                gramRemotePublishedAt = gramRelease.published_at,
+                gramLocalPublishedAt = prefs.getString(KEY_GRAM_PUBLISHED_AT, null),
+            )
+        }.onFailure {
+            Timber.e(it, "检查方案更新失败")
+        }
+    }
+
+    private fun fetchRelease(apiPath: String): GhRelease {
+        val request = Request.Builder()
+            .url("https://api.github.com/repos/$apiPath")
+            .header("Accept", "application/vnd.github+json")
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) error("版本检查失败：HTTP ${response.code}")
+            val body = response.body?.string() ?: error("版本检查返回为空")
+            return json.decodeFromString<GhRelease>(body)
+        }
     }
 
     /**
@@ -106,7 +157,7 @@ object WanxiangUpdateManager {
             if (info.schemaUpdateAvailable) {
                 val zipFile = File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX")
                 zipFile.delete()
-                val ok = downloadFile(SCHEMA_URL, zipFile) { d, t ->
+                val ok = downloadFile(schemaUrl(info.schemaRemoteVersion), zipFile) { d, t ->
                     onProgress(UpdateProgress(UpdateProgress.Stage.SCHEMA_DOWNLOAD, d, t))
                 }
                 if (!ok) return@withContext false
@@ -164,13 +215,13 @@ object WanxiangUpdateManager {
 
             // 5. 全部成功后才记录版本号
             prefs.edit()
-                .putString(KEY_SCHEMA_VERSION, SCHEMA_VERSION)
-                .putBoolean(KEY_GRAM_DOWNLOADED, true)
+                .putString(KEY_SCHEMA_VERSION, info.schemaRemoteVersion)
+                .putString(KEY_GRAM_PUBLISHED_AT, info.gramRemotePublishedAt)
                 .apply()
             true
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            Timber.e(e, "万象更新失败")
+            Timber.e(e, "方案更新失败")
             false
         } finally {
             // 清理临时文件，避免占用存储空间
@@ -240,7 +291,7 @@ object WanxiangUpdateManager {
         return runCatching {
             client.newCall(Request.Builder().url(url).build()).execute().use { response ->
                 if (!response.isSuccessful) {
-                    Timber.w("万象更新下载失败：HTTP %d", response.code)
+                    Timber.w("方案更新下载失败：HTTP %d", response.code)
                     return false
                 }
                 val body = response.body ?: return false
@@ -271,7 +322,7 @@ object WanxiangUpdateManager {
             }
         }.onFailure {
             if (it !is kotlinx.coroutines.CancellationException) {
-                Timber.e(it, "万象更新下载失败")
+                Timber.e(it, "方案更新下载失败")
             }
         }.getOrDefault(false)
     }
