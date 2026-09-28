@@ -6,11 +6,11 @@ plugins {
 }
 
 @Suppress("UnstableApiUsage") android {
-    namespace = "com.ninthsoft.ime"
+    namespace = "com.jobeen.ime"
     compileSdk = 37
 
     defaultConfig {
-        applicationId = "com.ninthsoft.ime"
+        applicationId = "com.jobeen.ime"
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36

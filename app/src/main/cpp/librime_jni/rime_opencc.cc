@@ -15,7 +15,7 @@
 extern "C" {
 
 JNIEXPORT jstring JNICALL
-Java_com_ninthsoft_ime_engine_rime_data_opencc_OpenCCDictManager_openCCLineConv(
+Java_com_jobeen_ime_engine_rime_data_opencc_OpenCCDictManager_openCCLineConv(
         JNIEnv *env, jclass, jstring input, jstring config_file_name) {
     jni::StringChars in(env, input);
     jni::StringChars config(env, config_file_name);
@@ -29,7 +29,7 @@ Java_com_ninthsoft_ime_engine_rime_data_opencc_OpenCCDictManager_openCCLineConv(
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_data_opencc_OpenCCDictManager_openCCDictConv(
+Java_com_jobeen_ime_engine_rime_data_opencc_OpenCCDictManager_openCCDictConv(
         JNIEnv *env, jclass, jstring src, jstring dest, jboolean mode) {
     jni::StringChars src_path(env, src);
     jni::StringChars dest_path(env, dest);

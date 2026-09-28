@@ -164,60 +164,60 @@ namespace jni {
             BooleanCtor = env->GetMethodID(Boolean, "<init>", "(Z)V");
 
             Rime = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/Rime")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/Rime")));
             HandleRimeMessage = env->GetStaticMethodID(
                     Rime, "handleMessage", "(I[Ljava/lang/Object;)V");
 
             CandidateProto = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/CandidateProto")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/CandidateProto")));
             CandidateProtoCtor = env->GetMethodID(
                     CandidateProto, "<init>",
                     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
 
             CommitProto = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/CommitProto")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/CommitProto")));
             CommitProtoCtor =
                     env->GetMethodID(CommitProto, "<init>", "(Ljava/lang/String;)V");
 
             ContextProto = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/ContextProto")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/ContextProto")));
             ContextProtoCtor = env->GetMethodID(
                     ContextProto, "<init>",
-                    "(Lcom/ninthsoft/ime/engine/rime/core/CompositionProto;"
-                    "Lcom/ninthsoft/ime/engine/rime/core/MenuProto;Ljava/lang/String;I)V");
+                    "(Lcom/jobeen/ime/engine/rime/core/CompositionProto;"
+                    "Lcom/jobeen/ime/engine/rime/core/MenuProto;Ljava/lang/String;I)V");
 
             SyllableProto = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/SyllableProto")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/SyllableProto")));
             SyllableProtoCtor = env->GetMethodID(
                     SyllableProto, "<init>",
                     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;II)V");
 
             CompositionProto = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/CompositionProto")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/CompositionProto")));
             CompositionProtoCtor = env->GetMethodID(
                     CompositionProto, "<init>",
-                    "(IIIILjava/lang/String;Ljava/lang/String;[Lcom/ninthsoft/ime/engine/rime/core/SyllableProto;)V");
+                    "(IIIILjava/lang/String;Ljava/lang/String;[Lcom/jobeen/ime/engine/rime/core/SyllableProto;)V");
 
             MenuProto = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/MenuProto")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/MenuProto")));
             MenuProtoCtor = env->GetMethodID(
                     MenuProto, "<init>",
-                    "(IIZI[Lcom/ninthsoft/ime/engine/rime/core/CandidateProto;"
+                    "(IIZI[Lcom/jobeen/ime/engine/rime/core/CandidateProto;"
                     "Ljava/lang/String;[Ljava/lang/String;)V");
 
             StatusProto = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/StatusProto")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/StatusProto")));
             StatusProtoCtor = env->GetMethodID(
                     StatusProto, "<init>",
                     "(Ljava/lang/String;Ljava/lang/String;ZZZZZZZ)V");
 
             SchemaItem = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/SchemaItem")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/SchemaItem")));
             SchemaItemCtor = env->GetMethodID(SchemaItem, "<init>",
                                               "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
 
             KeyEvent = static_cast<jclass>(env->NewGlobalRef(
-                    env->FindClass("com/ninthsoft/ime/engine/rime/core/RimeKeyEvent")));
+                    env->FindClass("com/jobeen/ime/engine/rime/core/RimeKeyEvent")));
             KeyEventCtor =
                     env->GetMethodID(KeyEvent, "<init>", "(IILjava/lang/String;)V");
         }

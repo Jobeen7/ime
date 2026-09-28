@@ -10,7 +10,7 @@
 extern "C" {
 
 JNIEXPORT jlong JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_openRimeConfig(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_openRimeConfig(
         JNIEnv *env, jclass, jstring config_id) {
     auto *api = rime_get_api();
     jni::StringChars id(env, config_id);
@@ -23,7 +23,7 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_openRimeConfig(
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_openRimeUserConfig(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_openRimeUserConfig(
         JNIEnv *env, jclass, jstring config_id) {
     auto *api = rime_get_api();
     jni::StringChars id(env, config_id);
@@ -36,7 +36,7 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_openRimeUserConfig(
 }
 
 JNIEXPORT jlong JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_openRimeSchema(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_openRimeSchema(
         JNIEnv *env, jclass, jstring schema_id) {
     auto *api = rime_get_api();
     jni::StringChars id(env, schema_id);
@@ -49,7 +49,7 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_openRimeSchema(
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_closeRimeConfig(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_closeRimeConfig(
         JNIEnv *, jclass, jlong peer) {
     auto *api = rime_get_api();
     auto *config = reinterpret_cast<RimeConfig *>(peer);
@@ -58,7 +58,7 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_closeRimeConfig(
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigInt(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_getRimeConfigInt(
         JNIEnv *env, jclass, jlong peer, jstring key) {
     auto *api = rime_get_api();
     jni::StringChars k(env, key);
@@ -71,7 +71,7 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigInt(
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigString(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_getRimeConfigString(
         JNIEnv *env, jclass, jlong peer, jstring key) {
     auto *api = rime_get_api();
     jni::StringChars k(env, key);
@@ -82,7 +82,7 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigString(
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigBool(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_getRimeConfigBool(
         JNIEnv *env, jclass, jlong peer, jstring key) {
     auto *api = rime_get_api();
     jni::StringChars k(env, key);
@@ -96,7 +96,7 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigBool(
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigListItemPath(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_getRimeConfigListItemPath(
         JNIEnv *env, jclass, jlong peer, jstring key) {
     auto *api = rime_get_api();
     auto *config = reinterpret_cast<RimeConfig *>(peer);
@@ -116,7 +116,7 @@ Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_getRimeConfigListItemPath(
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_RimeConfig_setRimeConfigBool(
+Java_com_jobeen_ime_engine_rime_core_RimeConfig_setRimeConfigBool(
         JNIEnv *env, jclass, jlong peer, jstring key, jboolean value) {
     auto *api = rime_get_api();
     jni::StringChars k(env, key);

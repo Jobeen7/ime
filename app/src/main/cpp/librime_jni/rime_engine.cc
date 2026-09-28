@@ -2,7 +2,7 @@
 //
 // Main JNI entry point and RIME engine bridge. Exposes the librime C API
 // (rime_api.h, BSD-3-Clause) to the Kotlin layer through a set of static
-// JNI methods on the com.ninthsoft.ime.engine.rime.core.Rime class.
+// JNI methods on the com.jobeen.ime.engine.rime.core.Rime class.
 
 #include <rime_api.h>
 
@@ -293,7 +293,7 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
 extern "C" {
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_bootstrap(
+Java_com_jobeen_ime_engine_rime_core_Rime_bootstrap(
         JNIEnv *env, jclass, jstring shared_dir, jstring user_dir,
         jstring version_name, jboolean full_check) {
     jni::StringChars shared(env, shared_dir);
@@ -328,24 +328,24 @@ Java_com_ninthsoft_ime_engine_rime_core_Rime_bootstrap(
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_shutdown(JNIEnv *, jclass) {
+Java_com_jobeen_ime_engine_rime_core_Rime_shutdown(JNIEnv *, jclass) {
     RimeEngine::instance().shutdown();
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_joinMaintenanceThread(JNIEnv *, jclass) {
+Java_com_jobeen_ime_engine_rime_core_Rime_joinMaintenanceThread(JNIEnv *, jclass) {
     RimeEngine::instance().joinMaintenanceThread();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_deploySchemaFile(
+Java_com_jobeen_ime_engine_rime_core_Rime_deploySchemaFile(
         JNIEnv *env, jclass, jstring schema_file) {
     jni::StringChars path(env, schema_file);
     return RimeEngine::instance().deploySchema(path.str());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_deployConfigFile(
+Java_com_jobeen_ime_engine_rime_core_Rime_deployConfigFile(
         JNIEnv *env, jclass, jstring file_name, jstring version_key) {
     jni::StringChars file(env, file_name);
     jni::StringChars key(env, version_key);
@@ -353,71 +353,71 @@ Java_com_ninthsoft_ime_engine_rime_core_Rime_deployConfigFile(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_syncUserData(JNIEnv *, jclass) {
+Java_com_jobeen_ime_engine_rime_core_Rime_syncUserData(JNIEnv *, jclass) {
     return RimeEngine::instance().syncUserData();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_processKey(
+Java_com_jobeen_ime_engine_rime_core_Rime_processKey(
         JNIEnv *, jclass, jint keycode, jint mask) {
     return RimeEngine::instance().processKey(keycode, mask);
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_commitComposition(
+Java_com_jobeen_ime_engine_rime_core_Rime_commitComposition(
         JNIEnv *, jclass) {
     return RimeEngine::instance().commitComposition();
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_commitCurrentSelection(
+Java_com_jobeen_ime_engine_rime_core_Rime_commitCurrentSelection(
         JNIEnv *env, jclass, jstring append) {
     jni::StringChars suffix(env, append);
     return RimeEngine::instance().commitCurrentSelection(suffix.str());
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_clearComposition(
+Java_com_jobeen_ime_engine_rime_core_Rime_clearComposition(
         JNIEnv *, jclass) {
     RimeEngine::instance().clearComposition();
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_freeContext(
+Java_com_jobeen_ime_engine_rime_core_Rime_freeContext(
         JNIEnv *, jclass) {
     RimeEngine::instance().freeContext();
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getCommit(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_getCommit(JNIEnv *env,
                                                        jclass) {
     auto c = RimeEngine::instance().commit();
     return toJavaCommit(env, *c);
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getContext(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_getContext(JNIEnv *env,
                                                         jclass) {
     auto ctx = RimeEngine::instance().context();
     return toJavaContext(env, *ctx);
 }
 
 JNIEXPORT jobject JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getStatus(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_getStatus(JNIEnv *env,
                                                        jclass) {
     auto s = RimeEngine::instance().status();
     return toJavaStatus(env, *s);
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_setOption(
+Java_com_jobeen_ime_engine_rime_core_Rime_setOption(
         JNIEnv *env, jclass, jstring option, jboolean value) {
     jni::StringChars key(env, option);
     RimeEngine::instance().setOption(key.str(), value);
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getOption(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_getOption(JNIEnv *env,
                                                        jclass,
                                                        jstring option) {
     jni::StringChars key(env, option);
@@ -425,46 +425,46 @@ Java_com_ninthsoft_ime_engine_rime_core_Rime_getOption(JNIEnv *env,
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getSchemaList(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_getSchemaList(JNIEnv *env,
                                                            jclass) {
     return toJavaSchemaArray(env, RimeEngine::instance().schemaList());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getCurrentSchema(
+Java_com_jobeen_ime_engine_rime_core_Rime_getCurrentSchema(
         JNIEnv *env, jclass) {
     return jni::makeString(env, RimeEngine::instance().currentSchemaId());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_selectSchema(
+Java_com_jobeen_ime_engine_rime_core_Rime_selectSchema(
         JNIEnv *env, jclass, jstring schema_id) {
     jni::StringChars id(env, schema_id);
     return RimeEngine::instance().selectSchema(id.str());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_simulateKeySequence(
+Java_com_jobeen_ime_engine_rime_core_Rime_simulateKeySequence(
         JNIEnv *env, jclass, jstring key_sequence) {
     jni::StringChars seq(env, key_sequence);
     return RimeEngine::instance().simulateKeySequence(seq.str());
 }
 
 JNIEXPORT jstring JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getRawInput(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_getRawInput(JNIEnv *env,
                                                          jclass) {
     return jni::makeString(env, RimeEngine::instance().rawInput());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_setInput(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_setInput(JNIEnv *env,
                                                        jclass, jstring input) {
     jni::StringChars raw(env, input);
     return RimeEngine::instance().setInput(raw.str());
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_appendInput(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_appendInput(JNIEnv *env,
                                                          jclass, jstring input) {
     jni::StringChars raw(env, input);
     return RimeEngine::instance().appendInput(raw.str());
@@ -472,51 +472,51 @@ Java_com_ninthsoft_ime_engine_rime_core_Rime_appendInput(JNIEnv *env,
 
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getInputConfirmedPosition(JNIEnv *env,
+Java_com_jobeen_ime_engine_rime_core_Rime_getInputConfirmedPosition(JNIEnv *env,
                                                       jclass) {
     return static_cast<jint>(RimeEngine::instance().getInputConfirmedPosition());
 }
 
 JNIEXPORT jint JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getCaretPos(JNIEnv *, jclass) {
+Java_com_jobeen_ime_engine_rime_core_Rime_getCaretPos(JNIEnv *, jclass) {
     return static_cast<jint>(RimeEngine::instance().caretPos());
 }
 
 JNIEXPORT void JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_setCaretPos(JNIEnv *, jclass,
+Java_com_jobeen_ime_engine_rime_core_Rime_setCaretPos(JNIEnv *, jclass,
                                                          jint caret_pos) {
     RimeEngine::instance().setCaretPos(static_cast<size_t>(caret_pos));
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_selectCandidate(
+Java_com_jobeen_ime_engine_rime_core_Rime_selectCandidate(
         JNIEnv *, jclass, jint index, jboolean global) {
     return RimeEngine::instance().selectCandidate(
             static_cast<size_t>(index), global);
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_deleteCandidate(
+Java_com_jobeen_ime_engine_rime_core_Rime_deleteCandidate(
         JNIEnv *, jclass, jint index, jboolean global) {
     return RimeEngine::instance().deleteCandidate(
             static_cast<size_t>(index), global);
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_changeCandidatePage(
+Java_com_jobeen_ime_engine_rime_core_Rime_changeCandidatePage(
         JNIEnv *, jclass, jboolean backward) {
     return RimeEngine::instance().changePage(backward);
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getCandidates(
+Java_com_jobeen_ime_engine_rime_core_Rime_getCandidates(
         JNIEnv *env, jclass, jint start_index, jint limit) {
     auto list = RimeEngine::instance().candidates(start_index, limit);
     return toJavaCandidateArray(env, list);
 }
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_ninthsoft_ime_engine_rime_core_Rime_getBulkCandidates(
+Java_com_jobeen_ime_engine_rime_core_Rime_getBulkCandidates(
         JNIEnv *env, jclass) {
     auto [size, highlighted, list] = RimeEngine::instance().bulkCandidates();
 
