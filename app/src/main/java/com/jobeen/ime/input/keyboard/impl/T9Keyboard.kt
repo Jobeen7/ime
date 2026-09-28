@@ -92,9 +92,9 @@ class T9Keyboard(
             ),
             listOf(
                 layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f),
-                schemaSwitchKey(0.13f),
-                spaceKey(percentWidth = 0.44f),
                 peroidKey(percentWidth = 0.13f),
+                spaceKey(percentWidth = 0.44f),
+                schemaSwitchKey(0.13f),
             ),
         )
     }
