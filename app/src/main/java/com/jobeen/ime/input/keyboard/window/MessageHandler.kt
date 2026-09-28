@@ -22,6 +22,7 @@ class MessageHandler(
             is EngineMessage.Commit -> {
                 (service as ImeInputMethodService).activeInputConnection()
                     ?.commitText(message.text, 1)
+                service.notifyInputChanged()
             }
 
             is EngineMessage.Candidates -> {

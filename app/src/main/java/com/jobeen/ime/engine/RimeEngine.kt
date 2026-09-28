@@ -3,7 +3,9 @@ package com.jobeen.ime.engine
 import android.content.Context
 import android.content.SharedPreferences
 import android.inputmethodservice.InputMethodService
+import android.text.InputType
 import android.view.KeyEvent.*
+import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.core.content.edit
 import com.jobeen.ime.ImeApplication
@@ -112,6 +114,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     @Volatile
     private var inputConnection: InputConnection? = null
+    private var editorInfo: EditorInfo? = null
     private var serviceRef: ImeInputMethodService? = null
 
     //引擎相关配置监控
@@ -433,9 +436,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 messages.emit(EngineMessage.Commit(""))
                 return@withContext
             }
-            if (!ic?.getTextBeforeCursor(1, 0).isNullOrEmpty()) {
-                ic.deleteSurroundingText(1, 0)
-            }
+            InputConnectionUtil.sendCombinationKeyEvent(ic, KEYCODE_DEL)
         }
     }
 
@@ -549,7 +550,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 actions.send(Action.Reset)
             } else {
                 withContext(Dispatchers.Main.immediate) {
-                    inputConnection()?.deleteSurroundingText(Int.MAX_VALUE, Int.MAX_VALUE)
+                    val ic = inputConnection()
+                    if (!ic?.getTextBeforeCursor(1, 0).isNullOrEmpty()) {
+                        ic.deleteSurroundingText(Int.MAX_VALUE, Int.MAX_VALUE)
+                    }
                 }
             }
         }
@@ -637,10 +641,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     override fun onFinishInputView() {
         inputConnection = null
+        editorInfo = null
     }
 
-    override fun onStartInputView(ic: InputConnection) {
+    override fun onStartInputView(ic: InputConnection, info: EditorInfo) {
         inputConnection = ic
+        editorInfo = info
     }
 
     override fun predict(commit: String) {
