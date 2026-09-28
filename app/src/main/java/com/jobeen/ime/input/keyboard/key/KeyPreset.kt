@@ -254,6 +254,18 @@ fun clearKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
     ),
 )
 
+fun newlineKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+    appearance = KeyDef.Appearance.Text(
+        displayText = "换行",
+        textSize = 15f,
+        percentWidth = percentWidth,
+        variant = Variant.Alternative,
+    ),
+    behaviors = setOf(
+        KeyDef.Behavior.Press(KeyboardAction.ReturnAction())
+    ),
+)
+
 
 fun zeroKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
     appearance = KeyDef.Appearance.Text(
