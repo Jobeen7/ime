@@ -159,6 +159,33 @@ object KeyboardManager {
                 }
             }
 
+            /** 按键振动是否跟随系统振动设置（默认开启） */
+            fun getVibrationFollowSystem(context: Context): Boolean {
+                return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getBoolean("$PREFIX.vibration_follow_system", true)
+            }
+
+            fun setVibrationFollowSystem(context: Context, enabled: Boolean) {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+                    putBoolean("$PREFIX.vibration_follow_system", enabled)
+                }
+            }
+
+            /**
+             * 不跟随系统时的振动强度（1~100），默认 100。
+             * 跟随系统开启时强度由系统触摸强度设置决定，此值不生效。
+             */
+            fun getVibrationAmplitude(context: Context): Int {
+                return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                    .getInt("$PREFIX.vibration_amplitude", 100).coerceIn(1, 100)
+            }
+
+            fun setVibrationAmplitude(context: Context, percent: Int) {
+                context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+                    putInt("$PREFIX.vibration_amplitude", percent.coerceIn(1, 100))
+                }
+            }
+
             fun getSoundEnabled(context: Context): Boolean {
                 return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
                     .getBoolean("$PREFIX.sound", true)
