@@ -128,6 +128,16 @@
     <string name="schema_update_check">检查更新</string>
     <string name="schema_update_checking">检查中…</string>
     <string name="schema_update_check_failed">检查失败，请稍后重试</string>
+    <string name="schema_update_local_info">本地信息</string>
+    <string name="schema_update_remote_info">远程信息</string>
+    <string name="schema_update_current_schema">当前选择的方案</string>
+    <string name="schema_update_local_schema">本地方案</string>
+    <string name="schema_update_local_dict">本地词库</string>
+    <string name="schema_update_local_gram">本地模型</string>
+    <string name="schema_update_remote_schema">远程方案</string>
+    <string name="schema_update_remote_dict">远程词库</string>
+    <string name="schema_update_remote_gram">远程模型</string>
+    <string name="schema_update_no_gram">未下载</string>
     <string name="schema_update_latest">已是最新版本</string>
     <string name="schema_update_available">发现新版本</string>
     <string name="schema_update_start">开始更新</string>
