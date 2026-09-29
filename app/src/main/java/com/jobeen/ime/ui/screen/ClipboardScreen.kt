@@ -43,9 +43,6 @@ fun ClipboardScreen(onBack: () -> Unit) {
 
     var maxEntries by remember { mutableFloatStateOf(ClipboardManager.getMaxEntries(context).toFloat()) }
     var retentionDays by remember { mutableFloatStateOf(ClipboardManager.getRetentionDays(context).toFloat()) }
-    var pollInterval by remember {
-        mutableFloatStateOf(ClipboardManager.getPollIntervalSeconds(context).toFloat())
-    }
 
     Scaffold(
         topBar = {
@@ -103,16 +100,6 @@ fun ClipboardScreen(onBack: () -> Unit) {
                     onValueChange = {
                         retentionDays = it
                         ClipboardManager.setRetentionDays(context, it.toInt())
-                    },
-                )
-                SliderRow(
-                    title = stringResource(R.string.clipboard_poll_interval),
-                    value = pollInterval,
-                    valueLabel = "${pollInterval.toInt()} 秒",
-                    range = 1f..60f,
-                    onValueChange = {
-                        pollInterval = it
-                        ClipboardManager.setPollIntervalSeconds(context, it.toInt())
                     },
                 )
             }

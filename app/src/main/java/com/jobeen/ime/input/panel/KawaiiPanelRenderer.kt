@@ -5,7 +5,6 @@ import android.graphics.Color
 import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Shader
-import kotlin.math.max
 import android.graphics.drawable.Drawable
 import androidx.core.graphics.withClip
 import androidx.core.graphics.withRotation
@@ -30,8 +29,42 @@ class ComposingRenderer(
 
     private data class PillRect(val left: Float, val right: Float, val index: Int)
 
+    /** 布局结果：只存几何与缩放，绘制时复用成员 Paint */
+    private data class PillLayout(
+        val rect: PillRect,
+        val scale: Float,
+        val indexW: Float,
+        val textW: Float,
+    )
+
     private var lastPills: List<PillRect> = emptyList()
     var maxScrollX: Float = 0f
+
+    // 成员复用：draw() 内零分配
+    private val indexPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val pillBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val fadePaint = Paint()
+    private val bgGradPaint = Paint()
+
+    // 布局缓存：candidates 引用/尺寸/字号/开关任一变化才重算
+    private var cachedLayouts: List<PillLayout> = emptyList()
+    private var cachedPills: List<PillRect> = emptyList()
+    private var cachedMaxScrollX: Float = 0f
+    private var cachedCandidates: List<EngineMessage.Candidate>? = null
+    private var cachedWidth: Int = -1
+    private var cachedDensity: Float = -1f
+    private var cachedHPad: Float = Float.NaN
+    private var cachedIndexTextSize: Float = -1f
+    private var cachedTextTextSize: Float = -1f
+    private var cachedShowIndex: Boolean = false
+    private var cachedShowComment: Boolean = false
+
+    // 渐变缓存：只在尺寸/颜色变化时重建
+    private var fadeKey: FadeKey? = null
+    private data class FadeKey(val width: Int, val fadeStart: Float, val dividerX: Float, val bgColor: Int)
+    private var bgGradKey: BgGradKey? = null
+    private data class BgGradKey(val height: Int, val bgColor: Int, val keyboardBg: Int)
 
     override fun draw(
         canvas: Canvas, width: Int, height: Int, paints: Paints,
@@ -40,14 +73,17 @@ class ComposingRenderer(
         lastPills = emptyList()
         if (width <= 0 || height <= 0 || candidates.isEmpty()) return
 
-        val savedBg = paints.candidateBgPaint.color
-        val savedText = paints.candidateTextPaint.color
-        val savedIndex = paints.candidateIndexPaint.color
+        // 每帧从 paints 同步属性到复用 paint（recording 变暗直接作用于复用 paint，不再改 paints）
+        indexPaint.set(paints.candidateIndexPaint)
+        textPaint.set(paints.candidateTextPaint)
+        pillBgPaint.set(paints.candidateBgPaint)
         if (recording) {
-            paints.candidateBgPaint.color = dimColor(savedBg)
-            paints.candidateTextPaint.color = dimColor(savedText)
-            paints.candidateIndexPaint.color = dimColor(savedIndex)
+            indexPaint.color = dimColor(indexPaint.color)
+            textPaint.color = dimColor(textPaint.color)
+            pillBgPaint.color = dimColor(pillBgPaint.color)
         }
+        val indexBaseSize = indexPaint.textSize
+        val textBaseSize = textPaint.textSize
 
         val pillH = 34f * density
         val pillY = (height - pillH) / 2f
@@ -65,89 +101,108 @@ class ComposingRenderer(
         val maxPillW = pillsEnd - sidePad
 
         val minTextSize = 12f * density
-        val minScale = minTextSize / minOf(
-            paints.candidateTextPaint.textSize,
-            paints.candidateIndexPaint.textSize,
-        )
+        val minScale = minTextSize / minOf(textBaseSize, indexBaseSize)
 
-        data class PillLayout(
-            val rect: PillRect,
-            val indexPaint: Paint,
-            val textPaint: Paint,
-            val indexW: Float,
-            val textW: Float,
-        )
-
-        val layouts = mutableListOf<PillLayout>()
-        val pills = mutableListOf<PillRect>()
-        var x = sidePad
-        for ((i, c) in candidates.withIndex()) {
-            val indexStr = if (showIndex) "${i + 1}. " else ""
-            val indexW = paints.candidateIndexPaint.measureText(indexStr)
-            val textW = paints.candidateTextPaint.measureText(c.text)
-            val commentStr = if (showComment && c.comment.isNotEmpty()) " ${c.comment}" else ""
-            val commentW =
-                if (commentStr.isNotEmpty()) paints.candidateIndexPaint.measureText(commentStr) else 0f
-            val contentW = indexW + textW + commentW + pillPad * 2
-            val scale = if (contentW >= maxPillW) {
-                (maxPillW / contentW).coerceAtLeast(minScale)
-            } else {
-                1f
+        // ---- 布局（命中缓存则跳过 measure） ----
+        val layoutValid = candidates === cachedCandidates
+            && width == cachedWidth
+            && density == cachedDensity
+            && horizontalPaddingDp == cachedHPad
+            && indexBaseSize == cachedIndexTextSize
+            && textBaseSize == cachedTextTextSize
+            && showIndex == cachedShowIndex
+            && showComment == cachedShowComment
+        val layouts: List<PillLayout>
+        if (layoutValid) {
+            layouts = cachedLayouts
+            lastPills = cachedPills
+            maxScrollX = cachedMaxScrollX
+        } else {
+            val newLayouts = ArrayList<PillLayout>(candidates.size)
+            val newPills = ArrayList<PillRect>(candidates.size)
+            var x = sidePad
+            for ((i, c) in candidates.withIndex()) {
+                val indexStr = if (showIndex) "${i + 1}. " else ""
+                val indexW = indexPaint.measureText(indexStr)
+                val textW = textPaint.measureText(c.text)
+                val commentStr = if (showComment && c.comment.isNotEmpty()) " ${c.comment}" else ""
+                val commentW =
+                    if (commentStr.isNotEmpty()) indexPaint.measureText(commentStr) else 0f
+                val contentW = indexW + textW + commentW + pillPad * 2
+                val scale = if (contentW >= maxPillW) {
+                    (maxPillW / contentW).coerceAtLeast(minScale)
+                } else {
+                    1f
+                }
+                indexPaint.textSize = indexBaseSize * scale
+                textPaint.textSize = textBaseSize * scale
+                val sIndexW = indexPaint.measureText(indexStr)
+                val sTextW = textPaint.measureText(c.text)
+                val sCommentW =
+                    if (commentStr.isNotEmpty()) indexPaint.measureText(commentStr) else 0f
+                val pillW = sIndexW + sTextW + sCommentW + pillPad * 2
+                val rect = PillRect(x, x + pillW, c.index)
+                newPills.add(rect)
+                newLayouts.add(PillLayout(rect, scale, sIndexW, sTextW))
+                x += pillW + gap
+                indexPaint.textSize = indexBaseSize
+                textPaint.textSize = textBaseSize
             }
-            val indexPaint = Paint(paints.candidateIndexPaint).apply {
-                textSize = paints.candidateIndexPaint.textSize * scale
-            }
-            val textPaint = Paint(paints.candidateTextPaint).apply {
-                textSize = paints.candidateTextPaint.textSize * scale
-            }
-            val sIndexW = indexPaint.measureText(indexStr)
-            val sTextW = textPaint.measureText(c.text)
-            val sCommentW = if (commentStr.isNotEmpty()) indexPaint.measureText(commentStr) else 0f
-            val pillW = sIndexW + sTextW + sCommentW + pillPad * 2
-            pills.add(PillRect(x, x + pillW, c.index))
-            layouts.add(
-                PillLayout(
-                    PillRect(x, x + pillW, c.index), indexPaint, textPaint, sIndexW, sTextW,
-                )
-            )
-            x += pillW + gap
+            layouts = newLayouts
+            lastPills = newPills
+            maxScrollX = maxOf(0f, x - sidePad - pillsEnd)
+            // 写缓存
+            cachedLayouts = newLayouts
+            cachedPills = newPills
+            cachedMaxScrollX = maxScrollX
+            cachedCandidates = candidates
+            cachedWidth = width
+            cachedDensity = density
+            cachedHPad = horizontalPaddingDp
+            cachedIndexTextSize = indexBaseSize
+            cachedTextTextSize = textBaseSize
+            cachedShowIndex = showIndex
+            cachedShowComment = showComment
         }
-        lastPills = pills
-
-        maxScrollX = maxOf(0f, x - sidePad - pillsEnd)
 
         val dividerX = (pillsEnd + expandBtnLeft) / 2f
         val fadeW = 24f * density
         val fadeStart = (dividerX - fadeW).coerceAtLeast(0f)
-        val fadePaint = Paint()
 
         canvas.withClip(0f, 0f, pillsEnd, height.toFloat()) {
             withSave {
                 translate(scrollX, 0f)
 
+                // 可见区间裁剪：只绘制可见候选（lastPills 保持全量供 hitTest）
+                val visLeft = -scrollX
+                val visRight = pillsEnd - scrollX
                 for ((i, c) in candidates.withIndex()) {
                     val layout = layouts[i]
                     val pill = layout.rect
+                    if (pill.right < visLeft || pill.left > visRight) continue
+
+                    indexPaint.textSize = indexBaseSize * layout.scale
+                    textPaint.textSize = textBaseSize * layout.scale
                     val textY =
-                        pillY + pillH / 2f - (layout.textPaint.descent() + layout.textPaint.ascent()) / 2f
+                        pillY + pillH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
 
                     if (candidateBorder) {
                         drawRoundRect(
                             pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
-                            paints.candidateBgPaint,
+                            pillBgPaint,
                         )
                     }
 
                     val drawIndex = showIndex
                     if (drawIndex) {
                         drawText(
-                            "${i + 1}. ", pill.left + pillPad, textY, layout.indexPaint,
+                            "${i + 1}. ", pill.left + pillPad, textY, indexPaint,
                         )
                     }
 
                     val textX =
                         if (drawIndex) pill.left + pillPad + layout.indexW else pill.left + pillPad
-                    drawText(c.text, textX, textY, layout.textPaint)
+                    drawText(c.text, textX, textY, textPaint)
 
                     if (showComment && c.comment.isNotEmpty()) {
                         val commentX = textX + layout.textW
@@ -155,27 +210,36 @@ class ComposingRenderer(
                             " ${c.comment}",
                             commentX,
                             textY,
-                            layout.indexPaint,
+                            indexPaint,
                         )
                     }
                 }
             }
 
-            fadePaint.shader = LinearGradient(
-                fadeStart, 0f, dividerX, 0f,
-                Color.TRANSPARENT, paints.bgPaint.color,
-                Shader.TileMode.CLAMP,
-            )
+            val bgColor = paints.bgPaint.color
+            val fk = FadeKey(width, fadeStart, dividerX, bgColor)
+            if (fk != fadeKey) {
+                fadePaint.shader = LinearGradient(
+                    fadeStart, 0f, dividerX, 0f,
+                    Color.TRANSPARENT, bgColor,
+                    Shader.TileMode.CLAMP,
+                )
+                fadeKey = fk
+            }
             drawRect(fadeStart, 0f, dividerX, height.toFloat(), fadePaint)
         }
 
-        val bgGradPaint = Paint(paints.bgPaint).apply {
-            shader = LinearGradient(
+        val bgColor = paints.bgPaint.color
+        val bgk = BgGradKey(height, bgColor, paints.keyboardBackground)
+        if (bgk != bgGradKey) {
+            bgGradPaint.set(paints.bgPaint)
+            bgGradPaint.shader = LinearGradient(
                 0f, 0f, 0f, height.toFloat(),
-                intArrayOf(paints.bgPaint.color, paints.bgPaint.color, paints.keyboardBackground),
+                intArrayOf(bgColor, bgColor, paints.keyboardBackground),
                 floatArrayOf(0f, 0.6f, 1f),
                 Shader.TileMode.CLAMP,
             )
+            bgGradKey = bgk
         }
         canvas.drawRect(pillsEnd, 0f, width.toFloat(), height.toFloat(), bgGradPaint)
         canvas.drawLine(
@@ -184,7 +248,7 @@ class ComposingRenderer(
         if (expandBorder) {
             canvas.drawRoundRect(
                 expandBtnLeft, pillY, expandBtnRight, pillY + pillH, pillR, pillR,
-                paints.candidateBgPaint,
+                pillBgPaint,
             )
         }
         val cx = expandBtnLeft + expandBtnW / 2f
@@ -205,12 +269,6 @@ class ComposingRenderer(
             } else {
                 d.draw(canvas)
             }
-        }
-
-        if (recording) {
-            paints.candidateBgPaint.color = savedBg
-            paints.candidateTextPaint.color = savedText
-            paints.candidateIndexPaint.color = savedIndex
         }
     }
 

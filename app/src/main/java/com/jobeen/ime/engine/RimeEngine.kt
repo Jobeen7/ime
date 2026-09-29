@@ -16,6 +16,7 @@ import com.jobeen.ime.engine.behavior.IBehavior
 import com.jobeen.ime.engine.rime.behavior.Segmentation
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.manager.CandidateManager
+import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.CandidateSortingManager
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.event.KeyEvent
@@ -60,6 +61,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
+import java.lang.ref.WeakReference
 import kotlin.lazy
 
 class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
@@ -116,7 +118,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     @Volatile
     private var inputConnection: InputConnection? = null
     private var editorInfo: EditorInfo? = null
-    private var serviceRef: ImeInputMethodService? = null
+    // 弱引用：EngineFactory 单例持有 RimeEngine，强引用 service 会导致 service 销毁后泄漏
+    private var serviceRef: WeakReference<ImeInputMethodService>? = null
 
     //引擎相关配置监控
     private var prefs: SharedPreferences? = null
@@ -128,7 +131,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     /** 桥接模式下返回虚拟连接，否则返回真实连接。 */
     private fun inputConnection(): InputConnection? =
-        serviceRef?.activeInputConnection() ?: inputConnection
+        serviceRef?.get()?.activeInputConnection() ?: inputConnection
 
     private val rerankManager by lazy { context?.let { CandidateRerankManager(it) } }
     private val predictionManager by lazy { context?.let { PredictionManager(it) } }
@@ -246,6 +249,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private suspend fun selectCandidateInternal(candidate: Candidate) {
+        // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不做任何学习
+        //（不读前文、不写偏好表、不跑预测上下文）；正常上屏不受影响
+        val noLearn = isNoPersonalizedLearning(editorInfo)
         if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
             messages.emit(EngineMessage.Commit(candidate.text))
             requestPrediction(candidate.text)
@@ -255,12 +261,35 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // Only Rime selection produces the empty candidate response that must be hidden.
         // Prediction candidates bypass Rime and must not arm this flag.
         state.suppressNextEmptyCandidates = true
-        sendJob {
-            val ctx = context ?: return@sendJob
-            val inputContext = (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
-            AppDatabase.getInstance(ctx).candidatePreferDao().upsert(candidate.text, inputContext)
+        if (!noLearn) {
+            sendJob {
+                val ctx = context ?: return@sendJob
+                val inputContext = (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
+                AppDatabase.getInstance(ctx).candidatePreferDao().upsert(candidate.text, inputContext)
+                CandidatePreferCache.noteUpsert(candidate.text)
+            }
         }
         flowBehavior(Selection(candidate.index))
+    }
+
+    /**
+     * 是否禁止个性化学习：密码类输入框，或输入框声明了
+     * [EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING]。
+     * 注意：librime native 层自学习是另一条路径，不受此处控制。
+     */
+    private fun isNoPersonalizedLearning(info: EditorInfo?): Boolean {
+        if (info == null) return false
+        val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
+        val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+        val isPassword = when (inputClass) {
+            InputType.TYPE_CLASS_TEXT -> variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
+            InputType.TYPE_CLASS_NUMBER -> variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
+            else -> false
+        }
+        if (isPassword) return true
+        return (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
     }
 
     override fun resetComposition() {
@@ -356,7 +385,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private suspend fun reduce(action: Action) {
         when (action) {
             is Action.ProcessKey -> {
-                serviceRef = action.service as? ImeInputMethodService
+                serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
                 processKeyInternal(action.key)
             }
 
@@ -366,12 +395,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is Action.Behavior -> flowBehavior(action.behavior)
             is Action.SelectCandidate -> selectCandidateInternal(action.candidate)
             is Action.Clear -> {
-                serviceRef = action.service as? ImeInputMethodService
+                serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
                 clearInternal()
             }
 
             is Action.Undo -> {
-                serviceRef = action.service as? ImeInputMethodService
+                serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
                 sendJob {
                     if (compositionCached.preedit?.isNotEmpty() == true) {
                         // 正在输入拼音：上滑撤销=清除当前正在打的拼音。
@@ -618,7 +647,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 val rerankEnabled = CandidateManager.isRerankEnabled(ctx)
                 if (rerankEnabled) {
                     // 开启重排：使用重排结果，不还原用户排序
-                    val inputContext =
+                    // 隐私模式下不读光标前文（gramDb 为空时前文本来也不参与打分）
+                    val inputContext = if (isNoPersonalizedLearning(editorInfo)) "" else
                         (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
                     val sortedList = rerankManager?.rerank(msg.list, inputContext, null)
                     actions.send(
@@ -678,6 +708,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private fun requestPrediction(commit: String) {
+        // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不读前文、不跑预测
+        if (isNoPersonalizedLearning(editorInfo)) return
         // 预测模型基于简体训练；先转成简体再推导，以支持繁体输入下的候选预测。
         val inputContext = TraditionalConverter.toSimplified(
             (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "") + commit

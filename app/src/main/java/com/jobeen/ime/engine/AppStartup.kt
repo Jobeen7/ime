@@ -13,7 +13,7 @@ import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import splitties.views.dsl.core.BuildConfig
+import com.jobeen.ime.BuildConfig
 import timber.log.Timber
 import java.io.File
 import java.security.MessageDigest
@@ -94,10 +94,27 @@ object AppStartup {
 
     private fun releaseResourcesIfNeeded(context: Context) {
         val destDir = context.getExternalFilesDir(null) ?: context.filesDir
-        val md5 = assetMd5(context, RESOURCE_ASSET) ?: return
         val versionFile = File(destDir, VERSION_FILE)
-        if (versionFile.isFile && versionFile.readText().trim() == md5) {
-            Timber.d("Resources up to date (md5=%s), skip extraction", md5)
+        val currentVc = currentVersionCode(context).toString()
+
+        // version.txt 存 "versionCode:md5"；versionCode 未变且哨兵文件存在 → 零 I/O 直接返回，
+        // 省掉每次冷启动对 65MB resource.zip 算 MD5
+        val stored = versionFile.takeIf { it.isFile }?.readText()?.trim()
+        val storedVc = stored?.substringBefore(':')
+        // 哨兵：资源目录被用户/清理工具删掉时不能只看 versionCode，必须重新解压
+        val sentinelOk = File(destDir, "shared/default.yaml").isFile
+        if (!storedVc.isNullOrEmpty() && storedVc == currentVc && sentinelOk) {
+            Timber.d("Resources up to date (vc=%s), skip md5 and extraction", currentVc)
+            return
+        }
+
+        // APK 更新了（或首次安装/旧格式 version.txt/资源目录缺失）：算一次 MD5 做二次确认
+        val md5 = assetMd5(context, RESOURCE_ASSET) ?: return
+        val storedMd5 = stored?.substringAfter(':')
+        if (storedMd5 == md5 && sentinelOk) {
+            // 资源内容没变（APK 只是重新打包），只更新 versionCode，跳过解压
+            versionFile.writeText("$currentVc:$md5")
+            Timber.d("Resources unchanged (md5=%s), skip extraction", md5)
             return
         }
 
@@ -105,8 +122,20 @@ object AppStartup {
         app.notifyState(ImeApplication.AppState.ResourcePreparing)
         runBlocking(Dispatchers.IO) {
             ResourceExtractorUtil.extract(context, RESOURCE_ASSET, destDir)
-            versionFile.writeText(md5)
+            versionFile.writeText("$currentVc:$md5")
         }
+    }
+
+    private fun currentVersionCode(context: Context): Long {
+        return runCatching {
+            val info = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                info.longVersionCode
+            } else {
+                @Suppress("DEPRECATION")
+                info.versionCode.toLong()
+            }
+        }.getOrDefault(0L)
     }
 
     private fun assetMd5(context: Context, assetName: String): String? {

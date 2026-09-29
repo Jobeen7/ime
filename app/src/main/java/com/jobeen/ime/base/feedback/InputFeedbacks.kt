@@ -1,9 +1,13 @@
 package com.jobeen.ime.base.feedback
 
 import android.content.Context
+import android.content.SharedPreferences
+import android.database.ContentObserver
 import android.media.AudioAttributes
 import android.media.SoundPool
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.VibrationEffect
 import android.os.VibrationAttributes
 import android.os.Vibrator
@@ -25,6 +29,82 @@ class InputFeedbacks private constructor() {
         private var isPopLoaded = false
         private val lock = Any()
         private const val VIBRATION_ATTRIBUTION_TAG = "keyboard_feedback"
+
+        // ---- 反馈设置缓存：避免每次按键重复读 SP / Binder IPC ----
+        // 失效机制：App 内设置经 SharedPreferences 监听器刷新；
+        // 系统触感总开关经 ContentObserver 刷新（回调在 binder 线程，只写 @Volatile 字段）
+        @Volatile private var cachedVibrationEnabled: Boolean? = null
+        @Volatile private var cachedFollowSystem: Boolean? = null
+        @Volatile private var cachedAmplitude: Int? = null
+        @Volatile private var cachedSystemHaptic: Boolean? = null
+        @Volatile private var cachedSoundEnabled: Boolean? = null
+        @Volatile private var cachedVibrator: Vibrator? = null
+        private var appContextRef: Context? = null
+        private var feedbackPrefs: SharedPreferences? = null
+        private var hapticObserver: ContentObserver? = null
+
+        private val feedbackPrefsListener =
+            SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+                if (key != null && key.startsWith("keyboard.feedback.")) {
+                    appContextRef?.let { refreshFeedbackCache(it) }
+                }
+            }
+
+        /** 在 ImeInputMethodService.onCreate 调用；幂等，可重复调用 */
+        fun initFeedbackCache(context: Context) {
+            if (feedbackPrefs != null) return
+            val app = context.applicationContext
+            appContextRef = app
+            feedbackPrefs = app.getSharedPreferences(
+                KeyboardManager.PREFS_NAME, Context.MODE_PRIVATE
+            ).also { it.registerOnSharedPreferenceChangeListener(feedbackPrefsListener) }
+            refreshFeedbackCache(app)
+            hapticObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) {
+                    cachedSystemHaptic = readSystemHapticEnabled(app)
+                }
+            }.also {
+                app.contentResolver.registerContentObserver(
+                    Settings.System.getUriFor(Settings.System.HAPTIC_FEEDBACK_ENABLED),
+                    false, it
+                )
+            }
+        }
+
+        /** 在 ImeInputMethodService.onDestroy 调用 */
+        fun releaseFeedbackCache(context: Context) {
+            feedbackPrefs?.unregisterOnSharedPreferenceChangeListener(feedbackPrefsListener)
+            feedbackPrefs = null
+            hapticObserver?.let { context.contentResolver.unregisterContentObserver(it) }
+            hapticObserver = null
+            appContextRef = null
+            cachedVibrationEnabled = null
+            cachedFollowSystem = null
+            cachedAmplitude = null
+            cachedSystemHaptic = null
+            cachedSoundEnabled = null
+            cachedVibrator = null
+        }
+
+        private fun refreshFeedbackCache(app: Context) {
+            cachedVibrationEnabled = KeyboardManager.Keyboard.Feedback.getVibrationEnabled(app)
+            cachedFollowSystem = KeyboardManager.Keyboard.Feedback.getVibrationFollowSystem(app)
+            cachedAmplitude = KeyboardManager.Keyboard.Feedback.getVibrationAmplitude(app)
+            cachedSoundEnabled = KeyboardManager.Keyboard.Feedback.getSoundEnabled(app)
+            cachedSystemHaptic = readSystemHapticEnabled(app)
+            cachedVibrator = createVibrator(app)
+        }
+
+        private fun ensureFeedbackCache(context: Context) {
+            if (cachedVibrationEnabled == null) {
+                synchronized(lock) {
+                    if (cachedVibrationEnabled == null) {
+                        // 兜底：service 未创建时（如设置页试听）也初始化并注册监听器
+                        initFeedbackCache(context)
+                    }
+                }
+            }
+        }
 
         fun initSoundPool(context: Context) {
             if (soundPool != null && isPopLoaded) return
@@ -55,7 +135,8 @@ class InputFeedbacks private constructor() {
         }
 
         fun soundEffect(context: Context, effect: SoundEffect) {
-            if (!KeyboardManager.Keyboard.Feedback.getSoundEnabled(context)) return
+            ensureFeedbackCache(context)
+            if (cachedSoundEnabled != true) return
             when (effect) {
                 SoundEffect.Standard -> {
                     if (isPopLoaded && popSoundId != 0) {
@@ -82,22 +163,22 @@ class InputFeedbacks private constructor() {
             longPressDuration: Long = 30L,
         ) {
             val context = view.context
-            if (!KeyboardManager.Keyboard.Feedback.getVibrationEnabled(context)) return
+            ensureFeedbackCache(context)
+            if (cachedVibrationEnabled != true) return
 
-            val followSystem = KeyboardManager.Keyboard.Feedback.getVibrationFollowSystem(context)
+            val followSystem = cachedFollowSystem == true
 
-            // —— 合并方案 ——
-            // Xime 的做法：跟随系统开关。读系统触感反馈总开关，关了就不振。
-            if (followSystem && !isSystemHapticEnabled(context)) return
+            // 跟随系统开关：读缓存的系统触感反馈总开关（ContentObserver 实时更新）
+            if (followSystem && cachedSystemHaptic != true) return
 
-            val vibrator = getVibrator(context)
+            val vibrator = cachedVibrator
             if (vibrator == null || !vibrator.hasVibrator()) return
 
             val duration = if (longPress) longPressDuration else pressDuration
             val hasAmplitudeControl =
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && vibrator.hasAmplitudeControl()
 
-            // 振幅决策（合并方案的核心）：
+            // 振幅决策：
             // - 跟随系统：用 DEFAULT_AMPLITUDE + USAGE_TOUCH，强度完全交给系统触摸强度
             //   设置（如三星"振动强度→触摸互动"），框架自动缩放；
             // - 不跟随：用 App 内设置的强度（1~100 → 1~255）。
@@ -106,7 +187,7 @@ class InputFeedbacks private constructor() {
             val amplitude = if (followSystem) {
                 VibrationEffect.DEFAULT_AMPLITUDE
             } else {
-                val percent = KeyboardManager.Keyboard.Feedback.getVibrationAmplitude(context)
+                val percent = cachedAmplitude ?: 100
                 ((percent / 100f) * 255).toInt().coerceIn(1, 255)
             }
 
@@ -139,7 +220,7 @@ class InputFeedbacks private constructor() {
         }
 
         /** 读取系统触感反馈总开关（设置→声音和振动→触控反馈） */
-        private fun isSystemHapticEnabled(context: Context): Boolean {
+        private fun readSystemHapticEnabled(context: Context): Boolean {
             return try {
                 Settings.System.getInt(
                     context.contentResolver,
@@ -152,7 +233,7 @@ class InputFeedbacks private constructor() {
             }
         }
 
-        private fun getVibrator(context: Context): Vibrator? {
+        private fun createVibrator(context: Context): Vibrator? {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 val attributionContext = context.createAttributionContext(
                     VIBRATION_ATTRIBUTION_TAG

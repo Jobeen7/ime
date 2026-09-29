@@ -16,7 +16,6 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.CopyOnWriteArrayList
-import splitties.views.dsl.core.BuildConfig
 import timber.log.Timber
 
 class Rime : RimeApi, RimeLifecycleOwner {
