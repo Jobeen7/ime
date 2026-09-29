@@ -57,6 +57,11 @@ object WanxiangUpdateManager {
     // 经与官方 Release 的 dict 文件哈希比对，确认为 v17.9.8
     const val BUILTIN_SCHEMA_VERSION = "v17.9.8"
     private const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
+    // 下载时计算的内容指纹（用于本地/远端比对）
+    private const val KEY_DICT_REMOTE_FP = "dict_remote_fp"
+    private const val KEY_DICT_REMOTE_FP_VER = "dict_remote_fp_ver"
+    private const val KEY_GRAM_REMOTE_FP = "gram_remote_fp"
+    private const val KEY_GRAM_REMOTE_FP_PUB = "gram_remote_fp_pub"
 
     private const val PART_SUFFIX = ".part"
     private const val BUFFER_SIZE = 32 * 1024
@@ -92,10 +97,10 @@ object WanxiangUpdateManager {
         val gramRemotePublishedAt: String,
         /** 本地已下载模型的发布时间，null=未下载过 */
         val gramLocalPublishedAt: String?,
-        /** 远端词库指纹（release 元数据派生，用于展示比对） */
-        val dictRemoteFingerprint: String,
-        /** 远端模型指纹（LTS 元数据派生，用于展示比对） */
-        val gramRemoteFingerprint: String,
+        /** 远端词库内容指纹（下载时计算并存储；null=尚未下载该版本） */
+        val dictRemoteFingerprint: String?,
+        /** 远端模型内容指纹（下载时计算并存储；null=尚未下载该版本） */
+        val gramRemoteFingerprint: String?,
     ) {
         val schemaUpdateAvailable: Boolean get() = schemaLocalVersion != schemaRemoteVersion
         val gramUpdateAvailable: Boolean get() = gramLocalPublishedAt != gramRemotePublishedAt
@@ -127,18 +132,13 @@ object WanxiangUpdateManager {
         prefs: android.content.SharedPreferences,
     ): LocalInfo = withContext(Dispatchers.IO) {
         val dictsDir = File(DataManager.sharedDataDir, "dicts")
-        val dictParts = dictsDir.walkTopDown()
-            .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
-            .map { "${it.relativeTo(dictsDir).path}|${it.length()}|${it.lastModified()}" }
-            .sorted()
-            .toList()
         val gramFile = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
         LocalInfo(
             // 未更新过则显示内置版本（v17.9.8，经哈希比对确认）
             schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null) ?: BUILTIN_SCHEMA_VERSION,
-            dictFingerprint = fingerprint(*dictParts.toTypedArray()),
+            dictFingerprint = runCatching { dictsContentFingerprint(dictsDir) }.getOrNull() ?: "",
             gramFingerprint = if (gramFile.isFile) {
-                fingerprint("${gramFile.length()}|${gramFile.lastModified()}")
+                runCatching { sha256File(gramFile) }.getOrNull()
             } else {
                 null
             },
@@ -158,6 +158,35 @@ object WanxiangUpdateManager {
     }
 
     /**
+     * 计算文件内容的 SHA-256（流式读取，适用于大文件如 396MB 语法模型）。
+     */
+    private fun sha256File(file: File): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(BUFFER_SIZE)
+            var n: Int
+            while (input.read(buf).also { n = it } != -1) {
+                digest.update(buf, 0, n)
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * 词库内容指纹：对每个 dict 文件计算内容 SHA-256，
+     * 按"相对路径|内容哈希"排序后拼接再取 SHA-256。
+     * 本地与下载时用同一算法，更新成功后两者一致。
+     */
+    private fun dictsContentFingerprint(dictsDir: File): String {
+        val parts = dictsDir.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
+            .map { "${it.relativeTo(dictsDir).path}|${sha256File(it)}" }
+            .sorted()
+            .toList()
+        return fingerprint(*parts.toTypedArray())
+    }
+
+    /**
      * 检查远端更新：查询 GitHub Releases 获取最新版本号，与本地记录比对。
      * 必须在协程中调用（内部已切换到 IO）。
      * @return Result 包装的 UpdateInfo，网络失败时携带异常
@@ -172,19 +201,15 @@ object WanxiangUpdateManager {
             if (gramRelease.published_at.isBlank()) error("远端模型版本无效")
 
             // 远端词库指纹：取 lite 包资产元数据派生
-            val liteAsset = schemaRelease.assets.firstOrNull {
-                it.name == "rime-wanxiang-lite.zip"
-            }
-            val dictRemoteFp = fingerprint(
-                schemaRelease.tag_name,
-                liteAsset?.name ?: "",
-                "${liteAsset?.size ?: 0L}",
-            )
-            // 远端模型指纹：取 LTS 发布时间派生
-            val gramRemoteFp = fingerprint(
-                gramRelease.published_at,
-                gramRelease.assets.firstOrNull()?.name ?: "",
-            )
+            // 远端词库指纹：仅当已下载过该版本时才有（下载时计算的内容指纹）；
+            // 新版本尚未下载时为 null，界面显示"—"
+            val dictRemoteFp =
+                prefs.getString(KEY_DICT_REMOTE_FP, null)
+                    .takeIf { prefs.getString(KEY_DICT_REMOTE_FP_VER, null) == schemaRelease.tag_name }
+            // 远端模型指纹：同理
+            val gramRemoteFp =
+                prefs.getString(KEY_GRAM_REMOTE_FP, null)
+                    .takeIf { prefs.getString(KEY_GRAM_REMOTE_FP_PUB, null) == gramRelease.published_at }
 
             UpdateInfo(
                 schemaRemoteVersion = schemaRelease.tag_name,
@@ -223,6 +248,9 @@ object WanxiangUpdateManager {
         onProgress: (UpdateProgress) -> Unit = {},
     ): Boolean = withContext(Dispatchers.IO) {
         val workDir = File(cacheDir, "wanxiang_update").apply { mkdirs() }
+        // 本次下载的内容指纹（下载成功后存入 prefs，供本地/远端比对）
+        var newDictFp: String? = null
+        var newGramFp: String? = null
         try {
             // 1. 下载方案包（只取其中 dicts/ 词库）
             if (info.schemaUpdateAvailable) {
@@ -248,6 +276,8 @@ object WanxiangUpdateManager {
                     Timber.w("方案包中未找到词库文件，放弃更新")
                     return@withContext false
                 }
+                // 计算下载词库的内容指纹（与本地同一算法，供更新后比对）
+                newDictFp = runCatching { dictsContentFingerprint(extractDir) }.getOrNull()
 
                 // 3. 搬移到 shared/dicts（逐文件覆盖，不删除其他文件）
                 val dictsDir = File(DataManager.sharedDataDir, "dicts").apply { mkdirs() }
@@ -280,15 +310,31 @@ object WanxiangUpdateManager {
                     Timber.w("语法模型下载为空，放弃更新")
                     return@withContext false
                 }
+                // 计算下载模型的内容指纹（流式，供更新后比对）
+                newGramFp = runCatching { sha256File(partial) }.getOrNull()
                 target.delete()
                 check(partial.renameTo(target)) { "语法模型落盘失败" }
             }
 
-            // 5. 全部成功后才记录版本号
-            prefs.edit()
-                .putString(KEY_SCHEMA_VERSION, info.schemaRemoteVersion)
-                .putString(KEY_GRAM_PUBLISHED_AT, info.gramRemotePublishedAt)
-                .apply()
+            // 5. 全部成功后才记录版本号与内容指纹
+            prefs.edit().apply {
+                putString(KEY_SCHEMA_VERSION, info.schemaRemoteVersion)
+                putString(KEY_GRAM_PUBLISHED_AT, info.gramRemotePublishedAt)
+                // 词库指纹仅在本次下载了方案包时更新
+                if (info.schemaUpdateAvailable) {
+                    newDictFp?.let {
+                        putString(KEY_DICT_REMOTE_FP, it)
+                        putString(KEY_DICT_REMOTE_FP_VER, info.schemaRemoteVersion)
+                    }
+                }
+                // 模型指纹仅在本次下载了模型时更新
+                if (info.gramUpdateAvailable) {
+                    newGramFp?.let {
+                        putString(KEY_GRAM_REMOTE_FP, it)
+                        putString(KEY_GRAM_REMOTE_FP_PUB, info.gramRemotePublishedAt)
+                    }
+                }
+            }.apply()
             true
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

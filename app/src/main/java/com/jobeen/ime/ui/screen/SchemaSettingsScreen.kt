@@ -286,6 +286,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 WanxiangUpdateManager.checkForUpdates(updatePrefs).onSuccess { info ->
                     updateInfo = info
                 }
+                // 重新计算本地指纹（更新后应与远端指纹一致）
+                localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
                 // 词库与模型已替换，触发 Rime 完整重新部署
                 updateStageText = context.getString(R.string.schema_update_deploying)
                 EngineFactory.current()?.reload()
@@ -406,7 +408,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     )
                     UpdateInfoRow(
                         label = stringResource(R.string.schema_update_local_dict),
-                        value = local?.dictFingerprint?.let {
+                        value = local?.dictFingerprint?.takeIf { it.isNotEmpty() }?.let {
                             WanxiangUpdateManager.shortFingerprint(it)
                         } ?: "—",
                         valueColor = localValueColor,
@@ -446,7 +448,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         )
                         UpdateInfoRow(
                             label = stringResource(R.string.schema_update_remote_dict),
-                            value = WanxiangUpdateManager.shortFingerprint(info.dictRemoteFingerprint),
+                            value = info.dictRemoteFingerprint?.let {
+                                WanxiangUpdateManager.shortFingerprint(it)
+                            } ?: "—",
                             valueColor = MaterialTheme.colorScheme.onSurface,
                         )
                         HorizontalDivider(
@@ -455,7 +459,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         )
                         UpdateInfoRow(
                             label = stringResource(R.string.schema_update_remote_gram),
-                            value = WanxiangUpdateManager.shortFingerprint(info.gramRemoteFingerprint),
+                            value = info.gramRemoteFingerprint?.let {
+                                WanxiangUpdateManager.shortFingerprint(it)
+                            } ?: "—",
                             valueColor = MaterialTheme.colorScheme.onSurface,
                         )
                     }
