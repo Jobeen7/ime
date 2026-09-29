@@ -5,9 +5,10 @@ import android.media.AudioAttributes
 import android.media.SoundPool
 import android.os.Build
 import android.os.VibrationEffect
+import android.os.VibrationAttributes
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.view.HapticFeedbackConstants
+import android.provider.Settings
 import android.view.View
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.KeyboardManager
@@ -79,51 +80,54 @@ class InputFeedbacks private constructor() {
             keyUp: Boolean = false,
             pressDuration: Long = 15L,
             longPressDuration: Long = 30L,
-            pressAmplitude: Int = 255,
-            longPressAmplitude: Int = 255
         ) {
             val context = view.context
             if (!KeyboardManager.Keyboard.Feedback.getVibrationEnabled(context)) return
+
+            val followSystem = KeyboardManager.Keyboard.Feedback.getVibrationFollowSystem(context)
+
+            // —— 合并方案 ——
+            // Xime 的做法：跟随系统开关。读系统触感反馈总开关，关了就不振。
+            if (followSystem && !isSystemHapticEnabled(context)) return
 
             val vibrator = getVibrator(context)
             if (vibrator == null || !vibrator.hasVibrator()) return
 
             val duration = if (longPress) longPressDuration else pressDuration
-            val amplitude = if (longPress) longPressAmplitude else pressAmplitude
             val hasAmplitudeControl =
                 Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && vibrator.hasAmplitudeControl()
 
+            // 振幅决策（合并方案的核心）：
+            // - 跟随系统：用 DEFAULT_AMPLITUDE + USAGE_TOUCH，强度完全交给系统触摸强度
+            //   设置（如三星"振动强度→触摸互动"），框架自动缩放；
+            // - 不跟随：用 App 内设置的强度（1~100 → 1~255）。
+            // 两种情况都走 vibrator 直接触发——部分三星机型会在 HAL 层静默丢弃
+            // performHapticFeedback 预设效果，直接 vibrate 才是可靠路径。
+            val amplitude = if (followSystem) {
+                VibrationEffect.DEFAULT_AMPLITUDE
+            } else {
+                val percent = KeyboardManager.Keyboard.Feedback.getVibrationAmplitude(context)
+                ((percent / 100f) * 255).toInt().coerceIn(1, 255)
+            }
+
             try {
-                if (duration != 0L) {
-                    if (hasAmplitudeControl && amplitude != 0) {
-                        vibrator.vibrate(
-                            VibrationEffect.createOneShot(duration, amplitude)
-                        )
-                    } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                        vibrator.vibrate(
-                            VibrationEffect.createOneShot(
-                                duration, VibrationEffect.DEFAULT_AMPLITUDE
-                            )
-                        )
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    val effect = if (hasAmplitudeControl && amplitude != 0) {
+                        VibrationEffect.createOneShot(duration, amplitude)
                     } else {
-                        @Suppress("DEPRECATION") vibrator.vibrate(duration)
+                        VibrationEffect.createOneShot(duration, VibrationEffect.DEFAULT_AMPLITUDE)
+                    }
+                    // API 33+：带 USAGE_TOUCH 属性，系统按触摸强度设置自动缩放振幅
+                    if (Build.VERSION.SDK_INT >= 33) {
+                        val attrs = VibrationAttributes.Builder()
+                            .setUsage(VibrationAttributes.USAGE_TOUCH)
+                            .build()
+                        vibrator.vibrate(effect, attrs)
+                    } else {
+                        vibrator.vibrate(effect)
                     }
                 } else {
-                    val hfc = if (longPress) {
-                        HapticFeedbackConstants.LONG_PRESS
-                    } else if (keyUp && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                        HapticFeedbackConstants.KEYBOARD_RELEASE
-                    } else {
-                        HapticFeedbackConstants.KEYBOARD_TAP
-                    }
-
-                    val flags = HapticFeedbackConstants.FLAG_IGNORE_VIEW_SETTING
-
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                        view.performHapticFeedback(hfc, flags)
-                    } else {
-                        @Suppress("DEPRECATION") view.performHapticFeedback(hfc)
-                    }
+                    @Suppress("DEPRECATION") vibrator.vibrate(duration)
                 }
 
                 Timber.d(
@@ -131,6 +135,20 @@ class InputFeedbacks private constructor() {
                 )
             } catch (e: Exception) {
                 Timber.e(e, "haptic feedback failed")
+            }
+        }
+
+        /** 读取系统触感反馈总开关（设置→声音和振动→触控反馈） */
+        private fun isSystemHapticEnabled(context: Context): Boolean {
+            return try {
+                Settings.System.getInt(
+                    context.contentResolver,
+                    Settings.System.HAPTIC_FEEDBACK_ENABLED,
+                    1
+                ) == 1
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to read system haptic setting, defaulting to enabled")
+                true
             }
         }
 
