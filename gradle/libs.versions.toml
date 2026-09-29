@@ -4,7 +4,6 @@ coreKtx = "1.19.0"
 junit = "4.13.2"
 junitVersion = "1.3.0"
 espressoCore = "3.7.0"
-kotlinpoet = "2.3.0"
 lifecycleRuntimeKtx = "2.11.0"
 activityCompose = "1.13.0"
 kotlin = "2.4.10"
@@ -40,7 +39,6 @@ androidx-compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-
 androidx-compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4" }
 androidx-compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 androidx-compose-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
-kotlinpoet = { module = "com.squareup:kotlinpoet", version.ref = "kotlinpoet" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 material = { module = "com.google.android.material:material", version.ref = "material" }
 splitties-bitflags = { module = "com.louiscad.splitties:splitties-bitflags", version.ref = "splitties" }
@@ -50,7 +48,6 @@ splitties-views-dsl-constraintlayout = { module = "com.louiscad.splitties:splitt
 splitties-views-dsl-coordinatorlayout = { module = "com.louiscad.splitties:splitties-views-dsl-coordinatorlayout", version.ref = "splitties" }
 splitties-views-dsl-recyclerview = { module = "com.louiscad.splitties:splitties-views-dsl-recyclerview", version.ref = "splitties" }
 splitties-views-recyclerview = { module = "com.louiscad.splitties:splitties-views-recyclerview", version.ref = "splitties" }
-kotlinpoet-ksp = { module = "com.squareup:kotlinpoet-ksp", version = "2.3.0" }
 timber = { module = "com.jakewharton.timber:timber", version.ref = "timber" }
 kotlinx-serialization-json = { module = "org.jetbrains.kotlinx:kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
 androidx-room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }

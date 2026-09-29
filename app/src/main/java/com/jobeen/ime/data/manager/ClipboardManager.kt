@@ -9,9 +9,6 @@ import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.ClipboardDao
 import com.jobeen.ime.data.database.ClipboardRecord
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import com.jobeen.ime.base.util.appScope
@@ -25,11 +22,9 @@ object ClipboardManager {
     private const val PREFS_NAME = "clipboard_settings"
     private const val KEY_MAX_ENTRIES = "max_entries"
     private const val KEY_RETENTION_DAYS = "retention_days"
-    private const val KEY_POLL_INTERVAL_SECONDS = "poll_interval_seconds"
 
     private const val DEFAULT_MAX_ENTRIES = 100
     private const val DEFAULT_RETENTION_DAYS = 30
-    private const val DEFAULT_POLL_INTERVAL_SECONDS = 5
 
     // ── 设置读写 ──
 
@@ -53,17 +48,6 @@ object ClipboardManager {
         val value = days.coerceIn(1, 365)
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
             putInt(KEY_RETENTION_DAYS, value)
-        }
-    }
-
-    fun getPollIntervalSeconds(context: Context): Int =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getInt(KEY_POLL_INTERVAL_SECONDS, DEFAULT_POLL_INTERVAL_SECONDS)
-            .coerceIn(1, 60)
-
-    fun setPollIntervalSeconds(context: Context, seconds: Int) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putInt(KEY_POLL_INTERVAL_SECONDS, seconds.coerceIn(1, 60))
         }
     }
 
@@ -138,7 +122,8 @@ object ClipboardManager {
      */
     suspend fun checkCurrentClipboard(context: Context): Boolean {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-        val clip = cm.primaryClip ?: return false
+        // 读剪贴板可能抛 SecurityException（如后台限制/OEM 行为），不能让监听协程崩掉
+        val clip = runCatching { cm.primaryClip }.getOrNull() ?: return false
         if (clip.itemCount == 0) return false
         val text = clipText(clip, context) ?: return false
 
@@ -147,7 +132,7 @@ object ClipboardManager {
         lastText = text
 
         // 与“最新一条记录（含软删除）”比对：清空后该记录变为软删除状态，
-        // 若仍与系统剪贴板内容一致，则视为没有新记录，避免被监控轮询重新插入。
+        // 若仍与系统剪贴板内容一致，则视为没有新记录，避免重复插入。
         val latest = db(context) { db -> db.clipboardDao().getLatestIncludingDeleted() }
         if (latest?.text == text) return false
 
@@ -161,13 +146,18 @@ object ClipboardManager {
         return false
     }
 
+    /**
+     * 事件驱动监听：系统剪贴板变化时实时回调，不再定时轮询。
+     * 注册后主动检查一次，补偿进程不存活期间的变化。
+     */
     fun startMonitoring(context: Context) {
-        monitoringJob?.cancel()
-        monitoringJob = appScope.launch(Dispatchers.IO) {
-            while (isActive) {
-                delay(getPollIntervalSeconds(context) * 1000L)
-                if (!isActive) break
-                val changed = checkCurrentClipboard(context)
+        stopMonitoring(context)
+        val app = context.applicationContext
+        val cm =
+            app.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+        val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
+            appScope.launch(Dispatchers.IO) {
+                val changed = checkCurrentClipboard(app)
                 if (changed) {
                     withContext(Dispatchers.Main) {
                         onContentChanged?.invoke()
@@ -175,14 +165,30 @@ object ClipboardManager {
                 }
             }
         }
+        clipListener = listener
+        cm.addPrimaryClipChangedListener(listener)
+        // 补偿进程不存活期间的变化
+        appScope.launch(Dispatchers.IO) {
+            val changed = checkCurrentClipboard(app)
+            if (changed) {
+                withContext(Dispatchers.Main) {
+                    onContentChanged?.invoke()
+                }
+            }
+        }
     }
 
     fun stopMonitoring(context: Context) {
-        monitoringJob?.cancel()
-        monitoringJob = null
+        val listener = clipListener ?: return
+        clipListener = null
+        runCatching {
+            val cm = context.applicationContext
+                .getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.removePrimaryClipChangedListener(listener)
+        }
     }
 
-    private var monitoringJob: Job? = null
+    private var clipListener: android.content.ClipboardManager.OnPrimaryClipChangedListener? = null
 
     @Volatile private var lastText: String = ""
     @Volatile private var lastClipTimestamp: Long = -1L

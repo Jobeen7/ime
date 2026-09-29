@@ -7,7 +7,7 @@ import com.jobeen.ime.base.priority.CandidateFeature
 import com.jobeen.ime.base.priority.PriorityCalculator
 import com.jobeen.ime.base.priority.WeightConfig
 import com.jobeen.ime.base.util.TextUtil
-import com.jobeen.ime.data.database.AppDatabase
+import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -41,10 +41,13 @@ class PredictionManager(private val context: Context) {
         }
 
     fun destroy() {
-        // 同步锁保护销毁过程
-        kotlinx.coroutines.runBlocking {
-            mutex.withLock {
+        // tryLock：拿不到锁说明正有 loadModels 在跑，旧模型即将被替换，跳过销毁是安全的；
+        // 避免在 finalizer 线程 runBlocking 等锁
+        if (mutex.tryLock()) {
+            try {
                 destroyLocked()
+            } finally {
+                mutex.unlock()
             }
         }
     }
@@ -63,13 +66,10 @@ class PredictionManager(private val context: Context) {
 
         for (contextStr in possiables) {
             if (contextStr.isEmpty()) continue
-            val words = pred.predictNextWords(contextStr)
+            // 查询段持锁：防止与 loadModels/destroy 并发导致 native use-after-free
+            val words = mutex.withLock { pred.predictNextWords(contextStr) }
             if (words.size >= 5) {
-                val texts = words.map { it.word }
-                val prefers =
-                    AppDatabase.getInstance(context).candidatePreferDao().getAllByTextIn(texts)
-                        .associate { it.text to it.count }
-
+                val prefers = CandidatePreferCache.snapshot(context)
                 val candidates = words.mapIndexed { index, it ->
                     val gramScore = gramDb?.query(inputContext, it.word) ?: 0.0
                     val preferCount = prefers[it.word] ?: 0

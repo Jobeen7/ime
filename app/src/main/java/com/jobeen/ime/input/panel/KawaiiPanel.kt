@@ -91,9 +91,17 @@ class KawaiiPanel(
         }
 
     private var copyText: String? = null
-    private var clipboardCheckRunnable: Runnable? = null
     private var lastShownCopyTimestamp: Long = 0L
     private var lastShownCopyText: String? = null
+
+    // 全局静态回调：持有 KawaiiPanel 及 view 树，onFinishInputView 时必须清理，
+    // 否则 service 销毁后旧 panel 泄漏；onStartInputView 时重新注册
+    private val clipNewEntryCallback: (ClipboardManager.Entry) -> Unit =
+        { entry -> showCopyIfRecent(entry.text) }
+    private val clipContentChangedCallback: () -> Unit =
+        { if (state == State.Menu) clipboardView.refresh() }
+    private val phraseContentChangedCallback: () -> Unit =
+        { if (state == State.Menu) clipboardView.refresh() }
 
     private var currentStateRender: IStateRender? = null
 
@@ -276,15 +284,9 @@ class KawaiiPanel(
             )
         }
 
-        ClipboardManager.onNewEntry = { entry ->
-            showCopyIfRecent(entry.text)
-        }
+        ClipboardManager.onNewEntry = clipNewEntryCallback
 
-        ClipboardManager.onContentChanged = {
-            if (state == State.Menu) {
-                clipboardView.refresh()
-            }
-        }
+        ClipboardManager.onContentChanged = clipContentChangedCallback
 
         clipboardView.onPhraseClick = { phrase ->
             listener?.onPhraseClick(phrase)
@@ -302,11 +304,7 @@ class KawaiiPanel(
                 cardY = 0f,
             )
         }
-        PhraseManager.onContentChanged = {
-            if (state == State.Menu) {
-                clipboardView.refresh()
-            }
-        }
+        PhraseManager.onContentChanged = phraseContentChangedCallback
 
     }
 
@@ -492,7 +490,10 @@ class KawaiiPanel(
 
     override fun onFinishInputView(finishingInput: Boolean) {
         confirmOverlay.dismiss()
-        view.removeCallbacks(clipboardCheckRunnable)
+        // 清理全局静态回调（仅当还是我们注册的才清，避免误清新 panel 的）
+        if (ClipboardManager.onNewEntry === clipNewEntryCallback) ClipboardManager.onNewEntry = null
+        if (ClipboardManager.onContentChanged === clipContentChangedCallback) ClipboardManager.onContentChanged = null
+        if (PhraseManager.onContentChanged === phraseContentChangedCallback) PhraseManager.onContentChanged = null
         if (addPhraseActive) {
             addPhraseActive = false
             listener?.onAddPhraseCancel()
@@ -501,17 +502,13 @@ class KawaiiPanel(
     }
 
     fun onStartInputView() {
-        if (clipboardCheckRunnable == null) {
-            clipboardCheckRunnable = object : Runnable {
-                override fun run() {
-                    appScope.launch {
-                        ClipboardManager.checkCurrentClipboard(context)
-                        checkPendingCopy()
-                    }
-                    view.postDelayed(this, 2000L)
-                }
-            }
-        }
+        // 重新注册全局回调（onFinishInputView 已清理）
+        ClipboardManager.onNewEntry = clipNewEntryCallback
+        ClipboardManager.onContentChanged = clipContentChangedCallback
+        PhraseManager.onContentChanged = phraseContentChangedCallback
+        // 剪贴板已改为事件驱动（OnPrimaryClipChangedListener），这里只做一次性补偿检查：
+        // 进程不存活期间的复制由 ClipboardManager.startMonitoring 补偿，
+        // 键盘打开前 500ms 内的复制由下面两次检查覆盖，不再每 2 秒轮询
         appScope.launch {
             ClipboardManager.checkCurrentClipboard(context)
             checkPendingCopy()
@@ -522,8 +519,6 @@ class KawaiiPanel(
                 checkPendingCopy()
             }
         }, 500L)
-        view.removeCallbacks(clipboardCheckRunnable!!)
-        view.postDelayed(clipboardCheckRunnable!!, 2000L)
     }
 
     private fun checkPendingCopy() {

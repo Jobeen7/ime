@@ -9,6 +9,7 @@ import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import com.jobeen.ime.ImeApplication
+import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.InputConnectionUtil
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.ClipboardManager
@@ -85,6 +86,7 @@ class ImeInputMethodService : InputMethodService() {
         themePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         schemaPrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         candidatePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        InputFeedbacks.initFeedbackCache(this)
     }
 
     override fun onConfigurationChanged(newConfig: Configuration) {
@@ -153,6 +155,7 @@ class ImeInputMethodService : InputMethodService() {
         keyboardWindow = null
 
         ClipboardManager.stopMonitoring(this)
+        InputFeedbacks.releaseFeedbackCache(this)
         themePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         schemaPrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         candidatePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)

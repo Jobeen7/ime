@@ -56,6 +56,13 @@ class KawaiiPanelView(context: Context) : View(context) {
     }
 
     private val paints = Paints(context)
+
+    // 背景渐变缓存：只在尺寸/颜色变化时重建，onDraw 内零分配
+    private val bgGradPaint = Paint()
+    private var bgGradW = -1
+    private var bgGradH = -1
+    private var bgGradColor = 0
+    private var bgGradKeyboardBg = 0
     private var lastTouchX = 0f
     private var lastTouchY = 0f
     private var isScrolling = false
@@ -106,19 +113,25 @@ class KawaiiPanelView(context: Context) : View(context) {
         )
     }
 
-    @SuppressLint("DrawAllocation")
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (width <= 0 || height <= 0) return
-        val gradPaint = Paint(paints.bgPaint).apply {
-            shader = LinearGradient(
+        val bgColor = paints.bgPaint.color
+        val kbBg = paints.keyboardBackground
+        if (width != bgGradW || height != bgGradH || bgColor != bgGradColor || kbBg != bgGradKeyboardBg) {
+            bgGradPaint.set(paints.bgPaint)
+            bgGradPaint.shader = LinearGradient(
                 0f, 0f, 0f, height.toFloat(),
-                intArrayOf(paints.bgPaint.color, paints.bgPaint.color, paints.keyboardBackground),
+                intArrayOf(bgColor, bgColor, kbBg),
                 floatArrayOf(0f, 0.6f, 1f),
                 Shader.TileMode.CLAMP,
             )
+            bgGradW = width
+            bgGradH = height
+            bgGradColor = bgColor
+            bgGradKeyboardBg = kbBg
         }
-        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), gradPaint)
+        canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgGradPaint)
         currentRenderer.draw(canvas, width, height, paints, scrollX, isExpanded, screenDensity)
     }
 

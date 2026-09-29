@@ -52,8 +52,21 @@ object ResourceExtractorUtil {
                     destFile.mkdirs()
                 } else {
                     destFile.parentFile?.mkdirs()
-                    destFile.outputStream().use { out ->
+                    // 先写临时文件再原子 rename：mmap 后的旧映射指向旧 inode，
+                    // 不会被原地截断覆写导致 SIGBUS
+                    val tmpFile = File(destFile.parentFile, "${destFile.name}.tmp")
+                    tmpFile.outputStream().use { out ->
                         zip.copyTo(out, 64 * 1024)
+                    }
+                    if (!tmpFile.renameTo(destFile)) {
+                        // rename 失败（极少见，同目录不可能跨文件系统）：
+                        // 先删目标再 rename —— 旧 mmap 映射仍指向被删的旧 inode，
+                        // 不会 SIGBUS；只有 rename 彻底不可用才回退原地覆盖
+                        destFile.delete()
+                        if (!tmpFile.renameTo(destFile)) {
+                            tmpFile.copyTo(destFile, overwrite = true)
+                            tmpFile.delete()
+                        }
                     }
                     fileCount++
                     Timber.d("  extracted: %s", name)

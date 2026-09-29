@@ -14,8 +14,8 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 16
-        versionName = "1.0.8"
+        versionCode = 17
+        versionName = "1.0.9"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -62,7 +62,13 @@ plugins {
             }
         }
         release {
-            isMinifyEnabled = false
+            // 与已发布版本同一把 key，保证覆盖升级；无配置时回退默认 debug 签名
+            val ksPath = project.findProperty("JIME_STORE_FILE") as String?
+            if (ksPath != null && file(ksPath).exists()) {
+                signingConfig = signingConfigs.getByName("jimeStable")
+            }
+            // R8 第一步：只开 minify；isShrinkResources 第二步再开（需单独回归）
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )
@@ -74,6 +80,7 @@ plugins {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     externalNativeBuild {
@@ -101,8 +108,6 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.commons.compress)
     implementation(libs.zxing.android.embedded)
-    implementation(libs.kotlinpoet)
-    implementation(libs.kotlinpoet.ksp)
     implementation(libs.splitties.bitflags)
     implementation(libs.splitties.systemservices)
     implementation(libs.splitties.views.dsl)

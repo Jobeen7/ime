@@ -12,6 +12,11 @@ interface CandidatePreferDao {
     @Query("SELECT * FROM candidate_prefers WHERE text IN (:texts)")
     suspend fun getAllByTextIn(texts: List<String>): List<CandidatePrefer>
 
+    @Query("SELECT text, click_count FROM candidate_prefers")
+    suspend fun getAllCounts(): List<PreferCount>
+
+    data class PreferCount(val text: String, val click_count: Int)
+
     @Query(
         """
         INSERT INTO candidate_prefers (text, context, click_count, created_at, updated_at)

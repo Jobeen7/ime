@@ -5,7 +5,7 @@ import com.jobeen.ime.base.ngram.GramDb
 import com.jobeen.ime.base.priority.CandidateFeature
 import com.jobeen.ime.base.priority.PriorityCalculator
 import com.jobeen.ime.base.priority.WeightConfig
-import com.jobeen.ime.data.database.AppDatabase
+import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
 import timber.log.Timber
 
@@ -21,9 +21,8 @@ class CandidateRerankManager(private val context: Context) {
         val restoreEnd = minOf(25, candidates.size)
         if (restoreEnd <= restoreStart) return candidates
 
-        val texts = candidates.subList(restoreStart, restoreEnd).map { it.text }
-        val prefers = AppDatabase.getInstance(context).candidatePreferDao().getAllByTextIn(texts)
-            .associate { it.text to it.count }
+        // 偏好走内存缓存，不再每轮查库
+        val prefers = CandidatePreferCache.snapshot(context)
 
         val cfg = WeightConfig()
         val restored = ArrayList<Candidate>(restoreEnd - restoreStart)
