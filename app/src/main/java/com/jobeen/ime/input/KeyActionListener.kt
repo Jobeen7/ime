@@ -48,6 +48,10 @@ class KeyActionListener(
                 )
             }
 
+            is KeyboardAction.CursorMoveAction -> {
+                engine?.moveCursor(service, action.direction)
+            }
+
             is KeyboardAction.LangSwitchAction -> {
                 @SuppressLint("NewApi") service.switchToNextInputMethod(false)
             }
