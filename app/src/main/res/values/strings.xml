@@ -118,7 +118,6 @@
     <string name="clipboard_history">历史记录</string>
     <string name="clipboard_max_entries">记录数量上限</string>
     <string name="clipboard_retention_days">保留天数</string>
-    <string name="clipboard_poll_interval">读取剪切板间隔</string>
     <string name="schema_model">模型管理</string>
     <string name="schema_model_grammar">语法模型</string>
     <string name="schema_grammar_model_desc">启用语法模型以提升整句输入准确率</string>

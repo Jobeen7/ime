@@ -336,7 +336,7 @@ class KeyboardWindowView(
 
     override fun onDetachedFromWindow() {
         panel.onFinishInputView(true)
-        preeditPinner.hide(wm)
+        preeditPinner.detach(wm)
         super.onDetachedFromWindow()
     }
 
