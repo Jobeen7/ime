@@ -357,6 +357,25 @@ abstract class BaseKeyboard(
                         doubleTapEnabled = true
                         onDoubleTapListener = { onAction(behavior.action) }
                     }
+
+                    is KeyDef.Behavior.SwipeMoveCursor -> {
+                        swipeEnabled = true
+                        swipeThresholdX = dp(32f)
+                        // 纵向滑动不处理，阈值设大等效禁用
+                        swipeThresholdY = dp(800f)
+                        onGestureListener = CustomGestureView.OnGestureListener { _, event ->
+                            if (event.type == CustomGestureView.GestureType.Move && event.countX != 0) {
+                                val direction = if (event.countX > 0) 1 else -1
+                                repeat(kotlin.math.abs(event.countX)) {
+                                    onAction(KeyboardAction.CursorMoveAction(direction))
+                                }
+                                // 消费掉手势，抬手时不再触发按键点击（空格）
+                                true
+                            } else {
+                                false
+                            }
+                        }
+                    }
                 }
             }
         }

@@ -7,11 +7,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -38,6 +36,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
+import com.jobeen.ime.base.speech.ModelDownloader
 import com.jobeen.ime.base.speech.SherpaSpeechClient
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
@@ -59,6 +58,14 @@ sealed interface DownloadUiState {
     data object Failed : DownloadUiState
 }
 
+sealed interface UpdateCheckState {
+    data object Idle : UpdateCheckState
+    data object Checking : UpdateCheckState
+    data object HasUpdate : UpdateCheckState
+    data object UpToDate : UpdateCheckState
+    data object CheckFailed : UpdateCheckState
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun VoiceSettingsScreen(
@@ -69,14 +76,28 @@ fun VoiceSettingsScreen(
     val density = LocalDensity.current
     var modelReady by remember { mutableStateOf(SherpaSpeechClient.isModelReady(context)) }
     var downloadState by remember { mutableStateOf<DownloadUiState>(DownloadUiState.Idle) }
+    var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var downloadBtnWidth by remember { mutableStateOf(0.dp) }
     var progressFraction by remember { mutableStateOf(0f) }
     var isExtracting by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
 
+    val checkUpdate: () -> Unit = check@{
+        if (updateCheckState is UpdateCheckState.Checking) return@check
+        updateCheckState = UpdateCheckState.Checking
+        scope.launch {
+            updateCheckState = when (SherpaSpeechClient.checkModelUpdate(context)) {
+                ModelDownloader.UpdateCheckResult.HasUpdate -> UpdateCheckState.HasUpdate
+                ModelDownloader.UpdateCheckResult.UpToDate -> UpdateCheckState.UpToDate
+                ModelDownloader.UpdateCheckResult.Failed -> UpdateCheckState.CheckFailed
+            }
+        }
+    }
+
     val startDownload: () -> Unit = download@{
-        if (downloadState !is DownloadUiState.Idle) return@download
+        // 下载中禁止重复触发；失败后允许重试、已就绪时允许重新下载
+        if (downloadState is DownloadUiState.Downloading) return@download
         downloadState = DownloadUiState.Downloading()
         progressFraction = 0f
         isExtracting = false
@@ -111,6 +132,8 @@ fun VoiceSettingsScreen(
             isExtracting = false
             if (ok) {
                 modelReady = SherpaSpeechClient.isModelReady(context)
+                // 刚从服务端下载的一定是最新版
+                updateCheckState = UpdateCheckState.UpToDate
                 SherpaSpeechClient.initialize(context)
                 downloadState = DownloadUiState.Idle
             } else {
@@ -168,22 +191,11 @@ fun VoiceSettingsScreen(
                         stringResource(R.string.voice_model_not_ready)
                     },
                     trailing = {
-                        when {
-                            modelReady -> Icon(
-                                imageVector = Icons.Filled.CheckCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp),
-                            )
-
-                            downloadState is DownloadUiState.Downloading -> ProgressButton(
-                                progressFraction,
-                                isExtracting,
-                                downloadBtnWidth,
-                            )
-
-                            else -> Button(
-                                onClick = startDownload,
+                        // 未下载 → 下载按钮；已就绪 → 检查更新流程
+                        val checkButton = @Composable { labelRes: Int, onClick: () -> Unit, enabled: Boolean ->
+                            Button(
+                                onClick = onClick,
+                                enabled = enabled,
                                 modifier = Modifier
                                     .height(32.dp)
                                     .onSizeChanged {
@@ -193,8 +205,37 @@ fun VoiceSettingsScreen(
                                 contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                             ) {
                                 Text(
-                                    stringResource(R.string.download),
+                                    stringResource(labelRes),
                                     fontSize = 13.sp,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                        when {
+                            downloadState is DownloadUiState.Downloading -> ProgressButton(
+                                progressFraction,
+                                isExtracting,
+                                downloadBtnWidth,
+                            )
+
+                            !modelReady -> checkButton(R.string.download, startDownload, true)
+
+                            else -> when (updateCheckState) {
+                                UpdateCheckState.Idle,
+                                UpdateCheckState.CheckFailed,
+                                -> checkButton(R.string.check_update, checkUpdate, true)
+
+                                UpdateCheckState.Checking ->
+                                    checkButton(R.string.schema_update_checking, {}, false)
+
+                                // 查到新版才显示下载
+                                UpdateCheckState.HasUpdate ->
+                                    checkButton(R.string.download, startDownload, true)
+
+                                UpdateCheckState.UpToDate -> Text(
+                                    stringResource(R.string.update_latest),
+                                    fontSize = rowSubFontSize,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
                         }
@@ -204,6 +245,14 @@ fun VoiceSettingsScreen(
                     Spacer(Modifier.height(4.dp))
                     Text(
                         stringResource(R.string.voice_model_download_failed),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (updateCheckState is UpdateCheckState.CheckFailed) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(R.string.update_check_failed),
                         fontSize = rowSubFontSize,
                         color = MaterialTheme.colorScheme.error,
                     )
