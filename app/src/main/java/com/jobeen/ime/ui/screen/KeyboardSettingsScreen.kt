@@ -49,6 +49,12 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
     var keyVibrationEnabled by remember {
         mutableStateOf(KeyboardManager.Keyboard.Feedback.getVibrationEnabled(context))
     }
+    var vibrationFollowSystem by remember {
+        mutableStateOf(KeyboardManager.Keyboard.Feedback.getVibrationFollowSystem(context))
+    }
+    var vibrationAmplitude by remember {
+        mutableFloatStateOf(KeyboardManager.Keyboard.Feedback.getVibrationAmplitude(context).toFloat())
+    }
     var keyBorderEnabled by remember {
         mutableStateOf(KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context))
     }
@@ -134,6 +140,26 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                     onCheckedChange = {
                         keyVibrationEnabled = it
                         KeyboardManager.Keyboard.Feedback.setVibrationEnabled(context, it)
+                    },
+                )
+                SwitchRow(
+                    title = stringResource(R.string.key_vibration_follow_system),
+                    checked = vibrationFollowSystem,
+                    enabled = keyVibrationEnabled,
+                    onCheckedChange = {
+                        vibrationFollowSystem = it
+                        KeyboardManager.Keyboard.Feedback.setVibrationFollowSystem(context, it)
+                    },
+                )
+                SliderRow(
+                    title = stringResource(R.string.key_vibration_amplitude),
+                    value = vibrationAmplitude,
+                    valueLabel = "${vibrationAmplitude.toInt()}%",
+                    range = 1f..100f,
+                    enabled = keyVibrationEnabled && !vibrationFollowSystem,
+                    onValueChange = {
+                        vibrationAmplitude = it
+                        KeyboardManager.Keyboard.Feedback.setVibrationAmplitude(context, it.toInt())
                     },
                 )
                 SwitchRow(

@@ -15,6 +15,8 @@
     <string name="key_feedback">按键设置</string>
     <string name="key_sound">启用按键音</string>
     <string name="key_vibration">点击时振动</string>
+    <string name="key_vibration_follow_system">跟随系统振动</string>
+    <string name="key_vibration_amplitude">振动强度</string>
     <string name="key_x_gap">X轴间隔</string>
     <string name="key_y_gap">Y轴间隔</string>
     <string name="key_ripple_effect">水波纹特效</string>

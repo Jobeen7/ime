@@ -158,6 +158,7 @@ object ScreenComponent {
         checked: Boolean,
         onCheckedChange: (Boolean) -> Unit,
         showDivider: Boolean = false,
+        enabled: Boolean = true,
     ) {
         Row(
             modifier = Modifier
@@ -170,10 +171,13 @@ object ScreenComponent {
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.weight(1f),
                 fontSize = rowSubFontSize,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
             )
             Switch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
+                enabled = enabled,
                 modifier = Modifier.scale(SWITCH_SCALE),
                 colors = SwitchDefaults.colors(
                     checkedThumbColor = MaterialTheme.colorScheme.primary,
@@ -240,6 +244,7 @@ object ScreenComponent {
         range: ClosedFloatingPointRange<Float>,
         onValueChange: (Float) -> Unit,
         showDivider: Boolean = false,
+        enabled: Boolean = true,
     ) {
         Column(
             modifier = Modifier
@@ -255,13 +260,16 @@ object ScreenComponent {
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f),
                     fontSize = rowSubFontSize,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurface
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                 )
                 Text(
                     text = valueLabel,
                     style = MaterialTheme.typography.bodyMedium,
                     fontSize = rowSubFontSize,
                     fontWeight = FontWeight.Medium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
+                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
@@ -269,6 +277,7 @@ object ScreenComponent {
                 value = value,
                 onValueChange = onValueChange,
                 valueRange = range,
+                enabled = enabled,
                 modifier = Modifier.offset(x = (-6).dp),
                 thumb = {
                     Box(
