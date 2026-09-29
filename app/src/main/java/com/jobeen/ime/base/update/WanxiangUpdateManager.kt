@@ -1,8 +1,10 @@
 package com.jobeen.ime.base.update
 
 import com.jobeen.ime.engine.rime.data.DataManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -110,9 +112,9 @@ object WanxiangUpdateManager {
     data class LocalInfo(
         /** 本地方案版本，未更新过则为内置版本 */
         val schemaVersion: String,
-        /** 本地词库指纹（dicts 文件元数据派生） */
+        /** 本地词库指纹（dicts 文件内容 SHA-256 派生） */
         val dictFingerprint: String,
-        /** 本地模型指纹，null=无模型文件 */
+        /** 本地模型指纹（文件内容 SHA-256），null=无模型文件 */
         val gramFingerprint: String?,
     )
 
@@ -136,9 +138,23 @@ object WanxiangUpdateManager {
         LocalInfo(
             // 未更新过则显示内置版本（v17.9.8，经哈希比对确认）
             schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null) ?: BUILTIN_SCHEMA_VERSION,
-            dictFingerprint = runCatching { dictsContentFingerprint(dictsDir) }.getOrNull() ?: "",
+            dictFingerprint = try {
+                dictsContentFingerprint(dictsDir)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "词库指纹计算失败")
+                ""
+            },
             gramFingerprint = if (gramFile.isFile) {
-                runCatching { sha256File(gramFile) }.getOrNull()
+                try {
+                    sha256File(gramFile)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "模型指纹计算失败")
+                    null
+                }
             } else {
                 null
             },
@@ -159,14 +175,17 @@ object WanxiangUpdateManager {
 
     /**
      * 计算文件内容的 SHA-256（流式读取，适用于大文件如 396MB 语法模型）。
+     * 每 1MB 检查一次协程取消，避免页面退出后继续空转。
      */
-    private fun sha256File(file: File): String {
+    private suspend fun sha256File(file: File): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         file.inputStream().use { input ->
             val buf = ByteArray(BUFFER_SIZE)
             var n: Int
+            var chunks = 0
             while (input.read(buf).also { n = it } != -1) {
                 digest.update(buf, 0, n)
+                if (++chunks % 32 == 0) currentCoroutineContext().ensureActive()
             }
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
@@ -177,12 +196,15 @@ object WanxiangUpdateManager {
      * 按"相对路径|内容哈希"排序后拼接再取 SHA-256。
      * 本地与下载时用同一算法，更新成功后两者一致。
      */
-    private fun dictsContentFingerprint(dictsDir: File): String {
-        val parts = dictsDir.walkTopDown()
+    private suspend fun dictsContentFingerprint(dictsDir: File): String {
+        val parts = mutableListOf<String>()
+        dictsDir.walkTopDown()
             .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
-            .map { "${it.relativeTo(dictsDir).path}|${sha256File(it)}" }
-            .sorted()
-            .toList()
+            .forEach {
+                currentCoroutineContext().ensureActive()
+                parts.add("${it.relativeTo(dictsDir).path}|${sha256File(it)}")
+            }
+        parts.sort()
         return fingerprint(*parts.toTypedArray())
     }
 
@@ -200,7 +222,6 @@ object WanxiangUpdateManager {
             if (schemaRelease.tag_name.isBlank()) error("远端方案版本无效")
             if (gramRelease.published_at.isBlank()) error("远端模型版本无效")
 
-            // 远端词库指纹：取 lite 包资产元数据派生
             // 远端词库指纹：仅当已下载过该版本时才有（下载时计算的内容指纹）；
             // 新版本尚未下载时为 null，界面显示"—"
             val dictRemoteFp =
@@ -277,7 +298,14 @@ object WanxiangUpdateManager {
                     return@withContext false
                 }
                 // 计算下载词库的内容指纹（与本地同一算法，供更新后比对）
-                newDictFp = runCatching { dictsContentFingerprint(extractDir) }.getOrNull()
+                newDictFp = try {
+                    dictsContentFingerprint(extractDir)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "下载词库指纹计算失败")
+                    null
+                }
 
                 // 3. 搬移到 shared/dicts（逐文件覆盖，不删除其他文件）
                 val dictsDir = File(DataManager.sharedDataDir, "dicts").apply { mkdirs() }
@@ -311,7 +339,14 @@ object WanxiangUpdateManager {
                     return@withContext false
                 }
                 // 计算下载模型的内容指纹（流式，供更新后比对）
-                newGramFp = runCatching { sha256File(partial) }.getOrNull()
+                newGramFp = try {
+                    sha256File(partial)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "下载模型指纹计算失败")
+                    null
+                }
                 target.delete()
                 check(partial.renameTo(target)) { "语法模型落盘失败" }
             }
