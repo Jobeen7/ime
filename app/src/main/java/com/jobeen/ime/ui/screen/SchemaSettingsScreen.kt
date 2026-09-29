@@ -376,7 +376,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 val info = updateInfo
                 val local = localInfo
                 val noGram = stringResource(R.string.schema_update_no_gram)
-                val localValueColor = if (isSystemInDarkTheme()) Color(0xFF69F0AE) else Color(0xFF2E7D32)
+                // 高亮色：仅用于远端信息与本地不一致时
+                val diffColor = if (isSystemInDarkTheme()) Color(0xFF69F0AE) else Color(0xFF2E7D32)
+                val darkColor = MaterialTheme.colorScheme.onSurface
 
                 // 本地信息
                 UpdateInfoSectionTitle(stringResource(R.string.schema_update_local_info))
@@ -400,7 +402,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     UpdateInfoRow(
                         label = stringResource(R.string.schema_update_local_schema),
                         value = local?.schemaVersion ?: "—",
-                        valueColor = localValueColor,
+                        valueColor = darkColor,
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = 16.dp),
@@ -411,7 +413,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         value = local?.dictFingerprint?.takeIf { it.isNotEmpty() }?.let {
                             WanxiangUpdateManager.shortFingerprint(it)
                         } ?: "—",
-                        valueColor = localValueColor,
+                        valueColor = darkColor,
                     )
                     HorizontalDivider(
                         modifier = Modifier.padding(horizontal = 16.dp),
@@ -422,12 +424,23 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         value = local?.gramFingerprint?.let {
                             WanxiangUpdateManager.shortFingerprint(it)
                         } ?: noGram,
-                        valueColor = localValueColor,
+                        valueColor = darkColor,
                     )
                 }
 
                 // 远程信息（检查后显示）
+                // 远程信息（检查后显示）：与本地不一致时用绿色高亮
                 if (info != null) {
+                    // 远端方案版本与本地不一致 → 高亮（本地未加载完成时不高亮）
+                    val schemaDiff = local != null && local.schemaVersion != info.schemaRemoteVersion
+                    // 远端词库指纹与本地不一致（双方都有值且不同）→ 高亮
+                    val dictDiff = info.dictRemoteFingerprint != null &&
+                        local?.dictFingerprint?.isNotEmpty() == true &&
+                        info.dictRemoteFingerprint != local.dictFingerprint
+                    // 远端模型指纹与本地不一致（双方都有值且不同）→ 高亮
+                    val gramDiff = info.gramRemoteFingerprint != null &&
+                        local?.gramFingerprint != null &&
+                        info.gramRemoteFingerprint != local.gramFingerprint
                     UpdateInfoSectionTitle(stringResource(R.string.schema_update_remote_info))
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -440,7 +453,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         UpdateInfoRow(
                             label = stringResource(R.string.schema_update_remote_schema),
                             value = info.schemaRemoteVersion,
-                            valueColor = MaterialTheme.colorScheme.onSurface,
+                            valueColor = if (schemaDiff) diffColor else darkColor,
                         )
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
@@ -451,7 +464,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                             value = info.dictRemoteFingerprint?.let {
                                 WanxiangUpdateManager.shortFingerprint(it)
                             } ?: "—",
-                            valueColor = MaterialTheme.colorScheme.onSurface,
+                            valueColor = if (dictDiff) diffColor else darkColor,
                         )
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
@@ -462,7 +475,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                             value = info.gramRemoteFingerprint?.let {
                                 WanxiangUpdateManager.shortFingerprint(it)
                             } ?: "—",
-                            valueColor = MaterialTheme.colorScheme.onSurface,
+                            valueColor = if (gramDiff) diffColor else darkColor,
                         )
                     }
                 }
