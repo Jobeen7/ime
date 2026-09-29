@@ -170,6 +170,10 @@ object SherpaSpeechClient {
         onExtract: (current: Long, total: Long) -> Unit = { _, _ -> },
     ): Boolean = ModelDownloader.download(context, onProgress, onExtract)
 
+    /** 检查服务端是否有新版语音模型 */
+    suspend fun checkModelUpdate(context: Context): ModelDownloader.UpdateCheckResult =
+        ModelDownloader.checkForUpdate(context)
+
     fun startHoldSession(service: ImeInputMethodService) {
         if (!holding.compareAndSet(false, true)) return
         Timber.i("startHoldSession")

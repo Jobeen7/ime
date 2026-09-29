@@ -1,6 +1,7 @@
 package com.jobeen.ime.base.speech
 
 import android.content.Context
+import androidx.core.content.edit
 import com.jobeen.ime.base.net.HttpUtil
 import com.jobeen.ime.data.App
 import com.jobeen.ime.base.util.TarBz2ExtractorUtil
@@ -48,6 +49,48 @@ object ModelDownloader {
         val total: Long,
     )
 
+    /** 检查服务端模型是否有新版的结果 */
+    sealed interface UpdateCheckResult {
+        data object HasUpdate : UpdateCheckResult
+        data object UpToDate : UpdateCheckResult
+        data object Failed : UpdateCheckResult
+    }
+
+    private const val PREFS_NAME = "speech_model_prefs"
+    private const val KEY_MANIFEST_ID = "manifest_id"
+
+    /** 本地已安装模型的服务端标识（manifest 的 md5，缺失时用下载链接） */
+    fun getStoredManifestId(context: Context): String? {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_MANIFEST_ID, null)
+    }
+
+    private fun storeManifestId(context: Context, id: String) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putString(KEY_MANIFEST_ID, id)
+        }
+    }
+
+    /**
+     * 检查服务端是否有新版语音模型。
+     * 比对服务端 manifest 标识与本地下载时记录的标识；本地无记录时视为有更新，
+     * 下载一次后即纳入比对。
+     */
+    suspend fun checkForUpdate(context: Context): UpdateCheckResult = withContext(Dispatchers.IO) {
+        val manifest = SpeechModelApi.fetchManifest(context)
+        val serverId = manifest.md5.trim().ifEmpty { manifest.link.trim() }
+        if (serverId.isEmpty()) {
+            Timber.w("Speech model manifest unavailable, check failed")
+            return@withContext UpdateCheckResult.Failed
+        }
+        val localId = getStoredManifestId(context)
+        return@withContext if (localId != null && localId.equals(serverId, ignoreCase = true)) {
+            UpdateCheckResult.UpToDate
+        } else {
+            UpdateCheckResult.HasUpdate
+        }
+    }
+
     private data class ModelFiles(
         val tokens: File,
         val encoder: File,
@@ -74,7 +117,11 @@ object ModelDownloader {
         if (!currentCoroutineContext().isActive) return@withContext false
         if (!ensureArchive(link, archiveFile, manifest.md5, onProgress)) return@withContext false
         if (!currentCoroutineContext().isActive) return@withContext false
-        extractAndInstall(archiveFile, stageDir, modelDir, onExtract)
+        if (!extractAndInstall(archiveFile, stageDir, modelDir, onExtract)) return@withContext false
+        // 安装成功后记录服务端标识，供后续检查更新时比对
+        val serverId = manifest.md5.trim().ifEmpty { link.trim() }
+        if (serverId.isNotEmpty()) storeManifestId(context, serverId)
+        true
     }
 
     private data class DownloadResult(val md5: String)

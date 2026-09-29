@@ -18,6 +18,8 @@ interface IEngine {
     suspend fun schemasList(): List<EngineMessage.Schema>
     fun clear(service: InputMethodService)
     fun resetComposition()
+    /** 移动光标：direction < 0 左移，> 0 右移 */
+    fun moveCursor(service: InputMethodService, direction: Int)
     fun selectSchema(schemaId: String)
     fun selectCandidatePinYin(pinYin: CandidatePinYin)
     fun segement()

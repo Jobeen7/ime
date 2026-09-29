@@ -81,14 +81,27 @@ object HttpUtil {
         }.getOrDefault("0")
     }
 
-    private suspend fun rawRequest(request: Request): String = withContext(Dispatchers.IO) {
-        client.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                Timber.w("HTTP %d for %s", response.code, request.url)
-                showToast("请求失败：HTTP ${response.code}")
-                throw ApiException(response.code, "HTTP ${response.code}")
+    private suspend fun rawRequest(request: Request, silent: Boolean = false): String =
+        withContext(Dispatchers.IO) {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) {
+                    Timber.w("HTTP %d for %s", response.code, request.url)
+                    if (!silent) showToast("请求失败：HTTP ${response.code}")
+                    throw ApiException(response.code, "HTTP ${response.code}")
+                }
+                response.body?.string().orEmpty()
             }
-            response.body?.string().orEmpty()
         }
+
+    /**
+     * 绝对 URL 的原始 GET，不经过服务端信封解析（用于 GitHub API 等第三方接口）。
+     * 失败时静默抛异常，由调用方处理 UI 提示。
+     */
+    internal suspend fun getRawText(url: String): String {
+        val request = Request.Builder()
+            .url(url)
+            .header("Accept", "application/vnd.github+json")
+            .build()
+        return rawRequest(request, silent = true)
     }
 }

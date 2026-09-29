@@ -40,6 +40,9 @@ sealed class KeyboardAction {
 
     data object SpaceAction : KeyboardAction()
 
+    /** 空格键滑动移动光标：direction < 0 左移，> 0 右移 */
+    data class CursorMoveAction(val direction: Int) : KeyboardAction()
+
     data object LangSwitchAction : KeyboardAction()
 
     data object RotateSchema : KeyboardAction()

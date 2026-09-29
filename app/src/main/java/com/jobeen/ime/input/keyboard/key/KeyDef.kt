@@ -103,6 +103,9 @@ open class KeyDef(
             val upAction: KeyboardAction? = null,
             val downAction: KeyboardAction? = null,
         ) : Behavior()
+
+        /** 空格键左右滑动移动光标（连续触发，每跨过一个阈值移动一格） */
+        data object SwipeMoveCursor : Behavior()
         class DoubleTap(val action: KeyboardAction) : Behavior()
     }
 
