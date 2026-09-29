@@ -153,10 +153,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 }.getOrNull()
             }
+            // 本地信息：方案更新针对万象 Lite，直接显示 Lite
+            currentSchemaName = "Lite"
             if (currentId != null) {
-                // 显示方案的友好名称（如"万象拼音Lite"），而非内部 ID（如 wanxiang_t9）
-                currentSchemaName =
-                    allItems.firstOrNull { it.id == currentId }?.name ?: currentId
                 val idx = enabledSchemas.indexOfFirst { it.id == currentId }
                 if (idx > 0) {
                     val item = enabledSchemas.removeAt(idx)
@@ -374,7 +373,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
 
                 val info = updateInfo
                 val local = localInfo
-                val builtin = stringResource(R.string.schema_update_builtin)
                 val noGram = stringResource(R.string.schema_update_no_gram)
                 val localValueColor = if (isSystemInDarkTheme()) Color(0xFF69F0AE) else Color(0xFF2E7D32)
 
@@ -399,7 +397,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     )
                     UpdateInfoRow(
                         label = stringResource(R.string.schema_update_local_schema),
-                        value = local?.schemaVersion ?: builtin,
+                        value = local?.schemaVersion ?: "—",
                         valueColor = localValueColor,
                     )
                     HorizontalDivider(

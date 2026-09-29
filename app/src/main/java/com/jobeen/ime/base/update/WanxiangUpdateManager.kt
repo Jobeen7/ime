@@ -53,6 +53,9 @@ object WanxiangUpdateManager {
 
     const val PREFS_NAME = "wanxiang_update"
     private const val KEY_SCHEMA_VERSION = "schema_version"
+    // 内置随 App 打包的万象 Lite 数据版本：resource.zip 打包于 2026-09-06，
+    // 经与官方 Release 的 dict 文件哈希比对，确认为 v17.9.8
+    const val BUILTIN_SCHEMA_VERSION = "v17.9.8"
     private const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
 
     private const val PART_SUFFIX = ".part"
@@ -100,8 +103,8 @@ object WanxiangUpdateManager {
     }
 
     data class LocalInfo(
-        /** 本地方案版本，null=内置未更新过 */
-        val schemaVersion: String?,
+        /** 本地方案版本，未更新过则为内置版本 */
+        val schemaVersion: String,
         /** 本地词库指纹（dicts 文件元数据派生） */
         val dictFingerprint: String,
         /** 本地模型指纹，null=无模型文件 */
@@ -131,7 +134,8 @@ object WanxiangUpdateManager {
             .toList()
         val gramFile = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
         LocalInfo(
-            schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
+            // 未更新过则显示内置版本（v17.9.8，经哈希比对确认）
+            schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null) ?: BUILTIN_SCHEMA_VERSION,
             dictFingerprint = fingerprint(*dictParts.toTypedArray()),
             gramFingerprint = if (gramFile.isFile) {
                 fingerprint("${gramFile.length()}|${gramFile.lastModified()}")
