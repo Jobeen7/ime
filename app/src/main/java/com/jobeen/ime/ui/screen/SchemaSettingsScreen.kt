@@ -9,6 +9,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -21,8 +23,6 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -126,7 +126,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var updateCheckFailed by remember { mutableStateOf(false) }
     var updateButtonWidth by remember { mutableStateOf(0.dp) }
     // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
-    var currentSchemaId by remember { mutableStateOf("") }
+    var currentSchemaName by remember { mutableStateOf("") }
     var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -154,7 +154,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 }.getOrNull()
             }
             if (currentId != null) {
-                currentSchemaId = currentId
+                // 显示方案的友好名称（如"万象拼音Lite"），而非内部 ID（如 wanxiang_t9）
+                currentSchemaName =
+                    allItems.firstOrNull { it.id == currentId }?.name ?: currentId
                 val idx = enabledSchemas.indexOfFirst { it.id == currentId }
                 if (idx > 0) {
                     val item = enabledSchemas.removeAt(idx)
@@ -324,6 +326,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .verticalScroll(rememberScrollState())
                 .padding(padding)
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -387,7 +390,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 ) {
                     UpdateInfoRow(
                         label = stringResource(R.string.schema_update_current_schema),
-                        value = currentSchemaId.ifEmpty { "—" },
+                        value = currentSchemaName.ifEmpty { "—" },
                         valueColor = MaterialTheme.colorScheme.onSurface,
                     )
                     HorizontalDivider(
@@ -599,8 +602,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
                 ) {
-                    LazyColumn {
-                        itemsIndexed(availableSchemas, key = { _, s -> s.id }) { _, schema ->
+                    Column {
+                        availableSchemas.forEach { schema ->
                             SchemaListItem(
                                 schema = schema,
                                 leadingIcon = {
@@ -646,8 +649,8 @@ private fun ReorderableSchemaList(
     var dragOffset by remember { mutableFloatStateOf(0f) }
     var itemHeight by remember { mutableFloatStateOf(0f) }
 
-    LazyColumn {
-        itemsIndexed(items, key = { _, s -> s.id }) { index, schema ->
+    Column {
+        items.forEachIndexed { index, schema ->
             val isDragging = dragIndex == index
             val dragScale by animateFloatAsState(
                 targetValue = if (isDragging) 1.03f else 1f,
