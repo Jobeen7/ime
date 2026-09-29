@@ -7,6 +7,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,6 +35,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -123,6 +125,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var checkingUpdate by remember { mutableStateOf(false) }
     var updateCheckFailed by remember { mutableStateOf(false) }
     var updateButtonWidth by remember { mutableStateOf(0.dp) }
+    // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
+    var currentSchemaId by remember { mutableStateOf("") }
+    var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
 
@@ -149,6 +154,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 }.getOrNull()
             }
             if (currentId != null) {
+                currentSchemaId = currentId
                 val idx = enabledSchemas.indexOfFirst { it.id == currentId }
                 if (idx > 0) {
                     val item = enabledSchemas.removeAt(idx)
@@ -156,6 +162,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     saveOrder(prefs, enabledSchemas)
                 }
             }
+            // 计算本地信息（词库/模型指纹），用于"本地信息"卡片
+            localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
             loaded = true
         }
     }
@@ -362,9 +370,105 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 )
 
                 val info = updateInfo
-                ActionRow(
-                    title = stringResource(R.string.schema_update_title),
-                    subtitle = when {
+                val local = localInfo
+                val builtin = stringResource(R.string.schema_update_builtin)
+                val noGram = stringResource(R.string.schema_update_no_gram)
+                val localValueColor = if (isSystemInDarkTheme()) Color(0xFF69F0AE) else Color(0xFF2E7D32)
+
+                // 本地信息
+                UpdateInfoSectionTitle(stringResource(R.string.schema_update_local_info))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = ExpressiveShapes.medium,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                ) {
+                    UpdateInfoRow(
+                        label = stringResource(R.string.schema_update_current_schema),
+                        value = currentSchemaId.ifEmpty { "—" },
+                        valueColor = MaterialTheme.colorScheme.onSurface,
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    )
+                    UpdateInfoRow(
+                        label = stringResource(R.string.schema_update_local_schema),
+                        value = local?.schemaVersion ?: builtin,
+                        valueColor = localValueColor,
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    )
+                    UpdateInfoRow(
+                        label = stringResource(R.string.schema_update_local_dict),
+                        value = local?.dictFingerprint?.let {
+                            WanxiangUpdateManager.shortFingerprint(it)
+                        } ?: "—",
+                        valueColor = localValueColor,
+                    )
+                    HorizontalDivider(
+                        modifier = Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    )
+                    UpdateInfoRow(
+                        label = stringResource(R.string.schema_update_local_gram),
+                        value = local?.gramFingerprint?.let {
+                            WanxiangUpdateManager.shortFingerprint(it)
+                        } ?: noGram,
+                        valueColor = localValueColor,
+                    )
+                }
+
+                // 远程信息（检查后显示）
+                if (info != null) {
+                    UpdateInfoSectionTitle(stringResource(R.string.schema_update_remote_info))
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = ExpressiveShapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    ) {
+                        UpdateInfoRow(
+                            label = stringResource(R.string.schema_update_remote_schema),
+                            value = info.schemaRemoteVersion,
+                            valueColor = MaterialTheme.colorScheme.onSurface,
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        )
+                        UpdateInfoRow(
+                            label = stringResource(R.string.schema_update_remote_dict),
+                            value = WanxiangUpdateManager.shortFingerprint(info.dictRemoteFingerprint),
+                            valueColor = MaterialTheme.colorScheme.onSurface,
+                        )
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        )
+                        UpdateInfoRow(
+                            label = stringResource(R.string.schema_update_remote_gram),
+                            value = WanxiangUpdateManager.shortFingerprint(info.gramRemoteFingerprint),
+                            valueColor = MaterialTheme.colorScheme.onSurface,
+                        )
+                    }
+                }
+
+                // 底部状态文本 + 操作按钮（右对齐）
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    val statusText = when {
                         updating && updateProgress != null -> {
                             val p = updateProgress!!
                             val pct = if (p.total > 0L) {
@@ -381,91 +485,81 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         updateFailed -> stringResource(R.string.schema_update_failed)
                         updateCheckFailed -> stringResource(R.string.schema_update_check_failed)
                         checkingUpdate -> stringResource(R.string.schema_update_checking)
-                        info == null -> stringResource(R.string.schema_update_desc)
+                        info == null -> ""
                         info.hasUpdate ->
                             "${stringResource(R.string.schema_update_available)} " +
                                 info.schemaRemoteVersion
                         else -> "${stringResource(R.string.schema_update_latest)} " +
                             "(${info.schemaRemoteVersion})"
-                    },
-                    trailing = {
-                        when {
-                            updateDone -> Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp),
-                            )
-
-                            updating -> ProgressButton(
-                                progress = updateProgress?.let {
-                                    if (it.total > 0L) it.downloaded.toFloat() / it.total.toFloat() else 0f
-                                } ?: 0f,
-                                width = updateButtonWidth,
-                            )
-
-                            checkingUpdate -> Button(
-                                onClick = {},
-                                enabled = false,
-                                modifier = Modifier
-                                    .height(32.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            ) {
-                                Text(
-                                    stringResource(R.string.schema_update_checking),
-                                    fontSize = rowSubFontSize,
-                                    maxLines = 1,
-                                )
-                            }
-
-                            info?.hasUpdate == true -> Button(
-                                onClick = { startWanxiangUpdate(info) },
-                                modifier = Modifier
-                                    .height(32.dp)
-                                    .onSizeChanged {
-                                        updateButtonWidth = with(density) { it.width.toDp() }
-                                    },
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            ) {
-                                Text(
-                                    stringResource(R.string.schema_update_start),
-                                    fontSize = rowSubFontSize,
-                                )
-                            }
-
-                            else -> Button(
-                                onClick = { checkWanxiangUpdate() },
-                                modifier = Modifier
-                                    .height(32.dp)
-                                    .onSizeChanged {
-                                        updateButtonWidth = with(density) { it.width.toDp() }
-                                    },
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            ) {
-                                Text(
-                                    stringResource(R.string.schema_update_check),
-                                    fontSize = rowSubFontSize,
-                                    maxLines = 1,
-                                )
-                            }
-                        }
-                    },
-                )
-                // 本地版本信息行
-                if (info != null && !updating) {
-                    val builtin = stringResource(R.string.schema_update_builtin)
-                    ActionRow(
-                        title = "版本 ${info.schemaLocalVersion ?: builtin}",
-                        subtitle = "语法模型 ${
-                            if (info.gramLocalPublishedAt != null)
-                                stringResource(R.string.schema_grammar_model_ready)
-                            else builtin
-                        }",
-                        trailing = {},
+                    }
+                    Text(
+                        text = statusText,
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
                     )
+                    when {
+                        updateDone -> Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(22.dp),
+                        )
+
+                        updating -> ProgressButton(
+                            progress = updateProgress?.let {
+                                if (it.total > 0L) it.downloaded.toFloat() / it.total.toFloat() else 0f
+                            } ?: 0f,
+                            width = updateButtonWidth,
+                        )
+
+                        checkingUpdate -> Button(
+                            onClick = {},
+                            enabled = false,
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.schema_update_checking),
+                                fontSize = rowSubFontSize,
+                                maxLines = 1,
+                            )
+                        }
+
+                        info?.hasUpdate == true -> Button(
+                            onClick = { startWanxiangUpdate(info) },
+                            modifier = Modifier
+                                .height(32.dp)
+                                .onSizeChanged {
+                                    updateButtonWidth = with(density) { it.width.toDp() }
+                                },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.schema_update_start),
+                                fontSize = rowSubFontSize,
+                            )
+                        }
+
+                        else -> Button(
+                            onClick = { checkWanxiangUpdate() },
+                            modifier = Modifier
+                                .height(32.dp)
+                                .onSizeChanged {
+                                    updateButtonWidth = with(density) { it.width.toDp() }
+                                },
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                stringResource(R.string.schema_update_check),
+                                fontSize = rowSubFontSize,
+                                maxLines = 1,
+                            )
+                        }
+                    }
                 }
             }
 
@@ -700,4 +794,39 @@ private fun TagBadge(text: String, bg: Color, fg: Color) {
             .background(bg, RoundedCornerShape(2.dp))
             .padding(horizontal = 3.dp, vertical = 1.dp),
     )
+}
+
+/** 方案更新"本地信息/远程信息"小标题 */
+@Composable
+private fun UpdateInfoSectionTitle(text: String) {
+    Text(
+        text = text,
+        fontSize = rowSubFontSize,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = 10.dp, bottom = 6.dp),
+    )
+}
+
+/** 方案更新信息行：左标签，右值 */
+@Composable
+private fun UpdateInfoRow(label: String, value: String, valueColor: Color) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 16.dp, vertical = 11.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            fontSize = rowFontSize,
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        Text(
+            text = value,
+            fontSize = rowSubFontSize,
+            color = valueColor,
+            maxLines = 1,
+        )
+    }
 }

@@ -89,11 +89,24 @@ object WanxiangUpdateManager {
         val gramRemotePublishedAt: String,
         /** 本地已下载模型的发布时间，null=未下载过 */
         val gramLocalPublishedAt: String?,
+        /** 远端词库指纹（release 元数据派生，用于展示比对） */
+        val dictRemoteFingerprint: String,
+        /** 远端模型指纹（LTS 元数据派生，用于展示比对） */
+        val gramRemoteFingerprint: String,
     ) {
         val schemaUpdateAvailable: Boolean get() = schemaLocalVersion != schemaRemoteVersion
         val gramUpdateAvailable: Boolean get() = gramLocalPublishedAt != gramRemotePublishedAt
         val hasUpdate: Boolean get() = schemaUpdateAvailable || gramUpdateAvailable
     }
+
+    data class LocalInfo(
+        /** 本地方案版本，null=内置未更新过 */
+        val schemaVersion: String?,
+        /** 本地词库指纹（dicts 文件元数据派生） */
+        val dictFingerprint: String,
+        /** 本地模型指纹，null=无模型文件 */
+        val gramFingerprint: String?,
+    )
 
     data class UpdateProgress(
         val stage: Stage,
@@ -101,6 +114,43 @@ object WanxiangUpdateManager {
         val total: Long = 0L,
     ) {
         enum class Stage { SCHEMA_DOWNLOAD, DICTS_EXTRACT, GRAM_DOWNLOAD }
+    }
+
+    /**
+     * 获取本地信息（词库指纹、模型指纹），纯本地计算，用于"本地信息"展示。
+     * 必须在协程中调用（内部已切换到 IO）。
+     */
+    suspend fun getLocalInfo(
+        prefs: android.content.SharedPreferences,
+    ): LocalInfo = withContext(Dispatchers.IO) {
+        val dictsDir = File(DataManager.sharedDataDir, "dicts")
+        val dictParts = dictsDir.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
+            .map { "${it.relativeTo(dictsDir).path}|${it.length()}|${it.lastModified()}" }
+            .sorted()
+            .toList()
+        val gramFile = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
+        LocalInfo(
+            schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
+            dictFingerprint = fingerprint(*dictParts.toTypedArray()),
+            gramFingerprint = if (gramFile.isFile) {
+                fingerprint("${gramFile.length()}|${gramFile.lastModified()}")
+            } else {
+                null
+            },
+        )
+    }
+
+    /**
+     * 指纹截断显示，如 "21012108...939392"，与设计稿一致。
+     */
+    fun shortFingerprint(full: String): String =
+        if (full.length > 14) "${full.take(8)}...${full.takeLast(6)}" else full
+
+    private fun fingerprint(vararg parts: String): String {
+        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        parts.forEach { digest.update(it.toByteArray(Charsets.UTF_8)) }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     /**
@@ -117,11 +167,28 @@ object WanxiangUpdateManager {
             if (schemaRelease.tag_name.isBlank()) error("远端方案版本无效")
             if (gramRelease.published_at.isBlank()) error("远端模型版本无效")
 
+            // 远端词库指纹：取 lite 包资产元数据派生
+            val liteAsset = schemaRelease.assets.firstOrNull {
+                it.name == "rime-wanxiang-lite.zip"
+            }
+            val dictRemoteFp = fingerprint(
+                schemaRelease.tag_name,
+                liteAsset?.name ?: "",
+                "${liteAsset?.size ?: 0L}",
+            )
+            // 远端模型指纹：取 LTS 发布时间派生
+            val gramRemoteFp = fingerprint(
+                gramRelease.published_at,
+                gramRelease.assets.firstOrNull()?.name ?: "",
+            )
+
             UpdateInfo(
                 schemaRemoteVersion = schemaRelease.tag_name,
                 schemaLocalVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
                 gramRemotePublishedAt = gramRelease.published_at,
                 gramLocalPublishedAt = prefs.getString(KEY_GRAM_PUBLISHED_AT, null),
+                dictRemoteFingerprint = dictRemoteFp,
+                gramRemoteFingerprint = gramRemoteFp,
             )
         }.onFailure {
             Timber.e(it, "检查方案更新失败")
