@@ -19,6 +19,7 @@ import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.CandidateSortingManager
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.event.KeyEvent
+import com.jobeen.ime.engine.event.KeyModifiers
 import com.jobeen.ime.engine.rime.host.BehaviorHost
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
@@ -264,6 +265,29 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     override fun resetComposition() {
         actions.trySend(Action.Reset)
+    }
+
+    override fun moveCursor(service: InputMethodService, direction: Int) {
+        sendJob {
+            if (compositionCached.preedit?.isNotEmpty() == true) {
+                // 正在输入拼音：交给 Rime 处理方向键，移动 preedit 内的 caret（Rime 原生行为）
+                processKeyInternal(
+                    KeyEvent.CodeEvent(
+                        if (direction < 0) KEYCODE_DPAD_LEFT else KEYCODE_DPAD_RIGHT,
+                        KeyModifiers.Empty,
+                    )
+                )
+            } else {
+                withContext(Dispatchers.Main.immediate) {
+                    val ic = inputConnection() ?: return@withContext
+                    // 结束编辑器侧 composing（如语音听写），避免与编辑器光标状态错位
+                    ic.finishComposingText()
+                    val keyCode = if (direction < 0) KEYCODE_DPAD_LEFT else KEYCODE_DPAD_RIGHT
+                    ic.sendKeyEvent(android.view.KeyEvent(ACTION_DOWN, keyCode))
+                    ic.sendKeyEvent(android.view.KeyEvent(ACTION_UP, keyCode))
+                }
+            }
+        }
     }
 
     override fun selectCandidatePinYin(pinYin: CandidatePinYin) {

@@ -145,13 +145,6 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
 
     fun sharedTheme(): KeyboardTheme? = ThemeCode.decode(qrCodeText)
 
-    fun shareCodeText(): String {
-        val theme = sharedTheme()
-        return context.getString(
-            R.string.keyboard_theme_share_text, theme?.name.orEmpty(), qrCodeText
-        )
-    }
-
     fun regenerateQr() {
         qrCodeText = ThemeCode.encode(currentTheme())
     }
@@ -173,7 +166,7 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
         Toast.makeText(context, R.string.keyboard_theme_copied, Toast.LENGTH_SHORT).show()
     }
 
-    fun shareTheme() {
+    fun shareTheme(shareText: String, chooserTitle: String) {
         val file = File(File(context.cacheDir, "shared").apply { mkdirs() }, "theme_qr.png")
         FileOutputStream(file).use {
             ThemeCode.toBitmap(qrCodeText).compress(Bitmap.CompressFormat.PNG, 90, it)
@@ -184,25 +177,27 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
         val shareIntent = Intent(Intent.ACTION_SEND).apply {
             type = "image/png"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_TEXT, shareCodeText())
+            putExtra(Intent.EXTRA_TEXT, shareText)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(
             Intent.createChooser(
-                shareIntent, context.getString(R.string.keyboard_theme_share)
+                shareIntent, chooserTitle
             )
         )
         showQrDialog = false
     }
 
-    val scanOptions = remember {
+    val scanPrompt = stringResource(R.string.keyboard_theme_scan_prompt)
+    val scanOptions = remember(scanPrompt) {
         ScanOptions().apply {
             setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            setPrompt(context.getString(R.string.keyboard_theme_scan_prompt))
+            setPrompt(scanPrompt)
             setOrientationLocked(false)
             setBeepEnabled(false)
         }
     }
+    val importedFormat = stringResource(R.string.keyboard_theme_imported)
     fun finishImport(theme: KeyboardTheme) {
         KeyboardManager.Keyboard.setFollowSystem(context, false)
         KeyboardManager.Keyboard.setThemeId(context, theme.id)
@@ -211,7 +206,7 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
         themeVersion++
         Toast.makeText(
             context,
-            context.getString(R.string.keyboard_theme_imported, theme.name),
+            importedFormat.format(theme.name),
             Toast.LENGTH_SHORT,
         ).show()
     }
@@ -506,7 +501,12 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                 }
             },
             confirmButton = {
-                TextButton(onClick = { shareTheme() }) {
+                val shareText = stringResource(
+                    R.string.keyboard_theme_share_text,
+                    sharedTheme()?.name.orEmpty(), qrCodeText
+                )
+                val chooserTitle = stringResource(R.string.keyboard_theme_share)
+                TextButton(onClick = { shareTheme(shareText, chooserTitle) }) {
                     Text(stringResource(R.string.keyboard_theme_share))
                 }
             },

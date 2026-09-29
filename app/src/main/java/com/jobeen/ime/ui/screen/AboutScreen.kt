@@ -65,6 +65,10 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     }
     var checkingUpdate by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    // 协程内不可用 stringResource，提前在组合阶段解析
+    val msgCheckFailed = stringResource(R.string.update_check_failed)
+    val msgAvailable = stringResource(R.string.update_available)
+    val msgLatest = stringResource(R.string.update_latest)
 
     Scaffold(
         topBar = {
@@ -123,7 +127,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                         contentAlignment = Alignment.Center,
                     ) {
                         androidx.compose.foundation.Image(
-                            painter = painterResource(R.drawable.ic_application_logo),
+                            painter = painterResource(R.drawable.ic_about_logo),
                             contentDescription = stringResource(R.string.app_name),
                             modifier = Modifier.size(100.dp),
                         )
@@ -160,9 +164,9 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                                     val website = VersionChecker.check(versionName)
                                     checkingUpdate = false
                                     val message = when {
-                                        website == null -> context.getString(R.string.update_check_failed)
-                                        website.isNotEmpty() -> context.getString(R.string.update_available)
-                                        else -> context.getString(R.string.update_latest)
+                                        website == null -> msgCheckFailed
+                                        website.isNotEmpty() -> msgAvailable
+                                        else -> msgLatest
                                     }
                                     android.widget.Toast.makeText(
                                         context, message, android.widget.Toast.LENGTH_SHORT

@@ -55,9 +55,9 @@ object WanxiangUpdateManager {
 
     const val PREFS_NAME = "wanxiang_update"
     private const val KEY_SCHEMA_VERSION = "schema_version"
-    // 内置随 App 打包的万象 Lite 数据版本：resource.zip 打包于 2026-09-06，
-    // 经与官方 Release 的 dict 文件哈希比对，确认为 v17.9.8
-    const val BUILTIN_SCHEMA_VERSION = "v17.9.8"
+    // 内置随 App 打包的万象 Lite 数据版本：resource.zip 内 shared/dicts/*.dict.yaml
+    // 取自官方 Release v18.0.15 的 rime-wanxiang-lite.zip（2026-09-29 打包）
+    const val BUILTIN_SCHEMA_VERSION = "v18.0.15"
     private const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
     // 下载时计算的内容指纹（用于本地/远端比对）
     private const val KEY_DICT_REMOTE_FP = "dict_remote_fp"
@@ -136,7 +136,7 @@ object WanxiangUpdateManager {
         val dictsDir = File(DataManager.sharedDataDir, "dicts")
         val gramFile = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
         LocalInfo(
-            // 未更新过则显示内置版本（v17.9.8，经哈希比对确认）
+            // 未更新过则显示内置版本（v18.0.15，resource.zip 内置）
             schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null) ?: BUILTIN_SCHEMA_VERSION,
             dictFingerprint = try {
                 dictsContentFingerprint(dictsDir)

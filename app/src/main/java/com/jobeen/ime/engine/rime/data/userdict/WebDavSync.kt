@@ -273,7 +273,7 @@ object WebDavSync {
      */
     private fun convertUserDbSnapshot(bytes: ByteArray): ByteArray {
         var text = bytes.toString(Charsets.UTF_8)
-        if (text.startsWith("﻿")) text = text.substring(1)
+        if (text.startsWith("\uFEFF")) text = text.substring(1)
         // 先采样投票判定文件列序：多数行第一列像拼音且第二列含汉字 → 「码在前」
         var codeFirstVotes = 0
         var phraseFirstVotes = 0

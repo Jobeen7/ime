@@ -130,6 +130,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    // 协程内不可用 stringResource，更新阶段文案提前在组合阶段解析
+    val stageDownloadingSchema = stringResource(R.string.schema_update_downloading_schema)
+    val stageExtracting = stringResource(R.string.schema_update_extracting)
+    val stageDownloadingGram = stringResource(R.string.schema_update_downloading_gram)
+    val stageDeploying = stringResource(R.string.schema_update_deploying)
 
     // 异步加载输入方案，避免阻塞主线程（schemasList 内部走引擎线程）
     LaunchedEffect(Unit) {
@@ -266,11 +271,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     updateProgress = progress
                     updateStageText = when (progress.stage) {
                         WanxiangUpdateManager.UpdateProgress.Stage.SCHEMA_DOWNLOAD ->
-                            context.getString(R.string.schema_update_downloading_schema)
+                            stageDownloadingSchema
                         WanxiangUpdateManager.UpdateProgress.Stage.DICTS_EXTRACT ->
-                            context.getString(R.string.schema_update_extracting)
+                            stageExtracting
                         WanxiangUpdateManager.UpdateProgress.Stage.GRAM_DOWNLOAD ->
-                            context.getString(R.string.schema_update_downloading_gram)
+                            stageDownloadingGram
                     }
                 }
             }
@@ -289,7 +294,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 // 重新计算本地指纹（更新后应与远端指纹一致）
                 localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
                 // 词库与模型已替换，触发 Rime 完整重新部署
-                updateStageText = context.getString(R.string.schema_update_deploying)
+                updateStageText = stageDeploying
                 EngineFactory.current()?.reload()
             } else {
                 updateFailed = true

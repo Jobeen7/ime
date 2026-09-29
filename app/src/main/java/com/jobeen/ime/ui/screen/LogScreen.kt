@@ -66,7 +66,8 @@ fun LogScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    IconButton(onClick = { copyLogs(context, logText) }, enabled = entries.isNotEmpty()) {
+                    val logsLabel = stringResource(R.string.app_logs)
+                    IconButton(onClick = { copyLogs(context, logText, logsLabel) }, enabled = entries.isNotEmpty()) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_logs))
                     }
                     IconButton(onClick = AppLogBuffer::clear, enabled = entries.isNotEmpty()) {
@@ -116,7 +117,7 @@ private fun LogLine(entry: AppLogEntry) {
     )
 }
 
-private fun copyLogs(context: Context, text: String) {
+private fun copyLogs(context: Context, text: String, label: String) {
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    clipboard.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.app_logs), text))
+    clipboard.setPrimaryClip(ClipData.newPlainText(label, text))
 }
