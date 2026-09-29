@@ -16,7 +16,8 @@ class Prediction(private val modelFile: File) {
     suspend fun load() = withContext(Context) {
         require(modelFile.exists()) { "Model file not found: ${modelFile.absolutePath}" }
         trie.create()
-        trie.load(modelFile.absolutePath)
+        // 内存映射：37MB 模型不再整份读进 native 堆，只有被访问的页才进内存
+        trie.mmap(modelFile.absolutePath)
     }
 
     fun isLoaded() = !trie.isEmpty() && !trie.empty
