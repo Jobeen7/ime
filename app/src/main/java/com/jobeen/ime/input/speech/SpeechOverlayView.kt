@@ -312,6 +312,10 @@ class SpeechOverlayView(
 
     fun show() {
         animate().cancel()
+        // 必须清除 hide() 残留的 withEndAction：cancel() 不会清除它，
+        // 否则本次 show 动画结束时会误触发旧的 endAction，直接把悬浮层置 GONE
+        // （表现为偶发没有语音动画），且 waveView.stopAnim() 会被误调用。
+        animate().withEndAction(null)
         visibility = VISIBLE
         setBackgroundColor(
             Color.argb(
