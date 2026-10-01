@@ -155,17 +155,15 @@ class KawaiiPanel(
         onSidePanelAction = { listener?.onSidePanelAction(it) },
     ).apply {
         onWordForget = { candidate, x, y ->
-            if (candidate.type == Candidate.TYPE_USER_PHRASE) {
-                confirmOverlay.confirm(
-                    message = context.getString(
-                        R.string.candidate_forget_confirm,
-                        if (candidate.text.length > 5) candidate.text.take(5) + "..." else candidate.text
-                    ),
-                    onConfirm = { handleCandidateForget(candidate) },
-                    cardX = x,
-                    cardY = y,
-                )
-            }
+            confirmOverlay.confirm(
+                message = context.getString(
+                    R.string.candidate_forget_confirm,
+                    if (candidate.text.length > 5) candidate.text.take(5) + "..." else candidate.text
+                ),
+                onConfirm = { handleCandidateForget(candidate) },
+                cardX = x,
+                cardY = y,
+            )
         }
         onDragComplete = { candidates ->
             (view.currentRenderer as? ComposingRenderer)?.candidates = candidates
