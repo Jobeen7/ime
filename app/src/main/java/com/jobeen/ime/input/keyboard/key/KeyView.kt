@@ -205,6 +205,34 @@ abstract class KeyView(
         }
     }
 
+    /**
+     * 强制清除按下视觉状态（诊断/修复用）。
+     * 964 只查了 isPressed，但 pressedLayerAlpha 可能在 isPressed=false 时仍卡住非零
+     * （动画异常中断），表现为按键阴影，且按其他键重绘时会消失。
+     * 返回 true 表示确实清掉了非零残留。
+     */
+    fun forceClearPressedVisual(): Boolean {
+        var cleared = false
+        if (isPressed) {
+            isPressed = false
+            cleared = true
+        }
+        if (pressedLayerAlpha != 0) {
+            cleared = true
+        }
+        bgAnimator?.cancel()
+        bgAnimator = null
+        wasPressed = false
+        pressedLayerAlpha = 0
+        (appearanceView.background as? android.graphics.drawable.LayerDrawable)?.let { bg ->
+            if (bg.numberOfLayers >= 2) {
+                bg.getDrawable(1)?.alpha = 0
+            }
+        }
+        appearanceView.invalidate()
+        return cleared
+    }
+
     fun updateBounds() {
         val (x, y) = cachedLocation.also { appearanceView.getLocationInWindow(it) }
         cachedBounds.set(x, y, x + appearanceView.width, y + appearanceView.height)
