@@ -119,11 +119,15 @@ object ClipboardManager {
 
     /**
      * 隐私：系统标记为敏感的剪贴板内容（如密码管理器复制的密码，
-     * [ClipDescription.EXTRA_IS_SENSITIVE]，API 33+）不入库、不弹粘贴提示。
+     * [ClipDescription.EXTRA_IS_SENSITIVE]，API 33+ 才有该常量；
+     * Android 12（API 31/32）的剪贴板 UI 认同一个字符串键，这里直接用
+     * 字符串兼容）不入库、不弹粘贴提示。
      */
     private fun isSensitiveClip(clip: ClipData): Boolean {
-        if (Build.VERSION.SDK_INT < 33) return false
-        return clip.description?.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true
+        if (Build.VERSION.SDK_INT < 31) return false
+        val key = if (Build.VERSION.SDK_INT >= 33) ClipDescription.EXTRA_IS_SENSITIVE
+        else "android.content.extra.IS_SENSITIVE"
+        return clip.description?.extras?.getBoolean(key) == true
     }
 
     /**
@@ -135,10 +139,9 @@ object ClipboardManager {
         // 读剪贴板可能抛 SecurityException（如后台限制/OEM 行为），不能让监听协程崩掉
         val clip = runCatching { cm.primaryClip }.getOrNull() ?: return false
         if (clip.itemCount == 0) return false
-        val text = clipText(clip, context) ?: return false
-
-        // 隐私：敏感内容不进历史、不弹提示
+        // 隐私：先判敏感标记——敏感内容连文本都不读，不进历史、不弹提示
         if (isSensitiveClip(clip)) return false
+        val text = clipText(clip, context) ?: return false
 
         val ts = clipTimestamp(clip)
         if (ts > 0) lastClipTimestamp = ts
