@@ -61,8 +61,9 @@ class KeyboardWindowView(
 
     // 实测：语音拖拽时 UP 事件到不了空格按键的 onTouchUpListener（MOVE 能到，
     // UP/CANCEL 都到不了）。在父容器直接拦截，触发语音拖拽松手逻辑。
+    // 锁定录音时不拦截：浮层空白处点按不应结束录音。
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        if (isVoiceRecording &&
+        if (isVoiceRecording && !voiceOverlay.isLocked &&
             (ev.actionMasked == android.view.MotionEvent.ACTION_UP ||
              ev.actionMasked == android.view.MotionEvent.ACTION_CANCEL)) {
             transformed(KeyboardAction.VoiceDragUp)
@@ -671,14 +672,6 @@ class KeyboardWindowView(
         panel.recording = false
         SherpaSpeechClient.stopHoldSession(discard = discard)
         voiceOverlay.hide()
-        // 视频实锤：撤销后整个键盘发白且一直存在。键盘容器 alpha 若被卡住也会导致整体发白，一并复位。
-        (currentKeyboard as? android.view.View)?.let { kb ->
-            if (kb.alpha != 1f) kb.alpha = 1f
-            // 分词键灰色背景残留：按别处重绘即好，说明是 stale draw。强制重绘兜底。
-            kb.postDelayed({ kb.invalidate() }, 150)
-        }
-        // 防御性清除：撤销语音后若有按键卡在按下态（表现为按键阴影残留，如分词键），强制复位。
-        (currentKeyboard as? BaseKeyboard)?.clearStuckPressedKeys()
     }
 
 
