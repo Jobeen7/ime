@@ -222,13 +222,11 @@ abstract class KeyView(
         if (isPressed) isPressed = false
         wasPressed = false
         pressedLayerAlpha = 0
-        (appearanceView.background as? android.graphics.drawable.LayerDrawable)?.let { bg ->
-            if (bg.numberOfLayers >= 2) {
-                bg.getDrawable(1)?.alpha = 0
-            }
-        }
         if (!isEnabled) isEnabled = true
         if (appearanceView.alpha != 1f) appearanceView.alpha = 1f
+        // 拖拽取消语音后分词键背景残留灰色，常规复位清不掉（drawable 内部状态已乱）。
+        // 直接重建背景 drawable，从源头消除残留。
+        setupBackgroundWithPress()
         appearanceView.invalidate()
         return cleared
     }
