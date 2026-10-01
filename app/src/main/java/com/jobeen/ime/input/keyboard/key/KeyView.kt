@@ -220,6 +220,16 @@ abstract class KeyView(
         if (pressedLayerAlpha != 0) {
             cleared = true
         }
+        // 视频实锤：撤销后整个键盘发白（appearanceView.alpha 卡住），不止是按下层。
+        // 按任何地方触发重绘即恢复，说明是绘制状态残留。一律复位。
+        if (!isEnabled) {
+            isEnabled = true
+            cleared = true
+        }
+        if (appearanceView.alpha != 1f) {
+            appearanceView.alpha = 1f
+            cleared = true
+        }
         bgAnimator?.cancel()
         bgAnimator = null
         wasPressed = false
