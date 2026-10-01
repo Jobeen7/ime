@@ -247,6 +247,15 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         val consumed = onGestureListener?.onGesture(this, event) ?: return
         if (consumed && !gestureConsumed) {
             gestureConsumed = true
+            // 手势已被消费（如空格慢滑移光标）：取消长按与连按，
+            // 否则慢滑超过长按时间会误触语音输入
+            if (longPressEnabled && !longPressTriggered) {
+                longPressJob?.cancel()
+                longPressJob = null
+            }
+            if (repeatEnabled && !repeatStarted) {
+                repeatHandler.removeCallbacks(repeatRunnable)
+            }
         }
     }
 
