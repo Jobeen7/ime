@@ -2,6 +2,7 @@ package com.jobeen.ime.input
 
 import android.content.Intent
 import com.jobeen.ime.data.manager.ClipboardManager
+import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.PhraseManager
 import com.jobeen.ime.R
 import com.jobeen.ime.engine.data.EngineMessage
@@ -123,6 +124,7 @@ class PanelActionListener(
     }
 
     override fun onCandidateForget(candidate: EngineMessage.Candidate) {
+        DeletedWordsStore.add(candidate.text)
         service.engine?.deleteCandidate(candidate.index)
     }
 
