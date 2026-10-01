@@ -1,6 +1,7 @@
 package com.jobeen.ime.data.manager
 
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
@@ -117,6 +118,15 @@ object ClipboardManager {
         else -1L
 
     /**
+     * 隐私：系统标记为敏感的剪贴板内容（如密码管理器复制的密码，
+     * [ClipDescription.EXTRA_IS_SENSITIVE]，API 33+）不入库、不弹粘贴提示。
+     */
+    private fun isSensitiveClip(clip: ClipData): Boolean {
+        if (Build.VERSION.SDK_INT < 33) return false
+        return clip.description?.extras?.getBoolean(ClipDescription.EXTRA_IS_SENSITIVE) == true
+    }
+
+    /**
      * 检查系统剪贴板，有新内容则入库。返回 true 表示有新条目。
      * suspend：在 IO 线程做查询，调用方负责把回调切回主线程。
      */
@@ -126,6 +136,9 @@ object ClipboardManager {
         val clip = runCatching { cm.primaryClip }.getOrNull() ?: return false
         if (clip.itemCount == 0) return false
         val text = clipText(clip, context) ?: return false
+
+        // 隐私：敏感内容不进历史、不弹提示
+        if (isSensitiveClip(clip)) return false
 
         val ts = clipTimestamp(clip)
         if (ts > 0) lastClipTimestamp = ts

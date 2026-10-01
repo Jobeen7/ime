@@ -1,0 +1,18 @@
+diff --git a/src/rime/gear/memory.cc b/src/rime/gear/memory.cc
+index 3f2e1a2..9b4c7d5 100644
+--- a/src/rime/gear/memory.cc
++++ b/src/rime/gear/memory.cc
+@@ -128,6 +128,13 @@ void Memory::StartSession() {
+ void Memory::OnCommit(Context* ctx) {
+   if (!user_dict_ || user_dict_->readonly())
+     return;
++  // Jime: skip user-dict self-learning when the current input field opts out
++  // of personalized learning (password fields /
++  // IME_FLAG_NO_PERSONALIZED_LEARNING). The Android side sets this option via
++  // RimeSetOption on every input start; it is not a schema switch so schema
++  // changes never reset it.
++  if (ctx && ctx->get_option("__no_personalized_learning"))
++    return;
+   StartSession();
+   CommitEntry commit_entry(this);
+   for (auto& seg : ctx->composition()) {

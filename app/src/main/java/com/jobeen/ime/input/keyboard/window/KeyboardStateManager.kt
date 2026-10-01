@@ -198,8 +198,18 @@ object KeyboardStateManager {
     }
 
     fun startInput(info: EditorInfo) {
-        val start = when (info.inputType and InputType.TYPE_MASK_CLASS) {
-            InputType.TYPE_CLASS_NUMBER, InputType.TYPE_CLASS_PHONE -> NumberKeyboard.NAME
+        val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
+        val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+        // 文本类密码框自动切英文键盘（Qwerty + engine 侧强制 ascii_mode 直输）；
+        // 数字密码走数字键盘，不在此处理
+        val isPasswordText = inputClass == InputType.TYPE_CLASS_TEXT &&
+            (variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)
+        val start = when {
+            inputClass == InputType.TYPE_CLASS_NUMBER ||
+                inputClass == InputType.TYPE_CLASS_PHONE -> NumberKeyboard.NAME
+            isPasswordText -> QwertyKeyboard.NAME
             else -> currentSchema?.layout ?: defaultKeyboardName
         }
         switchTo(start)

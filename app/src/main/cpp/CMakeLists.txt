@@ -32,6 +32,30 @@ unset(_jime_ud_patch)
 unset(_jime_ud_content)
 unset(_jime_patch_result)
 
+# Jime: allow disabling librime user-dict self-learning per input field
+# (password / IME_FLAG_NO_PERSONALIZED_LEARNING), via the
+# "__no_personalized_learning" runtime option checked in Memory::OnCommit.
+# See patches/librime-no-personalized-learning.patch.
+set(_jime_nl_file "${CMAKE_CURRENT_SOURCE_DIR}/deps/librime/src/rime/gear/memory.cc")
+set(_jime_nl_patch "${CMAKE_CURRENT_SOURCE_DIR}/patches/librime-no-personalized-learning.patch")
+if(EXISTS "${_jime_nl_file}" AND EXISTS "${_jime_nl_patch}")
+  file(READ "${_jime_nl_file}" _jime_nl_content)
+  if(NOT _jime_nl_content MATCHES "__no_personalized_learning")
+    message(STATUS "Jime: applying vendored librime patch (no-personalized-learning option)")
+    execute_process(
+      COMMAND patch -p1 --forward --silent -i "${_jime_nl_patch}"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/deps/librime"
+      RESULT_VARIABLE _jime_nl_patch_result)
+    if(NOT _jime_nl_patch_result EQUAL 0)
+      message(FATAL_ERROR "Jime: failed to apply librime no-personalized-learning patch")
+    endif()
+  endif()
+endif()
+unset(_jime_nl_file)
+unset(_jime_nl_patch)
+unset(_jime_nl_content)
+unset(_jime_nl_patch_result)
+
 set(CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake" ${CMAKE_MODULE_PATH})
 
 # general options
