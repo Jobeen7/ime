@@ -55,6 +55,10 @@ class KeyboardWindowView(
 
     companion object {
         const val PANEL_HEIGHT_DP = 48
+
+        @Volatile
+        var isVoiceRecordingGlobal = false
+            private set
     }
 
     private var cachedColors: KeyboardColors.ColorScheme = KeyboardColors.resolve(context)
@@ -88,6 +92,10 @@ class KeyboardWindowView(
     }
 
     private var isVoiceRecording = false
+        set(value) {
+            field = value
+            isVoiceRecordingGlobal = value
+        }
 
     private val addPhraseLayer = InputBoxLayerView(context).apply {
         visibility = View.GONE
