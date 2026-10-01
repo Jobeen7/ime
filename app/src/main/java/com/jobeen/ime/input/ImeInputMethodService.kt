@@ -31,7 +31,7 @@ import kotlinx.coroutines.launch
 class ImeInputMethodService : InputMethodService() {
     internal val engine: IEngine? get() = EngineFactory.current()
     internal var keyboardWindow: KeyboardWindow? = null
-    internal lateinit var keyActionListener: KeyActionListener
+    internal var keyActionListener: KeyActionListener? = null
 
     /** 桥接模式：添加常用语时为真，所有提交/删除/语音输出写入 [virtualInputConnection] 而非真实编辑器。 */
     var phraseAddBridgeActive = false
@@ -107,7 +107,10 @@ class ImeInputMethodService : InputMethodService() {
             panelActionListener = PanelActionListener(this),
         )
         keyboardWindow = window
-        window.setKeyActionListener(keyActionListener)
+        // onCreate 已初始化；防御性兜底：若为空（不应发生）则重建，避免 !! 崩溃
+        val listener = keyActionListener
+            ?: KeyActionListener(service = this).also { keyActionListener = it }
+        window.setKeyActionListener(listener)
         // KeyboardStateManager 是进程级单例，其键盤注册表可能残留上一实例（旧配色）的键盘；
         // 新建窗口（销毁重建路径）时重建一次，让键盘用本次实例解析出的新配色生成。
         KeyboardStateManager.rebuild()
@@ -153,6 +156,8 @@ class ImeInputMethodService : InputMethodService() {
         scope?.cancel()
         scope = null
         keyboardWindow = null
+        // KeyActionListener 持有 service，销毁后置空避免泄漏
+        keyActionListener = null
 
         ClipboardManager.stopMonitoring(this)
         InputFeedbacks.releaseFeedbackCache(this)
@@ -256,6 +261,8 @@ class ImeInputMethodService : InputMethodService() {
         lastSelectionStart = newSelStart
         lastSelectionEnd = newSelEnd
         keyboardWindow?.onSelectionUpdate(newSelStart, newSelEnd)
+        // 光标/选区变化：engine 侧光标前文本缓存失效
+        engine?.onSelectionChanged()
         notifyInputChanged()
     }
 
