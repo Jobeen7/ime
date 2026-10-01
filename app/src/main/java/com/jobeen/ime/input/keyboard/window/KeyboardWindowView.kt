@@ -675,12 +675,7 @@ class KeyboardWindowView(
             kb.postDelayed({ kb.invalidate() }, 150)
         }
         // 防御性清除：撤销语音后若有按键卡在按下态（表现为按键阴影残留，如分词键），强制复位。
-        // 正常流程下此时不应有任何 KeyView 处于按下态（手指已从空格松开 / 点在悬浮层按钮上），
-        // 若清到了，说明触摸序列确实丢了 UP/CANCEL，用 toast 告知以便定位根因。
-        val stuck = (currentKeyboard as? BaseKeyboard)?.clearStuckPressedKeys().orEmpty()
-        if (stuck.isNotEmpty()) {
-            imeToastView.showToast("诊断：已清除卡住的按键阴影（${stuck.joinToString()}）", cachedColors)
-        }
+        (currentKeyboard as? BaseKeyboard)?.clearStuckPressedKeys()
     }
 
 
