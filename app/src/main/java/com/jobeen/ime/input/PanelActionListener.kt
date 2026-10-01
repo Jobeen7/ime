@@ -91,7 +91,7 @@ class PanelActionListener(
     }
 
     override fun onSidePanelAction(action: KeyboardAction) {
-        service.keyActionListener.onKeyAction(action)
+        service.keyActionListener?.onKeyAction(action)
     }
 
     override fun onTextEditingAction(action: TextEditView.Action) {
@@ -99,11 +99,11 @@ class PanelActionListener(
     }
 
     override fun onClipboardItemClick(entry: ClipboardManager.Entry) {
-        service.keyActionListener.onKeyAction(KeyboardAction.CommitAction(entry.text))
+        service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(entry.text))
     }
 
     override fun onPhraseClick(phrase: PhraseManager.Phrase) {
-        service.keyActionListener.onKeyAction(KeyboardAction.CommitAction(phrase.text))
+        service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(phrase.text))
     }
 
     override fun onClipboardClear() {
@@ -115,7 +115,7 @@ class PanelActionListener(
     }
 
     override fun onCopyTextCommit(text: String) {
-        service.keyActionListener.onKeyAction(KeyboardAction.CommitAction(text))
+        service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(text))
     }
 
     override fun onCandidateGridDragComplete(candidates: List<EngineMessage.Candidate>) {

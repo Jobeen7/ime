@@ -134,10 +134,11 @@ object AppStartup {
             return
         }
 
-        // APK 更新了（或首次安装/旧格式 version.txt/资源目录缺失）：算一次 MD5 做二次确认
-        val md5 = assetMd5(context, RESOURCE_ASSET) ?: return
+        // APK 更新了（或首次安装/旧格式 version.txt/资源目录缺失）：算一次 MD5 做二次确认。
+        // MD5 算失败时不能当"未变"直接返回：按"已变"处理，走解压兜底。
+        val md5 = assetMd5(context, RESOURCE_ASSET)
         val storedMd5 = stored?.substringAfter(':')
-        if (storedMd5 == md5 && sentinelOk) {
+        if (md5 != null && storedMd5 == md5 && sentinelOk) {
             // 资源内容没变（APK 只是重新打包），只更新 versionCode，跳过解压
             versionFile.writeText("$currentVc:$md5")
             Timber.d("Resources unchanged (md5=%s), skip extraction", md5)
@@ -148,7 +149,7 @@ object AppStartup {
         app.notifyState(ImeApplication.AppState.ResourcePreparing)
         runBlocking(Dispatchers.IO) {
             ResourceExtractorUtil.extract(context, RESOURCE_ASSET, destDir)
-            versionFile.writeText("$currentVc:$md5")
+            versionFile.writeText("$currentVc:${md5.orEmpty()}")
         }
     }
 

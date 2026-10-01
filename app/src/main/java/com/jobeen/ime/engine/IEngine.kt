@@ -33,5 +33,7 @@ interface IEngine {
     fun onStartInputView(ic: InputConnection, info: EditorInfo)
     fun onFinishInputView()
     fun onInputCleared()
+    /** 光标/选区变化：与光标位置相关的缓存（如光标前文本）应失效 */
+    fun onSelectionChanged()
     fun observeMessages(scope: CoroutineScope, onMessage: suspend (EngineMessage) -> Unit): Job
 }

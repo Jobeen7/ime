@@ -90,6 +90,9 @@ class SpeechOverlayView(
 
     fun unlock() {
         isLocked = false
+        // 清掉上次拖拽到箭头/锁上残留的高亮，否则下次 show() 时箭头会带着"阴影"
+        dragTarget = null
+        resetHighlight()
         lockButton.setImageResource(R.drawable.ic_keyboard_lock_open_outline)
         closeButton.setImageResource(R.drawable.ic_keyboard_arrow_back)
         lockButtonBg.setColor(cachedCapsuleBg)
