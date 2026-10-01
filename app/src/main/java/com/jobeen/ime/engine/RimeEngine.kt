@@ -3,6 +3,7 @@ package com.jobeen.ime.engine
 import android.content.Context
 import android.content.SharedPreferences
 import android.inputmethodservice.InputMethodService
+import android.os.SystemClock
 import android.text.InputType
 import android.view.KeyEvent.*
 import android.view.inputmethod.EditorInfo
@@ -65,6 +66,16 @@ import java.lang.ref.WeakReference
 import kotlin.lazy
 
 class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
+
+    companion object {
+        /**
+         * librime native 层“禁止个性化学习”运行时开关
+         *（见 cpp/patches/librime-no-personalized-learning.patch，
+         * Memory::OnCommit 为 true 时跳过用户词典自学习）。
+         * 非 schema switch，切换方案不会被重置；每次 onStartInputView 按输入框重设。
+         */
+        private const val NO_PERSONALIZED_LEARNING_OPTION = "__no_personalized_learning"
+    }
     private data class EngineState(
         var initialized: Boolean = false,
         var predictionVisible: Boolean = false,
@@ -136,6 +147,32 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private val rerankManager by lazy { context?.let { CandidateRerankManager(it) } }
     private val predictionManager by lazy { context?.let { PredictionManager(it) } }
     private val state = EngineState()
+
+    /**
+     * 光标前文本缓存：getTextBeforeCursor() 是跨进程 Binder 调用，
+     * 之前每次产生候选都会调一次。这里缓存最近 64 个字符，TTL 800ms；
+     * 新输入框 / 上屏 / 删除文本时主动失效。
+     * 注意：调用方仍需各自做隐私门控（密码框等场景不要读前文）。
+     */
+    @Volatile private var beforeCursorCache = ""
+    @Volatile private var beforeCursorCacheAt = 0L
+
+    private fun peekTextBeforeCursor(n: Int): String {
+        val now = SystemClock.uptimeMillis()
+        if (beforeCursorCacheAt == 0L || now - beforeCursorCacheAt > 800L) {
+            beforeCursorCache = runCatching {
+                inputConnection()?.getTextBeforeCursor(64, 0)?.toString() ?: ""
+            }.getOrDefault("")
+            beforeCursorCacheAt = now
+        }
+        val want = n.coerceIn(0, 64)
+        return if (beforeCursorCache.length <= want) beforeCursorCache
+        else beforeCursorCache.takeLast(want)
+    }
+
+    private fun invalidateBeforeCursorCache() {
+        beforeCursorCacheAt = 0L
+    }
     private var predictionJob: Job? = null
     private var candidateRestoreJob: Job? = null
     private val messages = MutableSharedFlow<EngineMessage>(
@@ -254,6 +291,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val noLearn = isNoPersonalizedLearning(editorInfo)
         if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
             messages.emit(EngineMessage.Commit(candidate.text))
+            invalidateBeforeCursorCache()
             requestPrediction(candidate.text)
             return
         }
@@ -264,7 +302,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         if (!noLearn) {
             sendJob {
                 val ctx = context ?: return@sendJob
-                val inputContext = (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
+                val inputContext = peekTextBeforeCursor(20)
                 AppDatabase.getInstance(ctx).candidatePreferDao().upsert(candidate.text, inputContext)
                 CandidatePreferCache.noteUpsert(candidate.text)
             }
@@ -275,7 +313,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /**
      * 是否禁止个性化学习：密码类输入框，或输入框声明了
      * [EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING]。
-     * 注意：librime native 层自学习是另一条路径，不受此处控制。
+     * 生效范围：本 engine 的选词偏好表/缓存/预测/重排，以及经由
+     * [NO_PERSONALIZED_LEARNING_OPTION] 控制的 librime native 用户词典自学习。
      */
     private fun isNoPersonalizedLearning(info: EditorInfo?): Boolean {
         if (info == null) return false
@@ -290,6 +329,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         if (isPassword) return true
         return (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
+    }
+
+    /** 是否为文本类密码框（数字密码走数字键盘，不在此列）。 */
+    private fun isPasswordTextField(info: EditorInfo?): Boolean {
+        if (info == null) return false
+        if ((info.inputType and InputType.TYPE_MASK_CLASS) != InputType.TYPE_CLASS_TEXT) return false
+        return when (info.inputType and InputType.TYPE_MASK_VARIATION) {
+            InputType.TYPE_TEXT_VARIATION_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD,
+            InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD -> true
+            else -> false
+        }
     }
 
     override fun resetComposition() {
@@ -487,9 +538,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             val ic = inputConnection()
             if (!ic?.getSelectedText(0).isNullOrEmpty()) {
                 messages.emit(EngineMessage.Commit(""))
+                invalidateBeforeCursorCache()
                 return@withContext
             }
             InputConnectionUtil.sendCombinationKeyEvent(ic, KEYCODE_DEL)
+            invalidateBeforeCursorCache()
         }
     }
 
@@ -506,6 +559,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             is EngineMessage.Commit -> {
                 state.suppressNextEmptyCandidates = true
+                // native 刚上屏：前文缓存失效，预测读到新鲜前文
+                invalidateBeforeCursorCache()
                 requestPrediction(msg.text)
             }
 
@@ -606,6 +661,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     val ic = inputConnection()
                     if (!ic?.getTextBeforeCursor(1, 0).isNullOrEmpty()) {
                         ic.deleteSurroundingText(Int.MAX_VALUE, Int.MAX_VALUE)
+                        invalidateBeforeCursorCache()
                     }
                 }
             }
@@ -647,9 +703,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 val rerankEnabled = CandidateManager.isRerankEnabled(ctx)
                 if (rerankEnabled) {
                     // 开启重排：使用重排结果，不还原用户排序
-                    // 隐私模式下不读光标前文（gramDb 为空时前文本来也不参与打分）
+                    // 隐私模式下不读光标前文（gramDb 为空时前文本来也不参与打分）；
+                    // 非隐私模式走前文缓存，避免每次候选刷新都跨进程读一次
                     val inputContext = if (isNoPersonalizedLearning(editorInfo)) "" else
-                        (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "")
+                        peekTextBeforeCursor(20)
                     val sortedList = rerankManager?.rerank(msg.list, inputContext, null)
                     actions.send(
                         Action.CandidatesReady(
@@ -696,11 +753,29 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     override fun onFinishInputView() {
         inputConnection = null
         editorInfo = null
+        invalidateBeforeCursorCache()
     }
 
     override fun onStartInputView(ic: InputConnection, info: EditorInfo) {
         inputConnection = ic
         editorInfo = info
+        invalidateBeforeCursorCache()
+        // 隐私：把当前输入框的学习开关同步给 librime native 层。
+        // 密码框 / NO_PERSONALIZED_LEARNING 输入框内 native 用户词典不再自学习；
+        // 密码文本框同时强制英文直输（ascii_mode），离开后恢复用户设置。
+        sendJob {
+            setRuntimeOption(NO_PERSONALIZED_LEARNING_OPTION, isNoPersonalizedLearning(info))
+            applyAsciiModeForField(info)
+        }
+    }
+
+    private suspend fun RimeApi.applyAsciiModeForField(info: EditorInfo) {
+        val ctx = context ?: return
+        // 只有文本类密码框强制英文；数字密码已走数字键盘，不在此处理。
+        // 非密码框恢复用户自己的中/英设置（与 OptionsApplier 保持同一映射）。
+        val optionValue = if (isPasswordTextField(info)) true
+        else !CandidateManager.isAsciiModeEnabled(ctx)
+        setRuntimeOption("ascii_mode", optionValue)
     }
 
     override fun predict(commit: String) {
@@ -711,8 +786,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不读前文、不跑预测
         if (isNoPersonalizedLearning(editorInfo)) return
         // 预测模型基于简体训练；先转成简体再推导，以支持繁体输入下的候选预测。
+        // 上屏刚发生时缓存已失效，这里读到的是包含本次上屏内容的新鲜前文。
         val inputContext = TraditionalConverter.toSimplified(
-            (inputConnection()?.getTextBeforeCursor(20, 0)?.toString() ?: "") + commit
+            peekTextBeforeCursor(20) + commit
         )
         val requestId = ++state.predictionRequestId
         state.latestPredictionRequestId = requestId
@@ -757,6 +833,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private fun requestCommit(text: String) {
         sendJob {
+            // 直接上屏：前文缓存失效，后续预测读新鲜前文
+            invalidateBeforeCursorCache()
             if (compositionCached.preedit?.isNotEmpty() == true) {
                 commitCurrentSelection(text)
                 actions.send(Action.Predict(text))
