@@ -756,26 +756,48 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         invalidateBeforeCursorCache()
     }
 
+    override fun onSelectionChanged() {
+        // 光标移动后前文变了：缓存失效，避免 800ms 内读到旧前文
+        invalidateBeforeCursorCache()
+    }
+
     override fun onStartInputView(ic: InputConnection, info: EditorInfo) {
         inputConnection = ic
         editorInfo = info
         invalidateBeforeCursorCache()
         // 隐私：把当前输入框的学习开关同步给 librime native 层。
         // 密码框 / NO_PERSONALIZED_LEARNING 输入框内 native 用户词典不再自学习；
-        // 密码文本框同时强制英文直输（ascii_mode），离开后恢复用户设置。
+        // 文本密码框进出时保存/恢复中英状态（见 applyAsciiModeForField）。
         sendJob {
             setRuntimeOption(NO_PERSONALIZED_LEARNING_OPTION, isNoPersonalizedLearning(info))
             applyAsciiModeForField(info)
         }
     }
 
+    /**
+     * 密码框强制英文前保存的中英状态；null 表示当前不在"密码框强制英文"中。
+     * 只在 jobs 通道消费者内读写（串行），无需同步。
+     */
+    private var asciiModeBeforePassword: Boolean? = null
+
     private suspend fun RimeApi.applyAsciiModeForField(info: EditorInfo) {
-        val ctx = context ?: return
-        // 只有文本类密码框强制英文；数字密码已走数字键盘，不在此处理。
-        // 非密码框恢复用户自己的中/英设置（与 OptionsApplier 保持同一映射）。
-        val optionValue = if (isPasswordTextField(info)) true
-        else !CandidateManager.isAsciiModeEnabled(ctx)
-        setRuntimeOption("ascii_mode", optionValue)
+        if (isPasswordTextField(info)) {
+            // 进入文本密码框：首次进入时保存当前中英状态（连续两个密码框不重复保存），
+            // 然后强制英文直输。数字密码已走数字键盘，不在此处理。
+            if (asciiModeBeforePassword == null) {
+                asciiModeBeforePassword = getRuntimeOption("ascii_mode")
+            }
+            setRuntimeOption("ascii_mode", true)
+        } else {
+            // 离开密码框：恢复进入前保存的状态。
+            // 非密码框之间切换不再按偏好重设：Shift 临时切换、方案锁定（如万象锁定中文）
+            // 的状态都得以保留。
+            val saved = asciiModeBeforePassword
+            if (saved != null) {
+                asciiModeBeforePassword = null
+                setRuntimeOption("ascii_mode", saved)
+            }
+        }
     }
 
     override fun predict(commit: String) {
