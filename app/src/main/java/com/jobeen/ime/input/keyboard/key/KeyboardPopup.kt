@@ -140,6 +140,27 @@ class KeyboardPopup(private val context: Context) {
     private fun actionLabel(action: KeyboardAction): String = when (action) {
         is KeyboardAction.CommitAction -> action.text
         is KeyboardAction.KeySequenceAction -> action.sequence
-        else -> action.javaClass.simpleName
+        // 其余类型用硬编码名称：javaClass.simpleName 经 R8 混淆后会变成 "a" 这类无意义名字
+        is KeyboardAction.KeyCodeAction -> "KeyCodeAction"
+        is KeyboardAction.ClearAction -> "ClearAction"
+        is KeyboardAction.SelectCandidatePinYin -> "SelectCandidatePinYin"
+        is KeyboardAction.CapsAction -> "CapsAction"
+        is KeyboardAction.LayoutSwitchAction -> "LayoutSwitchAction"
+        is KeyboardAction.ResumeAction -> "ResumeAction"
+        is KeyboardAction.BackspaceAction -> "BackspaceAction"
+        is KeyboardAction.ReturnAction -> "ReturnAction"
+        is KeyboardAction.SpaceAction -> "SpaceAction"
+        is KeyboardAction.CursorMoveAction -> "CursorMoveAction"
+        is KeyboardAction.LangSwitchAction -> "LangSwitchAction"
+        is KeyboardAction.RotateSchema -> "RotateSchema"
+        is KeyboardAction.SelectSchema -> "SelectSchema"
+        is KeyboardAction.ShowInputMethodPickerAction -> "ShowInputMethodPickerAction"
+        is KeyboardAction.VoiceInputAction -> "VoiceInputAction"
+        is KeyboardAction.StopVoiceInputAction -> "StopVoiceInputAction"
+        is KeyboardAction.VoiceDragPosition -> "VoiceDragPosition"
+        is KeyboardAction.VoiceDragUp -> "VoiceDragUp"
+        is KeyboardAction.MultiReturnAction -> "MultiReturnAction"
+        is KeyboardAction.UndoAction -> "UndoAction"
+        is KeyboardAction.RedoAction -> "RedoAction"
     }
 }
