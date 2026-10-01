@@ -23,24 +23,14 @@
 # 保持 Sherpa-onnx 的类结构，防止被混淆
 -keep class com.k2fsa.sherpa.onnx.** { *; }
 
-#opecc4j
--keep public class com.github.houbb.opencc4j.** {}
--keep interface com.github.houbb.opencc4j.* {*;}
--keep class com.github.houbb.opencc4j.model.** {}
--keep class com.github.houbb.opencc4j.support.* {*;}
--keep public class com.github.houbb.heaven.** {}
--keep interface com.github.houbb.heaven.* {*;}
--keep @com.github.houbb.heaven.annotation.* class *
--keep class * {
-    @com.github.houbb.heaven.annotation.* *;
-}
+# opencc4j/heaven/jieba 相关 keep 已删除（2026-10-01）：
+# 代码中已无任何引用，旧规则 -keep @com.github.houbb.heaven.annotation.* class *
+# 会保留全包类名导致混淆失效。仅保留 dontwarn。
 -dontwarn com.huaban.analysis.jieba.**
 -dontwarn java.awt.**
 -dontwarn java.beans.**
 -dontwarn java.lang.management.**
 -dontwarn javax.tools.**
--keep public class com.huaban.analysis.jieba.** {}
--keep interface com.huaban.analysis.jieba.* {*;}
 
 # 保持 ONNX Runtime 的类结构
 -keep class ai.onnxruntime.** { *; }
@@ -57,6 +47,11 @@
 -dontwarn org.tukaani.xz.**
 -dontwarn org.objectweb.asm.**
 -dontwarn java.lang.reflect.AnnotatedType
+
+# 引擎实现构造器保留（EngineFactory 已改直接构造，此为双保险，防 R8 删无参构造）
+-keep class * implements com.jobeen.ime.engine.IEngine {
+    <init>();
+}
 
 # ===== Jime JNI 反射保留规则（jni_env.h:166-222，FindClass + GetMethodID）=====
 # R8 会改名/删除这些"看起来没被调用"的构造器，GetMethodID 返回 null 即 native 崩溃
