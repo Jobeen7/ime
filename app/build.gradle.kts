@@ -14,8 +14,8 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 17
-        versionName = "1.0.9"
+        versionCode = 18
+        versionName = "1.0.96"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -67,8 +67,9 @@ plugins {
             if (ksPath != null && file(ksPath).exists()) {
                 signingConfig = signingConfigs.getByName("jimeStable")
             }
-            // R8 第一步：只开 minify；isShrinkResources 第二步再开（需单独回归）
+            // R8 第二步：2026-10-01 开启 isShrinkResources（资源均为静态引用，无动态 getIdentifier）
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
             )

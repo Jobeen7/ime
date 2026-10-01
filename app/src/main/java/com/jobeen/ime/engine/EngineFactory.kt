@@ -15,11 +15,12 @@ object EngineFactory {
         context: Context,
         clazz: KClass<T>,
     ): T {
-        return try {
-            clazz.java.getDeclaredConstructor().newInstance()
-        } catch (e: Exception) {
-            throw e
-        }
+        // 不用反射直接构造：R8 会删掉只被反射调用的无参构造器，导致启动崩溃
+        @Suppress("UNCHECKED_CAST")
+        return when (clazz) {
+            RimeEngine::class -> RimeEngine()
+            else -> throw IllegalArgumentException("Unknown engine: $clazz")
+        } as T
     }
 
     @Suppress("UNCHECKED_CAST")

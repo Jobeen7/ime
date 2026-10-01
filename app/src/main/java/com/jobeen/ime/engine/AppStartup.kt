@@ -40,15 +40,23 @@ object AppStartup {
         synchronized(lock) {
             if (!initialized) {
                 val funcs = listOf(
-                    ::setupLogger,
-                    ::setupThemeStore,
-                    ::releaseResourcesIfNeeded,
-                    ::setupInputFeedbacks,
-                    ::setupEngine,
-                    ::setupSherpaSpeech,
-                    ::prewarmOpencc,
+                    "setupLogger" to ::setupLogger,
+                    "setupThemeStore" to ::setupThemeStore,
+                    "releaseResourcesIfNeeded" to ::releaseResourcesIfNeeded,
+                    "setupInputFeedbacks" to ::setupInputFeedbacks,
+                    "setupEngine" to ::setupEngine,
+                    "setupSherpaSpeech" to ::setupSherpaSpeech,
+                    "prewarmOpencc" to ::prewarmOpencc,
                 )
-                funcs.forEach { it(context) }
+                // 每一步独立捕获异常并记日志：某一步失败不直接杀进程，
+                // 用 android.util.Log 确保 release 包（Timber 无 tree）也能在 logcat 看到
+                funcs.forEach { (name, fn) ->
+                    runCatching { fn(context) }
+                        .onFailure { e ->
+                            android.util.Log.e("AppStartup", "step $name failed", e)
+                            Timber.e(e, "AppStartup step failed: %s", name)
+                        }
+                }
                 initialized = true
             }
         }

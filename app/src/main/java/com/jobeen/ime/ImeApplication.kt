@@ -5,6 +5,7 @@ import android.app.Application
 import android.content.Context
 import android.os.Build
 import com.jobeen.ime.engine.AppStartup
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.MainScope
@@ -37,7 +38,11 @@ class ImeApplication : Application() {
         super.onCreate()
         instance = this
         if (isMainProcess()) {
-            applicationScope.launch(Dispatchers.Default) {
+            // 兜底：AppStartup 内部每步已独立捕获，这里再防一次未预料的异常直接杀进程
+            val handler = CoroutineExceptionHandler { _, e ->
+                android.util.Log.e("ImeApplication", "AppStartup crashed", e)
+            }
+            applicationScope.launch(Dispatchers.Default + handler) {
                 AppStartup.initialize(this@ImeApplication)
             }
         }
