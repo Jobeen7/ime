@@ -205,32 +205,6 @@ abstract class KeyView(
         }
     }
 
-    /**
-     * 强制清除按下视觉状态（诊断/修复用）。
-     * 964 只查了 isPressed，但 pressedLayerAlpha 可能在 isPressed=false 时仍卡住非零
-     * （动画异常中断），表现为按键阴影，且按其他键重绘时会消失。
-     * 返回 true 表示确实清掉了非零残留。
-     */
-    fun forceClearPressedVisual(): Boolean {
-        var cleared = false
-        if (isPressed || pressedLayerAlpha != 0 || appearanceView.alpha != 1f || !isEnabled) {
-            cleared = true
-        }
-        // 不走 drawableStateChanged（会触发 onPressedChanged→水波纹），直接复位绘制状态。
-        bgAnimator?.cancel()
-        bgAnimator = null
-        if (isPressed) isPressed = false
-        wasPressed = false
-        pressedLayerAlpha = 0
-        if (!isEnabled) isEnabled = true
-        if (appearanceView.alpha != 1f) appearanceView.alpha = 1f
-        // 拖拽取消语音后分词键背景残留灰色，常规复位清不掉（drawable 内部状态已乱）。
-        // 直接重建背景 drawable，从源头消除残留。
-        setupBackgroundWithPress()
-        appearanceView.invalidate()
-        return cleared
-    }
-
     fun updateBounds() {
         val (x, y) = cachedLocation.also { appearanceView.getLocationInWindow(it) }
         cachedBounds.set(x, y, x + appearanceView.width, y + appearanceView.height)
