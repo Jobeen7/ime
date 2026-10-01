@@ -367,9 +367,11 @@ abstract class BaseKeyboard(
                         onGestureListener = CustomGestureView.OnGestureListener { _, event ->
                             // 语音录音中禁用光标滑动：长按空格拖拽取消语音时，
                             // 横滑会同时触发 CursorMoveAction，和语音拖拽打架
-                            // （v1.0.8 加入 SwipeMoveCursor 后引入的冲突）
+                            // （v1.0.8 加入 SwipeMoveCursor 后引入的冲突）。
+                            // 直接消费掉手势（返回 true），但不移动光标，
+                            // 保持和原来一致的手势消费状态，避免影响语音拖拽。
                             if (KeyboardWindowView.isVoiceRecordingGlobal) {
-                                return@OnGestureListener false
+                                return@OnGestureListener event.type == CustomGestureView.GestureType.Move
                             }
                             if (event.type == CustomGestureView.GestureType.Move && event.countX != 0) {
                                 val direction = if (event.countX > 0) 1 else -1
