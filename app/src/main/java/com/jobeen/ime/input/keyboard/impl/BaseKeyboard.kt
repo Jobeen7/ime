@@ -494,29 +494,4 @@ abstract class BaseKeyboard(
         }
         spanPanelViews.forEach { it.updateMode(mode) }
     }
-
-    /**
-     * 防御性清除卡住的按键视觉状态。
-     * 语音撤销后若某个 KeyView 的按下视觉（isPressed 或 pressedLayerAlpha）残留，
-     * 会表现为按键阴影。遍历所有 KeyView 强制复位，返回被清除的按键描述
-     * （正常应为空，用于诊断）。
-     */
-    fun clearStuckPressedKeys(): List<String> {
-        val stuck = mutableListOf<String>()
-        fun traverse(view: android.view.View) {
-            if (view is KeyView) {
-                if (view.forceClearPressedVisual()) {
-                    stuck.add(view.displayText ?: view.def.toString())
-                }
-            }
-            if (view is android.view.ViewGroup) {
-                for (i in 0 until view.childCount) traverse(view.getChildAt(i))
-            }
-        }
-        traverse(this)
-        if (stuck.isNotEmpty()) {
-            Timber.w("clearStuckPressedKeys: cleared stuck pressed keys=$stuck")
-        }
-        return stuck
-    }
 }
