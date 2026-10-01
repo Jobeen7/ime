@@ -19,6 +19,7 @@ import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.CandidateSortingManager
+import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.event.KeyEvent
 import com.jobeen.ime.engine.event.KeyModifiers
@@ -693,9 +694,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         candidateRestoreJob?.cancel()
         candidateRestoreJob = scope.launch {
             try {
+                // 过滤用户长按删除的词（Rime 墓碑不隐藏系统词，App 层过滤）
+                val filtered = msg.list.filterNot { DeletedWordsStore.isDeleted(it.text) }
+                val filteredMsg = if (filtered.size == msg.list.size) msg
+                    else EngineMessage.Candidates(filtered, msg.highlighted, msg.page)
                 val ctx = context
                 if (ctx == null) {
-                    actions.send(Action.CandidatesReady(requestId, msg))
+                    actions.send(Action.CandidatesReady(requestId, filteredMsg))
                     return@launch
                 }
 
@@ -707,20 +712,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 非隐私模式走前文缓存，避免每次候选刷新都跨进程读一次
                     val inputContext = if (isNoPersonalizedLearning(editorInfo)) "" else
                         peekTextBeforeCursor(20)
-                    val sortedList = rerankManager?.rerank(msg.list, inputContext, null)
+                    val sortedList = rerankManager?.rerank(filteredMsg.list, inputContext, null)
                     actions.send(
                         Action.CandidatesReady(
-                            requestId, EngineMessage.Candidates(sortedList ?: msg.list, 0, 0)
+                            requestId, EngineMessage.Candidates(sortedList ?: filteredMsg.list, 0, 0)
                         )
                     )
                 } else {
                     // 关闭重排：还原用户拖拽保存的排序；无记录则原样展示
-                    val savedIds = CandidateSortingManager(db).load(msg.list)
+                    val savedIds = CandidateSortingManager(db).load(filteredMsg.list)
                     actions.send(
                         Action.CandidatesReady(
-                            requestId, if (savedIds.isNullOrEmpty()) msg
+                            requestId, if (savedIds.isNullOrEmpty()) filteredMsg
                             else EngineMessage.Candidates(
-                                restoreCandidateOrder(msg.list, savedIds), 0, 0
+                                restoreCandidateOrder(filteredMsg.list, savedIds), 0, 0
                             )
                         )
                     )
