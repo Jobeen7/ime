@@ -314,6 +314,10 @@ abstract class BaseKeyboard(
                             return@setOnLongClickListener true
                         }
                         if (behavior.action is KeyboardAction.VoiceInputAction) {
+                            // 语音拖拽需要 swipeEnabled=true，否则 MOVE 在 longPressTriggered
+                            // 时会提前 return，打乱手势状态（v1.0.972 删除 SwipeMoveCursor
+                            // 后引入的问题）。这里只开 flag，不加光标移动逻辑。
+                            swipeEnabled = true
                             onTouchMoveListener = { rawX, rawY ->
                                 onAction(KeyboardAction.VoiceDragPosition(rawX, rawY))
                             }
