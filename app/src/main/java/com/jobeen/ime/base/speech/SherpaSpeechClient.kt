@@ -217,7 +217,15 @@ object SherpaSpeechClient {
 
     fun stopHoldSession(discard: Boolean = false) {
         if (!holding.compareAndSet(true, false)) return
-        if (discard) discarding.set(true)
+        if (discard) {
+            discarding.set(true)
+            // 取消一成立立刻在主线程清空待定文字，文字马上消失，不依赖服务端回信。
+            serviceRef?.get()?.let { service ->
+                service.scope?.launch(Dispatchers.Main) {
+                    service.activeInputConnection()?.setComposingText("", 1)
+                }
+            }
+        }
         uiJob?.cancel()
         uiJob = null
         val messenger = synchronized(connectLock) { speechMessenger }
@@ -232,10 +240,14 @@ object SherpaSpeechClient {
         val service = serviceRef?.get()
         service?.scope?.launch(Dispatchers.Main) {
             val text = composingText.getAndSet(null)
-            if (!discarding.get() && !text.isNullOrBlank()) {
-                service.activeInputConnection()?.setComposingText(toDisplayText(text), 1)
+            val ic = service.activeInputConnection()
+            if (discarding.get()) {
+                // 取消：先删掉已流式显示的待定文字，再收尾，否则 finishComposingText 会把待定文字确认上屏。
+                ic?.setComposingText("", 1)
+            } else if (!text.isNullOrBlank()) {
+                ic?.setComposingText(toDisplayText(text), 1)
             }
-            service.activeInputConnection()?.finishComposingText()
+            ic?.finishComposingText()
             SpeechUiBridge.onDone?.invoke()
             resetState()
         } ?: resetState()
@@ -248,6 +260,11 @@ object SherpaSpeechClient {
         val service = serviceRef?.get()
         val runUi = Runnable {
             runCatching {
+                // 出错/断开：先清空残留的待定文字，再收尾，避免下划线文字残留。
+                service?.activeInputConnection()?.let { ic ->
+                    ic.setComposingText("", 1)
+                    ic.finishComposingText()
+                }
                 SpeechUiBridge.onFailed?.invoke() ?: SpeechUiBridge.onDone?.invoke()
             }
         }
