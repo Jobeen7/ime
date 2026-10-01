@@ -73,8 +73,11 @@ object ModelDownloader {
 
     /**
      * 检查服务端是否有新版语音模型。
-     * 比对服务端 manifest 标识与本地下载时记录的标识；本地无记录时视为有更新，
-     * 下载一次后即纳入比对。
+     * 比对服务端 manifest 标识与本地下载时记录的标识；本地无记录时：
+     * - 模型文件已存在（老用户在该机制引入前已下载）→ 视为已是最新，
+     *   把当前服务端标识记为基线，避免首次检查误报"有更新"诱使用户重下大模型；
+     * - 模型不存在 → 才是真的需要下载，返回有更新。
+     * 下载成功后即纳入比对。
      */
     suspend fun checkForUpdate(context: Context): UpdateCheckResult = withContext(Dispatchers.IO) {
         val manifest = SpeechModelApi.fetchManifest(context)
@@ -84,11 +87,37 @@ object ModelDownloader {
             return@withContext UpdateCheckResult.Failed
         }
         val localId = getStoredManifestId(context)
-        return@withContext if (localId != null && localId.equals(serverId, ignoreCase = true)) {
+        if (localId != null) {
+            return@withContext if (localId.equals(serverId, ignoreCase = true)) {
+                UpdateCheckResult.UpToDate
+            } else {
+                UpdateCheckResult.HasUpdate
+            }
+        }
+        return@withContext if (isModelInstalled()) {
+            storeManifestId(context, serverId)
+            Timber.i("Speech model id baseline recorded for existing install")
             UpdateCheckResult.UpToDate
         } else {
             UpdateCheckResult.HasUpdate
         }
+    }
+
+    /** 本地是否已有完整语音模型（tokens + encoder/decoder/joiner） */
+    private fun isModelInstalled(): Boolean {
+        val dir = App.speechModelDir
+        if (!File(dir, TOKENS_FILE).isFile) return false
+        val files = dir.listFiles().orEmpty().filter { it.isFile }
+        fun pick(prefix: String, ext: String) = files.firstOrNull {
+            it.extension.equals(ext, ignoreCase = true) &&
+                it.nameWithoutExtension.contains(prefix, ignoreCase = true)
+        }
+        return (pick(ENCODER_NAME, ONNX_EXTENSION) != null &&
+            pick(DECODER_NAME, ONNX_EXTENSION) != null &&
+            pick(JOINER_NAME, ONNX_EXTENSION) != null) ||
+            (pick(ENCODER_NAME, BIN_EXTENSION) != null &&
+                pick(DECODER_NAME, BIN_EXTENSION) != null &&
+                pick(JOINER_NAME, BIN_EXTENSION) != null)
     }
 
     private data class ModelFiles(
