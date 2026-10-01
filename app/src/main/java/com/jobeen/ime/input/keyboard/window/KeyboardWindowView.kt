@@ -155,7 +155,7 @@ class KeyboardWindowView(
                 if (isVoiceRecording) {
                     when (voiceOverlay.currentDragTarget) {
                         SpeechOverlayView.DragTarget.CLOSE -> {
-                            stopVoiceInput()
+                            stopVoiceInput(discard = true)
                         }
 
                         SpeechOverlayView.DragTarget.LOCK -> {
@@ -163,7 +163,7 @@ class KeyboardWindowView(
                         }
 
                         SpeechOverlayView.DragTarget.NONE -> {
-                            stopVoiceInput()
+                            stopVoiceInput(discard = false)
                         }
                     }
                 }
@@ -661,12 +661,12 @@ class KeyboardWindowView(
         SherpaSpeechClient.startHoldSession(context as ImeInputMethodService)
     }
 
-    private fun stopVoiceInput() {
+    private fun stopVoiceInput(discard: Boolean = false) {
         // 按箭头撤销时，即使用户松手后录音已结束（isVoiceRecording=false），悬浮层也必须关闭，
         // 否则悬浮层会残留。stopHoldSession 内部有 CAS 保护，重复调用无害。
         isVoiceRecording = false
         panel.recording = false
-        SherpaSpeechClient.stopHoldSession()
+        SherpaSpeechClient.stopHoldSession(discard = discard)
         voiceOverlay.hide()
         // 视频实锤：撤销后整个键盘发白且一直存在。键盘容器 alpha 若被卡住也会导致整体发白，一并复位。
         (currentKeyboard as? android.view.View)?.let { kb ->
