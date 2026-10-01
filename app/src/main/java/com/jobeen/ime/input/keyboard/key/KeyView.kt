@@ -213,25 +213,13 @@ abstract class KeyView(
      */
     fun forceClearPressedVisual(): Boolean {
         var cleared = false
-        if (isPressed) {
-            isPressed = false
+        if (isPressed || pressedLayerAlpha != 0 || appearanceView.alpha != 1f || !isEnabled) {
             cleared = true
         }
-        if (pressedLayerAlpha != 0) {
-            cleared = true
-        }
-        // 视频实锤：撤销后整个键盘发白（appearanceView.alpha 卡住），不止是按下层。
-        // 按任何地方触发重绘即恢复，说明是绘制状态残留。一律复位。
-        if (!isEnabled) {
-            isEnabled = true
-            cleared = true
-        }
-        if (appearanceView.alpha != 1f) {
-            appearanceView.alpha = 1f
-            cleared = true
-        }
+        // 不走 drawableStateChanged（会触发 onPressedChanged→水波纹），直接复位绘制状态。
         bgAnimator?.cancel()
         bgAnimator = null
+        if (isPressed) isPressed = false
         wasPressed = false
         pressedLayerAlpha = 0
         (appearanceView.background as? android.graphics.drawable.LayerDrawable)?.let { bg ->
@@ -239,6 +227,8 @@ abstract class KeyView(
                 bg.getDrawable(1)?.alpha = 0
             }
         }
+        if (!isEnabled) isEnabled = true
+        if (appearanceView.alpha != 1f) appearanceView.alpha = 1f
         appearanceView.invalidate()
         return cleared
     }
