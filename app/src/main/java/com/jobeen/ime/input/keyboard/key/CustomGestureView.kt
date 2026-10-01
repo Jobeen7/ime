@@ -173,10 +173,6 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
 
             MotionEvent.ACTION_UP -> {
                 isPressed = false
-                android.util.Log.d("VoiceDiag", "CustomGestureView UP: listenerNull=${onTouchUpListener == null}, view=$this")
-                if (onTouchUpListener != null) {
-                    android.widget.Toast.makeText(context, "UP到按键", android.widget.Toast.LENGTH_SHORT).show()
-                }
                 onTouchUpListener?.invoke(this)
                 dispatchGestureEvent(GestureType.Up, event.x, event.y)
                 val shouldPerformClick =

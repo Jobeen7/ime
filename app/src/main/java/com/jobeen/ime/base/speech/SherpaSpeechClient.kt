@@ -216,8 +216,6 @@ object SherpaSpeechClient {
     }
 
     fun stopHoldSession(discard: Boolean = false) {
-        val wasHolding = holding.get()
-        android.util.Log.d("VoiceDiag", "stopHoldSession: discard=$discard, wasHolding=$wasHolding")
         if (!holding.compareAndSet(true, false)) return
         if (discard) discarding.set(true)
         uiJob?.cancel()
@@ -234,7 +232,6 @@ object SherpaSpeechClient {
         val service = serviceRef?.get()
         service?.scope?.launch(Dispatchers.Main) {
             val text = composingText.getAndSet(null)
-            android.util.Log.d("VoiceDiag", "finishSession: discarding=${discarding.get()}, text=$text")
             if (!discarding.get() && !text.isNullOrBlank()) {
                 service.activeInputConnection()?.setComposingText(toDisplayText(text), 1)
             }
