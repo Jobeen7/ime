@@ -59,6 +59,17 @@ class KeyboardWindowView(
 
     private var cachedColors: KeyboardColors.ColorScheme = KeyboardColors.resolve(context)
 
+    // 实测：语音拖拽时 UP 事件到不了空格按键的 onTouchUpListener（MOVE 能到，
+    // UP/CANCEL 都到不了）。在父容器直接拦截，触发语音拖拽松手逻辑。
+    override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
+        if (isVoiceRecording &&
+            (ev.actionMasked == android.view.MotionEvent.ACTION_UP ||
+             ev.actionMasked == android.view.MotionEvent.ACTION_CANCEL)) {
+            transformed(KeyboardAction.VoiceDragUp)
+        }
+        return super.dispatchTouchEvent(ev)
+    }
+
     val panel = KawaiiPanel(
         context = context,
         listener = panelListener,
@@ -144,8 +155,6 @@ class KeyboardWindowView(
             }
 
             is KeyboardAction.VoiceDragUp -> {
-                android.util.Log.d("VoiceDiag", "VoiceDragUp: isVoiceRecording=$isVoiceRecording, target=${voiceOverlay.currentDragTarget}")
-                android.widget.Toast.makeText(context, "松手: target=${voiceOverlay.currentDragTarget}", android.widget.Toast.LENGTH_SHORT).show()
                 if (isVoiceRecording) {
                     when (voiceOverlay.currentDragTarget) {
                         SpeechOverlayView.DragTarget.CLOSE -> {
@@ -656,7 +665,6 @@ class KeyboardWindowView(
     }
 
     private fun stopVoiceInput(discard: Boolean = false) {
-        android.util.Log.d("VoiceDiag", "stopVoiceInput: discard=$discard")
         // 按箭头撤销时，即使用户松手后录音已结束（isVoiceRecording=false），悬浮层也必须关闭，
         // 否则悬浮层会残留。stopHoldSession 内部有 CAS 保护，重复调用无害。
         isVoiceRecording = false
