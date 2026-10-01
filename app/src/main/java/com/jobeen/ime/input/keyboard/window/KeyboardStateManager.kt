@@ -15,7 +15,6 @@ import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
-import java.lang.ref.WeakReference
 
 object KeyboardStateManager {
     /**
@@ -32,10 +31,10 @@ object KeyboardStateManager {
 
     var callback: Callback? = null
 
-    // 注册表只持弱引用：键盘实例是 View（含 Context），强引用会导致 service 销毁后泄漏；
-    // 显示期间 View 层（KeyboardWindowView.currentKeyboard）持有强引用，隐藏后可被回收，
-    // 下次使用时按需重建
-    private val keyboards: MutableMap<String, WeakReference<IKeyboard>> = hashMapOf()
+    // 注册表持强引用：键盘收起时 View 会从布局移除，若只剩弱引用，
+    // 两次打开之间发生 GC 会导致取回 null、按键区空白且无法恢复。
+    // 服务 onDestroy 时统一清空，避免 service 销毁后泄漏。
+    private val keyboards: MutableMap<String, IKeyboard> = hashMapOf()
     private var keyboardFactory: ((String) -> IKeyboard)? = null
     private var currentKeyboardName: String? = null
     private var keyboardAttached = false
@@ -55,18 +54,16 @@ object KeyboardStateManager {
     var keyActionListener: KeyActionListener = KeyActionListener.Empty
         set(value) {
             field = value
-            for (kb in liveKeyboards()) kb.keyActionListener = value
+            for (kb in keyboards.values) kb.keyActionListener = value
         }
 
-    /** 取存活键盘；弱引用已失效时顺手清理条目 */
-    private fun getKeyboard(name: String): IKeyboard? {
-        val kb = keyboards[name]?.get()
-        if (kb == null) keyboards.remove(name)
-        return kb
+    /** 服务销毁时调用：释放注册表与回调，避免持有已销毁的 View/Context */
+    fun onDestroy() {
+        keyboards.clear()
+        callback = null
+        currentKeyboardName = null
+        keyboardAttached = false
     }
-
-    private fun liveKeyboards(): List<IKeyboard> =
-        keyboards.values.mapNotNull { it.get() }
 
     fun setKeyboardFactory(factory: (String) -> IKeyboard) {
         keyboardFactory = factory
@@ -74,7 +71,7 @@ object KeyboardStateManager {
 
     fun getSchemas(): List<EngineMessage.Schema> = schemas
     fun getCurrentSchema(): EngineMessage.Schema? = currentSchema
-    fun get(name: String): IKeyboard? = getKeyboard(name)
+    fun get(name: String): IKeyboard? = keyboards[name]
 
 
     fun onAttach() {
@@ -85,7 +82,7 @@ object KeyboardStateManager {
         }
         if (keyboardAttached) return
         currentKeyboardName?.let { name ->
-            getKeyboard(name)?.let { kb ->
+            keyboards[name]?.let { kb ->
                 kb.onAttach()
                 callback?.onShowKeyboard(kb)
             }
@@ -96,7 +93,7 @@ object KeyboardStateManager {
     fun onDetach() {
         if (!keyboardAttached) return
         currentKeyboardName?.let { name ->
-            getKeyboard(name)?.let { kb ->
+            keyboards[name]?.let { kb ->
                 if (keyboardAttached) kb.onDetach()
                 callback?.onHideKeyboard(kb)
             }
@@ -146,9 +143,9 @@ object KeyboardStateManager {
     private fun create(name: String): IKeyboard {
         val factory = keyboardFactory
             ?: error("KeyboardStateManager.keyboardFactory must be set before creating keyboards")
-        getKeyboard(name)?.let { return it }
+        keyboards[name]?.let { return it }
         val keyboard = factory(name)
-        keyboards[name] = WeakReference(keyboard)
+        keyboards[name] = keyboard
         return keyboard
     }
 
@@ -157,7 +154,7 @@ object KeyboardStateManager {
             detachCurrent()
             attachNew(name)
         }
-        val kb = getKeyboard(name)
+        val kb = keyboards[name]
         kb?.updateSpaceKeyText(currentSchema?.name.orEmpty())
         kb?.updatePunctuationMode(PunctuationMode.from(currentSchema?.punctuation.orEmpty()))
         kb?.let { callback?.onKeyboardChanged(it) }
@@ -175,7 +172,7 @@ object KeyboardStateManager {
     fun detachCurrent() {
         val name = currentKeyboardName
         if (name != null) {
-            getKeyboard(name)?.let { kb ->
+            keyboards[name]?.let { kb ->
                 kb.keyActionListener = null
                 if (keyboardAttached) kb.onDetach()
                 callback?.onHideKeyboard(kb)
@@ -195,7 +192,7 @@ object KeyboardStateManager {
     }
 
     fun setRippleEnabled(enabled: Boolean) {
-        for (kb in liveKeyboards()) {
+        for (kb in keyboards.values) {
             kb.setRippleEnabled(enabled)
         }
     }
@@ -256,7 +253,7 @@ object KeyboardStateManager {
     // 仅当 (imeAction, empty, isComposing) 三者有实际变化时才刷新回车键。
     private fun updateReturnKeyIfNeeded() {
         val info = lastEditorInfo ?: return
-        val keyboard = currentKeyboardName?.let { getKeyboard(it) } ?: return
+        val keyboard = currentKeyboardName?.let { keyboards[it] } ?: return
         val action = info.imeOptions and EditorInfo.IME_MASK_ACTION
         if (action == lastImeAction &&
             lastInputEmpty == lastAppliedEmpty &&
