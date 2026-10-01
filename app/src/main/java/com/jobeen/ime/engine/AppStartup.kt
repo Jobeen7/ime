@@ -40,27 +40,45 @@ object AppStartup {
         synchronized(lock) {
             if (!initialized) {
                 val funcs = listOf(
-                    "setupLogger" to ::setupLogger,
-                    "setupThemeStore" to ::setupThemeStore,
-                    "releaseResourcesIfNeeded" to ::releaseResourcesIfNeeded,
-                    "setupInputFeedbacks" to ::setupInputFeedbacks,
-                    "setupEngine" to ::setupEngine,
-                    "setupSherpaSpeech" to ::setupSherpaSpeech,
-                    "prewarmOpencc" to ::prewarmOpencc,
+                    Step("setupLogger", ::setupLogger),
+                    Step("setupThemeStore", ::setupThemeStore),
+                    Step("releaseResourcesIfNeeded", ::releaseResourcesIfNeeded),
+                    Step("setupInputFeedbacks", ::setupInputFeedbacks),
+                    // 引擎初始化依赖资源解压：资源失败时跳过，避免半初始化状态
+                    Step("setupEngine", ::setupEngine, requires = setOf("releaseResourcesIfNeeded")),
+                    Step("setupSherpaSpeech", ::setupSherpaSpeech),
+                    Step("prewarmOpencc", ::prewarmOpencc),
                 )
                 // 每一步独立捕获异常并记日志：某一步失败不直接杀进程，
-                // 用 android.util.Log 确保 release 包（Timber 无 tree）也能在 logcat 看到
-                funcs.forEach { (name, fn) ->
-                    runCatching { fn(context) }
+                // 用 android.util.Log 确保 release 包（Timber 无 tree）也能在 logcat 看到；
+                // 失败步骤的依赖步骤会被跳过，不会带着坏状态继续跑
+                val failed = mutableSetOf<String>()
+                funcs.forEach { step ->
+                    val blockedBy = step.requires.intersect(failed)
+                    if (blockedBy.isNotEmpty()) {
+                        android.util.Log.w(
+                            "AppStartup",
+                            "step ${step.name} skipped, blocked by failed step(s): $blockedBy"
+                        )
+                        return@forEach
+                    }
+                    runCatching { step.fn(context) }
                         .onFailure { e ->
-                            android.util.Log.e("AppStartup", "step $name failed", e)
-                            Timber.e(e, "AppStartup step failed: %s", name)
+                            failed.add(step.name)
+                            android.util.Log.e("AppStartup", "step ${step.name} failed", e)
+                            Timber.e(e, "AppStartup step failed: %s", step.name)
                         }
                 }
                 initialized = true
             }
         }
     }
+
+    private data class Step(
+        val name: String,
+        val fn: (Context) -> Unit,
+        val requires: Set<String> = emptySet(),
+    )
 
     private fun setupThemeStore(context: Context) {
         ThemeStore.refresh()
