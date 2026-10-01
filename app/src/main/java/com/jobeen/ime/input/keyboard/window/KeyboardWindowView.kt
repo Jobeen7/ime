@@ -579,11 +579,14 @@ class KeyboardWindowView(
     }
 
     private fun showModelDownloadPrompt() {
-        if (!isVoiceRecording) return
+        // 防御性重置：不依赖异步 onFailed 回调的时序，任何路径下先回到干净状态，
+        // 避免工具栏 recording 变暗态残留。
+        isVoiceRecording = false
+        panel.recording = false
+        voiceOverlay.hide()
         panel.confirmOverlay.confirm(
             message = context.getString(R.string.voice_model_missing_message),
             onConfirm = {
-                isVoiceRecording = false
                 val intent = Intent(
                     context, com.jobeen.ime.ui.VoiceSettingsActivity::class.java
                 ).apply {
@@ -604,6 +607,12 @@ class KeyboardWindowView(
     private fun startVoiceInput() {
         if (isVoiceRecording) return
         if (!ensureRecordAudioPermission()) return
+        // 模型缺失时直接弹下载提示，不进入录音态：
+        // 避免工具栏闪一下变暗、语音动画又永远不出现。
+        if (!SherpaSpeechClient.isModelReady(context)) {
+            showModelDownloadPrompt()
+            return
+        }
         isVoiceRecording = true
         panel.recording = true
         voiceOverlay.unlock()
@@ -644,7 +653,8 @@ class KeyboardWindowView(
     }
 
     private fun stopVoiceInput() {
-        if (!isVoiceRecording) return
+        // 按箭头撤销时，即使用户松手后录音已结束（isVoiceRecording=false），悬浮层也必须关闭，
+        // 否则悬浮层会残留。stopHoldSession 内部有 CAS 保护，重复调用无害。
         isVoiceRecording = false
         panel.recording = false
         SherpaSpeechClient.stopHoldSession()
@@ -663,6 +673,11 @@ class KeyboardWindowView(
     private fun startVoiceInputLocked() {
         if (isVoiceRecording) return
         if (!ensureRecordAudioPermission()) return
+        // 模型缺失时直接弹下载提示，不进入录音态（同 startVoiceInput）
+        if (!SherpaSpeechClient.isModelReady(context)) {
+            showModelDownloadPrompt()
+            return
+        }
         isVoiceRecording = true
         panel.recording = true
         voiceOverlay.unlock()

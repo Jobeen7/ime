@@ -144,7 +144,11 @@ abstract class RenderView @JvmOverloads constructor(
     }
 
     override fun surfaceCreated(p0: SurfaceHolder) {
-        renderThread = RenderThread(this)
+        // startThread() 可能已在 surface 有效时重建过线程，这里只补建，避免泄漏出第二个绘制线程
+        val rt = renderThread
+        if (rt == null || rt.destroyed || rt.state == Thread.State.TERMINATED) {
+            renderThread = RenderThread(this)
+        }
         if (isStartAnim) startThread()
     }
 
@@ -186,14 +190,30 @@ abstract class RenderView @JvmOverloads constructor(
     }
 
     private fun startThread() {
-        if (renderThread != null && !renderThread!!.running) {
-            renderThread!!.setRun(true)
+        var rt = renderThread
+        // 旧线程可能已随 surface 销毁而死亡（destroyed/TERMINATED），此时 setRun/唤醒都是空操作，
+        // 必须丢弃，否则动画静默起不来（偶尔没有动画的根因）
+        if (rt != null && (rt.destroyed || rt.state == Thread.State.TERMINATED)) {
+            renderThread = null
+            rt = null
+        }
+        if (rt == null) {
+            // surface 有效时直接重建线程；surface 尚未就绪则等待 surfaceCreated 回调重建
+            val surface = try { holder?.surface } catch (_: Throwable) { null }
+            if (surface != null && surface.isValid) {
+                rt = RenderThread(this).also { renderThread = it }
+            } else {
+                return
+            }
+        }
+        if (!rt.running) {
+            rt.setRun(true)
             surfaceLock.withLock {
-                renderThread!!.isPause = false
+                rt.isPause = false
                 surfaceCondition.signalAll()
             }
             try {
-                if (renderThread!!.state == Thread.State.NEW) renderThread!!.start()
+                if (rt.state == Thread.State.NEW) rt.start()
             } catch (ignored: Exception) {
             }
         }

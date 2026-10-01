@@ -263,7 +263,7 @@ fun newlineKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
         variant = Variant.Alternative,
     ),
     behaviors = setOf(
-        KeyDef.Behavior.Press(KeyboardAction.ReturnAction())
+        KeyDef.Behavior.Press(KeyboardAction.CommitAction("\n"))
     ),
 )
 

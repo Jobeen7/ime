@@ -63,6 +63,11 @@ object KeyboardStateManager {
         callback = null
         currentKeyboardName = null
         keyboardAttached = false
+        // factory 闭包持有 View、lastEditorInfo 持有输入框信息、keyActionListener 链条持有 View，
+        // 服务销毁后不再需要，全部释放避免小泄漏
+        keyboardFactory = null
+        lastEditorInfo = null
+        keyActionListener = KeyActionListener.Empty
     }
 
     fun setKeyboardFactory(factory: (String) -> IKeyboard) {
