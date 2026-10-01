@@ -156,6 +156,7 @@ class ImeInputMethodService : InputMethodService() {
 
         ClipboardManager.stopMonitoring(this)
         InputFeedbacks.releaseFeedbackCache(this)
+        KeyboardStateManager.onDestroy()
         themePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         schemaPrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         candidatePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
