@@ -663,6 +663,8 @@ class KeyboardWindowView(
         // 视频实锤：撤销后整个键盘发白且一直存在。键盘容器 alpha 若被卡住也会导致整体发白，一并复位。
         (currentKeyboard as? android.view.View)?.let { kb ->
             if (kb.alpha != 1f) kb.alpha = 1f
+            // 分词键灰色背景残留：按别处重绘即好，说明是 stale draw。强制重绘兜底。
+            kb.postDelayed({ kb.invalidate() }, 150)
         }
         // 防御性清除：撤销语音后若有按键卡在按下态（表现为按键阴影残留，如分词键），强制复位。
         // 正常流程下此时不应有任何 KeyView 处于按下态（手指已从空格松开 / 点在悬浮层按钮上），
