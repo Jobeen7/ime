@@ -14,8 +14,8 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 36
-        versionName = "1.0.978"
+        versionCode = 37
+        versionName = "1.0.979"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
