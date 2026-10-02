@@ -28,4 +28,19 @@ interface CandidatePreferDao {
         """
     )
     suspend fun upsert(text: String, context: String, now: Long = System.currentTimeMillis())
+
+    @Query("SELECT COUNT(*) FROM candidate_prefers")
+    suspend fun count(): Int
+
+    // 容量上限：只保留点击量最高（同量取最近更新）的前 limit 条，其余删除。
+    // 偏好表无上限时长年使用会无限膨胀，拖慢全量加载与重排。
+    @Query(
+        """
+        DELETE FROM candidate_prefers WHERE text NOT IN (
+            SELECT text FROM candidate_prefers
+            ORDER BY click_count DESC, updated_at DESC LIMIT :limit
+        )
+        """
+    )
+    suspend fun pruneToLimit(limit: Int)
 }

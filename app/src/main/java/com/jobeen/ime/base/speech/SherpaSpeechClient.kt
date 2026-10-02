@@ -159,7 +159,25 @@ object SherpaSpeechClient {
         android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")
 
     fun preStartSync(context: Context) {
+        // 冷启动预启动只对真正用过语音的用户做：纯打字用户不必每次冷启动
+        // 都拉起 :speech 进程、复制 QNN 文件并初始化识别器。
+        // 从未用过语音时，首次长按语音键走 send() 的按需绑定路径（稍慢一次）。
+        if (!hasUsedVoice(context)) return
         send(SpeechIpc.MSG_LOAD)
+    }
+
+    private const val PREFS_NAME = "speech_client"
+    private const val KEY_VOICE_USED = "voice_used"
+
+    private fun hasUsedVoice(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_VOICE_USED, false)
+
+    private fun markVoiceUsed(context: Context) {
+        if (!hasUsedVoice(context)) {
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .edit().putBoolean(KEY_VOICE_USED, true).apply()
+        }
     }
 
     fun initialize(context: Context) {
@@ -218,6 +236,7 @@ object SherpaSpeechClient {
             return
         }
 
+        markVoiceUsed(service)
         send(SpeechIpc.MSG_LOAD)
         send(SpeechIpc.MSG_START)
     }
