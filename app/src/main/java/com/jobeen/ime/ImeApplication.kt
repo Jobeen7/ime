@@ -48,6 +48,14 @@ class ImeApplication : Application() {
         }
     }
 
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        // 内存紧张时释放简繁转换词表（数 MB 级），下次转换按需重建
+        if (level >= TRIM_MEMORY_RUNNING_LOW) {
+            runCatching { com.jobeen.ime.base.util.TraditionalConverter.releaseCaches() }
+        }
+    }
+
     override fun onTerminate() {
         applicationScope.cancel()
         super.onTerminate()

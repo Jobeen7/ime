@@ -278,24 +278,46 @@ class MenuGridView(
             itemSize = minOf(widthBased, heightBased).coerceAtLeast(0)
         }
 
-        pager.layoutParams = pager.layoutParams.apply { height = pageHeight }
-        indicators.layoutParams = indicators.layoutParams.apply { height = indicatorHeight }
+        // 尺寸没变时不要重设 LayoutParams：原实现每次 measure 都给全部子 View
+        // 赋值 layoutParams，会触发额外的 requestLayout 连锁
+        pager.layoutParams.let { lp ->
+            if (lp.height != pageHeight) {
+                lp.height = pageHeight
+                pager.layoutParams = lp
+            }
+        }
+        indicators.layoutParams.let { lp ->
+            if (lp.height != indicatorHeight) {
+                lp.height = indicatorHeight
+                indicators.layoutParams = lp
+            }
+        }
         for (pageIndex in 0 until pages.childCount) {
             val page = pages.getChildAt(pageIndex) as ViewGroup
-            page.layoutParams = page.layoutParams.apply { width = totalWidth; height = pageHeight }
+            page.layoutParams.let { lp ->
+                if (lp.width != totalWidth || lp.height != pageHeight) {
+                    lp.width = totalWidth
+                    lp.height = pageHeight
+                    page.layoutParams = lp
+                }
+            }
             for (rowIndex in 0 until page.childCount) {
                 val row = page.getChildAt(rowIndex) as ViewGroup
-                row.setPadding(
-                    pad,
-                    if (rowIndex == 0) pad else gap,
-                    pad,
-                    if (rowIndex == page.childCount - 1) pad else 0,
-                )
+                val topPad = if (rowIndex == 0) pad else gap
+                val bottomPad = if (rowIndex == page.childCount - 1) pad else 0
+                if (row.paddingLeft != pad || row.paddingTop != topPad ||
+                    row.paddingRight != pad || row.paddingBottom != bottomPad
+                ) {
+                    row.setPadding(pad, topPad, pad, bottomPad)
+                }
                 for (itemIndex in 0 until row.childCount) {
                     val item = row.getChildAt(itemIndex)
-                    item.layoutParams = item.layoutParams.apply {
-                        width = itemSize
-                        height = itemSize
+                    item.layoutParams.let { lp ->
+                        if (lp.width != itemSize || lp.height != itemSize) {
+                            lp.width = itemSize
+                            lp.height = itemSize
+                            item.layoutParams = lp
+                        }
                     }
                 }
             }

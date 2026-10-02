@@ -76,7 +76,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
          * 非 schema switch，切换方案不会被重置；每次 onStartInputView 按输入框重设。
          */
         private const val NO_PERSONALIZED_LEARNING_OPTION = "__no_personalized_learning"
+
+        /** 选词偏好表容量上限与裁剪检查节流间隔（按 upsert 次数计）。 */
+        private const val PREFER_LIMIT = 5000
+        private const val PRUNE_CHECK_INTERVAL = 200
     }
+
+    /** 只在 jobs 串行通道内读写，无需同步。 */
+    private var upsertsSincePruneCheck = 0
     private data class EngineState(
         var initialized: Boolean = false,
         var predictionVisible: Boolean = false,
@@ -306,8 +313,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             sendJob {
                 val ctx = context ?: return@sendJob
                 val inputContext = peekTextBeforeCursor(20)
-                AppDatabase.getInstance(ctx).candidatePreferDao().upsert(candidate.text, inputContext)
+                val dao = AppDatabase.getInstance(ctx).candidatePreferDao()
+                dao.upsert(candidate.text, inputContext)
                 CandidatePreferCache.noteUpsert(candidate.text)
+                // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载（保持两者一致）
+                if (++upsertsSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
+                    upsertsSincePruneCheck = 0
+                    if (dao.count() > PREFER_LIMIT) {
+                        dao.pruneToLimit(PREFER_LIMIT)
+                        CandidatePreferCache.invalidate()
+                    }
+                }
             }
         }
         flowBehavior(Selection(candidate.index))

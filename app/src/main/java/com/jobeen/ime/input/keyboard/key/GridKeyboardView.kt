@@ -92,8 +92,12 @@ class GridKeyboardView(
         val colW = w / columns
         rowH = h / rows
         totalRows = (childCount + columns - 1) / columns
-        val contentH = max(totalRows * rowH, h)
+        // 只测可见行（上下各留 1 行缓冲）：分类最多近 400 个键，
+        // 滚动时每帧全量 measure/layout 是主要卡顿源；不可见键滚入视口时再测
+        val (first, last) = visibleRowRange()
         for (i in 0 until childCount) {
+            val row = if (columns > 0) i / columns else 0
+            if (row !in first..last) continue
             val child = getChildAt(i)
             child.measure(
                 MeasureSpec.makeMeasureSpec(colW, MeasureSpec.EXACTLY),
@@ -103,10 +107,20 @@ class GridKeyboardView(
         setMeasuredDimension(w, h)
     }
 
+    /** 当前视口覆盖的行范围（含 1 行缓冲）；rowH 未知时返回全量范围。 */
+    private fun visibleRowRange(): Pair<Int, Int> {
+        if (rowH <= 0 || totalRows == 0) return 0 to (totalRows - 1).coerceAtLeast(0)
+        val first = (scrollOffsetY.toInt() / rowH - 1).coerceAtLeast(0)
+        val last = (first + rows + 2).coerceAtMost(totalRows - 1)
+        return first to last
+    }
+
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val colW = (r - l) / columns
+        val (first, last) = visibleRowRange()
         for (i in 0 until childCount) {
             val row = i / columns
+            if (row !in first..last) continue
             val col = i % columns
             val child = getChildAt(i)
             val childTop = row * rowH - scrollOffsetY.toInt()
