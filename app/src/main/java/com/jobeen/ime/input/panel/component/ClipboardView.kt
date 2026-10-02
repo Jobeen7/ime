@@ -39,7 +39,14 @@ class ClipboardView(
 
     private val density = resources.displayMetrics.density
 
-    private val viewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var viewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // ClipboardView 是常驻 View，会随输入窗口 detach/attach；detach 时旧 scope 已取消，
+        // 必须重建，否则重新挂载后剪贴板与常用语都无法再异步加载。
+        viewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    }
 
     override fun onDetachedFromWindow() {
         viewScope.cancel()
