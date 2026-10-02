@@ -16,7 +16,7 @@ import okhttp3.Request
 import timber.log.Timber
 import java.io.File
 import java.util.concurrent.TimeUnit
-import java.util.zip.ZipInputStream
+import java.util.zip.ZipFile
 
 /**
  * 万象输入方案在线更新管理器。
@@ -164,7 +164,7 @@ object WanxiangUpdateManager {
             // 未更新过则显示内置版本（v18.0.15，resource.zip 内置）
             schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null) ?: BUILTIN_SCHEMA_VERSION,
             dictFingerprint = try {
-                dictsContentFingerprint(dictsDir)
+                cachedDictsFingerprint(prefs, dictsDir)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -173,7 +173,7 @@ object WanxiangUpdateManager {
             },
             gramFingerprint = if (gramFile.isFile) {
                 try {
-                    sha256File(gramFile)
+                    cachedFileFingerprint(prefs, gramFile)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -184,6 +184,44 @@ object WanxiangUpdateManager {
                 null
             },
         )
+    }
+
+    // 指纹缓存：文件未变（长度+修改时间一致）时不要每次打开页面都全量哈希
+    // （语法模型约 400MB，词库也要逐文件读完）。缓存只存"文件状态→指纹"映射，
+    // 文件一变键就对不上，自动重算，不会显示过期指纹。
+    private const val KEY_FP_GRAM = "fp_cache_gram"
+    private const val KEY_FP_GRAM_STATE = "fp_cache_gram_state"
+    private const val KEY_FP_DICT = "fp_cache_dict"
+    private const val KEY_FP_DICT_STATE = "fp_cache_dict_state"
+
+    private suspend fun cachedFileFingerprint(
+        prefs: android.content.SharedPreferences,
+        file: File,
+    ): String {
+        val state = "${file.length()}:${file.lastModified()}"
+        val cached = prefs.getString(KEY_FP_GRAM, null)
+        if (cached != null && prefs.getString(KEY_FP_GRAM_STATE, null) == state) return cached
+        val fp = sha256File(file)
+        prefs.edit().putString(KEY_FP_GRAM, fp).putString(KEY_FP_GRAM_STATE, state).apply()
+        return fp
+    }
+
+    private suspend fun cachedDictsFingerprint(
+        prefs: android.content.SharedPreferences,
+        dictsDir: File,
+    ): String {
+        // 词库状态键只用各文件的路径+长度+修改时间（stat 级别，开销可忽略）
+        val stateParts = mutableListOf<String>()
+        dictsDir.walkTopDown()
+            .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
+            .forEach { stateParts.add("${it.relativeTo(dictsDir).path}|${it.length()}|${it.lastModified()}") }
+        stateParts.sort()
+        val state = fingerprint(*stateParts.toTypedArray())
+        val cached = prefs.getString(KEY_FP_DICT, null)
+        if (cached != null && prefs.getString(KEY_FP_DICT_STATE, null) == state) return cached
+        val fp = dictsContentFingerprint(dictsDir)
+        prefs.edit().putString(KEY_FP_DICT, fp).putString(KEY_FP_DICT_STATE, state).apply()
+        return fp
     }
 
     /**
@@ -444,40 +482,32 @@ object WanxiangUpdateManager {
         destDir: File,
         onProgress: (done: Int, total: Int) -> Unit,
     ): Int = withContext(Dispatchers.IO) {
-        // 先数出总数用于进度显示（zip 条目数很小，开销可忽略）
-        val total = ZipInputStream(zipFile.inputStream()).use { zin ->
-            var n = 0
-            var e = zin.nextEntry
-            while (e != null) {
-                if (!e.isDirectory && isAllowedEntry(e.name)) n++
-                zin.closeEntry()
-                e = zin.nextEntry
-            }
-            n
-        }
         var done = 0
         val destCanonical = destDir.canonicalPath
-        ZipInputStream(zipFile.inputStream()).use { zin ->
-            var entry = zin.nextEntry
-            while (entry != null) {
+        // 用 ZipFile 读中央目录：条目数直接可得，不必像 ZipInputStream 那样
+        // 先把整个包流式过一遍（等于完整解压两遍）
+        ZipFile(zipFile).use { zf ->
+            val entries = zf.entries().asSequence()
+                .filter { !it.isDirectory && isAllowedEntry(it.name.trimEnd('/')) }
+                .toList()
+            val total = entries.size
+            for (entry in entries) {
                 if (!currentCoroutineContext().isActive) {
                     throw kotlinx.coroutines.CancellationException("解压已取消")
                 }
                 val name = entry.name.trimEnd('/')
-                if (!entry.isDirectory && isAllowedEntry(name)) {
-                    val destFile = File(destDir, name).canonicalFile
-                    // 路径穿越防护（必须带分隔符：无分隔符前缀比较可被同前缀兄弟目录绕过）
-                    if (destFile.path.startsWith(destCanonical + File.separator)) {
-                        destFile.parentFile?.mkdirs()
-                        destFile.outputStream().use { out -> zin.copyTo(out, BUFFER_SIZE) }
-                        done++
-                        onProgress(done, total)
-                    } else {
-                        Timber.w("跳过非法路径：%s", name)
+                val destFile = File(destDir, name).canonicalFile
+                // 路径穿越防护（必须带分隔符：无分隔符前缀比较可被同前缀兄弟目录绕过）
+                if (destFile.path.startsWith(destCanonical + File.separator)) {
+                    destFile.parentFile?.mkdirs()
+                    zf.getInputStream(entry).use { input ->
+                        destFile.outputStream().use { out -> input.copyTo(out, BUFFER_SIZE) }
                     }
+                    done++
+                    onProgress(done, total)
+                } else {
+                    Timber.w("跳过非法路径：%s", name)
                 }
-                zin.closeEntry()
-                entry = zin.nextEntry
             }
         }
         done
