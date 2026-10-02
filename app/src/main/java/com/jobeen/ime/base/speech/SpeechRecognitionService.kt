@@ -64,6 +64,11 @@ class SpeechRecognitionService : Service() {
 
     @Volatile
     private var sessionGen = 0
+
+    // 客户端随 START 发来的会话代次令牌：本会话全部回信原样带回，
+    // 客户端据此丢弃旧会话迟到的结果（服务端内部代次 sessionGen 只管服务端自身防串扰）
+    @Volatile
+    private var sessionClientGen = 0
     private val audioLock = Any()
     private var audioJob: Job? = null
     private var audioRecord: AudioRecord? = null
@@ -102,6 +107,10 @@ class SpeechRecognitionService : Service() {
                         return@Callback true
                     }
                     val gen = ++sessionGen
+                    val clientGen = runCatching {
+                        msg.data?.getInt(SpeechIpc.KEY_GEN, 0) ?: 0
+                    }.getOrDefault(0)
+                    sessionClientGen = clientGen
                     // 引擎初始化（可能数百 ms）移到 IO 线程，不要阻塞服务主线程
                     scope.launch {
                         val ready = initEngine(this@SpeechRecognitionService, silent = true)
@@ -129,6 +138,9 @@ class SpeechRecognitionService : Service() {
 
                 SpeechIpc.MSG_STOP -> {
                     val gen = sessionGen
+                    // DONE 必须带被停会话的客户端代次：join 期间新会话可能已开始，
+                    // 代次能让客户端识别这声 DONE 属于旧会话，不会误结算新会话
+                    val stoppedClientGen = sessionClientGen
                     sessionActive.set(false)
                     holding.set(false)
                     audioRecord?.runCatching { stop() }
@@ -136,7 +148,7 @@ class SpeechRecognitionService : Service() {
                     audioJob = null
                     if (job == null) {
                         // 还没开始采集（初始化中/STOP 先到）：也要回 DONE 让客户端收尾
-                        sendClient(SpeechIpc.MSG_DONE)
+                        sendClient(SpeechIpc.MSG_DONE, gen = stoppedClientGen)
                         clientMessenger = null
                     } else {
                         // 等最终解码在 IO 线程完成，不要在主线程 runBlocking 等待
@@ -144,7 +156,7 @@ class SpeechRecognitionService : Service() {
                             job.join()
                             // join 期间若已开始新会话，旧会话的 DONE 不得结算新会话
                             if (gen == sessionGen) {
-                                sendClient(SpeechIpc.MSG_DONE)
+                                sendClient(SpeechIpc.MSG_DONE, gen = stoppedClientGen)
                                 clientMessenger = null
                             }
                         }
@@ -174,9 +186,14 @@ class SpeechRecognitionService : Service() {
         recognizerRef.getAndSet(null)
     }
 
-    private fun sendClient(what: Int, text: String? = null, amplitude: Float = 0f) {
+    private fun sendClient(
+        what: Int,
+        text: String? = null,
+        amplitude: Float = 0f,
+        gen: Int = sessionClientGen,
+    ) {
         val messenger = clientMessenger ?: return
-        val ok = runCatching { messenger.send(SpeechIpc.message(what, text, amplitude)) }
+        val ok = runCatching { messenger.send(SpeechIpc.message(what, text, amplitude, gen)) }
         if (ok.isFailure) Log.e("SpeechSvc", "sendClient failed what=$what", ok.exceptionOrNull())
     }
 
@@ -338,12 +355,15 @@ class SpeechRecognitionService : Service() {
 
     private fun startAudioStreaming() {
         if (!sessionActive.get()) return
+        // 本会话的客户端代次在入口固定：协程收尾（最终解码）可能晚于新会话开始，
+        // 回信必须带自己会话的代次，不能读到那时已被覆盖的 sessionClientGen
+        val myGen = sessionClientGen
         if (ContextCompat.checkSelfPermission(
                 this, Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
         ) {
             sessionActive.set(false)
-            sendClient(SpeechIpc.MSG_ERROR)
+            sendClient(SpeechIpc.MSG_ERROR, gen = myGen)
             return
         }
 
@@ -382,7 +402,7 @@ class SpeechRecognitionService : Service() {
                     return@launch
                 }
                 holding.set(true)
-                sendClient(SpeechIpc.MSG_RECORDING_STARTED)
+                sendClient(SpeechIpc.MSG_RECORDING_STARTED, gen = myGen)
 
                 val bytes = ByteArray(chunkBytes)
                 val shortChunk = ShortArray(chunkSamples)
@@ -434,14 +454,14 @@ class SpeechRecognitionService : Service() {
                                     if (partial.isNotEmpty() && partial != lastEmittedText) {
                                         lastEmittedText = partial
                                         lastEmitUptimeMs = now
-                                        sendClient(SpeechIpc.MSG_PARTIAL, partial)
+                                        sendClient(SpeechIpc.MSG_PARTIAL, partial, gen = myGen)
                                     }
                                 }
                             }
                         }
                     }
 
-                    sendClient(SpeechIpc.MSG_AMPLITUDE, amplitude = amplitude)
+                    sendClient(SpeechIpc.MSG_AMPLITUDE, amplitude = amplitude, gen = myGen)
 
                     delay(5.milliseconds)
                 }
@@ -461,7 +481,7 @@ class SpeechRecognitionService : Service() {
                             }
                             val finalText = normalizeCjkSpacing(engine.getResult(stream).text)
                             finalText.takeIf { it.isNotEmpty() }?.let {
-                                sendClient(SpeechIpc.MSG_FINAL, it)
+                                sendClient(SpeechIpc.MSG_FINAL, it, gen = myGen)
                             }
                         } catch (e: Throwable) {
                             Log.e("SpeechSvc", "Final decode failed", e)
@@ -474,7 +494,7 @@ class SpeechRecognitionService : Service() {
                     withContext(NonCancellable + Dispatchers.Main) {
                         toast("录音异常")
                     }
-                    sendClient(SpeechIpc.MSG_ERROR)
+                    sendClient(SpeechIpc.MSG_ERROR, gen = myGen)
                 }
             } finally {
                 recorder?.runCatching { stop() }

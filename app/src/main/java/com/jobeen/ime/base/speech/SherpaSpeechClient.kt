@@ -40,6 +40,17 @@ object SherpaSpeechClient {
     private val discarding = AtomicBoolean(false)
     private val composingText = AtomicReference<String?>(null)
 
+    // 会话代际：每次 startHoldSession 递增并记为 activeGen，随 START 发给服务端，
+    // 服务端回信带回同一代次；handler 只接受 activeGen 的回信，旧会话迟到的
+    // FINAL/ERROR/DONE 一律丢弃，不能污染新会话（结束/取消后 activeGen 清零，
+    // 会话收尾之后到达的残余回信同样被丢弃）
+    private val genCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
+    @Volatile
+    private var activeGen = 0
+
+    fun isHolding(): Boolean = holding.get()
+
     private var uiJob: Job? = null
     private var serviceRef: WeakReference<ImeInputMethodService>? = null
 
@@ -48,6 +59,13 @@ object SherpaSpeechClient {
         Handler(
             Looper.getMainLooper(),
             { msg ->
+                // 代际校验：回信代次与当前会话不一致（旧会话迟到/会话已收尾）直接丢弃。
+                // gen==0 是对端未带代次的兼容情形（同版本发布，不应发生），放行保底。
+                val gen = msg.data?.getInt(SpeechIpc.KEY_GEN, 0) ?: 0
+                if (gen != 0 && gen != activeGen) {
+                    Timber.d("SpeechCli drop stale msg what=%d gen=%d active=%d", msg.what, gen, activeGen)
+                    return@Handler true
+                }
                 when (msg.what) {
                     SpeechIpc.MSG_RECORDING_STARTED -> onRecordingStarted()
                     SpeechIpc.MSG_PARTIAL -> onPartial(msg.data.getString(SpeechIpc.KEY_TEXT))
@@ -61,7 +79,7 @@ object SherpaSpeechClient {
         ),
     )
     private val connectLock = Any()
-    private val pending = mutableListOf<Int>()
+    private val pending = mutableListOf<Pair<Int, Int>>()
 
     private val connection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
@@ -71,11 +89,14 @@ object SherpaSpeechClient {
                 speechMessenger = messenger
                 val actions = pending.toList()
                 pending.clear()
-                actions.forEach { what ->
+                actions.forEach { (what, gen) ->
                     // 待绑定的 START 若在绑定完成前已被松手/取消，绝不能重放：
-                    // 否则客户端以为没在录，服务端却开始一段停不下来的幽灵录音
-                    if (what == SpeechIpc.MSG_START && !holding.get()) return@forEach
-                    val msg = SpeechIpc.message(what)
+                    // 否则客户端以为没在录，服务端却开始一段停不下来的幽灵录音。
+                    // 代次也必须仍是当前会话：旧会话的 START 更不能重放。
+                    if (what == SpeechIpc.MSG_START && (!holding.get() || gen != activeGen)) {
+                        return@forEach
+                    }
+                    val msg = SpeechIpc.message(what, gen = gen)
                     if (what == SpeechIpc.MSG_START) msg.replyTo = clientMessenger
                     runCatching { messenger.send(msg) }
                 }
@@ -95,17 +116,17 @@ object SherpaSpeechClient {
     }
 
     private fun removePending(what: Int) {
-        synchronized(connectLock) { pending.removeAll { it == what } }
+        synchronized(connectLock) { pending.removeAll { it.first == what } }
     }
 
-    private fun send(what: Int) {
+    private fun send(what: Int, gen: Int = 0) {
         val messenger = synchronized(connectLock) { speechMessenger }
         if (messenger != null) {
-            val msg = SpeechIpc.message(what)
+            val msg = SpeechIpc.message(what, gen = gen)
             if (what == SpeechIpc.MSG_START) msg.replyTo = clientMessenger
             runCatching { messenger.send(msg) }
         } else {
-            synchronized(connectLock) { pending.add(what) }
+            synchronized(connectLock) { pending.add(what to gen) }
             Timber.d("SpeechCli %s", "bind requested what=$what")
             val app = appContext
             Handler(Looper.getMainLooper()).post {
@@ -207,6 +228,8 @@ object SherpaSpeechClient {
         }
         if (!holding.compareAndSet(false, true)) return
         Timber.i("startHoldSession")
+        val gen = genCounter.incrementAndGet()
+        activeGen = gen
         serviceRef = WeakReference(service)
         composingText.set(null)
         discarding.set(false)
@@ -243,7 +266,7 @@ object SherpaSpeechClient {
 
         markVoiceUsed(service)
         send(SpeechIpc.MSG_LOAD)
-        send(SpeechIpc.MSG_START)
+        send(SpeechIpc.MSG_START, gen)
     }
 
     fun stopHoldSession(discard: Boolean = false) {
@@ -313,6 +336,8 @@ object SherpaSpeechClient {
     private fun resetState() {
         holding.set(false)
         discarding.set(false)
+        // 会话收尾：代次清零，此后到达的任何带代次回信都会被 handler 丢弃
+        activeGen = 0
         uiJob?.cancel()
         uiJob = null
         serviceRef?.clear()

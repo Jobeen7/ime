@@ -418,21 +418,37 @@ object WanxiangUpdateManager {
                 gramTarget = target
             }
 
-            // 4. 两边都就绪后才应用：先搬词库，再原子替换语法模型
+            // 4. 两边都就绪后才应用：词库整目录对齐（先清残留再覆盖），再原子替换语法模型
             extractDir?.let { dir ->
                 val dictsDir = File(DataManager.sharedDataDir, "dicts").apply { mkdirs() }
-                dir.walkTopDown()
+                val newFiles = dir.walkTopDown()
                     .filter { it.isFile }
-                    .forEach { src ->
-                        val rel = src.relativeTo(dir).path
-                        val dest = File(dictsDir, rel).canonicalFile
-                        // 二次路径穿越检查
-                        check(dest.path.startsWith(dictsDir.canonicalPath + File.separator)) {
-                            "非法路径：$rel"
-                        }
-                        dest.parentFile?.mkdirs()
-                        src.copyTo(dest, overwrite = true)
+                    .toList()
+                val newRelPaths = newFiles.map { it.relativeTo(dir).path }.toSet()
+                // 清除残留：现用目录里不在新词库清单中的 .dict.yaml 一律删除。
+                // 上游删掉/改名的词库文件若不清，会永远留在目录里被 Rime 加载；
+                // 旧版误写到 dicts/dicts/ 下的文件也在这里一并清掉。
+                dictsDir.walkTopDown()
+                    .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
+                    .filter { it.relativeTo(dictsDir).path !in newRelPaths }
+                    .forEach {
+                        Timber.i("清理残留词库文件：%s", it.relativeTo(dictsDir).path)
+                        it.delete()
                     }
+                // 残留文件删完后顺手清掉空子目录（如误写遗留的 dicts/dicts/）
+                dictsDir.walkBottomUp()
+                    .filter { it.isDirectory && it != dictsDir }
+                    .forEach { if (it.listFiles().isNullOrEmpty()) it.delete() }
+                newFiles.forEach { src ->
+                    val rel = src.relativeTo(dir).path
+                    val dest = File(dictsDir, rel).canonicalFile
+                    // 二次路径穿越检查
+                    check(dest.path.startsWith(dictsDir.canonicalPath + File.separator)) {
+                        "非法路径：$rel"
+                    }
+                    dest.parentFile?.mkdirs()
+                    src.copyTo(dest, overwrite = true)
+                }
             }
             if (gramPartial != null && gramTarget != null) {
                 gramTarget.delete()
@@ -496,7 +512,12 @@ object WanxiangUpdateManager {
                     throw kotlinx.coroutines.CancellationException("解压已取消")
                 }
                 val name = entry.name.trimEnd('/')
-                val destFile = File(destDir, name).canonicalFile
+                // 剥掉 dicts/ 前缀：解压目录直接代表现用 dicts 目录本身。
+                // 这样解压目录与现用目录的相对路径完全同构——内容指纹可直接比对，
+                // 应用时也不会再多套一层 dicts/dicts/（旧实现把文件写进了
+                // shared/dicts/dicts/，Rime 根本读不到，在线更新的词库从未真正生效）
+                val relName = name.removePrefix("dicts/")
+                val destFile = File(destDir, relName).canonicalFile
                 // 路径穿越防护（必须带分隔符：无分隔符前缀比较可被同前缀兄弟目录绕过）
                 if (destFile.path.startsWith(destCanonical + File.separator)) {
                     destFile.parentFile?.mkdirs()
