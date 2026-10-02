@@ -139,6 +139,28 @@ class KawaiiPanelView(context: Context) : View(context) {
     private var expandLongPressed = false
     private var dragTotalX = 0f
     private var dragTotalY = 0f
+
+    // 当前手势的指针 id：只认第一根落指的手指，其他手指的事件不干扰本手势
+    private var activePointerId = -1
+
+    // 延迟触发的工具栏动作（Palette 300ms / CloseKeyboard 100ms）：
+    // 用具名 Runnable 以便取消——新按下、输入结束、View 分离时必须清掉，
+    // 否则过期的点击会在错误的状态下迟到触发
+    private var delayedPalette: Runnable? = null
+    private var delayedClose: Runnable? = null
+
+    fun cancelDelayedTaps() {
+        delayedPalette?.let { removeCallbacks(it) }
+        delayedClose?.let { removeCallbacks(it) }
+        delayedPalette = null
+        delayedClose = null
+    }
+
+    override fun onDetachedFromWindow() {
+        cancelDelayedTaps()
+        longPressHandler.removeCallbacks(longPressRunnable)
+        super.onDetachedFromWindow()
+    }
     private val longPressHandler = Handler(Looper.getMainLooper())
     private val longPressRunnable = Runnable {
         val result = currentRenderer.hitTest(
@@ -186,8 +208,12 @@ class KawaiiPanelView(context: Context) : View(context) {
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                lastTouchX = event.x
-                lastTouchY = event.y
+                // 已有手指在进行手势时，第二根手指不重启手势
+                if (activePointerId != -1) return true
+                activePointerId = event.getPointerId(0)
+                cancelDelayedTaps()
+                lastTouchX = event.getX(0)
+                lastTouchY = event.getY(0)
                 dragTotalX = 0f
                 dragTotalY = 0f
                 isScrolling = false
@@ -197,14 +223,19 @@ class KawaiiPanelView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_MOVE -> {
-                val dx = event.x - lastTouchX
-                val dy = event.y - lastTouchY
-                lastTouchX = event.x
-                lastTouchY = event.y
+                val idx = event.findPointerIndex(activePointerId)
+                if (idx < 0) return true
+                val ex = event.getX(idx)
+                val ey = event.getY(idx)
+                val dx = ex - lastTouchX
+                val dy = ey - lastTouchY
+                lastTouchX = ex
+                lastTouchY = ey
                 dragTotalX += dx
                 dragTotalY += dy
-                val moveDist = abs(dx) + abs(dy)
-                if (moveDist > 8 * screenDensity) {
+                // 长按取消按累计位移判定（dragTotal 即相对按下点的实际位移）：
+                // 旧实现用单步位移，慢速小步拖动每步都达不到阈值，手已滑走长按仍触发
+                if (abs(dragTotalX) + abs(dragTotalY) > 8 * screenDensity) {
                     longPressHandler.removeCallbacks(longPressRunnable)
                 }
                 if (currentRenderer !is ComposingRenderer) return true
@@ -220,46 +251,67 @@ class KawaiiPanelView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_UP -> {
-                longPressHandler.removeCallbacks(longPressRunnable)
-                parent.requestDisallowInterceptTouchEvent(false)
-                if (expandLongPressed) return true
-                if (!isScrolling) {
-                    val result = currentRenderer.hitTest(
-                        event.x, event.y, width, height, scrollX, isExpanded, screenDensity,
-                    )
-                    if (recording && !isRecordingAllowed(result)) return true
-                    if (currentRenderer is ToolbarRenderer && result != null) {
-                        val action = (result as? KawaiiPanel.TouchResult.ToolbarAction)?.action
-                        val isClipAction =
-                            action is PanelAction.ClipTab || action is PanelAction.AddPhrase || action is PanelAction.ClearClipboard || action is PanelAction.ClearPhrases
-                        val animateAfterRender =
-                            action is PanelAction.SwitchKeyboard || action is PanelAction.CursorMove
-                        if (!isClipAction && !animateAfterRender) {
-                            startPressAnimation(currentRenderer as ToolbarRenderer)
-                        }
-                        if (result is KawaiiPanel.TouchResult.ToolbarAction && result.action is PanelAction.Palette) {
-                            postDelayed({ onTap?.invoke(result) }, 300L)
-                            return true
-                        }
-                    }
-                    val delayedAction =
-                        result is KawaiiPanel.TouchResult.ToolbarAction && result.action is PanelAction.CloseKeyboard
-                    if (delayedAction) {
-                        postDelayed({ onTap?.invoke(result) }, 100L)
-                    } else {
-                        onTap?.invoke(result)
-                    }
-                    if (result is KawaiiPanel.TouchResult.ToolbarAction && (result.action is PanelAction.SwitchKeyboard || result.action is PanelAction.CursorMove)) {
-                        post { playToolbarPressAt(result.tapX, result.tapY) }
-                    }
+                activePointerId = -1
+                handleUp(event.x, event.y)
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                // 被追踪的手指先抬起（还有其他手指在按）时同样结束手势
+                if (event.getPointerId(event.actionIndex) == activePointerId) {
+                    val idx = event.actionIndex
+                    activePointerId = -1
+                    handleUp(event.getX(idx), event.getY(idx))
                 }
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                activePointerId = -1
+                cancelDelayedTaps()
                 longPressHandler.removeCallbacks(longPressRunnable)
                 parent.requestDisallowInterceptTouchEvent(false)
             }
         }
         return true
+    }
+
+    /** 主动抬起的统一收尾（坐标取抬起的那根手指） */
+    private fun handleUp(upX: Float, upY: Float) {
+        longPressHandler.removeCallbacks(longPressRunnable)
+        parent.requestDisallowInterceptTouchEvent(false)
+        if (expandLongPressed) return
+        if (!isScrolling) {
+            val result = currentRenderer.hitTest(
+                upX, upY, width, height, scrollX, isExpanded, screenDensity,
+            )
+            if (recording && !isRecordingAllowed(result)) return
+            if (currentRenderer is ToolbarRenderer && result != null) {
+                val action = (result as? KawaiiPanel.TouchResult.ToolbarAction)?.action
+                val isClipAction =
+                    action is PanelAction.ClipTab || action is PanelAction.AddPhrase || action is PanelAction.ClearClipboard || action is PanelAction.ClearPhrases
+                val animateAfterRender =
+                    action is PanelAction.SwitchKeyboard || action is PanelAction.CursorMove
+                if (!isClipAction && !animateAfterRender) {
+                    startPressAnimation(currentRenderer as ToolbarRenderer)
+                }
+                if (result is KawaiiPanel.TouchResult.ToolbarAction && result.action is PanelAction.Palette) {
+                    val r = Runnable { onTap?.invoke(result) }
+                    delayedPalette = r
+                    postDelayed(r, 300L)
+                    return
+                }
+            }
+            val delayedAction =
+                result is KawaiiPanel.TouchResult.ToolbarAction && result.action is PanelAction.CloseKeyboard
+            if (delayedAction) {
+                val r = Runnable { onTap?.invoke(result) }
+                delayedClose = r
+                postDelayed(r, 100L)
+            } else {
+                onTap?.invoke(result)
+            }
+            if (result is KawaiiPanel.TouchResult.ToolbarAction && (result.action is PanelAction.SwitchKeyboard || result.action is PanelAction.CursorMove)) {
+                post { playToolbarPressAt(result.tapX, result.tapY) }
+            }
+        }
     }
 }

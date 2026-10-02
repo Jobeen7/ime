@@ -22,13 +22,29 @@ object SpeechIpc {
     const val KEY_TEXT = "text"
     const val KEY_AMPLITUDE = "amplitude"
 
-    fun message(what: Int, text: String? = null, amplitude: Float = 0f): Message {
+    /**
+     * 会话代际令牌：客户端每次 startHoldSession 生成新代次并随 START 发给服务端，
+     * 服务端在该会话的全部回信（STARTED/PARTIAL/FINAL/ERROR/DONE）里原样带回。
+     * 客户端只接受当前代次的回信——旧会话迟到的结果不能污染新会话。
+     */
+    const val KEY_GEN = "gen"
+
+    fun message(what: Int, text: String? = null, amplitude: Float = 0f, gen: Int = 0): Message {
         val msg = Message.obtain(null, what)
+        val bundle = Bundle()
+        var hasData = false
         if (text != null) {
-            msg.data = Bundle().apply { putString(KEY_TEXT, text) }
+            bundle.putString(KEY_TEXT, text)
+            hasData = true
         } else if (what == MSG_AMPLITUDE) {
-            msg.data = Bundle().apply { putFloat(KEY_AMPLITUDE, amplitude) }
+            bundle.putFloat(KEY_AMPLITUDE, amplitude)
+            hasData = true
         }
+        if (gen != 0) {
+            bundle.putInt(KEY_GEN, gen)
+            hasData = true
+        }
+        if (hasData) msg.data = bundle
         return msg
     }
 }

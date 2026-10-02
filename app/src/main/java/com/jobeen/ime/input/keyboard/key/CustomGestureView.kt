@@ -21,7 +21,7 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
 
     enum class SwipeAxis { X, Y }
 
-    enum class GestureType { Down, Move, Up }
+    enum class GestureType { Down, Move, Up, Cancel }
 
     data class Event(
         val type: GestureType,
@@ -88,7 +88,11 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     private var lastClickTime = 0L
     private var maybeDoubleTap = false
 
-    var onTouchMoveListener: ((Float, Float) -> Unit)? = null
+    // 当前手势的指针 id：只追踪按下本 View 的那根手指。
+    // 多指场景下其他指针的 MOVE/UP 不得干扰本手势（坐标串指、提前结束等）。
+    private var activePointerId = -1
+
+    var onTouchMoveListener: ((pointerId: Int, rawX: Float, rawY: Float) -> Unit)? = null
     var onTouchDownListener: ((View) -> Unit)? = null
     var onTouchUpListener: ((View) -> Unit)? = null
     var onDoubleTapListener: ((View) -> Unit)? = null
@@ -140,11 +144,14 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        val x = event.x
-        val y = event.y
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 if (!isEnabled) return false
+                // 已有手指在进行手势时，第二根手指的 DOWN 不重启手势
+                if (activePointerId != -1) return true
+                activePointerId = event.getPointerId(0)
+                val x = event.getX(0)
+                val y = event.getY(0)
                 drawableHotspotChanged(x, y)
                 isPressed = true
                 InputFeedbacks.hapticFeedback(this)
@@ -171,36 +178,39 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                 }
             }
 
+            MotionEvent.ACTION_POINTER_DOWN -> {
+                // 其他手指按下与本手势无关，不接管
+                return true
+            }
+
             MotionEvent.ACTION_UP -> {
-                isPressed = false
-                onTouchUpListener?.invoke(this)
-                dispatchGestureEvent(GestureType.Up, event.x, event.y)
-                val shouldPerformClick =
-                    !(touchMovedOutside || longPressTriggered || repeatStarted || swipeRepeatTriggered || gestureConsumed)
-                resetState()
-                if (shouldPerformClick) {
-                    if (doubleTapEnabled) {
-                        val now = System.currentTimeMillis()
-                        if (maybeDoubleTap && now - lastClickTime <= longPressDelay) {
-                            maybeDoubleTap = false
-                            onDoubleTapListener?.invoke(this)
-                        } else {
-                            maybeDoubleTap = true
-                            performClick()
-                        }
-                        lastClickTime = now
-                    } else {
-                        performClick()
-                    }
+                activePointerId = -1
+                handleRelease(event.x, event.y)
+                return true
+            }
+
+            MotionEvent.ACTION_POINTER_UP -> {
+                // 只有被追踪的那根手指抬起才算手势结束；其他手指抬起忽略
+                if (event.getPointerId(event.actionIndex) == activePointerId) {
+                    val idx = event.actionIndex
+                    activePointerId = -1
+                    handleRelease(event.getX(idx), event.getY(idx))
                 }
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
                 if (!isEnabled) return false
+                val idx = event.findPointerIndex(activePointerId)
+                if (idx < 0) return true
+                val x = event.getX(idx)
+                val y = event.getY(idx)
                 drawableHotspotChanged(x, y)
                 if (longPressTriggered) {
-                    onTouchMoveListener?.invoke(event.rawX, event.rawY)
+                    // raw 坐标按追踪指针换算（event.rawX 永远是 0 号指针的）
+                    val loc = IntArray(2)
+                    getLocationOnScreen(loc)
+                    onTouchMoveListener?.invoke(activePointerId, loc[0] + x, loc[1] + y)
                 }
                 if (!touchMovedOutside && !pointInView(x, y)) {
                     touchMovedOutside = true
@@ -225,9 +235,15 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                // CANCEL 是手势被系统/父容器打断，不是用户主动抬起：
+                // 不能当作 UP——不触发 onTouchUpListener（语音会误上屏、
+                // 弹窗会误选词），只做状态回收，并以 Cancel 类型通知手势监听方。
+                val idx = event.findPointerIndex(activePointerId)
+                val x = if (idx >= 0) event.getX(idx) else 0f
+                val y = if (idx >= 0) event.getY(idx) else 0f
+                activePointerId = -1
                 isPressed = false
-                onTouchUpListener?.invoke(this)
-                dispatchGestureEvent(GestureType.Up, event.x, event.y)
+                dispatchGestureEvent(GestureType.Cancel, x, y)
                 resetState()
                 // reset double tap state on cancel
                 if (doubleTapEnabled) {
@@ -238,6 +254,31 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
             }
         }
         return true
+    }
+
+    /** 主动抬起（UP / 追踪指针的 POINTER_UP）的统一收尾：触发抬起回调与点击判定 */
+    private fun handleRelease(x: Float, y: Float) {
+        isPressed = false
+        onTouchUpListener?.invoke(this)
+        dispatchGestureEvent(GestureType.Up, x, y)
+        val shouldPerformClick =
+            !(touchMovedOutside || longPressTriggered || repeatStarted || swipeRepeatTriggered || gestureConsumed)
+        resetState()
+        if (shouldPerformClick) {
+            if (doubleTapEnabled) {
+                val now = System.currentTimeMillis()
+                if (maybeDoubleTap && now - lastClickTime <= longPressDelay) {
+                    maybeDoubleTap = false
+                    onDoubleTapListener?.invoke(this)
+                } else {
+                    maybeDoubleTap = true
+                    performClick()
+                }
+                lastClickTime = now
+            } else {
+                performClick()
+            }
+        }
     }
 
     private fun dispatchGestureEvent(

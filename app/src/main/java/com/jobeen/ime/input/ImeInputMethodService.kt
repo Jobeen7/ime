@@ -126,6 +126,12 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         showingDialog?.dismiss()
+        // 录音中切换输入框：立即丢弃本次录音。否则识别结果会经
+        // activeInputConnection() 写进新输入框，且待定文字会残留在旧框。
+        // 放在最前面，保证清待定文字时连接仍指向旧输入框。
+        if (com.jobeen.ime.base.speech.SherpaSpeechClient.isHolding()) {
+            com.jobeen.ime.base.speech.SherpaSpeechClient.stopHoldSession(discard = true)
+        }
         engine?.resetComposition()
         keyboardWindow?.onFinishInputView(finishingInput)
         engine?.onFinishInputView()
