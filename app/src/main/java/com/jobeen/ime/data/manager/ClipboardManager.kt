@@ -8,6 +8,7 @@ import android.os.Build
 import androidx.core.content.edit
 import androidx.room.withTransaction
 import com.jobeen.ime.data.database.AppDatabase
+import com.jobeen.ime.data.database.ClipboardDatabase
 import com.jobeen.ime.data.database.ClipboardDao
 import com.jobeen.ime.data.database.ClipboardRecord
 import kotlinx.coroutines.Dispatchers
@@ -225,10 +226,31 @@ object ClipboardManager {
     @Volatile var clearTimestamp: Long = 0L
         private set
 
-    private suspend fun <T> db(context: Context, block: suspend (com.jobeen.ime.data.database.AppDatabase) -> T): T? =
+    private const val KEY_DB_MIGRATED = "clipboard_db_migrated_v1"
+
+    /**
+     * 一次性把剪贴板历史从 ime_database 迁到独立的 clipboard_database（拆库原因见
+     * ClipboardDatabase 注释）。仅当新库为空时才搬，避免中途失败重试造成重复。
+     */
+    private suspend fun migrateFromAppDatabase(context: Context, target: ClipboardDatabase) {
+        val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (settings.getBoolean(KEY_DB_MIGRATED, false)) return
+        runCatching {
+            val dao = target.clipboardDao()
+            if (dao.count() == 0) {
+                val oldRows = AppDatabase.getInstance(context).clipboardDao().getAllRaw()
+                oldRows.forEach { dao.insert(it) }
+                Timber.i("Clipboard history migrated: ${oldRows.size} rows")
+            }
+            settings.edit().putBoolean(KEY_DB_MIGRATED, true).apply()
+        }.onFailure { Timber.w(it, "Clipboard history migration failed; will retry") }
+    }
+
+    private suspend fun <T> db(context: Context, block: suspend (ClipboardDatabase) -> T): T? =
         try {
             withContext(Dispatchers.IO) {
-                val db = AppDatabase.getInstance(context)
+                val db = ClipboardDatabase.getInstance(context)
+                migrateFromAppDatabase(context, db)
                 block(db)
             }
         } catch (e: Exception) {
