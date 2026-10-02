@@ -6,12 +6,18 @@ import com.jobeen.ime.data.database.PhraseRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.jobeen.ime.base.util.appScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
 object PhraseManager {
 
     private const val PREFS_NAME = "phrase_prefs"
     private const val KEY_SEEDED = "seeded"
+
+    // 播种是"检查空表→插入→写标记"的非原子序列，并发 getAll 时必须串行，
+    // 否则默认常用语会被重复插入
+    private val seedMutex = Mutex()
 
     var onContentChanged: (() -> Unit)? = null
 
@@ -71,20 +77,23 @@ object PhraseManager {
     private suspend fun ensureSeeded(context: Context, db: AppDatabase) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (prefs.getBoolean(KEY_SEEDED, false)) return
-        val dao = db.phraseDao()
-        if (dao.getAll().isEmpty()) {
-            val now = System.currentTimeMillis()
-            val defaults = listOf(
-                "谢谢" to "谢谢",
-                "辛苦了" to "辛苦了",
-                "收到" to "收到",
-                "辛苦了，注意身体" to "关心",
-            )
-            defaults.forEachIndexed { index, (text, label) ->
-                dao.insert(PhraseRecord(text = text, label = label, createdAt = now - index * 1000))
+        seedMutex.withLock {
+            if (prefs.getBoolean(KEY_SEEDED, false)) return
+            val dao = db.phraseDao()
+            if (dao.getAll().isEmpty()) {
+                val now = System.currentTimeMillis()
+                val defaults = listOf(
+                    "谢谢" to "谢谢",
+                    "辛苦了" to "辛苦了",
+                    "收到" to "收到",
+                    "辛苦了，注意身体" to "关心",
+                )
+                defaults.forEachIndexed { index, (text, label) ->
+                    dao.insert(PhraseRecord(text = text, label = label, createdAt = now - index * 1000))
+                }
             }
+            prefs.edit().putBoolean(KEY_SEEDED, true).apply()
         }
-        prefs.edit().putBoolean(KEY_SEEDED, true).apply()
     }
 
     private suspend fun <T> db(context: Context, block: suspend (AppDatabase) -> T): T? =

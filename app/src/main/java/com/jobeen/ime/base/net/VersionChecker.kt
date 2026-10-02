@@ -11,7 +11,8 @@ private data class GithubRelease(
 )
 
 object VersionChecker {
-    private const val RELEASES_URL = "https://api.github.com/repos/Jobeen7/ime/releases?per_page=30"
+    // /releases/latest 直接返回最新正式版；用列表接口时预览版发得多会把正式版挤出第一页
+    private const val LATEST_URL = "https://api.github.com/repos/Jobeen7/ime/releases/latest"
     private val json = Json { ignoreUnknownKeys = true }
 
     /**
@@ -19,16 +20,10 @@ object VersionChecker {
      * @return 有新版时返回发行版页面地址；已是最新返回 ""；查询失败返回 null
      */
     suspend fun check(currentVersion: String): String? {
-        val releases = runCatching {
-            json.decodeFromString<List<GithubRelease>>(HttpUtil.getRawText(RELEASES_URL))
+        val latest = runCatching {
+            json.decodeFromString<GithubRelease>(HttpUtil.getRawText(LATEST_URL))
         }.getOrNull() ?: return null
-        val latest = releases
-            .filter { !it.prerelease }
-            .maxWithOrNull { a, b ->
-                compareVersions(normalizeVersion(a.tag_name), normalizeVersion(b.tag_name))
-            }
-            ?.takeIf { normalizeVersion(it.tag_name).isNotBlank() }
-            ?: return null
+        if (latest.prerelease || normalizeVersion(latest.tag_name).isBlank()) return null
         return when {
             compareVersions(normalizeVersion(latest.tag_name), currentVersion) > 0 ->
                 latest.html_url.trim().takeIf { it.isNotEmpty() }

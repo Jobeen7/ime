@@ -26,50 +26,47 @@ import java.security.MessageDigest
  * 2. 按需解压资源（resource.zip）
  * 3. 创建并切换到 [RimeEngine]
  *
- * 该过程是幂等的，可被多次调用，仅首次调用时实际执行。
+ * 该过程按步骤幂等：已成功的步骤不重复执行；失败的步骤在下次调用时重试
+ * （旧实现失败后仍置 initialized=true，引擎在同进程内永不恢复）。
  */
 object AppStartup {
     private const val VERSION_FILE = "version.txt"
     private const val RESOURCE_ASSET = "resource.zip"
 
-    @Volatile
-    private var initialized = false
+    private val completedSteps = mutableSetOf<String>()
     private val lock = Any()
 
     fun initialize(context: Context) {
         synchronized(lock) {
-            if (!initialized) {
-                val funcs = listOf(
-                    Step("setupLogger", ::setupLogger),
-                    Step("setupThemeStore", ::setupThemeStore),
-                    Step("releaseResourcesIfNeeded", ::releaseResourcesIfNeeded),
-                    Step("setupInputFeedbacks", ::setupInputFeedbacks),
-                    // 引擎初始化依赖资源解压：资源失败时跳过，避免半初始化状态
-                    Step("setupEngine", ::setupEngine, requires = setOf("releaseResourcesIfNeeded")),
-                    Step("setupSherpaSpeech", ::setupSherpaSpeech),
-                    Step("prewarmOpencc", ::prewarmOpencc),
-                )
-                // 每一步独立捕获异常并记日志：某一步失败不直接杀进程，
-                // 用 android.util.Log 确保 release 包（Timber 无 tree）也能在 logcat 看到；
-                // 失败步骤的依赖步骤会被跳过，不会带着坏状态继续跑
-                val failed = mutableSetOf<String>()
-                funcs.forEach { step ->
-                    val blockedBy = step.requires.intersect(failed)
-                    if (blockedBy.isNotEmpty()) {
-                        android.util.Log.w(
-                            "AppStartup",
-                            "step ${step.name} skipped, blocked by failed step(s): $blockedBy"
-                        )
-                        return@forEach
-                    }
-                    runCatching { step.fn(context) }
-                        .onFailure { e ->
-                            failed.add(step.name)
-                            android.util.Log.e("AppStartup", "step ${step.name} failed", e)
-                            Timber.e(e, "AppStartup step failed: %s", step.name)
-                        }
+            val funcs = listOf(
+                Step("setupLogger", ::setupLogger),
+                Step("setupThemeStore", ::setupThemeStore),
+                Step("releaseResourcesIfNeeded", ::releaseResourcesIfNeeded),
+                Step("setupInputFeedbacks", ::setupInputFeedbacks),
+                // 引擎初始化依赖资源解压：资源失败时跳过，避免半初始化状态
+                Step("setupEngine", ::setupEngine, requires = setOf("releaseResourcesIfNeeded")),
+                Step("setupSherpaSpeech", ::setupSherpaSpeech),
+                Step("prewarmOpencc", ::prewarmOpencc),
+            )
+            // 每一步独立捕获异常并记日志：某一步失败不直接杀进程，
+            // 用 android.util.Log 确保 release 包（Timber 无 tree）也能在 logcat 看到；
+            // 失败步骤不记入完成集，其依赖步骤本轮跳过，下次 initialize 再重试
+            funcs.forEach { step ->
+                if (step.name in completedSteps) return@forEach
+                val blockedBy = step.requires - completedSteps
+                if (blockedBy.isNotEmpty()) {
+                    android.util.Log.w(
+                        "AppStartup",
+                        "step ${step.name} skipped, blocked by incomplete step(s): $blockedBy"
+                    )
+                    return@forEach
                 }
-                initialized = true
+                runCatching { step.fn(context) }
+                    .onSuccess { completedSteps.add(step.name) }
+                    .onFailure { e ->
+                        android.util.Log.e("AppStartup", "step ${step.name} failed", e)
+                        Timber.e(e, "AppStartup step failed: %s", step.name)
+                    }
             }
         }
     }

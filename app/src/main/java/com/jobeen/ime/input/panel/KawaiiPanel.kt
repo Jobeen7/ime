@@ -100,13 +100,14 @@ class KawaiiPanel(
         { entry -> showCopyIfRecent(entry.text) }
     private val clipContentChangedCallback: () -> Unit =
         {
-            if (state == State.Menu) clipboardView.refresh()
+            // 列表实际显示在 State.Clipboard 展开态，之前误写 State.Menu 导致内容变化不刷新
+            if (state == State.Clipboard) clipboardView.refresh()
             // 系统剪贴板变化走 addEntry(notify=false)，onNewEntry 不触发：
             // 这里直接检查，Idle 状态下复制内容能立刻弹出粘贴提示
             checkPendingCopy()
         }
     private val phraseContentChangedCallback: () -> Unit =
-        { if (state == State.Menu) clipboardView.refresh() }
+        { if (state == State.Clipboard) clipboardView.refresh() }
 
     private var currentStateRender: IStateRender? = null
 

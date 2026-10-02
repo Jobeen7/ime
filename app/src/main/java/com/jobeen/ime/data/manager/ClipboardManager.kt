@@ -6,6 +6,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.os.Build
 import androidx.core.content.edit
+import androidx.room.withTransaction
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.ClipboardDao
 import com.jobeen.ime.data.database.ClipboardRecord
@@ -69,15 +70,19 @@ object ClipboardManager {
         if (text.isBlank()) return
         val now = System.currentTimeMillis()
         val retentionCutoff = now - getRetentionDays(context) * 86400000L
+        // 事务串行化"检查→删除→插入→裁剪"：并发写入时旧实现会重复插入，
+        // 且与 clearAll 交错时条目会在清空后复活
         val isNew = db(context) { db ->
-            val dao = db.clipboardDao()
-            val existed = dao.existsByText(text)
-            dao.deleteByText(text)
-            dao.insert(ClipboardRecord(text = text, timestamp = now, cloud = false))
-            trimExcess(dao, getMaxEntries(context))
-            dao.deleteOlderThan(retentionCutoff)
-            dao.purgeDeletedOlderThan(retentionCutoff)
-            !existed
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                val existed = dao.existsByText(text)
+                dao.deleteByText(text)
+                dao.insert(ClipboardRecord(text = text, timestamp = now, cloud = false))
+                trimExcess(dao, getMaxEntries(context))
+                dao.deleteOlderThan(retentionCutoff)
+                dao.purgeDeletedOlderThan(retentionCutoff)
+                !existed
+            }
         } ?: return
         if (notify && isNew) onNewEntry?.invoke(Entry(text, now))
     }
@@ -91,8 +96,10 @@ object ClipboardManager {
         val now = System.currentTimeMillis()
         val retentionCutoff = now - getRetentionDays(context) * 86400000L
         db(context) { db ->
-            db.clipboardDao().softDeleteAll(now)
-            db.clipboardDao().purgeDeletedOlderThan(retentionCutoff)
+            db.withTransaction {
+                db.clipboardDao().softDeleteAll(now)
+                db.clipboardDao().purgeDeletedOlderThan(retentionCutoff)
+            }
         }
         lastCopyText = null
         lastCopyTimestamp = 0L

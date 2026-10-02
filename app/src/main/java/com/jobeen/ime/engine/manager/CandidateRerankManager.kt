@@ -47,7 +47,8 @@ class CandidateRerankManager(private val context: Context) {
             )
             restored.add(
                 Candidate(
-                    index = index, text = it.text, comment = it.comment, type = it.type, score = score
+                    // 必须保留 Rime 全局 index：选词/删词都按它定位，改成局部位置会打错对象
+                    index = it.index, text = it.text, comment = it.comment, type = it.type, score = score
                 )
             )
         }
