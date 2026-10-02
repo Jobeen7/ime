@@ -10,6 +10,10 @@ interface ClipboardDao {
     @Insert
     suspend fun insert(record: ClipboardRecord): Long
 
+    /** 一次性迁移用：读出全部行（含软删除行），供搬到独立的 clipboard_database */
+    @Query("SELECT * FROM clipboard_records")
+    suspend fun getAllRaw(): List<ClipboardRecord>
+
     @Query("SELECT * FROM clipboard_records WHERE deleted = 0 AND timestamp >= :cutoff ORDER BY timestamp DESC")
     suspend fun getAllActiveSince(cutoff: Long): List<ClipboardRecord>
 

@@ -19,6 +19,8 @@ object UserDictPrefs {
     private const val KEY_SYNC_PATH = "webdav_sync_path"
     private const val KEY_LAST_UPLOAD = "last_upload_time"
     private const val KEY_LAST_DOWNLOAD = "last_download_time"
+    private const val KEY_ALLOW_HTTP = "webdav_allow_http"
+    private const val KEY_SYNC_ETAG_PREFIX = "sync_etag_"
 
     private val prefs by lazy {
         appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -47,6 +49,25 @@ object UserDictPrefs {
     var lastDownloadTime: Long
         get() = prefs.getLong(KEY_LAST_DOWNLOAD, 0L)
         set(value) = prefs.edit().putLong(KEY_LAST_DOWNLOAD, value).apply()
+
+    /** 高级选项：是否允许明文 HTTP 的 WebDAV 服务器（默认不允许，凭据与词典会明文传输）。 */
+    var allowHttp: Boolean
+        get() = prefs.getBoolean(KEY_ALLOW_HTTP, false)
+        set(value) = prefs.edit().putBoolean(KEY_ALLOW_HTTP, value).apply()
+
+    /**
+     * 上次同步时某个远端文件的 ETag（按文件名分别记录）。
+     * 上传前用它判断远端是否被其他设备改过，避免静默覆盖。
+     */
+    fun syncETag(fileName: String): String? =
+        prefs.getString(KEY_SYNC_ETAG_PREFIX + fileName, null)?.takeIf { it.isNotBlank() }
+
+    fun setSyncETag(fileName: String, etag: String?) {
+        val editor = prefs.edit()
+        if (etag.isNullOrBlank()) editor.remove(KEY_SYNC_ETAG_PREFIX + fileName)
+        else editor.putString(KEY_SYNC_ETAG_PREFIX + fileName, etag)
+        editor.apply()
+    }
 
     fun isConfigured(): Boolean =
         server.isNotBlank() && username.isNotBlank() && password.isNotEmpty()

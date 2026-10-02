@@ -36,6 +36,22 @@ object DeletedWordsStore {
 
     fun isDeleted(text: String): Boolean = load().contains(text)
 
+    /** 当前全部已删除词的快照（供 WebDAV 同步读取）。 */
+    fun all(): Set<String> = HashSet(load())
+
+    /** 批量并入（WebDAV 同步合并远端删除词表时用），只落盘一次。 */
+    fun addAll(words: Collection<String>) {
+        val set = load()
+        var changed = false
+        for (w in words) {
+            val t = w.trim()
+            if (t.isNotEmpty() && set.add(t)) changed = true
+        }
+        if (changed) {
+            prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+        }
+    }
+
     fun add(text: String) {
         val set = load()
         if (set.add(text)) {

@@ -1,13 +1,14 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample backup rules file; uncomment and customize as necessary.
-   See https://developer.android.com/guide/topics/data/autobackup
-   for details.
-   Note: This file is ignored for devices older than API 31
-   See https://developer.android.com/about/versions/12/backup-restore
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  系统备份排除规则（API 31 以下的 Auto Backup 用此文件）：
+  - WebDAV 配置（含明文密码）不进备份
+  - 剪贴板历史（独立库 clipboard_database）不进备份
+  其余（用户词典、主题、设置、常用语、选词偏好等）照常备份，不影响换机迁移。
 -->
 <full-backup-content>
-    <!--
-   <include domain="sharedpref" path="."/>
-   <exclude domain="sharedpref" path="device.xml"/>
--->
+    <exclude domain="sharedpref" path="user_dict_sync.xml" />
+    <exclude domain="database" path="clipboard_database" />
+    <exclude domain="database" path="clipboard_database-wal" />
+    <exclude domain="database" path="clipboard_database-shm" />
+    <exclude domain="database" path="clipboard_database-journal" />
 </full-backup-content>

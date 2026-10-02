@@ -267,4 +267,11 @@
     <string name="user_dict_downloading_from">正在下载 %1$s，输入法将短暂重启…</string>
     <string name="user_dict_no_dict">暂无用户词典</string>
     <string name="user_dict_switch_dict">点击切换词典</string>
+    <string name="user_dict_advanced">高级</string>
+    <string name="user_dict_allow_http">允许明文 HTTP</string>
+    <string name="user_dict_allow_http_desc">默认关闭，WebDAV 只允许 HTTPS。仅当服务器是局域网自建、没有 HTTPS 时才开启</string>
+    <string name="user_dict_allow_http_confirm_title">开启明文 HTTP？</string>
+    <string name="user_dict_allow_http_confirm_msg">明文 HTTP 不加密传输：同一网络中的其他人可能截获你的 WebDAV 账号密码和全部词典内容。仅在可信的局域网自建服务器上开启。</string>
+    <string name="user_dict_allow_http_confirm_ok">我了解风险，开启</string>
+    <string name="user_dict_cancel">取消</string>
 </resources>
