@@ -51,6 +51,7 @@ import com.jobeen.ime.R
 import com.jobeen.ime.ui.screen.ScreenComponent.ClickableSettingItem
 import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
 import com.jobeen.ime.ui.screen.ScreenComponent.SingleChoiceDialog
+import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -66,6 +67,7 @@ class UserDictUiState {
     var webdavUsername by mutableStateOf("")
     var webdavPassword by mutableStateOf("")
     var webdavSyncPath by mutableStateOf("")
+    var webdavAllowHttp by mutableStateOf(false)
     var lastUpload by mutableStateOf(0L)
     var lastDownload by mutableStateOf(0L)
     /** 服务器上的备份文件列表；非空时弹出选择对话框 */
@@ -87,6 +89,7 @@ fun UserDictScreen(
     onExport: () -> Unit,
     onImport: () -> Unit,
     onSaveWebDav: (server: String, username: String, password: String, syncPath: String) -> Unit,
+    onAllowHttpChange: (Boolean) -> Unit,
     onUpload: () -> Unit,
     onDownload: () -> Unit,
     onTestConnection: () -> Unit,
@@ -95,6 +98,7 @@ fun UserDictScreen(
     onDismissNotice: () -> Unit,
 ) {
     var showDictDialog by remember { mutableStateOf(false) }
+    var showHttpRiskConfirm by remember { mutableStateOf(false) }
     var serverText by remember { mutableStateOf(state.webdavServer) }
     var usernameText by remember { mutableStateOf(state.webdavUsername) }
     var passwordText by remember { mutableStateOf(state.webdavPassword) }
@@ -262,6 +266,23 @@ fun UserDictScreen(
 
                     Spacer(Modifier.height(4.dp))
 
+                    SectionHeader(stringResource(R.string.user_dict_advanced))
+
+                    SwitchRow(
+                        title = stringResource(R.string.user_dict_allow_http),
+                        checked = state.webdavAllowHttp,
+                        onCheckedChange = { wantOn ->
+                            // 开启必须先弹风险确认；关闭直接生效
+                            if (wantOn) showHttpRiskConfirm = true else onAllowHttpChange(false)
+                        },
+                        enabled = !state.busy,
+                    )
+                    Text(
+                        text = stringResource(R.string.user_dict_allow_http_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+
                     ClickableSettingItem(
                         title = stringResource(R.string.user_dict_upload),
                         subtitle = "上次上传：${formatTime(state.lastUpload)}",
@@ -308,6 +329,27 @@ fun UserDictScreen(
             selectedIndex = 0,
             onSelect = { onPickRemoteFile(remoteFiles[it]) },
             onDismiss = onDismissRemoteFiles,
+        )
+    }
+
+    if (showHttpRiskConfirm) {
+        AlertDialog(
+            onDismissRequest = { showHttpRiskConfirm = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    showHttpRiskConfirm = false
+                    onAllowHttpChange(true)
+                }) {
+                    Text(stringResource(R.string.user_dict_allow_http_confirm_ok))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showHttpRiskConfirm = false }) {
+                    Text(stringResource(R.string.user_dict_cancel))
+                }
+            },
+            title = { Text(stringResource(R.string.user_dict_allow_http_confirm_title)) },
+            text = { Text(stringResource(R.string.user_dict_allow_http_confirm_msg)) },
         )
     }
 

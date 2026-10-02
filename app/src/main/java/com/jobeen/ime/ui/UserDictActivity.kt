@@ -55,6 +55,7 @@ class UserDictActivity : ComponentActivity() {
         uiState.webdavUsername = UserDictPrefs.username
         uiState.webdavPassword = UserDictPrefs.password
         uiState.webdavSyncPath = UserDictPrefs.syncPath
+        uiState.webdavAllowHttp = UserDictPrefs.allowHttp
         uiState.lastUpload = UserDictPrefs.lastUploadTime
         uiState.lastDownload = UserDictPrefs.lastDownloadTime
 
@@ -77,6 +78,13 @@ class UserDictActivity : ComponentActivity() {
                         uiState.webdavPassword = UserDictPrefs.password
                         uiState.webdavSyncPath = UserDictPrefs.syncPath
                         ToastUtil.showToast("已保存")
+                    },
+                    onAllowHttpChange = { allowed ->
+                        UserDictPrefs.allowHttp = allowed
+                        uiState.webdavAllowHttp = allowed
+                        ToastUtil.showToast(
+                            if (allowed) "已允许明文 HTTP（高级）" else "已恢复仅允许 HTTPS"
+                        )
                     },
                     onUpload = { doUpload() },
                     onDownload = { doDownload() },

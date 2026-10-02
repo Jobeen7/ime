@@ -91,6 +91,9 @@ class KawaiiPanel(
         }
 
     private var copyText: String? = null
+
+    /** 密码框内为 true：粘贴提示横幅禁用（复制过的密码不能明文弹在横幅上）。 */
+    var suppressCopyBanner: Boolean = false
     private var lastShownCopyTimestamp: Long = 0L
     private var lastShownCopyText: String? = null
 
@@ -358,6 +361,7 @@ class KawaiiPanel(
     }
 
     private fun showCopyIfRecent(text: String) {
+        if (suppressCopyBanner) return
         copyText = text
         val recentTime = ClipboardManager.lastCopyTimestamp
         if (recentTime <= lastShownCopyTimestamp || System.currentTimeMillis() - recentTime >= 5 * 60 * 1000L) return
@@ -526,6 +530,7 @@ class KawaiiPanel(
     }
 
     private fun checkPendingCopy() {
+        if (suppressCopyBanner) return
         if (state != State.Idle) return
         val text = ClipboardManager.lastCopyText ?: return
         if (text == lastShownCopyText) return
