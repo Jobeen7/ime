@@ -74,6 +74,13 @@ class CandidateGridView(
         var positions = emptyList<WordPos>()
             private set
 
+        // 布局期测得的文本宽度缓存：绘制/命中测试直接查表，
+        // 不再每帧对每个候选重复 measureText
+        private var textWidths = FloatArray(0)
+
+        // 每行第一个候选在 positions 中的下标：绘制从可见行开始、命中测试只扫一行
+        private var rowStartIndex = IntArray(0)
+
         private val rowScrollX = mutableMapOf<Int, Float>()
         private var downX = 0f
         private var horizontalDrag = -1
@@ -124,13 +131,19 @@ class CandidateGridView(
         fun recomputeLayout() {
             if (width <= 0 || allCandidates.isEmpty()) {
                 positions = emptyList()
+                textWidths = FloatArray(0)
+                rowStartIndex = IntArray(0)
                 return
             }
 
             val rowWidth = width.toFloat()
+            // 文本宽度只在这里测一次，绘制与命中测试复用缓存
+            textWidths = FloatArray(allCandidates.size) {
+                textPaint.measureText(allCandidates[it].text)
+            }
             // 每个候选词原始宽度 = 文本宽度 + 左右内边距
             val rawWidths = FloatArray(allCandidates.size) {
-                textPaint.measureText(allCandidates[it].text) + cellPad * 2f
+                textWidths[it] + cellPad * 2f
             }
 
             val tempPositions = mutableListOf<WordPos>()
@@ -186,6 +199,13 @@ class CandidateGridView(
             }
 
             positions = tempPositions
+            // 行首下标表：行数 = 最大行号 + 1
+            val rowCount = (tempPositions.maxOfOrNull { it.row } ?: -1) + 1
+            rowStartIndex = IntArray(rowCount) { positions.size }
+            for (i in tempPositions.indices) {
+                val r = tempPositions[i].row
+                if (i < rowStartIndex[r]) rowStartIndex[r] = i
+            }
             rowScrollX.clear()
         }
 
@@ -216,7 +236,8 @@ class CandidateGridView(
 
             canvas.withSave {
                 clipRect(0f, 0f, rowWidth, h)
-                for (i in positions.indices) {
+                val startIdx = rowStartIndex.getOrElse(firstRow) { 0 }
+                for (i in startIdx until positions.size) {
                     val pos = positions[i]
                     if (pos.row < firstRow) continue
                     val y = (pos.row - firstRow) * rowH + yOff
@@ -225,7 +246,7 @@ class CandidateGridView(
                     // 被拖动项仅隐藏内容，其右侧分割线仍需绘制
                     if (i != dragIndex) {
                         val c = allCandidates[i]
-                        val tw = textPaint.measureText(c.text)
+                        val tw = textWidths.getOrElse(i) { 0f }
                         val isTarget = i == dragTargetIndex && dragIndex >= 0
 
                         val shakeOff = if (dragIndex >= 0) {
@@ -297,7 +318,7 @@ class CandidateGridView(
 
             if (dragIndex >= 0 && dragIndex in allCandidates.indices) {
                 val c = allCandidates[dragIndex]
-                val dragW = textPaint.measureText(c.text) + cellPad * 2
+                val dragW = textWidths.getOrElse(dragIndex) { 0f } + cellPad * 2
                 val dragLeft = (dragFingerX - dragW / 2).coerceIn(0f, width - dragW)
                 val dragTop = (dragFingerY - rowH / 2).coerceIn(0f, height - rowH)
 
@@ -322,13 +343,18 @@ class CandidateGridView(
         }
 
         private fun hitTest(x: Float, y: Float): Int {
+            if (positions.isEmpty() || rowH <= 0f) return -1
+            // 由纵坐标直接定位行，只扫该行候选（原实现每个 MOVE 事件全量线性扫描）
             val adjustedY = y + scrollOffsetY
-            for (i in positions.indices) {
+            val row = (adjustedY / rowH).toInt()
+            if (row < 0 || row >= rowStartIndex.size) return -1
+            var i = rowStartIndex[row]
+            if (i >= positions.size) return -1
+            while (i < positions.size && positions[i].row == row) {
                 val pos = positions[i]
-                val cy = pos.row * rowH
-                if (adjustedY < cy || adjustedY >= cy + rowH) continue
                 if (pos.extraWide) return i
                 if (x in pos.xStart..(pos.xStart + pos.width)) return i
+                i++
             }
             return -1
         }
@@ -378,7 +404,7 @@ class CandidateGridView(
                     if (horizontalDrag >= 0) {
                         val pos = positions.getOrNull(horizontalDrag)
                         if (pos != null && pos.extraWide) {
-                            val tw = textPaint.measureText(allCandidates[horizontalDrag].text)
+                            val tw = textWidths.getOrElse(horizontalDrag) { 0f }
                             val maxSx = (tw - (width - cellPad * 2f)).coerceAtLeast(0f)
                             val old = rowScrollX[pos.row] ?: 0f
                             rowScrollX[pos.row] = (old + (downX - event.x)).coerceIn(0f, maxSx)
