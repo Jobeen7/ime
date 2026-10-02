@@ -125,7 +125,11 @@ class PanelActionListener(
 
     override fun onCandidateForget(candidate: EngineMessage.Candidate) {
         DeletedWordsStore.add(candidate.text)
-        service.engine?.deleteCandidate(candidate.index)
+        // 预测候选的 index 不是 Rime 组字序号，给它写墓碑会误伤同序号的真实候选；
+        // 预测词只靠上面的 App 层过滤隐藏即可
+        if (candidate.type != EngineMessage.Candidate.TYPE_IME_PREDICTION) {
+            service.engine?.deleteCandidate(candidate.index)
+        }
     }
 
     override fun onEnterAddPhraseMode() {
