@@ -22,7 +22,8 @@ interface ClipboardDao {
     @Query("SELECT * FROM clipboard_records ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestIncludingDeleted(): ClipboardRecord?
 
-    @Query("SELECT COUNT(*) FROM clipboard_records")
+    // 只数有效行：软删除行会保留一段时间，计入上限会提前误删最旧的有效记录
+    @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0")
     suspend fun count(): Int
 
     @Query("UPDATE clipboard_records SET deleted = 1, deletedAt = :ts WHERE text = :text AND deleted = 0")
@@ -34,7 +35,8 @@ interface ClipboardDao {
     @Query("DELETE FROM clipboard_records WHERE text = :text")
     suspend fun deleteByText(text: String)
 
-    @Query("DELETE FROM clipboard_records WHERE id IN (SELECT id FROM clipboard_records ORDER BY timestamp ASC LIMIT :n)")
+    // 只淘汰有效行中最旧的；软删除行由 purgeDeletedOlderThan 按保留期清理
+    @Query("DELETE FROM clipboard_records WHERE id IN (SELECT id FROM clipboard_records WHERE deleted = 0 ORDER BY timestamp ASC LIMIT :n)")
     suspend fun deleteOldest(n: Int)
 
     @Query("DELETE FROM clipboard_records WHERE timestamp < :cutoff")

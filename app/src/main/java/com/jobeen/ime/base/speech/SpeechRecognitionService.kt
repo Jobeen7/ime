@@ -34,7 +34,6 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.io.File
 import android.util.Log
@@ -58,6 +57,13 @@ class SpeechRecognitionService : Service() {
     private val qnnRuntimeRef = AtomicReference<QnnRuntime?>(null)
 
     private val holding = AtomicBoolean(false)
+
+    // 会话状态机：START 用 CAS 保证幂等；STOP 以 sessionActive/代次为准，
+    // 不依赖在采集协程里迟置位的 holding（STOP 先到时旧逻辑会直接吞掉停止请求）
+    private val sessionActive = AtomicBoolean(false)
+
+    @Volatile
+    private var sessionGen = 0
     private val audioLock = Any()
     private var audioJob: Job? = null
     private var audioRecord: AudioRecord? = null
@@ -91,26 +97,58 @@ class SpeechRecognitionService : Service() {
 
                 SpeechIpc.MSG_START -> {
                     clientMessenger = msg.replyTo
-                    val ready = initEngine(this@SpeechRecognitionService, silent = true)
-                    if (!ready) {
-                        sendClient(SpeechIpc.MSG_ERROR)
+                    if (!sessionActive.compareAndSet(false, true)) {
+                        // 重复 START：已有会话在跑，忽略，避免两个采集协程抢同一个 stream
                         return@Callback true
                     }
-                    val engine = recognizerRef.get()
-                    if (engine == null) {
-                        sendClient(SpeechIpc.MSG_ERROR)
-                        return@Callback true
+                    val gen = ++sessionGen
+                    // 引擎初始化（可能数百 ms）移到 IO 线程，不要阻塞服务主线程
+                    scope.launch {
+                        val ready = initEngine(this@SpeechRecognitionService, silent = true)
+                        val engine = if (ready) recognizerRef.get() else null
+                        if (engine == null) {
+                            // 初始化期间 STOP 已到达（会话已撤销）则静默收尾，不再回错误
+                            if (sessionActive.get()) {
+                                sessionActive.set(false)
+                                sendClient(SpeechIpc.MSG_ERROR)
+                            }
+                            return@launch
+                        }
+                        if (!sessionActive.get() || gen != sessionGen) {
+                            // STOP 已在初始化期间到达：不要再启动采集（幽灵录音）
+                            return@launch
+                        }
+                        // 新会话重置跨会话去重/节流状态，避免首段文字被上一会话吞掉
+                        lastRawText = null
+                        lastEmittedText = null
+                        lastEmitUptimeMs = 0L
+                        synchronized(audioLock) { streamRef.set(engine.createStream()) }
+                        startAudioStreaming()
                     }
-                    synchronized(audioLock) { streamRef.set(engine.createStream()) }
-                    startAudioStreaming()
                 }
 
                 SpeechIpc.MSG_STOP -> {
-                    if (!holding.compareAndSet(true, false)) return@Callback true
+                    val gen = sessionGen
+                    sessionActive.set(false)
+                    holding.set(false)
                     audioRecord?.runCatching { stop() }
-                    audioJob?.let { runBlocking { it.join() } }
-                    sendClient(SpeechIpc.MSG_DONE)
-                    clientMessenger = null
+                    val job = audioJob
+                    audioJob = null
+                    if (job == null) {
+                        // 还没开始采集（初始化中/STOP 先到）：也要回 DONE 让客户端收尾
+                        sendClient(SpeechIpc.MSG_DONE)
+                        clientMessenger = null
+                    } else {
+                        // 等最终解码在 IO 线程完成，不要在主线程 runBlocking 等待
+                        scope.launch {
+                            job.join()
+                            // join 期间若已开始新会话，旧会话的 DONE 不得结算新会话
+                            if (gen == sessionGen) {
+                                sendClient(SpeechIpc.MSG_DONE)
+                                clientMessenger = null
+                            }
+                        }
+                    }
                 }
             }
             true
@@ -127,6 +165,8 @@ class SpeechRecognitionService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        sessionActive.set(false)
+        holding.set(false)
         scope.cancel()
         synchronized(audioLock) {
             streamRef.getAndSet(null)?.runCatching { release() }
@@ -297,16 +337,21 @@ class SpeechRecognitionService : Service() {
     }
 
     private fun startAudioStreaming() {
+        if (!sessionActive.get()) return
         if (ContextCompat.checkSelfPermission(
                 this, Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
         ) {
+            sessionActive.set(false)
             sendClient(SpeechIpc.MSG_ERROR)
             return
         }
 
         audioJob = scope.launch(Dispatchers.IO) {
             var recorder: AudioRecord? = null
+            // 本会话的 stream 在协程内固定持有：结束时只释放自己这个，
+            // 不能无条件清 streamRef（新会话可能已经换上了新 stream）
+            val myStream = synchronized(audioLock) { streamRef.get() }
             try {
                 val channel = AudioFormat.CHANNEL_IN_MONO
                 val format = AudioFormat.ENCODING_PCM_16BIT
@@ -318,13 +363,24 @@ class SpeechRecognitionService : Service() {
                 recorder = listOf(
                     MediaRecorder.AudioSource.MIC, MediaRecorder.AudioSource.VOICE_RECOGNITION
                 ).firstNotNullOfOrNull { source ->
-                    runCatching {
+                    val candidate = runCatching {
                         AudioRecord(source, SAMPLE_RATE, channel, format, bufferSize)
-                    }.getOrNull()?.takeIf { it.state == AudioRecord.STATE_INITIALIZED }
+                    }.getOrNull()
+                    if (candidate != null && candidate.state == AudioRecord.STATE_INITIALIZED) {
+                        candidate
+                    } else {
+                        // 未初始化成功的实例必须释放，否则每次探测都泄漏一个 AudioRecord
+                        candidate?.runCatching { release() }
+                        null
+                    }
                 } ?: error("Unable to initialize AudioRecord")
 
                 audioRecord = recorder
                 recorder.startRecording()
+                if (!sessionActive.get()) {
+                    // STOP 在采集启动期间已到达：立即收尾，不能把 holding 重新置 true
+                    return@launch
+                }
                 holding.set(true)
                 sendClient(SpeechIpc.MSG_RECORDING_STARTED)
 
@@ -357,7 +413,7 @@ class SpeechRecognitionService : Service() {
 
                     synchronized(audioLock) {
                         val engine = recognizerRef.get()
-                        val stream = streamRef.get()
+                        val stream = myStream
                         if (engine != null && stream != null) {
                             stream.acceptWaveform(
                                 if (sampleCount == floatChunk.size) floatChunk
@@ -392,7 +448,7 @@ class SpeechRecognitionService : Service() {
 
                 synchronized(audioLock) {
                     val engine = recognizerRef.get()
-                    val stream = streamRef.get()
+                    val stream = myStream
                     if (engine != null && stream != null) {
                         try {
                             val tail = FloatArray(SAMPLE_RATE * FINAL_TAIL_PADDING_MS / 1000)
@@ -425,7 +481,11 @@ class SpeechRecognitionService : Service() {
                 recorder?.release()
                 if (audioRecord === recorder) audioRecord = null
                 synchronized(audioLock) {
-                    streamRef.getAndSet(null)?.runCatching { release() }
+                    // 只释放本会话的 stream；新会话已换上新 stream 时不能误放
+                    if (myStream != null && streamRef.get() === myStream) {
+                        streamRef.set(null)
+                        myStream.runCatching { release() }
+                    }
                 }
             }
         }

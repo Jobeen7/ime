@@ -34,13 +34,16 @@ object CandidatePreferCache {
                     .associate { it.text to it.click_count }
             }.getOrElse {
                 Timber.e(it, "candidate prefer cache load failed")
-                emptyMap()
+                null
             }
-            synchronized(lock) {
-                if (!loaded) {
-                    // 用 maxOf 合并：加载期间若有 noteUpsert 先写入，不丢增量
-                    loadedMap.forEach { (k, v) -> cache.merge(k, v, ::maxOf) }
-                    loaded = true
+            // 加载失败不能置 loaded：否则本进程内偏好永远为空且不再重试
+            if (loadedMap != null) {
+                synchronized(lock) {
+                    if (!loaded) {
+                        // 用 maxOf 合并：加载期间若有 noteUpsert 先写入，不丢增量
+                        loadedMap.forEach { (k, v) -> cache.merge(k, v, ::maxOf) }
+                        loaded = true
+                    }
                 }
             }
             cache

@@ -136,8 +136,12 @@ class ClipboardView(
         reload()
     }
 
+    private var reloadJob: kotlinx.coroutines.Job? = null
+
     private fun reload() {
-        viewScope.launch {
+        // 取消上一轮未完成的加载：避免连续 show/refresh 时旧结果覆盖新结果、滚动被重复重置
+        reloadJob?.cancel()
+        reloadJob = viewScope.launch {
             clipboardEntries = ClipboardManager.getEntries(context)
             phrases = PhraseManager.getAll(context)
             resetScroll()

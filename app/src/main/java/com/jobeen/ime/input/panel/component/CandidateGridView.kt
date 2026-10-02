@@ -408,6 +408,8 @@ class CandidateGridView(
                     if (!dragging && !longPressTriggered) {
                         if (absDy > touchSlop && absDy >= absDx) {
                             dragging = true
+                            // 已进入滚动：长按计时必须取消，否则滚动中途长按触发会把手势劫持成拖拽排序
+                            removeCallbacks(longPressRunnable)
                             pressedIndex = -1
                             stretch = 0f
                             if (!scroller.isFinished) scroller.abortAnimation()
@@ -415,6 +417,7 @@ class CandidateGridView(
                             val pos = positions.getOrNull(pressedIndex)
                             if (pos != null && pos.extraWide) {
                                 horizontalDrag = pressedIndex
+                                removeCallbacks(longPressRunnable)
                                 pressedIndex = -1
                                 invalidate()
                             }
@@ -463,6 +466,11 @@ class CandidateGridView(
                     if (longPressTriggered) {
                         pressedIndex = -1
                         longPressTriggered = false
+                        // 防御性复位：长按分支提前 return，不能把滚动状态留到下一个手势
+                        if (dragging) {
+                            dragging = false
+                            springBackIfNeeded()
+                        }
                         if (!longPressMoved && longPressIndex >= 0 && longPressIndex in allCandidates.indices) {
                             val firstRow = (scrollOffsetY / rowH).toInt().coerceAtLeast(0)
                             val yOff = -(scrollOffsetY - firstRow * rowH) + stretch

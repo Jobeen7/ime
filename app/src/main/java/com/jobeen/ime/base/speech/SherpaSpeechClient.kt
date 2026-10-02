@@ -72,6 +72,9 @@ object SherpaSpeechClient {
                 val actions = pending.toList()
                 pending.clear()
                 actions.forEach { what ->
+                    // 待绑定的 START 若在绑定完成前已被松手/取消，绝不能重放：
+                    // 否则客户端以为没在录，服务端却开始一段停不下来的幽灵录音
+                    if (what == SpeechIpc.MSG_START && !holding.get()) return@forEach
                     val msg = SpeechIpc.message(what)
                     if (what == SpeechIpc.MSG_START) msg.replyTo = clientMessenger
                     runCatching { messenger.send(msg) }
@@ -89,6 +92,10 @@ object SherpaSpeechClient {
 //                App.speechModelDir.listFiles()?.forEach { it.deleteRecursively() }
 //            }.onFailure { Timber.d("SpeechCli clearSpeechModelDir failed %s", it.message) }
         }
+    }
+
+    private fun removePending(what: Int) {
+        synchronized(connectLock) { pending.removeAll { it == what } }
     }
 
     private fun send(what: Int) {
@@ -217,6 +224,8 @@ object SherpaSpeechClient {
 
     fun stopHoldSession(discard: Boolean = false) {
         if (!holding.compareAndSet(true, false)) return
+        // 服务尚未绑定时 START 还在待发队列里：先撤掉，绑定完成后不得重放
+        removePending(SpeechIpc.MSG_START)
         if (discard) {
             discarding.set(true)
             // 取消一成立立刻在主线程清空待定文字，文字马上消失，不依赖服务端回信。
@@ -255,6 +264,7 @@ object SherpaSpeechClient {
 
     private fun cancelSession() {
         holding.set(false)
+        removePending(SpeechIpc.MSG_START)
         uiJob?.cancel()
         uiJob = null
         val service = serviceRef?.get()

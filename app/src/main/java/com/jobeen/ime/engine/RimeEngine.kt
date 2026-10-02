@@ -287,6 +287,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private suspend fun selectCandidateInternal(candidate: Candidate) {
+        // 选词后旧组字的候选还原结果作废，防止迟到结果把已清空的候选复活
+        invalidatePendingCandidates()
         // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不做任何学习
         //（不读前文、不写偏好表、不跑预测上下文）；正常上屏不受影响
         val noLearn = isNoPersonalizedLearning(editorInfo)
@@ -471,8 +473,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is Action.Predict -> requestPrediction(action.commit)
             is Action.PredictionReady -> {
                 if (action.requestId == state.latestPredictionRequestId) {
-                    state.predictionVisible = action.candidates.isNotEmpty()
-                    messages.emit(EngineMessage.Candidates(action.candidates, 0, 0))
+                    // 预测路径同样要过滤已删除词（删除过滤不能只挂在 Rime 候选还原上）
+                    val visible = action.candidates.filterNot { DeletedWordsStore.isDeleted(it.text) }
+                    state.predictionVisible = visible.isNotEmpty()
+                    messages.emit(EngineMessage.Candidates(visible, 0, 0))
                 }
             }
 
@@ -492,6 +496,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
 
             Action.Reset -> {
+                invalidatePendingCandidates()
+                invalidatePendingPrediction()
                 flowBehavior(Reset())
             }
 
@@ -499,11 +505,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             Action.Segment -> flowBehavior(Segmentation())
             is Action.SelectSchema -> {
                 flowBehavior(Reset())
-                sendJob { selectSchema(action.schemaId) }
+                sendJob {
+                    selectSchema(action.schemaId)
+                    // ApplySchema 会清掉 librime 的 "_" 开头 transient options（含
+                    // __no_personalized_learning），同一密码框内切方案后必须按当前输入框重设
+                    editorInfo?.let {
+                        setRuntimeOption(NO_PERSONALIZED_LEARNING_OPTION, isNoPersonalizedLearning(it))
+                    }
+                }
             }
 
             is Action.Commit -> requestCommit(action.text)
             Action.InputCleared -> {
+                invalidatePendingCandidates()
+                invalidatePendingPrediction()
                 if (state.predictionVisible) {
                     state.predictionVisible = false
                     messages.emit(EngineMessage.Candidates(emptyList(), 0, 0))
@@ -559,6 +574,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
 
             is EngineMessage.Commit -> {
+                invalidatePendingCandidates()
                 state.suppressNextEmptyCandidates = true
                 // native 刚上屏：前文缓存失效，预测读到新鲜前文
                 invalidateBeforeCursorCache()
@@ -569,6 +585,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 if (msg.list.isNotEmpty()) {
                     // Rime candidates take over the panel from prediction candidates.
                     state.predictionVisible = false
+                    invalidatePendingPrediction()
                 }
                 if (state.suppressNextEmptyCandidates) {
                     state.suppressNextEmptyCandidates = false
@@ -649,6 +666,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private suspend fun clearInternal() {
+        invalidatePendingCandidates()
+        invalidatePendingPrediction()
         val clearPredictions = state.predictionVisible
         state.predictionVisible = false
         if (clearPredictions) {
@@ -693,11 +712,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         state.latestCandidateRequestId = requestId
         candidateRestoreJob?.cancel()
         candidateRestoreJob = scope.launch {
+            // 过滤用户长按删除的词（Rime 墓碑不隐藏系统词，App 层过滤）；
+            // 兜底分支也要用过滤后的列表，故在 try 外先算好
+            val filtered = msg.list.filterNot { DeletedWordsStore.isDeleted(it.text) }
+            val filteredMsg = if (filtered.size == msg.list.size) msg
+                else EngineMessage.Candidates(filtered, msg.highlighted, msg.page)
             try {
-                // 过滤用户长按删除的词（Rime 墓碑不隐藏系统词，App 层过滤）
-                val filtered = msg.list.filterNot { DeletedWordsStore.isDeleted(it.text) }
-                val filteredMsg = if (filtered.size == msg.list.size) msg
-                    else EngineMessage.Candidates(filtered, msg.highlighted, msg.page)
                 val ctx = context
                 if (ctx == null) {
                     actions.send(Action.CandidatesReady(requestId, filteredMsg))
@@ -733,10 +753,24 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Exception) {
-                Timber.e(error, "Failed to restore candidates; using original list")
-                actions.send(Action.CandidatesReady(requestId, msg))
+                Timber.e(error, "Failed to restore candidates; using filtered list")
+                actions.send(Action.CandidatesReady(requestId, filteredMsg))
             }
         }
+    }
+
+    /** 取消在途的候选还原并推进代次：迟到的旧还原结果会被 CandidatesReady 门控丢弃。 */
+    private fun invalidatePendingCandidates() {
+        candidateRestoreJob?.cancel()
+        candidateRestoreJob = null
+        state.latestCandidateRequestId = ++state.candidateRequestId
+    }
+
+    /** 取消在途的预测并推进代次，避免迟到预测覆盖新候选或在清空后重现。 */
+    private fun invalidatePendingPrediction() {
+        predictionJob?.cancel()
+        predictionJob = null
+        state.latestPredictionRequestId = ++state.predictionRequestId
     }
 
     /** 按保存的原始序号顺序重排候选；不在保存列表中的候选保持原有相对顺序追加到末尾。 */
@@ -759,6 +793,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         inputConnection = null
         editorInfo = null
         invalidateBeforeCursorCache()
+        invalidatePendingCandidates()
+        invalidatePendingPrediction()
     }
 
     override fun onSelectionChanged() {

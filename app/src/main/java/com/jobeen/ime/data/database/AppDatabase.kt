@@ -78,10 +78,10 @@ abstract class AppDatabase : RoomDatabase() {
             startVersion = 4,
             endVersion = 5,
         ) { db ->
-            db.execSQL("DROP TABLE IF EXISTS `candidate_prefers`")
+            // 主键从自增 id 改为 text：同结构搬数据，不要 DROP 后重建白白丢掉用户选词偏好
             db.execSQL(
                 """
-                CREATE TABLE `candidate_prefers` (
+                CREATE TABLE `candidate_prefers_new` (
                     `text` TEXT NOT NULL PRIMARY KEY,
                     `context` TEXT NOT NULL,
                     `click_count` INTEGER NOT NULL DEFAULT 1,
@@ -90,6 +90,18 @@ abstract class AppDatabase : RoomDatabase() {
                 )
                 """
             )
+            db.execSQL(
+                """
+                INSERT INTO `candidate_prefers_new` (text, context, click_count, created_at, updated_at)
+                SELECT text,
+                    (SELECT context FROM candidate_prefers o2
+                     WHERE o2.text = o.text ORDER BY updated_at DESC LIMIT 1),
+                    SUM(click_count), MIN(created_at), MAX(updated_at)
+                FROM candidate_prefers o GROUP BY text
+                """
+            )
+            db.execSQL("DROP TABLE IF EXISTS `candidate_prefers`")
+            db.execSQL("ALTER TABLE `candidate_prefers_new` RENAME TO `candidate_prefers`")
         }
 
         private val MIGRATION_5_6: Migration = Migration(

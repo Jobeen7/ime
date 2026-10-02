@@ -8,14 +8,19 @@ import kotlin.math.exp
 
 class GramDb(filePath: String) {
 
-    private val file: RandomAccessFile
     private val trie: DoubleArrayTrie
 
     init {
-        file = RandomAccessFile(filePath, "r")
-        val size = file.length()
-        val mapped = file.channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
-            .order(ByteOrder.LITTLE_ENDIAN)
+        // mmap 完成后立即关 FD：映射在 Linux/Android 上独立于文件描述符存活，
+        // 长期持有 RandomAccessFile 只会白占一个 FD（且本类没有 close 入口）
+        val file = RandomAccessFile(filePath, "r")
+        val mapped = try {
+            val size = file.length()
+            file.channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
+                .order(ByteOrder.LITTLE_ENDIAN)
+        } finally {
+            file.close()
+        }
 
         val fmt = ByteArray(FORMAT_MAX_LEN)
         mapped.get(fmt)
