@@ -55,7 +55,7 @@ sealed class KeyboardAction {
 
     data object StopVoiceInputAction : KeyboardAction()
 
-    data class VoiceDragPosition(val rawX: Float, val rawY: Float) : KeyboardAction()
+    data class VoiceDragPosition(val pointerId: Int, val rawX: Float, val rawY: Float) : KeyboardAction()
 
     data object VoiceDragUp : KeyboardAction()
 

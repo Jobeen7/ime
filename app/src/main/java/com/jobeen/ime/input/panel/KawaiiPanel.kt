@@ -498,6 +498,8 @@ class KawaiiPanel(
 
     override fun onFinishInputView(finishingInput: Boolean) {
         confirmOverlay.dismiss()
+        // 取消工具栏未触发的延迟点击（Palette/CloseKeyboard），避免输入结束后迟到执行
+        view.cancelDelayedTaps()
         // 清理全局静态回调（仅当还是我们注册的才清，避免误清新 panel 的）
         if (ClipboardManager.onNewEntry === clipNewEntryCallback) ClipboardManager.onNewEntry = null
         if (ClipboardManager.onContentChanged === clipContentChangedCallback) ClipboardManager.onContentChanged = null
