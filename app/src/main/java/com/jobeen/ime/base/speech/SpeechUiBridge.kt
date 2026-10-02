@@ -24,6 +24,7 @@ object SpeechUiBridge {
         onRecordingStarted = null
         onAmplitude = null
         onDone = null
+        onModelMissing = null
         onFailed = null
     }
 }

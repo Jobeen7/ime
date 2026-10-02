@@ -6,6 +6,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -104,9 +106,32 @@ object WanxiangUpdateManager {
         /** 远端模型内容指纹（下载时计算并存储；null=尚未下载该版本） */
         val gramRemoteFingerprint: String?,
     ) {
-        val schemaUpdateAvailable: Boolean get() = schemaLocalVersion != schemaRemoteVersion
-        val gramUpdateAvailable: Boolean get() = gramLocalPublishedAt != gramRemotePublishedAt
+        // 只在远端确实更新时才算"有更新"：本地版本高于远端（内置更新包等）时
+        // 用 != 判断会误报并把用户降级式覆盖
+        val schemaUpdateAvailable: Boolean
+            get() {
+                val local = schemaLocalVersion ?: return true
+                return compareVersions(schemaRemoteVersion, local) > 0
+            }
+        val gramUpdateAvailable: Boolean
+            get() {
+                val local = gramLocalPublishedAt ?: return true
+                return gramRemotePublishedAt > local
+            }
         val hasUpdate: Boolean get() = schemaUpdateAvailable || gramUpdateAvailable
+    }
+
+    /** "v18.0.15" 风格版本号逐段数字比较。 */
+    private fun compareVersions(left: String, right: String): Int {
+        fun parts(v: String) = v.trim().removePrefix("v").removePrefix("V")
+            .split('.', '-', '_').map { it.toIntOrNull() ?: 0 }
+        val a = parts(left)
+        val b = parts(right)
+        for (i in 0 until maxOf(a.size, b.size)) {
+            val r = (a.getOrElse(i) { 0 }).compareTo(b.getOrElse(i) { 0 })
+            if (r != 0) return r
+        }
+        return 0
     }
 
     data class LocalInfo(
@@ -262,7 +287,19 @@ object WanxiangUpdateManager {
      * 全部在 IO 线程执行；支持协程取消，取消后临时文件会被清理。
      * @return true=全部成功并已记录版本号；false=失败（旧文件不受影响）
      */
+    // 全流程互斥：临时目录与 .part 路径都是固定名，并发更新会互相覆盖/删除
+    private val updateMutex = Mutex()
+
     suspend fun downloadAndApply(
+        prefs: android.content.SharedPreferences,
+        info: UpdateInfo,
+        cacheDir: File,
+        onProgress: (UpdateProgress) -> Unit = {},
+    ): Boolean = updateMutex.withLock {
+        downloadAndApplyLocked(prefs, info, cacheDir, onProgress)
+    }
+
+    private suspend fun downloadAndApplyLocked(
         prefs: android.content.SharedPreferences,
         info: UpdateInfo,
         cacheDir: File,
@@ -272,6 +309,11 @@ object WanxiangUpdateManager {
         // 本次下载的内容指纹（下载成功后存入 prefs，供本地/远端比对）
         var newDictFp: String? = null
         var newGramFp: String? = null
+        // 先全部下载到临时位置、校验通过后才动现用文件：
+        // 避免"词库已换新、模型下载失败"形成新词库+旧模型的混合状态
+        var extractDir: File? = null
+        var gramPartial: File? = null
+        var gramTarget: File? = null
         try {
             // 1. 下载方案包（只取其中 dicts/ 词库）
             if (info.schemaUpdateAvailable) {
@@ -285,8 +327,8 @@ object WanxiangUpdateManager {
                 finalZip.delete()
                 check(zipFile.renameTo(finalZip)) { "方案包落盘失败" }
 
-                // 2. 解压词库到临时目录并校验
-                val extractDir = File(workDir, "dicts_new").apply {
+                // 2. 解压词库到临时目录并校验（暂不搬移，等模型也下载成功后一起应用）
+                extractDir = File(workDir, "dicts_new").apply {
                     deleteRecursively()
                     mkdirs()
                 }
@@ -306,22 +348,9 @@ object WanxiangUpdateManager {
                     Timber.w(e, "下载词库指纹计算失败")
                     null
                 }
-
-                // 3. 搬移到 shared/dicts（逐文件覆盖，不删除其他文件）
-                val dictsDir = File(DataManager.sharedDataDir, "dicts").apply { mkdirs() }
-                extractDir.walkTopDown()
-                    .filter { it.isFile }
-                    .forEach { src ->
-                        val rel = src.relativeTo(extractDir).path
-                        val dest = File(dictsDir, rel).canonicalFile
-                        // 二次路径穿越检查
-                        check(dest.path.startsWith(dictsDir.canonicalPath)) { "非法路径：$rel" }
-                        dest.parentFile?.mkdirs()
-                        src.copyTo(dest, overwrite = true)
-                    }
             }
 
-            // 4. 下载语法模型（.part + 原子重命名，与 GramModelDownloader 一致）
+            // 3. 下载语法模型到 .part（只下载校验，先不替换现用文件）
             if (info.gramUpdateAvailable) {
                 val target = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
                 val partial = File(target.parentFile, target.name + PART_SUFFIX)
@@ -347,8 +376,29 @@ object WanxiangUpdateManager {
                     Timber.w(e, "下载模型指纹计算失败")
                     null
                 }
-                target.delete()
-                check(partial.renameTo(target)) { "语法模型落盘失败" }
+                gramPartial = partial
+                gramTarget = target
+            }
+
+            // 4. 两边都就绪后才应用：先搬词库，再原子替换语法模型
+            extractDir?.let { dir ->
+                val dictsDir = File(DataManager.sharedDataDir, "dicts").apply { mkdirs() }
+                dir.walkTopDown()
+                    .filter { it.isFile }
+                    .forEach { src ->
+                        val rel = src.relativeTo(dir).path
+                        val dest = File(dictsDir, rel).canonicalFile
+                        // 二次路径穿越检查
+                        check(dest.path.startsWith(dictsDir.canonicalPath + File.separator)) {
+                            "非法路径：$rel"
+                        }
+                        dest.parentFile?.mkdirs()
+                        src.copyTo(dest, overwrite = true)
+                    }
+            }
+            if (gramPartial != null && gramTarget != null) {
+                gramTarget.delete()
+                check(gramPartial.renameTo(gramTarget)) { "语法模型落盘失败" }
             }
 
             // 5. 全部成功后才记录版本号与内容指纹
@@ -380,7 +430,8 @@ object WanxiangUpdateManager {
             runCatching { File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX").delete() }
             runCatching { File(workDir, "rime-wanxiang-lite.zip").delete() }
             runCatching { File(workDir, "dicts_new").deleteRecursively() }
-            // gram 的 .part 文件在失败分支已处理；成功后无残留
+            // gram 成功时已 rename 走；失败/取消时清掉 .part 残留
+            runCatching { gramPartial?.delete() }
         }
     }
 
@@ -415,8 +466,8 @@ object WanxiangUpdateManager {
                 val name = entry.name.trimEnd('/')
                 if (!entry.isDirectory && isAllowedEntry(name)) {
                     val destFile = File(destDir, name).canonicalFile
-                    // 路径穿越防护
-                    if (destFile.path.startsWith(destCanonical)) {
+                    // 路径穿越防护（必须带分隔符：无分隔符前缀比较可被同前缀兄弟目录绕过）
+                    if (destFile.path.startsWith(destCanonical + File.separator)) {
                         destFile.parentFile?.mkdirs()
                         destFile.outputStream().use { out -> zin.copyTo(out, BUFFER_SIZE) }
                         done++
@@ -469,6 +520,12 @@ object WanxiangUpdateManager {
                         }
                         onProgress(downloaded, total)
                     }
+                }
+                // 完整性校验：服务端声明了长度时，实际字节数必须一致，
+                // 否则截断的坏文件会被当成功落盘（语法模型坏文件会让旧模型也找不回来）
+                if (total > 0 && target.length() != total) {
+                    Timber.w("下载不完整：期望 %d 字节，实际 %d 字节", total, target.length())
+                    return false
                 }
                 true
             }

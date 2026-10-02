@@ -141,8 +141,8 @@ class ClipboardStateRender(
 
     override fun showExpand(isExpanded: Boolean) {
         ctx.clipboardView.clipTab = clipTab
+        // show() 内部已触发一次加载，不要再叠加 refresh()（否则每次打开固定加载两遍）
         ctx.clipboardView.show()
-        ctx.clipboardView.refresh()
     }
 
     override fun hideExpand() {
