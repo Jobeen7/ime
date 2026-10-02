@@ -58,6 +58,12 @@ object WebDavSync {
         require(server.startsWith("http://") || server.startsWith("https://")) {
             "服务器地址须以 http:// 或 https:// 开头"
         }
+        // 默认强制 HTTPS：明文 HTTP 会让账号密码与词典内容在网络上裸奔，
+        // 仅当用户在「高级」里手动开启并确认风险后才放行
+        require(!server.startsWith("http://") || UserDictPrefs.allowHttp) {
+            "服务器使用明文 HTTP，账号密码与词典内容会被明文传输。" +
+                "请改用 HTTPS，或在用户词典页的「高级」中开启「允许明文 HTTP」并确认风险后再同步"
+        }
         require(UserDictPrefs.username.isNotBlank()) { "请填写用户名" }
         require(UserDictPrefs.password.isNotEmpty()) { "请填写密码" }
     }
@@ -100,6 +106,68 @@ object WebDavSync {
         }.onFailure { Timber.w(it, "MKCOL sync dir failed") }
     }
 
+    /** 远端文件的版本状态：用于上传前判断远端是否被其他设备改动过 */
+    private data class RemoteState(val etag: String?, val lastModifiedMs: Long)
+
+    private val etagRegex =
+        Regex("<(?:\\w+:)?getetag>(.*?)</(?:\\w+:)?getetag>", RegexOption.IGNORE_CASE)
+    private val lastModifiedRegex =
+        Regex(
+            "<(?:\\w+:)?getlastmodified>(.*?)</(?:\\w+:)?getlastmodified>",
+            RegexOption.IGNORE_CASE,
+        )
+
+    /**
+     * 查询某个远端文件的 ETag / 修改时间（PROPFIND Depth: 0）。
+     * 文件不存在返回 null；服务器不支持 PROPFIND 等异常同样返回 null（调用方退化为
+     * "无状态可比"，保持旧行为直接上传，但仍会带上已知的 If-Match 时才做强校验）。
+     */
+    private fun fetchRemoteState(fileName: String): RemoteState? {
+        val body = """
+            <?xml version="1.0" encoding="utf-8"?>
+            <d:propfind xmlns:d="DAV:"><d:prop><d:getetag/><d:getlastmodified/></d:prop></d:propfind>
+        """.trimIndent().toRequestBody("application/xml; charset=utf-8".toMediaType())
+        val request = Request.Builder()
+            .url(remoteUrl(fileName))
+            .header("Authorization", authHeader())
+            .header("Depth", "0")
+            .method("PROPFIND", body)
+            .build()
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                if (response.code == 404) return null
+                if (!response.isSuccessful) return null
+                val xml = response.body?.string().orEmpty()
+                val etag = etagRegex.find(xml)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
+                val lmText = lastModifiedRegex.find(xml)?.groupValues?.get(1)?.trim().orEmpty()
+                val lmMs = runCatching {
+                    val fmt = java.text.SimpleDateFormat(
+                        "EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US
+                    )
+                    fmt.timeZone = java.util.TimeZone.getTimeZone("GMT")
+                    fmt.parse(lmText)?.time ?: 0L
+                }.getOrDefault(0L)
+                RemoteState(etag, lmMs)
+            }
+        }.getOrNull()
+    }
+
+    /**
+     * 判断远端文件自上次同步后是否被其他设备改动过。
+     * 优先比 ETag（上次同步记录的基准值）；无 ETag 时退化为修改时间与
+     * 上次同步时间（上传/下载取较晚者）的比较。
+     */
+    private fun isRemoteChanged(fileName: String, state: RemoteState): Boolean {
+        val knownETag = UserDictPrefs.syncETag(fileName)
+        if (state.etag != null) {
+            // 从未记录过基准（本机第一次同步）但远端已有文件：视为已被改动，先合并再说
+            return knownETag == null || knownETag != state.etag
+        }
+        if (knownETag != null) return true // 远端曾有 ETag 现在没了，保守视为已变
+        val lastSync = maxOf(UserDictPrefs.lastUploadTime, UserDictPrefs.lastDownloadTime)
+        return state.lastModifiedMs > lastSync && lastSync > 0L
+    }
+
     /**
      * 上传当前词典到 WebDAV 服务器，返回导出的词条数。
      * 必须在后台线程调用。
@@ -109,22 +177,51 @@ object WebDavSync {
             checkConfigured()
             // 先确保同步目录存在：坚果云对不存在的目录直接返回 403
             ensureSyncDir()
+            val fileName = remoteFileName(dictName)
+            // 冲突保护：远端若被其他设备改过，先下载合并进本地再上传，
+            // 绝不拿本地旧词库静默覆盖远端较新的内容
+            var baseState = fetchRemoteState(fileName)
+            if (baseState != null && isRemoteChanged(fileName, baseState)) {
+                Timber.i("Remote '$fileName' changed since last sync; merging before upload")
+                download(dictName).getOrThrow()
+                baseState = fetchRemoteState(fileName) ?: baseState
+            }
             val tempFile = File(appContext.cacheDir, "webdav-upload-${dictName}.txt")
             try {
                 val count = UserDictManager.exportUserDictLive(dictName, tempFile.absolutePath)
                 if (count < 0) throw IllegalStateException("导出用户词典失败")
-                val request = Request.Builder()
-                    .url(remoteUrl(remoteFileName(dictName)))
+                val builder = Request.Builder()
+                    .url(remoteUrl(fileName))
                     .header("Authorization", authHeader())
                     .put(tempFile.asRequestBody(textPlain))
-                    .build()
-                client.newCall(request).execute().use { response ->
+                // 带上合并基准的 ETag：合并后到上传之间远端又被改动时服务器回 412，
+                // 而不是被我们覆盖掉
+                baseState?.etag?.let { builder.header("If-Match", it) }
+                client.newCall(builder.build()).execute().use { response ->
+                    if (response.code == 412) {
+                        throw IllegalStateException(
+                            "远端词库在同步期间又被其他设备修改，本次上传已取消以避免覆盖。" +
+                                "请重新点一次上传（会先自动合并远端最新内容）"
+                        )
+                    }
                     if (!response.isSuccessful) {
                         throw httpError("上传", response.code, errorDetail(response))
+                    }
+                    val newETag = response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+                    if (newETag != null) {
+                        UserDictPrefs.setSyncETag(fileName, newETag)
+                    } else {
+                        // 响应没带 ETag：重新查询一次作为下次同步的基准
+                        fetchRemoteState(fileName)?.etag?.let {
+                            UserDictPrefs.setSyncETag(fileName, it)
+                        }
                     }
                 }
                 UserDictPrefs.lastUploadTime = System.currentTimeMillis()
                 Timber.i("User dict '$dictName' uploaded: $count entries")
+                // 删除词表随词典同步一起走（并集合并，失败不影响词典同步结果）
+                runCatching { syncDeletedWords() }
+                    .onFailure { Timber.w(it, "Deleted words sync failed") }
                 count
             } finally {
                 tempFile.delete()
@@ -180,6 +277,8 @@ object WebDavSync {
             parseRemoteEntries(propfindDirXml())
                 .filter { !it.isDirectory }
                 .map { it.name }
+                // 删除词表是同步内部文件，不作为可下载词典展示
+                .filter { it != DELETED_WORDS_FILE }
                 .distinct()
                 .sortedWith(
                     compareBy(
@@ -380,6 +479,12 @@ object WebDavSync {
                     if (!response.isSuccessful) {
                         throw httpError("下载", response.code, errorDetail(response))
                     }
+                    // 下载的就是本词典的同步文件时，记下它的 ETag 作为下次上传的比对基准
+                    if (remoteFile == remoteFileName(dictName)) {
+                        response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                            UserDictPrefs.setSyncETag(remoteFile, it)
+                        }
+                    }
                     val body = response.body ?: throw IllegalStateException("下载内容为空")
                     if (body.contentLength() == 0L) {
                         throw IllegalStateException("下载的文件为空")
@@ -399,11 +504,71 @@ object WebDavSync {
                 if (count < 0) throw IllegalStateException("导入用户词典失败")
                 UserDictPrefs.lastDownloadTime = System.currentTimeMillis()
                 Timber.i("User dict '$dictName' downloaded and imported: $count entries")
+                // 删除词表随词典同步一起走（并集合并，失败不影响词典下载结果）
+                runCatching { syncDeletedWords() }
+                    .onFailure { Timber.w(it, "Deleted words sync failed") }
                 count
             } finally {
                 tempFile.delete()
             }
         }
+    }
+
+    /** 删除词表在服务器上的文件名（全设备共用一份，与具体词典无关） */
+    const val DELETED_WORDS_FILE = "jime_deleted_words.txt"
+
+    /**
+     * 同步长按删除词表：与远端取并集合并。
+     *
+     * 删除是单调操作（只加不减），并集即正确合并、天然无冲突：
+     * 任一设备删过的词，同步后在所有设备上都保持删除，换机也不会复活。
+     * GET 远端 → 本地并入 → 并集与远端不同才 PUT 回（带 If-Match 防并发覆盖）。
+     * 必须在后台线程调用；失败抛异常由调用方决定是否忽略。
+     */
+    private fun syncDeletedWords() {
+        val local = com.jobeen.ime.data.manager.DeletedWordsStore.all()
+        var remoteETag: String? = null
+        val remote = mutableSetOf<String>()
+        val getRequest = Request.Builder()
+            .url(remoteUrl(DELETED_WORDS_FILE))
+            .header("Authorization", authHeader())
+            .get()
+            .build()
+        client.newCall(getRequest).execute().use { response ->
+            when {
+                response.code == 404 -> Unit // 远端还没有这份文件，按空集处理
+                !response.isSuccessful ->
+                    throw httpError("下载删除词表", response.code, errorDetail(response))
+                else -> {
+                    remoteETag = response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+                    response.body?.string().orEmpty().lineSequence()
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .forEach { remote.add(it) }
+                }
+            }
+        }
+        val merged = local union remote
+        if (merged.size != local.size) {
+            com.jobeen.ime.data.manager.DeletedWordsStore.addAll(merged)
+        }
+        if (merged != remote) {
+            val content = merged.sorted().joinToString("\n", postfix = "\n")
+            val putBuilder = Request.Builder()
+                .url(remoteUrl(DELETED_WORDS_FILE))
+                .header("Authorization", authHeader())
+                .put(content.toRequestBody(textPlain))
+            remoteETag?.let { putBuilder.header("If-Match", it) }
+            client.newCall(putBuilder.build()).execute().use { response ->
+                if (!response.isSuccessful) {
+                    throw httpError("上传删除词表", response.code, errorDetail(response))
+                }
+                response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                    UserDictPrefs.setSyncETag(DELETED_WORDS_FILE, it)
+                }
+            }
+        }
+        Timber.i("Deleted words synced: local=${local.size}, remote=${remote.size}, merged=${merged.size}")
     }
 
     /**

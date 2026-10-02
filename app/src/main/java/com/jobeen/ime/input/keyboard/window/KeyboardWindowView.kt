@@ -447,7 +447,12 @@ class KeyboardWindowView(
     }
 
 
+    /** 当前输入框是否为密码框（onStartInput 时更新）：密码框禁用语音与粘贴横幅。 */
+    private var passwordField = false
+
     fun onStartInput(info: EditorInfo) {
+        passwordField = com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(info)
+        panel.suppressCopyBanner = passwordField
         panel.view.setExpanded(false)
         panel.onStartInputView()
         keyboardStateManager.startInput(info)
@@ -619,6 +624,8 @@ class KeyboardWindowView(
 
     private fun startVoiceInput() {
         if (isVoiceRecording) return
+        // 密码框禁用语音输入
+        if (passwordField) return
         if (!ensureRecordAudioPermission()) return
         // 模型缺失时直接弹下载提示，不进入录音态：
         // 避免工具栏闪一下变暗、语音动画又永远不出现。
@@ -685,6 +692,8 @@ class KeyboardWindowView(
 
     private fun startVoiceInputLocked() {
         if (isVoiceRecording) return
+        // 密码框禁用语音输入
+        if (passwordField) return
         if (!ensureRecordAudioPermission()) return
         // 模型缺失时直接弹下载提示，不进入录音态（同 startVoiceInput）
         if (!SherpaSpeechClient.isModelReady(context)) {

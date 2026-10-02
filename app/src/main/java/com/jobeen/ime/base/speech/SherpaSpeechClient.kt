@@ -200,6 +200,11 @@ object SherpaSpeechClient {
         ModelDownloader.checkForUpdate(context)
 
     fun startHoldSession(service: ImeInputMethodService) {
+        // 密码框禁用语音（入口层已拦，这里再兜一层，任何调用方都绕不过）
+        if (com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(service.currentInputEditorInfo)) {
+            Timber.i("startHoldSession blocked: password field")
+            return
+        }
         if (!holding.compareAndSet(false, true)) return
         Timber.i("startHoldSession")
         serviceRef = WeakReference(service)
