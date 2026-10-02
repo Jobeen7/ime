@@ -61,12 +61,18 @@ class KeyboardWindowView(
 
     // 实测：语音拖拽时 UP 事件到不了空格按键的 onTouchUpListener（MOVE 能到，
     // UP/CANCEL 都到不了）。在父容器直接拦截，触发语音拖拽松手逻辑。
+    // 只认启动语音的那根手指（voicePointerId，由拖拽 MOVE 上报的指针 id）：
+    // 其他手指的抬起不得结束本次录音。id 未知（工具栏点击启动等无拖拽场景）
+    // 时保持旧行为，拦截任意 UP/CANCEL。
     // 锁定录音时不拦截：浮层空白处点按不应结束录音。
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         if (isVoiceRecording && !voiceOverlay.isLocked &&
             (ev.actionMasked == android.view.MotionEvent.ACTION_UP ||
              ev.actionMasked == android.view.MotionEvent.ACTION_CANCEL)) {
-            transformed(KeyboardAction.VoiceDragUp)
+            val upPointerId = runCatching { ev.getPointerId(ev.actionIndex) }.getOrDefault(-1)
+            if (voicePointerId == -1 || upPointerId == voicePointerId) {
+                transformed(KeyboardAction.VoiceDragUp)
+            }
         }
         return super.dispatchTouchEvent(ev)
     }
@@ -95,11 +101,25 @@ class KeyboardWindowView(
                 stopVoiceInput()
             }
 
-            override fun onLockStateChanged(isLocked: Boolean) {}
+            override fun onLockStateChanged(isLocked: Boolean) {
+                // 点击解锁 = 免提录音结束：没有手指再按着，继续录下去只能靠关按钮收尾，
+                // 语义上等同松手——结束并上屏。锁定（点锁）时不做处理，录音继续。
+                if (!isLocked && isVoiceRecording) {
+                    stopVoiceInput(discard = false)
+                }
+            }
         }
     }
 
     private var isVoiceRecording = false
+        set(value) {
+            field = value
+            // 录音一结束，启动手势令牌随之失效，下次录音重新认领
+            if (!value) voicePointerId = -1
+        }
+
+    /** 启动本次语音拖拽手势的指针 id；-1 表示未知（非拖拽启动） */
+    private var voicePointerId = -1
 
     private val addPhraseLayer = InputBoxLayerView(context).apply {
         visibility = View.GONE
@@ -150,6 +170,8 @@ class KeyboardWindowView(
 
             is KeyboardAction.VoiceDragPosition -> {
                 if (isVoiceRecording) {
+                    // 认领启动手势的指针：父容器此后只认这根手指的抬起
+                    if (voicePointerId == -1) voicePointerId = action.pointerId
                     voiceOverlay.onDragPosition(action.rawX, action.rawY)
                 }
                 null

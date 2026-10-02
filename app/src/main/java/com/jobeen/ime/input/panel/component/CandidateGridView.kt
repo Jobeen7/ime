@@ -82,6 +82,9 @@ class CandidateGridView(
         private var rowStartIndex = IntArray(0)
 
         private val rowScrollX = mutableMapOf<Int, Float>()
+        // 当前手势的指针 id：只追踪第一根落指，其他指针不得串扰坐标与收尾
+        private var activePointerId = -1
+
         private var downX = 0f
         private var horizontalDrag = -1
 
@@ -363,6 +366,8 @@ class CandidateGridView(
         override fun onTouchEvent(event: MotionEvent): Boolean {
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    if (activePointerId != -1) return true
+                    activePointerId = event.getPointerId(0)
                     parent.requestDisallowInterceptTouchEvent(true)
                     if (!scroller.isFinished) scroller.abortAnimation()
 
@@ -386,18 +391,22 @@ class CandidateGridView(
 
                 MotionEvent.ACTION_MOVE -> {
                     velocityTracker?.addMovement(event)
-                    val dy = lastY - event.y
-                    val dx = event.x - downX
-                    val absDy = abs(event.y - downY)
-                    val absDx = abs(event.x - downX)
+                    val pIdx = event.findPointerIndex(activePointerId)
+                    if (pIdx < 0) return true
+                    val ex = event.getX(pIdx)
+                    val ey = event.getY(pIdx)
+                    val dy = lastY - ey
+                    val dx = ex - downX
+                    val absDy = abs(ey - downY)
+                    val absDx = abs(ex - downX)
 
                     if (dragIndex >= 0) {
-                        dragFingerX = event.x
-                        dragFingerY = event.y
-                        val hit = hitTest(event.x, event.y)
+                        dragFingerX = ex
+                        dragFingerY = ey
+                        val hit = hitTest(ex, ey)
                         dragTargetIndex = if (hit >= 0 && hit != dragIndex) hit else dragIndex
                         invalidate()
-                        lastY = event.y
+                        lastY = ey
                         return true
                     }
 
@@ -407,11 +416,11 @@ class CandidateGridView(
                             val tw = textWidths.getOrElse(horizontalDrag) { 0f }
                             val maxSx = (tw - (width - cellPad * 2f)).coerceAtLeast(0f)
                             val old = rowScrollX[pos.row] ?: 0f
-                            rowScrollX[pos.row] = (old + (downX - event.x)).coerceIn(0f, maxSx)
-                            downX = event.x
+                            rowScrollX[pos.row] = (old + (downX - ex)).coerceIn(0f, maxSx)
+                            downX = ex
                             invalidate()
                         }
-                        lastY = event.y
+                        lastY = ey
                         return true
                     }
 
@@ -427,7 +436,7 @@ class CandidateGridView(
                             startShake()
                             invalidate()
                         }
-                        lastY = event.y
+                        lastY = ey
                         return true
                     }
 
@@ -454,17 +463,50 @@ class CandidateGridView(
                         dragBy(dy)
                         invalidate()
                     } else if (horizontalDrag < 0 && !longPressTriggered) {
-                        val n = hitTest(event.x, event.y)
+                        val n = hitTest(ex, ey)
                         if (n != pressedIndex) {
                             pressedIndex = n
                             invalidate()
                         }
                     }
 
-                    lastY = event.y
+                    lastY = ey
                 }
 
                 MotionEvent.ACTION_UP -> {
+                    activePointerId = -1
+                    handleUp(event)
+                }
+
+                MotionEvent.ACTION_POINTER_UP -> {
+                    if (event.getPointerId(event.actionIndex) == activePointerId) {
+                        activePointerId = -1
+                        handleUp(event)
+                    }
+                }
+
+                MotionEvent.ACTION_CANCEL -> {
+                    activePointerId = -1
+                    recycleVelocityTracker()
+                    removeCallbacks(longPressRunnable)
+                    stopShake()
+                    dragIndex = -1
+                    dragTargetIndex = -1
+                    pressedIndex = -1
+                    horizontalDrag = -1
+                    dragging = false
+                    longPressTriggered = false
+                    longPressMoved = false
+                    springBackIfNeeded()
+                    invalidate()
+                    parent.requestDisallowInterceptTouchEvent(false)
+                }
+            }
+            return true
+        }
+
+        /** 主动抬起的统一收尾（UP / 追踪指针的 POINTER_UP 共用）；体内坐标无关，只用速度与状态 */
+        private fun handleUp(event: MotionEvent) {
                     velocityTracker?.addMovement(event)
                     velocityTracker?.computeCurrentVelocity(1000, maxFlingVelocity.toFloat())
                     val velocityY = velocityTracker?.yVelocity ?: 0f
@@ -486,7 +528,7 @@ class CandidateGridView(
                         stopShake()
                         invalidate()
                         parent.requestDisallowInterceptTouchEvent(false)
-                        return true
+                        return
                     }
 
                     if (longPressTriggered) {
@@ -514,7 +556,7 @@ class CandidateGridView(
                         }
                         invalidate()
                         parent.requestDisallowInterceptTouchEvent(false)
-                        return true
+                        return
                     }
 
                     if (horizontalDrag >= 0) {
@@ -533,25 +575,6 @@ class CandidateGridView(
                     }
 
                     parent.requestDisallowInterceptTouchEvent(false)
-                }
-
-                MotionEvent.ACTION_CANCEL -> {
-                    recycleVelocityTracker()
-                    removeCallbacks(longPressRunnable)
-                    stopShake()
-                    dragIndex = -1
-                    dragTargetIndex = -1
-                    pressedIndex = -1
-                    horizontalDrag = -1
-                    dragging = false
-                    longPressTriggered = false
-                    longPressMoved = false
-                    springBackIfNeeded()
-                    invalidate()
-                    parent.requestDisallowInterceptTouchEvent(false)
-                }
-            }
-            return true
         }
 
         private fun startShake() {

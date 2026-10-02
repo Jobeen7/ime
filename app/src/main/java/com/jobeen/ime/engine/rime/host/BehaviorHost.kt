@@ -20,6 +20,12 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
     private val emptyInput = ""
     private val symbols = listOf(".", ",", ";")
 
+    // 三个队列会被两个线程并发访问：flowed/resetState 来自按键分发线程，
+    // build/possiblePinYin 在引擎线程的 sendJob 里执行。ArrayDeque 本身非线程安全，
+    // 并发 add/removeLast/遍历会出现元素丢失、迭代异常甚至内部数组损坏，
+    // 因此全部队列访问统一由 queueLock 串行化（入口方法加锁，私有方法只在锁内调用）。
+    private val queueLock = Any()
+
     // 已选择的拼音队列
     private val selectedPinYinQueue = ArrayDeque<CandidatePinYin>()
 
@@ -78,7 +84,10 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
         return parts
     }
 
-    override fun flowed(behavior: IBehavior): Boolean {
+    override fun flowed(behavior: IBehavior): Boolean =
+        synchronized(queueLock) { flowedLocked(behavior) }
+
+    private fun flowedLocked(behavior: IBehavior): Boolean {
         if (behavior is RimeBehavior) {
             behavior.withRimeJob(rimeJob)
         }
@@ -182,9 +191,11 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
     }
 
     override fun resetState() {
-        selectedPinYinQueue.clear()
-        inputStringQueue.clear()
-        behaviorQueue.clear()
+        synchronized(queueLock) {
+            selectedPinYinQueue.clear()
+            inputStringQueue.clear()
+            behaviorQueue.clear()
+        }
     }
 
     /**
@@ -194,6 +205,11 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
      * 构造可能候选拼音。手动选择拼音时插入的分隔符会修正 confirmedLen。
      */
     fun possiblePinYin(
+        candidatePinYinType: String, currentInput: String, confirmedLen: Int
+    ): List<CandidatePinYin> =
+        synchronized(queueLock) { possiblePinYinLocked(candidatePinYinType, currentInput, confirmedLen) }
+
+    private fun possiblePinYinLocked(
         candidatePinYinType: String, currentInput: String, confirmedLen: Int
     ): List<CandidatePinYin> {
         if (inputStringQueue.isEmpty()) return emptyList()
@@ -257,7 +273,9 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
      * 根据 inputStringQueue 与 selectedPinYinQueue 构造要投递给 Rime 的输入串。
      * 每个选中的拼音会替换原 raw，并在其后追加 segmentKeyChar 作为分隔符。
      */
-    fun build(): String {
+    fun build(): String = synchronized(queueLock) { buildLocked() }
+
+    private fun buildLocked(): String {
         val input = inputStringQueue.joinToString("")
         if (selectedPinYinQueue.isEmpty()) return input
         val first = selectedPinYinQueue.first()

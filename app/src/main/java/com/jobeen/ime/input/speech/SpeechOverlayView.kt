@@ -231,11 +231,17 @@ class SpeechOverlayView(
             isClickable = true
             isFocusable = true
             setOnClickListener {
-                if (isLocked) return@setOnClickListener
+                // 锁定与解锁都走点击切换：已锁定时再点一次即解锁。
+                // （旧实现 isLocked 时直接 return，拖拽锁定后这个按钮永远解不开。）
                 isLocked = !isLocked
                 setImageResource(
                     if (isLocked) R.drawable.ic_keyboard_lock_outline
                     else R.drawable.ic_keyboard_lock_open_outline
+                )
+                // 关闭按钮图标与锁定态保持一致（同 setDragLocked/unlock 的约定）
+                closeButton.setImageResource(
+                    if (isLocked) R.drawable.ic_keyboard_close
+                    else R.drawable.ic_keyboard_arrow_back
                 )
                 if (isLocked) {
                     highlightButton(lockButton, lockButtonBg)
