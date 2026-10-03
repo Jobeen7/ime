@@ -143,7 +143,8 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
         }
 
         else -> {
-            Timber.d("EngineMessage.Unknown %s", message.data.toString())
+            // 只记消息类型不记内容：data 可能携带组字/候选原文
+            Timber.d("EngineMessage.Unknown type=%s", message.javaClass.simpleName)
             EngineMessage.Unknown
         }
     }
