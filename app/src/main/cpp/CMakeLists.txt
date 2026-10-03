@@ -12,6 +12,11 @@ add_link_options("LINKER:--hash-style=gnu,--build-id=none")
 # Jime: hot user-dict import/export needs a tiny accessor on librime's
 # UserDictionary (see patches/librime-user-dictionary-db-accessor.patch).
 # deps/ is untracked, so apply the vendored patch automatically when missing.
+# Multi-ABI builds configure this same source dir in parallel: guard the
+# check-and-apply sequence with a file lock, otherwise two configures can
+# both see the patch missing and run patch(1) concurrently (one then fails
+# with "previously applied" and aborts the whole configure).
+file(LOCK "${CMAKE_CURRENT_SOURCE_DIR}/.jime-vendored-patch.lock" GUARD FILE TIMEOUT 180)
 set(_jime_ud_header "${CMAKE_CURRENT_SOURCE_DIR}/deps/librime/src/rime/dict/user_dictionary.h")
 set(_jime_ud_patch "${CMAKE_CURRENT_SOURCE_DIR}/patches/librime-user-dictionary-db-accessor.patch")
 if(EXISTS "${_jime_ud_header}" AND EXISTS "${_jime_ud_patch}")
