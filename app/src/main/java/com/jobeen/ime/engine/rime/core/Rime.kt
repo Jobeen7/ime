@@ -366,9 +366,19 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     companion object {
+        // 消息流不丢消息：这里走的是 Schema/Option/Deploy 等状态消息，
+        // 丢一条 Deploy 成功或 Schema 变更，awaitMessage 的等待方会永久挂起、
+        // 守护进程的部署通知也会缺失。旧配置 DROP_OLDEST 在收集方卡顿时
+        // 直接把最旧的未消费消息扔掉。用 SUSPEND 语义 + 溢出时异步补发，
+        // 保证至少送达一次（补发走单线程调度，保持溢出消息之间的先后顺序）。
         private val messageFlow_ = MutableSharedFlow<RimeMessage<*>>(
             extraBufferCapacity = 64,
-            onBufferOverflow = BufferOverflow.DROP_OLDEST,
+            onBufferOverflow = BufferOverflow.SUSPEND,
+        )
+
+        private val messageEmitScope = kotlinx.coroutines.CoroutineScope(
+            kotlinx.coroutines.SupervisorJob() +
+                Dispatchers.IO.limitedParallelism(1),
         )
 
         private val rimeMessageHandlers = CopyOnWriteArrayList<(RimeMessage<*>) -> Unit>()
@@ -485,7 +495,10 @@ class Rime : RimeApi, RimeLifecycleOwner {
         fun handleMessage(type: Int, params: Array<Any>) {
             val message = RimeMessage.nativeCreate(type, params)
             rimeMessageHandlers.forEach { it.invoke(message) }
-            messageFlow_.tryEmit(message)
+            if (!messageFlow_.tryEmit(message)) {
+                // 缓冲已满（收集方一时卡住）：异步补发到送达为止，不丢弃
+                messageEmitScope.launch { messageFlow_.emit(message) }
+            }
         }
 
         private fun registerMessageHandler(handler: (RimeMessage<*>) -> Unit) {

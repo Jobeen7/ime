@@ -50,10 +50,15 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_build(
 
     marisa::Keyset keyset;
     for (jint i = 0; i < keyCount; ++i) {
+        // 逐轮释放元素局部引用：建 trie 的 key 可达数千个，不释放会撑爆局部引用表。
+        // 注意顺序——先让 StringChars 析构（ReleaseStringUTFChars 要用 js），再删引用
         jstring js = static_cast<jstring>(env->GetObjectArrayElement(keys, i));
-        StringChars chars(env, js);
-        float w = weightData ? weightData[i] : 1.0f;
-        keyset.push_back(std::string_view(chars.get()), w);
+        {
+            StringChars chars(env, js);
+            float w = weightData ? weightData[i] : 1.0f;
+            keyset.push_back(std::string_view(chars.get()), w);
+        }
+        env->DeleteLocalRef(js);
     }
 
     if (weightData) {

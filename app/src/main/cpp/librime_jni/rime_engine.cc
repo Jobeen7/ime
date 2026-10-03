@@ -8,6 +8,7 @@
 
 #include <cstdlib>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -95,6 +96,11 @@ namespace {
         }
 
         void joinMaintenanceThread() {
+            // librime Deployer::JoinWorkThread 对同一个 std::future 并发 get()
+            // 会抛 std::future_error（第二次 get 时状态已被消费）。
+            // Kotlin 侧有两个调用点（引擎启动与部署路径），可能跨线程并发到这里，
+            // 用互斥把 join 串行化：串行重复 join 时 valid() 已为 false，天然无操作。
+            std::lock_guard<std::mutex> lock(join_mutex_);
             api_->join_maintenance_thread();
         }
 
@@ -267,6 +273,7 @@ namespace {
     private:
         RimeApi *api_;
         std::shared_ptr<RimeSession> session_;
+        std::mutex join_mutex_;
 
         RimeSessionId sessionId() {
             if (!session_) {

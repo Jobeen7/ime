@@ -8,14 +8,21 @@ class RimeConfig private constructor(
     private val peer: Long,
 ) : AutoCloseable {
 
-    fun getInt(key: String): Int? = getRimeConfigInt(peer, key)
+    // close 必须幂等：旧实现每次 close 都把同一 peer 交给 native 释放，
+    // use{} 与手动清理叠加时就是 double-free。关闭后再读写同样是野指针访问，一并拦截。
+    private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    fun getString(key: String): String? = getRimeConfigString(peer, key)
+    private fun peerOrNull(): Long? = if (closed.get()) null else peer
 
-    fun getBool(key: String): Boolean? = getRimeConfigBool(peer, key)
+    fun getInt(key: String): Int? = peerOrNull()?.let { getRimeConfigInt(it, key) }
+
+    fun getString(key: String): String? = peerOrNull()?.let { getRimeConfigString(it, key) }
+
+    fun getBool(key: String): Boolean? = peerOrNull()?.let { getRimeConfigBool(it, key) }
 
     fun <E : Any> getList(key: String, getAction: RimeConfig.(String) -> E?): List<E> {
-        val paths = getRimeConfigListItemPath(peer, key)
+        val p = peerOrNull() ?: return emptyList()
+        val paths = getRimeConfigListItemPath(p, key)
         val result = ArrayList<E>(paths.size)
         for (path in paths) {
             val value = getAction(this, path)
@@ -28,10 +35,14 @@ class RimeConfig private constructor(
         return result
     }
 
-    fun setBool(key: String, value: Boolean) = setRimeConfigBool(peer, key, value)
+    fun setBool(key: String, value: Boolean) {
+        peerOrNull()?.let { setRimeConfigBool(it, key, value) }
+    }
 
     override fun close() {
-        closeRimeConfig(peer)
+        if (closed.compareAndSet(false, true)) {
+            closeRimeConfig(peer)
+        }
     }
 
     companion object {

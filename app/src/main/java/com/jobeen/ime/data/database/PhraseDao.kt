@@ -12,7 +12,7 @@ interface PhraseDao {
     suspend fun insert(record: PhraseRecord): Long
 
     @Update
-    suspend fun update(record: PhraseRecord)
+    suspend fun update(record: PhraseRecord): Int
 
     @Query("SELECT * FROM phrase_records ORDER BY createdAt DESC")
     suspend fun getAll(): List<PhraseRecord>
@@ -21,10 +21,10 @@ interface PhraseDao {
     suspend fun getById(id: Long): PhraseRecord?
 
     @Query("DELETE FROM phrase_records WHERE id = :id")
-    suspend fun deleteById(id: Long)
+    suspend fun deleteById(id: Long): Int
 
     @Query("DELETE FROM phrase_records")
-    suspend fun deleteAll()
+    suspend fun deleteAll(): Int
 
     @Query("SELECT * FROM phrase_records WHERE label LIKE '%' || :query || '%' OR text LIKE '%' || :query || '%' ORDER BY createdAt DESC")
     suspend fun search(query: String): List<PhraseRecord>

@@ -37,8 +37,23 @@ object ClipboardManager {
     }
 
     fun setMaxEntries(context: Context, max: Int) {
+        val value = max.coerceIn(20, 500)
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putInt(KEY_MAX_ENTRIES, max.coerceIn(20, 500))
+            putInt(KEY_MAX_ENTRIES, value)
+        }
+        // 上限调低后立即清理存量：旧实现只在下一次新增条目时才顺带 trimExcess，
+        // 不再复制新内容的话超限条目会一直留着，设置看起来不生效
+        val app = context.applicationContext
+        appScope.launch(Dispatchers.IO) {
+            val trimmed = db(app) { db ->
+                db.withTransaction {
+                    val dao = db.clipboardDao()
+                    val before = dao.count()
+                    trimExcess(dao, value)
+                    dao.count() < before
+                }
+            } ?: false
+            if (trimmed) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
         }
     }
 
@@ -122,17 +137,19 @@ object ClipboardManager {
     }
 
     private fun clipTimestamp(clip: ClipData): Long =
-        if (Build.VERSION.SDK_INT >= 33) clip.description?.timestamp?.takeIf { it > 0 } ?: -1L
+        // getTimestamp() 自 API 26 起可用（旧实现误按 33 拦截，低版本永远拿不到时间戳）
+        if (Build.VERSION.SDK_INT >= 26) clip.description?.timestamp?.takeIf { it > 0 } ?: -1L
         else -1L
 
     /**
-     * 隐私：系统标记为敏感的剪贴板内容（如密码管理器复制的密码，
-     * [ClipDescription.EXTRA_IS_SENSITIVE]，API 33+ 才有该常量；
-     * Android 12（API 31/32）的剪贴板 UI 认同一个字符串键，这里直接用
-     * 字符串兼容）不入库、不弹粘贴提示。
+     * 隐私：被标记为敏感的剪贴板内容（如密码管理器复制的密码）不入库、不弹粘贴提示。
+     *
+     * 标记由**复制来源 App** 写进 ClipDescription 的 extras，与设备系统版本无关：
+     * extras 的 getExtras() 自 API 24 起可用，常量 [ClipDescription.EXTRA_IS_SENSITIVE]
+     * 到 API 33 才公开，低版本用同一字符串键读取即可。旧实现在 API<31 直接返回
+     * false，把来源 App 在旧系统上写的标记也一并丢弃了。
      */
     private fun isSensitiveClip(clip: ClipData): Boolean {
-        if (Build.VERSION.SDK_INT < 31) return false
         val key = if (Build.VERSION.SDK_INT >= 33) ClipDescription.EXTRA_IS_SENSITIVE
         else "android.content.extra.IS_SENSITIVE"
         return clip.description?.extras?.getBoolean(key) == true

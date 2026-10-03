@@ -27,20 +27,27 @@ using namespace rime_jni;
 
 namespace {
 
+    // 任一环节缺失（Rime 未初始化、模块未加载）都返回 nullptr，
+    // 调用方必须判空：旧实现直接解引用链，异常状态下就是 native 崩溃
     RimeLeversApi *leversApi() {
-        return reinterpret_cast<RimeLeversApi *>(
-                rime_get_api()->find_module("levers")->get_api());
+        auto *api = rime_get_api();
+        if (!api || !api->find_module) return nullptr;
+        auto *module = api->find_module("levers");
+        if (!module || !module->get_api) return nullptr;
+        return reinterpret_cast<RimeLeversApi *>(module->get_api());
     }
-
     class SwitcherSettings {
     public:
         SwitcherSettings()
-                : api_(leversApi()), settings_(api_->switcher_settings_init()) {
-            api_->load_settings(reinterpret_cast<RimeCustomSettings *>(settings_));
+                : api_(leversApi()),
+                  settings_(api_ ? api_->switcher_settings_init() : nullptr) {
+            if (api_ && settings_) {
+                api_->load_settings(reinterpret_cast<RimeCustomSettings *>(settings_));
+            }
         }
 
         ~SwitcherSettings() {
-            if (settings_)
+            if (api_ && settings_)
                 api_->custom_settings_destroy(
                         reinterpret_cast<RimeCustomSettings *>(settings_));
         }
@@ -50,6 +57,7 @@ namespace {
         SwitcherSettings &operator=(const SwitcherSettings &) = delete;
 
         std::vector<SchemaEntry> availableSchemas() {
+            if (!api_ || !settings_) return {};
             RimeSchemaList list{};
             std::vector<SchemaEntry> out;
             if (api_->get_available_schema_list(settings_, &list)) {
@@ -60,6 +68,7 @@ namespace {
         }
 
         std::vector<SchemaEntry> selectedSchemas() {
+            if (!api_ || !settings_) return {};
             RimeSchemaList list{};
             std::vector<SchemaEntry> out;
             if (api_->get_selected_schema_list(settings_, &list)) {
@@ -83,6 +92,7 @@ namespace {
         }
 
         bool selectSchemas(const std::vector<std::string> &ids) {
+            if (!api_ || !settings_) return false;
             std::vector<const char *> ptrs;
             ptrs.reserve(ids.size());
             for (const auto &id: ids) ptrs.push_back(id.c_str());
@@ -153,6 +163,7 @@ jint HotImportUserDict(const char *dict_name, const char *text_file) {
         return num_entries;
     }
     auto *api = leversApi();
+    if (!api) return -1;
     return api->import_user_dict(dict_name, text_file);
 }
 
@@ -172,6 +183,7 @@ jint HotExportUserDict(const char *dict_name, const char *text_file) {
         return num_entries;
     }
     auto *api = leversApi();
+    if (!api) return -1;
     return api->export_user_dict(dict_name, text_file);
 }
 
@@ -205,6 +217,7 @@ Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_getUserDictList(
         JNIEnv *env, jclass) {
     auto *api = leversApi();
     std::vector<std::string> dicts;
+    if (!api) return vectorToJavaStringArray(env, dicts);
     RimeUserDictIterator iter{};
     if (api->user_dict_iterator_init(&iter)) {
         while (true) {
@@ -221,14 +234,16 @@ JNIEXPORT jboolean JNICALL
 Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_backupUserDict(
         JNIEnv *env, jclass, jstring dict_name) {
     jni::StringChars name(env, dict_name);
-    return leversApi()->backup_user_dict(name.get());
+    auto *api = leversApi();
+    return api ? api->backup_user_dict(name.get()) : JNI_FALSE;
 }
 
 JNIEXPORT jboolean JNICALL
 Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_restoreUserDict(
         JNIEnv *env, jclass, jstring snapshot_file) {
     jni::StringChars path(env, snapshot_file);
-    return leversApi()->restore_user_dict(path.get());
+    auto *api = leversApi();
+    return api ? api->restore_user_dict(path.get()) : JNI_FALSE;
 }
 
 JNIEXPORT jint JNICALL
@@ -236,7 +251,8 @@ Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_exportUserDict(
         JNIEnv *env, jclass, jstring dict_name, jstring text_file) {
     jni::StringChars name(env, dict_name);
     jni::StringChars file(env, text_file);
-    return leversApi()->export_user_dict(name.get(), file.get());
+    auto *api = leversApi();
+    return api ? api->export_user_dict(name.get(), file.get()) : -1;
 }
 
 JNIEXPORT jint JNICALL
@@ -244,7 +260,8 @@ Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_importUserDict(
         JNIEnv *env, jclass, jstring dict_name, jstring text_file) {
     jni::StringChars name(env, dict_name);
     jni::StringChars file(env, text_file);
-    return leversApi()->import_user_dict(name.get(), file.get());
+    auto *api = leversApi();
+    return api ? api->import_user_dict(name.get(), file.get()) : -1;
 }
 
 

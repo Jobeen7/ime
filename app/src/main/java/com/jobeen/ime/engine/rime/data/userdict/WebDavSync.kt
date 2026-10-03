@@ -489,8 +489,14 @@ object WebDavSync {
                     if (body.contentLength() == 0L) {
                         throw IllegalStateException("下载的文件为空")
                     }
+                    // 大小上限：服务器配错/被替换成大文件时不能把磁盘和内存撑爆。
+                    // 先看声明长度，流式拷贝时再按实际上限截断（防无长度/谎报长度）
+                    if (body.contentLength() > UserDictManager.MAX_DICT_FILE_BYTES) {
+                        throw IllegalStateException("远端文件过大，拒绝下载")
+                    }
                     tempFile.outputStream().use { out ->
-                        body.byteStream().copyTo(out)
+                        body.byteStream()
+                            .copyToWithLimit(out, UserDictManager.MAX_DICT_FILE_BYTES)
                     }
                 }
                 // Rime 原生同步快照（*.userdb.txt）列序为「码⇥词⇥权重」，
@@ -517,6 +523,9 @@ object WebDavSync {
     /** 删除词表在服务器上的文件名（全设备共用一份，与具体词典无关） */
     const val DELETED_WORDS_FILE = "jime_deleted_words.txt"
 
+    /** 删除词表大小上限（4MB 约可存数十万条删除词，远超实际用量） */
+    private const val DELETED_WORDS_MAX_BYTES = 4L * 1024 * 1024
+
     /**
      * 同步长按删除词表：与远端取并集合并。
      *
@@ -541,7 +550,13 @@ object WebDavSync {
                     throw httpError("下载删除词表", response.code, errorDetail(response))
                 else -> {
                     remoteETag = response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }
-                    response.body?.string().orEmpty().lineSequence()
+                    // 删除词表是每行一个词的小文件，设上限防止异常内容撑爆内存
+                    val bytes = java.io.ByteArrayOutputStream().use { out ->
+                        response.body?.byteStream()
+                            ?.copyToWithLimit(out, DELETED_WORDS_MAX_BYTES)
+                        out.toByteArray()
+                    }
+                    String(bytes, Charsets.UTF_8).lineSequence()
                         .map { it.trim() }
                         .filter { it.isNotEmpty() }
                         .forEach { remote.add(it) }

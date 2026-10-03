@@ -42,7 +42,8 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
     private fun updateRimeInput(): Boolean {
         rimeJob.sendJob {
             val input = build()
-            Timber.d("rimeJob.sendJob setInput: %s", input)
+            // 只记长度不记原文：组字内容是用户输入，打进日志等于把打字内容落盘
+            Timber.d("rimeJob.sendJob setInput: len=%d", input.length)
             if (input.startsWith("/")) {
                 setInput(input)
                 return@sendJob

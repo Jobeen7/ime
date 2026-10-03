@@ -56,22 +56,24 @@ object PhraseManager {
         val t = phrase.text.trim()
         if (t.isEmpty()) return
         val l = phrase.label.trim().ifEmpty { t.take(12) }
-        db(context) { db ->
+        // 只有真的改到行（且数据库操作没失败）才通知刷新：
+        // 旧实现无条件发回调，失败/目标不存在时 UI 也照常当成功处理
+        val rows = db(context) { db ->
             db.phraseDao().update(
                 PhraseRecord(id = phrase.id, text = t, label = l, createdAt = phrase.createdAt)
             )
-        }
-        withContext(Dispatchers.Main) { onContentChanged?.invoke() }
+        } ?: 0
+        if (rows > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }
 
     suspend fun delete(context: Context, id: Long) {
-        db(context) { db -> db.phraseDao().deleteById(id) }
-        withContext(Dispatchers.Main) { onContentChanged?.invoke() }
+        val rows = db(context) { db -> db.phraseDao().deleteById(id) } ?: 0
+        if (rows > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }
 
     suspend fun deleteAll(context: Context) {
-        db(context) { db -> db.phraseDao().deleteAll() }
-        withContext(Dispatchers.Main) { onContentChanged?.invoke() }
+        val rows = db(context) { db -> db.phraseDao().deleteAll() } ?: 0
+        if (rows > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }
 
     private suspend fun ensureSeeded(context: Context, db: AppDatabase) {

@@ -12,3 +12,4 @@ local.properties
 .kotlin/
 release.keystore
 app/src/main/assets/resource.zip
+app/src/main/cpp/.jime-vendored-patch.lock
