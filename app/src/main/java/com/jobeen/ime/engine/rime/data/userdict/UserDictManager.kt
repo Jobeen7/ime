@@ -5,12 +5,33 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 
+/** 带上限的流拷贝：超过 [maxBytes] 立即抛异常（调用方负责清理临时文件） */
+internal fun InputStream.copyToWithLimit(out: OutputStream, maxBytes: Long): Long {
+    val buffer = ByteArray(64 * 1024)
+    var total = 0L
+    while (true) {
+        val read = read(buffer)
+        if (read < 0) break
+        total += read
+        if (total > maxBytes) {
+            throw IllegalStateException("文件超过大小上限（${maxBytes / 1024 / 1024}MB）")
+        }
+        out.write(buffer, 0, read)
+    }
+    return total
+}
+
 object UserDictManager {
+
+    /** 词典文本/快照文件的大小上限：正常用户词典远小于此值，
+     *  超限基本是选错文件或服务器返回异常内容，直接拒绝避免撑爆磁盘/内存 */
+    const val MAX_DICT_FILE_BYTES = 64L * 1024 * 1024
+
     fun restoreUserDict(stream: InputStream, snapshotFile: String): Result<Unit> {
         val tempFile = File(appContext.cacheDir, snapshotFile)
         try {
             tempFile.outputStream().use {
-                stream.copyTo(it)
+                stream.copyToWithLimit(it, MAX_DICT_FILE_BYTES)
             }
             val success = restoreUserDict(tempFile.absolutePath)
             return if (success) {
@@ -29,7 +50,7 @@ object UserDictManager {
         val tempFile = File(appContext.cacheDir, textFile)
         try {
             tempFile.outputStream().use {
-                stream.copyTo(it)
+                stream.copyToWithLimit(it, MAX_DICT_FILE_BYTES)
             }
             val count = importUserDictLive(dictName, tempFile.absolutePath)
             return if (count >= 0) {

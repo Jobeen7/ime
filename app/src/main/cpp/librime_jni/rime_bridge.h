@@ -14,12 +14,14 @@
 namespace rime_jni {
 
     inline jobject toJavaSchemaItem(JNIEnv *env, const SchemaEntry &entry) {
+        jni::LocalRef<jstring> id(env, jni::makeString(env, entry.id));
+        jni::LocalRef<jstring> name(env, jni::makeString(env, entry.name));
+        jni::LocalRef<jstring> layout(env, jni::makeString(env, entry.layout));
+        jni::LocalRef<jstring> punct(env, jni::makeString(env, entry.punctuation));
+        jni::LocalRef<jstring> kind(env, jni::makeString(env, entry.kind));
         return env->NewObject(jni::g_refs->SchemaItem, jni::g_refs->SchemaItemCtor,
-                              jni::makeString(env, entry.id),
-                              jni::makeString(env, entry.name),
-                              jni::makeString(env, entry.layout),
-                              jni::makeString(env, entry.punctuation),
-                              jni::makeString(env, entry.kind));
+                              id.get(), name.get(), layout.get(), punct.get(),
+                              kind.get());
     }
 
     inline jobjectArray toJavaSchemaArray(JNIEnv *env,
@@ -39,8 +41,11 @@ namespace rime_jni {
         std::vector<std::string> out;
         out.reserve(len);
         for (int i = 0; i < len; ++i) {
-            jni::StringChars chars(
+            // GetObjectArrayElement 每轮产生一个局部引用，必须逐轮释放，
+            // 否则长数组会累积撑爆局部引用表
+            jni::LocalRef<jstring> elem(
                     env, static_cast<jstring>(env->GetObjectArrayElement(arr, i)));
+            jni::StringChars chars(env, elem.get());
             out.emplace_back(chars.get());
         }
         return out;
@@ -58,16 +63,20 @@ namespace rime_jni {
     }
 
     inline jobject toJavaCommit(JNIEnv *env, const CommitData &commit) {
-        jstring text = commit.text ? jni::makeString(env, *commit.text) : nullptr;
+        jni::LocalRef<jstring> text(
+                env, commit.text ? jni::makeString(env, *commit.text) : nullptr);
         return env->NewObject(jni::g_refs->CommitProto, jni::g_refs->CommitProtoCtor,
-                              text);
+                              text.get());
     }
 
     inline jobject toJavaCandidate(JNIEnv *env, const CandidateData &cand) {
+        jni::LocalRef<jstring> text(env, jni::makeString(env, cand.text));
+        jni::LocalRef<jstring> comment(env, jni::makeString(env, cand.comment));
+        jni::LocalRef<jstring> label(env, jni::makeString(env, cand.label));
+        jni::LocalRef<jstring> type(env, jni::makeString(env, cand.type));
         return env->NewObject(
                 jni::g_refs->CandidateProto, jni::g_refs->CandidateProtoCtor,
-                jni::makeString(env, cand.text), jni::makeString(env, cand.comment),
-                jni::makeString(env, cand.label), jni::makeString(env, cand.type));
+                text.get(), comment.get(), label.get(), type.get());
     }
 
     inline jobjectArray toJavaCandidateArray(JNIEnv *env,
@@ -82,55 +91,63 @@ namespace rime_jni {
     }
 
     inline jobject toJavaSyllable(JNIEnv *env, const SyllableData &sd) {
+        jni::LocalRef<jstring> raw(env, jni::makeString(env, sd.rawInput));
+        jni::LocalRef<jstring> spelling(env, jni::makeString(env, sd.spelling));
+        jni::LocalRef<jstring> text(env, jni::makeString(env, sd.text));
         return env->NewObject(jni::g_refs->SyllableProto,
                               jni::g_refs->SyllableProtoCtor,
-                              jni::makeString(env, sd.rawInput),
-                              jni::makeString(env, sd.spelling),
-                              jni::makeString(env, sd.text),
+                              raw.get(), spelling.get(), text.get(),
                               static_cast<jint>(sd.textSyllableStart),
                               static_cast<jint>(sd.textSyllableEnd));
     }
 
     inline jobject toJavaComposition(JNIEnv *env, const CompositionData &comp) {
-        jstring preedit = comp.preedit ? jni::makeString(env, *comp.preedit) : nullptr;
-        jstring preview = comp.commitTextPreview
-                          ? jni::makeString(env, *comp.commitTextPreview)
-                          : nullptr;
-        jobjectArray syllableArray = env->NewObjectArray(
-                static_cast<int>(comp.syllables.size()),
-                jni::g_refs->SyllableProto, nullptr);
+        jni::LocalRef<jstring> preedit(
+                env, comp.preedit ? jni::makeString(env, *comp.preedit) : nullptr);
+        jni::LocalRef<jstring> preview(
+                env, comp.commitTextPreview
+                     ? jni::makeString(env, *comp.commitTextPreview)
+                     : nullptr);
+        jni::LocalRef<jobjectArray> syllableArray(
+                env, env->NewObjectArray(static_cast<int>(comp.syllables.size()),
+                                         jni::g_refs->SyllableProto, nullptr));
         for (int i = 0; i < static_cast<int>(comp.syllables.size()); ++i) {
             jni::LocalRef<> ref(env, toJavaSyllable(env, comp.syllables[i]));
-            env->SetObjectArrayElement(syllableArray, i, ref.get());
+            env->SetObjectArrayElement(syllableArray.get(), i, ref.get());
         }
         return env->NewObject(jni::g_refs->CompositionProto,
                               jni::g_refs->CompositionProtoCtor, comp.length,
-                              comp.cursorPos, comp.selStart, comp.selEnd, preedit,
-                              preview, syllableArray);
+                              comp.cursorPos, comp.selStart, comp.selEnd,
+                              preedit.get(), preview.get(), syllableArray.get());
     }
 
     inline jobject toJavaMenu(JNIEnv *env, const MenuData &menu) {
-        jobjectArray candidates = toJavaCandidateArray(env, menu.candidates);
-        jobjectArray labels = vectorToJavaStringArray(env, menu.selectLabels);
+        jni::LocalRef<jobjectArray> candidates(
+                env, toJavaCandidateArray(env, menu.candidates));
+        jni::LocalRef<jobjectArray> labels(
+                env, vectorToJavaStringArray(env, menu.selectLabels));
+        jni::LocalRef<jstring> keys(env, jni::makeString(env, menu.selectKeys));
         return env->NewObject(
                 jni::g_refs->MenuProto, jni::g_refs->MenuProtoCtor, menu.pageSize,
-                menu.pageNumber, menu.isLastPage, menu.highlightedIndex, candidates,
-                jni::makeString(env, menu.selectKeys), labels);
+                menu.pageNumber, menu.isLastPage, menu.highlightedIndex,
+                candidates.get(), keys.get(), labels.get());
     }
 
     inline jobject toJavaContext(JNIEnv *env, const ContextData &ctx) {
-        jobject composition = toJavaComposition(env, ctx.composition);
-        jobject menu = toJavaMenu(env, ctx.menu);
+        jni::LocalRef<> composition(env, toJavaComposition(env, ctx.composition));
+        jni::LocalRef<> menu(env, toJavaMenu(env, ctx.menu));
+        jni::LocalRef<jstring> input(env, jni::makeString(env, ctx.input));
         return env->NewObject(jni::g_refs->ContextProto, jni::g_refs->ContextProtoCtor,
-                              composition, menu, jni::makeString(env, ctx.input),
+                              composition.get(), menu.get(), input.get(),
                               ctx.caretPos);
     }
 
     inline jobject toJavaStatus(JNIEnv *env, const StatusData &status) {
+        jni::LocalRef<jstring> id(env, jni::makeString(env, status.schemaId));
+        jni::LocalRef<jstring> name(env, jni::makeString(env, status.schemaName));
         return env->NewObject(
                 jni::g_refs->StatusProto, jni::g_refs->StatusProtoCtor,
-                jni::makeString(env, status.schemaId),
-                jni::makeString(env, status.schemaName), status.isDisabled,
+                id.get(), name.get(), status.isDisabled,
                 status.isComposing, status.isAsciiMode, status.isFullShape,
                 status.isSimplified, status.isTraditional, status.isAsciiPunct);
     }
