@@ -1,6 +1,7 @@
 package com.jobeen.ime.data.manager
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.PhraseRecord
 import kotlinx.coroutines.Dispatchers
@@ -92,8 +93,11 @@ object PhraseManager {
                     "收到" to "收到",
                     "辛苦了，注意身体" to "关心",
                 )
-                defaults.forEachIndexed { index, (text, label) ->
-                    dao.insert(PhraseRecord(text = text, label = label, createdAt = now - index * 1000))
+                // 事务内播种：中途中断不能留下「缺条 + 已标记 seeded」的永久缺口
+                db.withTransaction {
+                    defaults.forEachIndexed { index, (text, label) ->
+                        dao.insert(PhraseRecord(text = text, label = label, createdAt = now - index * 1000))
+                    }
                 }
             }
             prefs.edit().putBoolean(KEY_SEEDED, true).apply()
@@ -106,6 +110,8 @@ object PhraseManager {
                 val db = AppDatabase.getInstance(context)
                 block(db)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "phrase database operation failed")
             null

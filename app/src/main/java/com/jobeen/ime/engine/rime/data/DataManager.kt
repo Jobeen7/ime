@@ -96,7 +96,9 @@ object DataManager {
 
             Timber.d("Synced!")
         } catch (e: Exception) {
-            Timber.d("Sync not prepared!")
+            // 必须带异常记录：资源同步失败若无痕，release 下只剩「词库莫名其妙
+            // 没更新」的表象，无从定位
+            Timber.w(e, "Sync not prepared!")
         }
     }
 }

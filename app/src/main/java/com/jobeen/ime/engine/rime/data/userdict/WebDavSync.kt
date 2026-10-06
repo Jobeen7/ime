@@ -3,6 +3,8 @@ package com.jobeen.ime.engine.rime.data.userdict
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.Credentials
 import okhttp3.MediaType.Companion.toMediaType
@@ -40,6 +42,13 @@ object WebDavSync {
         .build()
 
     private val textPlain = "text/plain; charset=utf-8".toMediaType()
+
+    /**
+     * 同步互斥：此前防并发全靠设置页的 busy 门禁，程序化调用/双入口并发时
+     * 两次同步会交错读写同一远端文件与 ETag 基准。upload 内部的合并下载
+     * 走 downloadLocked（已持锁变体），避免 Mutex 不可重入自死锁。
+     */
+    private val syncMutex = Mutex()
 
     /** 服务器上的文件名：每本词典一个文件，多设备共用 */
     fun remoteFileName(dictName: String): String = "$dictName.userdict.txt"
@@ -167,14 +176,20 @@ object WebDavSync {
         }
         if (knownETag != null) return true // 远端曾有 ETag 现在没了，保守视为已变
         val lastSync = maxOf(UserDictPrefs.lastUploadTime, UserDictPrefs.lastDownloadTime)
-        return state.lastModifiedMs > lastSync && lastSync > 0L
+        // 无任何同步基准（本机首次同步、lastSync==0）时不能断言远端未变：
+        // 旧实现恒返回 false，首次上传会跳过合并直接覆盖其他设备的词库。
+        // 无基准一律视为已变，先下载合并再上传。
+        return lastSync == 0L || state.lastModifiedMs > lastSync
     }
 
     /**
      * 上传当前词典到 WebDAV 服务器，返回导出的词条数。
      * 必须在后台线程调用。
      */
-    suspend fun upload(dictName: String, session: RimeSession): Result<Int> = withContext(Dispatchers.IO) {
+    suspend fun upload(dictName: String, session: RimeSession): Result<Int> =
+        syncMutex.withLock { uploadLocked(dictName, session) }
+
+    private suspend fun uploadLocked(dictName: String, session: RimeSession): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             checkConfigured()
             // 先确保同步目录存在：坚果云对不存在的目录直接返回 403
@@ -185,10 +200,10 @@ object WebDavSync {
             var baseState = fetchRemoteState(fileName)
             if (baseState != null && isRemoteChanged(fileName, baseState)) {
                 Timber.i("Remote '$fileName' changed since last sync; merging before upload")
-                download(dictName, session).getOrThrow()
+                downloadLocked(dictName, session).getOrThrow()
                 baseState = fetchRemoteState(fileName) ?: baseState
             }
-            val tempFile = File(appContext.cacheDir, "webdav-upload-${dictName}.txt")
+            val tempFile = File(appContext.cacheDir, "webdav-upload-${dictName}-${System.nanoTime()}.txt")
             try {
                 val count = session.runOnReady {
                     exportUserDictLive(dictName, tempFile.absolutePath)
@@ -467,10 +482,16 @@ object WebDavSync {
         dictName: String,
         session: RimeSession,
         remoteFile: String = remoteFileName(dictName),
+    ): Result<Int> = syncMutex.withLock { downloadLocked(dictName, session, remoteFile) }
+
+    private suspend fun downloadLocked(
+        dictName: String,
+        session: RimeSession,
+        remoteFile: String = remoteFileName(dictName),
     ): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             checkConfigured()
-            val tempFile = File(appContext.cacheDir, "webdav-download-${dictName}.txt")
+            val tempFile = File(appContext.cacheDir, "webdav-download-${dictName}-${System.nanoTime()}.txt")
             try {
                 val request = Request.Builder()
                     .url(remoteUrl(remoteFile))

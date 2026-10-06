@@ -62,18 +62,9 @@ object OpenCCDictManager {
         }
     }
 
-    fun importFromInputStream(
-        stream: InputStream,
-        name: String,
-    ): OpenCCDictionary {
-        val tempFile = File(appContext.cacheDir, name)
-        tempFile.outputStream().use {
-            stream.copyTo(it)
-        }
-        val new = importFromFile(tempFile)
-        tempFile.delete()
-        return new
-    }
+    // 已删除 importFromInputStream：全仓零调用方的死代码，且其无上限 copyTo
+    // 落盘 + 以外部 name 直接拼 cacheDir 路径（可穿越目录）都是隐患；
+    // 将来若要接回流式导入，先加体积上限与文件名净化再恢复。
 
     @JvmStatic
     fun convertLine(
