@@ -274,15 +274,21 @@ class SpeechOverlayView(
         }
     }
 
+    // 拖动命中判定复用对象：onDragPosition 在拖动中高频调用，旧实现每次
+    // 新建 IntArray + 两个 Rect
+    private val dragLocation = IntArray(2)
+    private val dragCloseRect = Rect()
+    private val dragLockRect = Rect()
+
     fun onDragPosition(rawX: Float, rawY: Float) {
-        val location = IntArray(2)
+        val location = dragLocation
         getLocationOnScreen(location)
         val localX = rawX.toInt() - location[0]
         val localY = rawY.toInt() - location[1]
 
-        val closeRect = Rect()
+        val closeRect = dragCloseRect
         closeButton.getHitRect(closeRect)
-        val lockRect = Rect()
+        val lockRect = dragLockRect
         lockButton.getHitRect(lockRect)
 
         when {
