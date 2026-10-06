@@ -176,10 +176,13 @@ object ClipboardManager {
 
         // 与“最新一条记录（含软删除）”比对：清空后该记录变为软删除状态，
         // 若仍与系统剪贴板内容一致，则视为没有新记录，避免重复插入。
-        val latest = db(context) { db -> db.clipboardDao().getLatestIncludingDeleted() }
+        // 两项判断合并进一次 db{} 往返（每次剪贴板变化都走这里）
+        val (latest, exists) = db(context) { db ->
+            db.clipboardDao().getLatestIncludingDeleted() to db.clipboardDao().existsByText(text)
+        } ?: (null to true)
         if (latest?.text == text) return false
 
-        val isNew = db(context) { db -> !db.clipboardDao().existsByText(text) } ?: false
+        val isNew = !exists
         if (isNew) {
             lastCopyText = text
             lastCopyTimestamp = System.currentTimeMillis()
@@ -245,21 +248,35 @@ object ClipboardManager {
     @Volatile var clearTimestamp: Long = 0L
         private set
 
-    private const val KEY_DB_MIGRATED = "clipboard_db_migrated_v1"
+    private const val KEY_DB_MIGRATED = "clipboard_db_migrated_v2"
 
     /**
      * 一次性把剪贴板历史从 ime_database 迁到独立的 clipboard_database（拆库原因见
-     * ClipboardDatabase 注释）。仅当新库为空时才搬，避免中途失败重试造成重复。
+     * ClipboardDatabase 注释）。v2 起改为幂等合并：按 (text, timestamp) 自然键
+     * 只补新库缺失的行（旧实现以 count()==0 判完成，中断后新库非空但缺行会被
+     * 当成已迁移、静默丢行；且留有主键冲突让后续每次操作都重跑失败迁移的
+     * 可能）。补行在单个事务内完成；确认后清掉旧库残留行——旧表继续躺在
+     * ime_database 里会随云备份/换机迁移外带，拆库的隐私隔离只做一半。
+     * 整个过程可重入：任何一步失败下次调用会继续收敛到同一终态。
      */
     private suspend fun migrateFromAppDatabase(context: Context, target: ClipboardDatabase) {
         val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (settings.getBoolean(KEY_DB_MIGRATED, false)) return
         runCatching {
             val dao = target.clipboardDao()
-            if (dao.count() == 0) {
-                val oldRows = AppDatabase.getInstance(context).clipboardDao().getAllRaw()
-                oldRows.forEach { dao.insert(it) }
-                Timber.i("Clipboard history migrated: ${oldRows.size} rows")
+            val oldDao = AppDatabase.getInstance(context).clipboardDao()
+            val oldRows = oldDao.getAllRaw()
+            if (oldRows.isNotEmpty()) {
+                val existing = dao.getAllRaw().map { it.text to it.timestamp }.toHashSet()
+                val missing = oldRows.filter { (it.text to it.timestamp) !in existing }
+                if (missing.isNotEmpty()) {
+                    target.withTransaction {
+                        // id 清零走自增，避免与新库已有行主键冲突
+                        missing.forEach { dao.insert(it.copy(id = 0)) }
+                    }
+                    Timber.i("Clipboard history migrated: ${missing.size} rows")
+                }
+                oldDao.deleteAllRaw()
             }
             settings.edit().putBoolean(KEY_DB_MIGRATED, true).apply()
         }.onFailure { Timber.w(it, "Clipboard history migration failed; will retry") }
@@ -272,6 +289,10 @@ object ClipboardManager {
                 migrateFromAppDatabase(context, db)
                 block(db)
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 取消不是失败：必须透传，否则结构化并发的取消信号被吞，
+            // 已取消的协程会继续跑完 block 之外的逻辑
+            throw e
         } catch (e: Exception) {
             Timber.e(e, "clipboard database operation failed")
             null
