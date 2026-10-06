@@ -206,7 +206,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         session = daemon.createSession(javaClass.name)
         scope.launch {
             for (job in jobs) {
-                session?.runOnReady(job)
+                try {
+                    session?.runOnReady(job)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // 单个 job 失败（如引擎在就绪前被停掉，whenReady 抛
+                    // RimeStoppedException）只丢这一个 job 并记日志，
+                    // 不能让异常杀掉整个 job 消费循环、堵死后续所有引擎操作
+                    Timber.w(e, "Rime job failed")
+                }
             }
         }
         //监听引擎注册事件
