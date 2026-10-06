@@ -12,10 +12,17 @@ import splitties.dimensions.dp
 class KeyboardPopup(private val context: Context) {
 
     private var popupWindow: PopupWindow? = null
+    private var container: LinearLayout? = null
+    private var containerBg: GradientDrawable? = null
+    private var windowBg: GradientDrawable? = null
     private var itemViews: List<TextView> = emptyList()
     var selectedIndex = 0
         private set
     private var keyPressedColor: Int = 0
+
+    // 视图层级复用：旧实现每次 show 都重建 LinearLayout + 全部 TextView +
+    // PopupWindow（长按弹层是用户高频操作）。现在容器/窗口/条目视图各建
+    // 一次：条目数变化才增删视图，颜色/文案变化只更新属性。
 
     fun show(
         anchor: View,
@@ -25,7 +32,7 @@ class KeyboardPopup(private val context: Context) {
         keyBgColor: Int,
         keyPressedColor: Int,
     ) {
-        dismiss()
+        popupWindow?.dismiss()
 
         this.keyPressedColor = keyPressedColor
         selectedIndex = 0
@@ -36,41 +43,45 @@ class KeyboardPopup(private val context: Context) {
         val gap = context.dp(4)
         val popupRadius = context.dp(8f)
 
-        val container = LinearLayout(context).apply {
+        val cont = container ?: LinearLayout(context).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(padding, padding, padding, padding)
-            background = GradientDrawable().apply {
-                setColor(bgColor)
-                cornerRadius = popupRadius
-            }
-        }
+        }.also { container = it }
+        val cbg = containerBg ?: GradientDrawable().also { containerBg = it }
+        cbg.setColor(bgColor)
+        cbg.cornerRadius = popupRadius
+        if (cont.background !== cbg) cont.background = cbg
 
-        val itemList = mutableListOf<TextView>()
-
-        items.forEach { action ->
-            val label = actionLabel(action)
-            val keyView = TextView(context).apply {
-                text = label
-                gravity = Gravity.CENTER
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
-                setTextColor(textColor)
-                setIncludeFontPadding(false)
-            }
-            itemList.add(keyView)
-            container.addView(
-                keyView,
-                LinearLayout.LayoutParams(itemWidth, itemHeight).apply {
-                    if (container.childCount > 1) marginStart = gap
+        // 条目视图按数量增删，文案/颜色逐个刷新
+        if (itemViews.size != items.size) {
+            cont.removeAllViews()
+            val itemList = ArrayList<TextView>(items.size)
+            items.forEachIndexed { index, _ ->
+                val keyView = TextView(context).apply {
+                    gravity = Gravity.CENTER
+                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16f)
+                    setIncludeFontPadding(false)
                 }
-            )
+                itemList.add(keyView)
+                cont.addView(
+                    keyView,
+                    LinearLayout.LayoutParams(itemWidth, itemHeight).apply {
+                        if (index > 0) marginStart = gap
+                    }
+                )
+            }
+            itemViews = itemList
         }
-        itemViews = itemList
+        items.forEachIndexed { i, action ->
+            itemViews[i].text = actionLabel(action)
+            itemViews[i].setTextColor(textColor)
+        }
 
         val measureSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
-        container.measure(measureSpec, measureSpec)
-        val totalWidth = container.measuredWidth
-        val totalHeight = container.measuredHeight
+        cont.measure(measureSpec, measureSpec)
+        val totalWidth = cont.measuredWidth
+        val totalHeight = cont.measuredHeight
 
         val loc = IntArray(2)
         anchor.getLocationInWindow(loc)
@@ -89,24 +100,23 @@ class KeyboardPopup(private val context: Context) {
         }
         applyItemBackgrounds()
 
-        popupWindow = PopupWindow(
-            container, totalWidth, totalHeight, false,
-        ).apply {
-            setBackgroundDrawable(GradientDrawable().apply {
-                setColor(bgColor)
-                cornerRadius = popupRadius
-            })
+        val wbg = windowBg ?: GradientDrawable().also { windowBg = it }
+        wbg.setColor(bgColor)
+        wbg.cornerRadius = popupRadius
+        val pw = popupWindow ?: PopupWindow(cont, totalWidth, totalHeight, false).apply {
             isOutsideTouchable = false
             isTouchable = false
             elevation = context.dp(8f)
-            showAtLocation(anchor, Gravity.TOP or Gravity.START, popupX, popupY)
-        }
+        }.also { popupWindow = it }
+        if (pw.contentView !== cont) pw.contentView = cont
+        pw.setBackgroundDrawable(wbg)
+        pw.width = totalWidth
+        pw.height = totalHeight
+        pw.showAtLocation(anchor, Gravity.TOP or Gravity.START, popupX, popupY)
     }
 
     fun dismiss() {
         popupWindow?.dismiss()
-        popupWindow = null
-        itemViews = emptyList()
     }
 
     fun selectIndex(index: Int): Boolean {
@@ -135,7 +145,7 @@ class KeyboardPopup(private val context: Context) {
         }
     }
 
-    fun isShowing(): Boolean = popupWindow != null
+    fun isShowing(): Boolean = popupWindow?.isShowing == true
 
     private fun actionLabel(action: KeyboardAction): String = when (action) {
         is KeyboardAction.CommitAction -> action.text

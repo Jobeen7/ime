@@ -106,18 +106,35 @@ abstract class KeyView(
         }
         visibility = def.visibility
 
-        if ((bordered && def.border != Border.Off) || def.border == Border.On) {
+        // 等价化简：旧 if/else 两支殊途同归，只剩「Special 且无边框」一种不建背景
+        if (def.border != Border.Special || bordered) {
             setupBackgroundWithPress()
-        } else {
-            if (def.border != Border.Special) {
-                setupBackgroundWithPress()
-            }
         }
         add(appearanceView, lParams(matchParent, matchParent))
     }
 
     private var pressedLayerAlpha = 0
     private var bgAnimator: Animator? = null
+
+    // 按压动画器池（见 drawableStateChanged）：三个动画器终身复用
+    private var animTarget: Drawable? = null
+    private val alphaUpdateListener = ValueAnimator.AnimatorUpdateListener { animator ->
+        val alpha = animator.animatedValue as Int
+        pressedLayerAlpha = alpha
+        animTarget?.alpha = alpha
+    }
+    private val pressFadeAnim = ValueAnimator.ofInt(0, 255).apply {
+        addUpdateListener(alphaUpdateListener)
+    }
+    private val releaseFadeAnim1 = ValueAnimator.ofInt(0, 255).apply {
+        addUpdateListener(alphaUpdateListener)
+    }
+    private val releaseFadeAnim2 = ValueAnimator.ofInt(255, 0).apply {
+        addUpdateListener(alphaUpdateListener)
+    }
+    private val releaseSet = AnimatorSet().apply {
+        playSequentially(releaseFadeAnim1, releaseFadeAnim2)
+    }
 
     protected fun setupBackgroundWithPress() {
         val bkgColor = when (def.variant) {
@@ -187,21 +204,20 @@ abstract class KeyView(
         bgAnimator?.cancel()
 
         val pressedDrawable = bg.getDrawable(1) ?: return
-        fun anim(from: Int, to: Int, durationMs: Long) = ValueAnimator.ofInt(from, to).apply {
-            duration = durationMs
-            addUpdateListener {
-                val alpha = animatedValue as Int
-                pressedLayerAlpha = alpha
-                pressedDrawable.alpha = alpha
-            }
-        }
+        // 动画器池化复用：旧实现每次按压新建 1 个、每次抬起新建 3 个
+        // Animator（高频打字时持续分配）；三个动画器各建一次反复复用，
+        // 监听统一走 animTarget 指向当前按压层
+        animTarget = pressedDrawable
         bgAnimator = if (pressed) {
-            anim(pressedLayerAlpha, 255, 220).also { it.start() }
+            pressFadeAnim.setIntValues(pressedLayerAlpha, 255)
+            pressFadeAnim.duration = 220
+            pressFadeAnim.also { it.start() }
         } else {
-            AnimatorSet().apply {
-                playSequentially(anim(pressedLayerAlpha, 255, 70), anim(255, 0, 180))
-                start()
-            }
+            releaseFadeAnim1.setIntValues(pressedLayerAlpha, 255)
+            releaseFadeAnim1.duration = 70
+            releaseFadeAnim2.setIntValues(255, 0)
+            releaseFadeAnim2.duration = 180
+            releaseSet.also { it.start() }
         }
     }
 
