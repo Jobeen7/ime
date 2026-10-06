@@ -3,6 +3,7 @@ package com.jobeen.ime.ui.screen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -67,7 +68,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     }
     var checkingUpdate by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    // 自更新对话框状态
+    // 自更新内联状态（查到新版后在「版本更新」组内展开，不弹对话框）
     var updateInfo by remember { mutableStateOf<UpdateCheckResult.Available?>(null) }
     var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var downloading by remember { mutableStateOf(false) }
@@ -101,6 +102,39 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
         runCatching { AppUpdateManager.installApk(context, file) }
             .onSuccess { updateInfo = null }
             .onFailure { toast(msgDownloadFailed) }
+    }
+
+    fun startDownload() {
+        val info = updateInfo ?: return
+        if (downloading) return
+        downloading = true
+        downloadPercent = 0
+        downloadJob = scope.launch {
+            val file = AppUpdateManager.downloadApk(
+                context, info.apkUrl, info.apkName, info.apkSize,
+            ) { downloaded, total ->
+                downloadPercent = if (total > 0) {
+                    (downloaded * 100 / total).toInt().coerceIn(0, 100)
+                } else {
+                    0
+                }
+            }
+            downloading = false
+            downloadJob = null
+            if (file == null) {
+                toast(msgDownloadFailed)
+            } else {
+                downloadedFile = file
+                tryInstall()
+            }
+        }
+    }
+
+    fun cancelDownload() {
+        downloadJob?.cancel()
+        AppUpdateManager.cancelDownload()
+        downloadJob = null
+        downloading = false
     }
 
     Scaffold(
@@ -237,102 +271,81 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                         }
                     },
                 )
+
+                // 查到新版后在组内内联展开（不弹对话框）：一行版本信息 + 操作按钮，
+                // 下载中时下方再出一行进度条。只有点「检查更新」才会走到这里。
+                updateInfo?.let { info ->
+                    ActionRow(
+                        title = stringResource(R.string.update_found_version, info.version),
+                        subtitle = stringResource(
+                            R.string.update_package_size,
+                            android.text.format.Formatter.formatFileSize(context, info.apkSize),
+                        ),
+                        trailing = {
+                            when {
+                                downloading -> Text(
+                                    stringResource(R.string.update_downloading, downloadPercent),
+                                    fontSize = rowSubFontSize,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                downloadedFile != null -> Button(
+                                    onClick = { tryInstall() },
+                                    modifier = Modifier.height(30.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                        horizontal = 10.dp,
+                                        vertical = 2.dp,
+                                    ),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.update_install_now),
+                                        fontSize = rowSubFontSize,
+                                    )
+                                }
+                                else -> Button(
+                                    onClick = { startDownload() },
+                                    modifier = Modifier.height(30.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                        horizontal = 10.dp,
+                                        vertical = 2.dp,
+                                    ),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.update_download_install),
+                                        fontSize = rowSubFontSize,
+                                    )
+                                }
+                            }
+                        },
+                        showDivider = true,
+                    )
+                    if (downloading) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { downloadPercent / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                androidx.compose.material3.TextButton(
+                                    onClick = { cancelDownload() },
+                                ) {
+                                    Text(
+                                        stringResource(R.string.update_cancel_download),
+                                        fontSize = rowSubFontSize,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             }
 
             Spacer(Modifier.height(32.dp))
         }
     }
 
-    // 自更新对话框：App 内下载正式版 APK，下完直接调起系统安装，不跳浏览器
-    updateInfo?.let { info ->
-        androidx.compose.material3.AlertDialog(
-            onDismissRequest = {
-                if (!downloading) {
-                    updateInfo = null
-                    downloadedFile = null
-                }
-            },
-            title = { Text(stringResource(R.string.update_dialog_title, info.version)) },
-            text = {
-                if (downloading) {
-                    Column {
-                        androidx.compose.material3.LinearProgressIndicator(
-                            progress = { downloadPercent / 100f },
-                            modifier = Modifier.fillMaxWidth(),
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            stringResource(R.string.update_downloading, downloadPercent),
-                            fontSize = rowSubFontSize,
-                        )
-                    }
-                } else {
-                    Text(
-                        stringResource(
-                            R.string.update_dialog_message,
-                            android.text.format.Formatter.formatFileSize(context, info.apkSize),
-                        ),
-                        fontSize = rowSubFontSize,
-                    )
-                }
-            },
-            confirmButton = {
-                when {
-                    downloading -> Unit
-                    downloadedFile != null -> {
-                        androidx.compose.material3.TextButton(onClick = { tryInstall() }) {
-                            Text(stringResource(R.string.update_install_now))
-                        }
-                    }
-                    else -> {
-                        androidx.compose.material3.TextButton(onClick = {
-                            downloading = true
-                            downloadPercent = 0
-                            downloadJob = scope.launch {
-                                val file = AppUpdateManager.downloadApk(
-                                    context, info.apkUrl, info.apkName, info.apkSize,
-                                ) { downloaded, total ->
-                                    downloadPercent = if (total > 0) {
-                                        (downloaded * 100 / total).toInt().coerceIn(0, 100)
-                                    } else {
-                                        0
-                                    }
-                                }
-                                downloading = false
-                                downloadJob = null
-                                if (file == null) {
-                                    toast(msgDownloadFailed)
-                                } else {
-                                    downloadedFile = file
-                                    tryInstall()
-                                }
-                            }
-                        }) {
-                            Text(stringResource(R.string.update_download_install))
-                        }
-                    }
-                }
-            },
-            dismissButton = {
-                androidx.compose.material3.TextButton(onClick = {
-                    if (downloading) {
-                        downloadJob?.cancel()
-                        AppUpdateManager.cancelDownload()
-                        downloadJob = null
-                        downloading = false
-                    } else {
-                        updateInfo = null
-                        downloadedFile = null
-                    }
-                }) {
-                    Text(
-                        stringResource(
-                            if (downloading) R.string.update_cancel_download
-                            else R.string.update_later
-                        )
-                    )
-                }
-            },
-        )
-    }
 }
