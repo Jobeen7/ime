@@ -107,6 +107,11 @@ class ToolbarRenderer(
     private val pressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
+    // draw 期复用：旧实现每次绘制新建 2-3 个 Paint（工具栏每帧重绘时持续分配）
+    private val copyBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val dimTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val segPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
 
     override fun draw(
         canvas: Canvas, width: Int, height: Int, paints: Paints,
@@ -154,11 +159,11 @@ class ToolbarRenderer(
 
         if (copyText != null) {
             val t = copyText!!
-            val textPaint = if (recording) Paint(paints.candidateTextPaint).apply {
+            val textPaint = if (recording) dimTextPaint.apply {
+                set(paints.candidateTextPaint)
                 color = dimColor(paints.candidateTextPaint.color)
             } else paints.candidateTextPaint
-            val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
+            val bgPaint = copyBgPaint.apply {
                 color = dimColor(paints.candidateBgPaint.color)
             }
             val pillR = 6f * density
@@ -266,10 +271,7 @@ class ToolbarRenderer(
         }
 
         // 胶囊（剪切板 / 快捷短语）
-        val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = paints.toolbarIconColor and 0x1FFFFFFF
-        }
+        trackPaint.color = paints.toolbarIconColor and 0x1FFFFFFF
         canvas.drawRoundRect(
             g.capsuleLeft,
             g.capsuleTop,
@@ -281,7 +283,7 @@ class ToolbarRenderer(
         )
         val segW = (g.capsuleRight - g.capsuleLeft) / 2f
         val cy = g.capsuleTop + g.capsuleH / 2f
-        val segPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+        val segPaint = this.segPaint
         val labels = listOf(
             clipLabelClipboard to (clipTab == ClipboardTab.CLIPBOARD),
             clipLabelPhrase to (clipTab == ClipboardTab.PHRASE),
