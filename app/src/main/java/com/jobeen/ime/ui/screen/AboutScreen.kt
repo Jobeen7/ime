@@ -111,7 +111,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
         downloadPercent = 0
         downloadJob = scope.launch {
             val file = AppUpdateManager.downloadApk(
-                context, info.apkUrl, info.apkName, info.apkSize,
+                context, info.apkUrl, info.apkName, info.apkSize, info.apkSha256,
             ) { downloaded, total ->
                 downloadPercent = if (total > 0) {
                     (downloaded * 100 / total).toInt().coerceIn(0, 100)
