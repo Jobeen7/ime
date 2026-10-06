@@ -75,15 +75,27 @@ object ThemeStore {
         applyCustomThemes(current)
     }
 
+    /** 写入序号：快速连续保存时，旧列表的写入不许覆盖新列表 */
+    private val writeSeq = java.util.concurrent.atomic.AtomicLong(0)
+
     private fun applyCustomThemes(themes: List<KeyboardTheme>) {
         KeyboardThemePresets.setCustomThemes(themes.take(MAX_CUSTOM_THEMES))
+        val snapshot = themes.map { ReadableTheme.from(it) }
+        val seq = writeSeq.incrementAndGet()
         // 文件写放 IO 线程，避免阻塞主线程
         appScope.launch(Dispatchers.IO) {
             val file = File(App.themesDir, THEMES_FILE)
             runCatching {
-                file.writeText(
-                    readableJson.encodeToString(themes.map { ReadableTheme.from(it) })
-                )
+                // 原子写：先写临时文件再 rename，进程在写一半时被杀不会留下
+                // 截断的 themes.json（旧实现 writeText 直写会丢全部自定义主题）
+                val tmp = File(App.themesDir, "$THEMES_FILE.tmp")
+                tmp.writeText(readableJson.encodeToString(snapshot))
+                // 已有更新的保存在途：本次快照作废，由最新一次负责落盘终态
+                if (seq == writeSeq.get()) {
+                    check(tmp.renameTo(file)) { "rename themes file failed" }
+                } else {
+                    tmp.delete()
+                }
             }
         }
     }

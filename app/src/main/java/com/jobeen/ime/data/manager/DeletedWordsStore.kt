@@ -39,30 +39,38 @@ object DeletedWordsStore {
     /** 当前全部已删除词的快照（供 WebDAV 同步读取）。 */
     fun all(): Set<String> = HashSet(load())
 
+    // 变更与落盘快照必须整体串行：两个线程交错时，后落盘的旧快照会覆盖
+    // 先落盘的新快照，被删词在进程重启后从磁盘上「复活」丢失一条
     /** 批量并入（WebDAV 同步合并远端删除词表时用），只落盘一次。 */
     fun addAll(words: Collection<String>) {
-        val set = load()
-        var changed = false
-        for (w in words) {
-            val t = w.trim()
-            if (t.isNotEmpty() && set.add(t)) changed = true
-        }
-        if (changed) {
-            prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+        synchronized(this) {
+            val set = load()
+            var changed = false
+            for (w in words) {
+                val t = w.trim()
+                if (t.isNotEmpty() && set.add(t)) changed = true
+            }
+            if (changed) {
+                prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+            }
         }
     }
 
     fun add(text: String) {
-        val set = load()
-        if (set.add(text)) {
-            prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+        synchronized(this) {
+            val set = load()
+            if (set.add(text)) {
+                prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+            }
         }
     }
 
     fun remove(text: String) {
-        val set = load()
-        if (set.remove(text)) {
-            prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+        synchronized(this) {
+            val set = load()
+            if (set.remove(text)) {
+                prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+            }
         }
     }
 }

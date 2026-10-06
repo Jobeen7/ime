@@ -14,6 +14,10 @@ interface ClipboardDao {
     @Query("SELECT * FROM clipboard_records")
     suspend fun getAllRaw(): List<ClipboardRecord>
 
+    /** 迁移完成并核对后清掉旧库残留行（旧表在 ime_database 里会随云备份外带） */
+    @Query("DELETE FROM clipboard_records")
+    suspend fun deleteAllRaw()
+
     @Query("SELECT * FROM clipboard_records WHERE deleted = 0 AND timestamp >= :cutoff ORDER BY timestamp DESC")
     suspend fun getAllActiveSince(cutoff: Long): List<ClipboardRecord>
 
