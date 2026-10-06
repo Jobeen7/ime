@@ -154,10 +154,11 @@ class ParticleWaveView @JvmOverloads constructor(
     }
 
     override fun doDrawBackground(canvas: Canvas?) {
+        val c = canvas ?: return
         if (isTransparentMode) {
-            canvas!!.drawColor(_backgroundColor, PorterDuff.Mode.CLEAR)
+            c.drawColor(_backgroundColor, PorterDuff.Mode.CLEAR)
         } else {
-            canvas!!.drawColor(_backgroundColor)
+            c.drawColor(_backgroundColor)
         }
     }
 
@@ -183,6 +184,7 @@ class ParticleWaveView @JvmOverloads constructor(
     override fun onRender(canvas: Canvas?, millisPassed: Long) {
         if (viewWidth == 0 || viewHeight == 0 || baseRadius <= 0) return
         if (isEngineSleeping) return
+        val c = canvas ?: return
 
         softerChangeVolume()
         val vPercent = volume * 0.01f
@@ -192,7 +194,7 @@ class ParticleWaveView @JvmOverloads constructor(
         if (targetVolume == 0 && volume == 0f) {
             silentFrameCount++
             if (silentFrameCount >= SILENT_IDLE_THRESHOLD) {
-                drawStaticScene(canvas!!, timeFactor)
+                drawStaticScene(c, timeFactor)
                 isEngineSleeping = true
                 silentFrameCount = 0
                 return
@@ -200,7 +202,7 @@ class ParticleWaveView @JvmOverloads constructor(
         } else {
             silentFrameCount = 0
         }
-        drawActiveScene(canvas!!, vPercent, timeFactor)
+        drawActiveScene(c, vPercent, timeFactor)
     }
 
     /**
