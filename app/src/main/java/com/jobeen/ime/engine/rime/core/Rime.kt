@@ -10,13 +10,16 @@ import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.isStorageAvailable
 import com.jobeen.ime.engine.data.CommandSymbol
 import com.jobeen.ime.engine.data.EngineMessage
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import timber.log.Timber
 
 class Rime : RimeApi, RimeLifecycleOwner {
@@ -48,6 +51,10 @@ class Rime : RimeApi, RimeLifecycleOwner {
     @Volatile
     override var paging: Boolean = false
         private set
+
+    /** STARTING 阶段收到 finalize 时的延迟执行：独立作用域 + 防重复排队标记 */
+    private val deferredFinalizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val deferredFinalizeScheduled = AtomicBoolean(false)
 
     private val dispatcher = RimeDispatcher(
         object : RimeDispatcher.RimeController {
@@ -361,19 +368,41 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     fun finalize() {
-        if (lifecycle.currentState != RimeLifecycle.State.READY) {
-            Timber.w("Skip stopping rime: not at ready state!")
-            return
-        }
-        lifecycleRegistry.emitState(RimeLifecycle.State.STOPPING)
-        Timber.i("Rime finalize()")
-        dispatcher.stop().let {
-            if (it.isNotEmpty()) {
-                Timber.w("${it.size} job(s) didn't get a chance to run!")
+        when (lifecycle.currentState) {
+            RimeLifecycle.State.READY -> {
+                lifecycleRegistry.emitState(RimeLifecycle.State.STOPPING)
+                Timber.i("Rime finalize()")
+                dispatcher.stop().let {
+                    if (it.isNotEmpty()) {
+                        Timber.w("${it.size} job(s) didn't get a chance to run!")
+                    }
+                }
+                lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
+                unregisterMessageHandler(::handleRimeMessage)
             }
+            RimeLifecycle.State.STARTING -> {
+                // 启动尚未完成时收到的停止请求不能丢弃：否则会话已全部销毁、
+                // 引擎却继续跑到 READY 无人持有（泄漏）。排队到就绪后立即执行。
+                if (deferredFinalizeScheduled.compareAndSet(false, true)) {
+                    Timber.i("Rime finalize() deferred until startup completes")
+                    deferredFinalizeScope.launch {
+                        try {
+                            lifecycle.whenReady { }
+                            finalize()
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // 引擎在就绪前已被其它路径停掉，停止请求已达成，无需再做
+                            Timber.w(e, "Deferred finalize aborted")
+                        } finally {
+                            deferredFinalizeScheduled.set(false)
+                        }
+                    }
+                }
+            }
+            // STOPPING 时已有 finalize 在执行，本次请求由它覆盖；STOPPED 时无事可做
+            else -> Timber.w("Skip stopping rime: not at ready state!")
         }
-        lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
-        unregisterMessageHandler(::handleRimeMessage)
     }
 
     companion object {

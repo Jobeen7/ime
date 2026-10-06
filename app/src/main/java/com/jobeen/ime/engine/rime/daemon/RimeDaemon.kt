@@ -19,6 +19,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
+import timber.log.Timber
 import splitties.systemservices.notificationManager
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -117,7 +118,23 @@ object RimeDaemon {
     /**
      * Restart Rime instance to deploy while keep the session
      */
-    fun restartRime(fullCheck: Boolean = false) = lock.withLock {
+    fun restartRime(fullCheck: Boolean = false) {
+        if (realRime.lifecycle.currentState == RimeLifecycle.State.STARTING) {
+            // 启动中收到的重启请求不能直接执行：finalize 与 startup 都会被
+            // 状态机以「状态不符」拒绝，重启被静默丢失。排队到就绪后重走流程。
+            Timber.i("restartRime deferred until startup completes")
+            appScope.launch {
+                runCatching { realRime.lifecycle.whenReady { } }
+                if (realRime.lifecycle.currentState == RimeLifecycle.State.READY) {
+                    restartRime(fullCheck)
+                }
+            }
+            return
+        }
+        doRestartRime(fullCheck)
+    }
+
+    private fun doRestartRime(fullCheck: Boolean): Unit = lock.withLock {
         val id = restartId++
         if (!fullCheck) {
             sendNotification(id) {
@@ -132,8 +149,12 @@ object RimeDaemon {
         realRime.finalize()
         realRime.startup()
         appScope.launch {
-            realRime.lifecycle.whenReady {
-                notificationManager.cancel(id)
+            // 引擎若在就绪前被停掉，whenReady 现在会抛 RimeStoppedException：
+            // 通知取消失败无妨（进程状态已变），不能让它变成未捕获异常
+            runCatching {
+                realRime.lifecycle.whenReady {
+                    notificationManager.cancel(id)
+                }
             }
         }
     }
