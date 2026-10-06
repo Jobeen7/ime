@@ -39,6 +39,9 @@ class KawaiiPanel(
     var listener: PanelListener? = null,
 ) : IPanel {
 
+    /** 当前批次已从引擎加载的候选原始条数（字形过滤前），与 total 同口径 */
+    private var rawCandidateLoaded: Int = 0
+
     sealed class TouchResult {
         data class ToolbarAction(
             val action: PanelAction,
@@ -562,9 +565,23 @@ class KawaiiPanel(
             return
         }
         candidateGrid.hasMoreCandidates = hasMore
+        // 「已加载原始条数」按引擎口径累计（过滤前），供追加时与 total
+        // 同口径判定是否到底；过滤后条数与 total 比会多打空往返
+        rawCandidateLoaded = list.size
         // 本机字体无字形的单字候选（扩展区生僻字）不进列表：显示出来
         // 是方框、点选打出对方也看不到。条带与网格共用此列表，一致
-        val list = list.filter { candidateGrid.isDisplayable(it) }
+        val displayList = list.filter { candidateGrid.isDisplayable(it) }
+        if (displayList.isEmpty() && list.isNotEmpty() && hasMore) {
+            // 整屏被滤光且引擎还有更多：保持组字空态并续取下一页穿过
+            // 无字形带，不要清成 Idle——那样追加页回来会因非组字态被
+            // 丢弃、候选就此消失。续取链由引擎侧 200 封顶收口，真到底
+            // 时追加空页关闭 hasMore。原始列表为空是真清空信号，不走此路
+            state = State.Composing(emptyList())
+            view.post { listener?.onRequestMoreCandidates() }
+            view.invalidate()
+            return
+        }
+        val list = displayList
         if (list.isEmpty()) {
             view.setExpanded(false)
             view.scrollX = 0f
@@ -602,6 +619,8 @@ class KawaiiPanel(
             candidateGrid.hasMoreCandidates = false
             return
         }
+        // 原始口径累计（过滤前），与引擎侧 total 同口径判定是否到底
+        rawCandidateLoaded += list.size
         // 同 setCandidates：先滤掉本机无字形的单字。整页被滤光说明正处
         // 在一整带无字形生僻字里——不收尾，直接续取下一页穿过去（引擎
         // 侧有 200 封顶，续取链有界；真到底时引擎回空页走上面的收尾）
@@ -615,12 +634,12 @@ class KawaiiPanel(
         when (val s = state) {
             is State.Composing -> {
                 val merged = s.candidates + displayable
-                candidateGrid.hasMoreCandidates = total < 0 || merged.size < total
+                candidateGrid.hasMoreCandidates = total < 0 || rawCandidateLoaded < total
                 state = State.Composing(merged)
             }
             is State.Prediction -> {
                 val merged = s.candidates + displayable
-                candidateGrid.hasMoreCandidates = total < 0 || merged.size < total
+                candidateGrid.hasMoreCandidates = total < 0 || rawCandidateLoaded < total
                 state = State.Prediction(merged)
             }
             else -> {}
