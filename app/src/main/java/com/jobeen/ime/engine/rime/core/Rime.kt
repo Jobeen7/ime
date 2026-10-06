@@ -56,6 +56,9 @@ class Rime : RimeApi, RimeLifecycleOwner {
     private val deferredFinalizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val deferredFinalizeScheduled = AtomicBoolean(false)
 
+    /** 每次 startup() 递增：延迟 finalize 执行前比对，防止误停「排队之后又被重启好」的新一代引擎 */
+    private val startupGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+
     private val dispatcher = RimeDispatcher(
         object : RimeDispatcher.RimeController {
             override fun nativeStartup() {
@@ -67,6 +70,12 @@ class Rime : RimeApi, RimeLifecycleOwner {
             override fun nativeFinalize() {
                 shutdown()
             }
+        },
+        onStartupFailed = {
+            // 启动失败：生命周期打回 STOPPED，让 whenReady 的等待方立即以
+            // RimeStoppedException 失败（而不是在 STARTING 永久挂起），
+            // 且后续 startup() 可以重试
+            lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
         },
     )
 
@@ -85,12 +94,25 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
     override suspend fun deploy() = withRimeContext {
         shutdown()
-        startRime(true)
+        try {
+            startRime(true)
+        } catch (t: Throwable) {
+            // native 已 shutdown 但重启失败：状态不能停留在 READY，否则上层
+            // 以为引擎可用、实际每次调用都打到已关闭的 native。打回 STOPPED
+            // 让状态与实际一致，并允许后续 startup() 重试。
+            lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
+            throw t
+        }
     }
 
     override suspend fun updateConfig() = withRimeContext {
         shutdown()
-        startRime(false)
+        try {
+            startRime(false)
+        } catch (t: Throwable) {
+            lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
+            throw t
+        }
     }
 
     override suspend fun joinMaintenanceThread() {
@@ -302,6 +324,12 @@ class Rime : RimeApi, RimeLifecycleOwner {
         handleMessage(RimeMessage.MessageType.Composition.ordinal, arrayOf(composition))
     }
 
+    /**
+     * 通知侧 JNI 读的口径例外（架构项②的串行不变量之外）：本函数在通知分发
+     * 线程（messageEmitScope，单线程 FIFO）上同步做 getStatus()/RimeSchema 构造
+     * 等**只读快照**查询，以保证缓存与通知严格同序。这里绝不允许出现 native
+     * 写调用——任何写操作必须走 withRimeContext 回到引擎 dispatcher 串行执行。
+     */
     @Suppress("UNUSED_PARAMETER")
     private fun handleRimeMessage(it: RimeMessage<*>) {
         when (it) {
@@ -363,6 +391,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
             return
         }
         registerMessageHandler(::handleRimeMessage)
+        startupGeneration.incrementAndGet()
         lifecycleRegistry.emitState(RimeLifecycle.State.STARTING)
         dispatcher.start()
     }
@@ -385,9 +414,16 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 // 引擎却继续跑到 READY 无人持有（泄漏）。排队到就绪后立即执行。
                 if (deferredFinalizeScheduled.compareAndSet(false, true)) {
                     Timber.i("Rime finalize() deferred until startup completes")
+                    val scheduledGeneration = startupGeneration.get()
                     deferredFinalizeScope.launch {
                         try {
                             lifecycle.whenReady { }
+                            // 排队期间引擎若已被「停掉又重启」成新一代，本次停止
+                            // 意图只针对旧一代，不能误停刚重启好的引擎
+                            if (startupGeneration.get() != scheduledGeneration) {
+                                Timber.i("Deferred finalize superseded by a newer startup; skipped")
+                                return@launch
+                            }
                             finalize()
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
