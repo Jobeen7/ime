@@ -313,7 +313,6 @@ Java_com_jobeen_ime_engine_rime_core_Rime_bootstrap(
 
     auto handler = [](void * /*ctx*/, RimeSessionId, const char *type,
                       const char *value) {
-        auto env = jni::g_refs->attach();
         int code = 0;
         if (std::strcmp(type, "schema") == 0) {
             code = 1;
@@ -322,12 +321,27 @@ Java_com_jobeen_ime_engine_rime_core_Rime_bootstrap(
         } else if (std::strcmp(type, "deploy") == 0) {
             code = 3;
         }
+        // 未知通知类型不转发：code 0 在 Kotlin 侧是 Key 消息，
+        // 拿字符串参数去构造会抛类型转换异常并污染本线程的 JNI 状态。
+        if (code == 0) return;
+        auto env = jni::g_refs->attach();
         jobjectArray args =
                 env->NewObjectArray(1, jni::g_refs->Object, nullptr);
         jni::LocalRef<jstring> ref(env, jni::makeString(env, value));
+        if (args == nullptr || ref.get() == nullptr) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            if (args != nullptr) env->DeleteLocalRef(args);
+            return;
+        }
         env->SetObjectArrayElement(args, 0, ref.get());
         env->CallStaticVoidMethod(jni::g_refs->Rime, jni::g_refs->HandleRimeMessage,
                                   code, args);
+        // Kotlin 侧处理若抛异常，未决异常会留在 librime 的工作线程上，
+        // 此后该线程任何 JNI 调用都会 abort：必须当场记录并清除。
+        if (env->ExceptionCheck()) {
+            env->ExceptionDescribe();
+            env->ExceptionClear();
+        }
         env->DeleteLocalRef(args);
     };
 
