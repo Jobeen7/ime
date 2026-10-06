@@ -327,11 +327,14 @@ object ModelDownloader {
                             output.write(buffer, 0, count)
                             digest.update(buffer, 0, count)
                             downloaded += count
-                            if (downloaded - lastReported >= REPORT_STEP || (total in 1 downTo downloaded)) {
+                            // 完成判定：旧写法的 (total in 1 downTo downloaded) 恒为假，
+                            // 最后一段进度永不回调、break 也成了死代码
+                            val finished = total > 0 && downloaded >= total
+                            if (downloaded - lastReported >= REPORT_STEP || finished) {
                                 onRead(downloaded, total)
                                 lastReported = downloaded
                             }
-                            if (total in 1 downTo downloaded) break
+                            if (finished) break
                         }
                     }
                 }

@@ -67,6 +67,10 @@ class SpeechRecognitionService : Service() {
     @Volatile
     private var sessionGen = 0
 
+    /** 已加载识别器对应的模型文件指纹（文件名+大小+修改时间）：在线更新替换文件后指纹变化，触发重载 */
+    @Volatile
+    private var loadedModelFingerprint: String? = null
+
     // 客户端随 START 发来的会话代次令牌：本会话全部回信原样带回，
     // 客户端据此丢弃旧会话迟到的结果（服务端内部代次 sessionGen 只管服务端自身防串扰）
     @Volatile
@@ -118,9 +122,10 @@ class SpeechRecognitionService : Service() {
                         val ready = initEngine(this@SpeechRecognitionService, silent = true)
                         val engine = if (ready) recognizerRef.get() else null
                         if (engine == null) {
-                            // 初始化期间 STOP 已到达（会话已撤销）则静默收尾，不再回错误
-                            if (sessionActive.get()) {
-                                sessionActive.set(false)
+                            // 只收尾自己这一代：初始化期间 STOP 已到达则静默；
+                            // 若已有新一代会话开始，旧的失败收尾不能误杀新会话
+                            if (gen == sessionGen && sessionActive.compareAndSet(true, false)) {
+                                holding.set(false)
                                 sendClient(SpeechIpc.MSG_ERROR)
                             }
                             return@launch
@@ -129,11 +134,14 @@ class SpeechRecognitionService : Service() {
                             // STOP 已在初始化期间到达：不要再启动采集（幽灵录音）
                             return@launch
                         }
-                        // 新会话重置跨会话去重/节流状态，避免首段文字被上一会话吞掉
-                        lastRawText = null
-                        lastEmittedText = null
-                        lastEmitUptimeMs = 0L
-                        synchronized(audioLock) { streamRef.set(engine.createStream()) }
+                        synchronized(audioLock) {
+                            // 新会话重置跨会话去重/节流状态：与采集协程对这三个
+                            // 字段的读写同在 audioLock 内，避免跨线程可见性竞态
+                            lastRawText = null
+                            lastEmittedText = null
+                            lastEmitUptimeMs = 0L
+                            streamRef.set(engine.createStream())
+                        }
                         startAudioStreaming()
                     }
                 }
@@ -296,12 +304,30 @@ class SpeechRecognitionService : Service() {
     }
 
     @SuppressLint("UnsafeDynamicallyLoadedCode")
-    private fun initEngine(context: android.content.Context, silent: Boolean = false): Boolean {
-        if (recognizerRef.get() != null) return true
-        synchronized(audioLock) {
-            if (recognizerRef.get() != null) return true
+    private fun modelFingerprint(dir: java.io.File): String =
+        dir.listFiles()?.filter { it.isFile }
+            ?.sortedBy { it.name }
+            ?.joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
+            ?: ""
 
+    private fun initEngine(context: android.content.Context, silent: Boolean = false): Boolean {
+        if (recognizerRef.get() != null &&
+            modelFingerprint(App.speechModelDir) == loadedModelFingerprint
+        ) return true
+        synchronized(audioLock) {
             val dir = App.speechModelDir
+            val fingerprint = modelFingerprint(dir)
+            val existing = recognizerRef.get()
+            if (existing != null) {
+                if (fingerprint == loadedModelFingerprint) return true
+                // 模型文件已被在线更新替换：释放旧识别器、下面按新文件重建，
+                // 否则下载成功的新模型在本进程重启前永不生效且无任何提示
+                Log.i("SpeechSvc", "Speech model files changed; reloading recognizer")
+                recognizerRef.set(null)
+                loadedModelFingerprint = null
+                streamRef.getAndSet(null)?.runCatching { release() }
+                existing.runCatching { release() }
+            }
             val qnnSupported = isQnnRuntimeSupported(context)
             val qnnFiles = if (qnnSupported) findModelFiles(dir, qnn = true) else null
 
@@ -353,6 +379,7 @@ class SpeechRecognitionService : Service() {
                     enableEndpoint = false,
                 )
                 recognizerRef.set(OnlineRecognizer(null, config))
+                loadedModelFingerprint = fingerprint
                 val encoderPath = files.encoder.absolutePath
                 val engineVariant = when {
                     useQnn -> "qnn"
@@ -375,6 +402,7 @@ class SpeechRecognitionService : Service() {
         // 本会话的客户端代次在入口固定：协程收尾（最终解码）可能晚于新会话开始，
         // 回信必须带自己会话的代次，不能读到那时已被覆盖的 sessionClientGen
         val myGen = sessionClientGen
+        val mySessionGen = sessionGen
         if (ContextCompat.checkSelfPermission(
                 this, Manifest.permission.RECORD_AUDIO
             ) != PackageManager.PERMISSION_GRANTED
@@ -386,6 +414,8 @@ class SpeechRecognitionService : Service() {
 
         audioJob = scope.launch(Dispatchers.IO) {
             var recorder: AudioRecord? = null
+            // 异常路径已发过 MSG_ERROR 时，finally 不再补发终结回信
+            var pipelineFailed = false
             // 本会话的 stream 在协程内固定持有：结束时只释放自己这个，
             // 不能无条件清 streamRef（新会话可能已经换上了新 stream）
             val myStream = synchronized(audioLock) { streamRef.get() }
@@ -507,6 +537,7 @@ class SpeechRecognitionService : Service() {
                 }
             } catch (t: Throwable) {
                 if (t !is CancellationException) {
+                    pipelineFailed = true
                     Log.e("SpeechSvc", "Audio recording or inference failed", t)
                     withContext(NonCancellable + Dispatchers.Main) {
                         toast("录音异常")
@@ -523,6 +554,19 @@ class SpeechRecognitionService : Service() {
                         streamRef.set(null)
                         myStream.runCatching { release() }
                     }
+                }
+                // 管线自行终止（读错误 break、录音状态被系统收回、异常）时
+                // MSG_STOP 不会来：会话状态无人复位，holding/sessionActive
+                // 残留会让下一次 START 的 CAS 失败被静默吞掉（无反馈死会话，
+                // 锁定模式下还会假录音）。仍是本代次且会话还标活跃即异常终止：
+                // 复位并补发终结回信让客户端收尾。正常 STOP 路径 sessionActive
+                // 已先置 false、DONE 由 STOP 处理方发出，不会进这里。
+                if (mySessionGen == sessionGen && sessionActive.compareAndSet(true, false)) {
+                    holding.set(false)
+                    if (!pipelineFailed) {
+                        sendClient(SpeechIpc.MSG_DONE, gen = myGen)
+                    }
+                    clientMessenger = null
                 }
             }
         }
