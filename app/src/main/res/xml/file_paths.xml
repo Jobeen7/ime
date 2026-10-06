@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
     <cache-path name="shared" path="shared/" />
+    <!-- App 自更新下载的 APK（cacheDir/update/），供 FileProvider 授权给系统安装器 -->
+    <cache-path name="update" path="update/" />
 </paths>

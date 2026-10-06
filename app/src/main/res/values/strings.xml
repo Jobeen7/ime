@@ -111,7 +111,16 @@
     <string name="update_available">发现新版本</string>
     <string name="update_latest">当前已是最新版本</string>
     <string name="update_check_failed">检查更新失败</string>
-    <string name="update_open_failed">无法打开更新地址</string>
+    <string name="update_dialog_title">发现新版本 v%1$s</string>
+    <string name="update_dialog_message">安装包大小 %1$s，下载完成后将打开系统安装界面。</string>
+    <string name="update_download_install">下载并安装</string>
+    <string name="update_cancel_download">取消下载</string>
+    <string name="update_later">稍后再说</string>
+    <string name="update_downloading">正在下载… %1$d%%</string>
+    <string name="update_download_failed">下载失败，请稍后重试</string>
+    <string name="update_install_now">立即安装</string>
+    <string name="update_need_permission">需要先开启「允许安装未知应用」，开启后回来点「立即安装」</string>
+    <string name="update_file_invalid">安装包校验失败，请重新下载</string>
     <string name="app_logs">运行日志</string>
     <string name="copy_logs">复制日志</string>
     <string name="clear_logs">清空日志</string>
