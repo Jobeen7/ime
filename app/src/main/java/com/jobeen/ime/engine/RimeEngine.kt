@@ -81,6 +81,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         /** 选词偏好表容量上限与裁剪检查节流间隔（按 upsert 次数计）。 */
         /** 分页补取的单页条数（与首屏 bulk 上限分开：续页可以大些，减少往返） */
         private const val CANDIDATE_PAGE_SIZE = 48
+        /** 动作/任务队列容量：远超正常深度，仅作异常堆积兜底 */
+        private const val ACTION_QUEUE_CAPACITY = 512
+        private const val JOB_QUEUE_CAPACITY = 256
+        /** 清空输入框时的分段删除：每段字符数与最大段数 */
+        private const val CLEAR_CHUNK_CHARS = 1000
+        private const val MAX_CLEAR_CHUNKS = 64
         private const val PREFER_LIMIT = 5000
         private const val PRUNE_CHECK_INTERVAL = 200
     }
@@ -750,8 +756,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             } else {
                 withContext(Dispatchers.Main.immediate) {
                     val ic = inputConnection()
-                    if (!ic?.getTextBeforeCursor(1, 0).isNullOrEmpty()) {
-                        ic.deleteSurroundingText(Int.MAX_VALUE, Int.MAX_VALUE)
+                    if (ic != null && !ic.getTextBeforeCursor(1, 0).isNullOrEmpty()) {
+                        // 分段删除：旧实现单次 deleteSurroundingText(MAX, MAX)
+                        // 在部分 App 的自绘输入框上会只删一部分或触发全量文本
+                        // 处理造成卡顿。按段删（前文→后文），每轮先探长度、
+                        // 探到 0 或删除无进展即停，段数设上限防异常输入框
+                        // 让循环失控；极端长文删不完时用户可再触发一次。
+                        var chunks = 0
+                        while (chunks++ < MAX_CLEAR_CHUNKS) {
+                            val n = ic.getTextBeforeCursor(CLEAR_CHUNK_CHARS, 0)?.length ?: 0
+                            if (n == 0 || !ic.deleteSurroundingText(n, 0)) break
+                        }
+                        chunks = 0
+                        while (chunks++ < MAX_CLEAR_CHUNKS) {
+                            val n = ic.getTextAfterCursor(CLEAR_CHUNK_CHARS, 0)?.length ?: 0
+                            if (n == 0 || !ic.deleteSurroundingText(0, n)) break
+                        }
                         invalidateBeforeCursorCache()
                     }
                 }
