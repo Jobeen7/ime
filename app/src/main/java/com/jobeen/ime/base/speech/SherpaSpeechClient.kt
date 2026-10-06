@@ -312,6 +312,11 @@ object SherpaSpeechClient {
     private fun cancelSession() {
         holding.set(false)
         removePending(SpeechIpc.MSG_START)
+        // 必须通知服务端终止会话：旧实现只做本地收尾，服务端 sessionActive
+        // 残留时下一次 START 会在服务端被 CAS 拒绝、静默无反馈
+        synchronized(connectLock) { speechMessenger }?.let { messenger ->
+            runCatching { messenger.send(SpeechIpc.message(SpeechIpc.MSG_STOP)) }
+        }
         uiJob?.cancel()
         uiJob = null
         val service = serviceRef?.get()
