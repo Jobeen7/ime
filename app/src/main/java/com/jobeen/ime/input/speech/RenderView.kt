@@ -76,7 +76,9 @@ abstract class RenderView @JvmOverloads constructor(
                 // 这样 onRender 进入冬眠 wait() 时既不会阻塞 onPause/ onDestroy，
                 // 也不会让 Canvas 长时间被锁住造成黑屏/ANR。
                 surfaceLock.withLock {
-                    while (isPause && !destroyed) {
+                    // 暂停或已停动画时都阻塞等待信号，不再 16ms 轮询空转
+                    // （startThread/onResume/surfaceDestroyed 都会 signalAll）
+                    while ((isPause || !running) && !destroyed) {
                         try {
                             surfaceCondition.await()
                         } catch (ignored: InterruptedException) {
@@ -85,10 +87,6 @@ abstract class RenderView @JvmOverloads constructor(
                     }
                 }
                 if (destroyed || !running) {
-                    try {
-                        sleep(IDLE_SLEEP_TIME)
-                    } catch (ignored: InterruptedException) {
-                    }
                     continue
                 }
 

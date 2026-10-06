@@ -82,17 +82,32 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
     private var globalPhase = 0f
     private var isAnimating = false
 
+    /** startAnim 已请求且未被 stopAnim 取消：静音冬眠/焦点丢失后靠它决定是否续跑 */
+    private var animRequested = false
+    private var silentFrames = 0
+
     private val frameCallback = object : Runnable {
         override fun run() {
             if (!isAnimating) return
             updateFrame()
-            postOnAnimation(this)
+            if (isAnimating) postOnAnimation(this)
         }
     }
 
     private fun updateFrame() {
         val target = targetVolume.coerceIn(0, 100) / 100f
         smoothVolume += (target - smoothVolume) * 0.16f
+        // 静音冬眠：无声约 1.5 秒后停止逐帧调度（旧实现录音全程 60fps 空转，
+        // 柱高早已静止仍不断 invalidate）；有声音时 setVolume 会唤醒续跑
+        if (targetVolume == 0 && smoothVolume < 0.01f) {
+            if (++silentFrames > 90) {
+                isAnimating = false
+                invalidate()
+                return
+            }
+        } else {
+            silentFrames = 0
+        }
         globalPhase += 0.035f
 
         // 中高音音量映射抑制
@@ -183,16 +198,23 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
 
     override fun setVolume(volume: Int) {
         targetVolume = volume.coerceIn(0, 100)
+        // 冬眠中来声音了：唤醒帧循环
+        if (volume > 0 && animRequested && !isAnimating) {
+            startAnim()
+        }
     }
 
     override fun startAnim() {
+        animRequested = true
         if (!isAnimating) {
             isAnimating = true
+            silentFrames = 0
             postOnAnimation(frameCallback)
         }
     }
 
     override fun stopAnim() {
+        animRequested = false
         isAnimating = false
         removeCallbacks(frameCallback)
         targetVolume = 0
@@ -209,9 +231,14 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
         super.onWindowFocusChanged(hasWindowFocus)
 
         if (hasWindowFocus) {
-            startAnim()
+            // 只恢复「曾请求播放且未被显式停止」的动画：旧实现获焦无条件
+            // startAnim，与可见性脱钩，已停止的波形也会被焦点变化复活
+            if (animRequested && !isAnimating) startAnim()
         } else {
-            stopAnim()
+            // 失焦只暂停帧循环（保留音量与柱高状态），不走 stopAnim 的全量
+            // 复位——否则重新获焦时 animRequested 已被清掉，动画再也恢复不了
+            isAnimating = false
+            removeCallbacks(frameCallback)
         }
     }
 
