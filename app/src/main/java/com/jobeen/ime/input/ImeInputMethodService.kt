@@ -118,6 +118,9 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
+        // 语音预启动挪到首次弹出键盘（内部一次性守卫 + 仅用过语音者）：
+        // App 冷启动时不再 eager 拉起 :speech 进程
+        com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
         keyboardWindow?.onStartInputView(info, restarting)
         engine?.onStartInputView(currentInputConnection, info)
         notifyInputChanged()

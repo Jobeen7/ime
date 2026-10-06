@@ -193,10 +193,16 @@ object SherpaSpeechClient {
     fun isQnnRuntimeSupported(context: Context): Boolean =
         android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")
 
+    /** 进程内只预启动一次（触发点在键盘首次弹出，见 ImeInputMethodService） */
+    private val preStartDone = AtomicBoolean(false)
+
     fun preStartSync(context: Context) {
-        // 冷启动预启动只对真正用过语音的用户做：纯打字用户不必每次冷启动
-        // 都拉起 :speech 进程、复制 QNN 文件并初始化识别器。
-        // 从未用过语音时，首次长按语音键走 send() 的按需绑定路径（稍慢一次）。
+        // 预启动时机后移到首次弹出键盘：App 冷启动（onCreate）阶段不再
+        // 拉起 :speech 进程——键盘还没露面时这笔开销纯属浪费，且主进程
+        // 被系统单独拉起（设置页/同步等）时根本用不到语音。
+        // 门控不变：只对真正用过语音的用户预启动；从未用过时，首次长按
+        // 语音键走 send() 的按需绑定路径（稍慢一次）。
+        if (!preStartDone.compareAndSet(false, true)) return
         if (!hasUsedVoice(context)) return
         send(SpeechIpc.MSG_LOAD)
     }
