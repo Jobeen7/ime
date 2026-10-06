@@ -43,7 +43,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
+import com.jobeen.ime.base.net.UpdateCheckResult
 import com.jobeen.ime.base.net.VersionChecker
+import com.jobeen.ime.base.update.AppUpdateManager
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
@@ -65,10 +67,41 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     }
     var checkingUpdate by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    // 自更新对话框状态
+    var updateInfo by remember { mutableStateOf<UpdateCheckResult.Available?>(null) }
+    var downloadJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var downloading by remember { mutableStateOf(false) }
+    var downloadPercent by remember { mutableStateOf(0) }
+    var downloadedFile by remember { mutableStateOf<java.io.File?>(null) }
     // 协程内不可用 stringResource，提前在组合阶段解析
     val msgCheckFailed = stringResource(R.string.update_check_failed)
     val msgAvailable = stringResource(R.string.update_available)
     val msgLatest = stringResource(R.string.update_latest)
+    val msgDownloadFailed = stringResource(R.string.update_download_failed)
+    val msgNeedPermission = stringResource(R.string.update_need_permission)
+    val msgFileInvalid = stringResource(R.string.update_file_invalid)
+
+    fun toast(msg: String) {
+        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    // 尝试安装：缺「安装未知应用」授权时先去设置，文件留着，用户回来再点即可
+    fun tryInstall() {
+        val file = downloadedFile ?: return
+        if (!AppUpdateManager.isInstallable(context, file)) {
+            downloadedFile = null
+            toast(msgFileInvalid)
+            return
+        }
+        if (AppUpdateManager.needsInstallPermission(context)) {
+            toast(msgNeedPermission)
+            runCatching { AppUpdateManager.openInstallPermissionSettings(context) }
+            return
+        }
+        runCatching { AppUpdateManager.installApk(context, file) }
+            .onSuccess { updateInfo = null }
+            .onFailure { toast(msgDownloadFailed) }
+    }
 
     Scaffold(
         topBar = {
@@ -161,32 +194,27 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                                 if (checkingUpdate) return@Button
                                 checkingUpdate = true
                                 scope.launch {
-                                    val website = VersionChecker.check(versionName)
+                                    val result = VersionChecker.check(versionName)
                                     checkingUpdate = false
-                                    val message = when {
-                                        website == null -> msgCheckFailed
-                                        website.isNotEmpty() -> msgAvailable
-                                        else -> msgLatest
-                                    }
-                                    android.widget.Toast.makeText(
-                                        context, message, android.widget.Toast.LENGTH_SHORT
-                                    ).show()
-                                    if (!website.isNullOrEmpty()) {
-                                        delay(1500)
-                                        runCatching {
-                                            context.startActivity(
-                                                android.content.Intent(
-                                                    android.content.Intent.ACTION_VIEW,
-                                                    android.net.Uri.parse(website),
-                                                )
-                                            )
-                                        }.onFailure {
-                                            android.widget.Toast.makeText(
-                                                context,
-                                                R.string.update_open_failed,
-                                                android.widget.Toast.LENGTH_SHORT,
-                                            ).show()
+                                    when (result) {
+                                        is UpdateCheckResult.Available -> {
+                                            if (result.apkUrl.isEmpty()) {
+                                                // 发行版没有 APK 资产时退回旧流程：打开 Release 页
+                                                toast(msgAvailable)
+                                                runCatching {
+                                                    context.startActivity(
+                                                        android.content.Intent(
+                                                            android.content.Intent.ACTION_VIEW,
+                                                            android.net.Uri.parse(result.pageUrl),
+                                                        )
+                                                    )
+                                                }.onFailure { toast(msgCheckFailed) }
+                                            } else {
+                                                updateInfo = result
+                                            }
                                         }
+                                        UpdateCheckResult.Latest -> toast(msgLatest)
+                                        UpdateCheckResult.Failed -> toast(msgCheckFailed)
                                     }
                                 }
                             },
@@ -213,5 +241,98 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
 
             Spacer(Modifier.height(32.dp))
         }
+    }
+
+    // 自更新对话框：App 内下载正式版 APK，下完直接调起系统安装，不跳浏览器
+    updateInfo?.let { info ->
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = {
+                if (!downloading) {
+                    updateInfo = null
+                    downloadedFile = null
+                }
+            },
+            title = { Text(stringResource(R.string.update_dialog_title, info.version)) },
+            text = {
+                if (downloading) {
+                    Column {
+                        androidx.compose.material3.LinearProgressIndicator(
+                            progress = { downloadPercent / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.update_downloading, downloadPercent),
+                            fontSize = rowSubFontSize,
+                        )
+                    }
+                } else {
+                    Text(
+                        stringResource(
+                            R.string.update_dialog_message,
+                            android.text.format.Formatter.formatFileSize(context, info.apkSize),
+                        ),
+                        fontSize = rowSubFontSize,
+                    )
+                }
+            },
+            confirmButton = {
+                when {
+                    downloading -> Unit
+                    downloadedFile != null -> {
+                        androidx.compose.material3.TextButton(onClick = { tryInstall() }) {
+                            Text(stringResource(R.string.update_install_now))
+                        }
+                    }
+                    else -> {
+                        androidx.compose.material3.TextButton(onClick = {
+                            downloading = true
+                            downloadPercent = 0
+                            downloadJob = scope.launch {
+                                val file = AppUpdateManager.downloadApk(
+                                    context, info.apkUrl, info.apkName, info.apkSize,
+                                ) { downloaded, total ->
+                                    downloadPercent = if (total > 0) {
+                                        (downloaded * 100 / total).toInt().coerceIn(0, 100)
+                                    } else {
+                                        0
+                                    }
+                                }
+                                downloading = false
+                                downloadJob = null
+                                if (file == null) {
+                                    toast(msgDownloadFailed)
+                                } else {
+                                    downloadedFile = file
+                                    tryInstall()
+                                }
+                            }
+                        }) {
+                            Text(stringResource(R.string.update_download_install))
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    if (downloading) {
+                        downloadJob?.cancel()
+                        AppUpdateManager.cancelDownload()
+                        downloadJob = null
+                        downloading = false
+                    } else {
+                        updateInfo = null
+                        downloadedFile = null
+                    }
+                }) {
+                    Text(
+                        stringResource(
+                            if (downloading) R.string.update_cancel_download
+                            else R.string.update_later
+                        )
+                    )
+                }
+            },
+        )
     }
 }
