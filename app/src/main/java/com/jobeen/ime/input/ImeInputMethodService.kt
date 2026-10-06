@@ -277,19 +277,27 @@ class ImeInputMethodService : InputMethodService() {
         val selection = if (phraseAddBridgeActive) virtualInputConnection.selection
         else lastSelectionStart to lastSelectionEnd
         keyboardWindow?.onSelectionUpdate(selection.first, selection.second)
+        // 下游只用空/非空：旧实现用 Int.MAX_VALUE 全量抓前后文拼接（桥接模式
+        // 下整篇文档跨进程过一遍），改为 1 字符探针
         keyboardWindow?.onInputChanged(
-            ic.getTextBeforeCursor(Int.MAX_VALUE, 0)?.toString().orEmpty() + ic.getTextAfterCursor(
-                Int.MAX_VALUE,
-                0
-            )?.toString().orEmpty(),
+            probeAroundCursorText(ic),
             virtualInputConnection = phraseAddBridgeActive,
         )
     }
 
+    /**
+     * 光标前后各取 1 字符作「输入框是否有内容」的探针：下游全部消费方只用
+     * 空/非空。前文非空即可短路，省掉第二次 Binder 调用（打字常态路径）。
+     */
+    private fun probeAroundCursorText(ic: android.view.inputmethod.InputConnection): String {
+        val before = ic.getTextBeforeCursor(1, 0)?.toString().orEmpty()
+        if (before.isNotEmpty()) return before
+        return ic.getTextAfterCursor(1, 0)?.toString().orEmpty()
+    }
+
     fun notifyInputChanged() {
         val ic = activeInputConnection() ?: return
-        var text = ic.getTextBeforeCursor(1, 0)?.toString() ?: ""
-        text += ic.getTextAfterCursor(1, 0)?.toString() ?: ""
+        val text = probeAroundCursorText(ic)
         keyboardWindow?.onInputChanged(text, virtualInputConnection = phraseAddBridgeActive)
         if (text.isEmpty()) engine?.onInputCleared()
     }
