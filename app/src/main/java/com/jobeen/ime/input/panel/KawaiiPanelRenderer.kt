@@ -27,6 +27,14 @@ class ComposingRenderer(
         return if (recording) (color and 0x00FFFFFF) or 0x5A000000.toInt() else color
     }
 
+    /** 序号标签预生成（绘制期每帧拼 "${i+1}. " 是纯浪费） */
+    private fun indexLabel(i: Int): String =
+        if (i < INDEX_LABELS.size) INDEX_LABELS[i] else "${i + 1}. "
+
+    companion object {
+        private val INDEX_LABELS = Array(99) { "${it + 1}. " }
+    }
+
     private data class PillRect(val left: Float, val right: Float, val index: Int)
 
     /** 布局结果：只存几何与缩放，绘制时复用成员 Paint */
@@ -35,6 +43,8 @@ class ComposingRenderer(
         val scale: Float,
         val indexW: Float,
         val textW: Float,
+        /** 预拼好的注释绘制串（" 注释"）：布局期拼一次，绘制期不再每帧拼串 */
+        val commentText: String = "",
     )
 
     private var lastPills: List<PillRect> = emptyList()
@@ -134,19 +144,30 @@ class ComposingRenderer(
                 } else {
                     1f
                 }
-                indexPaint.textSize = indexBaseSize * scale
-                textPaint.textSize = textBaseSize * scale
-                val sIndexW = indexPaint.measureText(indexStr)
-                val sTextW = textPaint.measureText(c.text)
-                val sCommentW =
-                    if (commentStr.isNotEmpty()) indexPaint.measureText(commentStr) else 0f
+                // scale==1 是常态：缩放后宽度与未缩放完全相同，第二遍三串测宽
+                // 纯浪费，直接复用第一遍结果（每候选省 3 次 measureText）
+                val sIndexW: Float
+                val sTextW: Float
+                val sCommentW: Float
+                if (scale == 1f) {
+                    sIndexW = indexW
+                    sTextW = textW
+                    sCommentW = commentW
+                } else {
+                    indexPaint.textSize = indexBaseSize * scale
+                    textPaint.textSize = textBaseSize * scale
+                    sIndexW = indexPaint.measureText(indexStr)
+                    sTextW = textPaint.measureText(c.text)
+                    sCommentW =
+                        if (commentStr.isNotEmpty()) indexPaint.measureText(commentStr) else 0f
+                    indexPaint.textSize = indexBaseSize
+                    textPaint.textSize = textBaseSize
+                }
                 val pillW = sIndexW + sTextW + sCommentW + pillPad * 2
                 val rect = PillRect(x, x + pillW, c.index)
                 newPills.add(rect)
-                newLayouts.add(PillLayout(rect, scale, sIndexW, sTextW))
+                newLayouts.add(PillLayout(rect, scale, sIndexW, sTextW, commentStr))
                 x += pillW + gap
-                indexPaint.textSize = indexBaseSize
-                textPaint.textSize = textBaseSize
             }
             layouts = newLayouts
             lastPills = newPills
@@ -196,7 +217,7 @@ class ComposingRenderer(
                     val drawIndex = showIndex
                     if (drawIndex) {
                         drawText(
-                            "${i + 1}. ", pill.left + pillPad, textY, indexPaint,
+                            indexLabel(i), pill.left + pillPad, textY, indexPaint,
                         )
                     }
 
@@ -204,10 +225,10 @@ class ComposingRenderer(
                         if (drawIndex) pill.left + pillPad + layout.indexW else pill.left + pillPad
                     drawText(c.text, textX, textY, textPaint)
 
-                    if (showComment && c.comment.isNotEmpty()) {
+                    if (showComment && layout.commentText.isNotEmpty()) {
                         val commentX = textX + layout.textW
                         drawText(
-                            " ${c.comment}",
+                            layout.commentText,
                             commentX,
                             textY,
                             indexPaint,
