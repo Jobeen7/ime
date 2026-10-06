@@ -44,8 +44,10 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_build(
     jint keyCount = env->GetArrayLength(keys);
 
     jfloat *weightData = nullptr;
+    jint weightCount = 0;
     if (weights != nullptr) {
         weightData = env->GetFloatArrayElements(weights, nullptr);
+        weightCount = env->GetArrayLength(weights);
     }
 
     marisa::Keyset keyset;
@@ -55,7 +57,8 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_build(
         jstring js = static_cast<jstring>(env->GetObjectArrayElement(keys, i));
         {
             StringChars chars(env, js);
-            float w = weightData ? weightData[i] : 1.0f;
+            // weights 比 keys 短时不能按 key 下标越界读堆内存，缺位按默认权重
+            float w = (weightData && i < weightCount) ? weightData[i] : 1.0f;
             keyset.push_back(std::string_view(chars.get()), w);
         }
         env->DeleteLocalRef(js);

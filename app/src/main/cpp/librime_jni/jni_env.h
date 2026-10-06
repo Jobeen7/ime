@@ -221,6 +221,31 @@ namespace jni {
                     env->FindClass("com/jobeen/ime/engine/rime/core/RimeKeyEvent")));
             KeyEventCtor =
                     env->GetMethodID(KeyEvent, "<init>", "(IILjava/lang/String;)V");
+
+            // 统一校验：任一按名查找失败（类/方法被改名或被 R8 删除——986 事故
+            // 正是此类）都会留下未决异常或 null ID。旧实现不查，未决异常会让
+            // 后续 JNI 调用在 ART 上直接 abort、null ID 潜伏到首次回调才崩，
+            // 日志里都看不到真正原因。这里清掉查找自身的异常，改抛带明确
+            // 信息的 RuntimeException，让问题在库加载期就以可读形式显形。
+            const bool missing =
+                    env->ExceptionCheck() ||
+                    !Object || !String || !Integer || !IntegerCtor ||
+                    !Boolean || !BooleanCtor || !Rime || !HandleRimeMessage ||
+                    !CandidateProto || !CandidateProtoCtor ||
+                    !CommitProto || !CommitProtoCtor ||
+                    !ContextProto || !ContextProtoCtor ||
+                    !SyllableProto || !SyllableProtoCtor ||
+                    !CompositionProto || !CompositionProtoCtor ||
+                    !MenuProto || !MenuProtoCtor ||
+                    !StatusProto || !StatusProtoCtor ||
+                    !SchemaItem || !SchemaItemCtor ||
+                    !KeyEvent || !KeyEventCtor;
+            if (missing) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                throwException(env,
+                               "rime_jni: required Java class/method lookup failed "
+                               "(renamed or removed by R8? check proguard keep rules)");
+            }
         }
 
         ScopedEnv attach() const { return ScopedEnv(vm); }
