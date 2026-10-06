@@ -165,6 +165,8 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onDestroy() {
+        // 清掉还没跑的选区探针合并任务，避免销毁后它再碰输入连接
+        mainHandler.removeCallbacks(pendingNotifyInputChanged)
         messageObserveJob?.cancel()
         scope?.cancel()
         scope = null
