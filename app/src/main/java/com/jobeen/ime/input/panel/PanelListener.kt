@@ -27,6 +27,9 @@ interface PanelListener {
 
     fun onCandidateGridDragComplete(candidates: List<EngineMessage.Candidate>) {}
 
+    /** 候选网格滚动到底且引擎侧还有更多候选时，请求分页补取下一页 */
+    fun onRequestMoreCandidates() {}
+
     fun onCandidateForget(candidate: EngineMessage.Candidate) {}
 
     fun onEnterAddPhraseMode() {}
