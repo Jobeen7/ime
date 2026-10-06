@@ -127,8 +127,31 @@ object KeyboardStateManager {
         return schema.id
     }
 
+    // Deploy 完成有两条通道（MessageHandler 与 handleEngineMessage）都会调
+    // refreshSchemas，旧实现每次部署全量刷新跑两遍。合并为单飞 + 尾随一次：
+    // 已在刷新时只标记 pending，当前轮结束后再补一轮，不丢真实的第二次部署
+    private val refreshInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    @Volatile
+    private var refreshAgain = false
+
     fun refreshSchemas() {
+        if (!refreshInFlight.compareAndSet(false, true)) {
+            refreshAgain = true
+            return
+        }
         appScope.launch {
+            try {
+                do {
+                    refreshAgain = false
+                    refreshSchemasOnce()
+                } while (refreshAgain)
+            } finally {
+                refreshInFlight.set(false)
+            }
+        }
+    }
+
+    private suspend fun refreshSchemasOnce() {
             val prefs = appContext.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE)
             val schemaIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
                 ?.filter { it.isNotBlank() } ?: emptyList()
@@ -142,7 +165,6 @@ object KeyboardStateManager {
             if (keyboardAttached) {
                 switchTo(currentSchema?.layout ?: defaultKeyboardName)
             }
-        }
     }
 
     private fun create(name: String): IKeyboard {
@@ -154,7 +176,15 @@ object KeyboardStateManager {
         return keyboard
     }
 
+    private var lastSwitchKey: Pair<String, String?>? = null
+
     fun switchTo(name: String) {
+        // 同键盘 + 同方案的重复切换直接早退：旧实现每次都重设空格键文案/
+        // 标点模式并回调 onKeyboardChanged（触发窗口侧重排），而调用方
+        // （refreshSchemas、resume 等）经常同参数连调多次
+        val key = name to currentSchema?.id
+        if (name == currentKeyboardName && key == lastSwitchKey) return
+        lastSwitchKey = key
         if (name != currentKeyboardName) {
             detachCurrent()
             attachNew(name)
@@ -185,6 +215,7 @@ object KeyboardStateManager {
         }
         currentKeyboardName = null
         keyboardAttached = false
+        lastSwitchKey = null
     }
 
     fun rebuild() {

@@ -83,6 +83,12 @@ abstract class SidePanelRender(
     }
     private val scrollbarRect = RectF()
 
+    // 绘制期复用对象：draw 在手势/动画期以 60-120fps 调用，旧实现每帧新建
+    // Path、每条目新建 Rect 与 Typeface（Typeface.create 走系统缓存查找也不便宜）
+    private val clipPath = Path()
+    private val textBounds = Rect()
+    private val typefaceCache = mutableMapOf<Int, Typeface>()
+
     var items: List<Item> = emptyList()
         private set
 
@@ -172,9 +178,9 @@ abstract class SidePanelRender(
             }
             val clipRadius = cornerRadius()
             if (clipRadius > 0f) {
-                clipPath(Path().apply {
-                    addRoundRect(panel, clipRadius, clipRadius, Path.Direction.CW)
-                })
+                clipPath.reset()
+                clipPath.addRoundRect(panel, clipRadius, clipRadius, Path.Direction.CW)
+                clipPath(clipPath)
             } else {
                 clipRect(panel)
             }
@@ -197,9 +203,11 @@ abstract class SidePanelRender(
                 }
                 textPaint.color = item.textColor
                 textPaint.textSize = dp(item.textSize)
-                textPaint.typeface = Typeface.create(Typeface.DEFAULT, item.textStyle)
+                textPaint.typeface = typefaceCache.getOrPut(item.textStyle) {
+                    Typeface.create(Typeface.DEFAULT, item.textStyle)
+                }
                 textPaint.textAlign = Paint.Align.LEFT
-                val bounds = Rect()
+                val bounds = textBounds
                 val text = item.label
                 textPaint.getTextBounds(text, 0, text.length, bounds)
                 val centerX = panel.centerX()

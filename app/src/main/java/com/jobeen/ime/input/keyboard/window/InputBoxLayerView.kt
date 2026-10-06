@@ -135,6 +135,14 @@ class InputBoxLayerView(
         typeface = FontManager.fromAsset(context, "fonts/xiaolai-mono-regular.ttf")
     }
     private val selectionPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    // onDraw 复用对象：旧实现每帧新建多个 Paint/RectF，且光标闪烁的静止期
+    // 也每秒全量重建 StaticLayout；布局按 (文本, 区域宽) 缓存，变化才重建
+    private val boxBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val underlinePaint = Paint()
+    private val boxRectScratch = RectF()
+    private val textRegionScratch = RectF()
+    private var layoutCacheText: String? = null
+    private var layoutCacheWidth: Int = -1
     private var closeIcon: Drawable? = null
     private var enterIcon: Drawable? = null
 
@@ -234,14 +242,11 @@ class InputBoxLayerView(
         val boxRight = w - outerPad
         val boxTop = titleRowBottom + titleGap
         val boxBottom = h - outerPad
-        val boxRect = RectF(boxLeft, boxTop, boxRight, boxBottom)
+        val boxRect = boxRectScratch.apply { set(boxLeft, boxTop, boxRight, boxBottom) }
         inputRect.set(boxRect)
 
-        val boxBg = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = colors.keyBackground
-            style = Paint.Style.FILL
-        }
-        canvas.drawRoundRect(boxRect, dp(10f), dp(10f), boxBg)
+        boxBgPaint.color = colors.keyBackground
+        canvas.drawRoundRect(boxRect, dp(10f), dp(10f), boxBgPaint)
 
         // 输入框内右侧圆形完成按钮（偏下）
         val hasText = (buffer?.text ?: "").isNotEmpty()
@@ -261,7 +266,7 @@ class InputBoxLayerView(
         val textRight = enterRect.left - dp(6f)
         val textTop = boxTop + padY
         val textBottom = boxBottom - padY
-        val textRegion = RectF(textLeft, textTop, textRight, textBottom)
+        val textRegion = textRegionScratch.apply { set(textLeft, textTop, textRight, textBottom) }
         textAreaRect.set(textRegion)
 
         val text = buffer?.text ?: ""
@@ -296,10 +301,19 @@ class InputBoxLayerView(
             textPaint.textSize = 17f * density
             textPaint.color = colors.keyText
             val regionW = (textRegion.width()).toInt().coerceAtLeast(1)
-            val layout = StaticLayout.Builder.obtain(text, 0, text.length, textPaint, regionW)
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL).setLineSpacing(0f, 1.25f)
-                .setIncludePad(false).build()
-            textLayout = layout
+            // 布局缓存：文本与区域宽未变时复用（光标闪烁帧不再全量重排）
+            val cached = textLayout
+            val layout = if (cached != null && layoutCacheText == text && layoutCacheWidth == regionW) {
+                cached
+            } else {
+                StaticLayout.Builder.obtain(text, 0, text.length, textPaint, regionW)
+                    .setAlignment(Layout.Alignment.ALIGN_NORMAL).setLineSpacing(0f, 1.25f)
+                    .setIncludePad(false).build().also {
+                        textLayout = it
+                        layoutCacheText = text
+                        layoutCacheWidth = regionW
+                    }
+            }
             val selection = buffer?.selection
             val hasSelection = selection != null && selection.first != selection.second
 
@@ -392,10 +406,9 @@ class InputBoxLayerView(
                     val cs = comp.first.coerceIn(0, text.length)
                     val ce = comp.second.coerceIn(cs, text.length)
                     if (ce > cs) {
-                        val uColor = 0xFFFFFFFF.toInt()
                         val uH = 1f.coerceAtLeast(density.toFloat())
                         val uYOff = textPaint.fontMetrics.descent + 1.5f * density
-                        val uPaint = Paint().apply { color = uColor }
+                        val uPaint = underlinePaint.apply { color = 0xFFFFFFFF.toInt() }
                         for (i in cs until ce) {
                             if (text[i] == '\n') continue
                             val line = layout.getLineForOffset(i)
