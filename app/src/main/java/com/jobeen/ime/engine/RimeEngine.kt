@@ -551,7 +551,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 预测路径同样要过滤已删除词（删除过滤不能只挂在 Rime 候选还原上）
                     val visible = action.candidates.filterNot { DeletedWordsStore.isDeleted(it.text) }
                     state.predictionVisible = visible.isNotEmpty()
-                    emitMessage(EngineMessage.Candidates(visible, 0, 0))
+                    // 预测候选是本地联想的完整列表、没有分页：total 显式给
+                    // 确切条数，避免下游按 -1（未知）误判"还有更多"而在
+                    // 预测态触发引擎分页补取、把组字候选拼进联想列表
+                    emitMessage(EngineMessage.Candidates(visible, 0, 0, total = visible.size))
                 }
             }
 
@@ -839,6 +842,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 重排/排序还原（那套只管首屏），仅过滤已删词、保持引擎原序。
      */
     override fun loadMoreCandidates() {
+        // 预测（联想）显示期间不补取：分页补的是引擎组字候选，拼进
+        // 联想列表会串味。正常由消息侧 total 保证预测态不触发，这里
+        // 再兜一道（批次计数是上一组字批次的残留值）
+        if (state.predictionVisible) return
         val start = candidateBatchLoaded
         if (start <= 0) return
         val total = candidateBatchTotal
@@ -891,7 +898,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             // 兜底分支也要用过滤后的列表，故在 try 外先算好
             val filtered = msg.list.filterNot { DeletedWordsStore.isDeleted(it.text) }
             val filteredMsg = if (filtered.size == msg.list.size) msg
-                else EngineMessage.Candidates(filtered, msg.highlighted, msg.page)
+                else EngineMessage.Candidates(filtered, msg.highlighted, msg.page, total = msg.total)
             try {
                 val ctx = context
                 if (ctx == null) {
@@ -910,7 +917,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     val sortedList = rerankManager?.rerank(filteredMsg.list, inputContext, null)
                     actions.send(
                         Action.CandidatesReady(
-                            requestId, EngineMessage.Candidates(sortedList ?: filteredMsg.list, 0, 0)
+                            requestId, EngineMessage.Candidates(
+                                sortedList ?: filteredMsg.list, 0, 0, total = filteredMsg.total
+                            )
                         )
                     )
                 } else {
@@ -932,7 +941,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         Action.CandidatesReady(
                             requestId, if (savedIds.isNullOrEmpty()) filteredMsg
                             else EngineMessage.Candidates(
-                                restoreCandidateOrder(filteredMsg.list, savedIds), 0, 0
+                                restoreCandidateOrder(filteredMsg.list, savedIds), 0, 0,
+                                total = filteredMsg.total
                             )
                         )
                     )

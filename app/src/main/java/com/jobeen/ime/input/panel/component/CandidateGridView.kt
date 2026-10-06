@@ -369,8 +369,11 @@ class CandidateGridView(
         private fun checkNeedMore() {
             if (!hasMoreCandidates || needMoreRequested) return
             val limit = maxScroll
-            if (limit <= 0f) return
-            if (scrollOffsetY >= limit - rowH * 1.5f) {
+            // 内容填不满一屏（limit=0）时同样要补取：首屏候选恰好一屏高
+            // 时用户根本滚不动，不能等"滚动到底"才触发。补取回来列表
+            // 更新会复位请求标志并重绘，此处再判定——如此续取到内容
+            // 可滚动或引擎到底（hasMoreCandidates 转 false）为止
+            if (limit <= 0f || scrollOffsetY >= limit - rowH * 1.5f) {
                 needMoreRequested = true
                 onNeedMoreCandidates?.invoke()
             }
