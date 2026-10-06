@@ -45,6 +45,10 @@ class ImeInputMethodService : InputMethodService() {
     private var showingDialog: android.app.Dialog? = null
     private var lastSelectionStart = 0
     private var lastSelectionEnd = 0
+
+    /** onUpdateSelection 的探针合并：窗口内连发只保留最后一次 */
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val pendingNotifyInputChanged = Runnable { notifyInputChanged() }
     private val themePrefs: SharedPreferences by lazy {
         getSharedPreferences(KeyboardManager.PREFS_NAME, MODE_PRIVATE)
     }
@@ -272,7 +276,12 @@ class ImeInputMethodService : InputMethodService() {
         keyboardWindow?.onSelectionUpdate(newSelStart, newSelEnd)
         // 光标/选区变化：engine 侧光标前文本缓存失效
         engine?.onSelectionChanged()
-        notifyInputChanged()
+        // 探针走 24ms 合并：选区变化在拖动光标/程序调整选区时会高频连发，
+        // 每次都跨进程探针是浪费；下游（onInputChanged/onInputCleared）只用
+        // 文本空/非空，窗口内取最后一次即可。onStartInputView 的即时调用
+        // 不走此路、不受影响
+        mainHandler.removeCallbacks(pendingNotifyInputChanged)
+        mainHandler.postDelayed(pendingNotifyInputChanged, 24L)
     }
 
     internal fun syncActiveInputState() {
