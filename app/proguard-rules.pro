@@ -86,3 +86,18 @@
 -keep class com.jobeen.ime.engine.rime.core.RimeKeyEvent {
     <init>(int, int, java.lang.String);
 }
+
+# ===== JNI 符号绑定类全保留（Kotlin external fun ↔ native Java_… 符号）=====
+# 通用规则 -keepclasseswithmembernames 只保「有调用方」的 native 方法：
+# v1.0.988 成品实测 39 个未被调用的 external 被 R8 整批删除（Rime 11、
+# MarisaJNI 18、UserDictManager 4、RimeConfig 2、RimeKeyEvent 3、OpenCC 1）。
+# 当前它们不可达所以无现网影响，但声明留着就是哑雷——将来任何新调用点都会
+# 在 release 首调时抛 UnsatisfiedLinkError（与 986 的 release-only 崩同型，
+# debug 测不出）。这 6 个类都很小，整类全保留，代价可忽略。
+-keep class com.jobeen.ime.engine.rime.core.Rime { *; }
+-keep class com.jobeen.ime.engine.rime.core.Rime$Companion { *; }
+-keep class com.jobeen.ime.engine.rime.core.RimeConfig { *; }
+-keep class com.jobeen.ime.engine.rime.core.RimeKeyEvent { *; }
+-keep class com.jobeen.ime.engine.rime.data.opencc.OpenCCDictManager { *; }
+-keep class com.jobeen.ime.engine.rime.data.userdict.UserDictManager { *; }
+-keep class com.jobeen.ime.base.marisa.MarisaJNI { *; }
