@@ -5,6 +5,7 @@ package com.jobeen.ime.engine.rime.core
 import com.jobeen.ime.engine.event.KeyModifiers
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.engine.rime.data.opencc.OpenCCDictManager
+import com.jobeen.ime.engine.rime.data.userdict.UserDictManager
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.isStorageAvailable
 import com.jobeen.ime.engine.data.CommandSymbol
@@ -94,6 +95,16 @@ class Rime : RimeApi, RimeLifecycleOwner {
     override suspend fun syncUserData(): Boolean = withRimeContext {
         Companion.syncUserData()
     }
+
+    override suspend fun getUserDictList(): List<String> = withRimeContext {
+        UserDictManager.getUserDictList().toList()
+    }
+
+    override suspend fun importUserDictLive(dictName: String, textFile: String): Int =
+        withRimeContext { UserDictManager.importUserDictLive(dictName, textFile) }
+
+    override suspend fun exportUserDictLive(dictName: String, textFile: String): Int =
+        withRimeContext { UserDictManager.exportUserDictLive(dictName, textFile) }
 
     override suspend fun processKey(value: Int, modifiers: UInt, isVirtual: Boolean): Boolean =
         withRimeContext { processKeyInner(value, modifiers.toInt(), isVirtual) }
