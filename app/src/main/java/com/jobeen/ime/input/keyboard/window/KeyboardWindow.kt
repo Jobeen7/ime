@@ -51,8 +51,12 @@ class KeyboardWindow(
         view.keyActionListener = listener
     }
 
-    fun setCandidates(list: List<EngineMessage.Candidate>) {
-        view.setCandidates(list)
+    fun setCandidates(list: List<EngineMessage.Candidate>, hasMore: Boolean = false) {
+        view.setCandidates(list, hasMore)
+    }
+
+    fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int) {
+        view.appendCandidates(list, total)
     }
 
     fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>) {
