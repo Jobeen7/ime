@@ -34,4 +34,7 @@ class CandidateSortingManager(private val db: AppDatabase) {
     /** 读取候选集合上次保存的排序结果；无记录时返回 null。 */
     suspend fun load(candidates: List<Candidate>): List<Int>? =
         dao.loadSorting(CandidateSortingKey.compute(candidates.map { it.text }))?.candidateIds
+
+    /** 排序表是否为空（供热路径缓存判空，避免每键一次注定无结果的查询） */
+    suspend fun isTableEmpty(): Boolean = dao.count() == 0
 }
