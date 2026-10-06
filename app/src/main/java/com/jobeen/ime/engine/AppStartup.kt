@@ -3,7 +3,6 @@ package com.jobeen.ime.engine
 import android.content.Context
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.base.log.AppLogBuffer
-import com.jobeen.ime.base.speech.SherpaSpeechClient
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.ResourceExtractorUtil
 import com.jobeen.ime.base.util.TraditionalConverter
@@ -45,7 +44,6 @@ object AppStartup {
                 Step("setupInputFeedbacks", ::setupInputFeedbacks),
                 // 引擎初始化依赖资源解压：资源失败时跳过，避免半初始化状态
                 Step("setupEngine", ::setupEngine, requires = setOf("releaseResourcesIfNeeded")),
-                Step("setupSherpaSpeech", ::setupSherpaSpeech),
                 Step("prewarmOpencc", ::prewarmOpencc),
             )
             // 每一步独立捕获异常并记日志：某一步失败不直接杀进程，
@@ -98,10 +96,6 @@ object AppStartup {
             KeyboardStateManager.handleEngineMessage(it)
         }
         engine.initialize(context)
-    }
-
-    private fun setupSherpaSpeech(context: Context) {
-        SherpaSpeechClient.preStartSync(context)
     }
 
     private fun setupInputFeedbacks(context: Context) {
