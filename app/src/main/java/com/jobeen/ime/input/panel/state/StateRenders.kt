@@ -55,7 +55,8 @@ class IdleStateRender(
 /** 组字态：菜单栏用候选药丸渲染，展开态展示候选网格。 */
 class ComposingStateRender(
     private val ctx: StateRenderContext,
-    private val candidates: List<EngineMessage.Candidate>,
+    // var：同态新批次复用本对象时原地更新，展开时 showExpand 读到的才是最新批次
+    var candidates: List<EngineMessage.Candidate>,
 ) : IStateRender {
 
     override fun createToolbarRenderer(): ComposingRenderer {
@@ -82,7 +83,7 @@ class ComposingStateRender(
 /** 预测态：与组字态共用候选渲染器，但进入时强制收起展开栏。 */
 class PredictionStateRender(
     private val ctx: StateRenderContext,
-    private val candidates: List<EngineMessage.Candidate>,
+    var candidates: List<EngineMessage.Candidate>,
 ) : IStateRender {
     override fun createToolbarRenderer(): ComposingRenderer {
         return ComposingRenderer(
