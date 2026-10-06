@@ -190,25 +190,29 @@ class SpeechRecognitionService : Service() {
         sessionActive.set(false)
         holding.set(false)
         audioRecord?.runCatching { stop() }
-        // 先等在途解码收尾，再释放资源。decode 是 audioLock 内的 native
-        // 阻塞调用，不响应协程取消：旧实现先 scope.cancel() 再立刻 release
-        // stream，采集协程的收尾解码可能踩到已释放的 stream/recognizer。
-        // 现在让采集协程自然结束（其 finally 会释放本会话的 stream），
-        // onDestroy 的释放只作兜底；等待设上限，超时不至于卡死销毁流程。
+        // 等待+释放整段挪到后台线程：decode 是 audioLock 内的 native 阻塞
+        // 调用，不响应协程取消，必须等在途解码收尾后才能 release stream/
+        // recognizer（否则采集协程的收尾解码踩已释放对象）。旧实现在主
+        // 线程 runBlocking 等最多 2 秒，堵 :speech 进程的主 Looper。
+        // 收尾顺序不变（join 在 release 之前、同一线程串行），只是换线程；
+        // 资源引用全是本实例字段，新服务实例有独立引用集，互不串扰；
+        // 进程若在收尾完成前被系统回收，native 资源随进程死亡由系统处理。
         val job = audioJob
         audioJob = null
-        if (job != null) {
-            runCatching {
-                runBlocking {
-                    withTimeoutOrNull(DESTROY_JOIN_TIMEOUT_MS) { job.join() }
+        Thread({
+            if (job != null) {
+                runCatching {
+                    runBlocking {
+                        withTimeoutOrNull(DESTROY_JOIN_TIMEOUT_MS) { job.join() }
+                    }
                 }
             }
-        }
-        scope.cancel()
-        synchronized(audioLock) {
-            streamRef.getAndSet(null)?.runCatching { release() }
-            recognizerRef.getAndSet(null)?.runCatching { release() }
-        }
+            scope.cancel()
+            synchronized(audioLock) {
+                streamRef.getAndSet(null)?.runCatching { release() }
+                recognizerRef.getAndSet(null)?.runCatching { release() }
+            }
+        }, "speech-destroy-cleanup").apply { isDaemon = true }.start()
     }
 
     private fun sendClient(
