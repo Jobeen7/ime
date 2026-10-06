@@ -57,9 +57,9 @@ object WanxiangUpdateManager {
 
     const val PREFS_NAME = "wanxiang_update"
     private const val KEY_SCHEMA_VERSION = "schema_version"
-    // 内置随 App 打包的万象 Lite 数据版本：resource.zip 内 shared/dicts/*.dict.yaml
-    // 取自官方 Release v18.0.15 的 rime-wanxiang-lite.zip（2026-09-29 打包）
-    const val BUILTIN_SCHEMA_VERSION = "v18.0.15"
+    // 内置随 App 打包的万象 Lite 数据版本（仅作落盘 version.txt 读不到时的
+    // 兜底；展示优先读 shared/version.txt，见 readBundledSchemaVersion）
+    const val BUILTIN_SCHEMA_VERSION = "v18.1.0"
     private const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
     // 下载时计算的内容指纹（用于本地/远端比对）
     private const val KEY_DICT_REMOTE_FP = "dict_remote_fp"
@@ -70,6 +70,13 @@ object WanxiangUpdateManager {
     private const val PART_SUFFIX = ".part"
     private const val BUFFER_SIZE = 32 * 1024
     private const val REPORT_STEP = 256 * 1024L
+
+    // 下载/解压体积上限（正常量级：方案包约 32MB、语法模型约 400MB、单个
+    // 词库文件远小于 64MB）：留足余量，只拦上游污染/异常流写满存储
+    private const val MAX_SCHEMA_BYTES = 128L * 1024 * 1024
+    private const val MAX_MODEL_BYTES = 600L * 1024 * 1024
+    private const val MAX_ENTRY_BYTES = 64L * 1024 * 1024
+    private const val MAX_EXTRACT_TOTAL_BYTES = 256L * 1024 * 1024
 
     private val client = OkHttpClient.Builder()
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -161,8 +168,12 @@ object WanxiangUpdateManager {
         val dictsDir = File(DataManager.sharedDataDir, "dicts")
         val gramFile = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
         LocalInfo(
-            // 未更新过则显示内置版本（v18.0.15，resource.zip 内置）
-            schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null) ?: BUILTIN_SCHEMA_VERSION,
+            // 未在线更新过则显示内置版本：优先读解压落盘的 shared/version.txt
+            // （随打包换版自动跟随，不依赖手改常量——常量曾停在 v18.0.15 与
+            // 实际内置 18.1.0 脱节，方案页本地版本错报）
+            schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null)
+                ?: readBundledSchemaVersion()
+                ?: BUILTIN_SCHEMA_VERSION,
             dictFingerprint = try {
                 cachedDictsFingerprint(prefs, dictsDir)
             } catch (e: CancellationException) {
@@ -193,6 +204,38 @@ object WanxiangUpdateManager {
     private const val KEY_FP_GRAM_STATE = "fp_cache_gram_state"
     private const val KEY_FP_DICT = "fp_cache_dict"
     private const val KEY_FP_DICT_STATE = "fp_cache_dict_state"
+
+    /**
+     * 不跟随符号链接的递归删除：File.deleteRecursively 遇到指向目录的软链
+     * 会跟进去删目标内容；解压目录虽由本 App 写入，仍按不跟随实现兜底。
+     * 纯 java.io 实现（java.nio.file 要 API 26+，minSdk 24）。
+     */
+    private fun File.deleteRecursivelyNoFollow() {
+        if (!exists()) return
+        if (isDirectory && !isSymlink()) {
+            listFiles()?.forEach { it.deleteRecursivelyNoFollow() }
+        }
+        delete()
+    }
+
+    /** 软链判定（经典 canonical 对比法，不依赖 java.nio） */
+    private fun File.isSymlink(): Boolean {
+        val parent = parentFile ?: return false
+        val canonicalParent = runCatching { parent.canonicalFile }.getOrNull() ?: return false
+        val inCanonicalParent = File(canonicalParent, name)
+        val canonical = runCatching { inCanonicalParent.canonicalPath }.getOrNull() ?: return false
+        return canonical != inCanonicalParent.path
+    }
+
+    /** 内置方案版本：读资源解压落盘的 shared/version.txt（如 "18.1.0"），补上 v 前缀与常量口径对齐 */
+    private fun readBundledSchemaVersion(): String? = runCatching {
+        val f = File(DataManager.sharedDataDir, "version.txt")
+        if (f.isFile) {
+            f.readText().trim().takeIf { it.isNotEmpty() }?.let { "v$it" }
+        } else {
+            null
+        }
+    }.getOrNull()
 
     private suspend fun cachedFileFingerprint(
         prefs: android.content.SharedPreferences,
@@ -357,7 +400,7 @@ object WanxiangUpdateManager {
             if (info.schemaUpdateAvailable) {
                 val zipFile = File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX")
                 zipFile.delete()
-                val ok = downloadFile(schemaUrl(info.schemaRemoteVersion), zipFile) { d, t ->
+                val ok = downloadFile(schemaUrl(info.schemaRemoteVersion), zipFile, MAX_SCHEMA_BYTES) { d, t ->
                     onProgress(UpdateProgress(UpdateProgress.Stage.SCHEMA_DOWNLOAD, d, t))
                 }
                 if (!ok) return@withContext false
@@ -367,7 +410,7 @@ object WanxiangUpdateManager {
 
                 // 2. 解压词库到临时目录并校验（暂不搬移，等模型也下载成功后一起应用）
                 extractDir = File(workDir, "dicts_new").apply {
-                    deleteRecursively()
+                    deleteRecursivelyNoFollow()
                     mkdirs()
                 }
                 val count = extractDicts(finalZip, extractDir) { done, total ->
@@ -393,7 +436,7 @@ object WanxiangUpdateManager {
                 val target = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
                 val partial = File(target.parentFile, target.name + PART_SUFFIX)
                 partial.delete()
-                val ok = downloadFile(GRAM_URL, partial) { d, t ->
+                val ok = downloadFile(GRAM_URL, partial, MAX_MODEL_BYTES) { d, t ->
                     onProgress(UpdateProgress(UpdateProgress.Stage.GRAM_DOWNLOAD, d, t))
                 }
                 if (!ok) {
@@ -483,7 +526,7 @@ object WanxiangUpdateManager {
             // 清理临时文件，避免占用存储空间
             runCatching { File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX").delete() }
             runCatching { File(workDir, "rime-wanxiang-lite.zip").delete() }
-            runCatching { File(workDir, "dicts_new").deleteRecursively() }
+            runCatching { File(workDir, "dicts_new").deleteRecursivelyNoFollow() }
             // gram 成功时已 rename 走；失败/取消时清掉 .part 残留
             runCatching { gramPartial?.delete() }
         }
@@ -499,6 +542,7 @@ object WanxiangUpdateManager {
         onProgress: (done: Int, total: Int) -> Unit,
     ): Int = withContext(Dispatchers.IO) {
         var done = 0
+        var extractedBytes = 0L
         val destCanonical = destDir.canonicalPath
         // 用 ZipFile 读中央目录：条目数直接可得，不必像 ZipInputStream 那样
         // 先把整个包流式过一遍（等于完整解压两遍）
@@ -521,8 +565,22 @@ object WanxiangUpdateManager {
                 // 路径穿越防护（必须带分隔符：无分隔符前缀比较可被同前缀兄弟目录绕过）
                 if (destFile.path.startsWith(destCanonical + File.separator)) {
                     destFile.parentFile?.mkdirs()
+                    // 解压体积上限：防 zip 炸弹（小压缩包解出数 GB 伪词库写满存储）
+                    var entryBytes = 0L
                     zf.getInputStream(entry).use { input ->
-                        destFile.outputStream().use { out -> input.copyTo(out, BUFFER_SIZE) }
+                        destFile.outputStream().use { out ->
+                            val buf = ByteArray(BUFFER_SIZE)
+                            while (true) {
+                                val n = input.read(buf)
+                                if (n < 0) break
+                                entryBytes += n
+                                extractedBytes += n
+                                if (entryBytes > MAX_ENTRY_BYTES || extractedBytes > MAX_EXTRACT_TOTAL_BYTES) {
+                                    throw IllegalStateException("词库解压体积超上限")
+                                }
+                                out.write(buf, 0, n)
+                            }
+                        }
                     }
                     done++
                     onProgress(done, total)
@@ -540,6 +598,7 @@ object WanxiangUpdateManager {
     private suspend fun downloadFile(
         url: String,
         target: File,
+        maxBytes: Long,
         onProgress: (downloaded: Long, total: Long) -> Unit,
     ): Boolean {
         return runCatching {
@@ -550,6 +609,12 @@ object WanxiangUpdateManager {
                 }
                 val body = response.body ?: return false
                 val total = body.contentLength()
+                // 体积上限：上游被污染或异常无限流响应可写满设备存储；声明
+                // 长度超限直接拒，chunked 无长度时靠下面累计字节数兜底
+                if (total > maxBytes) {
+                    Timber.w("下载体积超上限：声明 %d 字节，上限 %d", total, maxBytes)
+                    return false
+                }
                 body.byteStream().use { input ->
                     target.outputStream().use { output ->
                         val buffer = ByteArray(BUFFER_SIZE)
@@ -562,8 +627,12 @@ object WanxiangUpdateManager {
                             if (count == 0) continue
                             output.write(buffer, 0, count)
                             downloaded += count
+                            if (downloaded > maxBytes) {
+                                Timber.w("下载体积超上限：已下载 %d 字节，上限 %d", downloaded, maxBytes)
+                                return false
+                            }
                             if (downloaded - reported >= REPORT_STEP ||
-                                (total in 1 downTo downloaded)
+                                (total > 0 && downloaded >= total)
                             ) {
                                 onProgress(downloaded, total)
                                 reported = downloaded
