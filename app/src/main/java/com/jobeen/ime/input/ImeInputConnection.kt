@@ -27,6 +27,9 @@ import kotlin.collections.ArrayDeque
 class ImeInputConnection(private val context: Context? = null) : InputConnection {
     companion object {
         const val MAX_LENGTH = 1000
+
+        /** undo 快照总字符上限（与条数上限双钳，防快照全文拷贝无界累积） */
+        const val MAX_UNDO_TOTAL_CHARS = 200_000
     }
 
     private val editable: Editable = Editable.Factory.getInstance().newEditable("")
@@ -45,7 +48,12 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         val snap = Snapshot(editable.toString(), cursor)
         if (undoStack.lastOrNull() == snap) return
         undoStack.addLast(snap)
-        while (undoStack.size > 200) undoStack.removeFirst()
+        // 双上限：条数 + 总字符数（每份快照都是全文拷贝，只钳条数时
+        // 总量随单份长度线性膨胀）
+        var totalChars = undoStack.sumOf { it.text.length }
+        while (undoStack.size > 200 || (totalChars > MAX_UNDO_TOTAL_CHARS && undoStack.size > 1)) {
+            totalChars -= undoStack.removeFirst().text.length
+        }
         redoStack.clear()
     }
 

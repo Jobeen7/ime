@@ -404,35 +404,49 @@ class KeyboardWindowView(
             )
         }
 
-        panel.textEditingView.measure(
-            MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
-        )
+        // 覆盖层大多时候是 GONE 的：旧实现每次 onMeasure 都连 GONE 的一起
+        // 全量测一遍，逐个加可见性守卫（布局阶段对 GONE 子视图同样跳过）
+        if (!panel.textEditingView.isGone) {
+            panel.textEditingView.measure(
+                MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
+            )
+        }
 
-        panel.clipboardView.measure(
-            MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
-        )
+        if (!panel.clipboardView.isGone) {
+            panel.clipboardView.measure(
+                MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
+            )
+        }
 
-        panel.menuGridView.measure(
-            MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
-        )
+        if (!panel.menuGridView.isGone) {
+            panel.menuGridView.measure(
+                MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
+            )
+        }
 
-        panel.confirmOverlay.measure(
-            MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
-        )
+        if (!panel.confirmOverlay.isGone) {
+            panel.confirmOverlay.measure(
+                MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
+            )
+        }
 
-        addPhraseLayer.measure(
-            MeasureSpec.makeMeasureSpec(totalWidth, MeasureSpec.EXACTLY),
-            MeasureSpec.makeMeasureSpec(stripH, MeasureSpec.EXACTLY),
-        )
+        if (addPhraseActive && !addPhraseLayer.isGone) {
+            addPhraseLayer.measure(
+                MeasureSpec.makeMeasureSpec(totalWidth, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(stripH, MeasureSpec.EXACTLY),
+            )
+        }
 
-        imeToastView.measure(
-            MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.AT_MOST),
-            MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.AT_MOST),
-        )
+        if (!imeToastView.isGone) {
+            imeToastView.measure(
+                MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.AT_MOST),
+                MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.AT_MOST),
+            )
+        }
 
         val totalHeight = stripH + barH + cHeight + bPad + bottomInset
         setMeasuredDimension(totalWidth, totalHeight)

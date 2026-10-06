@@ -138,14 +138,31 @@ class ClipboardView(
 
     private var reloadJob: kotlinx.coroutines.Job? = null
 
+    // 布局测宽专用 Paint（在主线程从绘制 Paint 同步参数后交给后台线程用，
+    // 避免后台与 onDraw 共用同一个 Paint 实例）
+    private val measureTextPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+    private val measureIndexPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+
     private fun reload() {
         // 取消上一轮未完成的加载：避免连续 show/refresh 时旧结果覆盖新结果、滚动被重复重置
         reloadJob?.cancel()
+        val tab = clipTab
+        measureTextPaint.set(textPaint)
+        measureIndexPaint.set(indexPaint)
+        val w = width
         reloadJob = viewScope.launch {
-            clipboardEntries = ClipboardManager.getEntries(context)
-            phrases = PhraseManager.getAll(context)
+            // 只加载当前标签页的数据（旧实现双表全量加载，另一个标签用不到也查）；
+            // 断行布局计算放后台线程（条目上限可配到 500，旧实现全压主线程）
+            val layouts = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                if (tab == ClipboardTab.CLIPBOARD) {
+                    clipboardEntries = ClipboardManager.getEntries(context)
+                } else {
+                    phrases = PhraseManager.getAll(context)
+                }
+                buildRowLayouts(tab, w, measureTextPaint, measureIndexPaint)
+            }
+            rowLayouts = layouts
             resetScroll()
-            computeRowLayouts()
             invalidate()
         }
     }
@@ -174,12 +191,22 @@ class ClipboardView(
             rowLayouts = emptyList()
             return
         }
-        rowLayouts = if (clipTab == ClipboardTab.CLIPBOARD) {
-            val fm = textPaint.fontMetrics
-            val lh = fm.descent - fm.ascent
-            val maxTextW = w - hMargin * 2 - pillPad * 2 - indexPaint.measureText("9. ") - cloudIconSize - 2f * density
+        rowLayouts = buildRowLayouts(clipTab, w, textPaint, indexPaint)
+    }
+
+    private fun buildRowLayouts(
+        tab: ClipboardTab,
+        w: Int,
+        tp: android.graphics.Paint,
+        ip: android.graphics.Paint,
+    ): List<RowLayout> {
+        if (w <= 0) return emptyList()
+        val fm = tp.fontMetrics
+        val lh = fm.descent - fm.ascent
+        return if (tab == ClipboardTab.CLIPBOARD) {
+            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - cloudIconSize - 2f * density
             clipboardEntries.map { entry ->
-                val lines = breakText(entry.text, maxTextW, 4)
+                val lines = breakText(tp, entry.text, maxTextW, 4)
                 RowLayout(
                     height = lh * lines.size + pillPad * 2,
                     indexLabel = "",
@@ -189,11 +216,9 @@ class ClipboardView(
                 )
             }
         } else {
-            val fm = textPaint.fontMetrics
-            val lh = fm.descent - fm.ascent
-            val maxTextW = w - hMargin * 2 - pillPad * 2 - indexPaint.measureText("9. ") - 2f * density
+            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - 2f * density
             phrases.map { phrase ->
-                val lines = breakText(phrase.text, maxTextW, 4)
+                val lines = breakText(tp, phrase.text, maxTextW, 4)
                 RowLayout(
                     height = lh * lines.size + pillPad * 2,
                     indexLabel = "",
@@ -205,19 +230,25 @@ class ClipboardView(
         }
     }
 
-    private fun breakText(text: String, maxWidth: Float, maxLines: Int): List<String> {
+    private fun breakText(
+        paint: android.graphics.Paint,
+        text: String,
+        maxWidth: Float,
+        maxLines: Int,
+    ): List<String> {
         val lines = mutableListOf<String>()
         val cleanText = text.replace('\n', ' ')
         var start = 0
         while (start < cleanText.length && lines.size < maxLines) {
-            val count = textPaint.breakText(cleanText, start, cleanText.length, true, maxWidth, null)
+            val count = paint.breakText(cleanText, start, cleanText.length, true, maxWidth, null)
             var line = cleanText.substring(start, start + count)
             start += count
             if (start < cleanText.length && lines.size == maxLines - 1) {
-                while (line.isNotEmpty() && textPaint.measureText(line + "...") > maxWidth) {
-                    line = line.dropLast(1)
-                }
-                line += "..."
+                // 省略号截断用 breakText 一次算出可容纳字符数：旧实现逐字
+                // dropLast + measureText，长文本时接近 O(n²)
+                val ellipsis = "..."
+                val fit = paint.breakText(line, true, maxWidth - paint.measureText(ellipsis), null)
+                line = line.substring(0, fit.coerceIn(0, line.length)) + ellipsis
             }
             lines.add(line)
         }
