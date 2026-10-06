@@ -46,6 +46,19 @@ class CandidateGridView(
     var onDragComplete: ((List<EngineMessage.Candidate>) -> Unit)? = null
     var onWordForget: ((EngineMessage.Candidate, Float, Float) -> Unit)? = null
 
+    /**
+     * 候选在本机是否可显示：只判定单个 CJK 表意字——用网格实际绘制的
+     * Paint 查字体字形，设备字体无字形的扩展区生僻字（渲染成方框）判
+     * 为不可显示。多字词、符号、emoji、字母数字一律不动（词组即使含
+     * 个别生僻字也是可辨认的整体，且不在方框问题的主体范围内）。
+     */
+    fun isDisplayable(candidate: EngineMessage.Candidate): Boolean {
+        val text = candidate.text
+        if (text.codePointCount(0, text.length) != 1) return true
+        if (text.codePointAt(0) < 0x3400) return true
+        return gridCanvas.hasGlyph(text)
+    }
+
     /** 引擎侧是否还有未取的候选（面板在每次整表/追加更新时下发） */
     var hasMoreCandidates: Boolean = false
     /** 滚动接近底部且 hasMoreCandidates 时触发，由面板转给引擎补取下一页 */
@@ -378,6 +391,9 @@ class CandidateGridView(
                 onNeedMoreCandidates?.invoke()
             }
         }
+
+        /** 用实际绘制的 Paint 查字形（系统默认字体链，与真实渲染一致） */
+        fun hasGlyph(text: String): Boolean = textPaint.hasGlyph(text)
 
         private fun hitTest(x: Float, y: Float): Int {
             if (positions.isEmpty() || rowH <= 0f) return -1
