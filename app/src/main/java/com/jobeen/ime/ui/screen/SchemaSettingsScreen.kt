@@ -158,8 +158,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 }.getOrNull()
             }
-            // 本地信息：方案更新针对万象 Lite，直接显示 Lite
-            currentSchemaName = "Lite"
             if (currentId != null) {
                 val idx = enabledSchemas.indexOfFirst { it.id == currentId }
                 if (idx > 0) {
@@ -168,6 +166,17 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     saveOrder(prefs, enabledSchemas)
                 }
             }
+            // 「当前选择的方案」显示万象变体短名（Base/Pro/Lite/Pure），按
+            // 实际方案派生，不再写死 Lite：当前方案识别不出变体（如英文方案）
+            // 时在已启用列表里找第一个万象拼音方案，都没有则显示当前方案名
+            val current = enabledSchemas.firstOrNull { it.id == currentId }
+                ?: enabledSchemas.firstOrNull()
+            val variant = current?.let {
+                WanxiangUpdateManager.variantNameOf(it.id, it.name)
+            } ?: enabledSchemas.firstNotNullOfOrNull {
+                WanxiangUpdateManager.variantNameOf(it.id, it.name)
+            }
+            currentSchemaName = variant ?: current?.name ?: ""
             // 计算本地信息（词库/模型指纹），用于"本地信息"卡片
             localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
             loaded = true
