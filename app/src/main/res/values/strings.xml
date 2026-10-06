@@ -111,8 +111,8 @@
     <string name="update_available">发现新版本</string>
     <string name="update_latest">当前已是最新版本</string>
     <string name="update_check_failed">检查更新失败</string>
-    <string name="update_dialog_title">发现新版本 v%1$s</string>
-    <string name="update_dialog_message">安装包大小 %1$s，下载完成后将打开系统安装界面。</string>
+    <string name="update_found_version">发现新版本 v%1$s</string>
+    <string name="update_package_size">安装包 %1$s</string>
     <string name="update_download_install">下载并安装</string>
     <string name="update_cancel_download">取消下载</string>
     <string name="update_later">稍后再说</string>
