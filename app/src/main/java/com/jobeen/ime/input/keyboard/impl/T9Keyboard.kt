@@ -52,19 +52,8 @@ class T9Keyboard(
                 })
             return
         }
-        super.updateSidePanel(data.map { pinYin ->
-            KeyDef(
-                appearance = KeyDef.Appearance.Text(
-                    displayText = pinYin.pinYin,
-                    textSize = 15f,
-                    percentWidth = 0.5f,
-                    margin = false,
-                ),
-                behaviors = setOf(
-                    KeyDef.Behavior.Press(KeyboardAction.SelectCandidatePinYin(pinYin = pinYin))
-                ),
-            )
-        })
+        // 与候选网格侧栏共用同一份构建缓存，避免同批数据每键重复全量构建
+        super.updateSidePanel(com.jobeen.ime.input.panel.component.PinYinKeyDefCache.get(data))
     }
 
     companion object {
