@@ -137,8 +137,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private val daemon by lazy { RimeDaemon }
     private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
-    private val actions = Channel<Action>(Channel.UNLIMITED)
-    private val jobs by lazy { Channel<suspend RimeApi.() -> Unit>(Channel.UNLIMITED) }
+    // 两条队列都有界（旧实现 UNLIMITED）：正常深度个位数，容量只为异常
+    // 生产者（引擎通知风暴、长任务堵住消费端）兜底防无限堆积。溢出策略
+    // 分两边：jobs 全是控制任务，走 sendJob/awaitJob 的异步补投、永不丢；
+    // actions 经 dispatchAction 分发，易变类满时自丢、控制类异步补投。
+    private val actions = Channel<Action>(ACTION_QUEUE_CAPACITY)
+    private val jobs by lazy { Channel<suspend RimeApi.() -> Unit>(JOB_QUEUE_CAPACITY) }
     private var session: RimeSession? = null
     private var behaviorHosted: BehaviorHost? = null
     private var context: Context? = null
@@ -291,7 +295,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun processKey(service: InputMethodService, key: KeyEvent) {
-        actions.trySend(Action.ProcessKey(service, key))
+        dispatchAction(Action.ProcessKey(service, key))
     }
 
     private fun processKeyInternal(key: KeyEvent) {
@@ -343,7 +347,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun selectCandidate(candidate: Candidate) {
-        actions.trySend(Action.SelectCandidate(candidate))
+        dispatchAction(Action.SelectCandidate(candidate))
     }
 
     private suspend fun selectCandidateInternal(candidate: Candidate) {
@@ -416,7 +420,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun resetComposition() {
-        actions.trySend(Action.Reset)
+        dispatchAction(Action.Reset)
     }
 
     override fun moveCursor(service: InputMethodService, direction: Int) {
@@ -443,19 +447,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun selectCandidatePinYin(pinYin: CandidatePinYin) {
-        actions.trySend(Action.SelectCandidatePinYin(pinYin))
+        dispatchAction(Action.SelectCandidatePinYin(pinYin))
     }
 
     override fun segement() {
-        actions.trySend(Action.Segment)
+        dispatchAction(Action.Segment)
     }
 
     override fun selectSchema(schemaId: String) {
-        actions.trySend(Action.SelectSchema(schemaId))
+        dispatchAction(Action.SelectSchema(schemaId))
     }
 
     override fun undo(service: InputMethodService) {
-        actions.trySend(Action.Undo(service))
+        dispatchAction(Action.Undo(service))
     }
 
     override fun redo(service: InputMethodService) {
@@ -481,7 +485,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
 
     override fun flowed(behavior: IBehavior): Boolean {
-        actions.trySend(Action.Behavior(behavior))
+        dispatchAction(Action.Behavior(behavior))
         return true
     }
 
@@ -489,7 +493,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         behaviorHosted?.flowed(behavior) == true
 
     override fun resetState() {
-        actions.trySend(Action.Reset)
+        dispatchAction(Action.Reset)
     }
 
     private fun possibleCandidatePinYin() {
@@ -499,7 +503,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
             val currentInput = getRawInput()
             val confirmedLen = getInputConfirmedPosition()
-            actions.trySend(
+            dispatchAction(
                 Action.PossibleCandidatePinYinSnapshot(
                     schemaCached.candidateKind, currentInput, confirmedLen
                 )
@@ -739,7 +743,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
 
     override fun clear(service: InputMethodService) {
-        actions.trySend(Action.Clear(service))
+        dispatchAction(Action.Clear(service))
     }
 
     private suspend fun clearInternal() {
@@ -779,21 +783,50 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
     }
 
+    /**
+     * 动作队列的非挂起分发入口：先 trySend；队列满时易变类直接丢弃
+     * （预测/候选回执有 requestId 守卫，候选/组字类引擎通知会被下一批
+     * 取代），控制类（按键、选词、切方案、上屏、清空等）转异步挂起
+     * 补投、永不丢。协程上下文内可直接 actions.send 挂起等待。
+     */
+    private fun dispatchAction(action: Action) {
+        if (actions.trySend(action).isSuccess) return
+        if (action.isDroppable()) return
+        scope.launch { actions.send(action) }
+    }
+
+    private fun Action.isDroppable(): Boolean = when (this) {
+        is Action.PredictionReady, is Action.CandidatesReady -> true
+        is Action.RimeMessage -> when (message.messageType) {
+            RimeMessage.MessageType.Candidate, RimeMessage.MessageType.Composition,
+            RimeMessage.MessageType.InlinePreedit, RimeMessage.MessageType.DynamicPreedit,
+            RimeMessage.MessageType.Menu -> true
+            else -> false
+        }
+        else -> false
+    }
+
     override fun sendJob(block: suspend RimeApi.() -> Unit) {
-        jobs.trySend(block)
+        if (jobs.trySend(block).isFailure) {
+            // 队列满说明引擎正被长任务堵住：任务都是控制类（导词典、
+            // 清屏、切方案等），不许丢，转异步挂起入队等空位
+            scope.launch { jobs.send(block) }
+        }
     }
 
     override suspend fun <T> awaitJob(defaultValue: T, block: suspend RimeApi.() -> T): T {
         val deferred = CompletableDeferred<T>()
-        val result = jobs.trySend {
+        val task: suspend RimeApi.() -> Unit = {
             try {
                 deferred.complete(block())
             } catch (_: Throwable) {
                 deferred.complete(defaultValue)
             }
         }
-        if (!result.isSuccess) {
-            deferred.complete(defaultValue)
+        if (jobs.trySend(task).isFailure) {
+            // 同 sendJob：满时异步补投，任务仍会执行；等待方有 2 秒
+            // 超时兜底，超时先返回默认值，迟到的 complete 自动忽略
+            scope.launch { jobs.send(task) }
         }
         return withTimeoutOrNull(2000L) { deferred.await() } ?: defaultValue
     }
@@ -996,7 +1029,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun predict(commit: String) {
-        actions.trySend(Action.Predict(commit))
+        dispatchAction(Action.Predict(commit))
     }
 
     private fun requestPrediction(commit: String) {
@@ -1040,12 +1073,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun reload() {
-        actions.trySend(Action.Reload)
+        dispatchAction(Action.Reload)
     }
 
     //前端提交
     override fun commit(text: String) {
-        actions.trySend(Action.Commit(text))
+        dispatchAction(Action.Commit(text))
     }
 
     private fun requestCommit(text: String) {
@@ -1063,6 +1096,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun onInputCleared() {
-        actions.trySend(Action.InputCleared)
+        dispatchAction(Action.InputCleared)
     }
 }
