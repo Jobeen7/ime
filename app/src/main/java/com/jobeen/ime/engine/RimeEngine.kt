@@ -81,6 +81,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         /** 选词偏好表容量上限与裁剪检查节流间隔（按 upsert 次数计）。 */
         /** 分页补取的单页条数（与首屏 bulk 上限分开：续页可以大些，减少往返） */
         private const val CANDIDATE_PAGE_SIZE = 48
+        /** 每批候选补取封顶：再深处是字体无字形的扩展区生僻字，不加载 */
+        private const val CANDIDATE_BATCH_CAP = 200
         /** 动作/任务队列容量：远超正常深度，仅作异常堆积兜底 */
         private const val ACTION_QUEUE_CAPACITY = 512
         private const val JOB_QUEUE_CAPACITY = 256
@@ -853,9 +855,27 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         if (candidateLoadMoreInFlight) return
         candidateLoadMoreInFlight = true
         val batch = state.latestCandidateRequestId
+        // 封顶：每批最多累计取 CANDIDATE_BATCH_CAP 个候选。词库深处是
+        // 设备字体无字形的扩展区生僻字（渲染为方框、打出也无处可用），
+        // 200 已覆盖全部真实输入需求，不再往深处加载
+        val limit = minOf(CANDIDATE_PAGE_SIZE, CANDIDATE_BATCH_CAP - start)
         sendJob {
             try {
-                val page = getCandidates(start, CANDIDATE_PAGE_SIZE)
+                if (limit <= 0) {
+                    // 已达封顶：回空追加页把 UI 的「还有更多」关掉
+                    candidateBatchTotal = start
+                    emitMessage(
+                        EngineMessage.Candidates(
+                            list = emptyList(),
+                            highlighted = 0,
+                            page = 0,
+                            total = start,
+                            append = true,
+                        )
+                    )
+                    return@sendJob
+                }
+                val page = getCandidates(start, limit)
                 if (state.latestCandidateRequestId != batch) return@sendJob
                 val raw = page.size
                 if (raw == 0) {
@@ -863,7 +883,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     return@sendJob
                 }
                 candidateBatchLoaded = start + raw
-                if (raw < CANDIDATE_PAGE_SIZE) candidateBatchTotal = start + raw
+                if (raw < limit || candidateBatchLoaded >= CANDIDATE_BATCH_CAP) {
+                    candidateBatchTotal = candidateBatchLoaded
+                }
                 val items = page.mapIndexed { i, c ->
                     EngineMessage.Candidate(
                         index = start + i,
