@@ -57,6 +57,7 @@
 # R8 会改名/删除这些"看起来没被调用"的构造器，GetMethodID 返回 null 即 native 崩溃
 -keep class com.jobeen.ime.engine.rime.core.Rime {
     public static void handleMessage(int, java.lang.Object[]);
+    public static void handleNativeNotification(int, java.lang.Object[]);
 }
 -keep class com.jobeen.ime.engine.rime.core.CandidateProto {
     <init>(java.lang.String, java.lang.String, java.lang.String, java.lang.String);
