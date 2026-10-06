@@ -15,6 +15,8 @@ interface IEngine {
     fun finalize()
     fun processKey(service: InputMethodService, key: KeyEvent): Unit?
     fun selectCandidate(candidate: EngineMessage.Candidate)
+    /** 分页补取下一页候选（首屏只取少量，UI 滚动到底时请求）；无更多时应为空操作 */
+    fun loadMoreCandidates() {}
     suspend fun schemasList(): List<EngineMessage.Schema>
     fun clear(service: InputMethodService)
     fun resetComposition()

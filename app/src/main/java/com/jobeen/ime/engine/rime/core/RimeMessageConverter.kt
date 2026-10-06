@@ -84,6 +84,7 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
                 list = candidates,
                 highlighted = message.data.highlighted,
                 page = 0,
+                total = message.data.total,
             )
         }
 

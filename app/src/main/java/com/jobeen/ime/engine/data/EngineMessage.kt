@@ -7,6 +7,10 @@ sealed class EngineMessage {
         val list: List<Candidate>,
         val highlighted: Int,
         val page: Int,
+        /** 本批候选总数：-1 表示总数未知（首屏取满、后面还有）；>=0 为确切总数 */
+        val total: Int = -1,
+        /** true 表示这是分页补取的追加页，UI 应并入当前列表而非整表替换 */
+        val append: Boolean = false,
     ) : EngineMessage() {}
 
     data class Status(val isComposing: Boolean = false) : EngineMessage()

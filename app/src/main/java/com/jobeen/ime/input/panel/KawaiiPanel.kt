@@ -167,6 +167,7 @@ class KawaiiPanel(
         },
         onSidePanelAction = { listener?.onSidePanelAction(it) },
     ).apply {
+        onNeedMoreCandidates = { this@KawaiiPanel.listener?.onRequestMoreCandidates() }
         onWordForget = { candidate, x, y ->
             confirmOverlay.confirm(
                 message = context.getString(
@@ -555,11 +556,12 @@ class KawaiiPanel(
     }
 
     @SuppressLint("UseCompatLoadingForDrawables")
-    override fun setCandidates(list: List<EngineMessage.Candidate>) {
+    override fun setCandidates(list: List<EngineMessage.Candidate>, hasMore: Boolean) {
         if (!view.isLaidOut) {
-            view.post { setCandidates(list) }
+            view.post { setCandidates(list, hasMore) }
             return
         }
+        candidateGrid.hasMoreCandidates = hasMore
         if (list.isEmpty()) {
             view.setExpanded(false)
             view.scrollX = 0f
@@ -585,6 +587,31 @@ class KawaiiPanel(
             // 网格布局 ×2，旧实现一直双跑
         }
         view.invalidate()
+    }
+
+    /**
+     * 分页补取的追加页：并入当前组字/预测列表后走 state setter 的同态
+     * 复用分支原地更新（渲染器与展开网格同步）。非候选态忽略——补取请求
+     * 只由展开网格触发，回来时若用户已选词/清屏，追加页无处可放。
+     */
+    override fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int) {
+        if (list.isEmpty()) {
+            candidateGrid.hasMoreCandidates = false
+            return
+        }
+        when (val s = state) {
+            is State.Composing -> {
+                val merged = s.candidates + list
+                candidateGrid.hasMoreCandidates = total < 0 || merged.size < total
+                state = State.Composing(merged)
+            }
+            is State.Prediction -> {
+                val merged = s.candidates + list
+                candidateGrid.hasMoreCandidates = total < 0 || merged.size < total
+                state = State.Prediction(merged)
+            }
+            else -> {}
+        }
     }
 
     override fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>) {

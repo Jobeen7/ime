@@ -26,7 +26,15 @@ class MessageHandler(
             }
 
             is EngineMessage.Candidates -> {
-                window?.setCandidates(message.list)
+                // total=-1 表示首屏取满、总数未知（后面还有）；确切总数时
+                // 整表按 list.size 与 total 比。追加页把 total 原样交给面板，
+                // 由面板按合并后的总条数判定是否到底
+                if (message.append) {
+                    window?.appendCandidates(message.list, message.total)
+                } else {
+                    val hasMore = message.total < 0 || message.list.size < message.total
+                    window?.setCandidates(message.list, hasMore)
+                }
             }
 
             is EngineMessage.Depoly -> {

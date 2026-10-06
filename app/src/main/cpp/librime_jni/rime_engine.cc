@@ -31,7 +31,11 @@ extern void rime_require_module_predict();
 namespace {
 
     constexpr int kMaxSchemaIdLen = 2048;
-    constexpr int kBulkCandidateLimit = 100;
+    // 首屏批量取数上限：条带一屏约十余个、展开首屏约二十余个，24 够用。
+    // 旧值 100 使每键都构造上百个候选对象过 JNI，绝大多数从未被看到；
+    // 更多候选由 UI 滚动到底时走 getCandidates(start, limit) 分页补取，
+    // 取满本上限时 bulk 的 size 报 -1（总数未知）即"还有更多"的信号。
+    constexpr int kBulkCandidateLimit = 24;
 
     void requireModules() {
         rime_require_module_lua();

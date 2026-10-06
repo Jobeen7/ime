@@ -528,7 +528,11 @@ class KeyboardWindowView(
 
     private var currentKeyboard: IKeyboard? = null
 
-    fun setCandidates(list: List<EngineMessage.Candidate>) = panel.setCandidates(list)
+    fun setCandidates(list: List<EngineMessage.Candidate>, hasMore: Boolean = false) =
+        panel.setCandidates(list, hasMore)
+
+    fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int) =
+        panel.appendCandidates(list, total)
 
     fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>) {
         panel.onPossibleCandidatePinYin(pinyins)

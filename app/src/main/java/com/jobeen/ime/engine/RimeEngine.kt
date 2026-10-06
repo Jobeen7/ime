@@ -79,6 +79,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         private const val NO_PERSONALIZED_LEARNING_OPTION = "__no_personalized_learning"
 
         /** 选词偏好表容量上限与裁剪检查节流间隔（按 upsert 次数计）。 */
+        /** 分页补取的单页条数（与首屏 bulk 上限分开：续页可以大些，减少往返） */
+        private const val CANDIDATE_PAGE_SIZE = 48
         private const val PREFER_LIMIT = 5000
         private const val PRUNE_CHECK_INTERVAL = 200
     }
@@ -187,6 +189,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var predictionJob: Job? = null
     @Volatile
     private var candidateRestoreJob: Job? = null
+    /** 分页补取的批次状态：已从引擎取到的原始候选条数（分页 start 必须用原始计数，不能用 UI 过滤后的条数） */
+    @Volatile
+    private var candidateBatchLoaded: Int = 0
+    /** 本批候选总数：-1 = 未知（首屏取满、后面可能还有） */
+    @Volatile
+    private var candidateBatchTotal: Int = -1
+    @Volatile
+    private var candidateLoadMoreInFlight: Boolean = false
     /** 候选拖拽排序表判空缓存：null 语义用 false+首次查询实现，保存时由 resortCandidates 失效 */
     @Volatile
     private var sortingTableEmpty: Boolean = false
@@ -615,6 +625,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             is EngineMessage.Commit -> {
                 invalidatePendingCandidates()
+                candidateBatchLoaded = 0
+                candidateBatchTotal = -1
                 state.suppressNextEmptyCandidates = true
                 // native 刚上屏：前文缓存失效，预测读到新鲜前文
                 invalidateBeforeCursorCache()
@@ -622,6 +634,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
 
             is EngineMessage.Candidates -> {
+                // 记录分页批次：首屏 bulk 的原始条数与总数信号（total=-1 为
+                // 取满上限、后面可能还有），供 loadMoreCandidates 续取
+                candidateBatchLoaded = msg.list.size
+                candidateBatchTotal = msg.total
                 if (msg.list.isNotEmpty()) {
                     // Rime candidates take over the panel from prediction candidates.
                     state.predictionVisible = false
@@ -745,6 +761,57 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             deferred.complete(defaultValue)
         }
         return withTimeoutOrNull(2000L) { deferred.await() } ?: defaultValue
+    }
+
+    /**
+     * 分页补取：首屏 bulk 只取少量候选（native 上限），UI 滚动到底时经此
+     * 按已加载原始条数续取下一页。批次锚点用 latestCandidateRequestId：
+     * 补取在途时用户又打了键，新批次会 ++ 该值，回来时对不上即丢弃，
+     * 不会把上一编码的候选拼进新列表。追加页不走 restoreCandidates 的
+     * 重排/排序还原（那套只管首屏），仅过滤已删词、保持引擎原序。
+     */
+    override fun loadMoreCandidates() {
+        val start = candidateBatchLoaded
+        if (start <= 0) return
+        val total = candidateBatchTotal
+        if (total >= 0 && start >= total) return
+        if (candidateLoadMoreInFlight) return
+        candidateLoadMoreInFlight = true
+        val batch = state.latestCandidateRequestId
+        sendJob {
+            try {
+                val page = getCandidates(start, CANDIDATE_PAGE_SIZE)
+                if (state.latestCandidateRequestId != batch) return@sendJob
+                val raw = page.size
+                if (raw == 0) {
+                    candidateBatchTotal = start
+                    return@sendJob
+                }
+                candidateBatchLoaded = start + raw
+                if (raw < CANDIDATE_PAGE_SIZE) candidateBatchTotal = start + raw
+                val items = page.mapIndexed { i, c ->
+                    EngineMessage.Candidate(
+                        index = start + i,
+                        text = c.text,
+                        comment = c.comment,
+                        type = c.type,
+                    )
+                }.filterNot { DeletedWordsStore.isDeleted(it.text) }
+                if (items.isNotEmpty()) {
+                    messages.emit(
+                        EngineMessage.Candidates(
+                            list = items,
+                            highlighted = 0,
+                            page = 0,
+                            total = candidateBatchTotal,
+                            append = true,
+                        )
+                    )
+                }
+            } finally {
+                candidateLoadMoreInFlight = false
+            }
+        }
     }
 
     private fun restoreCandidates(msg: EngineMessage.Candidates) {
