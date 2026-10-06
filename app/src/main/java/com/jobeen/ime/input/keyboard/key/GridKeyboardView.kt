@@ -26,6 +26,8 @@ class GridKeyboardView(
 
     private var scrollOffsetY = 0f
     private var rowH = 0
+    private var lastMeasuredColW = -1
+    private var lastMeasuredRowH = -1
     private var totalRows = 0
 
     private val scroller = OverScroller(context)
@@ -95,15 +97,24 @@ class GridKeyboardView(
         // 只测可见行（上下各留 1 行缓冲）：分类最多近 400 个键，
         // 滚动时每帧全量 measure/layout 是主要卡顿源；不可见键滚入视口时再测
         val (first, last) = visibleRowRange()
+        // 尺寸未变且子 View 已按同规格测过时跳过：滚动每帧 requestLayout 会
+        // 把可见键整批重复 measure（fling 期约 30-70 个/帧），而它们的
+        // EXACTLY 规格在滚动中恒定，重复测量纯浪费
+        val sizeChanged = colW != lastMeasuredColW || rowH != lastMeasuredRowH
         for (i in 0 until childCount) {
             val row = if (columns > 0) i / columns else 0
             if (row !in first..last) continue
             val child = getChildAt(i)
+            if (!sizeChanged && child.measuredWidth == colW && child.measuredHeight == rowH) {
+                continue
+            }
             child.measure(
                 MeasureSpec.makeMeasureSpec(colW, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(rowH, MeasureSpec.EXACTLY)
             )
         }
+        lastMeasuredColW = colW
+        lastMeasuredRowH = rowH
         setMeasuredDimension(w, h)
     }
 

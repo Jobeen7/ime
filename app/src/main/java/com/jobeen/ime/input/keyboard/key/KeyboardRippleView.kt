@@ -54,6 +54,12 @@ class KeyboardRippleView(
     private var cx = 0f
     private var cy = 0f
 
+    // 当前波纹的脏区范围（帧间 invalidate 只刷这块）
+    private var dirtyLeft = 0
+    private var dirtyTop = 0
+    private var dirtyRight = 0
+    private var dirtyBottom = 0
+
     // 每次波纹的随机扰动参数
     private val perturbAmps = FloatArray(4)
     private val perturbFreqs = floatArrayOf(2f, 3f, 5f, 7f)
@@ -113,6 +119,13 @@ class KeyboardRippleView(
         ringScale = 0.5f + Math.random().toFloat() * 0.3f
         radiusMultiplier = if (sourceView is KeyView && sourceView.def.viewId == KeyView.button_space) 1.5f else 1f
         animProgress = 0f
+        // 脏区限定在波纹最大扩散范围：旧实现每帧整视图 invalidate（约 39 帧
+        // 全键盘尺寸重绘），实际变化区域只是中心附近的小圆环
+        val maxR = 140f * density * ringScale * radiusMultiplier + wavePaint.strokeWidth * 2
+        dirtyLeft = (cx - maxR).toInt().coerceAtLeast(0)
+        dirtyTop = (cy - maxR).toInt().coerceAtLeast(0)
+        dirtyRight = (cx + maxR).toInt().coerceAtMost(width)
+        dirtyBottom = (cy + maxR).toInt().coerceAtMost(height)
 
         animator?.let {
             it.cancel()
@@ -123,7 +136,7 @@ class KeyboardRippleView(
                 it.interpolator = DecelerateInterpolator()
                 it.addUpdateListener { anim ->
                     animProgress = anim.animatedFraction
-                    invalidate()
+                    invalidate(dirtyLeft, dirtyTop, dirtyRight, dirtyBottom)
                 }
                 animator = it
                 it.start()

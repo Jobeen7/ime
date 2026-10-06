@@ -9,13 +9,6 @@ import android.view.View
 import android.view.ViewConfiguration
 import android.widget.FrameLayout
 import com.jobeen.ime.base.feedback.InputFeedbacks
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
 
@@ -42,15 +35,12 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         }
     }
 
-    private var lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
-
     @Volatile
     private var touchMovedOutside = false
 
     @Volatile
     private var longPressTriggered = false
     var longPressEnabled = false
-    private var longPressJob: Job? = null
 
     @Volatile
     var longPressFeedbackEnabled = true
@@ -59,7 +49,19 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     private var repeatStarted = false
     var repeatEnabled = false
     private val repeatHandler = Handler(Looper.getMainLooper())
+
+    /** MOVE 事件坐标换算复用数组（长按拖动时每事件新建 IntArray 是纯浪费） */
+    private val moveLocation = IntArray(2)
     private val repeatRunnable = Runnable { fireRepeat() }
+
+    // 长按计时走 Handler + 复用 Runnable：旧实现每次按键都 launch 一个协程
+    // 只为 delay 后触发长按（同文件连发路径早已证明 Handler 足够）
+    private val longPressRunnable = Runnable {
+        if (longPressFeedbackEnabled) {
+            InputFeedbacks.hapticFeedback(this, true)
+        }
+        longPressTriggered = performLongClick()
+    }
 
     private fun fireRepeat() {
         if (isEnabled) {
@@ -122,8 +124,7 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         touchMovedOutside = false
         if (longPressEnabled) {
             longPressTriggered = false
-            longPressJob?.cancel()
-            longPressJob = null
+            repeatHandler.removeCallbacks(longPressRunnable)
         }
         if (repeatEnabled) {
             repeatStarted = false
@@ -159,14 +160,8 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                 onTouchDownListener?.invoke(this)
                 dispatchGestureEvent(GestureType.Down, x, y)
                 if (longPressEnabled) {
-                    longPressJob?.cancel()
-                    longPressJob = lifecycleScope.launch {
-                        delay(longPressDelay)
-                        if (longPressFeedbackEnabled) {
-                            InputFeedbacks.hapticFeedback(this@CustomGestureView, true)
-                        }
-                        longPressTriggered = performLongClick()
-                    }
+                    repeatHandler.removeCallbacks(longPressRunnable)
+                    repeatHandler.postDelayed(longPressRunnable, longPressDelay)
                 }
                 if (repeatEnabled) {
                     repeatHandler.removeCallbacks(repeatRunnable)
@@ -208,15 +203,14 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                 drawableHotspotChanged(x, y)
                 if (longPressTriggered) {
                     // raw 坐标按追踪指针换算（event.rawX 永远是 0 号指针的）
-                    val loc = IntArray(2)
+                    val loc = moveLocation
                     getLocationOnScreen(loc)
                     onTouchMoveListener?.invoke(activePointerId, loc[0] + x, loc[1] + y)
                 }
                 if (!touchMovedOutside && !pointInView(x, y)) {
                     touchMovedOutside = true
                     if (longPressEnabled) {
-                        longPressJob?.cancel()
-                        longPressJob = null
+                        repeatHandler.removeCallbacks(longPressRunnable)
                     }
                     if (repeatEnabled) {
                         repeatHandler.removeCallbacks(repeatRunnable)
@@ -291,8 +285,7 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
             // 手势已被消费（如空格慢滑移光标）：取消长按与连按，
             // 否则慢滑超过长按时间会误触语音输入
             if (longPressEnabled && !longPressTriggered) {
-                longPressJob?.cancel()
-                longPressJob = null
+                repeatHandler.removeCallbacks(longPressRunnable)
             }
             if (repeatEnabled && !repeatStarted) {
                 repeatHandler.removeCallbacks(repeatRunnable)
@@ -321,8 +314,7 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                 swipeRepeatTriggered = true
             }
             if (longPressEnabled && !longPressTriggered) {
-                longPressJob?.cancel()
-                longPressJob = null
+                repeatHandler.removeCallbacks(longPressRunnable)
             }
             if (repeatEnabled && !repeatStarted) {
                 repeatHandler.removeCallbacks(repeatRunnable)
@@ -349,12 +341,11 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        lifecycleScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     }
 
     override fun onDetachedFromWindow() {
         repeatHandler.removeCallbacks(repeatRunnable)
-        lifecycleScope.cancel()
+        repeatHandler.removeCallbacks(longPressRunnable)
         super.onDetachedFromWindow()
     }
 
