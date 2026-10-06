@@ -1,6 +1,7 @@
 package com.jobeen.ime.engine.rime.data.userdict
 
 import com.jobeen.ime.base.util.appContext
+import com.jobeen.ime.engine.rime.daemon.RimeSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Credentials
@@ -26,7 +27,8 @@ import java.util.concurrent.TimeUnit
  * - 下载：先 PROPFIND 列出同步目录文件让用户选择 -> GET 到本地 -> 合并导入本地词典
  *   （不删除本地已有词；可跨词典名，如电脑端 wanxiang -> 手机端 wanxiang_lite）
  * - 导入/导出使用热路径（importUserDictLive/exportUserDictLive），直接对运行中
- *   引擎已打开的词库句柄操作，无需停止 Rime
+ *   引擎已打开的词库句柄操作，无需停止 Rime；且一律经 [RimeSession] 的 RimeApi
+ *   在引擎线程串行执行，不与引擎查词/学词并发访问同一个 LevelDB
  * - 上传前用 MKCOL 确保同步目录存在；报错时会带上服务器返回的正文以便定位原因
  */
 object WebDavSync {
@@ -172,7 +174,7 @@ object WebDavSync {
      * 上传当前词典到 WebDAV 服务器，返回导出的词条数。
      * 必须在后台线程调用。
      */
-    suspend fun upload(dictName: String): Result<Int> = withContext(Dispatchers.IO) {
+    suspend fun upload(dictName: String, session: RimeSession): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             checkConfigured()
             // 先确保同步目录存在：坚果云对不存在的目录直接返回 403
@@ -183,12 +185,14 @@ object WebDavSync {
             var baseState = fetchRemoteState(fileName)
             if (baseState != null && isRemoteChanged(fileName, baseState)) {
                 Timber.i("Remote '$fileName' changed since last sync; merging before upload")
-                download(dictName).getOrThrow()
+                download(dictName, session).getOrThrow()
                 baseState = fetchRemoteState(fileName) ?: baseState
             }
             val tempFile = File(appContext.cacheDir, "webdav-upload-${dictName}.txt")
             try {
-                val count = UserDictManager.exportUserDictLive(dictName, tempFile.absolutePath)
+                val count = session.runOnReady {
+                    exportUserDictLive(dictName, tempFile.absolutePath)
+                }
                 if (count < 0) throw IllegalStateException("导出用户词典失败")
                 val builder = Request.Builder()
                     .url(remoteUrl(fileName))
@@ -461,6 +465,7 @@ object WebDavSync {
      */
     suspend fun download(
         dictName: String,
+        session: RimeSession,
         remoteFile: String = remoteFileName(dictName),
     ): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
@@ -506,7 +511,9 @@ object WebDavSync {
                 }
                 // 导入为合并操作：只增不减，不会删除本地已有词；
                 // 热导入直接写运行中引擎的词库，导入后立即生效，无需重启
-                val count = UserDictManager.importUserDictLive(dictName, tempFile.absolutePath)
+                val count = session.runOnReady {
+                    importUserDictLive(dictName, tempFile.absolutePath)
+                }
                 if (count < 0) throw IllegalStateException("导入用户词典失败")
                 UserDictPrefs.lastDownloadTime = System.currentTimeMillis()
                 Timber.i("User dict '$dictName' downloaded and imported: $count entries")

@@ -123,7 +123,7 @@ class UserDictActivity : ComponentActivity() {
                 if (ready != true) {
                     throw IllegalStateException("Rime 启动超时")
                 }
-                val dicts = runCatching { UserDictManager.getUserDictList().toList() }
+                val dicts = runCatching { s.runOnReady { getUserDictList() } }
                     .getOrDefault(emptyList())
                 withContext(Dispatchers.Main) {
                     uiState.dicts = dicts
@@ -148,7 +148,10 @@ class UserDictActivity : ComponentActivity() {
             try {
                 val sharedDir = File(cacheDir, "shared").apply { mkdirs() }
                 val file = File(sharedDir, WebDavSync.remoteFileName(dict))
-                val count = UserDictManager.exportUserDictLive(dict, file.absolutePath)
+                // 经引擎线程串行导出，不与引擎查词/学词并发访问同一个 LevelDB
+                val count = session?.runOnReady {
+                    exportUserDictLive(dict, file.absolutePath)
+                } ?: -1
                 withContext(Dispatchers.Main) {
                     setIdle()
                     when {
@@ -183,21 +186,27 @@ class UserDictActivity : ComponentActivity() {
         setBusy("正在导入…")
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val result = contentResolver.openInputStream(uri)?.use { input ->
-                    UserDictManager.importUserDict(input, dict, "import-$dict.txt")
-                } ?: Result.failure(IllegalStateException("无法读取文件"))
+                val s = session
+                    ?: throw IllegalStateException("Rime session not established")
+                val tempFile = contentResolver.openInputStream(uri)?.use { input ->
+                    UserDictManager.stageImportFile(input, "import-$dict.txt").getOrThrow()
+                } ?: throw IllegalStateException("无法读取文件")
+                // 经引擎线程串行导入，不与引擎查词/学词并发访问同一个 LevelDB
+                val count = try {
+                    s.runOnReady { importUserDictLive(dict, tempFile.absolutePath) }
+                } finally {
+                    tempFile.delete()
+                }
                 withContext(Dispatchers.Main) {
                     setIdle()
-                    result
-                        .onSuccess { count ->
-                            ToastUtil.showToast(
-                                if (count == 0) "文件中没有可导入的词" else "已导入 $count 个词"
-                            )
-                        }
-                        .onFailure {
-                            Timber.w(it, "Import user dict failed")
+                    when {
+                        count < 0 -> {
+                            Timber.w("Import user dict failed: native returned $count")
                             ToastUtil.showToast("导入失败")
                         }
+                        count == 0 -> ToastUtil.showToast("文件中没有可导入的词")
+                        else -> ToastUtil.showToast("已导入 $count 个词")
+                    }
                 }
             } catch (e: Exception) {
                 Timber.w(e, "Import user dict failed")
@@ -215,9 +224,13 @@ class UserDictActivity : ComponentActivity() {
             ToastUtil.showToast("请先填写 WebDAV 服务器地址、用户名和密码并保存")
             return
         }
+        val s = session ?: run {
+            ToastUtil.showToast("词典服务未就绪，请稍后重试")
+            return
+        }
         setBusy("正在上传…")
         lifecycleScope.launch {
-            val result = WebDavSync.upload(dict)
+            val result = WebDavSync.upload(dict, s)
             setIdle()
             uiState.lastUpload = UserDictPrefs.lastUploadTime
             result
@@ -307,9 +320,13 @@ class UserDictActivity : ComponentActivity() {
     }
 
     private fun doDownloadFile(dict: String, remoteFile: String) {
+        val s = session ?: run {
+            ToastUtil.showToast("词典服务未就绪，请稍后重试")
+            return
+        }
         setBusy(getString(R.string.user_dict_downloading_from, remoteFile))
         lifecycleScope.launch {
-            val result = WebDavSync.download(dict, remoteFile)
+            val result = WebDavSync.download(dict, s, remoteFile)
             setIdle()
             uiState.lastDownload = UserDictPrefs.lastDownloadTime
             result
