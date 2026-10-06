@@ -46,6 +46,13 @@ class CandidateGridView(
     var onDragComplete: ((List<EngineMessage.Candidate>) -> Unit)? = null
     var onWordForget: ((EngineMessage.Candidate, Float, Float) -> Unit)? = null
 
+    /** 引擎侧是否还有未取的候选（面板在每次整表/追加更新时下发） */
+    var hasMoreCandidates: Boolean = false
+    /** 滚动接近底部且 hasMoreCandidates 时触发，由面板转给引擎补取下一页 */
+    var onNeedMoreCandidates: (() -> Unit)? = null
+    /** 本批已发出补取请求、等列表更新后复位，避免同一位置反复触发 */
+    private var needMoreRequested: Boolean = false
+
     private val sidePanelKey = SidePanelKeyView(
         context, colors,
         KeyDef.Appearance.SidePannel(
@@ -349,6 +356,23 @@ class CandidateGridView(
                     dragTop + rowH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f,
                     textPaint
                 )
+            }
+
+            checkNeedMore()
+        }
+
+        /**
+         * 分页补取触发：滚动进入距底一行半以内、且引擎侧还有未取候选时
+         * 请求下一页。绘制末尾统一判定，覆盖拖动与 fling 两条滚动路径；
+         * needMoreRequested 防同一批次内重复请求，列表更新时复位。
+         */
+        private fun checkNeedMore() {
+            if (!hasMoreCandidates || needMoreRequested) return
+            val limit = maxScroll
+            if (limit <= 0f) return
+            if (scrollOffsetY >= limit - rowH * 1.5f) {
+                needMoreRequested = true
+                onNeedMoreCandidates?.invoke()
             }
         }
 
@@ -744,6 +768,7 @@ class CandidateGridView(
 
     fun show(list: List<EngineMessage.Candidate>) {
         allCandidates = list
+        needMoreRequested = false
         gridCanvas.recomputeLayout()
         gridCanvas.resetScroll()
         super.show()
@@ -753,6 +778,8 @@ class CandidateGridView(
 
     fun updateCandidates(list: List<EngineMessage.Candidate>) {
         allCandidates = list
+        // 列表已更新（新批次或追加页到达）：允许再次在滚到底时请求下一页
+        needMoreRequested = false
         gridCanvas.recomputeLayout()
         gridCanvas.clampScroll()
         gridCanvas.invalidate()
