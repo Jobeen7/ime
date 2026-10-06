@@ -65,19 +65,28 @@ class KawaiiPanel(
 
     private var state: State = State.Idle
         set(value) {
+            // 同态新批次先行复用（且避开 data class 的全列表 equals 开销）：
+            // 旧实现复用早退只在展开态成立，条带态每键都走 applyStateRender
+            // 重建渲染器——新 ComposingRenderer 的布局缓存以实例为键，跨批
+            // 永远命不中，每键白付全量测宽 + 5 次 SharedPreferences 读取。
+            // 现在条带/展开一致复用：原地更新候选，网格仅展开时同步。
+            if (field is State.Composing && value is State.Composing) {
+                (currentStateRender as? ComposingStateRender)?.candidates = value.candidates
+                (view.currentRenderer as? ComposingRenderer)?.candidates = value.candidates
+                if (view.isExpanded) candidateGrid.updateCandidates(value.candidates)
+                confirmOverlay.dismiss()
+                field = value
+                return
+            }
+            if (field is State.Prediction && value is State.Prediction) {
+                (currentStateRender as? PredictionStateRender)?.candidates = value.candidates
+                (view.currentRenderer as? ComposingRenderer)?.candidates = value.candidates
+                if (view.isExpanded) candidateGrid.updateCandidates(value.candidates)
+                confirmOverlay.dismiss()
+                field = value
+                return
+            }
             if (field == value) return
-            if (field is State.Composing && value is State.Composing && view.isExpanded) {
-                candidateGrid.updateCandidates(value.candidates)
-                (view.currentRenderer as? ComposingRenderer)?.candidates = value.candidates
-                field = value
-                return
-            }
-            if (field is State.Prediction && value is State.Prediction && view.isExpanded) {
-                candidateGrid.updateCandidates(value.candidates)
-                (view.currentRenderer as? ComposingRenderer)?.candidates = value.candidates
-                field = value
-                return
-            }
             field = value
             if (value is State.Menu) {
                 clipboardTab = ClipboardTab.CLIPBOARD
@@ -556,8 +565,10 @@ class KawaiiPanel(
             view.scrollX = 0f
             if (state !is State.Menu) state = State.Idle
         } else if (state is State.TextEditing) {
-            // 编辑态下保持工具栏渲染器，不切换为组字渲染器（右侧入口才正确）
-            applyStateRender(state)
+            // 编辑态下保持工具栏渲染器，不切换为组字渲染器（右侧入口才正确）。
+            // 幂等守卫：旧实现每批候选都重走 applyStateRender——hide+show 展开
+            // 视图、120ms 动画反复重启、新建 ToolbarRenderer，编辑态可见闪烁
+            if (currentStateRender !is TextEditingStateRender) applyStateRender(state)
         } else {
             if (state is State.Copy) state = State.Idle
             view.scrollX = 0f
@@ -569,10 +580,9 @@ class KawaiiPanel(
                 }
             }
             state = if (predictions) State.Prediction(list) else State.Composing(list)
-
-            if (view.isExpanded) {
-                candidateGrid.updateCandidates(list)
-            }
+            // 展开态的网格更新已由 state setter 的同态复用分支（或跨态时
+            // applyStateRender 的 showExpand）完成，此处再调一次是每键全量
+            // 网格布局 ×2，旧实现一直双跑
         }
         view.invalidate()
     }
@@ -582,11 +592,14 @@ class KawaiiPanel(
     }
 
     override fun refreshTheme() {
+        // 同一配色只解析一次再分发：旧实现每个子视图各 resolve 一遍（共 5 次，
+        // 每次都读主题配置并构建整套 ColorScheme）
+        val colors = KeyboardColors.resolve(context)
         view.refreshTheme()
         candidateGrid.refreshTheme(context)
-        clipboardView.refreshTheme(KeyboardColors.resolve(context))
-        menuGridView.refreshTheme(KeyboardColors.resolve(context))
-        textEditingView.refreshTheme(KeyboardColors.resolve(context))
-        confirmOverlay.refreshTheme(KeyboardColors.resolve(context))
+        clipboardView.refreshTheme(colors)
+        menuGridView.refreshTheme(colors)
+        textEditingView.refreshTheme(colors)
+        confirmOverlay.refreshTheme(colors)
     }
 }
