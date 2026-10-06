@@ -118,10 +118,15 @@ class CandidateGridView(
         private var shakeMaxAngle = 2f
         private val overScrollLimit get() = max(height * 0.45f, 1f)
 
+        // 缓存：旧实现每次访问都全量扫描 positions 求最大行（拖动 MOVE 与
+        // computeScroll 每帧多次访问）；布局或高度变化时才重算
+        private var maxScrollCache: Float? = null
+
         private val maxScroll
             get(): Float {
+                maxScrollCache?.let { return it }
                 val totalRows = positions.maxOfOrNull { it.row }?.plus(1) ?: visibleRows
-                return (totalRows * rowH - height).coerceAtLeast(0f)
+                return ((totalRows * rowH - height).coerceAtLeast(0f)).also { maxScrollCache = it }
             }
 
         fun updateColors(pc: KeyboardColors.ColorScheme.PanelColors) {
@@ -132,6 +137,7 @@ class CandidateGridView(
         }
 
         fun recomputeLayout() {
+            maxScrollCache = null
             if (width <= 0 || allCandidates.isEmpty()) {
                 positions = emptyList()
                 textWidths = FloatArray(0)
@@ -214,6 +220,7 @@ class CandidateGridView(
 
         override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
             super.onSizeChanged(w, h, oldw, oldh)
+            maxScrollCache = null
             val d = resources.displayMetrics.density
             textPaint.textSize = 17f * d
             cellPad = 6f * d
@@ -740,6 +747,8 @@ class CandidateGridView(
         gridCanvas.recomputeLayout()
         gridCanvas.resetScroll()
         super.show()
+        // 隐藏期间积压的拼音侧栏数据在展开时才真正构建应用
+        pendingPinYinData?.let { applyPossibleCandidatePinYin(it) }
     }
 
     fun updateCandidates(list: List<EngineMessage.Candidate>) {
@@ -756,28 +765,55 @@ class CandidateGridView(
         }
     }
 
+    private var pendingPinYinData: List<CandidatePinYin>? = null
+
     fun onPossibleCandidatePinYin(data: List<CandidatePinYin>) {
         if (!subscribePossibleCandidatePinYin) return
+        pendingPinYinData = data
+        // 网格隐藏时只记数据不构建：旧实现每键都为不可见的侧栏全量重建 KeyDef
+        if (visibility != View.VISIBLE) return
+        applyPossibleCandidatePinYin(data)
+    }
+
+    private fun applyPossibleCandidatePinYin(data: List<CandidatePinYin>) {
         if (data.isEmpty()) {
             sidePanelKey.updateItems(sidePanelPunctuationItems)
         } else {
-            sidePanelKey.updateItems(data.map { pinYin ->
-                KeyDef(
-                    appearance = KeyDef.Appearance.Text(
-                        displayText = pinYin.pinYin,
-                        textSize = 15f,
-                        percentWidth = 0.5f,
-                        margin = false
-                    ),
-                    behaviors = setOf(
-                        KeyDef.Behavior.Press(
-                            KeyboardAction.SelectCandidatePinYin(
-                                pinYin = pinYin
-                            )
-                        )
-                    ),
-                )
-            })
+            sidePanelKey.updateItems(PinYinKeyDefCache.get(data))
         }
+    }
+}
+
+/**
+ * 拼音侧栏 KeyDef 构建缓存：同一批数据会被候选网格侧栏与键盘（T9）侧栏两个
+ * 消费方各请求一次，两处构建结果完全一致。按数据引用缓存一份共用，避免每键
+ * 重复全量构建。仅在主线程的 UI 回调里访问，无需同步。
+ */
+internal object PinYinKeyDefCache {
+    private var lastData: List<CandidatePinYin>? = null
+    private var lastDefs: List<KeyDef> = emptyList()
+
+    fun get(data: List<CandidatePinYin>): List<KeyDef> {
+        if (data === lastData) return lastDefs
+        val defs = data.map { pinYin ->
+            KeyDef(
+                appearance = KeyDef.Appearance.Text(
+                    displayText = pinYin.pinYin,
+                    textSize = 15f,
+                    percentWidth = 0.5f,
+                    margin = false
+                ),
+                behaviors = setOf(
+                    KeyDef.Behavior.Press(
+                        KeyboardAction.SelectCandidatePinYin(
+                            pinYin = pinYin
+                        )
+                    )
+                ),
+            )
+        }
+        lastData = data
+        lastDefs = defs
+        return defs
     }
 }
