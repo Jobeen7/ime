@@ -423,8 +423,30 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
         private val rimeMessageHandlers = CopyOnWriteArrayList<(RimeMessage<*>) -> Unit>()
 
+        /**
+         * librime 通知（schema/option/deploy）的待处理队列。通知回调发生在
+         * librime 的调用栈里（维护线程或 API 调用途中），旧实现同步在回调里
+         * 做消息转换与分发，而转换（getSchemaList）和处理器（getStatus）
+         * 又会回调 JNI 取状态——在 librime 操作中途重入其 API。改为回调
+         * 只入队，由 [messageEmitScope] 的单线程消费者按 FIFO 顺序在
+         * native 调用栈之外完成转换与分发。
+         */
+        private val notificationQueue =
+            kotlinx.coroutines.channels.Channel<Pair<Int, Array<Any>>>(
+                kotlinx.coroutines.channels.Channel.UNLIMITED,
+            )
+
         init {
             System.loadLibrary("rime_jni")
+        }
+
+        init {
+            messageEmitScope.launch {
+                for ((type, params) in notificationQueue) {
+                    runCatching { dispatchMessage(type, params) }
+                        .onFailure { Timber.w(it, "Failed to dispatch rime notification") }
+                }
+            }
         }
 
         @JvmStatic
@@ -531,8 +553,19 @@ class Rime : RimeApi, RimeLifecycleOwner {
         @JvmStatic
         external fun getInputConfirmedPosition(): Int
 
+        /**
+         * librime 通知回调的 JNI 入口：只把原始消息入队后立即返回，
+         * 不在 native 调用栈里做任何转换/分发（见 [notificationQueue]）。
+         */
         @JvmStatic
-        fun handleMessage(type: Int, params: Array<Any>) {
+        fun handleNativeNotification(type: Int, params: Array<Any>) {
+            notificationQueue.trySend(type to params)
+        }
+
+        @JvmStatic
+        fun handleMessage(type: Int, params: Array<Any>) = dispatchMessage(type, params)
+
+        private fun dispatchMessage(type: Int, params: Array<Any>) {
             val message = RimeMessage.nativeCreate(type, params)
             rimeMessageHandlers.forEach { it.invoke(message) }
             if (!messageFlow_.tryEmit(message)) {

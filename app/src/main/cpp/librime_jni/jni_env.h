@@ -165,8 +165,9 @@ namespace jni {
 
             Rime = static_cast<jclass>(env->NewGlobalRef(
                     env->FindClass("com/jobeen/ime/engine/rime/core/Rime")));
+            // librime 通知回调入口：Kotlin 侧只入队立即返回，不在 native 调用栈内分发
             HandleRimeMessage = env->GetStaticMethodID(
-                    Rime, "handleMessage", "(I[Ljava/lang/Object;)V");
+                    Rime, "handleNativeNotification", "(I[Ljava/lang/Object;)V");
 
             CandidateProto = static_cast<jclass>(env->NewGlobalRef(
                     env->FindClass("com/jobeen/ime/engine/rime/core/CandidateProto")));
