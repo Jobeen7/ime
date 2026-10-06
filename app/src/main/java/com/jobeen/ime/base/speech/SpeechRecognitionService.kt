@@ -58,6 +58,12 @@ class SpeechRecognitionService : Service() {
     private val streamRef = AtomicReference<OnlineStream?>(null)
     private val qnnRuntimeRef = AtomicReference<QnnRuntime?>(null)
 
+    /**
+     * 销毁短路标志：onDestroy 在主线程置位并封消息入口后，在飞的消息
+     * 收尾协程与销毁守护线程不再并发碰同一批资源引用（见 onDestroy）
+     */
+    @Volatile
+    private var destroying = false
     private val holding = AtomicBoolean(false)
 
     // 会话状态机：START 用 CAS 保证幂等；STOP 以 sessionActive/代次为准，
@@ -164,8 +170,10 @@ class SpeechRecognitionService : Service() {
                         // 等最终解码在 IO 线程完成，不要在主线程 runBlocking 等待
                         scope.launch {
                             job.join()
-                            // join 期间若已开始新会话，旧会话的 DONE 不得结算新会话
-                            if (gen == sessionGen) {
+                            // join 期间若已开始新会话，旧会话的 DONE 不得结算新会话；
+                            // 服务已进入销毁（destroying）时同样不回——销毁守护
+                            // 线程正在串行释放资源，这条协程不再碰客户端与引用
+                            if (!destroying && gen == sessionGen) {
                                 sendClient(SpeechIpc.MSG_DONE, gen = stoppedClientGen)
                                 clientMessenger = null
                             }
@@ -187,6 +195,12 @@ class SpeechRecognitionService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        // 先封消息入口再 spawn 守护线程：消息回调与 onDestroy 同在主
+        // 线程串行，置位并清掉待处理消息后，不会再有 START/STOP 进入；
+        // 已在飞的 STOP 收尾协程回执前查 destroying 短路。由此资源
+        // 释放只剩守护线程一条线，不与消息路径并发碰同一批引用
+        destroying = true
+        serviceHandler.removeCallbacksAndMessages(null)
         sessionActive.set(false)
         holding.set(false)
         audioRecord?.runCatching { stop() }
