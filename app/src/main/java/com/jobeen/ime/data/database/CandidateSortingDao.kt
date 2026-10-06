@@ -13,4 +13,7 @@ interface CandidateSortingDao {
 
     @Query("SELECT * FROM candidate_sorting_v2 WHERE sorting_key = :key")
     suspend fun loadSorting(key: String): CandidateSorting?
+
+    @Query("SELECT COUNT(*) FROM candidate_sorting_v2")
+    suspend fun count(): Int
 }

@@ -58,6 +58,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -136,6 +137,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     @Volatile
     private var inputConnection: InputConnection? = null
+    @Volatile
     private var editorInfo: EditorInfo? = null
     // 弱引用：EngineFactory 单例持有 RimeEngine，强引用 service 会导致 service 销毁后泄漏
     private var serviceRef: WeakReference<ImeInputMethodService>? = null
@@ -181,10 +183,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private fun invalidateBeforeCursorCache() {
         beforeCursorCacheAt = 0L
     }
+    @Volatile
     private var predictionJob: Job? = null
+    @Volatile
     private var candidateRestoreJob: Job? = null
+    /** 候选拖拽排序表判空缓存：null 语义用 false+首次查询实现，保存时由 resortCandidates 失效 */
+    @Volatile
+    private var sortingTableEmpty: Boolean = false
+    // DROP_OLDEST：默认 SUSPEND 时收集方（主线程）一卡顿，emit 就挂起串行
+    // reduce 循环，后续按键在 actions 通道里越积越多、延迟被放大。缓冲打满
+    // 说明 UI 已落后 64 条以上，被挤掉的最旧消息绝大多数是已被新批次取代的
+    // 候选列表；控制类消息到达时总是最新的，只有在极端积压下才可能被后续
+    // 消息挤掉（后果是单条丢失、可自愈），远优于整条按键管线被背压拖死。
     private val messages = MutableSharedFlow<EngineMessage>(
-        replay = 0, extraBufferCapacity = 64
+        replay = 0, extraBufferCapacity = 64,
+        onBufferOverflow = BufferOverflow.DROP_OLDEST
     )
 
     override fun initialize(context: Context) {
@@ -424,6 +437,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val ctx = context ?: return
         if (candidates.isEmpty()) return
         val db = AppDatabase.getInstance(ctx)
+        // 有保存动作即排序表非空，失效 restoreCandidates 的判空缓存
+        sortingTableEmpty = false
         sendJob {
             CandidateSortingManager(db).save(candidates)
         }
@@ -764,8 +779,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         )
                     )
                 } else {
-                    // 关闭重排：还原用户拖拽保存的排序；无记录则原样展示
-                    val savedIds = CandidateSortingManager(db).load(filteredMsg.list)
+                    // 关闭重排：还原用户拖拽保存的排序；无记录则原样展示。
+                    // 排序表为空时（绝大多数用户从未保存过）跳过查询：旧实现
+                    // 每键都算一次指纹 + 查一次 Room，结果注定为 null
+                    val savedIds = if (sortingTableEmpty) {
+                        null
+                    } else {
+                        val mgr = CandidateSortingManager(db)
+                        if (mgr.isTableEmpty()) {
+                            sortingTableEmpty = true
+                            null
+                        } else {
+                            mgr.load(filteredMsg.list)
+                        }
+                    }
                     actions.send(
                         Action.CandidatesReady(
                             requestId, if (savedIds.isNullOrEmpty()) filteredMsg
