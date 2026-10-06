@@ -17,7 +17,9 @@ sealed class EngineMessage {
             Normal, Secondary,
         }
 
-        class DynamicPreeditItem(val text: String, val type: DynamicPreeditType)
+        // data class：PreeditPinner 的测宽缓存按 item 相等性命中，普通 class
+        // 无 equals 时每批都是新实例、缓存恒未命中（每键全量重测）
+        data class DynamicPreeditItem(val text: String, val type: DynamicPreeditType)
     }
 
     data class Schema(
