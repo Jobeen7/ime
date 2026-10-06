@@ -8,6 +8,8 @@ private data class GithubAsset(
     val name: String = "",
     val size: Long = 0,
     val browser_download_url: String = "",
+    /** GitHub 资产摘要，格式 "sha256:<hex>"（旧发行版可能缺省为空） */
+    val digest: String = "",
 )
 
 @Serializable
@@ -36,6 +38,8 @@ sealed interface UpdateCheckResult {
         val apkUrl: String,
         val apkSize: Long,
         val pageUrl: String,
+        /** 资产 SHA-256（hex）；GitHub 未提供时为空，此时回退到大小+签名校验 */
+        val apkSha256: String = "",
     ) : UpdateCheckResult
 }
 
@@ -66,6 +70,11 @@ object VersionChecker {
             apkUrl = apk?.browser_download_url.orEmpty(),
             apkSize = apk?.size ?: 0L,
             pageUrl = latest.html_url.trim(),
+            apkSha256 = apk?.digest
+                ?.substringAfter("sha256:", "")
+                ?.trim()
+                ?.takeIf { it.length == 64 }?.lowercase()
+                .orEmpty(),
         )
     }
 
