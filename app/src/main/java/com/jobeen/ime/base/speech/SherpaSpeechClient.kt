@@ -20,6 +20,7 @@ import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.input.ImeInputMethodService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -39,6 +40,13 @@ object SherpaSpeechClient {
     private val holding = AtomicBoolean(false)
     private val discarding = AtomicBoolean(false)
     private val composingText = AtomicReference<String?>(null)
+
+    /**
+     * 文本到达信号（合并通道）：partial/final 写入 composingText 后发一个
+     * 信号，消费协程据此上屏。未消费时只保留一个信号，天然合并高频到达；
+     * 无信号时消费协程挂起等待，替代旧实现每 50ms 空转轮询 composingText。
+     */
+    private val composingSignal = Channel<Unit>(Channel.CONFLATED)
 
     // 会话代际：每次 startHoldSession 递增并记为 activeGen，随 START 发给服务端，
     // 服务端回信带回同一代次；handler 只接受 activeGen 的回信，旧会话迟到的
@@ -147,12 +155,18 @@ object SherpaSpeechClient {
 
     private fun onPartial(text: String?) {
         if (discarding.get()) return
-        text?.takeIf { it.isNotEmpty() }?.let { composingText.set(it) }
+        text?.takeIf { it.isNotEmpty() }?.let {
+            composingText.set(it)
+            composingSignal.trySend(Unit)
+        }
     }
 
     private fun onFinal(text: String?) {
         if (discarding.get()) return
-        text?.takeIf { it.isNotEmpty() }?.let { composingText.set(it) }
+        text?.takeIf { it.isNotEmpty() }?.let {
+            composingText.set(it)
+            composingSignal.trySend(Unit)
+        }
     }
 
     private fun onAmplitude(value: Float) {
@@ -235,7 +249,11 @@ object SherpaSpeechClient {
         discarding.set(false)
 
         uiJob = service.scope?.launch(Dispatchers.Main) {
-            while (isActive && holding.get()) {
+            // 事件驱动上屏：信号到达才工作，第一份文本立即上屏；每轮后留
+            // 50ms 节流窗口，窗口内的多次到达被通道合并为一次上屏，避免
+            // 逐字 partial 高频刷新输入框。无新文本时挂起、零空转。
+            for (signal in composingSignal) {
+                if (!holding.get()) break
                 composingText.getAndSet(null)?.let { text ->
                     service.activeInputConnection()?.setComposingText(toDisplayText(text), 1)
                 }
