@@ -14,9 +14,8 @@
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
-    <uses-permission
-        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
-        tools:ignore="AllFilesAccessPolicy,ScopedStorage" />
+    <!-- MANAGE_EXTERNAL_STORAGE 已删除（2026-10-06 审查）：全仓从未请求或行使
+         该全文件访问权限，纯增权限面与商店政策风险，无功能收益 -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
     <application
