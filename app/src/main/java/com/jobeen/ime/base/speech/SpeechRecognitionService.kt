@@ -34,7 +34,9 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 import android.util.Log
 import java.nio.ByteBuffer
@@ -179,11 +181,26 @@ class SpeechRecognitionService : Service() {
         super.onDestroy()
         sessionActive.set(false)
         holding.set(false)
+        audioRecord?.runCatching { stop() }
+        // 先等在途解码收尾，再释放资源。decode 是 audioLock 内的 native
+        // 阻塞调用，不响应协程取消：旧实现先 scope.cancel() 再立刻 release
+        // stream，采集协程的收尾解码可能踩到已释放的 stream/recognizer。
+        // 现在让采集协程自然结束（其 finally 会释放本会话的 stream），
+        // onDestroy 的释放只作兜底；等待设上限，超时不至于卡死销毁流程。
+        val job = audioJob
+        audioJob = null
+        if (job != null) {
+            runCatching {
+                runBlocking {
+                    withTimeoutOrNull(DESTROY_JOIN_TIMEOUT_MS) { job.join() }
+                }
+            }
+        }
         scope.cancel()
         synchronized(audioLock) {
             streamRef.getAndSet(null)?.runCatching { release() }
+            recognizerRef.getAndSet(null)?.runCatching { release() }
         }
-        recognizerRef.getAndSet(null)
     }
 
     private fun sendClient(
@@ -551,5 +568,8 @@ class SpeechRecognitionService : Service() {
         private const val CHUNK_MS = 40
         private const val FINAL_TAIL_PADDING_MS = 800
         private const val PARTIAL_EMIT_MIN_INTERVAL_MS = 80L
+
+        /** onDestroy 等待在途解码收尾的上限：正常收尾远小于此值，仅防极端情况卡死销毁 */
+        private const val DESTROY_JOIN_TIMEOUT_MS = 2000L
     }
 }
