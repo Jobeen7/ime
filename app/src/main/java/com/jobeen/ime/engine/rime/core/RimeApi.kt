@@ -27,6 +27,19 @@ interface RimeApi {
 
     suspend fun syncUserData(): Boolean
 
+    /** 用户词典名列表 */
+    suspend fun getUserDictList(): List<String>
+
+    /**
+     * 热导入：将文本词库合并进运行中引擎已打开的用户词典，返回导入条数，失败为 -1。
+     * 必须经引擎调度器串行执行——直接在 IO 线程调用 JNI 会与引擎查词/学词
+     * 并发访问同一个 LevelDB，有损坏词库的风险。
+     */
+    suspend fun importUserDictLive(dictName: String, textFile: String): Int
+
+    /** 热导出：从运行中引擎已打开的用户词典导出文本，返回条数，失败为 -1。 */
+    suspend fun exportUserDictLive(dictName: String, textFile: String): Int
+
     suspend fun processKey(
         value: Int,
         modifiers: UInt = 0u,

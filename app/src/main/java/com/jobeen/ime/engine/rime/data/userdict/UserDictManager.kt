@@ -46,24 +46,22 @@ object UserDictManager {
         }
     }
 
-    fun importUserDict(stream: InputStream, dictName: String, textFile: String): Result<Int> {
+    /**
+     * 把待导入的词库流落盘为临时文件（带大小上限），返回临时文件。
+     * 只负责文件 IO；真正的导入必须经 RimeApi 在引擎线程串行执行
+     * （见 [com.jobeen.ime.engine.rime.core.RimeApi.importUserDictLive]），
+     * 调用方用完后负责删除临时文件。
+     */
+    fun stageImportFile(stream: InputStream, textFile: String): Result<File> {
         val tempFile = File(appContext.cacheDir, textFile)
-        try {
+        return try {
             tempFile.outputStream().use {
                 stream.copyToWithLimit(it, MAX_DICT_FILE_BYTES)
             }
-            val count = importUserDictLive(dictName, tempFile.absolutePath)
-            return if (count >= 0) {
-                Result.success(count)
-            } else {
-                Result.failure(
-                    Exception("Failed to import from '$textFile' to '$dictName'"),
-                )
-            }
-        } finally {
-            if (tempFile.exists()) {
-                tempFile.delete()
-            }
+            Result.success(tempFile)
+        } catch (e: Exception) {
+            tempFile.delete()
+            Result.failure(e)
         }
     }
 
@@ -109,6 +107,10 @@ object UserDictManager {
      * 热导入/热导出：直接对运行中引擎已打开的共享词库句柄做合并/读取，
      * 无需停止 Rime（停止 Rime 会触发 native finalize，导致组件注册表被清空，
      * 后续 levers 调用崩溃）。词库未被引擎打开时自动回退到经典路径。
+     *
+     * 线程约束：这两个 JNI 入口（以及 [getUserDictList]）只能在引擎调度器
+     * 线程上调用——它们与引擎查词/学词访问的是同一个 LevelDB，跨线程并发
+     * 会损坏词库。对外一律经 RimeApi 的同名挂起函数调用，不要直接调这里。
      */
     @JvmStatic
     external fun importUserDictLive(dictName: String, textFile: String): Int
