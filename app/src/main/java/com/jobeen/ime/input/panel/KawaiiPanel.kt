@@ -626,9 +626,15 @@ class KawaiiPanel(
         // 侧有 200 封顶，续取链有界；真到底时引擎回空页走上面的收尾）
         val displayable = list.filter { candidateGrid.isDisplayable(it) }
         if (displayable.isEmpty()) {
-            // 延迟一拍再续取：本页的引擎任务此刻可能还没复位防重入
-            // 标志，同步调用会被它吞掉、续取链就此断掉
-            view.post { listener?.onRequestMoreCandidates() }
+            // 先按原始口径收口「还有更多」：这一页若已是末页（total 已
+            // 确定且原始计数已达），整页滤光也只是到底，不该多打一次
+            // 空补取、更不该把 hasMore=true 粘住。仍有更多才续取
+            candidateGrid.hasMoreCandidates = total < 0 || rawCandidateLoaded < total
+            if (candidateGrid.hasMoreCandidates) {
+                // 延迟一拍再续取：本页的引擎任务此刻可能还没复位防重入
+                // 标志，同步调用会被它吞掉、续取链就此断掉
+                view.post { listener?.onRequestMoreCandidates() }
+            }
             return
         }
         when (val s = state) {
