@@ -562,6 +562,9 @@ class KawaiiPanel(
             return
         }
         candidateGrid.hasMoreCandidates = hasMore
+        // 本机字体无字形的单字候选（扩展区生僻字）不进列表：显示出来
+        // 是方框、点选打出对方也看不到。条带与网格共用此列表，一致
+        val list = list.filter { candidateGrid.isDisplayable(it) }
         if (list.isEmpty()) {
             view.setExpanded(false)
             view.scrollX = 0f
@@ -599,14 +602,24 @@ class KawaiiPanel(
             candidateGrid.hasMoreCandidates = false
             return
         }
+        // 同 setCandidates：先滤掉本机无字形的单字。整页被滤光说明正处
+        // 在一整带无字形生僻字里——不收尾，直接续取下一页穿过去（引擎
+        // 侧有 200 封顶，续取链有界；真到底时引擎回空页走上面的收尾）
+        val displayable = list.filter { candidateGrid.isDisplayable(it) }
+        if (displayable.isEmpty()) {
+            // 延迟一拍再续取：本页的引擎任务此刻可能还没复位防重入
+            // 标志，同步调用会被它吞掉、续取链就此断掉
+            view.post { listener?.onRequestMoreCandidates() }
+            return
+        }
         when (val s = state) {
             is State.Composing -> {
-                val merged = s.candidates + list
+                val merged = s.candidates + displayable
                 candidateGrid.hasMoreCandidates = total < 0 || merged.size < total
                 state = State.Composing(merged)
             }
             is State.Prediction -> {
-                val merged = s.candidates + list
+                val merged = s.candidates + displayable
                 candidateGrid.hasMoreCandidates = total < 0 || merged.size < total
                 state = State.Prediction(merged)
             }
