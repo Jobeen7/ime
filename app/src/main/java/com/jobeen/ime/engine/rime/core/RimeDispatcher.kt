@@ -9,6 +9,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
@@ -128,14 +129,22 @@ class RimeDispatcher(
     fun stop(): List<Runnable> {
         Timber.i("RimeDispatcher stop()")
         return if (isRunning.compareAndSet(true, false)) {
-            runBlocking {
-                queue.offer(WrappedRunnable.Empty)
-                mutex.withLock {
-                    val rest = mutableListOf<WrappedRunnable>()
-                    queue.drainTo(rest)
-                    rest
+            // 正常路径只是入队一个 Empty 唤醒消费循环退出 + 持锁排空队列，
+            // 瞬时完成。加 2 秒超时兜底：异常时（锁被长任务占住等）不再让
+            // runBlocking 无限等、把引擎销毁流程卡死；超时返回空表即可，
+            // 停止流程里的残余任务本就可丢弃。
+            runCatching {
+                runBlocking {
+                    withTimeoutOrNull(2_000L) {
+                        queue.offer(WrappedRunnable.Empty)
+                        mutex.withLock {
+                            val rest = mutableListOf<WrappedRunnable>()
+                            queue.drainTo(rest)
+                            rest
+                        }
+                    }
                 }
-            }
+            }.getOrNull() ?: emptyList()
         } else {
             emptyList()
         }
