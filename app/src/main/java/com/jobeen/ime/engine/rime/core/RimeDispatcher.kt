@@ -4,6 +4,7 @@ import com.jobeen.ime.engine.rime.core.Rime.Companion.handleMessage
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Runnable
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -18,6 +19,7 @@ import kotlin.coroutines.CoroutineContext
 
 class RimeDispatcher(
     private val controller: RimeController,
+    private val onStartupFailed: (Throwable) -> Unit = {},
 ) : CoroutineDispatcher() {
     interface RimeController {
         fun nativeStartup()
@@ -59,7 +61,9 @@ class RimeDispatcher(
         Thread(it, "rime-main")
     }.asCoroutineDispatcher()
 
-    private val internalScope = CoroutineScope(internalDispatcher)
+    // SupervisorJob：一次启动失败不能毒化作用域，否则后续 start() 的 launch
+    // 会被父 Job 的取消状态静默吞掉，引擎再也起不来
+    private val internalScope = CoroutineScope(internalDispatcher + SupervisorJob())
 
     private val mutex = Mutex()
 
@@ -77,13 +81,41 @@ class RimeDispatcher(
             mutex.withLock {
                 if (isRunning.compareAndSet(false, true)) {
                     Timber.d("nativeStartup()")
-                    controller.nativeStartup()
-                    while (isActive && isRunning.get()) {
-                        val block = queue.take()
-                        block.run()
+                    try {
+                        controller.nativeStartup()
+                    } catch (t: Throwable) {
+                        // 启动失败必须复位并显形：isRunning 留在 true 会让
+                        // dispatch() 继续把任务塞进无人消费的队列、按键永久
+                        // 挂起。复位后回调把生命周期打回 STOPPED，等待方立即
+                        // 失败、上层可以重新 startup() 重试。
+                        Timber.e(t, "nativeStartup() failed; dispatcher reset to stopped")
+                        isRunning.set(false)
+                        val dropped = queue.size
+                        queue.clear()
+                        if (dropped > 0) {
+                            Timber.w("Dropped $dropped queued job(s) after startup failure")
+                        }
+                        onStartupFailed(t)
+                        return@withLock
                     }
-                    Timber.i("nativeFinalize()")
-                    controller.nativeFinalize()
+                    try {
+                        while (isActive && isRunning.get()) {
+                            val block = queue.take()
+                            try {
+                                block.run()
+                            } catch (t: Throwable) {
+                                Timber.e(t, "Rime job failed")
+                            }
+                        }
+                    } finally {
+                        isRunning.set(false)
+                        try {
+                            Timber.i("nativeFinalize()")
+                            controller.nativeFinalize()
+                        } catch (t: Throwable) {
+                            Timber.e(t, "nativeFinalize() failed")
+                        }
+                    }
                 }
             }
         }

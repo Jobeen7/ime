@@ -29,7 +29,11 @@ object RimeDaemon {
 
     private val rimeImpl by lazy { object : RimeApi by realRime {} }
 
-    private val sessions = mutableMapOf<String, RimeSession>()
+    // ConcurrentHashMap：ensureEstablished 的读在锁外且位于每个按键 job 的
+    // 热路径上，普通 HashMap 与锁内增删并发会读到扩容中间态。
+    // 声明为 MutableMap 接口类型，让 `in` 走 Kotlin 的 containsKey 语义
+    private val sessions: MutableMap<String, RimeSession> =
+        java.util.concurrent.ConcurrentHashMap<String, RimeSession>()
 
     private val lock = ReentrantLock()
 
@@ -76,7 +80,7 @@ object RimeDaemon {
         if (name !in sessions) {
             return
         }
-        sessions -= name
+        sessions.remove(name)
         if (sessions.isEmpty()) {
             realRime.finalize()
         }
@@ -100,7 +104,10 @@ object RimeDaemon {
         )
         appScope.launch {
             realRime.messageFlow.collect {
-                handleRimeMessage(it)
+                // 单条异常隔离：一条消息处理失败（如 logcat 执行抛 IOException）
+                // 不能杀掉整个收集协程，否则部署通知从此全部失效且无人重启
+                runCatching { handleRimeMessage(it) }
+                    .onFailure { e -> Timber.e(e, "Failed to handle rime message") }
             }
         }
     }
