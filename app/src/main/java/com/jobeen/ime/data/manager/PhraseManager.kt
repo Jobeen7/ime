@@ -5,6 +5,7 @@ import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.PhraseRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.jobeen.ime.base.util.WeakProperty
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -19,7 +20,8 @@ object PhraseManager {
     // 否则默认常用语会被重复插入
     private val seedMutex = Mutex()
 
-    var onContentChanged: (() -> Unit)? = null
+    // 弱引用后备：注册方（KawaiiPanel）销毁后槽位自动失效，避免单例强持面板及其视图树
+    var onContentChanged: (() -> Unit)? by WeakProperty()
 
     data class Phrase(
         val id: Long,

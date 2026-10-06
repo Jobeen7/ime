@@ -37,6 +37,7 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.KawaiiPanel
 import com.jobeen.ime.input.pinner.PreeditPinner
 import com.jobeen.ime.input.speech.SpeechOverlayView
+import com.jobeen.ime.base.speech.ModelProvider
 import com.jobeen.ime.base.speech.SherpaSpeechClient
 import com.jobeen.ime.base.speech.SpeechUiBridge
 import com.jobeen.ime.input.ImeInputMethodService
@@ -371,6 +372,8 @@ class KeyboardWindowView(
 
     override fun onDetachedFromWindow() {
         panel.onFinishInputView(true)
+        // 语音桥回调在销毁时置空（桥内已是弱引用后备，这里再显式清一遍，双保险）
+        SpeechUiBridge.clear()
         preeditPinner.detach(wm)
         super.onDetachedFromWindow()
     }
@@ -644,6 +647,40 @@ class KeyboardWindowView(
         )
     }
 
+    // 语音桥回调实例：本视图字段强持有，SpeechUiBridge 内部弱引用后备，
+    // 视图销毁后桥的槽位自动失效，不会反向强持已销毁的视图
+    private val speechRecordingStartedCallback: () -> Unit = {
+        // 依赖就绪、录音真正开始后才展示动画，避免未就绪时一闪而过导致抖动
+        voiceOverlay.show()
+        voiceOverlay.bringToFront()
+    }
+    private val speechAmplitudeCallback: (Float) -> Unit = { amp ->
+        voiceOverlay.updateAmplitude(amp)
+    }
+    private val speechDoneCallback: () -> Unit = {
+        isVoiceRecording = false
+        panel.recording = false
+        if (!voiceOverlay.isLocked) {
+            voiceOverlay.hide()
+        }
+    }
+    private val speechFailedCallback: () -> Unit = {
+        isVoiceRecording = false
+        panel.recording = false
+        voiceOverlay.hide()
+    }
+    private val speechModelMissingCallback: (ModelProvider) -> Unit =
+        { _ -> showModelDownloadPrompt() }
+
+    private fun registerSpeechCallbacks() {
+        SpeechUiBridge.clear()
+        SpeechUiBridge.onRecordingStarted = speechRecordingStartedCallback
+        SpeechUiBridge.onAmplitude = speechAmplitudeCallback
+        SpeechUiBridge.onDone = speechDoneCallback
+        SpeechUiBridge.onFailed = speechFailedCallback
+        SpeechUiBridge.onModelMissing = speechModelMissingCallback
+    }
+
     private fun startVoiceInput() {
         if (isVoiceRecording) return
         // 密码框禁用语音输入
@@ -668,28 +705,7 @@ class KeyboardWindowView(
             addView(voiceOverlay)
         }
 
-        SpeechUiBridge.clear()
-        SpeechUiBridge.onRecordingStarted = {
-            // 依赖就绪、录音真正开始后才展示动画，避免未就绪时一闪而过导致抖动
-            voiceOverlay.show()
-            voiceOverlay.bringToFront()
-        }
-        SpeechUiBridge.onAmplitude = { amp ->
-            voiceOverlay.updateAmplitude(amp)
-        }
-        SpeechUiBridge.onDone = {
-            isVoiceRecording = false
-            panel.recording = false
-            if (!voiceOverlay.isLocked) {
-                voiceOverlay.hide()
-            }
-        }
-        SpeechUiBridge.onFailed = {
-            isVoiceRecording = false
-            panel.recording = false
-            voiceOverlay.hide()
-        }
-        SpeechUiBridge.onModelMissing = { _ -> showModelDownloadPrompt() }
+        registerSpeechCallbacks()
 
         SherpaSpeechClient.startHoldSession(context as ImeInputMethodService)
     }
@@ -736,27 +752,7 @@ class KeyboardWindowView(
         }
         voiceOverlay.setDragLocked()
 
-        SpeechUiBridge.clear()
-        SpeechUiBridge.onRecordingStarted = {
-            voiceOverlay.show()
-            voiceOverlay.bringToFront()
-        }
-        SpeechUiBridge.onAmplitude = { amp ->
-            voiceOverlay.updateAmplitude(amp)
-        }
-        SpeechUiBridge.onDone = {
-            isVoiceRecording = false
-            panel.recording = false
-            if (!voiceOverlay.isLocked) {
-                voiceOverlay.hide()
-            }
-        }
-        SpeechUiBridge.onFailed = {
-            isVoiceRecording = false
-            panel.recording = false
-            voiceOverlay.hide()
-        }
-        SpeechUiBridge.onModelMissing = { _ -> showModelDownloadPrompt() }
+        registerSpeechCallbacks()
 
         SherpaSpeechClient.startHoldSession(context as ImeInputMethodService)
     }

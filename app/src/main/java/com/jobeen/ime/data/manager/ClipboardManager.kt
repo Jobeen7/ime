@@ -14,13 +14,15 @@ import com.jobeen.ime.data.database.ClipboardRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.jobeen.ime.base.util.WeakProperty
 import com.jobeen.ime.base.util.appScope
 import timber.log.Timber
 
 object ClipboardManager {
 
-    var onNewEntry: ((Entry) -> Unit)? = null
-    var onContentChanged: (() -> Unit)? = null
+    // 弱引用后备：注册方（KawaiiPanel）销毁后槽位自动失效，避免单例强持面板及其视图树
+    var onNewEntry: ((Entry) -> Unit)? by WeakProperty()
+    var onContentChanged: (() -> Unit)? by WeakProperty()
 
     private const val PREFS_NAME = "clipboard_settings"
     private const val KEY_MAX_ENTRIES = "max_entries"
