@@ -268,8 +268,35 @@ object WanxiangUpdateManager {
     }
 
     /**
-     * 指纹截断显示，如 "21012108...939392"，与设计稿一致。
+     * 万象变体短名（Base/Pro/Lite/Pure）：按 schema id 派生（上游各变体的
+     * id 约定：wanxiang 为 Base、wanxiang_pro 系为 Pro、wanxiang_pure 系为
+     * Pure、wanxiang_lite 系与 wanxiang_t9 为 Lite），id 识别不出再按方案名
+     * 关键词兜底；都不命中返回 null（调用方回退显示方案名）。不写死某个
+     * 变体——用户可自备任意变体的方案包，展示必须跟着实际方案走。
      */
+    fun variantNameOf(schemaId: String, schemaName: String): String? {
+        val id = schemaId.trim().lowercase()
+        if (id.startsWith("wanxiang")) {
+            when {
+                id.contains("pure") -> return "Pure"
+                id.contains("pro") -> return "Pro"
+                id.contains("lite") || id == "wanxiang_t9" -> return "Lite"
+                id == "wanxiang" || id == "wanxiang_base" -> return "Base"
+            }
+        }
+        val name = schemaName.trim()
+        return when {
+            name.contains("Pure") -> "Pure"
+            name.contains("Pro") -> "Pro"
+            name.contains("Lite") -> "Lite"
+            name.contains("Base") -> "Base"
+            // 上游基础版方案名就是「万象拼音」（无变体后缀）
+            name == "万象拼音" -> "Base"
+            else -> null
+        }
+    }
+
+    /** 指纹截断显示，如 "21012108...939392"，与设计稿一致。 */
     fun shortFingerprint(full: String): String =
         if (full.length > 14) "${full.take(8)}...${full.takeLast(6)}" else full
 
