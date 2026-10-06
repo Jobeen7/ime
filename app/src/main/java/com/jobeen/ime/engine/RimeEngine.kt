@@ -200,15 +200,30 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /** 候选拖拽排序表判空缓存：null 语义用 false+首次查询实现，保存时由 resortCandidates 失效 */
     @Volatile
     private var sortingTableEmpty: Boolean = false
-    // DROP_OLDEST：默认 SUSPEND 时收集方（主线程）一卡顿，emit 就挂起串行
-    // reduce 循环，后续按键在 actions 通道里越积越多、延迟被放大。缓冲打满
-    // 说明 UI 已落后 64 条以上，被挤掉的最旧消息绝大多数是已被新批次取代的
-    // 候选列表；控制类消息到达时总是最新的，只有在极端积压下才可能被后续
-    // 消息挤掉（后果是单条丢失、可自愈），远优于整条按键管线被背压拖死。
+    // 消息分流（在 emitMessage 里按类型决定）：缓冲本身用 SUSPEND 保序、
+    // 永不自动丢弃；易变类消息（候选/编码/联想等每键都来、下一批即取代）
+    // 走 tryEmit，缓冲满时丢自己，避免 UI 卡顿反压引擎管线；控制类消息
+    // （上屏 Commit、切方案 Schema、部署 Deploy、状态 Status、分页追加页）
+    // 走 emit 挂起等待，永不丢——旧实现是全流 DROP_OLDEST，极端积压时
+    // 控制消息也可能被挤掉，分流后这个口子堵上。
     private val messages = MutableSharedFlow<EngineMessage>(
         replay = 0, extraBufferCapacity = 64,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST
+        onBufferOverflow = BufferOverflow.SUSPEND
     )
+
+    /** 易变类：丢一条可由下一批同类消息自愈；其余皆为控制类 */
+    private fun EngineMessage.isVolatile(): Boolean = when (this) {
+        is EngineMessage.Candidates -> !append
+        is EngineMessage.Composition, is EngineMessage.InlinePreedit,
+        is EngineMessage.DynamicPreedit, is EngineMessage.PossibleCandidatePinYin,
+        is EngineMessage.CandidateMenu -> true
+        else -> false
+    }
+
+    /** 全部 UI 消息的统一出口：易变类 tryEmit 自丢，控制类 emit 不丢 */
+    private suspend fun emitMessage(msg: EngineMessage) {
+        if (msg.isVolatile()) messages.tryEmit(msg) else messages.emit(msg)
+    }
 
     override fun initialize(context: Context) {
         val appContext = context.applicationContext
@@ -332,7 +347,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         //（不读前文、不写偏好表、不跑预测上下文）；正常上屏不受影响
         val noLearn = isNoPersonalizedLearning(editorInfo)
         if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
-            messages.emit(EngineMessage.Commit(candidate.text))
+            emitMessage(EngineMessage.Commit(candidate.text))
             invalidateBeforeCursorCache()
             requestPrediction(candidate.text)
             return
@@ -526,22 +541,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 预测路径同样要过滤已删除词（删除过滤不能只挂在 Rime 候选还原上）
                     val visible = action.candidates.filterNot { DeletedWordsStore.isDeleted(it.text) }
                     state.predictionVisible = visible.isNotEmpty()
-                    messages.emit(EngineMessage.Candidates(visible, 0, 0))
+                    emitMessage(EngineMessage.Candidates(visible, 0, 0))
                 }
             }
 
-            is Action.EmitMessage -> messages.emit(action.message)
+            is Action.EmitMessage -> emitMessage(action.message)
 
             is Action.PossibleCandidatePinYinSnapshot -> {
                 val pinYins = behaviorHosted?.possiblePinYin(
                     action.candidatePinYinType, action.currentInput, action.confirmedLen
                 ) ?: emptyList()
-                messages.emit(EngineMessage.PossibleCandidatePinYin(pinYins))
+                emitMessage(EngineMessage.PossibleCandidatePinYin(pinYins))
             }
 
             is Action.CandidatesReady -> {
                 if (action.requestId == state.latestCandidateRequestId) {
-                    messages.emit(action.message)
+                    emitMessage(action.message)
                 }
             }
 
@@ -571,7 +586,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 invalidatePendingPrediction()
                 if (state.predictionVisible) {
                     state.predictionVisible = false
-                    messages.emit(EngineMessage.Candidates(emptyList(), 0, 0))
+                    emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
                 }
             }
 
@@ -597,13 +612,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         if (state.predictionVisible) {
             state.predictionVisible = false
-            messages.emit(EngineMessage.Candidates(emptyList(), 0, 0))
+            emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
             return
         }
         withContext(Dispatchers.Main.immediate) {
             val ic = inputConnection()
             if (!ic?.getSelectedText(0).isNullOrEmpty()) {
-                messages.emit(EngineMessage.Commit(""))
+                emitMessage(EngineMessage.Commit(""))
                 invalidateBeforeCursorCache()
                 return@withContext
             }
@@ -694,7 +709,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             else -> {}
         }
-        messages.emit(msg)
+        emitMessage(msg)
     }
 
     override fun observeMessages(
@@ -727,7 +742,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val clearPredictions = state.predictionVisible
         state.predictionVisible = false
         if (clearPredictions) {
-            messages.emit(EngineMessage.Candidates(emptyList(), 0, 0))
+            emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
         }
         sendJob {
             if (compositionCached.preedit?.isNotEmpty() == true) {
@@ -798,7 +813,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     )
                 }.filterNot { DeletedWordsStore.isDeleted(it.text) }
                 if (items.isNotEmpty()) {
-                    messages.emit(
+                    emitMessage(
                         EngineMessage.Candidates(
                             list = items,
                             highlighted = 0,
