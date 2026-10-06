@@ -39,7 +39,8 @@ object AppUpdateManager {
         File(context.cacheDir, "update").apply { mkdirs() }
 
     fun targetFile(context: Context, apkName: String): File =
-        File(updateDir(context), apkName.ifBlank { "jime-update.apk" })
+        // 资产名来自远端 Release 元数据，只取 basename 拼接，防路径穿越写出更新目录
+        File(updateDir(context), File(apkName).name.ifBlank { "jime-update.apk" })
 
     fun cancelDownload() {
         activeCall?.cancel()
@@ -56,6 +57,7 @@ object AppUpdateManager {
         url: String,
         apkName: String,
         expectedSize: Long,
+        expectedSha256: String = "",
         onProgress: (downloaded: Long, total: Long) -> Unit,
     ): File? = withContext(Dispatchers.IO) {
         val target = targetFile(context, apkName)
@@ -76,6 +78,11 @@ object AppUpdateManager {
                 val body = response.body ?: return@withContext null
                 val total = body.contentLength().takeIf { it > 0 } ?: expectedSize
                 var downloaded = 0L
+                val digest = if (expectedSha256.isNotBlank()) {
+                    java.security.MessageDigest.getInstance("SHA-256")
+                } else {
+                    null
+                }
                 body.byteStream().use { input ->
                     partial.outputStream().use { out ->
                         val buffer = ByteArray(256 * 1024)
@@ -84,6 +91,7 @@ object AppUpdateManager {
                             val read = input.read(buffer)
                             if (read < 0) break
                             out.write(buffer, 0, read)
+                            digest?.update(buffer, 0, read)
                             downloaded += read
                             onProgress(downloaded, total)
                         }
@@ -92,12 +100,29 @@ object AppUpdateManager {
                 // 大小对不上（截断/多传）视为下载失败，不进入安装
                 if (expectedSize > 0 && downloaded != expectedSize) {
                     Timber.w("App update size mismatch: got %d, want %d", downloaded, expectedSize)
+                    partial.delete()
                     return@withContext null
                 }
+                // 完整性校验：GitHub 提供了资产 SHA-256 时必须逐字节一致，
+                // 只验大小挡不住同长度的内容替换/损坏
+                if (digest != null) {
+                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                    if (!actual.equals(expectedSha256, ignoreCase = true)) {
+                        Timber.w("App update SHA-256 mismatch")
+                        partial.delete()
+                        return@withContext null
+                    }
+                }
+                // 先删旧目标再 rename 的时序窗口：rename 失败时不能把「已删旧
+                // 包 + 只有 .part」当成功返回——走 copyTo 兜底并显式校验目标
                 if (target.exists()) target.delete()
                 if (!partial.renameTo(target)) {
                     partial.copyTo(target, overwrite = true)
                     partial.delete()
+                }
+                if (!target.exists() || target.length() != downloaded) {
+                    Timber.w("App update finalize failed: target missing or size changed")
+                    return@withContext null
                 }
                 target
             }
@@ -113,13 +138,45 @@ object AppUpdateManager {
         }
     }
 
-    /** 已下载文件是否可安装：能解析为 APK 且包名与本应用一致 */
+    /**
+     * 已下载文件是否可安装：能解析为 APK、包名与本应用一致、且**签名证书与
+     * 已安装应用完全一致**。此前只验包名：同包名异签名包要到系统安装器才
+     * 报错（用户先看到一次系统级安装失败）；在这里拦下，失败原因可控可解释。
+     * 系统覆盖安装本身也强制同签名，这里是把防线前移，不是唯一防线。
+     */
     fun isInstallable(context: Context, file: File): Boolean {
         if (!file.exists() || file.length() == 0L) return false
+        val pm = context.packageManager
+        // 签名信息 API 分档：28+ 用 GET_SIGNING_CERTIFICATES/signingInfo，
+        // 24-27 用旧 GET_SIGNATURES/signatures（minSdk 24，不能直调新 API）
+        @Suppress("DEPRECATION")
+        val flags = if (Build.VERSION.SDK_INT >= 28) {
+            android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+        } else {
+            android.content.pm.PackageManager.GET_SIGNATURES
+        }
         val info = runCatching {
-            context.packageManager.getPackageArchiveInfo(file.absolutePath, 0)
+            pm.getPackageArchiveInfo(file.absolutePath, flags)
         }.getOrNull() ?: return false
-        return info.packageName == context.packageName
+        if (info.packageName != context.packageName) return false
+        val newCerts = signerCerts(info) ?: return false
+        val current = runCatching {
+            pm.getPackageInfo(context.packageName, flags)
+        }.getOrNull() ?: return false
+        val currentCerts = signerCerts(current) ?: return false
+        return newCerts == currentCerts
+    }
+
+    /** 提取签名证书字节集合（按系统版本选 API），无签名信息时返回 null */
+    @Suppress("DEPRECATION")
+    private fun signerCerts(info: android.content.pm.PackageInfo): Set<List<Byte>>? {
+        val signers = if (Build.VERSION.SDK_INT >= 28) {
+            info.signingInfo?.apkContentsSigners
+        } else {
+            info.signatures
+        } ?: return null
+        if (signers.isEmpty()) return null
+        return signers.map { it.toByteArray().toList() }.toSet()
     }
 
     /** 是否还缺「安装未知应用」授权（API 26 起按应用单独授权，低版本无此门） */
