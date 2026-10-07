@@ -45,6 +45,7 @@ import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 sealed interface DownloadUiState {
@@ -257,6 +258,67 @@ fun VoiceSettingsScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+            }
+            // 语音热词状态：词表文件由键盘主进程生成，这里只读展示，
+            // 让“热词到底有没有生效”在屏幕上可查，而不是黑盒。
+            var hotwords by remember { mutableStateOf<List<String>?>(null) }
+            var showHotwords by remember { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                hotwords = withContext(Dispatchers.IO) {
+                    runCatching {
+                        val f = com.jobeen.ime.base.speech.SpeechHotwords.file(context)
+                        if (f.isFile) f.readLines().map { it.trim() }.filter { it.isNotEmpty() }
+                        else emptyList()
+                    }.getOrDefault(emptyList())
+                }
+            }
+            SettingsGroup(
+                title = stringResource(R.string.voice_hotwords_group),
+            ) {
+                ActionRow(
+                    title = stringResource(R.string.voice_hotwords_title),
+                    subtitle = when (val hw = hotwords) {
+                        null -> "…"
+                        else -> if (hw.isEmpty()) {
+                            stringResource(R.string.voice_hotwords_missing)
+                        } else {
+                            stringResource(R.string.voice_hotwords_ready, hw.size)
+                        }
+                    },
+                    trailing = {
+                        if (!hotwords.isNullOrEmpty()) {
+                            Button(
+                                onClick = { showHotwords = true },
+                                modifier = Modifier.height(32.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Text(stringResource(R.string.voice_hotwords_view), fontSize = 13.sp, maxLines = 1)
+                            }
+                        }
+                    },
+                )
+            }
+            if (showHotwords) {
+                val hw = hotwords.orEmpty()
+                androidx.compose.material3.AlertDialog(
+                    onDismissRequest = { showHotwords = false },
+                    title = { Text(stringResource(R.string.voice_hotwords_dialog_title, hw.size)) },
+                    text = {
+                        androidx.compose.foundation.lazy.LazyColumn(
+                            modifier = Modifier.height(360.dp),
+                        ) {
+                            items(hw.size) { i ->
+                                Text(hw[i], fontSize = 14.sp, modifier = Modifier.padding(vertical = 2.dp))
+                            }
+                        }
+                    },
+                    confirmButton = {
+                        androidx.compose.material3.TextButton(onClick = { showHotwords = false }) {
+                            Text(stringResource(R.string.voice_hotwords_close))
+                        }
+                    },
+                )
             }
         }
     }
