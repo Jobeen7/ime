@@ -395,12 +395,15 @@ class KeyboardWindowView(
             MeasureSpec.makeMeasureSpec(barH, MeasureSpec.EXACTLY),
         )
 
+        val clipStripH = clipSearchStripHeight(cHeight)
         for (i in 0 until childCount) {
             val child = getChildAt(i)
             if (child === panel.view || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
+            // 搜索态：键盘按扣掉顶部列表条后的高度测量（候选网格保持原高，它不参与搜索态）
+            val childH = if (clipStripH > 0 && child !== panel.candidateGrid) cHeight - clipStripH else cHeight
             child.measure(
                 MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(childH, MeasureSpec.EXACTLY),
             )
         }
 
@@ -414,9 +417,10 @@ class KeyboardWindowView(
         }
 
         if (!panel.clipboardView.isGone) {
+            val clipH = if (clipStripH > 0) clipStripH else cHeight
             panel.clipboardView.measure(
                 MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(clipH, MeasureSpec.EXACTLY),
             )
         }
 
@@ -462,15 +466,24 @@ class KeyboardWindowView(
 
         panel.view.layout(0, stripH, right - left, stripH + barH)
 
+        val clipStripH = clipSearchStripHeight(cHeight)
         for (i in 0 until childCount) {
             val child = getChildAt(i)
             if (child === panel.view || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
-            child.layout(hPad, y0, hPad + contentW, y0 + cHeight)
+            // 搜索态：键盘整体下移到列表条下方，按剩余高度排布
+            if (clipStripH > 0) {
+                child.layout(hPad, y0 + clipStripH, hPad + contentW, y0 + cHeight)
+            } else {
+                child.layout(hPad, y0, hPad + contentW, y0 + cHeight)
+            }
         }
 
         panel.candidateGrid.layout(hPad, y0, hPad + contentW, y0 + cHeight)
         panel.textEditingView.layout(hPad, y0, hPad + contentW, y0 + cHeight)
-        panel.clipboardView.layout(hPad, y0, hPad + contentW, y0 + cHeight)
+        panel.clipboardView.layout(
+            hPad, y0, hPad + contentW,
+            y0 + if (clipStripH > 0) clipStripH else cHeight
+        )
         panel.menuGridView.layout(hPad, y0, hPad + contentW, y0 + cHeight)
         panel.confirmOverlay.layout(hPad, y0, hPad + contentW, y0 + cHeight)
         addPhraseLayer.layout(0, 0, right - left, stripH)
@@ -485,6 +498,15 @@ class KeyboardWindowView(
         )
     }
 
+
+    /**
+     * 剪贴板搜索态的内容区纵向分割：列表只占顶部一条（约 30%，能看到
+     * 2 条左右的过滤结果），键盘按剩余高度重排露在下方（键略矮但全键
+     * 可点）。不能只把列表缩高盖在键盘上——那样九宫格顶排按键会被
+     * 列表盖住，照样打不了字。窗口总高不变，避免输入窗口跳动。
+     */
+    private fun clipSearchStripHeight(cHeight: Int): Int =
+        if (panel.clipSearchActive) (cHeight * 0.30f).roundToInt() else 0
 
     /** 当前输入框是否为密码框（onStartInput 时更新）：密码框禁用语音与粘贴横幅。 */
     private var passwordField = false
