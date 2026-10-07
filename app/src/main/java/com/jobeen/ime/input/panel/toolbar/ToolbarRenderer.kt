@@ -480,7 +480,8 @@ class ToolbarRenderer(
                 pressRadius = 0f
             }
             if (clipSearchMode) {
-                // 搜索态：左箭头=退出搜索，动作区 slot0=清除查询/退出，slot1 无效，
+                // 搜索态：左箭头=退出搜索，动作区 slot0=清除查询/退出，
+                // slot1 与搜索框本身点击无动作，收起键照常
                 if (x in menuTouchLeft..menuTouchRight) {
                     setPress(menuCenter)
                     return KawaiiPanel.TouchResult.ToolbarAction(
