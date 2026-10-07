@@ -15,8 +15,12 @@ import timber.log.Timber
 import java.io.File
 
 class PredictionManager(private val context: Context) {
+
     private var prediction: Prediction? = null
     private var gramDb: GramDb? = null
+
+    /** 已加载的语法模型（供候选重排打分共用同一实例；未加载/已销毁时为 null） */
+    fun gramDb(): GramDb? = gramDb
     private val calculator = PriorityCalculator()
 
     // 引入 Mutex 锁，防止并发重复加载导致冲突
