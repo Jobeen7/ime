@@ -1,6 +1,8 @@
 package com.jobeen.ime.data.database
 
 import androidx.room.Dao
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 
 @Dao
@@ -31,6 +33,16 @@ interface CandidatePreferDao {
 
     @Query("SELECT COUNT(*) FROM candidate_prefers")
     suspend fun count(): Int
+
+    // 备份/还原专用：全量读取、整表替换（还原流程先 deleteAll 再 insertAll）
+    @Query("SELECT * FROM candidate_prefers")
+    suspend fun getAllFull(): List<CandidatePrefer>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(items: List<CandidatePrefer>)
+
+    @Query("DELETE FROM candidate_prefers")
+    suspend fun deleteAll()
 
     // 容量上限：只保留点击量最高（同量取最近更新）的前 limit 条，其余删除。
     // 偏好表无上限时长年使用会无限膨胀，拖慢全量加载与重排。
