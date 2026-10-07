@@ -1,14 +1,18 @@
 package com.jobeen.ime.engine.rime.data.userdict
 
 import android.content.Context
+import com.jobeen.ime.base.util.SecretStore
 import com.jobeen.ime.base.util.appContext
+import timber.log.Timber
 
 /**
  * 用户词典 WebDAV 同步的配置存储。
  *
- * 说明：密码以明文存放在应用私有 SharedPreferences 中（MODE_PRIVATE，仅本应用可读），
- * 与市面上多数输入法/笔记类 App 的 WebDAV 实现一致。如需更高安全级别，后续可迁移到
- * EncryptedSharedPreferences。
+ * 密码经 [SecretStore]（Android Keystore，AES-GCM）加密后存入私有
+ * SharedPreferences，落盘无明文。旧版本遗留的明文密码在首次读取时自动
+ * 加密回写迁移；Keystore 不可用时 setter 不落盘并记录日志，getter 返回空，
+ * 绝不回退明文存储。备份/还原走 BackupManager 的特殊通道（备份包整体
+ * 加密，密码以明文进包、还原时在本机重新加密），不经过本文件的原始值。
  */
 object UserDictPrefs {
     private const val PREFS_NAME = "user_dict_sync"
@@ -35,8 +39,35 @@ object UserDictPrefs {
         set(value) = prefs.edit().putString(KEY_USERNAME, value.trim()).apply()
 
     var password: String
-        get() = prefs.getString(KEY_PASSWORD, "").orEmpty()
-        set(value) = prefs.edit().putString(KEY_PASSWORD, value).apply()
+        get() {
+            val stored = prefs.getString(KEY_PASSWORD, "").orEmpty()
+            if (stored.isEmpty()) return ""
+            if (SecretStore.isEncrypted(stored)) {
+                // 密钥丢失/损坏时解密失败：返回空而不是把密文当密码用
+                return SecretStore.decrypt(stored).orEmpty()
+            }
+            // 存量明文：立即加密回写完成迁移，本次返回原值不影响使用
+            val encrypted = SecretStore.encrypt(stored)
+            if (encrypted != null) {
+                prefs.edit().putString(KEY_PASSWORD, encrypted).apply()
+            } else {
+                Timber.w("WebDAV password stored in plaintext could not be migrated (Keystore unavailable)")
+            }
+            return stored
+        }
+        set(value) {
+            if (value.isEmpty()) {
+                prefs.edit().remove(KEY_PASSWORD).apply()
+                return
+            }
+            val encrypted = SecretStore.encrypt(value)
+            if (encrypted == null) {
+                // Keystore 不可用：宁可不保存也不写明文
+                Timber.w("WebDAV password not saved: Keystore unavailable")
+                return
+            }
+            prefs.edit().putString(KEY_PASSWORD, encrypted).apply()
+        }
 
     var syncPath: String
         get() = prefs.getString(KEY_SYNC_PATH, "").orEmpty()
