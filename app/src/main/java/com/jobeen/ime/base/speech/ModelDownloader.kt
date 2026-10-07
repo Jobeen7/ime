@@ -284,11 +284,27 @@ object ModelDownloader {
             staging.deleteRecursively()
             throw IOException("New model is incomplete before installation")
         }
-        if (modelDir.exists()) modelDir.deleteRecursively()
+        // 三步换名（同父目录 rename 都是原子操作）：旧目录先改名备份、
+        // 新目录就位、最后删备份。此前是先 deleteRecursively 再 rename，
+        // 两步之间进程被杀或 rename 失败即新旧模型全失、只能整包重下
+        val backup = File(parent, modelDir.name + ".old")
+        // 自愈：上次安装恰好中断在换名之间（正目录缺失、备份还在）先回滚
+        if (!modelDir.exists() && backup.exists()) {
+            backup.renameTo(modelDir)
+        }
+        backup.deleteRecursively()
+        val hadOld = modelDir.exists()
+        if (hadOld && !modelDir.renameTo(backup)) {
+            staging.deleteRecursively()
+            throw IOException("Failed to move old model aside: $modelDir")
+        }
         if (!staging.renameTo(modelDir)) {
+            // 新目录就位失败：把旧模型改回来，不能留下空目录
+            if (hadOld) backup.renameTo(modelDir)
             staging.deleteRecursively()
             throw IOException("Failed to move new model into place: $staging")
         }
+        backup.deleteRecursively()
         Timber.i("Speech model installed: %s", modelDir.absolutePath)
     }
 
@@ -299,26 +315,50 @@ object ModelDownloader {
         source.delete()
     }
 
+    /**
+     * 下载到 `target.part` 临时文件，支持断点续传：中断（取消/失败）保留
+     * 已下部分，下次请求带 Range 续传；服务器不支持 Range（回 200）时
+     * 自动从零重下。完整下完并算完 MD5 后才 rename 到 target。
+     * 返回的 MD5 覆盖整个文件（含续传前已下的部分），供上层校验。
+     */
     private suspend fun downloadFile(
         url: String,
         target: File,
         onRead: (Long, Long) -> Unit,
     ): DownloadResult? {
-        val request = Request.Builder().url(url).build()
+        val part = File(target.path + ".part")
+        val resumeFrom = if (part.isFile) part.length() else 0L
+        val requestBuilder = Request.Builder().url(url)
+        if (resumeFrom > 0) {
+            requestBuilder.header("Range", "bytes=$resumeFrom-")
+        }
         return try {
-            client.newCall(request).execute().use { response ->
+            client.newCall(requestBuilder.build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     Timber.w("Model download failed: HTTP %d", response.code)
                     HttpUtil.showToast("语音模型下载失败：HTTP ${response.code}")
                     return null
                 }
                 val body = response.body ?: return null
-                val total = body.contentLength()
+                val append = response.code == 206 && resumeFrom > 0
+                val startAt = if (append) resumeFrom else 0L
+                val total = if (append) startAt + body.contentLength() else body.contentLength()
                 val digest = MessageDigest.getInstance("MD5")
-                target.outputStream().use { output ->
+                if (append) {
+                    // 续传部分的 MD5 要含已下内容：先把 .part 已有字节喂给 digest
+                    part.inputStream().use { existing ->
+                        val buf = ByteArray(BUFFER_SIZE)
+                        while (true) {
+                            val n = existing.read(buf)
+                            if (n < 0) break
+                            digest.update(buf, 0, n)
+                        }
+                    }
+                }
+                java.io.FileOutputStream(part, append).use { output ->
                     body.byteStream().use { input ->
                         val buffer = ByteArray(BUFFER_SIZE)
-                        var downloaded = 0L
+                        var downloaded = startAt
                         var lastReported = 0L
                         while (true) {
                             if (!currentCoroutineContext().isActive) return null
@@ -327,8 +367,6 @@ object ModelDownloader {
                             output.write(buffer, 0, count)
                             digest.update(buffer, 0, count)
                             downloaded += count
-                            // 完成判定：旧写法的 (total in 1 downTo downloaded) 恒为假，
-                            // 最后一段进度永不回调、break 也成了死代码
                             val finished = total > 0 && downloaded >= total
                             if (downloaded - lastReported >= REPORT_STEP || finished) {
                                 onRead(downloaded, total)
@@ -337,6 +375,10 @@ object ModelDownloader {
                             if (finished) break
                         }
                     }
+                }
+                if (!part.renameTo(target)) {
+                    Timber.w("Model download: rename .part failed")
+                    return null
                 }
                 DownloadResult(digest.digest().joinToString("") { "%02x".format(it) })
             }

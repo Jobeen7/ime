@@ -127,7 +127,32 @@ object SherpaSpeechClient {
         synchronized(connectLock) { pending.removeAll { it.first == what } }
     }
 
+    // 空闲卸载：:speech 进程与已加载模型（数百 MB 级）此前绑定后永不解绑、
+    // 全程常驻。会话收尾后 3 分钟无新活动即解绑，系统可回收 :speech
+    // 进程与模型内存；下次使用时 send() 会重新绑定（多一次冷启动成本）。
+    private val idleHandler = Handler(Looper.getMainLooper())
+    private const val IDLE_UNBIND_DELAY_MS = 3 * 60 * 1000L
+    private val idleUnbindRunnable = Runnable {
+        if (holding.get()) return@Runnable
+        synchronized(connectLock) {
+            speechMessenger = null
+            pending.clear()
+        }
+        runCatching { appContext.unbindService(connection) }
+        Timber.d("SpeechCli idle timeout: unbound :speech service")
+    }
+
+    private fun scheduleIdleUnbind() {
+        idleHandler.removeCallbacks(idleUnbindRunnable)
+        idleHandler.postDelayed(idleUnbindRunnable, IDLE_UNBIND_DELAY_MS)
+    }
+
+    private fun cancelIdleUnbind() {
+        idleHandler.removeCallbacks(idleUnbindRunnable)
+    }
+
     private fun send(what: Int, gen: Int = 0) {
+        cancelIdleUnbind()
         val messenger = synchronized(connectLock) { speechMessenger }
         if (messenger != null) {
             val msg = SpeechIpc.message(what, gen = gen)
@@ -275,7 +300,7 @@ object SherpaSpeechClient {
                 service, SpeechPermissionActivity::class.java
             ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             runCatching { service.startActivity(intent) }
-            cancelSession()
+            abortSessionForPermission()
             return
         }
 
@@ -333,6 +358,22 @@ object SherpaSpeechClient {
         } ?: resetState()
     }
 
+    /**
+     * 首次无麦克风权限时的单独收尾：这是等用户授权的正常分支，不是会话
+     * 失败——不清屏、不触发 onFailed（否则 UI 会闪一下失败态）。服务端
+     * 此时尚无会话（START 还没发），无需 STOP。授权后用户再长按一次即可。
+     */
+    private fun abortSessionForPermission() {
+        holding.set(false)
+        uiJob?.cancel()
+        uiJob = null
+        runCatching { SpeechUiBridge.onDone?.invoke() }
+        resetState()
+        // resetState 会启动空闲卸载计时，但此刻 :speech 可能压根没绑定；
+        // 授权通常很快，取消计时避免刚授权就把预热连接卸掉
+        cancelIdleUnbind()
+    }
+
     private fun cancelSession() {
         holding.set(false)
         removePending(SpeechIpc.MSG_START)
@@ -371,6 +412,9 @@ object SherpaSpeechClient {
         uiJob = null
         serviceRef?.clear()
         serviceRef = null
+        // 会话结束进入空闲计时（preStartSync 的预热加载不经会话收尾，
+        // 不在此计时；真正用过语音后的常驻才是要回收的大头）
+        scheduleIdleUnbind()
     }
 
 
