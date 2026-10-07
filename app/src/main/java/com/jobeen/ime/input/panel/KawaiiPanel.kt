@@ -659,6 +659,7 @@ class KawaiiPanel(
     override fun refreshTheme() {
         // 同一配色只解析一次再分发：旧实现每个子视图各 resolve 一遍（共 5 次，
         // 每次都读主题配置并构建整套 ColorScheme）
+        renderContext.invalidateDisplaySettings()
         val colors = KeyboardColors.resolve(context)
         view.refreshTheme()
         candidateGrid.refreshTheme(context)
