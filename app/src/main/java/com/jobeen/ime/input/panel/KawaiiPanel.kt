@@ -389,7 +389,7 @@ class KawaiiPanel(
     // 搜索只存在于 State.Clipboard 之内：面板状态不新增，靠这个标志钉住——
     // 候选消息不再把状态抢去组字态，工具栏在「搜索框」与「候选行」间轮显。
 
-    var clipSearchActive: Boolean = false
+    override var clipSearchActive: Boolean = false
         private set
 
     private fun newClipToolbarRenderer(): ToolbarRenderer =
@@ -406,6 +406,8 @@ class KawaiiPanel(
         clipboardView.setSearchQuery("")
         view.currentRenderer = newClipToolbarRenderer().also { applySearchFields(it) }
         view.invalidate()
+        // 列表要缩高让出键盘区（窗口按 clipSearchActive 重排）
+        clipboardView.requestLayout()
     }
 
     private fun exitClipSearch() {
@@ -414,12 +416,14 @@ class KawaiiPanel(
         // 工具栏可能正被候选行轮显占用：一律重建回剪贴板工具栏
         view.currentRenderer = newClipToolbarRenderer()
         view.invalidate()
+        clipboardView.requestLayout()
     }
 
     /** 离开剪贴板态/切换分页时的静默收口：状态机本身会换渲染器，只清标志与查询。 */
     private fun resetClipSearchState() {
         clipSearchActive = false
         clipboardView.setSearchQuery("")
+        clipboardView.requestLayout()
     }
 
     override fun interceptCommit(text: String): Boolean {
