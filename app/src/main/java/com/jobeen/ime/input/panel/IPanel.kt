@@ -15,6 +15,9 @@ interface IPanel {
     fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>)
     fun exitAddPhraseMode()
 
+    /** 剪贴板搜索态是否激活（窗口布局要据此给剪贴板列表让出键盘区）。 */
+    val clipSearchActive: Boolean get() = false
+
     /** 剪贴板搜索态截获引擎上屏文本：返回 true 表示已消费（不写入目标应用）。 */
     fun interceptCommit(text: String): Boolean = false
 
