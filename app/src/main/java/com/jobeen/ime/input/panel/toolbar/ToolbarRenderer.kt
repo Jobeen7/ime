@@ -481,13 +481,6 @@ class ToolbarRenderer(
             }
             if (clipSearchMode) {
                 // 搜索态：左箭头=退出搜索，动作区 slot0=清除查询/退出，slot1 无效，
-                // 点搜索框=唤回键盘（键盘收起浏览结果时用），收起键照常
-                if (x in g.capsuleLeft..g.actionLeft) {
-                    setPress((g.capsuleLeft + g.actionLeft) / 2f)
-                    return KawaiiPanel.TouchResult.ToolbarAction(
-                        PanelAction.ClipSearchShowKeyboard, tapX = x, tapY = y
-                    )
-                }
                 if (x in menuTouchLeft..menuTouchRight) {
                     setPress(menuCenter)
                     return KawaiiPanel.TouchResult.ToolbarAction(
