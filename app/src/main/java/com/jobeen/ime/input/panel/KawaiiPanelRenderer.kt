@@ -57,6 +57,27 @@ class ComposingRenderer(
     private val fadePaint = Paint()
     private val bgGradPaint = Paint()
 
+    // 单候选测宽缓存（内容级）：整表引用判等对引擎每键产出的新列表永远
+    // 未命中，此前每键约 24 候选 × 3 次 measureText 全量重测。改为按
+    // （文本+测宽所用字号）缓存单项宽度，相邻按键间重复出现的候选直接
+    // 查表；环境（字号/密度等）变化时整表作废。LinkedHashMap 做 LRU 上限。
+    private val textWidthCache = object : LinkedHashMap<String, Float>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Float>?) =
+            size > 512
+    }
+    private val commentWidthCache = object : LinkedHashMap<String, Float>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Float>?) =
+            size > 512
+    }
+    // 序号串只有 "1. "…"N. " 有限种，按下标缓存（随 showIndex/字号失效）
+    private val indexWidthCache = HashMap<Int, Float>()
+
+    private fun measureTextCached(paint: Paint, text: String): Float =
+        textWidthCache.getOrPut(text) { paint.measureText(text) }
+
+    private fun measureCommentCached(paint: Paint, text: String): Float =
+        commentWidthCache.getOrPut(text) { paint.measureText(text) }
+
     // 布局缓存：candidates 引用/尺寸/字号/开关任一变化才重算
     private var cachedLayouts: List<PillLayout> = emptyList()
     private var cachedPills: List<PillRect> = emptyList()
@@ -128,16 +149,29 @@ class ComposingRenderer(
             lastPills = cachedPills
             maxScrollX = cachedMaxScrollX
         } else {
+            // 环境（字号/密度/内边距/开关）任一变化，单项测宽缓存整体作废
+            if (width != cachedWidth || density != cachedDensity
+                || horizontalPaddingDp != cachedHPad
+                || indexBaseSize != cachedIndexTextSize || textBaseSize != cachedTextTextSize
+                || showIndex != cachedShowIndex || showComment != cachedShowComment
+            ) {
+                textWidthCache.clear()
+                commentWidthCache.clear()
+                indexWidthCache.clear()
+            }
             val newLayouts = ArrayList<PillLayout>(candidates.size)
             val newPills = ArrayList<PillRect>(candidates.size)
             var x = sidePad
             for ((i, c) in candidates.withIndex()) {
-                val indexStr = if (showIndex) "${i + 1}. " else ""
-                val indexW = indexPaint.measureText(indexStr)
-                val textW = textPaint.measureText(c.text)
+                val indexW = if (showIndex) {
+                    indexWidthCache.getOrPut(i) { indexPaint.measureText("${i + 1}. ") }
+                } else {
+                    0f
+                }
+                val textW = measureTextCached(textPaint, c.text)
                 val commentStr = if (showComment && c.comment.isNotEmpty()) " ${c.comment}" else ""
                 val commentW =
-                    if (commentStr.isNotEmpty()) indexPaint.measureText(commentStr) else 0f
+                    if (commentStr.isNotEmpty()) measureCommentCached(indexPaint, commentStr) else 0f
                 val contentW = indexW + textW + commentW + pillPad * 2
                 val scale = if (contentW >= maxPillW) {
                     (maxPillW / contentW).coerceAtLeast(minScale)
