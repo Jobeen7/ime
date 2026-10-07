@@ -449,9 +449,10 @@ class KawaiiPanel(
 
     // ── 剪贴板条目编辑态 ────────────────────────────────────────
     // 与搜索态同构：标志钉住剪贴板态，键盘输入经 interceptCommit 改道
-    // 进编辑缓冲，退格同搜索分流。窗口形态与搜索共用（拉高+结果区），
-    // 故编辑期间列表保持可见可滚。编辑与搜索可叠加：从搜索结果长按进
-    // 编辑，保存/取消后回到搜索态（clipEditReturnToSearch 记账）。
+    // 进编辑缓冲（光标模型：插入光标处），退格同搜索分流。窗口形态与
+    // 搜索共用（拉高+结果区），结果区改画条目全文供多行编辑（见
+    // ClipboardView 编辑显示模式）。编辑与搜索可叠加：从搜索结果长按
+    // 进编辑，保存/取消后回到搜索态（clipEditReturnToSearch 记账）。
 
     override var clipEditActive: Boolean = false
         private set
