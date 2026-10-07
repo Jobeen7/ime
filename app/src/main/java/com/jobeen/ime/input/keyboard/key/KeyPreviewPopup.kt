@@ -35,8 +35,6 @@ class KeyPreviewPopup(private val context: Context) {
         textColor: Int,
         bgColor: Int,
     ) {
-        dismiss()
-
         contentView.setText(text)
         contentView.setTextColor(textColor)
         bgDrawable.setColor(bgColor)
@@ -48,7 +46,9 @@ class KeyPreviewPopup(private val context: Context) {
         val popupX = anchorCenterX - popupSize / 2
         val popupY = anchorTop - popupSize - context.dp(6)
 
-        popupWindow = PopupWindow(
+        // PopupWindow 对象只建一次复用（此前每次按键新建一个窗口对象并走一遍
+        // 完整的窗口增删装配，是按键抖动来源之一）：已显示时只更新位置
+        val popup = popupWindow ?: PopupWindow(
             contentView,
             popupSize,
             popupSize,
@@ -57,7 +57,11 @@ class KeyPreviewPopup(private val context: Context) {
             isOutsideTouchable = false
             isTouchable = false
             elevation = context.dp(8f)
-            showAtLocation(
+        }.also { popupWindow = it }
+        if (popup.isShowing) {
+            popup.update(popupX, popupY, popupSize, popupSize)
+        } else {
+            popup.showAtLocation(
                 anchor,
                 Gravity.TOP or Gravity.START,
                 popupX,
@@ -67,7 +71,7 @@ class KeyPreviewPopup(private val context: Context) {
     }
 
     fun dismiss() {
+        // 只隐藏不销毁：窗口对象留作复用（与 KeyboardPopup 的复用范式一致）
         popupWindow?.dismiss()
-        popupWindow = null
     }
 }
