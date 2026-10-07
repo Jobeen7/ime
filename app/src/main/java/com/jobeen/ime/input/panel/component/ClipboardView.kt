@@ -167,6 +167,7 @@ class ClipboardView(
                 buildRowLayouts(tab, w, measureTextPaint, measureIndexPaint)
             }
             rowLayouts = layouts
+            totalContentH = totalHeightOf(layouts)
             resetScroll()
             invalidate()
         }
@@ -199,9 +200,13 @@ class ClipboardView(
             return
         }
         rowLayouts = buildRowLayouts(clipTab, w, textPaint, indexPaint)
+        totalContentH = totalHeightOf(rowLayouts)
+    }
+
+    private fun totalHeightOf(layouts: List<RowLayout>): Float {
         var total = topPad * 2f
-        rowLayouts.forEach { total += it.height + listGap }
-        totalContentH = total
+        layouts.forEach { total += it.height + listGap }
+        return total
     }
 
     private fun buildRowLayouts(
