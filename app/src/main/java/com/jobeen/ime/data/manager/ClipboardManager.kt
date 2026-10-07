@@ -77,12 +77,18 @@ object ClipboardManager {
         val text: String,
         val timestamp: Long = System.currentTimeMillis(),
         val cloud: Boolean = false,
+        val pinned: Boolean = false,
     )
 
     suspend fun getEntries(context: Context): List<Entry> = db(context) { db ->
         val cutoff = System.currentTimeMillis() - getRetentionDays(context) * 86400000L
-        db.clipboardDao().getAllActiveSince(cutoff).map { Entry(it.text, it.timestamp, it.cloud) }
+        db.clipboardDao().getAllActiveSince(cutoff)
+            .map { Entry(it.text, it.timestamp, it.cloud, it.pinned) }
     } ?: emptyList()
+
+    suspend fun setPinned(context: Context, text: String, pinned: Boolean) {
+        db(context) { db -> db.clipboardDao().setPinnedByText(text, pinned) }
+    }
 
     suspend fun addEntry(context: Context, text: String, notify: Boolean = true) {
         if (text.isBlank()) return
@@ -94,8 +100,12 @@ object ClipboardManager {
             db.withTransaction {
                 val dao = db.clipboardDao()
                 val existed = dao.existsByText(text)
+                // 同文本重入（再次复制）会删旧行重插，置顶状态要保留下来
+                val wasPinned = dao.pinnedByText(text) ?: false
                 dao.deleteByText(text)
-                dao.insert(ClipboardRecord(text = text, timestamp = now, cloud = false))
+                dao.insert(
+                    ClipboardRecord(text = text, timestamp = now, cloud = false, pinned = wasPinned)
+                )
                 trimExcess(dao, getMaxEntries(context))
                 dao.deleteOlderThan(retentionCutoff)
                 dao.purgeDeletedOlderThan(retentionCutoff)

@@ -83,6 +83,7 @@ class KawaiiPanelView(context: Context) : View(context) {
                 context.getDrawable(R.drawable.ic_toolbar_select_all),
                 context.getDrawable(R.drawable.ic_toolbar_copy),
                 context.getDrawable(R.drawable.ic_toolbar_paste),
+                context.getDrawable(R.drawable.ic_keyboard_search),
             ),
             hPad,
         )

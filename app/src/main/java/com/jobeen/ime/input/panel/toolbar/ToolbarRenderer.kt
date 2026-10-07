@@ -20,6 +20,10 @@ class ToolbarRenderer(
     var textEditingMode: Boolean = false
     var copyText: String? = null
     var clipMode: Boolean = false
+    // 剪贴板搜索态（仅 CLIPBOARD 分页）：true 时胶囊区改画搜索框
+    var clipSearchMode: Boolean = false
+    var clipSearchQuery: String = ""
+    var clipSearchHint: String = ""
     var clipTab: ClipboardTab = ClipboardTab.CLIPBOARD
     var clipLabelClipboard: String = ""
     var clipLabelPhrase: String = ""
@@ -112,6 +116,14 @@ class ToolbarRenderer(
     private val dimTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val segPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val searchTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val searchLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+        strokeCap = Paint.Cap.ROUND
+    }
+    // 搜索文本尾部截断缓存：(查询, 可用宽, 字号) -> 显示文本
+    private var searchEllipsizeKey: Triple<String, Float, Float>? = null
+    private var searchEllipsizeValue: String = ""
     private val addPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
     // 复制药丸截断缓存：（源文本, 可用宽, 字号）→ 截断结果
     private var ellipsizeCacheKey: Triple<String, Float, Float>? = null
@@ -284,6 +296,12 @@ class ToolbarRenderer(
             d.draw(canvas)
         }
 
+        if (clipSearchMode) {
+            drawClipSearchbar(canvas, g, height, paints, density)
+            drawClipClose(canvas, g, height, paints, density)
+            return
+        }
+
         // 胶囊（剪切板 / 快捷短语）
         trackPaint.color = paints.toolbarIconColor and 0x1FFFFFFF
         canvas.drawRoundRect(
@@ -325,9 +343,12 @@ class ToolbarRenderer(
             )
         }
 
-        // 操作按钮：剪切板分页为「清空」，常用语分页为「新增」和「全部删除」
+        // 操作按钮：剪切板分页为「搜索（左槽）+清空」，常用语分页为「新增」和「全部删除」
         val actionCy = height / 2f
         if (clipTab == ClipboardTab.CLIPBOARD) {
+            resources.search?.let { d ->
+                drawActionIcon(canvas, d, actionSlotCenter(g, 1, density), actionCy, paints, density)
+            }
             resources.clear?.let { d ->
                 drawActionIcon(canvas, d, actionSlotCenter(g, 0, density), actionCy, paints, density)
             }
@@ -346,6 +367,12 @@ class ToolbarRenderer(
         }
 
         // 关闭键盘按钮（始终显示）
+        drawClipClose(canvas, g, height, paints, density)
+    }
+
+    private fun drawClipClose(
+        canvas: Canvas, g: ClipGeom, height: Int, paints: Paints, density: Float,
+    ) {
         resources.expand?.let { d ->
             d.setTint(dimColor(paints.toolbarIconColor))
             val iw = d.intrinsicWidth.toFloat() * iconScale
@@ -358,6 +385,75 @@ class ToolbarRenderer(
             )
             d.draw(canvas)
         }
+    }
+
+    /** 搜索态：胶囊区改画搜索框（图标+查询文本+尾部光标），动作区 slot0 画清除叉。 */
+    private fun drawClipSearchbar(
+        canvas: Canvas, g: ClipGeom, height: Int, paints: Paints, density: Float,
+    ) {
+        val fieldLeft = g.capsuleLeft
+        val fieldRight = g.actionLeft - 6f * density
+        val fieldTop = g.capsuleTop
+        val fieldH = g.capsuleH
+        trackPaint.color = paints.toolbarIconColor and 0x1FFFFFFF
+        canvas.drawRoundRect(
+            fieldLeft, fieldTop, fieldRight, fieldTop + fieldH,
+            fieldH / 2f, fieldH / 2f, trackPaint
+        )
+        val cy = fieldTop + fieldH / 2f
+        // 左侧放大镜
+        resources.search?.let { d ->
+            d.setTint(dimColor(paints.toolbarIconColor))
+            val size = 16f * density
+            val cx = fieldLeft + 16f * density
+            d.setBounds(
+                (cx - size / 2f).toInt(), (cy - size / 2f).toInt(),
+                (cx + size / 2f).toInt(), (cy + size / 2f).toInt(),
+            )
+            d.draw(canvas)
+        }
+        // 查询文本（或 hint）：超宽时保留尾部（最新输入在尾端）
+        val textPaint = searchTextPaint
+        textPaint.textSize = 14f * density
+        val textLeft = fieldLeft + 28f * density
+        val textRight = fieldRight - 10f * density
+        val availW = (textRight - textLeft).coerceAtLeast(0f)
+        val q = clipSearchQuery
+        val showing: String
+        if (q.isEmpty()) {
+            textPaint.color = dimColor(paints.toolbarIconColor)
+            showing = clipSearchHint
+            val fm = textPaint.fontMetrics
+            canvas.drawText(showing, textLeft, cy - fm.ascent / 2f - fm.descent / 2f, textPaint)
+        } else {
+            textPaint.color = paints.toolbarIconColor
+            val key = Triple(q, availW, textPaint.textSize)
+            showing = if (key == searchEllipsizeKey) {
+                searchEllipsizeValue
+            } else {
+                var s = q
+                while (s.isNotEmpty() && textPaint.measureText(s) > availW) s = s.drop(1)
+                searchEllipsizeKey = key
+                searchEllipsizeValue = s
+                s
+            }
+            val fm = textPaint.fontMetrics
+            val baseline = cy - fm.ascent / 2f - fm.descent / 2f
+            canvas.drawText(showing, textLeft, baseline, textPaint)
+            // 尾部光标（静态竖线，表达可继续输入）
+            val cursorX = textLeft + textPaint.measureText(showing) + 2f * density
+            searchLinePaint.color = paints.toolbarIconColor
+            searchLinePaint.strokeWidth = 1.6f * density
+            val halfTextH = (fm.descent - fm.ascent) / 2f * 0.8f
+            canvas.drawLine(cursorX, cy - halfTextH, cursorX, cy + halfTextH, searchLinePaint)
+        }
+        // 动作区 slot0：清除叉（两条对角线，不依赖字体字形）
+        val xCenter = actionSlotCenter(g, 0, density)
+        val half = 6f * density
+        searchLinePaint.color = dimColor(paints.toolbarIconColor)
+        searchLinePaint.strokeWidth = 1.6f * density
+        canvas.drawLine(xCenter - half, cy - half, xCenter + half, cy + half, searchLinePaint)
+        canvas.drawLine(xCenter - half, cy + half, xCenter + half, cy - half, searchLinePaint)
     }
 
     override fun hitTest(
@@ -383,6 +479,31 @@ class ToolbarRenderer(
                 pressRadiusMax = height * 0.55f
                 pressRadius = 0f
             }
+            if (clipSearchMode) {
+                // 搜索态：左箭头=退出搜索，动作区 slot0=清除查询/退出，slot1 无效，
+                // 搜索框本身点击无动作，收起键照常
+                if (x in menuTouchLeft..menuTouchRight) {
+                    setPress(menuCenter)
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.ClipSearchExit, tapX = x, tapY = y
+                    )
+                }
+                if (x in g.actionLeft..g.actionRight) {
+                    val btnW = 30f * density
+                    if (x < g.actionRight - btnW) return null
+                    setPress(actionSlotCenter(g, 0, density))
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.ClipSearchClear, tapX = x, tapY = y
+                    )
+                }
+                if (x in closeTouchLeft..closeTouchRight) {
+                    setPress((g.closeLeft + g.closeRight) / 2f)
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.CloseKeyboard, tapX = x, tapY = y
+                    )
+                }
+                return null
+            }
             if (x in menuTouchLeft..menuTouchRight) {
                 setPress(menuCenter)
                 return KawaiiPanel.TouchResult.ToolbarAction(
@@ -400,9 +521,9 @@ class ToolbarRenderer(
             if (x in g.actionLeft..g.actionRight) {
                 val action = if (clipTab == ClipboardTab.CLIPBOARD) {
                     val btnW = 30f * density
-                    if (x < g.actionRight - btnW) return null
-                    setPress(actionSlotCenter(g, 0, density))
-                    PanelAction.ClearClipboard
+                    val slot = if (x > g.actionRight - btnW) 0 else 1
+                    setPress(actionSlotCenter(g, slot, density))
+                    if (slot == 0) PanelAction.ClearClipboard else PanelAction.ClipSearch
                 } else {
                     val btnW = 30f * density
                     val slot = if (x > g.actionRight - btnW) 0 else 1

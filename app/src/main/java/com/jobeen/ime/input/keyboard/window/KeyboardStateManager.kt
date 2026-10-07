@@ -44,6 +44,9 @@ object KeyboardStateManager {
 
     // 打字状态：由 Status 消息驱动（RimeEngine 不参与）
     private var isComposing = false
+
+    /** 当前引擎是否处于组字中（剪贴板搜索的退格分流要据此决定归属）。 */
+    val isComposingNow: Boolean get() = isComposing
     private var lastEditorInfo: EditorInfo? = null
     private var lastInputEmpty = true
     // 上次实际应用到键盘的入参，用于避免无变化时的重复刷新

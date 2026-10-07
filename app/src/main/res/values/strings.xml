@@ -182,6 +182,12 @@
     <string name="clipboard_delete_confirm">确定要删除 \"%1$s\" 吗？</string>
     <string name="clipboard_confirm">确定</string>
     <string name="clipboard_cancel">取消</string>
+    <string name="clipboard_pin">置顶</string>
+    <string name="clipboard_unpin">取消置顶</string>
+    <string name="clipboard_delete">删除</string>
+    <string name="clipboard_search_hint">搜索剪贴板</string>
+    <string name="clipboard_search_empty">无匹配记录</string>
+    <string name="clipboard_item_actions">对这条记录</string>
 
     <!-- Clipboard / Phrase capsule -->
     <string name="clipboard_tab">剪切板</string>

@@ -72,6 +72,13 @@ class ConfirmOverlay(
         })
     }
 
+    // 动作菜单模式的按钮列（纵向逐项排布），与确认模式共用同一张卡片
+    private val actionsContainer = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        gravity = Gravity.CENTER_HORIZONTAL
+        visibility = View.GONE
+    }
+
     private val card = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
@@ -87,6 +94,10 @@ class ConfirmOverlay(
         })
 
         addView(btnContainer, LinearLayout.LayoutParams(matchParent, wrapContent).apply {
+            topMargin = dp(4)
+        })
+
+        addView(actionsContainer, LinearLayout.LayoutParams(matchParent, wrapContent).apply {
             topMargin = dp(4)
         })
     }
@@ -116,7 +127,61 @@ class ConfirmOverlay(
         this.onConfirm = onConfirm
         this.onCancel = onCancel
         messageView.text = message
+        btnContainer.visibility = View.VISIBLE
+        actionsContainer.visibility = View.GONE
+        showCard(cardX, cardY, centerHorizontal, centerVertical)
+    }
 
+    /**
+     * 动作菜单模式：标题下一列动作按钮，点击任一项执行并关闭。
+     * 定位参数与 [confirm] 相同。
+     */
+    fun actions(
+        message: String,
+        items: List<Pair<String, () -> Unit>>,
+        cardX: Float = Float.NaN,
+        cardY: Float = Float.NaN,
+        centerHorizontal: Boolean = false,
+        centerVertical: Boolean = false,
+    ) {
+        messageView.text = message
+        btnContainer.visibility = View.GONE
+        actionsContainer.visibility = View.VISIBLE
+        actionsContainer.removeAllViews()
+        actionButtons.clear()
+        items.forEachIndexed { index, (label, action) ->
+            val btn = TextView(context).apply {
+                text = label
+                setTextColor(colors.panel.toolbarText)
+                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
+                gravity = Gravity.CENTER
+                background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
+                setPadding(dp(12), dp(8), dp(12), dp(8))
+                setOnClickListener {
+                    action()
+                    dismiss()
+                }
+            }
+            actionsContainer.addView(
+                btn,
+                LinearLayout.LayoutParams(matchParent, wrapContent).apply {
+                    if (index > 0) topMargin = dp(8)
+                }
+            )
+            actionButtons += btn
+        }
+        showCard(cardX, cardY, centerHorizontal, centerVertical)
+    }
+
+    // 主题刷新时动作按钮也要跟着换色，集中登记
+    private val actionButtons = mutableListOf<TextView>()
+
+    private fun showCard(
+        cardX: Float,
+        cardY: Float,
+        centerHorizontal: Boolean,
+        centerVertical: Boolean,
+    ) {
         bringToFront()
         card.alpha = 0f
         card.scaleX = 0f
@@ -184,6 +249,11 @@ class ConfirmOverlay(
         cancelBtn.setTextColor(newColors.panel.toolbarText)
         cancelBtn.background =
             PillBg(newColors.keyBackground, newColors.keyBorderStroke, pillR)
+        actionButtons.forEach { btn ->
+            btn.setTextColor(newColors.panel.toolbarText)
+            btn.background =
+                PillBg(newColors.keyBackground, newColors.keyBorderStroke, pillR)
+        }
         card.background =
             PillBg(newColors.panel.background, newColors.keyBorderStroke, pillR)
     }

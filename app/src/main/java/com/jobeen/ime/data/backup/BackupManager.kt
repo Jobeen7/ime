@@ -126,6 +126,7 @@ object BackupManager {
                 JSONObject()
                     .put("id", r.id).put("text", r.text).put("timestamp", r.timestamp)
                     .put("cloud", r.cloud).put("deleted", r.deleted).put("deletedAt", r.deletedAt)
+                    .put("pinned", r.pinned)
             )
         }
         root.put("clipboard", clips)
@@ -289,6 +290,8 @@ object BackupManager {
                     cloud = o.optBoolean("cloud"),
                     deleted = o.optBoolean("deleted"),
                     deletedAt = o.optLong("deletedAt"),
+                    // 旧备份无此字段，按未置顶还原
+                    pinned = o.optBoolean("pinned"),
                 )
             }
 

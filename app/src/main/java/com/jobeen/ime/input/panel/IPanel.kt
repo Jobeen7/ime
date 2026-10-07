@@ -14,4 +14,10 @@ interface IPanel {
     fun onFinishInputView(finishingInput: Boolean)
     fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>)
     fun exitAddPhraseMode()
+
+    /** 剪贴板搜索态截获引擎上屏文本：返回 true 表示已消费（不写入目标应用）。 */
+    fun interceptCommit(text: String): Boolean = false
+
+    /** 剪贴板搜索态截获退格：返回 true 表示已消费（不下发引擎删字）。 */
+    fun handleClipSearchBackspace(isComposing: Boolean): Boolean = false
 }
