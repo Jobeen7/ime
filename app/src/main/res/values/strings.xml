@@ -188,6 +188,12 @@
     <string name="clipboard_search_hint">搜索剪贴板</string>
     <string name="clipboard_search_empty">无匹配记录</string>
     <string name="clipboard_item_actions">对这条记录</string>
+    <string name="clipboard_edit">编辑</string>
+    <string name="clipboard_edit_hint">编辑这条记录</string>
+    <string name="clipboard_edit_save">保存</string>
+    <string name="clipboard_multi_select">多选</string>
+    <string name="clipboard_selected_count">已选 %1$d 项</string>
+    <string name="clipboard_select_none">未选择记录</string>
 
     <!-- Clipboard / Phrase capsule -->
     <string name="clipboard_tab">剪切板</string>
