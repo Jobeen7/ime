@@ -107,6 +107,131 @@ class ClipboardView(
         onSelectionChanged?.invoke()
     }
 
+    // ── 条目编辑显示模式 ────────────────────────────────────────
+    // 编辑态下列表区改画条目全文（多行可滚）+ 光标，点按定位光标；
+    // 与列表显示互斥（editDisplayActive 优先），数据仍由面板持有，
+    // 这里只负责呈现与把点击换算成字符下标回调出去。
+
+    var onEditCursorMoved: ((Int) -> Unit)? = null
+
+    var editDisplayActive: Boolean = false
+        private set
+    private var editText: String = ""
+    private var editCursor: Int = 0
+
+    private data class EditLine(val start: Int, val text: String)
+
+    private var editLines = listOf<EditLine>()
+    private var editTotalH = 0f
+    private val editHintPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val editCursorPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    fun setEditContent(text: String, cursor: Int) {
+        editText = text
+        editCursor = cursor.coerceIn(0, text.length)
+        editDisplayActive = true
+        rebuildEditLines()
+        ensureCursorVisible()
+        invalidate()
+    }
+
+    fun clearEditDisplay() {
+        if (!editDisplayActive) return
+        editDisplayActive = false
+        editText = ""
+        editCursor = 0
+        editLines = emptyList()
+        computeRowLayouts()
+        resetScroll()
+        invalidate()
+    }
+
+    private fun editLineHeight(): Float {
+        val fm = textPaint.fontMetrics
+        return fm.descent - fm.ascent
+    }
+
+    private fun rebuildEditLines() {
+        val w = width
+        if (w <= 0) {
+            editLines = emptyList()
+            editTotalH = 0f
+            return
+        }
+        val maxTextW = w - hMargin * 2 - pillPad * 2
+        val lines = mutableListOf<EditLine>()
+        var segStart = 0
+        // 按段落逐段断行：段内换行由 breakText 处理，'\n' 本身占一个字符位
+        while (true) {
+            val nl = editText.indexOf('\n', segStart)
+            val segEnd = if (nl >= 0) nl else editText.length
+            val seg = editText.substring(segStart, segEnd)
+            val segLines = breakText(textPaint, seg, maxTextW, Int.MAX_VALUE)
+            var lineStart = segStart
+            for (line in segLines) {
+                lines.add(EditLine(lineStart, line))
+                lineStart += line.length
+            }
+            if (nl < 0) break
+            segStart = nl + 1
+            if (segStart > editText.length) break
+            if (segStart == editText.length) {
+                // 文本以 '\n' 结尾：尾部还有一个空行承载光标
+                lines.add(EditLine(segStart, ""))
+                break
+            }
+        }
+        if (lines.isEmpty()) lines.add(EditLine(0, ""))
+        editLines = lines
+        editTotalH = topPad * 2 + lines.size * editLineHeight()
+    }
+
+    /** 光标所在行下标：cursor 落在行内或正好行尾（含段尾 '\n' 位）都归该行。 */
+    private fun editCursorLine(): Int {
+        for (i in editLines.indices) {
+            val line = editLines[i]
+            if (editCursor <= line.start + line.text.length) return i
+        }
+        return editLines.lastIndex.coerceAtLeast(0)
+    }
+
+    private fun ensureCursorVisible() {
+        if (editLines.isEmpty() || height <= 0) return
+        val lh = editLineHeight()
+        val cursorTop = topPad + editCursorLine() * lh
+        val cursorBottom = cursorTop + lh
+        val viewH = height.toFloat()
+        if (cursorTop < scrollOffsetY) {
+            scrollOffsetY = cursorTop - topPad
+        } else if (cursorBottom > scrollOffsetY + viewH) {
+            scrollOffsetY = cursorBottom - viewH + topPad
+        }
+        val maxS = maxOf(0f, editTotalH - viewH)
+        scrollOffsetY = scrollOffsetY.coerceIn(0f, maxS)
+    }
+
+    /** 把点击坐标换算成字符下标：y 定行，x 用逐字测宽找最近字界。 */
+    private fun editIndexAt(x: Float, y: Float): Int {
+        if (editLines.isEmpty()) return 0
+        val lh = editLineHeight()
+        val contentY = scrollOffsetY + y - topPad
+        val li = (contentY / lh).toInt().coerceIn(0, editLines.lastIndex)
+        val line = editLines[li]
+        val textX = hMargin + pillPad
+        var acc = 0f
+        var best = 0
+        var bestDist = Float.MAX_VALUE
+        for (i in 0..line.text.length) {
+            val dist = abs(x - (textX + acc))
+            if (dist < bestDist) {
+                bestDist = dist
+                best = i
+            }
+            if (i < line.text.length) acc += textPaint.measureText(line.text[i].toString())
+        }
+        return line.start + best
+    }
+
     /** 列表异步重载后调用：清掉已不存在条目的残留选中。 */
     private fun pruneSelection() {
         if (selectedTexts.isEmpty()) return
@@ -228,7 +353,8 @@ class ClipboardView(
             }
             rowLayouts = layouts
             totalContentH = totalHeightOf(layouts)
-            resetScroll()
+            // 编辑显示期间列表数据可照常更新，但滚动位置归编辑区，不能被重置
+            if (!editDisplayActive) resetScroll()
             if (tab == ClipboardTab.CLIPBOARD) pruneSelection()
             invalidate()
         }
@@ -272,12 +398,20 @@ class ClipboardView(
         accentColor = scheme.accentKeyBackground
         pinBarPaint.color = accentColor
         checkBgColor = scheme.keyBackground
+        editCursorPaint.color = accentColor
+        editHintPaint.color = panel.candidateIndex
+        editHintPaint.textSize = 14f * density
 
         emptyPaint.color = panel.candidateIndex
         cloudDrawable?.setTint(panel.candidateIndex)
     }
 
     private fun computeRowLayouts() {
+        // 编辑显示模式下尺寸变化只需重排编辑行，列表行等退出编辑时再建
+        if (editDisplayActive) {
+            rebuildEditLines()
+            return
+        }
         val w = width
         if (w <= 0) {
             rowLayouts = emptyList()
@@ -368,6 +502,11 @@ class ClipboardView(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (width <= 0 || height <= 0) return
+
+        if (editDisplayActive) {
+            drawEditContent(canvas)
+            return
+        }
 
         if (rowLayouts.isEmpty()) {
             // 空态 Paint 此前每帧新建并现解析主题色；提为字段，颜色随主题刷新
@@ -480,6 +619,38 @@ class ClipboardView(
         canvas.restore()
     }
 
+    /** 编辑模式绘制：全文逐行 + 光标竖线；空文本画提示。 */
+    private fun drawEditContent(canvas: Canvas) {
+        maxScroll = maxOf(0f, editTotalH - height)
+        val lh = editLineHeight()
+        val fm = textPaint.fontMetrics
+        val textX = hMargin + pillPad
+        canvas.save()
+        canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
+        if (editText.isEmpty()) {
+            canvas.drawText(
+                context.getString(R.string.clipboard_edit_hint),
+                textX, topPad - fm.ascent, editHintPaint
+            )
+        } else {
+            val cursorLine = editCursorLine()
+            var y = topPad - scrollOffsetY
+            for ((i, line) in editLines.withIndex()) {
+                if (y + lh >= 0 && y <= height) {
+                    canvas.drawText(line.text, textX, y - fm.ascent, textPaint)
+                    if (i == cursorLine) {
+                        val col = (editCursor - line.start).coerceIn(0, line.text.length)
+                        val cx = textX + textPaint.measureText(line.text.substring(0, col))
+                        editCursorPaint.strokeWidth = 1.6f * density
+                        canvas.drawLine(cx, y + 1f * density, cx, y + lh - 1f * density, editCursorPaint)
+                    }
+                }
+                y += lh
+            }
+        }
+        canvas.restore()
+    }
+
     private fun itemIndexAt(y: Float): Int {
         val contentY = scrollOffsetY + y - headerH - topPad
         var cumulative = 0f
@@ -493,6 +664,7 @@ class ClipboardView(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        if (editDisplayActive) return onEditTouchEvent(event)
         velocityTracker?.addMovement(event)
 
         when (event.actionMasked) {
@@ -589,5 +761,67 @@ class ClipboardView(
             scrollOffsetY = scroller.currY.toFloat().coerceIn(0f, maxScroll)
             postInvalidateOnAnimation()
         }
+    }
+
+    /**
+     * 编辑模式手势：拖动滚动全文，抬手未滚动则按落点定位光标。
+     * 与列表手势同构，但没有长按菜单与点选上屏。
+     */
+    private fun onEditTouchEvent(event: MotionEvent): Boolean {
+        velocityTracker?.addMovement(event)
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                scroller.forceFinished(true)
+                lastTouchY = event.y
+                isScrolling = false
+                velocityTracker = VelocityTracker.obtain()
+                velocityTracker?.addMovement(event)
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val dy = event.y - lastTouchY
+                if (!isScrolling && abs(dy) > touchSlop) isScrolling = true
+                if (isScrolling) {
+                    val editMax = maxOf(0f, editTotalH - height)
+                    val rawOffset = scrollOffsetY - dy
+                    scrollOffsetY = if (rawOffset < 0) {
+                        rawOffset * 0.3f
+                    } else if (rawOffset > editMax) {
+                        editMax + (rawOffset - editMax) * 0.3f
+                    } else rawOffset
+                    lastTouchY = event.y
+                    invalidate()
+                }
+            }
+
+            MotionEvent.ACTION_UP -> {
+                velocityTracker?.let { tracker ->
+                    tracker.computeCurrentVelocity(1000)
+                    val vy = tracker.yVelocity
+                    val editMax = maxOf(0f, editTotalH - height)
+                    if (abs(vy) > ViewConfiguration.get(context).scaledMinimumFlingVelocity) {
+                        scroller.fling(
+                            0, scrollOffsetY.roundToInt(), 0, (-vy).toInt(),
+                            0, 0, 0, editMax.toInt()
+                        )
+                        postInvalidateOnAnimation()
+                    }
+                }
+                velocityTracker?.recycle()
+                velocityTracker = null
+                if (!isScrolling) {
+                    InputFeedbacks.hapticFeedback(this)
+                    onEditCursorMoved?.invoke(editIndexAt(event.x, event.y))
+                }
+                isScrolling = false
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                velocityTracker?.recycle()
+                velocityTracker = null
+                isScrolling = false
+            }
+        }
+        return true
     }
 }

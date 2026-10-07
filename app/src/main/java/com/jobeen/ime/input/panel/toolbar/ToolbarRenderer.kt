@@ -24,10 +24,9 @@ class ToolbarRenderer(
     var clipSearchMode: Boolean = false
     var clipSearchQuery: String = ""
     var clipSearchHint: String = ""
-    // 剪贴板条目编辑态：true 时胶囊区改画编辑框（与搜索框同几何），
+    // 剪贴板条目编辑态：true 时胶囊区改画提示行（全文编辑在列表区），
     // 动作区两槽改为「保存 / 取消」文字按钮
     var clipEditMode: Boolean = false
-    var clipEditText: String = ""
     var clipEditHint: String = ""
     var clipEditSaveLabel: String = ""
     var clipCancelLabel: String = ""
@@ -480,45 +479,22 @@ class ToolbarRenderer(
     }
 
     /**
-     * 编辑态：胶囊区改画编辑框——与搜索框同几何同尾截断逻辑，但不画放大镜，
-     * 文本从左内边距起；动作区两槽画「取消 / 保存」文字（slot1=取消、slot0=保存，
+     * 编辑态：胶囊区只画一行提示（条目全文在上方列表区多行编辑），
+     * 动作区两槽画「取消 / 保存」文字（slot1=取消、slot0=保存，
      * 与 hitTest 的槽位判定一致：靠右 btnW 内为 slot0）。
      */
     private fun drawClipEditbar(
         canvas: Canvas, g: ClipGeom, height: Int, paints: Paints, density: Float,
     ) {
-        val fieldLeft = g.capsuleLeft
-        val fieldRight = g.actionLeft - 6f * density
-        val fieldTop = g.capsuleTop
-        val fieldH = g.capsuleH
-        trackPaint.color = paints.toolbarIconColor and 0x1FFFFFFF
-        canvas.drawRoundRect(
-            fieldLeft, fieldTop, fieldRight, fieldTop + fieldH,
-            fieldH / 2f, fieldH / 2f, trackPaint
-        )
-        val cy = fieldTop + fieldH / 2f
+        val cy = height / 2f
         val textPaint = searchTextPaint
         textPaint.textSize = 14f * density
-        val textLeft = fieldLeft + 12f * density
-        val textRight = fieldRight - 10f * density
-        val availW = (textRight - textLeft).coerceAtLeast(0f)
-        val t = clipEditText
+        textPaint.color = dimColor(paints.toolbarIconColor)
         val fm = textPaint.fontMetrics
-        val baseline = cy - fm.ascent / 2f - fm.descent / 2f
-        if (t.isEmpty()) {
-            textPaint.color = dimColor(paints.toolbarIconColor)
-            canvas.drawText(clipEditHint, textLeft, baseline, textPaint)
-        } else {
-            textPaint.color = paints.toolbarIconColor
-            var s = t
-            while (s.isNotEmpty() && textPaint.measureText(s) > availW) s = s.drop(1)
-            canvas.drawText(s, textLeft, baseline, textPaint)
-            val cursorX = textLeft + textPaint.measureText(s) + 2f * density
-            searchLinePaint.color = paints.toolbarIconColor
-            searchLinePaint.strokeWidth = 1.6f * density
-            val halfTextH = (fm.descent - fm.ascent) / 2f * 0.8f
-            canvas.drawLine(cursorX, cy - halfTextH, cursorX, cy + halfTextH, searchLinePaint)
-        }
+        canvas.drawText(
+            clipEditHint, g.capsuleLeft + 4f * density,
+            cy - fm.ascent / 2f - fm.descent / 2f, textPaint
+        )
         drawClipTextAction(canvas, actionSlotCenter(g, 1, density), cy, clipCancelLabel, paints, density)
         drawClipTextAction(canvas, actionSlotCenter(g, 0, density), cy, clipEditSaveLabel, paints, density)
     }
