@@ -251,8 +251,12 @@ class KawaiiPanelView(context: Context) : View(context) {
             }
 
             MotionEvent.ACTION_UP -> {
-                activePointerId = -1
-                handleUp(event.x, event.y)
+                // 与 CustomGestureView 同一守卫：双指同压时被追踪手指已以
+                // POINTER_UP 收尾过，剩余手指的 ACTION_UP 不得再命中一次
+                if (activePointerId == event.getPointerId(0)) {
+                    activePointerId = -1
+                    handleUp(event.x, event.y)
+                }
             }
 
             MotionEvent.ACTION_POINTER_UP -> {

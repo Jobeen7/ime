@@ -179,8 +179,13 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
             }
 
             MotionEvent.ACTION_UP -> {
-                activePointerId = -1
-                handleRelease(event.x, event.y)
+                // 双指同压时被追踪手指会先以 POINTER_UP 收尾（activePointerId
+                // 已置 -1），剩余手指抬起产生的 ACTION_UP 不能再收尾一次，
+                // 否则 handleRelease 以复位后的状态重算出 click，动作触发两次
+                if (activePointerId == event.getPointerId(0)) {
+                    activePointerId = -1
+                    handleRelease(event.x, event.y)
+                }
                 return true
             }
 
