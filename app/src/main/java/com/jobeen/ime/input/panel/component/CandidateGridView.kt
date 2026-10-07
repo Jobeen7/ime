@@ -65,6 +65,7 @@ class CandidateGridView(
     var onNeedMoreCandidates: (() -> Unit)? = null
     /** 本批已发出补取请求、等列表更新后复位，避免同一位置反复触发 */
     private var needMoreRequested: Boolean = false
+    private var needMoreCheckPosted: Boolean = false
 
     private val sidePanelKey = SidePanelKeyView(
         context, colors,
@@ -263,6 +264,9 @@ class CandidateGridView(
 
             val firstRow = (scrollOffsetY / rowH).toInt().coerceAtLeast(0)
             val yOff = -(scrollOffsetY - firstRow * rowH) + stretch
+            // 一帧内恒定：行基线偏移在循环外算一次（此前每候选重复求值）
+            val textCenterDy = (textPaint.descent() + textPaint.ascent()) / 2f
+            val densityF = resources.displayMetrics.density
 
             canvas.withSave {
                 clipRect(0f, 0f, rowWidth, h)
@@ -279,12 +283,12 @@ class CandidateGridView(
                         val tw = textWidths.getOrElse(i) { 0f }
                         val isTarget = i == dragTargetIndex && dragIndex >= 0
 
-                        val shakeOff = if (dragIndex >= 0) {
-                            kotlin.math.sin(shakePhase + i * 1.9f) * 0.8f * resources.displayMetrics.density
+                        // 同一 sin 值两处用，只算一遍（此前每候选每帧算两次）
+                        val shakeSin = if (dragIndex >= 0) {
+                            kotlin.math.sin(shakePhase + i * 1.9f)
                         } else 0f
-                        val shakeAngle = if (dragIndex >= 0) {
-                            kotlin.math.sin(shakePhase + i * 1.9f) * shakeMaxAngle
-                        } else 0f
+                        val shakeOff = shakeSin * 0.8f * densityF
+                        val shakeAngle = shakeSin * shakeMaxAngle
 
                         if (pos.extraWide) {
                             val sx = rowScrollX[pos.row] ?: 0f
@@ -297,8 +301,7 @@ class CandidateGridView(
                                     )
                                 }
                                 val textX = cellPad - sx + shakeOff
-                                val textY =
-                                    y + rowH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+                                val textY = y + rowH / 2f - textCenterDy
                                 if (shakeAngle != 0f) {
                                     val cx = textX + tw / 2f
                                     val cy = textY
@@ -320,8 +323,7 @@ class CandidateGridView(
                             }
                             val txtLeft = pos.xStart + shakeOff + (pos.width - tw) / 2f
                             val textX = txtLeft.coerceAtLeast(rectLeft)
-                            val textY =
-                                y + rowH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+                            val textY = y + rowH / 2f - textCenterDy
                             if (shakeAngle != 0f) {
                                 val cx = textX + tw / 2f
                                 val cy = textY
@@ -366,12 +368,20 @@ class CandidateGridView(
                 canvas.drawText(
                     c.text,
                     dragLeft + cellPad,
-                    dragTop + rowH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f,
+                    dragTop + rowH / 2f - textCenterDy,
                     textPaint
                 )
             }
 
-            checkNeedMore()
+            // 补取判定不在绘制调用栈内直接回调 listener：post 到帧后执行，
+            // 数据请求与绘制事务解耦，避免改绘制逻辑时踩回调重入
+            if (!needMoreCheckPosted) {
+                needMoreCheckPosted = true
+                post {
+                    needMoreCheckPosted = false
+                    checkNeedMore()
+                }
+            }
         }
 
         /**

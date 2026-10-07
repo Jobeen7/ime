@@ -112,6 +112,10 @@ class ToolbarRenderer(
     private val dimTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val trackPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val segPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    private val addPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER }
+    // 复制药丸截断缓存：（源文本, 可用宽, 字号）→ 截断结果
+    private var ellipsizeCacheKey: Triple<String, Float, Float>? = null
+    private var ellipsizeCacheValue: String? = null
 
     override fun draw(
         canvas: Canvas, width: Int, height: Int, paints: Paints,
@@ -181,17 +185,27 @@ class ToolbarRenderer(
             val availW = clipRight - clipLeft
             val maxTextW = availW - iconAvail - pillPad * 2
             val src = if (t.length > 256) t.take(256) else t
-            val ellipsized = if (textPaint.measureText(src) <= maxTextW) {
-                src
+            // 截断结果缓存：按压动画约 18 帧重绘时 copyText 不变，此前每帧
+            // 都重跑一遍二分（每轮迭代还新建子串+拼接串）
+            val cacheKey = Triple(src, maxTextW, textPaint.textSize)
+            val ellipsized = if (cacheKey == ellipsizeCacheKey) {
+                ellipsizeCacheValue!!
             } else {
-                var lo = 0
-                var hi = src.length
-                while (lo < hi) {
-                    val mid = (lo + hi) / 2
-                    if (textPaint.measureText(src.take(mid) + "…") <= maxTextW) lo = mid + 1
-                    else hi = mid
+                val computed = if (textPaint.measureText(src) <= maxTextW) {
+                    src
+                } else {
+                    var lo = 0
+                    var hi = src.length
+                    while (lo < hi) {
+                        val mid = (lo + hi) / 2
+                        if (textPaint.measureText(src.take(mid) + "…") <= maxTextW) lo = mid + 1
+                        else hi = mid
+                    }
+                    src.take((lo - 1).coerceAtLeast(0)) + "…"
                 }
-                src.take((lo - 1).coerceAtLeast(0)) + "…"
+                ellipsizeCacheKey = cacheKey
+                ellipsizeCacheValue = computed
+                computed
             }
             val textW = textPaint.measureText(ellipsized)
             val totalW = iconAvail + textW
@@ -284,14 +298,14 @@ class ToolbarRenderer(
         val segW = (g.capsuleRight - g.capsuleLeft) / 2f
         val cy = g.capsuleTop + g.capsuleH / 2f
         val segPaint = this.segPaint
-        val labels = listOf(
-            clipLabelClipboard to (clipTab == ClipboardTab.CLIPBOARD),
-            clipLabelPhrase to (clipTab == ClipboardTab.PHRASE),
-        )
-        for ((i, pair) in labels.withIndex()) {
+        // 两段标签直接展开绘制（此前每帧现建 List+Pair，与本文件绘制期
+        // 复用的约定不一致）
+        for (i in 0..1) {
+            val label = if (i == 0) clipLabelClipboard else clipLabelPhrase
+            val selected = (i == 0) == (clipTab == ClipboardTab.CLIPBOARD)
             val segLeft = g.capsuleLeft + segW * i
             val segRight = segLeft + segW
-            if (pair.second) {
+            if (selected) {
                 canvas.drawRoundRect(
                     segLeft + 3f * density, g.capsuleTop + 3f * density,
                     segRight - 3f * density, g.capsuleTop + g.capsuleH - 3f * density,
@@ -300,11 +314,11 @@ class ToolbarRenderer(
                 )
             }
             segPaint.color =
-                if (pair.second) clipSelectedTextColor else dimColor(paints.toolbarIconColor)
+                if (selected) clipSelectedTextColor else dimColor(paints.toolbarIconColor)
             segPaint.textSize = 14f * density
             val fm = segPaint.fontMetrics
             canvas.drawText(
-                pair.first,
+                label,
                 (segLeft + segRight) / 2f,
                 cy - fm.ascent / 2f - fm.descent / 2f,
                 segPaint
@@ -318,11 +332,8 @@ class ToolbarRenderer(
                 drawActionIcon(canvas, d, actionSlotCenter(g, 0, density), actionCy, paints, density)
             }
         } else {
-            val addPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textAlign = Paint.Align.CENTER
-                textSize = 22f * density
-                color = dimColor(paints.toolbarIconColor)
-            }
+            addPaint.textSize = 22f * density
+            addPaint.color = dimColor(paints.toolbarIconColor)
             canvas.drawText(
                 "＋",
                 actionSlotCenter(g, 1, density),
