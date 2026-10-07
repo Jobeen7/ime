@@ -145,21 +145,10 @@ namespace rime_jni {
                 menu.isLastPage = m.is_last_page;
                 menu.highlightedIndex = m.highlighted_candidate_index;
                 menu.selectKeys = m.select_keys ? m.select_keys : "";
-
-                const auto keysLen = m.select_keys ? std::strlen(m.select_keys) : 0;
-                menu.candidates.reserve(m.num_candidates);
-                for (int i = 0; i < m.num_candidates; ++i) {
-                    std::string label;
-                    if (i < m.page_size && RIME_PROVIDED(ctx, select_labels)) {
-                        label = ctx->select_labels[i];
-                    } else if (i < static_cast<int>(keysLen)) {
-                        label = std::string(1, m.select_keys[i]);
-                    } else {
-                        label = std::to_string((i + 1) % 10);
-                    }
-                    menu.selectLabels.push_back(label);
-                    menu.candidates.emplace_back(m.candidates[i], label);
-                }
+                // menu.candidates / selectLabels 不再填充：候选自 bulk 分页
+                // 改造后另走一路，Kotlin 侧对 context 只读这几个标量；此前
+                // 每键把整页候选逐个拷贝并转 Java 对象是纯死数据。MenuProto
+                // 的字段与 JNI 构造签名保留（bridge 传空数组），避免动契约。
             }
         }
     };
