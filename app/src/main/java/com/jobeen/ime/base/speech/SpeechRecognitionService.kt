@@ -359,9 +359,10 @@ class SpeechRecognitionService : Service() {
     }
 
     private fun initEngine(context: android.content.Context, silent: Boolean = false): Boolean {
-        // 热词过期检查（异步、内部防并发）：刷新只写文件，本次沿用现有
-        // 词表建识别器；新词表经指纹变化在下一次初始化时自动生效
-        scope.launch { runCatching { SpeechHotwords.regenerateIfStale(context) } }
+        // 注意：本服务在 :speech 独立进程，不能在这里生成热词表——Rime 引擎与
+        // 用户词典在主进程，本进程的会话导不出词。生成归主进程（RimeEngine
+        // 输入结束时检查刷新、词典导入后刷新），本进程只读文件；新词表经
+        // 指纹变化在下一次初始化时自动生效。
         if (recognizerRef.get() != null &&
             engineFingerprint(context, App.speechModelDir) == loadedModelFingerprint
         ) return true
@@ -445,7 +446,7 @@ class SpeechRecognitionService : Service() {
                     maxActivePaths = if (useHotwords) 4 else 4,
                     enableEndpoint = false,
                     hotwordsFile = if (useHotwords) hotwordsFile.absolutePath else "",
-                    hotwordsScore = if (useHotwords) 1.5f else 0.0f,
+                    hotwordsScore = if (useHotwords) 2.5f else 0.0f,
                 )
                 recognizerRef.set(OnlineRecognizer(null, config))
                 loadedModelFingerprint = fingerprint
