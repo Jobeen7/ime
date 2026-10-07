@@ -678,10 +678,14 @@ class ClipboardView(
                 val idx = itemIndexAt(event.y)
                 if (idx in rowLayouts.indices) {
                     pressedIndex = idx
-                    longPressPending = true
-                    longPressX = event.x
-                    longPressY = event.y
-                    postDelayed(longPressRunnable, longPressTimeout.toLong())
+                    // 多选态不挂长按：长按触发会清掉 pressedIndex，
+                    // 使抬手时的勾选切换落空（点得稍久就"点不上"）
+                    if (!multiSelectActive) {
+                        longPressPending = true
+                        longPressX = event.x
+                        longPressY = event.y
+                        postDelayed(longPressRunnable, longPressTimeout.toLong())
+                    }
                     invalidate()
                 }
             }
