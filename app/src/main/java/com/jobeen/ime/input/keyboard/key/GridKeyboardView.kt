@@ -25,6 +25,11 @@ class GridKeyboardView(
     var onKeyPressed: ((KeyView) -> Unit)? = null
 
     private var scrollOffsetY = 0f
+    // 已通过 offsetTopAndBottom 应用到子 View 位置的滚动偏移：滚动时增量
+    // 平移子 View 代替每帧 requestLayout 的整批 measure/layout 遍历
+    private var appliedScrollOffset = 0
+    private var laidFirstRow = -1
+    private var laidLastRow = -1
     private var rowH = 0
     private var lastMeasuredColW = -1
     private var lastMeasuredRowH = -1
@@ -139,6 +144,33 @@ class GridKeyboardView(
                 col * colW, childTop, (col + 1) * colW, childTop + rowH
             )
         }
+        // onLayout 已按当前偏移定位，与增量平移的基准对齐
+        appliedScrollOffset = scrollOffsetY.toInt()
+        laidFirstRow = first
+        laidLastRow = last
+    }
+
+    /**
+     * 把滚动偏移以增量平移应用到全部子 View（纯位置字段修改 + 一次
+     * invalidate），滚动/fling 期间不再每帧请求整批 measure/layout。
+     * 子 View 的点击坐标由其 layout 位置决定，平移后命中与绘制一致。
+     */
+    private fun applyScrollOffset() {
+        // 新滚入的行尚未按当前范围 layout 过：跨行时才回退一次完整布局
+        // （每滚过一行一次，而非每帧），行内滚动走纯增量平移
+        val (f, l) = visibleRowRange()
+        if (f != laidFirstRow || l != laidLastRow) {
+            requestLayout()
+            return
+        }
+        val newOffset = scrollOffsetY.toInt()
+        val delta = newOffset - appliedScrollOffset
+        if (delta == 0) return
+        for (i in 0 until childCount) {
+            getChildAt(i).offsetTopAndBottom(-delta)
+        }
+        appliedScrollOffset = newOffset
+        invalidate()
     }
 
     override fun computeScroll() {
@@ -146,7 +178,7 @@ class GridKeyboardView(
         if (scroller.computeScrollOffset()) {
             scrollOffsetY = scroller.currY.toFloat()
             clampScroll()
-            requestLayout()
+            applyScrollOffset()
         }
     }
 
@@ -204,14 +236,11 @@ class GridKeyboardView(
 
     private fun animateStretchBack() {
         stretchAnimator?.cancel()
-        stretchAnimator = ValueAnimator.ofFloat(stretch, 0f).apply {
-            duration = 260
-            addUpdateListener {
-                stretch = it.animatedValue as Float
-                requestLayout()
-            }
-            start()
-        }
+        stretchAnimator = null
+        // stretch 从未进入 onLayout 的位置计算（位置只由 scrollOffsetY
+        // 决定），此前的逐帧动画只是驱动 260ms 的空转布局。直接归零，
+        // 视觉与此前一致（本来就没有拉伸位移），省掉整段布局空转
+        stretch = 0f
     }
 
     private fun fling(velocityY: Int) {
@@ -270,7 +299,7 @@ class GridKeyboardView(
                 if (dragging) {
                     val dy = lastY - event.y
                     dragBy(dy)
-                    requestLayout()
+                    applyScrollOffset()
                 }
                 lastY = event.y
                 return true
