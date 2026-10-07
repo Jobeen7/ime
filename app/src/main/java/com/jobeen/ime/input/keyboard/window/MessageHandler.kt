@@ -20,6 +20,8 @@ class MessageHandler(
     suspend fun handle(message: EngineMessage) {
         when (message) {
             is EngineMessage.Commit -> {
+                // 剪贴板搜索态：上屏文本改道进搜索查询，不写入目标应用
+                if (window?.interceptCommit(message.text) == true) return
                 (service as ImeInputMethodService).activeInputConnection()
                     ?.commitText(message.text, 1)
                 service.notifyInputChanged()

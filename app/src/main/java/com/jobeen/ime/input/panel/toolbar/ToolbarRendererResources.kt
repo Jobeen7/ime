@@ -16,4 +16,5 @@ data class ToolbarRendererResources(
     val selectAll: Drawable?,
     val copy: Drawable?,
     val paste: Drawable?,
+    val search: Drawable?,
 )

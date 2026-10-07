@@ -55,6 +55,9 @@ class KeyboardWindow(
         view.setCandidates(list, hasMore)
     }
 
+    /** 剪贴板搜索态截获上屏文本，转发给面板决定是否消费。 */
+    fun interceptCommit(text: String): Boolean = panel.interceptCommit(text)
+
     fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int) {
         view.appendCandidates(list, total)
     }

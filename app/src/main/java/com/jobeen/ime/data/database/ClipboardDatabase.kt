@@ -13,7 +13,7 @@ import androidx.room.TypeConverters
  * 敏感文本，必须排除在系统云备份之外；而常用语/选词偏好等留在 ime_database 照常备份。
  * 旧数据由 ClipboardManager 在首次访问时从 ime_database 一次性迁入。
  */
-@Database(entities = [ClipboardRecord::class], version = 1, exportSchema = false)
+@Database(entities = [ClipboardRecord::class], version = 2, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class ClipboardDatabase : RoomDatabase() {
 
@@ -23,13 +23,22 @@ abstract class ClipboardDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: ClipboardDatabase? = null
 
+        /** v2：新增 pinned（置顶）列，默认 0。 */
+        private val MIGRATION_1_2 = object : androidx.room.migration.Migration(1, 2) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE clipboard_records ADD COLUMN pinned INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         fun getInstance(context: Context): ClipboardDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     ClipboardDatabase::class.java,
                     "clipboard_database"
-                ).build().also { INSTANCE = it }
+                ).addMigrations(MIGRATION_1_2).build().also { INSTANCE = it }
             }
         }
     }
