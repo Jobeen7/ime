@@ -352,7 +352,10 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
             is RimeMessage.DeployMessage -> {
                 if (it.data == RimeMessage.DeployMessage.State.Start) {
-                    OpenCCDictManager.buildOpenCCDict()
+                    OpenCCDictManager.buildOpenCCDictAsync()
+                }
+                if (it.data == RimeMessage.DeployMessage.State.Success) {
+                    invalidateSchemaListCache()
                 }
             }
 
@@ -543,6 +546,18 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
         @JvmStatic
         external fun getSchemaList(): Array<SchemaItem>
+
+        // 方案列表缓存：Schema 通知转换每次只需按 id 查一条，此前每次都走
+        // JNI 全量拉取。部署成功后方案集可能变化，届时由通知处理失效缓存
+        @Volatile
+        private var schemaListCache: Array<SchemaItem>? = null
+
+        fun cachedSchemaList(): Array<SchemaItem> =
+            schemaListCache ?: getSchemaList().also { schemaListCache = it }
+
+        fun invalidateSchemaListCache() {
+            schemaListCache = null
+        }
 
         @JvmStatic
         external fun getCurrentSchema(): String
