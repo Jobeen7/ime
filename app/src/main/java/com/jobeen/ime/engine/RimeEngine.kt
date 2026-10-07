@@ -153,6 +153,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var inputConnection: InputConnection? = null
     @Volatile
     private var editorInfo: EditorInfo? = null
+
+    // 用户搭配学习链：上一个打字上屏的词段（简体形）。只由打字路径
+    // （native 上屏、预测候选点选）推进；前端提交（剪贴板/常用语/语音
+    // 等 CommitAction）不学且打断此链；输入结束/隐私闸门时清空。
+    private var lastLearnSegment: String? = null
     // 弱引用：EngineFactory 单例持有 RimeEngine，强引用 service 会导致 service 销毁后泄漏
     private var serviceRef: WeakReference<ImeInputMethodService>? = null
 
@@ -361,7 +366,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
             emitMessage(EngineMessage.Commit(candidate.text))
             invalidateBeforeCursorCache()
-            requestPrediction(candidate.text)
+            // 预测候选点选属于打字流上屏：参与搭配学习
+            requestPrediction(candidate.text, learnable = true)
             return
         }
 
@@ -660,7 +666,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 state.suppressNextEmptyCandidates = true
                 // native 刚上屏：前文缓存失效，预测读到新鲜前文
                 invalidateBeforeCursorCache()
-                requestPrediction(msg.text)
+                // 打字上屏：参与搭配学习
+                requestPrediction(msg.text, learnable = true)
             }
 
             is EngineMessage.Candidates -> {
@@ -1015,6 +1022,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     override fun onFinishInputView() {
         inputConnection = null
         editorInfo = null
+        lastLearnSegment = null
         invalidateBeforeCursorCache()
         invalidatePendingCandidates()
         invalidatePendingPrediction()
@@ -1068,14 +1076,35 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         dispatchAction(Action.Predict(commit))
     }
 
-    private fun requestPrediction(commit: String) {
-        // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不读前文、不跑预测
-        if (isNoPersonalizedLearning(editorInfo)) return
+    private fun requestPrediction(commit: String, learnable: Boolean = false) {
+        // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不读前文、不跑预测、不学搭配
+        if (isNoPersonalizedLearning(editorInfo)) {
+            lastLearnSegment = null
+            return
+        }
         // 预测模型基于简体训练；先转成简体再推导，以支持繁体输入下的候选预测。
         // 上屏刚发生时缓存已失效，这里读到的是包含本次上屏内容的新鲜前文。
         val inputContext = TraditionalConverter.toSimplified(
             peekTextBeforeCursor(20) + commit
         )
+        // 搭配学习（仅打字上屏路径 learnable=true 时）：与上一个打字
+        // 词段组成词对计数；本段不合规（标点等）则断链。查询键取更新
+        // 后的链尾，即刚上屏的词段。
+        val userKey: String?
+        if (learnable) {
+            val segment = TraditionalConverter.toSimplified(commit)
+            if (com.jobeen.ime.base.ngram.UserCollocationStore.isLearnableSegment(segment)) {
+                lastLearnSegment?.let { prev ->
+                    predictionManager?.learnCollocation(prev, segment)
+                }
+                lastLearnSegment = segment
+            } else {
+                lastLearnSegment = null
+            }
+            userKey = lastLearnSegment
+        } else {
+            userKey = null
+        }
         val requestId = ++state.predictionRequestId
         state.latestPredictionRequestId = requestId
         predictionJob?.cancel()
@@ -1090,7 +1119,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         inputContext.last()
                     )
                 ) {
-                    candidates = predictionManager?.makePredictions(inputContext) ?: emptyList()
+                    candidates = predictionManager?.makePredictions(inputContext, userKey) ?: emptyList()
                 }
                 if (context?.let { CandidateManager.isTraditionalChineseEnabled(it) } == true) {
                     candidates = candidates.map {
@@ -1118,6 +1147,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private fun requestCommit(text: String) {
+        // 前端提交（剪贴板/常用语/语音/符号键等）不参与搭配学习，
+        // 且打断打字学习链：粘贴的文本不作为下一个打字词的搭配前文
+        lastLearnSegment = null
         sendJob {
             // 直接上屏：前文缓存失效，后续预测读新鲜前文
             invalidateBeforeCursorCache()
