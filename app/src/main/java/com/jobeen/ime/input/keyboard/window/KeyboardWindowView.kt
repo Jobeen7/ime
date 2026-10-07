@@ -396,11 +396,18 @@ class KeyboardWindowView(
         )
 
         val clipStripH = clipSearchStripHeight(cHeight)
+        val searchKbHidden = panel.clipSearchKeyboardHidden
         for (i in 0 until childCount) {
             val child = getChildAt(i)
             if (child === panel.view || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
-            // 搜索态：键盘按扣掉顶部列表条后的高度测量（候选网格保持原高，它不参与搜索态）
-            val childH = if (clipStripH > 0 && child !== panel.candidateGrid) cHeight - clipStripH else cHeight
+            // 搜索态：键盘按扣掉顶部列表条后的高度测量（候选网格保持原高，它不参与搜索态）；
+            // 搜索内键盘收起时键盘测 0 高，列表占满浏览结果
+            val childH = when {
+                child === panel.candidateGrid -> cHeight
+                searchKbHidden -> 0
+                clipStripH > 0 -> cHeight - clipStripH
+                else -> cHeight
+            }
             child.measure(
                 MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(childH, MeasureSpec.EXACTLY),
@@ -417,7 +424,11 @@ class KeyboardWindowView(
         }
 
         if (!panel.clipboardView.isGone) {
-            val clipH = if (clipStripH > 0) clipStripH else cHeight
+            val clipH = when {
+                searchKbHidden -> cHeight
+                clipStripH > 0 -> clipStripH
+                else -> cHeight
+            }
             panel.clipboardView.measure(
                 MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(clipH, MeasureSpec.EXACTLY),
@@ -467,14 +478,16 @@ class KeyboardWindowView(
         panel.view.layout(0, stripH, right - left, stripH + barH)
 
         val clipStripH = clipSearchStripHeight(cHeight)
+        val searchKbHidden = panel.clipSearchKeyboardHidden
         for (i in 0 until childCount) {
             val child = getChildAt(i)
             if (child === panel.view || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
-            // 搜索态：键盘整体下移到列表条下方，按剩余高度排布
-            if (clipStripH > 0) {
-                child.layout(hPad, y0 + clipStripH, hPad + contentW, y0 + cHeight)
-            } else {
-                child.layout(hPad, y0, hPad + contentW, y0 + cHeight)
+            // 搜索态：键盘整体下移到列表条下方，按剩余高度排布；
+            // 键盘收起时把它排到内容区之下（零高，不可见也点不到）
+            when {
+                searchKbHidden -> child.layout(hPad, y0 + cHeight, hPad + contentW, y0 + cHeight)
+                clipStripH > 0 -> child.layout(hPad, y0 + clipStripH, hPad + contentW, y0 + cHeight)
+                else -> child.layout(hPad, y0, hPad + contentW, y0 + cHeight)
             }
         }
 
@@ -482,7 +495,11 @@ class KeyboardWindowView(
         panel.textEditingView.layout(hPad, y0, hPad + contentW, y0 + cHeight)
         panel.clipboardView.layout(
             hPad, y0, hPad + contentW,
-            y0 + if (clipStripH > 0) clipStripH else cHeight
+            y0 + when {
+                searchKbHidden -> cHeight
+                clipStripH > 0 -> clipStripH
+                else -> cHeight
+            }
         )
         panel.menuGridView.layout(hPad, y0, hPad + contentW, y0 + cHeight)
         panel.confirmOverlay.layout(hPad, y0, hPad + contentW, y0 + cHeight)
