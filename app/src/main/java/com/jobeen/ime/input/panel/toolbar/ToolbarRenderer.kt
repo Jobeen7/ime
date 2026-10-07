@@ -24,6 +24,17 @@ class ToolbarRenderer(
     var clipSearchMode: Boolean = false
     var clipSearchQuery: String = ""
     var clipSearchHint: String = ""
+    // 剪贴板条目编辑态：true 时胶囊区改画编辑框（与搜索框同几何），
+    // 动作区两槽改为「保存 / 取消」文字按钮
+    var clipEditMode: Boolean = false
+    var clipEditText: String = ""
+    var clipEditHint: String = ""
+    var clipEditSaveLabel: String = ""
+    var clipCancelLabel: String = ""
+    // 剪贴板多选态：true 时胶囊区改画已选计数，动作区两槽为「删除 / 取消」
+    var clipMultiMode: Boolean = false
+    var clipMultiLabel: String = ""
+    var clipDeleteLabel: String = ""
     var clipTab: ClipboardTab = ClipboardTab.CLIPBOARD
     var clipLabelClipboard: String = ""
     var clipLabelPhrase: String = ""
@@ -302,6 +313,18 @@ class ToolbarRenderer(
             return
         }
 
+        if (clipEditMode) {
+            drawClipEditbar(canvas, g, height, paints, density)
+            drawClipClose(canvas, g, height, paints, density)
+            return
+        }
+
+        if (clipMultiMode) {
+            drawClipMultibar(canvas, g, height, paints, density)
+            drawClipClose(canvas, g, height, paints, density)
+            return
+        }
+
         // 胶囊（剪切板 / 快捷短语）
         trackPaint.color = paints.toolbarIconColor and 0x1FFFFFFF
         canvas.drawRoundRect(
@@ -456,6 +479,80 @@ class ToolbarRenderer(
         canvas.drawLine(xCenter - half, cy + half, xCenter + half, cy - half, searchLinePaint)
     }
 
+    /**
+     * 编辑态：胶囊区改画编辑框——与搜索框同几何同尾截断逻辑，但不画放大镜，
+     * 文本从左内边距起；动作区两槽画「取消 / 保存」文字（slot1=取消、slot0=保存，
+     * 与 hitTest 的槽位判定一致：靠右 btnW 内为 slot0）。
+     */
+    private fun drawClipEditbar(
+        canvas: Canvas, g: ClipGeom, height: Int, paints: Paints, density: Float,
+    ) {
+        val fieldLeft = g.capsuleLeft
+        val fieldRight = g.actionLeft - 6f * density
+        val fieldTop = g.capsuleTop
+        val fieldH = g.capsuleH
+        trackPaint.color = paints.toolbarIconColor and 0x1FFFFFFF
+        canvas.drawRoundRect(
+            fieldLeft, fieldTop, fieldRight, fieldTop + fieldH,
+            fieldH / 2f, fieldH / 2f, trackPaint
+        )
+        val cy = fieldTop + fieldH / 2f
+        val textPaint = searchTextPaint
+        textPaint.textSize = 14f * density
+        val textLeft = fieldLeft + 12f * density
+        val textRight = fieldRight - 10f * density
+        val availW = (textRight - textLeft).coerceAtLeast(0f)
+        val t = clipEditText
+        val fm = textPaint.fontMetrics
+        val baseline = cy - fm.ascent / 2f - fm.descent / 2f
+        if (t.isEmpty()) {
+            textPaint.color = dimColor(paints.toolbarIconColor)
+            canvas.drawText(clipEditHint, textLeft, baseline, textPaint)
+        } else {
+            textPaint.color = paints.toolbarIconColor
+            var s = t
+            while (s.isNotEmpty() && textPaint.measureText(s) > availW) s = s.drop(1)
+            canvas.drawText(s, textLeft, baseline, textPaint)
+            val cursorX = textLeft + textPaint.measureText(s) + 2f * density
+            searchLinePaint.color = paints.toolbarIconColor
+            searchLinePaint.strokeWidth = 1.6f * density
+            val halfTextH = (fm.descent - fm.ascent) / 2f * 0.8f
+            canvas.drawLine(cursorX, cy - halfTextH, cursorX, cy + halfTextH, searchLinePaint)
+        }
+        drawClipTextAction(canvas, actionSlotCenter(g, 1, density), cy, clipCancelLabel, paints, density)
+        drawClipTextAction(canvas, actionSlotCenter(g, 0, density), cy, clipEditSaveLabel, paints, density)
+    }
+
+    /** 多选态：胶囊区画已选计数文本，动作区两槽画「取消 / 删除」文字。 */
+    private fun drawClipMultibar(
+        canvas: Canvas, g: ClipGeom, height: Int, paints: Paints, density: Float,
+    ) {
+        val cy = height / 2f
+        val textPaint = searchTextPaint
+        textPaint.textSize = 14f * density
+        textPaint.color = paints.toolbarIconColor
+        val fm = textPaint.fontMetrics
+        canvas.drawText(
+            clipMultiLabel, g.capsuleLeft + 4f * density,
+            cy - fm.ascent / 2f - fm.descent / 2f, textPaint
+        )
+        drawClipTextAction(canvas, actionSlotCenter(g, 1, density), cy, clipCancelLabel, paints, density)
+        drawClipTextAction(canvas, actionSlotCenter(g, 0, density), cy, clipDeleteLabel, paints, density)
+    }
+
+    /** 动作槽文字按钮（编辑/多选栏共用）：居中 14sp 文字。 */
+    private fun drawClipTextAction(
+        canvas: Canvas, cx: Float, cy: Float, label: String, paints: Paints, density: Float,
+    ) {
+        if (label.isEmpty()) return
+        val p = searchTextPaint
+        p.textSize = 14f * density
+        p.color = paints.toolbarIconColor
+        val w = p.measureText(label)
+        val fm = p.fontMetrics
+        canvas.drawText(label, cx - w / 2f, cy - fm.ascent / 2f - fm.descent / 2f, p)
+    }
+
     override fun hitTest(
         x: Float, y: Float, width: Int, height: Int,
         scrollX: Float, isExpanded: Boolean, density: Float,
@@ -494,6 +591,58 @@ class ToolbarRenderer(
                     setPress(actionSlotCenter(g, 0, density))
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.ClipSearchClear, tapX = x, tapY = y
+                    )
+                }
+                if (x in closeTouchLeft..closeTouchRight) {
+                    setPress((g.closeLeft + g.closeRight) / 2f)
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.CloseKeyboard, tapX = x, tapY = y
+                    )
+                }
+                return null
+            }
+            if (clipEditMode) {
+                // 编辑态：左箭头=取消编辑，动作区 slot1=取消、slot0=保存，
+                // 编辑框本身点击无动作，收起键照常
+                if (x in menuTouchLeft..menuTouchRight) {
+                    setPress(menuCenter)
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.ClipEditCancel, tapX = x, tapY = y
+                    )
+                }
+                if (x in g.actionLeft..g.actionRight) {
+                    val btnW = 30f * density
+                    val slot0 = x >= g.actionRight - btnW
+                    setPress(actionSlotCenter(g, if (slot0) 0 else 1, density))
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        if (slot0) PanelAction.ClipEditSave else PanelAction.ClipEditCancel,
+                        tapX = x, tapY = y
+                    )
+                }
+                if (x in closeTouchLeft..closeTouchRight) {
+                    setPress((g.closeLeft + g.closeRight) / 2f)
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.CloseKeyboard, tapX = x, tapY = y
+                    )
+                }
+                return null
+            }
+            if (clipMultiMode) {
+                // 多选态：左箭头=退出多选，动作区 slot1=退出、slot0=删除所选，
+                // 胶囊区点击无动作，收起键照常
+                if (x in menuTouchLeft..menuTouchRight) {
+                    setPress(menuCenter)
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.ClipMultiExit, tapX = x, tapY = y
+                    )
+                }
+                if (x in g.actionLeft..g.actionRight) {
+                    val btnW = 30f * density
+                    val slot0 = x >= g.actionRight - btnW
+                    setPress(actionSlotCenter(g, if (slot0) 0 else 1, density))
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        if (slot0) PanelAction.ClipMultiDelete else PanelAction.ClipMultiExit,
+                        tapX = x, tapY = y
                     )
                 }
                 if (x in closeTouchLeft..closeTouchRight) {
