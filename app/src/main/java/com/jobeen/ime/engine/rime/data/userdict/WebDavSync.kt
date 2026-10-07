@@ -129,6 +129,19 @@ object WebDavSync {
         )
 
     /**
+     * ETag 规范形：基准值来自 PUT 响应头、比较值来自 PROPFIND XML，两处
+     * 的引号与弱校验 `W/` 前缀表示在部分服务器上不一致，混用会让
+     * isRemoteChanged 恒为 true（每次上传都多做一次全量下载合并）。
+     * 比较与存储统一为去引号、去 W/ 的裸值；发送 If-Match 时再加回引号。
+     */
+    private fun normalizeETag(raw: String?): String? =
+        raw?.trim()?.removePrefix("W/")?.trim()?.removeSurrounding("\"")
+            ?.takeIf { it.isNotEmpty() }
+
+    /** If-Match 发送形：HTTP 规范要求带引号的强 ETag */
+    private fun quotedETag(normalized: String): String = "\"$normalized\""
+
+    /**
      * 查询某个远端文件的 ETag / 修改时间（PROPFIND Depth: 0）。
      * 文件不存在返回 null；服务器不支持 PROPFIND 等异常同样返回 null（调用方退化为
      * "无状态可比"，保持旧行为直接上传，但仍会带上已知的 If-Match 时才做强校验）。
@@ -149,7 +162,7 @@ object WebDavSync {
                 if (response.code == 404) return null
                 if (!response.isSuccessful) return null
                 val xml = response.body?.string().orEmpty()
-                val etag = etagRegex.find(xml)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
+                val etag = normalizeETag(etagRegex.find(xml)?.groupValues?.get(1))
                 val lmText = lastModifiedRegex.find(xml)?.groupValues?.get(1)?.trim().orEmpty()
                 val lmMs = runCatching {
                     val fmt = java.text.SimpleDateFormat(
@@ -169,7 +182,8 @@ object WebDavSync {
      * 上次同步时间（上传/下载取较晚者）的比较。
      */
     private fun isRemoteChanged(fileName: String, state: RemoteState): Boolean {
-        val knownETag = UserDictPrefs.syncETag(fileName)
+        // 历史存量基准可能未规范化，比较前同样过一遍（自愈）
+        val knownETag = normalizeETag(UserDictPrefs.syncETag(fileName))
         if (state.etag != null) {
             // 从未记录过基准（本机第一次同步）但远端已有文件：视为已被改动，先合并再说
             return knownETag == null || knownETag != state.etag
@@ -215,7 +229,7 @@ object WebDavSync {
                     .put(tempFile.asRequestBody(textPlain))
                 // 带上合并基准的 ETag：合并后到上传之间远端又被改动时服务器回 412，
                 // 而不是被我们覆盖掉
-                baseState?.etag?.let { builder.header("If-Match", it) }
+                baseState?.etag?.let { builder.header("If-Match", quotedETag(it)) }
                 client.newCall(builder.build()).execute().use { response ->
                     if (response.code == 412) {
                         throw IllegalStateException(
@@ -226,7 +240,7 @@ object WebDavSync {
                     if (!response.isSuccessful) {
                         throw httpError("上传", response.code, errorDetail(response))
                     }
-                    val newETag = response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+                    val newETag = normalizeETag(response.header("ETag"))
                     if (newETag != null) {
                         UserDictPrefs.setSyncETag(fileName, newETag)
                     } else {
@@ -507,7 +521,7 @@ object WebDavSync {
                     }
                     // 下载的就是本词典的同步文件时，记下它的 ETag 作为下次上传的比对基准
                     if (remoteFile == remoteFileName(dictName)) {
-                        response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        normalizeETag(response.header("ETag"))?.let {
                             UserDictPrefs.setSyncETag(remoteFile, it)
                         }
                     }
@@ -562,7 +576,7 @@ object WebDavSync {
      * GET 远端 → 本地并入 → 并集与远端不同才 PUT 回（带 If-Match 防并发覆盖）。
      * 必须在后台线程调用；失败抛异常由调用方决定是否忽略。
      */
-    private fun syncDeletedWords() {
+    private fun syncDeletedWords(retried: Boolean = false) {
         val local = com.jobeen.ime.data.manager.DeletedWordsStore.all()
         var remoteETag: String? = null
         val remote = mutableSetOf<String>()
@@ -577,7 +591,7 @@ object WebDavSync {
                 !response.isSuccessful ->
                     throw httpError("下载删除词表", response.code, errorDetail(response))
                 else -> {
-                    remoteETag = response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }
+                    remoteETag = normalizeETag(response.header("ETag"))
                     // 删除词表是每行一个词的小文件，设上限防止异常内容撑爆内存
                     val bytes = java.io.ByteArrayOutputStream().use { out ->
                         response.body?.byteStream()
@@ -601,12 +615,23 @@ object WebDavSync {
                 .url(remoteUrl(DELETED_WORDS_FILE))
                 .header("Authorization", authHeader())
                 .put(content.toRequestBody(textPlain))
-            remoteETag?.let { putBuilder.header("If-Match", it) }
+            if (remoteETag != null) {
+                putBuilder.header("If-Match", quotedETag(remoteETag))
+            } else {
+                // 远端文件尚不存在（首次同步）：只允许"不存在才创建"，防止两台
+                // 设备同时首同步时后写者无条件覆盖先写者的并集（删除词会短暂复活）
+                putBuilder.header("If-None-Match", "*")
+            }
             client.newCall(putBuilder.build()).execute().use { response ->
+                if (response.code == 412 && remoteETag == null && !retried) {
+                    // 另一台设备刚抢先创建：重走一次 GET→合并→PUT 即收敛
+                    syncDeletedWords(retried = true)
+                    return
+                }
                 if (!response.isSuccessful) {
                     throw httpError("上传删除词表", response.code, errorDetail(response))
                 }
-                response.header("ETag")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                normalizeETag(response.header("ETag"))?.let {
                     UserDictPrefs.setSyncETag(DELETED_WORDS_FILE, it)
                 }
             }
