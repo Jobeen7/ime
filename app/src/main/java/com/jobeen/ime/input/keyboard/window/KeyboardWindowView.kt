@@ -503,7 +503,7 @@ class KeyboardWindowView(
 
     /**
      * 剪贴板搜索态的结果列表区高度（同文大海版形态）：点搜索后整个
-     * 窗口往上拉高到宿主标题栏下方（顶部预留约 120dp 给状态栏+标题，
+     * 窗口往上拉高到宿主标题栏下方（顶部预留约 136dp 给状态栏+标题，
      * 即「放在名字下面」），工具栏（搜索框）之下、键盘之上是一段独立的
      * 结果列表区，键盘保持全尺寸不变。结果在该区内滚动看全部，
      * 不需要收起键盘。非搜索态为 0（列表与键盘同框叠放，同旧行为）。
@@ -512,7 +512,7 @@ class KeyboardWindowView(
         cHeight: Int, barH: Int, bPad: Int, bottomInset: Int,
     ): Int {
         if (!panel.clipSearchActive) return 0
-        val topReserve = (120f * resources.displayMetrics.density).roundToInt()
+        val topReserve = (136f * resources.displayMetrics.density).roundToInt()
         val keyboardBlock = barH + cHeight + bPad + bottomInset
         val target = fullScreenHeight() - topReserve - keyboardBlock
         // 兜底：不小于原来的 55% 段高，也不吃掉整个屏幕
