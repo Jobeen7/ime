@@ -85,7 +85,10 @@ class ClipboardView(
     fun setMultiSelect(active: Boolean) {
         if (multiSelectActive == active) return
         multiSelectActive = active
-        if (!active) selectedTexts.clear()
+        if (!active) {
+            endDragSelection(rollback = false)
+            selectedTexts.clear()
+        }
         computeRowLayouts()
         invalidate()
     }
@@ -102,7 +105,8 @@ class ClipboardView(
 
     fun toggleSelected(entry: ClipboardManager.Entry) {
         if (!selectedTexts.add(entry.text)) selectedTexts.remove(entry.text)
-        computeRowLayouts()
+        // 只变勾选标记、行高不变：轻量更新各行 selected，不做全量布局重建
+        refreshRowSelection()
         invalidate()
         onSelectionChanged?.invoke()
     }
@@ -232,6 +236,166 @@ class ClipboardView(
         return line.start + best
     }
 
+    // ── 多选拖动连选（相册式） ──────────────────────────────────
+    // 多选态下拖动不再滚动列表，而是连选：按下定锚点，超过滑动阈值后
+    // 进入拖选，锚点到手指当前行构成区间，区间内统一设为目标状态
+    // （锚点按下时未选→整趟选上，已选→整趟取消）；拖回时区间外恢复
+    // 本趟开始前的快照。手指进入上/下边缘区时列表自动滚动，可连选
+    // 到屏幕外。单独点按（未进入拖选）仍是切换一条。
+
+    private var dragSelecting = false
+    private var dragAnchorIndex = -1
+    private var dragTargetState = true
+    private var dragSnapshot: Set<String> = emptySet()
+    private var dragLastY = 0f
+    private var dragStartY = 0f
+
+    private val autoScrollRunnable = object : Runnable {
+        override fun run() {
+            if (!dragSelecting) return
+            val edge = 56f * density
+            val step: Float = when {
+                dragLastY < edge -> {
+                    val depth = (edge - dragLastY.coerceAtLeast(0f)) / edge
+                    -(4f + 12f * depth) * density
+                }
+                dragLastY > height - edge -> {
+                    val depth = (edge - (height - dragLastY).coerceAtLeast(0f)) / edge
+                    (4f + 12f * depth) * density
+                }
+                else -> 0f
+            }
+            if (step != 0f) {
+                val maxS = maxOf(0f, totalContentH - height)
+                val next = (scrollOffsetY + step).coerceIn(0f, maxS)
+                if (next != scrollOffsetY) {
+                    scrollOffsetY = next
+                    applyDragSelection()
+                    invalidate()
+                }
+                postDelayed(this, 16)
+            }
+        }
+    }
+
+    private fun startAutoScrollIfNeeded() {
+        removeCallbacks(autoScrollRunnable)
+        if (dragSelecting) post(autoScrollRunnable)
+    }
+
+    private fun stopDragAutoScroll() {
+        removeCallbacks(autoScrollRunnable)
+    }
+
+    /** 按当前手指位置重算拖选区间并应用到选中集合（区间外恢复快照）。 */
+    private fun applyDragSelection() {
+        if (dragAnchorIndex < 0 || displayedEntries.isEmpty()) return
+        var idx = itemIndexAt(dragLastY)
+        if (idx < 0) {
+            // 手指已拖到首行以上/末行以下（边缘自动滚动区）：钳到端点行
+            idx = if (dragLastY < height / 2f) 0 else displayedEntries.lastIndex
+        }
+        val lo = minOf(dragAnchorIndex, idx)
+        val hi = maxOf(dragAnchorIndex, idx)
+        val next = HashSet(dragSnapshot)
+        for (i in lo..hi) {
+            val text = displayedEntries.getOrNull(i)?.text ?: continue
+            if (dragTargetState) next.add(text) else next.remove(text)
+        }
+        if (next != selectedTexts) {
+            selectedTexts.clear()
+            selectedTexts.addAll(next)
+            refreshRowSelection()
+            InputFeedbacks.hapticFeedback(this)
+            onSelectionChanged?.invoke()
+        }
+        invalidate()
+    }
+
+    /** 只更新各行的 selected 标记（行高不变，不做全量布局重建）。 */
+    private fun refreshRowSelection() {
+        rowLayouts = rowLayouts.mapIndexed { i, row ->
+            val sel = multiSelectActive &&
+                displayedEntries.getOrNull(i)?.text?.let { it in selectedTexts } == true
+            if (row.selected == sel) row else row.copy(selected = sel)
+        }
+    }
+
+    private fun endDragSelection(rollback: Boolean) {
+        stopDragAutoScroll()
+        if (dragSelecting && rollback) {
+            selectedTexts.clear()
+            selectedTexts.addAll(dragSnapshot)
+            refreshRowSelection()
+            onSelectionChanged?.invoke()
+            invalidate()
+        }
+        dragSelecting = false
+        dragAnchorIndex = -1
+        dragSnapshot = emptySet()
+    }
+
+    /** 多选态手势：点按切换一条，拖动连选（见上方注释）。 */
+    private fun onMultiTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                scroller.forceFinished(true)
+                endDragSelection(rollback = false)
+                dragStartY = event.y
+                dragLastY = event.y
+                isScrolling = false
+                val idx = itemIndexAt(event.y)
+                pressedIndex = if (idx in rowLayouts.indices) idx else -1
+                if (pressedIndex >= 0) {
+                    dragAnchorIndex = pressedIndex
+                    val text = displayedEntries.getOrNull(pressedIndex)?.text
+                    // 目标状态按锚点当前状态取反：未选→整趟选上，已选→整趟取消
+                    dragTargetState = text != null && text !in selectedTexts
+                    dragSnapshot = LinkedHashSet(selectedTexts)
+                }
+                invalidate()
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                dragLastY = event.y
+                if (!dragSelecting && dragAnchorIndex >= 0 &&
+                    abs(event.y - dragStartY) > touchSlop
+                ) {
+                    dragSelecting = true
+                    pressedIndex = -1
+                    applyDragSelection()
+                    startAutoScrollIfNeeded()
+                } else if (dragSelecting) {
+                    applyDragSelection()
+                    startAutoScrollIfNeeded()
+                }
+            }
+
+            MotionEvent.ACTION_UP -> {
+                val wasDragging = dragSelecting
+                endDragSelection(rollback = false)
+                if (!wasDragging && pressedIndex in rowLayouts.indices) {
+                    val idx = pressedIndex
+                    displayedEntries.getOrNull(idx)?.let { entry ->
+                        InputFeedbacks.hapticFeedback(this)
+                        InputFeedbacks.soundEffect(context, InputFeedbacks.SoundEffect.Standard)
+                        toggleSelected(entry)
+                    }
+                }
+                pressedIndex = -1
+                invalidate()
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                // 手势被系统打断：回滚本趟连选，避免半成品状态
+                endDragSelection(rollback = true)
+                pressedIndex = -1
+                invalidate()
+            }
+        }
+        return true
+    }
+
     /** 列表异步重载后调用：清掉已不存在条目的残留选中。 */
     private fun pruneSelection() {
         if (selectedTexts.isEmpty()) return
@@ -353,6 +517,8 @@ class ClipboardView(
             }
             rowLayouts = layouts
             totalContentH = totalHeightOf(layouts)
+            // 数据已换：拖选锚点下标可能失效，直接收尾（不回滚已选结果）
+            if (dragSelecting) endDragSelection(rollback = false)
             // 编辑显示期间列表数据可照常更新，但滚动位置归编辑区，不能被重置
             if (!editDisplayActive) resetScroll()
             if (tab == ClipboardTab.CLIPBOARD) pruneSelection()
@@ -665,6 +831,7 @@ class ClipboardView(
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (editDisplayActive) return onEditTouchEvent(event)
+        if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) return onMultiTouchEvent(event)
         velocityTracker?.addMovement(event)
 
         when (event.actionMasked) {
