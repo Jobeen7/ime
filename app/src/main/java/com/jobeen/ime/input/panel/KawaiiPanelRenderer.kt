@@ -190,7 +190,7 @@ class ComposingRenderer(
                 } else {
                     indexPaint.textSize = indexBaseSize * scale
                     textPaint.textSize = textBaseSize * scale
-                    sIndexW = indexPaint.measureText(indexStr)
+                    sIndexW = if (showIndex) indexPaint.measureText("${i + 1}. ") else 0f
                     sTextW = textPaint.measureText(c.text)
                     sCommentW =
                         if (commentStr.isNotEmpty()) indexPaint.measureText(commentStr) else 0f

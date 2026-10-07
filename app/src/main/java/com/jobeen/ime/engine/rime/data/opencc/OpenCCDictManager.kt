@@ -5,6 +5,12 @@ import com.jobeen.ime.engine.rime.data.opencc.dict.Dictionary
 import com.jobeen.ime.engine.rime.data.opencc.dict.OpenCCDictionary
 import com.jobeen.ime.engine.rime.data.opencc.dict.TextDictionary
 import com.jobeen.ime.base.util.appContext
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import java.io.File
 import java.io.InputStream
@@ -41,10 +47,8 @@ object OpenCCDictManager {
         return new
     }
 
-    private val buildScope = kotlinx.coroutines.CoroutineScope(
-        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
-    )
-    private val buildMutex = kotlinx.coroutines.sync.Mutex()
+    private val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val buildMutex = Mutex()
 
     /**
      * 异步版本：部署开始通知在单线程分发队列上触发，构建含磁盘 IO 与词典
@@ -54,7 +58,7 @@ object OpenCCDictManager {
     @JvmStatic
     fun buildOpenCCDictAsync() {
         buildScope.launch {
-            kotlinx.coroutines.sync.withLock(buildMutex) { buildOpenCCDict() }
+            buildMutex.withLock { buildOpenCCDict() }
         }
     }
 
