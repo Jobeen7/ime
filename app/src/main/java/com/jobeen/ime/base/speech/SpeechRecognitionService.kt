@@ -70,6 +70,10 @@ class SpeechRecognitionService : Service() {
     // 不依赖在采集协程里迟置位的 holding（STOP 先到时旧逻辑会直接吞掉停止请求）
     private val sessionActive = AtomicBoolean(false)
 
+    // 录音中检测到模型文件已更新：不能当场换引擎，先标记，会话结束后补重载
+    @Volatile
+    private var pendingModelReload = false
+
     @Volatile
     private var sessionGen = 0
 
@@ -125,6 +129,7 @@ class SpeechRecognitionService : Service() {
                     sessionClientGen = clientGen
                     // 引擎初始化（可能数百 ms）移到 IO 线程，不要阻塞服务主线程
                     scope.launch {
+                      try {
                         val ready = initEngine(this@SpeechRecognitionService, silent = true)
                         val engine = if (ready) recognizerRef.get() else null
                         if (engine == null) {
@@ -146,9 +151,26 @@ class SpeechRecognitionService : Service() {
                             lastRawText = null
                             lastEmittedText = null
                             lastEmitUptimeMs = 0L
-                            streamRef.set(engine.createStream())
+                            // 换流必须释放旧流：正常路径旧流由上个会话协程按
+                            // 身份校验释放，但权限失败/STOP 抢先等中止路径会
+                            // 留下孤儿 native stream，无人释放只能等进程死亡
+                            val newStream = engine.createStream()
+                            val oldStream = streamRef.getAndSet(newStream)
+                            if (oldStream != null && oldStream !== newStream) {
+                                oldStream.runCatching { release() }
+                            }
                         }
                         startAudioStreaming()
+                      } catch (t: Throwable) {
+                        // 初始化段兜底：createStream 等 native 调用在模型
+                        // 半损坏/OOM 时可能抛错，此前异常无人处理会直接杀掉
+                        // :speech 进程且客户端收不到任何失败回信
+                        Log.e("SpeechSvc", "Session init failed", t)
+                        if (gen == sessionGen && sessionActive.compareAndSet(true, false)) {
+                            holding.set(false)
+                            sendClient(SpeechIpc.MSG_ERROR, gen = clientGen)
+                        }
+                      }
                     }
                 }
 
@@ -177,6 +199,7 @@ class SpeechRecognitionService : Service() {
                                 sendClient(SpeechIpc.MSG_DONE, gen = stoppedClientGen)
                                 clientMessenger = null
                             }
+                            reloadModelIfPending()
                         }
                     }
                 }
@@ -338,6 +361,15 @@ class SpeechRecognitionService : Service() {
             val existing = recognizerRef.get()
             if (existing != null) {
                 if (fingerprint == loadedModelFingerprint) return true
+                if (sessionActive.get()) {
+                    // 正在录音时绝不能换引擎：采集协程还持有旧 recognizer/
+                    // stream，此时 release 会让它在已释放的 native 对象上
+                    // decode。标记待重载，沿用旧模型完成本次会话，会话结束
+                    // 后由 reloadModelIfPending 补执行
+                    pendingModelReload = true
+                    Log.i("SpeechSvc", "Model changed during active session; reload deferred")
+                    return true
+                }
                 // 模型文件已被在线更新替换：释放旧识别器、下面按新文件重建，
                 // 否则下载成功的新模型在本进程重启前永不生效且无任何提示
                 Log.i("SpeechSvc", "Speech model files changed; reloading recognizer")
@@ -415,6 +447,13 @@ class SpeechRecognitionService : Service() {
         }
     }
 
+    /** 录音中被推迟的模型重载在会话结束后补执行（销毁中不再触发） */
+    private fun reloadModelIfPending() {
+        if (!pendingModelReload || sessionActive.get() || destroying) return
+        pendingModelReload = false
+        scope.launch(Dispatchers.IO) { initEngine(this@SpeechRecognitionService, silent = true) }
+    }
+
     private fun startAudioStreaming() {
         if (!sessionActive.get()) return
         // 本会话的客户端代次在入口固定：协程收尾（最终解码）可能晚于新会话开始，
@@ -472,6 +511,9 @@ class SpeechRecognitionService : Service() {
                 val bytes = ByteArray(chunkBytes)
                 val shortChunk = ShortArray(chunkSamples)
                 val floatChunk = FloatArray(chunkSamples)
+                // 音量消息节流：原先每 40ms 音频块无条件跨进程发一条（25Hz），
+                // 波形 UI 10Hz 已足够，省掉长录音期间一半多的 Binder 唤醒
+                var lastAmplitudeSentMs = 0L
 
                 while (isActive && holding.get() && recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     val count = recorder.read(bytes, 0, bytes.size)
@@ -526,7 +568,11 @@ class SpeechRecognitionService : Service() {
                         }
                     }
 
-                    sendClient(SpeechIpc.MSG_AMPLITUDE, amplitude = amplitude, gen = myGen)
+                    val ampNow = SystemClock.uptimeMillis()
+                    if (ampNow - lastAmplitudeSentMs >= 100L) {
+                        lastAmplitudeSentMs = ampNow
+                        sendClient(SpeechIpc.MSG_AMPLITUDE, amplitude = amplitude, gen = myGen)
+                    }
 
                     delay(5.milliseconds)
                 }
@@ -585,6 +631,7 @@ class SpeechRecognitionService : Service() {
                         sendClient(SpeechIpc.MSG_DONE, gen = myGen)
                     }
                     clientMessenger = null
+                    reloadModelIfPending()
                 }
             }
         }
