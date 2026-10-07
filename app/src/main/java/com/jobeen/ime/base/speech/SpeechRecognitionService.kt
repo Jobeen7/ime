@@ -557,7 +557,7 @@ class SpeechRecognitionService : Service() {
                                 lastRawText = rawText
                                 val now = SystemClock.uptimeMillis()
                                 if (now - lastEmitUptimeMs >= PARTIAL_EMIT_MIN_INTERVAL_MS) {
-                                    val partial = normalizeCjkSpacing(rawText)
+                                    val partial = FinalTextNormalizer.normalizeSpacing(rawText)
                                     if (partial.isNotEmpty() && partial != lastEmittedText) {
                                         lastEmittedText = partial
                                         lastEmitUptimeMs = now
@@ -590,7 +590,7 @@ class SpeechRecognitionService : Service() {
                             while (engine.isReady(stream) && loops++ < 512) {
                                 engine.decode(stream)
                             }
-                            val finalText = normalizeCjkSpacing(engine.getResult(stream).text)
+                            val finalText = FinalTextNormalizer.normalizeFinal(engine.getResult(stream).text)
                             finalText.takeIf { it.isNotEmpty() }?.let {
                                 sendClient(SpeechIpc.MSG_FINAL, it, gen = myGen)
                             }
@@ -636,37 +636,6 @@ class SpeechRecognitionService : Service() {
             }
         }
     }
-
-    private fun normalizeCjkSpacing(text: String): String {
-        val trimmed = text.trim()
-        if (trimmed.isEmpty()) return trimmed
-        val chars = trimmed.toCharArray()
-        val output = StringBuilder(trimmed.length)
-        var i = 0
-        while (i < chars.size) {
-            if (chars[i].isWhitespace()) {
-                var nextIndex = i + 1
-                while (nextIndex < chars.size && chars[nextIndex].isWhitespace()) nextIndex++
-                val previous = output.lastOrNull()
-                val next = chars.getOrNull(nextIndex)
-                val betweenCjk =
-                    previous != null && next != null && isCjkOrPunctuation(previous) && isCjkOrPunctuation(
-                        next
-                    )
-                val beforeAsciiPunctuation = next != null && next in ".,!?;:%)]}"
-                if (!betweenCjk && !beforeAsciiPunctuation) {
-                    repeat(nextIndex - i) { output.append(' ') }
-                }
-                i = nextIndex
-            } else {
-                output.append(chars[i++])
-            }
-        }
-        return output.toString()
-    }
-
-    private fun isCjkOrPunctuation(ch: Char): Boolean =
-        ch in '\u3400'..'\u4DBF' || ch in '\u4E00'..'\u9FFF' || ch in '\uF900'..'\uFAFF' || ch in '！'..'～' || ch in '\u3000'..'\u303F' || ch in '\uFF00'..'\uFFEF' || ch in '\uFE30'..'\uFE4F'
 
     private fun toast(text: String) {
         Toast.makeText(this, text, Toast.LENGTH_SHORT).show()

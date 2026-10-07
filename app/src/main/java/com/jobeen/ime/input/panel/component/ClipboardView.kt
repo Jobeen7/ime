@@ -34,6 +34,8 @@ class ClipboardView(
 
     var onItemClick: ((ClipboardManager.Entry) -> Unit)? = null
     var onItemLongClick: ((ClipboardManager.Entry, Float, Float) -> Unit)? = null
+    /** 多选态下选中集合变化时回调（面板据此刷新工具栏计数）。 */
+    var onSelectionChanged: (() -> Unit)? = null
     var onPhraseClick: ((PhraseManager.Phrase) -> Unit)? = null
     var onPhraseDelete: ((PhraseManager.Phrase) -> Unit)? = null
 
@@ -72,6 +74,46 @@ class ClipboardView(
     // 查询为空时与 clipboardEntries 相同
     private var displayedEntries = listOf<ClipboardManager.Entry>()
 
+    // ── 多选态（仅剪贴板标签）：选中集合以条目文本为键（与数据层业务键一致） ──
+    var multiSelectActive: Boolean = false
+        private set
+    private val selectedTexts = LinkedHashSet<String>()
+    val selectedCount: Int get() = selectedTexts.size
+
+    fun selectedSnapshot(): Set<String> = LinkedHashSet(selectedTexts)
+
+    fun setMultiSelect(active: Boolean) {
+        if (multiSelectActive == active) return
+        multiSelectActive = active
+        if (!active) selectedTexts.clear()
+        computeRowLayouts()
+        invalidate()
+    }
+
+    /** 进入多选并预选一条（长按菜单「多选」的入口语义）。 */
+    fun beginMultiSelect(entry: ClipboardManager.Entry) {
+        selectedTexts.clear()
+        selectedTexts.add(entry.text)
+        multiSelectActive = true
+        computeRowLayouts()
+        invalidate()
+        onSelectionChanged?.invoke()
+    }
+
+    fun toggleSelected(entry: ClipboardManager.Entry) {
+        if (!selectedTexts.add(entry.text)) selectedTexts.remove(entry.text)
+        computeRowLayouts()
+        invalidate()
+        onSelectionChanged?.invoke()
+    }
+
+    /** 列表异步重载后调用：清掉已不存在条目的残留选中。 */
+    private fun pruneSelection() {
+        if (selectedTexts.isEmpty()) return
+        val alive = clipboardEntries.mapTo(HashSet()) { it.text }
+        if (selectedTexts.retainAll(alive)) onSelectionChanged?.invoke()
+    }
+
     private data class RowLayout(
         val height: Float,
         val indexLabel: String,
@@ -79,6 +121,7 @@ class ClipboardView(
         val secondaryLines: List<String>,
         val cloud: Boolean,
         val pinned: Boolean = false,
+        val selected: Boolean = false,
     )
 
     private var rowLayouts = listOf<RowLayout>()
@@ -92,8 +135,11 @@ class ClipboardView(
     private val indexPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val pinBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    // 多选勾选：圆圈描边/填充与对勾线共用（颜色随主题在 updateColors 刷新）
+    private val checkPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     // 置顶标记色（强调色），随主题在 updateColors 刷新
     private var accentColor = 0
+    private var checkBgColor = 0
 
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
@@ -183,6 +229,7 @@ class ClipboardView(
             rowLayouts = layouts
             totalContentH = totalHeightOf(layouts)
             resetScroll()
+            if (tab == ClipboardTab.CLIPBOARD) pruneSelection()
             invalidate()
         }
     }
@@ -224,6 +271,7 @@ class ClipboardView(
         pressPaint.color = scheme.specialKeyPressed
         accentColor = scheme.accentKeyBackground
         pinBarPaint.color = accentColor
+        checkBgColor = scheme.keyBackground
 
         emptyPaint.color = panel.candidateIndex
         cloudDrawable?.setTint(panel.candidateIndex)
@@ -256,7 +304,9 @@ class ClipboardView(
         val fm = tp.fontMetrics
         val lh = fm.descent - fm.ascent
         return if (tab == ClipboardTab.CLIPBOARD) {
-            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - cloudIconSize - 2f * density
+            // 多选态行首要让出勾选圆的位置，文本可用宽相应收窄
+            val checkReserve = if (multiSelectActive) 26f * density else 0f
+            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - cloudIconSize - 2f * density - checkReserve
             displayedEntries.map { entry ->
                 val lines = breakText(tp, entry.text, maxTextW, 4)
                 RowLayout(
@@ -266,6 +316,7 @@ class ClipboardView(
                     secondaryLines = emptyList(),
                     cloud = entry.cloud,
                     pinned = entry.pinned,
+                    selected = multiSelectActive && entry.text in selectedTexts,
                 )
             }
         } else {
@@ -355,6 +406,33 @@ class ClipboardView(
             val pressed = i == pressedIndex
             canvas.drawRoundRect(left, y, right, y + h, 8f * density, 8f * density,
                 if (pressed) pressPaint else bgPaint)
+            if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) {
+                // 行首勾选圆：选中=强调色填充+对勾，未选=描边空心
+                val ccx = left + pillPad + 8f * density
+                val ccy = y + h / 2f
+                val cr = 8f * density
+                if (row.selected) {
+                    checkPaint.style = Paint.Style.FILL
+                    checkPaint.color = accentColor
+                    canvas.drawCircle(ccx, ccy, cr, checkPaint)
+                    checkPaint.style = Paint.Style.STROKE
+                    checkPaint.color = checkBgColor
+                    checkPaint.strokeWidth = 1.8f * density
+                    canvas.drawLine(
+                        ccx - 4.2f * density, ccy + 0.2f * density,
+                        ccx - 1.4f * density, ccy + 3.2f * density, checkPaint
+                    )
+                    canvas.drawLine(
+                        ccx - 1.4f * density, ccy + 3.2f * density,
+                        ccx + 4.6f * density, ccy - 3.4f * density, checkPaint
+                    )
+                } else {
+                    checkPaint.style = Paint.Style.STROKE
+                    checkPaint.color = emptyPaint.color
+                    checkPaint.strokeWidth = 1.4f * density
+                    canvas.drawCircle(ccx, ccy, cr, checkPaint)
+                }
+            }
             if (row.pinned) {
                 // 置顶标记：行左内侧一条强调色竖条
                 canvas.drawRoundRect(
@@ -364,7 +442,8 @@ class ClipboardView(
                 )
             }
 
-            val textStartX = left + pillPad
+            val textStartX = left + pillPad +
+                (if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) 26f * density else 0f)
 
             val fm = textPaint.fontMetrics
             val lh = fm.descent - fm.ascent
@@ -481,7 +560,10 @@ class ClipboardView(
                     InputFeedbacks.hapticFeedback(this)
                     InputFeedbacks.soundEffect(context, InputFeedbacks.SoundEffect.Standard)
                     if (clipTab == ClipboardTab.CLIPBOARD) {
-                        displayedEntries.getOrNull(idx)?.let { onItemClick?.invoke(it) }
+                        displayedEntries.getOrNull(idx)?.let { entry ->
+                            // 多选态点行只切换勾选，绝不上屏
+                            if (multiSelectActive) toggleSelected(entry) else onItemClick?.invoke(entry)
+                        }
                     } else {
                         phrases.getOrNull(idx)?.let { onPhraseClick?.invoke(it) }
                     }

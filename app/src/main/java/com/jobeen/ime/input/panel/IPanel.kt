@@ -18,9 +18,18 @@ interface IPanel {
     /** 剪贴板搜索态是否激活（窗口布局要据此拉高窗口、插入结果列表区）。 */
     val clipSearchActive: Boolean get() = false
 
-    /** 剪贴板搜索态截获引擎上屏文本：返回 true 表示已消费（不写入目标应用）。 */
+    /** 剪贴板条目编辑态是否激活（与搜索态同窗口形态：拉高窗口+键盘改道输入）。 */
+    val clipEditActive: Boolean get() = false
+
+    /**
+     * 剪贴板文本输入态（搜索/编辑）截获引擎上屏文本：
+     * 返回 true 表示已消费（不写入目标应用）。
+     */
     fun interceptCommit(text: String): Boolean = false
 
-    /** 剪贴板搜索态截获退格：返回 true 表示已消费（不下发引擎删字）。 */
+    /**
+     * 剪贴板文本输入态（搜索/编辑）截获退格：
+     * 返回 true 表示已消费（不下发引擎删字）。
+     */
     fun handleClipSearchBackspace(isComposing: Boolean): Boolean = false
 }

@@ -91,8 +91,16 @@ class KawaiiPanel(
             }
             if (field == value) return
             field = value
-            // 搜索态只活在剪贴板态里：离开剪贴板态统一收口（渲染器随状态重建自清）
-            if (value != State.Clipboard && clipSearchActive) resetClipSearchState()
+            // 搜索/编辑/多选只活在剪贴板态里：离开剪贴板态统一收口
+            // （渲染器随状态重建自清；编辑静默收口=不保存）
+            if (value != State.Clipboard) {
+                if (clipSearchActive) resetClipSearchState()
+                resetClipEditState()
+                if (clipMultiActive) {
+                    clipMultiActive = false
+                    clipboardView.setMultiSelect(false)
+                }
+            }
             if (value is State.Menu) {
                 clipboardTab = ClipboardTab.CLIPBOARD
                 clipboardView.clipTab = ClipboardTab.CLIPBOARD
@@ -294,6 +302,7 @@ class KawaiiPanel(
             }
         }
         clipboardView.onItemClick = { entry -> listener?.onClipboardItemClick(entry) }
+        clipboardView.onSelectionChanged = { if (clipMultiActive) syncMultiRenderer() }
         clipboardView.onItemLongClick = { entry, x, y ->
             Timber.d("clipboard longClick: cardX=$x cardY=$y")
             val summary = if (entry.text.length > 5) entry.text.take(5) + "..." else entry.text
@@ -307,6 +316,12 @@ class KawaiiPanel(
                             ClipboardManager.setPinned(context, entry.text, !entry.pinned)
                             clipboardView.refresh()
                         }
+                    },
+                    context.getString(R.string.clipboard_edit) to {
+                        enterClipEdit(entry)
+                    },
+                    context.getString(R.string.clipboard_multi_select) to {
+                        enterClipMulti(entry)
                     },
                     context.getString(R.string.clipboard_delete) to {
                         // 延后一帧再弹删除确认：动作卡的点击处理在回调后会 dismiss，
@@ -426,7 +441,144 @@ class KawaiiPanel(
         clipboardView.requestLayout()
     }
 
+    // ── 剪贴板条目编辑态 ────────────────────────────────────────
+    // 与搜索态同构：标志钉住剪贴板态，键盘输入经 interceptCommit 改道
+    // 进编辑缓冲，退格同搜索分流。窗口形态与搜索共用（拉高+结果区），
+    // 故编辑期间列表保持可见可滚。编辑与搜索可叠加：从搜索结果长按进
+    // 编辑，保存/取消后回到搜索态（clipEditReturnToSearch 记账）。
+
+    override var clipEditActive: Boolean = false
+        private set
+    private var clipEditOriginal: String? = null
+    private var clipEditBuffer: String = ""
+    private var clipEditReturnToSearch: Boolean = false
+
+    private fun applyEditFields(renderer: ToolbarRenderer) {
+        renderer.clipEditMode = true
+        renderer.clipEditText = clipEditBuffer
+        renderer.clipEditHint = context.getString(R.string.clipboard_edit_hint)
+        renderer.clipEditSaveLabel = context.getString(R.string.clipboard_edit_save)
+        renderer.clipCancelLabel = context.getString(R.string.clipboard_cancel)
+    }
+
+    private fun syncEditRenderer() {
+        (view.currentRenderer as? ToolbarRenderer)?.let { r ->
+            if (r.clipEditMode) r.clipEditText = clipEditBuffer
+        }
+        view.invalidate()
+    }
+
+    private fun enterClipEdit(entry: ClipboardManager.Entry) {
+        clipEditReturnToSearch = clipSearchActive
+        clipEditOriginal = entry.text
+        clipEditBuffer = entry.text
+        clipEditActive = true
+        view.currentRenderer = newClipToolbarRenderer().also { applyEditFields(it) }
+        view.invalidate()
+        // 窗口按 clipEditActive 重排（与搜索同形态），编辑期间列表在结果区可见
+        clipboardView.requestLayout()
+    }
+
+    private fun exitClipEdit(save: Boolean) {
+        val original = clipEditOriginal
+        val newText = clipEditBuffer.trim()
+        clipEditActive = false
+        clipEditOriginal = null
+        clipEditBuffer = ""
+        val backToSearch = clipEditReturnToSearch
+        clipEditReturnToSearch = false
+        if (backToSearch) {
+            view.currentRenderer = newClipToolbarRenderer().also { applySearchFields(it) }
+        } else {
+            view.currentRenderer = newClipToolbarRenderer()
+        }
+        view.invalidate()
+        clipboardView.requestLayout()
+        if (save && original != null && newText.isNotEmpty() && newText != original.trim()) {
+            appScope.launch {
+                ClipboardManager.updateEntry(context, original, newText)
+                clipboardView.refresh()
+            }
+        }
+    }
+
+    /** 静默收口（离开剪贴板态等）：不保存，直接丢弃编辑缓冲。 */
+    private fun resetClipEditState() {
+        if (!clipEditActive) return
+        clipEditActive = false
+        clipEditOriginal = null
+        clipEditBuffer = ""
+        clipEditReturnToSearch = false
+        clipboardView.requestLayout()
+    }
+
+    // ── 剪贴板多选态 ────────────────────────────────────────────
+    // 多选不涉及键盘输入改道，只换工具栏形态与列表点选语义；
+    // 选中集合由 ClipboardView 持有，这里负责工具栏与批量删除。
+
+    private var clipMultiActive: Boolean = false
+
+    private fun applyMultiFields(renderer: ToolbarRenderer) {
+        renderer.clipMultiMode = true
+        renderer.clipMultiLabel = multiLabelText()
+        renderer.clipDeleteLabel = context.getString(R.string.clipboard_delete)
+        renderer.clipCancelLabel = context.getString(R.string.clipboard_cancel)
+    }
+
+    private fun multiLabelText(): String {
+        val n = clipboardView.selectedCount
+        return if (n > 0) context.getString(R.string.clipboard_selected_count, n)
+        else context.getString(R.string.clipboard_select_none)
+    }
+
+    private fun syncMultiRenderer() {
+        (view.currentRenderer as? ToolbarRenderer)?.let { r ->
+            if (r.clipMultiMode) r.clipMultiLabel = multiLabelText()
+        }
+        view.invalidate()
+    }
+
+    private fun enterClipMulti(entry: ClipboardManager.Entry) {
+        clipMultiActive = true
+        clipboardView.beginMultiSelect(entry)
+        view.currentRenderer = newClipToolbarRenderer().also { applyMultiFields(it) }
+        view.invalidate()
+    }
+
+    private fun exitClipMulti() {
+        if (!clipMultiActive) return
+        clipMultiActive = false
+        clipboardView.setMultiSelect(false)
+        // 回到进入前的工具栏：搜索态下进多选则回搜索框，否则普通剪贴板栏
+        view.currentRenderer = if (clipSearchActive) {
+            newClipToolbarRenderer().also { applySearchFields(it) }
+        } else {
+            newClipToolbarRenderer()
+        }
+        view.invalidate()
+    }
+
+    private fun handleClipMultiDelete() {
+        val texts = clipboardView.selectedSnapshot()
+        exitClipMulti()
+        if (texts.isEmpty()) return
+        appScope.launch {
+            ClipboardManager.removeEntries(context, texts)
+            clipboardView.refresh()
+        }
+    }
+
     override fun interceptCommit(text: String): Boolean {
+        if (clipEditActive) {
+            // 编辑态优先于搜索态（可从搜索结果进编辑）：换行不进缓冲，
+            // 其余文本追加到编辑缓冲尾
+            val clean = text.replace("\n", "").replace("\r", "")
+            if (clean.isNotEmpty()) {
+                clipEditBuffer += clean
+                syncEditRenderer()
+            }
+            return true
+        }
         if (!clipSearchActive) return false
         // 换行不进查询（回车在搜索态即无动作），其余文本（含空格）追加到查询尾
         val clean = text.replace("\n", "").replace("\r", "")
@@ -442,6 +594,15 @@ class KawaiiPanel(
     }
 
     override fun handleClipSearchBackspace(isComposing: Boolean): Boolean {
+        if (clipEditActive) {
+            // 组字中退格归引擎删拼音；其余一律截获删编辑缓冲，绝不落到目标应用
+            if (isComposing) return false
+            if (clipEditBuffer.isNotEmpty()) {
+                clipEditBuffer = clipEditBuffer.dropLast(1)
+                syncEditRenderer()
+            }
+            return true
+        }
         if (!clipSearchActive) return false
         // 组字中退格归引擎删拼音；其余情况一律截获，绝不让退格落到目标应用删字
         if (isComposing) return false
@@ -506,6 +667,12 @@ class KawaiiPanel(
                             }
                             is PanelAction.ClipTab -> {
                                 confirmOverlay.dismiss()
+                                // 切分页时编辑（不保存）与多选一并收口
+                                resetClipEditState()
+                                if (clipMultiActive) {
+                                    clipMultiActive = false
+                                    clipboardView.setMultiSelect(false)
+                                }
                                 if (clipSearchActive) {
                                     resetClipSearchState()
                                     (view.currentRenderer as? ToolbarRenderer)?.clipSearchMode = false
@@ -536,6 +703,11 @@ class KawaiiPanel(
                                     view.invalidate()
                                 }
                             }
+
+                            PanelAction.ClipEditSave -> exitClipEdit(save = true)
+                            PanelAction.ClipEditCancel -> exitClipEdit(save = false)
+                            PanelAction.ClipMultiExit -> exitClipMulti()
+                            PanelAction.ClipMultiDelete -> handleClipMultiDelete()
 
                             PanelAction.SwitchKeyboard -> {
                                 when (state) {
@@ -685,8 +857,9 @@ class KawaiiPanel(
         // 本机字体无字形的单字候选（扩展区生僻字）不进列表：显示出来
         // 是方框、点选打出对方也看不到。条带与网格共用此列表，一致
         val displayList = list.filter { candidateGrid.isDisplayable(it) }
-        if (clipSearchActive) {
-            // 搜索态钉住：不切换面板状态，工具栏在搜索框与候选行之间轮显
+        if (clipSearchActive || clipEditActive) {
+            // 文本输入态（搜索/编辑）钉住：不切换面板状态，
+            // 工具栏在输入框与候选行之间轮显
             when {
                 displayList.isNotEmpty() -> {
                     val r = view.currentRenderer
@@ -702,10 +875,12 @@ class KawaiiPanel(
                     view.post { listener?.onRequestMoreCandidates() }
                 }
                 else -> {
-                    // 组字结束（选词已上屏改道查询，或清空）：恢复搜索框工具栏
+                    // 组字结束（选词已上屏改道输入，或清空）：恢复输入框工具栏；
+                    // 编辑态优先（可叠加在搜索之上）
                     if (view.currentRenderer !is ToolbarRenderer) {
-                        view.currentRenderer =
-                            newClipToolbarRenderer().also { applySearchFields(it) }
+                        view.currentRenderer = newClipToolbarRenderer().also { r ->
+                            if (clipEditActive) applyEditFields(r) else applySearchFields(r)
+                        }
                     }
                 }
             }

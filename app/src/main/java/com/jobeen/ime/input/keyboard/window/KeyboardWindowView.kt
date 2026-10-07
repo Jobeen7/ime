@@ -502,16 +502,17 @@ class KeyboardWindowView(
 
 
     /**
-     * 剪贴板搜索态的结果列表区高度（同文大海版形态）：点搜索后整个
-     * 窗口往上拉高到宿主标题栏下方（顶部预留约 136dp 给状态栏+标题，
-     * 即「放在名字下面」），工具栏（搜索框）之下、键盘之上是一段独立的
-     * 结果列表区，键盘保持全尺寸不变。结果在该区内滚动看全部，
-     * 不需要收起键盘。非搜索态为 0（列表与键盘同框叠放，同旧行为）。
+     * 剪贴板文本输入态（搜索/条目编辑）的结果列表区高度（同文大海版
+     * 形态）：点搜索后整个窗口往上拉高到宿主标题栏下方（顶部预留约
+     * 136dp 给状态栏+标题，即「放在名字下面」），工具栏（搜索框）之下、
+     * 键盘之上是一段独立的结果列表区，键盘保持全尺寸不变。结果在该区
+     * 内滚动看全部，不需要收起键盘。非输入态为 0（列表与键盘同框叠放，
+     * 同旧行为）。
      */
     private fun clipSearchStripHeight(
         cHeight: Int, barH: Int, bPad: Int, bottomInset: Int,
     ): Int {
-        if (!panel.clipSearchActive) return 0
+        if (!panel.clipSearchActive && !panel.clipEditActive) return 0
         val topReserve = (136f * resources.displayMetrics.density).roundToInt()
         val keyboardBlock = barH + cHeight + bPad + bottomInset
         val target = fullScreenHeight() - topReserve - keyboardBlock

@@ -44,8 +44,16 @@ interface ClipboardDao {
     @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0")
     suspend fun count(): Int
 
+    /** 编辑条目：把旧文本改写为新文本并刷新时间戳（排到最前）；置顶状态随行保留 */
+    @Query("UPDATE clipboard_records SET text = :newText, timestamp = :ts WHERE text = :oldText AND deleted = 0")
+    suspend fun updateTextByText(oldText: String, newText: String, ts: Long)
+
     @Query("UPDATE clipboard_records SET deleted = 1, deletedAt = :ts WHERE text = :text AND deleted = 0")
     suspend fun softDeleteByText(text: String, ts: Long)
+
+    /** 多选批量删除：与单条删除同为软删 */
+    @Query("UPDATE clipboard_records SET deleted = 1, deletedAt = :ts WHERE text IN (:texts) AND deleted = 0")
+    suspend fun softDeleteByTexts(texts: List<String>, ts: Long)
 
     @Query("UPDATE clipboard_records SET deleted = 1, deletedAt = :ts WHERE deleted = 0")
     suspend fun softDeleteAll(ts: Long)
