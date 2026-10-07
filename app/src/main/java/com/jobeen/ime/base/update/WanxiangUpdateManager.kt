@@ -517,11 +517,18 @@ object WanxiangUpdateManager {
                         "非法路径：$rel"
                     }
                     dest.parentFile?.mkdirs()
-                    src.copyTo(dest, overwrite = true)
+                    // 每文件原子落位：先写同目录临时文件再 rename 覆盖。中途中断
+                    // 只留下 .part 残留，现用文件要么旧版完整、要么新版完整，
+                    // 不会出现写一半的词库被 Rime 加载
+                    val part = File(dest.parentFile, dest.name + PART_SUFFIX)
+                    src.copyTo(part, overwrite = true)
+                    check(part.renameTo(dest)) { "词库文件落盘失败：$rel" }
                 }
             }
             if (gramPartial != null && gramTarget != null) {
-                gramTarget.delete()
+                // partial 与 target 同目录，rename 本身即原子替换目标文件；
+                // 不要先 delete——那会打开"旧模型已删、新模型未就位"的窗口，
+                // 中途被杀将留下无语法模型而 prefs 仍记旧版本的状态
                 check(gramPartial.renameTo(gramTarget)) { "语法模型落盘失败" }
             }
 
@@ -556,6 +563,12 @@ object WanxiangUpdateManager {
             runCatching { File(workDir, "dicts_new").deleteRecursivelyNoFollow() }
             // gram 成功时已 rename 走；失败/取消时清掉 .part 残留
             runCatching { gramPartial?.delete() }
+            // 词库逐文件落位中断时可能在 dicts 里留 .part，一并清掉
+            runCatching {
+                File(DataManager.sharedDataDir, "dicts").walkTopDown()
+                    .filter { it.isFile && it.name.endsWith(PART_SUFFIX) }
+                    .forEach { it.delete() }
+            }
         }
     }
 
