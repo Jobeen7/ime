@@ -129,6 +129,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.BackupActivity"
+            android:exported="false"
+            android:label="@string/backup_restore"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.LogActivity"
             android:exported="false"
             android:label="@string/app_logs"

@@ -97,6 +97,11 @@ class MainActivity : ComponentActivity() {
                             Intent(this@MainActivity, UserDictActivity::class.java)
                         )
                     },
+                    onOpenBackup = {
+                        startActivity(
+                            Intent(this@MainActivity, BackupActivity::class.java)
+                        )
+                    },
                     onOpenFiles = {
                         startActivity(
                             Intent(

@@ -11,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FolderOpen
@@ -58,6 +59,7 @@ fun MainScreen(
     onOpenVoiceSettings: () -> Unit,
     onOpenUserDict: () -> Unit,
     onOpenFiles: () -> Unit,
+    onOpenBackup: () -> Unit,
     onOpenAbout: () -> Unit,
 ) {
     val themes = listOf(
@@ -179,6 +181,14 @@ fun MainScreen(
                 subtitle = stringResource(R.string.user_dict_desc),
                 onClick = onOpenUserDict,
                 icon = Icons.Filled.MenuBook,
+                showSpacer = true,
+            )
+
+            ClickableSettingItem(
+                title = stringResource(R.string.backup_restore),
+                subtitle = stringResource(R.string.backup_restore_desc),
+                onClick = onOpenBackup,
+                icon = Icons.Filled.Backup,
                 showSpacer = true,
             )
 
