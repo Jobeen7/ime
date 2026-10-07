@@ -294,6 +294,9 @@ class KawaiiPanel(
             }
         }
         clipboardView.onItemClick = { entry -> listener?.onClipboardItemClick(entry) }
+        clipboardView.onSearchKeyboardToggle = {
+            setClipSearchKeyboardHidden(!clipSearchKeyboardHidden)
+        }
         clipboardView.onItemLongClick = { entry, x, y ->
             Timber.d("clipboard longClick: cardX=$x cardY=$y")
             val summary = if (entry.text.length > 5) entry.text.take(5) + "..." else entry.text
@@ -392,6 +395,18 @@ class KawaiiPanel(
     override var clipSearchActive: Boolean = false
         private set
 
+    override var clipSearchKeyboardHidden: Boolean = false
+        private set
+
+    /** 搜索内切换键盘收起/展开（列表右下角钮触发）：只动布局，不碰查询与搜索态。 */
+    private fun setClipSearchKeyboardHidden(hidden: Boolean) {
+        if (!clipSearchActive || clipSearchKeyboardHidden == hidden) return
+        clipSearchKeyboardHidden = hidden
+        clipboardView.keyboardHidden = hidden
+        clipboardView.requestLayout()
+        view.invalidate()
+    }
+
     private fun newClipToolbarRenderer(): ToolbarRenderer =
         (createStateRender(State.Clipboard) as ClipboardStateRender).createToolbarRenderer()
 
@@ -403,6 +418,9 @@ class KawaiiPanel(
 
     private fun enterClipSearch() {
         clipSearchActive = true
+        clipSearchKeyboardHidden = false
+        clipboardView.searchUiActive = true
+        clipboardView.keyboardHidden = false
         clipboardView.setSearchQuery("")
         view.currentRenderer = newClipToolbarRenderer().also { applySearchFields(it) }
         view.invalidate()
@@ -412,6 +430,9 @@ class KawaiiPanel(
 
     private fun exitClipSearch() {
         clipSearchActive = false
+        clipSearchKeyboardHidden = false
+        clipboardView.searchUiActive = false
+        clipboardView.keyboardHidden = false
         clipboardView.setSearchQuery("")
         // 工具栏可能正被候选行轮显占用：一律重建回剪贴板工具栏
         view.currentRenderer = newClipToolbarRenderer()
@@ -422,6 +443,9 @@ class KawaiiPanel(
     /** 离开剪贴板态/切换分页时的静默收口：状态机本身会换渲染器，只清标志与查询。 */
     private fun resetClipSearchState() {
         clipSearchActive = false
+        clipSearchKeyboardHidden = false
+        clipboardView.searchUiActive = false
+        clipboardView.keyboardHidden = false
         clipboardView.setSearchQuery("")
         clipboardView.requestLayout()
     }
@@ -525,6 +549,8 @@ class KawaiiPanel(
 
                             PanelAction.ClipSearch -> enterClipSearch()
                             PanelAction.ClipSearchExit -> exitClipSearch()
+                            PanelAction.ClipSearchShowKeyboard ->
+                                setClipSearchKeyboardHidden(false)
                             PanelAction.ClipSearchClear -> {
                                 if (clipboardView.searchQuery.isEmpty()) {
                                     exitClipSearch()
