@@ -18,6 +18,9 @@ interface IPanel {
     /** 剪贴板搜索态是否激活（窗口布局要据此给剪贴板列表让出键盘区）。 */
     val clipSearchActive: Boolean get() = false
 
+    /** 搜索态内键盘是否收起（列表全高浏览结果，查询保留）。 */
+    val clipSearchKeyboardHidden: Boolean get() = false
+
     /** 剪贴板搜索态截获引擎上屏文本：返回 true 表示已消费（不写入目标应用）。 */
     fun interceptCommit(text: String): Boolean = false
 
