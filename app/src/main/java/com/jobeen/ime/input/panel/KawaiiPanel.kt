@@ -303,6 +303,12 @@ class KawaiiPanel(
         }
         clipboardView.onItemClick = { entry -> listener?.onClipboardItemClick(entry) }
         clipboardView.onSelectionChanged = { if (clipMultiActive) syncMultiRenderer() }
+        clipboardView.onEditCursorMoved = { idx ->
+            if (clipEditActive) {
+                clipEditCursor = idx.coerceIn(0, clipEditBuffer.length)
+                syncEditDisplay()
+            }
+        }
         clipboardView.onItemLongClick = { entry, x, y ->
             Timber.d("clipboard longClick: cardX=$x cardY=$y")
             val summary = if (entry.text.length > 5) entry.text.take(5) + "..." else entry.text
@@ -451,31 +457,33 @@ class KawaiiPanel(
         private set
     private var clipEditOriginal: String? = null
     private var clipEditBuffer: String = ""
+    // 光标下标（0..buffer.length）：输入插入光标处，退格删光标前一字；
+    // 点编辑区定位由 ClipboardView 回调写入
+    private var clipEditCursor: Int = 0
     private var clipEditReturnToSearch: Boolean = false
 
     private fun applyEditFields(renderer: ToolbarRenderer) {
         renderer.clipEditMode = true
-        renderer.clipEditText = clipEditBuffer
         renderer.clipEditHint = context.getString(R.string.clipboard_edit_hint)
         renderer.clipEditSaveLabel = context.getString(R.string.clipboard_edit_save)
         renderer.clipCancelLabel = context.getString(R.string.clipboard_cancel)
     }
 
-    private fun syncEditRenderer() {
-        (view.currentRenderer as? ToolbarRenderer)?.let { r ->
-            if (r.clipEditMode) r.clipEditText = clipEditBuffer
-        }
-        view.invalidate()
+    /** 编辑内容变化后同步到列表区的编辑显示（全文+光标）。 */
+    private fun syncEditDisplay() {
+        clipboardView.setEditContent(clipEditBuffer, clipEditCursor)
     }
 
     private fun enterClipEdit(entry: ClipboardManager.Entry) {
         clipEditReturnToSearch = clipSearchActive
         clipEditOriginal = entry.text
         clipEditBuffer = entry.text
+        clipEditCursor = entry.text.length
         clipEditActive = true
         view.currentRenderer = newClipToolbarRenderer().also { applyEditFields(it) }
+        syncEditDisplay()
         view.invalidate()
-        // 窗口按 clipEditActive 重排（与搜索同形态），编辑期间列表在结果区可见
+        // 窗口按 clipEditActive 重排（与搜索同形态），结果区改画编辑全文
         clipboardView.requestLayout()
     }
 
@@ -485,6 +493,8 @@ class KawaiiPanel(
         clipEditActive = false
         clipEditOriginal = null
         clipEditBuffer = ""
+        clipEditCursor = 0
+        clipboardView.clearEditDisplay()
         val backToSearch = clipEditReturnToSearch
         clipEditReturnToSearch = false
         if (backToSearch) {
@@ -508,7 +518,9 @@ class KawaiiPanel(
         clipEditActive = false
         clipEditOriginal = null
         clipEditBuffer = ""
+        clipEditCursor = 0
         clipEditReturnToSearch = false
+        clipboardView.clearEditDisplay()
         clipboardView.requestLayout()
     }
 
@@ -571,11 +583,14 @@ class KawaiiPanel(
     override fun interceptCommit(text: String): Boolean {
         if (clipEditActive) {
             // 编辑态优先于搜索态（可从搜索结果进编辑）：换行不进缓冲，
-            // 其余文本追加到编辑缓冲尾
+            // 其余文本插入光标处并推进光标
             val clean = text.replace("\n", "").replace("\r", "")
             if (clean.isNotEmpty()) {
-                clipEditBuffer += clean
-                syncEditRenderer()
+                val c = clipEditCursor.coerceIn(0, clipEditBuffer.length)
+                clipEditBuffer = clipEditBuffer.substring(0, c) + clean +
+                    clipEditBuffer.substring(c)
+                clipEditCursor = c + clean.length
+                syncEditDisplay()
             }
             return true
         }
@@ -595,11 +610,14 @@ class KawaiiPanel(
 
     override fun handleClipSearchBackspace(isComposing: Boolean): Boolean {
         if (clipEditActive) {
-            // 组字中退格归引擎删拼音；其余一律截获删编辑缓冲，绝不落到目标应用
+            // 组字中退格归引擎删拼音；其余一律截获删光标前一字，绝不落到目标应用
             if (isComposing) return false
-            if (clipEditBuffer.isNotEmpty()) {
-                clipEditBuffer = clipEditBuffer.dropLast(1)
-                syncEditRenderer()
+            val c = clipEditCursor.coerceIn(0, clipEditBuffer.length)
+            if (c > 0) {
+                clipEditBuffer = clipEditBuffer.substring(0, c - 1) +
+                    clipEditBuffer.substring(c)
+                clipEditCursor = c - 1
+                syncEditDisplay()
             }
             return true
         }
