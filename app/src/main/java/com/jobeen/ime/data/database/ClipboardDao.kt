@@ -10,6 +10,9 @@ interface ClipboardDao {
     @Insert
     suspend fun insert(record: ClipboardRecord): Long
 
+    @Insert
+    suspend fun insertAll(records: List<ClipboardRecord>)
+
     /** 一次性迁移用：读出全部行（含软删除行），供搬到独立的 clipboard_database */
     @Query("SELECT * FROM clipboard_records")
     suspend fun getAllRaw(): List<ClipboardRecord>

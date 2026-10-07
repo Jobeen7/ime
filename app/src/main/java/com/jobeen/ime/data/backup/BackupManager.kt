@@ -9,6 +9,8 @@ import com.jobeen.ime.data.database.CandidateSorting
 import com.jobeen.ime.data.database.ClipboardDatabase
 import com.jobeen.ime.data.database.ClipboardRecord
 import com.jobeen.ime.data.database.PhraseRecord
+import com.jobeen.ime.data.manager.CandidatePreferCache
+import androidx.room.withTransaction
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import org.json.JSONArray
 import org.json.JSONObject
@@ -26,10 +28,12 @@ import javax.crypto.spec.SecretKeySpec
  * 选词偏好 + 候选排序，导出为单个口令加密文件（.jbk）。
  *
  * 加密格式：文件 = 头部 JSONObject 的 UTF-8 字节 + '\n' + 密文。头部含
- * format/version/kdf/iterations/salt/iv，明文可见但不含任何数据；密文为
- * AES-256-GCM（口令经 PBKDF2 派生），口令错误或文件被篡改时 GCM 校验
- * 失败，还原拒绝执行。KDF 算法随文件记录（新设备 SHA-256、低版本
- * 设备 SHA-1），跨设备可迁移。
+ * format/version/kdf/iterations/salt/iv，明文可见但不含任何数据；头部
+ * 字节同时作为 GCM 的 AAD 被认证（篡改头部参数同样导致解密失败）；
+ * 密文为 AES-256-GCM（口令经 PBKDF2 派生），口令错误或文件被篡改时
+ * GCM 校验失败，还原拒绝执行。KDF 算法随文件记录（新设备 SHA-256、
+ * 低版本设备 SHA-1），跨设备可迁移。iterations 只接受合理区间，
+ * 构造文件用极大迭代数拖死还原会被直接拒绝。
  *
  * WebDAV 密码特殊处理：prefs 原样导出时它是 Keystore 密文、换设备解不开。
  * 因此采集时单独把解密后的密码放进备份包的 webdavPassword 字段并从 prefs
@@ -37,8 +41,10 @@ import javax.crypto.spec.SecretKeySpec
  * 的加密 setter 在本机重新加密落盘。密码的明文只存在于内存与加密包内部，
  * 两个落盘点（本机 prefs、备份文件）都不是明文。
  *
- * 还原是整体覆盖（prefs 先清后写、四张表先清后插），且各管理器有内存
- * 缓存，因此 UI 层在还原成功后应引导重启应用使全部生效。
+ * 还原是整体覆盖，且严格分两段：先把解密后的内容完整解析为内存对象
+ * （此阶段零写入，任何结构/类型错误直接拒绝，不留半还原状态），再执行
+ * 写入——Room 四表各自在单事务内整表替换，prefs 随后逐文件同步提交。
+ * 各管理器有内存缓存，因此 UI 层在还原成功后应引导重启应用使全部生效。
  */
 object BackupManager {
 
@@ -48,6 +54,10 @@ object BackupManager {
     private const val KDF_SHA256 = "PBKDF2WithHmacSHA256"
     private const val KDF_SHA1 = "PBKDF2WithHmacSHA1"
     private const val ITERATIONS = 200_000
+    private const val MIN_ITERATIONS = 10_000
+    private const val MAX_ITERATIONS = 2_000_000
+    private const val CLIPBOARD_PREFS = "clipboard_settings"
+    private const val CLIPBOARD_MIGRATED_KEY = "clipboard_db_migrated_v2"
     private const val SALT_BYTES = 32
     private const val IV_BYTES = 12
     private const val KEY_BITS = 256
@@ -64,11 +74,6 @@ object BackupManager {
         val kdf = if (Build.VERSION.SDK_INT >= 26) KDF_SHA256 else KDF_SHA1
         val salt = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
         val iv = ByteArray(IV_BYTES).also { SecureRandom().nextBytes(it) }
-        val key = deriveKey(password, salt, ITERATIONS, kdf)
-        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-        val encrypted = cipher.doFinal(payload)
-
         val header = JSONObject()
             .put("format", FORMAT)
             .put("version", FORMAT_VERSION)
@@ -78,6 +83,12 @@ object BackupManager {
             .put("salt", salt.toBase64())
             .put("iv", iv.toBase64())
         val headerBytes = header.toString().toByteArray(Charsets.UTF_8)
+        val key = deriveKey(password, salt, ITERATIONS, kdf)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+        // 头部字节作 AAD：iterations/kdf 等参数被篡改时解密直接失败
+        cipher.updateAAD(headerBytes)
+        val encrypted = cipher.doFinal(payload)
         return headerBytes + byteArrayOf('\n'.code.toByte()) + encrypted
     }
 
@@ -168,19 +179,21 @@ object BackupManager {
     // ---------------- 还原 ----------------
 
     /**
-     * 解密并整体覆盖还原。口令错误/文件损坏抛 [BackupException]，
-     * 且解密与结构校验全部通过后才开始写任何数据（不会半还原）。
+     * 解密并整体覆盖还原。口令错误/文件损坏/结构非法抛 [BackupException]，
+     * 且解密与完整结构解析全部通过后才开始写任何数据（不会半还原）。
      */
     suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
         val payload = decryptPayload(bytes, password)
-        applyPayload(payload)
+        val parsed = parsePayload(payload)
+        applyPayload(parsed)
     }
 
     private fun decryptPayload(bytes: ByteArray, password: CharArray): JSONObject {
         val nl = bytes.indexOf('\n'.code.toByte())
         if (nl <= 0) throw BackupException("备份文件格式不正确")
+        val headerBytes = bytes.copyOfRange(0, nl)
         val header = try {
-            JSONObject(String(bytes, 0, nl, Charsets.UTF_8))
+            JSONObject(String(headerBytes, Charsets.UTF_8))
         } catch (e: Exception) {
             throw BackupException("备份文件格式不正确")
         }
@@ -190,20 +203,24 @@ object BackupManager {
         }
         val kdf = header.optString("kdf")
         if (kdf != KDF_SHA256 && kdf != KDF_SHA1) throw BackupException("备份加密参数不受支持")
+        // iterations 完全来自文件头，必须钳制：极大值会让 PBKDF2 长时间挂死
+        val iterations = header.optInt("iterations", ITERATIONS)
+        if (iterations !in MIN_ITERATIONS..MAX_ITERATIONS) {
+            throw BackupException("备份加密参数不受支持")
+        }
         val salt = header.optString("salt").fromBase64()
         val iv = header.optString("iv").fromBase64()
         if (salt == null || iv == null || salt.isEmpty() || iv.isEmpty()) {
             throw BackupException("备份文件格式不正确")
         }
-        val key = deriveKey(password, salt, header.optInt("iterations", ITERATIONS), kdf)
-        val plain = try {
-            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
-            cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
-            cipher.doFinal(bytes.copyOfRange(nl + 1, bytes.size))
-        } catch (e: Exception) {
+        val key = deriveKey(password, salt, iterations, kdf)
+        val cipherText = bytes.copyOfRange(nl + 1, bytes.size)
+        val plain = decryptGcm(key, iv, cipherText, headerBytes)
+            // 997 版备份的头部未作 AAD，无 AAD 再试一次以便旧包可还原；
+            // 新包带 AAD 校验，第一试即成功，不会走到这里
+            ?: decryptGcm(key, iv, cipherText, null)
             // GCM 校验失败：口令错误与文件篡改在加密上不可区分，统一提示
-            throw BackupException("口令错误或备份文件已损坏")
-        }
+            ?: throw BackupException("口令错误或备份文件已损坏")
         return try {
             JSONObject(String(plain, Charsets.UTF_8))
         } catch (e: Exception) {
@@ -211,103 +228,183 @@ object BackupManager {
         }
     }
 
-    private suspend fun applyPayload(root: JSONObject) {
+    private fun decryptGcm(
+        key: SecretKeySpec,
+        iv: ByteArray,
+        cipherText: ByteArray,
+        aad: ByteArray?,
+    ): ByteArray? = try {
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(GCM_TAG_BITS, iv))
+        if (aad != null) cipher.updateAAD(aad)
+        cipher.doFinal(cipherText)
+    } catch (e: Exception) {
+        null
+    }
+
+    /** 解析完成、等待写入的还原数据（解析阶段零写入） */
+    private class ParsedBackup(
+        val prefs: Map<String, Map<String, Any>>,
+        val webdavPassword: String,
+        val clipboard: List<ClipboardRecord>,
+        val phrases: List<PhraseRecord>,
+        val prefers: List<CandidatePrefer>,
+        val sortings: List<CandidateSorting>,
+    )
+
+    /**
+     * 把解密后的 JSON 完整解析为内存对象。任何结构/类型错误抛
+     * [BackupException]，此时尚未写入任何数据。
+     */
+    private fun parsePayload(root: JSONObject): ParsedBackup {
+        try {
+            val prefs = LinkedHashMap<String, Map<String, Any>>()
+            val prefsJson = root.optJSONObject("prefs") ?: JSONObject()
+            val names = prefsJson.keys()
+            while (names.hasNext()) {
+                val name = names.next()
+                val entries = prefsJson.getJSONObject(name)
+                val map = LinkedHashMap<String, Any>()
+                val keys = entries.keys()
+                while (keys.hasNext()) {
+                    val key = keys.next()
+                    map[key] = parsePrefValue(entries.getJSONObject(key))
+                }
+                prefs[name] = map
+            }
+            // 还原语义以备份为准：强制剪贴板拆库迁移标记为已完成，防止重启后
+            // 主库残留的旧剪贴板行被迁移逻辑合并进刚还原好的剪贴板表
+            val clipSettings = LinkedHashMap(prefs[CLIPBOARD_PREFS].orEmpty())
+            clipSettings[CLIPBOARD_MIGRATED_KEY] = true
+            prefs[CLIPBOARD_PREFS] = clipSettings
+
+            val clips = root.optJSONArray("clipboard") ?: JSONArray()
+            val clipList = ArrayList<ClipboardRecord>(clips.length())
+            for (i in 0 until clips.length()) {
+                val o = clips.getJSONObject(i)
+                clipList += ClipboardRecord(
+                    id = o.optLong("id", 0),
+                    text = o.optString("text"),
+                    timestamp = o.optLong("timestamp"),
+                    cloud = o.optBoolean("cloud"),
+                    deleted = o.optBoolean("deleted"),
+                    deletedAt = o.optLong("deletedAt"),
+                )
+            }
+
+            val phrases = root.optJSONArray("phrases") ?: JSONArray()
+            val phraseList = ArrayList<PhraseRecord>(phrases.length())
+            for (i in 0 until phrases.length()) {
+                val o = phrases.getJSONObject(i)
+                phraseList += PhraseRecord(
+                    id = o.optLong("id", 0),
+                    text = o.optString("text"),
+                    label = o.optString("label"),
+                    createdAt = o.optLong("createdAt"),
+                )
+            }
+
+            val prefers = root.optJSONArray("candidatePrefers") ?: JSONArray()
+            val preferList = ArrayList<CandidatePrefer>(prefers.length())
+            for (i in 0 until prefers.length()) {
+                val o = prefers.getJSONObject(i)
+                preferList += CandidatePrefer(
+                    text = o.optString("text"),
+                    count = o.optInt("count", 1),
+                    context = o.optString("context"),
+                    createdAt = o.optLong("createdAt"),
+                    updatedAt = o.optLong("updatedAt"),
+                )
+            }
+
+            val sortings = root.optJSONArray("candidateSortings") ?: JSONArray()
+            val sortingList = ArrayList<CandidateSorting>(sortings.length())
+            for (i in 0 until sortings.length()) {
+                val o = sortings.getJSONObject(i)
+                val ids = o.optJSONArray("candidateIds") ?: JSONArray()
+                sortingList += CandidateSorting(
+                    key = o.optString("key"),
+                    candidateIds = (0 until ids.length()).map { ids.optInt(it) },
+                )
+            }
+
+            return ParsedBackup(
+                prefs = prefs,
+                webdavPassword = root.optString("webdavPassword", ""),
+                clipboard = clipList,
+                phrases = phraseList,
+                prefers = preferList,
+                sortings = sortingList,
+            )
+        } catch (e: BackupException) {
+            throw e
+        } catch (e: Exception) {
+            throw BackupException("备份内容解析失败")
+        }
+    }
+
+    /** 严格解析单个 prefs 值：未知类型标签或类型不符直接抛错（解析阶段拦截） */
+    private fun parsePrefValue(obj: JSONObject): Any = when (obj.optString("t")) {
+        "s" -> obj.getString("v")
+        "i" -> obj.getInt("v")
+        "l" -> obj.getLong("v")
+        "f" -> obj.getDouble("v").toFloat()
+        "b" -> obj.getBoolean("v")
+        "ss" -> {
+            val arr = obj.getJSONArray("v")
+            (0 until arr.length()).map { arr.getString(it) }.toSet()
+        }
+        else -> throw BackupException("备份内容解析失败")
+    }
+
+    /** 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误 */
+    private suspend fun applyPayload(parsed: ParsedBackup) {
+        val db = AppDatabase.getInstance(appContext)
+        val clipDb = ClipboardDatabase.getInstance(appContext)
+
+        // —— Room 四表：各自单事务内整表替换，中途失败整表回滚
+        clipDb.withTransaction {
+            clipDb.clipboardDao().deleteAllRaw()
+            if (parsed.clipboard.isNotEmpty()) {
+                clipDb.clipboardDao().insertAll(parsed.clipboard)
+            }
+        }
+        db.withTransaction {
+            db.phraseDao().deleteAll()
+            if (parsed.phrases.isNotEmpty()) db.phraseDao().insertAll(parsed.phrases)
+            db.candidatePreferDao().deleteAll()
+            if (parsed.prefers.isNotEmpty()) db.candidatePreferDao().insertAll(parsed.prefers)
+            db.candidateSortingDao().deleteAll()
+            if (parsed.sortings.isNotEmpty()) db.candidateSortingDao().insertAll(parsed.sortings)
+        }
+
         // —— prefs 整表覆盖（先清后写，与备份时点的一致状态）
-        val prefsJson = root.optJSONObject("prefs") ?: JSONObject()
-        val names = prefsJson.keys()
-        while (names.hasNext()) {
-            val name = names.next()
-            val entries = prefsJson.getJSONObject(name)
+        for ((name, entries) in parsed.prefs) {
             val editor = appContext.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
             editor.clear()
-            val keys = entries.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                putPrefValue(editor, key, entries.getJSONObject(key))
-            }
+            for ((key, value) in entries) putPrefValue(editor, key, value)
             // prefs 回写必须同步落盘：随后可能马上重启进程，异步 apply 有丢失窗口
             if (!editor.commit()) Timber.w("Backup restore: commit prefs $name returned false")
         }
         // WebDAV 密码最后单独回写，经加密通道在本机 Keystore 重新加密
-        UserDictPrefs.password = root.optString("webdavPassword", "")
+        UserDictPrefs.password = parsed.webdavPassword
 
-        val db = AppDatabase.getInstance(appContext)
-        val clipDb = ClipboardDatabase.getInstance(appContext)
-
-        val clips = root.optJSONArray("clipboard") ?: JSONArray()
-        val clipList = ArrayList<ClipboardRecord>(clips.length())
-        for (i in 0 until clips.length()) {
-            val o = clips.getJSONObject(i)
-            clipList += ClipboardRecord(
-                id = o.optLong("id", 0),
-                text = o.optString("text"),
-                timestamp = o.optLong("timestamp"),
-                cloud = o.optBoolean("cloud"),
-                deleted = o.optBoolean("deleted"),
-                deletedAt = o.optLong("deletedAt"),
-            )
-        }
-        clipDb.clipboardDao().deleteAllRaw()
-        for (r in clipList) clipDb.clipboardDao().insert(r)
-
-        val phrases = root.optJSONArray("phrases") ?: JSONArray()
-        val phraseList = ArrayList<PhraseRecord>(phrases.length())
-        for (i in 0 until phrases.length()) {
-            val o = phrases.getJSONObject(i)
-            phraseList += PhraseRecord(
-                id = o.optLong("id", 0),
-                text = o.optString("text"),
-                label = o.optString("label"),
-                createdAt = o.optLong("createdAt"),
-            )
-        }
-        db.phraseDao().deleteAll()
-        for (r in phraseList) db.phraseDao().insert(r)
-
-        val prefers = root.optJSONArray("candidatePrefers") ?: JSONArray()
-        val preferList = ArrayList<CandidatePrefer>(prefers.length())
-        for (i in 0 until prefers.length()) {
-            val o = prefers.getJSONObject(i)
-            preferList += CandidatePrefer(
-                text = o.optString("text"),
-                count = o.optInt("count", 1),
-                context = o.optString("context"),
-                createdAt = o.optLong("createdAt"),
-                updatedAt = o.optLong("updatedAt"),
-            )
-        }
-        db.candidatePreferDao().deleteAll()
-        if (preferList.isNotEmpty()) db.candidatePreferDao().insertAll(preferList)
-
-        val sortings = root.optJSONArray("candidateSortings") ?: JSONArray()
-        val sortingList = ArrayList<CandidateSorting>(sortings.length())
-        for (i in 0 until sortings.length()) {
-            val o = sortings.getJSONObject(i)
-            val ids = o.optJSONArray("candidateIds") ?: JSONArray()
-            sortingList += CandidateSorting(
-                key = o.optString("key"),
-                candidateIds = (0 until ids.length()).map { ids.optInt(it) },
-            )
-        }
-        db.candidateSortingDao().deleteAll()
-        if (sortingList.isNotEmpty()) db.candidateSortingDao().insertAll(sortingList)
+        // 引擎侧候选偏好有内存快照，还原后显式失效，不依赖随后的杀进程重启
+        CandidatePreferCache.invalidate()
     }
 
     private fun putPrefValue(
         editor: android.content.SharedPreferences.Editor,
         key: String,
-        obj: JSONObject,
+        value: Any,
     ) {
-        when (obj.optString("t")) {
-            "s" -> editor.putString(key, obj.optString("v"))
-            "i" -> editor.putInt(key, obj.optInt("v"))
-            "l" -> editor.putLong(key, obj.optLong("v"))
-            "f" -> editor.putFloat(key, obj.optDouble("v").toFloat())
-            "b" -> editor.putBoolean(key, obj.optBoolean("v"))
-            "ss" -> {
-                val arr = obj.optJSONArray("v") ?: JSONArray()
-                editor.putStringSet(key, (0 until arr.length()).map { arr.optString(it) }.toSet())
-            }
+        when (value) {
+            is String -> editor.putString(key, value)
+            is Int -> editor.putInt(key, value)
+            is Long -> editor.putLong(key, value)
+            is Float -> editor.putFloat(key, value)
+            is Boolean -> editor.putBoolean(key, value)
+            is Set<*> -> editor.putStringSet(key, value.map { it.toString() }.toSet())
         }
     }
 
