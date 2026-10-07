@@ -62,22 +62,36 @@ object SecretStore {
         }
     }
 
+    private val keyLock = Any()
+
+    /**
+     * 查/建密钥必须串行：保存密码（主线程）与同步读密码（IO 线程）可能在
+     * 某台设备首次使用 Keystore 的瞬间并发走到建密钥，两把同 alias 密钥
+     * 互相覆盖会让先加密的密文永久解不开。
+     */
     private fun getOrCreateKey(): SecretKey {
         val keyStore = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
         (keyStore.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let {
             return it.secretKey
         }
-        val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
-        generator.init(
-            KeyGenParameterSpec.Builder(
-                KEY_ALIAS,
-                KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+        synchronized(keyLock) {
+            val ks = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
+            (ks.getEntry(KEY_ALIAS, null) as? KeyStore.SecretKeyEntry)?.let {
+                return it.secretKey
+            }
+            val generator =
+                KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
+            generator.init(
+                KeyGenParameterSpec.Builder(
+                    KEY_ALIAS,
+                    KeyProperties.PURPOSE_ENCRYPT or KeyProperties.PURPOSE_DECRYPT,
+                )
+                    .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                    .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                    .setKeySize(256)
+                    .build()
             )
-                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
-                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                .setKeySize(256)
-                .build()
-        )
-        return generator.generateKey()
+            return generator.generateKey()
+        }
     }
 }
