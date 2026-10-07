@@ -34,15 +34,6 @@ class ClipboardView(
 
     var onItemClick: ((ClipboardManager.Entry) -> Unit)? = null
     var onItemLongClick: ((ClipboardManager.Entry, Float, Float) -> Unit)? = null
-    /** 搜索态右下角收起/展开键盘钮的回调（由面板接线）。 */
-    var onSearchKeyboardToggle: (() -> Unit)? = null
-
-    /** 搜索 UI 是否激活（面板在进出搜索时同步）：决定右下角切换钮是否绘制。 */
-    var searchUiActive: Boolean = false
-
-    /** 搜索内键盘当前是否收起：切换钮画 ∧（展开）还是 ∨（收起）。 */
-    var keyboardHidden: Boolean = false
-    private var toggleBtnPressed = false
     var onPhraseClick: ((PhraseManager.Phrase) -> Unit)? = null
     var onPhraseDelete: ((PhraseManager.Phrase) -> Unit)? = null
 
@@ -103,12 +94,7 @@ class ClipboardView(
     private val pinBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     // 置顶标记色（强调色），随主题在 updateColors 刷新
     private var accentColor = 0
-    // 搜索键盘切换钮：圆形底 + 折线箭头
-    private val toggleBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
-    private val toggleLinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.STROKE
-        strokeCap = Paint.Cap.ROUND
-    }
+
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
     }
@@ -238,8 +224,7 @@ class ClipboardView(
         pressPaint.color = scheme.specialKeyPressed
         accentColor = scheme.accentKeyBackground
         pinBarPaint.color = accentColor
-        toggleBgPaint.color = scheme.specialKeyBackground
-        toggleLinePaint.color = scheme.keyText
+
         emptyPaint.color = panel.candidateIndex
         cloudDrawable?.setTint(panel.candidateIndex)
     }
@@ -414,41 +399,6 @@ class ClipboardView(
         }
 
         canvas.restore()
-        drawSearchKeyboardToggle(canvas)
-    }
-
-    /** 切换钮圆心：固定在视口右下角（不随列表滚动）。 */
-    private fun toggleCenter(): Pair<Float, Float> {
-        val r = 16f * density
-        return Pair(width - hMargin - r, height - r - 8f * density)
-    }
-
-    private fun drawSearchKeyboardToggle(canvas: Canvas) {
-        if (!searchUiActive || clipTab != ClipboardTab.CLIPBOARD) return
-        val (cx, cy) = toggleCenter()
-        val r = 16f * density
-        toggleBgPaint.alpha = if (toggleBtnPressed) 255 else 220
-        canvas.drawCircle(cx, cy, r, toggleBgPaint)
-        // 折线箭头：键盘展开中画 ∨（点它收起），收起后画 ∧（点它展开）
-        val w = 6f * density
-        val h = 3.5f * density
-        toggleLinePaint.strokeWidth = 1.8f * density
-        if (keyboardHidden) {
-            canvas.drawLine(cx - w, cy + h, cx, cy - h, toggleLinePaint)
-            canvas.drawLine(cx, cy - h, cx + w, cy + h, toggleLinePaint)
-        } else {
-            canvas.drawLine(cx - w, cy - h, cx, cy + h, toggleLinePaint)
-            canvas.drawLine(cx, cy + h, cx + w, cy - h, toggleLinePaint)
-        }
-    }
-
-    private fun hitToggle(x: Float, y: Float): Boolean {
-        if (!searchUiActive || clipTab != ClipboardTab.CLIPBOARD) return false
-        val (cx, cy) = toggleCenter()
-        val r = 22f * density // 命中区比绘制圆放大些，好点
-        val dx = x - cx
-        val dy = y - cy
-        return dx * dx + dy * dy <= r * r
     }
 
     private fun itemIndexAt(y: Float): Int {
@@ -464,29 +414,6 @@ class ClipboardView(
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
-        // 搜索键盘切换钮优先：命中后整个手势归它，不进列表的按压/滚动逻辑
-        if (toggleBtnPressed || hitToggle(event.x, event.y)) {
-            when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> {
-                    toggleBtnPressed = true
-                    invalidate()
-                }
-                MotionEvent.ACTION_UP -> {
-                    val fire = toggleBtnPressed && hitToggle(event.x, event.y)
-                    toggleBtnPressed = false
-                    invalidate()
-                    if (fire) {
-                        InputFeedbacks.hapticFeedback(this)
-                        onSearchKeyboardToggle?.invoke()
-                    }
-                }
-                MotionEvent.ACTION_CANCEL -> {
-                    toggleBtnPressed = false
-                    invalidate()
-                }
-            }
-            return true
-        }
         velocityTracker?.addMovement(event)
 
         when (event.actionMasked) {

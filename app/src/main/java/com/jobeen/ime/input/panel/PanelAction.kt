@@ -28,7 +28,6 @@ sealed class PanelAction {
     data object ClipSearch : PanelAction()
     data object ClipSearchExit : PanelAction()
     data object ClipSearchClear : PanelAction()
-    data object ClipSearchShowKeyboard : PanelAction()
     data object SelectAll : PanelAction()
     data object Copy : PanelAction()
     data object Paste : PanelAction()
