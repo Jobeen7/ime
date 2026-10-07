@@ -35,9 +35,23 @@ class KeyActionListener(
                 engine?.commit(action.text)
             }
 
-            is KeyboardAction.BackspaceAction, is KeyboardAction.ReturnAction, KeyboardAction.SpaceAction -> {
+            is KeyboardAction.BackspaceAction -> {
+                // 剪贴板搜索态：退格先问面板（删查询/吞掉），不归引擎才删拼音或文档
+                val intercepted = (service as? ImeInputMethodService)?.keyboardWindow
+                    ?.panel?.handleClipSearchBackspace(
+                        com.jobeen.ime.input.keyboard.window.KeyboardStateManager.isComposingNow
+                    ) == true
+                if (!intercepted) {
+                    engine?.processKey(
+                        service, KeyEvent.CodeEvent(
+                            KeyEvent.CodeEvent.keyCode("DEL"), KeyModifiers.Empty
+                        )
+                    )
+                }
+            }
+
+            is KeyboardAction.ReturnAction, KeyboardAction.SpaceAction -> {
                 val character = when (action) {
-                    KeyboardAction.BackspaceAction -> "DEL"
                     is KeyboardAction.ReturnAction -> "ENTER"
                     KeyboardAction.SpaceAction -> "SPACE"
                 }

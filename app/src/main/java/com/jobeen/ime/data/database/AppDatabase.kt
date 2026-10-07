@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 
-@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 8, exportSchema = false)
+@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 9, exportSchema = false)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 
@@ -29,7 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ime_database"
-                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build().also { INSTANCE = it }
+                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build().also { INSTANCE = it }
                 // 注意：不要加 fallbackToDestructiveMigration() —— 漏写 Migration 时宁可启动崩溃（fail-fast，
                 // 发布前真机测试会先暴露），也不要静默清空用户的剪贴板/常用语/选词偏好。每次 bump version
                 // 都必须写 Migration（无结构变更时写空迁移，见 MIGRATION_7_8）。
@@ -132,5 +132,14 @@ abstract class AppDatabase : RoomDatabase() {
             startVersion = 7,
             endVersion = 8,
         ) { _ -> }
+
+        // v9：与 ClipboardDatabase v2 同步——ClipboardRecord 实体共用，旧主库里的
+        // clipboard_records 残表也要补 pinned 列，否则实体 schema 校验不过（fail-fast 崩）
+        private val MIGRATION_8_9: Migration = Migration(
+            startVersion = 8,
+            endVersion = 9,
+        ) { db ->
+            db.execSQL("ALTER TABLE `clipboard_records` ADD COLUMN `pinned` INTEGER NOT NULL DEFAULT 0")
+        }
     }
 }

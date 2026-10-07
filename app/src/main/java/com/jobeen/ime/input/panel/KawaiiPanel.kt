@@ -91,6 +91,8 @@ class KawaiiPanel(
             }
             if (field == value) return
             field = value
+            // 搜索态只活在剪贴板态里：离开剪贴板态统一收口（渲染器随状态重建自清）
+            if (value != State.Clipboard && clipSearchActive) resetClipSearchState()
             if (value is State.Menu) {
                 clipboardTab = ClipboardTab.CLIPBOARD
                 clipboardView.clipTab = ClipboardTab.CLIPBOARD
@@ -220,6 +222,7 @@ class KawaiiPanel(
             context.getDrawable(R.drawable.ic_toolbar_select_all),
             context.getDrawable(R.drawable.ic_toolbar_copy),
             context.getDrawable(R.drawable.ic_toolbar_paste),
+            context.getDrawable(R.drawable.ic_keyboard_search),
         ),
         expandDrawable = context.getDrawable(R.drawable.ic_keyboard_expand_more),
         candidateGrid = candidateGrid,
@@ -293,12 +296,33 @@ class KawaiiPanel(
         clipboardView.onItemClick = { entry -> listener?.onClipboardItemClick(entry) }
         clipboardView.onItemLongClick = { entry, x, y ->
             Timber.d("clipboard longClick: cardX=$x cardY=$y")
-            confirmOverlay.confirm(
-                message = context.getString(
-                    R.string.clipboard_delete_confirm,
-                    if (entry.text.length > 5) entry.text.take(5) + "..." else entry.text
+            val summary = if (entry.text.length > 5) entry.text.take(5) + "..." else entry.text
+            confirmOverlay.actions(
+                message = context.getString(R.string.clipboard_item_actions),
+                items = listOf(
+                    context.getString(
+                        if (entry.pinned) R.string.clipboard_unpin else R.string.clipboard_pin
+                    ) to {
+                        appScope.launch {
+                            ClipboardManager.setPinned(context, entry.text, !entry.pinned)
+                            clipboardView.refresh()
+                        }
+                    },
+                    context.getString(R.string.clipboard_delete) to {
+                        // 延后一帧再弹删除确认：动作卡的点击处理在回调后会 dismiss，
+                        // 同步弹新卡会被随后的 dismiss 一起关掉
+                        confirmOverlay.post {
+                            confirmOverlay.confirm(
+                                message = context.getString(
+                                    R.string.clipboard_delete_confirm, summary
+                                ),
+                                onConfirm = { handleClipboardDelete(entry) },
+                                cardX = x + 100,
+                                cardY = y + 100,
+                            )
+                        }
+                    },
                 ),
-                onConfirm = { handleClipboardDelete(entry) },
                 cardX = x + 100,
                 cardY = y + 100,
             )
@@ -361,6 +385,74 @@ class KawaiiPanel(
         clipboardView.refresh()
     }
 
+    // ── 剪贴板搜索态 ──────────────────────────────────────────────
+    // 搜索只存在于 State.Clipboard 之内：面板状态不新增，靠这个标志钉住——
+    // 候选消息不再把状态抢去组字态，工具栏在「搜索框」与「候选行」间轮显。
+
+    var clipSearchActive: Boolean = false
+        private set
+
+    private fun newClipToolbarRenderer(): ToolbarRenderer =
+        (createStateRender(State.Clipboard) as ClipboardStateRender).createToolbarRenderer()
+
+    private fun applySearchFields(renderer: ToolbarRenderer) {
+        renderer.clipSearchMode = true
+        renderer.clipSearchQuery = clipboardView.searchQuery
+        renderer.clipSearchHint = context.getString(R.string.clipboard_search_hint)
+    }
+
+    private fun enterClipSearch() {
+        clipSearchActive = true
+        clipboardView.setSearchQuery("")
+        view.currentRenderer = newClipToolbarRenderer().also { applySearchFields(it) }
+        view.invalidate()
+    }
+
+    private fun exitClipSearch() {
+        clipSearchActive = false
+        clipboardView.setSearchQuery("")
+        // 工具栏可能正被候选行轮显占用：一律重建回剪贴板工具栏
+        view.currentRenderer = newClipToolbarRenderer()
+        view.invalidate()
+    }
+
+    /** 离开剪贴板态/切换分页时的静默收口：状态机本身会换渲染器，只清标志与查询。 */
+    private fun resetClipSearchState() {
+        clipSearchActive = false
+        clipboardView.setSearchQuery("")
+    }
+
+    override fun interceptCommit(text: String): Boolean {
+        if (!clipSearchActive) return false
+        // 换行不进查询（回车在搜索态即无动作），其余文本（含空格）追加到查询尾
+        val clean = text.replace("\n", "").replace("\r", "")
+        if (clean.isNotEmpty()) {
+            val q = clipboardView.searchQuery + clean
+            clipboardView.setSearchQuery(q)
+            (view.currentRenderer as? ToolbarRenderer)?.let { r ->
+                if (r.clipSearchMode) r.clipSearchQuery = q
+            }
+            view.invalidate()
+        }
+        return true
+    }
+
+    override fun handleClipSearchBackspace(isComposing: Boolean): Boolean {
+        if (!clipSearchActive) return false
+        // 组字中退格归引擎删拼音；其余情况一律截获，绝不让退格落到目标应用删字
+        if (isComposing) return false
+        val q = clipboardView.searchQuery
+        if (q.isNotEmpty()) {
+            val nq = q.dropLast(1)
+            clipboardView.setSearchQuery(nq)
+            (view.currentRenderer as? ToolbarRenderer)?.let { r ->
+                if (r.clipSearchMode) r.clipSearchQuery = nq
+            }
+            view.invalidate()
+        }
+        return true
+    }
+
     private fun handleCandidateForget(candidate: EngineMessage.Candidate) {
         listener?.onCandidateForget(candidate)
     }
@@ -410,6 +502,10 @@ class KawaiiPanel(
                             }
                             is PanelAction.ClipTab -> {
                                 confirmOverlay.dismiss()
+                                if (clipSearchActive) {
+                                    resetClipSearchState()
+                                    (view.currentRenderer as? ToolbarRenderer)?.clipSearchMode = false
+                                }
                                 clipboardTab =
                                     if (result.action.isClipboard) ClipboardTab.CLIPBOARD else ClipboardTab.PHRASE
                                  (view.currentRenderer as? ToolbarRenderer)?.clipTab = clipboardTab
@@ -422,6 +518,20 @@ class KawaiiPanel(
 
                             PanelAction.ClearClipboard -> showClearClipboardConfirm()
                             PanelAction.ClearPhrases -> showClearPhrasesConfirm()
+
+                            PanelAction.ClipSearch -> enterClipSearch()
+                            PanelAction.ClipSearchExit -> exitClipSearch()
+                            PanelAction.ClipSearchClear -> {
+                                if (clipboardView.searchQuery.isEmpty()) {
+                                    exitClipSearch()
+                                } else {
+                                    clipboardView.setSearchQuery("")
+                                    (view.currentRenderer as? ToolbarRenderer)?.let { r ->
+                                        if (r.clipSearchMode) r.clipSearchQuery = ""
+                                    }
+                                    view.invalidate()
+                                }
+                            }
 
                             PanelAction.SwitchKeyboard -> {
                                 when (state) {
@@ -571,6 +681,33 @@ class KawaiiPanel(
         // 本机字体无字形的单字候选（扩展区生僻字）不进列表：显示出来
         // 是方框、点选打出对方也看不到。条带与网格共用此列表，一致
         val displayList = list.filter { candidateGrid.isDisplayable(it) }
+        if (clipSearchActive) {
+            // 搜索态钉住：不切换面板状态，工具栏在搜索框与候选行之间轮显
+            when {
+                displayList.isNotEmpty() -> {
+                    val r = view.currentRenderer
+                    if (r is ComposingRenderer) {
+                        r.candidates = displayList
+                    } else {
+                        view.currentRenderer =
+                            ComposingStateRender(renderContext, displayList).createToolbarRenderer()
+                    }
+                }
+                list.isNotEmpty() && hasMore -> {
+                    // 整屏无字形且还有更多：续取穿过去（不切组字态）
+                    view.post { listener?.onRequestMoreCandidates() }
+                }
+                else -> {
+                    // 组字结束（选词已上屏改道查询，或清空）：恢复搜索框工具栏
+                    if (view.currentRenderer !is ToolbarRenderer) {
+                        view.currentRenderer =
+                            newClipToolbarRenderer().also { applySearchFields(it) }
+                    }
+                }
+            }
+            view.invalidate()
+            return
+        }
         if (displayList.isEmpty() && list.isNotEmpty() && hasMore) {
             // 整屏被滤光且引擎还有更多：保持组字空态并续取下一页穿过
             // 无字形带，不要清成 Idle——那样追加页回来会因非组字态被

@@ -12,4 +12,5 @@ data class ClipboardRecord(
     val cloud: Boolean = false,
     val deleted: Boolean = false,
     val deletedAt: Long = 0,
+    val pinned: Boolean = false,
 )
