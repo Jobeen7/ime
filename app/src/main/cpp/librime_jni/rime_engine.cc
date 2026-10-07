@@ -95,7 +95,10 @@ namespace {
         }
 
         void shutdown() {
-            session_.reset();
+            {
+                std::lock_guard<std::mutex> lock(session_mutex_);
+                session_.reset();
+            }
             api_->finalize();
         }
 
@@ -109,7 +112,10 @@ namespace {
         }
 
         bool syncUserData() {
-            session_.reset();
+            {
+                std::lock_guard<std::mutex> lock(session_mutex_);
+                session_.reset();
+            }
             return api_->sync_user_data();
         }
 
@@ -274,8 +280,14 @@ namespace {
         RimeApi *api_;
         std::shared_ptr<RimeSession> session_;
         std::mutex join_mutex_;
+        // session_ 的读写跨两个线程：引擎线程（全部 API 调用）与通知分发
+        // 线程（只读查询走 sessionId 懒建），外加 shutdown/syncUserData 的
+        // reset。shared_ptr 控制块并发读写是未定义行为，统一用这把锁串行；
+        // 无竞争时开销可忽略，懒建本身也只在首次/重置后发生一次
+        std::mutex session_mutex_;
 
         RimeSessionId sessionId() {
+            std::lock_guard<std::mutex> lock(session_mutex_);
             if (!session_) {
                 try {
                     session_ = std::make_shared<RimeSession>();

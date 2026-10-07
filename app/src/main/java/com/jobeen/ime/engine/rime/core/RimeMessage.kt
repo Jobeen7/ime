@@ -127,7 +127,7 @@ sealed class RimeMessage<T>(val data: T) {
                 val raw = params[0] as String
                 val parts = raw.split('/', limit = 4)
                 val schemaId = parts[0]
-                val schema = Rime.getSchemaList().firstOrNull { it.id == schemaId }
+                val schema = Rime.cachedSchemaList().firstOrNull { it.id == schemaId }
                 SchemaMessage(
                     SchemaItem(
                         id = schemaId,

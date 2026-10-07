@@ -41,6 +41,23 @@ object OpenCCDictManager {
         return new
     }
 
+    private val buildScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+    )
+    private val buildMutex = kotlinx.coroutines.sync.Mutex()
+
+    /**
+     * 异步版本：部署开始通知在单线程分发队列上触发，构建含磁盘 IO 与词典
+     * 转换，同步执行会把排在其后的 schema/option/部署成功通知全部堵住。
+     * 投 IO 线程并以 Mutex 串行（多次部署触发排队即可，转换幂等）。
+     */
+    @JvmStatic
+    fun buildOpenCCDictAsync() {
+        buildScope.launch {
+            kotlinx.coroutines.sync.withLock(buildMutex) { buildOpenCCDict() }
+        }
+    }
+
     /**
      * Convert internal text dict to opencc format
      */
