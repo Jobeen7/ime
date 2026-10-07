@@ -52,6 +52,10 @@ class ClipboardView(
 
     override fun onDetachedFromWindow() {
         viewScope.cancel()
+        // 拖选自动滚动是独立 post 链、不在 viewScope 内：窗口收起时
+        // 必须收尾，否则它会继续滚动并改动选中集合
+        endDragSelection(rollback = false)
+        removeCallbacks(longPressRunnable)
         super.onDetachedFromWindow()
     }
 
@@ -797,6 +801,12 @@ class ClipboardView(
             canvas.drawText(
                 context.getString(R.string.clipboard_edit_hint),
                 textX, topPad - fm.ascent, editHintPaint
+            )
+            // 空文本也要有光标，表达仍可继续输入
+            editCursorPaint.strokeWidth = 1.6f * density
+            canvas.drawLine(
+                textX, topPad + 1f * density,
+                textX, topPad + lh - 1f * density, editCursorPaint
             )
         } else {
             val cursorLine = editCursorLine()
