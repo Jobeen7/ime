@@ -20,4 +20,28 @@ class StateRenderContext(
     val clipboardView: ClipboardView,
     val menuGridView: MenuGridView,
     var recording: Boolean = false,
-)
+) {
+    /** 候选条显示设置四项（构造渲染器时此前每次都同步读一遍 prefs 背书值） */
+    data class CandidateDisplaySettings(
+        val showIndex: Boolean,
+        val showComment: Boolean,
+        val candidateBorder: Boolean,
+        val expandBorder: Boolean,
+    )
+
+    private var displaySettingsCache: CandidateDisplaySettings? = null
+
+    fun candidateDisplaySettings(): CandidateDisplaySettings =
+        displaySettingsCache ?: CandidateDisplaySettings(
+            showIndex = com.jobeen.ime.data.manager.CandidateManager.isShowIndex(context),
+            showComment = com.jobeen.ime.data.manager.CandidateManager.isShowComment(context),
+            candidateBorder = com.jobeen.ime.data.manager.CandidateManager.isBorderEnabled(context),
+            expandBorder = com.jobeen.ime.data.manager.KeyboardManager.Keyboard.ExpandBorder
+                .isEnabled(context),
+        ).also { displaySettingsCache = it }
+
+    /** 面板刷新主题/重新显示时失效，用户在设置页改完回来即生效 */
+    fun invalidateDisplaySettings() {
+        displaySettingsCache = null
+    }
+}

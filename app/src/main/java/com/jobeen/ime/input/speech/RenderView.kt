@@ -72,15 +72,24 @@ abstract class RenderView @JvmOverloads constructor(
         override fun run() {
             val startAt = System.currentTimeMillis()
             while (!destroyed) {
+                // 锁是宿主视图的实例字段；视图已被回收时无锁可等，短睡复检
+                val rv0 = renderView.get()
+                if (rv0 == null) {
+                    try {
+                        sleep(IDLE_SLEEP_TIME)
+                    } catch (ignored: InterruptedException) {
+                    }
+                    continue
+                }
                 // 仅在状态栅栏处持锁，绘制阶段不持有 surfaceLock 与 Canvas，
                 // 这样 onRender 进入冬眠 wait() 时既不会阻塞 onPause/ onDestroy，
                 // 也不会让 Canvas 长时间被锁住造成黑屏/ANR。
-                surfaceLock.withLock {
+                rv0.surfaceLock.withLock {
                     // 暂停或已停动画时都阻塞等待信号，不再 16ms 轮询空转
                     // （startThread/onResume/surfaceDestroyed 都会 signalAll）
                     while ((isPause || !running) && !destroyed) {
                         try {
-                            surfaceCondition.await()
+                            rv0.surfaceCondition.await()
                         } catch (ignored: InterruptedException) {
                             Thread.currentThread().interrupt()
                         }
@@ -240,9 +249,13 @@ abstract class RenderView @JvmOverloads constructor(
         runCatching { holder.removeCallback(this) }
     }
 
+    // 渲染锁改为实例字段：此前在 companion 里两类波形视图的所有渲染
+    // 线程共用一把锁一个条件变量，任一视图的 signal 都会唤醒全部线程
+    // 空转复检。现每实例一把，互不干扰
+    internal val surfaceLock = ReentrantLock()
+    internal val surfaceCondition = surfaceLock.newCondition()
+
     companion object {
-        private val surfaceLock = ReentrantLock()
-        private val surfaceCondition = surfaceLock.newCondition()
         const val RENDER_FRAME_INTERVAL_MS: Long = 16
     }
 }

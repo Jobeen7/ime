@@ -95,7 +95,9 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        keyboardWindow?.view?.refreshColors()
+        // 任何配置变化此前都无条件全量重建键盘（字体缩放/区域等与外观
+        // 无关的变化也触发）；改走带变更检测的版本，配色未变不重建
+        keyboardWindow?.view?.refreshColorsIfChanged()
     }
 
     override fun onCreateInputView(): View {

@@ -60,14 +60,15 @@ class ComposingStateRender(
 ) : IStateRender {
 
     override fun createToolbarRenderer(): ComposingRenderer {
+        val settings = ctx.candidateDisplaySettings()
         return ComposingRenderer(
             candidates,
             ctx.expandDrawable,
             ctx.idleHorizontalPaddingDp(),
-            showIndex = CandidateManager.isShowIndex(ctx.context),
-            showComment = CandidateManager.isShowComment(ctx.context),
-            candidateBorder = CandidateManager.isBorderEnabled(ctx.context),
-            expandBorder = KeyboardManager.Keyboard.ExpandBorder.isEnabled(ctx.context),
+            showIndex = settings.showIndex,
+            showComment = settings.showComment,
+            candidateBorder = settings.candidateBorder,
+            expandBorder = settings.expandBorder,
         ).also { it.recording = ctx.recording }
     }
 
@@ -86,14 +87,15 @@ class PredictionStateRender(
     var candidates: List<EngineMessage.Candidate>,
 ) : IStateRender {
     override fun createToolbarRenderer(): ComposingRenderer {
+        val settings = ctx.candidateDisplaySettings()
         return ComposingRenderer(
             candidates,
             ctx.expandDrawable,
             ctx.idleHorizontalPaddingDp(),
-            showIndex = CandidateManager.isShowIndex(ctx.context),
-            showComment = CandidateManager.isShowComment(ctx.context),
-            candidateBorder = CandidateManager.isBorderEnabled(ctx.context),
-            expandBorder = KeyboardManager.Keyboard.ExpandBorder.isEnabled(ctx.context),
+            showIndex = settings.showIndex,
+            showComment = settings.showComment,
+            candidateBorder = settings.candidateBorder,
+            expandBorder = settings.expandBorder,
         ).also { it.recording = ctx.recording }
     }
 

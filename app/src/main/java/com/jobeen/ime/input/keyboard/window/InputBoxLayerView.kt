@@ -349,34 +349,33 @@ class InputBoxLayerView(
                         selectionPaint.color = colors.accentKeyBackground
                         selectionPaint.alpha = 0x99
 
-
-                        for (i in start until end) {
-                            // 换行符本身不绘制高亮，避免将整行扩展成高亮区域
-                            if (text[i] == '\n') continue
-
-                            val line = layout.getLineForOffset(i)
-                            val lineTop = layout.getLineTop(line).toFloat()
-                            val lineBottom = layout.getLineBottom(line).toFloat()
+                        // 按行段绘制（此前逐字循环查布局，全选长文本时每帧
+                        // 上千次查询；行数远小于字数，视觉结果一致）
+                        val firstLine = layout.getLineForOffset(start)
+                        val lastLine = layout.getLineForOffset(end)
+                        for (line in firstLine..lastLine) {
+                            val lineStart = layout.getLineStart(line)
                             val lineEnd = layout.getLineEnd(line)
                             // getLineEnd() 对显式换行会包含 '\n'，
-                            // 所以真正的可见文本结束位置需要排除换行符。
+                            // 真正的可见文本结束位置需要排除换行符
                             val visualEnd =
                                 if (lineEnd > 0 && lineEnd <= text.length && text[lineEnd - 1] == '\n') {
                                     lineEnd - 1
                                 } else {
                                     lineEnd
                                 }
-                            val x1 = layout.getPrimaryHorizontal(i)
-                            // 当前字符是这一行最后一个可见字符时，
-                            // 使用当前行的实际结束位置，而不是 i + 1 的 offset。
-                            val x2 = if (i + 1 >= visualEnd) {
-                                layout.getPrimaryHorizontal(visualEnd)
-                            } else {
-                                layout.getPrimaryHorizontal(i + 1)
-                            }
+                            val segStart = maxOf(start, lineStart)
+                            val segEnd = minOf(end, visualEnd)
+                            if (segStart >= segEnd) continue
+                            val x1 = layout.getPrimaryHorizontal(segStart)
+                            val x2 = layout.getPrimaryHorizontal(segEnd)
                             if (x2 > x1) {
                                 drawRect(
-                                    x1, lineTop, x2, lineBottom, selectionPaint
+                                    x1,
+                                    layout.getLineTop(line).toFloat(),
+                                    x2,
+                                    layout.getLineBottom(line).toFloat(),
+                                    selectionPaint,
                                 )
                             }
                         }
@@ -436,13 +435,14 @@ class InputBoxLayerView(
         }
     }
 
+    // 绘制期复用 Paint：drawCaretRect/drawCircleButton 此前每次调用现建
+    private val caretPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val buttonBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+
     private fun drawCaretRect(canvas: Canvas, x: Float, top: Float, bottom: Float) {
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = colors.accentKeyText
-            style = Paint.Style.FILL
-        }
+        caretPaint.color = colors.accentKeyText
         val caretW = 2f
-        canvas.drawRect(x, top, x + caretW, bottom, paint)
+        canvas.drawRect(x, top, x + caretW, bottom, caretPaint)
     }
 
     private fun drawCircleButton(
@@ -454,11 +454,8 @@ class InputBoxLayerView(
         fg: Int,
         icon: Drawable?,
     ) {
-        val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            color = bg
-            style = Paint.Style.FILL
-        }
-        canvas.drawCircle(cx, cy, r, bgPaint)
+        buttonBgPaint.color = bg
+        canvas.drawCircle(cx, cy, r, buttonBgPaint)
         icon ?: return
         val inset = (r * 0.55f).toInt()
         icon.setTint(fg)

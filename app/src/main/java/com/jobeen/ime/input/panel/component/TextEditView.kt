@@ -420,11 +420,19 @@ class TextEditingButton(
     fun refreshColors(newColors: KeyboardColors.ColorScheme) {
         colors = newColors
         applyTextColors()
+        builtForActivated = null
         buildBackground()
     }
 
+    // 背景只取决于 activated 状态：drawableStateChanged 在每次按压都会
+    // 触发，此前每次都重建两个 GradientDrawable + LayerDrawable。状态
+    // 未变则跳过（当前只有"选择"一个键走这条路，量级小但属白做）
+    private var builtForActivated: Boolean? = null
+
     private fun buildBackground() {
         val activated = hasActivatedState && isActivated
+        if (builtForActivated == activated && background != null) return
+        builtForActivated = activated
         val bgColor = if (activated) bgActive else bgNormal
         var strokeColor = if (activated) strokeActive else strokeNormal
         val pColor = if (activated) pressedActive else pressedColor

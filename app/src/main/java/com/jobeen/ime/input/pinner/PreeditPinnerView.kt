@@ -50,6 +50,8 @@ class PreeditPinnerView(context: Context) : View(context) {
 
     private var pendingScrollToEnd = false
     private var contentWidth = 0f
+    // onMeasure 算好的逐项绘制宽度，供 onDraw 复用
+    private var itemWidths: FloatArray? = null
     private var scrollX = 0f
     private var textScale = 1f
     private val scrolledTextPaint = Paint()
@@ -108,6 +110,12 @@ class PreeditPinnerView(context: Context) : View(context) {
             scrolledSecondaryTextPaint.textSize = secondaryTextPaint.textSize
         }
 
+        // 最终绘制宽度逐项算好存下：onDraw 此前对同一批 item 再逐个
+        // measureText 一遍（onMeasure 已测过两遍），纯重复
+        itemWidths = FloatArray(items.size) { i ->
+            scrolledPaintFor(items[i]).measureText(items[i].text)
+        }
+
         val displayW = (contentWidth.roundToInt()).coerceAtMost(maxWidth)
         setMeasuredDimension(displayW, pillH.roundToInt())
 
@@ -133,11 +141,14 @@ class PreeditPinnerView(context: Context) : View(context) {
         canvas.translate(-scrollX, 0f)
 
         val textY = height / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+        val widths = itemWidths
         var x = pad
-        for (item in items) {
+        for ((i, item) in items.withIndex()) {
             val paint = scrolledPaintFor(item)
             canvas.drawText(item.text, x, textY, paint)
-            x += paint.measureText(item.text)
+            // 宽度优先用 onMeasure 的缓存；尺寸对不上（数据刚变更）时回退实测
+            x += if (widths != null && widths.size == items.size) widths[i]
+            else paint.measureText(item.text)
         }
 
         canvas.restore()
@@ -146,7 +157,14 @@ class PreeditPinnerView(context: Context) : View(context) {
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         val maxScroll = (contentWidth - width).coerceAtLeast(0f)
-        if (maxScroll <= 0f) return false
+        if (maxScroll <= 0f) {
+            // 内容在手势中途缩短到不可滚动时提前返回：已 obtain 的 tracker
+            // 必须先回收，此前直接 return 会让 obtain/recycle 不配对
+            velocityTracker?.recycle()
+            velocityTracker = null
+            isDragging = false
+            return false
+        }
 
         velocityTracker?.addMovement(event)
 
@@ -198,7 +216,6 @@ class PreeditPinnerView(context: Context) : View(context) {
     override fun computeScroll() {
         if (scroller.computeScrollOffset()) {
             scrollX = scroller.currX.toFloat().coerceIn(0f, (contentWidth - width).coerceAtLeast(0f))
-            invalidate()
             postInvalidateOnAnimation()
         }
     }

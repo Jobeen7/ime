@@ -82,6 +82,11 @@ class ClipboardView(
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val indexPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        textAlign = Paint.Align.CENTER
+    }
+    // 全部行的总内容高：布局重建时算好，onDraw 不再每帧累加
+    private var totalContentH = 0f
     private val cloudDrawable: Drawable? = context.getDrawable(R.drawable.ic_keyboard_clipboard_cloud)
     private val cloudIconSize = 14f * density
 
@@ -182,6 +187,7 @@ class ClipboardView(
         indexPaint.color = scheme.keyText
         indexPaint.textSize = 13f * density
         pressPaint.color = scheme.specialKeyPressed
+        emptyPaint.color = panel.candidateIndex
         cloudDrawable?.setTint(panel.candidateIndex)
     }
 
@@ -189,9 +195,13 @@ class ClipboardView(
         val w = width
         if (w <= 0) {
             rowLayouts = emptyList()
+            totalContentH = 0f
             return
         }
         rowLayouts = buildRowLayouts(clipTab, w, textPaint, indexPaint)
+        var total = topPad * 2f
+        rowLayouts.forEach { total += it.height + listGap }
+        totalContentH = total
     }
 
     private fun buildRowLayouts(
@@ -266,11 +276,8 @@ class ClipboardView(
         if (width <= 0 || height <= 0) return
 
         if (rowLayouts.isEmpty()) {
-            val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                textAlign = Paint.Align.CENTER
-                textSize = 14f * density
-                color = KeyboardColors.resolve(context).panel.candidateIndex
-            }
+            // 空态 Paint 此前每帧新建并现解析主题色；提为字段，颜色随主题刷新
+            emptyPaint.textSize = 14f * density
             val msg = if (clipTab == ClipboardTab.CLIPBOARD) {
                 context.getString(R.string.clipboard_empty)
             } else {
@@ -280,8 +287,7 @@ class ClipboardView(
             return
         }
 
-        var totalContentH = topPad * 2f
-        rowLayouts.forEach { totalContentH += it.height + listGap }
+        // totalContentH 在布局重建时已算好缓存，不再每帧全量累加
         maxScroll = maxOf(0f, totalContentH - (height - headerH))
 
         canvas.save()
@@ -437,7 +443,6 @@ class ClipboardView(
     override fun computeScroll() {
         if (scroller.computeScrollOffset()) {
             scrollOffsetY = scroller.currY.toFloat().coerceIn(0f, maxScroll)
-            invalidate()
             postInvalidateOnAnimation()
         }
     }

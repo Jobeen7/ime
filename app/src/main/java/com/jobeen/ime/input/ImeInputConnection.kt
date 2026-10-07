@@ -44,15 +44,18 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     private var selectionAnchor: Int? = null
     private var selectionCursor: Int? = null
 
+    // undo 栈总字符数增量维护（此前每次入栈都 sumOf 全栈遍历）
+    private var undoTotalChars = 0
+
     private fun recordHistory() {
         val snap = Snapshot(editable.toString(), cursor)
         if (undoStack.lastOrNull() == snap) return
         undoStack.addLast(snap)
+        undoTotalChars += snap.text.length
         // 双上限：条数 + 总字符数（每份快照都是全文拷贝，只钳条数时
         // 总量随单份长度线性膨胀）
-        var totalChars = undoStack.sumOf { it.text.length }
-        while (undoStack.size > 200 || (totalChars > MAX_UNDO_TOTAL_CHARS && undoStack.size > 1)) {
-            totalChars -= undoStack.removeFirst().text.length
+        while (undoStack.size > 200 || (undoTotalChars > MAX_UNDO_TOTAL_CHARS && undoStack.size > 1)) {
+            undoTotalChars -= undoStack.removeFirst().text.length
         }
         redoStack.clear()
     }
@@ -69,13 +72,17 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     fun undo(): Boolean {
         if (undoStack.isEmpty()) return false
         redoStack.addLast(Snapshot(editable.toString(), cursor))
-        restoreSnapshot(undoStack.removeLast())
+        val snap = undoStack.removeLast()
+        undoTotalChars -= snap.text.length
+        restoreSnapshot(snap)
         return true
     }
 
     fun redo(): Boolean {
         if (redoStack.isEmpty()) return false
-        undoStack.addLast(Snapshot(editable.toString(), cursor))
+        val snap = Snapshot(editable.toString(), cursor)
+        undoStack.addLast(snap)
+        undoTotalChars += snap.text.length
         restoreSnapshot(redoStack.removeLast())
         return true
     }
@@ -221,7 +228,8 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     ): Boolean = deleteSurroundingText(inLength, outLength)
 
     override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
-        recordHistory()
+        // 组字中间态不入 undo 栈：桥接编辑时每键一次全文快照纯属浪费，
+        // 撤销的粒度应该是已提交/已删除的文本（commit/delete 仍记录）
         replaceAndSpan(text, useComposing = true)
         return true
     }
