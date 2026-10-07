@@ -351,13 +351,23 @@ class SpeechRecognitionService : Service() {
             ?.joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
             ?: ""
 
+    /** 引擎指纹 = 模型目录指纹 + 热词文件戳：热词更新同样触发识别器重建。 */
+    private fun engineFingerprint(context: android.content.Context, dir: java.io.File): String {
+        val hw = SpeechHotwords.file(context)
+        val hwStamp = if (hw.isFile) "${hw.length()}:${hw.lastModified()}" else "none"
+        return modelFingerprint(dir) + "|hw=" + hwStamp
+    }
+
     private fun initEngine(context: android.content.Context, silent: Boolean = false): Boolean {
+        // 热词过期检查（异步、内部防并发）：刷新只写文件，本次沿用现有
+        // 词表建识别器；新词表经指纹变化在下一次初始化时自动生效
+        scope.launch { runCatching { SpeechHotwords.regenerateIfStale(context) } }
         if (recognizerRef.get() != null &&
-            modelFingerprint(App.speechModelDir) == loadedModelFingerprint
+            engineFingerprint(context, App.speechModelDir) == loadedModelFingerprint
         ) return true
         synchronized(audioLock) {
             val dir = App.speechModelDir
-            val fingerprint = modelFingerprint(dir)
+            val fingerprint = engineFingerprint(context, dir)
             val existing = recognizerRef.get()
             if (existing != null) {
                 if (fingerprint == loadedModelFingerprint) return true
@@ -422,11 +432,20 @@ class SpeechRecognitionService : Service() {
                     provider = if (useQnn) "qnn" else "cpu",
                     modelType = if (useQnn) "zipformer" else "",
                 )
+                // 热词（用户词库常用词）：文件存在且非空时切换束搜索并
+                // 挂热词表做上下文偏置；无热词时维持 greedy（更快）。
+                // 注：QNN 变体与束搜索的组合未经真机验证，若异常优先
+                // 在此按变体回退 greedy。
+                val hotwordsFile = SpeechHotwords.file(context)
+                val useHotwords = hotwordsFile.isFile && hotwordsFile.length() > 0
                 val config = OnlineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
                     modelConfig = modelConfig,
-                    decodingMethod = "greedy_search",
+                    decodingMethod = if (useHotwords) "modified_beam_search" else "greedy_search",
+                    maxActivePaths = if (useHotwords) 4 else 4,
                     enableEndpoint = false,
+                    hotwordsFile = if (useHotwords) hotwordsFile.absolutePath else "",
+                    hotwordsScore = if (useHotwords) 1.5f else 0.0f,
                 )
                 recognizerRef.set(OnlineRecognizer(null, config))
                 loadedModelFingerprint = fingerprint
