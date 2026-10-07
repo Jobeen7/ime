@@ -936,7 +936,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 非隐私模式走前文缓存，避免每次候选刷新都跨进程读一次
                     val inputContext = if (isNoPersonalizedLearning(editorInfo)) "" else
                         peekTextBeforeCursor(20)
-                    val sortedList = rerankManager?.rerank(filteredMsg.list, inputContext, null)
+                    // gram 分数此前一直传 null 恒为 0：模型由 PredictionManager
+                    // 加载并持有，这里取同一实例接进重排打分
+                    val sortedList = rerankManager?.rerank(
+                        filteredMsg.list, inputContext, predictionManager?.gramDb()
+                    )
                     actions.send(
                         Action.CandidatesReady(
                             requestId, EngineMessage.Candidates(
