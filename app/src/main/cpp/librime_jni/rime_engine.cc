@@ -260,17 +260,13 @@ namespace {
             return out;
         }
 
-        std::tuple<int, int, std::vector<CandidateData>> bulkCandidates() {
+        // highlighted 由 Kotlin 侧从同批已取的 context 传入，不再为它
+        // 在这里重复调一次 get_context 全量查询
+        std::tuple<int, int, std::vector<CandidateData>> bulkCandidates(int highlighted) {
             auto list = candidates(0, kBulkCandidateLimit);
             int size = static_cast<int>(list.size()) < kBulkCandidateLimit
                        ? static_cast<int>(list.size())
                        : -1;
-            int highlighted = 0;
-            RIME_STRUCT(RimeContext, ctx)
-            if (api_->get_context(sessionId(), &ctx)) {
-                highlighted = ctx.menu.highlighted_candidate_index;
-                api_->free_context(&ctx);
-            }
             return std::make_tuple(size, highlighted, std::move(list));
         }
 
@@ -542,13 +538,13 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getCandidates(
 
 JNIEXPORT jobjectArray JNICALL
 Java_com_jobeen_ime_engine_rime_core_Rime_getBulkCandidates(
-        JNIEnv *env, jclass) {
-    auto [size, highlighted, list] = RimeEngine::instance().bulkCandidates();
+        JNIEnv *env, jclass, jint highlighted) {
+    auto [size, hl, list] = RimeEngine::instance().bulkCandidates(highlighted);
 
     jni::LocalRef<> sizeObj(
             env, env->NewObject(jni::g_refs->Integer, jni::g_refs->IntegerCtor, size));
     jni::LocalRef<> hlObj(env, env->NewObject(jni::g_refs->Integer,
-                                              jni::g_refs->IntegerCtor, highlighted));
+                                              jni::g_refs->IntegerCtor, hl));
     jni::LocalRef<jobjectArray> listObj(env, toJavaCandidateArray(env, list));
 
     jobjectArray result =

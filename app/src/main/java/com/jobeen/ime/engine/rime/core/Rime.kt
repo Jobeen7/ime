@@ -272,7 +272,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
         if (c.text?.isNotEmpty() == true) {
             handleMessage(RimeMessage.MessageType.Commit.ordinal, arrayOf(c))
         }
-        getStatus()
+        // 不再单独调 getStatus()：其结果无人消费，isComposing 由 context.input 推导
         val context = getContext()
         handleMessage(
             RimeMessage.MessageType.Status.ordinal, arrayOf(
@@ -307,11 +307,17 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 RimeMessage.MessageType.Commit.ordinal, arrayOf(CommitProto(commitText))
             )
             handleComposition(CompositionProto())
-            handleMessage(RimeMessage.MessageType.Candidate.ordinal, getBulkCandidates())
+            handleMessage(
+                RimeMessage.MessageType.Candidate.ordinal,
+                getBulkCandidates(context.menu.highlightedCandidateIndex)
+            )
             return
         }
         handleComposition(context.composition)
-        handleMessage(RimeMessage.MessageType.Candidate.ordinal, getBulkCandidates())
+        handleMessage(
+            RimeMessage.MessageType.Candidate.ordinal,
+            getBulkCandidates(context.menu.highlightedCandidateIndex)
+        )
     }
 
     private fun handleComposition(composition: CompositionProto) {
@@ -584,7 +590,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
         external fun getCandidates(startIndex: Int, limit: Int): Array<CandidateProto>
 
         @JvmStatic
-        external fun getBulkCandidates(): Array<Any>
+        external fun getBulkCandidates(highlighted: Int): Array<Any>
 
         @JvmStatic
         external fun getInputConfirmedPosition(): Int
