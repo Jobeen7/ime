@@ -396,7 +396,7 @@ class KeyboardWindowView(
         )
 
         // 搜索态多出一段结果列表区（键盘全尺寸不变，窗口总高相应拉高）
-        val clipStripH = clipSearchStripHeight(cHeight)
+        val clipStripH = clipSearchStripHeight(cHeight, barH, bPad, bottomInset)
         for (i in 0 until childCount) {
             val child = getChildAt(i)
             if (child === panel.view || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
@@ -466,7 +466,10 @@ class KeyboardWindowView(
         panel.view.layout(0, stripH, right - left, stripH + barH)
 
         // 搜索态：键盘整体下移一段（结果列表区在上），尺寸与行高不变
-        val clipStripH = clipSearchStripHeight(cHeight)
+        val clipStripH = clipSearchStripHeight(
+            cHeight, barH, dpToPx(KeyboardManager.Keyboard.Padding.getBottomDp(context)),
+            resolveBottomInset()
+        )
         for (i in 0 until childCount) {
             val child = getChildAt(i)
             if (child === panel.view || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
@@ -500,12 +503,21 @@ class KeyboardWindowView(
 
     /**
      * 剪贴板搜索态的结果列表区高度（同文大海版形态）：点搜索后整个
-     * 窗口往上拉高，工具栏（搜索框）之下、键盘之上插入一段独立的
+     * 窗口往上拉高到宿主标题栏下方（顶部预留约 120dp 给状态栏+标题，
+     * 即「放在名字下面」），工具栏（搜索框）之下、键盘之上是一段独立的
      * 结果列表区，键盘保持全尺寸不变。结果在该区内滚动看全部，
      * 不需要收起键盘。非搜索态为 0（列表与键盘同框叠放，同旧行为）。
      */
-    private fun clipSearchStripHeight(cHeight: Int): Int =
-        if (panel.clipSearchActive) (cHeight * 0.55f).roundToInt() else 0
+    private fun clipSearchStripHeight(
+        cHeight: Int, barH: Int, bPad: Int, bottomInset: Int,
+    ): Int {
+        if (!panel.clipSearchActive) return 0
+        val topReserve = (120f * resources.displayMetrics.density).roundToInt()
+        val keyboardBlock = barH + cHeight + bPad + bottomInset
+        val target = fullScreenHeight() - topReserve - keyboardBlock
+        // 兜底：不小于原来的 55% 段高，也不吃掉整个屏幕
+        return target.coerceIn((cHeight * 0.55f).roundToInt(), fullScreenHeight())
+    }
 
     /** 当前输入框是否为密码框（onStartInput 时更新）：密码框禁用语音与粘贴横幅。 */
     private var passwordField = false
