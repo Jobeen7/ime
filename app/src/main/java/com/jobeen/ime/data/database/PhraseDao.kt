@@ -11,6 +11,9 @@ interface PhraseDao {
     @Insert
     suspend fun insert(record: PhraseRecord): Long
 
+    @Insert
+    suspend fun insertAll(records: List<PhraseRecord>)
+
     @Update
     suspend fun update(record: PhraseRecord): Int
 
