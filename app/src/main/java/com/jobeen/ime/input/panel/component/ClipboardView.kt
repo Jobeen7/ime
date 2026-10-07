@@ -64,12 +64,21 @@ class ClipboardView(
     private var clipboardEntries = listOf<ClipboardManager.Entry>()
     private var phrases = listOf<PhraseManager.Phrase>()
 
+    /** 搜索查询（仅剪贴板标签）：非空时列表只显示文本包含查询的条目。 */
+    var searchQuery: String = ""
+        private set
+
+    // 当前实际显示的剪贴板条目（查询过滤后）；行布局与点击/长按下标都以此为准，
+    // 查询为空时与 clipboardEntries 相同
+    private var displayedEntries = listOf<ClipboardManager.Entry>()
+
     private data class RowLayout(
         val height: Float,
         val indexLabel: String,
         val primaryLines: List<String>,
         val secondaryLines: List<String>,
         val cloud: Boolean,
+        val pinned: Boolean = false,
     )
 
     private var rowLayouts = listOf<RowLayout>()
@@ -82,6 +91,9 @@ class ClipboardView(
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val indexPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    private val pinBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
+    // 置顶标记色（强调色），随主题在 updateColors 刷新
+    private var accentColor = 0
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
     }
@@ -111,7 +123,7 @@ class ClipboardView(
             pressedIndex = -1
             invalidate()
             if (clipTab == ClipboardTab.CLIPBOARD) {
-                clipboardEntries.getOrNull(idx)?.let { onItemLongClick?.invoke(it, x, y) }
+                displayedEntries.getOrNull(idx)?.let { onItemLongClick?.invoke(it, x, y) }
             } else {
                 phrases.getOrNull(idx)?.let { onPhraseDelete?.invoke(it) }
             }
@@ -161,6 +173,7 @@ class ClipboardView(
             val layouts = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 if (tab == ClipboardTab.CLIPBOARD) {
                     clipboardEntries = ClipboardManager.getEntries(context)
+                    displayedEntries = filterEntries(clipboardEntries, searchQuery)
                 } else {
                     phrases = PhraseManager.getAll(context)
                 }
@@ -171,6 +184,26 @@ class ClipboardView(
             resetScroll()
             invalidate()
         }
+    }
+
+    private fun filterEntries(
+        entries: List<ClipboardManager.Entry>,
+        query: String,
+    ): List<ClipboardManager.Entry> {
+        val q = query.trim()
+        if (q.isEmpty()) return entries
+        return entries.filter { it.text.contains(q, ignoreCase = true) }
+    }
+
+    /** 更新搜索查询并即时按新查询重排当前列表（主线程调用）。 */
+    fun setSearchQuery(query: String) {
+        if (searchQuery == query) return
+        searchQuery = query
+        if (clipTab != ClipboardTab.CLIPBOARD) return
+        displayedEntries = filterEntries(clipboardEntries, query)
+        computeRowLayouts()
+        resetScroll()
+        invalidate()
     }
 
     private fun resetScroll() {
@@ -188,6 +221,8 @@ class ClipboardView(
         indexPaint.color = scheme.keyText
         indexPaint.textSize = 13f * density
         pressPaint.color = scheme.specialKeyPressed
+        accentColor = scheme.accentKeyBackground
+        pinBarPaint.color = accentColor
         emptyPaint.color = panel.candidateIndex
         cloudDrawable?.setTint(panel.candidateIndex)
     }
@@ -220,7 +255,7 @@ class ClipboardView(
         val lh = fm.descent - fm.ascent
         return if (tab == ClipboardTab.CLIPBOARD) {
             val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - cloudIconSize - 2f * density
-            clipboardEntries.map { entry ->
+            displayedEntries.map { entry ->
                 val lines = breakText(tp, entry.text, maxTextW, 4)
                 RowLayout(
                     height = lh * lines.size + pillPad * 2,
@@ -228,6 +263,7 @@ class ClipboardView(
                     primaryLines = lines,
                     secondaryLines = emptyList(),
                     cloud = entry.cloud,
+                    pinned = entry.pinned,
                 )
             }
         } else {
@@ -284,7 +320,11 @@ class ClipboardView(
             // 空态 Paint 此前每帧新建并现解析主题色；提为字段，颜色随主题刷新
             emptyPaint.textSize = 14f * density
             val msg = if (clipTab == ClipboardTab.CLIPBOARD) {
-                context.getString(R.string.clipboard_empty)
+                if (searchQuery.isNotBlank()) {
+                    context.getString(R.string.clipboard_search_empty)
+                } else {
+                    context.getString(R.string.clipboard_empty)
+                }
             } else {
                 context.getString(R.string.phrase_empty)
             }
@@ -313,6 +353,14 @@ class ClipboardView(
             val pressed = i == pressedIndex
             canvas.drawRoundRect(left, y, right, y + h, 8f * density, 8f * density,
                 if (pressed) pressPaint else bgPaint)
+            if (row.pinned) {
+                // 置顶标记：行左内侧一条强调色竖条
+                canvas.drawRoundRect(
+                    left + 3f * density, y + 7f * density,
+                    left + 6f * density, y + h - 7f * density,
+                    1.5f * density, 1.5f * density, pinBarPaint
+                )
+            }
 
             val textStartX = left + pillPad
 
@@ -321,7 +369,14 @@ class ClipboardView(
             val baseline = y + pillPad - fm.ascent
             val indexLabel = "${i + 1}. "
             val indexW = indexPaint.measureText(indexLabel)
-            canvas.drawText(indexLabel, textStartX, baseline, indexPaint)
+            if (row.pinned) {
+                val normalColor = indexPaint.color
+                indexPaint.color = accentColor
+                canvas.drawText(indexLabel, textStartX, baseline, indexPaint)
+                indexPaint.color = normalColor
+            } else {
+                canvas.drawText(indexLabel, textStartX, baseline, indexPaint)
+            }
             for ((li, line) in row.primaryLines.withIndex()) {
                 canvas.drawText(line, textStartX + indexW, baseline + lh * li, textPaint)
             }
@@ -424,7 +479,7 @@ class ClipboardView(
                     InputFeedbacks.hapticFeedback(this)
                     InputFeedbacks.soundEffect(context, InputFeedbacks.SoundEffect.Standard)
                     if (clipTab == ClipboardTab.CLIPBOARD) {
-                        clipboardEntries.getOrNull(idx)?.let { onItemClick?.invoke(it) }
+                        displayedEntries.getOrNull(idx)?.let { onItemClick?.invoke(it) }
                     } else {
                         phrases.getOrNull(idx)?.let { onPhraseClick?.invoke(it) }
                     }
