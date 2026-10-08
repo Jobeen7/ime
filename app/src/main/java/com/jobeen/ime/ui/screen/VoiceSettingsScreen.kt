@@ -340,6 +340,51 @@ fun VoiceSettingsScreen(
                     }
                 }
             }
+            // 诊断信息：模型文件构成 + 最近一次引擎构造结果（服务写入
+            // 的状态文件），让语音异常在屏幕上可查，不再黑盒试错。
+            var modelFilesDesc by remember { mutableStateOf<String?>(null) }
+            var engineStatus by remember { mutableStateOf<String?>(null) }
+            LaunchedEffect(Unit) {
+                val (filesDesc, status) = withContext(Dispatchers.IO) {
+                    val dir = com.jobeen.ime.data.App.speechModelDir
+                    val names = dir.listFiles().orEmpty().filter { it.isFile }
+                    fun hasSet(ext: String) = listOf("encoder", "decoder", "joiner").all { comp ->
+                        names.any {
+                            it.extension.equals(ext, true) &&
+                                it.nameWithoutExtension.contains(comp, true)
+                        }
+                    }
+                    val desc = when {
+                        hasSet("bin") && hasSet("onnx") -> "both"
+                        hasSet("bin") -> "qnn"
+                        hasSet("onnx") -> "cpu"
+                        else -> "none"
+                    }
+                    desc to com.jobeen.ime.base.speech.SpeechHotwords.readEngineStatus(context)
+                }
+                modelFilesDesc = filesDesc
+                engineStatus = status
+            }
+            SettingsGroup(
+                title = stringResource(R.string.voice_diag_group),
+            ) {
+                ActionRow(
+                    title = stringResource(R.string.voice_model_files_title),
+                    subtitle = when (modelFilesDesc) {
+                        "both" -> stringResource(R.string.voice_files_both)
+                        "qnn" -> stringResource(R.string.voice_files_qnn_only)
+                        "cpu" -> stringResource(R.string.voice_files_cpu_only)
+                        "none" -> stringResource(R.string.voice_files_none)
+                        else -> "…"
+                    },
+                    trailing = {},
+                )
+                ActionRow(
+                    title = stringResource(R.string.voice_engine_status_title),
+                    subtitle = engineStatus ?: stringResource(R.string.voice_engine_status_none),
+                    trailing = {},
+                )
+            }
             if (showHotwords) {
                 val hw = hotwords.orEmpty()
                 androidx.compose.material3.AlertDialog(

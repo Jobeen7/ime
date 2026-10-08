@@ -59,6 +59,47 @@ object SpeechHotwords {
         runCatching { f.writeText(mode.name) }
     }
 
+    // ---- 引擎构造状态与热词降级标记（服务写、设置读，跨进程文件传递） ----
+
+    /**
+     * 最近一次识别器构造结果（人话文本，设置页原样展示）：让"语音为什么
+     * 没反应"在屏幕上可查，不再黑盒。服务每次构造后写入。
+     */
+    fun engineStatusFile(context: Context): File =
+        File(File(context.filesDir, "speech"), "engine_status.txt")
+
+    fun writeEngineStatus(context: Context, text: String) {
+        val f = engineStatusFile(context)
+        f.parentFile?.mkdirs()
+        runCatching { f.writeText(text) }
+    }
+
+    fun readEngineStatus(context: Context): String? =
+        runCatching {
+            val f = engineStatusFile(context)
+            if (f.isFile) f.readText().trim().ifEmpty { null } else null
+        }.getOrNull()
+
+    /**
+     * 热词档构造失败的降级标记，内容为失败时的热词档指纹：指纹不变
+     * （词表/模型/模式都没变）时直接以束搜索构造，不再反复撞失败；
+     * 词表或模型更新后指纹变化，自动重试热词档。
+     */
+    private fun degradeFile(context: Context): File =
+        File(File(context.filesDir, "speech"), "hotwords_degraded.txt")
+
+    fun readDegradeStamp(context: Context): String? =
+        runCatching {
+            val f = degradeFile(context)
+            if (f.isFile) f.readText().trim().ifEmpty { null } else null
+        }.getOrNull()
+
+    fun writeDegradeStamp(context: Context, stamp: String) {
+        val f = degradeFile(context)
+        f.parentFile?.mkdirs()
+        runCatching { f.writeText(stamp) }
+    }
+
     /**
      * 按模型字表过滤热词：tokens.txt 每行「符号 id」，取其中单字符号为
      * 可编码字集；含字集外生字的词整词剔除——避免热词编码在 native 侧
