@@ -43,8 +43,25 @@ class ImeApplication : Application() {
                 android.util.Log.e("ImeApplication", "AppStartup crashed", e)
             }
             applicationScope.launch(Dispatchers.Default + handler) {
+                cleanupLegacySpeechFiles()
                 AppStartup.initialize(this@ImeApplication)
             }
+        }
+    }
+
+    /** 一次性清理已移除的语音热词残留文件；文件不存在时 delete 即 no-op，后续启动无副作用 */
+    private fun cleanupLegacySpeechFiles() {
+        runCatching {
+            val speechDir = java.io.File(filesDir, "speech")
+            listOf(
+                "hotwords.txt",
+                "decode_mode.txt",
+                "engine_status.txt",
+                "hotwords_degraded.txt",
+                "bpe.vocab",
+                "migrated_bpe_v1.txt",
+            ).forEach { java.io.File(speechDir, it).delete() }
+            java.io.File(com.jobeen.ime.data.App.speechModelDir, "bpe.model").delete()
         }
     }
 
