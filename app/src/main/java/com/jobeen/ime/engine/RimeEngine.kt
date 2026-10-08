@@ -40,11 +40,9 @@ import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.manager.CandidateRerankManager
 import com.jobeen.ime.engine.manager.PredictionManager
 import com.jobeen.ime.engine.rime.core.KeyMapping
-import com.jobeen.ime.engine.rime.core.Rime.Companion.getCurrentSchema
 import com.jobeen.ime.engine.rime.core.EngineMessageConverter
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.RimeMessage
-import com.jobeen.ime.engine.rime.core.RimeSchema
 import com.jobeen.ime.data.App.modelDir
 import com.jobeen.ime.engine.rime.data.DataManager.sharedDataDir
 import com.jobeen.ime.base.util.TraditionalConverter
@@ -165,7 +163,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var prefs: SharedPreferences? = null
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (OptionsApplier.isOptionDependency(key)) {
-            sendJob { RimeSchema(getCurrentSchema()).applyOptions(this) }
+            sendJob { currentSchema().applyOptions(this) }
         }
     }
 
@@ -287,7 +285,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
                 )
             )
-            RimeSchema(getCurrentSchema()).applyOptions(this)
+            currentSchema().applyOptions(this)
         }
     }
 
@@ -594,10 +592,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 sendJob {
                     selectSchema(action.schemaId)
                     // ApplySchema 会清掉 librime 的 "_" 开头 transient options（含
-                    // __no_personalized_learning），同一密码框内切方案后必须按当前输入框重设
-                    editorInfo?.let {
-                        setRuntimeOption(NO_PERSONALIZED_LEARNING_OPTION, isNoPersonalizedLearning(it))
-                    }
+                    // __no_personalized_learning），密码框 ascii 强制也可能被重置：
+                    // 同一输入框内切方案后按当前输入框统一重设字段选项
+                    editorInfo?.let { applyFieldOptions(it) }
                 }
             }
 
@@ -722,6 +719,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                 context?.let { it as ImeApplication }
                                     ?.notifyState(ImeApplication.AppState.Finished)
                             }
+
+                            // 部署重建了 native 会话：字段选项（禁个性化学习、
+                            // 密码框强制英文）随会话丢失，按当前输入框重设
+                            // （Reload 的完成路径也走这里）。初始化部署时
+                            // editorInfo 为空，自动跳过。
+                            editorInfo?.let { applyFieldOptions(it) }
                         }
                     }
 
@@ -1040,10 +1043,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 隐私：把当前输入框的学习开关同步给 librime native 层。
         // 密码框 / NO_PERSONALIZED_LEARNING 输入框内 native 用户词典不再自学习；
         // 文本密码框进出时保存/恢复中英状态（见 applyAsciiModeForField）。
-        sendJob {
-            setRuntimeOption(NO_PERSONALIZED_LEARNING_OPTION, isNoPersonalizedLearning(info))
-            applyAsciiModeForField(info)
-        }
+        sendJob { applyFieldOptions(info) }
+    }
+
+    /**
+     * 按输入框应用字段相关的运行时选项：禁个性化学习 + 密码框中英处理。
+     * 输入开始时调一次；部署/切方案会重建或重置 native 侧状态，这些选项
+     * 随之丢失，必须按当前输入框重设（Deploy Finish 与 SelectSchema 共用）。
+     */
+    private suspend fun RimeApi.applyFieldOptions(info: EditorInfo) {
+        setRuntimeOption(NO_PERSONALIZED_LEARNING_OPTION, isNoPersonalizedLearning(info))
+        applyAsciiModeForField(info)
     }
 
     /**

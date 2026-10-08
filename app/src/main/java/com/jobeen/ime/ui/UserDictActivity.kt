@@ -104,9 +104,13 @@ class UserDictActivity : ComponentActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        // fire-and-forget：若本界面是唯一的会话持有者，顺手停掉 Rime 释放资源
-        CoroutineScope(Dispatchers.IO).launch {
-            runCatching { RimeDaemon.destroySession(SESSION_NAME) }
+        // 配置变化（旋转等）重建时跳过销毁：会话按名共享且无持有者计数，
+        // 新实例正用着同名会话，此处销毁会让新界面拿到失效会话
+        if (!isChangingConfigurations) {
+            // fire-and-forget：若本界面是唯一的会话持有者，顺手停掉 Rime 释放资源
+            CoroutineScope(Dispatchers.IO).launch {
+                runCatching { RimeDaemon.destroySession(SESSION_NAME) }
+            }
         }
         session = null
     }
@@ -191,9 +195,14 @@ class UserDictActivity : ComponentActivity() {
                 val tempFile = contentResolver.openInputStream(uri)?.use { input ->
                     UserDictManager.stageImportFile(input, "import-$dict.txt").getOrThrow()
                 } ?: throw IllegalStateException("无法读取文件")
-                // 经引擎线程串行导入，不与引擎查词/学词并发访问同一个 LevelDB
+                // 经引擎线程串行导入，不与引擎查词/学词并发访问同一个 LevelDB；
+                // 大文件分批导入，避免整段独占引擎线程导致导入期间按键卡顿
                 val count = try {
-                    s.runOnReady { importUserDictLive(dict, tempFile.absolutePath) }
+                    s.runOnReady {
+                        UserDictManager.importUserDictInChunks(tempFile) { chunk ->
+                            importUserDictLive(dict, chunk.absolutePath)
+                        }
+                    }
                 } finally {
                     tempFile.delete()
                 }
