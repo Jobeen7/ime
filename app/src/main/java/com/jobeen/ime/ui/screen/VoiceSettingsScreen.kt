@@ -1,9 +1,7 @@
 package com.jobeen.ime.ui.screen
 
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -47,7 +45,6 @@ import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 sealed interface DownloadUiState {
@@ -260,151 +257,6 @@ fun VoiceSettingsScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
-            }
-            // 语音热词状态：词表文件由键盘主进程生成，这里只读展示，
-            // 让“热词到底有没有生效”在屏幕上可查，而不是黑盒。
-            var hotwords by remember { mutableStateOf<List<String>?>(null) }
-            var showHotwords by remember { mutableStateOf(false) }
-            LaunchedEffect(Unit) {
-                hotwords = withContext(Dispatchers.IO) {
-                    runCatching {
-                        val f = com.jobeen.ime.base.speech.SpeechHotwords.file(context)
-                        if (f.isFile) f.readLines().map { it.trim() }.filter { it.isNotEmpty() }
-                        else emptyList()
-                    }.getOrDefault(emptyList())
-                }
-            }
-            SettingsGroup(
-                title = stringResource(R.string.voice_hotwords_group),
-            ) {
-                ActionRow(
-                    title = stringResource(R.string.voice_hotwords_title),
-                    subtitle = when (val hw = hotwords) {
-                        null -> "…"
-                        else -> if (hw.isEmpty()) {
-                            stringResource(R.string.voice_hotwords_missing)
-                        } else {
-                            stringResource(R.string.voice_hotwords_ready, hw.size)
-                        }
-                    },
-                    trailing = {
-                        if (!hotwords.isNullOrEmpty()) {
-                            Button(
-                                onClick = { showHotwords = true },
-                                modifier = Modifier.height(32.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            ) {
-                                Text(stringResource(R.string.voice_hotwords_view), fontSize = 13.sp, maxLines = 1)
-                            }
-                        }
-                    },
-                )
-                // 解码方式三档：逐档隔离"带热词后语音无反应"的子嫌疑
-                var decodeMode by remember {
-                    mutableStateOf(com.jobeen.ime.base.speech.SpeechHotwords.readMode(context))
-                }
-                Text(
-                    stringResource(R.string.voice_decode_mode_title),
-                    fontSize = barFontSize,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
-                )
-                val modeScope = rememberCoroutineScope()
-                val modeOptions = listOf(
-                    com.jobeen.ime.base.speech.SpeechHotwords.DecodeMode.GREEDY to
-                        R.string.voice_decode_greedy,
-                    com.jobeen.ime.base.speech.SpeechHotwords.DecodeMode.BEAM to
-                        R.string.voice_decode_beam,
-                    com.jobeen.ime.base.speech.SpeechHotwords.DecodeMode.BEAM_HOTWORDS to
-                        R.string.voice_decode_beam_hotwords,
-                )
-                for ((mode, labelRes) in modeOptions) {
-                    androidx.compose.foundation.layout.Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clickable {
-                                decodeMode = mode
-                                modeScope.launch(Dispatchers.IO) {
-                                    com.jobeen.ime.base.speech.SpeechHotwords.writeMode(context, mode)
-                                }
-                            }
-                            .padding(vertical = 2.dp),
-                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-                    ) {
-                        androidx.compose.material3.RadioButton(
-                            selected = decodeMode == mode,
-                            onClick = null,
-                        )
-                        Text(stringResource(labelRes), fontSize = 14.sp)
-                    }
-                }
-            }
-            // 诊断信息：模型文件构成 + 最近一次引擎构造结果（服务写入
-            // 的状态文件），让语音异常在屏幕上可查，不再黑盒试错。
-            var modelFilesDesc by remember { mutableStateOf<String?>(null) }
-            var engineStatus by remember { mutableStateOf<String?>(null) }
-            LaunchedEffect(Unit) {
-                val (filesDesc, status) = withContext(Dispatchers.IO) {
-                    val dir = com.jobeen.ime.data.App.speechModelDir
-                    val names = dir.listFiles().orEmpty().filter { it.isFile }
-                    fun hasSet(ext: String) = listOf("encoder", "decoder", "joiner").all { comp ->
-                        names.any {
-                            it.extension.equals(ext, true) &&
-                                it.nameWithoutExtension.contains(comp, true)
-                        }
-                    }
-                    val desc = when {
-                        hasSet("bin") && hasSet("onnx") -> "both"
-                        hasSet("bin") -> "qnn"
-                        hasSet("onnx") -> "cpu"
-                        else -> "none"
-                    }
-                    desc to com.jobeen.ime.base.speech.SpeechHotwords.readEngineStatus(context)
-                }
-                modelFilesDesc = filesDesc
-                engineStatus = status
-            }
-            SettingsGroup(
-                title = stringResource(R.string.voice_diag_group),
-            ) {
-                ActionRow(
-                    title = stringResource(R.string.voice_model_files_title),
-                    subtitle = when (modelFilesDesc) {
-                        "both" -> stringResource(R.string.voice_files_both)
-                        "qnn" -> stringResource(R.string.voice_files_qnn_only)
-                        "cpu" -> stringResource(R.string.voice_files_cpu_only)
-                        "none" -> stringResource(R.string.voice_files_none)
-                        else -> "…"
-                    },
-                    trailing = {},
-                )
-                ActionRow(
-                    title = stringResource(R.string.voice_engine_status_title),
-                    subtitle = engineStatus ?: stringResource(R.string.voice_engine_status_none),
-                    trailing = {},
-                )
-            }
-            if (showHotwords) {
-                val hw = hotwords.orEmpty()
-                androidx.compose.material3.AlertDialog(
-                    onDismissRequest = { showHotwords = false },
-                    title = { Text(stringResource(R.string.voice_hotwords_dialog_title, hw.size)) },
-                    text = {
-                        androidx.compose.foundation.lazy.LazyColumn(
-                            modifier = Modifier.height(360.dp),
-                        ) {
-                            items(hw.size) { i ->
-                                Text(hw[i], fontSize = 14.sp, modifier = Modifier.padding(vertical = 2.dp))
-                            }
-                        }
-                    },
-                    confirmButton = {
-                        androidx.compose.material3.TextButton(onClick = { showHotwords = false }) {
-                            Text(stringResource(R.string.voice_hotwords_close))
-                        }
-                    },
-                )
             }
         }
     }
