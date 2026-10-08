@@ -13,6 +13,8 @@ import com.jobeen.ime.data.database.ClipboardDao
 import com.jobeen.ime.data.database.ClipboardRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import com.jobeen.ime.base.util.WeakProperty
 import com.jobeen.ime.base.util.appScope
@@ -358,6 +360,12 @@ object ClipboardManager {
 
     private const val KEY_DB_MIGRATED = "clipboard_db_migrated_v2"
 
+    // 迁移首跑串行锁：db() 的调用方都在 IO 多线程上，并发首跑时多个调用方
+    // 会同时看到「未迁移」并重复执行迁移体（各自按同一快照补行、互相重复
+    // 插入）。进程内只允许一个执行，其余等它完成后再读标记直接跳过；
+    // 迁移失败不置标记，下一个调用方仍可重试，语义不变。
+    private val migrationMutex = Mutex()
+
     /**
      * 一次性把剪贴板历史从 ime_database 迁到独立的 clipboard_database（拆库原因见
      * ClipboardDatabase 注释）。v2 起改为幂等合并：按 (text, timestamp) 自然键
@@ -404,7 +412,7 @@ object ClipboardManager {
         try {
             withContext(Dispatchers.IO) {
                 val db = ClipboardDatabase.getInstance(context)
-                migrateFromAppDatabase(context, db)
+                migrationMutex.withLock { migrateFromAppDatabase(context, db) }
                 truncateOversizedTextsOnce(context, db)
                 block(db)
             }
