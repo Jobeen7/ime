@@ -31,6 +31,16 @@ object ClipboardManager {
     private const val DEFAULT_MAX_ENTRIES = 100
     private const val DEFAULT_RETENTION_DAYS = 30
 
+    /**
+     * 单条文本长度上限：超大行（约 2MB 起）读出时会抛 SQLiteBlobTooBigException，
+     * 一行就能毒化整张历史表（列表恒空、备份导出失败），写入侧一律截断。
+     */
+    const val MAX_TEXT_LENGTH = 100_000
+
+    // 物理删除后防「已删条目复活」的抑制文本：见 noteRemovedLatestText
+    private const val KEY_REMOVED_LATEST_TEXT = "removed_latest_text"
+    private const val KEY_TEXT_TRUNCATED = "clipboard_text_truncated_v1"
+
     // ── 设置读写 ──
 
     fun getMaxEntries(context: Context): Int {
@@ -92,6 +102,10 @@ object ClipboardManager {
 
     suspend fun addEntry(context: Context, text: String, notify: Boolean = true) {
         if (text.isBlank()) return
+        // 限长：见 MAX_TEXT_LENGTH，超限文本截断后再走全部后续逻辑
+        val clipped = text.take(MAX_TEXT_LENGTH)
+        // 新内容（与被删最新条目不同）入库后，旧删除的防复活抑制随之失效
+        if (clipped != removedLatestText(context)) clearRemovedLatestText(context)
         val now = System.currentTimeMillis()
         val retentionCutoff = now - getRetentionDays(context) * 86400000L
         // 事务串行化"检查→删除→插入→裁剪"：并发写入时旧实现会重复插入，
@@ -99,12 +113,12 @@ object ClipboardManager {
         val isNew = db(context) { db ->
             db.withTransaction {
                 val dao = db.clipboardDao()
-                val existed = dao.existsByText(text)
+                val existed = dao.existsByText(clipped)
                 // 同文本重入（再次复制）会删旧行重插，置顶状态要保留下来
-                val wasPinned = dao.pinnedByText(text) ?: false
-                dao.deleteByText(text)
+                val wasPinned = dao.pinnedByText(clipped) ?: false
+                dao.deleteByText(clipped)
                 dao.insert(
-                    ClipboardRecord(text = text, timestamp = now, cloud = false, pinned = wasPinned)
+                    ClipboardRecord(text = clipped, timestamp = now, cloud = false, pinned = wasPinned)
                 )
                 trimExcess(dao, getMaxEntries(context))
                 dao.deleteOlderThan(retentionCutoff)
@@ -112,7 +126,7 @@ object ClipboardManager {
                 !existed
             }
         } ?: return
-        if (notify && isNew) onNewEntry?.invoke(Entry(text, now))
+        if (notify && isNew) onNewEntry?.invoke(Entry(clipped, now))
     }
 
     private suspend fun trimExcess(dao: ClipboardDao, limit: Int) {
@@ -122,11 +136,12 @@ object ClipboardManager {
 
     suspend fun clearAll(context: Context) {
         val now = System.currentTimeMillis()
-        val retentionCutoff = now - getRetentionDays(context) * 86400000L
         db(context) { db ->
             db.withTransaction {
-                db.clipboardDao().softDeleteAll(now)
-                db.clipboardDao().purgeDeletedOlderThan(retentionCutoff)
+                val dao = db.clipboardDao()
+                // 物理清空前记下最新条目文本作防复活抑制（替代软删墓碑行的作用）
+                dao.getLatestIncludingDeleted()?.text?.let { noteRemovedLatestText(context, it) }
+                dao.deleteAllRaw()
             }
         }
         lastCopyText = null
@@ -135,14 +150,47 @@ object ClipboardManager {
     }
 
     suspend fun removeEntry(context: Context, text: String) {
-        db(context) { db -> db.clipboardDao().softDeleteByText(text, System.currentTimeMillis()) }
+        db(context) { db ->
+            val dao = db.clipboardDao()
+            if (dao.getLatestIncludingDeleted()?.text == text) {
+                noteRemovedLatestText(context, text)
+            }
+            dao.deleteByText(text)
+        }
     }
 
-    /** 多选批量删除（软删，与单条删除一致）。 */
+    /** 多选批量删除（物理删，与单条删除一致）。 */
     suspend fun removeEntries(context: Context, texts: Collection<String>) {
         if (texts.isEmpty()) return
         db(context) { db ->
-            db.clipboardDao().softDeleteByTexts(texts.toList(), System.currentTimeMillis())
+            val dao = db.clipboardDao()
+            dao.getLatestIncludingDeleted()?.text?.takeIf { it in texts }?.let {
+                noteRemovedLatestText(context, it)
+            }
+            dao.deleteByTexts(texts.toList())
+        }
+    }
+
+    /**
+     * 删除改物理删后替代软删墓碑的防复活机制：软删时代，被删的最新条目
+     * 以 deleted 行留在表首，checkCurrentClipboard 靠它判定「系统剪贴板
+     * 内容没变、不是新记录」；物理删后该行消失，监听的补偿检查会把仍在
+     * 系统剪贴板里的同一文本当新内容重新入库。这里把被删的最新文本记进
+     * prefs，命中即不算新记录；真正的新文本入库时由 addEntry 清除。
+     */
+    private fun noteRemovedLatestText(context: Context, text: String) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putString(KEY_REMOVED_LATEST_TEXT, text)
+        }
+    }
+
+    private fun removedLatestText(context: Context): String? =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(KEY_REMOVED_LATEST_TEXT, null)
+
+    private fun clearRemovedLatestText(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            remove(KEY_REMOVED_LATEST_TEXT)
         }
     }
 
@@ -213,13 +261,15 @@ object ClipboardManager {
         if (ts > 0) lastClipTimestamp = ts
         lastText = text
 
-        // 与“最新一条记录（含软删除）”比对：清空后该记录变为软删除状态，
-        // 若仍与系统剪贴板内容一致，则视为没有新记录，避免重复插入。
+        // 与“最新一条记录（含软删除）”比对：若仍与系统剪贴板内容一致，
+        // 则视为没有新记录，避免重复插入。删除已改物理删，原墓碑行的
+        // 作用由 prefs 里的防复活抑制文本接替（见 noteRemovedLatestText）。
         // 两项判断合并进一次 db{} 往返（每次剪贴板变化都走这里）
         val (latest, exists) = db(context) { db ->
             db.clipboardDao().getLatestIncludingDeleted() to db.clipboardDao().existsByText(text)
         } ?: (null to true)
         if (latest?.text == text) return false
+        if (text == removedLatestText(context)) return false
 
         val isNew = !exists
         if (isNew) {
@@ -321,11 +371,22 @@ object ClipboardManager {
         }.onFailure { Timber.w(it, "Clipboard history migration failed; will retry") }
     }
 
+    /** 一次性存量限长：把库中已有的超限行在 SQL 内截断（见 DAO 注释）。 */
+    private suspend fun truncateOversizedTextsOnce(context: Context, target: ClipboardDatabase) {
+        val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (settings.getBoolean(KEY_TEXT_TRUNCATED, false)) return
+        runCatching {
+            target.clipboardDao().truncateOversizedTexts(MAX_TEXT_LENGTH)
+            settings.edit().putBoolean(KEY_TEXT_TRUNCATED, true).apply()
+        }.onFailure { Timber.w(it, "Clipboard oversized-text truncation failed; will retry") }
+    }
+
     private suspend fun <T> db(context: Context, block: suspend (ClipboardDatabase) -> T): T? =
         try {
             withContext(Dispatchers.IO) {
                 val db = ClipboardDatabase.getInstance(context)
                 migrateFromAppDatabase(context, db)
+                truncateOversizedTextsOnce(context, db)
                 block(db)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

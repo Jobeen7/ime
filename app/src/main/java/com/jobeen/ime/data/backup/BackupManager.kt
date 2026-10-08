@@ -10,6 +10,7 @@ import com.jobeen.ime.data.database.ClipboardDatabase
 import com.jobeen.ime.data.database.ClipboardRecord
 import com.jobeen.ime.data.database.PhraseRecord
 import com.jobeen.ime.data.manager.CandidatePreferCache
+import com.jobeen.ime.data.manager.ClipboardManager
 import androidx.room.withTransaction
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import org.json.JSONArray
@@ -121,7 +122,8 @@ object BackupManager {
         val clipDb = ClipboardDatabase.getInstance(appContext)
 
         val clips = JSONArray()
-        for (r in clipDb.clipboardDao().getAllRaw()) {
+        // 只导出有效行：历史软删除存量不进备份（删除已改物理删，此为存量兜底）
+        for (r in clipDb.clipboardDao().getAllActive()) {
             clips.put(
                 JSONObject()
                     .put("id", r.id).put("text", r.text).put("timestamp", r.timestamp)
@@ -369,7 +371,13 @@ object BackupManager {
         clipDb.withTransaction {
             clipDb.clipboardDao().deleteAllRaw()
             if (parsed.clipboard.isNotEmpty()) {
-                clipDb.clipboardDao().insertAll(parsed.clipboard)
+                // 还原入口同样限长：旧备份里的超限文本不能把毒化行带回库里
+                val clipped = parsed.clipboard.map { r ->
+                    if (r.text.length > ClipboardManager.MAX_TEXT_LENGTH) {
+                        r.copy(text = r.text.take(ClipboardManager.MAX_TEXT_LENGTH))
+                    } else r
+                }
+                clipDb.clipboardDao().insertAll(clipped)
             }
         }
         db.withTransaction {

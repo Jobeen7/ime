@@ -87,9 +87,11 @@ fun ClipboardScreen(onBack: () -> Unit) {
                     value = maxEntries,
                     valueLabel = "${maxEntries.toInt()} 条",
                     range = 20f..100f,
-                    onValueChange = {
-                        maxEntries = it
-                        ClipboardManager.setMaxEntries(context, it.toInt())
+                    // 拖动只更新本地显示：setMaxEntries 会立即按新上限裁剪历史，
+                    // 逐帧调用会把途经低点的裁剪全打出去（拖回高位也恢复不了）
+                    onValueChange = { maxEntries = it },
+                    onValueChangeFinished = {
+                        ClipboardManager.setMaxEntries(context, maxEntries.toInt())
                     },
                 )
                 SliderRow(

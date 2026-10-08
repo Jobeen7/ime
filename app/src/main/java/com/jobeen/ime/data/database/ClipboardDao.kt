@@ -17,6 +17,17 @@ interface ClipboardDao {
     @Query("SELECT * FROM clipboard_records")
     suspend fun getAllRaw(): List<ClipboardRecord>
 
+    /** 备份导出用：只导有效行，历史软删除存量不进备份 */
+    @Query("SELECT * FROM clipboard_records WHERE deleted = 0")
+    suspend fun getAllActive(): List<ClipboardRecord>
+
+    /**
+     * 存量限长（一次性）：超限行直接在 SQL 内截断，不把大文本读进内存
+     * （超 CursorWindow 的行用普通查询读出会抛 SQLiteBlobTooBigException）。
+     */
+    @Query("UPDATE clipboard_records SET text = substr(text, 1, :limit) WHERE length(text) > :limit")
+    suspend fun truncateOversizedTexts(limit: Int)
+
     /** 迁移完成并核对后清掉旧库残留行（旧表在 ime_database 里会随云备份外带） */
     @Query("DELETE FROM clipboard_records")
     suspend fun deleteAllRaw()
@@ -60,6 +71,10 @@ interface ClipboardDao {
 
     @Query("DELETE FROM clipboard_records WHERE text = :text")
     suspend fun deleteByText(text: String)
+
+    /** 多选批量删除（物理删，与单条删除一致） */
+    @Query("DELETE FROM clipboard_records WHERE text IN (:texts)")
+    suspend fun deleteByTexts(texts: List<String>)
 
     // 只淘汰未置顶有效行中最旧的；软删除行由 purgeDeletedOlderThan 按保留期清理
     @Query("DELETE FROM clipboard_records WHERE id IN (SELECT id FROM clipboard_records WHERE deleted = 0 AND pinned = 0 ORDER BY timestamp ASC LIMIT :n)")

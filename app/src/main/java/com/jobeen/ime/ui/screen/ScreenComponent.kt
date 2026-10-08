@@ -245,6 +245,7 @@ object ScreenComponent {
         onValueChange: (Float) -> Unit,
         showDivider: Boolean = false,
         enabled: Boolean = true,
+        onValueChangeFinished: (() -> Unit)? = null,
     ) {
         Column(
             modifier = Modifier
@@ -276,6 +277,7 @@ object ScreenComponent {
             Slider(
                 value = value,
                 onValueChange = onValueChange,
+                onValueChangeFinished = onValueChangeFinished,
                 valueRange = range,
                 enabled = enabled,
                 modifier = Modifier.offset(x = (-6).dp),

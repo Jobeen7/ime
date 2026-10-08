@@ -397,13 +397,21 @@ class KawaiiPanel(
     }
 
     private fun handleClipboardClear() {
-        listener?.onClipboardClear()
-        clipboardView.refresh()
+        // 与多选批量删除（handleClipMultiDelete）同一串行写法：同一协程内
+        // 先等写库完成再 refresh。经 listener 转发时写库是即发即忘的独立
+        // 协程，与 refresh 的 reload 读库无顺序关系，已清条目会被盖回列表
+        appScope.launch {
+            ClipboardManager.clearAll(context)
+            clipboardView.refresh()
+        }
     }
 
     private fun handleClipboardDelete(entry: ClipboardManager.Entry) {
-        listener?.onClipboardItemDelete(entry)
-        clipboardView.refresh()
+        // 同 handleClipboardClear：先写库、后 refresh，串行保证读到新数据
+        appScope.launch {
+            ClipboardManager.removeEntry(context, entry.text)
+            clipboardView.refresh()
+        }
     }
 
     // ── 剪贴板搜索态 ──────────────────────────────────────────────
