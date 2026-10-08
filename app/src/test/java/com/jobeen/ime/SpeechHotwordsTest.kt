@@ -61,4 +61,20 @@ class SpeechHotwordsTest {
         assertEquals("", SpeechHotwords.render(emptyList()))
         assertTrue(SpeechHotwords.selectHotwords(emptyList()).isEmpty())
     }
+
+    @Test
+    fun filterByTokenCharsDropsWordsWithUnknownChar() {
+        val chars = setOf("黄", "超", "彬", "恒", "健", "达")
+        val kept = SpeechHotwords.filterByTokenChars(
+            listOf("王小明", "安健达", "王小玥"), chars
+        )
+        // 玥不在字集内 → 整词剔除
+        assertEquals(listOf("王小明", "安健达"), kept)
+    }
+
+    @Test
+    fun filterByTokenCharsEmptyCharSetKeepsAll() {
+        val words = listOf("王小明", "安健达")
+        assertEquals(words, SpeechHotwords.filterByTokenChars(words, emptySet()))
+    }
 }

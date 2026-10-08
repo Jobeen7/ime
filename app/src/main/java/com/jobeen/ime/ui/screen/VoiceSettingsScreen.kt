@@ -1,7 +1,9 @@
 package com.jobeen.ime.ui.screen
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
@@ -298,6 +300,45 @@ fun VoiceSettingsScreen(
                         }
                     },
                 )
+                // 解码方式三档：逐档隔离"带热词后语音无反应"的子嫌疑
+                var decodeMode by remember {
+                    mutableStateOf(com.jobeen.ime.base.speech.SpeechHotwords.readMode(context))
+                }
+                Text(
+                    stringResource(R.string.voice_decode_mode_title),
+                    fontSize = barFontSize,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.padding(top = 6.dp, bottom = 2.dp),
+                )
+                val modeScope = rememberCoroutineScope()
+                val modeOptions = listOf(
+                    com.jobeen.ime.base.speech.SpeechHotwords.DecodeMode.GREEDY to
+                        R.string.voice_decode_greedy,
+                    com.jobeen.ime.base.speech.SpeechHotwords.DecodeMode.BEAM to
+                        R.string.voice_decode_beam,
+                    com.jobeen.ime.base.speech.SpeechHotwords.DecodeMode.BEAM_HOTWORDS to
+                        R.string.voice_decode_beam_hotwords,
+                )
+                for ((mode, labelRes) in modeOptions) {
+                    androidx.compose.foundation.layout.Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                decodeMode = mode
+                                modeScope.launch(Dispatchers.IO) {
+                                    com.jobeen.ime.base.speech.SpeechHotwords.writeMode(context, mode)
+                                }
+                            }
+                            .padding(vertical = 2.dp),
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        androidx.compose.material3.RadioButton(
+                            selected = decodeMode == mode,
+                            onClick = null,
+                        )
+                        Text(stringResource(labelRes), fontSize = 14.sp)
+                    }
+                }
             }
             if (showHotwords) {
                 val hw = hotwords.orEmpty()
