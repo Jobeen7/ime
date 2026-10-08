@@ -256,6 +256,14 @@
     <string name="voice_decode_greedy">贪心解码（稳定，默认）</string>
     <string name="voice_decode_beam">束搜索</string>
     <string name="voice_decode_beam_hotwords">束搜索 + 热词</string>
+    <string name="voice_diag_group">诊断信息</string>
+    <string name="voice_model_files_title">模型文件构成</string>
+    <string name="voice_files_both">QNN 与 CPU 文件都在</string>
+    <string name="voice_files_qnn_only">只有 QNN 文件（热词档需要 CPU 文件）</string>
+    <string name="voice_files_cpu_only">只有 CPU 文件</string>
+    <string name="voice_files_none">模型文件不完整</string>
+    <string name="voice_engine_status_title">引擎状态（最近一次构造）</string>
+    <string name="voice_engine_status_none">暂无记录（使用一次语音后更新）</string>
     <string name="voice_recognition_model">识别模型</string>
     <string name="voice_model_ready">已就绪</string>
     <string name="voice_model_not_ready">未下载，请先下载模型</string>
