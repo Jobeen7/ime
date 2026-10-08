@@ -37,8 +37,10 @@ object ClipboardManager {
      */
     const val MAX_TEXT_LENGTH = 100_000
 
-    // 物理删除后防「已删条目复活」的抑制文本：见 noteRemovedLatestText
+    // 物理删除后防「已删条目复活」的抑制集合：见 noteRemovedTexts
+    private const val KEY_REMOVED_TEXT_HASHES = "removed_text_hashes_v2"
     private const val KEY_REMOVED_LATEST_TEXT = "removed_latest_text"
+    private const val MAX_REMOVED_HASHES = 200
     private const val KEY_TEXT_TRUNCATED = "clipboard_text_truncated_v1"
 
     // ── 设置读写 ──
@@ -104,8 +106,8 @@ object ClipboardManager {
         if (text.isBlank()) return
         // 限长：见 MAX_TEXT_LENGTH，超限文本截断后再走全部后续逻辑
         val clipped = text.take(MAX_TEXT_LENGTH)
-        // 新内容（与被删最新条目不同）入库后，旧删除的防复活抑制随之失效
-        if (clipped != removedLatestText(context)) clearRemovedLatestText(context)
+        // 真正的新内容入库后，旧删除的防复活抑制随之失效（剪贴板已换了内容）
+        if (!isRemovedTextSuppressed(context, clipped)) clearRemovedTextSuppressions(context)
         val now = System.currentTimeMillis()
         val retentionCutoff = now - getRetentionDays(context) * 86400000L
         // 事务串行化"检查→删除→插入→裁剪"：并发写入时旧实现会重复插入，
@@ -139,8 +141,8 @@ object ClipboardManager {
         db(context) { db ->
             db.withTransaction {
                 val dao = db.clipboardDao()
-                // 物理清空前记下最新条目文本作防复活抑制（替代软删墓碑行的作用）
-                dao.getLatestIncludingDeleted()?.text?.let { noteRemovedLatestText(context, it) }
+                // 物理清空前把全部条目记入防复活抑制（替代软删墓碑行的作用）
+                noteRemovedTexts(context, dao.getAllActive().map { it.text })
                 dao.deleteAllRaw()
             }
         }
@@ -150,49 +152,66 @@ object ClipboardManager {
     }
 
     suspend fun removeEntry(context: Context, text: String) {
-        db(context) { db ->
-            val dao = db.clipboardDao()
-            if (dao.getLatestIncludingDeleted()?.text == text) {
-                noteRemovedLatestText(context, text)
-            }
-            dao.deleteByText(text)
-        }
+        noteRemovedTexts(context, listOf(text))
+        db(context) { db -> db.clipboardDao().deleteByText(text) }
     }
 
     /** 多选批量删除（物理删，与单条删除一致）。 */
     suspend fun removeEntries(context: Context, texts: Collection<String>) {
         if (texts.isEmpty()) return
-        db(context) { db ->
-            val dao = db.clipboardDao()
-            dao.getLatestIncludingDeleted()?.text?.takeIf { it in texts }?.let {
-                noteRemovedLatestText(context, it)
-            }
-            dao.deleteByTexts(texts.toList())
-        }
+        noteRemovedTexts(context, texts)
+        db(context) { db -> db.clipboardDao().deleteByTexts(texts.toList()) }
     }
 
     /**
-     * 删除改物理删后替代软删墓碑的防复活机制：软删时代，被删的最新条目
-     * 以 deleted 行留在表首，checkCurrentClipboard 靠它判定「系统剪贴板
-     * 内容没变、不是新记录」；物理删后该行消失，监听的补偿检查会把仍在
-     * 系统剪贴板里的同一文本当新内容重新入库。这里把被删的最新文本记进
-     * prefs，命中即不算新记录；真正的新文本入库时由 addEntry 清除。
+     * 删除改物理删后替代软删墓碑的防复活机制：软删时代，被删条目以 deleted
+     * 行留在表里，checkCurrentClipboard 靠它判定「系统剪贴板内容没变、不是
+     * 新记录」；物理删后记录消失，补偿检查会把仍在系统剪贴板里的同一文本当
+     * 新内容重新入库。这里把被删文本的哈希记进 prefs 集合（只存哈希不存
+     * 原文，上限 [MAX_REMOVED_HASHES] 条），命中即不算新记录；真正的新文本
+     * 入库时由 addEntry 整表清除（剪贴板已换内容，旧抑制不再需要）。
+     *
+     * 旧实现只记一条「最新被删文本」且仅当删的是最新行才记：连删多条时后删
+     * 的把先删的顶掉，而系统剪贴板里仍是先删那条，于是先删的冒回来、后删
+     * 的不冒——必须按集合记、且每条被删文本都记。
      */
-    private fun noteRemovedLatestText(context: Context, text: String) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putString(KEY_REMOVED_LATEST_TEXT, text)
-        }
-    }
-
-    private fun removedLatestText(context: Context): String? =
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getString(KEY_REMOVED_LATEST_TEXT, null)
-
-    private fun clearRemovedLatestText(context: Context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+    private fun noteRemovedTexts(context: Context, texts: Collection<String>) {
+        if (texts.isEmpty()) return
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val fresh = texts.map { textHash(it) }
+        val merged = (fresh + removedTextHashes(prefs)).distinct().take(MAX_REMOVED_HASHES)
+        prefs.edit {
+            putString(KEY_REMOVED_TEXT_HASHES, merged.joinToString("\n"))
             remove(KEY_REMOVED_LATEST_TEXT)
         }
     }
+
+    private fun removedTextHashes(
+        prefs: android.content.SharedPreferences,
+    ): List<String> {
+        val stored = prefs.getString(KEY_REMOVED_TEXT_HASHES, null)
+        if (stored != null) return stored.split("\n").filter { it.isNotEmpty() }
+        // 一次性迁移旧版单值抑制：折算成哈希并入集合口径
+        val legacy = prefs.getString(KEY_REMOVED_LATEST_TEXT, null) ?: return emptyList()
+        return listOf(textHash(legacy))
+    }
+
+    private fun isRemovedTextSuppressed(context: Context, text: String): Boolean {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        return textHash(text) in removedTextHashes(prefs)
+    }
+
+    private fun clearRemovedTextSuppressions(context: Context) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            remove(KEY_REMOVED_TEXT_HASHES)
+            remove(KEY_REMOVED_LATEST_TEXT)
+        }
+    }
+
+    private fun textHash(text: String): String =
+        java.security.MessageDigest.getInstance("SHA-256")
+            .digest(text.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
 
     /**
      * 编辑条目文本：改写后刷新时间戳排到最前，置顶状态随行保留。
@@ -263,13 +282,13 @@ object ClipboardManager {
 
         // 与“最新一条记录（含软删除）”比对：若仍与系统剪贴板内容一致，
         // 则视为没有新记录，避免重复插入。删除已改物理删，原墓碑行的
-        // 作用由 prefs 里的防复活抑制文本接替（见 noteRemovedLatestText）。
+        // 作用由 prefs 里的防复活抑制集合接替（见 noteRemovedTexts）。
         // 两项判断合并进一次 db{} 往返（每次剪贴板变化都走这里）
         val (latest, exists) = db(context) { db ->
             db.clipboardDao().getLatestIncludingDeleted() to db.clipboardDao().existsByText(text)
         } ?: (null to true)
         if (latest?.text == text) return false
-        if (text == removedLatestText(context)) return false
+        if (isRemovedTextSuppressed(context, text)) return false
 
         val isNew = !exists
         if (isNew) {
