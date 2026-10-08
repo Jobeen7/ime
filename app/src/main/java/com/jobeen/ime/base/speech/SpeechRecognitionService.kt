@@ -580,7 +580,13 @@ class SpeechRecognitionService : Service() {
                 synchronized(audioLock) {
                     val engine = recognizerRef.get()
                     val stream = myStream
-                    if (engine != null && stream != null) {
+                    // 收尾解码前必须复检身份：STOP 后新会话 START 会在锁内
+                    // getAndSet 换流并 release 旧 stream，本协程若在那之后
+                    // 才拿到锁，myStream 已是被释放的 native 对象，再调
+                    // acceptWaveform/decode 会踩已释放内存（SIGSEGV）。
+                    // 已被换走就放弃本次收尾：旧会话结果丢弃是正确语义，
+                    // DONE 由 STOP 处理方按本会话代次另行发出，不受影响
+                    if (engine != null && stream != null && streamRef.get() === stream) {
                         try {
                             val tail = FloatArray(SAMPLE_RATE * FINAL_TAIL_PADDING_MS / 1000)
                             stream.acceptWaveform(tail, SAMPLE_RATE)
