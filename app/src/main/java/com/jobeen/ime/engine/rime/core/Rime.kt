@@ -373,8 +373,13 @@ class Rime : RimeApi, RimeLifecycleOwner {
             }
 
             is RimeMessage.StatusMessage -> {
-                statusCached = it.data
-                updateSchemaCached(it.data)
+                // emitResponse 发来的 StatusMessage 是稀疏增量：只携带
+                // isComposing，其余字段都是数据类默认值（schemaId=""、
+                // isAsciiMode=true 等）。整表覆盖会把全量缓存冲成默认值，
+                // 故以当前缓存为基底合并，只采纳增量真正携带的字段；
+                // schemaId 等未出现在增量里的字段保持原值。
+                statusCached = statusCached.copy(isComposing = it.data.isComposing)
+                updateSchemaCached(statusCached)
             }
 
             else -> {}

@@ -266,6 +266,13 @@ object BackupManager {
             val names = prefsJson.keys()
             while (names.hasNext()) {
                 val name = names.next()
+                // 还原时 name 直接成为 getSharedPreferences 的文件名
+                // （shared_prefs/<name>.xml）：含路径分隔符的名字会穿越出
+                // shared_prefs 目录写到任意位置，解析阶段先按白名单拒绝。
+                // 本应用的 prefs 名均为字母/数字/下划线/点/连字符，兼容不受影响
+                if (!isValidPrefsName(name)) {
+                    throw BackupException("备份包含非法 prefs 名称")
+                }
                 val entries = prefsJson.getJSONObject(name)
                 val map = LinkedHashMap<String, Any>()
                 val keys = entries.keys()
@@ -347,6 +354,14 @@ object BackupManager {
             throw BackupException("备份内容解析失败")
         }
     }
+
+    // prefs 名白名单：字母/数字/点/下划线/连字符，且不许是 "." / ".."
+    // 这类纯相对路径段（点本身在字符白名单内，必须单独排除）
+    private val PREFS_NAME_PATTERN = Regex("[A-Za-z0-9._-]+")
+
+    private fun isValidPrefsName(name: String): Boolean =
+        name.isNotEmpty() && name != "." && name != ".." &&
+            PREFS_NAME_PATTERN.matches(name)
 
     /** 严格解析单个 prefs 值：未知类型标签或类型不符直接抛错（解析阶段拦截） */
     private fun parsePrefValue(obj: JSONObject): Any = when (obj.optString("t")) {
