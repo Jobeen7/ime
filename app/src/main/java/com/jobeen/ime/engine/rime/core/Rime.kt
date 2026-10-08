@@ -454,8 +454,9 @@ class Rime : RimeApi, RimeLifecycleOwner {
         // 消息流不丢消息：这里走的是 Schema/Option/Deploy 等状态消息，
         // 丢一条 Deploy 成功或 Schema 变更，awaitMessage 的等待方会永久挂起、
         // 守护进程的部署通知也会缺失。旧配置 DROP_OLDEST 在收集方卡顿时
-        // 直接把最旧的未消费消息扔掉。用 SUSPEND 语义 + 溢出时异步补发，
-        // 保证至少送达一次（补发走单线程调度，保持溢出消息之间的先后顺序）。
+        // 直接把最旧的未消费消息扔掉。现为 SUSPEND 语义，且全部分发都经
+        // notificationQueue 的单线程消费者串行完成（见 dispatchMessage），
+        // 缓冲满时消费者原地挂起等位，保证送达且全局有序。
         private val messageFlow_ = MutableSharedFlow<RimeMessage<*>>(
             extraBufferCapacity = 64,
             onBufferOverflow = BufferOverflow.SUSPEND,
@@ -474,7 +475,8 @@ class Rime : RimeApi, RimeLifecycleOwner {
          * 做消息转换与分发，而转换（getSchemaList）和处理器（getStatus）
          * 又会回调 JNI 取状态——在 librime 操作中途重入其 API。改为回调
          * 只入队，由 [messageEmitScope] 的单线程消费者按 FIFO 顺序在
-         * native 调用栈之外完成转换与分发。
+         * native 调用栈之外完成转换与分发。引擎自产消息（按键响应等，
+         * 见 [handleMessage]）也入同一队列，使两类消息全局有序。
          */
         private val notificationQueue =
             kotlinx.coroutines.channels.Channel<Pair<Int, Array<Any>>>(
@@ -488,8 +490,13 @@ class Rime : RimeApi, RimeLifecycleOwner {
         init {
             messageEmitScope.launch {
                 for ((type, params) in notificationQueue) {
-                    runCatching { dispatchMessage(type, params) }
-                        .onFailure { Timber.w(it, "Failed to dispatch rime notification") }
+                    try {
+                        dispatchMessage(type, params)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        Timber.w(e, "Failed to dispatch rime notification")
+                    }
                 }
             }
         }
@@ -620,14 +627,24 @@ class Rime : RimeApi, RimeLifecycleOwner {
         }
 
         @JvmStatic
-        fun handleMessage(type: Int, params: Array<Any>) = dispatchMessage(type, params)
+        fun handleMessage(type: Int, params: Array<Any>) {
+            // 引擎自产消息（按键响应等）与原生通知共用同一队列、同一单线程
+            // 消费者分发，保证两类消息全局有序。旧实现由调用方线程（rime-main）
+            // 同步直分发，与通知分发线程并发，顺序无法保证。
+            notificationQueue.trySend(type to params)
+        }
 
-        private fun dispatchMessage(type: Int, params: Array<Any>) {
+        /**
+         * 只由 [notificationQueue] 的单线程消费者调用：转换、处理器回调与
+         * 写入 [messageFlow_] 在此串行完成。缓冲满时在本线程内挂起补发，
+         * 后续消息仍在队列中排队——不会像旧实现另起协程补发那样被后续
+         * 消息超车，也不会丢弃。
+         */
+        private suspend fun dispatchMessage(type: Int, params: Array<Any>) {
             val message = RimeMessage.nativeCreate(type, params)
             rimeMessageHandlers.forEach { it.invoke(message) }
             if (!messageFlow_.tryEmit(message)) {
-                // 缓冲已满（收集方一时卡住）：异步补发到送达为止，不丢弃
-                messageEmitScope.launch { messageFlow_.emit(message) }
+                messageFlow_.emit(message)
             }
         }
 

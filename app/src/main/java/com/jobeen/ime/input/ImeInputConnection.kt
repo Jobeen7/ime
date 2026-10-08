@@ -171,14 +171,23 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         changeListeners -= listener
     }
 
+    /**
+     * 选区区间左端。Shift+方向键扩展出的反向选区里 Selection 的 start 在
+     * end 之后，这里一律归一化为 min，保证 replace/delete 等按 [start, end)
+     * 区间操作不越界抛 IOOBE；选区方向由 [selectionAnchor]/[selectionCursor]
+     * 单独记录，不靠 start/end 的顺序表达。
+     */
     private fun selStart(): Int {
         val s = Selection.getSelectionStart(editable)
-        return if (s < 0) editable.length else s
+        val e = Selection.getSelectionEnd(editable)
+        return if (s < 0 || e < 0) editable.length else min(s, e)
     }
 
+    /** 选区区间右端，口径见 [selStart]。 */
     private fun selEnd(): Int {
+        val s = Selection.getSelectionStart(editable)
         val e = Selection.getSelectionEnd(editable)
-        return if (e < 0) editable.length else e
+        return if (s < 0 || e < 0) editable.length else max(s, e)
     }
 
     override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence? {
