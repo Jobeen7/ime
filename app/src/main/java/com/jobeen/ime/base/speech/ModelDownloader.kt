@@ -334,6 +334,14 @@ object ModelDownloader {
         }
         return try {
             client.newCall(requestBuilder.build()).execute().use { response ->
+                if (response.code == 416 && resumeFrom > 0) {
+                    // 416 Range Not Satisfiable：本地 .part 已不小于远端文件
+                    // （远端换过更小的文件等），续传永远撞 416。删掉 .part
+                    // 后不带 Range 全量重下一次（重入时 resumeFrom=0，不会循环）
+                    Timber.w("Model download: HTTP 416, dropping .part and retrying full download")
+                    part.delete()
+                    return downloadFile(url, target, onRead)
+                }
                 if (!response.isSuccessful) {
                     Timber.w("Model download failed: HTTP %d", response.code)
                     HttpUtil.showToast("语音模型下载失败：HTTP ${response.code}")
