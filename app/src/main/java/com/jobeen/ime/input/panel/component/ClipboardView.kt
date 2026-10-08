@@ -500,6 +500,14 @@ class ClipboardView(
     private val measureTextPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
     private val measureIndexPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
 
+    /** reload 的后台计算结果：成员字段回主线程后一次性赋值，避免跨线程数据竞态。 */
+    private class ReloadOutcome(
+        val entries: List<ClipboardManager.Entry>,
+        val displayed: List<ClipboardManager.Entry>,
+        val phrases: List<PhraseManager.Phrase>,
+        val layouts: List<RowLayout>,
+    )
+
     private fun reload() {
         // 取消上一轮未完成的加载：避免连续 show/refresh 时旧结果覆盖新结果、滚动被重复重置
         reloadJob?.cancel()
@@ -509,18 +517,31 @@ class ClipboardView(
         val w = width
         reloadJob = viewScope.launch {
             // 只加载当前标签页的数据（旧实现双表全量加载，另一个标签用不到也查）；
-            // 断行布局计算放后台线程（条目上限可配到 500，旧实现全压主线程）
-            val layouts = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            // 断行布局计算放后台线程（条目上限可配到 500，旧实现全压主线程）。
+            // 后台只算局部变量：clipboardEntries/displayedEntries/phrases/rowLayouts
+            // 都在主线程被读改（setSearchQuery、绘制、点选按下标解析），后台直接写
+            // 成员字段会与主线程互相覆盖、数据与布局新旧不一致
+            val outcome = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 if (tab == ClipboardTab.CLIPBOARD) {
-                    clipboardEntries = ClipboardManager.getEntries(context)
-                    displayedEntries = filterEntries(clipboardEntries, searchQuery)
+                    val entries = ClipboardManager.getEntries(context)
+                    val displayed = filterEntries(entries, searchQuery)
+                    ReloadOutcome(
+                        entries, displayed, phrases,
+                        buildRowLayouts(tab, w, measureTextPaint, measureIndexPaint, displayed, phrases),
+                    )
                 } else {
-                    phrases = PhraseManager.getAll(context)
+                    val all = PhraseManager.getAll(context)
+                    ReloadOutcome(
+                        clipboardEntries, displayedEntries, all,
+                        buildRowLayouts(tab, w, measureTextPaint, measureIndexPaint, displayedEntries, all),
+                    )
                 }
-                buildRowLayouts(tab, w, measureTextPaint, measureIndexPaint)
             }
-            rowLayouts = layouts
-            totalContentH = totalHeightOf(layouts)
+            clipboardEntries = outcome.entries
+            displayedEntries = outcome.displayed
+            phrases = outcome.phrases
+            rowLayouts = outcome.layouts
+            totalContentH = totalHeightOf(outcome.layouts)
             // 数据已换：拖选锚点下标可能失效，直接收尾（不回滚已选结果）
             if (dragSelecting) endDragSelection(rollback = false)
             // 编辑显示期间列表数据可照常更新，但滚动位置归编辑区，不能被重置
@@ -603,6 +624,8 @@ class ClipboardView(
         w: Int,
         tp: android.graphics.Paint,
         ip: android.graphics.Paint,
+        entriesToLayout: List<ClipboardManager.Entry> = displayedEntries,
+        phrasesToLayout: List<PhraseManager.Phrase> = phrases,
     ): List<RowLayout> {
         if (w <= 0) return emptyList()
         val fm = tp.fontMetrics
@@ -611,7 +634,7 @@ class ClipboardView(
             // 多选态行首要让出勾选圆的位置，文本可用宽相应收窄
             val checkReserve = if (multiSelectActive) 26f * density else 0f
             val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - cloudIconSize - 2f * density - checkReserve
-            displayedEntries.map { entry ->
+            entriesToLayout.map { entry ->
                 val lines = breakText(tp, entry.text, maxTextW, 4)
                 RowLayout(
                     height = lh * lines.size + pillPad * 2,
@@ -625,7 +648,7 @@ class ClipboardView(
             }
         } else {
             val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - 2f * density
-            phrases.map { phrase ->
+            phrasesToLayout.map { phrase ->
                 val lines = breakText(tp, phrase.text, maxTextW, 4)
                 RowLayout(
                     height = lh * lines.size + pillPad * 2,
