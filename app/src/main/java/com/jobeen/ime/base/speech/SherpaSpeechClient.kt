@@ -319,11 +319,20 @@ object SherpaSpeechClient {
             // 逐字 partial 高频刷新输入框。无新文本时挂起、零空转。
             for (signal in composingSignal) {
                 if (!holding.get()) break
-                composingText.getAndSet(null)?.let { text ->
-                    // 繁简转换（含首次词表解析加载）挪到后台算完再回主线程
-                    // 上屏：循环仍逐条串行处理，出字顺序与 50ms 节流时机不变
+                // 繁简转换（含首次词表解析加载）挪到后台算完再回主线程
+                // 上屏：循环仍逐条串行处理，出字顺序与 50ms 节流时机不变。
+                // 先看不取、转换完再 CAS 清除：转换是挂起点，松手 cancel
+                // 若落在转换途中，先取走的文本会随协程丢失（finishSession
+                // 只能提交上一笔已显示内容，服务端 FINAL 缺席时无兜底）；
+                // CAS 失败说明期间来了更新的 partial，不用旧结果覆盖，
+                // 留给下一轮或 finishSession。CAS 成功后到上屏之间无
+                // 挂起点，取消插不进来。
+                val text = composingText.get()
+                if (text != null) {
                     val displayText = withContext(Dispatchers.Default) { toDisplayText(text) }
-                    service.activeInputConnection()?.setComposingText(displayText, 1)
+                    if (composingText.compareAndSet(text, null)) {
+                        service.activeInputConnection()?.setComposingText(displayText, 1)
+                    }
                 }
                 delay(50)
             }
