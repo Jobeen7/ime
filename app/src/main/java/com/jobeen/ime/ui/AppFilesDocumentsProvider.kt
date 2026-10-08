@@ -137,6 +137,9 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
         validateDisplayName(displayName)
 
         val source = fileFromDocumentId(documentId)
+        if (source == filesRoot) {
+            throw FileNotFoundException("cannot rename root")
+        }
         val target = source.resolveSibling(displayName)
 
         if (target.exists() || !source.renameTo(target)) {
@@ -158,6 +161,18 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
 
         if (!targetParent.isDirectory) {
             throw FileNotFoundException(targetParentDocumentId)
+        }
+
+        // 目录不得复制进自身（含复制到源目录本身）：copyRecursively 会
+        // 无限嵌套生成子目录直至写满存储
+        if (source.isDirectory) {
+            val sourcePath = source.canonicalPath
+            val targetPath = targetParent.canonicalPath
+            if (targetPath == sourcePath ||
+                targetPath.startsWith(sourcePath + File.separator)
+            ) {
+                throw FileNotFoundException("cannot copy a directory into itself")
+            }
         }
 
         val target = createAbstractFile(targetParent, source.name)
@@ -182,6 +197,9 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
         targetParentDocumentId: String,
     ): String {
         val source = fileFromDocumentId(sourceDocumentId)
+        if (source == filesRoot) {
+            throw FileNotFoundException("cannot move root")
+        }
         val targetParent = fileFromDocumentId(targetParentDocumentId)
 
         if (!targetParent.isDirectory) {

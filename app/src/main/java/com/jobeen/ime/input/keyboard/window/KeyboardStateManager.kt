@@ -196,6 +196,12 @@ object KeyboardStateManager {
         kb?.updateSpaceKeyText(currentSchema?.name.orEmpty())
         kb?.updatePunctuationMode(PunctuationMode.from(currentSchema?.punctuation.orEmpty()))
         kb?.let { callback?.onKeyboardChanged(it) }
+        // 切到的键盘实例（新切换或 rebuild 后重建的）还没被下发过 imeAction，
+        // 而 updateReturnKeyIfNeeded 的三元组去重会把重发拦下，新实例的回车键
+        // 在下一次输入变化前恒为默认换行行为：重置去重缓存并立即重发一次
+        // （rebuild 也走 switchTo，一并覆盖）
+        lastImeAction = -1
+        updateReturnKeyIfNeeded()
     }
 
     private fun attachNew(name: String) {

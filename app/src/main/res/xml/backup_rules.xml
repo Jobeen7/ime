@@ -7,6 +7,8 @@
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="user_dict_sync.xml" />
+    <exclude domain="external" path="shared/" />
+    <exclude domain="external" path="model/" />
     <exclude domain="database" path="clipboard_database" />
     <exclude domain="database" path="clipboard_database-wal" />
     <exclude domain="database" path="clipboard_database-shm" />

@@ -59,7 +59,8 @@ abstract class Dictionary {
         if (dest.extension != Type.OCD.ext && dest.extension != Type.OCD2.ext) {
             throw IllegalArgumentException("Dest file name must end with .${Type.OCD.ext} or .${Type.OCD2.ext}")
         }
-        dest.delete()
+        // 不再预删 dest：调用方先写同目录临时文件、成功后 rename 覆盖，
+        // 构建失败时旧 .ocd2 保持不动（此前先删后写，失败即词典全失）
     }
 
     override fun toString(): String = "${javaClass.simpleName}[$name -> ${file.path}]"
