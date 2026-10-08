@@ -351,11 +351,12 @@ class SpeechRecognitionService : Service() {
             ?.joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
             ?: ""
 
-    /** 引擎指纹 = 模型目录指纹 + 热词文件戳：热词更新同样触发识别器重建。 */
+    /** 引擎指纹 = 模型目录指纹 + 热词文件戳 + 解码模式：任一变化都触发识别器重建。 */
     private fun engineFingerprint(context: android.content.Context, dir: java.io.File): String {
         val hw = SpeechHotwords.file(context)
         val hwStamp = if (hw.isFile) "${hw.length()}:${hw.lastModified()}" else "none"
-        return modelFingerprint(dir) + "|hw=" + hwStamp
+        val mode = SpeechHotwords.readMode(context).name
+        return modelFingerprint(dir) + "|hw=" + hwStamp + "|mode=" + mode
     }
 
     private fun initEngine(context: android.content.Context, silent: Boolean = false): Boolean {
@@ -433,17 +434,21 @@ class SpeechRecognitionService : Service() {
                     provider = if (useQnn) "qnn" else "cpu",
                     modelType = if (useQnn) "zipformer" else "",
                 )
-                // 热词（用户词库常用词）：文件存在且非空时切换束搜索并
-                // 挂热词表做上下文偏置；无热词时维持 greedy（更快）。
-                // 注：QNN 变体与束搜索的组合未经真机验证，若异常优先
-                // 在此按变体回退 greedy。
+                // 解码方式由设置中的三档开关决定（文件传递，默认 GREEDY
+                // 即历史稳定行为）：BEAM 只切束搜索不挂词表，BEAM_HOTWORDS
+                // 再加用户词库热词偏置。v1.1.2.3 真机"带热词后语音无反应"
+                // 的三个子嫌疑（束搜索/热词文件/变体组合）靠逐档隔离定位；
+                // 定位结论出来后可收敛回单一路径。
+                val decodeMode = SpeechHotwords.readMode(context)
                 val hotwordsFile = SpeechHotwords.file(context)
-                val useHotwords = hotwordsFile.isFile && hotwordsFile.length() > 0
+                val useBeam = decodeMode != SpeechHotwords.DecodeMode.GREEDY
+                val useHotwords = decodeMode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS &&
+                    hotwordsFile.isFile && hotwordsFile.length() > 0
                 val config = OnlineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
                     modelConfig = modelConfig,
-                    decodingMethod = if (useHotwords) "modified_beam_search" else "greedy_search",
-                    maxActivePaths = if (useHotwords) 4 else 4,
+                    decodingMethod = if (useBeam) "modified_beam_search" else "greedy_search",
+                    maxActivePaths = 4,
                     enableEndpoint = false,
                     hotwordsFile = if (useHotwords) hotwordsFile.absolutePath else "",
                     hotwordsScore = if (useHotwords) 2.5f else 0.0f,

@@ -252,6 +252,10 @@
     <string name="voice_hotwords_view">查看</string>
     <string name="voice_hotwords_dialog_title">热词表（%1$d 个）</string>
     <string name="voice_hotwords_close">关闭</string>
+    <string name="voice_decode_mode_title">解码方式</string>
+    <string name="voice_decode_greedy">贪心解码（稳定，默认）</string>
+    <string name="voice_decode_beam">束搜索</string>
+    <string name="voice_decode_beam_hotwords">束搜索 + 热词</string>
     <string name="voice_recognition_model">识别模型</string>
     <string name="voice_model_ready">已就绪</string>
     <string name="voice_model_not_ready">未下载，请先下载模型</string>
