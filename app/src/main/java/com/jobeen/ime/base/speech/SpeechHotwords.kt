@@ -12,19 +12,22 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 供流式 transducer 识别器以 modified_beam_search 解码时做上下文
  * 偏置，让识别优先出用户自己的词。
  *
- * 口径：
+ * 口径（2026-10-08 审计定版，见 v1.1.2.7）：
+ * - 模型是 BPE 建模单元：识别器必须显式 modelingUnit="bpe" 并给出
+ *   bpe.vocab（由模型自带 bpe.model 导出的真实分数表，随包 assets
+ *   携带，与当前模型 tokens.txt 的 md5 绑定校验）；modelingUnit 留
+ *   空时引擎在热词编码处 _Exit 直接终止进程，不可捕获；
+ * - 热词文件每行一个词、字间加空格（如「礼 拜 二」），这是 bpe
+ *   编码能接收的写法；不加空格不报错但无效；
  * - 词源：全部用户词典导出（词\t拼音\t权重），按权重降序取前
- *   [MAX_HOTWORDS] 个；
- * - 只收纯汉字词（2–8 字）：保证能按字切分对齐模型的 cjkchar
- *   建模单元；含字母/数字/符号的词跳过，避免热词编码失败连累
- *   识别器创建；
+ *   [MAX_HOTWORDS] 个；只收纯汉字词（2–8 字），且每个字都必须在
+ *   模型字表里有「▁字」词片（可编码字集），否则整词剔除；
  * - 文件放 filesDir/speech/hotwords.txt，与模型目录分离；语音
  *   服务以文件戳记入引擎指纹，文件更新后下一次初始化自动重建
  *   识别器生效。
  *
- * 刷新时机：语音引擎初始化时过期（> [STALE_MS]）才刷新；用户
- * 词典导入完成后由词典页主动调用 [regenerate]。
- * 全部失败路径静默降级（无热词文件时识别器回退 greedy 解码）。
+ * 刷新时机：键盘输入结束时过期（> [STALE_MS]）才刷新（主进程）；
+ * 用户词典导入完成后由词典页主动调用 [regenerate]。
  */
 object SpeechHotwords {
 
@@ -100,24 +103,120 @@ object SpeechHotwords {
         runCatching { f.writeText(stamp) }
     }
 
+    fun clearDegradeStamp(context: Context) {
+        runCatching { degradeFile(context).delete() }
+    }
+
+    // ---- bpe.vocab 绑定（热词编码的词表必须与模型配套） ----
+
+    /** 随包 bpe.vocab 对应的模型 tokens.txt md5（模型换代时同步更新）。 */
+    const val EXPECTED_TOKENS_MD5 = "2836b40b48bdf307391191c1e50786ec"
+
+    /** 随包 bpe.vocab 自身的 md5（assets 释放后校验，防文件损坏）。 */
+    const val EXPECTED_VOCAB_MD5 = "44140fceaa5ec6426a52f2e169f9f16e"
+    private const val VOCAB_ASSET = "speech/bpe.vocab"
+
+    fun vocabFile(context: Context): File =
+        File(File(context.filesDir, "speech"), "bpe.vocab")
+
+    private fun md5Hex(file: File): String? = runCatching {
+        val digest = java.security.MessageDigest.getInstance("MD5")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n < 0) break
+                digest.update(buf, 0, n)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it) }
+    }.getOrNull()
+
     /**
-     * 按模型字表过滤热词：tokens.txt 每行「符号 id」，取其中单字符号为
-     * 可编码字集；含字集外生字的词整词剔除——避免热词编码在 native 侧
-     * 失败连累识别器构造。字集为空（模型未下载等）时不过滤。
+     * 确保与当前模型配套的 bpe.vocab 已释放到 filesDir 并返回其文件：
+     * 模型 tokens.txt 的 md5 与随包词表不匹配（模型已换代）时返回
+     * null——宁可不用热词，也不能拿错词表喂引擎。结果在进程内缓存。
+     */
+    @Volatile
+    private var vocabChecked: File? = null
+
+    @Volatile
+    private var vocabCheckedDone = false
+
+    fun ensureVocab(context: Context): File? {
+        if (vocabCheckedDone) return vocabChecked
+        synchronized(this) {
+            if (vocabCheckedDone) return vocabChecked
+            vocabChecked = runCatching {
+                val tokens = File(com.jobeen.ime.data.App.speechModelDir, "tokens.txt")
+                if (!tokens.isFile || md5Hex(tokens) != EXPECTED_TOKENS_MD5) {
+                    null
+                } else {
+                    val target = vocabFile(context)
+                    if (!target.isFile || md5Hex(target) != EXPECTED_VOCAB_MD5) {
+                        target.parentFile?.mkdirs()
+                        context.assets.open(VOCAB_ASSET).use { input ->
+                            target.outputStream().use { input.copyTo(it) }
+                        }
+                    }
+                    if (md5Hex(target) == EXPECTED_VOCAB_MD5) target else null
+                }
+            }.getOrNull()
+            vocabCheckedDone = true
+            return vocabChecked
+        }
+    }
+
+    // ---- 升级清理 ----
+
+    private fun legacyCleanupFile(context: Context): File =
+        File(File(context.filesDir, "speech"), "migrated_bpe_v1.txt")
+
+    /**
+     * 一次性清理旧版遗留：v1.1.2.3–v1.1.2.6 的 hotwords.txt 是连写
+     * 格式（bpe 下无效）、降级标记与引擎状态也可能是旧语义，升级到
+     * bpe 路线时全部删掉重来（词表会由主进程按新格式重新生成）。
+     */
+    fun cleanupLegacyIfNeeded(context: Context) {
+        val marker = legacyCleanupFile(context)
+        if (marker.isFile) return
+        runCatching {
+            file(context).delete()
+            degradeFile(context).delete()
+            engineStatusFile(context).delete()
+            marker.parentFile?.mkdirs()
+            marker.writeText("done")
+        }
+    }
+
+    /**
+     * 按模型字表过滤热词：当前模型是 BPE 建模，汉字在 tokens.txt 里
+     * 只有「▁字」词片、没有裸字——可编码字集 = 所有「▁X」词片去掉
+     * 前缀后的单字 X（外加本身即单字的符号）。含字集外生字的词整词
+     * 剔除。字集为空（模型未下载等）时不过滤。（v1.1.2.4 的旧写法只
+     * 认裸单字符号，会把所有中文词滤光。）
      */
     fun filterByTokenChars(words: List<String>, tokenChars: Set<String>): List<String> {
         if (tokenChars.isEmpty()) return words
         return words.filter { w -> w.all { ch -> ch.toString() in tokenChars } }
     }
 
-    /** 读模型目录 tokens.txt 的单字符号集；读不到返回空集。 */
+    /** 读模型目录 tokens.txt 的可编码字集；读不到返回空集。 */
     fun loadTokenChars(tokensFile: File): Set<String> {
         if (!tokensFile.isFile) return emptySet()
         return runCatching {
             tokensFile.readLines(Charsets.UTF_8)
                 .mapNotNull { line ->
                     val sym = line.substringBeforeLast(' ').trim()
-                    if (sym.codePointCount(0, sym.length) == 1) sym else null
+                    when {
+                        // 「▁字」词片：去掉 ▁ 前缀后是单字 → 该字可编码
+                        sym.length > 1 && sym[0] == '▁' -> {
+                            val rest = sym.substring(1)
+                            if (rest.codePointCount(0, rest.length) == 1) rest else null
+                        }
+                        sym.codePointCount(0, sym.length) == 1 -> sym
+                        else -> null
+                    }
                 }
                 .toSet()
         }.getOrDefault(emptySet())
@@ -165,8 +264,27 @@ object SpeechHotwords {
         return true
     }
 
+    /**
+     * 热词文件内容：每行一个词、字间加空格（「礼 拜 二」）——bpe 热词
+     * 编码只接收这种写法；连写不报错但完全无效（审计实测）。
+     */
     fun render(words: List<String>): String =
-        words.joinToString(separator = "\n", postfix = if (words.isEmpty()) "" else "\n")
+        words.joinToString(separator = "\n", postfix = if (words.isEmpty()) "" else "\n") { word ->
+            spaced(word)
+        }
+
+    /** 按码点拆字并以空格连接（扩展区汉字是代理对，不能按 Char 拆）。 */
+    fun spaced(word: String): String {
+        val out = StringBuilder()
+        var i = 0
+        while (i < word.length) {
+            val cp = word.codePointAt(i)
+            if (out.isNotEmpty()) out.append(' ')
+            out.appendCodePoint(cp)
+            i += Character.charCount(cp)
+        }
+        return out.toString()
+    }
 
     /** 过期或缺失时刷新（语音引擎初始化路径调用，可阻塞但有界）。 */
     suspend fun regenerateIfStale(context: Context) {
