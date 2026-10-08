@@ -148,7 +148,9 @@ object ClipboardManager {
 
     /**
      * 编辑条目文本：改写后刷新时间戳排到最前，置顶状态随行保留。
-     * 新文本若已存在另一条有效记录，先删那条再改写，避免同文本两行；
+     * 新文本若已存在另一条记录，先删那条再改写，避免同文本两行；
+     * 合并口径为任一行置顶则结果置顶——删目标行前先读其置顶状态（同 addEntry
+     * 的先读后恢复），改写后恢复，避免目标行置顶在合并时静默丢失。
      * 事务保证检查与改写不被并发插入打断。
      */
     suspend fun updateEntry(context: Context, oldText: String, newText: String) {
@@ -157,8 +159,10 @@ object ClipboardManager {
         db(context) { db ->
             db.withTransaction {
                 val dao = db.clipboardDao()
+                val targetPinned = dao.pinnedByText(clean) ?: false
                 if (dao.existsByText(clean)) dao.deleteByText(clean)
                 dao.updateTextByText(oldText, clean, System.currentTimeMillis())
+                if (targetPinned) dao.setPinnedByText(clean, true)
             }
         }
     }
