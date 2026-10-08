@@ -124,6 +124,8 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
+        // 换了输入框：上一框的语音纠错沉淀观察作废
+        com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
         // 语音预启动挪到首次弹出键盘（内部一次性守卫 + 仅用过语音者）：
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
@@ -141,6 +143,7 @@ class ImeInputMethodService : InputMethodService() {
         if (com.jobeen.ime.base.speech.SherpaSpeechClient.isHolding()) {
             com.jobeen.ime.base.speech.SherpaSpeechClient.stopHoldSession(discard = true)
         }
+        com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
         engine?.resetComposition()
         keyboardWindow?.onFinishInputView(finishingInput)
         engine?.onFinishInputView()
@@ -316,5 +319,7 @@ class ImeInputMethodService : InputMethodService() {
         val text = probeAroundCursorText(ic)
         keyboardWindow?.onInputChanged(text, virtualInputConnection = phraseAddBridgeActive)
         if (text.isEmpty()) engine?.onInputCleared()
+        // 语音纠错沉淀借同一探针节奏观察上屏后编辑（未武装时为空转检查）
+        com.jobeen.ime.base.speech.SherpaSpeechClient.onEditorTextProbed(this)
     }
 }

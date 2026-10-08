@@ -1136,6 +1136,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val userKey: String?
         if (learnable) {
             val segment = TraditionalConverter.toSimplified(commit)
+            // 语音纠错沉淀：打字上屏词段是用户亲手选定的正形，与搭配
+            // 学习共用此入口，交给语音侧与刚上屏的语音段配对（未武装
+            // 时为空转检查）。密码/免学习输入框已在函数头统一拦下。
+            com.jobeen.ime.base.speech.SherpaSpeechClient.notifyTypedSegment(segment)
             if (com.jobeen.ime.base.ngram.UserCollocationStore.isLearnableSegment(segment)) {
                 lastLearnSegment?.let { prev ->
                     predictionManager?.learnCollocation(prev, segment)
