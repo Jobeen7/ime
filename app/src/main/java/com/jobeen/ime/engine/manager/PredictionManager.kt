@@ -109,6 +109,9 @@ class PredictionManager(private val context: Context) {
         val pred = prediction ?: return emptyList()
         val possiables = TextUtil.contextSubstrings(inputContext)
         val cfg = WeightConfig()
+        // 语法模型的上下文只随 inputContext 变：整轮预测算一次，
+        // 逐候选复用，不再每个候选都重编码上下文并重走 trie
+        val preparedCtx = gramDb?.prepareContext(inputContext)
 
         for (contextStr in possiables) {
             if (contextStr.isEmpty()) continue
@@ -117,7 +120,7 @@ class PredictionManager(private val context: Context) {
             if (words.size >= 5) {
                 val prefers = CandidatePreferCache.snapshot(context)
                 val candidates = words.mapIndexed { index, it ->
-                    val gramScore = gramDb?.query(inputContext, it.word) ?: 0.0
+                    val gramScore = preparedCtx?.let { ctx -> gramDb?.query(ctx, it.word) } ?: 0.0
                     val preferCount = prefers[it.word] ?: 0
                     val textLen = it.word.codePointCount(0, it.word.length)
                     val score = calculator.calculate(

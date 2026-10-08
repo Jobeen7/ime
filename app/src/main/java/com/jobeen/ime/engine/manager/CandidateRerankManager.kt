@@ -26,14 +26,16 @@ class CandidateRerankManager(private val context: Context) {
 
         val cfg = WeightConfig()
         val restored = ArrayList<Candidate>(restoreEnd - restoreStart)
+        // 同一上下文逐候选打分：上下文预计算一次、整表复用
+        val preparedCtx = if (inputContext.isNotEmpty()) {
+            gramDb?.prepareContext(inputContext)
+        } else {
+            null
+        }
 
         for (index in restoreStart until restoreEnd) {
             val it = candidates[index]
-            val gramScore = if (inputContext.isNotEmpty()) {
-                gramDb?.query(inputContext, it.text) ?: 0.0
-            } else {
-                0.0
-            }
+            val gramScore = preparedCtx?.let { ctx -> gramDb?.query(ctx, it.text) } ?: 0.0
 
             val preferCount = prefers[it.text] ?: 0
             val textLen = it.text.codePointCount(0, it.text.length)

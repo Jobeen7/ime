@@ -2,10 +2,14 @@ package com.jobeen.ime.input.speech
 
 import android.content.Context
 import android.graphics.Canvas
+import android.os.Handler
+import android.os.Looper
 import android.util.AttributeSet
+import android.view.Choreographer
 import android.view.SurfaceHolder
 import android.view.SurfaceView
 import java.lang.ref.WeakReference
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import timber.log.Timber
@@ -72,14 +76,11 @@ abstract class RenderView @JvmOverloads constructor(
         override fun run() {
             val startAt = System.currentTimeMillis()
             while (!destroyed) {
-                // 锁是宿主视图的实例字段；视图已被回收时无锁可等，短睡复检
+                // 宿主视图已被回收：本线程再无绘制对象（surfaceHolder 也取
+                // 不到），直接退出，不再 16ms 空转轮询
                 val rv0 = renderView.get()
                 if (rv0 == null) {
-                    try {
-                        sleep(IDLE_SLEEP_TIME)
-                    } catch (ignored: InterruptedException) {
-                    }
-                    continue
+                    return
                 }
                 // 仅在状态栅栏处持锁，绘制阶段不持有 surfaceLock 与 Canvas，
                 // 这样 onRender 进入冬眠 wait() 时既不会阻塞 onPause/ onDestroy，
@@ -112,9 +113,14 @@ abstract class RenderView @JvmOverloads constructor(
                 }
                 drawFrame(holder, rv, System.currentTimeMillis() - startAt)
 
-                try {
-                    sleep(IDLE_SLEEP_TIME)
-                } catch (ignored: InterruptedException) {
+                // Choreographer 定帧：请求下一帧 vsync 后阻塞等它到达，
+                // 替代 Thread.sleep(16) 的自由跑定帧（帧率与显示刷新对齐，
+                // 相位不再漂移）。await 的超时片只用于复检 destroyed；
+                // 无 vsync（熄屏等）时停在等待里，不绘制、不空转。
+                val tickBefore = rv.frameTickCount
+                rv.requestNextFrame()
+                while (!destroyed && rv.frameTickCount == tickBefore) {
+                    rv.awaitFrameTick(tickBefore)
                 }
             }
         }
@@ -145,9 +151,6 @@ abstract class RenderView @JvmOverloads constructor(
             }
         }
 
-        companion object {
-            private const val IDLE_SLEEP_TIME: Long = 16
-        }
     }
 
     override fun surfaceCreated(p0: SurfaceHolder) {
@@ -185,6 +188,7 @@ abstract class RenderView @JvmOverloads constructor(
                 surfaceCondition.signalAll()
             }
         }
+        pokeFramePacer()
     }
 
     override fun onWindowFocusChanged(hasWindowFocus: Boolean) {
@@ -245,8 +249,57 @@ abstract class RenderView @JvmOverloads constructor(
                 surfaceCondition.signalAll()
             }
         }
+        pokeFramePacer()
         // 仅移除回调，交由 Framework 管理 Surface 生命周期，避免 native 释放竞态
         runCatching { holder.removeCallback(this) }
+    }
+
+    // ── Choreographer 定帧 ────────────────────────────────────
+    // 渲染线程每画完一帧，经主线程 Choreographer 请求一次 vsync 回调，
+    // 回调推进 frameTickCount 后才画下一帧。等待期间线程阻塞在条件
+    // 变量上（await 会释放 framePacerLock），不持 Canvas、不空转。
+    private val framePacerLock = ReentrantLock()
+    private val framePacerCondition = framePacerLock.newCondition()
+
+    @Volatile
+    internal var frameTickCount = 0L
+        private set
+
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+    private val vsyncCallback = Choreographer.FrameCallback {
+        framePacerLock.withLock {
+            frameTickCount++
+            framePacerCondition.signalAll()
+        }
+    }
+
+    private val nextFrameRequest = Runnable {
+        Choreographer.getInstance().postFrameCallback(vsyncCallback)
+    }
+
+    /** 由渲染线程调用：向主线程 Choreographer 请求下一帧 vsync。 */
+    internal fun requestNextFrame() {
+        mainHandler.post(nextFrameRequest)
+    }
+
+    /** 在定帧等待里睡一小片（≤50ms）：tick 推进即被唤醒，超时供复检存活。 */
+    internal fun awaitFrameTick(tick: Long) {
+        framePacerLock.withLock {
+            if (frameTickCount == tick) {
+                try {
+                    framePacerCondition.await(50, TimeUnit.MILLISECONDS)
+                } catch (ignored: InterruptedException) {
+                    // 本线程的中断无业务含义（停止靠 destroyed+poke 唤醒）：
+                    // 不恢复中断标志，否则后续 await 会立即抛错让定帧循环空转
+                }
+            }
+        }
+    }
+
+    /** 立即唤醒定帧等待（销毁/释放路径用，不必等满一个超时片）。 */
+    internal fun pokeFramePacer() {
+        framePacerLock.withLock { framePacerCondition.signalAll() }
     }
 
     // 渲染锁改为实例字段：此前在 companion 里两类波形视图的所有渲染
