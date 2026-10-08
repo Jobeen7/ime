@@ -120,6 +120,22 @@ object WebDavSync {
     /** 远端文件的版本状态：用于上传前判断远端是否被其他设备改动过 */
     private data class RemoteState(val etag: String?, val lastModifiedMs: Long)
 
+    /**
+     * 远端状态查询的三态结果：必须区分「确实不存在」与「查不到」——
+     * 后者（网络错误/5xx）若按不存在处理，上传会无条件 PUT、静默覆盖
+     * 其他设备刚改的远端词库。
+     */
+    private sealed interface RemoteStateResult {
+        /** 远端存在且状态已取得 */
+        data class Found(val state: RemoteState) : RemoteStateResult
+
+        /** 服务器明确回 404：远端不存在，可安全新建 */
+        data object NotFound : RemoteStateResult
+
+        /** 网络错误 / 非 404 的错误码 / 解析异常：不可判定，调用方应中止同步 */
+        data class Error(val message: String) : RemoteStateResult
+    }
+
     private val etagRegex =
         Regex("<(?:\\w+:)?getetag>(.*?)</(?:\\w+:)?getetag>", RegexOption.IGNORE_CASE)
     private val lastModifiedRegex =
@@ -142,11 +158,13 @@ object WebDavSync {
     private fun quotedETag(normalized: String): String = "\"$normalized\""
 
     /**
-     * 查询某个远端文件的 ETag / 修改时间（PROPFIND Depth: 0）。
-     * 文件不存在返回 null；服务器不支持 PROPFIND 等异常同样返回 null（调用方退化为
-     * "无状态可比"，保持旧行为直接上传，但仍会带上已知的 If-Match 时才做强校验）。
+     * 查询某个远端文件的 ETag / 修改时间（PROPFIND Depth: 0），返回三态结果：
+     * 404 → [RemoteStateResult.NotFound]（可安全新建）；2xx →
+     * [RemoteStateResult.Found]；其余错误码与任何异常 →
+     * [RemoteStateResult.Error]，调用方必须中止本次同步、不得继续上传——
+     * 状态不可判定还无条件 PUT，会静默覆盖其他设备的远端词库。
      */
-    private fun fetchRemoteState(fileName: String): RemoteState? {
+    private fun fetchRemoteState(fileName: String): RemoteStateResult {
         val body = """
             <?xml version="1.0" encoding="utf-8"?>
             <d:propfind xmlns:d="DAV:"><d:prop><d:getetag/><d:getlastmodified/></d:prop></d:propfind>
@@ -159,8 +177,10 @@ object WebDavSync {
             .build()
         return runCatching {
             client.newCall(request).execute().use { response ->
-                if (response.code == 404) return null
-                if (!response.isSuccessful) return null
+                if (response.code == 404) return RemoteStateResult.NotFound
+                if (!response.isSuccessful) {
+                    return RemoteStateResult.Error("PROPFIND HTTP ${response.code}")
+                }
                 val xml = response.body?.string().orEmpty()
                 val etag = normalizeETag(etagRegex.find(xml)?.groupValues?.get(1))
                 val lmText = lastModifiedRegex.find(xml)?.groupValues?.get(1)?.trim().orEmpty()
@@ -171,9 +191,9 @@ object WebDavSync {
                     fmt.timeZone = java.util.TimeZone.getTimeZone("GMT")
                     fmt.parse(lmText)?.time ?: 0L
                 }.getOrDefault(0L)
-                RemoteState(etag, lmMs)
+                RemoteStateResult.Found(RemoteState(etag, lmMs))
             }
-        }.getOrNull()
+        }.getOrElse { RemoteStateResult.Error(it.message ?: "网络错误") }
     }
 
     /**
@@ -210,12 +230,29 @@ object WebDavSync {
             ensureSyncDir()
             val fileName = remoteFileName(dictName)
             // 冲突保护：远端若被其他设备改过，先下载合并进本地再上传，
-            // 绝不拿本地旧词库静默覆盖远端较新的内容
-            var baseState = fetchRemoteState(fileName)
+            // 绝不拿本地旧词库静默覆盖远端较新的内容。
+            // 状态查不到（网络/服务器错误）时中止本次同步——不可判定还继续
+            // PUT 等于拿本地覆盖远端；只有 404 明确不存在才走新建路径。
+            var remoteMissing = false
+            var baseState = when (val r = fetchRemoteState(fileName)) {
+                is RemoteStateResult.Found -> r.state
+                RemoteStateResult.NotFound -> {
+                    remoteMissing = true
+                    null
+                }
+                is RemoteStateResult.Error ->
+                    throw IllegalStateException("查询远端词库状态失败（${r.message}），本次同步已中止")
+            }
             if (baseState != null && isRemoteChanged(fileName, baseState)) {
                 Timber.i("Remote '$fileName' changed since last sync; merging before upload")
                 downloadLocked(dictName, session).getOrThrow()
-                baseState = fetchRemoteState(fileName) ?: baseState
+                baseState = when (val r = fetchRemoteState(fileName)) {
+                    is RemoteStateResult.Found -> r.state
+                    // 合并刚下载过，远端不应消失；按不存在处理会退化为新建上传
+                    RemoteStateResult.NotFound -> null
+                    is RemoteStateResult.Error ->
+                        throw IllegalStateException("查询远端词库状态失败（${r.message}），本次同步已中止")
+                }
             }
             val tempFile = File(appContext.cacheDir, "webdav-upload-${dictName}-${System.nanoTime()}.txt")
             try {
@@ -230,6 +267,11 @@ object WebDavSync {
                 // 带上合并基准的 ETag：合并后到上传之间远端又被改动时服务器回 412，
                 // 而不是被我们覆盖掉
                 baseState?.etag?.let { builder.header("If-Match", quotedETag(it)) }
+                // 远端原本不存在：新建限定——查询后到上传之间若被其他设备
+                // 先建了同名文件，服务器回 412 而非被我们覆盖
+                if (remoteMissing && baseState == null) {
+                    builder.header("If-None-Match", "*")
+                }
                 client.newCall(builder.build()).execute().use { response ->
                     if (response.code == 412) {
                         throw IllegalStateException(
@@ -244,10 +286,12 @@ object WebDavSync {
                     if (newETag != null) {
                         UserDictPrefs.setSyncETag(fileName, newETag)
                     } else {
-                        // 响应没带 ETag：重新查询一次作为下次同步的基准
-                        fetchRemoteState(fileName)?.etag?.let {
-                            UserDictPrefs.setSyncETag(fileName, it)
-                        }
+                        // 响应没带 ETag：重新查询一次作为下次同步的基准；
+                        // 这一步仅记基准，查不到不影响已成功的上传
+                        (fetchRemoteState(fileName) as? RemoteStateResult.Found)
+                            ?.state?.etag?.let {
+                                UserDictPrefs.setSyncETag(fileName, it)
+                            }
                     }
                 }
                 UserDictPrefs.lastUploadTime = System.currentTimeMillis()
@@ -546,8 +590,11 @@ object WebDavSync {
                 }
                 // 导入为合并操作：只增不减，不会删除本地已有词；
                 // 热导入直接写运行中引擎的词库，导入后立即生效，无需重启
+                // 大文件分批导入，避免整段独占引擎线程导致同步期间按键卡顿
                 val count = session.runOnReady {
-                    importUserDictLive(dictName, tempFile.absolutePath)
+                    UserDictManager.importUserDictInChunks(tempFile) { chunk ->
+                        importUserDictLive(dictName, chunk.absolutePath)
+                    }
                 }
                 if (count < 0) throw IllegalStateException("导入用户词典失败")
                 UserDictPrefs.lastDownloadTime = System.currentTimeMillis()
