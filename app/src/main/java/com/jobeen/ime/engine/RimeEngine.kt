@@ -645,7 +645,40 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
     }
 
+    /**
+     * 引擎未处理按键的透传：native 拒绝的按键原先经 converter 落到
+     * EngineMessage.Unknown，在消费端被直接丢弃，目标应用收不到
+     * （个别按键在应用里无反应）。这里按 Android 键事件补发给输入连接。
+     * 修饰键状态由 [KeyModifiers.metaState] 还原；Release 修饰只补发抬起。
+     * 映射不回 Android 键码的（[KeyMapping.Key_VoidSymbol] 等）原始键码在
+     * 进入引擎的映射阶段已经丢失、无法还原，仍只能丢弃并记日志。
+     */
+    private suspend fun forwardUnhandledKey(message: RimeMessage.KeyMessage) {
+        val keyCode = message.data.value.keyCode
+        if (keyCode == KEYCODE_UNKNOWN) {
+            Timber.d("Drop unhandled key without Android mapping: %s", message.data.value)
+            return
+        }
+        val metaState = message.data.modifiers.metaState
+        val now = SystemClock.uptimeMillis()
+        withContext(Dispatchers.Main.immediate) {
+            val ic = inputConnection() ?: return@withContext
+            if (!message.data.modifiers.release) {
+                ic.sendKeyEvent(
+                    android.view.KeyEvent(now, now, ACTION_DOWN, keyCode, 0, metaState)
+                )
+            }
+            ic.sendKeyEvent(
+                android.view.KeyEvent(now, now, ACTION_UP, keyCode, 0, metaState)
+            )
+        }
+    }
+
     private suspend fun handleRimeMessage(message: RimeMessage<*>) {
+        if (message is RimeMessage.KeyMessage) {
+            forwardUnhandledKey(message)
+            return
+        }
         val msg = EngineMessageConverter.convert(message)
         when (msg) {
             is EngineMessage.InlinePreedit -> {
