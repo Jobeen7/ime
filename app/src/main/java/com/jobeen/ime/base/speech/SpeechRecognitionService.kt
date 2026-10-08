@@ -351,52 +351,13 @@ class SpeechRecognitionService : Service() {
             ?.joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
             ?: ""
 
-    /** 引擎指纹 = 模型目录指纹 + 热词文件戳 + 解码模式：任一变化都触发识别器重建。 */
-    private fun engineFingerprint(
-        context: android.content.Context,
-        dir: java.io.File,
-        mode: SpeechHotwords.DecodeMode,
-    ): String {
-        val hw = SpeechHotwords.file(context)
-        val hwStamp = if (hw.isFile) "${hw.length()}:${hw.lastModified()}" else "none"
-        return modelFingerprint(dir) + "|hw=" + hwStamp + "|mode=" + mode.name
-    }
-
-    /**
-     * 生效模式：设置请求 BEAM_HOTWORDS 但降级标记与当前热词档指纹一致
-     * （上次构造失败且词表/模型未变）时，实际按 BEAM 构造，避免每次
-     * 语音都先撞一次失败。词表或模型变化后指纹不同，自动重试热词档。
-     */
-    private fun effectiveMode(
-        context: android.content.Context,
-        dir: java.io.File,
-    ): SpeechHotwords.DecodeMode {
-        val requested = SpeechHotwords.readMode(context)
-        if (requested != SpeechHotwords.DecodeMode.BEAM_HOTWORDS) return requested
-        val stamp = SpeechHotwords.readDegradeStamp(context)
-        val hwFingerprint = engineFingerprint(context, dir, requested)
-        return if (stamp != null && stamp == hwFingerprint) {
-            SpeechHotwords.DecodeMode.BEAM
-        } else {
-            requested
-        }
-    }
-
     private fun initEngine(context: android.content.Context, silent: Boolean = false): Boolean {
-        // 注意：本服务在 :speech 独立进程，不能在这里生成热词表——Rime 引擎与
-        // 用户词典在主进程，本进程的会话导不出词。生成归主进程（RimeEngine
-        // 输入结束时检查刷新、词典导入后刷新），本进程只读文件；新词表经
-        // 指纹变化在下一次初始化时自动生效。
-        // 升级一次性清理旧版遗留的连写词表/旧标记（bpe 路线不兼容）。
-        SpeechHotwords.cleanupLegacyIfNeeded(context)
         if (recognizerRef.get() != null &&
-            engineFingerprint(
-                context, App.speechModelDir, effectiveMode(context, App.speechModelDir)
-            ) == loadedModelFingerprint
+            modelFingerprint(App.speechModelDir) == loadedModelFingerprint
         ) return true
         synchronized(audioLock) {
             val dir = App.speechModelDir
-            val fingerprint = engineFingerprint(context, dir, effectiveMode(context, dir))
+            val fingerprint = modelFingerprint(dir)
             val existing = recognizerRef.get()
             if (existing != null) {
                 if (fingerprint == loadedModelFingerprint) return true
@@ -417,41 +378,21 @@ class SpeechRecognitionService : Service() {
                 streamRef.getAndSet(null)?.runCatching { release() }
                 existing.runCatching { release() }
             }
-            // 单次构造尝试（按给定模式选变体并建识别器）。热词档强制 CPU
-            // （QNN transducer 不支持热词，native 明示）；失败只记录在
-            // buildDesc 里、不抛，由外层决定是否降级重试——语音不能被
-            // 热词拖死。注意 v1.1.2.5 的教训：热词档选不到 CPU 文件时
-            // 旧代码直接 return false 是另一种拖死，这次统一走降级。
-            var buildDesc = ""
-            val buildOnce: (SpeechHotwords.DecodeMode) -> Boolean = { mode ->
-                // bpe 词表（与模型绑定的随包词表）；不可用时为 null，
-                // 热词档直接判失败走降级，不拿错词表喂引擎。
-                val vocab = SpeechHotwords.ensureVocab(context)
-                if (mode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS && vocab == null) {
-                    buildDesc = "热词词表与当前模型不匹配（模型已换代），热词停用"
-                    false
-                } else {
-                val qnnSupported =
-                    if (mode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS) {
-                        false
-                    } else {
-                        isQnnRuntimeSupported(context)
-                    }
-                val qnnFiles = if (qnnSupported) findModelFiles(dir, qnn = true) else null
-                val picked = if (qnnFiles != null && prepareQnnRuntime(context)) {
-                    qnnFiles to true
-                } else {
-                    val cpuFiles = findModelFiles(dir, qnn = false)
-                    if (cpuFiles == null) {
-                        buildDesc = "无可用模型文件（模式=$mode）"
-                        Log.w("SpeechSvc", "No available speech model in $dir")
-                        null
-                    } else {
-                        cpuFiles to false
-                    }
+            val qnnSupported = isQnnRuntimeSupported(context)
+            val qnnFiles = if (qnnSupported) findModelFiles(dir, qnn = true) else null
+
+            val (files, useQnn) = if (qnnFiles != null && prepareQnnRuntime(context)) {
+                qnnFiles to true
+            } else {
+                val cpuFiles = findModelFiles(dir, qnn = false)
+                if (cpuFiles == null) {
+                    Log.w("SpeechSvc", "No available speech model in $dir")
+                    return false
                 }
-                val attempt = picked?.let { (files, useQnn) ->
-                try {
+                cpuFiles to false
+            }
+
+            return try {
                 val transducer = if (useQnn) {
                     val rt = qnnRuntimeRef.get() ?: error("QNN runtime missing")
                     OnlineTransducerModelConfig(
@@ -480,47 +421,15 @@ class SpeechRecognitionService : Service() {
                     debug = false,
                     provider = if (useQnn) "qnn" else "cpu",
                     modelType = if (useQnn) "zipformer" else "",
-                    // 建模单元永远显式给值：留空（Kotlin 默认 ""）时引擎在
-                    // 热词编码处以 _Exit 直接终止本进程、try/catch 接不住
-                    // ——这是 v1.1.2.3–v1.1.2.6 第三档必死、且自动降级与
-                    // 状态写入都来不及执行的根因（审计复现 exit 255）。
-                    // 本模型为 bpe 单元；bpeVocab 是与模型绑定的配套词表。
-                    modelingUnit = "bpe",
-                    bpeVocab = vocab?.absolutePath ?: "",
                 )
-                // 解码方式由设置中的三档开关决定（文件传递，默认 GREEDY
-                // 即历史稳定行为）：BEAM 只切束搜索不挂词表，BEAM_HOTWORDS
-                // 再加用户词库热词偏置；变体已在 buildOnce 选文件时按模式
-                // 门控（热词档强制 CPU），这里的 !useQnn 是第二道保险。
-                val hotwordsFile = SpeechHotwords.file(context)
-                val useBeam = mode != SpeechHotwords.DecodeMode.GREEDY
-                val useHotwords = mode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS &&
-                    !useQnn && vocab != null &&
-                    hotwordsFile.isFile && hotwordsFile.length() > 0
                 val config = OnlineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
                     modelConfig = modelConfig,
-                    decodingMethod = if (useBeam) "modified_beam_search" else "greedy_search",
-                    maxActivePaths = 4,
+                    decodingMethod = "greedy_search",
                     enableEndpoint = false,
-                    hotwordsFile = if (useHotwords) hotwordsFile.absolutePath else "",
-                    // 1.5 为审计实测值（2.5 开始冒多余的字）
-                    hotwordsScore = if (useHotwords) 1.5f else 0.0f,
                 )
-                if (useHotwords) {
-                    // 构造前预置降级标记：引擎若在构造中 _Exit 杀进程，
-                    // 标记留存，下次启动 effectiveMode 见标记直接降级，
-                    // 不会每次长按都再死一次；构造成功随即清除。
-                    SpeechHotwords.writeDegradeStamp(
-                        context,
-                        engineFingerprint(
-                            context, dir, SpeechHotwords.DecodeMode.BEAM_HOTWORDS
-                        ),
-                    )
-                }
                 recognizerRef.set(OnlineRecognizer(null, config))
-                if (useHotwords) SpeechHotwords.clearDegradeStamp(context)
-                loadedModelFingerprint = engineFingerprint(context, dir, mode)
+                loadedModelFingerprint = fingerprint
                 val encoderPath = files.encoder.absolutePath
                 val engineVariant = when {
                     useQnn -> "qnn"
@@ -529,41 +438,12 @@ class SpeechRecognitionService : Service() {
                     else -> "standard"
                 }
                 Log.i("SpeechSvc", "Creating OnlineRecognizer: encoder=$encoderPath, variant=$engineVariant")
-                buildDesc = "变体=$engineVariant，模式=$mode，热词=${if (useHotwords) "开" else "关"}"
                 true
             } catch (t: Throwable) {
                 Log.e("SpeechSvc", "Sherpa recognizer initialization failed", t)
-                buildDesc = "构造异常（模式=$mode）：${t.javaClass.simpleName}：${t.message ?: "无信息"}"
+                Log.e("SpeechSvc", "initEngine failed", t)
                 false
             }
-                }
-                attempt == true
-                }
-            }
-            // 构造主流程：热词档失败 → 记降级标记并以束搜索重试一次；
-            // 最终状态写引擎状态文件，设置页可见。
-            var mode = effectiveMode(context, dir)
-            var ok = buildOnce(mode)
-            var failDesc: String? = null
-            if (!ok && mode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS) {
-                failDesc = buildDesc
-                SpeechHotwords.writeDegradeStamp(
-                    context,
-                    engineFingerprint(context, dir, SpeechHotwords.DecodeMode.BEAM_HOTWORDS),
-                )
-                mode = SpeechHotwords.DecodeMode.BEAM
-                ok = buildOnce(mode)
-            }
-            val time = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US)
-                .format(java.util.Date())
-            val status = when {
-                ok && failDesc == null -> "正常（$time）：$buildDesc"
-                ok -> "已降级（$time）：热词档失败——$failDesc；当前 $buildDesc"
-                else -> "失败（$time）：$buildDesc"
-            }
-            SpeechHotwords.writeEngineStatus(context, status)
-            if (!ok) Log.e("SpeechSvc", "initEngine failed: $buildDesc")
-            return ok
         }
     }
 

@@ -1023,15 +1023,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         inputConnection = null
         editorInfo = null
         lastLearnSegment = null
-        // 语音热词表在本进程维护（引擎与词库都在主进程；语音服务是 :speech
-        // 独立进程、只能读文件）：输入结束时顺手检查，过期/缺失才真生成。
-        context?.let { ctx ->
-            scope.launch {
-                runCatching {
-                    com.jobeen.ime.base.speech.SpeechHotwords.regenerateIfStale(ctx)
-                }
-            }
-        }
         invalidateBeforeCursorCache()
         invalidatePendingCandidates()
         invalidatePendingPrediction()
