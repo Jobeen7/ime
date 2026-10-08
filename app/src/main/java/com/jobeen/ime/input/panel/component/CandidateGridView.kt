@@ -402,8 +402,16 @@ class CandidateGridView(
             }
         }
 
+        // 字形覆盖只随字体变；本视图生命周期内 textPaint 只改颜色/字号、
+        // 从不换字体，结果可按文本缓存。面板每轮整表过滤都会逐字走到
+        // 这里，常用字第二次起直接命中缓存，不再走字体回退查询
+        private val glyphCache = HashMap<String, Boolean>()
+
         /** 用实际绘制的 Paint 查字形（系统默认字体链，与真实渲染一致） */
-        fun hasGlyph(text: String): Boolean = textPaint.hasGlyph(text)
+        fun hasGlyph(text: String): Boolean {
+            if (glyphCache.size > 4096) glyphCache.clear()
+            return glyphCache.getOrPut(text) { textPaint.hasGlyph(text) }
+        }
 
         private fun hitTest(x: Float, y: Float): Int {
             if (positions.isEmpty() || rowH <= 0f) return -1

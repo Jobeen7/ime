@@ -707,6 +707,17 @@ class ClipboardView(
         computeRowLayouts()
     }
 
+    // 行号标签缓存：onDraw 原本每帧为每个可见行新建 "N. " 字符串，
+    // 标签只随下标变，按下标缓存复用，绘制结果不变
+    private val indexLabelCache = ArrayList<String>()
+
+    private fun indexLabel(index: Int): String {
+        while (indexLabelCache.size <= index) {
+            indexLabelCache.add("${indexLabelCache.size + 1}. ")
+        }
+        return indexLabelCache[index]
+    }
+
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (width <= 0 || height <= 0) return
@@ -795,7 +806,7 @@ class ClipboardView(
             val fm = textPaint.fontMetrics
             val lh = fm.descent - fm.ascent
             val baseline = y + pillPad - fm.ascent
-            val indexLabel = "${i + 1}. "
+            val indexLabel = indexLabel(i)
             val indexW = indexPaint.measureText(indexLabel)
             if (row.pinned) {
                 val normalColor = indexPaint.color
@@ -854,7 +865,8 @@ class ClipboardView(
                     canvas.drawText(line.text, textX, y - fm.ascent, textPaint)
                     if (i == cursorLine) {
                         val col = (editCursor - line.start).coerceIn(0, line.text.length)
-                        val cx = textX + textPaint.measureText(line.text.substring(0, col))
+                        // measureText 的区间重载与 substring 后测量逐位一致，免去每帧新建字符串
+                        val cx = textX + textPaint.measureText(line.text, 0, col)
                         editCursorPaint.strokeWidth = 1.6f * density
                         canvas.drawLine(cx, y + 1f * density, cx, y + lh - 1f * density, editCursorPaint)
                     }

@@ -24,6 +24,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
 import java.lang.ref.WeakReference
@@ -319,7 +320,10 @@ object SherpaSpeechClient {
             for (signal in composingSignal) {
                 if (!holding.get()) break
                 composingText.getAndSet(null)?.let { text ->
-                    service.activeInputConnection()?.setComposingText(toDisplayText(text), 1)
+                    // 繁简转换（含首次词表解析加载）挪到后台算完再回主线程
+                    // 上屏：循环仍逐条串行处理，出字顺序与 50ms 节流时机不变
+                    val displayText = withContext(Dispatchers.Default) { toDisplayText(text) }
+                    service.activeInputConnection()?.setComposingText(displayText, 1)
                 }
                 delay(50)
             }
@@ -386,7 +390,10 @@ object SherpaSpeechClient {
                 // 取消：先删掉已流式显示的待定文字，再收尾，否则 finishComposingText 会把待定文字确认上屏。
                 ic?.setComposingText("", 1)
             } else if (!text.isNullOrBlank()) {
-                ic?.setComposingText(toDisplayText(text), 1)
+                // 同上：最终文本先在后台转换，再回主线程上屏收尾，
+                // DONE 后的转换→上屏→finishComposingText 顺序不变
+                val displayText = withContext(Dispatchers.Default) { toDisplayText(text) }
+                ic?.setComposingText(displayText, 1)
             }
             ic?.finishComposingText()
             SpeechUiBridge.onDone?.invoke()
