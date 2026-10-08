@@ -387,6 +387,8 @@ class SpeechRecognitionService : Service() {
         // 用户词典在主进程，本进程的会话导不出词。生成归主进程（RimeEngine
         // 输入结束时检查刷新、词典导入后刷新），本进程只读文件；新词表经
         // 指纹变化在下一次初始化时自动生效。
+        // 升级一次性清理旧版遗留的连写词表/旧标记（bpe 路线不兼容）。
+        SpeechHotwords.cleanupLegacyIfNeeded(context)
         if (recognizerRef.get() != null &&
             engineFingerprint(
                 context, App.speechModelDir, effectiveMode(context, App.speechModelDir)
@@ -422,6 +424,13 @@ class SpeechRecognitionService : Service() {
             // 旧代码直接 return false 是另一种拖死，这次统一走降级。
             var buildDesc = ""
             val buildOnce: (SpeechHotwords.DecodeMode) -> Boolean = { mode ->
+                // bpe 词表（与模型绑定的随包词表）；不可用时为 null，
+                // 热词档直接判失败走降级，不拿错词表喂引擎。
+                val vocab = SpeechHotwords.ensureVocab(context)
+                if (mode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS && vocab == null) {
+                    buildDesc = "热词词表与当前模型不匹配（模型已换代），热词停用"
+                    false
+                } else {
                 val qnnSupported =
                     if (mode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS) {
                         false
@@ -471,6 +480,13 @@ class SpeechRecognitionService : Service() {
                     debug = false,
                     provider = if (useQnn) "qnn" else "cpu",
                     modelType = if (useQnn) "zipformer" else "",
+                    // 建模单元永远显式给值：留空（Kotlin 默认 ""）时引擎在
+                    // 热词编码处以 _Exit 直接终止本进程、try/catch 接不住
+                    // ——这是 v1.1.2.3–v1.1.2.6 第三档必死、且自动降级与
+                    // 状态写入都来不及执行的根因（审计复现 exit 255）。
+                    // 本模型为 bpe 单元；bpeVocab 是与模型绑定的配套词表。
+                    modelingUnit = "bpe",
+                    bpeVocab = vocab?.absolutePath ?: "",
                 )
                 // 解码方式由设置中的三档开关决定（文件传递，默认 GREEDY
                 // 即历史稳定行为）：BEAM 只切束搜索不挂词表，BEAM_HOTWORDS
@@ -479,7 +495,8 @@ class SpeechRecognitionService : Service() {
                 val hotwordsFile = SpeechHotwords.file(context)
                 val useBeam = mode != SpeechHotwords.DecodeMode.GREEDY
                 val useHotwords = mode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS &&
-                    !useQnn && hotwordsFile.isFile && hotwordsFile.length() > 0
+                    !useQnn && vocab != null &&
+                    hotwordsFile.isFile && hotwordsFile.length() > 0
                 val config = OnlineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
                     modelConfig = modelConfig,
@@ -487,9 +504,22 @@ class SpeechRecognitionService : Service() {
                     maxActivePaths = 4,
                     enableEndpoint = false,
                     hotwordsFile = if (useHotwords) hotwordsFile.absolutePath else "",
-                    hotwordsScore = if (useHotwords) 2.5f else 0.0f,
+                    // 1.5 为审计实测值（2.5 开始冒多余的字）
+                    hotwordsScore = if (useHotwords) 1.5f else 0.0f,
                 )
+                if (useHotwords) {
+                    // 构造前预置降级标记：引擎若在构造中 _Exit 杀进程，
+                    // 标记留存，下次启动 effectiveMode 见标记直接降级，
+                    // 不会每次长按都再死一次；构造成功随即清除。
+                    SpeechHotwords.writeDegradeStamp(
+                        context,
+                        engineFingerprint(
+                            context, dir, SpeechHotwords.DecodeMode.BEAM_HOTWORDS
+                        ),
+                    )
+                }
                 recognizerRef.set(OnlineRecognizer(null, config))
+                if (useHotwords) SpeechHotwords.clearDegradeStamp(context)
                 loadedModelFingerprint = engineFingerprint(context, dir, mode)
                 val encoderPath = files.encoder.absolutePath
                 val engineVariant = when {
@@ -508,6 +538,7 @@ class SpeechRecognitionService : Service() {
             }
                 }
                 attempt == true
+                }
             }
             // 构造主流程：热词档失败 → 记降级标记并以束搜索重试一次；
             // 最终状态写引擎状态文件，设置页可见。
