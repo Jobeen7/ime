@@ -57,7 +57,8 @@ class SpeechHotwordsTest {
 
     @Test
     fun renderOneWordPerLine() {
-        assertEquals("我们\n吃饭\n", SpeechHotwords.render(listOf("我们", "吃饭")))
+        // bpe 热词写法：每行一个词、字间加空格（连写不报错但无效）
+        assertEquals("我 们\n吃 饭\n", SpeechHotwords.render(listOf("我们", "吃饭")))
         assertEquals("", SpeechHotwords.render(emptyList()))
         assertTrue(SpeechHotwords.selectHotwords(emptyList()).isEmpty())
     }
@@ -76,5 +77,26 @@ class SpeechHotwordsTest {
     fun filterByTokenCharsEmptyCharSetKeepsAll() {
         val words = listOf("王小明", "安健达")
         assertEquals(words, SpeechHotwords.filterByTokenChars(words, emptySet()))
+    }
+
+    @Test
+    fun loadTokenCharsReadsPrefixedPieces() {
+        // 当前模型字表：汉字只有「▁字」词片、无裸字；可编码字集应由
+        // 词片去前缀得到（旧写法只认裸单字会得到空集、滤光所有中文词）
+        val tmp = java.io.File.createTempFile("tokens", ".txt")
+        try {
+            tmp.writeText("<blk> 0\n▁黄 619\n▁超 670\n▁， 8\nA 100\n▁ABC 200\n")
+            val chars = SpeechHotwords.loadTokenChars(tmp)
+            assertEquals(setOf("黄", "超", "，", "A"), chars)
+        } finally {
+            tmp.delete()
+        }
+    }
+
+    @Test
+    fun spacedJoinsByCodePoint() {
+        assertEquals("礼 拜 二", SpeechHotwords.spaced("礼拜二"))
+        assertEquals("好", SpeechHotwords.spaced("好"))
+        assertEquals("", SpeechHotwords.spaced(""))
     }
 }
