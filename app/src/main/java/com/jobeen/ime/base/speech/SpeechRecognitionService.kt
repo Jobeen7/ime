@@ -390,7 +390,17 @@ class SpeechRecognitionService : Service() {
                 streamRef.getAndSet(null)?.runCatching { release() }
                 existing.runCatching { release() }
             }
-            val qnnSupported = isQnnRuntimeSupported(context)
+            val decodeMode = SpeechHotwords.readMode(context)
+            // 热词档必须走 CPU：引擎 native 明示 "hotwords are not supported
+            // with qnn transducers"——QNN 变体挂热词构造直接被拒（v1.1.2.3
+            // 真机第三档无反应的根因，v1.1.2.4 三档隔离 + 库内字符串坐实）。
+            // CPU 模型文件缺失时下方自然落到 QNN 分支，届时 useHotwords
+            // 守卫会摘掉热词（等同 BEAM），语音不能被热词拖死。
+            val qnnSupported = if (decodeMode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS) {
+                false
+            } else {
+                isQnnRuntimeSupported(context)
+            }
             val qnnFiles = if (qnnSupported) findModelFiles(dir, qnn = true) else null
 
             val (files, useQnn) = if (qnnFiles != null && prepareQnnRuntime(context)) {
@@ -436,14 +446,13 @@ class SpeechRecognitionService : Service() {
                 )
                 // 解码方式由设置中的三档开关决定（文件传递，默认 GREEDY
                 // 即历史稳定行为）：BEAM 只切束搜索不挂词表，BEAM_HOTWORDS
-                // 再加用户词库热词偏置。v1.1.2.3 真机"带热词后语音无反应"
-                // 的三个子嫌疑（束搜索/热词文件/变体组合）靠逐档隔离定位；
-                // 定位结论出来后可收敛回单一路径。
-                val decodeMode = SpeechHotwords.readMode(context)
+                // 再加用户词库热词偏置，且构造前已强制 CPU 变体（见上）；
+                // useQnn 守卫是第二道保险：万一仍落在 QNN 上，宁可不挂
+                // 热词也不能让构造被 native 拒绝。
                 val hotwordsFile = SpeechHotwords.file(context)
                 val useBeam = decodeMode != SpeechHotwords.DecodeMode.GREEDY
                 val useHotwords = decodeMode == SpeechHotwords.DecodeMode.BEAM_HOTWORDS &&
-                    hotwordsFile.isFile && hotwordsFile.length() > 0
+                    !useQnn && hotwordsFile.isFile && hotwordsFile.length() > 0
                 val config = OnlineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = SAMPLE_RATE, featureDim = 80),
                     modelConfig = modelConfig,
