@@ -35,7 +35,8 @@ class OpenCCDictionary(
 
     override fun toOpenCCDictionary(dest: File): OpenCCDictionary {
         ensureBin(dest)
-        file.copyTo(dest)
+        // ensureBin 已不再预删 dest，拷贝需显式允许覆写
+        file.copyTo(dest, overwrite = true)
         return OpenCCDictionary(dest)
     }
 
