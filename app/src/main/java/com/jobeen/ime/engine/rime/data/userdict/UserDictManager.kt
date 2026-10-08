@@ -1,6 +1,7 @@
 package com.jobeen.ime.engine.rime.data.userdict
 
 import com.jobeen.ime.base.util.appContext
+import java.io.BufferedWriter
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
@@ -63,6 +64,82 @@ object UserDictManager {
             tempFile.delete()
             Result.failure(e)
         }
+    }
+
+    /** 单块导入的大小上限：整文件导入会长时间独占引擎线程（rime-main），
+     *  大词库导入/同步期间按键只能排队等它跑完；按行切块、逐块导入后，
+     *  按键最多等一块的时长。 */
+    private const val IMPORT_CHUNK_MAX_BYTES = 2L * 1024 * 1024
+
+    /**
+     * 分批导入 [source]：按行切成约 2MB 的临时块文件，逐块交给 [importChunk]
+     * （即 RimeApi.importUserDictLive）导入，块间 yield 让出调用方协程；
+     * 块文件用完即删（失败路径同样清理）。小文件（≤单块上限）不切块、
+     * 直接整文件导入，与旧行为一致。
+     *
+     * 返回累计导入条数；任一块返回负数即中止并返回 -1（与单文件导入的
+     * 失败口径一致；此前块已导入的部分不回滚——合并导入只增不减）。
+     * librime 按文件逐条合并，切块不改变最终词条集合。
+     */
+    suspend fun importUserDictInChunks(
+        source: File,
+        importChunk: suspend (File) -> Int,
+    ): Int {
+        if (source.length() <= IMPORT_CHUNK_MAX_BYTES) {
+            return importChunk(source)
+        }
+        val chunks = splitImportChunks(source)
+        try {
+            var total = 0
+            for ((index, chunk) in chunks.withIndex()) {
+                if (index > 0) kotlinx.coroutines.yield()
+                val count = importChunk(chunk)
+                if (count < 0) return -1
+                total += count
+            }
+            return total
+        } finally {
+            chunks.forEach { it.delete() }
+        }
+    }
+
+    /** 按行切块（不拆行）：单行超上限时自成一块。块文件与源文件同目录；
+     *  切分中途失败时删除已生成的块文件并抛出，由调用方按导入失败处理。 */
+    private fun splitImportChunks(source: File): List<File> {
+        val chunks = ArrayList<File>()
+        val prefix = "${source.name}.chunk-${System.nanoTime()}"
+        var out: BufferedWriter? = null
+        var bytesInChunk = 0L
+        fun closeChunk() {
+            out?.close()
+            out = null
+            bytesInChunk = 0
+        }
+        try {
+            source.bufferedReader(Charsets.UTF_8).useLines { lines ->
+                for (line in lines) {
+                    val lineBytes = line.toByteArray(Charsets.UTF_8).size + 1L
+                    if (out != null && bytesInChunk + lineBytes > IMPORT_CHUNK_MAX_BYTES) {
+                        closeChunk()
+                    }
+                    if (out == null) {
+                        val chunkFile = File(source.parentFile, "$prefix-${chunks.size}")
+                        chunks += chunkFile
+                        out = chunkFile.bufferedWriter(Charsets.UTF_8)
+                    }
+                    out!!.write(line)
+                    out!!.newLine()
+                    bytesInChunk += lineBytes
+                }
+            }
+        } catch (e: Exception) {
+            closeChunk()
+            chunks.forEach { it.delete() }
+            throw e
+        } finally {
+            closeChunk()
+        }
+        return chunks
     }
 
     fun exportUserDict(dest: OutputStream, dictName: String, textFile: String): Result<Int> {
