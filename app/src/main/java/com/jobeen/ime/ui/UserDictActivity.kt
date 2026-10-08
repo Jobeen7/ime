@@ -205,16 +205,7 @@ class UserDictActivity : ComponentActivity() {
                             ToastUtil.showToast("导入失败")
                         }
                         count == 0 -> ToastUtil.showToast("文件中没有可导入的词")
-                        else -> {
-                            ToastUtil.showToast("已导入 $count 个词")
-                            // 词库变了：语音热词随之刷新（下一次语音初始化生效）
-                            lifecycleScope.launch(Dispatchers.IO) {
-                                runCatching {
-                                    com.jobeen.ime.base.speech.SpeechHotwords
-                                        .regenerate(this@UserDictActivity)
-                                }
-                            }
-                        }
+                        else -> ToastUtil.showToast("已导入 $count 个词")
                     }
                 }
             } catch (e: Exception) {
