@@ -26,6 +26,7 @@ object ModelDownloader {
     private const val CONNECT_TIMEOUT_SECONDS = 30L
     private const val READ_TIMEOUT_SECONDS = 60L
     private const val TOKENS_FILE = "tokens.txt"
+    private const val BPE_MODEL_FILE = "bpe.model"
     private const val ENCODER_NAME = "encoder"
     private const val DECODER_NAME = "decoder"
     private const val JOINER_NAME = "joiner"
@@ -125,6 +126,9 @@ object ModelDownloader {
         val encoder: File,
         val decoder: File,
         val joiner: File,
+        // bpe.model 是热词（bpe 建模单元）导出词表的源文件，此前解压时
+        // 被丢弃；保留它，模型换代时才能重新导出匹配的 bpe.vocab。
+        val bpeModel: File? = null,
     )
 
     suspend fun download(
@@ -223,6 +227,7 @@ object ModelDownloader {
     private fun shouldExtract(name: String): Boolean {
         val fileName = name.substringAfterLast('/')
         if (fileName.equals(TOKENS_FILE, true)) return true
+        if (fileName.equals(BPE_MODEL_FILE, true)) return true
         return MODEL_COMPONENTS.any { isModelFile(fileName, it) }
     }
 
@@ -246,7 +251,8 @@ object ModelDownloader {
             )
             return null
         }
-        return ModelFiles(tokens, encoder, decoder, joiner)
+        val bpeModel = findFile(root) { it.name.equals(BPE_MODEL_FILE, true) }
+        return ModelFiles(tokens, encoder, decoder, joiner, bpeModel)
     }
 
     private fun findModelFile(root: File, component: String): File? =
@@ -279,6 +285,7 @@ object ModelDownloader {
         moveTo(staging, model.encoder)
         moveTo(staging, model.decoder)
         moveTo(staging, model.joiner)
+        model.bpeModel?.let { moveTo(staging, it) }
         // 替换前再次校验新模型已完整
         if (findModel(staging) == null) {
             staging.deleteRecursively()
