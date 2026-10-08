@@ -88,6 +88,16 @@ class VoiceCorrectionStoreTest {
     }
 
     @Test
+    fun wrongFormBelongsToLatestRightForm() {
+        // 同一错形先后被改到两个正形：以最新为准，旧规则不再抢
+        val store = VoiceCorrectionStore(tempFile())
+        store.learn("恒星大", "恒星达")
+        assertEquals("恒星达", store.correct("恒星大").text)
+        store.learn("恒星大", "衡星达")
+        assertEquals("衡星达", store.correct("恒星大").text)
+    }
+
+    @Test
     fun positionalVariantsGeneralizeAcrossPairs() {
         val store = VoiceCorrectionStore(tempFile())
         store.learn("恒星大", "恒星达")
