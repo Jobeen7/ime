@@ -62,6 +62,17 @@ class VoiceCorrectionStore(private val file: File) {
             ensureLoadedLocked()
             var changed = false
             if (disabled.remove(rightForm)) changed = true
+            // 错形归属唯一：同一错形此前若归在别的正形名下，先摘除，
+            // 避免两条规则抢同一片段、纠正结果 flip-flop
+            val it = pairs.entries.iterator()
+            while (it.hasNext()) {
+                val entry = it.next()
+                if (entry.key == rightForm) continue
+                if (entry.value.remove(wrongForm)) {
+                    changed = true
+                    if (entry.value.isEmpty()) it.remove()
+                }
+            }
             val set = pairs.getOrPut(rightForm) { LinkedHashSet() }
             if (set.add(wrongForm)) changed = true
             if (changed) markDirtyLocked()
