@@ -41,6 +41,33 @@ object SherpaSpeechClient {
     private val discarding = AtomicBoolean(false)
     private val composingText = AtomicReference<String?>(null)
 
+    // 等 DONE 窗口：stopHoldSession 发出 STOP 后、服务端回 DONE 前的这段
+    // 时间。DONE 是唯一收尾信号，若 :speech 进程在此期间死亡或回信丢失，
+    // 待定文字会永久挂在输入框里。故置位 awaitingDone 并挂超时：超时未
+    // 收到 DONE 就在客户端强制 finishSession（服务端大概率已完成识别，
+    // composingText 里的最新文本就是最终结果）。
+    private val awaitingDone = AtomicBoolean(false)
+    private val doneTimeoutHandler = Handler(Looper.getMainLooper())
+    private const val DONE_TIMEOUT_MS = 3000L
+    private val doneTimeoutRunnable = Runnable {
+        if (!awaitingDone.compareAndSet(true, false)) return@Runnable
+        // 超时期间用户已开始新会话：这声超时属于旧会话，不得结算新会话
+        if (holding.get()) return@Runnable
+        Timber.w("SpeechCli DONE timeout, force finishSession")
+        finishSession()
+    }
+
+    private fun armDoneTimeout() {
+        awaitingDone.set(true)
+        doneTimeoutHandler.removeCallbacks(doneTimeoutRunnable)
+        doneTimeoutHandler.postDelayed(doneTimeoutRunnable, DONE_TIMEOUT_MS)
+    }
+
+    private fun disarmDoneTimeout() {
+        awaitingDone.set(false)
+        doneTimeoutHandler.removeCallbacks(doneTimeoutRunnable)
+    }
+
     /**
      * 文本到达信号（合并通道）：partial/final 写入 composingText 后发一个
      * 信号，消费协程据此上屏。未消费时只保留一个信号，天然合并高频到达；
@@ -114,7 +141,9 @@ object SherpaSpeechClient {
         override fun onServiceDisconnected(name: ComponentName?) {
             Timber.d("SpeechCli %s", "onServiceDisconnected")
             synchronized(connectLock) { speechMessenger = null }
-            if (holding.get()) cancelSession()
+            // 录音中、或已停录在等 DONE 时断开都要收尾：后者 holding 已
+            // false，只判 holding 会漏掉，DONE 永远等不到、待定文字挂死
+            if (holding.get() || awaitingDone.get()) cancelSession()
 
             //异常退出。清理资源
 //            runCatching {
@@ -212,6 +241,7 @@ object SherpaSpeechClient {
     }
 
     private fun onDone() {
+        disarmDoneTimeout()
         finishSession()
     }
 
@@ -273,6 +303,9 @@ object SherpaSpeechClient {
         }
         if (!holding.compareAndSet(false, true)) return
         Timber.i("startHoldSession")
+        // 新会话开始：上一会话若还留着等 DONE 的超时任务，一并清掉，
+        // 防止它在新会话中途误触发 finishSession
+        disarmDoneTimeout()
         val gen = genCounter.incrementAndGet()
         activeGen = gen
         serviceRef = WeakReference(service)
@@ -335,6 +368,9 @@ object SherpaSpeechClient {
         uiJob = null
         val messenger = synchronized(connectLock) { speechMessenger }
         if (messenger != null) {
+            // 先 arm 再发 STOP：DONE 可能极快返回，先置位才不会被 onDone
+            // 的 disarm 错过、反留下无人认领的超时任务
+            armDoneTimeout()
             runCatching { messenger.send(SpeechIpc.message(SpeechIpc.MSG_STOP)) }
         } else {
             finishSession()
@@ -406,6 +442,9 @@ object SherpaSpeechClient {
     private fun resetState() {
         holding.set(false)
         discarding.set(false)
+        // 所有收尾路径（finish/cancel/权限中止）都经这里：等 DONE 的
+        // 标志与超时任务不得残留到下一会话
+        disarmDoneTimeout()
         // 会话收尾：代次清零，此后到达的任何带代次回信都会被 handler 丢弃
         activeGen = 0
         uiJob?.cancel()
