@@ -69,25 +69,49 @@ class GramDb(filePath: String) {
         return all
     }
 
-    fun query(context: String, word: String, isRear: Boolean = false): Double {
+    /**
+     * 一次预测的上下文预计算：上下文编码与逐后缀步的 trie 落点只随上下文
+     * 变、与候选词无关。旧实现在 [query] 里对每个候选（一次预测最多
+     * 25 个）把同一份上下文从头重算一遍；改为在预测入口算一次、各候选
+     * 复用。trie 的 traverse/commonPrefixSearch 只读无共享可变状态，
+     * 预计算与逐候选内联计算的结果逐位一致。
+     */
+    class PreparedContext internal constructor(
+        internal val nodePositions: IntArray,
+    )
+
+    fun prepareContext(context: String): PreparedContext {
         val n = minOf(GramEncoding.MAX_ENCODED_UNICODE, 8)
         val ctxTail = lastNCodePoints(context, n)
-        val wordHead = firstNCodePoints(word, n)
         val encCtx = GramEncoding.encode(ctxTail)
-        val encWord = GramEncoding.encode(wordHead)
 
-        var best = -Double.MAX_VALUE
+        val positions = ArrayList<Int>()
         var p = 0
         while (p < encCtx.size) {
             val subCtx = encCtx.copyOfRange(p, encCtx.size)
             val t = trie.traverse(subCtx)
             if (t.keyPos == subCtx.size) {
-                for (m in trie.commonPrefixSearch(encWord, MAX_RESULTS, nodePosStart = t.nodePos)) {
-                    val s = scaleValue(m.value)
-                    if (s > best) best = s
-                }
+                positions.add(t.nodePos)
             }
             p = GramEncoding.nextUnicode(encCtx, p)
+        }
+        return PreparedContext(positions.toIntArray())
+    }
+
+    fun query(context: String, word: String, isRear: Boolean = false): Double =
+        query(prepareContext(context), word, isRear)
+
+    fun query(prepared: PreparedContext, word: String, isRear: Boolean = false): Double {
+        val n = minOf(GramEncoding.MAX_ENCODED_UNICODE, 8)
+        val wordHead = firstNCodePoints(word, n)
+        val encWord = GramEncoding.encode(wordHead)
+
+        var best = -Double.MAX_VALUE
+        for (nodePos in prepared.nodePositions) {
+            for (m in trie.commonPrefixSearch(encWord, MAX_RESULTS, nodePosStart = nodePos)) {
+                val s = scaleValue(m.value)
+                if (s > best) best = s
+            }
         }
 
         if (isRear) {
