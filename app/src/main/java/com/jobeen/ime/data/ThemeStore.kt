@@ -9,6 +9,7 @@ import java.io.File
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 object ThemeStore {
     private const val THEMES_FILE = "themes.json"
@@ -25,8 +26,11 @@ object ThemeStore {
 
     fun refresh() {
         val file = File(App.themesDir, THEMES_FILE)
-        val themes = if (file.isFile) {
-            val text = file.readText()
+        if (!file.isFile) {
+            KeyboardThemePresets.setCustomThemes(emptyList())
+            return
+        }
+        val themes = runCatching { file.readText() }.getOrNull()?.let { text ->
             runCatching {
                 readableJson.decodeFromString<List<ReadableTheme>>(text)
                     .map { it.toKeyboardTheme() }
@@ -37,11 +41,16 @@ object ThemeStore {
                     runCatching {
                         fallbackJson.decodeFromString<List<CompactTheme>>(text)
                             .map { it.toKeyboardTheme() }
-                    }.getOrElse { emptyList() }
+                    }.getOrNull()
                 }
             }
-        } else {
-            emptyList()
+        }
+        if (themes == null) {
+            // 解析失败（文件损坏/格式不符/读失败）：保留上一个可用状态，
+            // 内存不清空、磁盘不覆盖，等下一次 refresh 或保存自然收敛；
+            // 旧实现落到 emptyList 会把内存态清零、与磁盘内容不一致
+            Timber.w("ThemeStore: failed to parse %s; keeping previous custom themes", THEMES_FILE)
+            return
         }
         KeyboardThemePresets.setCustomThemes(
             themes.take(MAX_CUSTOM_THEMES).map { it }
@@ -87,8 +96,10 @@ object ThemeStore {
             val file = File(App.themesDir, THEMES_FILE)
             runCatching {
                 // 原子写：先写临时文件再 rename，进程在写一半时被杀不会留下
-                // 截断的 themes.json（旧实现 writeText 直写会丢全部自定义主题）
-                val tmp = File(App.themesDir, "$THEMES_FILE.tmp")
+                // 截断的 themes.json（旧实现 writeText 直写会丢全部自定义主题）。
+                // tmp 名带写入序号保持唯一：共用同一 tmp 时并发写的 writeText
+                // 会互相交错、rename 还可能把别人的半成品顶成正式文件
+                val tmp = File(App.themesDir, "$THEMES_FILE.$seq.tmp")
                 tmp.writeText(readableJson.encodeToString(snapshot))
                 // 已有更新的保存在途：本次快照作废，由最新一次负责落盘终态
                 if (seq == writeSeq.get()) {
