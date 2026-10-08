@@ -70,6 +70,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
+import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.R
 import com.jobeen.ime.base.ngram.GramModelDownloader
 import com.jobeen.ime.base.update.WanxiangUpdateManager
@@ -270,7 +271,13 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         updateFailed = false
         updateDone = false
         updateProgress = null
-        scope.launch {
+        // 下载应用 + 引擎 reload 必须跑在应用级作用域：绑页面 scope 时用户
+        // 中途离开页面会把协程取消，可能词库文件已替换而 reload 永不执行，
+        // 引擎继续用旧部署。进度回调只做 UI 更新，仍走页面 scope（页面已
+        // 销毁时其 launch 自动失效，无副作用）
+        val workScope =
+            (context.applicationContext as? ImeApplication)?.applicationScope ?: scope
+        workScope.launch {
             val success = WanxiangUpdateManager.downloadAndApply(
                 updatePrefs,
                 info,

@@ -101,6 +101,27 @@ plugins {
     }
 }
 
+// release 构建 fail-fast：JIME 持久签名未配置时，release 的 signingConfig
+// 不会被赋值，AGP 产出未签名包——能装但覆盖不了已发布版本，且构建不报错、
+// 极易误发。仅当本次调用包含 assemble/bundle/install/publish 的 Release
+// 任务时拦截；debug 构建、单元测试、lint 等不受影响（debug 仍可回退默认签名）。
+val jimeKsPath = project.findProperty("JIME_STORE_FILE") as String?
+val jimeSigningConfigured = jimeKsPath != null && file(jimeKsPath).exists()
+if (!jimeSigningConfigured) {
+    val releaseTaskRequested = gradle.startParameter.taskNames.any { name ->
+        val task = name.substringAfterLast(':')
+        task.contains("Release") &&
+            (task.startsWith("assemble") || task.startsWith("bundle") ||
+                task.startsWith("install") || task.startsWith("publish"))
+    }
+    if (releaseTaskRequested) {
+        throw GradleException(
+            "JIME 签名配置缺失（gradle.properties 未配置 JIME_STORE_FILE 或 key 文件不存在），" +
+                "release 构建已拦截：未签名包无法覆盖升级已发布版本。"
+        )
+    }
+}
+
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     // implementation(libs.tokenizer)

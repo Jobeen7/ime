@@ -69,6 +69,7 @@ class KeyboardWindowView(
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
         if (isVoiceRecording && !voiceOverlay.isLocked &&
             (ev.actionMasked == android.view.MotionEvent.ACTION_UP ||
+             ev.actionMasked == android.view.MotionEvent.ACTION_POINTER_UP ||
              ev.actionMasked == android.view.MotionEvent.ACTION_CANCEL)) {
             val upPointerId = runCatching { ev.getPointerId(ev.actionIndex) }.getOrDefault(-1)
             if (voicePointerId == -1 || upPointerId == voicePointerId) {

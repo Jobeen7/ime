@@ -795,12 +795,28 @@ class CandidateGridView(
         invalidate()
     }
 
+    /** 收起动画进行中：此间 visibility 仍为 VISIBLE，show() 需特殊处理 */
+    private var collapseAnimating = false
+
     fun show(list: List<EngineMessage.Candidate>) {
         allCandidates = list
         needMoreRequested = false
         gridCanvas.recomputeLayout()
         gridCanvas.resetScroll()
-        super.show()
+        if (collapseAnimating) {
+            // 收起动画未结束时 visibility 仍是 VISIBLE，ComponentView.show()
+            // 的守卫会直接空转，而旧动画收尾还会清空刚写入的候选：
+            // 先取消动画（slideUpCollapse 的 cancelled 守卫会跳过收尾清空）、
+            // 复位缩放，直接置为展开态
+            collapseAnimating = false
+            animate().cancel()
+            animate().setListener(null)
+            scaleY = 1f
+            bringToFront()
+            visibility = View.VISIBLE
+        } else {
+            super.show()
+        }
         // 隐藏期间积压的拼音侧栏数据在展开时才真正构建应用
         pendingPinYinData?.let { applyPossibleCandidatePinYin(it) }
     }
@@ -815,7 +831,9 @@ class CandidateGridView(
     }
 
     override fun hide() {
+        collapseAnimating = true
         slideUpCollapse {
+            collapseAnimating = false
             allCandidates = emptyList()
             gridCanvas.resetScroll()
         }
