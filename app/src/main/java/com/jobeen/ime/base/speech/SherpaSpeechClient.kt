@@ -204,6 +204,26 @@ object SherpaSpeechClient {
         }
     }
 
+    /** 语音专名纠错词表：与识别解耦的独立小文件存储，损坏即整体不纠。 */
+    private val correctionStore by lazy {
+        VoiceCorrectionStore(File(appContext.filesDir, "voice_corrections.tsv"))
+    }
+
+    /** 输入法服务的选区探针回调：把编辑观察转给纠错沉淀会话。 */
+    fun onEditorTextProbed(service: ImeInputMethodService) {
+        VoiceCorrectionSession.onInputChanged(service)
+    }
+
+    /** 打字上屏词段回调（引擎搭配学习同一入口）：供纠错沉淀配对正形。 */
+    fun notifyTypedSegment(segment: String) {
+        VoiceCorrectionSession.onTypedWord(segment)
+    }
+
+    /** 输入视图结束/切换输入框：解除纠错沉淀观察。 */
+    fun onInputViewFinished() {
+        VoiceCorrectionSession.disarm()
+    }
+
     private fun onRecordingStarted() {
         runCatching { SpeechUiBridge.onRecordingStarted?.invoke() }
     }
@@ -395,16 +415,25 @@ object SherpaSpeechClient {
         service?.scope?.launch(Dispatchers.Main) {
             val text = composingText.getAndSet(null)
             val ic = service.activeInputConnection()
+            var committed: CorrectResult? = null
             if (discarding.get()) {
                 // 取消：先删掉已流式显示的待定文字，再收尾，否则 finishComposingText 会把待定文字确认上屏。
                 ic?.setComposingText("", 1)
             } else if (!text.isNullOrBlank()) {
-                // 同上：最终文本先在后台转换，再回主线程上屏收尾，
+                // 定稿先过专名同音纠错（词表与规则均为简体，必须赶在
+                // 繁简转换之前），再在后台转换，回主线程上屏收尾，
                 // DONE 后的转换→上屏→finishComposingText 顺序不变
-                val displayText = withContext(Dispatchers.Default) { toDisplayText(text) }
+                val corrected = withContext(Dispatchers.Default) { correctionStore.correct(text) }
+                val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
                 ic?.setComposingText(displayText, 1)
+                committed = corrected
             }
             ic?.finishComposingText()
+            // 上屏后武装纠错沉淀：观察用户对这段文本的亲手修改，
+            // 学成词对供下次定稿自动纠正（无观察条件时内部自行放弃）
+            committed?.let {
+                VoiceCorrectionSession.arm(service, correctionStore, it.text, it.applied)
+            }
             SpeechUiBridge.onDone?.invoke()
             resetState()
         } ?: resetState()
