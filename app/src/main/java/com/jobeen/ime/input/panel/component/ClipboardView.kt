@@ -247,25 +247,6 @@ class ClipboardView(
     // 本趟开始前的快照。手指进入上/下边缘区时列表自动滚动，可连选
     // 到屏幕外。单独点按（未进入拖选）仍是切换一条。
 
-    // ── 临时诊断（拖选失效排查，定版后移除）：屏幕浮层显示手势状态 ──
-    private var dbgEvent = "（无事件）"
-    private var dbgApply = ""
-    private val dbgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFFFF5252.toInt()
-        textSize = 11f * resources.displayMetrics.density
-        typeface = android.graphics.Typeface.MONOSPACE
-    }
-
-    override fun draw(canvas: Canvas) {
-        super.draw(canvas)
-        val l1 = "multi=$multiSelectActive tab=$clipTab rows=${rowLayouts.size} " +
-            "disp=${displayedEntries.size} anch=$dragAnchorIndex drag=$dragSelecting " +
-            "sel=${selectedTexts.size} off=${scrollOffsetY.toInt()}"
-        canvas.drawText(l1, 4f, 12f * density, dbgPaint)
-        canvas.drawText(dbgEvent, 4f, 24f * density, dbgPaint)
-        if (dbgApply.isNotEmpty()) canvas.drawText(dbgApply, 4f, 36f * density, dbgPaint)
-    }
-
     private var dragSelecting = false
     private var dragAnchorIndex = -1
     private var dragTargetState = true
@@ -313,14 +294,13 @@ class ClipboardView(
     /** 按当前手指位置重算拖选区间并应用到选中集合（区间外恢复快照）。 */
     private fun applyDragSelection() {
         if (dragAnchorIndex < 0 || displayedEntries.isEmpty()) return
-        var idx = itemIndexAt(dragLastY)
+        var idx = dragIndexAt(dragLastY)
         if (idx < 0) {
             // 手指已拖到首行以上/末行以下（边缘自动滚动区）：钳到端点行
             idx = if (dragLastY < height / 2f) 0 else displayedEntries.lastIndex
         }
         val lo = minOf(dragAnchorIndex, idx)
         val hi = maxOf(dragAnchorIndex, idx)
-        dbgApply = "APPLY y=${dragLastY.toInt()} idx=$idx lo=$lo hi=$hi tgt=$dragTargetState"
         val next = HashSet(dragSnapshot)
         for (i in lo..hi) {
             val text = displayedEntries.getOrNull(i)?.text ?: continue
@@ -343,6 +323,21 @@ class ClipboardView(
                 displayedEntries.getOrNull(i)?.text?.let { it in selectedTexts } == true
             if (row.selected == sel) row else row.copy(selected = sel)
         }
+    }
+
+    /**
+     * 设定拖选锚点：目标状态按锚点当前状态取反（未选→整趟选上，已选→整趟取消）。
+     * 例外：当前仅选中锚点一条（多为经长按菜单进入多选时的预选）时起拖按
+     * 选取走——预选是系统替用户选的，用户落指的意图是从这里开始选，整趟
+     * 变取消只会扑空；真要取消这一条点按即可。已手动选中多条时不受影响。
+     */
+    private fun setDragAnchor(idx: Int, y: Float) {
+        dragAnchorIndex = idx
+        dragStartY = y
+        val text = displayedEntries.getOrNull(idx)?.text
+        dragTargetState = text != null &&
+            (text !in selectedTexts || selectedTexts.size == 1)
+        dragSnapshot = LinkedHashSet(selectedTexts)
     }
 
     private fun endDragSelection(rollback: Boolean) {
@@ -368,26 +363,23 @@ class ClipboardView(
                 dragStartY = event.y
                 dragLastY = event.y
                 isScrolling = false
-                val idx = itemIndexAt(event.y)
-                dbgEvent = "M-DOWN y=${event.y.toInt()} idx=$idx"
+                val idx = dragIndexAt(event.y)
                 pressedIndex = if (idx in rowLayouts.indices) idx else -1
-                if (pressedIndex >= 0) {
-                    dragAnchorIndex = pressedIndex
-                    val text = displayedEntries.getOrNull(pressedIndex)?.text
-                    // 目标状态按锚点当前状态取反：未选→整趟选上，已选→整趟取消
-                    dragTargetState = text != null && text !in selectedTexts
-                    dragSnapshot = LinkedHashSet(selectedTexts)
-                    dbgEvent += " anch=$dragAnchorIndex tgt=$dragTargetState"
-                }
+                if (pressedIndex >= 0) setDragAnchor(pressedIndex, event.y)
                 invalidate()
             }
 
             MotionEvent.ACTION_MOVE -> {
                 dragLastY = event.y
+                if (dragAnchorIndex < 0) {
+                    // 按下时落在列表外（如顶部空白）：手指移入行区后补设锚点，
+                    // 否则整趟拖动无声失效（只有滚动、没有连选）
+                    val idx = dragIndexAt(event.y)
+                    if (idx in rowLayouts.indices) setDragAnchor(idx, event.y)
+                }
                 if (!dragSelecting && dragAnchorIndex >= 0 &&
                     abs(event.y - dragStartY) > touchSlop
                 ) {
-                    dbgEvent = "ENGAGE dy=${(event.y - dragStartY).toInt()} slop=$touchSlop"
                     dragSelecting = true
                     pressedIndex = -1
                     applyDragSelection()
@@ -400,7 +392,6 @@ class ClipboardView(
 
             MotionEvent.ACTION_UP -> {
                 val wasDragging = dragSelecting
-                dbgEvent = "M-UP wasDrag=$wasDragging pressed=$pressedIndex"
                 endDragSelection(rollback = false)
                 if (!wasDragging && pressedIndex in rowLayouts.indices) {
                     val idx = pressedIndex
@@ -416,7 +407,6 @@ class ClipboardView(
 
             MotionEvent.ACTION_CANCEL -> {
                 // 手势被系统打断：回滚本趟连选，避免半成品状态
-                dbgEvent = "M-CANCEL drag=$dragSelecting"
                 endDragSelection(rollback = true)
                 pressedIndex = -1
                 invalidate()
@@ -886,11 +876,28 @@ class ClipboardView(
         return -1
     }
 
+    /**
+     * 拖选专用命中：行间空隙（listGap）不算落空，就近归到上一行；
+     * 列表上下之外钳到首/末行。点按仍用严格的 [itemIndexAt]，
+     * 避免空隙点按误触邻行上屏。
+     */
+    private fun dragIndexAt(y: Float): Int {
+        val direct = itemIndexAt(y)
+        if (direct >= 0) return direct
+        if (rowLayouts.isEmpty()) return -1
+        val contentY = scrollOffsetY + y - headerH - topPad
+        if (contentY < 0f) return 0
+        var cumulative = 0f
+        for (i in rowLayouts.indices) {
+            cumulative += rowLayouts[i].height + listGap
+            if (contentY < cumulative) return i
+        }
+        return rowLayouts.lastIndex
+    }
+
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
         if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-            dbgEvent = "ROUTE edit=$editDisplayActive multi=$multiSelectActive tab=$clipTab"
-            dbgApply = ""
         }
         if (editDisplayActive) return onEditTouchEvent(event)
         if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) return onMultiTouchEvent(event)
