@@ -37,6 +37,14 @@ class ParticleWaveView @JvmOverloads constructor(
     @Volatile
     private var targetVolume = 0
 
+    /**
+     * 最近一次 setVolume 的原始输入（未加 +20 视觉增益）。冬眠判定必须看
+     * 它：targetVolume 存的是 input+20、volume 又被 MIN_ACTIVE_VOLUME 钉住，
+     * 旧判定（target==0 && volume==0）永远不成立，引擎从不冬眠。
+     */
+    @Volatile
+    private var rawInputVolume = 0
+
     @Volatile
     private var perVolume = 0f
     private var sensibility = 5
@@ -190,8 +198,9 @@ class ParticleWaveView @JvmOverloads constructor(
         val vPercent = volume * 0.01f
         val timeFactor = millisPassed / offsetSpeed
 
-        // 智能静音判定机
-        if (targetVolume == 0 && volume == 0f) {
+        // 智能静音判定机：原始输入持续为 0（真静默）达阈值帧数后冬眠；
+        // 输入端在静默期会持续喂 0，计数不会被打断；来声由 setVolume 唤醒
+        if (rawInputVolume == 0) {
             silentFrameCount++
             if (silentFrameCount >= SILENT_IDLE_THRESHOLD) {
                 drawStaticScene(c, timeFactor)
@@ -504,6 +513,7 @@ class ParticleWaveView @JvmOverloads constructor(
 
     override fun setVolume(volume: Int) {
         val inputVolume = volume.coerceIn(0, 100)
+        rawInputVolume = inputVolume
         if (abs((targetVolume - inputVolume).toFloat()) > perVolume || inputVolume > 0) {
             targetVolume = inputVolume + 20
             checkVolumeValue()
