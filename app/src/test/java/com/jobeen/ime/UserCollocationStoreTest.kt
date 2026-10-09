@@ -60,6 +60,24 @@ class UserCollocationStoreTest {
     }
 
     @Test
+    fun loadFailureDisablesWrites() {
+        // 路径被目录占据：读整体失败，本进程内不得落盘覆写历史
+        val dir = File.createTempFile("collocation-blocked", "")
+        assertTrue(dir.delete() && dir.mkdir())
+        val file = File(dir, "store.tsv")
+        assertTrue(file.mkdir()) // 目标路径本身是个目录
+        val store = UserCollocationStore(file)
+        store.learn("我想", "吃饭")
+        store.flush()
+        Thread.sleep(400) // 若有落盘尝试，给执行器时间跑完
+        assertTrue("读失败时不得覆写原路径", file.isDirectory)
+        assertFalse(
+            "读失败时不得产生 tmp 文件",
+            File(file.parentFile, file.name + ".tmp").exists()
+        )
+    }
+
+    @Test
     fun parseSkipsMalformedLines() {
         val back = HashMap<String, HashMap<String, UserCollocationStore.Entry>>()
         UserCollocationStore.parseInto(
