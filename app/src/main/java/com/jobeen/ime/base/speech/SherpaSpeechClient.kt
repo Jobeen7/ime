@@ -10,6 +10,7 @@ import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.os.Messenger
+import android.os.SystemClock
 import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -85,6 +86,21 @@ object SherpaSpeechClient {
     @Volatile
     private var activeGen = 0
 
+    // 已结算代次：finishSession 与新会话接管结算都在入口按代次声明，
+    // 同一代次只结算一次——DONE 超时强制结算与迟到的 DONE/FINAL 交错
+    // 到达时，后到的一律被代次去重挡下，不再重复上屏/收尾
+    @Volatile
+    private var settledGen = 0
+
+    // 当前连接的原始 binder 与其死亡监听引用：binder 死亡即 :speech
+    // 进程死亡，死亡回调里立即作废连接（不等下一次 send 失败才发现）；
+    // 每次连接新 binder 注册新监听，旧监听随旧 binder 死亡自动失效
+    @Volatile
+    private var speechBinder: IBinder? = null
+
+    @Volatile
+    private var deathRecipient: IBinder.DeathRecipient? = null
+
     fun isHolding(): Boolean = holding.get()
 
     private var uiJob: Job? = null
@@ -95,9 +111,15 @@ object SherpaSpeechClient {
         Handler(
             Looper.getMainLooper(),
             { msg ->
+                val gen = msg.data?.getInt(SpeechIpc.KEY_GEN, 0) ?: 0
+                // 存活探针回信先行处理：预检探针的代次是保留值（非会话
+                // 代次），不能走下面的会话代际校验
+                if (msg.what == SpeechIpc.MSG_PONG) {
+                    onPong(gen)
+                    return@Handler true
+                }
                 // 代际校验：回信代次与当前会话不一致（旧会话迟到/会话已收尾）直接丢弃。
                 // gen==0 是对端未带代次的兼容情形（同版本发布，不应发生），放行保底。
-                val gen = msg.data?.getInt(SpeechIpc.KEY_GEN, 0) ?: 0
                 if (gen != 0 && gen != activeGen) {
                     Timber.d("SpeechCli drop stale msg what=%d gen=%d active=%d", msg.what, gen, activeGen)
                     return@Handler true
@@ -124,6 +146,19 @@ object SherpaSpeechClient {
             var needsRebind = false
             synchronized(connectLock) {
                 speechMessenger = messenger
+                if (binder != null) {
+                    // 死亡监听：回调里按 binder 身份复检，旧 binder 的
+                    // 迟到死亡通知不得误伤已重绑的新连接
+                    val recipient = IBinder.DeathRecipient {
+                        Handler(Looper.getMainLooper()).post {
+                            if (speechBinder === binder) onSpeechBinderDied()
+                        }
+                    }
+                    if (runCatching { binder.linkToDeath(recipient, 0) }.isSuccess) {
+                        speechBinder = binder
+                        deathRecipient = recipient
+                    }
+                }
                 val actions: List<Pair<Int, Int>> = pending.toList()
                 pending.clear()
                 var failedAt = -1
@@ -136,8 +171,15 @@ object SherpaSpeechClient {
                     if (what == SpeechIpc.MSG_START && (!holding.get() || gen != activeGen)) {
                         continue
                     }
+                    // 探针同理只重放仍有效的：会话探针须仍是当前代次，
+                    // 预检探针须仍是待回音的那一条
+                    if (what == SpeechIpc.MSG_PING && gen != activeGen && gen != prestartProbeGen) {
+                        continue
+                    }
                     val msg = SpeechIpc.message(what, gen = gen)
-                    if (what == SpeechIpc.MSG_START) msg.replyTo = clientMessenger
+                    if (what == SpeechIpc.MSG_START || what == SpeechIpc.MSG_PING) {
+                        msg.replyTo = clientMessenger
+                    }
                     if (runCatching { messenger.send(msg) }.isFailure) {
                         failedAt = index
                         break
@@ -161,15 +203,22 @@ object SherpaSpeechClient {
                 // 类型推断自引用递归），this 即本连接对象
                 runCatching { appContext.unbindService(this) }
                 postBind()
+            } else if (!holding.get() && !awaitingDone.get()) {
+                // 预热绑定（initialize/preStartSync 的 LOAD）同样进入空闲
+                // 卸载计时：无任何会话活动时 3 分钟后一并解绑回收，不再
+                // 只有走过会话收尾的连接才计时（会话绑定的连接走到这里
+                // 时 holding 已置位，不会误挂计时）
+                scheduleIdleUnbind()
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
             Timber.d("SpeechCli %s", "onServiceDisconnected")
             synchronized(connectLock) { speechMessenger = null }
-            // 录音中、或已停录在等 DONE 时断开都要收尾：后者 holding 已
-            // false，只判 holding 会漏掉，DONE 永远等不到、待定文字挂死
-            if (holding.get() || awaitingDone.get()) cancelSession()
+            speechBinder = null
+            deathRecipient = null
+            // 录音中、或已停录在等 DONE 时断开都要收尾（分流见 handleLinkLost）
+            handleLinkLost()
 
             //异常退出。清理资源
 //            runCatching {
@@ -180,6 +229,47 @@ object SherpaSpeechClient {
 
     private fun removePending(what: Int) {
         synchronized(connectLock) { pending.removeAll { it.first == what } }
+    }
+
+    /**
+     * :speech 进程死亡（binderDied，主线程执行）：立即作废本地连接。
+     * 启动途中死亡（录音尚未开始）走作废重绑+重发本会话并重新探活
+     * 自愈；其余情形与 onServiceDisconnected 同款分流收尾。
+     */
+    private fun onSpeechBinderDied() {
+        Timber.w("SpeechCli speech binder died")
+        speechBinder = null
+        deathRecipient = null
+        synchronized(connectLock) { speechMessenger = null }
+        lastLivenessMs = 0L
+        if (holding.get() && !recordingStarted) {
+            forceDisconnect()
+            send(SpeechIpc.MSG_LOAD)
+            send(SpeechIpc.MSG_START, activeGen)
+            sendPing(activeGen)
+            probeHandler.removeCallbacks(probeTimeoutRunnable)
+            probeHandler.postDelayed(probeTimeoutRunnable, PROBE_TIMEOUT_MS)
+        } else {
+            handleLinkLost()
+        }
+    }
+
+    /**
+     * 连接丢失时的会话分流收尾（断连回调与 binder 死亡共用）：
+     * 录音中丢失——服务端会话已随进程死亡，待定文字没有定稿来源，
+     * 按取消清屏；等 DONE 中丢失——服务端大概率已完成识别，
+     * composingText 里的最新文本就是最终结果，按 DONE 超时同款
+     * 强制 finishSession 定稿，不清屏（一律 cancelSession 清屏会把
+     * 已识别出的文字在断连瞬间吞掉）。
+     */
+    private fun handleLinkLost() {
+        when {
+            holding.get() -> cancelSession()
+            awaitingDone.get() -> {
+                disarmDoneTimeout()
+                finishSession()
+            }
+        }
     }
 
     // 空闲卸载：:speech 进程与已加载模型（数百 MB 级）此前绑定后永不解绑、
@@ -237,7 +327,9 @@ object SherpaSpeechClient {
         val messenger = synchronized(connectLock) { speechMessenger }
         if (messenger != null) {
             val msg = SpeechIpc.message(what, gen = gen)
-            if (what == SpeechIpc.MSG_START) msg.replyTo = clientMessenger
+            if (what == SpeechIpc.MSG_START || what == SpeechIpc.MSG_PING) {
+                msg.replyTo = clientMessenger
+            }
             if (runCatching { messenger.send(msg) }.isSuccess) return
             // 发送失败 = binder 已失效：长时间空闲后 :speech 进程被系统
             // 回收/冻结、服务实例已销毁，但本地 speechMessenger 仍非空，
@@ -254,37 +346,114 @@ object SherpaSpeechClient {
         enqueueAndBind(what, gen)
     }
 
-    // 启动看门狗：START 发出后若迟迟没有 RECORDING_STARTED（连接僵尸、
-    // 对端进程被冻结、消息石沉大海都会这样），旧实现无限期静默等待，
-    // 用户只看到「拉不起」且无任何失败反馈。6 秒未开始 → 强制重连并
-    // 重发一次 START；再失败 → 走 cancelSession 正常失败收尾（UI 收起、
-    // 状态清干净），不留死会话。正常冷启动（绑服务+加载模型）在 6 秒
-    // 内完成，看门狗不会误触发；万一误触发也只是多一次重连，不丢会话。
-    private val startWatchdogHandler = Handler(Looper.getMainLooper())
-    private const val START_WATCHDOG_MS = 6000L
-    private var startWatchdogRetryUsed = false
-    private val startWatchdogRunnable = Runnable {
-        if (!holding.get()) return@Runnable
-        if (!startWatchdogRetryUsed) {
-            startWatchdogRetryUsed = true
-            Timber.w("SpeechCli start watchdog: no RECORDING_STARTED, reconnect + resend START")
+    // 存活探针（整段替代旧 6 秒启动看门狗）：看门狗只能等满 6 秒才
+    // 发现僵尸连接。改为：START 发出后同发一条 PING，1 秒内收到
+    // PONG 或 RECORDING_STARTED 即确认对端存活、解除探针，只留
+    // 15 秒长兜底纯防引擎初始化真卡死；1 秒无回音 → 作废重绑、重发
+    // LOAD/START/PING 再探一次；第二次仍无回音 → cancelSession 失败
+    // 收尾，不留死会话。binder 死亡另有死亡监听即时处理（见
+    // onSpeechBinderDied），探针负责 binder 未死但对端冻结/消息
+    // 石沉大海的僵尸连接。v1.1.5.1 的 send() 发送失败即时重连保留
+    // 不动，与探针互为补充（send 失败是本地即时可知，探针管送达后无回音）。
+    private val probeHandler = Handler(Looper.getMainLooper())
+    private const val PROBE_TIMEOUT_MS = 1000L
+    private const val START_FALLBACK_MS = 15000L
+
+    /** 本会话是否已收到 RECORDING_STARTED（死亡监听据此分流启动途中/录音中） */
+    @Volatile
+    private var recordingStarted = false
+
+    /** 最近一次确认对端存活的时刻（PONG/RECORDING_STARTED 更新），预检节流用 */
+    @Volatile
+    private var lastLivenessMs = 0L
+
+    private var probeArmed = false
+    private var probeRetryUsed = false
+
+    private val probeTimeoutRunnable = Runnable {
+        if (!holding.get() || recordingStarted) return@Runnable
+        if (!probeRetryUsed) {
+            probeRetryUsed = true
+            Timber.w("SpeechCli start probe timeout; reconnect + resend START/PING")
             forceDisconnect()
             send(SpeechIpc.MSG_LOAD)
             send(SpeechIpc.MSG_START, activeGen)
-            armStartWatchdog()
+            sendPing(activeGen)
+            repostProbeTimeout()
         } else {
-            Timber.e("SpeechCli start watchdog: retry exhausted, cancel session")
+            Timber.e("SpeechCli start probe failed twice; cancel session")
             cancelSession()
         }
     }
 
-    private fun armStartWatchdog() {
-        startWatchdogHandler.removeCallbacks(startWatchdogRunnable)
-        startWatchdogHandler.postDelayed(startWatchdogRunnable, START_WATCHDOG_MS)
+    // 经函数中转重挂探针：Runnable 初始化块内直接自引用会触发编译器
+    // 类型推断自引用递归，须隔一层函数调用
+    private fun repostProbeTimeout() {
+        probeHandler.postDelayed(probeTimeoutRunnable, PROBE_TIMEOUT_MS)
     }
 
-    private fun disarmStartWatchdog() {
-        startWatchdogHandler.removeCallbacks(startWatchdogRunnable)
+    private val startFallbackRunnable = Runnable {
+        if (!holding.get() || recordingStarted) return@Runnable
+        Timber.e("SpeechCli start fallback timeout; cancel session")
+        cancelSession()
+    }
+
+    private fun armStartProbe() {
+        probeArmed = true
+        probeRetryUsed = false
+        probeHandler.removeCallbacks(probeTimeoutRunnable)
+        probeHandler.removeCallbacks(startFallbackRunnable)
+        probeHandler.postDelayed(probeTimeoutRunnable, PROBE_TIMEOUT_MS)
+    }
+
+    private fun disarmStartProbe() {
+        probeArmed = false
+        probeHandler.removeCallbacks(probeTimeoutRunnable)
+        probeHandler.removeCallbacks(startFallbackRunnable)
+    }
+
+    /** 确认存活：更新存活时刻；探针武装中则解除短探针、换 15 秒长兜底 */
+    private fun onLivenessConfirmed() {
+        lastLivenessMs = SystemClock.uptimeMillis()
+        if (!probeArmed) return
+        probeArmed = false
+        probeHandler.removeCallbacks(probeTimeoutRunnable)
+        if (holding.get() && !recordingStarted) {
+            probeHandler.postDelayed(startFallbackRunnable, START_FALLBACK_MS)
+        }
+    }
+
+    private fun sendPing(gen: Int) {
+        send(SpeechIpc.MSG_PING, gen)
+    }
+
+    private fun onPong(gen: Int) {
+        // 预检探针回音：只更新存活时刻，不碰会话状态
+        if (gen != 0 && gen == prestartProbeGen) {
+            prestartProbeGen = 0
+            probeHandler.removeCallbacks(prestartProbeTimeoutRunnable)
+            lastLivenessMs = SystemClock.uptimeMillis()
+            return
+        }
+        if (gen != 0 && gen == activeGen) onLivenessConfirmed()
+    }
+
+    // 键盘弹起预检探针：已绑定但久未确认存活时发一条 PING，1 秒无
+    // 回音即判僵尸连接、作废重绑预热（见 preStartSync）。代次用保留
+    // 值与会话代次（自 1 递增）区分，服务端原样带回。
+    private const val PRESTART_PROBE_GEN = -1
+
+    @Volatile
+    private var prestartProbeGen = 0
+
+    private val prestartProbeTimeoutRunnable = Runnable {
+        if (prestartProbeGen == 0) return@Runnable
+        prestartProbeGen = 0
+        // 预检等待期间用户已开始会话：会话自带探针在管，不许预检拆连接
+        if (holding.get()) return@Runnable
+        Timber.w("SpeechCli prestart probe timeout; force reconnect + warm up")
+        forceDisconnect()
+        send(SpeechIpc.MSG_LOAD)
     }
 
     /** 语音专名纠错词表：与识别解耦的独立小文件存储，损坏即整体不纠。 */
@@ -308,7 +477,9 @@ object SherpaSpeechClient {
     }
 
     private fun onRecordingStarted() {
-        disarmStartWatchdog()
+        recordingStarted = true
+        // RECORDING_STARTED 本身就是存活证据：解除启动探针
+        onLivenessConfirmed()
         runCatching { SpeechUiBridge.onRecordingStarted?.invoke() }
     }
 
@@ -356,15 +527,38 @@ object SherpaSpeechClient {
     /** 进程内只预启动一次（触发点在键盘首次弹出，见 ImeInputMethodService） */
     private val preStartDone = AtomicBoolean(false)
 
+    /** 已绑定连接的存活预检间隔：距上次确认存活超过此时长才发探针 */
+    private const val LIVENESS_CHECK_INTERVAL_MS = 30_000L
+
     fun preStartSync(context: Context) {
         // 预启动时机后移到首次弹出键盘：App 冷启动（onCreate）阶段不再
         // 拉起 :speech 进程——键盘还没露面时这笔开销纯属浪费，且主进程
         // 被系统单独拉起（设置页/同步等）时根本用不到语音。
         // 门控不变：只对真正用过语音的用户预启动；从未用过时，首次长按
         // 语音键走 send() 的按需绑定路径（稍慢一次）。
-        if (!preStartDone.compareAndSet(false, true)) return
-        if (!hasUsedVoice(context)) return
-        send(SpeechIpc.MSG_LOAD)
+        // 每次调用都做存活检查（调用点在 onStartInputView、频率高，
+        // 故必须轻量）：未绑定时只有首次预热真正干活；已绑定时仅在距
+        // 上次确认存活超过 30 秒才发一条 PING 探针，免得每次切输入框
+        // 都发探针；探针 1 秒无 PONG 即判僵尸连接、作废重绑预热，让
+        // 死连接在用户长按之前就自愈。
+        val bound = synchronized(connectLock) { speechMessenger } != null
+        if (!bound) {
+            if (!preStartDone.compareAndSet(false, true)) return
+            if (!hasUsedVoice(context)) return
+            send(SpeechIpc.MSG_LOAD)
+            return
+        }
+        if (holding.get()) {
+            // 会话进行中：会话自身的回信就是存活证据
+            lastLivenessMs = SystemClock.uptimeMillis()
+            return
+        }
+        if (SystemClock.uptimeMillis() - lastLivenessMs <= LIVENESS_CHECK_INTERVAL_MS) return
+        if (prestartProbeGen != 0) return // 上一条预检探针还在等回音
+        prestartProbeGen = PRESTART_PROBE_GEN
+        sendPing(PRESTART_PROBE_GEN)
+        probeHandler.removeCallbacks(prestartProbeTimeoutRunnable)
+        probeHandler.postDelayed(prestartProbeTimeoutRunnable, PROBE_TIMEOUT_MS)
     }
 
     private const val PREFS_NAME = "speech_client"
@@ -411,11 +605,19 @@ object SherpaSpeechClient {
         // 新会话开始：上一会话若还留着等 DONE 的超时任务，一并清掉，
         // 防止它在新会话中途误触发 finishSession
         disarmDoneTimeout()
+        // 上一会话未结算的待定文本先按快照就地结算（不等 DONE），再
+        // 开始新会话——直接清掉 composingText 会把已识别出的文字吞掉
+        settlePreviousSession()
+        // 预检探针若还在等回音就此作废：本会话自带探针，预检超时
+        // 不得在会话途中拆连接
+        prestartProbeGen = 0
+        probeHandler.removeCallbacks(prestartProbeTimeoutRunnable)
         val gen = genCounter.incrementAndGet()
         activeGen = gen
         serviceRef = WeakReference(service)
         composingText.set(null)
         discarding.set(false)
+        recordingStarted = false
 
         uiJob = service.scope?.launch(Dispatchers.Main) {
             // 事件驱动上屏：信号到达才工作，第一份文本立即上屏；每轮后留
@@ -466,13 +668,14 @@ object SherpaSpeechClient {
         markVoiceUsed(service)
         send(SpeechIpc.MSG_LOAD)
         send(SpeechIpc.MSG_START, gen)
-        startWatchdogRetryUsed = false
-        armStartWatchdog()
+        // 同发存活探针：1 秒无 PONG/RECORDING_STARTED 即判僵尸连接自愈
+        sendPing(gen)
+        armStartProbe()
     }
 
     fun stopHoldSession(discard: Boolean = false) {
         if (!holding.compareAndSet(true, false)) return
-        disarmStartWatchdog()
+        disarmStartProbe()
         // 服务尚未绑定时 START 还在待发队列里：先撤掉，绑定完成后不得重放
         removePending(SpeechIpc.MSG_START)
         if (discard) {
@@ -501,13 +704,77 @@ object SherpaSpeechClient {
         }
     }
 
-    private fun finishSession() {
+    /**
+     * 新会话开始前的上一会话接管结算：上一会话松手后 DONE 未回（或
+     * 回信丢失）时用户又长按，旧实现直接清 composingText 开始新会话，
+     * 未定稿文本被吞。改为先按快照就地结算（不等 DONE）：待弃文本
+     * 同步清屏，待定稿文本走与 finishSession 同款的异步纠错/转换尾
+     * 上屏；结算在入口按代次声明，迟到的 DONE 此后被代次去重挡下。
+     * 状态字段不在此复位——紧接着的 startHoldSession 会逐项覆写。
+     */
+    private fun settlePreviousSession() {
+        val prevGen = activeGen
+        if (prevGen == 0) return
+        if (!awaitingDone.get() && composingText.get() == null && !discarding.get()) return
+        // 声明本代已结算：其 DONE/超时此后不得二次结算
+        settledGen = prevGen
         val service = serviceRef?.get()
-        service?.scope?.launch(Dispatchers.Main) {
-            val text = composingText.getAndSet(null)
+        val prevText = composingText.getAndSet(null)
+        val prevDiscard = discarding.get()
+        disarmDoneTimeout()
+        if (prevDiscard) {
+            // 待弃文本同步清屏（与 stopHoldSession 的即时清屏同款），
+            // 赶在新会话开始前完成，不留异步尾巴误清新会话的待定文字
+            service?.activeInputConnection()?.let { ic ->
+                ic.setComposingText("", 1)
+                ic.finishComposingText()
+            }
+            return
+        }
+        if (service == null) return
+        service.scope?.launch(Dispatchers.Main) {
+            // 验代次：本结算未被更新的结算取代、且当前会话未被用户
+            // 丢弃时才上屏；新会话（本代的直接后继）已开始是预期
+            // 情形，不作废本尾
+            if (settledGen != prevGen || discarding.get()) return@launch
+            val ic = service.activeInputConnection()
+            if (!prevText.isNullOrBlank()) {
+                val corrected = withContext(Dispatchers.Default) { correctionStore.correct(prevText) }
+                val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
+                ic?.setComposingText(displayText, 1)
+            }
+            ic?.finishComposingText()
+            // 不触发 onDone、不武装沉淀：新会话正在进行，UI 收尾与
+            // 沉淀观察归新会话自己的结算
+        }
+    }
+
+    /**
+     * 会话结算单一入口（DONE 回信 / DONE 超时 / 等 DONE 断连分流都
+     * 走这里）：入口先同步快照（text/discarding/service/gen）并同步
+     * 复位本代状态，纠错/繁简/上屏走异步尾；同一代次只结算一次，
+     * 超时强制结算与迟到的 DONE 交错到达时后到的一律在入口被代次
+     * 去重丢弃，不重复上屏。
+     */
+    private fun finishSession() {
+        val gen = activeGen
+        if (gen != 0 && gen == settledGen) return
+        settledGen = gen
+        // 同步快照 + 同步复位：快照之后到达的回信会被代次校验丢弃，
+        // 异步尾只认这份快照，不再读共享状态
+        val service = serviceRef?.get()
+        val text = composingText.getAndSet(null)
+        val discard = discarding.get()
+        resetState()
+        if (service == null) return
+        service.scope?.launch(Dispatchers.Main) {
+            // 回到主线程先验代次：结算期间用户已开始新会话（activeGen
+            // 既非本代、也非空闲的 0）则本尾整体作废——输入框归新
+            // 会话，其上屏与收尾不归本代管
+            if (activeGen != 0 && activeGen != gen) return@launch
             val ic = service.activeInputConnection()
             var committed: CorrectResult? = null
-            if (discarding.get()) {
+            if (discard) {
                 // 取消：先删掉已流式显示的待定文字，再收尾，否则 finishComposingText 会把待定文字确认上屏。
                 ic?.setComposingText("", 1)
             } else if (!text.isNullOrBlank()) {
@@ -526,8 +793,9 @@ object SherpaSpeechClient {
                 VoiceCorrectionSession.arm(service, correctionStore, it.text, it.applied)
             }
             SpeechUiBridge.onDone?.invoke()
-            resetState()
-        } ?: resetState()
+            // 不再 resetState：本代状态已在入口同步复位，此处再复位
+            // 会误伤可能已经开始的新会话
+        }
     }
 
     /**
@@ -581,7 +849,7 @@ object SherpaSpeechClient {
     private fun resetState() {
         holding.set(false)
         discarding.set(false)
-        disarmStartWatchdog()
+        disarmStartProbe()
         // 所有收尾路径（finish/cancel/权限中止）都经这里：等 DONE 的
         // 标志与超时任务不得残留到下一会话
         disarmDoneTimeout()
@@ -591,8 +859,8 @@ object SherpaSpeechClient {
         uiJob = null
         serviceRef?.clear()
         serviceRef = null
-        // 会话结束进入空闲计时（preStartSync 的预热加载不经会话收尾，
-        // 不在此计时；真正用过语音后的常驻才是要回收的大头）
+        // 会话结束进入空闲计时；预热绑定的连接在 onServiceConnected
+        // 里同样武装此计时，无会话活动时一并在 3 分钟后回收
         scheduleIdleUnbind()
     }
 
