@@ -251,6 +251,12 @@
     <string name="voice_model_download_start">模型下载功能即将上线</string>
     <string name="voice_model_downloading">正在下载 %1$d/%2$d</string>
     <string name="voice_model_download_failed">下载失败，请重试</string>
+    <string name="voice_correction_group">语音专名纠错</string>
+    <string name="voice_correction_enable">启用专名纠错</string>
+    <string name="voice_correction_clear_pairs">清除已学词对</string>
+    <string name="voice_correction_clear_desc">清除后不再按已学词对自动纠正</string>
+    <string name="voice_correction_cleared">已清除</string>
+    <string name="voice_correction_clear">清除</string>
     <string name="download">下载</string>
     <string name="downloading">下载中</string>
     <string name="model_enhance">模型增强</string>

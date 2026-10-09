@@ -269,12 +269,11 @@ fun VoiceSettingsScreen(
                     )
                 }
             }
-            // 文案暂用字面量：strings.xml 不在本簇归属内，后续统一抽取
             SettingsGroup(
-                title = "语音专名纠错",
+                title = stringResource(R.string.voice_correction_group),
             ) {
                 SwitchRow(
-                    title = "启用专名纠错",
+                    title = stringResource(R.string.voice_correction_enable),
                     checked = correctionEnabled,
                     onCheckedChange = {
                         correctionEnabled = it
@@ -283,11 +282,11 @@ fun VoiceSettingsScreen(
                     showDivider = true,
                 )
                 ActionRow(
-                    title = "清除已学词对",
+                    title = stringResource(R.string.voice_correction_clear_pairs),
                     subtitle = if (correctionsCleared) {
-                        "已清除"
+                        stringResource(R.string.voice_correction_cleared)
                     } else {
-                        "清除后不再按已学词对自动纠正"
+                        stringResource(R.string.voice_correction_clear_desc)
                     },
                     trailing = {
                         Button(
@@ -300,7 +299,7 @@ fun VoiceSettingsScreen(
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                         ) {
                             Text(
-                                "清除",
+                                stringResource(R.string.voice_correction_clear),
                                 fontSize = 13.sp,
                                 maxLines = 1,
                             )

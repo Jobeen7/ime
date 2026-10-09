@@ -2,6 +2,7 @@ package com.jobeen.ime.input.speech
 
 import android.content.Context
 import android.graphics.*
+import android.os.SystemClock
 import android.util.AttributeSet
 import android.view.View
 import java.util.Random
@@ -22,6 +23,13 @@ class ParticleWaveView @JvmOverloads constructor(
     private companion object {
         private const val SILENT_IDLE_THRESHOLD = 30 // 约 500ms 无声则判定冬眠
         private const val SILENT_VOLUME_THRESHOLD = 2 // 原始音量（0-100）≤2 视为静默，吸收底噪抖动
+        // 唤醒阈值：冬眠中须有原始音量 >5 的帧才唤醒。与静默阈值（≤2）拉开迟滞带：
+        // 3–5 的低量抖动既唤不醒、也不算有声，免得音量在 1–2 低量区时偶发一帧
+        // 就唤醒、约 500ms 后又睡下，动画一闪一停反复横跳
+        private const val WAKE_VOLUME_THRESHOLD = 5
+        // 唤醒后最短保持时长：保持窗内即使持续静默也不许再睡；与连续静默
+        // 帧判据（约 500ms）同时成立才冬眠，两者取较大者生效
+        private const val MIN_AWAKE_HOLD_MS = 1200L
         private const val RAD_CONVERT = PI.toFloat() / 180f // 缓存弧度转换常数，免去高频双精度转换
         private const val MIN_ACTIVE_VOLUME = 0.1f // 正常运行时的最低视觉音量底限
 
@@ -58,6 +66,10 @@ class ParticleWaveView @JvmOverloads constructor(
 
     @Volatile
     private var isEngineSleeping = false
+
+    /** 最近一次冬眠唤醒时刻（主线程写、渲染线程读），喂给最短保持判据 */
+    @Volatile
+    private var lastWakeUptimeMs = 0L
 
     @Volatile
     private var isViewAttached = false
@@ -200,11 +212,14 @@ class ParticleWaveView @JvmOverloads constructor(
         val timeFactor = millisPassed / offsetSpeed
 
         // 智能静音判定机：原始输入持续 ≤2（映射后近静默，含底噪抖动）
-        // 达阈值帧数后冬眠；输入端在静默期会持续喂小音量，计数不会被
-        // 打断；来声由 setVolume 唤醒
+        // 达阈值帧数、且已越过唤醒后的最短保持窗，才冬眠；输入端在
+        // 静默期会持续喂小音量，计数不会被打断；来声由 setVolume
+        // 越过唤醒阈值时唤醒
         if (rawInputVolume <= SILENT_VOLUME_THRESHOLD) {
             silentFrameCount++
-            if (silentFrameCount >= SILENT_IDLE_THRESHOLD) {
+            if (silentFrameCount >= SILENT_IDLE_THRESHOLD &&
+                SystemClock.uptimeMillis() - lastWakeUptimeMs >= MIN_AWAKE_HOLD_MS
+            ) {
                 drawStaticScene(c, timeFactor)
                 isEngineSleeping = true
                 silentFrameCount = 0
@@ -520,9 +535,12 @@ class ParticleWaveView @JvmOverloads constructor(
             targetVolume = inputVolume + 20
             checkVolumeValue()
 
-            if (inputVolume > 0 && isEngineSleeping) {
+            // 冬眠唤醒须越过唤醒阈值（迟滞带 3–5 的低量帧不唤醒），
+            // 并盖保持窗时间戳：此后 MIN_AWAKE_HOLD_MS 内不许再睡
+            if (inputVolume > WAKE_VOLUME_THRESHOLD && isEngineSleeping) {
                 renderLock.withLock {
                     isEngineSleeping = false
+                    lastWakeUptimeMs = SystemClock.uptimeMillis()
                     renderCondition.signalAll()
                 }
             }
@@ -567,6 +585,7 @@ class ParticleWaveView @JvmOverloads constructor(
         } else {
             renderLock.withLock {
                 isEngineSleeping = false
+                lastWakeUptimeMs = SystemClock.uptimeMillis()
                 renderCondition.signalAll()
             }
             startAnim()

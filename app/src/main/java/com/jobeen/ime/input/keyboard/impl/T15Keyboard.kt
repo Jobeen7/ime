@@ -23,7 +23,7 @@ class T15Keyboard(
     context: Context,
     colors: KeyboardColors.ColorScheme,
 ) : BaseKeyboard(context, colors, Layout), ISidePanelKeyboard {
-    private val fullWidthPunctuations = listOf("，", "。", "！", "？", "：", "~", "...")
+    private val fullWidthPunctuations = listOf("，", "。", "？", "！", "：", "~", "...")
     private val halfWidthPunctuations = listOf(",", ".", "!", "?", ":", "~", "...")
     var punctuations = fullWidthPunctuations
     private var state: PunctuationMode = PunctuationMode.FullWidth

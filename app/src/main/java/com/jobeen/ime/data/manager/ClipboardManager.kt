@@ -108,8 +108,8 @@ object ClipboardManager {
         if (text.isBlank()) return
         // 限长：见 MAX_TEXT_LENGTH，超限文本截断后再走全部后续逻辑
         val clipped = text.take(MAX_TEXT_LENGTH)
-        // 真正的新内容入库后，旧删除的防复活抑制随之失效（剪贴板已换了内容）
-        if (!isRemovedTextSuppressed(context, clipped)) clearRemovedTextSuppressions(context)
+        // 防复活抑制不在这里动：抑制条目只许按条摘除（见 noteRemovedTexts），
+        // 入库新内容不构成清除其余条目抑制的理由
         val now = System.currentTimeMillis()
         val retentionCutoff = now - getRetentionDays(context) * 86400000L
         // 事务串行化"检查→删除→插入→裁剪"：并发写入时旧实现会重复插入，
@@ -185,8 +185,11 @@ object ClipboardManager {
      * 行留在表里，checkCurrentClipboard 靠它判定「系统剪贴板内容没变、不是
      * 新记录」；物理删后记录消失，补偿检查会把仍在系统剪贴板里的同一文本当
      * 新内容重新入库。这里把被删文本的哈希记进 prefs 集合（只存哈希不存
-     * 原文，上限 [MAX_REMOVED_HASHES] 条），命中即不算新记录；真正的新文本
-     * 入库时由 addEntry 整表清除（剪贴板已换内容，旧抑制不再需要）。
+     * 原文，上限 [MAX_REMOVED_HASHES] 条），命中即不算新记录。抑制条目只许
+     * 按条摘除、没有任何整表清除路径：某条被删文本被证实重新复制时，才在
+     * checkCurrentClipboard 里按其哈希摘掉那一条，其余条目的抑制原样保留
+     * ——旧实现曾在新内容入库时整表清除，多删条目中其余条目的防复活保护
+     * 会被一条文本的重新入库误伤失效。
      *
      * 旧实现只记一条「最新被删文本」且仅当删的是最新行才记：连删多条时后删
      * 的把先删的顶掉，而系统剪贴板里仍是先删那条，于是先删的冒回来、后删
@@ -241,9 +244,6 @@ object ClipboardManager {
         return removedSuppressions(prefs).firstOrNull { it.hash == hash }
     }
 
-    private fun isRemovedTextSuppressed(context: Context, text: String): Boolean =
-        removedSuppression(context, text) != null
-
     /** 放行一条抑制（被删文本已被重新复制）：只摘命中条，其余抑制原样保留。 */
     private fun liftRemovedSuppression(context: Context, hash: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -257,13 +257,6 @@ object ClipboardManager {
                     remaining.joinToString("\n") { it.toStoredString() },
                 )
             }
-            remove(KEY_REMOVED_LATEST_TEXT)
-        }
-    }
-
-    private fun clearRemovedTextSuppressions(context: Context) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            remove(KEY_REMOVED_TEXT_HASHES)
             remove(KEY_REMOVED_LATEST_TEXT)
         }
     }
@@ -361,8 +354,8 @@ object ClipboardManager {
         } ?: (null to true)
         // 防复活抑制命中：先判「重新复制」放行，再判与最新行是否一致——
         // 已被物理删的文本不在有效行里，顺序反过来会让软删存量行把放行短路。
-        // 放行判据（任一成立即视为删除之后的主动重新复制，摘除该条抑制
-        // 并走正常入库；放行后 addEntry 仍按既有契约清理其余抑制）：
+        // 放行判据（任一成立即视为删除之后的主动重新复制，只摘除该条
+        // 抑制并走正常入库，其余条目的抑制不受影响）：
         // ① 主判据：本次检查由剪贴板变更监听事件触发——删除动作本身不改
         //    系统剪贴板、不会产生新事件，事件到达且内容哈希仍等于被删文本，
         //    只可能是删除之后又被复制了同一文本；
