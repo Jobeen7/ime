@@ -573,6 +573,20 @@ class CandidateGridView(
             return true
         }
 
+        /**
+         * 候选列表被替换后拖拽下标可能已越界（拖拽中整表更新/清空）：
+         * 就地复位拖拽状态，避免抬手时按过期下标重排甚至越界崩溃。
+         * 由外层在替换 allCandidates 后调用。
+         */
+        fun resetDragIfOutOfBounds() {
+            if (dragIndex >= 0 && dragIndex !in allCandidates.indices) {
+                dragIndex = -1
+                dragTargetIndex = -1
+                stopShake()
+                invalidate()
+            }
+        }
+
         /** 主动抬起的统一收尾（UP / 追踪指针的 POINTER_UP 共用）；体内坐标无关，只用速度与状态 */
         private fun handleUp(event: MotionEvent) {
                     velocityTracker?.addMovement(event)
@@ -581,8 +595,19 @@ class CandidateGridView(
                     recycleVelocityTracker()
                     removeCallbacks(longPressRunnable)
 
+                    if (dragIndex >= 0 && dragIndex !in allCandidates.indices) {
+                        // 拖拽期间候选列表已被替换且原下标越界：放弃本次
+                        // 重排（removeAt 必崩），复位拖拽状态后按普通收尾退出
+                        dragIndex = -1
+                        dragTargetIndex = -1
+                        stopShake()
+                        invalidate()
+                        parent.requestDisallowInterceptTouchEvent(false)
+                        return
+                    }
+
                     if (dragIndex >= 0) {
-                        if (dragTargetIndex >= 0 && dragTargetIndex != dragIndex) {
+                        if (dragTargetIndex in allCandidates.indices && dragTargetIndex != dragIndex) {
                             val mutable = allCandidates.toMutableList()
                             val item = mutable.removeAt(dragIndex)
                             mutable.add(dragTargetIndex, item)
@@ -808,6 +833,8 @@ class CandidateGridView(
 
     fun show(list: List<EngineMessage.Candidate>) {
         allCandidates = list
+        // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽
+        gridCanvas.resetDragIfOutOfBounds()
         needMoreRequested = false
         gridCanvas.recomputeLayout()
         gridCanvas.resetScroll()
@@ -831,6 +858,8 @@ class CandidateGridView(
 
     fun updateCandidates(list: List<EngineMessage.Candidate>) {
         allCandidates = list
+        // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽
+        gridCanvas.resetDragIfOutOfBounds()
         // 列表已更新（新批次或追加页到达）：允许再次在滚到底时请求下一页
         needMoreRequested = false
         gridCanvas.recomputeLayout()
@@ -843,6 +872,8 @@ class CandidateGridView(
         slideUpCollapse {
             collapseAnimating = false
             allCandidates = emptyList()
+            // 列表清空同样是替换：残留拖拽下标一并复位
+            gridCanvas.resetDragIfOutOfBounds()
             gridCanvas.resetScroll()
         }
     }

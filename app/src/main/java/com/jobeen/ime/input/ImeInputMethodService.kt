@@ -283,10 +283,18 @@ class ImeInputMethodService : InputMethodService() {
         keyboardWindow?.onSelectionUpdate(newSelStart, newSelEnd)
         // 光标/选区变化：engine 侧光标前文本缓存失效
         engine?.onSelectionChanged()
-        // 探针走 24ms 合并：选区变化在拖动光标/程序调整选区时会高频连发，
-        // 每次都跨进程探针是浪费；下游（onInputChanged/onInputCleared）只用
-        // 文本空/非空，窗口内取最后一次即可。onStartInputView 的即时调用
-        // 不走此路、不受影响
+        // 探针走 24ms 合并（见 scheduleNotifyInputChanged）；onStartInputView
+        // 的即时调用不走此路、不受影响
+        scheduleNotifyInputChanged()
+    }
+
+    /**
+     * 输入变化探针的 24ms 合并通道：选区变化（拖动光标/程序调整选区）与
+     * Commit 上屏都会高频连发，每次都跨进程探针是浪费；下游
+     * （onInputChanged/onInputCleared）只用文本空/非空，窗口内取最后一次
+     * 即可。需要即时结果的入口（onStartInputView）仍直调 notifyInputChanged。
+     */
+    fun scheduleNotifyInputChanged() {
         mainHandler.removeCallbacks(pendingNotifyInputChanged)
         mainHandler.postDelayed(pendingNotifyInputChanged, 24L)
     }
