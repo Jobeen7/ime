@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.os.SystemClock
 import android.view.View
 import androidx.core.graphics.withScale
 import kotlin.math.abs
@@ -23,6 +24,22 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
 
     /** 静默判定阈值：目标音量（0-100）≤2 视为静默，吸收底噪抖动 */
     private val silentVolumeThreshold = 2
+
+    /**
+     * 唤醒阈值：冬眠中须有音量 >5 的帧才唤醒。与静默阈值（≤2）拉开
+     * 迟滞带：3–5 的低量抖动既唤不醒、也不算有声，免得音量在 1–2
+     * 低量区时偶发一帧就唤醒、随即又睡下，动画一闪一停反复横跳
+     */
+    private val wakeVolumeThreshold = 5
+
+    /** 连续静默帧数上限：约 60fps 下 90 帧 ≈ 1.5 秒持续静默才许睡 */
+    private val silentFrameLimit = 90
+
+    /**
+     * 唤醒后最短保持时长（毫秒）：保持窗内即使持续静默也不许再睡。
+     * 与连续静默帧判据同时成立才冬眠，两者取较大者生效
+     */
+    private val minAwakeHoldMs = 1200L
     private val barCount = 9
     private val contentScale = 0.48f
     private val centerIndex = (barCount - 1) / 2
@@ -89,6 +106,9 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
     private var animRequested = false
     private var silentFrames = 0
 
+    /** 最近一次（重新）开始逐帧动画的时刻，喂给最短保持时长判据 */
+    private var lastWakeUptimeMs = 0L
+
     private val frameCallback = object : Runnable {
         override fun run() {
             if (!isAnimating) return
@@ -100,11 +120,14 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
     private fun updateFrame() {
         val target = targetVolume.coerceIn(0, 100) / 100f
         smoothVolume += (target - smoothVolume) * 0.16f
-        // 静音冬眠：音量 ≤2（近静默，含底噪抖动）约 1.5 秒后停止逐帧
-        // 调度（旧实现录音全程 60fps 空转，柱高早已静止仍不断
-        // invalidate）；有声音时 setVolume 会唤醒续跑
+        // 静音冬眠：音量 ≤2（近静默，含底噪抖动）持续约 1.5 秒、且已
+        // 越过唤醒后的最短保持窗，才停止逐帧调度（旧实现录音全程
+        // 60fps 空转，柱高早已静止仍不断 invalidate）；有声音时
+        // setVolume 越过唤醒阈值会唤醒续跑
         if (targetVolume <= silentVolumeThreshold && smoothVolume < 0.01f) {
-            if (++silentFrames > 90) {
+            if (++silentFrames > silentFrameLimit &&
+                SystemClock.uptimeMillis() - lastWakeUptimeMs >= minAwakeHoldMs
+            ) {
                 isAnimating = false
                 invalidate()
                 return
@@ -202,8 +225,9 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
 
     override fun setVolume(volume: Int) {
         targetVolume = volume.coerceIn(0, 100)
-        // 冬眠中来声音了：唤醒帧循环
-        if (volume > 0 && animRequested && !isAnimating) {
+        // 冬眠中来声音了：须越过唤醒阈值才唤醒帧循环，迟滞带内的
+        // 低量帧（3–5）不唤醒，避免低量区唤醒-冬眠反复
+        if (volume > wakeVolumeThreshold && animRequested && !isAnimating) {
             startAnim()
         }
     }
@@ -213,6 +237,10 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
         if (!isAnimating) {
             isAnimating = true
             silentFrames = 0
+            // 录音开始/冬眠唤醒/获焦续跑都经此路：盖保持窗时间戳，
+            // 此后 minAwakeHoldMs 内冬眠判据不许放行（显式 stopAnim
+            // 不受此限，仍立即停）
+            lastWakeUptimeMs = SystemClock.uptimeMillis()
             postOnAnimation(frameCallback)
         }
     }

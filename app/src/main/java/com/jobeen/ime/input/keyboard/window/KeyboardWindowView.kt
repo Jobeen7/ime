@@ -566,6 +566,14 @@ class KeyboardWindowView(
     }
 
     fun refreshColors() {
+        // 全量刷新会重建键盘，主题切换又常与系统界面变化（深浅色连带状态
+        // 栏/导航栏外观、边距）同时发生：全高与底部边距同属「窗口几何」
+        // 缓存，一并失效待下次查询重算（边距另有 insets 监听回填、0 为
+        // 未缓存哨兵值，重算无副作用）。失效点收在本函数内，两个入口
+        // （refreshColorsIfChanged 的变化路径、防抖调度的设置项变更路径）
+        // 口径一致，不再各挂一份。
+        cachedFullScreenHeight = -1
+        cachedBottomInset = 0
         panel.view.setExpanded(false)
         cachedColors = KeyboardColors.resolve(context)
         setBackgroundColor(cachedColors.background)
@@ -588,6 +596,7 @@ class KeyboardWindowView(
     fun refreshColorsIfChanged() {
         val resolved = KeyboardColors.resolve(context)
         if (resolved != cachedColors) {
+            // 几何缓存的失效在 refreshColors() 内统一做，这里只管门控
             refreshColors()
         }
     }
@@ -630,7 +639,7 @@ class KeyboardWindowView(
 
     /** 全屏高度缓存：onMeasure/onLayout 一轮内会被多处反复调用，每次都查
      * WindowManager 是纯浪费；同一窗口生命周期内结果不变，缓存复用。
-     * -1 表示未缓存；配置变化与窗口销毁时失效（见下方两处清理）。 */
+     * -1 表示未缓存；配置变化、窗口销毁、配色实际变化走全量刷新时失效。 */
     private var cachedFullScreenHeight: Int = -1
 
     private fun fullScreenHeight(): Int {

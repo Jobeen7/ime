@@ -53,15 +53,21 @@ class GridKeyboardView(
             return (contentH - height).coerceAtLeast(0)
         }
 
-    // KeyView 复用缓存（最近一次 items）：表情/符号面板每次打开、切回分类
-    // 都会用内容完全相同的 items 再调一次 setItems，全量重建数百个 KeyView
-    // 是纯浪费。内容签名未变时复用已建的 View，只做 detach 后再 attach。
-    // 配色在本 View 生命周期内固定（构造入参，换主题走键盘重建、新建本
-    // View），不存在原地换色路径；仍把配色记入缓存快照比对，将来若有
-    // 原地刷新配色的入口，签名不一致会自然落到重建分支清掉缓存。
-    private var cachedSignature: List<String>? = null
-    private var cachedColors: KeyboardColors.ColorScheme? = null
-    private var cachedViews: List<KeyView> = emptyList()
+    // KeyView 复用缓存（按内容签名多条目）：表情/符号面板每次打开、切换
+    // 分类都会用某分类的 items 调一次 setItems，全量重建数百个 KeyView 是
+    // 纯浪费。旧实现只缓存最近一个分类，来回切分类时每切一次都重建；现
+    // 改为按签名缓存多个分类的已建 View，切回已缓存分类直接复用，只做
+    // detach 后再 attach。
+    // 失效策略选「条目内带配色快照」：配色在本 View 生命周期内固定（构造
+    // 入参，换主题走键盘重建、新建本 View），不存在原地换色路径；仍给每
+    // 条目记一份配色快照，命中时比对、不符则丢弃该条目按当前配色重建，
+    // 将来若有原地刷新配色的入口也能自然失效，无需整表清理的代码路径。
+    // 容量上限：表情+符号分类总数有限，超过上限时按最久未用淘汰
+    // （accessOrder 的 LinkedHashMap，get/put 都会刷新条目顺序）。
+    private val viewCache =
+        LinkedHashMap<List<String>, Pair<KeyboardColors.ColorScheme, List<KeyView>>>(
+            16, 0.75f, true
+        )
 
     /**
      * items 的内容签名：外观类型与文本/图源、字号、变体、宽度与 Press
@@ -89,20 +95,31 @@ class GridKeyboardView(
 
     fun setItems(items: List<KeyDef>) {
         val signature = itemsSignature(items)
-        val reusable = signature == cachedSignature &&
-            cachedViews.size == items.size &&
-            cachedColors == colors
-        if (!reusable) {
-            cachedViews = items.map { createKeyView(it) }
-            cachedSignature = signature
-            cachedColors = colors
+        // 签名逐项由 items 生成，长度恒与 items 相同；再核一遍条目内 View
+        // 数与 items 数一致才复用，防签名构造方式将来变更时误用旧条目
+        val cached = viewCache[signature]
+        val views: List<KeyView> = if (cached != null &&
+            cached.first == colors &&
+            cached.second.size == items.size
+        ) {
+            cached.second
+        } else {
+            items.map { createKeyView(it) }.also { built ->
+                viewCache[signature] = colors to built
+                // 超上限淘汰最久未用条目；被淘汰条目的 View 若正挂在本
+                // View 上（刚被 removeAllViews 前的旧分类），随后统一
+                // detach 流程会把它们摘下交 GC，不影响本次挂载
+                while (viewCache.size > MAX_CACHED_VIEW_SETS) {
+                    viewCache.remove(viewCache.keys.first())
+                }
+            }
         }
         // 复用的 View 可能还挂在父容器上（就是本 View 或重建前的旧父级），
         // 先统一 detach 再 attach，避免「已有 parent」异常；点击监听在建时
         // 捕获的是本 View 的 onKeyAction 属性（点击时动态读取），复用后
         // 仍走当前回调，无需重绑
         removeAllViews()
-        for (keyView in cachedViews) {
+        for (keyView in views) {
             (keyView.parent as? ViewGroup)?.removeView(keyView)
             addView(keyView)
         }
@@ -374,5 +391,10 @@ class GridKeyboardView(
             }
         }
         return true
+    }
+
+    companion object {
+        /** View 复用缓存的分类数上限：覆盖表情+符号全部分类仍有余量，防内存膨胀 */
+        private const val MAX_CACHED_VIEW_SETS = 12
     }
 }
