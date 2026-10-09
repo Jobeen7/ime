@@ -11,7 +11,10 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
+import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import timber.log.Timber
+import java.io.BufferedInputStream
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -162,7 +165,14 @@ object ModelDownloader {
         onProgress: (Progress) -> Unit,
     ): Boolean {
         val md5 = expectedMd5.trim()
-        val reusable = archiveFile.isFile && (md5.isEmpty() || md5Of(archiveFile).equals(md5, true))
+        // 有 md5 时按 md5 判定复用（主路径不变）；manifest 未给 md5 时不能
+        // 凭文件存在就复用——旧包可能是上次中断留下的截断包，先验包完整性
+        // （可完整解压且含预期条目），验不过走下面删除重下
+        val reusable = archiveFile.isFile && if (md5.isNotEmpty()) {
+            md5Of(archiveFile).equals(md5, true)
+        } else {
+            isArchiveComplete(archiveFile)
+        }
         if (reusable) {
             Timber.i("Reusing cached archive: %s", archiveFile.absolutePath)
             return true
@@ -396,6 +406,39 @@ object ModelDownloader {
             HttpUtil.showToast("语音模型下载失败：${e.message ?: "网络错误"}")
             null
         }
+    }
+
+    /**
+     * 无 md5 时的旧包完整性校验：完整遍历一遍 tar.bz2（遍历会把每个条目
+     * 的数据都解压读过，流损坏/截断会抛异常），并确认含 tokens 与
+     * encoder/decoder/joiner 预期条目（判定口径与解压过滤、findModel 一致）。
+     */
+    private fun isArchiveComplete(archiveFile: File): Boolean {
+        return runCatching {
+            var hasTokens = false
+            val foundComponents = mutableSetOf<String>()
+            java.io.FileInputStream(archiveFile).use { fis ->
+                BufferedInputStream(fis).use { bis ->
+                    BZip2CompressorInputStream(bis).use { bzIn ->
+                        TarArchiveInputStream(bzIn).use { tarIn ->
+                            var entry = tarIn.nextEntry
+                            while (entry != null) {
+                                if (!entry.isDirectory) {
+                                    val fileName = entry.name.substringAfterLast('/')
+                                    if (fileName.equals(TOKENS_FILE, true)) hasTokens = true
+                                    MODEL_COMPONENTS.filter { isModelFile(fileName, it) }
+                                        .forEach { foundComponents.add(it) }
+                                }
+                                entry = tarIn.nextEntry
+                            }
+                        }
+                    }
+                }
+            }
+            hasTokens && foundComponents.containsAll(MODEL_COMPONENTS)
+        }.onFailure {
+            Timber.w(it, "Cached speech model archive incomplete, will re-download")
+        }.getOrDefault(false)
     }
 
     private fun md5Of(file: File): String {

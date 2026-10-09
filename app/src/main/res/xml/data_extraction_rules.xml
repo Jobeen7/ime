@@ -3,6 +3,8 @@
   数据提取规则（API 31+）：云备份与设备迁移都排除敏感内容：
   - WebDAV 配置（含明文密码）
   - 剪贴板历史（独立库 clipboard_database）
+  - 方案/模型/日志/下载缓存（external 的 shared/、model/、log/、download/）
+  - 语音纠错表（filesDir 根下 voice_corrections.tsv，含用户改词记录）
   其余（用户词典、主题、设置、常用语、选词偏好等）照常迁移。
 -->
 <data-extraction-rules>
@@ -10,6 +12,9 @@
         <exclude domain="sharedpref" path="user_dict_sync.xml" />
         <exclude domain="external" path="shared/" />
         <exclude domain="external" path="model/" />
+        <exclude domain="external" path="log/" />
+        <exclude domain="external" path="download/" />
+        <exclude domain="file" path="voice_corrections.tsv" />
         <exclude domain="database" path="clipboard_database" />
         <exclude domain="database" path="clipboard_database-wal" />
         <exclude domain="database" path="clipboard_database-shm" />
@@ -17,6 +22,11 @@
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="user_dict_sync.xml" />
+        <exclude domain="external" path="shared/" />
+        <exclude domain="external" path="model/" />
+        <exclude domain="external" path="log/" />
+        <exclude domain="external" path="download/" />
+        <exclude domain="file" path="voice_corrections.tsv" />
         <exclude domain="database" path="clipboard_database" />
         <exclude domain="database" path="clipboard_database-wal" />
         <exclude domain="database" path="clipboard_database-shm" />
