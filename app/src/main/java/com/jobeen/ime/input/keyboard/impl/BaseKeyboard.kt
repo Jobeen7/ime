@@ -310,7 +310,18 @@ abstract class BaseKeyboard(
                     is KeyDef.Behavior.LongPress -> {
                         longPressEnabled = true
                         setOnLongClickListener {
-                            onAction(behavior.action)
+                            val action = behavior.action
+                            if (action is KeyboardAction.VoiceInputAction) {
+                                // 语音长按穿线：把触发瞬间记下的指针 id 带上，
+                                // 父容器从录音开始就认这根手指，不等首次 MOVE
+                                onAction(
+                                    KeyboardAction.VoiceInputAction(
+                                        pointerId = (it as? CustomGestureView)?.longPressPointerId ?: -1
+                                    )
+                                )
+                            } else {
+                                onAction(action)
+                            }
                             return@setOnLongClickListener true
                         }
                         if (behavior.action is KeyboardAction.VoiceInputAction) {

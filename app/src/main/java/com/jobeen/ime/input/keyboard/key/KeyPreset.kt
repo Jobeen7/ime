@@ -147,7 +147,7 @@ fun spaceKey(percentWidth: Float = 0.23333f): KeyDef = KeyDef(
     ),
     behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.SpaceAction),
-        KeyDef.Behavior.LongPress(KeyboardAction.VoiceInputAction),
+        KeyDef.Behavior.LongPress(KeyboardAction.VoiceInputAction()),
     ),
 )
 
