@@ -143,8 +143,17 @@ object ClipboardManager {
         db(context) { db ->
             db.withTransaction {
                 val dao = db.clipboardDao()
-                // 物理清空前把全部条目记入防复活抑制（替代软删墓碑行的作用）
-                noteRemovedTexts(context, dao.getAllActive().map { it.text })
+                // 物理清空前把全部条目记入防复活抑制（替代软删墓碑行的作用）。
+                // 抑制集上限 200 条：先按时间倒序再截断，保证最新条目（含当前
+                // 系统剪贴板内容）不被丢掉——getAllActive 无排序，乱序截断时
+                // 可能恰好丢掉当前剪贴板那条，清空后它又复活回来
+                noteRemovedTexts(
+                    context,
+                    dao.getAllActive()
+                        .sortedByDescending { it.timestamp }
+                        .take(MAX_REMOVED_HASHES)
+                        .map { it.text },
+                )
                 dao.deleteAllRaw()
             }
         }
@@ -165,6 +174,12 @@ object ClipboardManager {
         db(context) { db -> db.clipboardDao().deleteByTexts(texts.toList()) }
     }
 
+    /** 一条防复活抑制记录：文本哈希 + 删除时刻（0 表示时刻未知，见 noteRemovedTexts）。 */
+    private data class RemovedSuppression(val hash: String, val removedAt: Long)
+
+    private fun RemovedSuppression.toStoredString(): String =
+        if (removedAt > 0) "$hash:$removedAt" else hash
+
     /**
      * 删除改物理删后替代软删墓碑的防复活机制：软删时代，被删条目以 deleted
      * 行留在表里，checkCurrentClipboard 靠它判定「系统剪贴板内容没变、不是
@@ -176,31 +191,74 @@ object ClipboardManager {
      * 旧实现只记一条「最新被删文本」且仅当删的是最新行才记：连删多条时后删
      * 的把先删的顶掉，而系统剪贴板里仍是先删那条，于是先删的冒回来、后删
      * 的不冒——必须按集合记、且每条被删文本都记。
+     *
+     * 每条抑制记录除哈希外还记删除时刻，供「被删文本被重新复制」时放行
+     * （判定在 checkCurrentClipboard：监听事件为主判据、剪贴板时间戳为
+     * 进程死亡期兜底）。prefs 序列化一行一条：新格式「哈希:删除时刻」，
+     * 旧格式整行只有哈希、读出时删除时刻记 0（未知）——这类记录时间戳
+     * 兜底不生效、按继续抑制处理，待下一次监听事件再放行。
      */
     private fun noteRemovedTexts(context: Context, texts: Collection<String>) {
         if (texts.isEmpty()) return
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val fresh = texts.map { textHash(it) }
-        val merged = (fresh + removedTextHashes(prefs)).distinct().take(MAX_REMOVED_HASHES)
+        val now = System.currentTimeMillis()
+        val fresh = texts.map { RemovedSuppression(textHash(it), now) }
+        val merged = (fresh + removedSuppressions(prefs))
+            .distinctBy { it.hash }
+            .take(MAX_REMOVED_HASHES)
         prefs.edit {
-            putString(KEY_REMOVED_TEXT_HASHES, merged.joinToString("\n"))
+            putString(KEY_REMOVED_TEXT_HASHES, merged.joinToString("\n") { it.toStoredString() })
             remove(KEY_REMOVED_LATEST_TEXT)
         }
     }
 
-    private fun removedTextHashes(
+    private fun removedSuppressions(
         prefs: android.content.SharedPreferences,
-    ): List<String> {
+    ): List<RemovedSuppression> {
         val stored = prefs.getString(KEY_REMOVED_TEXT_HASHES, null)
-        if (stored != null) return stored.split("\n").filter { it.isNotEmpty() }
-        // 一次性迁移旧版单值抑制：折算成哈希并入集合口径
+        if (stored != null) {
+            return stored.split("\n").filter { it.isNotEmpty() }.map { line ->
+                // 新格式带删除时刻；旧格式整行只有哈希，时刻记 0（未知）
+                val sep = line.indexOf(':')
+                if (sep > 0) {
+                    RemovedSuppression(
+                        line.substring(0, sep),
+                        line.substring(sep + 1).toLongOrNull() ?: 0L,
+                    )
+                } else {
+                    RemovedSuppression(line, 0L)
+                }
+            }
+        }
+        // 一次性迁移旧版单值抑制：折算成哈希并入集合口径（无删除时刻）
         val legacy = prefs.getString(KEY_REMOVED_LATEST_TEXT, null) ?: return emptyList()
-        return listOf(textHash(legacy))
+        return listOf(RemovedSuppression(textHash(legacy), 0L))
     }
 
-    private fun isRemovedTextSuppressed(context: Context, text: String): Boolean {
+    private fun removedSuppression(context: Context, text: String): RemovedSuppression? {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        return textHash(text) in removedTextHashes(prefs)
+        val hash = textHash(text)
+        return removedSuppressions(prefs).firstOrNull { it.hash == hash }
+    }
+
+    private fun isRemovedTextSuppressed(context: Context, text: String): Boolean =
+        removedSuppression(context, text) != null
+
+    /** 放行一条抑制（被删文本已被重新复制）：只摘命中条，其余抑制原样保留。 */
+    private fun liftRemovedSuppression(context: Context, hash: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val remaining = removedSuppressions(prefs).filter { it.hash != hash }
+        prefs.edit {
+            if (remaining.isEmpty()) {
+                remove(KEY_REMOVED_TEXT_HASHES)
+            } else {
+                putString(
+                    KEY_REMOVED_TEXT_HASHES,
+                    remaining.joinToString("\n") { it.toStoredString() },
+                )
+            }
+            remove(KEY_REMOVED_LATEST_TEXT)
+        }
     }
 
     private fun clearRemovedTextSuppressions(context: Context) {
@@ -223,7 +281,9 @@ object ClipboardManager {
      * 事务保证检查与改写不被并发插入打断。
      */
     suspend fun updateEntry(context: Context, oldText: String, newText: String) {
-        val clean = newText.trim()
+        // 与写入侧统一限长（见 MAX_TEXT_LENGTH）：编辑结果超限同样截断，
+        // 否则改写出的超限行照样能毒化整张历史表
+        val clean = newText.trim().take(MAX_TEXT_LENGTH)
         if (clean.isEmpty() || clean == oldText) return
         db(context) { db ->
             db.withTransaction {
@@ -268,15 +328,25 @@ object ClipboardManager {
     /**
      * 检查系统剪贴板，有新内容则入库。返回 true 表示有新条目。
      * suspend：在 IO 线程做查询，调用方负责把回调切回主线程。
+     *
+     * [fromClipChangedEvent] 标记本次检查是否由系统剪贴板变更监听回调
+     * 触发：它是「被删文本被重新复制」的放行主判据（见下方抑制判定），
+     * 面板打开时的补偿检查等其他来源保持默认 false。
      */
-    suspend fun checkCurrentClipboard(context: Context): Boolean {
+    suspend fun checkCurrentClipboard(
+        context: Context,
+        fromClipChangedEvent: Boolean = false,
+    ): Boolean {
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         // 读剪贴板可能抛 SecurityException（如后台限制/OEM 行为），不能让监听协程崩掉
         val clip = runCatching { cm.primaryClip }.getOrNull() ?: return false
         if (clip.itemCount == 0) return false
         // 隐私：先判敏感标记——敏感内容连文本都不读，不进历史、不弹提示
         if (isSensitiveClip(clip)) return false
-        val text = clipText(clip, context) ?: return false
+        // 采集侧先按与入库侧同一上限截断，再参与后续全部比对与哈希：
+        // 超限文本全文与 addEntry 截断后入库的文本永远对不上（最新行比对、
+        // 抑制哈希判定双双失效），且哈希入参自此不超过 MAX_TEXT_LENGTH
+        val text = (clipText(clip, context) ?: return false).take(MAX_TEXT_LENGTH)
 
         val ts = clipTimestamp(clip)
         if (ts > 0) lastClipTimestamp = ts
@@ -289,8 +359,25 @@ object ClipboardManager {
         val (latest, exists) = db(context) { db ->
             db.clipboardDao().getLatestIncludingDeleted() to db.clipboardDao().existsByText(text)
         } ?: (null to true)
-        if (latest?.text == text) return false
-        if (isRemovedTextSuppressed(context, text)) return false
+        // 防复活抑制命中：先判「重新复制」放行，再判与最新行是否一致——
+        // 已被物理删的文本不在有效行里，顺序反过来会让软删存量行把放行短路。
+        // 放行判据（任一成立即视为删除之后的主动重新复制，摘除该条抑制
+        // 并走正常入库；放行后 addEntry 仍按既有契约清理其余抑制）：
+        // ① 主判据：本次检查由剪贴板变更监听事件触发——删除动作本身不改
+        //    系统剪贴板、不会产生新事件，事件到达且内容哈希仍等于被删文本，
+        //    只可能是删除之后又被复制了同一文本；
+        // ② 时间戳兜底：进程死亡期间错过的复制事件靠 ClipDescription 时
+        //    间戳补判，剪贴板设置时刻晚于删除时刻即放行；旧格式记录无删
+        //    除时刻（removedAt=0）或剪贴板无时间戳（ts<=0）时不放行、继续抑制。
+        val suppression = removedSuppression(context, text)
+        if (suppression != null) {
+            val recopied = fromClipChangedEvent ||
+                (suppression.removedAt > 0L && ts > suppression.removedAt)
+            if (!recopied) return false
+            liftRemovedSuppression(context, suppression.hash)
+        } else if (latest?.text == text) {
+            return false
+        }
 
         val isNew = !exists
         if (isNew) {
@@ -313,7 +400,8 @@ object ClipboardManager {
             app.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         val listener = android.content.ClipboardManager.OnPrimaryClipChangedListener {
             appScope.launch(Dispatchers.IO) {
-                val changed = checkCurrentClipboard(app)
+                // 来源标记供「重新复制」放行主判据使用（见 checkCurrentClipboard）
+                val changed = checkCurrentClipboard(app, fromClipChangedEvent = true)
                 if (changed) {
                     withContext(Dispatchers.Main) {
                         onContentChanged?.invoke()
@@ -323,7 +411,8 @@ object ClipboardManager {
         }
         clipListener = listener
         cm.addPrimaryClipChangedListener(listener)
-        // 补偿进程不存活期间的变化
+        // 补偿进程不存活期间的变化（不冒充监听事件：删除后重复制的放行
+        // 在这里靠剪贴板时间戳兜底判定）
         appScope.launch(Dispatchers.IO) {
             val changed = checkCurrentClipboard(app)
             if (changed) {
@@ -384,7 +473,11 @@ object ClipboardManager {
             val oldRows = oldDao.getAllRaw()
             if (oldRows.isNotEmpty()) {
                 val existing = dao.getAllRaw().map { it.text to it.timestamp }.toHashSet()
-                val missing = oldRows.filter { (it.text to it.timestamp) !in existing }
+                // 软删行不搬运：那是已删除内容，搬进新库只会让墓碑行继续占位
+                // 并被保留期清理前误当存量；下方 deleteAllRaw 仍会清掉旧库全部行
+                val missing = oldRows.filter {
+                    !it.deleted && (it.text to it.timestamp) !in existing
+                }
                 if (missing.isNotEmpty()) {
                     target.withTransaction {
                         // id 清零走自增，避免与新库已有行主键冲突
