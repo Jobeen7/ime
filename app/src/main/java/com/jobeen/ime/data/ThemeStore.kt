@@ -87,6 +87,12 @@ object ThemeStore {
     /** 写入序号：快速连续保存时，旧列表的写入不许覆盖新列表 */
     private val writeSeq = java.util.concurrent.atomic.AtomicLong(0)
 
+    /**
+     * 落盘串行锁：「比序号 + rename」必须在锁内整体执行——只做先查后动时，
+     * 旧写入可能在新写入已 rename 完成后才通过检查、反过来把新文件覆盖掉。
+     */
+    private val writeLock = Any()
+
     private fun applyCustomThemes(themes: List<KeyboardTheme>) {
         KeyboardThemePresets.setCustomThemes(themes.take(MAX_CUSTOM_THEMES))
         val snapshot = themes.map { ReadableTheme.from(it) }
@@ -101,11 +107,15 @@ object ThemeStore {
                 // 会互相交错、rename 还可能把别人的半成品顶成正式文件
                 val tmp = File(App.themesDir, "$THEMES_FILE.$seq.tmp")
                 tmp.writeText(readableJson.encodeToString(snapshot))
-                // 已有更新的保存在途：本次快照作废，由最新一次负责落盘终态
-                if (seq == writeSeq.get()) {
-                    check(tmp.renameTo(file)) { "rename themes file failed" }
-                } else {
-                    tmp.delete()
+                // 比序号与 rename 在锁内串行：检查通过后不许有其他写入插队
+                // 完成 rename，否则旧快照仍可能后发覆盖新快照
+                synchronized(writeLock) {
+                    // 已有更新的保存在途：本次快照作废，由最新一次负责落盘终态
+                    if (seq == writeSeq.get()) {
+                        check(tmp.renameTo(file)) { "rename themes file failed" }
+                    } else {
+                        tmp.delete()
+                    }
                 }
             }
         }

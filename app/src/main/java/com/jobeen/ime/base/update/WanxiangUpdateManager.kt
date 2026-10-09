@@ -31,7 +31,8 @@ import java.util.zip.ZipFile
  *    自定义 filter 链），绝不能被上游覆盖；lua/ 与定制 schema 深度集成，
  *    opencc/ App 未使用，均不更新。
  * 2. 只写 sharedDataDir，绝不碰 userDataDir（用户词库、自定义配置不受影响）。
- * 3. 下载用 .part 临时文件，成功后原子替换；词库先解压到临时目录校验后再搬移。
+ * 3. 下载用 .part 临时文件，成功后原子替换；词库先完整解压到与现用目录
+ *    同级的 staging 目录校验，再整目录 rename 切换，不逐文件搬移。
  * 4. 全部网络与文件 IO 在 Dispatchers.IO，绝不阻塞主线程；下载为流式，
  *    不把整个文件载入内存（语法模型约 400MB）。
  * 5. 词库与语法模型紧耦合（上游 RIME-LMDG 说明），必须配套更新，不单独更新其中之一。
@@ -68,6 +69,10 @@ object WanxiangUpdateManager {
     private const val KEY_GRAM_REMOTE_FP_PUB = "gram_remote_fp_pub"
 
     private const val PART_SUFFIX = ".part"
+
+    /** 词库整目录切换的 staging/trash 目录名（与现用 dicts 同级，保证 rename 在同一文件系统内原子） */
+    private const val DICTS_STAGING_DIR = "dicts.staging"
+    private const val DICTS_TRASH_DIR = "dicts.trash"
     private const val BUFFER_SIZE = 32 * 1024
     private const val REPORT_STEP = 256 * 1024L
 
@@ -435,8 +440,11 @@ object WanxiangUpdateManager {
                 finalZip.delete()
                 check(zipFile.renameTo(finalZip)) { "方案包落盘失败" }
 
-                // 2. 解压词库到临时目录并校验（暂不搬移，等模型也下载成功后一起应用）
-                extractDir = File(workDir, "dicts_new").apply {
+                // 2. 解压词库到 staging 目录并校验（暂不切换，等模型也下载
+                // 成功后一起应用）。staging 必须与现用 dicts 同级（同在
+                // sharedDataDir 下）：应用时整目录 rename 切换，跨文件系统
+                // （如 cacheDir 在内部存储）rename 会失败
+                extractDir = File(DataManager.sharedDataDir, DICTS_STAGING_DIR).apply {
                     deleteRecursivelyNoFollow()
                     mkdirs()
                 }
@@ -488,42 +496,32 @@ object WanxiangUpdateManager {
                 gramTarget = target
             }
 
-            // 4. 两边都就绪后才应用：词库整目录对齐（先清残留再覆盖），再原子替换语法模型
-            extractDir?.let { dir ->
-                val dictsDir = File(DataManager.sharedDataDir, "dicts").apply { mkdirs() }
-                val newFiles = dir.walkTopDown()
-                    .filter { it.isFile }
-                    .toList()
-                val newRelPaths = newFiles.map { it.relativeTo(dir).path }.toSet()
-                // 清除残留：现用目录里不在新词库清单中的 .dict.yaml 一律删除。
-                // 上游删掉/改名的词库文件若不清，会永远留在目录里被 Rime 加载；
-                // 旧版误写到 dicts/dicts/ 下的文件也在这里一并清掉。
-                dictsDir.walkTopDown()
-                    .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
-                    .filter { it.relativeTo(dictsDir).path !in newRelPaths }
-                    .forEach {
-                        Timber.i("清理残留词库文件：%s", it.relativeTo(dictsDir).path)
-                        it.delete()
-                    }
-                // 残留文件删完后顺手清掉空子目录（如误写遗留的 dicts/dicts/）
-                dictsDir.walkBottomUp()
-                    .filter { it.isDirectory && it != dictsDir }
-                    .forEach { if (it.listFiles().isNullOrEmpty()) it.delete() }
-                newFiles.forEach { src ->
-                    val rel = src.relativeTo(dir).path
-                    val dest = File(dictsDir, rel).canonicalFile
-                    // 二次路径穿越检查
-                    check(dest.path.startsWith(dictsDir.canonicalPath + File.separator)) {
-                        "非法路径：$rel"
-                    }
-                    dest.parentFile?.mkdirs()
-                    // 每文件原子落位：先写同目录临时文件再 rename 覆盖。中途中断
-                    // 只留下 .part 残留，现用文件要么旧版完整、要么新版完整，
-                    // 不会出现写一半的词库被 Rime 加载
-                    val part = File(dest.parentFile, dest.name + PART_SUFFIX)
-                    src.copyTo(part, overwrite = true)
-                    check(part.renameTo(dest)) { "词库文件落盘失败：$rel" }
+            // 4. 两边都就绪后才应用：词库整目录切换，再原子替换语法模型。
+            // 不再逐文件搬移+清残留：逐文件落位期间现用目录是新旧混合态，
+            // 中途被杀 Rime 会加载到半套词库；整目录 rename 后现用目录
+            // 要么是旧版完整词库、要么是新版完整词库。上游删掉/改名的词库
+            // 文件随旧目录整份进 trash，不再需要单独清残留
+            extractDir?.let { staging ->
+                val dictsDir = File(DataManager.sharedDataDir, "dicts")
+                val trashDir = File(DataManager.sharedDataDir, DICTS_TRASH_DIR)
+                // 自愈：上次切换若中断在两次 rename 之间（现用目录缺失、
+                // trash 还在），先把旧词库改回来；现用目录在场时的残留
+                // trash 是已完成切换的遗留，直接清掉
+                if (!dictsDir.exists() && trashDir.exists()) {
+                    check(trashDir.renameTo(dictsDir)) { "词库旧目录回滚失败" }
                 }
+                if (dictsDir.exists() && trashDir.exists()) {
+                    trashDir.deleteRecursivelyNoFollow()
+                }
+                if (dictsDir.exists()) {
+                    check(dictsDir.renameTo(trashDir)) { "词库旧目录移开失败" }
+                }
+                if (!staging.renameTo(dictsDir)) {
+                    // 新目录就位失败：把旧词库改回来，不能留下无词库状态
+                    if (trashDir.exists()) trashDir.renameTo(dictsDir)
+                    throw IllegalStateException("词库目录切换失败")
+                }
+                trashDir.deleteRecursivelyNoFollow()
             }
             if (gramPartial != null && gramTarget != null) {
                 // partial 与 target 同目录，rename 本身即原子替换目标文件；
@@ -560,15 +558,14 @@ object WanxiangUpdateManager {
             // 清理临时文件，避免占用存储空间
             runCatching { File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX").delete() }
             runCatching { File(workDir, "rime-wanxiang-lite.zip").delete() }
-            runCatching { File(workDir, "dicts_new").deleteRecursivelyNoFollow() }
+            // staging 未切换（失败/取消）时清掉；切换成功后该路径已 rename
+            // 为现用 dicts、不存在，此处是空操作。trash 不在此清：切换中断
+            // 时它可能是旧词库的唯一副本，留下次应用前的自愈处理
+            runCatching {
+                File(DataManager.sharedDataDir, DICTS_STAGING_DIR).deleteRecursivelyNoFollow()
+            }
             // gram 成功时已 rename 走；失败/取消时清掉 .part 残留
             runCatching { gramPartial?.delete() }
-            // 词库逐文件落位中断时可能在 dicts 里留 .part，一并清掉
-            runCatching {
-                File(DataManager.sharedDataDir, "dicts").walkTopDown()
-                    .filter { it.isFile && it.name.endsWith(PART_SUFFIX) }
-                    .forEach { it.delete() }
-            }
         }
     }
 

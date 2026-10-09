@@ -105,21 +105,31 @@ plugins {
 // 不会被赋值，AGP 产出未签名包——能装但覆盖不了已发布版本，且构建不报错、
 // 极易误发。仅当本次调用包含 assemble/bundle/install/publish 的 Release
 // 任务时拦截；debug 构建、单元测试、lint 等不受影响（debug 仍可回退默认签名）。
+// 判断按实际任务图（taskGraph.whenReady）而非 startParameter 原始字符串：
+// 命令行缩写（aR）与聚合任务（build 经 assemble 带出 assembleRelease）的
+// 原始字符串都对不上 Release 任务名，会漏拦；任务图展开后是真实任务名。
 val jimeKsPath = project.findProperty("JIME_STORE_FILE") as String?
 val jimeSigningConfigured = jimeKsPath != null && file(jimeKsPath).exists()
 if (!jimeSigningConfigured) {
-    val releaseTaskRequested = gradle.startParameter.taskNames.any { name ->
-        val task = name.substringAfterLast(':')
-        task.contains("Release") &&
-            (task.startsWith("assemble") || task.startsWith("bundle") ||
-                task.startsWith("install") || task.startsWith("publish"))
-    }
-    if (releaseTaskRequested) {
-        throw GradleException(
-            "JIME 签名配置缺失（gradle.properties 未配置 JIME_STORE_FILE 或 key 文件不存在），" +
-                "release 构建已拦截：未签名包无法覆盖升级已发布版本。"
-        )
-    }
+    // whenReady 在 Kotlin DSL 里用对象表达式实现 Action，避免 SAM 推断歧义
+    gradle.taskGraph.whenReady(
+        object : org.gradle.api.Action<org.gradle.api.execution.TaskExecutionGraph> {
+            override fun execute(graph: org.gradle.api.execution.TaskExecutionGraph) {
+                val releaseTaskRequested = graph.allTasks.any { task ->
+                    val name = task.name
+                    name.contains("Release") &&
+                        (name.startsWith("assemble") || name.startsWith("bundle") ||
+                            name.startsWith("install") || name.startsWith("publish"))
+                }
+                if (releaseTaskRequested) {
+                    throw GradleException(
+                        "JIME 签名配置缺失（gradle.properties 未配置 JIME_STORE_FILE 或 key 文件不存在），" +
+                            "release 构建已拦截：未签名包无法覆盖升级已发布版本。"
+                    )
+                }
+            }
+        }
+    )
 }
 
 dependencies {
