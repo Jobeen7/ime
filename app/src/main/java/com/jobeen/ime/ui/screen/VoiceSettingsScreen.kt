@@ -38,9 +38,12 @@ import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
 import com.jobeen.ime.base.speech.ModelDownloader
 import com.jobeen.ime.base.speech.SherpaSpeechClient
+import com.jobeen.ime.base.speech.VoiceCorrectionStore
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
+import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 import com.jobeen.ime.ui.screen.ScreenComponent.ProgressButton
+import java.io.File
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
 import kotlinx.coroutines.Dispatchers
@@ -80,6 +83,14 @@ fun VoiceSettingsScreen(
     var downloadBtnWidth by remember { mutableStateOf(0.dp) }
     var progressFraction by remember { mutableStateOf(0f) }
     var isExtracting by remember { mutableStateOf(false) }
+
+    // 语音专名纠错：与输入法服务同文件、同进程的词对存储实例
+    // （开关与清除经 Store 的跨实例同步即时作用到服务侧实例）
+    val correctionStore = remember {
+        VoiceCorrectionStore(File(context.filesDir, VoiceCorrectionStore.FILE_NAME))
+    }
+    var correctionEnabled by remember { mutableStateOf(correctionStore.enabled) }
+    var correctionsCleared by remember { mutableStateOf(false) }
 
     val scope = rememberCoroutineScope()
 
@@ -257,6 +268,45 @@ fun VoiceSettingsScreen(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+            }
+            // 文案暂用字面量：strings.xml 不在本簇归属内，后续统一抽取
+            SettingsGroup(
+                title = "语音专名纠错",
+            ) {
+                SwitchRow(
+                    title = "启用专名纠错",
+                    checked = correctionEnabled,
+                    onCheckedChange = {
+                        correctionEnabled = it
+                        correctionStore.setEnabled(it)
+                    },
+                    showDivider = true,
+                )
+                ActionRow(
+                    title = "清除已学词对",
+                    subtitle = if (correctionsCleared) {
+                        "已清除"
+                    } else {
+                        "清除后不再按已学词对自动纠正"
+                    },
+                    trailing = {
+                        Button(
+                            onClick = {
+                                correctionStore.clear()
+                                correctionsCleared = true
+                            },
+                            modifier = Modifier.height(32.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                        ) {
+                            Text(
+                                "清除",
+                                fontSize = 13.sp,
+                                maxLines = 1,
+                            )
+                        }
+                    },
+                )
             }
         }
     }

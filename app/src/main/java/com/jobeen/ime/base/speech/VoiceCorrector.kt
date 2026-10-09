@@ -42,6 +42,10 @@ data class CorrectResult(
  *
  * 只作用于最终上屏文本，不碰流式预览、不碰打字链路。规则按错形
  * 长度降序应用（长段优先），已替换区间不再被其他规则重叠命中。
+ *
+ * 正形保护：待纠片段若恰好一字不差等于任一已学正形，永不改写——
+ * 逐位字集泛化可能让别的规则的字集恰好罩住一个已教正形，若不加
+ * 这层保护，用户刚教对的词会被另一条规则的泛化组合再次改错。
  */
 object VoiceCorrector {
 
@@ -77,6 +81,8 @@ object VoiceCorrector {
             compareByDescending<CorrectionRule> { it.spanLength }
                 .thenByDescending { it.rightForm.length }
         )
+        // 全部已学正形集合：片段一字不差等于其中任何一个都受保护
+        val protectedForms = rules.mapTo(HashSet()) { it.rightForm }
         val consumed = BooleanArray(text.length)
         // 输入坐标下的命中（start → 规则）
         val hits = ArrayList<Pair<Int, CorrectionRule>>()
@@ -94,7 +100,8 @@ object VoiceCorrector {
                 }
                 if (!blocked && rule.matchesAt(text, start)) {
                     val span = text.substring(start, start + len)
-                    if (span != rule.rightForm) {
+                    // 正形保护含本规则自己的正形（span == rightForm 同此）
+                    if (span !in protectedForms) {
                         hits += start to rule
                         for (i in start until start + len) consumed[i] = true
                         start += len
