@@ -54,12 +54,19 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     private val moveLocation = IntArray(2)
     private val repeatRunnable = Runnable { fireRepeat() }
 
+    /** 长按触发瞬间记下的指针 id：长按动作（如语音）穿线取用，免得等首次
+     * MOVE 才认领手指时其他手指的抬起已被漏过；无长按触发时为 -1 */
+    var longPressPointerId: Int = -1
+        private set
+
     // 长按计时走 Handler + 复用 Runnable：旧实现每次按键都 launch 一个协程
     // 只为 delay 后触发长按（同文件连发路径早已证明 Handler 足够）
     private val longPressRunnable = Runnable {
         if (longPressFeedbackEnabled) {
             InputFeedbacks.hapticFeedback(this, true)
         }
+        // 先记 id 再触发：performLongClick 内同步回调监听方，届时即可取到
+        longPressPointerId = activePointerId
         longPressTriggered = performLongClick()
     }
 

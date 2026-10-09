@@ -51,7 +51,9 @@ sealed class KeyboardAction {
 
     data object ShowInputMethodPickerAction : KeyboardAction()
 
-    data object VoiceInputAction : KeyboardAction()
+    /** 长按触发语音：pointerId 为触发瞬间那根手指的 id，父容器据此认领松手；
+     * -1 表示未知（工具栏等无指针来源），松手判定回退为任意 UP 可结束 */
+    data class VoiceInputAction(val pointerId: Int = -1) : KeyboardAction()
 
     data object StopVoiceInputAction : KeyboardAction()
 
