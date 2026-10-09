@@ -292,6 +292,9 @@ object BackupManager {
             val clipList = ArrayList<ClipboardRecord>(clips.length())
             for (i in 0 until clips.length()) {
                 val o = clips.getJSONObject(i)
+                // 软删行不写回：导出侧只导有效行，此为旧备份/异常包的兜底——
+                // 已删除内容还原回库只会重新成为墓碑行，不应复活也不应占位
+                if (o.optBoolean("deleted")) continue
                 clipList += ClipboardRecord(
                     id = o.optLong("id", 0),
                     text = o.optString("text"),
