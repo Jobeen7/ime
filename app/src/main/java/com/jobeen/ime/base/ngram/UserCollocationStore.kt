@@ -10,7 +10,8 @@ import java.io.File
  * - 只存词对与计数、最后使用日期，不存整句原文；
  * - 独立文件存储（TSV），不并入主数据库：损坏时预测退回通用
  *   模型，打字与词库不受影响（故障域隔离）；
- * - 内存计数、攒批落盘，学习调用不阻塞输入路径；
+ * - 内存计数、攒批落盘（tmp 文件 + rename 原子替换），学习调用不阻塞输入路径；
+ * - 读文件整体失败时本进程内禁用写入，绝不让空内存覆写磁盘上的全部历史；
  * - 总量封顶 [MAX_PAIRS]，落盘时按（计数、最近使用）淘汰尾部，
  *   低频旧搭配在加载时清掉，避免旧习惯无限累积。
  *
@@ -25,6 +26,9 @@ class UserCollocationStore(private val file: File) {
     private val lock = Any()
     private val table = HashMap<String, HashMap<String, Entry>>()
     private var loaded = false
+
+    /** 读文件整体失败：一旦置真，本进程内不再落盘，防止空内存覆写历史。 */
+    private var loadFailed = false
     private var dirtyCount = 0
 
     private val flushExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
@@ -35,12 +39,22 @@ class UserCollocationStore(private val file: File) {
 
     private fun ensureLoadedLocked() {
         if (loaded) return
-        loaded = true
         runCatching {
             if (file.isFile) {
                 parseInto(file.readText(Charsets.UTF_8), table)
                 evictStaleLocked(today())
+            } else if (file.exists()) {
+                // 路径存在却不是普通文件（损坏形态）：按读失败处理
+                throw java.io.IOException("user collocations path is not a regular file")
             }
+        }.onSuccess {
+            loaded = true
+            loadFailed = false
+        }.onFailure {
+            // 整体读失败：不标记 loaded（下次调用可重试），且在读
+            // 成功之前禁用一切写入，防止空内存覆写磁盘历史；
+            // 行级坏行仍由 parseInto 逐行跳过，不走这里
+            loadFailed = true
         }
     }
 
@@ -91,6 +105,7 @@ class UserCollocationStore(private val file: File) {
     }
 
     private fun scheduleFlushLocked() {
+        if (loadFailed) return // 读未成功前不落盘，仅留内存状态
         // 快照在锁内序列化成文本，写文件在执行器线程做，不阻塞调用方
         val text = runCatching {
             pruneLocked()
