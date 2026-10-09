@@ -18,9 +18,12 @@
          该全文件访问权限，纯增权限面与商店政策风险，无功能收益 -->
     <uses-permission android:name="android.permission.VIBRATE" />
 
+    <!-- 剪贴板局域网同步走明文 HTTP 连电脑端，但载荷本身是 AES+HMAC
+         端到端加密，链路上传输的只有密文，故放行明文流量 -->
     <application
         android:name="com.jobeen.ime.ImeApplication"
         android:allowBackup="true"
+        android:usesCleartextTraffic="true"
         android:dataExtractionRules="@xml/data_extraction_rules"
         android:fullBackupContent="@xml/backup_rules"
         android:icon="@mipmap/ic_launcher"
