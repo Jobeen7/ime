@@ -121,21 +121,46 @@ object SherpaSpeechClient {
         override fun onServiceConnected(name: ComponentName?, binder: IBinder?) {
             val messenger = Messenger(binder)
             Timber.d("SpeechCli %s", "onServiceConnected")
+            var needsRebind = false
             synchronized(connectLock) {
                 speechMessenger = messenger
-                val actions = pending.toList()
+                val actions: List<Pair<Int, Int>> = pending.toList()
                 pending.clear()
-                actions.forEach { (what, gen) ->
+                var failedAt = -1
+                for (index in actions.indices) {
+                    val what: Int = actions[index].first
+                    val gen: Int = actions[index].second
                     // 待绑定的 START 若在绑定完成前已被松手/取消，绝不能重放：
                     // 否则客户端以为没在录，服务端却开始一段停不下来的幽灵录音。
                     // 代次也必须仍是当前会话：旧会话的 START 更不能重放。
                     if (what == SpeechIpc.MSG_START && (!holding.get() || gen != activeGen)) {
-                        return@forEach
+                        continue
                     }
                     val msg = SpeechIpc.message(what, gen = gen)
                     if (what == SpeechIpc.MSG_START) msg.replyTo = clientMessenger
-                    runCatching { messenger.send(msg) }
+                    if (runCatching { messenger.send(msg) }.isFailure) {
+                        failedAt = index
+                        break
+                    }
                 }
+                if (failedAt >= 0) {
+                    // 刚连上就发送失败（对端在绑定瞬间又被回收）：失败处起的
+                    // 消息全部退回队列（下次重放时 START 的代次校验会再过滤
+                    // 一遍，退回无害），连接整体作废重绑，不能假装发过。
+                    for (i in failedAt until actions.size) {
+                        val item: Pair<Int, Int> = actions[i]
+                        pending.add(item)
+                    }
+                    speechMessenger = null
+                    needsRebind = true
+                }
+            }
+            if (needsRebind) {
+                Timber.w("SpeechCli replay send failed; force reconnect")
+                // 在 connection 对象内部不能按名引用 connection 本身（编译器
+                // 类型推断自引用递归），this 即本连接对象
+                runCatching { appContext.unbindService(this) }
+                postBind()
             }
         }
 
@@ -181,27 +206,85 @@ object SherpaSpeechClient {
         idleHandler.removeCallbacks(idleUnbindRunnable)
     }
 
+    /** 作废当前连接：清掉本地 messenger 并向框架解绑，下一次 send 必然走全新绑定。 */
+    private fun forceDisconnect() {
+        synchronized(connectLock) { speechMessenger = null }
+        runCatching { appContext.unbindService(connection) }
+    }
+
+    private fun postBind() {
+        val app = appContext
+        Handler(Looper.getMainLooper()).post {
+            runCatching {
+                app.bindService(
+                    Intent(app, SpeechRecognitionService::class.java),
+                    connection,
+                    Context.BIND_AUTO_CREATE,
+                )
+            }.onFailure { Timber.e("SpeechCli bindService failed %s", it.message) }
+        }
+    }
+
+    /** 无可用连接时：消息入待发队列并异步发起绑定，连上后由 onServiceConnected 重放。 */
+    private fun enqueueAndBind(what: Int, gen: Int) {
+        synchronized(connectLock) { pending.add(what to gen) }
+        Timber.d("SpeechCli %s", "bind requested what=$what")
+        postBind()
+    }
+
     private fun send(what: Int, gen: Int = 0) {
         cancelIdleUnbind()
         val messenger = synchronized(connectLock) { speechMessenger }
         if (messenger != null) {
             val msg = SpeechIpc.message(what, gen = gen)
             if (what == SpeechIpc.MSG_START) msg.replyTo = clientMessenger
-            runCatching { messenger.send(msg) }
-        } else {
-            synchronized(connectLock) { pending.add(what to gen) }
-            Timber.d("SpeechCli %s", "bind requested what=$what")
-            val app = appContext
-            Handler(Looper.getMainLooper()).post {
-                runCatching {
-                    app.bindService(
-                        Intent(app, SpeechRecognitionService::class.java),
-                        connection,
-                        Context.BIND_AUTO_CREATE,
-                    )
-                }.onFailure { Timber.e("SpeechCli bindService failed %s", it.message) }
-            }
+            if (runCatching { messenger.send(msg) }.isSuccess) return
+            // 发送失败 = binder 已失效：长时间空闲后 :speech 进程被系统
+            // 回收/冻结、服务实例已销毁，但本地 speechMessenger 仍非空，
+            // onServiceDisconnected 在部分系统上也不触发。旧实现 runCatching
+            // 静默吞掉失败：START 就此丢失，且此后每次 send 都继续信任这条
+            // 死连接、永不重绑——语音永久拉不起，直到重启进程类操作碰巧
+            // 把连接换掉。改为作废连接、重绑并把消息走待发队列重发，故障自愈。
+            Timber.w("SpeechCli send failed what=%d; force reconnect", what)
+            forceDisconnect()
+            // STOP 丢失不重发到新连接：其收尾由调用方的 DONE 超时兜底完成；
+            // 把旧 STOP 排进新连接反而可能误停刚开始的新会话
+            if (what == SpeechIpc.MSG_STOP) return
         }
+        enqueueAndBind(what, gen)
+    }
+
+    // 启动看门狗：START 发出后若迟迟没有 RECORDING_STARTED（连接僵尸、
+    // 对端进程被冻结、消息石沉大海都会这样），旧实现无限期静默等待，
+    // 用户只看到「拉不起」且无任何失败反馈。6 秒未开始 → 强制重连并
+    // 重发一次 START；再失败 → 走 cancelSession 正常失败收尾（UI 收起、
+    // 状态清干净），不留死会话。正常冷启动（绑服务+加载模型）在 6 秒
+    // 内完成，看门狗不会误触发；万一误触发也只是多一次重连，不丢会话。
+    private val startWatchdogHandler = Handler(Looper.getMainLooper())
+    private const val START_WATCHDOG_MS = 6000L
+    private var startWatchdogRetryUsed = false
+    private val startWatchdogRunnable = Runnable {
+        if (!holding.get()) return@Runnable
+        if (!startWatchdogRetryUsed) {
+            startWatchdogRetryUsed = true
+            Timber.w("SpeechCli start watchdog: no RECORDING_STARTED, reconnect + resend START")
+            forceDisconnect()
+            send(SpeechIpc.MSG_LOAD)
+            send(SpeechIpc.MSG_START, activeGen)
+            armStartWatchdog()
+        } else {
+            Timber.e("SpeechCli start watchdog: retry exhausted, cancel session")
+            cancelSession()
+        }
+    }
+
+    private fun armStartWatchdog() {
+        startWatchdogHandler.removeCallbacks(startWatchdogRunnable)
+        startWatchdogHandler.postDelayed(startWatchdogRunnable, START_WATCHDOG_MS)
+    }
+
+    private fun disarmStartWatchdog() {
+        startWatchdogHandler.removeCallbacks(startWatchdogRunnable)
     }
 
     /** 语音专名纠错词表：与识别解耦的独立小文件存储，损坏即整体不纠。 */
@@ -225,6 +308,7 @@ object SherpaSpeechClient {
     }
 
     private fun onRecordingStarted() {
+        disarmStartWatchdog()
         runCatching { SpeechUiBridge.onRecordingStarted?.invoke() }
     }
 
@@ -382,10 +466,13 @@ object SherpaSpeechClient {
         markVoiceUsed(service)
         send(SpeechIpc.MSG_LOAD)
         send(SpeechIpc.MSG_START, gen)
+        startWatchdogRetryUsed = false
+        armStartWatchdog()
     }
 
     fun stopHoldSession(discard: Boolean = false) {
         if (!holding.compareAndSet(true, false)) return
+        disarmStartWatchdog()
         // 服务尚未绑定时 START 还在待发队列里：先撤掉，绑定完成后不得重放
         removePending(SpeechIpc.MSG_START)
         if (discard) {
@@ -404,7 +491,11 @@ object SherpaSpeechClient {
             // 先 arm 再发 STOP：DONE 可能极快返回，先置位才不会被 onDone
             // 的 disarm 错过、反留下无人认领的超时任务
             armDoneTimeout()
-            runCatching { messenger.send(SpeechIpc.message(SpeechIpc.MSG_STOP)) }
+            if (runCatching { messenger.send(SpeechIpc.message(SpeechIpc.MSG_STOP)) }.isFailure) {
+                // STOP 没送达（连接已死）：作废连接，下次启动走全新绑定；
+                // 本次收尾由上面已武装的 DONE 超时强制完成，不受影响
+                forceDisconnect()
+            }
         } else {
             finishSession()
         }
@@ -461,7 +552,10 @@ object SherpaSpeechClient {
         // 必须通知服务端终止会话：旧实现只做本地收尾，服务端 sessionActive
         // 残留时下一次 START 会在服务端被 CAS 拒绝、静默无反馈
         synchronized(connectLock) { speechMessenger }?.let { messenger ->
-            runCatching { messenger.send(SpeechIpc.message(SpeechIpc.MSG_STOP)) }
+            if (runCatching { messenger.send(SpeechIpc.message(SpeechIpc.MSG_STOP)) }.isFailure) {
+                // 同 stopHoldSession：STOP 没送达说明连接已死，作废以免下次启动继续踩
+                forceDisconnect()
+            }
         }
         uiJob?.cancel()
         uiJob = null
@@ -487,6 +581,7 @@ object SherpaSpeechClient {
     private fun resetState() {
         holding.set(false)
         discarding.set(false)
+        disarmStartWatchdog()
         // 所有收尾路径（finish/cancel/权限中止）都经这里：等 DONE 的
         // 标志与超时任务不得残留到下一会话
         disarmDoneTimeout()
