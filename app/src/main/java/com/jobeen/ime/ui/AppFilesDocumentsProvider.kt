@@ -224,13 +224,25 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
         query: String,
         projection: Array<String>?,
     ): Cursor = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION).apply {
-        val keyword = query.lowercase()
-        fileFromDocumentId(
-            filesRoot.documentId
-        ).walk().filter {
-            it.name.lowercase().contains(keyword)
-        }.take(50).forEach {
-            newRowFromFile(it)
+        val keyword = query.lowercase(java.util.Locale.ROOT)
+        // SAF search must stay bounded even when an app's exported data tree has
+        // accumulated thousands of model/cache files. Stop after enough results
+        // or 5,000 visited nodes instead of walking the entire tree per query.
+        val pending = ArrayDeque<File>()
+        pending.add(filesRoot)
+        var visited = 0
+        var matches = 0
+        while (pending.isNotEmpty() && visited < MAX_SEARCH_VISITED && matches < MAX_SEARCH_RESULTS) {
+            val file = pending.removeFirst()
+            visited++
+            if (file.name.lowercase(java.util.Locale.ROOT).contains(keyword)) {
+                newRowFromFile(file)
+                matches++
+            }
+            if (file.isDirectory) {
+                file.listFiles()?.sortedBy { it.name.lowercase(java.util.Locale.ROOT) }
+                    ?.forEach(pending::addLast)
+            }
         }
     }
 
@@ -357,6 +369,8 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
         private const val MIME_TYPE_WILDCARD = "*/*"
         private const val MIME_TYPE_TEXT = "text/plain"
         private const val MIME_TYPE_BIN = "application/octet-stream"
+        private const val MAX_SEARCH_VISITED = 5_000
+        private const val MAX_SEARCH_RESULTS = 50
 
         private val TEXT_EXTENSIONS = setOf(
             "txt",

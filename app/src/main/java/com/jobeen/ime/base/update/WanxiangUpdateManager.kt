@@ -73,6 +73,9 @@ object WanxiangUpdateManager {
     /** 词库整目录切换的 staging/trash 目录名（与现用 dicts 同级，保证 rename 在同一文件系统内原子） */
     private const val DICTS_STAGING_DIR = "dicts.staging"
     private const val DICTS_TRASH_DIR = "dicts.trash"
+    private const val UPDATE_TXN_FILE = "wanxiang-update.pending"
+    private const val UPDATE_TXN_COMMITTED_FILE = "wanxiang-update.committed"
+    private const val GRAM_BACKUP_FILE = "$GRAM_FILE_NAME.update-backup"
     private const val BUFFER_SIZE = 32 * 1024
     private const val REPORT_STEP = 256 * 1024L
 
@@ -230,6 +233,91 @@ object WanxiangUpdateManager {
         val inCanonicalParent = File(canonicalParent, name)
         val canonical = runCatching { inCanonicalParent.canonicalPath }.getOrNull() ?: return false
         return canonical != inCanonicalParent.path
+    }
+
+    /**
+     * Recover a cross-resource update before Rime opens its data files. A pending
+     * transaction without a committed marker is rolled back; the marker is created
+     * only after both the dictionary directory and gram model have been replaced.
+     */
+    fun recoverInterruptedUpdate() {
+        val root = DataManager.sharedDataDir
+        val txn = File(root, UPDATE_TXN_FILE)
+        val committed = File(root, UPDATE_TXN_COMMITTED_FILE)
+        val dicts = File(root, "dicts")
+        val trash = File(root, DICTS_TRASH_DIR)
+        val gram = File(root, GRAM_FILE_NAME)
+        val gramBackup = File(root, GRAM_BACKUP_FILE)
+
+        if (!txn.isFile) {
+            committed.delete()
+            // Preserve the original crash-recovery behavior for installations
+            // created before the transaction marker was introduced.
+            if (!dicts.exists() && trash.exists()) trash.renameTo(dicts)
+            else if (dicts.exists() && trash.exists()) trash.deleteRecursivelyNoFollow()
+            return
+        }
+
+        val properties = java.util.Properties()
+        txn.inputStream().use(properties::load)
+        check(listOf("hadDicts", "hadGram", "changedDicts", "changedGram")
+            .all(properties::containsKey)) { "Incomplete update recovery journal" }
+        val hadDicts = properties.getProperty("hadDicts") == "true"
+        val hadGram = properties.getProperty("hadGram") == "true"
+        val changedDicts = properties.getProperty("changedDicts") == "true"
+        val changedGram = properties.getProperty("changedGram") == "true"
+
+        if (committed.isFile) {
+            Timber.i("Completing cleanup of committed data update")
+            trash.deleteRecursivelyNoFollow()
+            gramBackup.delete()
+        } else {
+            Timber.w("Rolling back interrupted data update")
+            if (changedDicts) {
+                when {
+                    hadDicts && trash.exists() -> {
+                        dicts.deleteRecursivelyNoFollow()
+                        check(trash.renameTo(dicts)) { "Failed to restore previous dictionary directory" }
+                    }
+                    !hadDicts -> dicts.deleteRecursivelyNoFollow()
+                    // If trash is absent, the original directory had not yet been moved.
+                }
+            }
+            if (changedGram) {
+                if (hadGram && gramBackup.isFile) {
+                    val restore = File(root, "$GRAM_BACKUP_FILE.restore")
+                    restore.delete()
+                    gramBackup.copyTo(restore, overwrite = true)
+                    if (!restore.renameTo(gram)) {
+                        gram.delete()
+                        check(restore.renameTo(gram)) { "Failed to restore previous grammar model" }
+                    }
+                } else if (!hadGram) {
+                    gram.delete()
+                }
+            }
+            trash.deleteRecursivelyNoFollow()
+            gramBackup.delete()
+        }
+        txn.delete()
+        committed.delete()
+        File(root, "$GRAM_BACKUP_FILE.tmp").delete()
+        File(root, "$GRAM_BACKUP_FILE.restore").delete()
+        File(root, DICTS_STAGING_DIR).deleteRecursivelyNoFollow()
+    }
+
+    private fun writeUpdateJournal(changedDicts: Boolean, changedGram: Boolean) {
+        val root = DataManager.sharedDataDir
+        val txn = File(root, UPDATE_TXN_FILE)
+        val temp = File(root, "$UPDATE_TXN_FILE.tmp")
+        val props = java.util.Properties().apply {
+            setProperty("hadDicts", File(root, "dicts").exists().toString())
+            setProperty("hadGram", File(root, GRAM_FILE_NAME).isFile.toString())
+            setProperty("changedDicts", changedDicts.toString())
+            setProperty("changedGram", changedGram.toString())
+        }
+        temp.outputStream().use { props.store(it, "Jime update recovery journal") }
+        check(temp.renameTo(txn)) { "Failed to persist update recovery journal" }
     }
 
     /** 内置方案版本：读资源解压落盘的 shared/version.txt（如 "18.1.0"），补上 v 前缀与常量口径对齐 */
@@ -418,6 +506,7 @@ object WanxiangUpdateManager {
         cacheDir: File,
         onProgress: (UpdateProgress) -> Unit = {},
     ): Boolean = withContext(Dispatchers.IO) {
+        recoverInterruptedUpdate()
         val workDir = File(cacheDir, "wanxiang_update").apply { mkdirs() }
         // 本次下载的内容指纹（下载成功后存入 prefs，供本地/远端比对）
         var newDictFp: String? = null
@@ -496,38 +585,40 @@ object WanxiangUpdateManager {
                 gramTarget = target
             }
 
-            // 4. 两边都就绪后才应用：词库整目录切换，再原子替换语法模型。
+            // 4. Journal and retain both previous resources until the pair is installed.
             // 不再逐文件搬移+清残留：逐文件落位期间现用目录是新旧混合态，
             // 中途被杀 Rime 会加载到半套词库；整目录 rename 后现用目录
             // 要么是旧版完整词库、要么是新版完整词库。上游删掉/改名的词库
             // 文件随旧目录整份进 trash，不再需要单独清残留
+            val dictsDir = File(DataManager.sharedDataDir, "dicts")
+            val trashDir = File(DataManager.sharedDataDir, DICTS_TRASH_DIR)
+            val changedDicts = extractDir != null
+            val changedGram = gramPartial != null && gramTarget != null
+            if (changedDicts || changedGram) writeUpdateJournal(changedDicts, changedGram)
+
+            if (changedGram && gramTarget!!.isFile) {
+                val backup = File(DataManager.sharedDataDir, GRAM_BACKUP_FILE)
+                val backupTemp = File(DataManager.sharedDataDir, "$GRAM_BACKUP_FILE.tmp")
+                backup.delete()
+                backupTemp.delete()
+                gramTarget!!.copyTo(backupTemp, overwrite = true)
+                check(backupTemp.renameTo(backup)) { "语法模型旧版本备份失败" }
+            }
             extractDir?.let { staging ->
-                val dictsDir = File(DataManager.sharedDataDir, "dicts")
-                val trashDir = File(DataManager.sharedDataDir, DICTS_TRASH_DIR)
-                // 自愈：上次切换若中断在两次 rename 之间（现用目录缺失、
-                // trash 还在），先把旧词库改回来；现用目录在场时的残留
-                // trash 是已完成切换的遗留，直接清掉
-                if (!dictsDir.exists() && trashDir.exists()) {
-                    check(trashDir.renameTo(dictsDir)) { "词库旧目录回滚失败" }
-                }
-                if (dictsDir.exists() && trashDir.exists()) {
-                    trashDir.deleteRecursivelyNoFollow()
-                }
-                if (dictsDir.exists()) {
-                    check(dictsDir.renameTo(trashDir)) { "词库旧目录移开失败" }
-                }
-                if (!staging.renameTo(dictsDir)) {
-                    // 新目录就位失败：把旧词库改回来，不能留下无词库状态
-                    if (trashDir.exists()) trashDir.renameTo(dictsDir)
-                    throw IllegalStateException("词库目录切换失败")
-                }
-                trashDir.deleteRecursivelyNoFollow()
+                if (dictsDir.exists()) check(dictsDir.renameTo(trashDir)) { "词库旧目录移开失败" }
+                check(staging.renameTo(dictsDir)) { "词库目录切换失败" }
             }
             if (gramPartial != null && gramTarget != null) {
                 // partial 与 target 同目录，rename 本身即原子替换目标文件；
                 // 不要先 delete——那会打开"旧模型已删、新模型未就位"的窗口，
                 // 中途被杀将留下无语法模型而 prefs 仍记旧版本的状态
                 check(gramPartial.renameTo(gramTarget)) { "语法模型落盘失败" }
+            }
+
+            if (changedDicts || changedGram) {
+                check(File(DataManager.sharedDataDir, UPDATE_TXN_COMMITTED_FILE).createNewFile()) {
+                    "无法标记数据更新事务已提交"
+                }
             }
 
             // 5. 全部成功后才记录版本号与内容指纹
@@ -549,12 +640,19 @@ object WanxiangUpdateManager {
                     }
                 }
             }.apply()
+            // Committed resources remain a valid pair even if preference metadata
+            // cannot be persisted immediately; the next check may simply re-fetch.
+            if (changedDicts || changedGram) recoverInterruptedUpdate()
             true
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "方案更新失败")
+            runCatching { recoverInterruptedUpdate() }
             false
         } finally {
+            // Cancellation may arrive after the first resource was switched.
+            // Resolve any still-pending transaction before cleaning temporary data.
+            runCatching { recoverInterruptedUpdate() }
             // 清理临时文件，避免占用存储空间
             runCatching { File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX").delete() }
             runCatching { File(workDir, "rime-wanxiang-lite.zip").delete() }

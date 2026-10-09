@@ -16,11 +16,15 @@ import java.util.concurrent.TimeUnit
 @Serializable
 data class GramModelManifest(
     val link: String = "",
+    val sha256: String = "",
 )
 
 object GramModelDownloader {
     private const val BUFFER_SIZE = 32 * 1024
     private const val REPORT_STEP = 256 * 1024L
+    // Grammar models are currently about 400 MB. Keep headroom for upstream
+    // growth while refusing unbounded or obviously invalid responses.
+    private const val MAX_MODEL_BYTES = 600L * 1024 * 1024
     private const val PART_SUFFIX = ".part"
 
     private val client = OkHttpClient.Builder()
@@ -52,7 +56,7 @@ object GramModelDownloader {
         val target = File(DataManager.sharedDataDir, "$language.gram")
         val partial = File(target.parentFile, target.name + PART_SUFFIX)
         partial.delete()
-        if (!downloadFile(link, partial, onProgress)) {
+        if (!downloadFile(link, partial, manifest.sha256, onProgress)) {
             partial.delete()
             return@withContext false
         }
@@ -67,6 +71,7 @@ object GramModelDownloader {
     private suspend fun downloadFile(
         url: String,
         target: File,
+        expectedSha256: String,
         onProgress: (Long, Long) -> Unit,
     ): Boolean {
         return runCatching {
@@ -78,6 +83,15 @@ object GramModelDownloader {
                 }
                 val body = response.body ?: return false
                 val total = body.contentLength()
+                val expected = expectedSha256.trim().lowercase()
+                if (expected.isNotEmpty() && !expected.matches(Regex("[0-9a-f]{64}"))) {
+                    Timber.w("Ngram model manifest contains an invalid SHA-256")
+                    return false
+                }
+                if (total > MAX_MODEL_BYTES) {
+                    Timber.w("Ngram model exceeds size limit: %d > %d", total, MAX_MODEL_BYTES)
+                    return false
+                }
                 body.byteStream().use { input ->
                     target.outputStream().use { output ->
                         val buffer = ByteArray(BUFFER_SIZE)
@@ -88,16 +102,40 @@ object GramModelDownloader {
                             val count = input.read(buffer)
                             if (count < 0) break
                             if (count == 0) continue
+                            if (downloaded + count > MAX_MODEL_BYTES) {
+                                Timber.w("Ngram model exceeded size limit while streaming")
+                                return false
+                            }
                             output.write(buffer, 0, count)
                             downloaded += count
                             if (downloaded - reported >= REPORT_STEP ||
-                                (total in 1 downTo downloaded)
+                                (total > 0 && downloaded >= total)
                             ) {
                                 onProgress(downloaded, total)
                                 reported = downloaded
                             }
                         }
+                        if (downloaded == 0L || (total >= 0L && downloaded != total)) {
+                            Timber.w("Ngram model length mismatch: expected=%d actual=%d", total, downloaded)
+                            return false
+                        }
                         onProgress(downloaded, total)
+                    }
+                }
+                if (expected.isNotEmpty()) {
+                    val digest = java.security.MessageDigest.getInstance("SHA-256")
+                    target.inputStream().use { input ->
+                        val digestBuffer = ByteArray(BUFFER_SIZE)
+                        while (true) {
+                            val count = input.read(digestBuffer)
+                            if (count < 0) break
+                            digest.update(digestBuffer, 0, count)
+                        }
+                    }
+                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                    if (actual != expected) {
+                        Timber.w("Ngram model SHA-256 mismatch")
+                        return false
                     }
                 }
                 true

@@ -88,7 +88,8 @@ if [ ! -d "$BOOST_DIR" ]; then
     elif command -v shasum &> /dev/null; then
       echo "$BOOST_HASH  boost.tar.xz" | shasum -a 256 -c -
     else
-      echo "Warning: no sha256sum or shasum found, skipping hash check"
+      echo "Error: sha256sum or shasum is required to verify Boost" >&2
+      exit 1
     fi
 
     echo ">>> 解压 Boost..."

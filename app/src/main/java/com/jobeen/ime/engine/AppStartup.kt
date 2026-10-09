@@ -7,6 +7,7 @@ import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.ResourceExtractorUtil
 import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.base.util.appScope
+import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.data.ThemeStore
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import kotlinx.coroutines.Dispatchers
@@ -42,8 +43,14 @@ object AppStartup {
                 Step("setupThemeStore", ::setupThemeStore),
                 Step("releaseResourcesIfNeeded", ::releaseResourcesIfNeeded),
                 Step("setupInputFeedbacks", ::setupInputFeedbacks),
+                // Resolve a process death during paired dictionary/model update
+                // before the engine can open either resource.
+                Step("recoverInterruptedUpdate", { WanxiangUpdateManager.recoverInterruptedUpdate() }),
                 // 引擎初始化依赖资源解压：资源失败时跳过，避免半初始化状态
-                Step("setupEngine", ::setupEngine, requires = setOf("releaseResourcesIfNeeded")),
+                Step(
+                    "setupEngine", ::setupEngine,
+                    requires = setOf("releaseResourcesIfNeeded", "recoverInterruptedUpdate")
+                ),
                 Step("prewarmOpencc", ::prewarmOpencc),
             )
             // 每一步独立捕获异常并记日志：某一步失败不直接杀进程，
