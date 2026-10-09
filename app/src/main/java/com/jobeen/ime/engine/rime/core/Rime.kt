@@ -83,10 +83,21 @@ class Rime : RimeApi, RimeLifecycleOwner {
         if (lifecycle.currentState != RimeLifecycle.State.STOPPED) {
             throw IllegalStateException("Rime has already been created!")
         }
+        // 登记活跃实例，供 companion 的 runOnRimeMain 派发定位（本类在进程内
+        // 由 RimeDaemon 单例式持有一个实例）
+        activeInstance = this
     }
 
     private suspend inline fun <T> withRimeContext(crossinline block: suspend () -> T): T =
         withContext(dispatcher) { block() }
+
+    /**
+     * 把 [block] 派发到 rime-main 执行并等待结果：[runOnRimeMain] 的实例侧
+     * 入口。RimeApi 各 suspend 方法本身就走这条串行线，但接口之外的 native
+     * 入口（如 RimeConfig.openSchema）没有现成通道，补此一处统一派发。
+     */
+    suspend fun <T> dispatchToRimeMain(block: suspend RimeApi.() -> T): T =
+        withRimeContext { block(this@Rime) }
 
     override suspend fun isEmpty(): Boolean = withRimeContext {
         getCurrentSchema() == ".default"
@@ -208,7 +219,12 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
     override suspend fun selectSchema(schemaId: String) = withRimeContext {
         Companion.selectSchema(schemaId).also {
-            RimeSchema(getCurrentSchema()).applyOptions(this@Rime)
+            val schema = RimeSchema(getCurrentSchema())
+            // 切方案的同步点回写缓存：此前 schemaCached 只靠 Schema 通知在
+            // 通知分发线程异步回写，其间的 sendJob 读 candidateKind 会读到
+            // 旧方案的值（通知路径本身随后仍会以同一 id 再刷新一次）
+            schemaCached = schema
+            schema.applyOptions(this@Rime)
         }
     }
 
@@ -321,6 +337,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     private fun handleComposition(composition: CompositionProto) {
+        // 组字缓存首行同步赋值：emitResponse 的正常分支与「候选页为空→
+        // 合成空组字」特殊分支都经此处，赋值对象即本轮真正分发的组字，
+        // 与组字产生同步完成。此前靠 CompositionMessage 在通知分发线程
+        // 异步回写，其间读 compositionCached 的 sendJob 会读到上一轮组字。
+        compositionCached = composition
         handleMessage(
             RimeMessage.MessageType.InlinePreedit.ordinal, arrayOf(composition.preedit ?: "")
         )
@@ -331,23 +352,49 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     /**
-     * 通知侧 JNI 读的口径例外（架构项②的串行不变量之外）：本函数在通知分发
-     * 线程（messageEmitScope，单线程 FIFO）上同步做 getStatus()/RimeSchema 构造
-     * 等**只读快照**查询，以保证缓存与通知严格同序。这里绝不允许出现 native
-     * 写调用——任何写操作必须走 withRimeContext 回到引擎 dispatcher 串行执行。
+     * 消息处理点：由 [dispatchMessage] 在通知分发队列上串行调用，各缓存都在
+     * 本处理点同步赋值（补取 await 完成后才继续分发给 UI），不另起异步任务
+     * 回写——否则处理点之后触发的 sendJob 可能读到上一轮缓存（组字缓存同
+     * 口径，见 [handleComposition]）。其中一切 librime native 读取
+     * （getStatus / RimeSchema 构造 / 方案列表查询）都不在分发线程直调，
+     * 一律经 [withRimeContext] 回到 rime-main 补取，使全部 native 调用串行于
+     * rime-main 一条线，关闭其与 finalize 的 UAF 窗口。补取失败（引擎停止
+     * 中等）保留旧缓存并原样分发，不丢消息。
+     *
+     * @return 实际分发的消息：Schema 消息在补到完整方案条目时以其替换原始
+     * 消息（原始串只有 id/name），其余消息原样返回。
      */
-    @Suppress("UNUSED_PARAMETER")
-    private fun handleRimeMessage(it: RimeMessage<*>) {
+    private suspend fun handleRimeMessage(it: RimeMessage<*>): RimeMessage<*> {
         when (it) {
             is RimeMessage.SchemaMessage -> {
-                statusCached = getStatus()
-                schemaCached = RimeSchema(it.data.id)
-                EngineMessageConverter.applySchemaKind(it.data.kind)
+                val snapshot = runCatching {
+                    withRimeContext {
+                        val status = getStatus()
+                        val schema = RimeSchema(it.data.id)
+                        val item = cachedSchemaList().firstOrNull { s -> s.id == it.data.id }
+                        Triple(status, schema, item)
+                    }
+                }.onFailure { e -> Timber.w(e, "Failed to refresh schema snapshot on rime-main") }
+                    .getOrNull()
+                if (snapshot != null) {
+                    statusCached = snapshot.first
+                    schemaCached = snapshot.second
+                    val item = snapshot.third
+                    EngineMessageConverter.applySchemaKind(item?.kind ?: it.data.kind)
+                    if (item != null) return RimeMessage.SchemaMessage(item)
+                }
+                return it
             }
 
             is RimeMessage.OptionMessage -> {
-                statusCached = getStatus()
-                updateSchemaCached(statusCached)
+                runCatching {
+                    withRimeContext {
+                        val status = getStatus()
+                        statusCached = status
+                        updateSchemaCached(status)
+                    }
+                }.onFailure { e -> Timber.w(e, "Failed to refresh status snapshot on rime-main") }
+                return it
             }
 
             is RimeMessage.DeployMessage -> {
@@ -357,19 +404,21 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 if (it.data == RimeMessage.DeployMessage.State.Success) {
                     invalidateSchemaListCache()
                 }
+                return it
             }
 
-            is RimeMessage.CompositionMessage -> {
-                compositionCached = it.data
-            }
+            // 组字缓存不在这里回写：已改为在 handleComposition 产生处同步赋值
+            is RimeMessage.CompositionMessage -> return it
 
             is RimeMessage.CandidateMenuMessage -> {
                 paging = it.data.pageNumber != 0
                 hasMenu = it.data.candidates.isNotEmpty()
+                return it
             }
 
             is RimeMessage.CandidateListMessage -> {
                 hasMenu = it.data.candidates.isNotEmpty()
+                return it
             }
 
             is RimeMessage.StatusMessage -> {
@@ -379,13 +428,26 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 // 故以当前缓存为基底合并，只采纳增量真正携带的字段；
                 // schemaId 等未出现在增量里的字段保持原值。
                 statusCached = statusCached.copy(isComposing = it.data.isComposing)
-                updateSchemaCached(statusCached)
+                val status = statusCached
+                // 稀疏增量的 schemaId 恒为空、不触发重建（每键都走此路，
+                // 不能每键都往 rime-main 跑一趟）；真携带了新 id 时，
+                // RimeSchema 构造走 native，同样派发到 rime-main 补取。
+                if (status.schemaId.isNotBlank() && status.schemaId != schemaCached.schemaId) {
+                    runCatching {
+                        withRimeContext { updateSchemaCached(status) }
+                    }.onFailure { e -> Timber.w(e, "Failed to rebuild schema cache on rime-main") }
+                }
+                return it
             }
 
-            else -> {}
+            else -> return it
         }
     }
 
+    /**
+     * 按状态中的 schemaId 重建方案缓存（RimeSchema 构造走 native）：
+     * 调用方必须已在 rime-main 上（见 [handleRimeMessage] 的补取路径）。
+     */
     private fun updateSchemaCached(status: StatusProto) {
         val schemaId = status.schemaId
         if (schemaId.isNotBlank() && schemaId != schemaCached.schemaId) {
@@ -472,7 +534,27 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 Dispatchers.IO.limitedParallelism(1),
         )
 
-        private val rimeMessageHandlers = CopyOnWriteArrayList<(RimeMessage<*>) -> Unit>()
+        // 处理器为 suspend 且返回实际分发消息：消息处理点要在 rime-main
+        // 补取快照后才继续分发（见 handleRimeMessage），分发必须 await 它
+        private val rimeMessageHandlers =
+            CopyOnWriteArrayList<suspend (RimeMessage<*>) -> RimeMessage<*>>()
+
+        /** 当前活跃实例（进程内单例式持有一台 Rime），供 [runOnRimeMain] 定位派发目标 */
+        @Volatile
+        private var activeInstance: Rime? = null
+
+        /**
+         * 把 [block] 派发到 rime-main 执行并等待结果，供 RimeApi 接口之外
+         * 的 native 入口调用方使用（典型：RimeConfig.openSchema）。调用方
+         * 线程（如引擎 jobs 线程、设置页协程）直调这类入口会绕开 rime-main
+         * 串行线，与 finalize 形成 UAF 窗口。没有活跃实例（引擎未创建）或
+         * 引擎已停止时抛 IllegalStateException，由调用方按既有口径降级。
+         */
+        suspend fun <T> runOnRimeMain(block: suspend RimeApi.() -> T): T {
+            val instance = activeInstance
+                ?: throw IllegalStateException("Rime has not been created!")
+            return instance.dispatchToRimeMain(block)
+        }
 
         /**
          * librime 通知（schema/option/deploy）的待处理队列。通知回调发生在
@@ -559,8 +641,9 @@ class Rime : RimeApi, RimeLifecycleOwner {
         @JvmStatic
         external fun getSchemaList(): Array<SchemaItem>
 
-        // 方案列表缓存：Schema 通知转换每次只需按 id 查一条，此前每次都走
-        // JNI 全量拉取。部署成功后方案集可能变化，届时由通知处理失效缓存
+        // 方案列表缓存：Schema 通知在 rime-main 补取时只需按 id 查一条，
+        // 此前每次都走 JNI 全量拉取。本函数走 native，只许在 rime-main 上
+        // 调用。部署成功后方案集可能变化，届时由通知处理失效缓存
         @Volatile
         private var schemaListCache: Array<SchemaItem>? = null
 
@@ -646,20 +729,27 @@ class Rime : RimeApi, RimeLifecycleOwner {
          * 消息超车，也不会丢弃。
          */
         private suspend fun dispatchMessage(type: Int, params: Array<Any>) {
-            val message = RimeMessage.nativeCreate(type, params)
-            rimeMessageHandlers.forEach { it.invoke(message) }
+            // nativeCreate 只做原始数据记录（不在本线程调 native）；处理器
+            // 在其内部把快照派发到 rime-main 补取并 await，返回实际分发
+            // 的消息后才写入消息流，保证缓存与 UI 分发严格同序
+            var message = RimeMessage.nativeCreate(type, params)
+            rimeMessageHandlers.forEach { handler -> message = handler.invoke(message) }
             if (!messageFlow_.tryEmit(message)) {
                 messageFlow_.emit(message)
             }
         }
 
-        private fun registerMessageHandler(handler: (RimeMessage<*>) -> Unit) {
+        private fun registerMessageHandler(
+            handler: suspend (RimeMessage<*>) -> RimeMessage<*>,
+        ) {
             if (handler !in rimeMessageHandlers) {
                 rimeMessageHandlers.add(handler)
             }
         }
 
-        private fun unregisterMessageHandler(handler: (RimeMessage<*>) -> Unit) {
+        private fun unregisterMessageHandler(
+            handler: suspend (RimeMessage<*>) -> RimeMessage<*>,
+        ) {
             rimeMessageHandlers.remove(handler)
         }
     }

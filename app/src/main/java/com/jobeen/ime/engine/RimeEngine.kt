@@ -27,7 +27,6 @@ import com.jobeen.ime.engine.rime.host.BehaviorHost
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
-import com.jobeen.ime.engine.rime.behavior.Backspace
 import com.jobeen.ime.engine.rime.behavior.InputKey
 import com.jobeen.ime.engine.rime.behavior.InputString
 import com.jobeen.ime.engine.rime.behavior.Reset
@@ -41,6 +40,7 @@ import com.jobeen.ime.engine.manager.CandidateRerankManager
 import com.jobeen.ime.engine.manager.PredictionManager
 import com.jobeen.ime.engine.rime.core.KeyMapping
 import com.jobeen.ime.engine.rime.core.EngineMessageConverter
+import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.RimeMessage
 import com.jobeen.ime.data.App.modelDir
@@ -106,7 +106,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private sealed interface Action {
         data class ProcessKey(val service: InputMethodService, val key: KeyEvent) : Action
-        data class Backspace(val rawInputEmpty: Boolean) : Action
         data class RimeMessage(val message: com.jobeen.ime.engine.rime.core.RimeMessage<*>) :
             Action
 
@@ -324,7 +323,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         }
 
                         KEYCODE_DEL -> {
-                            actions.send(Action.Backspace(getRawInput().isEmpty()))
+                            // 判断与处理收进本 job 内完成（见 handleBackspaceInJob）：
+                            // 不再先在本 job 取组字状态、再经 actions 队列转发处理，
+                            // 避免跨队列期间组字变化导致按旧状态误判
+                            handleBackspaceInJob()
                             return@sendJob
                         }
 
@@ -524,8 +526,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 processKeyInternal(action.key)
             }
 
-            is Action.Backspace -> handleBackspace(action.rawInputEmpty)
-
             is Action.RimeMessage -> handleRimeMessage(action.message)
             is Action.Behavior -> flowBehavior(action.behavior)
             is Action.SelectCandidate -> selectCandidateInternal(action.candidate)
@@ -623,9 +623,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
     }
 
-    private suspend fun handleBackspace(rawInputEmpty: Boolean) {
-        if (!rawInputEmpty) {
-            flowBehavior(Backspace())
+    /**
+     * 退格处理（在 processKeyInternal 的 rime job 内同步执行）：「组字是否
+     * 为空」的判断与后续处理落在同一个 job 里，不再跨 actions/jobs 两条
+     * 队列——旧实现先取状态再转发，期间组字被其它按键改掉就会按旧状态
+     * 误判（组字已空仍转交 Rime、或组字未空却删了宿主文本）。
+     * 组字非空时交给 [BehaviorHost.backspaceInJob] 在本 job 内同步消化
+     * （其队列维护的第二套状态也在同一 job 内一并推进）；组字为空时才
+     * 走原有出口：先收联想候选，再按选区/宿主 DEL 处理。
+     */
+    private suspend fun RimeApi.handleBackspaceInJob() {
+        if (getRawInput().isNotEmpty()) {
+            behaviorHosted?.backspaceInJob(this)
             return
         }
         if (state.predictionVisible) {
@@ -654,6 +663,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 进入引擎的映射阶段已经丢失、无法还原，仍只能丢弃并记日志。
      */
     private suspend fun forwardUnhandledKey(message: RimeMessage.KeyMessage) {
+        // 内部合成按键（isVirtual=false，如部署 hook 的 processKey
+        // (Key_Delete,…,false)、退格在 job 内重走的 BackSpace）不是用户
+        // 真实按键：native 未处理也不透传给宿主，避免凭空删字/触发宿主按键
+        if (!message.data.isVirtual) return
         val keyCode = message.data.value.keyCode
         if (keyCode == KEYCODE_UNKNOWN) {
             Timber.d("Drop unhandled key without Android mapping: %s", message.data.value)
@@ -720,6 +733,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 return
             }
 
+            is EngineMessage.Schema -> {
+                // librime 内部切方案（switcher/lua 等）不走 Action.SelectSchema：
+                // ApplySchema 会 ClearTransientOptions 清掉 "_" 开头的运行时
+                // 选项（含 __no_personalized_learning），且没有上层路径补设，
+                // 密码框等场景的禁学习会被内部切方案绕过。这里在方案变更
+                // 消息路径上按 SelectSchema/Deploy 的同款方式补设一次。
+                sendJob { editorInfo?.let { applyFieldOptions(it) } }
+            }
+
             is EngineMessage.Depoly -> {
                 when (msg.state) {
                     EngineMessage.Depoly.State.Start -> state.initialized = false
@@ -740,11 +762,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                 prefs?.edit { putString(SchemaManager.KEY_ENABLED_IDS, ids) }
                             }
                             val currentSchema = currentSchema()
-                            RimeConfig.openSchema(currentSchema.schemaId).use { config ->
-                                config.getString("grammar/language")?.let {
-                                    Timber.d("predictionManager load model %s.gram", it)
-                                    predictionManager?.loadModels(modelDir, sharedDataDir, it)
+                            // openSchema 是 librime native 入口：本 job 运行在
+                            // jobs 线程，直调会绕开 rime-main 串行线。派发到
+                            // rime-main 执行并等待结果，读取失败按无语法模型降级
+                            val grammarLanguage = runCatching {
+                                Rime.runOnRimeMain {
+                                    RimeConfig.openSchema(currentSchema.schemaId).use { config ->
+                                        config.getString("grammar/language")
+                                    }
                                 }
+                            }.getOrNull()
+                            grammarLanguage?.let {
+                                Timber.d("predictionManager load model %s.gram", it)
+                                predictionManager?.loadModels(modelDir, sharedDataDir, it)
                             }
 
                             if (triggerHook) {

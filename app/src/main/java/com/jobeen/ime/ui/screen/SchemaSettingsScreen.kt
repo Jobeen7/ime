@@ -74,6 +74,7 @@ import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.R
 import com.jobeen.ime.base.ngram.GramModelDownloader
 import com.jobeen.ime.base.update.WanxiangUpdateManager
+import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
@@ -212,7 +213,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) {
         val language = withContext(Dispatchers.IO) {
             runCatching {
-                (EngineFactory.current() as? IRimeJob)?.awaitJob<String?>(null) {
+                // openSchema 是 librime native 入口：页面协程（IO）直调会绕开
+                // rime-main 串行线，改为派发到 rime-main 执行并等待结果。
+                // 此前走 awaitJob 的 job 体仍在 jobs 线程，同样不算 rime-main
+                Rime.runOnRimeMain {
                     val currentSchema = currentSchema()
                     RimeConfig.openSchema(currentSchema.schemaId).use { config ->
                         config.getString("grammar/language")?.trim()?.takeIf { it.isNotEmpty() }

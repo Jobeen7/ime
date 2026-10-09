@@ -124,17 +124,22 @@ sealed class RimeMessage<T>(val data: T) {
         @Suppress("UNCHECKED_CAST")
         fun nativeCreate(type: Int, params: Array<Any>): RimeMessage<*> = when (types[type]) {
             MessageType.Schema -> {
+                // 本函数在通知分发线程上执行，只记录原始数据（方案通知的
+                // 原始串只有 id/name 两段）：此前在这里调 cachedSchemaList()
+                // 查 layout/punctuation/kind 是分发线程上的 librime native
+                // 直调，与 rime-main 串行线之外的 finalize 存在 UAF 窗口。
+                // 完整条目改由 Rime 的消息处理点在 rime-main 补取后替换本
+                // 消息再分发（见 Rime.handleRimeMessage），未补到时其余
+                // 字段保持为空。
                 val raw = params[0] as String
                 val parts = raw.split('/', limit = 4)
-                val schemaId = parts[0]
-                val schema = Rime.cachedSchemaList().firstOrNull { it.id == schemaId }
                 SchemaMessage(
                     SchemaItem(
-                        id = schemaId,
-                        name = schema?.name ?: parts.getOrElse(1) { "" },
-                        layout = schema?.layout ?: parts.getOrElse(2) { "" },
-                        punctuation = schema?.punctuation ?: parts.getOrElse(3) { "" },
-                        kind = schema?.kind.orEmpty(),
+                        id = parts[0],
+                        name = parts.getOrElse(1) { "" },
+                        layout = parts.getOrElse(2) { "" },
+                        punctuation = parts.getOrElse(3) { "" },
+                        kind = "",
                     )
                 )
             }
