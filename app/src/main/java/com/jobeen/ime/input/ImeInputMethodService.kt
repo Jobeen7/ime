@@ -123,10 +123,18 @@ class ImeInputMethodService : InputMethodService() {
         return window.view
     }
 
+    override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
+        // 输入框获焦比输入视图弹出更早一步：语音预热/存活预检抢在这里
+        // 发起，等用户点开键盘、长按语音时冷加载多半已经完成（函数内
+        // 部按连接状态与节流自判，重复调用无副作用）
+        com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
+        super.onStartInput(attribute, restarting)
+    }
+
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         // 换了输入框：上一框的语音纠错沉淀观察作废
         com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
-        // 语音预启动挪到首次弹出键盘（内部一次性守卫 + 仅用过语音者）：
+        // 语音预热/存活预检（onStartInput 已先行一步，这里再兜一次）：
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
         keyboardWindow?.onStartInputView(info, restarting)

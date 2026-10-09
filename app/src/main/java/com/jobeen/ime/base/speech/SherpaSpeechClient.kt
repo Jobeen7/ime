@@ -524,27 +524,38 @@ object SherpaSpeechClient {
     fun isQnnRuntimeSupported(context: Context): Boolean =
         android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")
 
-    /** 进程内只预启动一次（触发点在键盘首次弹出，见 ImeInputMethodService） */
-    private val preStartDone = AtomicBoolean(false)
-
     /** 已绑定连接的存活预检间隔：距上次确认存活超过此时长才发探针 */
     private const val LIVENESS_CHECK_INTERVAL_MS = 30_000L
 
+    /** 未绑定时补预热的最短间隔：防绑定进行中被高频弹起叠发，也不闩死 */
+    private const val WARMUP_RETRY_INTERVAL_MS = 5_000L
+
+    /** 最近一次补预热发起时刻，未绑定分支的节流（自愈式，不用闩锁） */
+    @Volatile
+    private var lastWarmupAttemptMs = 0L
+
     fun preStartSync(context: Context) {
-        // 预启动时机后移到首次弹出键盘：App 冷启动（onCreate）阶段不再
+        // 预启动时机后移到键盘弹起：App 冷启动（onCreate）阶段不再
         // 拉起 :speech 进程——键盘还没露面时这笔开销纯属浪费，且主进程
         // 被系统单独拉起（设置页/同步等）时根本用不到语音。
-        // 门控不变：只对真正用过语音的用户预启动；从未用过时，首次长按
+        // 门控：只对真正用过语音的用户预热；从未用过时，首次长按
         // 语音键走 send() 的按需绑定路径（稍慢一次）。
-        // 每次调用都做存活检查（调用点在 onStartInputView、频率高，
-        // 故必须轻量）：未绑定时只有首次预热真正干活；已绑定时仅在距
-        // 上次确认存活超过 30 秒才发一条 PING 探针，免得每次切输入框
-        // 都发探针；探针 1 秒无 PONG 即判僵尸连接、作废重绑预热，让
-        // 死连接在用户长按之前就自愈。
+        // 每次调用都做状态检查（调用点在 onStartInput/onStartInputView、
+        // 频率高，故必须轻量）：
+        // - 未绑定（空闲卸载后、进程死亡后）：重新预热。旧实现这里挂了
+        //   「进程内只预热一次」的闩锁，长闲后绑定早已被空闲卸载拆掉、
+        //   闩锁却不许补，长按只能当场付全程冷启动（拉进程+加载模型
+        //   数秒）。改为按 5 秒节流补发：绑定进行中不会叠发，绑定迟迟
+        //   不成也会自动重试，不留闩死状态。
+        // - 已绑定：仅在距上次确认存活超过 30 秒才发一条 PING 探针，
+        //   免得每次切输入框都发探针；探针 1 秒无 PONG 即判僵尸连接、
+        //   作废重绑预热，让死连接在用户长按之前就自愈。
         val bound = synchronized(connectLock) { speechMessenger } != null
         if (!bound) {
-            if (!preStartDone.compareAndSet(false, true)) return
             if (!hasUsedVoice(context)) return
+            val now = SystemClock.uptimeMillis()
+            if (now - lastWarmupAttemptMs < WARMUP_RETRY_INTERVAL_MS) return
+            lastWarmupAttemptMs = now
             send(SpeechIpc.MSG_LOAD)
             return
         }
