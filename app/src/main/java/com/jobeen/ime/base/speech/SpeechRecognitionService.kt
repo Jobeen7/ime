@@ -116,6 +116,23 @@ class SpeechRecognitionService : Service() {
                     initEngine(this@SpeechRecognitionService, silent = true)
                 }
 
+                SpeechIpc.MSG_PING -> {
+                    // 存活探针：立即回 PONG 并原样带回探针代次，不碰引擎
+                    // 与会话状态。优先回给探针自带的 replyTo（预热预检时
+                    // 还没有会话，clientMessenger 尚未由 START 设置），
+                    // 没有才走会话通道 sendClient
+                    val pingGen = runCatching {
+                        msg.data?.getInt(SpeechIpc.KEY_GEN, 0) ?: 0
+                    }.getOrDefault(0)
+                    val replyTo = msg.replyTo
+                    if (replyTo != null) {
+                        runCatching { replyTo.send(SpeechIpc.message(SpeechIpc.MSG_PONG, gen = pingGen)) }
+                            .onFailure { Log.e("SpeechSvc", "send PONG failed", it) }
+                    } else {
+                        sendClient(SpeechIpc.MSG_PONG, gen = pingGen)
+                    }
+                }
+
                 SpeechIpc.MSG_START -> {
                     clientMessenger = msg.replyTo
                     if (!sessionActive.compareAndSet(false, true)) {
@@ -541,7 +558,9 @@ class SpeechRecognitionService : Service() {
                     synchronized(audioLock) {
                         val engine = recognizerRef.get()
                         val stream = myStream
-                        if (engine != null && stream != null) {
+                        // 与收尾段同款身份复检：stream 已被新会话换走并
+                        // 释放时本帧直接丢弃，不碰已释放的 native 对象
+                        if (engine != null && stream != null && streamRef.get() === stream) {
                             stream.acceptWaveform(
                                 if (sampleCount == floatChunk.size) floatChunk
                                 else floatChunk.copyOf(sampleCount),

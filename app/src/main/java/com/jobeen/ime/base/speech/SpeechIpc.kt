@@ -12,12 +12,18 @@ object SpeechIpc {
     const val MSG_START = 2
     const val MSG_STOP = 3
 
+    /** 存活探针（客户端→服务端）：服务端收到立即回 MSG_PONG，不碰引擎与会话状态 */
+    const val MSG_PING = 4
+
     const val MSG_RECORDING_STARTED = 10
     const val MSG_PARTIAL = 11
     const val MSG_FINAL = 12
     const val MSG_AMPLITUDE = 13
     const val MSG_ERROR = 14
     const val MSG_DONE = 15
+
+    /** 存活探针回信（服务端→客户端）：原样带回 MSG_PING 的代次 */
+    const val MSG_PONG = 16
 
     const val KEY_TEXT = "text"
     const val KEY_AMPLITUDE = "amplitude"

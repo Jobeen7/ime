@@ -20,6 +20,9 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
     private var waveformColor = Color.CYAN
     private var targetVolume = 0
     private var smoothVolume = 0f
+
+    /** 静默判定阈值：目标音量（0-100）≤2 视为静默，吸收底噪抖动 */
+    private val silentVolumeThreshold = 2
     private val barCount = 9
     private val contentScale = 0.48f
     private val centerIndex = (barCount - 1) / 2
@@ -97,9 +100,10 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
     private fun updateFrame() {
         val target = targetVolume.coerceIn(0, 100) / 100f
         smoothVolume += (target - smoothVolume) * 0.16f
-        // 静音冬眠：无声约 1.5 秒后停止逐帧调度（旧实现录音全程 60fps 空转，
-        // 柱高早已静止仍不断 invalidate）；有声音时 setVolume 会唤醒续跑
-        if (targetVolume == 0 && smoothVolume < 0.01f) {
+        // 静音冬眠：音量 ≤2（近静默，含底噪抖动）约 1.5 秒后停止逐帧
+        // 调度（旧实现录音全程 60fps 空转，柱高早已静止仍不断
+        // invalidate）；有声音时 setVolume 会唤醒续跑
+        if (targetVolume <= silentVolumeThreshold && smoothVolume < 0.01f) {
             if (++silentFrames > 90) {
                 isAnimating = false
                 invalidate()
