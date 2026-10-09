@@ -294,7 +294,9 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
             }
         }
 
-        if (file.parentFile?.canWrite() == true) {
+        // 根目录本身不可删/改名/移动（deleteDocument 等对 root 也是直接拒绝），
+        // 不给它加这三个标志，避免文件管理器显示可操作、点了却报错
+        if (file != filesRoot && file.parentFile?.canWrite() == true) {
             flags = flags or Document.FLAG_SUPPORTS_DELETE or Document.FLAG_SUPPORTS_RENAME
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {

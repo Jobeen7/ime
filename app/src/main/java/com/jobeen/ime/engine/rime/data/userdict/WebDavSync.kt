@@ -248,8 +248,12 @@ object WebDavSync {
                 downloadLocked(dictName, session).getOrThrow()
                 baseState = when (val r = fetchRemoteState(fileName)) {
                     is RemoteStateResult.Found -> r.state
-                    // 合并刚下载过，远端不应消失；按不存在处理会退化为新建上传
-                    RemoteStateResult.NotFound -> null
+                    // 合并后远端消失（被其他设备删除等）：按不存在处理退化为新建
+                    // 上传，须同步置 remoteMissing，让 PUT 带 If-None-Match 新建限定
+                    RemoteStateResult.NotFound -> {
+                        remoteMissing = true
+                        null
+                    }
                     is RemoteStateResult.Error ->
                         throw IllegalStateException("查询远端词库状态失败（${r.message}），本次同步已中止")
                 }

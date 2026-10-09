@@ -57,7 +57,9 @@ object GramModelDownloader {
             return@withContext false
         }
 
-        target.delete()
+        // 不先删 target 再 rename：.part 与 target 同目录，rename 本身即
+        // 原子覆盖，先删会打开「旧模型已删、新模型未就位」的空窗，中途
+        // 被杀将无模型可用（与 WanxiangUpdateManager 语法模型落盘同款规避）
         check(partial.renameTo(target)) { "Failed to finalize ngram model: ${target.absolutePath}" }
         target.isFile && target.length() > 0L
     }
