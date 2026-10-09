@@ -188,7 +188,22 @@ object BackupManager {
     suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
         val payload = decryptPayload(bytes, password)
         val parsed = parsePayload(payload)
-        applyPayload(parsed)
+        // 写任何数据前，先把当前状态按同一格式与口令快照一份：写入阶段
+        // 任一步失败（数据库事务、偏好同步提交等）都用快照整体回滚，
+        // 绝不留下新旧混杂的半还原状态；快照本身失败则拒绝开始还原。
+        val snapshot = createBackup(password)
+        try {
+            applyPayload(parsed)
+        } catch (e: Exception) {
+            val rolledBack = runCatching {
+                applyPayload(parsePayload(decryptPayload(snapshot, password)))
+            }.isSuccess
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            throw BackupException(
+                if (rolledBack) "还原失败，已恢复到还原前状态：${e.message ?: "未知错误"}"
+                else "还原失败且自动回滚未成功，数据可能不完整：${e.message ?: "未知错误"}"
+            )
+        }
     }
 
     private fun decryptPayload(bytes: ByteArray, password: CharArray): JSONObject {
@@ -412,8 +427,10 @@ object BackupManager {
             val editor = appContext.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
             editor.clear()
             for ((key, value) in entries) putPrefValue(editor, key, value)
-            // prefs 回写必须同步落盘：随后可能马上重启进程，异步 apply 有丢失窗口
-            if (!editor.commit()) Timber.w("Backup restore: commit prefs $name returned false")
+            // prefs 回写必须同步落盘：随后可能马上重启进程，异步 apply 有丢失窗口；
+            // 同步提交失败必须让整个还原判失败（触发快照回滚），只记日志继续
+            // 会留下数据库是新数据、偏好是旧数据的混杂状态
+            if (!editor.commit()) throw BackupException("设置写入失败（$name），还原中止")
         }
         // WebDAV 密码最后单独回写，经加密通道在本机 Keystore 重新加密
         UserDictPrefs.password = parsed.webdavPassword
@@ -458,4 +475,28 @@ object BackupManager {
     } catch (e: Exception) {
         null
     }
+}
+
+/** 备份文件的硬上限：备份只含设置与小型数据库，超过 64MiB 视为异常文件 */
+internal const val MAX_BACKUP_BYTES = 64 * 1024 * 1024
+
+/**
+ * 带硬上限的流式读取：累计字节一旦超过 [maxBytes] 立即抛错中止，
+ * 不会把超大（或恶意）文件先全量读入内存、等读完才被大小检查拦下。
+ */
+internal fun readBackupBytes(
+    input: java.io.InputStream,
+    maxBytes: Int = MAX_BACKUP_BYTES,
+): ByteArray {
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(32 * 1024)
+    var total = 0
+    while (true) {
+        val count = input.read(buffer)
+        if (count < 0) break
+        total += count
+        if (total > maxBytes) throw BackupManager.BackupException("备份文件过大")
+        out.write(buffer, 0, count)
+    }
+    return out.toByteArray()
 }

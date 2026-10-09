@@ -11,6 +11,7 @@ import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.backup.BackupManager
+import com.jobeen.ime.data.backup.readBackupBytes
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.ui.screen.BackupScreen
 import com.jobeen.ime.ui.screen.BackupUiState
@@ -115,12 +116,10 @@ class BackupActivity : ComponentActivity() {
         uiState.busyText = getString(R.string.backup_working_restore)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val bytes = contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                // 流式读取并在读入过程中执行 64MB 硬上限：超大文件在超限
+                // 当刻即中止，不会先全量读入内存才被大小检查拦下
+                val bytes = contentResolver.openInputStream(uri)?.use { readBackupBytes(it) }
                     ?: throw BackupManager.BackupException("无法读取备份文件")
-                // 上限防御：备份是本地小数据，超过 64MB 视为异常文件
-                if (bytes.size > 64 * 1024 * 1024) {
-                    throw BackupManager.BackupException("备份文件过大")
-                }
                 BackupManager.restoreBackup(bytes, password)
                 password.fill(' ')
                 withContext(Dispatchers.Main) {

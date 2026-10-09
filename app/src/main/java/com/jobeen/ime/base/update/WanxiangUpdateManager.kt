@@ -239,8 +239,17 @@ object WanxiangUpdateManager {
      * Recover a cross-resource update before Rime opens its data files. A pending
      * transaction without a committed marker is rolled back; the marker is created
      * only after both the dictionary directory and gram model have been replaced.
+     *
+     * This runs on the startup path, so it must never throw: a damaged journal
+     * or a failed rollback step is logged and quarantined, never allowed to
+     * block the keyboard from starting.
      */
     fun recoverInterruptedUpdate() {
+        runCatching { recoverInterruptedUpdateInternal() }
+            .onFailure { Timber.e(it, "Interrupted-update recovery failed; continuing startup") }
+    }
+
+    private fun recoverInterruptedUpdateInternal() {
         val root = DataManager.sharedDataDir
         val txn = File(root, UPDATE_TXN_FILE)
         val committed = File(root, UPDATE_TXN_COMMITTED_FILE)
@@ -251,6 +260,7 @@ object WanxiangUpdateManager {
 
         if (!txn.isFile) {
             committed.delete()
+            File(root, "$UPDATE_TXN_FILE.tmp").delete()
             // Preserve the original crash-recovery behavior for installations
             // created before the transaction marker was introduced.
             if (!dicts.exists() && trash.exists()) trash.renameTo(dicts)
@@ -258,14 +268,23 @@ object WanxiangUpdateManager {
             return
         }
 
-        val properties = java.util.Properties()
-        txn.inputStream().use(properties::load)
-        check(listOf("hadDicts", "hadGram", "changedDicts", "changedGram")
-            .all(properties::containsKey)) { "Incomplete update recovery journal" }
-        val hadDicts = properties.getProperty("hadDicts") == "true"
-        val hadGram = properties.getProperty("hadGram") == "true"
-        val changedDicts = properties.getProperty("changedDicts") == "true"
-        val changedGram = properties.getProperty("changedGram") == "true"
+        val journal = runCatching {
+            val properties = java.util.Properties()
+            txn.inputStream().use(properties::load)
+            parseUpdateJournal(properties)
+        }.getOrNull()
+        if (journal == null) {
+            // Unreadable or incomplete journal: quarantine it for diagnosis and
+            // fall back to the plain consistency repair. A damaged journal must
+            // never wedge every subsequent startup.
+            Timber.w("Quarantining unreadable update recovery journal")
+            if (!txn.renameTo(File(root, "$UPDATE_TXN_FILE.bad"))) txn.delete()
+            committed.delete()
+            if (!dicts.exists() && trash.exists()) trash.renameTo(dicts)
+            else if (dicts.exists() && trash.exists()) trash.deleteRecursivelyNoFollow()
+            gramBackup.delete()
+            return
+        }
 
         if (committed.isFile) {
             Timber.i("Completing cleanup of committed data update")
@@ -273,26 +292,34 @@ object WanxiangUpdateManager {
             gramBackup.delete()
         } else {
             Timber.w("Rolling back interrupted data update")
-            if (changedDicts) {
+            if (journal.changedDicts) {
                 when {
-                    hadDicts && trash.exists() -> {
+                    journal.hadDicts && trash.exists() -> {
                         dicts.deleteRecursivelyNoFollow()
-                        check(trash.renameTo(dicts)) { "Failed to restore previous dictionary directory" }
+                        if (!trash.renameTo(dicts)) {
+                            // Best effort only: leave the trash directory in
+                            // place for diagnosis instead of failing startup.
+                            Timber.e("Failed to restore previous dictionary directory")
+                        }
                     }
-                    !hadDicts -> dicts.deleteRecursivelyNoFollow()
+                    !journal.hadDicts -> dicts.deleteRecursivelyNoFollow()
                     // If trash is absent, the original directory had not yet been moved.
                 }
             }
-            if (changedGram) {
-                if (hadGram && gramBackup.isFile) {
+            if (journal.changedGram) {
+                if (journal.hadGram && gramBackup.isFile) {
                     val restore = File(root, "$GRAM_BACKUP_FILE.restore")
                     restore.delete()
-                    gramBackup.copyTo(restore, overwrite = true)
-                    if (!restore.renameTo(gram)) {
-                        gram.delete()
-                        check(restore.renameTo(gram)) { "Failed to restore previous grammar model" }
-                    }
-                } else if (!hadGram) {
+                    runCatching {
+                        gramBackup.copyTo(restore, overwrite = true)
+                        if (!restore.renameTo(gram)) {
+                            gram.delete()
+                            if (!restore.renameTo(gram)) {
+                                Timber.e("Failed to restore previous grammar model")
+                            }
+                        }
+                    }.onFailure { Timber.e(it, "Grammar model rollback failed") }
+                } else if (!journal.hadGram) {
                     gram.delete()
                 }
             }
@@ -304,6 +331,25 @@ object WanxiangUpdateManager {
         File(root, "$GRAM_BACKUP_FILE.tmp").delete()
         File(root, "$GRAM_BACKUP_FILE.restore").delete()
         File(root, DICTS_STAGING_DIR).deleteRecursivelyNoFollow()
+    }
+
+    internal data class UpdateJournal(
+        val hadDicts: Boolean,
+        val hadGram: Boolean,
+        val changedDicts: Boolean,
+        val changedGram: Boolean,
+    )
+
+    /** Parse the update journal; missing fields mean a damaged journal -> null. */
+    internal fun parseUpdateJournal(properties: java.util.Properties): UpdateJournal? {
+        val keys = listOf("hadDicts", "hadGram", "changedDicts", "changedGram")
+        if (!keys.all(properties::containsKey)) return null
+        return UpdateJournal(
+            hadDicts = properties.getProperty("hadDicts") == "true",
+            hadGram = properties.getProperty("hadGram") == "true",
+            changedDicts = properties.getProperty("changedDicts") == "true",
+            changedGram = properties.getProperty("changedGram") == "true",
+        )
     }
 
     private fun writeUpdateJournal(changedDicts: Boolean, changedGram: Boolean) {

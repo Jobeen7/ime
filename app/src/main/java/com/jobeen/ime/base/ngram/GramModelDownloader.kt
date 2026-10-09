@@ -27,6 +27,12 @@ object GramModelDownloader {
     private const val MAX_MODEL_BYTES = 600L * 1024 * 1024
     private const val PART_SUFFIX = ".part"
 
+    // 可信摘要来源：上游 RIME-LMDG 的 LTS 发布资产在 GitHub API 中登记了
+    // 官方 sha256（digest 字段）。清单服务端未提供摘要时改查这里——
+    // 上游换模型时新资产带新摘要，客户端现查现验，无需发版跟随。
+    private const val GITHUB_DIGEST_API =
+        "https://api.github.com/repos/amzxyz/RIME-LMDG/releases/tags/LTS"
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
@@ -56,7 +62,17 @@ object GramModelDownloader {
         val target = File(DataManager.sharedDataDir, "$language.gram")
         val partial = File(target.parentFile, target.name + PART_SUFFIX)
         partial.delete()
-        if (!downloadFile(link, partial, manifest.sha256, onProgress)) {
+        // 期望摘要：清单提供了就用清单的；没提供（或格式不对）则向 GitHub
+        // 查上游登记的官方摘要。两者都拿不到时为空串，仅走长度校验不阻断。
+        val expectedSha = pickExpectedSha256(
+            manifest.sha256,
+            if (normalizeSha256(manifest.sha256).isEmpty()) {
+                fetchGithubSha256("$language.gram")
+            } else {
+                ""
+            },
+        )
+        if (!downloadFile(link, partial, expectedSha, onProgress)) {
             partial.delete()
             return@withContext false
         }
@@ -67,6 +83,38 @@ object GramModelDownloader {
         check(partial.renameTo(target)) { "Failed to finalize ngram model: ${target.absolutePath}" }
         target.isFile && target.length() > 0L
     }
+
+    /**
+     * 向 GitHub 查 [fileName] 在 LTS 发布中登记的官方 sha256。
+     * 任何失败（网络不通、限流、资产结构变化）都返回空串，
+     * 调用方随之退回长度校验，不阻断下载。
+     */
+    private suspend fun fetchGithubSha256(fileName: String): String =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val request = Request.Builder()
+                    .url(GITHUB_DIGEST_API)
+                    .header("Accept", "application/vnd.github+json")
+                    .build()
+                client.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful) return@use ""
+                    val assets = org.json.JSONObject(response.body?.string().orEmpty())
+                        .optJSONArray("assets") ?: return@use ""
+                    var digest = ""
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.optJSONObject(i) ?: continue
+                        if (asset.optString("name") == fileName) {
+                            digest = normalizeSha256(asset.optString("digest"))
+                            break
+                        }
+                    }
+                    digest
+                }
+            }.getOrElse {
+                Timber.w(it, "Failed to fetch grammar model digest from GitHub")
+                ""
+            }
+        }
 
     private suspend fun downloadFile(
         url: String,
@@ -156,3 +204,16 @@ private object GramModelApi {
         return HttpUtil.get("model/grammar?language=$encoded")
     }
 }
+
+/** 归一化 sha256 文本（可带 "sha256:" 前缀）：合法时返回小写 64 位十六进制，否则空串 */
+internal fun normalizeSha256(raw: String?): String {
+    val hex = raw?.trim()?.lowercase()?.removePrefix("sha256:") ?: return ""
+    return if (hex.matches(Regex("[0-9a-f]{64}"))) hex else ""
+}
+
+/**
+ * 期望摘要的选取：清单摘要优先（服务端给了就以它为准），
+ * 清单缺失或不合法时用 GitHub 官方摘要，两者都无则空串（不校验）。
+ */
+internal fun pickExpectedSha256(manifestSha256: String, githubSha256: String): String =
+    normalizeSha256(manifestSha256).ifEmpty { normalizeSha256(githubSha256) }

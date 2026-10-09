@@ -224,26 +224,7 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
         query: String,
         projection: Array<String>?,
     ): Cursor = MatrixCursor(projection ?: DEFAULT_DOCUMENT_PROJECTION).apply {
-        val keyword = query.lowercase(java.util.Locale.ROOT)
-        // SAF search must stay bounded even when an app's exported data tree has
-        // accumulated thousands of model/cache files. Stop after enough results
-        // or 5,000 visited nodes instead of walking the entire tree per query.
-        val pending = ArrayDeque<File>()
-        pending.add(filesRoot)
-        var visited = 0
-        var matches = 0
-        while (pending.isNotEmpty() && visited < MAX_SEARCH_VISITED && matches < MAX_SEARCH_RESULTS) {
-            val file = pending.removeFirst()
-            visited++
-            if (file.name.lowercase(java.util.Locale.ROOT).contains(keyword)) {
-                newRowFromFile(file)
-                matches++
-            }
-            if (file.isDirectory) {
-                file.listFiles()?.sortedBy { it.name.lowercase(java.util.Locale.ROOT) }
-                    ?.forEach(pending::addLast)
-            }
-        }
+        collectSearchMatches(filesRoot, query).forEach { newRowFromFile(it) }
     }
 
     override fun getDocumentType(documentId: String): String =
@@ -369,8 +350,7 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
         private const val MIME_TYPE_WILDCARD = "*/*"
         private const val MIME_TYPE_TEXT = "text/plain"
         private const val MIME_TYPE_BIN = "application/octet-stream"
-        private const val MAX_SEARCH_VISITED = 5_000
-        private const val MAX_SEARCH_RESULTS = 50
+
 
         private val TEXT_EXTENSIONS = setOf(
             "txt",
@@ -402,4 +382,48 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
             Document.COLUMN_SIZE,
         )
     }
+}
+
+/** SAF 搜索的枚举预算：命中的文件数上限 */
+internal const val MAX_SEARCH_MATCHES = 50
+
+/** SAF 搜索的枚举预算：枚举过的节点总数上限（含已入队未访问的） */
+internal const val MAX_SEARCH_VISITED_NODES = 5_000
+
+/**
+ * 广度优先收集 [root] 下文件名包含 [query]（忽略大小写）的文件。
+ *
+ * 与朴素的整树遍历不同，这里给「枚举过的节点」记总账：每个被列出的
+ * 子项在入队时就计入 [maxVisited] 预算，预算耗尽立即停止展开——单个
+ * 超大目录不会让队列无限堆积；同时不做排序（搜索结果不要求有序），
+ * 省掉旧实现里每个目录全量排序的开销。结果为广度优先的自然枚举序。
+ */
+internal fun collectSearchMatches(
+    root: File,
+    query: String,
+    maxVisited: Int = MAX_SEARCH_VISITED_NODES,
+    maxResults: Int = MAX_SEARCH_MATCHES,
+): List<File> {
+    val keyword = query.lowercase(java.util.Locale.ROOT)
+    val matches = mutableListOf<File>()
+    val pending = ArrayDeque<File>()
+    var visited = 0
+    pending.addLast(root)
+    visited++
+    while (pending.isNotEmpty() && matches.size < maxResults) {
+        val file = pending.removeFirst()
+        if (file.name.lowercase(java.util.Locale.ROOT).contains(keyword)) {
+            matches.add(file)
+            if (matches.size >= maxResults) break
+        }
+        if (file.isDirectory && visited < maxVisited) {
+            val children = file.listFiles() ?: continue
+            for (child in children) {
+                if (visited >= maxVisited) break
+                pending.addLast(child)
+                visited++
+            }
+        }
+    }
+    return matches
 }

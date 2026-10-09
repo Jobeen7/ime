@@ -46,10 +46,12 @@ object AppStartup {
                 // Resolve a process death during paired dictionary/model update
                 // before the engine can open either resource.
                 Step("recoverInterruptedUpdate", { WanxiangUpdateManager.recoverInterruptedUpdate() }),
-                // 引擎初始化依赖资源解压：资源失败时跳过，避免半初始化状态
+                // 引擎初始化依赖资源解压：资源失败时跳过，避免半初始化状态。
+                // 恢复步骤不在硬依赖内：它自身保证不抛错（损坏日志会被隔离），
+                // 且绝不能让一次恢复异常把引擎启动永久堵死
                 Step(
                     "setupEngine", ::setupEngine,
-                    requires = setOf("releaseResourcesIfNeeded", "recoverInterruptedUpdate")
+                    requires = setOf("releaseResourcesIfNeeded")
                 ),
                 Step("prewarmOpencc", ::prewarmOpencc),
             )
