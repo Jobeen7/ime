@@ -133,36 +133,6 @@ object ClipboardManager {
         if (notify && isNew) onNewEntry?.invoke(Entry(clipped, now))
     }
 
-    /**
-     * 局域网同步下行条目入库（电脑端复制的内容）：以云端时间戳落库并
-     * 标记 cloud，与本地条目同一套上限/保留期口径。同文本已在历史中
-     * 则跳过（不覆盖本地行）；本机删过的文本命中防复活抑制同样跳过，
-     * 不让同步把用户刚删掉的内容又带回来。新增成功后只刷新列表
-     * （onContentChanged），不触发 onNewEntry 的新条目提示——那是给
-     * 本机复制的即时反馈用的。
-     */
-    suspend fun addCloudEntry(context: Context, text: String, timestamp: Long) {
-        if (text.isBlank()) return
-        val clipped = text.take(MAX_TEXT_LENGTH)
-        if (removedSuppression(context, clipped) != null) return
-        val retentionCutoff =
-            System.currentTimeMillis() - getRetentionDays(context) * 86400000L
-        val inserted = db(context) { db ->
-            db.withTransaction {
-                val dao = db.clipboardDao()
-                if (dao.existsByText(clipped)) return@withTransaction false
-                dao.insert(
-                    ClipboardRecord(text = clipped, timestamp = timestamp, cloud = true)
-                )
-                trimExcess(dao, getMaxEntries(context))
-                dao.deleteOlderThan(retentionCutoff)
-                dao.purgeDeletedOlderThan(retentionCutoff)
-                true
-            }
-        } ?: false
-        if (inserted) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
-    }
-
     private suspend fun trimExcess(dao: ClipboardDao, limit: Int) {
         val excess = dao.count() - limit
         if (excess > 0) dao.deleteOldest(excess)
@@ -407,10 +377,6 @@ object ClipboardManager {
             lastCopyText = text
             lastCopyTimestamp = System.currentTimeMillis()
             addEntry(context, text, notify = false)
-            // 局域网同步上行：本机新复制的内容推给电脑端（未启用/未配置
-            // 时 publishLocalCopy 内部直接返回）；只挂在「全新条目」这
-            // 一支，历史已有文本的重复复制与云端下行条目都不会回环上传
-            ClipboardCloudSync.publishLocalCopy(context, text)
             return true
         }
         return false

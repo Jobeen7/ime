@@ -11,9 +11,7 @@ import android.view.inputmethod.EditorInfo
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.InputConnectionUtil
-import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.data.manager.CandidateManager
-import com.jobeen.ime.data.manager.ClipboardCloudSync
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.manager.SchemaManager
@@ -170,11 +168,6 @@ class ImeInputMethodService : InputMethodService() {
         super.onWindowShown()
         keyboardWindow?.onWindowShown()
         ClipboardManager.startMonitoring(this)
-        // 局域网剪贴板同步：与剪贴板监听同生命周期拉起；循环挂在
-        // appScope 上、未启用/未配置时 start 内部直接返回，窗口隐藏
-        // 不停它（电脑端下行同步不依赖键盘窗口是否显示），关闭开关
-        // 时由设置页 stop 且循环自身每轮复查启用状态后退出
-        ClipboardCloudSync.start(this, appScope)
         if (messageObserveJob == null) {
             messageObserveJob = scope?.let { scope ->
                 engine?.observeMessages(scope) {
