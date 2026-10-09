@@ -21,6 +21,7 @@ class ParticleWaveView @JvmOverloads constructor(
 
     private companion object {
         private const val SILENT_IDLE_THRESHOLD = 30 // 约 500ms 无声则判定冬眠
+        private const val SILENT_VOLUME_THRESHOLD = 2 // 原始音量（0-100）≤2 视为静默，吸收底噪抖动
         private const val RAD_CONVERT = PI.toFloat() / 180f // 缓存弧度转换常数，免去高频双精度转换
         private const val MIN_ACTIVE_VOLUME = 0.1f // 正常运行时的最低视觉音量底限
 
@@ -198,9 +199,10 @@ class ParticleWaveView @JvmOverloads constructor(
         val vPercent = volume * 0.01f
         val timeFactor = millisPassed / offsetSpeed
 
-        // 智能静音判定机：原始输入持续为 0（真静默）达阈值帧数后冬眠；
-        // 输入端在静默期会持续喂 0，计数不会被打断；来声由 setVolume 唤醒
-        if (rawInputVolume == 0) {
+        // 智能静音判定机：原始输入持续 ≤2（映射后近静默，含底噪抖动）
+        // 达阈值帧数后冬眠；输入端在静默期会持续喂小音量，计数不会被
+        // 打断；来声由 setVolume 唤醒
+        if (rawInputVolume <= SILENT_VOLUME_THRESHOLD) {
             silentFrameCount++
             if (silentFrameCount >= SILENT_IDLE_THRESHOLD) {
                 drawStaticScene(c, timeFactor)
