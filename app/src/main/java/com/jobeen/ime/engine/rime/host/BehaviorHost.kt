@@ -14,6 +14,8 @@ import com.jobeen.ime.engine.rime.behavior.Segmentation
 import com.jobeen.ime.engine.rime.behavior.SelectPinYin
 import com.jobeen.ime.engine.rime.behavior.Selection
 import com.jobeen.ime.engine.rime.core.IRimeJob
+import com.jobeen.ime.engine.rime.core.KeyMapping
+import com.jobeen.ime.engine.rime.core.RimeApi
 import timber.log.Timber
 
 class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
@@ -40,29 +42,54 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
      * 将 buildRimeInput 构造的输入投递给 Rime 引擎。
      */
     private fun updateRimeInput(): Boolean {
-        rimeJob.sendJob {
-            val input = build()
-            // 只记长度不记原文：组字内容是用户输入，打进日志等于把打字内容落盘
-            Timber.d("rimeJob.sendJob setInput: len=%d", input.length)
-            if (input.startsWith("/")) {
-                setInput(input)
-                return@sendJob
-            }
-            val parts = inputParts(input)
-            parts.forEachIndexed { index, item ->
-                val emit = index + 1 == parts.size
-                when (true) {
-                    (item in symbols) -> {
-                        if (index == 0) setInput(emptyInput, false)
-                        simulateKeySequence(sequence = item)
-                    }
+        rimeJob.sendJob { pushBuiltInput() }
+        return true
+    }
 
-                    (index == 0) -> setInput(input = item, emit)
-                    else -> appendInput(input = item, emit)
+    /**
+     * 在当前已进入的 rime job 内同步把 [build] 构造的输入投递给 Rime
+     * （不另发 sendJob）：[updateRimeInput] 的 job 内版本，供判断与处理
+     * 必须落在同一个 job 内的调用方（见 [backspaceInJob]）复用投递逻辑。
+     */
+    private suspend fun RimeApi.pushBuiltInput() {
+        val input = build()
+        // 只记长度不记原文：组字内容是用户输入，打进日志等于把打字内容落盘
+        Timber.d("rimeJob.sendJob setInput: len=%d", input.length)
+        if (input.startsWith("/")) {
+            setInput(input)
+            return
+        }
+        val parts = inputParts(input)
+        parts.forEachIndexed { index, item ->
+            val emit = index + 1 == parts.size
+            when (true) {
+                (item in symbols) -> {
+                    if (index == 0) setInput(emptyInput, false)
+                    simulateKeySequence(sequence = item)
                 }
+
+                (index == 0) -> setInput(input = item, emit)
+                else -> appendInput(input = item, emit)
             }
         }
-        return true
+    }
+
+    /**
+     * 在调用方已进入的 rime job 内同步执行一次退格：队列侧仍走
+     * [recontrolBackspace] 在同一把锁内维护第二套状态，与 [flowed] 的
+     * Backspace 分支口径一致；区别只是不另发 sendJob——队列内消化时在
+     * 本 job 内重建输入，转交 Rime 时也在本 job 内直接发 BackSpace。
+     * 转交用 isVirtual=false 的内部合成按键：native 判定未处理时其
+     * KeyMessage 会被 RimeEngine 的未处理按键透传门控拦下，不叠加补发
+     * 宿主 DEL（调用方只在组字非空时走到这里，再删宿主文本就是误删）。
+     */
+    suspend fun backspaceInJob(api: RimeApi) {
+        val recontrolled = synchronized(queueLock) { recontrolBackspace() }
+        if (recontrolled) {
+            api.pushBuiltInput()
+        } else {
+            api.processKey(KeyMapping.Key_BackSpace, 0U, false)
+        }
     }
 
     private fun inputParts(input: String): List<String> {
