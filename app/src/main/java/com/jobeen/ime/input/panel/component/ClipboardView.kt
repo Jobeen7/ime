@@ -363,7 +363,11 @@ class ClipboardView(
                 dragStartY = event.y
                 dragLastY = event.y
                 isScrolling = false
-                val idx = dragIndexAt(event.y)
+                // 按下定位走严格命中（与普通点按同口径）：pressedIndex 是未
+                // 进入拖选时抬手的 toggle 候选，行间空隙/空白吸附到邻行会
+                // 误选；拖选区间本身的吸附仍由 applyDragSelection 里的
+                // dragIndexAt 负责，不受此处口径影响
+                val idx = itemIndexAt(event.y)
                 pressedIndex = if (idx in rowLayouts.indices) idx else -1
                 if (pressedIndex >= 0) setDragAnchor(pressedIndex, event.y)
                 invalidate()
@@ -372,9 +376,10 @@ class ClipboardView(
             MotionEvent.ACTION_MOVE -> {
                 dragLastY = event.y
                 if (dragAnchorIndex < 0) {
-                    // 按下时落在列表外（如顶部空白）：手指移入行区后补设锚点，
-                    // 否则整趟拖动无声失效（只有滚动、没有连选）
-                    val idx = dragIndexAt(event.y)
+                    // 按下时落在行外（如顶部空白、行间空隙）：手指移入行区后
+                    // 补设锚点，否则整趟拖动无声失效（只有滚动、没有连选）；
+                    // 补锚与 DOWN 同用严格命户口径，落在空隙不吸附邻行作锚点
+                    val idx = itemIndexAt(event.y)
                     if (idx in rowLayouts.indices) setDragAnchor(idx, event.y)
                 }
                 if (!dragSelecting && dragAnchorIndex >= 0 &&
@@ -890,8 +895,8 @@ class ClipboardView(
 
     /**
      * 拖选专用命中：行间空隙（listGap）不算落空，就近归到上一行；
-     * 列表上下之外钳到首/末行。点按仍用严格的 [itemIndexAt]，
-     * 避免空隙点按误触邻行上屏。
+     * 列表上下之外钳到首/末行。只用于拖选进行中的区间计算；点按、
+     * 多选按下与拖选补锚都用严格的 [itemIndexAt]，避免空隙误触邻行。
      */
     private fun dragIndexAt(y: Float): Int {
         val direct = itemIndexAt(y)
