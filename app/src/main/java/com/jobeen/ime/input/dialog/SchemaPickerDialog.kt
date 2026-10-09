@@ -93,6 +93,10 @@ object SchemaPickerDialog {
         onSchemaSelected: (String) -> Unit,
         onDismiss: () -> Unit = {},
     ): Dialog {
+        // 覆盖前先关掉旧实例：currentDialog 会在下方被新实例顶替，
+        // 旧弹窗若不 dismiss 就失去引用、再也关不掉（其 OnDismiss 也
+        // 靠 currentDialog 置空来清理状态，必须趁引用还在时触发）
+        dismiss()
         val selectedIndex = schemas.indexOfFirst { it.id == currentSchemaId }
         val opaqueBackgroundColor = getOpaqueColor(colors.specialKeyBackground, colors.background)
         val innerLayout = LinearLayout(context).apply {

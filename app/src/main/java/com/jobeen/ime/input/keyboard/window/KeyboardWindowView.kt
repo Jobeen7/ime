@@ -56,24 +56,37 @@ class KeyboardWindowView(
 
     companion object {
         const val PANEL_HEIGHT_DP = 48
+
+        /** 配色刷新防抖窗口：窗口内的多次设置变更合并为一次全量刷新 */
+        const val REFRESH_COLORS_DEBOUNCE_MS = 50L
     }
 
     private var cachedColors: KeyboardColors.ColorScheme = KeyboardColors.resolve(context)
 
     // 实测：语音拖拽时 UP 事件到不了空格按键的 onTouchUpListener（MOVE 能到，
     // UP/CANCEL 都到不了）。在父容器直接拦截，触发语音拖拽松手逻辑。
-    // 只认启动语音的那根手指（voicePointerId，由拖拽 MOVE 上报的指针 id）：
-    // 其他手指的抬起不得结束本次录音。id 未知（工具栏点击启动等无拖拽场景）
-    // 时保持旧行为，拦截任意 UP/CANCEL。
+    // 只认启动语音的那根手指（voicePointerId，长按触发瞬间由
+    // VoiceInputAction 穿线带入，录音开始即已认领，不再等首次 MOVE）：
+    // 其他手指的抬起不得结束本次录音。id 未知（工具栏锁定启动等无指针
+    // 场景）时保持旧行为，任意 UP 可结束。
+    // ACTION_CANCEL 无条件结束：手势是被系统打断的，事件里的指针 id
+    // 不可靠（可能取不到或不是启动手指），再做 id 比对会漏掉收尾。
     // 锁定录音时不拦截：浮层空白处点按不应结束录音。
     override fun dispatchTouchEvent(ev: android.view.MotionEvent): Boolean {
-        if (isVoiceRecording && !voiceOverlay.isLocked &&
-            (ev.actionMasked == android.view.MotionEvent.ACTION_UP ||
-             ev.actionMasked == android.view.MotionEvent.ACTION_POINTER_UP ||
-             ev.actionMasked == android.view.MotionEvent.ACTION_CANCEL)) {
-            val upPointerId = runCatching { ev.getPointerId(ev.actionIndex) }.getOrDefault(-1)
-            if (voicePointerId == -1 || upPointerId == voicePointerId) {
-                transformed(KeyboardAction.VoiceDragUp)
+        if (isVoiceRecording && !voiceOverlay.isLocked) {
+            when (ev.actionMasked) {
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    transformed(KeyboardAction.VoiceDragUp)
+                }
+
+                android.view.MotionEvent.ACTION_UP,
+                android.view.MotionEvent.ACTION_POINTER_UP -> {
+                    val upPointerId =
+                        runCatching { ev.getPointerId(ev.actionIndex) }.getOrDefault(-1)
+                    if (voicePointerId == -1 || upPointerId == voicePointerId) {
+                        transformed(KeyboardAction.VoiceDragUp)
+                    }
+                }
             }
         }
         return super.dispatchTouchEvent(ev)
@@ -120,7 +133,8 @@ class KeyboardWindowView(
             if (!value) voicePointerId = -1
         }
 
-    /** 启动本次语音拖拽手势的指针 id；-1 表示未知（非拖拽启动） */
+    /** 启动本次语音的指针 id（长按触发瞬间经 VoiceInputAction 穿线带入）；
+     * -1 表示未知（工具栏锁定启动等无指针场景），松手判定回退为任意 UP */
     private var voicePointerId = -1
 
     private val addPhraseLayer = InputBoxLayerView(context).apply {
@@ -172,7 +186,8 @@ class KeyboardWindowView(
 
             is KeyboardAction.VoiceDragPosition -> {
                 if (isVoiceRecording) {
-                    // 认领启动手势的指针：父容器此后只认这根手指的抬起
+                    // 启动指针已在长按触发时经 VoiceInputAction 认领；这里仅
+                    // 兜底旧路径（id 仍未知时以首次 MOVE 上报的指针补认领）
                     if (voicePointerId == -1) voicePointerId = action.pointerId
                     voiceOverlay.onDragPosition(action.rawX, action.rawY)
                 }
@@ -202,7 +217,8 @@ class KeyboardWindowView(
                 if (isVoiceRecording) {
                     stopVoiceInput()
                 } else {
-                    startVoiceInput()
+                    // 穿线带入的启动指针 id 随启动一并记下（见 startVoiceInput）
+                    startVoiceInput(action.pointerId)
                 }
                 null
             }
@@ -223,7 +239,7 @@ class KeyboardWindowView(
                 requestLayout()
             }
 
-            KeyboardManager.Keyboard.KeyRadius.KEY, KeyboardManager.Keyboard.KEY_THEME, KeyboardManager.Keyboard.KEY_FOLLOW_SYSTEM, KeyboardManager.Keyboard.KEY_LIGHT_THEME, KeyboardManager.Keyboard.KEY_DARK_THEME, KeyboardManager.Keyboard.Gap.KEY_HORIZONTAL, KeyboardManager.Keyboard.Gap.KEY_VERTICAL -> post { refreshColors() }
+            KeyboardManager.Keyboard.KeyRadius.KEY, KeyboardManager.Keyboard.KEY_THEME, KeyboardManager.Keyboard.KEY_FOLLOW_SYSTEM, KeyboardManager.Keyboard.KEY_LIGHT_THEME, KeyboardManager.Keyboard.KEY_DARK_THEME, KeyboardManager.Keyboard.Gap.KEY_HORIZONTAL, KeyboardManager.Keyboard.Gap.KEY_VERTICAL -> scheduleRefreshColors()
 
             KeyboardManager.Keyboard.RippleEffect.KEY -> post {
                 keyboardStateManager.setRippleEnabled(
@@ -236,7 +252,7 @@ class KeyboardWindowView(
             CandidateManager.KEY_BORDER,
             CandidateManager.KEY_SHOW_INDEX,
             CandidateManager.KEY_SHOW_COMMENT,
-                -> post { refreshColors() }
+                -> scheduleRefreshColors()
         }
     }
 
@@ -373,6 +389,13 @@ class KeyboardWindowView(
 
     override fun onDetachedFromWindow() {
         panel.onFinishInputView(true)
+        // 方案选择弹窗挂在本窗口的 token 上，窗口销毁时一并关掉，
+        // 避免弹窗残留在已销毁的窗口上（单例在 build 覆盖前也会自关）
+        SchemaPickerDialog.dismiss()
+        // 设置变化的配色刷新若还挂在防抖窗口里，销毁后不必再执行
+        removeCallbacks(pendingRefreshColors)
+        // 全高缓存随窗口生命周期结束失效，重建/重新挂载时重新查询
+        cachedFullScreenHeight = -1
         // 语音桥回调在销毁时置空（桥内已是弱引用后备，这里再显式清一遍，双保险）
         SpeechUiBridge.clear()
         preeditPinner.detach(wm)
@@ -532,6 +555,16 @@ class KeyboardWindowView(
         keyboardStateManager.startInput(info)
     }
 
+    // 设置变化触发的配色全量刷新走防抖合并：主题类设置常成串变更（主题包
+    // 一次写多项、跟随系统切换连带多 key），每次都全量重建键盘纯浪费；
+    // 短窗口内只执行最后一次。高度类的即时 requestLayout 分流不在此列。
+    private val pendingRefreshColors = Runnable { refreshColors() }
+
+    private fun scheduleRefreshColors() {
+        removeCallbacks(pendingRefreshColors)
+        postDelayed(pendingRefreshColors, REFRESH_COLORS_DEBOUNCE_MS)
+    }
+
     fun refreshColors() {
         panel.view.setExpanded(false)
         cachedColors = KeyboardColors.resolve(context)
@@ -595,15 +628,30 @@ class KeyboardWindowView(
         return (fullHeight * percent / 100).coerceAtLeast(minimumHeight)
     }
 
+    /** 全屏高度缓存：onMeasure/onLayout 一轮内会被多处反复调用，每次都查
+     * WindowManager 是纯浪费；同一窗口生命周期内结果不变，缓存复用。
+     * -1 表示未缓存；配置变化与窗口销毁时失效（见下方两处清理）。 */
+    private var cachedFullScreenHeight: Int = -1
+
     private fun fullScreenHeight(): Int {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            return wm.maximumWindowMetrics.bounds.height()
+        cachedFullScreenHeight.takeIf { it > 0 }?.let { return it }
+        val height = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            wm.maximumWindowMetrics.bounds.height()
+        } else {
+            val dm = android.util.DisplayMetrics()
+            @Suppress("DEPRECATION") (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(
+                dm
+            )
+            dm.heightPixels
         }
-        val dm = android.util.DisplayMetrics()
-        @Suppress("DEPRECATION") (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(
-            dm
-        )
-        return dm.heightPixels
+        cachedFullScreenHeight = height
+        return height
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        // 旋转/分屏等配置变化后全高可能已变，缓存失效待下次查询重算
+        cachedFullScreenHeight = -1
     }
 
     private fun dpToPx(dp: Int): Int {
@@ -734,7 +782,7 @@ class KeyboardWindowView(
         SpeechUiBridge.onModelMissing = speechModelMissingCallback
     }
 
-    private fun startVoiceInput() {
+    private fun startVoiceInput(pointerId: Int = -1) {
         if (isVoiceRecording) return
         // 密码框禁用语音输入
         if (passwordField) return
@@ -745,6 +793,9 @@ class KeyboardWindowView(
             showModelDownloadPrompt()
             return
         }
+        // 启动成功才记指针：前面的失败路径没进录音态，不留过期 id；
+        // -1（无指针来源）保持父容器的回退语义——任意 UP 可结束
+        voicePointerId = pointerId
         isVoiceRecording = true
         panel.recording = true
         voiceOverlay.unlock()

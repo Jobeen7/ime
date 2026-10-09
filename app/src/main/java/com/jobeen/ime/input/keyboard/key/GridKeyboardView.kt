@@ -53,10 +53,57 @@ class GridKeyboardView(
             return (contentH - height).coerceAtLeast(0)
         }
 
+    // KeyView 复用缓存（最近一次 items）：表情/符号面板每次打开、切回分类
+    // 都会用内容完全相同的 items 再调一次 setItems，全量重建数百个 KeyView
+    // 是纯浪费。内容签名未变时复用已建的 View，只做 detach 后再 attach。
+    // 配色在本 View 生命周期内固定（构造入参，换主题走键盘重建、新建本
+    // View），不存在原地换色路径；仍把配色记入缓存快照比对，将来若有
+    // 原地刷新配色的入口，签名不一致会自然落到重建分支清掉缓存。
+    private var cachedSignature: List<String>? = null
+    private var cachedColors: KeyboardColors.ColorScheme? = null
+    private var cachedViews: List<KeyView> = emptyList()
+
+    /**
+     * items 的内容签名：外观类型与文本/图源、字号、变体、宽度与 Press
+     * 动作共同决定一个 KeyView 的长相与点击行为，任一不同即视为内容变化。
+     * KeyDef/Appearance 不是 data class，不能直接靠 equals 比对，故逐项拼串。
+     */
+    private fun itemsSignature(items: List<KeyDef>): List<String> = items.map { def ->
+        val appearance = def.appearance
+        val appearancePart = when (appearance) {
+            is KeyDef.Appearance.AltText ->
+                "AltText:${appearance.displayText}/${appearance.altText}/${appearance.altTextSize}/${appearance.textSize}"
+
+            is KeyDef.Appearance.ImageText ->
+                "ImageText:${appearance.displayText}/${appearance.src}/${appearance.textSize}"
+
+            is KeyDef.Appearance.Image -> "Image:${appearance.src}"
+            is KeyDef.Appearance.Text -> "Text:${appearance.displayText}/${appearance.textSize}"
+            else -> "Other:${appearance.javaClass.simpleName}"
+        }
+        val pressAction = def.behaviors
+            .filterIsInstance<KeyDef.Behavior.Press>()
+            .firstOrNull()?.action
+        "$appearancePart|${appearance.variant}|${appearance.percentWidth}|$pressAction"
+    }
+
     fun setItems(items: List<KeyDef>) {
+        val signature = itemsSignature(items)
+        val reusable = signature == cachedSignature &&
+            cachedViews.size == items.size &&
+            cachedColors == colors
+        if (!reusable) {
+            cachedViews = items.map { createKeyView(it) }
+            cachedSignature = signature
+            cachedColors = colors
+        }
+        // 复用的 View 可能还挂在父容器上（就是本 View 或重建前的旧父级），
+        // 先统一 detach 再 attach，避免「已有 parent」异常；点击监听在建时
+        // 捕获的是本 View 的 onKeyAction 属性（点击时动态读取），复用后
+        // 仍走当前回调，无需重绑
         removeAllViews()
-        for (def in items) {
-            val keyView = createKeyView(def)
+        for (keyView in cachedViews) {
+            (keyView.parent as? ViewGroup)?.removeView(keyView)
             addView(keyView)
         }
         scrollOffsetY = 0f

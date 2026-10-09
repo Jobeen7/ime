@@ -24,7 +24,9 @@ class MessageHandler(
                 if (window?.interceptCommit(message.text) == true) return
                 (service as ImeInputMethodService).activeInputConnection()
                     ?.commitText(message.text, 1)
-                service.notifyInputChanged()
+                // 连发 Commit（如连打上屏）不必每条都同步探针：与选区路径
+                // 共用 24ms 合并通道，窗口内只探最后一次
+                (service as ImeInputMethodService).scheduleNotifyInputChanged()
             }
 
             is EngineMessage.Candidates -> {
