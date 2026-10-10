@@ -7,7 +7,10 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -15,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
@@ -72,6 +76,8 @@ class UserDictUiState {
     var lastDownload by mutableStateOf(0L)
     /** 服务器上的备份文件列表；非空时弹出选择对话框 */
     var remoteFiles by mutableStateOf<List<String>?>(null)
+    /** 已删除词管理对话框：非空时打开，内容为当前已删词列表 */
+    var deletedWords by mutableStateOf<List<String>?>(null)
     var noticeTitle by mutableStateOf("")
     var noticeMessage by mutableStateOf<String?>(null)
 }
@@ -96,6 +102,9 @@ fun UserDictScreen(
     onPickRemoteFile: (String) -> Unit,
     onDismissRemoteFiles: () -> Unit,
     onDismissNotice: () -> Unit,
+    onShowDeletedWords: () -> Unit,
+    onRestoreDeletedWord: (String) -> Unit,
+    onDismissDeletedWords: () -> Unit,
 ) {
     var showDictDialog by remember { mutableStateOf(false) }
     var showHttpRiskConfirm by remember { mutableStateOf(false) }
@@ -301,6 +310,14 @@ fun UserDictScreen(
                         icon = Icons.Filled.CloudDownload,
                         showSpacer = true,
                     )
+
+                    ClickableSettingItem(
+                        title = stringResource(R.string.user_dict_deleted_words),
+                        subtitle = stringResource(R.string.user_dict_deleted_words_hint),
+                        onClick = { if (!state.busy) onShowDeletedWords() },
+                        icon = Icons.Filled.RestoreFromTrash,
+                        showSpacer = true,
+                    )
                 }
             }
 
@@ -329,6 +346,38 @@ fun UserDictScreen(
             selectedIndex = 0,
             onSelect = { onPickRemoteFile(remoteFiles[it]) },
             onDismiss = onDismissRemoteFiles,
+        )
+    }
+
+    val deletedWords = state.deletedWords
+    if (deletedWords != null) {
+        AlertDialog(
+            onDismissRequest = onDismissDeletedWords,
+            title = { Text(stringResource(R.string.user_dict_deleted_words)) },
+            text = {
+                if (deletedWords.isEmpty()) {
+                    Text(stringResource(R.string.user_dict_deleted_words_empty))
+                } else {
+                    LazyColumn(Modifier.heightIn(max = 320.dp)) {
+                        items(deletedWords) { word ->
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(word, Modifier.weight(1f))
+                                TextButton(onClick = { onRestoreDeletedWord(word) }) {
+                                    Text(stringResource(R.string.user_dict_restore))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = onDismissDeletedWords) {
+                    Text(stringResource(R.string.user_dict_dialog_close))
+                }
+            },
         )
     }
 

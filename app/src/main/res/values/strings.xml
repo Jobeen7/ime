@@ -305,6 +305,11 @@
     <string name="user_dict_upload">上传到服务器</string>
     <string name="user_dict_download">从服务器下载</string>
     <string name="user_dict_download_hint">可跨词典名选择 · 上次：%1$s</string>
+    <string name="user_dict_deleted_words">已删除的词</string>
+    <string name="user_dict_deleted_words_hint">长按候选词删除的词，可在此恢复</string>
+    <string name="user_dict_deleted_words_empty">暂无已删除的词</string>
+    <string name="user_dict_restore">恢复</string>
+    <string name="user_dict_deleted_words_restored">已恢复，下次同步后其他设备也会恢复</string>
     <string name="user_dict_test_connection">测试连接</string>
     <string name="user_dict_error_title">操作失败</string>
     <string name="user_dict_dialog_close">关闭</string>

@@ -6,6 +6,7 @@ import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 10, exportSchema = true)
 @TypeConverters(Converters::class)
@@ -29,10 +30,31 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ime_database"
-                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).build().also { INSTANCE = it }
+                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).addCallback(VACUUM_CALLBACK).build().also { INSTANCE = it }
                 // 注意：不要加 fallbackToDestructiveMigration() —— 漏写 Migration 时宁可启动崩溃（fail-fast，
                 // 发布前真机测试会先暴露），也不要静默清空用户的剪贴板/常用语/选词偏好。每次 bump version
                 // 都必须写 Migration（无结构变更时写空迁移，见 MIGRATION_7_8）。
+            }
+        }
+
+        private const val MAINTENANCE_PREFS = "db_maintenance"
+        private const val KEY_VACUUM_V10_DONE = "vacuum_after_v10_done"
+
+        /**
+         * 一次性 VACUUM：v10 迁移只把 candidate_prefers.context 的值清空，
+         * 旧输入片段仍留在数据库空闲页中（迁移在事务内、无法执行 VACUUM）。
+         * 库打开后（不在事务中）补跑一次 VACUUM 重建文件彻底擦除，成功后
+         * 落标记，之后每次打开只是一次偏好读检查。
+         */
+        private val VACUUM_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onOpen(db: SupportSQLiteDatabase) {
+                super.onOpen(db)
+                val prefs = com.jobeen.ime.base.util.appContext
+                    .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
+                if (prefs.getBoolean(KEY_VACUUM_V10_DONE, false)) return
+                runCatching { db.execSQL("VACUUM") }.onSuccess {
+                    prefs.edit().putBoolean(KEY_VACUUM_V10_DONE, true).apply()
+                }
             }
         }
 
