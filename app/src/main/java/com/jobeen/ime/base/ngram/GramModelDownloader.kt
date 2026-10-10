@@ -30,8 +30,7 @@ object GramModelDownloader {
     // 可信摘要来源：上游 RIME-LMDG 的 LTS 发布资产在 GitHub API 中登记了
     // 官方 sha256（digest 字段）。清单服务端未提供摘要时改查这里——
     // 上游换模型时新资产带新摘要，客户端现查现验，无需发版跟随。
-    private const val GITHUB_DIGEST_API =
-        "https://api.github.com/repos/amzxyz/RIME-LMDG/releases/tags/LTS"
+    // 查询走 base.net 的共享实现（资产分页端点，见 fetchGithubSha256）。
 
     // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
     // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
@@ -102,29 +101,11 @@ object GramModelDownloader {
      */
     private suspend fun fetchGithubSha256(fileName: String): String =
         withContext(Dispatchers.IO) {
-            runCatching {
-                val request = Request.Builder()
-                    .url(GITHUB_DIGEST_API)
-                    .header("Accept", "application/vnd.github+json")
-                    .build()
-                client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) return@use ""
-                    val assets = org.json.JSONObject(response.body?.string().orEmpty())
-                        .optJSONArray("assets") ?: return@use ""
-                    var digest = ""
-                    for (i in 0 until assets.length()) {
-                        val asset = assets.optJSONObject(i) ?: continue
-                        if (asset.optString("name") == fileName) {
-                            digest = normalizeSha256(asset.optString("digest"))
-                            break
-                        }
-                    }
-                    digest
-                }
-            }.getOrElse {
-                Timber.w(it, "Failed to fetch grammar model digest from GitHub")
-                ""
-            }
+            // 走资产分页端点（共享实现）：Release 对象内嵌的 assets
+            // 数组并不完整，恰好被省略的资产会查不到摘要
+            com.jobeen.ime.base.net.fetchGithubReleaseAssetSha256(
+                client, "amzxyz", "RIME-LMDG", "LTS", fileName,
+            )
         }
 
     private suspend fun downloadFile(

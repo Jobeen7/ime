@@ -24,6 +24,7 @@ Jime 基于开源组件构建。本文件列出随应用分发的主要组件及
 | 组件 | 用途 | 许可证 |
 |---|---|---|
 | sherpa-onnx（k2-fsa） | 离线语音识别运行时与模型 | Apache-2.0 |
+| Qualcomm QNN 运行时（libQnnHtp 等，随 sherpa-onnx 的 QNN 模型包分发） | 神经网络推理加速（骁龙设备） | Qualcomm 专有许可，条款见 Qualcomm AI Engine Direct SDK |
 
 ## 安卓与 JVM 依赖（经 Maven Central / Google Maven 引入）
 

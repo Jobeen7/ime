@@ -200,9 +200,23 @@ object BackupManager {
      * 解密并整体覆盖还原。口令错误/文件损坏/结构非法抛 [BackupException]，
      * 且解密与完整结构解析全部通过后才开始写任何数据（不会半还原）。
      */
-    suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
+    suspend fun restoreBackup(bytes: ByteArray, password: CharArray) =
+        restoreInternal(bytes, password, isSnapshotRollback = false)
+
+    /**
+     * 还原本体。[isSnapshotRollback] 区分数据来源：
+     * - 外部备份文件：脱敏解析（不带入 WebDAV 服务器等），并在写入前
+     *   把当前状态加密落盘，作为进程被杀后的回滚手段；
+     * - 落盘快照回滚：快照是本机自采的完整状态，按自有状态解析
+     *   （不脱敏，与内存回滚一致），且**绝不能再落盘新快照**——那会
+     *   把当前（已还原）状态覆写到快照文件上，原始还原前状态就此
+     *   丢失，回滚也就失去了目标。
+     */
+    private suspend fun restoreInternal(
+        bytes: ByteArray, password: CharArray, isSnapshotRollback: Boolean
+    ) {
         val payload = decryptPayload(bytes, password)
-        val parsed = parsePayload(payload)
+        val parsed = parsePayload(payload, sanitizeWebdav = !isSnapshotRollback)
         // 写任何数据前，先把当前状态快照一份：写入阶段任一步失败都用
         // 快照整体回滚，绝不留下新旧混杂的半还原状态。快照解析结构
         // 直接取自当前状态的采集结果——回滚回放是把我们自己的完整
@@ -212,10 +226,12 @@ object BackupManager {
         // 一轮 60 万次 PBKDF2）。
         val snapshotJson = collectPayload()
         val snapshotParsed = parsePayload(snapshotJson, sanitizeWebdav = false)
-        // 加密快照落盘到私有目录：进程若在写入中途被杀（系统回收、
-        // 断电），内存回滚随之消失，下次打开备份页凭此文件+口令仍可
-        // 回到还原前状态。落盘失败只降级为内存回滚，不阻塞还原。
-        persistRestoreSnapshot(encryptPayload(snapshotJson, password))
+        if (!isSnapshotRollback) {
+            // 加密快照落盘到私有目录：进程若在写入中途被杀（系统回收、
+            // 断电），内存回滚随之消失，下次打开备份页凭此文件+口令仍可
+            // 回到还原前状态。落盘失败只降级为内存回滚，不阻塞还原。
+            persistRestoreSnapshot(encryptPayload(snapshotJson, password))
+        }
         try {
             // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
             // 半途而废比继续写完更糟——半还原状态正是快照机制要防的
@@ -224,7 +240,10 @@ object BackupManager {
             val rolledBack = runCatching {
                 withContext(NonCancellable) { applyPayload(snapshotParsed) }
             }.isSuccess
-            if (rolledBack) clearRestoreSnapshot()
+            // 外部还原失败且内存回滚成功：落盘快照已无用，删掉；
+            // 落盘快照回滚本身失败时保留文件，用户可换口令/重试，
+            // 它仍是回到还原前状态的唯一凭据
+            if (rolledBack && !isSnapshotRollback) clearRestoreSnapshot()
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw BackupException(
                 if (rolledBack) "还原失败，已恢复到还原前状态：${e.message ?: "未知错误"}"
@@ -252,13 +271,21 @@ object BackupManager {
     }
 
     /** 是否留有上次还原中断的落盘快照（备份页据此提示回滚）。 */
-    fun hasRestoreSnapshot(): Boolean = restoreSnapshotFile.isFile
+    fun hasRestoreSnapshot(): Boolean {
+        // persistRestoreSnapshot 是先写 .tmp 再 rename：进程在中途被杀
+        // 会留下孤儿 .tmp，顺手清掉（主文件以 rename 成功为准）
+        runCatching {
+            val tmp = File(appContext.filesDir, "$RESTORE_SNAPSHOT_NAME.tmp")
+            if (tmp.isFile) tmp.delete()
+        }
+        return restoreSnapshotFile.isFile
+    }
 
     /** 用备份口令把落盘快照还原回去（即回到上次还原之前的状态）。 */
     suspend fun rollbackToRestoreSnapshot(password: CharArray) {
         val bytes = runCatching { restoreSnapshotFile.readBytes() }
             .getOrElse { throw BackupException("回滚快照已损坏或不存在") }
-        restoreBackup(bytes, password)
+        restoreInternal(bytes, password, isSnapshotRollback = true)
     }
 
     /** 用户确认不需要回滚时丢弃落盘快照。 */
@@ -281,12 +308,16 @@ object BackupManager {
         kotlinx.coroutines.flow.MutableStateFlow<RestoreState>(RestoreState.Idle)
     val restoreState: kotlinx.coroutines.flow.StateFlow<RestoreState> = _restoreState
 
+    /** 还原互斥：check-then-set 靠状态值判断不是原子操作，用 CAS 守门。 */
+    private val restoreRunning =
+        java.util.concurrent.atomic.AtomicBoolean(false)
+
     /**
      * 在应用级作用域启动还原：旋转/退出备份页都不会取消它（旧实现挂在
      * 界面作用域上，旋转即取消，还原与回滚同遭腰斩）。重复启动忽略。
      */
     fun startRestore(bytes: ByteArray, password: CharArray, rollbackSnapshot: Boolean = false) {
-        if (_restoreState.value == RestoreState.Running) {
+        if (!restoreRunning.compareAndSet(false, true)) {
             password.fill(' ')
             return
         }
@@ -296,14 +327,28 @@ object BackupManager {
                 if (rollbackSnapshot) rollbackToRestoreSnapshot(password)
                 else restoreBackup(bytes, password)
                 _restoreState.value = RestoreState.Done
+                scheduleProcessRestart()
             } catch (e: Exception) {
                 Timber.w(e, "Restore failed")
                 _restoreState.value =
                     RestoreState.Failed(e.message ?: "未知错误")
             } finally {
                 password.fill(' ')
+                restoreRunning.set(false)
             }
         }
+    }
+
+    /**
+     * 还原完成后由执行本体安排进程重启，让各处内存缓存整体失效。
+     * 旧实现把杀进程挂在备份页的 Done 观察者上：用户中途离开页面
+     * 就无人触发，旧缓存继续运行、还可能把旧数据回写覆盖已还原的
+     * 结果。延迟 600ms 与旧行为一致（给完成提示留显示时间）。
+     */
+    private fun scheduleProcessRestart() {
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }, 600)
     }
 
     /** 备份页消费掉终态后复位，避免下次打开页面重复处理。 */
@@ -414,7 +459,7 @@ object BackupManager {
             // - sync_etag_* / 上次同步时间：属于另一台设备的同步基准，沿用会让冲突检测失真。
             // 整表覆盖时这些键因此被清掉，回到默认（HTTPS-only、无基准先合并）
             if (sanitizeWebdav) prefs[WEBDAV_PREFS]?.let { webdav ->
-                prefs[WEBDAV_PREFS] = webdav.filterKeys { key ->
+                val filtered = webdav.filterKeys { key ->
                     key != "webdav_allow_http" &&
                         // 服务器地址同样不从备份还原：恶意备份可借整表覆盖把
                         // 服务器指向攻击者，用户之后填入真实口令同步即泄露；
@@ -424,6 +469,18 @@ object BackupManager {
                         key != "last_download_time" &&
                         !key.startsWith("sync_etag_")
                 }
+                // 服务器地址与明文开关是本机配置而非备份内容：整表覆盖
+                // 会连本机现值一起抹掉（还原自己的备份也丢服务器设置），
+                // 用解析当下的本机现值回填这两个键。同步基准不回填——
+                // 保持「无基准先全量合并」的安全方向，让还原后的词库
+                // 数据与远端重新对账，而不是拿旧基准误判未变化。
+                val local = appContext
+                    .getSharedPreferences(WEBDAV_PREFS, Context.MODE_PRIVATE).all
+                val refilled = LinkedHashMap(filtered)
+                for (key in listOf("webdav_server", "webdav_allow_http")) {
+                    local[key]?.let { refilled[key] = it }
+                }
+                prefs[WEBDAV_PREFS] = refilled
             }
             // 还原语义以备份为准：强制剪贴板拆库迁移标记为已完成，防止重启后
             // 主库残留的旧剪贴板行被迁移逻辑合并进刚还原好的剪贴板表

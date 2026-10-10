@@ -54,14 +54,34 @@ abstract class AppDatabase : RoomDatabase() {
             val prefs = com.jobeen.ime.base.util.appContext
                 .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
             if (prefs.getBoolean(KEY_VACUUM_CLIP_DONE, false)) return
+            val db = getInstance(com.jobeen.ime.base.util.appContext)
+                .openHelper.writableDatabase
+            vacuumAndMark(db, prefs, KEY_VACUUM_CLIP_DONE)
+        }
+
+        /**
+         * VACUUM + 落标记 + 截断 WAL 的统一实现。顺序是关键：
+         * 标记必须紧随 VACUUM 成功立即落盘——wal_checkpoint 会返回
+         * 结果行，只能用 query 读掉（execSQL 执行返回行的语句在多
+         * 个 Android 版本上会抛异常）；旧写法把标记放在 checkpoint
+         * 之后、同一 runCatching 内，checkpoint 一抛错标记永远写不
+         * 上，每次打开库都重跑 VACUUM、WAL 也永远截不断。
+         * checkpoint 失败只记日志：主文件已被 VACUUM 重建，标记
+         * 不应因此缺失。
+         */
+        private fun vacuumAndMark(
+            db: SupportSQLiteDatabase,
+            prefs: android.content.SharedPreferences,
+            doneKey: String,
+        ) {
             runCatching {
-                val db = getInstance(com.jobeen.ime.base.util.appContext)
-                    .openHelper.writableDatabase
                 db.execSQL("VACUUM")
-                db.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
-                prefs.edit { putBoolean(KEY_VACUUM_CLIP_DONE, true) }
+                prefs.edit { putBoolean(doneKey, true) }
+                runCatching {
+                    db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
+                }.onFailure { timber.log.Timber.w(it, "wal_checkpoint(TRUNCATE) failed") }
             }.onFailure {
-                timber.log.Timber.w(it, "VACUUM after clipboard split failed; will retry")
+                timber.log.Timber.w(it, "VACUUM failed; will retry")
             }
         }
 
@@ -77,13 +97,8 @@ abstract class AppDatabase : RoomDatabase() {
                 val prefs = com.jobeen.ime.base.util.appContext
                     .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
                 if (prefs.getBoolean(KEY_VACUUM_V10_DONE, false)) return
-                runCatching {
-                    db.execSQL("VACUUM")
-                    // VACUUM 重建主文件后，旧页还可能残留在 WAL 文件里，一并截断
-                    db.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
-                }.onSuccess {
-                    prefs.edit().putBoolean(KEY_VACUUM_V10_DONE, true).apply()
-                }
+                // VACUUM 重建主文件后旧页还可能残留在 WAL 里，vacuumAndMark 一并截断
+                vacuumAndMark(db, prefs, KEY_VACUUM_V10_DONE)
             }
         }
 

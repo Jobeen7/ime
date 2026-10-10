@@ -207,6 +207,9 @@ object VoiceCorrectionSession {
     @Volatile
     private var pending: Pending? = null
 
+    /** 本次武装期内编辑器是否已证明会无视 hintMaxChars 返回超长全文。 */
+    private var extractedTextOversized = false
+
     /**
      * 语音定稿上屏后调用。[committedText] 是纠错后的简体文本（编辑器
      * 里显示的可能是其繁体形态，故繁体模式直接不留记录）。
@@ -220,10 +223,15 @@ object VoiceCorrectionSession {
         synchronized(lock) {
             pending = null
             lastCommit = null
+            extractedTextOversized = false
             if (committedText.isBlank()) return
             if (!store.enabled) return
             if (service.phraseAddBridgeActive) return
             if (InputFieldPolicy.isPasswordField(service.currentInputEditorInfo)) return
+            // 「禁止个性化学习」的输入框（无痕等）同样不武装：武装后会
+            // 周期性读光标窗口并把改词学进纠错表，与其他学习路径
+            // （选词偏好/搭配/native 自学习）的统一判定保持一致
+            if (InputFieldPolicy.isNoPersonalizedLearning(service.currentInputEditorInfo)) return
             if (CandidateManager.isTraditionalChineseEnabled(service)) return
             lastCommit = CommitRecord(store, committedText, applied, System.currentTimeMillis())
             tryArmLocked(service)
@@ -371,7 +379,12 @@ object VoiceCorrectionSession {
         // before/after 两次取文本、再叠加服务层自己的 1 字探针，
         // 武装期内每次输入变化要跨进程往返 3–4 次。部分编辑器不
         // 实现 getExtractedText（返回 null），回退原两次取文本。
-        val extracted = runCatching {
+        // hintMaxChars 只是提示：个别编辑器（WebView、长文档）会无视它
+        // 返回全文，全文先过一遍 Binder 才到本地切片，事务过大有卡顿
+        // 风险。返回长度明显超窗口预期时，本次改走 before/after 路径，
+        // 且本次武装期内不再尝试 getExtractedText，避免每次探针都
+        // 搬一遍全文（arm 时复位，换输入框/下次语音重新评估）。
+        val extracted = if (extractedTextOversized) null else runCatching {
             ic.getExtractedText(
                 android.view.inputmethod.ExtractedTextRequest().apply {
                     hintMaxChars = WINDOW_BEFORE + WINDOW_AFTER
@@ -381,7 +394,12 @@ object VoiceCorrectionSession {
             )
         }.getOrNull()
         val extractedText = extracted?.text?.toString()
-        if (extracted != null && extractedText != null) {
+        if (extractedText != null &&
+            extractedText.length > (WINDOW_BEFORE + WINDOW_AFTER) * 3
+        ) {
+            extractedTextOversized = true
+        }
+        if (extracted != null && extractedText != null && !extractedTextOversized) {
             val cursor = extracted.selectionStart.coerceIn(0, extractedText.length)
             val start = (cursor - WINDOW_BEFORE).coerceAtLeast(0)
             val end = (cursor + WINDOW_AFTER).coerceAtMost(extractedText.length)

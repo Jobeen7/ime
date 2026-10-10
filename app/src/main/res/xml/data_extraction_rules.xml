@@ -5,6 +5,7 @@
   - 剪贴板历史（独立库 clipboard_database）
   - 方案/模型/日志/下载缓存（external 的 shared/、model/、log/、download/）
   - 语音纠错表（filesDir 根下 voice_corrections.tsv，含用户改词记录）
+  - 还原中断快照（filesDir 根下 restore-snapshot.jbk，含剪贴板/常用语全量数据）
   - 搭配学习表（filesDir 根下 user_collocations.tsv，由打字习惯派生的词对）
   其余（用户词典、主题、设置、常用语、选词偏好等）照常迁移。
 -->
@@ -17,6 +18,8 @@
         <exclude domain="external" path="download/" />
         <exclude domain="file" path="voice_corrections.tsv" />
     <exclude domain="file" path="voice_corrections.tsv.tmp" />
+        <exclude domain="file" path="restore-snapshot.jbk" />
+        <exclude domain="file" path="restore-snapshot.jbk.tmp" />
         <exclude domain="file" path="user_collocations.tsv" />
         <exclude domain="file" path="user_collocations.tsv.tmp" />
         <exclude domain="database" path="clipboard_database" />
@@ -32,6 +35,8 @@
         <exclude domain="external" path="download/" />
         <exclude domain="file" path="voice_corrections.tsv" />
         <exclude domain="file" path="voice_corrections.tsv.tmp" />
+        <exclude domain="file" path="restore-snapshot.jbk" />
+        <exclude domain="file" path="restore-snapshot.jbk.tmp" />
         <exclude domain="file" path="user_collocations.tsv" />
         <exclude domain="file" path="user_collocations.tsv.tmp" />
         <exclude domain="database" path="clipboard_database" />

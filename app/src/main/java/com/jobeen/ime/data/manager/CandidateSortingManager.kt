@@ -16,28 +16,43 @@ class CandidateSortingManager(private val db: AppDatabase) {
     private val dao: CandidateSortingDao = db.candidateSortingDao()
 
     /**
-     * 保存候选集合的排序结果。
+     * 保存一次拖拽排序结果。
      *
      * @param candidates 拖拽完成后的候选列表（顺序即用户期望的顺序）；
      *                   其 [Candidate.index] 为原始序号，记录的是“新顺序里的原始序号”。
+     * @param key [candidateSortingKey] 派生的组字串键。键按组字串而非
+     *            候选集合：保存时网格里是全量已加载候选，还原时引擎
+     *            按批下发、集合大小不同，集合指纹永远对不上——这是
+     *            拖拽排序此前存了也永不生效的根因。组字串两边一致，
+     *            保存的序号序列可套用到任意子集（缺失序号跳过、
+     *            未保存的新候选按原序追加，见 applySavedCandidateOrder）。
      */
-    suspend fun save(candidates: List<Candidate>) {
-        if (candidates.isEmpty()) return
+    suspend fun save(candidates: List<Candidate>, key: String) {
+        if (candidates.isEmpty() || key.isEmpty()) return
         dao.saveSorting(
             CandidateSorting(
-                key = CandidateSortingKey.compute(candidates.map { it.text }),
+                key = key,
                 candidateIds = candidates.map { it.index },
             )
         )
     }
 
-    /** 读取候选集合上次保存的排序结果；无记录时返回 null。 */
-    suspend fun load(candidates: List<Candidate>): List<Int>? =
-        dao.loadSorting(CandidateSortingKey.compute(candidates.map { it.text }))?.candidateIds
+    /** 读取某组字串上次保存的排序结果；无记录时返回 null。 */
+    suspend fun load(key: String): List<Int>? =
+        if (key.isEmpty()) null else dao.loadSorting(key)?.candidateIds
 
     /** 排序表是否为空（供热路径缓存判空，避免每键一次注定无结果的查询） */
     suspend fun isTableEmpty(): Boolean = dao.count() == 0
 }
+
+/**
+ * 拖拽排序记录的键：由当前组字串（preedit）派生，前缀 "p:" 与旧的
+ * 集合指纹键（裸十六进制）区分——旧行从此不再命中、自然沉底。
+ * 组字为空（预测态等无组字场景）返回空串，调用方据此跳过保存/读取，
+ * 避免无组字的列表共用一个键互相污染。
+ */
+internal fun candidateSortingKey(preedit: String): String =
+    if (preedit.isBlank()) "" else "p:" + CandidateSortingKey.compute(listOf(preedit))
 
 /**
  * 按保存的原始序号顺序重排候选；不在保存列表中的候选保持原有相对

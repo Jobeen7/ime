@@ -1,8 +1,11 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.data.manager.applySavedCandidateOrder
+import com.jobeen.ime.data.manager.candidateSortingKey
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -45,5 +48,21 @@ class CandidateSortingOrderTest {
         val list = listOf(0 to "甲", 1 to "乙")
         val result = applySavedCandidateOrder(list, listOf(9, 1, 0))
         assertEquals(listOf("乙", "甲"), result.map { it.text })
+    }
+
+    // ---- 排序键：按组字串派生（保存/还原两端同源同值，集合大小无关） ----
+
+    @Test
+    fun sortingKey_blankPreeditIsEmpty() {
+        assertEquals("", candidateSortingKey(""))
+        assertEquals("", candidateSortingKey("   "))
+    }
+
+    @Test
+    fun sortingKey_prefixedStableAndDistinct() {
+        val key = candidateSortingKey("nihao")
+        assertTrue(key.startsWith("p:"))
+        assertEquals(key, candidateSortingKey("nihao"))
+        assertNotEquals(key, candidateSortingKey("nihaoma"))
     }
 }

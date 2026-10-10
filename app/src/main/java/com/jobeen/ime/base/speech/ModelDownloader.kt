@@ -66,8 +66,6 @@ object ModelDownloader {
 
     private const val PREFS_NAME = "speech_model_prefs"
     private const val KEY_MANIFEST_ID = "manifest_id"
-    private const val KEY_TOFU_LINK = "tofu_link"
-    private const val KEY_TOFU_SHA256 = "tofu_sha256"
 
     /** 语音模型唯一可信的 GitHub 仓库：清单链接指向别处一律拒绝 */
     private const val GITHUB_OWNER = "k2-fsa"
@@ -173,7 +171,7 @@ object ModelDownloader {
         if (!currentCoroutineContext().isActive) return@withContext false
         if (!ensureArchive(link, archiveFile, manifest.md5, onProgress)) return@withContext false
         if (!currentCoroutineContext().isActive) return@withContext false
-        if (!verifyArchiveSha256(context, link, archiveFile)) return@withContext false
+        if (!verifyArchiveSha256(link, archiveFile)) return@withContext false
         if (!extractAndInstall(archiveFile, stageDir, modelDir, onExtract)) return@withContext false
         // 安装成功后记录服务端标识，供后续检查更新时比对
         val serverId = manifest.md5.trim().ifEmpty { link.trim() }
@@ -231,11 +229,11 @@ object ModelDownloader {
      * - 链接是 GitHub Release 资产（可含代理前缀）→ 向 GitHub API 查该
      *   资产登记的官方摘要比对，查不到或对不上都拒绝安装（fail-closed）；
      *   仅查询失败时保留已通过 MD5 的缓存包，下次可直接重试校验；
-     * - 非 GitHub 链接 → TOFU：首次下载后把摘要钉住，之后同链接的包
-     *   必须与钉住值一致，变更即拒绝并清缓存。
+     * - 非 GitHub 链接 → 只认 APK 内置钉死摘要（按文件名查表）：旧
+     *   TOFU（首次见到即钉住）在服务器被攻破时等于没有校验——换一个
+     *   链接就能让客户端把新包钉为可信，已废除；内置表没有的包拒绝。
      */
     private suspend fun verifyArchiveSha256(
-        context: Context,
         link: String,
         archiveFile: File,
     ): Boolean {
@@ -272,57 +270,28 @@ object ModelDownloader {
             }
             return true
         }
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val pinned = tofuExpectedSha(
-            prefs.getString(KEY_TOFU_LINK, null),
-            prefs.getString(KEY_TOFU_SHA256, null),
-            link,
-        )
-        if (pinned.isNotEmpty()) {
-            if (!actual.equals(pinned, ignoreCase = true)) {
-                Timber.e("Speech model archive SHA-256 differs from pinned TOFU value")
-                archiveFile.delete()
-                return false
-            }
-            return true
+        // 非 GitHub 链接：只认 APK 内置钉死摘要（按链接尾部的文件名查表）
+        val expected = expectedShaForNonGithubLink(link, PINNED_SPEECH_SHA256)
+        if (expected.isEmpty()) {
+            Timber.w("Speech model: non-GitHub link without pinned digest, refusing install")
+            HttpUtil.showToast("语音模型校验失败：下载来源无内置校验值，已拒绝安装")
+            archiveFile.delete()
+            return false
         }
-        prefs.edit {
-            putString(KEY_TOFU_LINK, link)
-            putString(KEY_TOFU_SHA256, actual)
+        if (!actual.equals(expected, ignoreCase = true)) {
+            Timber.e("Speech model archive SHA-256 mismatch vs pinned digest (non-GitHub link)")
+            HttpUtil.showToast("语音模型校验失败：文件与内置摘要不一致，已拒绝安装")
+            archiveFile.delete()
+            return false
         }
-        Timber.i("Speech model SHA-256 pinned (TOFU) for non-GitHub link")
         return true
     }
 
     /** 向 GitHub API 查 Release 资产登记的 sha256；任何失败返回空串 */
-    private fun fetchGithubAssetSha256(ref: GithubAssetRef): String {
-        return runCatching {
-            val url = "https://api.github.com/repos/${ref.owner}/${ref.repo}" +
-                "/releases/tags/${ref.tag}"
-            val request = Request.Builder()
-                .url(url)
-                .header("Accept", "application/vnd.github+json")
-                .build()
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return ""
-                val body = response.body?.string() ?: return ""
-                val assets = org.json.JSONObject(body).optJSONArray("assets")
-                    ?: return ""
-                for (i in 0 until assets.length()) {
-                    val asset = assets.optJSONObject(i) ?: continue
-                    if (asset.optString("name") == ref.assetName) {
-                        return com.jobeen.ime.base.ngram.normalizeSha256(
-                            asset.optString("digest"),
-                        )
-                    }
-                }
-                ""
-            }
-        }.getOrElse { e ->
-            Timber.w(e, "Speech model: failed to fetch GitHub digest")
-            ""
-        }
-    }
+    private fun fetchGithubAssetSha256(ref: GithubAssetRef): String =
+        com.jobeen.ime.base.net.fetchGithubReleaseAssetSha256(
+            client, ref.owner, ref.repo, ref.tag, ref.assetName,
+        )
 
     private suspend fun sha256OfFile(file: File): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -655,13 +624,17 @@ internal fun parseGithubReleaseAssetUrl(url: String): GithubAssetRef? {
 }
 
 /** TOFU 期望值：钉住记录与当前链接一致时返回钉住的 sha256，否则空串 */
-internal fun tofuExpectedSha(
-    storedLink: String?,
-    storedSha: String?,
+/**
+ * 非 GitHub 下载链接的期望摘要：按链接尾部的文件名查 APK 内置钉死表。
+ * 查不到返回空串（调用方拒绝安装）——不再有 TOFU 式的首次信任，
+ * 清单服务器换链接/换包都无法让客户端接受内置表之外的语音包。
+ */
+internal fun expectedShaForNonGithubLink(
     link: String,
-): String =
-    if (!storedLink.isNullOrEmpty() && storedLink == link) {
-        storedSha?.trim().orEmpty()
-    } else {
-        ""
-    }
+    pinned: Map<String, String>,
+): String {
+    val fileName = link.substringBefore('?').substringBefore('#')
+        .substringAfterLast('/').trim()
+    if (fileName.isEmpty()) return ""
+    return pinned[fileName]?.trim().orEmpty()
+}

@@ -263,10 +263,25 @@ namespace jni {
         explicit GlobalRefs(JavaVM *vm_) : vm(vm_) {
             JNIEnv *env;
             vm->AttachCurrentThread(&env, nullptr);
+            // 任一按名查找失败（类/方法被改名或被 R8 删除——986 事故
+            // 正是此类）都在这里收口：清掉查找自身的异常，改抛带明确
+            // 信息的 RuntimeException，让问题在库加载期以可读形式显形，
+            // 而不是带着未决异常继续调 JNI（未定义行为、ART 直接
+            // abort）或把 null ID 潜伏到首次回调才崩。
+            if (!initRefs(env)) {
+                if (env->ExceptionCheck()) env->ExceptionClear();
+                throwException(env,
+                               "rime_jni: required Java class/method lookup failed "
+                               "(renamed or removed by R8? check proguard keep rules)");
+            }
+        }
 
-            // 逐个查找并即时清异常：FindClass 失败会留下未决异常，
-            // 带着它继续调 JNI 是未定义行为（ART 可能直接 abort）。
-            // 清掉后返回 null，最终由构造尾部的统一校验抛错显形。
+    private:
+        // 逐步查找、逐步判空：任何一步失败立即停手返回 false。
+        // 不能「先全查完再统一校验」——类查找失败返回 null 后立刻拿
+        // 它去 GetMethodID，ART 在统一校验执行前就可能直接 abort，
+        // 可读报错根本到不了。
+        bool initRefs(JNIEnv *env) {
             auto findClass = [env](const char *name) -> jclass {
                 jclass cls = env->FindClass(name);
                 if (env->ExceptionCheck()) {
@@ -275,104 +290,113 @@ namespace jni {
                 }
                 return cls;
             };
+            auto global = [env](jclass cls) -> jclass {
+                return cls ? static_cast<jclass>(env->NewGlobalRef(cls)) : nullptr;
+            };
+            auto method = [env](jclass cls, const char *name, const char *sig)
+                    -> jmethodID {
+                if (!cls) return nullptr;
+                jmethodID id = env->GetMethodID(cls, name, sig);
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                    return nullptr;
+                }
+                return id;
+            };
+            auto staticMethod = [env](jclass cls, const char *name, const char *sig)
+                    -> jmethodID {
+                if (!cls) return nullptr;
+                jmethodID id = env->GetStaticMethodID(cls, name, sig);
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                    return nullptr;
+                }
+                return id;
+            };
 
-            Object = static_cast<jclass>(
-                    env->NewGlobalRef(findClass("java/lang/Object")));
-            String = static_cast<jclass>(
-                    env->NewGlobalRef(findClass("java/lang/String")));
+            Object = global(findClass("java/lang/Object"));
+            if (!Object) return false;
+            String = global(findClass("java/lang/String"));
+            if (!String) return false;
 
-            Integer = static_cast<jclass>(
-                    env->NewGlobalRef(findClass("java/lang/Integer")));
-            IntegerCtor = env->GetMethodID(Integer, "<init>", "(I)V");
+            Integer = global(findClass("java/lang/Integer"));
+            IntegerCtor = method(Integer, "<init>", "(I)V");
+            if (!IntegerCtor) return false;
 
-            Boolean = static_cast<jclass>(
-                    env->NewGlobalRef(findClass("java/lang/Boolean")));
-            BooleanCtor = env->GetMethodID(Boolean, "<init>", "(Z)V");
+            Boolean = global(findClass("java/lang/Boolean"));
+            BooleanCtor = method(Boolean, "<init>", "(Z)V");
+            if (!BooleanCtor) return false;
 
-            Rime = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/Rime")));
+            Rime = global(findClass("com/jobeen/ime/engine/rime/core/Rime"));
             // librime 通知回调入口：Kotlin 侧只入队立即返回，不在 native 调用栈内分发
-            HandleRimeMessage = env->GetStaticMethodID(
+            HandleRimeMessage = staticMethod(
                     Rime, "handleNativeNotification", "(I[Ljava/lang/Object;)V");
+            if (!HandleRimeMessage) return false;
 
-            CandidateProto = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/CandidateProto")));
-            CandidateProtoCtor = env->GetMethodID(
+            CandidateProto = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/CandidateProto"));
+            CandidateProtoCtor = method(
                     CandidateProto, "<init>",
                     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+            if (!CandidateProtoCtor) return false;
 
-            CommitProto = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/CommitProto")));
-            CommitProtoCtor =
-                    env->GetMethodID(CommitProto, "<init>", "(Ljava/lang/String;)V");
+            CommitProto = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/CommitProto"));
+            CommitProtoCtor = method(CommitProto, "<init>", "(Ljava/lang/String;)V");
+            if (!CommitProtoCtor) return false;
 
-            ContextProto = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/ContextProto")));
-            ContextProtoCtor = env->GetMethodID(
+            ContextProto = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/ContextProto"));
+            ContextProtoCtor = method(
                     ContextProto, "<init>",
                     "(Lcom/jobeen/ime/engine/rime/core/CompositionProto;"
                     "Lcom/jobeen/ime/engine/rime/core/MenuProto;Ljava/lang/String;I)V");
+            if (!ContextProtoCtor) return false;
 
-            SyllableProto = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/SyllableProto")));
-            SyllableProtoCtor = env->GetMethodID(
+            SyllableProto = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/SyllableProto"));
+            SyllableProtoCtor = method(
                     SyllableProto, "<init>",
                     "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;II)V");
+            if (!SyllableProtoCtor) return false;
 
-            CompositionProto = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/CompositionProto")));
-            CompositionProtoCtor = env->GetMethodID(
+            CompositionProto = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/CompositionProto"));
+            CompositionProtoCtor = method(
                     CompositionProto, "<init>",
                     "(IIIILjava/lang/String;Ljava/lang/String;[Lcom/jobeen/ime/engine/rime/core/SyllableProto;)V");
+            if (!CompositionProtoCtor) return false;
 
-            MenuProto = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/MenuProto")));
-            MenuProtoCtor = env->GetMethodID(
+            MenuProto = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/MenuProto"));
+            MenuProtoCtor = method(
                     MenuProto, "<init>",
                     "(IIZI[Lcom/jobeen/ime/engine/rime/core/CandidateProto;"
                     "Ljava/lang/String;[Ljava/lang/String;)V");
+            if (!MenuProtoCtor) return false;
 
-            StatusProto = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/StatusProto")));
-            StatusProtoCtor = env->GetMethodID(
+            StatusProto = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/StatusProto"));
+            StatusProtoCtor = method(
                     StatusProto, "<init>",
                     "(Ljava/lang/String;Ljava/lang/String;ZZZZZZZ)V");
+            if (!StatusProtoCtor) return false;
 
-            SchemaItem = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/SchemaItem")));
-            SchemaItemCtor = env->GetMethodID(SchemaItem, "<init>",
-                                              "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+            SchemaItem = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/SchemaItem"));
+            SchemaItemCtor = method(SchemaItem, "<init>",
+                                    "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V");
+            if (!SchemaItemCtor) return false;
 
-            KeyEvent = static_cast<jclass>(env->NewGlobalRef(
-                    findClass("com/jobeen/ime/engine/rime/core/RimeKeyEvent")));
-            KeyEventCtor =
-                    env->GetMethodID(KeyEvent, "<init>", "(IILjava/lang/String;)V");
+            KeyEvent = global(findClass(
+                    "com/jobeen/ime/engine/rime/core/RimeKeyEvent"));
+            KeyEventCtor = method(KeyEvent, "<init>", "(IILjava/lang/String;)V");
+            if (!KeyEventCtor) return false;
 
-            // 统一校验：任一按名查找失败（类/方法被改名或被 R8 删除——986 事故
-            // 正是此类）都会留下未决异常或 null ID。旧实现不查，未决异常会让
-            // 后续 JNI 调用在 ART 上直接 abort、null ID 潜伏到首次回调才崩，
-            // 日志里都看不到真正原因。这里清掉查找自身的异常，改抛带明确
-            // 信息的 RuntimeException，让问题在库加载期就以可读形式显形。
-            const bool missing =
-                    env->ExceptionCheck() ||
-                    !Object || !String || !Integer || !IntegerCtor ||
-                    !Boolean || !BooleanCtor || !Rime || !HandleRimeMessage ||
-                    !CandidateProto || !CandidateProtoCtor ||
-                    !CommitProto || !CommitProtoCtor ||
-                    !ContextProto || !ContextProtoCtor ||
-                    !SyllableProto || !SyllableProtoCtor ||
-                    !CompositionProto || !CompositionProtoCtor ||
-                    !MenuProto || !MenuProtoCtor ||
-                    !StatusProto || !StatusProtoCtor ||
-                    !SchemaItem || !SchemaItemCtor ||
-                    !KeyEvent || !KeyEventCtor;
-            if (missing) {
-                if (env->ExceptionCheck()) env->ExceptionClear();
-                throwException(env,
-                               "rime_jni: required Java class/method lookup failed "
-                               "(renamed or removed by R8? check proguard keep rules)");
-            }
+            return true;
         }
+
+    public:
 
         ScopedEnv attach() const { return ScopedEnv(vm); }
     };
