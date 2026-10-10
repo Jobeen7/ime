@@ -146,11 +146,13 @@ class VoiceCorrectionStoreTest {
     private val rightHeads = "星辰海天山川云月风雪雨晴岚峰岛原野泽光霜"
     private val wrongTails = "甲乙丙丁戊己庚辛壬癸子丑寅卯辰巳午未申酉"
 
+    // 三字形：两字词对有观察期（学一次不生效），会干扰上限淘汰的验证；
+    // 上限语义与词长无关，造词统一用三字（前两字保证 305 条内互不相同）
     private fun rightForm(i: Int): String =
-        "${rightHeads[i / 20]}${rightHeads[i % 20]}"
+        "${rightHeads[i / 20]}${rightHeads[i % 20]}${rightHeads[(i * 7) % 20]}"
 
     private fun wrongForm(i: Int): String =
-        "${rightHeads[i / 20]}${wrongTails[i % 20]}"
+        "${rightHeads[i / 20]}${wrongTails[i % 20]}${wrongTails[(i * 7) % 20]}"
 
     @Test
     fun pairCapEvictsOldestInMemory() {
