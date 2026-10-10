@@ -154,7 +154,7 @@ object BackupManager {
                 JSONObject()
                     .put("id", r.id).put("text", r.text)
                     .put("label", r.label).put("createdAt", r.createdAt)
-                    .put("sortOrder", r.sortOrder)
+                    .put("sortOrder", r.sortOrder).put("pinned", r.pinned)
             )
         }
         root.put("phrases", phrases)
@@ -522,6 +522,8 @@ object BackupManager {
                     createdAt = o.optLong("createdAt"),
                     sortOrder = if (o.has("sortOrder")) o.optLong("sortOrder")
                     else -o.optLong("createdAt"),
+                    // 旧备份无此字段，按未置顶还原
+                    pinned = o.optBoolean("pinned"),
                 )
             }
 
