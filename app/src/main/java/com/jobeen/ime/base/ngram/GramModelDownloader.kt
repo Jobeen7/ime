@@ -33,7 +33,10 @@ object GramModelDownloader {
     private const val GITHUB_DIGEST_API =
         "https://api.github.com/repos/amzxyz/RIME-LMDG/releases/tags/LTS"
 
+    // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
+    // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
     private val client = OkHttpClient.Builder()
+        .followSslRedirects(false)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
@@ -63,7 +66,8 @@ object GramModelDownloader {
         val partial = File(target.parentFile, target.name + PART_SUFFIX)
         partial.delete()
         // 期望摘要：清单提供了就用清单的；没提供（或格式不对）则向 GitHub
-        // 查上游登记的官方摘要。两者都拿不到时为空串，仅走长度校验不阻断。
+        // 查上游登记的官方摘要。fail-closed：两者都拿不到可信摘要时拒绝
+        // 下载——语法模型约 400MB 且由原生代码解析，不能只凭长度放行。
         val expectedSha = pickExpectedSha256(
             manifest.sha256,
             if (normalizeSha256(manifest.sha256).isEmpty()) {
@@ -72,6 +76,11 @@ object GramModelDownloader {
                 ""
             },
         )
+        if (expectedSha.isEmpty()) {
+            Timber.w("Ngram model has no trustworthy SHA-256, refusing download: %s", language)
+            HttpUtil.showToast("模型增强下载失败：无法获取官方校验值")
+            return@withContext false
+        }
         if (!downloadFile(link, partial, expectedSha, onProgress)) {
             partial.delete()
             return@withContext false

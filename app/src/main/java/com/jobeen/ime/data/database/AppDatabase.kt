@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 
-@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 9, exportSchema = false)
+@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 10, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 
@@ -29,7 +29,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ime_database"
-                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9).build().also { INSTANCE = it }
+                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).build().also { INSTANCE = it }
                 // 注意：不要加 fallbackToDestructiveMigration() —— 漏写 Migration 时宁可启动崩溃（fail-fast，
                 // 发布前真机测试会先暴露），也不要静默清空用户的剪贴板/常用语/选词偏好。每次 bump version
                 // 都必须写 Migration（无结构变更时写空迁移，见 MIGRATION_7_8）。
@@ -140,6 +140,16 @@ abstract class AppDatabase : RoomDatabase() {
             endVersion = 9,
         ) { db ->
             db.execSQL("ALTER TABLE `clipboard_records` ADD COLUMN `pinned` INTEGER NOT NULL DEFAULT 0")
+        }
+
+        // v10：清空历史遗留的 candidate_prefers.context（旧版本存了光标前 20 字的输入片段，
+        // 该列从未被读取）。结构不变，只擦内容；列保留以兼容旧备份与 Room 实体。
+        // 注意：SQLite 空闲页不会被立即覆写，彻底擦除需另行 VACUUM。
+        private val MIGRATION_9_10: Migration = Migration(
+            startVersion = 9,
+            endVersion = 10,
+        ) { db ->
+            db.execSQL("UPDATE `candidate_prefers` SET `context` = ''")
         }
     }
 }

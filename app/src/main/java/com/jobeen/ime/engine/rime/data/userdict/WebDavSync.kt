@@ -62,7 +62,7 @@ object WebDavSync {
     }
 
     private fun authHeader(): String =
-        Credentials.basic(UserDictPrefs.username, UserDictPrefs.password)
+        Credentials.basic(UserDictPrefs.username, UserDictPrefs.password, Charsets.UTF_8)
 
     private fun checkConfigured() {
         val server = UserDictPrefs.normalizedServer()
@@ -400,7 +400,7 @@ object WebDavSync {
                 val content = match.groupValues[1]
                 val href = hrefRegex.find(content)?.groupValues?.get(1)?.trim()
                     ?: return@mapNotNull null
-                val path = hrefPath(decodeHref(href)).trimEnd('/')
+                val path = hrefPath(decodeHref(unescapeXmlEntities(href))).trimEnd('/')
                 if (path.isEmpty()) return@mapNotNull null
                 val isSelf = path == dirPath
                 val isCollection = isSelf || collectionRegex.containsMatchIn(content)
@@ -423,24 +423,7 @@ object WebDavSync {
     }
 
     /** 百分号解码（按 UTF-8 字节还原，空格保持为 %20 解码，不把 + 当空格） */
-    private fun decodeHref(href: String): String {
-        val out = ByteArrayOutputStream()
-        var i = 0
-        while (i < href.length) {
-            val c = href[i]
-            if (c == '%' && i + 2 < href.length) {
-                val b = href.substring(i + 1, i + 3).toIntOrNull(16)
-                if (b != null) {
-                    out.write(b)
-                    i += 3
-                    continue
-                }
-            }
-            out.write(c.toString().toByteArray(Charsets.UTF_8))
-            i++
-        }
-        return out.toString(Charsets.UTF_8.name())
-    }
+    private fun decodeHref(href: String): String = decodeHrefImpl(href)
 
     /**
      * 把 Rime 原生同步快照（`<词典>.userdb.txt`）转置为导入接口要的列序。
@@ -697,4 +680,56 @@ object WebDavSync {
     suspend fun testConnection(): Result<List<RemoteEntry>> = withContext(Dispatchers.IO) {
         runCatching { parseRemoteEntries(propfindDirXml()) }
     }
+}
+
+private val xmlEntityRegex =
+    Regex("&(amp|lt|gt|quot|apos|#\\d+|#x[0-9a-fA-F]+);")
+
+/**
+ * 还原 XML 文本中的实体引用（PROPFIND 的 href 来自原始 XML 文本，
+ * 文件名含 & 等字符时服务器会写成 &amp;，不还原会与本地名对不上）。
+ * 单趟替换，&amp; 不会被二次展开。
+ */
+internal fun unescapeXmlEntities(text: String): String =
+    xmlEntityRegex.replace(text) { m ->
+        val body = m.groupValues[1]
+        when (body) {
+            "amp" -> "&"
+            "lt" -> "<"
+            "gt" -> ">"
+            "quot" -> "\""
+            "apos" -> "'"
+            else -> runCatching {
+                val cp = if (body.startsWith("#x")) {
+                    body.substring(2).toInt(16)
+                } else {
+                    body.substring(1).toInt()
+                }
+                String(Character.toChars(cp))
+            }.getOrDefault(m.value)
+        }
+    }
+
+/**
+ * 百分号解码 href。按 Unicode 码点迭代：旧实现按 char 逐个转 UTF-8，
+ * 星平面字符（代理对）会被拆开各自编码成替换符而损坏文件名。
+ */
+internal fun decodeHrefImpl(href: String): String {
+    val out = ByteArrayOutputStream()
+    var i = 0
+    while (i < href.length) {
+        val c = href[i]
+        if (c == '%' && i + 2 < href.length) {
+            val b = href.substring(i + 1, i + 3).toIntOrNull(16)
+            if (b != null) {
+                out.write(b)
+                i += 3
+                continue
+            }
+        }
+        val cp = Character.codePointAt(href, i)
+        out.write(String(Character.toChars(cp)).toByteArray(Charsets.UTF_8))
+        i += Character.charCount(cp)
+    }
+    return out.toString(Charsets.UTF_8.name())
 }

@@ -377,9 +377,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         if (!noLearn) {
             sendJob {
                 val ctx = context ?: return@sendJob
-                val inputContext = peekTextBeforeCursor(20)
                 val dao = AppDatabase.getInstance(ctx).candidatePreferDao()
-                dao.upsert(candidate.text, inputContext)
+                // 隐私：不再把光标前文存入 context 列——该列从未被排序/重排读取，
+                // 却会随云备份与 .jbk 备份带出用户输入片段。
+                dao.upsert(candidate.text, "")
                 CandidatePreferCache.noteUpsert(candidate.text)
                 // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载（保持两者一致）
                 if (++upsertsSincePruneCheck >= PRUNE_CHECK_INTERVAL) {

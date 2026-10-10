@@ -7,6 +7,7 @@ import com.jobeen.ime.data.App
 import com.jobeen.ime.base.util.TarBz2ExtractorUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -34,14 +35,18 @@ object ModelDownloader {
     private const val JOINER_NAME = "joiner"
     private const val BIN_EXTENSION = "bin"
     private const val ONNX_EXTENSION = "onnx"
-    private const val SO_EXTENSION = "so"
     private const val DOWNLOAD_FILE_INDEX = 1
     private const val DOWNLOAD_FILE_COUNT = 1
 
-    private val MODEL_EXTENSIONS = setOf(BIN_EXTENSION, ONNX_EXTENSION, SO_EXTENSION)
+    // 解压白名单不含 .so：下载包里的原生库从不被加载（QNN 运行时只从
+    // 应用自身 nativeLibraryDir 加载），留在白名单里只是无谓的信任面
+    private val MODEL_EXTENSIONS = setOf(BIN_EXTENSION, ONNX_EXTENSION)
     private val MODEL_COMPONENTS = listOf(ENCODER_NAME, DECODER_NAME, JOINER_NAME)
+    // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
+    // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
     private val client =
-        OkHttpClient.Builder().connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+        OkHttpClient.Builder().followSslRedirects(false)
+            .connectTimeout(CONNECT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
             .readTimeout(READ_TIMEOUT_SECONDS, TimeUnit.SECONDS).build()
 
     data class Progress(
@@ -61,6 +66,8 @@ object ModelDownloader {
 
     private const val PREFS_NAME = "speech_model_prefs"
     private const val KEY_MANIFEST_ID = "manifest_id"
+    private const val KEY_TOFU_LINK = "tofu_link"
+    private const val KEY_TOFU_SHA256 = "tofu_sha256"
 
     /** 本地已安装模型的服务端标识（manifest 的 md5，缺失时用下载链接） */
     fun getStoredManifestId(context: Context): String? {
@@ -149,6 +156,7 @@ object ModelDownloader {
         if (!currentCoroutineContext().isActive) return@withContext false
         if (!ensureArchive(link, archiveFile, manifest.md5, onProgress)) return@withContext false
         if (!currentCoroutineContext().isActive) return@withContext false
+        if (!verifyArchiveSha256(context, link, archiveFile)) return@withContext false
         if (!extractAndInstall(archiveFile, stageDir, modelDir, onExtract)) return@withContext false
         // 安装成功后记录服务端标识，供后续检查更新时比对
         val serverId = manifest.md5.trim().ifEmpty { link.trim() }
@@ -198,6 +206,101 @@ object ModelDownloader {
             archiveFile.length()
         )
         return true
+    }
+
+    /**
+     * 归档包 SHA-256 强校验（MD5 之外）。清单只给地址与 MD5 且同出一台
+     * 服务器，MD5 只能防损坏、防不住服务器被攻破后连摘要一起替换：
+     * - 链接是 GitHub Release 资产（可含代理前缀）→ 向 GitHub API 查该
+     *   资产登记的官方摘要比对，查不到或对不上都拒绝安装（fail-closed）；
+     *   仅查询失败时保留已通过 MD5 的缓存包，下次可直接重试校验；
+     * - 非 GitHub 链接 → TOFU：首次下载后把摘要钉住，之后同链接的包
+     *   必须与钉住值一致，变更即拒绝并清缓存。
+     */
+    private suspend fun verifyArchiveSha256(
+        context: Context,
+        link: String,
+        archiveFile: File,
+    ): Boolean {
+        val actual = sha256OfFile(archiveFile)
+        val ref = parseGithubReleaseAssetUrl(link)
+        if (ref != null) {
+            val expected = fetchGithubAssetSha256(ref)
+            if (expected.isEmpty()) {
+                Timber.w("Speech model: GitHub digest unavailable, refusing install")
+                return false
+            }
+            if (!actual.equals(expected, ignoreCase = true)) {
+                Timber.e("Speech model archive SHA-256 mismatch vs GitHub digest")
+                archiveFile.delete()
+                return false
+            }
+            return true
+        }
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val pinned = tofuExpectedSha(
+            prefs.getString(KEY_TOFU_LINK, null),
+            prefs.getString(KEY_TOFU_SHA256, null),
+            link,
+        )
+        if (pinned.isNotEmpty()) {
+            if (!actual.equals(pinned, ignoreCase = true)) {
+                Timber.e("Speech model archive SHA-256 differs from pinned TOFU value")
+                archiveFile.delete()
+                return false
+            }
+            return true
+        }
+        prefs.edit {
+            putString(KEY_TOFU_LINK, link)
+            putString(KEY_TOFU_SHA256, actual)
+        }
+        Timber.i("Speech model SHA-256 pinned (TOFU) for non-GitHub link")
+        return true
+    }
+
+    /** 向 GitHub API 查 Release 资产登记的 sha256；任何失败返回空串 */
+    private fun fetchGithubAssetSha256(ref: GithubAssetRef): String {
+        return runCatching {
+            val url = "https://api.github.com/repos/${ref.owner}/${ref.repo}" +
+                "/releases/tags/${ref.tag}"
+            val request = Request.Builder()
+                .url(url)
+                .header("Accept", "application/vnd.github+json")
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return ""
+                val body = response.body?.string() ?: return ""
+                val assets = org.json.JSONObject(body).optJSONArray("assets")
+                    ?: return ""
+                for (i in 0 until assets.length()) {
+                    val asset = assets.optJSONObject(i) ?: continue
+                    if (asset.optString("name") == ref.assetName) {
+                        return com.jobeen.ime.base.ngram.normalizeSha256(
+                            asset.optString("digest"),
+                        )
+                    }
+                }
+                ""
+            }
+        }.getOrElse { e ->
+            Timber.w(e, "Speech model: failed to fetch GitHub digest")
+            ""
+        }
+    }
+
+    private suspend fun sha256OfFile(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(BUFFER_SIZE)
+            var n: Int
+            var chunks = 0
+            while (input.read(buf).also { n = it } != -1) {
+                digest.update(buf, 0, n)
+                if (++chunks % 32 == 0) currentCoroutineContext().ensureActive()
+            }
+        }
+        return digest.digest().joinToString("") { "%02x".format(it) }
     }
 
     private fun extractAndInstall(
@@ -454,3 +557,46 @@ object ModelDownloader {
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
 }
+
+/** GitHub Release 资产坐标（从下载链接解析） */
+internal data class GithubAssetRef(
+    val owner: String,
+    val repo: String,
+    val tag: String,
+    val assetName: String,
+)
+
+/**
+ * 从下载链接解析 GitHub Release 资产坐标。链接可带任意代理前缀
+ * （如 https://gh-proxy.org/https://github.com/...），只要路径里含
+ * github.com/<owner>/<repo>/releases/download/<tag>/<asset> 即可；
+ * 不是这种形态返回 null。
+ */
+internal fun parseGithubReleaseAssetUrl(url: String): GithubAssetRef? {
+    val clean = url.substringBefore('?').substringBefore('#')
+    val marker = "github.com/"
+    val idx = clean.indexOf(marker)
+    if (idx < 0) return null
+    val parts = clean.substring(idx + marker.length).split('/')
+    if (parts.size < 6) return null
+    if (parts[2] != "releases" || parts[3] != "download") return null
+    val assetName = parts.subList(5, parts.size).joinToString("/")
+    if (parts[0].isBlank() || parts[1].isBlank() || parts[4].isBlank() ||
+        assetName.isBlank()
+    ) {
+        return null
+    }
+    return GithubAssetRef(parts[0], parts[1], parts[4], assetName)
+}
+
+/** TOFU 期望值：钉住记录与当前链接一致时返回钉住的 sha256，否则空串 */
+internal fun tofuExpectedSha(
+    storedLink: String?,
+    storedSha: String?,
+    link: String,
+): String =
+    if (!storedLink.isNullOrEmpty() && storedLink == link) {
+        storedSha?.trim().orEmpty()
+    } else {
+        ""
+    }

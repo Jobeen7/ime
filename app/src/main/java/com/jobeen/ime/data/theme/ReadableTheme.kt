@@ -173,9 +173,10 @@ data class ReadableColors(
             } else {
                 KeyboardColors.SurfaceStyle.Raised
             },
-            cornerRadius = cornerRadius,
-            keyHMargin = keyHMargin,
-            keyVMargin = keyVMargin,
+            // 主题可来自二维码/外部文件：数值必须钳制，极端值会让布局计算溢出
+            cornerRadius = cornerRadius.coerceIn(0f, 40f),
+            keyHMargin = keyHMargin.coerceIn(0f, 20f),
+            keyVMargin = keyVMargin.coerceIn(0f, 20f),
             panel = panelColors,
             pinner = pinnerColors,
             toastBackground = toastBackground ?: specialKeyBackground,
