@@ -100,6 +100,10 @@ class KawaiiPanel(
                     clipMultiActive = false
                     clipboardView.setMultiSelect(false)
                 }
+                if (clipReorderActive) {
+                    clipReorderActive = false
+                    clipboardView.setReorderMode(false)
+                }
             }
             if (value is State.Menu) {
                 clipboardTab = ClipboardTab.CLIPBOARD
@@ -337,6 +341,9 @@ class KawaiiPanel(
                     context.getString(R.string.clipboard_multi_select) to {
                         enterClipMulti(entry)
                     },
+                    context.getString(R.string.clipboard_reorder) to {
+                        enterClipReorder()
+                    },
                     context.getString(R.string.clipboard_delete) to {
                         // 延后一帧再弹删除确认：动作卡的点击处理在回调后会 dismiss，
                         // 同步弹新卡会被随后的 dismiss 一起关掉
@@ -365,17 +372,40 @@ class KawaiiPanel(
             listener?.onPhraseClick(phrase)
         }
         clipboardView.onPhraseDelete = { phrase ->
-            confirmOverlay.confirm(
-                message = context.getString(R.string.phrase_delete_confirm, phrase.label),
-                onConfirm = {
-                    appScope.launch {
-                        PhraseManager.delete(context, phrase.id)
-                        clipboardView.refresh()
-                    }
-                },
+            // 与剪贴板同构的动作菜单：排序入口 + 删除（删除仍走确认）
+            confirmOverlay.actions(
+                message = context.getString(R.string.phrase_item_actions),
+                items = listOf(
+                    context.getString(R.string.clipboard_reorder) to {
+                        enterClipReorder()
+                    },
+                    context.getString(R.string.clipboard_delete) to {
+                        confirmOverlay.post {
+                            confirmOverlay.confirm(
+                                message = context.getString(
+                                    R.string.phrase_delete_confirm, phrase.label
+                                ),
+                                onConfirm = {
+                                    appScope.launch {
+                                        PhraseManager.delete(context, phrase.id)
+                                        clipboardView.refresh()
+                                    }
+                                },
+                                cardX = Float.NaN,
+                                cardY = 0f,
+                            )
+                        }
+                    },
+                ),
                 cardX = Float.NaN,
                 cardY = 0f,
             )
+        }
+        clipboardView.onClipboardReordered = { texts ->
+            appScope.launch { ClipboardManager.applyOrder(context, texts) }
+        }
+        clipboardView.onPhrasesReordered = { ids ->
+            appScope.launch { PhraseManager.applyOrder(context, ids) }
         }
         PhraseManager.onContentChanged = phraseContentChangedCallback
 
@@ -597,6 +627,36 @@ class KawaiiPanel(
         }
     }
 
+    // ── 剪贴板/常用语排序态 ──────────────────────────────────────
+    // 与多选同构的工具栏形态切换；拖动与落库在 ClipboardView 与
+    // Manager 侧完成，这里只管进出与工具栏。搜索过滤中（显示子集）
+    // 进排序前先退搜索恢复全量列表，否则子集顺序写回会打乱全局。
+
+    private var clipReorderActive: Boolean = false
+
+    private fun applyReorderFields(renderer: ToolbarRenderer) {
+        renderer.clipReorderMode = true
+        renderer.clipReorderLabel = context.getString(R.string.clipboard_reorder_hint)
+        renderer.clipDoneLabel = context.getString(R.string.clipboard_reorder_done)
+    }
+
+    private fun enterClipReorder() {
+        if (clipMultiActive) exitClipMulti()
+        if (clipSearchActive) exitClipSearch()
+        clipReorderActive = true
+        clipboardView.setReorderMode(true)
+        view.currentRenderer = newClipToolbarRenderer().also { applyReorderFields(it) }
+        view.invalidate()
+    }
+
+    private fun exitClipReorder() {
+        if (!clipReorderActive) return
+        clipReorderActive = false
+        clipboardView.setReorderMode(false)
+        view.currentRenderer = newClipToolbarRenderer()
+        view.invalidate()
+    }
+
     override fun interceptCommit(text: String): Boolean {
         if (clipEditActive) {
             // 编辑态优先于搜索态（可从搜索结果进编辑）：换行不进缓冲，
@@ -708,6 +768,10 @@ class KawaiiPanel(
                                     clipMultiActive = false
                                     clipboardView.setMultiSelect(false)
                                 }
+                                if (clipReorderActive) {
+                                    clipReorderActive = false
+                                    clipboardView.setReorderMode(false)
+                                }
                                 if (clipSearchActive) {
                                     resetClipSearchState()
                                     (view.currentRenderer as? ToolbarRenderer)?.clipSearchMode = false
@@ -742,6 +806,7 @@ class KawaiiPanel(
                             PanelAction.ClipEditSave -> exitClipEdit(save = true)
                             PanelAction.ClipEditCancel -> exitClipEdit(save = false)
                             PanelAction.ClipMultiExit -> exitClipMulti()
+                            PanelAction.ClipReorderExit -> exitClipReorder()
                             PanelAction.ClipMultiDelete -> handleClipMultiDelete()
 
                             PanelAction.SwitchKeyboard -> {
