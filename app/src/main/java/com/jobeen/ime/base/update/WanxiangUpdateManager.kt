@@ -47,6 +47,7 @@ object WanxiangUpdateManager {
     private const val GRAM_URL =
         "https://github.com/amzxyz/RIME-LMDG/releases/download/LTS/wanxiang-lts-zh-hans.gram"
     private const val GRAM_FILE_NAME = "wanxiang-lts-zh-hans.gram"
+    private const val SCHEMA_ZIP_NAME = "rime-wanxiang-lite.zip"
 
     /** 方案包下载地址模式：只取 lite 版 */
     private fun schemaUrl(tag: String): String =
@@ -86,7 +87,10 @@ object WanxiangUpdateManager {
     private const val MAX_ENTRY_BYTES = 64L * 1024 * 1024
     private const val MAX_EXTRACT_TOTAL_BYTES = 256L * 1024 * 1024
 
+    // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
+    // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
     private val client = OkHttpClient.Builder()
+        .followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
@@ -98,6 +102,8 @@ object WanxiangUpdateManager {
         val name: String = "",
         val browser_download_url: String = "",
         val size: Long = 0L,
+        /** GitHub 登记的官方摘要（"sha256:..."），下载后据此校验、拿不到则拒绝更新 */
+        val digest: String = "",
     )
 
     @Serializable
@@ -120,6 +126,10 @@ object WanxiangUpdateManager {
         val dictRemoteFingerprint: String?,
         /** 远端模型内容指纹（下载时计算并存储；null=尚未下载该版本） */
         val gramRemoteFingerprint: String?,
+        /** 方案包在 GitHub 登记的官方 SHA-256（下载前必须取得，缺失即拒绝更新） */
+        val schemaZipSha256: String = "",
+        /** 语法模型在 GitHub 登记的官方 SHA-256（同上） */
+        val gramSha256: String = "",
     ) {
         // 只在远端确实更新时才算"有更新"：本地版本高于远端（内置更新包等）时
         // 用 != 判断会误报并把用户降级式覆盖
@@ -511,6 +521,12 @@ object WanxiangUpdateManager {
                 gramLocalPublishedAt = prefs.getString(KEY_GRAM_PUBLISHED_AT, null),
                 dictRemoteFingerprint = dictRemoteFp,
                 gramRemoteFingerprint = gramRemoteFp,
+                schemaZipSha256 = com.jobeen.ime.base.ngram.normalizeSha256(
+                    schemaRelease.assets.firstOrNull { it.name == SCHEMA_ZIP_NAME }?.digest,
+                ),
+                gramSha256 = com.jobeen.ime.base.ngram.normalizeSha256(
+                    gramRelease.assets.firstOrNull { it.name == GRAM_FILE_NAME }?.digest,
+                ),
             )
         }.onFailure {
             Timber.e(it, "检查方案更新失败")
@@ -565,6 +581,11 @@ object WanxiangUpdateManager {
         try {
             // 1. 下载方案包（只取其中 dicts/ 词库）
             if (info.schemaUpdateAvailable) {
+                // fail-closed：没有 GitHub 登记的官方摘要就不下载、不更新
+                if (info.schemaZipSha256.isBlank()) {
+                    Timber.w("方案包缺少官方 SHA-256，拒绝更新")
+                    return@withContext false
+                }
                 val zipFile = File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX")
                 zipFile.delete()
                 val ok = downloadFile(schemaUrl(info.schemaRemoteVersion), zipFile, MAX_SCHEMA_BYTES) { d, t ->
@@ -574,6 +595,11 @@ object WanxiangUpdateManager {
                 val finalZip = File(workDir, "rime-wanxiang-lite.zip")
                 finalZip.delete()
                 check(zipFile.renameTo(finalZip)) { "方案包落盘失败" }
+                if (!sha256File(finalZip).equals(info.schemaZipSha256, ignoreCase = true)) {
+                    Timber.w("方案包 SHA-256 与 GitHub 登记不一致，放弃更新")
+                    finalZip.delete()
+                    return@withContext false
+                }
 
                 // 2. 解压词库到 staging 目录并校验（暂不切换，等模型也下载
                 // 成功后一起应用）。staging 必须与现用 dicts 同级（同在
@@ -603,6 +629,11 @@ object WanxiangUpdateManager {
 
             // 3. 下载语法模型到 .part（只下载校验，先不替换现用文件）
             if (info.gramUpdateAvailable) {
+                // fail-closed：没有 GitHub 登记的官方摘要就不下载、不更新
+                if (info.gramSha256.isBlank()) {
+                    Timber.w("语法模型缺少官方 SHA-256，拒绝更新")
+                    return@withContext false
+                }
                 val target = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
                 val partial = File(target.parentFile, target.name + PART_SUFFIX)
                 partial.delete()
@@ -618,7 +649,8 @@ object WanxiangUpdateManager {
                     Timber.w("语法模型下载为空，放弃更新")
                     return@withContext false
                 }
-                // 计算下载模型的内容指纹（流式，供更新后比对）
+                // 计算下载模型的内容指纹（流式，供更新后比对），同时即为
+                // 与 GitHub 登记摘要的校验结果：算不出或对不上都放弃更新
                 newGramFp = try {
                     sha256File(partial)
                 } catch (e: CancellationException) {
@@ -626,6 +658,13 @@ object WanxiangUpdateManager {
                 } catch (e: Exception) {
                     Timber.w(e, "下载模型指纹计算失败")
                     null
+                }
+                if (newGramFp == null ||
+                    !newGramFp.equals(info.gramSha256, ignoreCase = true)
+                ) {
+                    Timber.w("语法模型 SHA-256 与 GitHub 登记不一致，放弃更新")
+                    partial.delete()
+                    return@withContext false
                 }
                 gramPartial = partial
                 gramTarget = target

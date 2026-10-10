@@ -19,7 +19,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven { url = uri("https://jitpack.io") }
+        // 不声明 jitpack 等聚合仓库：当前无任何依赖经它解析，留着只是
+        // 供应链风险面（同名坐标可被抢注投毒）
     }
 }
 

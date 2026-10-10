@@ -21,6 +21,14 @@ object TarBz2ExtractorUtil {
     private const val REPORT_STEP = 256 * 1024L
     private const val LOG_STEP = 16 * 1024 * 1024L
 
+    // 解压体积上限（防解压炸弹）：现用最大的语音模型包解压后约 600MB，
+    // 上限取单文件 1GB、总量 2GB，留足余量又不至于被恶意包撑爆磁盘
+    private const val MAX_ENTRY_BYTES = 1L * 1024 * 1024 * 1024
+    private const val MAX_TOTAL_BYTES = 2L * 1024 * 1024 * 1024
+
+    /** 解压体积超过上限时抛出，调用方按解压失败处理 */
+    class ExtractLimitException(message: String) : java.io.IOException(message)
+
     fun extract(
         archive: File,
         destDir: File,
@@ -105,9 +113,19 @@ object TarBz2ExtractorUtil {
         state: ProgressState,
         buffer: ByteArray,
     ) {
+        var entryBytes = 0L
         var n: Int
         while (tarIn.read(buffer).also { n = it } != -1) {
-            out?.write(buffer, 0, n)
+            if (out != null) {
+                out.write(buffer, 0, n)
+                entryBytes += n
+                state.extractedBytes += n
+                if (entryBytes > MAX_ENTRY_BYTES || state.extractedBytes > MAX_TOTAL_BYTES) {
+                    throw ExtractLimitException(
+                        "Extracted size exceeds limit (entry=$entryBytes, total=${state.extractedBytes})",
+                    )
+                }
+            }
             val currentBytes = counting.bytesRead
 
             if (currentBytes - state.lastReported >= REPORT_STEP) {
@@ -125,6 +143,8 @@ object TarBz2ExtractorUtil {
     private data class ProgressState(
         var lastReported: Long = 0L,
         var lastLogged: Long = 0L,
+        /** 已实际写盘的解压字节数（过滤跳过的条目不计） */
+        var extractedBytes: Long = 0L,
     )
 
     private class CountingInputStream(private val src: InputStream) : InputStream() {

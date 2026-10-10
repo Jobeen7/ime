@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  网络安全配置。
+
+  targetSdk >= 28 时系统默认禁止明文 HTTP，导致「用户词典 → 高级 → 允许明文 HTTP」
+  （UserDictPrefs.allowHttp）即使开启也会被系统拒绝（UnknownServiceException:
+  CLEARTEXT communication not permitted）。WebDAV 服务器地址由用户自填、无法按域名
+  白名单，因此这里放开明文，实际放行与否由应用层控制：
+
+  - WebDavSync.checkConfigured() 默认拒绝 http://，仅在用户确认风险并开启
+    allowHttp 后才放行；
+  - 其余网络访问（自更新、模型、语法模型、方案更新）全部是写死的 HTTPS 地址，
+    对应的 OkHttpClient 均已 followSslRedirects(false)，不会被重定向降级到 HTTP。
+
+  新增任何访问用户可控地址的网络代码时，必须自行做同样的应用层限制。
+-->
+<network-security-config xmlns:tools="http://schemas.android.com/tools">
+    <!-- InsecureBaseConfiguration 是刻意接受的：放行与否由应用层把关，见上方说明 -->
+    <base-config cleartextTrafficPermitted="true" tools:ignore="InsecureBaseConfiguration">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

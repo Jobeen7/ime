@@ -41,7 +41,10 @@ object ResourceExtractorUtil {
 
                 val destFile = File(destDir, name).canonicalFile
 
-                if (!destFile.path.startsWith(destCanonicalPath)) {
+                // 必须带分隔符比较：纯前缀会被 "<dest>2/..." 这类同前缀兄弟目录绕过
+                if (destFile.path != destCanonicalPath &&
+                    !destFile.path.startsWith(destCanonicalPath + File.separator)
+                ) {
                     Timber.w("  skipped illegal path: %s", name)
                     zip.closeEntry()
                     entry = zip.nextEntry

@@ -27,7 +27,10 @@ import java.util.concurrent.TimeUnit
  * - 当 `code != 0` 时自动 Toast 提示 `msg` 并抛出 [ApiException]，调用方无需额外处理业务错误码。
  */
 object HttpUtil {
+    // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
+    // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
     private val client = OkHttpClient.Builder()
+        .followSslRedirects(false)
         .connectTimeout(ApiConfig.CONNECT_TIMEOUT, TimeUnit.MILLISECONDS)
         .readTimeout(ApiConfig.READ_TIMEOUT, TimeUnit.MILLISECONDS)
         .build()

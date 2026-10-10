@@ -27,7 +27,10 @@ import java.util.concurrent.TimeUnit
  */
 object AppUpdateManager {
 
+    // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
+    // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
     private val client = OkHttpClient.Builder()
+        .followSslRedirects(false)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         .build()
@@ -60,6 +63,11 @@ object AppUpdateManager {
         expectedSha256: String = "",
         onProgress: (downloaded: Long, total: Long) -> Unit,
     ): File? = withContext(Dispatchers.IO) {
+        // 下载地址来自远端 Release 元数据：只接受 HTTPS（全局已放开明文，不能依赖系统拦截）
+        if (!url.startsWith("https://", ignoreCase = true)) {
+            Timber.w("App update URL rejected: not https")
+            return@withContext null
+        }
         val target = targetFile(context, apkName)
         val partial = File(target.parentFile, target.name + ".part")
         try {

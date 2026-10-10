@@ -176,7 +176,7 @@ fun BackupScreen(
             confirmButton = {
                 TextButton(onClick = {
                     when {
-                        pw.length < 6 -> error = tooShort
+                        pw.length < 8 -> error = tooShort
                         pw != pw2 -> error = mismatch
                         else -> {
                             state.showCreatePasswordDialog = false

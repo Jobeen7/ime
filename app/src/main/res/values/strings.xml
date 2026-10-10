@@ -279,8 +279,8 @@
     <string name="backup_restore_warning">还原会整体覆盖当前的设置、剪贴板、常用语与选词偏好，完成后应用将重启使设置生效。</string>
     <string name="backup_password">备份口令</string>
     <string name="backup_password_confirm">再次输入口令</string>
-    <string name="backup_password_hint">至少 6 位</string>
-    <string name="backup_password_too_short">口令至少 6 位</string>
+    <string name="backup_password_hint">至少 8 位</string>
+    <string name="backup_password_too_short">口令至少 8 位</string>
     <string name="backup_password_mismatch">两次输入的口令不一致</string>
     <string name="backup_working_create">正在生成备份…</string>
     <string name="backup_working_restore">正在还原…</string>
