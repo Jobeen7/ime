@@ -20,6 +20,7 @@ import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.CandidateSortingManager
 import com.jobeen.ime.data.manager.applySavedCandidateOrder
+import com.jobeen.ime.data.manager.candidateSortingKey
 import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.event.KeyEvent
@@ -409,25 +410,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     /**
-     * 是否禁止个性化学习：密码类输入框，或输入框声明了
-     * [EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING]。
+     * 是否禁止个性化学习：统一判定在 [InputFieldPolicy]（密码类输入框，
+     * 或输入框声明了 IME_FLAG_NO_PERSONALIZED_LEARNING）。
      * 生效范围：本 engine 的选词偏好表/缓存/预测/重排，以及经由
-     * [NO_PERSONALIZED_LEARNING_OPTION] 控制的 librime native 用户词典自学习。
+     * [NO_PERSONALIZED_LEARNING_OPTION] 控制的 librime native 用户词典自学习；
+     * 语音纠错学习（VoiceCorrectionSession）也过同一判定。
      */
-    private fun isNoPersonalizedLearning(info: EditorInfo?): Boolean {
-        if (info == null) return false
-        val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
-        val variation = info.inputType and InputType.TYPE_MASK_VARIATION
-        val isPassword = when (inputClass) {
-            InputType.TYPE_CLASS_TEXT -> variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
-                variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
-                variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD
-            InputType.TYPE_CLASS_NUMBER -> variation == InputType.TYPE_NUMBER_VARIATION_PASSWORD
-            else -> false
-        }
-        if (isPassword) return true
-        return (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
-    }
+    private fun isNoPersonalizedLearning(info: EditorInfo?): Boolean =
+        com.jobeen.ime.base.util.InputFieldPolicy.isNoPersonalizedLearning(info)
 
     /** 是否为文本类密码框（数字密码走数字键盘，不在此列）。 */
     private fun isPasswordTextField(info: EditorInfo?): Boolean {
@@ -497,7 +487,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 有保存动作即排序表非空，失效 restoreCandidates 的判空缓存
         sortingTableEmpty = false
         sendJob {
-            CandidateSortingManager(db).save(candidates)
+            // 排序记录按当前组字串键保存（job 内即 RimeApi 作用域，
+            // compositionCached 是与组字产生同步赋值的缓存）；
+            // 无组字（预测态）时键为空，save 内部据此跳过
+            CandidateSortingManager(db).save(
+                candidates, candidateSortingKey(compositionCached.preedit.orEmpty())
+            )
         }
     }
 
@@ -1029,7 +1024,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         sortingTableEmpty = true
                         null
                     } else {
-                        mgr.load(filteredMsg.list)
+                        // 按本批候选所属的组字串查保存顺序（与保存端
+                        // 同源同值）；保存的序号序列可套到本批子集上。
+                        // 组字缓存只在 RimeApi 作用域内可读，经 awaitJob
+                        // 取一次——仅排序表非空（用户真拖过）时才走这里，
+                        // 从未拖过的用户被上面的判空缓存短路、热路径无感
+                        val key = candidateSortingKey(
+                            awaitJob("") { compositionCached.preedit.orEmpty() }
+                        )
+                        mgr.load(key)
                     }
                 }
                 val rerankEnabled = CandidateManager.isRerankEnabled(ctx)

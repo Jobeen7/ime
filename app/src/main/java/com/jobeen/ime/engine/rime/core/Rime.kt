@@ -102,8 +102,13 @@ class Rime : RimeApi, RimeLifecycleOwner {
             kotlinx.coroutines.withTimeoutOrNull(SNAPSHOT_TIMEOUT_MS) {
                 withRimeContext { block() }
             }
-        }.onFailure { e -> Timber.w(e, "Failed to refresh snapshot on rime-main") }
-            .getOrNull()
+        }.onFailure { e ->
+            // 取消不能吞：调用方协程被取消时必须立即中止（超时返回
+            // null 是 withTimeoutOrNull 的内部语义、不经这里）；吞掉
+            // 取消会让消息消费者在作用域已取消后继续跑完整条处理
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            Timber.w(e, "Failed to refresh snapshot on rime-main")
+        }.getOrNull()
 
     /**
      * 把 [block] 派发到 rime-main 执行并等待结果：[runOnRimeMain] 的实例侧

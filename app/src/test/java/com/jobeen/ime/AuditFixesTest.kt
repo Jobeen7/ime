@@ -181,6 +181,19 @@ class AuditFixesTest {
     }
 
     @Test
+    fun findAssetDigest_scansPageByName() {
+        // 摘要查询走资产分页端点：每页资产按名命中并归一化（去前缀/小写）
+        val hex = "a".repeat(64)
+        val page = listOf(
+            "other.bin" to "sha256:${"B".repeat(64)}",
+            "target.gram" to "sha256:$hex",
+        )
+        assertEquals(hex, com.jobeen.ime.base.net.findAssetDigest(page, "target.gram"))
+        assertEquals("b".repeat(64), com.jobeen.ime.base.net.findAssetDigest(page, "other.bin"))
+        assertNull(com.jobeen.ime.base.net.findAssetDigest(page, "missing.bin"))
+    }
+
+    @Test
     fun parseContentRangeStart_cases() {
         assertEquals(1024L, parseContentRangeStart("bytes 1024-2047/4096"))
         assertEquals(0L, parseContentRangeStart("bytes 0-1023/*"))

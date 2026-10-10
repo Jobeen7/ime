@@ -1,7 +1,7 @@
 package com.jobeen.ime
 
+import com.jobeen.ime.base.speech.expectedShaForNonGithubLink
 import com.jobeen.ime.base.speech.parseGithubReleaseAssetUrl
-import com.jobeen.ime.base.speech.tofuExpectedSha
 import com.jobeen.ime.engine.rime.data.userdict.decodeHrefImpl
 import com.jobeen.ime.engine.rime.data.userdict.unescapeXmlEntities
 import org.junit.Assert.assertEquals
@@ -57,22 +57,32 @@ class SecurityFixesTest {
         assertEquals("x.bin", ref?.assetName)
     }
 
-    // ---- 语音模型：TOFU 钉住值 ----
+    // ---- 语音模型：非 GitHub 链接只认内置钉死摘要（TOFU 已废除） ----
+
+    private val pinnedTable = mapOf("model-a.tar.bz2" to "aaa111", "model-b.tar.bz2" to "bbb222")
 
     @Test
-    fun tofu_sameLinkReturnsPinned() {
+    fun nonGithubLink_pinnedAssetResolves() {
         assertEquals(
-            "abc123",
-            tofuExpectedSha("https://x/m.bin", "abc123", "https://x/m.bin"),
+            "aaa111",
+            expectedShaForNonGithubLink("https://mirror.example/dl/model-a.tar.bz2", pinnedTable),
+        )
+        assertEquals(
+            "bbb222",
+            expectedShaForNonGithubLink("https://mirror.example/model-b.tar.bz2?token=x", pinnedTable),
         )
     }
 
     @Test
-    fun tofu_otherLinkOrEmptyReturnsBlank() {
-        assertEquals("", tofuExpectedSha("https://x/a.bin", "abc", "https://x/b.bin"))
-        assertEquals("", tofuExpectedSha(null, "abc", "https://x/b.bin"))
-        assertEquals("", tofuExpectedSha("", "abc", "https://x/b.bin"))
-        assertEquals("", tofuExpectedSha("https://x/b.bin", null, "https://x/b.bin"))
+    fun nonGithubLink_unpinnedAssetRejected() {
+        // 服务器换一个包名/链接都拿不到期望摘要 → 调用方拒绝安装，
+        // 不存在「首次见到即信任」的窗口
+        assertEquals(
+            "",
+            expectedShaForNonGithubLink("https://mirror.example/dl/evil.tar.bz2", pinnedTable),
+        )
+        assertEquals("", expectedShaForNonGithubLink("https://mirror.example/", pinnedTable))
+        assertEquals("", expectedShaForNonGithubLink("", pinnedTable))
     }
 
     // ---- WebDAV：XML 实体还原 ----

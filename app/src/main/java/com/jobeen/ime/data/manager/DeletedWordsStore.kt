@@ -36,7 +36,12 @@ internal fun decodeDeletedWordEntry(line: String): Pair<String, DeletedWordEntry
     val word = parts[0]
     if (word.isEmpty()) return null
     val deleted = parts[1] != "0"
-    val ts = parts[2].toLongOrNull() ?: 0L
+    // 时间戳必须钳制：同步文件来自其他设备/对端写入，不设上限时一个
+    // Long.MAX_VALUE 级的坏时间戳会在合并中永久压制该词（本机的新
+    // 删除/恢复永远输给它），还会顶爆 maxSeen 下限棘轮。上限取
+    // 「当前时间 + 1 天」，容忍设备间时钟偏差，挡住离谱值
+    val tsMax = System.currentTimeMillis() + 86_400_000L
+    val ts = (parts[2].toLongOrNull() ?: 0L).coerceIn(0L, tsMax)
     return word to DeletedWordEntry(deleted, ts)
 }
 

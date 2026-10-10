@@ -6,7 +6,7 @@ import androidx.room.PrimaryKey
 
 @Entity(tableName = "candidate_sorting_v2")
 data class CandidateSorting(
-    /** 由候选集合计算出的无序唯一指纹，替代原 preedit 作为主键。 */
+    /** 排序记录的键：现行格式为组字串（preedit）派生键（"p:" 前缀）；历史行是候选集合指纹键，不再命中。 */
     @PrimaryKey
     @ColumnInfo(name = "sorting_key")
     val key: String,

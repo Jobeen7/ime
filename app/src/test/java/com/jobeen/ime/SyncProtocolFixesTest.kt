@@ -35,6 +35,18 @@ class SyncProtocolFixesTest {
     }
 
     @Test
+    fun deletedWordEntry_absurdTimestampIsClamped() {
+        // 对端写入的离谱时间戳（Long.MAX_VALUE 级）必须被钳到
+        // 「现在 + 1 天」以内，否则它会在合并中永久压制该词、
+        // 本机的新删除/恢复永远输；正常时间戳原样保留（roundTrip 用例）
+        val (_, entry) = decodeDeletedWordEntry("词\t1\t${Long.MAX_VALUE}")!!
+        val cap = System.currentTimeMillis() + 86_400_000L
+        assertTrue(entry.updatedAt in 1..cap)
+        val (_, neg) = decodeDeletedWordEntry("词\t1\t-5")!!
+        assertEquals(0L, neg.updatedAt)
+    }
+
+    @Test
     fun deletedWordEntry_legacyLineIsDeletedAtZero() {
         val (word, entry) = decodeDeletedWordEntry("旧词")!!
         assertEquals("旧词", word)
