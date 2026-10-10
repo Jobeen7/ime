@@ -124,6 +124,14 @@ class CandidateGridView(
         private var longPressMoved = false
         private var longPressIndex = -1
         private var dragIndex = -1
+
+        /**
+         * 拖拽中的候选本体：下标只是它的当前位置。候选列表整表替换
+         * 时按本体重新定位，找不到（已被新列表淘汰）才取消拖拽——
+         * 只按下标跟踪会让同位置的另一个候选被误当成拖拽对象拿去
+         * 重排，改错条目。
+         */
+        private var dragItem: EngineMessage.Candidate? = null
         private var dragTargetIndex = -1
         private var dragFingerX = 0f
         private var dragFingerY = 0f
@@ -497,6 +505,7 @@ class CandidateGridView(
                         if (moved) longPressMoved = true
                         if (moved && longPressIndex >= 0) {
                             dragIndex = longPressIndex
+                            dragItem = allCandidates.getOrNull(longPressIndex)
                             dragTargetIndex = longPressIndex
                             pressedIndex = -1
                             longPressTriggered = false
@@ -559,6 +568,7 @@ class CandidateGridView(
                     removeCallbacks(longPressRunnable)
                     stopShake()
                     dragIndex = -1
+                        dragItem = null
                     dragTargetIndex = -1
                     pressedIndex = -1
                     horizontalDrag = -1
@@ -574,13 +584,27 @@ class CandidateGridView(
         }
 
         /**
-         * 候选列表被替换后拖拽下标可能已越界（拖拽中整表更新/清空）：
-         * 就地复位拖拽状态，避免抬手时按过期下标重排甚至越界崩溃。
-         * 由外层在替换 allCandidates 后调用。
+         * 候选列表被替换后校准拖拽跟踪：按拖拽本体在新列表中重新
+         * 定位（整表替换后下标多半已指向别的候选，只按下标跟踪会
+         * 在抬手时把错的条目拿去重排）；本体已不在新列表中才取消
+         * 本次拖拽。由外层在替换 allCandidates 后调用。
          */
         fun resetDragIfOutOfBounds() {
-            if (dragIndex >= 0 && dragIndex !in allCandidates.indices) {
+            if (dragIndex < 0) return
+            val item = dragItem
+            val newIndex = if (item != null) {
+                allCandidates.indexOfFirst { it == item }
+            } else {
+                -1
+            }
+            if (newIndex >= 0) {
+                dragIndex = newIndex
+                if (dragTargetIndex !in allCandidates.indices) {
+                    dragTargetIndex = newIndex
+                }
+            } else {
                 dragIndex = -1
+                dragItem = null
                 dragTargetIndex = -1
                 stopShake()
                 invalidate()
@@ -599,6 +623,7 @@ class CandidateGridView(
                         // 拖拽期间候选列表已被替换且原下标越界：放弃本次
                         // 重排（removeAt 必崩），复位拖拽状态后按普通收尾退出
                         dragIndex = -1
+                        dragItem = null
                         dragTargetIndex = -1
                         stopShake()
                         invalidate()
@@ -617,6 +642,7 @@ class CandidateGridView(
                         }
                         this@CandidateGridView.onDragComplete?.invoke(allCandidates)
                         dragIndex = -1
+                        dragItem = null
                         dragTargetIndex = -1
                         stopShake()
                         invalidate()

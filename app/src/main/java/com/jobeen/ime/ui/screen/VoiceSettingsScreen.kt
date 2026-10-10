@@ -87,7 +87,7 @@ fun VoiceSettingsScreen(
     // 语音专名纠错：与输入法服务同文件、同进程的词对存储实例
     // （开关与清除经 Store 的跨实例同步即时作用到服务侧实例）
     val correctionStore = remember {
-        VoiceCorrectionStore(File(context.filesDir, VoiceCorrectionStore.FILE_NAME))
+        VoiceCorrectionStore.shared(File(context.filesDir, VoiceCorrectionStore.FILE_NAME))
     }
     var correctionEnabled by remember { mutableStateOf(correctionStore.enabled) }
     var correctionsCleared by remember { mutableStateOf(false) }

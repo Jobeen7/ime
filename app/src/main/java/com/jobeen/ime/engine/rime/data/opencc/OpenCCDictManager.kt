@@ -5,12 +5,6 @@ import com.jobeen.ime.engine.rime.data.opencc.dict.Dictionary
 import com.jobeen.ime.engine.rime.data.opencc.dict.OpenCCDictionary
 import com.jobeen.ime.engine.rime.data.opencc.dict.TextDictionary
 import com.jobeen.ime.base.util.appContext
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 import java.io.File
 import java.io.InputStream
@@ -47,26 +41,19 @@ object OpenCCDictManager {
         return new
     }
 
-    private val buildScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val buildMutex = Mutex()
+    /** 构建串行锁：同步/异步构建共用同一把，避免两份转换同时写同一输出文件 */
+    private val buildLock = Any()
 
     /**
-     * 异步版本：部署开始通知在单线程分发队列上触发，构建含磁盘 IO 与词典
-     * 转换，同步执行会把排在其后的 schema/option/部署成功通知全部堵住。
-     * 投 IO 线程并以 Mutex 串行（多次部署触发排队即可，转换幂等）。
+     * Convert internal text dict to opencc format.
+     *
+     * 同步构建是部署路径的正确性要求：librime 在 bootstrap 时就加载
+     * .ocd2，异步构建与部署并发时新词典要等下一次部署才被读到
+     * （方案更新后繁简转换沿用旧词典）。Rime.startRime 在 bootstrap
+     * 之前同步调用本函数，保证本次部署即用新词典。
      */
     @JvmStatic
-    fun buildOpenCCDictAsync() {
-        buildScope.launch {
-            buildMutex.withLock { buildOpenCCDict() }
-        }
-    }
-
-    /**
-     * Convert internal text dict to opencc format
-     */
-    @JvmStatic
-    fun buildOpenCCDict() {
+    fun buildOpenCCDict() = synchronized(buildLock) {
         for (d in getAllDictionaries()) {
             if (d is TextDictionary) {
                 val result: Result<OpenCCDictionary>

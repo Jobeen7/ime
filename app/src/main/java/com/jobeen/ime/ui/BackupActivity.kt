@@ -59,6 +59,14 @@ class BackupActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        observeRestoreState()
+        // 上次还原若在写入途中进程被杀，会留一份还原前的加密快照：
+        // 提示用户凭备份口令回滚，或明确丢弃
+        if (BackupManager.hasRestoreSnapshot() &&
+            BackupManager.restoreState.value == BackupManager.RestoreState.Idle
+        ) {
+            uiState.showSnapshotRecoveryDialog = true
+        }
 
         val themeMode = KeyboardManager.Theme.getMode(this)
 
@@ -79,6 +87,17 @@ class BackupActivity : ComponentActivity() {
                         val uri = pendingRestoreUri
                         pendingRestoreUri = null
                         if (uri != null) doRestore(uri, password.toCharArray())
+                    },
+                    onRollbackSnapshot = {
+                        uiState.showSnapshotRecoveryDialog = false
+                        uiState.showSnapshotPasswordDialog = true
+                    },
+                    onRollbackSnapshotWithPassword = { password ->
+                        doRollbackSnapshot(password.toCharArray())
+                    },
+                    onDiscardSnapshot = {
+                        uiState.showSnapshotRecoveryDialog = false
+                        BackupManager.discardRestoreSnapshot()
                     },
                 )
             }
@@ -120,20 +139,50 @@ class BackupActivity : ComponentActivity() {
                 // 当刻即中止，不会先全量读入内存才被大小检查拦下
                 val bytes = contentResolver.openInputStream(uri)?.use { readBackupBytes(it) }
                     ?: throw BackupManager.BackupException("无法读取备份文件")
-                BackupManager.restoreBackup(bytes, password)
-                password.fill(' ')
-                withContext(Dispatchers.Main) {
-                    uiState.busyText = null
-                    ToastUtil.showToast(getString(R.string.backup_restore_done))
-                    // 延迟杀进程让 Toast 有机会显示；系统会重新拉起应用与键盘
-                    window.decorView.postDelayed({ Process.killProcess(Process.myPid()) }, 600)
-                }
+                // 还原本体交给应用级作用域执行：旋转/退出本页不再取消
+                // 还原（旧实现挂在本页作用域上，旋转会把还原与回滚一并
+                // 腰斩，留下半还原状态）。结果经 restoreState 回报，
+                // 由 onCreate 的收集器统一处理。
+                BackupManager.startRestore(bytes, password)
             } catch (e: Exception) {
                 password.fill(' ')
-                Timber.w(e, "Restore backup failed")
+                Timber.w(e, "Read backup file failed")
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null
                     ToastUtil.showToast("还原失败：${e.message ?: "未知错误"}")
+                }
+            }
+        }
+    }
+
+    /** 用快照口令把上次中断的还原回滚掉（快照即还原前状态的一份备份）。 */
+    private fun doRollbackSnapshot(password: CharArray) {
+        uiState.busyText = getString(R.string.backup_working_restore)
+        BackupManager.startRestore(ByteArray(0), password, rollbackSnapshot = true)
+    }
+
+    /** 观察应用级还原状态：终态统一在这里提示/重启并消费掉。 */
+    private fun observeRestoreState() {
+        lifecycleScope.launch {
+            BackupManager.restoreState.collect { state ->
+                when (state) {
+                    BackupManager.RestoreState.Running ->
+                        uiState.busyText = getString(R.string.backup_working_restore)
+                    BackupManager.RestoreState.Done -> {
+                        BackupManager.consumeRestoreState()
+                        uiState.busyText = null
+                        ToastUtil.showToast(getString(R.string.backup_restore_done))
+                        // 延迟杀进程让 Toast 有机会显示；系统会重新拉起应用与键盘
+                        window.decorView.postDelayed(
+                            { Process.killProcess(Process.myPid()) }, 600
+                        )
+                    }
+                    is BackupManager.RestoreState.Failed -> {
+                        BackupManager.consumeRestoreState()
+                        uiState.busyText = null
+                        ToastUtil.showToast("还原失败：${state.message}")
+                    }
+                    BackupManager.RestoreState.Idle -> Unit
                 }
             }
         }

@@ -56,9 +56,14 @@ sync_dep() {
 
     echo ">>> 锁定: $path -> $commit（当前 $head）"
     if ! git -C "$path" cat-file -e "${commit}^{commit}" 2>/dev/null; then
-        # 先按 commit 浅拉取（GitHub 支持），失败再退回整分支拉取
-        git -C "$path" fetch --depth 1 origin "$commit" \
-            || git -C "$path" fetch origin "$branch"
+        # 只按 commit 浅拉取（GitHub 支持按 SHA 拉取）：不再退回整
+        # 分支拉取——浮动分支引用会让「钉死到某个 commit」的供应链
+        # 保证取决于拉取时刻的分支状态。拉不到就明确失败，让问题
+        # 在同步阶段显形（下方 reset+HEAD 校验是内容钉死的最后防线）
+        if ! git -C "$path" fetch --depth 1 origin "$commit"; then
+            echo "错误: $path 无法拉取锁定的 commit $commit（服务器不支持按 SHA 拉取或网络失败）" >&2
+            exit 1
+        fi
     fi
     git -C "$path" reset --hard "$commit" > /dev/null
 

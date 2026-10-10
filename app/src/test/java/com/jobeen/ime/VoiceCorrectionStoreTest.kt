@@ -48,6 +48,30 @@ class VoiceCorrectionStoreTest {
     }
 
     @Test
+    fun twoCharPair_needsTwoObservations() {
+        val file = tempFile()
+        val store = VoiceCorrectionStore(file)
+        // 两字词对单次观察只进观察期：不生效、也不落盘
+        store.learn("开会", "开汇")
+        assertEquals("去开会", store.correct("去开会").text)
+        assertTrue(!file.exists() || !file.readText(Charsets.UTF_8).contains("开汇"))
+        // 第二次独立观察才正式生效
+        store.learn("开会", "开汇")
+        assertEquals("去开汇", store.correct("去开会").text)
+        awaitContent(file, "P\t开汇\t开会")
+    }
+
+    @Test
+    fun twoCharPair_probationIsPerPair() {
+        val store = VoiceCorrectionStore(tempFile())
+        // 观察计数按词对隔离：另一个词对的观察不攒数
+        store.learn("开会", "开汇")
+        store.learn("大海", "大嗨")
+        assertEquals("去开会", store.correct("去开会").text)
+        assertEquals("看大海", store.correct("看大海").text)
+    }
+
+    @Test
     fun disable_blocksCorrectionAndPersists() {
         val file = tempFile()
         val store = VoiceCorrectionStore(file)

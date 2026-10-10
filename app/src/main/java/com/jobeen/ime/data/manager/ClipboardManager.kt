@@ -43,7 +43,11 @@ object ClipboardManager {
     private const val KEY_REMOVED_TEXT_HASHES = "removed_text_hashes_v2"
     private const val KEY_REMOVED_LATEST_TEXT = "removed_latest_text"
     private const val MAX_REMOVED_HASHES = 200
+
+    /** 无剪贴板时间戳的旧系统上，防复活抑制的最长有效期（见 checkCurrentClipboard 判据③） */
+    private const val SUPPRESSION_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
     private const val KEY_TEXT_TRUNCATED = "clipboard_text_truncated_v1"
+    private const val KEY_LEGACY_DELETED_PURGED = "clipboard_legacy_deleted_purged_v1"
 
     // ── 设置读写 ──
 
@@ -364,8 +368,17 @@ object ClipboardManager {
         //    除时刻（removedAt=0）或剪贴板无时间戳（ts<=0）时不放行、继续抑制。
         val suppression = removedSuppression(context, text)
         if (suppression != null) {
+            // ③ 无时间戳平台（API 26 以下恒无 ClipDescription 时间戳，
+            // ② 永不成立）的兜底：抑制超过上限时长后失效。进程死亡
+            // 期间的重新复制在这类系统上没有任何可判信号，无限期抑制
+            // 会把「删掉后重新复制同一文本」永久吞掉；而删除后一周
+            // 系统剪贴板仍是同一文本时，它实质就是用户当前的剪贴板
+            // 内容，防复活的保护价值已消失。近期的防复活不受影响。
             val recopied = fromClipChangedEvent ||
-                (suppression.removedAt > 0L && ts > suppression.removedAt)
+                (suppression.removedAt > 0L && ts > suppression.removedAt) ||
+                (ts <= 0 && suppression.removedAt > 0L &&
+                    System.currentTimeMillis() - suppression.removedAt >
+                    SUPPRESSION_MAX_AGE_MS)
             if (!recopied) return false
             liftRemovedSuppression(context, suppression.hash)
         } else if (latest?.text == text) {
@@ -481,6 +494,10 @@ object ClipboardManager {
                 oldDao.deleteAllRaw()
             }
             settings.edit().putBoolean(KEY_DB_MIGRATED, true).apply()
+            // 旧行全文此时还在 ime_database 的空闲页/WAL 里（启动时跑的
+            // 一次性 VACUUM 在迁移之前就已结束）：在这里补跑主库
+            // VACUUM 才真正擦除，拆库的隐私隔离才算完整
+            AppDatabase.vacuumAfterClipboardSplit()
         }.onFailure { Timber.w(it, "Clipboard history migration failed; will retry") }
     }
 
@@ -494,12 +511,29 @@ object ClipboardManager {
         }.onFailure { Timber.w(it, "Clipboard oversized-text truncation failed; will retry") }
     }
 
+    /**
+     * 一次性清理软删存量行：删除已改为物理删，软删行只是旧版本留下
+     * 的墓碑，此前靠 addEntry 时顺带按保留期淘汰——不新增条目就永
+     * 远清不掉。这里在首次数据库访问时整表清完并落标记；防复活由
+     * prefs 抑制集合负责，与这些行无关。
+     */
+    private suspend fun purgeLegacyDeletedOnce(context: Context, target: ClipboardDatabase) {
+        val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (settings.getBoolean(KEY_LEGACY_DELETED_PURGED, false)) return
+        runCatching {
+            val n = target.clipboardDao().purgeAllDeleted()
+            if (n > 0) Timber.i("Purged %d legacy soft-deleted clipboard rows", n)
+            settings.edit { putBoolean(KEY_LEGACY_DELETED_PURGED, true) }
+        }.onFailure { Timber.w(it, "Legacy soft-deleted purge failed; will retry") }
+    }
+
     private suspend fun <T> db(context: Context, block: suspend (ClipboardDatabase) -> T): T? =
         try {
             withContext(Dispatchers.IO) {
                 val db = ClipboardDatabase.getInstance(context)
                 migrationMutex.withLock { migrateFromAppDatabase(context, db) }
                 truncateOversizedTextsOnce(context, db)
+                purgeLegacyDeletedOnce(context, db)
                 block(db)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

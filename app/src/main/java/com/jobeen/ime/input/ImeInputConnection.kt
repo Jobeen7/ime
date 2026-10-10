@@ -220,11 +220,28 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         recordHistory()
         val s = selStart()
         val e = selEnd()
-        val start = max(0, s - inLength)
-        val end = min(editable.length, e + outLength)
         editable.removeSpan(composingSpan)
-        editable.delete(start, end)
-        Selection.setSelection(editable, start.coerceAtMost(editable.length))
+        if (s != e) {
+            // 有选区时只删选区两侧的环绕文本、选区本身保留：旧实现
+            // 把 [s-in, e+out) 整段删掉，deleteSurroundingText(1, 0)
+            // 这类「删光标前 1 字」的调用会连选区带前面一字一起吃掉，
+            // 与调用方意图不符（删选区应由 commitText("")/明确的
+            // 选区删除路径完成）
+            val afterStart = min(editable.length, e + outLength)
+            if (afterStart > e) editable.delete(e, afterStart)
+            val beforeStart = max(0, s - inLength)
+            if (s > beforeStart) editable.delete(beforeStart, s)
+            Selection.setSelection(
+                editable,
+                beforeStart.coerceAtMost(editable.length),
+                (e - (s - beforeStart)).coerceAtMost(editable.length),
+            )
+        } else {
+            val start = max(0, s - inLength)
+            val end = min(editable.length, e + outLength)
+            editable.delete(start, end)
+            Selection.setSelection(editable, start.coerceAtMost(editable.length))
+        }
         selectionAnchor = null
         selectionCursor = null
         fireChange()

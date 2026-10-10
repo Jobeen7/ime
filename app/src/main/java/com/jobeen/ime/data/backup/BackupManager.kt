@@ -15,6 +15,12 @@ import androidx.room.withTransaction
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import org.json.JSONArray
 import org.json.JSONObject
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
 import java.security.SecureRandom
@@ -67,13 +73,20 @@ object BackupManager {
     private const val GCM_TAG_BITS = 128
     private const val WEBDAV_PREFS = "user_dict_sync"
 
+    /** 还原前加密快照在 filesDir 的文件名：进程被杀后凭它+口令回滚 */
+    private const val RESTORE_SNAPSHOT_NAME = "restore-snapshot.jbk"
+
     class BackupException(message: String) : Exception(message)
 
     // ---------------- 备份 ----------------
 
     /** 采集当前数据并加密，返回完整备份文件字节（头部行 + 密文） */
-    suspend fun createBackup(password: CharArray): ByteArray {
-        val payload = collectPayload().toString().toByteArray(Charsets.UTF_8)
+    suspend fun createBackup(password: CharArray): ByteArray =
+        encryptPayload(collectPayload(), password)
+
+    /** 把已收集的载荷 JSON 加密为备份文件字节（createBackup 与还原前快照共用）。 */
+    private fun encryptPayload(payloadJson: JSONObject, password: CharArray): ByteArray {
+        val payload = payloadJson.toString().toByteArray(Charsets.UTF_8)
         val kdf = if (Build.VERSION.SDK_INT >= 26) KDF_SHA256 else KDF_SHA1
         val salt = ByteArray(SALT_BYTES).also { SecureRandom().nextBytes(it) }
         val iv = ByteArray(IV_BYTES).also { SecureRandom().nextBytes(it) }
@@ -190,21 +203,113 @@ object BackupManager {
     suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
         val payload = decryptPayload(bytes, password)
         val parsed = parsePayload(payload)
-        // 写任何数据前，先把当前状态按同一格式与口令快照一份：写入阶段
-        // 任一步失败（数据库事务、偏好同步提交等）都用快照整体回滚，
-        // 绝不留下新旧混杂的半还原状态；快照本身失败则拒绝开始还原。
-        val snapshot = createBackup(password)
+        // 写任何数据前，先把当前状态快照一份：写入阶段任一步失败都用
+        // 快照整体回滚，绝不留下新旧混杂的半还原状态。快照解析结构
+        // 直接取自当前状态的采集结果——回滚回放是把我们自己的完整
+        // 状态写回去，不走「外部备份」的 WebDAV 脱敏过滤（否则回滚会
+        // 把用户现有的服务器地址/同步基准整表抹掉，等于回滚本身又
+        // 制造了一次数据丢失）；也不再对快照二次解密重解析（省掉
+        // 一轮 60 万次 PBKDF2）。
+        val snapshotJson = collectPayload()
+        val snapshotParsed = parsePayload(snapshotJson, sanitizeWebdav = false)
+        // 加密快照落盘到私有目录：进程若在写入中途被杀（系统回收、
+        // 断电），内存回滚随之消失，下次打开备份页凭此文件+口令仍可
+        // 回到还原前状态。落盘失败只降级为内存回滚，不阻塞还原。
+        persistRestoreSnapshot(encryptPayload(snapshotJson, password))
         try {
-            applyPayload(parsed)
+            // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
+            // 半途而废比继续写完更糟——半还原状态正是快照机制要防的
+            withContext(NonCancellable) { applyPayload(parsed) }
         } catch (e: Exception) {
             val rolledBack = runCatching {
-                applyPayload(parsePayload(decryptPayload(snapshot, password)))
+                withContext(NonCancellable) { applyPayload(snapshotParsed) }
             }.isSuccess
+            if (rolledBack) clearRestoreSnapshot()
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw BackupException(
                 if (rolledBack) "还原失败，已恢复到还原前状态：${e.message ?: "未知错误"}"
                 else "还原失败且自动回滚未成功，数据可能不完整：${e.message ?: "未知错误"}"
             )
+        }
+        clearRestoreSnapshot()
+    }
+
+    // —— 还原中断的落盘快照（进程被杀后的最后回滚手段） ——
+
+    private val restoreSnapshotFile
+        get() = File(appContext.filesDir, RESTORE_SNAPSHOT_NAME)
+
+    private fun persistRestoreSnapshot(bytes: ByteArray) {
+        runCatching {
+            val tmp = File(appContext.filesDir, "$RESTORE_SNAPSHOT_NAME.tmp")
+            tmp.writeBytes(bytes)
+            check(tmp.renameTo(restoreSnapshotFile)) { "rename failed" }
+        }.onFailure { Timber.w(it, "Persist restore snapshot failed") }
+    }
+
+    private fun clearRestoreSnapshot() {
+        runCatching { restoreSnapshotFile.delete() }
+    }
+
+    /** 是否留有上次还原中断的落盘快照（备份页据此提示回滚）。 */
+    fun hasRestoreSnapshot(): Boolean = restoreSnapshotFile.isFile
+
+    /** 用备份口令把落盘快照还原回去（即回到上次还原之前的状态）。 */
+    suspend fun rollbackToRestoreSnapshot(password: CharArray) {
+        val bytes = runCatching { restoreSnapshotFile.readBytes() }
+            .getOrElse { throw BackupException("回滚快照已损坏或不存在") }
+        restoreBackup(bytes, password)
+    }
+
+    /** 用户确认不需要回滚时丢弃落盘快照。 */
+    fun discardRestoreSnapshot() = clearRestoreSnapshot()
+
+    // —— 应用级还原执行（不随界面销毁取消） ——
+
+    /** 还原进度状态：由备份页观察，界面重建（旋转等）不影响执行本体。 */
+    sealed interface RestoreState {
+        data object Idle : RestoreState
+        data object Running : RestoreState
+        data object Done : RestoreState
+        data class Failed(val message: String) : RestoreState
+    }
+
+    private val restoreScope =
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    private val _restoreState =
+        kotlinx.coroutines.flow.MutableStateFlow<RestoreState>(RestoreState.Idle)
+    val restoreState: kotlinx.coroutines.flow.StateFlow<RestoreState> = _restoreState
+
+    /**
+     * 在应用级作用域启动还原：旋转/退出备份页都不会取消它（旧实现挂在
+     * 界面作用域上，旋转即取消，还原与回滚同遭腰斩）。重复启动忽略。
+     */
+    fun startRestore(bytes: ByteArray, password: CharArray, rollbackSnapshot: Boolean = false) {
+        if (_restoreState.value == RestoreState.Running) {
+            password.fill(' ')
+            return
+        }
+        _restoreState.value = RestoreState.Running
+        restoreScope.launch {
+            try {
+                if (rollbackSnapshot) rollbackToRestoreSnapshot(password)
+                else restoreBackup(bytes, password)
+                _restoreState.value = RestoreState.Done
+            } catch (e: Exception) {
+                Timber.w(e, "Restore failed")
+                _restoreState.value =
+                    RestoreState.Failed(e.message ?: "未知错误")
+            } finally {
+                password.fill(' ')
+            }
+        }
+    }
+
+    /** 备份页消费掉终态后复位，避免下次打开页面重复处理。 */
+    fun consumeRestoreState() {
+        if (_restoreState.value != RestoreState.Running) {
+            _restoreState.value = RestoreState.Idle
         }
     }
 
@@ -276,7 +381,12 @@ object BackupManager {
      * 把解密后的 JSON 完整解析为内存对象。任何结构/类型错误抛
      * [BackupException]，此时尚未写入任何数据。
      */
-    private fun parsePayload(root: JSONObject): ParsedBackup {
+    /**
+     * @param sanitizeWebdav 还原外部备份时为 true（滤掉服务器地址/
+     * 明文开关/同步基准，防恶意备份改道）；回滚回放本机自采快照时
+     * 为 false——那是用户自己的完整状态，必须原样写回。
+     */
+    private fun parsePayload(root: JSONObject, sanitizeWebdav: Boolean = true): ParsedBackup {
         try {
             val prefs = LinkedHashMap<String, Map<String, Any>>()
             val prefsJson = root.optJSONObject("prefs") ?: JSONObject()
@@ -303,7 +413,7 @@ object BackupManager {
             // - allowHttp：备份包不应能替用户打开明文传输开关；
             // - sync_etag_* / 上次同步时间：属于另一台设备的同步基准，沿用会让冲突检测失真。
             // 整表覆盖时这些键因此被清掉，回到默认（HTTPS-only、无基准先合并）
-            prefs[WEBDAV_PREFS]?.let { webdav ->
+            if (sanitizeWebdav) prefs[WEBDAV_PREFS]?.let { webdav ->
                 prefs[WEBDAV_PREFS] = webdav.filterKeys { key ->
                     key != "webdav_allow_http" &&
                         // 服务器地址同样不从备份还原：恶意备份可借整表覆盖把
