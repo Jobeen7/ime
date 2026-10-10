@@ -292,7 +292,15 @@ object WanxiangUpdateManager {
             committed.delete()
             if (!dicts.exists() && trash.exists()) trash.renameTo(dicts)
             else if (dicts.exists() && trash.exists()) trash.deleteRecursivelyNoFollow()
-            gramBackup.delete()
+            // 日志损坏读不出 hadGram：不能无条件删备份——若 gram 恰在
+            // 换代窗口缺位，备份是唯一完好的旧模型，恢复它；gram 在
+            // 位时备份才是过期残留，删之
+            if (!gram.isFile && gramBackup.isFile) {
+                runCatching { gramBackup.renameTo(gram) }
+                    .onFailure { Timber.e(it, "Failed to restore grammar model after journal damage") }
+            } else {
+                gramBackup.delete()
+            }
             return
         }
 
@@ -316,25 +324,27 @@ object WanxiangUpdateManager {
                     // If trash is absent, the original directory had not yet been moved.
                 }
             }
+            var gramRestored = false
             if (journal.changedGram) {
                 if (journal.hadGram && gramBackup.isFile) {
-                    val restore = File(root, "$GRAM_BACKUP_FILE.restore")
-                    restore.delete()
+                    // 备份已改为 rename 存放（与 gram 同盘）：回滚直接
+                    // rename 回位，不再整份拷贝 400MB
                     runCatching {
-                        gramBackup.copyTo(restore, overwrite = true)
-                        if (!restore.renameTo(gram)) {
-                            gram.delete()
-                            if (!restore.renameTo(gram)) {
-                                Timber.e("Failed to restore previous grammar model")
-                            }
+                        gram.delete()
+                        gramRestored = gramBackup.renameTo(gram)
+                        if (!gramRestored) {
+                            Timber.e("Failed to restore previous grammar model")
                         }
                     }.onFailure { Timber.e(it, "Grammar model rollback failed") }
                 } else if (!journal.hadGram) {
                     gram.delete()
+                    gramRestored = true
                 }
             }
             trash.deleteRecursivelyNoFollow()
-            gramBackup.delete()
+            // 回滚没能把旧模型放回原位时，备份是唯一完好副本，留着
+            // 待诊断/下次恢复，绝不能在收尾时顺手删掉
+            if (gramRestored || gram.isFile) gramBackup.delete()
         }
         txn.delete()
         committed.delete()
@@ -372,8 +382,23 @@ object WanxiangUpdateManager {
             setProperty("changedDicts", changedDicts.toString())
             setProperty("changedGram", changedGram.toString())
         }
-        temp.outputStream().use { props.store(it, "Jime update recovery journal") }
+        // 日志是掉电恢复的唯一依据：临时文件落盘后必须 fsync 文件
+        // 本体，rename 后再 fsync 目录，否则断电时「日志存在」这个
+        // 事实本身可能没落盘，启动恢复会误判成无事务而错过回滚窗口
+        java.io.FileOutputStream(temp).use { out ->
+            props.store(out, "Jime update recovery journal")
+            out.flush()
+            out.fd.sync()
+        }
         check(temp.renameTo(txn)) { "Failed to persist update recovery journal" }
+        syncDirectory(root)
+    }
+
+    /** fsync 目录本体，让其中的 rename/新建在断电后依然成立（失败只记日志）。 */
+    private fun syncDirectory(dir: File) {
+        runCatching {
+            java.io.RandomAccessFile(dir, "r").use { it.channel.force(true) }
+        }.onFailure { Timber.w(it, "Directory fsync failed: %s", dir) }
     }
 
     /** 内置方案版本：读资源解压落盘的 shared/version.txt（如 "18.1.0"），补上 v 前缀与常量口径对齐 */
@@ -683,13 +708,16 @@ object WanxiangUpdateManager {
 
             if (changedGram && gramTarget!!.isFile) {
                 val backup = File(DataManager.sharedDataDir, GRAM_BACKUP_FILE)
-                val backupTemp = File(DataManager.sharedDataDir, "$GRAM_BACKUP_FILE.tmp")
                 backup.delete()
-                backupTemp.delete()
-                gramTarget!!.copyTo(backupTemp, overwrite = true)
-                check(backupTemp.renameTo(backup)) { "语法模型旧版本备份失败" }
+                // 旧模型直接 rename 成备份（同盘原子操作）：旧实现整份
+                // 拷贝约 400MB，慢且白耗同量磁盘。此后到新模型 rename
+                // 就位之间 gram 短暂缺位，崩溃时由日志回滚从备份恢复
+                check(gramTarget!!.renameTo(backup)) { "语法模型旧版本备份失败" }
             }
             extractDir?.let { staging ->
+                // 上一轮未被启动恢复清掉的残留 trash 不得挡住本次切换：
+                // 新事务日志已按当前磁盘状态写定，旧残留就此作废
+                if (trashDir.exists()) trashDir.deleteRecursivelyNoFollow()
                 if (dictsDir.exists()) check(dictsDir.renameTo(trashDir)) { "词库旧目录移开失败" }
                 check(staging.renameTo(dictsDir)) { "词库目录切换失败" }
             }
@@ -704,6 +732,9 @@ object WanxiangUpdateManager {
                 check(File(DataManager.sharedDataDir, UPDATE_TXN_COMMITTED_FILE).createNewFile()) {
                     "无法标记数据更新事务已提交"
                 }
+                // 提交标记与前面的目录/文件 rename 一并 fsync 落盘，
+                // 断电后恢复看到的必须是完整的「已提交」事实
+                syncDirectory(DataManager.sharedDataDir)
             }
 
             // 5. 全部成功后才记录版本号与内容指纹

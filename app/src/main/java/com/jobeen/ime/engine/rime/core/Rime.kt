@@ -92,6 +92,20 @@ class Rime : RimeApi, RimeLifecycleOwner {
         withContext(dispatcher) { block() }
 
     /**
+     * 消息消费者的补取专用通道：带 2 秒上限（与 dispatcher stop 的排空
+     * 上限对齐）。引擎正在停机时补取任务可能被排空丢弃，等待方若无限
+     * 挂起会把消息消费者——进而整个消息通道——永久堵死；超时即放弃
+     * 补取、按原消息继续（各调用点本就容忍补取失败）。
+     */
+    private suspend fun <T> snapshotOnRimeMain(block: suspend () -> T): T? =
+        runCatching {
+            kotlinx.coroutines.withTimeoutOrNull(SNAPSHOT_TIMEOUT_MS) {
+                withRimeContext { block() }
+            }
+        }.onFailure { e -> Timber.w(e, "Failed to refresh snapshot on rime-main") }
+            .getOrNull()
+
+    /**
      * 把 [block] 派发到 rime-main 执行并等待结果：[runOnRimeMain] 的实例侧
      * 入口。RimeApi 各 suspend 方法本身就走这条串行线，但接口之外的 native
      * 入口（如 RimeConfig.openSchema）没有现成通道，补此一处统一派发。
@@ -264,6 +278,10 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
     private fun startRime(fullCheck: Boolean) {
         DataManager.sync()
+        // OpenCC 文本词典先同步转成 .ocd2 再 bootstrap：异步转换与
+        // 部署并发时 librime 会先加载旧 .ocd2，新词典要到下次部署
+        // 才生效（方案更新后繁简转换沿用旧词典一整代）
+        OpenCCDictManager.buildOpenCCDict()
         val sharedDataDir = DataManager.sharedDataDir.absolutePath
         val userDataDir = DataManager.userDataDir.absolutePath
         Timber.d("Starting rime: shared=$sharedDataDir user=$userDataDir fullCheck=$fullCheck")
@@ -367,15 +385,12 @@ class Rime : RimeApi, RimeLifecycleOwner {
     private suspend fun handleRimeMessage(it: RimeMessage<*>): RimeMessage<*> {
         when (it) {
             is RimeMessage.SchemaMessage -> {
-                val snapshot = runCatching {
-                    withRimeContext {
-                        val status = getStatus()
-                        val schema = RimeSchema(it.data.id)
-                        val item = cachedSchemaList().firstOrNull { s -> s.id == it.data.id }
-                        Triple(status, schema, item)
-                    }
-                }.onFailure { e -> Timber.w(e, "Failed to refresh schema snapshot on rime-main") }
-                    .getOrNull()
+                val snapshot = snapshotOnRimeMain {
+                    val status = getStatus()
+                    val schema = RimeSchema(it.data.id)
+                    val item = cachedSchemaList().firstOrNull { s -> s.id == it.data.id }
+                    Triple(status, schema, item)
+                }
                 if (snapshot != null) {
                     statusCached = snapshot.first
                     schemaCached = snapshot.second
@@ -387,20 +402,18 @@ class Rime : RimeApi, RimeLifecycleOwner {
             }
 
             is RimeMessage.OptionMessage -> {
-                runCatching {
-                    withRimeContext {
-                        val status = getStatus()
-                        statusCached = status
-                        updateSchemaCached(status)
-                    }
-                }.onFailure { e -> Timber.w(e, "Failed to refresh status snapshot on rime-main") }
+                snapshotOnRimeMain {
+                    val status = getStatus()
+                    statusCached = status
+                    updateSchemaCached(status)
+                }
                 return it
             }
 
             is RimeMessage.DeployMessage -> {
-                if (it.data == RimeMessage.DeployMessage.State.Start) {
-                    OpenCCDictManager.buildOpenCCDictAsync()
-                }
+                // OpenCC 词典构建已前移到 startRime 的 bootstrap 之前
+                // 同步执行（见彼处），这里不再异步补触发——异步构建赶
+                // 不上本次部署，纯属重复转换
                 if (it.data == RimeMessage.DeployMessage.State.Success) {
                     invalidateSchemaListCache()
                 }
@@ -433,9 +446,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 // 不能每键都往 rime-main 跑一趟）；真携带了新 id 时，
                 // RimeSchema 构造走 native，同样派发到 rime-main 补取。
                 if (status.schemaId.isNotBlank() && status.schemaId != schemaCached.schemaId) {
-                    runCatching {
-                        withRimeContext { updateSchemaCached(status) }
-                    }.onFailure { e -> Timber.w(e, "Failed to rebuild schema cache on rime-main") }
+                    snapshotOnRimeMain { updateSchemaCached(status) }
                 }
                 return it
             }
@@ -518,6 +529,9 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     companion object {
+        /** 消息补取的等待上限：与 RimeDispatcher.stop() 的排空上限对齐 */
+        private const val SNAPSHOT_TIMEOUT_MS = 2_000L
+
         // 消息流不丢消息：这里走的是 Schema/Option/Deploy 等状态消息，
         // 丢一条 Deploy 成功或 Schema 变更，awaitMessage 的等待方会永久挂起、
         // 守护进程的部署通知也会缺失。旧配置 DROP_OLDEST 在收集方卡顿时

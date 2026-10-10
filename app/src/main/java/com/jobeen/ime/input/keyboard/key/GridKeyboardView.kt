@@ -69,6 +69,10 @@ class GridKeyboardView(
             16, 0.75f, true
         )
 
+    /** 缓存构建时的显示度量戳：density/scaledDensity 变化（改显示大小/字体大小）后旧 View 的像素字号已固化，整表失效重建 */
+    private var cacheDensity = 0f
+    private var cacheScaledDensity = 0f
+
     /**
      * items 的内容签名：外观类型与文本/图源、字号、变体、宽度与 Press
      * 动作共同决定一个 KeyView 的长相与点击行为，任一不同即视为内容变化。
@@ -94,6 +98,14 @@ class GridKeyboardView(
     }
 
     fun setItems(items: List<KeyDef>) {
+        // 显示大小/字体大小变更后，缓存 View 在构造时固化的像素字号与
+        // 当前度量不符（签名不含度量）——度量戳变化即整表失效
+        val dm = resources.displayMetrics
+        if (dm.density != cacheDensity || dm.scaledDensity != cacheScaledDensity) {
+            viewCache.clear()
+            cacheDensity = dm.density
+            cacheScaledDensity = dm.scaledDensity
+        }
         val signature = itemsSignature(items)
         // 签名逐项由 items 生成，长度恒与 items 相同；再核一遍条目内 View
         // 数与 items 数一致才复用，防签名构造方式将来变更时误用旧条目
@@ -102,14 +114,23 @@ class GridKeyboardView(
             cached.first == colors &&
             cached.second.size == items.size
         ) {
+            // 复用前必须清掉旧布局坐标：本 View 只给可见行调 layout，
+            // 不在可见行的复用 View 会保留上次（可能在滚动态势下）的
+            // 位置，叠到首屏键上抢触摸。清零后未被 layout 的键是
+            // 0 尺寸、不可见也不可命中，等它滚进可见行时再定位。
+            cached.second.forEach { it.layout(0, 0, 0, 0) }
             cached.second
         } else {
             items.map { createKeyView(it) }.also { built ->
                 viewCache[signature] = colors to built
-                // 超上限淘汰最久未用条目；被淘汰条目的 View 若正挂在本
-                // View 上（刚被 removeAllViews 前的旧分类），随后统一
-                // detach 流程会把它们摘下交 GC，不影响本次挂载
-                while (viewCache.size > MAX_CACHED_VIEW_SETS) {
+                // 按缓存内 View 总数淘汰最久未用条目（单分类可达数百
+                // 个键，按「套数」设上限会让上万个 View 常驻）；被淘汰
+                // 条目的 View 若正挂在本 View 上，随后统一 detach 流
+                // 程会把它们摘下交 GC，不影响本次挂载。至少保留刚
+                // 放入的这一套。
+                while (viewCache.size > 1 &&
+                    viewCache.values.sumOf { it.second.size } > MAX_CACHED_VIEWS_TOTAL
+                ) {
                     viewCache.remove(viewCache.keys.first())
                 }
             }
@@ -393,8 +414,20 @@ class GridKeyboardView(
         return true
     }
 
+    override fun onDetachedFromWindow() {
+        super.onDetachedFromWindow()
+        // 键盘隐藏后裁剪复用缓存（只留最近用的几套）：全量分类的
+        // KeyView 在隐藏期间常驻纯属浪费，下次打开时按需重建/复用
+        while (viewCache.size > DETACHED_KEEP_SETS) {
+            viewCache.remove(viewCache.keys.first())
+        }
+    }
+
     companion object {
-        /** View 复用缓存的分类数上限：覆盖表情+符号全部分类仍有余量，防内存膨胀 */
-        private const val MAX_CACHED_VIEW_SETS = 12
+        /** 缓存内 KeyView 总数上限：超出按最久未用整套淘汰 */
+        private const val MAX_CACHED_VIEWS_TOTAL = 1200
+
+        /** detach 后缓存保留的套数上限：键盘隐藏期间不养全量缓存 */
+        private const val DETACHED_KEEP_SETS = 3
     }
 }

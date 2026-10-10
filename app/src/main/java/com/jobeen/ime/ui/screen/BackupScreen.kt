@@ -44,6 +44,8 @@ class BackupUiState {
     var busyText: String? by mutableStateOf(null)
     var showCreatePasswordDialog: Boolean by mutableStateOf(false)
     var showRestorePasswordDialog: Boolean by mutableStateOf(false)
+    var showSnapshotRecoveryDialog: Boolean by mutableStateOf(false)
+    var showSnapshotPasswordDialog: Boolean by mutableStateOf(false)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -54,6 +56,9 @@ fun BackupScreen(
     onCreateBackup: (password: String) -> Unit,
     onPickRestoreFile: () -> Unit,
     onRestoreWithPassword: (password: String) -> Unit,
+    onRollbackSnapshot: () -> Unit,
+    onRollbackSnapshotWithPassword: (password: String) -> Unit,
+    onDiscardSnapshot: () -> Unit,
 ) {
     val barFontSize = 18.sp
     Scaffold(
@@ -219,6 +224,56 @@ fun BackupScreen(
             },
             dismissButton = {
                 TextButton(onClick = { state.showRestorePasswordDialog = false }) {
+                    Text(stringResource(R.string.backup_cancel))
+                }
+            },
+        )
+    }
+    if (state.showSnapshotRecoveryDialog) {
+        AlertDialog(
+            onDismissRequest = { state.showSnapshotRecoveryDialog = false },
+            title = { Text("上次还原未完成") },
+            text = {
+                Text("检测到一份还原开始前保存的快照，说明上次还原曾被中断，当前数据可能不完整。可用当时的备份口令回滚到还原前状态，或丢弃快照保留现状。")
+            },
+            confirmButton = {
+                TextButton(onClick = onRollbackSnapshot) {
+                    Text("回滚到还原前")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = onDiscardSnapshot) {
+                    Text("丢弃快照")
+                }
+            },
+        )
+    }
+    if (state.showSnapshotPasswordDialog) {
+        var pw by androidx.compose.runtime.remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { state.showSnapshotPasswordDialog = false },
+            title = { Text("回滚到还原前") },
+            text = {
+                OutlinedTextField(
+                    value = pw,
+                    onValueChange = { pw = it },
+                    label = { Text(stringResource(R.string.backup_password)) },
+                    visualTransformation = PasswordVisualTransformation(),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        state.showSnapshotPasswordDialog = false
+                        onRollbackSnapshotWithPassword(pw)
+                    },
+                    enabled = pw.isNotEmpty(),
+                ) { Text(stringResource(R.string.backup_confirm_restore)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { state.showSnapshotPasswordDialog = false }) {
                     Text(stringResource(R.string.backup_cancel))
                 }
             },

@@ -69,6 +69,23 @@ object ModelDownloader {
     private const val KEY_TOFU_LINK = "tofu_link"
     private const val KEY_TOFU_SHA256 = "tofu_sha256"
 
+    /** 语音模型唯一可信的 GitHub 仓库：清单链接指向别处一律拒绝 */
+    private const val GITHUB_OWNER = "k2-fsa"
+    private const val GITHUB_REPO = "sherpa-onnx"
+
+    /**
+     * APK 内置钉死的语音模型包摘要（按资产名）：GitHub 查询失败
+     * （国内网络不可达/匿名限流）时的兜底信任锚，避免 fail-closed
+     * 误伤正常安装。上游换代新包时 GitHub 查询照常工作；查询失败
+     * 且文件与钉死值对不上时拒绝安装。
+     */
+    private val PINNED_SPEECH_SHA256 = mapOf(
+        "sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2" to
+            "8a6fca056e1a342546edd78be4d50274e2c01898e7b8ae8fc336f6410319c399",
+        "sherpa-onnx-qnn-SM8850-binary-x-asr-streaming-zipformer-transducer-zh-en-punct-2026-06-05-chunk-size-160ms.tar.bz2" to
+            "01dbcdbc6260a3bd55f902088a156c691888bb2c44f36299ae209797049f00a5",
+    )
+
     /** 本地已安装模型的服务端标识（manifest 的 md5，缺失时用下载链接） */
     fun getStoredManifestId(context: Context): String? {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -225,13 +242,31 @@ object ModelDownloader {
         val actual = sha256OfFile(archiveFile)
         val ref = parseGithubReleaseAssetUrl(link)
         if (ref != null) {
+            // 仓库坐标必须与钉死的官方仓库一致：链接与 MD5 同出清单
+            // 服务器，服务器被攻破时可把链接改指向攻击者自己的仓库，
+            // 那里的「官方登记摘要」会对得上它自己的恶意包。只认
+            // k2-fsa/sherpa-onnx 的资产，其余 GitHub 链接一律拒绝。
+            if (ref.owner != GITHUB_OWNER || ref.repo != GITHUB_REPO) {
+                Timber.e(
+                    "Speech model: link points at untrusted repo %s/%s, refusing install",
+                    ref.owner, ref.repo,
+                )
+                HttpUtil.showToast("语音模型校验失败：下载来源不可信，已拒绝安装")
+                archiveFile.delete()
+                return false
+            }
             val expected = fetchGithubAssetSha256(ref)
+                .ifEmpty { PINNED_SPEECH_SHA256[ref.assetName] ?: "" }
             if (expected.isEmpty()) {
+                // GitHub 查询失败且无内置钉死摘要：明确告知校验环节
+                // 出问题，而不是笼统的「下载失败」
                 Timber.w("Speech model: GitHub digest unavailable, refusing install")
+                HttpUtil.showToast("语音模型校验失败：无法获取官方校验值")
                 return false
             }
             if (!actual.equals(expected, ignoreCase = true)) {
                 Timber.e("Speech model archive SHA-256 mismatch vs GitHub digest")
+                HttpUtil.showToast("语音模型校验失败：文件与官方摘要不一致，已拒绝安装")
                 archiveFile.delete()
                 return false
             }
@@ -462,6 +497,24 @@ object ModelDownloader {
                 }
                 val body = response.body ?: return null
                 val append = response.code == 206 && resumeFrom > 0
+                if (append) {
+                    // 206 只证明服务器支持续传，不证明它给的正是我们要的
+                    // 区间：Content-Range 起点必须与续传点一致，缺失或
+                    // 对不上时把这段内容追加进 .part 只会拼出损坏文件。
+                    // 弃用本次响应、删 .part 全量重下（重入时 resumeFrom
+                    // 为 0，不会再进本分支）
+                    val rangeStart = parseContentRangeStart(
+                        response.header("Content-Range")
+                    )
+                    if (rangeStart != resumeFrom) {
+                        Timber.w(
+                            "Model download: Content-Range start %s != resume point %d, restarting full download",
+                            rangeStart, resumeFrom,
+                        )
+                        part.delete()
+                        return downloadFile(url, target, onRead)
+                    }
+                }
                 val startAt = if (append) resumeFrom else 0L
                 val total = if (append) startAt + body.contentLength() else body.contentLength()
                 val digest = MessageDigest.getInstance("MD5")
@@ -556,6 +609,18 @@ object ModelDownloader {
         }
         return digest.digest().joinToString("") { "%02x".format(it) }
     }
+}
+
+/**
+ * 解析 Content-Range 响应头（`bytes <start>-<end>/<total|*>`）的区间
+ * 起点；格式不符返回 null。续传校验用：服务器回 206 时必须核对它
+ * 给的确实是从本地续传点开始的那一段。
+ */
+internal fun parseContentRangeStart(header: String?): Long? {
+    val h = header?.trim() ?: return null
+    if (!h.startsWith("bytes ")) return null
+    val rangePart = h.substring("bytes ".length).substringBefore('/')
+    return rangePart.substringBefore('-').trim().toLongOrNull()
 }
 
 /** GitHub Release 资产坐标（从下载链接解析） */
