@@ -143,7 +143,7 @@ object BackupManager {
                 JSONObject()
                     .put("id", r.id).put("text", r.text).put("timestamp", r.timestamp)
                     .put("cloud", r.cloud).put("deleted", r.deleted).put("deletedAt", r.deletedAt)
-                    .put("pinned", r.pinned)
+                    .put("pinned", r.pinned).put("sortOrder", r.sortOrder)
             )
         }
         root.put("clipboard", clips)
@@ -154,6 +154,7 @@ object BackupManager {
                 JSONObject()
                     .put("id", r.id).put("text", r.text)
                     .put("label", r.label).put("createdAt", r.createdAt)
+                    .put("sortOrder", r.sortOrder)
             )
         }
         root.put("phrases", phrases)
@@ -504,6 +505,9 @@ object BackupManager {
                     deletedAt = o.optLong("deletedAt"),
                     // 旧备份无此字段，按未置顶还原
                     pinned = o.optBoolean("pinned"),
+                    // 旧备份无排序序号：用 -timestamp 派生，保持备份内的时间倒序
+                    sortOrder = if (o.has("sortOrder")) o.optLong("sortOrder")
+                    else -o.optLong("timestamp"),
                 )
             }
 
@@ -516,6 +520,8 @@ object BackupManager {
                     text = o.optString("text"),
                     label = o.optString("label"),
                     createdAt = o.optLong("createdAt"),
+                    sortOrder = if (o.has("sortOrder")) o.optLong("sortOrder")
+                    else -o.optLong("createdAt"),
                 )
             }
 

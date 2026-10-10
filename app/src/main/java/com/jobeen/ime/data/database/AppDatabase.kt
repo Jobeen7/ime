@@ -9,7 +9,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 10, exportSchema = true)
+@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 11, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 
@@ -31,7 +31,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ime_database"
-                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10).addCallback(VACUUM_CALLBACK).build().also { INSTANCE = it }
+                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).addCallback(VACUUM_CALLBACK).build().also { INSTANCE = it }
                 // 注意：不要加 fallbackToDestructiveMigration() —— 漏写 Migration 时宁可启动崩溃（fail-fast，
                 // 发布前真机测试会先暴露），也不要静默清空用户的剪贴板/常用语/选词偏好。每次 bump version
                 // 都必须写 Migration（无结构变更时写空迁移，见 MIGRATION_7_8）。
@@ -216,6 +216,19 @@ abstract class AppDatabase : RoomDatabase() {
             endVersion = 10,
         ) { db ->
             db.execSQL("UPDATE `candidate_prefers` SET `context` = ''")
+        }
+
+        // v11：phrase_records 新增 sortOrder（常用语拖动排序），回填
+        // -createdAt 使既有顺序（新建在前）不变；主库里的 clipboard_records
+        // 残表与独立库共用同一实体，列必须同步加上（残表数据已迁走，
+        // 无需回填）
+        private val MIGRATION_10_11: Migration = Migration(
+            startVersion = 10,
+            endVersion = 11,
+        ) { db ->
+            db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `sortOrder` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("UPDATE `phrase_records` SET `sortOrder` = -`createdAt`")
+            db.execSQL("ALTER TABLE `clipboard_records` ADD COLUMN `sortOrder` INTEGER NOT NULL DEFAULT 0")
         }
     }
 }
