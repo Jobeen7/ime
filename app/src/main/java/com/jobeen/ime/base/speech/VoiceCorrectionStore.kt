@@ -81,6 +81,7 @@ class VoiceCorrectionStore(private val file: File) {
             ensureLoadedLocked()
             pairs.clear()
             disabled.clear()
+            probation.clear()
             // 主动清除是用户明确要抹掉历史，不受读失败禁写约束
             loadFailed = false
             markDirtyLocked()
@@ -119,14 +120,35 @@ class VoiceCorrectionStore(private val file: File) {
         rightForm in disabled
     }
 
+    /** 两字词对的观察期计数（仅内存，不落盘）：见 [learn] 的两字门槛。 */
+    private val probation = HashMap<Pair<String, String>, Int>()
+
     /**
      * 学一条词对。词形不合规（非 2–6 字全 CJK、错形等于正形）直接忽略。
      * 正形此前被停用又被用户重新纠正到它时，视为用户改主意，重新启用。
+     *
+     * 两字词对加一道观察期：位置配对对两字词只需同位相同 1 字即可
+     * 成立，单次观察误学面过大（句尾续写、边界巧合都能凑出词对），
+     * 故两字词对须被独立观察到 [PROBATION_REQUIRED] 次才正式生效并
+     * 落盘；观察计数只在内存，进程重启重新计数。三字及以上维持
+     * 单次生效（同位相同下限更高，误配概率低得多）。
      */
     fun learn(wrongForm: String, rightForm: String) {
         if (wrongForm == rightForm) return
         if (!VoiceCorrector.isValidForm(wrongForm) || !VoiceCorrector.isValidForm(rightForm)) return
         synchronized(lock) {
+            ensureLoadedLocked()
+            if (wrongForm.length == 2 && rightForm.length == 2 &&
+                wrongForm !in pairs[rightForm].orEmpty()
+            ) {
+                val key = wrongForm to rightForm
+                val seen = (probation[key] ?: 0) + 1
+                if (seen < PROBATION_REQUIRED) {
+                    probation[key] = seen
+                    return
+                }
+                probation.remove(key)
+            }
             ensureLoadedLocked()
             var changed = false
             if (disabled.remove(rightForm)) changed = true
@@ -286,6 +308,21 @@ class VoiceCorrectionStore(private val file: File) {
 
     companion object {
         const val MAX_PAIRS = 300
+
+        /** 两字词对正式生效所需的独立观察次数（见 [learn]）。 */
+        const val PROBATION_REQUIRED = 2
+
+        /**
+         * 按文件取同进程共享实例：客户端与设置页必须用同一实例。
+         * 两边各建实例时词表互不感知，后落盘的一方会把另一方学到的
+         * 词对整表覆写掉（liveInstances 只同步开关与清除，救不了词表
+         * 分叉）。测试与特殊场景仍可直接构造独立实例。
+         */
+        private val sharedByPath = HashMap<String, VoiceCorrectionStore>()
+
+        fun shared(file: File): VoiceCorrectionStore = synchronized(sharedByPath) {
+            sharedByPath.getOrPut(file.absolutePath) { VoiceCorrectionStore(file) }
+        }
 
         /** 停用集合上限，与词对上限同量级。 */
         const val MAX_DISABLED = 300

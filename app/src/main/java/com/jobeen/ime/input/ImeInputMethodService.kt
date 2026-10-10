@@ -139,6 +139,9 @@ class ImeInputMethodService : InputMethodService() {
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
         keyboardWindow?.onStartInputView(info, restarting)
         engine?.onStartInputView(currentInputConnection, info)
+        // 直调即时探针前先撤掉合并通道里排队的那次：它捕获的是旧
+        // 输入框的待发任务，再跑一次只会在新框上多做一轮无用探针
+        mainHandler.removeCallbacks(pendingNotifyInputChanged)
         notifyInputChanged()
         super.onStartInputView(info, restarting)
     }

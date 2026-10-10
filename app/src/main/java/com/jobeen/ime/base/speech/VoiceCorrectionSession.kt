@@ -88,12 +88,20 @@ object VoiceCorrectionSessionLogic {
         }
     }
 
-    /** 判断一次变更是否完全落在段内（只有段内编辑才产生配对位置信号）。 */
+    /**
+     * 判断一次变更是否构成对段内原文的编辑（只有编辑才产生配对位置
+     * 信号）。纯插入（oldText 为空）一律不算：在段边界处接着打字是
+     * 续写新内容，不是修改本段——旧实现把段尾纯插入也判为段内编辑，
+     * 用户在语音句后打一个新词就会与段尾按位置配对误学成词对
+     * （如句尾「开会」后打「不会」被学成 开会→不会）。插入仍会经
+     * updateAnchor 更新演化快照的位置跟踪，只是不产生学习信号。
+     */
     fun isSegmentInternalChange(
         segmentStart: Int,
         segmentText: String,
         change: VoiceCorrectionLearner.Change,
     ): Boolean {
+        if (change.oldText.isEmpty()) return false
         val segEnd = segmentStart + segmentText.length
         val changeEnd = change.start + change.oldText.length
         return change.start >= segmentStart && changeEnd <= segEnd
@@ -359,6 +367,26 @@ object VoiceCorrectionSession {
 
     private fun readWindow(service: ImeInputMethodService): Window? {
         val ic = service.currentInputConnection ?: return null
+        // 优先一次 getExtractedText 拿全文+选区（1 次 IPC）：此前
+        // before/after 两次取文本、再叠加服务层自己的 1 字探针，
+        // 武装期内每次输入变化要跨进程往返 3–4 次。部分编辑器不
+        // 实现 getExtractedText（返回 null），回退原两次取文本。
+        val extracted = runCatching {
+            ic.getExtractedText(
+                android.view.inputmethod.ExtractedTextRequest().apply {
+                    hintMaxChars = WINDOW_BEFORE + WINDOW_AFTER
+                    hintMaxLines = -1
+                },
+                0,
+            )
+        }.getOrNull()
+        val extractedText = extracted?.text?.toString()
+        if (extracted != null && extractedText != null) {
+            val cursor = extracted.selectionStart.coerceIn(0, extractedText.length)
+            val start = (cursor - WINDOW_BEFORE).coerceAtLeast(0)
+            val end = (cursor + WINDOW_AFTER).coerceAtMost(extractedText.length)
+            return Window(extractedText.substring(start, end), cursor - start)
+        }
         val before = ic.getTextBeforeCursor(WINDOW_BEFORE, 0)?.toString() ?: return null
         val after = ic.getTextAfterCursor(WINDOW_AFTER, 0)?.toString().orEmpty()
         return Window(before + after, before.length)

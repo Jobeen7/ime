@@ -58,7 +58,7 @@ class KeyboardWindowView(
         const val PANEL_HEIGHT_DP = 48
 
         /** 配色刷新防抖窗口：窗口内的多次设置变更合并为一次全量刷新 */
-        const val REFRESH_COLORS_DEBOUNCE_MS = 50L
+        const val REFRESH_COLORS_DEBOUNCE_MS = 200L
     }
 
     private var cachedColors: KeyboardColors.ColorScheme = KeyboardColors.resolve(context)
@@ -558,7 +558,10 @@ class KeyboardWindowView(
     // 设置变化触发的配色全量刷新走防抖合并：主题类设置常成串变更（主题包
     // 一次写多项、跟随系统切换连带多 key），每次都全量重建键盘纯浪费；
     // 短窗口内只执行最后一次。高度类的即时 requestLayout 分流不在此列。
-    private val pendingRefreshColors = Runnable { refreshColors() }
+    // 到点后仍要过变化门控：防抖窗口（200ms）盖不住跨度更长的成串写入，
+    // 且半径/间距类设置根本不改配色——解析结果与缓存一致时整轮跳过，
+    // 不再无条件全量重建。
+    private val pendingRefreshColors = Runnable { refreshColorsIfChanged() }
 
     private fun scheduleRefreshColors() {
         removeCallbacks(pendingRefreshColors)

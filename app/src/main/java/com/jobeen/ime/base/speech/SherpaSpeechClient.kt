@@ -203,7 +203,13 @@ object SherpaSpeechClient {
                 // 类型推断自引用递归），this 即本连接对象
                 runCatching { appContext.unbindService(this) }
                 postBind()
-            } else if (!holding.get() && !awaitingDone.get()) {
+            } else if (probeArmed) {
+                // 待发 PING 刚在上面真正发出：把绑定阶段的 5 秒预算
+                // 换成从此刻起算的 1 秒回音窗，避免冷启动被误判僵尸
+                probeHandler.removeCallbacks(probeTimeoutRunnable)
+                probeHandler.postDelayed(probeTimeoutRunnable, PROBE_TIMEOUT_MS)
+            }
+            if (!needsRebind && !holding.get() && !awaitingDone.get()) {
                 // 预热绑定（initialize/preStartSync 的 LOAD）同样进入空闲
                 // 卸载计时：无任何会话活动时 3 分钟后一并解绑回收，不再
                 // 只有走过会话收尾的连接才计时（会话绑定的连接走到这里
@@ -236,6 +242,11 @@ object SherpaSpeechClient {
      * 启动途中死亡（录音尚未开始）走作废重绑+重发本会话并重新探活
      * 自愈；其余情形与 onServiceDisconnected 同款分流收尾。
      */
+    /** binder 死亡后「启动途中复活」的时刻窗：崩溃循环时不能无限复活拉起进程 */
+    private val deathResurrectTimes = ArrayDeque<Long>()
+    private const val DEATH_RESURRECT_WINDOW_MS = 60_000L
+    private const val DEATH_RESURRECT_MAX = 3
+
     private fun onSpeechBinderDied() {
         Timber.w("SpeechCli speech binder died")
         speechBinder = null
@@ -243,6 +254,22 @@ object SherpaSpeechClient {
         synchronized(connectLock) { speechMessenger = null }
         lastLivenessMs = 0L
         if (holding.get() && !recordingStarted) {
+            // 复活计次：:speech 若在启动阶段反复崩溃（如模型损坏），
+            // 每次死亡都立即重绑重发会形成崩溃循环，且每次死亡都先于
+            // 探针超时到达、把超时自愈短路掉。窗口内超限即放弃本次
+            // 会话，按连接丢失收尾，等用户下一次长按重新开始。
+            val now = SystemClock.uptimeMillis()
+            while (deathResurrectTimes.isNotEmpty() &&
+                now - deathResurrectTimes.first() > DEATH_RESURRECT_WINDOW_MS
+            ) {
+                deathResurrectTimes.removeFirst()
+            }
+            if (deathResurrectTimes.size >= DEATH_RESURRECT_MAX) {
+                Timber.e("SpeechCli binder died too often; giving up this session")
+                handleLinkLost()
+                return
+            }
+            deathResurrectTimes.addLast(now)
             forceDisconnect()
             send(SpeechIpc.MSG_LOAD)
             send(SpeechIpc.MSG_START, activeGen)
@@ -323,7 +350,10 @@ object SherpaSpeechClient {
     }
 
     private fun send(what: Int, gen: Int = 0) {
-        cancelIdleUnbind()
+        // PING 只是存活探针，不是会话活动：不取消空闲卸载计时。
+        // 旧实现任何 send 都取消计时，预检 PING 发出后 PONG 又不重挂，
+        // 用过一次语音后模型实际永不卸载、:speech 进程常驻数百 MB。
+        if (what != SpeechIpc.MSG_PING) cancelIdleUnbind()
         val messenger = synchronized(connectLock) { speechMessenger }
         if (messenger != null) {
             val msg = SpeechIpc.message(what, gen = gen)
@@ -357,6 +387,9 @@ object SherpaSpeechClient {
     // 不动，与探针互为补充（send 失败是本地即时可知，探针管送达后无回音）。
     private val probeHandler = Handler(Looper.getMainLooper())
     private const val PROBE_TIMEOUT_MS = 1000L
+
+    /** 未绑定时探针的绑定阶段预算：冷启动 :speech 进程（拉起+加载）远超 1 秒，计时须从 PING 真正发出起算 */
+    private const val BIND_PROBE_TIMEOUT_MS = 5000L
     private const val START_FALLBACK_MS = 15000L
 
     /** 本会话是否已收到 RECORDING_STARTED（死亡监听据此分流启动途中/录音中） */
@@ -403,7 +436,14 @@ object SherpaSpeechClient {
         probeRetryUsed = false
         probeHandler.removeCallbacks(probeTimeoutRunnable)
         probeHandler.removeCallbacks(startFallbackRunnable)
-        probeHandler.postDelayed(probeTimeoutRunnable, PROBE_TIMEOUT_MS)
+        // 计时口径：已绑定时 PING 随 START 即时发出，1 秒回音窗成立；
+        // 未绑定时 PING 还在待发队列里，先给绑定阶段 5 秒预算，待
+        // onServiceConnected 真正重放 PING 后再换回 1 秒窗（见彼处）
+        val bound = synchronized(connectLock) { speechMessenger } != null
+        probeHandler.postDelayed(
+            probeTimeoutRunnable,
+            if (bound) PROBE_TIMEOUT_MS else BIND_PROBE_TIMEOUT_MS,
+        )
     }
 
     private fun disarmStartProbe() {
@@ -433,6 +473,9 @@ object SherpaSpeechClient {
             prestartProbeGen = 0
             probeHandler.removeCallbacks(prestartProbeTimeoutRunnable)
             lastLivenessMs = SystemClock.uptimeMillis()
+            // 探针不算会话活动：无会话时把空闲卸载计时挂回去，
+            // 与 send() 不再取消 PING 的计时配套
+            if (!holding.get()) scheduleIdleUnbind()
             return
         }
         if (gen != 0 && gen == activeGen) onLivenessConfirmed()
@@ -458,7 +501,7 @@ object SherpaSpeechClient {
 
     /** 语音专名纠错词表：与识别解耦的独立小文件存储，损坏即整体不纠。 */
     private val correctionStore by lazy {
-        VoiceCorrectionStore(File(appContext.filesDir, "voice_corrections.tsv"))
+        VoiceCorrectionStore.shared(File(appContext.filesDir, VoiceCorrectionStore.FILE_NAME))
     }
 
     /** 输入法服务的选区探针回调：把编辑观察转给纠错沉淀会话。 */
@@ -803,6 +846,11 @@ object SherpaSpeechClient {
             committed?.let {
                 VoiceCorrectionSession.arm(service, correctionStore, it.text, it.applied)
             }
+            // 触发 UI 收尾前再验一次代次：本尾中途在后台做过纠错与
+            // 繁简转换（两次挂起），期间用户可能已经停掉旧会话并开始
+            // 新会话——此时调 onDone 会把新会话的录音标志清掉，松手
+            // 不再发 STOP。开头验过不算数，临门一脚必须复验。
+            if (activeGen != 0 && activeGen != gen) return@launch
             SpeechUiBridge.onDone?.invoke()
             // 不再 resetState：本代状态已在入口同步复位，此处再复位
             // 会误伤可能已经开始的新会话

@@ -16,6 +16,7 @@
         <exclude domain="external" path="log/" />
         <exclude domain="external" path="download/" />
         <exclude domain="file" path="voice_corrections.tsv" />
+    <exclude domain="file" path="voice_corrections.tsv.tmp" />
         <exclude domain="file" path="user_collocations.tsv" />
         <exclude domain="file" path="user_collocations.tsv.tmp" />
         <exclude domain="database" path="clipboard_database" />
@@ -30,6 +31,7 @@
         <exclude domain="external" path="log/" />
         <exclude domain="external" path="download/" />
         <exclude domain="file" path="voice_corrections.tsv" />
+        <exclude domain="file" path="voice_corrections.tsv.tmp" />
         <exclude domain="file" path="user_collocations.tsv" />
         <exclude domain="file" path="user_collocations.tsv.tmp" />
         <exclude domain="database" path="clipboard_database" />

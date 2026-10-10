@@ -36,6 +36,13 @@ class RimeDispatcher(
         var started = false
             private set
 
+        /**
+         * 派发时协程的 Job（dispatch 的 context 携带）。stop() 排空
+         * 队列时用它把「任务被丢弃」翻译成协程取消——否则被丢弃的
+         * DispatchedTask 永不运行，其 withContext 调用方永久挂起。
+         */
+        var job: kotlinx.coroutines.Job? = null
+
         private val delta
             get() = System.currentTimeMillis() - time
 
@@ -91,10 +98,19 @@ class RimeDispatcher(
                         // 失败、上层可以重新 startup() 重试。
                         Timber.e(t, "nativeStartup() failed; dispatcher reset to stopped")
                         isRunning.set(false)
-                        val dropped = queue.size
-                        queue.clear()
-                        if (dropped > 0) {
-                            Timber.w("Dropped $dropped queued job(s) after startup failure")
+                        val droppedTasks = mutableListOf<WrappedRunnable>()
+                        queue.drainTo(droppedTasks)
+                        // 同 stop()：被丢弃任务的协程必须以取消收尾，
+                        // 不能让调用方永久挂在 withContext 上
+                        for (task in droppedTasks) {
+                            task.job?.cancel(
+                                kotlinx.coroutines.CancellationException(
+                                    "RimeDispatcher startup failed before the job ran"
+                                )
+                            )
+                        }
+                        if (droppedTasks.isNotEmpty()) {
+                            Timber.w("Dropped ${droppedTasks.size} queued job(s) after startup failure")
                         }
                         onStartupFailed(t)
                         return@withLock
@@ -140,6 +156,17 @@ class RimeDispatcher(
                         mutex.withLock {
                             val rest = mutableListOf<WrappedRunnable>()
                             queue.drainTo(rest)
+                            // 被排空的任务永不执行：逐一取消其协程 Job，
+                            // 让挂在 withContext 上的调用方以取消收尾，
+                            // 而不是永久挂起（消息消费者一旦这样挂死，
+                            // 本进程内消息通道就此停摆、无从恢复）
+                            for (task in rest) {
+                                task.job?.cancel(
+                                    kotlinx.coroutines.CancellationException(
+                                        "RimeDispatcher stopped before the job ran"
+                                    )
+                                )
+                            }
                             rest
                         }
                     }
@@ -158,6 +185,7 @@ class RimeDispatcher(
             throw IllegalStateException("Dispatcher is not in running state!")
         }
         val wrapped = WrappedRunnable(block)
+        wrapped.job = context[kotlinx.coroutines.Job]
         queue.offer(wrapped)
         // 入队后复查：stop() 可能在检查与入队之间执行，避免任务入队后无人消费导致挂起
         if (!isRunning.get()) {

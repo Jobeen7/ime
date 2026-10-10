@@ -259,7 +259,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         scope.launch {
             for (job in jobs) {
                 try {
-                    session?.runOnReady(job)
+                    session?.runOnReady {
+                        // 字段选项（禁个性化学习等隐私项）待补设时，在
+                        // 本 job 之前先行应用：不依赖补设 job 在队列中
+                        // 与按键 job 的相对位置——队列满时 sendJob 的
+                        // 异步补投会让两者乱序，密码框最初几键可能在
+                        // native 学习仍开启时被处理。消费端是唯一串行
+                        // 执行点，在这里补设顺序即确定。
+                        if (fieldOptionsPending) {
+                            fieldOptionsPending = false
+                            editorInfo?.let { applyFieldOptions(it) }
+                        }
+                        job()
+                    }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -1100,6 +1112,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         invalidateBeforeCursorCache()
     }
 
+    /** 有字段选项等待在下一个 job 之前补设（见 jobs 消费循环）。 */
+    @Volatile
+    private var fieldOptionsPending = false
+
     override fun onStartInputView(ic: InputConnection, info: EditorInfo) {
         inputConnection = ic
         editorInfo = info
@@ -1107,7 +1123,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 隐私：把当前输入框的学习开关同步给 librime native 层。
         // 密码框 / NO_PERSONALIZED_LEARNING 输入框内 native 用户词典不再自学习；
         // 文本密码框进出时保存/恢复中英状态（见 applyAsciiModeForField）。
-        sendJob { applyFieldOptions(info) }
+        // 只置待补设标记：实际补设由 jobs 消费端在下一个 job（含本框
+        // 的第一个按键）执行之前完成，顺序确定，不走 sendJob 的异步
+        // 队列位置竞争。
+        fieldOptionsPending = true
     }
 
     /**

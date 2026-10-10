@@ -259,7 +259,10 @@ object SchemaPickerDialog {
         return Dialog(context).apply {
             setContentView(contentView)
             setOnDismissListener {
-                currentDialog = null
+                // dismiss 回调是异步投递的：触发时可能已有新弹窗顶替
+                // 上来，无条件置空会把新弹窗的引用一并清掉、让它再也
+                // 关不掉。只有仍指向本实例时才清理
+                if (currentDialog === this) currentDialog = null
                 onDismiss()
             }
             currentDialog = this
@@ -279,7 +282,10 @@ object SchemaPickerDialog {
     }
 
     fun dismiss() {
-        currentDialog?.dismiss()
+        // 先摘引用再 dismiss：dismiss 的回调异步投递，若等它来清，
+        // 回调到达前 build() 顶替上的新弹窗引用会被旧回调误清
+        val dialog = currentDialog ?: return
         currentDialog = null
+        dialog.dismiss()
     }
 }

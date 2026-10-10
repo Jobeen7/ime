@@ -123,8 +123,12 @@ class SpectrumWaveView(context: Context) : View(context), ISpeechView {
         // 静音冬眠：音量 ≤2（近静默，含底噪抖动）持续约 1.5 秒、且已
         // 越过唤醒后的最短保持窗，才停止逐帧调度（旧实现录音全程
         // 60fps 空转，柱高早已静止仍不断 invalidate）；有声音时
-        // setVolume 越过唤醒阈值会唤醒续跑
-        if (targetVolume <= silentVolumeThreshold && smoothVolume < 0.01f) {
+        // setVolume 越过唤醒阈值会唤醒续跑。
+        // 平滑值阈值取 0.03 而非 0.01：smoothVolume 是向 target 的
+        // 指数趋近，输入恒为阈值量级（底噪 1–2，归一化 ≤0.02）时
+        // 平台值就停在 0.02 附近，0.01 的门槛永远跨不过去、冬眠
+        // 永不触发；0.03 高于该平台又远低于说话音量，不误判。
+        if (targetVolume <= silentVolumeThreshold && smoothVolume < 0.03f) {
             if (++silentFrames > silentFrameLimit &&
                 SystemClock.uptimeMillis() - lastWakeUptimeMs >= minAwakeHoldMs
             ) {

@@ -108,6 +108,10 @@ Java_com_jobeen_ime_engine_rime_core_RimeConfig_getRimeConfigListItemPath(
     int i = 0;
     if (!api->config_begin_list(&iter, config, k.get())) return arr;
     while (api->config_next(&iter)) {
+        // 迭代数以 config_list_size 预分配数组为界：配置若在两次调用
+        // 之间被改动（或 size 语义变化），多出的元素写界外下标会抛
+        // ArrayIndexOutOfBounds 并留未决异常——到界即停
+        if (i >= size) break;
         jni::LocalRef<jstring> ref(env, jni::makeString(env, iter.path));
         env->SetObjectArrayElement(arr, i++, ref.get());
     }

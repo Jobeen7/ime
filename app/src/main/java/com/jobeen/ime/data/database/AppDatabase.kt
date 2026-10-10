@@ -1,6 +1,7 @@
 package com.jobeen.ime.data.database
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -39,6 +40,30 @@ abstract class AppDatabase : RoomDatabase() {
 
         private const val MAINTENANCE_PREFS = "db_maintenance"
         private const val KEY_VACUUM_V10_DONE = "vacuum_after_v10_done"
+        private const val KEY_VACUUM_CLIP_DONE = "vacuum_after_clipboard_split_done"
+
+        /**
+         * 剪贴板拆库迁移完成后补跑的一次性 VACUUM：旧剪贴板行在迁移时
+         * 已从主库整表删除，但全文还留在主库文件的空闲页与 WAL 里，
+         * 而 onOpen 的一次性 VACUUM 在启动时（迁移发生之前）就已跑完
+         * 并置了标记，擦不到这批残留。迁移完成点单独补跑一次
+         * （VACUUM 后再截断 WAL），成功落标记、失败下次迁移检查重试。
+         * 在调用方的后台线程执行。
+         */
+        fun vacuumAfterClipboardSplit() {
+            val prefs = com.jobeen.ime.base.util.appContext
+                .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
+            if (prefs.getBoolean(KEY_VACUUM_CLIP_DONE, false)) return
+            runCatching {
+                val db = getInstance(com.jobeen.ime.base.util.appContext)
+                    .openHelper.writableDatabase
+                db.execSQL("VACUUM")
+                db.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
+                prefs.edit { putBoolean(KEY_VACUUM_CLIP_DONE, true) }
+            }.onFailure {
+                timber.log.Timber.w(it, "VACUUM after clipboard split failed; will retry")
+            }
+        }
 
         /**
          * 一次性 VACUUM：v10 迁移只把 candidate_prefers.context 的值清空，
@@ -52,7 +77,11 @@ abstract class AppDatabase : RoomDatabase() {
                 val prefs = com.jobeen.ime.base.util.appContext
                     .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
                 if (prefs.getBoolean(KEY_VACUUM_V10_DONE, false)) return
-                runCatching { db.execSQL("VACUUM") }.onSuccess {
+                runCatching {
+                    db.execSQL("VACUUM")
+                    // VACUUM 重建主文件后，旧页还可能残留在 WAL 文件里，一并截断
+                    db.execSQL("PRAGMA wal_checkpoint(TRUNCATE)")
+                }.onSuccess {
                     prefs.edit().putBoolean(KEY_VACUUM_V10_DONE, true).apply()
                 }
             }

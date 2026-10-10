@@ -181,6 +181,35 @@ class VoiceCorrectionSessionTest {
         )
     }
 
+    @Test
+    fun segmentInternal_pureInsertionsNeverCount() {
+        // 段尾纯插入（在语音句后接着打字）不是对本段的编辑：
+        // 旧实现判为段内编辑，用户在句尾「开会」后打「不会」会被
+        // 位置配对误学成 开会→不会
+        assertFalse(
+            VoiceCorrectionSessionLogic.isSegmentInternalChange(
+                0, "我们开会", change(4, "", "不会")
+            )
+        )
+        // 段中间、段首的纯插入同样不算编辑（只是续写/插入新内容）
+        assertFalse(
+            VoiceCorrectionSessionLogic.isSegmentInternalChange(
+                2, "星辰海", change(3, "", "新")
+            )
+        )
+        assertFalse(
+            VoiceCorrectionSessionLogic.isSegmentInternalChange(
+                2, "星辰海", change(2, "", "新")
+            )
+        )
+        // 替换恰好落在段尾边界（有原文被改）仍是段内编辑
+        assertTrue(
+            VoiceCorrectionSessionLogic.isSegmentInternalChange(
+                0, "我们开会", change(3, "会", "汇")
+            )
+        )
+    }
+
     // ── 编辑区间回映射到原文坐标 ──
 
     @Test

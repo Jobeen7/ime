@@ -86,4 +86,8 @@ interface ClipboardDao {
 
     @Query("DELETE FROM clipboard_records WHERE deleted = 1 AND deletedAt < :cutoff")
     suspend fun purgeDeletedOlderThan(cutoff: Long)
+
+    /** 一次性清理全部软删行（物理删除切换前的存量墓碑），返回删除行数 */
+    @Query("DELETE FROM clipboard_records WHERE deleted = 1")
+    suspend fun purgeAllDeleted(): Int
 }

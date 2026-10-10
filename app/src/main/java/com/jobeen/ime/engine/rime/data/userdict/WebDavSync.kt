@@ -39,6 +39,10 @@ object WebDavSync {
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
+        // 禁止跨协议跳转：HTTPS 同步地址被服务器（被攻破/误配置时）
+        // 301 到 HTTP 时，同步口令与词库内容会在那一跳走明文。与其余
+        // 固定服务客户端口径一致；https→https 的正常跳转不受影响
+        .followSslRedirects(false)
         .build()
 
     private val textPlain = "text/plain; charset=utf-8".toMediaType()
@@ -623,7 +627,7 @@ object WebDavSync {
      */
     private fun syncDeletedWords(retried: Boolean = false) {
         val store = com.jobeen.ime.data.manager.DeletedWordsStore
-        val local = store.entriesSnapshot()
+        var remoteExists = false
         var remoteETag: String? = null
         var remoteETagWeak = false
         var remoteLastModifiedMs = 0L
@@ -639,6 +643,7 @@ object WebDavSync {
                 !response.isSuccessful ->
                     throw httpError("下载删除词表", response.code, errorDetail(response))
                 else -> {
+                    remoteExists = true
                     val etagRaw = response.header("ETag")
                     remoteETag = normalizeETag(etagRaw)
                     remoteETagWeak = isWeakETag(etagRaw)
@@ -657,11 +662,11 @@ object WebDavSync {
                 }
             }
         }
-        val merged =
-            com.jobeen.ime.data.manager.mergeDeletedWordEntries(local, remote)
-        if (merged != local) {
-            store.applyMerged(merged)
-        }
+        // 合并对着当前本地状态在存储锁内完成：网络往返期间用户的新
+        // 增删除/恢复直接参与本次合并，不会被旧快照的合并结果整表
+        // 覆盖吞掉（旧实现先取快照、往返后整表回写，窗口内的修改
+        // 永久丢失）
+        val merged = store.applyRemoteMerge(remote)
         if (merged != remote) {
             val content = merged.entries
                 .sortedBy { it.key }
@@ -673,16 +678,25 @@ object WebDavSync {
                 .url(remoteUrl(DELETED_WORDS_FILE))
                 .header("Authorization", authHeader())
                 .put(content.toRequestBody(textPlain))
-            if (remoteETag != null) {
-                val pre = putPrecondition(remoteETag, remoteETagWeak, remoteLastModifiedMs)
-                pre.ifMatch?.let { putBuilder.header("If-Match", it) }
-                pre.ifUnmodifiedSince?.let {
-                    putBuilder.header("If-Unmodified-Since", it)
+            when {
+                remoteETag != null -> {
+                    val pre = putPrecondition(remoteETag, remoteETagWeak, remoteLastModifiedMs)
+                    pre.ifMatch?.let { putBuilder.header("If-Match", it) }
+                    pre.ifUnmodifiedSince?.let {
+                        putBuilder.header("If-Unmodified-Since", it)
+                    }
                 }
-            } else {
-                // 远端文件尚不存在（首次同步）：只允许"不存在才创建"，防止两台
-                // 设备同时首同步时后写者无条件覆盖先写者的结果
-                putBuilder.header("If-None-Match", "*")
+                remoteExists -> {
+                    // 远端文件存在但服务器不给 ETag：没有可用的前置条件，
+                    // 直接覆盖写。旧实现按「ETag 为空」误判为文件不存在、
+                    // 带上 If-None-Match:*，对已存在文件必然 412，这类
+                    // 服务器上的删词同步永远成功不了
+                }
+                else -> {
+                    // 远端文件尚不存在（首次同步）：只允许"不存在才创建"，防止两台
+                    // 设备同时首同步时后写者无条件覆盖先写者的结果
+                    putBuilder.header("If-None-Match", "*")
+                }
             }
             client.newCall(putBuilder.build()).execute().use { response ->
                 if (response.code == 412 && !retried) {
@@ -698,7 +712,7 @@ object WebDavSync {
                 }
             }
         }
-        Timber.i("Deleted words synced: local=${local.size}, remote=${remote.size}, merged=${merged.size}")
+        Timber.i("Deleted words synced: remote=${remote.size}, merged=${merged.size}")
     }
 
     /**
