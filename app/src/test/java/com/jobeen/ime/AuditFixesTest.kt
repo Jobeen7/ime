@@ -2,6 +2,7 @@ package com.jobeen.ime
 
 import com.jobeen.ime.base.ngram.normalizeSha256
 import com.jobeen.ime.base.ngram.pickExpectedSha256
+import com.jobeen.ime.base.speech.parseContentRangeStart
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.data.backup.BackupManager
 import com.jobeen.ime.data.backup.readBackupBytes
@@ -163,6 +164,32 @@ class AuditFixesTest {
         assertEquals("", normalizeSha256(""))
         assertEquals("", normalizeSha256("not-a-hash"))
         assertEquals("", normalizeSha256(validSha.drop(1)))
+    }
+
+    @Test
+    fun pickExpectedSha256_pinnedFallbackOnlyWhenGithubMissing() {
+        val manifest = "a".repeat(64)
+        val github = "b".repeat(64)
+        val pinned = "c".repeat(64)
+        // GitHub 登记值优先于内置钉死值
+        assertEquals(github, pickExpectedSha256(manifest, github, pinned))
+        // GitHub 查不到时退到内置钉死值（清单自带值仍不作数）
+        assertEquals(pinned, pickExpectedSha256(manifest, "", pinned))
+        // 两者皆无 → 空（调用方 fail-closed）
+        assertEquals("", pickExpectedSha256(manifest, "", ""))
+        assertEquals("", pickExpectedSha256(manifest, "", "garbage"))
+    }
+
+    @Test
+    fun parseContentRangeStart_cases() {
+        assertEquals(1024L, parseContentRangeStart("bytes 1024-2047/4096"))
+        assertEquals(0L, parseContentRangeStart("bytes 0-1023/*"))
+        assertEquals(5L, parseContentRangeStart(" bytes 5-9/10 "))
+        assertNull(parseContentRangeStart(null))
+        assertNull(parseContentRangeStart(""))
+        assertNull(parseContentRangeStart("items 0-1/2"))
+        assertNull(parseContentRangeStart("bytes */4096"))
+        assertNull(parseContentRangeStart("bytes x-y/z"))
     }
 
     @Test

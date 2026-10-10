@@ -72,6 +72,7 @@ object GramModelDownloader {
         val expectedSha = pickExpectedSha256(
             manifest.sha256,
             fetchGithubSha256("$language.gram"),
+            PINNED_GRAM_SHA256["$language.gram"] ?: "",
         )
         val manifestSha = normalizeSha256(manifest.sha256)
         if (manifestSha.isNotEmpty() && manifestSha != expectedSha) {
@@ -96,8 +97,8 @@ object GramModelDownloader {
 
     /**
      * 向 GitHub 查 [fileName] 在 LTS 发布中登记的官方 sha256。
-     * 任何失败（网络不通、限流、资产结构变化）都返回空串，
-     * 调用方随之退回长度校验，不阻断下载。
+     * 任何失败（网络不通、限流、资产结构变化）都返回空串，调用方
+     * 退到 APK 内置钉死摘要，两者皆无则 fail-closed 拒绝下载。
      */
     private suspend fun fetchGithubSha256(fileName: String): String =
         withContext(Dispatchers.IO) {
@@ -192,7 +193,10 @@ object GramModelDownloader {
                     }
                     val actual = digest.digest().joinToString("") { "%02x".format(it) }
                     if (actual != expected) {
+                        // 校验不一致要让用户明确知道是「被拒绝」而不是
+                        // 普通下载失败：文件可能已被替换/篡改
                         Timber.w("Ngram model SHA-256 mismatch")
+                        HttpUtil.showToast("模型增强下载失败：文件校验不一致，已拒绝安装")
                         return false
                     }
                 }
@@ -222,9 +226,27 @@ internal fun normalizeSha256(raw: String?): String {
 }
 
 /**
- * 期望摘要的选取：只认 GitHub 登记摘要。清单摘要与下载链接同出一台
- * 服务器、不能当信任锚（参数保留仅因调用方还要拿它做日志比对）。
- * GitHub 也查不到时返回空串，调用方据此 fail-closed 拒绝下载。
+ * 期望摘要的选取：只认独立于清单服务器的信任锚——优先 GitHub 登记
+ * 摘要，其次 APK 内置钉死摘要（同一模型文件的摘要随包发布，GitHub
+ * 在国内网络不可达/被限流时 fail-closed 不应误伤正常安装）。清单
+ * 摘要与下载链接同出一台服务器、不能当信任锚（参数保留仅因调用
+ * 方还要拿它做日志比对）。两者皆无时返回空串，调用方拒绝下载。
  */
-internal fun pickExpectedSha256(manifestSha256: String, githubSha256: String): String =
-    normalizeSha256(githubSha256)
+internal fun pickExpectedSha256(
+    manifestSha256: String,
+    githubSha256: String,
+    pinnedSha256: String = "",
+): String =
+    normalizeSha256(githubSha256).ifEmpty { normalizeSha256(pinnedSha256) }
+
+/**
+ * APK 内置钉死的语法模型摘要（按文件名）：仅作 GitHub 查询失败时
+ * 的兜底信任锚。上游换代新模型后，GitHub 可达时照常按登记摘要
+ * 安装；GitHub 不可达且新文件与钉死值对不上时拒绝安装（宁可装
+ * 不上，也不装一个无独立来源背书的 400MB 原生解析文件），等
+ * 网络恢复即可。钉死值只在 GitHub 查询为空时参与选取。
+ */
+private val PINNED_GRAM_SHA256 = mapOf(
+    "wanxiang-lts-zh-hans.gram" to
+        "6169f35d48aa1018e6effd16cb6ae07f307964cffe5d8c79b97faf2164693bec",
+)
