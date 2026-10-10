@@ -29,19 +29,20 @@ object PhraseManager {
         val text: String,
         val label: String,
         val createdAt: Long,
+        val sortOrder: Long = 0,
     )
 
     suspend fun getAll(context: Context): List<Phrase> = db(context) { db ->
         ensureSeeded(context, db)
-        db.phraseDao().getAll().map { Phrase(it.id, it.text, it.label, it.createdAt) }
+        db.phraseDao().getAll().map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder) }
     } ?: emptyList()
 
     suspend fun getById(context: Context, id: Long): Phrase? = db(context) { db ->
-        db.phraseDao().getById(id)?.let { Phrase(it.id, it.text, it.label, it.createdAt) }
+        db.phraseDao().getById(id)?.let { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder) }
     }
 
     suspend fun search(context: Context, query: String): List<Phrase> = db(context) { db ->
-        db.phraseDao().search(query).map { Phrase(it.id, it.text, it.label, it.createdAt) }
+        db.phraseDao().search(query).map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder) }
     } ?: emptyList()
 
     suspend fun insert(context: Context, text: String, label: String): Long {
@@ -49,7 +50,13 @@ object PhraseManager {
         if (t.isEmpty()) return -1
         val l = label.trim().ifEmpty { t.take(12) }
         val id = db(context) { db ->
-            db.phraseDao().insert(PhraseRecord(text = t, label = l, createdAt = System.currentTimeMillis()))
+            db.phraseDao().insert(
+                PhraseRecord(
+                    text = t, label = l, createdAt = System.currentTimeMillis(),
+                    // 新常用语排到最前（与此前「新建在前」的顺序语义一致）
+                    sortOrder = (db.phraseDao().minSortOrder() ?: 0L) - 1L,
+                )
+            )
         } ?: -1
         if (id > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
         return id
@@ -60,13 +67,30 @@ object PhraseManager {
         if (t.isEmpty()) return
         val l = phrase.label.trim().ifEmpty { t.take(12) }
         // 只有真的改到行（且数据库操作没失败）才通知刷新：
-        // 旧实现无条件发回调，失败/目标不存在时 UI 也照常当成功处理
+        // 旧实现无条件发回调，失败/目标不存在时 UI 也照常当成功处理。
+        // sortOrder 必须回读保留：整行 @Update 会把排序序号重置为 0
         val rows = db(context) { db ->
+            val existing = db.phraseDao().getById(phrase.id)
             db.phraseDao().update(
-                PhraseRecord(id = phrase.id, text = t, label = l, createdAt = phrase.createdAt)
+                PhraseRecord(
+                    id = phrase.id, text = t, label = l, createdAt = phrase.createdAt,
+                    sortOrder = existing?.sortOrder ?: phrase.sortOrder,
+                )
             )
         } ?: 0
         if (rows > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
+    }
+
+    /** 拖动排序落库：按面板给出的完整顺序重编号全部常用语。 */
+    suspend fun applyOrder(context: Context, orderedIds: List<Long>) {
+        db(context) { db ->
+            db.withTransaction {
+                val dao = db.phraseDao()
+                orderedIds.forEachIndexed { index, id ->
+                    dao.setSortOrderById(id, index.toLong())
+                }
+            }
+        }
     }
 
     suspend fun delete(context: Context, id: Long) {
@@ -96,7 +120,13 @@ object PhraseManager {
                 // 事务内播种：中途中断不能留下「缺条 + 已标记 seeded」的永久缺口
                 db.withTransaction {
                     defaults.forEachIndexed { index, (text, label) ->
-                        dao.insert(PhraseRecord(text = text, label = label, createdAt = now - index * 1000))
+                        val created = now - index * 1000
+                        dao.insert(
+                            PhraseRecord(
+                                text = text, label = label, createdAt = created,
+                                sortOrder = -created,
+                            )
+                        )
                     }
                 }
             }

@@ -126,7 +126,11 @@ object ClipboardManager {
                 val wasPinned = dao.pinnedByText(clipped) ?: false
                 dao.deleteByText(clipped)
                 dao.insert(
-                    ClipboardRecord(text = clipped, timestamp = now, cloud = false, pinned = wasPinned)
+                    ClipboardRecord(
+                        text = clipped, timestamp = now, cloud = false, pinned = wasPinned,
+                        // 新条目排到最前：取当前最小排序序号再减一
+                        sortOrder = (dao.minSortOrder() ?: 0L) - 1L,
+                    )
                 )
                 trimExcess(dao, getMaxEntries(context))
                 dao.deleteOlderThan(retentionCutoff)
@@ -140,6 +144,32 @@ object ClipboardManager {
     private suspend fun trimExcess(dao: ClipboardDao, limit: Int) {
         val excess = dao.count() - limit
         if (excess > 0) dao.deleteOldest(excess)
+    }
+
+    /**
+     * 拖动排序落库：[orderedTexts] 是面板当前显示的条目顺序（置顶组在前）。
+     * 全量有效行统一重编号：显示中的按新顺序在前，其余（已被保留期挡在
+     * 显示外的未置顶旧条目）按时间倒序接在后面——只给显示子集编号会让
+     * 两套序号交错，日后旧条目重回显示范围时位置错乱。
+     */
+    suspend fun applyOrder(context: Context, orderedTexts: List<String>) {
+        db(context) { db ->
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                val all = dao.getAllActive()
+                val byText = all.associateBy { it.text }
+                val shown = orderedTexts.mapNotNull { byText[it] }
+                val shownTexts = shown.mapTo(HashSet()) { it.text }
+                val rest = all.filter { it.text !in shownTexts }
+                    .sortedWith(compareBy({ !it.pinned }, { -it.timestamp }))
+                val sequence = shown + rest
+                sequence.forEachIndexed { index, record ->
+                    if (record.sortOrder != index.toLong()) {
+                        dao.setSortOrderByText(record.text, index.toLong())
+                    }
+                }
+            }
+        }
     }
 
     suspend fun clearAll(context: Context) {

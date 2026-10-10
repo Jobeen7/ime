@@ -34,6 +34,10 @@ class ToolbarRenderer(
     var clipMultiMode: Boolean = false
     var clipMultiLabel: String = ""
     var clipDeleteLabel: String = ""
+    // 排序态：胶囊区改画提示文字，动作区 slot1 为「完成」
+    var clipReorderMode: Boolean = false
+    var clipReorderLabel: String = ""
+    var clipDoneLabel: String = ""
     var clipTab: ClipboardTab = ClipboardTab.CLIPBOARD
     var clipLabelClipboard: String = ""
     var clipLabelPhrase: String = ""
@@ -324,6 +328,12 @@ class ToolbarRenderer(
             return
         }
 
+        if (clipReorderMode) {
+            drawClipReorderbar(canvas, g, height, paints, density)
+            drawClipClose(canvas, g, height, paints, density)
+            return
+        }
+
         // 胶囊（剪切板 / 快捷短语）
         trackPaint.color = paints.toolbarIconColor and 0x1FFFFFFF
         canvas.drawRoundRect(
@@ -516,6 +526,21 @@ class ToolbarRenderer(
         drawClipTextAction(canvas, actionSlotCenter(g, 0, density), cy, clipDeleteLabel, paints, density)
     }
 
+    private fun drawClipReorderbar(
+        canvas: Canvas, g: ClipGeom, height: Int, paints: Paints, density: Float,
+    ) {
+        val cy = height / 2f
+        val textPaint = searchTextPaint
+        textPaint.textSize = 14f * density
+        textPaint.color = paints.toolbarIconColor
+        val fm = textPaint.fontMetrics
+        canvas.drawText(
+            clipReorderLabel, g.capsuleLeft + 4f * density,
+            cy - fm.ascent / 2f - fm.descent / 2f, textPaint
+        )
+        drawClipTextAction(canvas, actionSlotCenter(g, 1, density), cy, clipDoneLabel, paints, density)
+    }
+
     /** 动作槽文字按钮（编辑/多选栏共用）：居中 14sp 文字。 */
     private fun drawClipTextAction(
         canvas: Canvas, cx: Float, cy: Float, label: String, paints: Paints, density: Float,
@@ -619,6 +644,28 @@ class ToolbarRenderer(
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         if (slot0) PanelAction.ClipMultiDelete else PanelAction.ClipMultiExit,
                         tapX = x, tapY = y
+                    )
+                }
+                if (x in closeTouchLeft..closeTouchRight) {
+                    setPress((g.closeLeft + g.closeRight) / 2f)
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.CloseKeyboard, tapX = x, tapY = y
+                    )
+                }
+                return null
+            }
+            if (clipReorderMode) {
+                // 排序态：左箭头与动作区（完成）都退出排序，收起键照常
+                if (x in menuTouchLeft..menuTouchRight) {
+                    setPress(menuCenter)
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.ClipReorderExit, tapX = x, tapY = y
+                    )
+                }
+                if (x in g.actionLeft..g.actionRight) {
+                    setPress(actionSlotCenter(g, 1, density))
+                    return KawaiiPanel.TouchResult.ToolbarAction(
+                        PanelAction.ClipReorderExit, tapX = x, tapY = y
                     )
                 }
                 if (x in closeTouchLeft..closeTouchRight) {

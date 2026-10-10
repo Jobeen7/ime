@@ -4,7 +4,10 @@ import android.Manifest
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.os.Bundle
@@ -88,6 +91,69 @@ class SpeechRecognitionService : Service() {
     private val audioLock = Any()
     private var audioJob: Job? = null
     private var audioRecord: AudioRecord? = null
+
+    // ── 音频焦点 ────────────────────────────────────────────────
+    // 录音期间持有独占瞬时焦点，让媒体应用自动暂停/降音量，避免
+    // 外放声音串进麦克风污染识别。申请结果不作会话门槛（被拒——
+    // 如通话占用——时采集会因读不到有效音频走既有异常收尾）。
+    // 焦点被抢时只停采集：会话复位与 DONE 回信由采集协程的收尾
+    // 逻辑统一完成（在这里直接动 sessionActive 会让收尾的 CAS
+    // 转换失败、DONE 丢失）。
+    private val audioFocusListener = AudioManager.OnAudioFocusChangeListener { change ->
+        if (change == AudioManager.AUDIOFOCUS_LOSS ||
+            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
+            change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
+        ) {
+            holding.set(false)
+            audioRecord?.runCatching { stop() }
+        }
+    }
+    private var audioFocusRequest: AudioFocusRequest? = null
+    private var audioFocusHeld = false
+
+    private fun requestAudioFocus() {
+        runCatching {
+            val am = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                val request = AudioFocusRequest.Builder(
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE
+                ).setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                ).setOnAudioFocusChangeListener(audioFocusListener).build()
+                audioFocusRequest = request
+                audioFocusHeld =
+                    am.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            } else {
+                @Suppress("DEPRECATION")
+                audioFocusHeld = am.requestAudioFocus(
+                    audioFocusListener,
+                    AudioManager.STREAM_VOICE_CALL,
+                    AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE,
+                ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+            }
+        }.onFailure { Log.w("SpeechSvc", "requestAudioFocus failed", it) }
+    }
+
+    private fun abandonAudioFocus() {
+        if (!audioFocusHeld && audioFocusRequest == null) return
+        audioFocusHeld = false
+        runCatching {
+            val am = getSystemService(android.content.Context.AUDIO_SERVICE) as AudioManager
+            val request = audioFocusRequest
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+                request != null
+            ) {
+                am.abandonAudioFocusRequest(request)
+            } else {
+                @Suppress("DEPRECATION")
+                am.abandonAudioFocus(audioFocusListener)
+            }
+        }.onFailure { Log.w("SpeechSvc", "abandonAudioFocus failed", it) }
+        audioFocusRequest = null
+    }
     private var clientMessenger: Messenger? = null
 
     private var lastRawText: String? = null
@@ -244,6 +310,7 @@ class SpeechRecognitionService : Service() {
         sessionActive.set(false)
         holding.set(false)
         audioRecord?.runCatching { stop() }
+        abandonAudioFocus()
         // 等待+释放整段挪到后台线程：decode 是 audioLock 内的 native 阻塞
         // 调用，不响应协程取消，必须等在途解码收尾后才能 release stream/
         // recognizer（否则采集协程的收尾解码踩已释放对象）。旧实现在主
@@ -488,6 +555,7 @@ class SpeechRecognitionService : Service() {
 
         audioJob = scope.launch(Dispatchers.IO) {
             var recorder: AudioRecord? = null
+            var myFocusRequest: AudioFocusRequest? = null
             // 异常路径已发过 MSG_ERROR 时，finally 不再补发终结回信
             var pipelineFailed = false
             // 本会话的 stream 在协程内固定持有：结束时只释放自己这个，
@@ -517,6 +585,10 @@ class SpeechRecognitionService : Service() {
                 } ?: error("Unable to initialize AudioRecord")
 
                 audioRecord = recorder
+                // 焦点在采集协程内申请、同一协程的 finally 释放，
+                // 覆盖正常停止/异常/焦点被抢全部出口
+                requestAudioFocus()
+                myFocusRequest = audioFocusRequest
                 recorder.startRecording()
                 if (!sessionActive.get()) {
                     // STOP 在采集启动期间已到达：立即收尾，不能把 holding 重新置 true
@@ -637,6 +709,8 @@ class SpeechRecognitionService : Service() {
                 recorder?.runCatching { stop() }
                 recorder?.release()
                 if (audioRecord === recorder) audioRecord = null
+                // 只释放本会话申请的焦点：新会话可能已申请了自己的
+                if (audioFocusRequest === myFocusRequest) abandonAudioFocus()
                 synchronized(audioLock) {
                     // 只释放本会话的 stream；新会话已换上新 stream 时不能误放
                     if (myStream != null && streamRef.get() === myStream) {

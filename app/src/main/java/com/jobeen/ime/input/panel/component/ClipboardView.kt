@@ -34,6 +34,9 @@ class ClipboardView(
 
     var onItemClick: ((ClipboardManager.Entry) -> Unit)? = null
     var onItemLongClick: ((ClipboardManager.Entry, Float, Float) -> Unit)? = null
+    /** 排序模式下一次拖动结束（顺序确有变化）时回调：剪贴板给文本序、常用语给 id 序。 */
+    var onClipboardReordered: ((List<String>) -> Unit)? = null
+    var onPhrasesReordered: ((List<Long>) -> Unit)? = null
     /** 多选态下选中集合变化时回调（面板据此刷新工具栏计数）。 */
     var onSelectionChanged: (() -> Unit)? = null
     var onPhraseClick: ((PhraseManager.Phrase) -> Unit)? = null
@@ -55,6 +58,9 @@ class ClipboardView(
         // 拖选自动滚动是独立 post 链、不在 viewScope 内：窗口收起时
         // 必须收尾，否则它会继续滚动并改动选中集合
         endDragSelection(rollback = false)
+        // 排序拖动同理：收尾并落库已拖出的顺序（中途关键盘不丢调整）
+        if (reorderDragging) finishReorderDrag(persist = true)
+        removeCallbacks(reorderAutoScrollRunnable)
         removeCallbacks(longPressRunnable)
         super.onDetachedFromWindow()
     }
@@ -85,6 +91,202 @@ class ClipboardView(
     val selectedCount: Int get() = selectedTexts.size
 
     fun selectedSnapshot(): Set<String> = LinkedHashSet(selectedTexts)
+
+    // ── 排序模式（剪贴板/常用语共用）：长按菜单进入，工具栏「完成」退出 ──
+    // 模式内按住条目拖动：条目跟随手指，同组内（剪贴板按置顶与否分组）
+    // 实时换位，抬手即落库。滚动只靠边缘自动滚动。与多选/编辑互斥，
+    // 由面板保证不同时开启；搜索过滤中（显示的是子集）禁止进入。
+
+    var reorderActive: Boolean = false
+        private set
+    private var reorderDragging = false
+    private var reorderDragIndex = -1
+    private var reorderGrabOffset = 0f
+    private var reorderDragTop = 0f
+    private var reorderLastY = 0f
+    private var reorderDownLayoutY = 0f
+    private var reorderOrderChanged = false
+    private var reorderSnapshotEntries: List<ClipboardManager.Entry>? = null
+    private var reorderSnapshotPhrases: List<PhraseManager.Phrase>? = null
+    private var reorderSnapshotLayouts: List<RowLayout>? = null
+
+    fun setReorderMode(active: Boolean) {
+        if (reorderActive == active) return
+        if (active && clipTab == ClipboardTab.CLIPBOARD && searchQuery.isNotBlank()) return
+        if (!active) finishReorderDrag(persist = true)
+        reorderActive = active
+        pressedIndex = -1
+        computeRowLayouts()
+        invalidate()
+    }
+
+    /** 第 i 行在布局空间（onDraw 累计 y 口径）中的顶端。 */
+    private fun slotTop(index: Int): Float {
+        var t = 0f
+        for (i in 0 until index.coerceAtMost(rowLayouts.size)) {
+            t += rowLayouts[i].height + listGap
+        }
+        return t
+    }
+
+    /** 拖动条目当前所属的同组下标区间（剪贴板按置顶分组，常用语全表一组）。 */
+    private fun reorderRangeFor(index: Int): IntRange {
+        if (clipTab != ClipboardTab.CLIPBOARD) {
+            return if (phrases.isEmpty()) IntRange.EMPTY else 0..phrases.lastIndex
+        }
+        return reorderGroupRange(displayedEntries.map { it.pinned }, index)
+    }
+
+    private fun moveReorderItem(from: Int, to: Int) {
+        if (from == to) return
+        if (clipTab == ClipboardTab.CLIPBOARD) {
+            val m = displayedEntries.toMutableList()
+            val item = m.removeAt(from); m.add(to, item)
+            displayedEntries = m
+            // 排序模式禁搜索，displayedEntries 与 clipboardEntries 同集同序，同步即可
+            clipboardEntries = m
+        } else {
+            val m = phrases.toMutableList()
+            val item = m.removeAt(from); m.add(to, item)
+            phrases = m
+        }
+        val l = rowLayouts.toMutableList()
+        val row = l.removeAt(from); l.add(to, row)
+        rowLayouts = l
+        totalContentH = totalHeightOf(l)
+        reorderDragIndex = to
+        reorderOrderChanged = true
+        InputFeedbacks.hapticFeedback(this)
+    }
+
+    /** 按当前手指位置更新拖动态：条目跟随、越过邻位中心即换位。 */
+    private fun updateReorderDrag(viewY: Float) {
+        if (reorderDragIndex !in rowLayouts.indices) return
+        val fingerLayoutY = scrollOffsetY + viewY - headerH - topPad
+        val range = reorderRangeFor(reorderDragIndex)
+        if (range.isEmpty()) return
+        val rowH = rowLayouts[reorderDragIndex].height
+        val groupTop = slotTop(range.first)
+        val groupBottom = slotTop(range.last) + rowLayouts[range.last].height - rowH
+        reorderDragTop = (fingerLayoutY - reorderGrabOffset).coerceIn(groupTop, groupBottom)
+        // 目标位：被拖行中心落入的那一行
+        val center = reorderDragTop + rowH / 2f
+        var acc = 0f
+        var target = range.last
+        for (i in rowLayouts.indices) {
+            val h = rowLayouts[i].height
+            if (center < acc + h + listGap / 2f) { target = i; break }
+            acc += h + listGap
+        }
+        moveReorderItem(reorderDragIndex, target.coerceIn(range))
+    }
+
+    private val reorderAutoScrollRunnable = object : Runnable {
+        override fun run() {
+            if (!reorderDragging) return
+            val edge = 56f * density
+            val step: Float = when {
+                reorderLastY < edge -> {
+                    val depth = (edge - reorderLastY.coerceAtLeast(0f)) / edge
+                    -(4f + 12f * depth) * density
+                }
+                reorderLastY > height - edge -> {
+                    val depth = (edge - (height - reorderLastY).coerceAtLeast(0f)) / edge
+                    (4f + 12f * depth) * density
+                }
+                else -> 0f
+            }
+            if (step != 0f) {
+                val maxS = maxOf(0f, totalContentH - height)
+                val next = (scrollOffsetY + step).coerceIn(0f, maxS)
+                if (next != scrollOffsetY) {
+                    scrollOffsetY = next
+                    updateReorderDrag(reorderLastY)
+                    invalidate()
+                }
+                postDelayed(this, 16)
+            }
+        }
+    }
+
+    private fun finishReorderDrag(persist: Boolean) {
+        removeCallbacks(reorderAutoScrollRunnable)
+        if (reorderDragging && persist && reorderOrderChanged) {
+            if (clipTab == ClipboardTab.CLIPBOARD) {
+                onClipboardReordered?.invoke(displayedEntries.map { it.text })
+            } else {
+                onPhrasesReordered?.invoke(phrases.map { it.id })
+            }
+        }
+        if (reorderDragging && !persist) {
+            // 手势被打断：恢复拖动开始前的顺序快照
+            reorderSnapshotEntries?.let { displayedEntries = it; clipboardEntries = it }
+            reorderSnapshotPhrases?.let { phrases = it }
+            reorderSnapshotLayouts?.let {
+                rowLayouts = it
+                totalContentH = totalHeightOf(it)
+            }
+        }
+        reorderDragging = false
+        reorderDragIndex = -1
+        reorderOrderChanged = false
+        reorderSnapshotEntries = null
+        reorderSnapshotPhrases = null
+        reorderSnapshotLayouts = null
+    }
+
+    private fun onReorderTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                scroller.forceFinished(true)
+                finishReorderDrag(persist = false)
+                val idx = itemIndexAt(event.y)
+                if (idx in rowLayouts.indices) {
+                    reorderDragIndex = idx
+                    reorderDownLayoutY = scrollOffsetY + event.y - headerH - topPad
+                    reorderGrabOffset = reorderDownLayoutY - slotTop(idx)
+                    reorderDragTop = slotTop(idx)
+                    reorderLastY = event.y
+                    reorderOrderChanged = false
+                    reorderSnapshotEntries = displayedEntries
+                    reorderSnapshotPhrases = phrases
+                    reorderSnapshotLayouts = rowLayouts
+                    pressedIndex = idx
+                }
+                invalidate()
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                reorderLastY = event.y
+                if (reorderDragIndex < 0) return true
+                if (!reorderDragging) {
+                    val dy = abs(
+                        (scrollOffsetY + event.y - headerH - topPad) - reorderDownLayoutY
+                    )
+                    if (dy <= touchSlop) return true
+                    reorderDragging = true
+                    pressedIndex = -1
+                    removeCallbacks(reorderAutoScrollRunnable)
+                    post(reorderAutoScrollRunnable)
+                }
+                updateReorderDrag(event.y)
+                invalidate()
+            }
+
+            MotionEvent.ACTION_UP -> {
+                finishReorderDrag(persist = true)
+                pressedIndex = -1
+                invalidate()
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                finishReorderDrag(persist = false)
+                pressedIndex = -1
+                invalidate()
+            }
+        }
+        return true
+    }
 
     fun setMultiSelect(active: Boolean) {
         if (multiSelectActive == active) return
@@ -557,6 +759,17 @@ class ClipboardView(
                     )
                 }
             }
+            // 数据即将整体替换：排序拖动态只清状态，不能走快照回滚
+            // （快照是旧数据，写回会把新数据盖掉）
+            if (reorderDragging) {
+                removeCallbacks(reorderAutoScrollRunnable)
+                reorderDragging = false
+                reorderDragIndex = -1
+                reorderOrderChanged = false
+                reorderSnapshotEntries = null
+                reorderSnapshotPhrases = null
+                reorderSnapshotLayouts = null
+            }
             clipboardEntries = outcome.entries
             displayedEntries = outcome.displayed
             phrases = outcome.phrases
@@ -653,7 +866,9 @@ class ClipboardView(
         return if (tab == ClipboardTab.CLIPBOARD) {
             // 多选态行首要让出勾选圆的位置，文本可用宽相应收窄
             val checkReserve = if (multiSelectActive) 26f * density else 0f
-            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - cloudIconSize - 2f * density - checkReserve
+            // 排序模式行尾让出拖动手柄的位置
+            val handleReserve = if (reorderActive) 26f * density else 0f
+            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - cloudIconSize - 2f * density - checkReserve - handleReserve
             entriesToLayout.map { entry ->
                 val lines = breakText(tp, entry.text, maxTextW, 4)
                 RowLayout(
@@ -667,7 +882,8 @@ class ClipboardView(
                 )
             }
         } else {
-            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - 2f * density
+            val handleReserve = if (reorderActive) 26f * density else 0f
+            val maxTextW = w - hMargin * 2 - pillPad * 2 - ip.measureText("9. ") - 2f * density - handleReserve
             phrasesToLayout.map { phrase ->
                 val lines = breakText(tp, phrase.text, maxTextW, 4)
                 RowLayout(
@@ -756,17 +972,33 @@ class ClipboardView(
         canvas.translate(0f, headerH + topPad - scrollOffsetY)
 
         var y = 0f
+        var draggedRow: RowLayout? = null
         for ((i, row) in rowLayouts.withIndex()) {
             val h = row.height
-            val left = hMargin
-            val right = width - hMargin
-
+            if (reorderDragging && i == reorderDragIndex) {
+                // 被拖行最后单独画在手指位置（浮在其他行之上）
+                draggedRow = row
+                y += h + listGap
+                continue
+            }
             if (y + h < scrollOffsetY || y > scrollOffsetY + (height - headerH)) {
                 y += h + listGap
                 continue
             }
+            drawRow(canvas, i, row, y)
+            y += h + listGap
+        }
+        draggedRow?.let { drawRow(canvas, reorderDragIndex, it, reorderDragTop) }
 
-            val pressed = i == pressedIndex
+        canvas.restore()
+    }
+
+    private fun drawRow(canvas: Canvas, i: Int, row: RowLayout, y: Float) {
+        val h = row.height
+        val left = hMargin
+        val right = width - hMargin
+        run {
+            val pressed = i == pressedIndex || (reorderDragging && i == reorderDragIndex)
             canvas.drawRoundRect(left, y, right, y + h, 8f * density, 8f * density,
                 if (pressed) pressPaint else bgPaint)
             if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) {
@@ -836,11 +1068,19 @@ class ClipboardView(
                     cloudDrawable.draw(canvas)
                 }
             }
-
-            y += h + listGap
+            if (reorderActive) {
+                // 排序模式：行尾拖动手柄（三条横线）
+                val hx = right - pillPad - 7f * density
+                val cy = y + h / 2f
+                checkPaint.style = Paint.Style.STROKE
+                checkPaint.color = emptyPaint.color
+                checkPaint.strokeWidth = 1.6f * density
+                for (k in -1..1) {
+                    val ly = cy + k * 4.5f * density
+                    canvas.drawLine(hx - 7f * density, ly, hx + 7f * density, ly, checkPaint)
+                }
+            }
         }
-
-        canvas.restore()
     }
 
     /** 编辑模式绘制：全文逐行 + 光标竖线；空文本画提示。 */
@@ -918,6 +1158,7 @@ class ClipboardView(
         }
         if (editDisplayActive) return onEditTouchEvent(event)
         if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) return onMultiTouchEvent(event)
+        if (reorderActive) return onReorderTouchEvent(event)
         velocityTracker?.addMovement(event)
 
         when (event.actionMasked) {
@@ -1081,4 +1322,19 @@ class ClipboardView(
         }
         return true
     }
+}
+
+/**
+ * 拖动排序时第 [index] 条所属的同组下标区间：按 pinned 标志的连续段
+ * 划分（列表已按置顶在前排序，置顶段与未置顶段各自成组），拖动不得
+ * 跨组——把未置顶条目拖进置顶区不等于用户想置顶它。
+ */
+internal fun reorderGroupRange(pinned: List<Boolean>, index: Int): IntRange {
+    if (index !in pinned.indices) return IntRange.EMPTY
+    val group = pinned[index]
+    var lo = index
+    while (lo > 0 && pinned[lo - 1] == group) lo--
+    var hi = index
+    while (hi < pinned.lastIndex && pinned[hi + 1] == group) hi++
+    return lo..hi
 }

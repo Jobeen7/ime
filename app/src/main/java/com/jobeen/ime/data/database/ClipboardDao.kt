@@ -32,9 +32,16 @@ interface ClipboardDao {
     @Query("DELETE FROM clipboard_records")
     suspend fun deleteAllRaw()
 
-    // 置顶项不受保留期过滤（pinned=1 直接入列），排序置顶在前、组内时间倒序
-    @Query("SELECT * FROM clipboard_records WHERE deleted = 0 AND (pinned = 1 OR timestamp >= :cutoff) ORDER BY pinned DESC, timestamp DESC")
+    // 置顶项不受保留期过滤（pinned=1 直接入列），排序置顶在前、组内按
+    // 手动排序序号（拖动排序写入；未排过时由 -timestamp 回填保持时间倒序）
+    @Query("SELECT * FROM clipboard_records WHERE deleted = 0 AND (pinned = 1 OR timestamp >= :cutoff) ORDER BY pinned DESC, sortOrder ASC, timestamp DESC")
     suspend fun getAllActiveSince(cutoff: Long): List<ClipboardRecord>
+
+    @Query("SELECT MIN(sortOrder) FROM clipboard_records WHERE deleted = 0")
+    suspend fun minSortOrder(): Long?
+
+    @Query("UPDATE clipboard_records SET sortOrder = :order WHERE text = :text AND deleted = 0")
+    suspend fun setSortOrderByText(text: String, order: Long)
 
     @Query("UPDATE clipboard_records SET pinned = :pinned WHERE text = :text AND deleted = 0")
     suspend fun setPinnedByText(text: String, pinned: Boolean)

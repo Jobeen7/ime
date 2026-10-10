@@ -32,6 +32,7 @@ sealed class PanelAction {
     data object ClipEditCancel : PanelAction()
     data object ClipMultiExit : PanelAction()
     data object ClipMultiDelete : PanelAction()
+    data object ClipReorderExit : PanelAction()
     data object SelectAll : PanelAction()
     data object Copy : PanelAction()
     data object Paste : PanelAction()
