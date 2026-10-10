@@ -30,20 +30,26 @@ object PhraseManager {
         val label: String,
         val createdAt: Long,
         val sortOrder: Long = 0,
+        val pinned: Boolean = false,
     )
 
     suspend fun getAll(context: Context): List<Phrase> = db(context) { db ->
         ensureSeeded(context, db)
-        db.phraseDao().getAll().map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder) }
+        db.phraseDao().getAll().map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder, it.pinned) }
     } ?: emptyList()
 
     suspend fun getById(context: Context, id: Long): Phrase? = db(context) { db ->
-        db.phraseDao().getById(id)?.let { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder) }
+        db.phraseDao().getById(id)?.let { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder, it.pinned) }
     }
 
     suspend fun search(context: Context, query: String): List<Phrase> = db(context) { db ->
-        db.phraseDao().search(query).map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder) }
+        db.phraseDao().search(query).map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder, it.pinned) }
     } ?: emptyList()
+
+    suspend fun setPinned(context: Context, id: Long, pinned: Boolean) {
+        val rows = db(context) { db -> db.phraseDao().setPinnedById(id, pinned) } ?: 0
+        if (rows > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
+    }
 
     suspend fun insert(context: Context, text: String, label: String): Long {
         val t = text.trim()
@@ -68,13 +74,14 @@ object PhraseManager {
         val l = phrase.label.trim().ifEmpty { t.take(12) }
         // 只有真的改到行（且数据库操作没失败）才通知刷新：
         // 旧实现无条件发回调，失败/目标不存在时 UI 也照常当成功处理。
-        // sortOrder 必须回读保留：整行 @Update 会把排序序号重置为 0
+        // sortOrder/pinned 必须回读保留：整行 @Update 会把它们重置为默认值
         val rows = db(context) { db ->
             val existing = db.phraseDao().getById(phrase.id)
             db.phraseDao().update(
                 PhraseRecord(
                     id = phrase.id, text = t, label = l, createdAt = phrase.createdAt,
                     sortOrder = existing?.sortOrder ?: phrase.sortOrder,
+                    pinned = existing?.pinned ?: phrase.pinned,
                 )
             )
         } ?: 0
