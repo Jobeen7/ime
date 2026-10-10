@@ -132,6 +132,12 @@ if (!jimeSigningConfigured) {
     )
 }
 
+// Room 架构导出（配合 @Database exportSchema=true）：每次版本升级把
+// schema JSON 生成到 app/schemas 并随代码提交，供迁移测试比对
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
+}
+
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
     // implementation(libs.tokenizer)
