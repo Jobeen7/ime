@@ -2,7 +2,6 @@ package com.jobeen.ime.ui
 
 import android.net.Uri
 import android.os.Bundle
-import android.os.Process
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -172,10 +171,8 @@ class BackupActivity : ComponentActivity() {
                         BackupManager.consumeRestoreState()
                         uiState.busyText = null
                         ToastUtil.showToast(getString(R.string.backup_restore_done))
-                        // 延迟杀进程让 Toast 有机会显示；系统会重新拉起应用与键盘
-                        window.decorView.postDelayed(
-                            { Process.killProcess(Process.myPid()) }, 600
-                        )
+                        // 进程重启由 BackupManager 在置 Done 时自行安排：
+                        // 离开本页的用户收不到这条观察，重启不能只挂在这里
                     }
                     is BackupManager.RestoreState.Failed -> {
                         BackupManager.consumeRestoreState()

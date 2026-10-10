@@ -194,7 +194,11 @@ object WebDavSync {
                 }
                 val xml = response.body?.string().orEmpty()
                 val etagRaw = etagRegex.find(xml)?.groupValues?.get(1)
-                val etag = normalizeETag(etagRaw)
+                // XML 文本里的 ETag 要先还原实体：部分服务器把引号写成
+                // &quot;…&quot;，不还原就存下带实体的「假引号」值，发送
+                // If-Match 时强比较永远对不上、上传恒 412。仅限此处
+                // （响应头来的 ETag 不是 XML，不做实体处理）
+                val etag = normalizeETag(etagRaw?.let { unescapeXmlEntities(it) })
                 val lmText = lastModifiedRegex.find(xml)?.groupValues?.get(1)?.trim().orEmpty()
                 RemoteStateResult.Found(
                     RemoteState(etag, parseHttpDateMs(lmText), isWeakETag(etagRaw)),
