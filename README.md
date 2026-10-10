@@ -5,165 +5,61 @@
 - 隐私说明见 [PRIVACY.md](PRIVACY.md)
 - 第三方组件与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，本项目许可证见 [LICENSE](LICENSE)
 
-# 键盘主题数据格式说明
+## 特色功能
 
-本文件说明键盘自定义主题的存储格式（`themes.json`，可读）与二维码分享格式（紧凑短 key）的所有字段含义。
+### 输入
 
----
+- 内置万象拼音方案，支持九宫格、全键盘等多种布局
+- 候选词可长按拖动排序，顺序会记住，之后打同样的拼音仍按你的顺序出词
+- 会学习你的选词习惯，常用词自动靠前
+- 支持万象语法模型，长句输入时候选更准确
+- 方案与词库可在线更新到万象官方最新版
 
-## 1. 用户主题存储文件 `themes.json`
+### 语音
 
-- 位置：`App.themesDir/themes.json`（外置目录 `files/themes/`）
-- 格式：JSON 数组，最多 2 个主题（超出部分读取时截断）
-- 采用**长字段名 + ARGB 十六进制颜色（`#AARRGGBB`）**，并美化排版，便于阅读与手写
-- 读取时兼容三种历史格式：`#AARRGGBB` hex → 长 key Int → 紧凑短 key
+- 完全离线的语音输入，边说边出字，不联网也能用
+- 骁龙机型支持 NPU 加速识别
+- 会从你手动改过的词里学生词，专名、人名越用越准
+- 录音时自动暂停其他媒体播放，密码框等敏感场景自动停用
 
-```json
-[
-  {
-    "id": "custom_seafoam",
-    "name": "海盐蓝",
-    "colors": { "...": "#FF1A3F4E" }
-  }
-]
-```
+### 剪贴板与常用语
 
-### 1.1 顶层字段
+- 剪贴板历史支持搜索、置顶、多选批量删除、编辑条目、拖动排序
+- 剪贴板保留天数与条数上限可调，历史记录不进系统云备份
+- 常用语支持置顶与拖动排序，点一下即可上屏
 
-| 字段 | 类型 | 必填 | 含义 |
-|------|------|------|------|
-| `id` | string | 是 | 主题唯一标识，用于存储、切换与二维码识别 |
-| `name` | string | 是 | 主题显示名称 |
-| `colors` | object | 是 | 主题配色，见下 |
+### 同步与备份
 
-### 1.2 `colors` 配色字段
+- 用户词库可通过 WebDAV 同步（支持坚果云等），多设备词库保持一致
+- 在一台设备上删掉的词，不会在其他设备上重新出现
+- 全量备份为加密文件（口令派生密钥 + AES-256-GCM），别人拿到文件也读不了
+- 还原前自动留快照，还原出问题可以回滚到还原前的状态
 
-颜色值格式：`#AARRGGBB`（`AA`=透明度，`RR/GG/BB`=红绿蓝）；也接受 `#RRGGBB`（自动按不透明处理）。
+### 主题与其他
 
-| 字段 | 默认值 | 含义 |
-|------|--------|------|
-| `keyBackground` | - | 主按键背景色 |
-| `keyPressed` | - | 主按键按下状态背景色 |
-| `keyBorderStroke` | - | 主按键边框描边色 |
-| `specialKeyBackground` | - | 功能键（特殊键，如符号/shift 等）背景色 |
-| `specialKeyPressed` | - | 功能键按下状态背景色 |
-| `specialKeyBorderStroke` | - | 功能键边框描边色 |
-| `accentKeyBackground` | - | 强调键（回车、空格等）背景色 |
-| `accentKeyPressed` | - | 强调键按下状态背景色 |
-| `accentKeyBorderStroke` | - | 强调键边框描边色 |
-| `keyText` | - | 主按键文字颜色 |
-| `specialKeyText` | - | 功能键文字颜色 |
-| `accentKeyText` | - | 强调键文字颜色 |
-| `altText` | - | 次级文字颜色（候选注释、标签、次要说明等） |
-| `background` | - | 键盘整体背景色 |
-| `surfaceStyle` | `"Raised"` | 表面风格：`"Raised"`（凸起）/ `"Flat"`（扁平） |
-| `panel` | 必填 | 候选/工具栏面板配色，见下方 `panel` |
-| `pinner` | 必填 | 顶部拼音悬浮条配色，见下方 `pinner` |
-| `toastBackground` | `specialKeyBackground` | Toast 提示背景色（可省略） |
-| `toastText` | `keyText` | Toast 提示文字色（可省略） |
+- 键盘配色可自定义主题，并能通过二维码分享和导入
+- 内置表情、符号面板与光标移动、文本编辑（全选/复制/剪切/粘贴）
+- 支持简繁转换；万象方案自带计算器（输入大写 V 加算式）
 
-### 1.3 `colors.panel`（候选/工具栏面板）
+## 下载与安装
 
-| 字段 | 含义 |
-|------|------|
-| `background` | 面板背景色 |
-| `toolbarText` | 工具栏文字颜色 |
-| `toolbarActived` | 工具栏激活/高亮项颜色 |
-| `toolbarIcon` | 工具栏图标颜色 |
-| `candidateBackground` | 候选词区域背景色 |
-| `candidateText` | 候选词文字颜色 |
-| `candidateIndex` | 候选词序号颜色 |
-| `candidateDivider` | 候选词之间分隔线颜色 |
-| `toolbarPressed` | 工具栏按下状态颜色 |
+1. 在 [Releases](https://github.com/Jobeen7/ime/releases) 下载最新正式版 APK 安装
+2. 在系统设置「语言和输入法」中启用 Jime 并切换为当前输入法
+3. 首次启用会自动部署内置方案，稍等片刻即可输入
+4. 语音输入需先在 Jime 设置中下载语音模型（离线使用，下载后不再联网）
 
-### 1.4 `colors.pinner`（拼音悬浮条）
+## 隐私
 
-| 字段 | 含义 |
-|------|------|
-| `background` | 悬浮条背景色 |
-| `textColor` | 主文字颜色 |
-| `secondaryTextColor` | 次级/辅助文字颜色 |
+- 打字输入全程在本机离线完成，不上传输入内容
+- 联网只用于更新检查、模型下载，以及你主动配置的 WebDAV 同步
+- 所有从网络下载的文件都先校验 SHA-256 摘要，校验通过才安装使用
+- 详细说明见 [PRIVACY.md](PRIVACY.md)
 
----
+## 文档
 
-## 2. 二维码分享格式（紧凑短 key）
+- 键盘主题数据格式说明见 [docs/theme-format.md](docs/theme-format.md)
+- 第三方组件与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
-分享时把**单个主题**编码为：
+## 许可证
 
-```
-IMEKBTHEME:{紧凑JSON}
-```
-
-- 前缀：固定 `IMEKBTHEME:`（区分本应用主题）
-- 内容：`CompactTheme` 紧凑 JSON，字段名压缩到最短，便于二维码容纳
-- 颜色以 **ARGB 数字（Int）** 表示
-- 编码时指定 UTF-8 字符集，保证中文名称正确
-
-### 2.1 紧凑字段映射
-
-| 紧凑 key | 对应可读字段 | 含义 |
-|----------|--------------|------|
-| `i` | `id` | 主题唯一标识 |
-| `n` | `name` | 主题名称 |
-| `c` | `colors` | 配色对象（见下） |
-
-`c` 内字段：
-
-| 紧凑 key | 对应可读字段 |
-|----------|--------------|
-| `kb` | `keyBackground` |
-| `kp` | `keyPressed` |
-| `kbs` | `keyBorderStroke` |
-| `skb` | `specialKeyBackground` |
-| `skp` | `specialKeyPressed` |
-| `skbs` | `specialKeyBorderStroke` |
-| `akb` | `accentKeyBackground` |
-| `akp` | `accentKeyPressed` |
-| `akbs` | `accentKeyBorderStroke` |
-| `kt` | `keyText` |
-| `skt` | `specialKeyText` |
-| `akt` | `accentKeyText` |
-| `alt` | `altText` |
-| `bg` | `background` |
-| `ss` | `surfaceStyle` |
-| `p` | `panel` |
-| `pn` | `pinner` |
-| `tb` | `toastBackground` |
-| `tt` | `toastText` |
-
-`p`（panel）内：
-
-| 紧凑 key | 对应字段 |
-|----------|----------|
-| `bg` | `background` |
-| `tt` | `toolbarText` |
-| `ta` | `toolbarActived` |
-| `ti` | `toolbarIcon` |
-| `cb` | `candidateBackground` |
-| `ct` | `candidateText` |
-| `ci` | `candidateIndex` |
-| `cd` | `candidateDivider` |
-| `tp` | `toolbarPressed` |
-
-`pn`（pinner）内：
-
-| 紧凑 key | 对应字段 |
-|----------|----------|
-| `bg` | `background` |
-| `tc` | `textColor` |
-| `stc` | `secondaryTextColor` |
-
----
-
-## 3. 导入规则
-
-- 扫码解析出完整主题后：
-  - 存在 **相同 `id`** 的主题 → 原位覆盖并直接导入
-  - 用户主题**未满（< 2）** → 直接追加导入
-  - 已满（= 2）→ 弹窗选择要覆盖的槽位
-- 导入成功后写入 `themes.json`（可读长 key 格式）、刷新列表并以该主题作为当前主题
-
-## 4. 导出规则
-
-- 分享前弹出“选择要导出的主题”弹层，**仅列出用户主题**（最多 2 个）
-- 选中后按紧凑短 key 格式生成二维码，UTF-8 编码中文名称
+本项目以 BSD-3-Clause 许可证发布，见 [LICENSE](LICENSE)。输入引擎基于 librime，拼音方案来自万象拼音（rime-wanxiang），离线语音识别基于 sherpa-onnx，详见第三方声明。
