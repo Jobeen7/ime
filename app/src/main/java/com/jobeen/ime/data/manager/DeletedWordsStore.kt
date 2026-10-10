@@ -4,14 +4,74 @@ import android.content.Context
 import com.jobeen.ime.base.util.appContext
 import java.util.concurrent.ConcurrentHashMap
 
+/** 一条删词记录：当前状态与最后变更时间（毫秒，写入设备时钟）。 */
+data class DeletedWordEntry(
+    val deleted: Boolean,
+    val updatedAt: Long,
+)
+
 /**
- * 用户长按删除的候选词（文本集合）。
+ * 编码一条删词记录为单行文本：`词<TAB>状态(1=已删/0=已恢复)<TAB>时间戳`。
+ * 词本身含制表符/换行时无法编码，返回 null（候选词实际不会出现这类字符，
+ * 同步与落盘时跳过即可）。
+ */
+internal fun encodeDeletedWordEntry(
+    word: String,
+    entry: DeletedWordEntry,
+): String? {
+    if (word.contains('\t') || word.contains('\n')) return null
+    return "$word\t${if (entry.deleted) 1 else 0}\t${entry.updatedAt}"
+}
+
+/**
+ * 解码一行删词记录。兼容旧格式：没有制表符的整行就是一个已删词
+ * （旧版只存词表），按「已删、时间 0」处理——合并时任何带时间戳的
+ * 新记录都能正确覆盖它。
+ */
+internal fun decodeDeletedWordEntry(line: String): Pair<String, DeletedWordEntry>? {
+    val text = line.trim()
+    if (text.isEmpty()) return null
+    val parts = text.split('\t')
+    if (parts.size < 3) return text to DeletedWordEntry(deleted = true, updatedAt = 0L)
+    val word = parts[0]
+    if (word.isEmpty()) return null
+    val deleted = parts[1] != "0"
+    val ts = parts[2].toLongOrNull() ?: 0L
+    return word to DeletedWordEntry(deleted, ts)
+}
+
+/**
+ * 合并两台设备的删词记录：逐词取时间戳较新的一方；时间相同（多为
+ * 旧格式的时间 0）时「已删」优先，保证删除不被旧状态覆盖、恢复也
+ * 不被旧删除覆盖——恢复是一次带新时间戳的显式操作，天然会赢。
+ */
+internal fun mergeDeletedWordEntries(
+    local: Map<String, DeletedWordEntry>,
+    remote: Map<String, DeletedWordEntry>,
+): Map<String, DeletedWordEntry> {
+    val merged = LinkedHashMap<String, DeletedWordEntry>(local)
+    for ((word, r) in remote) {
+        val l = merged[word]
+        merged[word] = when {
+            l == null -> r
+            r.updatedAt > l.updatedAt -> r
+            r.updatedAt < l.updatedAt -> l
+            else -> if (r.deleted) r else l
+        }
+    }
+    return merged
+}
+
+/**
+ * 用户长按删除的候选词（带状态与时间戳的记录表）。
  *
  * 背景：Rime 的 deleteCandidate 只在 userdb 打墓碑标记，系统词库查词时不检查墓碑，
  * 系统词删完会立刻重新出现。因此在 App 层维护删除词集合，候选列表展示前过滤掉。
- * Rime 的 userdb 墓碑仍然会写入（用于 WebDAV 同步）。
  *
- * 线程安全：读在引擎 Default 线程、写在主线程，用 ConcurrentHashMap 的 Set；
+ * 记录保留「已恢复」状态（墓碑的墓碑）：删除与恢复都是带时间戳的事件，
+ * WebDAV 同步逐词取较新状态，误删后可以在任意设备恢复并传播到所有设备。
+ *
+ * 线程安全：读在引擎 Default 线程、写在主线程，内部用 ConcurrentHashMap；
  * 落盘时传快照副本，不能把活集合交给 SharedPreferences（其异步序列化会读到后续修改）。
  */
 object DeletedWordsStore {
@@ -23,53 +83,79 @@ object DeletedWordsStore {
     }
 
     @Volatile
-    private var cache: MutableSet<String>? = null
+    private var cache: MutableMap<String, DeletedWordEntry>? = null
 
-    private fun load(): MutableSet<String> {
+    private fun load(): MutableMap<String, DeletedWordEntry> {
         return cache ?: synchronized(this) {
-            cache ?: ConcurrentHashMap.newKeySet<String>().also { set ->
-                set.addAll(prefs.getStringSet(KEY_WORDS, emptySet()).orEmpty())
-                cache = set
+            cache ?: ConcurrentHashMap<String, DeletedWordEntry>().also { map ->
+                prefs.getStringSet(KEY_WORDS, emptySet()).orEmpty().forEach { line ->
+                    decodeDeletedWordEntry(line)?.let { (word, entry) ->
+                        map[word] = entry
+                    }
+                }
+                cache = map
             }
         }
     }
 
-    fun isDeleted(text: String): Boolean = load().contains(text)
+    /** 变更与落盘快照整体串行，避免交错落盘让旧快照覆盖新状态。 */
+    private fun persistLocked(map: Map<String, DeletedWordEntry>) {
+        val lines = HashSet<String>()
+        for ((word, entry) in map) {
+            encodeDeletedWordEntry(word, entry)?.let { lines.add(it) }
+        }
+        prefs.edit().putStringSet(KEY_WORDS, lines).apply()
+    }
 
-    /** 当前全部已删除词的快照（供 WebDAV 同步读取）。 */
-    fun all(): Set<String> = HashSet(load())
+    fun isDeleted(text: String): Boolean = load()[text]?.deleted == true
 
-    // 变更与落盘快照必须整体串行：两个线程交错时，后落盘的旧快照会覆盖
-    // 先落盘的新快照，被删词在进程重启后从磁盘上「复活」丢失一条
-    /** 批量并入（WebDAV 同步合并远端删除词表时用），只落盘一次。 */
-    fun addAll(words: Collection<String>) {
+    /** 当前处于「已删」状态的全部词的快照。 */
+    fun all(): Set<String> =
+        load().filterValues { it.deleted }.keys.toHashSet()
+
+    /** 当前全部记录（含已恢复的墓碑）的快照，供 WebDAV 同步合并。 */
+    fun entriesSnapshot(): Map<String, DeletedWordEntry> = HashMap(load())
+
+    /** 已删词列表（按词排序），供设置页展示与恢复。 */
+    fun deletedWords(): List<String> = all().sorted()
+
+    /** 应用一次同步合并结果（本地与远端逐词取较新状态后的全表）。 */
+    fun applyMerged(merged: Map<String, DeletedWordEntry>) {
         synchronized(this) {
-            val set = load()
-            var changed = false
-            for (w in words) {
-                val t = w.trim()
-                if (t.isNotEmpty() && set.add(t)) changed = true
-            }
-            if (changed) {
-                prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
-            }
+            val map = load()
+            map.clear()
+            map.putAll(merged)
+            persistLocked(map)
         }
     }
 
     fun add(text: String) {
+        val word = text.trim()
+        if (word.isEmpty()) return
         synchronized(this) {
-            val set = load()
-            if (set.add(text)) {
-                prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+            val map = load()
+            if (map[word]?.deleted != true) {
+                map[word] = DeletedWordEntry(
+                    deleted = true,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                persistLocked(map)
             }
         }
     }
 
+    /** 恢复一个误删的词：写入带新时间戳的「已恢复」记录，同步后全设备生效。 */
     fun remove(text: String) {
+        val word = text.trim()
+        if (word.isEmpty()) return
         synchronized(this) {
-            val set = load()
-            if (set.remove(text)) {
-                prefs.edit().putStringSet(KEY_WORDS, HashSet(set)).apply()
+            val map = load()
+            if (map[word]?.deleted == true) {
+                map[word] = DeletedWordEntry(
+                    deleted = false,
+                    updatedAt = System.currentTimeMillis(),
+                )
+                persistLocked(map)
             }
         }
     }
