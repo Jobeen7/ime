@@ -194,6 +194,10 @@
     <string name="clipboard_multi_select">多选</string>
     <string name="clipboard_selected_count">已选 %1$d 项</string>
     <string name="clipboard_select_none">未选择记录</string>
+    <string name="clipboard_reorder">排序</string>
+    <string name="clipboard_reorder_hint">拖动条目调整顺序</string>
+    <string name="clipboard_reorder_done">完成</string>
+    <string name="phrase_item_actions">对这条常用语</string>
 
     <!-- Clipboard / Phrase capsule -->
     <string name="clipboard_tab">剪切板</string>
