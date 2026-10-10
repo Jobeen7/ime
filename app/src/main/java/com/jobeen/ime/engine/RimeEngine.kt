@@ -19,6 +19,7 @@ import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.CandidateSortingManager
+import com.jobeen.ime.data.manager.applySavedCandidateOrder
 import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.event.KeyEvent
@@ -1015,9 +1016,24 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 }
 
                 val db = AppDatabase.getInstance(ctx)
+                // 用户拖拽保存的顺序是对该候选集的显式意愿：无论是否开启
+                // 智能重排都要应用（此前重排分支直接丢弃保存顺序，而重排
+                // 默认开启，拖拽排序存进数据库也永不生效、拖完必回原位）。
+                // 排序表为空时（绝大多数用户从未保存过）跳过查询：旧实现
+                // 每键都算一次指纹 + 查一次 Room，结果注定为 null
+                val savedIds = if (sortingTableEmpty) {
+                    null
+                } else {
+                    val mgr = CandidateSortingManager(db)
+                    if (mgr.isTableEmpty()) {
+                        sortingTableEmpty = true
+                        null
+                    } else {
+                        mgr.load(filteredMsg.list)
+                    }
+                }
                 val rerankEnabled = CandidateManager.isRerankEnabled(ctx)
                 if (rerankEnabled) {
-                    // 开启重排：使用重排结果，不还原用户排序
                     // 隐私模式下不读光标前文（gramDb 为空时前文本来也不参与打分）；
                     // 非隐私模式走前文缓存，避免每次候选刷新都跨进程读一次
                     val inputContext = if (isNoPersonalizedLearning(editorInfo)) "" else
@@ -1027,33 +1043,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     val sortedList = rerankManager?.rerank(
                         filteredMsg.list, inputContext, predictionManager?.gramDb()
                     )
+                    val baseList = sortedList ?: filteredMsg.list
                     actions.send(
                         Action.CandidatesReady(
                             requestId, EngineMessage.Candidates(
-                                sortedList ?: filteredMsg.list, 0, 0, total = filteredMsg.total
+                                if (savedIds.isNullOrEmpty()) baseList
+                                else applySavedCandidateOrder(baseList, savedIds),
+                                0, 0, total = filteredMsg.total
                             )
                         )
                     )
                 } else {
-                    // 关闭重排：还原用户拖拽保存的排序；无记录则原样展示。
-                    // 排序表为空时（绝大多数用户从未保存过）跳过查询：旧实现
-                    // 每键都算一次指纹 + 查一次 Room，结果注定为 null
-                    val savedIds = if (sortingTableEmpty) {
-                        null
-                    } else {
-                        val mgr = CandidateSortingManager(db)
-                        if (mgr.isTableEmpty()) {
-                            sortingTableEmpty = true
-                            null
-                        } else {
-                            mgr.load(filteredMsg.list)
-                        }
-                    }
                     actions.send(
                         Action.CandidatesReady(
                             requestId, if (savedIds.isNullOrEmpty()) filteredMsg
                             else EngineMessage.Candidates(
-                                restoreCandidateOrder(filteredMsg.list, savedIds), 0, 0,
+                                applySavedCandidateOrder(filteredMsg.list, savedIds), 0, 0,
                                 total = filteredMsg.total
                             )
                         )
@@ -1080,22 +1085,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         predictionJob?.cancel()
         predictionJob = null
         state.latestPredictionRequestId = ++state.predictionRequestId
-    }
-
-    /** 按保存的原始序号顺序重排候选；不在保存列表中的候选保持原有相对顺序追加到末尾。 */
-    private fun restoreCandidateOrder(
-        list: List<Candidate>, savedIds: List<Int>
-    ): List<Candidate> {
-        val byId = list.associateBy { it.index }
-        val savedSet = savedIds.toSet()
-        val restored = ArrayList<Candidate>(list.size)
-        for (id in savedIds) {
-            byId[id]?.let { restored.add(it) }
-        }
-        for (c in list) {
-            if (c.index !in savedSet) restored.add(c)
-        }
-        return restored
     }
 
     override fun onFinishInputView() {

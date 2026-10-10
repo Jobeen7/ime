@@ -38,3 +38,23 @@ class CandidateSortingManager(private val db: AppDatabase) {
     /** 排序表是否为空（供热路径缓存判空，避免每键一次注定无结果的查询） */
     suspend fun isTableEmpty(): Boolean = dao.count() == 0
 }
+
+/**
+ * 按保存的原始序号顺序重排候选；不在保存列表中的候选保持原有相对
+ * 顺序追加到末尾。保存顺序是用户对该候选集的显式意愿，调用方无论
+ * 是否启用智能重排都应以此收口，否则拖拽排序存了也永不生效。
+ */
+internal fun applySavedCandidateOrder(
+    list: List<Candidate>, savedIds: List<Int>
+): List<Candidate> {
+    val byId = list.associateBy { it.index }
+    val savedSet = savedIds.toSet()
+    val restored = ArrayList<Candidate>(list.size)
+    for (id in savedIds) {
+        byId[id]?.let { restored.add(it) }
+    }
+    for (c in list) {
+        if (c.index !in savedSet) restored.add(c)
+    }
+    return restored
+}
