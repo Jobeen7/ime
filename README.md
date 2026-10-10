@@ -62,4 +62,4 @@
 
 ## 许可证
 
-本项目以 BSD-3-Clause 许可证发布，见 [LICENSE](LICENSE)。输入引擎基于 librime，拼音方案来自万象拼音（rime-wanxiang），离线语音识别基于 sherpa-onnx，详见第三方声明。
+本项目以 BSD-3-Clause 许可证发布，见 [LICENSE](LICENSE)。输入引擎基于 librime，拼音方案来自[万象拼音](https://github.com/amzxyz/rime-wanxiang)，离线语音识别基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)，详见第三方声明。
