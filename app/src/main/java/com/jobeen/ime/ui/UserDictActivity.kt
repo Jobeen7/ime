@@ -95,6 +95,19 @@ class UserDictActivity : ComponentActivity() {
                     },
                     onDismissRemoteFiles = { uiState.remoteFiles = null },
                     onDismissNotice = { uiState.noticeMessage = null },
+                    onShowDeletedWords = {
+                        uiState.deletedWords =
+                            com.jobeen.ime.data.manager.DeletedWordsStore.deletedWords()
+                    },
+                    onRestoreDeletedWord = { word ->
+                        com.jobeen.ime.data.manager.DeletedWordsStore.remove(word)
+                        uiState.deletedWords =
+                            com.jobeen.ime.data.manager.DeletedWordsStore.deletedWords()
+                        ToastUtil.showToast(
+                            getString(R.string.user_dict_deleted_words_restored),
+                        )
+                    },
+                    onDismissDeletedWords = { uiState.deletedWords = null },
                 )
             }
         }

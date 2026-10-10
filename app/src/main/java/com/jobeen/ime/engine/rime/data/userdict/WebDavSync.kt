@@ -118,7 +118,12 @@ object WebDavSync {
     }
 
     /** 远端文件的版本状态：用于上传前判断远端是否被其他设备改动过 */
-    private data class RemoteState(val etag: String?, val lastModifiedMs: Long)
+    private data class RemoteState(
+        val etag: String?,
+        val lastModifiedMs: Long,
+        /** ETag 是否为弱校验形式（W/ 前缀）：弱 ETag 不能用于 If-Match 强比较 */
+        val etagWeak: Boolean = false,
+    )
 
     /**
      * 远端状态查询的三态结果：必须区分「确实不存在」与「查不到」——
@@ -154,8 +159,10 @@ object WebDavSync {
         raw?.trim()?.removePrefix("W/")?.trim()?.removeSurrounding("\"")
             ?.takeIf { it.isNotEmpty() }
 
-    /** If-Match 发送形：HTTP 规范要求带引号的强 ETag */
-    private fun quotedETag(normalized: String): String = "\"$normalized\""
+    // 上传前置条件（If-Match / If-Unmodified-Since）的构造统一走文件
+    // 末尾的 putPrecondition()：弱 ETag 不能用于 If-Match 强比较（RFC
+    // 规定弱标签永不强匹配，硬发会让服务器回 412 且同步永远失败），
+    // 改用修改时间条件；强 ETag 仍发带引号的 If-Match。
 
     /**
      * 查询某个远端文件的 ETag / 修改时间（PROPFIND Depth: 0），返回三态结果：
@@ -182,16 +189,12 @@ object WebDavSync {
                     return RemoteStateResult.Error("PROPFIND HTTP ${response.code}")
                 }
                 val xml = response.body?.string().orEmpty()
-                val etag = normalizeETag(etagRegex.find(xml)?.groupValues?.get(1))
+                val etagRaw = etagRegex.find(xml)?.groupValues?.get(1)
+                val etag = normalizeETag(etagRaw)
                 val lmText = lastModifiedRegex.find(xml)?.groupValues?.get(1)?.trim().orEmpty()
-                val lmMs = runCatching {
-                    val fmt = java.text.SimpleDateFormat(
-                        "EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US
-                    )
-                    fmt.timeZone = java.util.TimeZone.getTimeZone("GMT")
-                    fmt.parse(lmText)?.time ?: 0L
-                }.getOrDefault(0L)
-                RemoteStateResult.Found(RemoteState(etag, lmMs))
+                RemoteStateResult.Found(
+                    RemoteState(etag, parseHttpDateMs(lmText), isWeakETag(etagRaw)),
+                )
             }
         }.getOrElse { RemoteStateResult.Error(it.message ?: "网络错误") }
     }
@@ -268,9 +271,16 @@ object WebDavSync {
                     .url(remoteUrl(fileName))
                     .header("Authorization", authHeader())
                     .put(tempFile.asRequestBody(textPlain))
-                // 带上合并基准的 ETag：合并后到上传之间远端又被改动时服务器回 412，
-                // 而不是被我们覆盖掉
-                baseState?.etag?.let { builder.header("If-Match", quotedETag(it)) }
+                // 带上合并基准的前置条件：合并后到上传之间远端又被改动时
+                // 服务器回 412，而不是被我们覆盖掉。弱 ETag 不能用于
+                // If-Match（见 putPrecondition），自动降级为时间条件。
+                baseState?.let { st ->
+                    val pre = putPrecondition(st.etag, st.etagWeak, st.lastModifiedMs)
+                    pre.ifMatch?.let { builder.header("If-Match", it) }
+                    pre.ifUnmodifiedSince?.let {
+                        builder.header("If-Unmodified-Since", it)
+                    }
+                }
                 // 远端原本不存在：新建限定——查询后到上传之间若被其他设备
                 // 先建了同名文件，服务器回 412 而非被我们覆盖
                 if (remoteMissing && baseState == null) {
@@ -603,17 +613,21 @@ object WebDavSync {
     private const val DELETED_WORDS_MAX_BYTES = 4L * 1024 * 1024
 
     /**
-     * 同步长按删除词表：与远端取并集合并。
+     * 同步长按删除词表：逐词按时间戳合并（见 DeletedWordsStore 的记录格式）。
      *
-     * 删除是单调操作（只加不减），并集即正确合并、天然无冲突：
-     * 任一设备删过的词，同步后在所有设备上都保持删除，换机也不会复活。
-     * GET 远端 → 本地并入 → 并集与远端不同才 PUT 回（带 If-Match 防并发覆盖）。
+     * 删除与恢复都是带时间戳的事件、逐词取较新状态；旧格式远端文件
+     * （每行一个词）按「已删、时间 0」兼容读取，下次 PUT 自动升级为新格式。
+     * GET 远端 → 合并应用到本地 → 合并结果与远端不同才 PUT 回（带前置
+     * 条件防并发覆盖，412 时重走一次合并）。
      * 必须在后台线程调用；失败抛异常由调用方决定是否忽略。
      */
     private fun syncDeletedWords(retried: Boolean = false) {
-        val local = com.jobeen.ime.data.manager.DeletedWordsStore.all()
+        val store = com.jobeen.ime.data.manager.DeletedWordsStore
+        val local = store.entriesSnapshot()
         var remoteETag: String? = null
-        val remote = mutableSetOf<String>()
+        var remoteETagWeak = false
+        var remoteLastModifiedMs = 0L
+        val remote = mutableMapOf<String, com.jobeen.ime.data.manager.DeletedWordEntry>()
         val getRequest = Request.Builder()
             .url(remoteUrl(DELETED_WORDS_FILE))
             .header("Authorization", authHeader())
@@ -625,40 +639,54 @@ object WebDavSync {
                 !response.isSuccessful ->
                     throw httpError("下载删除词表", response.code, errorDetail(response))
                 else -> {
-                    remoteETag = normalizeETag(response.header("ETag"))
-                    // 删除词表是每行一个词的小文件，设上限防止异常内容撑爆内存
+                    val etagRaw = response.header("ETag")
+                    remoteETag = normalizeETag(etagRaw)
+                    remoteETagWeak = isWeakETag(etagRaw)
+                    remoteLastModifiedMs =
+                        parseHttpDateMs(response.header("Last-Modified"))
+                    // 删除词表是每行一条记录的小文件，设上限防止异常内容撑爆内存
                     val bytes = java.io.ByteArrayOutputStream().use { out ->
                         response.body?.byteStream()
                             ?.copyToWithLimit(out, DELETED_WORDS_MAX_BYTES)
                         out.toByteArray()
                     }
-                    String(bytes, Charsets.UTF_8).lineSequence()
-                        .map { it.trim() }
-                        .filter { it.isNotEmpty() }
-                        .forEach { remote.add(it) }
+                    String(bytes, Charsets.UTF_8).lineSequence().forEach { line ->
+                        com.jobeen.ime.data.manager.decodeDeletedWordEntry(line)
+                            ?.let { (word, entry) -> remote[word] = entry }
+                    }
                 }
             }
         }
-        val merged = local union remote
-        if (merged.size != local.size) {
-            com.jobeen.ime.data.manager.DeletedWordsStore.addAll(merged)
+        val merged =
+            com.jobeen.ime.data.manager.mergeDeletedWordEntries(local, remote)
+        if (merged != local) {
+            store.applyMerged(merged)
         }
         if (merged != remote) {
-            val content = merged.sorted().joinToString("\n", postfix = "\n")
+            val content = merged.entries
+                .sortedBy { it.key }
+                .mapNotNull { (word, entry) ->
+                    com.jobeen.ime.data.manager.encodeDeletedWordEntry(word, entry)
+                }
+                .joinToString("\n", postfix = "\n")
             val putBuilder = Request.Builder()
                 .url(remoteUrl(DELETED_WORDS_FILE))
                 .header("Authorization", authHeader())
                 .put(content.toRequestBody(textPlain))
             if (remoteETag != null) {
-                putBuilder.header("If-Match", quotedETag(remoteETag))
+                val pre = putPrecondition(remoteETag, remoteETagWeak, remoteLastModifiedMs)
+                pre.ifMatch?.let { putBuilder.header("If-Match", it) }
+                pre.ifUnmodifiedSince?.let {
+                    putBuilder.header("If-Unmodified-Since", it)
+                }
             } else {
                 // 远端文件尚不存在（首次同步）：只允许"不存在才创建"，防止两台
-                // 设备同时首同步时后写者无条件覆盖先写者的并集（删除词会短暂复活）
+                // 设备同时首同步时后写者无条件覆盖先写者的结果
                 putBuilder.header("If-None-Match", "*")
             }
             client.newCall(putBuilder.build()).execute().use { response ->
-                if (response.code == 412 && remoteETag == null && !retried) {
-                    // 另一台设备刚抢先创建：重走一次 GET→合并→PUT 即收敛
+                if (response.code == 412 && !retried) {
+                    // 远端刚被其他设备改动（或抢先创建）：重走一次合并即收敛
                     syncDeletedWords(retried = true)
                     return
                 }
@@ -709,6 +737,54 @@ internal fun unescapeXmlEntities(text: String): String =
             }.getOrDefault(m.value)
         }
     }
+
+/** 原始 ETag 文本是否为弱校验形式（W/ 前缀） */
+internal fun isWeakETag(raw: String?): Boolean =
+    raw?.trimStart()?.startsWith("W/") == true
+
+/** 上传前置条件：If-Match 与 If-Unmodified-Since 至多取其一 */
+internal data class PutPrecondition(
+    val ifMatch: String?,
+    val ifUnmodifiedSince: String?,
+)
+
+/**
+ * 按基准状态构造 PUT 前置条件：
+ * - 强 ETag → If-Match（带引号）；
+ * - 弱 ETag → 不能用于 If-Match 强比较（硬发永远 412），改用
+ *   If-Unmodified-Since（基准的修改时间）；连时间都没有则不带
+ *   前置条件——调用方在上传前已做过远端变更检查，风险窗口与
+ *   服务器不提供 ETag 时相同；
+ * - 无 ETag → 不带前置条件。
+ */
+internal fun putPrecondition(
+    normalizedETag: String?,
+    etagWeak: Boolean,
+    lastModifiedMs: Long,
+): PutPrecondition {
+    if (normalizedETag.isNullOrEmpty()) return PutPrecondition(null, null)
+    if (!etagWeak) return PutPrecondition("\"$normalizedETag\"", null)
+    return PutPrecondition(
+        null,
+        if (lastModifiedMs > 0L) formatHttpDate(lastModifiedMs) else null,
+    )
+}
+
+private fun httpDateFormat(): java.text.SimpleDateFormat =
+    java.text.SimpleDateFormat(
+        "EEE, dd MMM yyyy HH:mm:ss 'GMT'", java.util.Locale.US,
+    ).apply { timeZone = java.util.TimeZone.getTimeZone("GMT") }
+
+/** 毫秒时间戳 → HTTP 日期串（GMT） */
+internal fun formatHttpDate(ms: Long): String =
+    httpDateFormat().format(java.util.Date(ms))
+
+/** HTTP 日期串 → 毫秒时间戳；解析失败返回 0 */
+internal fun parseHttpDateMs(text: String?): Long {
+    val t = text?.trim().orEmpty()
+    if (t.isEmpty()) return 0L
+    return runCatching { httpDateFormat().parse(t)?.time ?: 0L }.getOrDefault(0L)
+}
 
 /**
  * 百分号解码 href。按 Unicode 码点迭代：旧实现按 char 逐个转 UTF-8，

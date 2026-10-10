@@ -166,9 +166,11 @@ class AuditFixesTest {
     }
 
     @Test
-    fun pickExpectedSha256_manifestWinsThenGithubFallback() {
+    fun pickExpectedSha256_githubRegistryOnly() {
         val other = "a".repeat(64)
-        assertEquals(validSha, pickExpectedSha256(validSha, other))
+        // 清单摘要永不作数：只认 GitHub 登记值（信任根收口）
+        assertEquals(other, pickExpectedSha256(validSha, other))
+        assertEquals("", pickExpectedSha256(validSha, ""))
         assertEquals(other, pickExpectedSha256("", other))
         assertEquals(other, pickExpectedSha256("garbage", "sha256:$other"))
         assertEquals("", pickExpectedSha256("", ""))
