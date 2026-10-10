@@ -372,10 +372,18 @@ class KawaiiPanel(
             listener?.onPhraseClick(phrase)
         }
         clipboardView.onPhraseDelete = { phrase ->
-            // 与剪贴板同构的动作菜单：排序入口 + 删除（删除仍走确认）
+            // 与剪贴板同构的动作菜单：置顶 + 排序入口 + 删除（删除仍走确认）
             confirmOverlay.actions(
                 message = context.getString(R.string.phrase_item_actions),
                 items = listOf(
+                    context.getString(
+                        if (phrase.pinned) R.string.clipboard_unpin else R.string.clipboard_pin
+                    ) to {
+                        appScope.launch {
+                            PhraseManager.setPinned(context, phrase.id, !phrase.pinned)
+                            clipboardView.refresh()
+                        }
+                    },
                     context.getString(R.string.clipboard_reorder) to {
                         enterClipReorder()
                     },

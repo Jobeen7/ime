@@ -129,12 +129,13 @@ class ClipboardView(
         return t
     }
 
-    /** 拖动条目当前所属的同组下标区间（剪贴板按置顶分组，常用语全表一组）。 */
+    /** 拖动条目当前所属的同组下标区间（两标签都按置顶与否分组、互不跨越）。 */
     private fun reorderRangeFor(index: Int): IntRange {
-        if (clipTab != ClipboardTab.CLIPBOARD) {
-            return if (phrases.isEmpty()) IntRange.EMPTY else 0..phrases.lastIndex
+        return if (clipTab == ClipboardTab.CLIPBOARD) {
+            reorderGroupRange(displayedEntries.map { it.pinned }, index)
+        } else {
+            reorderGroupRange(phrases.map { it.pinned }, index)
         }
-        return reorderGroupRange(displayedEntries.map { it.pinned }, index)
     }
 
     private fun moveReorderItem(from: Int, to: Int) {
@@ -204,8 +205,10 @@ class ClipboardView(
                     updateReorderDrag(reorderLastY)
                     invalidate()
                 }
-                postDelayed(this, 16)
             }
+            // 拖动期间持续自循环：手指静止停在边缘区时没有 MOVE 事件，
+            // 只投递一次会在 step==0 时直接退出、之后再进边缘区也不滚动
+            postDelayed(this, 16)
         }
     }
 
@@ -892,6 +895,7 @@ class ClipboardView(
                     primaryLines = lines,
                     secondaryLines = emptyList(),
                     cloud = false,
+                    pinned = phrase.pinned,
                 )
             }
         }

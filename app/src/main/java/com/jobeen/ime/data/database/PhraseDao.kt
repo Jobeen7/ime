@@ -17,8 +17,11 @@ interface PhraseDao {
     @Update
     suspend fun update(record: PhraseRecord): Int
 
-    @Query("SELECT * FROM phrase_records ORDER BY sortOrder ASC, createdAt DESC")
+    @Query("SELECT * FROM phrase_records ORDER BY pinned DESC, sortOrder ASC, createdAt DESC")
     suspend fun getAll(): List<PhraseRecord>
+
+    @Query("UPDATE phrase_records SET pinned = :pinned WHERE id = :id")
+    suspend fun setPinnedById(id: Long, pinned: Boolean): Int
 
     @Query("SELECT MIN(sortOrder) FROM phrase_records")
     suspend fun minSortOrder(): Long?
@@ -35,6 +38,6 @@ interface PhraseDao {
     @Query("DELETE FROM phrase_records")
     suspend fun deleteAll(): Int
 
-    @Query("SELECT * FROM phrase_records WHERE label LIKE '%' || :query || '%' OR text LIKE '%' || :query || '%' ORDER BY sortOrder ASC, createdAt DESC")
+    @Query("SELECT * FROM phrase_records WHERE label LIKE '%' || :query || '%' OR text LIKE '%' || :query || '%' ORDER BY pinned DESC, sortOrder ASC, createdAt DESC")
     suspend fun search(query: String): List<PhraseRecord>
 }

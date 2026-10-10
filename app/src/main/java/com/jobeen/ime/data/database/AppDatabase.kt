@@ -9,7 +9,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 11, exportSchema = true)
+@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 12, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 
@@ -31,7 +31,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ime_database"
-                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).addCallback(VACUUM_CALLBACK).build().also { INSTANCE = it }
+                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12).addCallback(VACUUM_CALLBACK).build().also { INSTANCE = it }
                 // 注意：不要加 fallbackToDestructiveMigration() —— 漏写 Migration 时宁可启动崩溃（fail-fast，
                 // 发布前真机测试会先暴露），也不要静默清空用户的剪贴板/常用语/选词偏好。每次 bump version
                 // 都必须写 Migration（无结构变更时写空迁移，见 MIGRATION_7_8）。
@@ -229,6 +229,14 @@ abstract class AppDatabase : RoomDatabase() {
             db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `sortOrder` INTEGER NOT NULL DEFAULT 0")
             db.execSQL("UPDATE `phrase_records` SET `sortOrder` = -`createdAt`")
             db.execSQL("ALTER TABLE `clipboard_records` ADD COLUMN `sortOrder` INTEGER NOT NULL DEFAULT 0")
+        }
+
+        // v12：phrase_records 新增 pinned（常用语置顶，与剪贴板同语义），默认未置顶
+        private val MIGRATION_11_12: Migration = Migration(
+            startVersion = 11,
+            endVersion = 12,
+        ) { db ->
+            db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `pinned` INTEGER NOT NULL DEFAULT 0")
         }
     }
 }
