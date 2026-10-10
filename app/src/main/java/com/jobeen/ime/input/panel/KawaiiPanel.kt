@@ -194,6 +194,14 @@ class KawaiiPanel(
         }
         onDragComplete = { candidates ->
             (view.currentRenderer as? ComposingRenderer)?.candidates = candidates
+            // 面板状态必须同步成新顺序：state 仍是拖前列表时，之后任何
+            // 一次同态候选刷新走 setter 都会用拖前列表覆盖网格，拖拽
+            // 结果当场或下个按键即被打回原位
+            when (state) {
+                is State.Composing -> state = State.Composing(candidates)
+                is State.Prediction -> state = State.Prediction(candidates)
+                else -> {}
+            }
             this@KawaiiPanel.listener?.onCandidateGridDragComplete(candidates)
         }
     }
