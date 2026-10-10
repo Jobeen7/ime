@@ -148,9 +148,11 @@ object ClipboardManager {
 
     /**
      * 拖动排序落库：[orderedTexts] 是面板当前显示的条目顺序（置顶组在前）。
-     * 全量有效行统一重编号：显示中的按新顺序在前，其余（已被保留期挡在
-     * 显示外的未置顶旧条目）按时间倒序接在后面——只给显示子集编号会让
-     * 两套序号交错，日后旧条目重回显示范围时位置错乱。
+     * 槽位保持合并：取全量有效行的当前显示序，显示中的条目在它们原先
+     * 占据的槽位集合内按面板新序重排，未显示的条目（保留期外的旧条目、
+     * 拖动后落库前刚复制进来的新条目）原位不动，最后统一重编号。
+     * 只按子集拼接会把未显示条目一律压到末尾——新条目刚进来就沉底，
+     * 且两套序号交错后旧条目重回显示范围时位置错乱。
      */
     suspend fun applyOrder(context: Context, orderedTexts: List<String>) {
         db(context) { db ->
@@ -158,11 +160,11 @@ object ClipboardManager {
                 val dao = db.clipboardDao()
                 val all = dao.getAllActive()
                 val byText = all.associateBy { it.text }
-                val shown = orderedTexts.mapNotNull { byText[it] }
-                val shownTexts = shown.mapTo(HashSet()) { it.text }
-                val rest = all.filter { it.text !in shownTexts }
-                    .sortedWith(compareBy({ !it.pinned }, { -it.timestamp }))
-                val sequence = shown + rest
+                val current = all.sortedWith(
+                    compareBy({ !it.pinned }, { it.sortOrder }, { -it.timestamp })
+                )
+                val shownQueue = orderedTexts.mapNotNull { byText[it] }
+                val sequence = slotPreservingReorder(current, shownQueue) { it.text }
                 sequence.forEachIndexed { index, record ->
                     if (record.sortOrder != index.toLong()) {
                         dao.setSortOrderByText(record.text, index.toLong())
