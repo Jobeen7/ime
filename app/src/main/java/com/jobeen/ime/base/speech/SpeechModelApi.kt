@@ -34,7 +34,9 @@ object SpeechModelApi {
         val query = mapOf(
             "type" to type,
             "soc" to socModel(),
-        ).entries.joinToString("&") { (k, v) -> "$k=$v" }
+        ).entries.joinToString("&") { (k, v) ->
+            "$k=${java.net.URLEncoder.encode(v, Charsets.UTF_8.name())}"
+        }
         return runCatching {
             HttpUtil.get<SpeechModelManifest>("speech/model?$query")
         }.getOrElse { e ->

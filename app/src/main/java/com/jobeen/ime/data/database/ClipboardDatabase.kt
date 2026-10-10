@@ -13,7 +13,7 @@ import androidx.room.TypeConverters
  * 敏感文本，必须排除在系统云备份之外；而常用语/选词偏好等留在 ime_database 照常备份。
  * 旧数据由 ClipboardManager 在首次访问时从 ime_database 一次性迁入。
  */
-@Database(entities = [ClipboardRecord::class], version = 2, exportSchema = false)
+@Database(entities = [ClipboardRecord::class], version = 2, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class ClipboardDatabase : RoomDatabase() {
 

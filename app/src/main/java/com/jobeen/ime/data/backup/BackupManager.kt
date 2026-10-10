@@ -54,7 +54,9 @@ object BackupManager {
     private const val FORMAT_VERSION = 1
     private const val KDF_SHA256 = "PBKDF2WithHmacSHA256"
     private const val KDF_SHA1 = "PBKDF2WithHmacSHA1"
-    private const val ITERATIONS = 200_000
+    // 新备份按 OWASP 对 PBKDF2-HMAC-SHA256 的建议取 600k；还原时迭代数读自文件头
+    // （区间 MIN..MAX 已覆盖），旧的 20 万次备份仍可还原
+    private const val ITERATIONS = 600_000
     private const val MIN_ITERATIONS = 10_000
     private const val MAX_ITERATIONS = 2_000_000
     private const val CLIPBOARD_PREFS = "clipboard_settings"
@@ -147,7 +149,7 @@ object BackupManager {
         for (r in db.candidatePreferDao().getAllFull()) {
             prefers.put(
                 JSONObject()
-                    .put("text", r.text).put("count", r.count).put("context", r.context)
+                    .put("text", r.text).put("count", r.count).put("context", "")
                     .put("createdAt", r.createdAt).put("updatedAt", r.updatedAt)
             )
         }
@@ -297,6 +299,22 @@ object BackupManager {
                 }
                 prefs[name] = map
             }
+            // 还原不得带入风险/过期的 WebDAV 状态：
+            // - allowHttp：备份包不应能替用户打开明文传输开关；
+            // - sync_etag_* / 上次同步时间：属于另一台设备的同步基准，沿用会让冲突检测失真。
+            // 整表覆盖时这些键因此被清掉，回到默认（HTTPS-only、无基准先合并）
+            prefs[WEBDAV_PREFS]?.let { webdav ->
+                prefs[WEBDAV_PREFS] = webdav.filterKeys { key ->
+                    key != "webdav_allow_http" &&
+                        // 服务器地址同样不从备份还原：恶意备份可借整表覆盖把
+                        // 服务器指向攻击者，用户之后填入真实口令同步即泄露；
+                        // 账号与口令仍可迁移（没有地址时它们无处发送）
+                        key != "webdav_server" &&
+                        key != "last_upload_time" &&
+                        key != "last_download_time" &&
+                        !key.startsWith("sync_etag_")
+                }
+            }
             // 还原语义以备份为准：强制剪贴板拆库迁移标记为已完成，防止重启后
             // 主库残留的旧剪贴板行被迁移逻辑合并进刚还原好的剪贴板表
             val clipSettings = LinkedHashMap(prefs[CLIPBOARD_PREFS].orEmpty())
@@ -341,7 +359,8 @@ object BackupManager {
                 preferList += CandidatePrefer(
                     text = o.optString("text"),
                     count = o.optInt("count", 1),
-                    context = o.optString("context"),
+                    // 旧备份可能带有输入片段：还原时一律丢弃
+                    context = "",
                     createdAt = o.optLong("createdAt"),
                     updatedAt = o.optLong("updatedAt"),
                 )

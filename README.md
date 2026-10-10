@@ -1,5 +1,12 @@
 Yet another ime
 
+# Jime
+
+基于 Rime 引擎的安卓输入法（万象拼音方案，九宫格/全键盘，离线语音输入）。
+
+- 隐私说明见 [PRIVACY.md](PRIVACY.md)
+- 第三方组件与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，本项目许可证见 [LICENSE](LICENSE)
+
 # 键盘主题数据格式说明
 
 本文件说明键盘自定义主题的存储格式（`themes.json`，可读）与二维码分享格式（紧凑短 key）的所有字段含义。

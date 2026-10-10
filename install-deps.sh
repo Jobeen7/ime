@@ -24,7 +24,6 @@ DEPS=(
     "$DEPS_DIR/librime-lua-deps|https://github.com/hchunhui/librime-lua.git|thirdparty|9e5bb71db1544913f8005dadc3df8439c00d08b7"
     "$DEPS_DIR/librime-octagram|https://github.com/lotem/librime-octagram.git|master|57d18b9f58e5284bd891d559f6bdd16cf60341e9"
     "$DEPS_DIR/librime-predict|https://github.com/rime/librime-predict.git|master|920bd41ebf6f9bf6855d14fbe80212e54e749791"
-    "$DEPS_DIR/llama.cpp|https://github.com/ggml-org/llama.cpp.git|master|4da6337767f973e2b4d0797e5b323d77d8565e4a"
 )
 
 # Git 依赖定义（librime 的 deps 子目录）
