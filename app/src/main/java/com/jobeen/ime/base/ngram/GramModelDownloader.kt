@@ -65,17 +65,18 @@ object GramModelDownloader {
         val target = File(DataManager.sharedDataDir, "$language.gram")
         val partial = File(target.parentFile, target.name + PART_SUFFIX)
         partial.delete()
-        // 期望摘要：清单提供了就用清单的；没提供（或格式不对）则向 GitHub
-        // 查上游登记的官方摘要。fail-closed：两者都拿不到可信摘要时拒绝
-        // 下载——语法模型约 400MB 且由原生代码解析，不能只凭长度放行。
+        // 期望摘要只认 GitHub 登记值：清单与下载链接同出一台服务器，清单
+        // 自带的 sha256 与链接同源、不能当信任锚（服务器被攻破时可配套
+        // 伪造）。fail-closed：GitHub 查不到可信摘要时拒绝下载——语法
+        // 模型约 400MB 且由原生代码解析，不能只凭长度放行。
         val expectedSha = pickExpectedSha256(
             manifest.sha256,
-            if (normalizeSha256(manifest.sha256).isEmpty()) {
-                fetchGithubSha256("$language.gram")
-            } else {
-                ""
-            },
+            fetchGithubSha256("$language.gram"),
         )
+        val manifestSha = normalizeSha256(manifest.sha256)
+        if (manifestSha.isNotEmpty() && manifestSha != expectedSha) {
+            Timber.w("Ngram manifest sha256 differs from GitHub registry, trusting GitHub")
+        }
         if (expectedSha.isEmpty()) {
             Timber.w("Ngram model has no trustworthy SHA-256, refusing download: %s", language)
             HttpUtil.showToast("模型增强下载失败：无法获取官方校验值")
@@ -221,8 +222,9 @@ internal fun normalizeSha256(raw: String?): String {
 }
 
 /**
- * 期望摘要的选取：清单摘要优先（服务端给了就以它为准），
- * 清单缺失或不合法时用 GitHub 官方摘要，两者都无则空串（不校验）。
+ * 期望摘要的选取：只认 GitHub 登记摘要。清单摘要与下载链接同出一台
+ * 服务器、不能当信任锚（参数保留仅因调用方还要拿它做日志比对）。
+ * GitHub 也查不到时返回空串，调用方据此 fail-closed 拒绝下载。
  */
 internal fun pickExpectedSha256(manifestSha256: String, githubSha256: String): String =
-    normalizeSha256(manifestSha256).ifEmpty { normalizeSha256(githubSha256) }
+    normalizeSha256(githubSha256)
