@@ -88,13 +88,23 @@ object PhraseManager {
         if (rows > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }
 
-    /** 拖动排序落库：按面板给出的完整顺序重编号全部常用语。 */
+    /**
+     * 拖动排序落库：与剪贴板同一槽位保持合并——显示中的条目在原槽位
+     * 集合内按面板新序重排，未显示的原位不动，最后统一重编号，避免
+     * 只给子集编号时新序号与未更新条目的旧序号交错。
+     */
     suspend fun applyOrder(context: Context, orderedIds: List<Long>) {
         db(context) { db ->
             db.withTransaction {
                 val dao = db.phraseDao()
-                orderedIds.forEachIndexed { index, id ->
-                    dao.setSortOrderById(id, index.toLong())
+                val all = dao.getAll()
+                val byId = all.associateBy { it.id }
+                val shownQueue = orderedIds.mapNotNull { byId[it] }
+                val sequence = slotPreservingReorder(all, shownQueue) { it.id }
+                sequence.forEachIndexed { index, record ->
+                    if (record.sortOrder != index.toLong()) {
+                        dao.setSortOrderById(record.id, index.toLong())
+                    }
                 }
             }
         }
