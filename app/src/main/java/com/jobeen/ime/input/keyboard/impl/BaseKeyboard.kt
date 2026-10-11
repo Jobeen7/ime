@@ -329,6 +329,12 @@ abstract class BaseKeyboard(
                             // 时会提前 return，打乱手势状态（v1.0.972 删除 SwipeMoveCursor
                             // 后引入的问题）。这里只开 flag，不加光标移动逻辑。
                             swipeEnabled = true
+                            // 语音长按的取消改走位移判据（20dp）：默认的
+                            // 24px 步进/出界摘除会被拇指沉降漂移误触、
+                            // 把长按吃成普通空格（审计 G1）；慢滑移光标
+                            // 的大位移仍能自然摘除。只设这一个视图，
+                            // 其他键的长按口径不变。
+                            longPressCancelSlopPx = dp(20f)
                             onTouchMoveListener = { pointerId, rawX, rawY ->
                                 onAction(KeyboardAction.VoiceDragPosition(pointerId, rawX, rawY))
                             }

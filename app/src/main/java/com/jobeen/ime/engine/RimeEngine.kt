@@ -10,6 +10,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.core.content.edit
 import com.jobeen.ime.ImeApplication
+import com.jobeen.ime.base.speech.VoiceUndoLedger
 import com.jobeen.ime.base.util.InputConnectionUtil
 import com.jobeen.ime.base.util.PinYinUtil
 import com.jobeen.ime.base.util.TextUtil
@@ -582,9 +583,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         actions.send(Action.Reset)
                     } else {
                         withContext(Dispatchers.Main.immediate) {
-                            InputConnectionUtil.sendCombinationKeyEvent(
-                                inputConnection(), KEYCODE_Z, ctrl = true
-                            )
+                            val ic = inputConnection()
+                            // 先查语音上屏账本：最近一段语音文字还在光标前
+                            // 原样躺着就整段直删。语音走组字转正，编辑器
+                            // 撤销栈的记账口径不一（分多步、甚至不入栈），
+                            // 盲发 Ctrl+Z 经常删不完一整段。不命中（上屏
+                            // 后打过字/移过光标/账本无账）才回落 Ctrl+Z。
+                            val undoneByLedger = ic != null && VoiceUndoLedger.tryUndo(ic)
+                            if (!undoneByLedger) {
+                                InputConnectionUtil.sendCombinationKeyEvent(
+                                    ic, KEYCODE_Z, ctrl = true
+                                )
+                            }
                         }
                     }
                 }
