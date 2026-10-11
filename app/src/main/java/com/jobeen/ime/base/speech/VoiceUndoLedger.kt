@@ -16,6 +16,13 @@ import android.view.inputmethod.InputConnection
  * （用户实测口径：多段语音要一次删完，不逐段滑）。用户在上屏后
  * 打过字、改过字、移过光标都会让拼接在对应段处断开：断点之后的
  * 段不删、账也不弹；全不吻合返回 false 让调用方回落 Ctrl+Z。
+ *
+ * 恢复口径（与撤销对称）：账本直删绕开了编辑器的撤销栈，下滑
+ * 恢复（Ctrl+Shift+Z）对这笔删除无账可恢复——故撤销成功时把删掉
+ * 的整串连同删除前的一小段前文锚点存入恢复栈；恢复时先核对光标
+ * 前文与删除后应有的状态一致（期间打过字/删过字即不一致），一致
+ * 才整串写回并重新入账。新的语音上屏清空恢复栈（新编辑作废恢复
+ * 未来，与通用撤销语义一致）。
  */
 object VoiceUndoLedger {
 
@@ -27,12 +34,27 @@ object VoiceUndoLedger {
 
     private data class Entry(val text: String, val atMs: Long)
 
+    /**
+     * 一次账本撤销的恢复单元：被删的整串 [combinedText]、删除后光标
+     * 前应剩下的前文 [prefix]（含一小段锚点，恢复时据此核对位置）、
+     * 被弹出的账本条目本体（恢复成功后按原时间戳重新入账）。
+     */
+    private data class RedoUnit(
+        val combinedText: String,
+        val prefix: String,
+        val entries: List<Entry>,
+    )
+
     private val entries = ArrayDeque<Entry>()
+    private val redoUnits = ArrayDeque<RedoUnit>()
 
     /** 登记一段刚真正落到编辑器里的语音文字；空串忽略 */
     @Synchronized
     fun recordCommittedSegment(text: String) {
         if (text.isEmpty()) return
+        // 新编辑作废恢复未来（通用撤销语义）：此前撤销存下的恢复
+        // 单元不再对应当前编辑脉络
+        redoUnits.clear()
         pruneExpired()
         entries.addLast(Entry(text, System.currentTimeMillis()))
         while (entries.size > MAX_ENTRIES) entries.removeFirst()
@@ -42,6 +64,7 @@ object VoiceUndoLedger {
     @Synchronized
     fun clearAll() {
         entries.clear()
+        redoUnits.clear()
     }
 
     /** 一次现读光标前文本的上限：账本至多 10 段，超出这个长度的极端长段组合不再整删 */
@@ -72,17 +95,72 @@ object VoiceUndoLedger {
             candidates.add(e)
         }
         if (candidates.isEmpty()) return false
-        val before = runCatching { ic.getTextBeforeCursor(lookup, 0) }.getOrNull()
+        // 现读窗口在段长之外多带一小段前文锚点：删除成功后这段锚点
+        // 连同被删整串一起存进恢复单元，下滑恢复时据此核对光标位置
+        // （拼接判定只看尾部，多读不影响判定结果）
+        val before = runCatching {
+            ic.getTextBeforeCursor(lookup + ANCHOR_CHARS, 0)?.toString()
+        }.getOrNull()
         val span = decideUndoDeleteMulti(before, candidates.map { it.text }) ?: return false
         val (count, totalLen) = span
         val deleted = runCatching { ic.deleteSurroundingText(totalLen, 0) }.getOrDefault(false)
         if (!deleted) return false
+        val window = before.orEmpty()
         synchronized(this) {
             // 从最新侧逐条弹：只弹仍是快照同一条的，校验期间登记的
             // 新段（不在快照里）身份不符、立即停手，不能误删新账
+            val popped = ArrayList<Entry>()
             for (i in 0 until count) {
-                if (entries.lastOrNull() === candidates[i]) entries.removeLast() else break
+                val top = entries.lastOrNull()
+                if (top === candidates[i]) {
+                    entries.removeLast()
+                    popped.add(top)
+                } else break
             }
+            // 存恢复单元：被删整串＋删除后应剩的前文（锚点＋未删的
+            // 旧段部分）。实际弹出的条目按时间序随单元保存，恢复
+            // 成功后重新入账；弹出中途被新账打断时单元只带已弹部分
+            redoUnits.addLast(
+                RedoUnit(
+                    combinedText = window.takeLast(totalLen),
+                    prefix = window.dropLast(totalLen),
+                    entries = popped.reversed(),
+                )
+            )
+            while (redoUnits.size > MAX_ENTRIES) redoUnits.removeFirst()
+        }
+        return true
+    }
+
+    /** 恢复核对时多读的前文锚点长度：足够定位删除点，又不至把大量无关前文纳入校验 */
+    private const val ANCHOR_CHARS = 16
+
+    /**
+     * 尝试恢复最近一次账本撤销删掉的整串：恢复栈顶单元的前文核对
+     * 通过（删除后编辑状态未被动过）才把整串写回光标处并重新入账；
+     * 任何不吻合/失败返回 false（不弹恢复栈），调用方回落
+     * Ctrl+Shift+Z。
+     */
+    fun tryRedo(ic: InputConnection): Boolean {
+        val selected = runCatching { ic.getSelectedText(0) }.getOrNull()
+        if (!selected.isNullOrEmpty()) return false
+        val unit = synchronized(this) { redoUnits.lastOrNull() } ?: return false
+        val before = runCatching {
+            ic.getTextBeforeCursor(unit.prefix.length + unit.combinedText.length, 0)?.toString()
+        }.getOrNull()
+        if (!decideRedoApply(before, unit.prefix, unit.combinedText.length)) return false
+        val committed = runCatching { ic.commitText(unit.combinedText, 1) }.getOrDefault(false)
+        if (!committed) return false
+        synchronized(this) {
+            // 只弹仍是栈顶的同一单元：校验期间状态变了就不动恢复栈
+            if (redoUnits.lastOrNull() === unit) redoUnits.removeLast()
+            // 被恢复的段按原时间戳重新入账（已过期的不再入），使
+            // 恢复后还能再次被上滑撤销接管
+            val now = System.currentTimeMillis()
+            for (e in unit.entries) {
+                if (now - e.atMs <= EXPIRE_MS) entries.addLast(e)
+            }
+            while (entries.size > MAX_ENTRIES) entries.removeFirst()
         }
         return true
     }
@@ -120,6 +198,26 @@ object VoiceUndoLedger {
             count++
         }
         return if (count > 0) count to combined.length else null
+    }
+
+    /**
+     * 纯判定（恢复）：[beforeText] 是按「前文长＋被删串长」现读的
+     * 光标前窗口。删除后未被动过的状态只有两种形态：字段短、窗口
+     * 恰等于 [prefix]；或字段长、窗口被读满且以 [prefix] 结尾（前
+     * 面是更早的内容）。其余（期间打字会让窗口尾部变样、删字会让
+     * 窗口变短或内容不符）一律不接管。[prefix] 为空时只认窗口全空
+     * （删除点就在字段开头，锚点无从附着，只能严判）。
+     */
+    internal fun decideRedoApply(
+        beforeText: CharSequence?,
+        prefix: String,
+        combinedLength: Int,
+    ): Boolean {
+        if (beforeText == null) return false
+        if (beforeText.toString() == prefix) return true
+        if (prefix.isEmpty()) return false
+        return beforeText.length == prefix.length + combinedLength &&
+            beforeText.endsWith(prefix)
     }
 
     /** 清掉已过期条目（队首最旧，过期必在队首一段连续区间内） */
