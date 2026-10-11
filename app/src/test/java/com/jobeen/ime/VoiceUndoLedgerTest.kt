@@ -106,4 +106,42 @@ class VoiceUndoLedgerTest {
         assertNull(VoiceUndoLedger.decideUndoDeleteMulti(null, listOf("一。")))
         assertNull(VoiceUndoLedger.decideUndoDeleteMulti("一。", emptyList()))
     }
+
+    // ---- decideRedoApply：恢复前的前文核对 ----
+
+    @Test
+    fun redo_shortFieldExactPrefix_applies() {
+        // 字段里只有锚点前文（删除后原样），窗口恰等于 prefix
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("你好", "你好", 3))
+    }
+
+    @Test
+    fun redo_longFieldWindowEndsWithPrefix_applies() {
+        // 更早的内容在锚点之前：窗口读满（prefix+被删串长）且以 prefix 结尾
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("更早的内容你好", "你好", 5))
+    }
+
+    @Test
+    fun redo_typedAfterUndo_refuses() {
+        // 撤销后又打了字：窗口尾部不再是 prefix
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("你好呀", "你好", 3))
+    }
+
+    @Test
+    fun redo_deletedIntoPrefix_refuses() {
+        // 撤销后又删了前文的字：窗口与 prefix 不符
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("你", "你好", 3))
+    }
+
+    @Test
+    fun redo_emptyPrefixRequiresEmptyWindow() {
+        // 语音段原本就是字段全部内容：只认光标前全空
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("", "", 3))
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("别的内容", "", 4))
+    }
+
+    @Test
+    fun redo_nullBefore_refuses() {
+        assertEquals(false, VoiceUndoLedger.decideRedoApply(null, "你好", 3))
+    }
 }
