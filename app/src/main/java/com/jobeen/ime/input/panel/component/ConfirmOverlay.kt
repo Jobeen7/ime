@@ -133,8 +133,13 @@ class ConfirmOverlay(
     }
 
     /**
-     * 动作菜单模式：标题下一列动作按钮，点击任一项执行并关闭。
+     * 动作菜单模式：标题下排布动作按钮，点击任一项执行并关闭。
      * 定位参数与 [confirm] 相同。
+     *
+     * 按钮两列排布（一行两项、奇数时末项整行）：单列纵排时 5 项
+     * 菜单的总高会超过面板可用高度，纵向布局按上限截断后最后一项
+     * 被挤出卡外不可见（剪贴板菜单的「删除」就这样消失过）——两列
+     * 把高度压到一半以下，横竖屏与大字体下都不会再丢项。
      */
     fun actions(
         message: String,
@@ -147,28 +152,46 @@ class ConfirmOverlay(
         messageView.text = message
         btnContainer.visibility = View.GONE
         actionsContainer.visibility = View.VISIBLE
+        // 两列排布需要确定总宽（权重子项在 wrapContent 下会撑满
+        // 可用宽）：固定容器宽、卡片随之定宽，定位钳制照常生效
+        actionsContainer.layoutParams =
+            LinearLayout.LayoutParams(dp(204), wrapContent).apply {
+                topMargin = dp(4)
+            }
         actionsContainer.removeAllViews()
         actionButtons.clear()
-        items.forEachIndexed { index, (label, action) ->
-            val btn = TextView(context).apply {
-                text = label
-                setTextColor(colors.panel.toolbarText)
-                setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
+        items.chunked(2).forEachIndexed { rowIndex, rowItems ->
+            val row = LinearLayout(context).apply {
+                orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER
-                background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
-                setPadding(dp(12), dp(8), dp(12), dp(8))
-                setOnClickListener {
-                    action()
-                    dismiss()
+            }
+            rowItems.forEachIndexed { colIndex, (label, action) ->
+                val btn = TextView(context).apply {
+                    text = label
+                    setTextColor(colors.panel.toolbarText)
+                    setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
+                    gravity = Gravity.CENTER
+                    background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
+                    setPadding(dp(12), dp(8), dp(12), dp(8))
+                    setOnClickListener {
+                        action()
+                        dismiss()
+                    }
                 }
+                row.addView(
+                    btn,
+                    LinearLayout.LayoutParams(0, wrapContent, 1f).apply {
+                        if (colIndex > 0) marginStart = dp(6)
+                    }
+                )
+                actionButtons += btn
             }
             actionsContainer.addView(
-                btn,
+                row,
                 LinearLayout.LayoutParams(matchParent, wrapContent).apply {
-                    if (index > 0) topMargin = dp(8)
+                    if (rowIndex > 0) topMargin = dp(6)
                 }
             )
-            actionButtons += btn
         }
         showCard(cardX, cardY, centerHorizontal, centerVertical)
     }
