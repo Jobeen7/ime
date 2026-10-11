@@ -2,6 +2,7 @@ package com.jobeen.ime
 
 import com.jobeen.ime.base.speech.VoiceUndoLedger
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -53,5 +54,56 @@ class VoiceUndoLedgerTest {
     fun surrogatePairCountsUtf16Units() {
         // 表情是 1 个码点 = 2 个 UTF-16 单元，删除长度必须按 2 算
         assertEquals(2, VoiceUndoLedger.decideUndoDelete("看😀", "😀"))
+    }
+
+    // ---- decideUndoDeleteMulti：一次删完连续多段 ----
+
+    @Test
+    fun multi_twoSegmentsConcatenated_matchBoth() {
+        // 编辑器里是 旧段＋新段 相邻，条目最新在前传入
+        val span = VoiceUndoLedger.decideUndoDeleteMulti(
+            "我昨天跟他讲了。他今天也休息。", listOf("他今天也休息。", "我昨天跟他讲了。")
+        )
+        assertEquals(2 to 15, span)
+    }
+
+    @Test
+    fun multi_onlyNewestMatches_stopsAtMismatch() {
+        // 新段吻合、旧段前被改过（拼接在旧段处断开）：只删新段
+        val span = VoiceUndoLedger.decideUndoDeleteMulti(
+            "被改过的旧文。他今天也休息。", listOf("他今天也休息。", "我昨天跟他讲了。")
+        )
+        assertEquals(1 to 7, span)
+    }
+
+    @Test
+    fun multi_newestMismatch_returnsNull() {
+        val span = VoiceUndoLedger.decideUndoDeleteMulti(
+            "光标前是别的内容", listOf("他今天也休息。", "我昨天跟他讲了。")
+        )
+        assertNull(span)
+    }
+
+    @Test
+    fun multi_threeSegments_matchAll() {
+        val span = VoiceUndoLedger.decideUndoDeleteMulti(
+            "前缀无关。一。二。三。", listOf("三。", "二。", "一。")
+        )
+        assertEquals(3 to 6, span)
+    }
+
+    @Test
+    fun multi_typedTextBetweenSegments_breaksChain() {
+        // 两段之间夹了手打字：拼接串与原文不符，旧段不连带
+        val span = VoiceUndoLedger.decideUndoDeleteMulti(
+            "一。手动二。", listOf("二。", "一。")
+        )
+        assertEquals(1 to 2, span)
+    }
+
+    @Test
+    fun multi_nullOrEmpty_returnsNull() {
+        assertNull(VoiceUndoLedger.decideUndoDeleteMulti(null, listOf("一。")))
+        assertNull(VoiceUndoLedger.decideUndoDeleteMulti("一。", emptyList()))
     }
 }
