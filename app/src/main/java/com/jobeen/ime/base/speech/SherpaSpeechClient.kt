@@ -804,6 +804,9 @@ object SherpaSpeechClient {
     }
 
     private fun onDone() {
+        // 松手链时序打点终点：与 stopHoldSession 的 release 打点、
+        // 服务端的 STOP/drained 打点同前缀，logcat 时间戳即分段耗时
+        Timber.i("voice-stop: DONE received")
         disarmDoneTimeout()
         finishSession()
     }
@@ -1007,13 +1010,17 @@ object SherpaSpeechClient {
 
     fun stopHoldSession(discard: Boolean = false) {
         if (!holding.compareAndSet(true, false)) return
+        // 松手链时序打点起点（voice-stop 前缀，与服务端各段同查）
+        Timber.i("voice-stop: release discard=%b", discard)
         // 启动截止不在此解除：它自会话开始计时，松手后待结算
         // （pendingFinish/cancelPending）期间仍要靠它兜底，READY
         // 到达（onRecordingStarted）或会话收尾（resetState）才解除
         // 服务尚未绑定时 START 还在待发队列里：先撤掉，绑定完成后不得重放
         removePending(SpeechIpc.MSG_START)
-        // 先停录音并等采集线程静默：此后无新块入队，保留队列内容
-        // 定格，后续 flush 与待结算标记都以这份定格为准
+        // 先停录音（不阻塞等采集线程退出）：holding 已置 false，
+        // 块到达路径的补发闸门随之关闭；本方法内的 flush 与 STOP
+        // 在发送锁内串行，迟到入队的至多一块也不会越过 STOP，
+        // 保留队列以这条边界定格，后续结算都以此为准
         recorderOrNull?.stop()
         if (discard) {
             discarding.set(true)

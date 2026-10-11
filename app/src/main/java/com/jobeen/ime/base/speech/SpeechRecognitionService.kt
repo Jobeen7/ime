@@ -294,7 +294,12 @@ class SpeechRecognitionService : Service() {
                     val session = pushSession
                     if (session != null) {
                         // 会话已建立：只置流结束标记，FINAL/DONE 由解码协程
-                        // 排空队列后统一发出
+                        // 排空队列后统一发出。队列余量是松手收尾耗时的
+                        // 主要变量，随松手链时序打点一并记录备查
+                        Log.i(
+                            "SpeechSvc",
+                            "voice-stop: STOP gen=$stoppedClientGen queued=${session.queue.size}"
+                        )
                         session.endOfStream = true
                     } else if (!wasActive) {
                         // 无会话（初始化也没在飞）：直接回 DONE 让客户端收尾
@@ -625,6 +630,8 @@ class SpeechRecognitionService : Service() {
                 }
 
                 if (!session.cancelled && !destroying && isActive) {
+                    // 松手链时序打点：解码队列已排空、进入收尾解码
+                    Log.i("SpeechSvc", "voice-stop: drained gen=$myClientGen, finalizing")
                     // 收尾解码前必须复检身份：STOP 后新会话 START 会在锁内
                     // getAndSet 换流并 release 旧 stream，本协程若在那之后
                     // 才拿到锁，myStream 已是被释放的 native 对象，再调
