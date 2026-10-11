@@ -76,10 +76,16 @@ class VoiceRecorder(
         }
     }
 
-    /** 幂等启动：已有采集线程在跑时直接返回。 */
+    /**
+     * 幂等启动：真正在跑的采集线程在场时直接返回；只剩一个已被
+     * 要求停止、正在退出的旧线程时照常另起新线程——旧线程的
+     * AudioRecord 已被 stop，其循环靠 recordingState 变化必然退出，
+     * 退出清理全部按实例身份复检，不会碰新线程的状态；它迟到的块
+     * 带旧代次标签，客户端按代次丢弃。
+     */
     @Synchronized
     fun start() {
-        if (captureThread != null) return
+        if (captureThread != null && !stopRequested) return
         stopRequested = false
         focusLostNotified = false
         val tag = sessionTag
@@ -87,20 +93,17 @@ class VoiceRecorder(
     }
 
     /**
-     * 幂等停止：置停止标志并停 AudioRecord 使阻塞 read 立即返回，
-     * 再有界 join 等采集线程退出——返回后不再有新块回调（账本与
-     * 发送偏移据此定格）。在采集线程内调用时不自 join。
+     * 幂等停止（不阻塞调用方）：只置停止标志并停 AudioRecord 使阻塞
+     * read 返回，采集线程随即自行退出并在 finally 里释放资源。
+     * 此前这里还要 join 等线程退出才返回——调用方在输入法主线程上
+     * （松手收尾），真机上 AudioRecord 停止慢时能把浮层关闭拖后
+     * 约一秒。停止后队列定格改由客户端的发送锁保证：本方法返回后
+     * 迟到块至多一块、且只能进入待发队列、不会越过随后的 STOP。
      */
     @Synchronized
     fun stop() {
         stopRequested = true
         audioRecord?.runCatching { stop() }
-        val thread = captureThread
-        captureThread = null
-        if (thread != null && thread !== Thread.currentThread()) {
-            runCatching { thread.join(STOP_JOIN_MS) }
-                .onFailure { Timber.w("VoiceRecorder join interrupted: %s", it.message) }
-        }
     }
 
     private fun runCapture(tag: Int) {
@@ -239,10 +242,5 @@ class VoiceRecorder(
             }
         }.onFailure { Timber.w("VoiceRecorder abandonAudioFocus failed: %s", it.message) }
         audioFocusRequest = null
-    }
-
-    private companion object {
-        /** stop 的 join 上限：stop() 已让 read 立即返回，正常远小于此值，仅防极端卡死 */
-        const val STOP_JOIN_MS = 1000L
     }
 }
