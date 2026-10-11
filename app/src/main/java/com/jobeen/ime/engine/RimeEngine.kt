@@ -101,9 +101,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         var predictionVisible: Boolean = false,
         var suppressNextEmptyCandidates: Boolean = false,
         var initHookTriggered: Boolean = false,
-        var candidateRequestId: Long = 0L,
+        // 代次计数器被主线程（切框失效）与 jobs/协程并发推进：普通
+        // Long 的 ++ 是读-改-写，极端时序下两代同号会让迟到的旧结果
+        // 穿过 Ready 门控；用 AtomicLong 保证 incrementAndGet 不重号
+        // （字段与 Action.requestId 均为 Long，故用 AtomicLong 而非
+        // AtomicInteger，免去每处取值转换）
+        val candidateRequestId: java.util.concurrent.atomic.AtomicLong =
+            java.util.concurrent.atomic.AtomicLong(0L),
         var latestCandidateRequestId: Long = 0L,
-        var predictionRequestId: Long = 0L,
+        val predictionRequestId: java.util.concurrent.atomic.AtomicLong =
+            java.util.concurrent.atomic.AtomicLong(0L),
         var latestPredictionRequestId: Long = 0L,
     )
 
@@ -1061,7 +1068,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private fun restoreCandidates(msg: EngineMessage.Candidates) {
-        val requestId = ++state.candidateRequestId
+        val requestId = state.candidateRequestId.incrementAndGet()
         state.latestCandidateRequestId = requestId
         candidateRestoreJob?.cancel()
         candidateRestoreJob = scope.launch {
@@ -1147,20 +1154,25 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private fun invalidatePendingCandidates() {
         candidateRestoreJob?.cancel()
         candidateRestoreJob = null
-        state.latestCandidateRequestId = ++state.candidateRequestId
+        state.latestCandidateRequestId = state.candidateRequestId.incrementAndGet()
     }
 
     /** 取消在途的预测并推进代次，避免迟到预测覆盖新候选或在清空后重现。 */
     private fun invalidatePendingPrediction() {
         predictionJob?.cancel()
         predictionJob = null
-        state.latestPredictionRequestId = ++state.predictionRequestId
+        state.latestPredictionRequestId = state.predictionRequestId.incrementAndGet()
     }
 
     override fun onFinishInputView() {
         inputConnection = null
         editorInfo = null
         lastLearnSegment = null
+        // 联想可见标志是上一个输入框的状态：切框必须复位，否则新框
+        // 非空（不触发 InputCleared 顺带清）时，第一次退格会只清掉
+        // 这个残留标志而不删字。invalidatePendingPrediction 只取消
+        // 在途预测、不动此标志，故在此与连接/缓存一并收尾
+        state.predictionVisible = false
         invalidateBeforeCursorCache()
         invalidatePendingCandidates()
         invalidatePendingPrediction()
@@ -1261,7 +1273,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         } else {
             userKey = null
         }
-        val requestId = ++state.predictionRequestId
+        val requestId = state.predictionRequestId.incrementAndGet()
         state.latestPredictionRequestId = requestId
         predictionJob?.cancel()
         predictionJob = scope.launch {

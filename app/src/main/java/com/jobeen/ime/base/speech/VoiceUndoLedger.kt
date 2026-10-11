@@ -19,10 +19,11 @@ import android.view.inputmethod.InputConnection
  *
  * 恢复口径（与撤销对称）：账本直删绕开了编辑器的撤销栈，下滑
  * 恢复（Ctrl+Shift+Z）对这笔删除无账可恢复——故撤销成功时把删掉
- * 的整串连同删除前的一小段前文锚点存入恢复栈；恢复时先核对光标
- * 前文与删除后应有的状态一致（期间打过字/删过字即不一致），一致
- * 才整串写回并重新入账。新的语音上屏清空恢复栈（新编辑作废恢复
- * 未来，与通用撤销语义一致）。
+ * 的整串连同删除点前的锚点（至多 [ANCHOR_CHARS] 字）存入恢复栈；
+ * 恢复时按统一后缀判定核对：光标前窗口以锚点结尾、且窗口长度
+ * 落在锚点长与「锚点长＋被删串长」之间（删除后未被动过的状态
+ * 必然如此，见 [decideRedoApply]），才整串写回并重新入账。新的
+ * 语音上屏清空恢复栈（新编辑作废恢复未来，与通用撤销语义一致）。
  */
 object VoiceUndoLedger {
 
@@ -35,9 +36,10 @@ object VoiceUndoLedger {
     private data class Entry(val text: String, val atMs: Long)
 
     /**
-     * 一次账本撤销的恢复单元：被删的整串 [combinedText]、删除后光标
-     * 前应剩下的前文 [prefix]（含一小段锚点，恢复时据此核对位置）、
-     * 被弹出的账本条目本体（恢复成功后按原时间戳重新入账）。
+     * 一次账本撤销的恢复单元：被删的整串 [combinedText]、删除点前
+     * 的锚点 [prefix]（只存窗口尾部至多 [ANCHOR_CHARS] 字，恢复时
+     * 按后缀核对删除点未被动过，见 [buildRedoPrefix]）、被弹出的
+     * 账本条目本体（恢复成功后按原时间戳重新入账）。
      */
     private data class RedoUnit(
         val combinedText: String,
@@ -117,13 +119,16 @@ object VoiceUndoLedger {
                     popped.add(top)
                 } else break
             }
-            // 存恢复单元：被删整串＋删除后应剩的前文（锚点＋未删的
-            // 旧段部分）。实际弹出的条目按时间序随单元保存，恢复
-            // 成功后重新入账；弹出中途被新账打断时单元只带已弹部分
+            // 存恢复单元：被删整串＋删除点前的锚点（只取尾部至多
+            // ANCHOR_CHARS 字：恢复判定是后缀判定，存全量前文只会
+            // 让判定背上数千字无关文本——其间改一字即拒恢复、且
+            // 复读长度随之膨胀）。实际弹出的条目按时间序随单元
+            // 保存，恢复成功后重新入账；弹出中途被新账打断时单元
+            // 只带已弹部分
             redoUnits.addLast(
                 RedoUnit(
                     combinedText = window.takeLast(totalLen),
-                    prefix = window.dropLast(totalLen),
+                    prefix = buildRedoPrefix(window, totalLen),
                     entries = popped.reversed(),
                 )
             )
@@ -134,6 +139,16 @@ object VoiceUndoLedger {
 
     /** 恢复核对时多读的前文锚点长度：足够定位删除点，又不至把大量无关前文纳入校验 */
     private const val ANCHOR_CHARS = 16
+
+    /**
+     * 纯函数：由撤销时的现读窗口 [window] 与应删总长 [totalLen]
+     * 构造恢复单元的锚点——窗口去掉尾部被删整串后，只保留最后
+     * 至多 [ANCHOR_CHARS] 字。锚点是删除点紧邻的前文：恢复判定
+     * 只需核对它仍位于光标前窗口的尾部（见 [decideRedoApply]），
+     * 更早的前文与删除点状态无关，不进恢复单元。
+     */
+    internal fun buildRedoPrefix(window: String, totalLen: Int): String =
+        window.dropLast(totalLen).takeLast(ANCHOR_CHARS)
 
     /**
      * 尝试恢复最近一次账本撤销删掉的整串：恢复栈顶单元的前文核对
@@ -201,12 +216,20 @@ object VoiceUndoLedger {
     }
 
     /**
-     * 纯判定（恢复）：[beforeText] 是按「前文长＋被删串长」现读的
-     * 光标前窗口。删除后未被动过的状态只有两种形态：字段短、窗口
-     * 恰等于 [prefix]；或字段长、窗口被读满且以 [prefix] 结尾（前
-     * 面是更早的内容）。其余（期间打字会让窗口尾部变样、删字会让
-     * 窗口变短或内容不符）一律不接管。[prefix] 为空时只认窗口全空
-     * （删除点就在字段开头，锚点无从附着，只能严判）。
+     * 纯判定（恢复）：[beforeText] 是按「锚点长＋被删串长」现读的
+     * 光标前窗口，[prefix] 是删除点前的锚点（至多 [ANCHOR_CHARS]
+     * 字）。统一后缀判定：窗口以锚点结尾、且长度落在
+     * [锚点长, 锚点长＋被删串长] 区间内才接管。
+     *
+     * 未被动过的状态必然落在该区间：删除后光标前恰剩「锚点及更早
+     * 的内容」，按锚点长＋被删串长现读，读回的或是全量（字段短，
+     * 窗口＝全部前文）、或是读满（字段长，窗口尾部仍是锚点）；
+     * 此前只认「恰等于锚点」与「恰好读满」两个端点，撤销窗口之外
+     * 残留的前文长度介于其间时（部分读回）会误拒，现统一为区间
+     * 判定。安全性不减：删除点之后打字会让窗口尾部变成新打的字、
+     * 删字会吃掉锚点尾部或让窗口短于锚点，两种情形后缀都不再
+     * 吻合。[prefix] 为空时只认窗口全空（删除点就在字段开头，
+     * 锚点无从附着，只能严判）。
      */
     internal fun decideRedoApply(
         beforeText: CharSequence?,
@@ -214,9 +237,9 @@ object VoiceUndoLedger {
         combinedLength: Int,
     ): Boolean {
         if (beforeText == null) return false
-        if (beforeText.toString() == prefix) return true
-        if (prefix.isEmpty()) return false
-        return beforeText.length == prefix.length + combinedLength &&
+        if (prefix.isEmpty()) return beforeText.isEmpty()
+        return beforeText.length >= prefix.length &&
+            beforeText.length <= prefix.length + combinedLength &&
             beforeText.endsWith(prefix)
     }
 

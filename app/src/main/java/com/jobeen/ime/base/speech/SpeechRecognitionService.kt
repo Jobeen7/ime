@@ -208,25 +208,43 @@ class SpeechRecognitionService : Service() {
                             return@launch
                         }
                         val session = PushSession()
-                        // STOP 在初始化期间已到达：队列预置流结束，解码协程
-                        // 建好后排空已有块（通常为零）即走收尾，不闩死会话
-                        session.endOfStream = stopRequested
                         var newStream: OnlineStream? = null
                         synchronized(audioLock) {
-                            // 新会话重置跨会话去重/节流状态：与解码协程对这三个
-                            // 字段的读写同在 audioLock 内，避免跨线程可见性竞态
-                            lastRawText = null
-                            lastEmittedText = null
-                            lastEmitUptimeMs = 0L
-                            // 换流必须释放旧流：正常路径旧流由上个会话协程按
-                            // 身份校验释放，但中止路径会留下孤儿 native stream，
-                            // 无人释放只能等进程死亡
                             newStream = engine.createStream()
-                            val oldStream = streamRef.getAndSet(newStream)
-                            if (oldStream != null && oldStream !== newStream) {
-                                oldStream.runCatching { release() }
+                            if (gen != sessionGen) {
+                                // 锁内代次复检：等锁期间（旧会话收尾解码
+                                // 占用）已被新一代顶替——刚建的流就地
+                                // 释放、不发布本会话，静默退出。去重/节流
+                                // 状态也不得重置（那是新会话的）
+                                newStream?.runCatching { release() }
+                                newStream = null
+                            } else {
+                                // 新会话重置跨会话去重/节流状态：与解码协程对这三个
+                                // 字段的读写同在 audioLock 内，避免跨线程可见性竞态
+                                lastRawText = null
+                                lastEmittedText = null
+                                lastEmitUptimeMs = 0L
+                                // 换流必须释放旧流：正常路径旧流由上个会话协程按
+                                // 身份校验释放，但中止路径会留下孤儿 native stream，
+                                // 无人释放只能等进程死亡
+                                val oldStream = streamRef.getAndSet(newStream)
+                                if (oldStream != null && oldStream !== newStream) {
+                                    oldStream.runCatching { release() }
+                                }
+                                // 停止标记在发布前锁内现读：STOP 在初始
+                                // 化期间（含等锁期间）已到达时，队列预置
+                                // 流结束，解码协程建好后排空已有块（通常
+                                // 为零）即走收尾，不闩死会话。此前在锁外
+                                // 一次性快照，「快照后、发布前」到达的
+                                // STOP 只作用于旧会话、新会话以未结束
+                                // 发布，该代次永远等不到 DONE
+                                session.endOfStream = stopRequested
+                                pushSession = session
                             }
-                            pushSession = session
+                        }
+                        if (newStream == null) {
+                            // 锁内复检未过：已在锁内释放刚建的流
+                            return@launch
                         }
                         holding.set(true)
                         startDecodeSession(session, newStream!!, clientGen, gen)
@@ -734,10 +752,18 @@ class SpeechRecognitionService : Service() {
                     val rawText = engine.getResult(myStream).text.trim()
                     if (rawText.isNotEmpty() && rawText != lastRawText) {
                         lastRawText = rawText
-                        val now = SystemClock.uptimeMillis()
-                        if (now - lastEmitUptimeMs >= PARTIAL_EMIT_MIN_INTERVAL_MS) {
-                            val partial = FinalTextNormalizer.normalizeSpacing(rawText)
-                            if (partial.isNotEmpty() && partial != lastEmittedText) {
+                    }
+                    // 发射判定与变化检测解耦：此前被节流压住的版本因
+                    // lastRawText 已先行更新、后续同文本不再触发判定
+                    // 而永不补发，停顿期间字幕缺尾字。现在只要规整后
+                    // 的文本与上次已发不同且节流窗已过就发射——说话
+                    // 间隙持续喂入的静音块会在节流窗过后的第一个块
+                    // 把待发文本补出去；同文本仍只发一次（已发去重）
+                    if (rawText.isNotEmpty()) {
+                        val partial = FinalTextNormalizer.normalizeSpacing(rawText)
+                        if (partial.isNotEmpty() && partial != lastEmittedText) {
+                            val now = SystemClock.uptimeMillis()
+                            if (now - lastEmitUptimeMs >= PARTIAL_EMIT_MIN_INTERVAL_MS) {
                                 lastEmittedText = partial
                                 lastEmitUptimeMs = now
                                 sendClient(SpeechIpc.MSG_PARTIAL, partial, gen = myClientGen)

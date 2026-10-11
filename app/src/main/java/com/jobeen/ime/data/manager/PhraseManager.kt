@@ -56,13 +56,17 @@ object PhraseManager {
         if (t.isEmpty()) return -1
         val l = label.trim().ifEmpty { t.take(12) }
         val id = db(context) { db ->
-            db.phraseDao().insert(
-                PhraseRecord(
-                    text = t, label = l, createdAt = System.currentTimeMillis(),
-                    // 新常用语排到最前（与此前「新建在前」的顺序语义一致）
-                    sortOrder = (db.phraseDao().minSortOrder() ?: 0L) - 1L,
+            // 「读最小序号→插入」必须同事务：并发新增时两条会算出
+            // 同一 sortOrder、次序不稳定（与剪贴板侧 addEntry 同口径）
+            db.withTransaction {
+                db.phraseDao().insert(
+                    PhraseRecord(
+                        text = t, label = l, createdAt = System.currentTimeMillis(),
+                        // 新常用语排到最前（与此前「新建在前」的顺序语义一致）
+                        sortOrder = (db.phraseDao().minSortOrder() ?: 0L) - 1L,
+                    )
                 )
-            )
+            }
         } ?: -1
         if (id > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
         return id
@@ -76,14 +80,18 @@ object PhraseManager {
         // 旧实现无条件发回调，失败/目标不存在时 UI 也照常当成功处理。
         // sortOrder/pinned 必须回读保留：整行 @Update 会把它们重置为默认值
         val rows = db(context) { db ->
-            val existing = db.phraseDao().getById(phrase.id)
-            db.phraseDao().update(
-                PhraseRecord(
-                    id = phrase.id, text = t, label = l, createdAt = phrase.createdAt,
-                    sortOrder = existing?.sortOrder ?: phrase.sortOrder,
-                    pinned = existing?.pinned ?: phrase.pinned,
+            // 「回读保留字段→整行回写」必须同事务：与置顶切换并发时，
+            // 事务外的旧快照会把刚改的置顶状态覆盖回去
+            db.withTransaction {
+                val existing = db.phraseDao().getById(phrase.id)
+                db.phraseDao().update(
+                    PhraseRecord(
+                        id = phrase.id, text = t, label = l, createdAt = phrase.createdAt,
+                        sortOrder = existing?.sortOrder ?: phrase.sortOrder,
+                        pinned = existing?.pinned ?: phrase.pinned,
+                    )
                 )
-            )
+            }
         } ?: 0
         if (rows > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }

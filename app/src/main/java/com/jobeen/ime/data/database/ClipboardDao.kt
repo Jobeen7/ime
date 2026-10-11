@@ -62,9 +62,13 @@ interface ClipboardDao {
     @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0")
     suspend fun count(): Int
 
-    /** 编辑条目：把旧文本改写为新文本并刷新时间戳（排到最前）；置顶状态随行保留 */
-    @Query("UPDATE clipboard_records SET text = :newText, timestamp = :ts WHERE text = :oldText AND deleted = 0")
-    suspend fun updateTextByText(oldText: String, newText: String, ts: Long)
+    /**
+     * 编辑条目：把旧文本改写为新文本，刷新时间戳并把排序序号设为
+     * 当前最小值减一（排到最前——列表按 sortOrder 在 timestamp 之前
+     * 排序，只刷新时间戳排不动）；置顶状态随行保留
+     */
+    @Query("UPDATE clipboard_records SET text = :newText, timestamp = :ts, sortOrder = :sortOrder WHERE text = :oldText AND deleted = 0")
+    suspend fun updateTextByText(oldText: String, newText: String, ts: Long, sortOrder: Long)
 
     @Query("UPDATE clipboard_records SET deleted = 1, deletedAt = :ts WHERE text = :text AND deleted = 0")
     suspend fun softDeleteByText(text: String, ts: Long)

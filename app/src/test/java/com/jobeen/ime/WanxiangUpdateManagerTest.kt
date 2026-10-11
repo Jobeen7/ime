@@ -8,8 +8,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 方案更新误报修复的判定纯函数测试：判定从「只看下载记录」改为
- * 记录 + 内容指纹/内置版本兜底，记录为空不再直接误判有更新。
+ * 方案更新判定纯函数测试：方案侧记录 + 内置版本兜底；语法模型侧
+ * 双方哈希都非空时以哈希为准（原地换包 published_at 不变也判得出），
+ * 哈希缺失回落记录语义。全矩阵见各 gram_* 用例。
  */
 class WanxiangUpdateManagerTest {
 
@@ -18,6 +19,7 @@ class WanxiangUpdateManagerTest {
         gramLocal: String? = null,
         schemaRemote: String = "v18.1.2",
         gramRemotePub: String = REMOTE_PUB,
+        gramUpdate: Boolean = false,
     ) = WanxiangUpdateManager.UpdateInfo(
         schemaRemoteVersion = schemaRemote,
         schemaLocalVersion = schemaLocal,
@@ -26,9 +28,29 @@ class WanxiangUpdateManagerTest {
         dictRemoteFingerprint = null,
         gramRemoteFingerprint = null,
         gramSha256 = SHA,
+        gramUpdateAvailable = gramUpdate,
     )
 
-    // ---- 语法模型：内容兜底 ----
+    /** 判定三元组与 UpdateInfo 字段的一致性：检查流程就是这样填的 */
+    private fun assertDecision(
+        decision: WanxiangUpdateManager.GramUpdateDecision,
+        effective: String?,
+        backfill: Boolean,
+        update: Boolean,
+    ) {
+        assertEquals(effective, decision.effectiveLocalPublishedAt)
+        assertEquals(backfill, decision.backfill)
+        assertEquals(update, decision.updateAvailable)
+        assertEquals(
+            update,
+            info(
+                gramLocal = decision.effectiveLocalPublishedAt,
+                gramUpdate = decision.updateAvailable,
+            ).gramUpdateAvailable,
+        )
+    }
+
+    // ---- 语法模型：哈希为准（双方哈希都非空） ----
 
     @Test
     fun gram_recordMissingButFingerprintMatches_noUpdateAndBackfill() {
@@ -38,35 +60,53 @@ class WanxiangUpdateManagerTest {
             remotePublishedAt = REMOTE_PUB,
             remoteSha256 = SHA,
         )
-        assertEquals(REMOTE_PUB, decision.effectiveLocalPublishedAt)
-        assertTrue(decision.backfill)
-        assertFalse(info(gramLocal = decision.effectiveLocalPublishedAt).gramUpdateAvailable)
+        assertDecision(decision, effective = REMOTE_PUB, backfill = true, update = false)
     }
 
     @Test
-    fun gram_fingerprintDiffers_updateAvailable() {
+    fun gram_fingerprintDiffers_noRecord_updateAvailable() {
         val decision = WanxiangUpdateManager.resolveGramUpdate(
             recordedPublishedAt = null,
             localFingerprint = OTHER_SHA,
             remotePublishedAt = REMOTE_PUB,
             remoteSha256 = SHA,
         )
-        assertNull(decision.effectiveLocalPublishedAt)
-        assertFalse(decision.backfill)
-        assertTrue(info(gramLocal = decision.effectiveLocalPublishedAt).gramUpdateAvailable)
+        assertDecision(decision, effective = null, backfill = false, update = true)
+    }
+
+    @Test
+    fun gram_fingerprintDiffers_recordCurrent_updateAvailable() {
+        // 上游原地换包的实测形态：published_at 与记录相同、只有摘要变。
+        // 旧的纯时间判定会判无更新（真更新永不下发），哈希判定必须判有
+        val decision = WanxiangUpdateManager.resolveGramUpdate(
+            recordedPublishedAt = REMOTE_PUB,
+            localFingerprint = OTHER_SHA,
+            remotePublishedAt = REMOTE_PUB,
+            remoteSha256 = SHA,
+        )
+        assertDecision(decision, effective = REMOTE_PUB, backfill = false, update = true)
+    }
+
+    @Test
+    fun gram_fingerprintDiffers_staleRecord_updateAvailable() {
+        val decision = WanxiangUpdateManager.resolveGramUpdate(
+            recordedPublishedAt = OLD_PUB,
+            localFingerprint = OTHER_SHA,
+            remotePublishedAt = REMOTE_PUB,
+            remoteSha256 = SHA,
+        )
+        assertDecision(decision, effective = OLD_PUB, backfill = false, update = true)
     }
 
     @Test
     fun gram_staleRecordButContentMatches_backfilledToRemote() {
         val decision = WanxiangUpdateManager.resolveGramUpdate(
-            recordedPublishedAt = "2026-01-01T00:00:00Z",
+            recordedPublishedAt = OLD_PUB,
             localFingerprint = SHA,
             remotePublishedAt = REMOTE_PUB,
             remoteSha256 = SHA,
         )
-        assertEquals(REMOTE_PUB, decision.effectiveLocalPublishedAt)
-        assertTrue(decision.backfill)
-        assertFalse(info(gramLocal = decision.effectiveLocalPublishedAt).gramUpdateAvailable)
+        assertDecision(decision, effective = REMOTE_PUB, backfill = true, update = false)
     }
 
     @Test
@@ -77,34 +117,86 @@ class WanxiangUpdateManagerTest {
             remotePublishedAt = REMOTE_PUB,
             remoteSha256 = SHA,
         )
-        assertEquals(REMOTE_PUB, decision.effectiveLocalPublishedAt)
-        assertFalse(decision.backfill)
+        assertDecision(decision, effective = REMOTE_PUB, backfill = false, update = false)
     }
 
+    // ---- 语法模型：哈希缺失回落记录语义 ----
+
     @Test
-    fun gram_noRemoteDigest_fallsBackToRecord() {
+    fun gram_noRemoteDigest_noRecord_updateAvailable() {
         val decision = WanxiangUpdateManager.resolveGramUpdate(
             recordedPublishedAt = null,
             localFingerprint = SHA,
             remotePublishedAt = REMOTE_PUB,
             remoteSha256 = "",
         )
-        assertNull(decision.effectiveLocalPublishedAt)
-        assertFalse(decision.backfill)
-        assertTrue(info(gramLocal = decision.effectiveLocalPublishedAt).gramUpdateAvailable)
+        assertDecision(decision, effective = null, backfill = false, update = true)
     }
 
     @Test
-    fun gram_noLocalFile_fallsBackToRecord() {
+    fun gram_noRemoteDigest_staleRecord_updateAvailable() {
+        val decision = WanxiangUpdateManager.resolveGramUpdate(
+            recordedPublishedAt = OLD_PUB,
+            localFingerprint = SHA,
+            remotePublishedAt = REMOTE_PUB,
+            remoteSha256 = "",
+        )
+        assertDecision(decision, effective = OLD_PUB, backfill = false, update = true)
+    }
+
+    @Test
+    fun gram_noRemoteDigest_recordCurrent_noUpdate() {
+        val decision = WanxiangUpdateManager.resolveGramUpdate(
+            recordedPublishedAt = REMOTE_PUB,
+            localFingerprint = SHA,
+            remotePublishedAt = REMOTE_PUB,
+            remoteSha256 = "",
+        )
+        assertDecision(decision, effective = REMOTE_PUB, backfill = false, update = false)
+    }
+
+    @Test
+    fun gram_noLocalFile_noRecord_updateAvailable() {
         val decision = WanxiangUpdateManager.resolveGramUpdate(
             recordedPublishedAt = null,
             localFingerprint = null,
             remotePublishedAt = REMOTE_PUB,
             remoteSha256 = SHA,
         )
-        assertNull(decision.effectiveLocalPublishedAt)
-        assertFalse(decision.backfill)
-        assertTrue(info(gramLocal = decision.effectiveLocalPublishedAt).gramUpdateAvailable)
+        assertDecision(decision, effective = null, backfill = false, update = true)
+    }
+
+    @Test
+    fun gram_noLocalFile_staleRecord_updateAvailable() {
+        val decision = WanxiangUpdateManager.resolveGramUpdate(
+            recordedPublishedAt = OLD_PUB,
+            localFingerprint = null,
+            remotePublishedAt = REMOTE_PUB,
+            remoteSha256 = SHA,
+        )
+        assertDecision(decision, effective = OLD_PUB, backfill = false, update = true)
+    }
+
+    @Test
+    fun gram_noLocalFile_recordCurrent_noUpdate() {
+        val decision = WanxiangUpdateManager.resolveGramUpdate(
+            recordedPublishedAt = REMOTE_PUB,
+            localFingerprint = null,
+            remotePublishedAt = REMOTE_PUB,
+            remoteSha256 = SHA,
+        )
+        assertDecision(decision, effective = REMOTE_PUB, backfill = false, update = false)
+    }
+
+    @Test
+    fun gram_bothHashesMissing_recordCurrent_noUpdate() {
+        val decision = WanxiangUpdateManager.resolveGramUpdate(
+            recordedPublishedAt = REMOTE_PUB,
+            localFingerprint = "",
+            remotePublishedAt = REMOTE_PUB,
+            remoteSha256 = "",
+        )
+        assertDecision(decision, effective = REMOTE_PUB, backfill = false, update = false)
     }
 
     // ---- 方案：内置版本兜底 ----
@@ -146,6 +238,7 @@ class WanxiangUpdateManagerTest {
 
     private companion object {
         const val REMOTE_PUB = "2026-10-09T00:00:00Z"
+        const val OLD_PUB = "2026-01-01T00:00:00Z"
         const val SHA =
             "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
         const val OTHER_SHA =

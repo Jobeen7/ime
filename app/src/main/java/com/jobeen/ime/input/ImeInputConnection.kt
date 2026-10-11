@@ -30,6 +30,35 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
 
         /** undo 快照总字符上限（与条数上限双钳，防快照全文拷贝无界累积） */
         const val MAX_UNDO_TOTAL_CHARS = 200_000
+
+        /**
+         * 码点数 → UTF-16 单元数换算（纯函数）：以 [selStart]/[selEnd]
+         * 为原点，前方按 [beforeCp] 个码点、后方按 [afterCp] 个码点行走，
+         * 返回两侧实际跨过的 UTF-16 单元数。代理对（emoji 等）一个码点
+         * 占 2 个单元，与 deleteSurroundingText 的字符口径对齐。
+         *
+         * 先用 codePointCount 数清两端可用码点数并钳制请求量，再调
+         * offsetByCodePoints 行走——后者越界会抛 IndexOutOfBounds，
+         * 钳制后必然落回文本内；选区端点本身也先钳回 [0, length]。
+         */
+        internal fun codePointsToUtf16Counts(
+            text: CharSequence,
+            selStart: Int,
+            selEnd: Int,
+            beforeCp: Int,
+            afterCp: Int,
+        ): Pair<Int, Int> {
+            val length = text.length
+            val start = selStart.coerceIn(0, length)
+            val end = selEnd.coerceIn(start, length)
+            val availBefore = Character.codePointCount(text, 0, start)
+            val walkBefore = beforeCp.coerceIn(0, availBefore)
+            val newStart = Character.offsetByCodePoints(text, start, -walkBefore)
+            val availAfter = Character.codePointCount(text, end, length)
+            val walkAfter = afterCp.coerceIn(0, availAfter)
+            val newEnd = Character.offsetByCodePoints(text, end, walkAfter)
+            return (start - newStart) to (newEnd - end)
+        }
     }
 
     private val editable: Editable = Editable.Factory.getInstance().newEditable("")
@@ -151,6 +180,10 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         editable.clear()
         undoStack.clear()
         redoStack.clear()
+        // 计数与栈同清：不清零会跨会话（每次进入桥接编辑都调 clear）
+        // 单调残留，逼近上限后 recordHistory 把撤销栈裁到只剩 1 条，
+        // 多步撤销长期劣化为单步
+        undoTotalChars = 0
         selectionAnchor = null
         selectionCursor = null
         fireChange()
@@ -251,7 +284,16 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     override fun deleteSurroundingTextInCodePoints(
         inLength: Int,
         outLength: Int,
-    ): Boolean = deleteSurroundingText(inLength, outLength)
+    ): Boolean {
+        // 接口语义是码点数：先以当前选区两端为原点把码点数换算成
+        // UTF-16 单元数，再委托既有 deleteSurroundingText——旧实现把
+        // 码点数直接当字符数转发，选区两侧有代理对时会少删或劈字；
+        // 换算后 span/组字清理与选区保留口径全部沿用既有实现不变
+        val (before, after) = codePointsToUtf16Counts(
+            editable, selStart(), selEnd(), inLength, outLength,
+        )
+        return deleteSurroundingText(before, after)
+    }
 
     override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
         // 组字中间态不入 undo 栈：桥接编辑时每键一次全文快照纯属浪费，
