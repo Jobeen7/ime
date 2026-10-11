@@ -1,6 +1,7 @@
 package com.jobeen.ime.base.update
 
 import androidx.core.content.edit
+import com.jobeen.ime.base.net.fetchGithubReleaseAssetSha256
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -131,6 +132,13 @@ object WanxiangUpdateManager {
         val schemaZipSha256: String = "",
         /** 语法模型在 GitHub 登记的官方 SHA-256（同上） */
         val gramSha256: String = "",
+        /**
+         * 语法模型是否有更新：由检查流程按 [resolveGramUpdate] 的判定
+         * 在构造时写入。不能再从 gramLocalPublishedAt 派生：上游原地
+         * 替换模型文件时 published_at 不变，纯时间比对会把「摘要已变」
+         * 的真更新漏判（判定规则见 resolveGramUpdate）。
+         */
+        val gramUpdateAvailable: Boolean,
     ) {
         // 只在远端确实更新时才算"有更新"：本地版本高于远端（内置更新包等）时
         // 用 != 判断会误报并把用户降级式覆盖
@@ -138,11 +146,6 @@ object WanxiangUpdateManager {
             get() {
                 val local = schemaLocalVersion ?: return true
                 return compareVersions(schemaRemoteVersion, local) > 0
-            }
-        val gramUpdateAvailable: Boolean
-            get() {
-                val local = gramLocalPublishedAt ?: return true
-                return gramRemotePublishedAt > local
             }
         val hasUpdate: Boolean get() = schemaUpdateAvailable || gramUpdateAvailable
     }
@@ -160,22 +163,27 @@ object WanxiangUpdateManager {
         return 0
     }
 
-    /** 语法模型内容兜底判定的结果（见 [resolveGramUpdate]）。 */
+    /** 语法模型更新判定的结果（见 [resolveGramUpdate]）。 */
     internal data class GramUpdateDecision(
-        /** 参与发布时间比对的本地值：内容兜底命中时即远端发布时间（判无更新） */
+        /** 参与发布时间比对/显示的本地值：内容一致时即远端发布时间 */
         val effectiveLocalPublishedAt: String?,
         /** 记录与内容不一致、需要把发布时间与远端模型指纹回填进 prefs */
         val backfill: Boolean,
+        /** 是否有更新：以内容哈希为准，哈希缺失时回落发布时间比对 */
+        val updateAvailable: Boolean,
     )
 
     /**
      * 语法模型更新判定（纯函数）。下载记录只说明「上次经本管理器下载
      * 时」的版本：App 升版会清记录、模型经其他入口（模型增强页）下载
-     * 时根本不写记录，记录为空/过期不等于本地文件旧。本地文件真实
-     * 指纹与远端登记摘要一致时以内容为准：判无更新，并要求回填记录，
-     * 避免每次升版后都误报更新、整份重下约 400MB。指纹缺失、远端
-     * 摘要缺失或两者不一致时退回记录判定（backfill=false），原有
-     * 发布时间比对语义不变。
+     * 时根本不写记录，记录为空/过期不等于本地文件旧。
+     *
+     * 本地指纹与远端登记摘要都拿得到时以哈希为唯一判据（上游会在
+     * 同一 Release 里原地替换模型文件：published_at 不变、摘要变，
+     * 只比时间会把真更新永远漏掉，2026-10-11 实测发生过一次）：
+     * 相等→无更新（并按需回填记录，避免每次升版后误报、整份重下
+     * 约 400MB）；不等→有更新，哪怕发布时间相同。任一哈希缺失时
+     * 回落记录语义：记录为空、或远端发布时间较新，即判有更新。
      */
     internal fun resolveGramUpdate(
         recordedPublishedAt: String?,
@@ -184,17 +192,26 @@ object WanxiangUpdateManager {
         remoteSha256: String,
     ): GramUpdateDecision {
         val sha = remoteSha256.trim()
-        if (sha.isNotEmpty() && !localFingerprint.isNullOrEmpty() &&
-            localFingerprint.equals(sha, ignoreCase = true)
-        ) {
-            return GramUpdateDecision(
-                effectiveLocalPublishedAt = remotePublishedAt,
-                backfill = recordedPublishedAt != remotePublishedAt,
-            )
+        if (sha.isNotEmpty() && !localFingerprint.isNullOrEmpty()) {
+            return if (localFingerprint.equals(sha, ignoreCase = true)) {
+                GramUpdateDecision(
+                    effectiveLocalPublishedAt = remotePublishedAt,
+                    backfill = recordedPublishedAt != remotePublishedAt,
+                    updateAvailable = false,
+                )
+            } else {
+                GramUpdateDecision(
+                    effectiveLocalPublishedAt = recordedPublishedAt,
+                    backfill = false,
+                    updateAvailable = true,
+                )
+            }
         }
         return GramUpdateDecision(
             effectiveLocalPublishedAt = recordedPublishedAt,
             backfill = false,
+            updateAvailable = recordedPublishedAt == null ||
+                remotePublishedAt > recordedPublishedAt,
         )
     }
 
@@ -554,6 +571,10 @@ object WanxiangUpdateManager {
      * 词库内容指纹：对每个 dict 文件计算内容 SHA-256，
      * 按"相对路径|内容哈希"排序后拼接再取 SHA-256。
      * 本地与下载时用同一算法，更新成功后两者一致。
+     * 目录缺失/为空（部署失败等异常状态）时返回空串而非对零个
+     * part 做哈希——空输入哈希是个非空常量，会绕过各处空值守卫、
+     * 伪装成一个真实指纹显示并落盘为远端记录；空串则让本地行
+     * 诚实显示"—"、回填守卫也不会写入。
      */
     private suspend fun dictsContentFingerprint(dictsDir: File): String {
         val parts = mutableListOf<String>()
@@ -563,6 +584,7 @@ object WanxiangUpdateManager {
                 currentCoroutineContext().ensureActive()
                 parts.add("${it.relativeTo(dictsDir).path}|${sha256File(it)}")
             }
+        if (parts.isEmpty()) return ""
         parts.sort()
         return fingerprint(*parts.toTypedArray())
     }
@@ -581,8 +603,17 @@ object WanxiangUpdateManager {
             if (schemaRelease.tag_name.isBlank()) error("远端方案版本无效")
             if (gramRelease.published_at.isBlank()) error("远端模型版本无效")
 
-            val gramSha256 = com.jobeen.ime.base.ngram.normalizeSha256(
+            // 登记摘要改走资产分页端点：Release 对象内嵌的 assets 数组
+            // 可缺资产（本仓实测 498/499），恰好缺目标资产时摘要落空、
+            // 更新会被下载侧的 fail-closed 永久拒绝；分页端点查不到
+            // 再回落内嵌值，不低于现状
+            val gramSha256 = paginatedDigest(
+                GRAM_REPO, GRAM_TAG, GRAM_FILE_NAME,
                 gramRelease.assets.firstOrNull { it.name == GRAM_FILE_NAME }?.digest,
+            )
+            val schemaZipSha256 = paginatedDigest(
+                SCHEMA_REPO, schemaRelease.tag_name, SCHEMA_ZIP_NAME,
+                schemaRelease.assets.firstOrNull { it.name == SCHEMA_ZIP_NAME }?.digest,
             )
             // 模型内容兜底：记录为空/过期时以本地文件真实指纹为准。指纹
             // 走文件状态缓存（cachedFileFingerprint），文件未变时不重哈希
@@ -651,10 +682,14 @@ object WanxiangUpdateManager {
                     }
                 }
             }
-            // 远端模型指纹：同理（内容兜底回填后即有值）
+            // 远端模型指纹：优先下载记录（发布时间匹配时）；记录无值
+            // 时用本次检查拿到的远端登记摘要兜底显示——远端原地换包
+            // 后记录仍是旧值/空值，只读记录会把新指纹藏成"—"，而
+            // 登记摘要就是远端当前文件的真实指纹
             val gramRemoteFp =
                 prefs.getString(KEY_GRAM_REMOTE_FP, null)
                     .takeIf { prefs.getString(KEY_GRAM_REMOTE_FP_PUB, null) == gramRelease.published_at }
+                    ?: gramSha256.ifEmpty { null }
 
             UpdateInfo(
                 schemaRemoteVersion = schemaRelease.tag_name,
@@ -663,14 +698,34 @@ object WanxiangUpdateManager {
                 gramLocalPublishedAt = gramDecision.effectiveLocalPublishedAt,
                 dictRemoteFingerprint = dictRemoteFp,
                 gramRemoteFingerprint = gramRemoteFp,
-                schemaZipSha256 = com.jobeen.ime.base.ngram.normalizeSha256(
-                    schemaRelease.assets.firstOrNull { it.name == SCHEMA_ZIP_NAME }?.digest,
-                ),
+                schemaZipSha256 = schemaZipSha256,
                 gramSha256 = gramSha256,
+                gramUpdateAvailable = gramDecision.updateAvailable,
             )
         }.onFailure {
             Timber.e(it, "检查方案更新失败")
         }
+    }
+
+    /**
+     * 资产登记摘要：优先资产分页端点（Release 内嵌 assets 可缺项），
+     * 查不到（网络失败/限流/结构变化）回落 [embeddedDigest] 内嵌值。
+     * 两处皆无返回空串，下载侧按 fail-closed 拒绝更新。
+     */
+    private fun paginatedDigest(
+        repoPath: String,
+        tag: String,
+        assetName: String,
+        embeddedDigest: String?,
+    ): String {
+        val parts = repoPath.split('/', limit = 2)
+        if (parts.size == 2 && tag.isNotBlank()) {
+            val fromApi = fetchGithubReleaseAssetSha256(
+                client, parts[0], parts[1], tag, assetName,
+            )
+            if (fromApi.isNotEmpty()) return fromApi
+        }
+        return com.jobeen.ime.base.ngram.normalizeSha256(embeddedDigest)
     }
 
     private fun fetchRelease(apiPath: String): GhRelease {
@@ -852,10 +907,13 @@ object WanxiangUpdateManager {
                 syncDirectory(DataManager.sharedDataDir)
             }
 
-            // 5. 全部成功后才记录版本号与内容指纹
+            // 5. 全部成功后才记录版本号与内容指纹。版本记录按侧写：
+            // 只更新了哪侧就只写哪侧——无条件写另一侧的远端值，会在
+            // 上游回撤版本等情形下把未变更侧的记录改退，并压过实际
+            // 部署版本（本地方案版本解析是记录优先）
             prefs.edit().apply {
-                putString(KEY_SCHEMA_VERSION, info.schemaRemoteVersion)
-                putString(KEY_GRAM_PUBLISHED_AT, info.gramRemotePublishedAt)
+                if (changedDicts) putString(KEY_SCHEMA_VERSION, info.schemaRemoteVersion)
+                if (changedGram) putString(KEY_GRAM_PUBLISHED_AT, info.gramRemotePublishedAt)
                 // 词库指纹仅在本次下载了方案包时更新
                 if (info.schemaUpdateAvailable) {
                     newDictFp?.let {

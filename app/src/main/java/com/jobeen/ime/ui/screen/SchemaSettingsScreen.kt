@@ -307,10 +307,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 currentAppVersionCode().takeIf { it != -1L }?.let {
                     updatePrefs.edit().putLong(KEY_APP_VERSION_CODE, it).apply()
                 }
-                // 更新本地版本显示
-                WanxiangUpdateManager.checkForUpdates(updatePrefs).onSuccess { info ->
-                    updateInfo = info
-                }
+                // 更新本地版本显示。复检失败必须可见：置检查失败标志
+                // （状态文案里检查失败优先于更新成功，见下方 statusText），
+                // 否则远程卡停留在更新前数值、还显示成功，用户无从知道；
+                // updateDone 保留（更新本身确实成功），按钮区在该状态
+                // 仍给出「检查更新」入口（见下方按钮分支），可当场复检
+                WanxiangUpdateManager.checkForUpdates(updatePrefs)
+                    .onSuccess { info ->
+                        updateInfo = info
+                    }
+                    .onFailure {
+                        updateCheckFailed = true
+                    }
                 // 重新计算本地指纹（更新后应与远端指纹一致）
                 localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
                 // 词库与模型已替换，触发 Rime 完整重新部署
@@ -526,9 +534,13 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         updating -> updateStageText.ifEmpty {
                             stringResource(R.string.schema_update_deploying)
                         }
+                        // 检查失败排在更新成功之前：更新成功后的静默
+                        // 复检若失败，最新事实是「复检没过、远程卡是旧
+                        // 值」，继续显示成功会掩盖这一点；普通检查失败
+                        // 时 updateDone 本就为假，顺序调整不影响它
+                        updateCheckFailed -> stringResource(R.string.schema_update_check_failed)
                         updateDone -> stringResource(R.string.schema_update_success)
                         updateFailed -> stringResource(R.string.schema_update_failed)
-                        updateCheckFailed -> stringResource(R.string.schema_update_check_failed)
                         checkingUpdate -> stringResource(R.string.schema_update_checking)
                         info == null -> ""
                         info.hasUpdate ->
@@ -544,12 +556,32 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         modifier = Modifier.weight(1f),
                     )
                     when {
-                        updateDone -> Icon(
-                            imageVector = Icons.Default.CheckCircle,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(22.dp),
-                        )
+                        // 更新成功后仍保留「检查更新」入口：成功回调里的
+                        // 静默复检失败时远程卡是旧值，用户可当场手动复检，
+                        // 不必退出页面重进
+                        updateDone -> Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp),
+                            )
+                            Button(
+                                onClick = { checkWanxiangUpdate() },
+                                modifier = Modifier.height(32.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                            ) {
+                                Text(
+                                    stringResource(R.string.schema_update_check),
+                                    fontSize = rowSubFontSize,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
 
                         updating -> ProgressButton(
                             progress = updateProgress?.let {

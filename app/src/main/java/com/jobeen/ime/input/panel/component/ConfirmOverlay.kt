@@ -5,9 +5,13 @@ import android.content.Context
 import android.graphics.Color
 import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.view.animation.OvershootInterpolator
+import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.TextView
+import androidx.core.view.isVisible
 import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import splitties.dimensions.dp
@@ -76,7 +80,18 @@ class ConfirmOverlay(
     private val actionsContainer = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
+    }
+
+    // 动作列表的外层滚动区：卡片自然总高超过浮层可用高时（横屏、
+    // 大字体、项数多），靠 showCard 把它的高度定到可用范围、内部
+    // 滚动保住末项可达，而不是被浮层裁掉
+    private val actionsScroll = ScrollView(context).apply {
         visibility = View.GONE
+        isVerticalScrollBarEnabled = false
+        addView(
+            actionsContainer,
+            FrameLayout.LayoutParams(matchParent, wrapContent),
+        )
     }
 
     private val card = LinearLayout(context).apply {
@@ -97,7 +112,7 @@ class ConfirmOverlay(
             topMargin = dp(4)
         })
 
-        addView(actionsContainer, LinearLayout.LayoutParams(matchParent, wrapContent).apply {
+        addView(actionsScroll, LinearLayout.LayoutParams(matchParent, wrapContent).apply {
             topMargin = dp(4)
         })
     }
@@ -129,7 +144,7 @@ class ConfirmOverlay(
         messageView.text = message
         messageView.visibility = View.VISIBLE
         btnContainer.visibility = View.VISIBLE
-        actionsContainer.visibility = View.GONE
+        actionsScroll.visibility = View.GONE
         showCard(cardX, cardY, centerHorizontal, centerVertical)
     }
 
@@ -155,7 +170,8 @@ class ConfirmOverlay(
         // confirm 模式会把标题行恢复显示
         messageView.visibility = View.GONE
         btnContainer.visibility = View.GONE
-        actionsContainer.visibility = View.VISIBLE
+        actionsScroll.visibility = View.VISIBLE
+        actionsScroll.scrollTo(0, 0)
         actionsContainer.removeAllViews()
         actionButtons.clear()
         items.forEachIndexed { index, (label, action) ->
@@ -185,57 +201,119 @@ class ConfirmOverlay(
     // 主题刷新时动作按钮也要跟着换色，集中登记
     private val actionButtons = mutableListOf<TextView>()
 
+    // 本次弹出的定位触发源（布局监听 + post 兜底，见 showCard）：
+    // 存字段供 dismiss/下次弹出时先行清理，避免残留者用旧坐标抢定位
+    private var layoutListener: View.OnLayoutChangeListener? = null
+    private var positionRunnable: Runnable? = null
+    private var cardPositioned = false
+
+    private fun clearPositionTriggers() {
+        layoutListener?.let { card.removeOnLayoutChangeListener(it) }
+        layoutListener = null
+        positionRunnable?.let { card.removeCallbacks(it) }
+        positionRunnable = null
+    }
+
     private fun showCard(
         cardX: Float,
         cardY: Float,
         centerHorizontal: Boolean,
         centerVertical: Boolean,
     ) {
+        clearPositionTriggers()
+        cardPositioned = false
         bringToFront()
         card.alpha = 0f
         card.scaleX = 0f
         card.scaleY = 0f
         visibility = VISIBLE
 
-        card.addOnLayoutChangeListener(object : View.OnLayoutChangeListener {
+        // 定位与显形只执行一次，两个触发源任一先到：布局变化监听是
+        // 常态路径；post 兜底同尺寸卡二次弹出——无布局边界变化时
+        // 监听永不触发、卡片会 alpha=0 隐形而浮层还在拦点击
+        fun positionCard() {
+            if (cardPositioned) return
+            // 尚未布局（post 抢在首帧布局前）：不消耗这次机会，
+            // 等布局监听在布局完成后执行
+            if (card.height == 0 || measuredHeight == 0) return
+            cardPositioned = true
+            layoutListener?.let { card.removeOnLayoutChangeListener(it) }
+            layoutListener = null
+
+            val maxWidth = (measuredWidth - marginH * 2).coerceAtLeast(dp(200))
+            messageView.maxWidth = maxWidth
+
+            // 动作菜单高度钳制：卡片自然总高超过浮层可用高时，把
+            // 滚动区布局高度定为「可用高 − 卡片其余部分」，菜单
+            // 内部可滚、末项可达；高度足够则恢复 wrapContent
+            // （上次的定高不能残留）。cardH 是钳制后的预期卡高，
+            // 定位钳制直接用它，不等改高引发的第二轮布局
+            var cardH = card.height
+            if (actionsScroll.isVisible) {
+                val availH = measuredHeight - marginV * 2
+                val restH = card.height - actionsScroll.height
+                val naturalH = restH + actionsContainer.height
+                val lp = actionsScroll.layoutParams as LinearLayout.LayoutParams
+                if (naturalH > availH) {
+                    val target = (availH - restH).coerceAtLeast(0)
+                    if (lp.height != target) {
+                        lp.height = target
+                        actionsScroll.layoutParams = lp
+                    }
+                    cardH = restH + target
+                } else {
+                    if (lp.height != ViewGroup.LayoutParams.WRAP_CONTENT) {
+                        lp.height = ViewGroup.LayoutParams.WRAP_CONTENT
+                        actionsScroll.layoutParams = lp
+                    }
+                    cardH = naturalH
+                }
+            }
+
+            card.pivotX = card.width / 2f
+            card.pivotY = cardH / 2f
+
+            val cx =
+                if (cardX.isNaN()) measuredWidth - card.measuredWidth - marginH else cardX.toInt()
+            val cy =
+                if (cardY.isNaN()) measuredHeight - cardH - marginV else cardY.toInt()
+            val maxX = (measuredWidth - card.measuredWidth - marginH).coerceAtLeast(marginH)
+            val maxY = (measuredHeight - cardH - marginV).coerceAtLeast(marginV)
+            val finalCx =
+                if (centerHorizontal) (measuredWidth - card.measuredWidth) / 2 else cx
+            val finalCy =
+                if (centerVertical) (measuredHeight - cardH) / 2 else cy
+            card.translationX = finalCx.coerceIn(marginH, maxX).toFloat()
+            card.translationY = finalCy.coerceIn(marginV, maxY).toFloat()
+
+            card.scaleX = 0f
+            card.scaleY = 0f
+            card.alpha = 1f
+            invalidate()
+            card.animate()
+                .scaleX(1f).scaleY(1f)
+                .setDuration(200)
+                .setInterpolator(OvershootInterpolator(2f))
+                .start()
+        }
+
+        val listener = object : View.OnLayoutChangeListener {
             override fun onLayoutChange(
                 v: View?, left: Int, top: Int, right: Int, bottom: Int,
                 oldLeft: Int, oldTop: Int, oldRight: Int, oldBottom: Int
             ) {
-                card.removeOnLayoutChangeListener(this)
-                val maxWidth = (measuredWidth - marginH * 2).coerceAtLeast(dp(200))
-                messageView.maxWidth = maxWidth
-
-                card.pivotX = card.width / 2f
-                card.pivotY = card.height / 2f
-
-                val cx =
-                    if (cardX.isNaN()) measuredWidth - card.measuredWidth - marginH else cardX.toInt()
-                val cy =
-                    if (cardY.isNaN()) measuredHeight - card.measuredHeight - marginV else cardY.toInt()
-                val maxX = (measuredWidth - card.measuredWidth - marginH).coerceAtLeast(marginH)
-                val maxY = (measuredHeight - card.measuredHeight - marginV).coerceAtLeast(marginV)
-                val finalCx =
-                    if (centerHorizontal) (measuredWidth - card.measuredWidth) / 2 else cx
-                val finalCy =
-                    if (centerVertical) (measuredHeight - card.measuredHeight) / 2 else cy
-                card.translationX = finalCx.coerceIn(marginH, maxX).toFloat()
-                card.translationY = finalCy.coerceIn(marginV, maxY).toFloat()
-
-                card.scaleX = 0f
-                card.scaleY = 0f
-                card.alpha = 1f
-                invalidate()
-                card.animate()
-                    .scaleX(1f).scaleY(1f)
-                    .setDuration(200)
-                    .setInterpolator(OvershootInterpolator(2f))
-                    .start()
+                positionCard()
             }
-        })
+        }
+        layoutListener = listener
+        card.addOnLayoutChangeListener(listener)
+        val posted = Runnable { positionCard() }
+        positionRunnable = posted
+        card.post(posted)
     }
 
     fun dismiss() {
+        clearPositionTriggers()
         if (visibility != VISIBLE) return
         card.animate().cancel()
         animate().cancel()
