@@ -10,6 +10,7 @@ import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.base.feedback.InputFeedbacks
+import com.jobeen.ime.base.speech.VoiceUndoLedger
 import com.jobeen.ime.base.util.InputConnectionUtil
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.ClipboardManager
@@ -146,6 +147,9 @@ class ImeInputMethodService : InputMethodService() {
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         // 换了输入框：上一框的语音纠错沉淀观察作废
         com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        // 新输入框（非同框重启）：语音上屏撤销账本是旧框的账，整表作废，
+        // 不能把旧框的段拿来新框删
+        if (!restarting) VoiceUndoLedger.clearAll()
         // 语音预热/存活预检（onStartInput 已先行一步，这里再兜一次）：
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
