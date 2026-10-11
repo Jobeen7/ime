@@ -763,8 +763,9 @@ class KeyboardWindowView(
     // 语音桥回调实例：本视图字段强持有，SpeechUiBridge 内部弱引用后备，
     // 视图销毁后桥的槽位自动失效，不会反向强持已销毁的视图
     private val speechRecordingStartedCallback: () -> Unit = {
-        // 依赖就绪、录音真正开始后才展示动画，避免未就绪时一闪而过导致抖动
-        voiceOverlay.show()
+        // 浮层已在启动瞬间即显示（见 startVoiceInput：音频先行后录音
+        // 本地立即开始，冷启动备引擎期间不再留「按了没反应」的空白）；
+        // 就绪回调只负责确保浮层在最前。动画本体一律不动
         voiceOverlay.bringToFront()
     }
     private val speechAmplitudeCallback: (Float) -> Unit = { amp ->
@@ -781,6 +782,9 @@ class KeyboardWindowView(
         isVoiceRecording = false
         panel.recording = false
         voiceOverlay.hide()
+        // 失败必须可见（旧实现静默收起，用户无从知道发生了什么）：
+        // 客户端留了具体文案用文案，否则用通用文案
+        showImeToast(SherpaSpeechClient.consumeStartFailureHint() ?: "语音启动失败，请重试")
     }
     private val speechModelMissingCallback: (ModelProvider) -> Unit =
         { _ -> showModelDownloadPrompt() }
@@ -824,6 +828,10 @@ class KeyboardWindowView(
         registerSpeechCallbacks()
 
         SherpaSpeechClient.startHoldSession(context as ImeInputMethodService)
+        // 启动即显示浮层：录音已在本地开始，引擎冷启动期间浮层先
+        // 在（动画本体不变、不加任何文字），就绪后由回调带到最前
+        voiceOverlay.show()
+        voiceOverlay.bringToFront()
     }
 
     private fun stopVoiceInput(discard: Boolean = false) {
@@ -871,12 +879,20 @@ class KeyboardWindowView(
         registerSpeechCallbacks()
 
         SherpaSpeechClient.startHoldSession(context as ImeInputMethodService)
+        // 同 startVoiceInput：锁定录音同样启动即显示浮层
+        voiceOverlay.show()
+        voiceOverlay.bringToFront()
     }
 
     fun onInputChanged(
         info: EditorInfo?, text: String, virtualInputConnection: Boolean = false,
     ): Any {
-        if (isVoiceRecording && text.isEmpty()) {
+        // 空探针 discard 只在本会话已出过 partial 后才成立：未出首个
+        // partial 前探到光标前后为空是常态（空编辑器正是最常见的
+        // 语音场景），宿主 App 在录音开始阶段发一次选区事件就会
+        // 误杀刚起的会话（审计 W1）；已出 partial 后探空才视作
+        // 编辑器内容被外部清空
+        if (isVoiceRecording && text.isEmpty() && SherpaSpeechClient.sessionHasPartial) {
             isVoiceRecording = false
             panel.recording = false
             SherpaSpeechClient.stopHoldSession(discard = true)

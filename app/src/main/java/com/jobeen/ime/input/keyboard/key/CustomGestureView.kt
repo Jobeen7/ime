@@ -45,6 +45,16 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     @Volatile
     var longPressFeedbackEnabled = true
 
+    /**
+     * 长按取消的位移判据（px）：null＝完全沿用旧口径（滑出边界、滑动
+     * 步进消费、手势被消费，任一命中即摘待发长按）。非 null 时待发
+     * 长按的取消只由「指针相对 DOWN 点的直线位移超过本值」触发——
+     * 空格语音长按专用：旧口径的 24px 步进/出界摘除对拇指落指后的
+     * 沉降漂移太敏感（偶发把长按吃成普通空格），而慢滑移光标必然
+     * 走出大位移、靠位移判据自然摘除，两边不耽误。
+     */
+    var longPressCancelSlopPx: Float? = null
+
     @Volatile
     private var repeatStarted = false
     var repeatEnabled = false
@@ -100,6 +110,10 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     // 当前手势的指针 id：只追踪按下本 View 的那根手指。
     // 多指场景下其他指针的 MOVE/UP 不得干扰本手势（坐标串指、提前结束等）。
     private var activePointerId = -1
+
+    // 本次手势的 DOWN 点（视图内坐标）：longPressCancelSlopPx 位移判据的原点
+    private var downX = 0f
+    private var downY = 0f
 
     var onTouchMoveListener: ((pointerId: Int, rawX: Float, rawY: Float) -> Unit)? = null
     var onTouchDownListener: ((View) -> Unit)? = null
@@ -160,6 +174,8 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                 activePointerId = event.getPointerId(0)
                 val x = event.getX(0)
                 val y = event.getY(0)
+                downX = x
+                downY = y
                 drawableHotspotChanged(x, y)
                 isPressed = true
                 InputFeedbacks.hapticFeedback(this)
@@ -219,9 +235,20 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                     getLocationOnScreen(loc)
                     onTouchMoveListener?.invoke(activePointerId, loc[0] + x, loc[1] + y)
                 }
+                val cancelSlop = longPressCancelSlopPx
+                if (cancelSlop != null && longPressEnabled && !longPressTriggered) {
+                    // 位移判据模式：待发长按只由相对 DOWN 点的直线位移
+                    // 摘除；下面的出界/步进/消费摘除在本模式下全部跳过
+                    //（那三处都以 longPressCancelSlopPx == null 为条件）
+                    val dx = x - downX
+                    val dy = y - downY
+                    if (dx * dx + dy * dy > cancelSlop * cancelSlop) {
+                        repeatHandler.removeCallbacks(longPressRunnable)
+                    }
+                }
                 if (!touchMovedOutside && !pointInView(x, y)) {
                     touchMovedOutside = true
-                    if (longPressEnabled) {
+                    if (longPressEnabled && longPressCancelSlopPx == null) {
                         repeatHandler.removeCallbacks(longPressRunnable)
                     }
                     if (repeatEnabled) {
@@ -295,8 +322,9 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         if (consumed && !gestureConsumed) {
             gestureConsumed = true
             // 手势已被消费（如空格慢滑移光标）：取消长按与连按，
-            // 否则慢滑超过长按时间会误触语音输入
-            if (longPressEnabled && !longPressTriggered) {
+            // 否则慢滑超过长按时间会误触语音输入。位移判据模式下不走
+            // 这里：慢滑靠大位移自然摘除（见 longPressCancelSlopPx）
+            if (longPressEnabled && !longPressTriggered && longPressCancelSlopPx == null) {
                 repeatHandler.removeCallbacks(longPressRunnable)
             }
             if (repeatEnabled && !repeatStarted) {
@@ -325,7 +353,9 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
             if (swipeRepeatEnabled && !swipeRepeatTriggered) {
                 swipeRepeatTriggered = true
             }
-            if (longPressEnabled && !longPressTriggered) {
+            // 步进消费本身照常（计数/事件分发不变），只是位移判据模式
+            // 下不再由步进摘长按——判据只看总位移（见 longPressCancelSlopPx）
+            if (longPressEnabled && !longPressTriggered && longPressCancelSlopPx == null) {
                 repeatHandler.removeCallbacks(longPressRunnable)
             }
             if (repeatEnabled && !repeatStarted) {
