@@ -320,50 +320,80 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         if (!state.initialized) {
             return
         }
-        sendJob {
-            when (key) {
-                is KeyEvent.SequenceEvent -> {
-                    actions.send(Action.Behavior(InputString(key.sequence)))
-                    return@sendJob
-                }
+        when (key) {
+            is KeyEvent.SequenceEvent -> {
+                // 序列键在分类 job 内原本即无条件转发、不读任何状态：
+                // 直接分发 Behavior，省去纯转发的一跳。行为的 native
+                // 工作仍由 Behavior 经 sendJob 入 jobs 队列执行。
+                dispatchAction(Action.Behavior(InputString(key.sequence)))
+            }
 
-                is KeyEvent.CodeEvent -> {
-                    when (key.keyCode) {
-                        KEYCODE_SPACE -> {
-                            if (getRawInput().isEmpty()) {
-                                actions.send(Action.EmitMessage(EngineMessage.Commit(" ")))
-                                return@sendJob
-                            }
-                        }
+            is KeyEvent.CodeEvent -> {
+                when (key.keyCode) {
+                    // 空格/回车/退格的去向取决于执行时点的实时组字，
+                    // 只能留在 job 内串行判定（见 sendStatefulKeyJob）
+                    KEYCODE_SPACE, KEYCODE_ENTER, KEYCODE_DEL ->
+                        sendStatefulKeyJob(key)
 
-                        KEYCODE_DEL -> {
-                            // 判断与处理收进本 job 内完成（见 handleBackspaceInJob）：
-                            // 不再先在本 job 取组字状态、再经 actions 队列转发处理，
-                            // 避免跨队列期间组字变化导致按旧状态误判
-                            handleBackspaceInJob()
-                            return@sendJob
-                        }
-
-                        KEYCODE_APOSTROPHE -> {
-                            actions.send(Action.Behavior(Segmentation()))
-                            return@sendJob
-                        }
-
-                        KEYCODE_ENTER -> {
-                            if (getRawInput().isEmpty()) {
-                                actions.send(Action.EmitMessage(EngineMessage.Commit("\n")))
-                                return@sendJob
-                            }
-                        }
+                    KEYCODE_APOSTROPHE -> {
+                        // 分隔符键在分类 job 内同样是无条件转发
+                        dispatchAction(Action.Behavior(Segmentation()))
                     }
-                    actions.send(
-                        Action.Behavior(
-                            InputKey(key.keyCode, key.modifiers.toInt(), key.isVirtual)
+
+                    else -> {
+                        // 其余普通键在分类 job 内不读状态、只转发
+                        // InputKey：直接分发，绕开纯转发 job
+                        dispatchAction(
+                            Action.Behavior(
+                                InputKey(key.keyCode, key.modifiers.toInt(), key.isVirtual)
+                            )
                         )
-                    )
-                    return@sendJob
+                    }
                 }
             }
+        }
+    }
+
+    /**
+     * 空格/回车/退格的分类 job：三者的去向都取决于 jobs 串行执行
+     * 时点的实时组字（getRawInput），不能在分发侧凭组字缓存预判——
+     * compositionCached.preedit 是展示串而非原始输入，且分发时点上
+     * 先行按键的 job 可能尚未执行、缓存滞后于在途按键，预判会重蹈
+     * 退格注释里跨队列按旧状态误判的覆辙。空格/回车在空组字时直通
+     * 文本、非空时与普通键同样转 InputKey；退格的判断与处理更必须
+     * 同 job 完成（见 handleBackspaceInJob）。
+     */
+    private fun sendStatefulKeyJob(key: KeyEvent.CodeEvent) {
+        sendJob {
+            when (key.keyCode) {
+                KEYCODE_SPACE -> {
+                    if (getRawInput().isEmpty()) {
+                        actions.send(Action.EmitMessage(EngineMessage.Commit(" ")))
+                        return@sendJob
+                    }
+                }
+
+                KEYCODE_DEL -> {
+                    // 判断与处理收进本 job 内完成（见 handleBackspaceInJob）：
+                    // 不再先在本 job 取组字状态、再经 actions 队列转发处理，
+                    // 避免跨队列期间组字变化导致按旧状态误判
+                    handleBackspaceInJob()
+                    return@sendJob
+                }
+
+                KEYCODE_ENTER -> {
+                    if (getRawInput().isEmpty()) {
+                        actions.send(Action.EmitMessage(EngineMessage.Commit("\n")))
+                        return@sendJob
+                    }
+                }
+            }
+            actions.send(
+                Action.Behavior(
+                    InputKey(key.keyCode, key.modifiers.toInt(), key.isVirtual)
+                )
+            )
+            return@sendJob
         }
     }
 
