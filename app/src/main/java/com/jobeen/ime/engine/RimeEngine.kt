@@ -116,6 +116,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class SelectCandidate(val candidate: Candidate) : Action
         data class Clear(val service: InputMethodService) : Action
         data class Undo(val service: InputMethodService) : Action
+        data class Redo(val service: InputMethodService) : Action
         data class Predict(val commit: String) : Action
         data class PredictionReady(val requestId: Long, val candidates: List<Candidate>) : Action
         data class EmitMessage(val message: EngineMessage) : Action
@@ -506,9 +507,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun redo(service: InputMethodService) {
-        InputConnectionUtil.sendCombinationKeyEvent(
-            inputConnection(), KEYCODE_Z, ctrl = true, shift = true
-        )
+        dispatchAction(Action.Redo(service))
     }
 
     override fun resortCandidates(candidates: List<Candidate>) {
@@ -593,6 +592,34 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             if (!undoneByLedger) {
                                 InputConnectionUtil.sendCombinationKeyEvent(
                                     ic, KEYCODE_Z, ctrl = true
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            is Action.Redo -> {
+                serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
+                sendJob {
+                    if (compositionCached.preedit?.isNotEmpty() == true) {
+                        // 组字中恢复与旧实现同口径：盲发组合键，不查账本
+                        // （组字是输入法内部状态，账本恢复够不着也不该动）
+                        InputConnectionUtil.sendCombinationKeyEvent(
+                            inputConnection(), KEYCODE_Z, ctrl = true, shift = true
+                        )
+                    } else {
+                        withContext(Dispatchers.Main.immediate) {
+                            val ic = inputConnection()
+                            // 先查语音账本恢复栈：账本直删绕开了编辑器
+                            // 的撤销栈，Ctrl+Shift+Z 对这笔删除无账可
+                            // 恢复；删除后状态未被动过时由账本整串写回。
+                            // 不命中（期间打过字/删过字/无恢复账）才回落
+                            // 组合键——打字撤销的恢复仍走编辑器自己的栈
+                            val redoneByLedger = ic != null && VoiceUndoLedger.tryRedo(ic)
+                            if (!redoneByLedger) {
+                                InputConnectionUtil.sendCombinationKeyEvent(
+                                    ic, KEYCODE_Z, ctrl = true, shift = true
                                 )
                             }
                         }
