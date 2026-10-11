@@ -169,9 +169,14 @@ object ModelDownloader {
         val archiveFile = File(tempDir, archiveName)
         val stageDir = File(tempDir, STAGE_DIR)
         if (!currentCoroutineContext().isActive) return@withContext false
+        // 先取可信摘要再下载：来源不可信、或查不到摘要且无内置钉死兜底时，
+        // 整包根本无从校验，提前中止，不白下数百 MB（校验口径见
+        // resolveExpectedSha256，与下载后比对完全一致）
+        val expectedSha = resolveExpectedSha256(link, archiveFile) ?: return@withContext false
+        if (!currentCoroutineContext().isActive) return@withContext false
         if (!ensureArchive(link, archiveFile, manifest.md5, onProgress)) return@withContext false
         if (!currentCoroutineContext().isActive) return@withContext false
-        if (!verifyArchiveSha256(link, archiveFile)) return@withContext false
+        if (!verifyArchiveSha256(archiveFile, expectedSha)) return@withContext false
         if (!extractAndInstall(archiveFile, stageDir, modelDir, onExtract)) return@withContext false
         // 安装成功后记录服务端标识，供后续检查更新时比对
         val serverId = manifest.md5.trim().ifEmpty { link.trim() }
@@ -223,21 +228,29 @@ object ModelDownloader {
         return true
     }
 
+    /** 已解析的可信期望摘要；[fromGithubLink] 区分不一致时的提示措辞（官方登记 vs 内置钉死） */
+    private data class ExpectedSha256(
+        val value: String,
+        val fromGithubLink: Boolean,
+    )
+
     /**
-     * 归档包 SHA-256 强校验（MD5 之外）。清单只给地址与 MD5 且同出一台
-     * 服务器，MD5 只能防损坏、防不住服务器被攻破后连摘要一起替换：
-     * - 链接是 GitHub Release 资产（可含代理前缀）→ 向 GitHub API 查该
-     *   资产登记的官方摘要比对，查不到或对不上都拒绝安装（fail-closed）；
-     *   仅查询失败时保留已通过 MD5 的缓存包，下次可直接重试校验；
+     * 下载前解析归档包的可信期望 SHA-256（MD5 之外）。清单只给地址与
+     * MD5 且同出一台服务器，MD5 只能防损坏、防不住服务器被攻破后连摘要
+     * 一起替换，因此期望摘要只认独立于清单服务器的信任锚，且必须在
+     * 下载前取到：查不到且无钉死兜底时整包无从校验，直接中止、不再
+     * 白下载整包（fail-closed）：
+     * - 链接是 GitHub Release 资产（可含代理前缀）→ 仓库必须是钉死的
+     *   官方仓库（k2-fsa/sherpa-onnx），否则拒绝；摘要向 GitHub API 查
+     *   该资产登记的官方值，查询失败退 APK 内置钉死表。此分支中止时
+     *   不删已缓存的包：缓存包已通过 MD5，摘要查询恢复后重试可直接
+     *   校验落盘，不必重下整包；
      * - 非 GitHub 链接 → 只认 APK 内置钉死摘要（按文件名查表）：旧
      *   TOFU（首次见到即钉住）在服务器被攻破时等于没有校验——换一个
      *   链接就能让客户端把新包钉为可信，已废除；内置表没有的包拒绝。
+     * 拒绝时已按既有口径 Toast 说明，返回 null 表示调用方直接中止。
      */
-    private suspend fun verifyArchiveSha256(
-        link: String,
-        archiveFile: File,
-    ): Boolean {
-        val actual = sha256OfFile(archiveFile)
+    private fun resolveExpectedSha256(link: String, archiveFile: File): ExpectedSha256? {
         val ref = parseGithubReleaseAssetUrl(link)
         if (ref != null) {
             // 仓库坐标必须与钉死的官方仓库一致：链接与 MD5 同出清单
@@ -251,7 +264,7 @@ object ModelDownloader {
                 )
                 HttpUtil.showToast("语音模型校验失败：下载来源不可信，已拒绝安装")
                 archiveFile.delete()
-                return false
+                return null
             }
             val expected = fetchGithubAssetSha256(ref)
                 .ifEmpty { PINNED_SPEECH_SHA256[ref.assetName] ?: "" }
@@ -260,15 +273,9 @@ object ModelDownloader {
                 // 出问题，而不是笼统的「下载失败」
                 Timber.w("Speech model: GitHub digest unavailable, refusing install")
                 HttpUtil.showToast("语音模型校验失败：无法获取官方校验值")
-                return false
+                return null
             }
-            if (!actual.equals(expected, ignoreCase = true)) {
-                Timber.e("Speech model archive SHA-256 mismatch vs GitHub digest")
-                HttpUtil.showToast("语音模型校验失败：文件与官方摘要不一致，已拒绝安装")
-                archiveFile.delete()
-                return false
-            }
-            return true
+            return ExpectedSha256(expected, fromGithubLink = true)
         }
         // 非 GitHub 链接：只认 APK 内置钉死摘要（按链接尾部的文件名查表）
         val expected = expectedShaForNonGithubLink(link, PINNED_SPEECH_SHA256)
@@ -276,15 +283,31 @@ object ModelDownloader {
             Timber.w("Speech model: non-GitHub link without pinned digest, refusing install")
             HttpUtil.showToast("语音模型校验失败：下载来源无内置校验值，已拒绝安装")
             archiveFile.delete()
-            return false
+            return null
         }
-        if (!actual.equals(expected, ignoreCase = true)) {
+        return ExpectedSha256(expected, fromGithubLink = false)
+    }
+
+    /**
+     * 归档包 SHA-256 强校验：文件内容与下载前已解析的可信期望摘要比对，
+     * 对不上拒绝安装并删包（摘要本身的来源与 fail-closed 口径见
+     * [resolveExpectedSha256]）。
+     */
+    private suspend fun verifyArchiveSha256(
+        archiveFile: File,
+        expected: ExpectedSha256,
+    ): Boolean {
+        val actual = sha256OfFile(archiveFile)
+        if (actual.equals(expected.value, ignoreCase = true)) return true
+        if (expected.fromGithubLink) {
+            Timber.e("Speech model archive SHA-256 mismatch vs GitHub digest")
+            HttpUtil.showToast("语音模型校验失败：文件与官方摘要不一致，已拒绝安装")
+        } else {
             Timber.e("Speech model archive SHA-256 mismatch vs pinned digest (non-GitHub link)")
             HttpUtil.showToast("语音模型校验失败：文件与内置摘要不一致，已拒绝安装")
-            archiveFile.delete()
-            return false
         }
-        return true
+        archiveFile.delete()
+        return false
     }
 
     /** 向 GitHub API 查 Release 资产登记的 sha256；任何失败返回空串 */

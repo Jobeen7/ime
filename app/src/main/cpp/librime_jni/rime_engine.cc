@@ -561,6 +561,10 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getBulkCandidates(
 
     jobjectArray result =
             env->NewObjectArray(3, jni::g_refs->Object, nullptr);
+    if (result == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
     env->SetObjectArrayElement(result, 0, sizeObj.get());
     env->SetObjectArrayElement(result, 1, hlObj.get());
     env->SetObjectArrayElement(result, 2, listObj.get());

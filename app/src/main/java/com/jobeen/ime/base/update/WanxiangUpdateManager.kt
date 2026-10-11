@@ -1,5 +1,6 @@
 package com.jobeen.ime.base.update
 
+import androidx.core.content.edit
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -158,6 +159,57 @@ object WanxiangUpdateManager {
         }
         return 0
     }
+
+    /** 语法模型内容兜底判定的结果（见 [resolveGramUpdate]）。 */
+    internal data class GramUpdateDecision(
+        /** 参与发布时间比对的本地值：内容兜底命中时即远端发布时间（判无更新） */
+        val effectiveLocalPublishedAt: String?,
+        /** 记录与内容不一致、需要把发布时间与远端模型指纹回填进 prefs */
+        val backfill: Boolean,
+    )
+
+    /**
+     * 语法模型更新判定（纯函数）。下载记录只说明「上次经本管理器下载
+     * 时」的版本：App 升版会清记录、模型经其他入口（模型增强页）下载
+     * 时根本不写记录，记录为空/过期不等于本地文件旧。本地文件真实
+     * 指纹与远端登记摘要一致时以内容为准：判无更新，并要求回填记录，
+     * 避免每次升版后都误报更新、整份重下约 400MB。指纹缺失、远端
+     * 摘要缺失或两者不一致时退回记录判定（backfill=false），原有
+     * 发布时间比对语义不变。
+     */
+    internal fun resolveGramUpdate(
+        recordedPublishedAt: String?,
+        localFingerprint: String?,
+        remotePublishedAt: String,
+        remoteSha256: String,
+    ): GramUpdateDecision {
+        val sha = remoteSha256.trim()
+        if (sha.isNotEmpty() && !localFingerprint.isNullOrEmpty() &&
+            localFingerprint.equals(sha, ignoreCase = true)
+        ) {
+            return GramUpdateDecision(
+                effectiveLocalPublishedAt = remotePublishedAt,
+                backfill = recordedPublishedAt != remotePublishedAt,
+            )
+        }
+        return GramUpdateDecision(
+            effectiveLocalPublishedAt = recordedPublishedAt,
+            backfill = false,
+        )
+    }
+
+    /**
+     * 本地方案版本（纯函数）：下载记录优先；记录缺失（未在线更新过、
+     * 或升版后记录被清）时以实际部署的内置版本为准——内置数据就是
+     * 随包发布的官方版本，只信记录会把「记录为空」误判成有更新。
+     * 方案侧只做版本比对：方案 zip 的官方摘要是对 zip 文件的，与解压
+     * 后的词库派生指纹不可直接比对。两者皆无返回 null（保持原有的
+     * 未知即提示更新语义）。
+     */
+    internal fun resolveLocalSchemaVersion(
+        recordedVersion: String?,
+        bundledVersion: String?,
+    ): String? = recordedVersion ?: bundledVersion
 
     data class LocalInfo(
         /** 本地方案版本，未更新过则为内置版本 */
@@ -529,29 +581,66 @@ object WanxiangUpdateManager {
             if (schemaRelease.tag_name.isBlank()) error("远端方案版本无效")
             if (gramRelease.published_at.isBlank()) error("远端模型版本无效")
 
+            val gramSha256 = com.jobeen.ime.base.ngram.normalizeSha256(
+                gramRelease.assets.firstOrNull { it.name == GRAM_FILE_NAME }?.digest,
+            )
+            // 模型内容兜底：记录为空/过期时以本地文件真实指纹为准。指纹
+            // 走文件状态缓存（cachedFileFingerprint），文件未变时不重哈希
+            // 这约 400MB 的文件；算不出（无文件/摘要缺失）退回记录判定
+            val localGramFingerprint = if (gramSha256.isNotEmpty()) {
+                try {
+                    val gramFile = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
+                    if (gramFile.isFile) cachedFileFingerprint(prefs, gramFile) else null
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "本地模型指纹计算失败，退回记录判定")
+                    null
+                }
+            } else {
+                null
+            }
+            val gramDecision = resolveGramUpdate(
+                recordedPublishedAt = prefs.getString(KEY_GRAM_PUBLISHED_AT, null),
+                localFingerprint = localGramFingerprint,
+                remotePublishedAt = gramRelease.published_at,
+                remoteSha256 = gramSha256,
+            )
+            if (gramDecision.backfill && localGramFingerprint != null) {
+                // 内容已证实本地即远端当前版本：把记录补齐，此后走记录
+                // 判定即可；远端模型指纹也有值可回填，界面不再显示"—"
+                prefs.edit {
+                    putString(KEY_GRAM_PUBLISHED_AT, gramRelease.published_at)
+                    putString(KEY_GRAM_REMOTE_FP, localGramFingerprint)
+                    putString(KEY_GRAM_REMOTE_FP_PUB, gramRelease.published_at)
+                }
+            }
+
             // 远端词库指纹：仅当已下载过该版本时才有（下载时计算的内容指纹）；
             // 新版本尚未下载时为 null，界面显示"—"
             val dictRemoteFp =
                 prefs.getString(KEY_DICT_REMOTE_FP, null)
                     .takeIf { prefs.getString(KEY_DICT_REMOTE_FP_VER, null) == schemaRelease.tag_name }
-            // 远端模型指纹：同理
+            // 远端模型指纹：同理（内容兜底回填后即有值）
             val gramRemoteFp =
                 prefs.getString(KEY_GRAM_REMOTE_FP, null)
                     .takeIf { prefs.getString(KEY_GRAM_REMOTE_FP_PUB, null) == gramRelease.published_at }
 
             UpdateInfo(
                 schemaRemoteVersion = schemaRelease.tag_name,
-                schemaLocalVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
+                // 记录缺失时以实际部署的内置版本为准，不只信记录
+                schemaLocalVersion = resolveLocalSchemaVersion(
+                    recordedVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
+                    bundledVersion = readBundledSchemaVersion(),
+                ),
                 gramRemotePublishedAt = gramRelease.published_at,
-                gramLocalPublishedAt = prefs.getString(KEY_GRAM_PUBLISHED_AT, null),
+                gramLocalPublishedAt = gramDecision.effectiveLocalPublishedAt,
                 dictRemoteFingerprint = dictRemoteFp,
                 gramRemoteFingerprint = gramRemoteFp,
                 schemaZipSha256 = com.jobeen.ime.base.ngram.normalizeSha256(
                     schemaRelease.assets.firstOrNull { it.name == SCHEMA_ZIP_NAME }?.digest,
                 ),
-                gramSha256 = com.jobeen.ime.base.ngram.normalizeSha256(
-                    gramRelease.assets.firstOrNull { it.name == GRAM_FILE_NAME }?.digest,
-                ),
+                gramSha256 = gramSha256,
             )
         }.onFailure {
             Timber.e(it, "检查方案更新失败")

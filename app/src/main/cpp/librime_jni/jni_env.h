@@ -15,6 +15,9 @@ namespace jni {
 // Throws a Java exception with the given message.
     inline void throwException(JNIEnv *env, const char *message) {
         jclass cls = env->FindClass("java/lang/RuntimeException");
+        // 类都找不到时 FindClass 已留未决异常，直接返回让它显形；
+        // 拿 null 去 ThrowNew 只会再崩一次且掩盖原始问题
+        if (!cls) return;
         env->ThrowNew(cls, message);
         env->DeleteLocalRef(cls);
     }
