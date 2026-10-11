@@ -144,4 +144,60 @@ class VoiceUndoLedgerTest {
     fun redo_nullBefore_refuses() {
         assertEquals(false, VoiceUndoLedger.decideRedoApply(null, "你好", 3))
     }
+
+    // ---- decideRedoApply 区域矩阵：统一后缀判定（锚点只存尾 16 字） ----
+
+    @Test
+    fun redo_partialWindowInBlindZone_applies() {
+        // 盲区形态：撤销窗口之外还残留 2 字前文（窗口未读满、也
+        // 不恰等于锚点），未做任何编辑。此前只认两端点会误拒
+        val anchor = "一二三四五六七八九十甲乙丙丁戊己"
+        assertEquals(16, anchor.length)
+        // 前文共 18 字（窗口外 2 字＋锚点 16 字），被删串长 3：
+        // 现读 16+3=19 只能读回 18，落在 （锚点长， 锚点长＋被删长） 之间
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("更早" + anchor, anchor, 3))
+    }
+
+    @Test
+    fun redo_windowShorterThanAnchor_refuses() {
+        // 窗口比锚点还短：锚点已被删改动过，不接管
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("你好", "你们好", 3))
+    }
+
+    @Test
+    fun redo_windowBeyondCombinedLength_refuses() {
+        // 窗口长于「锚点＋被删串」：删除点之后多出内容（形态不合）
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("更早的内容你好世界", "你好", 3))
+    }
+
+    @Test
+    fun redo_typedInsideAnchorTail_refuses() {
+        // 锚点尾部被改：后缀不再以完整锚点结尾
+        val anchor = "一二三四五六七八九十甲乙丙丁戊己"
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("一二三四五六七八九十甲乙丙丁戊改", anchor, 3))
+    }
+
+    // ---- buildRedoPrefix：锚点只存尾 16 字 ----
+
+    @Test
+    fun buildRedoPrefix_longPreamble_truncatesToAnchor() {
+        // 窗口 = 18 字前文＋3 字被删串：锚点只取前文尾 16 字
+        val window = "更早一二三四五六七八九十甲乙丙丁戊己被删串"
+        assertEquals(
+            "一二三四五六七八九十甲乙丙丁戊己",
+            VoiceUndoLedger.buildRedoPrefix(window, 3),
+        )
+    }
+
+    @Test
+    fun buildRedoPrefix_shortPreamble_keepsAll() {
+        // 前文不足 16 字时全量保留（短字段恢复靠恰等判定）
+        assertEquals("你好", VoiceUndoLedger.buildRedoPrefix("你好被删串", 3))
+    }
+
+    @Test
+    fun buildRedoPrefix_segmentAtFieldStart_emptyAnchor() {
+        // 被删串就是字段全部内容：锚点为空
+        assertEquals("", VoiceUndoLedger.buildRedoPrefix("被删串", 3))
+    }
 }

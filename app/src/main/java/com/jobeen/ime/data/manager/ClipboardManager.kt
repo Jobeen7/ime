@@ -319,7 +319,13 @@ object ClipboardManager {
                 val dao = db.clipboardDao()
                 val targetPinned = dao.pinnedByText(clean) ?: false
                 if (dao.existsByText(clean)) dao.deleteByText(clean)
-                dao.updateTextByText(oldText, clean, System.currentTimeMillis())
+                // 排到最前靠改排序序号（与 addEntry 新条目同口径，取
+                // 当前最小值减一）：列表排序键是 sortOrder 在前、
+                // timestamp 在后，只刷新时间戳条目原地不动
+                dao.updateTextByText(
+                    oldText, clean, System.currentTimeMillis(),
+                    (dao.minSortOrder() ?: 0L) - 1L,
+                )
                 if (targetPinned) dao.setPinnedByText(clean, true)
             }
         }
@@ -354,6 +360,12 @@ object ClipboardManager {
         return clip.description?.extras?.getBoolean(key) == true
     }
 
+    // 入库决策串行锁：监听回调与启动补偿（以及面板打开等其他来源）
+    // 都会并发走 checkCurrentClipboard，「读最新行/判存在→判抑制→
+    // 插入」若交错，快连复制时后到的内容可能先落库、顶部顺序倒置，
+    // 同一文本还会被两路同时判为新条目。决策段统一过这把锁串行化
+    private val intakeMutex = Mutex()
+
     /**
      * 检查系统剪贴板，有新内容则入库。返回 true 表示有新条目。
      * suspend：在 IO 线程做查询，调用方负责把回调切回主线程。
@@ -381,50 +393,54 @@ object ClipboardManager {
         if (ts > 0) lastClipTimestamp = ts
         lastText = text
 
-        // 与“最新一条记录（含软删除）”比对：若仍与系统剪贴板内容一致，
-        // 则视为没有新记录，避免重复插入。删除已改物理删，原墓碑行的
-        // 作用由 prefs 里的防复活抑制集合接替（见 noteRemovedTexts）。
-        // 两项判断合并进一次 db{} 往返（每次剪贴板变化都走这里）
-        val (latest, exists) = db(context) { db ->
-            db.clipboardDao().getLatestIncludingDeleted() to db.clipboardDao().existsByText(text)
-        } ?: (null to true)
-        // 防复活抑制命中：先判「重新复制」放行，再判与最新行是否一致——
-        // 已被物理删的文本不在有效行里，顺序反过来会让软删存量行把放行短路。
-        // 放行判据（任一成立即视为删除之后的主动重新复制，只摘除该条
-        // 抑制并走正常入库，其余条目的抑制不受影响）：
-        // ① 主判据：本次检查由剪贴板变更监听事件触发——删除动作本身不改
-        //    系统剪贴板、不会产生新事件，事件到达且内容哈希仍等于被删文本，
-        //    只可能是删除之后又被复制了同一文本；
-        // ② 时间戳兜底：进程死亡期间错过的复制事件靠 ClipDescription 时
-        //    间戳补判，剪贴板设置时刻晚于删除时刻即放行；旧格式记录无删
-        //    除时刻（removedAt=0）或剪贴板无时间戳（ts<=0）时不放行、继续抑制。
-        val suppression = removedSuppression(context, text)
-        if (suppression != null) {
-            // ③ 无时间戳平台（API 26 以下恒无 ClipDescription 时间戳，
-            // ② 永不成立）的兜底：抑制超过上限时长后失效。进程死亡
-            // 期间的重新复制在这类系统上没有任何可判信号，无限期抑制
-            // 会把「删掉后重新复制同一文本」永久吞掉；而删除后一周
-            // 系统剪贴板仍是同一文本时，它实质就是用户当前的剪贴板
-            // 内容，防复活的保护价值已消失。近期的防复活不受影响。
-            val recopied = fromClipChangedEvent ||
-                (suppression.removedAt > 0L && ts > suppression.removedAt) ||
-                (ts <= 0 && suppression.removedAt > 0L &&
-                    System.currentTimeMillis() - suppression.removedAt >
-                    SUPPRESSION_MAX_AGE_MS)
-            if (!recopied) return false
-            liftRemovedSuppression(context, suppression.hash)
-        } else if (latest?.text == text) {
-            return false
-        }
+        // 以下决策段（读最新行/判存在→判抑制→插入）过 intakeMutex
+        // 串行化，见锁的注释
+        return intakeMutex.withLock {
+            // 与“最新一条记录（含软删除）”比对：若仍与系统剪贴板内容一致，
+            // 则视为没有新记录，避免重复插入。删除已改物理删，原墓碑行的
+            // 作用由 prefs 里的防复活抑制集合接替（见 noteRemovedTexts）。
+            // 两项判断合并进一次 db{} 往返（每次剪贴板变化都走这里）
+            val (latest, exists) = db(context) { db ->
+                db.clipboardDao().getLatestIncludingDeleted() to db.clipboardDao().existsByText(text)
+            } ?: (null to true)
+            // 防复活抑制命中：先判「重新复制」放行，再判与最新行是否一致——
+            // 已被物理删的文本不在有效行里，顺序反过来会让软删存量行把放行短路。
+            // 放行判据（任一成立即视为删除之后的主动重新复制，只摘除该条
+            // 抑制并走正常入库，其余条目的抑制不受影响）：
+            // ① 主判据：本次检查由剪贴板变更监听事件触发——删除动作本身不改
+            //    系统剪贴板、不会产生新事件，事件到达且内容哈希仍等于被删文本，
+            //    只可能是删除之后又被复制了同一文本；
+            // ② 时间戳兜底：进程死亡期间错过的复制事件靠 ClipDescription 时
+            //    间戳补判，剪贴板设置时刻晚于删除时刻即放行；旧格式记录无删
+            //    除时刻（removedAt=0）或剪贴板无时间戳（ts<=0）时不放行、继续抑制。
+            val suppression = removedSuppression(context, text)
+            if (suppression != null) {
+                // ③ 无时间戳平台（API 26 以下恒无 ClipDescription 时间戳，
+                // ② 永不成立）的兜底：抑制超过上限时长后失效。进程死亡
+                // 期间的重新复制在这类系统上没有任何可判信号，无限期抑制
+                // 会把「删掉后重新复制同一文本」永久吞掉；而删除后一周
+                // 系统剪贴板仍是同一文本时，它实质就是用户当前的剪贴板
+                // 内容，防复活的保护价值已消失。近期的防复活不受影响。
+                val recopied = fromClipChangedEvent ||
+                    (suppression.removedAt > 0L && ts > suppression.removedAt) ||
+                    (ts <= 0 && suppression.removedAt > 0L &&
+                        System.currentTimeMillis() - suppression.removedAt >
+                        SUPPRESSION_MAX_AGE_MS)
+                if (!recopied) return@withLock false
+                liftRemovedSuppression(context, suppression.hash)
+            } else if (latest?.text == text) {
+                return@withLock false
+            }
 
-        val isNew = !exists
-        if (isNew) {
-            lastCopyText = text
-            lastCopyTimestamp = System.currentTimeMillis()
-            addEntry(context, text, notify = false)
-            return true
+            val isNew = !exists
+            if (isNew) {
+                lastCopyText = text
+                lastCopyTimestamp = System.currentTimeMillis()
+                addEntry(context, text, notify = false)
+                return@withLock true
+            }
+            false
         }
-        return false
     }
 
     /**

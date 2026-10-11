@@ -17,7 +17,12 @@ import java.io.File
 
 class PredictionManager(private val context: Context) {
 
+    // 两字段在 rime job 线程写（loadModels/destroy）、Default 线程读
+    // （makePredictions/重排打分），无锁交接靠 @Volatile 保证可见性
+    @Volatile
     private var prediction: Prediction? = null
+
+    @Volatile
     private var gramDb: GramDb? = null
 
     /**

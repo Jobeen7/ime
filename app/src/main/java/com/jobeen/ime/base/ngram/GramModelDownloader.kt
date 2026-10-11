@@ -228,6 +228,8 @@ internal fun pickExpectedSha256(
  * 网络恢复即可。钉死值只在 GitHub 查询为空时参与选取。
  */
 private val PINNED_GRAM_SHA256 = mapOf(
+    // 2026-10-11 上游在 LTS Release 内原地替换了简体模型（published_at
+    // 不变、摘要变），钉死值同步刷新为现行登记摘要
     "wanxiang-lts-zh-hans.gram" to
-        "6169f35d48aa1018e6effd16cb6ae07f307964cffe5d8c79b97faf2164693bec",
+        "e317fb8587d189183cf31c046cb2410d8e11416dbd8a9c7d42d699c6e685e763",
 )

@@ -49,6 +49,47 @@ internal fun fetchGithubReleaseAssetSha256(
 
 private const val MAX_ASSET_PAGES = 20
 
+/** 资产列表函数的页数上限（每页 100 个；asr-models 约 500 个，12 页足够且防失控） */
+private const val MAX_LIST_PAGES = 12
+
+/**
+ * 拉取某个 Release 的全部资产（名 → 登记 SHA-256，已归一化；资产无
+ * 登记摘要时值为空串）。走资产分页端点（理由同上：内嵌数组可缺项）。
+ * 任何失败（取不到 release id、某页请求失败、结构变化）返回空列表，
+ * 调用方据此走兜底（如内置钉死表），不把部分结果当全量清单。
+ */
+internal fun fetchGithubReleaseAssets(
+    client: OkHttpClient,
+    owner: String,
+    repo: String,
+    tag: String,
+): List<Pair<String, String>> = runCatching {
+    val releaseId = fetchReleaseId(client, owner, repo, tag)
+    if (releaseId <= 0L) return@runCatching emptyList()
+    val out = mutableListOf<Pair<String, String>>()
+    var page = 1
+    while (page <= MAX_LIST_PAGES) {
+        val url = "https://api.github.com/repos/$owner/$repo" +
+            "/releases/$releaseId/assets?per_page=100&page=$page"
+        val body = githubGet(client, url) ?: return@runCatching emptyList()
+        val assets = JSONArray(body)
+        if (assets.length() == 0) break
+        for (i in 0 until assets.length()) {
+            val item = assets.optJSONObject(i) ?: continue
+            val name = item.optString("name")
+            if (name.isNotEmpty()) {
+                out.add(name to normalizeSha256(item.optString("digest")))
+            }
+        }
+        if (assets.length() < 100) break
+        page++
+    }
+    out
+}.getOrElse {
+    Timber.w(it, "Failed to list GitHub release assets")
+    emptyList()
+}
+
 private fun fetchReleaseId(
     client: OkHttpClient, owner: String, repo: String, tag: String
 ): Long {

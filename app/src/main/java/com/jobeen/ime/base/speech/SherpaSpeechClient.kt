@@ -259,38 +259,48 @@ object SherpaSpeechClient {
         synchronized(connectLock) { speechMessenger = null }
         lastLivenessMs = 0L
         if (holding.get() && !recordingStarted) {
-            // 复活计次：:speech 若在启动阶段反复崩溃（如模型损坏），
-            // 每次死亡都立即重绑重发会形成崩溃循环，且每次死亡都先于
-            // 探针超时到达、把超时自愈短路掉。窗口内超限即放弃本次
-            // 会话，按连接丢失收尾，等用户下一次长按重新开始。
-            val now = SystemClock.uptimeMillis()
-            while (deathResurrectTimes.isNotEmpty() &&
-                now - deathResurrectTimes.first() > DEATH_RESURRECT_WINDOW_MS
-            ) {
-                deathResurrectTimes.removeFirst()
-            }
-            if (deathResurrectTimes.size >= DEATH_RESURRECT_MAX) {
-                Timber.e("SpeechCli binder died too often; giving up this session")
-                handleLinkLost()
-                return
-            }
-            deathResurrectTimes.addLast(now)
-            forceDisconnect()
-            send(SpeechIpc.MSG_LOAD)
-            send(SpeechIpc.MSG_START, activeGen)
-            sendPing(activeGen)
-            // 复活重发后给新连接一份完整的启动截止：原截止自会话开始
-            // 计时，进程死亡重拉可能已耗掉大半，不能让会话刚复活就被
-            // 旧截止误杀；成功判据仍只是本代 READY（其到达后靠连接
-            // 代际触发保留音频重绕重发，见 onRecordingStarted）
-            armStartDeadline(activeGen)
+            if (!tryResurrectStartupSession()) handleLinkLost()
         } else {
             handleLinkLost()
         }
     }
 
     /**
+     * 启动阶段死亡的复活：作废重绑＋重发本代 START 并重新探活，
+     * 保留音频不丢（新连接 READY 后靠连接代际重绕重发）。复活计
+     * 次：:speech 若在启动阶段反复崩溃（如模型损坏），每次死亡都
+     * 立即重绑重发会形成崩溃循环，且每次死亡都先于探针超时到达、
+     * 把超时自愈短路掉。窗口内超限返回 false，调用方按连接丢失
+     * 收尾，等用户下一次长按重新开始。
+     */
+    private fun tryResurrectStartupSession(): Boolean {
+        val now = SystemClock.uptimeMillis()
+        while (deathResurrectTimes.isNotEmpty() &&
+            now - deathResurrectTimes.first() > DEATH_RESURRECT_WINDOW_MS
+        ) {
+            deathResurrectTimes.removeFirst()
+        }
+        if (deathResurrectTimes.size >= DEATH_RESURRECT_MAX) {
+            Timber.e("SpeechCli binder died too often; giving up this session")
+            return false
+        }
+        deathResurrectTimes.addLast(now)
+        forceDisconnect()
+        send(SpeechIpc.MSG_LOAD)
+        send(SpeechIpc.MSG_START, activeGen)
+        sendPing(activeGen)
+        // 复活重发后给新连接一份完整的启动截止：原截止自会话开始
+        // 计时，进程死亡重拉可能已耗掉大半，不能让会话刚复活就被
+        // 旧截止误杀；成功判据仍只是本代 READY（其到达后靠连接
+        // 代际触发保留音频重绕重发，见 onRecordingStarted）
+        armStartDeadline(activeGen)
+        return true
+    }
+
+    /**
      * 连接丢失时的会话分流收尾（断连回调与 binder 死亡共用）：
+     * 已松手待就绪（pendingFinish）——走启动复活，整句保留音频等
+     * 新连接 READY 后由既有 pendingFinish 逻辑 flush＋STOP 定稿；
      * 录音中丢失——服务端会话已随进程死亡，待定文字没有定稿来源，
      * 按取消清屏；等 DONE 中丢失——服务端大概率已完成识别，
      * composingText 里的最新文本就是最终结果，按 DONE 超时同款
@@ -299,6 +309,15 @@ object SherpaSpeechClient {
      */
     private fun handleLinkLost() {
         when {
+            // 已松手、未就绪、待 READY 后发 STOP 结算的状态：此前
+            // holding/awaitingDone 两分支都不命中——不断连、不重
+            // 发，保留的整句音频无人来取，只能等启动截止按失败
+            // 丢弃，与仍按住时同情形有完整复活形成无理由落差。
+            // cancelPending（用户已主动丢弃）不复活：仍由启动截止
+            // 补 CANCEL 静默收尾
+            pendingFinish && !cancelPending -> {
+                if (!tryResurrectStartupSession()) finishSession()
+            }
             holding.get() -> cancelSession()
             awaitingDone.get() -> {
                 disarmDoneTimeout()
@@ -579,6 +598,7 @@ object SherpaSpeechClient {
         onChunk = { tag, chunk -> onRecorderChunk(tag, chunk) },
         onAmplitude = { tag, amp -> onRecorderAmplitude(tag, amp) },
         onInitFailed = { tag -> onRecorderInitFailed(tag) },
+        onCaptureFailed = { tag -> onRecorderCaptureFailed(tag) },
         onFocusLost = { tag -> onRecorderFocusLost(tag) },
     ).also { recorderOrNull = it }
 
@@ -680,6 +700,22 @@ object SherpaSpeechClient {
             if (tag != activeGen || tag == settledGen) return@post
             startFailureHint = RECORDER_FAILURE_HINT
             cancelSession()
+        }
+    }
+
+    private fun onRecorderCaptureFailed(tag: Int) {
+        Timber.e("voice-start recorder capture failed gen=%d", tag)
+        mainHandler.post {
+            // 已结算或已被新会话取代的迟到失败不处理
+            if (tag != activeGen || tag == settledGen) return@post
+            startFailureHint = RECORDER_FAILURE_HINT
+            // 采集中途失败（read 报错/被外部停录）：已推送的音频
+            // 是好的，按焦点被抢同口径走正常松手结算（flush＋STOP
+            // 定稿已录部分），不整场作废；失败提示已置上，结算完成
+            // 时由 finishSession 尾部补消费弹出（见彼处注释）。已
+            // 松手（待就绪/等 DONE）时什么都不用做，结算自会推进，
+            // 提示随 finishSession 一并弹出
+            if (holding.get()) stopHoldSession(discard = false)
         }
     }
 
@@ -1117,19 +1153,35 @@ object SherpaSpeechClient {
             // 丢弃时才上屏；新会话（本代的直接后继）已开始是预期
             // 情形，不作废本尾
             if (settledGen != prevGen || discarding.get()) return@launch
-            val ic = service.activeInputConnection()
+            var screenIc = service.activeInputConnection()
             var prevDisplay: String? = null
+            // 本次是否真的对有效连接执行了上屏提交（账本登记门控）
+            var landed = false
             if (!prevText.isNullOrBlank()) {
                 val corrected = withContext(Dispatchers.Default) { correctionStore.correct(prevText) }
                 val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
-                ic?.setComposingText(displayText, 1)
-                prevDisplay = displayText
+                // 与 finishSession 尾同构：两次挂起之后、写屏之前
+                // 复验（验法与本尾入口一致）并重取连接——挂起期间
+                // 状态已变（本结算被更新的结算取代/新会话被丢弃）
+                // 或连接已指向新框时，不得用旧连接幽灵上屏，更
+                // 不得登记账本
+                if (settledGen != prevGen || discarding.get()) return@launch
+                val liveIc = service.activeInputConnection()
+                screenIc = liveIc
+                if (liveIc != null) {
+                    liveIc.setComposingText(displayText, 1)
+                    prevDisplay = displayText
+                    landed = true
+                }
             }
-            ic?.finishComposingText()
+            screenIc?.finishComposingText()
             // 账本登记：接管上屏的文本同样是真正落入编辑器的语音
-            // 段，供退格上滑整段撤销（登记口径与 finishSession 一致）
-            prevDisplay?.takeIf { it.isNotEmpty() }?.let {
-                VoiceUndoLedger.recordCommittedSegment(it)
+            // 段，供退格上滑整段撤销（登记口径与 finishSession 一
+            // 致，且同受 landed 门控：没真正落屏不登记）
+            if (landed) {
+                prevDisplay?.takeIf { it.isNotEmpty() }?.let {
+                    VoiceUndoLedger.recordCommittedSegment(it)
+                }
             }
             // 不触发 onDone、不武装沉淀：新会话正在进行，UI 收尾与
             // 沉淀观察归新会话自己的结算
@@ -1159,28 +1211,45 @@ object SherpaSpeechClient {
             // 既非本代、也非空闲的 0）则本尾整体作废——输入框归新
             // 会话，其上屏与收尾不归本代管
             if (activeGen != 0 && activeGen != gen) return@launch
-            val ic = service.activeInputConnection()
+            var screenIc = service.activeInputConnection()
             var committed: CorrectResult? = null
             var committedDisplay: String? = null
+            // 本次是否真的对有效连接执行了上屏提交（账本登记门控）
+            var landed = false
             if (discard) {
                 // 取消：先删掉已流式显示的待定文字，再收尾，否则 finishComposingText 会把待定文字确认上屏。
-                ic?.setComposingText("", 1)
+                screenIc?.setComposingText("", 1)
             } else if (!text.isNullOrBlank()) {
                 // 定稿先过专名同音纠错（词表与规则均为简体，必须赶在
                 // 繁简转换之前），再在后台转换，回主线程上屏收尾，
                 // DONE 后的转换→上屏→finishComposingText 顺序不变
                 val corrected = withContext(Dispatchers.Default) { correctionStore.correct(text) }
                 val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
-                ic?.setComposingText(displayText, 1)
-                committed = corrected
-                committedDisplay = displayText
+                // 两次挂起之后、写屏之前必须复验并重取连接：挂起
+                // 期间切框/新会话开始时，先前抓的连接已指向旧框，
+                // 继续用它上屏是幽灵输入；验法与本尾入口一致。连
+                // 接失效（取不到）时本次提交不发生，committed 不
+                // 置、账本不登记（见下方门控）
+                if (activeGen != 0 && activeGen != gen) return@launch
+                val liveIc = service.activeInputConnection()
+                screenIc = liveIc
+                if (liveIc != null) {
+                    liveIc.setComposingText(displayText, 1)
+                    committed = corrected
+                    committedDisplay = displayText
+                    landed = true
+                }
             }
-            ic?.finishComposingText()
+            screenIc?.finishComposingText()
             // 账本登记：文本真正落入编辑器之后记一笔（最终落下的
             // displayText，含规整/繁简转换），供退格上滑的语音段
-            // 两级撤销整段直删；丢弃的文本不登记
-            committedDisplay?.takeIf { it.isNotEmpty() }?.let {
-                VoiceUndoLedger.recordCommittedSegment(it)
+            // 两级撤销整段直删；丢弃的文本不登记。上屏没真正发生
+            // （连接失效）时不登记：幽灵账目会让后续上滑误删，且
+            // 登记动作本身还会清掉恢复栈、抹掉用户待恢复的段
+            if (landed) {
+                committedDisplay?.takeIf { it.isNotEmpty() }?.let {
+                    VoiceUndoLedger.recordCommittedSegment(it)
+                }
             }
             // 上屏后武装纠错沉淀：观察用户对这段文本的亲手修改，
             // 学成词对供下次定稿自动纠正（无观察条件时内部自行放弃）
@@ -1192,7 +1261,19 @@ object SherpaSpeechClient {
             // 新会话——此时调 onDone 会把新会话的录音标志清掉，松手
             // 不再发 STOP。开头验过不算数，临门一脚必须复验。
             if (activeGen != 0 && activeGen != gen) return@launch
-            SpeechUiBridge.onDone?.invoke()
+            if (startFailureHint != null) {
+                // 结算完成路径的失败提示补消费：失败文案此前只在
+                // 窗口层的 onFailed 回调里被取走展示，正常完成走
+                // onDone 无人消费——采集中途失败「结算已录部分」
+                // 正是走这条完成路径（见 onRecorderCaptureFailed），
+                // 提示会滞留到下一次失败才被顺带带出。此处有待弹
+                // 提示时改走 onFailed 收尾：窗口层据此取走文案弹
+                // Toast，浮层收起/录音态复位与 onDone 等价；文本
+                // 已在上方落屏，不受这次收尾口径影响
+                SpeechUiBridge.onFailed?.invoke() ?: SpeechUiBridge.onDone?.invoke()
+            } else {
+                SpeechUiBridge.onDone?.invoke()
+            }
             // 不再 resetState：本代状态已在入口同步复位，此处再复位
             // 会误伤可能已经开始的新会话
         }
