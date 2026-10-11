@@ -30,12 +30,16 @@ import kotlin.math.abs
  * 代次）：stop 后迟到的块/事件可由客户端按代次丢弃，不串入下一会话。
  * onChunk/onAmplitude 在采集线程回调；onInitFailed/onFocusLost 的
  * 线程随触发源（采集线程/焦点回调线程），客户端须自行回主线程。
+ * 采集中途失败（read 报错/被外部停录）走 [onCaptureFailed]（采集
+ * 线程收尾时回调），与构建失败的 [onInitFailed] 分开：前者已有
+ * 音频在外，收尾口径是结算已录部分，不是整场作废。
  */
 class VoiceRecorder(
     context: Context,
     private val onChunk: (tag: Int, chunk: ByteArray) -> Unit,
     private val onAmplitude: (tag: Int, amplitude: Float) -> Unit,
     private val onInitFailed: (tag: Int) -> Unit,
+    private val onCaptureFailed: (tag: Int) -> Unit,
     private val onFocusLost: (tag: Int) -> Unit,
 ) {
     private val appContext = context.applicationContext
@@ -44,8 +48,21 @@ class VoiceRecorder(
     @Volatile
     var sessionTag: Int = 0
 
+    /**
+     * 单次采集的停止控制：每次 [start] 新建一份、由采集线程捕获。
+     * 停止只作用于「当前」这份，旧线程永远读自己捕获的那份——新
+     * start 不会把已停的旧线程复活（共享单一 stopRequested 时，
+     * 旧线程卡在 buildRecorder 期间 stop 停不到它、start 又把标志
+     * 复位，旧线程启动后检查失效、与新线程双录）。
+     */
+    private class CaptureControl {
+        @Volatile
+        var stop = false
+    }
+
+    /** 当前采集的控制对象（[start]/[stop]/焦点监听据此作用于当前代） */
     @Volatile
-    private var stopRequested = false
+    private var currentControl: CaptureControl? = null
 
     @Volatile
     private var captureThread: Thread? = null
@@ -64,10 +81,10 @@ class VoiceRecorder(
             change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT ||
             change == AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK
         ) {
-            // 与旧服务端同纪律：焦点被抢只停采集（置停止标志＋停
+            // 与旧服务端同纪律：焦点被抢只停采集（置当前控制对象＋停
             // AudioRecord 让阻塞 read 返回），会话如何收尾由客户端
             // 经 onFocusLost 统一决定，这里不碰会话状态
-            stopRequested = true
+            currentControl?.stop = true
             audioRecord?.runCatching { stop() }
             if (!focusLostNotified) {
                 focusLostNotified = true
@@ -77,38 +94,48 @@ class VoiceRecorder(
     }
 
     /**
-     * 幂等启动：真正在跑的采集线程在场时直接返回；只剩一个已被
-     * 要求停止、正在退出的旧线程时照常另起新线程——旧线程的
-     * AudioRecord 已被 stop，其循环靠 recordingState 变化必然退出，
-     * 退出清理全部按实例身份复检，不会碰新线程的状态；它迟到的块
-     * 带旧代次标签，客户端按代次丢弃。
+     * 幂等启动：当前代采集线程仍在跑（其控制对象未被停）时直接
+     * 返回；只剩一个已被要求停止、正在退出的旧线程时照常另起新
+     * 线程。每次启动新建一份 [CaptureControl] 并由新线程捕获：旧
+     * 线程读的是自己那份（早已被停），哪怕它此前卡在
+     * buildRecorder 里、stop 没停到它，启动后检查也会命中、立即
+     * 收尾，永不与新线程双录。共享字段（[audioRecord]/焦点）由各
+     * 线程按身份认领，迟到的旧线程不覆盖新线程已写入的字段，其
+     * 资源只走局部释放；它迟到的块带旧代次标签，客户端按代次丢弃。
      */
     @Synchronized
     fun start() {
-        if (captureThread != null && !stopRequested) return
-        stopRequested = false
+        val current = currentControl
+        if (captureThread != null && current != null && !current.stop) return
+        val control = CaptureControl()
+        currentControl = control
         focusLostNotified = false
         val tag = sessionTag
-        captureThread = Thread({ runCapture(tag) }, "VoiceRecorder").also { it.start() }
+        captureThread = Thread({ runCapture(tag, control) }, "VoiceRecorder").also { it.start() }
     }
 
     /**
-     * 幂等停止（不阻塞调用方）：只置停止标志并停 AudioRecord 使阻塞
-     * read 返回，采集线程随即自行退出并在 finally 里释放资源。
-     * 此前这里还要 join 等线程退出才返回——调用方在输入法主线程上
-     * （松手收尾），真机上 AudioRecord 停止慢时能把浮层关闭拖后
-     * 约一秒。停止后队列定格改由客户端的发送锁保证：本方法返回后
-     * 迟到块至多一块、且只能进入待发队列、不会越过随后的 STOP。
+     * 幂等停止（不阻塞调用方）：只置当前控制对象的停止标志并停
+     * AudioRecord 使阻塞 read 返回，采集线程随即自行退出并在
+     * finally 里释放资源。此前这里还要 join 等线程退出才返回——
+     * 调用方在输入法主线程上（松手收尾），真机上 AudioRecord
+     * 停止慢时能把浮层关闭拖后约一秒。停止后队列定格改由客户端
+     * 的发送锁保证：本方法返回后迟到块至多一块、且只能进入待发
+     * 队列、不会越过随后的 STOP。
      */
     @Synchronized
     fun stop() {
-        stopRequested = true
+        currentControl?.stop = true
         audioRecord?.runCatching { stop() }
     }
 
-    private fun runCapture(tag: Int) {
+    private fun runCapture(tag: Int, control: CaptureControl) {
         var recorder: AudioRecord? = null
         var myFocusRequest: AudioFocusRequest? = null
+        // 采集中途失败（read 报错/被外部停录）：finally 收尾时经
+        // onCaptureFailed 通知客户端结算已录部分。此前这两条退出
+        // 路径静默无声，界面假装仍在录音、后续语音全丢
+        var captureFailed = false
         try {
             recorder = buildRecorder()
             if (recorder == null) {
@@ -116,24 +143,36 @@ class VoiceRecorder(
                 onInitFailed(tag)
                 return
             }
-            audioRecord = recorder
-            // 焦点在采集线程内申请、同一线程 finally 释放（平移旧口径）
-            requestAudioFocus()
-            myFocusRequest = audioFocusRequest
+            // 共享字段按身份认领：只在字段空闲时写入——迟到的旧
+            // 线程（卡在 buildRecorder 后才回来）不得覆盖新线程已
+            // 写入的字段，它的 recorder 只保局部引用、走局部释放
+            synchronized(this) {
+                if (audioRecord == null) audioRecord = recorder
+            }
+            // 已被停的旧线程不再申请焦点：申请动作本身会把新线程的
+            // 焦点登记顶掉（同一监听收到 LOSS 会停掉新会话），而它
+            // 申请完也只是立即收尾，纯有害无收益
+            if (control.stop) return
+            // 焦点在采集线程内申请、同一线程 finally 释放（平移旧口径）；
+            // 申请到的句柄本地持有，共享字段只在空闲时认领发布（见
+            // requestAudioFocus），迟到线程不得回读字段冒认别人的句柄
+            myFocusRequest = requestAudioFocus()
             recorder.startRecording()
-            if (stopRequested) {
-                // 启动期间停止已到达：立即收尾（finally 统一释放）
+            if (control.stop) {
+                // 启动期间停止已到达：读的是本线程捕获的控制对象，
+                // 新会话的 start 不会把它复活（每代一份，见类注释）
                 return
             }
 
             val bytes = ByteArray(SpeechIpc.CHUNK_BYTES)
             val shortChunk = ShortArray(SpeechIpc.CHUNK_SAMPLES)
-            while (!stopRequested &&
+            while (!control.stop &&
                 recorder.recordingState == AudioRecord.RECORDSTATE_RECORDING
             ) {
                 val count = recorder.read(bytes, 0, bytes.size)
                 if (count < 0) {
                     Timber.e("VoiceRecorder: recorder.read error count=%d", count)
+                    captureFailed = true
                     break
                 }
                 if (count == 0) {
@@ -149,23 +188,53 @@ class VoiceRecorder(
                     if (v > maxAmp) maxAmp = v
                 }
                 // 已 stop 的迟到块不再外送：块归属以代次＋停止标志双判
-                if (stopRequested) break
+                if (control.stop) break
                 onAmplitude(tag, maxAmp / 32768f)
                 onChunk(tag, bytes.copyOf(count))
+            }
+            // 循环因 recordingState 被外部翻转而退出（系统/其他应用
+            // 停了录音）：非本方停止、非正常结束，同属采集中途失败
+            if (!control.stop &&
+                recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING
+            ) {
+                captureFailed = true
             }
         } catch (t: Throwable) {
             Timber.e(t, "VoiceRecorder: capture failed")
             // 采集线程异常与构建失败同口径：通知客户端按启动失败收尾
-            if (!stopRequested) onInitFailed(tag)
+            if (!control.stop) onInitFailed(tag)
         } finally {
             recorder?.runCatching { stop() }
             recorder?.runCatching { release() }
             if (audioRecord === recorder) audioRecord = null
-            // 只释放本会话申请的焦点（平移旧纪律，防误放新会话的焦点）
-            if (audioFocusRequest === myFocusRequest) abandonAudioFocus()
+            // 只释放本会话申请的焦点（平移旧纪律，防误放新会话的焦点）：
+            // 赢得共享字段认领的走字段释放；没赢得的（迟到旧线程）按
+            // 本地句柄直接释放自己申请的那份，不碰共享字段
+            val focusRequest = myFocusRequest
+            if (focusRequest != null) {
+                if (audioFocusRequest === focusRequest) {
+                    abandonAudioFocus()
+                } else {
+                    runCatching {
+                        val am = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                            am.abandonAudioFocusRequest(focusRequest)
+                        }
+                    }.onFailure {
+                        Timber.w("VoiceRecorder abandonAudioFocus(local) failed: %s", it.message)
+                    }
+                }
+            } else if (audioFocusRequest == null) {
+                // 无请求对象的旧系统路径：字段里没有别人的请求才释放
+                abandonAudioFocus()
+            }
             synchronized(this) {
                 if (captureThread === Thread.currentThread()) captureThread = null
             }
+            // 中途失败通知放收尾最后：资源已释放、状态已定格，客户
+            // 端据此结算已录部分（stop 已先行到达时不重复打扰——
+            // 松手结算自会处理截断音频）
+            if (captureFailed && !control.stop) onCaptureFailed(tag)
         }
     }
 
@@ -200,7 +269,14 @@ class VoiceRecorder(
         }
     }
 
-    private fun requestAudioFocus() {
+    /**
+     * 申请音频焦点，返回本次申请到的请求句柄（旧系统无句柄返回
+     * null）。共享字段（[audioFocusRequest]/[audioFocusHeld]）只在
+     * 空闲时认领发布：迟到的旧线程申请到的句柄只保本地，由其
+     * finally 按本地句柄释放，不覆盖新线程已发布的字段。
+     */
+    private fun requestAudioFocus(): AudioFocusRequest? {
+        var created: AudioFocusRequest? = null
         runCatching {
             val am = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
@@ -212,18 +288,28 @@ class VoiceRecorder(
                         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                         .build()
                 ).setOnAudioFocusChangeListener(audioFocusListener).build()
-                audioFocusRequest = request
-                audioFocusHeld =
+                created = request
+                val granted =
                     am.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                synchronized(this) {
+                    if (audioFocusRequest == null) {
+                        audioFocusRequest = request
+                        audioFocusHeld = granted
+                    }
+                }
             } else {
                 @Suppress("DEPRECATION")
-                audioFocusHeld = am.requestAudioFocus(
+                val granted = am.requestAudioFocus(
                     audioFocusListener,
                     AudioManager.STREAM_VOICE_CALL,
                     AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_EXCLUSIVE,
                 ) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+                synchronized(this) {
+                    if (!audioFocusHeld) audioFocusHeld = granted
+                }
             }
         }.onFailure { Timber.w("VoiceRecorder requestAudioFocus failed: %s", it.message) }
+        return created
     }
 
     private fun abandonAudioFocus() {

@@ -626,8 +626,15 @@ object BackupManager {
             // 会留下数据库是新数据、偏好是旧数据的混杂状态
             if (!editor.commit()) throw BackupException("设置写入失败（$name），还原中止")
         }
-        // WebDAV 密码最后单独回写，经加密通道在本机 Keystore 重新加密
-        UserDictPrefs.password = parsed.webdavPassword
+        // WebDAV 密码最后单独回写，经加密通道在本机 Keystore 重新加密。
+        // 仅当备份里真有口令才回写：与上方 webdav_server/webdav_allow_http
+        // 的本机回填同一原则——口令同属本机配置，备份缺省/为空（典型：
+        // 在未配置 WebDAV 的设备上做的备份）不得抹掉本机现口令
+        // （password setter 收到空串即删除该键），否则还原后 WebDAV
+        // 同步会无声失效
+        if (parsed.webdavPassword.isNotEmpty()) {
+            UserDictPrefs.password = parsed.webdavPassword
+        }
 
         // 引擎侧候选偏好有内存快照，还原后显式失效，不依赖随后的杀进程重启
         CandidatePreferCache.invalidate()

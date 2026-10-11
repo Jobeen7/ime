@@ -847,6 +847,10 @@ class ClipboardView(
         }
         rowLayouts = buildRowLayouts(clipTab, w, textPaint, indexPaint)
         totalContentH = totalHeightOf(rowLayouts)
+        // 内容变矮（退出排序/多选、条目变少）后滚动量必须跟着钳制：
+        // 只在手势/自动滚动路径钳制的话，深滚动时会卡在过滚空白、
+        // 整屏点按落空。公式与滚动路径的 maxS 同口径（总高减整高）
+        scrollOffsetY = scrollOffsetY.coerceIn(0f, maxOf(0f, totalContentH - height))
     }
 
     private fun totalHeightOf(layouts: List<RowLayout>): Float {

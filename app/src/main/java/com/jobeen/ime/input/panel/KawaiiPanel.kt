@@ -317,7 +317,16 @@ class KawaiiPanel(
         clipboardView.onSelectionChanged = { if (clipMultiActive) syncMultiRenderer() }
         clipboardView.onEditCursorMoved = { idx ->
             if (clipEditActive) {
-                clipEditCursor = idx.coerceIn(0, clipEditBuffer.length)
+                var cursor = idx.coerceIn(0, clipEditBuffer.length)
+                // 落点停在代理对中间时向后吸附到码点边界：半个码点
+                // 的光标会让后续插入/退格把字符劈成孤代理项
+                if (cursor > 0 && cursor < clipEditBuffer.length &&
+                    clipEditBuffer[cursor - 1].isHighSurrogate() &&
+                    clipEditBuffer[cursor].isLowSurrogate()
+                ) {
+                    cursor += 1
+                }
+                clipEditCursor = cursor
                 syncEditDisplay()
             }
         }
@@ -353,14 +362,14 @@ class KawaiiPanel(
                                     R.string.clipboard_delete_confirm, summary
                                 ),
                                 onConfirm = { handleClipboardDelete(entry) },
-                                cardX = x + 100,
-                                cardY = y + 100,
+                                cardX = Float.NaN,
+                                cardY = 0f,
                             )
                         }
                     },
                 ),
-                cardX = x + 100,
-                cardY = y + 100,
+                cardX = Float.NaN,
+                cardY = 0f,
             )
         }
 
@@ -699,9 +708,15 @@ class KawaiiPanel(
             if (isComposing) return false
             val c = clipEditCursor.coerceIn(0, clipEditBuffer.length)
             if (c > 0) {
-                clipEditBuffer = clipEditBuffer.substring(0, c - 1) +
+                // 按码点删：光标前是代理对（emoji 等）时两个 UTF-16
+                // 单元一起删，只删一个会留下孤代理项并被保存落库
+                val del = if (c >= 2 &&
+                    clipEditBuffer[c - 1].isLowSurrogate() &&
+                    clipEditBuffer[c - 2].isHighSurrogate()
+                ) 2 else 1
+                clipEditBuffer = clipEditBuffer.substring(0, c - del) +
                     clipEditBuffer.substring(c)
-                clipEditCursor = c - 1
+                clipEditCursor = c - del
                 syncEditDisplay()
             }
             return true
@@ -711,7 +726,12 @@ class KawaiiPanel(
         if (isComposing) return false
         val q = clipboardView.searchQuery
         if (q.isNotEmpty()) {
-            val nq = q.dropLast(1)
+            // 按码点丢弃：末尾是代理对时丢两个 UTF-16 单元，
+            // 只丢一个会留下孤代理项、搜索瞬间无结果
+            val nq = if (q.length >= 2 &&
+                q[q.length - 1].isLowSurrogate() &&
+                q[q.length - 2].isHighSurrogate()
+            ) q.dropLast(2) else q.dropLast(1)
             clipboardView.setSearchQuery(nq)
             (view.currentRenderer as? ToolbarRenderer)?.let { r ->
                 if (r.clipSearchMode) r.clipSearchQuery = nq
@@ -983,11 +1003,17 @@ class KawaiiPanel(
                     view.post { listener?.onRequestMoreCandidates() }
                 }
                 else -> {
-                    // 组字结束（选词已上屏改道输入，或清空）：恢复输入框工具栏；
-                    // 编辑态优先（可叠加在搜索之上）
+                    // 组字结束（选词已上屏改道输入，或清空）：恢复输入框工具栏。
+                    // 优先序 编辑 > 多选 > 搜索：多选可叠加在搜索之上进组字，
+                    // 漏掉多选分支会让工具栏恢复成搜索框而多选状态与选中
+                    // 还在、却没有删除/取消/计数（隐形多选）
                     if (view.currentRenderer !is ToolbarRenderer) {
                         view.currentRenderer = newClipToolbarRenderer().also { r ->
-                            if (clipEditActive) applyEditFields(r) else applySearchFields(r)
+                            when {
+                                clipEditActive -> applyEditFields(r)
+                                clipMultiActive -> applyMultiFields(r)
+                                else -> applySearchFields(r)
+                            }
                         }
                     }
                 }

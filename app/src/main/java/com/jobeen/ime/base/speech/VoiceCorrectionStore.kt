@@ -46,6 +46,13 @@ class VoiceCorrectionStore(private val file: File) {
     private var dirty = false
     private var enabledField = true
 
+    /**
+     * 读盘失败期间被 [setEnabled] 改过开关：置真后，加载成功的
+     * parseInto 不得用文件 E 行覆盖内存里已设的值，且加载成功后
+     * 要补一次落盘把这个值写回文件（见 ensureLoadedLocked）。
+     */
+    private var enabledDirtyWhileUnloaded = false
+
     private val flushExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
         Thread(r, "voice-correction-flush").apply { isDaemon = true }
     }
@@ -67,6 +74,11 @@ class VoiceCorrectionStore(private val file: File) {
             ensureLoadedLocked()
             if (enabledField != value) {
                 enabledField = value
+                // 读盘失败期间改的开关：加载成功时 parseInto 的 E 行
+                // 不得覆盖它（见 enabledDirtyWhileUnloaded），且要
+                // 在加载成功后补落盘，否则这次切换会被随后读回的
+                // 文件旧值回滚、或永远不落盘而丢失
+                if (loadFailed) enabledDirtyWhileUnloaded = true
                 markDirtyLocked()
             }
         }
@@ -77,6 +89,9 @@ class VoiceCorrectionStore(private val file: File) {
 
     /** 清空全部已学词对与停用记录（用户在设置页主动清除）。 */
     fun clear() {
+        // 先自增清除代次再清：清除前已拍出的在途落盘快照在写文件
+        // 前会因代次过期被跳过，不会把刚清掉的词对又写回磁盘
+        clearEpoch.incrementAndGet()
         synchronized(lock) {
             ensureLoadedLocked()
             pairs.clear()
@@ -90,6 +105,9 @@ class VoiceCorrectionStore(private val file: File) {
             synchronized(peer.lock) {
                 peer.pairs.clear()
                 peer.disabled.clear()
+                // 观察期计数也要清：漏清会让被清的两字词对只需再
+                // 被观察一次就重新生效，清除不彻底
+                peer.probation.clear()
                 peer.loadFailed = false
                 peer.dirty = false
             }
@@ -236,6 +254,12 @@ class VoiceCorrectionStore(private val file: File) {
             loaded = true
             loadFailed = false
             enforceCapsLocked()
+            if (enabledDirtyWhileUnloaded) {
+                // 读失败期间改的开关已在 parseInto 里被保护（E 行
+                // 未覆盖）：补一次落盘把内存值写回文件，清标记
+                enabledDirtyWhileUnloaded = false
+                markDirtyLocked()
+            }
         }.onFailure {
             // 整体读失败：不标记 loaded（下次调用可重试），且在读
             // 成功之前禁用一切写入，防止空内存覆写磁盘历史
@@ -263,7 +287,10 @@ class VoiceCorrectionStore(private val file: File) {
                 }
                 "E" -> {
                     if (parts.size != 2) continue
-                    enabledField = parts[1] == "1"
+                    // 读失败期间用户已改过开关时以内存值为准：文件
+                    // 里这行是改动前写下的旧值，覆盖回去会把这次
+                    // 切换回滚掉
+                    if (!enabledDirtyWhileUnloaded) enabledField = parts[1] == "1"
                 }
             }
         }
@@ -274,18 +301,30 @@ class VoiceCorrectionStore(private val file: File) {
         if (loadFailed) return // 读未成功前不落盘，仅留内存状态
         flushExecutor.execute {
             val snapshot: String
+            val snapshotEpoch: Int
             synchronized(lock) {
                 if (!dirty || loadFailed) return@execute
                 dirty = false
                 snapshot = serializeLocked()
+                // 快照与清除代次同拍：写文件前据此判断这份快照是否
+                // 拍于最近一次 clear 之前（见下方写段）
+                snapshotEpoch = clearEpoch.get()
             }
             runCatching {
-                file.parentFile?.mkdirs()
-                val tmp = File(file.parentFile, file.name + ".tmp")
-                tmp.writeText(snapshot, Charsets.UTF_8)
-                if (!tmp.renameTo(file)) {
-                    runCatching { file.writeText(snapshot, Charsets.UTF_8) }
-                    tmp.delete()
+                // 实际写文件在跨实例写锁内串行（同文件的多个实例
+                // 各有执行器，无锁会互相踩 tmp 文件）；写入前校验
+                // 快照代次：clear 已自增代次时，这份清除前拍的快照
+                // 一律跳过，防已清词对被在途落盘写回「复活」。
+                // clear 自己的 flush 带的是新代次，正常落盘
+                synchronized(fileWriteLock) {
+                    if (snapshotEpoch != clearEpoch.get()) return@runCatching
+                    file.parentFile?.mkdirs()
+                    val tmp = File(file.parentFile, file.name + ".tmp")
+                    tmp.writeText(snapshot, Charsets.UTF_8)
+                    if (!tmp.renameTo(file)) {
+                        runCatching { file.writeText(snapshot, Charsets.UTF_8) }
+                        tmp.delete()
+                    }
                 }
             }
         }
@@ -333,5 +372,19 @@ class VoiceCorrectionStore(private val file: File) {
         /** 同进程存活实例登记表：供 enabled/clear 跨实例同步（弱引用，不防泄漏）。 */
         private val liveInstances: MutableSet<VoiceCorrectionStore> =
             Collections.newSetFromMap(WeakHashMap())
+
+        /**
+         * 落盘写锁：同一文件的多个实例各有 flush 执行器，实际写文件
+         * （tmp 写入＋rename）在此串行，避免互相踩同一 tmp 文件。
+         */
+        private val fileWriteLock = Any()
+
+        /**
+         * 清除代次：[clear] 先自增再清内存；flush 写文件前校验快照
+         * 拍摄时的代次与当前代次一致，清除前拍的过期快照直接跳过，
+         * 防止用户刚清掉的词对被在途落盘写回磁盘「复活」。clear 自
+         * 身触发的 flush 在自增之后拍快照，代次一致、正常落盘。
+         */
+        private val clearEpoch = java.util.concurrent.atomic.AtomicInteger(0)
     }
 }

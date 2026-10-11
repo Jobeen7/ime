@@ -12,10 +12,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
-import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import timber.log.Timber
-import java.io.BufferedInputStream
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
@@ -24,7 +21,6 @@ import java.util.concurrent.TimeUnit
 
 object ModelDownloader {
     private const val STAGE_DIR = ".extract-stage"
-    private const val DEFAULT_ARCHIVE_NAME = "model.tar.bz2"
     private const val BUFFER_SIZE = 32768
     private const val REPORT_STEP = 256 * 1024L
     private const val CONNECT_TIMEOUT_SECONDS = 30L
@@ -67,9 +63,12 @@ object ModelDownloader {
     private const val PREFS_NAME = "speech_model_prefs"
     private const val KEY_MANIFEST_ID = "manifest_id"
 
-    /** 语音模型唯一可信的 GitHub 仓库：清单链接指向别处一律拒绝 */
+    /** 语音模型唯一可信的 GitHub 仓库：下载链接指向别处一律拒绝 */
     private const val GITHUB_OWNER = "k2-fsa"
     private const val GITHUB_REPO = "sherpa-onnx"
+
+    /** 语音模型资产所在的 Release 标签（k2-fsa 全部 ASR 模型挂在这一个滚动发布下） */
+    private const val ASR_MODELS_TAG = "asr-models"
 
     /**
      * APK 内置钉死的语音模型包摘要（按资产名）：GitHub 查询失败
@@ -84,7 +83,7 @@ object ModelDownloader {
             "01dbcdbc6260a3bd55f902088a156c691888bb2c44f36299ae209797049f00a5",
     )
 
-    /** 本地已安装模型的服务端标识（manifest 的 md5，缺失时用下载链接） */
+    /** 本地已安装模型的标识（现行是 gh identity；旧版本记录的是清单 md5/link，见迁移逻辑） */
     fun getStoredManifestId(context: Context): String? {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getString(KEY_MANIFEST_ID, null)
@@ -97,35 +96,110 @@ object ModelDownloader {
     }
 
     /**
-     * 检查服务端是否有新版语音模型。
-     * 比对服务端 manifest 标识与本地下载时记录的标识；本地无记录时：
+     * 本次要用的语音模型目标：资产名 + 其 GitHub 登记 SHA-256。
+     * [identity] 是写进本地记录、供检查更新比对的版本标识
+     * （"gh:<资产名>:<登记摘要>"）：以摘要为版本事实，原地换包
+     * 不换名也判得出更新（与语法模型只比发布时间的教训同理）。
+     */
+    private data class SpeechModelTarget(
+        val name: String,
+        val sha256: String,
+    ) {
+        val identity: String = "gh:$name:$sha256"
+        val downloadUrl: String =
+            "https://gh-proxy.org/https://github.com/$GITHUB_OWNER/$GITHUB_REPO" +
+                "/releases/download/$ASR_MODELS_TAG/$name"
+    }
+
+    /**
+     * 解析目标资产：直接查 k2-fsa/sherpa-onnx 的 asr-models 资产
+     * 清单（分页端点），按家族规则选最新日期的一份（见
+     * [selectSpeechModelAsset]），摘要用其登记值（缺失退钉死表）。
+     * 清单整体拉不到（GitHub 不可达等）时退到内置钉死表中的同家族
+     * 条目；再没有返回 null（调用方判检查失败/中止下载）。不再问
+     * 任何清单服务器要包：选包与版本事实都以官方仓库为准。
+     */
+    private fun resolveTarget(): SpeechModelTarget? {
+        val assets = com.jobeen.ime.base.net.fetchGithubReleaseAssets(
+            client, GITHUB_OWNER, GITHUB_REPO, ASR_MODELS_TAG,
+        )
+        val picked = selectSpeechModelAsset(assets.map { it.first })
+        if (picked != null) {
+            val sha = assets.firstOrNull { it.first == picked }?.second
+                ?.ifEmpty { null }
+                ?: PINNED_SPEECH_SHA256[picked]
+            if (!sha.isNullOrEmpty()) return SpeechModelTarget(picked, sha)
+        }
+        val pinnedPicked = selectSpeechModelAsset(PINNED_SPEECH_SHA256.keys.toList())
+        if (pinnedPicked != null) {
+            return SpeechModelTarget(pinnedPicked, PINNED_SPEECH_SHA256.getValue(pinnedPicked))
+        }
+        return null
+    }
+
+    /**
+     * 检查语音模型是否有新版：目标资产的 identity 与本地记录比对。
+     * 本地无记录时：
      * - 模型文件已存在（老用户在该机制引入前已下载）→ 视为已是最新，
-     *   把当前服务端标识记为基线，避免首次检查误报"有更新"诱使用户重下大模型；
+     *   把当前 identity 记为基线，避免首次检查误报"有更新"诱使用户重下大模型；
      * - 模型不存在 → 才是真的需要下载，返回有更新。
      * 下载成功后即纳入比对。
      */
     suspend fun checkForUpdate(context: Context): UpdateCheckResult = withContext(Dispatchers.IO) {
-        val manifest = SpeechModelApi.fetchManifest(context)
-        val serverId = manifest.md5.trim().ifEmpty { manifest.link.trim() }
-        if (serverId.isEmpty()) {
-            Timber.w("Speech model manifest unavailable, check failed")
+        val target = resolveTarget()
+        if (target == null) {
+            Timber.w("Speech model target unavailable, check failed")
             return@withContext UpdateCheckResult.Failed
         }
         val localId = getStoredManifestId(context)
         if (localId != null) {
-            return@withContext if (localId.equals(serverId, ignoreCase = true)) {
-                UpdateCheckResult.UpToDate
-            } else {
-                UpdateCheckResult.HasUpdate
+            if (localId.equals(target.identity, ignoreCase = true)) {
+                return@withContext UpdateCheckResult.UpToDate
             }
+            if (localId.startsWith("gh:")) {
+                return@withContext UpdateCheckResult.HasUpdate
+            }
+            return@withContext migrateLegacyRecord(context, target)
         }
         return@withContext if (isModelInstalled()) {
-            storeManifestId(context, serverId)
+            storeManifestId(context, target.identity)
             Timber.i("Speech model id baseline recorded for existing install")
             UpdateCheckResult.UpToDate
         } else {
             UpdateCheckResult.HasUpdate
         }
+    }
+
+    /**
+     * 旧记录迁移：记录是清单时代的 md5/link（不带 gh: 前缀）时的
+     * 一次性判定，判完把记录改写为现行 identity，之后走正常比对。
+     * - 模型未安装：记录无意义，判有更新（需要下载）；
+     * - 缓存归档还在：以其真实 SHA-256 与目标摘要定判；
+     * - 归档不在（安装成功后归档即被删，这是常态）：旧清单服务器
+     *   当时回的正是同一 GitHub 资产（2026-10-11 实测：清单 link
+     *   指向本家族的 GitHub 包、md5 与该包对应），已装模型即该资产
+     *   内容，本次判无更新并改写记录。若本地其实是更旧的同家族包
+     *   本次会漏报一次，但旧记录本身不含可比对的版本信息，无从
+     *   更准；记录迁移后下次检查恢复准确。
+     */
+    private suspend fun migrateLegacyRecord(
+        context: Context,
+        target: SpeechModelTarget,
+    ): UpdateCheckResult {
+        if (!isModelInstalled()) return UpdateCheckResult.HasUpdate
+        val archiveFile = File(App.downloadDir, target.name)
+        if (archiveFile.isFile) {
+            val sha = sha256OfFile(archiveFile)
+            return if (sha.equals(target.sha256, ignoreCase = true)) {
+                storeManifestId(context, target.identity)
+                UpdateCheckResult.UpToDate
+            } else {
+                UpdateCheckResult.HasUpdate
+            }
+        }
+        storeManifestId(context, target.identity)
+        Timber.i("Speech model id migrated from legacy manifest id")
+        return UpdateCheckResult.UpToDate
     }
 
     /** 本地是否已有完整语音模型（tokens + encoder/decoder/joiner） */
@@ -157,16 +231,19 @@ object ModelDownloader {
         onProgress: (Progress) -> Unit = {},
         onExtract: (current: Long, total: Long) -> Unit = { _, _ -> },
     ): Boolean = withContext(Dispatchers.IO) {
-        val manifest = SpeechModelApi.fetchManifest(context)
-        val link = manifest.link.trim()
-        if (link.isEmpty()) {
-            Timber.w("Speech model manifest has no download link")
+        // 目标与下载地址都由本类按 GitHub 官方资产解析（见 resolveTarget），
+        // 不再向清单服务器要包；代理前缀形态与旧清单给的地址一致（国内
+        // 直连 github.com 下载 Release 资产基本不可达），完整性不依赖
+        // 代理、由既有 resolveExpectedSha256 锚 GitHub 登记摘要保证
+        val target = resolveTarget()
+        if (target == null) {
+            Timber.w("Speech model target unavailable, download aborted")
             return@withContext false
         }
+        val link = target.downloadUrl
         val tempDir = App.downloadDir
         val modelDir = App.speechModelDir
-        val archiveName = link.substringAfterLast('/').ifBlank { DEFAULT_ARCHIVE_NAME }
-        val archiveFile = File(tempDir, archiveName)
+        val archiveFile = File(tempDir, target.name)
         val stageDir = File(tempDir, STAGE_DIR)
         if (!currentCoroutineContext().isActive) return@withContext false
         // 先取可信摘要再下载：来源不可信、或查不到摘要且无内置钉死兜底时，
@@ -174,13 +251,12 @@ object ModelDownloader {
         // resolveExpectedSha256，与下载后比对完全一致）
         val expectedSha = resolveExpectedSha256(link, archiveFile) ?: return@withContext false
         if (!currentCoroutineContext().isActive) return@withContext false
-        if (!ensureArchive(link, archiveFile, manifest.md5, onProgress)) return@withContext false
+        if (!ensureArchive(link, archiveFile, expectedSha, onProgress)) return@withContext false
         if (!currentCoroutineContext().isActive) return@withContext false
         if (!verifyArchiveSha256(archiveFile, expectedSha)) return@withContext false
         if (!extractAndInstall(archiveFile, stageDir, modelDir, onExtract)) return@withContext false
-        // 安装成功后记录服务端标识，供后续检查更新时比对
-        val serverId = manifest.md5.trim().ifEmpty { link.trim() }
-        if (serverId.isNotEmpty()) storeManifestId(context, serverId)
+        // 安装成功后记录目标 identity，供后续检查更新时比对
+        storeManifestId(context, target.identity)
         true
     }
 
@@ -189,34 +265,28 @@ object ModelDownloader {
     private suspend fun ensureArchive(
         url: String,
         archiveFile: File,
-        expectedMd5: String,
+        expectedSha: ExpectedSha256,
         onProgress: (Progress) -> Unit,
     ): Boolean {
-        val md5 = expectedMd5.trim()
-        // 有 md5 时按 md5 判定复用（主路径不变）；manifest 未给 md5 时不能
-        // 凭文件存在就复用——旧包可能是上次中断留下的截断包，先验包完整性
-        // （可完整解压且含预期条目），验不过走下面删除重下
-        val reusable = archiveFile.isFile && if (md5.isNotEmpty()) {
-            md5Of(archiveFile).equals(md5, true)
-        } else {
-            isArchiveComplete(archiveFile)
-        }
+        // 复用只认内容：缓存归档的真实 SHA-256 与可信期望摘要一致才
+        // 复用。旧口径靠清单服务器的 MD5，新路径已无清单 MD5；只看
+        // 结构完整性会把上次中断的截断包/旧版本包当作可复用（其后
+        // 虽有统一 SHA 校验，但那只会让整次下载失败、不会自愈重下）
+        val reusable = archiveFile.isFile &&
+            sha256OfFile(archiveFile).equals(expectedSha.value, ignoreCase = true)
         if (reusable) {
             Timber.i("Reusing cached archive: %s", archiveFile.absolutePath)
             return true
         }
         if (archiveFile.exists()) archiveFile.delete()
         Timber.i("Speech model download start: %s", url)
-        val result = downloadFile(url, archiveFile) { read, total ->
+        // downloadFile 返回的过程 MD5 不再与任何外部值比对：完整性
+        // 由 download() 随后以官方登记 SHA-256 统一校验
+        downloadFile(url, archiveFile) { read, total ->
             onProgress(
                 Progress(DOWNLOAD_FILE_INDEX, DOWNLOAD_FILE_COUNT, archiveFile.name, read, total)
             )
         } ?: run {
-            archiveFile.delete()
-            return false
-        }
-        if (md5.isNotEmpty() && !result.md5.equals(md5, true)) {
-            Timber.e("Speech model archive MD5 mismatch: %s", archiveFile.absolutePath)
             archiveFile.delete()
             return false
         }
@@ -235,11 +305,11 @@ object ModelDownloader {
     )
 
     /**
-     * 下载前解析归档包的可信期望 SHA-256（MD5 之外）。清单只给地址与
-     * MD5 且同出一台服务器，MD5 只能防损坏、防不住服务器被攻破后连摘要
-     * 一起替换，因此期望摘要只认独立于清单服务器的信任锚，且必须在
-     * 下载前取到：查不到且无钉死兜底时整包无从校验，直接中止、不再
-     * 白下载整包（fail-closed）：
+     * 下载前解析归档包的可信期望 SHA-256。下载地址现由本类按
+     * GitHub 资产解析构造（见 resolveTarget），但期望摘要仍只认
+     * 独立的信任锚、且必须在下载前取到（下载域名是代理、且此处
+     * 对仓库坐标再做一次钉死复核，防解析被改向）：查不到且无钉死
+     * 兜底时整包无从校验，直接中止、不再白下载整包（fail-closed）：
      * - 链接是 GitHub Release 资产（可含代理前缀）→ 仓库必须是钉死的
      *   官方仓库（k2-fsa/sherpa-onnx），否则拒绝；摘要向 GitHub API 查
      *   该资产登记的官方值，查询失败退 APK 内置钉死表。此分支中止时
@@ -253,10 +323,10 @@ object ModelDownloader {
     private fun resolveExpectedSha256(link: String, archiveFile: File): ExpectedSha256? {
         val ref = parseGithubReleaseAssetUrl(link)
         if (ref != null) {
-            // 仓库坐标必须与钉死的官方仓库一致：链接与 MD5 同出清单
-            // 服务器，服务器被攻破时可把链接改指向攻击者自己的仓库，
-            // 那里的「官方登记摘要」会对得上它自己的恶意包。只认
-            // k2-fsa/sherpa-onnx 的资产，其余 GitHub 链接一律拒绝。
+            // 仓库坐标必须与钉死的官方仓库一致：链接虽由本类构造，
+            // 仍在此复核——指向别家仓库的链接，那里的「官方登记
+            // 摘要」会对得上它自己的恶意包。只认 k2-fsa/sherpa-onnx
+            // 的资产，其余 GitHub 链接一律拒绝。
             if (ref.owner != GITHUB_OWNER || ref.repo != GITHUB_REPO) {
                 Timber.e(
                     "Speech model: link points at untrusted repo %s/%s, refusing install",
@@ -556,51 +626,42 @@ object ModelDownloader {
         }
     }
 
-    /**
-     * 无 md5 时的旧包完整性校验：完整遍历一遍 tar.bz2（遍历会把每个条目
-     * 的数据都解压读过，流损坏/截断会抛异常），并确认含 tokens 与
-     * encoder/decoder/joiner 预期条目（判定口径与解压过滤、findModel 一致）。
-     */
-    private fun isArchiveComplete(archiveFile: File): Boolean {
-        return runCatching {
-            var hasTokens = false
-            val foundComponents = mutableSetOf<String>()
-            java.io.FileInputStream(archiveFile).use { fis ->
-                BufferedInputStream(fis).use { bis ->
-                    BZip2CompressorInputStream(bis).use { bzIn ->
-                        TarArchiveInputStream(bzIn).use { tarIn ->
-                            var entry = tarIn.nextEntry
-                            while (entry != null) {
-                                if (!entry.isDirectory) {
-                                    val fileName = entry.name.substringAfterLast('/')
-                                    if (fileName.equals(TOKENS_FILE, true)) hasTokens = true
-                                    MODEL_COMPONENTS.filter { isModelFile(fileName, it) }
-                                        .forEach { foundComponents.add(it) }
-                                }
-                                entry = tarIn.nextEntry
-                            }
-                        }
-                    }
-                }
-            }
-            hasTokens && foundComponents.containsAll(MODEL_COMPONENTS)
-        }.onFailure {
-            Timber.w(it, "Cached speech model archive incomplete, will re-download")
-        }.getOrDefault(false)
-    }
+}
 
-    private fun md5Of(file: File): String {
-        val digest = MessageDigest.getInstance("MD5")
-        file.inputStream().use { input ->
-            val buffer = ByteArray(BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
+/** 语音模型资产家族前缀：流式 Zipformer 中英带标点、int8 量化版（fp32 同家族不带 -int8-，不匹配） */
+private const val SPEECH_MODEL_ASSET_PREFIX =
+    "sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-"
+
+private val SPEECH_MODEL_DATE_REGEX = Regex("""-(\d{4})-(\d{2})-(\d{2})\.tar\.bz2$""")
+
+/**
+ * 从资产名列表中选语音模型目标（纯函数）：只认 [SPEECH_MODEL_ASSET_PREFIX]
+ * 前缀 + ".tar.bz2" 后缀、且文件名带合法 yyyy-MM-dd 日期者，取日期
+ * 最大的一份；同日期取字典序大者（名字更长/后缀更新）。无匹配、
+ * 或候选全无合法日期时返回 null——选包规则写死在这里：上游改
+ * 命名规则时跟着发版适配，不做模糊猜测。
+ */
+internal fun selectSpeechModelAsset(names: List<String>): String? {
+    var best: String? = null
+    var bestDateKey = -1
+    for (name in names) {
+        if (!name.startsWith(SPEECH_MODEL_ASSET_PREFIX)) continue
+        if (!name.endsWith(".tar.bz2")) continue
+        val match = SPEECH_MODEL_DATE_REGEX.find(name) ?: continue
+        val (y, m, d) = match.destructured
+        val month = m.toInt()
+        val day = d.toInt()
+        if (month !in 1..12 || day !in 1..31) continue
+        // yyyyMMdd 拼成整数即与日期同序，可直接比大小
+        val dateKey = y.toInt() * 10000 + month * 100 + day
+        if (dateKey > bestDateKey ||
+            (dateKey == bestDateKey && best != null && name > best)
+        ) {
+            best = name
+            bestDateKey = dateKey
         }
-        return digest.digest().joinToString("") { "%02x".format(it) }
     }
+    return best
 }
 
 /**
@@ -650,7 +711,7 @@ internal fun parseGithubReleaseAssetUrl(url: String): GithubAssetRef? {
 /**
  * 非 GitHub 下载链接的期望摘要：按链接尾部的文件名查 APK 内置钉死表。
  * 查不到返回空串（调用方拒绝安装）——不再有 TOFU 式的首次信任，
- * 清单服务器换链接/换包都无法让客户端接受内置表之外的语音包。
+ * 任何换链接/换包都无法让客户端接受内置表之外的语音包。
  */
 internal fun expectedShaForNonGithubLink(
     link: String,
