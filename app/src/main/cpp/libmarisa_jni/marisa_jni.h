@@ -10,6 +10,9 @@ namespace marisa_jni {
 
 inline void throwException(JNIEnv *env, const char *message) {
     jclass cls = env->FindClass("java/lang/RuntimeException");
+    // 与 librime_jni 同纪律：类查找失败（实际不可达）时不再拿 null 调
+    // ThrowNew，让 FindClass 自身的未决异常显形即可
+    if (cls == nullptr) return;
     env->ThrowNew(cls, message);
     env->DeleteLocalRef(cls);
 }
@@ -151,10 +154,26 @@ public:
     jclass String;
 
     explicit GlobalRefs(JNIEnv *env) {
-        Object = static_cast<jclass>(
-            env->NewGlobalRef(env->FindClass("java/lang/Object")));
-        String = static_cast<jclass>(
-            env->NewGlobalRef(env->FindClass("java/lang/String")));
+        // 逐步查找、逐步判空（与 librime_jni 的 initRefs 同纪律）：任一步
+        // 失败立即停手，清掉查找异常后改抛带明确信息的 RuntimeException，
+        // 让问题在库加载期显形，而不是把 null 全局引用潜伏到首次使用才崩
+        Object = findGlobal(env, "java/lang/Object");
+        String = Object ? findGlobal(env, "java/lang/String") : nullptr;
+        if (Object == nullptr || String == nullptr) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            throwException(env,
+                           "marisa_jni: required Java class lookup failed");
+        }
+    }
+
+private:
+    static jclass findGlobal(JNIEnv *env, const char *name) {
+        jclass cls = env->FindClass(name);
+        if (cls == nullptr || env->ExceptionCheck()) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return nullptr;
+        }
+        return static_cast<jclass>(env->NewGlobalRef(cls));
     }
 };
 

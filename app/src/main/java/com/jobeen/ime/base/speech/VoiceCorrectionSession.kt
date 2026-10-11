@@ -238,8 +238,14 @@ object VoiceCorrectionSession {
         }
     }
 
-    /** 尝试把上屏记录定位成跟踪段；编辑器还没落账时留待探针重试。 */
-    private fun tryArmLocked(service: ImeInputMethodService) {
+    /**
+     * 尝试把上屏记录定位成跟踪段；编辑器还没落账时留待探针重试。
+     * [probeText] 是服务当帧 1 字探针随回调下传的结果（arm 直调时
+     * 为 null）：探针为空意味着光标前后都无字、编辑器整篇为空，
+     * 这一帧定位必然失败，省掉整窗读、留待下帧重试——记录保留，
+     * 与读窗后定位失败的结局一致。
+     */
+    private fun tryArmLocked(service: ImeInputMethodService, probeText: String? = null) {
         val record = lastCommit ?: return
         if (!VoiceCorrectionSessionLogic.canRetryArm(
                 record.at, System.currentTimeMillis(), ARM_RETRY_MS
@@ -253,6 +259,7 @@ object VoiceCorrectionSession {
             return
         }
         if (service.phraseAddBridgeActive) return
+        if (probeText != null && probeText.isEmpty()) return
         val window = readWindow(service) ?: return
         val segStart = VoiceCorrectionSessionLogic.locateSegment(
             window.text, window.cursorPos, record.text
@@ -273,11 +280,20 @@ object VoiceCorrectionSession {
         )
     }
 
-    /** 输入法服务的探针节奏回调：重试武装，并维护段的锚点快照。 */
-    fun onInputChanged(service: ImeInputMethodService) {
+    /**
+     * 输入法服务的探针节奏回调：重试武装，并维护段的锚点快照。
+     * [probeText]/[probeCursorPos] 是服务当帧探针的结果，随回调下传：
+     * 补武装定位时探针已能判定成败的帧（编辑器为空）不再自读整窗；
+     * 已武装的锚点维护仍须整窗做变更 diff，不用探针替代。
+     */
+    fun onInputChanged(
+        service: ImeInputMethodService,
+        probeText: String?,
+        probeCursorPos: Int,
+    ) {
         synchronized(lock) {
             if (pending == null) {
-                tryArmLocked(service)
+                tryArmLocked(service, probeText)
                 return
             }
             val p = pending ?: return

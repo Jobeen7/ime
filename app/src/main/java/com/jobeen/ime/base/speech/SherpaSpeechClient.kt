@@ -504,9 +504,17 @@ object SherpaSpeechClient {
         VoiceCorrectionStore.shared(File(appContext.filesDir, VoiceCorrectionStore.FILE_NAME))
     }
 
-    /** 输入法服务的选区探针回调：把编辑观察转给纠错沉淀会话。 */
-    fun onEditorTextProbed(service: ImeInputMethodService) {
-        VoiceCorrectionSession.onInputChanged(service)
+    /**
+     * 输入法服务的选区探针回调：把编辑观察转给纠错沉淀会话。
+     * [probeText]/[probeCursorPos] 是服务当帧探针的结果（1 字探针文本
+     * 与光标位），随回调下传供沉淀侧复用，省掉同帧的重复跨进程读。
+     */
+    fun onEditorTextProbed(
+        service: ImeInputMethodService,
+        probeText: String,
+        probeCursorPos: Int,
+    ) {
+        VoiceCorrectionSession.onInputChanged(service, probeText, probeCursorPos)
     }
 
     /** 打字上屏词段回调（引擎搭配学习同一入口）：供纠错沉淀配对正形。 */
@@ -887,14 +895,23 @@ object SherpaSpeechClient {
         uiJob?.cancel()
         uiJob = null
         val service = serviceRef?.get()
+        // 捕获本代代次供 runUi 复检：紧随其后的 resetState 会把
+        // activeGen 清零，runUi 真正执行时它只可能是 0（本代已收尾）
+        // 或新会话的代次
+        val gen = activeGen
         val runUi = Runnable {
-            runCatching {
-                // 出错/断开：先清空残留的待定文字，再收尾，避免下划线文字残留。
-                service?.activeInputConnection()?.let { ic ->
-                    ic.setComposingText("", 1)
-                    ic.finishComposingText()
+            // 复检代次（与 finishSession 异步尾同口径）：投递之后、执行
+            // 之前用户若已开始新会话（activeGen 既非空闲的 0、也非本
+            // 代），清待定文字与失败回调归新会话管，本尾整体作废
+            if (activeGen == 0 || activeGen == gen) {
+                runCatching {
+                    // 出错/断开：先清空残留的待定文字，再收尾，避免下划线文字残留。
+                    service?.activeInputConnection()?.let { ic ->
+                        ic.setComposingText("", 1)
+                        ic.finishComposingText()
+                    }
+                    SpeechUiBridge.onFailed?.invoke() ?: SpeechUiBridge.onDone?.invoke()
                 }
-                SpeechUiBridge.onFailed?.invoke() ?: SpeechUiBridge.onDone?.invoke()
             }
         }
         if (service != null) {

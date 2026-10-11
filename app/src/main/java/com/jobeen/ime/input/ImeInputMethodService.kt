@@ -49,6 +49,18 @@ class ImeInputMethodService : InputMethodService() {
     /** onUpdateSelection 的探针合并：窗口内连发只保留最后一次 */
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     private val pendingNotifyInputChanged = Runnable { notifyInputChanged() }
+
+    /**
+     * 一帧探针缓存：同一输入会话、同一选区签名下，[syncActiveInputState]
+     * 与 [notifyInputChanged] 共用一次探针结果——Commit 后两者常成对
+     * 触发，旧实现对同一光标位置连做两轮跨进程探针。签名取选区，是
+     * 因为编辑动作必伴选区变化；换输入框时整帧作废（见
+     * [invalidateProbeFrame]），不会把旧框的探针带进新框。
+     */
+    private var probeFrameText: String? = null
+    private var probeFrameBridge = false
+    private var probeFrameSelStart = -1
+    private var probeFrameSelEnd = -1
     private val themePrefs: SharedPreferences by lazy {
         getSharedPreferences(KeyboardManager.PREFS_NAME, MODE_PRIVATE)
     }
@@ -142,12 +154,14 @@ class ImeInputMethodService : InputMethodService() {
         // 直调即时探针前先撤掉合并通道里排队的那次：它捕获的是旧
         // 输入框的待发任务，再跑一次只会在新框上多做一轮无用探针
         mainHandler.removeCallbacks(pendingNotifyInputChanged)
+        invalidateProbeFrame()
         notifyInputChanged()
         super.onStartInputView(info, restarting)
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
         showingDialog?.dismiss()
+        invalidateProbeFrame()
         // 录音中切换输入框：立即丢弃本次录音。否则识别结果会经
         // activeInputConnection() 写进新输入框，且待定文字会残留在旧框。
         // 放在最前面，保证清待定文字时连接仍指向旧输入框。
@@ -310,15 +324,47 @@ class ImeInputMethodService : InputMethodService() {
         mainHandler.postDelayed(pendingNotifyInputChanged, 24L)
     }
 
+    /** 当帧选区签名：桥接模式读虚拟连接选区，其余读最近一次选区回调。 */
+    private fun currentSelectionSignature(): Pair<Int, Int> =
+        if (phraseAddBridgeActive) virtualInputConnection.selection
+        else lastSelectionStart to lastSelectionEnd
+
+    /** 换输入框/输入视图结束时作废整帧探针缓存。 */
+    private fun invalidateProbeFrame() {
+        probeFrameText = null
+        probeFrameSelStart = -1
+        probeFrameSelEnd = -1
+    }
+
+    /**
+     * 一帧共用探针：签名（桥接标志 + 选区）未变时直接复用本帧已探到的
+     * 结果，不再重复跨进程取字；签名变化才真正探一次并回填缓存。
+     */
+    private fun probeAroundCursorShared(ic: android.view.inputmethod.InputConnection): String {
+        val selection = currentSelectionSignature()
+        val cached = probeFrameText
+        if (cached != null && probeFrameBridge == phraseAddBridgeActive &&
+            probeFrameSelStart == selection.first && probeFrameSelEnd == selection.second
+        ) {
+            return cached
+        }
+        val text = probeAroundCursorText(ic)
+        probeFrameText = text
+        probeFrameBridge = phraseAddBridgeActive
+        probeFrameSelStart = selection.first
+        probeFrameSelEnd = selection.second
+        return text
+    }
+
     internal fun syncActiveInputState() {
         val ic = activeInputConnection() ?: return
-        val selection = if (phraseAddBridgeActive) virtualInputConnection.selection
-        else lastSelectionStart to lastSelectionEnd
+        val selection = currentSelectionSignature()
         keyboardWindow?.onSelectionUpdate(selection.first, selection.second)
         // 下游只用空/非空：旧实现用 Int.MAX_VALUE 全量抓前后文拼接（桥接模式
-        // 下整篇文档跨进程过一遍），改为 1 字符探针
+        // 下整篇文档跨进程过一遍），改为 1 字符探针（与 notifyInputChanged
+        // 共用一帧缓存，见 probeAroundCursorShared）
         keyboardWindow?.onInputChanged(
-            probeAroundCursorText(ic),
+            probeAroundCursorShared(ic),
             virtualInputConnection = phraseAddBridgeActive,
         )
     }
@@ -335,10 +381,14 @@ class ImeInputMethodService : InputMethodService() {
 
     fun notifyInputChanged() {
         val ic = activeInputConnection() ?: return
-        val text = probeAroundCursorText(ic)
+        val text = probeAroundCursorShared(ic)
         keyboardWindow?.onInputChanged(text, virtualInputConnection = phraseAddBridgeActive)
         if (text.isEmpty()) engine?.onInputCleared()
-        // 语音纠错沉淀借同一探针节奏观察上屏后编辑（未武装时为空转检查）
-        com.jobeen.ime.base.speech.SherpaSpeechClient.onEditorTextProbed(this)
+        // 语音纠错沉淀借同一探针节奏观察上屏后编辑（未武装时为空转检查）；
+        // 当帧探针结果（文本、光标位）随回调下传，沉淀侧能据此判定
+        // 的帧不再自读整窗
+        com.jobeen.ime.base.speech.SherpaSpeechClient.onEditorTextProbed(
+            this, text, currentSelectionSignature().first
+        )
     }
 }

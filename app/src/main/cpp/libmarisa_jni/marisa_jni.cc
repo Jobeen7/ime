@@ -279,6 +279,7 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_commonPrefixSearchBytes(
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     jsize queryLen = env->GetArrayLength(query);
     jbyte *queryData = env->GetByteArrayElements(query, nullptr);
+    if (!queryData) return nullptr;
     marisa::Agent agent;
     agent.set_query(reinterpret_cast<const char *>(queryData),
                     static_cast<std::size_t>(queryLen));
@@ -297,9 +298,16 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_commonPrefixSearchBytes(
     env->ReleaseByteArrayElements(query, queryData, JNI_ABORT);
 
     jclass byteArrayClass = env->FindClass("[B");
+    if (!byteArrayClass) {
+        // 查找失败已留未决异常：清掉并按本函数失败约定返回 null，
+        // 不能拿空 class 继续 NewObjectArray
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
     jobjectArray arr = env->NewObjectArray(
         static_cast<jsize>(results.size()), byteArrayClass, nullptr);
     env->DeleteLocalRef(byteArrayClass);
+    if (!arr) return nullptr;
     for (size_t i = 0; i < results.size(); ++i) {
         jbyteArray keyBytes = env->NewByteArray(
             static_cast<jsize>(results[i].first.size()));
@@ -318,6 +326,7 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_predictiveSearchBytes(
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     jsize queryLen = env->GetArrayLength(query);
     jbyte *queryData = env->GetByteArrayElements(query, nullptr);
+    if (!queryData) return nullptr;
     marisa::Agent agent;
     agent.set_query(reinterpret_cast<const char *>(queryData),
                     static_cast<std::size_t>(queryLen));
@@ -336,9 +345,16 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_predictiveSearchBytes(
     env->ReleaseByteArrayElements(query, queryData, JNI_ABORT);
 
     jclass byteArrayClass = env->FindClass("[B");
+    if (!byteArrayClass) {
+        // 查找失败已留未决异常：清掉并按本函数失败约定返回 null，
+        // 不能拿空 class 继续 NewObjectArray
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
     jobjectArray arr = env->NewObjectArray(
         static_cast<jsize>(results.size()), byteArrayClass, nullptr);
     env->DeleteLocalRef(byteArrayClass);
+    if (!arr) return nullptr;
     for (size_t i = 0; i < results.size(); ++i) {
         jbyteArray keyBytes = env->NewByteArray(
             static_cast<jsize>(results[i].size()));
@@ -359,9 +375,16 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_dumpKeys(
     if (limit > 0 && limit < count) count = limit;
 
     jclass byteArrayClass = env->FindClass("[B");
+    if (!byteArrayClass) {
+        // 查找失败已留未决异常：清掉并按本函数失败约定返回 null，
+        // 不能拿空 class 继续 NewObjectArray
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
     jobjectArray arr = env->NewObjectArray(
         static_cast<jsize>(count), byteArrayClass, nullptr);
     env->DeleteLocalRef(byteArrayClass);
+    if (!arr) return nullptr;
 
     for (int i = 0; i < count; ++i) {
         marisa::Agent agent;
@@ -386,6 +409,7 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_lookupBytes(
     auto *trie = reinterpret_cast<marisa::Trie *>(ptr);
     jsize queryLen = env->GetArrayLength(query);
     jbyte *queryData = env->GetByteArrayElements(query, nullptr);
+    if (!queryData) return nullptr;
     marisa::Agent agent;
     agent.set_query(reinterpret_cast<const char *>(queryData),
                     static_cast<std::size_t>(queryLen));

@@ -51,6 +51,9 @@ Java_com_jobeen_ime_engine_rime_core_RimeConfig_openRimeSchema(
 JNIEXPORT void JNICALL
 Java_com_jobeen_ime_engine_rime_core_RimeConfig_closeRimeConfig(
         JNIEnv *, jclass, jlong peer) {
+    // open 失败时 peer 为 0：无配置可关，直接返回，
+    // 避免把空指针喂给 config_close
+    if (peer == 0) return;
     auto *api = rime_get_api();
     auto *config = reinterpret_cast<RimeConfig *>(peer);
     api->config_close(config);
@@ -104,6 +107,10 @@ Java_com_jobeen_ime_engine_rime_core_RimeConfig_getRimeConfigListItemPath(
     int size = static_cast<int>(api->config_list_size(config, k.get()));
     jobjectArray arr =
             env->NewObjectArray(size, jni::g_refs->String, nullptr);
+    if (!arr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
     RimeConfigIterator iter;
     int i = 0;
     if (!api->config_begin_list(&iter, config, k.get())) return arr;

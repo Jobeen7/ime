@@ -24,6 +24,13 @@ namespace rime_jni {
                               kind.get());
     }
 
+    // 循环构造 Java 对象时某一步若抛异常（如 OOM），必须立即停下：
+    // 带未决异常继续调用 JNI 是未定义行为，Android 上会直接 abort。
+    // ExceptionCheck 只读 JVM 的一个标志位，代价可忽略。
+    inline bool HasPendingException(JNIEnv *env) {
+        return env->ExceptionCheck() == JNI_TRUE;
+    }
+
     inline jobjectArray toJavaSchemaArray(JNIEnv *env,
                                           const std::vector<SchemaEntry> &items) {
         jobjectArray arr = env->NewObjectArray(static_cast<int>(items.size()),
@@ -31,6 +38,7 @@ namespace rime_jni {
         for (int i = 0; i < static_cast<int>(items.size()); ++i) {
             jni::LocalRef<> ref(env, toJavaSchemaItem(env, items[i]));
             env->SetObjectArrayElement(arr, i, ref.get());
+            if (HasPendingException(env)) break;
         }
         return arr;
     }
@@ -49,13 +57,6 @@ namespace rime_jni {
             out.emplace_back(chars.get());
         }
         return out;
-    }
-
-    // 循环构造 Java 对象时某一步若抛异常（如 OOM），必须立即停下：
-    // 带未决异常继续调用 JNI 是未定义行为，Android 上会直接 abort。
-    // ExceptionCheck 只读 JVM 的一个标志位，代价可忽略。
-    inline bool HasPendingException(JNIEnv *env) {
-        return env->ExceptionCheck() == JNI_TRUE;
     }
 
     inline jobjectArray vectorToJavaStringArray(JNIEnv *env,
