@@ -616,11 +616,41 @@ object WanxiangUpdateManager {
                 }
             }
 
-            // 远端词库指纹：仅当已下载过该版本时才有（下载时计算的内容指纹）；
+            // 本地版本先定下来（记录缺失时以实际部署的内置版本为准，
+            // 不只信记录），词库指纹兜底与下方 UpdateInfo 共用
+            val localSchemaVersion = resolveLocalSchemaVersion(
+                recordedVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
+                bundledVersion = readBundledSchemaVersion(),
+            )
+
+            // 远端词库指纹：下载过该版本时有记录（下载时计算的内容指纹）；
             // 新版本尚未下载时为 null，界面显示"—"
-            val dictRemoteFp =
+            var dictRemoteFp =
                 prefs.getString(KEY_DICT_REMOTE_FP, null)
                     .takeIf { prefs.getString(KEY_DICT_REMOTE_FP_VER, null) == schemaRelease.tag_name }
+            if (dictRemoteFp == null && localSchemaVersion == schemaRelease.tag_name) {
+                // 版本一致兜底：本地版本与远端标签相同，则已部署词库
+                // 必然是该版本的内容——内置打包按该 Release 同步、
+                // 在线更新按该标签下载，两条落盘路径都与版本严格
+                // 对应（与模型侧内容兜底同思路；词库远端未发布内容
+                // 清单可比对，只能以版本同一性作判据）。回填记录后
+                // 界面不再显示"—"，后续检查直接走记录
+                val localDictFp = try {
+                    cachedDictsFingerprint(prefs, File(DataManager.sharedDataDir, "dicts"))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "本地词库指纹计算失败，远端词库指纹保持未知")
+                    null
+                }
+                if (!localDictFp.isNullOrEmpty()) {
+                    dictRemoteFp = localDictFp
+                    prefs.edit {
+                        putString(KEY_DICT_REMOTE_FP, localDictFp)
+                        putString(KEY_DICT_REMOTE_FP_VER, schemaRelease.tag_name)
+                    }
+                }
+            }
             // 远端模型指纹：同理（内容兜底回填后即有值）
             val gramRemoteFp =
                 prefs.getString(KEY_GRAM_REMOTE_FP, null)
@@ -628,11 +658,7 @@ object WanxiangUpdateManager {
 
             UpdateInfo(
                 schemaRemoteVersion = schemaRelease.tag_name,
-                // 记录缺失时以实际部署的内置版本为准，不只信记录
-                schemaLocalVersion = resolveLocalSchemaVersion(
-                    recordedVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
-                    bundledVersion = readBundledSchemaVersion(),
-                ),
+                schemaLocalVersion = localSchemaVersion,
                 gramRemotePublishedAt = gramRelease.published_at,
                 gramLocalPublishedAt = gramDecision.effectiveLocalPublishedAt,
                 dictRemoteFingerprint = dictRemoteFp,
