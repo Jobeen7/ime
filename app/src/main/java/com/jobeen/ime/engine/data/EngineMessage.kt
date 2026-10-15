@@ -1,7 +1,13 @@
 package com.jobeen.ime.engine.data
 
 sealed class EngineMessage {
-    data class Commit(val text: String) : EngineMessage()
+    /**
+     * @property direct 直送标记，由转换器自
+     * [com.jobeen.ime.engine.rime.core.RimeMessage.CommitTextMessage]
+     * 透传：true 时下游只落屏、不按「打字上屏」记账。引擎内部直接
+     * 构造的 Commit（选词上屏、前端提交等）不经该记账路径，恒缺省。
+     */
+    data class Commit(val text: String, val direct: Boolean = false) : EngineMessage()
     data class Composition(val preedit: String, val cursorPos: Int) : EngineMessage()
     data class Candidates(
         val list: List<Candidate>,

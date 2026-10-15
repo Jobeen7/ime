@@ -186,7 +186,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     }
 
     fun downloadGrammar(language: String) {
-        if (grammarDownloading) return
+        // 与万象更新互斥：两路都写 sharedDataDir 下的语法模型文件，
+        // 同时跑会各下一份约 400 MB 且落盘记录互相错位
+        if (grammarDownloading || updating) return
         grammarDownloading = true
         grammarFailed = false
         grammarProgress = 0f
@@ -276,7 +278,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     }
 
     fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
-        if (updating) return
+        // 与语法模型单独下载互斥（见 downloadGrammar 的同一口径）
+        if (updating || grammarDownloading) return
         updating = true
         updateFailed = false
         updateDone = false
@@ -400,6 +403,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
 
                             grammarLanguage != null -> Button(
                                 onClick = { downloadGrammar(grammarLanguage!!) },
+                                // 万象更新进行中禁用（与 downloadGrammar 的守门同口径）
+                                enabled = !updating,
                                 modifier = Modifier
                                     .height(32.dp)
                                     .onSizeChanged {
@@ -620,6 +625,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
 
                         info?.hasUpdate == true -> Button(
                             onClick = { startWanxiangUpdate(info) },
+                            // 语法模型下载进行中禁用（与 startWanxiangUpdate 的守门同口径）
+                            enabled = !grammarDownloading,
                             modifier = Modifier
                                 .height(32.dp)
                                 .onSizeChanged {

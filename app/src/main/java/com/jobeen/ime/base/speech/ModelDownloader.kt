@@ -62,6 +62,50 @@ object ModelDownloader {
         data object Failed : UpdateCheckResult
     }
 
+    /**
+     * 防降级判据的日期键：资产名内嵌的 yyyy-MM-dd 拼成可比较的
+     * 整数（月/日合法性口径与选包 selectSpeechModelAsset 一致）；
+     * 资产名无日期或日期非法时返回 null。
+     */
+    private fun assetDateKey(assetName: String): Int? {
+        val m = SPEECH_MODEL_DATE_REGEX.find(assetName) ?: return null
+        val month = m.groupValues[2].toInt()
+        val day = m.groupValues[3].toInt()
+        if (month !in 1..12 || day !in 1..31) return null
+        return m.groupValues[1].toInt() * 10000 + month * 100 + day
+    }
+
+    /**
+     * 目标是否比本地记录的已装包更旧（降级）：按资产名日期比大
+     * 小——本地记录是 gh: 资产且两边日期都可解析时以日期为准
+     * （含「本地是更新的在线包、目标是较旧钉死包」的离线循环场
+     * 景，也含「本地是较旧在线包、钉死包更新」的正当升级，后者
+     * 不算降级须放行）。任一日期不可解析时回落钉死口径：只有
+     * 目标来自钉死摘要才可能是「本地更新包 vs 旧钉死」的降级。
+     * 本地无 gh: 记录（无记录/旧版手填记录）一律不判降级。
+     */
+    private fun isDowngradeTarget(target: SpeechModelTarget, localId: String?): Boolean {
+        if (localId.isNullOrBlank() || !localId.startsWith("gh:")) return false
+        val localAsset = localId.removePrefix("gh:").substringBeforeLast(':')
+        val localDate = assetDateKey(localAsset)
+        val targetDate = assetDateKey(target.name)
+        return if (localDate != null && targetDate != null) {
+            targetDate < localDate
+        } else {
+            target.shaFromPinned
+        }
+    }
+
+    /**
+     * 防降级总守卫（check 与 download 两处共用同一判据）：已装
+     * 模型且目标比已装包更旧时拒绝。必须叠加「已装」条件：无模
+     * 型只有残留记录时，目标再旧也要放行安装——否则这类用户被
+     * 误判最新、永远装不上模型。
+     */
+    private fun isRefusedDowngrade(context: Context, target: SpeechModelTarget): Boolean =
+        isModelInstalled() &&
+            isDowngradeTarget(target, getStoredManifestId(context))
+
     private const val PREFS_NAME = "speech_model_prefs"
     private const val KEY_MANIFEST_ID = "manifest_id"
 
@@ -191,6 +235,15 @@ object ModelDownloader {
                 }
             }
             if (localId.startsWith("gh:")) {
+                // 防降级（与 download 同一守卫）：本地已装的包比目
+                // 标更新时不报有更新——离线回落的旧钉死目标若照
+                // 报，用户每次点下载都会被拒、反复横跳，无从收尾
+                if (isRefusedDowngrade(context, target)) {
+                    Timber.i(
+                        "Speech model update check: local package is newer, pinned target refused",
+                    )
+                    return@withContext UpdateCheckResult.UpToDate
+                }
                 return@withContext UpdateCheckResult.HasUpdate
             }
             return@withContext migrateLegacyRecord(context, target)
@@ -271,9 +324,14 @@ object ModelDownloader {
         // 代理、由既有 resolveExpectedSha256 锚 GitHub 登记摘要保证。
         // 目标优先用检查时已公示的那份（announcedTarget）：下载时现解析
         // 可能因限流退到钉死回落、静默换上旧包。无已公示目标时才现
-        // 解析，且现解析来自钉死回落又已有本地模型记录时明确失败——
-        // 宁可让用户检查网络后重试，也不装一个比已公示版本旧的包；
-        // 首次安装（无记录）无可降级，允许钉死兜底
+        // 解析。两条来源统一过防降级守卫（isRefusedDowngrade，
+        // 与 checkForUpdate 同一判据）：已装模型且目标比已装包更
+        // 旧时明确失败——公示目标同样可能是离线回落出的旧钉死包
+        // （check 时被无条件记为已公示），旧守卫只拦现解析支、漏
+        // 了这条主路径，会把新包静默换回旧包。判据按资产名日期
+        // 比大小并叠加「已装」条件：无模型只有残留记录时放行安
+        // 装（否则永远装不上）；钉死包比已装包更新时是正当升级，
+        // 同样放行
         val announced = announcedTarget
         val target = if (announced != null) {
             announced
@@ -283,17 +341,14 @@ object ModelDownloader {
                 Timber.w("Speech model target unavailable, download aborted")
                 return@withContext false
             }
-            if (resolved.shaFromPinned &&
-                !getStoredManifestId(context).isNullOrEmpty()
-            ) {
-                Timber.w(
-                    "Speech model download refused: fresh resolution fell back to pinned " +
-                        "digest while a local model record exists (anti-downgrade)"
-                )
-                HttpUtil.showToast("语音模型下载失败：无法确认最新版本，请检查网络后重试")
-                return@withContext false
-            }
             resolved
+        }
+        if (isRefusedDowngrade(context, target)) {
+            Timber.w(
+                "Speech model download refused: target is older than installed package (anti-downgrade)"
+            )
+            HttpUtil.showToast("语音模型下载失败：无法确认最新版本，请检查网络后重试")
+            return@withContext false
         }
         val link = target.downloadUrl
         val tempDir = App.downloadDir

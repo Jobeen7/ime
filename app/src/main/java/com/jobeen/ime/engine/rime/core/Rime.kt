@@ -117,7 +117,12 @@ class Rime : RimeApi, RimeLifecycleOwner {
             withContext(dispatcher) { block() }
         } catch (e: CancellationException) {
             if (callerJob?.isActive == true) {
-                throw RimeStoppedException().also { runCatching { it.initCause(e) } }
+                // 本转抛点只来自任务被 dispatcher 排空丢弃（停机或启动
+                // 失败），引擎此时可能早已就绪过，文案用丢弃语义而非
+                // 默认的「就绪前停止」（见 RimeStoppedException）
+                throw RimeStoppedException(
+                    "task dropped by dispatcher stop/startup-failure"
+                ).also { runCatching { it.initCause(e) } }
             }
             throw e
         }
@@ -205,6 +210,21 @@ class Rime : RimeApi, RimeLifecycleOwner {
         modifiers: KeyModifiers,
         isVirtual: Boolean,
     ): Boolean = withRimeContext { processKeyInner(value.value, modifiers.toInt(), isVirtual) }
+
+    override suspend fun emitCommit(text: String) = withRimeContext {
+        // 与 native Commit 的产生点（processKeyInner→emitResponse）同
+        // 在 rime-main 上、经同一 handleMessage 入队：本调用与相邻按键
+        // 任务在 dispatcher 单线程上串行执行，trySend 的先后即两条
+        // Commit 的分发先后，不存在跨队列超车。
+        // 第二个参数是直送标记（见 CommitTextMessage.direct）：本路
+        // 借道只为排序，下游不得按打字上屏记账。标记不放 CommitProto
+        // 本体——它由 JNI 按固定构造签名 (Ljava/lang/String;)V 创建
+        // （jni_env.h），加字段会使 JNI 构造查找失败
+        handleMessage(
+            RimeMessage.MessageType.Commit.ordinal,
+            arrayOf(CommitProto(text), true),
+        )
+    }
 
     override suspend fun simulateKeySequence(sequence: String): Boolean = withRimeContext {
         if (Companion.simulateKeySequence(sequence)) {

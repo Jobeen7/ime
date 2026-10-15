@@ -101,6 +101,17 @@ class SpeechRecognitionService : Service() {
 
         /** 队列满时丢弃的块数：DONE 时顺带标记回客户端打点（本轮不做用户提示） */
         val droppedBlocks = java.util.concurrent.atomic.AtomicInteger(0)
+
+        // partial 去重/节流状态（随会话对象走）：此前是服务实例
+        // 字段、靠 START 时在锁内手动复位——旧会话协程与新会话
+        // 协程并存期间（连按排空）共用一对字段，旧协程的迟到
+        // 判定会污染新会话的去重（同文本被误判已发而吞掉、节流
+        // 窗互相干扰）。挪进会话对象后每个协程只读写自己这份，
+        // 新会话天然初值、无需复位。读写点只在 feedAudioBlock
+        // 的 audioLock 段内，与此前同锁纪律
+        var lastRawText: String? = null
+        var lastEmittedText: String? = null
+        var lastEmitUptimeMs = 0L
     }
 
     /** 当前推流会话（无会话时为 null）；写入在 audioLock 内，读取可直接读 */
@@ -134,10 +145,6 @@ class SpeechRecognitionService : Service() {
     private var cancelRequestedGen = 0
 
     private var clientMessenger: Messenger? = null
-
-    private var lastRawText: String? = null
-    private var lastEmittedText: String? = null
-    private var lastEmitUptimeMs = 0L
 
     private data class ModelFiles(
         val tokens: File,
@@ -229,16 +236,13 @@ class SpeechRecognitionService : Service() {
                             if (gen != sessionGen) {
                                 // 锁内代次复检：等锁期间（旧会话收尾解码
                                 // 占用）已被新一代顶替——刚建的流就地
-                                // 释放、不发布本会话，静默退出。去重/节流
-                                // 状态也不得重置（那是新会话的）
+                                // 释放、不发布本会话，静默退出
                                 newStream?.runCatching { release() }
                                 newStream = null
                             } else {
-                                // 新会话重置跨会话去重/节流状态：与解码协程对这三个
-                                // 字段的读写同在 audioLock 内，避免跨线程可见性竞态
-                                lastRawText = null
-                                lastEmittedText = null
-                                lastEmitUptimeMs = 0L
+                                // 去重/节流状态已随 PushSession 对象走
+                                //（上方刚建的新会话自带初值），此处无
+                                // 需复位：旧会话协程只读写它自己那份
                                 // 换流必须释放旧流：正常路径旧流由上个会话协程按
                                 // 身份校验释放，但中止路径会留下孤儿 native stream，
                                 // 无人释放只能等进程死亡。例外：旧会话正在排空
@@ -692,7 +696,7 @@ class SpeechRecognitionService : Service() {
                         null
                     }
                     if (block != null) {
-                        feedAudioBlock(block, myStream, myClientGen, floatChunk)
+                        feedAudioBlock(session, block, myStream, myClientGen, floatChunk)
                         continue
                     }
                     if (session.endOfStream) break
@@ -786,6 +790,7 @@ class SpeechRecognitionService : Service() {
      * 节流、normalizeSpacing 规整与 lastRaw/lastEmitted 双重去重）。
      */
     private fun feedAudioBlock(
+        session: PushSession,
         block: ByteArray,
         myStream: OnlineStream,
         myClientGen: Int,
@@ -819,8 +824,8 @@ class SpeechRecognitionService : Service() {
                     }
 
                     val rawText = engine.getResult(myStream).text.trim()
-                    if (rawText.isNotEmpty() && rawText != lastRawText) {
-                        lastRawText = rawText
+                    if (rawText.isNotEmpty() && rawText != session.lastRawText) {
+                        session.lastRawText = rawText
                     }
                     // 发射判定与变化检测解耦：此前被节流压住的版本因
                     // lastRawText 已先行更新、后续同文本不再触发判定
@@ -830,11 +835,11 @@ class SpeechRecognitionService : Service() {
                     // 把待发文本补出去；同文本仍只发一次（已发去重）
                     if (rawText.isNotEmpty()) {
                         val partial = FinalTextNormalizer.normalizeSpacing(rawText)
-                        if (partial.isNotEmpty() && partial != lastEmittedText) {
+                        if (partial.isNotEmpty() && partial != session.lastEmittedText) {
                             val now = SystemClock.uptimeMillis()
-                            if (now - lastEmitUptimeMs >= PARTIAL_EMIT_MIN_INTERVAL_MS) {
-                                lastEmittedText = partial
-                                lastEmitUptimeMs = now
+                            if (now - session.lastEmitUptimeMs >= PARTIAL_EMIT_MIN_INTERVAL_MS) {
+                                session.lastEmittedText = partial
+                                session.lastEmitUptimeMs = now
                                 sendClient(SpeechIpc.MSG_PARTIAL, partial, gen = myClientGen)
                             }
                         }

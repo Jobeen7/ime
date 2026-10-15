@@ -284,9 +284,9 @@ object SchemaPickerDialog {
             val w = dialog.window ?: return@also
             w.setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
 
-            // 去掉非弹层区域变灰
-            w.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-            w.setDimAmount(0f)
+            // 非弹层区域不压暗：不在此自设——显示方 showDialog 会后写
+            // 窗口标志，压暗口径统一由其 dim 参数决定，本弹窗经调用点
+            // 传 dim=false 落实不压暗（此处自清曾被后写覆盖、形同虚设）
 
             val attrs = w.attributes
             attrs.width = dialogWidth

@@ -50,8 +50,11 @@ abstract class AppDatabase : RoomDatabase() {
          * 全部 VACUUM 执行的串行锁（v10 与拆库两条路径共用同一咽喉
          * [vacuumAndMark]）：把「查标记→执行→落标记」收成临界区，
          * 消除并发首跑时多个调用方同时看到未完成标记、各自跑一遍
-         * VACUUM 的 check-then-act 窗口。可重入：拆库路径持锁时触发
-         * 库打开回调（v10 路径）会同线程重入。
+         * VACUUM 的 check-then-act 窗口。可重入：拆库路径持锁时调
+         * vacuumAndMark 会同线程再次取它。与 SQLiteOpenHelper 监
+         * 视器的锁序全局统一为「helper 监视器 → vacuumLock」：
+         * onOpen 回调在监视器内取本锁，拆库路径因此先开库后取锁
+         * （见 vacuumAfterClipboardSplit），不得反序。
          */
         private val vacuumLock = java.util.concurrent.locks.ReentrantLock()
 
@@ -72,6 +75,16 @@ abstract class AppDatabase : RoomDatabase() {
             val prefs = com.jobeen.ime.base.util.appContext
                 .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
             if (prefs.getBoolean(KEY_VACUUM_CLIP_DONE, false)) return
+            // 先开库、后拿 vacuumLock（锁序与 onOpen 路径统一）：
+            // onOpen 回调是在 SQLiteOpenHelper 的监视器内调
+            // vacuumAndMark 取 vacuumLock 的；若本路径先持 vacuumLock
+            // 再开库，恰有另一线程同时在首开数据库（持 helper 监视
+            // 器、在 onOpen 里等 vacuumLock）时两边互等死锁。先开库
+            // 后，本路径的取锁顺序与 onOpen 一致（helper 监视器 →
+            // vacuumLock），反转消除；开库触发的 onOpen 只处理 v10
+            // 标记（与本路径的拆库标记各查各的），不会重复执行。
+            val db = getInstance(com.jobeen.ime.base.util.appContext)
+                .openHelper.writableDatabase
             vacuumLock.lock()
             try {
                 // 锁内复查：锁外快检会让并发首跑一起走到这里，二次确认
@@ -100,8 +113,6 @@ abstract class AppDatabase : RoomDatabase() {
                         return
                     }
                 }
-                val db = getInstance(com.jobeen.ime.base.util.appContext)
-                    .openHelper.writableDatabase
                 if (!vacuumAndMark(db, prefs, KEY_VACUUM_CLIP_DONE)) {
                     prefs.edit { putLong(KEY_VACUUM_CLIP_LAST_FAIL, System.currentTimeMillis()) }
                 }
