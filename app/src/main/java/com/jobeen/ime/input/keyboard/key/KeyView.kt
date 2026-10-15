@@ -42,6 +42,10 @@ import splitties.views.padding
 import kotlin.math.min
 import kotlin.math.roundToInt
 
+// 对齐计算复用的边界矩形：调用都在主线程、bounds 取到后立即消费，
+// 共享一份即可，不再每次按键文本定位新建 Rect
+private val alignBoundsScratch = Rect()
+
 private fun TextView.alignVisibleTextCenter() {
     val text = text?.toString().orEmpty()
     val container = parent as? android.view.View ?: return
@@ -50,7 +54,7 @@ private fun TextView.alignVisibleTextCenter() {
         return
     }
 
-    val bounds = Rect()
+    val bounds = alignBoundsScratch
     paint.getTextBounds(text, 0, text.length, bounds)
     val glyphCenter = left + (bounds.left + bounds.right) / 2f
     translationX = container.width / 2f - glyphCenter
@@ -322,6 +326,9 @@ class TextKeyView(
     }
 
     fun updateText(text: CharSequence?) {
+        // 值未变不重设：setText 内容相同也会触发 requestLayout，全/半角
+        // 切换时 updateMode 逐键调用，未变的键不应连带整排重排（L6）
+        if (mainText.text.toString() == text?.toString()) return
         mainText.text = text
     }
 }
@@ -418,6 +425,8 @@ class AltTextKeyView(
     }
 
     fun updateText(text: CharSequence?) {
+        // 同 TextKeyView：值未变不重设，避免全/半角切换整排重排（L6）
+        if (mainText.text.toString() == text?.toString()) return
         mainText.text = text
         mainText.doOnPreDraw {
             updateMainTextPosition()
@@ -425,6 +434,9 @@ class AltTextKeyView(
     }
 
     fun updateAltText(text: CharSequence?) {
+        // 与 updateText 同口径：updateMode 总是成对调用两者，只守一处
+        // 等于没守
+        if (altText.text.toString() == text?.toString()) return
         altText.text = text
         altText.doOnPreDraw {
             updateAltTextPosition()
@@ -587,6 +599,8 @@ class ImageTextKeyView(
     }
 
     fun updateText(text: CharSequence?) {
+        // 同 TextKeyView：值未变不重设，避免全/半角切换整排重排（L6）
+        if (mainText.text.toString() == text?.toString()) return
         mainText.text = text
         mainText.doOnPreDraw {
             updateTextPosition()

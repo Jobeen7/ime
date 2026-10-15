@@ -1,6 +1,8 @@
 package com.jobeen.ime.base.speech
 
 import android.content.Context
+import android.system.Os
+import android.system.OsConstants
 import androidx.core.content.edit
 import com.jobeen.ime.base.net.HttpUtil
 import com.jobeen.ime.data.App
@@ -104,6 +106,8 @@ object ModelDownloader {
     private data class SpeechModelTarget(
         val name: String,
         val sha256: String,
+        /** 摘要是否来自 APK 内置钉死表（而非 GitHub 资产清单登记值）：只影响校验失败时的提示措辞 */
+        val shaFromPinned: Boolean = false,
     ) {
         val identity: String = "gh:$name:$sha256"
         val downloadUrl: String =
@@ -125,20 +129,29 @@ object ModelDownloader {
         )
         val picked = selectSpeechModelAsset(assets.map { it.first })
         if (picked != null) {
-            val sha = assets.firstOrNull { it.first == picked }?.second
+            val registered = assets.firstOrNull { it.first == picked }?.second
                 ?.ifEmpty { null }
-                ?: PINNED_SPEECH_SHA256[picked]
-            if (!sha.isNullOrEmpty()) return SpeechModelTarget(picked, sha)
+            if (registered != null) return SpeechModelTarget(picked, registered)
+            val pinned = PINNED_SPEECH_SHA256[picked]
+            if (!pinned.isNullOrEmpty()) {
+                return SpeechModelTarget(picked, pinned, shaFromPinned = true)
+            }
         }
         val pinnedPicked = selectSpeechModelAsset(PINNED_SPEECH_SHA256.keys.toList())
         if (pinnedPicked != null) {
-            return SpeechModelTarget(pinnedPicked, PINNED_SPEECH_SHA256.getValue(pinnedPicked))
+            return SpeechModelTarget(
+                pinnedPicked,
+                PINNED_SPEECH_SHA256.getValue(pinnedPicked),
+                shaFromPinned = true,
+            )
         }
         return null
     }
 
     /**
      * 检查语音模型是否有新版：目标资产的 identity 与本地记录比对。
+     * 记录与目标一致时还要确认模型文件真在盘上（记录会随备份/迁移
+     * 跨设备而来、文件不会），不在盘一律判有更新，见函数内注释。
      * 本地无记录时：
      * - 模型文件已存在（老用户在该机制引入前已下载）→ 视为已是最新，
      *   把当前 identity 记为基线，避免首次检查误报"有更新"诱使用户重下大模型；
@@ -154,7 +167,15 @@ object ModelDownloader {
         val localId = getStoredManifestId(context)
         if (localId != null) {
             if (localId.equals(target.identity, ignoreCase = true)) {
-                return@withContext UpdateCheckResult.UpToDate
+                // 记录一致也要确认模型真的在盘：记录是设备本地状态，
+                // 会随备份/迁移来到新设备、文件却不会，只看记录会把
+                // 「实际没装」误报成「已是最新」，用户永远得不到重下
+                // 提示。在盘检查本就在 IO 线程、低频调用，开销可忽略
+                return@withContext if (isModelInstalled()) {
+                    UpdateCheckResult.UpToDate
+                } else {
+                    UpdateCheckResult.HasUpdate
+                }
             }
             if (localId.startsWith("gh:")) {
                 return@withContext UpdateCheckResult.HasUpdate
@@ -248,8 +269,13 @@ object ModelDownloader {
         if (!currentCoroutineContext().isActive) return@withContext false
         // 先取可信摘要再下载：来源不可信、或查不到摘要且无内置钉死兜底时，
         // 整包根本无从校验，提前中止，不白下数百 MB（校验口径见
-        // resolveExpectedSha256，与下载后比对完全一致）
-        val expectedSha = resolveExpectedSha256(link, archiveFile) ?: return@withContext false
+        // resolveExpectedSha256，与下载后比对完全一致）。期望摘要直接
+        // 复用 resolveTarget 已取得的 target.sha256，不再为同一资产
+        // 二次查询 GitHub——重复查询多烧匿名限流，且二次查询失败时
+        // 会误落钉死表、把不在表内的新包拒掉（target 摘要的来源与
+        // 二次查询同为 GitHub 登记值或内置钉死表，信任级不变）
+        val expectedSha = resolveExpectedSha256(link, archiveFile, target)
+            ?: return@withContext false
         if (!currentCoroutineContext().isActive) return@withContext false
         if (!ensureArchive(link, archiveFile, expectedSha, onProgress)) return@withContext false
         if (!currentCoroutineContext().isActive) return@withContext false
@@ -258,6 +284,34 @@ object ModelDownloader {
         // 安装成功后记录目标 identity，供后续检查更新时比对
         storeManifestId(context, target.identity)
         true
+    }
+
+    /**
+     * fsync 文件本体：内容写完、rename 就位前调用（失败只记日志——
+     * 落盘保障是尽力而为，不能反过来让下载/安装失败）。用 Os.open
+     * 只读打开后 fsync，对已关闭写入的文件同样有效。
+     */
+    private fun fsyncFile(file: File) {
+        runCatching {
+            val fd = Os.open(file.absolutePath, OsConstants.O_RDONLY, 0)
+            try {
+                Os.fsync(fd)
+            } finally {
+                Os.close(fd)
+            }
+        }.onFailure { Timber.w(it, "File fsync failed: %s", file) }
+    }
+
+    /** fsync 目录本体，让其中的 rename/新建在断电后依然成立（失败只记日志）。 */
+    private fun fsyncDirectory(dir: File) {
+        runCatching {
+            val fd = Os.open(dir.absolutePath, OsConstants.O_RDONLY, 0)
+            try {
+                Os.fsync(fd)
+            } finally {
+                Os.close(fd)
+            }
+        }.onFailure { Timber.w(it, "Directory fsync failed: %s", dir) }
     }
 
     private data class DownloadResult(val md5: String)
@@ -311,16 +365,22 @@ object ModelDownloader {
      * 对仓库坐标再做一次钉死复核，防解析被改向）：查不到且无钉死
      * 兜底时整包无从校验，直接中止、不再白下载整包（fail-closed）：
      * - 链接是 GitHub Release 资产（可含代理前缀）→ 仓库必须是钉死的
-     *   官方仓库（k2-fsa/sherpa-onnx），否则拒绝；摘要向 GitHub API 查
-     *   该资产登记的官方值，查询失败退 APK 内置钉死表。此分支中止时
-     *   不删已缓存的包：缓存包已通过 MD5，摘要查询恢复后重试可直接
-     *   校验落盘，不必重下整包；
+     *   官方仓库（k2-fsa/sherpa-onnx），否则拒绝；摘要优先复用
+     *   [target] 已解析的目标摘要（download 的现行路径，其来源就是
+     *   同一次资产清单查询的登记值或内置钉死表），不再二次查询；
+     *   无现成摘要时才向 GitHub API 查该资产登记的官方值，查询失败
+     *   退 APK 内置钉死表。此分支中止时不删已缓存的包：缓存包已通过
+     *   MD5，摘要查询恢复后重试可直接校验落盘，不必重下整包；
      * - 非 GitHub 链接 → 只认 APK 内置钉死摘要（按文件名查表）：旧
      *   TOFU（首次见到即钉住）在服务器被攻破时等于没有校验——换一个
      *   链接就能让客户端把新包钉为可信，已废除；内置表没有的包拒绝。
      * 拒绝时已按既有口径 Toast 说明，返回 null 表示调用方直接中止。
      */
-    private fun resolveExpectedSha256(link: String, archiveFile: File): ExpectedSha256? {
+    private fun resolveExpectedSha256(
+        link: String,
+        archiveFile: File,
+        target: SpeechModelTarget? = null,
+    ): ExpectedSha256? {
         val ref = parseGithubReleaseAssetUrl(link)
         if (ref != null) {
             // 仓库坐标必须与钉死的官方仓库一致：链接虽由本类构造，
@@ -335,6 +395,13 @@ object ModelDownloader {
                 HttpUtil.showToast("语音模型校验失败：下载来源不可信，已拒绝安装")
                 archiveFile.delete()
                 return null
+            }
+            // 坐标复核（纯字符串）通过后，摘要直接复用 target 的现成
+            // 结果（链接由 target 构造，资产名必然一致），跳过二次查询
+            if (target != null && target.sha256.isNotEmpty() &&
+                ref.assetName == target.name
+            ) {
+                return ExpectedSha256(target.sha256, fromGithubLink = !target.shaFromPinned)
             }
             val expected = fetchGithubAssetSha256(ref)
                 .ifEmpty { PINNED_SPEECH_SHA256[ref.assetName] ?: "" }
@@ -515,6 +582,10 @@ object ModelDownloader {
             throw IOException("Failed to move new model into place: $staging")
         }
         backup.deleteRecursively()
+        // 三步换名全部就位后 fsync 父目录：staging 内文件内容已在
+        // moveTo 时逐个 fsync，这里保证「新目录就位、旧备份清除」
+        // 这组目录项变更断电后依然成立，不会出现重启后新旧皆失
+        fsyncDirectory(parent)
         Timber.i("Speech model installed: %s", modelDir.absolutePath)
     }
 
@@ -522,6 +593,10 @@ object ModelDownloader {
         val target = File(destination, source.name)
         if (target.exists()) target.delete()
         source.copyTo(target, overwrite = true)
+        // 拷贝完即 fsync：随后 staging 整目录 rename 就位，文件内容
+        // 必须先于目录项变更落盘，断电后才不会出现「目录已换、文件
+        // 内容是空洞」的半套模型
+        fsyncFile(target)
         source.delete()
     }
 
@@ -611,11 +686,18 @@ object ModelDownloader {
                             if (finished) break
                         }
                     }
+                    // 写完先 fsync 文件本体再 rename：只靠 close 落盘，
+                    // 断电时 .part 内容可能还没真正上盘，rename 后的
+                    // 归档会是残缺的（后续 SHA 校验能拦住安装，但会
+                    // 白下一整包）
+                    output.fd.sync()
                 }
                 if (!part.renameTo(target)) {
                     Timber.w("Model download: rename .part failed")
                     return null
                 }
+                // rename 后 fsync 所在目录，让归档就位这一事实断电后依然成立
+                target.parentFile?.let { fsyncDirectory(it) }
                 DownloadResult(digest.digest().joinToString("") { "%02x".format(it) })
             }
         } catch (e: Throwable) {

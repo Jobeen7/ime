@@ -16,15 +16,20 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
 
     enum class GestureType { Down, Move, Up, Cancel }
 
-    data class Event(
-        val type: GestureType,
-        val consumed: Boolean,
-        val x: Float,
-        val y: Float,
-        val countX: Int,
-        val countY: Int,
-        val totalX: Int,
-        val totalY: Int
+    /**
+     * 手势事件：字段可变以便分发时复用同一实例（见 gestureEvent）。
+     * 监听方全部在回调内同步消费、不持有事件，复用不改变语义；
+     * 因此它不再是 data class（可变实例的 equals/copy 本就无意义）。
+     */
+    class Event(
+        var type: GestureType,
+        var consumed: Boolean,
+        var x: Float,
+        var y: Float,
+        var countX: Int,
+        var countY: Int,
+        var totalX: Int,
+        var totalY: Int
     )
 
     fun interface OnGestureListener {
@@ -62,6 +67,11 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
 
     /** MOVE 事件坐标换算复用数组（长按拖动时每事件新建 IntArray 是纯浪费） */
     private val moveLocation = IntArray(2)
+
+    /** 手势事件分发复用实例：每个 MOVE 都新建 Event 是热路径上的纯
+     * 分配；监听方（滑动/慢滑移光标）都在回调内同步读字段、不持有，
+     * 逐次改写复用安全 */
+    private val gestureEvent = Event(GestureType.Down, false, 0f, 0f, 0, 0, 0, 0)
     private val repeatRunnable = Runnable { fireRepeat() }
 
     /** 长按触发瞬间记下的指针 id：长按动作（如语音）穿线取用，免得等首次
@@ -317,7 +327,15 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     private fun dispatchGestureEvent(
         type: GestureType, x: Float, y: Float, countX: Int = 0, countY: Int = 0
     ) {
-        val event = Event(type, gestureConsumed, x, y, countX, countY, swipeTotalX, swipeTotalY)
+        val event = gestureEvent
+        event.type = type
+        event.consumed = gestureConsumed
+        event.x = x
+        event.y = y
+        event.countX = countX
+        event.countY = countY
+        event.totalX = swipeTotalX
+        event.totalY = swipeTotalY
         val consumed = onGestureListener?.onGesture(this, event) ?: return
         if (consumed && !gestureConsumed) {
             gestureConsumed = true

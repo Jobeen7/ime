@@ -180,15 +180,13 @@ object ClipboardManager {
             db.withTransaction {
                 val dao = db.clipboardDao()
                 // 物理清空前把全部条目记入防复活抑制（替代软删墓碑行的作用）。
-                // 抑制集上限 200 条：先按时间倒序再截断，保证最新条目（含当前
-                // 系统剪贴板内容）不被丢掉——getAllActive 无排序，乱序截断时
-                // 可能恰好丢掉当前剪贴板那条，清空后它又复活回来
+                // 抑制集上限 200 条：按时间倒序取最新 200 条截断，保证最新
+                // 条目（含当前系统剪贴板内容）不被丢掉——乱序截断时可能
+                // 恰好丢掉当前剪贴板那条，清空后它又复活回来。排序截断
+                // 在 SQL 内完成、只取 text 列，不再全量读全文进内存
                 noteRemovedTexts(
                     context,
-                    dao.getAllActive()
-                        .sortedByDescending { it.timestamp }
-                        .take(MAX_REMOVED_HASHES)
-                        .map { it.text },
+                    dao.getRecentTexts(MAX_REMOVED_HASHES),
                 )
                 dao.deleteAllRaw()
             }
@@ -542,10 +540,10 @@ object ClipboardManager {
                 oldDao.deleteAllRaw()
             }
             settings.edit().putBoolean(KEY_DB_MIGRATED, true).apply()
-            // 旧行全文此时还在 ime_database 的空闲页/WAL 里（启动时跑的
-            // 一次性 VACUUM 在迁移之前就已结束）：在这里补跑主库
-            // VACUUM 才真正擦除，拆库的隐私隔离才算完整
-            AppDatabase.vacuumAfterClipboardSplit()
+            // 旧行全文此时还在 ime_database 的空闲页/WAL 里：补跑主库
+            // VACUUM 才真正擦除（见 db() 中迁移检查之后的补跑点——
+            // 已完成迁移的老用户在本函数开头就按标记返回，补跑点
+            // 必须设在迁移体之外他们才走得到）
         }.onFailure { Timber.w(it, "Clipboard history migration failed; will retry") }
     }
 
@@ -580,6 +578,15 @@ object ClipboardManager {
             withContext(Dispatchers.IO) {
                 val db = ClipboardDatabase.getInstance(context)
                 migrationMutex.withLock { migrateFromAppDatabase(context, db) }
+                // 拆库补 VACUUM 的常规补跑点：vacuumAfterClipboardSplit
+                // 自带完成标记，未落标记时才真正执行。此前它只在迁移体
+                // 末尾被调用，而在本版本之前就完成拆库迁移的老用户会在
+                // 迁移体开头按标记直接返回、永远走不到——旧剪贴板全文
+                // 一直残留在会进云备份的主库空闲页里。放在每次数据库
+                // 访问的迁移检查之后：老用户下次用剪贴板即补跑一次，
+                // 此后只是标记检查。失败不阻断本次操作，下次访问重试
+                runCatching { AppDatabase.vacuumAfterClipboardSplit() }
+                    .onFailure { Timber.w(it, "Post-split VACUUM failed; will retry") }
                 truncateOversizedTextsOnce(context, db)
                 purgeLegacyDeletedOnce(context, db)
                 block(db)

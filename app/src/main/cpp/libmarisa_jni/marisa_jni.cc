@@ -2,6 +2,8 @@
 
 #include <marisa/trie.h>
 
+#include <android/log.h>
+
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -299,6 +301,8 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_commonPrefixSearchBytes(
 
     jclass byteArrayClass = env->FindClass("[B");
     if (!byteArrayClass) {
+        __android_log_print(ANDROID_LOG_ERROR, "marisa_jni",
+                            "FindClass(\"[B\") failed in commonPrefixSearchBytes, returning null");
         // 查找失败已留未决异常：清掉并按本函数失败约定返回 null，
         // 不能拿空 class 继续 NewObjectArray
         if (env->ExceptionCheck()) env->ExceptionClear();
@@ -346,6 +350,8 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_predictiveSearchBytes(
 
     jclass byteArrayClass = env->FindClass("[B");
     if (!byteArrayClass) {
+        __android_log_print(ANDROID_LOG_ERROR, "marisa_jni",
+                            "FindClass(\"[B\") failed in predictiveSearchBytes, returning null");
         // 查找失败已留未决异常：清掉并按本函数失败约定返回 null，
         // 不能拿空 class 继续 NewObjectArray
         if (env->ExceptionCheck()) env->ExceptionClear();
@@ -376,6 +382,8 @@ Java_com_jobeen_ime_base_marisa_MarisaJNI_dumpKeys(
 
     jclass byteArrayClass = env->FindClass("[B");
     if (!byteArrayClass) {
+        __android_log_print(ANDROID_LOG_ERROR, "marisa_jni",
+                            "FindClass(\"[B\") failed in dumpKeys, returning null");
         // 查找失败已留未决异常：清掉并按本函数失败约定返回 null，
         // 不能拿空 class 继续 NewObjectArray
         if (env->ExceptionCheck()) env->ExceptionClear();

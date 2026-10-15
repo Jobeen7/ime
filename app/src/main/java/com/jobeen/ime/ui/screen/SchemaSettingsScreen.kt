@@ -543,9 +543,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         updateFailed -> stringResource(R.string.schema_update_failed)
                         checkingUpdate -> stringResource(R.string.schema_update_checking)
                         info == null -> ""
-                        info.hasUpdate ->
+                        // 文案按更新对象区分：版本号是方案的版本，只有
+                        // 方案侧有更新时才拼它；仅语法模型有更新时拼上
+                        // 方案版本号会让用户误以为方案也要更新（此前
+                        // 只更新模型也显示「发现新版本 <方案版本>」）
+                        info.schemaUpdateAvailable ->
                             "${stringResource(R.string.schema_update_available)} " +
                                 info.schemaRemoteVersion
+                        info.gramUpdateAvailable ->
+                            stringResource(R.string.schema_update_gram_only)
                         else -> "${stringResource(R.string.schema_update_latest)} " +
                             "(${info.schemaRemoteVersion})"
                     }

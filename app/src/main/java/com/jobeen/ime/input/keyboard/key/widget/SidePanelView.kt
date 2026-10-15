@@ -5,7 +5,6 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
-import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.VelocityTracker
@@ -126,20 +125,10 @@ abstract class SidePanelView(
             invalidate()
         }
 
-        private val rippleLoc = IntArray(2)
-
-        // =====================================================
-        // 🌊 Ripple（同色简化版）
-        // =====================================================
-        private var rippleIndex = -1
-        private var rippleX = 0f
-        private var rippleY = 0f
-        private var rippleRadius = 0f
-        private var rippleActive = false
-
-        private val ripplePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-        }
+        // 原内部自绘 ripple 已删：rippleActive 从无任何置 true 的入口，
+        // 整套状态机（drawRipple/updateRipple 及其字段）永不运行；
+        // 侧栏按压反馈的实际路径是 onRippleRequest 外发给宿主键盘的
+        // KeyboardRippleView，不受影响（死代码清理 L7）
 
         private val overScrollLimit: Float
             get() = max(panel.height() * 0.45f, 1f)
@@ -162,43 +151,6 @@ abstract class SidePanelView(
             )
 
             render.draw(canvas, panel, scrollOffset, visualPressedIndex, stretch, pressedAlpha, selectedIndex)
-
-            drawRipple(canvas)
-            updateRipple()
-        }
-
-        // =====================================================
-        // 🌊 同色 ripple（核心）
-        // =====================================================
-        private fun drawRipple(canvas: Canvas) {
-            if (!rippleActive || rippleIndex !in render.items.indices) return
-
-            val itemHeight = render.itemHeight(panel.height())
-
-            val top = panel.top + itemHeight * rippleIndex - scrollOffset + stretch
-            val bottom = top + itemHeight
-            canvas.save()
-            canvas.clipRect(panel.left, top, panel.right, bottom)
-
-            ripplePaint.color = 0
-            ripplePaint.alpha = 25   // 👈 永远同色，不渐变
-
-            canvas.drawCircle(rippleX, rippleY, rippleRadius, ripplePaint)
-            canvas.restore()
-        }
-
-        // =====================================================
-        // 🌊 更自然扩散（无 alpha 变化）
-        // =====================================================
-        private fun updateRipple() {
-            if (!rippleActive) return
-            val maxRadius = width * 1.25f
-            rippleRadius += width * 0.014f * (1f + rippleRadius * 0.02f)
-            if (rippleRadius > maxRadius) {
-                rippleActive = false
-                rippleIndex = -1
-            }
-            invalidate()
         }
 
         override fun computeScroll() {

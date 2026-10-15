@@ -7,11 +7,15 @@
   - 语音纠错表（filesDir 根下 voice_corrections.tsv，含用户改词记录）
   - 还原中断快照（filesDir 根下 restore-snapshot.jbk，含剪贴板/常用语全量数据）
   - 搭配学习表（filesDir 根下 user_collocations.tsv，由打字习惯派生的词对）
+  - 设备本地状态偏好（speech_model_prefs、wanxiang_update：下载/更新
+    记录与本机文件绑定，带去新设备会让检查误判「已装/已最新」）
   其余（用户词典、主题、设置、常用语、选词偏好等）照常迁移。
 -->
 <data-extraction-rules>
     <cloud-backup>
         <exclude domain="sharedpref" path="user_dict_sync.xml" />
+        <exclude domain="sharedpref" path="speech_model_prefs.xml" />
+        <exclude domain="sharedpref" path="wanxiang_update.xml" />
         <exclude domain="external" path="shared/" />
         <exclude domain="external" path="model/" />
         <exclude domain="external" path="log/" />
@@ -29,6 +33,8 @@
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="user_dict_sync.xml" />
+        <exclude domain="sharedpref" path="speech_model_prefs.xml" />
+        <exclude domain="sharedpref" path="wanxiang_update.xml" />
         <exclude domain="external" path="shared/" />
         <exclude domain="external" path="model/" />
         <exclude domain="external" path="log/" />

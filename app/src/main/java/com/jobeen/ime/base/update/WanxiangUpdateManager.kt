@@ -73,6 +73,13 @@ object WanxiangUpdateManager {
 
     private const val PART_SUFFIX = ".part"
 
+    // 语法模型下载的临时后缀：必须与 GramModelDownloader 区分——两者
+    // 目标同为 sharedDataDir 下的 GRAM_FILE_NAME，此前共用同一个
+    // 「目标名 + .part」，同时触发时互相 delete/rename 对方下到一半
+    // 的文件。方案包的 .part 在 cacheDir 的私有工作目录里、无此冲突，
+    // 仍用 PART_SUFFIX
+    private const val GRAM_PART_SUFFIX = ".wx.part"
+
     /** 词库整目录切换的 staging/trash 目录名（与现用 dicts 同级，保证 rename 在同一文件系统内原子） */
     private const val DICTS_STAGING_DIR = "dicts.staging"
     private const val DICTS_TRASH_DIR = "dicts.trash"
@@ -463,10 +470,22 @@ object WanxiangUpdateManager {
         syncDirectory(root)
     }
 
-    /** fsync 目录本体，让其中的 rename/新建在断电后依然成立（失败只记日志）。 */
+    /**
+     * fsync 目录本体，让其中的 rename/新建在断电后依然成立（失败只记日志）。
+     * 必须用 Os.open 以只读方式打开目录再 fsync：旧实现用
+     * RandomAccessFile 打开目录，在 Android 上打开即失败、异常又被
+     * runCatching 吞掉，目录 fsync 从未真正执行过。
+     */
     private fun syncDirectory(dir: File) {
         runCatching {
-            java.io.RandomAccessFile(dir, "r").use { it.channel.force(true) }
+            val fd = android.system.Os.open(
+                dir.absolutePath, android.system.OsConstants.O_RDONLY, 0,
+            )
+            try {
+                android.system.Os.fsync(fd)
+            } finally {
+                android.system.Os.close(fd)
+            }
         }.onFailure { Timber.w(it, "Directory fsync failed: %s", dir) }
     }
 
@@ -603,15 +622,17 @@ object WanxiangUpdateManager {
             if (schemaRelease.tag_name.isBlank()) error("远端方案版本无效")
             if (gramRelease.published_at.isBlank()) error("远端模型版本无效")
 
-            // 登记摘要改走资产分页端点：Release 对象内嵌的 assets 数组
-            // 可缺资产（本仓实测 498/499），恰好缺目标资产时摘要落空、
-            // 更新会被下载侧的 fail-closed 永久拒绝；分页端点查不到
-            // 再回落内嵌值，不低于现状
-            val gramSha256 = paginatedDigest(
+            // 登记摘要优先用 Release 对象内嵌的 digest：内嵌 assets
+            // 数组偶有缺项（本仓实测 498/499），但目标资产的内嵌摘要
+            // 只要在，它就是 GitHub 登记值本身，直接采用即可省掉整套
+            // 分页查询（一趟检查为两个仓库各打一次取 id + 多页资产
+            // 列表，匿名限流 60 次/小时很容易烧穿）；仅内嵌缺失时才
+            // 走资产分页端点补查，两处皆无才为空、下载侧 fail-closed
+            val gramSha256 = resolveRegisteredDigest(
                 GRAM_REPO, GRAM_TAG, GRAM_FILE_NAME,
                 gramRelease.assets.firstOrNull { it.name == GRAM_FILE_NAME }?.digest,
             )
-            val schemaZipSha256 = paginatedDigest(
+            val schemaZipSha256 = resolveRegisteredDigest(
                 SCHEMA_REPO, schemaRelease.tag_name, SCHEMA_ZIP_NAME,
                 schemaRelease.assets.firstOrNull { it.name == SCHEMA_ZIP_NAME }?.digest,
             )
@@ -682,14 +703,16 @@ object WanxiangUpdateManager {
                     }
                 }
             }
-            // 远端模型指纹：优先下载记录（发布时间匹配时）；记录无值
-            // 时用本次检查拿到的远端登记摘要兜底显示——远端原地换包
-            // 后记录仍是旧值/空值，只读记录会把新指纹藏成"—"，而
-            // 登记摘要就是远端当前文件的真实指纹
-            val gramRemoteFp =
-                prefs.getString(KEY_GRAM_REMOTE_FP, null)
+            // 远端模型指纹：以本次检查响应拿到的远端登记摘要为准
+            // （非空即用）——它就是远端当前文件的真实指纹。下载记录
+            // 只说明「上次下载时」的值：远端原地换包后记录仍是旧值，
+            // 若优先记录，界面会把本地与记录里的同一个旧值同值同色
+            // 展示出来，看着像已对齐、其实远端早已换包（判定本身走
+            // 哈希没有错，错的只是这一行显示）。登记摘要为空（查询
+            // 失败）时才回落旧记录兜底（发布时间匹配时）
+            val gramRemoteFp = gramSha256.ifEmpty { null }
+                ?: prefs.getString(KEY_GRAM_REMOTE_FP, null)
                     .takeIf { prefs.getString(KEY_GRAM_REMOTE_FP_PUB, null) == gramRelease.published_at }
-                    ?: gramSha256.ifEmpty { null }
 
             UpdateInfo(
                 schemaRemoteVersion = schemaRelease.tag_name,
@@ -708,16 +731,20 @@ object WanxiangUpdateManager {
     }
 
     /**
-     * 资产登记摘要：优先资产分页端点（Release 内嵌 assets 可缺项），
-     * 查不到（网络失败/限流/结构变化）回落 [embeddedDigest] 内嵌值。
-     * 两处皆无返回空串，下载侧按 fail-closed 拒绝更新。
+     * 资产登记摘要：优先 [embeddedDigest] 内嵌值（归一化后合法即用，
+     * 它就是 GitHub 登记值本身）；内嵌缺失时才走资产分页端点补查
+     * （Release 内嵌 assets 数组可缺项，缺的恰好是目标资产时分页
+     * 端点是不缺项的权威来源）。两处皆无返回空串，下载侧按
+     * fail-closed 拒绝更新。
      */
-    private fun paginatedDigest(
+    private fun resolveRegisteredDigest(
         repoPath: String,
         tag: String,
         assetName: String,
         embeddedDigest: String?,
     ): String {
+        val embedded = com.jobeen.ime.base.ngram.normalizeSha256(embeddedDigest)
+        if (embedded.isNotEmpty()) return embedded
         val parts = repoPath.split('/', limit = 2)
         if (parts.size == 2 && tag.isNotBlank()) {
             val fromApi = fetchGithubReleaseAssetSha256(
@@ -725,7 +752,7 @@ object WanxiangUpdateManager {
             )
             if (fromApi.isNotEmpty()) return fromApi
         }
-        return com.jobeen.ime.base.ngram.normalizeSha256(embeddedDigest)
+        return ""
     }
 
     private fun fetchRelease(apiPath: String): GhRelease {
@@ -830,7 +857,7 @@ object WanxiangUpdateManager {
                     return@withContext false
                 }
                 val target = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
-                val partial = File(target.parentFile, target.name + PART_SUFFIX)
+                val partial = File(target.parentFile, target.name + GRAM_PART_SUFFIX)
                 partial.delete()
                 val ok = downloadFile(GRAM_URL, partial, MAX_MODEL_BYTES) { d, t ->
                     onProgress(UpdateProgress(UpdateProgress.Stage.GRAM_DOWNLOAD, d, t))
@@ -1004,6 +1031,9 @@ object WanxiangUpdateManager {
                                 }
                                 out.write(buf, 0, n)
                             }
+                            // 解压出的词库文件同样先 fsync 再参与后续整目录
+                            // rename 切换（与下载文件同一掉电安全口径）
+                            out.fd.sync()
                         }
                     }
                     done++
@@ -1063,6 +1093,10 @@ object WanxiangUpdateManager {
                             }
                         }
                         onProgress(downloaded, total)
+                        // 写完先 fsync 文件本体再走后续 rename/校验：只靠
+                        // close 落盘，断电时文件内容可能还没真正上盘，
+                        // 提交标记却已写下，恢复会误判这批数据完整
+                        output.fd.sync()
                     }
                 }
                 // 完整性校验：服务端声明了长度时，实际字节数必须一致，

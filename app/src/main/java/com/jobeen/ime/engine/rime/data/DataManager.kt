@@ -78,7 +78,11 @@ object DataManager {
 
                     is DataDiff.DeleteDir,
                     is DataDiff.DeleteFile,
-                        -> FileUtil.delete(sharedDataDir.resolve(it.path.substringAfterLast('/')))
+                        // 删除必须与创建同规则用 resolveSibling 按完整相对
+                        // 路径定位：旧写法只取文件名拼到 sharedDataDir 下，
+                        // 子目录里的过期文件（如 dicts/ 下的词库）永远删不
+                        // 掉，还可能误删顶层恰好同名的文件
+                        -> FileUtil.delete(sharedDataDir.resolveSibling(it.path))
                         .getOrThrow()
                 }
             }

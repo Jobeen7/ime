@@ -108,6 +108,14 @@ class RimeDispatcher(
                                     "RimeDispatcher startup failed before the job ran"
                                 )
                             )
+                            // 只 cancel 不够：cancel 只改 Job 状态，挂起方
+                            // 的 continuation 要等 DispatchedTask.run() 被
+                            // 调到时才会被以取消完成——任务已被丢弃、
+                            // 永不 run，等待方就永久挂死。故取消后补 run
+                            // 一次：已取消态下 run 走快速失败路径完成
+                            // 等待方，不会真正执行任务体（无 Job 的裸
+                            // 任务不补 run，维持原样丢弃）
+                            if (task.job != null) runCatching { task.run() }
                         }
                         if (droppedTasks.isNotEmpty()) {
                             Timber.w("Dropped ${droppedTasks.size} queued job(s) after startup failure")
@@ -159,13 +167,20 @@ class RimeDispatcher(
                             // 被排空的任务永不执行：逐一取消其协程 Job，
                             // 让挂在 withContext 上的调用方以取消收尾，
                             // 而不是永久挂起（消息消费者一旦这样挂死，
-                            // 本进程内消息通道就此停摆、无从恢复）
+                            // 本进程内消息通道就此停摆、无从恢复）。
+                            // 取消后还要补 run 一次：cancel 只改 Job 状态，
+                            // 挂起方的 continuation 只有在 DispatchedTask
+                            // .run() 里才会被以取消完成，任务既已丢弃、
+                            // 不补 run 则等待方永不恢复；已取消态下 run
+                            // 走快速失败路径，不会真正执行任务体（无 Job
+                            // 的裸任务不补 run，维持原样丢弃）
                             for (task in rest) {
                                 task.job?.cancel(
                                     kotlinx.coroutines.CancellationException(
                                         "RimeDispatcher stopped before the job ran"
                                     )
                                 )
+                                if (task.job != null) runCatching { task.run() }
                             }
                             rest
                         }

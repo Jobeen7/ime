@@ -24,7 +24,10 @@ Java_com_jobeen_ime_engine_rime_data_opencc_OpenCCDictManager_openCCLineConv(
         return jni::makeString(env, converter.Convert(in.str()));
     } catch (const opencc::Exception &e) {
         jni::throwException(env, e.what());
-        return jni::makeString(env, "");
+        // 异常已挂起：不能再调 makeString（内部 NewString 不在异常期
+        // 允许的 JNI 调用之列，CheckJNI 下 abort）。调用方在异常时会
+        // 丢弃返回值，直接回 nullptr
+        return nullptr;
     }
 }
 

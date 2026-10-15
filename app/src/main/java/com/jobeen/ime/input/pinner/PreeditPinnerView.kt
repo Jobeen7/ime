@@ -62,7 +62,12 @@ class PreeditPinnerView(context: Context) : View(context) {
     private val minFlingVelocity = ViewConfiguration.get(context).scaledMinimumFlingVelocity
     private var lastTouchX = 0f
     private var isDragging = false
-    private val minScale = (10f * density) / textPaint.textSize
+
+    // 缩小适配的最小缩放（最小字号 10dp ÷ 当前主题字号）：必须在
+    // applyTheme 写入主题字号后按现字号重算——旧实现在构造期用
+    // Paint 默认字号算死，高密度机上结果恒 >1、下限被上限钳成 1，
+    // 缩小适配从不生效（L2）。主题未应用前取 1（不限制）
+    private var minScale = 1f
 
 
     fun applyTheme(bgColor: Int, textColor: Int, secondaryTextColor: Int, textSize: Float) {
@@ -73,6 +78,7 @@ class PreeditPinnerView(context: Context) : View(context) {
         secondaryTextPaint.textSize = textSize - 2
         scrolledTextPaint.set(textPaint)
         scrolledSecondaryTextPaint.set(secondaryTextPaint)
+        minScale = if (textPaint.textSize > 0f) (10f * density) / textPaint.textSize else 1f
         invalidate()
     }
 

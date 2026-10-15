@@ -46,9 +46,12 @@ abstract class AppDatabase : RoomDatabase() {
          * 剪贴板拆库迁移完成后补跑的一次性 VACUUM：旧剪贴板行在迁移时
          * 已从主库整表删除，但全文还留在主库文件的空闲页与 WAL 里，
          * 而 onOpen 的一次性 VACUUM 在启动时（迁移发生之前）就已跑完
-         * 并置了标记，擦不到这批残留。迁移完成点单独补跑一次
-         * （VACUUM 后再截断 WAL），成功落标记、失败下次迁移检查重试。
-         * 在调用方的后台线程执行。
+         * 并置了标记，擦不到这批残留。由 ClipboardManager 的常规访问
+         * 路径在每次迁移检查之后调用（本函数自带完成标记，未完成才
+         * 真正执行）：补跑点不能放在迁移体内部——已完成迁移的老用户
+         * 在迁移体开头就按标记返回，永远走不到，残留全文会一直留在
+         * 会进云备份的主库里。VACUUM 后再截断 WAL，成功落标记、失败
+         * 下次访问重试。在调用方的后台线程执行。
          */
         fun vacuumAfterClipboardSplit() {
             val prefs = com.jobeen.ime.base.util.appContext

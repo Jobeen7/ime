@@ -216,20 +216,38 @@ object VoiceUndoLedger {
     }
 
     /**
+     * 把账本最新一条由 [oldText] 改为 [newText]：接管结算后迟到的
+     * FINAL 对账补全了整段文本时同步账面（见 SherpaSpeechClient 的
+     * 迟到 FINAL 对账），使上滑撤销仍按最终全文整段直删。最新一条
+     * 与 [oldText] 不符（期间已有新账）则不动。
+     */
+    @Synchronized
+    fun amendLastSegment(oldText: String, newText: String) {
+        val last = entries.lastOrNull() ?: return
+        if (last.text != oldText) return
+        entries.removeLast()
+        entries.addLast(Entry(newText, last.atMs))
+    }
+
+    /**
      * 纯判定（恢复）：[beforeText] 是按「锚点长＋被删串长」现读的
      * 光标前窗口，[prefix] 是删除点前的锚点（至多 [ANCHOR_CHARS]
-     * 字）。统一后缀判定：窗口以锚点结尾、且长度落在
-     * [锚点长, 锚点长＋被删串长] 区间内才接管。
+     * 字），[combinedLength] 是被删整串长。
      *
-     * 未被动过的状态必然落在该区间：删除后光标前恰剩「锚点及更早
-     * 的内容」，按锚点长＋被删串长现读，读回的或是全量（字段短，
-     * 窗口＝全部前文）、或是读满（字段长，窗口尾部仍是锚点）；
-     * 此前只认「恰等于锚点」与「恰好读满」两个端点，撤销窗口之外
-     * 残留的前文长度介于其间时（部分读回）会误拒，现统一为区间
-     * 判定。安全性不减：删除点之后打字会让窗口尾部变成新打的字、
-     * 删字会吃掉锚点尾部或让窗口短于锚点，两种情形后缀都不再
-     * 吻合。[prefix] 为空时只认窗口全空（删除点就在字段开头，
-     * 锚点无从附着，只能严判）。
+     * 长锚点（锚点长 ≥ 被删串长）走统一后缀判定：窗口以锚点结尾、
+     * 且长度落在 [锚点长, 锚点长＋被删串长] 区间内才接管。未被动过
+     * 的状态必然落在该区间：删除后光标前恰剩「锚点及更早的内容」，
+     * 按锚点长＋被删串长现读，读回的或是全量（字段短，窗口＝全部
+     * 前文）、或是读满（字段长，窗口尾部仍是锚点）；删除点之后打字
+     * 会让窗口尾部变成新打的字、删字会吃掉锚点尾部或让窗口短于
+     * 锚点，两种情形后缀都不再吻合。
+     *
+     * 短锚点（锚点长 < 被删串长，即删除点前文不足 [ANCHOR_CHARS]
+     * 字、锚点是被截短的全部前文）必须严判：短串作后缀太弱，字段
+     * 里别处以同一短串结尾的概率不低，套用上面的区间判定会在光标
+     * 移走后把整串写到错误位置。故只认窗口长度与锚点恰等（删除点
+     * 前文被完整读回、其后一字未动）才接管。[prefix] 为空时只认
+     * 窗口全空（删除点就在字段开头，锚点无从附着，只能严判）。
      */
     internal fun decideRedoApply(
         beforeText: CharSequence?,
@@ -238,6 +256,11 @@ object VoiceUndoLedger {
     ): Boolean {
         if (beforeText == null) return false
         if (prefix.isEmpty()) return beforeText.isEmpty()
+        if (prefix.length < combinedLength) {
+            // 短锚点严判：窗口恰为锚点全长才接管
+            return beforeText.length == prefix.length &&
+                beforeText.endsWith(prefix)
+        }
         return beforeText.length >= prefix.length &&
             beforeText.length <= prefix.length + combinedLength &&
             beforeText.endsWith(prefix)
