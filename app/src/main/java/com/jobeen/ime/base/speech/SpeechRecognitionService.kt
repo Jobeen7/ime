@@ -108,13 +108,16 @@ class SpeechRecognitionService : Service() {
     private var pushSession: PushSession? = null
 
     /**
-     * 被新会话换下、但旧解码协程仍在排空收尾的流：START 换流时不立即
-     * 释放它——立即释放会让旧协程收尾解码的身份复检失败、FINAL 尾段
-     * 整段丢失（连按丢句）；改记在此处，旧协程仍可拿它喂完余量、出
-     * FINAL，最后在自己的 finally 里补释放。
+     * 被新会话换下、但旧解码协程仍在排空收尾的流集合：START 换流时
+     * 不立即释放它——立即释放会让旧协程收尾解码的身份复检失败、
+     * FINAL 尾段整段丢失（连按丢句）；改入此集合，旧协程仍可拿它
+     * 喂完余量、出 FINAL，最后在自己的 finally 里按身份移除并补
+     * 释放。必须是集合而非单槽：连按三次时两个旧会话可能同时在
+     * 排空，单槽会被后一次换流覆盖，前一条流再无人释放（泄漏到
+     * 进程结束）。全部读写都在 audioLock 内（换流、身份复检、
+     * finally 补放、onDestroy 兜底），无需额外同步。
      */
-    @Volatile
-    private var deferredReleaseStream: OnlineStream? = null
+    private val deferredReleaseStreams = mutableSetOf<OnlineStream>()
 
     /**
      * STOP 先于会话建立（引擎初始化中）到达的标记：初始化完成后据此给
@@ -241,8 +244,9 @@ class SpeechRecognitionService : Service() {
                                 // 无人释放只能等进程死亡。例外：旧会话正在排空
                                 // 收尾（已 STOP、未取消）时不立即释放——旧协程
                                 // 还要用它解码余量并出 FINAL，立即释放会让其
-                                // 身份复检失败、尾段整段丢失；改记延迟释放，
-                                // 由旧协程在 finally 里补放（见 deferredReleaseStream）
+                                // 身份复检失败、尾段整段丢失；改入延迟释放集
+                                // 合，由旧协程在 finally 里按身份补放（见
+                                // deferredReleaseStreams）
                                 val oldStream = streamRef.getAndSet(newStream)
                                 if (oldStream != null && oldStream !== newStream) {
                                     val oldSession = pushSession
@@ -250,7 +254,7 @@ class SpeechRecognitionService : Service() {
                                         oldSession.endOfStream &&
                                         !oldSession.cancelled
                                     ) {
-                                        deferredReleaseStream = oldStream
+                                        deferredReleaseStreams.add(oldStream)
                                     } else {
                                         oldStream.runCatching { release() }
                                     }
@@ -368,13 +372,21 @@ class SpeechRecognitionService : Service() {
                     val session = pushSession
                     if (session != null) {
                         session.cancelled = true
-                        synchronized(audioLock) {
-                            if (pushSession === session) pushSession = null
-                            // 释放当前流：解码协程的一切 stream 操作都在
-                            // audioLock 内且先验身份，与此处串行化，不会踩
-                            // 到已释放对象；协程收尾的身份释放是第二重兜底
-                            streamRef.getAndSet(null)?.runCatching { release() }
-                        }
+                        // 不再在主线程持 audioLock 释放流：解码协程的
+                        // 收尾解码在锁内做 native 阻塞调用（静音尾巴＋
+                        // 至多 512 次 decode），主线程等锁会把整条消息
+                        // 管线（后续 START/AUDIO/DONE 回信）一并堵住。
+                        // 只置取消标记并以 volatile 写摘掉会话引用，
+                        // 流的释放交给解码协程 finally 的身份校验释放：
+                        // 它见 cancelled 即退出循环走 finally，按
+                        // streamRef/延迟集合的身份释放自己这条流。协程
+                        // 的一切 stream 操作本就在 audioLock 内且先验
+                        // 身份（isStreamUsable），「字段先清、流后放」
+                        // 期间它至多把当前块喂完（毫秒级）即停，不会
+                        // 碰到已释放对象；pushSession 的其他读方（音频
+                        // 入队、STOP 处理）先清只会更早丢弃本会话块，
+                        // 与 cancelled 口径一致
+                        if (pushSession === session) pushSession = null
                     }
                     sessionActive.set(false)
                     holding.set(false)
@@ -424,9 +436,10 @@ class SpeechRecognitionService : Service() {
             scope.cancel()
             synchronized(audioLock) {
                 streamRef.getAndSet(null)?.runCatching { release() }
-                // 延迟释放的流若还没等到旧协程补放（join 超时等），在此兜底
-                deferredReleaseStream?.runCatching { release() }
-                deferredReleaseStream = null
+                // 延迟释放集合里的流若还没等到旧协程补放（join 超时
+                // 等），在此全量兜底释放
+                deferredReleaseStreams.toList().forEach { it.runCatching { release() } }
+                deferredReleaseStreams.clear()
                 recognizerRef.getAndSet(null)?.runCatching { release() }
             }
         }, "speech-destroy-cleanup").apply { isDaemon = true }.start()
@@ -434,11 +447,12 @@ class SpeechRecognitionService : Service() {
 
     /**
      * 流是否仍可安全解码：是当前流，或是被新会话换下、但延迟释放给
-     * 本协程排空收尾的流（见 [deferredReleaseStream]）。两者都不是，
-     * 说明流已被释放，绝不能再碰 native 对象。
+     * 本协程排空收尾的流（见 [deferredReleaseStreams]）。两者都不
+     * 是，说明流已被释放，绝不能再碰 native 对象。调用方均在
+     * audioLock 内（喂块与收尾解码），与集合的写入同锁串行。
      */
     private fun isStreamUsable(myStream: OnlineStream): Boolean =
-        streamRef.get() === myStream || deferredReleaseStream === myStream
+        streamRef.get() === myStream || myStream in deferredReleaseStreams
 
     private fun sendClient(
         what: Int,
@@ -747,9 +761,10 @@ class SpeechRecognitionService : Service() {
                     if (streamRef.get() === myStream) {
                         streamRef.set(null)
                         myStream.runCatching { release() }
-                    } else if (deferredReleaseStream === myStream) {
-                        // 换流时被延迟释放的本会话流在此补放（见换流处）
-                        deferredReleaseStream = null
+                    } else if (deferredReleaseStreams.remove(myStream)) {
+                        // 换流时被延迟释放的本会话流在此按身份补放
+                        //（见换流处）；remove 返回 false 说明已被别处
+                        // 释放（如 onDestroy 兜底），不重复释放
                         myStream.runCatching { release() }
                     }
                 }

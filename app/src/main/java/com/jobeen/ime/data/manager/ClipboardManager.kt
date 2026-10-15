@@ -142,7 +142,10 @@ object ClipboardManager {
     }
 
     private suspend fun trimExcess(dao: ClipboardDao, limit: Int) {
-        val excess = dao.count() - limit
+        // 上限只约束未置顶行：deleteOldest 本就只淘汰未置顶行，计数
+        // 口径必须对齐——按总量算时置顶行白占名额，置顶数达到上限
+        // 后每次新入库的未置顶行都会被立刻当作超限删掉
+        val excess = dao.countUnpinned() - limit
         if (excess > 0) dao.deleteOldest(excess)
     }
 
@@ -573,20 +576,59 @@ object ClipboardManager {
         }.onFailure { Timber.w(it, "Legacy soft-deleted purge failed; will retry") }
     }
 
+    /**
+     * 确保拆库迁移已执行（备份导出/还原直接读写剪贴板库前调用）：
+     * 迁移本体只在 [db] 的常规访问路径里懒触发，绕开它直读新库会
+     * 在「升级后还没用过剪贴板」时读到空库（旧行还躺在主库里，
+     * 备份的剪贴板段静默为空）。与 [db] 共用同一把迁移锁和同一
+     * 个迁移实现，只是把触发点暴露出来，不复制迁移逻辑。
+     */
+    internal suspend fun ensureMigrated(context: Context) {
+        val db = ClipboardDatabase.getInstance(context)
+        migrationMutex.withLock { migrateFromAppDatabase(context, db) }
+    }
+
+    // 拆库补跑 VACUUM 的进程内派发去重：db() 每次访问都尝试触发，
+    // 已有一次在途时其余访问直接跳过，不排一串重复任务
+    private val postSplitVacuumInFlight =
+        java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * 拆库补 VACUUM 的触发点（见 AppDatabase.vacuumAfterClipboardSplit）：
+     * 只向应用级 IO 作用域派发一次、不内联执行——VACUUM 作用于主库
+     * ime_database，要对它持排他锁数百毫秒，内联在 block 之前会把
+     * 每次剪贴板操作都拖住；剪贴板数据已拆到独立库，两者不同库，
+     * 异步并发执行不互斥。真正的去重/退避在 AppDatabase 侧（完成
+     * 标记＋失败时间戳＋串行锁），这里只防同一时刻重复派发。
+     */
+    private fun schedulePostSplitVacuum() {
+        if (!postSplitVacuumInFlight.compareAndSet(false, true)) return
+        appScope.launch(Dispatchers.IO) {
+            try {
+                AppDatabase.vacuumAfterClipboardSplit()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Post-split VACUUM dispatch failed")
+            } finally {
+                postSplitVacuumInFlight.set(false)
+            }
+        }
+    }
+
     private suspend fun <T> db(context: Context, block: suspend (ClipboardDatabase) -> T): T? =
         try {
             withContext(Dispatchers.IO) {
                 val db = ClipboardDatabase.getInstance(context)
-                migrationMutex.withLock { migrateFromAppDatabase(context, db) }
-                // 拆库补 VACUUM 的常规补跑点：vacuumAfterClipboardSplit
-                // 自带完成标记，未落标记时才真正执行。此前它只在迁移体
-                // 末尾被调用，而在本版本之前就完成拆库迁移的老用户会在
-                // 迁移体开头按标记直接返回、永远走不到——旧剪贴板全文
-                // 一直残留在会进云备份的主库空闲页里。放在每次数据库
-                // 访问的迁移检查之后：老用户下次用剪贴板即补跑一次，
-                // 此后只是标记检查。失败不阻断本次操作，下次访问重试
-                runCatching { AppDatabase.vacuumAfterClipboardSplit() }
-                    .onFailure { Timber.w(it, "Post-split VACUUM failed; will retry") }
+                ensureMigrated(context)
+                // 拆库补 VACUUM 的常规补跑点（触发逻辑见
+                // schedulePostSplitVacuum）：此前它只在迁移体末尾被
+                // 调用，而在本版本之前就完成拆库迁移的老用户会在
+                // 迁移体开头按标记直接返回、永远走不到——旧剪贴板
+                // 全文一直残留在会进云备份的主库空闲页里。放在每次
+                // 数据库访问的迁移检查之后异步触发：老用户下次用
+                // 剪贴板即补跑一次，此后只是标记检查
+                schedulePostSplitVacuum()
                 truncateOversizedTextsOnce(context, db)
                 purgeLegacyDeletedOnce(context, db)
                 block(db)

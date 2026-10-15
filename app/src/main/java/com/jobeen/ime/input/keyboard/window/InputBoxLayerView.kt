@@ -6,6 +6,8 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.RectF
+import android.graphics.Color
+import androidx.core.graphics.drawable.toDrawable
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.GradientDrawable
 import android.provider.Settings
@@ -18,6 +20,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.Gravity
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
@@ -475,6 +478,7 @@ class InputBoxLayerView(
         icon.draw(canvas)
     }
 
+    @SuppressLint("ClickableViewAccessibility")
     private fun showEditActions() {
         actionPopup?.dismiss()
         val content = LinearLayout(context).apply {
@@ -505,41 +509,79 @@ class InputBoxLayerView(
         addAction(context.getString(R.string.newline)) {
             buffer?.commitText("\n", 1)
         }
+        // 菜单位置口径与旧实现一致：先量内容，再按光标锚点算左上角
+        content.measure(
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+            MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
+        )
+        val popupWidth = content.measuredWidth
+        val popupHeight = content.measuredHeight
+        val location = IntArray(2)
+        this@InputBoxLayerView.getLocationInWindow(location)
+        val edgePadding = dp(8f).toInt()
+        val screenWidth = resources.displayMetrics.widthPixels
+        val popupX = (location[0] + cursorAnchorX - popupWidth / 2f).toInt().coerceIn(
+            edgePadding, (screenWidth - popupWidth - edgePadding).coerceAtLeast(edgePadding)
+        )
+        val popupY = (location[1] + cursorAnchorY - popupHeight - dp(2f)).toInt()
+
+        // 全屏透明承接层：旧实现弹窗只有菜单大小，点外部关闭时那次
+        // 触摸不被弹窗消费、会穿透触发下方的按键（L4 的穿透点击）。
+        // 现在弹窗内容外包一层铺满显示区的透明承接层，菜单按原坐标
+        // 摆在层内；落在菜单外的触摸由承接层消费并走既有 dismiss
+        // 关闭，不再落到键盘上。弹窗显示期间本就模态（点别处只关
+        // 菜单），关闭后弹窗窗口随 dismiss 移除、无残留层；落在承接
+        // 层窗口之外（如宿主 App 区域）的触摸仍由 ACTION_OUTSIDE
+        // 通知关闭、透传口径与旧实现一致。
+        val catcher = FrameLayout(context).apply {
+            // 菜单阴影挂在 content 的 elevation 上、会绘出 content 边界
+            // 之外；承接层默认 clipChildren=true 会把越界阴影裁成切边，
+            // 关掉两级裁剪让阴影完整绘制（触摸消费与菜单布局不受影响）
+            clipChildren = false
+            clipToPadding = false
+            addView(
+                content,
+                FrameLayout.LayoutParams(
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                    android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                ).apply {
+                    leftMargin = popupX
+                    topMargin = popupY
+                },
+            )
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    val inMenu = event.x >= popupX && event.x < popupX + popupWidth &&
+                        event.y >= popupY && event.y < popupY + popupHeight
+                    if (!inMenu) {
+                        actionPopup?.dismiss()
+                        return@setOnTouchListener true
+                    }
+                }
+                false
+            }
+        }
+        // 阴影挂菜单本体：承接层全屏透明，阴影若仍挂弹窗会罩满整屏
+        content.elevation = dp(6f)
         actionPopup = PopupWindow(
-            content,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            catcher,
+            resources.displayMetrics.widthPixels,
+            resources.displayMetrics.heightPixels,
             // 不抢焦点：菜单项只有点击、不需要输入焦点，focusable=true
-            // 的弹窗挂在输入法窗口层里可能干扰宿主焦点（L4）；改不可
-            // 获焦后靠 outsideTouchable 支持点外部关闭（背景已在下方
-            // setBackgroundDrawable，外点关闭链路完整）
+            // 的弹窗挂在输入法窗口层里可能干扰宿主焦点（L4）；保持
+            // 不可获焦，点外部关闭由承接层消费＋ACTION_OUTSIDE 两路兜底
             false,
         ).apply {
             isOutsideTouchable = true
-            elevation = dp(6f)
-            setBackgroundDrawable(GradientDrawable().apply {
-                setColor(this@InputBoxLayerView.popupBackgroundColor)
-                cornerRadius = dp(10f)
-            })
+            // 透明背景仅为 ACTION_OUTSIDE 的投递前提，菜单本体的底色
+            // 在 content 自己的背景上，不受影响
+            setBackgroundDrawable(Color.TRANSPARENT.toDrawable())
             setOnDismissListener { actionPopup = null }
-            content.measure(
-                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
-                MeasureSpec.makeMeasureSpec(0, MeasureSpec.UNSPECIFIED),
-            )
-            val popupWidth = content.measuredWidth
-            val location = IntArray(2)
-            this@InputBoxLayerView.getLocationInWindow(location)
-            val edgePadding = dp(8f).toInt()
-            val screenWidth = resources.displayMetrics.widthPixels
-            val popupX = (location[0] + cursorAnchorX - popupWidth / 2f).toInt().coerceIn(
-                edgePadding, (screenWidth - popupWidth - edgePadding).coerceAtLeast(edgePadding)
-            )
-            val popupY = (location[1] + cursorAnchorY - content.measuredHeight - dp(2f)).toInt()
             showAtLocation(
                 this@InputBoxLayerView,
                 Gravity.TOP or Gravity.START,
-                popupX,
-                popupY,
+                0,
+                0,
             )
         }
     }

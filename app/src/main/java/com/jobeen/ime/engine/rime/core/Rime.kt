@@ -10,10 +10,14 @@ import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.isStorageAvailable
 import com.jobeen.ime.engine.data.CommandSymbol
 import com.jobeen.ime.engine.data.EngineMessage
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.launch
@@ -88,8 +92,36 @@ class Rime : RimeApi, RimeLifecycleOwner {
         activeInstance = this
     }
 
-    private suspend inline fun <T> withRimeContext(crossinline block: suspend () -> T): T =
-        withContext(dispatcher) { block() }
+    /**
+     * 派发到 rime-main 并等待结果的统一入口。
+     *
+     * 排空翻译：dispatcher 停机/启动失败排空队列时，被丢弃任务的等待方
+     * 以 CancellationException 收尾（见 RimeDispatcher 的 cancel＋补 run）。
+     * 但等待方协程自身的 Job 并未被取消，它只是所等的任务被丢弃；
+     * CancellationException 若原样冒泡，消息消费者与引擎 jobs 消费者
+     * 的 catch (CancellationException) { throw e } 会把整条永生消费
+     * 循环杀掉且无人重启（[snapshotOnRimeMain] 的 onFailure 也按取消
+     * 原样上抛，同样会穿透消息消费者）。故在此单点收口：捕获
+     * CancellationException 后，若调用方自身 Job 仍存活，说明取消
+     * 来自被等待的任务被排空，转抛 [RimeStoppedException]，由各调用
+     * 方按普通单条失败处理（与 [whenReady] 在引擎停机时抛同一异常的
+     * 既有口径一致）；调用方自身 Job 已取消（真取消、或外层
+     * withTimeoutOrNull 到期取消了本协程）则原样抛
+     * CancellationException，取消/超时语义不被吞。
+     */
+    private suspend fun <T> withRimeContext(block: suspend () -> T): T {
+        val callerContext = currentCoroutineContext()
+        callerContext.ensureActive()
+        val callerJob = callerContext[Job]
+        return try {
+            withContext(dispatcher) { block() }
+        } catch (e: CancellationException) {
+            if (callerJob?.isActive == true) {
+                throw RimeStoppedException().also { runCatching { it.initCause(e) } }
+            }
+            throw e
+        }
+    }
 
     /**
      * 消息消费者的补取专用通道：带 2 秒上限（与 dispatcher stop 的排空

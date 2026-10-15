@@ -41,6 +41,19 @@ abstract class AppDatabase : RoomDatabase() {
         private const val MAINTENANCE_PREFS = "db_maintenance"
         private const val KEY_VACUUM_V10_DONE = "vacuum_after_v10_done"
         private const val KEY_VACUUM_CLIP_DONE = "vacuum_after_clipboard_split_done"
+        private const val KEY_VACUUM_CLIP_LAST_FAIL = "vacuum_after_clipboard_split_last_fail"
+
+        /** 拆库补跑 VACUUM 失败后的退避间隔：失败多为空间不足/库忙，短间隔重试只是反复付费 */
+        private const val VACUUM_CLIP_RETRY_BACKOFF_MS = 24L * 60 * 60 * 1000
+
+        /**
+         * 全部 VACUUM 执行的串行锁（v10 与拆库两条路径共用同一咽喉
+         * [vacuumAndMark]）：把「查标记→执行→落标记」收成临界区，
+         * 消除并发首跑时多个调用方同时看到未完成标记、各自跑一遍
+         * VACUUM 的 check-then-act 窗口。可重入：拆库路径持锁时触发
+         * 库打开回调（v10 路径）会同线程重入。
+         */
+        private val vacuumLock = java.util.concurrent.locks.ReentrantLock()
 
         /**
          * 剪贴板拆库迁移完成后补跑的一次性 VACUUM：旧剪贴板行在迁移时
@@ -51,15 +64,50 @@ abstract class AppDatabase : RoomDatabase() {
          * 真正执行）：补跑点不能放在迁移体内部——已完成迁移的老用户
          * 在迁移体开头就按标记返回，永远走不到，残留全文会一直留在
          * 会进云备份的主库里。VACUUM 后再截断 WAL，成功落标记、失败
-         * 下次访问重试。在调用方的后台线程执行。
+         * 记失败时刻并退避（见 [VACUUM_CLIP_RETRY_BACKOFF_MS]），不
+         * 再每次访问都重试。由 ClipboardManager 在后台作用域异步
+         * 派发调用，不阻塞剪贴板操作本身。
          */
         fun vacuumAfterClipboardSplit() {
             val prefs = com.jobeen.ime.base.util.appContext
                 .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
             if (prefs.getBoolean(KEY_VACUUM_CLIP_DONE, false)) return
-            val db = getInstance(com.jobeen.ime.base.util.appContext)
-                .openHelper.writableDatabase
-            vacuumAndMark(db, prefs, KEY_VACUUM_CLIP_DONE)
+            vacuumLock.lock()
+            try {
+                // 锁内复查：锁外快检会让并发首跑一起走到这里，二次确认
+                // 保证整个进程只有第一个真正执行，其余直接返回
+                if (prefs.getBoolean(KEY_VACUUM_CLIP_DONE, false)) return
+                // 失败退避：上次失败未过退避间隔不再重试，避免失败态下
+                // 每次剪贴板访问都同步重跑一遍注定失败的 VACUUM
+                val lastFail = prefs.getLong(KEY_VACUUM_CLIP_LAST_FAIL, 0L)
+                if (lastFail > 0L &&
+                    System.currentTimeMillis() - lastFail < VACUUM_CLIP_RETRY_BACKOFF_MS
+                ) return
+                // 空间预检：VACUUM 要另建一份库副本，临时空间约需一倍
+                // 库大小；不足时执行必然失败，直接记失败走退避
+                val dbFile = com.jobeen.ime.base.util.appContext
+                    .getDatabasePath("ime_database")
+                if (dbFile.isFile) {
+                    val usable = runCatching {
+                        android.os.StatFs(dbFile.parent).availableBytes
+                    }.getOrDefault(Long.MAX_VALUE)
+                    if (usable < dbFile.length()) {
+                        timber.log.Timber.w(
+                            "Post-split VACUUM skipped: usable space %d < db size %d",
+                            usable, dbFile.length(),
+                        )
+                        prefs.edit { putLong(KEY_VACUUM_CLIP_LAST_FAIL, System.currentTimeMillis()) }
+                        return
+                    }
+                }
+                val db = getInstance(com.jobeen.ime.base.util.appContext)
+                    .openHelper.writableDatabase
+                if (!vacuumAndMark(db, prefs, KEY_VACUUM_CLIP_DONE)) {
+                    prefs.edit { putLong(KEY_VACUUM_CLIP_LAST_FAIL, System.currentTimeMillis()) }
+                }
+            } finally {
+                vacuumLock.unlock()
+            }
         }
 
         /**
@@ -76,15 +124,24 @@ abstract class AppDatabase : RoomDatabase() {
             db: SupportSQLiteDatabase,
             prefs: android.content.SharedPreferences,
             doneKey: String,
-        ) {
-            runCatching {
-                db.execSQL("VACUUM")
-                prefs.edit { putBoolean(doneKey, true) }
-                runCatching {
-                    db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
-                }.onFailure { timber.log.Timber.w(it, "wal_checkpoint(TRUNCATE) failed") }
-            }.onFailure {
-                timber.log.Timber.w(it, "VACUUM failed; will retry")
+        ): Boolean {
+            // 全部 VACUUM 经同一把锁串行化（v10 打开回调与拆库补跑
+            // 两条路径）：同一时刻只有一个 VACUUM 在跑，不会互相
+            // 抢库锁把对方打成失败
+            vacuumLock.lock()
+            try {
+                return runCatching {
+                    db.execSQL("VACUUM")
+                    prefs.edit { putBoolean(doneKey, true) }
+                    runCatching {
+                        db.query("PRAGMA wal_checkpoint(TRUNCATE)").use { it.moveToFirst() }
+                    }.onFailure { timber.log.Timber.w(it, "wal_checkpoint(TRUNCATE) failed") }
+                    true
+                }.onFailure {
+                    timber.log.Timber.w(it, "VACUUM failed; will retry")
+                }.getOrDefault(false)
+            } finally {
+                vacuumLock.unlock()
             }
         }
 
