@@ -35,6 +35,12 @@ object SpeechIpc {
     const val KEY_TEXT = "text"
     const val KEY_AMPLITUDE = "amplitude"
 
+    /**
+     * MSG_DONE 的附加标记（服务端→客户端）：本句解码期间推流队列曾满、
+     * 有音频块被丢弃，识别结果可能不完整。仅供客户端打点，本轮不做用户提示。
+     */
+    const val KEY_AUDIO_DROPPED = "audio_dropped"
+
     /** MSG_AUDIO 的音频载荷：PCM16LE 单声道原始块 */
     const val KEY_AUDIO = "audio"
 

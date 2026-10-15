@@ -108,8 +108,11 @@ class GramDb(filePath: String) {
 
         var best = -Double.MAX_VALUE
         for (nodePos in prepared.nodePositions) {
-            for (m in trie.commonPrefixSearch(encWord, MAX_RESULTS, nodePosStart = nodePos)) {
-                val s = scaleValue(m.value)
+            // 只需要最大值，走无分配的最大值遍历；scaleValue 随 raw 单调
+            // 不减，取 raw 最大值再换算与逐条换算取最大逐位等价
+            val maxRaw = trie.commonPrefixMaxValue(encWord, MAX_RESULTS, nodePosStart = nodePos)
+            if (maxRaw != null) {
+                val s = scaleValue(maxRaw)
                 if (s > best) best = s
             }
         }

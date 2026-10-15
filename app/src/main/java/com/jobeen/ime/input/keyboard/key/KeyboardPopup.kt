@@ -20,6 +20,10 @@ class KeyboardPopup(private val context: Context) {
         private set
     private var keyPressedColor: Int = 0
 
+    // 选中项背景复用一份：旧实现每次滑动换选都新建 GradientDrawable；
+    // 颜色在每次应用时按当前 keyPressedColor 重设，换色自动跟随
+    private val selectedItemBg = GradientDrawable()
+
     // 视图层级复用：旧实现每次 show 都重建 LinearLayout + 全部 TextView +
     // PopupWindow（长按弹层是用户高频操作）。现在容器/窗口/条目视图各建
     // 一次：条目数变化才增删视图，颜色/文案变化只更新属性。
@@ -132,17 +136,14 @@ class KeyboardPopup(private val context: Context) {
     val itemStep: Float get() = context.dp(42 + 4).toFloat()
 
     private fun applyItemBackgrounds() {
-        val itemRadius = context.dp(5f)
-        itemViews.forEachIndexed { i, view ->
-            if (i == selectedIndex) {
-                view.background = GradientDrawable().apply {
-                    setColor(keyPressedColor)
-                    cornerRadius = itemRadius
-                }
-            } else {
-                view.background = null
-            }
+        // 同一份 Drawable 同一时刻只能挂在一个 View 上：先从旧选中项
+        // 摘下再挂到新选中项，避免迭代顺序让它短暂挂在两个 View 上
+        itemViews.forEach { view ->
+            if (view.background === selectedItemBg) view.background = null
         }
+        selectedItemBg.setColor(keyPressedColor)
+        selectedItemBg.cornerRadius = context.dp(5f)
+        itemViews.getOrNull(selectedIndex)?.background = selectedItemBg
     }
 
     fun isShowing(): Boolean = popupWindow?.isShowing == true

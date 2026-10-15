@@ -117,8 +117,9 @@ class VoiceUndoLedgerTest {
 
     @Test
     fun redo_longFieldWindowEndsWithPrefix_applies() {
-        // 更早的内容在锚点之前：窗口读满（prefix+被删串长）且以 prefix 结尾
-        assertEquals(true, VoiceUndoLedger.decideRedoApply("更早的内容你好", "你好", 5))
+        // 长锚点（锚点长 ≥ 被删串长）：更早的内容在锚点之前，窗口
+        // 落在 [锚点长, 锚点长＋被删串长] 区间内且以锚点结尾
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("更早的一二三四五", "一二三四五", 3))
     }
 
     @Test
@@ -199,5 +200,41 @@ class VoiceUndoLedgerTest {
     fun buildRedoPrefix_segmentAtFieldStart_emptyAnchor() {
         // 被删串就是字段全部内容：锚点为空
         assertEquals("", VoiceUndoLedger.buildRedoPrefix("被删串", 3))
+    }
+
+    // ---- decideRedoApply 短锚点严判（锚点长 < 被删串长） ----
+
+    @Test
+    fun redo_shortAnchorExactWindow_applies() {
+        // 短锚点：窗口恰为锚点全长（删除点前文完整读回、未被动过）
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("你好", "你好", 5))
+    }
+
+    @Test
+    fun redo_shortAnchorWindowWithinOldInterval_refuses() {
+        // 旧区间判定会放行（窗口 7 落在 [2, 2+5]、后缀吻合），短锚点
+        // 严判拒绝：这正是光标移走后写错位置的形态
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("更早的内容你好", "你好", 5))
+    }
+
+    @Test
+    fun redo_shortAnchorWindowOneCharBeyond_refuses() {
+        // 窗口只比锚点多 1 字（删除后在删除点后打了一个字又删掉
+        // 之类无法区分的状态一律从严）：不恰等即拒绝
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("好你好", "你好", 5))
+    }
+
+    @Test
+    fun redo_shortAnchorSuffixMismatch_refuses() {
+        // 窗口恰为锚点长但内容不是锚点
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("您好", "你好", 5))
+    }
+
+    @Test
+    fun redo_anchorEqualsCombinedLength_usesIntervalRule() {
+        // 锚点长 == 被删串长属长锚点：窗口在区间内且后缀吻合即接管，
+        // 不受短锚点恰等严判影响
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("更早一二三", "一二三", 3))
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("一二三", "一二三", 3))
     }
 }

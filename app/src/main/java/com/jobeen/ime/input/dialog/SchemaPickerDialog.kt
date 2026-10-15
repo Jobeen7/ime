@@ -34,6 +34,25 @@ object SchemaPickerDialog {
 
     private var currentDialog: Dialog? = null
 
+    /** 当前弹窗的关闭回调（build 时登记，[handleDismiss] 里消费） */
+    private var currentOnDismiss: (() -> Unit)? = null
+
+    /**
+     * 弹窗关闭收尾：供显示方（ImeInputMethodService.showDialog）经其
+     * 注册口转调。弹窗自己不得 setOnDismissListener——显示方有服务侧
+     * 单一监听，自设会被整份覆盖（编号 24 的原故障）。
+     */
+    fun handleDismiss(dialog: Dialog) {
+        // 同 dismiss() 的异步语义：只认仍指向本实例的那次，迟到的旧
+        // 弹窗回调不得清掉顶替上来的新弹窗状态
+        if (currentDialog === dialog) {
+            currentDialog = null
+            val callback = currentOnDismiss
+            currentOnDismiss = null
+            callback?.invoke()
+        }
+    }
+
     /**
      * 将可能带有透明度的颜色，与基准底色（默认黑色/深色输入法背景）进行混合，
      * 计算出视觉效果完全一致但 Alpha 为 255（完全不透明）的新颜色。
@@ -94,8 +113,8 @@ object SchemaPickerDialog {
         onDismiss: () -> Unit = {},
     ): Dialog {
         // 覆盖前先关掉旧实例：currentDialog 会在下方被新实例顶替，
-        // 旧弹窗若不 dismiss 就失去引用、再也关不掉（其 OnDismiss 也
-        // 靠 currentDialog 置空来清理状态，必须趁引用还在时触发）
+        // 旧弹窗若不 dismiss 就失去引用、再也关不掉（其关闭收尾也
+        // 靠 dismiss() 在引用还在时同步消费，见 dismiss() 注释）
         dismiss()
         val selectedIndex = schemas.indexOfFirst { it.id == currentSchemaId }
         val opaqueBackgroundColor = getOpaqueColor(colors.specialKeyBackground, colors.background)
@@ -256,15 +275,10 @@ object SchemaPickerDialog {
             addView(innerLayout)
         }
 
+        currentOnDismiss = onDismiss
         return Dialog(context).apply {
             setContentView(contentView)
-            setOnDismissListener {
-                // dismiss 回调是异步投递的：触发时可能已有新弹窗顶替
-                // 上来，无条件置空会把新弹窗的引用一并清掉、让它再也
-                // 关不掉。只有仍指向本实例时才清理
-                if (currentDialog === this) currentDialog = null
-                onDismiss()
-            }
+            // 关闭收尾不在此设监听：经显示方的注册口转调 handleDismiss
             currentDialog = this
         }.also { dialog ->
             val w = dialog.window ?: return@also
@@ -283,9 +297,14 @@ object SchemaPickerDialog {
 
     fun dismiss() {
         // 先摘引用再 dismiss：dismiss 的回调异步投递，若等它来清，
-        // 回调到达前 build() 顶替上的新弹窗引用会被旧回调误清
+        // 回调到达前 build() 顶替上的新弹窗引用会被旧回调误清。
+        // 引用先摘后，显示方转调的 handleDismiss 会按身份跳过本弹窗，
+        // 登记的关闭回调改在这里同步消费，保证恰好触发一次
         val dialog = currentDialog ?: return
         currentDialog = null
+        val callback = currentOnDismiss
+        currentOnDismiss = null
         dialog.dismiss()
+        callback?.invoke()
     }
 }

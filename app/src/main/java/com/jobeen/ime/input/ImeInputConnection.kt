@@ -250,6 +250,11 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     ): ExtractedText? = null
 
     override fun deleteSurroundingText(inLength: Int, outLength: Int): Boolean {
+        // 系统契约里长度为负无意义：先钳为 0 与契约对齐——负值会让
+        // 区间端点反转，无选区分支里 start > end 时 Editable.delete
+        // 直接抛 IndexOutOfBounds
+        val inLen = inLength.coerceAtLeast(0)
+        val outLen = outLength.coerceAtLeast(0)
         recordHistory()
         val s = selStart()
         val e = selEnd()
@@ -260,9 +265,9 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
             // 这类「删光标前 1 字」的调用会连选区带前面一字一起吃掉，
             // 与调用方意图不符（删选区应由 commitText("")/明确的
             // 选区删除路径完成）
-            val afterStart = min(editable.length, e + outLength)
+            val afterStart = min(editable.length, e + outLen)
             if (afterStart > e) editable.delete(e, afterStart)
-            val beforeStart = max(0, s - inLength)
+            val beforeStart = max(0, s - inLen)
             if (s > beforeStart) editable.delete(beforeStart, s)
             Selection.setSelection(
                 editable,
@@ -270,8 +275,8 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
                 (e - (s - beforeStart)).coerceAtMost(editable.length),
             )
         } else {
-            val start = max(0, s - inLength)
-            val end = min(editable.length, e + outLength)
+            val start = max(0, s - inLen)
+            val end = min(editable.length, e + outLen)
             editable.delete(start, end)
             Selection.setSelection(editable, start.coerceAtMost(editable.length))
         }
@@ -396,12 +401,17 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
             KeyEvent.KEYCODE_DPAD_LEFT -> if (!extending && selStart() != selEnd()) {
                 selStart()
             } else {
-                (cursor - 1).coerceAtLeast(0)
+                // 按码点步进：cursor ± 1 是 UTF-16 单元口径，会让光标
+                // 停在代理对（emoji）中间；步长经既有换算工具按码点
+                // 数出单元数（与 deleteSurroundingTextInCodePoints 同源）
+                val (units, _) = codePointsToUtf16Counts(editable, cursor, cursor, 1, 0)
+                (cursor - units).coerceAtLeast(0)
             }
             KeyEvent.KEYCODE_DPAD_RIGHT -> if (!extending && selStart() != selEnd()) {
                 selEnd()
             } else {
-                (cursor + 1).coerceAtMost(editable.length)
+                val (_, units) = codePointsToUtf16Counts(editable, cursor, cursor, 0, 1)
+                (cursor + units).coerceAtMost(editable.length)
             }
             KeyEvent.KEYCODE_MOVE_HOME -> 0
             KeyEvent.KEYCODE_MOVE_END -> editable.length
@@ -409,7 +419,9 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
                 cursor, event.keyCode == KeyEvent.KEYCODE_DPAD_UP
             )
             KeyEvent.KEYCODE_DEL -> {
-                deleteSurroundingText(1, 0)
+                // 按码点删：deleteSurroundingText(1, 0) 只删 1 个
+                // UTF-16 单元，emoji 会被劈成孤立代理项残留下来
+                deleteSurroundingTextInCodePoints(1, 0)
                 return true
             }
             else -> return false
@@ -460,6 +472,19 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         }
         val targetEnd = editable.toString().indexOf('\n', targetStart)
             .takeIf { it >= 0 } ?: editable.length
-        return (targetStart + column).coerceAtMost(targetEnd)
+        // 列偏移是 UTF-16 单元口径：目标行同列前有代理对时会正好落
+        // 在一对代理项中间，对齐回该码点起点再返回
+        return snapToCodePointBoundary((targetStart + column).coerceAtMost(targetEnd))
+    }
+
+    /** 把 UTF-16 下标对齐到码点边界：落在代理对中间时退到该码点起点 */
+    private fun snapToCodePointBoundary(index: Int): Int {
+        if (index in 1 until editable.length &&
+            Character.isLowSurrogate(editable[index]) &&
+            Character.isHighSurrogate(editable[index - 1])
+        ) {
+            return index - 1
+        }
+        return index
     }
 }

@@ -139,6 +139,9 @@ class SymbolKeyboard(
             mES(sw, MeasureSpec.EXACTLY), mES(th - sidePanelH, MeasureSpec.EXACTLY)
         )
         gridView.measure(mES(gw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
+        // 同 EmojiKeyboard：波纹层补 measure/layout，否则宽高恒 0、
+        // 波纹从不显示（L1）
+        rippleView.measure(mES(tw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
         setMeasuredDimension(tw, th)
     }
 
@@ -148,6 +151,7 @@ class SymbolKeyboard(
         sidePanelKey.layout(0, 0, sw, sidePanelH)
         sideReturnBtn.layout(0, sidePanelH, sw, b - t)
         gridView.layout(sw, 0, r - l, b - t)
+        rippleView.layout(0, 0, r - l, b - t)
     }
 
     private fun mES(size: Int, mode: Int) = MeasureSpec.makeMeasureSpec(size, mode)

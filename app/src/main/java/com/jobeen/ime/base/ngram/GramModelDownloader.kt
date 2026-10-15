@@ -25,7 +25,12 @@ object GramModelDownloader {
     // Grammar models are currently about 400 MB. Keep headroom for upstream
     // growth while refusing unbounded or obviously invalid responses.
     private const val MAX_MODEL_BYTES = 600L * 1024 * 1024
-    private const val PART_SUFFIX = ".part"
+    // 临时文件名必须与 WanxiangUpdateManager 的语法模型下载区分：两者
+    // 目标文件同为 sharedDataDir 下的 <language>.gram（如
+    // wanxiang-lts-zh-hans.gram），此前共用同一个「目标名 + .part」，
+    // 两路下载同时触发时会互相 delete/rename 对方下到一半的文件，
+    // 轻则下载失败、重则 rename 校验环节抛未捕获异常崩溃
+    private const val PART_SUFFIX = ".gmdl.part"
 
     // 可信摘要来源：上游 RIME-LMDG 的 LTS 发布资产在 GitHub API 中登记了
     // 官方 sha256（digest 字段）。清单服务端未提供摘要时改查这里——
@@ -91,6 +96,8 @@ object GramModelDownloader {
         // 原子覆盖，先删会打开「旧模型已删、新模型未就位」的空窗，中途
         // 被杀将无模型可用（与 WanxiangUpdateManager 语法模型落盘同款规避）
         check(partial.renameTo(target)) { "Failed to finalize ngram model: ${target.absolutePath}" }
+        // rename 后 fsync 目录，让这次替换在断电后依然成立
+        syncDirectory(target.parentFile)
         target.isFile && target.length() > 0L
     }
 
@@ -107,6 +114,25 @@ object GramModelDownloader {
                 client, "amzxyz", "RIME-LMDG", "LTS", fileName,
             )
         }
+
+    /**
+     * fsync 目录本体，让其中的 rename 在断电后依然成立（失败只记日志）。
+     * 用 Os.open 以只读方式打开目录再 fsync；RandomAccessFile 打开
+     * 目录在 Android 上必然失败，不能用它实现。
+     */
+    private fun syncDirectory(dir: File?) {
+        if (dir == null) return
+        runCatching {
+            val fd = android.system.Os.open(
+                dir.absolutePath, android.system.OsConstants.O_RDONLY, 0,
+            )
+            try {
+                android.system.Os.fsync(fd)
+            } finally {
+                android.system.Os.close(fd)
+            }
+        }.onFailure { Timber.w(it, "Directory fsync failed: %s", dir) }
+    }
 
     private suspend fun downloadFile(
         url: String,
@@ -155,6 +181,9 @@ object GramModelDownloader {
                                 reported = downloaded
                             }
                         }
+                        // 写完先 fsync 文件本体再走校验与 rename：只靠
+                        // close 落盘，断电时内容可能还没真正上盘
+                        output.fd.sync()
                         if (downloaded == 0L || (total >= 0L && downloaded != total)) {
                             Timber.w("Ngram model length mismatch: expected=%d actual=%d", total, downloaded)
                             return false
