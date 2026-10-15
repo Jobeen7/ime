@@ -73,15 +73,19 @@ object BackupManager {
     private const val GCM_TAG_BITS = 128
     private const val WEBDAV_PREFS = "user_dict_sync"
     private const val WEBDAV_PASSWORD_KEY = "webdav_password"
+    private const val WEBDAV_USERNAME_KEY = "webdav_username"
 
     /**
-     * 设备本地状态偏好，不随备份还原回写：内容是本机下载记录
-     * （模型 identity、方案/模型更新状态），随备份来到新设备会与
-     * 本机实际文件脱钩（记录称已装而文件不在，检查误报「已最新」）。
+     * 设备本地状态偏好，不随备份还原回写：内容是本机状态而非用户
+     * 数据——模型/方案的下载记录（随备份来到新设备会与本机实际
+     * 文件脱钩，检查误报「已最新」）、数据库维护的一次性标记
+     * （db_maintenance 的 VACUUM 完成标记描述的是本机库文件的
+     * 物理状态，还原到新设备会让新设备误以为已擦除而永不补跑）。
      * 导出端照常采集（无害），只在写入段按文件名跳过——这样用户
-     * 手上已有的旧备份包还原时同样不会回写这两份。
+     * 手上已有的旧备份包还原时同样不会回写这些。
      */
-    private val DEVICE_LOCAL_PREFS = setOf("speech_model_prefs", "wanxiang_update")
+    private val DEVICE_LOCAL_PREFS =
+        setOf("speech_model_prefs", "wanxiang_update", "db_maintenance")
 
     /** 还原前加密快照在 filesDir 的文件名：进程被杀后凭它+口令回滚 */
     private const val RESTORE_SNAPSHOT_NAME = "restore-snapshot.jbk"
@@ -145,6 +149,11 @@ object BackupManager {
         // —— Room 四表
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
+        // 读剪贴板库前先确保拆库迁移已执行：迁移只在 ClipboardManager
+        // 的常规访问路径懒触发，升级后还没用过剪贴板就来导出（换机
+        // 前先备份正是这个时序）会读到空的新库、旧行还躺在主库里，
+        // 备份的剪贴板段静默为空
+        ClipboardManager.ensureMigrated(appContext)
 
         val clips = JSONArray()
         // 只导出有效行：历史软删除存量不进备份（删除已改物理删，此为存量兜底）
@@ -509,6 +518,13 @@ object BackupManager {
                 // 写入段经专用通道以备份口令重新加密落盘
                 if (root.optString("webdavPassword", "").isEmpty()) {
                     local[WEBDAV_PASSWORD_KEY]?.let { refilled[WEBDAV_PASSWORD_KEY] = it }
+                    // 用户名与口令成组迁移：口令不随备份走时，用户名
+                    // 也绝不能单独随备份覆盖——否则会出现「本机服务器
+                    // ＋备份用户名＋本机口令」的错配组合，同步只会
+                    // 401 失败。先摘掉备份带来的用户名，再以本机现
+                    // 值回填（本机也没有就保持无用户名）
+                    refilled.remove(WEBDAV_USERNAME_KEY)
+                    local[WEBDAV_USERNAME_KEY]?.let { refilled[WEBDAV_USERNAME_KEY] = it }
                 }
                 prefs[WEBDAV_PREFS] = refilled
             }
@@ -622,6 +638,10 @@ object BackupManager {
     private suspend fun applyPayload(parsed: ParsedBackup) {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
+        // 写剪贴板库前同样先确保拆库迁移已执行，与采集侧同一口径：
+        // 迁移标记虽被上方解析段强制置为已完成，但那是 prefs 层面的
+        // 防合并口径，物理迁移是否跑过仍以这里的实际触发为准
+        ClipboardManager.ensureMigrated(appContext)
 
         // —— Room 四表：各自单事务内整表替换，中途失败整表回滚
         clipDb.withTransaction {

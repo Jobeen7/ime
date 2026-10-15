@@ -16,6 +16,7 @@ import android.view.inputmethod.ExtractedText
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import android.view.inputmethod.InputContentInfo
+import java.text.BreakIterator
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.collections.ArrayDeque
@@ -255,9 +256,21 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         // 直接抛 IndexOutOfBounds
         val inLen = inLength.coerceAtLeast(0)
         val outLen = outLength.coerceAtLeast(0)
-        recordHistory()
         val s = selStart()
         val e = selEnd()
+        // 先算有效删除范围，确有删减才记历史：旧实现无条件先记，光标
+        // 在文首按退格这类空删会白入 undo 栈、还顺手清掉 redo 栈，
+        // 用户随后想重做刚撤销的编辑就没了。范围口径与下方实际删除
+        // 分支严格同构（选区时两侧环绕、无选区时单一区间），钳制后
+        // 的长度先压到文本长度内再算端点，防大参数下端点溢出
+        val beforeStart = max(0, s - min(inLen, editable.length))
+        val afterEnd = min(editable.length, e + min(outLen, editable.length))
+        val willDelete = if (s != e) {
+            afterEnd > e || beforeStart < s
+        } else {
+            afterEnd > beforeStart
+        }
+        if (willDelete) recordHistory()
         editable.removeSpan(composingSpan)
         if (s != e) {
             // 有选区时只删选区两侧的环绕文本、选区本身保留：旧实现
@@ -401,17 +414,15 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
             KeyEvent.KEYCODE_DPAD_LEFT -> if (!extending && selStart() != selEnd()) {
                 selStart()
             } else {
-                // 按码点步进：cursor ± 1 是 UTF-16 单元口径，会让光标
-                // 停在代理对（emoji）中间；步长经既有换算工具按码点
-                // 数出单元数（与 deleteSurroundingTextInCodePoints 同源）
-                val (units, _) = codePointsToUtf16Counts(editable, cursor, cursor, 1, 0)
-                (cursor - units).coerceAtLeast(0)
+                // 按字素簇步进：码点步进会让光标停在组合序列内部
+                // （基字与附加符之间、ZWJ 序列中间、国旗两面之间），
+                // 与退格同口径走 BreakIterator 边界
+                graphemeBoundaryBefore(cursor)
             }
             KeyEvent.KEYCODE_DPAD_RIGHT -> if (!extending && selStart() != selEnd()) {
                 selEnd()
             } else {
-                val (_, units) = codePointsToUtf16Counts(editable, cursor, cursor, 0, 1)
-                (cursor + units).coerceAtMost(editable.length)
+                graphemeBoundaryAfter(cursor)
             }
             KeyEvent.KEYCODE_MOVE_HOME -> 0
             KeyEvent.KEYCODE_MOVE_END -> editable.length
@@ -419,9 +430,21 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
                 cursor, event.keyCode == KeyEvent.KEYCODE_DPAD_UP
             )
             KeyEvent.KEYCODE_DEL -> {
-                // 按码点删：deleteSurroundingText(1, 0) 只删 1 个
-                // UTF-16 单元，emoji 会被劈成孤立代理项残留下来
-                deleteSurroundingTextInCodePoints(1, 0)
+                if (selStart() != selEnd()) {
+                    // 有选区时保持既有口径不变：走 deleteSurroundingText
+                    // 的选区语义（只删环绕、选区保留），字素簇化只改
+                    // 无选区的单删路径，不触碰选区路径的行为
+                    deleteSurroundingTextInCodePoints(1, 0)
+                } else {
+                    // 按字素簇删：按 1 码点删会把国旗删掉一半（区域
+                    // 指示符成对）、ZWJ 序列拆散、组合附加符与基字
+                    // 分家。先求光标前一簇的码点数，再走既有码点
+                    // 删除路径（换算与 span 清理口径全部不变）
+                    val start = selStart()
+                    val clusterStart = graphemeBoundaryBefore(start)
+                    val cpCount = Character.codePointCount(editable, clusterStart, start)
+                    deleteSurroundingTextInCodePoints(cpCount, 0)
+                }
                 return true
             }
             else -> return false
@@ -475,6 +498,29 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         // 列偏移是 UTF-16 单元口径：目标行同列前有代理对时会正好落
         // 在一对代理项中间，对齐回该码点起点再返回
         return snapToCodePointBoundary((targetStart + column).coerceAtMost(targetEnd))
+    }
+
+    /**
+     * [pos] 之前最近的字素簇边界：BreakIterator（Android 上由 ICU
+     * 实现，遵循 UAX #29）口径下，区域指示符对（国旗）、ZWJ emoji
+     * 序列、组合附加符与基字各为一簇；pos 恰在簇界时返回上一簇的
+     * 起点，落在簇内时返回本簇起点——退格删一簇、步进跨一簇共用。
+     */
+    private fun graphemeBoundaryBefore(pos: Int): Int {
+        if (pos <= 0) return 0
+        val it = BreakIterator.getCharacterInstance()
+        it.setText(editable.toString())
+        val b = it.preceding(pos)
+        return if (b == BreakIterator.DONE) 0 else b
+    }
+
+    /** [pos] 之后最近的字素簇边界，口径见 [graphemeBoundaryBefore]。 */
+    private fun graphemeBoundaryAfter(pos: Int): Int {
+        if (pos >= editable.length) return editable.length
+        val it = BreakIterator.getCharacterInstance()
+        it.setText(editable.toString())
+        val b = it.following(pos)
+        return if (b == BreakIterator.DONE) editable.length else b
     }
 
     /** 把 UTF-16 下标对齐到码点边界：落在代理对中间时退到该码点起点 */

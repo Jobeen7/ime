@@ -56,12 +56,43 @@ class ImeInputMethodService : InputMethodService() {
      * 与 [notifyInputChanged] 共用一次探针结果——Commit 后两者常成对
      * 触发，旧实现对同一光标位置连做两轮跨进程探针。签名取选区，是
      * 因为编辑动作必伴选区变化；换输入框时整帧作废（见
-     * [invalidateProbeFrame]），不会把旧框的探针带进新框。
+     * [invalidateProbeFrame]），不会把旧框的探针带进新框。签名另含
+     * [localWriteGen]：本端刚写入、宿主选区回调还没到时，服务侧记录
+     * 的仍是旧选区，只按选区作键会命中写入前的旧帧（空框首上屏后被
+     * 误判已清空的原故障）。
      */
     private var probeFrameText: String? = null
     private var probeFrameBridge = false
     private var probeFrameSelStart = -1
     private var probeFrameSelEnd = -1
+    private var probeFrameWriteGen = -1
+
+    /**
+     * 本端写代次：主通道每写入一次连接就递增，进探针帧签名使帧失效。
+     * 写入点覆盖审计（逐个 grep 核过）：
+     * ①主通道：MessageHandler 的 Commit 上屏——写入处调 [noteLocalWrite]，
+     * 文本同步落地，探针帧同步失效，无缺口；
+     * ②靠选区签名跟随（与①不同，不构成无条件覆盖）：
+     * [handleTextEditingAction] 的剪切/粘贴、直写方（语音组字/上屏/
+     * 收尾、撤销账本的删与写、引擎清全文与收尾组字、面板粘贴）。
+     * 剪切/粘贴调用处虽也调了 [noteLocalWrite]，但经
+     * performContextMenuAction 由宿主异步落地：落地前探针回填的帧
+     * 已带新代次，宿主变更随后到达且选区数值不变时仍可能命中该帧，
+     * 与直写方同口径；其余直写方的文本写入都伴随光标移动，宿主选区
+     * 回调改掉选区签名后合并探针必然真探；
+     * ③纯选区/按键类（方向键组合、performEditorAction、选区设置）
+     * 不改文本内容，不入此列。
+     * 已知缺口：②类写入若在文本空/非空翻转的同时数值选区恰好不变、
+     * 且宿主不发选区回调，帧仍可能命中旧结果——现行直写方无此形态
+     * （写入必移光标、或不改变空/非空结论；剪切/粘贴的落地面由宿主
+     * 决定、不在本端控制内），新增同类写入时须回看此审计。
+     */
+    private var localWriteGen = 0
+
+    /** 主通道写入连接后调用：递增写代次，使当帧探针缓存失效。 */
+    internal fun noteLocalWrite() {
+        localWriteGen++
+    }
     private val themePrefs: SharedPreferences by lazy {
         getSharedPreferences(KeyboardManager.PREFS_NAME, MODE_PRIVATE)
     }
@@ -309,9 +340,19 @@ class ImeInputMethodService : InputMethodService() {
             }
 
             TextEditView.Action.SelectAll -> ic?.performContextMenuAction(android.R.id.selectAll)
-            TextEditView.Action.Cut -> ic?.performContextMenuAction(android.R.id.cut)
+            TextEditView.Action.Cut -> {
+                ic?.performContextMenuAction(android.R.id.cut)
+                // 剪切删文本：代次先递增，但文本由宿主异步落地，覆盖
+                // 口径与直写方相同（见 localWriteGen 审计②）
+                noteLocalWrite()
+            }
+
             TextEditView.Action.Copy -> ic?.performContextMenuAction(android.R.id.copy)
-            TextEditView.Action.Paste -> ic?.performContextMenuAction(android.R.id.paste)
+            TextEditView.Action.Paste -> {
+                ic?.performContextMenuAction(android.R.id.paste)
+                // 粘贴写文本：同剪切口径
+                noteLocalWrite()
+            }
 
             TextEditView.Action.Backspace -> engine?.processKey(
                 this, com.jobeen.ime.engine.event.KeyEvent.CodeEvent(
@@ -366,17 +407,20 @@ class ImeInputMethodService : InputMethodService() {
         probeFrameText = null
         probeFrameSelStart = -1
         probeFrameSelEnd = -1
+        probeFrameWriteGen = -1
     }
 
     /**
-     * 一帧共用探针：签名（桥接标志 + 选区）未变时直接复用本帧已探到的
-     * 结果，不再重复跨进程取字；签名变化才真正探一次并回填缓存。
+     * 一帧共用探针：签名（桥接标志 + 选区 + 本端写代次）未变时直接复用
+     * 本帧已探到的结果，不再重复跨进程取字；签名变化才真正探一次并
+     * 回填缓存。
      */
     private fun probeAroundCursorShared(ic: android.view.inputmethod.InputConnection): String {
         val selection = currentSelectionSignature()
         val cached = probeFrameText
         if (cached != null && probeFrameBridge == phraseAddBridgeActive &&
-            probeFrameSelStart == selection.first && probeFrameSelEnd == selection.second
+            probeFrameSelStart == selection.first && probeFrameSelEnd == selection.second &&
+            probeFrameWriteGen == localWriteGen
         ) {
             return cached
         }
@@ -385,6 +429,7 @@ class ImeInputMethodService : InputMethodService() {
         probeFrameBridge = phraseAddBridgeActive
         probeFrameSelStart = selection.first
         probeFrameSelEnd = selection.second
+        probeFrameWriteGen = localWriteGen
         return text
     }
 
