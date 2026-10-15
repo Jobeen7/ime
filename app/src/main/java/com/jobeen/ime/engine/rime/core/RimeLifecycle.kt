@@ -117,5 +117,12 @@ suspend fun <T> RimeLifecycle.whenReady(block: suspend CoroutineScope.() -> T): 
     }
 }
 
-/** 引擎在就绪之前已被完全停止时由 [whenReady] 抛出，等待方应按本次操作失败处理。 */
-class RimeStoppedException : IllegalStateException("Rime stopped before becoming ready")
+/**
+ * 引擎停止/任务被丢弃时抛出，等待方应按本次操作失败处理。
+ * 默认文案对应 [whenReady] 的「就绪之前已被完全停止」场景；dispatcher
+ * 排空丢弃已就绪引擎的在途任务时文案不符（引擎早已就绪），由转抛点
+ * 传入丢弃语义的文案，避免日志排查被误导。
+ */
+class RimeStoppedException(
+    message: String = "Rime stopped before becoming ready",
+) : IllegalStateException(message)

@@ -62,7 +62,7 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
 
     override fun convert(message: RimeMessage<*>): EngineMessage = when (message) {
         is RimeMessage.CommitTextMessage -> {
-            EngineMessage.Commit(message.data.text.orEmpty())
+            EngineMessage.Commit(message.data.text.orEmpty(), direct = message.direct)
         }
 
         is RimeMessage.CompositionMessage -> {

@@ -251,11 +251,12 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     ): ExtractedText? = null
 
     override fun deleteSurroundingText(inLength: Int, outLength: Int): Boolean {
-        // 系统契约里长度为负无意义：先钳为 0 与契约对齐——负值会让
-        // 区间端点反转，无选区分支里 start > end 时 Editable.delete
-        // 直接抛 IndexOutOfBounds
-        val inLen = inLength.coerceAtLeast(0)
-        val outLen = outLength.coerceAtLeast(0)
+        // 系统契约里长度为负无意义且不予执行：直接返回 false——钳为 0
+        // 再走完流程会谎报成功，且负值会让区间端点反转，无选区分支里
+        // start > end 时 Editable.delete 直接抛 IndexOutOfBounds
+        if (inLength < 0 || outLength < 0) return false
+        val inLen = inLength
+        val outLen = outLength
         val s = selStart()
         val e = selEnd()
         // 先算有效删除范围，确有删减才记历史：旧实现无条件先记，光标
@@ -270,7 +271,10 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         } else {
             afterEnd > beforeStart
         }
-        if (willDelete) recordHistory()
+        // 空操作直接返回：不动组字 span、不发变更通知——旧实现照样
+        // removeSpan 会把组字区悄悄结束掉、多一次无谓重绘
+        if (!willDelete) return true
+        recordHistory()
         editable.removeSpan(composingSpan)
         if (s != e) {
             // 有选区时只删选区两侧的环绕文本、选区本身保留：旧实现
@@ -496,8 +500,21 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         val targetEnd = editable.toString().indexOf('\n', targetStart)
             .takeIf { it >= 0 } ?: editable.length
         // 列偏移是 UTF-16 单元口径：目标行同列前有代理对时会正好落
-        // 在一对代理项中间，对齐回该码点起点再返回
-        return snapToCodePointBoundary((targetStart + column).coerceAtMost(targetEnd))
+        // 在一对代理项中间，先对齐回该码点起点；码点对齐后仍可能停
+        // 在字素簇内部（基字与组合符之间、国旗两指示符之间），光标
+        // 停簇内会让随后上屏拆簇、退格只删半簇，再下取整到簇起点。
+        // 必须先判 isBoundary：恰在簇界时 graphemeBoundaryBefore 会
+        // 过冲到上一簇起点，裸调等于平白退一簇
+        val p = snapToCodePointBoundary((targetStart + column).coerceAtMost(targetEnd))
+        return if (isGraphemeBoundary(p)) p else graphemeBoundaryBefore(p)
+    }
+
+    /** [pos] 是否恰在字素簇边界上（BreakIterator.isBoundary 口径）。 */
+    private fun isGraphemeBoundary(pos: Int): Boolean {
+        if (pos <= 0 || pos >= editable.length) return true
+        val it = BreakIterator.getCharacterInstance()
+        it.setText(editable.toString())
+        return it.isBoundary(pos)
     }
 
     /**

@@ -52,6 +52,18 @@ interface RimeApi {
         isVirtual: Boolean = true,
     ): Boolean
 
+    /**
+     * 把一段文本作为引擎自产 Commit 消息送入通知管线：与 native 按键
+     * 产生的 Commit 走同一队列（notificationQueue）、同一单线程消费
+     * 者分发，入队顺序即 rime-main 上任务的执行顺序，全局严格 FIFO。
+     * 供组字为空时直通上屏空格/回车用——这类上屏若绕过管线直送 UI
+     * 层，会超车上一键尚在管线中的 native Commit（其转换/分发含补取
+     * 等待），造成上屏文字顺序错乱。所产消息带直送标记：下游只参与
+     * 排序与落屏，不按「打字上屏」记账（不失效候选/前文缓存、不触发
+     * 搭配学习与联想），与旧直送路径的下游行为等价。
+     */
+    suspend fun emitCommit(text: String)
+
     suspend fun simulateKeySequence(
         sequence: String,
     ): Boolean

@@ -345,9 +345,14 @@ object WanxiangUpdateManager {
     private fun recoverInterruptedUpdateInternal() {
         val root = DataManager.sharedDataDir
         // 旧共用临时名遗留：两下载器曾共用「目标名 + .part」作半成品
-        // 名，拆分后缀后已无人再写它，残留文件只占空间（可达数百
-        // MB），启动恢复时顺手清掉（不存在即空操作）
-        File(root, "$GRAM_FILE_NAME.part").delete()
+        // 名（<language>.gram.part，language 不止默认一种），拆分后缀
+        // 后已无人再写它，残留文件只占空间（可达数百 MB），启动恢
+        // 复时按模式统一清掉。现行半成品后缀已逐项核对、均不匹配
+        // 「.gram.part」结尾，不会误删在途下载：GMD 是
+        // <language>.gmdl.part、本类 gram 是 <目标名>.wx.part、
+        // 方案包 .part 在 cacheDir 的工作目录里、不在本目录
+        root.listFiles { f -> f.isFile && f.name.endsWith(".gram.part") }
+            ?.forEach { it.delete() }
         val txn = File(root, UPDATE_TXN_FILE)
         val committed = File(root, UPDATE_TXN_COMMITTED_FILE)
         val dicts = File(root, "dicts")
