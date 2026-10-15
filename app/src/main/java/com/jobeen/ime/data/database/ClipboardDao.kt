@@ -71,6 +71,15 @@ interface ClipboardDao {
     suspend fun count(): Int
 
     /**
+     * 只数未置顶的有效行：保留上限只约束未置顶行（见
+     * ClipboardManager.trimExcess）——置顶行是用户显式保留的，
+     * 占名额会把未置顶容量压成「上限－置顶数」，置顶数达到上限时
+     * 新复制内容一入库就会被当作超限行立刻删掉
+     */
+    @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0 AND pinned = 0")
+    suspend fun countUnpinned(): Int
+
+    /**
      * 编辑条目：把旧文本改写为新文本，刷新时间戳并把排序序号设为
      * 当前最小值减一（排到最前——列表按 sortOrder 在 timestamp 之前
      * 排序，只刷新时间戳排不动）；置顶状态随行保留

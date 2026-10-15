@@ -191,21 +191,27 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         grammarFailed = false
         grammarProgress = 0f
         scope.launch {
-            val success = GramModelDownloader.download(language) { downloaded, total ->
-                scope.launch(Dispatchers.Main.immediate) {
-                    grammarProgress = if (total > 0L) {
-                        downloaded.toFloat() / total.toFloat()
-                    } else {
-                        0f
+            try {
+                val success = GramModelDownloader.download(language) { downloaded, total ->
+                    scope.launch(Dispatchers.Main.immediate) {
+                        grammarProgress = if (total > 0L) {
+                            downloaded.toFloat() / total.toFloat()
+                        } else {
+                            0f
+                        }
                     }
                 }
-            }
-            grammarDownloading = false
-            grammarReady = success && File(DataManager.sharedDataDir, "$language.gram").isFile
-            grammarFailed = !success
-            if (grammarReady) {
-                // The grammar database is loaded during engine startup.
-                EngineFactory.current()?.reload()
+                grammarReady = success && File(DataManager.sharedDataDir, "$language.gram").isFile
+                grammarFailed = !success
+                if (grammarReady) {
+                    // The grammar database is loaded during engine startup.
+                    EngineFactory.current()?.reload()
+                }
+            } finally {
+                // 下载中标志必须复位：下载抛异常时漏复位会让按钮永远
+                // 卡在下载中（GMD 侧失败已改为判负返回，这里再以
+                // finally 兜底任何未预见的异常路径）
+                grammarDownloading = false
             }
         }
     }
@@ -307,6 +313,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 currentAppVersionCode().takeIf { it != -1L }?.let {
                     updatePrefs.edit().putLong(KEY_APP_VERSION_CODE, it).apply()
                 }
+                // 词库与模型已在盘上换新，先触发 Rime 完整重新部署，
+                // 再做联网复检：复检只刷新远端信息展示，排在前面会让
+                // 引擎换新数据被一次网络往返（慢或失败时更久）无谓推迟
+                updateStageText = stageDeploying
+                EngineFactory.current()?.reload()
                 // 更新本地版本显示。复检失败必须可见：置检查失败标志
                 // （状态文案里检查失败优先于更新成功，见下方 statusText），
                 // 否则远程卡停留在更新前数值、还显示成功，用户无从知道；
@@ -321,9 +332,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 // 重新计算本地指纹（更新后应与远端指纹一致）
                 localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
-                // 词库与模型已替换，触发 Rime 完整重新部署
-                updateStageText = stageDeploying
-                EngineFactory.current()?.reload()
             } else {
                 updateFailed = true
             }

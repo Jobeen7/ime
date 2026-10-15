@@ -116,10 +116,13 @@ class VoiceUndoLedgerTest {
     }
 
     @Test
-    fun redo_longFieldWindowEndsWithPrefix_applies() {
-        // 长锚点（锚点长 ≥ 被删串长）：更早的内容在锚点之前，窗口
-        // 落在 [锚点长, 锚点长＋被删串长] 区间内且以锚点结尾
-        assertEquals(true, VoiceUndoLedger.decideRedoApply("更早的一二三四五", "一二三四五", 3))
+    fun redo_untruncatedAnchorWindowBeyondPrefix_refuses() {
+        // 规格依据（已核实翻正）：锚点「一二三四五」长 5 < 16，是
+        // 删除点前的全部前文（未被截断），走严判——窗口须与锚点
+        // 恰等。窗口多出的 3 字只能来自光标移位/编辑，接管会把
+        // 整串写错位置，故拒绝。旧断言按「锚点长 ≥ 被删串长走
+        // 区间」的错误定义断言 true，现按规格翻为 false
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("更早的一二三四五", "一二三四五", 3))
     }
 
     @Test
@@ -202,7 +205,7 @@ class VoiceUndoLedgerTest {
         assertEquals("", VoiceUndoLedger.buildRedoPrefix("被删串", 3))
     }
 
-    // ---- decideRedoApply 短锚点严判（锚点长 < 被删串长） ----
+    // ---- decideRedoApply 短锚点严判（锚点长 < 16、未被截断＝全部前文） ----
 
     @Test
     fun redo_shortAnchorExactWindow_applies() {
@@ -231,10 +234,52 @@ class VoiceUndoLedgerTest {
     }
 
     @Test
-    fun redo_anchorEqualsCombinedLength_usesIntervalRule() {
-        // 锚点长 == 被删串长属长锚点：窗口在区间内且后缀吻合即接管，
-        // 不受短锚点恰等严判影响
-        assertEquals(true, VoiceUndoLedger.decideRedoApply("更早一二三", "一二三", 3))
+    fun redo_shortAnchorEqualsCombinedLength_stillStrict() {
+        // 规格依据（已核实翻正）：分界只看锚点是否被截断，与被删
+        // 串长无关。锚点「一二三」长 3 < 16、是全部前文，虽与被删
+        // 串等长仍走严判：窗口恰等才接管；窗口多出字只能来自光
+        // 标移位/编辑，拒绝。旧断言按「锚点长 == 被删串长属长锚
+        // 点走区间」的错误定义断言第一例为 true，现按规格翻正
+        assertEquals(false, VoiceUndoLedger.decideRedoApply("更早一二三", "一二三", 3))
         assertEquals(true, VoiceUndoLedger.decideRedoApply("一二三", "一二三", 3))
+    }
+
+    // ---- decideRedoApply 满锚点（锚点长 == 16、被截断）配长被删串 ----
+
+    @Test
+    fun redo_fullAnchorSegment18_unedited_applies() {
+        // 前文 18 字（锚点取尾 16 字、被截断）、被删串 18 字、零
+        // 编辑：现读窗口＝全部前文 18 字，落在 [16, 16+18] 区间
+        // 且以锚点结尾，必须接管。旧错误判据按「锚点长 16 < 被
+        // 删串长 18」误入严判、要求窗口恰为 16 字，必拒此类恢复
+        val anchor = "一二三四五六七八九十甲乙丙丁戊己"
+        assertEquals(16, anchor.length)
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("前文" + anchor, anchor, 18))
+    }
+
+    @Test
+    fun redo_fullAnchorSegment18_windowEditedLonger_refuses() {
+        // 同形态但窗口被编辑变长：总长 35 超过「锚点＋被删串」=
+        // 34 的上限，删除点之外的状态已变，不接管
+        val anchor = "一二三四五六七八九十甲乙丙丁戊己"
+        val longer = "一二三四五六七八九十甲乙丙丁戊己庚辛壬" + anchor
+        assertEquals(35, longer.length)
+        assertEquals(false, VoiceUndoLedger.decideRedoApply(longer, anchor, 18))
+    }
+
+    @Test
+    fun redo_fullAnchorSegment16Boundary_applies() {
+        // 边界：被删串长恰 16、锚点满 16，未被动过的窗口 18 字
+        // 在 [16, 16+16] 区间内且以锚点结尾，接管
+        val anchor = "一二三四五六七八九十甲乙丙丁戊己"
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("前文" + anchor, anchor, 16))
+    }
+
+    @Test
+    fun redo_fullAnchorSegment17Boundary_applies() {
+        // 边界：被删串长 17 > 锚点长 16，仍因锚点已满走区间判
+        // 定接管（旧错误判据对此形态误入严判必拒）
+        val anchor = "一二三四五六七八九十甲乙丙丁戊己"
+        assertEquals(true, VoiceUndoLedger.decideRedoApply("前文" + anchor, anchor, 17))
     }
 }

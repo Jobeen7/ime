@@ -2,6 +2,7 @@ package com.jobeen.ime.base.update
 
 import androidx.core.content.edit
 import com.jobeen.ime.base.net.fetchGithubReleaseAssetSha256
+import com.jobeen.ime.base.ngram.gramFileInstallLock
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -19,6 +20,7 @@ import timber.log.Timber
 import java.io.File
 import java.util.concurrent.TimeUnit
 import java.util.zip.ZipFile
+import kotlin.concurrent.withLock
 
 /**
  * 万象输入方案在线更新管理器。
@@ -331,12 +333,21 @@ object WanxiangUpdateManager {
      * block the keyboard from starting.
      */
     fun recoverInterruptedUpdate() {
-        runCatching { recoverInterruptedUpdateInternal() }
-            .onFailure { Timber.e(it, "Interrupted-update recovery failed; continuing startup") }
+        // 恢复会删/换语法模型文件，与 GramModelDownloader 的落盘共用
+        // 跨下载器安装锁（见 gramFileInstallLock）：回滚不得删掉另一
+        // 路刚装好的模型，落盘也不得插进回滚中间
+        gramFileInstallLock.withLock {
+            runCatching { recoverInterruptedUpdateInternal() }
+                .onFailure { Timber.e(it, "Interrupted-update recovery failed; continuing startup") }
+        }
     }
 
     private fun recoverInterruptedUpdateInternal() {
         val root = DataManager.sharedDataDir
+        // 旧共用临时名遗留：两下载器曾共用「目标名 + .part」作半成品
+        // 名，拆分后缀后已无人再写它，残留文件只占空间（可达数百
+        // MB），启动恢复时顺手清掉（不存在即空操作）
+        File(root, "$GRAM_FILE_NAME.part").delete()
         val txn = File(root, UPDATE_TXN_FILE)
         val committed = File(root, UPDATE_TXN_COMMITTED_FILE)
         val dicts = File(root, "dicts")
@@ -901,6 +912,13 @@ object WanxiangUpdateManager {
             val trashDir = File(DataManager.sharedDataDir, DICTS_TRASH_DIR)
             val changedDicts = extractDir != null
             val changedGram = gramPartial != null && gramTarget != null
+            // 跨下载器安装锁（见 gramFileInstallLock）：从写事务日志起
+            // 到版本/指纹记录落盘为止，语法模型的备份、切换与记录是
+            // 一个临界区，GramModelDownloader 的落盘不得插进来（否则
+            // 记录会对上另一路的文件、回滚会删掉另一路的模型）。
+            // 锁序固定：外层 updateMutex 已先持有，本锁恒在其内层
+            gramFileInstallLock.lock()
+            try {
             if (changedDicts || changedGram) writeUpdateJournal(changedDicts, changedGram)
 
             if (changedGram && gramTarget!!.isFile) {
@@ -956,6 +974,9 @@ object WanxiangUpdateManager {
                     }
                 }
             }.apply()
+            } finally {
+                gramFileInstallLock.unlock()
+            }
             // Committed resources remain a valid pair even if preference metadata
             // cannot be persisted immediately; the next check may simply re-fetch.
             if (changedDicts || changedGram) recoverInterruptedUpdate()

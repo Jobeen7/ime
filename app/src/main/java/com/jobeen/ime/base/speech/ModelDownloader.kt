@@ -116,6 +116,17 @@ object ModelDownloader {
     }
 
     /**
+     * 最近一次检查更新解析出的目标（进程内）：download 优先固定
+     * 使用它——检查已经向用户公示过这个目标，下载时现解析若因
+     * GitHub 限流退到钉死回落，会静默换成钉死表里的旧包装上，
+     * 下次检查又报有更新，形成「报更新→装旧包」循环。进程重启
+     * 即失效（检查本来就先于下载发生），失效时 download 走现解析
+     * ＋防降级守卫，见 download 内注释。
+     */
+    @Volatile
+    private var announcedTarget: SpeechModelTarget? = null
+
+    /**
      * 解析目标资产：直接查 k2-fsa/sherpa-onnx 的 asr-models 资产
      * 清单（分页端点），按家族规则选最新日期的一份（见
      * [selectSpeechModelAsset]），摘要用其登记值（缺失退钉死表）。
@@ -164,6 +175,8 @@ object ModelDownloader {
             Timber.w("Speech model target unavailable, check failed")
             return@withContext UpdateCheckResult.Failed
         }
+        // 解析成功即记为已公示目标，供 download 固定使用（见字段注释）
+        announcedTarget = target
         val localId = getStoredManifestId(context)
         if (localId != null) {
             if (localId.equals(target.identity, ignoreCase = true)) {
@@ -255,11 +268,32 @@ object ModelDownloader {
         // 目标与下载地址都由本类按 GitHub 官方资产解析（见 resolveTarget），
         // 不再向清单服务器要包；代理前缀形态与旧清单给的地址一致（国内
         // 直连 github.com 下载 Release 资产基本不可达），完整性不依赖
-        // 代理、由既有 resolveExpectedSha256 锚 GitHub 登记摘要保证
-        val target = resolveTarget()
-        if (target == null) {
-            Timber.w("Speech model target unavailable, download aborted")
-            return@withContext false
+        // 代理、由既有 resolveExpectedSha256 锚 GitHub 登记摘要保证。
+        // 目标优先用检查时已公示的那份（announcedTarget）：下载时现解析
+        // 可能因限流退到钉死回落、静默换上旧包。无已公示目标时才现
+        // 解析，且现解析来自钉死回落又已有本地模型记录时明确失败——
+        // 宁可让用户检查网络后重试，也不装一个比已公示版本旧的包；
+        // 首次安装（无记录）无可降级，允许钉死兜底
+        val announced = announcedTarget
+        val target = if (announced != null) {
+            announced
+        } else {
+            val resolved = resolveTarget()
+            if (resolved == null) {
+                Timber.w("Speech model target unavailable, download aborted")
+                return@withContext false
+            }
+            if (resolved.shaFromPinned &&
+                !getStoredManifestId(context).isNullOrEmpty()
+            ) {
+                Timber.w(
+                    "Speech model download refused: fresh resolution fell back to pinned " +
+                        "digest while a local model record exists (anti-downgrade)"
+                )
+                HttpUtil.showToast("语音模型下载失败：无法确认最新版本，请检查网络后重试")
+                return@withContext false
+            }
+            resolved
         }
         val link = target.downloadUrl
         val tempDir = App.downloadDir
