@@ -182,8 +182,12 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
-        // 换了输入框：上一框的语音纠错沉淀观察作废
-        com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        // 换了输入框：上一框的语音纠错沉淀观察作废。同框重启
+        // （restarting）不作废：框没换，待就绪的保留音频本应落
+        // 回同一框，与下方账本作废的 !restarting 门控同口径
+        if (!restarting) {
+            com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        }
         // 新输入框（非同框重启）：语音上屏撤销账本是旧框的账，整表作废，
         // 不能把旧框的段拿来新框删
         if (!restarting) VoiceUndoLedger.clearAll()
@@ -269,8 +273,15 @@ class ImeInputMethodService : InputMethodService() {
      * 状态，再转调调用方经 [onDismiss] 注册的回调——调用方不得再对
      * 弹窗直接 setOnDismissListener，那会把这里的监听整份覆盖掉，
      * 服务侧状态与调用方自己的收尾便一起失效（编号 24 的原故障）。
+     * [dim] 控制非弹层区域压暗：默认压暗 0.5；不需要压暗的弹窗传
+     * false（方案选择弹窗——其构建侧曾自清压暗标志，但这里后写覆盖，
+     * 两处设置互相矛盾，最终以这里为准，统一收口到这个参数）。
      */
-    fun showDialog(dialog: android.app.Dialog, onDismiss: (() -> Unit)? = null) {
+    fun showDialog(
+        dialog: android.app.Dialog,
+        dim: Boolean = true,
+        onDismiss: (() -> Unit)? = null,
+    ) {
         showingDialog?.dismiss()
         val tokenView = keyboardWindow?.view ?: return
         // view 已存在但尚未挂上窗口时 windowToken 为 null，拿它去
@@ -279,10 +290,14 @@ class ImeInputMethodService : InputMethodService() {
         dialog.window?.apply {
             attributes.token = token
             attributes.type = WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG
-            addFlags(
-                WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or WindowManager.LayoutParams.FLAG_DIM_BEHIND
-            )
-            setDimAmount(0.5f)
+            addFlags(WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM)
+            if (dim) {
+                addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                setDimAmount(0.5f)
+            } else {
+                clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+                setDimAmount(0f)
+            }
         }
         showingDialog = dialog
         showingDialogOnDismiss = onDismiss

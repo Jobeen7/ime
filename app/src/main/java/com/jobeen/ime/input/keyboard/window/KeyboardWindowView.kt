@@ -176,8 +176,9 @@ class KeyboardWindowView(
                     colors = cachedColors,
                     onSchemaSelected = { schemaId -> keyboardStateManager.selectSchema(schemaId) })
                 // 关闭收尾经 showDialog 注册给服务侧单一监听转调，不再
-                // 由弹窗自己 setOnDismissListener（会被服务侧覆盖）
-                (context as ImeInputMethodService).showDialog(dialog) {
+                // 由弹窗自己 setOnDismissListener（会被服务侧覆盖）；
+                // 方案弹窗不压暗非弹层区域，dim 传 false
+                (context as ImeInputMethodService).showDialog(dialog, dim = false) {
                     SchemaPickerDialog.handleDismiss(dialog)
                 }
                 null

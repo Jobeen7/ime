@@ -518,11 +518,17 @@ object ClipboardManager {
      * 可能）。补行在单个事务内完成；确认后清掉旧库残留行——旧表继续躺在
      * ime_database 里会随云备份/换机迁移外带，拆库的隐私隔离只做一半。
      * 整个过程可重入：任何一步失败下次调用会继续收敛到同一终态。
+     *
+     * @return 迁移已完成（本次刚完成或此前已完成）为 true；任一步
+     * 失败为 false——成败必须回给调用方：迁移没成时旧行还躺在主库
+     * 里，此时派发拆库 VACUUM 会把「已擦除」标记错落下（此后再无
+     * 路径补跑，删行后的空闲页全文永久留在主库文件里），备份侧
+     * 直读新库则会静默漏掉旧行。
      */
-    private suspend fun migrateFromAppDatabase(context: Context, target: ClipboardDatabase) {
+    private suspend fun migrateFromAppDatabase(context: Context, target: ClipboardDatabase): Boolean {
         val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (settings.getBoolean(KEY_DB_MIGRATED, false)) return
-        runCatching {
+        if (settings.getBoolean(KEY_DB_MIGRATED, false)) return true
+        return runCatching {
             val dao = target.clipboardDao()
             val oldDao = AppDatabase.getInstance(context).clipboardDao()
             val oldRows = oldDao.getAllRaw()
@@ -547,7 +553,9 @@ object ClipboardManager {
             // VACUUM 才真正擦除（见 db() 中迁移检查之后的补跑点——
             // 已完成迁移的老用户在本函数开头就按标记返回，补跑点
             // 必须设在迁移体之外他们才走得到）
+            true
         }.onFailure { Timber.w(it, "Clipboard history migration failed; will retry") }
+            .getOrDefault(false)
     }
 
     /** 一次性存量限长：把库中已有的超限行在 SQL 内截断（见 DAO 注释）。 */
@@ -582,10 +590,13 @@ object ClipboardManager {
      * 在「升级后还没用过剪贴板」时读到空库（旧行还躺在主库里，
      * 备份的剪贴板段静默为空）。与 [db] 共用同一把迁移锁和同一
      * 个迁移实现，只是把触发点暴露出来，不复制迁移逻辑。
+     *
+     * @return 迁移已完成为 true、失败为 false（透传迁移体的成败，
+     * 调用方据此决定是中止还是继续，不得再当作无条件成功）。
      */
-    internal suspend fun ensureMigrated(context: Context) {
+    internal suspend fun ensureMigrated(context: Context): Boolean {
         val db = ClipboardDatabase.getInstance(context)
-        migrationMutex.withLock { migrateFromAppDatabase(context, db) }
+        return migrationMutex.withLock { migrateFromAppDatabase(context, db) }
     }
 
     // 拆库补跑 VACUUM 的进程内派发去重：db() 每次访问都尝试触发，
@@ -620,15 +631,20 @@ object ClipboardManager {
         try {
             withContext(Dispatchers.IO) {
                 val db = ClipboardDatabase.getInstance(context)
-                ensureMigrated(context)
+                val migrated = ensureMigrated(context)
                 // 拆库补 VACUUM 的常规补跑点（触发逻辑见
                 // schedulePostSplitVacuum）：此前它只在迁移体末尾被
                 // 调用，而在本版本之前就完成拆库迁移的老用户会在
                 // 迁移体开头按标记直接返回、永远走不到——旧剪贴板
                 // 全文一直残留在会进云备份的主库空闲页里。放在每次
                 // 数据库访问的迁移检查之后异步触发：老用户下次用
-                // 剪贴板即补跑一次，此后只是标记检查
-                schedulePostSplitVacuum()
+                // 剪贴板即补跑一次，此后只是标记检查。
+                // 仅迁移已完成才派发：迁移失败时旧行还没删，VACUUM
+                // 擦无可擦却会落下「已擦除」标记，之后迁移成功删行
+                // 也再无路径补跑物理擦除（见 migrateFromAppDatabase
+                // 的返回值说明）。迁移本身失败不拦本次剪贴板操作：
+                // 新库照常可用、旧行下次访问继续收敛
+                if (migrated) schedulePostSplitVacuum()
                 truncateOversizedTextsOnce(context, db)
                 purgeLegacyDeletedOnce(context, db)
                 block(db)

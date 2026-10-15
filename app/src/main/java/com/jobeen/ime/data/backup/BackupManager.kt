@@ -152,8 +152,12 @@ object BackupManager {
         // 读剪贴板库前先确保拆库迁移已执行：迁移只在 ClipboardManager
         // 的常规访问路径懒触发，升级后还没用过剪贴板就来导出（换机
         // 前先备份正是这个时序）会读到空的新库、旧行还躺在主库里，
-        // 备份的剪贴板段静默为空
-        ClipboardManager.ensureMigrated(appContext)
+        // 备份的剪贴板段静默为空。迁移失败必须中止并让用户可见：
+        // 继续采集只会产出剪贴板段缺旧行的备份（还原侧同理会把
+        // 「迁移已完成」的假标记落盘、旧行永久滞留主库残表）
+        if (!ClipboardManager.ensureMigrated(appContext)) {
+            throw BackupException("剪贴板数据迁移失败，操作中止")
+        }
 
         val clips = JSONArray()
         // 只导出有效行：历史软删除存量不进备份（删除已改物理删，此为存量兜底）
@@ -219,8 +223,11 @@ object BackupManager {
     /**
      * 解密并整体覆盖还原。口令错误/文件损坏/结构非法抛 [BackupException]，
      * 且解密与完整结构解析全部通过后才开始写任何数据（不会半还原）。
+     *
+     * @return 还原前落盘快照是否保存失败（true 时还原本身已成功，
+     * 但期间没有进程被杀后的回滚凭据，调用方须向用户明示）。
      */
-    suspend fun restoreBackup(bytes: ByteArray, password: CharArray) =
+    suspend fun restoreBackup(bytes: ByteArray, password: CharArray): Boolean =
         restoreInternal(bytes, password, isSnapshotRollback = false)
 
     /**
@@ -231,10 +238,12 @@ object BackupManager {
      *   （不脱敏，与内存回滚一致），且**绝不能再落盘新快照**——那会
      *   把当前（已还原）状态覆写到快照文件上，原始还原前状态就此
      *   丢失，回滚也就失去了目标。
+     *
+     * @return 本次是否发生了「落盘快照保存失败」（仅外部备份还原才落盘快照）。
      */
     private suspend fun restoreInternal(
         bytes: ByteArray, password: CharArray, isSnapshotRollback: Boolean
-    ) {
+    ): Boolean {
         val payload = decryptPayload(bytes, password)
         val parsed = parsePayload(payload, sanitizeWebdav = !isSnapshotRollback)
         // 写任何数据前，先把当前状态快照一份：写入阶段任一步失败都用
@@ -246,11 +255,15 @@ object BackupManager {
         // 一轮 60 万次 PBKDF2）。
         val snapshotJson = collectPayload()
         val snapshotParsed = parsePayload(snapshotJson, sanitizeWebdav = false)
+        var snapshotPersistFailed = false
         if (!isSnapshotRollback) {
             // 加密快照落盘到私有目录：进程若在写入中途被杀（系统回收、
             // 断电），内存回滚随之消失，下次打开备份页凭此文件+口令仍可
-            // 回到还原前状态。落盘失败只降级为内存回滚，不阻塞还原。
-            persistRestoreSnapshot(encryptPayload(snapshotJson, password))
+            // 回到还原前状态。落盘失败只降级为内存回滚，不阻塞还原；
+            // 但失败不能只记日志：经返回值上报，终态以带警告的完成
+            // 呈现，让用户知道本次还原期间没有这层兜底
+            snapshotPersistFailed =
+                !persistRestoreSnapshot(encryptPayload(snapshotJson, password))
         }
         try {
             // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
@@ -271,6 +284,7 @@ object BackupManager {
             )
         }
         clearRestoreSnapshot()
+        return snapshotPersistFailed
     }
 
     // —— 还原中断的落盘快照（进程被杀后的最后回滚手段） ——
@@ -278,13 +292,15 @@ object BackupManager {
     private val restoreSnapshotFile
         get() = File(appContext.filesDir, RESTORE_SNAPSHOT_NAME)
 
-    private fun persistRestoreSnapshot(bytes: ByteArray) {
+    /** @return 落盘成功为 true；失败只记日志并回 false 由调用方提示用户（不阻塞还原）。 */
+    private fun persistRestoreSnapshot(bytes: ByteArray): Boolean =
         runCatching {
             val tmp = File(appContext.filesDir, "$RESTORE_SNAPSHOT_NAME.tmp")
             tmp.writeBytes(bytes)
             check(tmp.renameTo(restoreSnapshotFile)) { "rename failed" }
+            true
         }.onFailure { Timber.w(it, "Persist restore snapshot failed") }
-    }
+            .getOrDefault(false)
 
     private fun clearRestoreSnapshot() {
         runCatching { restoreSnapshotFile.delete() }
@@ -302,10 +318,10 @@ object BackupManager {
     }
 
     /** 用备份口令把落盘快照还原回去（即回到上次还原之前的状态）。 */
-    suspend fun rollbackToRestoreSnapshot(password: CharArray) {
+    suspend fun rollbackToRestoreSnapshot(password: CharArray): Boolean {
         val bytes = runCatching { restoreSnapshotFile.readBytes() }
             .getOrElse { throw BackupException("回滚快照已损坏或不存在") }
-        restoreInternal(bytes, password, isSnapshotRollback = true)
+        return restoreInternal(bytes, password, isSnapshotRollback = true)
     }
 
     /** 用户确认不需要回滚时丢弃落盘快照。 */
@@ -318,6 +334,9 @@ object BackupManager {
         data object Idle : RestoreState
         data object Running : RestoreState
         data object Done : RestoreState
+
+        /** 还原成功，但还原前落盘快照保存失败：[message] 是给用户的事实说明。 */
+        data class DoneWithWarning(val message: String) : RestoreState
         data class Failed(val message: String) : RestoreState
     }
 
@@ -344,9 +363,17 @@ object BackupManager {
         _restoreState.value = RestoreState.Running
         restoreScope.launch {
             try {
-                if (rollbackSnapshot) rollbackToRestoreSnapshot(password)
-                else restoreBackup(bytes, password)
-                _restoreState.value = RestoreState.Done
+                val snapshotPersistFailed =
+                    if (rollbackSnapshot) rollbackToRestoreSnapshot(password)
+                    else restoreBackup(bytes, password)
+                _restoreState.value =
+                    if (snapshotPersistFailed) {
+                        RestoreState.DoneWithWarning(
+                            "恢复快照保存失败，若还原中途中断将无法回到还原前状态"
+                        )
+                    } else {
+                        RestoreState.Done
+                    }
                 scheduleProcessRestart()
             } catch (e: Exception) {
                 Timber.w(e, "Restore failed")
@@ -496,19 +523,25 @@ object BackupManager {
                         // 服务器指向攻击者，用户之后填入真实口令同步即泄露；
                         // 账号与口令仍可迁移（没有地址时它们无处发送）
                         key != "webdav_server" &&
+                        // 同步目录是该服务器上的路径、与地址同属一台
+                        // 机器的配置：随备份带入会让本机服务器＋本机
+                        // 账号往异机目录同步，备份里没有这个键时整表
+                        // 覆盖还会把本机值清掉、回落默认路径
+                        key != "webdav_sync_path" &&
                         key != "last_upload_time" &&
                         key != "last_download_time" &&
                         !key.startsWith("sync_etag_")
                 }
-                // 服务器地址与明文开关是本机配置而非备份内容：整表覆盖
-                // 会连本机现值一起抹掉（还原自己的备份也丢服务器设置），
-                // 用解析当下的本机现值回填这两个键。同步基准不回填——
-                // 保持「无基准先全量合并」的安全方向，让还原后的词库
-                // 数据与远端重新对账，而不是拿旧基准误判未变化。
+                // 服务器地址、明文开关与同步目录是本机配置而非备份
+                // 内容：整表覆盖会连本机现值一起抹掉（还原自己的备
+                // 份也丢服务器设置），用解析当下的本机现值回填这三
+                // 个键。同步基准不回填——保持「无基准先全量合并」
+                // 的安全方向，让还原后的词库数据与远端重新对账，
+                // 而不是拿旧基准误判未变化。
                 val local = appContext
                     .getSharedPreferences(WEBDAV_PREFS, Context.MODE_PRIVATE).all
                 val refilled = LinkedHashMap(filtered)
-                for (key in listOf("webdav_server", "webdav_allow_http")) {
+                for (key in listOf("webdav_server", "webdav_allow_http", "webdav_sync_path")) {
                     local[key]?.let { refilled[key] = it }
                 }
                 // 口令同口径：备份口令为空（在未配置 WebDAV、或口令读
@@ -640,8 +673,13 @@ object BackupManager {
         val clipDb = ClipboardDatabase.getInstance(appContext)
         // 写剪贴板库前同样先确保拆库迁移已执行，与采集侧同一口径：
         // 迁移标记虽被上方解析段强制置为已完成，但那是 prefs 层面的
-        // 防合并口径，物理迁移是否跑过仍以这里的实际触发为准
-        ClipboardManager.ensureMigrated(appContext)
+        // 防合并口径，物理迁移是否跑过仍以这里的实际触发为准。
+        // 失败同采集侧口径中止（抛错走 restoreInternal 的回滚与
+        // 失败上报）：带着没迁完的旧行整表替换，会把状态推进到
+        // 无人再能收敛的形态
+        if (!ClipboardManager.ensureMigrated(appContext)) {
+            throw BackupException("剪贴板数据迁移失败，还原中止")
+        }
 
         // —— Room 四表：各自单事务内整表替换，中途失败整表回滚
         clipDb.withTransaction {

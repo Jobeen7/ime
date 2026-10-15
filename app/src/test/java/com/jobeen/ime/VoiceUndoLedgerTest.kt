@@ -258,13 +258,21 @@ class VoiceUndoLedgerTest {
     }
 
     @Test
-    fun redo_fullAnchorSegment18_windowEditedLonger_refuses() {
-        // 同形态但窗口被编辑变长：总长 35 超过「锚点＋被删串」=
-        // 34 的上限，删除点之外的状态已变，不接管
-        val anchor = "一二三四五六七八九十甲乙丙丁戊己"
-        val longer = "一二三四五六七八九十甲乙丙丁戊己庚辛壬" + anchor
-        assertEquals(35, longer.length)
-        assertEquals(false, VoiceUndoLedger.decideRedoApply(longer, anchor, 18))
+    fun redo_fullAnchorSegment18_windowEditedTail_refuses() {
+        // 现实可达形态：tryRedo 的回读上限就是「锚点长＋被删串
+        // 长」＝16＋18＝34 字（旧用例的 35 字窗口现实中读不出
+        // 来）。删除点前文 32 字、锚点为其尾 16 字；撤销后用户
+        // 在删除点新打 2 字，回读窗口＝前文 32 字＋新打 2 字
+        // ＝34 字，长度落在 [16, 34] 区间内、但尾部不再以锚点
+        // 结尾（新打字介入），删除点的状态已变，不接管
+        val prefix = "更早的前文一二三四五六七八九十甲乙丙" + "一二三四五六七八九十甲乙丙丁"
+        assertEquals(32, prefix.length)
+        val anchor = "乙丙一二三四五六七八九十甲乙丙丁"
+        assertEquals(16, anchor.length)
+        assertEquals(true, prefix.endsWith(anchor))
+        val edited = prefix + "新打"
+        assertEquals(34, edited.length)
+        assertEquals(false, VoiceUndoLedger.decideRedoApply(edited, anchor, 18))
     }
 
     @Test
