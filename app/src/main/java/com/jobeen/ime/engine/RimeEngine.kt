@@ -108,11 +108,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // AtomicInteger，免去每处取值转换）
         val candidateRequestId: java.util.concurrent.atomic.AtomicLong =
             java.util.concurrent.atomic.AtomicLong(0L),
-        // 「最新代次」的回写（还原入口/失效路径在 Default 线程）与
-        // 读取（reduce/jobs 线程）跨线程交接：普通 Long 回写是单次
-        // 写、无原子性/可见性保证，与自增源之间极端时序下可能读到
-        // 旧值、让最新代次看起来「回退」而丢掉最新一批候选。与
-        // candidateRequestId 同口径用 AtomicLong，set/get 收口
+        // 「最新代次」的发布（还原入口/失效路径在 Default 线程）与
+        // 读取（reduce/jobs 线程）跨线程交接。两个发布方都是「在
+        // candidateRequestId 上 incrementAndGet 取新号、再回写本
+        // 字段」的两步操作：若回写用 set，两步交错（甲取 11、乙取
+        // 12、乙先 set(12)、甲后 set(11)）会让已发布的最新代次回退
+        // 到 11，最新一批候选被 Ready 门控误丢、或已被作废的旧批
+        // 反而穿过门控。故发布一律走 accumulateAndGet(maxOf)：本
+        // 字段单调不减，任何交错下都不回退；AtomicLong 同时保证
+        // 单次读写的原子性与跨线程可见性
         val latestCandidateRequestId: java.util.concurrent.atomic.AtomicLong =
             java.util.concurrent.atomic.AtomicLong(0L),
         val predictionRequestId: java.util.concurrent.atomic.AtomicLong =
@@ -172,7 +176,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 的单线程计数假设都与原先在 jobs 内时一致。
      */
     private val preferDbScope by lazy {
-        CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+        CoroutineScope(
+            SupervisorJob() + Dispatchers.IO.limitedParallelism(1) +
+                // 兜底：本通道的 launch 块应各自 try/catch（见
+                // selectCandidateInternal）；万一有漏网异常，默认
+                // 未捕获异常处理会把进程杀掉——选词偏好这种尽力而为
+                // 的写不值得赔上键盘进程，只记日志吞掉
+                kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
+                    if (e !is CancellationException) {
+                        Timber.w(e, "Uncaught failure in preferDbScope")
+                    }
+                }
+        )
     }
     // 两条队列都有界（旧实现 UNLIMITED）：正常深度个位数，容量只为异常
     // 生产者（引擎通知风暴、长任务堵住消费端）兜底防无限堆积。溢出策略
@@ -401,8 +416,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 不能在分发侧凭组字缓存预判——compositionCached.preedit 是
      * 展示串而非原始输入，且分发时点上先行按键的 job 可能尚未
      * 执行、缓存滞后于在途按键，预判会重蹈退格注释里跨队列按旧
-     * 状态误判的覆辙。空格/回车在空组字时直通文本、非空时与普通
-     * 键同样转 InputKey；退格的判断与处理更必须同 job 完成
+     * 状态误判的覆辙。空格/回车在空组字时直通文本、非空时在本 job
+     * 内同步转交 Rime（与退格的 handleBackspaceInJob 同口径，见
+     * 下方非空分支）；退格的判断与处理更必须同 job 完成
      * （见 handleBackspaceInJob）。
      */
     private fun sendStatefulKeyJob(key: KeyEvent.CodeEvent) {
@@ -430,10 +446,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     }
                 }
             }
-            actions.send(
-                Action.Behavior(
-                    InputKey(key.keyCode, key.modifiers.toInt(), key.isVirtual)
-                )
+            // 组字非空的空格/回车（退格已在上方分支内处理）：在本 job
+            // 内同步转交 Rime，与 InputKey.invoke() 的转交内容逐字
+            // 等价（键码映射＋修饰键＋isVirtual），只是不再绕回
+            // actions 队尾另发一个 job。此前绕回 actions 时，本键的
+            // 处理 job 要排到 reduce 消费完在途动作之后才入队，积压
+            // 时落在本键之后到达的普通键 job 之后（a、空格、b 连按
+            // 会先把 b 并入组字、再拿 "ab" 的首选上屏），即按键被
+            // 后续键超车。InputKey 在 BehaviorHost 里不登记任何队列
+            // 状态（flowedLocked 的 InputKey 分支只是 invoke 转交），
+            // 跳过 flowBehavior 这一跳不丢队列维护，与退格经
+            // backspaceInJob 在本 job 内直达 Rime 同构。
+            processKey(
+                KeyMapping.keyCodeToVal(key.keyCode),
+                key.modifiers.toInt().toUInt(),
+                key.isVirtual,
             )
             return@sendJob
         }
@@ -467,18 +494,30 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             val ctx = context
             if (ctx != null) {
                 preferDbScope.launch {
-                    val dao = AppDatabase.getInstance(ctx).candidatePreferDao()
-                    // 隐私：不再把光标前文存入 context 列——该列从未被排序/重排读取，
-                    // 却会随云备份与 .jbk 备份带出用户输入片段。
-                    dao.upsert(candidate.text, "")
-                    CandidatePreferCache.noteUpsert(candidate.text)
-                    // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载（保持两者一致）
-                    if (++upsertsSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
-                        upsertsSincePruneCheck = 0
-                        if (dao.count() > PREFER_LIMIT) {
-                            dao.pruneToLimit(PREFER_LIMIT)
-                            CandidatePreferCache.invalidate()
+                    // 整段兜住：盘满（SQLiteFullException）、还原期间
+                    // 库被替换等失败只丢这一次偏好，异常不得逃出
+                    // launch——此前写在 jobs 里时异常被 jobs 消费循环
+                    // 的通用 catch 吸收，移出后必须在本处补上同等吸收，
+                    // 否则未捕获异常会杀进程（scope 上另有
+                    // CoroutineExceptionHandler 作第二层兜底）
+                    try {
+                        val dao = AppDatabase.getInstance(ctx).candidatePreferDao()
+                        // 隐私：不再把光标前文存入 context 列——该列从未被排序/重排读取，
+                        // 却会随云备份与 .jbk 备份带出用户输入片段。
+                        dao.upsert(candidate.text, "")
+                        CandidatePreferCache.noteUpsert(candidate.text)
+                        // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载（保持两者一致）
+                        if (++upsertsSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
+                            upsertsSincePruneCheck = 0
+                            if (dao.count() > PREFER_LIMIT) {
+                                dao.pruneToLimit(PREFER_LIMIT)
+                                CandidatePreferCache.invalidate()
+                            }
                         }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.w(e, "Failed to persist candidate preference")
                     }
                 }
             }
@@ -562,16 +601,33 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 有保存动作即排序表非空，失效 restoreCandidates 的判空缓存
         sortingTableEmpty = false
         sendJob {
-            // 排序记录按当前组字串＋方案键保存（job 内即 RimeApi
-            // 作用域，compositionCached 是与组字产生同步赋值的缓存，
-            // currentSchema 与候选同源）；无组字（预测态）时键为空，
-            // save 内部据此跳过
-            CandidateSortingManager(db).save(
-                candidates,
-                candidateSortingKey(
-                    compositionCached.preedit.orEmpty(), currentSchema().schemaId
-                )
+            // 键的两个输入只在 RimeApi 作用域内可读，必须在本 job
+            // 内取齐：组字串读 compositionCached（与组字产生同步
+            // 赋值的缓存），方案读 schemaCached（方案变更消息处理点
+            // 同步回写的缓存，与还原端同源同值）；无组字（预测态）
+            // 时键为空，save 内部据此跳过。候选列表在此拷一份快照，
+            // 写库移出 jobs 后由 preferDbScope 异步消费，调用方的
+            // 列表对象不能再被原地改动影响到落库内容
+            val key = candidateSortingKey(
+                compositionCached.preedit.orEmpty(), schemaCached.schemaId
             )
+            val snapshot = candidates.toList()
+            // 写库与选词偏好同走 preferDbScope 串行 IO 通道（与 28
+            // 号原则一致：Room 写不占 jobs、不堵后续按键）。代价是
+            // 保存与还原之间不再有 jobs FIFO 的先后保证：还原端
+            // load 读的是 Room 而非内存表，紧随保存触发的同一批
+            // 还原可能读到落库前的值（本批沿用旧序、下一批起按新
+            // 序，属有界的最终一致，不会错套到别的组字上——键含
+            // 组字串与方案，两端同源）
+            preferDbScope.launch {
+                try {
+                    CandidateSortingManager(db).save(snapshot, key)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "Failed to save candidate sorting")
+                }
+            }
         }
     }
 
@@ -1113,7 +1169,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private fun restoreCandidates(msg: EngineMessage.Candidates) {
         val requestId = state.candidateRequestId.incrementAndGet()
-        state.latestCandidateRequestId.set(requestId)
+        state.latestCandidateRequestId.accumulateAndGet(requestId) { a, b -> maxOf(a, b) }
         candidateRestoreJob?.cancel()
         candidateRestoreJob = scope.launch {
             // 过滤用户长按删除的词（Rime 墓碑不隐藏系统词，App 层过滤）；
@@ -1151,7 +1207,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         val key = awaitJob("") {
                             candidateSortingKey(
                                 compositionCached.preedit.orEmpty(),
-                                currentSchema().schemaId,
+                                schemaCached.schemaId,
                             )
                         }
                         // awaitJob 与按键共用 jobs FIFO：它排队期间，
@@ -1212,7 +1268,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private fun invalidatePendingCandidates() {
         candidateRestoreJob?.cancel()
         candidateRestoreJob = null
-        state.latestCandidateRequestId.set(state.candidateRequestId.incrementAndGet())
+        state.latestCandidateRequestId.accumulateAndGet(
+            state.candidateRequestId.incrementAndGet()
+        ) { a, b -> maxOf(a, b) }
     }
 
     /** 取消在途的预测并推进代次，避免迟到预测覆盖新候选或在清空后重现。 */

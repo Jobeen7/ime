@@ -24,6 +24,9 @@ class MessageHandler(
                 if (window?.interceptCommit(message.text) == true) return
                 (service as ImeInputMethodService).activeInputConnection()
                     ?.commitText(message.text, 1)
+                // 主通道写入：递增本端写代次，使探针帧在宿主选区回调
+                // 到达前就已失效，合并探针不会命中上屏前的旧帧
+                (service as ImeInputMethodService).noteLocalWrite()
                 // 连发 Commit（如连打上屏）不必每条都同步探针：与选区路径
                 // 共用 24ms 合并通道，窗口内只探最后一次
                 (service as ImeInputMethodService).scheduleNotifyInputChanged()

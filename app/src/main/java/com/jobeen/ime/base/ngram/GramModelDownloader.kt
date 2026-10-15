@@ -12,12 +12,25 @@ import okhttp3.Request
 import timber.log.Timber
 import java.io.File
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.withLock
 
 @Serializable
 data class GramModelManifest(
     val link: String = "",
     val sha256: String = "",
 )
+
+/**
+ * 语法模型最终文件（sharedDataDir 下的 <language>.gram）的跨下载器
+ * 安装锁：本下载器与 WanxiangUpdateManager 写的是同一个目标文件，
+ * 「rename 安装＋记录写入」临界区必须共用一把锁串行化，否则两路
+ * 并发时后到者的记录会对应先到者的文件、更新事务的回滚还会删掉
+ * 另一路刚装好的模型。用进程内 ReentrantLock 而非协程 Mutex：
+ * WUM 的启动恢复入口是阻塞式普通函数、且全部临界区内都没有挂起
+ * 点，普通锁在两种调用上下文里都成立；锁序固定为先 WUM 自己的
+ * updateMutex、后本锁，本下载器只持本锁，不存在反序。
+ */
+internal val gramFileInstallLock = java.util.concurrent.locks.ReentrantLock()
 
 object GramModelDownloader {
     private const val BUFFER_SIZE = 32 * 1024
@@ -94,10 +107,23 @@ object GramModelDownloader {
 
         // 不先删 target 再 rename：.part 与 target 同目录，rename 本身即
         // 原子覆盖，先删会打开「旧模型已删、新模型未就位」的空窗，中途
-        // 被杀将无模型可用（与 WanxiangUpdateManager 语法模型落盘同款规避）
-        check(partial.renameTo(target)) { "Failed to finalize ngram model: ${target.absolutePath}" }
-        // rename 后 fsync 目录，让这次替换在断电后依然成立
-        syncDirectory(target.parentFile)
+        // 被杀将无模型可用（与 WanxiangUpdateManager 语法模型落盘同款规避）。
+        // rename 在跨下载器安装锁内执行（见 gramFileInstallLock）：与
+        // WUM 的语法模型落盘/回滚互斥，避免互相覆盖与记录错位。
+        // rename 失败按下载失败处理（记日志、清半成品、返回 false），
+        // 不再抛未捕获异常穿透到调用方——旧实现 check() 在任何 try
+        // 之外，失败即崩进程且调用方的下载中标志永不复位
+        val renamed = gramFileInstallLock.withLock {
+            val ok = partial.renameTo(target)
+            // rename 后 fsync 目录，让这次替换在断电后依然成立
+            if (ok) syncDirectory(target.parentFile)
+            ok
+        }
+        if (!renamed) {
+            Timber.w("Failed to finalize ngram model: %s", target.absolutePath)
+            partial.delete()
+            return@withContext false
+        }
         target.isFile && target.length() > 0L
     }
 
