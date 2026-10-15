@@ -98,11 +98,23 @@ class SpeechRecognitionService : Service() {
         /** 会话被丢弃（CANCEL）：解码协程丢弃队列静默退出，不发 FINAL */
         @Volatile
         var cancelled: Boolean = false
+
+        /** 队列满时丢弃的块数：DONE 时顺带标记回客户端打点（本轮不做用户提示） */
+        val droppedBlocks = java.util.concurrent.atomic.AtomicInteger(0)
     }
 
     /** 当前推流会话（无会话时为 null）；写入在 audioLock 内，读取可直接读 */
     @Volatile
     private var pushSession: PushSession? = null
+
+    /**
+     * 被新会话换下、但旧解码协程仍在排空收尾的流：START 换流时不立即
+     * 释放它——立即释放会让旧协程收尾解码的身份复检失败、FINAL 尾段
+     * 整段丢失（连按丢句）；改记在此处，旧协程仍可拿它喂完余量、出
+     * FINAL，最后在自己的 finally 里补释放。
+     */
+    @Volatile
+    private var deferredReleaseStream: OnlineStream? = null
 
     /**
      * STOP 先于会话建立（引擎初始化中）到达的标记：初始化完成后据此给
@@ -226,10 +238,22 @@ class SpeechRecognitionService : Service() {
                                 lastEmitUptimeMs = 0L
                                 // 换流必须释放旧流：正常路径旧流由上个会话协程按
                                 // 身份校验释放，但中止路径会留下孤儿 native stream，
-                                // 无人释放只能等进程死亡
+                                // 无人释放只能等进程死亡。例外：旧会话正在排空
+                                // 收尾（已 STOP、未取消）时不立即释放——旧协程
+                                // 还要用它解码余量并出 FINAL，立即释放会让其
+                                // 身份复检失败、尾段整段丢失；改记延迟释放，
+                                // 由旧协程在 finally 里补放（见 deferredReleaseStream）
                                 val oldStream = streamRef.getAndSet(newStream)
                                 if (oldStream != null && oldStream !== newStream) {
-                                    oldStream.runCatching { release() }
+                                    val oldSession = pushSession
+                                    if (oldSession != null &&
+                                        oldSession.endOfStream &&
+                                        !oldSession.cancelled
+                                    ) {
+                                        deferredReleaseStream = oldStream
+                                    } else {
+                                        oldStream.runCatching { release() }
+                                    }
                                 }
                                 // 停止标记在发布前锁内现读：STOP 在初始
                                 // 化期间（含等锁期间）已到达时，队列预置
@@ -286,8 +310,10 @@ class SpeechRecognitionService : Service() {
                     }.getOrNull() ?: return@Callback true
                     if (!session.queue.offer(block)) {
                         // 队列满（客户端领先解码约 60s）：丢新块保会话，
-                        // 缺这一块只影响这一小段识别，不让会话闩死
-                        Log.w("SpeechSvc", "Audio queue full; dropping chunk")
+                        // 缺这一块只影响这一小段识别，不让会话闩死；
+                        // 丢块计数随本会话 DONE 顺带回客户端打点
+                        val dropped = session.droppedBlocks.incrementAndGet()
+                        Log.w("SpeechSvc", "Audio queue full; dropping chunk (dropped=$dropped)")
                     }
                 }
 
@@ -398,19 +424,37 @@ class SpeechRecognitionService : Service() {
             scope.cancel()
             synchronized(audioLock) {
                 streamRef.getAndSet(null)?.runCatching { release() }
+                // 延迟释放的流若还没等到旧协程补放（join 超时等），在此兜底
+                deferredReleaseStream?.runCatching { release() }
+                deferredReleaseStream = null
                 recognizerRef.getAndSet(null)?.runCatching { release() }
             }
         }, "speech-destroy-cleanup").apply { isDaemon = true }.start()
     }
+
+    /**
+     * 流是否仍可安全解码：是当前流，或是被新会话换下、但延迟释放给
+     * 本协程排空收尾的流（见 [deferredReleaseStream]）。两者都不是，
+     * 说明流已被释放，绝不能再碰 native 对象。
+     */
+    private fun isStreamUsable(myStream: OnlineStream): Boolean =
+        streamRef.get() === myStream || deferredReleaseStream === myStream
 
     private fun sendClient(
         what: Int,
         text: String? = null,
         amplitude: Float = 0f,
         gen: Int = sessionClientGen,
+        audioDropped: Boolean = false,
     ) {
         val messenger = clientMessenger ?: return
-        val ok = runCatching { messenger.send(SpeechIpc.message(what, text, amplitude, gen)) }
+        val msg = SpeechIpc.message(what, text, amplitude, gen)
+        if (audioDropped) {
+            // DONE 带代次时 message() 必已挂 data；无载荷的防御情形在此补建
+            val data = msg.data ?: Bundle().also { msg.data = it }
+            data.putBoolean(SpeechIpc.KEY_AUDIO_DROPPED, true)
+        }
+        val ok = runCatching { messenger.send(msg) }
         if (ok.isFailure) Log.e("SpeechSvc", "sendClient failed what=$what", ok.exceptionOrNull())
     }
 
@@ -657,7 +701,7 @@ class SpeechRecognitionService : Service() {
                     // 已被换走就放弃收尾解码：旧会话结果丢弃是正确语义
                     synchronized(audioLock) {
                         val engine = recognizerRef.get()
-                        if (engine != null && streamRef.get() === myStream) {
+                        if (engine != null && isStreamUsable(myStream)) {
                             try {
                                 val tail = FloatArray(
                                     SpeechIpc.SAMPLE_RATE * FINAL_TAIL_PADDING_MS / 1000
@@ -680,7 +724,11 @@ class SpeechRecognitionService : Service() {
                             }
                         }
                     }
-                    sendClient(SpeechIpc.MSG_DONE, gen = myClientGen)
+                    sendClient(
+                        SpeechIpc.MSG_DONE,
+                        gen = myClientGen,
+                        audioDropped = session.droppedBlocks.get() > 0,
+                    )
                 }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
@@ -698,6 +746,10 @@ class SpeechRecognitionService : Service() {
                     // 只释放本会话的 stream；新会话已换上新 stream 时不能误放
                     if (streamRef.get() === myStream) {
                         streamRef.set(null)
+                        myStream.runCatching { release() }
+                    } else if (deferredReleaseStream === myStream) {
+                        // 换流时被延迟释放的本会话流在此补放（见换流处）
+                        deferredReleaseStream = null
                         myStream.runCatching { release() }
                     }
                 }
@@ -737,8 +789,10 @@ class SpeechRecognitionService : Service() {
             synchronized(audioLock) {
                 val engine = recognizerRef.get()
                 // 与收尾段同款身份复检：stream 已被新会话换走并释放时
-                // 本片直接丢弃，不碰已释放的 native 对象
-                if (engine != null && streamRef.get() === myStream) {
+                // 本片直接丢弃，不碰已释放的 native 对象；被换下但
+                // 延迟释放给本协程排空的流仍可喂（余量要解码完才
+                // 能出完整的 FINAL）
+                if (engine != null && isStreamUsable(myStream)) {
                     myStream.acceptWaveform(
                         if (n == floatChunk.size) floatChunk
                         else floatChunk.copyOf(n),

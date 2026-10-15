@@ -94,7 +94,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         private const val PRUNE_CHECK_INTERVAL = 200
     }
 
-    /** 只在 jobs 串行通道内读写，无需同步。 */
+    /** 只在 [preferDbScope] 的串行 IO 通道内读写，无需同步。 */
     private var upsertsSincePruneCheck = 0
     private data class EngineState(
         var initialized: Boolean = false,
@@ -108,7 +108,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // AtomicInteger，免去每处取值转换）
         val candidateRequestId: java.util.concurrent.atomic.AtomicLong =
             java.util.concurrent.atomic.AtomicLong(0L),
-        var latestCandidateRequestId: Long = 0L,
+        // 「最新代次」的回写（还原入口/失效路径在 Default 线程）与
+        // 读取（reduce/jobs 线程）跨线程交接：普通 Long 回写是单次
+        // 写、无原子性/可见性保证，与自增源之间极端时序下可能读到
+        // 旧值、让最新代次看起来「回退」而丢掉最新一批候选。与
+        // candidateRequestId 同口径用 AtomicLong，set/get 收口
+        val latestCandidateRequestId: java.util.concurrent.atomic.AtomicLong =
+            java.util.concurrent.atomic.AtomicLong(0L),
         val predictionRequestId: java.util.concurrent.atomic.AtomicLong =
             java.util.concurrent.atomic.AtomicLong(0L),
         var latestPredictionRequestId: Long = 0L,
@@ -116,6 +122,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private sealed interface Action {
         data class ProcessKey(val service: InputMethodService, val key: KeyEvent) : Action
+
+        /**
+         * 状态键（空格/回车/退格）的二次分发：分类在 [processKeyInternal]
+         * 完成，但真正入 jobs 的动作推迟到 reduce 处理本 Action 时才做。
+         * 普通键经 Action.Behavior 绕 actions 一圈后才在 reduce 里入
+         * jobs，状态键若在分类当时直接 sendJob，就会插到排在前面的
+         * 普通键之前（积压时空格先于字母被处理）。两路都在 reduce 的
+         * 同一串行点入队，按键到达顺序才等于 jobs 执行顺序。
+         */
+        data class StatefulKey(val key: KeyEvent.CodeEvent) : Action
         data class RimeMessage(val message: com.jobeen.ime.engine.rime.core.RimeMessage<*>) :
             Action
 
@@ -147,6 +163,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private val daemon by lazy { RimeDaemon }
     private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+
+    /**
+     * 选词偏好 DB 写专用通道：upsert/裁剪是纯 Room IO，不碰 Rime
+     * 状态，此前混在 jobs 串行队列里，慢盘或裁剪尖峰会把排在后面
+     * 的按键 job 一并堵住。独立出来后用 limitedParallelism(1) 保住
+     * 串行语义：多次 upsert 的相对顺序与 [upsertsSincePruneCheck]
+     * 的单线程计数假设都与原先在 jobs 内时一致。
+     */
+    private val preferDbScope by lazy {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO.limitedParallelism(1))
+    }
     // 两条队列都有界（旧实现 UNLIMITED）：正常深度个位数，容量只为异常
     // 生产者（引擎通知风暴、长任务堵住消费端）兜底防无限堆积。溢出策略
     // 分两边：jobs 全是控制任务，走 sendJob/awaitJob 的异步补投、永不丢；
@@ -317,6 +344,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         actions.close()
         jobs.close()
         scope.cancel()
+        preferDbScope.cancel()
         predictionManager?.destroy()
         daemon.destroySession(javaClass.name)
     }
@@ -340,9 +368,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is KeyEvent.CodeEvent -> {
                 when (key.keyCode) {
                     // 空格/回车/退格的去向取决于执行时点的实时组字，
-                    // 只能留在 job 内串行判定（见 sendStatefulKeyJob）
+                    // 只能留在 job 内串行判定（见 sendStatefulKeyJob）；
+                    // 但入 job 的动作本身经 Action 二次分发，与普通键
+                    // 的 Behavior 在 reduce 同一点入队，避免状态键凭
+                    // 直达 sendJob 插到在途普通键之前（见 StatefulKey）
                     KEYCODE_SPACE, KEYCODE_ENTER, KEYCODE_DEL ->
-                        sendStatefulKeyJob(key)
+                        dispatchAction(Action.StatefulKey(key))
 
                     KEYCODE_APOSTROPHE -> {
                         // 分隔符键在分类 job 内同样是无条件转发
@@ -364,13 +395,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     /**
-     * 空格/回车/退格的分类 job：三者的去向都取决于 jobs 串行执行
-     * 时点的实时组字（getRawInput），不能在分发侧凭组字缓存预判——
-     * compositionCached.preedit 是展示串而非原始输入，且分发时点上
-     * 先行按键的 job 可能尚未执行、缓存滞后于在途按键，预判会重蹈
-     * 退格注释里跨队列按旧状态误判的覆辙。空格/回车在空组字时直通
-     * 文本、非空时与普通键同样转 InputKey；退格的判断与处理更必须
-     * 同 job 完成（见 handleBackspaceInJob）。
+     * 空格/回车/退格的分类 job（经 Action.StatefulKey 在 reduce 里
+     * 调用，入队点与普通键的 Behavior 对齐，见 StatefulKey）：三者
+     * 的去向都取决于 jobs 串行执行时点的实时组字（getRawInput），
+     * 不能在分发侧凭组字缓存预判——compositionCached.preedit 是
+     * 展示串而非原始输入，且分发时点上先行按键的 job 可能尚未
+     * 执行、缓存滞后于在途按键，预判会重蹈退格注释里跨队列按旧
+     * 状态误判的覆辙。空格/回车在空组字时直通文本、非空时与普通
+     * 键同样转 InputKey；退格的判断与处理更必须同 job 完成
+     * （见 handleBackspaceInJob）。
      */
     private fun sendStatefulKeyJob(key: KeyEvent.CodeEvent) {
         sendJob {
@@ -428,19 +461,24 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // Prediction candidates bypass Rime and must not arm this flag.
         state.suppressNextEmptyCandidates = true
         if (!noLearn) {
-            sendJob {
-                val ctx = context ?: return@sendJob
-                val dao = AppDatabase.getInstance(ctx).candidatePreferDao()
-                // 隐私：不再把光标前文存入 context 列——该列从未被排序/重排读取，
-                // 却会随云备份与 .jbk 备份带出用户输入片段。
-                dao.upsert(candidate.text, "")
-                CandidatePreferCache.noteUpsert(candidate.text)
-                // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载（保持两者一致）
-                if (++upsertsSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
-                    upsertsSincePruneCheck = 0
-                    if (dao.count() > PREFER_LIMIT) {
-                        dao.pruneToLimit(PREFER_LIMIT)
-                        CandidatePreferCache.invalidate()
+            // 偏好写走独立串行 IO 通道（见 preferDbScope），不再占
+            // jobs 队列堵后续按键；noteUpsert 是内存操作、与 DB 写
+            // 配对放在同一块内，保持"DB 成功后才更新内存"的原口径
+            val ctx = context
+            if (ctx != null) {
+                preferDbScope.launch {
+                    val dao = AppDatabase.getInstance(ctx).candidatePreferDao()
+                    // 隐私：不再把光标前文存入 context 列——该列从未被排序/重排读取，
+                    // 却会随云备份与 .jbk 备份带出用户输入片段。
+                    dao.upsert(candidate.text, "")
+                    CandidatePreferCache.noteUpsert(candidate.text)
+                    // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载（保持两者一致）
+                    if (++upsertsSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
+                        upsertsSincePruneCheck = 0
+                        if (dao.count() > PREFER_LIMIT) {
+                            dao.pruneToLimit(PREFER_LIMIT)
+                            CandidatePreferCache.invalidate()
+                        }
                     }
                 }
             }
@@ -524,11 +562,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 有保存动作即排序表非空，失效 restoreCandidates 的判空缓存
         sortingTableEmpty = false
         sendJob {
-            // 排序记录按当前组字串键保存（job 内即 RimeApi 作用域，
-            // compositionCached 是与组字产生同步赋值的缓存）；
-            // 无组字（预测态）时键为空，save 内部据此跳过
+            // 排序记录按当前组字串＋方案键保存（job 内即 RimeApi
+            // 作用域，compositionCached 是与组字产生同步赋值的缓存，
+            // currentSchema 与候选同源）；无组字（预测态）时键为空，
+            // save 内部据此跳过
             CandidateSortingManager(db).save(
-                candidates, candidateSortingKey(compositionCached.preedit.orEmpty())
+                candidates,
+                candidateSortingKey(
+                    compositionCached.preedit.orEmpty(), currentSchema().schemaId
+                )
             )
         }
     }
@@ -571,6 +613,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
                 processKeyInternal(action.key)
             }
+
+            is Action.StatefulKey -> sendStatefulKeyJob(action.key)
 
             is Action.RimeMessage -> handleRimeMessage(action.message)
             is Action.Behavior -> flowBehavior(action.behavior)
@@ -657,7 +701,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
 
             is Action.CandidatesReady -> {
-                if (action.requestId == state.latestCandidateRequestId) {
+                if (action.requestId == state.latestCandidateRequestId.get()) {
                     emitMessage(action.message)
                 }
             }
@@ -1010,7 +1054,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         if (total >= 0 && start >= total) return
         if (candidateLoadMoreInFlight) return
         candidateLoadMoreInFlight = true
-        val batch = state.latestCandidateRequestId
+        val batch = state.latestCandidateRequestId.get()
         // 封顶：每批最多累计取 CANDIDATE_BATCH_CAP 个候选。词库深处是
         // 设备字体无字形的扩展区生僻字（渲染为方框、打出也无处可用），
         // 200 已覆盖全部真实输入需求，不再往深处加载
@@ -1032,7 +1076,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     return@sendJob
                 }
                 val page = getCandidates(start, limit)
-                if (state.latestCandidateRequestId != batch) return@sendJob
+                if (state.latestCandidateRequestId.get() != batch) return@sendJob
                 val raw = page.size
                 if (raw == 0) {
                     candidateBatchTotal = start
@@ -1069,7 +1113,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private fun restoreCandidates(msg: EngineMessage.Candidates) {
         val requestId = state.candidateRequestId.incrementAndGet()
-        state.latestCandidateRequestId = requestId
+        state.latestCandidateRequestId.set(requestId)
         candidateRestoreJob?.cancel()
         candidateRestoreJob = scope.launch {
             // 过滤用户长按删除的词（Rime 墓碑不隐藏系统词，App 层过滤）；
@@ -1090,7 +1134,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 默认开启，拖拽排序存进数据库也永不生效、拖完必回原位）。
                 // 排序表为空时（绝大多数用户从未保存过）跳过查询：旧实现
                 // 每键都算一次指纹 + 查一次 Room，结果注定为 null
-                val savedIds = if (sortingTableEmpty) {
+                val savedOrder = if (sortingTableEmpty) {
                     null
                 } else {
                     val mgr = CandidateSortingManager(db)
@@ -1098,15 +1142,29 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         sortingTableEmpty = true
                         null
                     } else {
-                        // 按本批候选所属的组字串查保存顺序（与保存端
-                        // 同源同值）；保存的序号序列可套到本批子集上。
-                        // 组字缓存只在 RimeApi 作用域内可读，经 awaitJob
-                        // 取一次——仅排序表非空（用户真拖过）时才走这里，
-                        // 从未拖过的用户被上面的判空缓存短路、热路径无感
-                        val key = candidateSortingKey(
-                            awaitJob("") { compositionCached.preedit.orEmpty() }
-                        )
-                        mgr.load(key)
+                        // 按本批候选所属的组字串＋方案查保存顺序（与保存
+                        // 端同源同值）；保存的文本哈希序列可套到本批
+                        // 子集上。组字缓存与当前方案只在 RimeApi 作用域
+                        // 内可读，经 awaitJob 一次取齐——仅排序表非空
+                        // （用户真拖过）时才走这里，从未拖过的用户被
+                        // 上面的判空缓存短路、热路径无感
+                        val key = awaitJob("") {
+                            candidateSortingKey(
+                                compositionCached.preedit.orEmpty(),
+                                currentSchema().schemaId,
+                            )
+                        }
+                        // awaitJob 与按键共用 jobs FIFO：它排队期间，
+                        // 后续按键可能已把组字推进到下一批，此时读到的
+                        // 组字属于新组字、其保存顺序套到本批候选上即
+                        // 错套。故落地前验本批代次：本批已被更新代次
+                        // 取代（新批已开始还原）则弃用这份保存顺序，
+                        // 不让它借本批的落地通道把新组字的顺序套进来
+                        if (state.latestCandidateRequestId.get() != requestId) {
+                            null
+                        } else {
+                            mgr.load(key)
+                        }
                     }
                 }
                 val rerankEnabled = CandidateManager.isRerankEnabled(ctx)
@@ -1124,8 +1182,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     actions.send(
                         Action.CandidatesReady(
                             requestId, EngineMessage.Candidates(
-                                if (savedIds.isNullOrEmpty()) baseList
-                                else applySavedCandidateOrder(baseList, savedIds),
+                                if (savedOrder.isNullOrEmpty()) baseList
+                                else applySavedCandidateOrder(baseList, savedOrder),
                                 0, 0, total = filteredMsg.total
                             )
                         )
@@ -1133,9 +1191,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 } else {
                     actions.send(
                         Action.CandidatesReady(
-                            requestId, if (savedIds.isNullOrEmpty()) filteredMsg
+                            requestId, if (savedOrder.isNullOrEmpty()) filteredMsg
                             else EngineMessage.Candidates(
-                                applySavedCandidateOrder(filteredMsg.list, savedIds), 0, 0,
+                                applySavedCandidateOrder(filteredMsg.list, savedOrder), 0, 0,
                                 total = filteredMsg.total
                             )
                         )
@@ -1154,7 +1212,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private fun invalidatePendingCandidates() {
         candidateRestoreJob?.cancel()
         candidateRestoreJob = null
-        state.latestCandidateRequestId = state.candidateRequestId.incrementAndGet()
+        state.latestCandidateRequestId.set(state.candidateRequestId.incrementAndGet())
     }
 
     /** 取消在途的预测并推进代次，避免迟到预测覆盖新候选或在清空后重现。 */

@@ -148,11 +148,18 @@ class InputBoxLayerView(
 
     private var changeListener: (() -> Unit)? = null
 
+    // 文本缓存：在 buffer 变更监听里随变更刷新，onDraw 只读缓存——
+    // buffer.text 每次读取都整串拷贝一份，光标闪烁每 500ms 重绘一帧
+    // 就拷两次，长文本下是纯浪费（M5）
+    private var cachedText: String = ""
+
     fun bind(buffer: ImeInputConnection) {
         // 先移除旧监听器，避免多次 bind 导致监听器累积
         changeListener?.let { this.buffer?.removeOnChangeListener(it) }
         this.buffer = buffer
+        cachedText = buffer.text
         val listener: () -> Unit = {
+            cachedText = buffer.text
             cursorOn = true
             userScrolled = false
             invalidate()
@@ -249,7 +256,7 @@ class InputBoxLayerView(
         canvas.drawRoundRect(boxRect, dp(10f), dp(10f), boxBgPaint)
 
         // 输入框内右侧圆形完成按钮（偏下）
-        val hasText = (buffer?.text ?: "").isNotEmpty()
+        val hasText = cachedText.isNotEmpty()
         val cx = boxRight - dp(12f) - btnD / 2f
         val enterCy = boxBottom - dp(14f) - btnD / 2f
         enterRect.set(cx - btnD / 2f, enterCy - btnD / 2f, cx + btnD / 2f, enterCy + btnD / 2f)
@@ -269,7 +276,7 @@ class InputBoxLayerView(
         val textRegion = textRegionScratch.apply { set(textLeft, textTop, textRight, textBottom) }
         textAreaRect.set(textRegion)
 
-        val text = buffer?.text ?: ""
+        val text = cachedText
         val cursor = (buffer?.cursor ?: text.length).coerceIn(0, text.length)
 
         val lineH = 17f * density * 1.25f
@@ -502,8 +509,13 @@ class InputBoxLayerView(
             content,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
-            true,
+            // 不抢焦点：菜单项只有点击、不需要输入焦点，focusable=true
+            // 的弹窗挂在输入法窗口层里可能干扰宿主焦点（L4）；改不可
+            // 获焦后靠 outsideTouchable 支持点外部关闭（背景已在下方
+            // setBackgroundDrawable，外点关闭链路完整）
+            false,
         ).apply {
+            isOutsideTouchable = true
             elevation = dp(6f)
             setBackgroundDrawable(GradientDrawable().apply {
                 setColor(this@InputBoxLayerView.popupBackgroundColor)

@@ -72,6 +72,16 @@ object BackupManager {
     private const val KEY_BITS = 256
     private const val GCM_TAG_BITS = 128
     private const val WEBDAV_PREFS = "user_dict_sync"
+    private const val WEBDAV_PASSWORD_KEY = "webdav_password"
+
+    /**
+     * 设备本地状态偏好，不随备份还原回写：内容是本机下载记录
+     * （模型 identity、方案/模型更新状态），随备份来到新设备会与
+     * 本机实际文件脱钩（记录称已装而文件不在，检查误报「已最新」）。
+     * 导出端照常采集（无害），只在写入段按文件名跳过——这样用户
+     * 手上已有的旧备份包还原时同样不会回写这两份。
+     */
+    private val DEVICE_LOCAL_PREFS = setOf("speech_model_prefs", "wanxiang_update")
 
     /** 还原前加密快照在 filesDir 的文件名：进程被杀后凭它+口令回滚 */
     private const val RESTORE_SNAPSHOT_NAME = "restore-snapshot.jbk"
@@ -128,7 +138,7 @@ object BackupManager {
             prefsJson.put(name, entries)
         }
         // WebDAV 密码：从 prefs 副本删除（密文换设备解不开），改走独立字段
-        prefsJson.optJSONObject(WEBDAV_PREFS)?.remove("webdav_password")
+        prefsJson.optJSONObject(WEBDAV_PREFS)?.remove(WEBDAV_PASSWORD_KEY)
         root.put("webdavPassword", UserDictPrefs.password)
         root.put("prefs", prefsJson)
 
@@ -455,6 +465,17 @@ object BackupManager {
                 }
                 prefs[name] = map
             }
+            // 口令不走 prefs 通道：采集时已从 prefs 副本剔除该键、只走
+            // webdavPassword 专用字段（写入段非空才回写）。但旧备份的
+            // prefs 里可能还带着这个键（空值、或另一台设备的密文），
+            // 写入段整表覆盖先 clear() 再写入，会连本机口令一起冲掉
+            // ——备份口令为空时本机口令就此丢失。一律先从 prefs 剔除，
+            // 任何备份都不能经 prefs 通道写入口令
+            prefs[WEBDAV_PREFS]?.let { webdav ->
+                if (webdav.containsKey(WEBDAV_PASSWORD_KEY)) {
+                    prefs[WEBDAV_PREFS] = webdav - WEBDAV_PASSWORD_KEY
+                }
+            }
             // 还原不得带入风险/过期的 WebDAV 状态：
             // - allowHttp：备份包不应能替用户打开明文传输开关；
             // - sync_etag_* / 上次同步时间：属于另一台设备的同步基准，沿用会让冲突检测失真。
@@ -480,6 +501,14 @@ object BackupManager {
                 val refilled = LinkedHashMap(filtered)
                 for (key in listOf("webdav_server", "webdav_allow_http")) {
                     local[key]?.let { refilled[key] = it }
+                }
+                // 口令同口径：备份口令为空（在未配置 WebDAV、或口令读
+                // 不出的设备上做的备份）时，整表覆盖不得抹掉本机口令
+                // ——用本机现存值原样回填（落盘密文形态，与上面两个键
+                // 同为 .all 读到的原值）。备份口令非空时不回填，由
+                // 写入段经专用通道以备份口令重新加密落盘
+                if (root.optString("webdavPassword", "").isEmpty()) {
+                    local[WEBDAV_PASSWORD_KEY]?.let { refilled[WEBDAV_PASSWORD_KEY] = it }
                 }
                 prefs[WEBDAV_PREFS] = refilled
             }
@@ -618,6 +647,10 @@ object BackupManager {
 
         // —— prefs 整表覆盖（先清后写，与备份时点的一致状态）
         for ((name, entries) in parsed.prefs) {
+            // 设备本地状态偏好跳过回写（见 DEVICE_LOCAL_PREFS）：备份里
+            // 的下载记录与本机实际文件无关，整表覆盖回去会让更新检查
+            // 拿别台设备的记录误判本机状态
+            if (name in DEVICE_LOCAL_PREFS) continue
             val editor = appContext.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
             editor.clear()
             for ((key, value) in entries) putPrefValue(editor, key, value)
@@ -634,6 +667,22 @@ object BackupManager {
         // 同步会无声失效
         if (parsed.webdavPassword.isNotEmpty()) {
             UserDictPrefs.password = parsed.webdavPassword
+            // 口令 setter 走 apply() 异步落盘，而还原成功后随即安排
+            // 进程重启（600ms 后 killProcess），异步写盘有赶不上的
+            // 丢写窗口：把该 prefs 文件的当前内存状态（含刚写入的
+            // 口令密文）整体用 commit() 同步重写一次封住窗口。clear
+            // 保证必然触发实际写盘（值未变的 put 可能被编辑器判定
+            // 无变更而跳过）。同步提交失败同上方口径判还原失败
+            val webdavPrefs = appContext
+                .getSharedPreferences(WEBDAV_PREFS, Context.MODE_PRIVATE)
+            val flush = webdavPrefs.edit()
+            flush.clear()
+            for ((key, value) in webdavPrefs.all) {
+                if (value != null) putPrefValue(flush, key, value)
+            }
+            if (!flush.commit()) {
+                throw BackupException("设置写入失败（$WEBDAV_PREFS），还原中止")
+            }
         }
 
         // 引擎侧候选偏好有内存快照，还原后显式失效，不依赖随后的杀进程重启

@@ -150,6 +150,7 @@
     <string name="schema_update_no_gram">未下载</string>
     <string name="schema_update_latest">已是最新版本</string>
     <string name="schema_update_available">发现新版本</string>
+    <string name="schema_update_gram_only">语法模型有新版本</string>
     <string name="schema_update_start">开始更新</string>
     <string name="schema_update_downloading_schema">正在下载方案包…</string>
     <string name="schema_update_extracting">正在更新词库…</string>

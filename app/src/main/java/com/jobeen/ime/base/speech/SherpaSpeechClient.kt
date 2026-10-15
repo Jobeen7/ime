@@ -50,7 +50,16 @@ object SherpaSpeechClient {
     // composingText 里的最新文本就是最终结果）。
     private val awaitingDone = AtomicBoolean(false)
     private val doneTimeoutHandler = Handler(Looper.getMainLooper())
-    private const val DONE_TIMEOUT_MS = 3000L
+
+    // DONE 超时不再固定一刀切（D4）：短句 3 秒足够，长句在低端机上
+    // 服务端还要排空队列＋收尾解码，固定 3 秒会把会话按未解码完的
+    // partial 截断结算。改为基础值＋按本会话保留块数线性预留：基础
+    // 3s 覆盖回信往返与收尾固定开销；每块 40ms 音频按最坏约半实时
+    // 的解码速率折算 20ms/块；封顶 10s 防服务端真死时用户久等——
+    // 超时后按已有文本强制结算，已识别部分不丢。
+    private const val DONE_TIMEOUT_BASE_MS = 3000L
+    private const val DONE_TIMEOUT_PER_BLOCK_MS = 20L
+    private const val DONE_TIMEOUT_MAX_MS = 10_000L
     private val doneTimeoutRunnable = Runnable {
         if (!awaitingDone.compareAndSet(true, false)) return@Runnable
         // 超时期间用户已开始新会话：这声超时属于旧会话，不得结算新会话
@@ -59,10 +68,16 @@ object SherpaSpeechClient {
         finishSession()
     }
 
+    private fun doneTimeoutMs(): Long {
+        val blocks = synchronized(audioSendLock) { sessionAudio.size }
+        return (DONE_TIMEOUT_BASE_MS + blocks * DONE_TIMEOUT_PER_BLOCK_MS)
+            .coerceAtMost(DONE_TIMEOUT_MAX_MS)
+    }
+
     private fun armDoneTimeout() {
         awaitingDone.set(true)
         doneTimeoutHandler.removeCallbacks(doneTimeoutRunnable)
-        doneTimeoutHandler.postDelayed(doneTimeoutRunnable, DONE_TIMEOUT_MS)
+        doneTimeoutHandler.postDelayed(doneTimeoutRunnable, doneTimeoutMs())
     }
 
     private fun disarmDoneTimeout() {
@@ -121,7 +136,14 @@ object SherpaSpeechClient {
                 // 代际校验：回信代次与当前会话不一致（旧会话迟到/会话已收尾）直接丢弃。
                 // gen==0 是对端未带代次的兼容情形（同版本发布，不应发生），放行保底。
                 if (gen != 0 && gen != activeGen) {
-                    Timber.d("SpeechCli drop stale msg what=%d gen=%d active=%d", msg.what, gen, activeGen)
+                    // 唯一例外：上一代在排空期被新会话接管结算（快照先行
+                    // 上屏）后迟到的 FINAL——其增量尾段经对账补上，不
+                    // 整段丢弃（见 tryReconcileLateFinal）；其余一律丢弃
+                    if (msg.what == SpeechIpc.MSG_FINAL && gen == lateFinalGen) {
+                        tryReconcileLateFinal(gen, msg.data?.getString(SpeechIpc.KEY_TEXT))
+                    } else {
+                        Timber.d("SpeechCli drop stale msg what=%d gen=%d active=%d", msg.what, gen, activeGen)
+                    }
                     return@Handler true
                 }
                 when (msg.what) {
@@ -131,7 +153,9 @@ object SherpaSpeechClient {
                     // MSG_AMPLITUDE 已废除：音量改由本地录音直接供给
                     // （见 onRecorderAmplitude），服务端不再发
                     SpeechIpc.MSG_ERROR -> onError()
-                    SpeechIpc.MSG_DONE -> onDone()
+                    SpeechIpc.MSG_DONE -> onDone(
+                        msg.data?.getBoolean(SpeechIpc.KEY_AUDIO_DROPPED, false) ?: false
+                    )
                 }
                 true
             },
@@ -175,10 +199,15 @@ object SherpaSpeechClient {
                 for (index in actions.indices) {
                     val what: Int = actions[index].first
                     val gen: Int = actions[index].second
-                    // 待绑定的 START 若在绑定完成前已被松手/取消，绝不能重放：
+                    // 待绑定的 START 若在绑定完成前已被丢弃，绝不能重放：
                     // 否则客户端以为没在录，服务端却开始一段停不下来的幽灵录音。
                     // 代次也必须仍是当前会话：旧会话的 START 更不能重放。
-                    if (what == SpeechIpc.MSG_START && (!holding.get() || gen != activeGen)) {
+                    // 例外：松手先于绑定完成时本会话记了 pendingFinish
+                    //（等就绪结算）——此时 START 必须照常重放，READY 后
+                    // 由其 pendingFinish 分支整段结算（见 stopHoldSession）
+                    if (what == SpeechIpc.MSG_START &&
+                        (gen != activeGen || (!holding.get() && !pendingFinish))
+                    ) {
                         continue
                     }
                     // 探针同理只重放仍有效的：会话探针须仍是当前代次，
@@ -424,6 +453,8 @@ object SherpaSpeechClient {
     private const val START_DEADLINE_MS = 12_000L
     private const val START_FAILURE_HINT = "语音启动失败，请重试"
     private const val RECORDER_FAILURE_HINT = "录音异常，请检查麦克风"
+    private const val AUDIO_TOO_LONG_HINT = "录音过长，已识别已录部分"
+    private const val NO_SOUND_HINT = "未检测到声音，请检查麦克风"
 
     /** 本会话是否已收到 RECORDING_STARTED（死亡监听据此分流启动途中/录音中） */
     @Volatile
@@ -543,6 +574,28 @@ object SherpaSpeechClient {
     private val sessionAudio = ArrayDeque<ByteArray>()
     private var sendOffset = 0
 
+    // 音频发送统一走专用单线程执行器（4.1）：READY 时的全量补发可达
+    // 数千块，在主线程同步跑完会冻住界面、长时间霸占 binder 通道；
+    // 主线程只做状态切换，实际发送由此线程串行完成。发送仍经
+    // audioSendLock 与采集入队串行化，偏移单调、块序不变。
+    private val audioFlushExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "speech-audio-flush").apply { isDaemon = true }
+    }
+
+    /** flush 任务在途标记：合并高频调度（每入队一块都请求一次），任务退出前复查未发量兜底 */
+    private val flushTaskActive = AtomicBoolean(false)
+
+    /**
+     * 待 flush 排空后补发的 STOP 代次（0＝无）：STOP 必须排在全部音频
+     * 之后，由 flush 任务在发送线程内发；登记方（stopHoldSession 的
+     * live 分支）只登记不直发。
+     */
+    @Volatile
+    private var stopAfterFlushGen = 0
+
+    /** 单次持锁连发上限：全量补发分片让出，避免长时间独占发送锁饿死采集入队 */
+    private const val FLUSH_CHUNK_BLOCKS = 50
+
     /** 本代服务端会话已就绪、可收音频（收到 RECORDING_STARTED） */
     @Volatile
     private var sessionLive = false
@@ -574,6 +627,14 @@ object SherpaSpeechClient {
     /** 本地录音首秒内的最大电平（疑似静音流打点用，只记日志不改行为） */
     @Volatile
     private var firstSecondMaxAmp = 0f
+
+    /**
+     * 本地录音全程的最大电平：结算时若恒为 0 即整段零电平（麦克风
+     * 被占用/硬件无声），借失败提示通道给用户明确提示，不再只是
+     * 首秒打点（见 finishSession 的整段静音结算）
+     */
+    @Volatile
+    private var sessionMaxAmp = 0f
 
     @Volatile
     private var audioOverflowed = false
@@ -608,32 +669,83 @@ object SherpaSpeechClient {
         if (tag != activeGen || audioOverflowed) return
         synchronized(audioSendLock) {
             if (sessionAudio.size >= MAX_SESSION_AUDIO_BLOCKS) {
-                // 保留队列到顶：继续录也无从恢复，按可见失败收尾
+                // 保留队列到顶（约 120 秒）：不再整段作废——已录部分
+                // 是好的，按正常松手结算（flush＋STOP 定稿），只把
+                // 提示换成「录音过长」；与采集中途失败的结算口径一致
                 audioOverflowed = true
                 Timber.e(
-                    "voice-start audio queue overflow gen=%d blocks=%d",
+                    "voice-start audio queue overflow gen=%d blocks=%d; settle recorded part",
                     tag, sessionAudio.size,
                 )
                 mainHandler.post {
-                    if (tag == activeGen && tag != settledGen) cancelSession()
+                    if (tag == activeGen && tag != settledGen) {
+                        startFailureHint = AUDIO_TOO_LONG_HINT
+                        stopHoldSession(discard = false)
+                    }
                 }
                 return
             }
             sessionAudio.addLast(chunk)
             // 已就绪且仍在按住：新块即时续发；未就绪或已松手时只
             // 保留，发送时机由 READY 处理与 stop 路径统一决定（松手
-            // 后残块只由那两条路径 flush，防 STOP 之后再冒出音频）
-            if (sessionLive && holding.get()) flushUnsentLocked(tag)
+            // 后残块只由那两条路径调度，防 STOP 之后再冒出音频）
+            if (sessionLive && holding.get()) scheduleFlush(tag)
         }
     }
 
     /**
-     * 按 sendOffset 顺序推送未发块；调用方须持有 audioSendLock。
-     * 发送失败即停（偏移不前进）：连接恢复后由新 READY 触发重绕续发。
+     * 调度一次后台 flush（见 [audioFlushExecutor]）：已有任务在途时
+     * 直接返回——在途任务会把队列发送到排空为止，新入队的块自然被
+     * 它带走；任务收尾时再按未发量复查兜底，两条合起来不丢调度。
      */
-    private fun flushUnsentLocked(gen: Int) {
-        val messenger = synchronized(connectLock) { speechMessenger } ?: return
-        while (sendOffset < sessionAudio.size) {
+    private fun scheduleFlush(gen: Int) {
+        if (!flushTaskActive.compareAndSet(false, true)) return
+        audioFlushExecutor.execute {
+            try {
+                flushLoop(gen)
+            } finally {
+                flushTaskActive.set(false)
+                // 退出兜底：在途期间新入队的块，其调度请求可能被在途
+                // 标记挡下；退出后队列仍有未发块且会话还活着，补投一轮
+                val hasUnsent = synchronized(audioSendLock) { sendOffset < sessionAudio.size }
+                if (hasUnsent && sessionLive) scheduleFlush(gen)
+            }
+        }
+    }
+
+    /** flush 任务体：分片发送到排空，最后补发登记待发的 STOP。 */
+    private fun flushLoop(gen: Int) {
+        while (true) {
+            val drained = synchronized(audioSendLock) {
+                flushSomeLocked(gen, FLUSH_CHUNK_BLOCKS)
+            }
+            if (drained) break
+            // 分片让出：采集入队等锁的间隙能插进来，不被长补发饿死
+            Thread.yield()
+        }
+        // 排空后补发 STOP：登记方只登记不直发，保证 STOP 不越过尚未
+        // 发出的音频；发哪个代次以登记值为准，不与本任务的代次比较
+        val stopGen = stopAfterFlushGen
+        if (stopGen != 0) {
+            stopAfterFlushGen = 0
+            sendStopNow(stopGen)
+        }
+    }
+
+    /**
+     * 按 sendOffset 顺序推送未发块，单次至多 [maxBlocks] 块；调用方
+     * 须持有 audioSendLock。返回 true 表示本轮到此为止（已排空、或
+     * 代次已变、或无连接、或发送失败已转入自愈），false 表示发满
+     * 一片且仍有未发块。发送失败时偏移不前进：连接恢复后由新 READY
+     * 触发重绕续发。
+     */
+    private fun flushSomeLocked(gen: Int, maxBlocks: Int): Boolean {
+        // 代次已变：队列已属新会话（或已收尾清空），本轮按排空退出；
+        // 新会话的发送由它自己的调度与 READY 重绕接管
+        if (gen != activeGen) return true
+        val messenger = synchronized(connectLock) { speechMessenger } ?: return true
+        var sent = 0
+        while (sendOffset < sessionAudio.size && sent < maxBlocks) {
             val chunk = sessionAudio[sendOffset]
             val msg = SpeechIpc.message(SpeechIpc.MSG_AUDIO, gen = gen, audio = chunk)
             if (runCatching { messenger.send(msg) }.isFailure) {
@@ -642,10 +754,18 @@ object SherpaSpeechClient {
                     gen, sendOffset,
                 )
                 forceDisconnect()
-                return
+                // 发送失败的自愈补绑（D6）：只断开不重绑，会话会对着
+                // 死连接静默空转到松手为止。用一条 LOAD 驱动重绑
+                //（send 在无连接时入队并 postBind）：同进程服务端
+                // 会话还在时新连接就绪后续块直接续发；进程已换新时
+                // 靠 READY 的连接代际重绕全量重发，都能自愈
+                send(SpeechIpc.MSG_LOAD)
+                return true
             }
             sendOffset++
+            sent++
         }
+        return sendOffset >= sessionAudio.size
     }
 
     private fun sendStopNow(gen: Int) {
@@ -677,6 +797,9 @@ object SherpaSpeechClient {
     private fun onRecorderAmplitude(tag: Int, amp: Float) {
         if (tag != activeGen) return
         latestAmplitude = amp
+        // 全程最大电平（结算时判整段静音用）：逐块峰值取大，任一块
+        // 有声即非零，不会误伤正常会话
+        if (amp > sessionMaxAmp) sessionMaxAmp = amp
         // 首秒电平留痕：供启动后 1.1s 的疑似静音检查点比对
         if (SystemClock.uptimeMillis() - sessionStartUptimeMs <= 1000L &&
             amp > firstSecondMaxAmp
@@ -780,23 +903,25 @@ object SherpaSpeechClient {
                     sendCancelNow(sessionGen)
                 }
                 pendingFinish -> {
-                    // 松手先于就绪：先 arm DONE 超时再 flush＋STOP，
-                    // 沿用「先 arm 再发」纪律防极快 DONE 竞态
+                    // 松手先于就绪：先 arm DONE 超时，再登记 STOP 待
+                    // flush 排空后由发送线程补发（纪律同「先 arm 再
+                    // 发」：DONE 可能极快回来，超时必须先就位）
                     pendingFinish = false
                     armDoneTimeout()
-                    flushUnsentLocked(sessionGen)
-                    sendStopNow(sessionGen)
+                    stopAfterFlushGen = sessionGen
+                    scheduleFlush(sessionGen)
                 }
                 connGen != readyConnGen -> {
                     // 新连接上的首个 READY（初次绑定，或 binder 死亡
                     // 复活后的全新服务端会话）：偏移归零、全量重发
+                    //（发送在后台线程分片进行，本处只切状态）
                     readyConnGen = connGen
                     sendOffset = 0
-                    flushUnsentLocked(sessionGen)
+                    scheduleFlush(sessionGen)
                 }
                 else -> {
                     // 同连接内重复 READY：不重绕，只补发未发块
-                    flushUnsentLocked(sessionGen)
+                    scheduleFlush(sessionGen)
                 }
             }
         }
@@ -839,12 +964,68 @@ object SherpaSpeechClient {
         cancelSession()
     }
 
-    private fun onDone() {
+    private fun onDone(audioDropped: Boolean = false) {
         // 松手链时序打点终点：与 stopHoldSession 的 release 打点、
         // 服务端的 STOP/drained 打点同前缀，logcat 时间戳即分段耗时
         Timber.i("voice-stop: DONE received")
+        if (audioDropped) {
+            // 本句解码期间服务端队列曾满、有音频块被丢弃：结果可能
+            // 不完整。本轮只打点留痕，呈现层不做（见服务端计数处）
+            Timber.w("voice-stop: DONE with dropped audio blocks; result may be incomplete")
+        }
         disarmDoneTimeout()
         finishSession()
+    }
+
+    // ── 迟到 FINAL 对账（D3 客户端半） ─────────────────────
+    // 上一代在排空期（已 STOP、DONE 未回）被新会话接管结算时，快照
+    // 文本先行上屏；服务端随后补发的 FINAL 是那句的最终全文，若按
+    // 代次过滤整段丢弃，快照之后多出的增量尾段就丢了。故接管结算
+    // 落屏时把（代次、已落屏的展示文本）记在此处，迟到 FINAL 走
+    // tryReconcileLateFinal 对账补尾。
+
+    /** 待对账的上一代代次（0＝无）；迟到 FINAL 命中即一次性消费 */
+    @Volatile
+    private var lateFinalGen = 0
+
+    /** 待对账时已落屏的展示文本（纠错＋繁简之后、与 FINAL 同口径可比） */
+    @Volatile
+    private var lateFinalLandedText: String? = null
+
+    /**
+     * 迟到 FINAL 对账：把上一代 FINAL 相对快照多出的尾段补到编辑器。
+     * 严门控、任一不合即整段放弃（回落为丢弃，与旧行为一致）：
+     * 新会话须仍在进行且尚未出任何 partial（光标必定位于已落屏段
+     * 之后、组字区未被占用，补尾才不会拼错位置）；FINAL 经同款
+     * 纠错/转换后的展示文本须以已落屏文本为前缀，增量才定义良好。
+     */
+    private fun tryReconcileLateFinal(gen: Int, rawFinal: String?) {
+        val landedText = lateFinalLandedText
+        // 一次性消费：无论对账成败都不再重试
+        lateFinalGen = 0
+        lateFinalLandedText = null
+        if (rawFinal.isNullOrEmpty() || landedText == null) return
+        if (activeGen == 0 || activeGen == gen || sessionHasPartial) return
+        val service = serviceRef?.get() ?: return
+        service.scope?.launch(Dispatchers.Main) {
+            val corrected = withContext(Dispatchers.Default) { correctionStore.correct(rawFinal) }
+            val displayFinal = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
+            // 两次挂起后复验：期间新会话出了 partial 或已收尾，补尾
+            // 位置不再可靠，放弃（与上方入口门控同一口径）
+            if (activeGen == 0 || activeGen == gen || sessionHasPartial) return@launch
+            if (displayFinal == landedText || !displayFinal.startsWith(landedText)) return@launch
+            val increment = displayFinal.drop(landedText.length)
+            if (increment.isEmpty()) return@launch
+            val ic = service.activeInputConnection() ?: return@launch
+            if (!runCatching { ic.commitText(increment, 1) }.getOrDefault(false)) return@launch
+            // 账本同步扩账：已登记的快照段改为最终全文，日后上滑
+            // 撤销仍按整段直删，不会只删掉一半
+            VoiceUndoLedger.amendLastSegment(landedText, displayFinal)
+            Timber.i(
+                "voice-stop: late FINAL reconciled gen=%d increment=%d chars",
+                gen, increment.length,
+            )
+        }
     }
 
     fun isQnnRuntimeSupported(context: Context): Boolean =
@@ -942,6 +1123,10 @@ object SherpaSpeechClient {
         // 新会话开始：上一会话若还留着等 DONE 的超时任务，一并清掉，
         // 防止它在新会话中途误触发 finishSession
         disarmDoneTimeout()
+        // 上一代待就绪结算（pendingFinish）留下的整段保留音频由本代
+        // 接续（D7）：在 settlePreviousSession 清掉待结算标记之前先
+        // 记下，下方音频状态复位时据此不清队列。已丢弃的不接续
+        val inheritRetainedAudio = pendingFinish && !cancelPending
         // 上一会话未结算的待定文本先按快照就地结算（不等 DONE），再
         // 开始新会话——直接清掉 composingText 会把已识别出的文字吞掉
         settlePreviousSession()
@@ -1006,8 +1191,18 @@ object SherpaSpeechClient {
         // 音频先行状态复位：上一会话的保留队列/待结算标记/打点
         // 基线不得带入本代（settlePreviousSession 只接管文本侧状态）
         synchronized(audioSendLock) {
-            sessionAudio.clear()
-            sendOffset = 0
+            if (inheritRetainedAudio) {
+                // 接续上一代未就绪会话的保留音频（D7）：不清队列、
+                // 不归零偏移——其偏移必为 0（从未就绪即从未发送），
+                // 本代录音继续往后接，就绪后整段一并推送结算
+                Timber.i(
+                    "voice-start inherit retained audio gen=%d blocks=%d",
+                    gen, sessionAudio.size,
+                )
+            } else {
+                sessionAudio.clear()
+                sendOffset = 0
+            }
         }
         sessionLive = false
         pendingFinish = false
@@ -1015,6 +1210,7 @@ object SherpaSpeechClient {
         audioOverflowed = false
         sessionHasPartial = false
         firstSecondMaxAmp = 0f
+        sessionMaxAmp = 0f
         sessionStartUptimeMs = SystemClock.uptimeMillis()
         // 录音立即本地启动，不等绑定与引擎加载：冷启动期间说的话
         // 进保留队列、就绪后回灌（音频先行）。init 失败经回调走
@@ -1051,12 +1247,15 @@ object SherpaSpeechClient {
         // 启动截止不在此解除：它自会话开始计时，松手后待结算
         // （pendingFinish/cancelPending）期间仍要靠它兜底，READY
         // 到达（onRecordingStarted）或会话收尾（resetState）才解除
-        // 服务尚未绑定时 START 还在待发队列里：先撤掉，绑定完成后不得重放
-        removePending(SpeechIpc.MSG_START)
+        // 丢弃时先撤掉待发队列里的 START：绑定完成后不得重放出一段
+        // 幽灵录音。非丢弃的未绑定支恰恰相反——START 要留在队列里
+        // 等绑定完成重放（见 when 的最后一支）
+        if (discard) removePending(SpeechIpc.MSG_START)
         // 先停录音（不阻塞等采集线程退出）：holding 已置 false，
-        // 块到达路径的补发闸门随之关闭；本方法内的 flush 与 STOP
-        // 在发送锁内串行，迟到入队的至多一块也不会越过 STOP，
-        // 保留队列以这条边界定格，后续结算都以此为准
+        // 块到达路径的补发闸门随之关闭；STOP 经 stopAfterFlushGen
+        // 登记、由发送线程在 flush 排空后补发，迟到入队的块只会
+        // 被排在 STOP 之前一并发走、不会越过 STOP，保留队列以后
+        // 续结算都以排空点为准
         recorderOrNull?.stop()
         if (discard) {
             discarding.set(true)
@@ -1091,11 +1290,12 @@ object SherpaSpeechClient {
                 finishSession()
             }
             sessionLive -> {
-                // 就绪后松手：先 arm DONE 超时，再 flush 未发块、发
-                // STOP（先 arm 再发的纪律同上，防极快 DONE 竞态）
+                // 就绪后松手：先 arm DONE 超时（防极快 DONE 竞态），
+                // 再登记 STOP 待 flush 排空后由发送线程补发——STOP
+                // 必须排在全部未发音频之后（见 stopAfterFlushGen）
                 armDoneTimeout()
-                synchronized(audioSendLock) { flushUnsentLocked(gen) }
-                sendStopNow(gen)
+                stopAfterFlushGen = gen
+                scheduleFlush(gen)
             }
             bound -> {
                 // 松手先于就绪：不发 STOP（服务端会话还没建好），
@@ -1104,7 +1304,16 @@ object SherpaSpeechClient {
                 // 截止按可见失败收尾
                 pendingFinish = true
             }
-            else -> finishSession()
+            else -> {
+                // 未绑定（绑定还在飞）就松手：不能就地 finishSession
+                //——服务端会话尚未建立，此刻只能按空文本收尾，整句
+                // 静默丢失。与已绑定未就绪支同款记 pendingFinish：
+                // 待发队列里的 START 在绑定完成时照常重放（重放过滤
+                // 已为此放行，见 onServiceConnected），READY 后由其
+                // pendingFinish 分支整段结算；一直等不到 READY 由
+                // 启动截止按可见失败收尾（超过截止才提示失败）
+                pendingFinish = true
+            }
         }
     }
 
@@ -1181,6 +1390,10 @@ object SherpaSpeechClient {
             if (landed) {
                 prevDisplay?.takeIf { it.isNotEmpty() }?.let {
                     VoiceUndoLedger.recordCommittedSegment(it)
+                    // 记下待对账状态：本代服务端若随后补发 FINAL，
+                    // 其增量尾段经对账补上而非按代次整段丢弃（D3）
+                    lateFinalGen = prevGen
+                    lateFinalLandedText = it
                 }
             }
             // 不触发 onDone、不武装沉淀：新会话正在进行，UI 收尾与
@@ -1204,13 +1417,22 @@ object SherpaSpeechClient {
         val service = serviceRef?.get()
         val text = composingText.getAndSet(null)
         val discard = discarding.get()
+        // 整段零电平结算（编号 26）：有录音块、全程最大电平恒为 0
+        //（麦克风被占用/硬件无声）时，借失败提示通道明确告知——
+        // 文本该落的照常落（异步尾见 startFailureHint 改走 onFailed
+        // 收尾弹提示，与采集中途失败同口径）。已有提示时不覆盖
+        if (!discard && sessionMaxAmp == 0f && startFailureHint == null &&
+            synchronized(audioSendLock) { sessionAudio.isNotEmpty() }
+        ) {
+            startFailureHint = NO_SOUND_HINT
+        }
         resetState()
         if (service == null) return
         service.scope?.launch(Dispatchers.Main) {
-            // 回到主线程先验代次：结算期间用户已开始新会话（activeGen
-            // 既非本代、也非空闲的 0）则本尾整体作废——输入框归新
-            // 会话，其上屏与收尾不归本代管
-            if (activeGen != 0 && activeGen != gen) return@launch
+            // 代次口径（D5）：本代被新会话取代只隔离 UI 收尾与沉淀
+            // 武装，快照文本必须先上屏再退出——此前三处代次复验失败
+            // 即整尾作废，DONE 已到、纠错已算完时用户恰好开始新会话，
+            // 整句就此被吞。文本去留不再由代次决定（见下方各处）
             var screenIc = service.activeInputConnection()
             var committed: CorrectResult? = null
             var committedDisplay: String? = null
@@ -1218,19 +1440,20 @@ object SherpaSpeechClient {
             var landed = false
             if (discard) {
                 // 取消：先删掉已流式显示的待定文字，再收尾，否则 finishComposingText 会把待定文字确认上屏。
-                screenIc?.setComposingText("", 1)
+                // 但本代已被新会话取代时组字区已归新会话（待弃文字在
+                // 丢弃当时已即时清屏），再清会误伤新会话的待定文字
+                if (activeGen == 0 || activeGen == gen) {
+                    screenIc?.setComposingText("", 1)
+                }
             } else if (!text.isNullOrBlank()) {
                 // 定稿先过专名同音纠错（词表与规则均为简体，必须赶在
                 // 繁简转换之前），再在后台转换，回主线程上屏收尾，
                 // DONE 后的转换→上屏→finishComposingText 顺序不变
                 val corrected = withContext(Dispatchers.Default) { correctionStore.correct(text) }
                 val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
-                // 两次挂起之后、写屏之前必须复验并重取连接：挂起
-                // 期间切框/新会话开始时，先前抓的连接已指向旧框，
-                // 继续用它上屏是幽灵输入；验法与本尾入口一致。连
-                // 接失效（取不到）时本次提交不发生，committed 不
-                // 置、账本不登记（见下方门控）
-                if (activeGen != 0 && activeGen != gen) return@launch
+                // 两次挂起之后、写屏之前重取连接：挂起期间切框时
+                // 先前抓的连接已指向旧框。连接失效（取不到）时本次
+                // 提交不发生，committed 不置、账本不登记（见下方门控）
                 val liveIc = service.activeInputConnection()
                 screenIc = liveIc
                 if (liveIc != null) {
@@ -1240,7 +1463,13 @@ object SherpaSpeechClient {
                     landed = true
                 }
             }
-            screenIc?.finishComposingText()
+            // 确认上屏的执行条件：本尾刚落了文本（必须 finish 把它
+            // 转正，否则仍是组字态、会被新会话首个 partial 顶掉），
+            // 或本代未被取代（常态收尾）；被取代且未落文本时编辑器
+            // 归新会话，碰它会误确认新会话的待定文字
+            if (landed || activeGen == 0 || activeGen == gen) {
+                screenIc?.finishComposingText()
+            }
             // 账本登记：文本真正落入编辑器之后记一笔（最终落下的
             // displayText，含规整/繁简转换），供退格上滑的语音段
             // 两级撤销整段直删；丢弃的文本不登记。上屏没真正发生
@@ -1251,16 +1480,15 @@ object SherpaSpeechClient {
                     VoiceUndoLedger.recordCommittedSegment(it)
                 }
             }
+            // 本代已被新会话取代：沉淀武装与 UI 收尾归新会话管
+            //（onDone 会把新会话的录音标志清掉、令其松手不再发
+            // STOP），文本既已上屏，本尾到此退出
+            if (activeGen != 0 && activeGen != gen) return@launch
             // 上屏后武装纠错沉淀：观察用户对这段文本的亲手修改，
             // 学成词对供下次定稿自动纠正（无观察条件时内部自行放弃）
             committed?.let {
                 VoiceCorrectionSession.arm(service, correctionStore, it.text, it.applied)
             }
-            // 触发 UI 收尾前再验一次代次：本尾中途在后台做过纠错与
-            // 繁简转换（两次挂起），期间用户可能已经停掉旧会话并开始
-            // 新会话——此时调 onDone 会把新会话的录音标志清掉，松手
-            // 不再发 STOP。开头验过不算数，临门一脚必须复验。
-            if (activeGen != 0 && activeGen != gen) return@launch
             if (startFailureHint != null) {
                 // 结算完成路径的失败提示补消费：失败文案此前只在
                 // 窗口层的 onFailed 回调里被取走展示，正常完成走
@@ -1352,6 +1580,10 @@ object SherpaSpeechClient {
         pendingFinish = false
         cancelPending = false
         sessionHasPartial = false
+        // 迟到 FINAL 对账窗口随任一会话收尾关闭：本代之后的会话若
+        // 已结算过，编辑器内容已变迁，旧句增量再补必拼错位置
+        lateFinalGen = 0
+        lateFinalLandedText = null
         recorderOrNull?.stop()
         // 会话收尾：代次清零，此后到达的任何带代次回信都会被 handler 丢弃
         activeGen = 0

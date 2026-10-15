@@ -22,6 +22,14 @@ interface ClipboardDao {
     suspend fun getAllActive(): List<ClipboardRecord>
 
     /**
+     * 只取最新若干条的文本列：clearAll 构造防复活抑制集只需要文本本身，
+     * 在 SQL 内排序截断，不再把全表全文读进内存再排序（单条文本可为
+     * 用户复制的长文，全量读既费内存、极端时还有大行读出异常风险）
+     */
+    @Query("SELECT text FROM clipboard_records WHERE deleted = 0 ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun getRecentTexts(limit: Int): List<String>
+
+    /**
      * 存量限长（一次性）：超限行直接在 SQL 内截断，不把大文本读进内存
      * （超 CursorWindow 的行用普通查询读出会抛 SQLiteBlobTooBigException）。
      */

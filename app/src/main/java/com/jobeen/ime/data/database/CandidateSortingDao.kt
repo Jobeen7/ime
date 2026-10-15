@@ -26,4 +26,11 @@ interface CandidateSortingDao {
 
     @Query("DELETE FROM candidate_sorting_v2")
     suspend fun deleteAll()
+
+    /**
+     * 一次性清理旧格式行：现行键为 "p:<方案>:<组字哈希>" 三段式；
+     * 裸十六进制指纹键与上一代 "p:<指纹>" 两段键永不再命中，只占行与备份体积。
+     */
+    @Query("DELETE FROM candidate_sorting_v2 WHERE sorting_key NOT LIKE 'p:%:%'")
+    suspend fun deleteLegacyKeys()
 }

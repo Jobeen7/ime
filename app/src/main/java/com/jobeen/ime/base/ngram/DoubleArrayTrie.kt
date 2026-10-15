@@ -60,6 +60,46 @@ class DoubleArrayTrie(private val buf: IntBuffer) {
         return results
     }
 
+    /**
+     * [commonPrefixSearch] 的最大值版本，语义与「对其结果列表取 value
+     * 最大值」逐位等价（含 [maxResults] 的截断口径：只计先命中的
+     * maxResults 个），但不建列表、不产生 MatchPair 分配，供只需要
+     * 最大值的热点路径使用。无命中返回 null，由调用方决定缺省口径。
+     */
+    fun commonPrefixMaxValue(
+        key: ByteArray,
+        maxResults: Int,
+        length: Int = key.size,
+        nodePosStart: Int = 0,
+    ): Int? {
+        val keyLen = minOf(length, key.size)
+        if (!valid(nodePosStart)) return null
+
+        var nodePos = nodePosStart
+        var unit = buf.get(nodePos)
+        nodePos = nodePos xor offset(unit)
+        if (!valid(nodePos)) return null
+
+        var best: Int? = null
+        var matches = 0
+        for (i in 0 until keyLen) {
+            val c = (key[i].toInt() and 0xFF)
+            nodePos = nodePos xor c
+            if (!valid(nodePos)) return best
+            unit = buf.get(nodePos)
+            if (label(unit) != c) return best
+
+            nodePos = nodePos xor offset(unit)
+            if (!valid(nodePos)) return best
+            if (hasLeaf(unit) && matches < maxResults) {
+                val v = value(buf.get(nodePos))
+                if (best == null || v > best) best = v
+                matches++
+            }
+        }
+        return best
+    }
+
     fun enumerateSuffixes(nodePosStart: Int, callback: (ByteArray, Int) -> Unit) {
         if (!valid(nodePosStart)) return
         val base = nodePosStart xor offset(buf.get(nodePosStart))

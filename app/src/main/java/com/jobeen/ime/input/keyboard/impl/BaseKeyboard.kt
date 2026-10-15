@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Color
 import android.view.inputmethod.EditorInfo
 import androidx.constraintlayout.widget.ConstraintLayout
-import androidx.core.view.updateLayoutParams
 import com.jobeen.ime.R
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
@@ -46,7 +45,6 @@ abstract class BaseKeyboard(
     private val keyLayout: List<List<KeyDef>>,
 ) : ConstraintLayout(context), IKeyboard {
     override var keyActionListener: KeyActionListener? = null
-    var expandKeypressArea = false
     private val previewPopup = KeyPreviewPopup(context)
     private val keyboardPopup = KeyboardPopup(context)
     // 复用坐标数组，避免每次按键分配
@@ -112,7 +110,6 @@ abstract class BaseKeyboard(
             val spanScale = if (occupiedWidth > 0f) 1f / (1f - occupiedWidth) else 1f
 
             constraintLayout {
-                var totalWidth = 0f
                 keyViews.forEachIndexed { index, view ->
                     add(view, lParams {
                         centerVertically()
@@ -131,27 +128,9 @@ abstract class BaseKeyboard(
                         matchConstraintPercentWidth =
                             parts[index].appearance.percentWidth * spanScale
                     })
-                    (parts[index].appearance.percentWidth * spanScale).let {
-                        totalWidth += if (it != 0f) it else 1f
-                    }
                 }
-                if (expandKeypressArea && totalWidth < 1f) {
-                    val free = (1f - totalWidth) / 2f
-                    val firstScaledPercent = parts.first().appearance.percentWidth * spanScale
-                    val lastScaledPercent = parts.last().appearance.percentWidth * spanScale
-                    keyViews.first().apply {
-                        updateLayoutParams<LayoutParams> {
-                            matchConstraintPercentWidth += free
-                        }
-                        layoutMarginLeft = free / (firstScaledPercent + free)
-                    }
-                    keyViews.last().apply {
-                        updateLayoutParams<LayoutParams> {
-                            matchConstraintPercentWidth += free
-                        }
-                        layoutMarginRight = free / (lastScaledPercent + free)
-                    }
-                }
+                // 原 expandKeypressArea 分支已删：该开关恒 false、全仓
+                // 无写入方，分支永不执行（死代码清理 L7）
             }
         }
         keyRows.forEachIndexed { index, row ->
@@ -233,7 +212,9 @@ abstract class BaseKeyboard(
             }
             if (this is SidePanelKeyView) {
                 onRippleRequest = { screenX, screenY ->
-                    val boardLoc = IntArray(2)
+                    // 复用类级 boardLoc：与 onPressedChanged 同为触摸线程
+                    // 同步使用、取到坐标立即消费，不存在交错改写窗口，
+                    // 不再每次侧栏波纹新建 IntArray
                     this@BaseKeyboard.getLocationOnScreen(boardLoc)
                     rippleView.startRipple(screenX - boardLoc[0], screenY - boardLoc[1], this)
                 }
