@@ -14,7 +14,7 @@ target_compile_options(marisa_jni PRIVATE
   -fvisibility=hidden -ffunction-sections -fdata-sections)
 target_link_options(marisa_jni PRIVATE "LINKER:--gc-sections")
 
-target_link_libraries(marisa_jni ${Marisa_LIBRARY})
+target_link_libraries(marisa_jni ${Marisa_LIBRARY} log)
 target_include_directories(marisa_jni PRIVATE
     "${CMAKE_SOURCE_DIR}/deps/librime/deps/marisa-trie/include"
 )

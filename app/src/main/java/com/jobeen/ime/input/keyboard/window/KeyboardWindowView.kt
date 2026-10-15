@@ -175,7 +175,11 @@ class KeyboardWindowView(
                     currentSchemaId = keyboardStateManager.getCurrentSchema()?.id,
                     colors = cachedColors,
                     onSchemaSelected = { schemaId -> keyboardStateManager.selectSchema(schemaId) })
-                (context as ImeInputMethodService).showDialog(dialog)
+                // 关闭收尾经 showDialog 注册给服务侧单一监听转调，不再
+                // 由弹窗自己 setOnDismissListener（会被服务侧覆盖）
+                (context as ImeInputMethodService).showDialog(dialog) {
+                    SchemaPickerDialog.handleDismiss(dialog)
+                }
                 null
             }
 
@@ -252,7 +256,7 @@ class KeyboardWindowView(
             CandidateManager.KEY_BORDER,
             CandidateManager.KEY_SHOW_INDEX,
             CandidateManager.KEY_SHOW_COMMENT,
-                -> scheduleRefreshColors()
+                -> scheduleRefreshDisplaySettings()
         }
     }
 
@@ -394,6 +398,7 @@ class KeyboardWindowView(
         SchemaPickerDialog.dismiss()
         // 设置变化的配色刷新若还挂在防抖窗口里，销毁后不必再执行
         removeCallbacks(pendingRefreshColors)
+        removeCallbacks(pendingRefreshDisplaySettings)
         // 全高缓存随窗口生命周期结束失效，重建/重新挂载时重新查询
         cachedFullScreenHeight = -1
         // 语音桥回调在销毁时置空（桥内已是弱引用后备，这里再显式清一遍，双保险）
@@ -566,6 +571,18 @@ class KeyboardWindowView(
     private fun scheduleRefreshColors() {
         removeCallbacks(pendingRefreshColors)
         postDelayed(pendingRefreshColors, REFRESH_COLORS_DEBOUNCE_MS)
+    }
+
+    // 显示开关（按键描边/展开边框/候选边框/序号/注释）不进配色解析，
+    // 走 refreshColorsIfChanged 会被「解析结果与缓存一致」的门控整份
+    // 挡下、改了永不生效（K1 回归）；它们单独走一条直达 refreshColors()
+    // 的防抖通道，与配色刷新解耦——refreshColors 内的键盘重建与面板
+    // 显示设置失效会让各视图重新读取这些开关
+    private val pendingRefreshDisplaySettings = Runnable { refreshColors() }
+
+    private fun scheduleRefreshDisplaySettings() {
+        removeCallbacks(pendingRefreshDisplaySettings)
+        postDelayed(pendingRefreshDisplaySettings, REFRESH_COLORS_DEBOUNCE_MS)
     }
 
     fun refreshColors() {

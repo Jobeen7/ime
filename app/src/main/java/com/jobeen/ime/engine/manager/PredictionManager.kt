@@ -112,11 +112,20 @@ class PredictionManager(private val context: Context) {
 
     private suspend fun modelPredictions(inputContext: String): List<Candidate> {
         val pred = prediction ?: return emptyList()
+        // gramDb 只快照一次：prepareContext 与逐候选 query 必须落在
+        // 同一个实例上。两处读字段之间夹着 predictNextWords 的挂起
+        // 点，期间 loadModels 换模型会整体替换字段，旧实例的上下文
+        // 节点位（裸 trie 下标、不带实例身份）拿到新 trie 上用，
+        // valid 检查只防越界崩溃、防不住走错节点打错分。
+        // 快照允许为 null：无语法模型时本就以 0 分出预测，不因此
+        // 整体放弃本轮（GramDb 构造后只读、旧实例被字段弃置后由
+        // 本地引用续命用完，不存在 use-after-free）
+        val db = gramDb
         val possiables = TextUtil.contextSubstrings(inputContext)
         val cfg = WeightConfig()
         // 语法模型的上下文只随 inputContext 变：整轮预测算一次，
         // 逐候选复用，不再每个候选都重编码上下文并重走 trie
-        val preparedCtx = gramDb?.prepareContext(inputContext)
+        val preparedCtx = db?.prepareContext(inputContext)
 
         for (contextStr in possiables) {
             if (contextStr.isEmpty()) continue
@@ -125,7 +134,7 @@ class PredictionManager(private val context: Context) {
             if (words.size >= 5) {
                 val prefers = CandidatePreferCache.snapshot(context)
                 val candidates = words.mapIndexed { index, it ->
-                    val gramScore = preparedCtx?.let { ctx -> gramDb?.query(ctx, it.word) } ?: 0.0
+                    val gramScore = preparedCtx?.let { ctx -> db?.query(ctx, it.word) } ?: 0.0
                     val preferCount = prefers[it.word] ?: 0
                     val textLen = it.word.codePointCount(0, it.word.length)
                     val score = calculator.calculate(

@@ -74,9 +74,10 @@ class KeyActionListener(
                 engine?.selectSchema(action.schemaId)
             }
 
-            is KeyboardAction.ShowInputMethodPickerAction -> {
-                @SuppressLint("NewApi") service.requestShowSelf(0)
-            }
+            // ShowInputMethodPickerAction 不在此处理：它在
+            // KeyboardWindowView.transformed 里被拦截（弹方案选择框）
+            // 并返回 null，永远到不了本监听——原先这里的分支不可达，
+            // 已删除，避免误以为请求系统输入法选择器是生效路径
 
             is KeyboardAction.SelectCandidatePinYin -> {
                 engine?.selectCandidatePinYin(action.pinYin)

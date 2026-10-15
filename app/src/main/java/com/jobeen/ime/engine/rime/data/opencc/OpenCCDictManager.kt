@@ -45,6 +45,16 @@ object OpenCCDictManager {
     private val buildLock = Any()
 
     /**
+     * 已转换文本词典的进程内缓存：源文件绝对路径 → 源指纹
+     * （mtime＋长度）。buildOpenCCDict 在每次启动/部署的 bootstrap
+     * 都跑，此前对每本词典无条件全量重转（JNI 整表转换），词典没变
+     * 时纯属浪费、拖慢启动。指纹一致且产物 .ocd2 仍在盘上时跳过；
+     * 源文件被替换（方案更新/用户导入）时指纹变化、自动失效重建，
+     * 产物被删时同样重建。只在 buildLock 内读写，无需并发容器。
+     */
+    private val convertedFingerprints = HashMap<String, Pair<Long, Long>>()
+
+    /**
      * Convert internal text dict to opencc format.
      *
      * 同步构建是部署路径的正确性要求：librime 在 bootstrap 时就加载
@@ -56,11 +66,20 @@ object OpenCCDictManager {
     fun buildOpenCCDict() = synchronized(buildLock) {
         for (d in getAllDictionaries()) {
             if (d is TextDictionary) {
+                val src = d.file
+                // 与 Dictionary.toOpenCCDictionary() 无参版同一产物路径
+                val dest = src.resolveSibling("${d.name}.${Dictionary.Type.OCD2.ext}")
+                val fingerprint = src.lastModified() to src.length()
+                if (convertedFingerprints[src.absolutePath] == fingerprint && dest.isFile) {
+                    Timber.d("Skip unchanged opencc dict $d")
+                    continue
+                }
                 val result: Result<OpenCCDictionary>
                 measureTimeMillis {
                     result = runCatching { d.toOpenCCDictionary() }
                 }.also {
                     result.onSuccess { r ->
+                        convertedFingerprints[src.absolutePath] = fingerprint
                         Timber.d("Took $it to convert to $r")
                     }.onFailure {
                         Timber.e(it, "Failed to convert $d")

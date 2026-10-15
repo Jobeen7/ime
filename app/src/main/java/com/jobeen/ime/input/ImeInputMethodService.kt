@@ -81,7 +81,13 @@ class ImeInputMethodService : InputMethodService() {
     override fun onCreate() {
         super.onCreate()
         virtualInputConnection.addOnChangeListener {
-            if (phraseAddBridgeActive) syncActiveInputState()
+            if (phraseAddBridgeActive) {
+                // 桥接文本是本地 Editable：程序性改字（清空/替换）可以
+                // 不伴随选区变化，只按选区作键的帧探针缓存会返回旧
+                // 结果（K3），文本变更回调里先整帧作废再同步状态
+                invalidateProbeFrame()
+                syncActiveInputState()
+            }
         }
         //service scope & message subscribe
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Main).apply {
@@ -224,20 +230,42 @@ class ImeInputMethodService : InputMethodService() {
         return true
     }
 
-    fun showDialog(dialog: android.app.Dialog) {
+    /** 当前弹窗的关闭回调（经 [showDialog] 注册，随弹窗一并清理） */
+    private var showingDialogOnDismiss: (() -> Unit)? = null
+
+    /**
+     * 显示挂在本窗口 token 上的弹窗。关闭监听由服务侧独占：先清自身
+     * 状态，再转调调用方经 [onDismiss] 注册的回调——调用方不得再对
+     * 弹窗直接 setOnDismissListener，那会把这里的监听整份覆盖掉，
+     * 服务侧状态与调用方自己的收尾便一起失效（编号 24 的原故障）。
+     */
+    fun showDialog(dialog: android.app.Dialog, onDismiss: (() -> Unit)? = null) {
         showingDialog?.dismiss()
         val tokenView = keyboardWindow?.view ?: return
+        // view 已存在但尚未挂上窗口时 windowToken 为 null，拿它去
+        // show() 会抛 BadTokenException，直接放弃本次显示
+        val token = tokenView.windowToken ?: return
         dialog.window?.apply {
-            attributes.token = tokenView.windowToken
+            attributes.token = token
             attributes.type = WindowManager.LayoutParams.TYPE_APPLICATION_ATTACHED_DIALOG
             addFlags(
                 WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM or WindowManager.LayoutParams.FLAG_DIM_BEHIND
             )
             setDimAmount(0.5f)
         }
-        dialog.setOnDismissListener { showingDialog = null }
-        dialog.show()
         showingDialog = dialog
+        showingDialogOnDismiss = onDismiss
+        dialog.setOnDismissListener {
+            // dismiss 回调异步投递：到达时可能已有新弹窗顶替上来，
+            // 只认仍指向本弹窗的那次，旧弹窗的迟到回调不得清新状态
+            if (showingDialog === dialog) {
+                showingDialog = null
+                val callback = showingDialogOnDismiss
+                showingDialogOnDismiss = null
+                callback?.invoke()
+            }
+        }
+        dialog.show()
     }
 
     internal fun handleTextEditingAction(action: TextEditView.Action) {
