@@ -98,25 +98,11 @@ class RimeDispatcher(
                         // 失败、上层可以重新 startup() 重试。
                         Timber.e(t, "nativeStartup() failed; dispatcher reset to stopped")
                         isRunning.set(false)
-                        val droppedTasks = mutableListOf<WrappedRunnable>()
-                        queue.drainTo(droppedTasks)
-                        // 同 stop()：被丢弃任务的协程必须以取消收尾，
-                        // 不能让调用方永久挂在 withContext 上
-                        for (task in droppedTasks) {
-                            task.job?.cancel(
-                                kotlinx.coroutines.CancellationException(
-                                    "RimeDispatcher startup failed before the job ran"
-                                )
-                            )
-                            // 只 cancel 不够：cancel 只改 Job 状态，挂起方
-                            // 的 continuation 要等 DispatchedTask.run() 被
-                            // 调到时才会被以取消完成——任务已被丢弃、
-                            // 永不 run，等待方就永久挂死。故取消后补 run
-                            // 一次：已取消态下 run 走快速失败路径完成
-                            // 等待方，不会真正执行任务体（无 Job 的裸
-                            // 任务不补 run，维持原样丢弃）
-                            if (task.job != null) runCatching { task.run() }
-                        }
+                        // 被丢弃任务的协程必须以取消收尾，不能让调用
+                        // 方永久挂在 withContext 上（见 drainQueuedJobs）
+                        val droppedTasks = drainQueuedJobs(
+                            "RimeDispatcher startup failed before the job ran"
+                        )
                         if (droppedTasks.isNotEmpty()) {
                             Timber.w("Dropped ${droppedTasks.size} queued job(s) after startup failure")
                         }
@@ -140,6 +126,19 @@ class RimeDispatcher(
                         } catch (t: Throwable) {
                             Timber.e(t, "nativeFinalize() failed")
                         }
+                        // 排空保证点：stop() 的持锁排空只是第一道——
+                        // rime-main 被长任务（部署、词库导入导出）占住
+                        // 超过其 2 秒超时时，stop() 拿不到本锁、返回
+                        // 空表就走，残余任务会留在队列里：等待方挂到
+                        // 下次 start()，而下次的消费循环会把这些陈旧
+                        // 任务在新会话里真执行（旧按键打进新组字）。
+                        // 消费循环的退出段是长任务结束后、dispatcher
+                        // 被复用前唯一必经的串行点，故无论循环因何
+                        // 退出（stop 置位、作用域取消），都在此（仍
+                        // 持锁、nativeFinalize 之后）把队列排空，等待
+                        // 方必被唤醒。drainTo 原子摘取，与 stop()、
+                        // 启动失败两处排空不会重复摘同一任务。
+                        drainQueuedJobs("RimeDispatcher stopped before the job ran")
                     }
                 }
             }
@@ -162,27 +161,15 @@ class RimeDispatcher(
                     withTimeoutOrNull(2_000L) {
                         queue.offer(WrappedRunnable.Empty)
                         mutex.withLock {
-                            val rest = mutableListOf<WrappedRunnable>()
-                            queue.drainTo(rest)
-                            // 被排空的任务永不执行：逐一取消其协程 Job，
-                            // 让挂在 withContext 上的调用方以取消收尾，
-                            // 而不是永久挂起（消息消费者一旦这样挂死，
-                            // 本进程内消息通道就此停摆、无从恢复）。
-                            // 取消后还要补 run 一次：cancel 只改 Job 状态，
-                            // 挂起方的 continuation 只有在 DispatchedTask
-                            // .run() 里才会被以取消完成，任务既已丢弃、
-                            // 不补 run 则等待方永不恢复；已取消态下 run
-                            // 走快速失败路径，不会真正执行任务体（无 Job
-                            // 的裸任务不补 run，维持原样丢弃）
-                            for (task in rest) {
-                                task.job?.cancel(
-                                    kotlinx.coroutines.CancellationException(
-                                        "RimeDispatcher stopped before the job ran"
-                                    )
-                                )
-                                if (task.job != null) runCatching { task.run() }
-                            }
-                            rest
+                            // 被排空的任务永不执行：逐一取消其协程
+                            // Job 并补 run，让挂在 withContext 上的调用
+                            // 方以取消收尾，而不是永久挂起（消息消费
+                            // 者一旦这样挂死，本进程内消息通道就此停
+                            // 摆、无从恢复）。见 drainQueuedJobs。本处
+                            // 只是第一道：超时拿不到锁时，残余任务由
+                            // 消费循环退出段的排空兜底（start() 的
+                            // finally），不会留在队列里。
+                            drainQueuedJobs("RimeDispatcher stopped before the job ran")
                         }
                     }
                 }
@@ -190,6 +177,30 @@ class RimeDispatcher(
         } else {
             emptyList()
         }
+    }
+
+    /**
+     * 把队列里尚未执行的任务原子摘出并逐一收尾：取消其协程 Job 后
+     * 补 run 一次。只 cancel 不够：cancel 只改 Job 状态，挂起方的
+     * continuation 要等 DispatchedTask.run() 被调到时才会被以取消
+     * 完成——任务已被丢弃、永不 run，不补 run 则等待方永久挂死；
+     * 已取消态下 run 走快速失败路径完成等待方，不会真正执行任务
+     * 体（无 Job 的裸任务不补 run，维持原样丢弃）。
+     *
+     * 三个调用点共用：启动失败（start 的 catch）、stop() 持锁排空、
+     * 消费循环退出段（start 的 finally）。drainTo 原子摘取，同一
+     * 任务只会被一个调用点摘走，不存在双重排空。
+     */
+    private fun drainQueuedJobs(cancelMessage: String): List<WrappedRunnable> {
+        val dropped = mutableListOf<WrappedRunnable>()
+        queue.drainTo(dropped)
+        for (task in dropped) {
+            task.job?.cancel(
+                kotlinx.coroutines.CancellationException(cancelMessage)
+            )
+            if (task.job != null) runCatching { task.run() }
+        }
+        return dropped
     }
 
     override fun dispatch(

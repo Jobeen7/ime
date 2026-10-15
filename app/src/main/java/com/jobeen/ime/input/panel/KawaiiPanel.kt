@@ -381,7 +381,7 @@ class KawaiiPanel(
             listener?.onPhraseClick(phrase)
         }
         clipboardView.onPhraseDelete = { phrase ->
-            // 与剪贴板同构的动作菜单：置顶 + 排序入口 + 删除（删除仍走确认）
+            // 与剪贴板同构的动作菜单：置顶 + 编辑 + 排序入口 + 删除（删除仍走确认）
             confirmOverlay.actions(
                 message = context.getString(R.string.phrase_item_actions),
                 items = listOf(
@@ -392,6 +392,9 @@ class KawaiiPanel(
                             PhraseManager.setPinned(context, phrase.id, !phrase.pinned)
                             clipboardView.refresh()
                         }
+                    },
+                    context.getString(R.string.clipboard_edit) to {
+                        enterPhraseEdit(phrase)
                     },
                     context.getString(R.string.clipboard_reorder) to {
                         enterClipReorder()
@@ -510,16 +513,21 @@ class KawaiiPanel(
         clipboardView.requestLayout()
     }
 
-    // ── 剪贴板条目编辑态 ────────────────────────────────────────
+    // ── 剪贴板条目/常用语编辑态 ────────────────────────────────
     // 与搜索态同构：标志钉住剪贴板态，键盘输入经 interceptCommit 改道
     // 进编辑缓冲（光标模型：插入光标处），退格同搜索分流。窗口形态与
     // 搜索共用（拉高+结果区），结果区改画条目全文供多行编辑（见
     // ClipboardView 编辑显示模式）。编辑与搜索可叠加：从搜索结果长按
     // 进编辑，保存/取消后回到搜索态（clipEditReturnToSearch 记账）。
+    // 常用语编辑共用同一套状态（clipEditPhrase 记账目标），保存走
+    // PhraseManager.update；常用语侧无搜索态，不存在回搜索的叠加。
 
     override var clipEditActive: Boolean = false
         private set
     private var clipEditOriginal: String? = null
+    // 非空 = 本次编辑的是常用语（与 clipEditOriginal 二选一，两编辑态互斥）：
+    // 缓冲/光标/显示/工具栏与剪贴板编辑共用同一套，只有保存目标不同
+    private var clipEditPhrase: PhraseManager.Phrase? = null
     private var clipEditBuffer: String = ""
     // 光标下标（0..buffer.length）：输入插入光标处，退格删光标前一字；
     // 点编辑区定位由 ClipboardView 回调写入
@@ -541,6 +549,7 @@ class KawaiiPanel(
     private fun enterClipEdit(entry: ClipboardManager.Entry) {
         clipEditReturnToSearch = clipSearchActive
         clipEditOriginal = entry.text
+        clipEditPhrase = null
         clipEditBuffer = entry.text
         clipEditCursor = entry.text.length
         clipEditActive = true
@@ -551,11 +560,29 @@ class KawaiiPanel(
         clipboardView.requestLayout()
     }
 
+    /** 常用语编辑：与剪贴板编辑共用缓冲/光标/显示/工具栏，入口只换记账目标。
+     *  常用语侧没有搜索态（工具栏第二槽是新增、列表不按查询过滤），
+     *  clipEditReturnToSearch 恒为 false，保存/取消后直接回常用语工具栏。 */
+    private fun enterPhraseEdit(phrase: PhraseManager.Phrase) {
+        clipEditReturnToSearch = clipSearchActive
+        clipEditOriginal = null
+        clipEditPhrase = phrase
+        clipEditBuffer = phrase.text
+        clipEditCursor = phrase.text.length
+        clipEditActive = true
+        view.currentRenderer = newClipToolbarRenderer().also { applyEditFields(it) }
+        syncEditDisplay()
+        view.invalidate()
+        clipboardView.requestLayout()
+    }
+
     private fun exitClipEdit(save: Boolean) {
         val original = clipEditOriginal
+        val phrase = clipEditPhrase
         val newText = clipEditBuffer.trim()
         clipEditActive = false
         clipEditOriginal = null
+        clipEditPhrase = null
         clipEditBuffer = ""
         clipEditCursor = 0
         clipboardView.clearEditDisplay()
@@ -568,7 +595,20 @@ class KawaiiPanel(
         }
         view.invalidate()
         clipboardView.requestLayout()
-        if (save && original != null && newText.isNotEmpty() && newText != original.trim()) {
+        if (save && phrase != null) {
+            // 常用语保存：空文本不保存（与剪贴板同口径）；label 镜像新增
+            // 口径随新文本再生（insert 调用点传 text.take(12)），pinned/
+            // sortOrder/createdAt 由 PhraseManager.update 事务内回读保留
+            if (newText.isNotEmpty() && newText != phrase.text.trim()) {
+                appScope.launch {
+                    PhraseManager.update(
+                        context,
+                        phrase.copy(text = newText, label = newText.take(12)),
+                    )
+                    clipboardView.refresh()
+                }
+            }
+        } else if (save && original != null && newText.isNotEmpty() && newText != original.trim()) {
             appScope.launch {
                 ClipboardManager.updateEntry(context, original, newText)
                 clipboardView.refresh()
@@ -581,6 +621,7 @@ class KawaiiPanel(
         if (!clipEditActive) return
         clipEditActive = false
         clipEditOriginal = null
+        clipEditPhrase = null
         clipEditBuffer = ""
         clipEditCursor = 0
         clipEditReturnToSearch = false

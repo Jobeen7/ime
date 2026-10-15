@@ -40,7 +40,16 @@ sealed class RimeMessage<T>(val data: T) {
         enum class State { Start, Success, Failure, Finish }
     }
 
-    data class CommitTextMessage(val commit: CommitProto) : RimeMessage<CommitProto>(commit)
+    /**
+     * @property direct 直送标记：仅 [RimeApi.emitCommit] 产生的 Commit
+     * 为 true。这类上屏借道消息管线只为与 native Commit 同 FIFO 排序，
+     * 下游不得按「打字上屏」记账（见 RimeEngine 的 Commit 分支处理）。
+     * native 产生的 Commit 恒为 false（见 [nativeCreate] 的构造约束）。
+     */
+    data class CommitTextMessage(
+        val commit: CommitProto,
+        val direct: Boolean = false,
+    ) : RimeMessage<CommitProto>(commit)
 
     data class InlinePreeditMessage(val preedit: String) : RimeMessage<String>(preedit)
 
@@ -154,7 +163,13 @@ sealed class RimeMessage<T>(val data: T) {
                     (params[0] as String).replaceFirstChar { it.titlecase() })
             )
 
-            MessageType.Commit -> CommitTextMessage(params[0] as CommitProto)
+            MessageType.Commit -> CommitTextMessage(
+                params[0] as CommitProto,
+                // 直送标记只经第二个参数传递，且只有 emitCommit 会传：
+                // native 通知与 emitResponse 等 native Commit 产生点的
+                // 参数恒为单元素，标记缺省 false，构造上无法被误置
+                direct = (params.getOrNull(1) as? Boolean) == true,
+            )
             MessageType.InlinePreedit -> InlinePreeditMessage(params[0] as String)
             MessageType.Composition -> CompositionMessage(params[0] as CompositionProto)
             MessageType.Menu -> CandidateMenuMessage(params[0] as MenuProto)
