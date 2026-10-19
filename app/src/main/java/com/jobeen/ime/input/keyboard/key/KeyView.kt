@@ -231,6 +231,16 @@ abstract class KeyView(
         boundsValid = true
     }
 
+    override fun onDetachedFromWindow() {
+        // 本类自有的按压背景动画不随父类（CustomGestureView）的手势
+        // runnable 收尾覆盖：分离时取消，避免动画继续改已脱窗按键的
+        // 按压层透明度；重挂后下一次状态变化会经 drawableStateChanged
+        // 重新启动动画器池，不影响复用
+        bgAnimator?.cancel()
+        bgAnimator = null
+        super.onDetachedFromWindow()
+    }
+
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         boundsValid = false
         if (layoutMarginLeft != 0f || layoutMarginRight != 0f) {

@@ -163,6 +163,17 @@ abstract class SidePanelView(
             }
         }
 
+        override fun onDetachedFromWindow() {
+            // 本 View 自有异步资源收尾：待触发的长按投递、按压淡出与
+            // 回弹动画在分离后都不应再驱动已脱窗的侧栏
+            removeCallbacks(longPressRunnable)
+            pressAnimator?.cancel()
+            pressAnimator = null
+            stretchAnimator?.cancel()
+            stretchAnimator = null
+            super.onDetachedFromWindow()
+        }
+
         private var longPressTriggered = false
 
         private val longPressRunnable = Runnable {

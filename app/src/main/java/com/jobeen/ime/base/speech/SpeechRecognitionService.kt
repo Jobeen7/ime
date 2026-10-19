@@ -17,7 +17,6 @@ import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
-import com.k2fsa.sherpa.onnx.QnnConfig
 import com.jobeen.ime.data.App
 import com.jobeen.ime.base.util.appContext
 import kotlinx.coroutines.CancellationException
@@ -31,7 +30,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
-import java.io.File
 import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -51,7 +49,6 @@ class SpeechRecognitionService : Service() {
 
     private val recognizerRef = AtomicReference<OnlineRecognizer?>(null)
     private val streamRef = AtomicReference<OnlineStream?>(null)
-    private val qnnRuntimeRef = AtomicReference<QnnRuntime?>(null)
 
     /**
      * 销毁短路标志：onDestroy 在主线程置位并封消息入口后，在飞的消息
@@ -144,28 +141,17 @@ class SpeechRecognitionService : Service() {
     @Volatile
     private var cancelRequestedGen = 0
 
+    // 写入在服务主线程（START 换手）与解码协程收尾（置空），读取在
+    // sendClient 的多条线程路径上：必须 @Volatile 保证跨线程可见
+    @Volatile
     private var clientMessenger: Messenger? = null
-
-    private data class ModelFiles(
-        val tokens: File,
-        val encoder: File,
-        val decoder: File,
-        val joiner: File,
-        val isQnn: Boolean,
-    )
-
-    private data class QnnRuntime(
-        val backend: File,
-        val system: File,
-        val target: File,
-    )
 
     private val serviceHandler = Handler(
         Looper.getMainLooper(),
         Handler.Callback { msg ->
             when (msg.what) {
                 SpeechIpc.MSG_LOAD -> scope.launch(Dispatchers.IO) {
-                    initEngine(this@SpeechRecognitionService, silent = true)
+                    initEngine(silent = true)
                 }
 
                 SpeechIpc.MSG_PING -> {
@@ -186,24 +172,37 @@ class SpeechRecognitionService : Service() {
                 }
 
                 SpeechIpc.MSG_START -> {
-                    clientMessenger = msg.replyTo
-                    if (!sessionActive.compareAndSet(false, true)) {
-                        // 重复 START：已有会话在跑，忽略，避免两个解码协程抢同一个 stream
-                        return@Callback true
+                    // 通道换手＋代次推进与解码协程 finally 的收尾复位
+                    // 同锁（见 startDecodeSession 的 finally）：旧协程
+                    // 若先过代次复检、后被抢占，新 START 在此完成换代
+                    // 后，旧协程的复位会误杀新会话（sessionActive 被
+                    // 清、clientMessenger 被置空，新会话整句丢失）。
+                    // 锁内只有字段写与 CAS，无 Binder/IO 等阻塞调用
+                    val startGate = synchronized(audioLock) {
+                        // 通道先换手再判幂等：重复 START 也把回信通道
+                        // 更新到最新 replyTo（与此前口径一致）
+                        clientMessenger = msg.replyTo
+                        if (!sessionActive.compareAndSet(false, true)) {
+                            // 重复 START：已有会话在跑，忽略，避免两个解码协程抢同一个 stream
+                            null
+                        } else {
+                            val g = ++sessionGen
+                            val cg = runCatching {
+                                msg.data?.getInt(SpeechIpc.KEY_GEN, 0) ?: 0
+                            }.getOrDefault(0)
+                            sessionClientGen = cg
+                            // 新会话清掉上一会话残留的停止标记：迟到的旧 STOP/CANCEL
+                            // 已在各自处理里按代次过滤，不会走到这里给新会话置位
+                            stopRequested = false
+                            cancelRequestedGen = 0
+                            g to cg
+                        }
                     }
-                    val gen = ++sessionGen
-                    val clientGen = runCatching {
-                        msg.data?.getInt(SpeechIpc.KEY_GEN, 0) ?: 0
-                    }.getOrDefault(0)
-                    sessionClientGen = clientGen
-                    // 新会话清掉上一会话残留的停止标记：迟到的旧 STOP/CANCEL
-                    // 已在各自处理里按代次过滤，不会走到这里给新会话置位
-                    stopRequested = false
-                    cancelRequestedGen = 0
+                    val (gen, clientGen) = startGate ?: return@Callback true
                     // 引擎初始化（可能数百 ms）移到 IO 线程，不要阻塞服务主线程
                     scope.launch {
                       try {
-                        val ready = initEngine(this@SpeechRecognitionService, silent = true)
+                        val ready = initEngine(silent = true)
                         if (cancelRequestedGen == gen) {
                             // 初始化期间 CANCEL 已到达：处理方已复位会话并发
                             // DONE，这里静默退出，不建会话、不再回信
@@ -213,15 +212,21 @@ class SpeechRecognitionService : Service() {
                         if (engine == null) {
                             // 只收尾自己这一代：STOP 已先行到达则回 DONE（客户
                             // 端在等会话终结而非失败口径）；若已有新一代会话
-                            // 开始，旧的失败收尾不能误杀新会话
-                            if (gen == sessionGen) {
-                                sessionActive.set(false)
-                                holding.set(false)
-                                sendClient(
+                            // 开始，旧的失败收尾不能误杀新会话。代次复检与
+                            // 复位收进 audioLock（与 START 换代、finally 复位
+                            // 同锁，见 MSG_START 处注释）；回信在锁外发
+                            val failWhat = synchronized(audioLock) {
+                                if (gen != sessionGen) {
+                                    null
+                                } else {
+                                    sessionActive.set(false)
+                                    holding.set(false)
                                     if (stopRequested) SpeechIpc.MSG_DONE
-                                    else SpeechIpc.MSG_ERROR,
-                                    gen = clientGen,
-                                )
+                                    else SpeechIpc.MSG_ERROR
+                                }
+                            }
+                            if (failWhat != null) {
+                                sendClient(failWhat, gen = clientGen)
                             }
                             return@launch
                         }
@@ -288,14 +293,20 @@ class SpeechRecognitionService : Service() {
                         // 半损坏/OOM 时可能抛错，此前异常无人处理会直接杀掉
                         // :speech 进程且客户端收不到任何失败回信
                         Log.e("SpeechSvc", "Session init failed", t)
-                        if (cancelRequestedGen != gen && gen == sessionGen) {
-                            sessionActive.set(false)
-                            holding.set(false)
-                            sendClient(
+                        // 代次判据与复位收进 audioLock（同上方 engine==null
+                        // 路径口径）；回信在锁外发
+                        val failWhat = synchronized(audioLock) {
+                            if (cancelRequestedGen == gen || gen != sessionGen) {
+                                null
+                            } else {
+                                sessionActive.set(false)
+                                holding.set(false)
                                 if (stopRequested) SpeechIpc.MSG_DONE
-                                else SpeechIpc.MSG_ERROR,
-                                gen = clientGen,
-                            )
+                                else SpeechIpc.MSG_ERROR
+                            }
+                        }
+                        if (failWhat != null) {
+                            sendClient(failWhat, gen = clientGen)
                         }
                       }
                     }
@@ -476,87 +487,6 @@ class SpeechRecognitionService : Service() {
         if (ok.isFailure) Log.e("SpeechSvc", "sendClient failed what=$what", ok.exceptionOrNull())
     }
 
-    private fun isQnnRuntimeSupported(context: android.content.Context): Boolean =
-        android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")
-
-    @SuppressLint("UnsafeDynamicallyLoadedCode")
-    private fun prepareQnnRuntime(context: android.content.Context): Boolean {
-        qnnRuntimeRef.get()?.let { return true }
-        return runCatching {
-            val cdsp = File(context.filesDir, "cdsp")
-            prepareCdspFiles(context, cdsp)
-            listOf("QnnSystem", "QnnHtp").forEach { System.loadLibrary(it) }
-            OnlineRecognizer.prependAdspLibraryPath(cdsp.absolutePath)
-            qnnRuntimeRef.set(
-                QnnRuntime(
-                    backend = File(context.applicationInfo.nativeLibraryDir, "libQnnHtp.so"),
-                    system = File(context.applicationInfo.nativeLibraryDir, "libQnnSystem.so"),
-                    target = cdsp,
-                ),
-            )
-            Log.i("SpeechSvc", "QNN runtime prepared: DSP_PATH=$cdsp.absolutePath")
-            true
-        }.getOrElse {
-            Log.e("SpeechSvc", "Failed to prepare QNN runtime", it)
-            false
-        }
-    }
-
-    private fun prepareCdspFiles(context: android.content.Context, cdspDir: File) {
-        val marker = File(cdspDir, ".prepared")
-        if (marker.isFile) return
-        cdspDir.deleteRecursively()
-        cdspDir.mkdirs()
-        copyAssetDirectory(context, "cdsp", cdspDir)
-        marker.createNewFile()
-    }
-
-    private fun copyAssetDirectory(context: android.content.Context, assetPath: String, targetDir: File) {
-        val entries = context.assets.list(assetPath).orEmpty()
-        if (entries.isEmpty()) {
-            context.assets.open(assetPath).use { input ->
-                val target = File(targetDir, assetPath.substringAfterLast('/'))
-                target.parentFile?.mkdirs()
-                target.outputStream().use { output -> input.copyTo(output) }
-            }
-            targetDir.listFiles()?.forEach { it.setExecutable(true) }
-            return
-        }
-        for (entry in entries) {
-            val childAssetPath = "$assetPath/$entry"
-            val target = File(targetDir, entry)
-            val children = context.assets.list(childAssetPath).orEmpty()
-            if (children.isNotEmpty()) {
-                target.mkdirs()
-                copyAssetDirectory(context, childAssetPath, target)
-            } else {
-                context.assets.open(childAssetPath).use { input ->
-                    target.parentFile?.mkdirs()
-                    target.outputStream().use { output -> input.copyTo(output) }
-                }
-                target.setReadable(true)
-                target.setExecutable(true)
-            }
-        }
-    }
-
-    private fun findModelFiles(dir: File, qnn: Boolean): ModelFiles? {
-        val tokens = File(dir, "tokens.txt")
-        if (!tokens.isFile) return null
-        val files = dir.listFiles().orEmpty().filter { it.isFile }
-        val ext = if (qnn) "bin" else "onnx"
-        fun pick(prefix: String) = files.firstOrNull {
-            it.extension.equals(ext, ignoreCase = true) && it.nameWithoutExtension.contains(
-                prefix, ignoreCase = true
-            )
-        }
-
-        val encoder = pick("encoder") ?: return null
-        val decoder = pick("decoder") ?: return null
-        val joiner = pick("joiner") ?: return null
-        return ModelFiles(tokens, encoder, decoder, joiner, qnn)
-    }
-
     @SuppressLint("UnsafeDynamicallyLoadedCode")
     private fun modelFingerprint(dir: java.io.File): String =
         dir.listFiles()?.filter { it.isFile }
@@ -564,7 +494,7 @@ class SpeechRecognitionService : Service() {
             ?.joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
             ?: ""
 
-    private fun initEngine(context: android.content.Context, silent: Boolean = false): Boolean {
+    private fun initEngine(silent: Boolean = false): Boolean {
         if (recognizerRef.get() != null &&
             modelFingerprint(App.speechModelDir) == loadedModelFingerprint
         ) return true
@@ -591,49 +521,27 @@ class SpeechRecognitionService : Service() {
                 streamRef.getAndSet(null)?.runCatching { release() }
                 existing.runCatching { release() }
             }
-            val qnnSupported = isQnnRuntimeSupported(context)
-            val qnnFiles = if (qnnSupported) findModelFiles(dir, qnn = true) else null
-
-            val (files, useQnn) = if (qnnFiles != null && prepareQnnRuntime(context)) {
-                qnnFiles to true
-            } else {
-                val cpuFiles = findModelFiles(dir, qnn = false)
-                if (cpuFiles == null) {
-                    Log.w("SpeechSvc", "No available speech model in $dir")
-                    return false
-                }
-                cpuFiles to false
+            val files = findSpeechModelFiles(dir)
+            if (files == null) {
+                Log.w("SpeechSvc", "No available speech model in $dir")
+                return false
             }
 
             return try {
-                val transducer = if (useQnn) {
-                    val rt = qnnRuntimeRef.get() ?: error("QNN runtime missing")
-                    OnlineTransducerModelConfig(
-                        encoder = "",
-                        decoder = "",
-                        joiner = "",
-                        qnnConfig = QnnConfig(
-                            backendLib = rt.backend.absolutePath,
-                            systemLib = rt.system.absolutePath,
-                            contextBinary = "${files.encoder.absolutePath},${files.decoder.absolutePath},${files.joiner.absolutePath}",
-                        ),
-                    )
-                } else {
-                    OnlineTransducerModelConfig(
-                        encoder = files.encoder.absolutePath,
-                        decoder = files.decoder.absolutePath,
-                        joiner = files.joiner.absolutePath,
-                    )
-                }
+                val transducer = OnlineTransducerModelConfig(
+                    encoder = files.encoder.absolutePath,
+                    decoder = files.decoder.absolutePath,
+                    joiner = files.joiner.absolutePath,
+                )
 
                 val modelConfig = OnlineModelConfig(
                     transducer = transducer,
                     tokens = files.tokens.absolutePath,
-                    numThreads = if (useQnn) 1 else Runtime.getRuntime().availableProcessors()
+                    numThreads = Runtime.getRuntime().availableProcessors()
                         .coerceIn(1, 4),
                     debug = false,
-                    provider = if (useQnn) "qnn" else "cpu",
-                    modelType = if (useQnn) "zipformer" else "",
+                    provider = "cpu",
+                    modelType = "",
                 )
                 val config = OnlineRecognizerConfig(
                     featConfig = FeatureConfig(sampleRate = SpeechIpc.SAMPLE_RATE, featureDim = 80),
@@ -644,12 +552,12 @@ class SpeechRecognitionService : Service() {
                 recognizerRef.set(OnlineRecognizer(null, config))
                 loadedModelFingerprint = fingerprint
                 val encoderPath = files.encoder.absolutePath
-                val engineVariant = when {
-                    useQnn -> "qnn"
-                    files.isQnn -> "qnn-fallback-cpu"
-                    files.encoder.nameWithoutExtension.contains("int8", ignoreCase = true) -> "int8"
-                    else -> "standard"
-                }
+                val engineVariant =
+                    if (files.encoder.nameWithoutExtension.contains("int8", ignoreCase = true)) {
+                        "int8"
+                    } else {
+                        "standard"
+                    }
                 Log.i("SpeechSvc", "Creating OnlineRecognizer: encoder=$encoderPath, variant=$engineVariant")
                 true
             } catch (t: Throwable) {
@@ -664,7 +572,7 @@ class SpeechRecognitionService : Service() {
     private fun reloadModelIfPending() {
         if (!pendingModelReload || sessionActive.get() || destroying) return
         pendingModelReload = false
-        scope.launch(Dispatchers.IO) { initEngine(this@SpeechRecognitionService, silent = true) }
+        scope.launch(Dispatchers.IO) { initEngine(silent = true) }
     }
 
     /**
@@ -759,6 +667,7 @@ class SpeechRecognitionService : Service() {
                 }
                 sendClient(SpeechIpc.MSG_ERROR, gen = myClientGen)
             } finally {
+                var shouldReloadModel = false
                 synchronized(audioLock) {
                     if (pushSession === session) pushSession = null
                     // 只释放本会话的 stream；新会话已换上新 stream 时不能误放
@@ -771,15 +680,20 @@ class SpeechRecognitionService : Service() {
                         // 释放（如 onDestroy 兜底），不重复释放
                         myStream.runCatching { release() }
                     }
+                    // 全局复位只许当前代次做：被新会话取代的旧协程不得碰
+                    // 新会话的标志与通道（与旧采集协程收尾的代次守卫同
+                    // 口径）。复检与复位必须与 MSG_START 的换代同锁且
+                    // 在同一临界区内：此前复位在锁外，旧协程过检后被
+                    // 抢占、新 START 完成换代，旧协程随即把新会话的
+                    // sessionActive/clientMessenger 复位掉（整句丢失）
+                    if (mySessionGen == sessionGen) {
+                        sessionActive.set(false)
+                        holding.set(false)
+                        clientMessenger = null
+                        shouldReloadModel = true
+                    }
                 }
-                // 全局复位只许当前代次做：被新会话取代的旧协程不得碰
-                // 新会话的标志与通道（与旧采集协程收尾的代次守卫同口径）
-                if (mySessionGen == sessionGen) {
-                    sessionActive.set(false)
-                    holding.set(false)
-                    clientMessenger = null
-                    reloadModelIfPending()
-                }
+                if (shouldReloadModel) reloadModelIfPending()
             }
         }
     }

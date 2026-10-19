@@ -1321,9 +1321,6 @@ object SherpaSpeechClient {
         }
     }
 
-    fun isQnnRuntimeSupported(context: Context): Boolean =
-        android.os.Build.SUPPORTED_ABIS.contains("arm64-v8a")
-
     /** 已绑定连接的存活预检间隔：距上次确认存活超过此时长才发探针 */
     private const val LIVENESS_CHECK_INTERVAL_MS = 30_000L
 
@@ -1391,8 +1388,8 @@ object SherpaSpeechClient {
     }
 
     fun isModelReady(context: Context): Boolean {
-        val dir = App.speechModelDir
-        return findModelFiles(dir, qnn = true) || findModelFiles(dir, qnn = false)
+        // 与服务端构建识别器共用同一份文件定位规则（findSpeechModelFiles）
+        return findSpeechModelFiles(App.speechModelDir) != null
     }
 
     suspend fun downloadModel(
@@ -1533,10 +1530,7 @@ object SherpaSpeechClient {
         }
 
         if (!isModelReady(service)) {
-            notifyModelMissing(
-                service,
-                if (isQnnRuntimeSupported(service)) ModelProvider.QNN else ModelProvider.CPU
-            )
+            notifyModelMissing(service)
             cancelSession()
             return
         }
@@ -2044,21 +2038,8 @@ object SherpaSpeechClient {
     }
 
 
-    private fun notifyModelMissing(context: Context, provider: ModelProvider) {
+    private fun notifyModelMissing(context: Context) {
         val cb = SpeechUiBridge.onModelMissing ?: return
-        ContextCompat.getMainExecutor(context).execute { cb(provider) }
-    }
-
-    private fun findModelFiles(dir: File, qnn: Boolean): Boolean {
-        val tokens = File(dir, "tokens.txt")
-        if (!tokens.isFile) return false
-        val files = dir.listFiles().orEmpty().filter { it.isFile }
-        val ext = if (qnn) "bin" else "onnx"
-        fun pick(prefix: String) = files.firstOrNull {
-            it.extension.equals(ext, ignoreCase = true) && it.nameWithoutExtension.contains(
-                prefix, ignoreCase = true
-            )
-        }
-        return pick("encoder") != null && pick("decoder") != null && pick("joiner") != null
+        ContextCompat.getMainExecutor(context).execute { cb() }
     }
 }

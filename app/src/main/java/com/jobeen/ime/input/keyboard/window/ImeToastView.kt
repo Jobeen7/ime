@@ -34,6 +34,12 @@ class ImeToastView(context: Context) : androidx.appcompat.widget.AppCompatTextVi
         }
     }
 
+    override fun onDetachedFromWindow() {
+        // 待触发的自动隐藏投递在分离后不必再执行
+        handler.removeCallbacks(hideRunnable)
+        super.onDetachedFromWindow()
+    }
+
     fun showToast(message: CharSequence, colors: KeyboardColors.ColorScheme) {
         ensureIcon()
         applyColors(colors)

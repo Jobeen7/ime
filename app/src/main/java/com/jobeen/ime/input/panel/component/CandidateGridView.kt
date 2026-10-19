@@ -715,6 +715,16 @@ class CandidateGridView(
             shakePhase = 0f
         }
 
+        override fun onDetachedFromWindow() {
+            // 本 View 自有异步资源收尾：待触发的长按投递、抖动帧循环、
+            // 回弹动画在分离后都不应再驱动已脱窗的 View
+            removeCallbacks(longPressRunnable)
+            stopShake()
+            stretchAnimator?.cancel()
+            stretchAnimator = null
+            super.onDetachedFromWindow()
+        }
+
         private fun dragBy(deltaY: Float) {
             val proposed = scrollOffsetY + deltaY
             when {

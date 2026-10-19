@@ -122,8 +122,13 @@ class InputBoxLayerView(
     private val popupBackgroundColor: Int
         get() = (colors.specialKeyBackground and 0x00FFFFFF) or 0xFF000000.toInt()
     private val longPressRunnable = Runnable {
-        longPressTriggered = true
-        showEditActions()
+        // detach 时已 removeCallbacks，此处再复检一次挂载状态兜底：
+        // 万一有残留投递，showEditActions 以本 View 为锚 showAtLocation，
+        // 锚的 windowToken 为 null 会抛 BadTokenException
+        if (isAttachedToWindow) {
+            longPressTriggered = true
+            showEditActions()
+        }
     }
 
     private val textPaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -176,6 +181,12 @@ class InputBoxLayerView(
         changeListener?.let { buffer?.removeOnChangeListener(it) }
         changeListener = null
         stopBlink()
+        // 长按菜单投递与已弹菜单同样要收尾：手指按住未满长按时长时
+        // 键盘收起，残留投递会在已分离的 View 上弹菜单（锚 token 为
+        // null 直接崩）；弹窗不关则随窗口销毁残留
+        handler.removeCallbacks(longPressRunnable)
+        actionPopup?.dismiss()
+        actionPopup = null
         super.onDetachedFromWindow()
     }
 
