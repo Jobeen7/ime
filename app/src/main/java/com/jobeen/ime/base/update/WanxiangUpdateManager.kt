@@ -66,7 +66,7 @@ object WanxiangUpdateManager {
     private const val KEY_SCHEMA_VERSION = "schema_version"
     // 内置随 App 打包的万象 Lite 数据版本（仅作落盘 version.txt 读不到时的
     // 兜底；展示优先读 shared/version.txt，见 readBundledSchemaVersion）
-    const val BUILTIN_SCHEMA_VERSION = "v18.1.5"
+    const val BUILTIN_SCHEMA_VERSION = "v18.1.6"
     private const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
     // 下载时计算的内容指纹（用于本地/远端比对）
     private const val KEY_DICT_REMOTE_FP = "dict_remote_fp"
@@ -602,17 +602,45 @@ object WanxiangUpdateManager {
      * 伪装成一个真实指纹显示并落盘为远端记录；空串则让本地行
      * 诚实显示"—"、回填守卫也不会写入。
      */
+    /**
+     * 词库内容指纹：每个 dict 文件取「相对路径|大小|内容 CRC32」
+     * 元组（见 [DictFingerprint]），排序后拼接再取 SHA-256。元组
+     * 口径与 zip 中央目录可提供的字段完全一致，使检查更新时能用
+     * 中央目录实时算出远端指纹、与本地同值可比。本地与下载时用
+     * 同一算法，更新成功后两者一致。
+     */
     private suspend fun dictsContentFingerprint(dictsDir: File): String {
         val parts = mutableListOf<String>()
         dictsDir.walkTopDown()
             .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
             .forEach {
                 currentCoroutineContext().ensureActive()
-                parts.add("${it.relativeTo(dictsDir).path}|${sha256File(it)}")
+                parts.add(
+                    DictFingerprint.entryPart(
+                        it.relativeTo(dictsDir).path,
+                        it.length(),
+                        crc32File(it),
+                    )
+                )
             }
         if (parts.isEmpty()) return ""
         parts.sort()
         return fingerprint(*parts.toTypedArray())
+    }
+
+    /** 流式计算文件 CRC32（分块读、每块检查协程取消，口径同 sha256File）。 */
+    private suspend fun crc32File(file: File): Long = withContext(Dispatchers.IO) {
+        val crc = java.util.zip.CRC32()
+        file.inputStream().buffered().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val n = input.read(buf)
+                if (n < 0) break
+                crc.update(buf, 0, n)
+            }
+        }
+        crc.value
     }
 
     /**
@@ -682,10 +710,26 @@ object WanxiangUpdateManager {
                 bundledVersion = readBundledSchemaVersion(),
             )
 
-            // 远端词库指纹：下载过该版本时有记录（下载时计算的内容指纹）；
-            // 新版本尚未下载时为 null，界面显示"—"
-            var dictRemoteFp =
-                prefs.getString(KEY_DICT_REMOTE_FP, null)
+            // 远端词库指纹：优先实时取方案包的 zip 中央目录算出
+            // （只读包尾、不整包下载，元组口径与本地一致）；实时取
+            // 到即刷新下载记录。取不到才回落既有记录（下载过该版
+            // 本时下载流程留下的内容指纹）
+            val liveDictRemoteFp = try {
+                fetchRemoteDictFingerprint(schemaUrl(schemaRelease.tag_name))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "远端词库指纹实时获取失败，回落记录")
+                null
+            }
+            if (liveDictRemoteFp != null) {
+                prefs.edit {
+                    putString(KEY_DICT_REMOTE_FP, liveDictRemoteFp)
+                    putString(KEY_DICT_REMOTE_FP_VER, schemaRelease.tag_name)
+                }
+            }
+            var dictRemoteFp = liveDictRemoteFp
+                ?: prefs.getString(KEY_DICT_REMOTE_FP, null)
                     .takeIf { prefs.getString(KEY_DICT_REMOTE_FP_VER, null) == schemaRelease.tag_name }
             if (dictRemoteFp == null && localSchemaVersion == schemaRelease.tag_name) {
                 // 版本一致兜底：本地版本与远端标签相同，则已部署词库
@@ -1065,6 +1109,76 @@ object WanxiangUpdateManager {
 
     private fun isAllowedEntry(name: String): Boolean =
         ALLOWED_PREFIXES.any { name.startsWith(it) } && name.endsWith(ALLOWED_SUFFIX)
+
+    /** 实时取远端词库指纹时读取的包尾长度：须覆盖 EOCD＋常见中央目录。 */
+    private const val RANGE_TAIL_BYTES = 256 * 1024
+
+    /** 中央目录大小上限：超出说明包结构异常，放弃实时指纹。 */
+    private const val MAX_CENTRAL_DIR_BYTES = 8 * 1024 * 1024L
+
+    /**
+     * 实时计算远端方案包的词库指纹：Range 只取包尾定位 EOCD，
+     * 中央目录不在包尾段内时再按其偏移精确取一段；条目过滤与
+     * 元组口径同 [dictsContentFingerprint]，同内容必同指纹。
+     * 任一步失败（服务器不支持 Range、包结构异常等）返回 null，
+     * 调用方回落既有记录。
+     */
+    private fun fetchRemoteDictFingerprint(url: String): String? {
+        val (tail, totalSize) = rangeGet(url, "bytes=-$RANGE_TAIL_BYTES") ?: return null
+        val tailStart = totalSize - tail.size
+        val eocd = ZipCentralDirectory.findEocd(tail, tailStart) ?: return null
+        val cdStartInTail = eocd.cdOffset - tailStart
+        val cdBytes = if (
+            cdStartInTail >= 0 &&
+            cdStartInTail + eocd.cdSize <= tail.size.toLong()
+        ) {
+            tail.copyOfRange(
+                cdStartInTail.toInt(),
+                (cdStartInTail + eocd.cdSize).toInt(),
+            )
+        } else {
+            if (eocd.cdSize > MAX_CENTRAL_DIR_BYTES) return null
+            val (cd, _) = rangeGet(
+                url,
+                "bytes=${eocd.cdOffset}-${eocd.cdOffset + eocd.cdSize - 1}",
+            ) ?: return null
+            cd
+        }
+        val entries = ZipCentralDirectory.parseEntries(cdBytes) ?: return null
+        val parts = entries.asSequence()
+            .filter { !it.name.endsWith("/") && isAllowedEntry(it.name) }
+            .map {
+                DictFingerprint.entryPart(
+                    it.name.removePrefix("dicts/"),
+                    it.size,
+                    it.crc32,
+                )
+            }
+            .toList()
+        if (parts.isEmpty()) return null
+        return fingerprint(*parts.sorted().toTypedArray())
+    }
+
+    /**
+     * Range GET：返回响应体与文件总长（从 Content-Range 解析）。
+     * 服务器未按 206 返回（不支持 Range）即视为失败，避免把整包
+     * 读进内存。
+     */
+    private fun rangeGet(url: String, range: String): Pair<ByteArray, Long>? {
+        return runCatching {
+            client.newCall(
+                okhttp3.Request.Builder().url(url).header("Range", range).build()
+            ).execute().use { response ->
+                if (response.code != 206) return null
+                val total = response.header("Content-Range")
+                    ?.substringAfterLast('/')
+                    ?.toLongOrNull()
+                    ?: return null
+                val bytes = response.body?.bytes() ?: return null
+                bytes to total
+            }
+        }.getOrNull()
+    }
 
     private suspend fun downloadFile(
         url: String,
