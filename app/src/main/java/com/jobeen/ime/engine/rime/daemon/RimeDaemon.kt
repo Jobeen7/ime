@@ -27,7 +27,18 @@ import kotlin.concurrent.withLock
 object RimeDaemon {
     private val realRime by lazy { Rime() }
 
-    private val rimeImpl by lazy { object : RimeApi by realRime {} }
+    private val rimeImpl by lazy {
+        object : RimeApi by realRime {
+            // 显式转发，不依赖委托生成的转发集：转发集按本类编译时
+            // 的接口形态生成，接口新增方法后本文件若未重编（增量编
+            // 译），转发集会缺新方法、运行时抛 AbstractMethodError
+            // （v1.1.12.7 起空组字退格闪退实锤）。RimeApi 再新增方
+            // 法时必须在此同步显式转发，并有契约测试兜底
+            override suspend fun emitKey(value: Int, modifiers: Int, isVirtual: Boolean) {
+                realRime.emitKey(value, modifiers, isVirtual)
+            }
+        }
+    }
 
     // ConcurrentHashMap：ensureEstablished 的读在锁外且位于每个按键 job 的
     // 热路径上，普通 HashMap 与锁内增删并发会读到扩容中间态。
