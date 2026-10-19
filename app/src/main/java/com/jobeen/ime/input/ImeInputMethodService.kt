@@ -111,6 +111,7 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        com.jobeen.ime.base.CrashTrap.surfacePending(this)
         virtualInputConnection.addOnChangeListener {
             if (phraseAddBridgeActive) {
                 // 桥接文本是本地 Editable：程序性改字（清空/替换）可以
