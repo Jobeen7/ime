@@ -25,7 +25,10 @@ class RimeDaemonDelegateContractTest {
             return
         }
         val declared = delegateClass.declaredMethods.map { it.name }.toSet()
+        // 滤掉合成方法：默认参数生成的 `xxx$default` 桥在接口侧、不由
+        // 实现类声明；桥方法也不是真实接口方法
         val missing = RimeApi::class.java.methods
+            .filter { !it.isSynthetic && !it.isBridge }
             .map { it.name }
             .filter { it !in declared }
         assertTrue("delegate misses RimeApi methods: $missing", missing.isEmpty())
