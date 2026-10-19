@@ -14,11 +14,13 @@
 3. 将整个目录树（`shared/`、`model/` 等）重新打包为 zip，放到 `app/src/main/assets/resource.zip`。
 4. 打包后 App 启动时按 MD5 变化自动解压覆盖旧方案；发版验包须逐项核对下述三处适配都在成品包内。
 
-## 相对官方 lite 包的三处适配（缺一即回归）
+## 相对官方 lite 包的四处适配（缺一即回归）
 
 1. **方案清单启用三方案**：`default.yaml` 的 `schema_list` 启用 `wanxiang_t9`、`wanxiang_lite`、`wanxiang_english`（官方只启用 lite，其余为注释行）。librime 按此清单给出可用方案，缺谁谁从方案列表消失。
 2. **方案 `schema:` 段布局注入**：三个方案的 `schema:` 段带 Jime 定制字段，App 与定制 librime 据此决定键盘布局与候选类型——t9：`layout: "T9"`、`punctuation: "FullWidth"`、`kind: "PinYin"`、`candidateKind: "T9PinYin"`；lite：`"Qwerty"`/`"FullWidth"`/`"PinYin"`/`"PinYin"`；english：`"Qwerty"`/`"HalfWidth"`/`"English"`（无 candidateKind）。缺失时九宫格会退化成 26 键全键盘。
-3. **顶层 `options:` 段**：三个方案各有一段 Jime 自有声明（`traditional_chinese_enabled`→`s2t`、`emoji_enabled`→`emoji`、`ascii_mode_enabled`→`ascii_mode`），OptionsApplier 靠它把功能面板的繁体/表情/英文输入三项偏好刷进引擎，缺失时三项开关与引擎脱节。**三段长度相同但 `lock` 标记逐方案不同，必须各自按本目录文件原样使用**：t9/lite 的 ascii 段为 `lock: true`（英文直输由键盘中英键控制）、trad 段为 `lock: false`；english 相反（ascii 段 `lock: false`，面板「英文输入」靠它在英文方案里开关 ascii 直输；trad 段 `lock: true`）。
+4. **顶层 `options:` 段**：三个方案各有一段 Jime 自有声明（`traditional_chinese_enabled`→`s2t`、`emoji_enabled`→`emoji`、`ascii_mode_enabled`→`ascii_mode`），OptionsApplier 靠它把功能面板的繁体/表情/英文输入三项偏好刷进引擎，缺失时三项开关与引擎脱节。**三段长度相同但 `lock` 标记逐方案不同，必须各自按本目录文件原样使用**：t9/lite 的 ascii 段为 `lock: true`（英文直输由键盘中英键控制）、trad 段为 `lock: false`；english 相反（ascii 段 `lock: false`，面板「英文输入」靠它在英文方案里开关 ascii 直输；trad 段 `lock: true`）。
+
+3. **T9 单字母缩写拼写恢复**（2026-10-20 新增）：`wanxiang_t9.schema.yaml` 的 `speller/algebra` 里，官方 18.1.6 将两行注释掉——`- abbrev/^([a-z]).*/$1/` 与 `- abbrev/^([A-Z]).*/$1/`（呈现为 `#- abbrev/...`）。Jime T9 左列点选按 fcitx5 约定回写「首字母 + 分隔符」（如 `g'`），引擎认这个形态全靠这两条缩写拼写；缺失时点选后该段无候选、组字错乱（每段缀原始数字）。Jime 内置包将这两行恢复为启用状态（与官方 18.1.2 时一致，其余内容不动）。注意副作用口径：恢复后纯数字输入的音节切分恢复旧版行为（如 `45` 的组字由 `gj` 变为 `g j` 两段），属旧版官方行为，非新引入。换新版官方包时先 diff 这两行：若官方已恢复启用，本适配自动失效、可从清单移除；仍是注释状态则继续恢复。
 
 ## 历史教训
 

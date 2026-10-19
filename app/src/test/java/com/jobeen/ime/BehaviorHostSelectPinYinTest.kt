@@ -17,9 +17,10 @@ import org.junit.Test
  * 进原始输入并加分隔符，不得残留原始数字（真机故障形态为
  * 「g'4j'5…」每段多一个数字、选词上屏出错）。
  *
- * 大小写契约：万象 T9 的 speller algebra 按大写回写设计（xlit 将
- * 大写字母映射为九宫格数字编码），T9 口径的回写必须是大写；
- * 全拼口径保持小写。左列显示用的 CandidatePinYin 本身不变。
+ * 大小写契约：回写一律用左列拼音的原始小写形态。引擎侧认这个
+ * 形态的前提是方案 speller algebra 启用单字母缩写拼写（abbrev）——
+ * 万象 18.1.6 的 T9 方案曾把该规则注释掉致点选失效，Jime 内置包
+ * 以第四处适配恢复之（见打包铁律）。左列显示与回写同源同值。
  */
 class BehaviorHostSelectPinYinTest {
 
@@ -42,18 +43,18 @@ class BehaviorHostSelectPinYinTest {
     }
 
     @Test
-    fun t9SelectionsRewriteUppercaseWithoutRawDigits() {
+    fun t9SelectionsRewriteLowercaseWithoutRawDigits() {
         val host = BehaviorHost(FakeJob())
         var built = host.pressAndSelect("T9PinYin", "4", "g")
-        assertEquals("G'", built)
+        assertEquals("g'", built)
         built = host.pressAndSelect("T9PinYin", "5", "j")
-        assertEquals("G'J'", built)
+        assertEquals("g'j'", built)
         built = host.pressAndSelect("T9PinYin", "6", "m")
-        assertEquals("G'J'M'", built)
+        assertEquals("g'j'm'", built)
         built = host.pressAndSelect("T9PinYin", "7", "p")
-        assertEquals("G'J'M'P'", built)
+        assertEquals("g'j'm'p'", built)
         built = host.pressAndSelect("T9PinYin", "7", "q")
-        assertEquals("G'J'M'P'Q'", built)
+        assertEquals("g'j'm'p'q'", built)
     }
 
     @Test
@@ -73,6 +74,6 @@ class BehaviorHostSelectPinYinTest {
         host.pressAndSelect("T9PinYin", "4", "g")
         host.flowed(InputString("5"))
         // 第二段未点选：保持原始数字，等用户点选或直接选词
-        assertEquals("G'5", host.build())
+        assertEquals("g'5", host.build())
     }
 }
