@@ -4,8 +4,10 @@
 # 该条与三平台 aapt2 校验值已补入 gradle/verification-metadata.xml，
 # 单测步骤已转绿；其后 lint 在 generateDebugAndroidTestLintModel 处
 # 因 androidTest classpath 另有 13 个构件（compose ui-test 系列的
-# .module、coroutines 1.8.1 等）未登记而失败，亦已补齐并本地强制
-# 重验通过，待本次推送确认远端转绿。
+# .module、coroutines 1.8.1 等）未登记而失败，补齐后实跑又报
+# coroutines-test 1.9.0 的 .module——冲突仲裁会抓落选版本的元数据
+# 文件，这类登记缺口本地因缓存记录不可见、只能以远端实跑为准；
+# coroutines 与 tracing 两簇全部版本已按官方 sha1 双核补齐。
 # 已知前提：testDebugUnitTest 与 lint 不打包 APK、不执行 CMake 原生
 # 构建，按 AGP 任务图不需要 app/src/main/cpp/deps 产物，故不跑
 # install-deps.sh。若实际运行时因 externalNativeBuild 配置期检查等
