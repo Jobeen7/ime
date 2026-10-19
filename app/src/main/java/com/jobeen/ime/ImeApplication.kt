@@ -4,6 +4,7 @@ import android.app.ActivityManager
 import android.app.Application
 import android.content.Context
 import android.os.Build
+import com.jobeen.ime.base.CrashTrap
 import com.jobeen.ime.engine.AppStartup
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
@@ -37,6 +38,7 @@ class ImeApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        CrashTrap.install(this)
         if (isMainProcess()) {
             // 兜底：AppStartup 内部每步已独立捕获，这里再防一次未预料的异常直接杀进程
             val handler = CoroutineExceptionHandler { _, e ->
