@@ -70,7 +70,13 @@ class VoiceRecorder(
     @Volatile
     private var audioRecord: AudioRecord? = null
 
+    // requestAudioFocus 在 synchronized(this) 内写、abandonAudioFocus
+    // 无锁读判：补 @Volatile 保证跨采集线程的可见性（纪律与同文件
+    // 其余跨线程字段一致）
+    @Volatile
     private var audioFocusRequest: AudioFocusRequest? = null
+
+    @Volatile
     private var audioFocusHeld = false
 
     @Volatile

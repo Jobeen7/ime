@@ -31,10 +31,6 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Ime">
 
-        <uses-library
-            android:name="libcdsprpc.so"
-            android:required="false" />
-
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"

@@ -6,10 +6,10 @@ import android.system.OsConstants
 import androidx.core.content.edit
 import com.jobeen.ime.base.net.HttpUtil
 import com.jobeen.ime.data.App
+import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.TarBz2ExtractorUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -36,8 +36,8 @@ object ModelDownloader {
     private const val DOWNLOAD_FILE_INDEX = 1
     private const val DOWNLOAD_FILE_COUNT = 1
 
-    // 解压白名单不含 .so：下载包里的原生库从不被加载（QNN 运行时只从
-    // 应用自身 nativeLibraryDir 加载），留在白名单里只是无谓的信任面
+    // 解压白名单不含 .so：下载包里的原生库从不被加载，
+    // 留在白名单里只是无谓的信任面
     private val MODEL_EXTENSIONS = setOf(BIN_EXTENSION, ONNX_EXTENSION)
     private val MODEL_COMPONENTS = listOf(ENCODER_NAME, DECODER_NAME, JOINER_NAME)
     // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
@@ -125,8 +125,6 @@ object ModelDownloader {
     private val PINNED_SPEECH_SHA256 = mapOf(
         "sherpa-onnx-x-asr-160ms-streaming-zipformer-transducer-zh-en-punct-int8-2026-06-05.tar.bz2" to
             "8a6fca056e1a342546edd78be4d50274e2c01898e7b8ae8fc336f6410319c399",
-        "sherpa-onnx-qnn-SM8850-binary-x-asr-streaming-zipformer-transducer-zh-en-punct-2026-06-05-chunk-size-160ms.tar.bz2" to
-            "01dbcdbc6260a3bd55f902088a156c691888bb2c44f36299ae209797049f00a5",
     )
 
     /** 本地已安装模型的标识（现行是 gh identity；旧版本记录的是清单 md5/link，见迁移逻辑） */
@@ -542,19 +540,9 @@ object ModelDownloader {
             client, ref.owner, ref.repo, ref.tag, ref.assetName,
         )
 
-    private suspend fun sha256OfFile(file: File): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buf = ByteArray(BUFFER_SIZE)
-            var n: Int
-            var chunks = 0
-            while (input.read(buf).also { n = it } != -1) {
-                digest.update(buf, 0, n)
-                if (++chunks % 32 == 0) currentCoroutineContext().ensureActive()
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
+    /** 实现已收敛到 [DigestUtil.sha256HexCancellable]（口径逐行同构：32KB 缓冲、每 32 块查取消）。 */
+    private suspend fun sha256OfFile(file: File): String =
+        DigestUtil.sha256HexCancellable(file)
 
     private fun extractAndInstall(
         archiveFile: File,

@@ -21,6 +21,10 @@ interface ClipboardDao {
     @Query("SELECT * FROM clipboard_records WHERE deleted = 0")
     suspend fun getAllActive(): List<ClipboardRecord>
 
+    /** applyOrder 专用投影：排序重排只取五列，不整行读全文（见 ClipboardOrderRow） */
+    @Query("SELECT id, text, pinned, sortOrder, timestamp FROM clipboard_records WHERE deleted = 0")
+    suspend fun getAllActiveOrderRows(): List<ClipboardOrderRow>
+
     /**
      * 只取最新若干条的文本列：clearAll 构造防复活抑制集只需要文本本身，
      * 在 SQL 内排序截断，不再把全表全文读进内存再排序（单条文本可为
@@ -82,20 +86,13 @@ interface ClipboardDao {
     /**
      * 编辑条目：把旧文本改写为新文本，刷新时间戳并把排序序号设为
      * 当前最小值减一（排到最前——列表按 sortOrder 在 timestamp 之前
-     * 排序，只刷新时间戳排不动）；置顶状态随行保留
+     * 排序，只刷新时间戳排不动）；置顶状态随行保留。
+     * 返回受影响行数：调用方必须校验——旧行已被并发路径删除时
+     * 命中 0 行，不补处理会让新旧内容双双静默丢失
+     * （见 ClipboardManager.updateEntry 的补插兜底）。
      */
     @Query("UPDATE clipboard_records SET text = :newText, timestamp = :ts, sortOrder = :sortOrder WHERE text = :oldText AND deleted = 0")
-    suspend fun updateTextByText(oldText: String, newText: String, ts: Long, sortOrder: Long)
-
-    @Query("UPDATE clipboard_records SET deleted = 1, deletedAt = :ts WHERE text = :text AND deleted = 0")
-    suspend fun softDeleteByText(text: String, ts: Long)
-
-    /** 多选批量删除：与单条删除同为软删 */
-    @Query("UPDATE clipboard_records SET deleted = 1, deletedAt = :ts WHERE text IN (:texts) AND deleted = 0")
-    suspend fun softDeleteByTexts(texts: List<String>, ts: Long)
-
-    @Query("UPDATE clipboard_records SET deleted = 1, deletedAt = :ts WHERE deleted = 0")
-    suspend fun softDeleteAll(ts: Long)
+    suspend fun updateTextByText(oldText: String, newText: String, ts: Long, sortOrder: Long): Int
 
     @Query("DELETE FROM clipboard_records WHERE text = :text")
     suspend fun deleteByText(text: String)

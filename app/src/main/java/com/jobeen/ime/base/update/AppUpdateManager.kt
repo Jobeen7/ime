@@ -6,6 +6,7 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import androidx.core.content.FileProvider
+import com.jobeen.ime.base.util.DigestUtil
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -87,7 +88,7 @@ object AppUpdateManager {
                 val total = body.contentLength().takeIf { it > 0 } ?: expectedSize
                 var downloaded = 0L
                 val digest = if (expectedSha256.isNotBlank()) {
-                    java.security.MessageDigest.getInstance("SHA-256")
+                    DigestUtil.newSha256Digest()
                 } else {
                     null
                 }
@@ -114,7 +115,7 @@ object AppUpdateManager {
                 // 完整性校验：GitHub 提供了资产 SHA-256 时必须逐字节一致，
                 // 只验大小挡不住同长度的内容替换/损坏
                 if (digest != null) {
-                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                    val actual = DigestUtil.hexDigest(digest)
                     if (!actual.equals(expectedSha256, ignoreCase = true)) {
                         Timber.w("App update SHA-256 mismatch")
                         partial.delete()

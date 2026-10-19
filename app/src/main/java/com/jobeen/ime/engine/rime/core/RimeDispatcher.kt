@@ -213,10 +213,23 @@ class RimeDispatcher(
         val wrapped = WrappedRunnable(block)
         wrapped.job = context[kotlinx.coroutines.Job]
         queue.offer(wrapped)
-        // 入队后复查：stop() 可能在检查与入队之间执行，避免任务入队后无人消费导致挂起
+        // 入队后复查：stop() 可能在检查与入队之间执行，避免任务入队后无人消费导致挂起。
+        // 但不能无条件抛错——按任务此刻的归属分三种：
+        // - 消费侧已接管（started=true，执行中或已执行完）：任务已被
+        //   接受甚至已经生效，再抛 IllegalStateException 等于把已成
+        //   功执行的操作上报为失败，静默返回；
+        // - 仍在队列里（remove 成功）：无人会执行它，摘除并抛错，
+        //   调用方立即按未运行口径降级，与入口检查一致；
+        // - 既不在队列、started 又读到 false：任务已被
+        //   drainQueuedJobs 摘走（started 非 volatile，消费线程的写
+        //   对本线程不保证可见，故以 remove 的原子结果为准），其
+        //   「取消 Job＋补 run」会让等待方以取消收尾，派发侧不再
+        //   叠加一个假失败。
         if (!isRunning.get()) {
-            queue.remove(wrapped)
-            throw IllegalStateException("Dispatcher is not in running state!")
+            if (wrapped.started) return
+            if (queue.remove(wrapped)) {
+                throw IllegalStateException("Dispatcher is not in running state!")
+            }
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.jobeen.ime.base.ngram
 
 import com.jobeen.ime.base.net.HttpUtil
+import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -76,6 +77,13 @@ object GramModelDownloader {
         val link = manifest.link.trim()
         if (link.isEmpty()) {
             Timber.w("Ngram model manifest has no download link: %s", language)
+            return@withContext false
+        }
+        // 下载链接来自清单服务端：只接受 HTTPS。全局网络配置已放开
+        // 明文（供 WebDAV 用户自填地址），不能依赖系统拦截；非 HTTPS
+        // 与「无链接」同走 fail-closed 拒绝路径，不新增异常通道。
+        if (!link.startsWith("https://")) {
+            Timber.w("Ngram model manifest link is not https, refusing download: %s", language)
             return@withContext false
         }
 
@@ -218,16 +226,7 @@ object GramModelDownloader {
                     }
                 }
                 if (expected.isNotEmpty()) {
-                    val digest = java.security.MessageDigest.getInstance("SHA-256")
-                    target.inputStream().use { input ->
-                        val digestBuffer = ByteArray(BUFFER_SIZE)
-                        while (true) {
-                            val count = input.read(digestBuffer)
-                            if (count < 0) break
-                            digest.update(digestBuffer, 0, count)
-                        }
-                    }
-                    val actual = digest.digest().joinToString("") { "%02x".format(it) }
+                    val actual = DigestUtil.sha256Hex(target)
                     if (actual != expected) {
                         // 校验不一致要让用户明确知道是「被拒绝」而不是
                         // 普通下载失败：文件可能已被替换/篡改

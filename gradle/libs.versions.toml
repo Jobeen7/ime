@@ -9,14 +9,12 @@ activityCompose = "1.13.0"
 kotlin = "2.4.10"
 composeBom = "2026.06.01"
 coroutines = "1.11.0"
-#noinspection NewerVersionAvailable
-lottie = "6.7.1"
 material = "1.14.0"
 splitties = "3.0.0"
 timber = "5.0.1"
     kotlinxSerialization = "1.11.0"
     ksp = "2.3.10"
-    kotlinSerialization = "2.4.10"
+    kotlinSerializationPlugin = "2.4.10"
     room = "2.8.4"
     okhttp = "4.12.0"
     commonsCompress = "1.27.1"
@@ -61,5 +59,5 @@ androidx-room-ktx = { module = "androidx.room:room-ktx", version.ref = "room" }
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
-kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlinSerialization" }
+kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlinSerializationPlugin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }

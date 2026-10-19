@@ -214,6 +214,13 @@ class ConfirmOverlay(
         positionRunnable = null
     }
 
+    override fun onDetachedFromWindow() {
+        // 定位触发源（布局监听 + 一次性定位投递）随窗口分离一并清理，
+        // 与 dismiss 的清理口径一致；下次弹出时 showCard 会重新登记
+        clearPositionTriggers()
+        super.onDetachedFromWindow()
+    }
+
     private fun showCard(
         cardX: Float,
         cardY: Float,

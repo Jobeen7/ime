@@ -37,7 +37,6 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.KawaiiPanel
 import com.jobeen.ime.input.pinner.PreeditPinner
 import com.jobeen.ime.input.speech.SpeechOverlayView
-import com.jobeen.ime.base.speech.ModelProvider
 import com.jobeen.ime.base.speech.SherpaSpeechClient
 import com.jobeen.ime.base.speech.SpeechUiBridge
 import com.jobeen.ime.input.ImeInputMethodService
@@ -804,8 +803,8 @@ class KeyboardWindowView(
         // 客户端留了具体文案用文案，否则用通用文案
         showImeToast(SherpaSpeechClient.consumeStartFailureHint() ?: "语音启动失败，请重试")
     }
-    private val speechModelMissingCallback: (ModelProvider) -> Unit =
-        { _ -> showModelDownloadPrompt() }
+    private val speechModelMissingCallback: () -> Unit =
+        { showModelDownloadPrompt() }
 
     private fun registerSpeechCallbacks() {
         SpeechUiBridge.clear()
