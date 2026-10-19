@@ -78,6 +78,27 @@ class SpeechRecognitionService : Service() {
     @Volatile
     private var sessionClientGen = 0
     private val audioLock = Any()
+
+    /**
+     * 会话状态锁：只保护会话字段组的换代/复位临界区——MSG_START
+     * 的通道换手＋代次推进、初始化失败收尾、解码 finally 的代次
+     * 复检＋全局复位（sessionActive/sessionGen/sessionClientGen/
+     * stopRequested/cancelRequestedGen，及随之换手/清空的
+     * clientMessenger）。与 audioLock 的分工：audioLock 只管流
+     * 与识别器本体（createStream/换流/延迟释放集合/喂块与收尾
+     * 解码/引擎构建），长操作只在 audioLock 内、不持本锁，故
+     * START 不再排在收尾解码与模型加载之后。两把锁禁止嵌套：
+     * finally 先在 audioLock 内按身份释放流、再在本锁内复检复
+     * 位。字段组的其余读写仍走原有口径、不纳入本锁：主线程
+     * STOP/CANCEL 对 stopRequested/cancelRequestedGen/
+     * sessionActive 的单点写（主线程串行）、MSG_AUDIO 等对
+     * sessionClientGen 的比对读、发布段在 audioLock 内对
+     * stopRequested 的现读、initEngine 对 sessionActive 的快照
+     * 守卫——均为 @Volatile/原子字段的单点读写，可见性与原子
+     * 性自足；本锁只解决「换代与协程收尾复位跨线程互斥」这一
+     * 对关系。
+     */
+    private val stateLock = Any()
     private var audioJob: Job? = null
 
     /**
@@ -173,12 +194,16 @@ class SpeechRecognitionService : Service() {
 
                 SpeechIpc.MSG_START -> {
                     // 通道换手＋代次推进与解码协程 finally 的收尾复位
-                    // 同锁（见 startDecodeSession 的 finally）：旧协程
-                    // 若先过代次复检、后被抢占，新 START 在此完成换代
-                    // 后，旧协程的复位会误杀新会话（sessionActive 被
-                    // 清、clientMessenger 被置空，新会话整句丢失）。
-                    // 锁内只有字段写与 CAS，无 Binder/IO 等阻塞调用
-                    val startGate = synchronized(audioLock) {
+                    // 同锁（stateLock，见 startDecodeSession 的
+                    // finally）：旧协程若先过代次复检、后被抢占，新
+                    // START 在此完成换代后，旧协程的复位会误杀新会
+                    // 话（sessionActive 被清、clientMessenger 被置
+                    // 空，新会话整句丢失）。换代只碰会话字段、不碰
+                    // 流与识别器，故不再与 audioLock 内的收尾解码
+                    // （至多 512 次 native decode）和模型加载串行，
+                    // 主线程不必等它们完事才处理 START。锁内只有
+                    // 字段写与 CAS，无 Binder/IO 等阻塞调用
+                    val startGate = synchronized(stateLock) {
                         // 通道先换手再判幂等：重复 START 也把回信通道
                         // 更新到最新 replyTo（与此前口径一致）
                         clientMessenger = msg.replyTo
@@ -213,9 +238,9 @@ class SpeechRecognitionService : Service() {
                             // 只收尾自己这一代：STOP 已先行到达则回 DONE（客户
                             // 端在等会话终结而非失败口径）；若已有新一代会话
                             // 开始，旧的失败收尾不能误杀新会话。代次复检与
-                            // 复位收进 audioLock（与 START 换代、finally 复位
+                            // 复位收进 stateLock（与 START 换代、finally 复位
                             // 同锁，见 MSG_START 处注释）；回信在锁外发
-                            val failWhat = synchronized(audioLock) {
+                            val failWhat = synchronized(stateLock) {
                                 if (gen != sessionGen) {
                                     null
                                 } else {
@@ -293,9 +318,9 @@ class SpeechRecognitionService : Service() {
                         // 半损坏/OOM 时可能抛错，此前异常无人处理会直接杀掉
                         // :speech 进程且客户端收不到任何失败回信
                         Log.e("SpeechSvc", "Session init failed", t)
-                        // 代次判据与复位收进 audioLock（同上方 engine==null
+                        // 代次判据与复位收进 stateLock（同上方 engine==null
                         // 路径口径）；回信在锁外发
-                        val failWhat = synchronized(audioLock) {
+                        val failWhat = synchronized(stateLock) {
                             if (cancelRequestedGen == gen || gen != sessionGen) {
                                 null
                             } else {
@@ -668,6 +693,9 @@ class SpeechRecognitionService : Service() {
                 sendClient(SpeechIpc.MSG_ERROR, gen = myClientGen)
             } finally {
                 var shouldReloadModel = false
+                // 流的身份清退先在 audioLock 内做（与换流、延迟释放
+                // 集合的写入同锁）；会话字段的复检与复位随后在
+                // stateLock 内做（见下段）。两段不嵌套、次序固定
                 synchronized(audioLock) {
                     if (pushSession === session) pushSession = null
                     // 只释放本会话的 stream；新会话已换上新 stream 时不能误放
@@ -680,12 +708,17 @@ class SpeechRecognitionService : Service() {
                         // 释放（如 onDestroy 兜底），不重复释放
                         myStream.runCatching { release() }
                     }
+                }
+                synchronized(stateLock) {
                     // 全局复位只许当前代次做：被新会话取代的旧协程不得碰
                     // 新会话的标志与通道（与旧采集协程收尾的代次守卫同
                     // 口径）。复检与复位必须与 MSG_START 的换代同锁且
                     // 在同一临界区内：此前复位在锁外，旧协程过检后被
                     // 抢占、新 START 完成换代，旧协程随即把新会话的
-                    // sessionActive/clientMessenger 复位掉（整句丢失）
+                    // sessionActive/clientMessenger 复位掉（整句丢失）。
+                    // 与上方流清退分锁不影响该不变量：换代与复检复位
+                    // 在本锁内互斥；流的清退按身份判定，与字段复位谁
+                    // 先谁后都不会误伤新会话
                     if (mySessionGen == sessionGen) {
                         sessionActive.set(false)
                         holding.set(false)

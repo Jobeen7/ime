@@ -3,6 +3,7 @@ package com.jobeen.ime
 import com.jobeen.ime.engine.rime.core.RimeDispatcher
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -141,15 +142,70 @@ class RimeDispatcherDispatchContractTest {
         runBlocking {
             // 正在执行的任务不被 stop 误伤：正常交付结果
             assertEquals("done", withTimeout(5_000) { task1.await() })
-            // 已入队未消费的任务：等待方以取消收尾，任务体不执行
+            // 已入队未消费的任务：等待方以取消收尾，任务体不执行。
+            // 超时异常必须单独成支：TimeoutCancellationException 是
+            // CancellationException 的子类，若混在一个 catch 里，
+            // 等待方真挂死时会被测试自己的 5 秒超时兜住、照样通过，
+            // 断言就失去了区分力
             try {
                 withTimeout(5_000) { task2.await() }
                 fail("queued task's waiter must complete with CancellationException")
+            } catch (expected: TimeoutCancellationException) {
+                fail("queued task's waiter hung instead of being cancelled by drain")
             } catch (expected: CancellationException) {
                 // 规格期望：取消语义，不是挂死、不是 IllegalStateException
             }
         }
         assertFalse("queued task body must never run", task2BodyRan.get())
+    }
+
+    @Test
+    fun queuedTaskBeyondStopTimeout_waiterCancelledAndNeverRunsAfterRestart() {
+        val controller = FakeController()
+        val dispatcher = startedDispatcher(controller)
+        val scope = CoroutineScope(SupervisorJob())
+        val task1Started = CountDownLatch(1)
+        // 任务 1 占用 rime-main 2.5 秒，超过 stop() 内部 2 秒等锁
+        // 超时：stop() 先行返回，排空改由消费循环退出段兜底完成
+        val task1 = scope.async(dispatcher) {
+            task1Started.countDown()
+            Thread.sleep(2_500)
+            "done"
+        }
+        assertTrue(task1Started.await(5, TimeUnit.SECONDS))
+        val task2BodyRan = AtomicBoolean(false)
+        val task2 = scope.async(dispatcher) {
+            task2BodyRan.set(true)
+            "unreachable"
+        }
+        // 给任务 2 的派发落队列留出时间
+        Thread.sleep(300)
+
+        dispatcher.stop()
+
+        runBlocking {
+            // 长任务不被 stop 误伤：正常跑完并交付结果
+            assertEquals("done", withTimeout(10_000) { task1.await() })
+            // 任务 1 结束后消费循环退出、退出段排空：任务 2 的等待方
+            // 必须以取消收尾（挂死会被超时支单独抓住判失败）
+            try {
+                withTimeout(5_000) { task2.await() }
+                fail("queued task's waiter must complete with CancellationException")
+            } catch (expected: TimeoutCancellationException) {
+                fail("queued task's waiter hung instead of being cancelled by drain")
+            } catch (expected: CancellationException) {
+                // 规格期望：退出段排空的取消语义
+            }
+        }
+        assertFalse("queued task body must never run", task2BodyRan.get())
+
+        // 重新 start() 后，被排空的任务也不能被新一代消费循环捡起
+        // （startupLatch 是同一 controller 的单次闩，首启时已倒数完，
+        // 这里只需给新消费循环留出会捡任务的时间窗再断言）
+        dispatcher.start()
+        Thread.sleep(300)
+        assertFalse("drained task must not run after restart", task2BodyRan.get())
+        dispatcher.stop()
     }
 
     @Test

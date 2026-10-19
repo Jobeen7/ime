@@ -8,14 +8,17 @@ plugins {
 @Suppress("UnstableApiUsage") android {
     namespace = "com.jobeen.ime"
     compileSdk = 37
+    // 显式锁定 NDK 版本，避免换机器或 AGP 升级时默认 NDK 悄悄变化、
+    // 原生产物不可复现（取本机实际在用版本）
+    ndkVersion = "28.2.13676358"
 
     defaultConfig {
         applicationId = "com.jobeen.ime"
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 123
-        versionName = "1.1.12.5"
+        versionCode = 124
+        versionName = "1.1.12.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {

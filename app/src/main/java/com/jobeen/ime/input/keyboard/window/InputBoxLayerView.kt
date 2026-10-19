@@ -122,10 +122,11 @@ class InputBoxLayerView(
     private val popupBackgroundColor: Int
         get() = (colors.specialKeyBackground and 0x00FFFFFF) or 0xFF000000.toInt()
     private val longPressRunnable = Runnable {
-        // detach 时已 removeCallbacks，此处再复检一次挂载状态兜底：
+        // detach 时已 removeCallbacks，此处再复检一次挂载与可见状态兜底：
         // 万一有残留投递，showEditActions 以本 View 为锚 showAtLocation，
-        // 锚的 windowToken 为 null 会抛 BadTokenException
-        if (isAttachedToWindow) {
+        // 锚的 windowToken 为 null 会抛 BadTokenException；hide() 后本
+        // View 仍 attached 只是 GONE，投递照常到期也会凭空弹菜单
+        if (isAttachedToWindow && isShown) {
             longPressTriggered = true
             showEditActions()
         }
@@ -202,6 +203,9 @@ class InputBoxLayerView(
 
     fun hide() {
         stopBlink()
+        // 与 detach 同口径撤长按投递：手指按住未满长按时长时被其他
+        // 路径 hide()，残留投递到期会在已隐藏的输入框上弹编辑菜单
+        handler.removeCallbacks(longPressRunnable)
         actionPopup?.dismiss()
         visibility = View.GONE
     }

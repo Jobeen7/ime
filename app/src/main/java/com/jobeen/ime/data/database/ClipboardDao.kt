@@ -34,8 +34,30 @@ interface ClipboardDao {
     suspend fun getRecentTexts(limit: Int): List<String>
 
     /**
+     * 存量限长前置去重（必须在 [truncateOversizedTexts] 之前调用）：
+     * 两条超限行若前 [limit] 字相同，截断后 text 必然同值、撞 text
+     * 唯一索引，整条 UPDATE 语句失败（旧库迁移与新库一次性限长都
+     * 会因此永久卡死）。先按截断键（substr(text, 1, limit)）删掉
+     * 较差的一行，只留一行待截断；保留口径与 [dedupeClipboardByText]
+     * 及 v4 迁移 SQL 严格一致：pinned 优先、timestamp 最新、id 最大。
+     * 只删超限行，未超限的行不参与（其 text 与截断键的关系不归本
+     * 方法处理）。
+     */
+    @Query(
+        "DELETE FROM clipboard_records WHERE length(text) > :limit AND EXISTS (" +
+            "SELECT 1 FROM clipboard_records o WHERE o.id <> clipboard_records.id " +
+            "AND substr(o.text, 1, :limit) = substr(clipboard_records.text, 1, :limit) AND (" +
+            "o.pinned > clipboard_records.pinned OR " +
+            "(o.pinned = clipboard_records.pinned AND o.timestamp > clipboard_records.timestamp) OR " +
+            "(o.pinned = clipboard_records.pinned AND o.timestamp = clipboard_records.timestamp AND o.id > clipboard_records.id)))"
+    )
+    suspend fun dedupeOversizedByTruncatedKey(limit: Int)
+
+    /**
      * 存量限长（一次性）：超限行直接在 SQL 内截断，不把大文本读进内存
      * （超 CursorWindow 的行用普通查询读出会抛 SQLiteBlobTooBigException）。
+     * 调用前必须先 [dedupeOversizedByTruncatedKey]，否则同前缀超限行
+     * 截断后撞唯一索引、整条语句失败。
      */
     @Query("UPDATE clipboard_records SET text = substr(text, 1, :limit) WHERE length(text) > :limit")
     suspend fun truncateOversizedTexts(limit: Int)
@@ -83,6 +105,10 @@ interface ClipboardDao {
     @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0 AND pinned = 0")
     suspend fun countUnpinned(): Int
 
+    /** 只数置顶的有效行：置顶条数上限的计数口径（见 ClipboardManager.MAX_PINNED） */
+    @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0 AND pinned = 1")
+    suspend fun countPinned(): Int
+
     /**
      * 编辑条目：把旧文本改写为新文本，刷新时间戳并把排序序号设为
      * 当前最小值减一（排到最前——列表按 sortOrder 在 timestamp 之前
@@ -101,8 +127,12 @@ interface ClipboardDao {
     @Query("DELETE FROM clipboard_records WHERE text IN (:texts)")
     suspend fun deleteByTexts(texts: List<String>)
 
-    // 只淘汰未置顶有效行中最旧的；软删除行由 purgeDeletedOlderThan 按保留期清理
-    @Query("DELETE FROM clipboard_records WHERE id IN (SELECT id FROM clipboard_records WHERE deleted = 0 AND pinned = 0 ORDER BY timestamp ASC LIMIT :n)")
+    // 只淘汰未置顶有效行；软删除行由 purgeDeletedOlderThan 按保留期清理。
+    // 淘汰口径按显示序的末尾先删：显示序为 sortOrder 升序（越小越靠前），
+    // 故 sortOrder 大的先淘汰——被用户拖到顶部的条目 sortOrder 小，
+    // 不再因 timestamp 旧而被先删（旧口径纯按 timestamp，与显示序脱钩）；
+    // sortOrder 相同（从未拖排的行同为一组）时按 timestamp 最旧先删
+    @Query("DELETE FROM clipboard_records WHERE id IN (SELECT id FROM clipboard_records WHERE deleted = 0 AND pinned = 0 ORDER BY sortOrder DESC, timestamp ASC LIMIT :n)")
     suspend fun deleteOldest(n: Int)
 
     // 保留期清理豁免置顶行

@@ -19,13 +19,17 @@ import org.junit.runner.RunWith
  * 造旧版库不用 MigrationTestHelper（room-testing 是额外构件，构建
  * 环境未必拉得到）：按 app/schemas 里导出的旧版 createSql 手工建库
  * 并写入旧版 identity 到 room_master_table（与 MigrationTestHelper
- * 的造法等价），再经**生产构建器**（getInstance 的真实迁移链）
+ * 的造法等价），再经**生产构建器**（createWithName 的真实迁移链）
  * 开库断言。两库的 Migration 都是 companion 私有成员，测试拿不到、
  * 无法走 runMigrationsAndValidate；经生产路径开库时 Room 自身会做
  * identity 与 TableInfo 校验，迁移产出的索引与实体不一致会直接
  * 抛错，等价于 schema 验证。
  *
- * 本机未跑（需真机/模拟器），CI 亦未纳入 androidTest。
+ * 使用测试专用库名（ime_database_test / clipboard_database_test），
+ * 不触碰生产数据：在装有正式版的日常机上跑也不会删掉真实的
+ * 常用语、选词偏好与剪贴板。
+ *
+ * 本机未跑（需真机/模拟器）；CI 以 android-test.yml 手动触发运行。
  */
 @RunWith(AndroidJUnit4::class)
 class DatabaseMigrationTest {
@@ -41,7 +45,8 @@ class DatabaseMigrationTest {
             identityHash = "a56076266282b2fb9498caa3557db1e9",
             createSqls = listOf(CLIPBOARD_RECORDS_SQL),
         )
-        val db = ClipboardDatabase.getInstance(context).openHelper.writableDatabase
+        val db = ClipboardDatabase.createWithName(context, CLIPBOARD_DB_NAME)
+            .openHelper.writableDatabase
         assertClipboardMigrated(db)
     }
 
@@ -58,7 +63,8 @@ class DatabaseMigrationTest {
                 PHRASE_RECORDS_SQL,
             ),
         )
-        val db = AppDatabase.getInstance(context).openHelper.writableDatabase
+        val db = AppDatabase.createWithName(context, IME_DB_NAME)
+            .openHelper.writableDatabase
         assertClipboardMigrated(db)
     }
 
@@ -162,8 +168,8 @@ class DatabaseMigrationTest {
     }
 
     private companion object {
-        const val CLIPBOARD_DB_NAME = "clipboard_database"
-        const val IME_DB_NAME = "ime_database"
+        const val CLIPBOARD_DB_NAME = "clipboard_database_test"
+        const val IME_DB_NAME = "ime_database_test"
 
         // 以下建表 SQL 逐字摘自 app/schemas 导出（占位符已替换为表名）：
         // ClipboardDatabase/3.json 与 AppDatabase/12.json 的 clipboard_records；

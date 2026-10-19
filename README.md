@@ -62,6 +62,7 @@
 ## 构建
 
 - 源码构建先运行 `install-deps.sh` 拉取并校验原生依赖；在 Windows 上构建需 `patch.exe` 在 PATH 中（构建期对 deps 打补丁用）
+- 内置万象方案包 `app/src/main/assets/resource.zip` 不入版本库，其经 Jime 适配的四个方案文件与重打包步骤见 [tools/wanxiang-builtin/](tools/wanxiang-builtin/README.md)
 
 ## 许可证
 

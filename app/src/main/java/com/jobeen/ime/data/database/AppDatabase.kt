@@ -27,16 +27,27 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    AppDatabase::class.java,
-                    "ime_database"
-                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13).addCallback(VACUUM_CALLBACK).build().also { INSTANCE = it }
+                INSTANCE ?: build(context.applicationContext, "ime_database")
+                    .also { INSTANCE = it }
                 // 注意：不要加 fallbackToDestructiveMigration() —— 漏写 Migration 时宁可启动崩溃（fail-fast，
                 // 发布前真机测试会先暴露），也不要静默清空用户的剪贴板/常用语/选词偏好。每次 bump version
                 // 都必须写 Migration（无结构变更时写空迁移，见 MIGRATION_7_8）。
             }
         }
+
+        /**
+         * 以指定库名新建实例（不走单例缓存）：迁移仪器测试以测试专用
+         * 库名走同一条迁移链验证，避免在真机上触碰生产库文件。
+         * 生产代码只用 [getInstance]。
+         */
+        fun createWithName(context: Context, name: String): AppDatabase =
+            build(context.applicationContext, name)
+
+        private fun build(context: Context, name: String): AppDatabase =
+            Room.databaseBuilder(context, AppDatabase::class.java, name)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
+                .addCallback(VACUUM_CALLBACK)
+                .build()
 
         private const val MAINTENANCE_PREFS = "db_maintenance"
         private const val KEY_VACUUM_V10_DONE = "vacuum_after_v10_done"
@@ -97,17 +108,23 @@ abstract class AppDatabase : RoomDatabase() {
                     System.currentTimeMillis() - lastFail < VACUUM_CLIP_RETRY_BACKOFF_MS
                 ) return
                 // 空间预检：VACUUM 要另建一份库副本，临时空间约需一倍
-                // 库大小；不足时执行必然失败，直接记失败走退避
+                // 库大小；不足时执行必然失败，直接记失败走退避。需求
+                // 口径把 WAL 一并计入：未 checkpoint 的 WAL 页同样占着
+                // 空间、且 VACUUM 期间仍在写，只按主文件大小估会把恰
+                // 在边界上的设备放行后照样失败（-wal 不存在按 0）
                 val dbFile = com.jobeen.ime.base.util.appContext
                     .getDatabasePath("ime_database")
                 if (dbFile.isFile) {
                     val usable = runCatching {
                         android.os.StatFs(dbFile.parent).availableBytes
                     }.getOrDefault(Long.MAX_VALUE)
-                    if (usable < dbFile.length()) {
+                    val walFile = java.io.File(dbFile.path + "-wal")
+                    val walLength = if (walFile.isFile) walFile.length() else 0L
+                    val required = dbFile.length() + walLength
+                    if (usable < required) {
                         timber.log.Timber.w(
-                            "Post-split VACUUM skipped: usable space %d < db size %d",
-                            usable, dbFile.length(),
+                            "Post-split VACUUM skipped: usable space %d < required %d (db %d + wal %d)",
+                            usable, required, dbFile.length(), walLength,
                         )
                         prefs.edit { putLong(KEY_VACUUM_CLIP_LAST_FAIL, System.currentTimeMillis()) }
                         return
@@ -118,6 +135,25 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             } finally {
                 vacuumLock.unlock()
+            }
+        }
+
+        /**
+         * 清除拆库 VACUUM 的完成/失败标记（供 ClipboardManager 的拆库
+         * 迁移在真正删掉旧行后调用）：在 v1.1.11.x 上迁移失败但
+         * VACUUM 照样跑完的设备，完成标记已被误置为 true——此后迁
+         * 移即使成功删行，[vacuumAfterClipboardSplit] 也会被完成标
+         * 记短路，旧剪贴板全文永久留在主库空闲页里、随云备份外带，
+         * 拆库的隐私隔离对这批设备等于没做。清标后，db() 随后派发
+         * 的补跑才会真正重新执行一次物理擦除；失败标记一并清掉，
+         * 免得 24 小时退避期挡住这次正当补跑。
+         */
+        fun clearPostSplitVacuumMarks() {
+            val prefs = com.jobeen.ime.base.util.appContext
+                .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
+            prefs.edit {
+                putBoolean(KEY_VACUUM_CLIP_DONE, false)
+                remove(KEY_VACUUM_CLIP_LAST_FAIL)
             }
         }
 

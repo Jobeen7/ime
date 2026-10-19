@@ -722,6 +722,19 @@ class CandidateGridView(
             stopShake()
             stretchAnimator?.cancel()
             stretchAnimator = null
+            // 手势进行中被摘除时 UP/CANCEL 送达不到，按压/拖拽状态会
+            // 残留到重挂后串扰下一趟手势：按 ACTION_CANCEL 同款字段集
+            // 复位（动画与投递已在上方收尾，这里只清手势状态）
+            activePointerId = -1
+            recycleVelocityTracker()
+            dragIndex = -1
+            dragItem = null
+            dragTargetIndex = -1
+            pressedIndex = -1
+            horizontalDrag = -1
+            dragging = false
+            longPressTriggered = false
+            longPressMoved = false
             super.onDetachedFromWindow()
         }
 

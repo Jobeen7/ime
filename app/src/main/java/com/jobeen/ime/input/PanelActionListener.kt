@@ -4,6 +4,7 @@ import android.content.Intent
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.PhraseManager
+import com.jobeen.ime.data.manager.takeCodePoints
 import com.jobeen.ime.R
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.keyboard.impl.EmojiKeyboard
@@ -145,7 +146,7 @@ class PanelActionListener(
 
     override fun onAddPhraseSave(text: String) {
         appScope.launch {
-            val id = PhraseManager.insert(service, text, text.take(12))
+            val id = PhraseManager.insert(service, text, text.takeCodePoints(12))
             if (id > 0) {
                 service.keyboardWindow?.showToast(service.getString(R.string.phrase_add_success))
             }

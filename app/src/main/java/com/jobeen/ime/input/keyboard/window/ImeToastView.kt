@@ -35,8 +35,10 @@ class ImeToastView(context: Context) : androidx.appcompat.widget.AppCompatTextVi
     }
 
     override fun onDetachedFromWindow() {
-        // 待触发的自动隐藏投递在分离后不必再执行
+        // 待触发的自动隐藏投递在分离后不必再执行；投递撤掉后须一并
+        // 隐藏，否则重挂后无人再投递，提示会常驻到下一次 showToast
         handler.removeCallbacks(hideRunnable)
+        visibility = GONE
         super.onDetachedFromWindow()
     }
 

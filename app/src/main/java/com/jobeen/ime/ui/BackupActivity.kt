@@ -174,13 +174,6 @@ class BackupActivity : ComponentActivity() {
                         // 进程重启由 BackupManager 在置 Done 时自行安排：
                         // 离开本页的用户收不到这条观察，重启不能只挂在这里
                     }
-                    is BackupManager.RestoreState.DoneWithWarning -> {
-                        BackupManager.consumeRestoreState()
-                        uiState.busyText = null
-                        ToastUtil.showToast(
-                            "${getString(R.string.backup_restore_done)}，但${state.message}"
-                        )
-                    }
                     is BackupManager.RestoreState.Failed -> {
                         BackupManager.consumeRestoreState()
                         uiState.busyText = null

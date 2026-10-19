@@ -36,6 +36,14 @@ object ClipboardManager {
     private const val DEFAULT_RETENTION_DAYS = 30
 
     /**
+     * 置顶条数上限：置顶行不计入保留上限（见 trimExcess）、单条又可
+     * 达 [MAX_TEXT_LENGTH]，没有独立上限时置顶可绕过全部容量约束
+     * 无限堆积库文件。达到上限后新的置顶被拒（[setPinned] 回 false），
+     * 取消置顶与已置顶条目的存续不受影响。
+     */
+    private const val MAX_PINNED = 100
+
+    /**
      * 单条文本长度上限：超大行（约 2MB 起）读出时会抛 SQLiteBlobTooBigException，
      * 一行就能毒化整张历史表（列表恒空、备份导出失败），写入侧一律截断。
      */
@@ -117,9 +125,27 @@ object ClipboardManager {
     suspend fun getEntries(context: Context): List<Entry> =
         getEntriesOrNull(context) ?: emptyList()
 
-    /** @return 写入成功为 true；数据库操作失败为 false（旧实现静默吞掉，调用方无从感知）。 */
-    suspend fun setPinned(context: Context, text: String, pinned: Boolean): Boolean =
-        db(context) { db -> db.clipboardDao().setPinnedByText(text, pinned) } != null
+    /**
+     * @return 写入成功为 true；数据库操作失败、或置顶已达
+     * [MAX_PINNED] 上限被拒为 false（旧实现静默吞掉，调用方无从感知）。
+     */
+    suspend fun setPinned(context: Context, text: String, pinned: Boolean): Boolean {
+        val result = db(context) { db ->
+            val dao = db.clipboardDao()
+            if (pinned && dao.pinnedByText(text) != true &&
+                dao.countPinned() >= MAX_PINNED
+            ) {
+                // 已置顶条目重复置顶是幂等操作、不占新名额（上面按
+                // pinnedByText 放行）；未置顶条目在置顶数已达上限时
+                // 拒绝，不落库。取消置顶永远放行
+                false
+            } else {
+                dao.setPinnedByText(text, pinned)
+                true
+            }
+        }
+        return result ?: false
+    }
 
     /**
      * @return 条目已落库（或空文本无需落库）为 true；数据库操作失败
@@ -582,7 +608,11 @@ object ClipboardManager {
             // 重跑一次注定失败的迁移，旧行既不搬也不删、一直躺在
             // 会进云备份的主库里。截断是现成的 SQL substr 更新、
             // 不物化行（truncateOversizedTextsOnce 只作用于新库，
-            // 待迁移的旧库才是毒化源头，必须在这里对源头先行）
+            // 待迁移的旧库才是毒化源头，必须在这里对源头先行）。
+            // 截断前先按截断键去重：两条超限行前 MAX_TEXT_LENGTH
+            // 字相同时截断后必然同 text、撞旧表上的 text 唯一索引，
+            // 整条 UPDATE 失败、迁移随之永久卡死（见 DAO 注释）
+            oldDao.dedupeOversizedByTruncatedKey(MAX_TEXT_LENGTH)
             oldDao.truncateOversizedTexts(MAX_TEXT_LENGTH)
             val oldRows = oldDao.getAllRaw()
             if (oldRows.isNotEmpty()) {
@@ -605,6 +635,14 @@ object ClipboardManager {
                     Timber.i("Clipboard history migrated: ${missing.size} rows")
                 }
                 oldDao.deleteAllRaw()
+                // 清掉拆库 VACUUM 的完成/失败标记：在 v1.1.11.x 上
+                // 迁移失败但 VACUUM 照样跑完、完成标记被误置的设备，
+                // 本次迁移删行后若不清除，db() 随后派发的补跑会被
+                // 完成标记短路，刚删掉的旧全文永久留在主库空闲页
+                // 里（标记误置的成因见 migrateFromAppDatabase 的
+                // 返回值说明）。仅在确实删过旧行时清：旧表本就为空
+                // 的设备没有新残留，不必多跑一次 VACUUM
+                AppDatabase.clearPostSplitVacuumMarks()
             }
             settings.edit().putBoolean(KEY_DB_MIGRATED, true).apply()
             // 旧行全文此时还在 ime_database 的空闲页/WAL 里：补跑主库
@@ -621,7 +659,11 @@ object ClipboardManager {
         val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         if (settings.getBoolean(KEY_TEXT_TRUNCATED, false)) return
         runCatching {
-            target.clipboardDao().truncateOversizedTexts(MAX_TEXT_LENGTH)
+            val dao = target.clipboardDao()
+            // 与迁移路径同规：截断前先按截断键去重，防同前缀超限行
+            // 截断后撞 text 唯一索引让整条 UPDATE 失败（见 DAO 注释）
+            dao.dedupeOversizedByTruncatedKey(MAX_TEXT_LENGTH)
+            dao.truncateOversizedTexts(MAX_TEXT_LENGTH)
             settings.edit().putBoolean(KEY_TEXT_TRUNCATED, true).apply()
         }.onFailure { Timber.w(it, "Clipboard oversized-text truncation failed; will retry") }
     }

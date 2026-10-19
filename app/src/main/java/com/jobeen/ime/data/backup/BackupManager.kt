@@ -226,12 +226,10 @@ object BackupManager {
      * 且解密与完整结构解析全部通过后才开始写任何数据（不会半还原）。
      * 还原前落盘快照保存失败同样抛 [BackupException] 中止（fail-fast，
      * 见 restoreInternal），不再降级继续。
-     *
-     * @return 恒为 false（保留返回值是为兼容既有状态机接线：落盘快照
-     * 失败已改抛错，快照回滚路径本就不落盘快照）。
      */
-    suspend fun restoreBackup(bytes: ByteArray, password: CharArray): Boolean =
+    suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
         restoreInternal(bytes, password, isSnapshotRollback = false)
+    }
 
     /**
      * 还原本体。[isSnapshotRollback] 区分数据来源：
@@ -242,13 +240,10 @@ object BackupManager {
      *   把当前（已还原）状态覆写到快照文件上，原始还原前状态就此
      *   丢失，回滚也就失去了目标。
      *
-     * @return 恒为 false：外部备份还原的落盘快照保存失败已改抛
-     * [BackupException] 中止（fail-fast，见下方判定点）；快照回滚
-     * 路径不落盘快照。返回值仅为兼容既有状态机接线保留。
      */
     private suspend fun restoreInternal(
         bytes: ByteArray, password: CharArray, isSnapshotRollback: Boolean
-    ): Boolean {
+    ) {
         val payload = decryptPayload(bytes, password)
         val parsed = parsePayload(payload, sanitizeWebdav = !isSnapshotRollback)
         // 写任何数据前，先把当前状态快照一份：写入阶段任一步失败都用
@@ -260,7 +255,6 @@ object BackupManager {
         // 一轮 60 万次 PBKDF2）。
         val snapshotJson = collectPayload()
         val snapshotParsed = parsePayload(snapshotJson, sanitizeWebdav = false)
-        var snapshotPersistFailed = false
         if (!isSnapshotRollback) {
             // 加密快照落盘到私有目录：进程若在写入中途被杀（系统回收、
             // 断电），内存回滚随之消失，下次打开备份页凭此文件+口令仍可
@@ -270,9 +264,7 @@ object BackupManager {
             // 是唯一回滚凭据——没有凭据就继续写，等于把「防半还原」
             // 的最后一道防线主动拆掉。旧口径是降级继续＋事后警告，
             // 警告出现时风险窗口已经敞着走完了全程
-            snapshotPersistFailed =
-                !persistRestoreSnapshot(encryptPayload(snapshotJson, password))
-            if (snapshotPersistFailed) {
+            if (!persistRestoreSnapshot(encryptPayload(snapshotJson, password))) {
                 throw BackupException(
                     "还原前状态快照保存失败，还原已中止（未改动任何数据）"
                 )
@@ -297,7 +289,6 @@ object BackupManager {
             )
         }
         clearRestoreSnapshot()
-        return snapshotPersistFailed
     }
 
     // —— 还原中断的落盘快照（进程被杀后的最后回滚手段） ——
@@ -305,7 +296,7 @@ object BackupManager {
     private val restoreSnapshotFile
         get() = File(appContext.filesDir, RESTORE_SNAPSHOT_NAME)
 
-    /** @return 落盘成功为 true；失败只记日志并回 false 由调用方提示用户（不阻塞还原）。 */
+    /** @return 落盘成功为 true；失败只记日志并回 false——调用方（restoreInternal）据此抛 BackupException 中止还原（fail-fast），不降级继续。 */
     private fun persistRestoreSnapshot(bytes: ByteArray): Boolean =
         runCatching {
             val tmp = File(appContext.filesDir, "$RESTORE_SNAPSHOT_NAME.tmp")
@@ -331,10 +322,10 @@ object BackupManager {
     }
 
     /** 用备份口令把落盘快照还原回去（即回到上次还原之前的状态）。 */
-    suspend fun rollbackToRestoreSnapshot(password: CharArray): Boolean {
+    suspend fun rollbackToRestoreSnapshot(password: CharArray) {
         val bytes = runCatching { restoreSnapshotFile.readBytes() }
             .getOrElse { throw BackupException("回滚快照已损坏或不存在") }
-        return restoreInternal(bytes, password, isSnapshotRollback = true)
+        restoreInternal(bytes, password, isSnapshotRollback = true)
     }
 
     /** 用户确认不需要回滚时丢弃落盘快照。 */
@@ -347,9 +338,6 @@ object BackupManager {
         data object Idle : RestoreState
         data object Running : RestoreState
         data object Done : RestoreState
-
-        /** 还原成功，但还原前落盘快照保存失败：[message] 是给用户的事实说明。 */
-        data class DoneWithWarning(val message: String) : RestoreState
         data class Failed(val message: String) : RestoreState
     }
 
@@ -376,17 +364,9 @@ object BackupManager {
         _restoreState.value = RestoreState.Running
         restoreScope.launch {
             try {
-                val snapshotPersistFailed =
-                    if (rollbackSnapshot) rollbackToRestoreSnapshot(password)
-                    else restoreBackup(bytes, password)
-                _restoreState.value =
-                    if (snapshotPersistFailed) {
-                        RestoreState.DoneWithWarning(
-                            "恢复快照保存失败，若还原中途中断将无法回到还原前状态"
-                        )
-                    } else {
-                        RestoreState.Done
-                    }
+                if (rollbackSnapshot) rollbackToRestoreSnapshot(password)
+                else restoreBackup(bytes, password)
+                _restoreState.value = RestoreState.Done
                 scheduleProcessRestart()
             } catch (e: Exception) {
                 Timber.w(e, "Restore failed")
