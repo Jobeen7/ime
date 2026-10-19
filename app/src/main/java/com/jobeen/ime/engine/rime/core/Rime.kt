@@ -129,10 +129,13 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     /**
-     * 消息消费者的补取专用通道：带 2 秒上限（与 dispatcher stop 的排空
-     * 上限对齐）。引擎正在停机时补取任务可能被排空丢弃，等待方若无限
-     * 挂起会把消息消费者——进而整个消息通道——永久堵死；超时即放弃
-     * 补取、按原消息继续（各调用点本就容忍补取失败）。
+     * 消息消费者的补取专用通道：名义 2 秒超时（与 dispatcher stop 的
+     * 排空上限对齐），但只对已被取走执行的补取有效——任务还在
+     * dispatcher 队列里排队时，超时唤不醒等待方（其 continuation 要
+     * 等任务被取走、或停机排空时才以取消完成），实际收尾时长取决于
+     * 队列推进。引擎正在停机时补取任务会被排空丢弃并以取消收尾，
+     * 等待方不会永久挂起堵死消息消费者；放弃补取后按原消息继续
+     * （各调用点本就容忍补取失败）。
      */
     private suspend fun <T> snapshotOnRimeMain(block: suspend () -> T): T? =
         runCatching {
@@ -225,6 +228,18 @@ class Rime : RimeApi, RimeLifecycleOwner {
             arrayOf(CommitProto(text), true),
         )
     }
+
+    override suspend fun emitKey(value: Int, modifiers: Int, isVirtual: Boolean) =
+        withRimeContext {
+            // 与 emitCommit 同产生点：本调用与相邻按键任务在 dispatcher
+            // 单线程上串行执行，trySend 的先后即消息分发先后。参数形态
+            // 与 processKeyInner 的未处理按键回送（见其 handleMessage
+            // 调用）逐项一致，nativeCreate 按 (Int, Int, Boolean) 还原
+            handleMessage(
+                RimeMessage.MessageType.Key.ordinal,
+                arrayOf(value, modifiers, isVirtual),
+            )
+        }
 
     override suspend fun simulateKeySequence(sequence: String): Boolean = withRimeContext {
         if (Companion.simulateKeySequence(sequence)) {

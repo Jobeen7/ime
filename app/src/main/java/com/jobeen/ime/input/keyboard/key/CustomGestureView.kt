@@ -406,6 +406,16 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     override fun onDetachedFromWindow() {
         repeatHandler.removeCallbacks(repeatRunnable)
         repeatHandler.removeCallbacks(longPressRunnable)
+        // 手势进行中被摘除（长按切键盘、窗口拆建）时，抬起与 CANCEL
+        // 都送达不到本 View：activePointerId 与长按标志残留会让重挂后
+        // 第一次点按被当成「已有手指」吞掉。这里按 ACTION_CANCEL
+        // 同款收尾：只回收状态、不触发抬起回调（避免误上屏/误选词）
+        if (activePointerId != -1) {
+            activePointerId = -1
+            isPressed = false
+            dispatchGestureEvent(GestureType.Cancel, downX, downY)
+            resetState()
+        }
         super.onDetachedFromWindow()
     }
 

@@ -164,6 +164,13 @@ class KawaiiPanelView(context: Context) : View(context) {
         // 继续驱动已脱窗 View 的重绘（§6#6）
         pressAnimator?.cancel()
         pressAnimator = null
+        // 只 cancel 会把渲染器状态冻结在中间值（pressRadius>0 即被
+        // ToolbarRenderer 绘制），重挂后留下一个静止的半透明按压圆：
+        // 与动画一并把渲染器状态直接清零
+        (currentRenderer as? ToolbarRenderer)?.let {
+            it.pressRadius = 0f
+            it.pressAlpha = 0
+        }
         super.onDetachedFromWindow()
     }
     private val longPressHandler = Handler(Looper.getMainLooper())

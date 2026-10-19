@@ -21,6 +21,12 @@ abstract class RenderView @JvmOverloads constructor(
     private var isStartAnim = false
     private var renderThread: RenderThread? = null
 
+    // SurfaceHolder 回调是否在册：release() 会摘掉回调，重新 attach 时
+    // 须补注册，否则 surfaceCreated 永不再达、动画起不来。AOSP 的
+    // SurfaceHolder 不去重、removeCallback 只摘一份，故用此标志防
+    // 重复注册（重复注册会让回调被多次分发）
+    private var callbackRegistered = false
+
     protected abstract fun doDrawBackground(canvas: Canvas?)
 
     protected abstract fun onRender(canvas: Canvas?, millisPassed: Long)
@@ -45,6 +51,17 @@ abstract class RenderView @JvmOverloads constructor(
 
     init {
         holder.addCallback(this)
+        callbackRegistered = true
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        // detach 时 release() 摘过回调的，重挂后补注册（子类 detach
+        // 收尾路径 ParticleWaveView.onDetachedFromWindow 会调 release）
+        if (!callbackRegistered) {
+            holder.addCallback(this)
+            callbackRegistered = true
+        }
     }
 
     private class RenderThread(renderView: RenderView?) : Thread("RenderThread") {
@@ -252,6 +269,7 @@ abstract class RenderView @JvmOverloads constructor(
         pokeFramePacer()
         // 仅移除回调，交由 Framework 管理 Surface 生命周期，避免 native 释放竞态
         runCatching { holder.removeCallback(this) }
+        callbackRegistered = false
     }
 
     // ── Choreographer 定帧 ────────────────────────────────────

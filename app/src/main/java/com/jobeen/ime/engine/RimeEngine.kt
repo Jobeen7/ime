@@ -160,7 +160,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class Undo(val service: InputMethodService) : Action
         data class Redo(val service: InputMethodService) : Action
         data class Predict(val commit: String) : Action
-        data class PredictionReady(val requestId: Long, val candidates: List<Candidate>) : Action
+        data class PredictionReady(
+            val requestId: Long,
+            val candidates: List<Candidate>,
+            /** 发起预测时的输入框引用：交付时与当前 editorInfo 复检同一性，防旧框联想落到新框 */
+            val editorInfo: EditorInfo?,
+        ) : Action
         data class EmitMessage(val message: EngineMessage) : Action
         data class CandidatesReady(val requestId: Long, val message: EngineMessage.Candidates) :
             Action
@@ -283,8 +288,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /** 本批候选总数：-1 = 未知（首屏取满、后面可能还有） */
     @Volatile
     private var candidateBatchTotal: Int = -1
-    @Volatile
-    private var candidateLoadMoreInFlight: Boolean = false
+    /** 分页补取在飞标记（批次代次）：-1 = 无在飞，否则为在飞批次的 latestCandidateRequestId */
+    private val loadMoreBatch = java.util.concurrent.atomic.AtomicLong(-1L)
     /** 候选拖拽排序表判空缓存：null 语义用 false+首次查询实现，保存时由 resortCandidates 失效 */
     @Volatile
     private var sortingTableEmpty: Boolean = false
@@ -516,8 +521,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         state.suppressNextEmptyCandidates = true
         if (!noLearn) {
             // 偏好写走独立串行 IO 通道（见 preferDbScope），不再占
-            // jobs 队列堵后续按键；noteUpsert 是内存操作、与 DB 写
-            // 配对放在同一块内，保持"DB 成功后才更新内存"的原口径
+            // jobs 队列堵后续按键；noteUpsert 是向缓存投递一次计数
+            // 落点（异步串行合并），与 DB 写配对放在同一块内，保持
+            // "DB 成功后才投递计数"的原口径
             val ctx = context
             if (ctx != null) {
                 preferDbScope.launch {
@@ -773,7 +779,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             is Action.Predict -> requestPrediction(action.commit)
             is Action.PredictionReady -> {
-                if (action.requestId == state.latestPredictionRequestId.get()) {
+                // requestId 只防同框内的请求交错；输入框已切换
+                // （editorInfo 换代）时旧框联想直接丢弃，不落到新框
+                if (action.requestId == state.latestPredictionRequestId.get() &&
+                    action.editorInfo === editorInfo
+                ) {
                     // 预测路径同样要过滤已删除词（删除过滤不能只挂在 Rime 候选还原上）
                     val visible = action.candidates.filterNot { DeletedWordsStore.isDeleted(it.text) }
                     state.predictionVisible = visible.isNotEmpty()
@@ -862,16 +872,25 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
             return
         }
-        withContext(Dispatchers.Main.immediate) {
-            val ic = inputConnection()
-            if (!ic?.getSelectedText(0).isNullOrEmpty()) {
-                emitMessage(EngineMessage.Commit(""))
-                invalidateBeforeCursorCache()
-                return@withContext
-            }
-            InputConnectionUtil.sendCombinationKeyEvent(ic, KEYCODE_DEL)
-            invalidateBeforeCursorCache()
+        // 选区读取须在主线程（InputConnection 契约）；落键与上屏则
+        // 改走引擎消息管线、与 native 上屏同 FIFO——旧实现在本 job
+        // 内直发 DEL、直送 Commit("")，上一键的 native Commit 尚在
+        // 管线中时会被超车（先删掉宿主已有字、或选区替换先于文字
+        // 落屏，出现删错字与顺序错乱）
+        val hasSelection = withContext(Dispatchers.Main.immediate) {
+            !inputConnection()?.getSelectedText(0).isNullOrEmpty()
         }
+        if (hasSelection) {
+            emitCommit("")
+            invalidateBeforeCursorCache()
+            return
+        }
+        // 空组字退格借道 KeyMessage 透传：在 rime-main 上与 native
+        // Commit 同队列入队（isVirtual=true），由 forwardUnhandledKey
+        // 在主线程补发给宿主。不经 native processKey，避免被方案
+        // 处理器吞掉后宿主收不到键
+        emitKey(KeyMapping.keyCodeToVal(KEYCODE_DEL), 0, true)
+        invalidateBeforeCursorCache()
     }
 
     /**
@@ -1173,9 +1192,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         if (start <= 0) return
         val total = candidateBatchTotal
         if (total >= 0 && start >= total) return
-        if (candidateLoadMoreInFlight) return
-        candidateLoadMoreInFlight = true
         val batch = state.latestCandidateRequestId.get()
+        // 在飞守卫按批次代次判定：同批次已有补取在飞才跳过；标记停在
+        // 旧批次（旧 job 被停机吞掉、其 finally 没跑到）时与当前批次
+        // 天然不等，直接接管放行，不会永久滞留
+        while (true) {
+            val inFlight = loadMoreBatch.get()
+            if (inFlight == batch) return
+            if (loadMoreBatch.compareAndSet(inFlight, batch)) break
+        }
         // 封顶：每批最多累计取 CANDIDATE_BATCH_CAP 个候选。词库深处是
         // 设备字体无字形的扩展区生僻字（渲染为方框、打出也无处可用），
         // 200 已覆盖全部真实输入需求，不再往深处加载
@@ -1227,18 +1252,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     )
                 }
             } finally {
-                candidateLoadMoreInFlight = false
+                // 只清自己批次的标记：批次已推进时标记多半已被新批次
+                // 接管，无条件清零会误清新批次的在飞守卫，同一页被
+                // 两条 job 各取一次、重复追加
+                loadMoreBatch.compareAndSet(batch, -1L)
             }
         }
     }
 
     private fun restoreCandidates(msg: EngineMessage.Candidates) {
-        // 新批次自愈：上一批的分页补取若在引擎停机窗口被消费侧吞掉
-        // （job 体未进入、其 finally 复位不到），在途标记会永久滞留、
-        // 本进程内分页彻底失效。新批次的到来证明管线已恢复，在此
-        // 复位（与批次锚点同位）；job 体内的 finally 保留不动，负责
-        // 正常路径的及时复位
-        candidateLoadMoreInFlight = false
+        // 分页在飞标记已按批次代次化（loadMoreBatch）：新批次到来时
+        // 下方推进的 latestCandidateRequestId 与标记天然不等，
+        // loadMoreCandidates 直接接管放行——旧 job 在停机窗口被吞掉
+        // 也不会永久滞留，无需在此复位；其 finally 也只清自己批次
         val requestId = state.candidateRequestId.incrementAndGet()
         state.latestCandidateRequestId.accumulateAndGet(requestId) { a, b -> maxOf(a, b) }
         candidateRestoreJob?.cancel()
@@ -1435,11 +1461,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             lastLearnSegment = null
             return
         }
-        // 预测模型基于简体训练；先转成简体再推导，以支持繁体输入下的候选预测。
-        // 上屏刚发生时缓存已失效，这里读到的是包含本次上屏内容的新鲜前文。
-        val inputContext = TraditionalConverter.toSimplified(
-            peekTextBeforeCursor(20) + commit
-        )
         // 搭配学习（仅打字上屏路径 learnable=true 时）：与上一个打字
         // 词段组成词对计数；本段不合规（标点等）则断链。查询键取更新
         // 后的链尾，即刚上屏的词段。
@@ -1464,13 +1485,25 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         val requestId = state.predictionRequestId.incrementAndGet()
         state.latestPredictionRequestId.accumulateAndGet(requestId) { a, b -> maxOf(a, b) }
+        // 发起时的输入框引用随结果带回：交付时复检仍是同一个框才
+        // 落屏，切框后到达的旧联想直接丢弃（见 PredictionReady 分支）
+        val predictionEditorInfo = editorInfo
         predictionJob?.cancel()
         predictionJob = scope.launch {
             try {
                 if (context?.let { !CandidateManager.isPredictionEnabled(it) } == true) {
-                    actions.send(Action.PredictionReady(requestId, emptyList()))
+                    actions.send(Action.PredictionReady(requestId, emptyList(), predictionEditorInfo))
                     return@launch
                 }
+                // 前文读取放进 job 内：调用方只做缓存失效、取代次与
+                // 记账，不再为等一趟主线程读前文推迟 Commit 的落屏
+                // 交付。预测模型基于简体训练，先转简体再推导，以
+                // 支持繁体输入下的候选预测；上屏刚发生时缓存已由
+                // 调用方失效，这里读到的是包含本次上屏内容的新鲜
+                // 前文。job 被新请求取消时本读取一并取消
+                val inputContext = TraditionalConverter.toSimplified(
+                    peekTextBeforeCursor(20) + commit
+                )
                 var candidates: List<Candidate> = emptyList()
                 if (inputContext.isNotEmpty() && !TextUtil.isSymbol(inputContext.last()) && !TextUtil.isAlphabet(
                         inputContext.last()
@@ -1487,7 +1520,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         )
                     }
                 }
-                actions.send(Action.PredictionReady(requestId, candidates))
+                actions.send(Action.PredictionReady(requestId, candidates, predictionEditorInfo))
             } catch (error: CancellationException) {
                 throw error
             }
@@ -1515,7 +1548,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 actions.send(Action.Predict(text))
                 return@sendJob
             }
-            actions.send(Action.EmitMessage(EngineMessage.Commit(text)))
+            // 经 emitCommit 走引擎消息管线而非直送 actions：上一键的
+            // native Commit 尚在管线中时直送会超车先落屏（如粘贴的
+            // 标点排到刚打的字前面）。直送标记使下游只排序与落屏、
+            // 不按打字上屏记账，与旧直送路径行为等价（见 emitCommit）
+            emitCommit(text)
             actions.send(Action.Predict(text))
         }
     }

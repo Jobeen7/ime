@@ -78,12 +78,22 @@ abstract class ClipboardDatabase : RoomDatabase() {
 
         fun getInstance(context: Context): ClipboardDatabase {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Room.databaseBuilder(
-                    context.applicationContext,
-                    ClipboardDatabase::class.java,
-                    "clipboard_database"
-                ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build().also { INSTANCE = it }
+                INSTANCE ?: build(context.applicationContext, "clipboard_database")
+                    .also { INSTANCE = it }
             }
         }
+
+        /**
+         * 以指定库名新建实例（不走单例缓存）：迁移仪器测试以测试专用
+         * 库名走同一条迁移链验证，避免在真机上触碰生产库文件。
+         * 生产代码只用 [getInstance]。
+         */
+        fun createWithName(context: Context, name: String): ClipboardDatabase =
+            build(context.applicationContext, name)
+
+        private fun build(context: Context, name: String): ClipboardDatabase =
+            Room.databaseBuilder(context, ClipboardDatabase::class.java, name)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .build()
     }
 }

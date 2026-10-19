@@ -480,7 +480,10 @@ class ClipboardView(
             maxOf(0f, totalContentH - height) > 0f
 
     private fun isThumbHotZone(x: Float): Boolean =
-        thumbEnabled() && x >= width - 24f * density
+        // 热区只覆盖行胶囊右端（width - hMargin）之外的空白带，与
+        // drawScrollThumb 的绘制落点同口径；再宽会压进胶囊本体，
+        // 吞掉每行右侧一段的点按与拖选起点
+        thumbEnabled() && x >= width - hMargin
 
     private val autoScrollRunnable = object : Runnable {
         override fun run() {
@@ -589,8 +592,14 @@ class ClipboardView(
             // 不进连选、不触发任何点按/长按语义
             when (event.actionMasked) {
                 MotionEvent.ACTION_MOVE -> {
-                    val ratio = if (height > 0) totalContentH / height else 1f
                     val maxS = maxOf(0f, totalContentH - height)
+                    val viewH = height - headerH
+                    val thumbH = thumbHeight()
+                    // 比例取绘制映射的逆运算：拇指行程 (viewH - thumbH)
+                    // 对应滚动行程 maxS。旧口径 totalContentH/height 只在
+                    // 拇指未被 36dp 下限钳住时才与绘制一致，钳住后拖满
+                    // 全程也滚不到底、拇指与手指脱节
+                    val ratio = if (viewH > thumbH) maxS / (viewH - thumbH) else 1f
                     scrollOffsetY = (thumbStartOffset + (event.y - thumbStartY) * ratio)
                         .coerceIn(0f, maxS)
                     invalidate()
@@ -1056,6 +1065,13 @@ class ClipboardView(
         drawScrollThumb(canvas)
     }
 
+    /** 拇指高度：绘制与拖动比例共用同一口径，避免两处算出不同的钳制值。 */
+    private fun thumbHeight(): Float {
+        val viewH = height - headerH
+        if (totalContentH <= 0f) return viewH
+        return maxOf(36f * density, viewH * viewH / totalContentH).coerceAtMost(viewH)
+    }
+
     /**
      * 多选态右缘滚动拇指（条目 33）：长度与位置按可视比例映射。
      * 画在列表层之上、视图坐标系内（不受列表 translate 影响）；
@@ -1067,7 +1083,7 @@ class ClipboardView(
         val maxS = maxOf(0f, totalContentH - height)
         if (maxS <= 0f) return
         val viewH = height - headerH
-        val thumbH = maxOf(36f * density, viewH * viewH / totalContentH).coerceAtMost(viewH)
+        val thumbH = thumbHeight()
         val top = headerH + (viewH - thumbH) * (scrollOffsetY / maxS).coerceIn(0f, 1f)
         val right = width - 3f * density
         thumbPaint.alpha = if (thumbScrolling) 235 else 150

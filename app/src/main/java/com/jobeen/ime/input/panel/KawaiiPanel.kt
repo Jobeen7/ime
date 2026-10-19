@@ -7,6 +7,7 @@ import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.PhraseManager
+import com.jobeen.ime.data.manager.takeCodePoints
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.engine.data.CandidatePinYin
@@ -597,13 +598,13 @@ class KawaiiPanel(
         clipboardView.requestLayout()
         if (save && phrase != null) {
             // 常用语保存：空文本不保存（与剪贴板同口径）；label 镜像新增
-            // 口径随新文本再生（insert 调用点传 text.take(12)），pinned/
+            // 口径随新文本再生（insert 调用点传 text.takeCodePoints(12)），pinned/
             // sortOrder/createdAt 由 PhraseManager.update 事务内回读保留
             if (newText.isNotEmpty() && newText != phrase.text.trim()) {
                 appScope.launch {
                     PhraseManager.update(
                         context,
-                        phrase.copy(text = newText, label = newText.take(12)),
+                        phrase.copy(text = newText, label = newText.takeCodePoints(12)),
                     )
                     clipboardView.refresh()
                 }
