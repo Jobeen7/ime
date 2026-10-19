@@ -1,8 +1,11 @@
 # 最小 CI：JVM 单测 + lint 两道闸门（§7.3）。
-# 实跑状态：已随推送在 GitHub Actions 实跑；单测编译期曾因依赖校验
+# 实跑状态：已随推送在 GitHub Actions 实跑。单测编译期曾因依赖校验
 # 缺 org.jetbrains.kotlin:kotlin-stdlib-jdk7:1.8.0 的 pom 登记失败，
-# 该条与三平台 aapt2 校验值已补入 gradle/verification-metadata.xml；
-# lint 结果待后续推送观察。
+# 该条与三平台 aapt2 校验值已补入 gradle/verification-metadata.xml，
+# 单测步骤已转绿；其后 lint 在 generateDebugAndroidTestLintModel 处
+# 因 androidTest classpath 另有 13 个构件（compose ui-test 系列的
+# .module、coroutines 1.8.1 等）未登记而失败，亦已补齐并本地强制
+# 重验通过，待本次推送确认远端转绿。
 # 已知前提：testDebugUnitTest 与 lint 不打包 APK、不执行 CMake 原生
 # 构建，按 AGP 任务图不需要 app/src/main/cpp/deps 产物，故不跑
 # install-deps.sh。若实际运行时因 externalNativeBuild 配置期检查等
