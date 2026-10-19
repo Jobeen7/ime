@@ -31,6 +31,12 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
     // 已选择的拼音队列
     private val selectedPinYinQueue = ArrayDeque<CandidatePinYin>()
 
+    // 当前方案是否为 T9 拼音：决定 build() 回写已选拼音的大小写
+    // 形态（见 possiblePinYin）。仅在按键分发线程写、队列锁内读，
+    // 与三个队列相同的并发口径。
+    @Volatile
+    private var uppercaseSelectedPinYin: Boolean = false
+
     // 输入内容的队列
     private val inputStringQueue = ArrayDeque<String>()
 
@@ -234,8 +240,18 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
      */
     fun possiblePinYin(
         candidatePinYinType: String, currentInput: String, confirmedLen: Int
-    ): List<CandidatePinYin> =
-        synchronized(queueLock) { possiblePinYinLocked(candidatePinYinType, currentInput, confirmedLen) }
+    ): List<CandidatePinYin> {
+        // 记下当前方案的拼音类型，build 回写时按它决定大小写形态。
+        // 万象 T9 的 speller algebra 按大写字母回写设计（xlit 把大写
+        // 字母映射为九宫格数字编码），回写小写拼音会让引擎的音节
+        // 切分段位错位（组字里每段多出一个原始数字、上屏出错）；
+        // 全拼方案则按小写回写。点选只能发生在 possible 已按当前
+        // 方案刷新之后，故此标志在回写被用到时必然是新鲜的。
+        uppercaseSelectedPinYin = candidatePinYinType == PinYinUtil.CandidateKindT9
+        return synchronized(queueLock) {
+            possiblePinYinLocked(candidatePinYinType, currentInput, confirmedLen)
+        }
+    }
 
     private fun possiblePinYinLocked(
         candidatePinYinType: String, currentInput: String, confirmedLen: Int
@@ -322,7 +338,13 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
                     entry.position, entry.raw, 0, entry.raw.length
                 )
             ) {
-                result.append(entry.pinYin)
+                result.append(
+                    if (uppercaseSelectedPinYin) {
+                        entry.pinYin.uppercase()
+                    } else {
+                        entry.pinYin
+                    }
+                )
                 result.append(segmentKeyChar)
             } else {
                 result.append(input.substring(entry.position, rawEnd))
