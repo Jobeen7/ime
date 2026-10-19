@@ -203,7 +203,7 @@ object KeyboardManager {
             const val KEY_HORIZONTAL = "$PREFIX.horizontal"
             const val KEY_VERTICAL = "$PREFIX.vertical"
 
-            private const val DEFAULT_HORIZONTAL_DP = 3
+            private const val DEFAULT_HORIZONTAL_DP = 4
             private const val DEFAULT_VERTICAL_DP = 3
 
             fun getHorizontalDp(context: Context): Int {
@@ -231,7 +231,7 @@ object KeyboardManager {
 
         object KeyRadius {
             const val KEY = "keyboard.key_radius"
-            private const val DEFAULT_RADIUS_DP = 14
+            private const val DEFAULT_RADIUS_DP = 9
 
             fun getDp(context: Context): Int {
                 return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
