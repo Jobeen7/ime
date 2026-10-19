@@ -238,6 +238,25 @@ abstract class KeyView(
         // 重新启动动画器池，不影响复用
         bgAnimator?.cancel()
         bgAnimator = null
+        // 按压手势被切断时（长按切键盘、窗口收起等）抬起信号不会再
+        // 送达本 View，wasPressed 与按压层会锁死在按压态，重挂后无
+        // 状态变化触发淡出（符号键残影）。这里强制复位到已抬起终态：
+        // setPressed(false) 引发的状态变化会再启一个淡出动画，随即
+        // 取消并把按压层直接归零，保证脱窗后无动画残留
+        if (isPressed) {
+            setPressed(false)
+            bgAnimator?.cancel()
+            bgAnimator = null
+        }
+        if (pressedLayerAlpha != 0) {
+            pressedLayerAlpha = 0
+            animTarget?.alpha = 0
+            val bg = appearanceView.background
+            if (bg is LayerDrawable && bg.numberOfLayers >= 2) {
+                bg.getDrawable(1)?.alpha = 0
+            }
+        }
+        wasPressed = false
         super.onDetachedFromWindow()
     }
 
