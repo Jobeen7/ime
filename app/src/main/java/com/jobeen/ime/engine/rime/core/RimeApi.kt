@@ -64,6 +64,16 @@ interface RimeApi {
      */
     suspend fun emitCommit(text: String)
 
+    /**
+     * 把一个按键作为引擎自产 Key 消息送入通知管线：与 [emitCommit]
+     * 同口径，在 rime-main 上经同一队列入队、与 native 按键响应严格
+     * FIFO。供引擎侧合成的「未处理按键」借道 KeyMessage 透传路径
+     * （RimeEngine.forwardUnhandledKey）落到宿主用，如空组字退格——
+     * 不经 native processKey，避免被方案处理器吞掉后宿主收不到键；
+     * [isVirtual] 恒传 true，否则透传点会按内部合成键丢弃。
+     */
+    suspend fun emitKey(value: Int, modifiers: Int, isVirtual: Boolean)
+
     suspend fun simulateKeySequence(
         sequence: String,
     ): Boolean

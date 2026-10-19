@@ -12,6 +12,18 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
+/**
+ * 按码点（Unicode code point）取前 [n] 个字符。普通 [String.take] 按
+ * UTF-16 码元计数，截断点恰落在代理对中间时会劈开 emoji 等增补平面
+ * 字符，标签尾部留下孤代理项、列表里显示为缺字。常用语标签的生成
+ * 口径（三处：新增传参、insert/update 兜底）统一走这里。
+ */
+fun String.takeCodePoints(n: Int): String {
+    if (n <= 0) return ""
+    if (codePointCount(0, length) <= n) return this
+    return substring(0, offsetByCodePoints(0, n))
+}
+
 object PhraseManager {
 
     private const val PREFS_NAME = "phrase_prefs"
@@ -54,7 +66,7 @@ object PhraseManager {
     suspend fun insert(context: Context, text: String, label: String): Long {
         val t = text.trim()
         if (t.isEmpty()) return -1
-        val l = label.trim().ifEmpty { t.take(12) }
+        val l = label.trim().ifEmpty { t.takeCodePoints(12) }
         val id = db(context) { db ->
             // 「读最小序号→插入」必须同事务：并发新增时两条会算出
             // 同一 sortOrder、次序不稳定（与剪贴板侧 addEntry 同口径）
@@ -75,7 +87,7 @@ object PhraseManager {
     suspend fun update(context: Context, phrase: Phrase) {
         val t = phrase.text.trim()
         if (t.isEmpty()) return
-        val l = phrase.label.trim().ifEmpty { t.take(12) }
+        val l = phrase.label.trim().ifEmpty { t.takeCodePoints(12) }
         // 只有真的改到行（且数据库操作没失败）才通知刷新：
         // 旧实现无条件发回调，失败/目标不存在时 UI 也照常当成功处理。
         // sortOrder/pinned 必须回读保留：整行 @Update 会把它们重置为默认值

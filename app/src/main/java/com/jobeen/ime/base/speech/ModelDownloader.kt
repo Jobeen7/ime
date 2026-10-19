@@ -5,6 +5,7 @@ import android.system.Os
 import android.system.OsConstants
 import androidx.core.content.edit
 import com.jobeen.ime.base.net.HttpUtil
+import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.data.App
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.TarBz2ExtractorUtil
@@ -31,14 +32,14 @@ object ModelDownloader {
     private const val ENCODER_NAME = "encoder"
     private const val DECODER_NAME = "decoder"
     private const val JOINER_NAME = "joiner"
-    private const val BIN_EXTENSION = "bin"
     private const val ONNX_EXTENSION = "onnx"
     private const val DOWNLOAD_FILE_INDEX = 1
     private const val DOWNLOAD_FILE_COUNT = 1
 
     // 解压白名单不含 .so：下载包里的原生库从不被加载，
-    // 留在白名单里只是无谓的信任面
-    private val MODEL_EXTENSIONS = setOf(BIN_EXTENSION, ONNX_EXTENSION)
+    // 留在白名单里只是无谓的信任面；也不含 .bin（QNN 时代格式，
+    // 运行时已只认 onnx，见 isModelInstalled）
+    private val MODEL_EXTENSIONS = setOf(ONNX_EXTENSION)
     private val MODEL_COMPONENTS = listOf(ENCODER_NAME, DECODER_NAME, JOINER_NAME)
     // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
     // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
@@ -94,6 +95,21 @@ object ModelDownloader {
         } else {
             target.shaFromPinned
         }
+    }
+
+    /**
+     * 钉死摘要盲区（V7）：目标摘要出自钉死表（非 GitHub 登记值）
+     * 且与本地 gh: 记录日期不更晚。调用点已保证 identity 与本地
+     * 记录不相等，故同名即「仅摘要不同」；异名时以日期键判定，
+     * 任一日期不可解析则不成立（无从判定孰新，不拦正常更新）。
+     */
+    private fun isPinnedShaBlindSpot(target: SpeechModelTarget, localId: String): Boolean {
+        if (!target.shaFromPinned) return false
+        val localAsset = localId.removePrefix("gh:").substringBeforeLast(':')
+        if (localAsset == target.name) return true
+        val localDate = assetDateKey(localAsset)
+        val targetDate = assetDateKey(target.name)
+        return localDate != null && targetDate != null && targetDate <= localDate
     }
 
     /**
@@ -212,6 +228,7 @@ object ModelDownloader {
      * 下载成功后即纳入比对。
      */
     suspend fun checkForUpdate(context: Context): UpdateCheckResult = withContext(Dispatchers.IO) {
+        cleanupLegacyCdspDir()
         val target = resolveTarget()
         if (target == null) {
             Timber.w("Speech model target unavailable, check failed")
@@ -239,6 +256,19 @@ object ModelDownloader {
                 if (isRefusedDowngrade(context, target)) {
                     Timber.i(
                         "Speech model update check: local package is newer, pinned target refused",
+                    )
+                    return@withContext UpdateCheckResult.UpToDate
+                }
+                // 钉死摘要盲区（V7）：目标摘要来自钉死表、与本
+                // 地仅摘要不同且日期不更晚时孰新无从判定——典型
+                // 是上游同名原地换包后钉死值已过期，照报更新只
+                // 会走「下载→按钉死摘要校验必失配」的死循环。
+                // 本次按已是最新收尾并打点；待 API 可达（登记摘
+                // 要）或钉死表随新版更新后，比对自然恢复准确
+                if (isModelInstalled() && isPinnedShaBlindSpot(target, localId)) {
+                    Timber.i(
+                        "Speech model update check: pinned sha differs from local record " +
+                            "without a newer date; treating as up to date (pinned blind spot)",
                     )
                     return@withContext UpdateCheckResult.UpToDate
                 }
@@ -287,21 +317,33 @@ object ModelDownloader {
         return UpdateCheckResult.UpToDate
     }
 
-    /** 本地是否已有完整语音模型（tokens + encoder/decoder/joiner） */
-    private fun isModelInstalled(): Boolean {
-        val dir = App.speechModelDir
-        if (!File(dir, TOKENS_FILE).isFile) return false
-        val files = dir.listFiles().orEmpty().filter { it.isFile }
-        fun pick(prefix: String, ext: String) = files.firstOrNull {
-            it.extension.equals(ext, ignoreCase = true) &&
-                it.nameWithoutExtension.contains(prefix, ignoreCase = true)
-        }
-        return (pick(ENCODER_NAME, ONNX_EXTENSION) != null &&
-            pick(DECODER_NAME, ONNX_EXTENSION) != null &&
-            pick(JOINER_NAME, ONNX_EXTENSION) != null) ||
-            (pick(ENCODER_NAME, BIN_EXTENSION) != null &&
-                pick(DECODER_NAME, BIN_EXTENSION) != null &&
-                pick(JOINER_NAME, BIN_EXTENSION) != null)
+    /**
+     * 本地是否已有完整语音模型：与运行时就绪判定共用同一份定位
+     * 规则（[findSpeechModelFiles]，只认 onnx）。此前本函数另有
+     * 一份实现且认 .bin 三件套（QNN 时代格式），与运行时口径分
+     * 叉：只剩 .bin 的目录会被判「已装、已是最新」，键盘侧却报
+     * 模型缺失（V5）
+     */
+    private fun isModelInstalled(): Boolean =
+        findSpeechModelFiles(App.speechModelDir) != null
+
+    /** 旧版 cdsp 残留清理是否已在本进程尝试过（每进程至多一次） */
+    @Volatile
+    private var legacyCdspCleanupAttempted = false
+
+    /**
+     * 一次性清理旧版残留：QNN 时代启动时拷到 filesDir/cdsp 的库
+     * （约 13 MB）已无任何加载方，留着只是白占空间。幂等：目录
+     * 不存在即无操作；删除失败不挡正事，下次进程启动再试。
+     */
+    private fun cleanupLegacyCdspDir() {
+        if (legacyCdspCleanupAttempted) return
+        legacyCdspCleanupAttempted = true
+        val dir = File(appContext.filesDir, "cdsp")
+        if (!dir.exists()) return
+        runCatching { dir.deleteRecursively() }
+            .onSuccess { Timber.i("Legacy cdsp dir removed: %s", dir.absolutePath) }
+            .onFailure { Timber.w(it, "Legacy cdsp dir cleanup failed: %s", dir.absolutePath) }
     }
 
     private data class ModelFiles(
@@ -330,8 +372,9 @@ object ModelDownloader {
         // 比大小并叠加「已装」条件：无模型只有残留记录时放行安
         // 装（否则永远装不上）；钉死包比已装包更新时是正当升级，
         // 同样放行
+        cleanupLegacyCdspDir()
         val announced = announcedTarget
-        val target = if (announced != null) {
+        var target = if (announced != null) {
             announced
         } else {
             val resolved = resolveTarget()
@@ -348,25 +391,53 @@ object ModelDownloader {
             HttpUtil.showToast("语音模型下载失败：无法确认最新版本，请检查网络后重试")
             return@withContext false
         }
-        val link = target.downloadUrl
         val tempDir = App.downloadDir
         val modelDir = App.speechModelDir
-        val archiveFile = File(tempDir, target.name)
         val stageDir = File(tempDir, STAGE_DIR)
-        if (!currentCoroutineContext().isActive) return@withContext false
-        // 先取可信摘要再下载：来源不可信、或查不到摘要且无内置钉死兜底时，
-        // 整包根本无从校验，提前中止，不白下数百 MB（校验口径见
-        // resolveExpectedSha256，与下载后比对完全一致）。期望摘要直接
-        // 复用 resolveTarget 已取得的 target.sha256，不再为同一资产
-        // 二次查询 GitHub——重复查询多烧匿名限流，且二次查询失败时
-        // 会误落钉死表、把不在表内的新包拒掉（target 摘要的来源与
-        // 二次查询同为 GitHub 登记值或内置钉死表，信任级不变）
-        val expectedSha = resolveExpectedSha256(link, archiveFile, target)
-            ?: return@withContext false
-        if (!currentCoroutineContext().isActive) return@withContext false
-        if (!ensureArchive(link, archiveFile, expectedSha, onProgress)) return@withContext false
-        if (!currentCoroutineContext().isActive) return@withContext false
-        if (!verifyArchiveSha256(archiveFile, expectedSha)) return@withContext false
+        var archiveFile = File(tempDir, target.name)
+        // 摘要失配后的强制重解析重试至多一次（见循环尾）：检查与
+        // 下载之间上游可能原地换包，公示目标随之作废
+        var retriedAfterMismatch = false
+        while (true) {
+            val link = target.downloadUrl
+            archiveFile = File(tempDir, target.name)
+            if (!currentCoroutineContext().isActive) return@withContext false
+            // 先取可信摘要再下载：来源不可信、或查不到摘要且无内置钉死兜底时，
+            // 整包根本无从校验，提前中止，不白下数百 MB（校验口径见
+            // resolveExpectedSha256，与下载后比对完全一致）。期望摘要直接
+            // 复用 resolveTarget 已取得的 target.sha256，不再为同一资产
+            // 二次查询 GitHub——重复查询多烧匿名限流，且二次查询失败时
+            // 会误落钉死表、把不在表内的新包拒掉（target 摘要的来源与
+            // 二次查询同为 GitHub 登记值或内置钉死表，信任级不变）
+            val expectedSha = resolveExpectedSha256(link, archiveFile, target)
+                ?: return@withContext false
+            if (!currentCoroutineContext().isActive) return@withContext false
+            if (!ensureArchive(link, archiveFile, expectedSha, onProgress)) return@withContext false
+            if (!currentCoroutineContext().isActive) return@withContext false
+            if (verifyArchiveSha256(archiveFile, expectedSha, mismatchToast = null)) break
+            if (retriedAfterMismatch) {
+                // 已按重解析的新目标重试仍失配：按「上游已更新」
+                // 收尾，区别于普通文件损坏/摘要不一致
+                HttpUtil.showToast("语音模型校验失败：上游已更新，请重新检查更新")
+                return@withContext false
+            }
+            retriedAfterMismatch = true
+            val fresh = resolveTarget()
+            if (fresh == null || fresh.identity.equals(target.identity, ignoreCase = true) ||
+                isRefusedDowngrade(context, fresh)
+            ) {
+                // 重解析不出新目标：失配与目标过期无关，按普通校
+                // 验失败的原措辞收尾（官方登记/内置钉死两款）
+                HttpUtil.showToast(shaMismatchToast(expectedSha))
+                return@withContext false
+            }
+            Timber.i(
+                "Speech model SHA mismatch; target changed upstream, retrying with fresh target %s",
+                fresh.name,
+            )
+            announcedTarget = fresh
+            target = fresh
+        }
         if (!extractAndInstall(archiveFile, stageDir, modelDir, onExtract)) return@withContext false
         // 安装成功后记录目标 identity，供后续检查更新时比对
         storeManifestId(context, target.identity)
@@ -512,24 +583,33 @@ object ModelDownloader {
         return ExpectedSha256(expected, fromGithubLink = false)
     }
 
+    /** 普通校验失败的提示措辞：按期望摘要来源区分官方登记/内置钉死 */
+    private fun shaMismatchToast(expected: ExpectedSha256): String =
+        if (expected.fromGithubLink) {
+            "语音模型校验失败：文件与官方摘要不一致，已拒绝安装"
+        } else {
+            "语音模型校验失败：文件与内置摘要不一致，已拒绝安装"
+        }
+
     /**
      * 归档包 SHA-256 强校验：文件内容与下载前已解析的可信期望摘要比对，
      * 对不上拒绝安装并删包（摘要本身的来源与 fail-closed 口径见
-     * [resolveExpectedSha256]）。
+     * [resolveExpectedSha256]）。[mismatchToast] 非空时失配即按其
+     * 文案提示；为空时静默（下载侧要先尝试强制重解析重试，失败
+     * 提示由重试收尾处统一给出，避免成功重试前先弹一条失败）。
      */
     private suspend fun verifyArchiveSha256(
         archiveFile: File,
         expected: ExpectedSha256,
+        mismatchToast: String?,
     ): Boolean {
         val actual = sha256OfFile(archiveFile)
         if (actual.equals(expected.value, ignoreCase = true)) return true
-        if (expected.fromGithubLink) {
-            Timber.e("Speech model archive SHA-256 mismatch vs GitHub digest")
-            HttpUtil.showToast("语音模型校验失败：文件与官方摘要不一致，已拒绝安装")
-        } else {
-            Timber.e("Speech model archive SHA-256 mismatch vs pinned digest (non-GitHub link)")
-            HttpUtil.showToast("语音模型校验失败：文件与内置摘要不一致，已拒绝安装")
-        }
+        Timber.e(
+            "Speech model archive SHA-256 mismatch (fromGithubLink=%s)",
+            expected.fromGithubLink,
+        )
+        if (mismatchToast != null) HttpUtil.showToast(mismatchToast)
         archiveFile.delete()
         return false
     }

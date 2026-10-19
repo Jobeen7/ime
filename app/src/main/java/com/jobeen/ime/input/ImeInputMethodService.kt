@@ -213,7 +213,14 @@ class ImeInputMethodService : InputMethodService() {
         if (com.jobeen.ime.base.speech.SherpaSpeechClient.isHolding()) {
             com.jobeen.ime.base.speech.SherpaSpeechClient.stopHoldSession(discard = true)
         }
-        com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        // 待就绪整句的作废只认真正结束输入（finishingInput=true，
+        // 框架换框/收尾走 doFinishInput 的情形）：仅收起键盘
+        // （false）时输入会话并未结束、连接仍指向同一框，作废会
+        // 把已说完待落屏的整句误删并误报「已切换输入框」。换框的
+        // 作废另有 onStartInputView 的 !restarting 门控覆盖，不重叠
+        if (finishingInput) {
+            com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        }
         engine?.resetComposition()
         keyboardWindow?.onFinishInputView(finishingInput)
         engine?.onFinishInputView()
