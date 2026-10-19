@@ -9,7 +9,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 12, exportSchema = true)
+@Database(entities = [CandidateSorting::class, ClipboardRecord::class, CandidatePrefer::class, PhraseRecord::class], version = 13, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 
@@ -31,7 +31,7 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "ime_database"
-                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12).addCallback(VACUUM_CALLBACK).build().also { INSTANCE = it }
+                )                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13).addCallback(VACUUM_CALLBACK).build().also { INSTANCE = it }
                 // 注意：不要加 fallbackToDestructiveMigration() —— 漏写 Migration 时宁可启动崩溃（fail-fast，
                 // 发布前真机测试会先暴露），也不要静默清空用户的剪贴板/常用语/选词偏好。每次 bump version
                 // 都必须写 Migration（无结构变更时写空迁移，见 MIGRATION_7_8）。
@@ -308,6 +308,31 @@ abstract class AppDatabase : RoomDatabase() {
             endVersion = 12,
         ) { db ->
             db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `pinned` INTEGER NOT NULL DEFAULT 0")
+        }
+
+        // v13：与 ClipboardDatabase v4 同步——ClipboardRecord 实体共用，实体
+        // 新增了 text 唯一索引，主库里的 clipboard_records 残表必须配套建
+        // 同名索引，否则 Room identity 校验不过（fail-fast 崩）。步骤与
+        // ClipboardDatabase.MIGRATION_3_4 严格同规：先清软删行，再按
+        // 「pinned 优先、timestamp 最新、id 最大」EXISTS 去重，最后建
+        // 唯一索引。残表数据本已迁去独立库，这里多为空表/少量残行，
+        // 但 SQL 按全表口径写，老设备上的任何存量都不例外。
+        private val MIGRATION_12_13: Migration = Migration(
+            startVersion = 12,
+            endVersion = 13,
+        ) { db ->
+            db.execSQL("DELETE FROM clipboard_records WHERE deleted = 1")
+            db.execSQL(
+                "DELETE FROM clipboard_records WHERE EXISTS (" +
+                    "SELECT 1 FROM clipboard_records other " +
+                    "WHERE other.text = clipboard_records.text AND (" +
+                    "other.pinned > clipboard_records.pinned OR " +
+                    "(other.pinned = clipboard_records.pinned AND other.timestamp > clipboard_records.timestamp) OR " +
+                    "(other.pinned = clipboard_records.pinned AND other.timestamp = clipboard_records.timestamp AND other.id > clipboard_records.id)))"
+            )
+            db.execSQL(
+                "CREATE UNIQUE INDEX IF NOT EXISTS `index_clipboard_records_text` ON `clipboard_records` (`text`)"
+            )
         }
     }
 }

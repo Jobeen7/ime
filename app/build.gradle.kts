@@ -14,8 +14,8 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 118
-        versionName = "1.1.12"
+        versionCode = 119
+        versionName = "1.1.12.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -36,6 +36,13 @@ plugins {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            // QNN 运行时已删除：剔除 sherpa-onnx AAR 内随包的 QNN 原生库
+            //（选包写死 int8 家族、运行时无 QNN 路径，此前为纯死重量）
+            excludes += listOf(
+                "**/libQnnHtp.so",
+                "**/libQnnSystem.so",
+                "**/libQnnHtpV81*.so",
+            )
         }
     }
 
@@ -140,7 +147,6 @@ ksp {
 
 dependencies {
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
-    // implementation(libs.tokenizer)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.timber)
     implementation(libs.okhttp)

@@ -484,4 +484,12 @@ class TextEditingButton(
             }
         }
     }
+
+    override fun onDetachedFromWindow() {
+        // 与 KeyView 同理：本类自有的按压背景动画不在父类
+        // CustomGestureView 的 detach 收尾覆盖内，分离时取消
+        bgAnimator?.cancel()
+        bgAnimator = null
+        super.onDetachedFromWindow()
+    }
 }

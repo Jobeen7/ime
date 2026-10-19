@@ -278,7 +278,7 @@
     <string name="backup_restore">备份与还原</string>
     <string name="backup_restore_desc">加密备份设置与数据、换机还原</string>
     <string name="backup_title">备份与还原</string>
-    <string name="backup_intro">把全部设置、剪贴板历史、常用语与选词偏好打包成一个加密文件（.jbk）。备份口令经 20 万次迭代派生密钥后 AES-256 加密，口令不保存在任何地方，丢失口令将无法还原。</string>
+    <string name="backup_intro">把全部设置、剪贴板历史、常用语与选词偏好打包成一个加密文件（.jbk）；语音纠错与候选搭配学习记录不在备份内。备份口令经 20 万次迭代派生密钥后 AES-256 加密，口令不保存在任何地方，丢失口令将无法还原。</string>
     <string name="backup_create">创建加密备份</string>
     <string name="backup_restore_from_file">从备份文件还原</string>
     <string name="backup_restore_warning">还原会整体覆盖当前的设置、剪贴板、常用语与选词偏好，完成后应用将重启使设置生效。</string>

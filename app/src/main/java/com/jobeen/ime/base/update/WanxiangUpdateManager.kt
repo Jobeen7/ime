@@ -2,6 +2,7 @@ package com.jobeen.ime.base.update
 
 import androidx.core.content.edit
 import com.jobeen.ime.base.net.fetchGithubReleaseAssetSha256
+import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.ngram.gramFileInstallLock
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.CancellationException
@@ -579,28 +580,18 @@ object WanxiangUpdateManager {
         if (full.length > 14) "${full.take(8)}...${full.takeLast(6)}" else full
 
     private fun fingerprint(vararg parts: String): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
+        val digest = DigestUtil.newSha256Digest()
         parts.forEach { digest.update(it.toByteArray(Charsets.UTF_8)) }
-        return digest.digest().joinToString("") { "%02x".format(it) }
+        return DigestUtil.hexDigest(digest)
     }
 
     /**
      * 计算文件内容的 SHA-256（流式读取，适用于大文件如 396MB 语法模型）。
      * 每 1MB 检查一次协程取消，避免页面退出后继续空转。
+     * 实现收敛至 [DigestUtil.sha256HexCancellable]，口径逐字节一致。
      */
-    private suspend fun sha256File(file: File): String {
-        val digest = java.security.MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buf = ByteArray(BUFFER_SIZE)
-            var n: Int
-            var chunks = 0
-            while (input.read(buf).also { n = it } != -1) {
-                digest.update(buf, 0, n)
-                if (++chunks % 32 == 0) currentCoroutineContext().ensureActive()
-            }
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
+    private suspend fun sha256File(file: File): String =
+        DigestUtil.sha256HexCancellable(file)
 
     /**
      * 词库内容指纹：对每个 dict 文件计算内容 SHA-256，

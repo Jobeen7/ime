@@ -98,6 +98,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var upsertsSincePruneCheck = 0
     private data class EngineState(
         var initialized: Boolean = false,
+        // 联想可见标志跨线程读写：写点分布在 reduce、jobs（退格
+        // 处理）与主线程（onFinishInputView 切框收尾），读点在 jobs
+        // 与主线程（loadMoreCandidates 的防串味守卫）。普通 var 无
+        // 可见性保证，读到过期值会串味（联想显示期误放行分页补取
+        // 拼进组字候选）或吞退格。单写单读的布尔标志无复合操作，
+        // @Volatile 的可见性即足够，不需要 AtomicBoolean
+        @Volatile
         var predictionVisible: Boolean = false,
         var suppressNextEmptyCandidates: Boolean = false,
         var initHookTriggered: Boolean = false,
@@ -244,12 +251,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     @Volatile private var beforeCursorCache = ""
     @Volatile private var beforeCursorCacheAt = 0L
 
-    private fun peekTextBeforeCursor(n: Int): String {
+    private suspend fun peekTextBeforeCursor(n: Int): String {
         val now = SystemClock.uptimeMillis()
         if (beforeCursorCacheAt == 0L || now - beforeCursorCacheAt > 800L) {
-            beforeCursorCache = runCatching {
-                inputConnection()?.getTextBeforeCursor(64, 0)?.toString() ?: ""
-            }.getOrDefault("")
+            // InputConnection 非线程安全、契约要求主线程访问：本类其余
+            // 读写点都显式 withContext(Main.immediate)，此探针原先在
+            // Default 线程直调，是唯一例外。只有真正读 IC 的填缓存段
+            // 切主线程；TTL 判定与切片留在调用线程，800ms 语义不变
+            beforeCursorCache = withContext(Dispatchers.Main.immediate) {
+                runCatching {
+                    inputConnection()?.getTextBeforeCursor(64, 0)?.toString() ?: ""
+                }.getOrDefault("")
+            }
             beforeCursorCacheAt = now
         }
         val want = n.coerceIn(0, 64)
@@ -1118,7 +1131,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val task: suspend RimeApi.() -> Unit = {
             try {
                 deferred.complete(block())
-            } catch (_: Throwable) {
+            } catch (t: Throwable) {
+                // 捕获面保持 Throwable、等待方仍以默认值收尾，行为
+                // 不变；这里只补可诊断性。捕获面不能收窄到
+                // Exception：Error（OOM 等）一旦穿透 task，会落进
+                // jobs 消费循环并杀死它（其 catch 只有
+                // CancellationException 与 Exception 两档），后果远
+                // 比静默降级严重。CancellationException 是引擎收尾
+                // 的正常路径，不打错误日志
+                if (t !is CancellationException) {
+                    if (t is Error) {
+                        Timber.e(t, "awaitJob task failed with an Error; completing with default value")
+                    } else {
+                        Timber.e(t, "awaitJob task failed; completing with default value")
+                    }
+                }
                 deferred.complete(defaultValue)
             }
         }
@@ -1206,6 +1233,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private fun restoreCandidates(msg: EngineMessage.Candidates) {
+        // 新批次自愈：上一批的分页补取若在引擎停机窗口被消费侧吞掉
+        // （job 体未进入、其 finally 复位不到），在途标记会永久滞留、
+        // 本进程内分页彻底失效。新批次的到来证明管线已恢复，在此
+        // 复位（与批次锚点同位）；job 体内的 finally 保留不动，负责
+        // 正常路径的及时复位
+        candidateLoadMoreInFlight = false
         val requestId = state.candidateRequestId.incrementAndGet()
         state.latestCandidateRequestId.accumulateAndGet(requestId) { a, b -> maxOf(a, b) }
         candidateRestoreJob?.cancel()
@@ -1396,7 +1429,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         dispatchAction(Action.Predict(commit))
     }
 
-    private fun requestPrediction(commit: String, learnable: Boolean = false) {
+    private suspend fun requestPrediction(commit: String, learnable: Boolean = false) {
         // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不读前文、不跑预测、不学搭配
         if (isNoPersonalizedLearning(editorInfo)) {
             lastLearnSegment = null

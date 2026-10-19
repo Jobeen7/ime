@@ -8,6 +8,7 @@ import com.jobeen.ime.data.database.CandidatePrefer
 import com.jobeen.ime.data.database.CandidateSorting
 import com.jobeen.ime.data.database.ClipboardDatabase
 import com.jobeen.ime.data.database.ClipboardRecord
+import com.jobeen.ime.data.database.dedupeClipboardByText
 import com.jobeen.ime.data.database.PhraseRecord
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
@@ -223,9 +224,11 @@ object BackupManager {
     /**
      * 解密并整体覆盖还原。口令错误/文件损坏/结构非法抛 [BackupException]，
      * 且解密与完整结构解析全部通过后才开始写任何数据（不会半还原）。
+     * 还原前落盘快照保存失败同样抛 [BackupException] 中止（fail-fast，
+     * 见 restoreInternal），不再降级继续。
      *
-     * @return 还原前落盘快照是否保存失败（true 时还原本身已成功，
-     * 但期间没有进程被杀后的回滚凭据，调用方须向用户明示）。
+     * @return 恒为 false（保留返回值是为兼容既有状态机接线：落盘快照
+     * 失败已改抛错，快照回滚路径本就不落盘快照）。
      */
     suspend fun restoreBackup(bytes: ByteArray, password: CharArray): Boolean =
         restoreInternal(bytes, password, isSnapshotRollback = false)
@@ -239,7 +242,9 @@ object BackupManager {
      *   把当前（已还原）状态覆写到快照文件上，原始还原前状态就此
      *   丢失，回滚也就失去了目标。
      *
-     * @return 本次是否发生了「落盘快照保存失败」（仅外部备份还原才落盘快照）。
+     * @return 恒为 false：外部备份还原的落盘快照保存失败已改抛
+     * [BackupException] 中止（fail-fast，见下方判定点）；快照回滚
+     * 路径不落盘快照。返回值仅为兼容既有状态机接线保留。
      */
     private suspend fun restoreInternal(
         bytes: ByteArray, password: CharArray, isSnapshotRollback: Boolean
@@ -259,11 +264,19 @@ object BackupManager {
         if (!isSnapshotRollback) {
             // 加密快照落盘到私有目录：进程若在写入中途被杀（系统回收、
             // 断电），内存回滚随之消失，下次打开备份页凭此文件+口令仍可
-            // 回到还原前状态。落盘失败只降级为内存回滚，不阻塞还原；
-            // 但失败不能只记日志：经返回值上报，终态以带警告的完成
-            // 呈现，让用户知道本次还原期间没有这层兜底
+            // 回到还原前状态。落盘失败即中止还原（fail-fast，此时尚未
+            // 写入任何数据，用户数据原样不动）：内存快照回滚只防得住
+            // 进程内异常，进程被杀时它和半还原状态一起消失、落盘快照
+            // 是唯一回滚凭据——没有凭据就继续写，等于把「防半还原」
+            // 的最后一道防线主动拆掉。旧口径是降级继续＋事后警告，
+            // 警告出现时风险窗口已经敞着走完了全程
             snapshotPersistFailed =
                 !persistRestoreSnapshot(encryptPayload(snapshotJson, password))
+            if (snapshotPersistFailed) {
+                throw BackupException(
+                    "还原前状态快照保存失败，还原已中止（未改动任何数据）"
+                )
+            }
         }
         try {
             // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
@@ -633,7 +646,12 @@ object BackupManager {
             return ParsedBackup(
                 prefs = prefs,
                 webdavPassword = root.optString("webdavPassword", ""),
-                clipboard = clipList,
+                // 剪贴板表 text 唯一（ClipboardDatabase v4 起）：备份内
+                // 同 text 多行（旧版本应用层唯一性约定失效时期的产物）
+                // 直插会撞唯一索引、整表事务回滚让还原全灭。解析阶段
+                // 先按统一口径去重（pinned 优先、timestamp 最新、
+                // id 最大，与库内迁移去重一致）
+                clipboard = dedupeClipboardByText(clipList),
                 phrases = phraseList,
                 prefers = preferList,
                 sortings = sortingList,
@@ -685,12 +703,17 @@ object BackupManager {
         clipDb.withTransaction {
             clipDb.clipboardDao().deleteAllRaw()
             if (parsed.clipboard.isNotEmpty()) {
-                // 还原入口同样限长：旧备份里的超限文本不能把毒化行带回库里
-                val clipped = parsed.clipboard.map { r ->
-                    if (r.text.length > ClipboardManager.MAX_TEXT_LENGTH) {
-                        r.copy(text = r.text.take(ClipboardManager.MAX_TEXT_LENGTH))
-                    } else r
-                }
+                // 还原入口同样限长：旧备份里的超限文本不能把毒化行带回库里。
+                // 截断会新造重复（两条长文前 MAX_TEXT_LENGTH 字相同），
+                // 解析阶段的去重防不住这一格，插入前按同一口径再去重
+                // 一次，避免撞 text 唯一索引整表回滚
+                val clipped = dedupeClipboardByText(
+                    parsed.clipboard.map { r ->
+                        if (r.text.length > ClipboardManager.MAX_TEXT_LENGTH) {
+                            r.copy(text = r.text.take(ClipboardManager.MAX_TEXT_LENGTH))
+                        } else r
+                    }
+                )
                 clipDb.clipboardDao().insertAll(clipped)
             }
         }

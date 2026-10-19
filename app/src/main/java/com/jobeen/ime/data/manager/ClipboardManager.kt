@@ -7,10 +7,12 @@ import android.content.Context
 import android.os.Build
 import androidx.core.content.edit
 import androidx.room.withTransaction
+import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.ClipboardDatabase
 import com.jobeen.ime.data.database.ClipboardDao
 import com.jobeen.ime.data.database.ClipboardRecord
+import com.jobeen.ime.data.database.dedupeClipboardByText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -98,18 +100,33 @@ object ClipboardManager {
         val pinned: Boolean = false,
     )
 
-    suspend fun getEntries(context: Context): List<Entry> = db(context) { db ->
+    /**
+     * 读条目，失败与真空分开：数据库操作失败（库损坏/迁移异常等）
+     * 返回 null，「真无条目」返回空表。旧实现失败一律吞成 emptyList，
+     * 面板会把「读不出来」显示成「剪贴板被清空」的假象、还可能据此
+     * 覆盖现有列表。消费方拿到 null 应保留现有数据/给出提示，
+     * 不要用空列表覆盖。
+     */
+    suspend fun getEntriesOrNull(context: Context): List<Entry>? = db(context) { db ->
         val cutoff = System.currentTimeMillis() - getRetentionDays(context) * 86400000L
         db.clipboardDao().getAllActiveSince(cutoff)
             .map { Entry(it.text, it.timestamp, it.cloud, it.pinned) }
-    } ?: emptyList()
-
-    suspend fun setPinned(context: Context, text: String, pinned: Boolean) {
-        db(context) { db -> db.clipboardDao().setPinnedByText(text, pinned) }
     }
 
-    suspend fun addEntry(context: Context, text: String, notify: Boolean = true) {
-        if (text.isBlank()) return
+    /** 旧契约兼容：失败按真空返回。不关心成败的调用方用，新消费方用 [getEntriesOrNull]。 */
+    suspend fun getEntries(context: Context): List<Entry> =
+        getEntriesOrNull(context) ?: emptyList()
+
+    /** @return 写入成功为 true；数据库操作失败为 false（旧实现静默吞掉，调用方无从感知）。 */
+    suspend fun setPinned(context: Context, text: String, pinned: Boolean): Boolean =
+        db(context) { db -> db.clipboardDao().setPinnedByText(text, pinned) } != null
+
+    /**
+     * @return 条目已落库（或空文本无需落库）为 true；数据库操作失败
+     * 为 false——旧实现静默 return，监听侧会冒充「有新条目」触发无谓刷新。
+     */
+    suspend fun addEntry(context: Context, text: String, notify: Boolean = true): Boolean {
+        if (text.isBlank()) return true
         // 限长：见 MAX_TEXT_LENGTH，超限文本截断后再走全部后续逻辑
         val clipped = text.take(MAX_TEXT_LENGTH)
         // 防复活抑制不在这里动：抑制条目只许按条摘除（见 noteRemovedTexts），
@@ -137,8 +154,9 @@ object ClipboardManager {
                 dao.purgeDeletedOlderThan(retentionCutoff)
                 !existed
             }
-        } ?: return
+        } ?: return false
         if (notify && isNew) onNewEntry?.invoke(Entry(clipped, now))
+        return true
     }
 
     private suspend fun trimExcess(dao: ClipboardDao, limit: Int) {
@@ -157,13 +175,17 @@ object ClipboardManager {
      * 只按子集拼接会把未显示条目一律压到末尾——新条目刚进来就沉底，
      * 且两套序号交错后旧条目重回显示范围时位置错乱。
      */
-    suspend fun applyOrder(context: Context, orderedTexts: List<String>) {
+    /** @return 落库成功为 true；数据库操作失败为 false（重排未生效，调用方可提示/保持原序）。 */
+    suspend fun applyOrder(context: Context, orderedTexts: List<String>): Boolean =
         db(context) { db ->
             db.withTransaction {
                 val dao = db.clipboardDao()
-                val all = dao.getAllActive()
-                val byText = all.associateBy { it.text }
-                val current = all.sortedWith(
+                // 只取排序重排需要的五列投影：旧实现整行读全文，
+                // 单条可达 10 万字、500 条时内存峰值数十 MB（见
+                // ClipboardOrderRow）。排序/合并口径与全量读完全一致
+                val rows = dao.getAllActiveOrderRows()
+                val byText = rows.associateBy { it.text }
+                val current = rows.sortedWith(
                     compareBy({ !it.pinned }, { it.sortOrder }, { -it.timestamp })
                 )
                 val shownQueue = orderedTexts.mapNotNull { byText[it] }
@@ -174,12 +196,12 @@ object ClipboardManager {
                     }
                 }
             }
-        }
-    }
+        } != null
 
-    suspend fun clearAll(context: Context) {
+    /** @return 清空落库成功为 true；数据库操作失败为 false。 */
+    suspend fun clearAll(context: Context): Boolean {
         val now = System.currentTimeMillis()
-        db(context) { db ->
+        val ok = db(context) { db ->
             db.withTransaction {
                 val dao = db.clipboardDao()
                 // 物理清空前把全部条目记入防复活抑制（替代软删墓碑行的作用）。
@@ -193,22 +215,27 @@ object ClipboardManager {
                 )
                 dao.deleteAllRaw()
             }
-        }
+        } != null
         lastCopyText = null
         lastCopyTimestamp = 0L
         clearTimestamp = now
+        return ok
     }
 
-    suspend fun removeEntry(context: Context, text: String) {
+    /** @return 删除落库成功为 true；数据库操作失败为 false。 */
+    suspend fun removeEntry(context: Context, text: String): Boolean {
         noteRemovedTexts(context, listOf(text))
-        db(context) { db -> db.clipboardDao().deleteByText(text) }
+        return db(context) { db -> db.clipboardDao().deleteByText(text) } != null
     }
 
-    /** 多选批量删除（物理删，与单条删除一致）。 */
-    suspend fun removeEntries(context: Context, texts: Collection<String>) {
-        if (texts.isEmpty()) return
+    /**
+     * 多选批量删除（物理删，与单条删除一致）。
+     * @return 删除落库成功为 true；数据库操作失败为 false。
+     */
+    suspend fun removeEntries(context: Context, texts: Collection<String>): Boolean {
+        if (texts.isEmpty()) return true
         noteRemovedTexts(context, texts)
-        db(context) { db -> db.clipboardDao().deleteByTexts(texts.toList()) }
+        return db(context) { db -> db.clipboardDao().deleteByTexts(texts.toList()) } != null
     }
 
     /** 一条防复活抑制记录：文本哈希 + 删除时刻（0 表示时刻未知，见 noteRemovedTexts）。 */
@@ -299,9 +326,7 @@ object ClipboardManager {
     }
 
     private fun textHash(text: String): String =
-        java.security.MessageDigest.getInstance("SHA-256")
-            .digest(text.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
+        DigestUtil.sha256Hex(text.toByteArray(Charsets.UTF_8))
 
     /**
      * 编辑条目文本：改写后刷新时间戳排到最前，置顶状态随行保留。
@@ -309,13 +334,16 @@ object ClipboardManager {
      * 合并口径为任一行置顶则结果置顶——删目标行前先读其置顶状态（同 addEntry
      * 的先读后恢复），改写后恢复，避免目标行置顶在合并时静默丢失。
      * 事务保证检查与改写不被并发插入打断。
+     *
+     * @return 编辑落库成功为 true；数据库操作失败为 false。空结果/
+     * 未改动按无需落库处理、返回 true。
      */
-    suspend fun updateEntry(context: Context, oldText: String, newText: String) {
+    suspend fun updateEntry(context: Context, oldText: String, newText: String): Boolean {
         // 与写入侧统一限长（见 MAX_TEXT_LENGTH）：编辑结果超限同样截断，
         // 否则改写出的超限行照样能毒化整张历史表
         val clean = newText.trim().take(MAX_TEXT_LENGTH)
-        if (clean.isEmpty() || clean == oldText) return
-        db(context) { db ->
+        if (clean.isEmpty() || clean == oldText) return true
+        return db(context) { db ->
             db.withTransaction {
                 val dao = db.clipboardDao()
                 val targetPinned = dao.pinnedByText(clean) ?: false
@@ -323,13 +351,25 @@ object ClipboardManager {
                 // 排到最前靠改排序序号（与 addEntry 新条目同口径，取
                 // 当前最小值减一）：列表排序键是 sortOrder 在前、
                 // timestamp 在后，只刷新时间戳条目原地不动
-                dao.updateTextByText(
-                    oldText, clean, System.currentTimeMillis(),
-                    (dao.minSortOrder() ?: 0L) - 1L,
-                )
+                val now = System.currentTimeMillis()
+                val frontOrder = (dao.minSortOrder() ?: 0L) - 1L
+                val updated = dao.updateTextByText(oldText, clean, now, frontOrder)
+                if (updated == 0) {
+                    // 旧行已被并发路径删除（编辑框打开期间新复制触发
+                    // 裁剪/保留期清理把正在编辑的条目删了）：改写命中
+                    // 0 行、而新文本行已在上方被删——旧实现到此为止，
+                    // 新旧内容双双静默消失。同事务补插一行兜底，
+                    // 置顶/排序口径与改写命中时一致
+                    dao.insert(
+                        ClipboardRecord(
+                            text = clean, timestamp = now,
+                            pinned = targetPinned, sortOrder = frontOrder,
+                        )
+                    )
+                }
                 if (targetPinned) dao.setPinnedByText(clean, true)
             }
-        }
+        } != null
     }
 
     // ── 系统剪切板监听 ──
@@ -437,8 +477,10 @@ object ClipboardManager {
             if (isNew) {
                 lastCopyText = text
                 lastCopyTimestamp = System.currentTimeMillis()
-                addEntry(context, text, notify = false)
-                return@withLock true
+                // 入库失败不再冒充「有新条目」：内容仍在系统剪贴板里，
+                // 下次变化事件/补偿检查会再试；冒充成功只会让面板
+                // 白刷新一次、还把监听侧的成败口径搅浑
+                return@withLock addEntry(context, text, notify = false)
             }
             false
         }
@@ -512,8 +554,10 @@ object ClipboardManager {
 
     /**
      * 一次性把剪贴板历史从 ime_database 迁到独立的 clipboard_database（拆库原因见
-     * ClipboardDatabase 注释）。v2 起改为幂等合并：按 (text, timestamp) 自然键
-     * 只补新库缺失的行（旧实现以 count()==0 判完成，中断后新库非空但缺行会被
+     * ClipboardDatabase 注释）。v2 起改为幂等合并：按自然键只补新库
+     * 缺失的行（ClipboardDatabase v4 起目标表 text 唯一，自然键随之
+     * 从 (text, timestamp) 收紧为 text，补行前先去重——见迁移体注释；
+     * 旧实现以 count()==0 判完成，中断后新库非空但缺行会被
      * 当成已迁移、静默丢行；且留有主键冲突让后续每次操作都重跑失败迁移的
      * 可能）。补行在单个事务内完成；确认后清掉旧库残留行——旧表继续躺在
      * ime_database 里会随云备份/换机迁移外带，拆库的隐私隔离只做一半。
@@ -531,14 +575,28 @@ object ClipboardManager {
         return runCatching {
             val dao = target.clipboardDao()
             val oldDao = AppDatabase.getInstance(context).clipboardDao()
+            // 读旧库前先在旧库就地截断超限行：MAX_TEXT_LENGTH 引入之前
+            // 复制的 >2MB 文本会留成超 CursorWindow 的行，getAllRaw
+            // 读到它直接抛 SQLiteBlobTooBigException——整个迁移被
+            // runCatching 吞掉、完成标记永不落盘，此后每次访问都
+            // 重跑一次注定失败的迁移，旧行既不搬也不删、一直躺在
+            // 会进云备份的主库里。截断是现成的 SQL substr 更新、
+            // 不物化行（truncateOversizedTextsOnce 只作用于新库，
+            // 待迁移的旧库才是毒化源头，必须在这里对源头先行）
+            oldDao.truncateOversizedTexts(MAX_TEXT_LENGTH)
             val oldRows = oldDao.getAllRaw()
             if (oldRows.isNotEmpty()) {
-                val existing = dao.getAllRaw().map { it.text to it.timestamp }.toHashSet()
+                val existingTexts = dao.getAllRaw().map { it.text }.toHashSet()
                 // 软删行不搬运：那是已删除内容，搬进新库只会让墓碑行继续占位
-                // 并被保留期清理前误当存量；下方 deleteAllRaw 仍会清掉旧库全部行
-                val missing = oldRows.filter {
-                    !it.deleted && (it.text to it.timestamp) !in existing
-                }
+                // 并被保留期清理前误当存量；下方 deleteAllRaw 仍会清掉旧库全部行。
+                // 目标表 v4 起 text 唯一：存在性按 text 判（同 text 异
+                // timestamp 的行在目标库里只许一行，再补必撞唯一索引、
+                // 整事务回滚且永不收敛）；源头同 text 多行先按统一
+                // 口径去重（dedupeClipboardByText：pinned 优先、
+                // timestamp 最新、id 最大）
+                val missing = dedupeClipboardByText(
+                    oldRows.filter { !it.deleted && it.text !in existingTexts }
+                )
                 if (missing.isNotEmpty()) {
                     target.withTransaction {
                         // id 清零走自增，避免与新库已有行主键冲突

@@ -11,5 +11,9 @@ local.properties
 /app/src/main/cpp/deps/*
 .kotlin/
 release.keystore
+*.jks
+*.keystore
+*.p12
+*.pepk
 app/src/main/assets/resource.zip
 app/src/main/cpp/.jime-vendored-patch.lock

@@ -51,13 +51,17 @@
 
 - 打字输入全程在本机离线完成，不上传输入内容
 - 联网只用于更新检查、模型下载，以及你主动配置的 WebDAV 同步
-- 所有从网络下载的文件都先校验 SHA-256 摘要，校验通过才安装使用
+- 从网络下载的文件以 SHA-256 摘要校验为主，校验通过才安装使用；应用更新包在官方未提供摘要时，以文件大小与签名证书（须与已安装版本一致）校验兜底
 - 详细说明见 [PRIVACY.md](PRIVACY.md)
 
 ## 文档
 
 - 键盘主题数据格式说明见 [docs/theme-format.md](docs/theme-format.md)
 - 第三方组件与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+
+## 构建
+
+- 源码构建先运行 `install-deps.sh` 拉取并校验原生依赖；在 Windows 上构建需 `patch.exe` 在 PATH 中（构建期对 deps 打补丁用）
 
 ## 许可证
 

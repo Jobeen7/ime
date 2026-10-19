@@ -160,6 +160,10 @@ class KawaiiPanelView(context: Context) : View(context) {
     override fun onDetachedFromWindow() {
         cancelDelayedTaps()
         longPressHandler.removeCallbacks(longPressRunnable)
+        // 工具栏按压扩散动画同为本 View 自有资源：不取消会在分离后
+        // 继续驱动已脱窗 View 的重绘（§6#6）
+        pressAnimator?.cancel()
+        pressAnimator = null
         super.onDetachedFromWindow()
     }
     private val longPressHandler = Handler(Looper.getMainLooper())

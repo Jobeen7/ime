@@ -561,6 +561,14 @@ class ParticleWaveView @JvmOverloads constructor(
         synchronized(particleLock) {
             particles.clear()
         }
+        // 基类收尾必须在子类清理之后补上：置 destroyed 唤醒并终结渲染
+        // 线程、摘除 SurfaceHolder 回调。基类 release 幂等（标志位置位、
+        // signalAll、removeCallback 重复调用均无害），且其内部的
+        // stopAnim 与上面的子类 stopAnim 重复调用同为幂等收尾；
+        // 子类的 clearDraw 已在 stopAnim 内先行执行，此时 Surface 仍
+        // 有效，顺序安全。此前漏调导致渲染线程永不置 destroyed、
+        // 阻塞在条件等待里无法退出（§6#2）
+        super.release()
     }
 
     override fun onAttachedToWindow() {

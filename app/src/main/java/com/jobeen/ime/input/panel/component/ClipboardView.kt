@@ -60,6 +60,8 @@ class ClipboardView(
         endDragSelection(rollback = false)
         // 排序拖动同理：收尾并落库已拖出的顺序（中途关键盘不丢调整）
         if (reorderDragging) finishReorderDrag(persist = true)
+        // 拇指滚动是纯状态位、无 post 链，复位即可（手势流随窗口销毁而断）
+        thumbScrolling = false
         removeCallbacks(reorderAutoScrollRunnable)
         removeCallbacks(longPressRunnable)
         super.onDetachedFromWindow()
@@ -296,6 +298,9 @@ class ClipboardView(
         multiSelectActive = active
         if (!active) {
             endDragSelection(rollback = false)
+            // 退出多选时拇指模式一并复位：路由不再进 onMultiTouchEvent，
+            // 残留 true 会让下次进入多选的首趟手势被误截获
+            thumbScrolling = false
             selectedTexts.clear()
         }
         computeRowLayouts()
@@ -459,6 +464,24 @@ class ClipboardView(
     private var dragLastY = 0f
     private var dragStartY = 0f
 
+    // ── 多选态右缘滚动拇指（条目 33，形态 A） ────────────────────
+    // 多选态拖动全被连选占用、无自由滚动：右缘 24dp 热区内的落指
+    // 整趟归拇指滚动——只按内容高/可视高比例改 scrollOffsetY，
+    // 不定拖选锚点、不动选中集。与拖选互斥：拇指落指在连选开始
+    // 之前判定（dragSelecting 恒为 false 时才可能进入），拇指模式
+    // 内的 MOVE/UP 由 onMultiTouchEvent 开头分支全量截获。
+    private var thumbScrolling = false
+    private var thumbStartY = 0f
+    private var thumbStartOffset = 0f
+
+    /** 拇指生效条件：多选态剪贴板页且内容超出可视区。 */
+    private fun thumbEnabled(): Boolean =
+        multiSelectActive && clipTab == ClipboardTab.CLIPBOARD &&
+            maxOf(0f, totalContentH - height) > 0f
+
+    private fun isThumbHotZone(x: Float): Boolean =
+        thumbEnabled() && x >= width - 24f * density
+
     private val autoScrollRunnable = object : Runnable {
         override fun run() {
             if (!dragSelecting) return
@@ -559,8 +582,26 @@ class ClipboardView(
         dragSnapshot = emptySet()
     }
 
-    /** 多选态手势：点按切换一条，拖动连选（见上方注释）。 */
+    /** 多选态手势：点按切换一条，拖动连选（见上方注释）；右缘热区落指走拇指滚动。 */
     private fun onMultiTouchEvent(event: MotionEvent): Boolean {
+        if (thumbScrolling) {
+            // 拇指模式全量截获本趟手势：MOVE 只按比例滚视口，
+            // 不进连选、不触发任何点按/长按语义
+            when (event.actionMasked) {
+                MotionEvent.ACTION_MOVE -> {
+                    val ratio = if (height > 0) totalContentH / height else 1f
+                    val maxS = maxOf(0f, totalContentH - height)
+                    scrollOffsetY = (thumbStartOffset + (event.y - thumbStartY) * ratio)
+                        .coerceIn(0f, maxS)
+                    invalidate()
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    thumbScrolling = false
+                    invalidate()
+                }
+            }
+            return true
+        }
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 scroller.forceFinished(true)
@@ -568,6 +609,14 @@ class ClipboardView(
                 dragStartY = event.y
                 dragLastY = event.y
                 isScrolling = false
+                if (isThumbHotZone(event.x)) {
+                    thumbScrolling = true
+                    thumbStartY = event.y
+                    thumbStartOffset = scrollOffsetY
+                    pressedIndex = -1
+                    invalidate()
+                    return true
+                }
                 // 按下定位走严格命中（与普通点按同口径）：pressedIndex 是未
                 // 进入拖选时抬手的 toggle 候选，行间空隙/空白吸附到邻行会
                 // 误选；拖选区间本身的吸附仍由 applyDragSelection 里的
@@ -655,6 +704,8 @@ class ClipboardView(
     private val pinBarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     // 多选勾选：圆圈描边/填充与对勾线共用（颜色随主题在 updateColors 刷新）
     private val checkPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    // 多选滚动拇指（颜色随主题在 updateColors 刷新，透明度在绘制时按拖动态给）
+    private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     // 置顶标记色（强调色），随主题在 updateColors 刷新
     private var accentColor = 0
     private var checkBgColor = 0
@@ -748,7 +799,9 @@ class ClipboardView(
             // 成员字段会与主线程互相覆盖、数据与布局新旧不一致
             val outcome = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 if (tab == ClipboardTab.CLIPBOARD) {
-                    val entries = ClipboardManager.getEntries(context)
+                    // 读失败（DB 异常）时保留现有列表，不再按真空整表替换出
+                    // 「剪贴板被清空」的假象（§5.3）
+                    val entries = ClipboardManager.getEntriesOrNull(context) ?: clipboardEntries
                     val displayed = filterEntries(entries, searchQuery)
                     ReloadOutcome(
                         entries, displayed, phrases,
@@ -824,6 +877,7 @@ class ClipboardView(
         pressPaint.color = scheme.specialKeyPressed
         accentColor = scheme.accentKeyBackground
         pinBarPaint.color = accentColor
+        thumbPaint.color = panel.candidateIndex
         checkBgColor = scheme.keyBackground
         editCursorPaint.color = accentColor
         editHintPaint.color = panel.candidateIndex
@@ -999,6 +1053,28 @@ class ClipboardView(
         draggedRow?.let { drawRow(canvas, reorderDragIndex, it, reorderDragTop) }
 
         canvas.restore()
+        drawScrollThumb(canvas)
+    }
+
+    /**
+     * 多选态右缘滚动拇指（条目 33）：长度与位置按可视比例映射。
+     * 画在列表层之上、视图坐标系内（不受列表 translate 影响）；
+     * 横向落在行胶囊右端（width - hMargin）之外的空白带，与行首
+     * 左侧的勾选圆天然不冲突。
+     */
+    private fun drawScrollThumb(canvas: Canvas) {
+        if (!thumbEnabled()) return
+        val maxS = maxOf(0f, totalContentH - height)
+        if (maxS <= 0f) return
+        val viewH = height - headerH
+        val thumbH = maxOf(36f * density, viewH * viewH / totalContentH).coerceAtMost(viewH)
+        val top = headerH + (viewH - thumbH) * (scrollOffsetY / maxS).coerceIn(0f, 1f)
+        val right = width - 3f * density
+        thumbPaint.alpha = if (thumbScrolling) 235 else 150
+        canvas.drawRoundRect(
+            right - 4f * density, top, right, top + thumbH,
+            2f * density, 2f * density, thumbPaint,
+        )
     }
 
     private fun drawRow(canvas: Canvas, i: Int, row: RowLayout, y: Float) {
