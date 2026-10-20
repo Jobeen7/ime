@@ -6,11 +6,13 @@ import android.system.OsConstants
 import androidx.core.content.edit
 import com.jobeen.ime.base.net.HttpUtil
 import com.jobeen.ime.base.util.appContext
+import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.data.App
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.TarBz2ExtractorUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -99,9 +101,14 @@ object ModelDownloader {
 
     /**
      * 钉死摘要盲区（V7）：目标摘要出自钉死表（非 GitHub 登记值）
-     * 且与本地 gh: 记录日期不更晚。调用点已保证 identity 与本地
-     * 记录不相等，故同名即「仅摘要不同」；异名时以日期键判定，
-     * 任一日期不可解析则不成立（无从判定孰新，不拦正常更新）。
+     * 时，本地与目标孰新无从判定。调用点已保证 identity 与本地
+     * 记录不相等：同名即无条件成立（仅摘要不同）；异名时以日期
+     * 键判定，任一日期不可解析则不成立（无从判定孰新，不拦正
+     * 常更新）。注意同名盲区不会随钉死表更新自行解除：钉死值
+     * 再新，与本地记录仍是同名、仍仅摘要不同、本函数照样返回
+     * true——上游同名原地换包且发布接口不可达时，本机制根本察
+     * 觉不到换包；退出本支只有两条路：接口可达使目标改走登记
+     * 摘要（shaFromPinned 为假），或上游换成带新日期的异名资产。
      */
     private fun isPinnedShaBlindSpot(target: SpeechModelTarget, localId: String): Boolean {
         if (!target.shaFromPinned) return false
@@ -263,8 +270,11 @@ object ModelDownloader {
                 // 地仅摘要不同且日期不更晚时孰新无从判定——典型
                 // 是上游同名原地换包后钉死值已过期，照报更新只
                 // 会走「下载→按钉死摘要校验必失配」的死循环。
-                // 本次按已是最新收尾并打点；待 API 可达（登记摘
-                // 要）或钉死表随新版更新后，比对自然恢复准确
+                // 本次按已是最新收尾并打点。如实口径：同名资产
+                // 的盲区不随钉死表更新「自然恢复」——钉死值再
+                // 新，与本地仍是同名仅摘要不同、本支照样命中；
+                // 只有 API 可达（目标改走登记摘要）或上游换成
+                // 异名新日期资产时才退出本支（见函数 KDoc）
                 if (isModelInstalled() && isPinnedShaBlindSpot(target, localId)) {
                     Timber.i(
                         "Speech model update check: pinned sha differs from local record " +
@@ -344,6 +354,18 @@ object ModelDownloader {
         runCatching { dir.deleteRecursively() }
             .onSuccess { Timber.i("Legacy cdsp dir removed: %s", dir.absolutePath) }
             .onFailure { Timber.w(it, "Legacy cdsp dir cleanup failed: %s", dir.absolutePath) }
+    }
+
+    /**
+     * 启动路径的一次性清理入口（W6）：[cleanupLegacyCdspDir] 此
+     * 前只挂在设置页的检查/下载入口，从不打开语音设置页的用户
+     * 残留永不清理，与其注释「下次进程启动再试」自相矛盾。由输
+     * 入法服务 onCreate 调用：投递到 IO 协程异步执行，不阻塞启
+     * 动；幂等与每进程至多一次仍由 [cleanupLegacyCdspDir] 内的
+     * 闩保证，本入口重复调用无副作用。
+     */
+    fun cleanupLegacyCdspDirOnStartup() {
+        appScope.launch(Dispatchers.IO) { cleanupLegacyCdspDir() }
     }
 
     private data class ModelFiles(

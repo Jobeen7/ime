@@ -53,6 +53,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -97,8 +98,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
-private const val KEY_APP_VERSION_CODE = "app_version_code"
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SchemaSettingsScreen(onBack: () -> Unit) {
@@ -110,7 +109,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var loaded by remember { mutableStateOf(false) }
     var grammarLanguage by remember { mutableStateOf<String?>(null) }
     var grammarReady by remember { mutableStateOf(false) }
-    var grammarDownloading by remember { mutableStateOf(false) }
+    // 下载中状态读进程级运行标志（GramModelDownloader/WanxiangUpdateManager
+    // 各一份）：页面 remember 状态随页面销毁丢失，任务却在应用级作用域
+    // 继续跑，重进页面会误判为空闲、重复启动同一路下载
+    val grammarDownloading by GramModelDownloader.isRunning.collectAsStateWithLifecycle()
     var grammarProgress by remember { mutableFloatStateOf(0f) }
     var grammarFailed by remember { mutableStateOf(false) }
     var grammarButtonWidth by remember { mutableStateOf(0.dp) }
@@ -119,7 +121,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         context.getSharedPreferences(WanxiangUpdateManager.PREFS_NAME, Context.MODE_PRIVATE)
     }
     var updateInfo by remember { mutableStateOf<WanxiangUpdateManager.UpdateInfo?>(null) }
-    var updating by remember { mutableStateOf(false) }
+    val updating by WanxiangUpdateManager.isRunning.collectAsStateWithLifecycle()
     var updateProgress by remember { mutableStateOf<WanxiangUpdateManager.UpdateProgress?>(null) }
     var updateStageText by remember { mutableStateOf("") }
     var updateDone by remember { mutableStateOf(false) }
@@ -185,35 +187,34 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         }
     }
 
+    // 打开页面先做版本切换清理（指纹记录/缓存跨版本作废，见
+    // WanxiangUpdateManager.ensureVersionHousekeeping；checkForUpdates
+    // 入口也会再调一次，幂等）
+    LaunchedEffect(Unit) {
+        WanxiangUpdateManager.ensureVersionHousekeeping(context)
+    }
+
     fun downloadGrammar(language: String) {
         // 与万象更新互斥：两路都写 sharedDataDir 下的语法模型文件，
         // 同时跑会各下一份约 400 MB 且落盘记录互相错位
         if (grammarDownloading || updating) return
-        grammarDownloading = true
         grammarFailed = false
         grammarProgress = 0f
         scope.launch {
-            try {
-                val success = GramModelDownloader.download(language) { downloaded, total ->
-                    scope.launch(Dispatchers.Main.immediate) {
-                        grammarProgress = if (total > 0L) {
-                            downloaded.toFloat() / total.toFloat()
-                        } else {
-                            0f
-                        }
+            val success = GramModelDownloader.download(language) { downloaded, total ->
+                scope.launch(Dispatchers.Main.immediate) {
+                    grammarProgress = if (total > 0L) {
+                        downloaded.toFloat() / total.toFloat()
+                    } else {
+                        0f
                     }
                 }
-                grammarReady = success && File(DataManager.sharedDataDir, "$language.gram").isFile
-                grammarFailed = !success
-                if (grammarReady) {
-                    // The grammar database is loaded during engine startup.
-                    EngineFactory.current()?.reload()
-                }
-            } finally {
-                // 下载中标志必须复位：下载抛异常时漏复位会让按钮永远
-                // 卡在下载中（GMD 侧失败已改为判负返回，这里再以
-                // finally 兜底任何未预见的异常路径）
-                grammarDownloading = false
+            }
+            grammarReady = success && File(DataManager.sharedDataDir, "$language.gram").isFile
+            grammarFailed = !success
+            if (grammarReady) {
+                // The grammar database is loaded during engine startup.
+                EngineFactory.current()?.reload()
             }
         }
     }
@@ -245,22 +246,13 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         else -> "$bytes B"
     }
 
-    fun currentAppVersionCode(): Long = runCatching {
-        val pi = context.packageManager.getPackageInfo(context.packageName, 0)
-        if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode
-        else @Suppress("DEPRECATION") pi.versionCode.toLong()
-    }.getOrNull() ?: -1L
-
     fun checkWanxiangUpdate() {
         if (updating || checkingUpdate) return
-        // App 升级后内置词库可能已变化：若 versionCode 变了，清除旧的更新记录，
-        // 避免"已是最新"的版本号与实际被 DataManager.sync() 还原的文件不一致
-        val appVersionCode = currentAppVersionCode()
-        val recordedCode = updatePrefs.getLong(KEY_APP_VERSION_CODE, -1L)
-        if (appVersionCode != -1L && recordedCode != -1L && recordedCode != appVersionCode) {
-            updatePrefs.edit().clear().apply()
-            updateInfo = null
-        }
+        // App 升级后的指纹记录/缓存清理统一走 WUM 的版本切换清理
+        // （打开页面时已调过、这里再兜一次，幂等）：它对全部用户
+        // 生效；旧实现在此整表 clear，但触发键只在应用内更新成功
+        // 后才写入，没在应用内更新过的用户永远清不到
+        WanxiangUpdateManager.ensureVersionHousekeeping(context)
         // 联网查询 GitHub 最新版本，与本地记录比对
         checkingUpdate = true
         updateDone = false
@@ -280,7 +272,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
         // 与语法模型单独下载互斥（见 downloadGrammar 的同一口径）
         if (updating || grammarDownloading) return
-        updating = true
         updateFailed = false
         updateDone = false
         updateProgress = null
@@ -308,14 +299,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 }
             }
-            updating = false
             updateProgress = null
             if (success) {
                 updateDone = true
-                // 记录 App 版本号，用于下次检查时判断内置词库是否被升级覆盖
-                currentAppVersionCode().takeIf { it != -1L }?.let {
-                    updatePrefs.edit().putLong(KEY_APP_VERSION_CODE, it).apply()
-                }
                 // 词库与模型已在盘上换新，先触发 Rime 完整重新部署，
                 // 再做联网复检：复检只刷新远端信息展示，排在前面会让
                 // 引擎换新数据被一次网络往返（慢或失败时更久）无谓推迟

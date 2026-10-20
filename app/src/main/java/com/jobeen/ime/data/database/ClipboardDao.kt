@@ -40,11 +40,14 @@ interface ClipboardDao {
      * 会因此永久卡死）。先按截断键（substr(text, 1, limit)）删掉
      * 较差的一行，只留一行待截断；保留口径与 [dedupeClipboardByText]
      * 及 v4 迁移 SQL 严格一致：pinned 优先、timestamp 最新、id 最大。
-     * 只删超限行，未超限的行不参与（其 text 与截断键的关系不归本
-     * 方法处理）。
+     * 外层条件含等长行（>=）：长度恰等于 limit 的行截断后不变，但
+     * 若一条超限行与它同前缀、且在保留口径上压过它，超限行截断后
+     * 会与它同 text 撞唯一索引——等长行必须同样作为删除目标参与
+     * 去重（败给更优行时删掉自己），只留胜出的一行待截断。短于
+     * limit 的行 substr 键更短、不可能与超限行同键，不受影响。
      */
     @Query(
-        "DELETE FROM clipboard_records WHERE length(text) > :limit AND EXISTS (" +
+        "DELETE FROM clipboard_records WHERE length(text) >= :limit AND EXISTS (" +
             "SELECT 1 FROM clipboard_records o WHERE o.id <> clipboard_records.id " +
             "AND substr(o.text, 1, :limit) = substr(clipboard_records.text, 1, :limit) AND (" +
             "o.pinned > clipboard_records.pinned OR " +

@@ -45,8 +45,13 @@ object ZipCentralDirectory {
         return null
     }
 
-    /** 解析中央目录字节为条目列表；任一条目格式损坏返回 null。 */
-    fun parseEntries(cd: ByteArray): List<Entry>? {
+    /**
+     * 解析中央目录字节为条目列表；任一条目格式损坏返回 null。
+     * [expectedCount] 给出时（EOCD.totalEntries）解析完再核对条目
+     * 数：中央目录字节被截断/错位时可能恰好停在条目边界上「成功」
+     * 解析出半份，条目数对不上即判失败，不让残缺目录算出指纹。
+     */
+    fun parseEntries(cd: ByteArray, expectedCount: Int? = null): List<Entry>? {
         val out = ArrayList<Entry>()
         var pos = 0
         while (pos < cd.size) {
@@ -66,6 +71,7 @@ object ZipCentralDirectory {
             out.add(Entry(String(cd, nameStart, nameLen, Charsets.UTF_8), size, crc))
             pos = next
         }
+        if (expectedCount != null && out.size != expectedCount) return null
         return out
     }
 
@@ -109,7 +115,7 @@ object DictFingerprint {
     fun entryPart(relPath: String, size: Long, crc32: Long): String =
         "$relPath|$size|${crc32.toString(16)}"
 
-    /** 与 WanxiangUpdateManager 既有合成口径一致：逐段喂入同一 SHA-256。 */
+    /** 指纹合成的唯一实现（本地/远端/状态键共用）：逐段喂入同一 SHA-256。 */
     fun combine(parts: List<String>): String {
         val digest = DigestUtil.newSha256Digest()
         parts.forEach { digest.update(it.toByteArray(Charsets.UTF_8)) }

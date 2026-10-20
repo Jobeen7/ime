@@ -341,7 +341,17 @@ class KawaiiPanel(
                         if (entry.pinned) R.string.clipboard_unpin else R.string.clipboard_pin
                     ) to {
                         appScope.launch {
-                            ClipboardManager.setPinned(context, entry.text, !entry.pinned)
+                            val ok = ClipboardManager.setPinned(
+                                context, entry.text, !entry.pinned
+                            )
+                            // 置顶失败（达上限被拒为主因，契约见
+                            // ClipboardManager.setPinned）时条目纹丝不动，
+                            // 必须给反馈，否则用户无从知道为什么没置上
+                            if (!ok && !entry.pinned) {
+                                com.jobeen.ime.base.util.ToastUtil.showToast(
+                                    context, "置顶已达上限（100 条）"
+                                )
+                            }
                             clipboardView.refresh()
                         }
                     },

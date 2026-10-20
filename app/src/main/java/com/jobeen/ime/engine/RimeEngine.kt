@@ -90,12 +90,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         /** 清空输入框时的分段删除：每段字符数与最大段数 */
         private const val CLEAR_CHUNK_CHARS = 1000
         private const val MAX_CLEAR_CHUNKS = 64
-        private const val PREFER_LIMIT = 5000
-        private const val PRUNE_CHECK_INTERVAL = 200
     }
 
-    /** 只在 [preferDbScope] 的串行 IO 通道内读写，无需同步。 */
-    private var upsertsSincePruneCheck = 0
     private data class EngineState(
         var initialized: Boolean = false,
         // 联想可见标志跨线程读写：写点分布在 reduce、jobs（退格
@@ -163,8 +159,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class PredictionReady(
             val requestId: Long,
             val candidates: List<Candidate>,
-            /** 发起预测时的输入框引用：交付时与当前 editorInfo 复检同一性，防旧框联想落到新框 */
-            val editorInfo: EditorInfo?,
+            /** 发起预测时的输入框代次：交付时与当前代次复检，防旧框联想落到新框 */
+            val fieldGen: Long,
         ) : Action
         data class EmitMessage(val message: EngineMessage) : Action
         data class CandidatesReady(val requestId: Long, val message: EngineMessage.Candidates) :
@@ -189,11 +185,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
 
     /**
-     * 选词偏好 DB 写专用通道：upsert/裁剪是纯 Room IO，不碰 Rime
-     * 状态，此前混在 jobs 串行队列里，慢盘或裁剪尖峰会把排在后面
-     * 的按键 job 一并堵住。独立出来后用 limitedParallelism(1) 保住
-     * 串行语义：多次 upsert 的相对顺序与 [upsertsSincePruneCheck]
-     * 的单线程计数假设都与原先在 jobs 内时一致。
+     * 选词偏好写的发起通道：实际落库、裁剪与计数落点由
+     * [CandidatePreferCache.recordClick] 在缓存侧的串行通道内成对
+     * 执行，本 scope 只负责把调用投递出去（不占 jobs 队列，慢盘
+     * 不堵后续按键）并作异常兜底。用 limitedParallelism(1) 保住
+     * 多次投递的相对顺序与原先在 jobs 内时一致。
      */
     private val preferDbScope by lazy {
         CoroutineScope(
@@ -235,7 +231,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var prefs: SharedPreferences? = null
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (OptionsApplier.isOptionDependency(key)) {
-            sendJob { currentSchema().applyOptions(this) }
+            sendJob {
+                currentSchema().applyOptions(this)
+                // 与 SelectSchema/Schema 消息同口径补刷字段选项：
+                // applyOptions 按方案 lock 值整表重刷运行时选项，会
+                // 覆盖密码框强制英文（ascii_mode）等字段选项，必须
+                // 随后按当前输入框重放一次（形态与 SelectSchema 的
+                // 补刷一致）
+                editorInfo?.let { applyFieldOptions(it) }
+            }
         }
     }
 
@@ -278,6 +282,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private fun invalidateBeforeCursorCache() {
         beforeCursorCacheAt = 0L
     }
+    /**
+     * 输入框代次：换框（onStartInputView 且 !restarting）时推进。
+     * 预测发起时捕获，交付复检与 job 内复检都按代次比对，取代旧的
+     * EditorInfo 引用同一性（===）——同一性比较把「同框 restartInput
+     * 换发新 EditorInfo 实例」与「换框」混为一谈，且无法表达代次
+     * 先后。同框重启不推进，框没换、在途联想仍属本框。
+     */
+    private val predictionFieldGen = java.util.concurrent.atomic.AtomicLong(0L)
+
     @Volatile
     private var predictionJob: Job? = null
     @Volatile
@@ -521,9 +534,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         state.suppressNextEmptyCandidates = true
         if (!noLearn) {
             // 偏好写走独立串行 IO 通道（见 preferDbScope），不再占
-            // jobs 队列堵后续按键；noteUpsert 是向缓存投递一次计数
-            // 落点（异步串行合并），与 DB 写配对放在同一块内，保持
-            // "DB 成功后才投递计数"的原口径
+            // jobs 队列堵后续按键；落库、节流裁剪与计数落点由缓存
+            // 侧在同一串行通道内成对执行（见
+            // CandidatePreferCache.recordClick），不再拆成「本通道
+            // upsert、缓存通道落点」两段——两段分属不同通道时，首
+            // 次加载的读库段可插进对子中间造成双计
             val ctx = context
             if (ctx != null) {
                 preferDbScope.launch {
@@ -535,18 +550,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // CoroutineExceptionHandler 作第二层兜底）
                     try {
                         val dao = AppDatabase.getInstance(ctx).candidatePreferDao()
-                        // 隐私：不再把光标前文存入 context 列——该列从未被排序/重排读取，
-                        // 却会随云备份与 .jbk 备份带出用户输入片段。
-                        dao.upsert(candidate.text, "")
-                        CandidatePreferCache.noteUpsert(candidate.text)
-                        // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载（保持两者一致）
-                        if (++upsertsSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
-                            upsertsSincePruneCheck = 0
-                            if (dao.count() > PREFER_LIMIT) {
-                                dao.pruneToLimit(PREFER_LIMIT)
-                                CandidatePreferCache.invalidate()
-                            }
-                        }
+                        CandidatePreferCache.recordClick(candidate.text, dao)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
@@ -780,9 +784,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is Action.Predict -> requestPrediction(action.commit)
             is Action.PredictionReady -> {
                 // requestId 只防同框内的请求交错；输入框已切换
-                // （editorInfo 换代）时旧框联想直接丢弃，不落到新框
+                // （代次推进）时旧框联想直接丢弃，不落到新框
                 if (action.requestId == state.latestPredictionRequestId.get() &&
-                    action.editorInfo === editorInfo
+                    action.fieldGen == predictionFieldGen.get()
                 ) {
                     // 预测路径同样要过滤已删除词（删除过滤不能只挂在 Rime 候选还原上）
                     val visible = action.candidates.filterNot { DeletedWordsStore.isDeleted(it.text) }
@@ -872,23 +876,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
             return
         }
-        // 选区读取须在主线程（InputConnection 契约）；落键与上屏则
-        // 改走引擎消息管线、与 native 上屏同 FIFO——旧实现在本 job
-        // 内直发 DEL、直送 Commit("")，上一键的 native Commit 尚在
-        // 管线中时会被超车（先删掉宿主已有字、或选区替换先于文字
-        // 落屏，出现删错字与顺序错乱）
-        val hasSelection = withContext(Dispatchers.Main.immediate) {
-            !inputConnection()?.getSelectedText(0).isNullOrEmpty()
-        }
-        if (hasSelection) {
-            emitCommit("")
-            invalidateBeforeCursorCache()
-            return
-        }
-        // 空组字退格借道 KeyMessage 透传：在 rime-main 上与 native
-        // Commit 同队列入队（isVirtual=true），由 forwardUnhandledKey
-        // 在主线程补发给宿主。不经 native processKey，避免被方案
-        // 处理器吞掉后宿主收不到键
+        // 「有选区只删选区、无选区删一字」的判定不在本 job 内做：
+        // 上一键的 native Commit 尚在消息管线中未落屏时，宿主里还
+        // 是替换前的旧选区，按它判定走「删选区」分支，等 Commit
+        // 落屏后选区已不存在，这次退格会被白白吞掉。统一借道
+        // KeyMessage 透传，由 forwardUnhandledKey 在主线程实际执行
+        // 删除的时点重读选区再决定（其判定点排在在途 Commit 的消
+        // 息之后）。不经 native processKey，避免被方案处理器吞掉
+        // 后宿主收不到键
         emitKey(KeyMapping.keyCodeToVal(KEYCODE_DEL), 0, true)
         invalidateBeforeCursorCache()
     }
@@ -913,6 +908,47 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         val metaState = message.data.modifiers.metaState
         val now = SystemClock.uptimeMillis()
+        if (keyCode == KEYCODE_DEL && !message.data.modifiers.release) {
+            // 空组字退格借道至此（见 handleBackspaceInJob）：删除形态
+            // 在执行时点按当前选区决定——有选区只删选区、无选区才按
+            // DEL 键事件删光标前一字。判定点放在这里（reduce 消费流
+            // 内、排在在途 Commit 的消息之后）：在 job 内提前判定会
+            // 读到 Commit 落屏前的旧选区、按它走删选区分支，等落屏
+            // 后选区已不存在，这次退格会被白白吞掉。
+            // 选区删除不直达 InputConnection，而是经 emitCommit("")
+            // 送回引擎消息管线：MessageHandler 对 Commit 有剪贴板搜
+            // 索态改道（interceptCommit）、本地写代次记账
+            // （noteLocalWrite）与探针通知合并
+            // （scheduleNotifyInputChanged）三件套处理，直达
+            // commitText 会整段绕过。emitCommit 只能在 RimeApi 作用
+            // 域内调，故判定留在此处、投递借 sendJob 入队，判定点
+            // 本身不回 job。
+            // 拦截只限引擎无组字时：到达这里的 virtual DEL 不止退
+            // 格借道一个来源，rime 未消费透传的 DEL 在组字非空时也
+            // 会进来；组字非空时抢先删选区会与引擎组字态脱节，故
+            // 非空一律走下方原 sendKeyEvent 路径。组字判据取 jobs
+            // 串行执行时点的实时原始输入 getRawInput()（经
+            // awaitJob，与 handleBackspaceInJob 及空格/回车的分类
+            // 同口径）；compositionCached 是展示串、且异步回写会滞
+            // 后一轮，不作判据。awaitJob 失败默认按有组字处理（不
+            // 拦截，走原路径）。
+            val hasComposition = awaitJob(true) { getRawInput().isNotEmpty() }
+            if (!hasComposition) {
+                val hasSelection = withContext(Dispatchers.Main.immediate) {
+                    !runCatching { inputConnection()?.getSelectedText(0) }
+                        .getOrNull().isNullOrEmpty()
+                }
+                if (hasSelection) {
+                    sendJob {
+                        emitCommit("")
+                        // 与旧删选区路径同口径：宿主文本已变，
+                        // 前文缓存失效
+                        invalidateBeforeCursorCache()
+                    }
+                    return
+                }
+            }
+        }
         withContext(Dispatchers.Main.immediate) {
             val ic = inputConnection() ?: return@withContext
             if (!message.data.modifiers.release) {
@@ -932,6 +968,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             return
         }
         val msg = EngineMessageConverter.convert(message)
+        // 打字上屏的预测延后到本函数尾部 emitMessage 之后再发起
+        //（见尾部说明），Commit 分支只记下文本
+        var predictionText: String? = null
         when (msg) {
             is EngineMessage.InlinePreedit -> {
                 if (msg.preedit.isEmpty()) {
@@ -961,8 +1000,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     state.suppressNextEmptyCandidates = true
                     // native 刚上屏：前文缓存失效，预测读到新鲜前文
                     invalidateBeforeCursorCache()
-                    // 打字上屏：参与搭配学习
-                    requestPrediction(msg.text, learnable = true)
+                    // 打字上屏：参与搭配学习。只记下文本，实际发起
+                    // 在本函数尾部 emitMessage 之后（见 predictionText）
+                    predictionText = msg.text
                 }
             }
 
@@ -1051,6 +1091,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             else -> {}
         }
         emitMessage(msg)
+        // 落屏消息发出后再发起预测：predictionJob 读前文的常态时点
+        // 因此在落屏之后，前文已含本次上屏文字，job 内不再拼接
+        // commit（旧顺序先发起预测、job 与落屏竞速，读到的前文通
+        // 常已含本次词、再拼一遍成重复上下文）。与本函数同在
+        // reduce 串行点执行，相对次序确定
+        predictionText?.let { requestPrediction(it, learnable = true) }
     }
 
     override fun observeMessages(
@@ -1402,9 +1448,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     @Volatile
     private var fieldOptionsPending = false
 
-    override fun onStartInputView(ic: InputConnection, info: EditorInfo) {
+    override fun onStartInputView(ic: InputConnection, info: EditorInfo, restarting: Boolean) {
         inputConnection = ic
         editorInfo = info
+        // 输入框代次推进：在途预测的交付/job 复检按代次作废旧框结果。
+        // 同框重启（restarting）不推进：框没换，在途联想仍属本框，
+        // 推进会误杀（旧实现以 EditorInfo === 比对有同一问题）
+        if (!restarting) predictionFieldGen.incrementAndGet()
         invalidateBeforeCursorCache()
         // 隐私：把当前输入框的学习开关同步给 librime native 层。
         // 密码框 / NO_PERSONALIZED_LEARNING 输入框内 native 用户词典不再自学习；
@@ -1485,24 +1535,34 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         val requestId = state.predictionRequestId.incrementAndGet()
         state.latestPredictionRequestId.accumulateAndGet(requestId) { a, b -> maxOf(a, b) }
-        // 发起时的输入框引用随结果带回：交付时复检仍是同一个框才
-        // 落屏，切框后到达的旧联想直接丢弃（见 PredictionReady 分支）
-        val predictionEditorInfo = editorInfo
+        // 发起时的输入框代次随结果带回：交付时复检代次未变才落屏，
+        // 切框后到达的旧联想直接丢弃（见 PredictionReady 分支）；
+        // job 内读前文前与出结果前也按代次复检（见 job 内注释）
+        val startFieldGen = predictionFieldGen.get()
         predictionJob?.cancel()
         predictionJob = scope.launch {
             try {
                 if (context?.let { !CandidateManager.isPredictionEnabled(it) } == true) {
-                    actions.send(Action.PredictionReady(requestId, emptyList(), predictionEditorInfo))
+                    actions.send(Action.PredictionReady(requestId, emptyList(), startFieldGen))
                     return@launch
                 }
+                // 复检一（读前文之前）：发起后已切框（代次推进）或
+                // 当前框已变为禁学习（密码框等）时整轮作废——不在
+                // 新框上读前文、不写前文缓存。函数头的隐私闸门只覆
+                // 盖发起时刻，job 排队/执行期间的切框靠这里兜底
+                if (!isPredictionFieldCurrent(startFieldGen)) return@launch
                 // 前文读取放进 job 内：调用方只做缓存失效、取代次与
                 // 记账，不再为等一趟主线程读前文推迟 Commit 的落屏
-                // 交付。预测模型基于简体训练，先转简体再推导，以
-                // 支持繁体输入下的候选预测；上屏刚发生时缓存已由
-                // 调用方失效，这里读到的是包含本次上屏内容的新鲜
-                // 前文。job 被新请求取消时本读取一并取消
+                // 交付。上下文只用读到的前文，不再拼接 commit：两
+                // 处调用点都已改为先 emitMessage 落屏再发起预测，
+                // 读点的常态在落屏之后、前文已含本次上屏文字，拼
+                // 接会把本次词计两遍（上下文成「吃饭吃饭」）。偶发
+                // 读点抢在落屏之前时上下文缺本次词，由上屏时的缓
+                // 存失效与下一轮预测自愈，不为此加重试。预测模型
+                // 基于简体训练，先转简体再推导，以支持繁体输入下
+                // 的候选预测。job 被新请求取消时本读取一并取消
                 val inputContext = TraditionalConverter.toSimplified(
-                    peekTextBeforeCursor(20) + commit
+                    peekTextBeforeCursor(20)
                 )
                 var candidates: List<Candidate> = emptyList()
                 if (inputContext.isNotEmpty() && !TextUtil.isSymbol(inputContext.last()) && !TextUtil.isAlphabet(
@@ -1520,12 +1580,26 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         )
                     }
                 }
-                actions.send(Action.PredictionReady(requestId, candidates, predictionEditorInfo))
+                // 复检二（出结果之前）：读前文与计算期间切了框，
+                // 同样整轮作废，不把旧框联想送去交付（交付侧还有
+                // 代次门控，此处提前丢弃省掉无谓的 actions 投递）
+                if (!isPredictionFieldCurrent(startFieldGen)) return@launch
+                actions.send(Action.PredictionReady(requestId, candidates, startFieldGen))
             } catch (error: CancellationException) {
                 throw error
             }
         }
     }
+
+    /**
+     * 预测 job 的框复检：代次未变且当前输入框非禁学习。发起时点的
+     * 隐私闸门（[requestPrediction] 函数头）只覆盖发起时刻；job 在
+     * Default 线程异步执行，其间用户可能已切到密码框——读前文（写
+     * [beforeCursorCache]）与出结果前各复检一次，任一不过整轮丢弃
+     * 且不写缓存。
+     */
+    private fun isPredictionFieldCurrent(startFieldGen: Long): Boolean =
+        predictionFieldGen.get() == startFieldGen && !isNoPersonalizedLearning(editorInfo)
 
     override fun reload() {
         dispatchAction(Action.Reload)

@@ -35,7 +35,11 @@ object KeyboardThemePresets {
                 toolbarText = Color.rgb(255, 255, 255),
                 toolbarActived = Color.rgb(156, 130, 74),
                 toolbarIcon = Color.rgb(255, 255, 255),
-                toolbarPressed = Color.rgb(72, 72, 74),
+                // 工具栏按压是半透明涟漪（alpha≤120）叠在面板底 22 灰上，
+                // 取键面 pressed 的 72 灰混合后对比仅 1.33、肉眼不可辨；
+                // 与 PanelColors.from 派生口径一致取 specialKeyText
+                // 纯白，混合后约 3.9:1
+                toolbarPressed = Color.rgb(255, 255, 255),
                 candidateBackground = Color.argb(220, 22, 22, 22),
                 candidateText = Color.rgb(255, 255, 255),
                 candidateIndex = Color.rgb(130, 130, 130),
@@ -79,7 +83,10 @@ object KeyboardThemePresets {
                 candidateText = Color.rgb(20, 20, 20),
                 candidateIndex = Color.rgb(120, 120, 125),
                 candidateDivider = Color.argb(100, 140, 140, 145),
-                toolbarPressed = Color.rgb(230, 230, 230),
+                // 同暗夜：涟漪叠在面板底 225 灰上，230 与底几乎同色
+                // （混合后约 1.0:1、不可见）；取功能键文字的深灰，
+                // 混合后约 2.3:1
+                toolbarPressed = Color.rgb(60, 60, 65),
             ),
             pinner = KeyboardColors.ColorScheme.PinnerColors(
                 background = Color.rgb(255, 255, 255),
@@ -119,7 +126,9 @@ object KeyboardThemePresets {
                 candidateText = Color.rgb(50, 40, 35),
                 candidateIndex = Color.rgb(140, 120, 110),
                 candidateDivider = Color.argb(100, 220, 200, 185),
-                toolbarPressed = Color.rgb(230, 215, 200),
+                // 同上：原值与面板底 242,235,228 几乎同色（混合后约
+                // 1.1:1）；取功能键文字的暖灰，混合后约 1.9:1
+                toolbarPressed = Color.rgb(120, 100, 90),
             ),
             pinner = KeyboardColors.ColorScheme.PinnerColors(
                 background = Color.rgb(245, 238, 230),

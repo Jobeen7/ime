@@ -60,7 +60,10 @@ object KeyboardColors {
                     candidateText = c.keyText,
                     candidateIndex = c.altText,
                     candidateDivider = c.altText,
-                    toolbarPressed = c.keyPressed,
+                    // 工具栏按压是半透明涟漪叠在面板底上，不是整块键面：
+                    // 不能照搬 keyPressed（它按键面底调，与面板底几乎
+                    // 同色时混合后不可见），取功能键文字色作涟漪墨色
+                    toolbarPressed = c.specialKeyText,
                 )
             }
         }

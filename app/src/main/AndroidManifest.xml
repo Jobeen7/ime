@@ -93,7 +93,7 @@
 
         <provider
             android:name=".ui.AppFilesDocumentsProvider"
-            android:authorities="com.jobeen.ime.files.documents"
+            android:authorities="${applicationId}.files.documents"
             android:exported="true"
             android:grantUriPermissions="true"
             android:icon="@mipmap/ic_launcher"
