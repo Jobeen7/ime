@@ -68,6 +68,19 @@ import timber.log.Timber
 import java.lang.ref.WeakReference
 import kotlin.lazy
 
+/**
+ * 预测上下文在发起点的定格拼装（纯函数）：[base] 是本次上屏落屏
+ * 前捕获的光标前基底，[commit] 是本次上屏词，拼起来就是落屏后
+ * 的完整前文。上下文由此在发起时刻确定，与异步的落屏时序无关
+ * ——predictionJob 自行读前文时与落屏竞速，读早缺词、读晚拼重，
+ * 两种联想错误都源于此。超长时只保留尾部（预测只用尾部若干字，
+ * commit 位于尾部不得被截掉）。
+ */
+internal fun composePredictionContext(base: String, commit: String, maxLen: Int = 24): String {
+    val joined = base + commit
+    return if (joined.length <= maxLen) joined else joined.takeLast(maxLen)
+}
+
 class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     companion object {
@@ -155,7 +168,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class Clear(val service: InputMethodService) : Action
         data class Undo(val service: InputMethodService) : Action
         data class Redo(val service: InputMethodService) : Action
-        data class Predict(val commit: String) : Action
+        data class Predict(val commit: String, val baseContext: String? = null) : Action
         data class PredictionReady(
             val requestId: Long,
             val candidates: List<Candidate>,
@@ -522,10 +535,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         //（不读前文、不写偏好表、不跑预测上下文）；正常上屏不受影响
         val noLearn = isNoPersonalizedLearning(editorInfo)
         if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
+            // 上下文定格同打字上屏路径：先捕获落屏前基底再落屏，
+            // 预测上下文 = 基底 + 本次点选词，不让 job 自行读前文
+            val base = if (!noLearn) peekTextBeforeCursor(20) else null
             emitMessage(EngineMessage.Commit(candidate.text))
             invalidateBeforeCursorCache()
             // 预测候选点选属于打字流上屏：参与搭配学习
-            requestPrediction(candidate.text, learnable = true)
+            requestPrediction(
+                candidate.text,
+                learnable = true,
+                contextOverride = base?.let { composePredictionContext(it, candidate.text) },
+            )
             return
         }
 
@@ -781,7 +801,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 }
             }
 
-            is Action.Predict -> requestPrediction(action.commit)
+            is Action.Predict -> requestPrediction(
+                action.commit,
+                contextOverride = action.baseContext?.let {
+                    composePredictionContext(it, action.commit)
+                },
+            )
             is Action.PredictionReady -> {
                 // requestId 只防同框内的请求交错；输入框已切换
                 // （代次推进）时旧框联想直接丢弃，不落到新框
@@ -968,9 +993,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             return
         }
         val msg = EngineMessageConverter.convert(message)
-        // 打字上屏的预测延后到本函数尾部 emitMessage 之后再发起
-        //（见尾部说明），Commit 分支只记下文本
+        // 打字上屏的预测在函数尾部发起（见尾部说明），Commit 分支
+        // 记下文本、并在此刻捕获落屏前的前文基底：预测上下文由
+        // 「基底 + 本次上屏词」在发起点定格拼装，不让异步 job 自
+        // 行读输入框与落屏竞速（见 composePredictionContext）
         var predictionText: String? = null
+        var predictionBase: String? = null
         when (msg) {
             is EngineMessage.InlinePreedit -> {
                 if (msg.preedit.isEmpty()) {
@@ -998,10 +1026,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     candidateBatchLoaded = 0
                     candidateBatchTotal = -1
                     state.suppressNextEmptyCandidates = true
-                    // native 刚上屏：前文缓存失效，预测读到新鲜前文
+                    // 落屏前的前文基底要在缓存失效之前捕获（失效后
+                    // 重读虽也是落屏前状态，但多一次跨进程往返）；
+                    // 隐私口径与 requestPrediction 的函数头闸门一
+                    // 致：禁学习框不读前文，基底留空、预测随之在函
+                    // 数头被拦下
+                    if (!isNoPersonalizedLearning(editorInfo)) {
+                        predictionBase = peekTextBeforeCursor(20)
+                    }
+                    // native 刚上屏：前文缓存失效，后续读到新鲜前文
                     invalidateBeforeCursorCache()
-                    // 打字上屏：参与搭配学习。只记下文本，实际发起
-                    // 在本函数尾部 emitMessage 之后（见 predictionText）
+                    // 打字上屏：参与搭配学习。只记下文本与基底，
+                    // 实际发起在本函数尾部（见 predictionText）
                     predictionText = msg.text
                 }
             }
@@ -1091,12 +1127,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             else -> {}
         }
         emitMessage(msg)
-        // 落屏消息发出后再发起预测：predictionJob 读前文的常态时点
-        // 因此在落屏之后，前文已含本次上屏文字，job 内不再拼接
-        // commit（旧顺序先发起预测、job 与落屏竞速，读到的前文通
-        // 常已含本次词、再拼一遍成重复上下文）。与本函数同在
-        // reduce 串行点执行，相对次序确定
-        predictionText?.let { requestPrediction(it, learnable = true) }
+        // 发起预测：上下文已在 Commit 分支定格（基底 + 本次上屏
+        // 词），job 不再自行读前文。基底为空（禁学习框）时传
+        // null，requestPrediction 在函数头即拦下、不会用到
+        predictionText?.let { text ->
+            requestPrediction(
+                text,
+                learnable = true,
+                contextOverride = predictionBase?.let { composePredictionContext(it, text) },
+            )
+        }
     }
 
     override fun observeMessages(
@@ -1505,7 +1545,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         dispatchAction(Action.Predict(commit))
     }
 
-    private suspend fun requestPrediction(commit: String, learnable: Boolean = false) {
+    private suspend fun requestPrediction(
+        commit: String,
+        learnable: Boolean = false,
+        contextOverride: String? = null,
+    ) {
         // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不读前文、不跑预测、不学搭配
         if (isNoPersonalizedLearning(editorInfo)) {
             lastLearnSegment = null
@@ -1546,23 +1590,23 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     actions.send(Action.PredictionReady(requestId, emptyList(), startFieldGen))
                     return@launch
                 }
-                // 复检一（读前文之前）：发起后已切框（代次推进）或
+                // 复检一（用上下文之前）：发起后已切框（代次推进）或
                 // 当前框已变为禁学习（密码框等）时整轮作废——不在
                 // 新框上读前文、不写前文缓存。函数头的隐私闸门只覆
                 // 盖发起时刻，job 排队/执行期间的切框靠这里兜底
                 if (!isPredictionFieldCurrent(startFieldGen)) return@launch
-                // 前文读取放进 job 内：调用方只做缓存失效、取代次与
-                // 记账，不再为等一趟主线程读前文推迟 Commit 的落屏
-                // 交付。上下文只用读到的前文，不再拼接 commit：两
-                // 处调用点都已改为先 emitMessage 落屏再发起预测，
-                // 读点的常态在落屏之后、前文已含本次上屏文字，拼
-                // 接会把本次词计两遍（上下文成「吃饭吃饭」）。偶发
-                // 读点抢在落屏之前时上下文缺本次词，由上屏时的缓
-                // 存失效与下一轮预测自愈，不为此加重试。预测模型
-                // 基于简体训练，先转简体再推导，以支持繁体输入下
-                // 的候选预测。job 被新请求取消时本读取一并取消
+                // 上下文在发起点已定格（contextOverride = 落屏前
+                // 基底 + 本次上屏词，见 composePredictionContext）：
+                // job 与落屏是两条异步线，job 里自行读前文必然与
+                // 落屏竞速——读早了缺本次词（联想慢一拍、首选回
+                // 到刚上屏的词本身），读晚了再人工拼接又成本次词
+                // 两遍。两种错误形态都出自这条竞速，故有上屏来源
+                // 的预测一律用定格上下文；contextOverride 为空是
+                // 无上屏事件的兜底路径，才在 job 内读一次前文。
+                // 预测模型基于简体训练，先转简体再推导，以支持繁
+                // 体输入下的候选预测
                 val inputContext = TraditionalConverter.toSimplified(
-                    peekTextBeforeCursor(20)
+                    contextOverride ?: peekTextBeforeCursor(20)
                 )
                 var candidates: List<Candidate> = emptyList()
                 if (inputContext.isNotEmpty() && !TextUtil.isSymbol(inputContext.last()) && !TextUtil.isAlphabet(
@@ -1617,17 +1661,24 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         sendJob {
             // 直接上屏：前文缓存失效，后续预测读新鲜前文
             invalidateBeforeCursorCache()
+            // 预测上下文的基底随 Predict 一并带走（发起点定格，
+            // 见 composePredictionContext）：禁学习框不读前文
+            val learnableField = !isNoPersonalizedLearning(editorInfo)
             if (compositionCached.preedit?.isNotEmpty() == true) {
                 commitCurrentSelection(text)
-                actions.send(Action.Predict(text))
+                // 组字词已在此同步落屏、text 尚未上屏：此刻读到
+                // 的前文正是 text 的完整基底
+                val base = if (learnableField) peekTextBeforeCursor(20) else null
+                actions.send(Action.Predict(text, base))
                 return@sendJob
             }
             // 经 emitCommit 走引擎消息管线而非直送 actions：上一键的
             // native Commit 尚在管线中时直送会超车先落屏（如粘贴的
             // 标点排到刚打的字前面）。直送标记使下游只排序与落屏、
             // 不按打字上屏记账，与旧直送路径行为等价（见 emitCommit）
+            val base = if (learnableField) peekTextBeforeCursor(20) else null
             emitCommit(text)
-            actions.send(Action.Predict(text))
+            actions.send(Action.Predict(text, base))
         }
     }
 
