@@ -465,7 +465,7 @@ class InputBoxLayerView(
     private val buttonBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
 
     private fun drawCaretRect(canvas: Canvas, x: Float, top: Float, bottom: Float) {
-        caretPaint.color = colors.accentKeyText
+        caretPaint.color = colors.keyText
         val caretW = 2f
         canvas.drawRect(x, top, x + caretW, bottom, caretPaint)
     }

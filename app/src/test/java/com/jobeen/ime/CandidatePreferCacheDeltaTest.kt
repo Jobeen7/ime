@@ -1,5 +1,7 @@
 package com.jobeen.ime
 
+import com.jobeen.ime.data.database.CandidatePrefer
+import com.jobeen.ime.data.database.CandidatePreferDao
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.mergeLoadedSnapshot
 import java.util.concurrent.ConcurrentHashMap
@@ -30,6 +32,11 @@ import org.junit.Test
  * 通过 internal 入口（finishLoad）直接驱动状态机，DB 读数以
  * finishLoad 的入参模拟在不同时点取得的快照；noteUpsert 的落点
  * 是异步投递，断言前先 flushLandings 等落点执行完。
+ *
+ * 生产写路径自第十一批起统一走 recordClick（upsert、节流裁剪与
+ * 落点在缓存侧同一串行通道段内成对完成，见
+ * recordClickPairingPreventsDoubleCount 的假 DAO 实跑覆盖）；其
+ * 余用例仍以 finishLoad/noteUpsert 直接驱动时序状态机。
  */
 class CandidatePreferCacheDeltaTest {
 
@@ -156,6 +163,61 @@ class CandidatePreferCacheDeltaTest {
         val g2 = gen()
         CandidatePreferCache.finishLoad(mapOf("甲" to 12), g2)
         assertEquals(12, CandidatePreferCache.cacheCopy()["甲"])
+    }
+
+    @Test
+    fun recordClickPairingPreventsDoubleCount() {
+        runBlocking {
+            // 经生产写入口 recordClick 落库+落点：返回时对子已在
+            // 串行通道内成对完成，DB 与缓存同为 1
+            val dao = FakePreferDao()
+            CandidatePreferCache.recordClick("甲", dao)
+            assertEquals(1, dao.countOf("甲"))
+            assertEquals(1, CandidatePreferCache.cacheCopy()["甲"])
+
+            // 随后一轮加载的读数（1）已包含这次点击：合并取 maxOf，
+            // 落点不得再 +1——旧实现里 upsert 在另一条通道、落点经
+            // noteUpsert 投递，读段插进对子中间时此交错双计为 2
+            val g = gen()
+            CandidatePreferCache.finishLoad(mapOf("甲" to 1), g)
+            assertEquals(1, CandidatePreferCache.cacheCopy()["甲"])
+
+            // 再点一次：DB 与缓存同步推进到 2
+            CandidatePreferCache.recordClick("甲", dao)
+            assertEquals(2, dao.countOf("甲"))
+            assertEquals(2, CandidatePreferCache.cacheCopy()["甲"])
+        }
+    }
+
+    /** 内存版 DAO：只实现 recordClick/getAllCounts 用到的计数语义。 */
+    private class FakePreferDao : CandidatePreferDao {
+        private val counts = mutableMapOf<String, Int>()
+
+        fun countOf(text: String): Int = counts[text] ?: 0
+
+        override suspend fun get(text: String): CandidatePrefer? = null
+
+        override suspend fun getAllByTextIn(texts: List<String>): List<CandidatePrefer> =
+            emptyList()
+
+        override suspend fun getAllCounts(): List<CandidatePreferDao.PreferCount> =
+            counts.map { (text, count) -> CandidatePreferDao.PreferCount(text, count) }
+
+        override suspend fun upsert(text: String, context: String, now: Long) {
+            counts[text] = (counts[text] ?: 0) + 1
+        }
+
+        override suspend fun count(): Int = counts.size
+
+        override suspend fun getAllFull(): List<CandidatePrefer> = emptyList()
+
+        override suspend fun insertAll(items: List<CandidatePrefer>) = Unit
+
+        override suspend fun deleteAll() {
+            counts.clear()
+        }
+
+        override suspend fun pruneToLimit(limit: Int) = Unit
     }
 
     @Test

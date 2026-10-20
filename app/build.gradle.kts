@@ -17,8 +17,8 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 131
-        versionName = "1.1.12.13"
+        versionCode = 132
+        versionName = "1.1.12.14"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
@@ -66,6 +66,9 @@ plugins {
 
     buildTypes {
         debug {
+            // debug 带 .debug 后缀，与正式版不同包名：同机可并存，
+            // 跑仪器测试/调试装包不会覆盖或清掉正式版的数据
+            applicationIdSuffix = ".debug"
             val ksPath = project.findProperty("JIME_STORE_FILE") as String?
             if (ksPath != null && file(ksPath).exists()) {
                 signingConfig = signingConfigs.getByName("jimeStable")

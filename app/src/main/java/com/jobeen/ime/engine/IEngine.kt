@@ -32,7 +32,7 @@ interface IEngine {
     fun deleteCandidate(index: Int): Unit?
     fun predict(commit: String = "")
     fun reload()
-    fun onStartInputView(ic: InputConnection, info: EditorInfo)
+    fun onStartInputView(ic: InputConnection, info: EditorInfo, restarting: Boolean = false)
     fun onFinishInputView()
     fun onInputCleared()
     /** 光标/选区变化：与光标位置相关的缓存（如光标前文本）应失效 */

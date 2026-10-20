@@ -12,6 +12,7 @@ import android.provider.DocumentsContract.Document
 import android.provider.DocumentsContract.Root
 import android.provider.DocumentsProvider
 import android.webkit.MimeTypeMap
+import com.jobeen.ime.BuildConfig
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.IOException
@@ -344,7 +345,9 @@ class AppFilesDocumentsProvider : DocumentsProvider() {
         }
 
     companion object {
-        const val AUTHORITY = "com.jobeen.ime.files.documents"
+        // 与 Manifest 的 ${applicationId}.files.documents 占位保持一致：
+        // debug 带 .debug 后缀时 authority 随包名变，不能写死正式版包名
+        val AUTHORITY: String = BuildConfig.APPLICATION_ID + ".files.documents"
         const val ROOT_ID = "files"
 
         private const val MIME_TYPE_WILDCARD = "*/*"

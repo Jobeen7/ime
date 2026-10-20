@@ -8,6 +8,9 @@ object PinYinUtil {
         CandidateKindT9, CandidateKindFull
     )
 
+    /** 无对应方案拼写的单字母条目：无以其开头的音节，缩写拼写无从派生。 */
+    private val NO_SPELLING_SINGLE_LETTERS = setOf("i", "u", "v")
+
 
     private val t9KeyMap = mapOf(
         'a' to 'A',
@@ -557,8 +560,15 @@ object PinYinUtil {
         val result = ArrayList<String>()
 
         for (length in numString.length downTo 1) {
-            pinyinMap[numString.substring(0, length)]?.let {
-                result.addAll(it)
+            pinyinMap[numString.substring(0, length)]?.let { matches ->
+                // 万象 T9 的 speller 缩写拼写只能由实有音节派生，音节
+                // 表里没有以 i/u/v 开头的音节，单字母 "i"/"u"/"v" 在
+                // 方案里没有对应拼写：点选回写 "i'" 等必然坏段，左列
+                // 不产出这三个单字母条目。多字母组合是实有音节的键
+                // 位映射，不在此列
+                result.addAll(
+                    matches.filterNot { it.length == 1 && it in NO_SPELLING_SINGLE_LETTERS }
+                )
             }
         }
 
