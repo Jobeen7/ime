@@ -36,8 +36,18 @@ AndroidX、Kotlin 标准库与协程、OkHttp/Okio、kotlinx.serialization、Apa
 
 | 组件 | 用途 | 说明 |
 |---|---|---|
-| 万象拼音方案与词库（amzxyz/rime-wanxiang） | 内置输入方案与词库、方案更新 | 见其仓库说明 |
+| 万象拼音方案与词库（amzxyz/rime-wanxiang） | 内置输入方案与词库、方案更新 | CC BY 4.0（见下） |
 | RIME-LMDG 语法模型（amzxyz） | 语法模型下载源 | 见其仓库说明 |
+
+万象拼音方案与词库由 amzxyz 维护（https://github.com/amzxyz/rime-wanxiang），以 Creative Commons Attribution 4.0 International（CC BY 4.0）许可发布，许可证全文见 https://creativecommons.org/licenses/by/4.0/ 。Jime 内置的方案文件包含本地修改（方案清单启用、布局字段注入、功能选项段与 T9 拼写规则调整，明细见 tools/wanxiang-builtin/README.md）。
+
+## 字体
+
+| 组件 | 用途 | 许可证 |
+|---|---|---|
+| Xiaolai Mono（小赖字体等宽版） | 键盘等宽字体显示 | SIL OFL 1.1 |
+
+Xiaolai Mono：Copyright 2020-2024 LXGW (https://github.com/lxgw/kose-font)，Copyright 2014 Nozomi Seto (https://ja.osdn.net/projects/setofont/)。以 SIL Open Font License 1.1 发布，许可证全文见 https://openfontlicense.org 。
 
 ## 本项目
 

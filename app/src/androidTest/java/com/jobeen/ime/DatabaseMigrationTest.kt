@@ -7,6 +7,8 @@ import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.ClipboardDatabase
+import com.jobeen.ime.data.database.ClipboardRecord
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -26,8 +28,12 @@ import org.junit.runner.RunWith
  * 抛错，等价于 schema 验证。
  *
  * 使用测试专用库名（ime_database_test / clipboard_database_test），
- * 不触碰生产数据：在装有正式版的日常机上跑也不会删掉真实的
- * 常用语、选词偏好与剪贴板。
+ * 不触碰生产数据。前提：本测试跑在 debug 构建上，debug 带
+ * applicationIdSuffix ".debug"、与正式版是不同包名，测试进程的
+ * 私有目录与正式版完全隔离——connectedAndroidTest 结束后的卸载
+ * 也只卸 debug 包，故在装有正式版的日常机上跑不会删掉真实的
+ * 常用语、选词偏好与剪贴板。若去掉 debug 的包名后缀，此结论
+ * 不再成立。
  *
  * 本机未跑（需真机/模拟器）；CI 以 android-test.yml 手动触发运行。
  */
@@ -66,6 +72,49 @@ class DatabaseMigrationTest {
         val db = AppDatabase.createWithName(context, IME_DB_NAME)
             .openHelper.writableDatabase
         assertClipboardMigrated(db)
+    }
+
+    /**
+     * 存量限长去重规格（ClipboardDao.dedupeOversizedByTruncatedKey）：
+     * 长度恰等于上限的行与超限行同前缀时，截断后必然同 text——保留
+     * 口径落败的一方必须在去重阶段被删（等长行也要作删除目标），
+     * 否则截断 UPDATE 撞 text 唯一索引整条失败、迁移永不收敛。
+     * 两组对称场景：超限行置顶占优（留超限行、截断后文本与等长行
+     * 相同）与等长行置顶占优（留等长行、超限行被删）。直接开当前
+     * 版本库走生产 DAO，不经迁移链。本机未跑（需真机/模拟器）。
+     */
+    @Test
+    fun clipboardDao_dedupeOversizedByTruncatedKey_exactLimitRowCompetes() {
+        val name = "clipboard_dedupe_test"
+        context.deleteDatabase(name)
+        val roomDb = ClipboardDatabase.createWithName(context, name)
+        try {
+            val dao = roomDb.clipboardDao()
+            runBlocking {
+                // 组一：等长行未置顶（ts 更新也压不过置顶），超限行置顶占优
+                dao.insert(ClipboardRecord(text = "abcdefghij", timestamp = 100))
+                dao.insert(ClipboardRecord(text = "abcdefghijXYZ", timestamp = 50, pinned = true))
+                // 组二：等长行置顶占优，超限行未置顶（ts 再新也落败）
+                dao.insert(ClipboardRecord(text = "klmnopqrst", timestamp = 50, pinned = true))
+                dao.insert(ClipboardRecord(text = "klmnopqrstXYZ", timestamp = 999))
+                dao.dedupeOversizedByTruncatedKey(10)
+                dao.truncateOversizedTexts(10)
+                val rows = dao.getAllRaw()
+                assertEquals(2, rows.size)
+                val byText = rows.associateBy { it.text }
+                // 两组各只剩一行、无重复文本、截断未抛唯一约束
+                assertEquals(setOf("abcdefghij", "klmnopqrst"), byText.keys)
+                // 组一留的是置顶的超限行（截断后与等长行同文本）
+                assertTrue(byText.getValue("abcdefghij").pinned)
+                assertEquals(50L, byText.getValue("abcdefghij").timestamp)
+                // 组二留的是置顶的等长行本身
+                assertTrue(byText.getValue("klmnopqrst").pinned)
+                assertEquals(50L, byText.getValue("klmnopqrst").timestamp)
+            }
+        } finally {
+            roomDb.close()
+            context.deleteDatabase(name)
+        }
     }
 
     /** 按旧版 schema 建库、写旧版 identity、灌种子后关闭，等生产构建器接手迁移。 */

@@ -705,7 +705,7 @@ object ClipboardManager {
         java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
-     * 拆库补 VACUUM 的触发点（见 AppDatabase.vacuumAfterClipboardSplit）：
+     * 拆库补 VACUUM 的触发点（见 AppDatabase.runPostSplitVacuumMaintenance）：
      * 只向应用级 IO 作用域派发一次、不内联执行——VACUUM 作用于主库
      * ime_database，要对它持排他锁数百毫秒，内联在 block 之前会把
      * 每次剪贴板操作都拖住；剪贴板数据已拆到独立库，两者不同库，
@@ -716,7 +716,7 @@ object ClipboardManager {
         if (!postSplitVacuumInFlight.compareAndSet(false, true)) return
         appScope.launch(Dispatchers.IO) {
             try {
-                AppDatabase.vacuumAfterClipboardSplit()
+                AppDatabase.runPostSplitVacuumMaintenance()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {

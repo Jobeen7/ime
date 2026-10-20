@@ -54,6 +54,18 @@ abstract class AppDatabase : RoomDatabase() {
         private const val KEY_VACUUM_CLIP_DONE = "vacuum_after_clipboard_split_done"
         private const val KEY_VACUUM_CLIP_LAST_FAIL = "vacuum_after_clipboard_split_last_fail"
 
+        /** 生产库名：v10 VACUUM 标记的兼容读与按库分键都以它为准 */
+        private const val PRODUCTION_DB_NAME = "ime_database"
+
+        /**
+         * 拆库 VACUUM 一次性补跑标记（见 [runPostSplitVacuumMaintenance]）：
+         * 在 v1.1.11.x 已完成迁移、且拆库 VACUUM 完成标记被误置的子集
+         * 设备上，迁移体按 KEY_DB_MIGRATED 早退、清标永不执行，补跑又被
+         * 误置的完成标记短路——本键未置位时强制清标重跑一次，补上
+         * 这条覆盖缺口。
+         */
+        private const val KEY_VACUUM_CLIP_REDO_V2 = "vacuum_clip_redo_v2"
+
         /** 拆库补跑 VACUUM 失败后的退避间隔：失败多为空间不足/库忙，短间隔重试只是反复付费 */
         private const val VACUUM_CLIP_RETRY_BACKOFF_MS = 24L * 60 * 60 * 1000
 
@@ -139,6 +151,39 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * 拆库 VACUUM 维护入口（ClipboardManager 的 db() 补跑点调用）：
+         * [KEY_VACUUM_CLIP_REDO_V2] 未置位时，先清一遍拆库完成/失败
+         * 标记再走既有补跑——覆盖「迁移早已完成、完成标记却被误置」
+         * 的设备子集（迁移体早退使 [clearPostSplitVacuumMarks] 对这批
+         * 设备永不执行，见该键注释）。只有补跑真正完成（完成标记已
+         * 落）才置位本键：失败/退避时不置位，下次访问继续重试，不把
+         * 一次失败固化成「已补跑」。置位后本入口退化为直接走既有
+         * 补跑（迁移新删行后的常规补跑仍靠它）。
+         */
+        fun runPostSplitVacuumMaintenance() {
+            val prefs = com.jobeen.ime.base.util.appContext
+                .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
+            if (prefs.getBoolean(KEY_VACUUM_CLIP_REDO_V2, false)) {
+                vacuumAfterClipboardSplit()
+                return
+            }
+            // 退避优先于清标：clearPostSplitVacuumMarks 会连失败标记
+            // 一并清掉，若每次补跑入口都先清标，vacuumAfterClipboardSplit
+            // 内的 24 小时退避永远读到空值、持续失败的设备每次剪贴板
+            // 访问都要重复一遍空间预检。故上次补跑失败且未出退避窗
+            // 时直接返回，不清标不重跑。
+            val lastFail = prefs.getLong(KEY_VACUUM_CLIP_LAST_FAIL, 0L)
+            if (lastFail > 0L &&
+                System.currentTimeMillis() - lastFail < VACUUM_CLIP_RETRY_BACKOFF_MS
+            ) return
+            clearPostSplitVacuumMarks()
+            vacuumAfterClipboardSplit()
+            if (prefs.getBoolean(KEY_VACUUM_CLIP_DONE, false)) {
+                prefs.edit { putBoolean(KEY_VACUUM_CLIP_REDO_V2, true) }
+            }
+        }
+
+        /**
          * 清除拆库 VACUUM 的完成/失败标记（供 ClipboardManager 的拆库
          * 迁移在真正删掉旧行后调用）：在 v1.1.11.x 上迁移失败但
          * VACUUM 照样跑完的设备，完成标记已被误置为 true——此后迁
@@ -193,19 +238,40 @@ abstract class AppDatabase : RoomDatabase() {
         }
 
         /**
+         * v10 VACUUM 完成标记按库名分键：本回调挂在 [build] 上，生产库
+         * 与 createWithName 的测试库共用——共用一个全局键时，测试库打开
+         * 也会置位生产标记（反之生产先跑完也会让测试库误以为已跑），
+         * 两边各记各的后互不污染。
+         */
+        private fun vacuumV10DoneKey(dbName: String): String =
+            "${KEY_VACUUM_V10_DONE}_$dbName"
+
+        /**
          * 一次性 VACUUM：v10 迁移只把 candidate_prefers.context 的值清空，
          * 旧输入片段仍留在数据库空闲页中（迁移在事务内、无法执行 VACUUM）。
          * 库打开后（不在事务中）补跑一次 VACUUM 重建文件彻底擦除，成功后
          * 落标记，之后每次打开只是一次偏好读检查。
+         * 兼容读：生产库此前用无后缀的旧键记账，已跑过的设备旧键为
+         * true——直接认账并回填分键，不重复跑一次 VACUUM；旧键只对
+         * 生产库名生效，测试库不读、也永不写旧键。
          */
         private val VACUUM_CALLBACK = object : RoomDatabase.Callback() {
             override fun onOpen(db: SupportSQLiteDatabase) {
                 super.onOpen(db)
                 val prefs = com.jobeen.ime.base.util.appContext
                     .getSharedPreferences(MAINTENANCE_PREFS, Context.MODE_PRIVATE)
-                if (prefs.getBoolean(KEY_VACUUM_V10_DONE, false)) return
+                val dbName = db.path?.let { java.io.File(it).name }
+                    ?.takeIf { it.isNotEmpty() } ?: return
+                val doneKey = vacuumV10DoneKey(dbName)
+                if (prefs.getBoolean(doneKey, false)) return
+                if (dbName == PRODUCTION_DB_NAME &&
+                    prefs.getBoolean(KEY_VACUUM_V10_DONE, false)
+                ) {
+                    prefs.edit { putBoolean(doneKey, true) }
+                    return
+                }
                 // VACUUM 重建主文件后旧页还可能残留在 WAL 里，vacuumAndMark 一并截断
-                vacuumAndMark(db, prefs, KEY_VACUUM_V10_DONE)
+                vacuumAndMark(db, prefs, doneKey)
             }
         }
 

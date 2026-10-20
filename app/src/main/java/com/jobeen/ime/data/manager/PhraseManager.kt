@@ -13,15 +13,27 @@ import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
 /**
- * 按码点（Unicode code point）取前 [n] 个字符。普通 [String.take] 按
- * UTF-16 码元计数，截断点恰落在代理对中间时会劈开 emoji 等增补平面
- * 字符，标签尾部留下孤代理项、列表里显示为缺字。常用语标签的生成
- * 口径（三处：新增传参、insert/update 兜底）统一走这里。
+ * 取前 [n] 个字素簇（用户感知的一个「字」）。普通 [String.take] 按
+ * UTF-16 码元计数会劈开代理对；只按码点截仍会劈开多码点的字素——
+ * ZWJ 组合 emoji（如家庭组合是 5 个码点拼一个字素）、肤色修饰符
+ * 序列（基础 emoji＋修饰符 2 个码点）截一半都会在标签里显示成
+ * 散开/坏掉的图形。用 BreakIterator 的字符边界（即字素簇边界）
+ * 截断。常用语标签的生成口径（三处：新增传参、insert/update
+ * 兜底）统一走这里，函数名沿用旧名（调用方按「取前 n 个字」理解）。
  */
 fun String.takeCodePoints(n: Int): String {
     if (n <= 0) return ""
     if (codePointCount(0, length) <= n) return this
-    return substring(0, offsetByCodePoints(0, n))
+    val iterator = java.text.BreakIterator.getCharacterInstance()
+    iterator.setText(this)
+    var count = 0
+    var end = iterator.next()
+    while (end != java.text.BreakIterator.DONE) {
+        count++
+        if (count >= n) return substring(0, end)
+        end = iterator.next()
+    }
+    return this
 }
 
 object PhraseManager {

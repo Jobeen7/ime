@@ -2,6 +2,7 @@ package com.jobeen.ime.data.manager
 
 import android.content.Context
 import com.jobeen.ime.data.database.AppDatabase
+import com.jobeen.ime.data.database.CandidatePreferDao
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
@@ -9,6 +10,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
 /**
@@ -38,21 +40,19 @@ object CandidatePreferCache {
     private val lock = Any()
 
     /**
-     * 加载与增量落点的串行通道（IO + limitedParallelism(1)，与写入
-     * 端 RimeEngine 的 preferDbScope 同规格；preferDbScope 是
-     * RimeEngine 的私有实例字段、本类够不到，故在本类内自建同规格
-     * 通道收敛同一不变量）。
+     * 加载、落库与落点的串行通道（IO + limitedParallelism(1)）。
      *
-     * 要保的不变量：读库（[snapshot] 的 getAllCounts）与写入端的
-     * 「DAO upsert → [noteUpsert]」对子严格先后——读数要么整体在
-     * 对子之前（点击不在读数里，随后由落点直加缓存），要么整体在
-     * 对子之后（读数已含点击，落点更早已计入缓存、合并取 maxOf
-     * 不重复）。旧实现读走 Dispatchers.IO 多线程、写走另一条通道，
-     * 两边无先后关系，只能靠窗口增量账本（pendingDelta）事后对
-     * 账，而账本本身在「点击先于读数落地」的交错下会双计（见
-     * §3.6 复核）。现在读库与落点都收进本通道按 FIFO 串行执行：
-     * 落点是 noteUpsert 投递到本通道的一段、读库与回写合并是
-     * snapshot 的一段，同通道内两段不交错，账本整套删除、合并
+     * 要保的不变量：读库（[snapshot] 的 getAllCounts）与一次点击的
+     * 「DAO upsert → 计数落点」对子严格先后——读数要么整体在对子
+     * 之前（点击不在读数里，随后由落点直加缓存），要么整体在对子
+     * 之后（读数已含点击，落点已先行计入缓存、合并取 maxOf 不重
+     * 复）。为此生产写路径统一走 [recordClick]：upsert、节流裁剪
+     * 与落点在同一段通道代码内依次执行，与 snapshot 的读库段同
+     * 通道 FIFO 串行、互不交错。此前 upsert 在 RimeEngine 的
+     * preferDbScope 另一条通道上执行、只有落点经 [noteUpsert] 投
+     * 递到本通道，对子被拆在两条通道上：读段若排在 upsert 之后、
+     * 落点之前执行，读数已含这次点击而落点随后又 +1，该交错下
+     * 双计真实可达。收编后对子不可分割，不变量才真正成立，合并
      * 回归纯 maxOf 即精确（见 [mergeLoadedSnapshot]）。
      */
     private val serialDispatcher = Dispatchers.IO.limitedParallelism(1)
@@ -75,12 +75,15 @@ object CandidatePreferCache {
 
     /**
      * 返回 text → click_count。首次调用在本类串行通道上全量加载
-     * （读库与回写合并同段执行，不与 [noteUpsert] 落点交错）。
+     * （读库与回写合并同段执行，不与点击对子交错）。
      */
     suspend fun snapshot(context: Context): Map<String, Int> {
         if (loaded) return cache
-        val gen = generation          // 加载前记下代次
         return withContext(serialDispatcher) {
+            // 通道外的一次 loaded 检查只是快速路径：进通道后先复查，
+            // 排队期间已由另一段完成加载时直接返回，不重复读库
+            if (loaded) return@withContext cache
+            val gen = generation          // 加载前记下代次
             val loadedMap = runCatching {
                 AppDatabase.getInstance(context).candidatePreferDao().getAllCounts()
                     .associate { it.text to it.click_count }
@@ -91,6 +94,73 @@ object CandidatePreferCache {
             // 加载失败不能置 loaded：否则本进程内偏好永远为空且不再重试
             finishLoad(loadedMap, gen)
             cache
+        }
+    }
+
+    /** 偏好表容量上限（随生产写路径自 RimeEngine 收编至此，值不变）。 */
+    private const val PREFER_LIMIT = 5000
+
+    /** 每多少次点击检查一次容量（节流，避免每次选词都跑 COUNT）。 */
+    private const val PRUNE_CHECK_INTERVAL = 200
+
+    /** 只在 [serialDispatcher] 通道内读写，无需同步。 */
+    private var recordClicksSincePruneCheck = 0
+
+    /**
+     * 生产写路径：一次选词点击的落库与计数落点。
+     *
+     * 整段在 [serialDispatcher] 上执行：dao.upsert 成功后在同一段
+     * 内把计数落点合并进缓存，随后做节流容量检查（超限裁剪并
+     * [invalidate]——本次落点若已合并会随之清掉，与裁剪后的 DB
+     * 在下次 [snapshot] 重建时对齐，不单独留账）。整段与
+     * [snapshot] 的读库段同通道串行，点击对子不可分割（见
+     * [serialDispatcher] 的不变量说明）。异常由调用方按其既有口径
+     * 吸收（写入是尽力而为，失败只丢这一次偏好）。
+     */
+    suspend fun recordClick(text: String, dao: CandidatePreferDao) {
+        withContext(serialDispatcher) {
+            val gen = generation
+            // 隐私：不把光标前文存入 context 列——该列从未被排序/
+            // 重排读取，却会随云备份与 .jbk 备份带出用户输入片段
+            //（口径随写路径自 RimeEngine 迁入，保持不变）
+            dao.upsert(text, "")
+            // 落点紧随 upsert 先行：裁剪段的 count/prune 若抛异常
+            // （盘满/库忙），不得吞掉这次已落库点击的计数（旧实现
+            // noteUpsert 在裁剪之前投递，落点不丢，此序保持之）
+            landIfCurrent(text, gen)
+            // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载
+            //（保持两者一致；刚落的点若随 invalidate 清掉，下次
+            // snapshot 按裁剪后的 DB 重建对齐，本就如此）。裁剪是
+            // 尽力而为的维护动作，失败只记日志、不冒泡连累点击主
+            // 路径——异常在本段内吸收（取消除外）
+            try {
+                if (++recordClicksSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
+                    recordClicksSincePruneCheck = 0
+                    if (dao.count() > PREFER_LIMIT) {
+                        dao.pruneToLimit(PREFER_LIMIT)
+                        invalidate()
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "Failed to prune candidate preference table")
+            }
+        }
+    }
+
+    /**
+     * 代次未变时把一次点击计数合并进缓存。代次校验与计数同在
+     * lock 内：与 [invalidate] 的清缓存/推进代次互斥，防「校验通
+     * 过后被清、随后又把计数写回空缓存」的交错。代次已变（期间
+     * 发生过还原/裁剪）时直接丢弃——这次点击所属的表已被整表替
+     * 换，其计数不得复活进新缓存，后续加载按新表读数重建。
+     */
+    private fun landIfCurrent(text: String, gen: Int) {
+        synchronized(lock) {
+            if (gen == generation) {
+                cache.merge(text, 1, Int::plus)
+            }
         }
     }
 
@@ -110,22 +180,16 @@ object CandidatePreferCache {
     }
 
     /**
-     * 与 [com.jobeen.ime.data.database.CandidatePreferDao.upsert] 配对调用：
-     * DB 写入成功后更新内存，保持一致。落点投递到串行通道异步
-     * 执行（见 [landingScope]）：与加载同通道 FIFO 串行，是「读数
-     * 与写入对子严格先后」不变量的落点一侧。
+     * 落点原语：把一次已落库点击的计数投递到串行通道异步合并。
+     * 生产写路径走 [recordClick]（upsert 与落点同段完成）；本入口
+     * 保留给测试直接驱动落点时序，以及任何无法走 [recordClick]
+     * 的调用方——注意单独调用它不构成「upsert → 落点」对子的串
+     * 行保证（见 [serialDispatcher] 的不变量说明）。
      */
     fun noteUpsert(text: String) {
         val gen = generation
         landingScope.launch {
-            // 代次校验与计数同在 lock 内：与 invalidate 的清缓存/
-            // 推进代次互斥，防「校验通过后被清、随后又把计数写回
-            // 空缓存」的交错
-            synchronized(lock) {
-                if (gen == generation) {
-                    cache.merge(text, 1, Int::plus)
-                }
-            }
+            landIfCurrent(text, gen)
         }
     }
 
@@ -163,8 +227,9 @@ object CandidatePreferCache {
  * 键取「DB 值与缓存现值（落点直写计数）的较大者」；只在缓存中、
  * 不在 DB 快照里的新键不动；只在 DB 快照里的键按 DB 值落缓存。
  *
- * 纯 maxOf 之所以精确，前提是读库点与「upsert＋noteUpsert 落点」
- * 已由串行通道严格排序（见 [CandidatePreferCache] 的通道说明）：
+ * 纯 maxOf 之所以精确，前提是读库点与「upsert＋落点」对子已由
+ * 串行通道严格排序（生产写路径 [CandidatePreferCache.recordClick]
+ * 在同一通道段内成对完成，见其通道说明）：
  * 命中键的点击要么全部在读数里（DB 值即真值、且 ≥ 缓存里对应
  * 的落点计数），要么全部不在读数里（DB 值是点击前的存量，落点
  * 在合并之后才执行、随后直加到缓存上）。不存在「一部分在读数

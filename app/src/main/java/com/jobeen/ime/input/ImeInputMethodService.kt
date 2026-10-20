@@ -111,7 +111,10 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
-        com.jobeen.ime.base.CrashTrap.surfacePending(this)
+        // 旧版 cdsp 残留的一次性清理（W6）：此前只挂在语音设置
+        // 页的检查/下载入口，不进设置页的用户永不清。函数内投
+        // 递 IO 协程异步执行、每进程至多一次，不阻塞启动
+        com.jobeen.ime.base.speech.ModelDownloader.cleanupLegacyCdspDirOnStartup()
         virtualInputConnection.addOnChangeListener {
             if (phraseAddBridgeActive) {
                 // 桥接文本是本地 Editable：程序性改字（清空/替换）可以
@@ -196,13 +199,32 @@ class ImeInputMethodService : InputMethodService() {
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
         keyboardWindow?.onStartInputView(info, restarting)
-        engine?.onStartInputView(currentInputConnection, info)
+        engine?.onStartInputView(currentInputConnection, info, restarting)
         // 直调即时探针前先撤掉合并通道里排队的那次：它捕获的是旧
         // 输入框的待发任务，再跑一次只会在新框上多做一轮无用探针
         mainHandler.removeCallbacks(pendingNotifyInputChanged)
         invalidateProbeFrame()
         notifyInputChanged()
         super.onStartInputView(info, restarting)
+    }
+
+    override fun onFinishInput() {
+        // 输入会话结束（W2）：待就绪整句的作废此前只挂在
+        // onFinishInputView(finishingInput=true) 与新框
+        // onStartInputView(!restarting) 两处——「先收起键盘再换
+        // 框」且框架对新框只投递 onStartInput（视图未弹出、不走
+        // onStartInputView）、或对新框以 restarting=true 投递时，
+        // 两处门控都不命中，待就绪整句会经新框连接结算落入新
+        // 框。onFinishInput 按 AOSP 语义只在输入会话结束时投递
+        //（仅隐藏键盘不投递、整句仍可落回同一框的 N13 场景不受
+        // 影响）；个别厂商若在隐藏键盘时也投递，该场景会被误
+        // 作废——此点代码层无法证伪，列入真机验收项待核。在此
+        // 补同一作废。与 onFinishInputView(true) 先后重复调用无碍：
+        // onInputViewFinished 对重复调用幂等（快照清零是重复赋
+        // 空、作废支内保留音频已清空后二次进入只重撤待发 START
+        // 并按「确有音频被清」判提示，不重复置位）
+        com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        super.onFinishInput()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {

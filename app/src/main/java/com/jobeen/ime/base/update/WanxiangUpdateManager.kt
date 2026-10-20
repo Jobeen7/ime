@@ -105,6 +105,10 @@ object WanxiangUpdateManager {
         .followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
+        // 总时长上限：readTimeout 只约束两次读之间的间隔，慢速涓流
+        // 响应能让单次调用无限拖长（检查更新里的 Range 取数串行其
+        // 中），callTimeout 给整条调用封顶
+        .callTimeout(20, TimeUnit.SECONDS)
         .build()
 
     private val json = Json { ignoreUnknownKeys = true }
@@ -299,8 +303,48 @@ object WanxiangUpdateManager {
     // 文件一变键就对不上，自动重算，不会显示过期指纹。
     private const val KEY_FP_GRAM = "fp_cache_gram"
     private const val KEY_FP_GRAM_STATE = "fp_cache_gram_state"
-    private const val KEY_FP_DICT = "fp_cache_dict"
-    private const val KEY_FP_DICT_STATE = "fp_cache_dict_state"
+    // 词库指纹缓存带算法版本后缀（v2 = 「路径|大小|CRC32」元组口径）：
+    // 口径变更时换键名，旧口径缓存自然失效，不会拿旧值与新口径的
+    // 远端指纹假比对（状态键只含路径|长度|mtime，本身分不出算法版本）
+    private const val KEY_FP_DICT = "fp_cache_dict_v2"
+    private const val KEY_FP_DICT_STATE = "fp_cache_dict_state_v2"
+    // v1 口径的旧键名：仅供版本切换清理时移除，不再读写
+    private const val KEY_FP_DICT_LEGACY = "fp_cache_dict"
+    private const val KEY_FP_DICT_STATE_LEGACY = "fp_cache_dict_state"
+
+    /** 版本切换清理已见过的 App versionCode（见 [ensureVersionHousekeeping]） */
+    private const val KEY_APP_VERSION_CODE_SEEN = "app_version_code_seen"
+
+    /**
+     * App 版本切换时的指纹记录清理：内置词库随 App 升级可能已变化，
+     * 且指纹口径也可能随版本变更——versionCode 与上次记录不一致时，
+     * 清掉远端词库指纹记录与词库指纹缓存（本地状态键只含文件
+     * path|length|mtime，换包重部署偶然同状态时会命中旧口径值），
+     * 逼下一次检查重新实时取数/重算。语法模型缓存不动：其指纹是
+     * 文件内容 SHA-256、口径未变，状态键含文件长度与 mtime 足以
+     * 自行失效。在设置页打开与 [checkForUpdates] 入口各调一次，
+     * 幂等且只是一次偏好读（版本号未变即返回）。
+     */
+    fun ensureVersionHousekeeping(context: android.content.Context) {
+        val prefs = context.getSharedPreferences(
+            PREFS_NAME, android.content.Context.MODE_PRIVATE
+        )
+        val current = runCatching {
+            val pi = context.packageManager.getPackageInfo(context.packageName, 0)
+            if (android.os.Build.VERSION.SDK_INT >= 28) pi.longVersionCode
+            else @Suppress("DEPRECATION") pi.versionCode.toLong()
+        }.getOrNull() ?: return
+        if (prefs.getLong(KEY_APP_VERSION_CODE_SEEN, -1L) == current) return
+        prefs.edit {
+            remove(KEY_DICT_REMOTE_FP)
+            remove(KEY_DICT_REMOTE_FP_VER)
+            remove(KEY_FP_DICT)
+            remove(KEY_FP_DICT_STATE)
+            remove(KEY_FP_DICT_LEGACY)
+            remove(KEY_FP_DICT_STATE_LEGACY)
+            putLong(KEY_APP_VERSION_CODE_SEEN, current)
+        }
+    }
 
     /**
      * 不跟随符号链接的递归删除：File.deleteRecursively 遇到指向目录的软链
@@ -538,7 +582,7 @@ object WanxiangUpdateManager {
             .filter { it.isFile && it.name.endsWith(ALLOWED_SUFFIX) }
             .forEach { stateParts.add("${it.relativeTo(dictsDir).path}|${it.length()}|${it.lastModified()}") }
         stateParts.sort()
-        val state = fingerprint(*stateParts.toTypedArray())
+        val state = DictFingerprint.combine(stateParts)
         val cached = prefs.getString(KEY_FP_DICT, null)
         if (cached != null && prefs.getString(KEY_FP_DICT_STATE, null) == state) return cached
         val fp = dictsContentFingerprint(dictsDir)
@@ -579,12 +623,6 @@ object WanxiangUpdateManager {
     fun shortFingerprint(full: String): String =
         if (full.length > 14) "${full.take(8)}...${full.takeLast(6)}" else full
 
-    private fun fingerprint(vararg parts: String): String {
-        val digest = DigestUtil.newSha256Digest()
-        parts.forEach { digest.update(it.toByteArray(Charsets.UTF_8)) }
-        return DigestUtil.hexDigest(digest)
-    }
-
     /**
      * 计算文件内容的 SHA-256（流式读取，适用于大文件如 396MB 语法模型）。
      * 每 1MB 检查一次协程取消，避免页面退出后继续空转。
@@ -594,20 +632,15 @@ object WanxiangUpdateManager {
         DigestUtil.sha256HexCancellable(file)
 
     /**
-     * 词库内容指纹：对每个 dict 文件计算内容 SHA-256，
-     * 按"相对路径|内容哈希"排序后拼接再取 SHA-256。
-     * 本地与下载时用同一算法，更新成功后两者一致。
-     * 目录缺失/为空（部署失败等异常状态）时返回空串而非对零个
-     * part 做哈希——空输入哈希是个非空常量，会绕过各处空值守卫、
-     * 伪装成一个真实指纹显示并落盘为远端记录；空串则让本地行
-     * 诚实显示"—"、回填守卫也不会写入。
-     */
-    /**
      * 词库内容指纹：每个 dict 文件取「相对路径|大小|内容 CRC32」
      * 元组（见 [DictFingerprint]），排序后拼接再取 SHA-256。元组
      * 口径与 zip 中央目录可提供的字段完全一致，使检查更新时能用
      * 中央目录实时算出远端指纹、与本地同值可比。本地与下载时用
      * 同一算法，更新成功后两者一致。
+     * 目录缺失/为空（部署失败等异常状态）时返回空串而非对零个
+     * part 做哈希——空输入哈希是个非空常量，会绕过各处空值守卫、
+     * 伪装成一个真实指纹显示并落盘为远端记录；空串则让本地行
+     * 诚实显示"—"、回填守卫也不会写入。
      */
     private suspend fun dictsContentFingerprint(dictsDir: File): String {
         val parts = mutableListOf<String>()
@@ -625,7 +658,7 @@ object WanxiangUpdateManager {
             }
         if (parts.isEmpty()) return ""
         parts.sort()
-        return fingerprint(*parts.toTypedArray())
+        return DictFingerprint.combine(parts)
     }
 
     /** 流式计算文件 CRC32（分块读、每块检查协程取消，口径同 sha256File）。 */
@@ -652,6 +685,8 @@ object WanxiangUpdateManager {
         prefs: android.content.SharedPreferences,
     ): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         runCatching {
+            // 版本切换先清理旧指纹记录/缓存（幂等，见该函数注释）
+            ensureVersionHousekeeping(com.jobeen.ime.base.util.appContext)
             val schemaRelease = fetchRelease("$SCHEMA_REPO/releases/latest")
             val gramRelease = fetchRelease("$GRAM_REPO/releases/tags/$GRAM_TAG")
             if (schemaRelease.tag_name.isBlank()) error("远端方案版本无效")
@@ -714,8 +749,13 @@ object WanxiangUpdateManager {
             // （只读包尾、不整包下载，元组口径与本地一致）；实时取
             // 到即刷新下载记录。取不到才回落既有记录（下载过该版
             // 本时下载流程留下的内容指纹）
+            // 资产大小取自本次 Release 响应（GhAsset.size）：实时取
+            // 指纹要按它发显式区间 Range——GitHub 资产 CDN 对后缀
+            // Range（bytes=-N）回 501，只有显式区间可用
+            val schemaZipSize = schemaRelease.assets
+                .firstOrNull { it.name == SCHEMA_ZIP_NAME }?.size ?: 0L
             val liveDictRemoteFp = try {
-                fetchRemoteDictFingerprint(schemaUrl(schemaRelease.tag_name))
+                fetchRemoteDictFingerprint(schemaUrl(schemaRelease.tag_name), schemaZipSize)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -826,13 +866,47 @@ object WanxiangUpdateManager {
     // 全流程互斥：临时目录与 .part 路径都是固定名，并发更新会互相覆盖/删除
     private val updateMutex = Mutex()
 
+    /**
+     * 方案更新的进程级运行状态：设置页订阅它决定按钮可用性——页面
+     * 的 remember 局部状态在离开页面后即丢失，工作却跑在应用级作用
+     * 域里继续，重进页面若只看局部状态会误以为没在更新、可再点一次
+     * （同路在 updateMutex 上排队重跑、跨路与语法下载各下一份大文件）。
+     * 状态由 [runningGate] 驱动：只有抢到占位的调用才置位/复位，
+     * 被拒的重复调用不触碰它，不会把正在跑（或排队中）的更新假复位。
+     */
+    private val runningState = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isRunning: kotlinx.coroutines.flow.StateFlow<Boolean> = runningState
+
+    /**
+     * 防重入占位：[downloadAndApply] 入口第一行 CAS 抢占，持有到整个
+     * 函数结束（含在 updateMutex 上排队等锁期间）。updateMutex 只保
+     * 证串行、挡不住「排队重跑一遍」，且旧写法任何一次调用结束都会
+     * 把运行状态置回 false，先结束者会让排队中的调用假复位；占位把
+     * 「排队」也算作进行中，重复调用在入口即被拒。
+     */
+    private val runningGate = java.util.concurrent.atomic.AtomicBoolean(false)
+
     suspend fun downloadAndApply(
         prefs: android.content.SharedPreferences,
         info: UpdateInfo,
         cacheDir: File,
         onProgress: (UpdateProgress) -> Unit = {},
-    ): Boolean = updateMutex.withLock {
-        downloadAndApplyLocked(prefs, info, cacheDir, onProgress)
+    ): Boolean {
+        if (!runningGate.compareAndSet(false, true)) {
+            Timber.w("方案更新已在进行中，忽略重复调用")
+            return false
+        }
+        runningState.value = true
+        try {
+            return updateMutex.withLock {
+                downloadAndApplyLocked(prefs, info, cacheDir, onProgress)
+            }
+        } finally {
+            // 先复位状态再放占位：占位未放时无人能抢入并置位，
+            // 不会出现新调用的 true 被本处 false 覆盖
+            runningState.value = false
+            runningGate.set(false)
+        }
     }
 
     private suspend fun downloadAndApplyLocked(
@@ -1117,15 +1191,18 @@ object WanxiangUpdateManager {
     private const val MAX_CENTRAL_DIR_BYTES = 8 * 1024 * 1024L
 
     /**
-     * 实时计算远端方案包的词库指纹：Range 只取包尾定位 EOCD，
-     * 中央目录不在包尾段内时再按其偏移精确取一段；条目过滤与
-     * 元组口径同 [dictsContentFingerprint]，同内容必同指纹。
-     * 任一步失败（服务器不支持 Range、包结构异常等）返回 null，
-     * 调用方回落既有记录。
+     * 实时计算远端方案包的词库指纹：按资产总长（Release 接口的
+     * GhAsset.size）发显式区间 Range 只取包尾定位 EOCD，中央目录
+     * 不在包尾段内时再按其偏移精确取一段；条目过滤与元组口径同
+     * [dictsContentFingerprint]，同内容必同指纹。任一步失败
+     * （服务器不支持 Range、包结构异常等）返回 null，调用方回落
+     * 既有记录。
      */
-    private fun fetchRemoteDictFingerprint(url: String): String? {
-        val (tail, totalSize) = rangeGet(url, "bytes=-$RANGE_TAIL_BYTES") ?: return null
-        val tailStart = totalSize - tail.size
+    private fun fetchRemoteDictFingerprint(url: String, assetSize: Long): String? {
+        if (assetSize <= 0) return null
+        val tailLen = minOf(RANGE_TAIL_BYTES.toLong(), assetSize)
+        val tailStart = assetSize - tailLen
+        val tail = rangeGet(url, tailStart, assetSize - 1, assetSize) ?: return null
         val eocd = ZipCentralDirectory.findEocd(tail, tailStart) ?: return null
         val cdStartInTail = eocd.cdOffset - tailStart
         val cdBytes = if (
@@ -1138,13 +1215,12 @@ object WanxiangUpdateManager {
             )
         } else {
             if (eocd.cdSize > MAX_CENTRAL_DIR_BYTES) return null
-            val (cd, _) = rangeGet(
-                url,
-                "bytes=${eocd.cdOffset}-${eocd.cdOffset + eocd.cdSize - 1}",
-            ) ?: return null
-            cd
+            rangeGet(url, eocd.cdOffset, eocd.cdOffset + eocd.cdSize - 1, assetSize)
+                ?: return null
         }
-        val entries = ZipCentralDirectory.parseEntries(cdBytes) ?: return null
+        // 条目数与 EOCD 声明核对：中央目录被截断/错位时解析可能
+        // 「成功」出半份条目，算出的指纹会与本地假比对
+        val entries = ZipCentralDirectory.parseEntries(cdBytes, eocd.totalEntries) ?: return null
         val parts = entries.asSequence()
             .filter { !it.name.endsWith("/") && isAllowedEntry(it.name) }
             .map {
@@ -1156,26 +1232,57 @@ object WanxiangUpdateManager {
             }
             .toList()
         if (parts.isEmpty()) return null
-        return fingerprint(*parts.sorted().toTypedArray())
+        return DictFingerprint.combine(parts.sorted())
     }
 
     /**
-     * Range GET：返回响应体与文件总长（从 Content-Range 解析）。
-     * 服务器未按 206 返回（不支持 Range）即视为失败，避免把整包
-     * 读进内存。
+     * 显式区间 Range GET：请求 [start]..[endInclusive]（含端点），
+     * [totalSize] 是调用方已知的资产总长。必须用显式区间：GitHub
+     * 资产 CDN 对后缀 Range（bytes=-N）回 501 Unsupported。
+     * 校验从严：非 206、Content-Range 的起点/终点/总长任一与请求
+     * 不符即失败；响应体按期望长度流式读，读超期望或不足都判
+     * 失败——绝不无界读入（声明合规但返回更大的 206 体时，旧实现
+     * 整段 bytes() 入内存，上限检查形同虚设）。
      */
-    private fun rangeGet(url: String, range: String): Pair<ByteArray, Long>? {
+    private fun rangeGet(
+        url: String,
+        start: Long,
+        endInclusive: Long,
+        totalSize: Long,
+    ): ByteArray? {
+        if (start < 0 || endInclusive < start || endInclusive >= totalSize) return null
+        val expected = endInclusive - start + 1
+        if (expected > Int.MAX_VALUE) return null
         return runCatching {
             client.newCall(
-                okhttp3.Request.Builder().url(url).header("Range", range).build()
+                okhttp3.Request.Builder().url(url)
+                    .header("Range", "bytes=$start-$endInclusive").build()
             ).execute().use { response ->
                 if (response.code != 206) return null
-                val total = response.header("Content-Range")
-                    ?.substringAfterLast('/')
-                    ?.toLongOrNull()
-                    ?: return null
-                val bytes = response.body?.bytes() ?: return null
-                bytes to total
+                val contentRange = response.header("Content-Range") ?: return null
+                val total = contentRange.substringAfterLast('/')
+                    .toLongOrNull() ?: return null
+                if (total != totalSize) return null
+                val rangeNums = contentRange.substringBefore('/')
+                    .removePrefix("bytes").trim().split('-')
+                val respStart = rangeNums.getOrNull(0)?.trim()?.toLongOrNull() ?: return null
+                val respEnd = rangeNums.getOrNull(1)?.trim()?.toLongOrNull() ?: return null
+                if (respStart != start || respEnd != endInclusive) return null
+                val body = response.body ?: return null
+                body.byteStream().use { input ->
+                    val out = java.io.ByteArrayOutputStream(expected.toInt())
+                    val buf = ByteArray(BUFFER_SIZE)
+                    var read = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        read += n
+                        if (read > expected) return null
+                        out.write(buf, 0, n)
+                    }
+                    if (read != expected) return null
+                    out.toByteArray()
+                }
             }
         }.getOrNull()
     }

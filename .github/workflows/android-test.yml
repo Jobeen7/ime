@@ -4,6 +4,12 @@
 # 模拟器，且 RimeJniSmokeTest 需要原生 deps 先行就位
 # （install-deps.sh），connectedDebugAndroidTest 只能在带模拟器的
 # job 里执行，故与 ci.yml 的单测/lint 分开、按需手动跑。
+# 模拟器必须用 arm64-v8a 镜像：App 的 abiFilters 只打 arm64-v8a，
+# x86_64 模拟器装不上 APK（INSTALL_FAILED_NO_MATCHING_ABIS）。
+# 注意：x86_64 宿主上 KVM 加速不了 arm64 客户机，Enable KVM 步骤
+# 对 arm64 镜像无加速作用，模拟器走纯软件模拟，首次手动触发时
+# 留意启动与 connectedDebugAndroidTest 的耗时/超时。debug 构建带
+# .debug 包名后缀，装到日常机上也与正式版互不覆盖。
 name: AndroidTest
 
 on:
@@ -27,14 +33,20 @@ jobs:
           java-version: "21"
 
       - name: Set up Gradle (with cache)
-        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
 
       - name: Install native deps
         run: bash install-deps.sh
+
+      - name: Enable KVM group perms
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
 
       - name: Run instrumented tests on emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
           api-level: 34
-          arch: x86_64
+          target: default
+          arch: arm64-v8a
           script: ./gradlew connectedDebugAndroidTest

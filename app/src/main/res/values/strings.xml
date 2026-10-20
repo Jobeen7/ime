@@ -123,6 +123,8 @@
     <string name="update_file_invalid">安装包校验失败，请重新下载</string>
     <string name="app_logs">运行日志</string>
     <string name="copy_logs">复制日志</string>
+    <string name="copy_last_crash">复制最近崩溃信息</string>
+    <string name="crash_copied">已复制最近崩溃信息</string>
     <string name="clear_logs">清空日志</string>
     <string name="clipboard_history">历史记录</string>
     <string name="clipboard_max_entries">记录数量上限</string>

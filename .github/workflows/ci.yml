@@ -28,7 +28,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # 只取消 PR 的旧运行：main 推送的运行不互相取消，保证每个出包
+  # 提交都有独立的完整 CI 结论
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test-and-lint:
@@ -45,7 +47,7 @@ jobs:
           java-version: "21"
 
       - name: Set up Gradle (with cache)
-        uses: gradle/actions/setup-gradle@48b5f213c81028ace310571dc5ec0fbbca0b2947 # v4
+        uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
 
       - name: Unit tests
         run: ./gradlew testDebugUnitTest

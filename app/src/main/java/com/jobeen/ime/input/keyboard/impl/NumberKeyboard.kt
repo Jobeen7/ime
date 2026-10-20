@@ -33,34 +33,38 @@ class NumberKeyboard(
     companion object {
         const val NAME = "Number"
 
+        // 行宽账（行内和＋跨行键宽须恰为 1.0）：右列与 T9 对齐为
+        // 0.18，数字列随之由 0.23333 收为 0.22333（与 T9 字母列
+        // 同宽）；底行回车涨到 0.18 后，从宽键「0」扣回 0.03
+        // （0.23333→0.20333），其余底行键不变
         val Layout: List<List<KeyDef>> = listOf(
             listOf(
                 sidePannelKey(rowSpan = 3, visableRow = 4),
-                commitKey("1", fontSize = 22f),
-                commitKey("2", fontSize = 22f),
-                commitKey("3", fontSize = 22f),
-                backspaceKey(),
+                commitKey("1", percentWidth = 0.22333f, fontSize = 22f),
+                commitKey("2", percentWidth = 0.22333f, fontSize = 22f),
+                commitKey("3", percentWidth = 0.22333f, fontSize = 22f),
+                backspaceKey(0.18f),
             ),
             listOf(
-                commitKey("4", fontSize = 22f),
-                commitKey("5", fontSize = 22f),
-                commitKey("6", fontSize = 22f),
-                clearKey(0.15f)
+                commitKey("4", percentWidth = 0.22333f, fontSize = 22f),
+                commitKey("5", percentWidth = 0.22333f, fontSize = 22f),
+                commitKey("6", percentWidth = 0.22333f, fontSize = 22f),
+                clearKey(0.18f)
             ),
             listOf(
-                commitKey("7", fontSize = 22f),
-                commitKey("8", fontSize = 22f),
-                commitKey("9", fontSize = 22f),
-                miniSpaceKey()
+                commitKey("7", percentWidth = 0.22333f, fontSize = 22f),
+                commitKey("8", percentWidth = 0.22333f, fontSize = 22f),
+                commitKey("9", percentWidth = 0.22333f, fontSize = 22f),
+                miniSpaceKey(0.18f)
             ),
             listOf(
                 resumeLayoutKey("返回", percentWidth = 0.15f),
                 symbolSwitchKey(0.13f),
                 commitKey(",", variant = Variant.Alternative, percentWidth = 0.10333f),
-                commitKey("0", percentWidth = 0.23333f, variant = Variant.Alternative),
+                commitKey("0", percentWidth = 0.20333f, variant = Variant.Alternative),
                 commitKey(".", percentWidth = 0.13f, variant = Variant.Alternative),
                 atKey(percentWidth = 0.10333f),
-                returnKey(percentWidth = 0.15f),
+                returnKey(percentWidth = 0.18f),
             ),
         )
     }

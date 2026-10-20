@@ -59,9 +59,48 @@ object GramModelDownloader {
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
 
+    /**
+     * 语法模型下载的进程级运行状态：设置页订阅它决定按钮可用性——
+     * 页面局部状态随页面销毁丢失，下载却在应用级作用域里继续，
+     * 重进页面只看局部状态会重复启动同一下载（与方案更新跨路时
+     * 还会各下一份约 400 MB）。
+     * 状态由 [runningGate] 驱动：只有抢到占位的调用才置位/复位，
+     * 被拒的重复调用不触碰它，不会把正在跑的下载假复位。
+     */
+    private val runningState = kotlinx.coroutines.flow.MutableStateFlow(false)
+    val isRunning: kotlinx.coroutines.flow.StateFlow<Boolean> = runningState
+
+    /**
+     * 防重入占位：[download] 入口第一行 CAS 抢占，持有到整个函数
+     * 结束。没有它时快速双击可同时启动两路下载——两路共用同一个
+     * partial 文件，互相 delete/覆盖对方下到一半的内容；旧写法又在
+     * 任一调用结束时无条件复位运行状态，先结束者还会把仍在跑的
+     * 另一路假复位、让页面误判空闲再放行一路。
+     */
+    private val runningGate = java.util.concurrent.atomic.AtomicBoolean(false)
+
     suspend fun download(
         language: String,
         onProgress: (downloaded: Long, total: Long) -> Unit = { _, _ -> },
+    ): Boolean {
+        if (!runningGate.compareAndSet(false, true)) {
+            Timber.w("语法模型下载已在进行中，忽略重复调用")
+            return false
+        }
+        runningState.value = true
+        try {
+            return downloadInternal(language, onProgress)
+        } finally {
+            // 先复位状态再放占位：占位未放时无人能抢入并置位，
+            // 不会出现新调用的 true 被本处 false 覆盖
+            runningState.value = false
+            runningGate.set(false)
+        }
+    }
+
+    private suspend fun downloadInternal(
+        language: String,
+        onProgress: (downloaded: Long, total: Long) -> Unit,
     ): Boolean = withContext(Dispatchers.IO) {
         val manifest = runCatching {
             GramModelApi.fetchManifest(language)
