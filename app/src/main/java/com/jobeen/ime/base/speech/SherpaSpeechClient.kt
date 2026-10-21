@@ -30,7 +30,28 @@ import timber.log.Timber
 import java.io.File
 import java.lang.ref.WeakReference
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
+
+/**
+ * 输入框纪元（纯逻辑，可单测）：单调递增计数，输入视图结束/换框
+ * 时推进一次。语音会话开始时捕获当前值为「会话纪元」，结算尾在
+ * 写屏前以 [isCurrent] 复检：纪元已推进即发起框已结束，本段结算
+ * 整段丢弃。语音代次只隔离会话之间，替代不了框属主判据，故另立
+ * 此纪元（F4）。
+ */
+internal class EditorEpoch {
+    private val value = AtomicLong(0)
+
+    /** 当前纪元。 */
+    fun current(): Long = value.get()
+
+    /** 推进纪元（换框/视图结束时调用），返回推进后的值。 */
+    fun advance(): Long = value.incrementAndGet()
+
+    /** [captured] 是否仍是当前纪元：未被推进过才放行。 */
+    fun isCurrent(captured: Long): Boolean = captured == value.get()
+}
 
 /**
  * Main-process proxy. Keeps the original public API untouched; the actual
@@ -113,6 +134,20 @@ object SherpaSpeechClient {
     // 到达时，后到的一律被代次去重挡下，不再重复上屏/收尾
     @Volatile
     private var settledGen = 0
+
+    // 输入框纪元（F4）：在 onInputViewFinished（IMS 投递的换框/视图
+    // 结束统一作废点）推进。语音代次只隔离会话之间，管不了「同一
+    // 句的结算尾飞行中换框」，故写屏属主判据用此纪元而非代次
+    private val editorEpoch = EditorEpoch()
+
+    // 当前会话开始时捕获的纪元：与 activeGen 在 startHoldSession
+    // 同点写入。结算时（finishSession 入口快照、本函数接管上一代
+    // 的 settlePreviousSession）读它与当前纪元比对——捕获的是会话
+    // 发起框的纪元，故结算发起之后、乃至接管发生之前就已完成的
+    // 换框同样判得出（只在结算入口现取当前纪元会把这类换框误判
+    // 为同框放行）
+    @Volatile
+    private var activeSessionEpoch = 0L
 
     // 当前连接的原始 binder 与其死亡监听引用：binder 死亡即 :speech
     // 进程死亡，死亡回调里立即作废连接（不等下一次 send 失败才发现）；
@@ -1193,6 +1228,14 @@ object SherpaSpeechClient {
      * 显示快照与「已松手待就绪」的保留音频（见下）。
      */
     fun onInputViewFinished() {
+        // 输入框纪元推进（F4）：本函数是换框/视图结束的统一作废
+        // 点，在此推进后，一切捕获了旧纪元的在途语音结算尾（本
+        // 会话的 finishSession 尾、下一会话接管时结算上一代的
+        // settlePreviousSession 尾）在写屏前复检都会判过期、整段
+        // 丢弃。推进点与既有跨框作废面完全同址，不新增投递点：
+        // 仅隐藏键盘（finishingInput=false）与同框 restarting 重
+        // 开不经本函数，纪元不变，同框落回（N13）不受影响
+        editorEpoch.advance()
         VoiceCorrectionSession.disarm()
         // 显示快照一并作废（不限于下方的待结算音频分支）：快照
         // 的成立前提是「文本显示在当前框的屏上」，视图结束即不
@@ -1688,6 +1731,11 @@ object SherpaSpeechClient {
         probeHandler.removeCallbacks(prestartProbeTimeoutRunnable)
         val gen = genCounter.incrementAndGet()
         activeGen = gen
+        // 本会话的发起框纪元（F4）：与代次同点捕获。结算本会话
+        // （finishSession）与日后接管结算本会话（下一会话开始时
+        // 的 settlePreviousSession，其调用在本行所属流程的代次
+        // 递增之前、读到的仍是上一会话的值）都以它作属主判据
+        activeSessionEpoch = editorEpoch.current()
         serviceRef = WeakReference(service)
         reconcileServiceRef = WeakReference(service)
         composingText.set(null)
@@ -1901,6 +1949,13 @@ object SherpaSpeechClient {
     private fun settlePreviousSession() {
         val prevGen = activeGen
         if (prevGen == 0) return
+        // 上一会话的发起框纪元（F4）：activeSessionEpoch 与上一代
+        // 的代次在 startHoldSession 同点写入；本函数由下一会话开
+        // 始时在其代次递增之前调用，读到的仍是上一会话的值。以
+        // 它（而非现取当前纪元）作判据，才能判出「上一会话发起
+        // 后、接管发生前就已换框」的情形——那正是本路径的跨框
+        // 暴露形态（用户在新框按下语音，上一句经新框连接落入）
+        val prevSessionEpoch = activeSessionEpoch
         if (pendingFinish || cancelPending) {
             // 上一代松手/丢弃后始终没等到 READY：它没有 partial、
             // 没有 composing 需要定稿（未就绪即无服务端文本），直接
@@ -1933,9 +1988,15 @@ object SherpaSpeechClient {
         if (prevDiscard) {
             // 待弃文本同步清屏（与 stopHoldSession 的即时清屏同款），
             // 赶在新会话开始前完成，不留异步尾巴误清新会话的待定文字
-            service?.activeInputConnection()?.let { ic ->
-                ic.setComposingText("", 1)
-                ic.finishComposingText()
+            // 纪元复检（F4）：上一会话的发起框已结束时，待弃组字
+            // 在旧框里、与当前连接无关；当前连接已是新框的，清
+            // 它反而误伤新框的待定文字——只在同纪元（同框接管）
+            // 时同步清屏，跨框时旧框组字归框架与旧应用自理
+            if (editorEpoch.isCurrent(prevSessionEpoch)) {
+                service?.activeInputConnection()?.let { ic ->
+                    ic.setComposingText("", 1)
+                    ic.finishComposingText()
+                }
             }
             return
         }
@@ -1956,15 +2017,32 @@ object SherpaSpeechClient {
             // 空基线对账暂存中真正随本次接管上屏一并落屏的那句
             //（账本分开登记用，见两处上屏与登记处）
             var landedLatePrefix: String? = null
+            // 写屏封锁（F4，口径同 finishSession 尾）：上一会话发
+            // 起框纪元已推进或当前字段是密码框时置位——封锁后不
+            // 写屏、不 finishComposingText、不登记账本、不以空基
+            // 线武装对账（见尾部各门控）
+            var writeBlocked = false
             if (!prevText.isNullOrBlank()) {
                 val corrected = withContext(Dispatchers.Default) { correctionStore.correct(prevText) }
+                // 挂起恢复复检（F4）：纠错挂起期间纪元已推进则封
+                // 锁写屏（接管前已换框的情形在尾执行的首次复检即
+                // 判出，本尾虽经 Main 投递、两次挂起前无写屏点）
+                if (!editorEpoch.isCurrent(prevSessionEpoch)) writeBlocked = true
                 val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
+                // 挂起恢复复检（F4）：繁简转换挂起期间已换框同上
+                if (!editorEpoch.isCurrent(prevSessionEpoch)) writeBlocked = true
+                // 写屏前密码兜底（F4，与 tryReconcileLateFinal 同口径）
+                if (com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(
+                        service.currentInputEditorInfo
+                    )
+                ) writeBlocked = true
                 // 与 finishSession 尾同构：两次挂起之后、写屏之前
                 // 复验（验法与本尾入口一致）并重取连接——挂起期间
                 // 状态已变（本结算被更新的结算取代）或连接已指向
-                // 新框时，不得用旧连接幽灵上屏，更不得登记账本
+                // 新框时，不得用旧连接幽灵上屏，更不得登记账本。
+                // 写屏封锁时不取连接、不写屏（理由见上方封锁声明）
                 if (settledGen != prevGen) return@launch
-                val liveIc = service.activeInputConnection()
+                val liveIc = if (writeBlocked) null else service.activeInputConnection()
                 screenIc = liveIc
                 if (liveIc != null) {
                     // 落屏判据认两类证据：本次写入被编辑器接受，
@@ -1997,10 +2075,19 @@ object SherpaSpeechClient {
                 val corrected = withContext(Dispatchers.Default) {
                     correctionStore.correct(displayedSnapshot)
                 }
+                // 挂起恢复复检（F4，同主支口径）：两次挂起后逐点复检
+                if (!editorEpoch.isCurrent(prevSessionEpoch)) writeBlocked = true
                 val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
-                // 新增挂起点后同主支口径复验并重取连接
+                if (!editorEpoch.isCurrent(prevSessionEpoch)) writeBlocked = true
+                // 写屏前密码兜底（F4，与 tryReconcileLateFinal 同口径）
+                if (com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(
+                        service.currentInputEditorInfo
+                    )
+                ) writeBlocked = true
+                // 新增挂起点后同主支口径复验并重取连接；写屏封锁
+                // 时不取连接、不写屏（理由见主支上方封锁声明）
                 if (settledGen != prevGen) return@launch
-                val liveIc = service.activeInputConnection()
+                val liveIc = if (writeBlocked) null else service.activeInputConnection()
                 screenIc = liveIc
                 if (liveIc != null) {
                     // 落屏维持证据式判定：连接有效即屏上快照会被
@@ -2019,7 +2106,9 @@ object SherpaSpeechClient {
                     landed = true
                 }
             }
-            screenIc?.finishComposingText()
+            // 写屏封锁（F4）时 screenIc 已置空或指向新框连接，
+            // finishComposingText 会转正新框的组字，一并放弃
+            if (!writeBlocked) screenIc?.finishComposingText()
             // 账本登记：接管上屏的文本同样是真正落入编辑器的语音
             // 段，供退格上滑整段撤销（登记口径与 finishSession 一
             // 致，且同受 landed 门控：没真正落屏不登记）
@@ -2035,7 +2124,7 @@ object SherpaSpeechClient {
                     lateFinalLandedText = it
                     lateFinalArmedAtMs = SystemClock.uptimeMillis()
                 }
-            } else if (prevAwaitingDone && screenIc != null && displayedSnapshot == null) {
+            } else if (!writeBlocked && prevAwaitingDone && screenIc != null && displayedSnapshot == null) {
                 // 无落字对账武装：上一代已 STOP 在等 DONE、屏上一
                 // 字未出（解码积压）时被再按接管——此前对账只在
                 // landed 时武装，这句的迟到 FINAL 只能按代次整段
@@ -2064,6 +2153,13 @@ object SherpaSpeechClient {
         val gen = activeGen
         if (gen != 0 && gen == settledGen) return
         settledGen = gen
+        // 本会话的发起框纪元（F4）：在任何挂起之前随入口快照一并
+        // 捕获（值是会话开始时与代次同点记下的 activeSessionEpoch，
+        // 不是现取当前纪元——换框已在本函数被调用前完成的情形，
+        // 现取只会取到新框的纪元而误判同框）。异步尾在每次挂起恢
+        // 复后与写屏前以它复检：纪元已推进即发起框已结束，整段丢
+        // 弃（不写屏、不登记账本、不武装沉淀，见尾内各门控）
+        val startEpoch = activeSessionEpoch
         // 同步快照 + 同步复位：快照之后到达的回信会被代次校验丢弃，
         // 异步尾只认这份快照，不再读共享状态
         val service = serviceRef?.get()
@@ -2094,6 +2190,13 @@ object SherpaSpeechClient {
             var committedDisplay: String? = null
             // 本次是否真的对有效连接执行了上屏提交（账本登记门控）
             var landed = false
+            // 写屏封锁（F4）：发起框纪元已推进（换框）或当前字段
+            // 是密码框时置位——封锁后本尾一切编辑器写动作（写屏、
+            // 清组字、finishComposingText）整段放弃；账本登记本就
+            // 受 landed 门控、沉淀武装受 committed 门控，随写屏放
+            // 弃自然不发生；UI 收尾（onDone/onFailed 与提示消费）
+            // 不是编辑器写入，不在此列、照常走完
+            var writeBlocked = false
             // 空基线对账暂存中真正随本代定稿一并落屏的那句（账本
             // 分开登记用，见上屏处与登记处）
             var landedLatePrefix: String? = null
@@ -2101,7 +2204,11 @@ object SherpaSpeechClient {
                 // 取消：先删掉已流式显示的待定文字，再收尾，否则 finishComposingText 会把待定文字确认上屏。
                 // 但本代已被新会话取代时组字区已归新会话（待弃文字在
                 // 丢弃当时已即时清屏），再清会误伤新会话的待定文字
-                if (activeGen == 0 || activeGen == gen) {
+                // 纪元复检（F4）：本尾经 Main 投递排队期间已换框时，
+                // screenIc 已是新框连接，清组字会误清新框的待定文
+                // 字——整段放弃并封锁下方 finishComposingText
+                if (!editorEpoch.isCurrent(startEpoch)) writeBlocked = true
+                if (!writeBlocked && (activeGen == 0 || activeGen == gen)) {
                     screenIc?.setComposingText("", 1)
                 }
             } else if (!text.isNullOrBlank()) {
@@ -2109,11 +2216,27 @@ object SherpaSpeechClient {
                 // 繁简转换之前），再在后台转换，回主线程上屏收尾，
                 // DONE 后的转换→上屏→finishComposingText 顺序不变
                 val corrected = withContext(Dispatchers.Default) { correctionStore.correct(text) }
+                // 挂起恢复复检一（F4）：纠错挂起期间已换框则封锁写屏
+                if (!editorEpoch.isCurrent(startEpoch)) writeBlocked = true
                 val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
+                // 挂起恢复复检二（F4）：繁简转换挂起期间已换框同上
+                if (!editorEpoch.isCurrent(startEpoch)) writeBlocked = true
+                // 写屏前密码兜底（F4，与 tryReconcileLateFinal 的兜底
+                // 同口径）：本尾不经会话入口，入口的密码拦截管不到
+                // 这里——当前字段是密码框（字段就地切换为密码类型
+                // 等纪元未推进的形态）时整段放弃
+                if (com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(
+                        service.currentInputEditorInfo
+                    )
+                ) writeBlocked = true
                 // 两次挂起之后、写屏之前重取连接：挂起期间切框时
                 // 先前抓的连接已指向旧框。连接失效（取不到）时本次
-                // 提交不发生，committed 不置、账本不登记（见下方门控）
-                val liveIc = service.activeInputConnection()
+                // 提交不发生，committed 不置、账本不登记（见下方门控）。
+                // 写屏封锁时不取连接、不写屏：committed/landed 维持
+                // 空与否，下方账本登记与沉淀武装随之不发生；对账暂
+                // 存也不在此消费（跨框时已由 onInputViewFinished 作
+                // 废，就地密码封锁时留待属主不符被下一会话丢弃）
+                val liveIc = if (writeBlocked) null else service.activeInputConnection()
                 screenIc = liveIc
                 if (liveIc != null) {
                     // 空基线对账暂存的上一句（本代进行中迟到、组字
@@ -2153,7 +2276,16 @@ object SherpaSpeechClient {
                 // 会话（位置语义已变，与对账严门控同取舍）。屏
                 // 上有本代已显示文本（组字态）时暂存拼在其前一
                 // 并转正，只写暂存会把组字态的本代文本顶掉
-                val stash = takePendingLateFinalText(gen)
+                // 写屏前复检（F4，与非空支同口径）：纪元已推进或当
+                // 前字段是密码框时整段放弃——暂存不在此消费（跨框
+                // 时已由 onInputViewFinished 作废；就地密码封锁时留
+                // 待属主不符被下一会话丢弃）
+                if (!editorEpoch.isCurrent(startEpoch) ||
+                    com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(
+                        service.currentInputEditorInfo
+                    )
+                ) writeBlocked = true
+                val stash = if (writeBlocked) "" else takePendingLateFinalText(gen)
                 if (stash.isNotEmpty()) {
                     val liveIc = service.activeInputConnection()
                     screenIc = liveIc
@@ -2168,8 +2300,10 @@ object SherpaSpeechClient {
             // 确认上屏的执行条件：本尾刚落了文本（必须 finish 把它
             // 转正，否则仍是组字态、会被新会话首个 partial 顶掉），
             // 或本代未被取代（常态收尾）；被取代且未落文本时编辑器
-            // 归新会话，碰它会误确认新会话的待定文字
-            if (landed || activeGen == 0 || activeGen == gen) {
+            // 归新会话，碰它会误确认新会话的待定文字。写屏封锁
+            //（F4）时 screenIc 指向的已是新框连接（或已置空），
+            // finishComposingText 会转正新框的组字，一并放弃
+            if (!writeBlocked && (landed || activeGen == 0 || activeGen == gen)) {
                 screenIc?.finishComposingText()
             }
             // 账本登记：文本真正落入编辑器之后记一笔（最终落下的

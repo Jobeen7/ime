@@ -359,8 +359,13 @@ class CandidateGridView(
             if (dragIndex >= 0 && dragIndex in allCandidates.indices) {
                 val c = allCandidates[dragIndex]
                 val dragW = textWidths.getOrElse(dragIndex) { 0f } + cellPad * 2
-                val dragLeft = (dragFingerX - dragW / 2).coerceIn(0f, width - dragW)
-                val dragTop = (dragFingerY - rowH / 2).coerceIn(0f, height - rowH)
+                // 超宽候选的拖动图有效宽度钳到视口宽：起点计算与实际
+                // 绘制宽度同用钳后值。dragLeft/dragTop 经 dragOrigin
+                // 计算，尺寸先钳到视口、coerceIn 区间恒非空（旧写法
+                // dragW > width 时上限为负、必抛 IllegalArgumentException）
+                val effectiveDragW = minOf(dragW, width.toFloat())
+                val dragLeft = dragOrigin(dragFingerX, dragW, width.toFloat())
+                val dragTop = dragOrigin(dragFingerY, rowH, height.toFloat())
 
                 val d = resources.displayMetrics.density
                 val oldColor = bgPaint.color
@@ -368,7 +373,7 @@ class CandidateGridView(
                 val oldAlpha = bgPaint.alpha
                 bgPaint.alpha = 160
                 canvas.drawRoundRect(
-                    dragLeft, dragTop, dragLeft + dragW, dragTop + rowH, 6f * d, 6f * d, bgPaint
+                    dragLeft, dragTop, dragLeft + effectiveDragW, dragTop + rowH, 6f * d, 6f * d, bgPaint
                 )
                 bgPaint.alpha = oldAlpha
                 bgPaint.color = oldColor
@@ -944,6 +949,17 @@ class CandidateGridView(
             sidePanelKey.updateItems(PinYinKeyDefCache.get(data))
         }
     }
+}
+
+/**
+ * 拖动图在单轴上的绘制起点：以手指位置为中心、钳制在视口内。
+ * 有效尺寸先钳到视口大小（min(size, viewport)），coerceIn 上限
+ * viewport - effective 因此恒 >= 0、区间永不为空；尺寸不超过视口
+ * 时与朴素居中钳制逐值一致。纯函数，供边界单测。
+ */
+internal fun dragOrigin(finger: Float, size: Float, viewport: Float): Float {
+    val effective = minOf(size, viewport)
+    return (finger - effective / 2f).coerceIn(0f, viewport - effective)
 }
 
 /**
