@@ -35,7 +35,9 @@ import org.junit.runner.RunWith
  * 常用语、选词偏好与剪贴板。若去掉 debug 的包名后缀，此结论
  * 不再成立。
  *
- * 本机未跑（需真机/模拟器）；CI 以 android-test.yml 手动触发运行。
+ * 本机未跑（需真机/模拟器）；CI 的 android-test.yml 为手动触发，
+ * 已改用 google_apis/x86_64/API 31 转译镜像，但至今尚未实际运行，
+ * 本测试尚未在 CI 执行过。
  */
 @RunWith(AndroidJUnit4::class)
 class DatabaseMigrationTest {

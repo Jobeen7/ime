@@ -43,6 +43,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.jobeen.ime.BuildConfig
 import com.jobeen.ime.R
 import com.jobeen.ime.base.net.UpdateCheckResult
 import com.jobeen.ime.base.net.VersionChecker
@@ -67,6 +68,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
         }
     }
     var checkingUpdate by remember { mutableStateOf(false) }
+    var showLicenses by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     // 自更新内联状态（查到新版后在「版本更新」组内展开，不弹对话框）
     var updateInfo by remember { mutableStateOf<UpdateCheckResult.Available?>(null) }
@@ -81,6 +83,12 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     val msgDownloadFailed = stringResource(R.string.update_download_failed)
     val msgNeedPermission = stringResource(R.string.update_need_permission)
     val msgFileInvalid = stringResource(R.string.update_file_invalid)
+    val msgDebugUnsupported = stringResource(R.string.debug_update_unsupported)
+
+    if (showLicenses) {
+        LicenseScreen(onBack = { showLicenses = false })
+        return
+    }
 
     fun toast(msg: String) {
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
@@ -221,10 +229,15 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
             SettingsGroup(title = stringResource(R.string.about_update)) {
                 ActionRow(
                     title = stringResource(R.string.current_version, versionName),
-                    subtitle = null,
+                    // debug 包名与正式版不同，应用内更新必然校验失败，直接明示
+                    subtitle = if (BuildConfig.DEBUG) msgDebugUnsupported else null,
                     trailing = {
                         Button(
                             onClick = {
+                                if (BuildConfig.DEBUG) {
+                                    toast(msgDebugUnsupported)
+                                    return@Button
+                                }
                                 if (checkingUpdate) return@Button
                                 checkingUpdate = true
                                 scope.launch {
@@ -252,7 +265,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                                     }
                                 }
                             },
-                            enabled = !checkingUpdate,
+                            enabled = !checkingUpdate && !BuildConfig.DEBUG,
                             modifier = Modifier.height(30.dp),
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = androidx.compose.foundation.layout.PaddingValues(
@@ -342,6 +355,31 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                         }
                     }
                 }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            SettingsGroup(title = stringResource(R.string.open_source_licenses)) {
+                ActionRow(
+                    title = stringResource(R.string.licenses_index),
+                    subtitle = stringResource(R.string.open_source_licenses_desc),
+                    trailing = {
+                        Button(
+                            onClick = { showLicenses = true },
+                            modifier = Modifier.height(30.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                horizontal = 10.dp,
+                                vertical = 2.dp,
+                            ),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.view_licenses),
+                                fontSize = rowSubFontSize,
+                            )
+                        }
+                    },
+                )
             }
 
             Spacer(Modifier.height(32.dp))

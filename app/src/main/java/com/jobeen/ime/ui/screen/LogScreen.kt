@@ -34,6 +34,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -48,8 +49,10 @@ import com.jobeen.ime.base.CrashTrap
 import com.jobeen.ime.base.log.AppLogBuffer
 import com.jobeen.ime.base.log.AppLogEntry
 import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.data.manager.takeCodePoints
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,12 +64,13 @@ fun LogScreen(onBack: () -> Unit) {
     val logText = remember(entries) {
         entries.joinToString("\n") { "${it.time} ${it.tag} ${it.message}" }
     }
-    // 最近崩溃记录（CrashTrap 落盘）：有内容才显示复制入口，纯手动
-    // 取回——复制带敏感标记，不进自家剪贴板历史
-    var pendingCrash by remember { mutableStateOf<String?>(null) }
+    // 最近崩溃记录（CrashTrap 落盘）：有内容才显示复制入口与发生
+    // 时间，纯手动取回——复制带敏感标记，不进自家剪贴板历史
+    var pendingCrash by remember { mutableStateOf<CrashTrap.PendingCrash?>(null) }
     LaunchedEffect(Unit) {
-        pendingCrash = withContext(Dispatchers.IO) { CrashTrap.readPendingCrash(context) }
+        pendingCrash = withContext(Dispatchers.IO) { CrashTrap.readPendingCrashInfo(context) }
     }
+    val scope = rememberCoroutineScope()
 
     LaunchedEffect(entries.size) {
         if (entries.isNotEmpty()) listState.animateScrollToItem(entries.lastIndex)
@@ -82,13 +86,15 @@ fun LogScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    val crashText = pendingCrash
-                    if (crashText != null) {
+                    val crash = pendingCrash
+                    if (crash != null) {
                         val copiedLabel = stringResource(R.string.crash_copied)
                         IconButton(onClick = {
                             copySensitiveClip(
                                 context,
-                                crashText.take(CrashTrap.MAX_CHARS),
+                                // 字素口径截断：String.take 按 UTF-16
+                                // 码元计数会劈开代理对/组合 emoji
+                                crash.text.takeCodePoints(CrashTrap.MAX_CHARS),
                                 "Jime crash log",
                             )
                             ToastUtil.showToast(context, copiedLabel)
@@ -103,7 +109,18 @@ fun LogScreen(onBack: () -> Unit) {
                     IconButton(onClick = { copyLogs(context, logText, logsLabel) }, enabled = entries.isNotEmpty()) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_logs))
                     }
-                    IconButton(onClick = AppLogBuffer::clear, enabled = entries.isNotEmpty()) {
+                    IconButton(
+                        onClick = {
+                            AppLogBuffer.clear()
+                            // 崩溃记录一并清除（此前只清日志：崩溃文件
+                            // 只读不删、旧崩溃入口永久留在页面上）
+                            pendingCrash = null
+                            scope.launch(Dispatchers.IO) {
+                                CrashTrap.clearPendingCrashes(context)
+                            }
+                        },
+                        enabled = entries.isNotEmpty() || pendingCrash != null,
+                    ) {
                         Icon(Icons.Filled.DeleteSweep, contentDescription = stringResource(R.string.clear_logs))
                     }
                 },
@@ -118,6 +135,23 @@ fun LogScreen(onBack: () -> Unit) {
                 .padding(8.dp)
                 .background(Color(0xFF101214)),
         ) {
+            // 最近崩溃的发生时间：记录只读不删，没有时间用户无从判断
+            // 顶栏那个入口是几天前的旧崩溃还是刚刚发生的
+            val crash = pendingCrash
+            if (crash != null) {
+                val crashTimeText = remember(crash.occurredAtMs) {
+                    java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(crash.occurredAtMs))
+                }
+                Text(
+                    text = stringResource(R.string.last_crash_time, crashTimeText),
+                    color = Color(0xFFFF7777),
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                )
+            }
             LazyColumn(
                 state = listState,
                 modifier = Modifier.fillMaxSize(),

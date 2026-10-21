@@ -3,6 +3,9 @@ package com.jobeen.ime.base.update
 import androidx.core.content.edit
 import com.jobeen.ime.base.net.fetchGithubReleaseAssetSha256
 import com.jobeen.ime.base.util.DigestUtil
+import com.jobeen.ime.base.ngram.DownloadGate
+import com.jobeen.ime.base.ngram.DownloadRecord
+import com.jobeen.ime.base.ngram.DownloadResult
 import com.jobeen.ime.base.ngram.gramFileInstallLock
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.CancellationException
@@ -63,11 +66,11 @@ object WanxiangUpdateManager {
     private const val ALLOWED_SUFFIX = ".dict.yaml"
 
     const val PREFS_NAME = "wanxiang_update"
-    private const val KEY_SCHEMA_VERSION = "schema_version"
+    internal const val KEY_SCHEMA_VERSION = "schema_version"
     // 内置随 App 打包的万象 Lite 数据版本（仅作落盘 version.txt 读不到时的
     // 兜底；展示优先读 shared/version.txt，见 readBundledSchemaVersion）
     const val BUILTIN_SCHEMA_VERSION = "v18.1.6"
-    private const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
+    internal const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
     // 下载时计算的内容指纹（用于本地/远端比对）
     private const val KEY_DICT_REMOTE_FP = "dict_remote_fp"
     private const val KEY_DICT_REMOTE_FP_VER = "dict_remote_fp_ver"
@@ -101,6 +104,8 @@ object WanxiangUpdateManager {
 
     // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
     // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
+    // 本 client 只用于检查类短请求（Release 查询、资产摘要查询、
+    // Range 指纹取数）；整包下载走 [downloadClient]，见其注释
     private val client = OkHttpClient.Builder()
         .followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS)
@@ -110,6 +115,19 @@ object WanxiangUpdateManager {
         // 中），callTimeout 给整条调用封顶
         .callTimeout(20, TimeUnit.SECONDS)
         .build()
+
+    /**
+     * 整包下载专用 client：与 [client] 同配置，唯独去掉 callTimeout。
+     * callTimeout 是整条调用（含读完响应体）的总时长上限，只适用于
+     * 上面的短请求；整包下载（约 23 MB 方案包、约 400 MB 语法模型）
+     * 耗时随用户带宽而定，套 20 秒总上限必然在读流中途被掐断
+     * （第十一批给 Range 取数加封顶时误伤了共用同一 client 的下载
+     * 路径）。派生 client 与原 client 共享连接池与调度器。
+     * internal 供守护测试断言其 callTimeoutMillis == 0、防回归。
+     */
+    internal val downloadClient: OkHttpClient by lazy {
+        client.newBuilder().callTimeout(0, TimeUnit.MILLISECONDS).build()
+    }
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -162,6 +180,16 @@ object WanxiangUpdateManager {
                 return compareVersions(schemaRemoteVersion, local) > 0
             }
         val hasUpdate: Boolean get() = schemaUpdateAvailable || gramUpdateAvailable
+
+        /**
+         * 远端语法模型内容是否经 GitHub 登记摘要核实过：摘要解析
+         * 失败（接口限流/网络异常，内嵌摘要又恰好缺失）时
+         * [gramSha256] 为空，模型侧「无更新」结论只剩下载记录的
+         * 发布时间语义兜底——上游同名原地换包时发布时间不变、
+         * 记录判不出，界面不得据此宣称「已是最新」，只能如实报
+         * 未确认（V7b 口径）。摘要非空即已核实。
+         */
+        val gramContentVerified: Boolean get() = gramSha256.isNotEmpty()
     }
 
     /** "v18.0.15" 风格版本号逐段数字比较。 */
@@ -316,14 +344,38 @@ object WanxiangUpdateManager {
     private const val KEY_APP_VERSION_CODE_SEEN = "app_version_code_seen"
 
     /**
-     * App 版本切换时的指纹记录清理：内置词库随 App 升级可能已变化，
+     * 版本切换时 [ensureVersionHousekeeping] 清掉的偏好键清单：
+     * 远端词库指纹记录、词库指纹缓存（新旧两套口径）与在线更新的
+     * 方案版本记录。不含 [KEY_GRAM_PUBLISHED_AT]：语法模型文件不被
+     * 内置包解压覆盖（内置 resource.zip 只有词库与方案文件），其
+     * 发布时间记录与盘上文件始终同在、自洽，清掉只会逼已装用户
+     * 无谓重判。internal 供测试钉住这份清单的构成。
+     */
+    internal val VERSION_HOUSEKEEPING_CLEARED_KEYS: List<String> = listOf(
+        KEY_DICT_REMOTE_FP,
+        KEY_DICT_REMOTE_FP_VER,
+        KEY_FP_DICT,
+        KEY_FP_DICT_STATE,
+        KEY_FP_DICT_LEGACY,
+        KEY_FP_DICT_STATE_LEGACY,
+        KEY_SCHEMA_VERSION,
+    )
+
+    /**
+     * App 版本切换时的记录清理：内置词库随 App 升级可能已变化，
      * 且指纹口径也可能随版本变更——versionCode 与上次记录不一致时，
-     * 清掉远端词库指纹记录与词库指纹缓存（本地状态键只含文件
-     * path|length|mtime，换包重部署偶然同状态时会命中旧口径值），
-     * 逼下一次检查重新实时取数/重算。语法模型缓存不动：其指纹是
+     * 按 [VERSION_HOUSEKEEPING_CLEARED_KEYS] 清掉远端词库指纹记录与
+     * 词库指纹缓存（本地状态键只含文件 path|length|mtime，换包重
+     * 部署偶然同状态时会命中旧口径值），逼下一次检查重新实时
+     * 取数/重算；同时清在线更新的方案版本记录（data M1）：App 升级
+     * 重新解压内置包会把 shared/dicts 还原为内置版本，旧记录不清
+     * 时本地版本继续显示在线版、与远端同版还会误判「已是最新」、
+     * 不给更新入口——清后本地版本回落到实际部署的内置 version.txt，
+     * 与盘上内容一致。语法模型缓存与发布时间记录不动：其指纹是
      * 文件内容 SHA-256、口径未变，状态键含文件长度与 mtime 足以
-     * 自行失效。在设置页打开与 [checkForUpdates] 入口各调一次，
-     * 幂等且只是一次偏好读（版本号未变即返回）。
+     * 自行失效；gram 文件也不被内置包覆盖（见清单注释）。
+     * 在设置页打开与 [checkForUpdates] 入口各调一次，幂等且只是
+     * 一次偏好读（版本号未变即返回）。
      */
     fun ensureVersionHousekeeping(context: android.content.Context) {
         val prefs = context.getSharedPreferences(
@@ -336,12 +388,7 @@ object WanxiangUpdateManager {
         }.getOrNull() ?: return
         if (prefs.getLong(KEY_APP_VERSION_CODE_SEEN, -1L) == current) return
         prefs.edit {
-            remove(KEY_DICT_REMOTE_FP)
-            remove(KEY_DICT_REMOTE_FP_VER)
-            remove(KEY_FP_DICT)
-            remove(KEY_FP_DICT_STATE)
-            remove(KEY_FP_DICT_LEGACY)
-            remove(KEY_FP_DICT_STATE_LEGACY)
+            VERSION_HOUSEKEEPING_CLEARED_KEYS.forEach { remove(it) }
             putLong(KEY_APP_VERSION_CODE_SEEN, current)
         }
     }
@@ -858,54 +905,76 @@ object WanxiangUpdateManager {
         }
     }
 
-    /**
-     * 下载并应用更新（词库 + 语法模型配套）。
-     * 全部在 IO 线程执行；支持协程取消，取消后临时文件会被清理。
-     * @return true=全部成功并已记录版本号；false=失败（旧文件不受影响）
-     */
-    // 全流程互斥：临时目录与 .part 路径都是固定名，并发更新会互相覆盖/删除
+    // 下载并应用更新（词库 + 语法模型配套）的全流程互斥：临时目录
+    // 与 .part 路径都是固定名，并发更新会互相覆盖/删除。入口防重入
+    // 与跨路互斥由 DownloadGate 承担（见 downloadAndApply），本锁只
+    // 串行化同一管理器的实际更新事务
     private val updateMutex = Mutex()
 
     /**
-     * 方案更新的进程级运行状态：设置页订阅它决定按钮可用性——页面
-     * 的 remember 局部状态在离开页面后即丢失，工作却跑在应用级作用
-     * 域里继续，重进页面若只看局部状态会误以为没在更新、可再点一次
-     * （同路在 updateMutex 上排队重跑、跨路与语法下载各下一份大文件）。
-     * 状态由 [runningGate] 驱动：只有抢到占位的调用才置位/复位，
-     * 被拒的重复调用不触碰它，不会把正在跑（或排队中）的更新假复位。
+     * 方案更新的进程级运行状态、进度与结果：设置页订阅它们决定按钮
+     * 与状态文案——页面的 remember 局部状态在离开页面后即丢失，
+     * 工作却跑在应用级作用域里继续，重进页面若只看局部状态会误以
+     * 为没在更新、可再点一次，进行中的进度与已完成的结果也无从
+     * 读回（N2）。
+     * 状态由跨下载器共用的 [DownloadGate] 驱动：只有抢到闸的调用
+     * 才置位/复位，被拒的重复调用（BUSY）不触碰它们，不会把正在
+     * 跑（或排队中）的更新假复位、也不会覆盖 [lastResult]。
      */
     private val runningState = kotlinx.coroutines.flow.MutableStateFlow(false)
     val isRunning: kotlinx.coroutines.flow.StateFlow<Boolean> = runningState
 
-    /**
-     * 防重入占位：[downloadAndApply] 入口第一行 CAS 抢占，持有到整个
-     * 函数结束（含在 updateMutex 上排队等锁期间）。updateMutex 只保
-     * 证串行、挡不住「排队重跑一遍」，且旧写法任何一次调用结束都会
-     * 把运行状态置回 false，先结束者会让排队中的调用假复位；占位把
-     * 「排队」也算作进行中，重复调用在入口即被拒。
-     */
-    private val runningGate = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val progressState =
+        kotlinx.coroutines.flow.MutableStateFlow<UpdateProgress?>(null)
 
+    /** 更新进度（阶段与已下载/总字节数）：进程级发布，页面重进可续看；非运行期为 null */
+    val progress: kotlinx.coroutines.flow.StateFlow<UpdateProgress?> = progressState
+
+    private val lastResultState =
+        kotlinx.coroutines.flow.MutableStateFlow<DownloadRecord?>(null)
+
+    /** 最近一次更新的完成记录（成功/失败与完成时间）；未跑过为 null */
+    val lastResult: kotlinx.coroutines.flow.StateFlow<DownloadRecord?> = lastResultState
+
+    /**
+     * 下载并应用更新。防重入占位用跨下载器共用的 [DownloadGate]
+     * （与语法模型单独下载共用一把，见该类注释）：[downloadAndApply]
+     * 入口第一行抢占，持有到整个函数结束（含在 updateMutex 上排队
+     * 等锁期间）。updateMutex 只保证串行、挡不住「排队重跑一遍」，
+     * 且旧写法任何一次调用结束都会把运行状态置回 false，先结束者
+     * 会让排队中的调用假复位；闸把「排队」也算作进行中，重复调用
+     * 在入口即被拒，并与语法模型下载跨路互斥。
+     * @return 三态结果：被拒（已有任一路下载在跑）为
+     * [DownloadResult.BUSY]，与失败严格区分
+     */
     suspend fun downloadAndApply(
         prefs: android.content.SharedPreferences,
         info: UpdateInfo,
         cacheDir: File,
         onProgress: (UpdateProgress) -> Unit = {},
-    ): Boolean {
-        if (!runningGate.compareAndSet(false, true)) {
-            Timber.w("方案更新已在进行中，忽略重复调用")
-            return false
+    ): DownloadResult {
+        if (!DownloadGate.tryAcquire()) {
+            Timber.w("已有大文件下载在进行中，忽略本次方案更新调用")
+            return DownloadResult.BUSY
         }
         runningState.value = true
+        progressState.value = null
         try {
-            return updateMutex.withLock {
-                downloadAndApplyLocked(prefs, info, cacheDir, onProgress)
+            val ok = updateMutex.withLock {
+                downloadAndApplyLocked(prefs, info, cacheDir) { progress ->
+                    progressState.value = progress
+                    onProgress(progress)
+                }
             }
+            val result = if (ok) DownloadResult.SUCCESS else DownloadResult.FAILED
+            lastResultState.value = DownloadRecord(result, System.currentTimeMillis())
+            return result
         } finally {
-            // 先复位状态再放占位：占位未放时无人能抢入并置位，
+            // 先复位状态再放闸：闸未放时无人能抢入并置位，
             // 不会出现新调用的 true 被本处 false 覆盖
+            progressState.value = null
             runningState.value = false
-            runningGate.set(false)
+            DownloadGate.release()
         }
     }
 
@@ -1294,7 +1363,9 @@ object WanxiangUpdateManager {
         onProgress: (downloaded: Long, total: Long) -> Unit,
     ): Boolean {
         return runCatching {
-            client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            // 整包下载走无总时长上限的 downloadClient：共用带
+            // callTimeout 的检查用 client 会在 20 秒处掐断读流
+            downloadClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     Timber.w("方案更新下载失败：HTTP %d", response.code)
                     return false

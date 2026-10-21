@@ -1,8 +1,13 @@
 package com.jobeen.ime
 
+import com.jobeen.ime.engine.rime.data.userdict.formatHttpDate
 import com.jobeen.ime.engine.rime.data.userdict.mergedStateMatchesCurrent
+import com.jobeen.ime.engine.rime.data.userdict.postPutRecheckAdoptable
+import com.jobeen.ime.engine.rime.data.userdict.putPrecondition
 import com.jobeen.ime.engine.rime.data.userdict.remoteChangedDecision
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -190,10 +195,12 @@ class WebDavBaselineDecisionTest {
     }
 
     @Test
-    fun f1_noETagServer_noTimestampMaterial_treatedAsMatch() {
-        // GET 未带 Last-Modified：没有可信材料可比，按一致处理，
-        // 不因校验材料不足让无 ETag 服务器上的同步永远失败
-        assertTrue(
+    fun r3_noValidatorsAtAll_cannotVerify_treatedAsMismatch() {
+        // 第十三批 R3 改规格（原用例断言 true、名为 treatedAsMatch，
+        // 已按新规格改判并更名）：双验证器皆无、或任一侧时间缺失时
+        // 没有任何材料能证明期间未被改动，按「无法验证即已变」判
+        // 不一致，上层据此中止/不采纳，而不是无条件放行裸覆盖
+        assertFalse(
             mergedStateMatchesCurrent(
                 mergedETag = null,
                 mergedLastModifiedMs = 0L,
@@ -201,5 +208,149 @@ class WebDavBaselineDecisionTest {
                 currentLastModifiedMs = 2_000L,
             ),
         )
+        assertFalse(
+            mergedStateMatchesCurrent(
+                mergedETag = null,
+                mergedLastModifiedMs = 0L,
+                currentETag = null,
+                currentLastModifiedMs = 0L,
+            ),
+        )
+        assertFalse(
+            mergedStateMatchesCurrent(
+                mergedETag = null,
+                mergedLastModifiedMs = 1_000L,
+                currentETag = null,
+                currentLastModifiedMs = 0L,
+            ),
+        )
+    }
+
+    // ---------- H1：夹逼只比 PROPFIND 与 PROPFIND，GET 头表示不进决策 ----------
+
+    @Test
+    fun h1_bracket_propfindStatesEqual_matches_regardlessOfGetHeaderRepresentation() {
+        // Apache mod_deflate 会把 GET 响应 ETag 改写为 "abc-gzip"，
+        // 与 PROPFIND 的 "abc" 永不相等——旧实现拿 GET 头与 PROPFIND
+        // 全等比对，这类服务器上上传永久失败。新口径下 GET 头根本
+        // 不进 mergedStateMatchesCurrent：夹逼比的是 GET 前后两次
+        // PROPFIND 的状态（同口径），相等即一致、不相等即中止
+        assertTrue(
+            mergedStateMatchesCurrent(
+                mergedETag = "abc",
+                mergedLastModifiedMs = 1_000L,
+                currentETag = "abc",
+                currentLastModifiedMs = 1_000L,
+            ),
+        )
+        assertFalse(
+            mergedStateMatchesCurrent(
+                mergedETag = "abc",
+                mergedLastModifiedMs = 1_000L,
+                currentETag = "abd",
+                currentLastModifiedMs = 1_000L,
+            ),
+        )
+    }
+
+    // ---------- R2：PUT 无响应 ETag 时，补查基准的采纳判据 ----------
+
+    @Test
+    fun r2_recheck_otherDeviceWroteAfterPut_notAdopted() {
+        // 他设备在本机 PUT 完成之后、补查之前写入新版本：补查修改
+        // 时间晚于 PUT 完成时刻 → 证明不了是本机 PUT 的内容，不写
+        // 基准，下次上传先合并，不会跳过合并覆盖它
+        assertFalse(
+            postPutRecheckAdoptable(
+                anchorETag = "e3",
+                anchorETagWeak = false,
+                anchorLastModifiedMs = 1_000L,
+                recheckETag = "e4",
+                recheckLastModifiedMs = 5_000L,
+                putFinishedAtMs = 4_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun r2_recheck_withinPutWindow_adopted() {
+        // 补查修改时间落在「锚点之后、PUT 完成之前」：就是本次 PUT
+        // 落下的内容，可采纳为新基准
+        assertTrue(
+            postPutRecheckAdoptable(
+                anchorETag = "e3",
+                anchorETagWeak = false,
+                anchorLastModifiedMs = 1_000L,
+                recheckETag = "e3next",
+                recheckLastModifiedMs = 3_000L,
+                putFinishedAtMs = 4_000L,
+            ),
+        )
+    }
+
+    @Test
+    fun r2_recheck_sameETagAsAnchor_adopted_staleOrNoMaterial_notAdopted() {
+        // 补查 ETag 与强锚点全等：远端仍是已合并的那一份
+        assertTrue(
+            postPutRecheckAdoptable(
+                anchorETag = "e3",
+                anchorETagWeak = false,
+                anchorLastModifiedMs = 1_000L,
+                recheckETag = "e3",
+                recheckLastModifiedMs = 1_000L,
+                putFinishedAtMs = 4_000L,
+            ),
+        )
+        // 修改时间不晚于锚点且 ETag 已变：无法证明是本次 PUT
+        assertFalse(
+            postPutRecheckAdoptable(
+                anchorETag = "e3",
+                anchorETagWeak = false,
+                anchorLastModifiedMs = 2_000L,
+                recheckETag = "eX",
+                recheckLastModifiedMs = 2_000L,
+                putFinishedAtMs = 4_000L,
+            ),
+        )
+        // 无 ETag / 无时间：无从证明，一律不采纳
+        assertFalse(
+            postPutRecheckAdoptable(
+                anchorETag = "e3",
+                anchorETagWeak = false,
+                anchorLastModifiedMs = 1_000L,
+                recheckETag = null,
+                recheckLastModifiedMs = 3_000L,
+                putFinishedAtMs = 4_000L,
+            ),
+        )
+        assertFalse(
+            postPutRecheckAdoptable(
+                anchorETag = null,
+                anchorETagWeak = false,
+                anchorLastModifiedMs = 0L,
+                recheckETag = "e1",
+                recheckLastModifiedMs = 0L,
+                putFinishedAtMs = 4_000L,
+            ),
+        )
+    }
+
+    // ---------- R3：无 ETag 有时间时，前置条件降级为时间条件 ----------
+
+    @Test
+    fun r3_precondition_noETagWithTimestamp_usesIfUnmodifiedSince() {
+        val lm = 1_700_000_000_000L
+        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = lm)
+        assertNull(pre.ifMatch)
+        assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
+        // 与弱 ETag 分支同口径（同一时间入参得同一结果）
+        assertEquals(
+            putPrecondition("abc123", etagWeak = true, lastModifiedMs = lm),
+            pre,
+        )
+        // 双无才裸 PUT
+        val bare = putPrecondition(null, etagWeak = false, lastModifiedMs = 0L)
+        assertNull(bare.ifMatch)
+        assertNull(bare.ifUnmodifiedSince)
     }
 }

@@ -33,6 +33,42 @@ data class GramModelManifest(
  */
 internal val gramFileInstallLock = java.util.concurrent.locks.ReentrantLock()
 
+/**
+ * 两路大文件下载的进程级共用闸：语法模型单独下载（本文件）与方案
+ * 更新（WanxiangUpdateManager，其流程内含约 400 MB 语法模型下载）
+ * 写的是同一个目标文件。此前两路各持一把 AtomicBoolean、彼此
+ * 不排斥，跨路互斥只靠设置页读 StateFlow 快照判断——快照翻转有
+ * 帧级延迟，同帧双击能双双放行、各下一份约 400 MB。闸只有一把：
+ * 任一路持有期间另一路入口即被拒（[DownloadResult.BUSY]），互斥
+ * 不再依赖界面层时序。
+ */
+object DownloadGate {
+    private val gate = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 抢占下载闸：成功返回 true 并持有至 [release]；已有下载在跑返回 false */
+    fun tryAcquire(): Boolean = gate.compareAndSet(false, true)
+
+    fun release() {
+        gate.set(false)
+    }
+
+    /** 当前是否有任一路下载持有闸（同步读，供界面守门即时判断） */
+    val isBusy: Boolean get() = gate.get()
+}
+
+/**
+ * 大文件下载的三态结果：抢闸被拒（已有下载在跑，BUSY）与真正失败
+ * （FAILED）严格区分——界面对 BUSY 不得置失败标志（旧实现被拒返回
+ * false 被当失败，第一路还在下载、界面却报「下载失败」）。
+ */
+enum class DownloadResult { SUCCESS, FAILED, BUSY }
+
+/** 一次下载的完成记录（进程级发布）：供页面销毁重进后读回最近一次结果 */
+data class DownloadRecord(
+    val result: DownloadResult,
+    val finishedAtMs: Long,
+)
+
 object GramModelDownloader {
     private const val BUFFER_SIZE = 32 * 1024
     private const val REPORT_STEP = 256 * 1024L
@@ -60,41 +96,61 @@ object GramModelDownloader {
         .build()
 
     /**
-     * 语法模型下载的进程级运行状态：设置页订阅它决定按钮可用性——
-     * 页面局部状态随页面销毁丢失，下载却在应用级作用域里继续，
-     * 重进页面只看局部状态会重复启动同一下载（与方案更新跨路时
-     * 还会各下一份约 400 MB）。
-     * 状态由 [runningGate] 驱动：只有抢到占位的调用才置位/复位，
-     * 被拒的重复调用不触碰它，不会把正在跑的下载假复位。
+     * 语法模型下载的进程级运行状态、进度与结果：设置页订阅它们决定
+     * 按钮与状态文案——页面局部状态随页面销毁丢失，下载由调用方以
+     * 应用级作用域启动、页面销毁不中断，重进页面只看局部状态会
+     * 误判空闲、重复启动同一下载，进行中的进度与已完成的结果也
+     * 无从读回。
+     * 状态由跨下载器共用的 [DownloadGate] 驱动：只有抢到闸的调用
+     * 才置位/复位，被拒的重复调用（BUSY）不触碰它们，不会把正在
+     * 跑的下载假复位、也不会覆盖 [lastResult]。
      */
     private val runningState = kotlinx.coroutines.flow.MutableStateFlow(false)
     val isRunning: kotlinx.coroutines.flow.StateFlow<Boolean> = runningState
 
-    /**
-     * 防重入占位：[download] 入口第一行 CAS 抢占，持有到整个函数
-     * 结束。没有它时快速双击可同时启动两路下载——两路共用同一个
-     * partial 文件，互相 delete/覆盖对方下到一半的内容；旧写法又在
-     * 任一调用结束时无条件复位运行状态，先结束者还会把仍在跑的
-     * 另一路假复位、让页面误判空闲再放行一路。
-     */
-    private val runningGate = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val progressState = kotlinx.coroutines.flow.MutableStateFlow(0f)
 
+    /** 下载进度 0f..1f（总量未知时为 0f）；非运行期保持初值或上次进度 */
+    val progress: kotlinx.coroutines.flow.StateFlow<Float> = progressState
+
+    private val lastResultState =
+        kotlinx.coroutines.flow.MutableStateFlow<DownloadRecord?>(null)
+
+    /** 最近一次下载的完成记录（成功/失败与完成时间）；未跑过为 null */
+    val lastResult: kotlinx.coroutines.flow.StateFlow<DownloadRecord?> = lastResultState
+
+    /**
+     * 下载语法模型。入口第一行抢跨下载器共用的 [DownloadGate]（与
+     * 方案更新共用一把，见该类注释），持有到整个函数结束：没有它时
+     * 快速双击可同时启动两路下载，两路共用同一个 partial 文件会
+     * 互相 delete/覆盖对方下到一半的内容。
+     * @return 三态结果：被拒（已有任一路下载在跑）为
+     * [DownloadResult.BUSY]，与失败严格区分
+     */
     suspend fun download(
         language: String,
         onProgress: (downloaded: Long, total: Long) -> Unit = { _, _ -> },
-    ): Boolean {
-        if (!runningGate.compareAndSet(false, true)) {
-            Timber.w("语法模型下载已在进行中，忽略重复调用")
-            return false
+    ): DownloadResult {
+        if (!DownloadGate.tryAcquire()) {
+            Timber.w("已有大文件下载在进行中，忽略本次语法模型下载调用")
+            return DownloadResult.BUSY
         }
         runningState.value = true
+        progressState.value = 0f
         try {
-            return downloadInternal(language, onProgress)
+            val ok = downloadInternal(language) { downloaded, total ->
+                progressState.value =
+                    if (total > 0L) downloaded.toFloat() / total.toFloat() else 0f
+                onProgress(downloaded, total)
+            }
+            val result = if (ok) DownloadResult.SUCCESS else DownloadResult.FAILED
+            lastResultState.value = DownloadRecord(result, System.currentTimeMillis())
+            return result
         } finally {
-            // 先复位状态再放占位：占位未放时无人能抢入并置位，
+            // 先复位状态再放闸：闸未放时无人能抢入并置位，
             // 不会出现新调用的 true 被本处 false 覆盖
             runningState.value = false
-            runningGate.set(false)
+            DownloadGate.release()
         }
     }
 

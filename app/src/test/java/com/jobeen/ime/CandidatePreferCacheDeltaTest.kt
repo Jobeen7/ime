@@ -76,6 +76,27 @@ class CandidatePreferCacheDeltaTest {
     }
 
     @Test
+    fun loadListenerUnregisterStopsNotifications() {
+        // 注销句柄语义（第十三批自审回修）：注册方（引擎实例）销
+        // 毁时注销，之后的 loaded 转真不再通知到它；句柄重复调用
+        // 无操作。本对象是进程级单例，测试结束必须注销自己的监
+        // 听，避免泄漏进其他用例
+        var notified = 0
+        val unregister = CandidatePreferCache.registerLoadListener { notified++ }
+        try {
+            CandidatePreferCache.finishLoad(mapOf("甲" to 1), gen())
+            assertEquals(1, notified)
+            unregister()
+            unregister()
+            CandidatePreferCache.invalidate()
+            CandidatePreferCache.finishLoad(mapOf("甲" to 2), gen())
+            assertEquals(1, notified)
+        } finally {
+            unregister()
+        }
+    }
+
+    @Test
     fun windowClickAlreadyInDbSnapshotIsNotDoubleCounted() {
         // 时序二（读数在点击对子之后）：窗口内点了一次，其 DB 写
         // 先于读数落地，DB 快照（11）已包含这次点击；落点也已把

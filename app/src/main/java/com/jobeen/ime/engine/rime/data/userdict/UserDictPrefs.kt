@@ -26,16 +26,27 @@ object UserDictPrefs {
 
     /**
      * 每文件的最近成功上传/下载时间（同步基准的一部分，与 ETag 基准
-     * 同为 per-file 口径）。键名沿用 `sync_etag_` 前缀不是笔误：
-     * BackupManager 还原时按「精确键名 + sync_etag_ 前缀」剔除同步
-     * 基准（基准是本机状态、不得随备份跨设备带入），新时间键只有落
-     * 在该前缀下才继续被既有过滤排除，无需改动备份侧。
-     * 旧的全局键 last_upload_time / last_download_time 已弃用：不再
-     * 读写（存量值原样留在 prefs 里、备份过滤仍会剔除它们），首次
-     * 升级后每本词典按「无基准」先合并一次再上传。
+     * 同为 per-file 口径）。键名用独立前缀 `sync_time␟`（␟ 是单元
+     * 分隔符 U+001F，不可能出现在词典文件名里）：时间键与 ETag 键
+     * （`sync_etag_`+文件名）的键空间彻底不交叠。此前时间键沿用
+     * `sync_etag_uptime_`/`sync_etag_downtime_` 前缀，与名为
+     * `uptime_…` 的文件的 ETag 键同名、String/Long 类型互覆会抛
+     * ClassCastException，前缀分离后根除；旧前缀时间键不再读写
+     * （存量值留在 prefs 里，备份过滤的 `sync_etag_` 前缀仍覆盖
+     * 它们）。备份侧：BackupManager 还原过滤同时剔除 `sync_etag_`
+     * 与 `sync_time␟` 两族键（基准是本机状态、不得随备份跨设备
+     * 带入）。
+     * 旧的全局键 last_upload_time / last_download_time 只读回落：
+     * 显示聚合在 per-file 全空时读它们（升级前最后一次同步时刻），
+     * 同步决策永不读。
      */
-    private const val KEY_SYNC_UPLOAD_TIME_PREFIX = "sync_etag_uptime_"
-    private const val KEY_SYNC_DOWNLOAD_TIME_PREFIX = "sync_etag_downtime_"
+    private const val KEY_SYNC_UPLOAD_TIME_PREFIX = "sync_time\u001Fup\u001F"
+    private const val KEY_SYNC_DOWNLOAD_TIME_PREFIX = "sync_time\u001Fdown\u001F"
+    private const val KEY_LEGACY_LAST_UPLOAD_TIME = "last_upload_time"
+    private const val KEY_LEGACY_LAST_DOWNLOAD_TIME = "last_download_time"
+
+    /** 最近一次任意下载成功并完成合并的时刻（仅供「上次下载」显示，不是同步基准） */
+    private const val KEY_LAST_ANY_DOWNLOAD_TIME = "last_any_download_time"
 
     private val prefs by lazy {
         appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -88,13 +99,34 @@ object UserDictPrefs {
      * 显示用（设置页「上次上传/下载」）：全部词典 per-file 基准时间
      * 的最大值，即最近一次成功同步的时刻；无任何记录为 0。
      * 只读聚合，不再是独立存储，更不是同步决策的依据——决策一律
-     * 走下面按文件隔离的基准。
+     * 走下面按文件隔离的基准。per-file 全空时回落读旧全局键
+     * （升级前最后一次同步的时刻，仅显示、只读）。
      */
     val lastUploadTime: Long
-        get() = maxPerFileTime(KEY_SYNC_UPLOAD_TIME_PREFIX)
+        get() {
+            val perFile = maxPerFileTime(KEY_SYNC_UPLOAD_TIME_PREFIX)
+            return if (perFile > 0L) perFile
+            else prefs.getLong(KEY_LEGACY_LAST_UPLOAD_TIME, 0L)
+        }
 
     val lastDownloadTime: Long
-        get() = maxPerFileTime(KEY_SYNC_DOWNLOAD_TIME_PREFIX)
+        get() {
+            // 跨词典下载不建 per-file 基准，但「上次下载」显示应更新：
+            // 聚合里并入任意下载的最近时刻
+            val agg = maxOf(
+                maxPerFileTime(KEY_SYNC_DOWNLOAD_TIME_PREFIX),
+                prefs.getLong(KEY_LAST_ANY_DOWNLOAD_TIME, 0L),
+            )
+            return if (agg > 0L) agg
+            else prefs.getLong(KEY_LEGACY_LAST_DOWNLOAD_TIME, 0L)
+        }
+
+    /** 任意一次下载合并成功后记一笔（仅供「上次下载」显示，永不作同步基准） */
+    fun noteAnyDownload(timeMs: Long) {
+        if (timeMs > prefs.getLong(KEY_LAST_ANY_DOWNLOAD_TIME, 0L)) {
+            prefs.edit().putLong(KEY_LAST_ANY_DOWNLOAD_TIME, timeMs).apply()
+        }
+    }
 
     private fun maxPerFileTime(prefix: String): Long {
         var max = 0L

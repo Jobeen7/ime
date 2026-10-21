@@ -5,15 +5,14 @@ import com.jobeen.ime.base.ngram.GramDb
 import com.jobeen.ime.base.priority.CandidateFeature
 import com.jobeen.ime.base.priority.PriorityCalculator
 import com.jobeen.ime.base.priority.WeightConfig
-import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
-import timber.log.Timber
 
-class CandidateRerankManager(private val context: Context) {
+class CandidateRerankManager(context: Context) {
     private val calculator = PriorityCalculator()
 
     suspend fun rerank(
-        candidates: List<Candidate>, inputContext: String, gramDb: GramDb?
+        candidates: List<Candidate>, inputContext: String, gramDb: GramDb?,
+        prefers: Map<String, Int>,
     ): List<Candidate> {
         if (candidates.size <= 1) return candidates
 
@@ -21,8 +20,10 @@ class CandidateRerankManager(private val context: Context) {
         val restoreEnd = minOf(25, candidates.size)
         if (restoreEnd <= restoreStart) return candidates
 
-        // 偏好走内存缓存，不再每轮查库
-        val prefers = CandidatePreferCache.snapshot(context)
+        // 偏好快照由调用方传入：已加载时是内存直读；未加载时调用
+        // 方先用当前缓存出候选、加载完成后另行重排刷新（见
+        // RimeEngine.restoreCandidates），本函数不在候选首屏路径
+        // 上等偏好加载（加载与写事务互斥，等它等于等写事务整段）
 
         val cfg = WeightConfig()
         val restored = ArrayList<Candidate>(restoreEnd - restoreStart)
