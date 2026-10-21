@@ -9,6 +9,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import timber.log.Timber
@@ -46,16 +48,36 @@ object CandidatePreferCache {
      * 「DAO upsert → 计数落点」对子严格先后——读数要么整体在对子
      * 之前（点击不在读数里，随后由落点直加缓存），要么整体在对子
      * 之后（读数已含点击，落点已先行计入缓存、合并取 maxOf 不重
-     * 复）。为此生产写路径统一走 [recordClick]：upsert、节流裁剪
-     * 与落点在同一段通道代码内依次执行，与 snapshot 的读库段同
-     * 通道 FIFO 串行、互不交错。此前 upsert 在 RimeEngine 的
+     * 复）。生产写路径统一走 [recordClick]：upsert、节流裁剪与落
+     * 点在同一段通道代码内依次执行。此前 upsert 在 RimeEngine 的
      * preferDbScope 另一条通道上执行、只有落点经 [noteUpsert] 投
      * 递到本通道，对子被拆在两条通道上：读段若排在 upsert 之后、
      * 落点之前执行，读数已含这次点击而落点随后又 +1，该交错下
-     * 双计真实可达。收编后对子不可分割，不变量才真正成立，合并
-     * 回归纯 maxOf 即精确（见 [mergeLoadedSnapshot]）。
+     * 双计真实可达，收编即为消除这一拆分。
+     *
+     * 但通道 FIFO 只保证「同一时刻只有一段在跑」，不保证跨挂起
+     * 的不可分割：recordClick 在 dao.upsert（Room 挂起调用）处挂
+     * 起时会让出通道的唯一 worker，排队中的 snapshot 读库段可以
+     * 插入运行——若 upsert 已提交、写协程尚未恢复，读数含本次点
+     * 击而落点随后又 +1，双计在收编后依然可达（审查 F6）。跨挂
+     * 起的互斥由 [transactionMutex] 提供：加载段与点击对子段都
+     * 必须在 Mutex 内执行，通道只负责把它们送到同一执行域。
      */
     private val serialDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+    /**
+     * 跨挂起互斥：[snapshot] 的加载段、[recordClick] 全段（upsert
+     * →落点→节流裁剪）与 [noteUpsert] 的落点段都在本锁内执行，
+     * 任一段在 DAO 挂起期间不允许另一段插入。
+     *
+     * 锁序纪律：本锁恒为最外层；既有 [lock]（synchronized）只护
+     * 代次校验与缓存合并的短临界区，只允许出现在本锁内层（经
+     * [landIfCurrent]/[finishLoad]）或单独出现（[invalidate]），
+     * 绝不反向嵌套。[invalidate] 刻意不取本锁：它由非挂起调用方
+     * （备份还原）同步调用，靠推进代次使飞行中的加载/落点在恢
+     * 复后自检作废，无需与本锁互斥。
+     */
+    private val transactionMutex = Mutex()
 
     /**
      * [noteUpsert] 落点的投递作用域：noteUpsert 本身是同步签名
@@ -79,21 +101,33 @@ object CandidatePreferCache {
      */
     suspend fun snapshot(context: Context): Map<String, Int> {
         if (loaded) return cache
+        return loadSnapshot(AppDatabase.getInstance(context).candidatePreferDao())
+    }
+
+    /**
+     * [snapshot] 的加载段本体（DAO 注入形态，供单测以假 DAO 驱动
+     * 与 [recordClick] 的真实交错）。整段在 [transactionMutex] 内：
+     * 读库中途即使挂起，点击对子也不能插入——读数要么整体在对子
+     * 之前，要么在对子之后，不存在「读数已含点击、落点再 +1」的
+     * 中间态。
+     */
+    internal suspend fun loadSnapshot(dao: CandidatePreferDao): Map<String, Int> {
         return withContext(serialDispatcher) {
-            // 通道外的一次 loaded 检查只是快速路径：进通道后先复查，
-            // 排队期间已由另一段完成加载时直接返回，不重复读库
-            if (loaded) return@withContext cache
-            val gen = generation          // 加载前记下代次
-            val loadedMap = runCatching {
-                AppDatabase.getInstance(context).candidatePreferDao().getAllCounts()
-                    .associate { it.text to it.click_count }
-            }.getOrElse {
-                Timber.e(it, "candidate prefer cache load failed")
-                null
+            transactionMutex.withLock {
+                // 锁外的一次 loaded 检查只是快速路径：进锁后先复查，
+                // 排队期间已由另一段完成加载时直接返回，不重复读库
+                if (loaded) return@withLock cache
+                val gen = generation          // 加载前记下代次
+                val loadedMap = runCatching {
+                    dao.getAllCounts().associate { it.text to it.click_count }
+                }.getOrElse {
+                    Timber.e(it, "candidate prefer cache load failed")
+                    null
+                }
+                // 加载失败不能置 loaded：否则本进程内偏好永远为空且不再重试
+                finishLoad(loadedMap, gen)
+                cache
             }
-            // 加载失败不能置 loaded：否则本进程内偏好永远为空且不再重试
-            finishLoad(loadedMap, gen)
-            cache
         }
     }
 
@@ -109,42 +143,46 @@ object CandidatePreferCache {
     /**
      * 生产写路径：一次选词点击的落库与计数落点。
      *
-     * 整段在 [serialDispatcher] 上执行：dao.upsert 成功后在同一段
-     * 内把计数落点合并进缓存，随后做节流容量检查（超限裁剪并
-     * [invalidate]——本次落点若已合并会随之清掉，与裁剪后的 DB
-     * 在下次 [snapshot] 重建时对齐，不单独留账）。整段与
-     * [snapshot] 的读库段同通道串行，点击对子不可分割（见
-     * [serialDispatcher] 的不变量说明）。异常由调用方按其既有口径
-     * 吸收（写入是尽力而为，失败只丢这一次偏好）。
+     * 整段在 [serialDispatcher] 上、[transactionMutex] 内执行：
+     * dao.upsert 成功后在同一段内把计数落点合并进缓存，随后做节
+     * 流容量检查（超限裁剪并 [invalidate]——本次落点若已合并会
+     * 随之清掉，与裁剪后的 DB 在下次 [snapshot] 重建时对齐，不
+     * 单独留账）。裁剪段一并纳入本锁：它读写的是同一张偏好表与
+     * 缓存代次，若留在锁外，其 prune/invalidate 与加载段的交错
+     * 还要再证一遍；纳入后整段对加载段原子，结论直接随对子成
+     * 立，且裁剪本身不另写缓存计数、无独立双计面。异常由调用方
+     * 按其既有口径吸收（写入是尽力而为，失败只丢这一次偏好）。
      */
     suspend fun recordClick(text: String, dao: CandidatePreferDao) {
         withContext(serialDispatcher) {
-            val gen = generation
-            // 隐私：不把光标前文存入 context 列——该列从未被排序/
-            // 重排读取，却会随云备份与 .jbk 备份带出用户输入片段
-            //（口径随写路径自 RimeEngine 迁入，保持不变）
-            dao.upsert(text, "")
-            // 落点紧随 upsert 先行：裁剪段的 count/prune 若抛异常
-            // （盘满/库忙），不得吞掉这次已落库点击的计数（旧实现
-            // noteUpsert 在裁剪之前投递，落点不丢，此序保持之）
-            landIfCurrent(text, gen)
-            // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载
-            //（保持两者一致；刚落的点若随 invalidate 清掉，下次
-            // snapshot 按裁剪后的 DB 重建对齐，本就如此）。裁剪是
-            // 尽力而为的维护动作，失败只记日志、不冒泡连累点击主
-            // 路径——异常在本段内吸收（取消除外）
-            try {
-                if (++recordClicksSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
-                    recordClicksSincePruneCheck = 0
-                    if (dao.count() > PREFER_LIMIT) {
-                        dao.pruneToLimit(PREFER_LIMIT)
-                        invalidate()
+            transactionMutex.withLock {
+                val gen = generation
+                // 隐私：不把光标前文存入 context 列——该列从未被排序/
+                // 重排读取，却会随云备份与 .jbk 备份带出用户输入片段
+                //（口径随写路径自 RimeEngine 迁入，保持不变）
+                dao.upsert(text, "")
+                // 落点紧随 upsert 先行：裁剪段的 count/prune 若抛异常
+                // （盘满/库忙），不得吞掉这次已落库点击的计数（旧实现
+                // noteUpsert 在裁剪之前投递，落点不丢，此序保持之）
+                landIfCurrent(text, gen)
+                // 偏好表容量上限：节流检查，超限时裁剪并让缓存重载
+                //（保持两者一致；刚落的点若随 invalidate 清掉，下次
+                // snapshot 按裁剪后的 DB 重建对齐，本就如此）。裁剪是
+                // 尽力而为的维护动作，失败只记日志、不冒泡连累点击主
+                // 路径——异常在本段内吸收（取消除外）
+                try {
+                    if (++recordClicksSincePruneCheck >= PRUNE_CHECK_INTERVAL) {
+                        recordClicksSincePruneCheck = 0
+                        if (dao.count() > PREFER_LIMIT) {
+                            dao.pruneToLimit(PREFER_LIMIT)
+                            invalidate()
+                        }
                     }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "Failed to prune candidate preference table")
                 }
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.w(e, "Failed to prune candidate preference table")
             }
         }
     }
@@ -189,7 +227,11 @@ object CandidatePreferCache {
     fun noteUpsert(text: String) {
         val gen = generation
         landingScope.launch {
-            landIfCurrent(text, gen)
+            // 落点段同在跨挂起互斥内：与加载段、点击对子段统一口径，
+            // 不留一条能在对子挂起窗口插入的旁路落点
+            transactionMutex.withLock {
+                landIfCurrent(text, gen)
+            }
         }
     }
 
@@ -228,8 +270,8 @@ object CandidatePreferCache {
  * 不在 DB 快照里的新键不动；只在 DB 快照里的键按 DB 值落缓存。
  *
  * 纯 maxOf 之所以精确，前提是读库点与「upsert＋落点」对子已由
- * 串行通道严格排序（生产写路径 [CandidatePreferCache.recordClick]
- * 在同一通道段内成对完成，见其通道说明）：
+ * 跨挂起互斥严格排序（生产写路径 [CandidatePreferCache.recordClick]
+ * 与加载段同在 transactionMutex 内成对完成，见其锁说明）：
  * 命中键的点击要么全部在读数里（DB 值即真值、且 ≥ 缓存里对应
  * 的落点计数），要么全部不在读数里（DB 值是点击前的存量，落点
  * 在合并之后才执行、随后直加到缓存上）。不存在「一部分在读数

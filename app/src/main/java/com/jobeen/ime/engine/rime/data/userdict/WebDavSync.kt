@@ -130,6 +130,17 @@ object WebDavSync {
     )
 
     /**
+     * 一次成功下载合并的结果：词条数，以及「本次实际下载并成功合并
+     * 的那份内容」的远端状态（取自 GET 响应头）。上传路径用它锚定
+     * PUT 前置条件并校验合并后远端未再被改动，不用二次查询的新状态
+     * 当基准（二者之间的窗口里他设备写入的新词会被未合并覆盖）。
+     */
+    private data class DownloadOutcome(
+        val count: Int,
+        val mergedState: RemoteState,
+    )
+
+    /**
      * 远端状态查询的三态结果：必须区分「确实不存在」与「查不到」——
      * 后者（网络错误/5xx）若按不存在处理，上传会无条件 PUT、静默覆盖
      * 其他设备刚改的远端词库。
@@ -208,24 +219,21 @@ object WebDavSync {
     }
 
     /**
-     * 判断远端文件自上次同步后是否被其他设备改动过。
-     * 优先比 ETag（上次同步记录的基准值）；无 ETag 时退化为修改时间与
-     * 上次同步时间（上传/下载取较晚者）的比较。
+     * 判断远端文件自上次同步后是否被其他设备改动过。决策本体是文件
+     * 末尾的纯函数 [remoteChangedDecision]（可单测），这里只负责从
+     * per-file 基准里取数：ETag 与上传/下载时间都按文件名隔离，
+     * 某本词典没有可信基准时只对它自己判「已变、先合并」，不受其他
+     * 词典同步历史的影响。
      */
-    private fun isRemoteChanged(fileName: String, state: RemoteState): Boolean {
-        // 历史存量基准可能未规范化，比较前同样过一遍（自愈）
-        val knownETag = normalizeETag(UserDictPrefs.syncETag(fileName))
-        if (state.etag != null) {
-            // 从未记录过基准（本机第一次同步）但远端已有文件：视为已被改动，先合并再说
-            return knownETag == null || knownETag != state.etag
-        }
-        if (knownETag != null) return true // 远端曾有 ETag 现在没了，保守视为已变
-        val lastSync = maxOf(UserDictPrefs.lastUploadTime, UserDictPrefs.lastDownloadTime)
-        // 无任何同步基准（本机首次同步、lastSync==0）时不能断言远端未变：
-        // 旧实现恒返回 false，首次上传会跳过合并直接覆盖其他设备的词库。
-        // 无基准一律视为已变，先下载合并再上传。
-        return lastSync == 0L || state.lastModifiedMs > lastSync
-    }
+    private fun isRemoteChanged(fileName: String, state: RemoteState): Boolean =
+        remoteChangedDecision(
+            // 历史存量基准可能未规范化，比较前同样过一遍（自愈）
+            knownETag = normalizeETag(UserDictPrefs.syncETag(fileName)),
+            stateETag = state.etag,
+            stateLastModifiedMs = state.lastModifiedMs,
+            lastUploadMs = UserDictPrefs.lastUploadTimeFor(fileName),
+            lastDownloadMs = UserDictPrefs.lastDownloadTimeFor(fileName),
+        )
 
     /**
      * 上传当前词典到 WebDAV 服务器，返回导出的词条数。
@@ -256,9 +264,27 @@ object WebDavSync {
             }
             if (baseState != null && isRemoteChanged(fileName, baseState)) {
                 Timber.i("Remote '$fileName' changed since last sync; merging before upload")
-                downloadLocked(dictName, session).getOrThrow()
+                val merged = downloadLocked(dictName, session).getOrThrow()
+                // 合并后的二次查询只作校验：远端必须仍是刚下载合并的
+                // 那一份，否则说明 GET 之后又有其他设备写入——那批新
+                // 词不在合并内容里，锚定它上传必然覆盖丢失。中止本
+                // 次上传、让用户重走一遍（会先把新版本合并进来），绝
+                // 不把二次查询的新状态替换为 PUT 的基准。校验通过时
+                // 基准就是合并内容自身的状态。
                 baseState = when (val r = fetchRemoteState(fileName)) {
-                    is RemoteStateResult.Found -> r.state
+                    is RemoteStateResult.Found -> {
+                        if (!mergedStateMatchesCurrent(
+                                merged.mergedState.etag, merged.mergedState.lastModifiedMs,
+                                r.state.etag, r.state.lastModifiedMs,
+                            )
+                        ) {
+                            throw IllegalStateException(
+                                "远端词库在同步期间又被其他设备修改，本次上传已取消以避免覆盖。" +
+                                    "请重新点一次上传（会先自动合并远端最新内容）"
+                            )
+                        }
+                        merged.mergedState
+                    }
                     // 合并后远端消失（被其他设备删除等）：按不存在处理退化为新建
                     // 上传，须同步置 remoteMissing，让 PUT 带 If-None-Match 新建限定
                     RemoteStateResult.NotFound -> {
@@ -316,7 +342,7 @@ object WebDavSync {
                             }
                     }
                 }
-                UserDictPrefs.lastUploadTime = System.currentTimeMillis()
+                UserDictPrefs.setLastUploadTime(fileName, System.currentTimeMillis())
                 Timber.i("User dict '$dictName' uploaded: $count entries")
                 // 删除词表随词典同步一起走（并集合并，失败不影响词典同步结果）
                 runCatching { syncDeletedWords() }
@@ -545,13 +571,15 @@ object WebDavSync {
         dictName: String,
         session: RimeSession,
         remoteFile: String = remoteFileName(dictName),
-    ): Result<Int> = syncMutex.withLock { downloadLocked(dictName, session, remoteFile) }
+    ): Result<Int> = syncMutex.withLock {
+        downloadLocked(dictName, session, remoteFile).map { it.count }
+    }
 
     private suspend fun downloadLocked(
         dictName: String,
         session: RimeSession,
         remoteFile: String = remoteFileName(dictName),
-    ): Result<Int> = withContext(Dispatchers.IO) {
+    ): Result<DownloadOutcome> = withContext(Dispatchers.IO) {
         runCatching {
             checkConfigured()
             val tempFile = File(appContext.cacheDir, "webdav-download-${dictName}-${System.nanoTime()}.txt")
@@ -561,6 +589,13 @@ object WebDavSync {
                     .header("Authorization", authHeader())
                     .get()
                     .build()
+                // 本次 GET 到的内容的验证器：先只捕获在手里，等响应体
+                // 完整读取且导入全部成功后才与时间基准在同一点提交。
+                // 绝不在导入前先写基准——中途失败又不撤回的话，下次
+                // 上传会误以为这份内容已合并、跳过合并直接覆盖它
+                var mergedETag: String? = null
+                var mergedETagWeak = false
+                var mergedLastModifiedMs = 0L
                 client.newCall(request).execute().use { response ->
                     if (response.code == 404) {
                         throw WebDavHttpException(404, "同步目录下没有该备份文件")
@@ -568,12 +603,10 @@ object WebDavSync {
                     if (!response.isSuccessful) {
                         throw httpError("下载", response.code, errorDetail(response))
                     }
-                    // 下载的就是本词典的同步文件时，记下它的 ETag 作为下次上传的比对基准
-                    if (remoteFile == remoteFileName(dictName)) {
-                        normalizeETag(response.header("ETag"))?.let {
-                            UserDictPrefs.setSyncETag(remoteFile, it)
-                        }
-                    }
+                    val etagRaw = response.header("ETag")
+                    mergedETag = normalizeETag(etagRaw)
+                    mergedETagWeak = isWeakETag(etagRaw)
+                    mergedLastModifiedMs = parseHttpDateMs(response.header("Last-Modified"))
                     val body = response.body ?: throw IllegalStateException("下载内容为空")
                     if (body.contentLength() == 0L) {
                         throw IllegalStateException("下载的文件为空")
@@ -602,12 +635,23 @@ object WebDavSync {
                     }
                 }
                 if (count < 0) throw IllegalStateException("导入用户词典失败")
-                UserDictPrefs.lastDownloadTime = System.currentTimeMillis()
+                // 基准提交点：响应体完整读取、转置与导入全部成功才
+                // 到这里，此前的任何失败都不会留下基准。同名文件才
+                // 建立基准（跨词典下载合并的是别的文件，不代表本词
+                // 典的同步文件已被合并过）；ETag 与 per-file 下载时
+                // 间在同一点写入，口径一致
+                if (remoteFile == remoteFileName(dictName)) {
+                    mergedETag?.let { UserDictPrefs.setSyncETag(remoteFile, it) }
+                    UserDictPrefs.setLastDownloadTime(remoteFile, System.currentTimeMillis())
+                }
                 Timber.i("User dict '$dictName' downloaded and imported: $count entries")
                 // 删除词表随词典同步一起走（并集合并，失败不影响词典下载结果）
                 runCatching { syncDeletedWords() }
                     .onFailure { Timber.w(it, "Deleted words sync failed") }
-                count
+                DownloadOutcome(
+                    count,
+                    RemoteState(mergedETag, mergedLastModifiedMs, mergedETagWeak),
+                )
             } finally {
                 tempFile.delete()
             }
@@ -786,6 +830,54 @@ internal fun putPrecondition(
         null,
         if (lastModifiedMs > 0L) formatHttpDate(lastModifiedMs) else null,
     )
+}
+
+/**
+ * 「远端是否自本机基准后被改动」的纯决策（基准全部是 per-file 口径
+ * 的入参，本函数不读存储）：
+ * - 远端有 ETag：从未记录过基准（本机第一次同步该文件）也视为已
+ *   变——远端已有内容必须先合并，绝不直接覆盖；
+ * - 远端没 ETag 但本机存量基准有：ETag 消失本身保守视为已变；
+ * - 两边都无 ETag：退化为修改时间与本文件上次成功上传/下载时间
+ *   （取较晚者）的比较；该文件无任何时间基准（0）时一律视为已
+ *   变，先合并再说——别的文件同步过不算这份文件的基准。
+ */
+internal fun remoteChangedDecision(
+    knownETag: String?,
+    stateETag: String?,
+    stateLastModifiedMs: Long,
+    lastUploadMs: Long,
+    lastDownloadMs: Long,
+): Boolean {
+    if (stateETag != null) {
+        return knownETag == null || knownETag != stateETag
+    }
+    if (knownETag != null) return true // 远端曾有 ETag 现在没了，保守视为已变
+    val lastSync = maxOf(lastUploadMs, lastDownloadMs)
+    return lastSync == 0L || stateLastModifiedMs > lastSync
+}
+
+/**
+ * 合并后校验「远端是否仍是刚下载合并的那一份」的纯决策：
+ * - 合并内容带 ETag：当前 ETag 必须与之全等（当前无 ETag 亦为不
+ *   一致——GET 之后文件被换过或验证器被撤下，锚定上传都会覆盖
+ *   未合并的内容）；
+ * - 合并内容无 ETag（服务器不发）：退化为修改时间全等比较；任一
+ *   侧时间缺失（0）时无可信材料可比，按一致处理——无强验证器服
+ *   务器上的能力边界与既有口径相同（PUT 侧仍有时间前置条件兜
+ *   底），不因校验材料不足而让同步永远失败。
+ */
+internal fun mergedStateMatchesCurrent(
+    mergedETag: String?,
+    mergedLastModifiedMs: Long,
+    currentETag: String?,
+    currentLastModifiedMs: Long,
+): Boolean {
+    if (mergedETag != null) return mergedETag == currentETag
+    if (mergedLastModifiedMs > 0L && currentLastModifiedMs > 0L) {
+        return mergedLastModifiedMs == currentLastModifiedMs
+    }
+    return true
 }
 
 private fun httpDateFormat(): java.text.SimpleDateFormat =
