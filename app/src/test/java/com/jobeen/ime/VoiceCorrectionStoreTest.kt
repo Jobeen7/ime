@@ -51,14 +51,19 @@ class VoiceCorrectionStoreTest {
     fun twoCharPair_needsTwoObservations() {
         val file = tempFile()
         val store = VoiceCorrectionStore(file)
-        // 两字词对单次观察只进观察期：不生效、也不落盘
+        // 两字词对单次观察只进观察期：不生效；观察计数以 O 行落盘
+        // （P3 起观察期持久化，旧口径「观察不落盘」已废止），但
+        // 不得出现该词对的 P 行（未生效不落正式规则）
         store.learn("开会", "开汇")
         assertEquals("去开会", store.correct("去开会").text)
-        assertTrue(!file.exists() || !file.readText(Charsets.UTF_8).contains("开汇"))
+        awaitContent(file, "O\t开会\t开汇\t1")
+        assertTrue(!file.readText(Charsets.UTF_8).contains("P\t开汇\t开会"))
         // 第二次独立观察才正式生效
         store.learn("开会", "开汇")
         assertEquals("去开汇", store.correct("去开会").text)
         awaitContent(file, "P\t开汇\t开会")
+        // 生效后观察记录已摘除，落盘文件里不再有该词对的 O 行
+        awaitCondition(file) { !it.contains("O\t开会\t开汇") }
     }
 
     @Test
@@ -240,5 +245,153 @@ class VoiceCorrectionStoreTest {
         assertFalse(store.isDisabled("星辰峰"))
         assertEquals("星辰大", store.correct("星辰大").text)
         awaitCondition(file) { !it.contains("P\t") && !it.contains("D\t") }
+    }
+
+    // ── P3：规则生命周期（命中淘汰/正向确认/观察期落盘） ──
+
+    /** 从落盘内容里取某词对 P 行的列（正形、错形定位）。 */
+    private fun pRow(content: String, right: String, wrong: String): List<String>? =
+        content.lineSequence()
+            .map { it.split('\t') }
+            .firstOrNull { it.size >= 3 && it[0] == "P" && it[1] == right && it[2] == wrong }
+
+    /** 预置文件的词对行：六列全格式，时间/命中按入参。 */
+    private fun pLine(right: String, wrong: String, hit: Int, lastHit: Long, learned: Long) =
+        "P\t$right\t$wrong\t$hit\t$lastHit\t$learned\n"
+
+    @Test
+    fun hitOldPairSurvivesCapEviction() {
+        val file = tempFile()
+        // 预置 301 条（超上限 1）：第 0 条命中过且最近命中时间最新，
+        // 其余从未命中、学入时间相同——旧口径按学入顺序会挤掉第 0
+        // 条，新口径必须保住它、淘汰未命中者中学入最靠前的一条
+        val sb = StringBuilder()
+        for (i in 0 until VoiceCorrectionStore.MAX_PAIRS + 1) {
+            if (i == 0) {
+                sb.append(pLine(rightForm(0), wrongForm(0), hit = 5, lastHit = 2_000_000, learned = 1_000_000))
+            } else {
+                sb.append(pLine(rightForm(i), wrongForm(i), hit = 0, lastHit = 0, learned = 1_000_000))
+            }
+        }
+        file.writeText(sb.toString(), Charsets.UTF_8)
+        val store = VoiceCorrectionStore(file)
+        store.rules() // 触发加载与就地淘汰
+        assertEquals(rightForm(0), store.correct(wrongForm(0)).text)
+        assertEquals(wrongForm(1), store.correct(wrongForm(1)).text)
+        assertEquals(
+            rightForm(VoiceCorrectionStore.MAX_PAIRS),
+            store.correct(wrongForm(VoiceCorrectionStore.MAX_PAIRS)).text
+        )
+    }
+
+    @Test
+    fun unhitNewPairEvictedBeforeHitOldPair() {
+        val file = tempFile()
+        // 老词对 A：学入最早，但命中过（活动时间 5000）；新词对 B：
+        // 学入较晚、从未命中（活动时间=学入 4000）；filler 活动时
+        // 间 9000 全部安全。超限 1 条时应淘汰活动时间最旧的 B，
+        // 而不是学入顺序最靠前的 A
+        val sb = StringBuilder()
+        sb.append(pLine(rightForm(0), wrongForm(0), hit = 3, lastHit = 5_000, learned = 1_000))
+        sb.append(pLine(rightForm(1), wrongForm(1), hit = 0, lastHit = 0, learned = 4_000))
+        for (i in 2 until VoiceCorrectionStore.MAX_PAIRS + 1) {
+            sb.append(pLine(rightForm(i), wrongForm(i), hit = 0, lastHit = 0, learned = 9_000))
+        }
+        file.writeText(sb.toString(), Charsets.UTF_8)
+        val store = VoiceCorrectionStore(file)
+        store.rules()
+        assertEquals(rightForm(0), store.correct(wrongForm(0)).text)
+        assertEquals(wrongForm(1), store.correct(wrongForm(1)).text)
+    }
+
+    @Test
+    fun hitCountRecordedOnlyOnActualReplacement() {
+        val file = tempFile()
+        val store = VoiceCorrectionStore(file)
+        store.learn("星辰大", "星辰海")
+        awaitContent(file, "P\t星辰海\t星辰大")
+        // 仅路过未替换：命中计数保持 0
+        assertEquals("今天开会", store.correct("今天开会").text)
+        var row = pRow(file.readText(Charsets.UTF_8), "星辰海", "星辰大")!!
+        assertEquals("0", row[3])
+        // 实际替换一次：计数变 1、最近命中时间写入
+        assertEquals("去星辰海", store.correct("去星辰大").text)
+        awaitCondition(file) {
+            pRow(it, "星辰海", "星辰大")?.get(3) == "1"
+        }
+        row = pRow(file.readText(Charsets.UTF_8), "星辰海", "星辰大")!!
+        assertTrue(row[4].toLong() > 0)
+    }
+
+    @Test
+    fun generalizedHitRefreshesGroupLastHit() {
+        val file = tempFile()
+        val store = VoiceCorrectionStore(file)
+        store.learn("星辰大", "星辰海")
+        store.learn("衡辰海", "星辰海")
+        awaitContent(file, "P\t星辰海\t衡辰海")
+        // 「衡辰大」是字位泛化组合（没被逐字教过）：命中后整组两条
+        // 的最近命中时间都被刷新，但命中次数不虚增
+        assertEquals("星辰海", store.correct("衡辰大").text)
+        awaitCondition(file) {
+            val r1 = pRow(it, "星辰海", "星辰大")
+            val r2 = pRow(it, "星辰海", "衡辰海")
+            r1 != null && r2 != null && r1[4].toLong() > 0 && r2[4].toLong() > 0
+        }
+        val row = pRow(file.readText(Charsets.UTF_8), "星辰海", "星辰大")!!
+        assertEquals("0", row[3])
+    }
+
+    @Test
+    fun probationPersistsAcrossInstances() {
+        val file = tempFile()
+        val first = VoiceCorrectionStore(file)
+        first.learn("开会", "开汇")
+        awaitContent(file, "O\t开会\t开汇\t1")
+        // 模拟进程重启：新实例从落盘的 O 行恢复观察计数，第二次
+        // 观察即正式生效（旧口径计数在内存、重启后还需再观察两次）
+        val second = VoiceCorrectionStore(file)
+        second.learn("开会", "开汇")
+        assertEquals("去开汇", second.correct("去开会").text)
+        awaitContent(file, "P\t开汇\t开会")
+    }
+
+    @Test
+    fun clearAlsoClearsPersistedProbation() {
+        val file = tempFile()
+        val store = VoiceCorrectionStore(file)
+        store.learn("开会", "开汇")
+        awaitContent(file, "O\t开会\t开汇\t1")
+
+        store.clear()
+        awaitCondition(file) { !it.contains("O\t") }
+        // 清除后计数从头来：一次观察仍不生效
+        val reloaded = VoiceCorrectionStore(file)
+        reloaded.learn("开会", "开汇")
+        assertEquals("去开会", reloaded.correct("去开会").text)
+    }
+
+    @Test
+    fun legacyAndMalformedMetaLoadWithDefaults() {
+        val file = tempFile()
+        file.writeText(
+            // 旧版三列 P 行
+            "P\t星辰海\t星辰大\n" +
+                // 六列但元信息全坏：词对保留、数值按 0
+                "P\t衡辰海\t衡辰大\tX\tY\tZ\n" +
+                // 坏行型继续逐行跳过
+                "O\t只有两列\n" +
+                "O\t星\t星辰海\t1\n", // 非两字对，非法 O 行
+            Charsets.UTF_8
+        )
+        val store = VoiceCorrectionStore(file)
+        assertEquals("星辰海", store.correct("星辰大").text)
+        assertEquals("衡辰海", store.correct("衡辰大").text)
+        // 坏数值不连坐：触发一次落盘后两条都在，命中列按缺省与实记
+        store.learn("星辰峰", "星辰海")
+        awaitContent(file, "P\t星辰海\t星辰峰")
+        val row = pRow(file.readText(Charsets.UTF_8), "星辰海", "星辰大")!!
+        assertEquals(6, row.size)
+        assertEquals("1", row[3]) // 上面 correct 实际替换过一次
     }
 }

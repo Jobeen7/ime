@@ -21,10 +21,21 @@ object UserDictPrefs {
     private const val KEY_USERNAME = "webdav_username"
     private const val KEY_PASSWORD = "webdav_password"
     private const val KEY_SYNC_PATH = "webdav_sync_path"
-    private const val KEY_LAST_UPLOAD = "last_upload_time"
-    private const val KEY_LAST_DOWNLOAD = "last_download_time"
     private const val KEY_ALLOW_HTTP = "webdav_allow_http"
     private const val KEY_SYNC_ETAG_PREFIX = "sync_etag_"
+
+    /**
+     * 每文件的最近成功上传/下载时间（同步基准的一部分，与 ETag 基准
+     * 同为 per-file 口径）。键名沿用 `sync_etag_` 前缀不是笔误：
+     * BackupManager 还原时按「精确键名 + sync_etag_ 前缀」剔除同步
+     * 基准（基准是本机状态、不得随备份跨设备带入），新时间键只有落
+     * 在该前缀下才继续被既有过滤排除，无需改动备份侧。
+     * 旧的全局键 last_upload_time / last_download_time 已弃用：不再
+     * 读写（存量值原样留在 prefs 里、备份过滤仍会剔除它们），首次
+     * 升级后每本词典按「无基准」先合并一次再上传。
+     */
+    private const val KEY_SYNC_UPLOAD_TIME_PREFIX = "sync_etag_uptime_"
+    private const val KEY_SYNC_DOWNLOAD_TIME_PREFIX = "sync_etag_downtime_"
 
     private val prefs by lazy {
         appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -73,13 +84,44 @@ object UserDictPrefs {
         get() = prefs.getString(KEY_SYNC_PATH, "").orEmpty()
         set(value) = prefs.edit().putString(KEY_SYNC_PATH, value.trim()).apply()
 
-    var lastUploadTime: Long
-        get() = prefs.getLong(KEY_LAST_UPLOAD, 0L)
-        set(value) = prefs.edit().putLong(KEY_LAST_UPLOAD, value).apply()
+    /**
+     * 显示用（设置页「上次上传/下载」）：全部词典 per-file 基准时间
+     * 的最大值，即最近一次成功同步的时刻；无任何记录为 0。
+     * 只读聚合，不再是独立存储，更不是同步决策的依据——决策一律
+     * 走下面按文件隔离的基准。
+     */
+    val lastUploadTime: Long
+        get() = maxPerFileTime(KEY_SYNC_UPLOAD_TIME_PREFIX)
 
-    var lastDownloadTime: Long
-        get() = prefs.getLong(KEY_LAST_DOWNLOAD, 0L)
-        set(value) = prefs.edit().putLong(KEY_LAST_DOWNLOAD, value).apply()
+    val lastDownloadTime: Long
+        get() = maxPerFileTime(KEY_SYNC_DOWNLOAD_TIME_PREFIX)
+
+    private fun maxPerFileTime(prefix: String): Long {
+        var max = 0L
+        for ((key, value) in prefs.all) {
+            if (key.startsWith(prefix)) {
+                val t = (value as? Number)?.toLong() ?: continue
+                if (t > max) max = t
+            }
+        }
+        return max
+    }
+
+    /** 某个远端文件最近一次成功上传的时刻（该文件的时间基准）；从未成功为 0 */
+    fun lastUploadTimeFor(fileName: String): Long =
+        prefs.getLong(KEY_SYNC_UPLOAD_TIME_PREFIX + fileName, 0L)
+
+    fun setLastUploadTime(fileName: String, timeMs: Long) {
+        prefs.edit().putLong(KEY_SYNC_UPLOAD_TIME_PREFIX + fileName, timeMs).apply()
+    }
+
+    /** 某个远端文件最近一次成功下载并合并的时刻（该文件的时间基准）；从未成功为 0 */
+    fun lastDownloadTimeFor(fileName: String): Long =
+        prefs.getLong(KEY_SYNC_DOWNLOAD_TIME_PREFIX + fileName, 0L)
+
+    fun setLastDownloadTime(fileName: String, timeMs: Long) {
+        prefs.edit().putLong(KEY_SYNC_DOWNLOAD_TIME_PREFIX + fileName, timeMs).apply()
+    }
 
     /** 高级选项：是否允许明文 HTTP 的 WebDAV 服务器（默认不允许，凭据与词典会明文传输）。 */
     var allowHttp: Boolean

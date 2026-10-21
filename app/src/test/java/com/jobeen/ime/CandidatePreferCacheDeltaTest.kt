@@ -5,9 +5,14 @@ import com.jobeen.ime.data.database.CandidatePreferDao
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.mergeLoadedSnapshot
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
@@ -37,6 +42,11 @@ import org.junit.Test
  * 落点在缓存侧同一串行通道段内成对完成，见
  * recordClickPairingPreventsDoubleCount 的假 DAO 实跑覆盖）；其
  * 余用例仍以 finishLoad/noteUpsert 直接驱动时序状态机。
+ *
+ * 第十二批 F6 补强：串行通道 FIFO 不防跨挂起交错（upsert 挂起让
+ * 出 worker 时读段仍可插入），加载段与点击对子改由 Mutex 跨挂起
+ * 互斥；suspendedUpsertCannotBeSplitBySnapshotLoad 用可控挂起的
+ * 假 DAO 经生产入口（recordClick + loadSnapshot）实跑该交错。
  */
 class CandidatePreferCacheDeltaTest {
 
@@ -189,11 +199,28 @@ class CandidatePreferCacheDeltaTest {
         }
     }
 
-    /** 内存版 DAO：只实现 recordClick/getAllCounts 用到的计数语义。 */
+    /**
+     * 内存版 DAO：只实现 recordClick/getAllCounts 用到的计数语义。
+     * counts 用 ConcurrentHashMap：F6 回归用例里 upsert 在 IO 线程
+     * 提交、测试线程经门闩信号读取，需要跨线程可见性（既有用例
+     * 顺序执行，语义不变）。
+     */
     private class FakePreferDao : CandidatePreferDao {
-        private val counts = mutableMapOf<String, Int>()
+        private val counts = ConcurrentHashMap<String, Int>()
 
         fun countOf(text: String): Int = counts[text] ?: 0
+
+        /**
+         * 可控挂起门闩（F6 回归用）：非空时 upsert 先把计数提交进
+         * counts、触发 [onUpsertCommitted]，再等门闩放行才返回——
+         * 精确复刻「DAO 已写库、写协程尚未恢复」的窗口。默认 null，
+         * 既有用例行为不变。
+         */
+        @Volatile
+        var upsertGate: CompletableDeferred<Unit>? = null
+
+        @Volatile
+        var onUpsertCommitted: (() -> Unit)? = null
 
         override suspend fun get(text: String): CandidatePrefer? = null
 
@@ -205,6 +232,19 @@ class CandidatePreferCacheDeltaTest {
 
         override suspend fun upsert(text: String, context: String, now: Long) {
             counts[text] = (counts[text] ?: 0) + 1
+            val gate = upsertGate
+            if (gate != null) {
+                onUpsertCommitted?.invoke()
+                gate.await()
+            }
+        }
+
+        override suspend fun insertOrIgnoreZero(text: String, context: String, now: Long) {
+            counts.putIfAbsent(text, 0)
+        }
+
+        override suspend fun incrementExisting(text: String, context: String, now: Long) {
+            counts.merge(text, 1, Int::plus)
         }
 
         override suspend fun count(): Int = counts.size
@@ -218,6 +258,46 @@ class CandidatePreferCacheDeltaTest {
         }
 
         override suspend fun pruneToLimit(limit: Int) = Unit
+    }
+
+    @Test
+    fun suspendedUpsertCannotBeSplitBySnapshotLoad() {
+        // F6 回归（报告形态）：一次点击的 upsert 已提交进 DB（10→11）
+        // 但写协程挂起未返回、落点未执行时，并发触发加载。修复前
+        // snapshot 读段插入运行、读到含本次点击的 11 并置 loaded，
+        // 写协程恢复后落点再 +1，缓存成 12（DB 只有 11）——双计。
+        // 修复后加载段与点击对子同在跨挂起互斥内：加载必须等对子
+        // 整段结束，最终 DB 与缓存同为 11。
+        runBlocking {
+            val dao = FakePreferDao()
+            repeat(10) { dao.upsert("甲", "", 0L) }
+            assertEquals(10, dao.countOf("甲"))
+
+            val committed = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            dao.onUpsertCommitted = { committed.complete(Unit) }
+            dao.upsertGate = gate
+
+            val click = async { CandidatePreferCache.recordClick("甲", dao) }
+            withTimeout(10_000) { committed.await() }
+            // 门闩窗口内：DB 已是 11，落点尚未执行（缓存仍为空）
+            assertEquals(11, dao.countOf("甲"))
+            assertFalse(CandidatePreferCache.cacheCopy().containsKey("甲"))
+
+            val load = async { CandidatePreferCache.loadSnapshot(dao) }
+            delay(300)
+            // 加载段不得在对子挂起期间完成（修复前此处已读完并回写）
+            assertFalse(load.isCompleted)
+            assertTrue(click.isActive)
+
+            gate.complete(Unit)
+            withTimeout(10_000) {
+                click.await()
+                load.await()
+            }
+            assertEquals(11, dao.countOf("甲"))
+            assertEquals(11, CandidatePreferCache.cacheCopy()["甲"])
+        }
     }
 
     @Test
