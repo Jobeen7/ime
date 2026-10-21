@@ -119,10 +119,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     val grammarDownloading by GramModelDownloader.isRunning.collectAsStateWithLifecycle()
     val grammarProgress by GramModelDownloader.progress.collectAsStateWithLifecycle()
     val grammarResult by GramModelDownloader.lastResult.collectAsStateWithLifecycle()
+    // 语法模型结果与下方方案更新侧同口径配「已消费时间」标记
+    // （updateResultSeenAtMs）：点下载即消费掉旧结果，未消费的失
+    // 败才呈失败态，不让上一次失败在重进页面后长期霸占状态行；
+    // 结果本身在进程级 lastResult 里，重进页面仍能读到未消费的
+    var grammarResultSeenAtMs by remember { mutableLongStateOf(0L) }
+    val shownGrammarResult = grammarResult?.takeIf { it.finishedAtMs > grammarResultSeenAtMs }
     // 语法模型失败态从进程级结果派生：已就绪或下载进行中都不算失败；
     // 被下载闸拒绝（BUSY）不写结果，不会误报失败（N3）
     val grammarFailed = !grammarReady && !grammarDownloading &&
-        grammarResult?.result == DownloadResult.FAILED
+        shownGrammarResult?.result == DownloadResult.FAILED
     var grammarButtonWidth by remember { mutableStateOf(0.dp) }
     // 万象方案更新状态
     val updatePrefs = remember {
@@ -247,6 +253,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         if (grammarPending || updatePending) return
         if (GramModelDownloader.isRunning.value || WanxiangUpdateManager.isRunning.value) return
         grammarPending = true
+        // 发起下载即消费掉上一次的语法模型结果，状态文案回到未
+        // 就绪口径（与 startWanxiangUpdate 消费更新结果同口径）
+        grammarResultSeenAtMs = System.currentTimeMillis()
         // 下载跑在应用级作用域（与 startWanxiangUpdate 同口径，N1）：
         // 绑页面 scope 时旋转屏幕、系统切深浅色（Activity 重建）或
         // 离开页面都会把约 400 MB 的下载取消并删掉已下部分；进度与

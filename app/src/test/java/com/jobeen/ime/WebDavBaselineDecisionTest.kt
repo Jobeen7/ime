@@ -2,6 +2,7 @@ package com.jobeen.ime
 
 import com.jobeen.ime.engine.rime.data.userdict.formatHttpDate
 import com.jobeen.ime.engine.rime.data.userdict.mergedStateMatchesCurrent
+import com.jobeen.ime.engine.rime.data.userdict.isUnprotectedOverwrite
 import com.jobeen.ime.engine.rime.data.userdict.postPutRecheckAdoptable
 import com.jobeen.ime.engine.rime.data.userdict.putPrecondition
 import com.jobeen.ime.engine.rime.data.userdict.remoteChangedDecision
@@ -253,37 +254,34 @@ class WebDavBaselineDecisionTest {
         )
     }
 
-    // ---------- R2：PUT 无响应 ETag 时，补查基准的采纳判据 ----------
+    // ---------- 补查基准采纳判据（.17 复核 R1：时间窗支已删除） ----------
 
     @Test
     fun r2_recheck_otherDeviceWroteAfterPut_notAdopted() {
-        // 他设备在本机 PUT 完成之后、补查之前写入新版本：补查修改
-        // 时间晚于 PUT 完成时刻 → 证明不了是本机 PUT 的内容，不写
-        // 基准，下次上传先合并，不会跳过合并覆盖它
+        // 他设备在本机 PUT 完成之后、补查之前写入新版本：补查
+        // ETag 已不是锚点那一份 → 证明不了是本机 PUT 的内容，
+        // 不写基准，下次上传先合并，不会跳过合并覆盖它
         assertFalse(
             postPutRecheckAdoptable(
                 anchorETag = "e3",
                 anchorETagWeak = false,
-                anchorLastModifiedMs = 1_000L,
                 recheckETag = "e4",
-                recheckLastModifiedMs = 5_000L,
-                putFinishedAtMs = 4_000L,
             ),
         )
     }
 
     @Test
-    fun r2_recheck_withinPutWindow_adopted() {
-        // 补查修改时间落在「锚点之后、PUT 完成之前」：就是本次 PUT
-        // 落下的内容，可采纳为新基准
-        assertTrue(
+    fun r1_recheck_sameSecondConcurrentWrite_notAdopted() {
+        // 同秒并发写形态（.17 复核 R1 的重放）：他设备在本机 PUT
+        // 落盘后、响应返回前同秒追加新词，ETag 变 e4、修改时间取
+        // 当前整秒——旧时间窗判据（锚点时间 < 补查整秒 ≤ PUT 完
+        // 成时刻）会误采纳 e4 为基准，下次上传跳过合并合法覆盖
+        // 丢词。新判据只认与强锚点全等，e4 ≠ e3 → 不采纳
+        assertFalse(
             postPutRecheckAdoptable(
                 anchorETag = "e3",
                 anchorETagWeak = false,
-                anchorLastModifiedMs = 1_000L,
-                recheckETag = "e3next",
-                recheckLastModifiedMs = 3_000L,
-                putFinishedAtMs = 4_000L,
+                recheckETag = "e4",
             ),
         )
     }
@@ -295,42 +293,39 @@ class WebDavBaselineDecisionTest {
             postPutRecheckAdoptable(
                 anchorETag = "e3",
                 anchorETagWeak = false,
-                anchorLastModifiedMs = 1_000L,
                 recheckETag = "e3",
-                recheckLastModifiedMs = 1_000L,
-                putFinishedAtMs = 4_000L,
             ),
         )
-        // 修改时间不晚于锚点且 ETag 已变：无法证明是本次 PUT
+        // ETag 已变：无法证明是本次 PUT
         assertFalse(
             postPutRecheckAdoptable(
                 anchorETag = "e3",
                 anchorETagWeak = false,
-                anchorLastModifiedMs = 2_000L,
                 recheckETag = "eX",
-                recheckLastModifiedMs = 2_000L,
-                putFinishedAtMs = 4_000L,
             ),
         )
-        // 无 ETag / 无时间：无从证明，一律不采纳
+        // 无 ETag：无从证明，一律不采纳
         assertFalse(
             postPutRecheckAdoptable(
                 anchorETag = "e3",
                 anchorETagWeak = false,
-                anchorLastModifiedMs = 1_000L,
                 recheckETag = null,
-                recheckLastModifiedMs = 3_000L,
-                putFinishedAtMs = 4_000L,
             ),
         )
+        // PUT 前无锚点（首次新建）：补查 ETag 无可比对的锚点，不采纳
         assertFalse(
             postPutRecheckAdoptable(
                 anchorETag = null,
                 anchorETagWeak = false,
-                anchorLastModifiedMs = 0L,
                 recheckETag = "e1",
-                recheckLastModifiedMs = 0L,
-                putFinishedAtMs = 4_000L,
+            ),
+        )
+        // 锚点为弱 ETag：弱值不作强比较锚点，纵使同值也不采纳
+        assertFalse(
+            postPutRecheckAdoptable(
+                anchorETag = "e3",
+                anchorETagWeak = true,
+                recheckETag = "e3",
             ),
         )
     }
@@ -348,9 +343,85 @@ class WebDavBaselineDecisionTest {
             putPrecondition("abc123", etagWeak = true, lastModifiedMs = lm),
             pre,
         )
-        // 双无才裸 PUT
+        // 双无时纯函数层面前置条件为空（是否中止由调用方按
+        // isUnprotectedOverwrite 判，见下方 R2 用例）
         val bare = putPrecondition(null, etagWeak = false, lastModifiedMs = 0L)
         assertNull(bare.ifMatch)
         assertNull(bare.ifUnmodifiedSince)
+    }
+
+    // ---------- R2（.17 复核）：双空前置条件不得覆盖已存在远端文件 ----------
+
+    @Test
+    fun r2_weakETagNoDate_remoteExists_abort() {
+        // 弱 ETag 且无 Last-Modified：putPrecondition 双空，远端
+        // 文件已存在 → 无条件覆盖风险成立，调用方须中止上传
+        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = 0L)
+        assertNull(pre.ifMatch)
+        assertNull(pre.ifUnmodifiedSince)
+        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
+    }
+
+    @Test
+    fun r2_doubleNull_remoteMissing_allowed() {
+        // 远端文件不存在（首次新建）：没有可被覆盖的既有内容，
+        // 双空放行，新建另有 If-None-Match 限定
+        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = 0L)
+        assertFalse(isUnprotectedOverwrite(pre, remoteExists = false))
+    }
+
+    @Test
+    fun r2_weakETagWithDate_stillSendsIfUnmodifiedSince() {
+        // 弱 ETag＋有修改时间：仍发 If-Unmodified-Since（旧降级
+        // 行为不回退），前置条件非空 → 不触发中止
+        val lm = 1_700_000_000_000L
+        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = lm)
+        assertNull(pre.ifMatch)
+        assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
+        assertFalse(isUnprotectedOverwrite(pre, remoteExists = true))
+        // 强 ETag 同理不触发
+        val strong = putPrecondition("e1", etagWeak = false, lastModifiedMs = 0L)
+        assertFalse(isUnprotectedOverwrite(strong, remoteExists = true))
+    }
+
+    // ---------- 删词同步归一（第十四批回修）：与词典上传同一守卫 ----------
+
+    @Test
+    fun dw_weakETagNoDate_remoteExists_abort() {
+        // 删词链与 R2 同形：弱 ETag＋无修改时间，GET 已证明远端
+        // 删词文件存在 → putPrecondition 双空、无条件覆盖风险成立，
+        // syncDeletedWords 须按同一判据中止本次同步
+        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = 0L)
+        assertNull(pre.ifMatch)
+        assertNull(pre.ifUnmodifiedSince)
+        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
+    }
+
+    @Test
+    fun dw_noETagNoDate_remoteExists_abort() {
+        // 旧删词链该分支根本不算前置条件、无条件裸 PUT；归一后
+        // 双空＋文件已存在同样中止
+        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = 0L)
+        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
+    }
+
+    @Test
+    fun dw_noETagWithDate_usesIfUnmodifiedSince() {
+        // 无 ETag＋有修改时间：归一后走 putPrecondition 的时间
+        // 降级，发 If-Unmodified-Since 受保护（旧分支连可用的
+        // 时间条件也不发），不触发中止
+        val lm = 1_700_000_000_000L
+        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = lm)
+        assertNull(pre.ifMatch)
+        assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
+        assertFalse(isUnprotectedOverwrite(pre, remoteExists = true))
+    }
+
+    @Test
+    fun dw_remoteMissing_doubleNull_allowed() {
+        // 删词文件远端不存在（首次同步）：没有可被覆盖的既有
+        // 内容，双空放行，新建另有 If-None-Match 限定
+        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = 0L)
+        assertFalse(isUnprotectedOverwrite(pre, remoteExists = false))
     }
 }

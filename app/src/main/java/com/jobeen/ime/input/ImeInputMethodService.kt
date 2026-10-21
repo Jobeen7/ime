@@ -52,6 +52,12 @@ class ImeInputMethodService : InputMethodService() {
     private val pendingNotifyInputChanged = Runnable { notifyInputChanged() }
 
     /**
+     * 输入框字段身份跟踪（R3）：onStartInput 与 onStartInputView
+     * 两入口共用一份快照（见 [trackInputField]）。
+     */
+    private val inputFieldTracker = InputFieldTracker()
+
+    /**
      * 一帧探针缓存：同一输入会话、同一选区签名下，[syncActiveInputState]
      * 与 [notifyInputChanged] 共用一次探针结果——Commit 后两者常成对
      * 触发，旧实现对同一光标位置连做两轮跨进程探针。签名取选区，是
@@ -177,25 +183,57 @@ class ImeInputMethodService : InputMethodService() {
         return window.view
     }
 
+    /**
+     * 字段身份跟踪（R3）：把本次输入开始的字段身份喂给
+     * [inputFieldTracker]（与引擎联想共用 InputFieldKey 口径），
+     * 关键字段变化即实为逻辑换框——无论宿主以 restarting 真假
+     * 哪种形式投递。restart 型换框没有 FINISH 回调，S1 收窄后
+     * 的两个真结束信号都不会来，旧框的语音结算尾会按旧纪元通
+     * 过复检、写进新框；故判变即经与 FINISH 侧共用的投递点
+     * （invalidateSpeechAfterInputEnd）同步投递同一作废，作废
+     * 内容单点定义、日后增项两路不会漏跟。投递在 IMS 回调内
+     * 同步完成，早于本回调之后一切语音结算路径对新连接的使
+     * 用；同框 hide/show 与同框 restarting 身份不变、恒不投
+     * 递，不误杀同框待结算整句（S1 的收窄口径不变）。
+     *
+     * 引擎联想的代次仍由引擎在自己 onStartInputView 内自算推
+     * 进（其快照只在该入口滚动，与改前逐字一致），本跟踪不碰
+     * 预测代次，不存在双重推进。
+     */
+    private fun trackInputField(info: EditorInfo?) {
+        if (inputFieldTracker.track(InputFieldKey.of(info))) {
+            invalidateSpeechAfterInputEnd()
+        }
+    }
+
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
         // 输入框获焦比输入视图弹出更早一步：语音预热/存活预检抢在这里
         // 发起，等用户点开键盘、长按语音时冷加载多半已经完成（函数内
         // 部按连接状态与节流自判，重复调用无副作用）
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
+        // 字段身份跟踪（R3）：视图尚未弹出时（如键盘隐藏中换框）
+        // 只有本入口能先于结算路径更新身份，故两入口都喂
+        trackInputField(attribute)
         super.onStartInput(attribute, restarting)
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
         // 语音的输入结束作废（纠错沉淀观察/待就绪整句/撤销账本/
-        // 输入框纪元）不在此投递（S1，判定见
+        // 输入框纪元）的 FINISH 口径不在此投递（S1，判定见
         // advancesEditorEpoch：START_INPUT_VIEW 恒不推进）：同框
         // 收起再打开走的正是本回调且 restarting=false，在此作
-        // 废会把同框待结算的整句误杀；真换框的作废由先行的
+        // 废会把同框待结算的整句误杀；真换框的结束作废由先行的
         // onFinishInput（doStartInput 在 !restarting 时必先
-        // doFinishInput）与 onFinishInputView(true) 承担，不漏
+        // doFinishInput）与 onFinishInputView(true) 承担，不漏。
+        // 例外是字段身份变化（R3，见 trackInputField）：restart
+        // 型逻辑换框没有 FINISH 回调、上面的承担链断裂，故以字
+        // 段比对在本回调内单独投递同一作废——身份不变恒不触发
         // 语音预热/存活预检（onStartInput 已先行一步，这里再兜一次）：
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
+        // 字段身份跟踪（R3）：同步投递，先于下方 engine 与窗口
+        // 对新连接的使用
+        trackInputField(info)
         keyboardWindow?.onStartInputView(info, restarting)
         engine?.onStartInputView(currentInputConnection, info, restarting)
         // 直调即时探针前先撤掉合并通道里排队的那次：它捕获的是旧
@@ -213,9 +251,12 @@ class ImeInputMethodService : InputMethodService() {
         // 只在输入会话结束时投递（仅隐藏键盘不投递、整句仍可
         // 落回同一框的 N13 场景不受影响）；「先收起键盘再换
         // 框」时框架对新框可能只投递 onStartInput（视图未弹出）
-        // 或以 restarting=true 投递 onStartInputView，但
-        // doStartInput 在 !restarting 时必先 doFinishInput，
-        // 旧会话的作废在本处已被承担，不会漏。个别厂商若在隐
+        // 或以 restarting=true 投递 onStartInputView：!restarting
+        // 的换框必先经 doFinishInput、作废在本处承担；
+        // restarting=true 的逻辑换框不经任何 FINISH 回调
+        // （doStartInput 在 restarting 时不调 doFinishInput），
+        // 其作废不在本处、由字段身份跟踪在判变时经共用投递点
+        // 单独投递（R3，见 trackInputField）。个别厂商若在隐
         // 藏键盘时也投递本回调，该场景会被误作废——此点代码
         // 层无法证伪，列入真机验收项待核。与
         // onFinishInputView(true) 先后重复调用无碍：
@@ -235,10 +276,13 @@ class ImeInputMethodService : InputMethodService() {
      * 输入真正结束时的语音作废一并执行：客户端侧作废（纠错沉
      * 淀观察、显示快照、对账窗与暂存、待就绪保留音频、输入框
      * 纪元推进）与语音上屏撤销账本整表作废（账本是旧框的账，
-     * 不能把旧框的段拿来新框删）。投递点只有 onFinishInput 与
-     * onFinishInputView(true) 两个真结束信号（S1）；账本作废
-     * 此前挂在 onStartInputView(!restarting)，同框收起再打开
-     * 会被误清，已随投递收窄一并归位到此处。
+     * 不能把旧框的段拿来新框删）。本函数是语音作废的单点投
+     * 递定义，投递点有三：onFinishInput 与
+     * onFinishInputView(true) 两个真结束信号（S1），以及
+     * trackInputField 判得字段身份变化时（R3：restart 型逻辑
+     * 换框没有 FINISH 回调）；账本作废此前挂在
+     * onStartInputView(!restarting)，同框收起再打开会被误清，
+     * 已随投递收窄一并归位到此处。
      */
     private fun invalidateSpeechAfterInputEnd() {
         com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
