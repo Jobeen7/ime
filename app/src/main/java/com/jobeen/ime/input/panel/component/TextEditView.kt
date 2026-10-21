@@ -486,10 +486,34 @@ class TextEditingButton(
     }
 
     override fun onDetachedFromWindow() {
-        // 与 KeyView 同理：本类自有的按压背景动画不在父类
-        // CustomGestureView 的 detach 收尾覆盖内，分离时取消
+        // 按压层三件套（pressedLayerAlpha / wasPressed /
+        // bgAnimator）与 KeyView 同构，detach 收尾同口径：本类
+        // 自有的按压背景动画不在父类 CustomGestureView 的
+        // detach 收尾覆盖内。仅取消动画不够：按住期间面板关闭
+        // 或切走时，父类收尾把 isPressed 置假会经
+        // drawableStateChanged 新启一个淡出动画，窗口已拆时帧
+        // 不再投递、动画冻结在高值，重挂后残留按压底色（与
+        // KeyView 在 v1.1.12.4 修过的符号键残影同一机制）。故
+        // 按 KeyView 现行实现补齐三件强制复位：先取消在途动
+        // 画；setPressed(false) 强制复位按压态（其引发的状态
+        // 变化会再启一个淡出动画，随即取消）；按压层 alpha
+        // 与 pressedLayerAlpha 直接归零；wasPressed 复位，让
+        // 父类收尾的置假投递空转、不再新启动画
         bgAnimator?.cancel()
         bgAnimator = null
+        if (isPressed) {
+            setPressed(false)
+            bgAnimator?.cancel()
+            bgAnimator = null
+        }
+        if (pressedLayerAlpha != 0) {
+            pressedLayerAlpha = 0
+            val bg = background
+            if (bg is LayerDrawable && bg.numberOfLayers >= 2) {
+                bg.getDrawable(1)?.alpha = 0
+            }
+        }
+        wasPressed = false
         super.onDetachedFromWindow()
     }
 }

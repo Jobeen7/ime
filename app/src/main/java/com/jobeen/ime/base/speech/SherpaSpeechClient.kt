@@ -71,10 +71,12 @@ internal enum class InputLifecycleCallback {
  * onFinishInputView 只在 finishingInput=true 时投递；
  * onStartInputView 恒不投递：同框收起再打开（hide 后 show）走的
  * 正是 onStartInputView(restarting=false)，在此投递会把同框待
- * 结算的语音整句误杀（N13）；而真换框在 AOSP 下必先经
- * doFinishInput（onFinishInput）或 onFinishInputView(true)，
- * 作废不会漏。IMS 的三个回调按本判定决定是否调用
- * [SherpaSpeechClient.onInputViewFinished]。
+ * 结算的语音整句误杀（N13）。本判定只管这三个回调本身：restart
+ * 型逻辑换框（宿主以 restarting=true 换字段）不经任何 FINISH
+ * 回调、doFinishInput 不会触发，不在本判定的覆盖内——其作废
+ * 由 IMS 的字段身份跟踪在判变时经共用投递点单独投递同一作废
+ * （R3，见 IMS 的 trackInputField）。IMS 的三个回调按本判定
+ * 决定是否调用 [SherpaSpeechClient.onInputViewFinished]。
  */
 internal fun advancesEditorEpoch(
     callback: InputLifecycleCallback,
@@ -1276,12 +1278,16 @@ object SherpaSpeechClient {
         // 点，在此推进后，一切捕获了旧纪元的在途语音结算尾（本
         // 会话的 finishSession 尾、下一会话接管时结算上一代的
         // settlePreviousSession 尾）在写屏前复检都会判过期、整段
-        // 丢弃。投递源按 S1 收窄（判定见 advancesEditorEpoch）：
-        // 只有 onFinishInput 与 onFinishInputView(true) 两个真结
-        // 束信号投递本函数；同框收起再打开（hide 走
-        // onFinishInputView(false)、show 走 onStartInputView，
-        // 后者不再投递）与同框 restarting 重开都不经本函数，纪
-        // 元不变，同框落回（N13）不受影响
+        // 丢弃。投递源有三：按 S1 收窄（判定见
+        // advancesEditorEpoch）的 onFinishInput 与
+        // onFinishInputView(true) 两个真结束信号，以及第十四批
+        // 补的字段身份变化投递（R3——restart 型逻辑换框没有
+        // FINISH 回调，IMS 以 InputFieldKey 判变后经与 FINISH
+        // 侧共用的投递点调本函数）；同框收起再打开
+        // （hide 走 onFinishInputView(false)、show 走
+        // onStartInputView，后者不再投递）、同框 restarting 重
+        // 开与字段不变的 restart 都不经本函数，纪元不变，同框
+        // 落回（N13）不受影响
         editorEpoch.advance()
         VoiceCorrectionSession.disarm()
         // 显示快照一并作废（不限于下方的待结算音频分支）：快照

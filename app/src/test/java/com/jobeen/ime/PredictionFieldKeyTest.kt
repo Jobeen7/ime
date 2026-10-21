@@ -1,7 +1,7 @@
 package com.jobeen.ime
 
-import com.jobeen.ime.engine.InputFieldKey
-import com.jobeen.ime.engine.isInputFieldChanged
+import com.jobeen.ime.input.InputFieldKey
+import com.jobeen.ime.input.isInputFieldChanged
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
