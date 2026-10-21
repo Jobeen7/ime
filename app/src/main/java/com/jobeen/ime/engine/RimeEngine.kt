@@ -69,17 +69,40 @@ import java.lang.ref.WeakReference
 import kotlin.lazy
 
 /**
- * 预测上下文在发起点的定格拼装（纯函数）：[base] 是本次上屏落屏
- * 前捕获的光标前基底，[commit] 是本次上屏词，拼起来就是落屏后
- * 的完整前文。上下文由此在发起时刻确定，与异步的落屏时序无关
- * ——predictionJob 自行读前文时与落屏竞速，读早缺词、读晚拼重，
- * 两种联想错误都源于此。超长时只保留尾部（预测只用尾部若干字，
- * commit 位于尾部不得被截掉）。
+ * 输入框身份快照（纯数据）：onStartInputView 的 restarting=true 只
+ * 说明宿主在同一 View 上重启输入（restartInput），不保证还是同一
+ * 个逻辑输入框——WebView 内不同 <input> 之间切换焦点正是走这条
+ * 路、且不经过 onFinishInputView。故以关键字段比对判定「同框重
+ * 启」还是「换框」：包名、字段 id、输入类型、imeOptions 任一不
+ * 同即按换框处理（推进预测代次、作废在途联想）。
  */
-internal fun composePredictionContext(base: String, commit: String, maxLen: Int = 24): String {
-    val joined = base + commit
-    return if (joined.length <= maxLen) joined else joined.takeLast(maxLen)
+internal data class InputFieldKey(
+    val packageName: String?,
+    val fieldId: Int,
+    val inputType: Int,
+    val imeOptions: Int,
+) {
+    companion object {
+        fun of(info: EditorInfo?): InputFieldKey? = info?.let {
+            InputFieldKey(it.packageName, it.fieldId, it.inputType, it.imeOptions)
+        }
+    }
 }
+
+/** restarting 重启时是否实为换框：任一侧快照缺失（首次启动等）不判换框。 */
+internal fun isInputFieldChanged(previous: InputFieldKey?, current: InputFieldKey?): Boolean =
+    previous != null && current != null && previous != current
+
+/**
+ * 借道 DEL 的来源标记：占 KeyModifiers 的 bit 29（既有命名位只到
+ * bit 12 与 24–28、30，metaState 映射也不含此位，不影响透传给宿
+ * 主的修饰状态）。只有 handleBackspaceInJob 产生的借道 DEL 带此
+ * 标记——它在 jobs 串行执行时点已确认组字为空。标记是「组字为空
+ * 已确立」这一前提的来源凭据：forwardUnhandledKey 的选区判定对
+ * 带标记与无标记（native 未消费透传）两路同口径（判定表见该函数），
+ * 不再按标记分流处理，但两路的组字前提不同，凭据保留备查。
+ */
+internal const val BORROWED_DEL_MARKER: Int = 1 shl 29
 
 class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
@@ -168,7 +191,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class Clear(val service: InputMethodService) : Action
         data class Undo(val service: InputMethodService) : Action
         data class Redo(val service: InputMethodService) : Action
-        data class Predict(val commit: String, val baseContext: String? = null) : Action
+        /**
+         * @property fieldGen 发起时刻的输入框代次（在分发点捕获）：
+         * 预测的基底读取与框复检都以这一代为准——代次若等到
+         * requestPrediction 执行时才取，分发与执行之间发生的换框
+         * 会被误读成「仍是发起时的框」。null 表示在 reduce 内直
+         * 接发起、无分发时差，执行时现取即可。
+         */
+        data class Predict(val commit: String, val fieldGen: Long? = null) : Action
         data class PredictionReady(
             val requestId: Long,
             val candidates: List<Candidate>,
@@ -178,6 +208,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class EmitMessage(val message: EngineMessage) : Action
         data class CandidatesReady(val requestId: Long, val message: EngineMessage.Candidates) :
             Action
+
+        /**
+         * 偏好快照加载完成信号：加载监听只投递本 Action，待刷新登
+         * 记的取出、批次复检与 restoreCandidates 重跑全部在 reduce
+         * 串行点内做——监听在缓存的加载线程上同步执行，若在那里
+         * 「比较代次通过→直接调 restoreCandidates」，比较与重跑不
+         * 是原子的（其间插入的新批次会被旧登记的重跑取消并抢发），
+         * 且 restoreCandidates 会脱离 reduce 线程跨线程触碰
+         * candidateRestoreJob。经本 Action 排队后，三者与新批次的
+         * 还原同在一个串行点上，交错不复存在。
+         */
+        data object PreferLoaded : Action
 
         data class PossibleCandidatePinYinSnapshot(
             val candidatePinYinType: String,
@@ -268,23 +310,40 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 光标前文本缓存：getTextBeforeCursor() 是跨进程 Binder 调用，
      * 之前每次产生候选都会调一次。这里缓存最近 64 个字符，TTL 800ms；
      * 新输入框 / 上屏 / 删除文本时主动失效。
-     * 注意：调用方仍需各自做隐私门控（密码框等场景不要读前文）。
+     *
+     * 隐私与代次复检在真正读 IC 的主线程块内做（而非只在调用线程
+     * 预检）：预检与读之间隔着主线程队列，其间可能已切框或切到
+     * 密码框——队列里排在读之前的 onStartInputView 会先更新
+     * editorInfo/代次，读点复检才拦得住。[expectedGen] 非空时还
+     * 要求当前代次与之相等（预测 job 以发起代次读基底：基底与代
+     * 次在读点同处校验，不再有「发起点先读基底、代次随后才取」
+     * 的时点差）。任一复检不过返回 null 且不写缓存，调用方应整
+     * 轮作废；缓存新鲜（TTL 内）时直接切片返回，不重复读 IC——
+     * 填缓存后任何切框/选区变化都会主动失效缓存，故新鲜缓存必
+     * 属当前框、当前隐私形态。
      */
     @Volatile private var beforeCursorCache = ""
     @Volatile private var beforeCursorCacheAt = 0L
 
-    private suspend fun peekTextBeforeCursor(n: Int): String {
+    private suspend fun peekTextBeforeCursor(n: Int, expectedGen: Long? = null): String? {
         val now = SystemClock.uptimeMillis()
         if (beforeCursorCacheAt == 0L || now - beforeCursorCacheAt > 800L) {
             // InputConnection 非线程安全、契约要求主线程访问：本类其余
             // 读写点都显式 withContext(Main.immediate)，此探针原先在
             // Default 线程直调，是唯一例外。只有真正读 IC 的填缓存段
             // 切主线程；TTL 判定与切片留在调用线程，800ms 语义不变
-            beforeCursorCache = withContext(Dispatchers.Main.immediate) {
+            val fresh = withContext(Dispatchers.Main.immediate) {
+                if (expectedGen != null && predictionFieldGen.get() != expectedGen) {
+                    return@withContext null
+                }
+                if (isNoPersonalizedLearning(editorInfo)) {
+                    return@withContext null
+                }
                 runCatching {
                     inputConnection()?.getTextBeforeCursor(64, 0)?.toString() ?: ""
                 }.getOrDefault("")
-            }
+            } ?: return null
+            beforeCursorCache = fresh
             beforeCursorCacheAt = now
         }
         val want = n.coerceIn(0, 64)
@@ -296,16 +355,75 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         beforeCursorCacheAt = 0L
     }
     /**
-     * 输入框代次：换框（onStartInputView 且 !restarting）时推进。
+     * 输入框代次：换框时推进——onStartInputView(!restarting)，以及
+     * restarting 但关键字段已变（实为换框，见 [InputFieldKey]）。
      * 预测发起时捕获，交付复检与 job 内复检都按代次比对，取代旧的
      * EditorInfo 引用同一性（===）——同一性比较把「同框 restartInput
      * 换发新 EditorInfo 实例」与「换框」混为一谈，且无法表达代次
-     * 先后。同框重启不推进，框没换、在途联想仍属本框。
+     * 先后。同框重启（字段未变）不推进，框没换、在途联想仍属本框。
      */
     private val predictionFieldGen = java.util.concurrent.atomic.AtomicLong(0L)
 
+    /**
+     * 前端提交（剪贴板/常用语/语音/符号键等经 [requestCommit]）待
+     * 发起预测的文本队列（FIFO）：requestCommit 的 job 在
+     * emitCommit 之前把文本入队，handleRimeMessage 在对应直送
+     * Commit 落屏（emitMessage）之后按队首文本匹配认领并发起预
+     * 测——预测的发起点由此落在 reduce 的落屏之后，job 内读到的
+     * 是落屏后的真实前文。入队点与消息产生点同在 rime-main 串行
+     * 线、消息管线全局 FIFO，故队首与到达的直送 Commit 一一对
+     * 应；空格/回车的直送 Commit 不入队，其文本（" "/"\n"）与队
+     * 首不等时不认领。残存巧合：前端文本恰为 " "/"\n" 且同一时
+     * 窗有空格/回车直送 Commit 在途时，可能由后者提前认领——后
+     * 果仅为一轮以落屏后真实前文计算的预测提前/缺席，不产生错
+     * 误上屏、不参与搭配学习（本路径 learnable 恒 false）。
+     */
+    private val pendingFrontendPredictions =
+        java.util.concurrent.ConcurrentLinkedQueue<String>()
+
+    /** 上一个输入框的身份快照：restarting 重启时比对是否实为换框（见 [InputFieldKey]）。 */
+    @Volatile
+    private var lastInputFieldKey: InputFieldKey? = null
+
+    /**
+     * 偏好缓存加载完成监听只注册一次（见 restoreCandidates 的待刷新
+     * 登记）。监听注册在进程级 [CandidatePreferCache] 上，注销句柄保
+     * 存在 [preferLoadListenerUnregister]，由 [finalize] 在引擎销毁
+     * 时调用注销——不注销则引擎每次重建叠加一条，旧实例被监听闭包
+     * 持有滞留，且其投递的 PreferLoaded 虽会被已关闭的 actions 通
+     * 道丢弃，仍是无谓的跨实例噪声。
+     */
+    private val preferLoadListenerRegistered =
+        java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** [ensurePreferLoadListener] 注册返回的注销句柄（注册在还原 job 线程、注销在销毁线程，须原子交接）。 */
+    private val preferLoadListenerUnregister =
+        java.util.concurrent.atomic.AtomicReference<(() -> Unit)?>(null)
+
+    /**
+     * 偏好未加载时先行出候选的最新一批（msg 与其代次）：加载完成
+     * 后若它仍是最新批次，重跑一次 restoreCandidates 补上偏好重
+     * 排。已被更新批次取代的登记在 reduce 处理
+     * [Action.PreferLoaded] 时按代次比对丢弃（取出/复检/重跑同在
+     * 串行点内，见该 Action 的说明）。
+     */
+    private val pendingPreferRefresh =
+        java.util.concurrent.atomic.AtomicReference<Pair<EngineMessage.Candidates, Long>?>(null)
+
     @Volatile
     private var predictionJob: Job? = null
+
+    /**
+     * 候选还原 job 句柄。写点只剩两处：[restoreCandidates]（reduce
+     * 串行点，cancel 旧的再赋新的）与 [invalidatePendingCandidates]
+     * （reduce 多路与 onFinishInputView 的主线程收尾都会调，cancel
+     * 后置空）。偏好加载监听曾是第三个跨线程触点（在加载线程上直
+     * 接重跑 restoreCandidates)，已改为只投递 [Action.PreferLoaded]
+     * 回到 reduce 内重跑，消除。余下两处以 @Volatile 保可见性即
+     * 够：Job.cancel 本身线程安全；赋值交错最坏让一次作废漏取消一
+     * 个刚启动的还原 job，其结果仍被 CandidatesReady 的 requestId
+     * 门控按代次丢弃，不会把旧批次候选发出去。
+     */
     @Volatile
     private var candidateRestoreJob: Job? = null
     /** 分页补取的批次状态：已从引擎取到的原始候选条数（分页 start 必须用原始计数，不能用 UI 过滤后的条数） */
@@ -408,6 +526,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     override fun finalize() {
         prefs?.unregisterOnSharedPreferenceChangeListener(prefsListener)
         prefs = null
+        // 偏好加载监听注册在进程级 CandidatePreferCache 上：与上方
+        // prefs 监听同口径在此注销，否则引擎重建逐次叠加、旧实例
+        // 被监听闭包滞留（见 preferLoadListenerRegistered 的说明）。
+        // 注销后复位注册标记，本实例若被复用可重新注册
+        preferLoadListenerUnregister.getAndSet(null)?.invoke()
+        preferLoadListenerRegistered.set(false)
         actions.close()
         jobs.close()
         scope.cancel()
@@ -535,17 +659,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         //（不读前文、不写偏好表、不跑预测上下文）；正常上屏不受影响
         val noLearn = isNoPersonalizedLearning(editorInfo)
         if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
-            // 上下文定格同打字上屏路径：先捕获落屏前基底再落屏，
-            // 预测上下文 = 基底 + 本次点选词，不让 job 自行读前文
-            val base = if (!noLearn) peekTextBeforeCursor(20) else null
+            // 落屏之后再发起预测（与打字上屏路径同口径）：job 内
+            // 读到的是落屏后的真实前文，已含本次点选词，不在
+            // reduce 上、落屏之前同步读前文（那会让本次上屏等一
+            // 次主线程 IPC 往返）
             emitMessage(EngineMessage.Commit(candidate.text))
             invalidateBeforeCursorCache()
             // 预测候选点选属于打字流上屏：参与搭配学习
-            requestPrediction(
-                candidate.text,
-                learnable = true,
-                contextOverride = base?.let { composePredictionContext(it, candidate.text) },
-            )
+            requestPrediction(candidate.text, learnable = true)
             return
         }
 
@@ -803,9 +924,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             is Action.Predict -> requestPrediction(
                 action.commit,
-                contextOverride = action.baseContext?.let {
-                    composePredictionContext(it, action.commit)
-                },
+                fieldGenOverride = action.fieldGen,
             )
             is Action.PredictionReady -> {
                 // requestId 只防同框内的请求交错；输入框已切换
@@ -835,6 +954,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is Action.CandidatesReady -> {
                 if (action.requestId == state.latestCandidateRequestId.get()) {
                     emitMessage(action.message)
+                }
+            }
+
+            Action.PreferLoaded -> {
+                // 待刷新登记的取出、批次复检与重跑同在本串行点内，
+                // 与新批次的还原天然互斥（见 Action.PreferLoaded）。
+                // 已被更新批次取代的登记直接丢弃：新批次自己会走已
+                // 加载的正常路径或重新登记
+                val pending = pendingPreferRefresh.getAndSet(null)
+                if (pending != null &&
+                    pending.second == state.latestCandidateRequestId.get()
+                ) {
+                    restoreCandidates(pending.first)
                 }
             }
 
@@ -905,11 +1037,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 上一键的 native Commit 尚在消息管线中未落屏时，宿主里还
         // 是替换前的旧选区，按它判定走「删选区」分支，等 Commit
         // 落屏后选区已不存在，这次退格会被白白吞掉。统一借道
-        // KeyMessage 透传，由 forwardUnhandledKey 在主线程实际执行
-        // 删除的时点重读选区再决定（其判定点排在在途 Commit 的消
-        // 息之后）。不经 native processKey，避免被方案处理器吞掉
-        // 后宿主收不到键
-        emitKey(KeyMapping.keyCodeToVal(KEYCODE_DEL), 0, true)
+        // KeyMessage 透传，由 forwardUnhandledKey 在实际执行删除
+        // 的时点重读选区再决定（其判定点排在在途 Commit 的消息
+        // 之后）。不经 native processKey，避免被方案处理器吞掉
+        // 后宿主收不到键。借道 DEL 带来源标记（见
+        // BORROWED_DEL_MARKER）：本 job 内刚确认组字为空，是透传
+        // 点区分「借道」与「native 未消费透传」的唯一凭据
+        emitKey(KeyMapping.keyCodeToVal(KEYCODE_DEL), BORROWED_DEL_MARKER, true)
         invalidateBeforeCursorCache()
     }
 
@@ -934,44 +1068,51 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val metaState = message.data.modifiers.metaState
         val now = SystemClock.uptimeMillis()
         if (keyCode == KEYCODE_DEL && !message.data.modifiers.release) {
-            // 空组字退格借道至此（见 handleBackspaceInJob）：删除形态
-            // 在执行时点按当前选区决定——有选区只删选区、无选区才按
-            // DEL 键事件删光标前一字。判定点放在这里（reduce 消费流
-            // 内、排在在途 Commit 的消息之后）：在 job 内提前判定会
-            // 读到 Commit 落屏前的旧选区、按它走删选区分支，等落屏
-            // 后选区已不存在，这次退格会被白白吞掉。
-            // 选区删除不直达 InputConnection，而是经 emitCommit("")
-            // 送回引擎消息管线：MessageHandler 对 Commit 有剪贴板搜
-            // 索态改道（interceptCommit）、本地写代次记账
-            // （noteLocalWrite）与探针通知合并
-            // （scheduleNotifyInputChanged）三件套处理，直达
-            // commitText 会整段绕过。emitCommit 只能在 RimeApi 作用
-            // 域内调，故判定留在此处、投递借 sendJob 入队，判定点
-            // 本身不回 job。
-            // 拦截只限引擎无组字时：到达这里的 virtual DEL 不止退
-            // 格借道一个来源，rime 未消费透传的 DEL 在组字非空时也
-            // 会进来；组字非空时抢先删选区会与引擎组字态脱节，故
-            // 非空一律走下方原 sendKeyEvent 路径。组字判据取 jobs
-            // 串行执行时点的实时原始输入 getRawInput()（经
-            // awaitJob，与 handleBackspaceInJob 及空格/回车的分类
-            // 同口径）；compositionCached 是展示串、且异步回写会滞
-            // 后一轮，不作判据。awaitJob 失败默认按有组字处理（不
-            // 拦截，走原路径）。
-            val hasComposition = awaitJob(true) { getRawInput().isNotEmpty() }
-            if (!hasComposition) {
-                val hasSelection = withContext(Dispatchers.Main.immediate) {
-                    !runCatching { inputConnection()?.getSelectedText(0) }
-                        .getOrNull().isNullOrEmpty()
-                }
-                if (hasSelection) {
-                    sendJob {
-                        emitCommit("")
-                        // 与旧删选区路径同口径：宿主文本已变，
-                        // 前文缓存失效
-                        invalidateBeforeCursorCache()
-                    }
-                    return
-                }
+            // 退格删除判定表（DEL 且非 release 的三条路径）：
+            //  一、组字非空：不经本函数——handleBackspaceInJob 在
+            //      job 内由 BehaviorHost 同步消化（删组字码），不产
+            //      生透传消息。
+            //  二、带标记借道 DEL（见 BORROWED_DEL_MARKER）：组字为
+            //      空已由 handleBackspaceInJob 在同一 job 内确立（判
+            //      定与 emitKey 之间无其他组字变更点，组字变更全在
+            //      rime-main 串行线；消息管线全局 FIFO 保证本消息排
+            //      在该 job 之后产生的组字消息之前到达 reduce）。
+            //  三、无标记 virtual DEL（native 未消费透传）：组字状
+            //      态未经 job 确立，但 native 在组字非空时消费
+            //      BackSpace，透传到此的实际形态即组字为空（唯一的
+            //      isVirtual=true behavior 来源 Backspace 无构造点、
+            //      不可达）；若此路不判选区径发键事件，「组字空＋有
+            //      选区」的删除会绕过下方 Commit 的三件套（改道/记
+            //      账/探针通知），与路径二及旧路径口径不一致。
+            // 路径二、三在此同口径判定：删除形态在执行时点按当前
+            // 选区决定——有选区只删选区、无选区才落到下方按 DEL
+            // 键事件删光标前一字。判定点在 reduce 消费流内、排在在
+            // 途 Commit 的消息之后：在 job 内提前判定会读到 Commit
+            // 落屏前的旧选区，按它走删选区分支，等落屏后选区已不
+            // 存在，这次退格会被白白吞掉。
+            // 严禁在此回 jobs 查组字（awaitJob）：那读到的是 jobs
+            // 队尾执行时点的状态、与消息时点错位（后续按键已并入
+            // 组字时会误判有组字），还让整个 reduce 最坏干等 2 秒
+            // ——已随第十三批 L2 废除，不得恢复。
+            val hasSelection = withContext(Dispatchers.Main.immediate) {
+                !runCatching { inputConnection()?.getSelectedText(0) }
+                    .getOrNull().isNullOrEmpty()
+            }
+            if (hasSelection) {
+                // 选区删除不直达 InputConnection，而是以直送
+                // Commit 送回引擎消息管线：MessageHandler 对
+                // Commit 有剪贴板搜索态改道（interceptCommit）、
+                // 本地写代次记账（noteLocalWrite）与探针通知合并
+                // （scheduleNotifyInputChanged）三件套处理，直达
+                // commitText 会整段绕过。此处本就在 reduce 内，
+                // 直接 emitMessage 与借道管线落到同一条下游处
+                // 理，不必再绕 jobs→rime-main 一圈（绕行期间第
+                // 二次退格的判定会赶在第一个 Commit("") 落屏前
+                // 重复走删选区分支，两次退格只删一次选区）。
+                emitMessage(EngineMessage.Commit("", direct = true))
+                // 与旧删选区路径同口径：宿主文本已变，前文缓存失效
+                invalidateBeforeCursorCache()
+                return
             }
         }
         withContext(Dispatchers.Main.immediate) {
@@ -993,12 +1134,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             return
         }
         val msg = EngineMessageConverter.convert(message)
-        // 打字上屏的预测在函数尾部发起（见尾部说明），Commit 分支
-        // 记下文本、并在此刻捕获落屏前的前文基底：预测上下文由
-        // 「基底 + 本次上屏词」在发起点定格拼装，不让异步 job 自
-        // 行读输入框与落屏竞速（见 composePredictionContext）
+        // 打字上屏的预测在函数尾部发起（见尾部说明）：发起点落在
+        // emitMessage 之后，预测 job 内读到的是落屏后的真实前文
+        // （含本次上屏词），不在此同步读前文——那会让本次上屏在
+        // reduce 串行点上等一次主线程 IPC 往返才落屏
         var predictionText: String? = null
-        var predictionBase: String? = null
         when (msg) {
             is EngineMessage.InlinePreedit -> {
                 if (msg.preedit.isEmpty()) {
@@ -1026,18 +1166,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     candidateBatchLoaded = 0
                     candidateBatchTotal = -1
                     state.suppressNextEmptyCandidates = true
-                    // 落屏前的前文基底要在缓存失效之前捕获（失效后
-                    // 重读虽也是落屏前状态，但多一次跨进程往返）；
-                    // 隐私口径与 requestPrediction 的函数头闸门一
-                    // 致：禁学习框不读前文，基底留空、预测随之在函
-                    // 数头被拦下
-                    if (!isNoPersonalizedLearning(editorInfo)) {
-                        predictionBase = peekTextBeforeCursor(20)
-                    }
                     // native 刚上屏：前文缓存失效，后续读到新鲜前文
                     invalidateBeforeCursorCache()
-                    // 打字上屏：参与搭配学习。只记下文本与基底，
-                    // 实际发起在本函数尾部（见 predictionText）
+                    // 打字上屏：参与搭配学习。只记下文本，实际发起
+                    // 在本函数尾部（见 predictionText）
                     predictionText = msg.text
                 }
             }
@@ -1127,15 +1259,23 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             else -> {}
         }
         emitMessage(msg)
-        // 发起预测：上下文已在 Commit 分支定格（基底 + 本次上屏
-        // 词），job 不再自行读前文。基底为空（禁学习框）时传
-        // null，requestPrediction 在函数头即拦下、不会用到
+        // 发起预测（打字上屏）：emitMessage 返回时本次 Commit 已
+        // 投递，collector 在 Main 的落屏处理排在预测 job 随后投递
+        // 的 withContext(Main) 之前，job 内读到的前文必然含本次
+        // 词——上下文在 job 内读落屏后的真实文本，不在发起点拼
+        // 装（发起点同步读会把一次 IPC 往返压在落屏之前；拼装则
+        // 会把宿主过滤器/自动纠正改过的落屏结果排除在外）
         predictionText?.let { text ->
-            requestPrediction(
-                text,
-                learnable = true,
-                contextOverride = predictionBase?.let { composePredictionContext(it, text) },
-            )
+            requestPrediction(text, learnable = true)
+        }
+        // 前端提交的预测发起点（见 pendingFrontendPredictions）：
+        // 直送 Commit 已在上方 emitMessage 落屏，此刻按队首文本
+        // 认领并发起——job 内同读落屏后前文，不拼接
+        if (msg is EngineMessage.Commit && msg.direct &&
+            pendingFrontendPredictions.peek() == msg.text
+        ) {
+            pendingFrontendPredictions.poll()
+            requestPrediction(msg.text)
         }
     }
 
@@ -1213,7 +1353,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private fun Action.isDroppable(): Boolean = when (this) {
-        is Action.PredictionReady, is Action.CandidatesReady -> true
+        // PreferLoaded 是刷新提示：丢了只是这批候选不补重排，下一批
+        // 在已加载后走快照直读自愈（未加载则重新登记），可丢
+        is Action.PredictionReady, is Action.CandidatesReady, is Action.PreferLoaded -> true
         is Action.RimeMessage -> when (message.messageType) {
             RimeMessage.MessageType.Candidate, RimeMessage.MessageType.Composition,
             RimeMessage.MessageType.InlinePreedit, RimeMessage.MessageType.DynamicPreedit,
@@ -1411,11 +1553,27 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 隐私模式下不读光标前文（gramDb 为空时前文本来也不参与打分）；
                     // 非隐私模式走前文缓存，避免每次候选刷新都跨进程读一次
                     val inputContext = if (isNoPersonalizedLearning(editorInfo)) "" else
-                        peekTextBeforeCursor(20)
+                        peekTextBeforeCursor(20) ?: ""
+                    // 偏好快照：已加载时是内存直读；未加载时不在本
+                    // job 里等加载——加载段与点击写事务同在缓存的
+                    // 跨挂起互斥内，首屏等它就等于等在途写事务整
+                    // 段。先用当前缓存（可能为空）出候选，并登记本
+                    // 批待刷新：后台加载完成后，监听投递的
+                    // Action.PreferLoaded 在 reduce 内复检它仍是最新
+                    // 批次时重跑一次 restoreCandidates 补上偏好重排
+                    // （见 pendingPreferRefresh）
+                    val prefers = if (CandidatePreferCache.isLoaded()) {
+                        CandidatePreferCache.snapshot(ctx)
+                    } else {
+                        ensurePreferLoadListener()
+                        pendingPreferRefresh.set(msg to requestId)
+                        CandidatePreferCache.ensureLoadInBackground(ctx)
+                        CandidatePreferCache.currentCache()
+                    }
                     // gram 分数此前一直传 null 恒为 0：模型由 PredictionManager
                     // 加载并持有，这里取同一实例接进重排打分
                     val sortedList = rerankManager?.rerank(
-                        filteredMsg.list, inputContext, predictionManager?.gramDb()
+                        filteredMsg.list, inputContext, predictionManager?.gramDb(), prefers
                     )
                     val baseList = sortedList ?: filteredMsg.list
                     actions.send(
@@ -1456,6 +1614,25 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         ) { a, b -> maxOf(a, b) }
     }
 
+    /**
+     * 注册偏好缓存的加载完成监听（本实例只注册一次，销毁时经
+     * [preferLoadListenerUnregister] 注销）：监听本体在缓存的加载
+     * 线程上同步执行，只投递 [Action.PreferLoaded]——登记的取出、
+     * 批次复检与 restoreCandidates 重跑全部回到 reduce 串行点内
+     * 做。在监听里直接「比较代次→调 restoreCandidates」不是原子
+     * 的：比较通过后、调用前插入的新批次会被旧登记的重跑取消并
+     * 抢发；且 restoreCandidates 会脱离 reduce 线程跨线程触碰
+     * candidateRestoreJob（见其字段说明）。
+     */
+    private fun ensurePreferLoadListener() {
+        if (!preferLoadListenerRegistered.compareAndSet(false, true)) return
+        preferLoadListenerUnregister.set(
+            CandidatePreferCache.registerLoadListener {
+                dispatchAction(Action.PreferLoaded)
+            }
+        )
+    }
+
     /** 取消在途的预测并推进代次，避免迟到预测覆盖新候选或在清空后重现。 */
     private fun invalidatePendingPrediction() {
         predictionJob?.cancel()
@@ -1492,9 +1669,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         inputConnection = ic
         editorInfo = info
         // 输入框代次推进：在途预测的交付/job 复检按代次作废旧框结果。
-        // 同框重启（restarting）不推进：框没换，在途联想仍属本框，
-        // 推进会误杀（旧实现以 EditorInfo === 比对有同一问题）
-        if (!restarting) predictionFieldGen.incrementAndGet()
+        // 同框重启（restarting 且关键字段未变）不推进：框没换，在
+        // 途联想仍属本框，推进会误杀（旧实现以 EditorInfo === 比
+        // 对有同一问题）。但 restarting 只代表宿主在同一 View 上
+        // 重启输入：WebView 内不同 <input> 切换焦点正是 restarting
+        // =true、且不经 onFinishInputView——关键字段（见
+        // InputFieldKey）已变时按换框推进，否则旧框联想会照常交
+        // 付到新框（代次与禁学习复检都拦不住同为可学习框的切换）
+        val fieldKey = InputFieldKey.of(info)
+        if (!restarting || isInputFieldChanged(lastInputFieldKey, fieldKey)) {
+            predictionFieldGen.incrementAndGet()
+        }
+        lastInputFieldKey = fieldKey
         invalidateBeforeCursorCache()
         // 隐私：把当前输入框的学习开关同步给 librime native 层。
         // 密码框 / NO_PERSONALIZED_LEARNING 输入框内 native 用户词典不再自学习；
@@ -1542,13 +1728,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun predict(commit: String) {
-        dispatchAction(Action.Predict(commit))
+        // 代次在分发点捕获、随 Action 带到 reduce（见 Action.Predict）：
+        // 等 reduce 执行 requestPrediction 时才取，分发与执行之间
+        // 的换框会被误读成发起时的框
+        dispatchAction(Action.Predict(commit, predictionFieldGen.get()))
     }
 
     private suspend fun requestPrediction(
         commit: String,
         learnable: Boolean = false,
-        contextOverride: String? = null,
+        fieldGenOverride: Long? = null,
     ) {
         // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不读前文、不跑预测、不学搭配
         if (isNoPersonalizedLearning(editorInfo)) {
@@ -1581,8 +1770,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         state.latestPredictionRequestId.accumulateAndGet(requestId) { a, b -> maxOf(a, b) }
         // 发起时的输入框代次随结果带回：交付时复检代次未变才落屏，
         // 切框后到达的旧联想直接丢弃（见 PredictionReady 分支）；
-        // job 内读前文前与出结果前也按代次复检（见 job 内注释）
-        val startFieldGen = predictionFieldGen.get()
+        // job 内读前文前与出结果前也按代次复检（见 job 内注释）。
+        // 经 Action.Predict 分发的预测以分发点捕获的代次为准（见
+        // Action.Predict 的 fieldGen），reduce 内直接发起的现取
+        val startFieldGen = fieldGenOverride ?: predictionFieldGen.get()
         predictionJob?.cancel()
         predictionJob = scope.launch {
             try {
@@ -1595,19 +1786,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 新框上读前文、不写前文缓存。函数头的隐私闸门只覆
                 // 盖发起时刻，job 排队/执行期间的切框靠这里兜底
                 if (!isPredictionFieldCurrent(startFieldGen)) return@launch
-                // 上下文在发起点已定格（contextOverride = 落屏前
-                // 基底 + 本次上屏词，见 composePredictionContext）：
-                // job 与落屏是两条异步线，job 里自行读前文必然与
-                // 落屏竞速——读早了缺本次词（联想慢一拍、首选回
-                // 到刚上屏的词本身），读晚了再人工拼接又成本次词
-                // 两遍。两种错误形态都出自这条竞速，故有上屏来源
-                // 的预测一律用定格上下文；contextOverride 为空是
-                // 无上屏事件的兜底路径，才在 job 内读一次前文。
+                // 上下文在 job 内读落屏后的真实前文：三条发起路径
+                // （打字上屏、点联想词、前端提交）都把发起点放在
+                // 本次上屏的 emitMessage/落屏之后，collector 在
+                // Main 的落屏处理排在本 job 随后投递的
+                // withContext(Main) 之前，读到的前文必然含本次词，
+                // 且就是宿主实际落屏的文本（过滤器/自动纠正改过
+                // 的结果也在内）——不在发起点拼装基底、更不在
+                // reduce 落屏前同步读（那会把一次 IPC 往返压在落
+                // 屏之前）。基底与代次同处捕获：peek 以发起代次在
+                // 真正读 IC 的主线程块内复检代次与隐私（见
+                // peekTextBeforeCursor），不过返回 null、整轮作废。
                 // 预测模型基于简体训练，先转简体再推导，以支持繁
                 // 体输入下的候选预测
-                val inputContext = TraditionalConverter.toSimplified(
-                    contextOverride ?: peekTextBeforeCursor(20)
-                )
+                val baseContext = peekTextBeforeCursor(20, expectedGen = startFieldGen)
+                    ?: return@launch
+                val inputContext = TraditionalConverter.toSimplified(baseContext)
                 var candidates: List<Candidate> = emptyList()
                 if (inputContext.isNotEmpty() && !TextUtil.isSymbol(inputContext.last()) && !TextUtil.isAlphabet(
                         inputContext.last()
@@ -1661,24 +1855,27 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         sendJob {
             // 直接上屏：前文缓存失效，后续预测读新鲜前文
             invalidateBeforeCursorCache()
-            // 预测上下文的基底随 Predict 一并带走（发起点定格，
-            // 见 composePredictionContext）：禁学习框不读前文
-            val learnableField = !isNoPersonalizedLearning(editorInfo)
             if (compositionCached.preedit?.isNotEmpty() == true) {
+                // 组字中：选中词与 text 由 native 合成一条 Commit
+                // 落屏，其在 handleRimeMessage 的 Commit 分支按打
+                // 字上屏路径于落屏后发起预测——job 内读到的前文
+                // 已含「选中词+text」，是最终结果；此处不再另发
+                // 预测（另发一轮的上下文只能在落屏前拼装，必缺刚
+                // 上屏的组字词）
                 commitCurrentSelection(text)
-                // 组字词已在此同步落屏、text 尚未上屏：此刻读到
-                // 的前文正是 text 的完整基底
-                val base = if (learnableField) peekTextBeforeCursor(20) else null
-                actions.send(Action.Predict(text, base))
                 return@sendJob
             }
             // 经 emitCommit 走引擎消息管线而非直送 actions：上一键的
             // native Commit 尚在管线中时直送会超车先落屏（如粘贴的
             // 标点排到刚打的字前面）。直送标记使下游只排序与落屏、
-            // 不按打字上屏记账，与旧直送路径行为等价（见 emitCommit）
-            val base = if (learnableField) peekTextBeforeCursor(20) else null
+            // 不按打字上屏记账，与旧直送路径行为等价（见 emitCommit）。
+            // 预测不在此另发 Action：入队待发后由 handleRimeMessage
+            // 在这条直送 Commit 落屏之后认领并发起（见
+            // pendingFrontendPredictions）——旧形态在此读落屏前基
+            // 底、与 Predict 一并定格带走，基底必然缺管线中尚未落
+            // 屏的上一键上屏词
+            pendingFrontendPredictions.offer(text)
             emitCommit(text)
-            actions.send(Action.Predict(text, base))
         }
     }
 

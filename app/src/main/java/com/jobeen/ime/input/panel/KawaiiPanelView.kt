@@ -198,7 +198,11 @@ class KawaiiPanelView(context: Context) : View(context) {
 
     private fun startPressAnimation(renderer: ToolbarRenderer) {
         pressAnimator?.cancel()
-        renderer.pressAlpha = 120
+        // 峰值 alpha 160：120 时素白、落日两套浅色主题的涟漪混合色与
+        // 面板底对比只有约 2.3 / 1.9（低于 3:1）；提到 160 并配合墨色
+        // 取各主题 keyText 后三套分别为约 7.6 / 5.8 / 4.1（复算口径
+        // 见 KeyboardThemePresets 各主题 toolbarPressed 注释）
+        renderer.pressAlpha = 160
         renderer.pressRadius = 0f
         pressAnimator = ValueAnimator.ofFloat(0f, renderer.pressRadiusMax).apply {
             duration = 300

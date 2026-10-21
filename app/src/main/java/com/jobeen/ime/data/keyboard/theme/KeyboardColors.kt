@@ -49,24 +49,7 @@ object KeyboardColors {
             val candidateIndex: Int,
             val candidateDivider: Int,
             val toolbarPressed: Int,
-        ) {
-            companion object {
-                fun from(c: ColorScheme) = PanelColors(
-                    background = c.background,
-                    toolbarText = c.keyText,
-                    toolbarActived = c.accentKeyBackground,
-                    toolbarIcon = c.specialKeyText,
-                    candidateBackground = c.specialKeyBackground,
-                    candidateText = c.keyText,
-                    candidateIndex = c.altText,
-                    candidateDivider = c.altText,
-                    // 工具栏按压是半透明涟漪叠在面板底上，不是整块键面：
-                    // 不能照搬 keyPressed（它按键面底调，与面板底几乎
-                    // 同色时混合后不可见），取功能键文字色作涟漪墨色
-                    toolbarPressed = c.specialKeyText,
-                )
-            }
-        }
+        )
 
         @Serializable
         data class PinnerColors(

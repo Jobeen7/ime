@@ -523,7 +523,11 @@ object BackupManager {
                         key != "webdav_sync_path" &&
                         key != "last_upload_time" &&
                         key != "last_download_time" &&
-                        !key.startsWith("sync_etag_")
+                        !key.startsWith("sync_etag_") &&
+                        // per-file 同步时间键的独立前缀（U+001F 分隔，
+                        // 与 ETag 键空间不交叠）：同属本机同步基准，
+                        // 一并剔除；旧前缀时间键已被 sync_etag_ 覆盖
+                        !key.startsWith("sync_time\u001F")
                 }
                 // 服务器地址、明文开关与同步目录是本机配置而非备份
                 // 内容：整表覆盖会连本机现值一起抹掉（还原自己的备

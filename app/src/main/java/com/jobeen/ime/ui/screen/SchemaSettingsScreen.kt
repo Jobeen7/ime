@@ -48,6 +48,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -73,6 +74,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.zIndex
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.R
+import com.jobeen.ime.base.ngram.DownloadResult
 import com.jobeen.ime.base.ngram.GramModelDownloader
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.rime.core.Rime
@@ -109,12 +111,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var loaded by remember { mutableStateOf(false) }
     var grammarLanguage by remember { mutableStateOf<String?>(null) }
     var grammarReady by remember { mutableStateOf(false) }
-    // 下载中状态读进程级运行标志（GramModelDownloader/WanxiangUpdateManager
-    // 各一份）：页面 remember 状态随页面销毁丢失，任务却在应用级作用域
-    // 继续跑，重进页面会误判为空闲、重复启动同一路下载
+    // 下载中状态、进度与最近结果都读进程级 StateFlow（GramModelDownloader /
+    // WanxiangUpdateManager 各一份）：页面 remember 状态随页面销毁丢失，
+    // 两路下载都在应用级作用域跑、页面销毁不中断，重进页面只看局部
+    // 状态会误判为空闲、重复启动同一路下载，进行中的进度与已完成
+    // 的结果也无从读回（N1/N2）
     val grammarDownloading by GramModelDownloader.isRunning.collectAsStateWithLifecycle()
-    var grammarProgress by remember { mutableFloatStateOf(0f) }
-    var grammarFailed by remember { mutableStateOf(false) }
+    val grammarProgress by GramModelDownloader.progress.collectAsStateWithLifecycle()
+    val grammarResult by GramModelDownloader.lastResult.collectAsStateWithLifecycle()
+    // 语法模型失败态从进程级结果派生：已就绪或下载进行中都不算失败；
+    // 被下载闸拒绝（BUSY）不写结果，不会误报失败（N3）
+    val grammarFailed = !grammarReady && !grammarDownloading &&
+        grammarResult?.result == DownloadResult.FAILED
     var grammarButtonWidth by remember { mutableStateOf(0.dp) }
     // 万象方案更新状态
     val updatePrefs = remember {
@@ -122,13 +130,24 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     }
     var updateInfo by remember { mutableStateOf<WanxiangUpdateManager.UpdateInfo?>(null) }
     val updating by WanxiangUpdateManager.isRunning.collectAsStateWithLifecycle()
-    var updateProgress by remember { mutableStateOf<WanxiangUpdateManager.UpdateProgress?>(null) }
-    var updateStageText by remember { mutableStateOf("") }
-    var updateDone by remember { mutableStateOf(false) }
-    var updateFailed by remember { mutableStateOf(false) }
+    val updateProgress by WanxiangUpdateManager.progress.collectAsStateWithLifecycle()
+    val updateResult by WanxiangUpdateManager.lastResult.collectAsStateWithLifecycle()
+    // 最近一次更新结果以「已消费时间」标记：点检查/开始更新即消费掉
+    // 旧结果，状态文案回到检查口径，不让上一次结果长期霸占状态行；
+    // 结果本身在进程级 lastResult 里，重进页面仍能读到未消费的结果
+    var updateResultSeenAtMs by remember { mutableLongStateOf(0L) }
+    val shownUpdateResult = updateResult?.takeIf { it.finishedAtMs > updateResultSeenAtMs }
+    val updateDone = shownUpdateResult?.result == DownloadResult.SUCCESS
+    val updateFailed = shownUpdateResult?.result == DownloadResult.FAILED
     var checkingUpdate by remember { mutableStateOf(false) }
     var updateCheckFailed by remember { mutableStateOf(false) }
     var updateButtonWidth by remember { mutableStateOf(0.dp) }
+    // 页面本地「已派发」标志（N3）：点击时同步置位、工作协程收尾
+    // 复位。进程级 isRunning 要等下载协程真正跑起来才翻转、经
+    // StateFlow 到达组合又有帧级延迟，只读它守门会留 1~2 帧双击
+    // 窗口；守门同步读 isRunning.value 与本地标志双保险
+    var grammarPending by remember { mutableStateOf(false) }
+    var updatePending by remember { mutableStateOf(false) }
     // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
     var currentSchemaName by remember { mutableStateOf("") }
     var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
@@ -139,6 +158,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     val stageExtracting = stringResource(R.string.schema_update_extracting)
     val stageDownloadingGram = stringResource(R.string.schema_update_downloading_gram)
     val stageDeploying = stringResource(R.string.schema_update_deploying)
+    // 更新阶段文案从进程级进度派生：页面重进时进度已在管理器里、
+    // 阶段文案随之可得，不再依赖发起页的写回（N2）
+    val updateStageText = when (updateProgress?.stage) {
+        WanxiangUpdateManager.UpdateProgress.Stage.SCHEMA_DOWNLOAD -> stageDownloadingSchema
+        WanxiangUpdateManager.UpdateProgress.Stage.DICTS_EXTRACT -> stageExtracting
+        WanxiangUpdateManager.UpdateProgress.Stage.GRAM_DOWNLOAD -> stageDownloadingGram
+        null -> ""
+    }
 
     // 异步加载输入方案，避免阻塞主线程（schemasList 内部走引擎线程）
     LaunchedEffect(Unit) {
@@ -194,27 +221,47 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         WanxiangUpdateManager.ensureVersionHousekeeping(context)
     }
 
+    // 更新结束（updating 由 true 变 false）后重算本地信息：更新可能
+    // 在本页之外发起或结束，本地卡片要反映盘上最新状态（N2）
+    var wasUpdating by remember { mutableStateOf(false) }
+    LaunchedEffect(updating) {
+        if (wasUpdating && !updating) {
+            localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
+        }
+        wasUpdating = updating
+    }
+
+    // 语法模型下载结束（哪一页发起的都一样）后按盘上文件刷新就绪态
+    LaunchedEffect(grammarDownloading) {
+        if (!grammarDownloading && grammarLanguage != null) {
+            grammarReady = File(DataManager.sharedDataDir, "$grammarLanguage.gram").isFile
+        }
+    }
+
     fun downloadGrammar(language: String) {
         // 与万象更新互斥：两路都写 sharedDataDir 下的语法模型文件，
-        // 同时跑会各下一份约 400 MB 且落盘记录互相错位
-        if (grammarDownloading || updating) return
-        grammarFailed = false
-        grammarProgress = 0f
-        scope.launch {
-            val success = GramModelDownloader.download(language) { downloaded, total ->
-                scope.launch(Dispatchers.Main.immediate) {
-                    grammarProgress = if (total > 0L) {
-                        downloaded.toFloat() / total.toFloat()
-                    } else {
-                        0f
-                    }
+        // 同时跑会各下一份约 400 MB 且落盘记录互相错位。守门同步读
+        // 进程级状态（isRunning.value）与本地已派发标志（见
+        // grammarPending 处注释）；管理器侧另有共用 DownloadGate
+        // 兜底，穿过守门的重复调用返回 BUSY、不会被当成失败
+        if (grammarPending || updatePending) return
+        if (GramModelDownloader.isRunning.value || WanxiangUpdateManager.isRunning.value) return
+        grammarPending = true
+        // 下载跑在应用级作用域（与 startWanxiangUpdate 同口径，N1）：
+        // 绑页面 scope 时旋转屏幕、系统切深浅色（Activity 重建）或
+        // 离开页面都会把约 400 MB 的下载取消并删掉已下部分；进度与
+        // 结果由管理器以进程级 StateFlow 发布，页面订阅即可，引擎
+        // reload 也在这里收尾、不依赖页面存活
+        val workScope =
+            (context.applicationContext as? ImeApplication)?.applicationScope ?: scope
+        workScope.launch {
+            try {
+                if (GramModelDownloader.download(language) == DownloadResult.SUCCESS) {
+                    // The grammar database is loaded during engine startup.
+                    EngineFactory.current()?.reload()
                 }
-            }
-            grammarReady = success && File(DataManager.sharedDataDir, "$language.gram").isFile
-            grammarFailed = !success
-            if (grammarReady) {
-                // The grammar database is loaded during engine startup.
-                EngineFactory.current()?.reload()
+            } finally {
+                grammarPending = false
             }
         }
     }
@@ -247,7 +294,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     }
 
     fun checkWanxiangUpdate() {
-        if (updating || checkingUpdate) return
+        if (updatePending || checkingUpdate) return
+        if (WanxiangUpdateManager.isRunning.value) return
         // App 升级后的指纹记录/缓存清理统一走 WUM 的版本切换清理
         // （打开页面时已调过、这里再兜一次，幂等）：它对全部用户
         // 生效；旧实现在此整表 clear，但触发键只在应用内更新成功
@@ -255,8 +303,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         WanxiangUpdateManager.ensureVersionHousekeeping(context)
         // 联网查询 GitHub 最新版本，与本地记录比对
         checkingUpdate = true
-        updateDone = false
-        updateFailed = false
+        // 发起新一轮检查即消费掉上一次的更新结果，状态文案回到检查口径
+        updateResultSeenAtMs = System.currentTimeMillis()
         updateCheckFailed = false
         scope.launch {
             val result = WanxiangUpdateManager.checkForUpdates(updatePrefs)
@@ -270,59 +318,52 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     }
 
     fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
-        // 与语法模型单独下载互斥（见 downloadGrammar 的同一口径）
-        if (updating || grammarDownloading) return
-        updateFailed = false
-        updateDone = false
-        updateProgress = null
+        // 与语法模型单独下载互斥（见 downloadGrammar 的同一口径）：
+        // 守门同步读进程级状态与本地已派发标志，管理器侧另有共用
+        // DownloadGate 兜底
+        if (updatePending || grammarPending) return
+        if (WanxiangUpdateManager.isRunning.value || GramModelDownloader.isRunning.value) return
+        updatePending = true
+        // 发起更新即消费掉上一次的结果，状态文案回到进行中口径
+        updateResultSeenAtMs = System.currentTimeMillis()
+        updateCheckFailed = false
         // 下载应用 + 引擎 reload 必须跑在应用级作用域：绑页面 scope 时用户
         // 中途离开页面会把协程取消，可能词库文件已替换而 reload 永不执行，
-        // 引擎继续用旧部署。进度回调只做 UI 更新，仍走页面 scope（页面已
-        // 销毁时其 launch 自动失效，无副作用）
+        // 引擎继续用旧部署。进度与结果由管理器以进程级 StateFlow 发布，
+        // 页面订阅即可（页面已销毁时本协程对页面状态的写回无副作用）
         val workScope =
             (context.applicationContext as? ImeApplication)?.applicationScope ?: scope
         workScope.launch {
-            val success = WanxiangUpdateManager.downloadAndApply(
-                updatePrefs,
-                info,
-                context.cacheDir,
-            ) { progress ->
-                scope.launch(Dispatchers.Main.immediate) {
-                    updateProgress = progress
-                    updateStageText = when (progress.stage) {
-                        WanxiangUpdateManager.UpdateProgress.Stage.SCHEMA_DOWNLOAD ->
-                            stageDownloadingSchema
-                        WanxiangUpdateManager.UpdateProgress.Stage.DICTS_EXTRACT ->
-                            stageExtracting
-                        WanxiangUpdateManager.UpdateProgress.Stage.GRAM_DOWNLOAD ->
-                            stageDownloadingGram
-                    }
+            try {
+                val result = WanxiangUpdateManager.downloadAndApply(
+                    updatePrefs,
+                    info,
+                    context.cacheDir,
+                )
+                if (result == DownloadResult.SUCCESS) {
+                    // 词库与模型已在盘上换新，先触发 Rime 完整重新部署，
+                    // 再做联网复检：复检只刷新远端信息展示，排在前面会让
+                    // 引擎换新数据被一次网络往返（慢或失败时更久）无谓推迟
+                    EngineFactory.current()?.reload()
+                    // 更新本地版本显示。复检失败必须可见：置检查失败标志
+                    // （状态文案里检查失败优先于更新成功，见下方 statusText），
+                    // 否则远程卡停留在更新前数值、还显示成功，用户无从知道；
+                    // 更新成功态保留（更新本身确实成功），按钮区在该状态
+                    // 仍给出「检查更新」入口（见下方按钮分支），可当场复检
+                    WanxiangUpdateManager.checkForUpdates(updatePrefs)
+                        .onSuccess { refreshed ->
+                            updateInfo = refreshed
+                        }
+                        .onFailure {
+                            updateCheckFailed = true
+                        }
+                    // 重新计算本地指纹（更新后应与远端指纹一致）
+                    localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
                 }
-            }
-            updateProgress = null
-            if (success) {
-                updateDone = true
-                // 词库与模型已在盘上换新，先触发 Rime 完整重新部署，
-                // 再做联网复检：复检只刷新远端信息展示，排在前面会让
-                // 引擎换新数据被一次网络往返（慢或失败时更久）无谓推迟
-                updateStageText = stageDeploying
-                EngineFactory.current()?.reload()
-                // 更新本地版本显示。复检失败必须可见：置检查失败标志
-                // （状态文案里检查失败优先于更新成功，见下方 statusText），
-                // 否则远程卡停留在更新前数值、还显示成功，用户无从知道；
-                // updateDone 保留（更新本身确实成功），按钮区在该状态
-                // 仍给出「检查更新」入口（见下方按钮分支），可当场复检
-                WanxiangUpdateManager.checkForUpdates(updatePrefs)
-                    .onSuccess { info ->
-                        updateInfo = info
-                    }
-                    .onFailure {
-                        updateCheckFailed = true
-                    }
-                // 重新计算本地指纹（更新后应与远端指纹一致）
-                localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
-            } else {
-                updateFailed = true
+                // FAILED 时管理器已发布 lastResult，状态文案从其派生；
+                // BUSY（守门之外被闸拒绝）不置任何失败标志
+            } finally {
+                updatePending = false
             }
         }
     }
@@ -390,7 +431,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                             grammarLanguage != null -> Button(
                                 onClick = { downloadGrammar(grammarLanguage!!) },
                                 // 万象更新进行中禁用（与 downloadGrammar 的守门同口径）
-                                enabled = !updating,
+                                enabled = !updating && !updatePending,
                                 modifier = Modifier
                                     .height(32.dp)
                                     .onSizeChanged {
@@ -538,6 +579,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         // 值」，继续显示成功会掩盖这一点；普通检查失败
                         // 时 updateDone 本就为假，顺序调整不影响它
                         updateCheckFailed -> stringResource(R.string.schema_update_check_failed)
+                        // 下载已完成、本地协程还在做引擎重部署与联网
+                        // 复检收尾：继续显示部署中，不抢先报成功
+                        updatePending && updateDone -> stageDeploying
                         updateDone -> stringResource(R.string.schema_update_success)
                         updateFailed -> stringResource(R.string.schema_update_failed)
                         checkingUpdate -> stringResource(R.string.schema_update_checking)
@@ -551,6 +595,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                 info.schemaRemoteVersion
                         info.gramUpdateAvailable ->
                             stringResource(R.string.schema_update_gram_only)
+                        // 远端内容未经登记摘要核实（摘要接口失败）时
+                        // 不得宣称「已是最新」：模型侧无更新结论只是
+                        // 下载记录的兜底判断，如实报未确认（V7b 口径）
+                        !info.gramContentVerified ->
+                            stringResource(R.string.schema_update_unverified)
                         else -> "${stringResource(R.string.schema_update_latest)} " +
                             "(${info.schemaRemoteVersion})"
                     }
@@ -612,7 +661,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         info?.hasUpdate == true -> Button(
                             onClick = { startWanxiangUpdate(info) },
                             // 语法模型下载进行中禁用（与 startWanxiangUpdate 的守门同口径）
-                            enabled = !grammarDownloading,
+                            enabled = !grammarDownloading && !grammarPending,
                             modifier = Modifier
                                 .height(32.dp)
                                 .onSizeChanged {

@@ -31,7 +31,7 @@ import java.util.WeakHashMap
  * 文件格式（每行一条，Tab 分隔）：
  * - `P\t<正形>\t<错形>\t<命中次数>\t<最近命中时间>\t<学入时间>`：
  *   一条学到的词对及其生命周期元信息。旧版三列 P 行（无元信息）
- *   按命中 0、时间 0 读入，不丢词对；
+ *   按命中 0、学入时间记为加载时刻读入，不丢词对；
  * - `D\t<正形>`：该正形已被停用（用户把自动纠正改回了错形）；
  * - `O\t<错形>\t<正形>\t<已观察次数>`：两字词对的观察期计数
  *   （落盘持久化，进程重启不清零，见 [learn]）；
@@ -135,33 +135,41 @@ class VoiceCorrectionStore(private val file: File) {
         liveInstances.filter { it !== this }
     }
 
-    /** 对定稿文本应用当前全部生效规则做纠错；开关关闭时直通。 */
+    /**
+     * 对定稿文本应用当前全部生效规则做纠错；开关关闭时直通。
+     * 本函数只算不记（L3）：命中记账改由调用方在纠错结果真正
+     * 落屏后显式调 [recordHits]——被纪元/密码封锁、连接失效而
+     * 未落屏的结果若在此处就计数，会虚增命中并把「某时刻用过
+     * 某条规则」的元数据写进密码/无痕框的定稿里。
+     */
     fun correct(text: String): CorrectResult {
         val rules = synchronized(lock) {
             ensureLoadedLocked()
             if (!enabledField) return CorrectResult(text, emptyList())
             buildRulesLocked()
         }
-        val result = VoiceCorrector.correct(text, rules)
-        if (result.applied.isNotEmpty()) recordHits(result.applied)
-        return result
+        return VoiceCorrector.correct(text, rules)
     }
 
     /**
-     * 命中记账（正向确认）：只有 [correct] 实际执行了替换才计，
-     * 仅路过未替换不计。归因口径：
+     * 命中记账（正向确认）：由调用方在 [correct] 的结果真正落
+     * 屏、且当前框可学习（非密码/非无痕）时调用（落屏点在
+     * SherpaSpeechClient 的 finishSession 与 settlePreviousSession
+     * 两结算尾）；迟到 FINAL 对账路径不记账（其结果或直提、或
+     * 暂存、或整段放弃，落屏归属不由对账单独成立，且与结算尾
+     * 记账叠加会对同一句重复计数）。归因口径：
      * - 被替换的片段恰好是一条已学错形：该词对命中次数 +1、
      *   最近命中时间刷新；
      * - 片段是字位字集泛化组合出的新错形（没被逐字教过）：这次
      *   命中由同正形、同长度的整组词对共同构成，只刷新整组的
      *   最近命中时间（保鲜整组），不虚增任一条的命中次数。
      *
-     * 调用频率为每次语音定稿/结算至多一轮（correct 的调用点都是
-     * 定稿路径，非流式预览），整文件至多 [MAX_PAIRS] 行，全量
-     * 序列化成本可忽略，故命中即经既有路径落盘，不做节流；淘
-     * 汰判定读的是锁内实时计数，与落盘时机无关，一致性天然成立。
+     * 调用频率为每次语音定稿/结算至多一轮，整文件至多
+     * [MAX_PAIRS] 行，全量序列化成本可忽略，故命中即经既有
+     * 路径落盘，不做节流；淘汰判定读的是锁内实时计数，与落
+     * 盘时机无关，一致性天然成立。
      */
-    private fun recordHits(applied: List<AppliedCorrection>) {
+    fun recordHits(applied: List<AppliedCorrection>) {
         val now = System.currentTimeMillis()
         synchronized(lock) {
             var changed = false
@@ -224,6 +232,9 @@ class VoiceCorrectionStore(private val file: File) {
                 val key = wrongForm to rightForm
                 val seen = (probation[key] ?: 0) + 1
                 if (seen < PROBATION_REQUIRED) {
+                    // 先摘再放刷新插入顺序（L5）：重复观察过的项
+                    // 不该还按首次插入的位置被 trim 当最旧淘汰
+                    probation.remove(key)
                     probation[key] = seen
                     trimProbationLocked()
                     // 观察计数也要落盘（O 行），否则进程重启后这次
@@ -284,9 +295,12 @@ class VoiceCorrectionStore(private val file: File) {
     /**
      * 上限就地执行。词对淘汰排序口径（生命周期淘汰，替代旧「按
      * 学入顺序挤最旧」：常用的老规则被挤掉正是要改掉的行为）：
-     * - 活动时间 = 最近命中时间；从未命中的以学入时间充当；
-     * - 按活动时间升序（最久没活动的先淘汰）、命中次数升序
-     *   （同等活动时间下命中少的先淘汰）排序，同分保持学入顺序；
+     * - 淘汰分数 = 活动时间 + 命中加成（见 [evictionScoreOf]）：
+     *   活动时间 = 最近命中时间、从未命中的以学入时间充当；命
+     *   中加成按命中次数的对数换算——只按活动时间排时命中次
+     *   数形同虚设（仅同毫秒活动才轮得到它比），高频老规则会
+     *   被刚学入的未命中词对挤掉，故命中必须独立计入分数；
+     * - 按分数升序（最该淘汰的在前）排序，同分保持学入顺序；
      * - 已停用正形名下的词对不参与这轮排序（它们的存废由停用
      *   语义决定）；仅当未停用候选删完仍超限时，才按学入顺序
      *   删停用词对兜底，保证上限是硬约束。
@@ -307,10 +321,7 @@ class VoiceCorrectionStore(private val file: File) {
             // sortedWith 稳定排序：同分项保持 candidates 的学入
             // （迭代）顺序，淘汰结果确定性可复现
             val sorted = candidates.sortedWith(
-                compareBy(
-                    { activityOf(it.third) },
-                    { it.third.hitCount },
-                )
+                compareBy { evictionScoreOf(it.third) }
             )
             for ((right, wrong, _) in sorted) {
                 if (toRemove <= 0) break
@@ -350,6 +361,24 @@ class VoiceCorrectionStore(private val file: File) {
     private fun activityOf(meta: PairMeta): Long =
         if (meta.lastHitAt > 0) meta.lastHitAt else meta.learnedAt
 
+    /**
+     * 淘汰分数（越小越先淘汰）= 活动时间 + 命中加成。命中加成
+     * = floor(log2(1 + 命中次数)) × [HIT_BONUS_MS_PER_DOUBLING]：
+     * 命中每翻一倍约抵一周未活动——命中 1 次约抵 1 周、7 次约
+     * 抵 3 周、80 次约抵 6 周。对数换算的依据：低命中段保护有
+     * 限（偶然命中一次不该长期霸占名额），高命中段保护随用量
+     * 增长但边际递减（防一条历史高频规则永久免淘汰）。
+     */
+    private fun evictionScoreOf(meta: PairMeta): Long {
+        val doublings = if (meta.hitCount <= 0) {
+            0
+        } else {
+            // floor(log2(1 + hitCount))：1 + hitCount 的最高位指数
+            31 - Integer.numberOfLeadingZeros(meta.hitCount + 1)
+        }
+        return activityOf(meta) + doublings * HIT_BONUS_MS_PER_DOUBLING
+    }
+
     private fun buildRulesLocked(): List<CorrectionRule> {
         val out = ArrayList<CorrectionRule>()
         for ((right, wrongs) in pairs) {
@@ -388,14 +417,23 @@ class VoiceCorrectionStore(private val file: File) {
     }
 
     private fun parseInto(content: String) {
+        // 本次加载时刻：旧三列行的学入时间与未来时间戳钳制都以
+        // 它为基准（见 P 行处理）
+        val loadNow = System.currentTimeMillis()
         for (line in content.lineSequence()) {
             if (line.isBlank()) continue
             val parts = line.split('\t')
             when (parts.firstOrNull()) {
                 "P" -> {
-                    // 三列是旧版格式（无元信息），按全 0 缺省读入；
-                    // 六列是现行格式。元信息字段解析失败只把该字段
-                    // 按 0 处理，不丢词对（数值损坏不该连坐规则）
+                    // 三列是旧版格式（无元信息）：学入时间记为本
+                    // 次加载时刻（L2）——按 0 读入会让全部旧词对
+                    // 的活动时间垫底、升级后首轮淘汰整批先死，
+                    // 旧规则得不到任何存量保护；六列是现行格式。
+                    // 元信息字段解析失败只把该字段按 0 处理，不
+                    // 丢词对（数值损坏不该连坐规则）。时间戳一律
+                    // 钳到 [0, loadNow]（L5）：设备时钟曾被调到未
+                    // 来时写下的时间戳若原样读入，其活动时间永远
+                    // 最大、永不淘汰
                     if (parts.size != 3 && parts.size != 6) continue
                     val right = parts[1]
                     val wrong = parts[2]
@@ -404,11 +442,13 @@ class VoiceCorrectionStore(private val file: File) {
                     val meta = if (parts.size == 6) {
                         PairMeta(
                             hitCount = (parts[3].toIntOrNull() ?: 0).coerceAtLeast(0),
-                            lastHitAt = (parts[4].toLongOrNull() ?: 0L).coerceAtLeast(0L),
-                            learnedAt = (parts[5].toLongOrNull() ?: 0L).coerceAtLeast(0L),
+                            lastHitAt = (parts[4].toLongOrNull() ?: 0L)
+                                .coerceIn(0L, loadNow),
+                            learnedAt = (parts[5].toLongOrNull() ?: 0L)
+                                .coerceIn(0L, loadNow),
                         )
                     } else {
-                        PairMeta()
+                        PairMeta(learnedAt = loadNow)
                     }
                     // 文件里同词对重复出现（外部拼接等）保留先到的一份
                     pairs.getOrPut(right) { LinkedHashMap() }.putIfAbsent(wrong, meta)
@@ -435,8 +475,13 @@ class VoiceCorrectionStore(private val file: File) {
                     if (wrong in pairs[right].orEmpty()) continue
                     val key = wrong to right
                     // 重复行取较大值：两份计数都是真实观察，不相加
-                    // （无法区分同一观察被记录两次与两次独立观察）
-                    if (count > (probation[key] ?: 0)) probation[key] = count
+                    // （无法区分同一观察被记录两次与两次独立观察）。
+                    // 更新既有键时先摘再放，刷新其在插入顺序中的
+                    // 位置（淘汰按插入顺序删最旧，见 trimProbationLocked）
+                    if (count > (probation[key] ?: 0)) {
+                        probation.remove(key)
+                        probation[key] = count
+                    }
                 }
                 "E" -> {
                     if (parts.size != 2) continue
@@ -508,6 +553,9 @@ class VoiceCorrectionStore(private val file: File) {
 
     companion object {
         const val MAX_PAIRS = 300
+
+        /** 命中加成单位：命中次数每翻一倍，淘汰分数约抵一周未活动（见 evictionScoreOf）。 */
+        private const val HIT_BONUS_MS_PER_DOUBLING = 7L * 24 * 60 * 60 * 1000
 
         /** 两字词对正式生效所需的独立观察次数（见 [learn]）。 */
         const val PROBATION_REQUIRED = 2

@@ -38,10 +38,11 @@ object ClipboardManager {
     /**
      * 置顶条数上限：置顶行不计入保留上限（见 trimExcess）、单条又可
      * 达 [MAX_TEXT_LENGTH]，没有独立上限时置顶可绕过全部容量约束
-     * 无限堆积库文件。达到上限后新的置顶被拒（[setPinned] 回 false），
-     * 取消置顶与已置顶条目的存续不受影响。
+     * 无限堆积库文件。达到上限后新的置顶被拒（[setPinned] 回
+     * [PinResult.Limit]），取消置顶与已置顶条目的存续不受影响。
+     * 公开可见：置顶上限提示文案用它填 %d，避免数字两处各写一份。
      */
-    private const val MAX_PINNED = 100
+    const val MAX_PINNED = 100
 
     /**
      * 单条文本长度上限：超大行（约 2MB 起）读出时会抛 SQLiteBlobTooBigException，
@@ -125,11 +126,17 @@ object ClipboardManager {
     suspend fun getEntries(context: Context): List<Entry> =
         getEntriesOrNull(context) ?: emptyList()
 
+    /** [setPinned] 的结果三态：落库成功 / 达上限被拒 / 数据库失败。 */
+    enum class PinResult { Ok, Limit, Error }
+
     /**
-     * @return 写入成功为 true；数据库操作失败、或置顶已达
-     * [MAX_PINNED] 上限被拒为 false（旧实现静默吞掉，调用方无从感知）。
+     * 置顶或取消置顶。旧契约只回 Boolean：达上限被拒与数据库失败
+     * 都是 false，调用方只能一律提示「已达上限」（与实际原因不符），
+     * 且取消置顶失败被当成无事发生、完全没有反馈。现在三态分开：
+     * [PinResult.Limit] 仅出现在置顶方向（取消置顶永远放行），
+     * [PinResult.Error] 是 db 操作失败（db() 返回 null）。
      */
-    suspend fun setPinned(context: Context, text: String, pinned: Boolean): Boolean {
+    suspend fun setPinned(context: Context, text: String, pinned: Boolean): PinResult {
         val result = db(context) { db ->
             val dao = db.clipboardDao()
             if (pinned && dao.pinnedByText(text) != true &&
@@ -144,7 +151,11 @@ object ClipboardManager {
                 true
             }
         }
-        return result ?: false
+        return when (result) {
+            null -> PinResult.Error
+            true -> PinResult.Ok
+            false -> PinResult.Limit
+        }
     }
 
     /**

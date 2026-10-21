@@ -62,6 +62,9 @@ object ModelDownloader {
     sealed interface UpdateCheckResult {
         data object HasUpdate : UpdateCheckResult
         data object UpToDate : UpdateCheckResult
+
+        /** 目标只来自内置钉死表（服务端不可达）、未与服务端核对过：不得报「已是最新」 */
+        data object Unverified : UpdateCheckResult
         data object Failed : UpdateCheckResult
     }
 
@@ -171,6 +174,8 @@ object ModelDownloader {
     private data class SpeechModelTarget(
         val name: String,
         val sha256: String,
+        /** 目标是否来自实时 GitHub 资产清单（否＝服务端不可达时回落钉死表选出） */
+        val fromLiveApi: Boolean = false,
         /** 摘要是否来自 APK 内置钉死表（而非 GitHub 资产清单登记值）：只影响校验失败时的提示措辞 */
         val shaFromPinned: Boolean = false,
     ) {
@@ -207,10 +212,10 @@ object ModelDownloader {
         if (picked != null) {
             val registered = assets.firstOrNull { it.first == picked }?.second
                 ?.ifEmpty { null }
-            if (registered != null) return SpeechModelTarget(picked, registered)
+            if (registered != null) return SpeechModelTarget(picked, registered, fromLiveApi = true)
             val pinned = PINNED_SPEECH_SHA256[picked]
             if (!pinned.isNullOrEmpty()) {
-                return SpeechModelTarget(picked, pinned, shaFromPinned = true)
+                return SpeechModelTarget(picked, pinned, shaFromPinned = true, fromLiveApi = true)
             }
         }
         val pinnedPicked = selectSpeechModelAsset(PINNED_SPEECH_SHA256.keys.toList())
@@ -234,6 +239,14 @@ object ModelDownloader {
      * - 模型不存在 → 才是真的需要下载，返回有更新。
      * 下载成功后即纳入比对。
      */
+    /** 「已是最新」只在目标来自实时清单时成立；钉死回落目标未经服务端核对，降级为未确认（V7b） */
+    private fun verified(result: UpdateCheckResult, target: SpeechModelTarget): UpdateCheckResult =
+        if (result == UpdateCheckResult.UpToDate && !target.fromLiveApi) {
+            UpdateCheckResult.Unverified
+        } else {
+            result
+        }
+
     suspend fun checkForUpdate(context: Context): UpdateCheckResult = withContext(Dispatchers.IO) {
         cleanupLegacyCdspDir()
         val target = resolveTarget()
@@ -251,7 +264,7 @@ object ModelDownloader {
                 // 「实际没装」误报成「已是最新」，用户永远得不到重下
                 // 提示。在盘检查本就在 IO 线程、低频调用，开销可忽略
                 return@withContext if (isModelInstalled()) {
-                    UpdateCheckResult.UpToDate
+                    verified(UpdateCheckResult.UpToDate, target)
                 } else {
                     UpdateCheckResult.HasUpdate
                 }
@@ -264,7 +277,7 @@ object ModelDownloader {
                     Timber.i(
                         "Speech model update check: local package is newer, pinned target refused",
                     )
-                    return@withContext UpdateCheckResult.UpToDate
+                    return@withContext verified(UpdateCheckResult.UpToDate, target)
                 }
                 // 钉死摘要盲区（V7）：目标摘要来自钉死表、与本
                 // 地仅摘要不同且日期不更晚时孰新无从判定——典型
@@ -280,7 +293,7 @@ object ModelDownloader {
                         "Speech model update check: pinned sha differs from local record " +
                             "without a newer date; treating as up to date (pinned blind spot)",
                     )
-                    return@withContext UpdateCheckResult.UpToDate
+                    return@withContext verified(UpdateCheckResult.UpToDate, target)
                 }
                 return@withContext UpdateCheckResult.HasUpdate
             }
@@ -289,7 +302,7 @@ object ModelDownloader {
         return@withContext if (isModelInstalled()) {
             storeManifestId(context, target.identity)
             Timber.i("Speech model id baseline recorded for existing install")
-            UpdateCheckResult.UpToDate
+            verified(UpdateCheckResult.UpToDate, target)
         } else {
             UpdateCheckResult.HasUpdate
         }
@@ -317,14 +330,14 @@ object ModelDownloader {
             val sha = sha256OfFile(archiveFile)
             return if (sha.equals(target.sha256, ignoreCase = true)) {
                 storeManifestId(context, target.identity)
-                UpdateCheckResult.UpToDate
+                verified(UpdateCheckResult.UpToDate, target)
             } else {
                 UpdateCheckResult.HasUpdate
             }
         }
         storeManifestId(context, target.identity)
         Timber.i("Speech model id migrated from legacy manifest id")
-        return UpdateCheckResult.UpToDate
+        return verified(UpdateCheckResult.UpToDate, target)
     }
 
     /**

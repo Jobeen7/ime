@@ -424,7 +424,8 @@ class InputBoxLayerView(
                     )
                 }
 
-                // 未上屏（composing）文本底部白色下划线（逐字符绘制以支持换行/回车）
+                // 未上屏（composing）文本底部下划线（逐字符绘制以支持换行/回车）；
+                // 与正文/光标同色（colors.keyText）：写死白色在素白、落日主题下与输入框底同色不可见
                 val comp = buffer?.composingRange
                 if (comp != null) {
                     val cs = comp.first.coerceIn(0, text.length)
@@ -432,7 +433,7 @@ class InputBoxLayerView(
                     if (ce > cs) {
                         val uH = 1f.coerceAtLeast(density.toFloat())
                         val uYOff = textPaint.fontMetrics.descent + 1.5f * density
-                        val uPaint = underlinePaint.apply { color = 0xFFFFFFFF.toInt() }
+                        val uPaint = underlinePaint.apply { color = colors.keyText }
                         for (i in cs until ce) {
                             if (text[i] == '\n') continue
                             val line = layout.getLineForOffset(i)

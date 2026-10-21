@@ -13,6 +13,7 @@ import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
+import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.input.panel.component.CandidateGridView
 import com.jobeen.ime.input.panel.component.ClipboardView
 import com.jobeen.ime.input.panel.component.ClipboardTab
@@ -341,16 +342,27 @@ class KawaiiPanel(
                         if (entry.pinned) R.string.clipboard_unpin else R.string.clipboard_pin
                     ) to {
                         appScope.launch {
-                            val ok = ClipboardManager.setPinned(
+                            val result = ClipboardManager.setPinned(
                                 context, entry.text, !entry.pinned
                             )
-                            // 置顶失败（达上限被拒为主因，契约见
-                            // ClipboardManager.setPinned）时条目纹丝不动，
-                            // 必须给反馈，否则用户无从知道为什么没置上
-                            if (!ok && !entry.pinned) {
-                                com.jobeen.ime.base.util.ToastUtil.showToast(
-                                    context, "置顶已达上限（100 条）"
-                                )
+                            // 三态分别反馈（契约见 ClipboardManager.setPinned）：
+                            // 达上限与数据库失败文案不同，取消置顶失败
+                            // （Error）旧实现完全没反馈。走键盘内置提示，
+                            // 与 PanelActionListener 同口径（面板 context
+                            // 即输入法服务本体）
+                            val message = when (result) {
+                                ClipboardManager.PinResult.Limit ->
+                                    context.getString(
+                                        R.string.clipboard_pin_limit,
+                                        ClipboardManager.MAX_PINNED,
+                                    )
+                                ClipboardManager.PinResult.Error ->
+                                    context.getString(R.string.clipboard_pin_failed)
+                                ClipboardManager.PinResult.Ok -> null
+                            }
+                            if (message != null) {
+                                (context as? ImeInputMethodService)
+                                    ?.keyboardWindow?.showToast(message)
                             }
                             clipboardView.refresh()
                         }

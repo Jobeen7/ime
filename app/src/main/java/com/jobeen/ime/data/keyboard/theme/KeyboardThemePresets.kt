@@ -35,10 +35,10 @@ object KeyboardThemePresets {
                 toolbarText = Color.rgb(255, 255, 255),
                 toolbarActived = Color.rgb(156, 130, 74),
                 toolbarIcon = Color.rgb(255, 255, 255),
-                // 工具栏按压是半透明涟漪（alpha≤120）叠在面板底 22 灰上，
+                // 工具栏按压是半透明涟漪（峰值 alpha 160，见
+                // KawaiiPanelView.startPressAnimation）叠在面板底 22 灰上，
                 // 取键面 pressed 的 72 灰混合后对比仅 1.33、肉眼不可辨；
-                // 与 PanelColors.from 派生口径一致取 specialKeyText
-                // 纯白，混合后约 3.9:1
+                // 取 specialKeyText 纯白，混合后约 7.6:1
                 toolbarPressed = Color.rgb(255, 255, 255),
                 candidateBackground = Color.argb(220, 22, 22, 22),
                 candidateText = Color.rgb(255, 255, 255),
@@ -84,9 +84,10 @@ object KeyboardThemePresets {
                 candidateIndex = Color.rgb(120, 120, 125),
                 candidateDivider = Color.argb(100, 140, 140, 145),
                 // 同暗夜：涟漪叠在面板底 225 灰上，230 与底几乎同色
-                // （混合后约 1.0:1、不可见）；取功能键文字的深灰，
-                // 混合后约 2.3:1
-                toolbarPressed = Color.rgb(60, 60, 65),
+                // （混合后约 1.0:1、不可见）；墨色取正文 keyText 纯黑、
+                // 峰值 alpha 160，混合后约 5.8:1（alpha 120 时用深灰
+                // 60,60,65 只有约 2.3:1，低于 3:1）
+                toolbarPressed = Color.rgb(0, 0, 0),
             ),
             pinner = KeyboardColors.ColorScheme.PinnerColors(
                 background = Color.rgb(255, 255, 255),
@@ -127,8 +128,10 @@ object KeyboardThemePresets {
                 candidateIndex = Color.rgb(140, 120, 110),
                 candidateDivider = Color.argb(100, 220, 200, 185),
                 // 同上：原值与面板底 242,235,228 几乎同色（混合后约
-                // 1.1:1）；取功能键文字的暖灰，混合后约 1.9:1
-                toolbarPressed = Color.rgb(120, 100, 90),
+                // 1.1:1）；墨色取正文 keyText 50,40,35、峰值 alpha 160，
+                // 混合后约 4.1:1（暖灰 120,100,90 在 alpha 120 时只有
+                // 约 1.9:1，低于 3:1）
+                toolbarPressed = Color.rgb(50, 40, 35),
             ),
             pinner = KeyboardColors.ColorScheme.PinnerColors(
                 background = Color.rgb(245, 238, 230),

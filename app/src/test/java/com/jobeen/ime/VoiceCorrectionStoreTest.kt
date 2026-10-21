@@ -287,10 +287,10 @@ class VoiceCorrectionStoreTest {
     @Test
     fun unhitNewPairEvictedBeforeHitOldPair() {
         val file = tempFile()
-        // 老词对 A：学入最早，但命中过（活动时间 5000）；新词对 B：
-        // 学入较晚、从未命中（活动时间=学入 4000）；filler 活动时
-        // 间 9000 全部安全。超限 1 条时应淘汰活动时间最旧的 B，
-        // 而不是学入顺序最靠前的 A
+        // 老词对 A：学入最早，但命中过（活动时间 5000＋命中加
+        // 成）；新词对 B：学入较晚、从未命中（分数=学入 4000）；
+        // filler 分数 9000 起全部安全。超限 1 条时应淘汰分数最
+        // 低的 B，而不是学入顺序最靠前的 A
         val sb = StringBuilder()
         sb.append(pLine(rightForm(0), wrongForm(0), hit = 3, lastHit = 5_000, learned = 1_000))
         sb.append(pLine(rightForm(1), wrongForm(1), hit = 0, lastHit = 0, learned = 4_000))
@@ -310,12 +310,20 @@ class VoiceCorrectionStoreTest {
         val store = VoiceCorrectionStore(file)
         store.learn("星辰大", "星辰海")
         awaitContent(file, "P\t星辰海\t星辰大")
-        // 仅路过未替换：命中计数保持 0
-        assertEquals("今天开会", store.correct("今天开会").text)
+        // 仅路过未替换：applied 为空，无可记账，计数保持 0
+        val noHit = store.correct("今天开会")
+        assertTrue(noHit.applied.isEmpty())
         var row = pRow(file.readText(Charsets.UTF_8), "星辰海", "星辰大")!!
         assertEquals("0", row[3])
-        // 实际替换一次：计数变 1、最近命中时间写入
-        assertEquals("去星辰海", store.correct("去星辰大").text)
+        // 实际替换但调用方未记账：correct 只算不记（L3，被封锁/
+        // 未落屏的结果走的正是这条），计数仍为 0
+        val result = store.correct("去星辰大")
+        assertEquals("去星辰海", result.text)
+        assertTrue(result.applied.isNotEmpty())
+        row = pRow(file.readText(Charsets.UTF_8), "星辰海", "星辰大")!!
+        assertEquals("0", row[3])
+        // 调用方在落屏成立后显式记账：计数变 1、最近命中时间写入
+        store.recordHits(result.applied)
         awaitCondition(file) {
             pRow(it, "星辰海", "星辰大")?.get(3) == "1"
         }
@@ -330,9 +338,11 @@ class VoiceCorrectionStoreTest {
         store.learn("星辰大", "星辰海")
         store.learn("衡辰海", "星辰海")
         awaitContent(file, "P\t星辰海\t衡辰海")
-        // 「衡辰大」是字位泛化组合（没被逐字教过）：命中后整组两条
-        // 的最近命中时间都被刷新，但命中次数不虚增
-        assertEquals("星辰海", store.correct("衡辰大").text)
+        // 「衡辰大」是字位泛化组合（没被逐字教过）：落屏后记账，
+        // 整组两条的最近命中时间都被刷新，但命中次数不虚增
+        val result = store.correct("衡辰大")
+        assertEquals("星辰海", result.text)
+        store.recordHits(result.applied)
         awaitCondition(file) {
             val r1 = pRow(it, "星辰海", "星辰大")
             val r2 = pRow(it, "星辰海", "衡辰海")
@@ -385,13 +395,88 @@ class VoiceCorrectionStoreTest {
             Charsets.UTF_8
         )
         val store = VoiceCorrectionStore(file)
-        assertEquals("星辰海", store.correct("星辰大").text)
+        val firstHit = store.correct("星辰大")
+        assertEquals("星辰海", firstHit.text)
+        store.recordHits(firstHit.applied)
         assertEquals("衡辰海", store.correct("衡辰大").text)
         // 坏数值不连坐：触发一次落盘后两条都在，命中列按缺省与实记
         store.learn("星辰峰", "星辰海")
         awaitContent(file, "P\t星辰海\t星辰峰")
         val row = pRow(file.readText(Charsets.UTF_8), "星辰海", "星辰大")!!
         assertEquals(6, row.size)
-        assertEquals("1", row[3]) // 上面 correct 实际替换过一次
+        assertEquals("1", row[3]) // 上面落屏后显式记账过一次
+    }
+
+    // ── 第十三批：淘汰复合分数（L2）与时间戳口径（L5） ──
+
+    @Test
+    fun highHitOldPairSurvivesEvictionByScoreBonus() {
+        val file = tempFile()
+        val day = 86_400_000L
+        val now = System.currentTimeMillis()
+        // 高频老规则：60 天前最后命中、命中 80 次（加成约 6 周，
+        // 分数≈18 天前活动）；新学未命中规则：20 天前学入（分数
+        // 即 20 天前，全场最低）；filler：10 天前学入（分数更
+        // 高、安全）。超限 1 条时，纯活动时间口径会先淘汰高频
+        // 老规则，复合分数口径应淘汰分数最低的新学未命中规则、
+        // 保住老规则
+        val sb = StringBuilder()
+        sb.append(pLine(rightForm(0), wrongForm(0), hit = 80, lastHit = now - 60 * day, learned = now - 90 * day))
+        sb.append(pLine(rightForm(1), wrongForm(1), hit = 0, lastHit = 0, learned = now - 20 * day))
+        for (i in 2 until VoiceCorrectionStore.MAX_PAIRS + 1) {
+            sb.append(pLine(rightForm(i), wrongForm(i), hit = 0, lastHit = 0, learned = now - 10 * day))
+        }
+        file.writeText(sb.toString(), Charsets.UTF_8)
+        val store = VoiceCorrectionStore(file)
+        store.rules() // 触发加载与就地淘汰
+        assertEquals(rightForm(0), store.correct(wrongForm(0)).text)
+        assertEquals(wrongForm(1), store.correct(wrongForm(1)).text)
+    }
+
+    @Test
+    fun legacyRowsGetLoadTimeAsLearnedAt() {
+        val file = tempFile()
+        val day = 86_400_000L
+        val now = System.currentTimeMillis()
+        // 一条六列行（10 天前学入、从未命中）＋ 300 条旧三列行：
+        // 三列行学入时间记为加载时刻后，活动时间最低的是那条
+        // 六列行，超限 1 条时应淘汰它；若三列行仍按时间 0 读
+        // 入，被淘汰的会是某条三列行、六列行存活
+        val sb = StringBuilder()
+        sb.append(pLine(rightForm(0), wrongForm(0), hit = 0, lastHit = 0, learned = now - 10 * day))
+        for (i in 1 until VoiceCorrectionStore.MAX_PAIRS + 1) {
+            sb.append("P\t${rightForm(i)}\t${wrongForm(i)}\n")
+        }
+        file.writeText(sb.toString(), Charsets.UTF_8)
+        val store = VoiceCorrectionStore(file)
+        store.rules()
+        assertEquals(wrongForm(0), store.correct(wrongForm(0)).text)
+        assertEquals(
+            rightForm(VoiceCorrectionStore.MAX_PAIRS),
+            store.correct(wrongForm(VoiceCorrectionStore.MAX_PAIRS)).text
+        )
+    }
+
+    @Test
+    fun futureTimestampsClampedOnLoad() {
+        val file = tempFile()
+        val day = 86_400_000L
+        val now = System.currentTimeMillis()
+        // 时钟曾被调到未来时写下的时间戳：原样读入会让该词对的
+        // 活动时间永远最大、永不淘汰；加载须钳到加载时刻
+        file.writeText(
+            pLine(rightForm(0), wrongForm(0), hit = 2, lastHit = now + 365 * day, learned = now + 365 * day),
+            Charsets.UTF_8
+        )
+        val store = VoiceCorrectionStore(file)
+        store.rules()
+        // 触发一次落盘，读回该行的时间戳断言已被钳制（仍 >0，
+        // 是钳到加载时刻而非清零）
+        store.learn("星辰峰", "星辰海")
+        awaitContent(file, "P\t星辰海\t星辰峰")
+        val row = pRow(file.readText(Charsets.UTF_8), rightForm(0), wrongForm(0))!!
+        val after = System.currentTimeMillis()
+        assertTrue(row[4].toLong() in 1..after)
+        assertTrue(row[5].toLong() in 1..after)
     }
 }
