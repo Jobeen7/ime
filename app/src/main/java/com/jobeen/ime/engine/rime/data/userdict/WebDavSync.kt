@@ -297,6 +297,16 @@ object WebDavSync {
                 // If-Match（见 putPrecondition），自动降级为时间条件。
                 baseState?.let { st ->
                     val pre = putPrecondition(st.etag, st.etagWeak, st.lastModifiedMs)
+                    // 前置条件双空（弱 ETag 且无修改时间等）且远端
+                    // 文件已存在：该服务器无法提供并发保护，裸
+                    // PUT 会无条件覆盖合并校验后他设备刚写入的
+                    // 内容——中止本次上传，不冒丢词风险
+                    if (isUnprotectedOverwrite(pre, remoteExists = true)) {
+                        throw IllegalStateException(
+                            "该服务器无法提供并发保护（无可用的 ETag / 修改时间校验），" +
+                                "继续上传可能覆盖其他设备刚写入的内容，本次上传已中止"
+                        )
+                    }
                     pre.ifMatch?.let { builder.header("If-Match", it) }
                     pre.ifUnmodifiedSince?.let {
                         builder.header("If-Unmodified-Since", it)
@@ -329,16 +339,12 @@ object WebDavSync {
                         // （见 postPutRecheckAdoptable）才采纳；证明不了
                         // 就不写基准，下次上传会先合并，不影响本次已
                         // 成功的上传
-                        val putFinishedAtMs = System.currentTimeMillis()
                         (fetchRemoteState(fileName) as? RemoteStateResult.Found)
                             ?.state?.let { recheck ->
                                 if (postPutRecheckAdoptable(
                                         anchorETag = baseState?.etag,
                                         anchorETagWeak = baseState?.etagWeak ?: false,
-                                        anchorLastModifiedMs = baseState?.lastModifiedMs ?: 0L,
                                         recheckETag = recheck.etag,
-                                        recheckLastModifiedMs = recheck.lastModifiedMs,
-                                        putFinishedAtMs = putFinishedAtMs,
                                     )
                                 ) {
                                     UserDictPrefs.setSyncETag(fileName, recheck.etag)
@@ -727,8 +733,11 @@ object WebDavSync {
      *
      * 删除与恢复都是带时间戳的事件、逐词取较新状态；旧格式远端文件
      * （每行一个词）按「已删、时间 0」兼容读取，下次 PUT 自动升级为新格式。
-     * GET 远端 → 合并应用到本地 → 合并结果与远端不同才 PUT 回（带前置
-     * 条件防并发覆盖，412 时重走一次合并）。
+     * GET 远端 → 合并应用到本地 → 合并结果与远端不同才 PUT 回。前置
+     * 条件与词典上传同一口径（[putPrecondition] 归一：强 ETag 用
+     * If-Match，弱 ETag／无 ETag 用修改时间降级）；构造不出任何前置
+     * 条件且远端文件已存在时中止本次同步，不裸 PUT 覆盖他设备刚写入
+     * 的删词事件（见 [isUnprotectedOverwrite]）；412 时重走一次合并。
      * 必须在后台线程调用；失败抛异常由调用方决定是否忽略。
      */
     private fun syncDeletedWords(retried: Boolean = false) {
@@ -787,25 +796,27 @@ object WebDavSync {
                 .url(remoteUrl(DELETED_WORDS_FILE))
                 .header("Authorization", authHeader())
                 .put(content.toRequestBody(textPlain))
-            when {
-                remoteETag != null -> {
-                    val pre = putPrecondition(remoteETag, remoteETagWeak, remoteLastModifiedMs)
-                    pre.ifMatch?.let { putBuilder.header("If-Match", it) }
-                    pre.ifUnmodifiedSince?.let {
-                        putBuilder.header("If-Unmodified-Since", it)
-                    }
-                }
-                remoteExists -> {
-                    // 远端文件存在但服务器不给 ETag：没有可用的前置条件，
-                    // 直接覆盖写。旧实现按「ETag 为空」误判为文件不存在、
-                    // 带上 If-None-Match:*，对已存在文件必然 412，这类
-                    // 服务器上的删词同步永远成功不了
-                }
-                else -> {
-                    // 远端文件尚不存在（首次同步）：只允许"不存在才创建"，防止两台
-                    // 设备同时首同步时后写者无条件覆盖先写者的结果
-                    putBuilder.header("If-None-Match", "*")
-                }
+            // 与词典上传同一口径：三分支统一先算前置条件——无 ETag
+            // 时 putPrecondition 也会用修改时间降级（旧实现该分支根
+            // 本不算、明明有时间条件可用也不发）；双空且远端文件已
+            // 存在时裸 PUT 会无条件覆盖 GET 之后他设备刚写入的删词
+            // 事件，按同一守卫中止（异常经调用方 runCatching 仅记日
+            // 志；本地合并已落盘，下次同步重走 GET→合并→PUT）
+            val pre = putPrecondition(remoteETag, remoteETagWeak, remoteLastModifiedMs)
+            if (isUnprotectedOverwrite(pre, remoteExists)) {
+                throw IllegalStateException(
+                    "该服务器无法提供并发保护（无可用的 ETag / 修改时间校验），" +
+                        "继续上传可能覆盖其他设备刚写入的内容，本次上传已中止"
+                )
+            }
+            pre.ifMatch?.let { putBuilder.header("If-Match", it) }
+            pre.ifUnmodifiedSince?.let {
+                putBuilder.header("If-Unmodified-Since", it)
+            }
+            if (!remoteExists) {
+                // 远端文件尚不存在（首次同步）：只允许"不存在才创建"，防止两台
+                // 设备同时首同步时后写者无条件覆盖先写者的结果
+                putBuilder.header("If-None-Match", "*")
             }
             client.newCall(putBuilder.build()).execute().use { response ->
                 if (response.code == 412 && !retried) {
@@ -816,9 +827,9 @@ object WebDavSync {
                 if (!response.isSuccessful) {
                     throw httpError("上传删除词表", response.code, errorDetail(response))
                 }
-                normalizeETag(response.header("ETag"))?.let {
-                    UserDictPrefs.setSyncETag(DELETED_WORDS_FILE, it)
-                }
+                // 不再回写删词文件的 ETag 基准：本链每轮都重新 GET、
+                // 从不查存量基准（syncETag 唯一读取点是词典文件的
+                // isRemoteChanged），旧回写是无人读的死写，已删除
             }
         }
         Timber.i("Deleted words synced: remote=${remote.size}, merged=${merged.size}")
@@ -879,11 +890,14 @@ internal data class PutPrecondition(
  * - 无 ETag → 同样降级为 If-Unmodified-Since（有时间时），与弱
  *   ETag 分支同口径——此前无 ETag 时直接丢弃已有时间、裸 PUT，
  *   保护反而弱于弱 ETag 服务器；
- * - ETag 与时间皆无 → 不带前置条件。调用方在上传前已做过远端
- *   变更检查；且合并路径在双验证器皆无时按「无法验证即已变」
- *   中止、不会走到无锚 PUT（见 mergedStateMatchesCurrent），能
- *   走到裸 PUT 的只剩「远端自始至终无验证器」的服务器，属其
- *   能力边界。
+ * - 弱 ETag 且无时间、或 ETag 与时间皆无 → 前置条件双空。双空
+ *   不等于可以裸 PUT：远端文件已存在时，合并校验之后、PUT 之
+ *   前的并发写入无任何拦截，裸 PUT 会被服务器直接接受覆盖，
+ *   调用方按 [isUnprotectedOverwrite] 中止本次上传；只有远端
+ *   文件不存在（首次新建、另有 If-None-Match 限定）时才可放
+ *   行。（旧注曾称合并路径中止后裸 PUT 只剩「自始至终无验证
+ *   器」的服务器——弱 ETag 服务器同样会落到双空，该说法覆盖
+ *   不全，已订正；.17 复核 R2。）
  */
 internal fun putPrecondition(
     normalizedETag: String?,
@@ -902,6 +916,21 @@ internal fun putPrecondition(
         if (lastModifiedMs > 0L) formatHttpDate(lastModifiedMs) else null,
     )
 }
+
+/**
+ * 该 PUT 是否会无任何前置条件地覆盖一个已存在的远端文件：
+ * 前置条件双空且远端文件已存在时为真——合并校验已在更早的时
+ * 点做完，其后到 PUT 之间他设备的并发写入无从发觉，裸 PUT 会
+ * 被服务器直接接受、覆盖掉本机未合并的内容，调用方必须中止
+ * 本次上传（该服务器无法提供并发保护）。远端文件不存在（首
+ * 次新建）时不算：新建由 If-None-Match 限定，没有可被覆盖的
+ * 既有内容。
+ */
+internal fun isUnprotectedOverwrite(
+    pre: PutPrecondition,
+    remoteExists: Boolean,
+): Boolean =
+    remoteExists && pre.ifMatch == null && pre.ifUnmodifiedSince == null
 
 /**
  * 「远端是否自本机基准后被改动」的纯决策（基准全部是 per-file 口径
@@ -956,29 +985,25 @@ internal fun mergedStateMatchesCurrent(
 
 /**
  * PUT 成功但响应没带 ETag 时，补查状态是否可采纳为新基准的纯
- * 决策。补查状态要能证明「就是本次 PUT 落下的内容」才可采纳：
- * - 补查 ETag 与 PUT 前锚点 ETag 全等（且锚点非弱 ETag）：远端
- *   仍是已合并的那一份（如内容寻址 ETag 且内容恰好相同），采纳；
- * - 否则看修改时间：补查的修改时间必须晚于锚点状态、且不晚于
- *   本机记录的 PUT 完成时刻。落在窗口之外（典型是他设备在 PUT
- *   完成之后、补查之前写入的新版本，其时间会晚于 PUT 完成时刻）
- *   一律不采纳——不写基准，下次上传先合并，绝不把未合并内容
- *   记成已合并基准。时间缺失（0）无从证明，同样不采纳。
- * 注：服务器与本机时钟存在偏差时可能误判为不可采纳，后果只是
- * 下次同步多合并一次（安全方向），不会丢词。
+ * 决策。采纳的唯一判据：补查 ETag 与 PUT 前锚点强 ETag 全等——
+ * 远端仍是已合并的那一份（如内容寻址 ETag 且内容恰好相同）。
+ * 其余情形（补查 ETag 已变或缺失、锚点为弱 ETag、PUT 前无锚点）
+ * 一律不采纳：不写基准，下次上传会重新 GET 合并，绝不把未合并
+ * 内容记成已合并基准。
+ * 旧版曾以「补查修改时间落在（锚点时间，PUT 完成时刻]」的时
+ * 间窗采纳变化后的 ETag，并注称时钟偏差只会保守拒绝、不会丢
+ * 词——该说法不成立：服务器修改时间只有秒精度、且与本机时钟
+ * 可不一致，他设备在 PUT 落盘后同秒（乃至响应返回前）追加的
+ * 新版本同样落进窗口，时间窗证明不了内容身份。故时间窗支已
+ * 删除，修改时间不再参与本判据（.17 复核 R1）。
  */
 internal fun postPutRecheckAdoptable(
     anchorETag: String?,
     anchorETagWeak: Boolean,
-    anchorLastModifiedMs: Long,
     recheckETag: String?,
-    recheckLastModifiedMs: Long,
-    putFinishedAtMs: Long,
 ): Boolean {
     if (recheckETag == null) return false
-    if (anchorETag != null && !anchorETagWeak && recheckETag == anchorETag) return true
-    return recheckLastModifiedMs > anchorLastModifiedMs &&
-        recheckLastModifiedMs <= putFinishedAtMs
+    return anchorETag != null && !anchorETagWeak && recheckETag == anchorETag
 }
 
 private fun httpDateFormat(): java.text.SimpleDateFormat =
