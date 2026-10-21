@@ -1,0 +1,33 @@
+# Tag 一致性校验：推送 v* tag 时触发，校验 tag 名与
+# app/build.gradle.kts 里的 versionName 一致，不一致直接失败，
+# 防止按错位 tag 检出得到与版本号不符的代码。
+name: TagCheck
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  tag-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Verify tag matches versionName
+        run: |
+          v=$(sed -n 's/^ *versionName = "\(.*\)"/\1/p' app/build.gradle.kts)
+          if [ -z "$v" ]; then
+            echo "versionName not found in app/build.gradle.kts"
+            exit 1
+          fi
+          if [ "v$v" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME != versionName $v"
+            exit 1
+          fi
+          echo "tag $GITHUB_REF_NAME matches versionName $v"

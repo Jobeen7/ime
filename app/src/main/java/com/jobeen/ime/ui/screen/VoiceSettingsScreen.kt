@@ -67,6 +67,7 @@ sealed interface UpdateCheckState {
     data object HasUpdate : UpdateCheckState
     data object UpToDate : UpdateCheckState
     data object CheckFailed : UpdateCheckState
+    data object Unverified : UpdateCheckState
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -102,6 +103,7 @@ fun VoiceSettingsScreen(
                 ModelDownloader.UpdateCheckResult.HasUpdate -> UpdateCheckState.HasUpdate
                 ModelDownloader.UpdateCheckResult.UpToDate -> UpdateCheckState.UpToDate
                 ModelDownloader.UpdateCheckResult.Failed -> UpdateCheckState.CheckFailed
+                ModelDownloader.UpdateCheckResult.Unverified -> UpdateCheckState.Unverified
             }
         }
     }
@@ -234,6 +236,7 @@ fun VoiceSettingsScreen(
                             else -> when (updateCheckState) {
                                 UpdateCheckState.Idle,
                                 UpdateCheckState.CheckFailed,
+                                UpdateCheckState.Unverified,
                                 -> checkButton(R.string.check_update, checkUpdate, true)
 
                                 UpdateCheckState.Checking ->
@@ -266,6 +269,14 @@ fun VoiceSettingsScreen(
                         stringResource(R.string.update_check_failed),
                         fontSize = rowSubFontSize,
                         color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                if (updateCheckState is UpdateCheckState.Unverified) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(R.string.voice_model_update_unverified),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
             }

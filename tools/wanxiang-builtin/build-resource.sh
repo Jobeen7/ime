@@ -4,8 +4,11 @@
 # 流程：下载官方 lite zip → 校验大小与 sha256 → 解压（官方包为根目录
 # 平铺）→ 整体放入 shared/ → 用本目录四个适配文件覆盖 shared/ 同名
 # 文件 → 加入 model/predict.marisa（沿用自现有 resource.zip，官方
-# lite 包不含此文件）→ 以固定排序、固定时间戳打包 → 输出成品
-# 路径与 sha256。
+# lite 包不含此文件，取出后按 MARISA_SHA256 校验，不符即停）→ 以
+# 固定排序、固定时间戳打包 → 输出成品路径与 sha256。
+#
+# 依赖：bash、curl、python3（大小与 sha256 均走 python3，不依赖 GNU
+# coreutils，macOS 可直接运行）。
 #
 # 用法：bash tools/wanxiang-builtin/build-resource.sh
 # 换官方版本时只改下面 VERSION / EXPECTED_SIZE / EXPECTED_SHA256
@@ -13,11 +16,20 @@
 # 列表读取），并同步核对四处适配是否仍成立（见 README.md）。
 set -euo pipefail
 
-VERSION="v18.1.6"
+VERSION="v18.1.7"
 ASSET="rime-wanxiang-lite.zip"
 URL="https://github.com/amzxyz/rime-wanxiang/releases/download/${VERSION}/${ASSET}"
-EXPECTED_SIZE=23403535
-EXPECTED_SHA256="c18038d2de11735aea7462c7f3a97d583f7c7160de20acac2b305c19ca0572e6"
+EXPECTED_SIZE=23403719
+EXPECTED_SHA256="4f76c49b70f711c10b6abdf142249d4f0e88dd5b00ffe380fd45b0cd1b39d42a"
+# model/predict.marisa 的登记 sha256（与 README.md「model/ 的来源」一致）
+MARISA_SHA256="bcd55c3e7b149a5611cde4d027781710f50533c90e67ab9fc7824e96ff62701d"
+
+sha256_of() {
+    python3 -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' "$1"
+}
+file_size() {
+    python3 -c 'import os, sys; print(os.path.getsize(sys.argv[1]))' "$1"
+}
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
@@ -29,12 +41,17 @@ trap 'rm -rf "${WORK}"' EXIT
 echo "下载 ${URL}"
 curl -fL --retry 3 -o "${WORK}/${ASSET}" "${URL}"
 
-ACTUAL_SIZE="$(stat -c%s "${WORK}/${ASSET}")"
+ACTUAL_SIZE="$(file_size "${WORK}/${ASSET}")"
 if [ "${ACTUAL_SIZE}" != "${EXPECTED_SIZE}" ]; then
     echo "大小不符：期望 ${EXPECTED_SIZE}，实际 ${ACTUAL_SIZE}" >&2
     exit 1
 fi
-echo "${EXPECTED_SHA256}  ${WORK}/${ASSET}" | sha256sum -c -
+ACTUAL_SHA256="$(sha256_of "${WORK}/${ASSET}")"
+if [ "${ACTUAL_SHA256}" != "${EXPECTED_SHA256}" ]; then
+    echo "sha256 不符：期望 ${EXPECTED_SHA256}，实际 ${ACTUAL_SHA256}" >&2
+    exit 1
+fi
+echo "官方包校验通过：${ACTUAL_SHA256}"
 
 mkdir -p "${WORK}/tree/shared"
 python3 - "${WORK}/${ASSET}" "${WORK}/tree/shared" <<'PY'
@@ -64,6 +81,14 @@ with open(dest, "wb") as fh:
     fh.write(data)
 PY
 
+# 取出的 predict.marisa 必须与登记值一致，任何内容不符都不进新包
+MARISA_ACTUAL_SHA256="$(sha256_of "${WORK}/tree/model/predict.marisa")"
+if [ "${MARISA_ACTUAL_SHA256}" != "${MARISA_SHA256}" ]; then
+    echo "predict.marisa sha256 不符：登记 ${MARISA_SHA256}，实际 ${MARISA_ACTUAL_SHA256}" >&2
+    exit 1
+fi
+echo "predict.marisa 校验通过：${MARISA_ACTUAL_SHA256}"
+
 # 固定排序 + 固定时间戳（1980-01-01，zip 纪元）+ 不写额外字段，
 # 同输入必得同 sha256 的成品
 python3 - "${WORK}/tree" "${WORK}/resource.zip" <<'PY'
@@ -91,4 +116,4 @@ PY
 
 cp "${WORK}/resource.zip" "${OUT}"
 echo "成品：${OUT}"
-sha256sum "${OUT}"
+echo "成品 sha256：$(sha256_of "${OUT}")（换包后同步登记到 README.md「当前成品登记」）"

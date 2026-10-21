@@ -118,10 +118,18 @@ object CandidatePreferCache {
                 // 排队期间已由另一段完成加载时直接返回，不重复读库
                 if (loaded) return@withLock cache
                 val gen = generation          // 加载前记下代次
-                val loadedMap = runCatching {
+                // 不用 runCatching：它会连 CancellationException 一起
+                // 吞掉——加载协程在读库挂起时被取消（候选批到达即
+                // 取消上一还原 job，首次加载期连打可反复命中）会被
+                // 误记成一条 load failed 且放弃本次读数。取消必须按
+                // 协程语义上抛（withLock/withContext 自行收尾），只
+                // 有真实失败才记日志、按 null 走失败收尾
+                val loadedMap = try {
                     dao.getAllCounts().associate { it.text to it.click_count }
-                }.getOrElse {
-                    Timber.e(it, "candidate prefer cache load failed")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.e(e, "candidate prefer cache load failed")
                     null
                 }
                 // 加载失败不能置 loaded：否则本进程内偏好永远为空且不再重试
@@ -207,12 +215,85 @@ object CandidatePreferCache {
      * [loadedMap] 为 null 表示加载失败：不合并、不置 loaded，下次
      * [snapshot] 重新加载（失败语义与原实现一致）；失败前已落点
      * 的直写计数保留在缓存里供进程内继续使用。
+     * 本次调用使 loaded 由假转真时通知加载完成监听（见
+     * [registerLoadListener]），供「未加载先行出候选」的消费方在
+     * 快照就绪后刷新。
      */
     internal fun finishLoad(loadedMap: Map<String, Int>?, gen: Int) {
-        synchronized(lock) {
+        val transitioned = synchronized(lock) {
             if (loadedMap != null && !loaded && gen == generation) {
                 mergeLoadedSnapshot(cache, loadedMap)
                 loaded = true
+                true
+            } else {
+                false
+            }
+        }
+        if (transitioned) notifyLoadListeners()
+    }
+
+    /** 偏好快照是否已加载完成（加载后 [snapshot] 为内存直读、不会等写事务）。 */
+    fun isLoaded(): Boolean = loaded
+
+    /** 当前缓存的实时视图（未加载完成时可能为空或只有落点直写计数）。 */
+    fun currentCache(): Map<String, Int> = cache
+
+    /** 加载完成监听集合：置 loaded 的一刻在锁外通知（监听方可能回调引擎管线）。 */
+    private val loadListeners =
+        java.util.concurrent.CopyOnWriteArrayList<() -> Unit>()
+
+    /** 后台加载在飞标记：[ensureLoadInBackground] 的防重复投递。 */
+    private val loadInFlight =
+        java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /**
+     * 注册加载完成监听：loaded 由假转真时（以及 [ensureLoadInBackground]
+     * 发现已加载时）逐个通知。监听在投递线程上同步执行，应只做轻量
+     * 触发（如向引擎管线登记一次刷新），不得反向阻塞等待本缓存。
+     *
+     * 返回注销句柄：本对象是进程级单例，监听集合只加不减会让注册方
+     * （引擎实例可重建）逐条叠加、旧实例被闭包持有滞留——注册方必须
+     * 在自身销毁路径上调用返回的句柄注销。句柄可重复调用（第二次起
+     * 为无操作），注销后不再收到通知。
+     */
+    fun registerLoadListener(listener: () -> Unit): () -> Unit {
+        loadListeners += listener
+        return { loadListeners -= listener }
+    }
+
+    private fun notifyLoadListeners() {
+        for (listener in loadListeners) {
+            try {
+                listener()
+            } catch (e: Exception) {
+                Timber.w(e, "CandidatePreferCache load listener failed")
+            }
+        }
+    }
+
+    /**
+     * 后台触发一次全量加载（不挂起调用方）：供候选首屏路径在未加
+     * 载时先用当前缓存出候选、加载完成后经监听刷新——避免首屏在
+     * 本函数所等的跨挂起互斥上排在在途点击写事务之后。加载本体仍
+     * 是 [loadSnapshot]（锁内、与写事务的互斥语义不变）。已加载时
+     * 直接补一次完成通知（调用方可能刚登记了待刷新项，而转真发生
+     * 在它登记之前）；加载已在飞时什么都不做，其完成收尾会通知。
+     */
+    fun ensureLoadInBackground(context: Context) {
+        if (loaded) {
+            notifyLoadListeners()
+            return
+        }
+        if (!loadInFlight.compareAndSet(false, true)) return
+        landingScope.launch {
+            try {
+                loadSnapshot(AppDatabase.getInstance(context).candidatePreferDao())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "CandidatePreferCache background load failed")
+            } finally {
+                loadInFlight.set(false)
             }
         }
     }
@@ -257,7 +338,10 @@ object CandidatePreferCache {
     /**
      * 测试用：等已投递的增量落点全部执行完。落点与本调用同在
      * [serialDispatcher] 上 FIFO 排队，本段执行到时先于它投递的
-     * 落点必然已执行。
+     * 落点必然已执行——此结论仅在无并发持锁时成立：落点段还要
+     * 先取 [transactionMutex]，等锁期间会让出通道的唯一 worker，
+     * 本调用可能抢先跑完、越过尚未取得锁的落点。现有用例都是串
+     * 行驱动、锁恒空闲，不触发这一交错。
      */
     internal suspend fun flushLandings() {
         withContext(serialDispatcher) { }

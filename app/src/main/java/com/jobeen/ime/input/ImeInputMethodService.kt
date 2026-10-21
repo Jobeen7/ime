@@ -186,15 +186,13 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onStartInputView(info: EditorInfo, restarting: Boolean) {
-        // 换了输入框：上一框的语音纠错沉淀观察作废。同框重启
-        // （restarting）不作废：框没换，待就绪的保留音频本应落
-        // 回同一框，与下方账本作废的 !restarting 门控同口径
-        if (!restarting) {
-            com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
-        }
-        // 新输入框（非同框重启）：语音上屏撤销账本是旧框的账，整表作废，
-        // 不能把旧框的段拿来新框删
-        if (!restarting) VoiceUndoLedger.clearAll()
+        // 语音的输入结束作废（纠错沉淀观察/待就绪整句/撤销账本/
+        // 输入框纪元）不在此投递（S1，判定见
+        // advancesEditorEpoch：START_INPUT_VIEW 恒不推进）：同框
+        // 收起再打开走的正是本回调且 restarting=false，在此作
+        // 废会把同框待结算的整句误杀；真换框的作废由先行的
+        // onFinishInput（doStartInput 在 !restarting 时必先
+        // doFinishInput）与 onFinishInputView(true) 承担，不漏
         // 语音预热/存活预检（onStartInput 已先行一步，这里再兜一次）：
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
@@ -209,22 +207,42 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onFinishInput() {
-        // 输入会话结束（W2）：待就绪整句的作废此前只挂在
-        // onFinishInputView(finishingInput=true) 与新框
-        // onStartInputView(!restarting) 两处——「先收起键盘再换
-        // 框」且框架对新框只投递 onStartInput（视图未弹出、不走
-        // onStartInputView）、或对新框以 restarting=true 投递时，
-        // 两处门控都不命中，待就绪整句会经新框连接结算落入新
-        // 框。onFinishInput 按 AOSP 语义只在输入会话结束时投递
-        //（仅隐藏键盘不投递、整句仍可落回同一框的 N13 场景不受
-        // 影响）；个别厂商若在隐藏键盘时也投递，该场景会被误
-        // 作废——此点代码层无法证伪，列入真机验收项待核。在此
-        // 补同一作废。与 onFinishInputView(true) 先后重复调用无碍：
+        // 输入会话结束（W2）：待就绪整句的作废只认真正的输入结
+        // 束信号——本回调与 onFinishInputView(true)（投递判定
+        // 见 advancesEditorEpoch）。onFinishInput 按 AOSP 语义
+        // 只在输入会话结束时投递（仅隐藏键盘不投递、整句仍可
+        // 落回同一框的 N13 场景不受影响）；「先收起键盘再换
+        // 框」时框架对新框可能只投递 onStartInput（视图未弹出）
+        // 或以 restarting=true 投递 onStartInputView，但
+        // doStartInput 在 !restarting 时必先 doFinishInput，
+        // 旧会话的作废在本处已被承担，不会漏。个别厂商若在隐
+        // 藏键盘时也投递本回调，该场景会被误作废——此点代码
+        // 层无法证伪，列入真机验收项待核。与
+        // onFinishInputView(true) 先后重复调用无碍：
         // onInputViewFinished 对重复调用幂等（快照清零是重复赋
         // 空、作废支内保留音频已清空后二次进入只重撤待发 START
         // 并按「确有音频被清」判提示，不重复置位）
-        com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        if (com.jobeen.ime.base.speech.advancesEditorEpoch(
+                com.jobeen.ime.base.speech.InputLifecycleCallback.FINISH_INPUT
+            )
+        ) {
+            invalidateSpeechAfterInputEnd()
+        }
         super.onFinishInput()
+    }
+
+    /**
+     * 输入真正结束时的语音作废一并执行：客户端侧作废（纠错沉
+     * 淀观察、显示快照、对账窗与暂存、待就绪保留音频、输入框
+     * 纪元推进）与语音上屏撤销账本整表作废（账本是旧框的账，
+     * 不能把旧框的段拿来新框删）。投递点只有 onFinishInput 与
+     * onFinishInputView(true) 两个真结束信号（S1）；账本作废
+     * 此前挂在 onStartInputView(!restarting)，同框收起再打开
+     * 会被误清，已随投递收窄一并归位到此处。
+     */
+    private fun invalidateSpeechAfterInputEnd() {
+        com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        VoiceUndoLedger.clearAll()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {
@@ -239,10 +257,15 @@ class ImeInputMethodService : InputMethodService() {
         // 待就绪整句的作废只认真正结束输入（finishingInput=true，
         // 框架换框/收尾走 doFinishInput 的情形）：仅收起键盘
         // （false）时输入会话并未结束、连接仍指向同一框，作废会
-        // 把已说完待落屏的整句误删并误报「已切换输入框」。换框的
-        // 作废另有 onStartInputView 的 !restarting 门控覆盖，不重叠
-        if (finishingInput) {
-            com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
+        // 把已说完待落屏的整句误删并误报「已切换输入框」。换框
+        // 的作废与 onFinishInput 同口径承担（S1：投递判定见
+        // advancesEditorEpoch），两处重复调用幂等、不重叠误伤
+        if (com.jobeen.ime.base.speech.advancesEditorEpoch(
+                com.jobeen.ime.base.speech.InputLifecycleCallback.FINISH_INPUT_VIEW,
+                finishingInput,
+            )
+        ) {
+            invalidateSpeechAfterInputEnd()
         }
         engine?.resetComposition()
         keyboardWindow?.onFinishInputView(finishingInput)

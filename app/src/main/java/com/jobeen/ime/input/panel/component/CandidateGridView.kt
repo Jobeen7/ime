@@ -510,6 +510,11 @@ class CandidateGridView(
                         if (moved) longPressMoved = true
                         if (moved && longPressIndex >= 0) {
                             dragIndex = longPressIndex
+                            // 拖动图从本帧起就按手指位置画：不同步的话
+                            // 进入拖动的第一帧（及停住不动的抖动帧）仍用
+                            // 上一次拖动的落点，首次拖动时画在 (0,0)
+                            dragFingerX = ex
+                            dragFingerY = ey
                             dragItem = allCandidates.getOrNull(longPressIndex)
                             dragTargetIndex = longPressIndex
                             pressedIndex = -1

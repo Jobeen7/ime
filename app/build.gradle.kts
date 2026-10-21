@@ -17,9 +17,13 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 134
-        versionName = "1.1.12.16"
+        versionCode = 135
+        versionName = "1.1.12.17"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        // 应用名/输入法名不写在 strings.xml 里：debug 需要在同一资源名上
+        // 覆盖成不同值（见 buildTypes.debug），resValue 按构建类型生成
+        resValue("string", "app_name", "Jime")
 
         ndk {
             //noinspection ChromeOsAbiSupport
@@ -69,6 +73,8 @@ plugins {
             // debug 带 .debug 后缀，与正式版不同包名：同机可并存，
             // 跑仪器测试/调试装包不会覆盖或清掉正式版的数据
             applicationIdSuffix = ".debug"
+            // 同机并存时与正式版区分应用名/输入法名，避免启用错输入法
+            resValue("string", "app_name", "Jime Debug")
             val ksPath = project.findProperty("JIME_STORE_FILE") as String?
             if (ksPath != null && file(ksPath).exists()) {
                 signingConfig = signingConfigs.getByName("jimeStable")
@@ -95,6 +101,8 @@ plugins {
     buildFeatures {
         compose = true
         buildConfig = true
+        // app_name 走 resValue 按构建类型生成（见 defaultConfig）
+        resValues = true
     }
 
     externalNativeBuild {
@@ -109,9 +117,27 @@ plugins {
             jniLibs.directories.add("src/main/libs")
             assets {
                 directories.add("src/main/assets")
+                // 许可证文件单源生成的 assets（见 syncLicenses 任务）
+                directories.add("build/generated/licensesAssets")
             }
         }
     }
+}
+
+// 许可证单源：根目录 THIRD_PARTY_NOTICES.md 与 licenses/ 是唯一维护源，
+// 构建时同步进生成的 assets 目录随 APK 分发（应用内「关于 → 开源许可」
+// 读 assets/licenses/）。不要再往 app/src/main/assets 里放手工副本。
+val syncLicenses = tasks.register<Copy>("syncLicenses") {
+    from(rootProject.file("THIRD_PARTY_NOTICES.md")) {
+        into("licenses")
+    }
+    from(rootProject.file("licenses")) {
+        into("licenses")
+    }
+    into(layout.buildDirectory.dir("generated/licensesAssets"))
+}
+tasks.named("preBuild") {
+    dependsOn(syncLicenses)
 }
 
 // release 构建 fail-fast：JIME 持久签名未配置时，release 的 signingConfig

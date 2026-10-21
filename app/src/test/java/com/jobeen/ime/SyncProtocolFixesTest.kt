@@ -126,11 +126,13 @@ class SyncProtocolFixesTest {
         val bare = putPrecondition("abc123", etagWeak = true, lastModifiedMs = 0L)
         assertNull(bare.ifMatch)
         assertNull(bare.ifUnmodifiedSince)
-        // 无 ETag：同样不带
+        // 无 ETag（第十三批 R3 改口径）：与弱 ETag 同样降级为时间
+        // 条件，不再丢弃已有时间裸 PUT；两者入参时间相同结果一致
         assertEquals(
             putPrecondition(null, false, lm),
             putPrecondition("", true, lm),
         )
+        assertEquals(lm - lm % 1000, parseHttpDateMs(putPrecondition(null, false, lm).ifUnmodifiedSince))
     }
 
     @Test

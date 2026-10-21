@@ -20,6 +20,7 @@ class WanxiangUpdateManagerTest {
         schemaRemote: String = "v18.1.2",
         gramRemotePub: String = REMOTE_PUB,
         gramUpdate: Boolean = false,
+        gramSha256: String = SHA,
     ) = WanxiangUpdateManager.UpdateInfo(
         schemaRemoteVersion = schemaRemote,
         schemaLocalVersion = schemaLocal,
@@ -27,7 +28,7 @@ class WanxiangUpdateManagerTest {
         gramLocalPublishedAt = gramLocal,
         dictRemoteFingerprint = null,
         gramRemoteFingerprint = null,
-        gramSha256 = SHA,
+        gramSha256 = gramSha256,
         gramUpdateAvailable = gramUpdate,
     )
 
@@ -234,6 +235,39 @@ class WanxiangUpdateManagerTest {
         )
         assertNull(local)
         assertTrue(info(schemaLocal = local).schemaUpdateAvailable)
+    }
+
+    // ---- 整包下载 client 不得带总时长上限（4.1 守护） ----
+
+    @Test
+    fun downloadClient_hasNoCallTimeout() {
+        // callTimeout 是整条调用（含读完响应体）的总时长上限：整包
+        // 下载走带 20 秒封顶的检查用 client 时，大文件必然在读流
+        // 中途被掐断（第十一批回归）。下载 client 必须为 0（无上限）
+        assertEquals(0, WanxiangUpdateManager.downloadClient.callTimeoutMillis)
+    }
+
+    // ---- 版本切换清理清单（data M1） ----
+
+    @Test
+    fun housekeeping_clearsSchemaVersionRecord_keepsGramPublishedAt() {
+        val keys = WanxiangUpdateManager.VERSION_HOUSEKEEPING_CLEARED_KEYS
+        // 方案版本记录必须清：升级重解压内置包后旧记录会让本地版本
+        // 脱离盘上内容、误判「已是最新」
+        assertTrue(keys.contains(WanxiangUpdateManager.KEY_SCHEMA_VERSION))
+        // 语法模型发布时间记录不清：gram 文件不被内置包覆盖，记录
+        // 与文件同在自洽
+        assertFalse(keys.contains(WanxiangUpdateManager.KEY_GRAM_PUBLISHED_AT))
+    }
+
+    // ---- 远端内容核实口径（V7b） ----
+
+    @Test
+    fun gramContentVerified_onlyWithRegisteredDigest() {
+        // 摘要拿到才算核实；摘要接口失败得空串时模型侧结论只是
+        // 记录兜底，界面不得宣称「已是最新」
+        assertTrue(info(gramSha256 = SHA).gramContentVerified)
+        assertFalse(info(gramSha256 = "").gramContentVerified)
     }
 
     private companion object {

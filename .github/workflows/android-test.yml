@@ -4,11 +4,16 @@
 # 模拟器，且 RimeJniSmokeTest 需要原生 deps 先行就位
 # （install-deps.sh），connectedDebugAndroidTest 只能在带模拟器的
 # job 里执行，故与 ci.yml 的单测/lint 分开、按需手动跑。
-# 模拟器必须用 arm64-v8a 镜像：App 的 abiFilters 只打 arm64-v8a，
-# x86_64 模拟器装不上 APK（INSTALL_FAILED_NO_MATCHING_ABIS）。
-# 注意：x86_64 宿主上 KVM 加速不了 arm64 客户机，Enable KVM 步骤
-# 对 arm64 镜像无加速作用，模拟器走纯软件模拟，首次手动触发时
-# 留意启动与 connectedDebugAndroidTest 的耗时/超时。debug 构建带
+# 模拟器镜像的选择：App 的 abiFilters 只打 arm64-v8a。曾经改用
+# arm64-v8a API 34 镜像，但 x86_64 宿主的模拟器对 API 28+ 的 arm64
+# 镜像是直接拒绝启动（APANIC)，根本跑不起来，并非只是慢。现改用
+# google_apis / x86_64 / API 31 镜像：该镜像带 ndk-translation，
+# 可转译运行 arm64 的 APK（issuetracker 210099270)。KVM 步骤对
+# x86_64 客户机有实际加速作用。
+# 注意：本 workflow 至今尚未实际运行过（0 次），镜像组合未经实跑
+# 验证；首次手动触发时留意原生 deps 构建 + 模拟器启动 +
+# connectedDebugAndroidTest 是否能在 60 分钟超时内完成，跑通后
+# 再更新本注释与 DatabaseMigrationTest 的说明。debug 构建带
 # .debug 包名后缀，装到日常机上也与正式版互不覆盖。
 name: AndroidTest
 
@@ -46,7 +51,7 @@ jobs:
       - name: Run instrumented tests on emulator
         uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2
         with:
-          api-level: 34
-          target: default
-          arch: arm64-v8a
+          api-level: 31
+          target: google_apis
+          arch: x86_64
           script: ./gradlew connectedDebugAndroidTest
