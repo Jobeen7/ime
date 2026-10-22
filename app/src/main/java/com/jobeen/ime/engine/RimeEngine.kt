@@ -45,6 +45,7 @@ import com.jobeen.ime.engine.manager.CandidateRerankManager
 import com.jobeen.ime.engine.manager.PredictionManager
 import com.jobeen.ime.engine.rime.core.KeyMapping
 import com.jobeen.ime.engine.rime.core.EngineMessageConverter
+import com.jobeen.ime.engine.rime.core.KeycapFilterState
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.RimeMessage
@@ -957,6 +958,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             Action.Reset -> {
                 invalidatePendingCandidates()
                 invalidatePendingPrediction()
+                // resetState/resetComposition 两个入口都汇入本分
+                // 支（总复位点）：一并清消息通道的待补发槽，防
+                // 复位前滞留的易变旧帧抢在新组字前补发（审查 A-2）
+                messageChannel.clearPending()
                 flowBehavior(Reset())
             }
 
@@ -1388,7 +1393,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 按已加载原始条数续取下一页。批次锚点用 latestCandidateRequestId：
      * 补取在途时用户又打了键，新批次会 ++ 该值，回来时对不上即丢弃，
      * 不会把上一编码的候选拼进新列表。追加页不走 restoreCandidates 的
-     * 重排/排序还原（那套只管首屏），仅过滤已删词、保持引擎原序。
+     * 重排/排序还原（那套只管首屏），仅过滤已删词与（触发条件成立时）
+     * 键帽表情、保持引擎原序。
      */
     override fun loadMoreCandidates() {
         // 预测（联想）显示期间不补取：分页补的是引擎组字候选，拼进
@@ -1439,7 +1445,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 if (raw < limit || candidateBatchLoaded >= CANDIDATE_BATCH_CAP) {
                     candidateBatchTotal = candidateBatchLoaded
                 }
-                val items = page.mapIndexed { i, c ->
+                val rawItems = page.mapIndexed { i, c ->
                     EngineMessage.Candidate(
                         index = start + i,
                         text = c.text,
@@ -1447,6 +1453,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         type = c.type,
                     )
                 }.filterNot { DeletedWordsStore.isDeleted(it.text) }
+                // 键帽表情过滤与首屏同口径（第十七批补覆盖）：触发
+                // 状态在 KeycapFilterState（转换器随组字消息刷新），
+                // 本页在批次校验之后才构造；极窄窗口内可能读到下
+                // 一轮已刷新的状态，后果仅限本页且随新首屏自愈；
+                // 只摘条目、保留其余条目的引擎全局下标，分页计数
+                // （candidateBatchLoaded 按 raw 条数推进）不受过滤影响
+                val items = KeycapFilterState.applyTo(rawItems)
                 if (items.isNotEmpty()) {
                     emitMessage(
                         EngineMessage.Candidates(

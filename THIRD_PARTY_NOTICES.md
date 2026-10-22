@@ -30,21 +30,21 @@ Jime 基于开源组件构建。本文件是随应用分发的第三方组件索
 
 注：仓库内的 sherpa-onnx AAR 还包含 Qualcomm QNN 运行时库，APK 打包时已全部剔除，不随应用分发。
 
-### sherpa-onnx 预编译库内嵌的组件
+### sherpa-onnx 库内嵌的组件（已自编关闭 TTS）
 
-仓库内的 sherpa-onnx 1.13.5 预编译 AAR 是开启语音合成（TTS）构建的，其 `libsherpa-onnx-jni.so` / `libsherpa-onnx-c-api.so` 静态内含下列组件（已在 .so 内检出其字符串与源码路径）。Jime 只使用其中的离线语音识别（ASR）路径，**不调用 TTS**，但这些代码随 APK 一并分发，故在此如实披露：
+仓库内 AAR 中的三个 sherpa-onnx 原生库（`libsherpa-onnx-jni.so` / `libsherpa-onnx-c-api.so` / `libsherpa-onnx-cxx-api.so`）已由 Jime 从 sherpa-onnx 官方 v1.13.5 源码自行构建，替换上游开启语音合成（TTS）的预编译版本：使用官方 `build-android-arm64-v8a.sh`，参数 `SHERPA_ONNX_ENABLE_TTS=OFF`、`SHERPA_ONNX_ENABLE_C_API=ON`、`SHERPA_ONNX_ENABLE_QNN=OFF`，NDK 28.2.13676358；`libonnxruntime.so`（1.27.1）与 AAR 其余内容（classes.jar 等）保持上游原样、未改动。Jime 只使用其中的离线语音识别（ASR）路径，**不调用 TTS**。
+
+自编库仍静态内含下列组件：
 
 | 组件 | 说明 | 版权 | 许可证 |
 |---|---|---|---|
-| espeak-ng | 经 piper-phonemize 引入的语音合成音素化组件 | The eSpeak NG 项目作者 | **GPL-3.0-or-later** |
-| piper-phonemize | 语音合成音素化库（sherpa-onnx 内含其 lexicon 代码） | Copyright (c) Michael Hansen（rhasspy） | MIT |
 | OpenFst | 有限状态转换器库（经 kaldifst 引入） | Copyright (c) Google Inc. | Apache-2.0 |
 | kaldifst | Kaldi 风格 FST 封装 | kaldifst 作者（k2-fsa） | Apache-2.0 |
 | kaldi-decoder | 解码器 | kaldi-decoder 作者（k2-fsa） | Apache-2.0 |
 | simple-sentencepiece | 分词 | simple-sentencepiece 作者（k2-fsa） | Apache-2.0 |
 | kaldi-native-fbank | 特征提取（待核：随附 .so 内未检出其源码路径字符串，上游 sherpa-onnx 的构建依赖包含此库） | kaldi-native-fbank 作者（k2-fsa） | Apache-2.0（待核实） |
 
-关于 espeak-ng 的 GPL-3.0 义务：GPL-3.0 许可证全文见 `licenses/GPL-3.0.txt`；espeak-ng 源码可从其官方仓库获取：https://github.com/espeak-ng/espeak-ng 。sherpa-onnx 上游已确认该组件经 piper-phonemize 引入、计划在 2.0.0 移除（上游 issue #3731）；Jime 侧的根治（自编关闭 TTS 的 sherpa-onnx 或升级至移除后的版本）尚在评估，当前先行如实披露。
+关于 espeak-ng：上游预编译版本曾静态内含 espeak-ng（经 piper-phonemize 引入，GPL-3.0-or-later）与 piper-phonemize。自编关闭 TTS 后，两者均不再链接进上述原生库——已以字符串全量扫描核验（espeak-ng / piper / phonemize 相关字符串与符号为 0；JNI 导出符号与上游版本相比仅少 9 个 TTS 专用符号，Jime 从不调用），故 espeak-ng 不再随应用分发，此前的 GPL-3.0 对应源码提供义务随之消解。`licenses/GPL-3.0.txt` 保留备查。
 
 ## 安卓与 JVM 依赖（经 Maven Central / Google Maven 引入）
 

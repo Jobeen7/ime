@@ -22,6 +22,16 @@ import android.view.inputmethod.EditorInfo
  * 常都有值（autofill 参与时 autofillId 必在两侧）。故扩展字段缺
  * 值只降低区分力、不产生误判，这也是「尽力而为」的确切含义。
  *
+ * 第十七批起扩展字段分两层：核心扩展（autofillId、fieldName、
+ * privateImeOptions）维持上述口径直接参与判变；文案类（hintText、
+ * label）降为兜底信号——只在核心扩展于两侧**全部缺失**时才参与
+ * 判变。理由是 hint/label 是宿主可随时改写的提示文案：同一框在
+ * 两次喂入间改文案（动态提示）且两侧都有值时，第十六批口径会误
+ * 判换框、多作废一次在途语音（audit16 (g) 的反向残余）；而真跨
+ * 框时若核心扩展有任何一侧在场，其证据优先于文案。只有强信号
+ * 全缺（WebView 里 fieldName/autofill 均不给的常见形态）时，
+ * hint/label 的差异才作为最后的区分线索被采纳。
+ *
  * 本类自第十四批起自引擎抽出共享：引擎（联想代次）与 IMS（语
  * 音纪元的字段身份投递）共用同一份字段口径，避免两处各表。
  */
@@ -70,10 +80,18 @@ internal data class InputFieldKey(
 private fun extendedFieldChanged(previous: String?, current: String?): Boolean =
     previous != null && current != null && previous != current
 
+/** 核心扩展（autofillId、fieldName、privateImeOptions）是否在两侧全部缺失。 */
+private fun primarySignalsAbsent(previous: InputFieldKey, current: InputFieldKey): Boolean =
+    previous.autofillId == null && previous.fieldName == null &&
+        previous.privateImeOptions == null &&
+        current.autofillId == null && current.fieldName == null &&
+        current.privateImeOptions == null
+
 /**
  * restarting 重启时是否实为换框：任一侧快照缺失（首次启动等）不
- * 判换框；核心四项任一不同即换框；扩展字段按
- * [extendedFieldChanged] 的两侧有值口径参与。
+ * 判换框；核心四项任一不同即换框；核心扩展字段按
+ * [extendedFieldChanged] 的两侧有值口径参与；文案类（hintText、
+ * label）仅在核心扩展两侧全部缺失时才作兜底参与（见类注释）。
  */
 internal fun isInputFieldChanged(previous: InputFieldKey?, current: InputFieldKey?): Boolean {
     if (previous == null || current == null) return false
@@ -85,11 +103,16 @@ internal fun isInputFieldChanged(previous: InputFieldKey?, current: InputFieldKe
     ) {
         return true
     }
-    return extendedFieldChanged(previous.autofillId, current.autofillId) ||
+    if (
+        extendedFieldChanged(previous.autofillId, current.autofillId) ||
         extendedFieldChanged(previous.fieldName, current.fieldName) ||
-        extendedFieldChanged(previous.hintText, current.hintText) ||
-        extendedFieldChanged(previous.label, current.label) ||
         extendedFieldChanged(previous.privateImeOptions, current.privateImeOptions)
+    ) {
+        return true
+    }
+    if (!primarySignalsAbsent(previous, current)) return false
+    return extendedFieldChanged(previous.hintText, current.hintText) ||
+        extendedFieldChanged(previous.label, current.label)
 }
 
 /**

@@ -24,9 +24,12 @@ class InputFeedbacks private constructor() {
     }
 
     companion object {
-        private var soundPool: SoundPool? = null
-        private var popSoundId: Int = 0
-        private var isPopLoaded = false
+        // 池状态跨线程读写：load 回调线程写 isPopLoaded、按键线
+        // 程读三者发声、服务销毁线程经 release() 整体置空——补
+        // @Volatile 保证释放/加载结果对按键侧守卫的可见性
+        @Volatile private var soundPool: SoundPool? = null
+        @Volatile private var popSoundId: Int = 0
+        @Volatile private var isPopLoaded = false
         private val lock = Any()
         private const val VIBRATION_ATTRIBUTION_TAG = "keyboard_feedback"
 
@@ -71,7 +74,13 @@ class InputFeedbacks private constructor() {
             }
         }
 
-        /** 在 ImeInputMethodService.onDestroy 调用 */
+        /**
+         * 在 ImeInputMethodService.onDestroy 调用：反馈资源的统一
+         * 销毁口——注销监听、清缓存，并连同 SoundPool 一并释放
+         * （Jime-2 报告 2.4：此前 release() 零调用、池无释放路径）。
+         * 服务在同进程内重建后，池由 soundEffect 的惰性重建按需拉
+         * 起，不依赖 AppStartup 的一次性初始化步骤重跑。
+         */
         fun releaseFeedbackCache(context: Context) {
             feedbackPrefs?.unregisterOnSharedPreferenceChangeListener(feedbackPrefsListener)
             feedbackPrefs = null
@@ -84,6 +93,7 @@ class InputFeedbacks private constructor() {
             cachedSystemHaptic = null
             cachedSoundEnabled = null
             cachedVibrator = null
+            release()
         }
 
         private fun refreshFeedbackCache(app: Context) {
@@ -137,6 +147,11 @@ class InputFeedbacks private constructor() {
         fun soundEffect(context: Context, effect: SoundEffect) {
             ensureFeedbackCache(context)
             if (cachedSoundEnabled != true) return
+            // 服务销毁已释放池时惰性重建：AppStartup 的初始化步
+            // 骤是进程内一次性的，服务在同进程重建不会再跑，靠这
+            // 里按需拉起（load 异步，本次按键可能无声、与冷启动
+            // 一致）；池未释放时该检查只是一次空判
+            if (soundPool == null) initSoundPool(context)
             when (effect) {
                 SoundEffect.Standard -> {
                     if (isPopLoaded && popSoundId != 0) {
