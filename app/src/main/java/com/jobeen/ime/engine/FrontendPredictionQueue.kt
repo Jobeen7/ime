@@ -4,15 +4,22 @@ import java.util.concurrent.ConcurrentLinkedQueue
 
 /**
  * 前端提交（剪贴板/常用语/语音/符号键等经 RimeEngine.requestCommit）
- * 待发起预测的文本队列（FIFO）：requestCommit 的 job 产生直送
- * Commit 消息成功后把文本入队，RimeEngine.handleRimeMessage 在
+ * 待发起预测的文本队列（FIFO）：requestCommit 的 job 先把文本入
+ * 队、再产生直送 Commit 消息，RimeEngine.handleRimeMessage 在
  * 对应直送 Commit 落屏后按队首认领并发起预测。
  *
  * 三条不变量：
- * - 入队与消息产生同成败（[offerAfterEmit]）：消息产生抛错时不
- *   入队——没有消息就没有认领方，提前入队的条目会滞留队首，
- *   其后每条前端提交的认领都比对这条旧队首，前端提交联想从
- *   此静默缺席且队列无界增长。
+ * - 条目先于消息可见（[offerAndEmit]）：emitCommit 的消息在
+ *   emit() 返回**之前**就已对消费者可见（trySend 落队即发布，
+ *   消费链全程异线程），认领可能抢在 emit() 返回前发生——入队
+ *   必须排在 emit 之前，认领到达时条目已在队首。旧顺序（先
+ *   emit 后入队）下消费者抢先认领必落空、条目随后滞留队首，
+ *   同框会话内其后不同文本的认领被持续挡住（第十四批自引入
+ *   回归，第十六批按令牌回滚方案修复）。emit 抛错（消息根本
+ *   不会产生）时按条目令牌只摘除自己那一条并原样上抛：没有
+ *   消息就没有认领方，不回滚则条目滞留队首、后果同上。令牌
+ *   即条目对象本身（[Entry] 非 data class，相等性为引用同
+ *   一），文本与代次都相同的另一条不会被误摘。
  * - 条目带入队时的输入框代次：换框推进代次时整队清空
  *   （[clear]，由 RimeEngine 在代次推进点调用）；认领时队首
  *   代次与当前代次不符的按过期丢弃并继续比对（清队漏网的兜
@@ -27,17 +34,30 @@ import java.util.concurrent.ConcurrentLinkedQueue
  */
 internal class FrontendPredictionQueue {
 
-    private data class Entry(val text: String, val fieldGen: Long)
+    /**
+     * 队列条目。**刻意不用 data class**：相等性必须为引用同一
+     * ——条目对象本身就是回滚令牌，[offerAndEmit] 失败时按引用
+     * 摘除；若按值相等，文本与代次相同的另一条会被误摘。
+     */
+    private class Entry(val text: String, val fieldGen: Long)
 
     private val queue = ConcurrentLinkedQueue<Entry>()
 
     /**
-     * 先执行 [emit] 产生直送 Commit 消息，成功返回后才入队；
-     * [emit] 抛错则异常原样上抛、不入队。
+     * 先把条目入队，再执行 [emit] 产生直送 Commit 消息；
+     * [emit] 抛错则按令牌只摘除本条目、异常原样上抛。
      */
-    suspend fun offerAfterEmit(text: String, fieldGen: Long, emit: suspend () -> Unit) {
-        emit()
-        queue.offer(Entry(text, fieldGen))
+    suspend fun offerAndEmit(text: String, fieldGen: Long, emit: suspend () -> Unit) {
+        val entry = Entry(text, fieldGen)
+        queue.offer(entry)
+        try {
+            emit()
+        } catch (t: Throwable) {
+            // 按引用摘除：ConcurrentLinkedQueue.remove 用相等性
+            // 定位，Entry 的相等性为引用同一，只会命中本条目
+            queue.remove(entry)
+            throw t
+        }
     }
 
     /**

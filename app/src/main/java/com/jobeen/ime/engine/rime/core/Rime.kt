@@ -387,10 +387,15 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 )
             )
         )
-        //候选词列表
+        //候选词列表：候选页为空且输入非空时合成原始输入直出（fcitx5
+        //系前端的无候选兜底，避免输入卡死）。但组字中含未解析的原
+        //始数字段（九宫格 T9 翻转态）时不合成提交、保留组字——翻
+        //转态下拼出的将是整串原始按键数字被写进输入框（第十六
+        //批，判定见 hasUnresolvedDigitSegment）；落入下方正常路径
+        //照常分发组字（胶囊显示原始数字）与空候选
         if (context.menu.pageSize <= 0 && context.input.isNotEmpty() && !context.input.startsWith(
                 CommandSymbol
-            )
+            ) && !hasUnresolvedDigitSegment(context.composition.syllables)
         ) {
             var commitText = ""
             var confirmedProto: SyllableProto? = null
@@ -840,3 +845,25 @@ class Rime : RimeApi, RimeLifecycleOwner {
         }
     }
 }
+
+/**
+ * 组字中是否存在「未解析的原始数字段」：某段尚未成词（text 为
+ * 空）、原始输入含数字、且拼写未解析出任何字母（spelling 为空
+ * 或全数字）。
+ *
+ * 只有九宫格 T9 的组字能命中：T9 按键送进引擎的是数字码，纯数
+ * 字串打到候选变空的长度时引擎翻转——组字回落成原始数字、拼
+ * 写为空（见 review16/verify-digit-commit 的主机实测）。lite /
+ * english 的键盘层数字走 CommitAction 直提、从不进组字，其组
+ * 字原始输入只有字母，本判定恒假、原直出行为不变。
+ *
+ * emitResponse 的「无候选直出」兜底据此收紧：命中时不合成提
+ * 交、保留组字（翻转那一按不再把整串数字写进输入框，用户可
+ * 继续编辑或退格删）。
+ */
+internal fun hasUnresolvedDigitSegment(syllables: Array<SyllableProto>): Boolean =
+    syllables.any { proto ->
+        proto.text.isEmpty() &&
+            proto.rawInput.any { it.isDigit() } &&
+            proto.spelling.none { it.isLetter() }
+    }
