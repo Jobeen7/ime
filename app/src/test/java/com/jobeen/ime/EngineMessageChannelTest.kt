@@ -180,6 +180,148 @@ class EngineMessageChannelTest {
         }
     }
 
+    /** 收集者挂起在哨兵上的测试台：灌突发后由 [StallRig.release] 放行排空。 */
+    private class StallRig(
+        val channel: EngineMessageChannel,
+        private val scope: CoroutineScope,
+        val receivedCount: AtomicInteger,
+        val receivedPreedits: CopyOnWriteArrayList<String>,
+        val receivedCommits: CopyOnWriteArrayList<String>,
+        private val releaseGate: CompletableDeferred<Unit>
+    ) {
+        fun release() {
+            releaseGate.complete(Unit)
+        }
+
+        fun close() {
+            scope.cancel()
+        }
+    }
+
+    private suspend fun startStalledCollector(): StallRig {
+        val channel = EngineMessageChannel()
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val receivedCount = AtomicInteger(0)
+        val receivedPreedits = CopyOnWriteArrayList<String>()
+        val receivedCommits = CopyOnWriteArrayList<String>()
+        val collectorBusy = CompletableDeferred<Unit>()
+        val releaseGate = CompletableDeferred<Unit>()
+        channel.observe(scope) { msg ->
+            receivedCount.incrementAndGet()
+            when (msg) {
+                is EngineMessage.DynamicPreedit ->
+                    receivedPreedits += msg.preedits.first().text
+                is EngineMessage.Commit -> receivedCommits += msg.text
+                else -> Unit
+            }
+            if (receivedCount.get() == 1) {
+                collectorBusy.complete(Unit)
+                releaseGate.await()
+            }
+        }
+        awaitUntil { channel.subscriptionCount.value >= 1 }
+        channel.emit(EngineMessage.Composition("sentinel", 0))
+        collectorBusy.await()
+        return StallRig(
+            channel, scope, receivedCount, receivedPreedits,
+            receivedCommits, releaseGate
+        )
+    }
+
+    /**
+     * A-2 回归（第十七批）：复位清槽。突发后最后一帧 FULL 滞留
+     * 待补发槽；复位（clearPending）后放行收集者，FULL 这张复位
+     * 前的陈旧快照不得被补发；清槽不得伤及通道本身——其后新组
+     * 字与控制类 Commit 照常到达。空槽时调用 clearPending 无害。
+     */
+    @Test
+    fun clearPendingAfterStall_stalePreeditNeverFlushed() = runBlocking {
+        val rig = startStalledCollector()
+        try {
+            // 空槽清槽：无害、不改变后续行为
+            rig.channel.clearPending()
+
+            burstSequence().forEach { rig.channel.emit(it) }
+            // FULL 已进待补发槽（尚未交付），复位清槽
+            assertEquals(emptyList<String>(), rig.receivedPreedits.toList())
+            rig.channel.clearPending()
+
+            rig.release()
+            // 只交付哨兵＋64 条入缓冲（含 STALE），槽内的 FULL 不出现
+            awaitUntil { rig.receivedCount.get() == 65 }
+            assertEquals(listOf(STALE), rig.receivedPreedits.toList())
+
+            // 清槽不伤通道：复位后的新组字与 Commit 照常到达
+            rig.channel.emit(preedit("xin de"))
+            rig.channel.emit(EngineMessage.Commit("已上屏"))
+            awaitUntil { rig.receivedCommits.size == 1 }
+            assertEquals(listOf(STALE, "xin de"), rig.receivedPreedits.toList())
+            assertEquals(listOf("已上屏"), rig.receivedCommits.toList())
+        } finally {
+            rig.close()
+        }
+    }
+
+    /**
+     * 临时取证计数（第十七批）：拥塞下未能直投的易变帧即旧实现
+     * 会静默丢弃的丢弃等价事件，必须被计数——99 条突发中 64 条
+     * 入缓冲、其余 35 条（进槽或覆盖槽）逐条计数；收集侧交付的
+     * 组字帧（STALE＋FULL）另行计数，供真机日志对账。
+     */
+    @Test
+    fun dropDiagnostics_countsDropEquivalentsAndDeliveries() = runBlocking {
+        val rig = startStalledCollector()
+        try {
+            assertTrue(rig.channel.dropDiagnosticsEnabled)
+            burstSequence().forEach { rig.channel.emit(it) }
+            assertEquals(35L, rig.channel.volatileDropEquivalentCount)
+
+            rig.release()
+            awaitUntil { rig.receivedCount.get() == 69 }
+            assertEquals(listOf(STALE, FULL), rig.receivedPreedits.toList())
+            assertEquals(2L, rig.channel.deliveredDynamicPreeditCount)
+        } finally {
+            rig.close()
+        }
+    }
+
+    /** 取证开关关闭时两个计数都停摆，且合流交付语义本身不变。 */
+    @Test
+    fun dropDiagnosticsDisabled_countsNothingAndDeliveryUnchanged() = runBlocking {
+        val channel = EngineMessageChannel()
+        channel.dropDiagnosticsEnabled = false
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        val receivedCount = AtomicInteger(0)
+        val receivedPreedits = CopyOnWriteArrayList<String>()
+        val collectorBusy = CompletableDeferred<Unit>()
+        val releaseCollector = CompletableDeferred<Unit>()
+        try {
+            channel.observe(scope) { msg ->
+                receivedCount.incrementAndGet()
+                if (msg is EngineMessage.DynamicPreedit) {
+                    receivedPreedits += msg.preedits.first().text
+                }
+                if (receivedCount.get() == 1) {
+                    collectorBusy.complete(Unit)
+                    releaseCollector.await()
+                }
+            }
+
+            awaitUntil { channel.subscriptionCount.value >= 1 }
+            channel.emit(EngineMessage.Composition("sentinel", 0))
+            collectorBusy.await()
+            burstSequence().forEach { channel.emit(it) }
+            assertEquals(0L, channel.volatileDropEquivalentCount)
+
+            releaseCollector.complete(Unit)
+            awaitUntil { receivedCount.get() == 69 }
+            assertEquals(listOf(STALE, FULL), receivedPreedits.toList())
+            assertEquals(0L, channel.deliveredDynamicPreeditCount)
+        } finally {
+            scope.cancel()
+        }
+    }
+
     /**
      * A-1 回归（第十六批收尾审查）：补发的「摘槽＋tryEmit」与易
      * 变分支的直投若不互斥，摘槽后槽位瞬时为空，窗口内并发到达

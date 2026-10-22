@@ -60,33 +60,15 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
 
     protected abstract val splitter: SyllableSpellingSplitter
 
-    /**
-     * 最近一轮组字的原始状态（随 DynamicPreedit / Composition 两路同源
-     * 消息刷新）：是否存在「未解析数字段」。两路消息都由同一
-     * handleComposition 在候选消息之前连续发出、转换串行进行，故候选
-     * 转换时读到的必是同轮组字状态；引擎直达本转换器的消息流不丢消息
-     * （分发点 tryEmit 失败会挂起补发），状态不会因 UI 侧易变消息丢弃
-     * 而过期。
-     */
-    private var hasUnresolvedDigitSegment = false
-
-    /** 当前方案布局（随 Schema 消息刷新），取值与方案 yaml 的 layout 字段同源。 */
-    private var currentLayout = ""
-
-    /** T9 布局标识：方案 layout 字段的值，与 T9Keyboard.NAME 同源。 */
-    private fun isT9Layout(): Boolean = currentLayout == "T9"
-
-    /** 键帽表情过滤的触发条件：T9 方案且当前组字含未解析数字段。 */
-    private fun shouldFilterKeycapCandidates(): Boolean =
-        isT9Layout() && hasUnresolvedDigitSegment
-
     override fun convert(message: RimeMessage<*>): EngineMessage = when (message) {
         is RimeMessage.CommitTextMessage -> {
             EngineMessage.Commit(message.data.text.orEmpty(), direct = message.direct)
         }
 
         is RimeMessage.CompositionMessage -> {
-            hasUnresolvedDigitSegment = compositionHasUnresolvedDigitSegment(message.data)
+            KeycapFilterState.onComposition(
+                compositionHasUnresolvedDigitSegment(message.data)
+            )
             val preedit = message.data.preedit.orEmpty()
             val cursor = message.data.cursorPos
             EngineMessage.Composition(preedit, cursor)
@@ -105,11 +87,7 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
             // 恒自 0 起），选词按它定位；先滤再编号会让其后每个候选的
             // 下标错位一位、点选打错词。与 restoreCandidates 里已删词
             // 过滤同口径：只摘条目、保留其余条目的原下标
-            val candidates = if (shouldFilterKeycapCandidates()) {
-                converted.filterNot { isKeycapSequence(it.text) }
-            } else {
-                converted
-            }
+            val candidates = KeycapFilterState.applyTo(converted)
             EngineMessage.Candidates(
                 list = candidates,
                 highlighted = message.data.highlighted,
@@ -148,13 +126,14 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
         }
 
         is RimeMessage.DynamicPreeditMessage -> {
-            hasUnresolvedDigitSegment =
+            KeycapFilterState.onComposition(
                 compositionHasUnresolvedDigitSegment(message.data.composition)
+            )
             buildDynamicPreedit(message.data.composition)
         }
 
         is RimeMessage.SchemaMessage -> {
-            currentLayout = message.data.layout
+            KeycapFilterState.onSchemaLayout(message.data.layout)
             EngineMessage.Schema(
                 message.data.id,
                 message.data.name,
@@ -291,6 +270,71 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
         }
         return false
     }
+}
+
+/**
+ * 键帽表情过滤的共享触发状态：当前方案布局＋最近一轮组字是否存在
+ * 「未解析数字段」。
+ *
+ * 第十六批时这两份状态是转换器的私有字段，只供首屏候选转换读取；
+ * 分页追加页的候选在 RimeEngine 内直构、不经转换器，拿不到该状态，
+ * 第十七批提为共享对象，转换器（写入方）与 RimeEngine 追加页路径
+ * （读取方）共用同一份。刷新点与第十六批逐点一致：
+ * - 布局：Schema 消息到达时全量覆盖（取值与方案 yaml 的 layout 同源）；
+ * - 未解析标记：Composition / DynamicPreedit 两路同源消息到达时按
+ *   本轮组字全量重算后覆盖。两路消息都由同一 handleComposition 在
+ *   候选消息之前连续发出、转换串行进行，故首屏转换时读到的必是
+ *   同轮状态；引擎直达转换器的消息流不丢消息（分发点 tryEmit 失败
+ *   会挂起补发），状态不会因 UI 侧易变消息丢弃而过期。组字清空时
+ *   空 syllables 的重算结果为 false，标记自然复位，没有单独的
+ *   清理口。
+ *
+ * 初值取安全方向：布局为空串（非 T9）、标记为 false，任何刷新到达
+ * 之前过滤恒不触发（宁可漏滤一次，不可误滤正常候选）。
+ *
+ * 线程：写入在消息转换所在的 reduce 串行路径；追加页在引擎 job
+ * 线程读取。两字段 @Volatile 只保证可见性——追加页 job 在通过
+ * 批次校验后才读，校验后、读取前新一轮组字若已先行刷新状态，
+ * 极窄窗口内可能读到下一轮状态；后果仅限那张即将被新首屏整表
+ * 替换的旧页（多摘或漏摘键帽，无下标错位、无持久污染），随新
+ * 一轮候选到达自愈（细节见 impl17-cand 报告的搬家保证逐项）。
+ */
+internal object KeycapFilterState {
+
+    /** T9 布局标识：方案 layout 字段的值，与 T9Keyboard.NAME 同源。 */
+    private const val T9_LAYOUT = "T9"
+
+    @Volatile
+    private var currentLayout: String = ""
+
+    @Volatile
+    private var hasUnresolvedDigitSegment: Boolean = false
+
+    /** Schema 消息刷新点：记录当前方案布局。 */
+    fun onSchemaLayout(layout: String) {
+        currentLayout = layout
+    }
+
+    /** 组字消息刷新点：记录本轮组字是否存在未解析数字段（全量重算值）。 */
+    fun onComposition(hasUnresolvedDigitSegment: Boolean) {
+        this.hasUnresolvedDigitSegment = hasUnresolvedDigitSegment
+    }
+
+    /** 触发条件：T9 方案且当前组字含未解析数字段。 */
+    fun shouldFilter(): Boolean =
+        currentLayout == T9_LAYOUT && hasUnresolvedDigitSegment
+
+    /**
+     * 触发成立时摘除键帽序列条目、保留其余条目的引擎全局下标
+     * （index/total/highlighted 均不动），否则原样返回。首屏转换与
+     * 分页追加页共用此口径。
+     */
+    fun applyTo(candidates: List<EngineMessage.Candidate>): List<EngineMessage.Candidate> =
+        if (shouldFilter()) {
+            candidates.filterNot { isKeycapSequence(it.text) }
+        } else {
+            candidates
+        }
 }
 
 /**

@@ -99,9 +99,7 @@ class WebDavBaselineDecisionTest {
         assertFalse(
             mergedStateMatchesCurrent(
                 mergedETag = "e1",
-                mergedLastModifiedMs = 1_000L,
                 currentETag = "e2",
-                currentLastModifiedMs = 2_000L,
             ),
         )
     }
@@ -111,9 +109,7 @@ class WebDavBaselineDecisionTest {
         assertTrue(
             mergedStateMatchesCurrent(
                 mergedETag = "e1",
-                mergedLastModifiedMs = 1_000L,
                 currentETag = "e1",
-                currentLastModifiedMs = 1_000L,
             ),
         )
     }
@@ -123,29 +119,32 @@ class WebDavBaselineDecisionTest {
         assertFalse(
             mergedStateMatchesCurrent(
                 mergedETag = "e1",
-                mergedLastModifiedMs = 1_000L,
                 currentETag = null,
-                currentLastModifiedMs = 1_000L,
             ),
         )
     }
 
     @Test
-    fun f1_noETagServer_fallsBackToLastModifiedEquality() {
-        assertTrue(
-            mergedStateMatchesCurrent(
-                mergedETag = null,
-                mergedLastModifiedMs = 1_000L,
-                currentETag = null,
-                currentLastModifiedMs = 1_000L,
-            ),
-        )
+    fun f1_noETagServer_timeEqualityCannotProveMatch() {
+        // 第十七批改规格（原用例名为 …fallsBackToLastModifiedEquality、
+        // 「两侧时间全等」断言 true）：HTTP 修改时间只有秒精度，他
+        // 设备在 GET＋导入期间同秒写入时时间不变，时间全等证明不
+        // 了内容一致——无 ETag 即无法证明一致，恒判不一致，上层
+        // 中止本次同步（闭第十六批审查 (f) 的残余歧义，与 O1/O2
+        // 同一口径）。原第二断言（时间不等 → false）断言值不变，
+        // 随时间入参删除与第一断言同形，不再单列
         assertFalse(
             mergedStateMatchesCurrent(
                 mergedETag = null,
-                mergedLastModifiedMs = 1_000L,
                 currentETag = null,
-                currentLastModifiedMs = 2_000L,
+            ),
+        )
+        // GET 前无 ETag、二次 PROPFIND 冒出 ETag：以前者为准仍无
+        // 从证明（基准侧没有可全等比对的强验证器）
+        assertFalse(
+            mergedStateMatchesCurrent(
+                mergedETag = null,
+                currentETag = "e1",
             ),
         )
     }
@@ -155,29 +154,14 @@ class WebDavBaselineDecisionTest {
         // 第十三批 R3 改规格（原用例断言 true、名为 treatedAsMatch，
         // 已按新规格改判并更名）：双验证器皆无、或任一侧时间缺失时
         // 没有任何材料能证明期间未被改动，按「无法验证即已变」判
-        // 不一致，上层据此中止/不采纳，而不是无条件放行裸覆盖
+        // 不一致，上层据此中止/不采纳，而不是无条件放行裸覆盖。
+        // 第十七批：时间入参已整体删除，原三条仅以时间取值区分的
+        // 断言（0/2000、0/0、1000/0，均 false）在新签名下同形，
+        // 合并为一条，断言值不变
         assertFalse(
             mergedStateMatchesCurrent(
                 mergedETag = null,
-                mergedLastModifiedMs = 0L,
                 currentETag = null,
-                currentLastModifiedMs = 2_000L,
-            ),
-        )
-        assertFalse(
-            mergedStateMatchesCurrent(
-                mergedETag = null,
-                mergedLastModifiedMs = 0L,
-                currentETag = null,
-                currentLastModifiedMs = 0L,
-            ),
-        )
-        assertFalse(
-            mergedStateMatchesCurrent(
-                mergedETag = null,
-                mergedLastModifiedMs = 1_000L,
-                currentETag = null,
-                currentLastModifiedMs = 0L,
             ),
         )
     }
@@ -194,17 +178,13 @@ class WebDavBaselineDecisionTest {
         assertTrue(
             mergedStateMatchesCurrent(
                 mergedETag = "abc",
-                mergedLastModifiedMs = 1_000L,
                 currentETag = "abc",
-                currentLastModifiedMs = 1_000L,
             ),
         )
         assertFalse(
             mergedStateMatchesCurrent(
                 mergedETag = "abc",
-                mergedLastModifiedMs = 1_000L,
                 currentETag = "abd",
-                currentLastModifiedMs = 1_000L,
             ),
         )
     }

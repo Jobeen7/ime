@@ -670,6 +670,13 @@ object WebDavSync {
                 // 任意下载合并成功都记一笔显示时间（含跨词典下载，
                 // 它不建 per-file 基准，但「上次下载」应更新；仅显示）
                 UserDictPrefs.noteAnyDownload(System.currentTimeMillis())
+                // 删除词表随词典同步一起走（并集合并，失败不影响词
+                // 典下载结果）。放在夹逼之前：它有自己的一套 GET→
+                // 合并→守卫 PUT，不属于夹逼要证明的范围；夹逼中止
+                // （含无 ETag 不可验证而中止）不应连带跳过它，否则
+                // 无 ETag 服务器上远端删除事件永远同步不下来
+                runCatching { syncDeletedWords() }
+                    .onFailure { Timber.w(it, "Deleted words sync failed") }
                 // 基准/锚点提交点：响应体完整读取、转置与导入全部成功
                 // 才到这里，此前的任何失败都不会留下基准。同名文件才
                 // 建立基准（跨词典下载合并的是别的文件，不代表本词典
@@ -677,7 +684,8 @@ object WebDavSync {
                 // 状态，且必须先通过夹逼：与 GET 前的 PROPFIND 状态
                 // 一致，才证明导入的就是当前远端那一份；GET 期间远
                 // 端被他设备改动则中止（导入已在本地生效，重试时会
-                // 把新版本再合并进来）
+                // 把新版本再合并进来；服务器无 ETag 时夹逼无从验
+                // 证、恒中止，见 mergedStateMatchesCurrent）
                 var mergedState: RemoteState? =
                     RemoteState(mergedETag, mergedLastModifiedMs, mergedETagWeak)
                 if (sameName) {
@@ -685,14 +693,21 @@ object WebDavSync {
                         is RemoteStateResult.Found -> {
                             val post = r.state
                             if (preState == null ||
-                                !mergedStateMatchesCurrent(
-                                    preState.etag, preState.lastModifiedMs,
-                                    post.etag, post.lastModifiedMs,
-                                )
+                                !mergedStateMatchesCurrent(preState.etag, post.etag)
                             ) {
                                 throw IllegalStateException(
-                                    "远端词库在同步期间又被其他设备修改，本次同步已中止以避免覆盖。" +
-                                        "请重新点一次同步（会先自动合并远端最新内容）"
+                                    if (preState != null && preState.etag == null) {
+                                        // GET 前状态无 ETag：夹逼无从验证，
+                                        // 不是断言已被改动，而是证明不了未
+                                        // 被改动——话术按不可验证口径，且
+                                        // 重试同样无法通过验证，不作重试邀
+                                        // 请。本地已导入的合并内容保留
+                                        "该服务器不提供 ETag 强校验，无法确认同步期间远端词库未被其他设备修改，" +
+                                            "本次同步已中止（已下载合并的内容已保留在本地）"
+                                    } else {
+                                        "远端词库在同步期间又被其他设备修改，本次同步已中止以避免覆盖。" +
+                                            "请重新点一次同步（会先自动合并远端最新内容）"
+                                    }
                                 )
                             }
                             post
@@ -711,9 +726,6 @@ object WebDavSync {
                     }
                 }
                 Timber.i("User dict '$dictName' downloaded and imported: $count entries")
-                // 删除词表随词典同步一起走（并集合并，失败不影响词典下载结果）
-                runCatching { syncDeletedWords() }
-                    .onFailure { Timber.w(it, "Deleted words sync failed") }
                 DownloadOutcome(count, mergedState)
             } finally {
                 tempFile.delete()
@@ -975,28 +987,28 @@ internal fun remoteChangedDecision(
 }
 
 /**
- * 两份远端状态是否指向同一版本的纯决策（合并夹逼、PUT 后校验
- * 共用；两侧入参必须同口径，如同为 PROPFIND 状态）：
+ * 两份远端状态是否指向同一版本的纯决策（下载合并的夹逼专
+ * 用；两侧入参必须同口径，如同为 PROPFIND 状态。PUT 后补查
+ * 走 [postPutRecheckAdoptable]，不共用本函数）：
  * - 前者带 ETag：后者 ETag 必须与之全等（后者无 ETag 亦为不
  *   一致——期间文件被换过或验证器被撤下，锚定上传都会覆盖
  *   未合并的内容）；
- * - 前者无 ETag：退化为修改时间全等比较；任一侧时间缺失（0）
- *   时没有任何可信材料能证明期间未被改动，按「无法验证即已
- *   变」判不一致——上层据此中止本次同步或不采纳补查基准，绝
- *   不把无证据当安全。（旧口径曾按一致处理、并声称 PUT 侧有
- *   时间前置条件兜底；实际无 ETag 路径当时不发任何时间条件，
- *   兜底不存在，已订正。）
+ * - 前者无 ETag：无法证明一致，恒判不一致。旧口径曾退化为
+ *   修改时间全等比较，但 HTTP 修改时间只有秒精度：他设备
+ *   在 GET＋导入期间同秒写入时时间不变，夹逼会被骗过、把
+ *   偏旧的合并基准采纳为已验证状态——「时间相同」证明不了
+ *   「内容相同」。与 [remoteChangedDecision]、
+ *   [postPutRecheckAdoptable] 同一口径：无强 ETag 即无内容
+ *   身份（第十七批，闭第十六批审查 (f) 的残余歧义；签名随
+ *   之收敛，两个时间入参删除）。上层据此中止本次同步；本
+ *   地已导入内容是逐词时间戳并集合并、不丢词，下轮同步仍
+ *   会重新下载合并。
  */
 internal fun mergedStateMatchesCurrent(
     mergedETag: String?,
-    mergedLastModifiedMs: Long,
     currentETag: String?,
-    currentLastModifiedMs: Long,
 ): Boolean {
     if (mergedETag != null) return mergedETag == currentETag
-    if (mergedLastModifiedMs > 0L && currentLastModifiedMs > 0L) {
-        return mergedLastModifiedMs == currentLastModifiedMs
-    }
     return false
 }
 
