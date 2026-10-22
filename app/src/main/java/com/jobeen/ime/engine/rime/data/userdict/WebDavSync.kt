@@ -172,10 +172,10 @@ object WebDavSync {
             RegexOption.IGNORE_CASE,
         )
 
-    // 上传前置条件（If-Match / If-Unmodified-Since）的构造统一走文件
-    // 末尾的 putPrecondition()：弱 ETag 不能用于 If-Match 强比较（RFC
-    // 规定弱标签永不强匹配，硬发会让服务器回 412 且同步永远失败），
-    // 改用修改时间条件；强 ETag 仍发带引号的 If-Match。
+    // PUT 前置条件（If-Match / If-Unmodified-Since）的构造走文件
+    // 末尾的 putPrecondition()：词典上传自第二十批起无条件裸 PUT，
+    // 删词同步自第二十批收尾（v1.1.13.5）起同改裸 PUT——该函数自
+    // 此已无生产调用方，本体与既有单测暂留、清点在册待裁。
 
     /**
      * 查询某个远端文件的 ETag / 修改时间（PROPFIND Depth: 0），返回三态结果：
@@ -252,13 +252,9 @@ object WebDavSync {
             // 绝不拿本地旧词库静默覆盖远端较新的内容。
             // 状态查不到（网络/服务器错误）时中止本次同步——不可判定还继续
             // PUT 等于拿本地覆盖远端；只有 404 明确不存在才走新建路径。
-            var remoteMissing = false
             var baseState = when (val r = fetchRemoteState(fileName)) {
                 is RemoteStateResult.Found -> r.state
-                RemoteStateResult.NotFound -> {
-                    remoteMissing = true
-                    null
-                }
+                RemoteStateResult.NotFound -> null
                 is RemoteStateResult.Error ->
                     throw IllegalStateException("查询远端词库状态失败（${r.message}），本次同步已中止")
             }
@@ -269,10 +265,8 @@ object WebDavSync {
                 // （第十八批回退：同步以可用为先）；mergedState 是
                 // 合并后重查的 PROPFIND 状态，直接作 PUT 锚点。
                 // 合并期间远端被删（mergedState 为 null）则按不
-                // 存在处理退化为新建上传，下方 PUT 带 If-None-Match
-                // 新建限定。
+                // 存在处理，下方 PUT 直接新建。
                 baseState = merged.mergedState
-                if (baseState == null) remoteMissing = true
             }
             val tempFile = File(appContext.cacheDir, "webdav-upload-${dictName}-${System.nanoTime()}.txt")
             try {
@@ -284,34 +278,16 @@ object WebDavSync {
                     .url(remoteUrl(fileName))
                     .header("Authorization", authHeader())
                     .put(tempFile.asRequestBody(textPlain))
-                // 带上合并基准的前置条件，有什么发什么，不再按
-                // 「有无强校验」区分对待（第十八批，Jobeen 决定：
-                // 同步以可用为先、成功就是成功）：强 ETag 发
-                // If-Match——合并后到上传之间远端又被改动时服务器
-                // 回 412、下方按真失败报出；弱/无 ETag 时
-                // putPrecondition 降级为时间条件或裸 PUT，照常发
-                // 送、不再因缺强校验中止。防丢词的实际机制是上传
-                // 前的下载合并本身：远端较新的词已先并进本地、随
-                // 这份合并结果一起写回，不存在拿旧词库静默覆盖。
-                baseState?.let { st ->
-                    val pre = putPrecondition(st.etag, st.etagWeak, st.lastModifiedMs)
-                    pre.ifMatch?.let { builder.header("If-Match", it) }
-                    pre.ifUnmodifiedSince?.let {
-                        builder.header("If-Unmodified-Since", it)
-                    }
-                }
-                // 远端原本不存在：新建限定——查询后到上传之间若被其他设备
-                // 先建了同名文件，服务器回 412 而非被我们覆盖
-                if (remoteMissing && baseState == null) {
-                    builder.header("If-None-Match", "*")
-                }
+                // 无条件裸 PUT，不带任何前置条件（第二十批终局
+                // 形态，Jobeen 口径：上传就是要成功）：第十八批
+                // 「有什么发什么」的 If-Match、第十九批弱 ETag 置
+                // 空后仅剩的日期条件 If-Unmodified-Since，在真机上
+                // 都被服务器恒回 412、上传永远失败（两轮真机坐
+                // 实）。防丢词靠上方上传前的下载合并本身：远端较
+                // 新的词已先并进本地、随这份合并结果一起写回，不
+                // 靠前置条件。412 若仍出现（服务器自身原因）走下
+                // 方通用失败口径，不再有专属话术。
                 client.newCall(builder.build()).execute().use { response ->
-                    if (response.code == 412) {
-                        throw IllegalStateException(
-                            "远端词库在同步期间又被其他设备修改，本次上传已取消以避免覆盖。" +
-                                "请重新点一次上传（会先自动合并远端最新内容）"
-                        )
-                    }
                     if (!response.isSuccessful) {
                         throw httpError("上传", response.code, errorDetail(response))
                     }
@@ -322,7 +298,7 @@ object WebDavSync {
                         // 响应没带 ETag：补查一次，但补查状态不得无条
                         // 件当基准——PUT 完成到补查之间他设备可能又写
                         // 入了新版本，那份内容本机从未合并，记成基准会
-                        // 让下次上传跳过合并、用 If-Match 合法覆盖它。
+                        // 让下次上传跳过合并、直接覆盖它。
                         // 只有补查状态能被证明就是本次 PUT 落下的内容
                         // （见 postPutRecheckAdoptable）才采纳；证明不了
                         // 就不写基准，下次上传会先合并，不影响本次已
@@ -713,22 +689,19 @@ object WebDavSync {
      *
      * 删除与恢复都是带时间戳的事件、逐词取较新状态；旧格式远端文件
      * （每行一个词）按「已删、时间 0」兼容读取，下次 PUT 自动升级为新格式。
-     * GET 远端 → 合并应用到本地 → 合并结果与远端不同才 PUT 回。前置
-     * 条件由 [putPrecondition] 归一构造；覆盖已存在的远端文件时，
-     * 只有强 ETag 的 If-Match 算并发保护——前置条件双空、或只有秒
-     * 精度的修改时间条件（弱/无 ETag），都中止本次 PUT，不覆盖他
-     * 设备刚写入的删词事件（见 [isUnprotectedOverwrite]）；412 时
-     * 重走一次合并。本链的守卫口径第十八批维持不变，与词典上传自
-     * 此分口径（词典上传已按 Jobeen 决定回退为不中止）：删词失败只
-     * 经调用方 runCatching 记日志，不影响用户可见的同步成败。
+     * GET 远端 → 合并应用到本地 → 合并结果与远端不同才 PUT 回。PUT
+     * 无条件裸发、不带前置条件（远端不存在时带 If-None-Match 新建
+     * 限定，412 时重走一次合并）。第二十批起与词典上传同口径：原「无并发
+     * 保护即中止本次 PUT」的守卫已删除——第十九批把弱 ETag 置空
+     * 后，弱 ETag 服务器上只要远端删词文件已存在守卫就恒触发，
+     * 删词事件永远同步不出去且无任何提示（清点第 3 路坐实）。删
+     * 词失败只经调用方 runCatching 记日志，不影响用户可见的同步
+     * 成败。
      * 必须在后台线程调用；失败抛异常由调用方决定是否忽略。
      */
     private fun syncDeletedWords(retried: Boolean = false) {
         val store = com.jobeen.ime.data.manager.DeletedWordsStore
         var remoteExists = false
-        var remoteETag: String? = null
-        var remoteETagWeak = false
-        var remoteLastModifiedMs = 0L
         val remote = mutableMapOf<String, com.jobeen.ime.data.manager.DeletedWordEntry>()
         val getRequest = Request.Builder()
             .url(remoteUrl(DELETED_WORDS_FILE))
@@ -745,13 +718,8 @@ object WebDavSync {
                     throw httpError("下载删除词表", response.code, errorDetail(response))
                 else -> {
                     remoteExists = true
-                    val etagRaw = response.header("ETag")
-                    remoteETag = captureETag(etagRaw)
-                    // 弱 ETag 已被 captureETag 置空（视为不存在），
-                    // 保留下来的必为强校验形式，弱标记恒为 false
-                    remoteETagWeak = false
-                    remoteLastModifiedMs =
-                        parseHttpDateMs(response.header("Last-Modified"))
+                    // 本链 PUT 自第二十批收尾起无条件裸发，不再捕获
+                    // GET 的 ETag / 修改时间作前置条件（见下方 PUT 处）
                     // 删除词表是每行一条记录的小文件，设上限防止异常内容撑爆内存
                     val bytes = java.io.ByteArrayOutputStream().use { out ->
                         response.body?.byteStream()
@@ -781,21 +749,15 @@ object WebDavSync {
                 .url(remoteUrl(DELETED_WORDS_FILE))
                 .header("Authorization", authHeader())
                 .put(content.toRequestBody(textPlain))
-            // 先算前置条件、再按守卫判定——覆盖已存在文件时，前置
-            // 条件双空或只有秒精度的时间条件（弱/无 ETag）都察觉
-            // 不了 GET 之后他设备刚写入的删词事件（同秒写入对日
-            // 期条件不可见），按守卫中止本次 PUT（异常经调用方
-            // runCatching 仅记日志；本地合并已落盘，下次同步重走
-            // GET→合并→PUT）。此守卫第十八批维持不变，与已回退
-            // 的词典上传分口径（见函数头注释）
-            val pre = putPrecondition(remoteETag, remoteETagWeak, remoteLastModifiedMs)
-            if (isUnprotectedOverwrite(pre, remoteExists)) {
-                throw IllegalStateException(unprotectedOverwriteMessage(pre))
-            }
-            pre.ifMatch?.let { putBuilder.header("If-Match", it) }
-            pre.ifUnmodifiedSince?.let {
-                putBuilder.header("If-Unmodified-Since", it)
-            }
+            // 无条件裸 PUT，不带任何前置条件（与词典上传同口
+            // 径，第二十批收尾）：原「无 If-Match 即中止本次
+            // PUT」的守卫已于第二十批删除（见函数头注释），残
+            // 留的前置条件附加一并去除——坚果云上弱 ETag 被置
+            // 空后只剩日期条件 If-Unmodified-Since，与词典上传
+            // 同一 412 风险，且本链失败仅记日志、不可见。逐词
+            // 时间戳合并本身即防丢的实际机制，GET 之后的并发
+            // 写入至多在下轮同步再合并。putPrecondition 自此
+            // 已无生产调用方，本体与单测暂留、清点在册待裁。
             if (!remoteExists) {
                 // 远端文件尚不存在（首次同步）：只允许"不存在才创建"，防止两台
                 // 设备同时首同步时后写者无条件覆盖先写者的结果
@@ -899,17 +861,13 @@ internal data class PutPrecondition(
  *   ETag 分支同口径——此前无 ETag 时直接丢弃已有时间、裸 PUT，
  *   保护反而弱于弱 ETag 服务器；
  * - 弱 ETag 且无时间、或 ETag 与时间皆无 → 前置条件双空。
- *   本函数只负责构造。「构造结果算不算并发保护」由
- *   [isUnprotectedOverwrite] 判定（覆盖已存在文件时只有强
- *   ETag 的 If-Match 算保护：双空无拦截，日期条件对合并之后、
- *   PUT 之前的同秒并发写入不可见），但第十八批起词典上传不
- *   再据此中止——前置条件有什么发什么，If-Match 在服务器端
- *   仍可拦下并发写入（412 按真失败报出），防丢词靠上传前的
- *   下载合并本身；该判据现仅删词同步用作其中止条件。（沿
- *   革：第十四批日期条件曾被当作降级保护放行覆盖；第十六批
- *   按主报告 O1 把日期-only 并入无保护，词典上传与删词链共
- *   用同一守卫；第十八批 Jobeen 决定同步以可用为先，词典上
- *   传回退、删词链守卫维持。）
+ *   本函数只负责构造。词典上传（第二十批）与删词同步（第二
+ *   十批收尾，v1.1.13.5）先后改无条件裸 PUT 后，本函数已无生
+ *   产调用方；本体与既有单测暂留、清点在册待裁。（沿革：本函数的构造结果曾另有「算不
+ *   算并发保护」的判据 isUnprotectedOverwrite，词典上传与删
+ *   词链先后据此中止 PUT；第二十批按 Jobeen 终局口径——上传
+ *   就是要成功、防丢靠合并本身——判据与守卫连同话术函数一
+ *   并删除。）
  */
 internal fun putPrecondition(
     normalizedETag: String?,
@@ -928,43 +886,6 @@ internal fun putPrecondition(
         if (lastModifiedMs > 0L) formatHttpDate(lastModifiedMs) else null,
     )
 }
-
-/**
- * 该 PUT 是否会在无并发保护下覆盖一个已存在的远端文件：远端
- * 文件已存在、且前置条件里没有强 ETag 的 If-Match 时为真——
- * 无论前置条件是双空，还是只有秒精度的 If-Unmodified-Since。
- * 合并校验已在更早的时点做完，其后到 PUT 之间他设备的并发写
- * 入：双空时无从拦截；只有日期条件时，同秒内的写入不改变
- * Last-Modified 字符串、条件必然通过——两种形态下 PUT 都会被
- * 服务器直接接受、覆盖掉本机未合并的内容。远端文件不存在
- * （首次新建）时不算：新建由 If-None-Match 限定，没有可被覆
- * 盖的既有内容。本判据第十八批起只剩删词同步一个生产调用方
- * （据此中止本次删词 PUT）；词典上传已按 Jobeen 决定回退、
- * 不再调用。（判据沿革：第十四批只收双空，日期条件算降级
- * 保护；第十六批按主报告 O1 把日期-only 并入无保护，判据
- * 收敛为「无 If-Match 即无保护」。）
- */
-internal fun isUnprotectedOverwrite(
-    pre: PutPrecondition,
-    remoteExists: Boolean,
-): Boolean =
-    remoteExists && pre.ifMatch == null
-
-/**
- * 无并发保护中止 PUT 时的话术，按前置条件形态取句。第十八批
- * 起只有删词同步一处调用（异常经 runCatching 仅记日志，不直
- * 接呈现给用户）；词典上传已回退为不中止、不再用此话术：
- * - 只有秒精度的日期条件：点明同秒写入不可见这一具体风险；
- * - 双空：沿用第十四批 R2 的原文。
- */
-internal fun unprotectedOverwriteMessage(pre: PutPrecondition): String =
-    if (pre.ifUnmodifiedSince != null) {
-        "该服务器只能提供秒精度的修改时间校验（无可用的 ETag 强校验），" +
-            "同一秒内其他设备刚写入的内容无法被察觉，继续上传可能将其覆盖，本次上传已中止"
-    } else {
-        "该服务器无法提供并发保护（无可用的 ETag / 修改时间校验），" +
-            "继续上传可能覆盖其他设备刚写入的内容，本次上传已中止"
-    }
 
 /**
  * 「远端是否自本机基准后被改动」的纯决策（基准是 per-file 口径
