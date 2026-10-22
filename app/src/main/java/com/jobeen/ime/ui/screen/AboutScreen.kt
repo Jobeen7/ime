@@ -359,6 +359,30 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
 
             Spacer(Modifier.height(8.dp))
 
+            SettingsGroup(title = stringResource(R.string.app_logs)) {
+                ActionRow(
+                    title = stringResource(R.string.open_logs_page),
+                    trailing = {
+                        Button(
+                            onClick = onOpenLogs,
+                            modifier = Modifier.height(30.dp),
+                            shape = RoundedCornerShape(8.dp),
+                            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                horizontal = 10.dp,
+                                vertical = 2.dp,
+                            ),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.view_licenses),
+                                fontSize = rowSubFontSize,
+                            )
+                        }
+                    },
+                )
+            }
+
+            Spacer(Modifier.height(8.dp))
+
             SettingsGroup(title = stringResource(R.string.open_source_licenses)) {
                 ActionRow(
                     title = stringResource(R.string.licenses_index),
