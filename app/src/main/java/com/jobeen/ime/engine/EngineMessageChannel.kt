@@ -2,13 +2,11 @@ package com.jobeen.ime.engine
 
 import com.jobeen.ime.engine.data.EngineMessage
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
-import timber.log.Timber
 
 /**
  * 引擎 UI 消息的统一出口（RimeEngine 的全部 UI 消息经此投递）。
@@ -72,62 +70,6 @@ internal class EngineMessageChannel {
      */
     private val volatileLock = Any()
 
-    // —— 临时取证设施（第十七批）：wode 根因真机坐实 ——
-    //
-    // wode 的根因（旧实现易变消息在缓冲满时被 tryEmit 静默丢弃、
-    // 最后一帧永不达）至今只有「主机确定性复现＋真机签名吻合」
-    // 的推断级证据，无真机日志实锤。本设施在**同一事件点**计数：
-    // 易变帧因拥塞未能直投（进待补发槽、或覆盖槽内同类旧值）——
-    // 旧实现下同一时刻的 tryEmit 失败即被静默丢弃，故称「丢弃
-    // 等价事件」。真机日志里若出现 dropEqTotal>0、且其后收集侧
-    // 组字帧计数（deliveredPreedit）持续增长到完整末帧，即坐实
-    // 「旧版会丢的帧在新版全部到达」。
-    //
-    // 隐私红线：日志只记消息类型、长度量级（字符数/条数）与计
-    // 数，**绝不记组字/候选原文**。开关默认开、随预览版上机取
-    // 证；坐实后下一批连同本段一并移除。
-
-    /** 丢弃等价事件计数开关（临时取证，默认开）。 */
-    @Volatile
-    var dropDiagnosticsEnabled: Boolean = true
-
-    /** 通道开启以来的丢弃等价事件累计数（取证对账/测试用）。 */
-    internal val volatileDropEquivalentCount: Long
-        get() = dropEquivalentCounter.get()
-
-    /** 收集侧已交付的组字（DynamicPreedit）帧累计数（取证对账/测试用）。 */
-    internal val deliveredDynamicPreeditCount: Long
-        get() = deliveredPreeditCounter.get()
-
-    companion object {
-        // 计数器进程级持有（第十八批由实例字段上提）：生产环境
-        // 通道只有一个实例（RimeEngine 持有），计数语义与实例级
-        // 时完全相同；上提是为让设置侧（日志页）能经静态入口读
-        // 快照、写汇总行——用户真机反馈逐事件行被界面帧率警告
-        // 刷满、根本翻不到。线程安全：AtomicLong 的自增与读取
-        // 各自原子；快照连读两个计数不做跨字段事务，写入方在两
-        // 读之间自增会让成对读数跨一帧，取证总数判读不受影响。
-        private val dropEquivalentCounter = AtomicLong(0)
-        private val deliveredPreeditCounter = AtomicLong(0)
-
-        /** 当前取证计数快照：（丢弃等价累计，已交付组字帧累计）。 */
-        internal fun dropDiagnosticsSnapshot(): Pair<Long, Long> =
-            dropEquivalentCounter.get() to deliveredPreeditCounter.get()
-
-        /**
-         * 把当前取证计数汇总写一行日志（临时取证出口，第十八
-         * 批）：设置侧打开日志页时调用，用户拉到日志末尾即可见
-         * 当前总数，不必在系统噪音里翻找逐事件行。正式版前随
-         * 整段取证设施一并移除。
-         */
-        internal fun logDropDiagnosticsSummary() {
-            Timber.d(
-                "volatileDropEqSummary dropEqTotal=%d deliveredPreedit=%d",
-                dropEquivalentCounter.get(), deliveredPreeditCounter.get()
-            )
-        }
-    }
-
     /** 当前收集者数量（测试等待订阅建立、诊断用）。 */
     internal val subscriptionCount: kotlinx.coroutines.flow.StateFlow<Int>
         get() = flow.subscriptionCount
@@ -159,11 +101,9 @@ internal class EngineMessageChannel {
                 // 同类已有待补发值：新值覆盖槽（合流），不直投
                 // ——见类注释的同类保序不变量
                 pendingVolatile[key] = msg
-                noteDropEquivalent(msg)
             } else if (!flow.tryEmit(msg)) {
                 // 缓冲满：不丢弃，进槽等补发（最新帧必达的承重点）
                 pendingVolatile[key] = msg
-                noteDropEquivalent(msg)
             }
         }
     }
@@ -181,32 +121,6 @@ internal class EngineMessageChannel {
     }
 
     /**
-     * 记一次丢弃等价事件（临时取证，见类内取证段注释）：只记类
-     * 型、长度量级与累计计数，绝不记原文。调用方须持
-     * [volatileLock]（在 [emit] 易变分支的两个入槽点调用）。
-     */
-    private fun noteDropEquivalent(msg: EngineMessage) {
-        if (!dropDiagnosticsEnabled) return
-        val total = dropEquivalentCounter.incrementAndGet()
-        Timber.d(
-            "volatileDropEq type=%s size=%d dropEqTotal=%d deliveredPreedit=%d",
-            msg.javaClass.simpleName, msg.sizeHint(), total,
-            deliveredPreeditCounter.get()
-        )
-    }
-
-    /** 长度量级：文本类取字符数、列表类取条数。只供取证日志，绝不含原文。 */
-    private fun EngineMessage.sizeHint(): Int = when (this) {
-        is EngineMessage.Composition -> preedit.length
-        is EngineMessage.InlinePreedit -> preedit.length
-        is EngineMessage.DynamicPreedit -> preedits.sumOf { it.text.length }
-        is EngineMessage.Candidates -> list.size
-        is EngineMessage.CandidateMenu -> candidates.size
-        is EngineMessage.PossibleCandidatePinYin -> possibleCandidatePinYins.size
-        else -> 0
-    }
-
-    /**
      * 在 [scope] 内收集并逐条交付；每交付一条后立即补发一次待
      * 补发槽——收集者排空缓冲的每一步都腾出位置，突发末尾滞留
      * 的最新帧靠这一笔达成，不必等下一条生产消息。
@@ -215,14 +129,6 @@ internal class EngineMessageChannel {
         scope: CoroutineScope, onMessage: suspend (EngineMessage) -> Unit
     ): Job = scope.launch {
         flow.collect { message ->
-            // 取证对账：收集侧实际交付的组字帧计数（多收集者时为
-            // 各收集者的交付总和，真机判读只看其随时间的增长与
-            // 末帧完整性，不要求与发出侧逐一相等）
-            if (dropDiagnosticsEnabled &&
-                message is EngineMessage.DynamicPreedit
-            ) {
-                deliveredPreeditCounter.incrementAndGet()
-            }
             onMessage(message)
             synchronized(volatileLock) { flushPendingLocked() }
         }

@@ -50,7 +50,6 @@ import com.jobeen.ime.base.log.AppLogBuffer
 import com.jobeen.ime.base.log.AppLogEntry
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.manager.takeCodePoints
-import com.jobeen.ime.engine.EngineMessageChannel
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -69,11 +68,6 @@ fun LogScreen(onBack: () -> Unit) {
     // 时间，纯手动取回——复制带敏感标记，不进自家剪贴板历史
     var pendingCrash by remember { mutableStateOf<CrashTrap.PendingCrash?>(null) }
     LaunchedEffect(Unit) {
-        // 临时取证（第十八批）：打开日志页即把引擎消息通道的丢
-        // 弃等价计数汇总写一行到日志末尾（volatileDropEqSummary），
-        // 拉到最新处即可见当前总数，免在系统帧率警告噪音里翻找
-        // 逐事件行。正式版前随整段取证设施一并移除
-        EngineMessageChannel.logDropDiagnosticsSummary()
         pendingCrash = withContext(Dispatchers.IO) { CrashTrap.readPendingCrashInfo(context) }
     }
     val scope = rememberCoroutineScope()

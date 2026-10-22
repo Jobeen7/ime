@@ -172,16 +172,6 @@ object WebDavSync {
             RegexOption.IGNORE_CASE,
         )
 
-    /**
-     * ETag 规范形：基准值来自 PUT 响应头、比较值来自 PROPFIND XML，两处
-     * 的引号与弱校验 `W/` 前缀表示在部分服务器上不一致，混用会让
-     * isRemoteChanged 恒为 true（每次上传都多做一次全量下载合并）。
-     * 比较与存储统一为去引号、去 W/ 的裸值；发送 If-Match 时再加回引号。
-     */
-    private fun normalizeETag(raw: String?): String? =
-        raw?.trim()?.removePrefix("W/")?.trim()?.removeSurrounding("\"")
-            ?.takeIf { it.isNotEmpty() }
-
     // 上传前置条件（If-Match / If-Unmodified-Since）的构造统一走文件
     // 末尾的 putPrecondition()：弱 ETag 不能用于 If-Match 强比较（RFC
     // 规定弱标签永不强匹配，硬发会让服务器回 412 且同步永远失败），
@@ -218,10 +208,13 @@ object WebDavSync {
                 // &quot;…&quot;，不还原就存下带实体的「假引号」值，发送
                 // If-Match 时强比较永远对不上、上传恒 412。仅限此处
                 // （响应头来的 ETag 不是 XML，不做实体处理）
-                val etag = normalizeETag(etagRaw?.let { unescapeXmlEntities(it) })
+                // 弱 ETag 在捕获点即置空（captureETag），全路径按无
+                // ETag 处理；保留下来的 ETag 必为强校验形式，故
+                // etagWeak 恒为 false
+                val etag = captureETag(etagRaw?.let { unescapeXmlEntities(it) })
                 val lmText = lastModifiedRegex.find(xml)?.groupValues?.get(1)?.trim().orEmpty()
                 RemoteStateResult.Found(
-                    RemoteState(etag, parseHttpDateMs(lmText), isWeakETag(etagRaw)),
+                    RemoteState(etag, parseHttpDateMs(lmText), etagWeak = false),
                 )
             }
         }.getOrElse { RemoteStateResult.Error(it.message ?: "网络错误") }
@@ -322,7 +315,7 @@ object WebDavSync {
                     if (!response.isSuccessful) {
                         throw httpError("上传", response.code, errorDetail(response))
                     }
-                    val newETag = normalizeETag(response.header("ETag"))
+                    val newETag = captureETag(response.header("ETag"))
                     if (newETag != null) {
                         UserDictPrefs.setSyncETag(fileName, newETag)
                     } else {
@@ -626,8 +619,10 @@ object WebDavSync {
                         throw httpError("下载", response.code, errorDetail(response))
                     }
                     val etagRaw = response.header("ETag")
-                    mergedETag = normalizeETag(etagRaw)
-                    mergedETagWeak = isWeakETag(etagRaw)
+                    mergedETag = captureETag(etagRaw)
+                    // 弱 ETag 已被 captureETag 置空（视为不存在），
+                    // 保留下来的必为强校验形式，弱标记恒为 false
+                    mergedETagWeak = false
                     mergedLastModifiedMs = parseHttpDateMs(response.header("Last-Modified"))
                     val body = response.body ?: throw IllegalStateException("下载内容为空")
                     if (body.contentLength() == 0L) {
@@ -751,8 +746,10 @@ object WebDavSync {
                 else -> {
                     remoteExists = true
                     val etagRaw = response.header("ETag")
-                    remoteETag = normalizeETag(etagRaw)
-                    remoteETagWeak = isWeakETag(etagRaw)
+                    remoteETag = captureETag(etagRaw)
+                    // 弱 ETag 已被 captureETag 置空（视为不存在），
+                    // 保留下来的必为强校验形式，弱标记恒为 false
+                    remoteETagWeak = false
                     remoteLastModifiedMs =
                         parseHttpDateMs(response.header("Last-Modified"))
                     // 删除词表是每行一条记录的小文件，设上限防止异常内容撑爆内存
@@ -861,6 +858,31 @@ internal fun unescapeXmlEntities(text: String): String =
 /** 原始 ETag 文本是否为弱校验形式（W/ 前缀） */
 internal fun isWeakETag(raw: String?): Boolean =
     raw?.trimStart()?.startsWith("W/") == true
+
+/**
+ * ETag 规范形：基准值来自 PUT 响应头、比较值来自 PROPFIND XML，两处
+ * 的引号与弱校验 `W/` 前缀表示在部分服务器上不一致，混用会让
+ * isRemoteChanged 恒为 true（每次上传都多做一次全量下载合并）。
+ * 比较与存储统一为去引号、去 W/ 的裸值；发送 If-Match 时再加回引号。
+ * （第十九批由 WebDavSync 成员函数移为顶层纯函数，函数体逐字未动，
+ * 以便捕获归一 [captureETag] 与单测直接引用。）
+ */
+internal fun normalizeETag(raw: String?): String? =
+    raw?.trim()?.removePrefix("W/")?.trim()?.removeSurrounding("\"")
+        ?.takeIf { it.isNotEmpty() }
+
+/**
+ * ETag 捕获归一（第十九批，Jobeen 口径：弱 ETag 没用就不要管它，
+ * 不要让它影响 App 使用）：凡从服务器捕获 ETag 的入口（PROPFIND
+ * XML、GET/PUT 响应头）统一过此函数——弱校验形式一律视为不存
+ * 在、返回 null，使远端判变、锚点/基准记账与前置条件构造在全
+ * 路径落到无 ETag 的既有口径（判变恒先合并、PUT 走日期条件或
+ * 裸发）；强 ETag 原样规范化，既有行为逐字不变。弱标签按 RFC
+ * 不得用于强比较与内容身份判定，其规范化裸值留在链路里只会派
+ * 生出服务器恒拒绝的前置条件（412 且重试永不收敛，见 fix19）。
+ */
+internal fun captureETag(raw: String?): String? =
+    if (isWeakETag(raw)) null else normalizeETag(raw)
 
 /** 上传前置条件：If-Match 与 If-Unmodified-Since 至多取其一 */
 internal data class PutPrecondition(
