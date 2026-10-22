@@ -62,7 +62,6 @@ engine:
     - punct_translator
   filters:
     - lua_filter@*wanxiang.super_english*F
-    - lua_filter@*wanxiang.auto_phrase
     - lua_filter@*wanxiang.super_replacer
     - uniquifier
 

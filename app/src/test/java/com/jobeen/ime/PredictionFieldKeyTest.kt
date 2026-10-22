@@ -8,8 +8,9 @@ import org.junit.Test
 
 /**
  * restarting 重启时的换框判定规格：restarting=true 只说明宿主在
- * 同一 View 上重启输入，关键字段（包名/fieldId/输入类型/
- * imeOptions）任一不同即实为换框，必须推进预测代次作废旧框联
+ * 同一 View 上重启输入，关键字段（核心四项：包名/fieldId/输入
+ * 类型/imeOptions；外加第十六批的扩展字段，口径见 InputFieldKey）
+ * 任一按判变口径不同即实为换框，必须推进预测代次作废旧框联
  * 想；字段全同才是同框重启，不推进（在途联想仍属本框）。
  */
 class PredictionFieldKeyTest {

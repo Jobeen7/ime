@@ -23,7 +23,10 @@ class PreeditPinnerView(context: Context) : View(context) {
             scrollX = 0f
             scroller.forceFinished(true)
             pendingScrollToEnd = value.isNotEmpty()
-            if (value.isEmpty()) requestLayout()
+            // 内容变更必须强制重排：仅空时 requestLayout 会让非空更新不置
+            // 强制标记，PreeditPinner 手动 measure 时规格未变即被 View 跳过
+            // onMeasure、沿用上一批内容的宽度（气泡截断的入口缺口）
+            requestLayout()
             invalidate()
         }
 
@@ -50,6 +53,12 @@ class PreeditPinnerView(context: Context) : View(context) {
 
     private var pendingScrollToEnd = false
     private var contentWidth = 0f
+    // onMeasure 真正执行的次数：View.measure 在规格未变且无强制重排标记时
+    // 会跳过 onMeasure，此时 measuredWidth 仍是上一批内容的值；
+    // PreeditPinner 凭此计数校验手动测宽是否真量过当前内容，未执行时
+    // 不得把宽度写进测宽缓存
+    var measureCount = 0
+        private set
     // onMeasure 算好的逐项绘制宽度，供 onDraw 复用
     private var itemWidths: FloatArray? = null
     private var scrollX = 0f
@@ -87,6 +96,7 @@ class PreeditPinnerView(context: Context) : View(context) {
         else secondaryTextPaint
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        measureCount++
         val items = preeditItems
         if (items.isEmpty()) {
             setMeasuredDimension(0, 0)

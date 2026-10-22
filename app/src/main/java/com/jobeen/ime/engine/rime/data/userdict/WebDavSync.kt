@@ -227,18 +227,16 @@ object WebDavSync {
     /**
      * 判断远端文件自上次同步后是否被其他设备改动过。决策本体是文件
      * 末尾的纯函数 [remoteChangedDecision]（可单测），这里只负责从
-     * per-file 基准里取数：ETag 与上传/下载时间都按文件名隔离，
-     * 某本词典没有可信基准时只对它自己判「已变、先合并」，不受其他
-     * 词典同步历史的影响。
+     * per-file 基准里取数：只认该文件自己的 ETag 基准，不受其他词典
+     * 同步历史的影响；远端不给 ETag 时没有任何可信基准，恒判「已变、
+     * 先合并」。本机上传/下载时间仍逐文件记录（展示/日志用），但自
+     * 第十六批起不再作为内容身份参与判定（见 remoteChangedDecision）。
      */
     private fun isRemoteChanged(fileName: String, state: RemoteState): Boolean =
         remoteChangedDecision(
             // 历史存量基准可能未规范化，比较前同样过一遍（自愈）
             knownETag = normalizeETag(UserDictPrefs.syncETag(fileName)),
             stateETag = state.etag,
-            stateLastModifiedMs = state.lastModifiedMs,
-            lastUploadMs = UserDictPrefs.lastUploadTimeFor(fileName),
-            lastDownloadMs = UserDictPrefs.lastDownloadTimeFor(fileName),
         )
 
     /**
@@ -292,20 +290,21 @@ object WebDavSync {
                     .url(remoteUrl(fileName))
                     .header("Authorization", authHeader())
                     .put(tempFile.asRequestBody(textPlain))
-                // 带上合并基准的前置条件：合并后到上传之间远端又被改动时
-                // 服务器回 412，而不是被我们覆盖掉。弱 ETag 不能用于
-                // If-Match（见 putPrecondition），自动降级为时间条件。
+                // 带上合并基准的前置条件：强 ETag 时合并后到上传之间
+                // 远端又被改动，服务器回 412，而不是被我们覆盖掉。
+                // 弱 ETag 不能用于 If-Match（见 putPrecondition），
+                // 构造降级为时间条件，但覆盖已存在文件时不算保护，
+                // 由下方守卫在发请求前中止。
                 baseState?.let { st ->
                     val pre = putPrecondition(st.etag, st.etagWeak, st.lastModifiedMs)
-                    // 前置条件双空（弱 ETag 且无修改时间等）且远端
-                    // 文件已存在：该服务器无法提供并发保护，裸
-                    // PUT 会无条件覆盖合并校验后他设备刚写入的
-                    // 内容——中止本次上传，不冒丢词风险
+                    // 覆盖已存在文件的唯一并发保护是强 ETag 的
+                    // If-Match：前置条件双空、或只有秒精度的修改
+                    // 时间条件（弱/无 ETag），都察觉不了合并校验
+                    // 后他设备刚写入的内容（同秒写入对日期条件
+                    // 不可见），裸 PUT / 日期条件 PUT 都会将其覆
+                    // 盖——中止本次上传，不冒丢词风险
                     if (isUnprotectedOverwrite(pre, remoteExists = true)) {
-                        throw IllegalStateException(
-                            "该服务器无法提供并发保护（无可用的 ETag / 修改时间校验），" +
-                                "继续上传可能覆盖其他设备刚写入的内容，本次上传已中止"
-                        )
+                        throw IllegalStateException(unprotectedOverwriteMessage(pre))
                     }
                     pre.ifMatch?.let { builder.header("If-Match", it) }
                     pre.ifUnmodifiedSince?.let {
@@ -734,10 +733,11 @@ object WebDavSync {
      * 删除与恢复都是带时间戳的事件、逐词取较新状态；旧格式远端文件
      * （每行一个词）按「已删、时间 0」兼容读取，下次 PUT 自动升级为新格式。
      * GET 远端 → 合并应用到本地 → 合并结果与远端不同才 PUT 回。前置
-     * 条件与词典上传同一口径（[putPrecondition] 归一：强 ETag 用
-     * If-Match，弱 ETag／无 ETag 用修改时间降级）；构造不出任何前置
-     * 条件且远端文件已存在时中止本次同步，不裸 PUT 覆盖他设备刚写入
-     * 的删词事件（见 [isUnprotectedOverwrite]）；412 时重走一次合并。
+     * 条件与词典上传同一口径（[putPrecondition] 归一构造）；覆盖已
+     * 存在的远端文件时，只有强 ETag 的 If-Match 算并发保护——前置
+     * 条件双空、或只有秒精度的修改时间条件（弱/无 ETag），都中止
+     * 本次同步，不覆盖他设备刚写入的删词事件（见
+     * [isUnprotectedOverwrite]）；412 时重走一次合并。
      * 必须在后台线程调用；失败抛异常由调用方决定是否忽略。
      */
     private fun syncDeletedWords(retried: Boolean = false) {
@@ -796,18 +796,15 @@ object WebDavSync {
                 .url(remoteUrl(DELETED_WORDS_FILE))
                 .header("Authorization", authHeader())
                 .put(content.toRequestBody(textPlain))
-            // 与词典上传同一口径：三分支统一先算前置条件——无 ETag
-            // 时 putPrecondition 也会用修改时间降级（旧实现该分支根
-            // 本不算、明明有时间条件可用也不发）；双空且远端文件已
-            // 存在时裸 PUT 会无条件覆盖 GET 之后他设备刚写入的删词
-            // 事件，按同一守卫中止（异常经调用方 runCatching 仅记日
-            // 志；本地合并已落盘，下次同步重走 GET→合并→PUT）
+            // 与词典上传同一口径：三分支统一先算前置条件，再按同
+            // 一守卫判定——覆盖已存在文件时，前置条件双空或只有秒
+            // 精度的时间条件（弱/无 ETag）都察觉不了 GET 之后他设
+            // 备刚写入的删词事件（同秒写入对日期条件不可见），按
+            // 同一守卫中止（异常经调用方 runCatching 仅记日志；本
+            // 地合并已落盘，下次同步重走 GET→合并→PUT）
             val pre = putPrecondition(remoteETag, remoteETagWeak, remoteLastModifiedMs)
             if (isUnprotectedOverwrite(pre, remoteExists)) {
-                throw IllegalStateException(
-                    "该服务器无法提供并发保护（无可用的 ETag / 修改时间校验），" +
-                        "继续上传可能覆盖其他设备刚写入的内容，本次上传已中止"
-                )
+                throw IllegalStateException(unprotectedOverwriteMessage(pre))
             }
             pre.ifMatch?.let { putBuilder.header("If-Match", it) }
             pre.ifUnmodifiedSince?.let {
@@ -890,14 +887,16 @@ internal data class PutPrecondition(
  * - 无 ETag → 同样降级为 If-Unmodified-Since（有时间时），与弱
  *   ETag 分支同口径——此前无 ETag 时直接丢弃已有时间、裸 PUT，
  *   保护反而弱于弱 ETag 服务器；
- * - 弱 ETag 且无时间、或 ETag 与时间皆无 → 前置条件双空。双空
- *   不等于可以裸 PUT：远端文件已存在时，合并校验之后、PUT 之
- *   前的并发写入无任何拦截，裸 PUT 会被服务器直接接受覆盖，
- *   调用方按 [isUnprotectedOverwrite] 中止本次上传；只有远端
- *   文件不存在（首次新建、另有 If-None-Match 限定）时才可放
- *   行。（旧注曾称合并路径中止后裸 PUT 只剩「自始至终无验证
- *   器」的服务器——弱 ETag 服务器同样会落到双空，该说法覆盖
- *   不全，已订正；.17 复核 R2。）
+ * - 弱 ETag 且无时间、或 ETag 与时间皆无 → 前置条件双空。
+ *   本函数只负责构造；「算不算并发保护」由 [isUnprotectedOverwrite]
+ *   判定：覆盖已存在的文件时，只有强 ETag 的 If-Match 算保护——
+ *   双空固然无拦截，日期条件也只有秒精度，合并校验之后、PUT
+ *   之前他设备在同一秒内的并发写入对它不可见，PUT 照样被服务
+ *   器接受并覆盖。两种形态调用方都按 [isUnprotectedOverwrite]
+ *   中止本次上传；只有远端文件不存在（首次新建、另有
+ *   If-None-Match 限定）时才可放行。（第十四批时日期条件曾被
+ *   当作降级保护放行覆盖，主报告 O1 指出其同秒盲区，第十六批
+ *   改判；.17 复核 R2 的双空口径一并归入同一守卫。）
  */
 internal fun putPrecondition(
     normalizedETag: String?,
@@ -918,43 +917,61 @@ internal fun putPrecondition(
 }
 
 /**
- * 该 PUT 是否会无任何前置条件地覆盖一个已存在的远端文件：
- * 前置条件双空且远端文件已存在时为真——合并校验已在更早的时
- * 点做完，其后到 PUT 之间他设备的并发写入无从发觉，裸 PUT 会
- * 被服务器直接接受、覆盖掉本机未合并的内容，调用方必须中止
- * 本次上传（该服务器无法提供并发保护）。远端文件不存在（首
- * 次新建）时不算：新建由 If-None-Match 限定，没有可被覆盖的
- * 既有内容。
+ * 该 PUT 是否会在无并发保护下覆盖一个已存在的远端文件：远端
+ * 文件已存在、且前置条件里没有强 ETag 的 If-Match 时为真——
+ * 无论前置条件是双空，还是只有秒精度的 If-Unmodified-Since。
+ * 合并校验已在更早的时点做完，其后到 PUT 之间他设备的并发写
+ * 入：双空时无从拦截；只有日期条件时，同秒内的写入不改变
+ * Last-Modified 字符串、条件必然通过——两种形态下 PUT 都会被
+ * 服务器直接接受、覆盖掉本机未合并的内容，调用方必须中止本
+ * 次上传。远端文件不存在（首次新建）时不算：新建由
+ * If-None-Match 限定，没有可被覆盖的既有内容。（判据沿革：
+ * 第十四批只收双空，日期条件算降级保护；第十六批按主报告 O1
+ * 把日期-only 并入无保护，判据收敛为「无 If-Match 即无保护」。）
  */
 internal fun isUnprotectedOverwrite(
     pre: PutPrecondition,
     remoteExists: Boolean,
 ): Boolean =
-    remoteExists && pre.ifMatch == null && pre.ifUnmodifiedSince == null
+    remoteExists && pre.ifMatch == null
 
 /**
- * 「远端是否自本机基准后被改动」的纯决策（基准全部是 per-file 口径
- * 的入参，本函数不读存储）：
+ * 无并发保护中止上传时的用户话术，按前置条件形态取句，两处
+ * 调用点（词典上传、删词同步）共用同一口径：
+ * - 只有秒精度的日期条件：点明同秒写入不可见这一具体风险；
+ * - 双空：沿用第十四批 R2 的原文。
+ */
+internal fun unprotectedOverwriteMessage(pre: PutPrecondition): String =
+    if (pre.ifUnmodifiedSince != null) {
+        "该服务器只能提供秒精度的修改时间校验（无可用的 ETag 强校验），" +
+            "同一秒内其他设备刚写入的内容无法被察觉，继续上传可能将其覆盖，本次上传已中止"
+    } else {
+        "该服务器无法提供并发保护（无可用的 ETag / 修改时间校验），" +
+            "继续上传可能覆盖其他设备刚写入的内容，本次上传已中止"
+    }
+
+/**
+ * 「远端是否自本机基准后被改动」的纯决策（基准是 per-file 口径
+ * 的 ETag 入参，本函数不读存储）：
  * - 远端有 ETag：从未记录过基准（本机第一次同步该文件）也视为已
  *   变——远端已有内容必须先合并，绝不直接覆盖；
  * - 远端没 ETag 但本机存量基准有：ETag 消失本身保守视为已变；
- * - 两边都无 ETag：退化为修改时间与本文件上次成功上传/下载时间
- *   （取较晚者）的比较；该文件无任何时间基准（0）时一律视为已
- *   变，先合并再说——别的文件同步过不算这份文件的基准。
+ * - 两边都无 ETag：恒视为已变，每次都先下载合并。旧口径曾退化
+ *   为「远端修改时间 vs 本文件上次成功上传/下载时间（本机时
+ *   钟）」的比较，但本机时间证明不了远端内容身份：远端时间是
+ *   HTTP 日期的整秒值，本机记录是 PUT 完成时刻的真毫秒，他设
+ *   备在 PUT 落盘后、响应返回前同秒追加的新版本必然被判「未
+ *   变化」而跳过合并、下轮被覆盖（主报告 O2）。故第十六批删
+ *   除时间支：本机上传/下载时间只作展示/日志记录，不再入参。
  */
 internal fun remoteChangedDecision(
     knownETag: String?,
     stateETag: String?,
-    stateLastModifiedMs: Long,
-    lastUploadMs: Long,
-    lastDownloadMs: Long,
 ): Boolean {
     if (stateETag != null) {
         return knownETag == null || knownETag != stateETag
     }
-    if (knownETag != null) return true // 远端曾有 ETag 现在没了，保守视为已变
-    val lastSync = maxOf(lastUploadMs, lastDownloadMs)
-    return lastSync == 0L || stateLastModifiedMs > lastSync
+    return true
 }
 
 /**
