@@ -69,7 +69,7 @@ object WanxiangUpdateManager {
     internal const val KEY_SCHEMA_VERSION = "schema_version"
     // 内置随 App 打包的万象 Lite 数据版本（仅作落盘 version.txt 读不到时的
     // 兜底；展示优先读 shared/version.txt，见 readBundledSchemaVersion）
-    const val BUILTIN_SCHEMA_VERSION = "v18.1.6"
+    const val BUILTIN_SCHEMA_VERSION = "v18.1.7"
     internal const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
     // 下载时计算的内容指纹（用于本地/远端比对）
     private const val KEY_DICT_REMOTE_FP = "dict_remote_fp"

@@ -60,25 +60,55 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
 
     protected abstract val splitter: SyllableSpellingSplitter
 
+    /**
+     * 最近一轮组字的原始状态（随 DynamicPreedit / Composition 两路同源
+     * 消息刷新）：是否存在「未解析数字段」。两路消息都由同一
+     * handleComposition 在候选消息之前连续发出、转换串行进行，故候选
+     * 转换时读到的必是同轮组字状态；引擎直达本转换器的消息流不丢消息
+     * （分发点 tryEmit 失败会挂起补发），状态不会因 UI 侧易变消息丢弃
+     * 而过期。
+     */
+    private var hasUnresolvedDigitSegment = false
+
+    /** 当前方案布局（随 Schema 消息刷新），取值与方案 yaml 的 layout 字段同源。 */
+    private var currentLayout = ""
+
+    /** T9 布局标识：方案 layout 字段的值，与 T9Keyboard.NAME 同源。 */
+    private fun isT9Layout(): Boolean = currentLayout == "T9"
+
+    /** 键帽表情过滤的触发条件：T9 方案且当前组字含未解析数字段。 */
+    private fun shouldFilterKeycapCandidates(): Boolean =
+        isT9Layout() && hasUnresolvedDigitSegment
+
     override fun convert(message: RimeMessage<*>): EngineMessage = when (message) {
         is RimeMessage.CommitTextMessage -> {
             EngineMessage.Commit(message.data.text.orEmpty(), direct = message.direct)
         }
 
         is RimeMessage.CompositionMessage -> {
+            hasUnresolvedDigitSegment = compositionHasUnresolvedDigitSegment(message.data)
             val preedit = message.data.preedit.orEmpty()
             val cursor = message.data.cursorPos
             EngineMessage.Composition(preedit, cursor)
         }
 
         is RimeMessage.CandidateListMessage -> {
-            val candidates = message.data.candidates.mapIndexed { i, c ->
+            val converted = message.data.candidates.mapIndexed { i, c ->
                 EngineMessage.Candidate(
                     index = i,
                     text = c.text,
                     comment = c.comment,
                     type = c.type,
                 )
+            }
+            // 键帽过滤必须在编号之后做：index 是引擎全局下标（bulk 取词
+            // 恒自 0 起），选词按它定位；先滤再编号会让其后每个候选的
+            // 下标错位一位、点选打错词。与 restoreCandidates 里已删词
+            // 过滤同口径：只摘条目、保留其余条目的原下标
+            val candidates = if (shouldFilterKeycapCandidates()) {
+                converted.filterNot { isKeycapSequence(it.text) }
+            } else {
+                converted
             }
             EngineMessage.Candidates(
                 list = candidates,
@@ -117,9 +147,14 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
             EngineMessage.InlinePreedit(message.data)
         }
 
-        is RimeMessage.DynamicPreeditMessage -> buildDynamicPreedit(message.data.composition)
+        is RimeMessage.DynamicPreeditMessage -> {
+            hasUnresolvedDigitSegment =
+                compositionHasUnresolvedDigitSegment(message.data.composition)
+            buildDynamicPreedit(message.data.composition)
+        }
 
         is RimeMessage.SchemaMessage -> {
+            currentLayout = message.data.layout
             EngineMessage.Schema(
                 message.data.id,
                 message.data.name,
@@ -153,7 +188,10 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
     private fun buildDynamicPreedit(composition: CompositionProto): EngineMessage {
         val items = mutableListOf<EngineMessage.DynamicPreedit.DynamicPreeditItem>()
         val preedits = composition.syllables
-        val spelling = composition.syllables.joinToString { it.spelling }
+        // 分隔符必须用空串：joinToString 默认 ", " 使拼出串恒含逗号与空格，
+        // 多音节时 all{isDigit()} 恒假，「整串」分支只剩单音节（及空表真空真）
+        // 可命中——多段纯数字/空拼写输入会误落逐音节路径（潜伏 bug）
+        val spelling = composition.syllables.joinToString("") { it.spelling }
         if (preedits.isEmpty() || spelling.all { it.isDigit() }) {
             if (composition.preedit.isNullOrBlank()) {
                 return EngineMessage.DynamicPreedit(items)
@@ -224,6 +262,49 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
         }
         return EngineMessage.DynamicPreedit(items)
     }
+
+    /**
+     * 组字中是否存在「未解析数字段」：某段的原始码含数字、却既没被选中
+     * 成词（text 为空）、也没解析出拼音字母（spelling 无字母）——该段在
+     * 组字里只能以原始数字形态出现（如 qu'77 的尾段 77、ji'5 的尾段 5）。
+     * 已确认候选覆盖的段与其内部的段不算未解析（与 [buildDynamicPreedit]
+     * 的 confirmed 段跳过同口径）。
+     */
+    private fun compositionHasUnresolvedDigitSegment(composition: CompositionProto): Boolean {
+        var confirmedProto: SyllableProto? = null
+        composition.syllables.forEachIndexed { index, proto ->
+            val cp = confirmedProto
+            if (cp != null &&
+                cp.textSyllableStart >= 0 && cp.textSyllableEnd >= 0 &&
+                cp.textSyllableStart <= index && index <= cp.textSyllableEnd
+            ) {
+                return@forEachIndexed
+            }
+            if (proto.text.isNotEmpty()) {
+                confirmedProto = proto
+                return@forEachIndexed
+            }
+            val raw = proto.rawInput.trimEnd(UserSegmentSymbol)
+            if (raw.any { it.isDigit() } && proto.spelling.none { it.isLetter() }) {
+                return true
+            }
+        }
+        return false
+    }
+}
+
+/**
+ * 键帽序列判定：单个基字符（0-9、#、*）＋可选的 U+FE0F（变体选择符）
+ * ＋ U+20E3（组合包围键帽符），如 "7️⃣"。这类文本由 emoji 简化器把
+ * 「七」等数字字转换而来（wanxiang_emoji 词表），字面就是按键数字
+ * 本身；在组字还带着未解析数字段时出现只会与原始数字相互混淆。
+ */
+internal fun isKeycapSequence(text: String): Boolean {
+    if (text.length !in 2..3) return false
+    if (text[text.length - 1] != '\u20E3') return false
+    val base = text[0]
+    if (base !in '0'..'9' && base != '#' && base != '*') return false
+    return text.length == 2 || text[1] == '\uFE0F'
 }
 
 /** 全拼/双拼通用转换器单例：根据方案 kind 设置音节注释切分器。 */

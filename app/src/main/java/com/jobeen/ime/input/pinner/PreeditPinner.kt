@@ -77,16 +77,28 @@ class PreeditPinner(context: Context) : IPinner {
             pillW = lastPillW
             pillH = lastPillH
         } else {
+            // 先强制重排再测：items 或主题字号变化后若无强制标记，手动
+            // measure 会因规格与上次相同被 View 跳过，measuredWidth 沿用
+            // 上一批内容的值（设置器的 requestLayout 是第一道，这里兜底
+            // 覆盖不经设置器的变化，如 applyTheme 改字号）
+            pinnerView.forceLayout()
+            val measureCountBefore = pinnerView.measureCount
             pinnerView.measure(
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
                 View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED),
             )
             pillW = pinnerView.measuredWidth
             pillH = pinnerView.measuredHeight
-            lastMeasuredItems = items
-            lastMeasuredMaxWidth = maxWidth
-            lastPillW = pillW
-            lastPillH = pillH
+            // 只缓存 onMeasure 真正为这批 items 执行过的结果：测宽被跳过时
+            // 宽度不属于当前内容，写进缓存会让错误宽度被后续同内容下发
+            // 长期复用且无自愈（截断持续数秒的主因）；不写缓存则下一次
+            // show 必然重测，自行恢复
+            if (pinnerView.measureCount > measureCountBefore) {
+                lastMeasuredItems = items
+                lastMeasuredMaxWidth = maxWidth
+                lastPillW = pillW
+                lastPillH = pillH
+            }
         }
         if (pillW <= 0 || pillH <= 0) return
 

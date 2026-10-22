@@ -13,7 +13,7 @@
 # 用法：bash tools/wanxiang-builtin/build-resource.sh
 # 换官方版本时只改下面 VERSION / EXPECTED_SIZE / EXPECTED_SHA256
 # 三处（新版资产的 size 与 digest 可从 GitHub release API 的资产
-# 列表读取），并同步核对四处适配是否仍成立（见 README.md）。
+# 列表读取），并同步核对五处适配是否仍成立（见 README.md）。
 set -euo pipefail
 
 VERSION="v18.1.7"
@@ -61,7 +61,7 @@ with zipfile.ZipFile(src) as z:
     z.extractall(dest)
 PY
 
-# 四处适配的载体：本目录四文件覆盖 shared/ 同名文件
+# 五处适配的载体：本目录四文件覆盖 shared/ 同名文件
 for f in default.yaml wanxiang_t9.schema.yaml wanxiang_lite.schema.yaml wanxiang_english.schema.yaml; do
     cp "${SCRIPT_DIR}/${f}" "${WORK}/tree/shared/${f}"
 done

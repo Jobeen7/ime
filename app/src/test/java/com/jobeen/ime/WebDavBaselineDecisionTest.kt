@@ -6,6 +6,7 @@ import com.jobeen.ime.engine.rime.data.userdict.isUnprotectedOverwrite
 import com.jobeen.ime.engine.rime.data.userdict.postPutRecheckAdoptable
 import com.jobeen.ime.engine.rime.data.userdict.putPrecondition
 import com.jobeen.ime.engine.rime.data.userdict.remoteChangedDecision
+import com.jobeen.ime.engine.rime.data.userdict.unprotectedOverwriteMessage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -15,7 +16,7 @@ import org.junit.Test
 /**
  * WebDAV 同步基准决策的回归测试（第十二批 F1/F2/F3）。
  *
- * 覆盖层级：决策纯函数。F1 的「合并窗口」与 F3 的「无 ETag 降级」
+ * 覆盖层级：决策纯函数。F1 的「合并窗口」与 F3 的「无 ETag 口径」
  * 本质都是决策输入/口径问题，在这一层完整可判；F2 的修复本体是
  * downloadLocked 里基准提交点的后移（网络/Android 控制流，无桩
  * 不可直测），这里覆盖它的决策级后果：基准未被失败下载推进时，
@@ -25,95 +26,55 @@ import org.junit.Test
  */
 class WebDavBaselineDecisionTest {
 
-    // ---------- F3：无 ETag 时的 per-file 时间降级 ----------
+    // ---------- F3：无 ETag 时只认 per-file ETag 基准，别词典的历史不入参 ----------
 
     @Test
-    fun f3_firstSyncOfDictB_noBaseline_mergesEvenIfRemoteIsOld() {
-        // 词典 B 本机从未同步（它自己的 etag/时间基准全空），远端 B
-        // 是他设备很早写下的。旧实现拿全局时间（其他词典的同步时
-        // 刻）比较会判「未变」直接覆盖；新口径下 B 无基准 → 已变
+    fun f3_firstSyncOfDictB_noETagBaseline_alwaysMerges() {
+        // 词典 B 本机从未同步（它自己的 ETag 基准为空），远端 B 是
+        // 他设备写下的。旧实现曾拿全局时间（其他词典的同步时刻）
+        // 比较误判「未变」直接覆盖；per-file 化后别词典的历史根本
+        // 不作为入参出现。第十六批（O2）后判据进一步收敛：两边无
+        // ETag 即恒判已变、先合并，不再有任何时间入参
         assertTrue(
-            remoteChangedDecision(
-                knownETag = null,
-                stateETag = null,
-                stateLastModifiedMs = 1_000L,
-                lastUploadMs = 0L,
-                lastDownloadMs = 0L,
-            ),
+            remoteChangedDecision(knownETag = null, stateETag = null),
         )
     }
 
     @Test
-    fun f3_noETag_remoteNotNewerThanOwnBaseline_unchanged() {
-        assertFalse(
-            remoteChangedDecision(
-                knownETag = null,
-                stateETag = null,
-                stateLastModifiedMs = 1_000L,
-                lastUploadMs = 0L,
-                lastDownloadMs = 2_000L,
-            ),
-        )
-    }
-
-    @Test
-    fun f3_noETag_remoteNewerThanOwnBaseline_changed() {
+    fun o2_noETag_localTimesNeverProveUnchanged() {
+        // 主报告 O2 的重放形态：服务器全程不给 ETag。他设备在本机
+        // PUT 落盘后、响应返回前同秒追加新词——远端修改时间（整
+        // 秒）必然 ≤ 本机记录的上传完成时刻（真毫秒），旧时间支
+        // 据此判「未变化」跳过 GET 合并，下轮 PUT 覆盖新词。新规
+        // 格：本机时间不作内容身份，无 ETag 基准即恒判已变；旧签
+        // 名下的 (state=1_000, up=0, down=2_000)「远端不新于本机基
+        // 准」形态在此同样判已变
         assertTrue(
-            remoteChangedDecision(
-                knownETag = null,
-                stateETag = null,
-                stateLastModifiedMs = 3_000L,
-                lastUploadMs = 2_000L,
-                lastDownloadMs = 1_000L,
-            ),
+            remoteChangedDecision(knownETag = null, stateETag = null),
         )
     }
 
     @Test
     fun f3_etagAppearsButKnownBaselineHasNone_changed() {
         assertTrue(
-            remoteChangedDecision(
-                knownETag = null,
-                stateETag = "e1",
-                stateLastModifiedMs = 0L,
-                lastUploadMs = 9_999L,
-                lastDownloadMs = 9_999L,
-            ),
+            remoteChangedDecision(knownETag = null, stateETag = "e1"),
         )
     }
 
     @Test
     fun remoteChanged_etagEqual_unchanged_etagDiffers_changed() {
         assertFalse(
-            remoteChangedDecision(
-                knownETag = "e1",
-                stateETag = "e1",
-                stateLastModifiedMs = 0L,
-                lastUploadMs = 0L,
-                lastDownloadMs = 0L,
-            ),
+            remoteChangedDecision(knownETag = "e1", stateETag = "e1"),
         )
         assertTrue(
-            remoteChangedDecision(
-                knownETag = "e1",
-                stateETag = "e2",
-                stateLastModifiedMs = 0L,
-                lastUploadMs = 0L,
-                lastDownloadMs = 0L,
-            ),
+            remoteChangedDecision(knownETag = "e1", stateETag = "e2"),
         )
     }
 
     @Test
     fun remoteChanged_etagVanishedFromRemote_changed() {
         assertTrue(
-            remoteChangedDecision(
-                knownETag = "e1",
-                stateETag = null,
-                stateLastModifiedMs = 0L,
-                lastUploadMs = 9_999L,
-                lastDownloadMs = 9_999L,
-            ),
+            remoteChangedDecision(knownETag = "e1", stateETag = null),
         )
     }
 
@@ -125,13 +86,7 @@ class WebDavBaselineDecisionTest {
         // 下次上传面对 e1 必须判已变（先 GET 合并），而不是把
         // e1 当作已合并基准跳过合并直接 PUT
         assertTrue(
-            remoteChangedDecision(
-                knownETag = "e0",
-                stateETag = "e1",
-                stateLastModifiedMs = 0L,
-                lastUploadMs = 0L,
-                lastDownloadMs = 0L,
-            ),
+            remoteChangedDecision(knownETag = "e0", stateETag = "e1"),
         )
     }
 
@@ -350,7 +305,7 @@ class WebDavBaselineDecisionTest {
         assertNull(bare.ifUnmodifiedSince)
     }
 
-    // ---------- R2（.17 复核）：双空前置条件不得覆盖已存在远端文件 ----------
+    // ---------- R2（.17 复核）＋O1（第十六批）：无 If-Match 的前置条件不得覆盖已存在远端文件 ----------
 
     @Test
     fun r2_weakETagNoDate_remoteExists_abort() {
@@ -371,17 +326,61 @@ class WebDavBaselineDecisionTest {
     }
 
     @Test
-    fun r2_weakETagWithDate_stillSendsIfUnmodifiedSince() {
-        // 弱 ETag＋有修改时间：仍发 If-Unmodified-Since（旧降级
-        // 行为不回退），前置条件非空 → 不触发中止
+    fun o1_weakETagWithDate_dateOnlyPrecondition_abortsOnExistingRemote() {
+        // 第十六批 O1 改规格（原用例名为 …stillSendsIfUnmodifiedSince、
+        // 末段断言「不触发中止」）：putPrecondition 的构造不变——弱
+        // ETag＋有修改时间仍产出 If-Unmodified-Since；但日期只有秒
+        // 精度，同秒并发写对它不可见，覆盖已存在文件时不再算并发
+        // 保护 → 守卫判无保护，调用方中止上传
         val lm = 1_700_000_000_000L
         val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = lm)
         assertNull(pre.ifMatch)
         assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
-        assertFalse(isUnprotectedOverwrite(pre, remoteExists = true))
-        // 强 ETag 同理不触发
+        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
+        // 强 ETag 的 If-Match 是唯一受保护形态，不触发
         val strong = putPrecondition("e1", etagWeak = false, lastModifiedMs = 0L)
         assertFalse(isUnprotectedOverwrite(strong, remoteExists = true))
+    }
+
+    @Test
+    fun o1_noETagWithDate_abortsOnExistingRemote() {
+        // 无 ETag＋有修改时间：与弱 ETag 同形——只有日期条件，
+        // 覆盖已存在文件视为无并发保护
+        val lm = 1_700_000_000_000L
+        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = lm)
+        assertNull(pre.ifMatch)
+        assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
+        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
+    }
+
+    @Test
+    fun o1_dateOnlyPrecondition_remoteMissing_allowed() {
+        // 远端文件不存在（首次新建）：没有可被覆盖的既有内容，
+        // 日期-only 前置条件不触发中止，新建另有 If-None-Match 限定
+        val lm = 1_700_000_000_000L
+        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = lm)
+        assertFalse(isUnprotectedOverwrite(pre, remoteExists = false))
+    }
+
+    @Test
+    fun o1_unprotectedAbort_messages_pinnedVerbatim() {
+        // 中止话术两形态全文钉住：日期-only 点明同秒不可见，
+        // 双空沿用第十四批 R2 原文
+        val lm = 1_700_000_000_000L
+        assertEquals(
+            "该服务器只能提供秒精度的修改时间校验（无可用的 ETag 强校验），" +
+                "同一秒内其他设备刚写入的内容无法被察觉，继续上传可能将其覆盖，本次上传已中止",
+            unprotectedOverwriteMessage(
+                putPrecondition(null, etagWeak = false, lastModifiedMs = lm),
+            ),
+        )
+        assertEquals(
+            "该服务器无法提供并发保护（无可用的 ETag / 修改时间校验），" +
+                "继续上传可能覆盖其他设备刚写入的内容，本次上传已中止",
+            unprotectedOverwriteMessage(
+                putPrecondition(null, etagWeak = false, lastModifiedMs = 0L),
+            ),
+        )
     }
 
     // ---------- 删词同步归一（第十四批回修）：与词典上传同一守卫 ----------
@@ -406,15 +405,26 @@ class WebDavBaselineDecisionTest {
     }
 
     @Test
-    fun dw_noETagWithDate_usesIfUnmodifiedSince() {
-        // 无 ETag＋有修改时间：归一后走 putPrecondition 的时间
-        // 降级，发 If-Unmodified-Since 受保护（旧分支连可用的
-        // 时间条件也不发），不触发中止
+    fun o1_dw_noETagWithDate_dateOnlyPrecondition_aborts() {
+        // 第十六批 O1 对齐（原用例名为 …usesIfUnmodifiedSince、末段
+        // 断言「不触发中止」）：构造不变——无 ETag＋有修改时间走
+        // putPrecondition 产出 If-Unmodified-Since（旧分支连可用的
+        // 时间条件也不发）；但删词链与词典上传同一守卫，日期-only
+        // 覆盖已存在的删词文件同样视为无并发保护 → 中止
         val lm = 1_700_000_000_000L
         val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = lm)
         assertNull(pre.ifMatch)
         assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
-        assertFalse(isUnprotectedOverwrite(pre, remoteExists = true))
+        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
+    }
+
+    @Test
+    fun o1_dw_weakETagWithDate_aborts() {
+        // 删词链弱 ETag＋有修改时间：同一守卫，覆盖已存在文件
+        // 时日期-only 不算保护
+        val lm = 1_700_000_000_000L
+        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = lm)
+        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
     }
 
     @Test

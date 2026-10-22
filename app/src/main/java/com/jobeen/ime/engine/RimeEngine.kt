@@ -61,8 +61,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
-import kotlinx.coroutines.channels.BufferOverflow
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -366,7 +364,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /**
      * 前端提交（剪贴板/常用语/语音/符号键等经 [requestCommit]）待
      * 发起预测的文本队列（FIFO，规格见 [FrontendPredictionQueue]）：
-     * requestCommit 的 job 在 emitCommit 成功之后才把文本入队，
+     * requestCommit 的 job 先把文本入队、再 emitCommit 产生消息
+     * （条目先于消息可见；emit 抛错按令牌回滚本条目），
      * handleRimeMessage 在对应直送 Commit 落屏（emitMessage）之
      * 后认领并发起预测——预测的发起点由此落在 reduce 的落屏之
      * 后，job 内读到的是落屏后的真实前文。条目带入队时的输入框
@@ -435,29 +434,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /** 候选拖拽排序表判空缓存：null 语义用 false+首次查询实现，保存时由 resortCandidates 失效 */
     @Volatile
     private var sortingTableEmpty: Boolean = false
-    // 消息分流（在 emitMessage 里按类型决定）：缓冲本身用 SUSPEND 保序、
-    // 永不自动丢弃；易变类消息（候选/编码/联想等每键都来、下一批即取代）
-    // 走 tryEmit，缓冲满时丢自己，避免 UI 卡顿反压引擎管线；控制类消息
-    // （上屏 Commit、切方案 Schema、部署 Deploy、状态 Status、分页追加页）
-    // 走 emit 挂起等待，永不丢——旧实现是全流 DROP_OLDEST，极端积压时
-    // 控制消息也可能被挤掉，分流后这个口子堵上。
-    private val messages = MutableSharedFlow<EngineMessage>(
-        replay = 0, extraBufferCapacity = 64,
-        onBufferOverflow = BufferOverflow.SUSPEND
-    )
+    // UI 消息通道：控制类 emit 保序不丢、易变类（状态型）最新值
+    // 合流必达，分流与合流的规格见 EngineMessageChannel——旧实现
+    // 易变类走 tryEmit、缓冲满静默丢自己，一串快打的最后一批组
+    // 字被丢后无下一批自愈、胶囊永久滞留旧值（wode 截图定案，
+    // 第十六批改为合流通道）
+    private val messageChannel = EngineMessageChannel()
 
-    /** 易变类：丢一条可由下一批同类消息自愈；其余皆为控制类 */
-    private fun EngineMessage.isVolatile(): Boolean = when (this) {
-        is EngineMessage.Candidates -> !append
-        is EngineMessage.Composition, is EngineMessage.InlinePreedit,
-        is EngineMessage.DynamicPreedit, is EngineMessage.PossibleCandidatePinYin,
-        is EngineMessage.CandidateMenu -> true
-        else -> false
-    }
-
-    /** 全部 UI 消息的统一出口：易变类 tryEmit 自丢，控制类 emit 不丢 */
+    /** 全部 UI 消息的统一出口（语义见 [EngineMessageChannel]） */
     private suspend fun emitMessage(msg: EngineMessage) {
-        if (msg.isVolatile()) messages.tryEmit(msg) else messages.emit(msg)
+        messageChannel.emit(msg)
     }
 
     override fun initialize(context: Context) {
@@ -1280,13 +1266,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     override fun observeMessages(
         scope: CoroutineScope, onMessage: suspend (EngineMessage) -> Unit
-    ): Job {
-        return scope.launch {
-            messages.collect { message ->
-                onMessage(message)
-            }
-        }
-    }
+    ): Job = messageChannel.observe(scope, onMessage)
 
     override suspend fun schemasList(): List<EngineMessage.Schema> =
         awaitJob(emptyList()) {
@@ -1880,11 +1860,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             // 在这条直送 Commit 落屏之后认领并发起（见
             // pendingFrontendPredictions）——旧形态在此读落屏前基
             // 底、与 Predict 一并定格带走，基底必然缺管线中尚未落
-            // 屏的上一键上屏词。入队排在 emitCommit 成功之后（同
-            // 成败，见 FrontendPredictionQueue.offerAfterEmit）：
-            // emitCommit 抛错时消息根本不会产生，提前入队的条目
-            // 无人认领、会滞留队首令其后前端提交的预测全数缺席
-            pendingFrontendPredictions.offerAfterEmit(
+            // 屏的上一键上屏词。入队排在 emitCommit 之前（条目先
+            // 于消息可见，见 FrontendPredictionQueue.offerAndEmit）：
+            // 消息在 emit 返回前就已对消费者可见，认领可能抢先到
+            // 达，入队在后则认领落空、条目滞留队首；emitCommit
+            // 抛错时按令牌回滚本条目（消息不会产生、无人认领）
+            pendingFrontendPredictions.offerAndEmit(
                 text, predictionFieldGen.get(),
             ) { emitCommit(text) }
         }
