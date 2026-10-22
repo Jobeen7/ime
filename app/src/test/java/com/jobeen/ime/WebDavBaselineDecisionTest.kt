@@ -1,7 +1,6 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.engine.rime.data.userdict.formatHttpDate
-import com.jobeen.ime.engine.rime.data.userdict.mergedStateMatchesCurrent
 import com.jobeen.ime.engine.rime.data.userdict.isUnprotectedOverwrite
 import com.jobeen.ime.engine.rime.data.userdict.postPutRecheckAdoptable
 import com.jobeen.ime.engine.rime.data.userdict.putPrecondition
@@ -14,15 +13,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * WebDAV 同步基准决策的回归测试（第十二批 F1/F2/F3）。
+ * WebDAV 同步基准决策的回归测试（第十二批 F2/F3）。
  *
- * 覆盖层级：决策纯函数。F1 的「合并窗口」与 F3 的「无 ETag 口径」
- * 本质都是决策输入/口径问题，在这一层完整可判；F2 的修复本体是
- * downloadLocked 里基准提交点的后移（网络/Android 控制流，无桩
- * 不可直测），这里覆盖它的决策级后果：基准未被失败下载推进时，
- * 下一次上传面对未合并版本必须判「已变、先合并」。
+ * 覆盖层级：决策纯函数。F3 的「无 ETag 口径」本质是决策输入/口
+ * 径问题，在这一层完整可判；F2 的修复本体是 downloadLocked 里
+ * 基准提交点的后移（网络/Android 控制流，无桩不可直测），这
+ * 里覆盖它的决策级后果：基准未被失败下载推进时，下一次上传面
+ * 对未合并版本必须判「已变、先合并」。
  * 基准入参一律是 per-file 口径——其他词典的同步历史根本不作为
  * 入参出现，这正是 F3 的修复形态。
+ * 第十八批：F1 的合并夹逼决策（mergedStateMatchesCurrent）已
+ * 随夹逼本体删除（下载不再做一致性校验），其用例一并移除；
+ * isUnprotectedOverwrite / unprotectedOverwriteMessage 自此只
+ * 剩删词同步一个生产调用方，下方用例继续钉住这两个纯函数本
+ * 身（词典上传不再据此中止，属流程层口径、无纯函数落点）。
  */
 class WebDavBaselineDecisionTest {
 
@@ -90,104 +94,14 @@ class WebDavBaselineDecisionTest {
         )
     }
 
-    // ---------- F1：合并后二次校验，只认合并内容自身的验证器 ----------
-
-    @Test
-    fun f1_window_otherDeviceWroteAfterMerge_mismatchAborts() {
-        // GET 合并的是 e1；GET→二次 PROPFIND 之间他设备写入 e2。
-        // 校验必须判不一致 → 上传中止，绝不锚定 e2 覆盖
-        assertFalse(
-            mergedStateMatchesCurrent(
-                mergedETag = "e1",
-                currentETag = "e2",
-            ),
-        )
-    }
-
-    @Test
-    fun f1_remoteUntouchedSinceMerge_matches() {
-        assertTrue(
-            mergedStateMatchesCurrent(
-                mergedETag = "e1",
-                currentETag = "e1",
-            ),
-        )
-    }
-
-    @Test
-    fun f1_remoteLostETagAfterMerge_mismatch() {
-        assertFalse(
-            mergedStateMatchesCurrent(
-                mergedETag = "e1",
-                currentETag = null,
-            ),
-        )
-    }
-
-    @Test
-    fun f1_noETagServer_timeEqualityCannotProveMatch() {
-        // 第十七批改规格（原用例名为 …fallsBackToLastModifiedEquality、
-        // 「两侧时间全等」断言 true）：HTTP 修改时间只有秒精度，他
-        // 设备在 GET＋导入期间同秒写入时时间不变，时间全等证明不
-        // 了内容一致——无 ETag 即无法证明一致，恒判不一致，上层
-        // 中止本次同步（闭第十六批审查 (f) 的残余歧义，与 O1/O2
-        // 同一口径）。原第二断言（时间不等 → false）断言值不变，
-        // 随时间入参删除与第一断言同形，不再单列
-        assertFalse(
-            mergedStateMatchesCurrent(
-                mergedETag = null,
-                currentETag = null,
-            ),
-        )
-        // GET 前无 ETag、二次 PROPFIND 冒出 ETag：以前者为准仍无
-        // 从证明（基准侧没有可全等比对的强验证器）
-        assertFalse(
-            mergedStateMatchesCurrent(
-                mergedETag = null,
-                currentETag = "e1",
-            ),
-        )
-    }
-
-    @Test
-    fun r3_noValidatorsAtAll_cannotVerify_treatedAsMismatch() {
-        // 第十三批 R3 改规格（原用例断言 true、名为 treatedAsMatch，
-        // 已按新规格改判并更名）：双验证器皆无、或任一侧时间缺失时
-        // 没有任何材料能证明期间未被改动，按「无法验证即已变」判
-        // 不一致，上层据此中止/不采纳，而不是无条件放行裸覆盖。
-        // 第十七批：时间入参已整体删除，原三条仅以时间取值区分的
-        // 断言（0/2000、0/0、1000/0，均 false）在新签名下同形，
-        // 合并为一条，断言值不变
-        assertFalse(
-            mergedStateMatchesCurrent(
-                mergedETag = null,
-                currentETag = null,
-            ),
-        )
-    }
-
-    // ---------- H1：夹逼只比 PROPFIND 与 PROPFIND，GET 头表示不进决策 ----------
-
-    @Test
-    fun h1_bracket_propfindStatesEqual_matches_regardlessOfGetHeaderRepresentation() {
-        // Apache mod_deflate 会把 GET 响应 ETag 改写为 "abc-gzip"，
-        // 与 PROPFIND 的 "abc" 永不相等——旧实现拿 GET 头与 PROPFIND
-        // 全等比对，这类服务器上上传永久失败。新口径下 GET 头根本
-        // 不进 mergedStateMatchesCurrent：夹逼比的是 GET 前后两次
-        // PROPFIND 的状态（同口径），相等即一致、不相等即中止
-        assertTrue(
-            mergedStateMatchesCurrent(
-                mergedETag = "abc",
-                currentETag = "abc",
-            ),
-        )
-        assertFalse(
-            mergedStateMatchesCurrent(
-                mergedETag = "abc",
-                currentETag = "abd",
-            ),
-        )
-    }
+    // ---------- F1 夹逼决策已删除（第十八批） ----------
+    // mergedStateMatchesCurrent 及其用例（f1_window / f1_remoteUntouched /
+    // f1_remoteLostETag / f1_noETagServer_timeEqualityCannotProveMatch /
+    // r3_noValidatorsAtAll / h1_bracket）随下载夹逼本体一并删除：
+    // 第十八批按 Jobeen 决定回退强校验语义，下载 GET＋合并成功即
+    // 成功、不再有合并前后一致性判定点。GET 期间并发写的残余处
+    // 理回到流程层：上传先合并后写、强 ETag 时 If-Match 由服务
+    // 器回 412 按真失败报出。
 
     // ---------- 补查基准采纳判据（.17 复核 R1：时间窗支已删除） ----------
 
@@ -285,12 +199,14 @@ class WebDavBaselineDecisionTest {
         assertNull(bare.ifUnmodifiedSince)
     }
 
-    // ---------- R2（.17 复核）＋O1（第十六批）：无 If-Match 的前置条件不得覆盖已存在远端文件 ----------
+    // ---------- R2（.17 复核）＋O1（第十六批）：无 If-Match 的前置条件不算并发保护 ----------
+    // 第十八批口径：本节判据本身不变，但生产调用方只剩删词同步
+    // （据此中止本次删词 PUT）；词典上传已回退为不调用本守卫
 
     @Test
     fun r2_weakETagNoDate_remoteExists_abort() {
         // 弱 ETag 且无 Last-Modified：putPrecondition 双空，远端
-        // 文件已存在 → 无条件覆盖风险成立，调用方须中止上传
+        // 文件已存在 → 无条件覆盖风险成立，守卫判无保护
         val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = 0L)
         assertNull(pre.ifMatch)
         assertNull(pre.ifUnmodifiedSince)
@@ -311,7 +227,7 @@ class WebDavBaselineDecisionTest {
         // 末段断言「不触发中止」）：putPrecondition 的构造不变——弱
         // ETag＋有修改时间仍产出 If-Unmodified-Since；但日期只有秒
         // 精度，同秒并发写对它不可见，覆盖已存在文件时不再算并发
-        // 保护 → 守卫判无保护，调用方中止上传
+        // 保护 → 守卫判无保护（第十八批起仅删词链据此中止）
         val lm = 1_700_000_000_000L
         val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = lm)
         assertNull(pre.ifMatch)

@@ -91,9 +91,6 @@ internal class EngineMessageChannel {
     @Volatile
     var dropDiagnosticsEnabled: Boolean = true
 
-    private val dropEquivalentCounter = AtomicLong(0)
-    private val deliveredPreeditCounter = AtomicLong(0)
-
     /** 通道开启以来的丢弃等价事件累计数（取证对账/测试用）。 */
     internal val volatileDropEquivalentCount: Long
         get() = dropEquivalentCounter.get()
@@ -101,6 +98,35 @@ internal class EngineMessageChannel {
     /** 收集侧已交付的组字（DynamicPreedit）帧累计数（取证对账/测试用）。 */
     internal val deliveredDynamicPreeditCount: Long
         get() = deliveredPreeditCounter.get()
+
+    companion object {
+        // 计数器进程级持有（第十八批由实例字段上提）：生产环境
+        // 通道只有一个实例（RimeEngine 持有），计数语义与实例级
+        // 时完全相同；上提是为让设置侧（日志页）能经静态入口读
+        // 快照、写汇总行——用户真机反馈逐事件行被界面帧率警告
+        // 刷满、根本翻不到。线程安全：AtomicLong 的自增与读取
+        // 各自原子；快照连读两个计数不做跨字段事务，写入方在两
+        // 读之间自增会让成对读数跨一帧，取证总数判读不受影响。
+        private val dropEquivalentCounter = AtomicLong(0)
+        private val deliveredPreeditCounter = AtomicLong(0)
+
+        /** 当前取证计数快照：（丢弃等价累计，已交付组字帧累计）。 */
+        internal fun dropDiagnosticsSnapshot(): Pair<Long, Long> =
+            dropEquivalentCounter.get() to deliveredPreeditCounter.get()
+
+        /**
+         * 把当前取证计数汇总写一行日志（临时取证出口，第十八
+         * 批）：设置侧打开日志页时调用，用户拉到日志末尾即可见
+         * 当前总数，不必在系统噪音里翻找逐事件行。正式版前随
+         * 整段取证设施一并移除。
+         */
+        internal fun logDropDiagnosticsSummary() {
+            Timber.d(
+                "volatileDropEqSummary dropEqTotal=%d deliveredPreedit=%d",
+                dropEquivalentCounter.get(), deliveredPreeditCounter.get()
+            )
+        }
+    }
 
     /** 当前收集者数量（测试等待订阅建立、诊断用）。 */
     internal val subscriptionCount: kotlinx.coroutines.flow.StateFlow<Int>
