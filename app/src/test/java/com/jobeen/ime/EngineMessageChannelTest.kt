@@ -263,71 +263,23 @@ class EngineMessageChannelTest {
     }
 
     /**
-     * 临时取证计数（第十七批）：拥塞下未能直投的易变帧即旧实现
-     * 会静默丢弃的丢弃等价事件，必须被计数——99 条突发中 64 条
-     * 入缓冲、其余 35 条（进槽或覆盖槽）逐条计数；收集侧交付的
-     * 组字帧（STALE＋FULL）另行计数，供真机日志对账。计数器第
-     * 十八批起进程级持有（companion，供设置侧读快照），同 JVM
-     * 内其他用例的计数会累加进来，故断言取本轮增量，事件数本
-     * 身不变。
+     * 突发拥塞下的合流交付语义：99 条突发中 64 条入缓冲、其余
+     * 进待补发槽合流，收集侧恢复后最终只收到每类的最新值
+     * （STALE＋FULL），控制类一条不丢。本用例原为第十七批取证
+     * 计数断言，第十九批取证设施整段移除后改回纯交付语义断言，
+     * 交付事件数与结果逐一保留。
      */
     @Test
-    fun dropDiagnostics_countsDropEquivalentsAndDeliveries() = runBlocking {
+    fun burstDelivery_conflatesToLatestAndDeliversEverything() = runBlocking {
         val rig = startStalledCollector()
         try {
-            assertTrue(rig.channel.dropDiagnosticsEnabled)
-            val dropStart = rig.channel.volatileDropEquivalentCount
-            val deliveredStart = rig.channel.deliveredDynamicPreeditCount
             burstSequence().forEach { rig.channel.emit(it) }
-            assertEquals(35L, rig.channel.volatileDropEquivalentCount - dropStart)
 
             rig.release()
             awaitUntil { rig.receivedCount.get() == 69 }
             assertEquals(listOf(STALE, FULL), rig.receivedPreedits.toList())
-            assertEquals(2L, rig.channel.deliveredDynamicPreeditCount - deliveredStart)
         } finally {
             rig.close()
-        }
-    }
-
-    /** 取证开关关闭时两个计数都停摆，且合流交付语义本身不变。 */
-    @Test
-    fun dropDiagnosticsDisabled_countsNothingAndDeliveryUnchanged() = runBlocking {
-        val channel = EngineMessageChannel()
-        channel.dropDiagnosticsEnabled = false
-        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
-        val receivedCount = AtomicInteger(0)
-        val receivedPreedits = CopyOnWriteArrayList<String>()
-        val collectorBusy = CompletableDeferred<Unit>()
-        val releaseCollector = CompletableDeferred<Unit>()
-        try {
-            channel.observe(scope) { msg ->
-                receivedCount.incrementAndGet()
-                if (msg is EngineMessage.DynamicPreedit) {
-                    receivedPreedits += msg.preedits.first().text
-                }
-                if (receivedCount.get() == 1) {
-                    collectorBusy.complete(Unit)
-                    releaseCollector.await()
-                }
-            }
-
-            awaitUntil { channel.subscriptionCount.value >= 1 }
-            channel.emit(EngineMessage.Composition("sentinel", 0))
-            collectorBusy.await()
-            // 计数器进程级持有（第十八批）：断言取增量——本通道
-            // 开关关闭期间两个计数都不得增长
-            val dropStart = channel.volatileDropEquivalentCount
-            val deliveredStart = channel.deliveredDynamicPreeditCount
-            burstSequence().forEach { channel.emit(it) }
-            assertEquals(dropStart, channel.volatileDropEquivalentCount)
-
-            releaseCollector.complete(Unit)
-            awaitUntil { receivedCount.get() == 69 }
-            assertEquals(listOf(STALE, FULL), receivedPreedits.toList())
-            assertEquals(deliveredStart, channel.deliveredDynamicPreeditCount)
-        } finally {
-            scope.cancel()
         }
     }
 
