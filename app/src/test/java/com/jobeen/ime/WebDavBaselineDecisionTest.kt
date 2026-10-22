@@ -1,11 +1,9 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.engine.rime.data.userdict.formatHttpDate
-import com.jobeen.ime.engine.rime.data.userdict.isUnprotectedOverwrite
 import com.jobeen.ime.engine.rime.data.userdict.postPutRecheckAdoptable
 import com.jobeen.ime.engine.rime.data.userdict.putPrecondition
 import com.jobeen.ime.engine.rime.data.userdict.remoteChangedDecision
-import com.jobeen.ime.engine.rime.data.userdict.unprotectedOverwriteMessage
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -23,10 +21,10 @@ import org.junit.Test
  * 基准入参一律是 per-file 口径——其他词典的同步历史根本不作为
  * 入参出现，这正是 F3 的修复形态。
  * 第十八批：F1 的合并夹逼决策（mergedStateMatchesCurrent）已
- * 随夹逼本体删除（下载不再做一致性校验），其用例一并移除；
- * isUnprotectedOverwrite / unprotectedOverwriteMessage 自此只
- * 剩删词同步一个生产调用方，下方用例继续钉住这两个纯函数本
- * 身（词典上传不再据此中止，属流程层口径、无纯函数落点）。
+ * 随夹逼本体删除（下载不再做一致性校验），其用例一并移除。
+ * 第二十批：isUnprotectedOverwrite / unprotectedOverwriteMessage
+ * 两个守卫纯函数随守卫本体一并删除（词典上传改无条件裸 PUT、
+ * 删词链删除中止守卫），其用例一并移除，见下方删除说明。
  */
 class WebDavBaselineDecisionTest {
 
@@ -100,8 +98,7 @@ class WebDavBaselineDecisionTest {
     // r3_noValidatorsAtAll / h1_bracket）随下载夹逼本体一并删除：
     // 第十八批按 Jobeen 决定回退强校验语义，下载 GET＋合并成功即
     // 成功、不再有合并前后一致性判定点。GET 期间并发写的残余处
-    // 理回到流程层：上传先合并后写、强 ETag 时 If-Match 由服务
-    // 器回 412 按真失败报出。
+    // 理回到流程层：上传先合并后无条件裸 PUT 写回（第二十批）。
 
     // ---------- 补查基准采纳判据（.17 复核 R1：时间窗支已删除） ----------
 
@@ -192,142 +189,24 @@ class WebDavBaselineDecisionTest {
             putPrecondition("abc123", etagWeak = true, lastModifiedMs = lm),
             pre,
         )
-        // 双无时纯函数层面前置条件为空（是否中止由调用方按
-        // isUnprotectedOverwrite 判，见下方 R2 用例）
+        // 双无时纯函数层面前置条件为空（调用方裸发，见第二十批
+        // 删除说明：已无任何「无保护即中止」的判据）
         val bare = putPrecondition(null, etagWeak = false, lastModifiedMs = 0L)
         assertNull(bare.ifMatch)
         assertNull(bare.ifUnmodifiedSince)
     }
 
-    // ---------- R2（.17 复核）＋O1（第十六批）：无 If-Match 的前置条件不算并发保护 ----------
-    // 第十八批口径：本节判据本身不变，但生产调用方只剩删词同步
-    // （据此中止本次删词 PUT）；词典上传已回退为不调用本守卫
-
-    @Test
-    fun r2_weakETagNoDate_remoteExists_abort() {
-        // 弱 ETag 且无 Last-Modified：putPrecondition 双空，远端
-        // 文件已存在 → 无条件覆盖风险成立，守卫判无保护
-        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = 0L)
-        assertNull(pre.ifMatch)
-        assertNull(pre.ifUnmodifiedSince)
-        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
-    }
-
-    @Test
-    fun r2_doubleNull_remoteMissing_allowed() {
-        // 远端文件不存在（首次新建）：没有可被覆盖的既有内容，
-        // 双空放行，新建另有 If-None-Match 限定
-        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = 0L)
-        assertFalse(isUnprotectedOverwrite(pre, remoteExists = false))
-    }
-
-    @Test
-    fun o1_weakETagWithDate_dateOnlyPrecondition_abortsOnExistingRemote() {
-        // 第十六批 O1 改规格（原用例名为 …stillSendsIfUnmodifiedSince、
-        // 末段断言「不触发中止」）：putPrecondition 的构造不变——弱
-        // ETag＋有修改时间仍产出 If-Unmodified-Since；但日期只有秒
-        // 精度，同秒并发写对它不可见，覆盖已存在文件时不再算并发
-        // 保护 → 守卫判无保护（第十八批起仅删词链据此中止）
-        val lm = 1_700_000_000_000L
-        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = lm)
-        assertNull(pre.ifMatch)
-        assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
-        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
-        // 强 ETag 的 If-Match 是唯一受保护形态，不触发
-        val strong = putPrecondition("e1", etagWeak = false, lastModifiedMs = 0L)
-        assertFalse(isUnprotectedOverwrite(strong, remoteExists = true))
-    }
-
-    @Test
-    fun o1_noETagWithDate_abortsOnExistingRemote() {
-        // 无 ETag＋有修改时间：与弱 ETag 同形——只有日期条件，
-        // 覆盖已存在文件视为无并发保护
-        val lm = 1_700_000_000_000L
-        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = lm)
-        assertNull(pre.ifMatch)
-        assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
-        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
-    }
-
-    @Test
-    fun o1_dateOnlyPrecondition_remoteMissing_allowed() {
-        // 远端文件不存在（首次新建）：没有可被覆盖的既有内容，
-        // 日期-only 前置条件不触发中止，新建另有 If-None-Match 限定
-        val lm = 1_700_000_000_000L
-        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = lm)
-        assertFalse(isUnprotectedOverwrite(pre, remoteExists = false))
-    }
-
-    @Test
-    fun o1_unprotectedAbort_messages_pinnedVerbatim() {
-        // 中止话术两形态全文钉住：日期-only 点明同秒不可见，
-        // 双空沿用第十四批 R2 原文
-        val lm = 1_700_000_000_000L
-        assertEquals(
-            "该服务器只能提供秒精度的修改时间校验（无可用的 ETag 强校验），" +
-                "同一秒内其他设备刚写入的内容无法被察觉，继续上传可能将其覆盖，本次上传已中止",
-            unprotectedOverwriteMessage(
-                putPrecondition(null, etagWeak = false, lastModifiedMs = lm),
-            ),
-        )
-        assertEquals(
-            "该服务器无法提供并发保护（无可用的 ETag / 修改时间校验），" +
-                "继续上传可能覆盖其他设备刚写入的内容，本次上传已中止",
-            unprotectedOverwriteMessage(
-                putPrecondition(null, etagWeak = false, lastModifiedMs = 0L),
-            ),
-        )
-    }
-
-    // ---------- 删词同步归一（第十四批回修）：与词典上传同一守卫 ----------
-
-    @Test
-    fun dw_weakETagNoDate_remoteExists_abort() {
-        // 删词链与 R2 同形：弱 ETag＋无修改时间，GET 已证明远端
-        // 删词文件存在 → putPrecondition 双空、无条件覆盖风险成立，
-        // syncDeletedWords 须按同一判据中止本次同步
-        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = 0L)
-        assertNull(pre.ifMatch)
-        assertNull(pre.ifUnmodifiedSince)
-        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
-    }
-
-    @Test
-    fun dw_noETagNoDate_remoteExists_abort() {
-        // 旧删词链该分支根本不算前置条件、无条件裸 PUT；归一后
-        // 双空＋文件已存在同样中止
-        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = 0L)
-        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
-    }
-
-    @Test
-    fun o1_dw_noETagWithDate_dateOnlyPrecondition_aborts() {
-        // 第十六批 O1 对齐（原用例名为 …usesIfUnmodifiedSince、末段
-        // 断言「不触发中止」）：构造不变——无 ETag＋有修改时间走
-        // putPrecondition 产出 If-Unmodified-Since（旧分支连可用的
-        // 时间条件也不发）；但删词链与词典上传同一守卫，日期-only
-        // 覆盖已存在的删词文件同样视为无并发保护 → 中止
-        val lm = 1_700_000_000_000L
-        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = lm)
-        assertNull(pre.ifMatch)
-        assertEquals(formatHttpDate(lm), pre.ifUnmodifiedSince)
-        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
-    }
-
-    @Test
-    fun o1_dw_weakETagWithDate_aborts() {
-        // 删词链弱 ETag＋有修改时间：同一守卫，覆盖已存在文件
-        // 时日期-only 不算保护
-        val lm = 1_700_000_000_000L
-        val pre = putPrecondition("e1", etagWeak = true, lastModifiedMs = lm)
-        assertTrue(isUnprotectedOverwrite(pre, remoteExists = true))
-    }
-
-    @Test
-    fun dw_remoteMissing_doubleNull_allowed() {
-        // 删词文件远端不存在（首次同步）：没有可被覆盖的既有
-        // 内容，双空放行，新建另有 If-None-Match 限定
-        val pre = putPrecondition(null, etagWeak = false, lastModifiedMs = 0L)
-        assertFalse(isUnprotectedOverwrite(pre, remoteExists = false))
-    }
+    // ---------- R2/O1 守卫判据与删词链同守卫用例已删除（第二十批） ----------
+    // isUnprotectedOverwrite / unprotectedOverwriteMessage 随守卫本
+    // 体一并删除（生产调用方归零：词典上传改无条件裸 PUT、删词链
+    // 删除中止守卫——见 fix20），原用例（r2_weakETagNoDate /
+    // r2_doubleNull / o1_weakETagWithDate / o1_noETagWithDate /
+    // o1_dateOnly_remoteMissing / o1_unprotectedAbort_messages /
+    // dw_weakETagNoDate / dw_noETagNoDate / o1_dw_noETagWithDate /
+    // o1_dw_weakETagWithDate / dw_remoteMissing_doubleNull）断言的
+    // 均为这两函数的输出，函数既删、用例无落点。其中涉及
+    // putPrecondition 构造形态的断言（弱/无 ETag＋时间 → 只有日期
+    // 条件、强 ETag → If-Match、双无 → 双空）由上方 R3 用例与
+    // SyncProtocolFixesTest 的 precondition_* 用例继续覆盖，
+    // putPrecondition 本体与既有断言本批不动。
 }
