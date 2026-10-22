@@ -34,6 +34,12 @@ class InputFieldTrackerTest {
     private val webFieldOtherHint = webFieldA.copy(hintText = "评论")
     private val webFieldOtherAutofill = webFieldA.copy(autofillId = "1001/8")
 
+    // 强信号全缺形态：核心扩展三项皆无，区分只剩文案类
+    private val hintOnlyA = fieldA.copy(hintText = "搜索")
+    private val hintOnlyOtherHint = hintOnlyA.copy(hintText = "评论")
+    private val labelOnlyA = fieldA.copy(label = "搜索")
+    private val labelOnlyOther = labelOnlyA.copy(label = "评论")
+
     /** 一串喂入后判变（应推进纪元）的总次数。 */
     private fun advancesFor(tracker: InputFieldTracker, feeds: List<InputFieldKey?>): Int =
         feeds.count { tracker.track(it) }
@@ -107,13 +113,45 @@ class InputFieldTrackerTest {
     }
 
     @Test
-    fun restartWithOnlyHintChangedAdvances() {
-        // §4.4 本体：同一 WebView 内换 <input>，核心四项完全重
-        // 合、只有 hintText 不同（两侧都有值）——扩展字段必须能
-        // 把它判成换框，否则 R3 的语音作废在这类宿主里漏过
+    fun hintDifferenceAdvancesWhenPrimarySignalsAbsent() {
+        // §4.4 的兜底形态：同一 WebView 内换 <input>，核心四项
+        // 全同、核心扩展（autofillId/fieldName/privateImeOptions）
+        // 两侧全缺，区分只剩文案类——第十七批口径下 hintText 作
+        // 兜底信号参与判变，仍须判成换框，否则 R3 的语音作废在
+        // 这类宿主里漏过（第十六批的对应旧用例
+        // restartWithOnlyHintChangedAdvances 带 autofillId 夹具，
+        // 在新口径下属「核心在场」形态、改判见下一条，故本条换
+        // 强信号全缺夹具续测其 §4.4 本意）
+        val tracker = InputFieldTracker()
+        tracker.track(hintOnlyA)
+        assertTrue(tracker.track(hintOnlyOtherHint))
+        // label 同口径
+        val labelTracker = InputFieldTracker()
+        labelTracker.track(labelOnlyA)
+        assertTrue(labelTracker.track(labelOnlyOther))
+    }
+
+    @Test
+    fun copyDifferencesDoNotAdvanceWhenPrimarySignalPresent() {
+        // 第十七批降权：核心扩展在场（autofillId 两侧有值）时，
+        // hintText/label 即使两侧有值且不同也不单独触发判变——
+        // 同一框在两次喂入间改写动态提示文案不得误判换框、误杀
+        // 在途语音（audit16 (g) 反向残余的收口）
         val tracker = InputFieldTracker()
         tracker.track(webFieldA)
-        assertTrue(tracker.track(webFieldOtherHint))
+        assertFalse(tracker.track(webFieldOtherHint))
+        val labelTracker = InputFieldTracker()
+        labelTracker.track(webFieldA.copy(label = "搜索"))
+        assertFalse(labelTracker.track(webFieldA.copy(label = "评论")))
+    }
+
+    @Test
+    fun restartWithOnlyFieldNameChangedAdvances() {
+        // fieldName 属核心扩展：仅它两侧有值且不同即判换框，
+        // 不受文案类降权影响
+        val tracker = InputFieldTracker()
+        tracker.track(webFieldA.copy(fieldName = "search"))
+        assertTrue(tracker.track(webFieldA.copy(fieldName = "comment")))
     }
 
     @Test

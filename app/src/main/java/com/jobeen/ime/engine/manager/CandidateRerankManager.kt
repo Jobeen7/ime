@@ -6,9 +6,15 @@ import com.jobeen.ime.base.priority.CandidateFeature
 import com.jobeen.ime.base.priority.PriorityCalculator
 import com.jobeen.ime.base.priority.WeightConfig
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
+import com.jobeen.ime.engine.rime.core.isKeycapSequence
 
 class CandidateRerankManager(context: Context) {
     private val calculator = PriorityCalculator()
+
+    private companion object {
+        /** 键帽序列候选的固定沉底分：必低于 calculate 的任何产出（恒 ≥ 0）。 */
+        const val KEYCAP_SUNK_SCORE = -1.0
+    }
 
     suspend fun rerank(
         candidates: List<Candidate>, inputContext: String, gramDb: GramDb?,
@@ -40,7 +46,7 @@ class CandidateRerankManager(context: Context) {
 
             val preferCount = prefers[it.text] ?: 0
             val textLen = it.text.codePointCount(0, it.text.length)
-            val score = calculator.calculate(
+            val rawScore = calculator.calculate(
                 CandidateFeature(
                     frequency = preferCount.toLong(),
                     wordLength = textLen,
@@ -48,6 +54,17 @@ class CandidateRerankManager(context: Context) {
                     baseScore = gramScore
                 ), cfg
             )
+            // 键帽序列（如 7️⃣）是基础字（七）的 emoji 派生候选：引擎
+            // 原始序里它恒紧跟在基础字之后，但重排会把它抬到基础字
+            // 之前——其一，组合序列被 codePointCount 算成 3 个码点，
+            // 长度项虚高（单字约 2.6 倍），零偏好历史时就已越过基础
+            // 字；其二，用户点过一次后偏好计数再叠一层。第十七批定
+            // 责（主机台运行时判别）：Lua context_reorder 的可重排
+            // 白名单只有 user_phrase，simplified 类型的键帽它动不了，
+            // 抬升只来自本重排。口径：键帽候选不参加分数竞争，沉到
+            // 重排窗口末尾（calculate 的分数恒 ≥ 0，-1 必垫底；稳定
+            // 排序保持多个键帽之间的原始相对序），恒在基础字之后。
+            val score = if (isKeycapSequence(it.text)) KEYCAP_SUNK_SCORE else rawScore
             restored.add(
                 Candidate(
                     // 必须保留 Rime 全局 index：选词/删词都按它定位，改成局部位置会打错对象

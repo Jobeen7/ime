@@ -92,7 +92,10 @@ object AppStartup {
         // 仅 debug 构建开启日志：内部缓冲收集 + logcat 读取 + DebugTree。
         // release（assembleRelease）不装任何 timber Tree → Timber 全部 no-op，不输出、零开销；
         // 崩溃兜底（crash.log）仍保留。
-        AppLogBuffer.install(context, enableLogging = BuildConfig.DEBUG)
+        // 第十七批取证临时措施（正式版前回退）：预览版临时放开内部日志缓冲，
+        // 使真机能在「关于 → 日志」页读到 EngineMessageChannel 的 volatileDropEq
+        // 计数行；回退时把下一行 enableLogging 改回 BuildConfig.DEBUG。
+        AppLogBuffer.install(context, enableLogging = true)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
