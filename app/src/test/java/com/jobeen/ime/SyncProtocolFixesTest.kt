@@ -5,6 +5,7 @@ import com.jobeen.ime.data.manager.DeletedWordEntry
 import com.jobeen.ime.data.manager.decodeDeletedWordEntry
 import com.jobeen.ime.data.manager.encodeDeletedWordEntry
 import com.jobeen.ime.data.manager.mergeDeletedWordEntries
+import com.jobeen.ime.engine.rime.data.userdict.captureETag
 import com.jobeen.ime.engine.rime.data.userdict.formatHttpDate
 import com.jobeen.ime.engine.rime.data.userdict.isWeakETag
 import com.jobeen.ime.engine.rime.data.userdict.parseHttpDateMs
@@ -107,6 +108,30 @@ class SyncProtocolFixesTest {
         assertTrue(isWeakETag("  W/\"abc\""))
         assertFalse(isWeakETag("\"abc\""))
         assertFalse(isWeakETag(null))
+    }
+
+    @Test
+    fun captureETag_weakTreatedAsAbsent() {
+        // 第十九批（Jobeen 口径：弱 ETag 一律视为不存在）：捕获点
+        // 归一后弱值不得以任何形式留在链路里
+        assertNull(captureETag("W/\"abc\""))
+        assertNull(captureETag("  W/\"abc\""))
+        assertNull(captureETag(null))
+        assertNull(captureETag(""))
+        // 强 ETag 原样规范化（去引号裸值），既有行为逐字不变
+        assertEquals("abc", captureETag("\"abc\""))
+        assertEquals("abc", captureETag("abc"))
+    }
+
+    @Test
+    fun captureETag_weakNeverProducesIfMatch() {
+        // 弱 ETag 捕获置空后，与无 ETag 入参同路：只有日期条件、
+        // 绝不产 If-Match——钉住「弱值派生前置条件被服务器恒
+        // 412」的修复点（fix19）
+        val lm = 1_700_000_000_000L
+        val pre = putPrecondition(captureETag("W/\"abc\""), etagWeak = false, lastModifiedMs = lm)
+        assertNull(pre.ifMatch)
+        assertEquals(lm - lm % 1000, parseHttpDateMs(pre.ifUnmodifiedSince))
     }
 
     @Test
