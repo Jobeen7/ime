@@ -84,6 +84,10 @@ private data class LibraryUiState(
     val drafts: List<com.jobeen.ime.skin.draft.DraftMeta> = emptyList(),
     val quotaBytes: Long = 0,
     val activeDegradations: List<Degradation> = emptyList(),
+    /** 布局显示名（索引条目不带 name，从当前代 layout.json 的 meta.name 读）。 */
+    val layoutNames: Map<String, String> = emptyMap(),
+    /** 生效皮肤绑定的布局当前不可解析（已删除/无效）——回退状态的常驻提示面（B3 §4.6）。 */
+    val activeLayoutMissing: Boolean = false,
 )
 
 private suspend fun loadLibraryState(): LibraryUiState = withContext(Dispatchers.IO) {
@@ -106,6 +110,25 @@ private suspend fun loadLibraryState(): LibraryUiState = withContext(Dispatchers
         activeDegradations = SkinSnapshotProvider.peek()
             ?.takeIf { it.ref.skinId == active?.skinId }
             ?.degradations?.toList() ?: emptyList(),
+        layoutNames = index.layouts.mapNotNull { entry ->
+            val name = runCatching {
+                val tree = com.jobeen.ime.skin.model.SkinJson.parseObject(
+                    File(
+                        SkinLibrary.layout.fileFromRelative(entry.dir), "layout.json",
+                    ).readText(),
+                )
+                ((tree?.get("meta") as? kotlinx.serialization.json.JsonObject)
+                    ?.get("name") as? kotlinx.serialization.json.JsonPrimitive)
+                    ?.takeIf { it.isString }?.content
+            }.getOrNull()
+            name?.let { entry.id to it }
+        }.toMap(),
+        activeLayoutMissing = SkinSnapshotProvider.peek()
+            ?.takeIf { it.ref.skinId == active?.skinId }
+            ?.layoutResolution in setOf(
+                com.jobeen.ime.skin.model.LayoutResolution.MISSING,
+                com.jobeen.ime.skin.model.LayoutResolution.INVALID,
+            ),
     )
 }
 
@@ -402,12 +425,56 @@ fun SkinLibraryScreen(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Text(layoutEntry.id, fontSize = 14.sp)
-                        TextButton(
-                            onClick = { deleteLayoutId = layoutEntry.id },
-                            enabled = !busy,
-                        ) { Text("删除") }
+                        Column {
+                            Text(
+                                state.layoutNames[layoutEntry.id] ?: layoutEntry.id,
+                                fontSize = 14.sp,
+                            )
+                            Text(
+                                "${layoutEntry.id} · 第 ${layoutEntry.generation} 代",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Row {
+                            TextButton(
+                                onClick = {
+                                    context.startActivity(
+                                        com.jobeen.ime.ui.LayoutEditorActivity
+                                            .intentForLayout(context, layoutEntry.id),
+                                    )
+                                },
+                                enabled = !busy,
+                            ) { Text("编辑") }
+                            TextButton(
+                                onClick = { deleteLayoutId = layoutEntry.id },
+                                enabled = !busy,
+                            ) { Text("删除") }
+                        }
                     }
+                }
+            }
+
+            item {
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(
+                            com.jobeen.ime.ui.LayoutEditorActivity.intentForNew(context),
+                        )
+                    },
+                    enabled = !busy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp),
+                ) { Text("新建自创布局") }
+                if (state.activeLayoutMissing) {
+                    Text(
+                        "提示：当前生效皮肤绑定的布局已不可用，键盘已回退到默认布局" +
+                            "（在皮肤编辑中改绑或删除该绑定可消除此提示）。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = 6.dp),
+                    )
                 }
             }
 

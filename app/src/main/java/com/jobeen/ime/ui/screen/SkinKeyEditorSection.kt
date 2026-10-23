@@ -431,7 +431,7 @@ private fun queryDisplayName(context: Context, uri: android.net.Uri): String? =
  * 引用回查 KeyDef.id 选键（不靠位置/文本比对，详设 §6.1-4），
  * 并描出选中高亮框。
  */
-private class KeyPickingView(
+class KeyPickingView(
     context: Context,
     private val keyboard: View,
     private val layout: List<List<KeyDef>>,
@@ -510,7 +510,7 @@ private class KeyPickingView(
 // ---------- 逐键浮层 ----------
 
 /** 浮层内的槽位编辑态（强类型；SequenceKept = 导入的占位原样保留）。 */
-private sealed interface SlotEdit {
+internal sealed interface SlotEdit {
     data object None : SlotEdit
     data class TextVal(val value: String) : SlotEdit
     data class Cmd(val action: WhitelistAction, val value: String) : SlotEdit
@@ -523,14 +523,14 @@ private sealed interface SoundChoice {
     data class Asset(val assetId: String) : SoundChoice
 }
 
-private fun SkinAction?.toSlotEdit(): SlotEdit = when (this) {
+internal fun SkinAction?.toSlotEdit(): SlotEdit = when (this) {
     null -> SlotEdit.None
     is SkinAction.Text -> SlotEdit.TextVal(value)
     is SkinAction.Command -> SlotEdit.Cmd(action, value ?: "")
     SkinAction.SequencePlaceholder -> SlotEdit.SequenceKept
 }
 
-private fun SlotEdit.toJson(): kotlinx.serialization.json.JsonElement? = when (this) {
+internal fun SlotEdit.toJson(): kotlinx.serialization.json.JsonElement? = when (this) {
     SlotEdit.None -> null
     is SlotEdit.TextVal -> if (value.isEmpty()) {
         null
@@ -550,14 +550,48 @@ private fun SlotEdit.toJson(): kotlinx.serialization.json.JsonElement? = when (t
     SlotEdit.SequenceKept -> buildJsonObject { put("type", "sequence") }
 }
 
+/**
+ * 结构编辑初值（B3 布局模式）：条目即完整键节点，装配时把
+ * widthWeight/rowSpan/alignSpanEnd 一并写回（键节点其余字段——
+ * stableId 与未知节点——由 assemble 的「从条目起步」自动保留）。
+ */
+internal data class KeyStructuralState(
+    /** 权重原文（原始数值文本；文件存原始权重，裁定 B1）。 */
+    val widthWeightText: String,
+    val rowSpan: Int,
+    /** rowSpan 可达上限（当前行到底部的行数）。 */
+    val maxRowSpan: Int,
+    val alignSpanEnd: Boolean,
+)
+
 @Composable
-private fun KeyOverrideDialog(
+internal fun KeyOverrideDialog(
     layoutName: String,
     keyId: String,
     entry: JsonObject?,
     admittedSounds: Set<String>,
     onDismiss: () -> Unit,
     onSaveEntry: (JsonObject?) -> Unit,
+    // ---- B3 泛化点（默认值 = B2 皮肤模式行为，皮肤侧调用方零改动） ----
+    /** 条目解析的谓词对（布局模式：该键恒可覆写、无锚点面）。 */
+    isOverridable: (String) -> Boolean = KeyIds::isOverridable,
+    isAnchor: (String) -> Boolean = KeyIds::isAnchor,
+    /** 基准标签覆盖（布局模式传键节点 label；null = 按出厂表查）。 */
+    baseLabel: String? = null,
+    /** 整节点校验钩子（布局模式传全布局预演校验，返回错误文案或 null）。 */
+    validateAssembled: ((JsonObject) -> String?)? = null,
+    /** switch_layout 的可选目标（布局模式追加 custom:<id> 项）。 */
+    switchLayoutTargets: Set<String> = WhitelistAction.LAYOUT_TARGETS,
+    /** 音效段（布局键节点无 sound 字段——音效走 keyMappings——布局模式关）。 */
+    includeSound: Boolean = true,
+    /** 「恢复出厂」钮（布局模式无出厂条目概念，关；删除走 onDeleteKey）。 */
+    showReset: Boolean = true,
+    /** 结构编辑初值（非 null 时渲染结构段：权重/跨行/跨行对齐）。 */
+    structural: KeyStructuralState? = null,
+    /** 删除此键（布局模式；确认在调用方）。 */
+    onDeleteKey: (() -> Unit)? = null,
+    /** 标题覆盖（布局模式显示逻辑 ID）。 */
+    dialogTitle: String? = null,
 ) {
     // 以与运行时相同的解析器读现行条目：无效绑定在运行时本就不
     // 生效，浮层展示生效态（保存时一并落为干净条目）
@@ -567,11 +601,11 @@ private fun KeyOverrideDialog(
         } else {
             SkinKeyMappingsParser.parse(
                 JsonObject(mapOf(keyId to entry)),
-                KeyIds::isOverridable, KeyIds::isAnchor,
+                isOverridable, isAnchor,
             ).overrides[keyId]
         }
     }
-    val factoryLabel = remember(layoutName, keyId) {
+    val factoryLabel = baseLabel ?: remember(layoutName, keyId) {
         val def = rawLayoutOf(layoutName).flatten().firstOrNull { it.id == keyId }
         when (val appearance = def?.appearance) {
             is KeyDef.Appearance.Text -> appearance.displayText
@@ -596,6 +630,10 @@ private fun KeyOverrideDialog(
         )
     }
     var errorText by remember { mutableStateOf<String?>(null) }
+    // 结构段状态（布局模式；皮肤模式 structural=null 不渲染不写回）
+    var weightText by remember { mutableStateOf(structural?.widthWeightText ?: "") }
+    var rowSpanValue by remember { mutableStateOf(structural?.rowSpan ?: 1) }
+    var alignEndValue by remember { mutableStateOf(structural?.alignSpanEnd ?: false) }
 
     fun assemble(): JsonObject {
         val map = (entry ?: JsonObject(emptyMap())).toMutableMap()
@@ -603,6 +641,26 @@ private fun KeyOverrideDialog(
             map.remove("label")
         } else {
             map["label"] = JsonPrimitive(labelText)
+        }
+        if (structural != null) {
+            val weight = weightText.trim()
+            when {
+                weight.isEmpty() -> map.remove("widthWeight")
+                weight.toDoubleOrNull() != null ->
+                    map["widthWeight"] = JsonPrimitive(weight.toDouble())
+                // 非数值原文照写：校验器以 weight_out_of_range 明示（不静默改值）
+                else -> map["widthWeight"] = JsonPrimitive(weight)
+            }
+            if (rowSpanValue > 1) {
+                map["rowSpan"] = JsonPrimitive(rowSpanValue)
+            } else {
+                map.remove("rowSpan")
+            }
+            if (alignEndValue && rowSpanValue > 1) {
+                map["alignSpanEnd"] = JsonPrimitive(true)
+            } else {
+                map.remove("alignSpanEnd")
+            }
         }
         fun putSlot(name: String, edit: SlotEdit) {
             val node = edit.toJson()
@@ -619,10 +677,12 @@ private fun KeyOverrideDialog(
                 longPressNodes.forEach { add(it) }
             }
         }
-        when (val choice = soundChoice) {
-            SoundChoice.Factory -> map.remove("sound")
-            SoundChoice.Muted -> map["sound"] = JsonPrimitive("")
-            is SoundChoice.Asset -> map["sound"] = JsonPrimitive(choice.assetId)
+        if (includeSound) {
+            when (val choice = soundChoice) {
+                SoundChoice.Factory -> map.remove("sound")
+                SoundChoice.Muted -> map["sound"] = JsonPrimitive("")
+                is SoundChoice.Asset -> map["sound"] = JsonPrimitive(choice.assetId)
+            }
         }
         return JsonObject(map)
     }
@@ -642,20 +702,29 @@ private fun KeyOverrideDialog(
             onSaveEntry(null)
             return
         }
-        // 写前预校验（详设 §6.3-2）：与导入同规则，编辑器内不可存无效绑定
-        val rejections = SkinTreeEditor.validateKeyEntry(keyId, assembled)
-        if (rejections.isNotEmpty()) {
-            errorText = "绑定无效：" + rejections.joinToString("；") {
-                "${it.slot?.jsonName ?: "键"} → ${it.reason.name.lowercase()}"
+        if (validateAssembled != null) {
+            // 布局模式：整布局预演校验（结构改动与绑定改动一并核）
+            val problem = validateAssembled(assembled)
+            if (problem != null) {
+                errorText = problem
+                return
             }
-            return
+        } else {
+            // 写前预校验（详设 §6.3-2）：与导入同规则，编辑器内不可存无效绑定
+            val rejections = SkinTreeEditor.validateKeyEntry(keyId, assembled)
+            if (rejections.isNotEmpty()) {
+                errorText = "绑定无效：" + rejections.joinToString("；") {
+                    "${it.slot?.jsonName ?: "键"} → ${it.reason.name.lowercase()}"
+                }
+                return
+            }
         }
         onSaveEntry(assembled)
     }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("编辑按键 $keyId") },
+        title = { Text(dialogTitle ?: "编辑按键 $keyId") },
         text = {
             Column(
                 modifier = Modifier.verticalScroll(rememberScrollState()),
@@ -675,13 +744,62 @@ private fun KeyOverrideDialog(
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth(),
                 )
-                ActionEditRow("点按 tap", tapEdit, KeySlot.TAP, onChange = { tapEdit = it })
+                if (structural != null) {
+                    Text("结构", fontWeight = FontWeight.Bold)
+                    OutlinedTextField(
+                        value = weightText,
+                        onValueChange = { weightText = it },
+                        label = { Text("宽度权重 widthWeight（原始值，渲染期按行内比例分配；空 = 1）") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Row(
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "跨行 rowSpan：$rowSpanValue",
+                            fontSize = 14.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = { if (rowSpanValue > 1) rowSpanValue-- },
+                            enabled = rowSpanValue > 1,
+                        ) { Text("－") }
+                        TextButton(
+                            onClick = {
+                                if (rowSpanValue < structural.maxRowSpan) rowSpanValue++
+                            },
+                            enabled = rowSpanValue < structural.maxRowSpan,
+                        ) { Text("＋") }
+                    }
+                    Row(
+                        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "跨行时对齐行尾 alignSpanEnd",
+                            fontSize = 14.sp,
+                            modifier = Modifier.weight(1f),
+                        )
+                        androidx.compose.material3.Switch(
+                            checked = alignEndValue && rowSpanValue > 1,
+                            onCheckedChange = { alignEndValue = it },
+                            enabled = rowSpanValue > 1,
+                        )
+                    }
+                }
+                ActionEditRow(
+                    "点按 tap", tapEdit, KeySlot.TAP,
+                    switchLayoutTargets = switchLayoutTargets,
+                    onChange = { tapEdit = it },
+                )
                 ActionEditRow(
                     "上滑 swipeUp", swipeUpEdit, KeySlot.SWIPE_UP,
+                    switchLayoutTargets = switchLayoutTargets,
                     onChange = { swipeUpEdit = it },
                 )
                 ActionEditRow(
                     "下滑 swipeDown", swipeDownEdit, KeySlot.SWIPE_DOWN,
+                    switchLayoutTargets = switchLayoutTargets,
                     onChange = { swipeDownEdit = it },
                 )
                 Text("长按 longPress（数组序 = 候选条展示序）", fontWeight = FontWeight.Bold)
@@ -693,6 +811,7 @@ private fun KeyOverrideDialog(
                         title = "长按 #${index + 1}",
                         edit = item,
                         slot = KeySlot.LONG_PRESS,
+                        switchLayoutTargets = switchLayoutTargets,
                         onChange = { newEdit ->
                             longPressEdits = if (
                                 newEdit is SlotEdit.Cmd &&
@@ -741,6 +860,7 @@ private fun KeyOverrideDialog(
                         onClick = { longPressEdits = longPressEdits + SlotEdit.TextVal("") },
                     ) { Text("添加长按动作") }
                 }
+                if (includeSound) {
                 Text("音效", fontWeight = FontWeight.Bold)
                 LabeledDropdown(
                     label = "该键点按音",
@@ -771,6 +891,7 @@ private fun KeyOverrideDialog(
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                }
                 errorText?.let {
                     Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                 }
@@ -781,7 +902,12 @@ private fun KeyOverrideDialog(
         },
         dismissButton = {
             Row {
-                TextButton(onClick = { onSaveEntry(null) }) { Text("恢复出厂") }
+                if (onDeleteKey != null) {
+                    TextButton(onClick = onDeleteKey) { Text("删除此键") }
+                }
+                if (showReset) {
+                    TextButton(onClick = { onSaveEntry(null) }) { Text("恢复出厂") }
+                }
                 TextButton(onClick = onDismiss) { Text("取消") }
             }
         },
@@ -793,6 +919,8 @@ private fun ActionEditRow(
     title: String,
     edit: SlotEdit,
     slot: KeySlot,
+    /** switch_layout 的目标候选（布局模式含 custom:<id> 项）。 */
+    switchLayoutTargets: Set<String> = WhitelistAction.LAYOUT_TARGETS,
     onChange: (SlotEdit) -> Unit,
     onDelete: (() -> Unit)? = null,
     onMoveUp: (() -> Unit)? = null,
@@ -877,7 +1005,7 @@ private fun ActionEditRow(
                     )
                     WhitelistAction.SWITCH_LAYOUT -> LabeledDropdown(
                         label = "目标布局",
-                        options = WhitelistAction.LAYOUT_TARGETS.map { it to it },
+                        options = switchLayoutTargets.map { it to it },
                         selectedKey = edit.value.ifEmpty { "Qwerty" },
                         onSelect = { onChange(SlotEdit.Cmd(edit.action, it)) },
                     )
