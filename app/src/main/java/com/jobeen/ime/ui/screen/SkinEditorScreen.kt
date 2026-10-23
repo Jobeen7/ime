@@ -470,9 +470,16 @@ private fun SkinEditorBody(
         item {
             SchematicPreview(scheme = scheme, backgroundBitmap = backgroundBitmap)
             Text(
-                text = "示意预览（非真实键盘；逐键编辑在后续批次）",
+                text = "示意预览（全局配色/几何）；逐键编辑与真实预览在下方",
                 fontSize = 12.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        item {
+            SkinKeyEditorSection(
+                tree = tree,
+                onTreeChange = onTreeChange,
+                draftId = draftId,
             )
         }
         if (warnings.isNotEmpty()) {
