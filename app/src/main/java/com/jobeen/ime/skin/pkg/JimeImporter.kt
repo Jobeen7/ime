@@ -59,7 +59,12 @@ class JimeImporter(
         val targetHeightPx: Int,
     )
 
-    enum class ConflictMode { FAIL, COPY }
+    /**
+     * FAIL：冲突待决（UI 提示）；COPY：冲突实体换新 id 副本入库
+     * （定稿七.4）；UPDATE：同 id 异 hash 直接入新代次（同步
+     * 快进更新专用，详设 §4.4.3——只入库不自动生效）。
+     */
+    enum class ConflictMode { FAIL, COPY, UPDATE }
 
     data class ImportReport(
         val importedSkinIds: List<String> = emptyList(),
@@ -226,8 +231,9 @@ class JimeImporter(
         }
 
         // ---- 副本改写（七.4）：冲突实体换新 id，改写包内已知引用 ----
+        // UPDATE 模式不改写：同 id 异 hash 由事务层入新代次（同步快进）。
         val copies = mutableMapOf<String, String>()
-        if (conflicts.isNotEmpty()) {
+        if (conflicts.isNotEmpty() && mode == ConflictMode.COPY) {
             for (conflictId in conflicts) copies[conflictId] = newId()
             issues += SkinIssue(
                 "package", SkinIssue.Kind.INFO,
