@@ -33,7 +33,7 @@ object KeyboardThemePresets {
             panel = KeyboardColors.ColorScheme.PanelColors(
                 background = Color.rgb(22, 22, 22),
                 toolbarText = Color.rgb(255, 255, 255),
-                toolbarActived = Color.rgb(156, 130, 74),
+                toolbarActived = Color.rgb(10, 132, 255), // #0A84FF，与长按弹窗高亮同值（BaseKeyboard 的 LONG_PRESS_HIGHLIGHT_BLUE）
                 toolbarIcon = Color.rgb(255, 255, 255),
                 // 工具栏按压是半透明涟漪（峰值 alpha 160，见
                 // KawaiiPanelView.startPressAnimation）叠在面板底 22 灰上，
@@ -77,7 +77,7 @@ object KeyboardThemePresets {
             panel = KeyboardColors.ColorScheme.PanelColors(
                 background = Color.rgb(225, 226, 231),
                 toolbarText = Color.rgb(20, 20, 20),
-                toolbarActived = Color.rgb(156, 130, 74),
+                toolbarActived = Color.rgb(10, 132, 255), // #0A84FF，与长按弹窗高亮同值（BaseKeyboard 的 LONG_PRESS_HIGHLIGHT_BLUE）
                 toolbarIcon = Color.rgb(80, 80, 85),
                 candidateBackground = Color.rgb(255, 255, 255),
                 candidateText = Color.rgb(20, 20, 20),
@@ -121,7 +121,7 @@ object KeyboardThemePresets {
             panel = KeyboardColors.ColorScheme.PanelColors(
                 background = Color.rgb(242, 235, 228),
                 toolbarText = Color.rgb(50, 40, 35),
-                toolbarActived = Color.rgb(242, 100, 25),
+                toolbarActived = Color.rgb(10, 132, 255), // #0A84FF，与长按弹窗高亮同值（BaseKeyboard 的 LONG_PRESS_HIGHLIGHT_BLUE）
                 toolbarIcon = Color.rgb(120, 100, 90),
                 candidateBackground = Color.rgb(255, 255, 255),
                 candidateText = Color.rgb(50, 40, 35),
