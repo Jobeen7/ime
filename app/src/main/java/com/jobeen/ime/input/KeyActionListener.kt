@@ -35,6 +35,13 @@ class KeyActionListener(
                 engine?.commit(action.text)
             }
 
+            // 字面提交（皮肤 commit_direct，裁定 B2）：与 CommitAction
+            // 同路上屏；字面性由类型隔离保证——Qwerty 的标点全半角
+            // 转换与 Caps 大写只作用于出厂类型，不命中本类型（详设 §3.4）
+            is KeyboardAction.LiteralCommitAction -> {
+                engine?.commit(action.text)
+            }
+
             is KeyboardAction.BackspaceAction -> {
                 // 剪贴板搜索态：退格先问面板（删查询/吞掉），不归引擎才删拼音或文档
                 val intercepted = (service as? ImeInputMethodService)?.keyboardWindow

@@ -54,6 +54,44 @@ class QwertyKeyboard(
             )
         }
 
+        /**
+         * onAction 变换的纯逻辑（自 onAction 抽取，行为逐项等价）：
+         * 返回（下发动作， 目标 Caps 状态）——下发动作为 null 表示
+         * 就地消费；目标 Caps 状态为 null 表示不切换。
+         *
+         * 裁定 B2 的字面通道在此成立：LiteralCommitAction 不命中
+         * CommitAction 的标点转换、也不命中 KeySequenceAction 的
+         * Caps 大写，原样下发（详设 §3.4）；出厂两类型照旧变换。
+         */
+        internal fun transformAction(
+            action: KeyboardAction,
+            capsState: CapsState,
+            fullWidthPunctuation: Boolean,
+        ): Pair<KeyboardAction?, CapsState?> = when (action) {
+            is KeyboardAction.CapsAction -> null to when (capsState) {
+                CapsState.None -> CapsState.Once
+                CapsState.Once -> CapsState.Lock
+                CapsState.Lock -> CapsState.None
+            }
+
+            is KeyboardAction.CommitAction -> KeyboardAction.CommitAction(
+                PunctuationUtil.convert(action.text, fullWidthPunctuation),
+            ) to null
+
+            is KeyboardAction.KeySequenceAction -> {
+                if (capsState != CapsState.None &&
+                    KeyEvent.SequenceEvent.isLowerAlphabet(action.sequence)
+                ) {
+                    KeyboardAction.KeySequenceAction(action.sequence.uppercase()) to
+                        if (capsState == CapsState.Once) CapsState.None else null
+                } else {
+                    action to null
+                }
+            }
+
+            else -> action to null
+        }
+
         fun buildLayout(): List<List<KeyDef>> {
             return listOf(
                 listOf(
@@ -137,35 +175,11 @@ class QwertyKeyboard(
             )
             return
         }
-        val transformed = when (action) {
-            is KeyboardAction.CapsAction -> {
-                switchCapsState()
-                return
-            }
-
-            is KeyboardAction.CommitAction -> {
-                KeyboardAction.CommitAction(
-                    PunctuationUtil.convert(
-                        action.text, punctuationState == PunctuationMode.FullWidth
-                    )
-                )
-            }
-
-            is KeyboardAction.KeySequenceAction -> {
-                val transformed =
-                    if (capsState != CapsState.None && KeyEvent.SequenceEvent.isLowerAlphabet(action.sequence)) {
-                        if (capsState == CapsState.Once) {
-                            switchCapsState(CapsState.None)
-                        }
-                        KeyboardAction.KeySequenceAction(action.sequence.uppercase())
-                    } else {
-                        action
-                    }
-                transformed
-            }
-
-            else -> action
-        }
+        val (transformed, capsTarget) = transformAction(
+            action, capsState, punctuationState == PunctuationMode.FullWidth,
+        )
+        if (capsTarget != null) switchCapsState(capsTarget)
+        if (transformed == null) return
         super.onAction(transformed)
     }
 
