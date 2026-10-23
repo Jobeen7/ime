@@ -19,6 +19,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 /**
@@ -326,7 +327,10 @@ class SkinLibrarySync(
                     val copyId = downloadLayout(round, id, remote!!, copy = true)
                     if (copyId != null) {
                         round.newUnits[unitKey("layout", copyId)] = remote.hash
-                        uploadLayout(round, local!!, key)
+                        // 跟随上传不单列结果行（§4.5 逐单元一列，与皮肤
+                        // 冲突路径同口径；B3 施工时对齐——此前该分支
+                        // 会为同一单元多报一行 UPLOADED）
+                        uploadLayout(round, local!!, key, reportResult = false)
                     }
                 }
             }
@@ -545,8 +549,25 @@ class SkinLibrarySync(
             ) {
                 throw UnitFailed("layout_json_limits_exceeded")
             }
+            // 结构校验（B3 §7.1）：与导入/运行时同一校验器——远端坏
+            // 布局整单元失败进失败清单，绝不入本地库毒化快照解析
+            if (com.jobeen.ime.skin.layout.LayoutValidator.validate(tree, id)
+                is com.jobeen.ime.skin.layout.LayoutValidation.Invalid
+            ) {
+                throw UnitFailed("layout_invalid")
+            }
             val finalId = if (copy) newId() else id
-            val hash = DigestUtil.sha256Hex(bytes)
+            // 副本改写（§7.1 待核复核）：meta.id 必须随新 id 改写
+            // （铁律 3），hash 随改写后字节重算——与导入器副本口径一致
+            val finalBytes = if (copy) {
+                Json.encodeToString(
+                    JsonObject.serializer(),
+                    com.jobeen.ime.skin.layout.LayoutTreeOps.rewriteMetaId(tree, finalId),
+                ).encodeToByteArray()
+            } else {
+                bytes
+            }
+            val hash = DigestUtil.sha256Hex(finalBytes)
             val manifest = PackageManifest(
                 formatVersion = 3,
                 contents = listOf(
@@ -557,7 +578,7 @@ class SkinLibrarySync(
             )
             val result = importTransaction.importPackage { staging ->
                 val dir = File(staging, "layouts/$finalId").apply { mkdirs() }
-                File(dir, "layout.json").writeBytes(bytes)
+                File(dir, "layout.json").writeBytes(finalBytes)
                 File(dir, "manifest.json").writeText(PackageManifest.toJson(manifest))
                 ImportTransaction.BuiltPackage(
                     layouts = listOf(ImportTransaction.StagedLayout(finalId, dir, hash)),
