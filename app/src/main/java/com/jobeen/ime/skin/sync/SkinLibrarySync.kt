@@ -551,9 +551,18 @@ class SkinLibrarySync(
             }
             // 结构校验（B3 §7.1）：与导入/运行时同一校验器——远端坏
             // 布局整单元失败进失败清单，绝不入本地库毒化快照解析
-            if (com.jobeen.ime.skin.layout.LayoutValidator.validate(tree, id)
-                is com.jobeen.ime.skin.layout.LayoutValidation.Invalid
-            ) {
+            val layoutValidation =
+                com.jobeen.ime.skin.layout.LayoutValidator.validate(tree, id)
+            if (layoutValidation is com.jobeen.ime.skin.layout.LayoutValidation.Invalid) {
+                com.jobeen.ime.skin.diag.DiagLog.w(
+                    "layout", "layout_validation_rejected",
+                    mapOf(
+                        "layoutId" to id, "source" to "sync",
+                        "issueCount" to layoutValidation.issues.size,
+                        "firstPath" to layoutValidation.issues.firstOrNull()?.path,
+                        "firstReason" to layoutValidation.issues.firstOrNull()?.reason,
+                    ),
+                )
                 throw UnitFailed("layout_invalid")
             }
             val finalId = if (copy) newId() else id

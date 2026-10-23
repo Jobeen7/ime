@@ -31,7 +31,17 @@ class LayoutDraftCommitter(
     suspend fun commit(layoutId: String, layoutJsonBytes: ByteArray): Result {
         val tree = SkinJson.parseObject(layoutJsonBytes.decodeToString())
             ?: return Result.Failed("unparseable")
-        if (LayoutValidator.validate(tree, layoutId) is LayoutValidation.Invalid) {
+        val validation = LayoutValidator.validate(tree, layoutId)
+        if (validation is LayoutValidation.Invalid) {
+            com.jobeen.ime.skin.diag.DiagLog.w(
+                "layout", "layout_validation_rejected",
+                mapOf(
+                    "layoutId" to layoutId, "source" to "layout_commit",
+                    "issueCount" to validation.issues.size,
+                    "firstPath" to validation.issues.firstOrNull()?.path,
+                    "firstReason" to validation.issues.firstOrNull()?.reason,
+                ),
+            )
             return Result.Failed("layout_invalid")
         }
         val hash = DigestUtil.sha256Hex(layoutJsonBytes)
