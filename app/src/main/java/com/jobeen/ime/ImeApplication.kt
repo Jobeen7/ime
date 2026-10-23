@@ -50,6 +50,8 @@ class ImeApplication : Application() {
             applicationScope.launch(Dispatchers.Default + handler) {
                 AppStartup.initialize(this@ImeApplication)
             }
+            // 皮肤库启动对账（详设 §2.8）：只动 skin_library 目录，异步不阻塞
+            com.jobeen.ime.skin.store.SkinLibrary.bootstrapIn(applicationScope)
         }
     }
 
