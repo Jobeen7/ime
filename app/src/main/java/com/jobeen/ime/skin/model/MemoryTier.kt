@@ -12,6 +12,13 @@ enum class MemoryTier {
     EXTREME,
     ;
 
+    /** 内存压力升级（详设 §6.3）：trim 后下一次快照构建降一档，极低档封顶。 */
+    fun escalated(): MemoryTier = when (this) {
+        NORMAL -> LOW
+        LOW -> EXTREME
+        EXTREME -> EXTREME
+    }
+
     companion object {
         /** 详设 §6.1 暂定阈值：memoryClass ≤128MB 为极低档；≤192MB 或低内存设备为低内存档。 */
         const val EXTREME_MAX_MEMORY_CLASS_MB = 128

@@ -38,7 +38,13 @@ object SkinSnapshotFactory {
 
     fun evaluateTier(context: Context): MemoryTier {
         val am = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
-        return MemoryTier.of(am.isLowRamDevice, am.memoryClass)
+        val base = MemoryTier.of(am.isLowRamDevice, am.memoryClass)
+        // 内存压力升级（详设 §6.3）：trim 置位后，下一次构建降一档（一次性消费）
+        if (SkinRuntime.trimEscalated) {
+            SkinRuntime.trimEscalated = false
+            return base.escalated()
+        }
+        return base
     }
 
     fun currentVersionCode(context: Context): Int = runCatching {

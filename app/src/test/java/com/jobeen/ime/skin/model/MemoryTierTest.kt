@@ -41,4 +41,11 @@ class MemoryTierTest {
             extreme.degradations(),
         )
     }
+
+    @Test
+    fun trimEscalationStepsDownOneTierCapped() {
+        assertEquals(MemoryTier.LOW, MemoryTier.NORMAL.escalated())
+        assertEquals(MemoryTier.EXTREME, MemoryTier.LOW.escalated())
+        assertEquals(MemoryTier.EXTREME, MemoryTier.EXTREME.escalated())
+    }
 }
