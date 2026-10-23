@@ -136,4 +136,44 @@ class SkinSnapshotBuilderTest {
         val snapshot = build(json, sha = { null })
         assertNull(snapshot.background)
     }
+
+    @Test
+    fun snapshotCarriesKeyOverrides() {
+        val snapshot = build(
+            """{"formatVersion": 3, "keyMappings":
+              {"KEY_Q": {"label": "Q!", "tap": {"type": "command", "action": "delete_forward"}}}}""",
+        )
+        val override = snapshot.keyOverrides.getValue("KEY_Q")
+        assertEquals("Q!", override.label)
+        assertEquals(
+            SkinAction.Command(WhitelistAction.DELETE_FORWARD),
+            override.tap,
+        )
+        // 无 keyMappings 的皮肤快照覆写表为空（行为与 B1 一致）
+        assertTrue(build("""{"formatVersion": 3}""").keyOverrides.isEmpty())
+    }
+
+    @Test
+    fun snapshotAdmitsOnlyReferencedSounds() {
+        val json = """
+            {"formatVersion": 3,
+             "audio": {"tap": "snd_tap"},
+             "keyMappings": {"KEY_Q": {"sound": "snd_key"}, "KEY_W": {"sound": ""}}}
+        """.trimIndent()
+        val facts = { id: String ->
+            AudioAssetFacts(
+                sha256 = "s".repeat(64), ext = "mp3", byteSize = 1_000,
+                info = com.jobeen.ime.skin.media.AudioInfo(100, 44_100, 1),
+            ).takeIf { id != "snd_unused" }
+        }
+        val snapshot = SkinSnapshotBuilder.build(
+            validated(json), ref, defaultScheme, MemoryTier.NORMAL,
+            { "a".repeat(64) }, 1000, 400,
+            audioAssetOrder = listOf("snd_unused", "snd_tap", "snd_key"),
+            audioFacts = facts,
+        )
+        // 清单里未被引用的 snd_unused 不接纳；静音哨兵 "" 不进引用集
+        assertEquals(setOf("snd_tap", "snd_key"), snapshot.soundBindings.admitted.keys)
+        assertEquals("snd_tap", snapshot.soundBindings.defaultTapAssetId)
+    }
 }

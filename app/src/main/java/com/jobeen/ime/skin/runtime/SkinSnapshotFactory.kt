@@ -7,7 +7,10 @@ import android.os.Build
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.media.AndroidAudioInfoProbe
 import com.jobeen.ime.skin.model.AssetKind
+import com.jobeen.ime.skin.model.AudioAssetFacts
+import com.jobeen.ime.skin.model.BindingRejectReason
 import com.jobeen.ime.skin.model.GeometryFallbacks
 import com.jobeen.ime.skin.model.MemoryTier
 import com.jobeen.ime.skin.model.PackageManifest
@@ -87,6 +90,7 @@ object SkinSnapshotFactory {
             skinJsonFile = File(genDir, "skin.json"),
             manifestFile = File(genDir, "manifest.json"),
             ref = ref,
+            libraryLayout = layout,
         )
     }
 
@@ -95,6 +99,7 @@ object SkinSnapshotFactory {
         skinJsonFile: File,
         manifestFile: File,
         ref: SkinGenRef,
+        libraryLayout: SkinLibraryLayout? = null,
     ): SkinSnapshot? {
         val tree = runCatching { SkinJson.parseObject(skinJsonFile.readText()) }.getOrNull()
         if (tree == null) {
@@ -104,7 +109,7 @@ object SkinSnapshotFactory {
         val manifest = runCatching {
             PackageManifest.parse(manifestFile.readText())
         }.getOrNull() ?: PackageManifest()
-        return buildFromTree(context, tree, manifest, ref)
+        return buildFromTree(context, tree, manifest, ref, libraryLayout)
     }
 
     fun buildFromTree(
@@ -112,6 +117,7 @@ object SkinSnapshotFactory {
         tree: kotlinx.serialization.json.JsonObject,
         manifest: PackageManifest,
         ref: SkinGenRef,
+        libraryLayout: SkinLibraryLayout? = null,
     ): SkinSnapshot? {
         val assetKindById = manifest.assets().associate { content ->
             content.id to PackageManifest.assetKindOf(content.path)
@@ -134,7 +140,31 @@ object SkinSnapshotFactory {
         }
         val assetShaById = manifest.assets().associate { it.id to it.sha256 }
         val (targetW, targetH) = backgroundTargetPx(context)
-        return SkinSnapshotBuilder.build(
+        // 音效事实（详设 §7.1 接纳输入）：清单条目 + 内容寻址文件 + 解码元信息；
+        // 无库布局时（纯树构建）恒 null，音效按缺失处理
+        val contentById = manifest.assets().associateBy { it.id }
+        val audioFacts: (String) -> AudioAssetFacts? = { assetId ->
+            val content = contentById[assetId]
+            val libLayout = libraryLayout
+            if (content == null || libLayout == null) {
+                null
+            } else {
+                val ext = content.path.substringAfterLast('.', "").lowercase()
+                val file = libLayout.assetFile(content.sha256, ext.ifEmpty { null })
+                if (!file.isFile) {
+                    null
+                } else {
+                    val bytes = runCatching { file.readBytes() }.getOrNull()
+                    AudioAssetFacts(
+                        sha256 = content.sha256,
+                        ext = ext,
+                        byteSize = file.length(),
+                        info = bytes?.let { AndroidAudioInfoProbe.probe(it) },
+                    )
+                }
+            }
+        }
+        val snapshot = SkinSnapshotBuilder.build(
             validated = validated,
             ref = ref,
             defaultScheme = KeyboardTheme.DEFAULT.colors,
@@ -142,6 +172,61 @@ object SkinSnapshotFactory {
             assetSha256 = { assetShaById[it] },
             targetWidthPx = targetW,
             targetHeightPx = targetH,
+            audioAssetOrder = manifest.assets().map { it.id },
+            audioFacts = audioFacts,
         )
+        logBatch2Events(ref, validated, snapshot)
+        return snapshot
+    }
+
+    /** B2 诊断事件面（详设 §八）：只记 keyId/槽位/原因枚举/计数，绝不记 label/value 原文。 */
+    private fun logBatch2Events(
+        ref: SkinGenRef,
+        validated: com.jobeen.ime.skin.model.ValidatedSkin,
+        snapshot: SkinSnapshot,
+    ) {
+        if (validated.keyOverrides.isNotEmpty() || validated.keyRejections.isNotEmpty()) {
+            DiagLog.i(
+                "keymap", "override_snapshot_built",
+                mapOf(
+                    "skinId" to ref.skinId,
+                    "overrideCount" to validated.keyOverrides.size,
+                    "rejectedCount" to validated.keyRejections.size,
+                    "sequenceCount" to validated.sequenceBindingCount,
+                ),
+            )
+        }
+        for (rejection in validated.keyRejections) {
+            if (rejection.reason == BindingRejectReason.ANCHOR_NOT_OVERRIDABLE) {
+                DiagLog.i(
+                    "keymap", "anchor_not_overridable",
+                    mapOf("keyId" to rejection.keyId),
+                )
+            } else {
+                DiagLog.w(
+                    "keymap", "binding_rejected",
+                    mapOf(
+                        "keyId" to rejection.keyId,
+                        "slot" to rejection.slot?.jsonName,
+                        "reason" to rejection.reason.name.lowercase(),
+                    ),
+                )
+            }
+        }
+        for ((assetId, sound) in snapshot.soundBindings.admitted) {
+            DiagLog.i(
+                "audio", "sound_admitted",
+                mapOf("assetId" to assetId, "pcmBytes" to sound.pcmBytes),
+            )
+        }
+        for (rejected in snapshot.soundBindings.rejected) {
+            DiagLog.w(
+                "audio", "sound_rejected",
+                mapOf(
+                    "assetId" to rejected.assetId,
+                    "reason" to rejected.reason.name.lowercase(),
+                ),
+            )
+        }
     }
 }

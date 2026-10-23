@@ -157,9 +157,14 @@ data class ValidatedSkin(
     val layoutId: String?,
     val appearance: AppearanceSpec,
     val styles: StylesSpec,
-    /** keyMappings 原始对象（B1 保留不应用）；null = 文件未提供。 */
     val keyMappingsPresent: Boolean,
     val keyMappingsCount: Int,
-    /** audio 原始映射 slot → 资产 id（B1 保留不应用，仍做引用存在性提示）。 */
+    /** keyMappings 强类型解析结果（B2 起应用）：校验通过的逐键覆写。 */
+    val keyOverrides: Map<String, KeyOverride>,
+    /** keyMappings 逐项剔除记录（导入报告与诊断日志共用）。 */
+    val keyRejections: List<KeyBindingRejection>,
+    /** sequence 占位绑定数（保留不生效，报告逐项明示）。 */
+    val sequenceBindingCount: Int,
+    /** audio 映射 slot → 资产 id（B2 起经快照接纳判定后应用）。 */
     val audioRefs: Map<String, String>,
 )

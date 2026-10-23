@@ -150,6 +150,7 @@ class KeyboardPopup(private val context: Context) {
 
     private fun actionLabel(action: KeyboardAction): String = when (action) {
         is KeyboardAction.CommitAction -> action.text
+        is KeyboardAction.LiteralCommitAction -> action.text
         is KeyboardAction.KeySequenceAction -> action.sequence
         // 其余类型用硬编码名称：javaClass.simpleName 经 R8 混淆后会变成 "a" 这类无意义名字
         is KeyboardAction.KeyCodeAction -> "KeyCodeAction"
@@ -173,5 +174,8 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.MultiReturnAction -> "MultiReturnAction"
         is KeyboardAction.UndoAction -> "UndoAction"
         is KeyboardAction.RedoAction -> "RedoAction"
+        is KeyboardAction.DeleteForwardAction -> "DeleteForwardAction"
+        is KeyboardAction.OpenSystemImePickerAction -> "OpenSystemImePickerAction"
+        is KeyboardAction.HideKeyboardAction -> "HideKeyboardAction"
     }
 }

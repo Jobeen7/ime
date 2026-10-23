@@ -70,6 +70,21 @@ class KeyActionListener(
                 @SuppressLint("NewApi") service.switchToNextInputMethod(false)
             }
 
+            // 系统输入法选择器（皮肤白名单 open_system_ime_picker）：
+            // 与 switchToNextInputMethod 并列的服务层路由，不经引擎
+            // （裁定记录 §11-2；注意与 ShowInputMethodPickerAction
+            // 的 JIME 方案弹窗不是一回事）
+            is KeyboardAction.OpenSystemImePickerAction -> {
+                val imm = service.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
+                    as? android.view.inputmethod.InputMethodManager
+                imm?.showInputMethodPicker()
+            }
+
+            // 隐藏键盘（皮肤白名单 hide_keyboard）：服务层 requestHideSelf
+            is KeyboardAction.HideKeyboardAction -> {
+                service.requestHideSelf(0)
+            }
+
             is KeyboardAction.SelectSchema -> {
                 engine?.selectSchema(action.schemaId)
             }

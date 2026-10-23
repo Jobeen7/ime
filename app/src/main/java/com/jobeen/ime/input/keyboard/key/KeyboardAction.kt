@@ -66,4 +66,24 @@ sealed class KeyboardAction {
     data object UndoAction : KeyboardAction()
 
     data object RedoAction : KeyboardAction()
+
+    /**
+     * 字面提交（皮肤覆写专用内部类型，裁定 B2 / 详设 §3.4）：
+     * 与 CommitAction 同义上屏，但不经 Qwerty 的标点全半角转换、
+     * 不随 Caps 大写。只由皮肤覆写装配产生，永不写入皮肤格式。
+     */
+    data class LiteralCommitAction(val text: String) : KeyboardAction()
+
+    /**
+     * 向前删除（定稿四.4）：仅非组字态生效（选区优先，其次删除
+     * 光标后一个字素簇）；组字中无操作。绝不经引擎按键通道、
+     * 绝不回退为退格（详设 §五）。
+     */
+    data object DeleteForwardAction : KeyboardAction()
+
+    /** 打开系统输入法选择器：服务层路由（裁定记录 §11-2），不经引擎。 */
+    data object OpenSystemImePickerAction : KeyboardAction()
+
+    /** 隐藏键盘：服务层路由（裁定记录 §11-2），不经引擎。 */
+    data object HideKeyboardAction : KeyboardAction()
 }
