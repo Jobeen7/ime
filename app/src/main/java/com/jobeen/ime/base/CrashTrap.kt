@@ -19,12 +19,9 @@ import java.io.StringWriter
  * 文件按进程分开（crash/last_crash-<进程名>.txt）：主进程与 :speech
  * 进程各写各的，避免同日双崩时后写覆盖先写。文件统一收进 filesDir
  * 的 crash/ 子目录：备份规则按目录整体排除，不随系统备份/迁移离开
- * 设备（旧版在 filesDir 根下逐文件名列排除，加进程即漏）。旧版根
- * 目录下的 last_crash.txt 与 last_crash-*.txt 只读兼容：升级后仍能
- * 被读到并被 [clearPendingCrashes] 一并清掉。
+ * 设备（旧版在 filesDir 根下逐文件名列排除，加进程即漏）。
  */
 object CrashTrap {
-    private const val LEGACY_FILE_NAME = "last_crash.txt"
     private const val FILE_PREFIX = "last_crash-"
     private const val FILE_SUFFIX = ".txt"
 
@@ -64,21 +61,16 @@ object CrashTrap {
     }
 
     /**
-     * 读最近一次崩溃记录（crash/ 子目录的全部进程文件与旧版根目录
-     * 文件里取修改时间最新的一份）；没有或内容为空返回 null。
+     * 读最近一次崩溃记录（crash/ 子目录的全部进程文件里取修改时间
+     * 最新的一份）；没有或内容为空返回 null。
      * 只读不删：查看与复制都不消耗记录（下次崩溃自然覆盖本进程的
      * 那一份）；删除走 [clearPendingCrashes]（日志页「清空日志」）。
      */
     fun readPendingCrashInfo(context: Context): PendingCrash? {
         val filesDir = context.filesDir ?: return null
-        val candidates = mutableListOf<File>()
-        crashDir(filesDir).listFiles { file ->
+        val candidates = crashDir(filesDir).listFiles { file ->
             file.isFile && isCrashFileName(file.name)
-        }?.let { candidates += it }
-        // 旧版位置（filesDir 根目录）兼容读：升级前落盘的记录不丢
-        filesDir.listFiles { file ->
-            file.isFile && isCrashFileName(file.name)
-        }?.let { candidates += it }
+        }?.toList().orEmpty()
         val latest = candidates.maxByOrNull { it.lastModified() } ?: return null
         val text = runCatching { latest.readText() }.getOrNull()
             ?.takeIf { it.isNotBlank() } ?: return null
@@ -89,19 +81,15 @@ object CrashTrap {
     fun readPendingCrash(context: Context): String? =
         readPendingCrashInfo(context)?.text
 
-    /** 清除全部崩溃记录：crash/ 子目录与旧版根目录位置一并清 */
+    /** 清除全部崩溃记录（crash/ 子目录内的全部进程文件） */
     fun clearPendingCrashes(context: Context) {
         val filesDir = context.filesDir ?: return
         crashDir(filesDir).listFiles()?.forEach { it.delete() }
-        filesDir.listFiles { file ->
-            file.isFile && isCrashFileName(file.name)
-        }?.forEach { it.delete() }
     }
 
-    /** 文件名是否为崩溃记录（现行按进程命名或旧版单文件名） */
+    /** 文件名是否为崩溃记录（现行按进程命名） */
     internal fun isCrashFileName(name: String): Boolean =
-        name == LEGACY_FILE_NAME ||
-            (name.startsWith(FILE_PREFIX) && name.endsWith(FILE_SUFFIX))
+        name.startsWith(FILE_PREFIX) && name.endsWith(FILE_SUFFIX)
 
     /** 某进程的崩溃文件名（进程名先做文件名安全化） */
     internal fun crashFileName(processName: String): String =

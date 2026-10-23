@@ -11,7 +11,8 @@ import androidx.room.TypeConverters
  *
  * 从 ime_database 拆出的原因：云备份规则只能按文件排除。剪贴板历史含用户复制过的
  * 敏感文本，必须排除在系统云备份之外；而常用语/选词偏好等留在 ime_database 照常备份。
- * 旧数据由 ClipboardManager 在首次访问时从 ime_database 一次性迁入。
+ * 旧数据当年由 ClipboardManager 一次性迁入（迁移本体已随清点 Q2 退场，
+ * 现行设备早已迁完）；ime_database 侧的同名残表已于 AppDatabase v14 DROP。
  */
 @Database(entities = [ClipboardRecord::class], version = 4, exportSchema = true)
 @TypeConverters(Converters::class)
@@ -46,7 +47,7 @@ abstract class ClipboardDatabase : RoomDatabase() {
          * v4：text 唯一索引。建索引前必须先收敛存量，否则同 text 重复行
          * 会让 CREATE UNIQUE INDEX 直接失败、迁移永不完成：
          * 1. 软删行整表物理清除——与现行 purge 口径一致（删除已改物理删，
-         *    墓碑行靠 ClipboardManager.purgeLegacyDeletedOnce 在首访时清）；
+         *    墓碑行原靠首访清理在迁移外清、该清理已随 Q2 退场）；
          *    提前到迁移内是因为唯一索引覆盖全表行，墓碑行与有效行同
          *    text 同样撞约束，不清建不了索引；
          * 2. 有效行按 text 去重：删掉「存在严格更优行」的行，保留口径与
@@ -55,9 +56,9 @@ abstract class ClipboardDatabase : RoomDatabase() {
          *    与求值顺序无关；
          * 3. 建唯一索引（名称与 Room 按实体 @Index 生成的保持一致）。
          *
-         * 注意：ClipboardRecord 实体被 AppDatabase 共用，ime_database 里
-         * 的同名旧表也须配套建此索引（AppDatabase 侧版本 bump 与迁移
-         * 不在本文件，随实体变更一并处理）。
+         * 注意（历史）：本实体当年与 AppDatabase 共用，ime_database 的
+         * 同名旧表曾须配套建此索引；残表已于 AppDatabase v14 DROP，
+         * 实体自此只属本库（清点 D20）。
          */
         private val MIGRATION_3_4 = object : androidx.room.migration.Migration(3, 4) {
             override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {

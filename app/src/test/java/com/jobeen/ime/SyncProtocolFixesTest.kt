@@ -5,20 +5,14 @@ import com.jobeen.ime.data.manager.DeletedWordEntry
 import com.jobeen.ime.data.manager.decodeDeletedWordEntry
 import com.jobeen.ime.data.manager.encodeDeletedWordEntry
 import com.jobeen.ime.data.manager.mergeDeletedWordEntries
-import com.jobeen.ime.engine.rime.data.userdict.captureETag
-import com.jobeen.ime.engine.rime.data.userdict.formatHttpDate
-import com.jobeen.ime.engine.rime.data.userdict.isWeakETag
-import com.jobeen.ime.engine.rime.data.userdict.parseHttpDateMs
-import com.jobeen.ime.engine.rime.data.userdict.putPrecondition
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 第二轮安全/协议修复的纯函数测试：删词墓碑合并、弱 ETag 前置条件、
- * 服务端文案收口。
+ * 同步协议纯函数测试：删词墓碑合并与服务端文案收口。
+ * （弱 ETag 前置条件一组用例已随清点 D13/S1 删除——被测函数整套退场。）
  */
 class SyncProtocolFixesTest {
 
@@ -98,74 +92,6 @@ class SyncProtocolFixesTest {
             DeletedWordEntry(false, 100L),
             mergeDeletedWordEntries(local, remote)["词"],
         )
-    }
-
-    // ---- 弱 ETag 前置条件 ----
-
-    @Test
-    fun weakETag_detection() {
-        assertTrue(isWeakETag("W/\"abc\""))
-        assertTrue(isWeakETag("  W/\"abc\""))
-        assertFalse(isWeakETag("\"abc\""))
-        assertFalse(isWeakETag(null))
-    }
-
-    @Test
-    fun captureETag_weakTreatedAsAbsent() {
-        // 第十九批（Jobeen 口径：弱 ETag 一律视为不存在）：捕获点
-        // 归一后弱值不得以任何形式留在链路里
-        assertNull(captureETag("W/\"abc\""))
-        assertNull(captureETag("  W/\"abc\""))
-        assertNull(captureETag(null))
-        assertNull(captureETag(""))
-        // 强 ETag 原样规范化（去引号裸值），既有行为逐字不变
-        assertEquals("abc", captureETag("\"abc\""))
-        assertEquals("abc", captureETag("abc"))
-    }
-
-    @Test
-    fun captureETag_weakNeverProducesIfMatch() {
-        // 弱 ETag 捕获置空后，与无 ETag 入参同路：只有日期条件、
-        // 绝不产 If-Match——钉住「弱值派生前置条件被服务器恒
-        // 412」的修复点（fix19）
-        val lm = 1_700_000_000_000L
-        val pre = putPrecondition(captureETag("W/\"abc\""), etagWeak = false, lastModifiedMs = lm)
-        assertNull(pre.ifMatch)
-        assertEquals(lm - lm % 1000, parseHttpDateMs(pre.ifUnmodifiedSince))
-    }
-
-    @Test
-    fun precondition_strongUsesIfMatch() {
-        val pre = putPrecondition("abc123", etagWeak = false, lastModifiedMs = 1000L)
-        assertEquals("\"abc123\"", pre.ifMatch)
-        assertNull(pre.ifUnmodifiedSince)
-    }
-
-    @Test
-    fun precondition_weakFallsBackToLastModified() {
-        val lm = 1_700_000_000_000L
-        val pre = putPrecondition("abc123", etagWeak = true, lastModifiedMs = lm)
-        assertNull(pre.ifMatch)
-        assertEquals(lm - lm % 1000, parseHttpDateMs(pre.ifUnmodifiedSince))
-        // 弱 ETag 且无修改时间：不带前置条件（上传前已有变更检查兜底）
-        val bare = putPrecondition("abc123", etagWeak = true, lastModifiedMs = 0L)
-        assertNull(bare.ifMatch)
-        assertNull(bare.ifUnmodifiedSince)
-        // 无 ETag（第十三批 R3 改口径）：与弱 ETag 同样降级为时间
-        // 条件，不再丢弃已有时间裸 PUT；两者入参时间相同结果一致
-        assertEquals(
-            putPrecondition(null, false, lm),
-            putPrecondition("", true, lm),
-        )
-        assertEquals(lm - lm % 1000, parseHttpDateMs(putPrecondition(null, false, lm).ifUnmodifiedSince))
-    }
-
-    @Test
-    fun httpDate_roundTrip() {
-        val ms = 1_728_000_000_000L
-        assertEquals(ms - ms % 1000, parseHttpDateMs(formatHttpDate(ms)))
-        assertEquals(0L, parseHttpDateMs("not a date"))
-        assertEquals(0L, parseHttpDateMs(null))
     }
 
     // ---- 服务端文案收口 ----

@@ -397,8 +397,7 @@ class KeyboardWindowView(
         // 避免弹窗残留在已销毁的窗口上（单例在 build 覆盖前也会自关）
         SchemaPickerDialog.dismiss()
         // 设置变化的配色刷新若还挂在防抖窗口里，销毁后不必再执行
-        removeCallbacks(pendingRefreshColors)
-        removeCallbacks(pendingRefreshDisplaySettings)
+        removeCallbacks(pendingRefresh)
         // 全高缓存随窗口生命周期结束失效，重建/重新挂载时重新查询
         cachedFullScreenHeight = -1
         // 语音桥回调在销毁时置空（桥内已是弱引用后备，这里再显式清一遍，双保险）
@@ -560,30 +559,35 @@ class KeyboardWindowView(
         keyboardStateManager.startInput(info)
     }
 
-    // 设置变化触发的配色全量刷新走防抖合并：主题类设置常成串变更（主题包
+    // 设置变化触发的配色刷新走防抖合并（清点 Q4 起两条通道并成一条带
+    // force 标志的调度，语义两路不变）：主题类设置常成串变更（主题包
     // 一次写多项、跟随系统切换连带多 key），每次都全量重建键盘纯浪费；
     // 短窗口内只执行最后一次。高度类的即时 requestLayout 分流不在此列。
-    // 到点后仍要过变化门控：防抖窗口（200ms）盖不住跨度更长的成串写入，
-    // 且半径/间距类设置根本不改配色——解析结果与缓存一致时整轮跳过，
-    // 不再无条件全量重建。
-    private val pendingRefreshColors = Runnable { refreshColorsIfChanged() }
-
-    private fun scheduleRefreshColors() {
-        removeCallbacks(pendingRefreshColors)
-        postDelayed(pendingRefreshColors, REFRESH_COLORS_DEBOUNCE_MS)
-    }
-
+    // 普通路（force=false）到点后仍要过变化门控：防抖窗口（200ms）盖
+    // 不住跨度更长的成串写入，且半径/间距类设置根本不改配色——解析
+    // 结果与缓存一致时整轮跳过，不再无条件全量重建。
     // 显示开关（按键描边/展开边框/候选边框/序号/注释）不进配色解析，
-    // 走 refreshColorsIfChanged 会被「解析结果与缓存一致」的门控整份
-    // 挡下、改了永不生效（K1 回归）；它们单独走一条直达 refreshColors()
-    // 的防抖通道，与配色刷新解耦——refreshColors 内的键盘重建与面板
-    // 显示设置失效会让各视图重新读取这些开关
-    private val pendingRefreshDisplaySettings = Runnable { refreshColors() }
+    // 走普通路会被「解析结果与缓存一致」的门控整份挡下、改了永不生效
+    // （K1 回归）；它们走 force 路直达 refreshColors()——其内的键盘
+    // 重建与面板显示设置失效会让各视图重新读取这些开关。窗口内两路
+    // 混合调度时 force 取或：任一路要求直达，本轮即直达。
+    private var pendingRefreshForce = false
 
-    private fun scheduleRefreshDisplaySettings() {
-        removeCallbacks(pendingRefreshDisplaySettings)
-        postDelayed(pendingRefreshDisplaySettings, REFRESH_COLORS_DEBOUNCE_MS)
+    private val pendingRefresh = Runnable {
+        val force = pendingRefreshForce
+        pendingRefreshForce = false
+        if (force) refreshColors() else refreshColorsIfChanged()
     }
+
+    private fun scheduleRefresh(force: Boolean) {
+        pendingRefreshForce = pendingRefreshForce || force
+        removeCallbacks(pendingRefresh)
+        postDelayed(pendingRefresh, REFRESH_COLORS_DEBOUNCE_MS)
+    }
+
+    private fun scheduleRefreshColors() = scheduleRefresh(force = false)
+
+    private fun scheduleRefreshDisplaySettings() = scheduleRefresh(force = true)
 
     fun refreshColors() {
         // 全量刷新会重建键盘，主题切换又常与系统界面变化（深浅色连带状态
@@ -926,5 +930,4 @@ class KeyboardWindowView(
     }
 
     fun switchKeyboard(name: String) = keyboardStateManager.switchTo(name)
-    fun onDepolyFinished() = keyboardStateManager.refreshSchemas()
 }

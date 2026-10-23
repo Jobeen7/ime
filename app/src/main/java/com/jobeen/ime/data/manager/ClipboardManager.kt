@@ -12,7 +12,6 @@ import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.ClipboardDatabase
 import com.jobeen.ime.data.database.ClipboardDao
 import com.jobeen.ime.data.database.ClipboardRecord
-import com.jobeen.ime.data.database.dedupeClipboardByText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -52,13 +51,7 @@ object ClipboardManager {
 
     // 物理删除后防「已删条目复活」的抑制集合：见 noteRemovedTexts
     private const val KEY_REMOVED_TEXT_HASHES = "removed_text_hashes_v2"
-    private const val KEY_REMOVED_LATEST_TEXT = "removed_latest_text"
     private const val MAX_REMOVED_HASHES = 200
-
-    /** 无剪贴板时间戳的旧系统上，防复活抑制的最长有效期（见 checkCurrentClipboard 判据③） */
-    private const val SUPPRESSION_MAX_AGE_MS = 7L * 24 * 60 * 60 * 1000
-    private const val KEY_TEXT_TRUNCATED = "clipboard_text_truncated_v1"
-    private const val KEY_LEGACY_DELETED_PURGED = "clipboard_legacy_deleted_purged_v1"
 
     // ── 设置读写 ──
 
@@ -275,12 +268,6 @@ object ClipboardManager {
         return db(context) { db -> db.clipboardDao().deleteByTexts(texts.toList()) } != null
     }
 
-    /** 一条防复活抑制记录：文本哈希 + 删除时刻（0 表示时刻未知，见 noteRemovedTexts）。 */
-    private data class RemovedSuppression(val hash: String, val removedAt: Long)
-
-    private fun RemovedSuppression.toStoredString(): String =
-        if (removedAt > 0) "$hash:$removedAt" else hash
-
     /**
      * 删除改物理删后替代软删墓碑的防复活机制：软删时代，被删条目以 deleted
      * 行留在表里，checkCurrentClipboard 靠它判定「系统剪贴板内容没变、不是
@@ -296,69 +283,50 @@ object ClipboardManager {
      * 的把先删的顶掉，而系统剪贴板里仍是先删那条，于是先删的冒回来、后删
      * 的不冒——必须按集合记、且每条被删文本都记。
      *
-     * 每条抑制记录除哈希外还记删除时刻，供「被删文本被重新复制」时放行
-     * （判定在 checkCurrentClipboard：监听事件为主判据、剪贴板时间戳为
-     * 进程死亡期兜底）。prefs 序列化一行一条：新格式「哈希:删除时刻」，
-     * 旧格式整行只有哈希、读出时删除时刻记 0（未知）——这类记录时间戳
-     * 兜底不生效、按继续抑制处理，待下一次监听事件再放行。
+     * 放行判据只有监听事件一条（清点 S6 定论：时间戳兜底与最长有效期
+     * 两层已删——它们让「删后重复制同一文本」在进程死亡等边角下被继
+     * 续抑制最长 7 天、表现为复制了不进历史；进程死亡期间错过的复制
+     * 事件不再补判，靠下一次真实复制事件放行）。存量行曾是「哈希:删
+     * 除时刻」格式：读取时只取哈希段，时刻自此不存在。
      */
     private fun noteRemovedTexts(context: Context, texts: Collection<String>) {
         if (texts.isEmpty()) return
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val now = System.currentTimeMillis()
-        val fresh = texts.map { RemovedSuppression(textHash(it), now) }
-        val merged = (fresh + removedSuppressions(prefs))
-            .distinctBy { it.hash }
+        val fresh = texts.map { textHash(it) }
+        val merged = (fresh + removedSuppressionHashes(prefs))
+            .distinct()
             .take(MAX_REMOVED_HASHES)
         prefs.edit {
-            putString(KEY_REMOVED_TEXT_HASHES, merged.joinToString("\n") { it.toStoredString() })
-            remove(KEY_REMOVED_LATEST_TEXT)
+            putString(KEY_REMOVED_TEXT_HASHES, merged.joinToString("\n"))
         }
     }
 
-    private fun removedSuppressions(
+    private fun removedSuppressionHashes(
         prefs: android.content.SharedPreferences,
-    ): List<RemovedSuppression> {
-        val stored = prefs.getString(KEY_REMOVED_TEXT_HASHES, null)
-        if (stored != null) {
-            return stored.split("\n").filter { it.isNotEmpty() }.map { line ->
-                // 新格式带删除时刻；旧格式整行只有哈希，时刻记 0（未知）
-                val sep = line.indexOf(':')
-                if (sep > 0) {
-                    RemovedSuppression(
-                        line.substring(0, sep),
-                        line.substring(sep + 1).toLongOrNull() ?: 0L,
-                    )
-                } else {
-                    RemovedSuppression(line, 0L)
-                }
-            }
-        }
-        // 一次性迁移旧版单值抑制：折算成哈希并入集合口径（无删除时刻）
-        val legacy = prefs.getString(KEY_REMOVED_LATEST_TEXT, null) ?: return emptyList()
-        return listOf(RemovedSuppression(textHash(legacy), 0L))
+    ): List<String> {
+        val stored = prefs.getString(KEY_REMOVED_TEXT_HASHES, null) ?: return emptyList()
+        // 存量行可能是旧格式「哈希:删除时刻」：只取哈希段（S6 后时刻层退场）
+        return stored.split("\n").filter { it.isNotEmpty() }
+            .map { it.substringBefore(':') }
     }
 
-    private fun removedSuppression(context: Context, text: String): RemovedSuppression? {
+    /** 该文本是否命中防复活抑制；命中返回其哈希，未命中返回 null。 */
+    private fun removedSuppressionHash(context: Context, text: String): String? {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val hash = textHash(text)
-        return removedSuppressions(prefs).firstOrNull { it.hash == hash }
+        return hash.takeIf { it in removedSuppressionHashes(prefs) }
     }
 
     /** 放行一条抑制（被删文本已被重新复制）：只摘命中条，其余抑制原样保留。 */
     private fun liftRemovedSuppression(context: Context, hash: String) {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val remaining = removedSuppressions(prefs).filter { it.hash != hash }
+        val remaining = removedSuppressionHashes(prefs).filter { it != hash }
         prefs.edit {
             if (remaining.isEmpty()) {
                 remove(KEY_REMOVED_TEXT_HASHES)
             } else {
-                putString(
-                    KEY_REMOVED_TEXT_HASHES,
-                    remaining.joinToString("\n") { it.toStoredString() },
-                )
+                putString(KEY_REMOVED_TEXT_HASHES, remaining.joinToString("\n"))
             }
-            remove(KEY_REMOVED_LATEST_TEXT)
         }
     }
 
@@ -483,29 +451,15 @@ object ClipboardManager {
             } ?: (null to true)
             // 防复活抑制命中：先判「重新复制」放行，再判与最新行是否一致——
             // 已被物理删的文本不在有效行里，顺序反过来会让软删存量行把放行短路。
-            // 放行判据（任一成立即视为删除之后的主动重新复制，只摘除该条
-            // 抑制并走正常入库，其余条目的抑制不受影响）：
-            // ① 主判据：本次检查由剪贴板变更监听事件触发——删除动作本身不改
-            //    系统剪贴板、不会产生新事件，事件到达且内容哈希仍等于被删文本，
-            //    只可能是删除之后又被复制了同一文本；
-            // ② 时间戳兜底：进程死亡期间错过的复制事件靠 ClipDescription 时
-            //    间戳补判，剪贴板设置时刻晚于删除时刻即放行；旧格式记录无删
-            //    除时刻（removedAt=0）或剪贴板无时间戳（ts<=0）时不放行、继续抑制。
-            val suppression = removedSuppression(context, text)
-            if (suppression != null) {
-                // ③ 无时间戳平台（API 26 以下恒无 ClipDescription 时间戳，
-                // ② 永不成立）的兜底：抑制超过上限时长后失效。进程死亡
-                // 期间的重新复制在这类系统上没有任何可判信号，无限期抑制
-                // 会把「删掉后重新复制同一文本」永久吞掉；而删除后一周
-                // 系统剪贴板仍是同一文本时，它实质就是用户当前的剪贴板
-                // 内容，防复活的保护价值已消失。近期的防复活不受影响。
-                val recopied = fromClipChangedEvent ||
-                    (suppression.removedAt > 0L && ts > suppression.removedAt) ||
-                    (ts <= 0 && suppression.removedAt > 0L &&
-                        System.currentTimeMillis() - suppression.removedAt >
-                        SUPPRESSION_MAX_AGE_MS)
-                if (!recopied) return@withLock false
-                liftRemovedSuppression(context, suppression.hash)
+            // 放行判据只有一条（清点 S6 定论）：本次检查由剪贴板变更监听
+            // 事件触发——删除动作本身不改系统剪贴板、不会产生新事件，
+            // 事件到达且内容哈希仍等于被删文本，只可能是删除之后又被
+            // 复制了同一文本。命中放行时只摘除该条抑制并走正常入库，
+            // 其余条目的抑制不受影响；未放行即继续抑制、不算新记录。
+            val suppressionHash = removedSuppressionHash(context, text)
+            if (suppressionHash != null) {
+                if (!fromClipChangedEvent) return@withLock false
+                liftRemovedSuppression(context, suppressionHash)
             } else if (latest?.text == text) {
                 return@withLock false
             }
@@ -545,8 +499,8 @@ object ClipboardManager {
         }
         clipListener = listener
         cm.addPrimaryClipChangedListener(listener)
-        // 补偿进程不存活期间的变化（不冒充监听事件：删除后重复制的放行
-        // 在这里靠剪贴板时间戳兜底判定）
+        // 补偿进程不存活期间的变化（不冒充监听事件：防复活抑制的放行
+        // 只认监听事件，补偿检查命中的抑制条目继续抑制，见 S6）
         appScope.launch(Dispatchers.IO) {
             val changed = checkCurrentClipboard(app)
             if (changed) {
@@ -581,183 +535,16 @@ object ClipboardManager {
     @Volatile var clearTimestamp: Long = 0L
         private set
 
-    private const val KEY_DB_MIGRATED = "clipboard_db_migrated_v2"
-
-    // 迁移首跑串行锁：db() 的调用方都在 IO 多线程上，并发首跑时多个调用方
-    // 会同时看到「未迁移」并重复执行迁移体（各自按同一快照补行、互相重复
-    // 插入）。进程内只允许一个执行，其余等它完成后再读标记直接跳过；
-    // 迁移失败不置标记，下一个调用方仍可重试，语义不变。
-    private val migrationMutex = Mutex()
-
-    /**
-     * 一次性把剪贴板历史从 ime_database 迁到独立的 clipboard_database（拆库原因见
-     * ClipboardDatabase 注释）。v2 起改为幂等合并：按自然键只补新库
-     * 缺失的行（ClipboardDatabase v4 起目标表 text 唯一，自然键随之
-     * 从 (text, timestamp) 收紧为 text，补行前先去重——见迁移体注释；
-     * 旧实现以 count()==0 判完成，中断后新库非空但缺行会被
-     * 当成已迁移、静默丢行；且留有主键冲突让后续每次操作都重跑失败迁移的
-     * 可能）。补行在单个事务内完成；确认后清掉旧库残留行——旧表继续躺在
-     * ime_database 里会随云备份/换机迁移外带，拆库的隐私隔离只做一半。
-     * 整个过程可重入：任何一步失败下次调用会继续收敛到同一终态。
-     *
-     * @return 迁移已完成（本次刚完成或此前已完成）为 true；任一步
-     * 失败为 false——成败必须回给调用方：迁移没成时旧行还躺在主库
-     * 里，此时派发拆库 VACUUM 会把「已擦除」标记错落下（此后再无
-     * 路径补跑，删行后的空闲页全文永久留在主库文件里），备份侧
-     * 直读新库则会静默漏掉旧行。
-     */
-    private suspend fun migrateFromAppDatabase(context: Context, target: ClipboardDatabase): Boolean {
-        val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (settings.getBoolean(KEY_DB_MIGRATED, false)) return true
-        return runCatching {
-            val dao = target.clipboardDao()
-            val oldDao = AppDatabase.getInstance(context).clipboardDao()
-            // 读旧库前先在旧库就地截断超限行：MAX_TEXT_LENGTH 引入之前
-            // 复制的 >2MB 文本会留成超 CursorWindow 的行，getAllRaw
-            // 读到它直接抛 SQLiteBlobTooBigException——整个迁移被
-            // runCatching 吞掉、完成标记永不落盘，此后每次访问都
-            // 重跑一次注定失败的迁移，旧行既不搬也不删、一直躺在
-            // 会进云备份的主库里。截断是现成的 SQL substr 更新、
-            // 不物化行（truncateOversizedTextsOnce 只作用于新库，
-            // 待迁移的旧库才是毒化源头，必须在这里对源头先行）。
-            // 截断前先按截断键去重：两条超限行前 MAX_TEXT_LENGTH
-            // 字相同时截断后必然同 text、撞旧表上的 text 唯一索引，
-            // 整条 UPDATE 失败、迁移随之永久卡死（见 DAO 注释）
-            oldDao.dedupeOversizedByTruncatedKey(MAX_TEXT_LENGTH)
-            oldDao.truncateOversizedTexts(MAX_TEXT_LENGTH)
-            val oldRows = oldDao.getAllRaw()
-            if (oldRows.isNotEmpty()) {
-                val existingTexts = dao.getAllRaw().map { it.text }.toHashSet()
-                // 软删行不搬运：那是已删除内容，搬进新库只会让墓碑行继续占位
-                // 并被保留期清理前误当存量；下方 deleteAllRaw 仍会清掉旧库全部行。
-                // 目标表 v4 起 text 唯一：存在性按 text 判（同 text 异
-                // timestamp 的行在目标库里只许一行，再补必撞唯一索引、
-                // 整事务回滚且永不收敛）；源头同 text 多行先按统一
-                // 口径去重（dedupeClipboardByText：pinned 优先、
-                // timestamp 最新、id 最大）
-                val missing = dedupeClipboardByText(
-                    oldRows.filter { !it.deleted && it.text !in existingTexts }
-                )
-                if (missing.isNotEmpty()) {
-                    target.withTransaction {
-                        // id 清零走自增，避免与新库已有行主键冲突
-                        missing.forEach { dao.insert(it.copy(id = 0)) }
-                    }
-                    Timber.i("Clipboard history migrated: ${missing.size} rows")
-                }
-                oldDao.deleteAllRaw()
-                // 清掉拆库 VACUUM 的完成/失败标记：在 v1.1.11.x 上
-                // 迁移失败但 VACUUM 照样跑完、完成标记被误置的设备，
-                // 本次迁移删行后若不清除，db() 随后派发的补跑会被
-                // 完成标记短路，刚删掉的旧全文永久留在主库空闲页
-                // 里（标记误置的成因见 migrateFromAppDatabase 的
-                // 返回值说明）。仅在确实删过旧行时清：旧表本就为空
-                // 的设备没有新残留，不必多跑一次 VACUUM
-                AppDatabase.clearPostSplitVacuumMarks()
-            }
-            settings.edit().putBoolean(KEY_DB_MIGRATED, true).apply()
-            // 旧行全文此时还在 ime_database 的空闲页/WAL 里：补跑主库
-            // VACUUM 才真正擦除（见 db() 中迁移检查之后的补跑点——
-            // 已完成迁移的老用户在本函数开头就按标记返回，补跑点
-            // 必须设在迁移体之外他们才走得到）
-            true
-        }.onFailure { Timber.w(it, "Clipboard history migration failed; will retry") }
-            .getOrDefault(false)
-    }
-
-    /** 一次性存量限长：把库中已有的超限行在 SQL 内截断（见 DAO 注释）。 */
-    private suspend fun truncateOversizedTextsOnce(context: Context, target: ClipboardDatabase) {
-        val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (settings.getBoolean(KEY_TEXT_TRUNCATED, false)) return
-        runCatching {
-            val dao = target.clipboardDao()
-            // 与迁移路径同规：截断前先按截断键去重，防同前缀超限行
-            // 截断后撞 text 唯一索引让整条 UPDATE 失败（见 DAO 注释）
-            dao.dedupeOversizedByTruncatedKey(MAX_TEXT_LENGTH)
-            dao.truncateOversizedTexts(MAX_TEXT_LENGTH)
-            settings.edit().putBoolean(KEY_TEXT_TRUNCATED, true).apply()
-        }.onFailure { Timber.w(it, "Clipboard oversized-text truncation failed; will retry") }
-    }
-
-    /**
-     * 一次性清理软删存量行：删除已改为物理删，软删行只是旧版本留下
-     * 的墓碑，此前靠 addEntry 时顺带按保留期淘汰——不新增条目就永
-     * 远清不掉。这里在首次数据库访问时整表清完并落标记；防复活由
-     * prefs 抑制集合负责，与这些行无关。
-     */
-    private suspend fun purgeLegacyDeletedOnce(context: Context, target: ClipboardDatabase) {
-        val settings = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        if (settings.getBoolean(KEY_LEGACY_DELETED_PURGED, false)) return
-        runCatching {
-            val n = target.clipboardDao().purgeAllDeleted()
-            if (n > 0) Timber.i("Purged %d legacy soft-deleted clipboard rows", n)
-            settings.edit { putBoolean(KEY_LEGACY_DELETED_PURGED, true) }
-        }.onFailure { Timber.w(it, "Legacy soft-deleted purge failed; will retry") }
-    }
-
-    /**
-     * 确保拆库迁移已执行（备份导出/还原直接读写剪贴板库前调用）：
-     * 迁移本体只在 [db] 的常规访问路径里懒触发，绕开它直读新库会
-     * 在「升级后还没用过剪贴板」时读到空库（旧行还躺在主库里，
-     * 备份的剪贴板段静默为空）。与 [db] 共用同一把迁移锁和同一
-     * 个迁移实现，只是把触发点暴露出来，不复制迁移逻辑。
-     *
-     * @return 迁移已完成为 true、失败为 false（透传迁移体的成败，
-     * 调用方据此决定是中止还是继续，不得再当作无条件成功）。
-     */
-    internal suspend fun ensureMigrated(context: Context): Boolean {
-        val db = ClipboardDatabase.getInstance(context)
-        return migrationMutex.withLock { migrateFromAppDatabase(context, db) }
-    }
-
-    // 拆库补跑 VACUUM 的进程内派发去重：db() 每次访问都尝试触发，
-    // 已有一次在途时其余访问直接跳过，不排一串重复任务
-    private val postSplitVacuumInFlight =
-        java.util.concurrent.atomic.AtomicBoolean(false)
-
-    /**
-     * 拆库补 VACUUM 的触发点（见 AppDatabase.runPostSplitVacuumMaintenance）：
-     * 只向应用级 IO 作用域派发一次、不内联执行——VACUUM 作用于主库
-     * ime_database，要对它持排他锁数百毫秒，内联在 block 之前会把
-     * 每次剪贴板操作都拖住；剪贴板数据已拆到独立库，两者不同库，
-     * 异步并发执行不互斥。真正的去重/退避在 AppDatabase 侧（完成
-     * 标记＋失败时间戳＋串行锁），这里只防同一时刻重复派发。
-     */
-    private fun schedulePostSplitVacuum() {
-        if (!postSplitVacuumInFlight.compareAndSet(false, true)) return
-        appScope.launch(Dispatchers.IO) {
-            try {
-                AppDatabase.runPostSplitVacuumMaintenance()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.w(e, "Post-split VACUUM dispatch failed")
-            } finally {
-                postSplitVacuumInFlight.set(false)
-            }
-        }
-    }
-
     private suspend fun <T> db(context: Context, block: suspend (ClipboardDatabase) -> T): T? =
         try {
             withContext(Dispatchers.IO) {
                 val db = ClipboardDatabase.getInstance(context)
-                val migrated = ensureMigrated(context)
-                // 拆库补 VACUUM 的常规补跑点（触发逻辑见
-                // schedulePostSplitVacuum）：此前它只在迁移体末尾被
-                // 调用，而在本版本之前就完成拆库迁移的老用户会在
-                // 迁移体开头按标记直接返回、永远走不到——旧剪贴板
-                // 全文一直残留在会进云备份的主库空闲页里。放在每次
-                // 数据库访问的迁移检查之后异步触发：老用户下次用
-                // 剪贴板即补跑一次，此后只是标记检查。
-                // 仅迁移已完成才派发：迁移失败时旧行还没删，VACUUM
-                // 擦无可擦却会落下「已擦除」标记，之后迁移成功删行
-                // 也再无路径补跑物理擦除（见 migrateFromAppDatabase
-                // 的返回值说明）。迁移本身失败不拦本次剪贴板操作：
-                // 新库照常可用、旧行下次访问继续收敛
-                if (migrated) schedulePostSplitVacuum()
-                truncateOversizedTextsOnce(context, db)
-                purgeLegacyDeletedOnce(context, db)
+                // 拆库后主库空闲页的一次性物理擦除（清点 S10 定论
+                // 收敛形态：同步 VACUUM 一次＋一个完成标记，见
+                // AppDatabase.vacuumAfterClipboardSplitOnce）。拆库
+                // 迁移本体已随清点 Q2 删除——现行设备迁移早已完成，
+                // 这里只剩把当年删行留在主库文件里的全文擦掉这一件
+                AppDatabase.vacuumAfterClipboardSplitOnce()
                 block(db)
             }
         } catch (e: kotlinx.coroutines.CancellationException) {

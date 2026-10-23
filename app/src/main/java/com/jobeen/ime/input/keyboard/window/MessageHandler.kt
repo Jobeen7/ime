@@ -4,9 +4,6 @@ import android.inputmethodservice.InputMethodService
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.ImeInputMethodService
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import timber.log.Timber
 
 class MessageHandler(
     private val service: InputMethodService,
@@ -24,11 +21,9 @@ class MessageHandler(
                 if (window?.interceptCommit(message.text) == true) return
                 (service as ImeInputMethodService).activeInputConnection()
                     ?.commitText(message.text, 1)
-                // 主通道写入：递增本端写代次，使探针帧在宿主选区回调
-                // 到达前就已失效，合并探针不会命中上屏前的旧帧
-                (service as ImeInputMethodService).noteLocalWrite()
                 // 连发 Commit（如连打上屏）不必每条都同步探针：与选区路径
-                // 共用 24ms 合并通道，窗口内只探最后一次
+                // 共用 24ms 合并通道，窗口内只探最后一次（探针每次直探，
+                // 无帧缓存可命中旧结果，见清点 S14）
                 (service as ImeInputMethodService).scheduleNotifyInputChanged()
             }
 
@@ -44,12 +39,9 @@ class MessageHandler(
                 }
             }
 
-            is EngineMessage.Depoly -> {
-                Timber.d("EngineMessage.Depoly")
-                if (message.state == EngineMessage.Depoly.State.Finish) {
-                    window?.onDepolyFinished()
-                }
-            }
+            // EngineMessage.Depoly 不在此处理：部署完成的方案刷新由
+            // KeyboardStateManager.handleEngineMessage 单点承担（清点
+            // Q9 已合并双通道，避免同一 Finish 两条订阅各刷一遍）
 
             is EngineMessage.PossibleCandidatePinYin -> {
                 window?.onPossibleCandidatePinYin(message.possibleCandidatePinYins)

@@ -1,7 +1,6 @@
 package com.jobeen.ime.base.update
 
 import androidx.core.content.edit
-import com.jobeen.ime.base.net.fetchGithubReleaseAssetSha256
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.ngram.DownloadGate
 import com.jobeen.ime.base.ngram.DownloadRecord
@@ -89,6 +88,8 @@ object WanxiangUpdateManager {
     /** 词库整目录切换的 staging/trash 目录名（与现用 dicts 同级，保证 rename 在同一文件系统内原子） */
     private const val DICTS_STAGING_DIR = "dicts.staging"
     private const val DICTS_TRASH_DIR = "dicts.trash"
+    // 旧版事务日志/提交标记与模型备份的文件名：S11 后不再产生，
+    // 仅供 recoverInterruptedUpdate 清理旧版残留时引用
     private const val UPDATE_TXN_FILE = "wanxiang-update.pending"
     private const val UPDATE_TXN_COMMITTED_FILE = "wanxiang-update.committed"
     private const val GRAM_BACKUP_FILE = "$GRAM_FILE_NAME.update-backup"
@@ -104,15 +105,14 @@ object WanxiangUpdateManager {
 
     // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
     // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
-    // 本 client 只用于检查类短请求（Release 查询、资产摘要查询、
-    // Range 指纹取数）；整包下载走 [downloadClient]，见其注释
+    // 本 client 只用于检查类短请求（Release 查询）；整包下载走
+    // [downloadClient]，见其注释
     private val client = OkHttpClient.Builder()
         .followSslRedirects(false)
         .connectTimeout(15, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
         // 总时长上限：readTimeout 只约束两次读之间的间隔，慢速涓流
-        // 响应能让单次调用无限拖长（检查更新里的 Range 取数串行其
-        // 中），callTimeout 给整条调用封顶
+        // 响应能让单次调用无限拖长，callTimeout 给整条调用封顶
         .callTimeout(20, TimeUnit.SECONDS)
         .build()
 
@@ -136,7 +136,7 @@ object WanxiangUpdateManager {
         val name: String = "",
         val browser_download_url: String = "",
         val size: Long = 0L,
-        /** GitHub 登记的官方摘要（"sha256:..."），下载后据此校验、拿不到则拒绝更新 */
+        /** GitHub 登记的官方摘要（"sha256:..."），查到时下载后据此校验，查不到降级放行（S2） */
         val digest: String = "",
     )
 
@@ -160,7 +160,7 @@ object WanxiangUpdateManager {
         val dictRemoteFingerprint: String?,
         /** 远端模型内容指纹（下载时计算并存储；null=尚未下载该版本） */
         val gramRemoteFingerprint: String?,
-        /** 方案包在 GitHub 登记的官方 SHA-256（下载前必须取得，缺失即拒绝更新） */
+        /** 方案包在 GitHub 登记的官方 SHA-256（查到则下载后强校验，缺失降级放行，S2） */
         val schemaZipSha256: String = "",
         /** 语法模型在 GitHub 登记的官方 SHA-256（同上） */
         val gramSha256: String = "",
@@ -331,43 +331,38 @@ object WanxiangUpdateManager {
     // 文件一变键就对不上，自动重算，不会显示过期指纹。
     private const val KEY_FP_GRAM = "fp_cache_gram"
     private const val KEY_FP_GRAM_STATE = "fp_cache_gram_state"
-    // 词库指纹缓存带算法版本后缀（v2 = 「路径|大小|CRC32」元组口径）：
-    // 口径变更时换键名，旧口径缓存自然失效，不会拿旧值与新口径的
-    // 远端指纹假比对（状态键只含路径|长度|mtime，本身分不出算法版本）
+    // 词库指纹缓存键（单代：「路径|大小|CRC32」元组口径）：状态键
+    // 只含路径|长度|mtime，文件一变即对不上、自动重算。原 v1/v2
+    // 两代键名＋版本切换逐键清理已按 S3 退役，只留现行一对
     private const val KEY_FP_DICT = "fp_cache_dict_v2"
     private const val KEY_FP_DICT_STATE = "fp_cache_dict_state_v2"
-    // v1 口径的旧键名：仅供版本切换清理时移除，不再读写
-    private const val KEY_FP_DICT_LEGACY = "fp_cache_dict"
-    private const val KEY_FP_DICT_STATE_LEGACY = "fp_cache_dict_state"
 
     /** 版本切换清理已见过的 App versionCode（见 [ensureVersionHousekeeping]） */
     private const val KEY_APP_VERSION_CODE_SEEN = "app_version_code_seen"
 
     /**
      * 版本切换时 [ensureVersionHousekeeping] 清掉的偏好键清单：
-     * 远端词库指纹记录、词库指纹缓存（新旧两套口径）与在线更新的
-     * 方案版本记录。不含 [KEY_GRAM_PUBLISHED_AT]：语法模型文件不被
-     * 内置包解压覆盖（内置 resource.zip 只有词库与方案文件），其
-     * 发布时间记录与盘上文件始终同在、自洽，清掉只会逼已装用户
-     * 无谓重判。internal 供测试钉住这份清单的构成。
+     * 远端词库指纹记录、词库指纹缓存与在线更新的方案版本记录。
+     * 不含 [KEY_GRAM_PUBLISHED_AT]：语法模型文件不被内置包解压覆盖
+     * （内置 resource.zip 只有词库与方案文件），其发布时间记录与
+     * 盘上文件始终同在、自洽，清掉只会逼已装用户无谓重判。
+     * internal 供测试钉住这份清单的构成。
      */
     internal val VERSION_HOUSEKEEPING_CLEARED_KEYS: List<String> = listOf(
         KEY_DICT_REMOTE_FP,
         KEY_DICT_REMOTE_FP_VER,
         KEY_FP_DICT,
         KEY_FP_DICT_STATE,
-        KEY_FP_DICT_LEGACY,
-        KEY_FP_DICT_STATE_LEGACY,
         KEY_SCHEMA_VERSION,
     )
 
     /**
-     * App 版本切换时的记录清理：内置词库随 App 升级可能已变化，
-     * 且指纹口径也可能随版本变更——versionCode 与上次记录不一致时，
-     * 按 [VERSION_HOUSEKEEPING_CLEARED_KEYS] 清掉远端词库指纹记录与
+     * App 版本切换时的记录清理：内置词库随 App 升级可能已变化——
+     * versionCode 与上次记录不一致时，按
+     * [VERSION_HOUSEKEEPING_CLEARED_KEYS] 清掉远端词库指纹记录与
      * 词库指纹缓存（本地状态键只含文件 path|length|mtime，换包重
-     * 部署偶然同状态时会命中旧口径值），逼下一次检查重新实时
-     * 取数/重算；同时清在线更新的方案版本记录（data M1）：App 升级
+     * 部署偶然同状态时会命中旧值），逼下一次检查重新计算；同时
+     * 清在线更新的方案版本记录（data M1）：App 升级
      * 重新解压内置包会把 shared/dicts 还原为内置版本，旧记录不清
      * 时本地版本继续显示在线版、与远端同版还会误判「已是最新」、
      * 不给更新入口——清后本地版本回落到实际部署的内置 version.txt，
@@ -416,21 +411,23 @@ object WanxiangUpdateManager {
     }
 
     /**
-     * Recover a cross-resource update before Rime opens its data files. A pending
-     * transaction without a committed marker is rolled back; the marker is created
-     * only after both the dictionary directory and gram model have been replaced.
-     *
-     * This runs on the startup path, so it must never throw: a damaged journal
-     * or a failed rollback step is logged and quarantined, never allowed to
-     * block the keyboard from starting.
+     * 更新残留清理（启动路径，函数名为兼容 AppStartup 的步骤引用
+     * 沿用旧名）：更新是手动触发、可重来的操作，不再有事务日志/
+     * 回滚（S11 已拆）——切换靠 staging 整目录 rename 本身原子，
+     * 中断后的坏状态按盘上实际状态收尾即可：
+     * - dicts 缺位而 trash 在 → 把旧词库 rename 回位；两者都在 →
+     *   trash 是已切换后的旧副本，删；
+     * - gram 缺位而备份在 → 备份 rename 回位；在 → 备份删；
+     * - staging 残留与旧版事务日志文件一律清掉。
+     * 本函数绝不能抛错堵住键盘启动：异常只记日志。
      */
     fun recoverInterruptedUpdate() {
-        // 恢复会删/换语法模型文件，与 GramModelDownloader 的落盘共用
-        // 跨下载器安装锁（见 gramFileInstallLock）：回滚不得删掉另一
-        // 路刚装好的模型，落盘也不得插进回滚中间
+        // 清理会删/换语法模型文件，与 GramModelDownloader 的落盘共用
+        // 跨下载器安装锁（见 gramFileInstallLock）：清理不得删掉另一
+        // 路刚装好的模型，落盘也不得插进清理中间
         gramFileInstallLock.withLock {
             runCatching { recoverInterruptedUpdateInternal() }
-                .onFailure { Timber.e(it, "Interrupted-update recovery failed; continuing startup") }
+                .onFailure { Timber.e(it, "Interrupted-update cleanup failed; continuing startup") }
         }
     }
 
@@ -438,163 +435,46 @@ object WanxiangUpdateManager {
         val root = DataManager.sharedDataDir
         // 旧共用临时名遗留：两下载器曾共用「目标名 + .part」作半成品
         // 名（<language>.gram.part，language 不止默认一种），拆分后缀
-        // 后已无人再写它，残留文件只占空间（可达数百 MB），启动恢
-        // 复时按模式统一清掉。现行半成品后缀已逐项核对、均不匹配
+        // 后已无人再写它，残留文件只占空间（可达数百 MB），启动清
+        // 理时按模式统一清掉。现行半成品后缀已逐项核对、均不匹配
         // 「.gram.part」结尾，不会误删在途下载：GMD 是
         // <language>.gmdl.part、本类 gram 是 <目标名>.wx.part、
         // 方案包 .part 在 cacheDir 的工作目录里、不在本目录
         root.listFiles { f -> f.isFile && f.name.endsWith(".gram.part") }
             ?.forEach { it.delete() }
-        val txn = File(root, UPDATE_TXN_FILE)
-        val committed = File(root, UPDATE_TXN_COMMITTED_FILE)
         val dicts = File(root, "dicts")
         val trash = File(root, DICTS_TRASH_DIR)
         val gram = File(root, GRAM_FILE_NAME)
         val gramBackup = File(root, GRAM_BACKUP_FILE)
 
-        if (!txn.isFile) {
-            committed.delete()
-            File(root, "$UPDATE_TXN_FILE.tmp").delete()
-            // Preserve the original crash-recovery behavior for installations
-            // created before the transaction marker was introduced.
-            if (!dicts.exists() && trash.exists()) trash.renameTo(dicts)
-            else if (dicts.exists() && trash.exists()) trash.deleteRecursivelyNoFollow()
-            return
-        }
-
-        val journal = runCatching {
-            val properties = java.util.Properties()
-            txn.inputStream().use(properties::load)
-            parseUpdateJournal(properties)
-        }.getOrNull()
-        if (journal == null) {
-            // Unreadable or incomplete journal: quarantine it for diagnosis and
-            // fall back to the plain consistency repair. A damaged journal must
-            // never wedge every subsequent startup.
-            Timber.w("Quarantining unreadable update recovery journal")
-            if (!txn.renameTo(File(root, "$UPDATE_TXN_FILE.bad"))) txn.delete()
-            committed.delete()
-            if (!dicts.exists() && trash.exists()) trash.renameTo(dicts)
-            else if (dicts.exists() && trash.exists()) trash.deleteRecursivelyNoFollow()
-            // 日志损坏读不出 hadGram：不能无条件删备份——若 gram 恰在
-            // 换代窗口缺位，备份是唯一完好的旧模型，恢复它；gram 在
-            // 位时备份才是过期残留，删之
-            if (!gram.isFile && gramBackup.isFile) {
-                runCatching { gramBackup.renameTo(gram) }
-                    .onFailure { Timber.e(it, "Failed to restore grammar model after journal damage") }
-            } else {
-                gramBackup.delete()
+        // 按状态修复（不读任何日志）：词库切换中断在两个 rename
+        // 之间时 dicts 缺位、旧词库在 trash 里，回位；切换已完成
+        // 时 trash 只是旧副本，删掉
+        if (!dicts.exists() && trash.exists()) {
+            if (!trash.renameTo(dicts)) {
+                // Best effort only: leave the trash directory in
+                // place for diagnosis instead of failing startup.
+                Timber.e("Failed to restore previous dictionary directory")
             }
-            return
-        }
-
-        if (committed.isFile) {
-            Timber.i("Completing cleanup of committed data update")
+        } else if (dicts.exists() && trash.exists()) {
             trash.deleteRecursivelyNoFollow()
-            gramBackup.delete()
+        }
+        // 语法模型：旧流程的备份只在 gram 缺位时是唯一完好副本，
+        // 回位；gram 在位时备份是过期残留，删之（新流程不再产生
+        // 备份，rename 本身原子替换）
+        if (!gram.isFile && gramBackup.isFile) {
+            runCatching { gramBackup.renameTo(gram) }
+                .onFailure { Timber.e(it, "Failed to restore grammar model from backup") }
         } else {
-            Timber.w("Rolling back interrupted data update")
-            if (journal.changedDicts) {
-                when {
-                    journal.hadDicts && trash.exists() -> {
-                        dicts.deleteRecursivelyNoFollow()
-                        if (!trash.renameTo(dicts)) {
-                            // Best effort only: leave the trash directory in
-                            // place for diagnosis instead of failing startup.
-                            Timber.e("Failed to restore previous dictionary directory")
-                        }
-                    }
-                    !journal.hadDicts -> dicts.deleteRecursivelyNoFollow()
-                    // If trash is absent, the original directory had not yet been moved.
-                }
-            }
-            var gramRestored = false
-            if (journal.changedGram) {
-                if (journal.hadGram && gramBackup.isFile) {
-                    // 备份已改为 rename 存放（与 gram 同盘）：回滚直接
-                    // rename 回位，不再整份拷贝 400MB
-                    runCatching {
-                        gram.delete()
-                        gramRestored = gramBackup.renameTo(gram)
-                        if (!gramRestored) {
-                            Timber.e("Failed to restore previous grammar model")
-                        }
-                    }.onFailure { Timber.e(it, "Grammar model rollback failed") }
-                } else if (!journal.hadGram) {
-                    gram.delete()
-                    gramRestored = true
-                }
-            }
-            trash.deleteRecursivelyNoFollow()
-            // 回滚没能把旧模型放回原位时，备份是唯一完好副本，留着
-            // 待诊断/下次恢复，绝不能在收尾时顺手删掉
-            if (gramRestored || gram.isFile) gramBackup.delete()
+            gramBackup.delete()
         }
-        txn.delete()
-        committed.delete()
+        File(root, DICTS_STAGING_DIR).deleteRecursivelyNoFollow()
+        // 旧版事务日志/提交标记残留（S11 后不再读写）：直接清掉
+        File(root, UPDATE_TXN_FILE).delete()
+        File(root, UPDATE_TXN_COMMITTED_FILE).delete()
+        File(root, "$UPDATE_TXN_FILE.tmp").delete()
         File(root, "$GRAM_BACKUP_FILE.tmp").delete()
         File(root, "$GRAM_BACKUP_FILE.restore").delete()
-        File(root, DICTS_STAGING_DIR).deleteRecursivelyNoFollow()
-    }
-
-    internal data class UpdateJournal(
-        val hadDicts: Boolean,
-        val hadGram: Boolean,
-        val changedDicts: Boolean,
-        val changedGram: Boolean,
-    )
-
-    /** Parse the update journal; missing fields mean a damaged journal -> null. */
-    internal fun parseUpdateJournal(properties: java.util.Properties): UpdateJournal? {
-        val keys = listOf("hadDicts", "hadGram", "changedDicts", "changedGram")
-        if (!keys.all(properties::containsKey)) return null
-        return UpdateJournal(
-            hadDicts = properties.getProperty("hadDicts") == "true",
-            hadGram = properties.getProperty("hadGram") == "true",
-            changedDicts = properties.getProperty("changedDicts") == "true",
-            changedGram = properties.getProperty("changedGram") == "true",
-        )
-    }
-
-    private fun writeUpdateJournal(changedDicts: Boolean, changedGram: Boolean) {
-        val root = DataManager.sharedDataDir
-        val txn = File(root, UPDATE_TXN_FILE)
-        val temp = File(root, "$UPDATE_TXN_FILE.tmp")
-        val props = java.util.Properties().apply {
-            setProperty("hadDicts", File(root, "dicts").exists().toString())
-            setProperty("hadGram", File(root, GRAM_FILE_NAME).isFile.toString())
-            setProperty("changedDicts", changedDicts.toString())
-            setProperty("changedGram", changedGram.toString())
-        }
-        // 日志是掉电恢复的唯一依据：临时文件落盘后必须 fsync 文件
-        // 本体，rename 后再 fsync 目录，否则断电时「日志存在」这个
-        // 事实本身可能没落盘，启动恢复会误判成无事务而错过回滚窗口
-        java.io.FileOutputStream(temp).use { out ->
-            props.store(out, "Jime update recovery journal")
-            out.flush()
-            out.fd.sync()
-        }
-        check(temp.renameTo(txn)) { "Failed to persist update recovery journal" }
-        syncDirectory(root)
-    }
-
-    /**
-     * fsync 目录本体，让其中的 rename/新建在断电后依然成立（失败只记日志）。
-     * 必须用 Os.open 以只读方式打开目录再 fsync：旧实现用
-     * RandomAccessFile 打开目录，在 Android 上打开即失败、异常又被
-     * runCatching 吞掉，目录 fsync 从未真正执行过。
-     */
-    private fun syncDirectory(dir: File) {
-        runCatching {
-            val fd = android.system.Os.open(
-                dir.absolutePath, android.system.OsConstants.O_RDONLY, 0,
-            )
-            try {
-                android.system.Os.fsync(fd)
-            } finally {
-                android.system.Os.close(fd)
-            }
-        }.onFailure { Timber.w(it, "Directory fsync failed: %s", dir) }
     }
 
     /** 内置方案版本：读资源解压落盘的 shared/version.txt（如 "18.1.0"），补上 v 前缀与常量口径对齐 */
@@ -680,10 +560,10 @@ object WanxiangUpdateManager {
 
     /**
      * 词库内容指纹：每个 dict 文件取「相对路径|大小|内容 CRC32」
-     * 元组（见 [DictFingerprint]），排序后拼接再取 SHA-256。元组
-     * 口径与 zip 中央目录可提供的字段完全一致，使检查更新时能用
-     * 中央目录实时算出远端指纹、与本地同值可比。本地与下载时用
-     * 同一算法，更新成功后两者一致。
+     * 元组（见 [DictFingerprint]），排序后拼接再取 SHA-256。本地
+     * 现用词库与下载暂存词库用同一算法：前者供本地行展示，后者
+     * 落盘为该版本的远端指纹记录，更新成功后两者同值可比（远端
+     * 实时取数已按 S3 退役，记录是远端指纹的唯一来源）。
      * 目录缺失/为空（部署失败等异常状态）时返回空串而非对零个
      * part 做哈希——空输入哈希是个非空常量，会绕过各处空值守卫、
      * 伪装成一个真实指纹显示并落盘为远端记录；空串则让本地行
@@ -739,18 +619,14 @@ object WanxiangUpdateManager {
             if (schemaRelease.tag_name.isBlank()) error("远端方案版本无效")
             if (gramRelease.published_at.isBlank()) error("远端模型版本无效")
 
-            // 登记摘要优先用 Release 对象内嵌的 digest：内嵌 assets
-            // 数组偶有缺项（本仓实测 498/499），但目标资产的内嵌摘要
-            // 只要在，它就是 GitHub 登记值本身，直接采用即可省掉整套
-            // 分页查询（一趟检查为两个仓库各打一次取 id + 多页资产
-            // 列表，匿名限流 60 次/小时很容易烧穿）；仅内嵌缺失时才
-            // 走资产分页端点补查，两处皆无才为空、下载侧 fail-closed
+            // 登记摘要只用 Release 对象内嵌的 digest（它就是 GitHub
+            // 登记值本身）；内嵌缺项时为空，下载侧按「查到强校验、
+            // 查不到降级放行＋自算哈希存记录」处理，不再走分页端点
+            // 补查、更不许因缺摘要拒绝更新（S2）
             val gramSha256 = resolveRegisteredDigest(
-                GRAM_REPO, GRAM_TAG, GRAM_FILE_NAME,
                 gramRelease.assets.firstOrNull { it.name == GRAM_FILE_NAME }?.digest,
             )
             val schemaZipSha256 = resolveRegisteredDigest(
-                SCHEMA_REPO, schemaRelease.tag_name, SCHEMA_ZIP_NAME,
                 schemaRelease.assets.firstOrNull { it.name == SCHEMA_ZIP_NAME }?.digest,
             )
             // 模型内容兜底：记录为空/过期时以本地文件真实指纹为准。指纹
@@ -786,61 +662,18 @@ object WanxiangUpdateManager {
             }
 
             // 本地版本先定下来（记录缺失时以实际部署的内置版本为准，
-            // 不只信记录），词库指纹兜底与下方 UpdateInfo 共用
+            // 不只信记录），下方 UpdateInfo 共用
             val localSchemaVersion = resolveLocalSchemaVersion(
                 recordedVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
                 bundledVersion = readBundledSchemaVersion(),
             )
 
-            // 远端词库指纹：优先实时取方案包的 zip 中央目录算出
-            // （只读包尾、不整包下载，元组口径与本地一致）；实时取
-            // 到即刷新下载记录。取不到才回落既有记录（下载过该版
-            // 本时下载流程留下的内容指纹）
-            // 资产大小取自本次 Release 响应（GhAsset.size）：实时取
-            // 指纹要按它发显式区间 Range——GitHub 资产 CDN 对后缀
-            // Range（bytes=-N）回 501，只有显式区间可用
-            val schemaZipSize = schemaRelease.assets
-                .firstOrNull { it.name == SCHEMA_ZIP_NAME }?.size ?: 0L
-            val liveDictRemoteFp = try {
-                fetchRemoteDictFingerprint(schemaUrl(schemaRelease.tag_name), schemaZipSize)
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Timber.w(e, "远端词库指纹实时获取失败，回落记录")
-                null
-            }
-            if (liveDictRemoteFp != null) {
-                prefs.edit {
-                    putString(KEY_DICT_REMOTE_FP, liveDictRemoteFp)
-                    putString(KEY_DICT_REMOTE_FP_VER, schemaRelease.tag_name)
-                }
-            }
-            var dictRemoteFp = liveDictRemoteFp
-                ?: prefs.getString(KEY_DICT_REMOTE_FP, null)
-                    .takeIf { prefs.getString(KEY_DICT_REMOTE_FP_VER, null) == schemaRelease.tag_name }
-            if (dictRemoteFp == null && localSchemaVersion == schemaRelease.tag_name) {
-                // 版本一致兜底：本地版本与远端标签相同，则已部署词库
-                // 必然是该版本的内容——内置打包按该 Release 同步、
-                // 在线更新按该标签下载，两条落盘路径都与版本严格
-                // 对应（与模型侧内容兜底同思路；词库远端未发布内容
-                // 清单可比对，只能以版本同一性作判据）。回填记录后
-                // 界面不再显示"—"，后续检查直接走记录
-                val localDictFp = try {
-                    cachedDictsFingerprint(prefs, File(DataManager.sharedDataDir, "dicts"))
-                } catch (e: CancellationException) {
-                    throw e
-                } catch (e: Exception) {
-                    Timber.w(e, "本地词库指纹计算失败，远端词库指纹保持未知")
-                    null
-                }
-                if (!localDictFp.isNullOrEmpty()) {
-                    dictRemoteFp = localDictFp
-                    prefs.edit {
-                        putString(KEY_DICT_REMOTE_FP, localDictFp)
-                        putString(KEY_DICT_REMOTE_FP_VER, schemaRelease.tag_name)
-                    }
-                }
-            }
+            // 远端词库指纹：不再实时取数（原 Range 抠 zip 中央目录
+            // 的整套机器已按 S3 退役）——只有下载流程留下的记录、
+            // 且记录版本与远端标签一致时才作数，其余为未知，界面
+            // 显示「—」；远端是否有更新由版本号比对判定
+            val dictRemoteFp = prefs.getString(KEY_DICT_REMOTE_FP, null)
+                .takeIf { prefs.getString(KEY_DICT_REMOTE_FP_VER, null) == schemaRelease.tag_name }
             // 远端模型指纹：以本次检查响应拿到的远端登记摘要为准
             // （非空即用）——它就是远端当前文件的真实指纹。下载记录
             // 只说明「上次下载时」的值：远端原地换包后记录仍是旧值，
@@ -869,29 +702,12 @@ object WanxiangUpdateManager {
     }
 
     /**
-     * 资产登记摘要：优先 [embeddedDigest] 内嵌值（归一化后合法即用，
-     * 它就是 GitHub 登记值本身）；内嵌缺失时才走资产分页端点补查
-     * （Release 内嵌 assets 数组可缺项，缺的恰好是目标资产时分页
-     * 端点是不缺项的权威来源）。两处皆无返回空串，下载侧按
-     * fail-closed 拒绝更新。
+     * 资产登记摘要：只用 Release 对象内嵌的 [embeddedDigest]（归一
+     * 化后合法即用，它就是 GitHub 登记值本身）。内嵌缺项返回空
+     * 串，下载侧降级放行（S2），不再走资产分页端点补查。
      */
-    private fun resolveRegisteredDigest(
-        repoPath: String,
-        tag: String,
-        assetName: String,
-        embeddedDigest: String?,
-    ): String {
-        val embedded = com.jobeen.ime.base.ngram.normalizeSha256(embeddedDigest)
-        if (embedded.isNotEmpty()) return embedded
-        val parts = repoPath.split('/', limit = 2)
-        if (parts.size == 2 && tag.isNotBlank()) {
-            val fromApi = fetchGithubReleaseAssetSha256(
-                client, parts[0], parts[1], tag, assetName,
-            )
-            if (fromApi.isNotEmpty()) return fromApi
-        }
-        return ""
-    }
+    private fun resolveRegisteredDigest(embeddedDigest: String?): String =
+        com.jobeen.ime.base.ngram.normalizeSha256(embeddedDigest)
 
     private fun fetchRelease(apiPath: String): GhRelease {
         val request = Request.Builder()
@@ -997,11 +813,6 @@ object WanxiangUpdateManager {
         try {
             // 1. 下载方案包（只取其中 dicts/ 词库）
             if (info.schemaUpdateAvailable) {
-                // fail-closed：没有 GitHub 登记的官方摘要就不下载、不更新
-                if (info.schemaZipSha256.isBlank()) {
-                    Timber.w("方案包缺少官方 SHA-256，拒绝更新")
-                    return@withContext false
-                }
                 val zipFile = File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX")
                 zipFile.delete()
                 val ok = downloadFile(schemaUrl(info.schemaRemoteVersion), zipFile, MAX_SCHEMA_BYTES) { d, t ->
@@ -1011,10 +822,19 @@ object WanxiangUpdateManager {
                 val finalZip = File(workDir, "rime-wanxiang-lite.zip")
                 finalZip.delete()
                 check(zipFile.renameTo(finalZip)) { "方案包落盘失败" }
-                if (!sha256File(finalZip).equals(info.schemaZipSha256, ignoreCase = true)) {
+                // 校验口径（S2）：GitHub 登记摘要非空才比对、不一致
+                // 放弃更新；摘要为空（内嵌缺项）降级放行——自算哈
+                // 希仅记日志，后续词库内容指纹已覆盖内容层比对
+                val actualSchemaSha = sha256File(finalZip)
+                if (info.schemaZipSha256.isNotBlank() &&
+                    !actualSchemaSha.equals(info.schemaZipSha256, ignoreCase = true)
+                ) {
                     Timber.w("方案包 SHA-256 与 GitHub 登记不一致，放弃更新")
                     finalZip.delete()
                     return@withContext false
+                }
+                if (info.schemaZipSha256.isBlank()) {
+                    Timber.i("方案包无 GitHub 登记摘要，降级放行（自算 SHA-256=%s）", actualSchemaSha)
                 }
 
                 // 2. 解压词库到 staging 目录并校验（暂不切换，等模型也下载
@@ -1045,11 +865,6 @@ object WanxiangUpdateManager {
 
             // 3. 下载语法模型到 .part（只下载校验，先不替换现用文件）
             if (info.gramUpdateAvailable) {
-                // fail-closed：没有 GitHub 登记的官方摘要就不下载、不更新
-                if (info.gramSha256.isBlank()) {
-                    Timber.w("语法模型缺少官方 SHA-256，拒绝更新")
-                    return@withContext false
-                }
                 val target = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
                 val partial = File(target.parentFile, target.name + GRAM_PART_SUFFIX)
                 partial.delete()
@@ -1065,8 +880,9 @@ object WanxiangUpdateManager {
                     Timber.w("语法模型下载为空，放弃更新")
                     return@withContext false
                 }
-                // 计算下载模型的内容指纹（流式，供更新后比对），同时即为
-                // 与 GitHub 登记摘要的校验结果：算不出或对不上都放弃更新
+                // 计算下载模型的内容指纹（流式）：写入记录供更新后
+                // 比对；GitHub 登记摘要非空时同时作强校验，对不上
+                // 放弃更新；摘要为空降级放行、自算值直接作记录（S2）
                 newGramFp = try {
                     sha256File(partial)
                 } catch (e: CancellationException) {
@@ -1075,8 +891,9 @@ object WanxiangUpdateManager {
                     Timber.w(e, "下载模型指纹计算失败")
                     null
                 }
-                if (newGramFp == null ||
-                    !newGramFp.equals(info.gramSha256, ignoreCase = true)
+                if (info.gramSha256.isNotBlank() &&
+                    (newGramFp == null ||
+                        !newGramFp.equals(info.gramSha256, ignoreCase = true))
                 ) {
                     Timber.w("语法模型 SHA-256 与 GitHub 登记不一致，放弃更新")
                     partial.delete()
@@ -1086,35 +903,29 @@ object WanxiangUpdateManager {
                 gramTarget = target
             }
 
-            // 4. Journal and retain both previous resources until the pair is installed.
-            // 不再逐文件搬移+清残留：逐文件落位期间现用目录是新旧混合态，
-            // 中途被杀 Rime 会加载到半套词库；整目录 rename 后现用目录
-            // 要么是旧版完整词库、要么是新版完整词库。上游删掉/改名的词库
-            // 文件随旧目录整份进 trash，不再需要单独清残留
+            // 4. 切换：整目录/整文件 rename 即切换本身。不再逐文件
+            // 搬移+清残留：逐文件落位期间现用目录是新旧混合态，中途
+            // 被杀 Rime 会加载到半套词库；整目录 rename 后现用目录
+            // 要么是旧版完整词库、要么是新版完整词库。上游删掉/改名
+            // 的词库文件随旧目录整份进 trash，不再需要单独清残留。
+            // 事务日志/掉电回滚已按 S11 拆除：切换中断在两个 rename
+            // 之间时，启动清理（recoverInterruptedUpdate）按盘上状
+            // 态把 trash 回位；用户重跑一次更新即可，不再为一个手动
+            // 操作养回滚体系
             val dictsDir = File(DataManager.sharedDataDir, "dicts")
             val trashDir = File(DataManager.sharedDataDir, DICTS_TRASH_DIR)
             val changedDicts = extractDir != null
             val changedGram = gramPartial != null && gramTarget != null
-            // 跨下载器安装锁（见 gramFileInstallLock）：从写事务日志起
-            // 到版本/指纹记录落盘为止，语法模型的备份、切换与记录是
-            // 一个临界区，GramModelDownloader 的落盘不得插进来（否则
-            // 记录会对上另一路的文件、回滚会删掉另一路的模型）。
+            // 跨下载器安装锁（见 gramFileInstallLock）：从切换起
+            // 到版本/指纹记录落盘为止，语法模型的切换与记录是
+            // 一个临界区，GramModelDownloader 的落盘不得插进来
+            // （否则记录会对上另一路的文件）。
             // 锁序固定：外层 updateMutex 已先持有，本锁恒在其内层
             gramFileInstallLock.lock()
             try {
-            if (changedDicts || changedGram) writeUpdateJournal(changedDicts, changedGram)
-
-            if (changedGram && gramTarget!!.isFile) {
-                val backup = File(DataManager.sharedDataDir, GRAM_BACKUP_FILE)
-                backup.delete()
-                // 旧模型直接 rename 成备份（同盘原子操作）：旧实现整份
-                // 拷贝约 400MB，慢且白耗同量磁盘。此后到新模型 rename
-                // 就位之间 gram 短暂缺位，崩溃时由日志回滚从备份恢复
-                check(gramTarget!!.renameTo(backup)) { "语法模型旧版本备份失败" }
-            }
             extractDir?.let { staging ->
-                // 上一轮未被启动恢复清掉的残留 trash 不得挡住本次切换：
-                // 新事务日志已按当前磁盘状态写定，旧残留就此作废
+                // 上一轮残留 trash 不得挡住本次切换：切换已完成时它
+                // 只是旧副本，就此作废
                 if (trashDir.exists()) trashDir.deleteRecursivelyNoFollow()
                 if (dictsDir.exists()) check(dictsDir.renameTo(trashDir)) { "词库旧目录移开失败" }
                 check(staging.renameTo(dictsDir)) { "词库目录切换失败" }
@@ -1125,15 +936,10 @@ object WanxiangUpdateManager {
                 // 中途被杀将留下无语法模型而 prefs 仍记旧版本的状态
                 check(gramPartial.renameTo(gramTarget)) { "语法模型落盘失败" }
             }
-
-            if (changedDicts || changedGram) {
-                check(File(DataManager.sharedDataDir, UPDATE_TXN_COMMITTED_FILE).createNewFile()) {
-                    "无法标记数据更新事务已提交"
-                }
-                // 提交标记与前面的目录/文件 rename 一并 fsync 落盘，
-                // 断电后恢复看到的必须是完整的「已提交」事实
-                syncDirectory(DataManager.sharedDataDir)
-            }
+            // 切换完成：旧词库目录在锁内直接删——原事务日志流程要
+            // 留着它等提交后清理，日志拆除后没有保留理由；语法模
+            // 型旧文件已被 rename 覆盖、同样无残留
+            if (changedDicts) trashDir.deleteRecursivelyNoFollow()
 
             // 5. 全部成功后才记录版本号与内容指纹。版本记录按侧写：
             // 只更新了哪侧就只写哪侧——无条件写另一侧的远端值，会在
@@ -1160,9 +966,6 @@ object WanxiangUpdateManager {
             } finally {
                 gramFileInstallLock.unlock()
             }
-            // Committed resources remain a valid pair even if preference metadata
-            // cannot be persisted immediately; the next check may simply re-fetch.
-            if (changedDicts || changedGram) recoverInterruptedUpdate()
             true
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
@@ -1171,14 +974,14 @@ object WanxiangUpdateManager {
             false
         } finally {
             // Cancellation may arrive after the first resource was switched.
-            // Resolve any still-pending transaction before cleaning temporary data.
+            // Clean any leftover update state before cleaning temporary data.
             runCatching { recoverInterruptedUpdate() }
             // 清理临时文件，避免占用存储空间
             runCatching { File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX").delete() }
             runCatching { File(workDir, "rime-wanxiang-lite.zip").delete() }
             // staging 未切换（失败/取消）时清掉；切换成功后该路径已 rename
             // 为现用 dicts、不存在，此处是空操作。trash 不在此清：切换中断
-            // 时它可能是旧词库的唯一副本，留下次应用前的自愈处理
+            // 时它可能是旧词库的唯一副本，留给上方按状态的启动清理处理
             runCatching {
                 File(DataManager.sharedDataDir, DICTS_STAGING_DIR).deleteRecursivelyNoFollow()
             }
@@ -1252,109 +1055,6 @@ object WanxiangUpdateManager {
 
     private fun isAllowedEntry(name: String): Boolean =
         ALLOWED_PREFIXES.any { name.startsWith(it) } && name.endsWith(ALLOWED_SUFFIX)
-
-    /** 实时取远端词库指纹时读取的包尾长度：须覆盖 EOCD＋常见中央目录。 */
-    private const val RANGE_TAIL_BYTES = 256 * 1024
-
-    /** 中央目录大小上限：超出说明包结构异常，放弃实时指纹。 */
-    private const val MAX_CENTRAL_DIR_BYTES = 8 * 1024 * 1024L
-
-    /**
-     * 实时计算远端方案包的词库指纹：按资产总长（Release 接口的
-     * GhAsset.size）发显式区间 Range 只取包尾定位 EOCD，中央目录
-     * 不在包尾段内时再按其偏移精确取一段；条目过滤与元组口径同
-     * [dictsContentFingerprint]，同内容必同指纹。任一步失败
-     * （服务器不支持 Range、包结构异常等）返回 null，调用方回落
-     * 既有记录。
-     */
-    private fun fetchRemoteDictFingerprint(url: String, assetSize: Long): String? {
-        if (assetSize <= 0) return null
-        val tailLen = minOf(RANGE_TAIL_BYTES.toLong(), assetSize)
-        val tailStart = assetSize - tailLen
-        val tail = rangeGet(url, tailStart, assetSize - 1, assetSize) ?: return null
-        val eocd = ZipCentralDirectory.findEocd(tail, tailStart) ?: return null
-        val cdStartInTail = eocd.cdOffset - tailStart
-        val cdBytes = if (
-            cdStartInTail >= 0 &&
-            cdStartInTail + eocd.cdSize <= tail.size.toLong()
-        ) {
-            tail.copyOfRange(
-                cdStartInTail.toInt(),
-                (cdStartInTail + eocd.cdSize).toInt(),
-            )
-        } else {
-            if (eocd.cdSize > MAX_CENTRAL_DIR_BYTES) return null
-            rangeGet(url, eocd.cdOffset, eocd.cdOffset + eocd.cdSize - 1, assetSize)
-                ?: return null
-        }
-        // 条目数与 EOCD 声明核对：中央目录被截断/错位时解析可能
-        // 「成功」出半份条目，算出的指纹会与本地假比对
-        val entries = ZipCentralDirectory.parseEntries(cdBytes, eocd.totalEntries) ?: return null
-        val parts = entries.asSequence()
-            .filter { !it.name.endsWith("/") && isAllowedEntry(it.name) }
-            .map {
-                DictFingerprint.entryPart(
-                    it.name.removePrefix("dicts/"),
-                    it.size,
-                    it.crc32,
-                )
-            }
-            .toList()
-        if (parts.isEmpty()) return null
-        return DictFingerprint.combine(parts.sorted())
-    }
-
-    /**
-     * 显式区间 Range GET：请求 [start]..[endInclusive]（含端点），
-     * [totalSize] 是调用方已知的资产总长。必须用显式区间：GitHub
-     * 资产 CDN 对后缀 Range（bytes=-N）回 501 Unsupported。
-     * 校验从严：非 206、Content-Range 的起点/终点/总长任一与请求
-     * 不符即失败；响应体按期望长度流式读，读超期望或不足都判
-     * 失败——绝不无界读入（声明合规但返回更大的 206 体时，旧实现
-     * 整段 bytes() 入内存，上限检查形同虚设）。
-     */
-    private fun rangeGet(
-        url: String,
-        start: Long,
-        endInclusive: Long,
-        totalSize: Long,
-    ): ByteArray? {
-        if (start < 0 || endInclusive < start || endInclusive >= totalSize) return null
-        val expected = endInclusive - start + 1
-        if (expected > Int.MAX_VALUE) return null
-        return runCatching {
-            client.newCall(
-                okhttp3.Request.Builder().url(url)
-                    .header("Range", "bytes=$start-$endInclusive").build()
-            ).execute().use { response ->
-                if (response.code != 206) return null
-                val contentRange = response.header("Content-Range") ?: return null
-                val total = contentRange.substringAfterLast('/')
-                    .toLongOrNull() ?: return null
-                if (total != totalSize) return null
-                val rangeNums = contentRange.substringBefore('/')
-                    .removePrefix("bytes").trim().split('-')
-                val respStart = rangeNums.getOrNull(0)?.trim()?.toLongOrNull() ?: return null
-                val respEnd = rangeNums.getOrNull(1)?.trim()?.toLongOrNull() ?: return null
-                if (respStart != start || respEnd != endInclusive) return null
-                val body = response.body ?: return null
-                body.byteStream().use { input ->
-                    val out = java.io.ByteArrayOutputStream(expected.toInt())
-                    val buf = ByteArray(BUFFER_SIZE)
-                    var read = 0L
-                    while (true) {
-                        val n = input.read(buf)
-                        if (n < 0) break
-                        read += n
-                        if (read > expected) return null
-                        out.write(buf, 0, n)
-                    }
-                    if (read != expected) return null
-                    out.toByteArray()
-                }
-            }
-        }.getOrNull()
-    }
 
     private suspend fun downloadFile(
         url: String,

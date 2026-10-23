@@ -10,8 +10,8 @@ import androidx.room.PrimaryKey
  * 的应用层「先删后插」约定维持；备份还原与拆库迁移补行都绕开该约定
  * 直插，同文本两行会让一改多行/一删多行。索引把不变量下沉到库层，
  * 直插路径写库前必须先去重（见 [dedupeClipboardByText]）。
- * 注意：本实体同时被 AppDatabase 共用，加索引后 AppDatabase 侧也必须
- * 配套 bump 版本并在旧表上建同名索引（见 ClipboardDatabase v4 迁移）。
+ * 本实体只属 ClipboardDatabase（历史上曾与 AppDatabase 共用，
+ * 主库残表已于 AppDatabase v14 DROP、实体自此单库，见清点 D20）。
  */
 @Entity(
     tableName = "clipboard_records",

@@ -1,36 +1,23 @@
 package com.jobeen.ime.input
 
-import android.os.Build
 import android.view.inputmethod.EditorInfo
 
 /**
  * 输入框身份快照（纯数据）：onStartInputView 的 restarting=true 只
  * 说明宿主在同一 View 上重启输入（restartInput），不保证还是同一
  * 个逻辑输入框——WebView 内不同 <input> 之间切换焦点正是走这条
- * 路、且不经过 onFinishInputView。故以关键字段比对判定「同框重
- * 启」还是「换框」：核心四项（包名、字段 id、输入类型、imeOptions）
- * 任一不同即按换框处理（推进预测代次、作废在途联想）。
+ * 路、且不经过 onFinishInputView。故以核心四项（包名、字段 id、
+ * 输入类型、imeOptions）比对判定「同框重启」还是「换框」：任一
+ * 不同即按换框处理（推进预测代次、作废在途联想）。
  *
- * 第十六批起身份纳入五项尽力而为的扩展字段（autofillId、
- * fieldName、hintText、label、privateImeOptions）：同一 WebView 里
- * 多个同类型 <input> 的核心四项可完全重合，扩展字段是仅剩的区分
- * 线索（其中 autofillId 区分力最强，WebView 里其余几项常为 null）。
- * 扩展字段的判变语义是「两侧都有值且不同才算变」：同框的两次喂
- * 入（onStartInput 与 onStartInputView 背靠背）之间宿主可能只在
- * 一侧给出某项扩展字段，null↔有值的抖动若按换框处理会误杀在途
- * 语音/联想（S1 口径）；而真正的跨框切换里有区分力的字段两侧通
- * 常都有值（autofill 参与时 autofillId 必在两侧）。故扩展字段缺
- * 值只降低区分力、不产生误判，这也是「尽力而为」的确切含义。
- *
- * 第十七批起扩展字段分两层：核心扩展（autofillId、fieldName、
- * privateImeOptions）维持上述口径直接参与判变；文案类（hintText、
- * label）降为兜底信号——只在核心扩展于两侧**全部缺失**时才参与
- * 判变。理由是 hint/label 是宿主可随时改写的提示文案：同一框在
- * 两次喂入间改文案（动态提示）且两侧都有值时，第十六批口径会误
- * 判换框、多作废一次在途语音（audit16 (g) 的反向残余）；而真跨
- * 框时若核心扩展有任何一侧在场，其证据优先于文案。只有强信号
- * 全缺（WebView 里 fieldName/autofill 均不给的常见形态）时，
- * hint/label 的差异才作为最后的区分线索被采纳。
+ * 第十六/十七批曾纳入五项尽力而为的扩展字段（autofillId、
+ * fieldName、hintText、label、privateImeOptions）＋两层判变口径，
+ * 为区分核心四项全同的 WebView 多 <input> 场景；但其字段在
+ * WebView 里常为 null、autofillId 仅 API 36+ 可读，分层自身还制
+ * 造过同框动态文案误判换框、误杀在途语音的反向故障，而目标场
+ * 景在全部真机记录中从未复现。已按清点 D6 定论整层拆除：代价
+ * 是核心四项全同的多框切换失去区分线索，接受此代价换判定口径
+ * 回到单一事实源。
  *
  * 本类自第十四批起自引擎抽出共享：引擎（联想代次）与 IMS（语
  * 音纪元的字段身份投递）共用同一份字段口径，避免两处各表。
@@ -40,14 +27,6 @@ internal data class InputFieldKey(
     val fieldId: Int,
     val inputType: Int,
     val imeOptions: Int,
-    /** 自动填充身份（API 30+ 的 EditorInfo.autofillId，定型为
-     * 「viewId/autofillVirtualId」字符串）；低版本或宿主未参与
-     * 自动填充时为 null。 */
-    val autofillId: String? = null,
-    val fieldName: String? = null,
-    val hintText: String? = null,
-    val label: String? = null,
-    val privateImeOptions: String? = null,
 ) {
     companion object {
         fun of(info: EditorInfo?): InputFieldKey? = info?.let {
@@ -56,63 +35,21 @@ internal data class InputFieldKey(
                 fieldId = it.fieldId,
                 inputType = it.inputType,
                 imeOptions = it.imeOptions,
-                autofillId = readAutofillId(it),
-                fieldName = it.fieldName,
-                // CharSequence 可能是可变/带 span 的实现，快照一律
-                // 定型为 String 再比对，避免引用相等误判
-                hintText = it.hintText?.toString(),
-                label = it.label?.toString(),
-                privateImeOptions = it.privateImeOptions,
             )
-        }
-
-        /** getAutofillId 及其 viewId/virtualId 按现行口径需 API 36+，低版本读不到即按无此线索处理；个别宿主实现可能抛错，同样按无此线索处理。 */
-        private fun readAutofillId(info: EditorInfo): String? {
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.BAKLAVA) return null
-            return runCatching {
-                info.autofillId?.let { "${it.viewId}/${it.autofillVirtualId}" }
-            }.getOrNull()
         }
     }
 }
 
-/** 扩展字段判变：仅当两侧都有值且不同才算变（见 InputFieldKey 的类注释）。 */
-private fun extendedFieldChanged(previous: String?, current: String?): Boolean =
-    previous != null && current != null && previous != current
-
-/** 核心扩展（autofillId、fieldName、privateImeOptions）是否在两侧全部缺失。 */
-private fun primarySignalsAbsent(previous: InputFieldKey, current: InputFieldKey): Boolean =
-    previous.autofillId == null && previous.fieldName == null &&
-        previous.privateImeOptions == null &&
-        current.autofillId == null && current.fieldName == null &&
-        current.privateImeOptions == null
-
 /**
  * restarting 重启时是否实为换框：任一侧快照缺失（首次启动等）不
- * 判换框；核心四项任一不同即换框；核心扩展字段按
- * [extendedFieldChanged] 的两侧有值口径参与；文案类（hintText、
- * label）仅在核心扩展两侧全部缺失时才作兜底参与（见类注释）。
+ * 判换框；核心四项任一不同即换框。
  */
 internal fun isInputFieldChanged(previous: InputFieldKey?, current: InputFieldKey?): Boolean {
     if (previous == null || current == null) return false
-    if (
-        previous.packageName != current.packageName ||
+    return previous.packageName != current.packageName ||
         previous.fieldId != current.fieldId ||
         previous.inputType != current.inputType ||
         previous.imeOptions != current.imeOptions
-    ) {
-        return true
-    }
-    if (
-        extendedFieldChanged(previous.autofillId, current.autofillId) ||
-        extendedFieldChanged(previous.fieldName, current.fieldName) ||
-        extendedFieldChanged(previous.privateImeOptions, current.privateImeOptions)
-    ) {
-        return true
-    }
-    if (!primarySignalsAbsent(previous, current)) return false
-    return extendedFieldChanged(previous.hintText, current.hintText) ||
-        extendedFieldChanged(previous.label, current.label)
 }
 
 /**

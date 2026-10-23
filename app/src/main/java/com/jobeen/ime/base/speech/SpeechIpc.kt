@@ -25,7 +25,6 @@ object SpeechIpc {
     const val MSG_RECORDING_STARTED = 10
     const val MSG_PARTIAL = 11
     const val MSG_FINAL = 12
-    const val MSG_AMPLITUDE = 13
     const val MSG_ERROR = 14
     const val MSG_DONE = 15
 
@@ -33,13 +32,6 @@ object SpeechIpc {
     const val MSG_PONG = 16
 
     const val KEY_TEXT = "text"
-    const val KEY_AMPLITUDE = "amplitude"
-
-    /**
-     * MSG_DONE 的附加标记（服务端→客户端）：本句解码期间推流队列曾满、
-     * 有音频块被丢弃，识别结果可能不完整。仅供客户端打点，本轮不做用户提示。
-     */
-    const val KEY_AUDIO_DROPPED = "audio_dropped"
 
     /** MSG_AUDIO 的音频载荷：PCM16LE 单声道原始块 */
     const val KEY_AUDIO = "audio"
@@ -63,7 +55,6 @@ object SpeechIpc {
     fun message(
         what: Int,
         text: String? = null,
-        amplitude: Float = 0f,
         gen: Int = 0,
         audio: ByteArray? = null,
     ): Message {
@@ -72,9 +63,6 @@ object SpeechIpc {
         var hasData = false
         if (text != null) {
             bundle.putString(KEY_TEXT, text)
-            hasData = true
-        } else if (what == MSG_AMPLITUDE) {
-            bundle.putFloat(KEY_AMPLITUDE, amplitude)
             hasData = true
         }
         if (gen != 0) {

@@ -23,8 +23,8 @@ import java.util.concurrent.TimeUnit
  * App 自更新：从 GitHub Release 直链下载正式版 APK 并调起系统安装，
  * 不再跳转浏览器到 Release 页。
  *
- * 下载落 cacheDir/update/（FileProvider 已授权该路径）；安装前校验
- * 文件大小与包名，防止下错/下坏的文件被送进安装器。
+ * 下载落 cacheDir/update/（FileProvider 已授权该路径）；下载后校验
+ * 文件大小与 GitHub 登记摘要，防止下错/下坏的文件被送进安装器。
  */
 object AppUpdateManager {
 
@@ -147,46 +147,9 @@ object AppUpdateManager {
         }
     }
 
-    /**
-     * 已下载文件是否可安装：能解析为 APK、包名与本应用一致、且**签名证书与
-     * 已安装应用完全一致**。此前只验包名：同包名异签名包要到系统安装器才
-     * 报错（用户先看到一次系统级安装失败）；在这里拦下，失败原因可控可解释。
-     * 系统覆盖安装本身也强制同签名，这里是把防线前移，不是唯一防线。
-     */
-    fun isInstallable(context: Context, file: File): Boolean {
-        if (!file.exists() || file.length() == 0L) return false
-        val pm = context.packageManager
-        // 签名信息 API 分档：28+ 用 GET_SIGNING_CERTIFICATES/signingInfo，
-        // 24-27 用旧 GET_SIGNATURES/signatures（minSdk 24，不能直调新 API）
-        @Suppress("DEPRECATION")
-        val flags = if (Build.VERSION.SDK_INT >= 28) {
-            android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
-        } else {
-            android.content.pm.PackageManager.GET_SIGNATURES
-        }
-        val info = runCatching {
-            pm.getPackageArchiveInfo(file.absolutePath, flags)
-        }.getOrNull() ?: return false
-        if (info.packageName != context.packageName) return false
-        val newCerts = signerCerts(info) ?: return false
-        val current = runCatching {
-            pm.getPackageInfo(context.packageName, flags)
-        }.getOrNull() ?: return false
-        val currentCerts = signerCerts(current) ?: return false
-        return newCerts == currentCerts
-    }
-
-    /** 提取签名证书字节集合（按系统版本选 API），无签名信息时返回 null */
-    @Suppress("DEPRECATION")
-    private fun signerCerts(info: android.content.pm.PackageInfo): Set<List<Byte>>? {
-        val signers = if (Build.VERSION.SDK_INT >= 28) {
-            info.signingInfo?.apkContentsSigners
-        } else {
-            info.signatures
-        } ?: return null
-        if (signers.isEmpty()) return null
-        return signers.map { it.toByteArray().toList() }.toSet()
-    }
+    // 安装前不再本地读包验签（Q12 已拆）：下载环节已做大小＋登记
+    // 摘要校验，系统安装器对签名不一致的覆盖安装本身就拒绝，这道
+    // 前置比对纯属重复劳动、还多一个误拒点
 
     /** 是否还缺「安装未知应用」授权（API 26 起按应用单独授权，低版本无此门） */
     fun needsInstallPermission(context: Context): Boolean =
