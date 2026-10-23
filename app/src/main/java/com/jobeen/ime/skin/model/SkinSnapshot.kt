@@ -25,6 +25,10 @@ data class SkinSnapshot(
     val background: BackgroundSnapshot?,
     val degradations: Set<Degradation>,
     val layoutId: String?,
+    /** 逐键覆写（B2）：键 ID → 强类型覆写；装配器在构建期消费（详设 §四）。 */
+    val keyOverrides: Map<String, KeyOverride> = emptyMap(),
+    /** 音效接纳结果（B2）：播放层只读接纳表（详设 §7）。 */
+    val soundBindings: SoundBindings = SoundBindings.EMPTY,
 )
 
 /** 快照中的背景状态：预处理产物引用 + 生效参数（已含降级处理）。 */

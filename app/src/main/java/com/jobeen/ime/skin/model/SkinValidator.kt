@@ -1,6 +1,7 @@
 package com.jobeen.ime.skin.model
 
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.input.keyboard.key.KeyIds
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -14,8 +15,8 @@ import kotlinx.serialization.json.intOrNull
  *   minAppVersion 不满足、第十一章 JSON 上限超限（九.3/十一.5）。
  * - 逐项回填（[SkinIssue]）：已知字段类型错/越界/格式错 → 按
  *   优先级链回填下一级并逐项报告，绝不静默丢弃整包（九.2）。
- * - 保留不应用：keyMappings / audio / layoutId 原文保留在树里，
- *   B1 只做存在性提示（十六.1 矩阵）。
+ * - keyMappings / audio 自 B2 起强类型解析并应用（单项无效只
+ *   剔该项）；layoutId 仍保留不应用（Batch 3）。
  *
  * 纯函数：全局偏好现值与资产清单经参数注入，可直接单测。
  */
@@ -38,7 +39,6 @@ object SkinValidator {
     private val BLUR_RANGE = 0f..25f
     private val ALPHA_RANGE = 0f..1f
     private const val MAX_META_NAME_LENGTH = 32
-    private const val MAX_LABEL_LENGTH = 16
 
     sealed interface Result {
         data class Valid(val skin: ValidatedSkin, val issues: List<SkinIssue>) : Result
@@ -183,34 +183,55 @@ object SkinValidator {
             }
         }
 
-        // ---- keyMappings（保留不应用；仅做条数与 label 长度提示） ----
+        // ---- keyMappings（B2 强类型解析；单项无效只剔该项，逐项报告） ----
         var keyMappingsCount = 0
+        var keyOverrides: Map<String, KeyOverride> = emptyMap()
+        var keyRejections: List<KeyBindingRejection> = emptyList()
+        var sequenceBindingCount = 0
         if (tree["keyMappings"] != null) {
             if (keyMappings == null) {
                 issues += SkinIssue(
-                    "keyMappings", SkinIssue.Kind.RETAINED_INACTIVE, "key_mappings_not_object_retained",
+                    "keyMappings", SkinIssue.Kind.FIELD_FALLBACK, "key_mappings_not_object",
                 )
             } else {
                 keyMappingsCount = keyMappings.size
-                issues += SkinIssue(
-                    "keyMappings", SkinIssue.Kind.RETAINED_INACTIVE, "key_mappings_not_applied_in_batch1",
+                val parsed = SkinKeyMappingsParser.parse(
+                    keyMappings = keyMappings,
+                    isOverridable = KeyIds::isOverridable,
+                    isAnchor = KeyIds::isAnchor,
                 )
-                for ((keyId, entry) in keyMappings) {
-                    val label = ((entry as? JsonObject)?.get("label") as? JsonPrimitive)?.contentOrNull
-                    if (label != null && label.length > MAX_LABEL_LENGTH) {
-                        issues += SkinIssue(
-                            "keyMappings.$keyId.label", SkinIssue.Kind.INFO, "label_too_long",
-                        )
+                keyOverrides = parsed.overrides
+                keyRejections = parsed.rejections
+                sequenceBindingCount = parsed.sequenceSlots.size
+                for (rejection in parsed.rejections) {
+                    val path = buildString {
+                        append("keyMappings.").append(rejection.keyId)
+                        rejection.slot?.let { append('.').append(it.jsonName) }
                     }
+                    issues += SkinIssue(
+                        path,
+                        if (rejection.reason == BindingRejectReason.ANCHOR_NOT_OVERRIDABLE) {
+                            SkinIssue.Kind.INFO
+                        } else {
+                            SkinIssue.Kind.FIELD_FALLBACK
+                        },
+                        rejection.reason.name.lowercase(),
+                    )
+                }
+                for ((keyId, slot) in parsed.sequenceSlots) {
+                    issues += SkinIssue(
+                        "keyMappings.$keyId.${slot.jsonName}",
+                        SkinIssue.Kind.RETAINED_INACTIVE, "sequence_retained_inactive",
+                    )
                 }
             }
         }
 
-        // ---- audio（保留不应用；引用存在性提示） ----
+        // ---- audio（B2 应用；此处只做引用存在性提示，接纳判定在快照构建期） ----
         val audioRefs = mutableMapOf<String, String>()
         val audio = tree["audio"] as? JsonObject
         if (tree["audio"] != null && audio == null) {
-            issues += SkinIssue("audio", SkinIssue.Kind.RETAINED_INACTIVE, "audio_not_object_retained")
+            issues += SkinIssue("audio", SkinIssue.Kind.FIELD_FALLBACK, "audio_not_object")
         }
         if (audio != null) {
             for ((slot, node) in audio) {
@@ -225,11 +246,6 @@ object SkinValidator {
                         )
                     }
                 }
-            }
-            if (audioRefs.isNotEmpty()) {
-                issues += SkinIssue(
-                    "audio", SkinIssue.Kind.RETAINED_INACTIVE, "audio_not_applied_in_batch1",
-                )
             }
         }
 
@@ -250,6 +266,9 @@ object SkinValidator {
                 styles = StylesSpec(colors = colors, surfaceStyle = surfaceStyle),
                 keyMappingsPresent = tree["keyMappings"] != null,
                 keyMappingsCount = keyMappingsCount,
+                keyOverrides = keyOverrides,
+                keyRejections = keyRejections,
+                sequenceBindingCount = sequenceBindingCount,
                 audioRefs = audioRefs,
             ),
             issues = issues,

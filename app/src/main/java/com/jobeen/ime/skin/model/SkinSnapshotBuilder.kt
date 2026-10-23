@@ -31,6 +31,10 @@ object SkinSnapshotBuilder {
         assetSha256: (String) -> String?,
         targetWidthPx: Int,
         targetHeightPx: Int,
+        /** 清单中的资产逻辑 id 顺序（音效接纳的确定性次序，详设 §7.1）。 */
+        audioAssetOrder: List<String> = emptyList(),
+        /** 资产 id → 音效事实；查无（未入清单/文件缺失）返回 null。 */
+        audioFacts: (String) -> AudioAssetFacts? = { null },
     ): SkinSnapshot {
         val policy = DegradationPolicy.forTier(tier)
 
@@ -82,6 +86,23 @@ object SkinSnapshotBuilder {
             )
         }
 
+        // 音效接纳（详设 §7.1）：被引用集合 = audio.tap + 逐键 sound 字段；
+        // 接纳次序 = 清单顺序，未入清单的引用追加在后（facts 恒 null → MISSING）
+        val referenced = LinkedHashSet<String>()
+        validated.audioRefs["tap"]?.let { referenced += it }
+        for (override in validated.keyOverrides.values) {
+            override.soundRef?.takeIf { it.isNotEmpty() }?.let { referenced += it }
+        }
+        val inManifest = audioAssetOrder.filter { it in referenced }
+        val notInManifest = referenced.filter { it !in audioAssetOrder }
+        val soundBindings = SkinSoundAdmission.admit(
+            referencedInOrder = inManifest + notInManifest,
+            defaultTapAssetId = validated.audioRefs["tap"],
+            facts = audioFacts,
+            audioBudgetBytes = policy.audioBudgetBytes,
+            skipAll = tier == MemoryTier.EXTREME,
+        )
+
         return SkinSnapshot(
             ref = ref,
             name = validated.metaName,
@@ -91,6 +112,8 @@ object SkinSnapshotBuilder {
             background = background,
             degradations = policy.degradations(),
             layoutId = validated.layoutId,
+            keyOverrides = validated.keyOverrides,
+            soundBindings = soundBindings,
         )
     }
 
