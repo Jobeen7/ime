@@ -74,10 +74,10 @@ class SkinValidatorTest {
             0xFF141414.toInt(),
             skin.styles.colors.getValue(StyleField.PANEL_CANDIDATE_TEXT),
         )
-        // B2 起 keyMappings/audio 已应用：保留不应用只剩 layoutId（Batch 3）
+        // B3 起 layoutId 由快照工厂解析生效：保留不应用段全部退役
         val retained = result.issues.filter { it.kind == SkinIssue.Kind.RETAINED_INACTIVE }
             .map { it.path }.toSet()
-        assertEquals(setOf("layoutId"), retained)
+        assertEquals(emptySet<String>(), retained)
         // 样例中的键覆写被强类型解析（KEY_Q 的 text 绑定生效）
         assertEquals(1, skin.keyOverrides.size)
         assertTrue(skin.keyRejections.isEmpty())
