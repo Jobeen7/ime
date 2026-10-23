@@ -150,6 +150,9 @@ fun SkinLibraryScreen(onBack: () -> Unit) {
     var qrCodeText by remember { mutableStateOf<String?>(null) }
     var deleteSkinId by remember { mutableStateOf<String?>(null) }
     var deleteLayoutId by remember { mutableStateOf<String?>(null) }
+    var deleteLayoutReferrers by remember {
+        mutableStateOf<List<SkinLibraryAdmin.LayoutReferrer>>(emptyList())
+    }
     var showLegacyPicker by remember { mutableStateOf(false) }
     var showPresetPicker by remember { mutableStateOf(false) }
     var pendingExportSkinId by remember { mutableStateOf<String?>(null) }
@@ -447,7 +450,14 @@ fun SkinLibraryScreen(onBack: () -> Unit) {
                                 enabled = !busy,
                             ) { Text("编辑") }
                             TextButton(
-                                onClick = { deleteLayoutId = layoutEntry.id },
+                                onClick = {
+                                    // 先查全部引用方再弹确认（B3 §4.6 警告面）
+                                    runBusy {
+                                        deleteLayoutReferrers =
+                                            admin.layoutReferrers(layoutEntry.id)
+                                        deleteLayoutId = layoutEntry.id
+                                    }
+                                },
                                 enabled = !busy,
                             ) { Text("删除") }
                         }
@@ -663,16 +673,62 @@ fun SkinLibraryScreen(onBack: () -> Unit) {
     }
 
     deleteLayoutId?.let { target ->
+        val referrers = deleteLayoutReferrers
         AlertDialog(
             onDismissRequest = { deleteLayoutId = null },
             title = { Text("删除布局？") },
-            text = { Text("仍被皮肤引用的布局会被拒绝删除。") },
+            text = {
+                if (referrers.isEmpty()) {
+                    Text("该布局未被任何皮肤引用。删除不可恢复（已同步的布局会经墓碑在下次同步时传播删除）。")
+                } else {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("以下 ${referrers.size} 个皮肤正在引用该布局：")
+                        for (referrer in referrers) {
+                            Text("· ${referrer.skinName}", fontSize = 13.sp)
+                        }
+                        Text(
+                            "删除后这些皮肤将回退到默认布局；皮肤文件本身不修改" +
+                                "（重新导入/同步回该布局时绑定自动恢复）。",
+                        )
+                    }
+                }
+            },
             confirmButton = {
                 TextButton(onClick = {
                     deleteLayoutId = null
                     runBusy {
                         when (val result = admin.deleteLayout(target)) {
-                            is SkinLibraryAdmin.Result.Done -> toast("已删除")
+                            is SkinLibraryAdmin.Result.Done -> {
+                                if (referrers.isNotEmpty()) {
+                                    com.jobeen.ime.skin.diag.DiagLog.w(
+                                        "layout", "layout_deleted_referenced",
+                                        mapOf(
+                                            "layoutId" to target,
+                                            "referrerCount" to referrers.size,
+                                        ),
+                                    )
+                                }
+                                // 生效皮肤在引用方之列：立即重装其快照，
+                                // 运行态当场回退默认布局（§4.6 即时收敛）
+                                val activeId = state.active?.skinId
+                                if (activeId != null &&
+                                    referrers.any { it.skinId == activeId }
+                                ) {
+                                    val reinstalled = applier.reinstallActiveSnapshot()
+                                    com.jobeen.ime.skin.diag.DiagLog.i(
+                                        "layout", "layout_delete_revert_applied",
+                                        mapOf(
+                                            "layoutId" to target,
+                                            "skinId" to activeId,
+                                            "reinstalled" to reinstalled,
+                                        ),
+                                    )
+                                    toast("已删除，生效皮肤已回退到默认布局")
+                                } else {
+                                    toast("已删除")
+                                }
+                                refresh()
+                            }
                             is SkinLibraryAdmin.Result.Refused ->
                                 toast("删除被拒绝：${result.reason}")
                         }

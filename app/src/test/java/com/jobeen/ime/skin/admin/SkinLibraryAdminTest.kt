@@ -18,7 +18,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 删除口径：先生效回退、Last-Good 清理、墓碑、引用保护。 */
+/** 删除口径：先生效回退、Last-Good 清理、墓碑、布局引用全量列出后可删。 */
 class SkinLibraryAdminTest {
 
     private class Fixture(
@@ -103,29 +103,82 @@ class SkinLibraryAdminTest {
         assertEquals("hash1", state.tombstones[0].hashAtDelete)
     }
 
-    @Test
-    fun deleteReferencedLayoutRefused() = runBlocking {
-        val f = fixture()
-        val layoutGen = f.layout.layoutGenDir("lay-1", 1).apply { mkdirs() }
+    private suspend fun addLayout(f: Fixture, id: String) {
+        val layoutGen = f.layout.layoutGenDir(id, 1).apply { mkdirs() }
         File(layoutGen, "layout.json").writeText("""{"rows":[]}""")
         val index = (f.store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
             ?: LibraryIndex()
         f.store.writeIndex(
             index.copy(
-                layouts = listOf(
-                    LayoutIndexEntry("lay-1", "lhash", 1, "layouts/lay-1/gen-1", 5L, 0L),
+                layouts = index.layouts + LayoutIndexEntry(
+                    id, "lhash-$id", 1, "layouts/$id/gen-1", 5L, 0L,
                 ),
             ),
         )
+    }
+
+    @Test
+    fun layoutReferrersListsAllReferencingSkins() = runBlocking {
+        val f = fixture()
+        addLayout(f, "lay-1")
+        addLayout(f, "lay-2")
+        addSkin(f, "s1", "hash1", layoutId = "lay-1")
+        addSkin(f, "s2", "hash2", layoutId = "lay-1")
+        addSkin(f, "s3", "hash3", layoutId = "lay-2")
+        addSkin(f, "s4", "hash4")
+        val referrers = f.admin.layoutReferrers("lay-1")
+        assertEquals(listOf("s1", "s2"), referrers.map { it.skinId })
+        assertEquals(listOf("s3"), f.admin.layoutReferrers("lay-2").map { it.skinId })
+        assertTrue(f.admin.layoutReferrers("lay-none").isEmpty())
+    }
+
+    @Test
+    fun deleteReferencedLayoutNowSucceedsAndKeepsSkinFiles() = runBlocking {
+        // B3 §4.6 新口径（取代旧的硬拒绝）：列出→警告→可删→引用方回退
+        val f = fixture()
+        addLayout(f, "lay-1")
         addSkin(f, "s1", "hash1", layoutId = "lay-1")
         val result = f.admin.deleteLayout("lay-1")
+        assertEquals(SkinLibraryAdmin.Result.Done("lay-1"), result)
+        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
+        assertTrue(index.layouts.isEmpty())
+        assertFalse(File(f.layout.layoutsDir, "lay-1").exists())
+        // 引用方皮肤文件原样保留（代次不可变；绑定靠重解析自然悬空回退）
+        assertTrue(File(f.layout.skinGenDir("s1", 1), "skin.json").isFile)
+        assertEquals(1, index.skins.size)
+        // 连带布局草稿被清
+        val draftDir = File(
+            f.layout.draftsDir,
+            com.jobeen.ime.skin.draft.DraftStore.layoutDraftKey("lay-1"),
+        ).apply { mkdirs() }
+        File(draftDir, "draft.json").writeText("{}")
+        addLayout(f, "lay-1")
+        f.admin.deleteLayout("lay-1")
+        assertFalse(draftDir.exists())
+    }
+
+    @Test
+    fun deleteLayoutRefusals() = runBlocking {
+        val f = fixture()
+        // 索引未落盘 → index_unavailable；空索引 → not_found
         assertEquals(
-            SkinLibraryAdmin.Result.Refused("referenced_by:s1"), result,
+            SkinLibraryAdmin.Result.Refused("index_unavailable"),
+            f.admin.deleteLayout("nope"),
         )
-        // 摘掉引用后可删
-        f.admin.deleteSkin("s1") { true }
+        f.store.writeIndex(LibraryIndex())
         assertEquals(
-            SkinLibraryAdmin.Result.Done("lay-1"), f.admin.deleteLayout("lay-1"),
+            SkinLibraryAdmin.Result.Refused("not_found"), f.admin.deleteLayout("nope"),
         )
+    }
+
+    @Test
+    fun deleteSyncedLayoutRecordsTombstone() = runBlocking {
+        val f = fixture()
+        addLayout(f, "lay-1")
+        f.stateStore.write(SkinSyncState(units = mapOf("layout:lay-1" to "lhash-lay-1")))
+        f.admin.deleteLayout("lay-1")
+        val state = f.stateStore.read()
+        assertEquals(1, state.tombstones.size)
+        assertEquals("layout", state.tombstones[0].kind)
     }
 }

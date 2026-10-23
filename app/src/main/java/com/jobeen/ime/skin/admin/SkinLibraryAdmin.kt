@@ -17,7 +17,10 @@ import kotlinx.serialization.json.JsonPrimitive
  * - Last-Good 指针指向被删皮肤：一并清除（指针不得悬空）。
  * - 已同步过的实体：记墓碑待同步传播删除（§4.3）；未同步的
  *   只置脏标记。连带删除其草稿（草稿归属该 id，一并失效）。
- * - 删布局：仍被任一本地皮肤引用的拒绝（引用完整性优先）。
+ * - 删布局（B3 §4.6 按定稿改）：不再因被引用而拒绝——调用方先经
+ *   [layoutReferrers] 列出全部引用方并警告，用户确认后可删；
+ *   引用方皮肤文件不改（代次不可变），其快照在下次构建时按
+ *   layoutId 未设处理并回退默认布局。连带其布局草稿。
  * - 资产实体不在此处回收：引用计数由启动对账全量重建（七.5）。
  */
 class SkinLibraryAdmin(
@@ -57,23 +60,41 @@ class SkinLibraryAdmin(
         return Result.Done(skinId)
     }
 
-    suspend fun deleteLayout(layoutId: String): Result {
-        val index = readIndex() ?: return Result.Refused("index_unavailable")
-        val entry = index.layouts.firstOrNull { it.id == layoutId }
-            ?: return Result.Refused("not_found")
-        for (skin in index.skins) {
+    /** 引用某布局的全部皮肤（删除警告与删后回退判定共用此一份事实）。 */
+    data class LayoutReferrer(val skinId: String, val skinName: String)
+
+    suspend fun layoutReferrers(layoutId: String): List<LayoutReferrer> {
+        val index = readIndex() ?: return emptyList()
+        return index.skins.mapNotNull { skin ->
             val tree = runCatching {
                 SkinJson.parseObject(
                     File(layout.fileFromRelative(skin.dir), "skin.json").readText(),
                 )
             }.getOrNull()
-            val referenced = (tree?.get("layoutId") as? JsonPrimitive)?.content
-            if (referenced == layoutId) {
-                return Result.Refused("referenced_by:${skin.id}")
+            val referenced = (tree?.get("layoutId") as? JsonPrimitive)
+                ?.takeIf { it.isString }?.content
+            if (referenced != layoutId) {
+                null
+            } else {
+                val metaName = ((tree?.get("meta") as? kotlinx.serialization.json.JsonObject)
+                    ?.get("name") as? JsonPrimitive)?.takeIf { it.isString }?.content
+                LayoutReferrer(skin.id, metaName ?: skin.name.ifBlank { skin.id })
             }
         }
+    }
+
+    suspend fun deleteLayout(layoutId: String): Result {
+        val index = readIndex() ?: return Result.Refused("index_unavailable")
+        val entry = index.layouts.firstOrNull { it.id == layoutId }
+            ?: return Result.Refused("not_found")
+        // 被引用不再拒绝（B3 §4.6）：引用方经快照重解析回退，本层
+        // 只做删除本身（墓碑 + 目录 + 索引 + 连带布局草稿）
         noteDeletion("layout", layoutId, entry.hash)
         File(layout.layoutsDir, layoutId).deleteRecursively()
+        File(
+            layout.draftsDir,
+            com.jobeen.ime.skin.draft.DraftStore.layoutDraftKey(layoutId),
+        ).deleteRecursively()
         store.writeIndex(index.copy(layouts = index.layouts.filterNot { it.id == layoutId }))
         return Result.Done(layoutId)
     }

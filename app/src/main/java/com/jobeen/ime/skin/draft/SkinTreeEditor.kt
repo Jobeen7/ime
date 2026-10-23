@@ -34,6 +34,17 @@ object SkinTreeEditor {
     fun layoutIdOf(tree: JsonObject): String? =
         (tree["layoutId"] as? JsonPrimitive)?.content
 
+    /**
+     * 改绑/解绑自创布局（B3 §4.6 皮肤编辑内改绑）：null = 移除
+     * 节点（键缺失即不绑定，与校验器的 layoutId 未设口径一致）。
+     */
+    fun setLayoutId(tree: JsonObject, layoutId: String?): JsonObject =
+        if (layoutId == null) {
+            JsonObject(tree - "layoutId")
+        } else {
+            JsonObject(tree + ("layoutId" to JsonPrimitive(layoutId)))
+        }
+
     // ---- 配色（styles 28 叶子） ----
 
     fun colorOf(tree: JsonObject, field: StyleField): Int? {
