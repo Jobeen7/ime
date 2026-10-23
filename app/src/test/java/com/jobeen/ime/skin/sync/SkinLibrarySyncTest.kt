@@ -267,6 +267,91 @@ class SkinLibrarySyncTest {
         assertTrue(f.stateStore.read().tombstones.isEmpty())
     }
 
+    // ---- B3 §7.1：布局单元的结构校验与副本改写 ----
+
+    private fun layoutJson(id: String, name: String) =
+        """{"formatVersion":3,"meta":{"id":"$id","name":"$name"},""" +
+            """"rows":[{"keys":[{"stableId":"1","label":"q",""" +
+            """"tap":{"type":"text","value":"q"}}]}]}"""
+
+    private suspend fun writeLocalLayout(f: Fixture, id: String, jsonText: String) {
+        val bytes = jsonText.encodeToByteArray()
+        val hash = DigestUtil.sha256Hex(bytes)
+        val genDir = f.layout.layoutGenDir(id, 1).apply { mkdirs() }
+        File(genDir, "layout.json").writeBytes(bytes)
+        val index = (f.store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
+            ?: LibraryIndex()
+        f.store.writeIndex(
+            index.copy(
+                layouts = index.layouts.filterNot { it.id == id } +
+                    com.jobeen.ime.skin.store.LayoutIndexEntry(
+                        id, hash, 1, "layouts/$id/gen-1", bytes.size.toLong(), 0L,
+                    ),
+            ),
+        )
+    }
+
+    private fun seedRemoteLayout(f: Fixture, id: String, jsonText: String) {
+        val bytes = jsonText.encodeToByteArray()
+        val hash = DigestUtil.sha256Hex(bytes)
+        f.transport.files["layouts/$id.json"] = bytes
+        val index = RemoteSkinIndex(
+            entries = listOf(
+                RemoteSkinEntry(id, "layout", hash, bytes.size.toLong(), 0L),
+            ),
+        )
+        f.transport.files["index.json"] =
+            Json.encodeToString(index).encodeToByteArray()
+    }
+
+    @Test
+    fun downloadNewRemoteLayoutValidatesAndImports() = runBlocking {
+        val f = fixture()
+        seedRemoteLayout(f, "lay-1", layoutJson("lay-1", "远端布局"))
+        val report = f.engine.sync()
+        assertEquals(
+            SkinLibrarySync.Action.DOWNLOADED, actions(report)["layout:lay-1"],
+        )
+        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(listOf("lay-1"), index.layouts.map { it.id })
+    }
+
+    @Test
+    fun remoteInvalidLayoutFailsUnitAndStaysOutOfLibrary() = runBlocking {
+        val f = fixture()
+        // 权重非法（整布局无效）：单元失败进失败清单，本地库不被毒化
+        val bad = """{"formatVersion":3,"meta":{"id":"lay-bad","name":"坏"},""" +
+            """"rows":[{"keys":[{"stableId":"1","label":"q","widthWeight":0.0,""" +
+            """"tap":{"type":"text","value":"q"}}]}]}"""
+        seedRemoteLayout(f, "lay-bad", bad)
+        val report = f.engine.sync()
+        val result = report.results.single { it.unitKey == "layout:lay-bad" }
+        assertEquals(SkinLibrarySync.Action.FAILED, result.action)
+        assertEquals("layout_invalid", result.detail)
+        val index = (f.store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
+        assertTrue(index == null || index.layouts.isEmpty())
+    }
+
+    @Test
+    fun layoutConflictCopyRewritesMetaIdAndHash() = runBlocking {
+        val f = fixture()
+        writeLocalLayout(f, "lay-1", layoutJson("lay-1", "本地 v1"))
+        f.engine.sync() // base := hash(v1)，远端 = v1
+        writeLocalLayout(f, "lay-1", layoutJson("lay-1", "本地 v2"))
+        seedRemoteLayout(f, "lay-1", layoutJson("lay-1", "远端 v3"))
+        val report = f.engine.sync()
+        val result = report.results.single { it.unitKey == "layout:lay-1" }
+        assertEquals(SkinLibrarySync.Action.CONFLICT_COPY, result.action)
+        val copyId = result.copyId
+        assertNotNull(copyId)
+        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
+        val copyEntry = index.layouts.single { it.id == copyId }
+        val copyFile = File(f.layout.fileFromRelative(copyEntry.dir), "layout.json")
+        // 副本文件 meta.id 已改写为新 id，索引 hash 与改写后字节一致（铁律 3）
+        assertTrue(copyFile.readText().contains("\"id\":\"$copyId\""))
+        assertEquals(DigestUtil.sha256Hex(copyFile.readBytes()), copyEntry.hash)
+    }
+
     @Test
     fun authFailureAbortsRound() = runBlocking {
         val f = fixture()
