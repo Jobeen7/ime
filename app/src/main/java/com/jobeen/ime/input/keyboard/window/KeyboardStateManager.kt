@@ -12,6 +12,8 @@ import com.jobeen.ime.input.keyboard.impl.IKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
+import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
@@ -174,7 +176,22 @@ object KeyboardStateManager {
 
     private var lastSwitchKey: Pair<String, String?>? = null
 
+    /**
+     * 切换到目标键盘。目标先经自创布局的主键盘位解析（皮肤 v3
+     * B3 §3.3）：生效皮肤绑定了有效自创布局时，主键盘名改指
+     * `custom:<layoutId>`；场景/工具键盘名原样。startInput 的
+     * 场景强制目标走 [switchToResolved] 直达，不经此解析。
+     */
     fun switchTo(name: String) {
+        val target = CustomLayoutRuntime.resolveSwitchTarget(
+            SkinSnapshotProvider.current(appContext),
+            name,
+            currentSchema?.layout ?: defaultKeyboardName,
+        )
+        switchToResolved(target)
+    }
+
+    private fun switchToResolved(name: String) {
         // 同键盘 + 同方案的重复切换直接早退：旧实现每次都重设空格键文案/
         // 标点模式并回调 onKeyboardChanged（触发窗口侧重排），而调用方
         // （refreshSchemas、resume 等）经常同参数连调多次
@@ -244,13 +261,15 @@ object KeyboardStateManager {
             (variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)
-        val start = when {
+        // 场景强制键盘（数字/电话/密码）不被自创布局替换（B3
+        // §3.3 优先级表第一行）：走直达通道；主键盘位走 switchTo 解析
+        when {
             inputClass == InputType.TYPE_CLASS_NUMBER ||
-                inputClass == InputType.TYPE_CLASS_PHONE -> NumberKeyboard.NAME
-            isPasswordText -> QwertyKeyboard.NAME
-            else -> currentSchema?.layout ?: defaultKeyboardName
+                inputClass == InputType.TYPE_CLASS_PHONE ->
+                switchToResolved(NumberKeyboard.NAME)
+            isPasswordText -> switchToResolved(QwertyKeyboard.NAME)
+            else -> switchTo(currentSchema?.layout ?: defaultKeyboardName)
         }
-        switchTo(start)
     }
 
     fun resume() {
