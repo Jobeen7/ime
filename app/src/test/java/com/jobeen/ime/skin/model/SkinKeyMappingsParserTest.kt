@@ -4,6 +4,7 @@ import com.jobeen.ime.input.keyboard.key.KeyIds
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -112,14 +113,16 @@ class SkinKeyMappingsParserTest {
     }
 
     @Test
-    fun sequenceRetainedAsPlaceholderNotApplied() {
+    fun sequenceRejectedAsRemoved() {
+        // B3 裁定删除 sequence 占位（详设 §6.6）：解析一律拒绝，
+        // 不再产生 SequencePlaceholder，sequenceSlots 恒空
         val result = parseEntry("""{"tap": {"type": "sequence", "steps": []}}""")
-        assertEquals(
-            SkinAction.SequencePlaceholder,
-            result.overrides.getValue("KEY_Q").tap,
-        )
-        assertEquals(listOf("KEY_Q" to KeySlot.TAP), result.sequenceSlots)
-        assertTrue(result.rejections.isEmpty())
+        // 唯一槽位被剔 → 整条覆写不产出（条目级口径与其它全剔情形一致）
+        assertFalse("KEY_Q" in result.overrides)
+        assertTrue(result.sequenceSlots.isEmpty())
+        val rejection = result.rejections.single()
+        assertEquals(BindingRejectReason.SEQUENCE_REMOVED, rejection.reason)
+        assertEquals(KeySlot.TAP, rejection.slot)
     }
 
     // ---------- 非法样本：逐项剔除 ----------

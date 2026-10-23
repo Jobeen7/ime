@@ -300,7 +300,8 @@ class LayoutValidatorTest {
         )
         val sequenceTap = buildJsonObject { put("type", "sequence") }
         assertEquals(
-            "tap_sequence_not_allowed",
+            // sequence 已删除（B3 §6.6）：解析层直接拒绝，tap 升格口径不变
+            "tap_invalid:sequence_removed",
             invalid(layout(rowsOf(row(key(tap = sequenceTap)))))
                 .reasonsAt("rows[0].keys[0].tap").single(),
         )
@@ -418,7 +419,8 @@ class LayoutValidatorTest {
         val validResult = result as LayoutValidation.Valid
         assertNull(validResult.layout.rows[0][0].longPress)
         assertEquals(
-            "sequence_placeholder",
+            // sequence 元素在解析层以 sequence_removed 剔除（B3 §6.6）
+            "sequence_removed",
             validResult.issues.reasonsAt("rows[0].keys[0].longPress").single(),
         )
     }
