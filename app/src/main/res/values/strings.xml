@@ -58,6 +58,7 @@
     <string name="custom_theme_marker">用户自定义主题</string>
     <string name="keyboard_theme_desc">主题设置、分享、导入</string>
     <string name="keyboard_theme_follow_system">跟随系统</string>
+    <string name="skin_follow_system_disabled_note">自定义皮肤生效中，跟随系统已停用（回退到内置主题后恢复）</string>
     <string name="keyboard_theme_light">浅色模式主题</string>
     <string name="keyboard_theme_dark">深色模式主题</string>
     <string name="keyboard_theme_scan">扫码</string>

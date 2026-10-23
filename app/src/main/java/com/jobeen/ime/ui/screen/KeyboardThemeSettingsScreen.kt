@@ -272,6 +272,11 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
             key(themeVersion) {
                 SettingsGroup(title = stringResource(R.string.keyboard_theme_setting)) {
                 Spacer(Modifier.height(4.dp))
+                // 裁定 B3：v3 自定义皮肤生效期间跟随系统不适用——开关置灰并注记，
+                // 回退内置主题后自动恢复（皮肤优先于跟随系统的浅/深变体）。
+                val skinActive = remember {
+                    com.jobeen.ime.skin.runtime.SkinSnapshotProvider.current(context) != null
+                }
                 SwitchRow(
                     title = stringResource(R.string.keyboard_theme_follow_system),
                     checked = followSystem,
@@ -280,7 +285,18 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                         KeyboardManager.Keyboard.setFollowSystem(context, it)
                     },
                     showDivider = true,
+                    enabled = !skinActive,
                 )
+                if (skinActive) {
+                    Text(
+                        text = stringResource(R.string.skin_follow_system_disabled_note),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp),
+                    )
+                }
                 Spacer(Modifier.height(8.dp))
                 if (followSystem) {
                     Text(
