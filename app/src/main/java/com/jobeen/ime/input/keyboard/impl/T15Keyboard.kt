@@ -6,6 +6,9 @@ import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.input.keyboard.key.KeyIds
+import com.jobeen.ime.skin.runtime.KeyOverrideApplier
+import com.jobeen.ime.skin.runtime.PlaceholderValues
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -23,7 +26,8 @@ import com.jobeen.ime.input.keyboard.key.zeroKey
 class T15Keyboard(
     context: Context,
     colors: KeyboardColors.ColorScheme,
-) : BaseKeyboard(context, colors, Layout), ISidePanelKeyboard {
+    layout: List<List<KeyDef>> = effectiveLayout(context),
+) : BaseKeyboard(context, colors, layout), ISidePanelKeyboard {
     private val fullWidthPunctuations = listOf("，", "。", "？", "！", "：", "~", "...")
     private val halfWidthPunctuations = listOf(",", ".", "!", "?", ":", "~", "...")
     var punctuations = fullWidthPunctuations
@@ -56,6 +60,18 @@ class T15Keyboard(
 
     companion object {
         const val NAME = "T15"
+
+        /**
+         * 生效布局（详设 §4.2 接缝）：出厂布局经当前皮肤快照的覆写
+         * 装配；无快照/无命中时恒等返回出厂布局。编辑器预览传入
+         * 显式 layout 时不走此路（不碰全局快照槽，详设 §10.2-7）。
+         */
+        fun effectiveLayout(context: Context): List<List<KeyDef>> {
+            val snapshot = SkinSnapshotProvider.current(context) ?: return Layout
+            return KeyOverrideApplier.apply(
+                NAME, Layout, snapshot, PlaceholderValues.current(context),
+            )
+        }
 
         const val percentWidth = 0.13998f
         const val npercentWidth = 0.15f

@@ -8,6 +8,9 @@ import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.KeyIds
+import com.jobeen.ime.skin.runtime.KeyOverrideApplier
+import com.jobeen.ime.skin.runtime.PlaceholderValues
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.atKey
 import com.jobeen.ime.input.keyboard.key.backspaceKey
@@ -24,7 +27,8 @@ import com.jobeen.ime.input.keyboard.key.sidePannelKey
 class NumberKeyboard(
     context: Context,
     colors: KeyboardColors.ColorScheme,
-) : BaseKeyboard(context, colors, Layout), ISidePanelKeyboard {
+    layout: List<List<KeyDef>> = effectiveLayout(context),
+) : BaseKeyboard(context, colors, layout), ISidePanelKeyboard {
 
     init {
         this.onPossibleCandidatePinYin(emptyList())
@@ -33,6 +37,18 @@ class NumberKeyboard(
 
     companion object {
         const val NAME = "Number"
+
+        /**
+         * 生效布局（详设 §4.2 接缝）：出厂布局经当前皮肤快照的覆写
+         * 装配；无快照/无命中时恒等返回出厂布局。编辑器预览传入
+         * 显式 layout 时不走此路（不碰全局快照槽，详设 §10.2-7）。
+         */
+        fun effectiveLayout(context: Context): List<List<KeyDef>> {
+            val snapshot = SkinSnapshotProvider.current(context) ?: return Layout
+            return KeyOverrideApplier.apply(
+                NAME, Layout, snapshot, PlaceholderValues.current(context),
+            )
+        }
 
         // 行宽账（行内和＋跨行键宽须恰为 1.0）：右列与 T9 对齐为
         // 0.18，数字列随之由 0.23333 收为 0.22333（与 T9 字母列
