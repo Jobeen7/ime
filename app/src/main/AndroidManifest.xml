@@ -154,6 +154,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.LayoutEditorActivity"
+            android:exported="false"
+            android:label="布局编辑"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.PredictionSettingsActivity"
             android:exported="false"
             android:label="@string/prediction_candidates"
