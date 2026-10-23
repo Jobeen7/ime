@@ -59,11 +59,6 @@
 - 键盘主题数据格式说明见 [docs/theme-format.md](docs/theme-format.md)
 - 第三方组件与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
-## 构建
-
-- 源码构建先运行 `install-deps.sh` 拉取并校验原生依赖；在 Windows 上构建需 `patch.exe` 在 PATH 中（构建期对 deps 打补丁用）
-- 内置万象方案包 `app/src/main/assets/resource.zip` 不入版本库，其经 Jime 适配的四个方案文件与重打包步骤见 [tools/wanxiang-builtin/](tools/wanxiang-builtin/README.md)
-
 ## 许可证
 
 本项目以 BSD-3-Clause 许可证发布，见 [LICENSE](LICENSE)。输入引擎基于 librime，拼音方案来自[万象拼音](https://github.com/amzxyz/rime-wanxiang)，离线语音识别基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)，详见第三方声明。
