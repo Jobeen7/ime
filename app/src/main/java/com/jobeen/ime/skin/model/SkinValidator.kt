@@ -16,7 +16,8 @@ import kotlinx.serialization.json.intOrNull
  * - 逐项回填（[SkinIssue]）：已知字段类型错/越界/格式错 → 按
  *   优先级链回填下一级并逐项报告，绝不静默丢弃整包（九.2）。
  * - keyMappings / audio 自 B2 起强类型解析并应用（单项无效只
- *   剔该项）；layoutId 仍保留不应用（Batch 3）。
+ *   剔该项）；layoutId 自 B3 起由快照工厂解析生效（本类只做
+ *   字符串形态校验，引用解析在工厂层，见详设 §3.4）。
  *
  * 纯函数：全局偏好现值与资产清单经参数注入，可直接单测。
  */
@@ -105,7 +106,7 @@ object SkinValidator {
         val metaAuthor = (meta?.get("author") as? JsonPrimitive)?.contentOrNull ?: ""
         val metaVersion = (meta?.get("version") as? JsonPrimitive)?.contentOrNull ?: "1.0"
 
-        // ---- layoutId（B1 保留不应用） ----
+        // ---- layoutId（B3 起由快照工厂解析生效；此处只验字符串形态） ----
         var layoutId: String? = null
         val layoutPrimitive = tree["layoutId"] as? JsonPrimitive
         if (layoutPrimitive != null) {
@@ -114,7 +115,6 @@ object SkinValidator {
                 issues += SkinIssue("layoutId", SkinIssue.Kind.FIELD_FALLBACK, "layout_id_not_string")
             } else {
                 layoutId = raw
-                issues += SkinIssue("layoutId", SkinIssue.Kind.RETAINED_INACTIVE, "layout_not_applied_in_batch1")
             }
         }
 

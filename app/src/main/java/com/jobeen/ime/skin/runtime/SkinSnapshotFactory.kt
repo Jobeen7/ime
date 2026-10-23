@@ -7,20 +7,25 @@ import android.os.Build
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.layout.LayoutResolver
 import com.jobeen.ime.skin.media.AndroidAudioInfoProbe
 import com.jobeen.ime.skin.model.AssetKind
 import com.jobeen.ime.skin.model.AudioAssetFacts
 import com.jobeen.ime.skin.model.BindingRejectReason
 import com.jobeen.ime.skin.model.GeometryFallbacks
+import com.jobeen.ime.skin.model.LayoutResolution
 import com.jobeen.ime.skin.model.MemoryTier
 import com.jobeen.ime.skin.model.PackageManifest
+import com.jobeen.ime.skin.model.ResolvedLayout
 import com.jobeen.ime.skin.model.SkinJson
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
 import com.jobeen.ime.skin.model.SkinValidator
 import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibraryLayout
+import com.jobeen.ime.skin.store.SkinLibraryStore
 import java.io.File
+import kotlinx.coroutines.runBlocking
 
 /**
  * 快照工厂（Android 适配层）：把磁盘上的一代皮肤（skin.json +
@@ -141,6 +146,9 @@ object SkinSnapshotFactory {
         val assetShaById = manifest.assets().associate { it.id to it.sha256 }
         val (targetW, targetH) = backgroundTargetPx(context)
         val audioFacts = manifestAudioFacts(libraryLayout, manifest)
+        val (resolvedLayout, layoutResolution) = resolveSnapshotLayout(
+            context, libraryLayout, validated.layoutId, ref,
+        )
         val snapshot = SkinSnapshotBuilder.build(
             validated = validated,
             ref = ref,
@@ -151,9 +159,100 @@ object SkinSnapshotFactory {
             targetHeightPx = targetH,
             audioAssetOrder = manifest.assets().map { it.id },
             audioFacts = audioFacts,
+            resolvedLayout = resolvedLayout,
+            layoutResolution = layoutResolution,
         )
         logBatch2Events(ref, validated, snapshot)
         return snapshot
+    }
+
+    /**
+     * 布局引用解析接线（B3 §3.4/§3.5）：索引 → 当前代次文件 →
+     * 校验 → 构建。失败一律回退为「未设 layoutId」：快照照常
+     * 成立、皮肤其余部分全部生效，逐项记日志（铁律 4）；不触发
+     * Last-Good（布局回退已在解析层完成，不属于新皮肤生效失败）。
+     */
+    private fun resolveSnapshotLayout(
+        context: Context,
+        libraryLayout: SkinLibraryLayout?,
+        layoutId: String?,
+        ref: SkinGenRef,
+    ): Pair<ResolvedLayout?, LayoutResolution> {
+        if (layoutId == null) return null to LayoutResolution.NOT_SET
+        if (libraryLayout == null) return null to LayoutResolution.MISSING
+        val index = (runBlocking { SkinLibraryStore(libraryLayout).readIndex() }
+            as? SkinLibraryStore.ReadResult.Ok)?.value
+        val entry = index?.layouts?.firstOrNull { it.id == layoutId }
+        if (entry == null) {
+            DiagLog.w(
+                "layout", "layout_fallback_default",
+                mapOf(
+                    "skinId" to ref.skinId, "layoutId" to layoutId,
+                    "reason" to "missing",
+                ),
+            )
+            return null to LayoutResolution.MISSING
+        }
+        val file = File(libraryLayout.fileFromRelative(entry.dir), "layout.json")
+        val tree = runCatching { SkinJson.parseObject(file.readText()) }.getOrNull()
+        if (tree == null) {
+            // 代次目录损坏/文件缺失（§3.5 第 5 项）：按 missing 处理，
+            // 索引对账（B1 启动对账）另行收敛
+            DiagLog.w(
+                "layout", "layout_fallback_default",
+                mapOf(
+                    "skinId" to ref.skinId, "layoutId" to layoutId,
+                    "reason" to "layout_file_unreadable",
+                ),
+            )
+            return null to LayoutResolution.MISSING
+        }
+        return when (
+            val outcome = LayoutResolver.resolve(
+                tree, layoutId, entry.generation, PlaceholderValues.current(context),
+            )
+        ) {
+            is LayoutResolver.Outcome.Invalid -> {
+                val first = outcome.issues.firstOrNull()
+                DiagLog.w(
+                    "layout", "layout_validation_rejected",
+                    mapOf(
+                        "layoutId" to layoutId, "source" to "snapshot",
+                        "issueCount" to outcome.issues.size,
+                        "firstPath" to first?.path, "firstReason" to first?.reason,
+                    ),
+                )
+                DiagLog.w(
+                    "layout", "layout_fallback_default",
+                    mapOf(
+                        "skinId" to ref.skinId, "layoutId" to layoutId,
+                        "reason" to "invalid",
+                    ),
+                )
+                null to LayoutResolution.INVALID
+            }
+            is LayoutResolver.Outcome.Resolved -> {
+                for (issue in outcome.issues) {
+                    DiagLog.w(
+                        "layout", "layout_field_fallback",
+                        mapOf(
+                            "layoutId" to layoutId, "path" to issue.path,
+                            "reason" to issue.reason,
+                        ),
+                    )
+                }
+                val resolved = outcome.resolved
+                DiagLog.i(
+                    "layout", "layout_resolved",
+                    mapOf(
+                        "layoutId" to layoutId, "generation" to resolved.generation,
+                        "keyCount" to resolved.baseLayout.sumOf { it.size },
+                        "rowCount" to resolved.baseLayout.size,
+                    ),
+                )
+                resolved to LayoutResolution.RESOLVED
+            }
+        }
     }
 
     /**

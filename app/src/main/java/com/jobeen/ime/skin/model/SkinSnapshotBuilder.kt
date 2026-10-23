@@ -35,6 +35,11 @@ object SkinSnapshotBuilder {
         audioAssetOrder: List<String> = emptyList(),
         /** 资产 id → 音效事实；查无（未入清单/文件缺失）返回 null。 */
         audioFacts: (String) -> AudioAssetFacts? = { null },
+        /** 已解析布局（B3 §3.4）：由工厂层引用解析后注入，本类只透传。 */
+        resolvedLayout: ResolvedLayout? = null,
+        /** 布局解析结论：默认按有无已解析布局推定，工厂层可显式给出失败结论。 */
+        layoutResolution: LayoutResolution =
+            if (resolvedLayout != null) LayoutResolution.RESOLVED else LayoutResolution.NOT_SET,
     ): SkinSnapshot {
         val policy = DegradationPolicy.forTier(tier)
 
@@ -114,6 +119,8 @@ object SkinSnapshotBuilder {
             layoutId = validated.layoutId,
             keyOverrides = validated.keyOverrides,
             soundBindings = soundBindings,
+            resolvedLayout = resolvedLayout,
+            layoutResolution = layoutResolution,
         )
     }
 
