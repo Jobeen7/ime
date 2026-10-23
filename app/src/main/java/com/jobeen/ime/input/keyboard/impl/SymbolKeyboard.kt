@@ -12,6 +12,7 @@ import com.jobeen.ime.data.Symbol
 import com.jobeen.ime.input.keyboard.key.GridKeyboardView
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.input.keyboard.key.KeyDef
+import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.input.keyboard.key.KeyView
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
@@ -79,6 +80,8 @@ class SymbolKeyboard(
             variant = KeyDef.Appearance.Variant.Alternative,
         ),
         behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.ResumeAction)),
+        // 功能锚点（定稿五.6）：只登记不覆写
+        id = KeyIds.Symbol.SYM_RETURN,
     )
 
     private val sideReturnBtn =
@@ -99,13 +102,15 @@ class SymbolKeyboard(
 
         isClickable = true
 
-        sidePanelItemDefs = categorys.map { (category, _) ->
+        sidePanelItemDefs = categorys.mapIndexed { index, (category, _) ->
             KeyDef(
                 appearance = KeyDef.Appearance.Text(
                     displayText = category.label, textSize = 15f, percentWidth = 0.5f,
                     margin = false, variant = KeyDef.Appearance.Variant.Alternative,
                 ),
                 behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(category.label))),
+                // 功能锚点（定稿五.6）：序号 = 分类表顺序，只登记不覆写
+                id = KeyIds.Symbol.CATS.getOrNull(index),
             )
         }
         sidePanelKey.updateItems(sidePanelItemDefs)
