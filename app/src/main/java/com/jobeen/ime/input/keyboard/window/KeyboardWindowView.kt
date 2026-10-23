@@ -42,7 +42,11 @@ import com.jobeen.ime.base.speech.SpeechUiBridge
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.input.ImeInputConnection
 import com.jobeen.ime.input.dialog.SchemaPickerDialog
+import com.jobeen.ime.input.keyboard.impl.GenericLayoutKeyboard
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.GeometryField
+import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
+import com.jobeen.ime.skin.runtime.PlaceholderValues
 import com.jobeen.ime.skin.runtime.SkinRuntime
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
@@ -283,16 +287,52 @@ class KeyboardWindowView(
     }
 
     private fun createKeyboard(name: String): IKeyboard {
-        val b = when (name) {
-            T15Keyboard.NAME -> T15Keyboard(context, cachedColors)
-            T9Keyboard.NAME -> T9Keyboard(context, cachedColors)
-            SymbolKeyboard.NAME -> SymbolKeyboard(context, cachedColors)
-            EmojiKeyboard.NAME -> EmojiKeyboard(context, cachedColors)
-            NumberKeyboard.NAME -> NumberKeyboard(context, cachedColors)
-            else -> QwertyKeyboard(context, cachedColors)
+        val b = when {
+            // 自创布局在 else 兜底之前显式认领（B3 §3.3）：认领失败
+            // 走 buildCustomKeyboard 的回退链，绝不静默变 Qwerty 而不留痕
+            name.startsWith(CustomLayoutRuntime.PREFIX) -> buildCustomKeyboard(name)
+            else -> when (name) {
+                T15Keyboard.NAME -> T15Keyboard(context, cachedColors)
+                T9Keyboard.NAME -> T9Keyboard(context, cachedColors)
+                SymbolKeyboard.NAME -> SymbolKeyboard(context, cachedColors)
+                EmojiKeyboard.NAME -> EmojiKeyboard(context, cachedColors)
+                NumberKeyboard.NAME -> NumberKeyboard(context, cachedColors)
+                else -> QwertyKeyboard(context, cachedColors)
+            }
         }
         b.setRippleEnabled(KeyboardManager.Keyboard.RippleEffect.isEnabled(context))
         return b
+    }
+
+    /**
+     * 自创布局键盘构建（B3 §3.5 第 3 项回退链）：快照已解析布局
+     * 过覆写装配后喂通用键盘类；解析缺失（运行期数据竞态，如
+     * 构建后布局被删）→ 记 ERROR 并回退方案默认键盘，绝不空白。
+     */
+    private fun buildCustomKeyboard(name: String): IKeyboard {
+        val snapshot = SkinSnapshotProvider.current(context)
+        val effective = CustomLayoutRuntime.effectiveLayout(
+            snapshot, PlaceholderValues.current(context),
+        )
+        if (effective == null) {
+            DiagLog.e(
+                "layout", "layout_keyboard_build_failed",
+                mapOf("layout" to name, "stage" to "factory_resolve"),
+            )
+            val schemaDefault = keyboardStateManager.getCurrentSchema()?.layout
+            val fallback = schemaDefault?.takeIf {
+                !it.startsWith(CustomLayoutRuntime.PREFIX)
+            } ?: QwertyKeyboard.NAME
+            return createKeyboard(fallback)
+        }
+        DiagLog.d(
+            "layout", "layout_applied_to_keyboard",
+            mapOf(
+                "layoutId" to snapshot?.resolvedLayout?.layoutId,
+                "overrideHits" to CustomLayoutRuntime.overrideHitCount(snapshot),
+            ),
+        )
+        return GenericLayoutKeyboard(context, cachedColors, name, effective)
     }
 
     private val keyboardFactory: (String) -> IKeyboard = { name -> createKeyboard(name) }
