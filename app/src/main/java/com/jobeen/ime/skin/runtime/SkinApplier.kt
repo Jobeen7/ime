@@ -105,6 +105,25 @@ class SkinApplier(context: Context) {
         transaction().revertToDefault()
     }
 
+    /**
+     * 以当前 active 记录重建并安装快照（B3 §4.6 删被引用布局后）：
+     * 皮肤内容本身未变，只是其 layoutId 引用已悬空——重解析后
+     * 快照按未绑定布局构建（回退默认布局），运行态即时收敛。
+     * 无 active 皮肤时返回 true（无事可做）。
+     */
+    suspend fun reinstallActiveSnapshot(): Boolean = mutex.withLock {
+        val active = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
+            ?: return@withLock true
+        val skinId = active.skinId ?: return@withLock true
+        val hash = active.hash ?: return@withLock false
+        val ref = SkinGenRef(skinId, hash, active.generation)
+        val snapshot = SkinSnapshotFactory.buildFromGenDir(appContext, layout, ref)
+            ?: return@withLock false
+        SkinSnapshotProvider.install(appContext, snapshot)
+        SkinRuntime.requestRefresh()
+        true
+    }
+
     /** 延迟验证路径：与事务同口径先验目标，再写 pending 并武装（R5）。 */
     private suspend fun deferredApply(ref: SkinGenRef): ApplyTransaction.Result {
         if (!isTargetValid(ref)) {

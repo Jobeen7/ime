@@ -569,6 +569,9 @@ private fun SkinEditorBody(
             )
         }
         item {
+            LayoutBindingRow(tree = tree, onTreeChange = onTreeChange)
+        }
+        item {
             Text("几何", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
         }
         for (field in GeometryField.entries) {
@@ -712,6 +715,105 @@ private fun SkinEditorBody(
             onConfirm = { argb ->
                 onTreeChange(SkinTreeEditor.setColor(tree, dialogField, argb))
                 colorDialogField = null
+            },
+        )
+    }
+}
+
+/**
+ * 布局绑定行（B3 §4.6 皮肤编辑内改绑）：显示当前绑定，选择布局
+ * （含解绑），并可直达布局编辑器新建/改绑中的布局。改绑只写草稿
+ * 树 layoutId 节点，随草稿应用走提交管线成新代次。
+ */
+@Composable
+private fun LayoutBindingRow(
+    tree: JsonObject,
+    onTreeChange: (JsonObject) -> Unit,
+) {
+    val context = LocalContext.current
+    var layouts by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    var showPicker by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        layouts = withContext(Dispatchers.IO) {
+            val index = (SkinLibrary.store.readIndex()
+                as? com.jobeen.ime.skin.store.SkinLibraryStore.ReadResult.Ok)?.value
+            index?.layouts?.map { entry ->
+                val name = runCatching {
+                    val layoutTree = com.jobeen.ime.skin.model.SkinJson.parseObject(
+                        File(
+                            SkinLibrary.layout.fileFromRelative(entry.dir),
+                            "layout.json",
+                        ).readText(),
+                    )
+                    layoutTree?.let { com.jobeen.ime.skin.layout.LayoutTreeEditor.nameOf(it) }
+                }.getOrNull()
+                entry.id to (name ?: entry.id)
+            } ?: emptyList()
+        }
+    }
+    val boundId = SkinTreeEditor.layoutIdOf(tree)
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Text("自创布局", fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
+        Text(
+            boundId?.let { id ->
+                "当前绑定：${layouts.firstOrNull { it.first == id }?.second ?: id}"
+            } ?: "未绑定（使用出厂布局）",
+            fontSize = 13.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            OutlinedButton(onClick = { showPicker = true }) { Text("选择布局") }
+            if (boundId != null) {
+                OutlinedButton(
+                    onClick = {
+                        context.startActivity(
+                            com.jobeen.ime.ui.LayoutEditorActivity
+                                .intentForLayout(context, boundId),
+                        )
+                    },
+                ) { Text("编辑布局") }
+            }
+            OutlinedButton(
+                onClick = {
+                    context.startActivity(
+                        com.jobeen.ime.ui.LayoutEditorActivity.intentForNew(context),
+                    )
+                },
+            ) { Text("新建布局") }
+        }
+    }
+    if (showPicker) {
+        AlertDialog(
+            onDismissRequest = { showPicker = false },
+            title = { Text("选择布局") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    TextButton(
+                        onClick = {
+                            onTreeChange(SkinTreeEditor.setLayoutId(tree, null))
+                            showPicker = false
+                        },
+                    ) { Text(if (boundId == null) "✓ 不绑定（出厂布局）" else "不绑定（出厂布局）") }
+                    for ((id, name) in layouts) {
+                        TextButton(
+                            onClick = {
+                                onTreeChange(SkinTreeEditor.setLayoutId(tree, id))
+                                showPicker = false
+                            },
+                        ) { Text(if (id == boundId) "✓ $name" else name) }
+                    }
+                    if (layouts.isEmpty()) {
+                        Text(
+                            "库中暂无自创布局，可先点「新建布局」创建。",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = {
+                TextButton(onClick = { showPicker = false }) { Text("取消") }
             },
         )
     }
