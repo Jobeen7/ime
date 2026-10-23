@@ -29,6 +29,16 @@ data class DraftMeta(
     /** existing / preset / legacy / blank */
     val source: String,
     val updatedAt: Long,
+    /**
+     * 锚二（皮肤 v3 B3 §4.4，本批补齐）：皮肤草稿立稿时其 layoutId
+     * 所绑布局的 id 与当时 hash——皮肤草稿应用前据此做布局漂移
+     * 提示（草稿期间布局被别处改动时，存量 keyMappings 覆写的
+     * 命中对象可能已变，用户须知情确认）。布局草稿本身不用这两
+     * 个字段（其基线即 baseHash，对布局实体成立，语义同皮肤锚）。
+     * 默认 null：旧 meta 文件与未绑布局的草稿都兼容。
+     */
+    val layoutAnchorId: String? = null,
+    val layoutAnchorHash: String? = null,
 )
 
 /**
@@ -75,6 +85,8 @@ class DraftStore(
         source: String,
         baseGeneration: Int,
         baseHash: String? = null,
+        layoutAnchorId: String? = null,
+        layoutAnchorHash: String? = null,
     ): Draft {
         val bytes = encodeTree(initialTree)
         val contentHash = DigestUtil.sha256Hex(bytes)
@@ -84,6 +96,8 @@ class DraftStore(
             baseGeneration = baseGeneration,
             source = source,
             updatedAt = clock(),
+            layoutAnchorId = layoutAnchorId,
+            layoutAnchorHash = layoutAnchorHash,
         )
         writeDraftFiles(skinId, bytes, meta)
         return Draft(meta, initialTree, contentHash)
@@ -188,5 +202,17 @@ class DraftStore(
         const val SOURCE_PRESET = "preset"
         const val SOURCE_LEGACY = "legacy"
         const val SOURCE_BLANK = "blank"
+
+        /**
+         * 布局草稿的 key 前缀（B3 §4.4）：布局草稿与皮肤草稿同处
+         * 一个草稿区（不新开 [SkinLibraryLayout] 根目录、不动既有
+         * 草稿文件结构），靠 key = `layout:<layoutId>` 区分；布局
+         * 草稿的 DraftMeta.skinId 字段即此 key。皮肤草稿列表等
+         * 消费方须按此前缀过滤，布局草稿只在布局语境出现。
+         */
+        const val LAYOUT_DRAFT_KEY_PREFIX = "layout:"
+
+        /** 布局草稿的草稿区 key。 */
+        fun layoutDraftKey(layoutId: String): String = LAYOUT_DRAFT_KEY_PREFIX + layoutId
     }
 }
