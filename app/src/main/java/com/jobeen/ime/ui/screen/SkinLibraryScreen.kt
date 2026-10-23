@@ -98,7 +98,10 @@ private suspend fun loadLibraryState(): LibraryUiState = withContext(Dispatchers
         active = active,
         lastGood = lastGood,
         syncDirty = syncState.dirty,
-        drafts = DraftStore(SkinLibrary.layout).listMetas(),
+        // 布局草稿与皮肤草稿同处一个草稿区（key 前缀 layout:）：
+        // 本页只列皮肤草稿，布局草稿只在布局编辑语境出现（B3 §4.4）
+        drafts = DraftStore(SkinLibrary.layout).listMetas()
+            .filter { !it.skinId.startsWith(DraftStore.LAYOUT_DRAFT_KEY_PREFIX) },
         quotaBytes = SkinLibrary.layout.quotaBytes(),
         activeDegradations = SkinSnapshotProvider.peek()
             ?.takeIf { it.ref.skinId == active?.skinId }

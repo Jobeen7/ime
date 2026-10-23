@@ -104,6 +104,7 @@ fun SkinEditorScreen(
     var tree by remember { mutableStateOf<JsonObject?>(null) }
     var recoveryDraft by remember { mutableStateOf<DraftStore.Draft?>(null) }
     var showDriftDialog by remember { mutableStateOf(false) }
+    var showLayoutDriftDialog by remember { mutableStateOf(false) }
     var showDiscardDialog by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
 
@@ -119,9 +120,17 @@ fun SkinEditorScreen(
         val sourceTree = com.jobeen.ime.skin.model.SkinJson.parseObject(
             File(genDir, "skin.json").readText(),
         ) ?: return null
+        // 锚二（B3 §4.4）：立稿时录下所绑布局的当前 hash，应用前
+        // 据此提示布局在草稿期间被改动（布局不在库中则不设锚）
+        val anchorLayoutId = SkinTreeEditor.layoutIdOf(sourceTree)
+        val anchorLayout = anchorLayoutId?.let { lid ->
+            index?.layouts?.firstOrNull { it.id == lid }
+        }
         return draftStore.create(
             targetId, sourceTree, DraftStore.SOURCE_EXISTING,
             baseGeneration = entry.generation, baseHash = entry.hash,
+            layoutAnchorId = anchorLayout?.id,
+            layoutAnchorHash = anchorLayout?.hash,
         )
     }
 
@@ -244,6 +253,28 @@ fun SkinEditorScreen(
                         return@launch
                     }
                 }
+                // 锚二布局漂移（B3 §4.4）：立稿后所绑布局被别处改动
+                // （含被删除）→ 知情确认后才继续（存量 keyMappings
+                // 覆写的命中对象可能已随布局变化）
+                val anchorLayoutId = currentDraft.meta.layoutAnchorId
+                if (anchorLayoutId != null) {
+                    val indexNow = (SkinLibrary.store.readIndex()
+                        as? com.jobeen.ime.skin.store.SkinLibraryStore.ReadResult.Ok)?.value
+                    val currentLayoutHash = indexNow?.layouts
+                        ?.firstOrNull { it.id == anchorLayoutId }?.hash
+                    if (currentLayoutHash != currentDraft.meta.layoutAnchorHash) {
+                        com.jobeen.ime.skin.diag.DiagLog.w(
+                            "draft", "layout_draft_drift",
+                            mapOf(
+                                "skinId" to currentDraft.meta.skinId,
+                                "layoutId" to anchorLayoutId,
+                                "layoutPresent" to (currentLayoutHash != null),
+                            ),
+                        )
+                        showLayoutDriftDialog = true
+                        return@launch
+                    }
+                }
                 commitAndApply()
             } finally {
                 busy = false
@@ -310,6 +341,35 @@ fun SkinEditorScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showDriftDialog = false }) { Text("取消") }
+            },
+        )
+    }
+
+    if (showLayoutDriftDialog) {
+        AlertDialog(
+            onDismissRequest = { showLayoutDriftDialog = false },
+            title = { Text("绑定的布局已被修改") },
+            text = {
+                Text(
+                    "编辑期间该皮肤绑定的自创布局已变更（可能来自布局编辑、同步或导入）。" +
+                        "继续应用将以当前布局为准；针对旧布局写的逐键覆写可能不再命中。",
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showLayoutDriftDialog = false
+                    scope.launch {
+                        busy = true
+                        try {
+                            commitAndApply()
+                        } finally {
+                            busy = false
+                        }
+                    }
+                }) { Text("仍然应用") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showLayoutDriftDialog = false }) { Text("取消") }
             },
         )
     }
