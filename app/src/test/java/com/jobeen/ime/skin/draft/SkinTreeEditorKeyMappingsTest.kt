@@ -101,10 +101,13 @@ class SkinTreeEditorKeyMappingsTest {
 
     @Test
     fun validateKeyEntryUsesImportRules() {
-        // 合法条目（含 sequence 占位）→ 无剔除
+        // 合法条目 → 无剔除
         val valid = buildJsonObject {
             put("label", "Q")
-            put("tap", buildJsonObject { put("type", "sequence") })
+            put("tap", buildJsonObject {
+                put("type", "text")
+                put("value", "q")
+            })
             put(
                 "longPress",
                 kotlinx.serialization.json.buildJsonArray {
@@ -113,6 +116,15 @@ class SkinTreeEditorKeyMappingsTest {
             )
         }
         assertTrue(SkinTreeEditor.validateKeyEntry("KEY_Q", valid).isEmpty())
+        // sequence 已删除（B3 §6.6）：写前校验同样拒绝
+        val withSequence = buildJsonObject {
+            put("tap", buildJsonObject { put("type", "sequence") })
+        }
+        val sequenceRejections = SkinTreeEditor.validateKeyEntry("KEY_Q", withSequence)
+        assertEquals(
+            listOf(BindingRejectReason.SEQUENCE_REMOVED),
+            sequenceRejections.map { it.reason },
+        )
         // voice_input 放错槽 → BAD_SLOT
         val badSlot = buildJsonObject {
             put("tap", buildJsonObject { put("type", "command"); put("action", "voice_input") })

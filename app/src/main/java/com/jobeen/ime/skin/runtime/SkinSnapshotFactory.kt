@@ -305,7 +305,16 @@ object SkinSnapshotFactory {
             )
         }
         for (rejection in validated.keyRejections) {
-            if (rejection.reason == BindingRejectReason.ANCHOR_NOT_OVERRIDABLE) {
+            if (rejection.reason == BindingRejectReason.SEQUENCE_REMOVED) {
+                // sequence 占位删除的落点信号（B3 §八）：仅键/槽位/原因
+                DiagLog.w(
+                    "keymap", "sequence_removed_binding",
+                    mapOf(
+                        "keyId" to rejection.keyId,
+                        "slot" to rejection.slot?.jsonName,
+                    ),
+                )
+            } else if (rejection.reason == BindingRejectReason.ANCHOR_NOT_OVERRIDABLE) {
                 DiagLog.i(
                     "keymap", "anchor_not_overridable",
                     mapOf("keyId" to rejection.keyId),

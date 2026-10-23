@@ -509,12 +509,11 @@ class KeyPickingView(
 
 // ---------- 逐键浮层 ----------
 
-/** 浮层内的槽位编辑态（强类型；SequenceKept = 导入的占位原样保留）。 */
+/** 浮层内的槽位编辑态（强类型）。sequence 已按 B3 裁定删除：编辑器不展示该类型。 */
 internal sealed interface SlotEdit {
     data object None : SlotEdit
     data class TextVal(val value: String) : SlotEdit
     data class Cmd(val action: WhitelistAction, val value: String) : SlotEdit
-    data object SequenceKept : SlotEdit
 }
 
 private sealed interface SoundChoice {
@@ -527,7 +526,8 @@ internal fun SkinAction?.toSlotEdit(): SlotEdit = when (this) {
     null -> SlotEdit.None
     is SkinAction.Text -> SlotEdit.TextVal(value)
     is SkinAction.Command -> SlotEdit.Cmd(action, value ?: "")
-    SkinAction.SequencePlaceholder -> SlotEdit.SequenceKept
+    // 解析器已不再产生占位（sequence 一律拒绝）；防御性映射为不覆写
+    SkinAction.SequencePlaceholder -> SlotEdit.None
 }
 
 internal fun SlotEdit.toJson(): kotlinx.serialization.json.JsonElement? = when (this) {
@@ -547,7 +547,6 @@ internal fun SlotEdit.toJson(): kotlinx.serialization.json.JsonElement? = when (
             put("value", value)
         }
     }
-    SlotEdit.SequenceKept -> buildJsonObject { put("type", "sequence") }
 }
 
 /**
@@ -943,21 +942,16 @@ private fun ActionEditRow(
             add("none" to "不覆写")
             add("text" to "文本（喂组字）")
             add("command" to "命令")
-            add("sequence" to "sequence（Batch 3 论证后定）")
         }
         val typeKey = when (edit) {
             SlotEdit.None -> "none"
             is SlotEdit.TextVal -> "text"
             is SlotEdit.Cmd -> "command"
-            SlotEdit.SequenceKept -> "sequence"
         }
         LabeledDropdown(
             label = "类型",
             options = typeOptions,
             selectedKey = typeKey,
-            // sequence 只许保留既有占位（不可新建，详设 §3.6/§6.2 置灰）
-            enabledKeys = setOf("none", "text", "command") +
-                if (edit == SlotEdit.SequenceKept) setOf("sequence") else emptySet(),
             onSelect = { picked ->
                 onChange(
                     when (picked) {
@@ -965,7 +959,6 @@ private fun ActionEditRow(
                         "command" -> SlotEdit.Cmd(
                             WhitelistAction.entries.first { slot in it.allowedSlots }, "",
                         )
-                        "sequence" -> SlotEdit.SequenceKept
                         else -> SlotEdit.None
                     },
                 )

@@ -93,7 +93,14 @@ sealed interface SkinAction {
         val value: String? = null,
     ) : SkinAction
 
-    /** sequence 占位（定稿三.5）：只解析保留，B2 不应用（详设 §3.6）。 */
+    /**
+     * sequence 占位（历史类型，保留仅为模型兼容）：Batch 3 裁定
+     * 删除该占位（详设 §6.6）后，解析器对 type=sequence 一律以
+     * SEQUENCE_REMOVED 拒绝，不再产生本类型；文件中已有的
+     * sequence 节点按未知节点原样往返、不执行不剥除。装配器对
+     * 本类型的既有处理（恒等/过滤）保留，防御以旧版构建的内存
+     * 模型流入。
+     */
     data object SequencePlaceholder : SkinAction
 }
 
@@ -108,6 +115,9 @@ enum class BindingRejectReason {
     VALUE_INVALID,
     VOICE_NOT_EXCLUSIVE,
     STRUCTURE,
+
+    /** type=sequence：占位已按 Batch 3 裁定删除（详设 §6.6），一律拒绝。 */
+    SEQUENCE_REMOVED,
 }
 
 /** 一条被剔除的绑定/字段（结构化记录：快照工厂据此发诊断日志）。 */
@@ -335,7 +345,9 @@ object SkinKeyMappingsParser {
                     ?: return reject(BindingRejectReason.VALUE_MISSING)
                 SkinAction.Text(value)
             }
-            "sequence" -> SkinAction.SequencePlaceholder
+            // sequence 占位已删除（B3 裁定，详设 §6.6）：格式不保留
+            // 该名，解析一律拒绝；文件节点本身在树层原样往返
+            "sequence" -> return reject(BindingRejectReason.SEQUENCE_REMOVED)
             "command" -> {
                 val actionName = obj["action"].stringContentOrNull()
                 val action = actionName?.let { WhitelistAction.fromFormatName(it) }
