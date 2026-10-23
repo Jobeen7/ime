@@ -42,6 +42,9 @@ import com.jobeen.ime.base.speech.SpeechUiBridge
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.input.ImeInputConnection
 import com.jobeen.ime.input.dialog.SchemaPickerDialog
+import com.jobeen.ime.skin.model.GeometryField
+import com.jobeen.ime.skin.runtime.SkinRuntime
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
 import com.jobeen.ime.input.panel.PanelListener
 import kotlin.math.roundToInt
@@ -51,7 +54,7 @@ class KeyboardWindowView(
     context: Context,
     private val keyboardStateManager: KeyboardStateManager,
     private val panelListener: PanelListener? = null,
-) : FrameLayout(context), IManagedView {
+) : FrameLayout(context), IManagedView, SkinRuntime.SkinWindow {
 
     companion object {
         const val PANEL_HEIGHT_DP = 48
@@ -333,7 +336,7 @@ class KeyboardWindowView(
             cachedColors.accentKeyText
         )
 
-        setBackgroundColor(cachedColors.background)
+        applyWindowBackground()
 
         addView(panel.view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
@@ -389,9 +392,13 @@ class KeyboardWindowView(
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
+        // 皮肤运行态注册：应用事务的首帧等待与延迟验证推进挂在本窗口上
+        SkinRuntime.attachWindow(this)
+        SkinRuntime.onWindowAttached()
     }
 
     override fun onDetachedFromWindow() {
+        SkinRuntime.detachWindow(this)
         panel.onFinishInputView(true)
         // 方案选择弹窗挂在本窗口的 token 上，窗口销毁时一并关掉，
         // 避免弹窗残留在已销毁的窗口上（单例在 build 覆盖前也会自关）
@@ -409,7 +416,7 @@ class KeyboardWindowView(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val density = resources.displayMetrics.density
         val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
-        val bPad = dpToPx(KeyboardManager.Keyboard.Padding.getBottomDp(context))
+        val bPad = dpToPx(effectiveBottomInsetDp())
         val barH = (PANEL_HEIGHT_DP * density).roundToInt()
         val cHeight = contentHeight()
         val totalWidth = MeasureSpec.getSize(widthMeasureSpec)
@@ -495,7 +502,7 @@ class KeyboardWindowView(
 
         // 搜索态：键盘整体下移一段（结果列表区在上），尺寸与行高不变
         val clipStripH = clipSearchStripHeight(
-            cHeight, barH, dpToPx(KeyboardManager.Keyboard.Padding.getBottomDp(context)),
+            cHeight, barH, dpToPx(effectiveBottomInsetDp()),
             resolveBottomInset()
         )
         for (i in 0 until childCount) {
@@ -518,7 +525,7 @@ class KeyboardWindowView(
         panel.confirmOverlay.layout(hPad, y0, hPad + contentW, y0 + cHeight)
         addPhraseLayer.layout(0, 0, right - left, stripH)
         val toastLeft = ((right - left) - imeToastView.measuredWidth) / 2
-        val bottomPadding = dpToPx(KeyboardManager.Keyboard.Padding.getBottomDp(context))
+        val bottomPadding = dpToPx(effectiveBottomInsetDp())
         val toastBottom = bottom - top - bottomPadding - resolveBottomInset() - dpToPx(12)
         imeToastView.layout(
             toastLeft,
@@ -600,7 +607,7 @@ class KeyboardWindowView(
         cachedBottomInset = 0
         panel.view.setExpanded(false)
         cachedColors = KeyboardColors.resolve(context)
-        setBackgroundColor(cachedColors.background)
+        applyWindowBackground()
         panel.refreshTheme()
         addPhraseLayer.refreshTheme(cachedColors)
         imeToastView.refreshTheme(cachedColors)
@@ -614,6 +621,46 @@ class KeyboardWindowView(
             cachedColors.accentKeyBackground,
             cachedColors.accentKeyText
         )
+    }
+
+    /**
+     * 窗口背景（皮肤 v3 详设 §2.7；背景绘制点即本类，无独立背景层）：
+     * 有已解码的预处理背景位图时以位图为窗口背景（位图内已含
+     * 模糊与色罩合成），否则回退快照/主题的纯色背景（八.3 不空白）。
+     */
+    private fun applyWindowBackground() {
+        val bitmap = SkinSnapshotProvider.currentBackgroundBitmap()
+        if (bitmap != null && !bitmap.isRecycled) {
+            background = android.graphics.drawable.BitmapDrawable(resources, bitmap)
+        } else {
+            background = null
+            setBackgroundColor(cachedColors.background)
+        }
+    }
+
+    /** 底部安全间距生效值：皮肤 presence 指定时取皮肤值，否则全局偏好（定稿四.3）。 */
+    private fun effectiveBottomInsetDp(): Int {
+        val snapshot = SkinSnapshotProvider.peek()
+        if (snapshot != null && GeometryField.BOTTOM_INSET in snapshot.geometryPresence) {
+            return snapshot.effectiveGeometry.getValue(GeometryField.BOTTOM_INSET).roundToInt()
+        }
+        return KeyboardManager.Keyboard.Padding.getBottomDp(context)
+    }
+
+    /** 皮肤应用事务的窗口接口：刷新一次，刷新后的首帧回调一次（详设 §2.4）。 */
+    override fun refreshSkinTheme(onFirstDraw: (() -> Unit)?) {
+        post {
+            if (onFirstDraw != null) {
+                viewTreeObserver.addOnDrawListener(object :
+                    android.view.ViewTreeObserver.OnDrawListener {
+                    override fun onDraw() {
+                        viewTreeObserver.removeOnDrawListener(this)
+                        onFirstDraw()
+                    }
+                })
+            }
+            refreshColors()
+        }
     }
 
     // 仅当解析出的配色与当前缓存不一致时才全量刷新（主题/跟随系统深浅变化等场景）。
