@@ -115,7 +115,9 @@ class JimeImporterTest {
         skinJson: String = """{"formatVersion":3,"meta":{"id":"skin-a","name":"A"},""" +
             """"styles":{"keyBackground":"#FF112233"}}""",
         layoutId: String? = null,
-        layoutJson: String = """{"rows":[]}""",
+        // B3 起 layout.json 有冻结结构：默认夹具 = meta.id 与 layoutId 一致的合法布局
+        layoutJson: String = """{"formatVersion":3,"meta":{"id":"$layoutId","name":"L"},""" +
+            """"rows":[{"keys":[{"stableId":"1","label":"q","tap":{"type":"text","value":"q"}}]}]}""",
         assets: List<Triple<String, String, ByteArray>> = emptyList(),
     ): List<ZipSafeExtractor.ExtractedFile> {
         val skinBytes = skinJson.encodeToByteArray()
