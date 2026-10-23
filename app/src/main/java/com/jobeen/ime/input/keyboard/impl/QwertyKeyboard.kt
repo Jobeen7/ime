@@ -13,6 +13,10 @@ import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.ImageKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
 import com.jobeen.ime.input.keyboard.key.KeyIds
+import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.runtime.KeyOverrideApplier
+import com.jobeen.ime.skin.runtime.PlaceholderValues
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.input.keyboard.key.alphabetKey
 import com.jobeen.ime.input.keyboard.key.backspaceKey
 import com.jobeen.ime.input.keyboard.key.capsLockKey
@@ -26,7 +30,9 @@ import com.jobeen.ime.input.keyboard.key.spaceKey
 class QwertyKeyboard(
     context: Context,
     colors: KeyboardColors.ColorScheme,
-) : BaseKeyboard(context, colors, buildLayout()) {
+    layout: List<List<KeyDef>> = effectiveLayout(context),
+    private val previewMode: Boolean = false,
+) : BaseKeyboard(context, colors, layout) {
 
     enum class CapsState { None, Once, Lock }
 
@@ -34,6 +40,19 @@ class QwertyKeyboard(
 
     companion object {
         const val NAME = "Qwerty"
+
+        /**
+         * 生效布局（详设 §4.2 接缝）：出厂布局经当前皮肤快照的覆写
+         * 装配；无快照/无命中时恒等返回出厂布局。编辑器预览传入
+         * 显式 layout 时不走此路（不碰全局快照槽，详设 §10.2-7）。
+         */
+        fun effectiveLayout(context: Context): List<List<KeyDef>> {
+            val raw = buildLayout()
+            val snapshot = SkinSnapshotProvider.current(context) ?: return raw
+            return KeyOverrideApplier.apply(
+                NAME, raw, snapshot, PlaceholderValues.current(context),
+            )
+        }
 
         fun buildLayout(): List<List<KeyDef>> {
             return listOf(
@@ -109,6 +128,15 @@ class QwertyKeyboard(
     }
 
     override fun onAction(action: KeyboardAction) {
+        if (previewMode && action is KeyboardAction.CapsAction) {
+            // 编辑器预览（详设 §6.3）：Caps 是本类唯一就地消费（切换
+            // 状态）的动作，预览中吞掉防状态污染；其余变换都是纯
+            // 文本变换且监听为空，本就无副作用
+            DiagLog.d(
+                "editor", "preview_action_swallowed", mapOf("action" to "CapsAction"),
+            )
+            return
+        }
         val transformed = when (action) {
             is KeyboardAction.CapsAction -> {
                 switchCapsState()

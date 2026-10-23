@@ -16,6 +16,16 @@ open class KeyDef(
      */
     val id: String? = null,
 ) {
+
+    /**
+     * 运行时逐键音效解析结果（B2 详设 §7.2）：只由覆写装配器写在
+     * 它生成的 KeyDef 副本上，出厂静态 def 永不写（恒为 null/false
+     * → 播放路径与 v1.1.14 一致）。值为已接纳资产 id。
+     */
+    var skinSoundAssetId: String? = null
+
+    /** 逐键显式静音（覆写 sound:""）：为 true 时该键不发任何点按音。 */
+    var skinSoundMuted: Boolean = false
     sealed class Appearance(
         val percentWidth: Float,
         val variant: Variant,
