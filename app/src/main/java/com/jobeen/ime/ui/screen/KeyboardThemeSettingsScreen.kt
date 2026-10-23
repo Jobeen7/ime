@@ -53,18 +53,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
-import com.google.zxing.BarcodeFormat
-import com.google.zxing.EncodeHintType
-import com.journeyapps.barcodescanner.BarcodeEncoder
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import com.jobeen.ime.R
 import com.jobeen.ime.data.ThemeStore
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.keyboard.theme.KeyboardThemePresets
+import com.jobeen.ime.data.keyboard.theme.ThemeCode
 import com.jobeen.ime.data.manager.KeyboardManager
-import com.jobeen.ime.data.theme.CompactTheme
-import kotlinx.serialization.json.Json
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 import com.jobeen.ime.ui.screen.ScreenComponent.ThemeChip
@@ -72,35 +68,6 @@ import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
 import java.io.File
 import java.io.FileOutputStream
-import java.util.EnumMap
-
-private object ThemeCode {
-    const val PREFIX = "IMEKBTHEME:"
-
-    private val json = Json { ignoreUnknownKeys = true }
-
-    fun encode(theme: KeyboardTheme): String =
-        PREFIX + json.encodeToString(CompactTheme.from(theme))
-
-    fun decode(raw: String): KeyboardTheme? {
-        val content = raw.trim()
-        if (!content.startsWith(PREFIX)) return null
-        val body = content.removePrefix(PREFIX)
-        runCatching {
-            return json.decodeFromString<CompactTheme>(body).toKeyboardTheme()
-        }
-        // 兼容旧版「IMEKBTHEME:主题id」格式
-        return KeyboardTheme.byId(body).takeIf { it.id == body }
-    }
-
-    fun toBitmap(text: String): Bitmap {
-        val hints = EnumMap<EncodeHintType, Any>(EncodeHintType::class.java).apply {
-            this[EncodeHintType.CHARACTER_SET] = "UTF-8"
-            this[EncodeHintType.MARGIN] = 1
-        }
-        return BarcodeEncoder().encodeBitmap(text, BarcodeFormat.QR_CODE, 512, 512, hints)
-    }
-}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
