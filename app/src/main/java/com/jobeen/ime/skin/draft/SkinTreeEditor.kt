@@ -1,8 +1,11 @@
 package com.jobeen.ime.skin.draft
 
+import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.skin.model.BackgroundSpec
 import com.jobeen.ime.skin.model.GeometryField
+import com.jobeen.ime.skin.model.KeyBindingRejection
 import com.jobeen.ime.skin.model.SkinJson
+import com.jobeen.ime.skin.model.SkinKeyMappingsParser
 import com.jobeen.ime.skin.model.StyleField
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -101,7 +104,7 @@ object SkinTreeEditor {
         )
     }
 
-    /** 树中引用的全部资产逻辑 id（背景 + audio 值），供提交组包与校验使用。 */
+    /** 树中引用的全部资产逻辑 id（背景 + audio 值 + 逐键音效），供提交组包与校验使用。 */
     fun referencedAssetIds(tree: JsonObject): Set<String> {
         val ids = mutableSetOf<String>()
         backgroundOf(tree)?.let { ids += it.assetId }
@@ -109,7 +112,67 @@ object SkinTreeEditor {
         audio?.values?.forEach { node ->
             (node as? JsonPrimitive)?.content?.let { ids += it }
         }
+        val mappings = tree["keyMappings"] as? JsonObject
+        mappings?.values?.forEach { entry ->
+            val sound = ((entry as? JsonObject)?.get("sound") as? JsonPrimitive)?.content
+            if (!sound.isNullOrEmpty()) ids += sound
+        }
         return ids
+    }
+
+    // ---- keyMappings / audio（B2 逐键编辑） ----
+
+    fun keyMappingsOf(tree: JsonObject): JsonObject? = tree["keyMappings"] as? JsonObject
+
+    fun keyEntryOf(tree: JsonObject, keyId: String): JsonObject? =
+        (tree["keyMappings"] as? JsonObject)?.get(keyId) as? JsonObject
+
+    /**
+     * 写入/删除单键覆写条目：只动该键节点——条目内未知字段、其余
+     * 键、其余段落逐节点保留；映射删空时整段移除（树保持干净）。
+     */
+    fun setKeyEntry(tree: JsonObject, keyId: String, entry: JsonObject?): JsonObject {
+        val mappings = tree["keyMappings"] as? JsonObject ?: JsonObject(emptyMap())
+        val newMappings = if (entry == null) {
+            JsonObject(mappings - keyId)
+        } else {
+            JsonObject(mappings + (keyId to entry))
+        }
+        return if (newMappings.isEmpty()) {
+            JsonObject(tree - "keyMappings")
+        } else {
+            JsonObject(tree + ("keyMappings" to newMappings))
+        }
+    }
+
+    fun audioTapOf(tree: JsonObject): String? =
+        ((tree["audio"] as? JsonObject)?.get("tap") as? JsonPrimitive)?.content
+
+    /** 设置/移除全局点按音（audio.tap）；audio 段删空时整段移除。 */
+    fun setAudioTap(tree: JsonObject, assetId: String?): JsonObject {
+        val audio = tree["audio"] as? JsonObject ?: JsonObject(emptyMap())
+        val newAudio = if (assetId == null) {
+            JsonObject(audio - "tap")
+        } else {
+            JsonObject(audio + ("tap" to JsonPrimitive(assetId)))
+        }
+        return if (newAudio.isEmpty()) {
+            JsonObject(tree - "audio")
+        } else {
+            JsonObject(tree + ("audio" to newAudio))
+        }
+    }
+
+    /**
+     * 编辑器写前预校验（详设 §6.3-2）：用与导入相同的解析规则试
+     * 解析候选条目，返回逐项剔除清单——非空即该绑定不可保存。
+     * sequence 占位不产生剔除（保留不生效是合法态）。
+     */
+    fun validateKeyEntry(keyId: String, entry: JsonObject): List<KeyBindingRejection> {
+        val probe = JsonObject(mapOf(keyId to entry))
+        return SkinKeyMappingsParser.parse(
+            probe, KeyIds::isOverridable, KeyIds::isAnchor,
+        ).rejections
     }
 
     // ---- 路径工具 ----

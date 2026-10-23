@@ -140,30 +140,7 @@ object SkinSnapshotFactory {
         }
         val assetShaById = manifest.assets().associate { it.id to it.sha256 }
         val (targetW, targetH) = backgroundTargetPx(context)
-        // 音效事实（详设 §7.1 接纳输入）：清单条目 + 内容寻址文件 + 解码元信息；
-        // 无库布局时（纯树构建）恒 null，音效按缺失处理
-        val contentById = manifest.assets().associateBy { it.id }
-        val audioFacts: (String) -> AudioAssetFacts? = { assetId ->
-            val content = contentById[assetId]
-            val libLayout = libraryLayout
-            if (content == null || libLayout == null) {
-                null
-            } else {
-                val ext = content.path.substringAfterLast('.', "").lowercase()
-                val file = libLayout.assetFile(content.sha256, ext.ifEmpty { null })
-                if (!file.isFile) {
-                    null
-                } else {
-                    val bytes = runCatching { file.readBytes() }.getOrNull()
-                    AudioAssetFacts(
-                        sha256 = content.sha256,
-                        ext = ext,
-                        byteSize = file.length(),
-                        info = bytes?.let { AndroidAudioInfoProbe.probe(it) },
-                    )
-                }
-            }
-        }
+        val audioFacts = manifestAudioFacts(libraryLayout, manifest)
         val snapshot = SkinSnapshotBuilder.build(
             validated = validated,
             ref = ref,
@@ -177,6 +154,38 @@ object SkinSnapshotFactory {
         )
         logBatch2Events(ref, validated, snapshot)
         return snapshot
+    }
+
+    /**
+     * 清单音效事实（详设 §7.1 接纳输入；快照构建与编辑器预览共用）：
+     * 资产 id → sha/扩展名/字节数/解码元信息；无库布局、未入清单
+     * 或文件缺失时为 null（接纳时按 MISSING 处理）。
+     */
+    fun manifestAudioFacts(
+        layout: SkinLibraryLayout?,
+        manifest: PackageManifest,
+    ): (String) -> AudioAssetFacts? {
+        val contentById = manifest.assets().associateBy { it.id }
+        return { assetId ->
+            val content = contentById[assetId]
+            if (content == null || layout == null) {
+                null
+            } else {
+                val ext = content.path.substringAfterLast('.', "").lowercase()
+                val file = layout.assetFile(content.sha256, ext.ifEmpty { null })
+                if (!file.isFile) {
+                    null
+                } else {
+                    val bytes = runCatching { file.readBytes() }.getOrNull()
+                    AudioAssetFacts(
+                        sha256 = content.sha256,
+                        ext = ext,
+                        byteSize = file.length(),
+                        info = bytes?.let { AndroidAudioInfoProbe.probe(it) },
+                    )
+                }
+            }
+        }
     }
 
     /** B2 诊断事件面（详设 §八）：只记 keyId/槽位/原因枚举/计数，绝不记 label/value 原文。 */
