@@ -28,6 +28,7 @@ import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.event.KeyEvent
 import com.jobeen.ime.engine.event.KeyModifiers
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.engine.rime.host.BehaviorHost
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
@@ -167,6 +168,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class Clear(val service: InputMethodService) : Action
         data class Undo(val service: InputMethodService) : Action
         data class Redo(val service: InputMethodService) : Action
+
+        /** 前删（定稿四.4）：reduce 串行点入队 job 判组字，禁手势线程预判。 */
+        data class ForwardDelete(val service: InputMethodService) : Action
+
+        /** 前删宿主段：组字已在 job 内确立为空，选区/后文在此执行时点重读。 */
+        data object ForwardDeleteHost : Action
         /**
          * @property fieldGen 发起时刻的输入框代次（在分发点捕获）：
          * 预测的基底读取与框复检都以这一代为准——代次若等到
@@ -843,6 +850,28 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 }
             }
 
+            is Action.ForwardDelete -> {
+                serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
+                sendJob {
+                    // 组字判定在 job 内以 getRawInput 现读（与退格
+                    // handleBackspaceInJob 同纪律）：组字中前删按
+                    // 探针定案无操作——引擎侧删除接口不可验、
+                    // BehaviorHost 队列模型无光标概念、未消费的
+                    // FORWARD_DEL 还可能透传宿主删宿主文本
+                    if (getRawInput().isNotEmpty()) {
+                        DiagLog.d("fwd_delete", "noop_composing")
+                        return@sendJob
+                    }
+                    // 选区/后文不在 job 内判：上一键的 Commit 可能
+                    // 尚在消息管线中未落屏，按旧选区判定会吞删——
+                    // 宿主段回 reduce 在执行时点重读（学
+                    // forwardUnhandledKey 的判定点纪律，详设 §5.2-2）
+                    dispatchAction(Action.ForwardDeleteHost)
+                }
+            }
+
+            Action.ForwardDeleteHost -> forwardDeleteOnHost()
+
             is Action.Predict -> requestPrediction(
                 action.commit,
                 fieldGenOverride = action.fieldGen,
@@ -1041,6 +1070,85 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
     }
 
+    /**
+     * 前删宿主段（reduce 内执行，组字已在 job 内确立为空）：选区、
+     * 后文一律在执行时点重读（详设 §5.1/§5.2）。红线：连接为空、
+     * 删除返回 false 或抛异常 → 一律无操作并记日志，绝不崩溃、
+     * 绝不回退成普通退格、绝不经 processKey 发送 Delete。
+     */
+    private suspend fun forwardDeleteOnHost() {
+        withContext(Dispatchers.Main.immediate) {
+            runCatching {
+                val ic = inputConnection() ?: run {
+                    DiagLog.w("fwd_delete", "no_input_connection")
+                    return@withContext
+                }
+                // 第 (1) 态：有选区只删选区本身。走消息管线直送
+                // Commit（与退格删选区同构：剪贴板搜索改道/记账/
+                // 探针通知不绕行）；禁用 deleteSurroundingText——
+                // 基线实现有选区时保留选区只删环绕，与意图相反
+                val selected = ic.getSelectedText(0)
+                if (!selected.isNullOrEmpty()) {
+                    emitMessage(EngineMessage.Commit("", direct = true))
+                    invalidateBeforeCursorCache()
+                    DiagLog.d(
+                        "fwd_delete", "executed", mapOf("state" to "selection"),
+                    )
+                    return@withContext
+                }
+                val after = ic.getTextAfterCursor(
+                    ForwardDeletePlanner.PROBE_CHARS, 0,
+                )?.toString().orEmpty()
+                val cluster = ForwardDeletePlanner.firstCluster(after)
+                if (cluster == null) {
+                    // 第 (4) 态：光标后无文，天然无操作
+                    DiagLog.d("fwd_delete", "noop_empty_after")
+                    return@withContext
+                }
+                // 第 (2) 态：删光标后一字素簇。主路径走码点口径；
+                // 返回 false/抛异常时以 UTF-16 口径同簇回退（同为
+                // InputConnection 删除面，非键事件、非退格）
+                val deleted = runCatching {
+                    ic.deleteSurroundingTextInCodePoints(0, cluster.codePoints)
+                }.getOrDefault(false) || runCatching {
+                    ic.deleteSurroundingText(0, cluster.utf16Length)
+                }.getOrDefault(false)
+                if (!deleted) {
+                    DiagLog.w(
+                        "fwd_delete", "delete_returned_false",
+                        mapOf("clusterCp" to cluster.codePoints),
+                    )
+                    return@withContext
+                }
+                // 删后探长校验（探针 §五注）：部分自绘输入框对删除
+                // 只执行一部分——校验不过只记日志，绝不重试连删。
+                // 探测窗未饱和时才可判（饱和时删后会补进窗外文本）
+                if (after.length < ForwardDeletePlanner.PROBE_CHARS) {
+                    val afterNow = runCatching {
+                        ic.getTextAfterCursor(ForwardDeletePlanner.PROBE_CHARS, 0)?.length
+                    }.getOrNull()
+                    if (afterNow != null && afterNow != after.length - cluster.utf16Length) {
+                        DiagLog.w(
+                            "fwd_delete", "verify_failed",
+                            mapOf("clusterCp" to cluster.codePoints),
+                        )
+                    }
+                }
+                invalidateBeforeCursorCache()
+                DiagLog.d(
+                    "fwd_delete", "executed",
+                    mapOf("state" to "cluster", "clusterCp" to cluster.codePoints),
+                )
+            }.onFailure { e ->
+                // 只记异常类名（红线：不记文本内容/凭据）
+                DiagLog.e(
+                    "fwd_delete", "failed",
+                    mapOf("error" to e.javaClass.simpleName), e,
+                )
+            }
+        }
+    }
+
     private suspend fun handleRimeMessage(message: RimeMessage<*>) {
         if (message is RimeMessage.KeyMessage) {
             forwardUnhandledKey(message)
@@ -1209,6 +1317,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     override fun clear(service: InputMethodService) {
         dispatchAction(Action.Clear(service))
+    }
+
+    override fun forwardDelete(service: InputMethodService) {
+        dispatchAction(Action.ForwardDelete(service))
     }
 
     private suspend fun clearInternal() {
