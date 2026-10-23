@@ -372,6 +372,19 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                 }
             }
             }
+            Spacer(Modifier.height(10.dp))
+            SettingsGroup(title = "自定义皮肤") {
+                TextButton(
+                    onClick = {
+                        context.startActivity(
+                            com.jobeen.ime.ui.SkinLibraryActivity.intent(context),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("打开皮肤库（导入 / 编辑 / 同步 v3 皮肤）")
+                }
+            }
             Spacer(Modifier.height(14.dp))
         }
     }
