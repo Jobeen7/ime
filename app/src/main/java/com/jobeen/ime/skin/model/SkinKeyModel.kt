@@ -65,6 +65,20 @@ enum class WhitelistAction(
 
         /** switch_layout 的合法目标 = 出厂六布局 NAME（详设 §3.2）。 */
         val LAYOUT_TARGETS: Set<String> = setOf("Qwerty", "T9", "T15", "Number", "Symbol", "Emoji")
+
+        /** 自创布局运行时名前缀（B3 §3.3）：switch_layout 目标 `custom:<layoutId>`。 */
+        const val CUSTOM_LAYOUT_PREFIX = "custom:"
+
+        /**
+         * switch_layout 合法目标全集（B3 §3.3 待核 2 定死）：出厂六布局，
+         * 或自创布局运行时名（前缀 + 非空 layoutId）。其余一律 VALUE_INVALID。
+         */
+        fun isLayoutTarget(value: String?): Boolean {
+            if (value == null) return false
+            if (value in LAYOUT_TARGETS) return true
+            return value.startsWith(CUSTOM_LAYOUT_PREFIX) &&
+                value.removePrefix(CUSTOM_LAYOUT_PREFIX).isNotBlank()
+        }
     }
 }
 
@@ -185,6 +199,45 @@ object SkinKeyMappingsParser {
         return ParseResult(overrides, rejections, sequenceSlots)
     }
 
+    /** 单动作节点解析结果（布局键槽位复用入口，B3 §2.2：与 keyMappings 同一语法）。 */
+    data class SingleActionResult(
+        val action: SkinAction?,
+        /** 解析失败的原因；action 非空时恒为 null。 */
+        val rejectReason: BindingRejectReason?,
+    )
+
+    /**
+     * 解析单个动作节点（自创布局的 tap/swipeUp/swipeDown 槽位）。
+     * 与 keyMappings 完全同一套规则（白名单/value 规则/槽位限制）。
+     */
+    fun parseSingleAction(slot: KeySlot, node: JsonElement): SingleActionResult {
+        val rejections = mutableListOf<KeyBindingRejection>()
+        val action = parseAction("", slot, node, rejections)
+        return SingleActionResult(action, rejections.firstOrNull()?.reason)
+    }
+
+    /** 长按数组解析结果（布局键 longPress 槽位复用入口）。 */
+    data class LongPressActionsResult(
+        /** 有效动作数组；节点非数组/剔空时为 null（整槽回退）。 */
+        val actions: List<SkinAction>?,
+        /** 逐项剔除原因（含整槽结构错误 STRUCTURE）。 */
+        val rejectReasons: List<BindingRejectReason>,
+        /** 数组内出现过 sequence 占位（占位本身在 actions 中原样保留）。 */
+        val hasSequence: Boolean,
+    )
+
+    /** 解析长按动作数组（逐元素规则 + voice_input 独占与 keyMappings 一致）。 */
+    fun parseLongPressActions(node: JsonElement): LongPressActionsResult {
+        val rejections = mutableListOf<KeyBindingRejection>()
+        val sequenceSlots = mutableListOf<Pair<String, KeySlot>>()
+        val actions = parseLongPress("", node, rejections, sequenceSlots)
+        return LongPressActionsResult(
+            actions = actions,
+            rejectReasons = rejections.map { it.reason },
+            hasSequence = sequenceSlots.isNotEmpty(),
+        )
+    }
+
     private fun parseLabel(
         keyId: String,
         entry: JsonObject,
@@ -303,7 +356,7 @@ object SkinKeyMappingsParser {
                     }
                 }
                 if (action == WhitelistAction.SWITCH_LAYOUT &&
-                    value !in WhitelistAction.LAYOUT_TARGETS
+                    !WhitelistAction.isLayoutTarget(value)
                 ) {
                     return reject(BindingRejectReason.VALUE_INVALID)
                 }
