@@ -27,6 +27,12 @@ interface IEngine {
     fun segement()
     fun undo(service: InputMethodService)
     fun redo(service: InputMethodService)
+
+    /**
+     * 向前删除（定稿四.4）：组字中无操作；非组字时删选区或
+     * 光标后一个字素簇。绝不经按键通道发 Delete、绝不回退退格。
+     */
+    fun forwardDelete(service: InputMethodService)
     fun commit(text: String)
     fun resortCandidates(candidates: List<EngineMessage.Candidate>): Unit?
     fun deleteCandidate(index: Int): Unit?

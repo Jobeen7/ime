@@ -77,6 +77,12 @@ class KeyActionListener(
                 @SuppressLint("NewApi") service.switchToNextInputMethod(false)
             }
 
+            // 向前删除（皮肤白名单 delete_forward，定稿四.4）：
+            // 引擎串行上下文内判定四态，组字中无操作（详设 §五）
+            is KeyboardAction.DeleteForwardAction -> {
+                engine?.forwardDelete(service)
+            }
+
             // 系统输入法选择器（皮肤白名单 open_system_ime_picker）：
             // 与 switchToNextInputMethod 并列的服务层路由，不经引擎
             // （裁定记录 §11-2；注意与 ShowInputMethodPickerAction
