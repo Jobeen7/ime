@@ -132,6 +132,16 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     var onRepeatListener: ((View) -> Unit)? = null
     var onGestureListener: OnGestureListener? = null
     var soundEffect: InputFeedbacks.SoundEffect = InputFeedbacks.SoundEffect.Standard
+
+    /**
+     * 皮肤逐键音效（B2 详设 §7.2-3）：覆写装配期随 KeyDef 注入的
+     * 已接纳资产 id；非空时 DOWN 播该音效（未就绪回退出厂 pop）。
+     * null = 无皮肤绑定，走原 soundEffect 路径，逐字节同 1.1.14。
+     */
+    var skinSoundAssetId: String? = null
+
+    /** 逐键显式静音（皮肤 sound:""）：true 时 DOWN 不发任何点按音。 */
+    var skinSoundMuted: Boolean = false
     private val touchSlop: Float = ViewConfiguration.get(ctx).scaledTouchSlop.toFloat()
 
     init {
@@ -189,7 +199,16 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                 drawableHotspotChanged(x, y)
                 isPressed = true
                 InputFeedbacks.hapticFeedback(this)
-                InputFeedbacks.soundEffect(context, soundEffect)
+                // 发声时机不变（DOWN 一次）：皮肤绑定优先于标准 pop，
+                // 静音标记压过一切（详设 §7.2-3/§7.3 同闸口径）
+                val skinAsset = skinSoundAssetId
+                if (skinSoundMuted) {
+                    // 显式静音：不发声
+                } else if (skinAsset != null) {
+                    InputFeedbacks.skinSoundEffect(context, skinAsset)
+                } else {
+                    InputFeedbacks.soundEffect(context, soundEffect)
+                }
                 onTouchDownListener?.invoke(this)
                 dispatchGestureEvent(GestureType.Down, x, y)
                 if (longPressEnabled) {

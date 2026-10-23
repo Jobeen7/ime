@@ -138,6 +138,42 @@ class DraftStore(
             ?.filter { it.isFile && it.name.startsWith("asset-") }
             ?: emptyList()
 
+    /**
+     * 草稿音效索引（B2）：逻辑 id → sha256 的认领表。编辑器导入的
+     * 音效文件与背景图同为 asset-<sha>.<ext> 命名，靠本索引区分
+     * 归属——提交时被索引认领的文件按音效资产组包，其余未认领
+     * 文件才按背景处理（B1 单资产口径）。索引损坏按空表处理。
+     */
+    fun readDraftSoundIndex(skinId: String): Map<String, String> {
+        val file = File(draftDir(skinId), SOUND_INDEX_FILE)
+        if (!file.isFile) return emptyMap()
+        return runCatching {
+            val obj = json.parseToJsonElement(file.readText()) as? JsonObject
+                ?: return emptyMap()
+            obj.mapNotNull { (id, node) ->
+                val primitive = node as? kotlinx.serialization.json.JsonPrimitive
+                // 严格字符串读法：数字/布尔的 contentOrNull 会返回
+                // 字面文本，必须先核 isString
+                if (primitive != null && primitive.isString) {
+                    id to primitive.content
+                } else {
+                    null
+                }
+            }.toMap()
+        }.getOrDefault(emptyMap())
+    }
+
+    fun writeDraftSoundIndex(skinId: String, index: Map<String, String>) {
+        val dir = draftDir(skinId).apply { mkdirs() }
+        val obj = JsonObject(
+            index.mapValues { kotlinx.serialization.json.JsonPrimitive(it.value) },
+        )
+        AtomicFiles.writeAtomically(
+            dir, SOUND_INDEX_FILE,
+            json.encodeToString(JsonObject.serializer(), obj).encodeToByteArray(),
+        )
+    }
+
     private fun writeDraftFiles(skinId: String, treeBytes: ByteArray, meta: DraftMeta) {
         val dir = draftDir(skinId).apply { mkdirs() }
         AtomicFiles.writeAtomically(dir, TREE_FILE, treeBytes)
@@ -147,6 +183,7 @@ class DraftStore(
     companion object {
         const val TREE_FILE = "draft.json"
         const val META_FILE = "draft.meta.json"
+        const val SOUND_INDEX_FILE = "sound-index.json"
         const val SOURCE_EXISTING = "existing"
         const val SOURCE_PRESET = "preset"
         const val SOURCE_LEGACY = "legacy"

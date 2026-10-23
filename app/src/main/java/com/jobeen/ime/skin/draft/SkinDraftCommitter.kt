@@ -72,11 +72,29 @@ class SkinDraftCommitter(
             sourceManifest?.assets()?.forEach { assetMap[it.id] = it.sha256 to it.path }
         }
         val draftAssetBytes = mutableMapOf<String, ByteArray>()
+        // 草稿音效先认领（B2）：索引中的逻辑 id → sha 逐项落位；
+        // 被认领的草稿文件不再参与下方背景映射（B1 单资产假设下
+        // 全部草稿文件都会被映射给背景 id，多资产时必须先认领）
+        val soundIndex = draftStore.readDraftSoundIndex(skinId)
+        val claimedShas = soundIndex.values.toSet()
+        for ((logicalId, sha) in soundIndex) {
+            val file = draftStore.draftAssetFiles(skinId)
+                .firstOrNull { it.name.contains(sha) }
+                ?: return Result.Failed("draft_sound_missing:$logicalId")
+            val bytes = file.readBytes()
+            if (DigestUtil.sha256Hex(bytes) != sha) {
+                return Result.Failed("draft_sound_hash_mismatch:$logicalId")
+            }
+            draftAssetBytes[sha] = bytes
+            val ext = file.extension.ifBlank { "bin" }
+            assetMap[logicalId] = sha to "assets/$logicalId.$ext"
+        }
         val backgroundId = SkinTreeEditor.backgroundOf(draft.tree)?.assetId
         if (backgroundId != null) {
             for (file in draftStore.draftAssetFiles(skinId)) {
                 val bytes = file.readBytes()
                 val sha = DigestUtil.sha256Hex(bytes)
+                if (sha in claimedShas) continue
                 draftAssetBytes[sha] = bytes
                 val ext = file.extension.ifBlank { "bin" }
                 assetMap[backgroundId] = sha to "assets/${backgroundId}.$ext"

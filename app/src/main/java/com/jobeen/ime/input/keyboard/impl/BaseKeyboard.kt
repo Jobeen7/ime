@@ -199,6 +199,11 @@ abstract class BaseKeyboard(
                 spaceKeyView = this
             }
             borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
+            // 皮肤逐键音效注入（详设 §7.2-3）：解析结果已由覆写
+            // 装配器挂在 def 上；出厂 def 两字段恒为默认，注入后
+            // 播放路径与 1.1.14 一致
+            skinSoundAssetId = def.skinSoundAssetId
+            skinSoundMuted = def.skinSoundMuted
             onPressedChanged = { key ->
                 if (key.isPressed) {
                     val isSwitchAction = def.behaviors.any { b ->
