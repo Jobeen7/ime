@@ -2,7 +2,12 @@ package com.jobeen.ime.skin.pkg
 
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.image.BackgroundPreparer
+import com.jobeen.ime.skin.layout.LayoutModel
+import com.jobeen.ime.skin.layout.LayoutTreeOps
+import com.jobeen.ime.skin.layout.LayoutValidation
+import com.jobeen.ime.skin.layout.LayoutValidator
 import com.jobeen.ime.skin.media.AudioInfoProbe
 import com.jobeen.ime.skin.media.ImageInfoProbe
 import com.jobeen.ime.skin.model.AssetKind
@@ -22,6 +27,7 @@ import java.io.File
 import java.util.UUID
 import kotlin.math.roundToInt
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
@@ -142,7 +148,9 @@ class JimeImporter(
             return Outcome.Rejected("skin_meta_id_mismatch", issues)
         }
 
-        // 布局树结构校验（语义校验是 B3；B1 只存不用，但结构性损坏整包拒绝，九.3）
+        // 布局结构校验（B3 §5.1）：与运行时同一校验器。整布局无效
+        // → 整包拒绝（定稿九章归类）并逐项列出字段路径；逐字段
+        // 回退/丢槽项只入报告，不拦包（与资源损坏回退同哲学、不同类）
         val layoutTrees = mutableMapOf<String, JsonObject>()
         for (layoutContent in manifest.layouts()) {
             val bytes = byPath.getValue(layoutContent.path).bytes
@@ -152,6 +160,46 @@ class JimeImporter(
                 SkinJson.maxStringLength(tree) > SkinValidator.MAX_STRING_LENGTH
             ) {
                 return Outcome.Rejected("layout_json_limits_exceeded:${layoutContent.id}", issues)
+            }
+            when (val validation = LayoutValidator.validate(tree, layoutContent.id)) {
+                is LayoutValidation.Invalid -> {
+                    val mapped = validation.issues.map { issue ->
+                        SkinIssue(
+                            path = "layouts.${layoutContent.id}" +
+                                if (issue.path.isEmpty()) "" else ".${issue.path}",
+                            kind = SkinIssue.Kind.FIELD_FALLBACK,
+                            detail = issue.reason,
+                        )
+                    }
+                    DiagLog.w(
+                        "layout", "layout_validation_rejected",
+                        mapOf(
+                            "layoutId" to layoutContent.id, "source" to "import",
+                            "issueCount" to validation.issues.size,
+                            "firstPath" to validation.issues.firstOrNull()?.path,
+                            "firstReason" to validation.issues.firstOrNull()?.reason,
+                        ),
+                    )
+                    return Outcome.Rejected(
+                        "layout_invalid:${layoutContent.id}", issues + mapped,
+                    )
+                }
+                is LayoutValidation.Valid -> {
+                    for (issue in validation.issues) {
+                        issues += SkinIssue(
+                            path = "layouts.${layoutContent.id}.${issue.path}",
+                            kind = SkinIssue.Kind.FIELD_FALLBACK,
+                            detail = issue.reason,
+                        )
+                        DiagLog.w(
+                            "layout", "layout_field_fallback",
+                            mapOf(
+                                "layoutId" to layoutContent.id,
+                                "path" to issue.path, "reason" to issue.reason,
+                            ),
+                        )
+                    }
+                }
             }
             layoutTrees[layoutContent.id] = tree
         }
@@ -255,7 +303,26 @@ class JimeImporter(
             Json.encodeToString(JsonObject.serializer(), finalSkinTree).encodeToByteArray()
         }
         val finalSkinHash = DigestUtil.sha256Hex(finalSkinBytes)
-        val finalManifest = rebuildManifest(manifest, copies, finalSkinHash, layoutHashes)
+        // 布局最终字节/hash：副本布局须把 meta.id 改写为新 id 后
+        // 再落盘（铁律 3），hash 随改写字节重算；非副本字节原样
+        val finalLayoutData = mutableMapOf<String, Pair<ByteArray, String>>()
+        for (layoutContent in manifest.layouts()) {
+            val copyId = copies[layoutContent.id]
+            if (copyId == null) {
+                finalLayoutData[layoutContent.id] =
+                    byPath.getValue(layoutContent.path).bytes to
+                        layoutHashes.getValue(layoutContent.id)
+            } else {
+                val rewritten = LayoutTreeOps.rewriteMetaId(
+                    layoutTrees.getValue(layoutContent.id), copyId,
+                )
+                val bytes = Json.encodeToString(JsonObject.serializer(), rewritten)
+                    .encodeToByteArray()
+                finalLayoutData[layoutContent.id] = bytes to DigestUtil.sha256Hex(bytes)
+            }
+        }
+        val finalLayoutHashes = finalLayoutData.mapValues { it.value.second }
+        val finalManifest = rebuildManifest(manifest, copies, finalSkinHash, finalLayoutHashes)
         val finalManifestJson = PackageManifest.toJson(finalManifest)
 
         // 背景预处理参数（与快照构建同口径：合成方案底色 + 生效模糊/尺寸）
@@ -326,12 +393,11 @@ class JimeImporter(
                 if (layoutContent.id in skippedLayouts) continue
                 val finalLayoutId = copies[layoutContent.id] ?: layoutContent.id
                 val layoutDir = File(it, "layouts/$finalLayoutId").apply { mkdirs() }
-                val bytes = byPath.getValue(layoutContent.path).bytes
+                val (bytes, hash) = finalLayoutData.getValue(layoutContent.id)
                 File(layoutDir, "layout.json").writeBytes(bytes)
                 File(layoutDir, "manifest.json").writeText(finalManifestJson)
                 stagedLayouts += ImportTransaction.StagedLayout(
-                    id = finalLayoutId, dir = layoutDir,
-                    hash = layoutHashes.getValue(layoutContent.id),
+                    id = finalLayoutId, dir = layoutDir, hash = hash,
                 )
             }
             val stagedAssetShas = mutableSetOf<String>()
@@ -427,7 +493,13 @@ class JimeImporter(
         }
     }
 
-    /** 副本改写：只改格式已知的引用位置（meta.id、layoutId），其余节点原样（七.4）。 */
+    /**
+     * 副本改写：只改格式已知的引用位置（meta.id、layoutId、
+     * keyMappings 的自创布局键前缀），其余节点原样（七.4）。
+     * keyMappings 前缀改写是 B3 补齐项（详设 §5.2 待核 1）：自创
+     * 布局键的逻辑 ID 以 `{layoutId}:` 起头，布局换副本 id 时，
+     * 引用它的覆写条目键名必须同步改写，否则覆写全部悬空。
+     */
     private fun rewriteSkinTreeRefs(
         tree: JsonObject,
         finalSkinId: String,
@@ -444,6 +516,24 @@ class JimeImporter(
         val copiedLayoutId = layoutId?.let { copies[it] }
         if (copiedLayoutId != null) {
             result = JsonObject(result + ("layoutId" to JsonPrimitive(copiedLayoutId)))
+        }
+        val mappings = result["keyMappings"] as? JsonObject
+        if (mappings != null) {
+            var changed = false
+            val rewritten = LinkedHashMap<String, JsonElement>()
+            for ((keyId, entry) in mappings) {
+                val parsed = LayoutModel.parseLogicalId(keyId)
+                val newLayoutId = parsed?.let { copies[it.first] }
+                if (parsed != null && newLayoutId != null) {
+                    rewritten[LayoutModel.logicalId(newLayoutId, parsed.second)] = entry
+                    changed = true
+                } else {
+                    rewritten[keyId] = entry
+                }
+            }
+            if (changed) {
+                result = JsonObject(result + ("keyMappings" to JsonObject(rewritten)))
+            }
         }
         return result
     }

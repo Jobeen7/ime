@@ -74,7 +74,10 @@ class JimeExporterTest {
         }
     """.trimIndent()
 
-    private val layoutJson = """{"rows": [[{"w": 1.5}]], "futureLayoutNode": {"x": 1}}"""
+    // B3 冻结结构内的合法布局 + 两级未知节点（往返保真断言对象不变）
+    private val layoutJson = """{"formatVersion":3,"meta":{"id":"lay-1","name":"往返布局"},""" +
+        """"rows":[{"keys":[{"stableId":"1","label":"q","widthWeight":1.5,""" +
+        """"tap":{"type":"text","value":"q"},"futureKeyNode":{"x":1}}]}],"futureLayoutNode":{"x":1}}"""
 
     @Test
     fun roundTripPreservesUnknownNodesAndAssets() = runBlocking {
