@@ -580,7 +580,7 @@ object ScreenComponent {
                                 .weight(1f)
                                 .fillMaxSize()
                                 .clip(RoundedCornerShape(2.dp))
-                                .background(Color(colors.accentKeyBackground)),
+                                .background(Color(colors.keyBackground)),
                         )
                     }
                 }
