@@ -39,6 +39,9 @@ import splitties.views.dsl.core.add
 import splitties.views.imageResource
 import timber.log.Timber
 
+// 长按弹窗选中条目的高亮蓝（新定值；全仓无现行选中蓝可复用）
+private const val LONG_PRESS_HIGHLIGHT_BLUE: Int = 0xFF0A84FF.toInt()
+
 abstract class BaseKeyboard(
     context: Context,
     protected val colors: KeyboardColors.ColorScheme,
@@ -420,7 +423,7 @@ abstract class BaseKeyboard(
                 KeyDef.Appearance.Variant.Accent -> colors.accentKeyBackground
                 KeyDef.Appearance.Variant.None -> Color.TRANSPARENT
             },
-            keyPressedColor = colors.accentKeyBackground,
+            keyPressedColor = LONG_PRESS_HIGHLIGHT_BLUE,
         )
     }
 
