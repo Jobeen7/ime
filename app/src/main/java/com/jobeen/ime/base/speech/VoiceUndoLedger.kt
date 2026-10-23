@@ -216,20 +216,6 @@ object VoiceUndoLedger {
     }
 
     /**
-     * 把账本最新一条由 [oldText] 改为 [newText]：接管结算后迟到的
-     * FINAL 对账补全了整段文本时同步账面（见 SherpaSpeechClient 的
-     * 迟到 FINAL 对账），使上滑撤销仍按最终全文整段直删。最新一条
-     * 与 [oldText] 不符（期间已有新账）则不动。
-     */
-    @Synchronized
-    fun amendLastSegment(oldText: String, newText: String) {
-        val last = entries.lastOrNull() ?: return
-        if (last.text != oldText) return
-        entries.removeLast()
-        entries.addLast(Entry(newText, last.atMs))
-    }
-
-    /**
      * 纯判定（恢复）：[beforeText] 是按「锚点长＋被删串长」现读的
      * 光标前窗口，[prefix] 是删除点前的锚点（至多 [ANCHOR_CHARS]
      * 字），[combinedLength] 是被删整串长。

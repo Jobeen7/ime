@@ -13,7 +13,6 @@ import com.jobeen.ime.data.database.PhraseRecord
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
 import androidx.room.withTransaction
-import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import org.json.JSONArray
 import org.json.JSONObject
 import kotlinx.coroutines.CoroutineScope
@@ -43,11 +42,10 @@ import javax.crypto.spec.SecretKeySpec
  * 低版本设备 SHA-1），跨设备可迁移。iterations 只接受合理区间，
  * 构造文件用极大迭代数拖死还原会被直接拒绝。
  *
- * WebDAV 密码特殊处理：prefs 原样导出时它是 Keystore 密文、换设备解不开。
- * 因此采集时单独把解密后的密码放进备份包的 webdavPassword 字段并从 prefs
- * 副本中删掉密码键；还原时 prefs 先整表回写、密码最后经 UserDictPrefs
- * 的加密 setter 在本机重新加密落盘。密码的明文只存在于内存与加密包内部，
- * 两个落盘点（本机 prefs、备份文件）都不是明文。
+ * WebDAV 配置整表（user_dict_sync）按设备本地状态处理：导出照常整表
+ * 采集（包本身有口令加密），还原时整表跳过回写——服务器地址、账号
+ * 口令与同步时刻都是本机配置/状态，不随备份跨设备走（清点 S8 定论，
+ * 替代原脱敏＋回填五层规则与密码专用迁移通道）。
  *
  * 还原是整体覆盖，且严格分两段：先把解密后的内容完整解析为内存对象
  * （此阶段零写入，任何结构/类型错误直接拒绝，不留半还原状态），再执行
@@ -66,30 +64,24 @@ object BackupManager {
     private const val ITERATIONS = 600_000
     private const val MIN_ITERATIONS = 10_000
     private const val MAX_ITERATIONS = 2_000_000
-    private const val CLIPBOARD_PREFS = "clipboard_settings"
-    private const val CLIPBOARD_MIGRATED_KEY = "clipboard_db_migrated_v2"
     private const val SALT_BYTES = 32
     private const val IV_BYTES = 12
     private const val KEY_BITS = 256
     private const val GCM_TAG_BITS = 128
     private const val WEBDAV_PREFS = "user_dict_sync"
-    private const val WEBDAV_PASSWORD_KEY = "webdav_password"
-    private const val WEBDAV_USERNAME_KEY = "webdav_username"
 
     /**
      * 设备本地状态偏好，不随备份还原回写：内容是本机状态而非用户
      * 数据——模型/方案的下载记录（随备份来到新设备会与本机实际
      * 文件脱钩，检查误报「已最新」）、数据库维护的一次性标记
      * （db_maintenance 的 VACUUM 完成标记描述的是本机库文件的
-     * 物理状态，还原到新设备会让新设备误以为已擦除而永不补跑）。
-     * 导出端照常采集（无害），只在写入段按文件名跳过——这样用户
-     * 手上已有的旧备份包还原时同样不会回写这些。
+     * 物理状态，还原到新设备会让新设备误以为已擦除而永不补跑）、
+     * WebDAV 同步整表（服务器/账号/口令/同步时刻都是本机配置，
+     * 清点 S8 定论）。导出端照常采集（无害），只在写入段按文件名
+     * 跳过——这样用户手上已有的旧备份包还原时同样不会回写这些。
      */
     private val DEVICE_LOCAL_PREFS =
-        setOf("speech_model_prefs", "wanxiang_update", "db_maintenance")
-
-    /** 还原前加密快照在 filesDir 的文件名：进程被杀后凭它+口令回滚 */
-    private const val RESTORE_SNAPSHOT_NAME = "restore-snapshot.jbk"
+        setOf("speech_model_prefs", "wanxiang_update", "db_maintenance", WEBDAV_PREFS)
 
     class BackupException(message: String) : Exception(message)
 
@@ -99,7 +91,7 @@ object BackupManager {
     suspend fun createBackup(password: CharArray): ByteArray =
         encryptPayload(collectPayload(), password)
 
-    /** 把已收集的载荷 JSON 加密为备份文件字节（createBackup 与还原前快照共用）。 */
+    /** 把已收集的载荷 JSON 加密为备份文件字节。 */
     private fun encryptPayload(payloadJson: JSONObject, password: CharArray): ByteArray {
         val payload = payloadJson.toString().toByteArray(Charsets.UTF_8)
         val kdf = if (Build.VERSION.SDK_INT >= 26) KDF_SHA256 else KDF_SHA1
@@ -142,23 +134,16 @@ object BackupManager {
             }
             prefsJson.put(name, entries)
         }
-        // WebDAV 密码：从 prefs 副本删除（密文换设备解不开），改走独立字段
-        prefsJson.optJSONObject(WEBDAV_PREFS)?.remove(WEBDAV_PASSWORD_KEY)
-        root.put("webdavPassword", UserDictPrefs.password)
+        // WebDAV 整表照常采集进包（S8）：还原侧按设备本地表整表跳过，
+        // 采集侧无脱敏——密码在 prefs 里本就是 Keystore 密文、包又有
+        // 口令加密，不再需要剔键＋独立字段迁移通道
         root.put("prefs", prefsJson)
 
         // —— Room 四表
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
-        // 读剪贴板库前先确保拆库迁移已执行：迁移只在 ClipboardManager
-        // 的常规访问路径懒触发，升级后还没用过剪贴板就来导出（换机
-        // 前先备份正是这个时序）会读到空的新库、旧行还躺在主库里，
-        // 备份的剪贴板段静默为空。迁移失败必须中止并让用户可见：
-        // 继续采集只会产出剪贴板段缺旧行的备份（还原侧同理会把
-        // 「迁移已完成」的假标记落盘、旧行永久滞留主库残表）
-        if (!ClipboardManager.ensureMigrated(appContext)) {
-            throw BackupException("剪贴板数据迁移失败，操作中止")
-        }
+        // 拆库迁移本体已随清点 Q2 退场（现行设备早已迁完），采集直接
+        // 读新库；原「迁移不成中止备份」的耦合随之解除
 
         val clips = JSONArray()
         // 只导出有效行：历史软删除存量不进备份（删除已改物理删，此为存量兜底）
@@ -224,52 +209,18 @@ object BackupManager {
     /**
      * 解密并整体覆盖还原。口令错误/文件损坏/结构非法抛 [BackupException]，
      * 且解密与完整结构解析全部通过后才开始写任何数据（不会半还原）。
-     * 还原前落盘快照保存失败同样抛 [BackupException] 中止（fail-fast，
-     * 见 restoreInternal），不再降级继续。
+     * 写入前先采一份当前状态的内存快照：写入阶段任一步失败都用它整
+     * 体回滚，绝不留下新旧混杂的半还原状态。原「加密快照落盘以防进
+     * 程被杀」的第二层已随清点 S7 退场——进程被杀的还原中断无自动
+     * 恢复，用户重导备份即可。
      */
     suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
-        restoreInternal(bytes, password, isSnapshotRollback = false)
-    }
-
-    /**
-     * 还原本体。[isSnapshotRollback] 区分数据来源：
-     * - 外部备份文件：脱敏解析（不带入 WebDAV 服务器等），并在写入前
-     *   把当前状态加密落盘，作为进程被杀后的回滚手段；
-     * - 落盘快照回滚：快照是本机自采的完整状态，按自有状态解析
-     *   （不脱敏，与内存回滚一致），且**绝不能再落盘新快照**——那会
-     *   把当前（已还原）状态覆写到快照文件上，原始还原前状态就此
-     *   丢失，回滚也就失去了目标。
-     *
-     */
-    private suspend fun restoreInternal(
-        bytes: ByteArray, password: CharArray, isSnapshotRollback: Boolean
-    ) {
         val payload = decryptPayload(bytes, password)
-        val parsed = parsePayload(payload, sanitizeWebdav = !isSnapshotRollback)
-        // 写任何数据前，先把当前状态快照一份：写入阶段任一步失败都用
-        // 快照整体回滚，绝不留下新旧混杂的半还原状态。快照解析结构
-        // 直接取自当前状态的采集结果——回滚回放是把我们自己的完整
-        // 状态写回去，不走「外部备份」的 WebDAV 脱敏过滤（否则回滚会
-        // 把用户现有的服务器地址/同步基准整表抹掉，等于回滚本身又
-        // 制造了一次数据丢失）；也不再对快照二次解密重解析（省掉
-        // 一轮 60 万次 PBKDF2）。
-        val snapshotJson = collectPayload()
-        val snapshotParsed = parsePayload(snapshotJson, sanitizeWebdav = false)
-        if (!isSnapshotRollback) {
-            // 加密快照落盘到私有目录：进程若在写入中途被杀（系统回收、
-            // 断电），内存回滚随之消失，下次打开备份页凭此文件+口令仍可
-            // 回到还原前状态。落盘失败即中止还原（fail-fast，此时尚未
-            // 写入任何数据，用户数据原样不动）：内存快照回滚只防得住
-            // 进程内异常，进程被杀时它和半还原状态一起消失、落盘快照
-            // 是唯一回滚凭据——没有凭据就继续写，等于把「防半还原」
-            // 的最后一道防线主动拆掉。旧口径是降级继续＋事后警告，
-            // 警告出现时风险窗口已经敞着走完了全程
-            if (!persistRestoreSnapshot(encryptPayload(snapshotJson, password))) {
-                throw BackupException(
-                    "还原前状态快照保存失败，还原已中止（未改动任何数据）"
-                )
-            }
-        }
+        val parsed = parsePayload(payload)
+        // 快照解析结构直接取自当前状态的采集结果——回滚回放是把我们
+        // 自己的完整状态写回去；也不再对快照二次解密重解析（省掉一
+        // 轮 60 万次 PBKDF2）
+        val snapshotParsed = parsePayload(collectPayload())
         try {
             // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
             // 半途而废比继续写完更糟——半还原状态正是快照机制要防的
@@ -278,58 +229,13 @@ object BackupManager {
             val rolledBack = runCatching {
                 withContext(NonCancellable) { applyPayload(snapshotParsed) }
             }.isSuccess
-            // 外部还原失败且内存回滚成功：落盘快照已无用，删掉；
-            // 落盘快照回滚本身失败时保留文件，用户可换口令/重试，
-            // 它仍是回到还原前状态的唯一凭据
-            if (rolledBack && !isSnapshotRollback) clearRestoreSnapshot()
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw BackupException(
                 if (rolledBack) "还原失败，已恢复到还原前状态：${e.message ?: "未知错误"}"
                 else "还原失败且自动回滚未成功，数据可能不完整：${e.message ?: "未知错误"}"
             )
         }
-        clearRestoreSnapshot()
     }
-
-    // —— 还原中断的落盘快照（进程被杀后的最后回滚手段） ——
-
-    private val restoreSnapshotFile
-        get() = File(appContext.filesDir, RESTORE_SNAPSHOT_NAME)
-
-    /** @return 落盘成功为 true；失败只记日志并回 false——调用方（restoreInternal）据此抛 BackupException 中止还原（fail-fast），不降级继续。 */
-    private fun persistRestoreSnapshot(bytes: ByteArray): Boolean =
-        runCatching {
-            val tmp = File(appContext.filesDir, "$RESTORE_SNAPSHOT_NAME.tmp")
-            tmp.writeBytes(bytes)
-            check(tmp.renameTo(restoreSnapshotFile)) { "rename failed" }
-            true
-        }.onFailure { Timber.w(it, "Persist restore snapshot failed") }
-            .getOrDefault(false)
-
-    private fun clearRestoreSnapshot() {
-        runCatching { restoreSnapshotFile.delete() }
-    }
-
-    /** 是否留有上次还原中断的落盘快照（备份页据此提示回滚）。 */
-    fun hasRestoreSnapshot(): Boolean {
-        // persistRestoreSnapshot 是先写 .tmp 再 rename：进程在中途被杀
-        // 会留下孤儿 .tmp，顺手清掉（主文件以 rename 成功为准）
-        runCatching {
-            val tmp = File(appContext.filesDir, "$RESTORE_SNAPSHOT_NAME.tmp")
-            if (tmp.isFile) tmp.delete()
-        }
-        return restoreSnapshotFile.isFile
-    }
-
-    /** 用备份口令把落盘快照还原回去（即回到上次还原之前的状态）。 */
-    suspend fun rollbackToRestoreSnapshot(password: CharArray) {
-        val bytes = runCatching { restoreSnapshotFile.readBytes() }
-            .getOrElse { throw BackupException("回滚快照已损坏或不存在") }
-        restoreInternal(bytes, password, isSnapshotRollback = true)
-    }
-
-    /** 用户确认不需要回滚时丢弃落盘快照。 */
-    fun discardRestoreSnapshot() = clearRestoreSnapshot()
 
     // —— 应用级还原执行（不随界面销毁取消） ——
 
@@ -354,9 +260,9 @@ object BackupManager {
 
     /**
      * 在应用级作用域启动还原：旋转/退出备份页都不会取消它（旧实现挂在
-     * 界面作用域上，旋转即取消，还原与回滚同遭腰斩）。重复启动忽略。
+     * 界面作用域上，旋转即取消，还原会遭腰斩）。重复启动忽略。
      */
-    fun startRestore(bytes: ByteArray, password: CharArray, rollbackSnapshot: Boolean = false) {
+    fun startRestore(bytes: ByteArray, password: CharArray) {
         if (!restoreRunning.compareAndSet(false, true)) {
             password.fill(' ')
             return
@@ -364,8 +270,7 @@ object BackupManager {
         _restoreState.value = RestoreState.Running
         restoreScope.launch {
             try {
-                if (rollbackSnapshot) rollbackToRestoreSnapshot(password)
-                else restoreBackup(bytes, password)
+                restoreBackup(bytes, password)
                 _restoreState.value = RestoreState.Done
                 scheduleProcessRestart()
             } catch (e: Exception) {
@@ -425,11 +330,10 @@ object BackupManager {
         }
         val key = deriveKey(password, salt, iterations, kdf)
         val cipherText = bytes.copyOfRange(nl + 1, bytes.size)
+        // 只认带 AAD（头部作附加数据）的现行包：无 AAD 旧包兼容解密已
+        // 随清点 D19 退场（997 版为一年前内部版本，存量旧包已清）。
+        // GCM 校验失败：口令错误与文件篡改在加密上不可区分，统一提示
         val plain = decryptGcm(key, iv, cipherText, headerBytes)
-            // 997 版备份的头部未作 AAD，无 AAD 再试一次以便旧包可还原；
-            // 新包带 AAD 校验，第一试即成功，不会走到这里
-            ?: decryptGcm(key, iv, cipherText, null)
-            // GCM 校验失败：口令错误与文件篡改在加密上不可区分，统一提示
             ?: throw BackupException("口令错误或备份文件已损坏")
         return try {
             JSONObject(String(plain, Charsets.UTF_8))
@@ -455,7 +359,6 @@ object BackupManager {
     /** 解析完成、等待写入的还原数据（解析阶段零写入） */
     private class ParsedBackup(
         val prefs: Map<String, Map<String, Any>>,
-        val webdavPassword: String,
         val clipboard: List<ClipboardRecord>,
         val phrases: List<PhraseRecord>,
         val prefers: List<CandidatePrefer>,
@@ -466,12 +369,7 @@ object BackupManager {
      * 把解密后的 JSON 完整解析为内存对象。任何结构/类型错误抛
      * [BackupException]，此时尚未写入任何数据。
      */
-    /**
-     * @param sanitizeWebdav 还原外部备份时为 true（滤掉服务器地址/
-     * 明文开关/同步基准，防恶意备份改道）；回滚回放本机自采快照时
-     * 为 false——那是用户自己的完整状态，必须原样写回。
-     */
-    private fun parsePayload(root: JSONObject, sanitizeWebdav: Boolean = true): ParsedBackup {
+    private fun parsePayload(root: JSONObject): ParsedBackup {
         try {
             val prefs = LinkedHashMap<String, Map<String, Any>>()
             val prefsJson = root.optJSONObject("prefs") ?: JSONObject()
@@ -494,75 +392,10 @@ object BackupManager {
                 }
                 prefs[name] = map
             }
-            // 口令不走 prefs 通道：采集时已从 prefs 副本剔除该键、只走
-            // webdavPassword 专用字段（写入段非空才回写）。但旧备份的
-            // prefs 里可能还带着这个键（空值、或另一台设备的密文），
-            // 写入段整表覆盖先 clear() 再写入，会连本机口令一起冲掉
-            // ——备份口令为空时本机口令就此丢失。一律先从 prefs 剔除，
-            // 任何备份都不能经 prefs 通道写入口令
-            prefs[WEBDAV_PREFS]?.let { webdav ->
-                if (webdav.containsKey(WEBDAV_PASSWORD_KEY)) {
-                    prefs[WEBDAV_PREFS] = webdav - WEBDAV_PASSWORD_KEY
-                }
-            }
-            // 还原不得带入风险/过期的 WebDAV 状态：
-            // - allowHttp：备份包不应能替用户打开明文传输开关；
-            // - sync_etag_* / 上次同步时间：属于另一台设备的同步基准，沿用会让冲突检测失真。
-            // 整表覆盖时这些键因此被清掉，回到默认（HTTPS-only、无基准先合并）
-            if (sanitizeWebdav) prefs[WEBDAV_PREFS]?.let { webdav ->
-                val filtered = webdav.filterKeys { key ->
-                    key != "webdav_allow_http" &&
-                        // 服务器地址同样不从备份还原：恶意备份可借整表覆盖把
-                        // 服务器指向攻击者，用户之后填入真实口令同步即泄露；
-                        // 账号与口令仍可迁移（没有地址时它们无处发送）
-                        key != "webdav_server" &&
-                        // 同步目录是该服务器上的路径、与地址同属一台
-                        // 机器的配置：随备份带入会让本机服务器＋本机
-                        // 账号往异机目录同步，备份里没有这个键时整表
-                        // 覆盖还会把本机值清掉、回落默认路径
-                        key != "webdav_sync_path" &&
-                        key != "last_upload_time" &&
-                        key != "last_download_time" &&
-                        !key.startsWith("sync_etag_") &&
-                        // per-file 同步时间键的独立前缀（U+001F 分隔，
-                        // 与 ETag 键空间不交叠）：同属本机同步基准，
-                        // 一并剔除；旧前缀时间键已被 sync_etag_ 覆盖
-                        !key.startsWith("sync_time\u001F")
-                }
-                // 服务器地址、明文开关与同步目录是本机配置而非备份
-                // 内容：整表覆盖会连本机现值一起抹掉（还原自己的备
-                // 份也丢服务器设置），用解析当下的本机现值回填这三
-                // 个键。同步基准不回填——保持「无基准先全量合并」
-                // 的安全方向，让还原后的词库数据与远端重新对账，
-                // 而不是拿旧基准误判未变化。
-                val local = appContext
-                    .getSharedPreferences(WEBDAV_PREFS, Context.MODE_PRIVATE).all
-                val refilled = LinkedHashMap(filtered)
-                for (key in listOf("webdav_server", "webdav_allow_http", "webdav_sync_path")) {
-                    local[key]?.let { refilled[key] = it }
-                }
-                // 口令同口径：备份口令为空（在未配置 WebDAV、或口令读
-                // 不出的设备上做的备份）时，整表覆盖不得抹掉本机口令
-                // ——用本机现存值原样回填（落盘密文形态，与上面两个键
-                // 同为 .all 读到的原值）。备份口令非空时不回填，由
-                // 写入段经专用通道以备份口令重新加密落盘
-                if (root.optString("webdavPassword", "").isEmpty()) {
-                    local[WEBDAV_PASSWORD_KEY]?.let { refilled[WEBDAV_PASSWORD_KEY] = it }
-                    // 用户名与口令成组迁移：口令不随备份走时，用户名
-                    // 也绝不能单独随备份覆盖——否则会出现「本机服务器
-                    // ＋备份用户名＋本机口令」的错配组合，同步只会
-                    // 401 失败。先摘掉备份带来的用户名，再以本机现
-                    // 值回填（本机也没有就保持无用户名）
-                    refilled.remove(WEBDAV_USERNAME_KEY)
-                    local[WEBDAV_USERNAME_KEY]?.let { refilled[WEBDAV_USERNAME_KEY] = it }
-                }
-                prefs[WEBDAV_PREFS] = refilled
-            }
-            // 还原语义以备份为准：强制剪贴板拆库迁移标记为已完成，防止重启后
-            // 主库残留的旧剪贴板行被迁移逻辑合并进刚还原好的剪贴板表
-            val clipSettings = LinkedHashMap(prefs[CLIPBOARD_PREFS].orEmpty())
-            clipSettings[CLIPBOARD_MIGRATED_KEY] = true
-            prefs[CLIPBOARD_PREFS] = clipSettings
+            // WebDAV 整表不在解析段做任何过滤：写入段按设备本地表
+            // 整表跳过（见 applyPayload 与 DEVICE_LOCAL_PREFS，S8）——
+            // 原脱敏＋本机现值回填五层规则随之退场，旧备份里的
+            // webdavPassword 专用字段也不再有人读（忽略即可）
 
             val clips = root.optJSONArray("clipboard") ?: JSONArray()
             val clipList = ArrayList<ClipboardRecord>(clips.length())
@@ -629,7 +462,6 @@ object BackupManager {
 
             return ParsedBackup(
                 prefs = prefs,
-                webdavPassword = root.optString("webdavPassword", ""),
                 // 剪贴板表 text 唯一（ClipboardDatabase v4 起）：备份内
                 // 同 text 多行（旧版本应用层唯一性约定失效时期的产物）
                 // 直插会撞唯一索引、整表事务回滚让还原全灭。解析阶段
@@ -673,15 +505,8 @@ object BackupManager {
     private suspend fun applyPayload(parsed: ParsedBackup) {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
-        // 写剪贴板库前同样先确保拆库迁移已执行，与采集侧同一口径：
-        // 迁移标记虽被上方解析段强制置为已完成，但那是 prefs 层面的
-        // 防合并口径，物理迁移是否跑过仍以这里的实际触发为准。
-        // 失败同采集侧口径中止（抛错走 restoreInternal 的回滚与
-        // 失败上报）：带着没迁完的旧行整表替换，会把状态推进到
-        // 无人再能收敛的形态
-        if (!ClipboardManager.ensureMigrated(appContext)) {
-            throw BackupException("剪贴板数据迁移失败，还原中止")
-        }
+        // 拆库迁移本体已随清点 Q2 退场（现行设备早已迁完）：原「迁移
+        // 不成中止还原」的耦合随之解除，直接整表替换
 
         // —— Room 四表：各自单事务内整表替换，中途失败整表回滚
         clipDb.withTransaction {
@@ -712,9 +537,9 @@ object BackupManager {
 
         // —— prefs 整表覆盖（先清后写，与备份时点的一致状态）
         for ((name, entries) in parsed.prefs) {
-            // 设备本地状态偏好跳过回写（见 DEVICE_LOCAL_PREFS）：备份里
-            // 的下载记录与本机实际文件无关，整表覆盖回去会让更新检查
-            // 拿别台设备的记录误判本机状态
+            // 设备本地状态偏好跳过回写（见 DEVICE_LOCAL_PREFS，含
+            // WebDAV 整表）：备份里的下载记录/同步配置与本机实际
+            // 状态无关，整表覆盖回去会让本机状态被别台设备顶掉
             if (name in DEVICE_LOCAL_PREFS) continue
             val editor = appContext.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
             editor.clear()
@@ -723,31 +548,6 @@ object BackupManager {
             // 同步提交失败必须让整个还原判失败（触发快照回滚），只记日志继续
             // 会留下数据库是新数据、偏好是旧数据的混杂状态
             if (!editor.commit()) throw BackupException("设置写入失败（$name），还原中止")
-        }
-        // WebDAV 密码最后单独回写，经加密通道在本机 Keystore 重新加密。
-        // 仅当备份里真有口令才回写：与上方 webdav_server/webdav_allow_http
-        // 的本机回填同一原则——口令同属本机配置，备份缺省/为空（典型：
-        // 在未配置 WebDAV 的设备上做的备份）不得抹掉本机现口令
-        // （password setter 收到空串即删除该键），否则还原后 WebDAV
-        // 同步会无声失效
-        if (parsed.webdavPassword.isNotEmpty()) {
-            UserDictPrefs.password = parsed.webdavPassword
-            // 口令 setter 走 apply() 异步落盘，而还原成功后随即安排
-            // 进程重启（600ms 后 killProcess），异步写盘有赶不上的
-            // 丢写窗口：把该 prefs 文件的当前内存状态（含刚写入的
-            // 口令密文）整体用 commit() 同步重写一次封住窗口。clear
-            // 保证必然触发实际写盘（值未变的 put 可能被编辑器判定
-            // 无变更而跳过）。同步提交失败同上方口径判还原失败
-            val webdavPrefs = appContext
-                .getSharedPreferences(WEBDAV_PREFS, Context.MODE_PRIVATE)
-            val flush = webdavPrefs.edit()
-            flush.clear()
-            for ((key, value) in webdavPrefs.all) {
-                if (value != null) putPrefValue(flush, key, value)
-            }
-            if (!flush.commit()) {
-                throw BackupException("设置写入失败（$WEBDAV_PREFS），还原中止")
-            }
         }
 
         // 引擎侧候选偏好有内存快照，还原后显式失效，不依赖随后的杀进程重启

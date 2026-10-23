@@ -82,7 +82,6 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     val msgLatest = stringResource(R.string.update_latest)
     val msgDownloadFailed = stringResource(R.string.update_download_failed)
     val msgNeedPermission = stringResource(R.string.update_need_permission)
-    val msgFileInvalid = stringResource(R.string.update_file_invalid)
     val msgDebugUnsupported = stringResource(R.string.debug_update_unsupported)
 
     if (showLicenses) {
@@ -95,13 +94,10 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     }
 
     // 尝试安装：缺「安装未知应用」授权时先去设置，文件留着，用户回来再点即可
+    // （不再本地验签：下载时已校验大小与登记摘要，签名不一致由系统
+    // 安装器拒绝，见 Q12）
     fun tryInstall() {
         val file = downloadedFile ?: return
-        if (!AppUpdateManager.isInstallable(context, file)) {
-            downloadedFile = null
-            toast(msgFileInvalid)
-            return
-        }
         if (AppUpdateManager.needsInstallPermission(context)) {
             toast(msgNeedPermission)
             runCatching { AppUpdateManager.openInstallPermissionSettings(context) }

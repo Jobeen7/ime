@@ -58,14 +58,13 @@ class GridKeyboardView(
     // 纯浪费。旧实现只缓存最近一个分类，来回切分类时每切一次都重建；现
     // 改为按签名缓存多个分类的已建 View，切回已缓存分类直接复用，只做
     // detach 后再 attach。
-    // 失效策略选「条目内带配色快照」：配色在本 View 生命周期内固定（构造
-    // 入参，换主题走键盘重建、新建本 View），不存在原地换色路径；仍给每
-    // 条目记一份配色快照，命中时比对、不符则丢弃该条目按当前配色重建，
-    // 将来若有原地刷新配色的入口也能自然失效，无需整表清理的代码路径。
+    // 配色在本 View 生命周期内固定（构造入参，换主题走键盘重建、新建
+    // 本 View），不存在原地换色路径，故条目不再附带配色快照比对（清点
+    // Q3 已拆该道）；失效只靠下方度量戳（改显示大小/字体大小整表失效）。
     // 容量上限：表情+符号分类总数有限，超过上限时按最久未用淘汰
     // （accessOrder 的 LinkedHashMap，get/put 都会刷新条目顺序）。
     private val viewCache =
-        LinkedHashMap<List<String>, Pair<KeyboardColors.ColorScheme, List<KeyView>>>(
+        LinkedHashMap<List<String>, List<KeyView>>(
             16, 0.75f, true
         )
 
@@ -111,25 +110,24 @@ class GridKeyboardView(
         // 数与 items 数一致才复用，防签名构造方式将来变更时误用旧条目
         val cached = viewCache[signature]
         val views: List<KeyView> = if (cached != null &&
-            cached.first == colors &&
-            cached.second.size == items.size
+            cached.size == items.size
         ) {
             // 复用前必须清掉旧布局坐标：本 View 只给可见行调 layout，
             // 不在可见行的复用 View 会保留上次（可能在滚动态势下）的
             // 位置，叠到首屏键上抢触摸。清零后未被 layout 的键是
             // 0 尺寸、不可见也不可命中，等它滚进可见行时再定位。
-            cached.second.forEach { it.layout(0, 0, 0, 0) }
-            cached.second
+            cached.forEach { it.layout(0, 0, 0, 0) }
+            cached
         } else {
             items.map { createKeyView(it) }.also { built ->
-                viewCache[signature] = colors to built
+                viewCache[signature] = built
                 // 按缓存内 View 总数淘汰最久未用条目（单分类可达数百
                 // 个键，按「套数」设上限会让上万个 View 常驻）；被淘汰
                 // 条目的 View 若正挂在本 View 上，随后统一 detach 流
                 // 程会把它们摘下交 GC，不影响本次挂载。至少保留刚
                 // 放入的这一套。
                 while (viewCache.size > 1 &&
-                    viewCache.values.sumOf { it.second.size } > MAX_CACHED_VIEWS_TOTAL
+                    viewCache.values.sumOf { it.size } > MAX_CACHED_VIEWS_TOTAL
                 ) {
                     viewCache.remove(viewCache.keys.first())
                 }

@@ -2,27 +2,28 @@ package com.jobeen.ime.data
 
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.keyboard.theme.KeyboardThemePresets
-import com.jobeen.ime.data.theme.CompactTheme
 import com.jobeen.ime.data.theme.ReadableTheme
 import kotlinx.serialization.json.Json
 import java.io.File
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import timber.log.Timber
 
 object ThemeStore {
     private const val THEMES_FILE = "themes.json"
     const val MAX_CUSTOM_THEMES = 2
 
-    // themes.json 使用可读的关键字（长 key）与 #AARRGGBB 十六进制颜色，美化排版
+    // themes.json 使用可读的关键字（长 key）与 #AARRGGBB 十六进制颜色，美化排版。
+    // 只认这一种现行格式：两代旧格式（长 key+Int 颜色、紧凑短 key）的
+    // 三级 fallback 兼容已于清点 S23 拆除——themes.json 只由本 App 自
+    // 写，旧格式文件按解析失败处理（保留上一个可用状态，不落盘覆盖）。
     private val readableJson = Json {
         ignoreUnknownKeys = true
         prettyPrint = true
     }
-
-    // 兼容旧版：长 key + Int 颜色（KeyboardTheme）或紧凑短 key（CompactTheme）
-    private val fallbackJson = Json { ignoreUnknownKeys = true }
 
     fun refresh() {
         val file = File(App.themesDir, THEMES_FILE)
@@ -34,16 +35,7 @@ object ThemeStore {
             runCatching {
                 readableJson.decodeFromString<List<ReadableTheme>>(text)
                     .map { it.toKeyboardTheme() }
-            }.getOrElse {
-                runCatching {
-                    fallbackJson.decodeFromString<List<KeyboardTheme>>(text)
-                }.getOrElse {
-                    runCatching {
-                        fallbackJson.decodeFromString<List<CompactTheme>>(text)
-                            .map { it.toKeyboardTheme() }
-                    }.getOrNull()
-                }
-            }
+            }.getOrNull()
         }
         if (themes == null) {
             // 解析失败（文件损坏/格式不符/读失败）：保留上一个可用状态，
@@ -84,38 +76,25 @@ object ThemeStore {
         applyCustomThemes(current)
     }
 
-    /** 写入序号：快速连续保存时，旧列表的写入不许覆盖新列表 */
-    private val writeSeq = java.util.concurrent.atomic.AtomicLong(0)
-
-    /**
-     * 落盘串行锁：「比序号 + rename」必须在锁内整体执行——只做先查后动时，
-     * 旧写入可能在新写入已 rename 完成后才通过检查、反过来把新文件覆盖掉。
-     */
-    private val writeLock = Any()
+    /** 落盘串行：写 tmp 与 rename 在同一把锁内整体执行，防并发写交错 */
+    private val writeMutex = Mutex()
 
     private fun applyCustomThemes(themes: List<KeyboardTheme>) {
         KeyboardThemePresets.setCustomThemes(themes.take(MAX_CUSTOM_THEMES))
         val snapshot = themes.map { ReadableTheme.from(it) }
-        val seq = writeSeq.incrementAndGet()
         // 文件写放 IO 线程，避免阻塞主线程
         appScope.launch(Dispatchers.IO) {
             val file = File(App.themesDir, THEMES_FILE)
             runCatching {
-                // 原子写：先写临时文件再 rename，进程在写一半时被杀不会留下
-                // 截断的 themes.json（旧实现 writeText 直写会丢全部自定义主题）。
-                // tmp 名带写入序号保持唯一：共用同一 tmp 时并发写的 writeText
-                // 会互相交错、rename 还可能把别人的半成品顶成正式文件
-                val tmp = File(App.themesDir, "$THEMES_FILE.$seq.tmp")
-                tmp.writeText(readableJson.encodeToString(snapshot))
-                // 比序号与 rename 在锁内串行：检查通过后不许有其他写入插队
-                // 完成 rename，否则旧快照仍可能后发覆盖新快照
-                synchronized(writeLock) {
-                    // 已有更新的保存在途：本次快照作废，由最新一次负责落盘终态
-                    if (seq == writeSeq.get()) {
-                        check(tmp.renameTo(file)) { "rename themes file failed" }
-                    } else {
-                        tmp.delete()
-                    }
+                // 原子写：锁内先写临时文件再 rename，进程在写一半时被杀
+                // 不会留下截断的 themes.json（writeText 直写会丢全部自
+                // 定义主题）；原「写入序号＋比序号作废旧快照」装置已于
+                // 清点 S23 一并拆除——保存是用户节奏的低频操作，锁串行
+                // 后完成顺序即调用顺序，不存在旧覆盖新的窗口
+                writeMutex.withLock {
+                    val tmp = File(App.themesDir, "$THEMES_FILE.tmp")
+                    tmp.writeText(readableJson.encodeToString(snapshot))
+                    check(tmp.renameTo(file)) { "rename themes file failed" }
                 }
             }
         }

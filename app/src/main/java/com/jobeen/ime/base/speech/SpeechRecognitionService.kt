@@ -2,10 +2,8 @@ package com.jobeen.ime.base.speech
 
 import android.app.Service
 import android.content.Intent
-import android.os.Bundle
 import android.os.Handler
 import android.os.IBinder
-import android.annotation.SuppressLint
 import android.os.Looper
 import android.os.Message
 import android.os.Messenger
@@ -62,16 +60,8 @@ class SpeechRecognitionService : Service() {
     // 不依赖在解码协程里迟置位的 holding（STOP 先到时旧逻辑会直接吞掉停止请求）
     private val sessionActive = AtomicBoolean(false)
 
-    // 录音中检测到模型文件已更新：不能当场换引擎，先标记，会话结束后补重载
-    @Volatile
-    private var pendingModelReload = false
-
     @Volatile
     private var sessionGen = 0
-
-    /** 已加载识别器对应的模型文件指纹（文件名+大小+修改时间）：在线更新替换文件后指纹变化，触发重载 */
-    @Volatile
-    private var loadedModelFingerprint: String? = null
 
     // 客户端随 START 发来的会话代次令牌：本会话全部回信原样带回，
     // 客户端据此丢弃旧会话迟到的结果（服务端内部代次 sessionGen 只管服务端自身防串扰）
@@ -116,9 +106,6 @@ class SpeechRecognitionService : Service() {
         /** 会话被丢弃（CANCEL）：解码协程丢弃队列静默退出，不发 FINAL */
         @Volatile
         var cancelled: Boolean = false
-
-        /** 队列满时丢弃的块数：DONE 时顺带标记回客户端打点（本轮不做用户提示） */
-        val droppedBlocks = java.util.concurrent.atomic.AtomicInteger(0)
 
         // partial 去重/节流状态（随会话对象走）：此前是服务实例
         // 字段、靠 START 时在锁内手动复位——旧会话协程与新会话
@@ -354,10 +341,8 @@ class SpeechRecognitionService : Service() {
                     }.getOrNull() ?: return@Callback true
                     if (!session.queue.offer(block)) {
                         // 队列满（客户端领先解码约 60s）：丢新块保会话，
-                        // 缺这一块只影响这一小段识别，不让会话闩死；
-                        // 丢块计数随本会话 DONE 顺带回客户端打点
-                        val dropped = session.droppedBlocks.incrementAndGet()
-                        Log.w("SpeechSvc", "Audio queue full; dropping chunk (dropped=$dropped)")
+                        // 缺这一块只影响这一小段识别，不让会话闩死
+                        Log.w("SpeechSvc", "Audio queue full; dropping chunk")
                     }
                 }
 
@@ -497,55 +482,24 @@ class SpeechRecognitionService : Service() {
     private fun sendClient(
         what: Int,
         text: String? = null,
-        amplitude: Float = 0f,
         gen: Int = sessionClientGen,
-        audioDropped: Boolean = false,
     ) {
         val messenger = clientMessenger ?: return
-        val msg = SpeechIpc.message(what, text, amplitude, gen)
-        if (audioDropped) {
-            // DONE 带代次时 message() 必已挂 data；无载荷的防御情形在此补建
-            val data = msg.data ?: Bundle().also { msg.data = it }
-            data.putBoolean(SpeechIpc.KEY_AUDIO_DROPPED, true)
-        }
+        val msg = SpeechIpc.message(what, text, gen)
         val ok = runCatching { messenger.send(msg) }
         if (ok.isFailure) Log.e("SpeechSvc", "sendClient failed what=$what", ok.exceptionOrNull())
     }
 
-    @SuppressLint("UnsafeDynamicallyLoadedCode")
-    private fun modelFingerprint(dir: java.io.File): String =
-        dir.listFiles()?.filter { it.isFile }
-            ?.sortedBy { it.name }
-            ?.joinToString("|") { "${it.name}:${it.length()}:${it.lastModified()}" }
-            ?: ""
-
+    /**
+     * 识别器在本进程内只建一次：在线更新替换了模型文件后，靠客户
+     * 端下载成功后的解绑重连（:speech 进程随之重建）让新模型生效，
+     * 本服务不再做指纹比对与热重载。
+     */
     private fun initEngine(silent: Boolean = false): Boolean {
-        if (recognizerRef.get() != null &&
-            modelFingerprint(App.speechModelDir) == loadedModelFingerprint
-        ) return true
+        if (recognizerRef.get() != null) return true
         synchronized(audioLock) {
             val dir = App.speechModelDir
-            val fingerprint = modelFingerprint(dir)
-            val existing = recognizerRef.get()
-            if (existing != null) {
-                if (fingerprint == loadedModelFingerprint) return true
-                if (sessionActive.get()) {
-                    // 正在录音时绝不能换引擎：采集协程还持有旧 recognizer/
-                    // stream，此时 release 会让它在已释放的 native 对象上
-                    // decode。标记待重载，沿用旧模型完成本次会话，会话结束
-                    // 后由 reloadModelIfPending 补执行
-                    pendingModelReload = true
-                    Log.i("SpeechSvc", "Model changed during active session; reload deferred")
-                    return true
-                }
-                // 模型文件已被在线更新替换：释放旧识别器、下面按新文件重建，
-                // 否则下载成功的新模型在本进程重启前永不生效且无任何提示
-                Log.i("SpeechSvc", "Speech model files changed; reloading recognizer")
-                recognizerRef.set(null)
-                loadedModelFingerprint = null
-                streamRef.getAndSet(null)?.runCatching { release() }
-                existing.runCatching { release() }
-            }
+            if (recognizerRef.get() != null) return true
             val files = findSpeechModelFiles(dir)
             if (files == null) {
                 Log.w("SpeechSvc", "No available speech model in $dir")
@@ -575,7 +529,6 @@ class SpeechRecognitionService : Service() {
                     enableEndpoint = false,
                 )
                 recognizerRef.set(OnlineRecognizer(null, config))
-                loadedModelFingerprint = fingerprint
                 val encoderPath = files.encoder.absolutePath
                 val engineVariant =
                     if (files.encoder.nameWithoutExtension.contains("int8", ignoreCase = true)) {
@@ -591,13 +544,6 @@ class SpeechRecognitionService : Service() {
                 false
             }
         }
-    }
-
-    /** 录音中被推迟的模型重载在会话结束后补执行（销毁中不再触发） */
-    private fun reloadModelIfPending() {
-        if (!pendingModelReload || sessionActive.get() || destroying) return
-        pendingModelReload = false
-        scope.launch(Dispatchers.IO) { initEngine(silent = true) }
     }
 
     /**
@@ -675,11 +621,7 @@ class SpeechRecognitionService : Service() {
                             }
                         }
                     }
-                    sendClient(
-                        SpeechIpc.MSG_DONE,
-                        gen = myClientGen,
-                        audioDropped = session.droppedBlocks.get() > 0,
-                    )
+                    sendClient(SpeechIpc.MSG_DONE, gen = myClientGen)
                 }
             } catch (t: Throwable) {
                 if (t is CancellationException) throw t
@@ -692,7 +634,6 @@ class SpeechRecognitionService : Service() {
                 }
                 sendClient(SpeechIpc.MSG_ERROR, gen = myClientGen)
             } finally {
-                var shouldReloadModel = false
                 // 流的身份清退先在 audioLock 内做（与换流、延迟释放
                 // 集合的写入同锁）；会话字段的复检与复位随后在
                 // stateLock 内做（见下段）。两段不嵌套、次序固定
@@ -723,10 +664,8 @@ class SpeechRecognitionService : Service() {
                         sessionActive.set(false)
                         holding.set(false)
                         clientMessenger = null
-                        shouldReloadModel = true
                     }
                 }
-                if (shouldReloadModel) reloadModelIfPending()
             }
         }
     }

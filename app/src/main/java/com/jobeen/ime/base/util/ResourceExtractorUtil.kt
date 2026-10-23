@@ -64,10 +64,12 @@ object ResourceExtractorUtil {
                     if (!tmpFile.renameTo(destFile)) {
                         // rename 失败（极少见，同目录不可能跨文件系统）：
                         // 先删目标再 rename —— 旧 mmap 映射仍指向被删的旧 inode，
-                        // 不会 SIGBUS；只有 rename 彻底不可用才回退原地覆盖
+                        // 不会 SIGBUS。再失败即放弃本条目（Q13：不再回退原地
+                        // copy 覆盖——那恰恰是 tmp+rename 要避免的截断覆写，
+                        // 解压失败由上层按整体失败处理、重跑即可）
                         destFile.delete()
                         if (!tmpFile.renameTo(destFile)) {
-                            tmpFile.copyTo(destFile, overwrite = true)
+                            Timber.w("  rename failed, entry not extracted: %s", name)
                             tmpFile.delete()
                         }
                     }

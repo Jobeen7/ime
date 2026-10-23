@@ -349,7 +349,6 @@ class Rime : RimeApi, RimeLifecycleOwner {
         withRimeContext { Companion.getCandidates(startIndex, limit) }
 
     private fun startRime(fullCheck: Boolean) {
-        DataManager.sync()
         // OpenCC 文本词典先同步转成 .ocd2 再 bootstrap：异步转换与
         // 部署并发时 librime 会先加载旧 .ocd2，新词典要到下次部署
         // 才生效（方案更新后繁简转换沿用旧词典一整代）

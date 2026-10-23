@@ -9,10 +9,10 @@ import timber.log.Timber
  * 用户词典 WebDAV 同步的配置存储。
  *
  * 密码经 [SecretStore]（Android Keystore，AES-GCM）加密后存入私有
- * SharedPreferences，落盘无明文。旧版本遗留的明文密码在首次读取时自动
- * 加密回写迁移；Keystore 不可用时 setter 不落盘并记录日志，getter 返回空，
- * 绝不回退明文存储。备份/还原走 BackupManager 的特殊通道（备份包整体
- * 加密，密码以明文进包、还原时在本机重新加密），不经过本文件的原始值。
+ * SharedPreferences，落盘无明文。Keystore 不可用时 setter 不落盘并记录
+ * 日志，getter 返回空，绝不回退明文存储；存量若不是密文形态（远古版
+ * 明文），getter 按无密码处理（清点 Q18 定论，不再读路径回写迁移）。
+ * 备份/还原不带本文件整表（设备本地状态，见 BackupManager）。
  */
 object UserDictPrefs {
     private const val PREFS_NAME = "user_dict_sync"
@@ -22,28 +22,16 @@ object UserDictPrefs {
     private const val KEY_PASSWORD = "webdav_password"
     private const val KEY_SYNC_PATH = "webdav_sync_path"
     private const val KEY_ALLOW_HTTP = "webdav_allow_http"
-    private const val KEY_SYNC_ETAG_PREFIX = "sync_etag_"
 
     /**
-     * 每文件的最近成功上传/下载时间（同步基准的一部分，与 ETag 基准
-     * 同为 per-file 口径）。键名用独立前缀 `sync_time␟`（␟ 是单元
-     * 分隔符 U+001F，不可能出现在词典文件名里）：时间键与 ETag 键
-     * （`sync_etag_`+文件名）的键空间彻底不交叠。此前时间键沿用
-     * `sync_etag_uptime_`/`sync_etag_downtime_` 前缀，与名为
-     * `uptime_…` 的文件的 ETag 键同名、String/Long 类型互覆会抛
-     * ClassCastException，前缀分离后根除；旧前缀时间键不再读写
-     * （存量值留在 prefs 里，备份过滤的 `sync_etag_` 前缀仍覆盖
-     * 它们）。备份侧：BackupManager 还原过滤同时剔除 `sync_etag_`
-     * 与 `sync_time␟` 两族键（基准是本机状态、不得随备份跨设备
-     * 带入）。
-     * 旧的全局键 last_upload_time / last_download_time 只读回落：
-     * 显示聚合在 per-file 全空时读它们（升级前最后一次同步时刻），
-     * 同步决策永不读。
+     * 每文件的最近成功上传/下载时间（仅供设置页「上次同步」显示，
+     * 不参与任何同步决策）。键名用独立前缀 `sync_time␟`（␟ 是单元
+     * 分隔符 U+001F，不可能出现在词典文件名里）。ETag 基准记账已随
+     * 清点 S1 定论整套退场（不再有 sync_etag_ 键的读写；存量键留在
+     * prefs 里无人读，本文件整表又是设备本地状态、不随备份走）。
      */
     private const val KEY_SYNC_UPLOAD_TIME_PREFIX = "sync_time\u001Fup\u001F"
     private const val KEY_SYNC_DOWNLOAD_TIME_PREFIX = "sync_time\u001Fdown\u001F"
-    private const val KEY_LEGACY_LAST_UPLOAD_TIME = "last_upload_time"
-    private const val KEY_LEGACY_LAST_DOWNLOAD_TIME = "last_download_time"
 
     /** 最近一次任意下载成功并完成合并的时刻（仅供「上次下载」显示，不是同步基准） */
     private const val KEY_LAST_ANY_DOWNLOAD_TIME = "last_any_download_time"
@@ -68,14 +56,10 @@ object UserDictPrefs {
                 // 密钥丢失/损坏时解密失败：返回空而不是把密文当密码用
                 return SecretStore.decrypt(stored).orEmpty()
             }
-            // 存量明文：立即加密回写完成迁移，本次返回原值不影响使用
-            val encrypted = SecretStore.encrypt(stored)
-            if (encrypted != null) {
-                prefs.edit().putString(KEY_PASSWORD, encrypted).apply()
-            } else {
-                Timber.w("WebDAV password stored in plaintext could not be migrated (Keystore unavailable)")
-            }
-            return stored
+            // 非密文存量（远古版明文）：按无密码处理，不再读路径回写
+            // 迁移（清点 Q18 定论——该分支对现行设备不可达，getter 的
+            // 写副作用一并消除）；用户重新填一次密码即恢复
+            return ""
         }
         set(value) {
             if (value.isEmpty()) {
@@ -96,29 +80,22 @@ object UserDictPrefs {
         set(value) = prefs.edit().putString(KEY_SYNC_PATH, value.trim()).apply()
 
     /**
-     * 显示用（设置页「上次上传/下载」）：全部词典 per-file 基准时间
-     * 的最大值，即最近一次成功同步的时刻；无任何记录为 0。
-     * 只读聚合，不再是独立存储，更不是同步决策的依据——决策一律
-     * 走下面按文件隔离的基准。per-file 全空时回落读旧全局键
-     * （升级前最后一次同步的时刻，仅显示、只读）。
+     * 显示用（设置页「上次上传/下载」）：全部词典 per-file 时间的
+     * 最大值，即最近一次成功同步的时刻；无任何记录为 0。只读聚合，
+     * 不是同步决策的依据。旧全局键回落已随清点 D17 删除（per-file
+     * 口径运行多版，回落支不可达）。
      */
     val lastUploadTime: Long
-        get() {
-            val perFile = maxPerFileTime(KEY_SYNC_UPLOAD_TIME_PREFIX)
-            return if (perFile > 0L) perFile
-            else prefs.getLong(KEY_LEGACY_LAST_UPLOAD_TIME, 0L)
-        }
+        get() = maxPerFileTime(KEY_SYNC_UPLOAD_TIME_PREFIX)
 
     val lastDownloadTime: Long
         get() {
-            // 跨词典下载不建 per-file 基准，但「上次下载」显示应更新：
+            // 跨词典下载不建 per-file 记录，但「上次下载」显示应更新：
             // 聚合里并入任意下载的最近时刻
-            val agg = maxOf(
+            return maxOf(
                 maxPerFileTime(KEY_SYNC_DOWNLOAD_TIME_PREFIX),
                 prefs.getLong(KEY_LAST_ANY_DOWNLOAD_TIME, 0L),
             )
-            return if (agg > 0L) agg
-            else prefs.getLong(KEY_LEGACY_LAST_DOWNLOAD_TIME, 0L)
         }
 
     /** 任意一次下载合并成功后记一笔（仅供「上次下载」显示，永不作同步基准） */
@@ -139,7 +116,7 @@ object UserDictPrefs {
         return max
     }
 
-    /** 某个远端文件最近一次成功上传的时刻（该文件的时间基准）；从未成功为 0 */
+    /** 某个远端文件最近一次成功上传的时刻（仅显示用）；从未成功为 0 */
     fun lastUploadTimeFor(fileName: String): Long =
         prefs.getLong(KEY_SYNC_UPLOAD_TIME_PREFIX + fileName, 0L)
 
@@ -147,7 +124,7 @@ object UserDictPrefs {
         prefs.edit().putLong(KEY_SYNC_UPLOAD_TIME_PREFIX + fileName, timeMs).apply()
     }
 
-    /** 某个远端文件最近一次成功下载并合并的时刻（该文件的时间基准）；从未成功为 0 */
+    /** 某个远端文件最近一次成功下载并合并的时刻（仅显示用）；从未成功为 0 */
     fun lastDownloadTimeFor(fileName: String): Long =
         prefs.getLong(KEY_SYNC_DOWNLOAD_TIME_PREFIX + fileName, 0L)
 
@@ -159,20 +136,6 @@ object UserDictPrefs {
     var allowHttp: Boolean
         get() = prefs.getBoolean(KEY_ALLOW_HTTP, false)
         set(value) = prefs.edit().putBoolean(KEY_ALLOW_HTTP, value).apply()
-
-    /**
-     * 上次同步时某个远端文件的 ETag（按文件名分别记录）。
-     * 上传前用它判断远端是否被其他设备改过，避免静默覆盖。
-     */
-    fun syncETag(fileName: String): String? =
-        prefs.getString(KEY_SYNC_ETAG_PREFIX + fileName, null)?.takeIf { it.isNotBlank() }
-
-    fun setSyncETag(fileName: String, etag: String?) {
-        val editor = prefs.edit()
-        if (etag.isNullOrBlank()) editor.remove(KEY_SYNC_ETAG_PREFIX + fileName)
-        else editor.putString(KEY_SYNC_ETAG_PREFIX + fileName, etag)
-        editor.apply()
-    }
 
     fun isConfigured(): Boolean =
         server.isNotBlank() && username.isNotBlank() && password.isNotEmpty()

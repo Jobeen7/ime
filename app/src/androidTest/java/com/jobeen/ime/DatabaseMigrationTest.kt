@@ -15,8 +15,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 /**
- * Room 迁移仪器测试（§7.4）：ClipboardDatabase 3→4 与 AppDatabase
- * 12→13（两处都是「清软删行 → 按 text 去重 → 建 text 唯一索引」）。
+ * Room 迁移仪器测试（§7.4）：ClipboardDatabase 3→4（清软删行 →
+ * 按 text 去重 → 建 text 唯一索引）与 AppDatabase 12→14（经 13 的
+ * 剪贴板索引迁移、到 14 DROP 剪贴板残表，清点 D20）。
  *
  * 造旧版库不用 MigrationTestHelper（room-testing 是额外构件，构建
  * 环境未必拉得到）：按 app/schemas 里导出的旧版 createSql 手工建库
@@ -59,7 +60,7 @@ class DatabaseMigrationTest {
     }
 
     @Test
-    fun appDatabase_migrates12To13() {
+    fun appDatabase_migrates12To14_dropsClipboardTable() {
         createOldDatabase(
             name = IME_DB_NAME,
             version = 12,
@@ -73,7 +74,15 @@ class DatabaseMigrationTest {
         )
         val db = AppDatabase.createWithName(context, IME_DB_NAME)
             .openHelper.writableDatabase
-        assertClipboardMigrated(db)
+        // v14（清点 D20）：剪贴板残表整表已 DROP，其余三表照常在
+        val tables = HashSet<String>()
+        db.query("SELECT name FROM sqlite_master WHERE type='table'").use { c ->
+            while (c.moveToNext()) tables += c.getString(0)
+        }
+        assertTrue("clipboard_records" !in tables)
+        assertTrue("candidate_sortings" in tables)
+        assertTrue("candidate_prefers" in tables)
+        assertTrue("phrase_records" in tables)
     }
 
     /**

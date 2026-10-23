@@ -130,24 +130,17 @@ object KeyboardStateManager {
         return schema.id
     }
 
-    // Deploy 完成有两条通道（MessageHandler 与 handleEngineMessage）都会调
-    // refreshSchemas，旧实现每次部署全量刷新跑两遍。合并为单飞 + 尾随一次：
-    // 已在刷新时只标记 pending，当前轮结束后再补一轮，不丢真实的第二次部署
+    // 部署完成的方案刷新只剩 handleEngineMessage 一条触发通道（清点
+    // Q9 已删 MessageHandler 的双通道透传），其余调用方（onAttach /
+    // onConfigChanged）都是用户节奏、不突发：在飞时直接跳过即可，
+    // 不再养单飞＋尾随重跑的合并装置
     private val refreshInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
-    @Volatile
-    private var refreshAgain = false
 
     fun refreshSchemas() {
-        if (!refreshInFlight.compareAndSet(false, true)) {
-            refreshAgain = true
-            return
-        }
+        if (!refreshInFlight.compareAndSet(false, true)) return
         appScope.launch {
             try {
-                do {
-                    refreshAgain = false
-                    refreshSchemasOnce()
-                } while (refreshAgain)
+                refreshSchemasOnce()
             } finally {
                 refreshInFlight.set(false)
             }

@@ -1,10 +1,6 @@
 <resources>
     <!-- app_name 由 build.gradle.kts 的 resValue 生成（debug 为 Jime Debug），不在此定义 -->
     <string name="done">done</string>
-    <string name="rime_deploy_success">引擎部署成功</string>
-    <string name="rime_deploy_failure">引擎部署失败</string>
-    <string name="deploy_progress">引擎部署进度</string>
-    <string name="rime_restarting">引擎重启中</string>
 
     <string name="basic_settings">基本设置</string>
     <string name="theme">应用主题</string>

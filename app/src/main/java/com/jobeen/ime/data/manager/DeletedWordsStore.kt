@@ -38,8 +38,8 @@ internal fun decodeDeletedWordEntry(line: String): Pair<String, DeletedWordEntry
     val deleted = parts[1] != "0"
     // 时间戳必须钳制：同步文件来自其他设备/对端写入，不设上限时一个
     // Long.MAX_VALUE 级的坏时间戳会在合并中永久压制该词（本机的新
-    // 删除/恢复永远输给它），还会顶爆 maxSeen 下限棘轮。上限取
-    // 「当前时间 + 1 天」，容忍设备间时钟偏差，挡住离谱值
+    // 删除/恢复永远输给它）。上限取「当前时间 + 1 天」，容忍设备间
+    // 时钟偏差，挡住离谱值
     val tsMax = System.currentTimeMillis() + 86_400_000L
     val ts = (parts[2].toLongOrNull() ?: 0L).coerceIn(0L, tsMax)
     return word to DeletedWordEntry(deleted, ts)
@@ -99,7 +99,6 @@ object DeletedWordsStore {
                     }
                 }
                 cache = map
-                observeLocked(map)
             }
         }
     }
@@ -125,30 +124,9 @@ object DeletedWordsStore {
     /** 已删词列表（按词排序），供设置页展示与恢复。 */
     fun deletedWords(): List<String> = all().sorted()
 
-    /**
-     * 已见过的最大时间戳（本地记录与历次同步远端记录）：本机时钟偏慢
-     * 时，新操作的墙钟时间戳会输给其他设备先前的高时间戳记录、合并
-     * 时被旧状态覆盖。新记录的时间戳取 max(当前时刻, 已见最大+1)，
-     * 保证「我见过一切之后做的操作」在合并中必胜过我见过的记录；
-     * 远端未来时间戳造成的棘轮抬升以对方时钟偏差为界，是时间戳合并
-     * 的固有代价。
-     */
-    @Volatile
-    private var maxSeenUpdatedAt = 0L
-
-    private fun nextTimestampLocked(): Long {
-        val ts = maxOf(System.currentTimeMillis(), maxSeenUpdatedAt + 1)
-        maxSeenUpdatedAt = ts
-        return ts
-    }
-
-    private fun observeLocked(entries: Map<String, DeletedWordEntry>) {
-        for (entry in entries.values) {
-            if (entry.updatedAt > maxSeenUpdatedAt) {
-                maxSeenUpdatedAt = entry.updatedAt
-            }
-        }
-    }
+    // 新记录时间戳直接取本机墙钟（清点 S20 定论：maxSeen 棘轮已删
+    // ——三台自有设备 NTP 同步，为「对端时钟中毒」养逻辑时钟不值；
+    // 解码侧的钳制保留，防坏数据本职）
 
     /**
      * 把一次同步拿到的远端记录合并进本地并返回合并结果（供上传）。
@@ -161,7 +139,6 @@ object DeletedWordsStore {
     ): Map<String, DeletedWordEntry> {
         synchronized(this) {
             val map = load()
-            observeLocked(remote)
             val merged = mergeDeletedWordEntries(map, remote)
             map.clear()
             map.putAll(merged)
@@ -178,7 +155,7 @@ object DeletedWordsStore {
             if (map[word]?.deleted != true) {
                 map[word] = DeletedWordEntry(
                     deleted = true,
-                    updatedAt = nextTimestampLocked(),
+                    updatedAt = System.currentTimeMillis(),
                 )
                 persistLocked(map)
             }
@@ -194,7 +171,7 @@ object DeletedWordsStore {
             if (map[word]?.deleted == true) {
                 map[word] = DeletedWordEntry(
                     deleted = false,
-                    updatedAt = nextTimestampLocked(),
+                    updatedAt = System.currentTimeMillis(),
                 )
                 persistLocked(map)
             }

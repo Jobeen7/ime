@@ -123,14 +123,14 @@ class SpeechEditorEpochTest {
         assertFalse(advancesEditorEpoch(InputLifecycleCallback.FINISH_INPUT_VIEW, false))
     }
 
-    // ── R1：迟到 FINAL 对账的武装纪元门控 ──
+    // ── 结算尾的发起框纪元门控（捕获＋复检语义） ──
 
     @Test
     fun armedEpochGateClosesAfterAdvance() {
-        // 对账在 settle 武装时记下所属会话的发起框纪元
-        // （lateFinalArmedEpoch）；对账协程飞行中换框（纪元推进）
-        // 后，以武装纪元复检必须判过期、整段放弃——协程持的是局
-        // 部快照，换框清窗清不到它，只有这道门控挡得住
+        // 结算尾在会话开始时记下发起框纪元（activeSessionEpoch）；
+        // 异步尾飞行中换框（纪元推进）后，以捕获纪元复检必须判
+        // 过期、整段放弃写屏——尾持的是局部快照，只有这道门控
+        // 挡得住把旧句写进新框
         val epoch = EditorEpoch()
         val armedEpoch = epoch.current()
         assertTrue(epoch.isCurrent(armedEpoch))
@@ -140,7 +140,7 @@ class SpeechEditorEpochTest {
 
     @Test
     fun armedEpochGateStaysOpenWithinSameEditor() {
-        // 同框接管（N12 语义）：武装后纪元未推进，对账照常放行
+        // 同框：捕获后纪元未推进，结算尾复检照常放行
         val epoch = EditorEpoch()
         val armedEpoch = epoch.current()
         assertTrue(epoch.isCurrent(armedEpoch))

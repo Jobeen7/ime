@@ -82,10 +82,11 @@ object GramModelDownloader {
     // 轻则下载失败、重则 rename 校验环节抛未捕获异常崩溃
     private const val PART_SUFFIX = ".gmdl.part"
 
-    // 可信摘要来源：上游 RIME-LMDG 的 LTS 发布资产在 GitHub API 中登记了
-    // 官方 sha256（digest 字段）。清单服务端未提供摘要时改查这里——
-    // 上游换模型时新资产带新摘要，客户端现查现验，无需发版跟随。
-    // 查询走 base.net 的共享实现（资产分页端点，见 fetchGithubSha256）。
+    // 期望摘要来源：优先上游 RIME-LMDG 的 LTS 发布资产在 GitHub API
+    // 中登记的官方 sha256（digest 字段，现查现验、无需发版跟随）；
+    // GitHub 查不到时退回清单自带摘要；两者皆无则只走大小/长度
+    // 校验放行，不再 fail-closed 拒绝下载（S2）。查询走 base.net
+    // 的共享实现（只读 Release 内嵌摘要，见 fetchGithubSha256）。
 
     // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
     // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
@@ -185,23 +186,18 @@ object GramModelDownloader {
         val target = File(DataManager.sharedDataDir, "$language.gram")
         val partial = File(target.parentFile, target.name + PART_SUFFIX)
         partial.delete()
-        // 期望摘要只认 GitHub 登记值：清单与下载链接同出一台服务器，清单
-        // 自带的 sha256 与链接同源、不能当信任锚（服务器被攻破时可配套
-        // 伪造）。fail-closed：GitHub 查不到可信摘要时拒绝下载——语法
-        // 模型约 400MB 且由原生代码解析，不能只凭长度放行。
+        // 期望摘要优先 GitHub 登记值（与清单/下载链接不同源，可作
+        // 校验锚）；GitHub 查不到时退回清单自带摘要；两者皆无时
+        // expectedSha 为空，downloadFile 只走大小/长度校验放行——
+        // 不再因拿不到摘要拒绝整个下载（S2：原三层信任锚＋钉死值
+        // ＋fail-closed 已拆）
         val expectedSha = pickExpectedSha256(
             manifest.sha256,
             fetchGithubSha256("$language.gram"),
-            PINNED_GRAM_SHA256["$language.gram"] ?: "",
         )
         val manifestSha = normalizeSha256(manifest.sha256)
         if (manifestSha.isNotEmpty() && manifestSha != expectedSha) {
             Timber.w("Ngram manifest sha256 differs from GitHub registry, trusting GitHub")
-        }
-        if (expectedSha.isEmpty()) {
-            Timber.w("Ngram model has no trustworthy SHA-256, refusing download: %s", language)
-            HttpUtil.showToast("模型增强下载失败：无法获取官方校验值")
-            return@withContext false
         }
         if (!downloadFile(link, partial, expectedSha, onProgress)) {
             partial.delete()
@@ -231,15 +227,14 @@ object GramModelDownloader {
     }
 
     /**
-     * 向 GitHub 查 [fileName] 在 LTS 发布中登记的官方 sha256。
-     * 任何失败（网络不通、限流、资产结构变化）都返回空串，调用方
-     * 退到 APK 内置钉死摘要，两者皆无则 fail-closed 拒绝下载。
+     * 向 GitHub 查 [fileName] 在 LTS 发布中登记的官方 sha256，只读
+     * Release 对象内嵌的摘要（共享实现，单次请求）。任何失败（网
+     * 络不通、限流、内嵌缺项、结构变化）都返回空串，调用方退回
+     * 清单自带摘要，不据此拒绝下载（S2）。
      */
     private suspend fun fetchGithubSha256(fileName: String): String =
         withContext(Dispatchers.IO) {
-            // 走资产分页端点（共享实现）：Release 对象内嵌的 assets
-            // 数组并不完整，恰好被省略的资产会查不到摘要
-            com.jobeen.ime.base.net.fetchGithubReleaseAssetSha256(
+            com.jobeen.ime.base.net.fetchGithubReleaseEmbeddedDigest(
                 client, "amzxyz", "RIME-LMDG", "LTS", fileName,
             )
         }
@@ -356,29 +351,14 @@ internal fun normalizeSha256(raw: String?): String {
 }
 
 /**
- * 期望摘要的选取：只认独立于清单服务器的信任锚——优先 GitHub 登记
- * 摘要，其次 APK 内置钉死摘要（同一模型文件的摘要随包发布，GitHub
- * 在国内网络不可达/被限流时 fail-closed 不应误伤正常安装）。清单
- * 摘要与下载链接同出一台服务器、不能当信任锚（参数保留仅因调用
- * 方还要拿它做日志比对）。两者皆无时返回空串，调用方拒绝下载。
+ * 期望摘要的选取（S2 后口径）：优先 GitHub 登记摘要（独立于清单
+ * 服务器，可作校验锚）；GitHub 查不到时退回清单自带摘要；两者
+ * 皆无返回空串，调用方只走大小/长度校验放行，不再拒绝下载。
+ * 原「钉死摘要兜底＋两者皆无即拒绝」的三层信任锚已拆除：钉死
+ * 值必然随上游换包过期，fail-closed 又把网络抖动升级成装不上。
  */
 internal fun pickExpectedSha256(
     manifestSha256: String,
     githubSha256: String,
-    pinnedSha256: String = "",
 ): String =
-    normalizeSha256(githubSha256).ifEmpty { normalizeSha256(pinnedSha256) }
-
-/**
- * APK 内置钉死的语法模型摘要（按文件名）：仅作 GitHub 查询失败时
- * 的兜底信任锚。上游换代新模型后，GitHub 可达时照常按登记摘要
- * 安装；GitHub 不可达且新文件与钉死值对不上时拒绝安装（宁可装
- * 不上，也不装一个无独立来源背书的 400MB 原生解析文件），等
- * 网络恢复即可。钉死值只在 GitHub 查询为空时参与选取。
- */
-private val PINNED_GRAM_SHA256 = mapOf(
-    // 2026-10-11 上游在 LTS Release 内原地替换了简体模型（published_at
-    // 不变、摘要变），钉死值同步刷新为现行登记摘要
-    "wanxiang-lts-zh-hans.gram" to
-        "e317fb8587d189183cf31c046cb2410d8e11416dbd8a9c7d42d699c6e685e763",
-)
+    normalizeSha256(githubSha256).ifEmpty { normalizeSha256(manifestSha256) }
