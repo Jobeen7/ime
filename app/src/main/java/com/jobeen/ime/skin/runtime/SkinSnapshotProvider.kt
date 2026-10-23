@@ -3,6 +3,7 @@ package com.jobeen.ime.skin.runtime
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.SkinSnapshot
@@ -72,6 +73,7 @@ object SkinSnapshotProvider {
             if (snapshot == null) {
                 currentSnapshot = null
                 releaseBitmapLocked()
+                InputFeedbacks.clearSkinSounds()
             } else {
                 installLocked(context, snapshot)
             }
@@ -84,6 +86,7 @@ object SkinSnapshotProvider {
             loadAttempted = false
             currentSnapshot = null
             releaseBitmapLocked()
+            InputFeedbacks.clearSkinSounds()
         }
     }
 
@@ -104,6 +107,7 @@ object SkinSnapshotProvider {
 
     private fun installLocked(context: Context, snapshot: SkinSnapshot) {
         currentSnapshot = snapshot
+        syncSkinSoundsLocked(context, snapshot)
         val key = snapshot.background?.preparedKey
         if (key != currentBitmapKey) {
             releaseBitmapLocked()
@@ -118,6 +122,23 @@ object SkinSnapshotProvider {
                 }
             }
         }
+    }
+
+    /**
+     * 快照切换同步皮肤音效（详设 §7.2-1）：已接纳音效按内容寻址
+     * 文件整表安装（load 异步，就绪前播出厂 pop）；无接纳整表卸载。
+     */
+    private fun syncSkinSoundsLocked(context: Context, snapshot: SkinSnapshot) {
+        val admitted = snapshot.soundBindings.admitted
+        if (admitted.isEmpty()) {
+            InputFeedbacks.clearSkinSounds()
+            return
+        }
+        val files = admitted.mapNotNull { (assetId, sound) ->
+            val file = SkinLibrary.layout.assetFile(sound.sha256, sound.ext)
+            if (file.isFile) assetId to file else null
+        }.toMap()
+        InputFeedbacks.installSkinSounds(context, files)
     }
 
     private fun releaseBitmapLocked() {

@@ -73,6 +73,7 @@ import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibrary
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -100,6 +101,7 @@ fun SkinKeyEditorSection(
     draftId: String?,
 ) {
     val context = LocalContext.current
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
     var layoutName by remember { mutableStateOf(QwertyKeyboard.NAME) }
     var editingKeyId by remember { mutableStateOf<String?>(null) }
 
@@ -108,18 +110,59 @@ fun SkinKeyEditorSection(
     LaunchedEffect(draftId) {
         manifest = withContext(Dispatchers.IO) { loadSourceManifest(draftId) }
     }
-    val snapshot = remember(tree, manifest) { editorSnapshot(context, tree, manifest) }
-    // 可接纳音效集：对全部清单资产按同一接纳公式试算（选全局
-    // tap / 逐键音效的候选面；未被引用时它们尚未进快照接纳表）
-    val admissibleSounds = remember(manifest) {
-        val facts = SkinSnapshotFactory.manifestAudioFacts(SkinLibrary.layout, manifest)
+    // 草稿音效索引与事实（编辑器导入的音效：与清单资产同口径接纳）
+    var draftSoundIndex by remember(draftId) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    LaunchedEffect(draftId) {
+        draftSoundIndex = withContext(Dispatchers.IO) {
+            if (draftId == null) {
+                emptyMap()
+            } else {
+                com.jobeen.ime.skin.draft.DraftStore(SkinLibrary.layout)
+                    .readDraftSoundIndex(draftId)
+            }
+        }
+    }
+    val draftFacts = remember(draftId, draftSoundIndex) {
+        buildDraftAudioFacts(draftId, draftSoundIndex)
+    }
+    val snapshot = remember(tree, manifest, draftFacts) {
+        editorSnapshot(context, tree, manifest, draftFacts)
+    }
+    // 可接纳音效集：对全部候选资产（清单 + 草稿导入）按同一接纳
+    // 公式试算（选全局 tap / 逐键音效的候选面；未被引用时它们
+    // 尚未进快照接纳表）
+    val admissibleSounds = remember(manifest, draftFacts) {
+        val manifestFacts =
+            SkinSnapshotFactory.manifestAudioFacts(SkinLibrary.layout, manifest)
+        val orderedIds = manifest.assets().map { it.id } +
+            draftFacts.keys.filter { id -> manifest.assets().none { it.id == id } }
         com.jobeen.ime.skin.model.SkinSoundAdmission.admit(
-            referencedInOrder = manifest.assets().map { it.id },
+            referencedInOrder = orderedIds,
             defaultTapAssetId = null,
-            facts = facts,
+            facts = { id -> draftFacts[id] ?: manifestFacts(id) },
             audioBudgetBytes = 32L * 1024 * 1024,
             skipAll = false,
         ).admitted.keys
+    }
+
+    val soundPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri == null || draftId == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val imported = withContext(Dispatchers.IO) {
+                importDraftSound(context, draftId, uri, draftSoundIndex)
+            }
+            if (imported == null) {
+                Toast.makeText(context, "导入音效失败", Toast.LENGTH_SHORT).show()
+            } else {
+                draftSoundIndex = imported.second
+                Toast.makeText(
+                    context, "已导入音效 ${imported.first}，可在全局/逐键音效中选用",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+        }
     }
     val scheme = snapshot?.colorScheme ?: KeyboardTheme.DEFAULT.colors
     val effective = remember(snapshot, layoutName) {
@@ -213,6 +256,18 @@ fun SkinKeyEditorSection(
                 modifier = Modifier.weight(1f),
             )
         }
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            OutlinedButton(
+                onClick = { soundPicker.launch(arrayOf("audio/*")) },
+                enabled = draftId != null,
+            ) { Text("导入音效到草稿") }
+            Spacer(Modifier.size(8.dp))
+            Text(
+                "支持 mp3/ogg/wav/m4a，≤250KB、≤5 秒（接纳口径定稿十二.2）",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 
     val editing = editingKeyId
@@ -264,6 +319,7 @@ private fun editorSnapshot(
     context: Context,
     tree: JsonObject,
     manifest: PackageManifest,
+    draftFacts: Map<String, com.jobeen.ime.skin.model.AudioAssetFacts>,
 ): SkinSnapshot? {
     val validated = when (
         val result = SkinValidator.validate(
@@ -276,6 +332,11 @@ private fun editorSnapshot(
         is SkinValidator.Result.Valid -> result.skin
         is SkinValidator.Result.Rejected -> return null
     }
+    val manifestFacts =
+        SkinSnapshotFactory.manifestAudioFacts(SkinLibrary.layout, manifest)
+    val draftOnlyIds = draftFacts.keys.filter { id ->
+        manifest.assets().none { it.id == id }
+    }
     return SkinSnapshotBuilder.build(
         validated = validated,
         ref = SkinGenRef("preview", "", 0),
@@ -284,10 +345,85 @@ private fun editorSnapshot(
         assetSha256 = { null },
         targetWidthPx = 100,
         targetHeightPx = 50,
-        audioAssetOrder = manifest.assets().map { it.id },
-        audioFacts = SkinSnapshotFactory.manifestAudioFacts(SkinLibrary.layout, manifest),
+        audioAssetOrder = manifest.assets().map { it.id } + draftOnlyIds,
+        audioFacts = { id -> draftFacts[id] ?: manifestFacts(id) },
     )
 }
+
+/** 草稿导入音效的事实表（索引 → 草稿文件 → 解码元信息）。 */
+private fun buildDraftAudioFacts(
+    draftId: String?,
+    index: Map<String, String>,
+): Map<String, com.jobeen.ime.skin.model.AudioAssetFacts> {
+    if (draftId == null || index.isEmpty()) return emptyMap()
+    val draftStore = com.jobeen.ime.skin.draft.DraftStore(SkinLibrary.layout)
+    val files = draftStore.draftAssetFiles(draftId)
+    return index.mapNotNull { (logicalId, sha) ->
+        val file = files.firstOrNull { it.name.contains(sha) } ?: return@mapNotNull null
+        val bytes = runCatching { file.readBytes() }.getOrNull() ?: return@mapNotNull null
+        logicalId to com.jobeen.ime.skin.model.AudioAssetFacts(
+            sha256 = sha,
+            ext = file.extension.lowercase(),
+            byteSize = file.length(),
+            info = com.jobeen.ime.skin.media.AndroidAudioInfoProbe.probe(bytes),
+        )
+    }.toMap()
+}
+
+/**
+ * 导入一个音效文件进草稿（详设 §7.1-3）：字节 → 内容寻址草稿
+ * 文件 + 索引认领；逻辑 id 取文件名净化，冲突时加序号后缀。
+ * 返回（逻辑 id，新索引）；失败返回 null。须在 IO 线程调用。
+ */
+private fun importDraftSound(
+    context: Context,
+    draftId: String,
+    uri: android.net.Uri,
+    currentIndex: Map<String, String>,
+): Pair<String, Map<String, String>>? {
+    val bytes = runCatching {
+        context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+    }.getOrNull() ?: return null
+    val mime = runCatching { context.contentResolver.getType(uri) }.getOrNull()
+    val displayName = queryDisplayName(context, uri)
+    val ext = when (mime) {
+        "audio/mpeg", "audio/mp3" -> "mp3"
+        "audio/ogg" -> "ogg"
+        "audio/wav", "audio/x-wav", "audio/wave" -> "wav"
+        "audio/mp4", "audio/m4a", "audio/x-m4a" -> "m4a"
+        else -> displayName?.substringAfterLast('.', "")?.lowercase()
+            ?.takeIf { it in setOf("mp3", "ogg", "wav", "m4a") } ?: return null
+    }
+    val sha = com.jobeen.ime.base.util.DigestUtil.sha256Hex(bytes)
+    var base = displayName?.substringBeforeLast('.')
+        ?.replace(Regex("[^A-Za-z0-9_-]"), "_")?.trim('_')
+        .orEmpty()
+    if (base.isEmpty()) base = "snd_custom"
+    if (!base.startsWith("snd_")) base = "snd_$base"
+    var logicalId = base
+    var suffix = 2
+    while (currentIndex[logicalId] != null && currentIndex[logicalId] != sha) {
+        logicalId = "${base}_$suffix"
+        suffix++
+    }
+    val draftStore = com.jobeen.ime.skin.draft.DraftStore(SkinLibrary.layout)
+    val target = draftStore.draftAssetFile(draftId, sha, ext)
+    target.parentFile?.mkdirs()
+    target.writeBytes(bytes)
+    val newIndex = currentIndex + (logicalId to sha)
+    draftStore.writeDraftSoundIndex(draftId, newIndex)
+    return logicalId to newIndex
+}
+
+private fun queryDisplayName(context: Context, uri: android.net.Uri): String? =
+    runCatching {
+        context.contentResolver.query(
+            uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME),
+            null, null, null,
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }
+    }.getOrNull()
 
 /**
  * 选键浮层：覆盖预览键盘并吞掉全部触摸（预览零执行的物理

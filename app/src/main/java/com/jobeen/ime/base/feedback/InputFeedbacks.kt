@@ -16,6 +16,8 @@ import android.provider.Settings
 import android.view.View
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.KeyboardManager
+import com.jobeen.ime.skin.diag.DiagLog
+import java.io.File
 import timber.log.Timber
 
 class InputFeedbacks private constructor() {
@@ -31,6 +33,14 @@ class InputFeedbacks private constructor() {
         @Volatile private var popSoundId: Int = 0
         @Volatile private var isPopLoaded = false
         private val lock = Any()
+
+        // ---- 皮肤音效注册表（B2 详设 §7.2）：快照切换期由
+        // SkinSnapshotProvider 安装/卸载；load 异步，就绪前播
+        // 出厂 pop（不进应用事务状态机，裁定 §10.1-8） ----
+        @Volatile private var skinSounds: Map<String, Int> = emptyMap()
+        @Volatile private var skinSoundsLoaded: Set<String> = emptySet()
+        /** soundId → 资产 id（load 完成回调反查用，只在 lock 内读写）。 */
+        private val pendingSkinLoads = mutableMapOf<Int, String>()
         private const val VIBRATION_ATTRIBUTION_TAG = "keyboard_feedback"
 
         // ---- 反馈设置缓存：避免每次按键重复读 SP / Binder IPC ----
@@ -131,8 +141,16 @@ class InputFeedbacks private constructor() {
                         if (status == 0 && sampleId == popSoundId) {
                             isPopLoaded = true
                             Timber.d("Pop sound loaded successfully.")
-                        } else {
-                            Timber.e("Pop sound load failed with status: $status")
+                        } else if (status != 0) {
+                            Timber.e("Sound load failed with status: $status")
+                        }
+                        if (status == 0) {
+                            val assetId = synchronized(lock) {
+                                pendingSkinLoads.remove(sampleId)
+                            }
+                            if (assetId != null) {
+                                skinSoundsLoaded = skinSoundsLoaded + assetId
+                            }
                         }
                     }
                     val appContext = context.applicationContext
@@ -163,12 +181,81 @@ class InputFeedbacks private constructor() {
             }
         }
 
+        /**
+         * 安装一版快照的皮肤音效（旧版整表卸载）：快照切换期由
+         * 装配层调用（详设 §7.2-1）。load 异步进行，完成前该键
+         * 播出厂 pop（见 [skinSoundEffect]）。
+         */
+        fun installSkinSounds(context: Context, files: Map<String, File>) {
+            if (soundPool == null) initSoundPool(context)
+            synchronized(lock) {
+                val pool = soundPool
+                for ((_, soundId) in skinSounds) {
+                    runCatching { pool?.unload(soundId) }
+                }
+                skinSounds = emptyMap()
+                skinSoundsLoaded = emptySet()
+                pendingSkinLoads.clear()
+                if (pool == null || files.isEmpty()) return
+                val loaded = mutableMapOf<String, Int>()
+                for ((assetId, file) in files) {
+                    val soundId = runCatching { pool.load(file.absolutePath, 1) }
+                        .getOrDefault(0)
+                    if (soundId != 0) {
+                        loaded[assetId] = soundId
+                        pendingSkinLoads[soundId] = assetId
+                    }
+                }
+                skinSounds = loaded
+            }
+        }
+
+        /** 卸载全部皮肤音效（回内置默认/失效时）。 */
+        fun clearSkinSounds() {
+            synchronized(lock) {
+                for ((_, soundId) in skinSounds) {
+                    runCatching { soundPool?.unload(soundId) }
+                }
+                skinSounds = emptyMap()
+                skinSoundsLoaded = emptySet()
+                pendingSkinLoads.clear()
+            }
+        }
+
+        /**
+         * 逐键皮肤音（按键 DOWN 触发）：与 [soundEffect] 同闸
+         * （App 开关 + 铃声模式门，B1 总闸零新增判定）；资产未
+         * 就绪（load 未完成/未安装）时先播出厂 pop 并记一条
+         * DEBUG，就绪后自动生效（详设 §7.2-2）。
+         */
+        fun skinSoundEffect(context: Context, assetId: String) {
+            ensureFeedbackCache(context)
+            if (cachedSoundEnabled != true) return
+            if (!RingerGate.shouldPlay(context)) return
+            if (soundPool == null) initSoundPool(context)
+            val soundId = skinSounds[assetId]
+            if (soundId != null && assetId in skinSoundsLoaded) {
+                soundPool?.play(soundId, 1.0f, 1.0f, 1, 0, 1.0f)
+            } else {
+                DiagLog.d(
+                    "audio", "sound_load_pending_fallback",
+                    mapOf("assetId" to assetId),
+                )
+                if (isPopLoaded && popSoundId != 0) {
+                    soundPool?.play(popSoundId, 1.0f, 1.0f, 1, 0, 1.0f)
+                }
+            }
+        }
+
         fun release() {
             synchronized(lock) {
                 soundPool?.release()
                 soundPool = null
                 popSoundId = 0
                 isPopLoaded = false
+                skinSounds = emptyMap()
+                skinSoundsLoaded = emptySet()
+                pendingSkinLoads.clear()
             }
         }
 
