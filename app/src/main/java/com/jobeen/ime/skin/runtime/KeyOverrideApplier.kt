@@ -201,6 +201,8 @@ object KeyOverrideApplier {
                 margin = appearance.margin,
                 viewId = appearance.viewId,
                 visibility = appearance.visibility,
+                rowSpan = appearance.rowSpan,
+                alignSpanEnd = appearance.alignSpanEnd,
             )
             is KeyDef.Appearance.ImageText -> KeyDef.Appearance.ImageText(
                 displayText = label,
@@ -212,6 +214,8 @@ object KeyOverrideApplier {
                 border = appearance.border,
                 margin = appearance.margin,
                 viewId = appearance.viewId,
+                rowSpan = appearance.rowSpan,
+                alignSpanEnd = appearance.alignSpanEnd,
             )
             is KeyDef.Appearance.Text -> KeyDef.Appearance.Text(
                 displayText = label,
@@ -223,6 +227,8 @@ object KeyOverrideApplier {
                 margin = appearance.margin,
                 viewId = appearance.viewId,
                 visibility = appearance.visibility,
+                rowSpan = appearance.rowSpan,
+                alignSpanEnd = appearance.alignSpanEnd,
             )
             // 图片/侧栏外观无文本面：label 记录在案但无处呈现，保持原外观
             is KeyDef.Appearance.Image, is KeyDef.Appearance.SidePannel -> appearance

@@ -50,7 +50,17 @@ open class KeyDef(
             margin: Boolean = true,
             viewId: Int = -1,
             visibility: Int = View.VISIBLE,
-        ) : Appearance(percentWidth, variant, border, margin, viewId, visibility)
+            /**
+             * 跨行参数（B3 §1.3 最小接缝扩展）：默认 1/false 与历史
+             * 行为逐字节一致，出厂调用点零改动；只有自创布局的文本
+             * 键会传 >1（出厂跨行先例仍是 Image 回车键）。
+             */
+            override val rowSpan: Int = 1,
+            override val alignSpanEnd: Boolean = false,
+        ) : Appearance(
+            percentWidth, variant, border, margin, viewId, visibility,
+            rowSpan, alignSpanEnd,
+        )
 
         class AltText(
             displayText: String,
@@ -66,6 +76,8 @@ open class KeyDef(
             margin: Boolean = true,
             viewId: Int = -1,
             visibility: Int = View.VISIBLE,
+            rowSpan: Int = 1,
+            alignSpanEnd: Boolean = false,
         ) : Text(
             displayText,
             textSize,
@@ -75,7 +87,9 @@ open class KeyDef(
             border,
             margin,
             viewId,
-            visibility
+            visibility,
+            rowSpan,
+            alignSpanEnd
         )
 
         class SidePannel(
@@ -109,7 +123,12 @@ open class KeyDef(
             border: Border = Border.Default,
             margin: Boolean = true,
             viewId: Int = -1,
-        ) : Text(displayText, textSize, textStyle, percentWidth, variant, border, margin, viewId)
+            rowSpan: Int = 1,
+            alignSpanEnd: Boolean = false,
+        ) : Text(
+            displayText, textSize, textStyle, percentWidth, variant, border,
+            margin, viewId, View.VISIBLE, rowSpan, alignSpanEnd,
+        )
     }
 
     sealed class Behavior {
