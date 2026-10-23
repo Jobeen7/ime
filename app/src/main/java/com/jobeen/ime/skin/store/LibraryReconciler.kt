@@ -323,26 +323,9 @@ class LibraryReconciler(
         return result
     }
 
-    /** 引用图：各保留代次 manifest.json 的 contents 中 type=asset 的 sha256 计数（定稿七.5）。 */
-    private fun computeRefcounts(index: LibraryIndex): Map<String, Int> {
-        val counts = mutableMapOf<String, Int>()
-        val genDirs = index.skins.map { layout.fileFromRelative(it.dir) } +
-            index.layouts.map { layout.fileFromRelative(it.dir) }
-        for (dir in genDirs) {
-            val manifest = File(dir, "manifest.json")
-            if (!manifest.isFile) continue
-            val rootObj = runCatching { Json.parseToJsonElement(manifest.readText()).jsonObject }
-                .getOrNull() ?: continue
-            val contents = rootObj["contents"] as? JsonArray ?: continue
-            for (element in contents) {
-                val obj = element as? JsonObject ?: continue
-                if (obj["type"]?.jsonPrimitive?.contentOrNull != "asset") continue
-                val sha = obj["sha256"]?.jsonPrimitive?.contentOrNull ?: continue
-                counts[sha] = (counts[sha] ?: 0) + 1
-            }
-        }
-        return counts
-    }
+    /** 引用图口径见 [AssetRefcounts]（与导入事务共用，保证计数一致）。 */
+    private fun computeRefcounts(index: LibraryIndex): Map<String, Int> =
+        AssetRefcounts.compute(layout, index)
 
     /** 磁盘上的资产实体：文件名主体须为 64 位小写 hex（sha256），杂文件不入索引。 */
     private fun scanDiskAssets(): List<Pair<String, Long>> {
