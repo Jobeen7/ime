@@ -57,48 +57,6 @@ class ImeInputMethodService : InputMethodService() {
      */
     private val inputFieldTracker = InputFieldTracker()
 
-    /**
-     * 一帧探针缓存：同一输入会话、同一选区签名下，[syncActiveInputState]
-     * 与 [notifyInputChanged] 共用一次探针结果——Commit 后两者常成对
-     * 触发，旧实现对同一光标位置连做两轮跨进程探针。签名取选区，是
-     * 因为编辑动作必伴选区变化；换输入框时整帧作废（见
-     * [invalidateProbeFrame]），不会把旧框的探针带进新框。签名另含
-     * [localWriteGen]：本端刚写入、宿主选区回调还没到时，服务侧记录
-     * 的仍是旧选区，只按选区作键会命中写入前的旧帧（空框首上屏后被
-     * 误判已清空的原故障）。
-     */
-    private var probeFrameText: String? = null
-    private var probeFrameBridge = false
-    private var probeFrameSelStart = -1
-    private var probeFrameSelEnd = -1
-    private var probeFrameWriteGen = -1
-
-    /**
-     * 本端写代次：主通道每写入一次连接就递增，进探针帧签名使帧失效。
-     * 写入点覆盖审计（逐个 grep 核过）：
-     * ①主通道：MessageHandler 的 Commit 上屏——写入处调 [noteLocalWrite]，
-     * 文本同步落地，探针帧同步失效，无缺口；
-     * ②靠选区签名跟随（与①不同，不构成无条件覆盖）：
-     * [handleTextEditingAction] 的剪切/粘贴、直写方（语音组字/上屏/
-     * 收尾、撤销账本的删与写、引擎清全文与收尾组字、面板粘贴）。
-     * 剪切/粘贴调用处虽也调了 [noteLocalWrite]，但经
-     * performContextMenuAction 由宿主异步落地：落地前探针回填的帧
-     * 已带新代次，宿主变更随后到达且选区数值不变时仍可能命中该帧，
-     * 与直写方同口径；其余直写方的文本写入都伴随光标移动，宿主选区
-     * 回调改掉选区签名后合并探针必然真探；
-     * ③纯选区/按键类（方向键组合、performEditorAction、选区设置）
-     * 不改文本内容，不入此列。
-     * 已知缺口：②类写入若在文本空/非空翻转的同时数值选区恰好不变、
-     * 且宿主不发选区回调，帧仍可能命中旧结果——现行直写方无此形态
-     * （写入必移光标、或不改变空/非空结论；剪切/粘贴的落地面由宿主
-     * 决定、不在本端控制内），新增同类写入时须回看此审计。
-     */
-    private var localWriteGen = 0
-
-    /** 主通道写入连接后调用：递增写代次，使当帧探针缓存失效。 */
-    internal fun noteLocalWrite() {
-        localWriteGen++
-    }
     private val themePrefs: SharedPreferences by lazy {
         getSharedPreferences(KeyboardManager.PREFS_NAME, MODE_PRIVATE)
     }
@@ -117,16 +75,11 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
-        // 旧版 cdsp 残留的一次性清理（W6）：此前只挂在语音设置
-        // 页的检查/下载入口，不进设置页的用户永不清。函数内投
-        // 递 IO 协程异步执行、每进程至多一次，不阻塞启动
-        com.jobeen.ime.base.speech.ModelDownloader.cleanupLegacyCdspDirOnStartup()
         virtualInputConnection.addOnChangeListener {
             if (phraseAddBridgeActive) {
                 // 桥接文本是本地 Editable：程序性改字（清空/替换）可以
-                // 不伴随选区变化，只按选区作键的帧探针缓存会返回旧
-                // 结果（K3），文本变更回调里先整帧作废再同步状态
-                invalidateProbeFrame()
+                // 不伴随选区变化，文本变更回调里直接同步状态（探针
+                // 每次直探、结果永远新鲜，见 probeAroundCursorText）
                 syncActiveInputState()
             }
         }
@@ -239,7 +192,6 @@ class ImeInputMethodService : InputMethodService() {
         // 直调即时探针前先撤掉合并通道里排队的那次：它捕获的是旧
         // 输入框的待发任务，再跑一次只会在新框上多做一轮无用探针
         mainHandler.removeCallbacks(pendingNotifyInputChanged)
-        invalidateProbeFrame()
         notifyInputChanged()
         super.onStartInputView(info, restarting)
     }
@@ -291,7 +243,6 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onFinishInputView(finishingInput: Boolean) {
         showingDialog?.dismiss()
-        invalidateProbeFrame()
         // 录音中切换输入框：立即丢弃本次录音。否则识别结果会经
         // activeInputConnection() 写进新输入框，且待定文字会残留在旧框。
         // 放在最前面，保证清待定文字时连接仍指向旧输入框。
@@ -454,16 +405,11 @@ class ImeInputMethodService : InputMethodService() {
             TextEditView.Action.SelectAll -> ic?.performContextMenuAction(android.R.id.selectAll)
             TextEditView.Action.Cut -> {
                 ic?.performContextMenuAction(android.R.id.cut)
-                // 剪切删文本：代次先递增，但文本由宿主异步落地，覆盖
-                // 口径与直写方相同（见 localWriteGen 审计②）
-                noteLocalWrite()
             }
 
             TextEditView.Action.Copy -> ic?.performContextMenuAction(android.R.id.copy)
             TextEditView.Action.Paste -> {
                 ic?.performContextMenuAction(android.R.id.paste)
-                // 粘贴写文本：同剪切口径
-                noteLocalWrite()
             }
 
             TextEditView.Action.Backspace -> engine?.processKey(
@@ -509,51 +455,21 @@ class ImeInputMethodService : InputMethodService() {
         mainHandler.postDelayed(pendingNotifyInputChanged, 24L)
     }
 
-    /** 当帧选区签名：桥接模式读虚拟连接选区，其余读最近一次选区回调。 */
+    /** 当帧选区：桥接模式读虚拟连接选区，其余读最近一次选区回调。 */
     private fun currentSelectionSignature(): Pair<Int, Int> =
         if (phraseAddBridgeActive) virtualInputConnection.selection
         else lastSelectionStart to lastSelectionEnd
-
-    /** 换输入框/输入视图结束时作废整帧探针缓存。 */
-    private fun invalidateProbeFrame() {
-        probeFrameText = null
-        probeFrameSelStart = -1
-        probeFrameSelEnd = -1
-        probeFrameWriteGen = -1
-    }
-
-    /**
-     * 一帧共用探针：签名（桥接标志 + 选区 + 本端写代次）未变时直接复用
-     * 本帧已探到的结果，不再重复跨进程取字；签名变化才真正探一次并
-     * 回填缓存。
-     */
-    private fun probeAroundCursorShared(ic: android.view.inputmethod.InputConnection): String {
-        val selection = currentSelectionSignature()
-        val cached = probeFrameText
-        if (cached != null && probeFrameBridge == phraseAddBridgeActive &&
-            probeFrameSelStart == selection.first && probeFrameSelEnd == selection.second &&
-            probeFrameWriteGen == localWriteGen
-        ) {
-            return cached
-        }
-        val text = probeAroundCursorText(ic)
-        probeFrameText = text
-        probeFrameBridge = phraseAddBridgeActive
-        probeFrameSelStart = selection.first
-        probeFrameSelEnd = selection.second
-        probeFrameWriteGen = localWriteGen
-        return text
-    }
 
     internal fun syncActiveInputState() {
         val ic = activeInputConnection() ?: return
         val selection = currentSelectionSignature()
         keyboardWindow?.onSelectionUpdate(selection.first, selection.second)
         // 下游只用空/非空：旧实现用 Int.MAX_VALUE 全量抓前后文拼接（桥接模式
-        // 下整篇文档跨进程过一遍），改为 1 字符探针（与 notifyInputChanged
-        // 共用一帧缓存，见 probeAroundCursorShared）
+        // 下整篇文档跨进程过一遍），改为每次直探的 1 字符探针（帧缓存已于
+        // 清点 S14 拆除：直探永远新鲜，原「空框首上屏后被误判已清空」故障
+        // 由此天然不成立；高频连发的降本由 24ms 合并通道承担）
         keyboardWindow?.onInputChanged(
-            probeAroundCursorShared(ic),
+            probeAroundCursorText(ic),
             virtualInputConnection = phraseAddBridgeActive,
         )
     }
@@ -570,11 +486,11 @@ class ImeInputMethodService : InputMethodService() {
 
     fun notifyInputChanged() {
         val ic = activeInputConnection() ?: return
-        val text = probeAroundCursorShared(ic)
+        val text = probeAroundCursorText(ic)
         keyboardWindow?.onInputChanged(text, virtualInputConnection = phraseAddBridgeActive)
         if (text.isEmpty()) engine?.onInputCleared()
         // 语音纠错沉淀借同一探针节奏观察上屏后编辑（未武装时为空转检查）；
-        // 当帧探针结果（文本、光标位）随回调下传，沉淀侧能据此判定
+        // 本次探针结果（文本、光标位）随回调下传，沉淀侧能据此判定
         // 的帧不再自读整窗
         com.jobeen.ime.base.speech.SherpaSpeechClient.onEditorTextProbed(
             this, text, currentSelectionSignature().first

@@ -1,40 +1,9 @@
 package com.jobeen.ime.engine.rime.data
 
-import android.content.res.AssetManager
-import com.jobeen.ime.base.util.FileUtil
-import com.jobeen.ime.base.util.ResourceUtil
 import com.jobeen.ime.base.util.appContext
-import kotlinx.serialization.json.Json
-import timber.log.Timber
 import java.io.File
-import java.util.concurrent.locks.ReentrantLock
-import kotlin.concurrent.withLock
 
 object DataManager {
-    private const val DEFAULT_CUSTOM_FILE_NAME = "default.custom.yaml"
-
-    private const val DATA_CHECKSUMS_NAME = "checksums.json"
-
-    private const val SCHEMA_LIST_CUSTOM_PATCH = """
-      patch:
-        schema_list:
-          - schema: luna_pinyin
-          - schema: luna_pinyin_simp
-    """
-
-    private val lock = ReentrantLock()
-
-    private val json by lazy { Json }
-
-    private fun deserializeDataSum(raw: String): DataSum = json.decodeFromString<DataSum>(raw)
-
-    // If Android version supports direct boot, we put the hierarchy in device encrypted storage
-    // instead of credential encrypted storage so that data can be accessed before user unlock
-    private val dataDir: File = appContext.createDeviceProtectedStorageContext().dataDir
-
-    private fun AssetManager.DataSum(): DataSum =
-        open(DATA_CHECKSUMS_NAME).bufferedReader().use { it.readText() }
-            .let { deserializeDataSum(it) }
     val sharedDataDir = File(appContext.getExternalFilesDir(null), "shared").also { it.mkdirs() }
     val userDataDir
         get() = File(appContext.getExternalFilesDir(null), "user").also { it.mkdirs() }
@@ -56,53 +25,5 @@ object DataManager {
             if (fallbackPath.exists()) return fallbackPath.absolutePath
         }
         return defaultPath.absolutePath
-    }
-
-    fun sync() = lock.withLock {
-        val oldChecksumsFile = File(dataDir, DATA_CHECKSUMS_NAME)
-        val oldChecksums =
-            oldChecksumsFile.runCatching { deserializeDataSum(bufferedReader().use { it.readText() }) }
-                .getOrElse { DataSum("", emptyMap()) }
-
-        try {
-            val newChecksums = appContext.assets.DataSum()
-            DataDiff.diff(oldChecksums, newChecksums).sortedByDescending { it.ordinal }.forEach {
-                Timber.d("Diff: $it")
-                when (it) {
-                    is DataDiff.CreateFile,
-                    is DataDiff.UpdateFile,
-                        -> {
-                        val destPath = sharedDataDir.resolveSibling(it.path).absolutePath
-                        ResourceUtil.copyFile(it.path, destPath)
-                    }
-
-                    is DataDiff.DeleteDir,
-                    is DataDiff.DeleteFile,
-                        // 删除必须与创建同规则用 resolveSibling 按完整相对
-                        // 路径定位：旧写法只取文件名拼到 sharedDataDir 下，
-                        // 子目录里的过期文件（如 dicts/ 下的词库）永远删不
-                        // 掉，还可能误删顶层恰好同名的文件
-                        -> FileUtil.delete(sharedDataDir.resolveSibling(it.path))
-                        .getOrThrow()
-                }
-            }
-
-            ResourceUtil.copyFile(
-                DATA_CHECKSUMS_NAME, dataDir.resolve(DATA_CHECKSUMS_NAME).absolutePath
-            )
-
-            val custom = userDataDir.resolve(DEFAULT_CUSTOM_FILE_NAME)
-            if (!custom.exists()) {
-                if (custom.createNewFile()) {
-                    custom.writeText(SCHEMA_LIST_CUSTOM_PATCH.trimIndent())
-                }
-            }
-
-            Timber.d("Synced!")
-        } catch (e: Exception) {
-            // 必须带异常记录：资源同步失败若无痕，release 下只剩「词库莫名其妙
-            // 没更新」的表象，无从定位
-            Timber.w(e, "Sync not prepared!")
-        }
     }
 }

@@ -59,13 +59,6 @@ class BackupActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         observeRestoreState()
-        // 上次还原若在写入途中进程被杀，会留一份还原前的加密快照：
-        // 提示用户凭备份口令回滚，或明确丢弃
-        if (BackupManager.hasRestoreSnapshot() &&
-            BackupManager.restoreState.value == BackupManager.RestoreState.Idle
-        ) {
-            uiState.showSnapshotRecoveryDialog = true
-        }
 
         val themeMode = KeyboardManager.Theme.getMode(this)
 
@@ -86,17 +79,6 @@ class BackupActivity : ComponentActivity() {
                         val uri = pendingRestoreUri
                         pendingRestoreUri = null
                         if (uri != null) doRestore(uri, password.toCharArray())
-                    },
-                    onRollbackSnapshot = {
-                        uiState.showSnapshotRecoveryDialog = false
-                        uiState.showSnapshotPasswordDialog = true
-                    },
-                    onRollbackSnapshotWithPassword = { password ->
-                        doRollbackSnapshot(password.toCharArray())
-                    },
-                    onDiscardSnapshot = {
-                        uiState.showSnapshotRecoveryDialog = false
-                        BackupManager.discardRestoreSnapshot()
                     },
                 )
             }
@@ -152,12 +134,6 @@ class BackupActivity : ComponentActivity() {
                 }
             }
         }
-    }
-
-    /** 用快照口令把上次中断的还原回滚掉（快照即还原前状态的一份备份）。 */
-    private fun doRollbackSnapshot(password: CharArray) {
-        uiState.busyText = getString(R.string.backup_working_restore)
-        BackupManager.startRestore(ByteArray(0), password, rollbackSnapshot = true)
     }
 
     /** 观察应用级还原状态：终态统一在这里提示/重启并消费掉。 */

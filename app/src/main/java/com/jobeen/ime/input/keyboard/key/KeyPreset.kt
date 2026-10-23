@@ -196,7 +196,12 @@ fun returnKey(percentWidth: Float, rowSpan: Int = 1): KeyDef = KeyDef(
         src = R.drawable.ic_keyboard_return,
         viewId = KeyView.button_return,
         percentWidth = percentWidth,
-        variant = Variant.Accent,
+        // 回车键与普通按键同色（Jobeen 指令）：不再用 Accent 变体
+        // （金色 #9C824A 底＋金色描边＋白前景），常态/按压/描边/图标
+        // 染色全部随普通键口径（keyBackground/keyPressed/
+        // keyBorderStroke/keyText）。Accent 变体本身保留在主题模型
+        // 里（方案弹窗等其他 accent 用途不动），只是回车不再取它
+        variant = Variant.Normal,
         border = Border.Special,
         rowSpan = rowSpan,
         alignSpanEnd = rowSpan > 1,

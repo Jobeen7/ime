@@ -26,72 +26,62 @@ import java.security.MessageDigest
  * 2. 按需解压资源（resource.zip）
  * 3. 创建并切换到 [RimeEngine]
  *
- * 该过程按步骤幂等：已成功的步骤不重复执行；失败的步骤在下次调用时重试
- * （旧实现失败后仍置 initialized=true，引擎在同进程内永不恢复）。
+ * 步骤框架（完成集＋依赖图）已于清点 S19 拆除：initialize 全仓只有
+ * Application.onCreate 一个调用点、每进程一次，旧框架的「失败下次
+ * 调用重试」实际等价于下次进程启动。现为顺序调用＋逐步 runCatching
+ * （某一步失败不直接杀进程，下次进程启动自然重走全程；旧故障「失
+ * 败仍置 initialized=true 致引擎同进程永不恢复」由逐步捕获本身堵
+ * 住）。仅保留一条显式依赖：引擎初始化依赖资源解压成功，资源失败
+ * 时本轮跳过引擎，避免半初始化状态。
  */
 object AppStartup {
     private const val VERSION_FILE = "version.txt"
     private const val RESOURCE_ASSET = "resource.zip"
 
-    private val completedSteps = mutableSetOf<String>()
     private val lock = Any()
 
     fun initialize(context: Context) {
         synchronized(lock) {
-            val funcs = listOf(
-                Step("setupLogger", ::setupLogger),
-                Step("setupThemeStore", ::setupThemeStore),
-                Step("releaseResourcesIfNeeded", ::releaseResourcesIfNeeded),
-                Step("setupInputFeedbacks", ::setupInputFeedbacks),
-                // Resolve a process death during paired dictionary/model update
-                // before the engine can open either resource.
-                Step("recoverInterruptedUpdate", { WanxiangUpdateManager.recoverInterruptedUpdate() }),
-                // 引擎初始化依赖资源解压：资源失败时跳过，避免半初始化状态。
-                // 恢复步骤不在硬依赖内：它自身保证不抛错（损坏日志会被隔离），
-                // 且绝不能让一次恢复异常把引擎启动永久堵死
-                Step(
-                    "setupEngine", ::setupEngine,
-                    requires = setOf("releaseResourcesIfNeeded")
-                ),
-                Step("prewarmOpencc", ::prewarmOpencc),
-            )
-            // 每一步独立捕获异常并记日志：某一步失败不直接杀进程，
-            // 用 android.util.Log 确保 release 包（Timber 无 tree）也能在 logcat 看到；
-            // 失败步骤不记入完成集，其依赖步骤本轮跳过，下次 initialize 再重试
-            funcs.forEach { step ->
-                if (step.name in completedSteps) return@forEach
-                val blockedBy = step.requires - completedSteps
-                if (blockedBy.isNotEmpty()) {
-                    android.util.Log.w(
-                        "AppStartup",
-                        "step ${step.name} skipped, blocked by incomplete step(s): $blockedBy"
-                    )
-                    return@forEach
-                }
-                runCatching { step.fn(context) }
-                    .onSuccess { completedSteps.add(step.name) }
-                    .onFailure { e ->
-                        android.util.Log.e("AppStartup", "step ${step.name} failed", e)
-                        Timber.e(e, "AppStartup step failed: %s", step.name)
-                    }
+            runStep("setupLogger") { setupLogger(context) }
+            runStep("setupThemeStore") { setupThemeStore(context) }
+            val resourcesReady =
+                runStep("releaseResourcesIfNeeded") { releaseResourcesIfNeeded(context) }
+            runStep("setupInputFeedbacks") { setupInputFeedbacks(context) }
+            // Resolve a process death during paired dictionary/model update
+            // before the engine can open either resource. 该步自身保证不
+            // 抛错（损坏日志会被隔离），不在引擎的硬依赖内：一次恢复
+            // 异常绝不能把引擎启动永久堵死
+            runStep("recoverInterruptedUpdate") { WanxiangUpdateManager.recoverInterruptedUpdate() }
+            if (resourcesReady) {
+                runStep("setupEngine") { setupEngine(context) }
+            } else {
+                android.util.Log.w(
+                    "AppStartup",
+                    "step setupEngine skipped, blocked by incomplete step: releaseResourcesIfNeeded"
+                )
             }
+            runStep("prewarmOpencc") { prewarmOpencc(context) }
         }
     }
 
-    private data class Step(
-        val name: String,
-        val fn: (Context) -> Unit,
-        val requires: Set<String> = emptySet(),
-    )
+    /** 单步执行：独立捕获异常并记日志，返回是否成功（供显式依赖判断）。 */
+    private fun runStep(name: String, block: () -> Unit): Boolean =
+        runCatching(block)
+            .onFailure { e ->
+                // 用 android.util.Log 确保 release 包（Timber 无 tree）也能在 logcat 看到
+                android.util.Log.e("AppStartup", "step $name failed", e)
+                Timber.e(e, "AppStartup step failed: %s", name)
+            }
+            .isSuccess
 
     private fun setupThemeStore(context: Context) {
         ThemeStore.refresh()
     }
 
     private fun setupLogger(context: Context) {
-        // 仅 debug 构建开启日志：内部缓冲收集 + logcat 读取 + DebugTree。
+        // 仅 debug 构建开启日志：AppLogBuffer 的 Timber 缓冲收集 + DebugTree。
         // release（assembleRelease）不装任何 timber Tree → Timber 全部 no-op，不输出、零开销；
-        // 崩溃兜底（crash.log）仍保留。
+        // 崩溃记录由 CrashTrap 单点落盘（Application.onCreate 已安装，不经此处）。
         AppLogBuffer.install(context, enableLogging = BuildConfig.DEBUG)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())

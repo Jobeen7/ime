@@ -72,37 +72,9 @@ class AuditFixesTest {
         assertEquals(0, out.size)
     }
 
-    // ── 万象更新日志解析（损坏日志必须判 null 交隔离处理，不能抛错堵死启动） ──
-
-    private fun journalProps(vararg pairs: Pair<String, String>): Properties =
-        Properties().apply { pairs.forEach { (k, v) -> setProperty(k, v) } }
-
-    @Test
-    fun parseUpdateJournal_complete_readsAllFlags() {
-        val j = WanxiangUpdateManager.parseUpdateJournal(
-            journalProps(
-                "hadDicts" to "true", "hadGram" to "false",
-                "changedDicts" to "true", "changedGram" to "true",
-            )
-        )!!
-        assertTrue(j.hadDicts)
-        assertTrue(!j.hadGram)
-        assertTrue(j.changedDicts)
-        assertTrue(j.changedGram)
-    }
-
-    @Test
-    fun parseUpdateJournal_missingField_returnsNull() {
-        val j = WanxiangUpdateManager.parseUpdateJournal(
-            journalProps("hadDicts" to "true", "hadGram" to "true", "changedDicts" to "true")
-        )
-        assertNull(j)
-    }
-
-    @Test
-    fun parseUpdateJournal_empty_returnsNull() {
-        assertNull(WanxiangUpdateManager.parseUpdateJournal(Properties()))
-    }
+    // （万象更新事务日志解析用例随 parseUpdateJournal 一并删除：
+    // S11 后更新无事务日志，recoverInterruptedUpdate 只按盘上状态
+    // 清理，无可解析的日志形态）
 
     // ── 文件搜索枚举限界 ──
 
@@ -167,22 +139,9 @@ class AuditFixesTest {
     }
 
     @Test
-    fun pickExpectedSha256_pinnedFallbackOnlyWhenGithubMissing() {
-        val manifest = "a".repeat(64)
-        val github = "b".repeat(64)
-        val pinned = "c".repeat(64)
-        // GitHub 登记值优先于内置钉死值
-        assertEquals(github, pickExpectedSha256(manifest, github, pinned))
-        // GitHub 查不到时退到内置钉死值（清单自带值仍不作数）
-        assertEquals(pinned, pickExpectedSha256(manifest, "", pinned))
-        // 两者皆无 → 空（调用方 fail-closed）
-        assertEquals("", pickExpectedSha256(manifest, "", ""))
-        assertEquals("", pickExpectedSha256(manifest, "", "garbage"))
-    }
-
-    @Test
     fun findAssetDigest_scansPageByName() {
-        // 摘要查询走资产分页端点：每页资产按名命中并归一化（去前缀/小写）
+        // 摘要按名命中并归一化（去前缀/小写）：内嵌 assets 解析后
+        // 的（名→digest）列表走同一助手
         val hex = "a".repeat(64)
         val page = listOf(
             "other.bin" to "sha256:${"B".repeat(64)}",
@@ -206,13 +165,15 @@ class AuditFixesTest {
     }
 
     @Test
-    fun pickExpectedSha256_githubRegistryOnly() {
+    fun pickExpectedSha256_githubFirstManifestFallback() {
         val other = "a".repeat(64)
-        // 清单摘要永不作数：只认 GitHub 登记值（信任根收口）
+        // S2 后口径：GitHub 登记值优先；查不到退回清单自带摘要；
+        // 两者皆空/垃圾 → 空（调用方只走大小/长度校验放行）
         assertEquals(other, pickExpectedSha256(validSha, other))
-        assertEquals("", pickExpectedSha256(validSha, ""))
+        assertEquals(validSha, pickExpectedSha256(validSha, ""))
         assertEquals(other, pickExpectedSha256("", other))
         assertEquals(other, pickExpectedSha256("garbage", "sha256:$other"))
         assertEquals("", pickExpectedSha256("", ""))
+        assertEquals("", pickExpectedSha256("garbage", "garbage"))
     }
 }

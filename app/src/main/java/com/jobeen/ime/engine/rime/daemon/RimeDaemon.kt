@@ -1,26 +1,17 @@
 package com.jobeen.ime.engine.rime.daemon
 
-import android.graphics.Color
-import androidx.core.app.NotificationCompat
-import com.jobeen.ime.R
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeApi
 import com.jobeen.ime.engine.rime.core.RimeLifecycle
 import com.jobeen.ime.engine.rime.core.RimeMessage
 import com.jobeen.ime.engine.rime.core.lifecycleScope
 import com.jobeen.ime.engine.rime.core.whenReady
-import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.appScope
-import com.jobeen.ime.base.util.createNotificationChannel
-import com.jobeen.ime.base.util.subProcess
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.first
 import timber.log.Timber
-import splitties.systemservices.notificationManager
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
@@ -104,35 +95,6 @@ object RimeDaemon {
         realRime.messageFlow.collect { onMessage(it) }
     }
 
-    private const val CHANNEL_ID = "rime-daemon"
-    private const val MESSAGE_ID = 2331
-    private var restartId = 0
-
-    init {
-        createNotificationChannel(
-            CHANNEL_ID,
-            appContext.getString(R.string.app_name),
-        )
-        appScope.launch {
-            realRime.messageFlow.collect {
-                // 单条异常隔离：一条消息处理失败（如 logcat 执行抛 IOException）
-                // 不能杀掉整个收集协程，否则部署通知从此全部失效且无人重启
-                runCatching { handleRimeMessage(it) }
-                    .onFailure { e -> Timber.e(e, "Failed to handle rime message") }
-            }
-        }
-    }
-
-    private inline fun sendNotification(
-        id: Int,
-        buildAction: NotificationCompat.Builder.() -> Unit,
-    ) {
-        val builder = NotificationCompat.Builder(appContext, CHANNEL_ID)
-            .setContentTitle(appContext.getString(R.string.app_name))
-        builder.buildAction()
-        builder.build().let { notificationManager.notify(id, it) }
-    }
-
     /**
      * Restart Rime instance to deploy while keep the session
      */
@@ -153,74 +115,7 @@ object RimeDaemon {
     }
 
     private fun doRestartRime(fullCheck: Boolean): Unit = lock.withLock {
-        val id = restartId++
-        if (!fullCheck) {
-            sendNotification(id) {
-                setContentTitle(appContext.getString(R.string.app_name))
-                setContentText(appContext.getString(R.string.rime_restarting))
-                setOngoing(true)
-                setSmallIcon(R.mipmap.ic_launcher_round)
-                setProgress(100, 0, true)
-                setPriority(NotificationCompat.PRIORITY_HIGH)
-            }
-        }
         realRime.finalize()
         realRime.startup()
-        appScope.launch {
-            // 引擎若在就绪前被停掉，whenReady 现在会抛 RimeStoppedException：
-            // 通知取消失败无妨（进程状态已变），不能让它变成未捕获异常
-            runCatching {
-                realRime.lifecycle.whenReady {
-                    notificationManager.cancel(id)
-                }
-            }
-        }
-    }
-
-
-    private suspend fun handleRimeMessage(it: RimeMessage<*>) {
-        if (it is RimeMessage.DeployMessage) {
-            val buildNotification: NotificationCompat.Builder.() -> Unit
-            when (it.data) {
-                RimeMessage.DeployMessage.State.Start -> {
-                    buildNotification = {
-                        setContentText(appContext.getString(R.string.deploy_progress))
-                        setProgress(0, 0, true)
-                        setOngoing(true)
-                        setAutoCancel(false)
-                        setSmallIcon(R.mipmap.ic_launcher_round)
-                        setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                    }
-                    withContext(Dispatchers.IO) { subProcess("logcat", "--clear") }
-                }
-
-                RimeMessage.DeployMessage.State.Success -> {
-                    buildNotification = {
-                        setColor(Color.GREEN)
-                        setContentText(appContext.getString(R.string.rime_deploy_success))
-                        setOngoing(false)
-                        setTimeoutAfter(3000L)
-                        setAutoCancel(true)
-                        setSmallIcon(R.mipmap.ic_launcher_round)
-                        setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                    }
-                }
-
-                RimeMessage.DeployMessage.State.Failure -> {
-                    buildNotification = {
-                        setColor(Color.GREEN)
-                        setContentText(appContext.getString(R.string.rime_deploy_failure))
-                        setOngoing(false)
-                        setTimeoutAfter(3000L)
-                        setAutoCancel(true)
-                        setSmallIcon(R.mipmap.ic_launcher_round)
-                        setPriority(NotificationCompat.PRIORITY_DEFAULT)
-                    }
-                }
-
-                else -> return
-            }
-            sendNotification(MESSAGE_ID, buildNotification)
-        }
     }
 }

@@ -29,16 +29,15 @@ class InputFieldTrackerTest {
     )
     private val fieldB = fieldA.copy(fieldId = 1002)
 
-    // WebView 形态：核心四项全同，区分只剩扩展字段
-    private val webFieldA = fieldA.copy(autofillId = "1001/7", hintText = "搜索")
-    private val webFieldOtherHint = webFieldA.copy(hintText = "评论")
-    private val webFieldOtherAutofill = webFieldA.copy(autofillId = "1001/8")
-
-    // 强信号全缺形态：核心扩展三项皆无，区分只剩文案类
-    private val hintOnlyA = fieldA.copy(hintText = "搜索")
-    private val hintOnlyOtherHint = hintOnlyA.copy(hintText = "评论")
-    private val labelOnlyA = fieldA.copy(label = "搜索")
-    private val labelOnlyOther = labelOnlyA.copy(label = "评论")
+    // 清点 D6 测试处置：扩展字段（autofillId/fieldName/hintText/
+    // label/privateImeOptions）整层拆除后，依赖它们的夹具与用例
+    // 一并删除——hintDifferenceAdvancesWhenPrimarySignalsAbsent、
+    // copyDifferencesDoNotAdvanceWhenPrimarySignalPresent、
+    // restartWithOnlyFieldNameChangedAdvances、
+    // restartWithOnlyAutofillIdChangedAdvances、
+    // extendedFieldPresentOnOnlyOneSideDoesNotAdvance 共 5 条；
+    // sameCoreAndExtendedFieldsAllEqualDoesNotAdvance 改为只用核
+    // 心四项夹具续测（见 sameCoreFieldsAllEqualDoesNotAdvance）。
 
     /** 一串喂入后判变（应推进纪元）的总次数。 */
     private fun advancesFor(tracker: InputFieldTracker, feeds: List<InputFieldKey?>): Int =
@@ -113,78 +112,15 @@ class InputFieldTrackerTest {
     }
 
     @Test
-    fun hintDifferenceAdvancesWhenPrimarySignalsAbsent() {
-        // §4.4 的兜底形态：同一 WebView 内换 <input>，核心四项
-        // 全同、核心扩展（autofillId/fieldName/privateImeOptions）
-        // 两侧全缺，区分只剩文案类——第十七批口径下 hintText 作
-        // 兜底信号参与判变，仍须判成换框，否则 R3 的语音作废在
-        // 这类宿主里漏过（第十六批的对应旧用例
-        // restartWithOnlyHintChangedAdvances 带 autofillId 夹具，
-        // 在新口径下属「核心在场」形态、改判见下一条，故本条换
-        // 强信号全缺夹具续测其 §4.4 本意）
+    fun sameCoreFieldsAllEqualDoesNotAdvance() {
+        // 核心四项全等（同框 hide/show 或同框 restarting 的两次
+        // 喂入）——恒判同框（S1 口径不回退）。原用例
+        // sameCoreAndExtendedFieldsAllEqualDoesNotAdvance 以核心
+        // ＋扩展全等为夹具，清点 D6 后改为核心四项夹具续测同义
         val tracker = InputFieldTracker()
-        tracker.track(hintOnlyA)
-        assertTrue(tracker.track(hintOnlyOtherHint))
-        // label 同口径
-        val labelTracker = InputFieldTracker()
-        labelTracker.track(labelOnlyA)
-        assertTrue(labelTracker.track(labelOnlyOther))
-    }
-
-    @Test
-    fun copyDifferencesDoNotAdvanceWhenPrimarySignalPresent() {
-        // 第十七批降权：核心扩展在场（autofillId 两侧有值）时，
-        // hintText/label 即使两侧有值且不同也不单独触发判变——
-        // 同一框在两次喂入间改写动态提示文案不得误判换框、误杀
-        // 在途语音（audit16 (g) 反向残余的收口）
-        val tracker = InputFieldTracker()
-        tracker.track(webFieldA)
-        assertFalse(tracker.track(webFieldOtherHint))
-        val labelTracker = InputFieldTracker()
-        labelTracker.track(webFieldA.copy(label = "搜索"))
-        assertFalse(labelTracker.track(webFieldA.copy(label = "评论")))
-    }
-
-    @Test
-    fun restartWithOnlyFieldNameChangedAdvances() {
-        // fieldName 属核心扩展：仅它两侧有值且不同即判换框，
-        // 不受文案类降权影响
-        val tracker = InputFieldTracker()
-        tracker.track(webFieldA.copy(fieldName = "search"))
-        assertTrue(tracker.track(webFieldA.copy(fieldName = "comment")))
-    }
-
-    @Test
-    fun restartWithOnlyAutofillIdChangedAdvances() {
-        // autofillId 是扩展字段里区分力最强的一项：仅它不同
-        // （虚拟子 id 不同）同样判换框
-        val tracker = InputFieldTracker()
-        tracker.track(webFieldA)
-        assertTrue(tracker.track(webFieldOtherAutofill))
-    }
-
-    @Test
-    fun sameCoreAndExtendedFieldsAllEqualDoesNotAdvance() {
-        // 核心四项与五项扩展字段全等（同框 hide/show 或同框
-        // restarting 的两次喂入）——恒判同框，不因扩展字段在场
-        // 而误判（S1 口径不回退）
-        val tracker = InputFieldTracker()
-        tracker.track(webFieldA)
-        assertFalse(tracker.track(webFieldA.copy()))
-        assertEquals(0, advancesFor(tracker, listOf(webFieldA, webFieldA)))
-    }
-
-    @Test
-    fun extendedFieldPresentOnOnlyOneSideDoesNotAdvance() {
-        // 扩展字段的判变口径是「两侧都有值且不同」：同框两次喂
-        // 入之间宿主只在一侧给出 hint（null↔有值抖动）不算换
-        // 框，避免同框重启被误判、误杀在途语音/联想
-        val tracker = InputFieldTracker()
-        tracker.track(fieldA) // 扩展字段全缺
-        assertFalse(tracker.track(fieldA.copy(hintText = "搜索")))
-        val tracker2 = InputFieldTracker()
-        tracker2.track(webFieldA)
-        assertFalse(tracker2.track(webFieldA.copy(hintText = null, autofillId = null)))
+        tracker.track(fieldA)
+        assertFalse(tracker.track(fieldA.copy()))
+        assertEquals(0, advancesFor(tracker, listOf(fieldA, fieldA)))
     }
 
     @Test

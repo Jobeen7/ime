@@ -103,6 +103,4 @@ class KeyboardWindow(
         view.onInputChanged(currentEditorInfo, text, virtualInputConnection)
 
     fun showToast(message: CharSequence) = view.showImeToast(message)
-
-    fun onDepolyFinished() = view.onDepolyFinished()
 }

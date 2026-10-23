@@ -8,8 +8,9 @@ import org.junit.Test
 
 /**
  * 崩溃文件名口径（4.8）：按进程分文件、进程名里的冒号等字符安全
- * 化；识别函数须同时认现行命名与旧版单文件名（升级兼容读/清），
- * 且不误认其他文件（读取与清理都按它圈定候选）。
+ * 化；识别函数只认现行命名，且不误认其他文件（读取与清理都按它
+ * 圈定候选）。旧版单文件名 last_crash.txt 的兼容读/清已于清点
+ * D16 拆除，不再算崩溃记录（下方用例已按新口径改判）。
  */
 class CrashTrapTest {
 
@@ -26,8 +27,10 @@ class CrashTrapTest {
     }
 
     @Test
-    fun isCrashFileName_matchesCurrentAndLegacyNames() {
-        assertTrue(CrashTrap.isCrashFileName("last_crash.txt"))
+    fun isCrashFileName_matchesCurrentNamesOnly() {
+        // 原断言：旧版单文件名 last_crash.txt 判 true（兼容读/清）；
+        // 新断言（清点 D16）：兼容支已拆，判 false
+        assertFalse(CrashTrap.isCrashFileName("last_crash.txt"))
         assertTrue(CrashTrap.isCrashFileName("last_crash-com.jobeen.ime.txt"))
         assertTrue(CrashTrap.isCrashFileName("last_crash-com.jobeen.ime_speech.txt"))
         assertFalse(CrashTrap.isCrashFileName("voice_corrections.tsv"))

@@ -185,18 +185,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class CandidatesReady(val requestId: Long, val message: EngineMessage.Candidates) :
             Action
 
-        /**
-         * 偏好快照加载完成信号：加载监听只投递本 Action，待刷新登
-         * 记的取出、批次复检与 restoreCandidates 重跑全部在 reduce
-         * 串行点内做——监听在缓存的加载线程上同步执行，若在那里
-         * 「比较代次通过→直接调 restoreCandidates」，比较与重跑不
-         * 是原子的（其间插入的新批次会被旧登记的重跑取消并抢发），
-         * 且 restoreCandidates 会脱离 reduce 线程跨线程触碰
-         * candidateRestoreJob。经本 Action 排队后，三者与新批次的
-         * 还原同在一个串行点上，交错不复存在。
-         */
-        data object PreferLoaded : Action
-
         data class PossibleCandidatePinYinSnapshot(
             val candidatePinYinType: String,
             val currentInput: String,
@@ -284,49 +272,30 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     /**
      * 光标前文本缓存：getTextBeforeCursor() 是跨进程 Binder 调用，
-     * 之前每次产生候选都会调一次。这里缓存最近 64 个字符，TTL 800ms；
-     * 新输入框 / 上屏 / 删除文本时主动失效。
+     * 之前每次产生候选都会调一次。这里缓存最近 64 个字符（见
+     * [BeforeCursorCache]）；新输入框 / 上屏 / 删除文本 / 光标移动
+     * 时主动失效（见各 [invalidateBeforeCursorCache] 调用点），命
+     * 中直接切片返回、不重复读 IC。
      *
-     * 隐私与代次复检在真正读 IC 的主线程块内做（而非只在调用线程
-     * 预检）：预检与读之间隔着主线程队列，其间可能已切框或切到
-     * 密码框——队列里排在读之前的 onStartInputView 会先更新
-     * editorInfo/代次，读点复检才拦得住。[expectedGen] 非空时还
-     * 要求当前代次与之相等（预测 job 以发起代次读基底：基底与代
-     * 次在读点同处校验，不再有「发起点先读基底、代次随后才取」
-     * 的时点差）。任一复检不过返回 null 且不写缓存，调用方应整
-     * 轮作废；缓存新鲜（TTL 内且代次吻合）时直接切片返回，不重
-     * 复读 IC。
-     *
-     * 缓存以「内容＋读取时刻＋所属代次」的单个快照发布（见
-     * [BeforeCursorCache]），命中与提交都核对代次。此前实现把
-     * 内容与时间存成两个独立字段，提交又发生在主线程块返回后
-     * 的调用线程上、无条件回填：读取飞行中若已换框（代次推进
-     * ＋失效），旧框前文仍会被写回、把已失效的缓存复活，新框
-     * 后续读取命中旧框上下文（R4）。故提交前以读取时捕获的代
-     * 次再核一次当前代次，不一致整轮作废、绝不回填；命中路径
-     * 同样先核对快照代次，不再短路掉本应执行的代次校验。
+     * 防串框只靠一个输入框序号整数比对：异步读者以发起时捕获的
+     * 序号（[expectedGen]，没给则以进入时的当前序号为准）在入口、
+     * 真正读 IC 的主线程块内、读回后各比对一次，序号已变即整轮
+     * 作废——旧框前文既不交付本轮、也不回填缓存。隐私复检也在
+     * 主线程块内做：预检与读之间隔着主线程队列，其间可能已切到
+     * 密码框，队列里排在读之前的 onStartInputView 会先更新
+     * editorInfo，读点复检才拦得住。
      */
     private val beforeCursorCache = BeforeCursorCache()
 
     private suspend fun peekTextBeforeCursor(n: Int, expectedGen: Long? = null): String? {
-        val now = SystemClock.uptimeMillis()
-        val currentGen = predictionFieldGen.get()
-        beforeCursorCache.freshText(now, currentGen)?.let { cached ->
-            // 命中也不短路代次校验：调用方带着发起代次来读，代次
-            // 已被推进时这份上下文不属于它，整轮作废
-            if (expectedGen != null && expectedGen != currentGen) return null
-            return sliceBeforeCursor(cached, n)
-        }
-        // 本轮读取所属代次：调用方给了发起代次就用它（与主线程
-        // 块内复检、提交复检同一口径），没给（重排）就以发起时
-        // 点的当前代次为准
-        val readGen = expectedGen ?: currentGen
-        // InputConnection 非线程安全、契约要求主线程访问：本类其余
-        // 读写点都显式 withContext(Main.immediate)，此探针原先在
-        // Default 线程直调，是唯一例外。只有真正读 IC 的填缓存段
-        // 切主线程；TTL 判定与切片留在调用线程，800ms 语义不变
+        val startGen = expectedGen ?: predictionFieldGen.get()
+        // 调用方带着发起序号来读：序号已变，这份上下文不属于它
+        if (predictionFieldGen.get() != startGen) return null
+        beforeCursorCache.cachedText()?.let { return sliceBeforeCursor(it, n) }
+        // InputConnection 非线程安全、契约要求主线程访问：只有真正
+        // 读 IC 的填缓存段切主线程，切片留在调用线程
         val fresh = withContext(Dispatchers.Main.immediate) {
-            if (expectedGen != null && predictionFieldGen.get() != expectedGen) {
+            if (predictionFieldGen.get() != startGen) {
                 return@withContext null
             }
             if (isNoPersonalizedLearning(editorInfo)) {
@@ -336,11 +305,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 inputConnection()?.getTextBeforeCursor(64, 0)?.toString() ?: ""
             }.getOrDefault("")
         } ?: return null
-        // 提交前复检（R4）：读取期间代次已被推进（换框）则整轮
-        // 作废——这份前文属旧框，既不交付本轮、也不回填缓存
-        if (!beforeCursorCache.publish(fresh, now, readGen, predictionFieldGen.get())) {
-            return null
-        }
+        // 提交前比对：读取期间序号已被推进（换框且缓存已失效），
+        // 这份前文属旧框——不交付本轮、也不回填
+        if (predictionFieldGen.get() != startGen) return null
+        beforeCursorCache.publish(fresh)
         return sliceBeforeCursor(fresh, n)
     }
 
@@ -353,12 +321,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         beforeCursorCache.invalidate()
     }
     /**
-     * 输入框代次：换框时推进——onStartInputView(!restarting)，以及
+     * 输入框序号：换框时推进——onStartInputView(!restarting)，以及
      * restarting 但关键字段已变（实为换框，见 [InputFieldKey]）。
-     * 预测发起时捕获，交付复检与 job 内复检都按代次比对，取代旧的
+     * 异步读者（前文读取、预测 job、前端提交认领）以发起时捕获的
+     * 序号作整轮作废的比对基准，交付点再比对一次；取代旧的
      * EditorInfo 引用同一性（===）——同一性比较把「同框 restartInput
-     * 换发新 EditorInfo 实例」与「换框」混为一谈，且无法表达代次
-     * 先后。同框重启（字段未变）不推进，框没换、在途联想仍属本框。
+     * 换发新 EditorInfo 实例」与「换框」混为一谈。同框重启（字段
+     * 未变）不推进，框没换、在途联想仍属本框。
      */
     private val predictionFieldGen = java.util.concurrent.atomic.AtomicLong(0L)
 
@@ -383,44 +352,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     @Volatile
     private var lastInputFieldKey: InputFieldKey? = null
 
-    /**
-     * 偏好缓存加载完成监听只注册一次（见 restoreCandidates 的待刷新
-     * 登记）。监听注册在进程级 [CandidatePreferCache] 上，注销句柄保
-     * 存在 [preferLoadListenerUnregister]，由 [finalize] 在引擎销毁
-     * 时调用注销——不注销则引擎每次重建叠加一条，旧实例被监听闭包
-     * 持有滞留，且其投递的 PreferLoaded 虽会被已关闭的 actions 通
-     * 道丢弃，仍是无谓的跨实例噪声。
-     */
-    private val preferLoadListenerRegistered =
-        java.util.concurrent.atomic.AtomicBoolean(false)
-
-    /** [ensurePreferLoadListener] 注册返回的注销句柄（注册在还原 job 线程、注销在销毁线程，须原子交接）。 */
-    private val preferLoadListenerUnregister =
-        java.util.concurrent.atomic.AtomicReference<(() -> Unit)?>(null)
-
-    /**
-     * 偏好未加载时先行出候选的最新一批（msg 与其代次）：加载完成
-     * 后若它仍是最新批次，重跑一次 restoreCandidates 补上偏好重
-     * 排。已被更新批次取代的登记在 reduce 处理
-     * [Action.PreferLoaded] 时按代次比对丢弃（取出/复检/重跑同在
-     * 串行点内，见该 Action 的说明）。
-     */
-    private val pendingPreferRefresh =
-        java.util.concurrent.atomic.AtomicReference<Pair<EngineMessage.Candidates, Long>?>(null)
-
     @Volatile
     private var predictionJob: Job? = null
 
     /**
-     * 候选还原 job 句柄。写点只剩两处：[restoreCandidates]（reduce
+     * 候选还原 job 句柄。写点两处：[restoreCandidates]（reduce
      * 串行点，cancel 旧的再赋新的）与 [invalidatePendingCandidates]
      * （reduce 多路与 onFinishInputView 的主线程收尾都会调，cancel
-     * 后置空）。偏好加载监听曾是第三个跨线程触点（在加载线程上直
-     * 接重跑 restoreCandidates)，已改为只投递 [Action.PreferLoaded]
-     * 回到 reduce 内重跑，消除。余下两处以 @Volatile 保可见性即
-     * 够：Job.cancel 本身线程安全；赋值交错最坏让一次作废漏取消一
-     * 个刚启动的还原 job，其结果仍被 CandidatesReady 的 requestId
-     * 门控按代次丢弃，不会把旧批次候选发出去。
+     * 后置空）。两处以 @Volatile 保可见性即够：Job.cancel 本身线
+     * 程安全；赋值交错最坏让一次作废漏取消一个刚启动的还原 job，
+     * 其结果仍被 CandidatesReady 的 requestId 门控丢弃，不会把旧
+     * 批次候选发出去。
      */
     @Volatile
     private var candidateRestoreJob: Job? = null
@@ -511,12 +453,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     override fun finalize() {
         prefs?.unregisterOnSharedPreferenceChangeListener(prefsListener)
         prefs = null
-        // 偏好加载监听注册在进程级 CandidatePreferCache 上：与上方
-        // prefs 监听同口径在此注销，否则引擎重建逐次叠加、旧实例
-        // 被监听闭包滞留（见 preferLoadListenerRegistered 的说明）。
-        // 注销后复位注册标记，本实例若被复用可重新注册
-        preferLoadListenerUnregister.getAndSet(null)?.invoke()
-        preferLoadListenerRegistered.set(false)
         actions.close()
         jobs.close()
         scope.cancel()
@@ -942,19 +878,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 }
             }
 
-            Action.PreferLoaded -> {
-                // 待刷新登记的取出、批次复检与重跑同在本串行点内，
-                // 与新批次的还原天然互斥（见 Action.PreferLoaded）。
-                // 已被更新批次取代的登记直接丢弃：新批次自己会走已
-                // 加载的正常路径或重新登记
-                val pending = pendingPreferRefresh.getAndSet(null)
-                if (pending != null &&
-                    pending.second == state.latestCandidateRequestId.get()
-                ) {
-                    restoreCandidates(pending.first)
-                }
-            }
-
             Action.Reset -> {
                 invalidatePendingCandidates()
                 invalidatePendingPrediction()
@@ -1090,14 +1013,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             if (hasSelection) {
                 // 选区删除不直达 InputConnection，而是以直送
                 // Commit 送回引擎消息管线：MessageHandler 对
-                // Commit 有剪贴板搜索态改道（interceptCommit）、
-                // 本地写代次记账（noteLocalWrite）与探针通知合并
-                // （scheduleNotifyInputChanged）三件套处理，直达
-                // commitText 会整段绕过。此处本就在 reduce 内，
-                // 直接 emitMessage 与借道管线落到同一条下游处
-                // 理，不必再绕 jobs→rime-main 一圈（绕行期间第
-                // 二次退格的判定会赶在第一个 Commit("") 落屏前
-                // 重复走删选区分支，两次退格只删一次选区）。
+                // Commit 有剪贴板搜索态改道（interceptCommit）
+                // 与上屏后经 24ms 合并通道的探针通知
+                // （scheduleNotifyInputChanged，每次直探）两件
+                // 处理，直达 commitText 会整段绕过。此处本就在
+                // reduce 内，直接 emitMessage 与借道管线落到同
+                // 一条下游处理，不必再绕 jobs→rime-main 一圈
+                // （绕行期间第二次退格的判定会赶在第一个
+                // Commit("") 落屏前重复走删选区分支，两次退
+                // 格只删一次选区）。
                 emitMessage(EngineMessage.Commit("", direct = true))
                 // 与旧删选区路径同口径：宿主文本已变，前文缓存失效
                 invalidateBeforeCursorCache()
@@ -1337,9 +1261,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private fun Action.isDroppable(): Boolean = when (this) {
-        // PreferLoaded 是刷新提示：丢了只是这批候选不补重排，下一批
-        // 在已加载后走快照直读自愈（未加载则重新登记），可丢
-        is Action.PredictionReady, is Action.CandidatesReady, is Action.PreferLoaded -> true
+        // 预测/候选回执有 requestId 守卫，丢了下一批自愈，可丢
+        is Action.PredictionReady, is Action.CandidatesReady -> true
         is Action.RimeMessage -> when (message.messageType) {
             RimeMessage.MessageType.Candidate, RimeMessage.MessageType.Composition,
             RimeMessage.MessageType.InlinePreedit, RimeMessage.MessageType.DynamicPreedit,
@@ -1486,9 +1409,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // loadMoreCandidates 直接接管放行——旧 job 在停机窗口被吞掉
         // 也不会永久滞留，无需在此复位；其 finally 也只清自己批次
         val requestId = state.candidateRequestId.incrementAndGet()
-        // 本批所属的输入框代次：job 内读前文时随 peek 一并校验
-        // （与联想 job 的发起代次同口径）——换框后本批要么读到新
-        // 框前文、要么整轮作废，不得消费旧框的缓存前文（R4）
+        // 本批所属的输入框序号：job 内读前文时随 peek 一并比对
+        // （与联想 job 的发起序号同口径）——换框后本批整轮作废，
+        // 不得消费旧框的缓存前文
         val fieldGen = predictionFieldGen.get()
         state.latestCandidateRequestId.accumulateAndGet(requestId) { a, b -> maxOf(a, b) }
         candidateRestoreJob?.cancel()
@@ -1550,19 +1473,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 非隐私模式走前文缓存，避免每次候选刷新都跨进程读一次
                     val inputContext = if (isNoPersonalizedLearning(editorInfo)) "" else
                         peekTextBeforeCursor(20, expectedGen = fieldGen) ?: ""
-                    // 偏好快照：已加载时是内存直读；未加载时不在本
-                    // job 里等加载——加载段与点击写事务同在缓存的
-                    // 跨挂起互斥内，首屏等它就等于等在途写事务整
-                    // 段。先用当前缓存（可能为空）出候选，并登记本
-                    // 批待刷新：后台加载完成后，监听投递的
-                    // Action.PreferLoaded 在 reduce 内复检它仍是最新
-                    // 批次时重跑一次 restoreCandidates 补上偏好重排
-                    // （见 pendingPreferRefresh）
+                    // 偏好快照直读：已加载时是内存直读；未加载时
+                    // 不在本 job 里等加载——加载段与点击写事务同在
+                    // 缓存的跨挂起互斥内，首屏等它就等于等在途写
+                    // 事务整段。先用当前缓存（可能为空）出本批候
+                    // 选，偏好在下一次按键的新批次里自然生效；同
+                    // 时发起后台加载，下批直接走快照
                     val prefers = if (CandidatePreferCache.isLoaded()) {
                         CandidatePreferCache.snapshot(ctx)
                     } else {
-                        ensurePreferLoadListener()
-                        pendingPreferRefresh.set(msg to requestId)
                         CandidatePreferCache.ensureLoadInBackground(ctx)
                         CandidatePreferCache.currentCache()
                     }
@@ -1608,25 +1527,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         state.latestCandidateRequestId.accumulateAndGet(
             state.candidateRequestId.incrementAndGet()
         ) { a, b -> maxOf(a, b) }
-    }
-
-    /**
-     * 注册偏好缓存的加载完成监听（本实例只注册一次，销毁时经
-     * [preferLoadListenerUnregister] 注销）：监听本体在缓存的加载
-     * 线程上同步执行，只投递 [Action.PreferLoaded]——登记的取出、
-     * 批次复检与 restoreCandidates 重跑全部回到 reduce 串行点内
-     * 做。在监听里直接「比较代次→调 restoreCandidates」不是原子
-     * 的：比较通过后、调用前插入的新批次会被旧登记的重跑取消并
-     * 抢发；且 restoreCandidates 会脱离 reduce 线程跨线程触碰
-     * candidateRestoreJob（见其字段说明）。
-     */
-    private fun ensurePreferLoadListener() {
-        if (!preferLoadListenerRegistered.compareAndSet(false, true)) return
-        preferLoadListenerUnregister.set(
-            CandidatePreferCache.registerLoadListener {
-                dispatchAction(Action.PreferLoaded)
-            }
-        )
     }
 
     /** 取消在途的预测并推进代次，避免迟到预测覆盖新候选或在清空后重现。 */
