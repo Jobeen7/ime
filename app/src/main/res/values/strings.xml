@@ -130,6 +130,10 @@
     <string name="last_crash_time">最近一次崩溃：%1$s</string>
     <string name="crash_copied">已复制最近崩溃信息</string>
     <string name="clear_logs">清空日志</string>
+    <string name="diagnostic_mode">诊断模式</string>
+    <string name="diagnostic_mode_desc">记录详细诊断日志供问题定位（默认关闭）</string>
+    <string name="export_diag_logs">导出诊断日志</string>
+    <string name="diag_export_failed">诊断日志导出失败</string>
     <string name="clipboard_history">历史记录</string>
     <string name="clipboard_max_entries">记录数量上限</string>
     <string name="clipboard_retention_days">保留天数</string>

@@ -39,6 +39,9 @@ class ImeApplication : Application() {
         super.onCreate()
         instance = this
         CrashTrap.install(this)
+        // 诊断日志基建（详设十三章）：崩溃仍由 CrashTrap 单点落盘，
+        // 本设施记 v3 子系统的结构化元数据日志，供日志页导出
+        com.jobeen.ime.skin.diag.DiagLog.init(this)
         if (isMainProcess()) {
             // 兜底：AppStartup 内部每步已独立捕获，这里再防一次未预料的异常直接杀进程
             val handler = CoroutineExceptionHandler { _, e ->

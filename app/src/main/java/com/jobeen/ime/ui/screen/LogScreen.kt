@@ -4,8 +4,11 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.PersistableBundle
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,11 +24,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
@@ -36,6 +41,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -49,6 +55,9 @@ import com.jobeen.ime.base.CrashTrap
 import com.jobeen.ime.base.log.AppLogBuffer
 import com.jobeen.ime.base.log.AppLogEntry
 import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.skin.diag.DiagExporter
+import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.diag.DiagPrefs
 import com.jobeen.ime.data.manager.takeCodePoints
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import kotlinx.coroutines.Dispatchers
@@ -70,6 +79,8 @@ fun LogScreen(onBack: () -> Unit) {
     LaunchedEffect(Unit) {
         pendingCrash = withContext(Dispatchers.IO) { CrashTrap.readPendingCrashInfo(context) }
     }
+    // 诊断模式开关（详设十三.6）：控制 DiagLog 的 DEBUG 级是否落盘
+    var diagnosticMode by remember { mutableStateOf(DiagPrefs.isDiagnosticMode(context)) }
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(entries.size) {
@@ -105,6 +116,45 @@ fun LogScreen(onBack: () -> Unit) {
                             )
                         }
                     }
+                    // 导出诊断日志（详设十三.5）：DiagLog 近期日志 +
+                    // CrashTrap 崩溃文件打成单个 zip 走系统分享
+                    val exportFailedLabel = stringResource(R.string.diag_export_failed)
+                    IconButton(onClick = {
+                        scope.launch {
+                            val zip = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    DiagLog.flush()
+                                    DiagExporter.buildExportZip(
+                                        logsDir = DiagLog.logsDir()
+                                            ?: File(context.filesDir, "logs"),
+                                        // CrashTrap 的崩溃目录（filesDir/crash）
+                                        crashDir = File(context.filesDir, "crash"),
+                                        outDir = File(context.cacheDir, "shared"),
+                                    )
+                                }.getOrNull()
+                            }
+                            if (zip == null) {
+                                ToastUtil.showToast(context, exportFailedLabel)
+                            } else {
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    zip,
+                                )
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/zip"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, null))
+                            }
+                        }
+                    }) {
+                        Icon(
+                            Icons.Filled.Share,
+                            contentDescription = stringResource(R.string.export_diag_logs),
+                        )
+                    }
                     val logsLabel = stringResource(R.string.app_logs)
                     IconButton(onClick = { copyLogs(context, logText, logsLabel) }, enabled = entries.isNotEmpty()) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_logs))
@@ -135,6 +185,33 @@ fun LogScreen(onBack: () -> Unit) {
                 .padding(8.dp)
                 .background(Color(0xFF101214)),
         ) {
+            // 诊断模式开关行（详设十三.6）
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 8.dp, vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.diagnostic_mode),
+                        color = Color(0xFFF5F5F7),
+                        fontSize = 13.sp,
+                    )
+                    Text(
+                        text = stringResource(R.string.diagnostic_mode_desc),
+                        color = Color(0xFF9A9AA0),
+                        fontSize = 11.sp,
+                    )
+                }
+                Switch(
+                    checked = diagnosticMode,
+                    onCheckedChange = { enabled ->
+                        diagnosticMode = enabled
+                        DiagPrefs.setDiagnosticMode(context, enabled)
+                    },
+                )
+            }
             // 最近崩溃的发生时间：记录只读不删，没有时间用户无从判断
             // 顶栏那个入口是几天前的旧崩溃还是刚刚发生的
             val crash = pendingCrash
