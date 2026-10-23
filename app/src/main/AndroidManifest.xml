@@ -140,6 +140,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.SkinEditorActivity"
+            android:exported="false"
+            android:label="皮肤编辑"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.PredictionSettingsActivity"
             android:exported="false"
             android:label="@string/prediction_candidates"
