@@ -5,6 +5,7 @@ import android.content.Context
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.data.CandidatePinYin
+import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -62,28 +63,28 @@ class T9Keyboard(
         val Layout: List<List<KeyDef>> = listOf(
             listOf(
                 sidePannelKey(rowSpan = 3, visableRow = 4),
-                segmentKey(percentWidth = 0.22333f),
-                mixedAlphabetKey("2", "ABC", 0.22333f),
-                mixedAlphabetKey("3", "DEF", 0.22333f),
-                backspaceKey(0.18f),
+                segmentKey(percentWidth = 0.22333f, id = KeyIds.T9.T9_SEGMENT),
+                mixedAlphabetKey("2", "ABC", 0.22333f, id = KeyIds.T9.T9_KEY_2),
+                mixedAlphabetKey("3", "DEF", 0.22333f, id = KeyIds.T9.T9_KEY_3),
+                backspaceKey(0.18f, id = KeyIds.T9.T9_DELETE),
             ),
             listOf(
-                mixedAlphabetKey("4", "GHI", 0.22333f),
-                mixedAlphabetKey("5", "JKL", 0.22333f),
-                mixedAlphabetKey("6", "MNO", 0.22333f),
-                newlineKey(0.18f),
+                mixedAlphabetKey("4", "GHI", 0.22333f, id = KeyIds.T9.T9_KEY_4),
+                mixedAlphabetKey("5", "JKL", 0.22333f, id = KeyIds.T9.T9_KEY_5),
+                mixedAlphabetKey("6", "MNO", 0.22333f, id = KeyIds.T9.T9_KEY_6),
+                newlineKey(0.18f, id = KeyIds.T9.T9_NEWLINE),
             ),
             listOf(
-                mixedAlphabetKey("7", "PQRS", 0.22333f),
-                mixedAlphabetKey("8", "TUV", 0.22333f),
-                mixedAlphabetKey("9", "WXYZ", 0.22333f),
-                returnKey(percentWidth = 0.18f, rowSpan = 2),
+                mixedAlphabetKey("7", "PQRS", 0.22333f, id = KeyIds.T9.T9_KEY_7),
+                mixedAlphabetKey("8", "TUV", 0.22333f, id = KeyIds.T9.T9_KEY_8),
+                mixedAlphabetKey("9", "WXYZ", 0.22333f, id = KeyIds.T9.T9_KEY_9),
+                returnKey(percentWidth = 0.18f, rowSpan = 2, id = KeyIds.T9.T9_ENTER),
             ),
             listOf(
-                layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f),
-                peroidKey(percentWidth = 0.13f),
-                spaceKey(percentWidth = 0.41f),
-                schemaSwitchKey(0.13f),
+                layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f, id = KeyIds.T9.T9_LAYOUT_NUMBER),
+                peroidKey(percentWidth = 0.13f, id = KeyIds.T9.T9_PERIOD),
+                spaceKey(percentWidth = 0.41f, id = KeyIds.T9.T9_SPACE),
+                schemaSwitchKey(0.13f, id = KeyIds.T9.T9_SCHEMA),
             ),
         )
     }

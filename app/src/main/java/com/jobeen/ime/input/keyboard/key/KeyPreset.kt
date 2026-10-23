@@ -14,7 +14,9 @@ fun alphabetKey(
     punctuation: String,
     altTextTranslationY: Int = 2,
     mainTextTranslationY: Int = -2,
+    id: String? = null,
 ) = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.AltText(
         displayText = character,
         altText = punctuation,
@@ -28,7 +30,10 @@ fun alphabetKey(
     )
 )
 
-fun mixedAlphabetKey(digit: String, letters: String, percentWidth: Float = 0.23333f) = KeyDef(
+fun mixedAlphabetKey(
+    digit: String, letters: String, percentWidth: Float = 0.23333f, id: String? = null,
+) = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.AltText(
         displayText = letters,
         altText = digit,
@@ -47,7 +52,9 @@ fun commitKey(
     character: String, percentWidth: Float = 0.23333f,
     variant: Variant = Variant.Normal,
     fontSize: Float = 20f,
+    id: String? = null,
 ) = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = character, textSize = fontSize, variant = variant, percentWidth = percentWidth
     ), behaviors = setOf(
@@ -75,7 +82,8 @@ fun sidePannelNormalItem(character: String, percentWidth: Float = 0.15f) = KeyDe
     behaviors = setOf(),
 )
 
-fun capsLockKey(): KeyDef = KeyDef(
+fun capsLockKey(id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_capslock_none,
         viewId = KeyView.button_caps,
@@ -88,7 +96,8 @@ fun capsLockKey(): KeyDef = KeyDef(
 )
 
 
-fun backspaceKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+fun backspaceKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_backspace,
         viewId = KeyView.button_backspace,
@@ -109,7 +118,9 @@ fun layoutSwitchKey(
     displayText: String,
     target: String,
     percentWidth: Float = 0.15f,
+    id: String? = null,
 ): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = displayText,
         textSize = 15f,
@@ -126,7 +137,9 @@ fun layoutSwitchKey(
 fun resumeLayoutKey(
     displayText: String,
     percentWidth: Float = 0.15f,
+    id: String? = null,
 ): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = displayText,
         textSize = 15f,
@@ -136,7 +149,8 @@ fun resumeLayoutKey(
     behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.ResumeAction)),
 )
 
-fun spaceKey(percentWidth: Float = 0.23333f): KeyDef = KeyDef(
+fun spaceKey(percentWidth: Float = 0.23333f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = "",
         textSize = 13f,
@@ -152,7 +166,8 @@ fun spaceKey(percentWidth: Float = 0.23333f): KeyDef = KeyDef(
 )
 
 
-fun peroidKey(percentWidth: Float): KeyDef = KeyDef(
+fun peroidKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.ImageText(
         displayText = ".",
         textSize = 18f,
@@ -168,7 +183,8 @@ fun peroidKey(percentWidth: Float): KeyDef = KeyDef(
 )
 
 
-fun schemaSwitchKey(percentWidth: Float): KeyDef = KeyDef(
+fun schemaSwitchKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_language,
         viewId = KeyView.button_lang,
@@ -181,7 +197,8 @@ fun schemaSwitchKey(percentWidth: Float): KeyDef = KeyDef(
     ),
 )
 
-fun symbolSwitchKey(percentWidth: Float): KeyDef = KeyDef(
+fun symbolSwitchKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_symbol,
         viewId = KeyView.button_lang,
@@ -191,7 +208,8 @@ fun symbolSwitchKey(percentWidth: Float): KeyDef = KeyDef(
     behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.LayoutSwitchAction(SymbolKeyboard.NAME))),
 )
 
-fun returnKey(percentWidth: Float, rowSpan: Int = 1): KeyDef = KeyDef(
+fun returnKey(percentWidth: Float, rowSpan: Int = 1, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_return,
         viewId = KeyView.button_return,
@@ -211,7 +229,8 @@ fun returnKey(percentWidth: Float, rowSpan: Int = 1): KeyDef = KeyDef(
     )
 )
 
-fun prevPageKey(percentWidth: Float): KeyDef = KeyDef(
+fun prevPageKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_arrow_up,
         percentWidth = percentWidth,
@@ -221,7 +240,8 @@ fun prevPageKey(percentWidth: Float): KeyDef = KeyDef(
     behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.ReturnAction())),
 )
 
-fun nextPageKey(percentWidth: Float): KeyDef = KeyDef(
+fun nextPageKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_arrow_down,
         percentWidth = percentWidth,
@@ -231,7 +251,8 @@ fun nextPageKey(percentWidth: Float): KeyDef = KeyDef(
     behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.ReturnAction())),
 )
 
-fun segmentKey(percentWidth: Float = 0.23333f): KeyDef = KeyDef(
+fun segmentKey(percentWidth: Float = 0.23333f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.AltText(
         displayText = "分词",
         altText = "1",
@@ -247,7 +268,8 @@ fun segmentKey(percentWidth: Float = 0.23333f): KeyDef = KeyDef(
     ),
 )
 
-fun clearKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+fun clearKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = "清空",
         textSize = 15f,
@@ -259,7 +281,8 @@ fun clearKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
     ),
 )
 
-fun newlineKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+fun newlineKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = "换行",
         textSize = 15f,
@@ -272,7 +295,8 @@ fun newlineKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
 )
 
 
-fun zeroKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+fun zeroKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = "@",
         textSize = 18f,
@@ -285,7 +309,8 @@ fun zeroKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
     ),
 )
 
-fun infiniteKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+fun infiniteKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.ImageText(
         displayText = "0",
         textSize = 11f,
@@ -299,7 +324,8 @@ fun infiniteKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
     ),
 )
 
-fun miniSpaceKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+fun miniSpaceKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_space,
         percentWidth = percentWidth,
@@ -308,7 +334,8 @@ fun miniSpaceKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
     behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.SpaceAction)),
 )
 
-fun atKey(percentWidth: Float = 0.15f): KeyDef = KeyDef(
+fun atKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = "@",
         textSize = 18f,
@@ -323,7 +350,9 @@ fun textKey(
     character: String, percentWidth: Float = 0.23333f,
     variant: Variant = Variant.Normal,
     fontSize: Float = 20f,
+    id: String? = null,
 ) = KeyDef(
+    id = id,
     appearance = KeyDef.Appearance.Text(
         displayText = character, textSize = fontSize, variant = variant, percentWidth = percentWidth
     ), behaviors = setOf(

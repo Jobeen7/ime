@@ -5,6 +5,7 @@ import android.content.Context
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.data.CandidatePinYin
+import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -65,8 +66,10 @@ class T15Keyboard(
             letters: String,
             percentWidth: Float = 0.23333f,
             mainTextTranslationY: Int = 0,
-            altTextTranslationY: Int = 4
+            altTextTranslationY: Int = 4,
+            id: String? = null
         ) = KeyDef(
+            id = id,
             appearance = KeyDef.Appearance.AltText(
                 displayText = letters,
                 altText = digit,
@@ -84,40 +87,40 @@ class T15Keyboard(
         val Layout: List<List<KeyDef>> = listOf(
             listOf(
                 sidePannelKey(rowSpan = 3, visableRow = 4, percentWidth = npercentWidth),
-                mixedAlphabetKey("1", "q", "b", percentWidth = percentWidth),
-                mixedAlphabetKey("2", "w", "p", percentWidth = percentWidth),
-                mixedAlphabetKey("3", "e", "m", percentWidth = percentWidth),
-                mixedAlphabetKey("4", "r", "rf", percentWidth = percentWidth),
-                mixedAlphabetKey("5", "t", "ẑz", percentWidth = percentWidth),
-                backspaceKey(percentWidth = npercentWidth),
+                mixedAlphabetKey("1", "q", "b", id = KeyIds.T15.T15_KEY_1, percentWidth = percentWidth),
+                mixedAlphabetKey("2", "w", "p", id = KeyIds.T15.T15_KEY_2, percentWidth = percentWidth),
+                mixedAlphabetKey("3", "e", "m", id = KeyIds.T15.T15_KEY_3, percentWidth = percentWidth),
+                mixedAlphabetKey("4", "r", "rf", id = KeyIds.T15.T15_KEY_4, percentWidth = percentWidth),
+                mixedAlphabetKey("5", "t", "ẑz", id = KeyIds.T15.T15_KEY_5, percentWidth = percentWidth),
+                backspaceKey(percentWidth = npercentWidth, id = KeyIds.T15.T15_DELETE),
             ),
             listOf(
-                mixedAlphabetKey("6", "a", "d", percentWidth = percentWidth),
-                mixedAlphabetKey("7", "s", "t", percentWidth = percentWidth),
-                mixedAlphabetKey("8", "d", "n", percentWidth = percentWidth),
-                mixedAlphabetKey("9", "f", "l", percentWidth = percentWidth),
-                mixedAlphabetKey("0", "g", "ĉc", percentWidth = percentWidth),
-                clearKey(percentWidth = npercentWidth),
+                mixedAlphabetKey("6", "a", "d", id = KeyIds.T15.T15_KEY_6, percentWidth = percentWidth),
+                mixedAlphabetKey("7", "s", "t", id = KeyIds.T15.T15_KEY_7, percentWidth = percentWidth),
+                mixedAlphabetKey("8", "d", "n", id = KeyIds.T15.T15_KEY_8, percentWidth = percentWidth),
+                mixedAlphabetKey("9", "f", "l", id = KeyIds.T15.T15_KEY_9, percentWidth = percentWidth),
+                mixedAlphabetKey("0", "g", "ĉc", id = KeyIds.T15.T15_KEY_10, percentWidth = percentWidth),
+                clearKey(percentWidth = npercentWidth, id = KeyIds.T15.T15_CLEAR),
             ),
             listOf(
                 mixedAlphabetKey(
-                    "&", "z", "gj", percentWidth = percentWidth, altTextTranslationY = 0
+                    "&", "z", "gj", id = KeyIds.T15.T15_KEY_11, percentWidth = percentWidth, altTextTranslationY = 0
                 ), mixedAlphabetKey(
-                    "*", "x", "kq", percentWidth = percentWidth, altTextTranslationY = 4
+                    "*", "x", "kq", id = KeyIds.T15.T15_KEY_12, percentWidth = percentWidth, altTextTranslationY = 4
                 ), mixedAlphabetKey(
-                    "^", "c", "hx", percentWidth = percentWidth, altTextTranslationY = 6
+                    "^", "c", "hx", id = KeyIds.T15.T15_KEY_13, percentWidth = percentWidth, altTextTranslationY = 6
                 ), mixedAlphabetKey(
-                    "#", "v", "yw", percentWidth = percentWidth, altTextTranslationY = 2
+                    "#", "v", "yw", id = KeyIds.T15.T15_KEY_14, percentWidth = percentWidth, altTextTranslationY = 2
                 ), mixedAlphabetKey(
-                    ";", "b", "ŝs", percentWidth = percentWidth, altTextTranslationY = 2
-                ), zeroKey(percentWidth = npercentWidth)
+                    ";", "b", "ŝs", id = KeyIds.T15.T15_KEY_15, percentWidth = percentWidth, altTextTranslationY = 2
+                ), zeroKey(percentWidth = npercentWidth, id = KeyIds.T15.T15_ZERO)
             ),
             listOf(
-                layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = npercentWidth),
-                schemaSwitchKey(0.13f),
-                spaceKey(percentWidth = 0.44f),
-                peroidKey(percentWidth = 0.13f),
-                returnKey(percentWidth = npercentWidth),
+                layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = npercentWidth, id = KeyIds.T15.T15_LAYOUT_NUMBER),
+                schemaSwitchKey(0.13f, id = KeyIds.T15.T15_SCHEMA),
+                spaceKey(percentWidth = 0.44f, id = KeyIds.T15.T15_SPACE),
+                peroidKey(percentWidth = 0.13f, id = KeyIds.T15.T15_PERIOD),
+                returnKey(percentWidth = npercentWidth, id = KeyIds.T15.T15_ENTER),
             ),
         )
     }

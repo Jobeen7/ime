@@ -7,6 +7,7 @@ import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
+import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.atKey
 import com.jobeen.ime.input.keyboard.key.backspaceKey
@@ -40,31 +41,31 @@ class NumberKeyboard(
         val Layout: List<List<KeyDef>> = listOf(
             listOf(
                 sidePannelKey(rowSpan = 3, visableRow = 4),
-                commitKey("1", percentWidth = 0.22333f, fontSize = 22f),
-                commitKey("2", percentWidth = 0.22333f, fontSize = 22f),
-                commitKey("3", percentWidth = 0.22333f, fontSize = 22f),
-                backspaceKey(0.18f),
+                commitKey("1", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_1),
+                commitKey("2", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_2),
+                commitKey("3", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_3),
+                backspaceKey(0.18f, id = KeyIds.Number.NUM_DELETE),
             ),
             listOf(
-                commitKey("4", percentWidth = 0.22333f, fontSize = 22f),
-                commitKey("5", percentWidth = 0.22333f, fontSize = 22f),
-                commitKey("6", percentWidth = 0.22333f, fontSize = 22f),
-                clearKey(0.18f)
+                commitKey("4", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_4),
+                commitKey("5", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_5),
+                commitKey("6", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_6),
+                clearKey(0.18f, id = KeyIds.Number.NUM_CLEAR)
             ),
             listOf(
-                commitKey("7", percentWidth = 0.22333f, fontSize = 22f),
-                commitKey("8", percentWidth = 0.22333f, fontSize = 22f),
-                commitKey("9", percentWidth = 0.22333f, fontSize = 22f),
-                miniSpaceKey(0.18f)
+                commitKey("7", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_7),
+                commitKey("8", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_8),
+                commitKey("9", percentWidth = 0.22333f, fontSize = 22f, id = KeyIds.Number.NUM_KEY_9),
+                miniSpaceKey(0.18f, id = KeyIds.Number.NUM_SPACE)
             ),
             listOf(
-                resumeLayoutKey("返回", percentWidth = 0.15f),
-                symbolSwitchKey(0.13f),
-                commitKey(",", variant = Variant.Alternative, percentWidth = 0.10333f),
-                commitKey("0", percentWidth = 0.20333f, variant = Variant.Alternative),
-                commitKey(".", percentWidth = 0.13f, variant = Variant.Alternative),
-                atKey(percentWidth = 0.10333f),
-                returnKey(percentWidth = 0.18f),
+                resumeLayoutKey("返回", percentWidth = 0.15f, id = KeyIds.Number.NUM_RESUME),
+                symbolSwitchKey(0.13f, id = KeyIds.Number.NUM_SYMBOL),
+                commitKey(",", variant = Variant.Alternative, percentWidth = 0.10333f, id = KeyIds.Number.NUM_COMMA),
+                commitKey("0", percentWidth = 0.20333f, variant = Variant.Alternative, id = KeyIds.Number.NUM_KEY_0),
+                commitKey(".", percentWidth = 0.13f, variant = Variant.Alternative, id = KeyIds.Number.NUM_DOT),
+                atKey(percentWidth = 0.10333f, id = KeyIds.Number.NUM_AT),
+                returnKey(percentWidth = 0.18f, id = KeyIds.Number.NUM_ENTER),
             ),
         )
     }

@@ -8,6 +8,13 @@ open class KeyDef(
     val appearance: Appearance,
     val behaviors: Set<Behavior>,
     val popups: Array<Popup>? = null,
+    /**
+     * 稳定键 ID（皮肤 v3 定稿五.1）：只由布局登记表（[KeyIds]）在
+     * 构造处标注；null = 未登记键（侧栏/动态/网格键）。只有皮肤
+     * 覆写装配器、逐键编辑器与对账测试读它，渲染与手势不读——
+     * 无 ID 的键行为与 v1.1.14 逐字节一致。
+     */
+    val id: String? = null,
 ) {
     sealed class Appearance(
         val percentWidth: Float,

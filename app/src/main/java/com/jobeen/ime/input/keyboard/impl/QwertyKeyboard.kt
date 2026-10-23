@@ -12,6 +12,7 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.ImageKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.input.keyboard.key.alphabetKey
 import com.jobeen.ime.input.keyboard.key.backspaceKey
 import com.jobeen.ime.input.keyboard.key.capsLockKey
@@ -37,45 +38,45 @@ class QwertyKeyboard(
         fun buildLayout(): List<List<KeyDef>> {
             return listOf(
                 listOf(
-                    alphabetKey("q", "1"),
-                    alphabetKey("w", "2"),
-                    alphabetKey("e", "3"),
-                    alphabetKey("r", "4"),
-                    alphabetKey("t", "5"),
-                    alphabetKey("y", "6"),
-                    alphabetKey("u", "7"),
-                    alphabetKey("i", "8"),
-                    alphabetKey("o", "9"),
-                    alphabetKey("p", "0"),
+                    alphabetKey("q", "1", id = KeyIds.Qwerty.KEY_Q),
+                    alphabetKey("w", "2", id = KeyIds.Qwerty.KEY_W),
+                    alphabetKey("e", "3", id = KeyIds.Qwerty.KEY_E),
+                    alphabetKey("r", "4", id = KeyIds.Qwerty.KEY_R),
+                    alphabetKey("t", "5", id = KeyIds.Qwerty.KEY_T),
+                    alphabetKey("y", "6", id = KeyIds.Qwerty.KEY_Y),
+                    alphabetKey("u", "7", id = KeyIds.Qwerty.KEY_U),
+                    alphabetKey("i", "8", id = KeyIds.Qwerty.KEY_I),
+                    alphabetKey("o", "9", id = KeyIds.Qwerty.KEY_O),
+                    alphabetKey("p", "0", id = KeyIds.Qwerty.KEY_P),
                 ),
                 listOf(
-                    alphabetKey("a", "~"),
-                    alphabetKey("s", "!"),
-                    alphabetKey("d", "@"),
-                    alphabetKey("f", "#"),
-                    alphabetKey("g", "$", mainTextTranslationY = -2),
-                    alphabetKey("h", "%"),
-                    alphabetKey("j", "^", altTextTranslationY = 4),
-                    alphabetKey("k", "&"),
-                    alphabetKey("l", "*", altTextTranslationY = 4),
+                    alphabetKey("a", "~", id = KeyIds.Qwerty.KEY_A),
+                    alphabetKey("s", "!", id = KeyIds.Qwerty.KEY_S),
+                    alphabetKey("d", "@", id = KeyIds.Qwerty.KEY_D),
+                    alphabetKey("f", "#", id = KeyIds.Qwerty.KEY_F),
+                    alphabetKey("g", "$", id = KeyIds.Qwerty.KEY_G, mainTextTranslationY = -2),
+                    alphabetKey("h", "%", id = KeyIds.Qwerty.KEY_H),
+                    alphabetKey("j", "^", id = KeyIds.Qwerty.KEY_J, altTextTranslationY = 4),
+                    alphabetKey("k", "&", id = KeyIds.Qwerty.KEY_K),
+                    alphabetKey("l", "*", id = KeyIds.Qwerty.KEY_L, altTextTranslationY = 4),
                 ),
                 listOf(
-                    capsLockKey(),
-                    alphabetKey("z", "("),
-                    alphabetKey("x", ")"),
-                    alphabetKey("c", ":"),
-                    alphabetKey("v", ";"),
-                    alphabetKey("b", ","),
-                    alphabetKey("n", "?"),
-                    alphabetKey("m", "/"),
-                    backspaceKey(),
+                    capsLockKey(id = KeyIds.Qwerty.KEY_CAPS),
+                    alphabetKey("z", "(", id = KeyIds.Qwerty.KEY_Z),
+                    alphabetKey("x", ")", id = KeyIds.Qwerty.KEY_X),
+                    alphabetKey("c", ":", id = KeyIds.Qwerty.KEY_C),
+                    alphabetKey("v", ";", id = KeyIds.Qwerty.KEY_V),
+                    alphabetKey("b", ",", id = KeyIds.Qwerty.KEY_B),
+                    alphabetKey("n", "?", id = KeyIds.Qwerty.KEY_N),
+                    alphabetKey("m", "/", id = KeyIds.Qwerty.KEY_M),
+                    backspaceKey(id = KeyIds.Qwerty.KEY_DELETE),
                 ),
                 listOf(
-                    layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f),
-                    peroidKey(percentWidth = 0.13f),
-                    spaceKey(percentWidth = 0.44f),
-                    schemaSwitchKey(0.13f),
-                    returnKey(percentWidth = 0.15f),
+                    layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f, id = KeyIds.Qwerty.KEY_LAYOUT_NUMBER),
+                    peroidKey(percentWidth = 0.13f, id = KeyIds.Qwerty.KEY_PERIOD),
+                    spaceKey(percentWidth = 0.44f, id = KeyIds.Qwerty.KEY_SPACE),
+                    schemaSwitchKey(0.13f, id = KeyIds.Qwerty.KEY_SCHEMA),
+                    returnKey(percentWidth = 0.15f, id = KeyIds.Qwerty.KEY_ENTER),
                 ),
             )
         }
