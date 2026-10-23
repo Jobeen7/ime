@@ -147,6 +147,8 @@ class InputFeedbacks private constructor() {
         fun soundEffect(context: Context, effect: SoundEffect) {
             ensureFeedbackCache(context)
             if (cachedSoundEnabled != true) return
+            // 铃声模式门：静音/振动模式不发声（作用于全部按键音）
+            if (!RingerGate.shouldPlay(context)) return
             // 服务销毁已释放池时惰性重建：AppStartup 的初始化步
             // 骤是进程内一次性的，服务在同进程重建不会再跑，靠这
             // 里按需拉起（load 异步，本次按键可能无声、与冷启动

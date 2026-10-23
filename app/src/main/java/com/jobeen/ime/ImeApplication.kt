@@ -60,6 +60,12 @@ class ImeApplication : Application() {
         // 内存紧张时释放简繁转换词表（数 MB 级），下次转换按需重建
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
             runCatching { com.jobeen.ime.base.util.TraditionalConverter.releaseCaches() }
+            // 皮肤降级（详设 §6.3）：先淘汰编辑器预览位图，并置位
+            // 压力升级标记——下一次快照构建按更低一档执行
+            runCatching {
+                com.jobeen.ime.skin.runtime.SkinSnapshotProvider.evictPreviewBitmap()
+                com.jobeen.ime.skin.runtime.SkinRuntime.trimEscalated = true
+            }
         }
     }
 
