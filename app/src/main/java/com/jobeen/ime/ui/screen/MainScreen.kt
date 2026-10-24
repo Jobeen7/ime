@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -117,6 +118,8 @@ fun MainScreen(
         floatingActionButton = {
             Column(
                 // 展开项以主钮轴线居中（纵向叠于主钮上方）。
+                // 整栈左移 4dp、上移 4dp：此前太靠右下角。
+                modifier = Modifier.offset(x = (-4).dp, y = (-4).dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {

@@ -6,6 +6,7 @@ import com.jobeen.ime.data.manager.DirSwitchMonitor
 import com.jobeen.ime.data.manager.DirSwitchOutcome
 import com.jobeen.ime.data.manager.DirSwitchPhase
 import com.jobeen.ime.data.manager.DirSwitchResumePolicy
+import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.awaitSchemasReady
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -37,11 +38,33 @@ class DirSwitchMonitorTest {
 
     @Test
     fun resume_onlyWhenEngineEmptyAndDiskHasSchemesAndIdle() {
-        assertTrue(DirSwitchResumePolicy.shouldResume(true, true, false))
-        assertFalse(DirSwitchResumePolicy.shouldResume(false, true, false))
-        assertFalse(DirSwitchResumePolicy.shouldResume(true, false, false))
-        assertFalse(DirSwitchResumePolicy.shouldResume(true, true, true))
-        assertFalse(DirSwitchResumePolicy.shouldResume(false, false, true))
+        assertTrue(DirSwitchResumePolicy.shouldResume(true, true, false, false))
+        assertFalse(DirSwitchResumePolicy.shouldResume(false, true, false, false))
+        assertFalse(DirSwitchResumePolicy.shouldResume(true, false, false, false))
+        assertFalse(DirSwitchResumePolicy.shouldResume(true, true, true, false))
+        assertFalse(DirSwitchResumePolicy.shouldResume(false, false, true, false))
+    }
+
+    @Test
+    fun resume_neverWhenDeployRunning() {
+        // 关键回归（2026-10-25 Base 导入）：部署进行中引擎表空是正常态
+        // （作业队列被部署作业占住、awaitJob 超时读回空表），续切 reload
+        // 会把进行中的全量编译推倒重来，表空 + 磁盘有方案 + 无切换在跑
+        // 也必须禁续切，否则重试/FAB 一点就重启编译、永远部署中。
+        assertFalse(DirSwitchResumePolicy.shouldResume(true, true, false, true))
+        assertFalse(DirSwitchResumePolicy.shouldResume(true, true, true, true))
+        assertTrue(DirSwitchResumePolicy.shouldResume(true, true, false, false))
+    }
+
+    @Test
+    fun deployState_flagRoundTrip() {
+        EngineDeployState.setRunning(false)
+        assertFalse(EngineDeployState.isRunning())
+        EngineDeployState.setRunning(true)
+        assertTrue(EngineDeployState.isRunning())
+        assertTrue(EngineDeployState.running.value)
+        EngineDeployState.setRunning(false)
+        assertFalse(EngineDeployState.isRunning())
     }
 
     @Test

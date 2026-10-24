@@ -16,6 +16,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.awaitSchemasReady
 import com.jobeen.ime.engine.EngineFactory
@@ -74,39 +75,45 @@ class MainActivity : ComponentActivity() {
         fabSession ?: RimeDaemon.createSession(FAB_SESSION_NAME).also { fabSession = it }
 
     /**
-     * FAB 部署：复用现有 RimeApi.deploy（关停 + 重启 + 重选方案集），不新写部署逻辑。
-     * 但 deploy() 返回只代表引擎刚启动，不代表部署编完（日志实证：启动后 7ms
-     * 即有 Depoly 消息，方案 apply 却要 20 秒后才来，Base 全量更久）——此前
-     * Toast 在此即发，是假完成。改为等引擎方案表就绪（每 2s 轮询，最多
-     * 10 分钟）再发完成；超时按失败处理。等待期间 fabDeployRunning 保
-     * 持 true，FAB 转圈即可见进度。
+     * FAB 部署：走引擎统一部署路径（Action.Reload，进作业队列串行执行），
+     * 不再直连 Daemon 会话调 deploy()。直连会绕过作业队列，在切换部署
+     * 编译中途关停引擎、重启编译，并把引擎作业队列堵在旧部署的
+     * joinMaintenanceThread 上，方案页从此永久显示“正在部署…”（2026-10-25
+     * Base 导入实证：切换部署 03:52:03 开始，03:53:17 一次直连部署打断后，
+     * 引擎再无 Finish 消息、方案表恒空）。
+     * 部署进行中直接拒（Toast），不排队、不重启：排队会在本次部署后再跑
+     * 一轮全量编译，等于把等待时间翻倍。
+     * 完成判定等引擎方案表就绪（每 2s 轮询，最多 10 分钟）；超时按失败处理。
+     * 等待期间 fabDeployRunning 保持 true，FAB 转圈即可见进度。
      */
     private fun doFabDeploy() {
         if (fabDeployRunning) return
+        if (EngineDeployState.isRunning()) {
+            ToastUtil.showToast(getString(R.string.fab_deploy_busy))
+            return
+        }
+        val engine = EngineFactory.current()
+        if (engine == null) {
+            ToastUtil.showToast(getString(R.string.fab_deploy_failed))
+            return
+        }
         fabDeployRunning = true
         lifecycleScope.launch {
-            val deployResult = runCatching {
-                fabSession().runOnReady { deploy() }
-            }
-            val ready = if (deployResult.isSuccess) {
-                awaitSchemasReady(
-                    poll = {
-                        runCatching {
-                            EngineFactory.current()?.schemasList()?.isNotEmpty() == true
-                        }.getOrDefault(false)
-                    },
-                    timeoutMs = 600_000L,
-                    intervalMs = 2000L,
-                )
-            } else {
-                false
-            }
-            if (deployResult.isSuccess && ready) {
+            runCatching { engine.reload() }
+            val ready = awaitSchemasReady(
+                poll = {
+                    runCatching {
+                        EngineFactory.current()?.schemasList()?.isNotEmpty() == true
+                    }.getOrDefault(false)
+                },
+                timeoutMs = 600_000L,
+                intervalMs = 2000L,
+            )
+            if (ready) {
                 ToastUtil.showToast(getString(R.string.fab_deploy_done))
                 RimeSyncPrefs.postNotice(this@MainActivity, getString(R.string.fab_deploy_done))
             } else {
-                deployResult.exceptionOrNull()?.let { Timber.w(it, "FAB deploy failed") }
-                    ?: Timber.w("FAB deploy timed out waiting for schemas")
+                Timber.w("FAB deploy timed out waiting for schemas")
                 ToastUtil.showToast(getString(R.string.fab_deploy_failed))
                 RimeSyncPrefs.postNotice(this@MainActivity, getString(R.string.fab_deploy_failed))
             }

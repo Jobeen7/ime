@@ -25,6 +25,7 @@ import com.jobeen.ime.data.manager.CandidateSortingManager
 import com.jobeen.ime.data.manager.applySavedCandidateOrder
 import com.jobeen.ime.data.manager.candidateSortingKey
 import com.jobeen.ime.data.manager.DeletedWordsStore
+import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.event.KeyEvent
 import com.jobeen.ime.engine.event.KeyModifiers
@@ -440,13 +441,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         //以结束为号
         sendJob {
-            joinMaintenanceThread()
-            actions.send(
-                Action.RimeMessage(
-                    RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+            EngineDeployState.setRunning(true)
+            try {
+                joinMaintenanceThread()
+                actions.send(
+                    Action.RimeMessage(
+                        RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                    )
                 )
-            )
-            currentSchema().applyOptions(this)
+                currentSchema().applyOptions(this)
+            } finally {
+                EngineDeployState.setRunning(false)
+            }
         }
     }
 
@@ -914,13 +920,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             Action.Reload -> {
                 behaviorHosted?.resetState()
                 sendJob {
-                    deploy()
-                    joinMaintenanceThread()
-                    actions.send(
-                        Action.RimeMessage(
-                            RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                    EngineDeployState.setRunning(true)
+                    try {
+                        deploy()
+                        joinMaintenanceThread()
+                        actions.send(
+                            Action.RimeMessage(
+                                RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                            )
                         )
-                    )
+                    } finally {
+                        EngineDeployState.setRunning(false)
+                    }
                 }
             }
         }
