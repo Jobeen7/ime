@@ -598,11 +598,12 @@ object WebDavSync {
 
     // ---- 方案目录同步（RIME 页 / FAB 同步共用，与词典合并同步并存） ----
     //
-    // 口径（Lee 定）：整个用户方案目录（user/）同步到远端 UUID 文件夹，
-    // 远端根 = 已配置的同步目录 + UUID。用户词典页原有的词库合并上传/
-    // 下载保持不动（那是另一条线：同步根目录下的 <词典>.userdict.txt）。
+    // 口径（Lee 定，多目录模型）：只同步当前方案目录，远端根 = 已配置的
+    // 同步目录 + UUID + 当前目录名；切换目录后同步对象跟着变，不跨目录
+    // 同步（旧单目录远端内容留在 UUID 根下，不进新目录、不自动删除）。
+    // 用户词典页原有的词库合并上传/下载保持不动（那是另一条线：同步根目录下的 <词典>.userdict.txt）。
     //
-    // 文件集合：user/ 下全部文件，除外——
+    // 文件集合：当前目录下全部文件，除外——
     // - build/（部署输出，部署可再生）
     // - *.userdb/（运行中 LevelDB，见下）
     // - installation.yaml（本机安装标识）
@@ -669,9 +670,12 @@ object WebDavSync {
         return false
     }
 
-    /** 远端 UUID 文件夹的完整 URL（显示用，与同步用同一构成）。 */
-    fun dirSyncRemoteUrl(context: android.content.Context): String =
-        "${UserDictPrefs.syncDirUrl()}/${RimeSyncPrefs.syncFolderUuid(context)}"
+    /** 远端当前目录文件夹的完整 URL（显示用，与同步用同一构成）。 */
+    fun dirSyncRemoteUrl(context: android.content.Context): String {
+        val dir = com.jobeen.ime.data.manager.SchemeDirs.currentDirName(context)
+        val encodedDir = URLEncoder.encode(dir, Charsets.UTF_8.name()).replace("+", "%20")
+        return "${UserDictPrefs.syncDirUrl()}/${RimeSyncPrefs.syncFolderUuid(context)}/$encodedDir"
+    }
 
     private fun dirUrl(base: String, rel: String): String {
         val encoded = rel.split("/").joinToString("/") {
@@ -740,7 +744,7 @@ object WebDavSync {
             }.distinct().toList()
         }
 
-    /** 递归列出远端 UUID 文件夹下的全部文件（相对路径，排除规则同本地）。 */
+    /** 递归列出远端当前目录文件夹下的全部文件（相对路径，排除规则同本地）。 */
     private suspend fun walkRemoteDir(base: String, relDir: String): List<DirEntry> {
         val out = mutableListOf<DirEntry>()
         val dirUrl = if (relDir.isEmpty()) base else dirUrl(base, relDir)
@@ -757,7 +761,7 @@ object WebDavSync {
         return out
     }
 
-    /** 本地 user/ 下的可同步文件（相对路径 + 文件），排除规则同远端。 */
+    /** 本地当前方案目录下的可同步文件（相对路径 + 文件），排除规则同远端。 */
     private fun collectLocalSyncFiles(userDir: File): List<Pair<String, File>> {
         val out = mutableListOf<Pair<String, File>>()
         userDir.walkTopDown()
@@ -861,7 +865,7 @@ object WebDavSync {
     }
 
     /**
-     * 方案目录同步：本地 user/ ↔ 远端 UUID 文件夹。
+     * 方案目录同步：本地当前方案目录 ↔ 远端 UUID/当前目录文件夹。
      * 必须在后台线程调用；与词典合并同步共用同一 WebDAV 配置与客户端，
      * 但互斥锁独立（两者可先后跑，不可同时跑同一远端）。
      */
@@ -871,8 +875,12 @@ object WebDavSync {
                 runCatching {
                     checkConfigured()
                     val uuid = RimeSyncPrefs.syncFolderUuid(appContext)
-                    val base = "${UserDictPrefs.syncDirUrl()}/$uuid"
+                    val dir = com.jobeen.ime.data.manager.SchemeDirs.currentDirName(appContext)
+                    val uuidBase = "${UserDictPrefs.syncDirUrl()}/$uuid"
+                    val base = "$uuidBase/${URLEncoder.encode(dir, Charsets.UTF_8.name()).replace("+", "%20")}"
                     ensureSyncDir()
+                    // MKCOL 只建一层：先建 UUID 层，再建目录层（已存在回 405 属正常）。
+                    mkcolQuiet(uuidBase)
                     mkcolQuiet(base)
                     val userDir = DataManager.userDataDir
                     val localFiles = collectLocalSyncFiles(userDir)
@@ -884,7 +892,7 @@ object WebDavSync {
                     var deletedRemote = 0
                     val failed = mutableListOf<String>()
                     // 1. 删除传播：上次同步后本地删掉、远端还在的文件，远端跟删。
-                    val known = RimeSyncPrefs.knownFiles(appContext)
+                    val known = RimeSyncPrefs.knownFiles(appContext, dir)
                     for (rel in known) {
                         if (rel !in localByRel && rel in remoteByRel) {
                             runCatching { httpDelete(dirUrl(base, rel)) }
@@ -968,9 +976,9 @@ object WebDavSync {
                             tmpOut.delete()
                         }
                     }
-                    // 4. 已知集合更新为同步后本地文件集合。
+                    // 4. 已知集合更新为同步后本地文件集合（按目录分键）。
                     val postLocal = collectLocalSyncFiles(userDir).map { it.first }.toSet()
-                    RimeSyncPrefs.setKnownFiles(appContext, postLocal)
+                    RimeSyncPrefs.setKnownFiles(appContext, dir, postLocal)
                     DirSyncResult(uploaded, downloaded, deletedRemote, dictCount, dictEntries, failed)
                 }
             }

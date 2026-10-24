@@ -189,7 +189,7 @@
     <string name="about_diag_failed">导出失败，请重试</string>
     <string name="about_reset">重置应用设置</string>
     <string name="about_reset_subline">全部设置回默认，学习词清零</string>
-    <string name="about_reset_footnote">重置后回到默认安装状态：仅内置 Lite 方案可用，自装方案、WebDAV 绑定、归档与学习词全部清除。</string>
+    <string name="about_reset_footnote">重置后回到默认安装状态：仅内置 Lite 方案可用，全部方案目录、WebDAV 绑定与学习词全部清除。</string>
     <string name="rime_title">RIME</string>
     <string name="ime_not_current_switch">不是当前输入法，点按切换输入法</string>
     <string name="rime_deploy">部署</string>
