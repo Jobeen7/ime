@@ -1828,7 +1828,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 } else if (!diskEmpty) {
                     // 重试：先重读引擎表，仍空则走续切（续切内已先同步
                     // custom 文件再部署），再重读一次。
-                    val onRetry = {
+                    val onRetry: () -> Unit = {
                         scope.launch {
                             loadSchemas()
                             if (!loaded) {
