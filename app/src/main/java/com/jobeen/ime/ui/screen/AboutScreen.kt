@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.background
@@ -242,6 +243,40 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
         downloading = false
     }
 
+    /** 检查更新（顶部按钮用；行内逻辑与旧版一致）。 */
+    fun checkUpdate() {
+        if (BuildConfig.DEBUG) {
+            toast(msgDebugUnsupported)
+            return
+        }
+        if (checkingUpdate) return
+        checkingUpdate = true
+        scope.launch {
+            val result = VersionChecker.check(versionName)
+            checkingUpdate = false
+            when (result) {
+                is UpdateCheckResult.Available -> {
+                    if (result.apkUrl.isEmpty()) {
+                        // 发行版没有 APK 资产时退回旧流程：打开 Release 页
+                        toast(msgAvailable)
+                        runCatching {
+                            context.startActivity(
+                                android.content.Intent(
+                                    android.content.Intent.ACTION_VIEW,
+                                    android.net.Uri.parse(result.pageUrl),
+                                ),
+                            )
+                        }.onFailure { toast(msgCheckFailed) }
+                    } else {
+                        updateInfo = result
+                    }
+                }
+                UpdateCheckResult.Latest -> toast(msgLatest)
+                UpdateCheckResult.Failed -> toast(msgCheckFailed)
+            }
+        }
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -316,7 +351,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .background(MaterialTheme.colorScheme.primary)
                             .padding(horizontal = 12.dp, vertical = 4.dp),
                         contentAlignment = Alignment.Center,
                     ) {
@@ -327,8 +362,126 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                                 versionCode,
                             ),
                             fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                        )
+                    }
+                    // 顶部：简介行 + 检查更新按钮（上移）。
+                    // logo 保持现有透明底（ic_about_logo 本身无底卡，不加实色底）。
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = stringResource(R.string.about_description_text),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(16.dp))
+                    Button(
+                        onClick = { checkUpdate() },
+                        enabled = !checkingUpdate && !BuildConfig.DEBUG,
+                        shape = RoundedCornerShape(24.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                            horizontal = 20.dp,
+                            vertical = 10.dp,
+                        ),
+                    ) {
+                        Icon(
+                            Icons.Filled.Refresh,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = if (checkingUpdate) {
+                                stringResource(R.string.checking_update)
+                            } else {
+                                stringResource(R.string.check_update)
+                            },
+                            fontSize = rowSubFontSize,
+                        )
+                    }
+                    if (BuildConfig.DEBUG) {
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = msgDebugUnsupported,
+                            fontSize = rowSubFontSize,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+
+            // 查到新版后在行内内联展开（随检查更新按钮移到顶部，逻辑不变）：
+            // 一行版本信息 + 操作按钮，下载中时下方再出一行进度条。
+            // 只有点「检查更新」才会走到这里。
+            updateInfo?.let { info ->
+                GroupCard {
+                    ActionRow(
+                        title = stringResource(R.string.update_found_version, info.version),
+                        subtitle = stringResource(
+                            R.string.update_package_size,
+                            android.text.format.Formatter.formatFileSize(context, info.apkSize),
+                        ),
+                        trailing = {
+                            when {
+                                downloading -> Text(
+                                    stringResource(R.string.update_downloading, downloadPercent),
+                                    fontSize = rowSubFontSize,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                downloadedFile != null -> Button(
+                                    onClick = { tryInstall() },
+                                    modifier = Modifier.height(30.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                        horizontal = 10.dp,
+                                        vertical = 2.dp,
+                                    ),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.update_install_now),
+                                        fontSize = rowSubFontSize,
+                                    )
+                                }
+                                else -> Button(
+                                    onClick = { startDownload() },
+                                    modifier = Modifier.height(30.dp),
+                                    shape = RoundedCornerShape(8.dp),
+                                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                                        horizontal = 10.dp,
+                                        vertical = 2.dp,
+                                    ),
+                                ) {
+                                    Text(
+                                        stringResource(R.string.update_download_install),
+                                        fontSize = rowSubFontSize,
+                                    )
+                                }
+                            }
+                        },
+                        showDivider = true,
+                    )
+                    if (downloading) {
+                        Column(modifier = Modifier.fillMaxWidth()) {
+                            androidx.compose.material3.LinearProgressIndicator(
+                                progress = { downloadPercent / 100f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.End,
+                            ) {
+                                androidx.compose.material3.TextButton(
+                                    onClick = { cancelDownload() },
+                                ) {
+                                    Text(
+                                        stringResource(R.string.update_cancel_download),
+                                        fontSize = rowSubFontSize,
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -336,8 +489,8 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
             Spacer(Modifier.height(8.dp))
 
             // 平铺列表（平铺逻辑，不分组）：一张卡内依次为导出诊断日志、
-            // 重置应用设置、开源许可、版本更新（最下方）。重置行无副文、
-            // 页底无脚注；点击后弹出的二次确认警告保留（ResetConfirmDialogs）。
+            // 重置应用设置、开源许可。重置行无副文、页底无脚注；
+            // 点击后弹出的二次确认警告保留（ResetConfirmDialogs）。
             // 运行日志组已按 B 删掉，只留导出诊断日志。
             GroupCard {
                 NavRow(
@@ -359,149 +512,11 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                 GroupDivider()
                 NavRow(
                     title = stringResource(R.string.licenses_index),
-                    subtitle = stringResource(R.string.open_source_licenses_desc),
                     onClick = { showLicenses = true },
                     icon = Icons.Filled.Description,
                     iconContainer = MaterialTheme.colorScheme.primaryContainer,
                     iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
-                GroupDivider()
-                // 版本更新（页面最下方）：行内逻辑与旧版一致（检查 / 下载 /
-                // 安装内联展开），只是不再单独立组、改放平铺列表末尾。
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
-                ) {
-                    ActionRow(
-                        title = stringResource(R.string.current_version, versionName),
-                        // debug 包名与正式版不同，应用内更新必然校验失败，直接明示
-                        subtitle = if (BuildConfig.DEBUG) msgDebugUnsupported else null,
-                        trailing = {
-                            Button(
-                                onClick = {
-                                    if (BuildConfig.DEBUG) {
-                                        toast(msgDebugUnsupported)
-                                        return@Button
-                                    }
-                                    if (checkingUpdate) return@Button
-                                    checkingUpdate = true
-                                    scope.launch {
-                                        val result = VersionChecker.check(versionName)
-                                        checkingUpdate = false
-                                        when (result) {
-                                            is UpdateCheckResult.Available -> {
-                                                if (result.apkUrl.isEmpty()) {
-                                                    // 发行版没有 APK 资产时退回旧流程：打开 Release 页
-                                                    toast(msgAvailable)
-                                                    runCatching {
-                                                        context.startActivity(
-                                                            android.content.Intent(
-                                                                android.content.Intent.ACTION_VIEW,
-                                                                android.net.Uri.parse(result.pageUrl),
-                                                            ),
-                                                        )
-                                                    }.onFailure { toast(msgCheckFailed) }
-                                                } else {
-                                                    updateInfo = result
-                                                }
-                                            }
-                                            UpdateCheckResult.Latest -> toast(msgLatest)
-                                            UpdateCheckResult.Failed -> toast(msgCheckFailed)
-                                        }
-                                    }
-                                },
-                                enabled = !checkingUpdate && !BuildConfig.DEBUG,
-                                modifier = Modifier.height(30.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                    horizontal = 10.dp,
-                                    vertical = 2.dp,
-                                ),
-                            ) {
-                                Text(
-                                    text = if (checkingUpdate) {
-                                        stringResource(R.string.checking_update)
-                                    } else {
-                                        stringResource(R.string.check_update)
-                                    },
-                                    fontSize = rowSubFontSize,
-                                )
-                            }
-                        },
-                    )
-
-                    // 查到新版后在行内内联展开（不弹对话框）：一行版本信息 + 操作按钮，
-                    // 下载中时下方再出一行进度条。只有点「检查更新」才会走到这里。
-                    updateInfo?.let { info ->
-                        ActionRow(
-                            title = stringResource(R.string.update_found_version, info.version),
-                            subtitle = stringResource(
-                                R.string.update_package_size,
-                                android.text.format.Formatter.formatFileSize(context, info.apkSize),
-                            ),
-                            trailing = {
-                                when {
-                                    downloading -> Text(
-                                        stringResource(R.string.update_downloading, downloadPercent),
-                                        fontSize = rowSubFontSize,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                    downloadedFile != null -> Button(
-                                        onClick = { tryInstall() },
-                                        modifier = Modifier.height(30.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                            horizontal = 10.dp,
-                                            vertical = 2.dp,
-                                        ),
-                                    ) {
-                                        Text(
-                                            stringResource(R.string.update_install_now),
-                                            fontSize = rowSubFontSize,
-                                        )
-                                    }
-                                    else -> Button(
-                                        onClick = { startDownload() },
-                                        modifier = Modifier.height(30.dp),
-                                        shape = RoundedCornerShape(8.dp),
-                                        contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                                            horizontal = 10.dp,
-                                            vertical = 2.dp,
-                                        ),
-                                    ) {
-                                        Text(
-                                            stringResource(R.string.update_download_install),
-                                            fontSize = rowSubFontSize,
-                                        )
-                                    }
-                                }
-                            },
-                            showDivider = true,
-                        )
-                        if (downloading) {
-                            Column(modifier = Modifier.fillMaxWidth()) {
-                                androidx.compose.material3.LinearProgressIndicator(
-                                    progress = { downloadPercent / 100f },
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.End,
-                                ) {
-                                    androidx.compose.material3.TextButton(
-                                        onClick = { cancelDownload() },
-                                    ) {
-                                        Text(
-                                            stringResource(R.string.update_cancel_download),
-                                            fontSize = rowSubFontSize,
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
             }
             if (resetting) {
                 Text(
