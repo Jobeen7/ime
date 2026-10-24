@@ -6,6 +6,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
@@ -31,16 +32,21 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -82,6 +88,10 @@ import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.data.manager.SchemaManager
+import com.jobeen.ime.data.manager.SchemeSwitchOrchestrator
+import com.jobeen.ime.data.manager.SchemeSwitchPolicy
+import com.jobeen.ime.data.manager.SchemeSwitchState
+import com.jobeen.ime.data.manager.SwitchVerification
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.core.SchemaItem
 import com.jobeen.ime.data.schemaLayoutTag
@@ -96,6 +106,7 @@ import com.jobeen.ime.ui.theme.ExpressiveShapes
 import kotlin.math.roundToInt
 import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -156,6 +167,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var updatePending by remember { mutableStateOf(false) }
     // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
     var currentSchemaName by remember { mutableStateOf("") }
+    // 第一期切换编排：状态机是转移权威，switchState 是其组合态镜像
+    // （状态机本身不是 State，页内变化须经 refreshSwitchState 同步，
+    // 否则横幅与忙态不会重组）
+    val switchOrchestrator = remember { SchemeSwitchOrchestrator() }
+    var switchState by remember { mutableStateOf<SchemeSwitchState>(SchemeSwitchState.Idle) }
+    var editMode by remember { mutableStateOf(false) }
+    var menuExpanded by remember { mutableStateOf(false) }
+    var currentSchemeId by remember { mutableStateOf("") }
+    var versionById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var sourceById by remember {
+        mutableStateOf<Map<String, SchemeSwitchPolicy.SchemeSource>>(emptyMap())
+    }
     var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
@@ -214,6 +237,29 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 WanxiangUpdateManager.variantNameOf(it.id, it.name)
             }
             currentSchemaName = variant ?: current?.name ?: ""
+            currentSchemeId = currentId ?: ""
+            // 每行版本（schema/version；万象族显示 LTS，包版本不在
+            // schema 内，不编造）与来源（user 层有方案文件即用户，
+            // 否则内置；两层都没有时回落内置，见编排器注释）
+            versionById = runCatching {
+                (EngineFactory.current() as? IRimeJob)?.awaitJob(emptyMap<String, String>()) {
+                    allItems.associate { item ->
+                        item.id to runCatching {
+                            RimeConfig.openSchema(item.id).use {
+                                it.getString("schema/version").orEmpty()
+                            }
+                        }.getOrDefault("")
+                    }
+                } ?: emptyMap()
+            }.getOrDefault(emptyMap())
+            sourceById = withContext(Dispatchers.IO) {
+                allItems.associate { item ->
+                    val inUser = File(DataManager.userDataDir, "${item.id}.schema.yaml").exists()
+                    val inShared =
+                        File(DataManager.sharedDataDir, "${item.id}.schema.yaml").exists()
+                    item.id to SchemeSwitchPolicy.classifySource(inUser, inShared)
+                }
+            }
             // 计算本地信息（词库/模型指纹），用于"本地信息"卡片
             localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
             loaded = true
@@ -326,6 +372,91 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         }
     }
 
+    // ---- 第一期方案切换：点选切换 / 部署 / 回退（状态机见编排器） ----
+    fun refreshSwitchState() {
+        switchState = switchOrchestrator.state
+    }
+
+    /** 把完整顺序写回偏好并同步两列（调用方只传完整顺序，不丢项）。 */
+    fun applyOrder(newOrder: List<String>) {
+        val byId = (enabledSchemas + availableSchemas).associateBy { it.id }
+        val newEnabled = newOrder.mapNotNull { byId[it] }
+        val enabledIds = newEnabled.map { it.id }.toSet()
+        enabledSchemas.clear()
+        enabledSchemas.addAll(newEnabled)
+        availableSchemas.removeAll { it.id in enabledIds }
+        saveOrder(prefs, enabledSchemas)
+    }
+
+    /** 读引擎当前方案 id；读失败返回 null（调用方按未验证处理）。 */
+    suspend fun readCurrentId(): String? =
+        runCatching {
+            (EngineFactory.current() as? IRimeJob)?.awaitJob<String?>(null) {
+                currentSchema().schemaId
+            }
+        }.getOrNull()
+
+    /** 轮询引擎当前方案，最多 timeoutMs；超时返回 false（不抛）。 */
+    suspend fun verifyCurrent(targetId: String, timeoutMs: Long): Boolean {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (true) {
+            if (readCurrentId() == targetId) return true
+            if (System.currentTimeMillis() >= deadline) return false
+            delay(1000)
+        }
+    }
+
+    /**
+     * 点选切换。先走偏好顺序 + 引擎直选（常见路径不重启引擎、打字不中断）；
+     * 10 秒内确认不到目标才进部署：reload 后再直选并以 180 秒轮询确认；
+     * 部署仍失败则回退：恢复切换前顺序 + reload + 重选上一方案并确认。
+     * 切换 / 部署 / 回退进行中拒绝新的切换（维护期守卫）。
+     * 离开页面取消本协程：顺序已写回、引擎侧以实际状态为准，重进页面
+     * 按实际当前方案重算，不留半吊子。
+     */
+    fun switchTo(target: SchemaItem) {
+        if (switchOrchestrator.isBusy()) return
+        val plan = switchOrchestrator.beginSwitch(
+            currentSchemeId,
+            target.id,
+            enabledSchemas.map { it.id },
+        ) ?: return
+        refreshSwitchState()
+        applyOrder(plan.newOrder)
+        EngineFactory.current()?.selectSchema(target.id)
+        scope.launch {
+            val ok = verifyCurrent(target.id, 10_000)
+            val result = switchOrchestrator.resolveSwitch(ok)
+            refreshSwitchState()
+            if (result == SwitchVerification.SUCCESS) {
+                currentSchemeId = target.id
+                return@launch
+            }
+            // 仅 Deploying 态才真正部署（编排器约定：非 Switching 态
+            // 的 resolveSwitch 不转移状态，返回值不得单独作为部署依据）
+            if (switchState !is SchemeSwitchState.Deploying) {
+                currentSchemeId = readCurrentId() ?: currentSchemeId
+                return@launch
+            }
+            EngineFactory.current()?.reload()
+            EngineFactory.current()?.selectSchema(target.id)
+            if (switchOrchestrator.resolveDeploy(verifyCurrent(target.id, 180_000))) {
+                refreshSwitchState()
+                currentSchemeId = target.id
+                return@launch
+            }
+            refreshSwitchState()
+            val rollback = switchOrchestrator.beginRollback() ?: return@launch
+            refreshSwitchState()
+            applyOrder(rollback.restoredOrder)
+            EngineFactory.current()?.reload()
+            EngineFactory.current()?.selectSchema(rollback.previousId)
+            switchOrchestrator.resolveRollback(verifyCurrent(rollback.previousId, 180_000))
+            refreshSwitchState()
+            currentSchemeId = readCurrentId() ?: rollback.previousId
+        }
+    }
+
     fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
         // 与语法模型单独下载互斥（见 downloadGrammar 的同一口径）：
         // 守门同步读进程级状态与本地已派发标志，管理器侧另有共用
@@ -397,6 +528,36 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         )
                     }
                 },
+                actions = {
+                    // 第一期菜单只含「方案列表编辑」：下载 / 导入 / 归档恢复
+                    // 是后续期数，不做死按钮。编辑模式下行点选不切换（防
+                    // 排序时误触），顶栏直接给「完成」退出。
+                    if (editMode) {
+                        TextButton(onClick = { editMode = false }) {
+                            Text(stringResource(R.string.schema_edit_done))
+                        }
+                    } else {
+                        IconButton(onClick = { menuExpanded = true }) {
+                            Icon(
+                                Icons.Filled.MoreVert,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                        DropdownMenu(
+                            expanded = menuExpanded,
+                            onDismissRequest = { menuExpanded = false },
+                        ) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.schema_list_edit)) },
+                                onClick = {
+                                    menuExpanded = false
+                                    editMode = true
+                                },
+                            )
+                        }
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
@@ -413,6 +574,311 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Spacer(Modifier.height(4.dp))
+            // 第一期行元数据：版本 / 来源 / 变体（行与卡片共用）
+            val allRowItems = enabledSchemas + availableSchemas
+            val sourceBuiltinLabel = stringResource(R.string.schema_source_builtin)
+            val sourceUserLabel = stringResource(R.string.schema_source_user)
+            fun sourceLabelFor(item: SchemaItem): String? =
+                when (sourceById[item.id]) {
+                    SchemeSwitchPolicy.SchemeSource.USER -> sourceUserLabel
+                    SchemeSwitchPolicy.SchemeSource.BUILTIN -> sourceBuiltinLabel
+                    null -> null
+                }
+            fun rowMetaFor(item: SchemaItem): SchemaRowMeta = SchemaRowMeta(
+                version = versionById[item.id].orEmpty(),
+                sourceLabel = sourceLabelFor(item),
+                variantLabel = WanxiangUpdateManager.variantNameOf(item.id, item.name),
+            )
+            // 忙态派生自组合态镜像（不要直接读状态机的非 State 字段作组合判断）
+            val switchBusy = switchState is SchemeSwitchState.Switching ||
+                switchState is SchemeSwitchState.Deploying ||
+                switchState is SchemeSwitchState.RollingBack
+            // 顶部当前方案卡：名 + 变体 + 键盘 + 版本 + 来源；非 Lite 时给回兜底入口
+            val currentItem = allRowItems.firstOrNull { it.id == currentSchemeId }
+                ?: enabledSchemas.firstOrNull()
+            val liteItem =
+                allRowItems.firstOrNull { it.id == SchemeSwitchPolicy.BUILTIN_LITE_ID }
+            if (currentItem != null) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = ExpressiveShapes.medium,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                        Text(
+                            stringResource(R.string.schema_current_title),
+                            fontSize = rowSubFontSize,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            currentItem.name.ifBlank { currentItem.id },
+                            fontSize = rowFontSize,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            val meta = rowMetaFor(currentItem)
+                            meta.variantLabel?.let {
+                                TagBadge(
+                                    it,
+                                    MaterialTheme.colorScheme.secondaryContainer,
+                                    MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            TagBadge(
+                                schemaLayoutTag(context, currentItem.layout),
+                                MaterialTheme.colorScheme.primaryContainer,
+                                MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                            if (meta.version.isNotBlank()) {
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    meta.version,
+                                    fontSize = rowSubFontSize,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    maxLines = 1,
+                                )
+                            }
+                            meta.sourceLabel?.let {
+                                Spacer(Modifier.width(4.dp))
+                                TagBadge(
+                                    it,
+                                    MaterialTheme.colorScheme.tertiaryContainer,
+                                    MaterialTheme.colorScheme.onTertiaryContainer,
+                                )
+                            }
+                        }
+                        if (liteItem != null && currentItem.id != liteItem.id) {
+                            Spacer(Modifier.height(8.dp))
+                            Button(
+                                onClick = { switchTo(liteItem) },
+                                enabled = !switchBusy,
+                            ) {
+                                Text(stringResource(R.string.schema_back_to_lite))
+                            }
+                        }
+                    }
+                }
+            }
+            // 切换 / 部署 / 回退横幅：Idle 时不占位
+            when (val s = switchState) {
+                is SchemeSwitchState.Switching -> {
+                    Text(
+                        stringResource(R.string.schema_switching),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                is SchemeSwitchState.Deploying -> {
+                    Column {
+                        Text(
+                            stringResource(R.string.schema_deploying),
+                            fontSize = rowSubFontSize,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                }
+                is SchemeSwitchState.RollingBack -> {
+                    Column {
+                        Text(
+                            stringResource(R.string.schema_rolling_back),
+                            fontSize = rowSubFontSize,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                    }
+                }
+                is SchemeSwitchState.Failed -> {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = ExpressiveShapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                        ),
+                    ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            Text(
+                                stringResource(R.string.schema_switch_failed) + "：" + s.targetId,
+                                fontSize = rowSubFontSize,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            Row {
+                                val targetItem =
+                                    allRowItems.firstOrNull { it.id == s.targetId }
+                                if (targetItem != null) {
+                                    TextButton(onClick = { switchTo(targetItem) }) {
+                                        Text(stringResource(R.string.schema_switch_retry))
+                                    }
+                                }
+                                TextButton(onClick = {
+                                    switchOrchestrator.dismiss()
+                                    refreshSwitchState()
+                                }) {
+                                    Text(stringResource(R.string.schema_banner_close))
+                                }
+                            }
+                        }
+                    }
+                }
+                is SchemeSwitchState.RolledBack -> {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = ExpressiveShapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                        ),
+                    ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            val prevName = allRowItems.firstOrNull { it.id == s.previousId }
+                                ?.let { it.name.ifBlank { it.id } } ?: s.previousId
+                            Text(
+                                stringResource(R.string.schema_rolled_back) + "：" + prevName,
+                                fontSize = rowSubFontSize,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                            TextButton(onClick = {
+                                switchOrchestrator.dismiss()
+                                refreshSwitchState()
+                            }) {
+                                Text(stringResource(R.string.schema_banner_close))
+                            }
+                        }
+                    }
+                }
+                else -> {}
+            }
+            if (editMode) {
+                Text(
+                    stringResource(R.string.schema_edit_hint),
+                    fontSize = rowSubFontSize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            SectionHeader(stringResource(R.string.enabled_schemas))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = ExpressiveShapes.medium,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            ) {
+                ReorderableSchemaList(
+                    items = enabledSchemas,
+                    rowMeta = { rowMetaFor(it) },
+                    // 编辑模式下行点选不切换（防排序时误触）；忙态下拒绝新切换
+                    onRowClick = if (editMode || switchBusy) null else ({ item -> switchTo(item) }),
+                    trailingIcon = { schema ->
+                        if (enabledSchemas.size > 1 && !switchBusy) {
+                            IconButton(onClick = {
+                                availableSchemas.add(schema)
+                                enabledSchemas.remove(schema)
+                                saveOrder(prefs, enabledSchemas)
+                            }) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(20.dp),
+                                )
+                            }
+                        }
+                    },
+                )
+            }
+            if (availableSchemas.isNotEmpty()) {
+                SectionHeader(stringResource(R.string.available_schemas))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = ExpressiveShapes.medium,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                ) {
+                    Column {
+                        availableSchemas.forEach { schema ->
+                            SchemaListItem(
+                                schema = schema,
+                                rowMeta = rowMetaFor(schema),
+                                leadingIcon = {
+                                    Icon(
+                                        Icons.Default.RadioButtonUnchecked,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                },
+                                trailingIcon = {
+                                    IconButton(
+                                        onClick = {
+                                            enabledSchemas.add(schema)
+                                            availableSchemas.remove(schema)
+                                            saveOrder(prefs, enabledSchemas)
+                                        },
+                                        enabled = !switchBusy,
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Add,
+                                            contentDescription = null,
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.primary,
+                                        )
+                                    }
+                                },
+                            )
+                        }
+                    }
+                }
+            }
+
+            // 底部内置 Lite 兜底行：单独成区、标注兜底、不可删；点选即切回
+            // Lite（Lite 不在已启用列表时先加入首位，见编排器 moveToTop）
+            if (liteItem != null) {
+                SectionHeader(stringResource(R.string.schema_builtin_lite_section))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = ExpressiveShapes.medium,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                ) {
+                    SchemaListItem(
+                        schema = liteItem,
+                        rowMeta = rowMetaFor(liteItem),
+                        fallbackBadge = stringResource(R.string.schema_fallback_badge),
+                        onClick = if (switchBusy) null else ({ switchTo(liteItem) }),
+                        leadingIcon = {
+                            Icon(
+                                Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.primary,
+                            )
+                        },
+                        trailingIcon = {},
+                    )
+                }
+            }
+            // 更新区视觉隔离说明：本区只服务内置 Lite 更新通道，
+            // 不更新用户自装方案（行为本身未改，只加一行说明）
+            Text(
+                stringResource(R.string.schema_update_isolated_note),
+                fontSize = rowSubFontSize,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
             SettingsGroup(title = stringResource(R.string.schema_update_title)) {
                 // 语法模型（原"模型管理"分组已合并至此）
@@ -705,80 +1171,22 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            SectionHeader(stringResource(R.string.enabled_schemas))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = ExpressiveShapes.medium,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-            ) {
-                ReorderableSchemaList(enabledSchemas) { schema ->
-                    if (enabledSchemas.size > 1) {
-                        IconButton(onClick = {
-                            availableSchemas.add(schema)
-                            enabledSchemas.remove(schema)
-                            saveOrder(prefs, enabledSchemas)
-                        }) {
-                            Icon(
-                                Icons.Default.Delete,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(20.dp),
-                            )
-                        }
-                    }
-                }
-            }
-            if (availableSchemas.isNotEmpty()) {
-                SectionHeader(stringResource(R.string.available_schemas))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = ExpressiveShapes.medium,
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                ) {
-                    Column {
-                        availableSchemas.forEach { schema ->
-                            SchemaListItem(
-                                schema = schema,
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.RadioButtonUnchecked,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                },
-                                trailingIcon = {
-                                    IconButton(onClick = {
-                                        enabledSchemas.add(schema)
-                                        availableSchemas.remove(schema)
-                                        saveOrder(prefs, enabledSchemas)
-                                    }) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(20.dp),
-                                            tint = MaterialTheme.colorScheme.primary,
-                                        )
-                                    }
-                                },
-                            )
-                        }
-                    }
-                }
-            }
         }
     }
 }
 
+/** 行副信息：版本（schema/version）、来源标签、变体标签（可空）。 */
+private data class SchemaRowMeta(
+    val version: String = "",
+    val sourceLabel: String? = null,
+    val variantLabel: String? = null,
+)
+
 @Composable
 private fun ReorderableSchemaList(
     items: MutableList<SchemaItem>,
+    rowMeta: (SchemaItem) -> SchemaRowMeta,
+    onRowClick: ((SchemaItem) -> Unit)?,
     trailingIcon: @Composable (SchemaItem) -> Unit,
 ) {
     val context = LocalContext.current
@@ -839,6 +1247,8 @@ private fun ReorderableSchemaList(
                 SchemaListItem(
                     schema = schema,
                     isDefault = index == 0,
+                    rowMeta = rowMeta(schema),
+                    onClick = onRowClick?.let { click -> { click(schema) } },
                     leadingIcon = {
                         Box(
                             modifier = Modifier
@@ -868,6 +1278,9 @@ private fun ReorderableSchemaList(
 private fun SchemaListItem(
     schema: SchemaItem,
     isDefault: Boolean = false,
+    rowMeta: SchemaRowMeta = SchemaRowMeta(),
+    fallbackBadge: String? = null,
+    onClick: (() -> Unit)? = null,
     leadingIcon: @Composable () -> Unit,
     trailingIcon: @Composable () -> Unit,
 ) {
@@ -875,6 +1288,7 @@ private fun SchemaListItem(
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -890,27 +1304,61 @@ private fun SchemaListItem(
             )
             if (schema.name.isNotBlank()) {
                 Spacer(Modifier.height(4.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (isDefault) {
-                        TagBadge(
-                            stringResource(R.string.tag_default),
-                            MaterialTheme.colorScheme.secondaryContainer,
-                            MaterialTheme.colorScheme.onSecondaryContainer,
-                        )
-                        Spacer(Modifier.width(4.dp))
-                    }
-                    val tagText = schemaLayoutTag(context, schema.layout)
+                Text(
+                    schema.id,
+                    fontSize = rowSubFontSize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            // 极简副行：变体 / 键盘 / 版本 / 来源（第一期定稿口径；
+            // 原全角/半角符号徽标随极简化去掉，符号信息不在行内展示）
+            Spacer(Modifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (isDefault) {
                     TagBadge(
-                        tagText,
-                        MaterialTheme.colorScheme.primaryContainer,
-                        MaterialTheme.colorScheme.onPrimaryContainer,
+                        stringResource(R.string.tag_default),
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        MaterialTheme.colorScheme.onSecondaryContainer,
                     )
                     Spacer(Modifier.width(4.dp))
-                    val punctText =
-                        if (schema.punctuation == "FullWidth") stringResource(R.string.tag_punctuation_full)
-                        else stringResource(R.string.tag_punctuation_half)
+                }
+                fallbackBadge?.let {
                     TagBadge(
-                        punctText,
+                        it,
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                rowMeta.variantLabel?.let {
+                    TagBadge(
+                        it,
+                        MaterialTheme.colorScheme.secondaryContainer,
+                        MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                }
+                val tagText = schemaLayoutTag(context, schema.layout)
+                TagBadge(
+                    tagText,
+                    MaterialTheme.colorScheme.primaryContainer,
+                    MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                if (rowMeta.version.isNotBlank()) {
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        rowMeta.version,
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+                rowMeta.sourceLabel?.let {
+                    Spacer(Modifier.width(4.dp))
+                    TagBadge(
+                        it,
                         MaterialTheme.colorScheme.tertiaryContainer,
                         MaterialTheme.colorScheme.onTertiaryContainer,
                     )
