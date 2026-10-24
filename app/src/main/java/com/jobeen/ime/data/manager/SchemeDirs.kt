@@ -56,6 +56,16 @@ object SchemeDirs {
         prefs(context).edit().putString(KEY_CURRENT_DIR, safe).apply()
     }
 
+    /**
+     * 导入落盘的目录名：包名净化后即目录名；但初始目录与 build 名受保护
+     * （初始目录是存量集，绝不能被导入替换；build 在根下会被误认作目录），
+     * 命中时加 -pkg 后缀。
+     */
+    fun importDirName(packageName: String): String {
+        val name = sanitizeDirName(packageName)
+        return if (name == INITIAL_DIR || name == "build") "$name-pkg" else name
+    }
+
     /** 根下的方案目录（仅子目录，按名排序；平铺残留文件与隐藏目录不计）。 */
     fun listDirs(root: File): List<File> {
         if (!root.isDirectory) return emptyList()
