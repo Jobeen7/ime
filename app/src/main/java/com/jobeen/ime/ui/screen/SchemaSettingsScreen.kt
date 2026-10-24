@@ -102,11 +102,15 @@ import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.R
 import com.jobeen.ime.base.ngram.DownloadResult
 import com.jobeen.ime.base.ngram.GramModelDownloader
+import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
+import com.jobeen.ime.data.manager.DirSwitchMonitor
+import com.jobeen.ime.data.manager.DirSwitchPhase
+import com.jobeen.ime.data.manager.DirSwitchResumePolicy
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.SchemeDownload
@@ -213,6 +217,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     var dirDetail by remember { mutableStateOf<String?>(null) }
     var dirSwitching by remember { mutableStateOf(false) }
     var dirSwitchError by remember { mutableStateOf<String?>(null) }
+    // stranded 修复：切换状态改读进程级 Monitor（组合销毁不丢）；
+    // 空表状态：引擎表空时不再静默留白，改显部署中 + 自动重载。
+    val monitorStatus by DirSwitchMonitor.status.collectAsStateWithLifecycle()
+    var schemasEmpty by remember { mutableStateOf(false) }
     var manageDeploying by remember { mutableStateOf(false) }
     var manageDeployError by remember { mutableStateOf<String?>(null) }
     var versionById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -294,6 +302,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     // 方案表才含新方案，合成占位项需被真实项替换）。
     suspend fun loadSchemas() {
         val allSchemas = EngineFactory.current()?.schemasList() ?: emptyList()
+        // 空表（部署进行中 / stranded）不再静默：记下空表态，让正文外
+        // 显部署中 + 自动重载，而不是 loaded 恒 false 永久空白。
+        schemasEmpty = allSchemas.isEmpty()
         if (allSchemas.isNotEmpty()) {
             val allItems =
                 allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
@@ -374,9 +385,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         }
     }
 
-    LaunchedEffect(Unit) {
-        loadSchemas()
-    }
+
 
     // 打开页面先做版本切换清理（指纹记录/缓存跨版本作废，见
     // WanxiangUpdateManager.ensureVersionHousekeeping；checkForUpdates
@@ -523,9 +532,64 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
      * 10 秒内确认不到目标才进部署：reload 后再直选并以 180 秒轮询确认；
      * 部署仍失败则回退：恢复切换前顺序 + reload + 重选上一方案并确认。
      * 切换 / 部署 / 回退进行中拒绝新的切换（维护期守卫）。
-     * 离开页面取消本协程：顺序已写回、引擎侧以实际状态为准，重进页面
-     * 按实际当前方案重算，不留半吊子。
+     * 切换跑应用级作用域，离开页面不取消（此前页面作用域取消导致
+     * stranded）；状态机镜像在重进后按实际重算。
      */
+    /**
+     * 重进续切（stranded 恢复）：只把引擎重同步到指针目录，不改指针。
+     * 判定见 DirSwitchResumePolicy：引擎表空 + 磁盘有方案 + 无切换在跑。
+     * 幂等：中途取消不留新状态，下次进页重新判定。
+     */
+    suspend fun resumeIfStranded() {
+        val dir = SchemeDirs.currentDirName(context)
+        val diskIds = withContext(Dispatchers.IO) {
+            runCatching {
+                SchemeDirs.schemesInDir(File(DataManager.schemeDirsRoot, dir))
+            }.getOrDefault(emptyList())
+        }
+        val engineEmpty = (EngineFactory.current()?.schemasList() ?: emptyList()).isEmpty()
+        val switching = DirSwitchMonitor.status.value.phase == DirSwitchPhase.SWITCHING
+        if (!DirSwitchResumePolicy.shouldResume(engineEmpty, diskIds.isNotEmpty(), switching)) return
+        val enabled = SchemaManager.readEnabledIds(prefs, dir).ifEmpty { diskIds }
+        SchemaManager.saveEnabledIds(prefs, dir, enabled)
+        EngineFactory.current()?.reload()
+        if (enabled.isNotEmpty()) {
+            EngineFactory.current()?.selectSchema(enabled[0])
+            // 校验只定成败显示，不抛：成败最终以 loadSchemas 重读的引擎表为准。
+            verifyCurrent(enabled[0], 180_000)
+        }
+    }
+
+    /** 空表轮询重载：2s 一次、最多 5 分钟，直到方案表就绪。 */
+    suspend fun pollUntilLoaded() {
+        var waitedMs = 0L
+        while (!loaded && waitedMs < 300_000L) {
+            delay(2000L)
+            waitedMs += 2000L
+            if (!loaded) loadSchemas()
+        }
+    }
+
+    // 进页加载 + 部署中自动重载：空表时轮询重载，部署跑完自动出列表；
+    // stranded 时先续切一次（仅一次，避免中途重启部署），再继续轮询。
+    // 用户中途离开即取消本轮询，下次进页重新判定——续切本身幂等。
+    LaunchedEffect(Unit) {
+        loadSchemas()
+        var resumed = false
+        var waitedMs = 0L
+        while (!loaded && waitedMs < 300_000L) {
+            delay(2000L)
+            waitedMs += 2000L
+            if (!loaded && !resumed &&
+                DirSwitchMonitor.status.value.phase != DirSwitchPhase.SWITCHING
+            ) {
+                resumed = true
+                resumeIfStranded()
+            }
+            if (!loaded) loadSchemas()
+        }
+    }
+
     /**
      * 点选切换（见上方注释）。[onDone] 在切换协程所有终点调用
      * （直选成功 / 部署成功 / 回退完成 / 防御性提前返回），供导入流程
@@ -541,7 +605,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         refreshSwitchState()
         applyOrder(plan.newOrder)
         EngineFactory.current()?.selectSchema(target.id)
-        scope.launch {
+        // 应用级作用域：点选切换的部署 / 回退路径不再随页面销毁取消。
+        appScope.launch {
             val ok = verifyCurrent(target.id, 10_000)
             val result = switchOrchestrator.resolveSwitch(ok)
             refreshSwitchState()
@@ -587,15 +652,24 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
      * 时不直选，改为等引擎部署出内置表（Lite 兜底）且当前方案非空。
      * 任一步失败自动回滚上一目录（指针 + 启用表 + 引擎重部署 + 重选上一方案），
      * 并在方案页留一条可关闭的失败提示。切换进行中拒绝新的切换与导入。
+     * 切换跑应用级作用域（appScope）：离开页面不取消；失败与取消一律
+     * 回滚（取消在 NonCancellable 内做）——此前页面作用域 + 取消跳过
+     * 回滚，正是 Base 导入 stranded 的根因。状态同时写进程级
+     * DirSwitchMonitor，重进页面能读到进行中 / 失败。
      */
     fun switchDirectory(targetDir: String) {
-        if (dirSwitching || switchOrchestrator.isBusy() || targetDir == currentDir) return
+        if (dirSwitching || switchOrchestrator.isBusy() ||
+            DirSwitchMonitor.status.value.phase == DirSwitchPhase.SWITCHING ||
+            targetDir == currentDir
+        ) return
         val prevDir = currentDir
         val prevOrder = enabledSchemas.map { it.id }
         val prevCurrent = currentSchemeId
         dirSwitching = true
         dirSwitchError = null
-        scope.launch {
+        DirSwitchMonitor.begin(targetDir)
+        appScope.launch {
+            var succeeded = false
             try {
                 var targetEnabled = SchemaManager.readEnabledIds(prefs, targetDir)
                 if (targetEnabled.isEmpty()) {
@@ -625,24 +699,35 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     }
                     if (!ready) throw IllegalStateException("empty dir deploy timeout")
                 }
-                dirSwitching = false
-                dirBrowser = false
-                dirDetail = null
-                loadSchemas()
+                succeeded = true
+                DirSwitchMonitor.done()
             } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                runCatching {
-                    SchemeDirs.setCurrentDirName(context, prevDir)
-                    currentDir = prevDir
-                    SchemaManager.saveEnabledIds(prefs, prevDir, prevOrder)
-                    EngineFactory.current()?.reload()
-                    if (prevCurrent.isNotEmpty()) {
-                        EngineFactory.current()?.selectSchema(prevCurrent)
+                // 失败与取消一律回滚（NonCancellable 内做，取消后仍能执行）；
+                // 回滚本身尽力而为，不掩盖原错；失败提示写 Monitor 供重进读取。
+                withContext(NonCancellable) {
+                    runCatching {
+                        SchemeDirs.setCurrentDirName(context, prevDir)
+                        currentDir = prevDir
+                        SchemaManager.saveEnabledIds(prefs, prevDir, prevOrder)
+                        EngineFactory.current()?.reload()
+                        if (prevCurrent.isNotEmpty()) {
+                            EngineFactory.current()?.selectSchema(prevCurrent)
+                        }
                     }
                 }
-                dirSwitching = false
-                dirSwitchError = context.getString(R.string.schema_dir_switch_failed)
-                scope.launch { loadSchemas() }
+                val msg = context.getString(R.string.schema_dir_switch_failed)
+                DirSwitchMonitor.failed(msg)
+                dirSwitchError = msg
+            }
+            dirSwitching = false
+            if (succeeded) {
+                dirBrowser = false
+                dirDetail = null
+            }
+            loadSchemas()
+            if (!loaded) {
+                // 部署仍在跑：页内轮询重载（离开页面即取消，重进由进页循环接手）。
+                scope.launch { pollUntilLoaded() }
             }
         }
     }
@@ -1651,7 +1736,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 detailDir = dirDetail,
                 onOpenDetail = { dirDetail = it },
                 onBackToList = { dirDetail = null },
-                switching = dirSwitching,
+                switching = dirSwitching ||
+                    monitorStatus.phase == DirSwitchPhase.SWITCHING,
                 onUseDir = { switchDirectory(it) },
                 modifier = Modifier
                     .fillMaxSize()
@@ -1660,7 +1746,78 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             )
             return@Scaffold
         }
-        if (!loaded) return@Scaffold
+        // 空表不再永久空白：失败提示放门外（空白态也能看到），
+        // 切换中 / 部署中显进度 + 自动重载进行中，另给手动重试。
+        if (!loaded) {
+            val switchErrorText = dirSwitchError
+                ?: monitorStatus.takeIf { it.phase == DirSwitchPhase.FAILED }
+                    ?.errorMessage?.takeIf { it.isNotEmpty() }
+            val switchingNow = monitorStatus.phase == DirSwitchPhase.SWITCHING
+            val diskEmpty = remember(currentDir) {
+                runCatching {
+                    SchemeDirs.schemesInDir(File(DataManager.schemeDirsRoot, currentDir)).isEmpty()
+                }.getOrDefault(false)
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Spacer(Modifier.height(4.dp))
+                if (switchErrorText != null) {
+                    DirSwitchErrorCard(
+                        message = switchErrorText,
+                        onClose = {
+                            dirSwitchError = null
+                            DirSwitchMonitor.clear()
+                        },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (switchingNow) {
+                    Text(
+                        stringResource(R.string.schema_switching),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                } else if (!diskEmpty) {
+                    Text(
+                        stringResource(R.string.schema_deploying),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(onClick = {
+                        scope.launch {
+                            loadSchemas()
+                            if (!loaded) {
+                                resumeIfStranded()
+                                loadSchemas()
+                            }
+                        }
+                    }) {
+                        Text(stringResource(R.string.schema_switch_retry))
+                    }
+                } else {
+                    Text(
+                        stringResource(R.string.schema_dir_empty_schemes),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            return@Scaffold
+        }
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -1772,27 +1929,13 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 else -> {}
             }
             // 目录切换失败提示：回滚已完成，留一条可关闭的说明。
+            // （同一卡片亦用于 !loaded 空白态，见门外分支。）
             if (dirSwitchError != null) {
                 Spacer(Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                    ),
-                ) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        Text(
-                            dirSwitchError!!,
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        TextButton(onClick = { dirSwitchError = null }) {
-                            Text(stringResource(R.string.schema_banner_close))
-                        }
-                    }
-                }
+                DirSwitchErrorCard(
+                    message = dirSwitchError!!,
+                    onClose = { dirSwitchError = null },
+                )
             }
             if (editMode) {
                 // 管理页：已选卡（勾选 + 拖拽合一）+ 全部方案区；草稿只在
@@ -2773,6 +2916,33 @@ private fun SchemeDirBrowserContent(
                 enabled = detailDir != null && detailDir != currentDir && !switching,
             ) {
                 Text(stringResource(R.string.schema_dir_use))
+            }
+        }
+    }
+}
+
+/**
+ * 目录切换失败提示卡：加载态与已加载态共用，失败提示不再被
+ * `if (!loaded)` 门挡住（空白页上也能看到）。
+ */
+@Composable
+private fun DirSwitchErrorCard(message: String, onClose: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        ),
+    ) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+            Text(
+                message,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            TextButton(onClick = onClose) {
+                Text(stringResource(R.string.schema_banner_close))
             }
         }
     }
