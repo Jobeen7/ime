@@ -7,9 +7,15 @@ import android.os.StatFs
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,6 +25,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -41,6 +48,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -78,6 +86,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -116,7 +125,6 @@ import com.jobeen.ime.data.manager.SchemeSwitchState
 import com.jobeen.ime.data.manager.SwitchVerification
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.core.SchemaItem
-import com.jobeen.ime.data.schemaLayoutTag
 import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.ProgressButton
@@ -681,7 +689,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
      * switchTo（首个方案移到首位，部署 / 回退编排全复用一期）。
      * 回退时顺序恢复为安装前，新方案退回未启用——文件与登记保留，
      * 卸载按集合清是后续期数的事，本期不删文件。
-     * 安装失败留在校验页并可重试（归档首次胜出、落盘幂等，重试安全）。
+     * 安装失败留在校验页并可重试（落盘幂等、登记 upsert，重试安全）。
      */
     fun confirmImport() {
         val plan = importPlan ?: return
@@ -2104,19 +2112,6 @@ private fun saveOrder(prefs: SharedPreferences, schemas: List<SchemaItem>) {
     prefs.edit { putString(SchemaManager.KEY_ENABLED_IDS, schemas.joinToString(",") { it.id }) }
 }
 
-@Composable
-private fun TagBadge(text: String, bg: Color, fg: Color) {
-    Text(
-        text = text,
-        fontSize = rowSubFontSize * 0.9f,
-        lineHeight = rowSubFontSize * 0.9f,
-        color = fg,
-        modifier = Modifier
-            .background(bg, RoundedCornerShape(2.dp))
-            .padding(horizontal = 3.dp, vertical = 1.dp),
-    )
-}
-
 // ---- 第二期本地导入：校验结果页与规划构造（界面层，规划逻辑见 SchemePackageImport） ----
 
 /** 导入错误种类（界面文案据此映射，规划层只给原因枚举）。 */
@@ -2264,6 +2259,12 @@ private fun importErrorText(error: ImportErrorKind): String = when (error) {
  * 安装进行中按钮禁用、显示进度；安装失败留在本页并可重试。
  */
 @Composable
+/**
+ * 导入校验页：摘要先行、明细折叠，不再是文件倾倒。
+ * 摘要卡 = 包名 + 版本 + 包内方案 N 个 + 方案行（名 + 灰字 id，无芯片）；
+ * 同名替换 = 琥珀色警告卡；共享文件决策与跳过文件 = 折叠明细；
+ * 确认安装 = 蓝色主钮。校验与安装逻辑不变。
+ */
 private fun ImportValidationPage(
     plan: SchemeImportPlan,
     installing: Boolean,
@@ -2272,207 +2273,195 @@ private fun ImportValidationPage(
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val context = LocalContext.current
     Column(
         modifier = modifier,
         verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
         Spacer(Modifier.height(4.dp))
-        Text(
-            stringResource(R.string.schema_import_package) + "：" + plan.packageName,
-            fontSize = rowFontSize,
-            fontWeight = FontWeight.Bold,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        Text(
-            plan.packageVersion ?: stringResource(R.string.schema_import_version_unknown),
-            fontSize = rowSubFontSize,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        Spacer(Modifier.height(8.dp))
-        SectionHeader(stringResource(R.string.schema_import_schemes_title))
         Card(
             modifier = Modifier.fillMaxWidth(),
-            shape = ExpressiveShapes.medium,
+            shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface,
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
             ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
-            Column {
+            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                Text(
+                    plan.packageName,
+                    fontSize = 16.sp,
+                    lineHeight = 21.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    plan.packageVersion ?: stringResource(R.string.schema_import_version_unknown),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                HorizontalDivider(
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.schema_import_summary_schemes, plan.schemes.size),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 plan.schemes.forEach { scheme ->
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                scheme.name,
-                                fontSize = rowFontSize,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                scheme.id,
-                                fontSize = rowSubFontSize,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        TagBadge(
-                            schemaLayoutTag(context, scheme.layout),
-                            MaterialTheme.colorScheme.primaryContainer,
-                            MaterialTheme.colorScheme.onPrimaryContainer,
-                        )
-                        scheme.version?.let {
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                it,
-                                fontSize = rowSubFontSize,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                            )
-                        }
-                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        scheme.name,
+                        fontSize = 16.sp,
+                        lineHeight = 21.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        scheme.id + (scheme.version?.let { " · $it" } ?: ""),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
             }
         }
         if (plan.replacements.isNotEmpty()) {
-            SectionHeader(stringResource(R.string.schema_import_replace_title))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = ExpressiveShapes.medium,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                ),
-            ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                    plan.replacements.forEach { replacement ->
-                        Text(
-                            replacement.schemeId +
-                                (replacement.previousPackage?.let { "（$it）" } ?: ""),
-                            fontSize = rowFontSize,
-                            fontWeight = FontWeight.Medium,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            when {
-                                replacement.overridesBuiltin ->
-                                    stringResource(R.string.schema_import_replace_builtin_note)
-                                replacement.schemeId == "wanxiang_pro" ->
-                                    stringResource(R.string.schema_import_replace_pro_note) +
-                                        "；" + stringResource(R.string.schema_import_replace_note)
-                                else ->
-                                    stringResource(R.string.schema_import_replace_note)
-                            },
-                            fontSize = rowSubFontSize,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
+            Spacer(Modifier.height(12.dp))
+            ScreenComponent.WarningCard {
+                Text(
+                    stringResource(R.string.schema_import_replace_title),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = ScreenComponent.warningContentColor(),
+                )
+                plan.replacements.forEach { replacement ->
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        replacement.schemeId +
+                            (replacement.previousPackage?.let { "（$it）" } ?: ""),
+                        fontSize = 16.sp,
+                        lineHeight = 21.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = ScreenComponent.warningContentColor(),
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        when {
+                            replacement.overridesBuiltin ->
+                                stringResource(R.string.schema_import_replace_builtin_note)
+                            replacement.schemeId == "wanxiang_pro" ->
+                                stringResource(R.string.schema_import_replace_pro_note) +
+                                    "；" + stringResource(R.string.schema_import_replace_note)
+                            else ->
+                                stringResource(R.string.schema_import_replace_note)
+                        },
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = ScreenComponent.warningContentColor(),
+                    )
                 }
             }
         }
-        if (plan.sharedDecisions.isNotEmpty()) {
-            SectionHeader(stringResource(R.string.schema_import_shared_title))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = ExpressiveShapes.medium,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-            ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                    plan.sharedDecisions.forEach { decision ->
-                        Text(
-                            decision.relPath,
-                            fontSize = rowFontSize,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            when {
-                                decision.overwrite ->
-                                    stringResource(R.string.schema_import_shared_overwrite) +
-                                        "（${decision.existingVersion} → ${decision.incomingVersion}）"
-                                decision.unknownVersion ->
-                                    stringResource(R.string.schema_import_shared_unknown)
-                                else ->
-                                    stringResource(R.string.schema_import_shared_keep) +
-                                        "（${decision.existingVersion} / ${decision.incomingVersion}）"
-                            },
-                            fontSize = rowSubFontSize,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
+        if (plan.sharedDecisions.isNotEmpty() || plan.overwrittenExisting.isNotEmpty()) {
+            Spacer(Modifier.height(12.dp))
+            FoldedSection(title = stringResource(R.string.schema_import_detail_files)) {
+                plan.sharedDecisions.forEach { decision ->
+                    Text(
+                        decision.relPath,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.MiddleEllipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        when {
+                            decision.overwrite ->
+                                stringResource(R.string.schema_import_shared_overwrite) +
+                                    "（${decision.existingVersion} → ${decision.incomingVersion}）"
+                            decision.unknownVersion ->
+                                stringResource(R.string.schema_import_shared_unknown)
+                            else ->
+                                stringResource(R.string.schema_import_shared_keep) +
+                                    "（${decision.existingVersion} / ${decision.incomingVersion}）"
+                        },
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
+                if (plan.overwrittenExisting.isNotEmpty()) {
+                    Text(
+                        stringResource(
+                            R.string.schema_import_overwrite_note,
+                            plan.overwrittenExisting.size,
+                        ),
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
         if (plan.skippedFiles.isNotEmpty()) {
-            SectionHeader(stringResource(R.string.schema_import_skipped_title))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = ExpressiveShapes.medium,
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+            Spacer(Modifier.height(12.dp))
+            FoldedSection(
+                title = stringResource(
+                    R.string.schema_import_skipped_count,
+                    plan.skippedFiles.size,
                 ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
             ) {
-                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                    plan.skippedFiles.forEach { skipped ->
-                        Text(
-                            skipped.relPath,
-                            fontSize = rowFontSize,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            when (skipped.reason) {
-                                SchemePackageImport.SkipReason.TRAVERSAL ->
-                                    stringResource(R.string.schema_import_skip_traversal)
-                                SchemePackageImport.SkipReason.PROTECTED ->
-                                    stringResource(R.string.schema_import_skip_protected)
-                                SchemePackageImport.SkipReason.USER_CUSTOM ->
-                                    stringResource(R.string.schema_import_skip_custom)
-                                SchemePackageImport.SkipReason.EXISTS_KEPT ->
-                                    stringResource(R.string.schema_import_skip_exists)
-                                SchemePackageImport.SkipReason.SHARED_OLDER ->
-                                    stringResource(R.string.schema_import_skip_shared_older)
-                                SchemePackageImport.SkipReason.SHARED_UNKNOWN_VERSION ->
-                                    stringResource(R.string.schema_import_skip_shared_unknown)
-                            },
-                            fontSize = rowSubFontSize,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                    }
+                plan.skippedFiles.forEach { skipped ->
+                    Text(
+                        skipped.relPath,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.MiddleEllipsis,
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        when (skipped.reason) {
+                            SchemePackageImport.SkipReason.TRAVERSAL ->
+                                stringResource(R.string.schema_import_skip_traversal)
+                            SchemePackageImport.SkipReason.PROTECTED ->
+                                stringResource(R.string.schema_import_skip_protected)
+                            SchemePackageImport.SkipReason.USER_CUSTOM ->
+                                stringResource(R.string.schema_import_skip_custom)
+                            SchemePackageImport.SkipReason.EXISTS_KEPT ->
+                                stringResource(R.string.schema_import_skip_exists)
+                            SchemePackageImport.SkipReason.SHARED_OLDER ->
+                                stringResource(R.string.schema_import_skip_shared_older)
+                            SchemePackageImport.SkipReason.SHARED_UNKNOWN_VERSION ->
+                                stringResource(R.string.schema_import_skip_shared_unknown)
+                        },
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
                 }
             }
-        }
-        if (plan.overwrittenExisting.isNotEmpty()) {
-            Spacer(Modifier.height(4.dp))
-            Text(
-                stringResource(R.string.schema_import_overwrite_note, plan.overwrittenExisting.size),
-                fontSize = rowSubFontSize,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
         }
         if (error != null) {
             Spacer(Modifier.height(8.dp))
             Text(
                 importErrorText(error),
-                fontSize = rowFontSize,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
                 color = MaterialTheme.colorScheme.error,
             )
         }
@@ -2480,7 +2469,8 @@ private fun ImportValidationPage(
             Spacer(Modifier.height(8.dp))
             Text(
                 stringResource(R.string.schema_import_installing),
-                fontSize = rowSubFontSize,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(4.dp))
@@ -2504,4 +2494,62 @@ private fun ImportValidationPage(
         Spacer(Modifier.height(16.dp))
     }
 }
+
+/**
+ * 折叠明细区（仅导入明细允许用 Accordion，设置组不用）：
+ * 标题行 + 展开箭头，内容以 250ms 展开/收起。
+ */
+@Composable
+private fun FoldedSection(
+    title: String,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val rotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "foldRotation",
+    )
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+    ) {
+        Column {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = title,
+                    fontSize = 16.sp,
+                    lineHeight = 21.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    Icons.Filled.ExpandMore,
+                    contentDescription = null,
+                    modifier = Modifier.rotate(rotation),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(animationSpec = tween(250)) + fadeIn(tween(250)),
+                exit = shrinkVertically(animationSpec = tween(250)) + fadeOut(tween(250)),
+            ) {
+                Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)) {
+                    content()
+                }
+            }
+        }
+    }
+}
+
 
