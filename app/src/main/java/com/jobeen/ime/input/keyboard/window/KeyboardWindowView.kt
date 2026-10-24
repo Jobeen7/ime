@@ -699,13 +699,29 @@ class KeyboardWindowView(
     override fun refreshSkinTheme(onFirstDraw: (() -> Unit)?) {
         post {
             if (onFirstDraw != null) {
-                viewTreeObserver.addOnDrawListener(object :
-                    android.view.ViewTreeObserver.OnDrawListener {
+                lateinit var listener: android.view.ViewTreeObserver.OnDrawListener
+                listener = object : android.view.ViewTreeObserver.OnDrawListener {
+                    // Android 禁止在 onDraw 回调内注销 OnDrawListener
+                    // （抛 IllegalStateException）：旧代码在此自注销，
+                    // 此前因窗口不绘制从未触发；延迟验证让首帧真正
+                    // 到达后立即整进程闪退（真机实证 16:28:58），
+                    // 随后启动对账把未验证的 pending 回滚，表现为
+                    // 「应用不成功」。修复：注销推迟到下一消息循环，
+                    // fired 保证注销前即使再绘制也不重复回调。
+                    var fired = false
+
                     override fun onDraw() {
-                        viewTreeObserver.removeOnDrawListener(this)
+                        if (fired) return
+                        fired = true
+                        post {
+                            runCatching {
+                                viewTreeObserver.removeOnDrawListener(listener)
+                            }
+                        }
                         onFirstDraw()
                     }
-                })
+                }
+                viewTreeObserver.addOnDrawListener(listener)
             }
             refreshColors()
         }
