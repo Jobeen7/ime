@@ -15,6 +15,7 @@ import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
+import com.jobeen.ime.input.panel.toolbar.ToolbarConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarRendererResources
 import kotlin.math.abs
 
@@ -84,13 +85,25 @@ class KawaiiPanelView(context: Context) : View(context) {
                 context.getDrawable(R.drawable.ic_toolbar_copy),
                 context.getDrawable(R.drawable.ic_toolbar_paste),
                 context.getDrawable(R.drawable.ic_keyboard_search),
+                symbol = context.getDrawable(R.drawable.ic_keyboard_symbol),
+                phrases = context.getDrawable(R.drawable.ic_keyboard_star_david),
+                voice = context.getDrawable(R.drawable.ic_keyboard_voice),
+                cursor = context.getDrawable(R.drawable.ic_keyboard_cursor_move),
+                undo = context.getDrawable(R.drawable.ic_keyboard_undo),
+                redo = context.getDrawable(R.drawable.ic_keyboard_redo),
+                palette = context.getDrawable(R.drawable.ic_keyboard_palette),
             ),
             hPad,
+            centerActions = ToolbarConfig.readActions(context),
         )
     }
 
     fun refreshTheme() {
         paints.updateColors(context)
+        // 工具栏中央区配置可能刚被设置页改过：长驻渲染器在此重读
+        (currentRenderer as? ToolbarRenderer)?.updateCenterActions(
+            ToolbarConfig.readActions(context),
+        )
         invalidate()
     }
 

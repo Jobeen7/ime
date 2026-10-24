@@ -7,6 +7,7 @@ import com.jobeen.ime.R
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.panel.ComposingRenderer
 import com.jobeen.ime.input.panel.component.ClipboardTab
+import com.jobeen.ime.input.panel.toolbar.ToolbarConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
 import com.jobeen.ime.input.panel.toolbar.ToolbarRendererResources
 
@@ -27,6 +28,8 @@ private fun StateRenderContext.buildToolbarRenderer(
     return ToolbarRenderer(
         idleResources,
         idleHorizontalPaddingDp(),
+        // 工具栏中央区自定义：态渲染器每次新建，在此读最新配置即生效
+        centerActions = ToolbarConfig.readActions(context),
     ).apply {
         this.showArrow = showArrow
         this.textEditingMode = textEditingMode
