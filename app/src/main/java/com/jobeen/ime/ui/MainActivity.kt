@@ -11,9 +11,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
@@ -152,15 +150,19 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            var themeMode by remember { mutableIntStateOf(KeyboardManager.Theme.getMode(this@MainActivity)) }
+            // 应用主题已删除（Lee 2026-10-25 定）：恒跟随系统。旧手动值
+            // 在此一次性迁回跟随系统，其余页面读同一偏好即跟随。
+            if (KeyboardManager.Theme.getMode(this@MainActivity) !=
+                KeyboardManager.Theme.MODE_SYSTEM
+            ) {
+                KeyboardManager.Theme.setMode(
+                    this@MainActivity,
+                    KeyboardManager.Theme.MODE_SYSTEM,
+                )
+            }
 
-            ImeTheme(themeMode = themeMode) {
+            ImeTheme(themeMode = KeyboardManager.Theme.MODE_SYSTEM) {
                 MainScreen(
-                    currentThemeMode = themeMode,
-                    onThemeModeChanged = { mode ->
-                        KeyboardManager.Theme.setMode(this@MainActivity, mode)
-                        themeMode = mode
-                    },
                     onOpenImeSetup = {
                         setupImeLauncher.launch(
                             Intent(this@MainActivity, SetupActivity::class.java)
