@@ -133,6 +133,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         keySoundEnabled = it
                         KeyboardManager.Keyboard.Feedback.setSoundEnabled(context, it)
                     },
+                    showDivider = true,
                 )
                 SwitchRow(
                     title = stringResource(R.string.key_vibration),
@@ -141,6 +142,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         keyVibrationEnabled = it
                         KeyboardManager.Keyboard.Feedback.setVibrationEnabled(context, it)
                     },
+                    showDivider = true,
                 )
                 SwitchRow(
                     title = stringResource(R.string.key_vibration_follow_system),
@@ -150,6 +152,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         vibrationFollowSystem = it
                         KeyboardManager.Keyboard.Feedback.setVibrationFollowSystem(context, it)
                     },
+                    showDivider = true,
                 )
                 SliderRow(
                     title = stringResource(R.string.key_vibration_amplitude),
@@ -161,6 +164,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         vibrationAmplitude = it
                         KeyboardManager.Keyboard.Feedback.setVibrationAmplitude(context, it.toInt())
                     },
+                    showDivider = true,
                 )
                 SwitchRow(
                     title = stringResource(R.string.key_ripple_effect),
@@ -169,6 +173,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         rippleEnabled = it
                         KeyboardManager.Keyboard.RippleEffect.setEnabled(context, it)
                     },
+                    showDivider = true,
                 )
                 SwitchRow(
                     title = stringResource(R.string.key_border_show),
@@ -177,6 +182,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         keyBorderEnabled = it
                         KeyboardManager.Keyboard.KeyBorderStroke.setEnabled(context, it)
                     },
+                    showDivider = true,
                 )
                 SwitchRow(
                     title = stringResource(R.string.expand_border),
@@ -196,6 +202,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         keyRadius = it
                         KeyboardManager.Keyboard.KeyRadius.setDp(context, it.toInt())
                     },
+                    showDivider = true,
                 )
                 SliderRow(
                     title = stringResource(R.string.key_x_gap),
@@ -206,6 +213,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         keyXGap = it
                         KeyboardManager.Keyboard.Gap.setHorizontalDp(context, it.toInt())
                     },
+                    showDivider = true,
                 )
                 SliderRow(
                     title = stringResource(R.string.key_y_gap),
@@ -216,7 +224,6 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         keyYGap = it
                         KeyboardManager.Keyboard.Gap.setVerticalDp(context, it.toInt())
                     },
-                    showDivider = true,
                 )
             }
 
@@ -232,6 +239,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         keyboardHeight = it
                         KeyboardManager.Keyboard.setHeightPercent(context, it.toInt())
                     },
+                    showDivider = true,
                 )
                 SliderRow(
                     title = stringResource(R.string.keyboard_height_landscape),
@@ -242,6 +250,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         keyboardHeightLandscape = it
                         KeyboardManager.Keyboard.setHeightPercentLandscape(context, it.toInt())
                     },
+                    showDivider = true,
                 )
                 SliderRow(
                     title = stringResource(R.string.horizontal_padding),
@@ -252,6 +261,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         horizontalPadding = it
                         KeyboardManager.Keyboard.Padding.setHorizontalDp(context, it.toInt())
                     },
+                    showDivider = true,
                 )
                 SliderRow(
                     title = stringResource(R.string.bottom_padding),
@@ -262,6 +272,7 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                         bottomPadding = it
                         KeyboardManager.Keyboard.Padding.setBottomDp(context, it.toInt())
                     },
+                    showDivider = true,
                 )
                 SwitchRow(
                     title = stringResource(R.string.ignore_system_insets),

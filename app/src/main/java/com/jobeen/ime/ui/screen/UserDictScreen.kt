@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.CloudUpload
 import androidx.compose.material.icons.filled.RestoreFromTrash
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -52,7 +53,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
-import com.jobeen.ime.ui.screen.ScreenComponent.ClickableSettingItem
+import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
+import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
+import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
 import com.jobeen.ime.ui.screen.ScreenComponent.SingleChoiceDialog
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
@@ -181,95 +184,108 @@ fun UserDictScreen(
                 else -> {
                     if (dicts.size > 1) {
                         SectionHeader(stringResource(R.string.user_dict))
-                        ClickableSettingItem(
-                            title = state.selectedDict.orEmpty(),
-                            subtitle = stringResource(R.string.user_dict_switch_dict),
-                            onClick = { if (!state.busy) showDictDialog = true },
-                            showSpacer = true,
-                        )
+                        GroupCard {
+                            NavRow(
+                                title = state.selectedDict.orEmpty(),
+                                subtitle = stringResource(R.string.user_dict_switch_dict),
+                                onClick = { if (!state.busy) showDictDialog = true },
+                                icon = Icons.Filled.MenuBook,
+                                iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                                iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            )
+                        }
                     }
 
                     SectionHeader(stringResource(R.string.user_dict_manual_backup))
 
-                    ClickableSettingItem(
-                        title = stringResource(R.string.user_dict_export),
-                        subtitle = stringResource(R.string.user_dict_export_desc),
-                        onClick = { if (enabled) onExport() },
-                        icon = Icons.Filled.Upload,
-                        showSpacer = true,
-                    )
-
-                    ClickableSettingItem(
-                        title = stringResource(R.string.user_dict_import),
-                        subtitle = stringResource(R.string.user_dict_import_desc),
-                        onClick = { if (enabled) onImport() },
-                        icon = Icons.Filled.Download,
-                        showSpacer = true,
-                    )
+                    GroupCard {
+                        NavRow(
+                            title = stringResource(R.string.user_dict_export),
+                            subtitle = stringResource(R.string.user_dict_export_desc),
+                            onClick = { if (enabled) onExport() },
+                            icon = Icons.Filled.Upload,
+                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        GroupDivider()
+                        NavRow(
+                            title = stringResource(R.string.user_dict_import),
+                            subtitle = stringResource(R.string.user_dict_import_desc),
+                            onClick = { if (enabled) onImport() },
+                            icon = Icons.Filled.Download,
+                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
 
                     SectionHeader(stringResource(R.string.user_dict_webdav_sync))
 
-                    OutlinedTextField(
-                        value = serverText,
-                        onValueChange = { serverText = it },
-                        label = { Text(stringResource(R.string.user_dict_server)) },
-                        placeholder = { Text(stringResource(R.string.user_dict_server_hint)) },
-                        singleLine = true,
-                        enabled = !state.busy,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = usernameText,
-                        onValueChange = { usernameText = it },
-                        label = { Text(stringResource(R.string.user_dict_username)) },
-                        singleLine = true,
-                        enabled = !state.busy,
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = passwordText,
-                        onValueChange = { passwordText = it },
-                        label = { Text(stringResource(R.string.user_dict_password)) },
-                        singleLine = true,
-                        enabled = !state.busy,
-                        visualTransformation = if (passwordText.isEmpty()) {
-                            VisualTransformation.None
-                        } else {
-                            PasswordVisualTransformation()
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    OutlinedTextField(
-                        value = syncPathText,
-                        onValueChange = { syncPathText = it },
-                        label = { Text(stringResource(R.string.user_dict_sync_path)) },
-                        placeholder = { Text(stringResource(R.string.user_dict_sync_path_hint)) },
-                        singleLine = true,
-                        enabled = !state.busy,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                        modifier = Modifier.fillMaxWidth(),
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                    ) {
-                        OutlinedButton(
-                            onClick = onTestConnection,
-                            enabled = !state.busy,
-                        ) {
-                            Text(stringResource(R.string.user_dict_test_connection))
-                        }
-                        Button(
-                            onClick = { onSaveWebDav(serverText, usernameText, passwordText, syncPathText) },
-                            enabled = !state.busy,
-                        ) {
-                            Text(stringResource(R.string.user_dict_save))
+                    // WebDAV 表单：字段与保存逻辑不动，只收进分组卡片。
+                    GroupCard {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                            OutlinedTextField(
+                                value = serverText,
+                                onValueChange = { serverText = it },
+                                label = { Text(stringResource(R.string.user_dict_server)) },
+                                placeholder = { Text(stringResource(R.string.user_dict_server_hint)) },
+                                singleLine = true,
+                                enabled = !state.busy,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = usernameText,
+                                onValueChange = { usernameText = it },
+                                label = { Text(stringResource(R.string.user_dict_username)) },
+                                singleLine = true,
+                                enabled = !state.busy,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = passwordText,
+                                onValueChange = { passwordText = it },
+                                label = { Text(stringResource(R.string.user_dict_password)) },
+                                singleLine = true,
+                                enabled = !state.busy,
+                                visualTransformation = if (passwordText.isEmpty()) {
+                                    VisualTransformation.None
+                                } else {
+                                    PasswordVisualTransformation()
+                                },
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            OutlinedTextField(
+                                value = syncPathText,
+                                onValueChange = { syncPathText = it },
+                                label = { Text(stringResource(R.string.user_dict_sync_path)) },
+                                placeholder = { Text(stringResource(R.string.user_dict_sync_path_hint)) },
+                                singleLine = true,
+                                enabled = !state.busy,
+                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
+                            ) {
+                                OutlinedButton(
+                                    onClick = onTestConnection,
+                                    enabled = !state.busy,
+                                ) {
+                                    Text(stringResource(R.string.user_dict_test_connection))
+                                }
+                                Button(
+                                    onClick = { onSaveWebDav(serverText, usernameText, passwordText, syncPathText) },
+                                    enabled = !state.busy,
+                                ) {
+                                    Text(stringResource(R.string.user_dict_save))
+                                }
+                            }
                         }
                     }
 
@@ -277,47 +293,54 @@ fun UserDictScreen(
 
                     SectionHeader(stringResource(R.string.user_dict_advanced))
 
-                    SwitchRow(
-                        title = stringResource(R.string.user_dict_allow_http),
-                        checked = state.webdavAllowHttp,
-                        onCheckedChange = { wantOn ->
-                            // 开启必须先弹风险确认；关闭直接生效
-                            if (wantOn) showHttpRiskConfirm = true else onAllowHttpChange(false)
-                        },
-                        enabled = !state.busy,
-                    )
-                    Text(
-                        text = stringResource(R.string.user_dict_allow_http_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-
-                    ClickableSettingItem(
-                        title = stringResource(R.string.user_dict_upload),
-                        subtitle = "上次上传：${formatTime(state.lastUpload)}",
-                        onClick = { if (enabled) onUpload() },
-                        icon = Icons.Filled.CloudUpload,
-                        showSpacer = true,
-                    )
-
-                    ClickableSettingItem(
-                        title = stringResource(R.string.user_dict_download),
-                        subtitle = stringResource(
-                            R.string.user_dict_download_hint,
-                            formatTime(state.lastDownload),
-                        ),
-                        onClick = { if (enabled) onDownload() },
-                        icon = Icons.Filled.CloudDownload,
-                        showSpacer = true,
-                    )
-
-                    ClickableSettingItem(
-                        title = stringResource(R.string.user_dict_deleted_words),
-                        subtitle = stringResource(R.string.user_dict_deleted_words_hint),
-                        onClick = { if (!state.busy) onShowDeletedWords() },
-                        icon = Icons.Filled.RestoreFromTrash,
-                        showSpacer = true,
-                    )
+                    GroupCard {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                            SwitchRow(
+                                title = stringResource(R.string.user_dict_allow_http),
+                                checked = state.webdavAllowHttp,
+                                onCheckedChange = { wantOn ->
+                                    // 开启必须先弹风险确认；关闭直接生效
+                                    if (wantOn) showHttpRiskConfirm = true else onAllowHttpChange(false)
+                                },
+                                enabled = !state.busy,
+                            )
+                            Text(
+                                text = stringResource(R.string.user_dict_allow_http_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        GroupDivider()
+                        NavRow(
+                            title = stringResource(R.string.user_dict_upload),
+                            subtitle = "上次上传：${formatTime(state.lastUpload)}",
+                            onClick = { if (enabled) onUpload() },
+                            icon = Icons.Filled.CloudUpload,
+                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        GroupDivider()
+                        NavRow(
+                            title = stringResource(R.string.user_dict_download),
+                            subtitle = stringResource(
+                                R.string.user_dict_download_hint,
+                                formatTime(state.lastDownload),
+                            ),
+                            onClick = { if (enabled) onDownload() },
+                            icon = Icons.Filled.CloudDownload,
+                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        GroupDivider()
+                        NavRow(
+                            title = stringResource(R.string.user_dict_deleted_words),
+                            subtitle = stringResource(R.string.user_dict_deleted_words_hint),
+                            onClick = { if (!state.busy) onShowDeletedWords() },
+                            icon = Icons.Filled.RestoreFromTrash,
+                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                    }
                 }
             }
 
