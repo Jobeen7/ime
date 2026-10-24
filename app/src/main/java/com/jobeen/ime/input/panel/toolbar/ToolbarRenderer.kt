@@ -15,6 +15,7 @@ class ToolbarRenderer(
     var horizontalPaddingDp: Float = 0f,
     var centerHorizontalPaddingDp: Float = 12f,
     var iconScale: Float = 0.94f,
+    centerActions: List<PanelAction> = ToolbarConfig.DEFAULT_ACTIONS,
 ) : IRenderer {
 
     var textEditingMode: Boolean = false
@@ -109,13 +110,44 @@ class ToolbarRenderer(
         return if (recording) (color and 0x00FFFFFF) or 0x5A000000 else color
     }
 
-    private val centerButtons = listOf(
-        ImageButton(resources.emoji, PanelAction.EmojiKeyboard, iconScale = iconScale),
-        ImageButton(resources.selectAll, PanelAction.SelectAll, iconScale = iconScale),
-        ImageButton(resources.copy, PanelAction.Copy, iconScale = iconScale),
-        ImageButton(resources.paste, PanelAction.Paste, iconScale = iconScale),
-        ImageButton(resources.clipboard, PanelAction.Clipboard, iconScale = iconScale),
-    )
+    // 中央区按钮由 ToolbarConfig 决定（选哪几个、什么顺序），构造时
+    // 按传入动作表生成；长驻实例可经 updateCenterActions 热更新。
+    private var centerButtons: List<ImageButton> = buildCenterButtons(centerActions)
+
+    private fun buildCenterButtons(actions: List<PanelAction>): List<ImageButton> =
+        actions.map { action -> ImageButton(iconFor(action), action, iconScale = iconScale) }
+
+    /** 热更新中央区按钮（设置页改完后长驻渲染器刷新用；面板态渲染器每次新建、本就读最新配置）。 */
+    fun updateCenterActions(actions: List<PanelAction>) {
+        centerButtons = buildCenterButtons(actions)
+    }
+
+    private fun iconFor(action: PanelAction): Drawable? = when (action) {
+        PanelAction.EmojiKeyboard -> resources.emoji
+        PanelAction.SelectAll -> resources.selectAll
+        PanelAction.Copy -> resources.copy
+        PanelAction.Paste -> resources.paste
+        PanelAction.Clipboard -> resources.clipboard
+        PanelAction.SymbolKeyboard -> resources.symbol
+        PanelAction.CommonPhrases -> resources.phrases
+        PanelAction.ToggleVoice -> resources.voice
+        PanelAction.CursorMove -> resources.cursor
+        PanelAction.Undo -> resources.undo
+        PanelAction.Redo -> resources.redo
+        PanelAction.Palette -> resources.palette
+        else -> null
+    }
+
+    companion object {
+        /**
+         * 文本编辑态下禁用的中央按钮：与顺序无关、按动作判定
+         * （旧实现按下标 i>=2 写死，中央区可排序后必然错位）。
+         * 集合与改版前一致：复制 / 粘贴 / 剪贴板。
+         */
+        val TEXT_EDIT_DISABLED: Set<PanelAction> = setOf(
+            PanelAction.Copy, PanelAction.Paste, PanelAction.Clipboard,
+        )
+    }
 
     var pressAlpha: Int = 0
     var pressCx: Float = 0f
@@ -253,11 +285,11 @@ class ToolbarRenderer(
             }
             val textY = textCenterY - (textPaint.descent() + textPaint.ascent()) / 2f
             canvas.drawText(ellipsized, drawX, textY, textPaint)
-        } else {
+        } else if (centerButtons.isNotEmpty()) {
             val otherW = centerAreaW / centerButtons.size
             for ((i, btn) in centerButtons.withIndex()) {
                 val savedColor = paints.toolbarIconColor
-                val disabled = (textEditingMode && i >= 2) || recording
+                val disabled = (textEditingMode && btn.action in TEXT_EDIT_DISABLED) || recording
                 if (disabled) {
                     paints.toolbarIconColor = (savedColor and 0x00FFFFFF) or 0x62000000.toInt()
                 }
@@ -716,7 +748,8 @@ class ToolbarRenderer(
         val centerPad = centerHorizontalPaddingDp * density
         val centerAreaLeft = hPad + fixedW + centerPad
         val centerAreaW = width - centerAreaLeft - hPad - fixedW - centerPad
-        val otherW = centerAreaW / centerButtons.size
+        // 中央区可被用户清空：size 为 0 时跳过槽位计算（下标校验自然落空）
+        val otherW = if (centerButtons.isEmpty()) 0f else centerAreaW / centerButtons.size
 
         when (x) {
             in closeTouchLeft..closeTouchRight -> {
@@ -747,7 +780,9 @@ class ToolbarRenderer(
                 if (copyText != null) return null
                 val index = ((x - centerAreaLeft) / otherW).toInt()
                     .takeIf { it in centerButtons.indices } ?: return null
-                if (textEditingMode && index >= 2) return null
+                if (textEditingMode && centerButtons[index].action in TEXT_EDIT_DISABLED) {
+                    return null
+                }
                 pressCx = centerAreaLeft + otherW * index + otherW / 2f
                 pressCy = height / 2f
                 pressRadiusMax = height * 0.55f
