@@ -85,16 +85,15 @@
     <!-- Schema Settings -->
     <string name="schema_settings">输入方案</string>
     <string name="schema_settings_desc">启用方案、可选方案</string>
-    <string name="enabled_schemas">当前启用的方案</string>
-    <string name="available_schemas">所有可选的方案</string>
     <!-- 第一期方案切换：当前方案卡 / 列表编辑 / 切换横幅 -->
     <string name="schema_current_title">当前方案</string>
-    <string name="schema_back_to_lite">回内置 Lite</string>
+    <string name="schema_menu_more">更多操作</string>
+    <string name="schema_enabled_only_footnote">此处仅显示当前已启用的方案。如需增删或排序，请点击右上角“…”→“方案列表编辑”。</string>
     <string name="schema_source_builtin">内置</string>
     <string name="schema_source_user">用户</string>
     <string name="schema_list_edit">方案列表编辑</string>
     <string name="schema_edit_done">完成</string>
-    <string name="schema_edit_hint">编辑模式：长按拖拽可排序，点击删除可移除（行点选不切换）</string>
+    <string name="schema_edit_hint">编辑模式：长按拖拽可排序（行点选不切换）</string>
     <string name="schema_switching">正在切换…</string>
     <string name="schema_deploying">正在部署…（部署期间请勿切换）</string>
     <string name="schema_rolling_back">正在回退到上一方案…</string>
@@ -336,7 +335,6 @@
     <string name="menu_theme">主题设置</string>
     <string name="menu_about">关于</string>
     <string name="choose_schema">选择输入方案</string>
-    <string name="tag_default">默认</string>
     <string name="tag_layout_t9">九宫格</string>
     <string name="tag_layout_t15">15键</string>
     <string name="tag_layout_full">全键盘</string>
