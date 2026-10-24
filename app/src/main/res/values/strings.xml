@@ -122,8 +122,11 @@
     <string name="schema_import_package">方案包</string>
     <string name="schema_import_version_unknown">未知版本</string>
     <string name="schema_import_schemes_title">包内方案</string>
+    <string name="schema_import_summary_schemes">包内方案 %1$d 个</string>
+    <string name="schema_import_detail_files">包内文件详情</string>
+    <string name="schema_import_skipped_count">跳过文件 %1$d 个</string>
     <string name="schema_import_replace_title">同名替换</string>
-    <string name="schema_import_replace_note">将先归档旧版，再用新版替换</string>
+    <string name="schema_import_replace_note">将用新版替换旧版</string>
     <string name="schema_import_replace_pro_note">Pro 多口味共用同一方案 id，安装后旧口味被替换</string>
     <string name="schema_import_replace_builtin_note">将覆盖内置同名方案（用户层优先）</string>
     <string name="schema_import_shared_title">共享文件</string>
