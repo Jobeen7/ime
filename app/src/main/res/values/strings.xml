@@ -95,8 +95,7 @@
     <string name="fab_sync_no_dict">无可用词典</string>
     <string name="fab_sync_engine_not_ready">词典服务未就绪，请稍后重试</string>
     <string name="schema_settings_desc">启用方案、可选方案</string>
-    <!-- 第一期方案切换：当前方案卡 / 列表编辑 / 切换横幅 -->
-    <string name="schema_current_title">当前方案</string>
+    <!-- 第一期方案切换：列表编辑 / 切换横幅 -->
     <string name="schema_menu_more">更多操作</string>
     <string name="schema_enabled_only_footnote">此处仅显示当前已启用的方案。如需增删或排序，请点击右上角“…”→“方案列表编辑”。</string>
     <string name="schema_source_builtin">内置</string>
