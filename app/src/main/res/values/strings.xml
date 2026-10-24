@@ -197,7 +197,6 @@
     <string name="rime_sync">同步</string>
     <string name="rime_sync_running">同步中…</string>
     <string name="rime_reset">方案重置</string>
-    <string name="rime_reset_subline">全部设置回默认，学习词清零</string>
     <string name="rime_manage">方案列表管理</string>
     <string name="rime_notice">键盘显示 RIME 通知</string>
     <string name="rime_notice_desc">部署/同步完成后，下次打开键盘时在键盘区提示一次。关闭后不再提示。</string>
