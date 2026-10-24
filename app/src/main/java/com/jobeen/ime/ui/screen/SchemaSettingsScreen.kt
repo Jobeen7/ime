@@ -150,7 +150,7 @@ import okhttp3.Request
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SchemaSettingsScreen(onBack: () -> Unit) {
+fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     val context = LocalContext.current
     val prefs =
         remember { context.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE) }
@@ -209,7 +209,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     // 否则横幅与忙态不会重组）
     val switchOrchestrator = remember { SchemeSwitchOrchestrator() }
     var switchState by remember { mutableStateOf<SchemeSwitchState>(SchemeSwitchState.Idle) }
-    var editMode by remember { mutableStateOf(false) }
+    var editMode by remember { mutableStateOf(openManage) }
     var menuExpanded by remember { mutableStateOf(false) }
     var currentSchemeId by remember { mutableStateOf("") }
     var versionById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -1803,7 +1803,10 @@ private fun SchemaManageContent(
     currentId: String,
     onSave: (List<SchemaItem>) -> Unit,
 ) {
-    val draftEnabled = remember {
+    // 草稿按 initialEnabled 重建：RIME 页直达管理页时，列表可能在
+    // 首次合成后才加载完；无 key 的 remember 会把空列表锁成草稿。
+    // （initialEnabled 只在加载/保存时变，编辑中途不会变，故不丢用户编辑。）
+    val draftEnabled = remember(initialEnabled) {
         mutableStateListOf<SchemaItem>().apply { addAll(initialEnabled) }
     }
     val draftIds = draftEnabled.map { it.id }.toSet()

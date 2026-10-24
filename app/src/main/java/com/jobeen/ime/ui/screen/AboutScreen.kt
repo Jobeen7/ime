@@ -18,7 +18,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -59,6 +58,7 @@ import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
+import com.jobeen.ime.ui.screen.ScreenComponent.ResetConfirmDialogs
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
@@ -535,50 +535,10 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     }
 
     // 重置二次确认：两次都只有取消 / 继续，绝不加“不再询问”。
-    if (resetStep == 1) {
-        AlertDialog(
-            onDismissRequest = { resetStep = 0 },
-            title = { Text(stringResource(R.string.about_reset)) },
-            text = {
-                Text(
-                    stringResource(R.string.about_reset_footnote) +
-                        stringResource(R.string.about_reset_confirm1_msg),
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { resetStep = 2 }) {
-                    Text(stringResource(R.string.about_reset_continue))
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { resetStep = 0 }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
-    if (resetStep == 2) {
-        AlertDialog(
-            onDismissRequest = { resetStep = 0 },
-            title = { Text(stringResource(R.string.about_reset_confirm2_title)) },
-            text = { Text(stringResource(R.string.about_reset_confirm2_msg)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    resetStep = 0
-                    doReset()
-                }) {
-                    Text(
-                        stringResource(R.string.about_reset_confirm),
-                        color = MaterialTheme.colorScheme.error,
-                    )
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { resetStep = 0 }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
-        )
-    }
+    ResetConfirmDialogs(
+        step = resetStep,
+        onStepChange = { resetStep = it },
+        onConfirmed = { doReset() },
+    )
 
 }

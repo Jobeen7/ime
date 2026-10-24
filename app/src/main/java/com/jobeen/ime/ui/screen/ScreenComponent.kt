@@ -465,6 +465,64 @@ object ScreenComponent {
         }
     }
 
+    /**
+     * 重置应用设置二次确认（关于页与 RIME 页共用，同一动作、同一文案）：
+     * step 1 = 首确认（范围说明 + 不可撤销），step 2 = 再次确认；
+     * 两次都只有取消 / 继续，绝不加“不再询问”。
+     */
+    @Composable
+    fun ResetConfirmDialogs(
+        step: Int,
+        onStepChange: (Int) -> Unit,
+        onConfirmed: () -> Unit,
+    ) {
+        if (step == 1) {
+            AlertDialog(
+                onDismissRequest = { onStepChange(0) },
+                title = { Text(stringResource(R.string.about_reset)) },
+                text = {
+                    Text(
+                        stringResource(R.string.about_reset_footnote) +
+                            stringResource(R.string.about_reset_confirm1_msg),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { onStepChange(2) }) {
+                        Text(stringResource(R.string.about_reset_continue))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { onStepChange(0) }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
+        }
+        if (step == 2) {
+            AlertDialog(
+                onDismissRequest = { onStepChange(0) },
+                title = { Text(stringResource(R.string.about_reset_confirm2_title)) },
+                text = { Text(stringResource(R.string.about_reset_confirm2_msg)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        onStepChange(0)
+                        onConfirmed()
+                    }) {
+                        Text(
+                            stringResource(R.string.about_reset_confirm),
+                            color = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { onStepChange(0) }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
+        }
+    }
+
     @Composable
     fun SingleChoiceDialog(
         title: String,
