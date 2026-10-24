@@ -38,9 +38,11 @@ import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -95,6 +97,7 @@ import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.data.manager.SchemaManager
+import com.jobeen.ime.data.manager.SchemeArchive
 import com.jobeen.ime.data.manager.SchemeDownload
 import com.jobeen.ime.data.manager.SchemePackageImport
 import com.jobeen.ime.data.manager.SchemePackageImport.PlanResult
@@ -124,6 +127,9 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -241,6 +247,22 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var importFromDownload by remember { mutableStateOf(false) }
     // URL 来源方案 id 集（登记里 source=URL 的方案，列表来源处显示 URL）。
     var urlSourceIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // ---- 第四期归档 / 恢复逃生舱：归档集列表 / 恢复确认（非一等入口） ----
+    // 归档页整体替换列表内容（与下载页同模式）；流程页内无菜单，
+    // 切换 / 导入 / 下载在归档页打开期间不可达；归档 / 恢复文件
+    // 操作进行中返回禁用（与二期安装 NonCancellable 口径一致）。
+    var archivePage by remember { mutableStateOf(false) }
+    val archiveEntries = remember { mutableStateListOf<ArchiveListItem>() }
+    var archiveWorking by remember { mutableStateOf(false) }
+    var archiveError by remember { mutableStateOf<ArchiveErrorKind?>(null) }
+    var archiveNameDialog by remember { mutableStateOf(false) }
+    var archiveNameInput by remember { mutableStateOf("") }
+    var archiveDeleteTarget by remember { mutableStateOf<ArchiveListItem?>(null) }
+    var restoreTarget by remember { mutableStateOf<ArchiveListItem?>(null) }
+    var restorePlan by remember { mutableStateOf<SchemeArchive.RestorePlan?>(null) }
+    var restoreInputs by remember { mutableStateOf<RestoreInputs?>(null) }
+    var restoreOverwriteUserdb by remember { mutableStateOf(false) }
+    var restoreWorking by remember { mutableStateOf(false) }
     // 整包下载专用 client（WanxiangUpdateManager.downloadClient 同形态：
     // 连接 15s / 读取 120s / 无总时长上限；https→http 降级禁跟随）。
     val downloadClient = remember {
@@ -758,6 +780,301 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         }
     }
 
+    // ---- 第四期归档 / 恢复逃生舱（列表 / 新建归档 / 恢复确认 / 删除） ----
+    /** 归档区根目录（user 层下，与二期同 ID 替换归档同区）。 */
+    fun archiveRootDir(): File =
+        File(DataManager.userDataDir, SchemePackageImport.ARCHIVE_DIR_NAME)
+
+    /** 归档默认名：方案集 + 当前日期时间（用户可在对话框里改）。 */
+    fun defaultArchiveName(): String =
+        "方案集 " + SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+            .format(Date(System.currentTimeMillis()))
+
+    /** 归档时间展示：清单里的 createdAtMs 转日期时间。 */
+    fun formatArchiveTime(createdAtMs: Long): String =
+        SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault())
+            .format(Date(createdAtMs))
+
+    /** 刷新归档集列表：只认带四期清单的目录（二期替换归档无清单，不混进列表）。 */
+    fun refreshArchiveEntries() {
+        scope.launch {
+            val entries = withContext(Dispatchers.IO) {
+                val root = archiveRootDir()
+                if (!root.isDirectory) {
+                    emptyList()
+                } else {
+                    root.listFiles()
+                        ?.filter { it.isDirectory }
+                        ?.mapNotNull { dir ->
+                            val text = runCatching {
+                                File(dir, SchemeArchive.MANIFEST_FILE_NAME).readText()
+                            }.getOrNull()
+                            SchemeArchive.decodeManifest(text)?.let { manifest ->
+                                ArchiveListItem(
+                                    dirName = dir.name,
+                                    manifest = manifest,
+                                    timeText = formatArchiveTime(manifest.createdAtMs),
+                                )
+                            }
+                        }
+                        ?.sortedByDescending { it.manifest.createdAtMs }
+                        .orEmpty()
+                }
+            }
+            archiveEntries.clear()
+            archiveEntries.addAll(entries)
+        }
+    }
+
+    /**
+     * 新建归档：当前 user 层方案集快照进归档区（NonCancellable 拷文件，
+     * 失败删未完成目录后可重试；同名目录已存在时拒绝覆盖）。
+     * 归档方案 id 取用户来源方案行，登记为空时回落登记里的方案 id。
+     */
+    fun createArchive() {
+        if (archiveWorking) return
+        archiveWorking = true
+        archiveError = null
+        val name = archiveNameInput.trim().ifEmpty { defaultArchiveName() }
+        val userSchemeIds = (enabledSchemas + availableSchemas)
+            .filter { sourceById[it.id] == SchemeSwitchPolicy.SchemeSource.USER }
+            .map { it.id }
+            .ifEmpty {
+                SchemePackageImport.decodeRegistry(
+                    importPrefs.getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
+                ).records.flatMap { it.schemeIds }
+            }
+        scope.launch {
+            try {
+                val plan = withContext(Dispatchers.IO) {
+                    SchemeArchive.planArchive(
+                        name,
+                        System.currentTimeMillis(),
+                        SchemePackageImport.listRelativeFiles(DataManager.userDataDir),
+                        userSchemeIds,
+                    )
+                }
+                if (plan == null) {
+                    archiveError = ArchiveErrorKind.EMPTY
+                    return@launch
+                }
+                val outcome = withContext(Dispatchers.IO + NonCancellable) {
+                    val targetDir = File(archiveRootDir(), plan.dirName)
+                    if (targetDir.exists()) return@withContext ArchiveErrorKind.EXISTS
+                    try {
+                        targetDir.mkdirs()
+                        val userCanonical = DataManager.userDataDir.canonicalPath
+                        for (rel in plan.files + plan.userdbFiles) {
+                            val src = File(DataManager.userDataDir, rel).canonicalFile
+                            if (!src.path.startsWith(userCanonical + File.separator)) continue
+                            if (!src.isFile) continue
+                            val dest = File(targetDir, rel)
+                            dest.parentFile?.mkdirs()
+                            src.copyTo(dest, overwrite = false)
+                        }
+                        File(targetDir, SchemeArchive.MANIFEST_FILE_NAME).writeText(
+                            SchemeArchive.encodeManifest(
+                                SchemeArchive.ArchiveManifest(
+                                    plan.name,
+                                    plan.createdAtMs,
+                                    plan.schemeIds,
+                                ),
+                            ),
+                        )
+                        File(targetDir, SchemeArchive.REGISTRY_FILE_NAME).writeText(
+                            importPrefs.getString(
+                                SchemePackageImport.KEY_PACKAGE_REGISTRY,
+                                null,
+                            ).orEmpty(),
+                        )
+                        null
+                    } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
+                        targetDir.deleteRecursively()
+                        ArchiveErrorKind.FAILED
+                    }
+                }
+                if (outcome != null) {
+                    archiveError = outcome
+                } else {
+                    refreshArchiveEntries()
+                }
+            } finally {
+                archiveWorking = false
+            }
+        }
+    }
+
+    /** 删除归档集：只删归档目录，二次确认在对话框里做，不动当前方案。 */
+    fun deleteArchive(item: ArchiveListItem) {
+        scope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                runCatching {
+                    File(archiveRootDir(), item.dirName).deleteRecursively()
+                }.getOrDefault(false)
+            }
+            if (!ok) {
+                archiveError = ArchiveErrorKind.FAILED
+            } else {
+                refreshArchiveEntries()
+            }
+        }
+    }
+
+    /**
+     * 打开恢复确认页：以归档目录实测文件为准生成规划（清单只提供
+     * 名 / 时间 / 方案 id）。归档内无方案文件时视为损坏目录，不进确认页。
+     */
+    fun openRestoreConfirm(item: ArchiveListItem) {
+        archiveError = null
+        scope.launch {
+            val inputs = withContext(Dispatchers.IO) {
+                val archiveDir = File(archiveRootDir(), item.dirName)
+                val (files, userdb) = SchemeArchive.splitArchiveListing(
+                    SchemePackageImport.listRelativeFiles(archiveDir),
+                )
+                val registry = SchemePackageImport.decodeRegistry(
+                    importPrefs.getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
+                )
+                RestoreInputs(
+                    archiveFiles = files,
+                    archiveUserdb = userdb,
+                    currentUserFiles = SchemePackageImport.listRelativeFiles(
+                        DataManager.userDataDir,
+                    ),
+                    currentRegistryFiles = registry.records.flatMap { it.files }.toSet(),
+                    schemeIds = item.manifest.schemeIds,
+                )
+            }
+            val plan = SchemeArchive.planRestore(
+                archiveFiles = inputs.archiveFiles,
+                archiveUserdb = inputs.archiveUserdb,
+                currentUserFiles = inputs.currentUserFiles,
+                currentRegistryFiles = inputs.currentRegistryFiles,
+                schemeIds = inputs.schemeIds,
+                overwriteUserdb = false,
+            )
+            if (plan.restoreFiles.isEmpty()) {
+                archiveError = ArchiveErrorKind.FAILED
+                return@launch
+            }
+            restoreInputs = inputs
+            restoreTarget = item
+            restorePlan = plan
+            restoreOverwriteUserdb = false
+        }
+    }
+
+    /**
+     * 确认恢复：文件操作在 NonCancellable 里做（清理登记外文件 →
+     * 拷回归档集 → userdb 按确认页策略 → 登记原样写回），再走一期
+     * 部署编排。调用 switchTo 时已启用顺序仍是恢复前顺序，因此
+     * 一期回退恢复的顺序与上一方案正是恢复前状态（见验收报告注记）。
+     * 恢复集首个方案已是当前方案时 switchTo 会拒绝（目标即当前），
+     * 此时改走 reload + 确认路径，失败则留在确认页明示。
+     */
+    fun confirmRestore() {
+        val target = restoreTarget ?: return
+        val plan = restorePlan ?: return
+        if (restoreWorking) return
+        restoreWorking = true
+        archiveError = null
+        val preRestoreCurrent = currentSchemeId
+        val targetId = plan.newOrder.firstOrNull()
+        if (targetId == null) {
+            restoreWorking = false
+            archiveError = ArchiveErrorKind.FAILED
+            return
+        }
+        scope.launch {
+            try {
+                val ioOk = withContext(Dispatchers.IO + NonCancellable) {
+                    runCatching {
+                        val userDir = DataManager.userDataDir
+                        val userCanonical = userDir.canonicalPath
+                        val archiveDir = File(archiveRootDir(), target.dirName)
+                        val archiveCanonical = archiveDir.canonicalPath
+                        for (rel in plan.cleanFiles) {
+                            val file = File(userDir, rel).canonicalFile
+                            if (file.path.startsWith(userCanonical + File.separator) &&
+                                file.isFile
+                            ) {
+                                file.delete()
+                            }
+                        }
+                        fun copyBack(rel: String) {
+                            val src = File(archiveDir, rel).canonicalFile
+                            val dest = File(userDir, rel).canonicalFile
+                            if (!src.path.startsWith(archiveCanonical + File.separator)) return
+                            if (!dest.path.startsWith(userCanonical + File.separator)) return
+                            if (!src.isFile) return
+                            dest.parentFile?.mkdirs()
+                            src.copyTo(dest, overwrite = true)
+                        }
+                        for (rel in plan.restoreFiles) copyBack(rel)
+                        for (rel in plan.userdbRestoreMissing + plan.userdbOverwrite) {
+                            copyBack(rel)
+                        }
+                        val registryFile =
+                            File(archiveDir, SchemeArchive.REGISTRY_FILE_NAME)
+                        if (registryFile.isFile) {
+                            importPrefs.edit {
+                                putString(
+                                    SchemePackageImport.KEY_PACKAGE_REGISTRY,
+                                    registryFile.readText(),
+                                )
+                            }
+                        }
+                    }.isSuccess
+                }
+                if (!ioOk) {
+                    archiveError = ArchiveErrorKind.FAILED
+                    return@launch
+                }
+                val placeholders = plan.newOrder.map { SchemaItem(it, it) }
+                placeholders.forEach { item ->
+                    if (availableSchemas.none { it.id == item.id } &&
+                        enabledSchemas.none { it.id == item.id }
+                    ) {
+                        availableSchemas.add(item)
+                    }
+                }
+                if (targetId == preRestoreCurrent) {
+                    EngineFactory.current()?.reload()
+                    EngineFactory.current()?.selectSchema(targetId)
+                    if (verifyCurrent(targetId, 180_000)) {
+                        applyOrder(plan.newOrder)
+                        archivePage = false
+                        restoreTarget = null
+                        restorePlan = null
+                        restoreInputs = null
+                        loadSchemas()
+                    } else {
+                        archiveError = ArchiveErrorKind.RESTORE_DEPLOY_FAILED
+                    }
+                    return@launch
+                }
+                switchTo(SchemaItem(targetId, targetId)) {
+                    scope.launch {
+                        // 成功（空闲态）才把顺序定为恢复集；回退 / 失败态
+                        // 下编排器已把顺序恢复为恢复前，主列表横幅明示。
+                        if (switchState is SchemeSwitchState.Idle) {
+                            applyOrder(plan.newOrder)
+                        }
+                        loadSchemas()
+                    }
+                }
+                // 切换横幅在主列表展示：恢复确认页即刻让出，回主列表。
+                archivePage = false
+                restoreTarget = null
+                restorePlan = null
+                restoreInputs = null
+            } finally {
+                restoreWorking = false
+            }
+        }
+    }
+
     /** 打开下载表单：新增时空表单，行末下载时按条目预填（Header 永不预填）。 */
     fun openDownloadForm(prefill: SchemeDownload.DownloadEntry?) {
         downloadFormName = prefill?.name.orEmpty()
@@ -1020,6 +1337,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             // 校验页与等待页的返回在安装进行中禁用（落盘在 NonCancellable
             // 里跑，关页不中断安装，关了也无处回写状态）。
             // 下载交接的校验 / 错误页标题跟随下载方案（与导入区分）。
+            // 第四期归档页标题为归档/恢复，确认页返回回列表、列表返回回主列表。
             val inImportFlow = importPlan != null || importError != null || importBusy
             val inDownloadFlow = downloadPage || downloadFormOpen ||
                 downloadRunning || downloadError != null
@@ -1032,6 +1350,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                 inImportFlow ->
                                     if (importFromDownload) R.string.schema_download
                                     else R.string.schema_import
+                                archivePage -> R.string.schema_archive
                                 inDownloadFlow -> R.string.schema_download
                                 else -> R.string.schema_settings
                             },
@@ -1046,6 +1365,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                             when {
                                 importPlan != null -> cancelImport()
                                 importError != null -> clearImportError()
+                                restorePlan != null -> {
+                                    restoreTarget = null
+                                    restorePlan = null
+                                    restoreInputs = null
+                                    restoreOverwriteUserdb = false
+                                    archiveError = null
+                                }
+                                archivePage -> archivePage = false
                                 downloadFormOpen -> {
                                     downloadFormOpen = false
                                     downloadFormError = null
@@ -1060,7 +1387,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                 }
                             }
                         },
-                        enabled = !importInstalling && !importBusy,
+                        enabled = !importInstalling && !importBusy &&
+                            !archiveWorking && !restoreWorking,
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
@@ -1071,8 +1399,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    if (inImportFlow || inDownloadFlow) {
-                        // 导入 / 下载流程页不给菜单与编辑入口，防流程中途切走状态。
+                    if (inImportFlow || inDownloadFlow || archivePage) {
+                        // 导入 / 下载 / 归档流程页不给菜单与编辑入口，
+                        // 防流程中途切走状态。
                     } else if (editMode) {
                         TextButton(onClick = { editMode = false }) {
                             Text(stringResource(R.string.schema_edit_done))
@@ -1122,6 +1451,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                 onClick = {
                                     menuExpanded = false
                                     editMode = true
+                                },
+                            )
+                            // 第四期新增「归档/恢复」：低频逃生舱入口，不是
+                            // 常规切换机制；切换 / 部署 / 导入 / 下载进行中禁用。
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.schema_archive)) },
+                                enabled = !switchOrchestrator.isBusy() && !importBusy &&
+                                    !downloadRunning,
+                                onClick = {
+                                    menuExpanded = false
+                                    archivePage = true
+                                    refreshArchiveEntries()
                                 },
                             )
                         }
@@ -1438,6 +1779,120 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 }
                 Spacer(Modifier.height(16.dp))
+            }
+            return@Scaffold
+        }
+        // 第四期归档 / 恢复页整体替换列表内容（确认页优先于列表页）。
+        if (restorePlan != null && restoreTarget != null) {
+            ArchiveRestoreConfirmPage(
+                target = restoreTarget!!,
+                plan = restorePlan!!,
+                overwriteChecked = restoreOverwriteUserdb,
+                onOverwriteChange = { checked ->
+                    restoreOverwriteUserdb = checked
+                    // 勾选变化即按已扫描输入纯算重规划，不再扫盘。
+                    val inputs = restoreInputs
+                    if (inputs != null) {
+                        restorePlan = SchemeArchive.planRestore(
+                            archiveFiles = inputs.archiveFiles,
+                            archiveUserdb = inputs.archiveUserdb,
+                            currentUserFiles = inputs.currentUserFiles,
+                            currentRegistryFiles = inputs.currentRegistryFiles,
+                            schemeIds = inputs.schemeIds,
+                            overwriteUserdb = checked,
+                        )
+                    }
+                },
+                working = restoreWorking,
+                error = archiveError,
+                onConfirm = { confirmRestore() },
+                onCancel = {
+                    restoreTarget = null
+                    restorePlan = null
+                    restoreInputs = null
+                    restoreOverwriteUserdb = false
+                    archiveError = null
+                },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+            )
+            return@Scaffold
+        }
+        if (archivePage) {
+            ArchiveListPage(
+                entries = archiveEntries,
+                working = archiveWorking,
+                error = archiveError,
+                onCreateClick = {
+                    archiveNameInput = defaultArchiveName()
+                    archiveNameDialog = true
+                },
+                onRestoreClick = { openRestoreConfirm(it) },
+                onDeleteClick = { archiveDeleteTarget = it },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+            )
+            if (archiveNameDialog) {
+                AlertDialog(
+                    onDismissRequest = { archiveNameDialog = false },
+                    title = { Text(stringResource(R.string.schema_archive_create)) },
+                    text = {
+                        OutlinedTextField(
+                            value = archiveNameInput,
+                            onValueChange = { archiveNameInput = it },
+                            label = {
+                                Text(stringResource(R.string.schema_archive_name_label))
+                            },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                archiveNameDialog = false
+                                createArchive()
+                            },
+                            enabled = !archiveWorking,
+                        ) {
+                            Text(stringResource(R.string.schema_archive_name_confirm))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { archiveNameDialog = false }) {
+                            Text(stringResource(R.string.schema_import_cancel))
+                        }
+                    },
+                )
+            }
+            if (archiveDeleteTarget != null) {
+                AlertDialog(
+                    onDismissRequest = { archiveDeleteTarget = null },
+                    title = { Text(stringResource(R.string.schema_archive_delete_title)) },
+                    text = { Text(stringResource(R.string.schema_archive_delete_message)) },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                val item = archiveDeleteTarget
+                                archiveDeleteTarget = null
+                                if (item != null) deleteArchive(item)
+                            },
+                        ) {
+                            Text(stringResource(R.string.schema_archive_delete_confirm))
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { archiveDeleteTarget = null }) {
+                            Text(stringResource(R.string.schema_import_cancel))
+                        }
+                    },
+                )
             }
             return@Scaffold
         }
@@ -2683,6 +3138,301 @@ private fun ImportValidationPage(
         TextButton(
             onClick = onCancel,
             enabled = !installing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.schema_import_cancel))
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+/** 归档集列表行：目录名 + 清单 + 预格式化时间（列表按时间倒序）。 */
+private data class ArchiveListItem(
+    val dirName: String,
+    val manifest: SchemeArchive.ArchiveManifest,
+    val timeText: String,
+)
+
+/** 恢复确认页的扫描输入：勾选变化时纯算重规划，不再扫盘。 */
+private data class RestoreInputs(
+    val archiveFiles: List<String>,
+    val archiveUserdb: List<String>,
+    val currentUserFiles: Set<String>,
+    val currentRegistryFiles: Set<String>,
+    val schemeIds: List<String>,
+)
+
+/** 归档 / 恢复错误口径（界面文案据此映射，不直接拼字符串）。 */
+private enum class ArchiveErrorKind {
+    EMPTY,
+    EXISTS,
+    FAILED,
+    RESTORE_DEPLOY_FAILED,
+}
+
+@Composable
+private fun archiveErrorText(error: ArchiveErrorKind): String = when (error) {
+    ArchiveErrorKind.EMPTY -> stringResource(R.string.schema_archive_error_empty)
+    ArchiveErrorKind.EXISTS -> stringResource(R.string.schema_archive_error_exists)
+    ArchiveErrorKind.FAILED -> stringResource(R.string.schema_archive_error_failed)
+    ArchiveErrorKind.RESTORE_DEPLOY_FAILED ->
+        stringResource(R.string.schema_archive_error_restore_deploy)
+}
+
+/**
+ * 第四期归档集列表页：名 + 时间 + 方案 id 串 + 恢复 / 删除操作。
+ * 归档是低频逃生舱：新建归档只快照当前 user 层方案集，不碰内置包。
+ */
+@Composable
+private fun ArchiveListPage(
+    entries: List<ArchiveListItem>,
+    working: Boolean,
+    error: ArchiveErrorKind?,
+    onCreateClick: () -> Unit,
+    onRestoreClick: (ArchiveListItem) -> Unit,
+    onDeleteClick: (ArchiveListItem) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Spacer(Modifier.height(4.dp))
+        Button(
+            onClick = onCreateClick,
+            enabled = !working,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.schema_archive_create))
+        }
+        if (working) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                stringResource(R.string.schema_archive_creating),
+                fontSize = rowSubFontSize,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        if (error != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                archiveErrorText(error),
+                fontSize = rowFontSize,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        if (entries.isEmpty()) {
+            Text(
+                stringResource(R.string.schema_archive_empty),
+                fontSize = rowSubFontSize,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        entries.forEach { entry ->
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = ExpressiveShapes.medium,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Text(
+                        entry.manifest.name,
+                        fontSize = rowFontSize,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        entry.timeText,
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        entry.manifest.schemeIds.joinToString(", "),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        TextButton(
+                            onClick = { onRestoreClick(entry) },
+                            enabled = !working,
+                        ) {
+                            Text(stringResource(R.string.schema_archive_restore))
+                        }
+                        Spacer(Modifier.width(8.dp))
+                        IconButton(
+                            onClick = { onDeleteClick(entry) },
+                            enabled = !working,
+                        ) {
+                            Icon(
+                                Icons.Filled.Delete,
+                                contentDescription = null,
+                                modifier = Modifier.scale(0.8f),
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+/**
+ * 第四期恢复确认页：写明将被替换的文件数、清理数、userdb 处理方式
+ * 与回退路径；userdb 默认不覆盖现存，仅勾选时覆盖。确认后文件操作
+ * 在 NonCancellable 里做，操作中返回与按钮禁用。
+ */
+@Composable
+private fun ArchiveRestoreConfirmPage(
+    target: ArchiveListItem,
+    plan: SchemeArchive.RestorePlan,
+    overwriteChecked: Boolean,
+    onOverwriteChange: (Boolean) -> Unit,
+    working: Boolean,
+    error: ArchiveErrorKind?,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            target.manifest.name,
+            fontSize = rowFontSize,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            target.timeText,
+            fontSize = rowSubFontSize,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        SectionHeader(stringResource(R.string.schema_archive_restore_title))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = ExpressiveShapes.medium,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+            ),
+        ) {
+            Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                Text(
+                    stringResource(
+                        R.string.schema_archive_restore_files,
+                        plan.restoreFiles.size,
+                    ),
+                    fontSize = rowFontSize,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(
+                        R.string.schema_archive_restore_replace,
+                        plan.replaceExisting.size,
+                    ),
+                    fontSize = rowSubFontSize,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                if (plan.cleanFiles.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(
+                            R.string.schema_archive_restore_clean,
+                            plan.cleanFiles.size,
+                        ),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+                if (plan.userdbRestoreMissing.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(
+                            R.string.schema_archive_restore_userdb_missing,
+                            plan.userdbRestoreMissing.size,
+                        ),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+                if (plan.userdbSkippedExisting.isNotEmpty()) {
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        stringResource(
+                            R.string.schema_archive_restore_userdb_skip,
+                            plan.userdbSkippedExisting.size,
+                        ),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.schema_archive_restore_rollback),
+                    fontSize = rowSubFontSize,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Checkbox(
+                checked = overwriteChecked,
+                onCheckedChange = onOverwriteChange,
+                enabled = !working,
+            )
+            Text(
+                stringResource(R.string.schema_archive_restore_userdb_overwrite),
+                fontSize = rowFontSize,
+            )
+        }
+        if (error != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                archiveErrorText(error),
+                fontSize = rowFontSize,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (working) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                stringResource(R.string.schema_archive_restoring),
+                fontSize = rowSubFontSize,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = onConfirm,
+            enabled = !working,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.schema_archive_restore))
+        }
+        TextButton(
+            onClick = onCancel,
+            enabled = !working,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.schema_import_cancel))
