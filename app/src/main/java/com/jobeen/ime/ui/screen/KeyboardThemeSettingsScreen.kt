@@ -385,6 +385,19 @@ fun KeyboardThemeSettingsScreen(onBack: () -> Unit) {
                     Text("打开皮肤库（导入 / 编辑 / 同步 v3 皮肤）")
                 }
             }
+            Spacer(Modifier.height(10.dp))
+            SettingsGroup(title = "工具栏") {
+                TextButton(
+                    onClick = {
+                        context.startActivity(
+                            Intent(context, com.jobeen.ime.ui.ToolbarSettingsActivity::class.java),
+                        )
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text("工具栏自定义（中间按钮的增删与排序）")
+                }
+            }
             Spacer(Modifier.height(14.dp))
         }
     }
