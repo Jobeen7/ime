@@ -335,7 +335,10 @@ fun SkinLibraryScreen(onBack: () -> Unit) {
                     modifier = Modifier.padding(top = 10.dp),
                 )
             }
-            items(state.index.skins, key = { it.id }) { entry ->
+            // LazyColumn 的 key 在整列内必须唯一：分区前缀不可省——
+            // 草稿的 skinId 恒等于其源皮肤 id，不加前缀必与皮肤区撞 key
+            // 抛 IllegalArgumentException 整页闪退（真机崩溃实证）。
+            items(state.index.skins, key = { "skin:${it.id}" }) { entry ->
                 val isActive = state.active?.skinId == entry.id
                 val isLastGood = state.lastGood?.skinId == entry.id
                 Column(
@@ -423,7 +426,7 @@ fun SkinLibraryScreen(onBack: () -> Unit) {
                         modifier = Modifier.padding(top = 10.dp),
                     )
                 }
-                items(state.index.layouts, key = { it.id }) { layoutEntry ->
+                items(state.index.layouts, key = { "layout:${it.id}" }) { layoutEntry ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -496,7 +499,7 @@ fun SkinLibraryScreen(onBack: () -> Unit) {
                         modifier = Modifier.padding(top = 10.dp),
                     )
                 }
-                items(state.drafts, key = { it.skinId }) { meta ->
+                items(state.drafts, key = { "draft:${it.skinId}" }) { meta ->
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
