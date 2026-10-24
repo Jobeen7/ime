@@ -76,6 +76,7 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
@@ -1440,82 +1441,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Spacer(Modifier.height(4.dp))
-            // 第一期行元数据：版本 / 来源 / 变体（行与卡片共用）
+            // 行元数据：切换失败 / 回退横幅按 id 找名字用。
             val allRowItems = enabledSchemas + availableSchemas
-            val sourceBuiltinLabel = stringResource(R.string.schema_source_builtin)
-            val sourceUserLabel = stringResource(R.string.schema_source_user)
-            val sourceUrlLabel = stringResource(R.string.schema_source_url)
-            fun sourceLabelFor(item: SchemaItem): String? =
-                if (item.id in urlSourceIds) {
-                    sourceUrlLabel
-                } else {
-                    when (sourceById[item.id]) {
-                        SchemeSwitchPolicy.SchemeSource.USER -> sourceUserLabel
-                        SchemeSwitchPolicy.SchemeSource.BUILTIN -> sourceBuiltinLabel
-                        null -> null
-                    }
-                }
-            fun rowMetaFor(item: SchemaItem): SchemaRowMeta = SchemaRowMeta(
-                version = versionById[item.id].orEmpty(),
-                sourceLabel = sourceLabelFor(item),
-                variantLabel = WanxiangUpdateManager.variantNameOf(item.id, item.name),
-            )
             // 忙态派生自组合态镜像（不要直接读状态机的非 State 字段作组合判断）
             val switchBusy = switchState is SchemeSwitchState.Switching ||
                 switchState is SchemeSwitchState.Deploying ||
                 switchState is SchemeSwitchState.RollingBack
-            // 顶部当前方案卡（v2 原型）：安静卡片，无撞色、无芯片、
-            // 无回兜底按钮；名 + 灰字副行（变体 · 键盘 · 版本 · 来源，纯文本）。
-            val currentItem = allRowItems.firstOrNull { it.id == currentSchemeId }
-                ?: enabledSchemas.firstOrNull()
-            if (currentItem != null) {
-                val meta = rowMetaFor(currentItem)
-                val subParts = listOfNotNull(
-                    meta.variantLabel,
-                    schemaLayoutTag(context, currentItem.layout),
-                    meta.version.ifBlank { null },
-                    meta.sourceLabel,
-                )
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-                ) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        Text(
-                            stringResource(R.string.schema_current_title),
-                            fontSize = 12.sp,
-                            lineHeight = 17.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            currentItem.name.ifBlank { currentItem.id },
-                            fontSize = 16.sp,
-                            lineHeight = 21.sp,
-                            fontWeight = FontWeight.Bold,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onSurface,
-                        )
-                        if (subParts.isNotEmpty()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                subParts.joinToString(" · "),
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(8.dp))
-            }
             // 切换 / 部署 / 回退横幅：Idle 时不占位（视觉收敛，逻辑不动）
             when (val s = switchState) {
                 is SchemeSwitchState.Switching -> {
@@ -1619,10 +1550,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            // 已启用列表（v2 原型）：一张分组卡片，行只留名 + 灰字 id，
-            // 无芯片、无默认标记；行点按切换。编辑模式仍走排序列表
-            // （无芯片、无删除——删除会把方案送进本页不再显示的未启用区，
-            // 禁用入口随管理页阶段一并补回）。
+            // 已启用列表：一张分组卡片，行只留名 + 灰字 id，无芯片、
+            // 无默认标记；行点按切换。当前方案由列表首行高亮表达
+            // （首行底色 + 无障碍状态描述，不另立当前卡、不加标签）；
+            // loadSchemas 已把当前方案移到首位。编辑模式仍走排序列表；
+            // 启用/禁用入口在方案列表管理页。
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
@@ -1641,11 +1573,23 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 } else {
                     Column {
                         enabledSchemas.forEachIndexed { index, schema ->
+                            val isCurrentRow = index == 0
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .semantics(mergeDescendants = true) {}
+                                    .semantics(mergeDescendants = true) {
+                                        if (isCurrentRow) {
+                                            stateDescription = "当前方案"
+                                        }
+                                    }
                                     .clickable(enabled = !switchBusy) { switchTo(schema) }
+                                    .background(
+                                        if (isCurrentRow) {
+                                            MaterialTheme.colorScheme.primaryContainer
+                                        } else {
+                                            Color.Transparent
+                                        },
+                                    )
                                     .padding(horizontal = 16.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -1657,6 +1601,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
+                                        color = if (isCurrentRow) {
+                                            MaterialTheme.colorScheme.onPrimaryContainer
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurface
+                                        },
                                     )
                                     if (schema.name.isNotBlank()) {
                                         Spacer(Modifier.height(4.dp))
@@ -1664,7 +1613,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                             schema.id,
                                             fontSize = 14.sp,
                                             lineHeight = 20.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            color = if (isCurrentRow) {
+                                                MaterialTheme.colorScheme.onPrimaryContainer
+                                                    .copy(alpha = 0.7f)
+                                            } else {
+                                                MaterialTheme.colorScheme.onSurfaceVariant
+                                            },
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
@@ -1692,13 +1646,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         }
     }
 }
-
-/** 行副信息：版本（schema/version）、来源标签、变体标签（可空）。 */
-private data class SchemaRowMeta(
-    val version: String = "",
-    val sourceLabel: String? = null,
-    val variantLabel: String? = null,
-)
 
 @Composable
 private fun ReorderableSchemaList(
