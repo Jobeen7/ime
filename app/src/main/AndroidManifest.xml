@@ -91,6 +91,13 @@
             android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
+        <activity
+            android:name=".ui.SchemeUpdateActivity"
+            android:exported="false"
+            android:label="@string/schema_update_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
         <provider
             android:name=".ui.AppFilesDocumentsProvider"
             android:authorities="${applicationId}.files.documents"
