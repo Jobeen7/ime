@@ -83,6 +83,9 @@ class UserDictUiState {
     var deletedWords by mutableStateOf<List<String>?>(null)
     var noticeTitle by mutableStateOf("")
     var noticeMessage by mutableStateOf<String?>(null)
+    /** 词典列表加载失败（超时/异常）时为真：区别于“加载中”（null）和“确实为空”（空表）。
+     * 失败不锁死为空表，界面出重试入口；切后台再回来时 Activity 也会重载。 */
+    var dictsLoadFailed by mutableStateOf(false)
 }
 
 private fun formatTime(time: Long): String {
@@ -108,6 +111,7 @@ fun UserDictScreen(
     onShowDeletedWords: () -> Unit,
     onRestoreDeletedWord: (String) -> Unit,
     onDismissDeletedWords: () -> Unit,
+    onRetryDictList: () -> Unit = {},
 ) {
     var showDictDialog by remember { mutableStateOf(false) }
     var showHttpRiskConfirm by remember { mutableStateOf(false) }
@@ -166,6 +170,25 @@ fun UserDictScreen(
             }
 
             when {
+                dicts == null && state.dictsLoadFailed -> {
+                    // 加载失败态：不冒充“暂无词典”，给重试入口。
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        Text(
+                            text = stringResource(R.string.user_dict_load_failed),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(12.dp))
+                        androidx.compose.material3.Button(onClick = onRetryDictList) {
+                            Text(stringResource(R.string.user_dict_retry))
+                        }
+                    }
+                }
                 dicts == null -> {
                     CircularProgressIndicator(
                         modifier = Modifier

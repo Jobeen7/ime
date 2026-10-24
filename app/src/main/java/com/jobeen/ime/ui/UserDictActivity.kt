@@ -22,6 +22,7 @@ import com.jobeen.ime.ui.screen.UserDictUiState
 import com.jobeen.ime.ui.theme.ImeTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -38,6 +39,7 @@ class UserDictActivity : ComponentActivity() {
 
     private val uiState = UserDictUiState()
     private var session: RimeSession? = null
+    private var loadJob: Job? = null
 
     private val importLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -108,11 +110,21 @@ class UserDictActivity : ComponentActivity() {
                         )
                     },
                     onDismissDeletedWords = { uiState.deletedWords = null },
+                    onRetryDictList = { loadDictList() },
                 )
             }
         }
 
         loadDictList()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // 曾加载失败（重置后引擎重启/部署窗口内打开正撞上超时）时，
+        // 回到本页自动重载，不再靠用户重进页面才恢复。
+        if (uiState.dicts == null) {
+            loadDictList()
+        }
     }
 
     override fun onDestroy() {
@@ -129,7 +141,10 @@ class UserDictActivity : ComponentActivity() {
     }
 
     private fun loadDictList() {
-        lifecycleScope.launch(Dispatchers.IO) {
+        // 失败不锁死为空表：加载中保持 null（转圈），失败置失败态（重试入口），
+        // 只有真正取回的表才写 dicts；取表异常也不再用空表吞掉。
+        loadJob?.cancel()
+        loadJob = lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val s = RimeDaemon.createSession(SESSION_NAME)
                 session = s
@@ -140,16 +155,19 @@ class UserDictActivity : ComponentActivity() {
                 if (ready != true) {
                     throw IllegalStateException("Rime 启动超时")
                 }
-                val dicts = runCatching { s.runOnReady { getUserDictList() } }
-                    .getOrDefault(emptyList())
+                val dicts = s.runOnReady { getUserDictList() }
                 withContext(Dispatchers.Main) {
+                    uiState.dictsLoadFailed = false
                     uiState.dicts = dicts
                     uiState.selectedDict = dicts.firstOrNull()
                 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // 被新一次加载取代的旧加载：不置失败态、不弹提示。
+                throw e
             } catch (e: Exception) {
                 Timber.w(e, "Failed to load user dict list")
                 withContext(Dispatchers.Main) {
-                    uiState.dicts = emptyList()
+                    uiState.dictsLoadFailed = true
                     ToastUtil.showToast("词典列表加载失败")
                 }
             }
