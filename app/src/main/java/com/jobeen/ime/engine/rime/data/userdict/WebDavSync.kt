@@ -1,7 +1,9 @@
 package com.jobeen.ime.engine.rime.data.userdict
 
 import com.jobeen.ime.base.util.appContext
+import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.engine.rime.daemon.RimeSession
+import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -16,6 +18,9 @@ import okhttp3.Response
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.nio.file.Files
+import java.text.SimpleDateFormat
+import java.util.Locale
 import java.net.URI
 import java.net.URLEncoder
 import java.text.Normalizer
@@ -590,7 +595,391 @@ object WebDavSync {
     suspend fun testConnection(): Result<List<RemoteEntry>> = withContext(Dispatchers.IO) {
         runCatching { parseRemoteEntries(propfindDirXml()) }
     }
+
+    // ---- 方案目录同步（RIME 页 / FAB 同步共用，与词典合并同步并存） ----
+    //
+    // 口径（Lee 定）：整个用户方案目录（user/）同步到远端 UUID 文件夹，
+    // 远端根 = 已配置的同步目录 + UUID。用户词典页原有的词库合并上传/
+    // 下载保持不动（那是另一条线：同步根目录下的 <词典>.userdict.txt）。
+    //
+    // 文件集合：user/ 下全部文件，除外——
+    // - build/（部署输出，部署可再生）
+    // - *.userdb/（运行中 LevelDB，见下）
+    // - installation.yaml（本机安装标识）
+    // - *.gram（语法模型，可经更新通道重下）
+    // - scheme-archive/（已去掉的归档功能残留目录，不复活）
+    // - *.lock / *.log / *.tmp（临时文件）
+    // - *.userdict.txt（词典文本由词库阶段专管，不走文件同步）
+    // 词库处理（选定：导出后同步，不停引擎快照）：运行中 LevelDB 不能
+    // 直接按文件同步（句柄打开、文件随时变，拷出来也可能是不一致快照），
+    // 停引擎快照又会打断打字。故词库内容以热导出文本形式同步：每本词典
+    // 先 GET 远端文本合并导入（404 = 首次上传，跳过；其他失败中止整次
+    // 同步，防没合并就覆盖丢词），再热导出 PUT；导入导出全走运行中引擎
+    // 的句柄，无需停引擎。代价与词典合并同步相同：LevelDB 内部元数据
+    // （精确 dee 历史）不随文本走，词/码/权重本身完整。
+    // 冲突规则（文件阶段）：按文件 mtime 末写胜出——本地新则上传、远端
+    // 新则下载、1 秒内视为相等跳过、远端无 mtime 时本地胜出；本地缺失
+    // 则下载恢复。删除单向传播：上次同步后本地删掉的文件，远端跟删
+    // （以同步后本地集合为准，下次同步不再复活）；远端删掉的文件不在
+    // 本地删除之列（本地缺失 + 远端存在 = 下载恢复，见上）。
+    // 删除词表（deleted-words）不在目录同步范围，仍走用户词典页那条线。
+    // 同步中途本地文件变化不加锁：以开始时快照为准，变化留待下次同步。
+
+    private val dirSyncMutex = Mutex()
+
+    /** 目录同步结果：上传 / 下载 / 远端跟删的文件数、词典数与词条数、失败文件。 */
+    data class DirSyncResult(
+        val uploaded: Int,
+        val downloaded: Int,
+        val deletedRemote: Int,
+        val dicts: Int,
+        val dictEntries: Int,
+        val failedFiles: List<String>,
+    )
+
+    /** 单文件同步动作（纯函数，可单测）。 */
+    internal enum class FileSyncAction { UPLOAD, DOWNLOAD, SKIP }
+
+    internal fun decideFileSync(localMtimeMs: Long?, remoteMtimeMs: Long?): FileSyncAction =
+        when {
+            localMtimeMs == null && remoteMtimeMs == null -> FileSyncAction.SKIP
+            localMtimeMs == null -> FileSyncAction.DOWNLOAD
+            remoteMtimeMs == null -> FileSyncAction.UPLOAD
+            kotlin.math.abs(localMtimeMs - remoteMtimeMs) <= 1000L -> FileSyncAction.SKIP
+            localMtimeMs > remoteMtimeMs -> FileSyncAction.UPLOAD
+            else -> FileSyncAction.DOWNLOAD
+        }
+
+    /** 目录同步排除规则（纯函数，可单测）：rel 为 user/ 下的相对路径。 */
+    internal fun isExcludedSyncPath(rel: String, isDir: Boolean): Boolean {
+        val segments = rel.split("/")
+        if (segments.firstOrNull() == "build") return true
+        if (segments.firstOrNull() == "scheme-archive") return true
+        if (segments.any { it.endsWith(".userdb") }) return true
+        if (!isDir) {
+            val name = segments.last()
+            if (name == "installation.yaml") return true
+            if (name.endsWith(".userdict.txt")) return true
+            if (name.endsWith(".gram") || name.endsWith(".lock") ||
+                name.endsWith(".log") || name.endsWith(".tmp")
+            ) {
+                return true
+            }
+        }
+        return false
+    }
+
+    /** 远端 UUID 文件夹的完整 URL（显示用，与同步用同一构成）。 */
+    fun dirSyncRemoteUrl(context: android.content.Context): String =
+        "${UserDictPrefs.syncDirUrl()}/${RimeSyncPrefs.syncFolderUuid(context)}"
+
+    private fun dirUrl(base: String, rel: String): String {
+        val encoded = rel.split("/").joinToString("/") {
+            URLEncoder.encode(it, Charsets.UTF_8.name()).replace("+", "%20")
+        }
+        return "$base/$encoded"
+    }
+
+    private data class DirEntry(
+        val relPath: String,
+        val isDirectory: Boolean,
+        val lastModifiedMs: Long?,
+    )
+
+    private val lastModifiedRegex =
+        Regex("<(?:\\w+:)?getlastmodified>(.*?)</(?:\\w+:)?getlastmodified>",
+            RegexOption.IGNORE_CASE)
+    private val rfc1123Format =
+        SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US)
+    private val iso8601Format =
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+
+    private fun parseLastModified(raw: String?): Long? {
+        if (raw.isNullOrBlank()) return null
+        return runCatching { rfc1123Format.parse(raw.trim())?.time }
+            .getOrNull()
+            ?: runCatching { iso8601Format.parse(raw.trim())?.time }.getOrNull()
+    }
+
+    private suspend fun propfindDirEntries(dirUrl: String): List<DirEntry> =
+        withContext(Dispatchers.IO) {
+            checkConfigured()
+            val body = """
+                <?xml version="1.0" encoding="utf-8"?>
+                <d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:resourcetype/><d:getlastmodified/></d:prop></d:propfind>
+            """.trimIndent().toRequestBody("application/xml; charset=utf-8".toMediaType())
+            val request = Request.Builder()
+                .url(if (dirUrl.endsWith("/")) dirUrl else "$dirUrl/")
+                .header("Authorization", authHeader())
+                .header("Depth", "1")
+                .method("PROPFIND", body)
+                .build()
+            val xml = client.newCall(request).execute().use { response ->
+                when {
+                    response.isSuccessful -> response.body?.string().orEmpty()
+                    // UUID 文件夹尚不存在 = 首次同步，视为空远端（后续 MKCOL/PUT 会建）
+                    response.code == 404 -> return@withContext emptyList()
+                    else -> throw httpError("列出远端目录", response.code, errorDetail(response))
+                }
+            }
+            val dirPath = runCatching { decodeHref(URI(dirUrl).path) }
+                .getOrDefault("").trimEnd('/')
+            responseRegex.findAll(xml).mapNotNull { match ->
+                val content = match.groupValues[1]
+                val href = hrefRegex.find(content)?.groupValues?.get(1)?.trim()
+                    ?: return@mapNotNull null
+                val path = hrefPath(decodeHref(unescapeXmlEntities(href))).trimEnd('/')
+                if (path.isEmpty() || path == dirPath) return@mapNotNull null
+                val name = path.substringAfterLast("/")
+                if (name.isEmpty()) return@mapNotNull null
+                val isCollection = collectionRegex.containsMatchIn(content)
+                val mtime = parseLastModified(
+                    lastModifiedRegex.find(content)?.groupValues?.get(1),
+                )
+                DirEntry(name, isCollection, mtime)
+            }.distinct().toList()
+        }
+
+    /** 递归列出远端 UUID 文件夹下的全部文件（相对路径，排除规则同本地）。 */
+    private suspend fun walkRemoteDir(base: String, relDir: String): List<DirEntry> {
+        val out = mutableListOf<DirEntry>()
+        val dirUrl = if (relDir.isEmpty()) base else dirUrl(base, relDir)
+        for (entry in propfindDirEntries(dirUrl)) {
+            val rel = if (relDir.isEmpty()) entry.relPath else "$relDir/${entry.relPath}"
+            if (entry.isDirectory) {
+                if (!isExcludedSyncPath(rel, true)) {
+                    out += walkRemoteDir(base, rel)
+                }
+            } else if (!isExcludedSyncPath(rel, false)) {
+                out += DirEntry(rel, false, entry.lastModifiedMs)
+            }
+        }
+        return out
+    }
+
+    /** 本地 user/ 下的可同步文件（相对路径 + 文件），排除规则同远端。 */
+    private fun collectLocalSyncFiles(userDir: File): List<Pair<String, File>> {
+        val out = mutableListOf<Pair<String, File>>()
+        userDir.walkTopDown()
+            .onEnter { dir ->
+                if (dir == userDir) return@onEnter true
+                val rel = dir.relativeTo(userDir).path.replace(File.separatorChar, '/')
+                !isExcludedSyncPath(rel, true) && !Files.isSymbolicLink(dir.toPath())
+            }
+            .forEach { file ->
+                if (file == userDir || file.isDirectory) return@forEach
+                if (Files.isSymbolicLink(file.toPath())) return@forEach
+                val rel = file.relativeTo(userDir).path.replace(File.separatorChar, '/')
+                if (!isExcludedSyncPath(rel, false)) {
+                    out += rel to file
+                }
+            }
+        return out
+    }
+
+    /** MKCOL（失败只记日志：目录已存在回 405 属正常，后续 PUT 会报真实原因）。 */
+    private fun mkcolQuiet(url: String) {
+        runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", authHeader())
+                .method("MKCOL", "".toRequestBody(null))
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful && response.code != 405) {
+                    Timber.w("MKCOL $url -> HTTP ${response.code}")
+                }
+            }
+        }.onFailure { Timber.w(it, "MKCOL failed: $url") }
+    }
+
+    private fun mkcolParents(base: String, rel: String) {
+        val parts = rel.split("/").dropLast(1)
+        var acc = ""
+        for (part in parts) {
+            acc = if (acc.isEmpty()) part else "$acc/$part"
+            mkcolQuiet(dirUrl(base, acc))
+        }
+    }
+
+    private fun httpPutFile(url: String, file: File) {
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", authHeader())
+            .put(file.asRequestBody("application/octet-stream".toMediaType()))
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw httpError("上传", response.code, errorDetail(response))
+            }
+        }
+    }
+
+    /** GET 到目标文件（流式 + 上限）；404 返回 null（调用方按缺失处理）。 */
+    private fun httpGetToFile(url: String, target: File): Boolean {
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", authHeader())
+            .header("Accept-Encoding", "identity")
+            .get()
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (response.code == 404) return false
+            if (!response.isSuccessful) {
+                throw httpError("下载", response.code, errorDetail(response))
+            }
+            val body = response.body ?: throw IllegalStateException("下载内容为空")
+            val tmp = File(target.parentFile, "${target.name}.tmp-${System.nanoTime()}")
+            try {
+                tmp.outputStream().use { out ->
+                    body.byteStream().copyToWithLimit(out, MAX_SYNC_FILE_BYTES)
+                }
+                if (target.exists()) target.delete()
+                if (!tmp.renameTo(target)) {
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+            } catch (e: Exception) {
+                tmp.delete()
+                throw e
+            }
+        }
+        return true
+    }
+
+    private fun httpDelete(url: String) {
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", authHeader())
+            .delete()
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful && response.code != 404) {
+                throw httpError("删除远端文件", response.code, errorDetail(response))
+            }
+        }
+    }
+
+    /**
+     * 方案目录同步：本地 user/ ↔ 远端 UUID 文件夹。
+     * 必须在后台线程调用；与词典合并同步共用同一 WebDAV 配置与客户端，
+     * 但互斥锁独立（两者可先后跑，不可同时跑同一远端）。
+     */
+    suspend fun syncSchemeDir(session: RimeSession): Result<DirSyncResult> =
+        dirSyncMutex.withLock {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    checkConfigured()
+                    val uuid = RimeSyncPrefs.syncFolderUuid(appContext)
+                    val base = "${UserDictPrefs.syncDirUrl()}/$uuid"
+                    ensureSyncDir()
+                    mkcolQuiet(base)
+                    val userDir = DataManager.userDataDir
+                    val localFiles = collectLocalSyncFiles(userDir)
+                    val localByRel = localFiles.toMap()
+                    val remoteFiles = walkRemoteDir(base, "")
+                    val remoteByRel = remoteFiles.associateBy { it.relPath }
+                    var uploaded = 0
+                    var downloaded = 0
+                    var deletedRemote = 0
+                    val failed = mutableListOf<String>()
+                    // 1. 删除传播：上次同步后本地删掉、远端还在的文件，远端跟删。
+                    val known = RimeSyncPrefs.knownFiles(appContext)
+                    for (rel in known) {
+                        if (rel !in localByRel && rel in remoteByRel) {
+                            runCatching { httpDelete(dirUrl(base, rel)) }
+                                .onSuccess { deletedRemote++ }
+                                .onFailure {
+                                    failed += rel
+                                    Timber.w(it, "Dir sync remote delete failed: $rel")
+                                }
+                        }
+                    }
+                    // 2. 文件同步（mtime 末写胜出）。
+                    val allRels = (localByRel.keys + remoteByRel.keys).toSet()
+                    for (rel in allRels) {
+                        val local = localByRel[rel]
+                        val remote = remoteByRel[rel]
+                        when (decideFileSync(local?.lastModified(), remote?.lastModifiedMs)) {
+                            FileSyncAction.SKIP -> Unit
+                            FileSyncAction.UPLOAD -> {
+                                runCatching {
+                                    mkcolParents(base, rel)
+                                    httpPutFile(dirUrl(base, rel), local!!)
+                                }.onSuccess { uploaded++ }
+                                    .onFailure {
+                                        failed += rel
+                                        Timber.w(it, "Dir sync upload failed: $rel")
+                                    }
+                            }
+                            FileSyncAction.DOWNLOAD -> {
+                                runCatching {
+                                    val target = File(userDir, rel)
+                                    target.parentFile?.mkdirs()
+                                    httpGetToFile(dirUrl(base, rel), target)
+                                }.onSuccess { downloaded++ }
+                                    .onFailure {
+                                        failed += rel
+                                        Timber.w(it, "Dir sync download failed: $rel")
+                                    }
+                            }
+                        }
+                    }
+                    // 3. 词库阶段：每本词典先下载合并再 PUT（与词典同步同一口径）。
+                    var dictCount = 0
+                    var dictEntries = 0
+                    val dicts = session.runOnReady { getUserDictList() }
+                    for (dict in dicts) {
+                        val remoteDictUrl = dirUrl(base, remoteFileName(dict))
+                        val tmpIn = File(
+                            appContext.cacheDir,
+                            "dirsync-download-$dict-${System.nanoTime()}.txt",
+                        )
+                        try {
+                            val found = httpGetToFile(remoteDictUrl, tmpIn)
+                            if (found) {
+                                val count = session.runOnReady {
+                                    UserDictManager.importUserDictInChunks(tmpIn) { chunk ->
+                                        importUserDictLive(dict, chunk.absolutePath)
+                                    }
+                                }
+                                if (count < 0) {
+                                    throw IllegalStateException("导入用户词典失败：$dict")
+                                }
+                            }
+                        } finally {
+                            tmpIn.delete()
+                        }
+                        val tmpOut = File(
+                            appContext.cacheDir,
+                            "dirsync-upload-$dict-${System.nanoTime()}.txt",
+                        )
+                        try {
+                            val count = session.runOnReady {
+                                exportUserDictLive(dict, tmpOut.absolutePath)
+                            }
+                            if (count < 0) {
+                                throw IllegalStateException("导出用户词典失败：$dict")
+                            }
+                            httpPutFile(remoteDictUrl, tmpOut)
+                            dictCount++
+                            dictEntries += count
+                        } finally {
+                            tmpOut.delete()
+                        }
+                    }
+                    // 4. 已知集合更新为同步后本地文件集合。
+                    val postLocal = collectLocalSyncFiles(userDir).map { it.first }.toSet()
+                    RimeSyncPrefs.setKnownFiles(appContext, postLocal)
+                    DirSyncResult(uploaded, downloaded, deletedRemote, dictCount, dictEntries, failed)
+                }
+            }
+        }
+
+    /** 单文件同步上限：与本地导入单条目上限同口径（256MB）。 */
+    private const val MAX_SYNC_FILE_BYTES = 256L * 1024 * 1024
 }
+
 
 private val xmlEntityRegex =
     Regex("&(amp|lt|gt|quot|apos|#\\d+|#x[0-9a-fA-F]+);")
