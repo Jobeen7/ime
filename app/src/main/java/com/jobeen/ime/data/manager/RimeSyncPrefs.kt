@@ -29,16 +29,21 @@ object RimeSyncPrefs {
         }
     }
 
-    /** 上次同步结束时的本地文件集合（相对路径），用于识别“本地已删 → 远端跟删”。 */
-    fun knownFiles(context: Context): Set<String> =
-        prefs(context).getString(KEY_KNOWN_FILES, null)
+    /**
+     * 上次同步结束时的本地文件集合（相对路径），用于识别“本地已删 → 远端跟删”。
+     * 多目录模型下按目录分键（known_files_<目录名>）：旧无后缀键不再读写，
+     * 各目录首同步以空集起步（只上传、不跟删，旧远端内容不进新目录）。
+     */
+    fun knownFiles(context: Context, dir: String): Set<String> =
+        prefs(context).getString("${KEY_KNOWN_FILES}_$dir", null)
             ?.split(",")
             ?.filter { it.isNotEmpty() }
             ?.toSet()
             ?: emptySet()
 
-    fun setKnownFiles(context: Context, files: Set<String>) {
-        prefs(context).edit().putString(KEY_KNOWN_FILES, files.joinToString(",")).apply()
+    fun setKnownFiles(context: Context, dir: String, files: Set<String>) {
+        prefs(context).edit()
+            .putString("${KEY_KNOWN_FILES}_$dir", files.joinToString(",")).apply()
     }
 
     /** 键盘显示 RIME 通知开关，默认开（只管部署/同步结果通知，不管语音提示）。 */
