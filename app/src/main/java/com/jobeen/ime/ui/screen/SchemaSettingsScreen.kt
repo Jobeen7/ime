@@ -11,6 +11,7 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.Arrangement
@@ -18,6 +19,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -27,10 +29,12 @@ import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.MoreVert
@@ -88,6 +92,7 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.ngram.DownloadResult
 import com.jobeen.ime.base.ngram.GramModelDownloader
 import com.jobeen.ime.base.update.WanxiangUpdateManager
+import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
@@ -1043,6 +1048,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                 downloadRunning -> cancelDownload()
                                 downloadError != null -> downloadError = null
                                 downloadPage -> downloadPage = false
+                                // 管理页返回即放弃草稿（保存 pill 才是提交口）。
+                                editMode -> editMode = false
                                 else -> {
                                     saveOrder(prefs, enabledSchemas)
                                     onBack()
@@ -1063,11 +1070,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     if (inImportFlow || inDownloadFlow) {
                         // 导入 / 下载流程页不给菜单与编辑入口，
                         // 防流程中途切走状态。
-                    } else if (editMode) {
-                        TextButton(onClick = { editMode = false }) {
-                            Text(stringResource(R.string.schema_edit_done))
-                        }
-                    } else {
+                    } else if (!editMode) {
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(
                                 Icons.Filled.MoreVert,
@@ -1543,34 +1546,39 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 else -> {}
             }
             if (editMode) {
-                Text(
-                    stringResource(R.string.schema_edit_hint),
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                // 管理页：勾选卡 + 保存 pill + 拖拽卡；草稿只在保存时提交，
+                // 返回放弃。当前方案钉在首位（首位 = 当前是系统不变量，
+                // 移走会触发键盘侧隐式切方案，故锁勾选、锁拖动）。
+                val manageSavedText = stringResource(R.string.schema_manage_saved)
+                SchemaManageContent(
+                    allItems = enabledSchemas + availableSchemas,
+                    initialEnabled = enabledSchemas.toList(),
+                    currentId = currentSchemeId,
+                    onSave = { newEnabled ->
+                        val all = enabledSchemas + availableSchemas
+                        val enabledIds = newEnabled.map { it.id }.toSet()
+                        enabledSchemas.clear()
+                        enabledSchemas.addAll(newEnabled)
+                        availableSchemas.clear()
+                        availableSchemas.addAll(all.filter { it.id !in enabledIds })
+                        saveOrder(prefs, enabledSchemas)
+                        editMode = false
+                        ToastUtil.showToast(manageSavedText)
+                    },
                 )
-            }
-            // 已启用列表：一张分组卡片，行只留名 + 灰字 id，无芯片、
-            // 无默认标记；行点按切换。当前方案由列表首行高亮表达
-            // （首行底色 + 无障碍状态描述，不另立当前卡、不加标签）；
-            // loadSchemas 已把当前方案移到首位。编辑模式仍走排序列表；
-            // 启用/禁用入口在方案列表管理页。
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            ) {
-                if (editMode) {
-                    ReorderableSchemaList(
-                        items = enabledSchemas,
-                        // 编辑模式下行点选不切换（防排序时误触）
-                        onRowClick = null,
-                        trailingIcon = {},
-                    )
-                } else {
+            } else {
+                // 已启用列表：一张分组卡片，行只留名 + 灰字 id，无芯片、
+                // 无默认标记；行点按切换。当前方案由列表首行高亮表达
+                // （首行底色 + 无障碍状态描述，不另立当前卡、不加标签）；
+                // loadSchemas 已把当前方案移到首位。
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                ) {
                     Column {
                         enabledSchemas.forEachIndexed { index, schema ->
                             val isCurrentRow = index == 0
@@ -1634,16 +1642,185 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.schema_enabled_only_footnote),
+                    fontSize = 12.sp,
+                    lineHeight = 17.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(R.string.schema_enabled_only_footnote),
-                fontSize = 12.sp,
-                lineHeight = 17.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
 
         }
+    }
+}
+
+/**
+ * 方案列表管理页内容：勾选卡（蓝勾选圈）+ 已选方案 + 蓝色保存 pill +
+ * 拖拽卡（≡ 柄）。草稿只活在本页，保存才提交；返回放弃。
+ * 当前方案锁勾选、锁拖动、钉首位（首位 = 当前是系统不变量）。
+ */
+@Composable
+private fun SchemaManageContent(
+    allItems: List<SchemaItem>,
+    initialEnabled: List<SchemaItem>,
+    currentId: String,
+    onSave: (List<SchemaItem>) -> Unit,
+) {
+    val draftEnabled = remember {
+        mutableStateListOf<SchemaItem>().apply { addAll(initialEnabled) }
+    }
+    val draftIds = draftEnabled.map { it.id }.toSet()
+    val isCurrent: (SchemaItem) -> Boolean = { it.id == currentId && currentId.isNotEmpty() }
+
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = stringResource(R.string.schema_manage_selected),
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.weight(1f))
+            Button(
+                onClick = { onSave(draftEnabled.toList()) },
+                enabled = draftEnabled.isNotEmpty(),
+                shape = RoundedCornerShape(50),
+                contentPadding = PaddingValues(horizontal = 20.dp, vertical = 6.dp),
+            ) {
+                Text(stringResource(R.string.schema_manage_save), fontSize = 14.sp)
+            }
+        }
+        Spacer(Modifier.height(4.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+            Column {
+                allItems.forEachIndexed { index, item ->
+                    val checked = item.id in draftIds
+                    val locked = isCurrent(item)
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .semantics(mergeDescendants = true) {
+                                if (locked) {
+                                    stateDescription = "当前方案"
+                                }
+                            }
+                            .clickable(enabled = !locked) {
+                                if (checked) {
+                                    draftEnabled.removeAll { it.id == item.id }
+                                } else {
+                                    draftEnabled.add(item)
+                                }
+                            }
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        // 蓝勾选圈：选中 = 蓝底白勾，未选中 = 灰圈。
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .then(
+                                    if (checked) {
+                                        Modifier.background(MaterialTheme.colorScheme.primary)
+                                    } else {
+                                        Modifier.border(
+                                            1.5.dp,
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                                .copy(alpha = 0.6f),
+                                            CircleShape,
+                                        )
+                                    },
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (checked) {
+                                Icon(
+                                    Icons.Filled.Check,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                item.name.ifBlank { item.id },
+                                fontSize = 16.sp,
+                                lineHeight = 21.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (item.name.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    item.id,
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
+                    }
+                    if (index < allItems.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = stringResource(R.string.schema_manage_order),
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+            ReorderableSchemaList(
+                items = draftEnabled,
+                // 拖拽卡行点选无动作（防排序时误触）
+                onRowClick = null,
+                trailingIcon = {},
+                draggable = { !isCurrent(it) },
+            )
+        }
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = stringResource(R.string.schema_manage_footnote),
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
@@ -1652,10 +1829,8 @@ private fun ReorderableSchemaList(
     items: MutableList<SchemaItem>,
     onRowClick: ((SchemaItem) -> Unit)?,
     trailingIcon: @Composable (SchemaItem) -> Unit,
+    draggable: (SchemaItem) -> Boolean = { true },
 ) {
-    val context = LocalContext.current
-    val prefs =
-        remember { context.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE) }
     var dragIndex by remember { mutableIntStateOf(-1) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
     var itemHeight by remember { mutableFloatStateOf(0f) }
@@ -1663,6 +1838,7 @@ private fun ReorderableSchemaList(
     Column {
         items.forEachIndexed { index, schema ->
             val isDragging = dragIndex == index
+            val canDrag = draggable(schema)
             val dragScale by animateFloatAsState(
                 targetValue = if (isDragging) 1.03f else 1f,
                 animationSpec = spring(
@@ -1683,54 +1859,73 @@ private fun ReorderableSchemaList(
                     .onGloballyPositioned {
                         if (itemHeight == 0f) itemHeight = it.size.height.toFloat()
                     }
-                    .pointerInput(index) {
+                    .pointerInput(index, canDrag) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
+                                if (!canDrag) return@detectDragGesturesAfterLongPress
                                 dragIndex = index
                                 dragOffset = 0f
                             },
                             onDragEnd = {
-                                val target =
-                                    (dragIndex + (dragOffset / itemHeight).roundToInt()).coerceIn(
-                                        0, items.size - 1
-                                    )
-                                if (target != dragIndex) {
+                                if (dragIndex < 0) return@detectDragGesturesAfterLongPress
+                                var target = (dragIndex + (dragOffset / itemHeight).roundToInt())
+                                    .coerceIn(0, items.size - 1)
+                                // 落点跳过不可拖行：沿拖动方向移到最近的可放位。
+                                val dir = if (target > dragIndex) 1 else -1
+                                while (target in 0..items.size - 1 && !draggable(items[target])) {
+                                    target += dir
+                                }
+                                if (target in 0..items.size - 1 && target != dragIndex) {
                                     val item = items.removeAt(dragIndex)
                                     items.add(target, item)
-                                    saveOrder(prefs, items)
                                 }
                                 dragIndex = -1
                             },
                             onDrag = { change, amount ->
+                                if (dragIndex < 0) return@detectDragGesturesAfterLongPress
                                 change.consume()
                                 dragOffset += amount.y
                             },
                         )
                     },
             ) {
-                SchemaListItem(
-                    schema = schema,
-                    onClick = onRowClick?.let { click -> { click(schema) } },
-                    leadingIcon = {
-                        Box(
-                            modifier = Modifier
-                                .size(28.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(
-                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Icon(
-                                Icons.Default.DragHandle,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                    },
-                    trailingIcon = { trailingIcon(schema) },
-                )
+                Column {
+                    SchemaListItem(
+                        schema = schema,
+                        onClick = onRowClick?.let { click -> { click(schema) } },
+                        leadingIcon = {
+                            if (canDrag) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .background(
+                                            MaterialTheme.colorScheme.primaryContainer
+                                                .copy(alpha = 0.4f)
+                                        ),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(
+                                        Icons.Default.DragHandle,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            } else {
+                                // 锁行无柄，占位对齐（位置本身表达“钉住”）。
+                                Spacer(Modifier.size(28.dp))
+                            }
+                        },
+                        trailingIcon = { trailingIcon(schema) },
+                    )
+                    if (index < items.lastIndex) {
+                        HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        )
+                    }
+                }
             }
         }
     }

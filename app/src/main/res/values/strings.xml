@@ -101,8 +101,12 @@
     <string name="schema_source_builtin">内置</string>
     <string name="schema_source_user">用户</string>
     <string name="schema_list_edit">方案列表编辑</string>
-    <string name="schema_edit_done">完成</string>
-    <string name="schema_edit_hint">编辑模式：长按拖拽可排序（行点选不切换）</string>
+    <!-- 方案列表管理页：勾选卡 + 保存 pill + 拖拽卡 -->
+    <string name="schema_manage_selected">已选方案</string>
+    <string name="schema_manage_save">保存</string>
+    <string name="schema_manage_saved">已保存</string>
+    <string name="schema_manage_order">排序</string>
+    <string name="schema_manage_footnote">当前方案不可取消勾选，也不可移出首位。</string>
     <string name="schema_switching">正在切换…</string>
     <string name="schema_deploying">正在部署…（部署期间请勿切换）</string>
     <string name="schema_rolling_back">正在回退到上一方案…</string>
