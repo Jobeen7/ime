@@ -15,6 +15,7 @@ import com.jobeen.ime.base.util.InputConnectionUtil
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.KeyboardManager
+import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.IEngine
@@ -278,6 +279,13 @@ class ImeInputMethodService : InputMethodService() {
         super.onWindowShown()
         keyboardWindow?.onWindowShown()
         ClipboardManager.startMonitoring(this)
+        // 键盘 RIME 通知：设置侧部署/同步完成时投递的待显示通知，在键盘
+        // 下次出现时经键盘区 Toast 显示一次；开关关时直接丢弃。
+        // （现有通道：KeyboardWindowView.showImeToast / ImeToastView，
+        // 语音失败提示也在用；本开关只管部署/同步结果通知。）
+        runCatching {
+            RimeSyncPrefs.drainNotice(this)?.let { keyboardWindow?.showToast(it) }
+        }
         if (messageObserveJob == null) {
             messageObserveJob = scope?.let { scope ->
                 engine?.observeMessages(scope) {
