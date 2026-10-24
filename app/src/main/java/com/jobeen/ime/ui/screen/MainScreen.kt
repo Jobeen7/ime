@@ -2,6 +2,7 @@ package com.jobeen.ime.ui.screen
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,7 +25,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Backup
-import androidx.compose.material.icons.filled.Brush
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FolderOpen
@@ -47,8 +47,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -62,26 +60,27 @@ import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
-import com.jobeen.ime.ui.screen.ScreenComponent.SingleChoiceDialog
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 
 /**
- * 设置 home：一页一组卡片，行 = 彩色方块图标 + 标题 + 右箭头，无副标题。
+ * 设置 home：顶部 hero（居中 logo + Jime）+ 一页一组卡片，
+ * 行 = 彩色方块图标 + 标题 + 右箭头，无副标题。
+ * 应用主题已删除（Lee 2026-10-25 定）：恒跟随系统，不再设手动项。
  * FAB 栈只放在本页：平时一个悬浮圆钮，点开展开两个圆钮——部署、同步。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MainScreen(
-    currentThemeMode: Int,
-    onThemeModeChanged: (Int) -> Unit,
     onOpenImeSetup: () -> Unit,
     onOpenSchemaSettings: () -> Unit,
     onOpenSchemeUpdate: () -> Unit,
@@ -102,13 +101,6 @@ fun MainScreen(
     deployRunning: Boolean = false,
     syncRunning: Boolean = false,
 ) {
-    val themes = listOf(
-        stringResource(R.string.theme_follow_system),
-        stringResource(R.string.theme_light),
-        stringResource(R.string.theme_dark),
-    )
-
-    var showThemeDialog by remember { mutableStateOf(false) }
     var fabExpanded by remember { mutableStateOf(false) }
     val fabAnyRunning = deployRunning || syncRunning
     val fabRotation by animateFloatAsState(
@@ -131,30 +123,6 @@ fun MainScreen(
     }
 
     Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.app_name),
-                        fontSize = barFontSize,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onOpenImeSetup) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.ime_setup_title),
-                            modifier = Modifier.scale(0.8f),
-                            tint = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
         floatingActionButton = {
             Column(
                 horizontalAlignment = Alignment.End,
@@ -216,6 +184,43 @@ fun MainScreen(
             ) {
             Spacer(Modifier.height(4.dp))
 
+            // 顶部 hero（居中排列）：返回键独占一行，logo 居中、
+            // 下方写 Jime；不再用 TopAppBar 标题栏。
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onOpenImeSetup) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = stringResource(R.string.ime_setup_title),
+                        modifier = Modifier.scale(0.8f),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                }
+            }
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 12.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                Image(
+                    painter = painterResource(R.drawable.ic_about_logo),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(RoundedCornerShape(2.dp)),
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    text = stringResource(R.string.hero_app_name),
+                    style = MaterialTheme.typography.titleLarge,
+                    fontSize = 20.sp,
+                    fontWeight = FontWeight.Bold,
+                )
+            }
+
             // 切换输入法红条：仅当 Jime 不是当前输入法时出现；已是当前时
             // 整条不存在（不是隐藏占位）。点按调出系统输入法选择器。
             if (!isImeConfigured) {
@@ -235,18 +240,6 @@ fun MainScreen(
                     )
                 }
                 Spacer(Modifier.height(12.dp))
-            }
-
-            SectionHeader(stringResource(R.string.basic_settings))
-            GroupCard {
-                val (c1, t1) = nextPair()
-                NavRow(
-                    title = stringResource(R.string.theme),
-                    onClick = { showThemeDialog = true },
-                    icon = Icons.Filled.Brush,
-                    iconContainer = c1,
-                    iconTint = t1,
-                )
             }
 
             SectionHeader(stringResource(R.string.input_settings))
@@ -380,16 +373,6 @@ fun MainScreen(
     }
 
     BackHandler(enabled = fabExpanded) { fabExpanded = false }
-
-    if (showThemeDialog) {
-        SingleChoiceDialog(
-            title = stringResource(R.string.theme),
-            options = themes,
-            selectedIndex = currentThemeMode,
-            onSelect = { onThemeModeChanged(it); showThemeDialog = false },
-            onDismiss = { showThemeDialog = false },
-        )
-    }
 }
 
 /** FAB 栈展开后的单个动作：文字标签 + 小圆钮；进行中转圈并禁用。 */

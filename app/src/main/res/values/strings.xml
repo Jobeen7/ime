@@ -1,12 +1,9 @@
 <resources>
+    <string name="hero_app_name">Jime</string>
+    <string name="about_version_pill">版本 %1$s(%2$d)</string>
     <!-- app_name 由 build.gradle.kts 的 resValue 生成（debug 为 Jime Debug），不在此定义 -->
     <string name="done">done</string>
 
-    <string name="basic_settings">基本设置</string>
-    <string name="theme">应用主题</string>
-    <string name="theme_follow_system">跟随系统</string>
-    <string name="theme_light">浅色</string>
-    <string name="theme_dark">深色</string>
 
     <string name="key_feedback">按键设置</string>
     <string name="key_sound">启用按键音</string>
@@ -101,12 +98,26 @@
     <string name="schema_source_builtin">内置</string>
     <string name="schema_source_user">用户</string>
     <string name="schema_list_edit">方案列表编辑</string>
+    <!-- 多目录：方案目录切换 / 管理页全部方案区 / 部署进度 -->
+    <string name="schema_dir_switch">方案目录切换</string>
+    <string name="schema_dir_current">当前方案目录：%1$s</string>
+    <string name="schema_dir_use">使用此文件夹</string>
+    <string name="schema_dir_schemes">%1$d 个方案</string>
+    <string name="schema_dir_default_name">默认</string>
+    <string name="schema_dir_current_badge">当前</string>
+    <string name="schema_dir_empty">暂无方案目录</string>
+    <string name="schema_dir_empty_schemes">此目录暂无方案</string>
+    <string name="schema_dir_breadcrumb">方案目录 / %1$s</string>
+    <string name="schema_dir_switching">正在切换目录并重新部署…</string>
+    <string name="schema_dir_switch_failed">切换目录失败，已回退到上一目录</string>
+    <string name="schema_manage_all">全部方案</string>
+    <string name="schema_manage_deploying">方案部署中…</string>
+    <string name="schema_manage_deploy_failed">部署失败，已恢复原顺序</string>
+    <string name="schema_import_replace_dir">已存在同名目录，将替换为新包内容</string>
     <!-- 方案列表管理页：勾选卡 + 保存 pill + 拖拽卡 -->
     <string name="schema_manage_selected">已选方案</string>
     <string name="schema_manage_save">保存</string>
-    <string name="schema_manage_saved">已保存</string>
-    <string name="schema_manage_order">排序</string>
-    <string name="schema_manage_footnote">当前方案不可取消勾选，也不可移出首位。</string>
+    <string name="schema_manage_footnote">取消勾选当前方案后，首位方案接任当前；至少保留一个方案。</string>
     <string name="schema_switching">正在切换…</string>
     <string name="schema_deploying">正在部署…（部署期间请勿切换）</string>
     <string name="schema_rolling_back">正在回退到上一方案…</string>
@@ -118,29 +129,7 @@
     <string name="schema_import">导入方案</string>
     <string name="schema_import_validating">正在校验方案包…</string>
     <string name="schema_import_installing">正在安装…</string>
-    <string name="schema_import_result_title">校验结果</string>
-    <string name="schema_import_package">方案包</string>
-    <string name="schema_import_version_unknown">未知版本</string>
-    <string name="schema_import_schemes_title">包内方案</string>
     <string name="schema_import_summary_schemes">包内方案 %1$d 个</string>
-    <string name="schema_import_detail_files">包内文件详情</string>
-    <string name="schema_import_skipped_count">跳过文件 %1$d 个</string>
-    <string name="schema_import_replace_title">同名替换</string>
-    <string name="schema_import_replace_note">将用新版替换旧版</string>
-    <string name="schema_import_replace_pro_note">Pro 多口味共用同一方案 id，安装后旧口味被替换</string>
-    <string name="schema_import_replace_builtin_note">将覆盖内置同名方案（用户层优先）</string>
-    <string name="schema_import_shared_title">共享文件</string>
-    <string name="schema_import_shared_overwrite">将覆盖（新版本更高）</string>
-    <string name="schema_import_shared_keep">保留现有（版本不低于新包）</string>
-    <string name="schema_import_shared_unknown">保留现有（版本未知）</string>
-    <string name="schema_import_skipped_title">跳过文件</string>
-    <string name="schema_import_skip_traversal">路径穿越，已跳过</string>
-    <string name="schema_import_skip_protected">受保护文件，已跳过</string>
-    <string name="schema_import_skip_custom">已有用户定制，已跳过</string>
-    <string name="schema_import_skip_exists">已存在，已跳过</string>
-    <string name="schema_import_skip_shared_older">版本不高于现有，已跳过</string>
-    <string name="schema_import_skip_shared_unknown">版本未知，已跳过</string>
-    <string name="schema_import_overwrite_note">将覆盖 %1$d 个现有文件</string>
     <string name="schema_import_confirm">确认安装</string>
     <string name="schema_import_cancel">取消</string>
     <string name="schema_import_error_copy">读取文件失败，请重试</string>
@@ -188,7 +177,6 @@
     <string name="about_diag_share">导出诊断日志</string>
     <string name="about_diag_failed">导出失败，请重试</string>
     <string name="about_reset">重置应用设置</string>
-    <string name="about_reset_subline">全部设置回默认，学习词清零</string>
     <string name="about_reset_footnote">重置后回到默认安装状态：仅内置 Lite 方案可用，全部方案目录、WebDAV 绑定与学习词全部清除。</string>
     <string name="rime_title">RIME</string>
     <string name="ime_not_current_switch">不是当前输入法，点按切换输入法</string>
@@ -213,8 +201,6 @@
     <string name="about_us_desc">应用信息、版本更新</string>
     <string name="about_app_info">应用信息</string>
     <string name="about_description">应用简介</string>
-    <string name="about_description_text">Jime 是一款简洁、高效的智能拼音输入法，支持多种输入方案，致力于提供流畅舒适的输入体验。</string>
-    <string name="about_update">版本更新</string>
     <string name="check_update">检查更新</string>
     <string name="current_version">当前版本 v%1$s</string>
     <string name="checking_update">检查中</string>
