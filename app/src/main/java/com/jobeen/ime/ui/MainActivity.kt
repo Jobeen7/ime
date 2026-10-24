@@ -18,15 +18,12 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
-import com.jobeen.ime.engine.rime.core.Rime
-import com.jobeen.ime.engine.rime.core.RimeConfig
+import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import timber.log.Timber
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.data.manager.KeyboardManager
@@ -55,6 +52,24 @@ class MainActivity : ComponentActivity() {
     private var fabDeployRunning by mutableStateOf(false)
     private var fabSyncRunning by mutableStateOf(false)
 
+    /**
+     * 红条状态：从系统输入法设置读当前 IME（复用 isImeConfigured，不另写
+     * 第二套判断）。onResume 刷新——用户在系统选择器切走/切回后回到
+     * 设置页，红条立即跟上，不用重启应用。
+     */
+    private var imeConfiguredState = mutableStateOf(true)
+
+    override fun onResume() {
+        super.onResume()
+        imeConfiguredState.value = isImeConfigured()
+    }
+
+    /** 系统输入法选择器（红条点按动作；系统级弹窗，非应用内页面）。 */
+    private fun showImePicker() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.showInputMethodPicker()
+    }
+
     private fun fabSession(): RimeSession =
         fabSession ?: RimeDaemon.createSession(FAB_SESSION_NAME).also { fabSession = it }
 
@@ -67,17 +82,21 @@ class MainActivity : ComponentActivity() {
                 fabSession().runOnReady { deploy() }
             }.onSuccess {
                 ToastUtil.showToast(getString(R.string.fab_deploy_done))
+                RimeSyncPrefs.postNotice(this@MainActivity, getString(R.string.fab_deploy_done))
             }.onFailure {
                 Timber.w(it, "FAB deploy failed")
                 ToastUtil.showToast(getString(R.string.fab_deploy_failed))
+                RimeSyncPrefs.postNotice(this@MainActivity, getString(R.string.fab_deploy_failed))
             }
             fabDeployRunning = false
         }
     }
 
     /**
-     * FAB 一键同步：复用现有 WebDavSync 上传流程（内含先下载合并再 PUT，
-     * 默认当前方案词典）。未配置 WebDAV 时明示并指引到用户词典页。
+     * FAB 一键同步：目录同步（新口径，覆盖原词库合并定义）——经现有
+     * WebDAV 客户端，把整个用户方案目录同步到远端 UUID 文件夹。
+     * 用户词典页原有的词库合并上传/下载保持不动（另一条线）。
+     * 未配置 WebDAV 时明示并指引到用户词典页。
      */
     private fun doFabSync() {
         if (fabSyncRunning) return
@@ -89,23 +108,30 @@ class MainActivity : ComponentActivity() {
         fabSyncRunning = true
         lifecycleScope.launch {
             try {
-                val session = fabSession()
-                val dict = currentDictName(session)
-                if (dict == null) {
-                    ToastUtil.showToast(getString(R.string.fab_sync_no_dict))
-                    return@launch
+                val result = WebDavSync.syncSchemeDir(fabSession())
+                result.onSuccess { r ->
+                    val msg = if (r.failedFiles.isEmpty()) {
+                        getString(R.string.fab_dir_sync_success, r.uploaded, r.downloaded)
+                    } else {
+                        getString(
+                            R.string.fab_dir_sync_partial,
+                            r.uploaded,
+                            r.downloaded,
+                            r.failedFiles.size,
+                        )
+                    }
+                    ToastUtil.showToast(msg)
+                    RimeSyncPrefs.postNotice(this@MainActivity, msg)
+                }.onFailure {
+                    Timber.w(it, "FAB dir sync failed")
+                    ToastUtil.showToast(getString(R.string.fab_sync_failed))
+                    RimeSyncPrefs.postNotice(
+                        this@MainActivity,
+                        getString(R.string.fab_sync_failed),
+                    )
                 }
-                val result = WebDavSync.upload(dict, session)
-                result
-                    .onSuccess { count ->
-                        ToastUtil.showToast(getString(R.string.fab_sync_success, count))
-                    }
-                    .onFailure {
-                        Timber.w(it, "FAB sync failed")
-                        ToastUtil.showToast(getString(R.string.fab_sync_failed))
-                    }
             } catch (e: Exception) {
-                Timber.w(e, "FAB sync failed")
+                Timber.w(e, "FAB dir sync failed")
                 ToastUtil.showToast(getString(R.string.fab_sync_engine_not_ready))
             } finally {
                 fabSyncRunning = false
@@ -113,25 +139,10 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 当前方案词典名：先读当前方案的 translator/dictionary，读不到回落首个用户词典。 */
-    private suspend fun currentDictName(session: RimeSession): String? =
-        withContext(Dispatchers.IO) {
-            runCatching {
-                Rime.runOnRimeMain {
-                    val schemaId = currentSchema().schemaId
-                    RimeConfig.openSchema(schemaId).use { config ->
-                        config.getString("translator/dictionary")?.trim()
-                            ?.takeIf { it.isNotEmpty() }
-                    }
-                }
-            }.getOrNull()
-        } ?: runCatching {
-            session.runOnReady { getUserDictList() }.firstOrNull()
-        }.getOrNull()
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        imeConfiguredState.value = isImeConfigured()
 
         val initState = ImeApplication.getInstance().state.value
         if (initState != ImeApplication.AppState.Finished) {
@@ -165,6 +176,13 @@ class MainActivity : ComponentActivity() {
                             Intent(this@MainActivity, SchemeUpdateActivity::class.java)
                         )
                     },
+                    onOpenRime = {
+                        startActivity(
+                            Intent(this@MainActivity, RimeActivity::class.java)
+                        )
+                    },
+                    isImeConfigured = imeConfiguredState.value,
+                    onOpenImePicker = { showImePicker() },
                     onOpenKeyboardSettings = {
                         startActivity(
                             Intent(this@MainActivity, KeyboardSettingsActivity::class.java)

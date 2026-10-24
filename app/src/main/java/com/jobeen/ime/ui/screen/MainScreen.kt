@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -24,6 +25,7 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Brush
+import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
@@ -36,6 +38,8 @@ import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -81,6 +85,9 @@ fun MainScreen(
     onOpenImeSetup: () -> Unit,
     onOpenSchemaSettings: () -> Unit,
     onOpenSchemeUpdate: () -> Unit,
+    onOpenRime: () -> Unit = {},
+    isImeConfigured: Boolean = true,
+    onOpenImePicker: () -> Unit = {},
     onOpenKeyboardSettings: () -> Unit,
     onOpenKeyboardThemeSettings: () -> Unit,
     onOpenClipboard: () -> Unit,
@@ -209,6 +216,27 @@ fun MainScreen(
             ) {
             Spacer(Modifier.height(4.dp))
 
+            // 切换输入法红条：仅当 Jime 不是当前输入法时出现；已是当前时
+            // 整条不存在（不是隐藏占位）。点按调出系统输入法选择器。
+            if (!isImeConfigured) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                    onClick = onOpenImePicker,
+                ) {
+                    Text(
+                        text = stringResource(R.string.ime_not_current_switch),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onErrorContainer,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                    )
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+
             SectionHeader(stringResource(R.string.basic_settings))
             GroupCard {
                 val (c1, t1) = nextPair()
@@ -239,6 +267,15 @@ fun MainScreen(
                     icon = Icons.Filled.SystemUpdateAlt,
                     iconContainer = c2,
                     iconTint = t2,
+                )
+                GroupDivider()
+                val (c2b, t2b) = nextPair()
+                NavRow(
+                    title = stringResource(R.string.rime_title),
+                    onClick = onOpenRime,
+                    icon = Icons.Filled.Build,
+                    iconContainer = c2b,
+                    iconTint = t2b,
                 )
                 GroupDivider()
                 val (c3, t3) = nextPair()
