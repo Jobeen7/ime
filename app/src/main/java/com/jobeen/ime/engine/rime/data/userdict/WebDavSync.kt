@@ -18,7 +18,6 @@ import okhttp3.Response
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
-import java.nio.file.Files
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.net.URI
@@ -761,6 +760,18 @@ object WebDavSync {
         return out
     }
 
+    /**
+     * 用户目录内相对路径上是否存在符号链接（API 24 可用）：以规范化的用户目录
+     * 为基拼出未解析的相对路径，与文件的规范路径比较，不一致即相对路径上某
+     * 一段或文件自身为链接；用户目录自身若为链接不计入。等价于 API 26 的
+     * Files.isSymbolicLink 对文件自身链接的判定，且覆盖父目录链接。
+     */
+    private fun isSymlinkBetween(userDir: File, file: File): Boolean =
+        runCatching {
+            val rel = file.relativeTo(userDir)
+            File(userDir.canonicalFile, rel.path) != file.canonicalFile
+        }.getOrDefault(false)
+
     /** 本地当前方案目录下的可同步文件（相对路径 + 文件），排除规则同远端。 */
     private fun collectLocalSyncFiles(userDir: File): List<Pair<String, File>> {
         val out = mutableListOf<Pair<String, File>>()
@@ -768,11 +779,11 @@ object WebDavSync {
             .onEnter { dir ->
                 if (dir == userDir) return@onEnter true
                 val rel = dir.relativeTo(userDir).path.replace(File.separatorChar, '/')
-                !isExcludedSyncPath(rel, true) && !Files.isSymbolicLink(dir.toPath())
+                !isExcludedSyncPath(rel, true) && !isSymlinkBetween(userDir, dir)
             }
             .forEach { file ->
                 if (file == userDir || file.isDirectory) return@forEach
-                if (Files.isSymbolicLink(file.toPath())) return@forEach
+                if (isSymlinkBetween(userDir, file)) return@forEach
                 val rel = file.relativeTo(userDir).path.replace(File.separatorChar, '/')
                 if (!isExcludedSyncPath(rel, false)) {
                     out += rel to file

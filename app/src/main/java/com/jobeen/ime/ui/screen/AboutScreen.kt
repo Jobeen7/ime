@@ -111,6 +111,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     val msgNeedPermission = stringResource(R.string.update_need_permission)
     val msgDebugUnsupported = stringResource(R.string.debug_update_unsupported)
     val msgDiagFailed = stringResource(R.string.about_diag_failed)
+    val diagShareTitle = stringResource(R.string.about_diag_share)
     val msgResetFailed = stringResource(R.string.about_reset_failed)
     var resetStep by remember { mutableStateOf(0) }
     var resetting by remember { mutableStateOf(false) }
@@ -186,7 +187,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
             context.startActivity(
                 android.content.Intent.createChooser(
                     intent,
-                    context.getString(R.string.about_diag_share),
+                    diagShareTitle,
                 ),
             )
         }.onFailure { e ->
