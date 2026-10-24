@@ -687,6 +687,14 @@ class KeyboardWindowView(
         return KeyboardManager.Keyboard.Padding.getBottomDp(context)
     }
 
+    /**
+     * 窗口是否真在绘制：键盘隐藏时本视图仍 attached 在 IME 窗口上，
+     * 只有 isShown 且窗口可见性为 VISIBLE 才说明屏幕上看得见、
+     * onDraw 会发生（皮肤应用事务的选路判据，见 SkinRuntime）。
+     */
+    override fun isVisibleNow(): Boolean =
+        isShown && windowVisibility == View.VISIBLE
+
     /** 皮肤应用事务的窗口接口：刷新一次，刷新后的首帧回调一次（详设 §2.4）。 */
     override fun refreshSkinTheme(onFirstDraw: (() -> Unit)?) {
         post {

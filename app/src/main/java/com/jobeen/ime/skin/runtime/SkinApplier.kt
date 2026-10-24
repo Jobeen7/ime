@@ -20,9 +20,11 @@ import kotlinx.coroutines.sync.withLock
 /**
  * 应用事务的真实端口装配（详设 §2.4/§2.7）：
  *
- * - 有活动窗口（IME 进程内）：走 [ApplyTransaction] 全状态机，
+ * - 窗口正在绘制（键盘正显示）：走 [ApplyTransaction] 全状态机，
  *   首帧等待 = 窗口刷新后的一次性 onDraw 闩（超时 2s 按失败回滚）。
- * - 无活动窗口（设置进程内应用）：延迟验证路径——构建快照 →
+ *   判据是可见性而非挂载：键盘隐藏时窗口视图仍 attached，从设置
+ *   页应用若误走全事务，首帧永不到达、必然超时回滚。
+ * - 窗口不可见（设置页内应用的常态）：延迟验证路径——构建快照 →
  *   写 active{pending} → 切换 provider → 在 [SkinRuntime] 武装，
  *   下一个窗口首帧完成 verified 推进与 Last-Good 晋升。
  * - 回退 Last-Good 的目标是已验证代次，无窗口时直接以 verified
@@ -57,7 +59,7 @@ class SkinApplier(context: Context) {
         }
 
         override fun awaitFirstRender(): Boolean {
-            if (!SkinRuntime.hasLiveWindow()) return false
+            if (!SkinRuntime.canVerifyInline()) return false
             val latch = CountDownLatch(1)
             SkinRuntime.requestRefresh { latch.countDown() }
             return runCatching { latch.await(FIRST_RENDER_TIMEOUT_MS, TimeUnit.MILLISECONDS) }
@@ -68,7 +70,10 @@ class SkinApplier(context: Context) {
     private fun transaction() = ApplyTransaction(layout, store, ports)
 
     suspend fun applySkin(ref: SkinGenRef): ApplyTransaction.Result = mutex.withLock {
-        if (SkinRuntime.hasLiveWindow()) {
+        // 选路以「窗口正在绘制」为准而非「窗口已挂载」：IME 窗口隐藏时
+        // 视图仍 attached，误判活窗口会让首帧等待必然 2s 超时回滚
+        // （真机实证三连 first_render_failed，间隔恰为超时值）。
+        if (SkinRuntime.canVerifyInline()) {
             transaction().apply(ref)
         } else {
             deferredApply(ref)
@@ -76,7 +81,7 @@ class SkinApplier(context: Context) {
     }
 
     suspend fun rollbackToLastGood(): ApplyTransaction.Result = mutex.withLock {
-        if (SkinRuntime.hasLiveWindow()) {
+        if (SkinRuntime.canVerifyInline()) {
             return@withLock transaction().rollbackToLastGood()
         }
         val pointer = (store.readLastGood() as? SkinLibraryStore.ReadResult.Ok)?.value
