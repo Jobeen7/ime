@@ -40,9 +40,6 @@ object SchemePackageImport {
     /** 导入前剩余空间检查的额外余量（部署还会写 build 产物）。 */
     const val FREE_SPACE_MARGIN_BYTES = 16L * 1024 * 1024
 
-    /** 旧版归档区（user 目录下，安装时按包名 + 时间戳分子目录）。 */
-    const val ARCHIVE_DIR_NAME = "scheme-archive"
-
     /** 包登记偏好文件名（与方案列表偏好分开，避免键冲突）。 */
     const val PREFS_NAME = "scheme_import"
 
@@ -298,8 +295,6 @@ object SchemePackageImport {
         val previousPackage: String?,
         /** 是否覆盖内置同名方案（仅 shared 层有、user 层无时为 true）。 */
         val overridesBuiltin: Boolean,
-        /** 归档文件（旧包登记的文件与现存文件的交集；未登记时回落方案本体）。 */
-        val archivedFiles: List<String>,
     )
 
     data class SharedFileDecision(
@@ -475,20 +470,10 @@ object SchemePackageImport {
             val inShared = scheme.id in existingSharedSchemeIds
             if (!inUser && !inShared) return@mapNotNull null
             val previousPackage = registry.packageForScheme(scheme.id)
-            val archivedFiles = if (inUser) {
-                val recorded = previousPackage?.let { registry.filesForPackage(it) }.orEmpty()
-                    .filter { it in existingUserFiles }
-                if (recorded.isNotEmpty()) recorded
-                else listOf(schemaFile) +
-                    listOf("${scheme.id}.custom.yaml").filter { it in existingUserFiles }
-            } else {
-                emptyList()
-            }
             ReplacementInfo(
                 schemeId = scheme.id,
                 previousPackage = previousPackage,
                 overridesBuiltin = !inUser && inShared,
-                archivedFiles = archivedFiles,
             )
         }
 
@@ -713,29 +698,17 @@ object SchemePackageImport {
     }
 
     /**
-     * 执行安装规划：先归档（同 ID 替换的旧版文件，目标已存在时首次胜出，
-     * 重试不覆盖已归档内容），再落盘。落盘双侧 canonical 守卫，逃出
-     * user 目录的条目直接跳过。返回实际落盘文件（供登记记录用）。
+     * 执行安装规划：直接落盘（同 ID 替换的旧版文件直接被新版覆盖，
+     * 不再归档）。落盘双侧 canonical 守卫，逃出 user 目录的条目
+     * 直接跳过。返回实际落盘文件（供登记记录用）。
      * 本函数不写登记偏好（调用方在成功后写），不碰引擎与部署。
      */
     fun applyPlan(
         stagingDir: File,
         userDir: File,
-        archiveDir: File,
         plan: SchemeImportPlan,
     ): List<String> {
         val userCanonical = userDir.canonicalPath
-        for (replacement in plan.replacements) {
-            for (rel in replacement.archivedFiles) {
-                val src = File(userDir, rel).canonicalFile
-                if (!src.path.startsWith(userCanonical + File.separator) || !src.isFile) continue
-                val dest = File(archiveDir, rel).canonicalFile
-                if (!dest.path.startsWith(archiveDir.canonicalPath + File.separator)) continue
-                if (dest.exists()) continue
-                dest.parentFile?.mkdirs()
-                src.copyTo(dest, overwrite = false)
-            }
-        }
         val installed = mutableListOf<String>()
         for (rel in plan.installFiles) {
             val src = File(stagingDir, rel).canonicalFile

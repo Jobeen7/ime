@@ -249,7 +249,7 @@ class SchemePackageImportTest {
     }
 
     @Test
-    fun planInstall_sameIdReplacementArchivesOldPackageFiles() {
+    fun planInstall_sameIdReplacementStillDetected() {
         val registry = SchemePackageRegistry(
             listOf(
                 SchemePackageRecord(
@@ -275,10 +275,6 @@ class SchemePackageImportTest {
         assertFalse(plan.replacements.first().overridesBuiltin)
         assertEquals(
             listOf("wanxiang_pro.schema.yaml", "wanxiang_pro.dict.yaml"),
-            plan.replacements.first().archivedFiles,
-        )
-        assertEquals(
-            listOf("wanxiang_pro.schema.yaml", "wanxiang_pro.dict.yaml"),
             plan.overwrittenExisting,
         )
     }
@@ -295,7 +291,6 @@ class SchemePackageImportTest {
         assertEquals(1, plan.replacements.size)
         assertTrue(plan.replacements.first().overridesBuiltin)
         assertEquals(null, plan.replacements.first().previousPackage)
-        assertTrue(plan.replacements.first().archivedFiles.isEmpty())
     }
 
     @Test
@@ -463,7 +458,7 @@ class SchemePackageImportTest {
     }
 
     @Test
-    fun applyPlan_archivesOldAndInstallsNewWithoutTouchingUserdb() {
+    fun applyPlan_installsNewOverOldWithoutTouchingUserdb() {
         val root = Files.createTempDirectory("scheme-import-test").toFile()
         try {
             val userDir = File(root, "user").apply { mkdirs() }
@@ -486,28 +481,21 @@ class SchemePackageImportTest {
                         schemeId = "wanxiang_pro",
                         previousPackage = "old-pro",
                         overridesBuiltin = false,
-                        archivedFiles = listOf("wanxiang_pro.schema.yaml"),
                     ),
                 ),
                 defaultCustomSchemaIds = emptyList(),
                 overwrittenExisting = listOf("wanxiang_pro.schema.yaml"),
                 totalBytes = 100L,
             )
-            val archiveDir = File(root, "archive")
-            val installed = SchemePackageImport.applyPlan(staging, userDir, archiveDir, plan)
+            val installed = SchemePackageImport.applyPlan(staging, userDir, plan)
             assertEquals(
                 listOf("wanxiang_pro.schema.yaml", "wanxiang_pro.dict.yaml"),
                 installed,
             )
             assertEquals("new schema", File(userDir, "wanxiang_pro.schema.yaml").readText())
             assertEquals("dict", File(userDir, "wanxiang_pro.dict.yaml").readText())
-            assertEquals("old schema", File(archiveDir, "wanxiang_pro.schema.yaml").readText())
-            // userdb 绝不碰。
+            // 旧版直接被新版覆盖，不再归档；userdb 绝不碰。
             assertEquals("user learning data", File(userDir, "wanxiang_pro.userdb").readText())
-            // 归档首次胜出：重试不覆盖已归档内容。
-            File(userDir, "wanxiang_pro.schema.yaml").writeText("newer schema")
-            SchemePackageImport.applyPlan(staging, userDir, archiveDir, plan)
-            assertEquals("old schema", File(archiveDir, "wanxiang_pro.schema.yaml").readText())
         } finally {
             root.deleteRecursively()
         }
