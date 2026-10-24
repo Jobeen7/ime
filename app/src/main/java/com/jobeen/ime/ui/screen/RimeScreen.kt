@@ -167,7 +167,7 @@ fun RimeScreen(
                     subtitle = if (resetting) {
                         stringResource(R.string.about_reset_busy)
                     } else {
-                        stringResource(R.string.rime_reset_subline)
+                        null
                     },
                     titleColor = MaterialTheme.colorScheme.error,
                     iconContainer = MaterialTheme.colorScheme.errorContainer,
@@ -187,24 +187,34 @@ fun RimeScreen(
             }
             Spacer(modifier = Modifier.height(16.dp))
             GroupCard {
-                SwitchRow(
-                    title = stringResource(R.string.rime_notice),
-                    checked = noticeEnabled,
-                    onCheckedChange = {
-                        noticeEnabled = it
-                        RimeSyncPrefs.setNoticeEnabled(context, it)
-                    },
-                )
-                Text(
-                    text = stringResource(R.string.rime_notice_desc),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 4.dp),
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                ) {
+                    SwitchRow(
+                        title = stringResource(R.string.rime_notice),
+                        checked = noticeEnabled,
+                        onCheckedChange = {
+                            noticeEnabled = it
+                            RimeSyncPrefs.setNoticeEnabled(context, it)
+                        },
+                    )
+                    Text(
+                        text = stringResource(R.string.rime_notice_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp, bottom = 6.dp),
+                    )
+                }
             }
             Spacer(modifier = Modifier.height(16.dp))
             GroupCard {
-                Row(modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
                     Text(
                         text = stringResource(R.string.rime_sync_folder),
                         style = MaterialTheme.typography.bodyLarge,
@@ -217,7 +227,9 @@ fun RimeScreen(
                     )
                 }
                 GroupDivider()
-                Column {
+                Column(
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
                     Text(
                         text = stringResource(R.string.rime_sync_folder_path),
                         style = MaterialTheme.typography.bodyLarge,
@@ -234,12 +246,6 @@ fun RimeScreen(
                     )
                 }
             }
-            Text(
-                text = stringResource(R.string.about_reset_footnote),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 12.dp),
-            )
         }
     }
 
