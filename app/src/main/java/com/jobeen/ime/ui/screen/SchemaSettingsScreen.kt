@@ -794,6 +794,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         targetDir,
                         plan,
                     )
+                    // 规划非空却零落盘 = 源路径对不上（如包装目录未处理）：
+                    // 不写方案表、不登记、不切换，直接报安装失败留在页内重试，
+                    // 杜绝“正在安装…→回列表、无报错、无方案”的静默失败。
+                    if (done.isEmpty() && plan.installFiles.isNotEmpty()) {
+                        throw IllegalStateException("scheme import installed nothing")
+                    }
                     val tableIds = plan.defaultCustomSchemaIds.ifEmpty {
                         plan.schemes.map { it.id }
                     }

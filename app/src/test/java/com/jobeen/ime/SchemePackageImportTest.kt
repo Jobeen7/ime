@@ -458,6 +458,42 @@ class SchemePackageImportTest {
     }
 
     @Test
+    fun applyPlan_wrappedZipInstallsFromWrapperDir() {
+        // codeload 式包装包：暂存盘保留 wrapper/ 前缀，规划路径已剥；
+        // 落盘须拼回前缀，否则全部静默跳过（零落盘、无报错）。
+        val root = Files.createTempDirectory("scheme-import-test").toFile()
+        try {
+            val userDir = File(root, "user").apply { mkdirs() }
+            val staging = File(root, "staging").apply { mkdirs() }
+            File(staging, "rime-ice-main").mkdirs()
+            File(staging, "rime-ice-main/wanxiang_pro.schema.yaml").writeText("wrapped schema")
+            val plan = SchemePackageImport.SchemeImportPlan(
+                packageName = "wrapped-pro",
+                packageVersion = "18.1.7",
+                schemes = listOf(
+                    SchemePackageImport.ImportedScheme("wanxiang_pro", "Pro", "18.1.7", ""),
+                ),
+                installFiles = listOf("wanxiang_pro.schema.yaml"),
+                wrapperPrefix = "rime-ice-main/",
+                skippedFiles = emptyList(),
+                sharedDecisions = emptyList(),
+                replacements = emptyList(),
+                defaultCustomSchemaIds = emptyList(),
+                overwrittenExisting = emptyList(),
+                totalBytes = 100L,
+            )
+            val installed = SchemePackageImport.applyPlan(staging, userDir, plan)
+            assertEquals(listOf("wanxiang_pro.schema.yaml"), installed)
+            assertEquals(
+                "wrapped schema",
+                File(userDir, "wanxiang_pro.schema.yaml").readText(),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun applyPlan_installsNewOverOldWithoutTouchingUserdb() {
         val root = Files.createTempDirectory("scheme-import-test").toFile()
         try {

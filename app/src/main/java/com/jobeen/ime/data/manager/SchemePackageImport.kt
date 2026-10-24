@@ -311,6 +311,9 @@ object SchemePackageImport {
         val schemes: List<ImportedScheme>,
         /** 落盘文件（相对路径，含覆盖既有文件的）。 */
         val installFiles: List<String>,
+        /** 暂存盘上的包装目录前缀（如 codeload 式 `rime-ice-main/`），
+         * 落盘时拼在 installFiles 前；无包装时为空。 */
+        val wrapperPrefix: String = "",
         val skippedFiles: List<SkippedFile>,
         val sharedDecisions: List<SharedFileDecision>,
         val replacements: List<ReplacementInfo>,
@@ -483,6 +486,7 @@ object SchemePackageImport {
                 packageVersion = packageVersion,
                 schemes = schemes,
                 installFiles = installFiles,
+                wrapperPrefix = wrapperPrefix,
                 skippedFiles = skippedFiles,
                 sharedDecisions = sharedDecisions,
                 replacements = replacements,
@@ -717,7 +721,9 @@ object SchemePackageImport {
         val userCanonical = userDir.canonicalPath
         val installed = mutableListOf<String>()
         for (rel in plan.installFiles) {
-            val src = File(stagingDir, rel).canonicalFile
+            // 暂存盘保留原始路径（含包装目录），落盘路径已剥包装：
+            // 读源须拼回 wrapperPrefix，否则带包装的包会静默零落盘。
+            val src = File(stagingDir, plan.wrapperPrefix + rel).canonicalFile
             val dest = File(userDir, rel).canonicalFile
             if (!dest.path.startsWith(userCanonical + File.separator)) continue
             if (!src.isFile) continue
