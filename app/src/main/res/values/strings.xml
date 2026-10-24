@@ -183,6 +183,20 @@
 
     <string name="about">关于</string>
     <string name="about_us">关于我们</string>
+    <!-- 诊断与复位卡 -->
+    <string name="about_diag_export">导出诊断日志</string>
+    <string name="about_diag_share">导出诊断日志</string>
+    <string name="about_diag_failed">导出失败，请重试</string>
+    <string name="about_reset">重置应用设置</string>
+    <string name="about_reset_subline">全部设置回默认，学习词清零</string>
+    <string name="about_reset_footnote">重置后回到默认安装状态：仅内置 Lite 方案可用，自装方案、WebDAV 绑定、归档与学习词全部清除。</string>
+    <string name="about_reset_confirm1_msg">此操作不可撤销，确定要继续吗？</string>
+    <string name="about_reset_confirm2_title">再次确认</string>
+    <string name="about_reset_confirm2_msg">确定要清除全部设置并回到默认状态吗？</string>
+    <string name="about_reset_continue">继续</string>
+    <string name="about_reset_confirm">确认重置</string>
+    <string name="about_reset_busy">正在重置…</string>
+    <string name="about_reset_failed">重置失败，请重试</string>
     <string name="about_us_desc">应用信息、版本更新</string>
     <string name="about_app_info">应用信息</string>
     <string name="about_description">应用简介</string>
