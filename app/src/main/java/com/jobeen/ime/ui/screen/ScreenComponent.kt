@@ -199,6 +199,7 @@ object ScreenComponent {
         iconTint: Color,
         titleColor: Color = MaterialTheme.colorScheme.onSurface,
         showChevron: Boolean = true,
+        subtitle: String? = null,
     ) {
         Row(
             modifier = Modifier
@@ -222,15 +223,26 @@ object ScreenComponent {
                 )
             }
             Spacer(Modifier.width(12.dp))
-            Text(
-                text = title,
-                fontSize = 16.sp,
-                lineHeight = 21.sp,
-                fontWeight = FontWeight.Medium,
-                color = titleColor,
-                modifier = Modifier.weight(1f),
-                maxLines = 1,
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontSize = 16.sp,
+                    lineHeight = 21.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = titleColor,
+                    maxLines = 1,
+                )
+                if (subtitle != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
             if (showChevron) {
                 Icon(
                     Icons.AutoMirrored.Filled.KeyboardArrowRight,

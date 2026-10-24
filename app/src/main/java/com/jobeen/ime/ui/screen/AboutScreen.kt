@@ -16,6 +16,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.BugReport
+import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -25,6 +28,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
@@ -45,10 +49,16 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jobeen.ime.BuildConfig
 import com.jobeen.ime.R
+import com.jobeen.ime.base.log.AppLogBuffer
 import com.jobeen.ime.base.net.UpdateCheckResult
 import com.jobeen.ime.base.net.VersionChecker
 import com.jobeen.ime.base.update.AppUpdateManager
+import com.jobeen.ime.data.manager.AppReset
+import com.jobeen.ime.ui.MainActivity
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
+import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
+import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
+import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
@@ -83,6 +93,10 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     val msgDownloadFailed = stringResource(R.string.update_download_failed)
     val msgNeedPermission = stringResource(R.string.update_need_permission)
     val msgDebugUnsupported = stringResource(R.string.debug_update_unsupported)
+    val msgDiagFailed = stringResource(R.string.about_diag_failed)
+    val msgResetFailed = stringResource(R.string.about_reset_failed)
+    var resetStep by remember { mutableStateOf(0) }
+    var resetting by remember { mutableStateOf(false) }
 
     if (showLicenses) {
         LicenseScreen(onBack = { showLicenses = false })
@@ -91,6 +105,80 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
 
     fun toast(msg: String) {
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    /** 重置执行：成功后以新任务重进设置 home（旧栈清掉，偏好重读默认值）。 */
+    fun doReset() {
+        if (resetting) return
+        resetting = true
+        scope.launch {
+            val result = AppReset.resetToInitialState(context)
+            resetting = false
+            result.onSuccess {
+                val intent = android.content.Intent(context, MainActivity::class.java).apply {
+                    flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_CLEAR_TASK
+                }
+                context.startActivity(intent)
+                (context as? android.app.Activity)?.finish()
+            }.onFailure {
+                toast(msgResetFailed)
+            }
+        }
+    }
+
+    /** 诊断导出：本进程 Timber 日志 + 应用/设备头，打包成 zip 分享。 */
+    fun exportDiag() {
+        runCatching {
+            val now = java.text.SimpleDateFormat(
+                "yyyyMMdd-HHmmss",
+                java.util.Locale.getDefault(),
+            ).format(java.util.Date())
+            val txt = buildString {
+                appendLine("Jime 诊断日志")
+                appendLine("应用版本：$versionName")
+                appendLine("包名：${context.packageName}")
+                appendLine("Android：${android.os.Build.VERSION.RELEASE}" +
+                    "（SDK ${android.os.Build.VERSION.SDK_INT}）")
+                appendLine("设备：${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
+                appendLine("导出时间：$now")
+                appendLine("说明：仅本进程 Timber 日志")
+                appendLine("----")
+                AppLogBuffer.entries.value.forEach { e ->
+                    val p = when (e.priority) {
+                        2 -> "V"
+                        3 -> "D"
+                        4 -> "I"
+                        5 -> "W"
+                        6 -> "E"
+                        else -> "?"
+                    }
+                    appendLine("${e.time} $p/${e.tag} ${e.message}")
+                }
+            }
+            val zipFile = java.io.File(context.cacheDir, "jime-diag-$now.zip")
+            java.util.zip.ZipOutputStream(java.io.FileOutputStream(zipFile)).use { zos ->
+                zos.putNextEntry(java.util.zip.ZipEntry("diagnostic.txt"))
+                zos.write(txt.toByteArray(Charsets.UTF_8))
+                zos.closeEntry()
+            }
+            val uri = androidx.core.content.FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                zipFile,
+            )
+            val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                type = "application/zip"
+                putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(
+                android.content.Intent.createChooser(
+                    intent,
+                    context.getString(R.string.about_diag_share),
+                ),
+            )
+        }.onFailure { toast(msgDiagFailed) }
     }
 
     // 尝试安装：缺「安装未知应用」授权时先去设置，文件留着，用户回来再点即可
@@ -179,9 +267,9 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 ),
             ) {
                 Column(
@@ -218,6 +306,46 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            // 诊断与复位卡：导出诊断日志 + 红色重置应用设置行 + 副行 + 脚注。
+            // 重置走 AppReset（与 RIME 页方案重置同一动作），二次确认，
+            // 绝不加“不再询问”。
+            GroupCard {
+                NavRow(
+                    title = stringResource(R.string.about_diag_export),
+                    onClick = { exportDiag() },
+                    icon = Icons.Filled.BugReport,
+                    iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                    iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                )
+                GroupDivider()
+                NavRow(
+                    title = stringResource(R.string.about_reset),
+                    subtitle = stringResource(R.string.about_reset_subline),
+                    onClick = { if (!resetting) resetStep = 1 },
+                    icon = Icons.Filled.Refresh,
+                    iconContainer = MaterialTheme.colorScheme.errorContainer,
+                    iconTint = MaterialTheme.colorScheme.onErrorContainer,
+                    titleColor = MaterialTheme.colorScheme.error,
+                )
+            }
+            Text(
+                text = stringResource(R.string.about_reset_footnote),
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(horizontal = 4.dp),
+            )
+            if (resetting) {
+                Text(
+                    text = stringResource(R.string.about_reset_busy),
+                    fontSize = rowSubFontSize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
             }
 
             Spacer(Modifier.height(8.dp))
@@ -404,6 +532,53 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
 
             Spacer(Modifier.height(32.dp))
         }
+    }
+
+    // 重置二次确认：两次都只有取消 / 继续，绝不加“不再询问”。
+    if (resetStep == 1) {
+        AlertDialog(
+            onDismissRequest = { resetStep = 0 },
+            title = { Text(stringResource(R.string.about_reset)) },
+            text = {
+                Text(
+                    stringResource(R.string.about_reset_footnote) +
+                        stringResource(R.string.about_reset_confirm1_msg),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = { resetStep = 2 }) {
+                    Text(stringResource(R.string.about_reset_continue))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetStep = 0 }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+    if (resetStep == 2) {
+        AlertDialog(
+            onDismissRequest = { resetStep = 0 },
+            title = { Text(stringResource(R.string.about_reset_confirm2_title)) },
+            text = { Text(stringResource(R.string.about_reset_confirm2_msg)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    resetStep = 0
+                    doReset()
+                }) {
+                    Text(
+                        stringResource(R.string.about_reset_confirm),
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { resetStep = 0 }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
     }
 
 }
