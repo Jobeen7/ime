@@ -31,15 +31,20 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
@@ -75,13 +80,16 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
@@ -1067,7 +1075,20 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    if (inImportFlow || inDownloadFlow) {
+                    // 下载列表页右上角 ＋：新增下载条目（表单页 / 进行中 /
+                    // 错误页不给，防流程中途切走）。
+                    if (downloadPage && importPlan == null && !importBusy &&
+                        importError == null && !downloadFormOpen &&
+                        !downloadRunning && downloadError == null
+                    ) {
+                        IconButton(onClick = { openDownloadForm(null) }) {
+                            Icon(
+                                Icons.Filled.Add,
+                                contentDescription = stringResource(R.string.schema_download_add),
+                                tint = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    } else if (inImportFlow || inDownloadFlow) {
                         // 导入 / 下载流程页不给菜单与编辑入口，
                         // 防流程中途切走状态。
                     } else if (!editMode) {
@@ -1124,16 +1145,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
-        },
-        floatingActionButton = {
-            // 只在下载列表页给 + 新增（校验 / 安装交接页不给，防流程中途切走）。
-            if (downloadPage && importPlan == null && !importBusy && importError == null &&
-                !downloadFormOpen && !downloadRunning && downloadError == null
-            ) {
-                FloatingActionButton(onClick = { openDownloadForm(null) }) {
-                    Icon(Icons.Filled.Add, contentDescription = null)
-                }
-            }
         },
     ) { padding ->
         // 导入流程页整体替换列表内容（校验页 / 等待页 / 错误页）。
@@ -1198,84 +1209,139 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         // 第三期下载页整体替换列表内容（表单 / 进度 / 错误 / 条目列表）。
         // 导入交接分支在前：下载成功后的校验 / 安装仍走二期页面。
         if (downloadFormOpen) {
+            // 新增表单：分组卡片形态——标签卡片 + 卡内输入框，
+            // HTTP 请求头区 + 添加 Header、深色保存钮。保存即保存条目
+            // 并立即用本次 Header 下载（Phase 3 逻辑不变）。
             Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .verticalScroll(rememberScrollState())
                     .padding(padding)
                     .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
-                Spacer(Modifier.height(8.dp))
-                OutlinedTextField(
-                    value = downloadFormName,
-                    onValueChange = { downloadFormName = it },
-                    label = { Text(stringResource(R.string.schema_download_name)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-                OutlinedTextField(
-                    value = downloadFormUrl,
-                    onValueChange = { downloadFormUrl = it },
-                    label = { Text(stringResource(R.string.schema_download_url)) },
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth(),
-                )
                 Spacer(Modifier.height(4.dp))
-                Text(
-                    stringResource(R.string.schema_download_header),
-                    fontSize = rowFontSize,
-                    fontWeight = FontWeight.Medium,
-                )
-                downloadFormHeaders.forEachIndexed { index, header ->
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OutlinedTextField(
-                            value = header.first,
-                            onValueChange = { value ->
-                                downloadFormHeaders[index] = value to header.second
-                            },
-                            label = {
-                                Text(stringResource(R.string.schema_download_header_name))
-                            },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        InCardTextField(
+                            label = stringResource(R.string.schema_download_name),
+                            value = downloadFormName,
+                            onValueChange = { downloadFormName = it },
                         )
-                        Spacer(Modifier.width(8.dp))
-                        OutlinedTextField(
-                            value = header.second,
-                            onValueChange = { value ->
-                                downloadFormHeaders[index] = header.first to value
-                            },
-                            label = {
-                                Text(stringResource(R.string.schema_download_header_value))
-                            },
-                            singleLine = true,
-                            modifier = Modifier.weight(1f),
+                        Spacer(Modifier.height(8.dp))
+                        HorizontalDivider(
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                         )
-                        TextButton(
-                            onClick = { downloadFormHeaders.removeAt(index) },
-                            enabled = downloadFormHeaders.size > 1,
-                        ) {
-                            Text(stringResource(R.string.schema_download_header_remove))
+                        Spacer(Modifier.height(8.dp))
+                        InCardTextField(
+                            label = stringResource(R.string.schema_download_url),
+                            value = downloadFormUrl,
+                            onValueChange = { downloadFormUrl = it },
+                            keyboardType = KeyboardType.Uri,
+                        )
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                ) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                stringResource(R.string.schema_download_header),
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Spacer(Modifier.weight(1f))
+                            TextButton(
+                                onClick = { downloadFormHeaders.add("" to "") },
+                            ) {
+                                Text(stringResource(R.string.schema_download_add_header))
+                            }
+                        }
+                        downloadFormHeaders.forEachIndexed { index, header ->
+                            if (index > 0) {
+                                Spacer(Modifier.height(8.dp))
+                                HorizontalDivider(
+                                    color = MaterialTheme.colorScheme.outlineVariant
+                                        .copy(alpha = 0.5f),
+                                )
+                                Spacer(Modifier.height(8.dp))
+                            }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    InCardTextField(
+                                        label = stringResource(
+                                            R.string.schema_download_header_name,
+                                        ),
+                                        value = header.first,
+                                        onValueChange = { value ->
+                                            downloadFormHeaders[index] = value to header.second
+                                        },
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column(Modifier.weight(1f)) {
+                                    InCardTextField(
+                                        label = stringResource(
+                                            R.string.schema_download_header_value,
+                                        ),
+                                        value = header.second,
+                                        onValueChange = { value ->
+                                            downloadFormHeaders[index] =
+                                                header.first to value
+                                        },
+                                    )
+                                }
+                                IconButton(
+                                    onClick = { downloadFormHeaders.removeAt(index) },
+                                    enabled = downloadFormHeaders.size > 1,
+                                    modifier = Modifier.size(40.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Close,
+                                        contentDescription = stringResource(
+                                            R.string.schema_download_header_remove,
+                                        ),
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
-                TextButton(onClick = { downloadFormHeaders.add("" to "") }) {
-                    Text(stringResource(R.string.schema_download_add_header))
-                }
                 if (downloadFormError != null) {
+                    Spacer(Modifier.height(8.dp))
                     Text(
                         downloadFormErrorText(downloadFormError!!),
-                        fontSize = rowFontSize,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
                         color = MaterialTheme.colorScheme.error,
                     )
                 }
+                Spacer(Modifier.height(12.dp))
                 Button(
                     onClick = { submitDownloadForm() },
                     modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.inverseSurface,
+                        contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                    ),
                 ) {
                     Text(stringResource(R.string.schema_download_save))
                 }
@@ -1382,48 +1448,78 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         fontSize = rowSubFontSize,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                }
-                downloadEntries.forEach { entry ->
+                } else {
+                    // 下载列表：一张分组卡片，行 = 名 + 中间截断 URL +
+                    // 蓝色下载圆钮；行点按与圆钮同义（打开预填表单补 Header
+                    // 后下载——Header 从不持久化，故重下载必经表单）。
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = ExpressiveShapes.medium,
+                        shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
                         ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     ) {
-                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
-                            Text(
-                                entry.name,
-                                fontSize = rowFontSize,
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                entry.url,
-                                fontSize = rowSubFontSize,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 2,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            Spacer(Modifier.height(4.dp))
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                TextButton(onClick = { openDownloadForm(entry) }) {
-                                    Text(
-                                        stringResource(
-                                            R.string.schema_download_row_download,
-                                        ),
-                                    )
+                        Column {
+                            downloadEntries.forEachIndexed { index, entry ->
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { openDownloadForm(entry) }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            entry.name,
+                                            fontSize = 16.sp,
+                                            lineHeight = 21.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            entry.url,
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.MiddleEllipsis,
+                                        )
+                                    }
+                                    Spacer(Modifier.width(12.dp))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(MaterialTheme.colorScheme.primary)
+                                            .clickable { openDownloadForm(entry) },
+                                        contentAlignment = Alignment.Center,
+                                    ) {
+                                        Icon(
+                                            Icons.Filled.Download,
+                                            contentDescription = stringResource(
+                                                R.string.schema_download_row_download,
+                                            ),
+                                            modifier = Modifier.size(20.dp),
+                                            tint = MaterialTheme.colorScheme.onPrimary,
+                                        )
+                                    }
+                                    IconButton(onClick = { deleteDownloadEntry(entry) }) {
+                                        Icon(
+                                            Icons.Filled.Delete,
+                                            contentDescription = null,
+                                            modifier = Modifier.scale(0.8f),
+                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
                                 }
-                                Spacer(Modifier.width(8.dp))
-                                IconButton(onClick = { deleteDownloadEntry(entry) }) {
-                                    Icon(
-                                        Icons.Filled.Delete,
-                                        contentDescription = null,
-                                        modifier = Modifier.scale(0.8f),
-                                        tint = MaterialTheme.colorScheme.onSurface,
+                                if (index < downloadEntries.lastIndex) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant
+                                            .copy(alpha = 0.5f),
                                     )
                                 }
                             }
@@ -1652,6 +1748,38 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             }
 
         }
+    }
+}
+
+/** 分组卡片内的输入框：上方小字标签 + 无框输入行（表单卡片语言）。 */
+@Composable
+private fun InCardTextField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    keyboardType: KeyboardType = KeyboardType.Text,
+) {
+    Column {
+        Text(
+            text = label,
+            fontSize = 12.sp,
+            lineHeight = 17.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(2.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onValueChange,
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(keyboardType = keyboardType),
+            textStyle = TextStyle(
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            modifier = Modifier.fillMaxWidth(),
+        )
     }
 }
 

@@ -149,7 +149,8 @@
     <string name="schema_import_error_validate">校验失败，请重试</string>
     <!-- 第三期远程下载：菜单 / 条目列表 / 表单 / 进度 / 错误 -->
     <string name="schema_download">下载方案</string>
-    <string name="schema_download_empty">暂无已保存的下载条目，点右下角 + 新增</string>
+    <string name="schema_download_empty">暂无已保存的下载条目，点右上角 + 新增</string>
+    <string name="schema_download_add">新增下载方案</string>
     <string name="schema_download_name">方案名称</string>
     <string name="schema_download_url">下载地址</string>
     <string name="schema_download_header">请求头（每次下载时输入，不保存）</string>
