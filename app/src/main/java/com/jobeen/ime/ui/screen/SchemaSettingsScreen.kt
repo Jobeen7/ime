@@ -2,6 +2,11 @@ package com.jobeen.ime.ui.screen
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.net.Uri
+import android.os.StatFs
+import android.provider.OpenableColumns
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -88,6 +93,9 @@ import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.data.manager.SchemaManager
+import com.jobeen.ime.data.manager.SchemePackageImport
+import com.jobeen.ime.data.manager.SchemePackageImport.PlanResult
+import com.jobeen.ime.data.manager.SchemePackageImport.SchemeImportPlan
 import com.jobeen.ime.data.manager.SchemeSwitchOrchestrator
 import com.jobeen.ime.data.manager.SchemeSwitchPolicy
 import com.jobeen.ime.data.manager.SchemeSwitchState
@@ -106,6 +114,7 @@ import com.jobeen.ime.ui.theme.ExpressiveShapes
 import kotlin.math.roundToInt
 import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -182,6 +191,17 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
     val density = LocalDensity.current
     val scope = rememberCoroutineScope()
+    // ---- 第二期本地导入：SAF 选 zip → 暂存校验 → 校验结果页 → 确认安装 ----
+    // importPlan 非空时 Scaffold 内容整体切到校验结果页（见下方内容分支）；
+    // importError 非空且无 plan 时切到错误页；importBusy 时切到等待页。
+    var importPlan by remember { mutableStateOf<SchemeImportPlan?>(null) }
+    var importStagingDir by remember { mutableStateOf<File?>(null) }
+    var importError by remember { mutableStateOf<ImportErrorKind?>(null) }
+    var importBusy by remember { mutableStateOf(false) }
+    var importInstalling by remember { mutableStateOf(false) }
+    val importPrefs = remember {
+        context.getSharedPreferences(SchemePackageImport.PREFS_NAME, Context.MODE_PRIVATE)
+    }
     // 协程内不可用 stringResource，更新阶段文案提前在组合阶段解析
     val stageDownloadingSchema = stringResource(R.string.schema_update_downloading_schema)
     val stageExtracting = stringResource(R.string.schema_update_extracting)
@@ -196,8 +216,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         null -> ""
     }
 
-    // 异步加载输入方案，避免阻塞主线程（schemasList 内部走引擎线程）
-    LaunchedEffect(Unit) {
+    // 异步加载输入方案，避免阻塞主线程（schemasList 内部走引擎线程）。
+    // 抽成独立挂起函数：导入安装 / 部署完成后也要重算（引擎侧部署后
+    // 方案表才含新方案，合成占位项需被真实项替换）。
+    suspend fun loadSchemas() {
         val allSchemas = EngineFactory.current()?.schemasList() ?: emptyList()
         if (allSchemas.isNotEmpty()) {
             val allItems =
@@ -264,6 +286,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
             loaded = true
         }
+    }
+
+    LaunchedEffect(Unit) {
+        loadSchemas()
     }
 
     // 打开页面先做版本切换清理（指纹记录/缓存跨版本作废，见
@@ -414,7 +440,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
      * 离开页面取消本协程：顺序已写回、引擎侧以实际状态为准，重进页面
      * 按实际当前方案重算，不留半吊子。
      */
-    fun switchTo(target: SchemaItem) {
+    /**
+     * 点选切换（见上方注释）。[onDone] 在切换协程所有终点调用
+     * （直选成功 / 部署成功 / 回退完成 / 防御性提前返回），供导入流程
+     * 在切换结束后刷新方案表；一期原有调用方不传，行为不变。
+     */
+    fun switchTo(target: SchemaItem, onDone: (() -> Unit)? = null) {
         if (switchOrchestrator.isBusy()) return
         val plan = switchOrchestrator.beginSwitch(
             currentSchemeId,
@@ -430,12 +461,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             refreshSwitchState()
             if (result == SwitchVerification.SUCCESS) {
                 currentSchemeId = target.id
+                onDone?.invoke()
                 return@launch
             }
             // 仅 Deploying 态才真正部署（编排器约定：非 Switching 态
             // 的 resolveSwitch 不转移状态，返回值不得单独作为部署依据）
             if (switchState !is SchemeSwitchState.Deploying) {
                 currentSchemeId = readCurrentId() ?: currentSchemeId
+                onDone?.invoke()
                 return@launch
             }
             EngineFactory.current()?.reload()
@@ -443,10 +476,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             if (switchOrchestrator.resolveDeploy(verifyCurrent(target.id, 180_000))) {
                 refreshSwitchState()
                 currentSchemeId = target.id
+                onDone?.invoke()
                 return@launch
             }
             refreshSwitchState()
-            val rollback = switchOrchestrator.beginRollback() ?: return@launch
+            val rollback = switchOrchestrator.beginRollback() ?: run {
+                onDone?.invoke()
+                return@launch
+            }
             refreshSwitchState()
             applyOrder(rollback.restoredOrder)
             EngineFactory.current()?.reload()
@@ -454,7 +491,172 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             switchOrchestrator.resolveRollback(verifyCurrent(rollback.previousId, 180_000))
             refreshSwitchState()
             currentSchemeId = readCurrentId() ?: rollback.previousId
+            onDone?.invoke()
         }
+    }
+
+    // ---- 第二期本地导入流程（SAF 选 zip → 暂存校验 → 确认安装 → 一期切换） ----
+    /** 删掉本次导入的暂存文件（暂存目录与临时 zip，按名删，状态未赋值也覆盖）。 */
+    fun cleanupImportFiles() {
+        importStagingDir?.deleteRecursively()
+        importStagingDir = null
+        File(context.cacheDir, IMPORT_STAGING_DIR_NAME).deleteRecursively()
+        File(context.cacheDir, IMPORT_TMP_ZIP_NAME).delete()
+    }
+
+    /** 取消导入：关校验页并清理暂存（安装进行中不可取消）。 */
+    fun cancelImport() {
+        if (importInstalling) return
+        importPlan = null
+        importError = null
+        cleanupImportFiles()
+    }
+
+    /**
+     * SAF 选包后的校验：复制到临时 zip → 解到暂存目录 → 生成安装规划。
+     * 剩余空间在规划出来后、安装前检查（解压后总体积 + 部署余量）。
+     * 校验失败只置错误态、不动 user 目录；离开页面取消本协程时暂存
+     * 文件残留 cacheDir，由系统清理（cacheDir 本就可随时清）。
+     */
+    fun runImportPick(uri: Uri) {
+        if (importBusy || switchOrchestrator.isBusy()) return
+        importBusy = true
+        importError = null
+        scope.launch {
+            try {
+                val displayName = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                            if (cursor.moveToFirst()) {
+                                val idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                                if (idx >= 0) cursor.getString(idx) else null
+                            } else {
+                                null
+                            }
+                        }
+                    }.getOrNull()
+                } ?: "scheme-package.zip"
+                val tmpZip = File(context.cacheDir, IMPORT_TMP_ZIP_NAME)
+                val copied = withContext(Dispatchers.IO) {
+                    runCatching {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            tmpZip.outputStream().use { output -> input.copyTo(output) }
+                        } ?: throw IllegalStateException("openInputStream null")
+                    }.getOrNull()
+                }
+                if (copied == null) {
+                    importError = ImportErrorKind.COPY_FAILED
+                    return@launch
+                }
+                val stagingDir = File(context.cacheDir, IMPORT_STAGING_DIR_NAME)
+                val outcome = withContext(Dispatchers.IO) {
+                    buildImportPlan(
+                        context,
+                        tmpZip,
+                        stagingDir,
+                        SchemePackageImport.sanitizePackageName(displayName),
+                    )
+                }
+                when (outcome) {
+                    is ImportPlanOutcome.Failed -> {
+                        importError = outcome.error
+                        cleanupImportFiles()
+                    }
+                    is ImportPlanOutcome.Ready -> {
+                        val available = runCatching {
+                            StatFs(DataManager.userDataDir.path).availableBytes
+                        }.getOrNull() ?: Long.MAX_VALUE
+                        if (available <
+                            outcome.plan.totalBytes + SchemePackageImport.FREE_SPACE_MARGIN_BYTES
+                        ) {
+                            importError = ImportErrorKind.NO_SPACE
+                            cleanupImportFiles()
+                        } else {
+                            importPlan = outcome.plan
+                            importStagingDir = stagingDir
+                        }
+                    }
+                }
+            } finally {
+                importBusy = false
+            }
+        }
+    }
+
+    /**
+     * 确认安装：落盘 + 登记在 NonCancellable 里做（短本地 IO，页面离开
+     * 也不留半安装）；登记写偏好后把新方案放进未启用列表，再走一期
+     * switchTo（首个方案移到首位，部署 / 回退编排全复用一期）。
+     * 回退时顺序恢复为安装前，新方案退回未启用——文件与登记保留，
+     * 卸载按集合清是后续期数的事，本期不删文件。
+     * 安装失败留在校验页并可重试（归档首次胜出、落盘幂等，重试安全）。
+     */
+    fun confirmImport() {
+        val plan = importPlan ?: return
+        val staging = importStagingDir ?: return
+        if (importInstalling) return
+        importInstalling = true
+        importError = null
+        scope.launch {
+            try {
+                val installed = withContext(Dispatchers.IO + NonCancellable) {
+                    val archiveDir = File(
+                        DataManager.userDataDir,
+                        "${SchemePackageImport.ARCHIVE_DIR_NAME}/" +
+                            "${plan.packageName}-${System.currentTimeMillis()}",
+                    )
+                    SchemePackageImport.applyPlan(
+                        staging,
+                        DataManager.userDataDir,
+                        archiveDir,
+                        plan,
+                    )
+                }
+                val registry = SchemePackageImport.decodeRegistry(
+                    importPrefs.getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
+                )
+                val record = SchemePackageImport.SchemePackageRecord(
+                    packageName = plan.packageName,
+                    version = plan.packageVersion,
+                    schemeIds = plan.schemes.map { it.id },
+                    files = installed,
+                )
+                importPrefs.edit {
+                    putString(
+                        SchemePackageImport.KEY_PACKAGE_REGISTRY,
+                        SchemePackageImport.encodeRegistry(registry.withRecord(record)),
+                    )
+                }
+                val newItems = plan.schemes.map { SchemaItem(it.id, it.name, it.layout) }
+                newItems.forEach { item ->
+                    if (availableSchemas.none { it.id == item.id } &&
+                        enabledSchemas.none { it.id == item.id }
+                    ) {
+                        availableSchemas.add(item)
+                    }
+                }
+                cleanupImportFiles()
+                importPlan = null
+                importInstalling = false
+                val target = newItems.firstOrNull()
+                if (target != null) {
+                    switchTo(target) { scope.launch { loadSchemas() } }
+                } else {
+                    loadSchemas()
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                importError = ImportErrorKind.INSTALL_FAILED
+                importInstalling = false
+            }
+        }
+    }
+
+    // SAF 启动器（流程函数之后声明：本地函数不可前向引用）。
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument(),
+    ) { uri ->
+        if (uri != null) runImportPick(uri)
     }
 
     fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
@@ -510,16 +712,42 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
 
     Scaffold(
         topBar = {
+            // 导入流程中顶栏跟随流程态：校验页标题为校验结果、返回即取消；
+            // 等待 / 错误页标题为导入方案、返回即清错误；其余为一期原顶栏。
+            // 校验页与等待页的返回在安装进行中禁用（落盘在 NonCancellable
+            // 里跑，关页不中断安装，关了也无处回写状态）。
+            val inImportFlow = importPlan != null || importError != null || importBusy
             TopAppBar(
                 title = {
                     Text(
-                        stringResource(R.string.schema_settings),
+                        stringResource(
+                            when {
+                                importPlan != null -> R.string.schema_import_result_title
+                                inImportFlow -> R.string.schema_import
+                                else -> R.string.schema_settings
+                            },
+                        ),
                         fontSize = barFontSize,
                         fontWeight = FontWeight.Bold,
                     )
                 },
                 navigationIcon = {
-                    IconButton(onClick = { saveOrder(prefs, enabledSchemas); onBack() }) {
+                    IconButton(
+                        onClick = {
+                            when {
+                                importPlan != null -> cancelImport()
+                                importError != null -> {
+                                    importError = null
+                                    cleanupImportFiles()
+                                }
+                                else -> {
+                                    saveOrder(prefs, enabledSchemas)
+                                    onBack()
+                                }
+                            }
+                        },
+                        enabled = !importInstalling && !importBusy,
+                    ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
                             contentDescription = null,
@@ -529,10 +757,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    // 第一期菜单只含「方案列表编辑」：下载 / 导入 / 归档恢复
-                    // 是后续期数，不做死按钮。编辑模式下行点选不切换（防
-                    // 排序时误触），顶栏直接给「完成」退出。
-                    if (editMode) {
+                    if (inImportFlow) {
+                        // 导入流程页不给菜单与编辑入口，防流程中途切走状态。
+                    } else if (editMode) {
                         TextButton(onClick = { editMode = false }) {
                             Text(stringResource(R.string.schema_edit_done))
                         }
@@ -548,6 +775,21 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false },
                         ) {
+                            // 第二期新增「导入方案」：SAF 选 zip，走暂存校验流程。
+                            // 切换 / 部署进行中禁用（维护期守卫与一期同口径）。
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.schema_import)) },
+                                enabled = !switchOrchestrator.isBusy() && !importBusy,
+                                onClick = {
+                                    menuExpanded = false
+                                    importLauncher.launch(
+                                        arrayOf(
+                                            "application/zip",
+                                            "application/x-zip-compressed",
+                                        ),
+                                    )
+                                },
+                            )
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.schema_list_edit)) },
                                 onClick = {
@@ -564,6 +806,66 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             )
         },
     ) { padding ->
+        // 导入流程页整体替换列表内容（校验页 / 等待页 / 错误页）。
+        if (importPlan != null) {
+            ImportValidationPage(
+                plan = importPlan!!,
+                installing = importInstalling,
+                error = importError,
+                onConfirm = { confirmImport() },
+                onCancel = { cancelImport() },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+            )
+            return@Scaffold
+        }
+        if (importBusy) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    stringResource(R.string.schema_import_validating),
+                    fontSize = rowSubFontSize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            return@Scaffold
+        }
+        if (importError != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+            ) {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    importErrorText(importError!!),
+                    fontSize = rowFontSize,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = {
+                        importError = null
+                        cleanupImportFiles()
+                    },
+                ) {
+                    Text(stringResource(R.string.schema_banner_close))
+                }
+            }
+            return@Scaffold
+        }
         if (!loaded) return@Scaffold
         Column(
             modifier = Modifier
@@ -1418,5 +1720,349 @@ private fun UpdateInfoRow(label: String, value: String, valueColor: Color) {
             color = valueColor,
             maxLines = 1,
         )
+    }
+}
+
+// ---- 第二期本地导入：校验结果页与规划构造（界面层，规划逻辑见 SchemePackageImport） ----
+
+/** 导入错误种类（界面文案据此映射，规划层只给原因枚举）。 */
+private enum class ImportErrorKind {
+    COPY_FAILED,
+    NOT_ZIP,
+    NO_SCHEMA,
+    TOO_LARGE,
+    NO_SPACE,
+    VALIDATE_FAILED,
+    INSTALL_FAILED,
+}
+
+/** SAF 选包后复制到的临时 zip 文件名（cacheDir 下，用完即删）。 */
+private const val IMPORT_TMP_ZIP_NAME = "scheme-import.zip"
+
+/** zip 解压暂存目录名（cacheDir 下，用完即删）。 */
+private const val IMPORT_STAGING_DIR_NAME = "scheme-import-staging"
+
+private sealed interface ImportPlanOutcome {
+    data class Ready(val plan: SchemeImportPlan) : ImportPlanOutcome
+    data class Failed(val error: ImportErrorKind) : ImportPlanOutcome
+}
+
+/**
+ * 由临时 zip 构造安装规划（IO 线程调用）：解压 → 登记读回 → 现存文件
+ * 盘点 → 规划。失败时暂存目录已由 extractZip 清掉或为空，调用方
+ * 再调 cleanupImportFiles 兜底。包名由调用方从 SAF 显示名净化后传入
+ * （临时 zip 文件名固定，不能作包名）。
+ */
+private fun buildImportPlan(
+    context: Context,
+    zipFile: File,
+    stagingDir: File,
+    packageName: String,
+): ImportPlanOutcome {
+    val extracted = when (val result = SchemePackageImport.extractZip(zipFile, stagingDir)) {
+        is SchemePackageImport.ExtractResult.Ok -> result.extracted
+        is SchemePackageImport.ExtractResult.Failed -> return ImportPlanOutcome.Failed(
+            when (result.reason) {
+                SchemePackageImport.ExtractFailure.NOT_ZIP -> ImportErrorKind.NOT_ZIP
+                SchemePackageImport.ExtractFailure.ZIP_TOO_LARGE,
+                SchemePackageImport.ExtractFailure.ENTRY_TOO_LARGE,
+                SchemePackageImport.ExtractFailure.TOTAL_TOO_LARGE -> ImportErrorKind.TOO_LARGE
+            },
+        )
+    }
+    val staged = SchemePackageImport.stagedPackageOf(stagingDir, extracted.entries)
+    val preSkipped = extracted.skippedTraversal.map {
+        SchemePackageImport.SkippedFile(it, SchemePackageImport.SkipReason.TRAVERSAL)
+    }
+    val registry = SchemePackageImport.decodeRegistry(
+        context.getSharedPreferences(
+            SchemePackageImport.PREFS_NAME,
+            Context.MODE_PRIVATE,
+        ).getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
+    )
+    val existingUser = SchemePackageImport.listRelativeFiles(DataManager.userDataDir)
+    val existingSharedIds = DataManager.sharedDataDir.listFiles()
+        ?.mapNotNull { file ->
+            file.name.removeSuffix(".schema.yaml")
+                .takeIf { file.name.endsWith(".schema.yaml") }
+        }?.toSet().orEmpty()
+    return when (
+        val result = SchemePackageImport.planInstall(
+            packageName = packageName,
+            zipBytes = zipFile.length(),
+            staged = staged,
+            preSkipped = preSkipped,
+            existingUserFiles = existingUser,
+            existingSharedSchemeIds = existingSharedIds,
+            registry = registry,
+        )
+    ) {
+        is PlanResult.Success -> ImportPlanOutcome.Ready(result.plan)
+        is PlanResult.Failed -> ImportPlanOutcome.Failed(
+            when (result.reason) {
+                SchemePackageImport.PlanFailure.NO_SCHEMA -> ImportErrorKind.NO_SCHEMA
+                SchemePackageImport.PlanFailure.ZIP_TOO_LARGE,
+                SchemePackageImport.PlanFailure.ENTRY_TOO_LARGE,
+                SchemePackageImport.PlanFailure.TOTAL_TOO_LARGE -> ImportErrorKind.TOO_LARGE
+            },
+        )
+    }
+}
+
+@Composable
+private fun importErrorText(error: ImportErrorKind): String = when (error) {
+    ImportErrorKind.COPY_FAILED -> stringResource(R.string.schema_import_error_copy)
+    ImportErrorKind.NOT_ZIP -> stringResource(R.string.schema_import_error_zip)
+    ImportErrorKind.NO_SCHEMA -> stringResource(R.string.schema_import_error_no_schema)
+    ImportErrorKind.TOO_LARGE -> stringResource(R.string.schema_import_error_too_large)
+    ImportErrorKind.NO_SPACE -> stringResource(R.string.schema_import_error_no_space)
+    ImportErrorKind.VALIDATE_FAILED -> stringResource(R.string.schema_import_error_validate)
+    ImportErrorKind.INSTALL_FAILED -> stringResource(R.string.schema_import_error_install)
+}
+
+/**
+ * 导入校验结果页：包内方案清单、同 ID 替换警告（含 Pro 多口味与内置
+ * 覆盖两种口径）、共享文件决策、跳过文件，最后确认安装 / 取消。
+ * 安装进行中按钮禁用、显示进度；安装失败留在本页并可重试。
+ */
+@Composable
+private fun ImportValidationPage(
+    plan: SchemeImportPlan,
+    installing: Boolean,
+    error: ImportErrorKind?,
+    onConfirm: () -> Unit,
+    onCancel: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Spacer(Modifier.height(4.dp))
+        Text(
+            stringResource(R.string.schema_import_package) + "：" + plan.packageName,
+            fontSize = rowFontSize,
+            fontWeight = FontWeight.Bold,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            plan.packageVersion ?: stringResource(R.string.schema_import_version_unknown),
+            fontSize = rowSubFontSize,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(8.dp))
+        SectionHeader(stringResource(R.string.schema_import_schemes_title))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = ExpressiveShapes.medium,
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surface,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+        ) {
+            Column {
+                plan.schemes.forEach { scheme ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                scheme.name,
+                                fontSize = rowFontSize,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                scheme.id,
+                                fontSize = rowSubFontSize,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        TagBadge(
+                            schemaLayoutTag(context, scheme.layout),
+                            MaterialTheme.colorScheme.primaryContainer,
+                            MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        scheme.version?.let {
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                it,
+                                fontSize = rowSubFontSize,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        if (plan.replacements.isNotEmpty()) {
+            SectionHeader(stringResource(R.string.schema_import_replace_title))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = ExpressiveShapes.medium,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                ),
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    plan.replacements.forEach { replacement ->
+                        Text(
+                            replacement.schemeId +
+                                (replacement.previousPackage?.let { "（$it）" } ?: ""),
+                            fontSize = rowFontSize,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            when {
+                                replacement.overridesBuiltin ->
+                                    stringResource(R.string.schema_import_replace_builtin_note)
+                                replacement.schemeId == "wanxiang_pro" ->
+                                    stringResource(R.string.schema_import_replace_pro_note) +
+                                        "；" + stringResource(R.string.schema_import_replace_note)
+                                else ->
+                                    stringResource(R.string.schema_import_replace_note)
+                            },
+                            fontSize = rowSubFontSize,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        }
+        if (plan.sharedDecisions.isNotEmpty()) {
+            SectionHeader(stringResource(R.string.schema_import_shared_title))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = ExpressiveShapes.medium,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    plan.sharedDecisions.forEach { decision ->
+                        Text(
+                            decision.relPath,
+                            fontSize = rowFontSize,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            when {
+                                decision.overwrite ->
+                                    stringResource(R.string.schema_import_shared_overwrite) +
+                                        "（${decision.existingVersion} → ${decision.incomingVersion}）"
+                                decision.unknownVersion ->
+                                    stringResource(R.string.schema_import_shared_unknown)
+                                else ->
+                                    stringResource(R.string.schema_import_shared_keep) +
+                                        "（${decision.existingVersion} / ${decision.incomingVersion}）"
+                            },
+                            fontSize = rowSubFontSize,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        }
+        if (plan.skippedFiles.isNotEmpty()) {
+            SectionHeader(stringResource(R.string.schema_import_skipped_title))
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = ExpressiveShapes.medium,
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                ),
+                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+            ) {
+                Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    plan.skippedFiles.forEach { skipped ->
+                        Text(
+                            skipped.relPath,
+                            fontSize = rowFontSize,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            when (skipped.reason) {
+                                SchemePackageImport.SkipReason.TRAVERSAL ->
+                                    stringResource(R.string.schema_import_skip_traversal)
+                                SchemePackageImport.SkipReason.PROTECTED ->
+                                    stringResource(R.string.schema_import_skip_protected)
+                                SchemePackageImport.SkipReason.USER_CUSTOM ->
+                                    stringResource(R.string.schema_import_skip_custom)
+                                SchemePackageImport.SkipReason.EXISTS_KEPT ->
+                                    stringResource(R.string.schema_import_skip_exists)
+                                SchemePackageImport.SkipReason.SHARED_OLDER ->
+                                    stringResource(R.string.schema_import_skip_shared_older)
+                                SchemePackageImport.SkipReason.SHARED_UNKNOWN_VERSION ->
+                                    stringResource(R.string.schema_import_skip_shared_unknown)
+                            },
+                            fontSize = rowSubFontSize,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                    }
+                }
+            }
+        }
+        if (plan.overwrittenExisting.isNotEmpty()) {
+            Spacer(Modifier.height(4.dp))
+            Text(
+                stringResource(R.string.schema_import_overwrite_note, plan.overwrittenExisting.size),
+                fontSize = rowSubFontSize,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (error != null) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                importErrorText(error),
+                fontSize = rowFontSize,
+                color = MaterialTheme.colorScheme.error,
+            )
+        }
+        if (installing) {
+            Spacer(Modifier.height(8.dp))
+            Text(
+                stringResource(R.string.schema_import_installing),
+                fontSize = rowSubFontSize,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+        }
+        Spacer(Modifier.height(12.dp))
+        Button(
+            onClick = onConfirm,
+            enabled = !installing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.schema_import_confirm))
+        }
+        TextButton(
+            onClick = onCancel,
+            enabled = !installing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(stringResource(R.string.schema_import_cancel))
+        }
+        Spacer(Modifier.height(16.dp))
     }
 }
