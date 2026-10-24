@@ -121,6 +121,7 @@
     <string name="schema_manage_footnote">取消勾选当前方案后，首位方案接任当前；至少保留一个方案。</string>
     <string name="schema_switching">正在切换…</string>
     <string name="schema_deploying">正在部署…（部署期间请勿切换）</string>
+    <string name="schema_deploy_stranded">部署已结束，但方案表为空</string>
     <string name="schema_rolling_back">正在回退到上一方案…</string>
     <string name="schema_switch_failed">切换失败</string>
     <string name="schema_rolled_back">切换失败，已回退到上一方案</string>
