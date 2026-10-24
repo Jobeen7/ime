@@ -7,15 +7,9 @@ import android.os.StatFs
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,13 +36,14 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -86,7 +81,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
@@ -109,12 +103,12 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.ngram.DownloadResult
 import com.jobeen.ime.base.ngram.GramModelDownloader
 import com.jobeen.ime.base.update.WanxiangUpdateManager
-import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.data.manager.SchemaManager
+import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.SchemeDownload
 import com.jobeen.ime.data.manager.SchemePackageImport
 import com.jobeen.ime.data.manager.SchemePackageImport.PlanResult
@@ -212,6 +206,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     var editMode by remember { mutableStateOf(openManage) }
     var menuExpanded by remember { mutableStateOf(false) }
     var currentSchemeId by remember { mutableStateOf("") }
+    // 多目录模型：当前目录名（引擎 user 目录 = 根 / 此名）；目录切换、
+    // 导入新目录后随之更新，管理页与启用表一律按此目录读写。
+    var currentDir by remember { mutableStateOf(SchemeDirs.currentDirName(context)) }
+    var dirBrowser by remember { mutableStateOf(false) }
+    var dirDetail by remember { mutableStateOf<String?>(null) }
+    var dirSwitching by remember { mutableStateOf(false) }
+    var dirSwitchError by remember { mutableStateOf<String?>(null) }
+    var manageDeploying by remember { mutableStateOf(false) }
+    var manageDeployError by remember { mutableStateOf<String?>(null) }
     var versionById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var sourceById by remember {
         mutableStateOf<Map<String, SchemeSwitchPolicy.SchemeSource>>(emptyMap())
@@ -221,7 +224,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     // ---- 第二期本地导入：SAF 选 zip → 暂存校验 → 校验结果页 → 确认安装 ----
     // importPlan 非空时 Scaffold 内容整体切到校验结果页（见下方内容分支）；
     // importError 非空且无 plan 时切到错误页；importBusy 时切到等待页。
+    // 多目录模型下导入落盘目标是独立新目录（importTargetDir），不再合并
+    // 进当前目录；校验页只确认包名、方案数与同名目录替换一行。
     var importPlan by remember { mutableStateOf<SchemeImportPlan?>(null) }
+    var importTargetDir by remember { mutableStateOf<File?>(null) }
     var importStagingDir by remember { mutableStateOf<File?>(null) }
     var importError by remember { mutableStateOf<ImportErrorKind?>(null) }
     var importBusy by remember { mutableStateOf(false) }
@@ -291,14 +297,21 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         if (allSchemas.isNotEmpty()) {
             val allItems =
                 allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
-            val enabledIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
-                ?.filter { it.isNotBlank() } ?: emptyList()
+            // 已启用顺序按当前目录分键读（切回旧目录时顺序原样恢复）。
+            val enabledIds = SchemaManager.readEnabledIds(prefs, currentDir)
             val byId = allItems.associateBy { it.id }
             val seen = mutableSetOf<String>()
             enabledSchemas.clear()
             enabledSchemas.addAll(enabledIds.mapNotNull { byId[it]?.also { seen.add(it.id) } })
             availableSchemas.clear()
             availableSchemas.addAll(allItems.filter { it.id !in seen })
+            if (enabledSchemas.isEmpty() && allItems.isNotEmpty()) {
+                // 目录启用表为空（新目录首跑 / 目录被删后重建）：以引擎部署表
+                // 为准兜底并写回，不让方案页在引擎有方案时显示空列表。
+                enabledSchemas.addAll(allItems)
+                availableSchemas.clear()
+                SchemaManager.saveEnabledIds(prefs, currentDir, allItems.map { it.id })
+            }
             // 将当前正在使用的方案置顶（顶部的方案即为"默认"方案）
             val currentId = withContext(Dispatchers.IO) {
                 runCatching {
@@ -312,7 +325,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 if (idx > 0) {
                     val item = enabledSchemas.removeAt(idx)
                     enabledSchemas.add(0, item)
-                    saveOrder(prefs, enabledSchemas)
+                    saveOrder(prefs, currentDir, enabledSchemas)
                 }
             }
             // 「当前选择的方案」显示万象变体短名（Base/Pro/Lite/Pure），按
@@ -484,7 +497,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         enabledSchemas.clear()
         enabledSchemas.addAll(newEnabled)
         availableSchemas.removeAll { it.id in enabledIds }
-        saveOrder(prefs, enabledSchemas)
+        saveOrder(prefs, currentDir, enabledSchemas)
     }
 
     /** 读引擎当前方案 id；读失败返回 null（调用方按未验证处理）。 */
@@ -568,11 +581,78 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         }
     }
 
+    /**
+     * 多目录切换：指针 → 启用表 → 引擎重部署 → 选首位方案 → 轮询确认。
+     * 目标启用表：分目录键优先，缺失时用目录方案表顺序；空目录（无方案）
+     * 时不直选，改为等引擎部署出内置表（Lite 兜底）且当前方案非空。
+     * 任一步失败自动回滚上一目录（指针 + 启用表 + 引擎重部署 + 重选上一方案），
+     * 并在方案页留一条可关闭的失败提示。切换进行中拒绝新的切换与导入。
+     */
+    fun switchDirectory(targetDir: String) {
+        if (dirSwitching || switchOrchestrator.isBusy() || targetDir == currentDir) return
+        val prevDir = currentDir
+        val prevOrder = enabledSchemas.map { it.id }
+        val prevCurrent = currentSchemeId
+        dirSwitching = true
+        dirSwitchError = null
+        scope.launch {
+            try {
+                var targetEnabled = SchemaManager.readEnabledIds(prefs, targetDir)
+                if (targetEnabled.isEmpty()) {
+                    targetEnabled = SchemeDirs.schemesInDir(
+                        File(DataManager.schemeDirsRoot, targetDir),
+                    )
+                }
+                SchemeDirs.setCurrentDirName(context, targetDir)
+                currentDir = targetDir
+                SchemaManager.saveEnabledIds(prefs, targetDir, targetEnabled)
+                EngineFactory.current()?.reload()
+                if (targetEnabled.isNotEmpty()) {
+                    EngineFactory.current()?.selectSchema(targetEnabled[0])
+                    if (!verifyCurrent(targetEnabled[0], 180_000)) {
+                        throw IllegalStateException("switch verify timeout")
+                    }
+                } else {
+                    // 空目录：等引擎部署完成且当前方案非空（内置 Lite 兜底）。
+                    val deadline = System.currentTimeMillis() + 60_000
+                    var ready = false
+                    while (System.currentTimeMillis() < deadline) {
+                        if (!readCurrentId().isNullOrEmpty()) {
+                            ready = true
+                            break
+                        }
+                        delay(1000)
+                    }
+                    if (!ready) throw IllegalStateException("empty dir deploy timeout")
+                }
+                dirSwitching = false
+                dirBrowser = false
+                dirDetail = null
+                loadSchemas()
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                runCatching {
+                    SchemeDirs.setCurrentDirName(context, prevDir)
+                    currentDir = prevDir
+                    SchemaManager.saveEnabledIds(prefs, prevDir, prevOrder)
+                    EngineFactory.current()?.reload()
+                    if (prevCurrent.isNotEmpty()) {
+                        EngineFactory.current()?.selectSchema(prevCurrent)
+                    }
+                }
+                dirSwitching = false
+                dirSwitchError = context.getString(R.string.schema_dir_switch_failed)
+                scope.launch { loadSchemas() }
+            }
+        }
+    }
+
     // ---- 第二期本地导入流程（SAF 选 zip → 暂存校验 → 确认安装 → 一期切换） ----
     /** 删掉本次导入的暂存文件（暂存目录与临时 zip，按名删，状态未赋值也覆盖）。 */
     fun cleanupImportFiles() {
         importStagingDir?.deleteRecursively()
         importStagingDir = null
+        importTargetDir = null
         File(context.cacheDir, IMPORT_STAGING_DIR_NAME).deleteRecursively()
         File(context.cacheDir, IMPORT_TMP_ZIP_NAME).delete()
     }
@@ -609,9 +689,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             SchemePackageImport.PackageSource.LOCAL
         }
         importFromDownload = fromDownload
+        // 多目录模型：落盘目标是包名对应的独立目录（初始目录与 build 名受保护，
+        // 见 SchemeDirs.importDirName）；同名目录存在时确认页只提示替换一行。
+        val targetDir = File(
+            DataManager.schemeDirsRoot,
+            SchemeDirs.importDirName(packageName),
+        )
         val stagingDir = File(context.cacheDir, IMPORT_STAGING_DIR_NAME)
         val outcome = withContext(Dispatchers.IO) {
-            buildImportPlan(context, zipFile, stagingDir, packageName)
+            buildImportPlan(context, zipFile, stagingDir, packageName, targetDir)
         }
         when (outcome) {
             is ImportPlanOutcome.Failed -> {
@@ -620,7 +706,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             }
             is ImportPlanOutcome.Ready -> {
                 val available = runCatching {
-                    StatFs(DataManager.userDataDir.path).availableBytes
+                    StatFs(DataManager.schemeDirsRoot.path).availableBytes
                 }.getOrNull() ?: Long.MAX_VALUE
                 if (available <
                     outcome.plan.totalBytes + SchemePackageImport.FREE_SPACE_MARGIN_BYTES
@@ -629,6 +715,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     cleanupImportFiles()
                 } else {
                     importPlan = outcome.plan
+                    importTargetDir = targetDir
                     importStagingDir = stagingDir
                 }
             }
@@ -684,27 +771,34 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
 
 
     /**
-     * 确认安装：落盘 + 登记在 NonCancellable 里做（短本地 IO，页面离开
-     * 也不留半安装）；登记写偏好后把新方案放进未启用列表，再走一期
-     * switchTo（首个方案移到首位，部署 / 回退编排全复用一期）。
-     * 回退时顺序恢复为安装前，新方案退回未启用——文件与登记保留，
-     * 卸载按集合清是后续期数的事，本期不删文件。
+     * 确认安装（多目录模型）：同名目录先删后装（确认页已提示替换一行）；
+     * 落盘到独立目录 + 写该目录方案表 + 登记（含目录名），再切到新目录
+     * （指针 → 启用表 → 引擎重部署 → 首位方案，失败自动回滚上一目录）。
+     * 旧单目录合并链就此取代：不再往当前目录合并、不再写当前目录方案表。
      * 安装失败留在校验页并可重试（落盘幂等、登记 upsert，重试安全）。
      */
     fun confirmImport() {
         val plan = importPlan ?: return
         val staging = importStagingDir ?: return
+        val targetDir = importTargetDir ?: return
         if (importInstalling) return
         importInstalling = true
         importError = null
         scope.launch {
             try {
+                val dirName = targetDir.name
                 val installed = withContext(Dispatchers.IO + NonCancellable) {
-                    SchemePackageImport.applyPlan(
+                    if (targetDir.exists()) targetDir.deleteRecursively()
+                    val done = SchemePackageImport.applyPlan(
                         staging,
-                        DataManager.userDataDir,
+                        targetDir,
                         plan,
                     )
+                    val tableIds = plan.defaultCustomSchemaIds.ifEmpty {
+                        plan.schemes.map { it.id }
+                    }
+                    SchemeDirs.writeDefaultCustomSchemaList(targetDir, tableIds)
+                    done
                 }
                 val registry = SchemePackageImport.decodeRegistry(
                     importPrefs.getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
@@ -715,6 +809,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     schemeIds = plan.schemes.map { it.id },
                     files = installed,
                     source = importSource,
+                    dir = dirName,
                 )
                 importPrefs.edit {
                     putString(
@@ -722,27 +817,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         SchemePackageImport.encodeRegistry(registry.withRecord(record)),
                     )
                 }
-                val newItems = plan.schemes.map { SchemaItem(it.id, it.name, it.layout) }
-                newItems.forEach { item ->
-                    if (availableSchemas.none { it.id == item.id } &&
-                        enabledSchemas.none { it.id == item.id }
-                    ) {
-                        availableSchemas.add(item)
-                    }
-                }
                 cleanupImportFiles()
                 importPlan = null
                 importInstalling = false
-                // 安装成功后回主列表（看切换横幅），下载交接的来源标记复位。
+                // 安装成功后切到新目录（看切换结果），下载交接的来源标记复位。
                 downloadPage = false
                 importFromDownload = false
                 importSource = SchemePackageImport.PackageSource.LOCAL
-                val target = newItems.firstOrNull()
-                if (target != null) {
-                    switchTo(target) { scope.launch { loadSchemas() } }
-                } else {
-                    loadSchemas()
-                }
+                switchDirectory(dirName)
             } catch (e: Exception) {
                 if (e is kotlinx.coroutines.CancellationException) throw e
                 importError = ImportErrorKind.INSTALL_FAILED
@@ -1038,7 +1120,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     Text(
                         stringResource(
                             when {
-                                importPlan != null -> R.string.schema_import_result_title
+                                importPlan != null -> R.string.schema_import
+                                dirBrowser -> R.string.schema_dir_switch
                                 inImportFlow ->
                                     if (importFromDownload) R.string.schema_download
                                     else R.string.schema_import
@@ -1064,15 +1147,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                 downloadRunning -> cancelDownload()
                                 downloadError != null -> downloadError = null
                                 downloadPage -> downloadPage = false
+                                // 目录浏览：详情先回列表，列表再关浏览页。
+                                dirDetail != null -> dirDetail = null
+                                dirBrowser -> dirBrowser = false
                                 // 管理页返回即放弃草稿（保存 pill 才是提交口）。
                                 editMode -> editMode = false
                                 else -> {
-                                    saveOrder(prefs, enabledSchemas)
+                                    saveOrder(prefs, currentDir, enabledSchemas)
                                     onBack()
                                 }
                             }
                         },
-                        enabled = !importInstalling && !importBusy,
+                        enabled = !importInstalling && !importBusy && !dirSwitching,
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
@@ -1096,8 +1182,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                 tint = MaterialTheme.colorScheme.onSurface,
                             )
                         }
-                    } else if (inImportFlow || inDownloadFlow) {
-                        // 导入 / 下载流程页不给菜单与编辑入口，
+                    } else if (inImportFlow || inDownloadFlow || dirBrowser) {
+                        // 导入 / 下载流程页与目录浏览页不给菜单与编辑入口，
                         // 防流程中途切走状态。
                     } else if (!editMode) {
                         IconButton(onClick = { menuExpanded = true }) {
@@ -1146,6 +1232,19 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                     editMode = true
                                 },
                             )
+                            // 多目录新增「方案目录切换」：浏览根下各方案目录，
+                            // 点“使用此文件夹”整套切换并重新部署。
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.schema_dir_switch)) },
+                                enabled = !switchOrchestrator.isBusy() && !importBusy &&
+                                    !downloadRunning,
+                                onClick = {
+                                    menuExpanded = false
+                                    dirDetail = null
+                                    dirSwitchError = null
+                                    dirBrowser = true
+                                },
+                            )
                         }
                     }
                 },
@@ -1159,6 +1258,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         if (importPlan != null) {
             ImportValidationPage(
                 plan = importPlan!!,
+                targetDirExists = importTargetDir?.exists() == true,
                 installing = importInstalling,
                 error = importError,
                 onConfirm = { confirmImport() },
@@ -1538,6 +1638,22 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             }
             return@Scaffold
         }
+        // 多目录浏览页：根下目录列表 / 目录详情（方案表）+ 底部使用栏。
+        if (dirBrowser) {
+            SchemeDirBrowserContent(
+                currentDir = currentDir,
+                detailDir = dirDetail,
+                onOpenDetail = { dirDetail = it },
+                onBackToList = { dirDetail = null },
+                switching = dirSwitching,
+                onUseDir = { switchDirectory(it) },
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+            )
+            return@Scaffold
+        }
         if (!loaded) return@Scaffold
         Column(
             modifier = Modifier
@@ -1649,25 +1765,94 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 }
                 else -> {}
             }
+            // 目录切换失败提示：回滚已完成，留一条可关闭的说明。
+            if (dirSwitchError != null) {
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Text(
+                            dirSwitchError!!,
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        TextButton(onClick = { dirSwitchError = null }) {
+                            Text(stringResource(R.string.schema_banner_close))
+                        }
+                    }
+                }
+            }
             if (editMode) {
-                // 管理页：勾选卡 + 保存 pill + 拖拽卡；草稿只在保存时提交，
-                // 返回放弃。当前方案钉在首位（首位 = 当前是系统不变量，
-                // 移走会触发键盘侧隐式切方案，故锁勾选、锁拖动）。
-                val manageSavedText = stringResource(R.string.schema_manage_saved)
+                // 管理页：已选卡（勾选 + 拖拽合一）+ 全部方案区；草稿只在
+                // 保存时提交，返回放弃。保存 = 写启用表与目录方案表后走
+                // 可见的部署进度框，部署失败自动恢复原顺序并明示。
                 SchemaManageContent(
                     allItems = enabledSchemas + availableSchemas,
                     initialEnabled = enabledSchemas.toList(),
-                    currentId = currentSchemeId,
                     onSave = { newEnabled ->
+                        val prevEnabled = enabledSchemas.toList()
+                        val prevYaml = SchemeDirs.schemesInDir(DataManager.userDataDir)
                         val all = enabledSchemas + availableSchemas
                         val enabledIds = newEnabled.map { it.id }.toSet()
+                        val newAvailable = all.filter { it.id !in enabledIds }
                         enabledSchemas.clear()
                         enabledSchemas.addAll(newEnabled)
                         availableSchemas.clear()
-                        availableSchemas.addAll(all.filter { it.id !in enabledIds })
-                        saveOrder(prefs, enabledSchemas)
-                        editMode = false
-                        ToastUtil.showToast(manageSavedText)
+                        availableSchemas.addAll(newAvailable)
+                        SchemaManager.saveEnabledIds(
+                            prefs,
+                            currentDir,
+                            newEnabled.map { it.id },
+                        )
+                        SchemeDirs.writeDefaultCustomSchemaList(
+                            DataManager.userDataDir,
+                            newEnabled.map { it.id } + newAvailable.map { it.id },
+                        )
+                        manageDeploying = true
+                        manageDeployError = null
+                        scope.launch {
+                            try {
+                                EngineFactory.current()?.reload()
+                                val first = newEnabled.firstOrNull()
+                                if (first != null) {
+                                    EngineFactory.current()?.selectSchema(first.id)
+                                    if (!verifyCurrent(first.id, 180_000)) {
+                                        throw IllegalStateException("manage deploy timeout")
+                                    }
+                                }
+                                manageDeploying = false
+                                editMode = false
+                                loadSchemas()
+                            } catch (e: Exception) {
+                                if (e is kotlinx.coroutines.CancellationException) throw e
+                                runCatching {
+                                    SchemaManager.saveEnabledIds(
+                                        prefs,
+                                        currentDir,
+                                        prevEnabled.map { it.id },
+                                    )
+                                    SchemeDirs.writeDefaultCustomSchemaList(
+                                        DataManager.userDataDir,
+                                        prevYaml,
+                                    )
+                                    EngineFactory.current()?.reload()
+                                    prevEnabled.firstOrNull()?.let {
+                                        EngineFactory.current()?.selectSchema(it.id)
+                                    }
+                                }
+                                manageDeploying = false
+                                manageDeployError = context.getString(
+                                    R.string.schema_manage_deploy_failed,
+                                )
+                                scope.launch { loadSchemas() }
+                            }
+                        }
                     },
                 )
             } else {
@@ -1757,6 +1942,39 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
 
         }
     }
+
+    // 管理页保存的部署进度框：部署中不可关闭；失败时明示并可关闭
+    // （顺序已自动恢复，见 onSave 回滚）。
+    if (manageDeploying) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(stringResource(R.string.schema_manage_save)) },
+            text = {
+                Column {
+                    Text(
+                        stringResource(R.string.schema_manage_deploying),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton = {},
+        )
+    }
+    if (manageDeployError != null) {
+        AlertDialog(
+            onDismissRequest = { manageDeployError = null },
+            title = { Text(stringResource(R.string.schema_manage_save)) },
+            text = { Text(manageDeployError!!) },
+            confirmButton = {
+                TextButton(onClick = { manageDeployError = null }) {
+                    Text(stringResource(R.string.schema_banner_close))
+                }
+            },
+        )
+    }
 }
 
 /** 分组卡片内的输入框：上方小字标签 + 无框输入行（表单卡片语言）。 */
@@ -1792,15 +2010,16 @@ private fun InCardTextField(
 }
 
 /**
- * 方案列表管理页内容：勾选卡（蓝勾选圈）+ 已选方案 + 蓝色保存 pill +
- * 拖拽卡（≡ 柄）。草稿只活在本页，保存才提交；返回放弃。
- * 当前方案锁勾选、锁拖动、钉首位（首位 = 当前是系统不变量）。
+ * 方案列表管理页内容（平铺逻辑）：已选卡 = 勾选 + 拖拽合一（行 = 蓝勾选圈
+ * + 名 + 拖拽柄，长按拖动排序，点圈取消勾选）；全部方案区 = 未选方案，
+ * 点圈即回已选末尾。草稿只活在本页，保存才提交；返回放弃。
+ * 当前方案不锁：取消勾选当前方案后首位剩余方案接任当前；草稿为空时
+ * 保存禁用（至少保留一个方案，不可出现无当前方案状态）。
  */
 @Composable
 private fun SchemaManageContent(
     allItems: List<SchemaItem>,
     initialEnabled: List<SchemaItem>,
-    currentId: String,
     onSave: (List<SchemaItem>) -> Unit,
 ) {
     // 草稿按 initialEnabled 重建：RIME 页直达管理页时，列表可能在
@@ -1810,7 +2029,7 @@ private fun SchemaManageContent(
         mutableStateListOf<SchemaItem>().apply { addAll(initialEnabled) }
     }
     val draftIds = draftEnabled.map { it.id }.toSet()
-    val isCurrent: (SchemaItem) -> Boolean = { it.id == currentId && currentId.isNotEmpty() }
+    val draftAvailable = allItems.filter { it.id !in draftIds }
 
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         Row(
@@ -1845,56 +2064,48 @@ private fun SchemaManageContent(
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
+            ManageEnabledList(
+                items = draftEnabled,
+                onUncheck = { item -> draftEnabled.removeAll { it.id == item.id } },
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            text = stringResource(R.string.schema_manage_all),
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            fontWeight = FontWeight.SemiBold,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(horizontal = 4.dp),
+        )
+        Spacer(Modifier.height(4.dp))
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
             Column {
-                allItems.forEachIndexed { index, item ->
-                    val checked = item.id in draftIds
-                    val locked = isCurrent(item)
+                draftAvailable.forEachIndexed { index, item ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .semantics(mergeDescendants = true) {
-                                if (locked) {
-                                    stateDescription = "当前方案"
-                                }
-                            }
-                            .clickable(enabled = !locked) {
-                                if (checked) {
-                                    draftEnabled.removeAll { it.id == item.id }
-                                } else {
-                                    draftEnabled.add(item)
-                                }
-                            }
+                            .clickable { draftEnabled.add(item) }
                             .padding(horizontal = 16.dp, vertical = 12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        // 蓝勾选圈：选中 = 蓝底白勾，未选中 = 灰圈。
                         Box(
                             modifier = Modifier
                                 .size(24.dp)
                                 .clip(CircleShape)
-                                .then(
-                                    if (checked) {
-                                        Modifier.background(MaterialTheme.colorScheme.primary)
-                                    } else {
-                                        Modifier.border(
-                                            1.5.dp,
-                                            MaterialTheme.colorScheme.onSurfaceVariant
-                                                .copy(alpha = 0.6f),
-                                            CircleShape,
-                                        )
-                                    },
+                                .border(
+                                    1.5.dp,
+                                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                    CircleShape,
                                 ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            if (checked) {
-                                Icon(
-                                    Icons.Filled.Check,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = MaterialTheme.colorScheme.onPrimary,
-                                )
-                            }
-                        }
+                        )
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
@@ -1918,7 +2129,7 @@ private fun SchemaManageContent(
                             }
                         }
                     }
-                    if (index < allItems.lastIndex) {
+                    if (index < draftAvailable.lastIndex) {
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
                             color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
@@ -1926,32 +2137,6 @@ private fun SchemaManageContent(
                     }
                 }
             }
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = stringResource(R.string.schema_manage_order),
-            fontSize = 14.sp,
-            lineHeight = 20.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(horizontal = 4.dp),
-        )
-        Spacer(Modifier.height(4.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        ) {
-            ReorderableSchemaList(
-                items = draftEnabled,
-                // 拖拽卡行点选无动作（防排序时误触）
-                onRowClick = null,
-                trailingIcon = {},
-                draggable = { !isCurrent(it) },
-            )
         }
         Spacer(Modifier.height(8.dp))
         Text(
@@ -1963,12 +2148,15 @@ private fun SchemaManageContent(
     }
 }
 
+/**
+ * 已选卡的拖拽列表：行 = 蓝勾选圈（点按取消勾选）+ 名 + 拖拽柄
+ * （长按拖动排序）。拖拽机制与旧 ReorderableSchemaList 同款
+ * （长按后跟手位移、落点按行高取整、拖动时微放大 + 阴影）。
+ */
 @Composable
-private fun ReorderableSchemaList(
+private fun ManageEnabledList(
     items: MutableList<SchemaItem>,
-    onRowClick: ((SchemaItem) -> Unit)?,
-    trailingIcon: @Composable (SchemaItem) -> Unit,
-    draggable: (SchemaItem) -> Boolean = { true },
+    onUncheck: (SchemaItem) -> Unit,
 ) {
     var dragIndex by remember { mutableIntStateOf(-1) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
@@ -1977,7 +2165,6 @@ private fun ReorderableSchemaList(
     Column {
         items.forEachIndexed { index, schema ->
             val isDragging = dragIndex == index
-            val canDrag = draggable(schema)
             val dragScale by animateFloatAsState(
                 targetValue = if (isDragging) 1.03f else 1f,
                 animationSpec = spring(
@@ -1998,23 +2185,17 @@ private fun ReorderableSchemaList(
                     .onGloballyPositioned {
                         if (itemHeight == 0f) itemHeight = it.size.height.toFloat()
                     }
-                    .pointerInput(index, canDrag) {
+                    .pointerInput(index) {
                         detectDragGesturesAfterLongPress(
                             onDragStart = {
-                                if (!canDrag) return@detectDragGesturesAfterLongPress
                                 dragIndex = index
                                 dragOffset = 0f
                             },
                             onDragEnd = {
                                 if (dragIndex < 0) return@detectDragGesturesAfterLongPress
-                                var target = (dragIndex + (dragOffset / itemHeight).roundToInt())
+                                val target = (dragIndex + (dragOffset / itemHeight).roundToInt())
                                     .coerceIn(0, items.size - 1)
-                                // 落点跳过不可拖行：沿拖动方向移到最近的可放位。
-                                val dir = if (target > dragIndex) 1 else -1
-                                while (target in 0..items.size - 1 && !draggable(items[target])) {
-                                    target += dir
-                                }
-                                if (target in 0..items.size - 1 && target != dragIndex) {
+                                if (target != dragIndex) {
                                     val item = items.removeAt(dragIndex)
                                     items.add(target, item)
                                 }
@@ -2029,35 +2210,67 @@ private fun ReorderableSchemaList(
                     },
             ) {
                 Column {
-                    SchemaListItem(
-                        schema = schema,
-                        onClick = onRowClick?.let { click -> { click(schema) } },
-                        leadingIcon = {
-                            if (canDrag) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(28.dp)
-                                        .clip(RoundedCornerShape(6.dp))
-                                        .background(
-                                            MaterialTheme.colorScheme.primaryContainer
-                                                .copy(alpha = 0.4f)
-                                        ),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    Icon(
-                                        Icons.Default.DragHandle,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    )
-                                }
-                            } else {
-                                // 锁行无柄，占位对齐（位置本身表达“钉住”）。
-                                Spacer(Modifier.size(28.dp))
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.primary)
+                                .clickable { onUncheck(schema) },
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Filled.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.onPrimary,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                schema.name.ifBlank { schema.id },
+                                fontSize = 16.sp,
+                                lineHeight = 21.sp,
+                                fontWeight = FontWeight.Medium,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            if (schema.name.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    schema.id,
+                                    fontSize = 14.sp,
+                                    lineHeight = 20.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
                             }
-                        },
-                        trailingIcon = { trailingIcon(schema) },
-                    )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Box(
+                            modifier = Modifier
+                                .size(28.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(
+                                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                Icons.Default.DragHandle,
+                                contentDescription = null,
+                                modifier = Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
                     if (index < items.lastIndex) {
                         HorizontalDivider(
                             modifier = Modifier.padding(horizontal = 16.dp),
@@ -2111,8 +2324,8 @@ private fun SchemaListItem(
     }
 }
 
-private fun saveOrder(prefs: SharedPreferences, schemas: List<SchemaItem>) {
-    prefs.edit { putString(SchemaManager.KEY_ENABLED_IDS, schemas.joinToString(",") { it.id }) }
+private fun saveOrder(prefs: SharedPreferences, dir: String, schemas: List<SchemaItem>) {
+    SchemaManager.saveEnabledIds(prefs, dir, schemas.map { it.id })
 }
 
 // ---- 第二期本地导入：校验结果页与规划构造（界面层，规划逻辑见 SchemePackageImport） ----
@@ -2184,16 +2397,18 @@ private sealed interface ImportPlanOutcome {
 }
 
 /**
- * 由临时 zip 构造安装规划（IO 线程调用）：解压 → 登记读回 → 现存文件
- * 盘点 → 规划。失败时暂存目录已由 extractZip 清掉或为空，调用方
+ * 由临时 zip 构造安装规划（IO 线程调用）：解压 → 登记读回 → 目标目录
+ * 现存文件盘点 → 规划。失败时暂存目录已由 extractZip 清掉或为空，调用方
  * 再调 cleanupImportFiles 兜底。包名由调用方从 SAF 显示名净化后传入
- * （临时 zip 文件名固定，不能作包名）。
+ * （临时 zip 文件名固定，不能作包名）。多目录模型下现存文件按目标独立
+ * 目录盘点（新目录为空表，替换安装按目录内现存文件算）。
  */
 private fun buildImportPlan(
     context: Context,
     zipFile: File,
     stagingDir: File,
     packageName: String,
+    targetDir: File,
 ): ImportPlanOutcome {
     val extracted = when (val result = SchemePackageImport.extractZip(zipFile, stagingDir)) {
         is SchemePackageImport.ExtractResult.Ok -> result.extracted
@@ -2216,7 +2431,7 @@ private fun buildImportPlan(
             Context.MODE_PRIVATE,
         ).getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
     )
-    val existingUser = SchemePackageImport.listRelativeFiles(DataManager.userDataDir)
+    val existingUser = SchemePackageImport.listRelativeFiles(targetDir)
     val existingSharedIds = DataManager.sharedDataDir.listFiles()
         ?.mapNotNull { file ->
             file.name.removeSuffix(".schema.yaml")
@@ -2257,19 +2472,14 @@ private fun importErrorText(error: ImportErrorKind): String = when (error) {
 }
 
 /**
- * 导入校验结果页：包内方案清单、同 ID 替换警告（含 Pro 多口味与内置
- * 覆盖两种口径）、共享文件决策、跳过文件，最后确认安装 / 取消。
- * 安装进行中按钮禁用、显示进度；安装失败留在本页并可重试。
+ * 导入确认页（轻量）：只给用户真正需要的信息——包名、包内方案数、
+ * 同名目录替换一行（存在时）；确认安装 / 取消；安装中进度与失败提示。
+ * 文件明细、逐行保留/跳过清单、“校验结果”措辞全部去掉。
  */
 @Composable
-/**
- * 导入校验页：摘要先行、明细折叠，不再是文件倾倒。
- * 摘要卡 = 包名 + 版本 + 包内方案 N 个 + 方案行（名 + 灰字 id，无芯片）；
- * 同名替换 = 琥珀色警告卡；共享文件决策与跳过文件 = 折叠明细；
- * 确认安装 = 蓝色主钮。校验与安装逻辑不变。
- */
 private fun ImportValidationPage(
     plan: SchemeImportPlan,
+    targetDirExists: Boolean,
     installing: Boolean,
     error: ImportErrorKind?,
     onConfirm: () -> Unit,
@@ -2300,163 +2510,23 @@ private fun ImportValidationPage(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    plan.packageVersion ?: stringResource(R.string.schema_import_version_unknown),
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider(
-                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                )
-                Spacer(Modifier.height(8.dp))
-                Text(
                     stringResource(R.string.schema_import_summary_schemes, plan.schemes.size),
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                plan.schemes.forEach { scheme ->
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        scheme.name,
-                        fontSize = 16.sp,
-                        lineHeight = 21.sp,
-                        fontWeight = FontWeight.Medium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        scheme.id + (scheme.version?.let { " · $it" } ?: ""),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
             }
         }
-        if (plan.replacements.isNotEmpty()) {
+        if (targetDirExists) {
             Spacer(Modifier.height(12.dp))
             ScreenComponent.WarningCard {
                 Text(
-                    stringResource(R.string.schema_import_replace_title),
+                    stringResource(R.string.schema_import_replace_dir),
                     fontSize = 14.sp,
                     lineHeight = 20.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = ScreenComponent.warningContentColor(),
                 )
-                plan.replacements.forEach { replacement ->
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        replacement.schemeId +
-                            (replacement.previousPackage?.let { "（$it）" } ?: ""),
-                        fontSize = 16.sp,
-                        lineHeight = 21.sp,
-                        fontWeight = FontWeight.Medium,
-                        color = ScreenComponent.warningContentColor(),
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        when {
-                            replacement.overridesBuiltin ->
-                                stringResource(R.string.schema_import_replace_builtin_note)
-                            replacement.schemeId == "wanxiang_pro" ->
-                                stringResource(R.string.schema_import_replace_pro_note) +
-                                    "；" + stringResource(R.string.schema_import_replace_note)
-                            else ->
-                                stringResource(R.string.schema_import_replace_note)
-                        },
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = ScreenComponent.warningContentColor(),
-                    )
-                }
-            }
-        }
-        if (plan.sharedDecisions.isNotEmpty() || plan.overwrittenExisting.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            FoldedSection(title = stringResource(R.string.schema_import_detail_files)) {
-                plan.sharedDecisions.forEach { decision ->
-                    Text(
-                        decision.relPath,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.MiddleEllipsis,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        when {
-                            decision.overwrite ->
-                                stringResource(R.string.schema_import_shared_overwrite) +
-                                    "（${decision.existingVersion} → ${decision.incomingVersion}）"
-                            decision.unknownVersion ->
-                                stringResource(R.string.schema_import_shared_unknown)
-                            else ->
-                                stringResource(R.string.schema_import_shared_keep) +
-                                    "（${decision.existingVersion} / ${decision.incomingVersion}）"
-                        },
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-                if (plan.overwrittenExisting.isNotEmpty()) {
-                    Text(
-                        stringResource(
-                            R.string.schema_import_overwrite_note,
-                            plan.overwrittenExisting.size,
-                        ),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-        }
-        if (plan.skippedFiles.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            FoldedSection(
-                title = stringResource(
-                    R.string.schema_import_skipped_count,
-                    plan.skippedFiles.size,
-                ),
-            ) {
-                plan.skippedFiles.forEach { skipped ->
-                    Text(
-                        skipped.relPath,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.MiddleEllipsis,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        when (skipped.reason) {
-                            SchemePackageImport.SkipReason.TRAVERSAL ->
-                                stringResource(R.string.schema_import_skip_traversal)
-                            SchemePackageImport.SkipReason.PROTECTED ->
-                                stringResource(R.string.schema_import_skip_protected)
-                            SchemePackageImport.SkipReason.USER_CUSTOM ->
-                                stringResource(R.string.schema_import_skip_custom)
-                            SchemePackageImport.SkipReason.EXISTS_KEPT ->
-                                stringResource(R.string.schema_import_skip_exists)
-                            SchemePackageImport.SkipReason.SHARED_OLDER ->
-                                stringResource(R.string.schema_import_skip_shared_older)
-                            SchemePackageImport.SkipReason.SHARED_UNKNOWN_VERSION ->
-                                stringResource(R.string.schema_import_skip_shared_unknown)
-                        },
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
             }
         }
         if (error != null) {
@@ -2498,61 +2568,206 @@ private fun ImportValidationPage(
     }
 }
 
+/** 方案目录显示名：初始目录显示“默认”，其余显示目录名原样。 */
+@Composable
+private fun dirDisplayName(name: String): String =
+    if (name == SchemeDirs.INITIAL_DIR) {
+        stringResource(R.string.schema_dir_default_name)
+    } else {
+        name
+    }
+
 /**
- * 折叠明细区（仅导入明细允许用 Accordion，设置组不用）：
- * 标题行 + 展开箭头，内容以 250ms 展开/收起。
+ * 方案目录浏览页（目录切换结构，本页只做目录级操作）：
+ * 列表 = 根下各方案目录（名 + 方案数 + 当前标识），点行进详情；
+ * 详情 = 面包屑 + 该目录方案表 + 底部栏（当前方案目录 + 使用此文件夹）。
+ * 使用 = 整套切换并重新部署（调用方 switchDirectory，失败自动回滚）。
  */
 @Composable
-private fun FoldedSection(
-    title: String,
-    content: @Composable ColumnScope.() -> Unit,
+private fun SchemeDirBrowserContent(
+    currentDir: String,
+    detailDir: String?,
+    onOpenDetail: (String) -> Unit,
+    onBackToList: () -> Unit,
+    switching: Boolean,
+    onUseDir: (String) -> Unit,
+    modifier: Modifier = Modifier,
 ) {
-    var expanded by remember { mutableStateOf(false) }
-    val rotation by animateFloatAsState(
-        targetValue = if (expanded) 180f else 0f,
-        label = "foldRotation",
-    )
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainer,
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-    ) {
-        Column {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { expanded = !expanded }
-                    .padding(horizontal = 16.dp, vertical = 12.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = title,
-                    fontSize = 16.sp,
-                    lineHeight = 21.sp,
-                    fontWeight = FontWeight.Medium,
-                    modifier = Modifier.weight(1f),
-                )
-                Icon(
-                    Icons.Filled.ExpandMore,
-                    contentDescription = null,
-                    modifier = Modifier.rotate(rotation),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            AnimatedVisibility(
-                visible = expanded,
-                enter = expandVertically(animationSpec = tween(250)) + fadeIn(tween(250)),
-                exit = shrinkVertically(animationSpec = tween(250)) + fadeOut(tween(250)),
-            ) {
-                Column(Modifier.padding(start = 16.dp, end = 16.dp, bottom = 12.dp)) {
-                    content()
+    val root = DataManager.schemeDirsRoot
+    // 浏览器每次打开都是新组合；切换成功即关页，失败时列表不变，无需动态刷新。
+    val dirs = remember { SchemeDirs.listDirs(root) }
+    Column(modifier = modifier) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            Spacer(Modifier.height(4.dp))
+            if (detailDir == null) {
+                if (dirs.isEmpty()) {
+                    Text(
+                        stringResource(R.string.schema_dir_empty),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    ) {
+                        Column {
+                            dirs.forEachIndexed { index, dir ->
+                                val name = dir.name
+                                val count = SchemeDirs.schemesInDir(dir).size
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable { onOpenDetail(name) }
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Folder,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    Spacer(Modifier.width(12.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(
+                                            dirDisplayName(name),
+                                            fontSize = 16.sp,
+                                            lineHeight = 21.sp,
+                                            fontWeight = FontWeight.Medium,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            stringResource(R.string.schema_dir_schemes, count),
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                    if (name == currentDir) {
+                                        Text(
+                                            stringResource(R.string.schema_dir_current_badge),
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp,
+                                            color = MaterialTheme.colorScheme.primary,
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                    }
+                                    Icon(
+                                        Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(20.dp),
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                            .copy(alpha = 0.3f),
+                                    )
+                                }
+                                if (index < dirs.lastIndex) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant
+                                            .copy(alpha = 0.5f),
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
+            } else {
+                val schemes = SchemeDirs.schemesInDir(File(root, detailDir))
+                Text(
+                    stringResource(R.string.schema_dir_breadcrumb, dirDisplayName(detailDir)),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 4.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+                if (schemes.isEmpty()) {
+                    Text(
+                        stringResource(R.string.schema_dir_empty_schemes),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                    ) {
+                        Column {
+                            schemes.forEachIndexed { index, id ->
+                                Text(
+                                    id,
+                                    fontSize = 16.sp,
+                                    lineHeight = 21.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                                )
+                                if (index < schemes.lastIndex) {
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 16.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant
+                                            .copy(alpha = 0.5f),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // 底部栏（固定位置）：当前方案目录 + 使用此文件夹；列表层
+        // 无选中目标时按钮置灰，详情层选中非当前目录时可用。
+        if (switching) {
+            Text(
+                stringResource(R.string.schema_dir_switching),
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(Modifier.fillMaxWidth())
+            Spacer(Modifier.height(8.dp))
+        }
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                stringResource(R.string.schema_dir_current, dirDisplayName(currentDir)),
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                modifier = Modifier.weight(1f),
+            )
+            Button(
+                onClick = {
+                    val target = detailDir ?: return@Button
+                    onUseDir(target)
+                },
+                enabled = detailDir != null && detailDir != currentDir && !switching,
+            ) {
+                Text(stringResource(R.string.schema_dir_use))
             }
         }
     }
 }
-
-

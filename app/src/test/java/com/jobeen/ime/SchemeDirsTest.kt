@@ -27,6 +27,13 @@ class SchemeDirsTest {
     }
 
     @Test
+    fun importDirName_protectsInitialAndBuild() {
+        assertEquals("rime-wanxiang-base", SchemeDirs.importDirName("rime-wanxiang-base"))
+        assertEquals("default-pkg", SchemeDirs.importDirName("default"))
+        assertEquals("build-pkg", SchemeDirs.importDirName("build"))
+    }
+
+    @Test
     fun migrationMoves_movesFlatChildrenExceptBuild() {
         val root = Files.createTempDirectory("schemedirs-root").toFile()
         try {

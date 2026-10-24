@@ -29,11 +29,10 @@ object SchemaManager {
         }
     }
 
-    /** 读某目录的已启用顺序：分目录键缺失时回落全局镜像（升级首跑兜底）。 */
+    /** 读某目录的已启用顺序：只读分目录键，缺失即空（调用方回落目录方案表顺序）。 */
     fun readEnabledIds(prefs: SharedPreferences, dir: String): List<String> {
-        val raw = prefs.getString(enabledKeyFor(dir), null)
-            ?: prefs.getString(KEY_ENABLED_IDS, "")
-        return raw?.split(",")?.filter { it.isNotBlank() }.orEmpty()
+        val raw = prefs.getString(enabledKeyFor(dir), null) ?: return emptyList()
+        return raw.split(",").filter { it.isNotBlank() }
     }
 
     fun isGrammarModelEnabled(context: Context): Boolean {
