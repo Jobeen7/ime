@@ -118,6 +118,7 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                         showIndex = it
                         CandidateManager.setShowIndex(context, it)
                     },
+                    showDivider = true,
                 )
                 SwitchRow(
                     title = stringResource(R.string.candidate_show_comment),
@@ -126,6 +127,7 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                         showComment = it
                         CandidateManager.setShowComment(context, it)
                     },
+                    showDivider = true,
                 )
                 SwitchRow(
                     title = stringResource(R.string.candidate_border),

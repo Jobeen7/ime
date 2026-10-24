@@ -93,6 +93,7 @@ fun ClipboardScreen(onBack: () -> Unit) {
                     onValueChangeFinished = {
                         ClipboardManager.setMaxEntries(context, maxEntries.toInt())
                     },
+                    showDivider = true,
                 )
                 SliderRow(
                     title = stringResource(R.string.clipboard_retention_days),
