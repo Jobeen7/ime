@@ -71,7 +71,7 @@ import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
  * 设置 home：顶部 hero（居中 logo + Jime）+ 一页一组卡片，
  * 行 = 彩色方块图标 + 标题 + 右箭头，无副标题。
  * 应用主题已删除（Lee 2026-10-25 定）：恒跟随系统，不再设手动项。
- * FAB 栈只放在本页（扇出效果）：深色主钮，收起为 cloud_circle，
+ * FAB 栈只放在本页：深色主钮，收起为 cloud_circle，
  * 展开为裸图标 + 小字标签纵向叠于主钮上方——部署、同步。
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -368,7 +368,7 @@ fun MainScreen(
             Spacer(Modifier.height(32.dp))
             }
             if (fabExpanded) {
-                // 扇出效果：无遮罩变暗，点击外部空白即收起（仍保留可点关闭层）。
+                // 无遮罩变暗，点击外部空白即收起（仍保留可点关闭层）。
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -381,7 +381,7 @@ fun MainScreen(
     BackHandler(enabled = fabExpanded) { fabExpanded = false }
 }
 
-/** FAB 栈展开后的单个动作（扇出效果）：裸图标在上 + 小字标签在下，
+/** FAB 栈展开后的单个动作：裸图标在上 + 小字标签在下，
  *  无 pill、无彩色 mini-FAB；整项 48dp 可点区域，图标 28dp 主色。 */
 @Composable
 private fun FabAction(
@@ -425,5 +425,5 @@ private fun FabAction(
 /** FAB 主钮深色（深浅主题下恒定，配白字图标）。 */
 private val FabMainDark = Color(0xFF2B2B2E)
 
-/** FAB 收起态 cloud_circle 的亮蓝（亮蓝，深色主钮上清晰可辨）。 */
+/** FAB 收起态 cloud_circle 的亮蓝（深色主钮上清晰可辨）。 */
 private val FabCloudBlue = Color(0xFF5EA8FF)
