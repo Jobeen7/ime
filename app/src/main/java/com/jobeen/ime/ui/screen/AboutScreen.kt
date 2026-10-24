@@ -56,6 +56,8 @@ import com.jobeen.ime.base.net.VersionChecker
 import com.jobeen.ime.base.update.AppUpdateManager
 import com.jobeen.ime.data.manager.AppReset
 import com.jobeen.ime.ui.MainActivity
+import com.jobeen.ime.base.log.DiagExport
+import timber.log.Timber
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
@@ -141,46 +143,40 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
         }
     }
 
-    /** 诊断导出：本进程 Timber 日志 + 应用/设备头，打包成 zip 分享。 */
+    /** 诊断导出：本进程 Timber 日志 + 应用/设备头，打包成 zip 分享。
+     * 失败时把断点（步骤 + 异常类）写进日志缓冲（元数据级，无用户内容），
+     * 下次导出成功时可直接从日志里看到上次断在哪一步；用户侧仍只出 Toast。 */
     fun exportDiag() {
+        var step = "build-txt"
         runCatching {
             val now = java.text.SimpleDateFormat(
                 "yyyyMMdd-HHmmss",
                 java.util.Locale.getDefault(),
             ).format(java.util.Date())
-            val txt = buildString {
-                appendLine("Jime 诊断日志")
-                appendLine("应用版本：$versionName")
-                appendLine("包名：${context.packageName}")
-                appendLine("Android：${android.os.Build.VERSION.RELEASE}" +
-                    "（SDK ${android.os.Build.VERSION.SDK_INT}）")
-                appendLine("设备：${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}")
-                appendLine("导出时间：$now")
-                appendLine("说明：仅本进程 Timber 日志")
-                appendLine("----")
-                AppLogBuffer.entries.value.forEach { e ->
-                    val p = when (e.priority) {
-                        2 -> "V"
-                        3 -> "D"
-                        4 -> "I"
-                        5 -> "W"
-                        6 -> "E"
-                        else -> "?"
-                    }
-                    appendLine("${e.time} $p/${e.tag} ${e.message}")
-                }
-            }
-            val zipFile = java.io.File(context.cacheDir, "jime-diag-$now.zip")
-            java.util.zip.ZipOutputStream(java.io.FileOutputStream(zipFile)).use { zos ->
-                zos.putNextEntry(java.util.zip.ZipEntry("diagnostic.txt"))
-                zos.write(txt.toByteArray(Charsets.UTF_8))
-                zos.closeEntry()
-            }
+            val txt = DiagExport.buildDiagnosticText(
+                versionName = versionName,
+                packageName = context.packageName,
+                androidRelease = android.os.Build.VERSION.RELEASE,
+                sdkInt = android.os.Build.VERSION.SDK_INT,
+                manufacturer = android.os.Build.MANUFACTURER,
+                model = android.os.Build.MODEL,
+                now = now,
+                entries = AppLogBuffer.entries.value,
+            )
+            step = "write-zip"
+            // 落盘必须进 cacheDir/shared/（file_paths.xml 唯一覆盖诊断 zip 的根）；
+            // 旧实现写 cacheDir 根目录，getUriForFile 恒抛 IllegalArgumentException。
+            val zipFile = DiagExport.writeDiagZip(
+                DiagExport.diagZipFile(context.cacheDir, now),
+                txt,
+            )
+            step = "get-uri"
             val uri = androidx.core.content.FileProvider.getUriForFile(
                 context,
                 "${context.packageName}.fileprovider",
                 zipFile,
             )
+            step = "start-share"
             val intent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
                 type = "application/zip"
                 putExtra(android.content.Intent.EXTRA_STREAM, uri)
@@ -192,7 +188,10 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                     context.getString(R.string.about_diag_share),
                 ),
             )
-        }.onFailure { toast(msgDiagFailed) }
+        }.onFailure { e ->
+            Timber.tag("DiagExport").e(e, "DiagExport failed at $step: ${e::class.java.simpleName}")
+            toast(msgDiagFailed)
+        }
     }
 
     // 尝试安装：缺「安装未知应用」授权时先去设置，文件留着，用户回来再点即可
