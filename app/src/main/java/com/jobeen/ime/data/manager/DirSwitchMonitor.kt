@@ -58,15 +58,37 @@ object DirSwitchOutcome {
 }
 
 /**
+ * 引擎部署进行中（进程级）：Action.Reload 的部署作业与引擎启动作业持有，
+ * 覆盖 deploy() + joinMaintenanceThread() 全程。部署直通引擎作业队列串行
+ * 执行；部署进行中引擎方案表读回空是正常态（作业队列被部署作业占住，
+ * awaitJob 2 秒超时读回空表；native 表也要等部署 Finish 才就绪），不是
+ * stranded——此时任何 reload 都等于把进行中的全量编译推倒重来。
+ * 2026-10-25 Base 导入实证：切换部署进行中一次旁路部署打断后，引擎再无
+ * Finish 消息、方案表恒空，页内重试/FAB 部署只会让编译永远从头开始。
+ */
+object EngineDeployState {
+    private val _running = MutableStateFlow(false)
+    val running: StateFlow<Boolean> = _running.asStateFlow()
+
+    fun isRunning(): Boolean = _running.value
+
+    fun setRunning(running: Boolean) {
+        _running.value = running
+    }
+}
+
+/**
  * 重进页面续切判定（纯逻辑）：引擎方案表空 + 磁盘有方案 + 无切换在跑
- * → 续切（把引擎重同步到指针目录）；否则只读，不盲目重部署。
+ * + 无部署在跑 → 续切（把引擎重同步到指针目录）；否则只读，不盲目重部署。
+ * 部署在跑时表空是正常态，续切 reload 会打断编译，必须排除。
  */
 object DirSwitchResumePolicy {
     fun shouldResume(
         engineSchemasEmpty: Boolean,
         diskHasSchemes: Boolean,
         switchRunning: Boolean,
-    ): Boolean = engineSchemasEmpty && diskHasSchemes && !switchRunning
+        deployRunning: Boolean,
+    ): Boolean = engineSchemasEmpty && diskHasSchemes && !switchRunning && !deployRunning
 }
 
 /**

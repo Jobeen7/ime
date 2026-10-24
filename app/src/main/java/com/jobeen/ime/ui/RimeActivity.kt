@@ -13,8 +13,11 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.manager.RimeSyncPrefs
+import com.jobeen.ime.data.manager.awaitSchemasReady
+import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
@@ -44,20 +47,41 @@ class RimeActivity : ComponentActivity() {
                 RimeScreen(
                     onBack = { finish() },
                     deployRunning = deployRunning,
+                    // 与主界面 FAB 同口径：走引擎统一部署路径，不直连会话
+                    // deploy()（会打断进行中的切换部署编译，见 MainActivity）。
+                    // 此前这里 deploy() 一返回即 Toast 完成，是假完成：返回只
+                    // 代表引擎刚启动，不代表编译编完。改为等方案表就绪再报完成。
                     onDeploy = {
                         if (deployRunning) return@RimeScreen
+                        if (EngineDeployState.isRunning()) {
+                            ToastUtil.showToast(getString(R.string.fab_deploy_busy))
+                            return@RimeScreen
+                        }
+                        val engine = EngineFactory.current()
+                        if (engine == null) {
+                            ToastUtil.showToast(getString(R.string.fab_deploy_failed))
+                            return@RimeScreen
+                        }
                         deployRunning = true
                         lifecycleScope.launch {
-                            runCatching {
-                                rimeSession.runOnReady { deploy() }
-                            }.onSuccess {
+                            runCatching { engine.reload() }
+                            val ready = awaitSchemasReady(
+                                poll = {
+                                    runCatching {
+                                        EngineFactory.current()?.schemasList()?.isNotEmpty() == true
+                                    }.getOrDefault(false)
+                                },
+                                timeoutMs = 600_000L,
+                                intervalMs = 2000L,
+                            )
+                            if (ready) {
                                 ToastUtil.showToast(getString(R.string.fab_deploy_done))
                                 RimeSyncPrefs.postNotice(
                                     this@RimeActivity,
                                     getString(R.string.fab_deploy_done),
                                 )
-                            }.onFailure {
-                                Timber.w(it, "RIME deploy failed")
+                            } else {
+                                Timber.w("RIME deploy timed out waiting for schemas")
                                 ToastUtil.showToast(getString(R.string.fab_deploy_failed))
                                 RimeSyncPrefs.postNotice(
                                     this@RimeActivity,

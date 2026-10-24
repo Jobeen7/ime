@@ -109,6 +109,7 @@ import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.data.manager.DirSwitchMonitor
+import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.DirSwitchPhase
 import com.jobeen.ime.data.manager.DirSwitchResumePolicy
 import com.jobeen.ime.data.manager.SchemaManager
@@ -537,7 +538,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
      */
     /**
      * 重进续切（stranded 恢复）：只把引擎重同步到指针目录，不改指针。
-     * 判定见 DirSwitchResumePolicy：引擎表空 + 磁盘有方案 + 无切换在跑。
+     * 判定见 DirSwitchResumePolicy：引擎表空 + 磁盘有方案 + 无切换在跑
+     * + 无部署在跑。部署在跑时表空是正常态（作业队列被部署作业占住），
+     * 此时 reload 会把进行中的全量编译推倒重来，必须排除——页内重试
+     * 与进页轮询都走这里，单点守门。
      * 幂等：中途取消不留新状态，下次进页重新判定。
      */
     suspend fun resumeIfStranded() {
@@ -549,7 +553,13 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         }
         val engineEmpty = (EngineFactory.current()?.schemasList() ?: emptyList()).isEmpty()
         val switching = DirSwitchMonitor.status.value.phase == DirSwitchPhase.SWITCHING
-        if (!DirSwitchResumePolicy.shouldResume(engineEmpty, diskIds.isNotEmpty(), switching)) return
+        if (!DirSwitchResumePolicy.shouldResume(
+                engineEmpty,
+                diskIds.isNotEmpty(),
+                switching,
+                EngineDeployState.isRunning(),
+            )
+        ) return
         val enabled = SchemaManager.readEnabledIds(prefs, dir).ifEmpty { diskIds }
         SchemaManager.saveEnabledIds(prefs, dir, enabled)
         EngineFactory.current()?.reload()
