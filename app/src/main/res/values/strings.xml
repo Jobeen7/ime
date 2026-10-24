@@ -238,7 +238,6 @@
     <string name="view_licenses">查看</string>
     <string name="licenses_index">第三方组件与许可证</string>
     <string name="app_logs">运行日志</string>
-    <string name="open_logs_page">打开日志页</string>
     <string name="copy_logs">复制日志</string>
     <string name="copy_last_crash">复制最近崩溃信息</string>
     <string name="last_crash_time">最近一次崩溃：%1$s</string>
