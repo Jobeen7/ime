@@ -489,7 +489,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
 
             Spacer(Modifier.height(8.dp))
 
-            // 平铺列表（平铺逻辑，不分组）：一张卡内依次为导出诊断日志、
+            // 平铺列表（不分组）：一张卡内依次为导出诊断日志、
             // 重置应用设置、开源许可。重置行无副文、页底无脚注；
             // 点击后弹出的二次确认警告保留（ResetConfirmDialogs）。
             // 运行日志组已按 B 删掉，只留导出诊断日志。
