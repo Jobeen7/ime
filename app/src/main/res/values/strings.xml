@@ -89,10 +89,10 @@
     <string name="fab_sync">同步</string>
     <string name="fab_deploy_done">部署完成</string>
     <string name="fab_deploy_failed">部署失败，请稍后重试</string>
-    <string name="fab_sync_success">同步完成，已上传 %1$d 个词</string>
+    <string name="fab_dir_sync_success">目录同步完成：上传 %1$d 个，下载 %2$d 个</string>
+    <string name="fab_dir_sync_partial">目录同步完成：上传 %1$d 个，下载 %2$d 个，%3$d 个文件失败</string>
     <string name="fab_sync_failed">同步失败</string>
     <string name="fab_sync_not_configured">请先到用户词典页填写 WebDAV 配置</string>
-    <string name="fab_sync_no_dict">无可用词典</string>
     <string name="fab_sync_engine_not_ready">词典服务未就绪，请稍后重试</string>
     <string name="schema_settings_desc">启用方案、可选方案</string>
     <!-- 第一期方案切换：列表编辑 / 切换横幅 -->
@@ -190,6 +190,20 @@
     <string name="about_reset">重置应用设置</string>
     <string name="about_reset_subline">全部设置回默认，学习词清零</string>
     <string name="about_reset_footnote">重置后回到默认安装状态：仅内置 Lite 方案可用，自装方案、WebDAV 绑定、归档与学习词全部清除。</string>
+    <string name="rime_title">RIME</string>
+    <string name="ime_not_current_switch">不是当前输入法，点按切换输入法</string>
+    <string name="rime_deploy">部署</string>
+    <string name="rime_deploy_running">部署中…</string>
+    <string name="rime_sync">同步</string>
+    <string name="rime_sync_running">同步中…</string>
+    <string name="rime_reset">方案重置</string>
+    <string name="rime_reset_subline">全部设置回默认，学习词清零</string>
+    <string name="rime_manage">方案列表管理</string>
+    <string name="rime_notice">键盘显示 RIME 通知</string>
+    <string name="rime_notice_desc">部署/同步完成后，下次打开键盘时在键盘区提示一次。关闭后不再提示。</string>
+    <string name="rime_sync_folder">同步文件夹</string>
+    <string name="rime_sync_folder_path">完整远程路径</string>
+    <string name="rime_sync_folder_unconfigured">未配置 WebDAV，配置后此处显示完整远程路径</string>
     <string name="about_reset_confirm1_msg">此操作不可撤销，确定要继续吗？</string>
     <string name="about_reset_confirm2_title">再次确认</string>
     <string name="about_reset_confirm2_msg">确定要清除全部设置并回到默认状态吗？</string>
