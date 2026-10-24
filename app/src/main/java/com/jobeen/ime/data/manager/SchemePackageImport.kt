@@ -512,17 +512,29 @@ object SchemePackageImport {
     fun mergeSchemaList(existing: List<String>, added: List<String>): List<String> =
         existing + added.filter { it !in existing }
 
+    /** 包来源：本地导入（SAF）与手动 URL 下载的区分依据（第三期）。 */
+    enum class PackageSource {
+        LOCAL,
+        URL,
+    }
+
     /** 包登记记录：后续期数卸载按集合清的依据（本期只登记、不删）。 */
     data class SchemePackageRecord(
         val packageName: String,
         val version: String?,
         val schemeIds: List<String>,
         val files: List<String>,
+        /** 默认 LOCAL：二期已存的四字段旧行解码后同样回落 LOCAL。 */
+        val source: PackageSource = PackageSource.LOCAL,
     )
 
     data class SchemePackageRegistry(val records: List<SchemePackageRecord>) {
         fun packageForScheme(schemeId: String): String? =
             records.firstOrNull { schemeId in it.schemeIds }?.packageName
+
+        /** 方案所属包的来源（URL 包与本地导入在列表来源处区分显示）。 */
+        fun sourceForScheme(schemeId: String): PackageSource? =
+            records.firstOrNull { schemeId in it.schemeIds }?.source
 
         fun versionForFile(relPath: String): String? =
             records.firstOrNull { relPath in it.files }?.version
@@ -542,8 +554,9 @@ object SchemePackageImport {
 
     /**
      * 登记编码：一行一记录，字段以 Tab 分隔（包名 / 版本 / 方案 id 逗号串 /
-     * 落盘文件逗号串）。Tab 与换行在包名里净化成下划线；Rime 文件名
-     * 实际不含逗号，逗号串可接受。解码容错：字段不足的行直接丢弃。
+     * 落盘文件逗号串 / 来源）。Tab 与换行在包名里净化成下划线；Rime 文件名
+     * 实际不含逗号，逗号串可接受。解码容错：字段不足的行直接丢弃；来源
+     * 字段缺失（二期旧行）或非 url 时一律回落 LOCAL，不改旧行语义。
      */
     fun encodeRegistry(registry: SchemePackageRegistry): String =
         registry.records.joinToString("\n") { record ->
@@ -552,6 +565,7 @@ object SchemePackageImport {
                 record.version.orEmpty(),
                 record.schemeIds.joinToString(","),
                 record.files.joinToString(","),
+                if (record.source == PackageSource.URL) "url" else "local",
             ).joinToString("\t")
         }
 
@@ -566,6 +580,11 @@ object SchemePackageImport {
                 version = parts[1].takeIf { it.isNotEmpty() },
                 schemeIds = parts[2].split(',').filter { it.isNotEmpty() },
                 files = parts[3].split(',').filter { it.isNotEmpty() },
+                source = if (parts.size >= 5 && parts[4] == "url") {
+                    PackageSource.URL
+                } else {
+                    PackageSource.LOCAL
+                },
             )
         }
         return SchemePackageRegistry(records)
