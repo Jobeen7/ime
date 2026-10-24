@@ -503,7 +503,8 @@ object SchemePackageImport {
         URL,
     }
 
-    /** 包登记记录：后续期数卸载按集合清的依据（本期只登记、不删）。 */
+    /** 包登记记录：后续期数卸载按集合清的依据（本期只登记、不删）。
+     * 多目录模型下记录所属目录 [dir]（旧五字段行解码后为空，按初始目录计）。 */
     data class SchemePackageRecord(
         val packageName: String,
         val version: String?,
@@ -511,6 +512,8 @@ object SchemePackageImport {
         val files: List<String>,
         /** 默认 LOCAL：二期已存的四字段旧行解码后同样回落 LOCAL。 */
         val source: PackageSource = PackageSource.LOCAL,
+        /** 包落盘的方案目录名；空 = 多目录前的旧记录。 */
+        val dir: String = "",
     )
 
     data class SchemePackageRegistry(val records: List<SchemePackageRecord>) {
@@ -539,9 +542,10 @@ object SchemePackageImport {
 
     /**
      * 登记编码：一行一记录，字段以 Tab 分隔（包名 / 版本 / 方案 id 逗号串 /
-     * 落盘文件逗号串 / 来源）。Tab 与换行在包名里净化成下划线；Rime 文件名
+     * 落盘文件逗号串 / 来源 / 目录名）。Tab 与换行在包名里净化成下划线；Rime 文件名
      * 实际不含逗号，逗号串可接受。解码容错：字段不足的行直接丢弃；来源
-     * 字段缺失（二期旧行）或非 url 时一律回落 LOCAL，不改旧行语义。
+     * 字段缺失（二期旧行）或非 url 时一律回落 LOCAL，不改旧行语义；
+     * 目录字段缺失（多目录前旧行）时为空。
      */
     fun encodeRegistry(registry: SchemePackageRegistry): String =
         registry.records.joinToString("\n") { record ->
@@ -551,6 +555,7 @@ object SchemePackageImport {
                 record.schemeIds.joinToString(","),
                 record.files.joinToString(","),
                 if (record.source == PackageSource.URL) "url" else "local",
+                record.dir,
             ).joinToString("\t")
         }
 
@@ -570,6 +575,7 @@ object SchemePackageImport {
                 } else {
                     PackageSource.LOCAL
                 },
+                dir = if (parts.size >= 6) parts[5] else "",
             )
         }
         return SchemePackageRegistry(records)
