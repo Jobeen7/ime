@@ -2180,43 +2180,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // 底部内置 Lite 兜底行：单独成区、标注兜底、不可删；点选即切回
-            // Lite（Lite 不在已启用列表时先加入首位，见编排器 moveToTop）
-            if (liteItem != null) {
-                SectionHeader(stringResource(R.string.schema_builtin_lite_section))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = ExpressiveShapes.medium,
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                ) {
-                    SchemaListItem(
-                        schema = liteItem,
-                        rowMeta = rowMetaFor(liteItem),
-                        fallbackBadge = stringResource(R.string.schema_fallback_badge),
-                        onClick = if (switchBusy) null else ({ switchTo(liteItem) }),
-                        leadingIcon = {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp),
-                                tint = MaterialTheme.colorScheme.primary,
-                            )
-                        },
-                        trailingIcon = {},
-                    )
-                }
-            }
-            // 更新区视觉隔离说明：本区只服务内置 Lite 更新通道，
-            // 不更新用户自装方案（行为本身未改，只加一行说明）
-            Text(
-                stringResource(R.string.schema_update_isolated_note),
-                fontSize = rowSubFontSize,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
             SettingsGroup(title = stringResource(R.string.schema_update_title)) {
                 // 语法模型（原"模型管理"分组已合并至此）
                 ActionRow(

@@ -87,11 +87,9 @@
     <string name="schema_settings_desc">启用方案、可选方案</string>
     <string name="enabled_schemas">当前启用的方案</string>
     <string name="available_schemas">所有可选的方案</string>
-    <!-- 第一期方案切换：当前方案卡 / 列表编辑 / 兜底行 / 切换横幅 -->
+    <!-- 第一期方案切换：当前方案卡 / 列表编辑 / 切换横幅 -->
     <string name="schema_current_title">当前方案</string>
     <string name="schema_back_to_lite">回内置 Lite</string>
-    <string name="schema_builtin_lite_section">内置兜底方案</string>
-    <string name="schema_fallback_badge">兜底</string>
     <string name="schema_source_builtin">内置</string>
     <string name="schema_source_user">用户</string>
     <string name="schema_list_edit">方案列表编辑</string>
@@ -104,7 +102,6 @@
     <string name="schema_rolled_back">切换失败，已回退到上一方案</string>
     <string name="schema_switch_retry">重试</string>
     <string name="schema_banner_close">关闭</string>
-    <string name="schema_update_isolated_note">以下为内置 Lite 更新通道，不更新用户自装方案</string>
     <!-- 第二期本地导入：菜单 / 校验结果页 / 安装确认 / 错误 -->
     <string name="schema_import">导入方案</string>
     <string name="schema_import_validating">正在校验方案包…</string>
