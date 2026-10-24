@@ -12,6 +12,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -135,9 +136,9 @@ object ScreenComponent {
             }
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 ),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
@@ -151,6 +152,125 @@ object ScreenComponent {
             }
         }
     }
+
+    /**
+     * 分组卡片：一张卡片装多行，组内行之间只用发丝线分隔，行自身无圆角无阴影。
+     * 卡片即“一页中的一组”，与“卡片是一张纸”的理念一致。
+     */
+    @Composable
+    fun GroupCard(
+        modifier: Modifier = Modifier,
+        content: @Composable ColumnScope.() -> Unit,
+    ) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                content()
+            }
+        }
+    }
+
+    /** 分组卡片内的发丝线：装饰性分隔，无语义。 */
+    @Composable
+    fun GroupDivider() {
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        )
+    }
+
+    /**
+     * 导航行：彩色方块图标 + 标题 + 右箭头，无副标题。
+     * 方块颜色由调用方按组内顺序取 Material 容器色循环，图标本身用轮廓图标。
+     */
+    @Composable
+    fun NavRow(
+        title: String,
+        onClick: () -> Unit,
+        icon: ImageVector,
+        iconContainer: Color,
+        iconTint: Color,
+        titleColor: Color = MaterialTheme.colorScheme.onSurface,
+        showChevron: Boolean = true,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(iconContainer),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                text = title,
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
+                fontWeight = FontWeight.Medium,
+                color = titleColor,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+            )
+            if (showChevron) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+
+    /** 琥珀色警告卡（内容流中的 Inline Alert，非 Banner）：深浅主题各一套琥珀色。 */
+    @Composable
+    fun WarningCard(
+        modifier: Modifier = Modifier,
+        content: @Composable ColumnScope.() -> Unit,
+    ) {
+        val dark = isSystemInDarkTheme()
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (dark) Color(0xFF40300A) else Color(0xFFFFF0C2),
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                content()
+            }
+        }
+    }
+
+    /** 琥珀色警告卡内的文字色，与 WarningCard 容器配对。 */
+    @Composable
+    fun warningContentColor(): Color =
+        if (isSystemInDarkTheme()) Color(0xFFFFD54A) else Color(0xFF6D4C00)
 
     @Composable
     fun SwitchRow(
