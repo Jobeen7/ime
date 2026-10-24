@@ -66,6 +66,8 @@ fun RimeScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    // 回调内不可用 stringResource，提前在组合阶段解析
+    val msgResetFailed = stringResource(R.string.about_reset_failed)
     var resetStep by remember { mutableStateOf(0) }
     var resetting by remember { mutableStateOf(false) }
     var noticeEnabled by remember { mutableStateOf(true) }
@@ -107,7 +109,7 @@ fun RimeScreen(
                 context.startActivity(intent)
                 (context as? android.app.Activity)?.finish()
             }.onFailure {
-                toast(context.getString(R.string.about_reset_failed))
+                toast(msgResetFailed)
             }
         }
     }

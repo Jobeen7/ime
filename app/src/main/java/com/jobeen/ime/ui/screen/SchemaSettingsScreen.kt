@@ -289,6 +289,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     val stageExtracting = stringResource(R.string.schema_update_extracting)
     val stageDownloadingGram = stringResource(R.string.schema_update_downloading_gram)
     val stageDeploying = stringResource(R.string.schema_update_deploying)
+    // 回调内不可用 stringResource，提前在组合阶段解析
+    val msgDirSwitchFailed = stringResource(R.string.schema_dir_switch_failed)
+    val msgManageDeployFailed = stringResource(R.string.schema_manage_deploy_failed)
     // 更新阶段文案从进程级进度派生：页面重进时进度已在管理器里、
     // 阶段文案随之可得，不再依赖发起页的写回（N2）
     val updateStageText = when (updateProgress?.stage) {
@@ -725,7 +728,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         }
                     }
                 }
-                val msg = context.getString(R.string.schema_dir_switch_failed)
+                val msg = msgDirSwitchFailed
                 DirSwitchMonitor.failed(msg)
                 dirSwitchError = msg
             }
@@ -2006,9 +2009,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                     }
                                 }
                                 manageDeploying = false
-                                manageDeployError = context.getString(
-                                    R.string.schema_manage_deploy_failed,
-                                )
+                                manageDeployError = msgManageDeployFailed
                                 scope.launch { loadSchemas() }
                             }
                         }
