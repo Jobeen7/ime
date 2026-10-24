@@ -69,6 +69,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.ToolbarSettingsActivity"
+            android:exported="false"
+            android:label="工具栏自定义"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name="com.journeyapps.barcodescanner.CaptureActivity"
             android:exported="false"
             android:screenOrientation="fullSensor"

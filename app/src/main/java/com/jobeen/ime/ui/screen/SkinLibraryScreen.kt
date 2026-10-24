@@ -325,6 +325,20 @@ fun SkinLibraryScreen(onBack: () -> Unit) {
                             enabled = !busy && state.active?.skinId != null,
                         ) { Text("回退内置默认") }
                     }
+                    // 工具栏是全局功能偏好（不随皮肤变），入口放在这里方便
+                    // 与皮肤一起调；实际配置页独立（工具栏自定义）。
+                    OutlinedButton(
+                        onClick = {
+                            context.startActivity(
+                                android.content.Intent(
+                                    context,
+                                    com.jobeen.ime.ui.ToolbarSettingsActivity::class.java,
+                                ),
+                            )
+                        },
+                        enabled = !busy,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) { Text("工具栏自定义（中间按钮增删 / 排序）") }
                 }
             }
 
