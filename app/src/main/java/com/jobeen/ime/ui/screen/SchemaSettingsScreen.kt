@@ -13,13 +13,11 @@ import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -35,8 +33,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DragHandle
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
-import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -56,7 +52,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -78,14 +74,14 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.R
@@ -204,7 +200,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         mutableStateOf<Map<String, SchemeSwitchPolicy.SchemeSource>>(emptyMap())
     }
     var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
-    val density = LocalDensity.current
     val scope = rememberCoroutineScope()
     // ---- 第二期本地导入：SAF 选 zip → 暂存校验 → 校验结果页 → 确认安装 ----
     // importPlan 非空时 Scaffold 内容整体切到校验结果页（见下方内容分支）；
@@ -1341,7 +1336,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             val inImportFlow = importPlan != null || importError != null || importBusy
             val inDownloadFlow = downloadPage || downloadFormOpen ||
                 downloadRunning || downloadError != null
-            TopAppBar(
+            CenterAlignedTopAppBar(
                 title = {
                     Text(
                         stringResource(
@@ -1392,7 +1387,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
+                            contentDescription = stringResource(R.string.back),
                             modifier = Modifier.scale(0.8f),
                             tint = MaterialTheme.colorScheme.onSurface,
                         )
@@ -1410,7 +1405,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         IconButton(onClick = { menuExpanded = true }) {
                             Icon(
                                 Icons.Filled.MoreVert,
-                                contentDescription = null,
+                                contentDescription = stringResource(R.string.schema_menu_more),
                                 tint = MaterialTheme.colorScheme.onSurface,
                             )
                         }
@@ -1930,87 +1925,65 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             val switchBusy = switchState is SchemeSwitchState.Switching ||
                 switchState is SchemeSwitchState.Deploying ||
                 switchState is SchemeSwitchState.RollingBack
-            // 顶部当前方案卡：名 + 变体 + 键盘 + 版本 + 来源；非 Lite 时给回兜底入口
+            // 顶部当前方案卡（v2 原型）：安静卡片，无撞色、无芯片、
+            // 无回兜底按钮；名 + 灰字副行（变体 · 键盘 · 版本 · 来源，纯文本）。
             val currentItem = allRowItems.firstOrNull { it.id == currentSchemeId }
                 ?: enabledSchemas.firstOrNull()
-            val liteItem =
-                allRowItems.firstOrNull { it.id == SchemeSwitchPolicy.BUILTIN_LITE_ID }
             if (currentItem != null) {
+                val meta = rowMetaFor(currentItem)
+                val subParts = listOfNotNull(
+                    meta.variantLabel,
+                    schemaLayoutTag(context, currentItem.layout),
+                    meta.version.ifBlank { null },
+                    meta.sourceLabel,
+                )
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = ExpressiveShapes.medium,
+                    shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
                     ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 ) {
-                    Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Text(
                             stringResource(R.string.schema_current_title),
-                            fontSize = rowSubFontSize,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontSize = 12.sp,
+                            lineHeight = 17.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
                             currentItem.name.ifBlank { currentItem.id },
-                            fontSize = rowFontSize,
+                            fontSize = 16.sp,
+                            lineHeight = 21.sp,
                             fontWeight = FontWeight.Bold,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            color = MaterialTheme.colorScheme.onSurface,
                         )
-                        Spacer(Modifier.height(4.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            val meta = rowMetaFor(currentItem)
-                            meta.variantLabel?.let {
-                                TagBadge(
-                                    it,
-                                    MaterialTheme.colorScheme.secondaryContainer,
-                                    MaterialTheme.colorScheme.onSecondaryContainer,
-                                )
-                                Spacer(Modifier.width(4.dp))
-                            }
-                            TagBadge(
-                                schemaLayoutTag(context, currentItem.layout),
-                                MaterialTheme.colorScheme.primaryContainer,
-                                MaterialTheme.colorScheme.onPrimaryContainer,
+                        if (subParts.isNotEmpty()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                subParts.joinToString(" · "),
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
                             )
-                            if (meta.version.isNotBlank()) {
-                                Spacer(Modifier.width(4.dp))
-                                Text(
-                                    meta.version,
-                                    fontSize = rowSubFontSize,
-                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
-                                    maxLines = 1,
-                                )
-                            }
-                            meta.sourceLabel?.let {
-                                Spacer(Modifier.width(4.dp))
-                                TagBadge(
-                                    it,
-                                    MaterialTheme.colorScheme.tertiaryContainer,
-                                    MaterialTheme.colorScheme.onTertiaryContainer,
-                                )
-                            }
-                        }
-                        if (liteItem != null && currentItem.id != liteItem.id) {
-                            Spacer(Modifier.height(8.dp))
-                            Button(
-                                onClick = { switchTo(liteItem) },
-                                enabled = !switchBusy,
-                            ) {
-                                Text(stringResource(R.string.schema_back_to_lite))
-                            }
                         }
                     }
                 }
+                Spacer(Modifier.height(8.dp))
             }
-            // 切换 / 部署 / 回退横幅：Idle 时不占位
+            // 切换 / 部署 / 回退横幅：Idle 时不占位（视觉收敛，逻辑不动）
             when (val s = switchState) {
                 is SchemeSwitchState.Switching -> {
                     Text(
                         stringResource(R.string.schema_switching),
-                        fontSize = rowSubFontSize,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -2018,7 +1991,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     Column {
                         Text(
                             stringResource(R.string.schema_deploying),
-                            fontSize = rowSubFontSize,
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
@@ -2029,7 +2003,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     Column {
                         Text(
                             stringResource(R.string.schema_rolling_back),
-                            fontSize = rowSubFontSize,
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                         Spacer(Modifier.height(4.dp))
@@ -2039,15 +2014,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 is SchemeSwitchState.Failed -> {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = ExpressiveShapes.medium,
+                        shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.errorContainer,
                         ),
                     ) {
-                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                             Text(
                                 stringResource(R.string.schema_switch_failed) + "：" + s.targetId,
-                                fontSize = rowSubFontSize,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
                             Row {
@@ -2071,17 +2047,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 is SchemeSwitchState.RolledBack -> {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        shape = ExpressiveShapes.medium,
+                        shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.errorContainer,
                         ),
                     ) {
-                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                             val prevName = allRowItems.firstOrNull { it.id == s.previousId }
                                 ?.let { it.name.ifBlank { it.id } } ?: s.previousId
                             Text(
                                 stringResource(R.string.schema_rolled_back) + "：" + prevName,
-                                fontSize = rowSubFontSize,
+                                fontSize = 14.sp,
+                                lineHeight = 20.sp,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )
                             TextButton(onClick = {
@@ -2098,378 +2075,80 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             if (editMode) {
                 Text(
                     stringResource(R.string.schema_edit_hint),
-                    fontSize = rowSubFontSize,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            SectionHeader(stringResource(R.string.enabled_schemas))
+            // 已启用列表（v2 原型）：一张分组卡片，行只留名 + 灰字 id，
+            // 无芯片、无默认标记；行点按切换。编辑模式仍走排序列表
+            // （无芯片、无删除——删除会把方案送进本页不再显示的未启用区，
+            // 禁用入口随管理页阶段一并补回）。
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = ExpressiveShapes.medium,
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
-                ReorderableSchemaList(
-                    items = enabledSchemas,
-                    rowMeta = { rowMetaFor(it) },
-                    // 编辑模式下行点选不切换（防排序时误触）；忙态下拒绝新切换
-                    onRowClick = if (editMode || switchBusy) null else ({ item -> switchTo(item) }),
-                    trailingIcon = { schema ->
-                        if (enabledSchemas.size > 1 && !switchBusy) {
-                            IconButton(onClick = {
-                                availableSchemas.add(schema)
-                                enabledSchemas.remove(schema)
-                                saveOrder(prefs, enabledSchemas)
-                            }) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                        }
-                    },
-                )
-            }
-            if (availableSchemas.isNotEmpty()) {
-                SectionHeader(stringResource(R.string.available_schemas))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = ExpressiveShapes.medium,
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                ) {
+                if (editMode) {
+                    ReorderableSchemaList(
+                        items = enabledSchemas,
+                        // 编辑模式下行点选不切换（防排序时误触）
+                        onRowClick = null,
+                        trailingIcon = {},
+                    )
+                } else {
                     Column {
-                        availableSchemas.forEach { schema ->
-                            SchemaListItem(
-                                schema = schema,
-                                rowMeta = rowMetaFor(schema),
-                                leadingIcon = {
-                                    Icon(
-                                        Icons.Default.RadioButtonUnchecked,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(20.dp),
-                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        enabledSchemas.forEachIndexed { index, schema ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .semantics(mergeDescendants = true) {}
+                                    .clickable(enabled = !switchBusy) { switchTo(schema) }
+                                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(
+                                        schema.name.ifBlank { schema.id },
+                                        fontSize = 16.sp,
+                                        lineHeight = 21.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
                                     )
-                                },
-                                trailingIcon = {
-                                    IconButton(
-                                        onClick = {
-                                            enabledSchemas.add(schema)
-                                            availableSchemas.remove(schema)
-                                            saveOrder(prefs, enabledSchemas)
-                                        },
-                                        enabled = !switchBusy,
-                                    ) {
-                                        Icon(
-                                            imageVector = Icons.Default.Add,
-                                            contentDescription = null,
-                                            modifier = Modifier.size(20.dp),
-                                            tint = MaterialTheme.colorScheme.primary,
+                                    if (schema.name.isNotBlank()) {
+                                        Spacer(Modifier.height(4.dp))
+                                        Text(
+                                            schema.id,
+                                            fontSize = 14.sp,
+                                            lineHeight = 20.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
                                         )
                                     }
-                                },
-                            )
-                        }
-                    }
-                }
-            }
-
-            SettingsGroup(title = stringResource(R.string.schema_update_title)) {
-                // 语法模型（原"模型管理"分组已合并至此）
-                ActionRow(
-                    title = stringResource(R.string.schema_model_grammar),
-                    subtitle = when {
-                        grammarLanguage == null -> stringResource(R.string.schema_grammar_model_unavailable)
-                        grammarReady -> stringResource(R.string.schema_grammar_model_ready)
-                        grammarFailed -> stringResource(R.string.schema_grammar_model_failed)
-                        else -> stringResource(R.string.schema_grammar_model_desc)
-                    },
-                    trailing = {
-                        when {
-                            grammarReady -> Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp),
-                            )
-
-                            grammarDownloading -> ProgressButton(
-                                grammarProgress, width = grammarButtonWidth
-                            )
-
-                            grammarLanguage != null -> Button(
-                                onClick = { downloadGrammar(grammarLanguage!!) },
-                                // 万象更新进行中禁用（与 downloadGrammar 的守门同口径）
-                                enabled = !updating && !updatePending,
-                                modifier = Modifier
-                                    .height(32.dp)
-                                    .onSizeChanged {
-                                        grammarButtonWidth = with(density) { it.width.toDp() }
-                                    },
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            ) {
-                                Text(stringResource(R.string.download), fontSize = rowSubFontSize)
+                                }
                             }
-                        }
-                    },
-                )
-
-                val info = updateInfo
-                val local = localInfo
-                val noGram = stringResource(R.string.schema_update_no_gram)
-                // 高亮色：仅用于远端信息与本地不一致时
-                val diffColor = if (isSystemInDarkTheme()) Color(0xFF69F0AE) else Color(0xFF2E7D32)
-                val darkColor = MaterialTheme.colorScheme.onSurface
-
-                // 本地信息
-                UpdateInfoSectionTitle(stringResource(R.string.schema_update_local_info))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = ExpressiveShapes.medium,
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface,
-                    ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                ) {
-                    UpdateInfoRow(
-                        label = stringResource(R.string.schema_update_current_schema),
-                        value = currentSchemaName.ifEmpty { "—" },
-                        valueColor = MaterialTheme.colorScheme.onSurface,
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                    )
-                    UpdateInfoRow(
-                        label = stringResource(R.string.schema_update_local_schema),
-                        value = local?.schemaVersion ?: "—",
-                        valueColor = darkColor,
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                    )
-                    UpdateInfoRow(
-                        label = stringResource(R.string.schema_update_local_dict),
-                        value = local?.dictFingerprint?.takeIf { it.isNotEmpty() }?.let {
-                            WanxiangUpdateManager.shortFingerprint(it)
-                        } ?: "—",
-                        valueColor = darkColor,
-                    )
-                    HorizontalDivider(
-                        modifier = Modifier.padding(horizontal = 16.dp),
-                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                    )
-                    UpdateInfoRow(
-                        label = stringResource(R.string.schema_update_local_gram),
-                        value = local?.gramFingerprint?.let {
-                            WanxiangUpdateManager.shortFingerprint(it)
-                        } ?: noGram,
-                        valueColor = darkColor,
-                    )
-                }
-
-                // 远程信息（检查后显示）
-                // 远程信息（检查后显示）：与本地不一致时用绿色高亮
-                if (info != null) {
-                    // 远端方案版本与本地不一致 → 高亮（本地未加载完成时不高亮）
-                    val schemaDiff = local != null && local.schemaVersion != info.schemaRemoteVersion
-                    // 远端词库指纹与本地不一致（双方都有值且不同）→ 高亮
-                    val dictDiff = info.dictRemoteFingerprint != null &&
-                        local?.dictFingerprint?.isNotEmpty() == true &&
-                        info.dictRemoteFingerprint != local.dictFingerprint
-                    // 远端模型指纹与本地不一致（双方都有值且不同）→ 高亮
-                    val gramDiff = info.gramRemoteFingerprint != null &&
-                        local?.gramFingerprint != null &&
-                        info.gramRemoteFingerprint != local.gramFingerprint
-                    UpdateInfoSectionTitle(stringResource(R.string.schema_update_remote_info))
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = ExpressiveShapes.medium,
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surface,
-                        ),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-                    ) {
-                        UpdateInfoRow(
-                            label = stringResource(R.string.schema_update_remote_schema),
-                            value = info.schemaRemoteVersion,
-                            valueColor = if (schemaDiff) diffColor else darkColor,
-                        )
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        )
-                        UpdateInfoRow(
-                            label = stringResource(R.string.schema_update_remote_dict),
-                            value = info.dictRemoteFingerprint?.let {
-                                WanxiangUpdateManager.shortFingerprint(it)
-                            } ?: "—",
-                            valueColor = if (dictDiff) diffColor else darkColor,
-                        )
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        )
-                        UpdateInfoRow(
-                            label = stringResource(R.string.schema_update_remote_gram),
-                            value = info.gramRemoteFingerprint?.let {
-                                WanxiangUpdateManager.shortFingerprint(it)
-                            } ?: "—",
-                            valueColor = if (gramDiff) diffColor else darkColor,
-                        )
-                    }
-                }
-
-                // 底部状态文本 + 操作按钮（右对齐）
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 8.dp, bottom = 4.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    val statusText = when {
-                        updating && updateProgress != null -> {
-                            val p = updateProgress!!
-                            val pct = if (p.total > 0L) {
-                                (p.downloaded * 100 / p.total).toInt()
-                            } else {
-                                0
-                            }
-                            "$updateStageText $pct%"
-                        }
-                        updating -> updateStageText.ifEmpty {
-                            stringResource(R.string.schema_update_deploying)
-                        }
-                        // 检查失败排在更新成功之前：更新成功后的静默
-                        // 复检若失败，最新事实是「复检没过、远程卡是旧
-                        // 值」，继续显示成功会掩盖这一点；普通检查失败
-                        // 时 updateDone 本就为假，顺序调整不影响它
-                        updateCheckFailed -> stringResource(R.string.schema_update_check_failed)
-                        // 下载已完成、本地协程还在做引擎重部署与联网
-                        // 复检收尾：继续显示部署中，不抢先报成功
-                        updatePending && updateDone -> stageDeploying
-                        updateDone -> stringResource(R.string.schema_update_success)
-                        updateFailed -> stringResource(R.string.schema_update_failed)
-                        checkingUpdate -> stringResource(R.string.schema_update_checking)
-                        info == null -> ""
-                        // 文案按更新对象区分：版本号是方案的版本，只有
-                        // 方案侧有更新时才拼它；仅语法模型有更新时拼上
-                        // 方案版本号会让用户误以为方案也要更新（此前
-                        // 只更新模型也显示「发现新版本 <方案版本>」）
-                        info.schemaUpdateAvailable ->
-                            "${stringResource(R.string.schema_update_available)} " +
-                                info.schemaRemoteVersion
-                        info.gramUpdateAvailable ->
-                            stringResource(R.string.schema_update_gram_only)
-                        // 远端内容未经登记摘要核实（摘要接口失败）时
-                        // 不得宣称「已是最新」：模型侧无更新结论只是
-                        // 下载记录的兜底判断，如实报未确认（V7b 口径）
-                        !info.gramContentVerified ->
-                            stringResource(R.string.schema_update_unverified)
-                        else -> "${stringResource(R.string.schema_update_latest)} " +
-                            "(${info.schemaRemoteVersion})"
-                    }
-                    Text(
-                        text = statusText,
-                        fontSize = rowSubFontSize,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
-                    )
-                    when {
-                        // 更新成功后仍保留「检查更新」入口：成功回调里的
-                        // 静默复检失败时远程卡是旧值，用户可当场手动复检，
-                        // 不必退出页面重进
-                        updateDone -> Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(22.dp),
-                            )
-                            Button(
-                                onClick = { checkWanxiangUpdate() },
-                                modifier = Modifier.height(32.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                            ) {
-                                Text(
-                                    stringResource(R.string.schema_update_check),
-                                    fontSize = rowSubFontSize,
-                                    maxLines = 1,
+                            if (index < enabledSchemas.lastIndex) {
+                                HorizontalDivider(
+                                    modifier = Modifier.padding(horizontal = 16.dp),
+                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                                 )
                             }
                         }
-
-                        updating -> ProgressButton(
-                            progress = updateProgress?.let {
-                                if (it.total > 0L) it.downloaded.toFloat() / it.total.toFloat() else 0f
-                            } ?: 0f,
-                            width = updateButtonWidth,
-                        )
-
-                        checkingUpdate -> Button(
-                            onClick = {},
-                            enabled = false,
-                            modifier = Modifier.height(32.dp),
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        ) {
-                            Text(
-                                stringResource(R.string.schema_update_checking),
-                                fontSize = rowSubFontSize,
-                                maxLines = 1,
-                            )
-                        }
-
-                        info?.hasUpdate == true -> Button(
-                            onClick = { startWanxiangUpdate(info) },
-                            // 语法模型下载进行中禁用（与 startWanxiangUpdate 的守门同口径）
-                            enabled = !grammarDownloading && !grammarPending,
-                            modifier = Modifier
-                                .height(32.dp)
-                                .onSizeChanged {
-                                    updateButtonWidth = with(density) { it.width.toDp() }
-                                },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        ) {
-                            Text(
-                                stringResource(R.string.schema_update_start),
-                                fontSize = rowSubFontSize,
-                            )
-                        }
-
-                        else -> Button(
-                            onClick = { checkWanxiangUpdate() },
-                            modifier = Modifier
-                                .height(32.dp)
-                                .onSizeChanged {
-                                    updateButtonWidth = with(density) { it.width.toDp() }
-                                },
-                            shape = RoundedCornerShape(8.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
-                        ) {
-                            Text(
-                                stringResource(R.string.schema_update_check),
-                                fontSize = rowSubFontSize,
-                                maxLines = 1,
-                            )
-                        }
                     }
                 }
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                stringResource(R.string.schema_enabled_only_footnote),
+                fontSize = 12.sp,
+                lineHeight = 17.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
 
         }
     }
@@ -2485,7 +2164,6 @@ private data class SchemaRowMeta(
 @Composable
 private fun ReorderableSchemaList(
     items: MutableList<SchemaItem>,
-    rowMeta: (SchemaItem) -> SchemaRowMeta,
     onRowClick: ((SchemaItem) -> Unit)?,
     trailingIcon: @Composable (SchemaItem) -> Unit,
 ) {
@@ -2546,8 +2224,6 @@ private fun ReorderableSchemaList(
             ) {
                 SchemaListItem(
                     schema = schema,
-                    isDefault = index == 0,
-                    rowMeta = rowMeta(schema),
                     onClick = onRowClick?.let { click -> { click(schema) } },
                     leadingIcon = {
                         Box(
@@ -2577,19 +2253,15 @@ private fun ReorderableSchemaList(
 @Composable
 private fun SchemaListItem(
     schema: SchemaItem,
-    isDefault: Boolean = false,
-    rowMeta: SchemaRowMeta = SchemaRowMeta(),
-    fallbackBadge: String? = null,
     onClick: (() -> Unit)? = null,
     leadingIcon: @Composable () -> Unit,
     trailingIcon: @Composable () -> Unit,
 ) {
-    val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(horizontal = 12.dp, vertical = 10.dp),
+            .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         leadingIcon()
@@ -2597,7 +2269,8 @@ private fun SchemaListItem(
         Column(Modifier.weight(1f)) {
             Text(
                 schema.name.ifBlank { schema.id },
-                fontSize = rowFontSize,
+                fontSize = 16.sp,
+                lineHeight = 21.sp,
                 fontWeight = FontWeight.Medium,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -2606,63 +2279,12 @@ private fun SchemaListItem(
                 Spacer(Modifier.height(4.dp))
                 Text(
                     schema.id,
-                    fontSize = rowSubFontSize,
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
-            }
-            // 极简副行：变体 / 键盘 / 版本 / 来源（第一期定稿口径；
-            // 原全角/半角符号徽标随极简化去掉，符号信息不在行内展示）
-            Spacer(Modifier.height(4.dp))
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                if (isDefault) {
-                    TagBadge(
-                        stringResource(R.string.tag_default),
-                        MaterialTheme.colorScheme.secondaryContainer,
-                        MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                }
-                fallbackBadge?.let {
-                    TagBadge(
-                        it,
-                        MaterialTheme.colorScheme.secondaryContainer,
-                        MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                }
-                rowMeta.variantLabel?.let {
-                    TagBadge(
-                        it,
-                        MaterialTheme.colorScheme.secondaryContainer,
-                        MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                    Spacer(Modifier.width(4.dp))
-                }
-                val tagText = schemaLayoutTag(context, schema.layout)
-                TagBadge(
-                    tagText,
-                    MaterialTheme.colorScheme.primaryContainer,
-                    MaterialTheme.colorScheme.onPrimaryContainer,
-                )
-                if (rowMeta.version.isNotBlank()) {
-                    Spacer(Modifier.width(4.dp))
-                    Text(
-                        rowMeta.version,
-                        fontSize = rowSubFontSize,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                    )
-                }
-                rowMeta.sourceLabel?.let {
-                    Spacer(Modifier.width(4.dp))
-                    TagBadge(
-                        it,
-                        MaterialTheme.colorScheme.tertiaryContainer,
-                        MaterialTheme.colorScheme.onTertiaryContainer,
-                    )
-                }
             }
         }
         trailingIcon()
@@ -2684,41 +2306,6 @@ private fun TagBadge(text: String, bg: Color, fg: Color) {
             .background(bg, RoundedCornerShape(2.dp))
             .padding(horizontal = 3.dp, vertical = 1.dp),
     )
-}
-
-/** 方案更新"本地信息/远程信息"小标题 */
-@Composable
-private fun UpdateInfoSectionTitle(text: String) {
-    Text(
-        text = text,
-        fontSize = rowSubFontSize,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 10.dp, bottom = 6.dp),
-    )
-}
-
-/** 方案更新信息行：左标签，右值 */
-@Composable
-private fun UpdateInfoRow(label: String, value: String, valueColor: Color) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 11.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = label,
-            fontSize = rowFontSize,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
-        Text(
-            text = value,
-            fontSize = rowSubFontSize,
-            color = valueColor,
-            maxLines = 1,
-        )
-    }
 }
 
 // ---- 第二期本地导入：校验结果页与规划构造（界面层，规划逻辑见 SchemePackageImport） ----
