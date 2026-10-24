@@ -84,6 +84,16 @@
 
     <!-- Schema Settings -->
     <string name="schema_settings">输入方案</string>
+    <!-- FAB 栈：部署 / 同步 -->
+    <string name="fab_deploy">部署</string>
+    <string name="fab_sync">同步</string>
+    <string name="fab_deploy_done">部署完成</string>
+    <string name="fab_deploy_failed">部署失败，请稍后重试</string>
+    <string name="fab_sync_success">同步完成，已上传 %1$d 个词</string>
+    <string name="fab_sync_failed">同步失败</string>
+    <string name="fab_sync_not_configured">请先到用户词典页填写 WebDAV 配置</string>
+    <string name="fab_sync_no_dict">无可用词典</string>
+    <string name="fab_sync_engine_not_ready">词典服务未就绪，请稍后重试</string>
     <string name="schema_settings_desc">启用方案、可选方案</string>
     <!-- 第一期方案切换：当前方案卡 / 列表编辑 / 切换横幅 -->
     <string name="schema_current_title">当前方案</string>
