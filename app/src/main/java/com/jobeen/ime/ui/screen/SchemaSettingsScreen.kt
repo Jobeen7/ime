@@ -44,11 +44,13 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -93,6 +95,7 @@ import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.data.manager.SchemaManager
+import com.jobeen.ime.data.manager.SchemeDownload
 import com.jobeen.ime.data.manager.SchemePackageImport
 import com.jobeen.ime.data.manager.SchemePackageImport.PlanResult
 import com.jobeen.ime.data.manager.SchemePackageImport.SchemeImportPlan
@@ -114,11 +117,17 @@ import com.jobeen.ime.ui.theme.ExpressiveShapes
 import kotlin.math.roundToInt
 import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.TimeUnit
+import okhttp3.Call
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -202,6 +211,46 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     val importPrefs = remember {
         context.getSharedPreferences(SchemePackageImport.PREFS_NAME, Context.MODE_PRIVATE)
     }
+    // ---- 第三期远程下载：条目列表 / 新增表单 / 下载进度 / 下载错误 ----
+    // 下载条目只存方案名 + URL（SchemeDownload 偏好）；Header 每次下载时
+    // 输入、不持久化，表单里的 Header 只用于紧随其后的那次下载。
+    val downloadPrefs = remember {
+        context.getSharedPreferences(SchemeDownload.PREFS_NAME, Context.MODE_PRIVATE)
+    }
+    val downloadEntries = remember { mutableStateListOf<SchemeDownload.DownloadEntry>() }
+    var downloadPage by remember { mutableStateOf(false) }
+    var downloadFormOpen by remember { mutableStateOf(false) }
+    var downloadFormName by remember { mutableStateOf("") }
+    var downloadFormUrl by remember { mutableStateOf("") }
+    val downloadFormHeaders = remember { mutableStateListOf<Pair<String, String>>() }
+    var downloadFormError by remember { mutableStateOf<DownloadFormError?>(null) }
+    var downloadRunning by remember { mutableStateOf(false) }
+    var downloadProgressBytes by remember { mutableLongStateOf(0L) }
+    var downloadProgressTotal by remember { mutableLongStateOf(-1L) }
+    var downloadProgressName by remember { mutableStateOf("") }
+    var downloadError by remember { mutableStateOf<DownloadErrorState?>(null) }
+    var downloadJob by remember { mutableStateOf<Job?>(null) }
+    var downloadCall by remember { mutableStateOf<Call?>(null) }
+    // 下载交接的校验 / 安装沿用导入流程：importSource 决定登记来源，
+    // importFromDownload 决定失败 / 取消后回下载页还是主列表。
+    var importSource by remember {
+        mutableStateOf<SchemePackageImport.PackageSource>(
+            SchemePackageImport.PackageSource.LOCAL,
+        )
+    }
+    var importFromDownload by remember { mutableStateOf(false) }
+    // URL 来源方案 id 集（登记里 source=URL 的方案，列表来源处显示 URL）。
+    var urlSourceIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    // 整包下载专用 client（WanxiangUpdateManager.downloadClient 同形态：
+    // 连接 15s / 读取 120s / 无总时长上限；https→http 降级禁跟随）。
+    val downloadClient = remember {
+        OkHttpClient.Builder()
+            .followRedirects(true)
+            .followSslRedirects(false)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .build()
+    }
     // 协程内不可用 stringResource，更新阶段文案提前在组合阶段解析
     val stageDownloadingSchema = stringResource(R.string.schema_update_downloading_schema)
     val stageExtracting = stringResource(R.string.schema_update_extracting)
@@ -282,6 +331,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     item.id to SchemeSwitchPolicy.classifySource(inUser, inShared)
                 }
             }
+            // URL 来源方案 id 集（登记里 source=URL 的包所含方案，行来源处
+            // 显示 URL 而非用户，与本地导入区分；登记缺失时自然为空集）。
+            urlSourceIds = SchemePackageImport.decodeRegistry(
+                importPrefs.getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
+            ).records.filter { it.source == SchemePackageImport.PackageSource.URL }
+                .flatMap { it.schemeIds }.toSet()
             // 计算本地信息（词库/模型指纹），用于"本地信息"卡片
             localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
             loaded = true
@@ -510,6 +565,56 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         importPlan = null
         importError = null
         cleanupImportFiles()
+        // 下载交接的取消回下载页；SAF 导入的取消回主列表。
+        if (importFromDownload) downloadPage = true
+        importFromDownload = false
+        importSource = SchemePackageImport.PackageSource.LOCAL
+    }
+
+    /** 清导入 / 下载交接的校验错误：下载交接的错误回下载页。 */
+    fun clearImportError() {
+        importError = null
+        cleanupImportFiles()
+        if (importFromDownload) downloadPage = true
+        importFromDownload = false
+    }
+
+    /**
+     * zip 已就绪后的公共尾巴：暂存校验 → 空间检查 → 校验结果页或错误页。
+     * SAF 导入与下载交接共用（下载不另起管线）；fromDownload 决定登记
+     * 来源与失败 / 取消后的回落页。调用方负责 importBusy 的置位与复位。
+     */
+    suspend fun validateZipFile(zipFile: File, packageName: String, fromDownload: Boolean) {
+        importSource = if (fromDownload) {
+            SchemePackageImport.PackageSource.URL
+        } else {
+            SchemePackageImport.PackageSource.LOCAL
+        }
+        importFromDownload = fromDownload
+        val stagingDir = File(context.cacheDir, IMPORT_STAGING_DIR_NAME)
+        val outcome = withContext(Dispatchers.IO) {
+            buildImportPlan(context, zipFile, stagingDir, packageName)
+        }
+        when (outcome) {
+            is ImportPlanOutcome.Failed -> {
+                importError = outcome.error
+                cleanupImportFiles()
+            }
+            is ImportPlanOutcome.Ready -> {
+                val available = runCatching {
+                    StatFs(DataManager.userDataDir.path).availableBytes
+                }.getOrNull() ?: Long.MAX_VALUE
+                if (available <
+                    outcome.plan.totalBytes + SchemePackageImport.FREE_SPACE_MARGIN_BYTES
+                ) {
+                    importError = ImportErrorKind.NO_SPACE
+                    cleanupImportFiles()
+                } else {
+                    importPlan = outcome.plan
+                    importStagingDir = stagingDir
+                }
+            }
+        }
     }
 
     /**
@@ -548,40 +653,17 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     importError = ImportErrorKind.COPY_FAILED
                     return@launch
                 }
-                val stagingDir = File(context.cacheDir, IMPORT_STAGING_DIR_NAME)
-                val outcome = withContext(Dispatchers.IO) {
-                    buildImportPlan(
-                        context,
-                        tmpZip,
-                        stagingDir,
-                        SchemePackageImport.sanitizePackageName(displayName),
-                    )
-                }
-                when (outcome) {
-                    is ImportPlanOutcome.Failed -> {
-                        importError = outcome.error
-                        cleanupImportFiles()
-                    }
-                    is ImportPlanOutcome.Ready -> {
-                        val available = runCatching {
-                            StatFs(DataManager.userDataDir.path).availableBytes
-                        }.getOrNull() ?: Long.MAX_VALUE
-                        if (available <
-                            outcome.plan.totalBytes + SchemePackageImport.FREE_SPACE_MARGIN_BYTES
-                        ) {
-                            importError = ImportErrorKind.NO_SPACE
-                            cleanupImportFiles()
-                        } else {
-                            importPlan = outcome.plan
-                            importStagingDir = stagingDir
-                        }
-                    }
-                }
+                validateZipFile(
+                    tmpZip,
+                    SchemePackageImport.sanitizePackageName(displayName),
+                    fromDownload = false,
+                )
             } finally {
                 importBusy = false
             }
         }
     }
+
 
     /**
      * 确认安装：落盘 + 登记在 NonCancellable 里做（短本地 IO，页面离开
@@ -620,6 +702,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     version = plan.packageVersion,
                     schemeIds = plan.schemes.map { it.id },
                     files = installed,
+                    source = importSource,
                 )
                 importPrefs.edit {
                     putString(
@@ -638,6 +721,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 cleanupImportFiles()
                 importPlan = null
                 importInstalling = false
+                // 安装成功后回主列表（看切换横幅），下载交接的来源标记复位。
+                downloadPage = false
+                importFromDownload = false
+                importSource = SchemePackageImport.PackageSource.LOCAL
                 val target = newItems.firstOrNull()
                 if (target != null) {
                     switchTo(target) { scope.launch { loadSchemas() } }
@@ -651,6 +738,222 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             }
         }
     }
+
+    // ---- 第三期远程下载：手动 URL → cacheDir 暂存 → 二期校验 / 安装 ----
+    /** 下载条目读回（菜单打开下载页时刷新一次，之后改动即时写回）。 */
+    fun loadDownloadEntries() {
+        val entries = SchemeDownload.decodeDownloadEntries(
+            downloadPrefs.getString(SchemeDownload.KEY_DOWNLOAD_ENTRIES, null),
+        )
+        downloadEntries.clear()
+        downloadEntries.addAll(entries)
+    }
+
+    fun saveDownloadEntries() {
+        downloadPrefs.edit {
+            putString(
+                SchemeDownload.KEY_DOWNLOAD_ENTRIES,
+                SchemeDownload.encodeDownloadEntries(downloadEntries.toList()),
+            )
+        }
+    }
+
+    /** 打开下载表单：新增时空表单，行末下载时按条目预填（Header 永不预填）。 */
+    fun openDownloadForm(prefill: SchemeDownload.DownloadEntry?) {
+        downloadFormName = prefill?.name.orEmpty()
+        downloadFormUrl = prefill?.url.orEmpty()
+        downloadFormHeaders.clear()
+        downloadFormHeaders.add("" to "")
+        downloadFormError = null
+        downloadFormOpen = true
+    }
+
+    /**
+     * OkHttp 流式下载到目标文件（调用方在 IO 线程调）：声明长度超限
+     * 直接拒，chunked 无长度时靠累计字节数兜底；声明长度与实际不符
+     * 按不完整处理。取消由调用方以 Call.cancel() 中断读流，读流抛
+     * 出的异常原样上抛、由调用方按 isActive 区分取消与网络错误。
+     * 请求头内容绝不记日志（本函数无任何日志）。
+     */
+    fun downloadToFile(
+        url: String,
+        headers: List<Pair<String, String>>,
+        target: File,
+        onProgress: (Long, Long) -> Unit,
+    ): DownloadOutcome {
+        val builder = Request.Builder().url(url)
+        headers.forEach { (headerName, headerValue) ->
+            builder.header(headerName, headerValue)
+        }
+        val call = downloadClient.newCall(builder.build())
+        downloadCall = call
+        call.execute().use { response ->
+            if (!response.isSuccessful) {
+                return DownloadOutcome.Failed(
+                    SchemeDownload.errorKindForHttp(response.code),
+                    response.code,
+                )
+            }
+            val body = response.body
+                ?: return DownloadOutcome.Failed(
+                    SchemeDownload.DownloadErrorKind.NETWORK,
+                    0,
+                )
+            val total = body.contentLength()
+            if (total > SchemePackageImport.MAX_ZIP_BYTES) {
+                return DownloadOutcome.Failed(
+                    SchemeDownload.DownloadErrorKind.TOO_LARGE,
+                    0,
+                )
+            }
+            var downloaded = 0L
+            var reported = 0L
+            body.byteStream().use { input ->
+                target.outputStream().use { output ->
+                    val buffer = ByteArray(32 * 1024)
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count < 0) break
+                        if (count == 0) continue
+                        output.write(buffer, 0, count)
+                        downloaded += count
+                        if (downloaded > SchemePackageImport.MAX_ZIP_BYTES) {
+                            return DownloadOutcome.Failed(
+                                SchemeDownload.DownloadErrorKind.TOO_LARGE,
+                                0,
+                            )
+                        }
+                        // 进度节流：256KB 一报 + 完成时一报，IO 线程直接写
+                        // 快照态（线程安全），避免每 32KB 触发一次重组。
+                        if (downloaded - reported >= 256 * 1024 ||
+                            (total > 0 && downloaded >= total)
+                        ) {
+                            onProgress(downloaded, total)
+                            reported = downloaded
+                        }
+                    }
+                    onProgress(downloaded, total)
+                }
+            }
+            if (total > 0 && target.length() != total) {
+                return DownloadOutcome.Failed(
+                    SchemeDownload.DownloadErrorKind.INCOMPLETE,
+                    0,
+                )
+            }
+            return DownloadOutcome.Success
+        }
+    }
+
+    /**
+     * 发起下载：下载到导入流程共用的固定临时 zip（与 SAF 导入互斥，
+     * 守门同口径），成功后走 validateZipFile 交接二期校验 / 安装；
+     * 失败按下载口径明示并删暂存。离开页面取消协程时暂存残留
+     * cacheDir，由系统清理（与二期同口径）。
+     */
+    fun startDownload(
+        entryName: String,
+        url: String,
+        headers: List<Pair<String, String>>,
+    ) {
+        if (downloadRunning || importBusy || switchOrchestrator.isBusy()) return
+        downloadRunning = true
+        downloadError = null
+        downloadProgressBytes = 0L
+        downloadProgressTotal = -1L
+        downloadProgressName = entryName
+        val job = scope.launch {
+            try {
+                val tmpZip = File(context.cacheDir, IMPORT_TMP_ZIP_NAME)
+                val outcome = withContext(Dispatchers.IO) {
+                    downloadToFile(url, headers, tmpZip) { bytes, total ->
+                        downloadProgressBytes = bytes
+                        downloadProgressTotal = total
+                    }
+                }
+                when (outcome) {
+                    is DownloadOutcome.Success -> {
+                        importBusy = true
+                        try {
+                            validateZipFile(
+                                tmpZip,
+                                SchemePackageImport.sanitizePackageName(entryName),
+                                fromDownload = true,
+                            )
+                        } finally {
+                            importBusy = false
+                        }
+                    }
+                    is DownloadOutcome.Failed -> {
+                        tmpZip.delete()
+                        File(context.cacheDir, IMPORT_STAGING_DIR_NAME).deleteRecursively()
+                        downloadError = DownloadErrorState(outcome.kind, outcome.httpCode)
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                File(context.cacheDir, IMPORT_TMP_ZIP_NAME).delete()
+                // 取消后 isActive 为 false：不报网络错。
+                if (isActive) {
+                    downloadError = DownloadErrorState(
+                        SchemeDownload.DownloadErrorKind.NETWORK,
+                        0,
+                    )
+                }
+            } finally {
+                downloadRunning = false
+                downloadJob = null
+                downloadCall = null
+            }
+        }
+        downloadJob = job
+    }
+
+    /** 取消下载：中断 OkHttp 读流并取消协程，暂存由协程收尾清理。 */
+    fun cancelDownload() {
+        downloadCall?.cancel()
+        downloadJob?.cancel()
+    }
+
+    /**
+     * 表单提交：名 / URL / Header 校验通过后按名 upsert 条目（只存名 +
+     * URL），随后立即用本次输入的 Header 发起下载——Header 不写偏好，
+     * 本次下载用完即弃；行末再次下载时重新输入。
+     */
+    fun submitDownloadForm() {
+        val name = downloadFormName.trim()
+        if (name.isEmpty()) {
+            downloadFormError = DownloadFormError.EMPTY_NAME
+            return
+        }
+        val urlResult = SchemeDownload.validateDownloadUrl(downloadFormUrl)
+        if (urlResult !is SchemeDownload.UrlValidation.Valid) {
+            downloadFormError = DownloadFormError.BAD_URL
+            return
+        }
+        val headersResult = SchemeDownload.buildHeaders(downloadFormHeaders.toList())
+        if (headersResult !is SchemeDownload.HeadersResult.Ok) {
+            downloadFormError = DownloadFormError.BAD_HEADER
+            return
+        }
+        downloadFormError = null
+        val entry = SchemeDownload.DownloadEntry(name, urlResult.url)
+        val updated = SchemeDownload.upsertEntry(downloadEntries.toList(), entry)
+        downloadEntries.clear()
+        downloadEntries.addAll(updated)
+        saveDownloadEntries()
+        downloadFormOpen = false
+        startDownload(entry.name, entry.url, headersResult.headers)
+    }
+
+    /** 删除下载条目（只删已存的名 + URL，不动已装方案与登记）。 */
+    fun deleteDownloadEntry(entry: SchemeDownload.DownloadEntry) {
+        downloadEntries.remove(entry)
+        saveDownloadEntries()
+    }
+
+
+
 
     // SAF 启动器（流程函数之后声明：本地函数不可前向引用）。
     val importLauncher = rememberLauncherForActivityResult(
@@ -716,14 +1019,20 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             // 等待 / 错误页标题为导入方案、返回即清错误；其余为一期原顶栏。
             // 校验页与等待页的返回在安装进行中禁用（落盘在 NonCancellable
             // 里跑，关页不中断安装，关了也无处回写状态）。
+            // 下载交接的校验 / 错误页标题跟随下载方案（与导入区分）。
             val inImportFlow = importPlan != null || importError != null || importBusy
+            val inDownloadFlow = downloadPage || downloadFormOpen ||
+                downloadRunning || downloadError != null
             TopAppBar(
                 title = {
                     Text(
                         stringResource(
                             when {
                                 importPlan != null -> R.string.schema_import_result_title
-                                inImportFlow -> R.string.schema_import
+                                inImportFlow ->
+                                    if (importFromDownload) R.string.schema_download
+                                    else R.string.schema_import
+                                inDownloadFlow -> R.string.schema_download
                                 else -> R.string.schema_settings
                             },
                         ),
@@ -736,10 +1045,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                         onClick = {
                             when {
                                 importPlan != null -> cancelImport()
-                                importError != null -> {
-                                    importError = null
-                                    cleanupImportFiles()
+                                importError != null -> clearImportError()
+                                downloadFormOpen -> {
+                                    downloadFormOpen = false
+                                    downloadFormError = null
                                 }
+                                // 下载进行中返回即取消（尚未安装，取消安全）。
+                                downloadRunning -> cancelDownload()
+                                downloadError != null -> downloadError = null
+                                downloadPage -> downloadPage = false
                                 else -> {
                                     saveOrder(prefs, enabledSchemas)
                                     onBack()
@@ -757,8 +1071,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     }
                 },
                 actions = {
-                    if (inImportFlow) {
-                        // 导入流程页不给菜单与编辑入口，防流程中途切走状态。
+                    if (inImportFlow || inDownloadFlow) {
+                        // 导入 / 下载流程页不给菜单与编辑入口，防流程中途切走状态。
                     } else if (editMode) {
                         TextButton(onClick = { editMode = false }) {
                             Text(stringResource(R.string.schema_edit_done))
@@ -775,11 +1089,24 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false },
                         ) {
+                            // 第三期新增「下载方案」：打开已保存下载条目列表。
+                            // 切换 / 部署 / 导入校验 / 下载进行中禁用。
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.schema_download)) },
+                                enabled = !switchOrchestrator.isBusy() && !importBusy &&
+                                    !downloadRunning,
+                                onClick = {
+                                    menuExpanded = false
+                                    loadDownloadEntries()
+                                    downloadPage = true
+                                },
+                            )
                             // 第二期新增「导入方案」：SAF 选 zip，走暂存校验流程。
                             // 切换 / 部署进行中禁用（维护期守卫与一期同口径）。
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.schema_import)) },
-                                enabled = !switchOrchestrator.isBusy() && !importBusy,
+                                enabled = !switchOrchestrator.isBusy() && !importBusy &&
+                                    !downloadRunning,
                                 onClick = {
                                     menuExpanded = false
                                     importLauncher.launch(
@@ -804,6 +1131,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     containerColor = MaterialTheme.colorScheme.background,
                 ),
             )
+        },
+        floatingActionButton = {
+            // 只在下载列表页给 + 新增（校验 / 安装交接页不给，防流程中途切走）。
+            if (downloadPage && importPlan == null && !importBusy && importError == null &&
+                !downloadFormOpen && !downloadRunning && downloadError == null
+            ) {
+                FloatingActionButton(onClick = { openDownloadForm(null) }) {
+                    Icon(Icons.Filled.Add, contentDescription = null)
+                }
+            }
         },
     ) { padding ->
         // 导入流程页整体替换列表内容（校验页 / 等待页 / 错误页）。
@@ -857,12 +1194,250 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 Spacer(Modifier.height(16.dp))
                 Button(
                     onClick = {
-                        importError = null
-                        cleanupImportFiles()
+                        clearImportError()
                     },
                 ) {
                     Text(stringResource(R.string.schema_banner_close))
                 }
+            }
+            return@Scaffold
+        }
+        // 第三期下载页整体替换列表内容（表单 / 进度 / 错误 / 条目列表）。
+        // 导入交接分支在前：下载成功后的校验 / 安装仍走二期页面。
+        if (downloadFormOpen) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = downloadFormName,
+                    onValueChange = { downloadFormName = it },
+                    label = { Text(stringResource(R.string.schema_download_name)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = downloadFormUrl,
+                    onValueChange = { downloadFormUrl = it },
+                    label = { Text(stringResource(R.string.schema_download_url)) },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    stringResource(R.string.schema_download_header),
+                    fontSize = rowFontSize,
+                    fontWeight = FontWeight.Medium,
+                )
+                downloadFormHeaders.forEachIndexed { index, header ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedTextField(
+                            value = header.first,
+                            onValueChange = { value ->
+                                downloadFormHeaders[index] = value to header.second
+                            },
+                            label = {
+                                Text(stringResource(R.string.schema_download_header_name))
+                            },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        OutlinedTextField(
+                            value = header.second,
+                            onValueChange = { value ->
+                                downloadFormHeaders[index] = header.first to value
+                            },
+                            label = {
+                                Text(stringResource(R.string.schema_download_header_value))
+                            },
+                            singleLine = true,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(
+                            onClick = { downloadFormHeaders.removeAt(index) },
+                            enabled = downloadFormHeaders.size > 1,
+                        ) {
+                            Text(stringResource(R.string.schema_download_header_remove))
+                        }
+                    }
+                }
+                TextButton(onClick = { downloadFormHeaders.add("" to "") }) {
+                    Text(stringResource(R.string.schema_download_add_header))
+                }
+                if (downloadFormError != null) {
+                    Text(
+                        downloadFormErrorText(downloadFormError!!),
+                        fontSize = rowFontSize,
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
+                Button(
+                    onClick = { submitDownloadForm() },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.schema_download_save))
+                }
+                TextButton(
+                    onClick = {
+                        downloadFormOpen = false
+                        downloadFormError = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(stringResource(R.string.schema_download_cancel))
+                }
+                Spacer(Modifier.height(16.dp))
+            }
+            return@Scaffold
+        }
+        if (downloadRunning) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.Center,
+            ) {
+                Text(
+                    downloadProgressName,
+                    fontSize = rowFontSize,
+                    fontWeight = FontWeight.Bold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    stringResource(R.string.schema_download_downloading),
+                    fontSize = rowSubFontSize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                if (downloadProgressTotal > 0) {
+                    LinearProgressIndicator(
+                        progress = {
+                            (downloadProgressBytes.toFloat() / downloadProgressTotal.toFloat())
+                                .coerceIn(0f, 1f)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        formatSize(downloadProgressBytes) + " / " +
+                            formatSize(downloadProgressTotal),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        formatSize(downloadProgressBytes),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { cancelDownload() }) {
+                    Text(stringResource(R.string.schema_download_cancel_download))
+                }
+            }
+            return@Scaffold
+        }
+        if (downloadError != null) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+            ) {
+                Spacer(Modifier.height(16.dp))
+                Text(
+                    downloadErrorText(downloadError!!),
+                    fontSize = rowFontSize,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = { downloadError = null }) {
+                    Text(stringResource(R.string.schema_banner_close))
+                }
+            }
+            return@Scaffold
+        }
+        if (downloadPage) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                Spacer(Modifier.height(4.dp))
+                if (downloadEntries.isEmpty()) {
+                    Text(
+                        stringResource(R.string.schema_download_empty),
+                        fontSize = rowSubFontSize,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                downloadEntries.forEach { entry ->
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = ExpressiveShapes.medium,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                        ),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
+                    ) {
+                        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+                            Text(
+                                entry.name,
+                                fontSize = rowFontSize,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                entry.url,
+                                fontSize = rowSubFontSize,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                TextButton(onClick = { openDownloadForm(entry) }) {
+                                    Text(
+                                        stringResource(
+                                            R.string.schema_download_row_download,
+                                        ),
+                                    )
+                                }
+                                Spacer(Modifier.width(8.dp))
+                                IconButton(onClick = { deleteDownloadEntry(entry) }) {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        contentDescription = null,
+                                        modifier = Modifier.scale(0.8f),
+                                        tint = MaterialTheme.colorScheme.onSurface,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(16.dp))
             }
             return@Scaffold
         }
@@ -880,11 +1455,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             val allRowItems = enabledSchemas + availableSchemas
             val sourceBuiltinLabel = stringResource(R.string.schema_source_builtin)
             val sourceUserLabel = stringResource(R.string.schema_source_user)
+            val sourceUrlLabel = stringResource(R.string.schema_source_url)
             fun sourceLabelFor(item: SchemaItem): String? =
-                when (sourceById[item.id]) {
-                    SchemeSwitchPolicy.SchemeSource.USER -> sourceUserLabel
-                    SchemeSwitchPolicy.SchemeSource.BUILTIN -> sourceBuiltinLabel
-                    null -> null
+                if (item.id in urlSourceIds) {
+                    sourceUrlLabel
+                } else {
+                    when (sourceById[item.id]) {
+                        SchemeSwitchPolicy.SchemeSource.USER -> sourceUserLabel
+                        SchemeSwitchPolicy.SchemeSource.BUILTIN -> sourceBuiltinLabel
+                        null -> null
+                    }
                 }
             fun rowMetaFor(item: SchemaItem): SchemaRowMeta = SchemaRowMeta(
                 version = versionById[item.id].orEmpty(),
@@ -1734,6 +2314,50 @@ private enum class ImportErrorKind {
     NO_SPACE,
     VALIDATE_FAILED,
     INSTALL_FAILED,
+}
+
+/** 下载阶段结果：成功即已落到临时 zip；失败带口径与 HTTP 状态码。 */
+private sealed interface DownloadOutcome {
+    data object Success : DownloadOutcome
+    data class Failed(
+        val kind: SchemeDownload.DownloadErrorKind,
+        val httpCode: Int,
+    ) : DownloadOutcome
+}
+
+/** 下载错误页状态（校验 / 安装阶段失败仍走 ImportErrorKind）。 */
+private data class DownloadErrorState(
+    val kind: SchemeDownload.DownloadErrorKind,
+    val httpCode: Int,
+)
+
+/** 下载表单校验错误（界面据此映射文案，不直接拼字符串进状态）。 */
+private enum class DownloadFormError {
+    EMPTY_NAME,
+    BAD_URL,
+    BAD_HEADER,
+}
+
+@Composable
+private fun downloadFormErrorText(error: DownloadFormError): String = when (error) {
+    DownloadFormError.EMPTY_NAME -> stringResource(R.string.schema_download_error_empty_name)
+    DownloadFormError.BAD_URL -> stringResource(R.string.schema_download_error_url)
+    DownloadFormError.BAD_HEADER -> stringResource(R.string.schema_download_error_header)
+}
+
+@Composable
+private fun downloadErrorText(error: DownloadErrorState): String = when (error.kind) {
+    SchemeDownload.DownloadErrorKind.NETWORK ->
+        stringResource(R.string.schema_download_error_network)
+    SchemeDownload.DownloadErrorKind.HTTP_STATUS ->
+        stringResource(R.string.schema_download_error_http, error.httpCode)
+    SchemeDownload.DownloadErrorKind.REDIRECT_DOWNGRADE ->
+        stringResource(R.string.schema_download_error_redirect)
+    // 体积上限与二期同口径、同文案（zip ≤ 512MB）。
+    SchemeDownload.DownloadErrorKind.TOO_LARGE ->
+        stringResource(R.string.schema_import_error_too_large)
+    SchemeDownload.DownloadErrorKind.INCOMPLETE ->
+        stringResource(R.string.schema_download_error_incomplete)
 }
 
 /** SAF 选包后复制到的临时 zip 文件名（cacheDir 下，用完即删）。 */
