@@ -17,6 +17,8 @@ import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.manager.RimeSyncPrefs
+import com.jobeen.ime.data.manager.awaitSchemasReady
+import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
@@ -71,18 +73,40 @@ class MainActivity : ComponentActivity() {
     private fun fabSession(): RimeSession =
         fabSession ?: RimeDaemon.createSession(FAB_SESSION_NAME).also { fabSession = it }
 
-    /** FAB 部署：复用现有 RimeApi.deploy（关停 + 重启 + 重选方案集），不新写部署逻辑。 */
+    /**
+     * FAB 部署：复用现有 RimeApi.deploy（关停 + 重启 + 重选方案集），不新写部署逻辑。
+     * 但 deploy() 返回只代表引擎刚启动，不代表部署编完（日志实证：启动后 7ms
+     * 即有 Depoly 消息，方案 apply 却要 20 秒后才来，Base 全量更久）——此前
+     * Toast 在此即发，是假完成。改为等引擎方案表就绪（每 2s 轮询，最多
+     * 10 分钟）再发完成；超时按失败处理。等待期间 fabDeployRunning 保
+     * 持 true，FAB 转圈即可见进度。
+     */
     private fun doFabDeploy() {
         if (fabDeployRunning) return
         fabDeployRunning = true
         lifecycleScope.launch {
-            runCatching {
+            val deployResult = runCatching {
                 fabSession().runOnReady { deploy() }
-            }.onSuccess {
+            }
+            val ready = if (deployResult.isSuccess) {
+                awaitSchemasReady(
+                    poll = {
+                        runCatching {
+                            EngineFactory.current()?.schemasList()?.isNotEmpty() == true
+                        }.getOrDefault(false)
+                    },
+                    timeoutMs = 600_000L,
+                    intervalMs = 2000L,
+                )
+            } else {
+                false
+            }
+            if (deployResult.isSuccess && ready) {
                 ToastUtil.showToast(getString(R.string.fab_deploy_done))
                 RimeSyncPrefs.postNotice(this@MainActivity, getString(R.string.fab_deploy_done))
-            }.onFailure {
-                Timber.w(it, "FAB deploy failed")
+            } else {
+                deployResult.exceptionOrNull()?.let { Timber.w(it, "FAB deploy failed") }
+                    ?: Timber.w("FAB deploy timed out waiting for schemas")
                 ToastUtil.showToast(getString(R.string.fab_deploy_failed))
                 RimeSyncPrefs.postNotice(this@MainActivity, getString(R.string.fab_deploy_failed))
             }
