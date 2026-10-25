@@ -15,6 +15,14 @@ import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.launch
 import timber.log.Timber
+import com.jobeen.ime.R
+import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.data.manager.discoverSchemes
+import com.jobeen.ime.data.manager.resolveEnabledIds
+import com.jobeen.ime.engine.rime.data.DataManager
+import com.jobeen.ime.engine.SchemeDeployState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 object KeyboardStateManager {
     /**
@@ -122,6 +130,10 @@ object KeyboardStateManager {
     }
 
     fun selectSchema(schemaId: String): String {
+        if (SchemeDeployState.isDeploying) {
+            ToastUtil.showToast(appContext, appContext.getString(R.string.schema_import_deploying))
+            return currentSchema?.id.orEmpty()
+        }
         val schema = schemas.find { it.id == schemaId } ?: return ""
         if (currentSchema?.id == schemaId) return schemaId
         currentSchema = schema
@@ -151,11 +163,20 @@ object KeyboardStateManager {
             val prefs = appContext.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE)
             val schemaIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
                 ?.filter { it.isNotBlank() } ?: emptyList()
-            val schemaList = EngineFactory.current()?.schemasList() ?: emptyList()
-            val byId = schemaList.associateBy { it.id }
-            schemas = schemaIds.mapNotNull { byId[it] }
+            val diskSchemas = withContext(Dispatchers.IO) {
+                discoverSchemes(DataManager.userDataDir, DataManager.sharedDataDir)
+            }
+            val byId = diskSchemas.map {
+                EngineMessage.Schema(it.id, it.name, it.layout, it.punctuation, it.kind)
+            }.associateBy { it.id }
+            val enabledIds = resolveEnabledIds(schemaIds, diskSchemas.map { it.id })
+            schemas = enabledIds.mapNotNull { byId[it] }
             currentSchema = schemas.firstOrNull()
-            currentSchema?.id?.let { EngineFactory.current()?.selectSchema(it) }
+            // 导入流程先写启用表、后部署，写表会触发本刷新，
+            // 若此时向引擎发选方案会与导入自身的选方案竞态，部署中必须跳过。
+            if (!SchemeDeployState.isDeploying) {
+                currentSchema?.id?.let { EngineFactory.current()?.selectSchema(it) }
+            }
 
             // 只有在已经挂载到窗口时才切换键盘布局，避免在 factory 尚未注入、
             if (keyboardAttached) {
