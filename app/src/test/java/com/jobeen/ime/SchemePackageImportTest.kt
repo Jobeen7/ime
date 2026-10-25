@@ -1073,4 +1073,84 @@ class SchemePackageImportTest {
             ),
         )
     }
+
+    @Test
+    fun scalarValue_roundTripsEscapedIds() {
+        // 往返：yamlPlainScalar 写出 → 自读解析还原（普通 / 空格 /
+        // 换行 / 单引号 / 双引号与反斜杠 / 保留字）。
+        val ids = listOf(
+            "wanxiang_pro",
+            "a b",
+            "a\nb",
+            "o'brien",
+            "a\"b\\c",
+            "true",
+            "123",
+            "yes",
+        )
+        assertEquals(
+            ids,
+            SchemePackageImport.parseSchemaListFromCustomYaml(
+                SchemePackageImport.buildDefaultCustomYamlContent(ids),
+            ),
+        )
+    }
+
+    @Test
+    fun scalarValue_unescapesDoubleQuotedNameField() {
+        val fields = SchemePackageImport.parseSchemaYamlFields(
+            "schema:\n  name: \"a\\\"b\\\\c\\nd\"\n",
+        )
+        assertEquals("a\"b\\c\nd", fields.name)
+    }
+
+    @Test
+    fun planInstall_skipsEmptySchemaStem() {
+        val result = planOf(
+            mapOf(
+                ".schema.yaml" to "schema:\n  name: Empty\n",
+                "ok.schema.yaml" to "schema:\n  name: Ok\n",
+            ),
+        )
+        val plan = (result as PlanResult.Success).plan
+        assertEquals(listOf("ok"), plan.schemes.map { it.id })
+        assertFalse(".schema.yaml" in plan.installFiles)
+        assertTrue(
+            plan.skippedFiles.any {
+                it.relPath == ".schema.yaml" && it.reason == SkipReason.EMPTY_SCHEMA_ID
+            },
+        )
+    }
+
+    @Test
+    fun planInstall_onlyEmptySchemaStemIsNoSchema() {
+        val result = planOf(
+            mapOf(".schema.yaml" to "schema:\n  name: Empty\n"),
+        )
+        assertTrue(result is PlanResult.Failed)
+        assertEquals(
+            SchemePackageImport.PlanFailure.NO_SCHEMA,
+            (result as PlanResult.Failed).reason,
+        )
+    }
+
+    @Test
+    fun deployTimeoutMs_scalesAndCaps() {
+        assertEquals(180_000L, SchemePackageImport.deployTimeoutMs(0L))
+        assertEquals(180_000L, SchemePackageImport.deployTimeoutMs(8L * 1024 * 1024 - 1))
+        assertEquals(210_000L, SchemePackageImport.deployTimeoutMs(8L * 1024 * 1024))
+        assertEquals(390_000L, SchemePackageImport.deployTimeoutMs(63L * 1024 * 1024))
+        assertEquals(1_800_000L, SchemePackageImport.deployTimeoutMs(Long.MAX_VALUE))
+    }
+
+    @Test
+    fun hasZipMagic_acceptsOnlyZipSignatures() {
+        assertTrue(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x03, 0x04)))
+        assertTrue(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x05, 0x06)))
+        assertTrue(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x07, 0x08)))
+        assertFalse(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x01, 0x02)))
+        assertFalse(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x03)))
+        assertFalse(SchemePackageImport.hasZipMagic(byteArrayOf()))
+        assertFalse(SchemePackageImport.hasZipMagic("Rar!".toByteArray()))
+    }
 }
