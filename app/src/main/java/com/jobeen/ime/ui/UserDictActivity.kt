@@ -108,6 +108,8 @@ class UserDictActivity : ComponentActivity() {
                         )
                     },
                     onDismissDeletedWords = { uiState.deletedWords = null },
+                    onUploadSchemes = { doUploadSchemes() },
+                    onDownloadSchemes = { doDownloadSchemes() },
                 )
             }
         }
@@ -338,6 +340,42 @@ class UserDictActivity : ComponentActivity() {
                     Timber.w(it, "WebDAV test connection failed")
                     showNotice("操作失败", it.message ?: "连接失败")
                 }
+        }
+    }
+
+    private fun doUploadSchemes() {
+        if (!UserDictPrefs.isConfigured()) {
+            ToastUtil.showToast("请先填写 WebDAV 服务器地址、用户名和密码并保存")
+            return
+        }
+        setBusy("正在上传方案目录…")
+        lifecycleScope.launch {
+            val result = WebDavSync.uploadSchemes()
+            setIdle()
+            result.onSuccess { count ->
+                ToastUtil.showToast("已上传 $count 个方案文件")
+            }.onFailure {
+                Timber.w(it, "uploadSchemes failed")
+                showNotice("操作失败", it.message ?: "上传失败")
+            }
+        }
+    }
+
+    private fun doDownloadSchemes() {
+        if (!UserDictPrefs.isConfigured()) {
+            ToastUtil.showToast("请先填写 WebDAV 服务器地址、用户名和密码并保存")
+            return
+        }
+        setBusy("正在下载方案目录…")
+        lifecycleScope.launch {
+            val result = WebDavSync.downloadSchemes()
+            setIdle()
+            result.onSuccess { count ->
+                ToastUtil.showToast("已下载 $count 个方案文件")
+            }.onFailure {
+                Timber.w(it, "downloadSchemes failed")
+                showNotice("操作失败", it.message ?: "下载失败")
+            }
         }
     }
 

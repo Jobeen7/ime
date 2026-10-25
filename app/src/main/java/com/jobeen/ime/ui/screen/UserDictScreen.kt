@@ -105,6 +105,8 @@ fun UserDictScreen(
     onShowDeletedWords: () -> Unit,
     onRestoreDeletedWord: (String) -> Unit,
     onDismissDeletedWords: () -> Unit,
+    onUploadSchemes: () -> Unit,
+    onDownloadSchemes: () -> Unit,
 ) {
     var showDictDialog by remember { mutableStateOf(false) }
     var showHttpRiskConfirm by remember { mutableStateOf(false) }
@@ -307,6 +309,22 @@ fun UserDictScreen(
                             formatTime(state.lastDownload),
                         ),
                         onClick = { if (enabled) onDownload() },
+                        icon = Icons.Filled.CloudDownload,
+                        showSpacer = true,
+                    )
+
+                    ClickableSettingItem(
+                        title = stringResource(R.string.user_dict_upload_schemes),
+                        subtitle = "增量上传，不删服务器独有文件",
+                        onClick = { if (!state.busy) onUploadSchemes() },
+                        icon = Icons.Filled.CloudUpload,
+                        showSpacer = true,
+                    )
+
+                    ClickableSettingItem(
+                        title = stringResource(R.string.user_dict_download_schemes),
+                        subtitle = "增量下载，不删本地独有文件",
+                        onClick = { if (!state.busy) onDownloadSchemes() },
                         icon = Icons.Filled.CloudDownload,
                         showSpacer = true,
                     )

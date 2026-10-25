@@ -2,6 +2,7 @@ package com.jobeen.ime.engine.rime.data.userdict
 
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.engine.rime.daemon.RimeSession
+import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -121,6 +122,154 @@ object WebDavSync {
         }.onFailure { Timber.w(it, "MKCOL sync dir failed") }
     }
 
+    private const val MAX_SCHEME_FILE_BYTES = 512L * 1024 * 1024
+
+    private fun schemesUrl(): String = "${UserDictPrefs.syncDirUrl()}/schemes"
+
+    private suspend fun ensureSchemesDir() {
+        ensureSyncDir()
+        val request = Request.Builder()
+            .url(schemesUrl())
+            .header("Authorization", authHeader())
+            .method("MKCOL", "".toRequestBody(null))
+            .build()
+        runCatching {
+            client.newCall(request).execute().use { response ->
+                if (response.code == 405) return@use
+                if (!response.isSuccessful) Timber.w("创建方案目录失败：${response.code} ${errorDetail(response)}")
+            }
+        }.onFailure { Timber.w("创建方案目录异常：${it.message}") }
+    }
+
+    private fun isProtectedSchemeRel(rel: String): Boolean {
+        val segments = rel.split('/')
+        for (segment in segments) {
+            if (segment == "build" || segment.endsWith(".userdb")) return true
+        }
+        val fileName = segments.last()
+        return fileName.endsWith(".log") || fileName.endsWith(".tmp")
+    }
+
+    private fun isValidSchemeRel(rel: String): Boolean {
+        if (rel.isEmpty() || rel.startsWith('/')) return false
+        val segments = rel.split('/')
+        for (segment in segments) {
+            if (segment.isEmpty() || segment == "..") return false
+        }
+        return !isProtectedSchemeRel(rel)
+    }
+
+    private fun parseSchemesEntries(xml: String, schemesPath: String): List<Pair<String, Boolean>> {
+        val seen = mutableSetOf<Pair<String, Boolean>>()
+        val result = mutableListOf<Pair<String, Boolean>>()
+        for (match in responseRegex.findAll(xml)) {
+            val hrefMatch = hrefRegex.find(match.value)?.destructured?.component1() ?: continue
+            val path = unescapeXmlEntities(decodeHref(hrefPath(hrefMatch))).trimEnd('/')
+            if (path != schemesPath && !path.startsWith(schemesPath + "/")) continue
+            val rel = path.removePrefix(schemesPath).trimStart('/')
+            if (rel.isEmpty()) continue
+            if (rel.split('/').any { it == ".." }) continue
+            val isDirectory = collectionRegex.containsMatchIn(match.value)
+            val pair = rel to isDirectory
+            if (pair in seen) continue
+            seen.add(pair)
+            result.add(pair)
+        }
+        return result
+    }
+
+    suspend fun uploadSchemes(): Result<Int> = syncMutex.withLock {
+        withContext(Dispatchers.IO) { runCatching {
+            checkConfigured()
+            ensureSchemesDir()
+            val userDir = DataManager.userDataDir
+            val root = userDir.canonicalFile
+            var count = 0
+            root.walkTopDown()
+                .filter { it.isFile }
+                .map { it.relativeTo(root).path.replace(File.separatorChar, '/') }
+                .filter { it.split('/').size <= 6 }
+                .filter { isValidSchemeRel(it) }
+                .take(1000)
+                .forEach { rel ->
+                    val file = File(root, rel)
+                    val request = Request.Builder()
+                        .url(remoteUrl("schemes/$rel"))
+                        .header("Authorization", authHeader())
+                        .put(file.asRequestBody("application/octet-stream".toMediaType()))
+                        .build()
+                    client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) throw httpError("上传方案文件", response.code, errorDetail(response))
+                    }
+                    count++
+                }
+            count
+        } }
+    }
+
+    suspend fun downloadSchemes(): Result<Int> = syncMutex.withLock {
+        withContext(Dispatchers.IO) { runCatching {
+            checkConfigured()
+            ensureSchemesDir()
+            val userDir = DataManager.userDataDir
+            val root = userDir.canonicalFile
+            val schemesPath = runCatching { URI(schemesUrl()).path }.getOrDefault("").trimEnd('/')
+            val files = mutableListOf<String>()
+            suspend fun collect(dirRel: String, depth: Int) {
+                if (depth > 4 || files.size >= 1000) return
+                val dirUrl = if (dirRel.isEmpty()) schemesUrl() + "/" else schemesUrl() + "/" + dirRel + "/"
+                val entries = parseSchemesEntries(propfindDirXml(dirUrl), schemesPath)
+                for ((rel, isDir) in entries) {
+                    if (files.size >= 1000) return
+                    if (isDir) {
+                        if (depth < 4) collect(rel, depth + 1)
+                    } else if (isValidSchemeRel(rel) && rel !in files) {
+                        files.add(rel)
+                    }
+                }
+            }
+            collect("", 0)
+            var count = 0
+            for (rel in files) {
+                val target = File(root, rel)
+                val canonical = target.canonicalFile
+                if (canonical != root && !canonical.path.startsWith(root.path + File.separator)) {
+                    Timber.w("skip schemes download outside root: $rel")
+                    continue
+                }
+                val parent = target.parentFile
+                if (parent != null && !parent.exists()) parent.mkdirs()
+                val tmp = File(parent, ".${target.name}.tmp-${System.nanoTime()}")
+                try {
+                    val request = Request.Builder()
+                        .url(remoteUrl("schemes/$rel"))
+                        .header("Authorization", authHeader())
+                        .header("Accept-Encoding", "identity")
+                        .get()
+                        .build()
+                    client.newCall(request).execute().use { response ->
+                        if (response.code == 404) return@use
+                        if (!response.isSuccessful) throw httpError("下载方案文件", response.code, errorDetail(response))
+                        val body = response.body ?: throw IllegalStateException("下载内容为空")
+                        tmp.outputStream().use { out -> body.byteStream().copyToWithLimit(out, MAX_SCHEME_FILE_BYTES) }
+                    }
+                    if (!tmp.exists()) {
+                        Timber.w("skip schemes download vanished remote: $rel")
+                        continue
+                    }
+                    if (!tmp.renameTo(target)) {
+                        tmp.copyTo(target, overwrite = true)
+                        tmp.delete()
+                    }
+                    count++
+                } finally {
+                    if (tmp.exists()) tmp.delete()
+                }
+            }
+            count
+        } }
+    }
+
     // 同步口径（清点 S1 定论施工）：ETag 状态机整套退场——不再
     // PROPFIND 查状态、不再判变、不再记 ETag 基准。下载恒 GET＋合并，
     // 上传恒先下载合并再无条件裸 PUT（第二十批形态），防丢词靠合并
@@ -194,14 +343,14 @@ object WebDavSync {
      * 对同步目录做 PROPFIND，返回原始 XML。
      * 必须在后台线程调用。
      */
-    private suspend fun propfindDirXml(): String = withContext(Dispatchers.IO) {
+    private suspend fun propfindDirXml(dirUrl: String): String = withContext(Dispatchers.IO) {
         checkConfigured()
         val body = """
             <?xml version="1.0" encoding="utf-8"?>
             <d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:resourcetype/></d:prop></d:propfind>
         """.trimIndent().toRequestBody("application/xml; charset=utf-8".toMediaType())
         val request = Request.Builder()
-            .url("${UserDictPrefs.syncDirUrl()}/")
+            .url(dirUrl)
             .header("Authorization", authHeader())
             .header("Depth", "1")
             .method("PROPFIND", body)
@@ -232,7 +381,7 @@ object WebDavSync {
      */
     suspend fun listRemoteFiles(): Result<List<String>> = withContext(Dispatchers.IO) {
         runCatching {
-            parseRemoteEntries(propfindDirXml())
+            parseRemoteEntries(propfindDirXml("${UserDictPrefs.syncDirUrl()}/"))
                 .filter { !it.isDirectory }
                 .map { it.name }
                 // 删除词表是同步内部文件，不作为可下载词典展示
@@ -588,7 +737,7 @@ object WebDavSync {
      * 必须在后台线程调用。
      */
     suspend fun testConnection(): Result<List<RemoteEntry>> = withContext(Dispatchers.IO) {
-        runCatching { parseRemoteEntries(propfindDirXml()) }
+        runCatching { parseRemoteEntries(propfindDirXml("${UserDictPrefs.syncDirUrl()}/")) }
     }
 }
 
