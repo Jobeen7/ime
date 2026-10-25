@@ -221,6 +221,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     // stranded 修复：切换状态改读进程级 Monitor（组合销毁不丢）；
     // 空表状态：引擎表空时不再静默留白，改显部署中 + 自动重载。
     val monitorStatus by DirSwitchMonitor.status.collectAsStateWithLifecycle()
+    val deployRunning by EngineDeployState.running.collectAsStateWithLifecycle()
     var schemasEmpty by remember { mutableStateOf(false) }
     var manageDeploying by remember { mutableStateOf(false) }
     var manageDeployError by remember { mutableStateOf<String?>(null) }
@@ -565,6 +566,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         ) return
         val enabled = SchemaManager.readEnabledIds(prefs, dir).ifEmpty { diskIds }
         SchemaManager.saveEnabledIds(prefs, dir, enabled)
+        // 续切只写偏好时引擎仍按旧 custom 表部署，空表续切等于白跑：
+        // 先把启用表同步进 custom 文件，再 reload（非空才写）。
+        if (enabled.isNotEmpty()) {
+            SchemeDirs.writeDefaultCustomSchemaList(
+                File(DataManager.schemeDirsRoot, dir),
+                enabled,
+            )
+        }
         EngineFactory.current()?.reload()
         if (enabled.isNotEmpty()) {
             EngineFactory.current()?.selectSchema(enabled[0])
@@ -693,6 +702,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 SchemeDirs.setCurrentDirName(context, targetDir)
                 currentDir = targetDir
                 SchemaManager.saveEnabledIds(prefs, targetDir, targetEnabled)
+                // 部署读的是合并配置（default.yaml + default.custom.yaml）：
+                // 只写偏好不写 custom 文件时，引擎会按旧表部署，首位方案
+                // 对不上、校验超时后回滚，页内遂长显部署中。部署前把本次
+                // 启用表同步进 custom 文件（非空才写，空目录走内置兜底）。
+                if (targetEnabled.isNotEmpty()) {
+                    SchemeDirs.writeDefaultCustomSchemaList(
+                        File(DataManager.schemeDirsRoot, targetDir),
+                        targetEnabled,
+                    )
+                }
                 EngineFactory.current()?.reload()
                 if (targetEnabled.isNotEmpty()) {
                     EngineFactory.current()?.selectSchema(targetEnabled[0])
@@ -722,6 +741,13 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         SchemeDirs.setCurrentDirName(context, prevDir)
                         currentDir = prevDir
                         SchemaManager.saveEnabledIds(prefs, prevDir, prevOrder)
+                        // 回滚同样先同步 custom 文件，否则回滚部署仍按错表编。
+                        if (prevOrder.isNotEmpty()) {
+                            SchemeDirs.writeDefaultCustomSchemaList(
+                                File(DataManager.schemeDirsRoot, prevDir),
+                                prevOrder,
+                            )
+                        }
                         EngineFactory.current()?.reload()
                         if (prevCurrent.isNotEmpty()) {
                             EngineFactory.current()?.selectSchema(prevCurrent)
@@ -1800,16 +1826,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else if (!diskEmpty) {
-                    Text(
-                        stringResource(R.string.schema_deploying),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                    Spacer(Modifier.height(8.dp))
-                    TextButton(onClick = {
+                    // 重试：先重读引擎表，仍空则走续切（续切内已先同步
+                    // custom 文件再部署），再重读一次。
+                    val onRetry = {
                         scope.launch {
                             loadSchemas()
                             if (!loaded) {
@@ -1817,8 +1836,33 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                 loadSchemas()
                             }
                         }
-                    }) {
-                        Text(stringResource(R.string.schema_switch_retry))
+                    }
+                    // 无部署在跑却仍空表 = 部署已结束的 stranded 态：不再
+                    // 转无限进度条，改明示 + 重试；部署在跑时才显部署中。
+                    if (dirSwitching || deployRunning) {
+                        Text(
+                            stringResource(R.string.schema_deploying),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        LinearProgressIndicator(Modifier.fillMaxWidth())
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = onRetry) {
+                            Text(stringResource(R.string.schema_switch_retry))
+                        }
+                    } else {
+                        Text(
+                            stringResource(R.string.schema_deploy_stranded),
+                            fontSize = 14.sp,
+                            lineHeight = 20.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        TextButton(onClick = onRetry) {
+                            Text(stringResource(R.string.schema_switch_retry))
+                        }
                     }
                 } else {
                     Text(
