@@ -5,17 +5,18 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -52,6 +53,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
@@ -71,8 +76,8 @@ import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
  * 设置 home：顶部 hero（居中 logo + Jime）+ 一页一组卡片，
  * 行 = 彩色方块图标 + 标题 + 右箭头，无副标题。
  * 应用主题已删除（Lee 2026-10-25 定）：恒跟随系统，不再设手动项。
- * FAB 栈只放在本页：深色主钮，收起为 cloud_circle，
- * 展开为裸图标 + 小字标签纵向叠于主钮上方——部署、同步。
+ * FAB 只放在本页：圆形主钮锚在候选词行右侧红框位，颜色跟随主题；
+ * 展开时两动作以 Popup 叠于主钮上方——部署、同步。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -114,74 +119,22 @@ fun MainScreen(
         return pair
     }
 
-    Scaffold(
-        floatingActionButton = {
-            Column(
-                // 展开项以主钮轴线居中（纵向叠于主钮上方）。
-                // 整栈左移 4dp、上移 4dp：此前太靠右下角。
-                modifier = Modifier.offset(x = (-4).dp, y = (-4).dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (fabExpanded) {
-                    FabAction(
-                        label = stringResource(R.string.fab_deploy),
-                        icon = Icons.Filled.RocketLaunch,
-                        running = deployRunning,
-                        enabled = !fabAnyRunning,
-                        onClick = {
-                            fabExpanded = false
-                            onDeploy()
-                        },
-                    )
-                    FabAction(
-                        label = stringResource(R.string.fab_sync),
-                        icon = Icons.Filled.Sync,
-                        running = syncRunning,
-                        enabled = !fabAnyRunning,
-                        onClick = {
-                            fabExpanded = false
-                            onSync()
-                        },
-                    )
-                }
-                FloatingActionButton(
-                    onClick = { if (!fabAnyRunning) fabExpanded = !fabExpanded },
-                    // 深色主钮（深浅主题下恒定），白字图标。
-                    containerColor = FabMainDark,
-                    contentColor = Color.White,
-                ) {
-                    if (fabAnyRunning) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp,
-                        )
-                    } else if (fabExpanded) {
-                        Icon(
-                            imageVector = Icons.Filled.Close,
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                        )
-                    } else {
-                        // 收起态：Lee 提供的 cloud_circle（原 #1f1f1f 黑不用，
-                        // 深色主钮上改 tint 亮蓝，保证清晰可辨）。
-                        Icon(
-                            painter = painterResource(R.drawable.ic_fab_cloud_circle),
-                            contentDescription = null,
-                            modifier = Modifier.size(24.dp),
-                            tint = FabCloudBlue,
-                        )
-                    }
-                }
-            }
-        },
-    ) { padding ->
+    Scaffold { padding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding),
         ) {
+            // 收起层必须在内容之下：FAB 现已进内容行（候选词行），
+            // 若收起层在上会盖住展开动作导致点不到；空白处点按仍可
+            // 透过内容落到本层收起（行点按则照常导航）。
+            if (fabExpanded) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .clickable { fabExpanded = false },
+                )
+            }
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -309,13 +262,99 @@ fun MainScreen(
                 )
                 GroupDivider()
                 val (c2, t2) = nextPair()
-                NavRow(
-                    title = stringResource(R.string.prediction_candidates),
-                    onClick = onOpenModelSettings,
-                    icon = Icons.Filled.AutoAwesome,
-                    iconContainer = c2,
-                    iconTint = t2,
-                )
+                // FAB 锚点行：圆形主钮贴在行右侧红框位（与行垂直居中），
+                // 展开动作以 Popup 叠于主钮上方，不撑开行高、不被卡片裁剪。
+                BoxWithConstraints(
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    // 红框右缘在屏宽 75.9% 处；内容宽 = 屏宽 − 32dp，
+                    // 距内容右缘 = 0.241 × 屏宽 − 16dp
+                    //            = 0.241 × 内容宽 − 8dp（本机约 83dp）。
+                    val fabEndPadding =
+                        (maxWidth * 0.241f - 8.dp).coerceAtLeast(16.dp)
+                    NavRow(
+                        title = stringResource(R.string.prediction_candidates),
+                        onClick = onOpenModelSettings,
+                        icon = Icons.Filled.AutoAwesome,
+                        iconContainer = c2,
+                        iconTint = t2,
+                    )
+                    FloatingActionButton(
+                        onClick = { if (!fabAnyRunning) fabExpanded = !fabExpanded },
+                        modifier = Modifier
+                            .align(Alignment.CenterEnd)
+                            .padding(end = fabEndPadding),
+                        shape = CircleShape,
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                    ) {
+                        if (fabAnyRunning) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(24.dp),
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                strokeWidth = 2.dp,
+                            )
+                        } else if (fabExpanded) {
+                            Icon(
+                                imageVector = Icons.Filled.Close,
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        } else {
+                            // 收起态：Lee 提供的 cloud_circle，颜色随主题内容色。
+                            Icon(
+                                painter = painterResource(R.drawable.ic_fab_cloud_circle),
+                                contentDescription = null,
+                                modifier = Modifier.size(24.dp),
+                            )
+                        }
+                    }
+                    if (fabExpanded) {
+                        // 动作列高 108dp（48 + 12 + 48），主钮顶距行顶 2dp
+                        // （行高 60dp、钮 56dp），动作底距钮顶留 12dp，
+                        // 故相对行顶上移 118dp；动作列宽 48dp、主钮 56dp，
+                        // 轴线对齐需再左移 4dp。
+                        val density = LocalDensity.current
+                        val popupOffset = with(density) {
+                            IntOffset(
+                                (-(fabEndPadding + 4.dp)).roundToPx(),
+                                (-118).dp.roundToPx(),
+                            )
+                        }
+                        Popup(
+                            alignment = Alignment.TopEnd,
+                            offset = popupOffset,
+                            onDismissRequest = { fabExpanded = false },
+                            properties = PopupProperties(focusable = false),
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                FabAction(
+                                    label = stringResource(R.string.fab_deploy),
+                                    icon = Icons.Filled.RocketLaunch,
+                                    running = deployRunning,
+                                    enabled = !fabAnyRunning,
+                                    onClick = {
+                                        fabExpanded = false
+                                        onDeploy()
+                                    },
+                                )
+                                FabAction(
+                                    label = stringResource(R.string.fab_sync),
+                                    icon = Icons.Filled.Sync,
+                                    running = syncRunning,
+                                    enabled = !fabAnyRunning,
+                                    onClick = {
+                                        fabExpanded = false
+                                        onSync()
+                                    },
+                                )
+                            }
+                        }
+                    }
+                }
                 GroupDivider()
                 val (c3, t3) = nextPair()
                 NavRow(
@@ -367,14 +406,6 @@ fun MainScreen(
 
             Spacer(Modifier.height(32.dp))
             }
-            if (fabExpanded) {
-                // 无遮罩变暗，点击外部空白即收起（仍保留可点关闭层）。
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clickable { fabExpanded = false },
-                )
-            }
         }
     }
 
@@ -422,8 +453,3 @@ private fun FabAction(
     }
 }
 
-/** FAB 主钮深色（深浅主题下恒定，配白字图标）。 */
-private val FabMainDark = Color(0xFF2B2B2E)
-
-/** FAB 收起态 cloud_circle 的亮蓝（深色主钮上清晰可辨）。 */
-private val FabCloudBlue = Color(0xFF5EA8FF)
