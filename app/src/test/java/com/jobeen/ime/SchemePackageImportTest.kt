@@ -554,4 +554,512 @@ class SchemePackageImportTest {
         assertEquals(EntryKind.PROTECTED, SchemePackageImport.classifyEntry("build/x.yaml"))
         assertEquals(EntryKind.OTHER, SchemePackageImport.classifyEntry("essay.txt"))
     }
+
+    // ---- 事务化安装（A1）与 extractZip 边界（C2）、白名单与转义（C4） ----
+
+    private fun transactionPlan(
+        installFiles: List<String>,
+        schemes: List<SchemePackageImport.ImportedScheme> = listOf(
+            SchemePackageImport.ImportedScheme("wanxiang_pro", "Pro", "18.1.7", ""),
+        ),
+        defaultCustomSchemaIds: List<String> = emptyList(),
+    ): SchemePackageImport.SchemeImportPlan =
+        SchemePackageImport.SchemeImportPlan(
+            packageName = "tx-pkg",
+            packageVersion = "18.1.7",
+            schemes = schemes,
+            installFiles = installFiles,
+            skippedFiles = emptyList(),
+            sharedDecisions = emptyList(),
+            replacements = emptyList(),
+            defaultCustomSchemaIds = defaultCustomSchemaIds,
+            overwrittenExisting = emptyList(),
+            totalBytes = 100L,
+        )
+
+    private fun writeJournal(
+        parent: File,
+        operationId: String,
+        target: File,
+        candidate: File,
+        backup: File,
+        stage: String,
+    ) {
+        File(parent, ".install-$operationId.journal").writeText(
+            "operationId=$operationId\n" +
+                "target=${target.absolutePath}\n" +
+                "candidate=${candidate.absolutePath}\n" +
+                "backup=${backup.absolutePath}\n" +
+                "stage=$stage\n",
+        )
+    }
+
+    @Test
+    fun inheritProtected_keepsUserdbCustomUserYamlAndSkipsBuild() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val oldDir = File(root, "old").apply { mkdirs() }
+            File(oldDir, "wanxiang.userdb").writeText("learning")
+            File(oldDir, "wanxiang_pro.custom.yaml").writeText("old custom")
+            File(oldDir, "user.yaml").writeText("user")
+            File(oldDir, "installation.yaml").writeText("install")
+            File(oldDir, "default.custom.yaml").writeText("old table")
+            File(oldDir, "wanxiang_pro.schema.yaml").writeText("old schema")
+            File(oldDir, "build").mkdirs()
+            File(oldDir, "build/old.yaml").writeText("stale build")
+            val candidate = File(root, "candidate").apply { mkdirs() }
+            File(candidate, "wanxiang_pro.custom.yaml").writeText("package custom")
+            val copied = SchemePackageImport.inheritProtected(oldDir, candidate)
+            assertEquals("old custom", File(candidate, "wanxiang_pro.custom.yaml").readText())
+            assertEquals("learning", File(candidate, "wanxiang.userdb").readText())
+            assertEquals("user", File(candidate, "user.yaml").readText())
+            assertEquals("install", File(candidate, "installation.yaml").readText())
+            assertEquals("old table", File(candidate, "default.custom.yaml").readText())
+            assertFalse(File(candidate, "build/old.yaml").exists())
+            assertFalse(File(candidate, "wanxiang_pro.schema.yaml").exists())
+            assertTrue("wanxiang.userdb" in copied)
+            assertTrue("wanxiang_pro.custom.yaml" in copied)
+            assertTrue("build/old.yaml" !in copied)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun inheritProtected_missingOldDirReturnsEmpty() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val candidate = File(root, "candidate").apply { mkdirs() }
+            assertEquals(
+                emptyList<String>(),
+                SchemePackageImport.inheritProtected(File(root, "nope"), candidate),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun installTransaction_successSwapsWritesTableAndKeepsBackup() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target").apply { mkdirs() }
+            File(target, "wanxiang_pro.schema.yaml").writeText("old schema")
+            File(target, "wanxiang_pro.custom.yaml").writeText("old custom")
+            File(target, "wanxiang.userdb").writeText("learning")
+            File(target, "build").mkdirs()
+            File(target, "build/old.yaml").writeText("stale build")
+            val staging = File(root, "staging").apply { mkdirs() }
+            File(staging, "wanxiang_pro.schema.yaml")
+                .writeText("schema:\n  name: Pro\n  version: 18.1.7\n")
+            File(staging, "wanxiang_pro.dict.yaml").writeText("dict")
+            val entries = listOf(
+                StagedEntry(
+                    "wanxiang_pro.schema.yaml",
+                    File(staging, "wanxiang_pro.schema.yaml").length(),
+                ),
+                StagedEntry(
+                    "wanxiang_pro.dict.yaml",
+                    File(staging, "wanxiang_pro.dict.yaml").length(),
+                ),
+            )
+            val result = SchemePackageImport.installTransaction(
+                stagingDir = staging,
+                targetDir = target,
+                plan = transactionPlan(
+                    listOf("wanxiang_pro.schema.yaml", "wanxiang_pro.dict.yaml"),
+                ),
+                stagedEntries = entries,
+                operationId = "op1",
+            )
+            val tx = (result as SchemePackageImport.InstallTransactionResult.Success).transaction
+            assertEquals("op1", tx.operationId)
+            assertFalse(File(root, ".install-op1").exists())
+            assertTrue(tx.backupDir.isDirectory)
+            assertEquals("old schema", File(tx.backupDir, "wanxiang_pro.schema.yaml").readText())
+            assertEquals(
+                "schema:\n  name: Pro\n  version: 18.1.7\n",
+                File(target, "wanxiang_pro.schema.yaml").readText(),
+            )
+            assertEquals("dict", File(target, "wanxiang_pro.dict.yaml").readText())
+            // 旧受保护文件进新目录；旧 build/ 不带过来。
+            assertEquals("old custom", File(target, "wanxiang_pro.custom.yaml").readText())
+            assertEquals("learning", File(target, "wanxiang.userdb").readText())
+            assertFalse(File(target, "build/old.yaml").exists())
+            // 方案表由 defaultCustomSchemaIds 为空回落到 schemes id，并可回读。
+            assertEquals(
+                listOf("wanxiang_pro"),
+                SchemePackageImport.parseSchemaListFromCustomYaml(
+                    File(target, "default.custom.yaml").readText(),
+                ),
+            )
+            assertTrue(tx.journalFile.isFile)
+            assertTrue(tx.journalFile.readText().contains("stage=SWAPPED"))
+            // 回滚恢复旧版并清日志。
+            assertTrue(SchemePackageImport.rollbackTransaction(tx.backupDir, target))
+            assertEquals("old schema", File(target, "wanxiang_pro.schema.yaml").readText())
+            assertFalse(tx.backupDir.exists())
+            assertFalse(tx.journalFile.exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun installTransaction_customSchemaListOverrideAndCleanupBackup() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target")
+            val staging = File(root, "staging").apply { mkdirs() }
+            File(staging, "wanxiang_pro.schema.yaml").writeText("schema:\n  name: Pro\n")
+            val entries = listOf(
+                StagedEntry(
+                    "wanxiang_pro.schema.yaml",
+                    File(staging, "wanxiang_pro.schema.yaml").length(),
+                ),
+            )
+            val result = SchemePackageImport.installTransaction(
+                stagingDir = staging,
+                targetDir = target,
+                plan = transactionPlan(listOf("wanxiang_pro.schema.yaml")),
+                stagedEntries = entries,
+                schemaList = listOf("wanxiang_pro", "extra_scheme"),
+                operationId = "op2",
+            )
+            val tx = (result as SchemePackageImport.InstallTransactionResult.Success).transaction
+            assertEquals(
+                listOf("wanxiang_pro", "extra_scheme"),
+                SchemePackageImport.parseSchemaListFromCustomYaml(
+                    File(target, "default.custom.yaml").readText(),
+                ),
+            )
+            // 全新安装无旧目录：无备份；清理幂等成功。
+            assertFalse(tx.backupDir.exists())
+            assertTrue(SchemePackageImport.cleanupBackup(tx.backupDir))
+            assertFalse(tx.journalFile.exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun installTransaction_midCopyFailureKeepsOldAndDeletesCandidate() {
+        // 可达的中途失败：两条目经 canonical 归一到同一目标，第二项
+        // copyTo(overwrite=false) 抛已存在 → COPY_FAILED，已拷的随候选一起删。
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target").apply { mkdirs() }
+            File(target, "keep.txt").writeText("old")
+            val staging = File(root, "staging").apply { mkdirs() }
+            File(staging, "a").mkdirs()
+            File(staging, "a/b.txt").writeText("inner")
+            val size = File(staging, "a/b.txt").length()
+            val plan = transactionPlan(
+                installFiles = listOf("a/b.txt", "a/../a/b.txt"),
+                schemes = emptyList(),
+            )
+            val result = SchemePackageImport.installTransaction(
+                stagingDir = staging,
+                targetDir = target,
+                plan = plan,
+                stagedEntries = listOf(
+                    StagedEntry("a/b.txt", size),
+                    StagedEntry("a/../a/b.txt", size),
+                ),
+                operationId = "op-copy",
+            )
+            val failed = result as SchemePackageImport.InstallTransactionResult.Failed
+            assertEquals(SchemePackageImport.TransactionFailure.COPY_FAILED, failed.failure)
+            assertEquals("old", File(target, "keep.txt").readText())
+            assertFalse(File(root, ".install-op-copy").exists())
+            assertFalse(File(root, ".install-op-copy.journal").exists())
+            assertFalse(File(root, ".backup-op-copy").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun installTransaction_prevalidationFailuresKeepOldAndCreateNothing() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target").apply { mkdirs() }
+            File(target, "keep.txt").writeText("old")
+            val staging = File(root, "staging").apply { mkdirs() }
+            File(staging, "ok.txt").writeText("ok")
+            // 源缺失：零落盘即失败，不静默部分安装。
+            val missing = SchemePackageImport.installTransaction(
+                stagingDir = staging,
+                targetDir = target,
+                plan = transactionPlan(listOf("nope.yaml"), schemes = emptyList()),
+                stagedEntries = emptyList(),
+                operationId = "op-missing",
+            )
+            assertEquals(
+                SchemePackageImport.TransactionFailure.PREVALIDATION,
+                (missing as SchemePackageImport.InstallTransactionResult.Failed).failure,
+            )
+            // 越界条目：零落盘即失败。
+            val traversal = SchemePackageImport.installTransaction(
+                stagingDir = staging,
+                targetDir = target,
+                plan = transactionPlan(listOf("../evil.yaml"), schemes = emptyList()),
+                stagedEntries = listOf(StagedEntry("../evil.yaml", 3L)),
+                operationId = "op-trav",
+            )
+            assertEquals(
+                SchemePackageImport.TransactionFailure.PREVALIDATION,
+                (traversal as SchemePackageImport.InstallTransactionResult.Failed).failure,
+            )
+            assertEquals("old", File(target, "keep.txt").readText())
+            assertFalse(File(root, ".install-op-missing").exists())
+            assertFalse(File(root, ".install-op-missing.journal").exists())
+            assertFalse(File(root, ".install-op-trav").exists())
+            assertFalse(File(root, ".install-op-trav.journal").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun installTransaction_emptySchemaFileFailsVerification() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target").apply { mkdirs() }
+            File(target, "keep.txt").writeText("old")
+            val staging = File(root, "staging").apply { mkdirs() }
+            File(staging, "empty.schema.yaml").writeText("")
+            val result = SchemePackageImport.installTransaction(
+                stagingDir = staging,
+                targetDir = target,
+                plan = transactionPlan(listOf("empty.schema.yaml")),
+                stagedEntries = listOf(StagedEntry("empty.schema.yaml", 0L)),
+                operationId = "op-empty",
+            )
+            assertEquals(
+                SchemePackageImport.TransactionFailure.VERIFICATION_FAILED,
+                (result as SchemePackageImport.InstallTransactionResult.Failed).failure,
+            )
+            assertEquals("old", File(target, "keep.txt").readText())
+            assertFalse(File(root, ".install-op-empty").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun recoverIncompleteTransactions_restoresOldKeepsSwapped() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            // TARGET_MOVED：旧目录已移走、候选未就位 → 备份移回目标。
+            val target1 = File(root, "target1")
+            val candidate1 = File(root, ".install-op9").apply { mkdirs() }
+            File(candidate1, "new.txt").writeText("new")
+            val backup1 = File(root, ".backup-op9").apply { mkdirs() }
+            File(backup1, "keep.txt").writeText("old")
+            writeJournal(root, "op9", target1, candidate1, backup1, "TARGET_MOVED")
+            // VERIFIED 且目标还在 → 删候选与日志，旧版原样。
+            val target2 = File(root, "target2").apply { mkdirs() }
+            File(target2, "keep.txt").writeText("old2")
+            val candidate2 = File(root, ".install-op8").apply { mkdirs() }
+            val backup2 = File(root, ".backup-op8")
+            writeJournal(root, "op8", target2, candidate2, backup2, "VERIFIED")
+            // SWAPPED：完整新版，备份与日志原样保留。
+            val target3 = File(root, "target3").apply { mkdirs() }
+            File(target3, "new.txt").writeText("new3")
+            val backup3 = File(root, ".backup-op7").apply { mkdirs() }
+            File(backup3, "keep.txt").writeText("old3")
+            val candidate3 = File(root, ".install-op7")
+            writeJournal(root, "op7", target3, candidate3, backup3, "SWAPPED")
+            val recovered = SchemePackageImport.recoverIncompleteTransactions(root)
+            assertEquals(3, recovered.size)
+            val byId = recovered.associateBy { it.operationId }
+            assertTrue(byId.getValue("op9").restoredOld)
+            assertTrue(byId.getValue("op8").restoredOld)
+            assertFalse(byId.getValue("op7").restoredOld)
+            assertEquals("old", File(target1, "keep.txt").readText())
+            assertFalse(candidate1.exists())
+            assertFalse(File(root, ".install-op9.journal").exists())
+            assertEquals("old2", File(target2, "keep.txt").readText())
+            assertFalse(candidate2.exists())
+            assertFalse(File(root, ".install-op8.journal").exists())
+            assertEquals("new3", File(target3, "new.txt").readText())
+            assertTrue(backup3.isDirectory)
+            assertTrue(File(root, ".install-op7.journal").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractZip_tooManyEntriesFails() {
+        val root = Files.createTempDirectory("scheme-import-test").toFile()
+        try {
+            val zip = File(root, "pkg.zip")
+            ZipOutputStream(zip.outputStream()).use { out ->
+                repeat(SchemePackageImport.MAX_EXTRACT_ENTRIES + 1) { i ->
+                    out.putNextEntry(ZipEntry("f%05d.txt".format(i)))
+                    out.write("x".toByteArray())
+                    out.closeEntry()
+                }
+            }
+            val staging = File(root, "staging")
+            val result = SchemePackageImport.extractZip(zip, staging)
+            assertEquals(
+                SchemePackageImport.ExtractFailure.TOO_MANY_ENTRIES,
+                (result as SchemePackageImport.ExtractResult.Failed).reason,
+            )
+            assertFalse(staging.exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractZip_pathLimitsDuplicatesAndConflictsFail() {
+        val root = Files.createTempDirectory("scheme-import-test").toFile()
+        try {
+            fun zipWith(vararg names: String): File {
+                val zip = File(root, "pkg-${names.hashCode()}.zip")
+                ZipOutputStream(zip.outputStream()).use { out ->
+                    names.forEach { name ->
+                        out.putNextEntry(ZipEntry(name))
+                        out.write("x".toByteArray())
+                        out.closeEntry()
+                    }
+                }
+                return zip
+            }
+            fun reasonFor(zip: File): SchemePackageImport.ExtractFailure {
+                val staging = File(root, "staging-${zip.name}")
+                val result = SchemePackageImport.extractZip(zip, staging)
+                return (result as SchemePackageImport.ExtractResult.Failed).reason
+            }
+            // 路径超长（单段 1030 字符）。
+            assertEquals(
+                SchemePackageImport.ExtractFailure.ENTRY_PATH_TOO_LONG,
+                reasonFor(zipWith("a".repeat(1025) + ".yaml")),
+            )
+            // 路径超深（34 段）。
+            assertEquals(
+                SchemePackageImport.ExtractFailure.ENTRY_PATH_TOO_DEEP,
+                reasonFor(zipWith((List(33) { "d" } + "f.yaml").joinToString("/"))),
+            )
+            // 归一化后重复。
+            assertEquals(
+                SchemePackageImport.ExtractFailure.DUPLICATE_ENTRY,
+                reasonFor(zipWith("a/./b.yaml", "a/b.yaml")),
+            )
+            // 文件与目录冲突：先文件 a，再 a/b.yaml。
+            assertEquals(
+                SchemePackageImport.ExtractFailure.ENTRY_CONFLICT,
+                reasonFor(zipWith("a", "a/b.yaml")),
+            )
+            // 目录条目与文件冲突：先目录 a/，再文件 a。
+            val dirConflictZip = File(root, "pkg-dirconflict.zip")
+            ZipOutputStream(dirConflictZip.outputStream()).use { out ->
+                out.putNextEntry(ZipEntry("a/"))
+                out.closeEntry()
+                out.putNextEntry(ZipEntry("a"))
+                out.write("x".toByteArray())
+                out.closeEntry()
+            }
+            assertEquals(
+                SchemePackageImport.ExtractFailure.ENTRY_CONFLICT,
+                reasonFor(dirConflictZip),
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractZip_stagingFailureIsIoErrorNotNotZip() {
+        val root = Files.createTempDirectory("scheme-import-test").toFile()
+        try {
+            val zip = File(root, "pkg.zip")
+            ZipOutputStream(zip.outputStream()).use { out ->
+                out.putNextEntry(ZipEntry("a.schema.yaml"))
+                out.write("schema:\n  name: A\n".toByteArray())
+                out.closeEntry()
+            }
+            // 暂存父目录被文件挡住：mkdirs 失败 → IO_ERROR。
+            val blocker = File(root, "blocker").apply { writeText("x") }
+            val staging = File(blocker, "staging")
+            val result = SchemePackageImport.extractZip(zip, staging)
+            assertEquals(
+                SchemePackageImport.ExtractFailure.IO_ERROR,
+                (result as SchemePackageImport.ExtractResult.Failed).reason,
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun extractZip_skippedTraversalKeepsOnlySamples() {
+        val root = Files.createTempDirectory("scheme-import-test").toFile()
+        try {
+            val zip = File(root, "pkg.zip")
+            ZipOutputStream(zip.outputStream()).use { out ->
+                out.putNextEntry(ZipEntry("a.schema.yaml"))
+                out.write("schema:\n  name: A\n".toByteArray())
+                out.closeEntry()
+                repeat(25) { i ->
+                    out.putNextEntry(ZipEntry("../evil-$i.yaml"))
+                    out.write("evil".toByteArray())
+                    out.closeEntry()
+                }
+            }
+            val staging = File(root, "staging")
+            val result = SchemePackageImport.extractZip(zip, staging)
+            val extracted = (result as SchemePackageImport.ExtractResult.Ok).extracted
+            assertEquals(SchemePackageImport.MAX_SKIPPED_TRAVERSAL_SAMPLES, extracted.skippedTraversal.size)
+            assertEquals(25, extracted.skippedTraversalCount)
+            assertEquals("../evil-0.yaml", extracted.skippedTraversal.first())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun sanitizeSchemeId_whitelistsSpecialChars() {
+        assertEquals("my_scheme", SchemePackageImport.sanitizeSchemeId("my scheme.schema.yaml"))
+        assertEquals("a_b_c", SchemePackageImport.sanitizeSchemeId("a\"b\nc.schema.yaml"))
+        assertEquals("evil", SchemePackageImport.sanitizeSchemeId("../evil.schema.yaml"))
+        assertEquals("wanxiang", SchemePackageImport.sanitizeSchemeId("wanxiang.schema.yaml"))
+        assertEquals("scheme", SchemePackageImport.sanitizeSchemeId(".schema.yaml"))
+        assertEquals("c_d", SchemePackageImport.sanitizeSchemeId("a/b/c d.schema.yaml"))
+        assertEquals("x".repeat(200), SchemePackageImport.sanitizeSchemeId("x".repeat(200) + ".schema.yaml"))
+        // 规划派生同步：含空格的文件名进规划后 id 已白名单化（登记直接取 plan id）。
+        val files = mapOf("my scheme.schema.yaml" to "schema:\n  name: S\n")
+        val plan = (planOf(files) as PlanResult.Success).plan
+        assertEquals(listOf("my_scheme"), plan.schemes.map { it.id })
+        val record = SchemePackageImport.SchemePackageRecord(
+            packageName = "pkg",
+            version = null,
+            schemeIds = plan.schemes.map { it.id },
+            files = plan.installFiles,
+        )
+        assertEquals(listOf("my_scheme"), record.schemeIds)
+    }
+
+    @Test
+    fun yamlPlainScalar_escapesUnsafeValues() {
+        assertEquals("wanxiang_pro", SchemePackageImport.yamlPlainScalar("wanxiang_pro"))
+        assertEquals("'a b'", SchemePackageImport.yamlPlainScalar("a b"))
+        assertEquals("'a\"b'", SchemePackageImport.yamlPlainScalar("a\"b"))
+        assertEquals("\"a\\nb\"", SchemePackageImport.yamlPlainScalar("a\nb"))
+        assertEquals("'true'", SchemePackageImport.yamlPlainScalar("true"))
+        assertEquals("'123'", SchemePackageImport.yamlPlainScalar("123"))
+        assertEquals("''", SchemePackageImport.yamlPlainScalar(""))
+        // 生成的方案表经回读与原表一致（含需转义的 id）。
+        val ids = listOf("wanxiang_pro", "a b", "true")
+        assertEquals(
+            ids,
+            SchemePackageImport.parseSchemaListFromCustomYaml(
+                SchemePackageImport.buildDefaultCustomYamlContent(ids),
+            ),
+        )
+    }
 }
