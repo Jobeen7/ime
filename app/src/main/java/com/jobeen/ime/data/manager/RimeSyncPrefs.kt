@@ -17,6 +17,8 @@ object RimeSyncPrefs {
     private const val KEY_KNOWN_FILES = "known_files"
     private const val KEY_NOTICE_ENABLED = "show_rime_notice"
     private const val KEY_PENDING_NOTICE = "pending_notice"
+    private const val KEY_DELETE_PAUSE_DIR = "delete_propagation_paused_dir"
+    private const val KEY_DELETE_PAUSE_REASON = "delete_propagation_paused_reason"
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -57,6 +59,40 @@ object RimeSyncPrefs {
     /** 设置侧投递一条待显示通知（键盘下次出现时由输入法服务取走显示）。 */
     fun postNotice(context: Context, message: String) {
         prefs(context).edit().putString(KEY_PENDING_NOTICE, message).apply()
+    }
+
+    /**
+     * 目录同步删除传播暂停标志：上轮同步因本地文件骤减跳过远端跟删时
+     * 由 FabActions 写下（目录名 + 原因）；设置页方案区域仅在标志存在
+     * 时显示“确认清理”入口，点击清除标志并以 forceDeletePropagation
+     * 重跑一次同步。本标志只做暂停记录，不参与同步逻辑判定。
+     */
+    data class DeletePropagationPause(
+        val dir: String,
+        val reason: String?,
+    )
+
+    fun deletePropagationPause(context: Context): DeletePropagationPause? {
+        val dir = prefs(context).getString(KEY_DELETE_PAUSE_DIR, null)
+            ?: return null
+        return DeletePropagationPause(
+            dir = dir,
+            reason = prefs(context).getString(KEY_DELETE_PAUSE_REASON, null),
+        )
+    }
+
+    fun setDeletePropagationPaused(context: Context, dir: String, reason: String?) {
+        prefs(context).edit()
+            .putString(KEY_DELETE_PAUSE_DIR, dir)
+            .putString(KEY_DELETE_PAUSE_REASON, reason)
+            .apply()
+    }
+
+    fun clearDeletePropagationPaused(context: Context) {
+        prefs(context).edit()
+            .remove(KEY_DELETE_PAUSE_DIR)
+            .remove(KEY_DELETE_PAUSE_REASON)
+            .apply()
     }
 
     /** 输入法服务取走待显示通知：开关关时直接丢弃；取后清空（只显示一次）。 */
