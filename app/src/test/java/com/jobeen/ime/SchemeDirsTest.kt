@@ -79,8 +79,7 @@ class SchemeDirsTest {
     }
 
     @Test
-    fun registryDirField_roundTripsAndOldRowsDefaultEmpty() {
-        val registry = SchemePackageRegistry(
+    fun registryDirField_roundTripsAndOldRowsDefaultEmpty() {        val registry = SchemePackageRegistry(
             listOf(
                 SchemePackageRecord(
                     packageName = "rime-wanxiang-base",
@@ -102,5 +101,263 @@ class SchemeDirsTest {
             "pkg-a\t18.1.7\tx\tx.schema.yaml\tlocal",
         )
         assertEquals("", old.records[0].dir)
+    }
+
+    /** 内存迁移状态：模拟 SharedPreferences 两组键，写失败/忽略写可配。 */
+    private class FakeMigrationStore(
+        var legacy: String?,
+        var dir: String?,
+        var throwOnDirWrite: Boolean = false,
+        var ignoreDirWrites: Boolean = false,
+    ) : SchemeDirs.MigrationStore {
+        var migrated = false
+        var error: String? = null
+
+        override fun isMigrated() = migrated
+        override fun setMigrated() {
+            migrated = true
+            error = null
+        }
+
+        override fun recordError(message: String) {
+            error = message
+        }
+
+        override fun legacyEnabledIds() = legacy
+        override fun dirEnabledIds() = dir
+        override fun setDirEnabledIds(value: String) {
+            if (throwOnDirWrite) throw RuntimeException("write failed")
+            if (!ignoreDirWrites) dir = value
+        }
+    }
+
+    @Test
+    fun migrationPlan_splitsMovesAndConflictsAndExcludesBackup() {
+        val root = Files.createTempDirectory("schemedirs-plan").toFile()
+        try {
+            File(root, "plain.schema.yaml").writeText("plain")
+            File(root, "clash.schema.yaml").writeText("new")
+            File(root, "default").mkdirs()
+            File(root, "default/clash.schema.yaml").writeText("old")
+            File(root, "build").mkdirs()
+            File(root, ".migration-backup").mkdirs()
+            val plan = SchemeDirs.migrationPlan(root)
+            assertEquals(listOf("plain.schema.yaml"), plan.moves.map { it.first.name })
+            assertEquals(listOf("clash.schema.yaml"), plan.conflicts.map { it.first.name })
+            // 兼容旧签名：移动表不变，冲突项不在其中。
+            assertEquals(plan.moves, SchemeDirs.migrationMoves(root))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun listDirs_excludesBuildHiddenAndFiles() {
+        val root = Files.createTempDirectory("schemedirs-list").toFile()
+        try {
+            File(root, "b-dir").mkdirs()
+            File(root, "a-dir").mkdirs()
+            File(root, "build").mkdirs()
+            File(root, ".hidden").mkdirs()
+            File(root, "loose.txt").writeText("x")
+            assertEquals(
+                listOf("a-dir", "b-dir"),
+                SchemeDirs.listDirs(root).map { it.name },
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_renameFailure_doesNotSetAndRetries() {
+        val root = Files.createTempDirectory("schemedirs-retry").toFile()
+        try {
+            // 目标父级是普通文件：mkdirs 无效，renameTo 必然返回 false。
+            File(root, "sub").writeText("blocker")
+            File(root, "a.schema.yaml").writeText("a")
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            SchemeDirs.ensureMigrated(root, store) {
+                SchemeDirs.MigrationPlan(
+                    listOf(
+                        File(root, "a.schema.yaml") to
+                            File(File(root, "sub"), "a.schema.yaml"),
+                    ),
+                    emptyList(),
+                )
+            }
+            assertFalse(store.migrated)
+            assertTrue(store.error?.contains("move failed") == true)
+            assertTrue(File(root, "a.schema.yaml").exists())
+            // 排除占位后重试：移动成功并置位，错误清除。
+            File(root, "sub").delete()
+            SchemeDirs.ensureMigrated(root, store)
+            assertTrue(store.migrated)
+            assertEquals(null, store.error)
+            assertFalse(File(root, "a.schema.yaml").exists())
+            assertEquals("a", File(root, "default/a.schema.yaml").readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_initialDirBlockedByFile_doesNotSet() {
+        val root = Files.createTempDirectory("schemedirs-blocked").toFile()
+        try {
+            // 初始目录位置被普通文件占住：建不出初始目录，迁移不置位。
+            File(root, "default").writeText("blocker")
+            File(root, "a.schema.yaml").writeText("a")
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            SchemeDirs.ensureMigrated(root, store)
+            assertFalse(store.migrated)
+            assertTrue(store.error?.contains("blocked") == true)
+            assertTrue(File(root, "a.schema.yaml").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_sameContentConflict_cleansSourceAndSets() {
+        val root = Files.createTempDirectory("schemedirs-same").toFile()
+        try {
+            File(root, "default").mkdirs()
+            File(root, "default/x.schema.yaml").writeText("identical")
+            File(root, "x.schema.yaml").writeText("identical")
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            SchemeDirs.ensureMigrated(root, store)
+            assertTrue(store.migrated)
+            assertFalse(File(root, "x.schema.yaml").exists())
+            assertEquals("identical", File(root, "default/x.schema.yaml").readText())
+            assertFalse(File(root, ".migration-backup").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_sameContentDirConflict_cleansSourceDirAndSets() {
+        val root = Files.createTempDirectory("schemedirs-samedir").toFile()
+        try {
+            File(root, "default").mkdirs()
+            File(root, "default/lua").mkdirs()
+            File(root, "default/lua/x.lua").writeText("-- lua")
+            File(root, "lua").mkdirs()
+            File(root, "lua/x.lua").writeText("-- lua")
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            SchemeDirs.ensureMigrated(root, store)
+            assertTrue(store.migrated)
+            assertFalse(File(root, "lua").exists())
+            assertEquals("-- lua", File(root, "default/lua/x.lua").readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_differentContentConflict_keepsBothWithBackupAndSets() {
+        val root = Files.createTempDirectory("schemedirs-diff").toFile()
+        try {
+            File(root, "default").mkdirs()
+            File(root, "default/x.schema.yaml").writeText("old")
+            File(root, "x.schema.yaml").writeText("new")
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            SchemeDirs.ensureMigrated(root, store)
+            assertTrue(store.migrated)
+            assertEquals("old", File(root, "default/x.schema.yaml").readText())
+            assertEquals("new", File(root, ".migration-backup/x.schema.yaml").readText())
+            assertFalse(File(root, "x.schema.yaml").exists())
+            // 幂等：已置位后重复调用不再动作，备份不重复。
+            SchemeDirs.ensureMigrated(root, store)
+            assertEquals(
+                listOf("x.schema.yaml"),
+                File(root, ".migration-backup").listFiles().orEmpty().map { it.name },
+            )
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_prefCopyWriteFailure_doesNotSet() {
+        val root = Files.createTempDirectory("schemedirs-prefwrite").toFile()
+        try {
+            File(root, "a.schema.yaml").writeText("a")
+            val store = FakeMigrationStore(
+                legacy = "wanxiang_lite",
+                dir = null,
+                throwOnDirWrite = true,
+            )
+            SchemeDirs.ensureMigrated(root, store)
+            assertFalse(store.migrated)
+            assertTrue(store.error?.contains("enabled ids") == true)
+            assertEquals(null, store.dir)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_prefCopyReadbackMismatch_doesNotSet() {
+        val root = Files.createTempDirectory("schemedirs-prefread").toFile()
+        try {
+            val store = FakeMigrationStore(
+                legacy = "wanxiang_lite",
+                dir = null,
+                ignoreDirWrites = true,
+            )
+            SchemeDirs.ensureMigrated(root, store)
+            assertFalse(store.migrated)
+            assertTrue(store.error?.contains("verify") == true)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_planException_doesNotSet() {
+        val root = Files.createTempDirectory("schemedirs-planfail").toFile()
+        try {
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            SchemeDirs.ensureMigrated(root, store) { throw RuntimeException("boom") }
+            assertFalse(store.migrated)
+            assertTrue(store.error?.contains("boom") == true)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_leftoverFile_doesNotSet() {
+        val root = Files.createTempDirectory("schemedirs-leftover").toFile()
+        try {
+            File(root, "missed.schema.yaml").writeText("missed")
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            // 规划漏掉根下已存在的文件（模拟规划后新文件出现）：终检查拦截。
+            SchemeDirs.ensureMigrated(root, store) {
+                SchemeDirs.MigrationPlan(emptyList(), emptyList())
+            }
+            assertFalse(store.migrated)
+            assertTrue(store.error?.contains("leftover") == true)
+            assertTrue(File(root, "missed.schema.yaml").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_alreadyMigrated_returnsImmediately() {
+        val root = Files.createTempDirectory("schemedirs-done").toFile()
+        try {
+            File(root, "a.schema.yaml").writeText("a")
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            store.migrated = true
+            SchemeDirs.ensureMigrated(root, store)
+            assertTrue(File(root, "a.schema.yaml").exists())
+            assertEquals(null, store.error)
+        } finally {
+            root.deleteRecursively()
+        }
     }
 }
