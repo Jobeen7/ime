@@ -206,7 +206,14 @@ object SchemePackageImport {
         return ids
     }
 
-    /** 去行尾注释（# 前须有空白或行首）并剥单双引号。 */
+    /**
+     * 去行尾注释（# 前须有空白或行首）并剥单双引号；是 [yamlPlainScalar]
+     * 的逆：双引号内反转义（\" \\ \n \r \t \uXXXX，见 [unescapeDoubleQuoted]），
+     * 单引号内 '' 还原为 '。引号内的首尾空白有意义，不再二次 trim
+     * （旧实现剥引号后又 trim，会把带首尾空白的 id 读走样）。
+     * 注释扫描跳过双引号内的转义字符，否则 \" 会误关引号、其后的 #
+     * 被误当行尾注释切掉。
+     */
     private fun scalarValue(raw: String): String {
         var s = raw.trim()
         var inSingle = false
@@ -215,6 +222,10 @@ object SchemePackageImport {
         var i = 0
         while (i < s.length) {
             val c = s[i]
+            if (inDouble && c == '\\' && i + 1 < s.length) {
+                i += 2
+                continue
+            }
             when {
                 c == '\'' && !inDouble -> inSingle = !inSingle
                 c == '"' && !inSingle -> inDouble = !inDouble
@@ -227,12 +238,50 @@ object SchemePackageImport {
             i++
         }
         s = s.substring(0, cut).trim()
-        if (s.length >= 2 && ((s.startsWith("'") && s.endsWith("'")) ||
-                (s.startsWith("\"") && s.endsWith("\"")))
-        ) {
-            s = s.substring(1, s.length - 1)
+        if (s.length >= 2 && s.startsWith("'") && s.endsWith("'")) {
+            return s.substring(1, s.length - 1).replace("''", "'")
         }
-        return s.trim()
+        if (s.length >= 2 && s.startsWith("\"") && s.endsWith("\"")) {
+            return unescapeDoubleQuoted(s.substring(1, s.length - 1))
+        }
+        return s
+    }
+
+    /** 双引号体反转义：只处理 [yamlPlainScalar] 实际写出的转义；未知转义
+     * 宽容地保留转义字符本身（不抛，调用方按缺失/原值处理）。 */
+    private fun unescapeDoubleQuoted(body: String): String {
+        if (!body.contains('\\')) return body
+        val out = StringBuilder()
+        var i = 0
+        while (i < body.length) {
+            val c = body[i]
+            if (c != '\\' || i + 1 >= body.length) {
+                out.append(c)
+                i++
+                continue
+            }
+            when (val e = body[i + 1]) {
+                '\\' -> out.append('\\')
+                '"' -> out.append('"')
+                'n' -> out.append('\n')
+                'r' -> out.append('\r')
+                't' -> out.append('\t')
+                '0' -> out.append('\u0000')
+                'u' -> {
+                    val hex = body.substring(i + 2, minOf(i + 6, body.length))
+                    val code = hex.takeIf { it.length == 4 }?.toIntOrNull(16)
+                    if (code != null) {
+                        out.append(code.toChar())
+                        i += 6
+                        continue
+                    }
+                    out.append('u')
+                }
+                else -> out.append(e)
+            }
+            i += 2
+        }
+        return out.toString()
     }
 
     /** 版本比较：与 WanxiangUpdateManager.compareVersions 同口径。 */
@@ -287,6 +336,33 @@ object SchemePackageImport {
         EXISTS_KEPT,
         SHARED_OLDER,
         SHARED_UNKNOWN_VERSION,
+        /** 方案文件主干为空（如 ".schema.yaml"）：产不出合法 id，整条跳过。 */
+        EMPTY_SCHEMA_ID,
+    }
+
+    /**
+     * 目录部署校验超时（纯函数）：180 秒基线 + 每 8MiB 加 30 秒，上限
+     * 1800 秒。系数是算术参考：63MiB 对应 180 + 7×30 = 390 秒；完整
+     * Base 编译时长未实测，见验收说明。
+     */
+    fun deployTimeoutMs(totalBytes: Long): Long {
+        if (totalBytes <= 0L) return 180_000L
+        val steps = totalBytes / (8L * 1024 * 1024)
+        return minOf(180_000L + steps * 30_000L, 1_800_000L)
+    }
+
+    /**
+     * zip magic 纯谓词：PK\x03\x04（普通 zip）、PK\x05\x06（空 zip）、
+     * PK\x07\x08（分卷）通过；其余一律不通过。.cskin 本身就是 zip，
+     * 过 magic 后走正常校验流程、无方案时应为 NO_SCHEMA，绝不特判为
+     * NOT_ZIP。
+     */
+    fun hasZipMagic(header: ByteArray): Boolean {
+        if (header.size < 4) return false
+        if (header[0] != 0x50.toByte() || header[1] != 0x4B.toByte()) return false
+        return (header[2] == 0x03.toByte() && header[3] == 0x04.toByte()) ||
+            (header[2] == 0x05.toByte() && header[3] == 0x06.toByte()) ||
+            (header[2] == 0x07.toByte() && header[3] == 0x08.toByte())
     }
 
     data class SkippedFile(
@@ -393,9 +469,16 @@ object SchemePackageImport {
         val entries = staged.entries.map { entry ->
             entry.copy(relPath = pathByIndex.getValue(entry.relPath))
         }
-        val schemaEntries = entries.filter {
+        val schemaEntriesAll = entries.filter {
             classifyEntry(it.relPath) == EntryKind.SCHEMA
         }
+        // 主干为空的方案文件（如 ".schema.yaml"）产不出合法 id：整条跳过
+        // 并记入跳过原因，不进入方案表、安装文件与替换判定；只剩空主干
+        // 时与无方案同等处理（NO_SCHEMA）。
+        val emptyStemEntries = schemaEntriesAll.filter {
+            it.relPath.substringAfterLast('/').removeSuffix(".schema.yaml").isEmpty()
+        }
+        val schemaEntries = schemaEntriesAll - emptyStemEntries.toSet()
         if (schemaEntries.isEmpty()) return PlanResult.Failed(PlanFailure.NO_SCHEMA)
 
         val packageVersion = readStaged("version.txt")
@@ -422,11 +505,15 @@ object SchemePackageImport {
             ?.let { parseSchemaListFromCustomYaml(it) }.orEmpty()
 
         val installFiles = mutableListOf<String>()
-        val skippedFiles = preSkipped.toMutableList()
+        val skippedFiles = (preSkipped + emptyStemEntries.map {
+            SkippedFile(it.relPath, SkipReason.EMPTY_SCHEMA_ID)
+        }).toMutableList()
         val sharedDecisions = mutableListOf<SharedFileDecision>()
         val overwrittenExisting = mutableListOf<String>()
         for (entry in entries) {
             val path = entry.relPath
+            // 空主干方案文件已在上一步记入跳过，安装循环内不再落盘。
+            if (entry in emptyStemEntries) continue
             val exists = path in existingUserFiles
             when (classifyEntry(path)) {
                 EntryKind.SCHEMA, EntryKind.DICT -> {

@@ -61,10 +61,12 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
 import java.lang.ref.WeakReference
@@ -443,7 +445,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         sendJob {
             EngineDeployState.setRunning(true)
             try {
-                joinMaintenanceThread()
+                // join 超时是防永久卡死的护栏，不是编译时限：600 秒取
+                // awaitSchemasReady 的既有默认值口径。超时只让本作业失败
+                // （转非取消异常，消费循环只丢本作业、不杀整条 jobs 队列；
+                // finally 照常复位标志），不中断 native 侧仍在阻塞的 join
+                // 线程——见汇报残余项。
+                try {
+                    withTimeout(600_000) { joinMaintenanceThread() }
+                } catch (e: TimeoutCancellationException) {
+                    EngineDeployState.setRunning(false)
+                    throw IllegalStateException("deploy join timeout")
+                }
                 actions.send(
                     Action.RimeMessage(
                         RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
@@ -923,7 +935,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     EngineDeployState.setRunning(true)
                     try {
                         deploy()
-                        joinMaintenanceThread()
+                        // join 超时是防永久卡死的护栏，不是编译时限：600 秒取
+                        // awaitSchemasReady 的既有默认值口径。超时只让本作业失败
+                        // （转非取消异常，消费循环只丢本作业、不杀整条 jobs 队列；
+                        // finally 照常复位标志），不中断 native 侧仍在阻塞的 join
+                        // 线程——见汇报残余项。
+                        try {
+                            withTimeout(600_000) { joinMaintenanceThread() }
+                        } catch (e: TimeoutCancellationException) {
+                            EngineDeployState.setRunning(false)
+                            throw IllegalStateException("deploy join timeout")
+                        }
                         actions.send(
                             Action.RimeMessage(
                                 RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
@@ -1751,6 +1773,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         predictionFieldGen.get() == startFieldGen && !isNoPersonalizedLearning(editorInfo)
 
     override fun reload() {
+        // 入口前置置位：部署标志从派发时点即为真，覆盖动作在队列里
+        // 等待执行的窗口（此前要等 Reload 作业真正开始才置位，FAB /
+        // 页面在此窗口会误判为空闲而另起部署）；作业的 finally 复位。
+        // 终局说明：引擎已 finalize（作用域取消）后调 reload 时派发被
+        // 悄悄丢弃、无作业复位，标志会滞留真——此时引擎已死，调用方
+        // 不应再调 reload，见汇报残余项。
+        EngineDeployState.setRunning(true)
         dispatchAction(Action.Reload)
     }
 
