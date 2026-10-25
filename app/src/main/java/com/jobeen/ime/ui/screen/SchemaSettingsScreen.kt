@@ -99,6 +99,20 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.data.manager.discoverSchemes
+import com.jobeen.ime.data.manager.resolveEnabledIds
+import com.jobeen.ime.data.manager.SingleSchemeEnabled
+import com.jobeen.ime.data.manager.extractZip
+import com.jobeen.ime.data.manager.isZipMagic
+import com.jobeen.ime.data.manager.deployTimeoutMs
+import com.jobeen.ime.engine.RimeEngine
+import com.jobeen.ime.engine.SchemeDeployState
+import android.net.Uri
+import java.io.FileInputStream
+import java.io.IOException
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -154,6 +168,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     // 窗口；守门同步读 isRunning.value 与本地标志双保险
     var grammarPending by remember { mutableStateOf(false) }
     var updatePending by remember { mutableStateOf(false) }
+    var importPending by remember { mutableStateOf(false) }
     // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
     var currentSchemaName by remember { mutableStateOf("") }
     var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
@@ -164,6 +179,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     val stageExtracting = stringResource(R.string.schema_update_extracting)
     val stageDownloadingGram = stringResource(R.string.schema_update_downloading_gram)
     val stageDeploying = stringResource(R.string.schema_update_deploying)
+val importTitle = stringResource(R.string.schema_import)
+val importDesc = stringResource(R.string.schema_import_desc)
+val importChoose = stringResource(R.string.schema_import_choose)
+val importSuccess = stringResource(R.string.schema_import_success)
+val importFailed = stringResource(R.string.schema_import_failed)
+val importNoSchema = stringResource(R.string.schema_import_no_schema)
+val importNotZip = stringResource(R.string.schema_import_not_zip)
+val importTooLarge = stringResource(R.string.schema_import_too_large)
+val importDeploying = stringResource(R.string.schema_import_deploying)
     // 更新阶段文案从进程级进度派生：页面重进时进度已在管理器里、
     // 阶段文案随之可得，不再依赖发起页的写回（N2）
     val updateStageText = when (updateProgress?.stage) {
@@ -173,53 +197,58 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         null -> ""
     }
 
-    // 异步加载输入方案，避免阻塞主线程（schemasList 内部走引擎线程）
+    // 异步加载输入方案：数据源改为磁盘发现（用户目录 + 共享目录）
     LaunchedEffect(Unit) {
-        val allSchemas = EngineFactory.current()?.schemasList() ?: emptyList()
-        if (allSchemas.isNotEmpty()) {
-            val allItems =
-                allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
-            val enabledIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
-                ?.filter { it.isNotBlank() } ?: emptyList()
-            val byId = allItems.associateBy { it.id }
-            val seen = mutableSetOf<String>()
-            enabledSchemas.clear()
-            enabledSchemas.addAll(enabledIds.mapNotNull { byId[it]?.also { seen.add(it.id) } })
-            availableSchemas.clear()
-            availableSchemas.addAll(allItems.filter { it.id !in seen })
-            // 将当前正在使用的方案置顶（顶部的方案即为"默认"方案）
-            val currentId = withContext(Dispatchers.IO) {
-                runCatching {
-                    (EngineFactory.current() as? IRimeJob)?.awaitJob<String?>(null) {
-                        currentSchema().schemaId
-                    }
-                }.getOrNull()
-            }
-            if (currentId != null) {
-                val idx = enabledSchemas.indexOfFirst { it.id == currentId }
-                if (idx > 0) {
-                    val item = enabledSchemas.removeAt(idx)
-                    enabledSchemas.add(0, item)
-                    saveOrder(prefs, enabledSchemas)
-                }
-            }
-            // 「当前选择的方案」显示万象变体短名（Base/Pro/Lite/Pure），按
-            // 实际方案派生，不再写死 Lite：当前方案识别不出变体（如英文方案）
-            // 时在已启用列表里找第一个万象拼音方案，都没有则显示当前方案名
-            val current = enabledSchemas.firstOrNull { it.id == currentId }
-                ?: enabledSchemas.firstOrNull()
-            val variant = current?.let {
-                WanxiangUpdateManager.variantNameOf(it.id, it.name)
-            } ?: enabledSchemas.firstNotNullOfOrNull {
-                WanxiangUpdateManager.variantNameOf(it.id, it.name)
-            }
-            currentSchemaName = variant ?: current?.name ?: ""
-            // 计算本地信息（词库/模型指纹），用于"本地信息"卡片
-            localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
-            loaded = true
+        val diskSchemas = withContext(Dispatchers.IO) {
+            discoverSchemes(DataManager.userDataDir, DataManager.sharedDataDir)
         }
+        val allItems =
+            diskSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
+        val prefsIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
+            ?.filter { it.isNotBlank() } ?: emptyList()
+        val diskIds = allItems.map { it.id }
+        val enabledIds = resolveEnabledIds(prefsIds, diskIds)
+        val byId = allItems.associateBy { it.id }
+        val seen = mutableSetOf<String>()
+        enabledSchemas.clear()
+        enabledSchemas.addAll(enabledIds.mapNotNull { byId[it]?.also { seen.add(it.id) } })
+        availableSchemas.clear()
+        availableSchemas.addAll(allItems.filter { it.id !in seen })
+        // 仅当 prefs 与磁盘交集为空（resolveEnabledIds 兜底返回全部磁盘 id）时写回一次
+        if (prefsIds.none { it in diskIds }) {
+            saveOrder(prefs, enabledSchemas)
+        }
+        // 将当前正在使用的方案置顶（顶部的方案即为"默认"方案）
+        val currentId = withContext(Dispatchers.IO) {
+            runCatching {
+                (EngineFactory.current() as? IRimeJob)?.awaitJob<String?>(null) {
+                    currentSchema().schemaId
+                }
+            }.getOrNull()
+        }
+        if (currentId != null) {
+            val idx = enabledSchemas.indexOfFirst { it.id == currentId }
+            if (idx > 0) {
+                val item = enabledSchemas.removeAt(idx)
+                enabledSchemas.add(0, item)
+                saveOrder(prefs, enabledSchemas)
+            }
+        }
+        // 「当前选择的方案」显示万象变体短名（Base/Pro/Lite/Pure），按
+        // 实际方案派生，不再写死 Lite：当前方案识别不出变体（如英文方案）
+        // 时在已启用列表里找第一个万象拼音方案，都没有则显示当前方案名
+        val current = enabledSchemas.firstOrNull { it.id == currentId }
+            ?: enabledSchemas.firstOrNull()
+        val variant = current?.let {
+            WanxiangUpdateManager.variantNameOf(it.id, it.name)
+        } ?: enabledSchemas.firstNotNullOfOrNull {
+            WanxiangUpdateManager.variantNameOf(it.id, it.name)
+        }
+        currentSchemaName = variant ?: current?.name ?: ""
+        // 计算本地信息（词库/模型指纹），用于"本地信息"卡片
+        localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
+        loaded = true
     }
-
     // 打开页面先做版本切换清理（指纹记录/缓存跨版本作废，见
     // WanxiangUpdateManager.ensureVersionHousekeeping；checkForUpdates
     // 入口也会再调一次，幂等）
@@ -242,6 +271,97 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         if (!grammarDownloading && grammarLanguage != null) {
             grammarReady = File(DataManager.sharedDataDir, "$grammarLanguage.gram").isFile
         }
+    }
+
+    // 从 ZIP 文件导入方案：复制到临时文件 → 校验魔数 → 解压安装 → 启用新方案 → 部署并置顶
+    fun importSchemePackage(uri: Uri) {
+        if (importPending || SchemeDeployState.isDeploying ||
+            WanxiangUpdateManager.isRunning.value || GramModelDownloader.isRunning.value
+        ) {
+            ToastUtil.showToast(context, importDeploying)
+            return
+        }
+        importPending = true
+        val workScope =
+            (context.applicationContext as? ImeApplication)?.applicationScope ?: scope
+        val temp = File(context.cacheDir, "scheme-import-" + System.currentTimeMillis() + ".zip")
+        workScope.launch {
+            try {
+                var total = 0L
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    temp.outputStream().use { out ->
+                        val buf = ByteArray(8192)
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            total += n
+                            if (total > 268435456L) {
+                                return@use
+                            }
+                            out.write(buf, 0, n)
+                        }
+                    }
+                } ?: run {
+                    ToastUtil.showToast(context, importFailed)
+                    return@launch
+                }
+                if (total > 268435456L) {
+                    ToastUtil.showToast(context, importTooLarge)
+                    return@launch
+                }
+                if (!isZipMagic(readMagicBytes(temp))) {
+                    ToastUtil.showToast(context, importNotZip)
+                    return@launch
+                }
+                val result = withContext(Dispatchers.IO) {
+                    extractZip(temp, DataManager.userDataDir)
+                }
+                if (result.newSchemaIds.isEmpty()) {
+                    ToastUtil.showToast(context, importNoSchema)
+                    return@launch
+                }
+                val customFile = File(DataManager.userDataDir, "default.custom.yaml")
+                val oldEnabled = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
+                    ?.filter { it.isNotBlank() } ?: emptyList()
+                val enabledIds = (result.newSchemaIds + oldEnabled).distinct()
+                SingleSchemeEnabled.writeEnabledList(prefs, customFile, enabledIds)
+                val engine = EngineFactory.current() as? RimeEngine
+                if (engine?.deployAndAwait(deployTimeoutMs(result.totalBytes)) != true) {
+                    // 部署失败不回滚安装（设计如此）：残余内容下次导入/部署可修复
+                    ToastUtil.showToast(context, importFailed)
+                    return@launch
+                }
+                EngineFactory.current()?.selectSchema(result.newSchemaIds.first())
+                // 刷新列表：重新发现磁盘方案，按新启用表拆分
+                val diskSchemas = withContext(Dispatchers.IO) {
+                    discoverSchemes(DataManager.userDataDir, DataManager.sharedDataDir)
+                }
+                val allItems =
+                    diskSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
+                val byId = allItems.associateBy { it.id }
+                val seen = mutableSetOf<String>()
+                enabledSchemas.clear()
+                enabledSchemas.addAll(enabledIds.mapNotNull { byId[it]?.also { seen.add(it.id) } })
+                availableSchemas.clear()
+                availableSchemas.addAll(allItems.filter { it.id !in seen })
+                val first = enabledSchemas.firstOrNull()
+                currentSchemaName = first?.let {
+                    WanxiangUpdateManager.variantNameOf(it.id, it.name) ?: it.name
+                } ?: ""
+                ToastUtil.showToast(context, importSuccess)
+            } catch (e: IOException) {
+                ToastUtil.showToast(context, importFailed)
+            } finally {
+                importPending = false
+                temp.delete()
+            }
+        }
+    }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) importSchemePackage(uri)
     }
 
     fun downloadGrammar(language: String) {
@@ -705,6 +825,36 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 }
             }
 
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = ExpressiveShapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        ActionRow(
+            title = importTitle,
+            subtitle = importDesc,
+            trailing = {
+                Button(
+                    onClick = {
+                        if (importPending || SchemeDeployState.isDeploying ||
+                            WanxiangUpdateManager.isRunning.value ||
+                            GramModelDownloader.isRunning.value
+                        ) {
+                            ToastUtil.showToast(context, importDeploying)
+                        } else {
+                            importLauncher.launch(arrayOf("*/*"))
+                        }
+                    },
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+                ) {
+                    Text(importChoose, fontSize = rowSubFontSize)
+                }
+            }
+        )
+    }
             SectionHeader(stringResource(R.string.enabled_schemas))
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -921,8 +1071,31 @@ private fun SchemaListItem(
     }
 }
 
+private fun readMagicBytes(temp: File): ByteArray {
+    val buffer = ByteArray(4)
+    var bytesRead = 0
+    
+    FileInputStream(temp).use { fis ->
+        while (bytesRead < buffer.size) {
+            val count = fis.read(buffer, bytesRead, buffer.size - bytesRead)
+            if (count == -1) {
+                break
+            }
+            bytesRead += count
+        }
+    }
+    
+    val magicBytes: ByteArray = buffer.copyOf(bytesRead)
+    return magicBytes
+}
+
 private fun saveOrder(prefs: SharedPreferences, schemas: List<SchemaItem>) {
-    prefs.edit { putString(SchemaManager.KEY_ENABLED_IDS, schemas.joinToString(",") { it.id }) }
+    // 小文件同步写是有意的（沿用旧 saveOrder 在点击处同步写的口径，不另起协程）
+    SingleSchemeEnabled.writeEnabledList(
+        prefs,
+        File(DataManager.userDataDir, "default.custom.yaml"),
+        schemas.map { it.id }
+    )
 }
 
 @Composable

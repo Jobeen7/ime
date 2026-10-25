@@ -87,6 +87,15 @@
     <string name="schema_settings_desc">启用方案、可选方案</string>
     <string name="enabled_schemas">当前启用的方案</string>
     <string name="available_schemas">所有可选的方案</string>
+    <string name="schema_import">导入方案</string>
+    <string name="schema_import_desc">从 ZIP 文件导入方案到本机</string>
+    <string name="schema_import_choose">选择文件</string>
+    <string name="schema_import_success">导入成功</string>
+    <string name="schema_import_failed">导入失败</string>
+    <string name="schema_import_no_schema">包内未发现新方案</string>
+    <string name="schema_import_not_zip">不是有效的方案包</string>
+    <string name="schema_import_too_large">文件过大</string>
+    <string name="schema_import_deploying">部署中，请稍后再试</string>
     <string name="remove">移除</string>
     <string name="add">添加</string>
     <string name="drag_to_reorder">长按拖动排序</string>
