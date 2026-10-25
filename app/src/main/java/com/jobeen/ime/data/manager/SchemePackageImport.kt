@@ -37,6 +37,18 @@ object SchemePackageImport {
     /** 单个条目解压上限。 */
     const val MAX_ENTRY_BYTES = 256L * 1024 * 1024
 
+    /** 解压条目数上限（与 WebDavSync 的 walk 上限同口径，防条目表无限增长）。 */
+    const val MAX_EXTRACT_ENTRIES = 20000
+
+    /** 单条目归一化相对路径长度上限（字符数）。 */
+    const val MAX_EXTRACT_REL_PATH_CHARS = 1024
+
+    /** 单条目相对路径深度上限（/ 分段数）。 */
+    const val MAX_EXTRACT_PATH_DEPTH = 32
+
+    /** 跳过条目只保留的样例条数（其余只计总数，不无限存列表）。 */
+    const val MAX_SKIPPED_TRAVERSAL_SAMPLES = 20
+
     /** 导入前剩余空间检查的额外余量（部署还会写 build 产物）。 */
     const val FREE_SPACE_MARGIN_BYTES = 16L * 1024 * 1024
 
@@ -393,7 +405,7 @@ object SchemePackageImport {
             }.maxWithOrNull { a, b -> compareVersions(a, b) }
 
         val schemes = schemaEntries.map { entry ->
-            val id = entry.relPath.substringAfterLast('/').removeSuffix(".schema.yaml")
+            val id = sanitizeSchemeId(entry.relPath)
             val fields = parseSchemaYamlFields(readStaged(entry.relPath) ?: "")
             ImportedScheme(
                 id = id,
@@ -467,9 +479,10 @@ object SchemePackageImport {
             }
         }
 
-        val replacements = schemes.mapNotNull { scheme ->
-            val schemaFile = "${scheme.id}.schema.yaml"
-            val inUser = schemaFile in existingUserFiles
+        // 替换判定按方案文件的实际相对路径查现存文件，不用 id 反拼文件名：
+        // 白名单化后的 id 可能与原文件主干不同（如含空格的文件名），反拼会漏判。
+        val replacements = schemaEntries.zip(schemes).mapNotNull { (entry, scheme) ->
+            val inUser = entry.relPath in existingUserFiles
             val inShared = scheme.id in existingSharedSchemeIds
             if (!inUser && !inShared) return@mapNotNull null
             val previousPackage = registry.packageForScheme(scheme.id)
@@ -594,11 +607,78 @@ object SchemePackageImport {
         return cleaned.ifEmpty { "scheme-package" }
     }
 
-    /** zip 解压结果：暂存目录、条目、解压阶段跳过的穿越条目。 */
+    /**
+     * 方案 id 白名单化：与 [SchemeDirs.sanitizeDirName] 同口径（字母数字与
+     * . _ -，其余转 _，首尾 . _ 修掉），空结果回落 "scheme"。注意
+     * isLetterOrDigit 按 Unicode 计，中文等字母原样保留（与目录名口径一致）。
+     * 输入为方案文件相对路径或文件名均可：先取 basename 再去 .schema.yaml 后缀，
+     * 因此 "../" 之类的路径段进不了 id。白名单化后的 id 本身已是 YAML 安全
+     * 纯量；[yamlPlainScalar] 是写 YAML 时的第二道防线。
+     * 登记写入路径直接用 [SchemeImportPlan.schemes] 的 id（已在此白名单化），
+     * 不再另行派生，登记与规划的 id 口径一致。
+     */
+    fun sanitizeSchemeId(rawPath: String): String {
+        val stem = rawPath.substringAfterLast('/').removeSuffix(".schema.yaml")
+        val cleaned = stem.map { c ->
+            if (c.isLetterOrDigit() || c == '.' || c == '_' || c == '-') c else '_'
+        }.joinToString("").trim('.', '_')
+        return cleaned.ifEmpty { "scheme" }
+    }
+
+    /**
+     * YAML 纯量转义（第二道防线）：白名单化后的 id 本来就是安全纯量，
+     * 本函数保证任意字符串拼进 YAML 时都不破结构、不被解析成别的类型。
+     * - 空串 → ''；纯数字、true/false/null 等保留字 → 单引号；
+     * - 含换行/回车/控制字符 → 双引号并转义（\n \r \t \\ \" 与 \uXXXX）；
+     * - 含空格、引号、": "、" #"、行首指示符等 → 单引号（' 加倍转义）；
+     * - 其余（首字符字母/数字/_，余下字母/数字/._-）→ 原样纯量。
+     */
+    fun yamlPlainScalar(value: String): String {
+        if (value.isEmpty()) return "''"
+        if (value.any { it < ' ' && it != '\t' } || value.contains('\n') ||
+            value.contains('\r')
+        ) {
+            val escaped = buildString {
+                for (c in value) {
+                    when (c) {
+                        '\\' -> append("\\\\")
+                        '"' -> append("\\\"")
+                        '\n' -> append("\\n")
+                        '\r' -> append("\\r")
+                        '\t' -> append("\\t")
+                        else -> if (c < ' ') append("\\u%04X".format(c.code)) else append(c)
+                    }
+                }
+            }
+            return "\"$escaped\""
+        }
+        val plainSafe = value.first().let { it.isLetterOrDigit() || it == '_' } &&
+            value.all { it.isLetterOrDigit() || it == '.' || it == '_' || it == '-' } &&
+            value !in setOf("true", "false", "null", "~", "yes", "no", "on", "off") &&
+            !value.all { it.isDigit() } &&
+            value.lowercase() !in setOf("true", "false", "null", "yes", "no", "on", "off")
+        if (plainSafe) return value
+        return "'" + value.replace("'", "''") + "'"
+    }
+
+    /** 生成 default.custom.yaml 文本：每项 id 都经 [yamlPlainScalar] 转义。 */
+    fun buildDefaultCustomYamlContent(ids: List<String>): String =
+        buildString {
+            appendLine("patch:")
+            appendLine("  schema_list:")
+            ids.forEach { appendLine("    - ${yamlPlainScalar(it)}") }
+        }
+
+    /**
+     * zip 解压结果：暂存目录、条目、解压阶段跳过的穿越条目。
+     * [skippedTraversal] 只保留前 [MAX_SKIPPED_TRAVERSAL_SAMPLES] 条样例，
+     * [skippedTraversalCount] 为跳过总数（含样例外的与 canonical 守卫拦截的）。
+     */
     data class ExtractedPackage(
         val stagingDir: File,
         val entries: List<StagedEntry>,
         val skippedTraversal: List<String>,
+        val skippedTraversalCount: Int = skippedTraversal.size,
     )
 
     enum class ExtractFailure {
@@ -606,6 +686,18 @@ object SchemePackageImport {
         ZIP_TOO_LARGE,
         ENTRY_TOO_LARGE,
         TOTAL_TOO_LARGE,
+        /** 条目数超 [MAX_EXTRACT_ENTRIES]。 */
+        TOO_MANY_ENTRIES,
+        /** 归一化相对路径超 [MAX_EXTRACT_REL_PATH_CHARS] 字符。 */
+        ENTRY_PATH_TOO_LONG,
+        /** 相对路径深度超 [MAX_EXTRACT_PATH_DEPTH] 段。 */
+        ENTRY_PATH_TOO_DEEP,
+        /** 归一化后相对路径重复。 */
+        DUPLICATE_ENTRY,
+        /** 文件与目录冲突（文件路径是另一文件的祖先目录，或反之）。 */
+        ENTRY_CONFLICT,
+        /** 暂存目录删/建失败、写出时的磁盘或权限错误（与格式错误分开）。 */
+        IO_ERROR,
     }
 
     sealed interface ExtractResult {
@@ -617,68 +709,145 @@ object SchemePackageImport {
      * zip 解到暂存目录（调用方负责事后清理）。体积上限按实际写出字节数
      * 计（不依赖 ZipEntry.size，data-descriptor 条目该值可能为 -1）；
      * 超限时删掉暂存目录并返回失败，不留半解压。路径穿越条目跳过并
-     * 记入 skippedTraversal（供规划页告警）；落盘另有 canonical 守卫。
+     * 记入 skippedTraversal 样例（供规划页告警，见 [ExtractedPackage]）；
+     * 落盘另有 canonical 守卫。边界失败一律用新增变体，不复用 NOT_ZIP；
+     * 暂存删/建失败与写出 IO 错误走 IO_ERROR；只有 zip 格式本身损坏
+     * （ZipException）才走 NOT_ZIP。
      */
     fun extractZip(zipFile: File, stagingDir: File): ExtractResult {
         if (zipFile.length() > MAX_ZIP_BYTES) return ExtractResult.Failed(ExtractFailure.ZIP_TOO_LARGE)
-        stagingDir.deleteRecursively()
+        if (stagingDir.exists()) {
+            stagingDir.deleteRecursively()
+            if (stagingDir.exists()) {
+                return ExtractResult.Failed(ExtractFailure.IO_ERROR)
+            }
+        }
         stagingDir.mkdirs()
+        if (!stagingDir.isDirectory) return ExtractResult.Failed(ExtractFailure.IO_ERROR)
         val entries = mutableListOf<StagedEntry>()
-        val skippedTraversal = mutableListOf<String>()
+        val skippedSamples = mutableListOf<String>()
+        var skippedCount = 0
+        fun recordSkipped(raw: String) {
+            skippedCount++
+            if (skippedSamples.size < MAX_SKIPPED_TRAVERSAL_SAMPLES) skippedSamples.add(raw)
+        }
         try {
             ZipFile(zipFile).use { zf ->
                 var totalBytes = 0L
+                var entryCount = 0
+                val seenFiles = mutableSetOf<String>()
+                val seenDirs = mutableSetOf<String>()
+                fun ancestorsOf(relPath: String): List<String> {
+                    val parts = relPath.split('/')
+                    return (1 until parts.size).map { parts.take(it).joinToString("/") }
+                }
                 for (zipEntry in zf.entries()) {
-                    if (zipEntry.isDirectory) continue
+                    entryCount++
+                    if (entryCount > MAX_EXTRACT_ENTRIES) {
+                        throw ExtractAbortException(ExtractFailure.TOO_MANY_ENTRIES)
+                    }
+                    if (zipEntry.isDirectory) {
+                        val dirPath = zipEntry.name.replace('\\', '/').trim().trimEnd('/')
+                        if (dirPath.isNotEmpty() && dirPath !in seenDirs) {
+                            if (dirPath in seenFiles) {
+                                throw ExtractAbortException(ExtractFailure.ENTRY_CONFLICT)
+                            }
+                            seenDirs.add(dirPath)
+                        }
+                        continue
+                    }
                     when (val normalized = normalizeEntryPath(zipEntry.name)) {
                         is NormalizedEntry.Traversal -> {
-                            skippedTraversal.add(zipEntry.name)
+                            recordSkipped(zipEntry.name)
                             continue
                         }
                         is NormalizedEntry.Ignored -> continue
                         is NormalizedEntry.File -> {
-                            val dest = File(stagingDir, normalized.relPath).canonicalFile
+                            val relPath = normalized.relPath
+                            if (relPath.length > MAX_EXTRACT_REL_PATH_CHARS) {
+                                throw ExtractAbortException(ExtractFailure.ENTRY_PATH_TOO_LONG)
+                            }
+                            if (relPath.split('/').size > MAX_EXTRACT_PATH_DEPTH) {
+                                throw ExtractAbortException(ExtractFailure.ENTRY_PATH_TOO_DEEP)
+                            }
+                            if (relPath in seenFiles) {
+                                throw ExtractAbortException(ExtractFailure.DUPLICATE_ENTRY)
+                            }
+                            if (relPath in seenDirs) {
+                                throw ExtractAbortException(ExtractFailure.ENTRY_CONFLICT)
+                            }
+                            val ancestors = ancestorsOf(relPath)
+                            if (ancestors.any { it in seenFiles }) {
+                                throw ExtractAbortException(ExtractFailure.ENTRY_CONFLICT)
+                            }
+                            val dest = File(stagingDir, relPath).canonicalFile
                             if (!dest.path.startsWith(stagingDir.canonicalPath + File.separator)) {
-                                skippedTraversal.add(zipEntry.name)
+                                recordSkipped(zipEntry.name)
                                 continue
                             }
-                            dest.parentFile?.mkdirs()
+                            val parent = dest.parentFile
+                            if (parent != null && !parent.isDirectory && !parent.mkdirs()) {
+                                throw ExtractAbortException(ExtractFailure.IO_ERROR)
+                            }
                             var entryBytes = 0L
-                            zf.getInputStream(zipEntry).use { input ->
-                                dest.outputStream().use { out ->
-                                    val buf = ByteArray(32 * 1024)
-                                    while (true) {
-                                        val n = input.read(buf)
-                                        if (n < 0) break
-                                        entryBytes += n
-                                        totalBytes += n
-                                        if (entryBytes > MAX_ENTRY_BYTES) {
-                                            throw ExtractLimitException(ExtractFailure.ENTRY_TOO_LARGE)
+                            try {
+                                zf.getInputStream(zipEntry).use { input ->
+                                    dest.outputStream().use { out ->
+                                        val buf = ByteArray(32 * 1024)
+                                        while (true) {
+                                            val n = input.read(buf)
+                                            if (n < 0) break
+                                            entryBytes += n
+                                            totalBytes += n
+                                            if (entryBytes > MAX_ENTRY_BYTES) {
+                                                throw ExtractAbortException(
+                                                    ExtractFailure.ENTRY_TOO_LARGE,
+                                                )
+                                            }
+                                            if (totalBytes > MAX_EXTRACTED_BYTES) {
+                                                throw ExtractAbortException(
+                                                    ExtractFailure.TOTAL_TOO_LARGE,
+                                                )
+                                            }
+                                            out.write(buf, 0, n)
                                         }
-                                        if (totalBytes > MAX_EXTRACTED_BYTES) {
-                                            throw ExtractLimitException(ExtractFailure.TOTAL_TOO_LARGE)
-                                        }
-                                        out.write(buf, 0, n)
                                     }
                                 }
+                            } catch (e: ExtractAbortException) {
+                                throw e
+                            } catch (e: java.util.zip.ZipException) {
+                                // 条目数据损坏是格式错误，不是磁盘错误。
+                                throw ExtractAbortException(ExtractFailure.NOT_ZIP)
+                            } catch (e: java.io.IOException) {
+                                throw ExtractAbortException(ExtractFailure.IO_ERROR)
                             }
-                            entries.add(StagedEntry(normalized.relPath, entryBytes))
+                            seenFiles.add(relPath)
+                            seenDirs.addAll(ancestors)
+                            entries.add(StagedEntry(relPath, entryBytes))
                         }
                     }
                 }
             }
-        } catch (e: ExtractLimitException) {
+        } catch (e: ExtractAbortException) {
             stagingDir.deleteRecursively()
             return ExtractResult.Failed(e.reason)
+        } catch (e: java.util.zip.ZipException) {
+            stagingDir.deleteRecursively()
+            return ExtractResult.Failed(ExtractFailure.NOT_ZIP)
+        } catch (e: java.io.IOException) {
+            stagingDir.deleteRecursively()
+            return ExtractResult.Failed(ExtractFailure.IO_ERROR)
         } catch (e: Exception) {
             if (e is InterruptedException) throw e
             stagingDir.deleteRecursively()
             return ExtractResult.Failed(ExtractFailure.NOT_ZIP)
         }
-        return ExtractResult.Ok(ExtractedPackage(stagingDir, entries, skippedTraversal))
+        return ExtractResult.Ok(
+            ExtractedPackage(stagingDir, entries, skippedSamples, skippedCount),
+        )
     }
 
-    private class ExtractLimitException(val reason: ExtractFailure) : Exception()
+    private class ExtractAbortException(val reason: ExtractFailure) : Exception()
 
     /** 由暂存目录构造规划输入：条目按相对路径排序，读文本走文件。 */
     fun stagedPackageOf(stagingDir: File, entries: List<StagedEntry>): StagedPackage {
@@ -712,6 +881,8 @@ object SchemePackageImport {
      * 不再归档）。落盘双侧 canonical 守卫，逃出 user 目录的条目
      * 直接跳过。返回实际落盘文件（供登记记录用）。
      * 本函数不写登记偏好（调用方在成功后写），不碰引擎与部署。
+     * 兼容保留：后续屏幕施工员改写 confirmImport 时改用下面的
+     * [installTransaction]，本函数不动，供旧流程与单测继续使用。
      */
     fun applyPlan(
         stagingDir: File,
@@ -732,5 +903,510 @@ object SchemePackageImport {
             installed.add(rel)
         }
         return installed
+    }
+
+    // ---- 事务化安装（供后续屏幕施工员调用，confirmImport 改写用） ----
+    //
+    // 调用顺序（屏幕侧）：
+    //   1. 启动时先调 recoverIncompleteTransactions(方案目录根)，清掉上次
+    //      崩溃留下的中间态（只在无安装进行时调用）；
+    //   2. 确认页调 installTransaction(暂存盘, 目标目录, 规划, 暂存条目)；
+    //   3. 成功后写登记、切目录、部署；部署确认后再调
+    //      cleanupBackup(backupDir) 删备份；部署/确认失败则调
+    //      rollbackTransaction(backupDir, targetDir) 恢复旧版。
+    //   4. installTransaction 返回 SWAP_FAILED 时，旧目录已被移走而候选
+    //      未就位：不要重试安装，先调 recoverIncompleteTransactions 恢复
+    //      到完整旧版，再由用户重新确认。
+    // 注意：installTransaction 本身已写候选目录的 default.custom.yaml
+    // （方案表见下），调用方不要再调 writeDefaultCustomSchemaList 重写。
+
+    /**
+     * 受保护文件继承：把旧目录下的受保护文件拷进候选目录——实路径语义，
+     * 不用 .inherit/ 中转，避免中转缺失导致恢复时丢文件。
+     * - 拷：任意层级的 *.userdb（文件或 userdb 目录内的文件）、
+     *   *.custom.yaml（含 default.custom.yaml，见下）、顶层 user.yaml、
+     *   顶层 installation.yaml；
+     * - 已存在的 *.custom.yaml 视为用户改过：旧文件覆盖候选内同名包文件；
+     * - 不拷 build/：它是可再生的编译产物，部署时重编；拷旧 build/
+     *   有新旧 schema 失配风险，且失败时备份恢复会把旧 build/ 带回来。
+     * 顺序语义（installTransaction 内）：先装包文件、再 inherit（旧 custom
+     * 压过包文件）、最后生成 default.custom.yaml（新方案表压过继承来的
+     * 旧 default.custom.yaml）。单独调用本函数时，继承来的
+     * default.custom.yaml 仍是旧方案表，调用方须随后重写方案表。
+     * 返回实际拷入的相对路径（已排序）；旧目录不存在返回空表；
+     * 拷失败抛 IOException（installTransaction 据此整体失败并删候选）。
+     */
+    fun inheritProtected(oldDir: File, candidateDir: File): List<String> {
+        if (!oldDir.isDirectory) return emptyList()
+        val copied = mutableListOf<String>()
+        for (rel in listRelativeFiles(oldDir).sorted()) {
+            if (rel.startsWith("build/")) continue
+            val name = rel.substringAfterLast('/')
+            val keep = rel.contains(".userdb") ||
+                rel.endsWith(".custom.yaml") ||
+                rel == "user.yaml" ||
+                rel == "installation.yaml"
+            if (!keep) continue
+            val src = File(oldDir, rel)
+            val dest = File(candidateDir, rel)
+            dest.parentFile?.mkdirs()
+            src.copyTo(dest, overwrite = true)
+            copied.add(rel)
+        }
+        return copied
+    }
+
+    /** 事务化安装的换位产物：成功后备份与日志保留，供回滚/清理用。 */
+    data class InstallTransaction(
+        val operationId: String,
+        val targetDir: File,
+        val candidateDir: File,
+        val backupDir: File,
+        val journalFile: File,
+        val installedFiles: List<String>,
+        val inheritedFiles: List<String>,
+    )
+
+    enum class TransactionFailure {
+        /** 预校验失败：目标被文件挡住、候选/备份名已占、条目越界、源缺失、条目重复。 */
+        PREVALIDATION,
+        /** 拷入候选（或继承）中途失败：候选已删、旧目录原样。 */
+        COPY_FAILED,
+        /** 候选校验失败（存在/大小/方案 yaml/方案表回读）：候选已删、旧目录原样。 */
+        VERIFICATION_FAILED,
+        /** 规划非空却零落盘：候选已删、旧目录原样（原 applyPlan 守卫的事务版）。 */
+        NOTHING_INSTALLED,
+        /** 换位失败：日志保留，调用方须调 recoverIncompleteTransactions 恢复。 */
+        SWAP_FAILED,
+    }
+
+    sealed interface InstallTransactionResult {
+        data class Success(val transaction: InstallTransaction) : InstallTransactionResult
+        data class Failed(
+            val failure: TransactionFailure,
+            val message: String,
+        ) : InstallTransactionResult
+    }
+
+    /** 安装日志阶段（写进父目录的 .install-<operationId>.journal）。 */
+    enum class JournalStage {
+        CANDIDATE_CREATED,
+        FILES_INSTALLED,
+        VERIFIED,
+        TARGET_MOVED,
+        SWAPPED,
+    }
+
+    private fun journalFileFor(parentDir: File, operationId: String): File =
+        File(parentDir, ".install-$operationId.journal")
+
+    private fun writeJournal(
+        journalFile: File,
+        operationId: String,
+        targetDir: File,
+        candidateDir: File,
+        backupDir: File,
+        stage: JournalStage,
+    ) {
+        journalFile.writeText(
+            buildString {
+                appendLine("operationId=$operationId")
+                appendLine("target=${targetDir.absolutePath}")
+                appendLine("candidate=${candidateDir.absolutePath}")
+                appendLine("backup=${backupDir.absolutePath}")
+                appendLine("stage=${stage.name}")
+            },
+        )
+    }
+
+    private data class ParsedJournal(
+        val operationId: String,
+        val target: File,
+        val candidate: File,
+        val backup: File,
+        val stage: String,
+    )
+
+    private fun parseJournal(journalFile: File): ParsedJournal? {
+        val values = mutableMapOf<String, String>()
+        runCatching {
+            journalFile.readLines().forEach { line ->
+                val idx = line.indexOf('=')
+                if (idx > 0) values[line.substring(0, idx)] = line.substring(idx + 1)
+            }
+        }.getOrNull() ?: return null
+        val operationId = values["operationId"] ?: return null
+        val target = values["target"]?.let { File(it) } ?: return null
+        val candidate = values["candidate"]?.let { File(it) } ?: return null
+        val backup = values["backup"]?.let { File(it) } ?: return null
+        return ParsedJournal(operationId, target, candidate, backup, values["stage"].orEmpty())
+    }
+
+    /**
+     * 事务化安装：候选目录 + 原子换位（同父目录 rename，同文件系统）。
+     *
+     * @param stagingDir 暂存盘（extractZip 的产物，含 wrapperPrefix 前缀路径）
+     * @param targetDir 目标目录（将被替换；不存在时为全新安装）
+     * @param plan 安装规划（installFiles 为落盘相对路径，已剥包装）
+     * @param stagedEntries 暂存条目（extractZip 的原始相对路径与字节数，
+     *   供逐项大小核对；缺失对应条目即预校验失败）
+     * @param schemaList 写入候选 default.custom.yaml 的最终方案表；
+     *   null 时取 plan.defaultCustomSchemaIds，非空则用它，否则取
+     *   plan.schemes 的 id（与旧 confirmImport 的 tableIds 口径一致）
+     * @param operationId 调用方传入或自动生成；候选/备份/日志名由此派生
+     *
+     * 步骤：预校验全部条目（目标在候选树内、源存在、无重复）→ 建候选 →
+     * 拷包文件 → inheritProtected（旧受保护文件压过包文件）→ 生成
+     * default.custom.yaml → 逐项核对存在与大小、每个 .schema.yaml
+     * 非空可读、方案表回读一致 → 旧目录 rename 为备份、候选 rename 为
+     * 目标。换位前任一步失败：删候选与日志、旧目录原样；换位失败：
+     * 日志保留，须由 recoverIncompleteTransactions 恢复。
+     * 规划 installFiles 非空但实际落盘为零时整体失败（NOTHING_INSTALLED）；
+     * 中途任一文件拷失败即整体失败，不存在部分成功。
+     */
+    fun installTransaction(
+        stagingDir: File,
+        targetDir: File,
+        plan: SchemeImportPlan,
+        stagedEntries: List<StagedEntry>,
+        schemaList: List<String>? = null,
+        operationId: String? = null,
+    ): InstallTransactionResult {
+        val opId = operationId?.takeIf { it.isNotBlank() }
+            ?: java.util.UUID.randomUUID().toString().replace("-", "").take(12)
+        val parentDir = targetDir.parentFile
+            ?: return InstallTransactionResult.Failed(
+                TransactionFailure.PREVALIDATION,
+                "target has no parent dir",
+            )
+        if (!parentDir.isDirectory && !parentDir.mkdirs()) {
+            return InstallTransactionResult.Failed(
+                TransactionFailure.PREVALIDATION,
+                "parent dir not creatable: ${parentDir.absolutePath}",
+            )
+        }
+        if (targetDir.exists() && !targetDir.isDirectory) {
+            return InstallTransactionResult.Failed(
+                TransactionFailure.PREVALIDATION,
+                "target blocked by file: ${targetDir.absolutePath}",
+            )
+        }
+        val candidateDir = File(parentDir, ".install-$opId")
+        val backupDir = File(parentDir, ".backup-$opId")
+        val journalFile = journalFileFor(parentDir, opId)
+        if (candidateDir.exists() || backupDir.exists() || journalFile.exists()) {
+            return InstallTransactionResult.Failed(
+                TransactionFailure.PREVALIDATION,
+                "stale transaction dirs for operationId: $opId",
+            )
+        }
+        // 预校验：全部条目先验，不合格一个都不装（杜绝静默 continue 部分安装）。
+        if (plan.installFiles.size != plan.installFiles.toSet().size) {
+            return InstallTransactionResult.Failed(
+                TransactionFailure.PREVALIDATION,
+                "duplicate install entries",
+            )
+        }
+        val stagedSizeByRel = stagedEntries.associateBy(
+            { it.relPath },
+            { it.sizeBytes },
+        )
+        val candidateCanonicalBase = runCatching {
+            candidateDir.canonicalPath
+        }.getOrNull()
+            ?: return InstallTransactionResult.Failed(
+                TransactionFailure.PREVALIDATION,
+                "candidate path not resolvable",
+            )
+        for (rel in plan.installFiles) {
+            val dest = runCatching {
+                File(candidateDir, rel).canonicalFile
+            }.getOrNull()
+            if (dest == null ||
+                !dest.path.startsWith(candidateCanonicalBase + File.separator)
+            ) {
+                return InstallTransactionResult.Failed(
+                    TransactionFailure.PREVALIDATION,
+                    "install entry outside candidate tree: $rel",
+                )
+            }
+            val src = File(stagingDir, plan.wrapperPrefix + rel)
+            if (!src.isFile) {
+                return InstallTransactionResult.Failed(
+                    TransactionFailure.PREVALIDATION,
+                    "install source missing: $rel",
+                )
+            }
+            if (plan.wrapperPrefix + rel !in stagedSizeByRel) {
+                return InstallTransactionResult.Failed(
+                    TransactionFailure.PREVALIDATION,
+                    "install entry missing staged size: $rel",
+                )
+            }
+        }
+        val effectiveSchemaList = schemaList
+            ?: plan.defaultCustomSchemaIds.ifEmpty { plan.schemes.map { it.id } }
+        if (!candidateDir.mkdirs()) {
+            return InstallTransactionResult.Failed(
+                TransactionFailure.PREVALIDATION,
+                "candidate dir not creatable",
+            )
+        }
+        fun failBeforeSwap(
+            failure: TransactionFailure,
+            message: String,
+        ): InstallTransactionResult.Failed {
+            candidateDir.deleteRecursively()
+            journalFile.delete()
+            return InstallTransactionResult.Failed(failure, message)
+        }
+        writeJournal(
+            journalFile, opId, targetDir, candidateDir, backupDir,
+            JournalStage.CANDIDATE_CREATED,
+        )
+        // 拷包文件：任一失败即停，整体失败（已拷的随候选一起删）。
+        // 首文件即失败 → 落盘为零，走 NOTHING_INSTALLED（原守卫的事务版）；
+        // 后续文件失败 → COPY_FAILED；两者都不存在部分成功。
+        val installed = mutableListOf<String>()
+        var copyFailure: String? = null
+        for (rel in plan.installFiles) {
+            try {
+                val src = File(stagingDir, plan.wrapperPrefix + rel)
+                val dest = File(candidateDir, rel)
+                dest.parentFile?.mkdirs()
+                src.copyTo(dest, overwrite = false)
+                installed.add(rel)
+            } catch (e: Exception) {
+                if (e is InterruptedException) throw e
+                copyFailure = "copy failed: ${e.message}"
+                break
+            }
+        }
+        if (copyFailure != null) {
+            return failBeforeSwap(
+                if (installed.isEmpty()) TransactionFailure.NOTHING_INSTALLED
+                else TransactionFailure.COPY_FAILED,
+                copyFailure,
+            )
+        }
+        val inherited = try {
+            inheritProtected(targetDir, candidateDir)
+        } catch (e: Exception) {
+            if (e is InterruptedException) throw e
+            return failBeforeSwap(
+                TransactionFailure.COPY_FAILED,
+                "inherit failed: ${e.message}",
+            )
+        }
+        // 生成方案表（压过继承来的旧 default.custom.yaml）；空表则删文件。
+        val customFile = File(candidateDir, "default.custom.yaml")
+        try {
+            if (effectiveSchemaList.isEmpty()) {
+                customFile.delete()
+            } else {
+                customFile.writeText(buildDefaultCustomYamlContent(effectiveSchemaList))
+            }
+        } catch (e: Exception) {
+            if (e is InterruptedException) throw e
+            return failBeforeSwap(
+                TransactionFailure.COPY_FAILED,
+                "schema list write failed: ${e.message}",
+            )
+        }
+        writeJournal(
+            journalFile, opId, targetDir, candidateDir, backupDir,
+            JournalStage.FILES_INSTALLED,
+        )
+        // 校验：零落盘守卫、逐项存在与大小、方案 yaml 非空可读、方案表回读。
+        if (plan.installFiles.isNotEmpty() && installed.isEmpty()) {
+            return failBeforeSwap(
+                TransactionFailure.NOTHING_INSTALLED,
+                "plan non-empty but nothing installed",
+            )
+        }
+        for (rel in installed) {
+            val dest = File(candidateDir, rel)
+            val expected = stagedSizeByRel.getValue(plan.wrapperPrefix + rel)
+            if (!dest.isFile || dest.length() != expected) {
+                return failBeforeSwap(
+                    TransactionFailure.VERIFICATION_FAILED,
+                    "installed file mismatch: $rel",
+                )
+            }
+        }
+        for (rel in installed) {
+            if (!rel.endsWith(".schema.yaml")) continue
+            val text = runCatching { File(candidateDir, rel).readText() }.getOrNull()
+            if (text.isNullOrBlank()) {
+                return failBeforeSwap(
+                    TransactionFailure.VERIFICATION_FAILED,
+                    "schema yaml unreadable: $rel",
+                )
+            }
+            // 复用既有行级解析：解析本身不抛，读到空文本已在上一步拦截；
+            // 这里只确认解析可执行（字段缺失时规划已用 id 回落，不另判）。
+            parseSchemaYamlFields(text)
+        }
+        if (effectiveSchemaList.isNotEmpty()) {
+            val roundTrip = runCatching {
+                parseSchemaListFromCustomYaml(customFile.readText())
+            }.getOrNull()
+            if (roundTrip != effectiveSchemaList) {
+                return failBeforeSwap(
+                    TransactionFailure.VERIFICATION_FAILED,
+                    "schema list round-trip mismatch",
+                )
+            }
+        } else if (customFile.exists()) {
+            return failBeforeSwap(
+                TransactionFailure.VERIFICATION_FAILED,
+                "empty schema list but custom file present",
+            )
+        }
+        writeJournal(
+            journalFile, opId, targetDir, candidateDir, backupDir,
+            JournalStage.VERIFIED,
+        )
+        // 换位：旧目录 → 备份，候选 → 目标（同父目录 rename）。
+        if (targetDir.exists()) {
+            if (!targetDir.renameTo(backupDir)) {
+                return InstallTransactionResult.Failed(
+                    TransactionFailure.SWAP_FAILED,
+                    "rename target to backup failed",
+                )
+            }
+            writeJournal(
+                journalFile, opId, targetDir, candidateDir, backupDir,
+                JournalStage.TARGET_MOVED,
+            )
+        }
+        if (!candidateDir.renameTo(targetDir)) {
+            // 日志保留在 TARGET_MOVED（或 VERIFIED，目标本就不存在时），
+            // 供 recoverIncompleteTransactions 恢复到完整旧版。
+            return InstallTransactionResult.Failed(
+                TransactionFailure.SWAP_FAILED,
+                "rename candidate to target failed",
+            )
+        }
+        writeJournal(
+            journalFile, opId, targetDir, candidateDir, backupDir,
+            JournalStage.SWAPPED,
+        )
+        return InstallTransactionResult.Success(
+            InstallTransaction(
+                operationId = opId,
+                targetDir = targetDir,
+                candidateDir = candidateDir,
+                backupDir = backupDir,
+                journalFile = journalFile,
+                installedFiles = installed,
+                inheritedFiles = inherited,
+            ),
+        )
+    }
+
+    /**
+     * 回滚：把备份恢复为目标（删当前目标、备份 rename 回目标），
+     * 并清掉引用该备份的日志。备份不存在返回 false；其余失败同样 false。
+     * 调用时机：部署/确认失败后，确认新版不要了才调（不可逆地丢弃新版）。
+     */
+    fun rollbackTransaction(backupDir: File, targetDir: File): Boolean {
+        if (!backupDir.exists()) return false
+        if (targetDir.exists()) {
+            targetDir.deleteRecursively()
+            if (targetDir.exists()) return false
+        }
+        if (!backupDir.renameTo(targetDir)) return false
+        deleteJournalsReferencing(backupDir)
+        return true
+    }
+
+    /**
+     * 清备份：部署确认后删备份与引用它的日志。备份已不存在时仍算成功
+     * （幂等，日志照清）；删除失败返回 false。
+     */
+    fun cleanupBackup(backupDir: File): Boolean {
+        if (backupDir.exists()) {
+            backupDir.deleteRecursively()
+            if (backupDir.exists()) return false
+        }
+        deleteJournalsReferencing(backupDir)
+        return true
+    }
+
+    private fun deleteJournalsReferencing(backupDir: File) {
+        val parentDir = backupDir.parentFile ?: return
+        parentDir.listFiles()
+            ?.filter { it.name.startsWith(".install-") && it.name.endsWith(".journal") }
+            ?.forEach { journal ->
+                if (parseJournal(journal)?.backup?.absolutePath == backupDir.absolutePath) {
+                    journal.delete()
+                }
+            }
+    }
+
+    /** 恢复结果：一次日志对应一条；restoredOld=true 表示恢复到了完整旧版。 */
+    data class RecoveredTransaction(
+        val operationId: String,
+        /** true=恢复到完整旧版（或装前无目录态），false=已是完整新版、原样保留。 */
+        val restoredOld: Boolean,
+    )
+
+    /**
+     * 恢复未完成事务：扫描父目录下全部 .install-*.journal。
+     * - 阶段在换位前（CANDIDATE_CREATED / FILES_INSTALLED / VERIFIED）：
+     *   目标还在 → 删候选与日志（旧版原样）；目标缺失且备份在 → 备份
+     *   移回目标、删候选与日志；目标与备份都不在 → 删候选与日志
+     *   （回到装前无目录态）；
+     * - 阶段 TARGET_MOVED（旧目录已移走、候选未就位）：备份移回目标、
+     *   删候选与日志，恢复到完整旧版（不擅自补完换位，因为安装从未成功上报）；
+     * - 阶段 SWAPPED：已是完整新版，备份与日志原样保留（供回滚/清理用）；
+     * - 未知阶段：按“目标在则删候选、目标缺失且备份在则备份移回”处置。
+     * 绝不留“目标缺失且候选与备份都不在”的半吊子之外的状态：该情形
+     * 本身已是装前无目录态，删日志即完成。本函数只在无安装进行时调用
+     * （启动时、或 SWAP_FAILED 后重试前）。
+     */
+    fun recoverIncompleteTransactions(parentDir: File): List<RecoveredTransaction> {
+        if (!parentDir.isDirectory) return emptyList()
+        val results = mutableListOf<RecoveredTransaction>()
+        val journals = parentDir.listFiles()
+            ?.filter { it.name.startsWith(".install-") && it.name.endsWith(".journal") }
+            ?.sortedBy { it.name }
+            .orEmpty()
+        for (journal in journals) {
+            val parsed = parseJournal(journal) ?: run {
+                journal.delete()
+                continue
+            }
+            when (parsed.stage) {
+                JournalStage.SWAPPED.name -> {
+                    // 完整新版：保留备份与日志，不动。
+                    results.add(RecoveredTransaction(parsed.operationId, restoredOld = false))
+                }
+                else -> {
+                    if (parsed.target.exists()) {
+                        if (parsed.candidate.exists()) parsed.candidate.deleteRecursively()
+                        journal.delete()
+                        results.add(
+                            RecoveredTransaction(parsed.operationId, restoredOld = true),
+                        )
+                    } else if (parsed.backup.exists()) {
+                        parsed.backup.renameTo(parsed.target)
+                        if (parsed.candidate.exists()) parsed.candidate.deleteRecursively()
+                        journal.delete()
+                        results.add(
+                            RecoveredTransaction(parsed.operationId, restoredOld = true),
+                        )
+                    } else {
+                        if (parsed.candidate.exists()) parsed.candidate.deleteRecursively()
+                        journal.delete()
+                        results.add(
+                            RecoveredTransaction(parsed.operationId, restoredOld = true),
+                        )
+                    }
+                }
+            }
+        }
+        return results
     }
 }
