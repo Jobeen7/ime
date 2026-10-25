@@ -1023,25 +1023,36 @@ class SchemePackageImportTest {
     }
 
     @Test
-    fun sanitizeSchemeId_whitelistsSpecialChars() {
-        assertEquals("my_scheme", SchemePackageImport.sanitizeSchemeId("my scheme.schema.yaml"))
-        assertEquals("a_b_c", SchemePackageImport.sanitizeSchemeId("a\"b\nc.schema.yaml"))
-        assertEquals("evil", SchemePackageImport.sanitizeSchemeId("../evil.schema.yaml"))
-        assertEquals("wanxiang", SchemePackageImport.sanitizeSchemeId("wanxiang.schema.yaml"))
-        assertEquals("scheme", SchemePackageImport.sanitizeSchemeId(".schema.yaml"))
-        assertEquals("c_d", SchemePackageImport.sanitizeSchemeId("a/b/c d.schema.yaml"))
-        assertEquals("x".repeat(200), SchemePackageImport.sanitizeSchemeId("x".repeat(200) + ".schema.yaml"))
-        // 规划派生同步：含空格的文件名进规划后 id 已白名单化（登记直接取 plan id）。
-        val files = mapOf("my scheme.schema.yaml" to "schema:\n  name: S\n")
-        val plan = (planOf(files) as PlanResult.Success).plan
-        assertEquals(listOf("my_scheme"), plan.schemes.map { it.id })
+    fun planInstall_schemeIdEqualsFileStem() {
+        // id 恒等于文件主干：应用按 File(dir, "${item.id}.schema.yaml") 查方案，
+        // 引擎按 schema_list 条目找同名文件，id 经任何字符映射都会找不到文件。
+        fun idsOf(files: Map<String, String>): List<String> =
+            ((planOf(files) as PlanResult.Success).plan.schemes.map { it.id })
+        assertEquals(listOf("my scheme"), idsOf(mapOf("my scheme.schema.yaml" to "schema:\n  name: S\n")))
+        assertEquals(listOf("a\"b\nc"), idsOf(mapOf("a\"b\nc.schema.yaml" to "schema:\n  name: S\n")))
+        assertEquals(listOf("中文方案"), idsOf(mapOf("中文方案.schema.yaml" to "schema:\n  name: S\n")))
+        assertEquals(listOf("wanxiang"), idsOf(mapOf("wanxiang.schema.yaml" to "schema:\n  name: S\n")))
+        assertEquals(listOf("c d"), idsOf(mapOf("a/b/c d.schema.yaml" to "schema:\n  name: S\n")))
+        assertEquals(listOf("evil"), idsOf(mapOf("../evil.schema.yaml" to "schema:\n  name: S\n")))
+        // 白名单碰撞消失："a b" 与 "a_b" 是两个不同主干，id 不再撞成同一个。
+        assertEquals(
+            listOf("a b", "a_b"),
+            idsOf(
+                mapOf(
+                    "a b.schema.yaml" to "schema:\n  name: S\n",
+                    "a_b.schema.yaml" to "schema:\n  name: T\n",
+                ),
+            ),
+        )
+        // 登记直接取 plan id：id 原样进登记，与文件主干一致。
+        val plan = (planOf(mapOf("my scheme.schema.yaml" to "schema:\n  name: S\n")) as PlanResult.Success).plan
         val record = SchemePackageImport.SchemePackageRecord(
             packageName = "pkg",
             version = null,
             schemeIds = plan.schemes.map { it.id },
             files = plan.installFiles,
         )
-        assertEquals(listOf("my_scheme"), record.schemeIds)
+        assertEquals(listOf("my scheme"), record.schemeIds)
     }
 
     @Test

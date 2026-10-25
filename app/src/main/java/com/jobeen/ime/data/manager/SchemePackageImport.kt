@@ -405,7 +405,11 @@ object SchemePackageImport {
             }.maxWithOrNull { a, b -> compareVersions(a, b) }
 
         val schemes = schemaEntries.map { entry ->
-            val id = sanitizeSchemeId(entry.relPath)
+            // id 恒等于方案文件主干（basename 去 .schema.yaml 后缀，不做字符映射）：
+            // 应用按 File(dir, "${item.id}.schema.yaml") 查方案，引擎按 schema_list
+            // 条目找同名文件，id 与主干不一致即找不到文件。YAML 安全不靠白名单，
+            // 靠写 YAML 时的 yamlPlainScalar 转义；目录名安全靠 sanitizeDirName。
+            val id = entry.relPath.substringAfterLast('/').removeSuffix(".schema.yaml")
             val fields = parseSchemaYamlFields(readStaged(entry.relPath) ?: "")
             ImportedScheme(
                 id = id,
@@ -479,8 +483,7 @@ object SchemePackageImport {
             }
         }
 
-        // 替换判定按方案文件的实际相对路径查现存文件，不用 id 反拼文件名：
-        // 白名单化后的 id 可能与原文件主干不同（如含空格的文件名），反拼会漏判。
+        // 替换判定按方案文件的实际相对路径查现存文件，不用 id 反拼文件名。
         val replacements = schemaEntries.zip(schemes).mapNotNull { (entry, scheme) ->
             val inUser = entry.relPath in existingUserFiles
             val inShared = scheme.id in existingSharedSchemeIds
@@ -608,25 +611,7 @@ object SchemePackageImport {
     }
 
     /**
-     * 方案 id 白名单化：与 [SchemeDirs.sanitizeDirName] 同口径（字母数字与
-     * . _ -，其余转 _，首尾 . _ 修掉），空结果回落 "scheme"。注意
-     * isLetterOrDigit 按 Unicode 计，中文等字母原样保留（与目录名口径一致）。
-     * 输入为方案文件相对路径或文件名均可：先取 basename 再去 .schema.yaml 后缀，
-     * 因此 "../" 之类的路径段进不了 id。白名单化后的 id 本身已是 YAML 安全
-     * 纯量；[yamlPlainScalar] 是写 YAML 时的第二道防线。
-     * 登记写入路径直接用 [SchemeImportPlan.schemes] 的 id（已在此白名单化），
-     * 不再另行派生，登记与规划的 id 口径一致。
-     */
-    fun sanitizeSchemeId(rawPath: String): String {
-        val stem = rawPath.substringAfterLast('/').removeSuffix(".schema.yaml")
-        val cleaned = stem.map { c ->
-            if (c.isLetterOrDigit() || c == '.' || c == '_' || c == '-') c else '_'
-        }.joinToString("").trim('.', '_')
-        return cleaned.ifEmpty { "scheme" }
-    }
-
-    /**
-     * YAML 纯量转义（第二道防线）：白名单化后的 id 本来就是安全纯量，
+     * YAML 纯量转义：方案 id 现为文件主干原样（含空格、引号等特殊字符时），
      * 本函数保证任意字符串拼进 YAML 时都不破结构、不被解析成别的类型。
      * - 空串 → ''；纯数字、true/false/null 等保留字 → 单引号；
      * - 含换行/回车/控制字符 → 双引号并转义（\n \r \t \\ \" 与 \uXXXX）；

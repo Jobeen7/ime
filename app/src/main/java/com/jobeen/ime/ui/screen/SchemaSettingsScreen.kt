@@ -2543,6 +2543,8 @@ private enum class ImportErrorKind {
     NO_SPACE,
     VALIDATE_FAILED,
     INSTALL_FAILED,
+    INVALID_PACKAGE,
+    IO_ERROR,
 }
 
 /** 下载阶段结果：成功即已落到临时 zip；失败带口径与 HTTP 状态码。 */
@@ -2622,6 +2624,12 @@ private fun buildImportPlan(
                 SchemePackageImport.ExtractFailure.ZIP_TOO_LARGE,
                 SchemePackageImport.ExtractFailure.ENTRY_TOO_LARGE,
                 SchemePackageImport.ExtractFailure.TOTAL_TOO_LARGE -> ImportErrorKind.TOO_LARGE
+                SchemePackageImport.ExtractFailure.TOO_MANY_ENTRIES,
+                SchemePackageImport.ExtractFailure.ENTRY_PATH_TOO_LONG,
+                SchemePackageImport.ExtractFailure.ENTRY_PATH_TOO_DEEP,
+                SchemePackageImport.ExtractFailure.DUPLICATE_ENTRY,
+                SchemePackageImport.ExtractFailure.ENTRY_CONFLICT -> ImportErrorKind.INVALID_PACKAGE
+                SchemePackageImport.ExtractFailure.IO_ERROR -> ImportErrorKind.IO_ERROR
             },
         )
     }
@@ -2673,6 +2681,8 @@ private fun importErrorText(error: ImportErrorKind): String = when (error) {
     ImportErrorKind.NO_SPACE -> stringResource(R.string.schema_import_error_no_space)
     ImportErrorKind.VALIDATE_FAILED -> stringResource(R.string.schema_import_error_validate)
     ImportErrorKind.INSTALL_FAILED -> stringResource(R.string.schema_import_error_install)
+    ImportErrorKind.INVALID_PACKAGE -> stringResource(R.string.schema_import_error_invalid_package)
+    ImportErrorKind.IO_ERROR -> stringResource(R.string.schema_import_error_io)
 }
 
 /**
