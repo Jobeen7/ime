@@ -1743,6 +1743,41 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         dispatchAction(Action.Reload)
     }
 
+    /**
+     * 执行一次全量部署并等待其返回。
+     *
+     * - [timeoutMs] <= 0 时直接返回 false，不启动部署。
+     * - 置位 SchemeDeployState.isDeploying，finally 中复位。
+     * - 通过 sendJob 串行投递任务：deploy() -> joinMaintenanceThread()。
+     * - 使用 withTimeoutOrNull(timeoutMs) 等待：超时返回 false；调用方取消时 CancellationException 穿透。
+     * - CancellationException 不被吞掉；其他 Exception 视为失败返回 false。
+     * - 不打日志，不抛其它异常；返回值表示是否在时限内完成。
+     */
+    suspend fun deployAndAwait(timeoutMs: Long): Boolean {
+        if (timeoutMs <= 0) return false
+        SchemeDeployState.isDeploying = true
+        try {
+            val deferred = CompletableDeferred<Boolean>()
+            sendJob {
+                try {
+                    deploy()
+                    joinMaintenanceThread()
+                    deferred.complete(true)
+                } catch (e: CancellationException) {
+                    deferred.complete(false)
+                    throw e
+                } catch (e: Exception) {
+                    deferred.complete(false)
+                }
+            }
+            return withTimeoutOrNull(timeoutMs) {
+                deferred.await()
+            } ?: false
+        } finally {
+            SchemeDeployState.isDeploying = false
+        }
+    }
+
     //前端提交
     override fun commit(text: String) {
         dispatchAction(Action.Commit(text))
