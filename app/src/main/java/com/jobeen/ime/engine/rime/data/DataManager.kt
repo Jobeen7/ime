@@ -15,13 +15,27 @@ object DataManager {
         get() = File(appContext.getExternalFilesDir(null), "user").also { it.mkdirs() }
 
     /**
-     * 引擎 user 目录 = 根 / 当前目录名。getter 内做一次性迁移并
-     * mkdirs（目录被删时重建空目录，引擎回落 shared 层内置 Lite）。
+     * 引擎 user 目录 = 根 / 当前目录名。迁移初始化只跑一次（once-guard）：
+     * 首次调用跑 [SchemeDirs.ensureMigrated]，成功置位后后续调用只做
+     * 标志位检查；迁移未成功（未置位）时下次调用重试，不把失败永久缓存。
+     * 注意守卫范围只含迁移初始化：当前目录名每调用仍现读偏好（目录
+     * 切换改偏好后必须立即生效，缓存解析结果会冻住切换），目标目录
+     * 的 mkdirs 每调用仍跑（目录被删时重建空目录、引擎回落内置 Lite）。
      */
+    @Volatile
+    private var userDataDirMigrated = false
+
     val userDataDir: File
         get() {
             val root = schemeDirsRoot
-            SchemeDirs.ensureMigrated(root)
+            if (!userDataDirMigrated) {
+                synchronized(this) {
+                    if (!userDataDirMigrated) {
+                        SchemeDirs.ensureMigrated(root)
+                        if (SchemeDirs.isMigrated()) userDataDirMigrated = true
+                    }
+                }
+            }
             return File(root, SchemeDirs.currentDirName()).also { it.mkdirs() }
         }
     val prebuiltDataDir = File(sharedDataDir, "build")

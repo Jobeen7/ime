@@ -79,6 +79,28 @@ class SchemeDirsTest {
     }
 
     @Test
+    fun defaultCustom_escapesIdsLikeCanonicalScalarAndLeavesNoTmp() {
+        val dir = Files.createTempDirectory("schemedirs-esc").toFile()
+        try {
+            // 含空格 / 引号 / 保留字的 id 必须经 canonical 转义写出，且
+            // 自读解析还原；写盘后同目录不留 .tmp（原子写已 rename 走）。
+            val ids = listOf("a b", "a\"b", "true", "123")
+            SchemeDirs.writeDefaultCustomSchemaList(dir, ids)
+            assertEquals(ids, SchemeDirs.schemesInDir(dir))
+            assertFalse(File(dir, "default.custom.yaml.tmp").exists())
+            val text = File(dir, "default.custom.yaml").readText()
+            assertTrue(text.contains("- 'a b'"))
+            assertTrue(text.contains("- 'true'"))
+            // 旧内容被新写覆盖（非追加），且仍无 tmp 残留。
+            SchemeDirs.writeDefaultCustomSchemaList(dir, listOf("wanxiang_lite"))
+            assertEquals(listOf("wanxiang_lite"), SchemeDirs.schemesInDir(dir))
+            assertFalse(File(dir, "default.custom.yaml.tmp").exists())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun registryDirField_roundTripsAndOldRowsDefaultEmpty() {        val registry = SchemePackageRegistry(
             listOf(
                 SchemePackageRecord(
