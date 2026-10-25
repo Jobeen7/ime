@@ -502,19 +502,19 @@ object BackupManager {
         else -> throw BackupException("备份内容解析失败")
     }
 
-    /** 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误 */
-/**
- * 判定偏好条目是否属于旧多目录方案残留，命中则不还原。
- * - prefsName 为 scheme_dirs 时恒为 true，整文件内容都不还原；
- * - 否则 key 以 SchemaManager.KEY_ENABLED_IDS + "_" 开头、且后缀非空时为 true（分键残留）；
- * - 全局键 SchemaManager.KEY_ENABLED_IDS 本身恒为 false，保留还原。
- */
-internal fun isLegacyMultiDirPref(prefsName: String, key: String): Boolean {
-    if (prefsName == "scheme_dirs") return true
-    val prefix = SchemaManager.KEY_ENABLED_IDS + "_"
-    return key.startsWith(prefix) && key.length > prefix.length
-}
+    /**
+     * 判定偏好条目是否属于旧多目录方案残留，命中则不还原。
+     * - prefsName 为 scheme_dirs 时恒为 true，整文件内容都不还原；
+     * - 否则 key 以 SchemaManager.KEY_ENABLED_IDS + "_" 开头、且后缀非空时为 true（分键残留）；
+     * - 全局键 SchemaManager.KEY_ENABLED_IDS 本身恒为 false，保留还原。
+     */
+    internal fun isLegacyMultiDirPref(prefsName: String, key: String): Boolean {
+        if (prefsName == "scheme_dirs") return true
+        val prefix = SchemaManager.KEY_ENABLED_IDS + "_"
+        return key.startsWith(prefix) && key.length > prefix.length
+    }
 
+    /** 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误 */
     private suspend fun applyPayload(parsed: ParsedBackup) {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
