@@ -414,6 +414,57 @@ class SchemePackageImportTest {
     }
 
     @Test
+    fun registryLookups_filterByDirAndLegacyRowsCountAsInitialDir() {
+        val registry = SchemePackageRegistry(
+            listOf(
+                SchemePackageRecord(
+                    packageName = "pkg-a",
+                    version = "18.1.7",
+                    schemeIds = listOf("x"),
+                    files = listOf("x.schema.yaml"),
+                    source = SchemePackageImport.PackageSource.URL,
+                    dir = "dir-a",
+                ),
+                SchemePackageRecord(
+                    packageName = "pkg-a",
+                    version = "18.1.8",
+                    schemeIds = listOf("x"),
+                    files = listOf("x.schema.yaml"),
+                    source = SchemePackageImport.PackageSource.LOCAL,
+                    dir = "dir-b",
+                ),
+                SchemePackageRecord(
+                    packageName = "pkg-legacy",
+                    version = "18.1.6",
+                    schemeIds = listOf("y"),
+                    files = listOf("y.schema.yaml"),
+                    dir = "",
+                ),
+            ),
+        )
+        // 同名包跨目录不得串：dir 过滤后各目录只看到自己的记录。
+        assertEquals("pkg-a", registry.packageForScheme("x", "dir-a"))
+        assertEquals("18.1.7", registry.versionForFile("x.schema.yaml", "dir-a"))
+        assertEquals(
+            SchemePackageImport.PackageSource.URL,
+            registry.sourceForScheme("x", "dir-a"),
+        )
+        assertEquals("18.1.8", registry.versionForFile("x.schema.yaml", "dir-b"))
+        assertEquals(
+            SchemePackageImport.PackageSource.LOCAL,
+            registry.sourceForScheme("x", "dir-b"),
+        )
+        assertEquals(listOf("x.schema.yaml"), registry.filesForPackage("pkg-a", "dir-b"))
+        assertEquals(null, registry.packageForScheme("x", "dir-missing"))
+        // 不传 dir 时保留跨目录汇总语义（首条命中）。
+        assertEquals("pkg-a", registry.packageForScheme("x"))
+        assertEquals("18.1.7", registry.versionForFile("x.schema.yaml"))
+        // 目录为空的旧记录按初始目录计：只在 dir == "default" 时命中。
+        assertEquals("pkg-legacy", registry.packageForScheme("y", "default"))
+        assertEquals(null, registry.packageForScheme("y", "dir-a"))
+    }
+
+    @Test
     fun extractZip_skipsTraversalAndEnforcesCanonicalGuard() {
         val root = Files.createTempDirectory("scheme-import-test").toFile()
         try {

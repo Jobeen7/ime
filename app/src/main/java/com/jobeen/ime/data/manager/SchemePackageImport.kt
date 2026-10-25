@@ -435,6 +435,8 @@ object SchemePackageImport {
      * @param existingUserFiles user 目录现存文件相对路径集合
      * @param existingSharedSchemeIds shared 层现存方案 id 集合
      * @param registry 包登记（同 ID 替换归属与共享文件既有版本来源）
+     * @param dir 目标方案目录名：登记查找按此目录过滤（多目录下同名包
+     *   不得跨目录串）；null 时不过滤（旧调用方汇总语义不变）。
      */
     fun planInstall(
         packageName: String,
@@ -444,6 +446,7 @@ object SchemePackageImport {
         existingUserFiles: Set<String>,
         existingSharedSchemeIds: Set<String>,
         registry: SchemePackageRegistry,
+        dir: String? = null,
     ): PlanResult {
         if (zipBytes > MAX_ZIP_BYTES) return PlanResult.Failed(PlanFailure.ZIP_TOO_LARGE)
         var totalBytes = 0L
@@ -524,7 +527,7 @@ object SchemePackageImport {
                     if (!exists) {
                         installFiles.add(path)
                     } else {
-                        val existingVersion = registry.versionForFile(path)
+                        val existingVersion = registry.versionForFile(path, dir)
                         val unknown = packageVersion == null || existingVersion == null
                         val overwrite = !unknown &&
                             compareVersions(packageVersion, existingVersion) > 0
@@ -575,7 +578,7 @@ object SchemePackageImport {
             val inUser = entry.relPath in existingUserFiles
             val inShared = scheme.id in existingSharedSchemeIds
             if (!inUser && !inShared) return@mapNotNull null
-            val previousPackage = registry.packageForScheme(scheme.id)
+            val previousPackage = registry.packageForScheme(scheme.id, dir)
             ReplacementInfo(
                 schemeId = scheme.id,
                 previousPackage = previousPackage,
@@ -624,18 +627,29 @@ object SchemePackageImport {
     )
 
     data class SchemePackageRegistry(val records: List<SchemePackageRecord>) {
-        fun packageForScheme(schemeId: String): String? =
-            records.firstOrNull { schemeId in it.schemeIds }?.packageName
+        /**
+         * 目录匹配：dir == null 时不过滤（跨目录汇总语义保留，供无目录
+         * 上下文的调用方）；dir 非空时只匹配该目录的记录，多目录下
+         * 同名包不得跨目录串；dir 为空的旧记录（多目录前）按初始目录计。
+         */
+        private fun SchemePackageRecord.matchesDir(dir: String?): Boolean =
+            dir == null || this.dir == dir ||
+                (this.dir.isEmpty() && dir == SchemeDirs.INITIAL_DIR)
+
+        fun packageForScheme(schemeId: String, dir: String? = null): String? =
+            records.firstOrNull { schemeId in it.schemeIds && it.matchesDir(dir) }?.packageName
 
         /** 方案所属包的来源（URL 包与本地导入在列表来源处区分显示）。 */
-        fun sourceForScheme(schemeId: String): PackageSource? =
-            records.firstOrNull { schemeId in it.schemeIds }?.source
+        fun sourceForScheme(schemeId: String, dir: String? = null): PackageSource? =
+            records.firstOrNull { schemeId in it.schemeIds && it.matchesDir(dir) }?.source
 
-        fun versionForFile(relPath: String): String? =
-            records.firstOrNull { relPath in it.files }?.version
+        fun versionForFile(relPath: String, dir: String? = null): String? =
+            records.firstOrNull { relPath in it.files && it.matchesDir(dir) }?.version
 
-        fun filesForPackage(packageName: String): List<String> =
-            records.firstOrNull { it.packageName == packageName }?.files.orEmpty()
+        fun filesForPackage(packageName: String, dir: String? = null): List<String> =
+            records.firstOrNull {
+                it.packageName == packageName && it.matchesDir(dir)
+            }?.files.orEmpty()
 
         /** 同名包登记替换旧记录（重装同一包不留两条）。 */
         fun withRecord(record: SchemePackageRecord): SchemePackageRegistry =

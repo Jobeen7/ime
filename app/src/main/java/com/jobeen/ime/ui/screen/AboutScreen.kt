@@ -66,8 +66,10 @@ import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.ResetConfirmDialogs
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -147,8 +149,10 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
 
     /** 诊断导出：本进程 Timber 日志 + 应用/设备头，打包成 zip 分享。
      * 失败时把断点（步骤 + 异常类）写进日志缓冲（元数据级，无用户内容），
-     * 下次导出成功时可直接从日志里看到上次断在哪一步；用户侧仍只出 Toast。 */
-    fun exportDiag() {
+     * 下次导出成功时可直接从日志里看到上次断在哪一步；用户侧仍只出 Toast。
+     * 调用方在页面协程里调（scope 为主线程）：写 zip 在 IO 上下文跑，
+     * 完成后回主线程起分享 / 弹提示（沿用本页 doReset 的协程体例）。 */
+    suspend fun exportDiag() {
         var step = "build-txt"
         runCatching {
             val now = java.text.SimpleDateFormat(
@@ -168,10 +172,12 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
             step = "write-zip"
             // 落盘必须进 cacheDir/shared/（file_paths.xml 唯一覆盖诊断 zip 的根）；
             // 旧实现写 cacheDir 根目录，getUriForFile 恒抛 IllegalArgumentException。
-            val zipFile = DiagExport.writeDiagZip(
-                DiagExport.diagZipFile(context.cacheDir, now),
-                txt,
-            )
+            val zipFile = withContext(Dispatchers.IO) {
+                DiagExport.writeDiagZip(
+                    DiagExport.diagZipFile(context.cacheDir, now),
+                    txt,
+                )
+            }
             step = "get-uri"
             val uri = androidx.core.content.FileProvider.getUriForFile(
                 context,
@@ -496,7 +502,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
             GroupCard {
                 NavRow(
                     title = stringResource(R.string.about_diag_export),
-                    onClick = { exportDiag() },
+                    onClick = { scope.launch { exportDiag() } },
                     icon = Icons.Filled.BugReport,
                     iconContainer = MaterialTheme.colorScheme.primaryContainer,
                     iconTint = MaterialTheme.colorScheme.onPrimaryContainer,

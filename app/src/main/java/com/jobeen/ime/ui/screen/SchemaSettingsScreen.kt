@@ -99,13 +99,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
-import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.R
-import com.jobeen.ime.base.ngram.DownloadResult
-import com.jobeen.ime.base.ngram.GramModelDownloader
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
-import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
@@ -163,51 +159,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     val enabledSchemas = remember { mutableStateListOf<SchemaItem>() }
     val availableSchemas = remember { mutableStateListOf<SchemaItem>() }
     var loaded by remember { mutableStateOf(false) }
-    var grammarLanguage by remember { mutableStateOf<String?>(null) }
-    var grammarReady by remember { mutableStateOf(false) }
-    // 下载中状态、进度与最近结果都读进程级 StateFlow（GramModelDownloader /
-    // WanxiangUpdateManager 各一份）：页面 remember 状态随页面销毁丢失，
-    // 两路下载都在应用级作用域跑、页面销毁不中断，重进页面只看局部
-    // 状态会误判为空闲、重复启动同一路下载，进行中的进度与已完成
-    // 的结果也无从读回（N1/N2）
-    val grammarDownloading by GramModelDownloader.isRunning.collectAsStateWithLifecycle()
-    val grammarProgress by GramModelDownloader.progress.collectAsStateWithLifecycle()
-    val grammarResult by GramModelDownloader.lastResult.collectAsStateWithLifecycle()
-    // 语法模型结果与下方方案更新侧同口径配「已消费时间」标记
-    // （updateResultSeenAtMs）：点下载即消费掉旧结果，未消费的失
-    // 败才呈失败态，不让上一次失败在重进页面后长期霸占状态行；
-    // 结果本身在进程级 lastResult 里，重进页面仍能读到未消费的
-    var grammarResultSeenAtMs by remember { mutableLongStateOf(0L) }
-    val shownGrammarResult = grammarResult?.takeIf { it.finishedAtMs > grammarResultSeenAtMs }
-    // 语法模型失败态从进程级结果派生：已就绪或下载进行中都不算失败；
-    // 被下载闸拒绝（BUSY）不写结果，不会误报失败（N3）
-    val grammarFailed = !grammarReady && !grammarDownloading &&
-        shownGrammarResult?.result == DownloadResult.FAILED
-    var grammarButtonWidth by remember { mutableStateOf(0.dp) }
-    // 万象方案更新状态
-    val updatePrefs = remember {
-        context.getSharedPreferences(WanxiangUpdateManager.PREFS_NAME, Context.MODE_PRIVATE)
-    }
-    var updateInfo by remember { mutableStateOf<WanxiangUpdateManager.UpdateInfo?>(null) }
-    val updating by WanxiangUpdateManager.isRunning.collectAsStateWithLifecycle()
-    val updateProgress by WanxiangUpdateManager.progress.collectAsStateWithLifecycle()
-    val updateResult by WanxiangUpdateManager.lastResult.collectAsStateWithLifecycle()
-    // 最近一次更新结果以「已消费时间」标记：点检查/开始更新即消费掉
-    // 旧结果，状态文案回到检查口径，不让上一次结果长期霸占状态行；
-    // 结果本身在进程级 lastResult 里，重进页面仍能读到未消费的结果
-    var updateResultSeenAtMs by remember { mutableLongStateOf(0L) }
-    val shownUpdateResult = updateResult?.takeIf { it.finishedAtMs > updateResultSeenAtMs }
-    val updateDone = shownUpdateResult?.result == DownloadResult.SUCCESS
-    val updateFailed = shownUpdateResult?.result == DownloadResult.FAILED
-    var checkingUpdate by remember { mutableStateOf(false) }
-    var updateCheckFailed by remember { mutableStateOf(false) }
-    var updateButtonWidth by remember { mutableStateOf(0.dp) }
-    // 页面本地「已派发」标志（N3）：点击时同步置位、工作协程收尾
-    // 复位。进程级 isRunning 要等下载协程真正跑起来才翻转、经
-    // StateFlow 到达组合又有帧级延迟，只读它守门会留 1~2 帧双击
-    // 窗口；守门同步读 isRunning.value 与本地标志双保险
-    var grammarPending by remember { mutableStateOf(false) }
-    var updatePending by remember { mutableStateOf(false) }
     // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
     var currentSchemaName by remember { mutableStateOf("") }
     // 切换编排：状态机仍是转移权威，但实例与 StateFlow 镜像一律归
@@ -234,13 +185,22 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     val monitorStatus by DirSwitchMonitor.status.collectAsStateWithLifecycle()
     val deployRunning by EngineDeployState.running.collectAsStateWithLifecycle()
     var schemasEmpty by remember { mutableStateOf(false) }
+    // 当前目录盘上是否空方案：只在副作用里读盘（LaunchedEffect(currentDir)），
+    // 不在组合期读盘；目录切换时 currentDir 变化触发重算。初始 false
+    // 为乐观值：首帧空目录会短暂按非空分支渲染，随后副作用纠正。
+    var diskEmpty by remember { mutableStateOf(false) }
     var manageDeploying by remember { mutableStateOf(false) }
     var manageDeployError by remember { mutableStateOf<String?>(null) }
     var versionById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    // 每行版本缓存：loadSchemas 每轮询都重算（引擎任务 + 逐方案 openSchema）
+    // 开销大；缓存键 = 当前目录 + 方案 id 序列，键不变时直接复用缓存，
+    // 键变化（切目录 / 方案集变化）时失效重算。缓存随组合销毁而丢，
+    // 重进页面重新计算，不会把更新后的版本长期钉在旧值上。
+    var versionCacheKey by remember { mutableStateOf<String?>(null) }
+    var versionCache by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var sourceById by remember {
         mutableStateOf<Map<String, SchemeSwitchPolicy.SchemeSource>>(emptyMap())
     }
-    var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
     val scope = rememberCoroutineScope()
     // ---- 第二期本地导入：SAF 选 zip → 暂存校验 → 校验结果页 → 确认安装 ----
     // importPlan 非空时 Scaffold 内容整体切到校验结果页（见下方内容分支）；
@@ -300,32 +260,21 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     var importFromDownload by remember { mutableStateOf(false) }
     // URL 来源方案 id 集（登记里 source=URL 的方案，列表来源处显示 URL）。
     var urlSourceIds by remember { mutableStateOf<Set<String>>(emptySet()) }
-    // 整包下载专用 client（WanxiangUpdateManager.downloadClient 同形态：
-    // 连接 15s / 读取 120s / 无总时长上限；https→http 降级禁跟随）。
+    // 整包下载专用 client：连接 15s / 读取 120s；callTimeout 300s
+    // 封顶整条调用（含重定向）：须大于单次 read 超时口径，300 秒取整；
+    // https→http 降级禁跟随。慢速涓流超过 300s 即按超时失败，不再无限拖长。
     val downloadClient = remember {
         OkHttpClient.Builder()
             .followRedirects(true)
             .followSslRedirects(false)
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(120, TimeUnit.SECONDS)
+            .callTimeout(300, TimeUnit.SECONDS)
             .build()
     }
-    // 协程内不可用 stringResource，更新阶段文案提前在组合阶段解析
-    val stageDownloadingSchema = stringResource(R.string.schema_update_downloading_schema)
-    val stageExtracting = stringResource(R.string.schema_update_extracting)
-    val stageDownloadingGram = stringResource(R.string.schema_update_downloading_gram)
-    val stageDeploying = stringResource(R.string.schema_update_deploying)
     // 回调内不可用 stringResource，提前在组合阶段解析
     val msgDirSwitchFailed = stringResource(R.string.schema_dir_switch_failed)
     val msgManageDeployFailed = stringResource(R.string.schema_manage_deploy_failed)
-    // 更新阶段文案从进程级进度派生：页面重进时进度已在管理器里、
-    // 阶段文案随之可得，不再依赖发起页的写回（N2）
-    val updateStageText = when (updateProgress?.stage) {
-        WanxiangUpdateManager.UpdateProgress.Stage.SCHEMA_DOWNLOAD -> stageDownloadingSchema
-        WanxiangUpdateManager.UpdateProgress.Stage.DICTS_EXTRACT -> stageExtracting
-        WanxiangUpdateManager.UpdateProgress.Stage.GRAM_DOWNLOAD -> stageDownloadingGram
-        null -> ""
-    }
 
     // 异步加载输入方案，避免阻塞主线程（schemasList 内部走引擎线程）。
     // 抽成独立挂起函数：导入安装 / 部署完成后也要重算（引擎侧部署后
@@ -383,18 +332,28 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             currentSchemeId = currentId ?: ""
             // 每行版本（schema/version；万象族显示 LTS，包版本不在
             // schema 内，不编造）与来源（user 层有方案文件即用户，
-            // 否则内置；两层都没有时回落内置，见编排器注释）
-            versionById = runCatching {
-                (EngineFactory.current() as? IRimeJob)?.awaitJob(emptyMap<String, String>()) {
-                    allItems.associate { item ->
-                        item.id to runCatching {
-                            RimeConfig.openSchema(item.id).use {
-                                it.getString("schema/version").orEmpty()
-                            }
-                        }.getOrDefault("")
-                    }
-                } ?: emptyMap()
-            }.getOrDefault(emptyMap())
+            // 否则内置；两层都没有时回落内置，见编排器注释）。
+            // 版本计算走缓存（见 versionCacheKey 处注释）：轮询重调
+            // loadSchemas 时键不变直接复用，不再每次都跑引擎任务。
+            val versionKey = "$currentDir|${allItems.joinToString(",") { it.id }}"
+            versionById = if (versionKey == versionCacheKey) {
+                versionCache
+            } else {
+                runCatching {
+                    (EngineFactory.current() as? IRimeJob)?.awaitJob(emptyMap<String, String>()) {
+                        allItems.associate { item ->
+                            item.id to runCatching {
+                                RimeConfig.openSchema(item.id).use {
+                                    it.getString("schema/version").orEmpty()
+                                }
+                            }.getOrDefault("")
+                        }
+                    } ?: emptyMap()
+                }.getOrDefault(emptyMap()).also {
+                    versionCacheKey = versionKey
+                    versionCache = it
+                }
+            }
             sourceById = withContext(Dispatchers.IO) {
                 allItems.associate { item ->
                     val inUser = File(DataManager.userDataDir, "${item.id}.schema.yaml").exists()
@@ -409,118 +368,17 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 importPrefs.getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
             ).records.filter { it.source == SchemePackageImport.PackageSource.URL }
                 .flatMap { it.schemeIds }.toSet()
-            // 计算本地信息（词库/模型指纹），用于"本地信息"卡片
-            localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
             loaded = true
         }
     }
 
 
 
-    // 打开页面先做版本切换清理（指纹记录/缓存跨版本作废，见
-    // WanxiangUpdateManager.ensureVersionHousekeeping；checkForUpdates
-    // 入口也会再调一次，幂等）
-    LaunchedEffect(Unit) {
-        WanxiangUpdateManager.ensureVersionHousekeeping(context)
-    }
-
-    // 更新结束（updating 由 true 变 false）后重算本地信息：更新可能
-    // 在本页之外发起或结束，本地卡片要反映盘上最新状态（N2）
-    var wasUpdating by remember { mutableStateOf(false) }
-    LaunchedEffect(updating) {
-        if (wasUpdating && !updating) {
-            localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
-        }
-        wasUpdating = updating
-    }
-
-    // 语法模型下载结束（哪一页发起的都一样）后按盘上文件刷新就绪态
-    LaunchedEffect(grammarDownloading) {
-        if (!grammarDownloading && grammarLanguage != null) {
-            grammarReady = File(DataManager.sharedDataDir, "$grammarLanguage.gram").isFile
-        }
-    }
-
-    fun downloadGrammar(language: String) {
-        // 与万象更新互斥：两路都写 sharedDataDir 下的语法模型文件，
-        // 同时跑会各下一份约 400 MB 且落盘记录互相错位。守门同步读
-        // 进程级状态（isRunning.value）与本地已派发标志（见
-        // grammarPending 处注释）；管理器侧另有共用 DownloadGate
-        // 兜底，穿过守门的重复调用返回 BUSY、不会被当成失败
-        if (grammarPending || updatePending) return
-        if (GramModelDownloader.isRunning.value || WanxiangUpdateManager.isRunning.value) return
-        grammarPending = true
-        // 发起下载即消费掉上一次的语法模型结果，状态文案回到未
-        // 就绪口径（与 startWanxiangUpdate 消费更新结果同口径）
-        grammarResultSeenAtMs = System.currentTimeMillis()
-        // 下载跑在应用级作用域（与 startWanxiangUpdate 同口径，N1）：
-        // 绑页面 scope 时旋转屏幕、系统切深浅色（Activity 重建）或
-        // 离开页面都会把约 400 MB 的下载取消并删掉已下部分；进度与
-        // 结果由管理器以进程级 StateFlow 发布，页面订阅即可，引擎
-        // reload 也在这里收尾、不依赖页面存活
-        val workScope =
-            (context.applicationContext as? ImeApplication)?.applicationScope ?: scope
-        workScope.launch {
-            try {
-                if (GramModelDownloader.download(language) == DownloadResult.SUCCESS) {
-                    // The grammar database is loaded during engine startup.
-                    EngineFactory.current()?.reload()
-                }
-            } finally {
-                grammarPending = false
-            }
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        val language = withContext(Dispatchers.IO) {
-            runCatching {
-                // openSchema 是 librime native 入口：页面协程（IO）直调会绕开
-                // rime-main 串行线，改为派发到 rime-main 执行并等待结果。
-                // 此前走 awaitJob 的 job 体仍在 jobs 线程，同样不算 rime-main
-                Rime.runOnRimeMain {
-                    val currentSchema = currentSchema()
-                    RimeConfig.openSchema(currentSchema.schemaId).use { config ->
-                        config.getString("grammar/language")?.trim()?.takeIf { it.isNotEmpty() }
-                    }
-                }
-            }.getOrNull()
-        }
-        grammarLanguage = language
-        if (language != null) {
-            grammarReady = File(DataManager.sharedDataDir, "$language.gram").isFile
-        }
-    }
-
     fun formatSize(bytes: Long): String = when {
         bytes <= 0L -> ""
         bytes >= 1024L * 1024L -> "%.1f MB".format(bytes / 1024.0 / 1024.0)
         bytes >= 1024L -> "%.0f KB".format(bytes / 1024.0)
         else -> "$bytes B"
-    }
-
-    fun checkWanxiangUpdate() {
-        if (updatePending || checkingUpdate) return
-        if (WanxiangUpdateManager.isRunning.value) return
-        // App 升级后的指纹记录/缓存清理统一走 WUM 的版本切换清理
-        // （打开页面时已调过、这里再兜一次，幂等）：它对全部用户
-        // 生效；旧实现在此整表 clear，但触发键只在应用内更新成功
-        // 后才写入，没在应用内更新过的用户永远清不到
-        WanxiangUpdateManager.ensureVersionHousekeeping(context)
-        // 联网查询 GitHub 最新版本，与本地记录比对
-        checkingUpdate = true
-        // 发起新一轮检查即消费掉上一次的更新结果，状态文案回到检查口径
-        updateResultSeenAtMs = System.currentTimeMillis()
-        updateCheckFailed = false
-        scope.launch {
-            val result = WanxiangUpdateManager.checkForUpdates(updatePrefs)
-            checkingUpdate = false
-            result.onSuccess { info ->
-                updateInfo = info
-            }.onFailure {
-                updateCheckFailed = true
-            }
-        }
     }
 
     // ---- 第一期方案切换：点选切换 / 部署 / 回退（状态机见协调器） ----
@@ -604,10 +462,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         }
     }
 
-    /** 空表轮询重载：2s 一次、最多 5 分钟，直到方案表就绪。 */
-    suspend fun pollUntilLoaded() {
+    /** 空表轮询重载：2s 一次、最多 timeoutMs（默认 5 分钟），直到方案表就绪。 */
+    suspend fun pollUntilLoaded(timeoutMs: Long = 300_000L) {
         var waitedMs = 0L
-        while (!loaded && waitedMs < 300_000L) {
+        while (!loaded && waitedMs < timeoutMs) {
             delay(2000L)
             waitedMs += 2000L
             if (!loaded) loadSchemas()
@@ -617,24 +475,39 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     // 进页加载 + 部署中自动重载：空表时轮询重载，部署跑完自动出列表；
     // stranded 时先续切一次（仅一次，避免中途重启部署），再继续轮询。
     // 用户中途离开即取消本轮询，下次进页重新判定——续切本身幂等。
+    // 注意：本 effect 不再自写重载轮询（与 pollUntilLoaded 是同一等待
+    // 目标的重复实现，已删）；只保留原循环里 pollUntilLoaded 没有的
+    // 续切门：等 phase 离开 SWITCHING 后续切一次，再把剩余预算交给
+    // pollUntilLoaded 重载——总预算仍是 5 分钟，不因拆分而延长。
     LaunchedEffect(Unit) {
         migrationErrorText = SchemeDirs.migrationError(context)
         // 进页刷新删除传播暂停标志：FAB 同步可能在本页之外暂停跟删，
         // 重进时方案区才应出现“确认清理”入口。
         syncPause = RimeSyncPrefs.deletePropagationPause(context)
         loadSchemas()
-        var resumed = false
-        var waitedMs = 0L
-        while (!loaded && waitedMs < 300_000L) {
-            delay(2000L)
-            waitedMs += 2000L
-            if (!loaded && !resumed &&
+        if (!loaded) {
+            var gateWaitedMs = 0L
+            while (DirSwitchMonitor.status.value.phase == DirSwitchPhase.SWITCHING &&
+                gateWaitedMs < 300_000L
+            ) {
+                delay(2000L)
+                gateWaitedMs += 2000L
+            }
+            if (!loaded &&
                 DirSwitchMonitor.status.value.phase != DirSwitchPhase.SWITCHING
             ) {
-                resumed = true
                 resumeIfStranded()
             }
-            if (!loaded) loadSchemas()
+            pollUntilLoaded(timeoutMs = (300_000L - gateWaitedMs).coerceAtLeast(0L))
+        }
+    }
+
+    // 空目录判定读盘移到副作用：目录名变化时在 IO 上重算，不在组合期读盘。
+    LaunchedEffect(currentDir) {
+        diskEmpty = withContext(Dispatchers.IO) {
+            runCatching {
+                SchemeDirs.schemesInDir(File(DataManager.schemeDirsRoot, currentDir)).isEmpty()
+            }.getOrDefault(false)
         }
     }
 
@@ -769,6 +642,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         // 持有锁，三者任一即拒绝——不再留两套忙态。移交情形下锁已由
         // 导入方持有，跳过协调器守门（只保留页内 dirSwitching 与同目录
         // 早退），切换协程结束时由本函数释放移交来的锁。
+        // 第二道防线：目录浏览器不得切入 build（部署产物目录，listDirs
+        // 已排除、importDirName 已把 "build" 映射为 "build-pkg"）：非法
+        // 输入与函数内其他守门早退同口径，静默返回 false，不置错。
+        if (targetDir == "build") return false
         if (dirSwitching ||
             (existingOperationId == null && SchemeSwitchCoordinator.isBusy()) ||
             (targetDir == currentDir && !forceReload)
@@ -938,6 +815,19 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             SchemeDirs.importDirName(packageName),
         )
         val stagingDir = File(context.cacheDir, IMPORT_STAGING_DIR_NAME)
+        // 解压前预检（快速失败）：按 ZipFile 中央目录声明量估算解压总量，
+        // 在解压前即报 NO_SPACE，不等解压完才报；解压后按实际总体积 +
+        // 余量的精确终检仍保留（见下方 Ready 分支）。
+        val precheckOk = withContext(Dispatchers.IO) {
+            precheckExtractSpace(zipFile, context.cacheDir)
+        }
+        if (!precheckOk) {
+            importError = ImportErrorKind.NO_SPACE
+            importStagedEntries = emptyList()
+            importKeptFiles = emptyList()
+            cleanupImportFiles()
+            return
+        }
         val outcome = withContext(Dispatchers.IO) {
             buildImportPlan(context, zipFile, stagingDir, packageName, targetDir)
         }
@@ -1499,57 +1389,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         if (uri != null) runImportPick(uri)
     }
 
-    fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
-        // 与语法模型单独下载互斥（见 downloadGrammar 的同一口径）：
-        // 守门同步读进程级状态与本地已派发标志，管理器侧另有共用
-        // DownloadGate 兜底
-        if (updatePending || grammarPending) return
-        if (WanxiangUpdateManager.isRunning.value || GramModelDownloader.isRunning.value) return
-        updatePending = true
-        // 发起更新即消费掉上一次的结果，状态文案回到进行中口径
-        updateResultSeenAtMs = System.currentTimeMillis()
-        updateCheckFailed = false
-        // 下载应用 + 引擎 reload 必须跑在应用级作用域：绑页面 scope 时用户
-        // 中途离开页面会把协程取消，可能词库文件已替换而 reload 永不执行，
-        // 引擎继续用旧部署。进度与结果由管理器以进程级 StateFlow 发布，
-        // 页面订阅即可（页面已销毁时本协程对页面状态的写回无副作用）
-        val workScope =
-            (context.applicationContext as? ImeApplication)?.applicationScope ?: scope
-        workScope.launch {
-            try {
-                val result = WanxiangUpdateManager.downloadAndApply(
-                    updatePrefs,
-                    info,
-                    context.cacheDir,
-                )
-                if (result == DownloadResult.SUCCESS) {
-                    // 词库与模型已在盘上换新，先触发 Rime 完整重新部署，
-                    // 再做联网复检：复检只刷新远端信息展示，排在前面会让
-                    // 引擎换新数据被一次网络往返（慢或失败时更久）无谓推迟
-                    EngineFactory.current()?.reload()
-                    // 更新本地版本显示。复检失败必须可见：置检查失败标志
-                    // （状态文案里检查失败优先于更新成功，见下方 statusText），
-                    // 否则远程卡停留在更新前数值、还显示成功，用户无从知道；
-                    // 更新成功态保留（更新本身确实成功），按钮区在该状态
-                    // 仍给出「检查更新」入口（见下方按钮分支），可当场复检
-                    WanxiangUpdateManager.checkForUpdates(updatePrefs)
-                        .onSuccess { refreshed ->
-                            updateInfo = refreshed
-                        }
-                        .onFailure {
-                            updateCheckFailed = true
-                        }
-                    // 重新计算本地指纹（更新后应与远端指纹一致）
-                    localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
-                }
-                // FAILED 时管理器已发布 lastResult，状态文案从其派生；
-                // BUSY（守门之外被闸拒绝）不置任何失败标志
-            } finally {
-                updatePending = false
-            }
-        }
-    }
-
     Scaffold(
         topBar = {
             // 导入流程中顶栏跟随流程态：校验页标题为校验结果、返回即取消；
@@ -2107,11 +1946,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 ?: monitorStatus.takeIf { it.phase == DirSwitchPhase.FAILED }
                     ?.errorMessage?.takeIf { it.isNotEmpty() }
             val switchingNow = monitorStatus.phase == DirSwitchPhase.SWITCHING
-            val diskEmpty = remember(currentDir) {
-                runCatching {
-                    SchemeDirs.schemesInDir(File(DataManager.schemeDirsRoot, currentDir)).isEmpty()
-                }.getOrDefault(false)
-            }
+            // diskEmpty 已是状态值（读盘在 LaunchedEffect(currentDir) 里做），
+            // 此处不再组合期读盘。
+            val diskEmptyNow = diskEmpty
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -2140,7 +1977,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     )
                     Spacer(Modifier.height(4.dp))
                     LinearProgressIndicator(Modifier.fillMaxWidth())
-                } else if (!diskEmpty) {
+                } else if (!diskEmptyNow) {
                     // 重试：先重读引擎表，仍空则走续切（续切内已先同步
                     // custom 文件再部署），再重读一次。
                     val onRetry: () -> Unit = {
@@ -2420,31 +2257,40 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     initialEnabled = enabledSchemas.toList(),
                     onSave = { newEnabled ->
                         val prevEnabled = enabledSchemas.toList()
-                        val prevYaml = SchemeDirs.schemesInDir(DataManager.userDataDir)
                         val all = enabledSchemas + availableSchemas
                         val enabledIds = newEnabled.map { it.id }.toSet()
                         val newAvailable = all.filter { it.id !in enabledIds }
+                        // 内存态同步更新（主线程、无磁盘 IO）；读盘与写盘
+                        // 一律移到下面应用级协程的 IO 上下文，完成后回主线
+                        // 程刷新状态（appScope 即 MainScope）。
                         enabledSchemas.clear()
                         enabledSchemas.addAll(newEnabled)
                         availableSchemas.clear()
                         availableSchemas.addAll(newAvailable)
-                        SchemaManager.saveEnabledIds(
-                            prefs,
-                            currentDir,
-                            newEnabled.map { it.id },
-                        )
-                        SchemeDirs.writeDefaultCustomSchemaList(
-                            DataManager.userDataDir,
-                            newEnabled.map { it.id } + newAvailable.map { it.id },
-                        )
                         manageDeploying = true
                         manageDeployError = null
                         // 保存部署跑应用级作用域：离开页面不再取消部署；
                         // 取消（与失败）一律先在 NonCancellable 内回滚原
                         // 顺序再处理——此前取消在回滚之前重抛，部署失败的
                         // 新顺序就此滞留，是本处要修的位置。
+                        // 顺序保证：回滚用的旧盘上表（prevYaml）必须在新表
+                        // 写盘前读出，故读盘与写盘同在协程内按序跑在 IO 上。
                         appScope.launch {
+                            val prevYaml = withContext(Dispatchers.IO) {
+                                SchemeDirs.schemesInDir(DataManager.userDataDir)
+                            }
                             try {
+                                withContext(Dispatchers.IO) {
+                                    SchemaManager.saveEnabledIds(
+                                        prefs,
+                                        currentDir,
+                                        newEnabled.map { it.id },
+                                    )
+                                    SchemeDirs.writeDefaultCustomSchemaList(
+                                        DataManager.userDataDir,
+                                        newEnabled.map { it.id } + newAvailable.map { it.id },
+                                    )
+                                }
                                 EngineFactory.current()?.reload()
                                 val first = newEnabled.firstOrNull()
                                 if (first != null) {
@@ -2459,15 +2305,17 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                             } catch (e: Exception) {
                                 withContext(NonCancellable) {
                                     runCatching {
-                                        SchemaManager.saveEnabledIds(
-                                            prefs,
-                                            currentDir,
-                                            prevEnabled.map { it.id },
-                                        )
-                                        SchemeDirs.writeDefaultCustomSchemaList(
-                                            DataManager.userDataDir,
-                                            prevYaml,
-                                        )
+                                        withContext(Dispatchers.IO) {
+                                            SchemaManager.saveEnabledIds(
+                                                prefs,
+                                                currentDir,
+                                                prevEnabled.map { it.id },
+                                            )
+                                            SchemeDirs.writeDefaultCustomSchemaList(
+                                                DataManager.userDataDir,
+                                                prevYaml,
+                                            )
+                                        }
                                         EngineFactory.current()?.reload()
                                         prevEnabled.firstOrNull()?.let {
                                             EngineFactory.current()?.selectSchema(it.id)
@@ -3051,11 +2899,52 @@ private fun protectedKeptFiles(dir: File): List<String> =
     }.sorted()
 
 /**
+ * 解压前空间预检（IO 线程调用）：按 ZipFile 中央目录声明量估算解压总量，
+ * 与暂存所在分区（cacheDir）的可用空间比较；估算量 + 部署余量超过可用
+ * 空间时返回 false（调用方按既有 NO_SPACE 口径报错），否则返回 true。
+ * 分区口径：预检必须用 cacheDir 所在分区（暂存解压落在这里），不许用
+ * schemeDirsRoot 的分区（那是最终落盘分区，解压后终检才用它）。
+ * 估算局限：声明 size 为 -1 的条目（data-descriptor）按压缩大小计入，
+ * 压缩大小 ≤ 解压大小，故估算量是下限——预检只保证“估算都装不下时
+ * 一定失败”，不保证“预检通过就一定够”（终检仍按实际总体积把关）。
+ * 估算失败（zip 打不开、StatFs 读失败）时返回 true 放行，让解压阶段
+ * 的精确错误（NOT_ZIP / IO_ERROR / TOTAL_TOO_LARGE）说了算，不以
+ * 含糊的预检误报 NO_SPACE。
+ */
+private fun precheckExtractSpace(zipFile: File, cacheDir: File): Boolean {
+    val estimated = runCatching {
+        java.util.zip.ZipFile(zipFile).use { zf ->
+            var total = 0L
+            for (entry in zf.entries()) {
+                if (entry.isDirectory) continue
+                val declared = if (entry.size >= 0L) {
+                    entry.size
+                } else {
+                    entry.compressedSize.coerceAtLeast(0L)
+                }
+                total = if (Long.MAX_VALUE - total < declared) Long.MAX_VALUE else total + declared
+            }
+            total
+        }
+    }.getOrNull() ?: return true
+    val available = runCatching {
+        StatFs(cacheDir.path).availableBytes
+    }.getOrNull() ?: return true
+    val needed = if (Long.MAX_VALUE - estimated < SchemePackageImport.FREE_SPACE_MARGIN_BYTES) {
+        Long.MAX_VALUE
+    } else {
+        estimated + SchemePackageImport.FREE_SPACE_MARGIN_BYTES
+    }
+    return available >= needed
+}
+
+/**
  * 由临时 zip 构造安装规划（IO 线程调用）：解压 → 登记读回 → 目标目录
  * 现存文件盘点 → 规划。失败时暂存目录已由 extractZip 清掉或为空，调用方
  * 再调 cleanupImportFiles 兜底。包名由调用方从 SAF 显示名净化后传入
  * （临时 zip 文件名固定，不能作包名）。多目录模型下现存文件按目标独立
- * 目录盘点（新目录为空表，替换安装按目录内现存文件算）。
+ * 目录盘点（新目录为空表，替换安装按目录内现存文件算）；登记查找按
+ * 目标目录名过滤（见 planInstall 的 dir 参数）。
  */
 private fun buildImportPlan(
     context: Context,
@@ -3106,6 +2995,7 @@ private fun buildImportPlan(
             existingUserFiles = existingUser,
             existingSharedSchemeIds = existingSharedIds,
             registry = registry,
+            dir = targetDir.name,
         )
     ) {
         is PlanResult.Success -> ImportPlanOutcome.Ready(result.plan, extracted.entries)
