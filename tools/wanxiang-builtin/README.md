@@ -11,7 +11,7 @@
 
 优先用同目录的 `build-resource.sh` 一键打包（固定官方包下载地址与 sha256、固定排序与时间戳，输出可复现；脚本依赖 bash、curl、python3，大小与 sha256 校验均走 python3，不依赖 GNU coreutils）。手工流程等价如下：
 
-1. 取官方 [rime-wanxiang](https://github.com/amzxyz/rime-wanxiang) 的 **lite** 发布 zip（当前内置对应版本见包内 `shared/version.txt`，现为 18.1.7）。官方包为根目录平铺、没有 `shared/` 目录，重打包时整个目录树放入 `shared/`。
+1. 取官方 [rime-wanxiang](https://github.com/amzxyz/rime-wanxiang) 的 **lite** 发布 zip（当前内置对应版本见包内 `shared/version.txt`，现为 18.1.8）。官方包为根目录平铺、没有 `shared/` 目录，重打包时整个目录树放入 `shared/`。
 2. 解压后，用本目录四个文件覆盖 `shared/` 下的同名文件。
 3. 补入 `model/predict.marisa`（来源见下节），将整个目录树（`shared/`、`model/`）重新打包为 zip，放到 `app/src/main/assets/resource.zip`。
 4. 升 versionCode 后，App 启动时比对 MD5，有变化才解压覆盖旧方案（versionCode 未变时连 MD5 都不算，见下节换包纪律）；发版验包须逐项核对下述五处适配都在成品包内。
@@ -24,11 +24,11 @@
 
 ## 当前成品登记
 
-当前 `app/src/main/assets/resource.zip`（官方 lite 18.1.7 ＋ 本目录五处适配）：
+当前 `app/src/main/assets/resource.zip`（官方 lite 18.1.8 ＋ 本目录五处适配）：
 
-- 大小：57,397,578 字节
-- sha256：`7dc9cae09e296aecc909c074d79b9a63b2c42096874925c1be04bcc9af7a2648`
-- 登记日期：2026-10-22（build-resource.sh 产出，包内四文件与适配源逐字节复测一致）
+- 大小：57,396,535 字节
+- sha256：`971fcde47837786f8fefec9b6e9fad09d3d639c6960c836511859f04383cc199`
+- 登记日期：2026-10-25（build-resource.sh 产出，包内四文件与适配源逐字节复测一致）
 - 生成环境：Python 3.12.3 / zlib 1.3（deflate 输出与 zlib 实现有关，跨机器核对成品时连同此项一起比对）
 
 换包重打后必须同步更新此登记，否则成品无从审计。
