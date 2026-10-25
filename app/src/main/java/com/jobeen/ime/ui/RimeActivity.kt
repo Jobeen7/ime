@@ -7,24 +7,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
-import androidx.lifecycle.lifecycleScope
-import com.jobeen.ime.R
-import com.jobeen.ime.base.util.ToastUtil
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.KeyboardManager
-import com.jobeen.ime.data.manager.RimeSyncPrefs
-import com.jobeen.ime.data.manager.awaitSchemasReady
-import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
-import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
-import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.ui.screen.RimeScreen
 import com.jobeen.ime.ui.theme.ImeTheme
-import kotlinx.coroutines.launch
-import timber.log.Timber
 
 /**
  * RIME 页宿主：与设置 home 的 FAB 共用同一套部署/同步动作
@@ -41,8 +31,8 @@ class RimeActivity : ComponentActivity() {
             val themeMode = remember {
                 mutableIntStateOf(KeyboardManager.Theme.getMode(this))
             }
-            var deployRunning by remember { mutableStateOf(false) }
-            var syncRunning by remember { mutableStateOf(false) }
+            val deployRunning by EngineDeployState.running.collectAsStateWithLifecycle()
+            val syncRunning by FabSyncState.running.collectAsStateWithLifecycle()
             ImeTheme(themeMode = themeMode.intValue) {
                 RimeScreen(
                     onBack = { finish() },
@@ -51,99 +41,22 @@ class RimeActivity : ComponentActivity() {
                     // deploy()（会打断进行中的切换部署编译，见 MainActivity）。
                     // 此前这里 deploy() 一返回即 Toast 完成，是假完成：返回只
                     // 代表引擎刚启动，不代表编译编完。改为等方案表就绪再报完成。
-                    onDeploy = {
-                        if (deployRunning) return@RimeScreen
-                        if (EngineDeployState.isRunning()) {
-                            ToastUtil.showToast(getString(R.string.fab_deploy_busy))
-                            return@RimeScreen
-                        }
-                        val engine = EngineFactory.current()
-                        if (engine == null) {
-                            ToastUtil.showToast(getString(R.string.fab_deploy_failed))
-                            return@RimeScreen
-                        }
-                        deployRunning = true
-                        lifecycleScope.launch {
-                            runCatching { engine.reload() }
-                            val ready = awaitSchemasReady(
-                                poll = {
-                                    runCatching {
-                                        EngineFactory.current()?.schemasList()?.isNotEmpty() == true
-                                    }.getOrDefault(false)
-                                },
-                                timeoutMs = 600_000L,
-                                intervalMs = 2000L,
-                            )
-                            if (ready) {
-                                ToastUtil.showToast(getString(R.string.fab_deploy_done))
-                                RimeSyncPrefs.postNotice(
-                                    this@RimeActivity,
-                                    getString(R.string.fab_deploy_done),
-                                )
-                            } else {
-                                Timber.w("RIME deploy timed out waiting for schemas")
-                                ToastUtil.showToast(getString(R.string.fab_deploy_failed))
-                                RimeSyncPrefs.postNotice(
-                                    this@RimeActivity,
-                                    getString(R.string.fab_deploy_failed),
-                                )
-                            }
-                            deployRunning = false
-                        }
-                    },
+                    onDeploy = { FabActions.deploy(this@RimeActivity, appScope) },
                     syncRunning = syncRunning,
                     onSync = {
-                        if (syncRunning) return@RimeScreen
-                        if (!UserDictPrefs.isConfigured()) {
-                            ToastUtil.showToast(
-                                getString(R.string.fab_sync_not_configured),
-                            )
-                            startActivity(
-                                Intent(
-                                    this@RimeActivity,
-                                    UserDictActivity::class.java,
-                                ),
-                            )
-                            return@RimeScreen
-                        }
-                        syncRunning = true
-                        lifecycleScope.launch {
-                            try {
-                                val result = WebDavSync.syncSchemeDir(rimeSession)
-                                result.onSuccess { r ->
-                                    val msg = if (r.failedFiles.isEmpty()) {
-                                        getString(
-                                            R.string.fab_dir_sync_success,
-                                            r.uploaded,
-                                            r.downloaded,
-                                        )
-                                    } else {
-                                        getString(
-                                            R.string.fab_dir_sync_partial,
-                                            r.uploaded,
-                                            r.downloaded,
-                                            r.failedFiles.size,
-                                        )
-                                    }
-                                    ToastUtil.showToast(msg)
-                                    RimeSyncPrefs.postNotice(this@RimeActivity, msg)
-                                }.onFailure {
-                                    Timber.w(it, "RIME dir sync failed")
-                                    ToastUtil.showToast(getString(R.string.fab_sync_failed))
-                                    RimeSyncPrefs.postNotice(
+                        FabActions.sync(
+                            this@RimeActivity,
+                            appScope,
+                            sessionProvider = { rimeSession },
+                            onNotConfigured = {
+                                startActivity(
+                                    Intent(
                                         this@RimeActivity,
-                                        getString(R.string.fab_sync_failed),
-                                    )
-                                }
-                            } catch (e: Exception) {
-                                Timber.w(e, "RIME dir sync failed")
-                                ToastUtil.showToast(
-                                    getString(R.string.fab_sync_engine_not_ready),
+                                        UserDictActivity::class.java,
+                                    ),
                                 )
-                            } finally {
-                                syncRunning = false
-                            }
-                        }
+                            },
+                        )
                     },
                     onOpenManage = {
                         startActivity(
