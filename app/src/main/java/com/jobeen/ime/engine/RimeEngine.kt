@@ -65,6 +65,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
@@ -1781,6 +1782,52 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 不应再调 reload，见汇报残余项。
         EngineDeployState.setRunning(true)
         dispatchAction(Action.Reload)
+    }
+
+    // 部署等待互斥：同一时刻只允许一个 deployAndAwait 持有。
+    private val deployMutex = Mutex()
+
+    /**
+     * 执行一次全量部署并等待其返回。
+     * - timeoutMs <= 0 时直接返回 false，不启动部署。
+     * - deployMutex.tryLock() 抢不到返回 false；EngineDeployState 已在跑返回 false。
+     * - 置位 SchemeDeployState.isDeploying 与 EngineDeployState.setRunning(true)，finally 中复位并解锁。
+     * - 通过 sendJob 串行投递任务：deploy() -> joinMaintenanceThread()。
+     * - 使用 withTimeoutOrNull(timeoutMs) 等待：超时返回 false；调用方取消时 CancellationException 穿透。
+     * - CancellationException 不被吞掉（先 complete(false) 再重抛）；其他 Exception 视为失败返回 false。
+     * - 不打日志，不抛其它异常；返回值表示是否在时限内完成。
+     */
+    suspend fun deployAndAwait(timeoutMs: Long): Boolean {
+        if (timeoutMs <= 0) return false
+        if (!deployMutex.tryLock()) return false
+        if (EngineDeployState.isRunning()) {
+            deployMutex.unlock()
+            return false
+        }
+        SchemeDeployState.isDeploying = true
+        EngineDeployState.setRunning(true)
+        try {
+            val deferred = CompletableDeferred<Boolean>()
+            sendJob {
+                try {
+                    deploy()
+                    joinMaintenanceThread()
+                    deferred.complete(true)
+                } catch (e: CancellationException) {
+                    deferred.complete(false)
+                    throw e
+                } catch (e: Exception) {
+                    deferred.complete(false)
+                }
+            }
+            return withTimeoutOrNull(timeoutMs) {
+                deferred.await()
+            } ?: false
+        } finally {
+            SchemeDeployState.isDeploying = false
+            EngineDeployState.setRunning(false)
+            deployMutex.unlock()
+        }
     }
 
     //前端提交
