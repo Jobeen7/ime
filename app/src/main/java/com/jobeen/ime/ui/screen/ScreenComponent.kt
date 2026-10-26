@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -87,7 +88,9 @@ object ScreenComponent {
         Box(
             modifier = Modifier
                 .width(buttonWidth)
-                .height(32.dp)
+                // 与去定高后的 Button 同高（自然高、字号再大也不裁）：
+                // 最小 40dp（Material Button 自然高），内容更高时随内容长。
+                .defaultMinSize(minHeight = 40.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(containerColor),
         ) {

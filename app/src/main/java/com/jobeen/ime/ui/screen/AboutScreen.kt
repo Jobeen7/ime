@@ -454,7 +454,6 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                                 )
                                 downloadedFile != null -> Button(
                                     onClick = { tryInstall() },
-                                    modifier = Modifier.height(30.dp),
                                     shape = RoundedCornerShape(8.dp),
                                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
                                         horizontal = 10.dp,
@@ -468,7 +467,6 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                                 }
                                 else -> Button(
                                     onClick = { startDownload() },
-                                    modifier = Modifier.height(30.dp),
                                     shape = RoundedCornerShape(8.dp),
                                     contentPadding = androidx.compose.foundation.layout.PaddingValues(
                                         horizontal = 10.dp,

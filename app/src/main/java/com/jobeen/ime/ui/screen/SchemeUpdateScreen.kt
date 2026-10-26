@@ -343,7 +343,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         grammarLanguage != null -> Button(
                             onClick = { downloadGrammar(grammarLanguage!!) },
                             enabled = !updating && !updatePending,
-                            modifier = Modifier.height(32.dp),
                             shape = RoundedCornerShape(8.dp),
                         ) {
                             Text(stringResource(R.string.download), fontSize = rowSubFontSize)
@@ -360,19 +359,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                 UpdateInfoRow(
                     label = stringResource(R.string.schema_update_current_schema),
                     value = currentSchemaName.ifEmpty { "—" },
-                )
-                GroupDivider()
-                UpdateInfoRow(
-                    label = stringResource(R.string.schema_update_target),
-                    value = when (val t = updateTarget) {
-                        is WanxiangUpdateManager.UpdateTarget.Dir ->
-                            if (t.dirName == SchemeDirs.INITIAL_DIR) {
-                                stringResource(R.string.schema_dir_default_name)
-                            } else {
-                                t.dirName
-                            }
-                        else -> stringResource(R.string.schema_update_target_shared)
-                    },
                 )
                 GroupDivider()
                 UpdateInfoRow(
@@ -496,7 +482,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         )
                         Button(
                             onClick = { checkWanxiangUpdate() },
-                            modifier = Modifier.height(32.dp),
                             shape = RoundedCornerShape(8.dp),
                         ) {
                             Text(
@@ -514,7 +499,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     checkingUpdate -> Button(
                         onClick = {},
                         enabled = false,
-                        modifier = Modifier.height(32.dp),
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Text(
@@ -526,7 +510,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     info?.hasUpdate == true -> Button(
                         onClick = { startWanxiangUpdate(info) },
                         enabled = !grammarDownloading && !grammarPending,
-                        modifier = Modifier.height(32.dp),
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Text(
@@ -538,7 +521,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     updateSource !is WanxiangUpdateManager.UpdateSource.Wanxiang -> {}
                     else -> Button(
                         onClick = { checkWanxiangUpdate() },
-                        modifier = Modifier.height(32.dp),
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Text(

@@ -210,7 +210,6 @@ fun VoiceSettingsScreen(
                                 onClick = onClick,
                                 enabled = enabled,
                                 modifier = Modifier
-                                    .height(32.dp)
                                     .onSizeChanged {
                                         downloadBtnWidth = with(density) { it.width.toDp() }
                                     },
@@ -305,7 +304,6 @@ fun VoiceSettingsScreen(
                                 correctionStore.clear()
                                 correctionsCleared = true
                             },
-                            modifier = Modifier.height(32.dp),
                             shape = RoundedCornerShape(8.dp),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
                         ) {
