@@ -1519,6 +1519,8 @@ object SchemePackageImport {
      *   （回到装前无目录态）；
      * - 阶段 TARGET_MOVED（旧目录已移走、候选未就位）：备份移回目标、
      *   删候选与日志，恢复到完整旧版（不擅自补完换位，因为安装从未成功上报）；
+     *   备份移回失败时日志与备份/候选原样保留、不上报 restoredOld，
+     *   留待下次启动重试（绝不删日志销毁恢复记录）；
      * - 阶段 SWAPPED：已是完整新版，备份与日志原样保留（供回滚/清理用）；
      * - 未知阶段：按“目标在则删候选、目标缺失且备份在则备份移回”处置。
      * 绝不留“目标缺失且候选与备份都不在”的半吊子之外的状态：该情形
@@ -1550,7 +1552,10 @@ object SchemePackageImport {
                             RecoveredTransaction(parsed.operationId, restoredOld = true),
                         )
                     } else if (parsed.backup.exists()) {
-                        parsed.backup.renameTo(parsed.target)
+                        // 备份移回失败时绝不删日志：否则备份失去日志索引、
+                        // 后续启动不再认它。失败时整条状态原样保留
+                        // （不上报 restoredOld），留待下次启动重试。
+                        if (!parsed.backup.renameTo(parsed.target)) continue
                         if (parsed.candidate.exists()) parsed.candidate.deleteRecursively()
                         journal.delete()
                         results.add(

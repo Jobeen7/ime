@@ -821,6 +821,47 @@ class ImportTransactionTest {
     }
 
     @Test
+    fun recovery_targetMovedRenameFailed_keepsJournalAndBackupForRetry() {
+        val root = Files.createTempDirectory("import-tx-test").toFile()
+        try {
+            val roots = File(root, "dirs").apply { mkdirs() }
+            // 目标父路径被普通文件挡住：renameTo 必定返回 false，
+            // 且与权限/用户无关、可稳定复现移回失败。
+            val blocker = File(roots, "blocker").apply { writeText("not a dir") }
+            val target = File(blocker, "mydir")
+            val candidate = File(roots, ".install-op1").apply { mkdirs() }
+            File(candidate, "c.schema.yaml").writeText(schemaText("C"))
+            val backup = File(roots, ".backup-op1").apply { mkdirs() }
+            File(backup, "a.schema.yaml").writeText(schemaText("A"))
+            File(roots, ".install-op1.journal").writeText(
+                "operationId=op1\n" +
+                    "target=${target.absolutePath}\n" +
+                    "candidate=${candidate.absolutePath}\n" +
+                    "backup=${backup.absolutePath}\n" +
+                    "stage=TARGET_MOVED\n",
+            )
+            val failed = SchemePackageImport.recoverIncompleteTransactions(roots)
+            assertEquals(0, failed.size)
+            assertTrue(backup.exists())
+            assertEquals(schemaText("A"), File(backup, "a.schema.yaml").readText())
+            assertTrue(File(roots, ".install-op1.journal").exists())
+            assertTrue(candidate.exists())
+            // 挡路文件撤掉后下次启动重试：备份移回目标、日志与候选清掉。
+            blocker.delete()
+            blocker.mkdirs()
+            val retried = SchemePackageImport.recoverIncompleteTransactions(roots)
+            assertEquals(1, retried.size)
+            assertTrue(retried[0].restoredOld)
+            assertFalse(backup.exists())
+            assertFalse(candidate.exists())
+            assertFalse(File(roots, ".install-op1.journal").exists())
+            assertEquals(schemaText("A"), File(target, "a.schema.yaml").readText())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun recovery_swappedKeptThenSweepByPointer() {
         val root = Files.createTempDirectory("import-tx-test").toFile()
         try {
