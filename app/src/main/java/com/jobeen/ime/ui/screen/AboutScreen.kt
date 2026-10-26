@@ -507,16 +507,12 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                     title = stringResource(R.string.about_diag_export),
                     onClick = { scope.launch { exportDiag() } },
                     icon = Icons.Filled.BugReport,
-                    iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                    iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
                 GroupDivider()
                 NavRow(
                     title = stringResource(R.string.about_reset),
                     onClick = { if (!resetting) resetStep = 1 },
                     icon = Icons.Filled.Refresh,
-                    iconContainer = MaterialTheme.colorScheme.errorContainer,
-                    iconTint = MaterialTheme.colorScheme.onErrorContainer,
                     titleColor = MaterialTheme.colorScheme.error,
                 )
                 GroupDivider()
@@ -524,8 +520,6 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                     title = stringResource(R.string.licenses_index),
                     onClick = { showLicenses = true },
                     icon = Icons.Filled.Description,
-                    iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                    iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                 )
             }
             if (resetting) {

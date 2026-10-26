@@ -139,8 +139,6 @@ fun RimeScreen(
             GroupCard {
                 NavRow(
                     icon = Icons.Filled.RocketLaunch,
-                    iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                    iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                     title = stringResource(R.string.rime_deploy),
                     subtitle = if (deployRunning) {
                         stringResource(R.string.rime_deploy_running)
@@ -152,8 +150,6 @@ fun RimeScreen(
                 GroupDivider()
                 NavRow(
                     icon = Icons.Filled.Sync,
-                    iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                    iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                     title = stringResource(R.string.rime_sync),
                     subtitle = if (syncRunning) {
                         stringResource(R.string.rime_sync_running)
@@ -172,8 +168,6 @@ fun RimeScreen(
                         null
                     },
                     titleColor = MaterialTheme.colorScheme.error,
-                    iconContainer = MaterialTheme.colorScheme.errorContainer,
-                    iconTint = MaterialTheme.colorScheme.onErrorContainer,
                     onClick = { if (!resetting) resetStep = 1 },
                 )
             }
@@ -181,8 +175,6 @@ fun RimeScreen(
             GroupCard {
                 NavRow(
                     icon = Icons.Filled.List,
-                    iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                    iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                     title = stringResource(R.string.rime_manage),
                     onClick = onOpenManage,
                 )
