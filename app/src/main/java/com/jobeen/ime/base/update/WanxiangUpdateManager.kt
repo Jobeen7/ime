@@ -5,6 +5,8 @@ import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.ngram.DownloadGate
 import com.jobeen.ime.base.ngram.DownloadRecord
 import com.jobeen.ime.base.ngram.DownloadResult
+import com.jobeen.ime.base.ngram.UpdateImportGate
+import com.jobeen.ime.base.ngram.deployBlocksUpdate
 import com.jobeen.ime.base.ngram.gramFileInstallLock
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.engine.rime.data.DataManager
@@ -927,13 +929,20 @@ object WanxiangUpdateManager {
     /**
      * 下载并应用更新。防重入占位用跨下载器共用的 [DownloadGate]
      * （与语法模型单独下载共用一把，见该类注释）：[downloadAndApply]
-     * 入口第一行抢占，持有到整个函数结束（含在 updateMutex 上排队
+     * 入口抢占，持有到整个函数结束（含在 updateMutex 上排队
      * 等锁期间）。updateMutex 只保证串行、挡不住「排队重跑一遍」，
      * 且旧写法任何一次调用结束都会把运行状态置回 false，先结束者
      * 会让排队中的调用假复位；闸把「排队」也算作进行中，重复调用
      * 在入口即被拒，并与语法模型下载跨路互斥。
-     * @return 三态结果：被拒（已有任一路下载在跑）为
-     * [DownloadResult.BUSY]，与失败严格区分
+     * 交叉守门（先于一切状态置位与文件写入）：部署进行中（含
+     * 超时孤儿）或导入事务进行中时一律 BUSY，不触碰运行状态
+     * 与完成记录——被拒不得表现为失败；部署状态只在入口与换位
+     * 前各读一次（见 [downloadAndApplyLocked] 步骤 4 前的复核），
+     * 入口读不到导入换位阶段的部署（那时部署还没开始），故另
+     * 用 [UpdateImportGate] 与导入事务互斥。锁序固定：先交叉闸、
+     * 后 DownloadGate，释放反序；交叉闸被拒时尚未抢 DownloadGate。
+     * @return 三态结果：被拒（已有任一路下载在跑、部署进行中、
+     * 导入事务进行中）为 [DownloadResult.BUSY]，与失败严格区分
      */
     suspend fun downloadAndApply(
         prefs: android.content.SharedPreferences,
@@ -941,28 +950,40 @@ object WanxiangUpdateManager {
         cacheDir: File,
         onProgress: (UpdateProgress) -> Unit = {},
     ): DownloadResult {
-        if (!DownloadGate.tryAcquire()) {
-            Timber.w("已有大文件下载在进行中，忽略本次方案更新调用")
+        if (deployBlocksUpdate()) {
+            Timber.w("部署进行中，忽略本次方案更新调用")
             return DownloadResult.BUSY
         }
-        runningState.value = true
-        progressState.value = null
+        if (!UpdateImportGate.tryAcquire()) {
+            Timber.w("方案导入进行中，忽略本次方案更新调用")
+            return DownloadResult.BUSY
+        }
         try {
-            val ok = updateMutex.withLock {
-                downloadAndApplyLocked(prefs, info, cacheDir) { progress ->
-                    progressState.value = progress
-                    onProgress(progress)
-                }
+            if (!DownloadGate.tryAcquire()) {
+                Timber.w("已有大文件下载在进行中，忽略本次方案更新调用")
+                return DownloadResult.BUSY
             }
-            val result = if (ok) DownloadResult.SUCCESS else DownloadResult.FAILED
-            lastResultState.value = DownloadRecord(result, System.currentTimeMillis())
-            return result
-        } finally {
-            // 先复位状态再放闸：闸未放时无人能抢入并置位，
-            // 不会出现新调用的 true 被本处 false 覆盖
+            runningState.value = true
             progressState.value = null
-            runningState.value = false
-            DownloadGate.release()
+            try {
+                val ok = updateMutex.withLock {
+                    downloadAndApplyLocked(prefs, info, cacheDir) { progress ->
+                        progressState.value = progress
+                        onProgress(progress)
+                    }
+                }
+                val result = if (ok) DownloadResult.SUCCESS else DownloadResult.FAILED
+                lastResultState.value = DownloadRecord(result, System.currentTimeMillis())
+                return result
+            } finally {
+                // 先复位状态再放闸：闸未放时无人能抢入并置位，
+                // 不会出现新调用的 true 被本处 false 覆盖
+                progressState.value = null
+                runningState.value = false
+                DownloadGate.release()
+            }
+        } finally {
+            UpdateImportGate.release()
         }
     }
 
@@ -1094,7 +1115,22 @@ object WanxiangUpdateManager {
             // （否则记录会对上另一路的文件）。
             // 锁序固定：外层 updateMutex 已先持有，本锁恒在其内层
             gramFileInstallLock.lock()
+            // 换位前复核：下载中途部署启动时，入口守门已拦不住
+            // 本次下载；此处是动现用文件前的最后一道关——部署
+            // 进行中（含超时孤儿）即放弃切换与记录，staging 由
+            // 外层 finally 的启动清理清掉，现用词库与记录保持
+            // 旧的自洽状态，下次更新可重跑。检查与 rename 间无
+            // 挂起点；本闸此时由本次更新自己持有，故此处只读
+            // 部署状态、不读本闸。残余窗口只剩检查到 rename 间
+            // 另一线程刚启动部署的瞬间（无挂起、无 IO，极短），
+            // 部署侧若要彻底关掉它，须在部署入口同样读本闸
+            // （见汇报未决项）。
+            var deployAborted = false
             try {
+            if (deployBlocksUpdate()) {
+                Timber.w("部署进行中，放弃本次词库切换")
+                deployAborted = true
+            } else {
             extractDir?.let { staging ->
                 // 上一轮残留 trash 不得挡住本次切换：切换已完成时它
                 // 只是旧副本，就此作废
@@ -1135,9 +1171,11 @@ object WanxiangUpdateManager {
                     }
                 }
             }.apply()
+            }
             } finally {
                 gramFileInstallLock.unlock()
             }
+            if (deployAborted) return@withContext false
             true
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

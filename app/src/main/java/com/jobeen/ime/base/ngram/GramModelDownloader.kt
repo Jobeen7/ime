@@ -57,6 +57,50 @@ object DownloadGate {
 }
 
 /**
+ * 词库更新与方案导入事务的交叉互斥闸：更新两路（方案更新、
+ * 语法模型单独下载）在入口抢占并持有至整个函数结束；方案导入
+ * 事务（[com.jobeen.ime.ui.screen.SchemaSettingsScreen] 的 runImport）
+ * 同样在事务入口抢占并持有至事务结束。任一方持有期间另一方
+ * 入口即被拒（BUSY/直接返回），从而关掉「导入换位前部署标志
+ * 尚未置位」的时间窗：只查 EngineDeployState 关不住导入的
+ * 解压/换位阶段——那时部署还没开始，更新却已能把新 dicts
+ * 换进随后被导入换位盖回或失败回滚删掉的目标目录。
+ * 注意：更新持有本闸期间，换位前的部署复核只读部署状态、
+ * 不读本闸（本闸此时正是更新自己持有，读它恒为真）。
+ * 切换/管理页部署不持本闸：其部署全程置位 EngineDeployState，
+ * 更新入口与换位前复核读部署状态即可覆盖。
+ */
+object UpdateImportGate {
+    private val held = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    /** 抢占交叉闸：成功返回 true 并持有至 [release]；已有对方持有返回 false */
+    fun tryAcquire(): Boolean = held.compareAndSet(false, true)
+
+    fun release() {
+        held.set(false)
+    }
+
+    /** 当前是否有更新或导入事务持有交叉闸（同步读，供界面守门即时判断） */
+    val isHeld: Boolean get() = held.get()
+}
+
+/**
+ * 部署进行中是否应挡住词库更新（含超时孤儿仍在后台跑）：
+ * 部署作业与更新换位互斥——部署进行中更新换位会撞上部署
+ * 的编译读盘，部署失败回滚更会把刚换上的新 dicts 连同目标
+ * 目录一起删掉、而偏好仍记新版本。纯函数口径供测试钉住；
+ * 无参版读实时状态，供两路下载入口与换位前复核调用。
+ */
+internal fun deployBlocksUpdate(deployRunning: Boolean, orphanRunning: Boolean): Boolean =
+    deployRunning || orphanRunning
+
+internal fun deployBlocksUpdate(): Boolean =
+    deployBlocksUpdate(
+        com.jobeen.ime.data.manager.EngineDeployState.isRunning(),
+        com.jobeen.ime.data.manager.EngineDeployState.isOrphanRunning(),
+    )
+
+/**
  * 大文件下载的三态结果：抢闸被拒（已有下载在跑，BUSY）与真正失败
  * （FAILED）严格区分——界面对 BUSY 不得置失败标志（旧实现被拒返回
  * false 被当失败，第一路还在下载、界面却报「下载失败」）。
@@ -132,26 +176,43 @@ object GramModelDownloader {
         language: String,
         onProgress: (downloaded: Long, total: Long) -> Unit = { _, _ -> },
     ): DownloadResult {
-        if (!DownloadGate.tryAcquire()) {
-            Timber.w("已有大文件下载在进行中，忽略本次语法模型下载调用")
+        // 交叉守门（先于一切状态置位与文件写入）：部署进行中
+        // （含超时孤儿）或导入事务进行中时一律 BUSY，不触碰
+        // 运行状态与完成记录——被拒不得表现为失败。锁序固定：
+        // 先交叉闸、后 DownloadGate，释放反序；交叉闸被拒时
+        // 尚未抢 DownloadGate，无需释放它。
+        if (deployBlocksUpdate()) {
+            Timber.w("部署进行中，忽略本次语法模型下载调用")
             return DownloadResult.BUSY
         }
-        runningState.value = true
-        progressState.value = 0f
+        if (!UpdateImportGate.tryAcquire()) {
+            Timber.w("方案导入进行中，忽略本次语法模型下载调用")
+            return DownloadResult.BUSY
+        }
         try {
-            val ok = downloadInternal(language) { downloaded, total ->
-                progressState.value =
-                    if (total > 0L) downloaded.toFloat() / total.toFloat() else 0f
-                onProgress(downloaded, total)
+            if (!DownloadGate.tryAcquire()) {
+                Timber.w("已有大文件下载在进行中，忽略本次语法模型下载调用")
+                return DownloadResult.BUSY
             }
-            val result = if (ok) DownloadResult.SUCCESS else DownloadResult.FAILED
-            lastResultState.value = DownloadRecord(result, System.currentTimeMillis())
-            return result
+            runningState.value = true
+            progressState.value = 0f
+            try {
+                val ok = downloadInternal(language) { downloaded, total ->
+                    progressState.value =
+                        if (total > 0L) downloaded.toFloat() / total.toFloat() else 0f
+                    onProgress(downloaded, total)
+                }
+                val result = if (ok) DownloadResult.SUCCESS else DownloadResult.FAILED
+                lastResultState.value = DownloadRecord(result, System.currentTimeMillis())
+                return result
+            } finally {
+                // 先复位状态再放闸：闸未放时无人能抢入并置位，
+                // 不会出现新调用的 true 被本处 false 覆盖
+                runningState.value = false
+                DownloadGate.release()
+            }
         } finally {
-            // 先复位状态再放闸：闸未放时无人能抢入并置位，
-            // 不会出现新调用的 true 被本处 false 覆盖
-            runningState.value = false
-            DownloadGate.release()
+            UpdateImportGate.release()
         }
     }
 
@@ -213,10 +274,21 @@ object GramModelDownloader {
         // 不再抛未捕获异常穿透到调用方——旧实现 check() 在任何 try
         // 之外，失败即崩进程且调用方的下载中标志永不复位
         val renamed = gramFileInstallLock.withLock {
-            val ok = partial.renameTo(target)
-            // rename 后 fsync 目录，让这次替换在断电后依然成立
-            if (ok) syncDirectory(target.parentFile)
-            ok
+            // 换位前复核：下载中途部署启动时，入口守门已拦不住
+            // 本次下载；此处是落盘前的最后一道关——部署进行中
+            // （含超时孤儿）即放弃安装，半成品由调用方删掉，
+            // 现用模型与记录保持旧的自洽状态。检查与 rename 间
+            // 无挂起点；本闸（UpdateImportGate）此时由本次下载
+            // 自己持有，故此处只读部署状态、不读本闸。
+            if (deployBlocksUpdate()) {
+                Timber.w("部署进行中，放弃本次语法模型安装")
+                false
+            } else {
+                val ok = partial.renameTo(target)
+                // rename 后 fsync 目录，让这次替换在断电后依然成立
+                if (ok) syncDirectory(target.parentFile)
+                ok
+            }
         }
         if (!renamed) {
             Timber.w("Failed to finalize ngram model: %s", target.absolutePath)

@@ -50,6 +50,7 @@ import com.jobeen.ime.base.ngram.DownloadResult
 import com.jobeen.ime.base.ngram.GramModelDownloader
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.EngineFactory
+import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
@@ -95,6 +96,13 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
 
     var updateInfo by remember { mutableStateOf<WanxiangUpdateManager.UpdateInfo?>(null) }
     val updating by WanxiangUpdateManager.isRunning.collectAsStateWithLifecycle()
+    // 交叉守门：部署进行中（含超时孤儿）时更新页不启动检查/
+    // 下载——部署失败回滚会删刚换上的新 dicts，偏好却已记新版，
+    // 此后更新入口不再出现。管理器入口与换位前复核是强制关，
+    // 此处订阅只决定按钮可用态与入口早退（防误触）。
+    val deployRunning by EngineDeployState.running.collectAsStateWithLifecycle()
+    val orphanRunning by EngineDeployState.orphanRunning.collectAsStateWithLifecycle()
+    val deployBusy = deployRunning || orphanRunning
     val updateProgress by WanxiangUpdateManager.progress.collectAsStateWithLifecycle()
     val updateResult by WanxiangUpdateManager.lastResult.collectAsStateWithLifecycle()
     var updateResultSeenAtMs by remember { mutableLongStateOf(0L) }
@@ -132,6 +140,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
     fun downloadGrammar(language: String) {
         if (grammarPending || updatePending) return
         if (GramModelDownloader.isRunning.value || WanxiangUpdateManager.isRunning.value) return
+        if (EngineDeployState.isRunning() || EngineDeployState.isOrphanRunning()) return
         grammarPending = true
         grammarResultSeenAtMs = System.currentTimeMillis()
         val workScope =
@@ -139,7 +148,11 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
         workScope.launch {
             try {
                 if (GramModelDownloader.download(language) == DownloadResult.SUCCESS) {
-                    EngineFactory.current()?.reload()
+                    // 部署进行中不 reload：那会把进行中的全量编译
+                    // 推倒重来；在途部署编的即是刚落盘的内容。
+                    if (!EngineDeployState.isRunning() && !EngineDeployState.isOrphanRunning()) {
+                        EngineFactory.current()?.reload()
+                    }
                 }
             } finally {
                 grammarPending = false
@@ -150,6 +163,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
     fun checkWanxiangUpdate() {
         if (updatePending || checkingUpdate) return
         if (WanxiangUpdateManager.isRunning.value) return
+        if (EngineDeployState.isRunning() || EngineDeployState.isOrphanRunning()) return
         val wanxiangSource =
             updateSource as? WanxiangUpdateManager.UpdateSource.Wanxiang ?: return
         WanxiangUpdateManager.ensureVersionHousekeeping(context)
@@ -172,6 +186,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
     fun startWanxiangUpdate(info: WanxiangUpdateManager.UpdateInfo) {
         if (updatePending || grammarPending) return
         if (WanxiangUpdateManager.isRunning.value || GramModelDownloader.isRunning.value) return
+        if (EngineDeployState.isRunning() || EngineDeployState.isOrphanRunning()) return
         updatePending = true
         updateResultSeenAtMs = System.currentTimeMillis()
         updateCheckFailed = false
@@ -185,7 +200,11 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     context.cacheDir,
                 )
                 if (result == DownloadResult.SUCCESS) {
-                    EngineFactory.current()?.reload()
+                    // 部署进行中不 reload：理由同 downloadGrammar；
+                    // 在途部署编的即是刚换上的内容。
+                    if (!EngineDeployState.isRunning() && !EngineDeployState.isOrphanRunning()) {
+                        EngineFactory.current()?.reload()
+                    }
                     (updateSource as? WanxiangUpdateManager.UpdateSource.Wanxiang)?.let { source ->
                         WanxiangUpdateManager.checkForUpdates(updatePrefs, updateTarget, source)
                             .onSuccess { refreshed ->
@@ -342,7 +361,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         grammarDownloading -> ProgressButton(grammarProgress)
                         grammarLanguage != null -> Button(
                             onClick = { downloadGrammar(grammarLanguage!!) },
-                            enabled = !updating && !updatePending,
+                            enabled = !updating && !updatePending && !deployBusy,
                             shape = RoundedCornerShape(8.dp),
                         ) {
                             Text(stringResource(R.string.download), fontSize = rowSubFontSize)
@@ -509,7 +528,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     }
                     info?.hasUpdate == true -> Button(
                         onClick = { startWanxiangUpdate(info) },
-                        enabled = !grammarDownloading && !grammarPending,
+                        enabled = !grammarDownloading && !grammarPending && !deployBusy,
                         shape = RoundedCornerShape(8.dp),
                     ) {
                         Text(

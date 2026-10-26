@@ -100,6 +100,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.jobeen.ime.R
+import com.jobeen.ime.base.ngram.DownloadGate
+import com.jobeen.ime.base.ngram.GramModelDownloader
+import com.jobeen.ime.base.ngram.UpdateImportGate
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.rime.core.RimeConfig
@@ -182,6 +185,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         mutableStateOf<Map<String, SchemeSwitchPolicy.SchemeSource>>(emptyMap())
     }
     val scope = rememberCoroutineScope()
+    /**
+     * 更新/导入交叉忙：更新两路任一在跑，或任一事务持有交叉闸
+     * （更新两路入口与导入事务共用 [UpdateImportGate] 互斥）。
+     * 导入/切换/下载入口据此拒入——只查部署状态关不住更新：
+     * 更新换位会撞上导入的解压/换位/失败回滚，偏好记新版而
+     * 磁盘被盖回旧词库后不再有更新入口（记录优先口径）。
+     */
+    fun updateBusy(): Boolean =
+        WanxiangUpdateManager.isRunning.value ||
+            GramModelDownloader.isRunning.value ||
+            DownloadGate.isBusy ||
+            UpdateImportGate.isHeld
     // ---- 导入：SAF 选 zip / 下载完成 → 直接导入新目录（无确认页） ----
     // importBusy 时 Scaffold 内容切到等待页；失败只 toast，不留错误页。
     // 导入落盘目标是独立新目录（同名合并覆盖）；登记不再写入（只读
@@ -381,6 +396,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             ToastUtil.showToast(context.getString(R.string.fab_deploy_busy))
             return false
         }
+        if (updateBusy()) {
+            ToastUtil.showToast(context.getString(R.string.schema_update_busy))
+            return false
+        }
         val prevDir = currentDir
         val prevOrder = enabledSchemas.map { it.id }
         dirSwitching = true
@@ -483,6 +502,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
      * 调用方负责 importBusy 的置位与复位、暂存 zip 的删除。
      */
     suspend fun runImport(zipFile: File, fallbackName: String) {
+        // 交叉互斥：整个导入事务（解压/换位/部署/失败回滚）持有
+        // 交叉闸，更新两路入口抢不到即 BUSY；反之更新进行中时
+        // 本处抢闸失败即整单放弃——换位与回滚会删/盖目标目录，
+        // 绝不能与更新换位交错。抢闸失败不置失败 toast 之外的
+        // 状态：调用方的 importBusy 由其 finally 复位。
+        if (!UpdateImportGate.tryAcquire()) {
+            ToastUtil.showToast(context.getString(R.string.schema_update_busy))
+            return
+        }
+        try {
         // 部署失败回滚用：导入前指针与镜像（与切换失败同口径）。
         val prevDir = currentDir
         val prevOrder = enabledSchemas.map { it.id }
@@ -527,6 +556,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             ToastUtil.showToast(context.getString(importFailureString(outcome.failure)))
         }
         loadSchemas()
+        } finally {
+            UpdateImportGate.release()
+        }
     }
 
     /**
@@ -543,7 +575,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
      * 两者都是 toast、仅文案不同，不影响导入安全。
      */
     fun runImportPick(uri: Uri) {
-        if (importBusy || EngineDeployState.isRunning() || dirSwitching) return
+        if (importBusy || EngineDeployState.isRunning() || dirSwitching || updateBusy()) return
         importBusy = true
         scope.launch {
             val tmpZip = File(context.cacheDir, IMPORT_TMP_ZIP_NAME)
@@ -749,7 +781,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         url: String,
         headers: List<Pair<String, String>>,
     ) {
-        if (downloadRunning || importBusy || EngineDeployState.isRunning() || dirSwitching) return
+        if (downloadRunning || importBusy || EngineDeployState.isRunning() || dirSwitching || updateBusy()) return
         downloadRunning = true
         downloadError = null
         downloadProgressBytes = 0L
