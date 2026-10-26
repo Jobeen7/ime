@@ -517,6 +517,15 @@ object BackupManager {
         return key.startsWith(prefix) && key.length > prefix.length
     }
 
+    /**
+     * 整表跳过回写的文件：设备本地表（见 DEVICE_LOCAL_PREFS）与
+     * 现行多目录状态文件 scheme_dirs。调用方必须在循环开头、
+     * 创建 editor 之前判断——一旦 editor.clear() 执行，跳过已无意义。
+     * （字面名 scheme_dirs，不跟随常量改名，与 isLegacyMultiDirPref 同口径。）
+     */
+    internal fun isSkippedPrefsFile(name: String): Boolean =
+        name in DEVICE_LOCAL_PREFS || name == "scheme_dirs"
+
     private suspend fun applyPayload(parsed: ParsedBackup) {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
@@ -552,10 +561,13 @@ object BackupManager {
 
         // —— prefs 整表覆盖（先清后写，与备份时点的一致状态）
         for ((name, entries) in parsed.prefs) {
-            // 设备本地状态偏好跳过回写（见 DEVICE_LOCAL_PREFS，含
-            // WebDAV 整表）：备份里的下载记录/同步配置与本机实际
-            // 状态无关，整表覆盖回去会让本机状态被别台设备顶掉
-            if (name in DEVICE_LOCAL_PREFS) continue
+            // 整表跳过的文件根本不碰：循环开头 continue，绝不走到
+            // 下面的 editor.clear()。scheme_dirs 是现行多目录状态
+            // （current_dir / migrated_to_dirs），不是旧残留——先
+            // clear 再逐条跳过会把它清空，且回滚回放走同一路径
+            // 同样救不回来；与 DEVICE_LOCAL_PREFS 的“整表跳过
+            // 不碰”口径一致。
+            if (isSkippedPrefsFile(name)) continue
             val editor = appContext.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
             editor.clear()
             for ((key, value) in entries) {
