@@ -1499,9 +1499,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             } else {
                 // 已启用列表：一张分组卡片，行只留名 + 灰字 id，无芯片、
                 // 无默认标记；行不可点按、仅展示，勾选与排序都在方案
-                // 列表编辑页确认。当前方案由列表首行高亮表达（首行底色
-                // + 无障碍状态描述，不另立当前卡、不加标签）；
-                // loadSchemas 已把当前方案移到首位。
+                // 列表编辑页确认。当前方案排首位（loadSchemas 已把
+                // 当前方案移到首位），无障碍状态描述标明，不用底色
+                // 高亮区分。
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
@@ -1521,13 +1521,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                             stateDescription = "当前方案"
                                         }
                                     }
-                                    .background(
-                                        if (isCurrentRow) {
-                                            MaterialTheme.colorScheme.primaryContainer
-                                        } else {
-                                            Color.Transparent
-                                        },
-                                    )
                                     .padding(horizontal = 16.dp, vertical = 12.dp),
                                 verticalAlignment = Alignment.CenterVertically,
                             ) {
@@ -1539,11 +1532,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                         fontWeight = FontWeight.Medium,
                                         maxLines = 1,
                                         overflow = TextOverflow.Ellipsis,
-                                        color = if (isCurrentRow) {
-                                            MaterialTheme.colorScheme.onPrimaryContainer
-                                        } else {
-                                            MaterialTheme.colorScheme.onSurface
-                                        },
+                                        color = MaterialTheme.colorScheme.onSurface,
                                     )
                                     if (schema.name.isNotBlank()) {
                                         Spacer(Modifier.height(4.dp))
@@ -1551,12 +1540,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                             schema.id,
                                             fontSize = 14.sp,
                                             lineHeight = 20.sp,
-                                            color = if (isCurrentRow) {
-                                                MaterialTheme.colorScheme.onPrimaryContainer
-                                                    .copy(alpha = 0.7f)
-                                            } else {
-                                                MaterialTheme.colorScheme.onSurfaceVariant
-                                            },
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
                                         )
