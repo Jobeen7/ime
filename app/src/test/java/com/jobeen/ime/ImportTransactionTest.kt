@@ -862,6 +862,45 @@ class ImportTransactionTest {
     }
 
     @Test
+    fun recovery_targetMovedWithRebuiltTarget_cleansOrphanBackup() {
+        val root = Files.createTempDirectory("import-tx-test").toFile()
+        try {
+            val roots = File(root, "dirs").apply { mkdirs() }
+            // 同进程重试导入成功后的残留态：目标已是新内容，
+            // 旧 TARGET_MOVED 日志＋旧备份＋旧候选仍在。
+            val target = File(roots, "mydir").apply { mkdirs() }
+            File(target, "c.schema.yaml").writeText(schemaText("C"))
+            val candidate = File(roots, ".install-op1").apply { mkdirs() }
+            File(candidate, "c.schema.yaml").writeText(schemaText("C"))
+            val backup = File(roots, ".backup-op1").apply { mkdirs() }
+            File(backup, "a.schema.yaml").writeText(schemaText("A"))
+            File(backup, "userdict.txt").writeText("old-words")
+            File(roots, ".install-op1.journal").writeText(
+                "operationId=op1\n" +
+                    "target=${target.absolutePath}\n" +
+                    "candidate=${candidate.absolutePath}\n" +
+                    "backup=${backup.absolutePath}\n" +
+                    "stage=TARGET_MOVED\n",
+            )
+            val results = SchemePackageImport.recoverIncompleteTransactions(roots)
+            assertEquals(1, results.size)
+            assertTrue(results[0].restoredOld)
+            assertFalse(candidate.exists())
+            assertFalse(File(roots, ".install-op1.journal").exists())
+            assertFalse(backup.exists())
+            assertEquals(
+                0,
+                roots.listFiles()?.count { it.name.startsWith(".backup-") } ?: 0,
+            )
+            // 新目标原样保留。
+            assertEquals(schemaText("C"), File(target, "c.schema.yaml").readText())
+            assertEquals(0, SchemePackageImport.sweepSwappedBackups(roots, "other"))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun recovery_swappedKeptThenSweepByPointer() {
         val root = Files.createTempDirectory("import-tx-test").toFile()
         try {

@@ -1521,6 +1521,9 @@ object SchemePackageImport {
      *   删候选与日志，恢复到完整旧版（不擅自补完换位，因为安装从未成功上报）；
      *   备份移回失败时日志与备份/候选原样保留、不上报 restoredOld，
      *   留待下次启动重试（绝不删日志销毁恢复记录）；
+     * - 目标已存在时（任一非 SWAPPED 阶段）：删候选与日志；若是
+     *   TARGET_MOVED 且备份还在，备份随日志一并清掉——目标已重建，
+     *   旧备份已无人认领（sweep 只认 SWAPPED），不删即成永久孤儿；
      * - 阶段 SWAPPED：已是完整新版，备份与日志原样保留（供回滚/清理用）；
      * - 未知阶段：按“目标在则删候选、目标缺失且备份在则备份移回”处置。
      * 绝不留“目标缺失且候选与备份都不在”的半吊子之外的状态：该情形
@@ -1546,6 +1549,16 @@ object SchemePackageImport {
                 }
                 else -> {
                     if (parsed.target.exists()) {
+                        // TARGET_MOVED 且目标已重建（同进程重试导入成功之
+                        // 后）：旧备份已无人认领——sweep 只认 SWAPPED，本
+                        // 分支删日志后它即成永久孤儿，故随日志一并清掉。
+                        // 删不动则整条日志原样保留、下次启动重试。
+                        if (parsed.stage == JournalStage.TARGET_MOVED.name &&
+                            parsed.backup.exists()
+                        ) {
+                            parsed.backup.deleteRecursively()
+                            if (parsed.backup.exists()) continue
+                        }
                         if (parsed.candidate.exists()) parsed.candidate.deleteRecursively()
                         journal.delete()
                         results.add(
