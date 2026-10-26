@@ -2,6 +2,7 @@
 
 package com.jobeen.ime
 
+import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.ImportFailure
 import com.jobeen.ime.data.manager.ImportOutcome
 import com.jobeen.ime.data.manager.MAX_IMPORT_ZIP_BYTES
@@ -9,6 +10,7 @@ import com.jobeen.ime.data.manager.SchemeEnabled
 import com.jobeen.ime.data.manager.determineDirName
 import com.jobeen.ime.data.manager.extractZip
 import com.jobeen.ime.data.manager.importPackage
+import com.jobeen.ime.data.manager.injectOptionsSegments
 import com.jobeen.ime.data.manager.injectT9Fields
 import com.jobeen.ime.data.manager.isProtectedEntry
 import com.jobeen.ime.data.manager.stripTopDir
@@ -267,7 +269,7 @@ class SchemeImportTest {
                 setCurrentDir = { pointer = it },
                 deploy = { timeout ->
                     deployTimeout = timeout
-                    true
+                    DeployAwaitResult.COMPLETED
                 },
                 selectSchema = { selected = it },
             )
@@ -312,7 +314,7 @@ class SchemeImportTest {
                 sharedDir = sharedDir,
                 writeMirror = { mirrored = it },
                 setCurrentDir = {},
-                deploy = { true },
+                deploy = { DeployAwaitResult.COMPLETED },
                 selectSchema = {},
             )
             assertTrue(outcome is ImportOutcome.Success)
@@ -337,7 +339,7 @@ class SchemeImportTest {
                 sharedDir = sharedDir,
                 writeMirror = {},
                 setCurrentDir = {},
-                deploy = { true },
+                deploy = { DeployAwaitResult.COMPLETED },
                 selectSchema = {},
             )
             assertEquals(
@@ -362,7 +364,7 @@ class SchemeImportTest {
                 sharedDir = sharedDir,
                 writeMirror = {},
                 setCurrentDir = {},
-                deploy = { true },
+                deploy = { DeployAwaitResult.COMPLETED },
                 selectSchema = {},
             )
             assertEquals(ImportOutcome.Failed(ImportFailure.NOT_ZIP), outcome)
@@ -383,7 +385,7 @@ class SchemeImportTest {
                 sharedDir = sharedDir,
                 writeMirror = {},
                 setCurrentDir = {},
-                deploy = { true },
+                deploy = { DeployAwaitResult.COMPLETED },
                 selectSchema = {},
             )
             assertEquals(ImportOutcome.Failed(ImportFailure.NO_SCHEMA), outcome)
@@ -410,13 +412,205 @@ class SchemeImportTest {
                 sharedDir = sharedDir,
                 writeMirror = {},
                 setCurrentDir = { pointer = it },
-                deploy = { false },
+                deploy = { DeployAwaitResult.FAILED },
                 selectSchema = { selected = it },
             )
             assertEquals(ImportOutcome.Failed(ImportFailure.DEPLOY_FAILED), outcome)
             assertEquals("newpkg", pointer)
             assertEquals(null, selected)
             assertTrue(File(File(schemeDirsRoot, "newpkg"), "default.custom.yaml").isFile)
+        }
+    }
+
+    @Test
+    fun injectT9Fields_t9i_addsCandidateKind() {
+        runWithTempDir { root ->
+            val file = File(root, "wanxiang_t9i.schema.yaml")
+            file.writeText(
+                "schema:\n" +
+                    "  schema_id: wanxiang_t9i\n" +
+                    "  name: \"t9i\"\n"
+            )
+            val result = injectT9Fields(root, listOf("wanxiang_t9i"))
+            assertEquals(1, result.injected)
+            assertTrue(result.skipped.isEmpty())
+            val text = file.readText()
+            assertTrue(text.contains("  layout: \"T9\"\n"))
+            // candidateKind 为段尾追加的最后一行（输入尾空行被段内
+            // 空行消耗），文件末尾无换行，故不断言尾换行。
+            assertTrue(text.contains("  candidateKind: \"T9PinYin\""))
+        }
+    }
+
+    @Test
+    fun injectOptionsSegments_english_missingSegment_appendedWithEnglishLocks() {
+        runWithTempDir { root ->
+            val file = File(root, "wanxiang_english.schema.yaml")
+            file.writeText(
+                "schema:\n" +
+                    "  schema_id: wanxiang_english\n" +
+                    "  name: \"english\"\n"
+            )
+            val result = injectOptionsSegments(root, listOf("wanxiang_english"))
+            assertEquals(1, result.injected)
+            assertTrue(result.skipped.isEmpty())
+            assertTrue(
+                file.readText().contains(
+                    "options:\n" +
+                        "  - name: traditional_chinese_enabled\n" +
+                        "    key: s2t\n" +
+                        "    keys: [s2s, s2t, s2hk, s2tw]\n" +
+                        "    lock: true\n" +
+                        "    value: false\n" +
+                        "  - name: emoji_enabled\n" +
+                        "    key: emoji\n" +
+                        "    keys: [emoji]\n" +
+                        "    lock: false\n" +
+                        "    value: false\n" +
+                        "  - name: ascii_mode_enabled\n" +
+                        "    key: ascii_mode\n" +
+                        "    keys: [ascii_mode]\n" +
+                        "    lock: false\n" +
+                        "    value: false"
+                )
+            )
+        }
+    }
+
+    @Test
+    fun injectOptionsSegments_t9_wrongLockCorrected_unknownItemPreserved() {
+        runWithTempDir { root ->
+            val file = File(root, "wanxiang_t9.schema.yaml")
+            file.writeText(
+                "schema:\n" +
+                    "  schema_id: wanxiang_t9\n" +
+                    "  name: \"t9\"\n" +
+                    "options:\n" +
+                    "  - name: ascii_mode_enabled\n" +
+                    "    key: ascii_mode\n" +
+                    "    keys: [ascii_mode]\n" +
+                    "    lock: false\n" +
+                    "    value: false\n" +
+                    "  - name: some_other\n" +
+                    "    key: other\n" +
+                    "    lock: true\n"
+            )
+            val result = injectOptionsSegments(root, listOf("wanxiang_t9"))
+            assertEquals(1, result.injected)
+            val text = file.readText()
+            // t9 的 ascii 应为 lock:true（错锁纠正），未知条目原样保留。
+            assertTrue(
+                text.contains(
+                    "  - name: ascii_mode_enabled\n" +
+                        "    key: ascii_mode\n" +
+                        "    keys: [ascii_mode]\n" +
+                        "    lock: true\n" +
+                        "    value: false"
+                )
+            )
+            assertTrue(
+                text.contains(
+                    "  - name: some_other\n" +
+                        "    key: other\n" +
+                        "    lock: true\n"
+                )
+            )
+            // 缺失的 trad/emoji 两项补齐。
+            assertTrue(text.contains("  - name: traditional_chinese_enabled\n"))
+            assertTrue(text.contains("  - name: emoji_enabled\n"))
+        }
+    }
+
+    @Test
+    fun injectOptionsSegments_alreadyCorrect_unchanged() {
+        runWithTempDir { root ->
+            val file = File(root, "wanxiang_english.schema.yaml")
+            val original =
+                "schema:\n" +
+                    "  schema_id: wanxiang_english\n" +
+                    "  name: \"english\"\n" +
+                    "options:\n" +
+                    "  - name: traditional_chinese_enabled\n" +
+                    "    key: s2t\n" +
+                    "    keys: [s2s, s2t, s2hk, s2tw]\n" +
+                    "    lock: true\n" +
+                    "    value: false\n" +
+                    "  - name: emoji_enabled\n" +
+                    "    key: emoji\n" +
+                    "    keys: [emoji]\n" +
+                    "    lock: false\n" +
+                    "    value: false\n" +
+                    "  - name: ascii_mode_enabled\n" +
+                    "    key: ascii_mode\n" +
+                    "    keys: [ascii_mode]\n" +
+                    "    lock: false\n" +
+                    "    value: false\n"
+            file.writeText(original)
+            val result = injectOptionsSegments(root, listOf("wanxiang_english"))
+            assertEquals(1, result.injected)
+            assertEquals(original, file.readText())
+        }
+    }
+
+    @Test
+    fun importPackage_deployTimeout_returnsDeployTimeout() = runBlocking {
+        runWithTempDirSuspend { root ->
+            val schemeDirsRoot = File(root, "root")
+            val sharedDir = File(root, "shared")
+            val zipFile = File(root, "newpkg.zip")
+            writeZip(
+                zipFile,
+                mapOf("newpkg/wanxiang_lite.schema.yaml" to liteSchema()),
+            )
+            var pointer: String? = null
+            val outcome = importPackage(
+                zipFile = zipFile,
+                fallbackName = "newpkg.zip",
+                schemeDirsRoot = schemeDirsRoot,
+                sharedDir = sharedDir,
+                writeMirror = {},
+                setCurrentDir = { pointer = it },
+                deploy = { DeployAwaitResult.TIMEOUT_RUNNING },
+                selectSchema = {},
+            )
+            assertEquals(ImportOutcome.Failed(ImportFailure.DEPLOY_TIMEOUT), outcome)
+            assertEquals("newpkg", pointer)
+        }
+    }
+
+    @Test
+    fun importPackage_noOptionsUpstream_getsOptionsSegments() = runBlocking {
+        runWithTempDirSuspend { root ->
+            val schemeDirsRoot = File(root, "root")
+            val sharedDir = File(root, "shared")
+            val zipFile = File(root, "newpkg.zip")
+            writeZip(
+                zipFile,
+                mapOf("newpkg/wanxiang_lite.schema.yaml" to liteSchema()),
+            )
+            val outcome = importPackage(
+                zipFile = zipFile,
+                fallbackName = "newpkg.zip",
+                schemeDirsRoot = schemeDirsRoot,
+                sharedDir = sharedDir,
+                writeMirror = {},
+                setCurrentDir = {},
+                deploy = { DeployAwaitResult.COMPLETED },
+                selectSchema = {},
+            )
+            assertTrue(outcome is ImportOutcome.Success)
+            val imported = File(File(schemeDirsRoot, "newpkg"), "wanxiang_lite.schema.yaml")
+                .readText()
+            // lite：ascii lock:true（与内置旧值一致），开关桥不再缺段。
+            assertTrue(
+                imported.contains(
+                    "  - name: ascii_mode_enabled\n" +
+                        "    key: ascii_mode\n" +
+                        "    keys: [ascii_mode]\n" +
+                        "    lock: true\n" +
+                        "    value: false"
+                )
+            )
         }
     }
 }

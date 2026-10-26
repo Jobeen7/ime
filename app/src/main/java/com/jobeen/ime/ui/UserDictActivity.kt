@@ -276,7 +276,9 @@ class UserDictActivity : ComponentActivity() {
             setIdle()
             uiState.lastUpload = UserDictPrefs.lastUploadTime
             result
-                .onSuccess { count -> ToastUtil.showToast("已上传 $count 个词") }
+                .onSuccess { count ->
+                    ToastUtil.showToast("已上传 $count 个词到 ${WebDavSync.remoteFileName(dict)}")
+                }
                 .onFailure {
                     Timber.w(it, "WebDAV upload failed")
                     showNotice("操作失败", it.message ?: "上传失败")

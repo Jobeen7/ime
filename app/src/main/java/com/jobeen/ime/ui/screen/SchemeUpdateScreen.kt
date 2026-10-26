@@ -106,6 +106,17 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
     var updatePending by remember { mutableStateOf(false) }
     var localInfo by remember { mutableStateOf<WanxiangUpdateManager.LocalInfo?>(null) }
     var currentSchemaName by remember { mutableStateOf("") }
+    // 更新跟随当前方案：目标与源在页面加载时按当前目录解析一次。
+    var updateTarget by remember {
+        mutableStateOf<WanxiangUpdateManager.UpdateTarget>(
+            WanxiangUpdateManager.UpdateTarget.Shared,
+        )
+    }
+    var updateSource by remember {
+        mutableStateOf<WanxiangUpdateManager.UpdateSource>(
+            WanxiangUpdateManager.UpdateSource.NoSource,
+        )
+    }
 
     val stageDownloadingSchema = stringResource(R.string.schema_update_downloading_schema)
     val stageExtracting = stringResource(R.string.schema_update_extracting)
@@ -139,12 +150,16 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
     fun checkWanxiangUpdate() {
         if (updatePending || checkingUpdate) return
         if (WanxiangUpdateManager.isRunning.value) return
+        val wanxiangSource =
+            updateSource as? WanxiangUpdateManager.UpdateSource.Wanxiang ?: return
         WanxiangUpdateManager.ensureVersionHousekeeping(context)
         checkingUpdate = true
         updateResultSeenAtMs = System.currentTimeMillis()
         updateCheckFailed = false
         scope.launch {
-            val result = WanxiangUpdateManager.checkForUpdates(updatePrefs)
+            val result = WanxiangUpdateManager.checkForUpdates(
+                updatePrefs, updateTarget, wanxiangSource,
+            )
             checkingUpdate = false
             result.onSuccess { info ->
                 updateInfo = info
@@ -171,14 +186,19 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                 )
                 if (result == DownloadResult.SUCCESS) {
                     EngineFactory.current()?.reload()
-                    WanxiangUpdateManager.checkForUpdates(updatePrefs)
-                        .onSuccess { refreshed ->
-                            updateInfo = refreshed
-                        }
-                        .onFailure {
-                            updateCheckFailed = true
-                        }
-                    localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
+                    (updateSource as? WanxiangUpdateManager.UpdateSource.Wanxiang)?.let { source ->
+                        WanxiangUpdateManager.checkForUpdates(updatePrefs, updateTarget, source)
+                            .onSuccess { refreshed ->
+                                updateInfo = refreshed
+                            }
+                            .onFailure {
+                                updateCheckFailed = true
+                            }
+                    }
+                    localInfo = WanxiangUpdateManager.getLocalInfo(
+                        updatePrefs, updateTarget,
+                        updateSource is WanxiangUpdateManager.UpdateSource.Wanxiang,
+                    )
                 }
             } finally {
                 updatePending = false
@@ -188,7 +208,8 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
 
     LaunchedEffect(Unit) {
         WanxiangUpdateManager.ensureVersionHousekeeping(context)
-        localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
+        val target = WanxiangUpdateManager.resolveUpdateTarget(context)
+        updateTarget = target
         val detected = withContext(Dispatchers.IO) {
             runCatching {
                 Rime.runOnRimeMain {
@@ -202,6 +223,12 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
         }
         grammarLanguage = detected?.first
         val schemaId = detected?.second
+        val source = WanxiangUpdateManager.resolveUpdateSource(target, schemaId, schemaId)
+        updateSource = source
+        localInfo = WanxiangUpdateManager.getLocalInfo(
+            updatePrefs, target,
+            source is WanxiangUpdateManager.UpdateSource.Wanxiang,
+        )
         if (schemaId != null) {
             // 变体是目录（方案包）的属性：先按当前目录内容判定；
             // Base 与 Lite 共用 wanxiang_t9 / wanxiang_english，按
@@ -222,7 +249,10 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
     var wasUpdating by remember { mutableStateOf(false) }
     LaunchedEffect(updating) {
         if (wasUpdating && !updating) {
-            localInfo = WanxiangUpdateManager.getLocalInfo(updatePrefs)
+            localInfo = WanxiangUpdateManager.getLocalInfo(
+                updatePrefs, updateTarget,
+                updateSource is WanxiangUpdateManager.UpdateSource.Wanxiang,
+            )
         }
         wasUpdating = updating
     }
@@ -269,6 +299,8 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
         ) {
             Spacer(Modifier.height(4.dp))
 
+            // 语法模型是万象专属：非万象目录不显示模型区（含下载按钮）。
+            if (updateSource is WanxiangUpdateManager.UpdateSource.Wanxiang) {
             SectionHeader(stringResource(R.string.schema_model_grammar))
             GroupCard {
                 Row(
@@ -319,6 +351,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     }
                 }
             }
+            }
 
             SectionHeader(stringResource(R.string.schema_update_local_info))
             GroupCard {
@@ -330,8 +363,21 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                 )
                 GroupDivider()
                 UpdateInfoRow(
+                    label = stringResource(R.string.schema_update_target),
+                    value = when (val t = updateTarget) {
+                        is WanxiangUpdateManager.UpdateTarget.Dir ->
+                            if (t.dirName == SchemeDirs.INITIAL_DIR) {
+                                stringResource(R.string.schema_dir_default_name)
+                            } else {
+                                t.dirName
+                            }
+                        else -> stringResource(R.string.schema_update_target_shared)
+                    },
+                )
+                GroupDivider()
+                UpdateInfoRow(
                     label = stringResource(R.string.schema_update_local_schema),
-                    value = local?.schemaVersion ?: "—",
+                    value = local?.schemaVersion?.takeIf { it.isNotEmpty() } ?: "—",
                 )
                 GroupDivider()
                 UpdateInfoRow(
@@ -340,13 +386,16 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         WanxiangUpdateManager.shortFingerprint(it)
                     } ?: "—",
                 )
-                GroupDivider()
-                UpdateInfoRow(
-                    label = stringResource(R.string.schema_update_local_gram),
-                    value = local?.gramFingerprint?.let {
-                        WanxiangUpdateManager.shortFingerprint(it)
-                    } ?: noGram,
-                )
+                // 非万象目录不显示模型行（模型是万象专属）。
+                if (updateSource is WanxiangUpdateManager.UpdateSource.Wanxiang) {
+                    GroupDivider()
+                    UpdateInfoRow(
+                        label = stringResource(R.string.schema_update_local_gram),
+                        value = local?.gramFingerprint?.let {
+                            WanxiangUpdateManager.shortFingerprint(it)
+                        } ?: noGram,
+                    )
+                }
             }
 
             val info = updateInfo
@@ -396,6 +445,10 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                 horizontalArrangement = Arrangement.SpaceBetween,
             ) {
                 val statusText = when {
+                    updateSource is WanxiangUpdateManager.UpdateSource.NoSource ->
+                        stringResource(R.string.schema_update_no_source)
+                    updateSource is WanxiangUpdateManager.UpdateSource.UnsupportedVariant ->
+                        stringResource(R.string.schema_update_pro_unsupported)
                     updating && updateProgress != null -> {
                         val p = updateProgress!!
                         val pct = if (p.total > 0L) {
@@ -481,6 +534,8 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                             fontSize = rowSubFontSize,
                         )
                     }
+                    // 无官方源时不提供检查按钮（状态区已说明原因）。
+                    updateSource !is WanxiangUpdateManager.UpdateSource.Wanxiang -> {}
                     else -> Button(
                         onClick = { checkWanxiangUpdate() },
                         modifier = Modifier.height(32.dp),

@@ -43,8 +43,6 @@ import androidx.compose.material.icons.filled.Keyboard
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
-import androidx.compose.material.icons.filled.RocketLaunch
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.SystemUpdateAlt
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,10 +64,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -89,12 +88,15 @@ import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
 
+/** 辅助触控式 FAB 深色：固定深灰，双主题同色（不跟随主题）。 */
+private val FabAssistiveDark = Color(0xFF2C2C2E)
+
 /**
  * 设置 home：顶部 hero（居中 logo + Jime）+ 一页一组卡片，
  * 行 = 彩色方块图标 + 标题 + 右箭头，无副标题。
  * 应用主题已删除（Lee 2026-10-25 定）：恒跟随系统，不再设手动项。
- * FAB 只放在本页：圆形主钮右下角悬浮，颜色跟随主题；
- * 展开时三动作自钮位向上扇出——部署、同步、×（× 只收起）。
+ * FAB 只放在本页：辅助触控式深色圆钮，可拖动、松手贴边；
+ * 展开时部署、同步两动作自钮位扇出（圆形深色钮＋浅色图标）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -183,6 +185,33 @@ fun MainScreen(
     val displayY = boundedY
     var fanoutHeightPx by remember { mutableStateOf(0) }
     val expandDown = displayY < containerSize.height / 2f
+    // 松手/取消统一落位：从实时状态重算当前位置（不用组合期捕获的
+    // boundedX/Y，避免旧手势闭包读到首帧零尺寸），贴最近左右边、
+    // 保持高度并持久化；取消不再弹回旧位。
+    fun settleFab() {
+        val curRaw = fracToPx(fabFrac, containerSize) + dragOffset
+        val cur = Offset(
+            curRaw.x.coerceIn(
+                fabMarginPx,
+                (containerSize.width - fabSizePx - fabMarginPx).coerceAtLeast(fabMarginPx),
+            ),
+            curRaw.y.coerceIn(
+                fabMarginPx,
+                (containerSize.height - fabSizePx - fabMarginPx).coerceAtLeast(fabMarginPx),
+            ),
+        )
+        dragOffset = Offset.Zero
+        val h = (containerSize.height - fabSizePx - 2 * fabMarginPx).coerceAtLeast(1f)
+        val snapped = Offset(
+            x = if (cur.x < containerSize.width / 2f) 0f else 1f,
+            y = ((cur.y - fabMarginPx) / h).coerceIn(0f, 1f),
+        )
+        fabFrac = snapped
+        fabPrefs.edit()
+            .putFloat("x_frac", snapped.x)
+            .putFloat("y_frac", snapped.y)
+            .apply()
+    }
 
     Scaffold(
     ) { padding ->
@@ -384,7 +413,7 @@ fun MainScreen(
                             ) {
                                 FabAction(
                                     label = stringResource(R.string.fab_deploy),
-                                    icon = Icons.Filled.RocketLaunch,
+                                    icon = painterResource(R.drawable.ic_fab_deploy),
                                     running = deployRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -395,7 +424,7 @@ fun MainScreen(
                                 )
                                 FabAction(
                                     label = stringResource(R.string.fab_sync),
-                                    icon = Icons.Filled.Sync,
+                                    icon = painterResource(R.drawable.ic_fab_sync),
                                     running = syncRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -412,7 +441,7 @@ fun MainScreen(
                         .offset { IntOffset(displayX.roundToInt(), displayY.roundToInt()) }
                         .size(56.dp)
                         .alpha(fabAlpha)
-                        .pointerInput(Unit) {
+                        .pointerInput(containerSize) {
                             detectDragGestures(
                                 onDragStart = {
                                     touch()
@@ -421,23 +450,11 @@ fun MainScreen(
                                 },
                                 onDragEnd = {
                                     dragging = false
-                                    val cur = Offset(boundedX, boundedY)
-                                    dragOffset = Offset.Zero
-                                    val h = (containerSize.height - fabSizePx - 2 * fabMarginPx)
-                                        .coerceAtLeast(1f)
-                                    val snapped = Offset(
-                                        x = if (cur.x < containerSize.width / 2f) 0f else 1f,
-                                        y = ((cur.y - fabMarginPx) / h).coerceIn(0f, 1f),
-                                    )
-                                    fabFrac = snapped
-                                    fabPrefs.edit()
-                                        .putFloat("x_frac", snapped.x)
-                                        .putFloat("y_frac", snapped.y)
-                                        .apply()
+                                    settleFab()
                                 },
                                 onDragCancel = {
                                     dragging = false
-                                    dragOffset = Offset.Zero
+                                    settleFab()
                                 },
                                 onDrag = { change, dragAmount ->
                                     dragOffset += dragAmount
@@ -453,13 +470,13 @@ fun MainScreen(
                             if (!fabAnyRunning) fabExpanded = !fabExpanded
                         },
                         shape = CircleShape,
-                        containerColor = MaterialTheme.colorScheme.primaryContainer,
-                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        containerColor = FabAssistiveDark,
+                        contentColor = Color.White,
                     ) {
                         if (fabAnyRunning) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(24.dp),
-                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                color = Color.White,
                                 strokeWidth = 2.dp,
                             )
                         } else if (fabExpanded) {
@@ -469,7 +486,7 @@ fun MainScreen(
                                 modifier = Modifier.size(24.dp),
                             )
                         } else {
-                            // 收起态：Lee 提供的 cloud_circle，颜色随主题内容色。
+                            // 收起态：Lee 提供的 cloud_circle，深色钮上 tint 为白色。
                             Icon(
                                 painter = painterResource(R.drawable.ic_fab_cloud_circle),
                                 contentDescription = null,
@@ -485,12 +502,12 @@ fun MainScreen(
     BackHandler(enabled = fabExpanded) { fabExpanded = false }
 }
 
-/** FAB 栈展开后的单个动作：圆角方块钮在上（主题主容器色底、
- *  内容色图标）＋小字标签在下；× 项同样式。块 48dp、图标 24dp。 */
+/** FAB 栈展开后的单个动作：圆形深色钮（辅助触控式，48dp）
+ * ＋小字标签在下；图标为浅色。块 48dp、图标 24dp。 */
 @Composable
 private fun FabAction(
     label: String,
-    icon: ImageVector,
+    icon: Painter,
     running: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -503,22 +520,22 @@ private fun FabAction(
         Box(
             modifier = Modifier
                 .size(48.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .clip(CircleShape)
+                .background(FabAssistiveDark),
             contentAlignment = Alignment.Center,
         ) {
             if (running) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(24.dp),
-                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    color = Color.White,
                     strokeWidth = 2.dp,
                 )
             } else {
                 Icon(
-                    imageVector = icon,
+                    painter = icon,
                     contentDescription = label,
                     modifier = Modifier.size(24.dp),
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    tint = Color.White,
                 )
             }
         }

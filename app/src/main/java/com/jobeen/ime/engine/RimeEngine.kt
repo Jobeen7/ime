@@ -25,6 +25,7 @@ import com.jobeen.ime.data.manager.CandidateSortingManager
 import com.jobeen.ime.data.manager.applySavedCandidateOrder
 import com.jobeen.ime.data.manager.candidateSortingKey
 import com.jobeen.ime.data.manager.DeletedWordsStore
+import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.event.KeyEvent
@@ -65,6 +66,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -1195,6 +1197,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             // 密码框强制英文）随会话丢失，按当前输入框重设
                             // （Reload 的完成路径也走这里）。初始化部署时
                             // editorInfo 为空，自动跳过。
+                            // 部署完成时先重刷方案 options：偏好监听只在偏好
+                            // 变化时触发，部署本身不调 applyOptions，选项会
+                            // 停留在 reset 默认值（如英文整句）；随后字段选项
+                            // 重放（下行）覆盖密码框等字段特例，与偏好监听
+                            // 同口径。
+                            currentSchema().applyOptions(this)
                             editorInfo?.let { applyFieldOptions(it) }
                         }
                     }
@@ -1789,43 +1797,80 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     /**
      * 执行一次全量部署并等待其返回。
-     * - timeoutMs <= 0 时直接返回 false，不启动部署。
-     * - deployMutex.tryLock() 抢不到返回 false；EngineDeployState 已在跑返回 false。
-     * - 置位 SchemeDeployState.isDeploying 与 EngineDeployState.setRunning(true)，finally 中复位并解锁。
-     * - 通过 sendJob 串行投递任务：deploy() -> joinMaintenanceThread()。
-     * - 使用 withTimeoutOrNull(timeoutMs) 等待：超时返回 false；调用方取消时 CancellationException 穿透。
-     * - CancellationException 不被吞掉（先 complete(false) 再重抛）；其他 Exception 视为失败返回 false。
-     * - 不打日志，不抛其它异常；返回值表示是否在时限内完成。
+     * - timeoutMs <= 0 时直接返回 FAILED，不启动部署。
+     * - deployMutex.tryLock() 抢不到返回 FAILED；EngineDeployState 已在跑
+     *   或有超时孤儿在跑时返回 FAILED（孤儿存活期禁新部署）。
+     * - 置位 SchemeDeployState.isDeploying 与 EngineDeployState.setRunning(true)，
+     *   标志由部署作业收尾复位（先复位再 complete，等待方醒来时状态已一致）。
+     * - 通过 sendJob 串行投递任务：deploy() -> joinMaintenanceThread() ->
+     *   合成 Deploy Finish（与 Reload 同一收尾，见问题 7 修复）。
+     * - 使用 withTimeoutOrNull(timeoutMs) 等待：超时只取消等待、作业继续跑，
+     *   返回 TIMEOUT_RUNNING 并记孤儿标志；调用方取消时 CancellationException
+     *   穿透，同样记孤儿（作业收尾时复位）。
+     * - 等待方 finally 只解锁互斥，绝不提前复位标志（否则孤儿存活期
+     *   的守门与 running 指示会提前失效）。
+     * - 引擎作用域已死时直接返回 FAILED，不记孤儿（作业根本不会跑，
+     *   记了就永远卡住后续部署）。
+     * - 超时系数说明：Base 冷编译实测约 20 秒、热编译约 12 秒，
+     *   180 秒起步已有 9 倍余量，不改系数；超时是语义问题不是时限问题。
      */
-    suspend fun deployAndAwait(timeoutMs: Long): Boolean {
-        if (timeoutMs <= 0) return false
-        if (!deployMutex.tryLock()) return false
-        if (EngineDeployState.isRunning()) {
+    suspend fun deployAndAwait(timeoutMs: Long): DeployAwaitResult {
+        if (timeoutMs <= 0) return DeployAwaitResult.FAILED
+        if (!deployMutex.tryLock()) return DeployAwaitResult.FAILED
+        if (EngineDeployState.isRunning() || EngineDeployState.isOrphanRunning()) {
             deployMutex.unlock()
-            return false
+            return DeployAwaitResult.FAILED
+        }
+        if (!scope.isActive) {
+            deployMutex.unlock()
+            return DeployAwaitResult.FAILED
         }
         SchemeDeployState.isDeploying = true
         EngineDeployState.setRunning(true)
         try {
-            val deferred = CompletableDeferred<Boolean>()
+            val deferred = CompletableDeferred<DeployAwaitResult>()
             sendJob {
                 try {
-                    deploy()
-                    joinMaintenanceThread()
-                    deferred.complete(true)
-                } catch (e: CancellationException) {
-                    deferred.complete(false)
-                    throw e
-                } catch (e: Exception) {
-                    deferred.complete(false)
+                    // 作业取消只记失败、不重抛杀消费循环（原实现重抛，
+                    // 循环若不捕获则整个 jobs 队列陪葬；记 FAILED 已足够诚实）。
+                    val result = try {
+                        deploy()
+                        joinMaintenanceThread()
+                        actions.send(
+                            Action.RimeMessage(
+                                RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                            )
+                        )
+                        DeployAwaitResult.COMPLETED
+                    } catch (e: CancellationException) {
+                        DeployAwaitResult.FAILED
+                    } catch (e: Exception) {
+                        DeployAwaitResult.FAILED
+                    }
+                    // 标志先于 complete 复位：等待方醒来时状态已一致，
+                    // 不会把刚完成的部署误判为忙；以下均为非挂起调用，
+                    // 作业取消也不会打断这段收尾。
+                    SchemeDeployState.isDeploying = false
+                    EngineDeployState.setRunning(false)
+                    EngineDeployState.setOrphanRunning(false)
+                    deferred.complete(result)
+                } finally {
+                    // 兜底复位（幂等）：complete 前后的任何异常路径都不滞留标志。
+                    SchemeDeployState.isDeploying = false
+                    EngineDeployState.setRunning(false)
+                    EngineDeployState.setOrphanRunning(false)
                 }
             }
             return withTimeoutOrNull(timeoutMs) {
                 deferred.await()
-            } ?: false
+            } ?: run {
+                EngineDeployState.setOrphanRunning(true)
+                DeployAwaitResult.TIMEOUT_RUNNING
+            }
+        } catch (e: CancellationException) {
+            EngineDeployState.setOrphanRunning(true)
+            throw e
         } finally {
-            SchemeDeployState.isDeploying = false
-            EngineDeployState.setRunning(false)
             deployMutex.unlock()
         }
     }

@@ -79,10 +79,11 @@ object AppStartup {
     }
 
     private fun setupLogger(context: Context) {
-        // 仅 debug 构建开启日志：AppLogBuffer 的 Timber 缓冲收集 + DebugTree。
-        // release（assembleRelease）不装任何 timber Tree → Timber 全部 no-op，不输出、零开销；
+        // 缓冲日志在 debug 与 release 都装（BufferTree）：诊断导出在
+        // 正式版也需要日志，否则导出恒为空（2026-10-26 实测：正式版
+        // 诊断包只有 7 行头、0 条目）。DebugTree 仍仅 debug 构建装。
         // 崩溃记录由 CrashTrap 单点落盘（Application.onCreate 已安装，不经此处）。
-        AppLogBuffer.install(context, enableLogging = BuildConfig.DEBUG)
+        AppLogBuffer.install(context, enableLogging = true)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
