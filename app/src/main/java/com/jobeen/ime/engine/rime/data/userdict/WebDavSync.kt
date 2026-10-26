@@ -1066,193 +1066,200 @@ object WebDavSync {
         }
     }
 
+    // ---------------- 方案目录同步（多目录口径） ----------------
+    // 远端布局：同步根下单一 schemes/ 文件夹，内按目录名分层
+    // （schemes/<目录名>/<方案文件>）；只增量、不删对端任何文件；
+    // 与词典同步共用 syncMutex（不另设锁、不跨触发）。
+
+    private fun schemesUrl(): String = "${UserDictPrefs.syncDirUrl()}/schemes"
+
+    private fun ensureSchemesDir() {
+        ensureSyncDir()
+        mkcolQuiet(schemesUrl())
+    }
+
+    private fun isProtectedSchemeRel(rel: String): Boolean {
+        for (segment in rel.split('/')) {
+            if (segment == "build" || segment.endsWith(".userdb")) return true
+        }
+        val fileName = rel.substringAfterLast('/')
+        return fileName.endsWith(".log") || fileName.endsWith(".tmp")
+    }
+
+    internal fun isValidSchemeRel(rel: String): Boolean {
+        if (rel.isEmpty() || rel.startsWith("/")) return false
+        val segments = rel.split('/')
+        for (segment in segments) {
+            if (segment.isEmpty() || segment == "..") return false
+        }
+        return !isProtectedSchemeRel(rel)
+    }
+
     /**
-     * 方案目录同步：本地当前方案目录 ↔ 远端 UUID/当前目录文件夹。
-     * 必须在后台线程调用；与词典合并同步共用同一 WebDAV 配置与客户端，
-     * 但互斥锁独立（两者可先后跑，不可同时跑同一远端）。
+     * 收集待上传的方案文件（相对路径含目录名前缀）。
+     * 根下 build 目录与点号目录不进同步；符号链接不进同步（防越界读）；
+     * 单目录内相对路径超 6 段或受保护条目跳过；总数上限 1000。
      */
+    internal fun collectUploadFiles(root: File): List<String> {
+        val canonical = root.canonicalFile
+        val out = mutableListOf<String>()
+        val dirs = canonical.listFiles()
+            ?.filter { it.isDirectory && it.name != "build" && !it.name.startsWith(".") }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+        for (dir in dirs) {
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                if (out.size >= 1000) return@forEach
+                if (file.canonicalFile != file.absoluteFile) return@forEach
+                val fileRel = file.relativeTo(dir).path.replace(File.separatorChar, '/')
+                if (fileRel.split('/').size > 6) return@forEach
+                if (!isValidSchemeRel(fileRel)) return@forEach
+                out.add("${dir.name}/$fileRel")
+            }
+            if (out.size >= 1000) break
+        }
+        return out
+    }
+
     /**
-     * 方案目录同步：本地当前方案目录 ↔ 远端 UUID/当前目录文件夹。
-     * 必须在后台线程调用；与词典合并同步共用同一 WebDAV 配置与客户端，
-     * 但互斥锁独立（两者可先后跑，不可同时跑同一远端）。
-     *
-     * @param forceDeletePropagation 为 true 时绕过步骤 1 的骤减暂停
-     * （供后续界面“确认清理”按钮调用，按钮本身不在此做）。
+     * 上传全部方案目录到远端 schemes/（裸 PUT，逐文件失败即整体失败）。
+     * 必须在后台线程调用；返回上传文件数。
      */
-    suspend fun syncSchemeDir(
-        session: RimeSession,
-        forceDeletePropagation: Boolean = false,
-    ): Result<DirSyncResult> =
-        dirSyncMutex.withLock {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    checkConfigured()
-                    val uuid = RimeSyncPrefs.syncFolderUuid(appContext)
-                    val dir = com.jobeen.ime.data.manager.SchemeDirs.currentDirName(appContext)
-                    val uuidBase = "${UserDictPrefs.syncDirUrl()}/$uuid"
-                    val base = "$uuidBase/${URLEncoder.encode(dir, Charsets.UTF_8.name()).replace("+", "%20")}"
-                    ensureSyncDir()
-                    // MKCOL 只建一层：先建 UUID 层，再建目录层（已存在回 405 属正常）。
-                    mkcolQuiet(uuidBase)
-                    mkcolQuiet(base)
-                    val userDir = DataManager.userDataDir
-                    val failed = mutableListOf<String>()
-                    val localFiles = collectLocalSyncFiles(userDir, failed)
-                    val localByRel = localFiles.toMap()
-                    val remoteFiles = walkRemoteDir(base, "", failed)
-                    val remoteByRel = remoteFiles.associateBy { it.relPath }.toMutableMap()
-                    var uploaded = 0
-                    var downloaded = 0
-                    var deletedRemote = 0
-                    // 1. 删除传播：上次同步后本地删掉、远端还在的文件，远端跟删。
-                    // 骤减暂停：已知集非空且本地数不足已知集 50% 时跳过整个步骤 1，
-                    // 防本地目录被清空/切换/异常导致误删远端；暂停时步骤 4 用并集
-                    // 保基线（见下），forceDeletePropagation 可绕过暂停。
-                    val known = RimeSyncPrefs.knownFiles(appContext, dir)
-                    val deletePropagationPaused =
-                        isDeletePropagationPaused(known, localByRel.size, forceDeletePropagation)
-                    val deletePropagationPauseReason = if (deletePropagationPaused) {
-                        "本地文件数 ${localByRel.size} 不足已知集 ${known.size} 的 50%，" +
-                            "疑似目录被清空或异常，暂停远端跟删以防误删"
-                    } else {
-                        null
-                    }
-                    if (deletePropagationPaused) {
-                        Timber.w("Dir sync delete propagation paused: $deletePropagationPauseReason")
-                    } else {
-                        for (rel in known) {
-                            if (rel !in localByRel && rel in remoteByRel) {
-                                runCatching { httpDelete(dirUrl(base, rel)) }
-                                    .onSuccess {
-                                        deletedRemote++
-                                        // 删后刷新：已删条目从远端集合移除，
-                                        // 步骤 2 不再对它 GET（避免刚删又 404）。
-                                        remoteByRel.remove(rel)
-                                    }
-                                    .onFailure {
-                                        failed += rel
-                                        Timber.w(it, "Dir sync remote delete failed: $rel")
-                                    }
-                            }
-                        }
-                    }
-                    // 2. 文件同步（mtime 末写胜出）。
-                    val allRels = syncTargetRels(localByRel.keys, remoteByRel.keys)
-                    for (rel in allRels) {
-                        val local = localByRel[rel]
-                        val remote = remoteByRel[rel]
-                        when (decideFileSync(local?.lastModified(), remote?.lastModifiedMs)) {
-                            FileSyncAction.SKIP -> Unit
-                            FileSyncAction.UPLOAD -> {
-                                runCatching {
-                                    mkcolParents(base, rel)
-                                    httpPutFile(dirUrl(base, rel), local!!)
-                                }.onSuccess { uploaded++ }
-                                    .onFailure {
-                                        failed += rel
-                                        Timber.w(it, "Dir sync upload failed: $rel")
-                                    }
-                            }
-                            FileSyncAction.DOWNLOAD -> {
-                                // 落盘前 canonical containment：越界不落盘、不 GET。
-                                val target = resolveSyncTarget(userDir, rel)
-                                if (target == null) {
-                                    failed += rel
-                                    Timber.w("Dir sync download rejected (unsafe path): $rel")
-                                } else {
-                                    target.parentFile?.mkdirs()
-                                    downloaded += downloadCountDelta(
-                                        httpGetToFile(dirUrl(base, rel), target),
-                                        rel,
-                                        failed,
-                                    )
-                                }
-                            }
-                        }
-                    }
-                    // 3. 词库阶段：每本词典先下载合并再 PUT（与词典同步同一口径）。
-                    // 单词典失败只记 failed、不中止循环；灾难性异常（如取词典
-                    // 列表/会话失效）记下后仍走步骤 4，步骤 4 跑完再抛出。
-                    var dictCount = 0
-                    var dictEntries = 0
-                    var dictCatastrophic: Throwable? = null
-                    try {
-                        val dicts = session.runOnReady { getUserDictList() }
-                        for (dict in dicts) {
-                            runCatching {
-                                val remoteDictUrl = dirUrl(base, remoteFileName(dict))
-                                val tmpIn = File(
-                                    appContext.cacheDir,
-                                    "dirsync-download-$dict-${System.nanoTime()}.txt",
-                                )
-                                try {
-                                    when (dictDownloadAction(httpGetToFile(remoteDictUrl, tmpIn))) {
-                                        DictDownloadAction.IMPORT -> {
-                                            val count = session.runOnReady {
-                                                UserDictManager.importUserDictInChunks(tmpIn) { chunk ->
-                                                    importUserDictLive(dict, chunk.absolutePath)
-                                                }
-                                            }
-                                            if (count < 0) {
-                                                throw IllegalStateException("导入用户词典失败：$dict")
-                                            }
-                                        }
-                                        DictDownloadAction.SKIP -> Unit // 首次上传，跳过合并
-                                        DictDownloadAction.FAIL ->
-                                            throw IllegalStateException("下载词典失败：$dict")
-                                    }
-                                } finally {
-                                    tmpIn.delete()
-                                }
-                                val tmpOut = File(
-                                    appContext.cacheDir,
-                                    "dirsync-upload-$dict-${System.nanoTime()}.txt",
-                                )
-                                try {
-                                    val count = session.runOnReady {
-                                        exportUserDictLive(dict, tmpOut.absolutePath)
-                                    }
-                                    if (count < 0) {
-                                        throw IllegalStateException("导出用户词典失败：$dict")
-                                    }
-                                    httpPutFile(remoteDictUrl, tmpOut)
-                                    dictCount++
-                                    dictEntries += count
-                                } finally {
-                                    tmpOut.delete()
-                                }
-                            }.onFailure {
-                                failed += remoteFileName(dict)
-                                Timber.w(it, "Dir sync dict failed: $dict")
-                            }
-                        }
-                    } catch (e: Throwable) {
-                        dictCatastrophic = e
-                        Timber.w(e, "Dir sync dict phase failed")
-                    }
-                    // 4. 已知集合更新为同步后本地文件集合（按目录分键）；
-                    // 骤减暂停时取已知集与本地集的并集，不用缩水集覆盖基线。
-                    val postLocal = collectLocalSyncFiles(userDir, failed).map { it.first }.toSet()
-                    val nextKnown = if (deletePropagationPaused) {
-                        mergeKnownOnPause(known, postLocal)
-                    } else {
-                        postLocal
-                    }
-                    RimeSyncPrefs.setKnownFiles(appContext, dir, nextKnown)
-                    if (dictCatastrophic != null) throw dictCatastrophic
-                    DirSyncResult(
-                        uploaded,
-                        downloaded,
-                        deletedRemote,
-                        dictCount,
-                        dictEntries,
-                        failed,
-                        deletePropagationPaused,
-                        deletePropagationPauseReason,
-                    )
+    suspend fun uploadSchemes(): Result<Int> = syncMutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkConfigured()
+                ensureSchemesDir()
+                val root = DataManager.schemeDirsRoot
+                var count = 0
+                for (rel in collectUploadFiles(root)) {
+                    httpPutFile(remoteUrl("schemes/$rel"), File(root, rel))
+                    count++
                 }
+                count
             }
         }
+    }
+
+    /**
+     * 从远端 schemes/ 下载全部方案文件到本地（tmp＋rename 原子替换；
+     * 404 视为远端已删、跳过不计；其余失败记入失败清单、最后整体失败）。
+     * 递归口径与 .6 一致（自 schemes/ 根起 calls 0-4 层，单目录内路径
+     * 至多 4 段）；总数上限 1000。必须在后台线程调用。
+     */
+    suspend fun downloadSchemes(): Result<Int> = syncMutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkConfigured()
+                ensureSchemesDir()
+                val root = DataManager.schemeDirsRoot.canonicalFile
+                val files = mutableListOf<String>()
+                suspend fun collect(dirRel: String, depth: Int) {
+                    if (depth > 4 || files.size >= 1000) return
+                    val dirUrl = if (dirRel.isEmpty()) schemesUrl() + "/" else schemesUrl() + "/" + dirRel + "/"
+                    val entries = propfindDirEntries(dirUrl)
+                    for (entry in entries) {
+                        if (files.size >= 1000) return
+                        val rel = if (dirRel.isEmpty()) entry.relPath else "$dirRel/${entry.relPath}"
+                        if (entry.isDirectory) {
+                            if (depth < 4) collect(rel, depth + 1)
+                        } else {
+                            val fileRel = rel.substringAfter('/', "")
+                            if (fileRel.isEmpty()) continue
+                            if (isValidSchemeRel(fileRel) && rel !in files) files.add(rel)
+                        }
+                    }
+                }
+                collect("", 0)
+                var count = 0
+                val failed = mutableListOf<String>()
+                for (rel in files) {
+                    val target = File(root, rel)
+                    val canonical = target.canonicalFile
+                    if (canonical != root && !canonical.path.startsWith(root.path + File.separator)) {
+                        Timber.w("skip schemes download outside root: $rel")
+                        failed += rel
+                        continue
+                    }
+                    target.parentFile?.mkdirs()
+                    when (httpGetToFile(remoteUrl("schemes/$rel"), target)) {
+                        HttpGetResult.OK -> count++
+                        HttpGetResult.NOT_FOUND -> Unit // 远端已删，跳过不计
+                        HttpGetResult.FAILED -> failed += rel
+                    }
+                }
+                if (failed.isNotEmpty()) {
+                    throw IllegalStateException("下载方案文件失败：${failed.size} 个")
+                }
+                count
+            }
+        }
+    }
+
+    /**
+     * 词典全量同步（自旧 syncSchemeDir 第 3 步抽出，口径原样保留）：
+     * 每本词典先下载合并再 PUT；单本失败记 failed、不中止循环；
+     * 取词典列表失败则整体失败。远端布局沿用旧口径（uuid/当前目录），
+     * 不动已存词典位置；与方案上传/下载共用 syncMutex。
+     * 成功时返回失败词典文件名清单（空＝全部成功）。
+     */
+    suspend fun syncAllDicts(session: RimeSession): Result<List<String>> = syncMutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkConfigured()
+                val uuid = RimeSyncPrefs.syncFolderUuid(appContext)
+                val dir = com.jobeen.ime.data.manager.SchemeDirs.currentDirName(appContext)
+                val uuidBase = "${UserDictPrefs.syncDirUrl()}/$uuid"
+                val base = "$uuidBase/${URLEncoder.encode(dir, Charsets.UTF_8.name()).replace("+", "%20")}"
+                ensureSyncDir()
+                mkcolQuiet(uuidBase)
+                mkcolQuiet(base)
+                val failed = mutableListOf<String>()
+                val dicts = session.runOnReady { getUserDictList() }
+                for (dict in dicts) {
+                    runCatching {
+                        val remoteDictUrl = dirUrl(base, remoteFileName(dict))
+                        val tmpIn = File(appContext.cacheDir, "dirsync-download-$dict-${System.nanoTime()}.txt")
+                        try {
+                            when (dictDownloadAction(httpGetToFile(remoteDictUrl, tmpIn))) {
+                                DictDownloadAction.IMPORT -> {
+                                    val count = session.runOnReady {
+                                        UserDictManager.importUserDictInChunks(tmpIn) { chunk ->
+                                            importUserDictLive(dict, chunk.absolutePath)
+                                        }
+                                    }
+                                    if (count < 0) {
+                                        throw IllegalStateException("导入用户词典失败：$dict")
+                                    }
+                                }
+                                DictDownloadAction.SKIP -> Unit // 首次上传，跳过合并
+                                DictDownloadAction.FAIL ->
+                                    throw IllegalStateException("下载词典失败：$dict")
+                            }
+                        } finally {
+                            tmpIn.delete()
+                        }
+                        val tmpOut = File(appContext.cacheDir, "dirsync-upload-$dict-${System.nanoTime()}.txt")
+                        try {
+                            val count = session.runOnReady {
+                                exportUserDictLive(dict, tmpOut.absolutePath)
+                            }
+                            if (count < 0) {
+                                throw IllegalStateException("导出用户词典失败：$dict")
+                            }
+                            httpPutFile(remoteDictUrl, tmpOut)
+                        } finally {
+                            tmpOut.delete()
+                        }
+                    }.onFailure {
+                        failed += remoteFileName(dict)
+                        Timber.w(it, "Dir sync dict failed: $dict")
+                    }
+                }
+                failed
+            }
+        }
+    }
 
     /** 单文件同步上限：与本地导入单条目上限同口径（256MB）。 */
     private const val MAX_SYNC_FILE_BYTES = 256L * 1024 * 1024

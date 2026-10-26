@@ -6,14 +6,19 @@ import android.view.inputmethod.EditorInfo
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.manager.SchemaManager
+import com.jobeen.ime.data.manager.EngineDeployState
+import com.jobeen.ime.data.manager.discoverSchemes
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.data.EngineMessage
+import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.input.keyboard.impl.IKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.base.util.appScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 object KeyboardStateManager {
@@ -114,6 +119,8 @@ object KeyboardStateManager {
     }
 
     fun rotateSchema(): String {
+        // 部署进行中：只读当前方案，不推进、不切布局、不碰引擎。
+        if (EngineDeployState.isRunning()) return currentSchema?.id.orEmpty()
         if (schemas.isEmpty()) return ""
         val index = schemas.indexOf(currentSchema)
         currentSchema = if (index >= 0) schemas[(index + 1) % schemas.size] else schemas.first()
@@ -122,6 +129,8 @@ object KeyboardStateManager {
     }
 
     fun selectSchema(schemaId: String): String {
+        // 部署进行中：不选、不切布局、不碰引擎，返回当前方案 id。
+        if (EngineDeployState.isRunning()) return currentSchema?.id.orEmpty()
         val schema = schemas.find { it.id == schemaId } ?: return ""
         if (currentSchema?.id == schemaId) return schemaId
         currentSchema = schema
@@ -151,9 +160,20 @@ object KeyboardStateManager {
             val prefs = appContext.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE)
             val schemaIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
                 ?.filter { it.isNotBlank() } ?: emptyList()
-            val schemaList = EngineFactory.current()?.schemasList() ?: emptyList()
-            val byId = schemaList.associateBy { it.id }
-            schemas = schemaIds.mapNotNull { byId[it] }
+            // 方案表一律读盘（当前目录＋共享目录，与方案页同口径），
+            // 不读引擎实时表：部署进行中引擎表不可信。读盘走 IO（本
+            // 函数跑在 MainScope 上，旧引擎表读取是内存操作才可直调）。
+            val disk = withContext(Dispatchers.IO) {
+                discoverSchemes(DataManager.userDataDir, DataManager.sharedDataDir)
+            }
+            val byId = disk.associateBy { it.id }
+            schemas = schemaIds.mapNotNull { id ->
+                byId[id]?.let {
+                    EngineMessage.Schema(it.id, it.name, it.layout, it.punctuation, it.kind)
+                }
+            }
+            // 部署进行中：只更新方案表，不选方案、不切布局、不碰引擎。
+            if (EngineDeployState.isRunning()) return
             currentSchema = schemas.firstOrNull()
             currentSchema?.id?.let { EngineFactory.current()?.selectSchema(it) }
 

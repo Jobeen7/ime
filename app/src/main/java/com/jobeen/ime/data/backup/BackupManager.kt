@@ -12,6 +12,7 @@ import com.jobeen.ime.data.database.dedupeClipboardByText
 import com.jobeen.ime.data.database.PhraseRecord
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
+import com.jobeen.ime.data.manager.SchemaManager
 import androidx.room.withTransaction
 import org.json.JSONArray
 import org.json.JSONObject
@@ -502,6 +503,20 @@ object BackupManager {
     }
 
     /** 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误 */
+    /**
+     * 判定偏好条目是否属于旧多目录方案残留，命中则不还原。
+     * - prefsName 为 scheme_dirs 时恒为 true，整文件内容都不还原；
+     * - 否则 key 以 SchemaManager.KEY_ENABLED_IDS + "_" 开头、且后缀非空时为 true（分键残留）；
+     * - 全局键 SchemaManager.KEY_ENABLED_IDS 本身恒为 false，保留还原。
+     * （表名取备份载荷里的字面名，不跟随代码常量改名：旧备份里的
+     * scheme_dirs 表无论现常量为何值，都必须跳过。）
+     */
+    internal fun isLegacyMultiDirPref(prefsName: String, key: String): Boolean {
+        if (prefsName == "scheme_dirs") return true
+        val prefix = SchemaManager.KEY_ENABLED_IDS + "_"
+        return key.startsWith(prefix) && key.length > prefix.length
+    }
+
     private suspend fun applyPayload(parsed: ParsedBackup) {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
@@ -543,7 +558,12 @@ object BackupManager {
             if (name in DEVICE_LOCAL_PREFS) continue
             val editor = appContext.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
             editor.clear()
-            for ((key, value) in entries) putPrefValue(editor, key, value)
+            for ((key, value) in entries) {
+                // 旧多目录方案残留不还原（见 isLegacyMultiDirPref）；
+                // 其余条目按原口径整表覆盖。
+                if (isLegacyMultiDirPref(name, key)) continue
+                putPrefValue(editor, key, value)
+            }
             // prefs 回写必须同步落盘：随后可能马上重启进程，异步 apply 有丢失窗口；
             // 同步提交失败必须让整个还原判失败（触发快照回滚），只记日志继续
             // 会留下数据库是新数据、偏好是旧数据的混杂状态

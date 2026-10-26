@@ -104,6 +104,8 @@ fun UserDictScreen(
     onAllowHttpChange: (Boolean) -> Unit,
     onUpload: () -> Unit,
     onDownload: () -> Unit,
+    onUploadSchemes: () -> Unit,
+    onDownloadSchemes: () -> Unit,
     onTestConnection: () -> Unit,
     onPickRemoteFile: (String) -> Unit,
     onDismissRemoteFiles: () -> Unit,
@@ -350,6 +352,24 @@ fun UserDictScreen(
                                 formatTime(state.lastDownload),
                             ),
                             onClick = { if (enabled) onDownload() },
+                            icon = Icons.Filled.CloudDownload,
+                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        GroupDivider()
+                        NavRow(
+                            title = stringResource(R.string.user_dict_upload_schemes),
+                            subtitle = stringResource(R.string.user_dict_upload_schemes_hint),
+                            onClick = { if (!state.busy) onUploadSchemes() },
+                            icon = Icons.Filled.CloudUpload,
+                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
+                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        )
+                        GroupDivider()
+                        NavRow(
+                            title = stringResource(R.string.user_dict_download_schemes),
+                            subtitle = stringResource(R.string.user_dict_download_schemes_hint),
+                            onClick = { if (!state.busy) onDownloadSchemes() },
                             icon = Icons.Filled.CloudDownload,
                             iconContainer = MaterialTheme.colorScheme.primaryContainer,
                             iconTint = MaterialTheme.colorScheme.onPrimaryContainer,

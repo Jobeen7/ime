@@ -104,10 +104,8 @@ import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
-import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.ui.FabActions
-import com.jobeen.ime.ui.UserDictActivity
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.SchemeDirs
@@ -116,7 +114,6 @@ import com.jobeen.ime.data.manager.ImportFailure
 import com.jobeen.ime.data.manager.ImportOutcome
 import com.jobeen.ime.data.manager.MAX_IMPORT_ZIP_BYTES
 import com.jobeen.ime.data.manager.SchemePackageImport
-import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.SchemeSwitchCoordinator
 import com.jobeen.ime.data.manager.SchemeSwitchPolicy
 import com.jobeen.ime.data.manager.SchemeEnabled
@@ -161,10 +158,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     val availableSchemas = remember { mutableStateListOf<SchemaItem>() }
     // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
     var currentSchemaName by remember { mutableStateOf("") }
-    // 目录同步删除传播暂停标志：仅存在时在方案区显示“确认清理”入口。
-    var syncPause by remember {
-        mutableStateOf(RimeSyncPrefs.deletePropagationPause(context))
-    }
     var editMode by remember { mutableStateOf(openManage) }
     var menuExpanded by remember { mutableStateOf(false) }
     var currentSchemeId by remember { mutableStateOf("") }
@@ -367,9 +360,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     // 部署中列表不变空，部署完由各入口重调 loadSchemas 刷新。
     LaunchedEffect(Unit) {
         migrationErrorText = SchemeDirs.migrationError(context)
-        // 进页刷新删除传播暂停标志：FAB 同步可能在本页之外暂停跟删，
-        // 重进时方案区才应出现“确认清理”入口。
-        syncPause = RimeSyncPrefs.deletePropagationPause(context)
         loadSchemas()
     }
 
@@ -1397,68 +1387,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             }
             // 行忙态：目录切换或部署进行中时禁用行点按。
             val switchBusy = dirSwitching || deployRunning
-            // 目录同步删除传播暂停确认入口：仅暂停标志存在时出现。
-            // 点击先清除标志，再以 forceDeletePropagation=true 在应用级
-            // 作用域重跑一次同步，结果经 FabActions 同样 Toast + 待显示
-            // 通知；连点由 FabActions 的进程级同步守门挡下（本卡不另设
-            // 本地禁用态，点后卡片即消失）。
-            if (syncPause != null) {
-                Spacer(Modifier.height(8.dp))
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                    ),
-                ) {
-                    Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                        Text(
-                            stringResource(R.string.schema_sync_pause_title),
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            stringResource(
-                                R.string.schema_sync_pause_desc,
-                                syncPause!!.dir,
-                            ),
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onErrorContainer,
-                        )
-                        if (!syncPause!!.reason.isNullOrBlank()) {
-                            Spacer(Modifier.height(4.dp))
-                            Text(
-                                syncPause!!.reason!!,
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                        }
-                        TextButton(onClick = {
-                            RimeSyncPrefs.clearDeletePropagationPaused(context)
-                            syncPause = null
-                            FabActions.sync(
-                                context,
-                                appScope,
-                                sessionProvider = {
-                                    RimeDaemon.createSession("schema-sync-confirm")
-                                },
-                                onNotConfigured = {
-                                    context.startActivity(
-                                        Intent(context, UserDictActivity::class.java),
-                                    )
-                                },
-                                forceDeletePropagation = true,
-                            )
-                        }) {
-                            Text(stringResource(R.string.schema_sync_pause_confirm))
-                        }
-                    }
-                }
-            }
             if (editMode) {
                 // 管理页：已选卡（勾选 + 拖拽合一）+ 全部方案区；草稿只在
                 // 保存时提交，返回放弃。保存 = 写启用表（custom＋镜像）后走
