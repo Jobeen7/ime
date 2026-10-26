@@ -280,7 +280,7 @@ class SchemeImportTest {
             assertEquals(180_000L, deployTimeout)
             assertEquals("wanxiang_lite", selected)
             val custom = File(File(schemeDirsRoot, "newpkg"), "default.custom.yaml")
-            assertTrue(custom.readText().contains("    - wanxiang_lite\n"))
+            assertTrue(custom.readText().contains("    - schema: wanxiang_lite\n"))
         }
     }
 

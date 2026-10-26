@@ -171,7 +171,7 @@ object SchemePackageImport {
         return SchemaYamlFields(name, version, layout)
     }
 
-    /** 解析 default.custom.yaml 顶层 schema_list（块列表与流式 [a, b] 均支持）。 */
+    /** 解析 default.custom.yaml 顶层 schema_list（块列表与流式 [a, b] 均支持；块项支持 `- schema: <id>` 与旧版裸字符串两种写法）。 */
     fun parseSchemaListFromCustomYaml(text: String): List<String> {
         val lines = text.lines()
         val ids = mutableListOf<String>()
@@ -199,9 +199,16 @@ object SchemePackageImport {
                 continue
             }
             if (indent <= listIndent) break
-            val item = Regex("""^-\s+(\S.*)$""").matchEntire(content)?.groupValues?.get(1)
+            val rawItem = Regex("""^-\s+(\S.*)$""").matchEntire(content)?.groupValues?.get(1)
                 ?: continue
-            scalarValue(item).takeIf { it.isNotEmpty() }?.let { if (it !in ids) ids.add(it) }
+            // 序列项双兼容：Rime 标准 map 项 `- schema: <id>` 取冒号后的值；
+            // 旧版写出的裸字符串项直接取整项（存量文件规范化前仍要读对）。
+            val valueText = if (rawItem == "schema:" || rawItem.startsWith("schema: ")) {
+                rawItem.removePrefix("schema:").trim()
+            } else {
+                rawItem
+            }
+            scalarValue(valueText).takeIf { it.isNotEmpty() }?.let { if (it !in ids) ids.add(it) }
         }
         return ids
     }
@@ -733,12 +740,12 @@ object SchemePackageImport {
         return "'" + value.replace("'", "''") + "'"
     }
 
-    /** 生成 default.custom.yaml 文本：每项 id 都经 [yamlPlainScalar] 转义。 */
+    /** 生成 default.custom.yaml 文本：每项 id 都经 [yamlPlainScalar] 转义，序列项为 Rime 标准 map 格式。 */
     fun buildDefaultCustomYamlContent(ids: List<String>): String =
         buildString {
             appendLine("patch:")
             appendLine("  schema_list:")
-            ids.forEach { appendLine("    - ${yamlPlainScalar(it)}") }
+            ids.forEach { appendLine("    - schema: ${yamlPlainScalar(it)}") }
         }
 
     /**
