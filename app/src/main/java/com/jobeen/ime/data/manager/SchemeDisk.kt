@@ -26,6 +26,7 @@ data class DiskSchema(
  * - value 先去除首尾空白，再脱去一层成对的单引号或双引号（仅有一侧引号则不脱）。
  * - 只采集 schema_id、name、layout、punctuation、kind 五个键，其余键忽略；缺失的键按空字符串处理。
  * - id 取 schema_id；schema_id 为空时取文件名去掉 `.schema.yaml` 后缀；结果 id 仍为空时返回 null。
+ * - layout 未写时按 id 兜底：含 t9 的 id 视为九宫格（"T9"），其余为空（调用方按全键盘处理）。
  * - 整个文件找不到顶格 `schema:` 段时返回 null（视为解析失败）。
  */
 fun parseSchemaFile(file: File): DiskSchema? {
@@ -76,7 +77,14 @@ fun parseSchemaFile(file: File): DiskSchema? {
 
     val id = schemaId.ifEmpty { file.name.removeSuffix(".schema.yaml") }
     if (id.isEmpty()) return null
-    return DiskSchema(id, name, layout, punctuation, kind)
+    // 布局兜底：layout 是 Jime 扩展字段，上游方案文件大多不写；文件未写
+    // 时按 id 判定九宫格家族（含 t9，如 wanxiang_t9i），否则键盘工厂
+    // 会把九宫格方案按未知布局回落成 26 键全键盘。显式写了 layout 的
+    // 以文件为准，本兜底只补空值。
+    val resolvedLayout = layout.ifEmpty {
+        if (id.contains("t9", ignoreCase = true)) "T9" else ""
+    }
+    return DiskSchema(id, name, resolvedLayout, punctuation, kind)
 }
 
 /**

@@ -69,6 +69,36 @@ class SchemeDiskTest {
     }
 
     @Test
+    fun parseSchemaFile_t9IdWithoutLayoutFallsBackToT9() {
+        runWithTempDir { root ->
+            val file = writeSchemaFile(
+                root, "wanxiang_t9i.schema.yaml",
+                "schema:\n" +
+                    "  schema_id: wanxiang_t9i\n" +
+                    "  name: 万象九键\n"
+            )
+            val schema = parseSchemaFile(file)
+            assertEquals("wanxiang_t9i", schema?.id)
+            assertEquals("T9", schema?.layout)
+        }
+    }
+
+    @Test
+    fun parseSchemaFile_explicitLayoutWinsOverT9Fallback() {
+        runWithTempDir { root ->
+            val file = writeSchemaFile(
+                root, "custom_t9.schema.yaml",
+                "schema:\n" +
+                    "  schema_id: custom_t9\n" +
+                    "  name: Custom\n" +
+                    "  layout: Qwerty\n"
+            )
+            val schema = parseSchemaFile(file)
+            assertEquals("Qwerty", schema?.layout)
+        }
+    }
+
+    @Test
     fun parseSchemaFile_noSchemaSectionReturnsNull() {
         runWithTempDir { root ->
             val file = writeSchemaFile(
