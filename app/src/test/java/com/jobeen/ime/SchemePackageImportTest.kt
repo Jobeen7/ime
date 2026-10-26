@@ -1149,6 +1149,35 @@ class SchemePackageImportTest {
     }
 
     @Test
+    fun parseSchemaListFromCustomYaml_readsMapItems() {
+        assertEquals(
+            listOf("wanxiang_t9", "wanxiang_english", "wanxiang"),
+            SchemePackageImport.parseSchemaListFromCustomYaml(
+                "patch:\n" +
+                    "  schema_list:\n" +
+                    "    - schema: wanxiang_t9\n" +
+                    "    - schema: wanxiang_english\n" +
+                    "    - schema: wanxiang\n",
+            ),
+        )
+    }
+
+    @Test
+    fun parseSchemaListFromCustomYaml_readsMixedMapAndBareItems() {
+        // 存量旧文件（裸字符串）与新文件（map 项）混写时均读对。
+        assertEquals(
+            listOf("a", "b", "c d"),
+            SchemePackageImport.parseSchemaListFromCustomYaml(
+                "patch:\n" +
+                    "  schema_list:\n" +
+                    "    - a\n" +
+                    "    - schema: b\n" +
+                    "    - schema: 'c d'\n",
+            ),
+        )
+    }
+
+    @Test
     fun scalarValue_unescapesDoubleQuotedNameField() {
         val fields = SchemePackageImport.parseSchemaYamlFields(
             "schema:\n  name: \"a\\\"b\\\\c\\nd\"\n",

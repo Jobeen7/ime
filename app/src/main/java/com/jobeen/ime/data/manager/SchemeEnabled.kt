@@ -11,6 +11,10 @@ object SchemeEnabled {
     /**
      * 根据传入的 ID 列表生成或修改 YAML 文本中的 schema_list 序列。
      *
+     * 序列项一律写 Rime 标准 map 格式 `    - schema: <id>`（裸字符串项
+     * 不是合法 schema_list 项：librime 部署时读不到方案、新目录编不出
+     * 词库，表现为组字有码无候选；旧版写出的裸字符串文件由读盘侧
+     * 双兼容解析、由 normalizeCustomFileToMapFormat 规范化）。
      * - 过滤 ID：仅保留全匹配 [A-Za-z0-9_.\-]+ 且不等于 "."、".." 的项。
      * - 若 existingText 为 null 或空白，返回以 "# Written by Jime scheme settings." 开头的全新文本。
      * - 若无 patch 段，在末尾追加 patch: 及其下的 schema_list: 和序列项。
@@ -23,8 +27,8 @@ object SchemeEnabled {
         val validIds = ids.filter { id ->
             ITEM_PATTERN.matches(id) && id != "." && id != ".."
         }
-        
-        val newLines = validIds.map { "    - $it" }
+
+        val newLines = validIds.map { "    - schema: $it" }
         
         val text = existingText
         if (text.isNullOrBlank()) {
@@ -130,6 +134,33 @@ object SchemeEnabled {
         } catch (e: Exception) {
             tmpFile.delete()
             throw e
+        }
+    }
+
+    /**
+     * 把既有 custom 文件的 schema_list 规范化为 Rime 标准 map 项：
+     * 以双兼容解析读出现有 ID，算出新文本，与原文不同才经
+     * [writeEnabledCustomFile] 写回（tmp＋rename）。原文已是 map
+     * 格式、文件缺失、不可读、无有效 ID 时返回 false 且不写盘。
+     * 供部署前对当前目录调用：旧版裸字符串文件若不先规范化，
+     * 本次部署仍按旧格式读不到方案、编不出词库。
+     */
+    fun normalizeCustomFileToMapFormat(customFile: File): Boolean {
+        if (!customFile.isFile) return false
+        val existing = try {
+            customFile.readText()
+        } catch (_: Exception) {
+            return false
+        }
+        val ids = SchemePackageImport.parseSchemaListFromCustomYaml(existing)
+        if (ids.isEmpty()) return false
+        val newText = patchSchemaListYaml(existing, ids)
+        if (newText == existing) return false
+        return try {
+            writeEnabledCustomFile(customFile, ids)
+            true
+        } catch (_: Exception) {
+            false
         }
     }
 

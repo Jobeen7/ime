@@ -7,7 +7,10 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.RimeSyncPrefs
+import com.jobeen.ime.data.manager.SchemeDirs
+import com.jobeen.ime.data.manager.SchemeEnabled
 import com.jobeen.ime.data.manager.awaitSchemasReady
+import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
@@ -58,6 +61,13 @@ object FabActions {
         if (engine == null) {
             ToastUtil.showToast(context.getString(R.string.fab_deploy_failed))
             return
+        }
+        // 部署先行规范化当前目录 custom 文件：旧版写出的裸字符串
+        // schema_list 项 librime 读不到，本次部署会编不出词库；
+        // 规范化失败也不拦部署（部署本身仍按旧文件走）。
+        runCatching {
+            val dir = java.io.File(DataManager.schemeDirsRoot, SchemeDirs.currentDirName(context))
+            SchemeEnabled.normalizeCustomFileToMapFormat(java.io.File(dir, "default.custom.yaml"))
         }
         scope.launch {
             runCatching { engine.reload() }

@@ -32,8 +32,8 @@ class SchemeEnabledTest {
                 "# Written by Jime scheme settings.\n" +
                     "patch:\n" +
                     "  schema_list:\n" +
-                    "    - a\n" +
-                    "    - b\n",
+                    "    - schema: a\n" +
+                    "    - schema: b\n",
                 custom.readText()
             )
             assertTrue(root.walkTopDown().none { it.name.endsWith(".tmp") })
@@ -53,8 +53,9 @@ class SchemeEnabledTest {
             SchemeEnabled.writeEnabledCustomFile(custom, listOf("a", "b"))
             val text = custom.readText()
             assertTrue(text.contains("  something: x\n"))
-            assertTrue(text.contains("    - a\n    - b\n"))
+            assertTrue(text.contains("    - schema: a\n    - schema: b\n"))
             assertFalse(text.contains("    - old\n"))
+            assertFalse(text.contains("    - schema: old\n"))
             assertTrue(root.walkTopDown().none { it.name.endsWith(".tmp") })
         }
     }
@@ -70,10 +71,44 @@ class SchemeEnabledTest {
                 "# Written by Jime scheme settings.\n" +
                     "patch:\n" +
                     "  schema_list:\n" +
-                    "    - a\n" +
-                    "    - b\n",
+                    "    - schema: a\n" +
+                    "    - schema: b\n",
                 custom.readText()
             )
+        }
+    }
+
+    @Test
+    fun normalizeCustomFileToMapFormat_rewritesLegacyBareItems() {
+        runWithTempDir { root ->
+            val custom = File(root, "default.custom.yaml")
+            custom.writeText(
+                "patch:\n" +
+                    "  something: x\n" +
+                    "  schema_list:\n" +
+                    "    - old_a\n" +
+                    "    - old_b\n"
+            )
+            assertTrue(SchemeEnabled.normalizeCustomFileToMapFormat(custom))
+            val text = custom.readText()
+            assertTrue(text.contains("  something: x\n"))
+            assertTrue(text.contains("    - schema: old_a\n    - schema: old_b\n"))
+            assertTrue(root.walkTopDown().none { it.name.endsWith(".tmp") })
+        }
+    }
+
+    @Test
+    fun normalizeCustomFileToMapFormat_leavesMapFormatUntouched() {
+        runWithTempDir { root ->
+            val custom = File(root, "default.custom.yaml")
+            val original =
+                "patch:\n" +
+                    "  schema_list:\n" +
+                    "    - schema: a\n" +
+                    "    - schema: b\n"
+            custom.writeText(original)
+            assertFalse(SchemeEnabled.normalizeCustomFileToMapFormat(custom))
+            assertEquals(original, custom.readText())
         }
     }
 }
