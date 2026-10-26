@@ -50,6 +50,7 @@ import com.jobeen.ime.base.ngram.DownloadResult
 import com.jobeen.ime.base.ngram.GramModelDownloader
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.EngineFactory
+import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.data.DataManager
@@ -202,8 +203,16 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
         grammarLanguage = detected?.first
         val schemaId = detected?.second
         if (schemaId != null) {
-            currentSchemaName =
-                WanxiangUpdateManager.variantNameOf(schemaId, schemaId) ?: schemaId
+            // 变体是目录（方案包）的属性：先按当前目录内容判定；
+            // Base 与 Lite 共用 wanxiang_t9 / wanxiang_english，按
+            // 方案 id 派生会把 Base 目录误判为 Lite。目录判定不明
+            // （内置目录无文件、合并目录多主方案并存）时回退旧口径。
+            val dirVariant = WanxiangUpdateManager.variantNameOfDir(
+                File(DataManager.schemeDirsRoot, SchemeDirs.currentDirName(context)),
+            )
+            currentSchemaName = dirVariant
+                ?: WanxiangUpdateManager.variantNameOf(schemaId, schemaId)
+                ?: schemaId
         }
         if (grammarLanguage != null) {
             grammarReady = File(DataManager.sharedDataDir, "$grammarLanguage.gram").isFile

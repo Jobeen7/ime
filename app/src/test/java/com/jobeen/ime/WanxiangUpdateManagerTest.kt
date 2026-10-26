@@ -1,6 +1,8 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.base.update.WanxiangUpdateManager
+import java.io.File
+import java.nio.file.Files
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -268,6 +270,61 @@ class WanxiangUpdateManagerTest {
         // 记录兜底，界面不得宣称「已是最新」
         assertTrue(info(gramSha256 = SHA).gramContentVerified)
         assertFalse(info(gramSha256 = "").gramContentVerified)
+    }
+
+    // ---- 目录内容判定变体（Base 与 Lite 共用方案 id） ----
+
+    private fun dirWith(vararg names: String): File {
+        val root = Files.createTempDirectory("variant-dir-test-").toFile()
+        for (name in names) {
+            File(root, name).writeText("schema:\n  schema_id: x\n")
+        }
+        return root
+    }
+
+    @Test
+    fun variantNameOfDir_baseDirHasWanxiangMain() {
+        val dir = dirWith("wanxiang.schema.yaml", "wanxiang_t9.schema.yaml", "wanxiang_english.schema.yaml")
+        try {
+            assertEquals("Base", WanxiangUpdateManager.variantNameOfDir(dir))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun variantNameOfDir_liteDirHasLiteMain() {
+        val dir = dirWith("wanxiang_lite.schema.yaml", "wanxiang_t9.schema.yaml", "wanxiang_english.schema.yaml")
+        try {
+            assertEquals("Lite", WanxiangUpdateManager.variantNameOfDir(dir))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun variantNameOfDir_mergedDirWithBothMains_isNull() {
+        val dir = dirWith("wanxiang.schema.yaml", "wanxiang_lite.schema.yaml")
+        try {
+            assertNull(WanxiangUpdateManager.variantNameOfDir(dir))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun variantNameOfDir_noMainFile_isNull() {
+        val dir = dirWith("wanxiang_t9.schema.yaml", "wanxiang_english.schema.yaml")
+        try {
+            assertNull(WanxiangUpdateManager.variantNameOfDir(dir))
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun variantNameOfDir_missingDir_isNull() {
+        assertNull(WanxiangUpdateManager.variantNameOfDir(File("/nonexistent-dir-xyz")))
     }
 
     private companion object {

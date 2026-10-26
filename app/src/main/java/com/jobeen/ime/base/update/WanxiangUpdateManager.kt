@@ -546,6 +546,37 @@ object WanxiangUpdateManager {
         }
     }
 
+    /**
+     * 按目录内容判定万象变体：目录即方案包，变体是包的属性而不
+     * 是方案的属性——Base 与 Lite 共用 wanxiang_t9 / wanxiang_english
+     * 两个方案 id，按当前方案 id 派生会把 Base 目录误判为 Lite。
+     * - 目录含 wanxiang_lite 系主方案文件 → Lite；含 wanxiang 主方
+     *   案文件（wanxiang.schema.yaml）→ Base；含 wanxiang_pro 系 →
+     *   Pro；含 wanxiang_pure 系 → Pure。
+     * - 多个主方案文件并存（合并目录）时变体不明，返回 null，调
+     *   用方回退按方案 id 派生；目录不存在、不可读、读异常同样
+     *   返回 null。
+     */
+    fun variantNameOfDir(dir: java.io.File): String? {
+        if (!dir.isDirectory) return null
+        val names = try {
+            dir.list()?.toSet() ?: return null
+        } catch (_: Exception) {
+            return null
+        }
+        val hasLite = names.any { it.startsWith("wanxiang_lite") && it.endsWith(".schema.yaml") }
+        val hasBase = "wanxiang.schema.yaml" in names
+        val hasPro = names.any { it.startsWith("wanxiang_pro") && it.endsWith(".schema.yaml") }
+        val hasPure = names.any { it.startsWith("wanxiang_pure") && it.endsWith(".schema.yaml") }
+        val found = listOfNotNull(
+            if (hasLite) "Lite" else null,
+            if (hasBase) "Base" else null,
+            if (hasPro) "Pro" else null,
+            if (hasPure) "Pure" else null,
+        )
+        return found.singleOrNull()
+    }
+
     /** 指纹截断显示，如 "21012108...939392"，与设计稿一致。 */
     fun shortFingerprint(full: String): String =
         if (full.length > 14) "${full.take(8)}...${full.takeLast(6)}" else full
