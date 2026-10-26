@@ -107,6 +107,7 @@ import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.ui.FabActions
 import com.jobeen.ime.data.manager.EngineDeployState
+import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.SchemeDownload
@@ -119,6 +120,7 @@ import com.jobeen.ime.data.manager.SchemeEnabled
 import com.jobeen.ime.data.manager.discoverSchemes
 import com.jobeen.ime.data.manager.effectiveEnabledIds
 import com.jobeen.ime.data.manager.importPackage
+import com.jobeen.ime.data.manager.repairSchemeFiles
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.EngineFactory
@@ -230,12 +232,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     // 回调内不可用 stringResource，提前在组合阶段解析
     val msgDirSwitchFailed = stringResource(R.string.schema_dir_switch_failed)
     val msgManageDeployFailed = stringResource(R.string.schema_manage_deploy_failed)
+    val msgManageDeployTimeout = stringResource(R.string.schema_deploy_timeout)
 
     // 方案列表来自磁盘发现（当前目录根＋shared 根，绝不递归），不再读引擎实时表：
     // 部署中列表不变空；导入安装 / 部署完成后重调即刷新。
     suspend fun loadSchemas() {
         val currentDirFile = DataManager.userDataDir
         val sharedDirFile = DataManager.sharedDataDir
+        // 存量修复先行：导入前已落盘的旧目录可能缺 schema: 字段或
+        // options: 段，修好再读表；仅写内容有变的文件，只修当前目录。
+        repairSchemeFiles(currentDirFile)
         val disk = discoverSchemes(currentDirFile, sharedDirFile)
         val allItems =
             disk.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
@@ -327,9 +333,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             ).records.filter { it.source == SchemePackageImport.PackageSource.URL }
                 .flatMap { it.schemeIds }.toSet()
         } else {
-            // 磁盘确实无方案：清掉旧列表（磁盘已知为空，不是加载中）。
+            // 磁盘确实无方案：清掉旧列表（磁盘已知为空，不是加载中），
+            // 当前方案 id 与名同步清零，不留滞留旧值（旧分支只清列表）。
             enabledSchemas.clear()
             availableSchemas.clear()
+            currentSchemeId = ""
+            currentSchemaName = ""
         }
     }
 
@@ -342,41 +351,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         else -> "$bytes B"
     }
 
-    // ---- 第一期方案切换：点选切换 / 部署 / 回退（状态机见协调器） ----
+    // ---- 第一期方案切换：部署 / 回退（状态机见协调器） ----
 
     /** 把完整顺序写回偏好并同步两列（调用方只传完整顺序，不丢项）。 */
-    fun applyOrder(newOrder: List<String>) {
-        val byId = (enabledSchemas + availableSchemas).associateBy { it.id }
-        val newEnabled = newOrder.mapNotNull { byId[it] }
-        val enabledIds = newEnabled.map { it.id }.toSet()
-        enabledSchemas.clear()
-        enabledSchemas.addAll(newEnabled)
-        availableSchemas.removeAll { it.id in enabledIds }
-        saveOrder(prefs, currentDir, enabledSchemas)
-    }
-
     // 进页加载：磁盘列表一次读完，不再轮询等待引擎表；
     // 部署中列表不变空，部署完由各入口重调 loadSchemas 刷新。
     LaunchedEffect(Unit) {
         migrationErrorText = SchemeDirs.migrationError(context)
         loadSchemas()
-    }
-
-    /**
-     * 点选切换：守门→引擎直选→置顶→写回顺序，不部署、不轮询校验。
-     * [onDone] 在切换结束时调用，供导入流程在切换结束后刷新方案表。
-     */
-    fun switchTo(target: SchemaItem, onDone: (() -> Unit)? = null) {
-        if (dirSwitching || EngineDeployState.isRunning()) {
-            ToastUtil.showToast(context.getString(R.string.fab_deploy_busy))
-            return
-        }
-        val newOrder =
-            listOf(target.id) + enabledSchemas.map { it.id }.filter { it != target.id }
-        applyOrder(newOrder)
-        EngineFactory.current()?.selectSchema(target.id)
-        currentSchemeId = target.id
-        onDone?.invoke()
     }
 
     /**
@@ -405,12 +387,21 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         dirSwitching = true
         appScope.launch {
             var succeeded = false
+            var deployTimedOut = false
             try {
                 val targetDirFile = File(DataManager.schemeDirsRoot, targetDir)
                 val targetDisk = discoverSchemes(targetDirFile, DataManager.sharedDataDir)
                 val targetEnabled = effectiveEnabledIds(
                     targetDirFile, DataManager.sharedDataDir, targetDisk.map { it.id }
                 )
+                if (targetDisk.isEmpty()) {
+                    // 合并层（目录＋共享）皆空：无方案可部署，禁切，
+                    // 指针不动；否则指针切过去、部署回落 .default、
+                    // 选方案被跳过，界面滞留旧方案 id。
+                    ToastUtil.showToast(context.getString(R.string.schema_dir_empty_schemes))
+                    dirSwitching = false
+                    return@launch
+                }
                 SchemeDirs.setCurrentDirName(context, targetDir)
                 currentDir = targetDir
                 if (targetEnabled.isNotEmpty()) {
@@ -419,6 +410,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     )
                 }
                 SchemeEnabled.writeEnabledMirror(prefs, targetEnabled)
+                // 切入前修好目标目录的方案文件（与导入注入同口径），
+                // 使随后部署读到的是已补段的文件；仅写内容有变的文件。
+                repairSchemeFiles(targetDirFile)
                 // 部署超时随目标目录体积缩放（纯函数，见
                 // SchemePackageImport.deployTimeoutMs）：小目录与旧 180 秒
                 // 一致，大目录放宽、上限 1800 秒。
@@ -428,8 +422,14 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 }.getOrDefault(0L)
                 val deployTimeout = SchemePackageImport.deployTimeoutMs(dirTotalBytes)
                 val deployed = (EngineFactory.current() as? RimeEngine)
-                    ?.deployAndAwait(deployTimeout) ?: false
-                if (!deployed) throw IllegalStateException("switch deploy failed")
+                    ?.deployAndAwait(deployTimeout) ?: DeployAwaitResult.FAILED
+                if (deployed == DeployAwaitResult.TIMEOUT_RUNNING) {
+                    deployTimedOut = true
+                    throw IllegalStateException("switch deploy timeout")
+                }
+                if (deployed != DeployAwaitResult.COMPLETED) {
+                    throw IllegalStateException("switch deploy failed")
+                }
                 if (targetEnabled.isNotEmpty()) {
                     EngineFactory.current()?.selectSchema(targetEnabled[0])
                 }
@@ -442,7 +442,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     currentDir = prevDir
                     SchemeEnabled.writeEnabledMirror(prefs, prevOrder)
                 }
-                ToastUtil.showToast(context.getString(R.string.schema_dir_switch_failed))
+                ToastUtil.showToast(
+                    context.getString(
+                        if (deployTimedOut) {
+                            R.string.schema_deploy_timeout
+                        } else {
+                            R.string.schema_dir_switch_failed
+                        }
+                    )
+                )
             }
             dirSwitching = false
             if (succeeded) {
@@ -458,22 +466,26 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     // runImportPick（SAF 复制）与 startDownload（下载完成）共用 runImport：
     // 校验→解压→T9 注入→写启用表→切指针→部署→选首位方案；失败只 toast。
     // 导入中 importBusy 置位（等待页 + 顶栏返回禁用），跑完落主列表刷新。
-    /** 导入失败种类 → toast 文案（复用既有串；部署失败不称回退，因指针已留新目录）。 */
+    /** 导入失败种类 → toast 文案（部署失败/超时均已回滚指针，见 runImport）。 */
     fun importFailureString(failure: ImportFailure): Int = when (failure) {
         ImportFailure.NOT_ZIP -> R.string.schema_import_error_zip
         ImportFailure.TOO_LARGE -> R.string.schema_import_error_too_large
         ImportFailure.NO_SCHEMA -> R.string.schema_import_error_no_schema
         ImportFailure.IO_ERROR -> R.string.schema_import_error_io
         ImportFailure.DEPLOY_FAILED -> R.string.schema_import_error_install
+        ImportFailure.DEPLOY_TIMEOUT -> R.string.schema_deploy_timeout
     }
 
     /**
      * SAF / 下载共用的导入飞行（见 SchemeImport.importPackage）。
-     * 成功与部署失败都落到主列表并刷新（部署失败时指针已留新目录，
-     * 不回滚）；校验类失败只 toast，指针与列表不动。调用方负责
-     * importBusy 的置位与复位、暂存 zip 的删除。
+     * 成功与部署失败都落到主列表并刷新（部署失败/超时时指针＋镜像
+     * 回滚到导入前，与切换失败同口径）；校验类失败只 toast，指针与列表不动。
+     * 调用方负责 importBusy 的置位与复位、暂存 zip 的删除。
      */
     suspend fun runImport(zipFile: File, fallbackName: String) {
+        // 部署失败回滚用：导入前指针与镜像（与切换失败同口径）。
+        val prevDir = currentDir
+        val prevOrder = enabledSchemas.map { it.id }
         val outcome = importPackage(
             zipFile = zipFile,
             fallbackName = fallbackName,
@@ -485,7 +497,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 currentDir = dir
             },
             deploy = { timeout ->
-                (EngineFactory.current() as? RimeEngine)?.deployAndAwait(timeout) ?: false
+                (EngineFactory.current() as? RimeEngine)?.deployAndAwait(timeout)
+                    ?: DeployAwaitResult.FAILED
             },
             selectSchema = { id ->
                 EngineFactory.current()?.selectSchema(id)
@@ -496,6 +509,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         dirBrowser = false
         dirDetail = null
         if (outcome is ImportOutcome.Failed) {
+            if (outcome.failure == ImportFailure.DEPLOY_FAILED ||
+                outcome.failure == ImportFailure.DEPLOY_TIMEOUT
+            ) {
+                // 部署失败/超时：指针＋镜像回滚到导入前（目标 custom
+                // 已写可留，下次切过去即用）；孤儿部署随后若完成，
+                // 部署的是回滚后的旧目录，无害。
+                runCatching {
+                    SchemeDirs.setCurrentDirName(context, prevDir)
+                    currentDir = prevDir
+                    SchemeEnabled.writeEnabledMirror(prefs, prevOrder)
+                }
+            }
             ToastUtil.showToast(context.getString(importFailureString(outcome.failure)))
         }
         loadSchemas()
@@ -1384,8 +1409,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            // 行忙态：目录切换或部署进行中时禁用行点按。
-            val switchBusy = dirSwitching || deployRunning
             if (editMode) {
                 // 管理页：已选卡（勾选 + 拖拽合一）+ 全部方案区；草稿只在
                 // 保存时提交，返回放弃。保存 = 写启用表（custom＋镜像）后走
@@ -1411,6 +1434,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         // 失败恢复原启用表（custom＋镜像）并明示，不 reload
                         // 回滚部署；取消同样先恢复原表再重抛。
                         appScope.launch {
+                            var deployTimedOut = false
                             try {
                                 val dirFile = DataManager.userDataDir
                                 withContext(Dispatchers.IO) {
@@ -1429,8 +1453,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                 val deployed = (EngineFactory.current() as? RimeEngine)
                                     ?.deployAndAwait(
                                         SchemePackageImport.deployTimeoutMs(dirTotalBytes)
-                                    ) ?: false
-                                if (!deployed) {
+                                    ) ?: DeployAwaitResult.FAILED
+                                if (deployed == DeployAwaitResult.TIMEOUT_RUNNING) {
+                                    deployTimedOut = true
+                                    throw IllegalStateException("manage deploy timeout")
+                                }
+                                if (deployed != DeployAwaitResult.COMPLETED) {
                                     throw IllegalStateException("manage deploy failed")
                                 }
                                 newEnabled.firstOrNull()?.let {
@@ -1458,7 +1486,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                 }
                                 manageDeploying = false
                                 if (e is kotlinx.coroutines.CancellationException) throw e
-                                manageDeployError = msgManageDeployFailed
+                                manageDeployError = if (deployTimedOut) {
+                                    msgManageDeployTimeout
+                                } else {
+                                    msgManageDeployFailed
+                                }
                                 appScope.launch { loadSchemas() }
                             }
                         }
@@ -1466,8 +1498,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 )
             } else {
                 // 已启用列表：一张分组卡片，行只留名 + 灰字 id，无芯片、
-                // 无默认标记；行点按切换。当前方案由列表首行高亮表达
-                // （首行底色 + 无障碍状态描述，不另立当前卡、不加标签）；
+                // 无默认标记；行不可点按、仅展示，勾选与排序都在方案
+                // 列表编辑页确认。当前方案由列表首行高亮表达（首行底色
+                // + 无障碍状态描述，不另立当前卡、不加标签）；
                 // loadSchemas 已把当前方案移到首位。
                 Card(
                     modifier = Modifier.fillMaxWidth(),
@@ -1488,7 +1521,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                             stateDescription = "当前方案"
                                         }
                                     }
-                                    .clickable(enabled = !switchBusy) { switchTo(schema) }
                                     .background(
                                         if (isCurrentRow) {
                                             MaterialTheme.colorScheme.primaryContainer

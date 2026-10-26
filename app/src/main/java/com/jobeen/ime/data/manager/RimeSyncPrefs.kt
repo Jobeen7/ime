@@ -28,6 +28,25 @@ object RimeSyncPrefs {
         }
     }
 
+    /** 同步文件夹名合法当且仅当单段：非空，且不含 /、\ 与空白字符。 */
+    fun isValidSyncFolderName(name: String): Boolean {
+        if (name.isBlank()) return false
+        return name.none { it == '/' || it == '\\' || it.isWhitespace() }
+    }
+
+    /**
+     * 改写同步文件夹名（RIME 页编辑用）：合法才保存并返回 true，
+     * 非法不保存返回 false。只改本机偏好，不动远端旧文件夹；
+     * 下次目录同步即以新文件夹为合并对象（词典先 GET 合并再 PUT，
+     * 不覆盖丢词；方案文件同步走共享 schemes/，不受文件夹名影响）。
+     */
+    fun setSyncFolderUuid(context: Context, value: String): Boolean {
+        val name = value.trim()
+        if (!isValidSyncFolderName(name)) return false
+        prefs(context).edit().putString(KEY_SYNC_FOLDER_UUID, name).apply()
+        return true
+    }
+
     /** 键盘显示 RIME 通知开关，默认开（只管部署/同步结果通知，不管语音提示）。 */
     fun isNoticeEnabled(context: Context): Boolean =
         prefs(context).getBoolean(KEY_NOTICE_ENABLED, true)

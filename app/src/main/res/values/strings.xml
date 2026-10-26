@@ -114,6 +114,7 @@
     <string name="schema_manage_all">全部方案</string>
     <string name="schema_manage_deploying">方案部署中…</string>
     <string name="schema_manage_deploy_failed">部署失败，已恢复原顺序</string>
+    <string name="schema_deploy_timeout">部署超时，已回退，稍后可重试</string>
     <string name="schema_import_replace_dir">已存在同名目录，将替换为新包内容，输入历史与手动配置会被保留</string>
     <string name="schema_dir_migration_failed">方案目录迁移失败</string>
     <!-- 方案列表管理页：勾选卡 + 保存 pill + 拖拽卡 -->
@@ -183,6 +184,7 @@
     <string name="about_diag_export">导出诊断日志</string>
     <string name="about_diag_share">导出诊断日志</string>
     <string name="about_diag_failed">导出失败，请重试</string>
+    <string name="about_diag_empty">暂无日志可导出</string>
     <string name="about_reset">重置应用设置</string>
     <string name="about_reset_footnote">重置后回到默认安装状态：仅内置 Lite 方案可用，全部方案目录、WebDAV 绑定与学习词全部清除。</string>
     <string name="rime_title">RIME</string>
@@ -198,6 +200,17 @@
     <string name="rime_sync_folder">同步文件夹</string>
     <string name="rime_sync_folder_path">完整远程路径</string>
     <string name="rime_sync_folder_unconfigured">未配置 WebDAV，配置后此处显示完整远程路径</string>
+    <string name="rime_sync_folder_edit_title">编辑同步文件夹</string>
+    <string name="rime_sync_cleanup_orphans">清理旧同步残留</string>
+    <string name="rime_sync_cleanup_empty">远端同步文件夹根下没有残留文件</string>
+    <string name="rime_sync_cleanup_failed">列出远端文件失败</string>
+    <string name="rime_sync_cleanup_confirm">远端同步文件夹根下有 %1$d 个文件、%2$d 个文件夹。确认只删除这 %1$d 个文件吗？文件夹不会被删除。</string>
+    <string name="rime_sync_cleanup_done">已删除 %1$d 个文件，跳过 %2$d 个文件夹</string>
+    <string name="rime_sync_cleanup_failed_count">，%1$d 个删除失败</string>
+    <string name="rime_sync_folder_path_edit_title">编辑完整远程路径</string>
+    <string name="rime_sync_folder_invalid">文件夹名不能为空，不能包含 / \ 或空白</string>
+    <string name="rime_sync_path_invalid">路径格式不对，末尾必须是当前目录名</string>
+    <string name="rime_sync_path_server_changed">服务器地址请到用户词典页修改，这里只能改同步路径与文件夹</string>
     <string name="about_reset_confirm1_msg">此操作不可撤销，确定要继续吗？</string>
     <string name="about_reset_confirm2_title">再次确认</string>
     <string name="about_reset_confirm2_msg">确定要清除全部设置并回到默认状态吗？</string>
@@ -273,6 +286,10 @@
     <string name="schema_update_success">更新完成，已重新部署</string>
     <string name="schema_update_failed">更新失败，请重试</string>
     <string name="schema_update_builtin">内置版本</string>
+    <string name="schema_update_target">更新目标</string>
+    <string name="schema_update_target_shared">共享词库（内置）</string>
+    <string name="schema_update_no_source">该目录无官方更新源，不自动检查</string>
+    <string name="schema_update_pro_unsupported">Pro 变体辅助码类型无法从目录推断，暂不支持自动更新</string>
 
     <!-- Text Editing Panel -->
     <string name="move_cursor_up">上移光标</string>

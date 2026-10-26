@@ -2,6 +2,8 @@
 
 package com.jobeen.ime.ui.screen
 
+import android.content.Context
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,13 +19,16 @@ import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.RocketLaunch
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -38,6 +43,8 @@ import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.AppReset
 import com.jobeen.ime.data.manager.RimeSyncPrefs
+import com.jobeen.ime.data.manager.SchemeDirs
+import java.net.URLEncoder
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
@@ -52,7 +59,10 @@ import kotlinx.coroutines.launch
  * 部署 = 与 FAB 部署同一动作（Activity 传入）；同步 = 目录同步（同 FAB 同步）；
  * 方案重置 = 与关于页同一重置动作（AppReset.resetToInitialState）；
  * 方案列表管理 = 跳转现有管理页；通知开关 = 键盘 RIME 通知；
- * 同步文件夹 = UUID 名 + 完整远程路径（显示用，不可编辑）。
+ * 同步文件夹与完整远程路径均可点按编辑：文件夹名是目录同步的远端
+ * 文件夹标识（对齐 Rime 原生多设备同步的 installation_id 角色，改后
+ * 下次同步即以新文件夹为词典合并对象）；完整路径 = 同步根／文件夹／
+ * 当前目录，编辑时只允许改同步路径与文件夹，服务器地址仍归用户词典页。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -74,6 +84,22 @@ fun RimeScreen(
     var syncFolderUuid by remember { mutableStateOf("") }
     var syncRemotePath by remember { mutableStateOf("") }
     var webdavConfigured by remember { mutableStateOf(false) }
+    // 编辑弹窗状态：非空 = 打开中，值为编辑框初始文本。
+    var uuidEdit by remember { mutableStateOf<String?>(null) }
+    var pathEdit by remember { mutableStateOf<String?>(null) }
+    // 旧残留清理：非空 = 确认弹窗打开中，值为 UUID 根的直接子项。
+    var cleanupEntries by remember { mutableStateOf<List<WebDavSync.UuidRootEntry>?>(null) }
+    var cleanupBusy by remember { mutableStateOf(false) }
+
+    /** 编辑后刷新两行显示（路径由偏好现算，与同步用同一构成）。 */
+    fun refreshSyncDisplay() {
+        syncFolderUuid = RimeSyncPrefs.syncFolderUuid(context)
+        syncRemotePath = if (UserDictPrefs.isConfigured()) {
+            WebDavSync.dirSyncRemoteUrl(context)
+        } else {
+            ""
+        }
+    }
 
     LaunchedEffect(Unit) {
         noticeEnabled = RimeSyncPrefs.isNoticeEnabled(context)
@@ -207,6 +233,7 @@ fun RimeScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clickable { uuidEdit = syncFolderUuid }
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
                     Text(
@@ -222,7 +249,11 @@ fun RimeScreen(
                 }
                 GroupDivider()
                 Column(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                    modifier = Modifier
+                        .clickable(enabled = webdavConfigured) {
+                            pathEdit = syncRemotePath
+                        }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
                     Text(
                         text = stringResource(R.string.rime_sync_folder_path),
@@ -239,6 +270,39 @@ fun RimeScreen(
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
+                GroupDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(enabled = webdavConfigured && !cleanupBusy) {
+                            scope.launch {
+                                cleanupBusy = true
+                                val result = WebDavSync.listUuidRootEntries(syncFolderUuid)
+                                cleanupBusy = false
+                                result.onSuccess { entries ->
+                                    if (entries.isEmpty()) {
+                                        toast(
+                                            context.getString(R.string.rime_sync_cleanup_empty)
+                                        )
+                                    } else {
+                                        cleanupEntries = entries
+                                    }
+                                }.onFailure {
+                                    toast(
+                                        it.message
+                                            ?: context.getString(R.string.rime_sync_cleanup_failed)
+                                    )
+                                }
+                            }
+                        }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                ) {
+                    Text(
+                        text = stringResource(R.string.rime_sync_cleanup_orphans),
+                        style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
         }
     }
@@ -249,4 +313,164 @@ fun RimeScreen(
         onStepChange = { resetStep = it },
         onConfirmed = { doReset() },
     )
+
+    // 同步文件夹编辑：单段名，非法不保存、弹窗不关闭。
+    uuidEdit?.let { initial ->
+        var text by remember { mutableStateOf(initial) }
+        AlertDialog(
+            onDismissRequest = { uuidEdit = null },
+            title = { Text(stringResource(R.string.rime_sync_folder_edit_title)) },
+            text = {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    if (RimeSyncPrefs.setSyncFolderUuid(context, text)) {
+                        refreshSyncDisplay()
+                        uuidEdit = null
+                    } else {
+                        toast(context.getString(R.string.rime_sync_folder_invalid))
+                    }
+                }) { Text(stringResource(R.string.schema_manage_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { uuidEdit = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    // 完整远程路径编辑：拆回同步路径与文件夹名（服务器地址不动）。
+    pathEdit?.let { initial ->
+        var text by remember { mutableStateOf(initial) }
+        AlertDialog(
+            onDismissRequest = { pathEdit = null },
+            title = { Text(stringResource(R.string.rime_sync_folder_path_edit_title)) },
+            text = {
+                OutlinedTextField(
+                    value = text,
+                    onValueChange = { text = it },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    when (applyEditedRemotePath(context, text)) {
+                        PathEditOutcome.OK -> {
+                            refreshSyncDisplay()
+                            pathEdit = null
+                        }
+                        PathEditOutcome.INVALID -> {
+                            toast(context.getString(R.string.rime_sync_path_invalid))
+                        }
+                        PathEditOutcome.SERVER_CHANGED -> {
+                            toast(context.getString(R.string.rime_sync_path_server_changed))
+                        }
+                    }
+                }) { Text(stringResource(R.string.schema_manage_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pathEdit = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+
+    // 旧残留清理确认：只删文件，文件夹只计跳过、不自动删。
+    cleanupEntries?.let { entries ->
+        val fileCount = entries.count { !it.isDirectory }
+        val dirCount = entries.count { it.isDirectory }
+        AlertDialog(
+            onDismissRequest = { cleanupEntries = null },
+            title = { Text(stringResource(R.string.rime_sync_cleanup_orphans)) },
+            text = {
+                Text(
+                    stringResource(
+                        R.string.rime_sync_cleanup_confirm,
+                        fileCount,
+                        dirCount,
+                    )
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    val doomed = entries.filter { !it.isDirectory }
+                    cleanupEntries = null
+                    scope.launch {
+                        cleanupBusy = true
+                        var deleted = 0
+                        var failed = 0
+                        for (entry in doomed) {
+                            if (WebDavSync.deleteRemoteFile(
+                                    WebDavSync.uuidFileUrl(syncFolderUuid, entry.name)
+                                )
+                            ) {
+                                deleted++
+                            } else {
+                                failed++
+                            }
+                        }
+                        cleanupBusy = false
+                        var msg = context.getString(
+                            R.string.rime_sync_cleanup_done,
+                            deleted,
+                            dirCount,
+                        )
+                        if (failed > 0) {
+                            msg += context.getString(
+                                R.string.rime_sync_cleanup_failed_count,
+                                failed,
+                            )
+                        }
+                        toast(msg)
+                    }
+                }) { Text(stringResource(R.string.schema_manage_save)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { cleanupEntries = null }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            },
+        )
+    }
+}
+
+/** 完整远程路径编辑的解析结果。 */
+private enum class PathEditOutcome { OK, INVALID, SERVER_CHANGED }
+
+/**
+ * 把编辑后的完整远程路径拆回偏好：
+ * - 末尾必须为当前目录名（URL 编码后），否则 INVALID；
+ * - 倒数第二段为文件夹名，须单段合法，否则 INVALID；
+ * - 剩余前缀必须为当前服务器（或其下路径），否则 SERVER_CHANGED
+ *   （服务器地址改动请到用户词典页，那里连同账号密码一起改）。
+ * 成功时写回 syncPath 与文件夹名。
+ */
+private fun applyEditedRemotePath(context: Context, input: String): PathEditOutcome {
+    val text = input.trim().trimEnd('/')
+    val dir = SchemeDirs.currentDirName(context)
+    val encodedDir = URLEncoder.encode(dir, Charsets.UTF_8.name()).replace("+", "%20")
+    if (!text.endsWith("/$encodedDir")) return PathEditOutcome.INVALID
+    val head = text.removeSuffix("/$encodedDir")
+    val slash = head.lastIndexOf('/')
+    if (slash < 0) return PathEditOutcome.INVALID
+    val root = head.substring(0, slash)
+    val uuid = head.substring(slash + 1)
+    if (!RimeSyncPrefs.isValidSyncFolderName(uuid)) return PathEditOutcome.INVALID
+    val server = UserDictPrefs.normalizedServer()
+    if (root != server && !root.startsWith("$server/")) {
+        return PathEditOutcome.SERVER_CHANGED
+    }
+    val syncPath = if (root == server) "" else root.removePrefix("$server/")
+    UserDictPrefs.syncPath = syncPath
+    RimeSyncPrefs.setSyncFolderUuid(context, uuid)
+    return PathEditOutcome.OK
 }

@@ -114,6 +114,7 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     val msgNeedPermission = stringResource(R.string.update_need_permission)
     val msgDebugUnsupported = stringResource(R.string.debug_update_unsupported)
     val msgDiagFailed = stringResource(R.string.about_diag_failed)
+    val msgDiagEmpty = stringResource(R.string.about_diag_empty)
     val diagShareTitle = stringResource(R.string.about_diag_share)
     val msgResetFailed = stringResource(R.string.about_reset_failed)
     var resetStep by remember { mutableStateOf(0) }
@@ -151,16 +152,24 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     /** 诊断导出：本进程 Timber 日志 + 应用/设备头，打包成 zip 分享。
      * 失败时把断点（步骤 + 异常类）写进日志缓冲（元数据级，无用户内容），
      * 下次导出成功时可直接从日志里看到上次断在哪一步；用户侧仍只出 Toast。
+     * 日志与崩溃记录都为空时不分享空包，只出 Toast（正式版曾因缓冲
+     * 未装而恒为空包）。崩溃记录（CrashTrap）附在正文末尾，不经日志缓冲。
      * 调用方在页面协程里调（scope 为主线程）：写 zip 在 IO 上下文跑，
      * 完成后回主线程起分享 / 弹提示（沿用本页 doReset 的协程体例）。 */
     suspend fun exportDiag() {
+        val entries = AppLogBuffer.entries.value
+        val pendingCrash = com.jobeen.ime.base.CrashTrap.readPendingCrashInfo(context)
+        if (entries.isEmpty() && pendingCrash == null) {
+            toast(msgDiagEmpty)
+            return
+        }
         var step = "build-txt"
         runCatching {
             val now = java.text.SimpleDateFormat(
                 "yyyyMMdd-HHmmss",
                 java.util.Locale.getDefault(),
             ).format(java.util.Date())
-            val txt = DiagExport.buildDiagnosticText(
+            var txt = DiagExport.buildDiagnosticText(
                 versionName = versionName,
                 packageName = context.packageName,
                 androidRelease = android.os.Build.VERSION.RELEASE,
@@ -168,8 +177,11 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                 manufacturer = android.os.Build.MANUFACTURER,
                 model = android.os.Build.MODEL,
                 now = now,
-                entries = AppLogBuffer.entries.value,
+                entries = entries,
             )
+            if (pendingCrash != null) {
+                txt += "\n\n=== 最近崩溃 ===\n" + pendingCrash.text
+            }
             step = "write-zip"
             // 落盘必须进 cacheDir/shared/（file_paths.xml 唯一覆盖诊断 zip 的根）；
             // 旧实现写 cacheDir 根目录，getUriForFile 恒抛 IllegalArgumentException。

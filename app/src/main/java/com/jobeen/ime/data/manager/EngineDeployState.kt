@@ -25,7 +25,24 @@ object EngineDeployState {
     fun setRunning(running: Boolean) {
         _running.value = running
     }
+
+    /**
+     * 超时孤儿部署进行中：等待方超时后部署作业仍在后台跑，
+     * 此时新部署一律以忙失败（deployAndAwait 入口守门），直至
+     * 作业收尾复位。只由 deployAndAwait 置位/复位。
+     */
+    private val _orphanRunning = MutableStateFlow(false)
+    val orphanRunning: StateFlow<Boolean> = _orphanRunning.asStateFlow()
+
+    fun isOrphanRunning(): Boolean = _orphanRunning.value
+
+    fun setOrphanRunning(running: Boolean) {
+        _orphanRunning.value = running
+    }
 }
+
+/** deployAndAwait 的三态结果：完成 / 失败 / 超时但部署仍在后台继续。 */
+enum class DeployAwaitResult { COMPLETED, FAILED, TIMEOUT_RUNNING }
 
 /**
  * 等引擎方案表就绪：每 intervalMs 轮询一次，直到 poll 为真或超时。

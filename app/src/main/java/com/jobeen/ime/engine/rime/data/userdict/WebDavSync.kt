@@ -177,7 +177,34 @@ object WebDavSync {
                         throw httpError("上传", response.code, errorDetail(response))
                     }
                     // 成功即完成：不再读响应 ETag、不再补查记基准
-                    // （清点 S1 定论，ETag 状态机整套退场）
+                    // （清点 S1 定论，ETag 状态机整套退场）。
+                }
+                // PUT 2xx 后的轻复核（14）：只认“写到了该地址且长度一致”。
+                // HEAD 失败/非 2xx 时不推翻 PUT 2xx（只记警告，部分服务
+                // 器禁 HEAD）；长度明确不一致时视为未写成功，不记上传
+                // 时间、不报成功，调用方按失败处理。
+                try {
+                    val head = Request.Builder()
+                        .url(remoteUrl(fileName))
+                        .header("Authorization", authHeader())
+                        .head()
+                        .build()
+                    client.newCall(head).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val declared = response.header("Content-Length")?.toLongOrNull()
+                            if (declared != null && declared != tempFile.length()) {
+                                throw IllegalStateException(
+                                    "上传后复核长度不符（本地 ${tempFile.length()}，远端 $declared）"
+                                )
+                            }
+                        } else {
+                            Timber.w("Upload recheck HEAD non-2xx: ${response.code}")
+                        }
+                    }
+                } catch (e: IllegalStateException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "Upload recheck HEAD failed, PUT 2xx stands")
                 }
                 UserDictPrefs.setLastUploadTime(fileName, System.currentTimeMillis())
                 Timber.i("User dict '$dictName' uploaded: $count entries")
@@ -839,14 +866,18 @@ object WebDavSync {
 
     /**
      * 收集待上传的方案文件（相对路径含目录名前缀）。
-     * 根下 build 目录与点号目录不进同步；符号链接不进同步（防越界读）；
+     * 根下 build 目录、点号目录与 scheme-archive（同名目录归档，
+     * 非方案目录）不进同步；符号链接不进同步（防越界读）；
      * 单目录内相对路径超 6 段或受保护条目跳过；总数上限 1000。
      */
     internal fun collectUploadFiles(root: File): List<String> {
         val canonical = root.canonicalFile
         val out = mutableListOf<String>()
         val dirs = canonical.listFiles()
-            ?.filter { it.isDirectory && it.name != "build" && !it.name.startsWith(".") }
+            ?.filter {
+                it.isDirectory && it.name != "build" && it.name != "scheme-archive" &&
+                    !it.name.startsWith(".")
+            }
             ?.sortedBy { it.name }
             ?: emptyList()
         for (dir in dirs) {
@@ -903,6 +934,9 @@ object WebDavSync {
                     for (entry in entries) {
                         if (files.size >= 1000) return
                         val rel = if (dirRel.isEmpty()) entry.relPath else "$dirRel/${entry.relPath}"
+                        // 根级 scheme-archive 是同名目录归档，非方案目录，
+                        // 上传侧已排除；下载侧同样跳过整棵子树（不删远端旧份）。
+                        if (rel.substringBefore('/') == "scheme-archive") continue
                         if (entry.isDirectory) {
                             if (depth < 4) collect(rel, depth + 1)
                         } else {
@@ -937,6 +971,46 @@ object WebDavSync {
             }
         }
     }
+
+    /** UUID 根的直接子项（清理旧残留用）：仅文件可删，文件夹只计跳过。 */
+    data class UuidRootEntry(val name: String, val isDirectory: Boolean)
+
+    /**
+     * 列出 UUID 根的直接子项（12d 清理旧残留用）。
+     * UUID 文件夹不存在（404）视为空（首次同步前）；注意：.5 时代
+     * 直接落在 UUID 根下的旧文件与现行按目录分的词典文件夹都在此列出，
+     * 调用方只删文件、绝不自动删文件夹，误删活目录的风险由“只删文件”兜底。
+     */
+    suspend fun listUuidRootEntries(uuid: String): Result<List<UuidRootEntry>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkConfigured()
+                val url = "${UserDictPrefs.syncDirUrl()}/$uuid"
+                propfindDirEntries(url).map { UuidRootEntry(it.relPath, it.isDirectory) }
+            }
+        }
+
+    /**
+     * 删远端单个文件：2xx 或 404（已不在）视为成功，其余返回 false。
+     * 只删文件，调用方不得拿它删目录（目录删除不在本函数口径内）。
+     */
+    suspend fun deleteRemoteFile(url: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            checkConfigured()
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", authHeader())
+                .delete()
+                .build()
+            client.newCall(request).execute().use { response ->
+                response.isSuccessful || response.code == 404
+            }
+        }.getOrDefault(false)
+    }
+
+    /** UUID 根下某文件的远端 URL（按段编码，与下载路径同口径）。 */
+    fun uuidFileUrl(uuid: String, name: String): String =
+        dirUrl("${UserDictPrefs.syncDirUrl()}/$uuid", name)
 
     /**
      * 词典全量同步（自旧 syncSchemeDir 第 3 步抽出，口径原样保留）：
