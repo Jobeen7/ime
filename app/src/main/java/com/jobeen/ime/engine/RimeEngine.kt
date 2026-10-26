@@ -235,7 +235,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     // 分两边：jobs 全是控制任务，走 sendJob/awaitJob 的异步补投、永不丢；
     // actions 经 dispatchAction 分发，易变类满时自丢、控制类异步补投。
     private val actions = Channel<Action>(ACTION_QUEUE_CAPACITY)
-    private val jobs by lazy { Channel<suspend RimeApi.() -> Unit>(JOB_QUEUE_CAPACITY) }
+
+    /**
+     * jobs 队列的单条作业：block 之外带一个作业体永不执行时的
+     * 丢弃回调。消费循环在 runOnReady 门处抛错（引擎已 STOPPED）
+     * 时作业体根本不跑——只在作业体内 finally 复位的标志会就此
+     * 滞留；丢弃回调是这些标志在门外的唯一复位方。
+     * 回调约束（调用方必须遵守）：只做幂等复位与 deferred 完成，
+     * 不挂起、不抛错。作业体执行中抛错时消费循环同样会调它，
+     * 此时作业体自身的 finally/完成已先行，重复调用必须无害。
+     */
+    private class QueuedJob(
+        val block: suspend RimeApi.() -> Unit,
+        val onDropped: (() -> Unit)? = null,
+    )
+
+    private val jobs by lazy { Channel<QueuedJob>(JOB_QUEUE_CAPACITY) }
     private var session: RimeSession? = null
     private var behaviorHosted: BehaviorHost? = null
     private var context: Context? = null
@@ -413,9 +428,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         session = daemon.createSession(javaClass.name)
         scope.launch {
-            for (job in jobs) {
+            for (entry in jobs) {
                 try {
-                    session?.runOnReady {
+                    val currentSession = session
+                    if (currentSession == null) {
+                        // 会话尚未建立：作业体永不会执行，按丢弃处理，
+                        // 否则带完成回调的部署作业会让等待方空等到超时。
+                        entry.onDropped?.invoke()
+                        continue
+                    }
+                    currentSession.runOnReady {
                         // 字段选项（禁个性化学习等隐私项）待补设时，在
                         // 本 job 之前先行应用：不依赖补设 job 在队列中
                         // 与按键 job 的相对位置——队列满时 sendJob 的
@@ -426,6 +448,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             fieldOptionsPending = false
                             editorInfo?.let { applyFieldOptions(it) }
                         }
+                        // 裸调用：block 是带 RimeApi 接收者的函数值，
+                        // 只有裸调用才沿用 runOnReady 块的隐式接收者；
+                        // 写成 entry.block() 时编译器要求显式传接收者
+                        // （原实现 job() 即此形态）。
+                        val job = entry.block
                         job()
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
@@ -433,8 +460,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 } catch (e: Exception) {
                     // 单个 job 失败（如引擎在就绪前被停掉，whenReady 抛
                     // RimeStoppedException）只丢这一个 job 并记日志，
-                    // 不能让异常杀掉整个 job 消费循环、堵死后续所有引擎操作
+                    // 不能让异常杀掉整个 job 消费循环、堵死后续所有引擎操作。
+                    // 作业体未执行时 onDropped 是其标志/等待方的唯一复位方：
+                    // 消费循环是 jobs 唯一的串行执行点，丢弃回调跑在本
+                    // 循环内，与作业体执行点同一线程/队列，回调只做幂等
+                    // 复位与 deferred 完成，故与作业体 finally 的保证等价。
                     Timber.w(e, "Rime job failed")
+                    entry.onDropped?.invoke()
                 }
             }
         }
@@ -476,7 +508,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         prefs = null
         actions.close()
         jobs.close()
-        scope.cancel()
+        // 引擎死后排队未执行的部署作业永不会跑：其入口置位
+        // （reload/deployAndAwait）与超时孤儿在此统一清零，否则
+        // 进程级单例标志会把下一个引擎实例也堵死。锁内先取消
+        // 作用域再清标志，并与 reload/deployAndAwait 入口的
+        // 查—置段共用同一把锁定序：锁内已取消作用域的，后续
+        // 入口必在锁内看到 scope 已死而拒绝置位；锁前已置位的，
+        // 本处清零后不再有作业能把它重新置真（派发通道已关闭）。
+        // 锁内只有取消与标志赋值，无挂起调用，不会堵住部署本身；
+        // 锁顺序上 finalize 只拿 deployGateLock，绝不拿 deployMutex，
+        // 与 deployAndAwait（先 deployMutex 后 deployGateLock）无环。
+        synchronized(deployGateLock) {
+            scope.cancel()
+            SchemeDeployState.isDeploying = false
+            EngineDeployState.setRunning(false)
+            EngineDeployState.setOrphanRunning(false)
+        }
         preferDbScope.cancel()
         predictionManager?.destroy()
         daemon.destroySession(javaClass.name)
@@ -934,30 +981,38 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             Action.Reload -> {
                 behaviorHosted?.resetState()
-                sendJob {
-                    EngineDeployState.setRunning(true)
-                    try {
-                        deploy()
-                        // join 超时是防永久卡死的护栏，不是编译时限：600 秒取
-                        // awaitSchemasReady 的既有默认值口径。超时只让本作业失败
-                        // （转非取消异常，消费循环只丢本作业、不杀整条 jobs 队列；
-                        // finally 照常复位标志），不中断 native 侧仍在阻塞的 join
-                        // 线程——见汇报残余项。
+                // 丢弃回调：作业体在就绪门处被丢时，入口前置置位
+                // 的 running 标志除此之外无任何复位方——作业体内的
+                // finally 根本不会执行。此前该路径让 running 永久滞留
+                // 真，守门与 FAB 部署永久走“忙”路径。回调只复位
+                // running：Reload 不置 isDeploying、不记孤儿。
+                sendDeployJob(
+                    block = {
+                        EngineDeployState.setRunning(true)
                         try {
-                            withTimeout(600_000) { joinMaintenanceThread() }
-                        } catch (e: TimeoutCancellationException) {
-                            EngineDeployState.setRunning(false)
-                            throw IllegalStateException("deploy join timeout")
-                        }
-                        actions.send(
-                            Action.RimeMessage(
-                                RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                            deploy()
+                            // join 超时是防永久卡死的护栏，不是编译时限：600 秒取
+                            // awaitSchemasReady 的既有默认值口径。超时只让本作业失败
+                            // （转非取消异常，消费循环只丢本作业、不杀整条 jobs 队列；
+                            // finally 照常复位标志），不中断 native 侧仍在阻塞的 join
+                            // 线程——见汇报残余项。
+                            try {
+                                withTimeout(600_000) { joinMaintenanceThread() }
+                            } catch (e: TimeoutCancellationException) {
+                                EngineDeployState.setRunning(false)
+                                throw IllegalStateException("deploy join timeout")
+                            }
+                            actions.send(
+                                Action.RimeMessage(
+                                    RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                                )
                             )
-                        )
-                    } finally {
-                        EngineDeployState.setRunning(false)
-                    }
-                }
+                        } finally {
+                            EngineDeployState.setRunning(false)
+                        }
+                    },
+                    onDropped = { EngineDeployState.setRunning(false) },
+                )
             }
         }
     }
@@ -1314,12 +1369,25 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         else -> false
     }
 
-    override fun sendJob(block: suspend RimeApi.() -> Unit) {
-        if (jobs.trySend(block).isFailure) {
+    private fun enqueueJob(entry: QueuedJob) {
+        if (jobs.trySend(entry).isFailure) {
             // 队列满说明引擎正被长任务堵住：任务都是控制类（导词典、
             // 清屏、切方案等），不许丢，转异步挂起入队等空位
-            scope.launch { jobs.send(block) }
+            scope.launch { jobs.send(entry) }
         }
+    }
+
+    override fun sendJob(block: suspend RimeApi.() -> Unit) {
+        enqueueJob(QueuedJob(block))
+    }
+
+    /**
+     * 带丢弃回调的部署作业投递：仅 Reload 与 deployAndAwait 两路
+     * 部署作业使用。普通按键类作业无等待方、无入口置位，丢了也
+     * 无需复位，走 sendJob 即可。
+     */
+    private fun sendDeployJob(block: suspend RimeApi.() -> Unit, onDropped: () -> Unit) {
+        enqueueJob(QueuedJob(block, onDropped))
     }
 
     override suspend fun <T> awaitJob(defaultValue: T, block: suspend RimeApi.() -> T): T {
@@ -1345,11 +1413,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 deferred.complete(defaultValue)
             }
         }
-        if (jobs.trySend(task).isFailure) {
-            // 同 sendJob：满时异步补投，任务仍会执行；等待方有 2 秒
-            // 超时兜底，超时先返回默认值，迟到的 complete 自动忽略
-            scope.launch { jobs.send(task) }
-        }
+        // 同 sendJob：满时异步补投，任务仍会执行；等待方有 2 秒
+        // 超时兜底，超时先返回默认值，迟到的 complete 自动忽略。
+        // 任务被就绪门丢弃时同样走超时兜底（无 onDropped：等待方
+        // 本就有超时，不需要第二条完成路径）。
+        enqueueJob(QueuedJob(task))
         return withTimeoutOrNull(2000L) { deferred.await() } ?: defaultValue
     }
 
