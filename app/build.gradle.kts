@@ -17,8 +17,8 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 150
-        versionName = "1.1.14.7"
+        versionCode = 151
+        versionName = "1.1.14.8"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 应用名/输入法名不写在 strings.xml 里：debug 需要在同一资源名上
