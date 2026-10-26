@@ -128,7 +128,7 @@ fun MainScreen(
     val context = LocalContext.current
     val fabPrefs = remember { context.getSharedPreferences("jime_fab", Context.MODE_PRIVATE) }
     val density = LocalDensity.current
-    val fabSizePx = with(density) { 56.dp.toPx() }
+    val fabSizePx = with(density) { 60.dp.toPx() }
     val fabMarginPx = with(density) { 16.dp.toPx() }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
     var fabFrac by remember {
@@ -381,7 +381,7 @@ fun MainScreen(
                 )
             }
 
-            // 底部留白 96dp：悬浮 FAB 区（56dp 钮＋16dp 边距）上方
+            // 底部留白 96dp：悬浮 FAB 区（60dp 钮＋16dp 边距）上方
             // 不遮挡末行，滚动到底时末行仍可完整点按。
             Spacer(Modifier.height(96.dp))
             }
@@ -389,7 +389,7 @@ fun MainScreen(
             // 悬浮钮覆盖层（内容之上）：扇出在钮的上方或下方，
             // 钮本身可拖动；收起层在内容之下，不影响钮的点按。
             if (containerSize != IntSize.Zero) {
-                val fanoutX = displayX + (fabSizePx - with(density) { 48.dp.toPx() }) / 2
+                val fanoutX = displayX + (fabSizePx - with(density) { 52.dp.toPx() }) / 2
                 val fanoutY = if (expandDown) {
                     displayY + fabSizePx + with(density) { 12.dp.toPx() }
                 } else {
@@ -443,7 +443,7 @@ fun MainScreen(
                 Box(
                     modifier = Modifier
                         .offset { IntOffset(displayX.roundToInt(), displayY.roundToInt()) }
-                        .size(56.dp)
+                        .size(60.dp)
                         .alpha(fabAlpha)
                         .pointerInput(containerSize) {
                             detectDragGestures(
@@ -479,7 +479,7 @@ fun MainScreen(
                     ) {
                         if (fabAnyRunning) {
                             CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(26.dp),
                                 color = Color.White,
                                 strokeWidth = 2.dp,
                             )
@@ -490,7 +490,7 @@ fun MainScreen(
                             Icon(
                                 painter = painterResource(R.drawable.ic_fab_assistive),
                                 contentDescription = null,
-                                modifier = Modifier.size(24.dp),
+                                modifier = Modifier.size(26.dp),
                             )
                         }
                     }
@@ -502,8 +502,8 @@ fun MainScreen(
     BackHandler(enabled = fabExpanded) { fabExpanded = false }
 }
 
-/** FAB 栈展开后的单个动作：圆形深色钮（辅助触控式，48dp）
- * ＋小字标签在下；图标为浅色。块 48dp、图标 24dp。 */
+/** FAB 栈展开后的单个动作：圆形深色钮（辅助触控式，52dp）
+ * ＋小字标签在下；图标为浅色。块 52dp、图标 26dp。 */
 @Composable
 private fun FabAction(
     label: String,
@@ -519,14 +519,14 @@ private fun FabAction(
     ) {
         Box(
             modifier = Modifier
-                .size(48.dp)
+                .size(52.dp)
                 .clip(CircleShape)
                 .background(FabAssistiveDark),
             contentAlignment = Alignment.Center,
         ) {
             if (running) {
                 CircularProgressIndicator(
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(26.dp),
                     color = Color.White,
                     strokeWidth = 2.dp,
                 )
@@ -534,7 +534,7 @@ private fun FabAction(
                 Icon(
                     painter = icon,
                     contentDescription = label,
-                    modifier = Modifier.size(24.dp),
+                    modifier = Modifier.size(26.dp),
                     tint = Color.White,
                 )
             }
