@@ -35,7 +35,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Build
-import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
@@ -88,8 +87,8 @@ import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
 
-/** 辅助触控式 FAB 深色：固定深灰，双主题同色（不跟随主题）。 */
-private val FabAssistiveDark = Color(0xFF2C2C2E)
+/** 辅助触控式 FAB 深色：参考图外盘色，固定深灰，双主题同色（不跟随主题）。 */
+private val FabAssistiveDark = Color(0xFF202931)
 
 /**
  * 设置 home：顶部 hero（居中 logo + Jime）+ 一页一组卡片，
@@ -479,16 +478,12 @@ fun MainScreen(
                                 color = Color.White,
                                 strokeWidth = 2.dp,
                             )
-                        } else if (fabExpanded) {
-                            Icon(
-                                imageVector = Icons.Filled.Close,
-                                contentDescription = null,
-                                modifier = Modifier.size(24.dp),
-                            )
                         } else {
-                            // 收起态：Lee 提供的 cloud_circle，深色钮上 tint 为白色。
+                            // 收起与展开同一图标（iPhone 辅助触控样式）：
+                            // 展开后不再显示 ×，再点主钮即收起（onClick
+                            // 的 fabExpanded 取反逻辑不变）。
                             Icon(
-                                painter = painterResource(R.drawable.ic_fab_cloud_circle),
+                                painter = painterResource(R.drawable.ic_fab_assistive),
                                 contentDescription = null,
                                 modifier = Modifier.size(24.dp),
                             )
