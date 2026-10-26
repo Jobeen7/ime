@@ -3,7 +3,9 @@ package com.jobeen.ime.input.keyboard.window
 import android.content.Context
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
+import com.jobeen.ime.R
 import com.jobeen.ime.base.util.appContext
+import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.EngineDeployState
@@ -94,6 +96,13 @@ object KeyboardStateManager {
             return
         }
         if (keyboardAttached) return
+        // 重挂时若当前方案布局已变（键盘收起期间切了方案），不直接
+        // 复现旧键盘实例，改走 switchTo 同步布局与空格键文案。
+        val targetLayout = currentSchema?.layout ?: defaultKeyboardName
+        if (targetLayout != currentKeyboardName) {
+            switchTo(targetLayout)
+            return
+        }
         currentKeyboardName?.let { name ->
             keyboards[name]?.let { kb ->
                 kb.onAttach()
@@ -119,8 +128,13 @@ object KeyboardStateManager {
     }
 
     fun rotateSchema(): String {
-        // 部署进行中：只读当前方案，不推进、不切布局、不碰引擎。
-        if (EngineDeployState.isRunning()) return currentSchema?.id.orEmpty()
+        // 部署进行中：只读当前方案，不推进、不切布局、不碰引擎，并
+        // 提示忙碌（此前静默返回，点选后键盘无任何变化、用户无法得
+        // 知切换被挡下）；部署结束后由 Depoly.Finish 刷新接管。
+        if (EngineDeployState.isRunning()) {
+            ToastUtil.showToast(appContext.getString(R.string.fab_deploy_busy))
+            return currentSchema?.id.orEmpty()
+        }
         if (schemas.isEmpty()) return ""
         val index = schemas.indexOf(currentSchema)
         currentSchema = if (index >= 0) schemas[(index + 1) % schemas.size] else schemas.first()
@@ -129,8 +143,12 @@ object KeyboardStateManager {
     }
 
     fun selectSchema(schemaId: String): String {
-        // 部署进行中：不选、不切布局、不碰引擎，返回当前方案 id。
-        if (EngineDeployState.isRunning()) return currentSchema?.id.orEmpty()
+        // 部署进行中：不选、不切布局、不碰引擎，返回当前方案 id，并
+        // 提示忙碌（与 rotateSchema 同口径，避免静默无反应）。
+        if (EngineDeployState.isRunning()) {
+            ToastUtil.showToast(appContext.getString(R.string.fab_deploy_busy))
+            return currentSchema?.id.orEmpty()
+        }
         val schema = schemas.find { it.id == schemaId } ?: return ""
         if (currentSchema?.id == schemaId) return schemaId
         currentSchema = schema
