@@ -1782,15 +1782,36 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         predictionFieldGen.get() == startFieldGen && !isNoPersonalizedLearning(editorInfo)
 
     override fun reload() {
-        // 入口前置置位：部署标志从派发时点即为真，覆盖动作在队列里
-        // 等待执行的窗口（此前要等 Reload 作业真正开始才置位，FAB /
-        // 页面在此窗口会误判为空闲而另起部署）；作业的 finally 复位。
-        // 终局说明：引擎已 finalize（作用域取消）后调 reload 时派发被
-        // 悄悄丢弃、无作业复位，标志会滞留真——此时引擎已死，调用方
-        // 不应再调 reload，见汇报残余项。
-        EngineDeployState.setRunning(true)
+        // 单部署门控：部署进行中（running）或有超时孤儿在跑时，
+        // 本次 reload 直接丢弃、不派发、不置位——此前无条件派发，
+        // Reload 作业会串行排在进行中的部署之后，待前者完成立即
+        // 执行第二份全量部署（冷编译约 20 秒量级），只浪费一次
+        // 部署窗口与一次方案表 churn。
+        // 守门与置位在同一 deployGateLock 内完成：reload 与
+        // deployAndAwait 入口的“查—置”若不串行，两个调用方可能
+        // 同时看到空闲并各置位各派发，门控形同虚设。
+        // 作用域已死（finalize 后）同样不置位不派发：派发会被悄悄
+        // 丢弃、无作业复位，标志会滞留真。
+        // 丢弃语义的代价：调用方是 fire-and-forget（返回 Unit），
+        // 触发点（工具栏、方案更新/语法模型下载完成回调、FAB）均
+        // 不感知“被丢弃”；与进行中的部署重叠的下载内容，需下一次
+        // reload/部署才生效——该窗口此前由第二份部署覆盖，本修法
+        // 把它换成了“部署窗口内后来者静默丢弃”，见报告未决问题。
+        synchronized(deployGateLock) {
+            if (!deployGateAllows(
+                    EngineDeployState.isRunning(),
+                    EngineDeployState.isOrphanRunning(),
+                    scope.isActive,
+                )
+            ) return
+            EngineDeployState.setRunning(true)
+        }
         dispatchAction(Action.Reload)
     }
+
+    // 部署入口守门锁：只覆盖各入口“查标志—置标志”的瞬时段，
+    // 绝不跨越作业执行或等待——锁内无挂起调用，不会堵住部署本身。
+    private val deployGateLock = Any()
 
     // 部署等待互斥：同一时刻只允许一个 deployAndAwait 持有。
     private val deployMutex = Mutex()
@@ -1920,3 +1941,26 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         dispatchAction(Action.InputCleared)
     }
 }
+
+/**
+ * 部署入口的统一守门谓词：reload() 与 deployAndAwait() 共用同一判定，
+ * 两路不得再各自演化出不同的“忙”口径。
+ * - 部署进行中（running）或有超时孤儿在跑（orphanRunning）时禁新部署：
+ *   新部署只会串行排在旧部署之后，白白重编一次。
+ * - 引擎作用域已死时禁新部署：作业根本不会执行，入口置位将无复位方。
+ * 纯函数：单元测试直接覆盖真值表，引擎本体不依赖它做 Android/ native 调用。
+ */
+internal fun deployGateAllows(
+    running: Boolean,
+    orphanRunning: Boolean,
+    scopeActive: Boolean,
+): Boolean = scopeActive && !running && !orphanRunning
+
+/**
+ * deployAndAwait 等待超时的结果判定：作用域已死说明部署作业已死
+ * （消费循环已取消、排队作业永不执行），此时“仍在后台继续”不成立，
+ * 返回 FAILED 而不是 TIMEOUT_RUNNING——后者会让等待方记孤儿标志，
+ * 而孤儿的唯一复位点在永不执行的作业体内，等于把孤儿钉成终态。
+ */
+internal fun deployWaitTimeoutResult(scopeActive: Boolean): DeployAwaitResult =
+    if (scopeActive) DeployAwaitResult.TIMEOUT_RUNNING else DeployAwaitResult.FAILED
