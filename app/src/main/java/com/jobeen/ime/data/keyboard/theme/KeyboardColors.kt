@@ -68,7 +68,10 @@ object KeyboardColors {
     }
 
     fun resolve(context: Context): ColorScheme {
-        val c = themeFor(context).colors
+        val theme = themeFor(context)
+        // 莫奈色是动态主题：Android 12+ 跟随系统 Material You 取色，
+        // 低版本或取色失败时 MonetPalette 内部回落静态色板。
+        val c = if (theme.id == MonetPalette.ID) MonetPalette.build(context) else theme.colors
         val userRadius = KeyboardManager.Keyboard.KeyRadius.getDp(context).toFloat()
         val userHMargin = KeyboardManager.Keyboard.Gap.getHorizontalDp(context).toFloat()
         val userVMargin = KeyboardManager.Keyboard.Gap.getVerticalDp(context).toFloat()

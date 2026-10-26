@@ -143,10 +143,17 @@ object KeyboardThemePresets {
         ),
     )
 
+    val Monet = KeyboardTheme(
+        id = MonetPalette.ID,
+        name = "莫奈色",
+        colors = MonetPalette.LightFallback,
+    )
+
     val ALL: List<KeyboardTheme>
         get() = listOf(
             Amoled,
             Light,
             Sunset,
+            Monet,
         ) + customThemes
 }
