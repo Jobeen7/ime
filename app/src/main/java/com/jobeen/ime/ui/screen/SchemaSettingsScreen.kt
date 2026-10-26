@@ -111,7 +111,6 @@ import com.jobeen.ime.ui.UserDictActivity
 import com.jobeen.ime.data.manager.DirSwitchMonitor
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.DirSwitchPhase
-import com.jobeen.ime.data.manager.DirSwitchResumePolicy
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.SchemeDownload
@@ -122,8 +121,11 @@ import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.SchemeSwitchCoordinator
 import com.jobeen.ime.data.manager.SchemeSwitchOperationKind
 import com.jobeen.ime.data.manager.SchemeSwitchPolicy
-import com.jobeen.ime.data.manager.SchemeSwitchState
-import com.jobeen.ime.data.manager.SwitchVerification
+import com.jobeen.ime.data.manager.SchemeEnabled
+import com.jobeen.ime.data.manager.discoverSchemes
+import com.jobeen.ime.data.manager.effectiveEnabledIds
+import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.core.SchemaItem
 import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
@@ -158,14 +160,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         remember { context.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE) }
     val enabledSchemas = remember { mutableStateListOf<SchemaItem>() }
     val availableSchemas = remember { mutableStateListOf<SchemaItem>() }
-    var loaded by remember { mutableStateOf(false) }
     // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
     var currentSchemaName by remember { mutableStateOf("") }
-    // 切换编排：状态机仍是转移权威，但实例与 StateFlow 镜像一律归
-    // 应用级协调器（SchemeSwitchCoordinator）所有；页面只订阅，不再
-    // remember 自己的编排器——重进即看到运行 / 失败 / 回退态，点选
-    // 切换、目录切换、导入安装三路互斥也由协调器守门。
-    val switchState by SchemeSwitchCoordinator.state.collectAsStateWithLifecycle()
     // 目录同步删除传播暂停标志：仅存在时在方案区显示“确认清理”入口。
     var syncPause by remember {
         mutableStateOf(RimeSyncPrefs.deletePropagationPause(context))
@@ -179,16 +175,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     var dirBrowser by remember { mutableStateOf(false) }
     var dirDetail by remember { mutableStateOf<String?>(null) }
     var dirSwitching by remember { mutableStateOf(false) }
-    var dirSwitchError by remember { mutableStateOf<String?>(null) }
-    // stranded 修复：切换状态改读进程级 Monitor（组合销毁不丢）；
-    // 空表状态：引擎表空时不再静默留白，改显部署中 + 自动重载。
-    val monitorStatus by DirSwitchMonitor.status.collectAsStateWithLifecycle()
     val deployRunning by EngineDeployState.running.collectAsStateWithLifecycle()
     var schemasEmpty by remember { mutableStateOf(false) }
-    // 当前目录盘上是否空方案：只在副作用里读盘（LaunchedEffect(currentDir)），
-    // 不在组合期读盘；目录切换时 currentDir 变化触发重算。初始 false
-    // 为乐观值：首帧空目录会短暂按非空分支渲染，随后副作用纠正。
-    var diskEmpty by remember { mutableStateOf(false) }
     var manageDeploying by remember { mutableStateOf(false) }
     var manageDeployError by remember { mutableStateOf<String?>(null) }
     var versionById by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -276,31 +264,34 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     val msgDirSwitchFailed = stringResource(R.string.schema_dir_switch_failed)
     val msgManageDeployFailed = stringResource(R.string.schema_manage_deploy_failed)
 
-    // 异步加载输入方案，避免阻塞主线程（schemasList 内部走引擎线程）。
-    // 抽成独立挂起函数：导入安装 / 部署完成后也要重算（引擎侧部署后
-    // 方案表才含新方案，合成占位项需被真实项替换）。
+    // 方案列表来自磁盘发现（当前目录根＋shared 根，绝不递归），不再读引擎实时表：
+    // 部署中列表不变空；导入安装 / 部署完成后重调即刷新。
     suspend fun loadSchemas() {
-        val allSchemas = EngineFactory.current()?.schemasList() ?: emptyList()
-        // 空表（部署进行中 / stranded）不再静默：记下空表态，让正文外
-        // 显部署中 + 自动重载，而不是 loaded 恒 false 永久空白。
-        schemasEmpty = allSchemas.isEmpty()
-        if (allSchemas.isNotEmpty()) {
-            val allItems =
-                allSchemas.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
-            // 已启用顺序按当前目录分键读（切回旧目录时顺序原样恢复）。
-            val enabledIds = SchemaManager.readEnabledIds(prefs, currentDir)
+        val currentDirFile = DataManager.userDataDir
+        val sharedDirFile = DataManager.sharedDataDir
+        val disk = discoverSchemes(currentDirFile, sharedDirFile)
+        val allItems =
+            disk.map { SchemaItem(it.id, it.name, it.layout, it.punctuation, it.kind) }
+        schemasEmpty = allItems.isEmpty()
+        if (allItems.isNotEmpty()) {
+            // 启用顺序按当前目录启用表回落链读（custom → 目录 default.yaml →
+            // shared default.yaml → 磁盘全体）；custom 文件不存在时（新目录首跑）
+            // 把结果写回 custom＋镜像，之后各写操作同步维护。
+            val enabledIds = effectiveEnabledIds(
+                currentDirFile, sharedDirFile, disk.map { it.id }
+            )
             val byId = allItems.associateBy { it.id }
             val seen = mutableSetOf<String>()
             enabledSchemas.clear()
             enabledSchemas.addAll(enabledIds.mapNotNull { byId[it]?.also { seen.add(it.id) } })
             availableSchemas.clear()
             availableSchemas.addAll(allItems.filter { it.id !in seen })
-            if (enabledSchemas.isEmpty() && allItems.isNotEmpty()) {
-                // 目录启用表为空（新目录首跑 / 目录被删后重建）：以引擎部署表
-                // 为准兜底并写回，不让方案页在引擎有方案时显示空列表。
-                enabledSchemas.addAll(allItems)
-                availableSchemas.clear()
-                SchemaManager.saveEnabledIds(prefs, currentDir, allItems.map { it.id })
+            val customFile = File(currentDirFile, "default.custom.yaml")
+            if (!customFile.exists()) {
+                SchemeEnabled.writeEnabledCustomFile(
+                    customFile, enabledSchemas.map { it.id }
+                )
+                SchemeEnabled.writeEnabledMirror(prefs, enabledSchemas.map { it.id })
             }
             // 将当前正在使用的方案置顶（顶部的方案即为"默认"方案）
             val currentId = withContext(Dispatchers.IO) {
@@ -368,7 +359,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 importPrefs.getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
             ).records.filter { it.source == SchemePackageImport.PackageSource.URL }
                 .flatMap { it.schemeIds }.toSet()
-            loaded = true
+        } else {
+            // 磁盘确实无方案：清掉旧列表（磁盘已知为空，不是加载中）。
+            enabledSchemas.clear()
+            availableSchemas.clear()
         }
     }
 
@@ -394,241 +388,43 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         saveOrder(prefs, currentDir, enabledSchemas)
     }
 
-    /** 读引擎当前方案 id；读失败返回 null（调用方按未验证处理）。 */
-    suspend fun readCurrentId(): String? =
-        runCatching {
-            (EngineFactory.current() as? IRimeJob)?.awaitJob<String?>(null) {
-                currentSchema().schemaId
-            }
-        }.getOrNull()
-
-    /** 轮询引擎当前方案，最多 timeoutMs；超时返回 false（不抛）。 */
-    suspend fun verifyCurrent(targetId: String, timeoutMs: Long): Boolean {
-        val deadline = System.currentTimeMillis() + timeoutMs
-        while (true) {
-            if (readCurrentId() == targetId) return true
-            if (System.currentTimeMillis() >= deadline) return false
-            delay(1000)
-        }
-    }
-
-    /**
-     * 点选切换。先走偏好顺序 + 引擎直选（常见路径不重启引擎、打字不中断）；
-     * 10 秒内确认不到目标才进部署：reload 后再直选并以 180 秒轮询确认；
-     * 部署仍失败则回退：恢复切换前顺序 + reload + 重选上一方案并确认。
-     * 切换 / 部署 / 回退进行中拒绝新的切换（维护期守卫）。
-     * 切换跑应用级作用域，离开页面不取消（此前页面作用域取消导致
-     * stranded）；状态机镜像在重进后按实际重算。
-     */
-    /**
-     * 重进续切（stranded 恢复）：只把引擎重同步到指针目录，不改指针。
-     * 判定见 DirSwitchResumePolicy：引擎表空 + 磁盘有方案 + 无切换在跑
-     * + 无部署在跑。部署在跑时表空是正常态（作业队列被部署作业占住），
-     * 此时 reload 会把进行中的全量编译推倒重来，必须排除——页内重试
-     * 与进页轮询都走这里，单点守门。
-     * 幂等：中途取消不留新状态，下次进页重新判定。
-     */
-    suspend fun resumeIfStranded() {
-        val dir = SchemeDirs.currentDirName(context)
-        val diskIds = withContext(Dispatchers.IO) {
-            runCatching {
-                SchemeDirs.schemesInDir(File(DataManager.schemeDirsRoot, dir))
-            }.getOrDefault(emptyList())
-        }
-        val engineEmpty = (EngineFactory.current()?.schemasList() ?: emptyList()).isEmpty()
-        val switching = DirSwitchMonitor.status.value.phase == DirSwitchPhase.SWITCHING
-        if (!DirSwitchResumePolicy.shouldResume(
-                engineEmpty,
-                diskIds.isNotEmpty(),
-                switching,
-                EngineDeployState.isRunning(),
-            )
-        ) return
-        val enabled = SchemaManager.readEnabledIds(prefs, dir).ifEmpty { diskIds }
-        SchemaManager.saveEnabledIds(prefs, dir, enabled)
-        // 续切只写偏好时引擎仍按旧 custom 表部署，空表续切等于白跑：
-        // 先把启用表同步进 custom 文件，再 reload（非空才写）。
-        if (enabled.isNotEmpty()) {
-            SchemeDirs.writeDefaultCustomSchemaList(
-                File(DataManager.schemeDirsRoot, dir),
-                enabled,
-            )
-        }
-        EngineFactory.current()?.reload()
-        if (enabled.isNotEmpty()) {
-            EngineFactory.current()?.selectSchema(enabled[0])
-            // 校验只定成败显示，不抛：成败最终以 loadSchemas 重读的引擎表为准。
-            verifyCurrent(enabled[0], 180_000)
-        }
-    }
-
-    /** 空表轮询重载：2s 一次、最多 timeoutMs（默认 5 分钟），直到方案表就绪。 */
-    suspend fun pollUntilLoaded(timeoutMs: Long = 300_000L) {
-        var waitedMs = 0L
-        while (!loaded && waitedMs < timeoutMs) {
-            delay(2000L)
-            waitedMs += 2000L
-            if (!loaded) loadSchemas()
-        }
-    }
-
-    // 进页加载 + 部署中自动重载：空表时轮询重载，部署跑完自动出列表；
-    // stranded 时先续切一次（仅一次，避免中途重启部署），再继续轮询。
-    // 用户中途离开即取消本轮询，下次进页重新判定——续切本身幂等。
-    // 注意：本 effect 不再自写重载轮询（与 pollUntilLoaded 是同一等待
-    // 目标的重复实现，已删）；只保留原循环里 pollUntilLoaded 没有的
-    // 续切门：等 phase 离开 SWITCHING 后续切一次，再把剩余预算交给
-    // pollUntilLoaded 重载——总预算仍是 5 分钟，不因拆分而延长。
+    // 进页加载：磁盘列表一次读完，不再轮询等待引擎表；
+    // 部署中列表不变空，部署完由各入口重调 loadSchemas 刷新。
     LaunchedEffect(Unit) {
         migrationErrorText = SchemeDirs.migrationError(context)
         // 进页刷新删除传播暂停标志：FAB 同步可能在本页之外暂停跟删，
         // 重进时方案区才应出现“确认清理”入口。
         syncPause = RimeSyncPrefs.deletePropagationPause(context)
         loadSchemas()
-        if (!loaded) {
-            var gateWaitedMs = 0L
-            while (DirSwitchMonitor.status.value.phase == DirSwitchPhase.SWITCHING &&
-                gateWaitedMs < 300_000L
-            ) {
-                delay(2000L)
-                gateWaitedMs += 2000L
-            }
-            if (!loaded &&
-                DirSwitchMonitor.status.value.phase != DirSwitchPhase.SWITCHING
-            ) {
-                resumeIfStranded()
-            }
-            pollUntilLoaded(timeoutMs = (300_000L - gateWaitedMs).coerceAtLeast(0L))
-        }
-    }
-
-    // 空目录判定读盘移到副作用：目录名变化时在 IO 上重算，不在组合期读盘。
-    LaunchedEffect(currentDir) {
-        diskEmpty = withContext(Dispatchers.IO) {
-            runCatching {
-                SchemeDirs.schemesInDir(File(DataManager.schemeDirsRoot, currentDir)).isEmpty()
-            }.getOrDefault(false)
-        }
     }
 
     /**
-     * 部署失败后的回退尾巴（正常路径与取消路径共用）：恢复切换前顺序
-     * + reload + 重选上一方案，整段跑在 NonCancellable 内，取消不得
-     * 打断；回退确认的布尔结果必须分支使用——成功时明示已回退到
-     * 上一方案并显示上一方案为当前，失败时保留可见错误（Failed 态
-     * 横幅）并显示 readCurrentId 实测的实际当前方案，实测不到时不
-     * 再无条件 fallback 到上一方案误导。
-     */
-    suspend fun rollbackAfterDeployFailure() {
-        val rollback = SchemeSwitchCoordinator.beginRollback() ?: return
-        withContext(NonCancellable) {
-            applyOrder(rollback.restoredOrder)
-            EngineFactory.current()?.reload()
-            EngineFactory.current()?.selectSchema(rollback.previousId)
-            val rolledBack = SchemeSwitchCoordinator.resolveRollback(
-                verifyCurrent(rollback.previousId, 180_000),
-            )
-            if (rolledBack) {
-                // verifyCurrent 已实测上一方案为当前，才可明示回退成功。
-                currentSchemeId = rollback.previousId
-            } else {
-                // 回退失败：Failed 态（rollback_failed）保留可见错误；
-                // 当前方案只认实测值，实测不到时保持原显示，不谎称上一方案。
-                readCurrentId()?.let { currentSchemeId = it }
-            }
-        }
-    }
-
-    /**
-     * 点选切换（见上方注释）。[onDone] 在切换协程所有终点调用
-     * （直选成功 / 部署成功 / 回退完成 / 防御性提前返回），供导入流程
-     * 在切换结束后刷新方案表；一期原有调用方不传，行为不变。
+     * 点选切换：守门→引擎直选→置顶→写回顺序，不部署、不轮询校验。
+     * [onDone] 在切换结束时调用，供导入流程在切换结束后刷新方案表。
      */
     fun switchTo(target: SchemaItem, onDone: (() -> Unit)? = null) {
-        // 操作锁先行：点选切换全程持有协调器操作锁，目录切换与导入
-        // 安装在此期间拒绝；锁抢不到直接返回（不排队、不改状态）。
-        val operationId = SchemeSwitchCoordinator.tryBegin(
-            SchemeSwitchOperationKind.POINT_SWITCH,
-            target.id,
-            currentDir,
-        ) ?: return
-        val plan = SchemeSwitchCoordinator.beginSwitch(
-            currentSchemeId,
-            target.id,
-            enabledSchemas.map { it.id },
-        ) ?: run {
-            SchemeSwitchCoordinator.endOperation(operationId)
+        if (dirSwitching || EngineDeployState.isRunning()) {
+            ToastUtil.showToast(context.getString(R.string.fab_deploy_busy))
             return
         }
-        applyOrder(plan.newOrder)
+        val newOrder =
+            listOf(target.id) + enabledSchemas.map { it.id }.filter { it != target.id }
+        applyOrder(newOrder)
         EngineFactory.current()?.selectSchema(target.id)
-        // 应用级作用域：点选切换的部署 / 回退路径不再随页面销毁取消。
-        appScope.launch {
-            try {
-                val ok = verifyCurrent(target.id, 10_000)
-                val result = SchemeSwitchCoordinator.resolveSwitch(ok)
-                if (result == SwitchVerification.SUCCESS) {
-                    currentSchemeId = target.id
-                    onDone?.invoke()
-                    return@launch
-                }
-                // 仅 Deploying 态才真正部署（编排器约定：非 Switching 态
-                // 的 resolveSwitch 不转移状态，返回值不得单独作为部署依据）
-                if (SchemeSwitchCoordinator.state.value !is SchemeSwitchState.Deploying) {
-                    currentSchemeId = readCurrentId() ?: currentSchemeId
-                    onDone?.invoke()
-                    return@launch
-                }
-                EngineFactory.current()?.reload()
-                EngineFactory.current()?.selectSchema(target.id)
-                if (SchemeSwitchCoordinator.resolveDeploy(verifyCurrent(target.id, 180_000))) {
-                    currentSchemeId = target.id
-                    onDone?.invoke()
-                    return@launch
-                }
-                rollbackAfterDeployFailure()
-                onDone?.invoke()
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                // 取消也不得跳过回滚：部署确认中途被取消时，把部署记为
-                // 失败并在 NonCancellable 内走完回退，再按正常终点回调。
-                // （应用级作用域只在进程消亡时取消，此分支是兜底。）
-                withContext(NonCancellable) {
-                    val st = SchemeSwitchCoordinator.state.value
-                    if (st is SchemeSwitchState.Deploying) {
-                        SchemeSwitchCoordinator.resolveDeploy(false)
-                    }
-                    if (SchemeSwitchCoordinator.state.value is SchemeSwitchState.Failed) {
-                        rollbackAfterDeployFailure()
-                    }
-                }
-                onDone?.invoke()
-            } finally {
-                SchemeSwitchCoordinator.endOperation(operationId)
-            }
-        }
+        currentSchemeId = target.id
+        onDone?.invoke()
     }
 
     /**
-     * 多目录切换：指针 → 启用表 → 引擎重部署 → 选首位方案 → 轮询确认。
-     * 目标启用表：分目录键优先，缺失时用目录方案表顺序；空目录（无方案）
-     * 时不直选，改为等引擎部署出内置表（Lite 兜底）且当前方案非空。
-     * 任一步失败自动回滚上一目录（指针 + 启用表 + 引擎重部署 + 重选上一方案），
-     * 并在方案页留一条可关闭的失败提示。切换进行中拒绝新的切换与导入。
-     * 切换跑应用级作用域（appScope）：离开页面不取消；失败与取消一律
-     * 回滚（取消在 NonCancellable 内做）——此前页面作用域 + 取消跳过
-     * 回滚，正是 Base 导入 stranded 的根因。状态同时写进程级
-     * DirSwitchMonitor，重进页面能读到进行中 / 失败。
-     * @param forceReload true 时即使目标就是当前目录也走完整部署（重装
-     * 后必须重编新包内容；普通切换无变化时仍早退）。
-     * @param onBeforeRollback 失败时在指针 / 顺序回滚之前调用（确认导入
-     * 传入 rollbackTransaction：先把新包目录内容恢复为旧版，再走指针
-     * 回滚；组合后终态是指针指上一目录 + 目标目录内容为旧版，不出现
-     * “指针已回滚但目录内容还是新包”的中间态）。
-     * @param onSwitchDone 切换协程结束时调用（成功与失败都调），供确认
-     * 导入在成功时清理备份；早退（未启动）时不调，调用方以返回值为准。
-     * @param existingOperationId 导入安装移交的操作锁 id：非空时目录切换
-     * 接管该锁直至切换协程结束（不另抢锁、不重复守门）；为空时按正常
-     * 入口抢协调器操作锁，抢不到即守门早退。早退时不接管、不释放。
+     * 多目录切换：守门→读目标启用表→指针→写 custom＋镜像→deployAndAwait→选首位方案。
+     * 失败＝指针＋镜像回滚＋toast（目标 custom 已写可留，下次切过去即用；
+     * 不 reload 回滚部署、不自动重试）；切换期间列表保持旧目录磁盘表（不变空）。
+     * @param forceReload true 时即使目标就是当前目录也走完整部署（重装后必须重编
+     * 新包内容；普通切换无变化时仍早退）。P3 删除旧导入路径时随之清理。
+     * @param onBeforeRollback 失败时在指针回滚之前调用（旧导入确认路径传入
+     * rollbackTransaction；P3 删除旧导入路径时随之清理）。
+     * @param onSwitchDone 切换协程结束时调用（成功与失败都调），供确认导入在成功
+     * 时清理备份；早退（未启动）时不调，调用方以返回值为准。
      * @return true = 已启动切换协程，false = 守门早退（未启动）。
      */
     fun switchDirectory(
@@ -636,113 +432,61 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         forceReload: Boolean = false,
         onBeforeRollback: (() -> Unit)? = null,
         onSwitchDone: ((Boolean) -> Unit)? = null,
-        existingOperationId: String? = null,
     ): Boolean {
-        // 互斥守门统一读协调器：点选切换忙、目录切换进行中、导入安装
-        // 持有锁，三者任一即拒绝——不再留两套忙态。移交情形下锁已由
-        // 导入方持有，跳过协调器守门（只保留页内 dirSwitching 与同目录
-        // 早退），切换协程结束时由本函数释放移交来的锁。
         // 第二道防线：目录浏览器不得切入 build（部署产物目录，listDirs
         // 已排除、importDirName 已把 "build" 映射为 "build-pkg"）：非法
         // 输入与函数内其他守门早退同口径，静默返回 false，不置错。
         if (targetDir == "build") return false
-        if (dirSwitching ||
-            (existingOperationId == null && SchemeSwitchCoordinator.isBusy()) ||
-            (targetDir == currentDir && !forceReload)
-        ) return false
-        val operationId = existingOperationId ?: SchemeSwitchCoordinator.tryBegin(
-            SchemeSwitchOperationKind.DIR_SWITCH,
-            targetDir,
-            targetDir,
-        ) ?: return false
+        if (dirSwitching || (targetDir == currentDir && !forceReload)) return false
+        if (EngineDeployState.isRunning()) {
+            ToastUtil.showToast(context.getString(R.string.fab_deploy_busy))
+            return false
+        }
         val prevDir = currentDir
         val prevOrder = enabledSchemas.map { it.id }
-        val prevCurrent = currentSchemeId
         dirSwitching = true
-        dirSwitchError = null
-        DirSwitchMonitor.begin(targetDir)
         appScope.launch {
-            try {
             var succeeded = false
             try {
-                var targetEnabled = SchemaManager.readEnabledIds(prefs, targetDir)
-                if (targetEnabled.isEmpty()) {
-                    targetEnabled = SchemeDirs.schemesInDir(
-                        File(DataManager.schemeDirsRoot, targetDir),
-                    )
-                }
+                val targetDirFile = File(DataManager.schemeDirsRoot, targetDir)
+                val targetDisk = discoverSchemes(targetDirFile, DataManager.sharedDataDir)
+                val targetEnabled = effectiveEnabledIds(
+                    targetDirFile, DataManager.sharedDataDir, targetDisk.map { it.id }
+                )
                 SchemeDirs.setCurrentDirName(context, targetDir)
                 currentDir = targetDir
-                SchemaManager.saveEnabledIds(prefs, targetDir, targetEnabled)
-                // 部署读的是合并配置（default.yaml + default.custom.yaml）：
-                // 只写偏好不写 custom 文件时，引擎会按旧表部署，首位方案
-                // 对不上、校验超时后回滚，页内遂长显部署中。部署前把本次
-                // 启用表同步进 custom 文件（非空才写，空目录走内置兜底）。
                 if (targetEnabled.isNotEmpty()) {
-                    SchemeDirs.writeDefaultCustomSchemaList(
-                        File(DataManager.schemeDirsRoot, targetDir),
-                        targetEnabled,
+                    SchemeEnabled.writeEnabledCustomFile(
+                        File(targetDirFile, "default.custom.yaml"), targetEnabled
                     )
                 }
-                // 部署校验超时随目标目录体积缩放（纯函数，见
+                SchemeEnabled.writeEnabledMirror(prefs, targetEnabled)
+                // 部署超时随目标目录体积缩放（纯函数，见
                 // SchemePackageImport.deployTimeoutMs）：小目录与旧 180 秒
-                // 一致，大目录放宽、上限 1800 秒；空目录走内置兜底分支，
-                // 不用本超时。
+                // 一致，大目录放宽、上限 1800 秒。
                 val dirTotalBytes = runCatching {
-                    File(DataManager.schemeDirsRoot, targetDir).walkTopDown()
+                    targetDirFile.walkTopDown()
                         .filter { it.isFile }.sumOf { it.length() }
                 }.getOrDefault(0L)
                 val deployTimeout = SchemePackageImport.deployTimeoutMs(dirTotalBytes)
-                EngineFactory.current()?.reload()
+                val deployed = (EngineFactory.current() as? RimeEngine)
+                    ?.deployAndAwait(deployTimeout) ?: false
+                if (!deployed) throw IllegalStateException("switch deploy failed")
                 if (targetEnabled.isNotEmpty()) {
                     EngineFactory.current()?.selectSchema(targetEnabled[0])
-                    if (!verifyCurrent(targetEnabled[0], deployTimeout)) {
-                        throw IllegalStateException("switch verify timeout")
-                    }
-                } else {
-                    // 空目录：等引擎部署完成且当前方案非空（内置 Lite 兜底）。
-                    val deadline = System.currentTimeMillis() + 60_000
-                    var ready = false
-                    while (System.currentTimeMillis() < deadline) {
-                        if (!readCurrentId().isNullOrEmpty()) {
-                            ready = true
-                            break
-                        }
-                        delay(1000)
-                    }
-                    if (!ready) throw IllegalStateException("empty dir deploy timeout")
                 }
                 succeeded = true
-                DirSwitchMonitor.done()
             } catch (e: Exception) {
-                // 失败与取消一律回滚（NonCancellable 内做，取消后仍能执行）；
-                // 回滚本身尽力而为，不掩盖原错；失败提示写 Monitor 供重进读取。
-                // 顺序：先跑调用方的 onBeforeRollback（确认导入时是
-                // rollbackTransaction，把新包目录内容恢复为旧版），再走下面
-                // 的指针 / 顺序回滚——终态是指针指上一目录 + 目标目录内容
-                // 为旧版，不出现“指针已回滚但目录内容还是新包”的中间态。
+                // 失败：先跑调用方的 onBeforeRollback（旧导入确认路径的
+                // rollbackTransaction），再指针＋镜像回滚；目标 custom 已写
+                // 可留，下次切过去即用；不 reload 回滚部署、不自动重试。
                 runCatching { onBeforeRollback?.invoke() }
-                withContext(NonCancellable) {
-                    runCatching {
-                        SchemeDirs.setCurrentDirName(context, prevDir)
-                        currentDir = prevDir
-                        SchemaManager.saveEnabledIds(prefs, prevDir, prevOrder)
-                        // 回滚同样先同步 custom 文件，否则回滚部署仍按错表编。
-                        if (prevOrder.isNotEmpty()) {
-                            SchemeDirs.writeDefaultCustomSchemaList(
-                                File(DataManager.schemeDirsRoot, prevDir),
-                                prevOrder,
-                            )
-                        }
-                        EngineFactory.current()?.reload()
-                        if (prevCurrent.isNotEmpty()) {
-                            EngineFactory.current()?.selectSchema(prevCurrent)
-                        }
-                    }
+                runCatching {
+                    SchemeDirs.setCurrentDirName(context, prevDir)
+                    currentDir = prevDir
+                    SchemeEnabled.writeEnabledMirror(prefs, prevOrder)
                 }
-                val msg = msgDirSwitchFailed
-                DirSwitchMonitor.failed(msg)
-                dirSwitchError = msg
+                ToastUtil.showToast(context.getString(R.string.schema_dir_switch_failed))
             }
             dirSwitching = false
             if (succeeded) {
@@ -751,13 +495,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             }
             runCatching { onSwitchDone?.invoke(succeeded) }
             loadSchemas()
-            if (!loaded) {
-                // 部署仍在跑：页内轮询重载（离开页面即取消，重进由进页循环接手）。
-                scope.launch { pollUntilLoaded() }
-            }
-            } finally {
-                SchemeSwitchCoordinator.endOperation(operationId)
-            }
         }
         return true
     }
@@ -1112,7 +849,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     onSwitchDone = { ok ->
                         if (ok) SchemePackageImport.cleanupBackup(backupDir)
                     },
-                    existingOperationId = operationId,
                 )
                 transferred = started
                 if (!started) {
@@ -1524,7 +1260,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                 onClick = {
                                     menuExpanded = false
                                     dirDetail = null
-                                    dirSwitchError = null
                                     dirBrowser = true
                                 },
                             )
@@ -1929,102 +1664,13 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 detailDir = dirDetail,
                 onOpenDetail = { dirDetail = it },
                 onBackToList = { dirDetail = null },
-                switching = dirSwitching ||
-                    monitorStatus.phase == DirSwitchPhase.SWITCHING,
+                switching = dirSwitching,
                 onUseDir = { switchDirectory(it) },
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(padding)
                     .padding(horizontal = 16.dp),
             )
-            return@Scaffold
-        }
-        // 空表不再永久空白：失败提示放门外（空白态也能看到），
-        // 切换中 / 部署中显进度 + 自动重载进行中，另给手动重试。
-        if (!loaded) {
-            val switchErrorText = dirSwitchError
-                ?: monitorStatus.takeIf { it.phase == DirSwitchPhase.FAILED }
-                    ?.errorMessage?.takeIf { it.isNotEmpty() }
-            val switchingNow = monitorStatus.phase == DirSwitchPhase.SWITCHING
-            // diskEmpty 已是状态值（读盘在 LaunchedEffect(currentDir) 里做），
-            // 此处不再组合期读盘。
-            val diskEmptyNow = diskEmpty
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(padding)
-                    .padding(horizontal = 16.dp),
-                verticalArrangement = Arrangement.spacedBy(4.dp),
-            ) {
-                Spacer(Modifier.height(4.dp))
-                if (switchErrorText != null) {
-                    DirSwitchErrorCard(
-                        message = switchErrorText,
-                        onClose = {
-                            dirSwitchError = null
-                            DirSwitchMonitor.clear()
-                        },
-                    )
-                    Spacer(Modifier.height(8.dp))
-                }
-                if (switchingNow) {
-                    Text(
-                        stringResource(R.string.schema_switching),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(Modifier.fillMaxWidth())
-                } else if (!diskEmptyNow) {
-                    // 重试：先重读引擎表，仍空则走续切（续切内已先同步
-                    // custom 文件再部署），再重读一次。
-                    val onRetry: () -> Unit = {
-                        scope.launch {
-                            loadSchemas()
-                            if (!loaded) {
-                                resumeIfStranded()
-                                loadSchemas()
-                            }
-                        }
-                    }
-                    // 无部署在跑却仍空表 = 部署已结束的 stranded 态：不再
-                    // 转无限进度条，改明示 + 重试；部署在跑时才显部署中。
-                    if (dirSwitching || deployRunning) {
-                        Text(
-                            stringResource(R.string.schema_deploying),
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                        Spacer(Modifier.height(8.dp))
-                        TextButton(onClick = onRetry) {
-                            Text(stringResource(R.string.schema_switch_retry))
-                        }
-                    } else {
-                        Text(
-                            stringResource(R.string.schema_deploy_stranded),
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        TextButton(onClick = onRetry) {
-                            Text(stringResource(R.string.schema_switch_retry))
-                        }
-                    }
-                } else {
-                    Text(
-                        stringResource(R.string.schema_dir_empty_schemes),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
             return@Scaffold
         }
         Column(
@@ -2078,114 +1724,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     }
                 }
             }
-            // 行元数据：切换失败 / 回退横幅按 id 找名字用。
-            val allRowItems = enabledSchemas + availableSchemas
-            // 忙态派生自组合态镜像（不要直接读状态机的非 State 字段作组合判断）
-            val switchBusy = switchState is SchemeSwitchState.Switching ||
-                switchState is SchemeSwitchState.Deploying ||
-                switchState is SchemeSwitchState.RollingBack
-            // 切换 / 部署 / 回退横幅：Idle 时不占位（视觉收敛，逻辑不动）
-            when (val s = switchState) {
-                is SchemeSwitchState.Switching -> {
-                    Text(
-                        stringResource(R.string.schema_switching),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                is SchemeSwitchState.Deploying -> {
-                    Column {
-                        Text(
-                            stringResource(R.string.schema_deploying),
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                    }
-                }
-                is SchemeSwitchState.RollingBack -> {
-                    Column {
-                        Text(
-                            stringResource(R.string.schema_rolling_back),
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        LinearProgressIndicator(Modifier.fillMaxWidth())
-                    }
-                }
-                is SchemeSwitchState.Failed -> {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                        ),
-                    ) {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            Text(
-                                stringResource(R.string.schema_switch_failed) + "：" + s.targetId,
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                            Row {
-                                val targetItem =
-                                    allRowItems.firstOrNull { it.id == s.targetId }
-                                if (targetItem != null) {
-                                    TextButton(onClick = { switchTo(targetItem) }) {
-                                        Text(stringResource(R.string.schema_switch_retry))
-                                    }
-                                }
-                                TextButton(onClick = {
-                                    SchemeSwitchCoordinator.dismiss()
-                                }) {
-                                    Text(stringResource(R.string.schema_banner_close))
-                                }
-                            }
-                        }
-                    }
-                }
-                is SchemeSwitchState.RolledBack -> {
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.errorContainer,
-                        ),
-                    ) {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                            val prevName = allRowItems.firstOrNull { it.id == s.previousId }
-                                ?.let { it.name.ifBlank { it.id } } ?: s.previousId
-                            Text(
-                                stringResource(R.string.schema_rolled_back) + "：" + prevName,
-                                fontSize = 14.sp,
-                                lineHeight = 20.sp,
-                                color = MaterialTheme.colorScheme.onErrorContainer,
-                            )
-                            TextButton(onClick = {
-                                SchemeSwitchCoordinator.dismiss()
-                            }) {
-                                Text(stringResource(R.string.schema_banner_close))
-                            }
-                        }
-                    }
-                }
-                else -> {}
-            }
-            // 目录切换失败提示：回滚已完成，留一条可关闭的说明。
-            // （同一卡片亦用于 !loaded 空白态，见门外分支。）
-            if (dirSwitchError != null) {
-                Spacer(Modifier.height(8.dp))
-                DirSwitchErrorCard(
-                    message = dirSwitchError!!,
-                    onClose = { dirSwitchError = null },
+            if (schemasEmpty) {
+                Text(
+                    stringResource(R.string.schema_dir_empty_schemes),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            // 行忙态：目录切换或部署进行中时禁用行点按。
+            val switchBusy = dirSwitching || deployRunning
             // 目录同步删除传播暂停确认入口：仅暂停标志存在时出现。
             // 点击先清除标志，再以 forceDeletePropagation=true 在应用级
             // 作用域重跑一次同步，结果经 FabActions 同样 Toast + 待显示
@@ -2250,8 +1798,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             }
             if (editMode) {
                 // 管理页：已选卡（勾选 + 拖拽合一）+ 全部方案区；草稿只在
-                // 保存时提交，返回放弃。保存 = 写启用表与目录方案表后走
-                // 可见的部署进度框，部署失败自动恢复原顺序并明示。
+                // 保存时提交，返回放弃。保存 = 写启用表（custom＋镜像）后走
+                // 部署，部署失败恢复原顺序并明示。
                 SchemaManageContent(
                     allItems = enabledSchemas + availableSchemas,
                     initialEnabled = enabledSchemas.toList(),
@@ -2270,34 +1818,33 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         manageDeploying = true
                         manageDeployError = null
                         // 保存部署跑应用级作用域：离开页面不再取消部署；
-                        // 取消（与失败）一律先在 NonCancellable 内回滚原
-                        // 顺序再处理——此前取消在回滚之前重抛，部署失败的
-                        // 新顺序就此滞留，是本处要修的位置。
-                        // 顺序保证：回滚用的旧盘上表（prevYaml）必须在新表
-                        // 写盘前读出，故读盘与写盘同在协程内按序跑在 IO 上。
+                        // 失败恢复原启用表（custom＋镜像）并明示，不 reload
+                        // 回滚部署；取消同样先恢复原表再重抛。
                         appScope.launch {
-                            val prevYaml = withContext(Dispatchers.IO) {
-                                SchemeDirs.schemesInDir(DataManager.userDataDir)
-                            }
                             try {
+                                val dirFile = DataManager.userDataDir
                                 withContext(Dispatchers.IO) {
-                                    SchemaManager.saveEnabledIds(
-                                        prefs,
-                                        currentDir,
+                                    SchemeEnabled.writeEnabledCustomFile(
+                                        File(dirFile, "default.custom.yaml"),
                                         newEnabled.map { it.id },
                                     )
-                                    SchemeDirs.writeDefaultCustomSchemaList(
-                                        DataManager.userDataDir,
-                                        newEnabled.map { it.id } + newAvailable.map { it.id },
+                                    SchemeEnabled.writeEnabledMirror(
+                                        prefs, newEnabled.map { it.id }
                                     )
                                 }
-                                EngineFactory.current()?.reload()
-                                val first = newEnabled.firstOrNull()
-                                if (first != null) {
-                                    EngineFactory.current()?.selectSchema(first.id)
-                                    if (!verifyCurrent(first.id, 180_000)) {
-                                        throw IllegalStateException("manage deploy timeout")
-                                    }
+                                val dirTotalBytes = runCatching {
+                                    dirFile.walkTopDown()
+                                        .filter { it.isFile }.sumOf { it.length() }
+                                }.getOrDefault(0L)
+                                val deployed = (EngineFactory.current() as? RimeEngine)
+                                    ?.deployAndAwait(
+                                        SchemePackageImport.deployTimeoutMs(dirTotalBytes)
+                                    ) ?: false
+                                if (!deployed) {
+                                    throw IllegalStateException("manage deploy failed")
+                                }
+                                newEnabled.firstOrNull()?.let {
+                                    EngineFactory.current()?.selectSchema(it.id)
                                 }
                                 manageDeploying = false
                                 editMode = false
@@ -2306,19 +1853,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                 withContext(NonCancellable) {
                                     runCatching {
                                         withContext(Dispatchers.IO) {
-                                            SchemaManager.saveEnabledIds(
-                                                prefs,
-                                                currentDir,
+                                            SchemeEnabled.writeEnabledCustomFile(
+                                                File(
+                                                    DataManager.userDataDir,
+                                                    "default.custom.yaml",
+                                                ),
                                                 prevEnabled.map { it.id },
                                             )
-                                            SchemeDirs.writeDefaultCustomSchemaList(
-                                                DataManager.userDataDir,
-                                                prevYaml,
+                                            SchemeEnabled.writeEnabledMirror(
+                                                prefs, prevEnabled.map { it.id }
                                             )
-                                        }
-                                        EngineFactory.current()?.reload()
-                                        prevEnabled.firstOrNull()?.let {
-                                            EngineFactory.current()?.selectSchema(it.id)
                                         }
                                     }
                                 }
@@ -2800,7 +2344,12 @@ private fun SchemaListItem(
 }
 
 private fun saveOrder(prefs: SharedPreferences, dir: String, schemas: List<SchemaItem>) {
-    SchemaManager.saveEnabledIds(prefs, dir, schemas.map { it.id })
+    val ids = schemas.map { it.id }
+    SchemeEnabled.writeEnabledCustomFile(
+        File(File(DataManager.schemeDirsRoot, dir), "default.custom.yaml"),
+        ids
+    )
+    SchemeEnabled.writeEnabledMirror(prefs, ids)
 }
 
 // ---- 第二期本地导入：校验结果页与规划构造（界面层，规划逻辑见 SchemePackageImport） ----
@@ -3389,29 +2938,4 @@ private fun SchemeDirBrowserContent(
     }
 }
 
-/**
- * 目录切换失败提示卡：加载态与已加载态共用，失败提示不再被
- * `if (!loaded)` 门挡住（空白页上也能看到）。
- */
-@Composable
-private fun DirSwitchErrorCard(message: String, onClose: () -> Unit) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer,
-        ),
-    ) {
-        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-            Text(
-                message,
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                color = MaterialTheme.colorScheme.onErrorContainer,
-            )
-            TextButton(onClick = onClose) {
-                Text(stringResource(R.string.schema_banner_close))
-            }
-        }
-    }
-}
+
