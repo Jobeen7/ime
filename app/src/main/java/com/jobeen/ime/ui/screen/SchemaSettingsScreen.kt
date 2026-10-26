@@ -108,22 +108,21 @@ import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.ui.FabActions
 import com.jobeen.ime.ui.UserDictActivity
-import com.jobeen.ime.data.manager.DirSwitchMonitor
 import com.jobeen.ime.data.manager.EngineDeployState
-import com.jobeen.ime.data.manager.DirSwitchPhase
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.SchemeDownload
+import com.jobeen.ime.data.manager.ImportFailure
+import com.jobeen.ime.data.manager.ImportOutcome
+import com.jobeen.ime.data.manager.MAX_IMPORT_ZIP_BYTES
 import com.jobeen.ime.data.manager.SchemePackageImport
-import com.jobeen.ime.data.manager.SchemePackageImport.PlanResult
-import com.jobeen.ime.data.manager.SchemePackageImport.SchemeImportPlan
 import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.SchemeSwitchCoordinator
-import com.jobeen.ime.data.manager.SchemeSwitchOperationKind
 import com.jobeen.ime.data.manager.SchemeSwitchPolicy
 import com.jobeen.ime.data.manager.SchemeEnabled
 import com.jobeen.ime.data.manager.discoverSchemes
 import com.jobeen.ime.data.manager.effectiveEnabledIds
+import com.jobeen.ime.data.manager.importPackage
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.EngineFactory
@@ -190,31 +189,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         mutableStateOf<Map<String, SchemeSwitchPolicy.SchemeSource>>(emptyMap())
     }
     val scope = rememberCoroutineScope()
-    // ---- 第二期本地导入：SAF 选 zip → 暂存校验 → 校验结果页 → 确认安装 ----
-    // importPlan 非空时 Scaffold 内容整体切到校验结果页（见下方内容分支）；
-    // importError 非空且无 plan 时切到错误页；importBusy 时切到等待页。
-    // 多目录模型下导入落盘目标是独立新目录（importTargetDir），不再合并
-    // 进当前目录；校验页只确认包名、方案数与同名目录替换一行。
-    var importPlan by remember { mutableStateOf<SchemeImportPlan?>(null) }
-    var importTargetDir by remember { mutableStateOf<File?>(null) }
-    var importStagingDir by remember { mutableStateOf<File?>(null) }
-    // 事务安装用：extractZip 的原始相对路径 + 字节数（installTransaction
-    // 逐项核对大小用，禁止用 staging 文件大小现算代替；校验成功时由
-    // validateZipFile 随规划一起保留，取消 / 失败时随之清空）。
-    var importStagedEntries by remember {
-        mutableStateOf<List<SchemePackageImport.StagedEntry>>(emptyList())
-    }
-    // 确认页“将被保留”摘要：旧目录现存的受保护文件（inheritProtected
-    // 口径，default.custom.yaml 除外——事务随后会用新方案表重写它，
-    // 其旧内容并不保留，列入会误导）。
-    var importKeptFiles by remember { mutableStateOf<List<String>>(emptyList()) }
+    // ---- 导入：SAF 选 zip / 下载完成 → 直接导入新目录（无确认页） ----
+    // importBusy 时 Scaffold 内容切到等待页；失败只 toast，不留错误页。
+    // 导入落盘目标是独立新目录（同名合并覆盖）；登记不再写入（只读
+    // 旧登记用于列表来源显示）。
     // 迁移失败显示：W1 接口 migrationError 的页内镜像，重试后刷新。
     var migrationErrorText by remember {
         mutableStateOf(SchemeDirs.migrationError(context))
     }
-    var importError by remember { mutableStateOf<ImportErrorKind?>(null) }
     var importBusy by remember { mutableStateOf(false) }
-    var importInstalling by remember { mutableStateOf(false) }
     val importPrefs = remember {
         context.getSharedPreferences(SchemePackageImport.PREFS_NAME, Context.MODE_PRIVATE)
     }
@@ -238,14 +221,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     var downloadError by remember { mutableStateOf<DownloadErrorState?>(null) }
     var downloadJob by remember { mutableStateOf<Job?>(null) }
     var downloadCall by remember { mutableStateOf<Call?>(null) }
-    // 下载交接的校验 / 安装沿用导入流程：importSource 决定登记来源，
-    // importFromDownload 决定失败 / 取消后回下载页还是主列表。
-    var importSource by remember {
-        mutableStateOf<SchemePackageImport.PackageSource>(
-            SchemePackageImport.PackageSource.LOCAL,
-        )
-    }
-    var importFromDownload by remember { mutableStateOf(false) }
     // URL 来源方案 id 集（登记里 source=URL 的方案，列表来源处显示 URL）。
     var urlSourceIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     // 整包下载专用 client：连接 15s / 读取 120s；callTimeout 300s
@@ -420,18 +395,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
      * 失败＝指针＋镜像回滚＋toast（目标 custom 已写可留，下次切过去即用；
      * 不 reload 回滚部署、不自动重试）；切换期间列表保持旧目录磁盘表（不变空）。
      * @param forceReload true 时即使目标就是当前目录也走完整部署（重装后必须重编
-     * 新包内容；普通切换无变化时仍早退）。P3 删除旧导入路径时随之清理。
-     * @param onBeforeRollback 失败时在指针回滚之前调用（旧导入确认路径传入
-     * rollbackTransaction；P3 删除旧导入路径时随之清理）。
-     * @param onSwitchDone 切换协程结束时调用（成功与失败都调），供确认导入在成功
-     * 时清理备份；早退（未启动）时不调，调用方以返回值为准。
+     * 新包内容；普通切换无变化时仍早退）。
      * @return true = 已启动切换协程，false = 守门早退（未启动）。
      */
     fun switchDirectory(
         targetDir: String,
         forceReload: Boolean = false,
-        onBeforeRollback: (() -> Unit)? = null,
-        onSwitchDone: ((Boolean) -> Unit)? = null,
     ): Boolean {
         // 第二道防线：目录浏览器不得切入 build（部署产物目录，listDirs
         // 已排除、importDirName 已把 "build" 映射为 "build-pkg"）：非法
@@ -477,10 +446,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 }
                 succeeded = true
             } catch (e: Exception) {
-                // 失败：先跑调用方的 onBeforeRollback（旧导入确认路径的
-                // rollbackTransaction），再指针＋镜像回滚；目标 custom 已写
-                // 可留，下次切过去即用；不 reload 回滚部署、不自动重试。
-                runCatching { onBeforeRollback?.invoke() }
+                // 失败：指针＋镜像回滚；目标 custom 已写可留，下次切过去
+                // 即用；不 reload 回滚部署、不自动重试。
                 runCatching {
                     SchemeDirs.setCurrentDirName(context, prevDir)
                     currentDir = prevDir
@@ -493,132 +460,77 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 dirBrowser = false
                 dirDetail = null
             }
-            runCatching { onSwitchDone?.invoke(succeeded) }
             loadSchemas()
         }
         return true
     }
 
-    // ---- 第二期本地导入流程（SAF 选 zip → 暂存校验 → 确认安装 → 一期切换） ----
-    /** 删掉本次导入的暂存文件（暂存目录与临时 zip，按名删，状态未赋值也覆盖）。 */
-    fun cleanupImportFiles() {
-        importStagingDir?.deleteRecursively()
-        importStagingDir = null
-        importTargetDir = null
-        File(context.cacheDir, IMPORT_STAGING_DIR_NAME).deleteRecursively()
-        File(context.cacheDir, IMPORT_TMP_ZIP_NAME).delete()
-    }
-
-    /** 取消导入：关校验页并清理暂存（安装进行中不可取消）。 */
-    fun cancelImport() {
-        if (importInstalling) return
-        importPlan = null
-        importError = null
-        importStagedEntries = emptyList()
-        importKeptFiles = emptyList()
-        cleanupImportFiles()
-        // 下载交接的取消回下载页；SAF 导入的取消回主列表。
-        if (importFromDownload) downloadPage = true
-        importFromDownload = false
-        importSource = SchemePackageImport.PackageSource.LOCAL
-    }
-
-    /** 清导入 / 下载交接的校验错误：下载交接的错误回下载页。 */
-    fun clearImportError() {
-        importError = null
-        importStagedEntries = emptyList()
-        importKeptFiles = emptyList()
-        cleanupImportFiles()
-        if (importFromDownload) downloadPage = true
-        importFromDownload = false
+    // ---- 导入：SAF 选 zip / 下载完成 → 直接导入新目录（无确认页） ----
+    // runImportPick（SAF 复制）与 startDownload（下载完成）共用 runImport：
+    // 校验→解压→T9 注入→写启用表→切指针→部署→选首位方案；失败只 toast。
+    // 导入中 importBusy 置位（等待页 + 顶栏返回禁用），跑完落主列表刷新。
+    /** 导入失败种类 → toast 文案（复用既有串；部署失败不称回退，因指针已留新目录）。 */
+    fun importFailureString(failure: ImportFailure): Int = when (failure) {
+        ImportFailure.NOT_ZIP -> R.string.schema_import_error_zip
+        ImportFailure.TOO_LARGE -> R.string.schema_import_error_too_large
+        ImportFailure.NO_SCHEMA -> R.string.schema_import_error_no_schema
+        ImportFailure.IO_ERROR -> R.string.schema_import_error_io
+        ImportFailure.DEPLOY_FAILED -> R.string.schema_import_error_install
     }
 
     /**
-     * zip 已就绪后的公共尾巴：暂存校验 → 空间检查 → 校验结果页或错误页。
-     * SAF 导入与下载交接共用（下载不另起管线）；fromDownload 决定登记
-     * 来源与失败 / 取消后的回落页。调用方负责 importBusy 的置位与复位。
+     * SAF / 下载共用的导入飞行（见 SchemeImport.importPackage）。
+     * 成功与部署失败都落到主列表并刷新（部署失败时指针已留新目录，
+     * 不回滚）；校验类失败只 toast，指针与列表不动。调用方负责
+     * importBusy 的置位与复位、暂存 zip 的删除。
      */
-    suspend fun validateZipFile(zipFile: File, packageName: String, fromDownload: Boolean) {
-        importSource = if (fromDownload) {
-            SchemePackageImport.PackageSource.URL
-        } else {
-            SchemePackageImport.PackageSource.LOCAL
-        }
-        importFromDownload = fromDownload
-        // 多目录模型：落盘目标是包名对应的独立目录（初始目录与 build 名受保护，
-        // 见 SchemeDirs.importDirName）；同名目录存在时确认页只提示替换一行。
-        val targetDir = File(
-            DataManager.schemeDirsRoot,
-            SchemeDirs.importDirName(packageName),
+    suspend fun runImport(zipFile: File, fallbackName: String) {
+        val outcome = importPackage(
+            zipFile = zipFile,
+            fallbackName = fallbackName,
+            schemeDirsRoot = DataManager.schemeDirsRoot,
+            sharedDir = DataManager.sharedDataDir,
+            writeMirror = { ids -> SchemeEnabled.writeEnabledMirror(prefs, ids) },
+            setCurrentDir = { dir ->
+                SchemeDirs.setCurrentDirName(context, dir)
+                currentDir = dir
+            },
+            deploy = { timeout ->
+                (EngineFactory.current() as? RimeEngine)?.deployAndAwait(timeout) ?: false
+            },
+            selectSchema = { id ->
+                EngineFactory.current()?.selectSchema(id)
+            },
         )
-        val stagingDir = File(context.cacheDir, IMPORT_STAGING_DIR_NAME)
-        // 解压前预检（快速失败）：按 ZipFile 中央目录声明量估算解压总量，
-        // 在解压前即报 NO_SPACE，不等解压完才报；解压后按实际总体积 +
-        // 余量的精确终检仍保留（见下方 Ready 分支）。
-        val precheckOk = withContext(Dispatchers.IO) {
-            precheckExtractSpace(zipFile, context.cacheDir)
+        // 落点统一为主列表（下载交接的导入也不留下载页，与旧确认成功同口径）。
+        downloadPage = false
+        dirBrowser = false
+        dirDetail = null
+        if (outcome is ImportOutcome.Failed) {
+            ToastUtil.showToast(context.getString(importFailureString(outcome.failure)))
         }
-        if (!precheckOk) {
-            importError = ImportErrorKind.NO_SPACE
-            importStagedEntries = emptyList()
-            importKeptFiles = emptyList()
-            cleanupImportFiles()
-            return
-        }
-        val outcome = withContext(Dispatchers.IO) {
-            buildImportPlan(context, zipFile, stagingDir, packageName, targetDir)
-        }
-        when (outcome) {
-            is ImportPlanOutcome.Failed -> {
-                importError = outcome.error
-                importStagedEntries = emptyList()
-                importKeptFiles = emptyList()
-                cleanupImportFiles()
-            }
-            is ImportPlanOutcome.Ready -> {
-                val available = runCatching {
-                    StatFs(DataManager.schemeDirsRoot.path).availableBytes
-                }.getOrNull() ?: Long.MAX_VALUE
-                if (available <
-                    outcome.plan.totalBytes + SchemePackageImport.FREE_SPACE_MARGIN_BYTES
-                ) {
-                    importError = ImportErrorKind.NO_SPACE
-                    importStagedEntries = emptyList()
-                    importKeptFiles = emptyList()
-                    cleanupImportFiles()
-                } else {
-                    importPlan = outcome.plan
-                    importTargetDir = targetDir
-                    importStagingDir = stagingDir
-                    importStagedEntries = outcome.stagedEntries
-                    importKeptFiles = withContext(Dispatchers.IO) {
-                        protectedKeptFiles(targetDir)
-                    }
-                }
-            }
-        }
+        loadSchemas()
     }
 
     /**
-     * SAF 选包后的校验：有界复制到临时 zip → magic 校验 → 解到暂存目录
-     * → 生成安装规划。复制 8KB 缓冲、每次写入前累计实际字节、超
-     * MAX_ZIP_BYTES 立即中止；每循环检查取消，CancellationException
-     * 必须重抛（不得被 runCatching 吞成 COPY_FAILED）；先写 .part、
-     * 成功关闭后 rename 为固定名，finally 只删 .part（成功时它已被
-     * rename 走），失败 / 取消不留残留。剩余空间在规划出来后、安装
-     * 前检查（解压后总体积 + 部署余量）；校验失败只置错误态、不动
-     * user 目录。
-     * 错误区分：超限 → TOO_LARGE；读取失败 → COPY_FAILED；空间不足
-     * （ENOSPC，凭 IOException 信息启发式判定）→ IO_ERROR；用户取消
-     * → 不置 importError。启发式判定的局限：异常信息文本依赖平台与
-     * 封装层，不含 errno 字样时会把空间不足误判为 COPY_FAILED，两者
-     * 都是错误页、仅文案不同，不影响安装安全。
+     * SAF 选包后的导入：有界复制到临时 zip → 直接 runImport。
+     * 复制 8KB 缓冲、每次写入前累计实际字节、超 256MiB 立即中止；
+     * 每循环检查取消，CancellationException 必须重抛（不得被
+     * runCatching 吞成 COPY_FAILED）；先写 .part、成功关闭后 rename
+     * 为固定名，finally 只删 .part（成功时它已被 rename 走），失败 /
+     * 取消不留残留；暂存 zip 由外层 finally 删（runImport 内已读完）。
+     * 错误区分：超限 → TOO_LARGE；空间不足（ENOSPC，凭 IOException
+     * 信息启发式判定）→ IO_ERROR；其余读取失败 → COPY_FAILED；
+     * 用户取消 → 不 toast。启发式判定的局限：异常信息文本依赖平台
+     * 与封装层，不含 errno 字样时会把空间不足误判为 COPY_FAILED，
+     * 两者都是 toast、仅文案不同，不影响导入安全。
      */
     fun runImportPick(uri: Uri) {
-        if (importBusy || SchemeSwitchCoordinator.isBusy()) return
+        if (importBusy || EngineDeployState.isRunning() || dirSwitching) return
         importBusy = true
-        importError = null
         scope.launch {
+            val tmpZip = File(context.cacheDir, IMPORT_TMP_ZIP_NAME)
+            val partZip = File(context.cacheDir, "$IMPORT_TMP_ZIP_NAME.part")
             try {
                 val displayName = withContext(Dispatchers.IO) {
                     runCatching {
@@ -632,8 +544,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         }
                     }.getOrNull()
                 } ?: "scheme-package.zip"
-                val tmpZip = File(context.cacheDir, IMPORT_TMP_ZIP_NAME)
-                val partZip = File(context.cacheDir, "$IMPORT_TMP_ZIP_NAME.part")
                 try {
                     withContext(Dispatchers.IO) {
                         val input = context.contentResolver.openInputStream(uri)
@@ -647,7 +557,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                     val n = src.read(buf)
                                     if (n < 0) break
                                     copied += n
-                                    if (copied > SchemePackageImport.MAX_ZIP_BYTES) {
+                                    if (copied > MAX_IMPORT_ZIP_BYTES) {
                                         throw ZipTooLargeException()
                                     }
                                     output.write(buf, 0, n)
@@ -663,242 +573,43 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: ZipTooLargeException) {
-                    importError = ImportErrorKind.TOO_LARGE
+                    ToastUtil.showToast(
+                        context.getString(R.string.schema_import_error_too_large)
+                    )
                     return@launch
                 } catch (e: java.io.IOException) {
                     val msg = e.message.orEmpty()
-                    importError = if (msg.contains("No space left", ignoreCase = true) ||
-                        msg.contains("ENOSPC")
-                    ) {
-                        ImportErrorKind.IO_ERROR
-                    } else {
-                        ImportErrorKind.COPY_FAILED
-                    }
+                    ToastUtil.showToast(
+                        context.getString(
+                            if (msg.contains("No space left", ignoreCase = true) ||
+                                msg.contains("ENOSPC")
+                            ) {
+                                R.string.schema_import_error_io
+                            } else {
+                                R.string.schema_import_error_copy
+                            }
+                        )
+                    )
                     return@launch
                 } catch (e: Exception) {
-                    importError = ImportErrorKind.COPY_FAILED
+                    ToastUtil.showToast(
+                        context.getString(R.string.schema_import_error_copy)
+                    )
                     return@launch
                 } finally {
                     // 只删 .part：成功时它已被 rename 走（删空操作），失败 /
-                    // 取消时清掉半复制残留；固定名 tmpZip 绝不在此删（成功
-                    // 路径随后要拿它校验）。
+                    // 取消时清掉半复制残留；固定名 tmpZip 由外层 finally 删
+                    // （成功路径随后要拿它导入）。
                     partZip.delete()
                 }
-                // magic 校验：非 zip 在此拦（NOT_ZIP）；真 zip（含 .cskin）
-                // 过 magic 后走正常校验流程，无方案时由规划报 NO_SCHEMA。
-                val magicOk = withContext(Dispatchers.IO) {
-                    runCatching {
-                        tmpZip.inputStream().use { input ->
-                            val header = ByteArray(4)
-                            var read = 0
-                            while (read < 4) {
-                                val n = input.read(header, read, 4 - read)
-                                if (n < 0) break
-                                read += n
-                            }
-                            SchemePackageImport.hasZipMagic(header.copyOf(read))
-                        }
-                    }.getOrDefault(false)
-                }
-                if (!magicOk) {
-                    importError = ImportErrorKind.NOT_ZIP
-                    importStagedEntries = emptyList()
-                    importKeptFiles = emptyList()
-                    cleanupImportFiles()
-                    return@launch
-                }
-                validateZipFile(
-                    tmpZip,
-                    SchemePackageImport.sanitizePackageName(displayName),
-                    fromDownload = false,
-                )
+                runImport(tmpZip, SchemePackageImport.sanitizePackageName(displayName))
             } finally {
                 importBusy = false
+                tmpZip.delete()
             }
         }
     }
-
-
-    /**
-     * 确认安装（多目录模型）：事务化安装到独立目录 + 登记（含目录名），
-     * 再切到新目录（指针 → 启用表 → 引擎重部署 → 首位方案，失败自动
-     * 回滚上一目录）。旧单目录合并链就此取代：不再往当前目录合并、
-     * 不再写当前目录方案表；事务已写新目录方案表，成功后不再调
-     * writeDefaultCustomSchemaList。
-     * 顺序与引擎：
-     * - 入口先调 recoverIncompleteTransactions（方案目录根），清掉上次
-     *   崩溃留下的中间态；importInstalling 守门保证单 flight（仅在无
-     *   安装进行时调 recover，见事务注释）。
-     * - 引擎没有可安全调用的只停不停启入口：finalize 会销毁引擎（关
-     *   actions/jobs 通道、取消作用域），此后 reload 无法复活它；
-     *   Rime.shutdown 只在 deploy() 内经 rime-main 调用，屏侧直调会
-     *   绕过生命周期与调度器。本批文件范围（RimeEngine 仅 setRunning /
-     *   join 点，IEngine / RimeApi 不在范围）加不出停机入口，故安装期
-     *   不做 native 停机，只以 EngineDeployState 占位：挡住 FAB 与页面
-     *   部署入口在安装期另起部署（它们读 isRunning 守门）；安装目标
-     *   是独立新目录，引擎仍跑在旧目录上，文件级互斥由事务候选目录 +
-     *   原子换位保证。残余风险见汇报（目标恰为当前目录时换位与运行
-     *   中引擎共用同一目录）。
-     * - 成功：写登记、把新目录启用 id 设为新方案表顺序（重装即整包
-     *   替换，旧顺序对新包无意义），再 switchDirectory(forceReload=true)。
-     *   switch 成功 → onSwitchDone 清备份；switch 失败 → 先
-     *   onBeforeRollback 恢复目录内容，再走 switch 已有的指针 / 顺序
-     *   回滚（见 switchDirectory 注释），终态一致。
-     * - 安装失败：失败原因与重启动作的顺序是 reload 派发在先、失败态
-     *   置位在后——reload 是异步派发，置位不等它完成；引擎为空时直接
-     *   复位标志，绝不把引擎留在停机态 / 标志留在置位态。SWAP_FAILED
-     *   时先在失败处理内调 recover 恢复到完整旧版（与事务注释“重试
-     *   前 recover”一致，只是提前到失败处理内做，不等用户下次确认），
-     *   再 reload、再置失败态。失败映射：PREVALIDATION →
-     *   INVALID_PACKAGE，其余（COPY_FAILED、VERIFICATION_FAILED、
-     *   NOTHING_INSTALLED、SWAP_FAILED）→ INSTALL_FAILED。
-     * 安装失败留在校验页并可重试（登记 upsert，重试安全）。
-     */
-    fun confirmImport() {
-        val plan = importPlan ?: return
-        val staging = importStagingDir ?: return
-        val targetDir = importTargetDir ?: return
-        val stagedEntries = importStagedEntries
-        if (importInstalling) return
-        // 切换进行中不启动安装：否则安装成功后的 switch 早退、备份无人
-        // 清理、新目录无人激活；安装开始前拦截，不动任何文件。
-        if (dirSwitching ||
-            DirSwitchMonitor.status.value.phase == DirSwitchPhase.SWITCHING ||
-            SchemeSwitchCoordinator.isBusy()
-        ) {
-            importError = ImportErrorKind.INSTALL_FAILED
-            return
-        }
-        // 导入安装同样持有协调器操作锁：安装全程拒绝点选切换与目录
-        // 切换；安装成功后把锁移交给 switchDirectory（见下），切换协程
-        // 结束时释放，中间不留另一入口插队的窗口。
-        val operationId = SchemeSwitchCoordinator.tryBegin(
-            SchemeSwitchOperationKind.IMPORT_INSTALL,
-            targetDir.name,
-            targetDir.name,
-        ) ?: run {
-            importError = ImportErrorKind.INSTALL_FAILED
-            return
-        }
-        importInstalling = true
-        importError = null
-        scope.launch {
-            var transferred = false
-            try {
-                val dirName = targetDir.name
-                val schemeIds = plan.schemes.map { it.id }
-                // 恢复 + 事务安装（NonCancellable：换位中途取消不得留半态）。
-                val transaction = withContext(Dispatchers.IO + NonCancellable) {
-                    SchemePackageImport.recoverIncompleteTransactions(
-                        DataManager.schemeDirsRoot,
-                    )
-                    // 安装期占位标志（见上）：挡并发部署；成功时 switch 的
-                    // reload 作业 finally 复位，失败时下文 reload / 直复位。
-                    EngineDeployState.setRunning(true)
-                    when (
-                        val result = SchemePackageImport.installTransaction(
-                            stagingDir = staging,
-                            targetDir = targetDir,
-                            plan = plan,
-                            stagedEntries = stagedEntries,
-                            schemaList = schemeIds,
-                        )
-                    ) {
-                        is SchemePackageImport.InstallTransactionResult.Success ->
-                            result.transaction
-                        is SchemePackageImport.InstallTransactionResult.Failed ->
-                            throw InstallFailedException(result.failure)
-                    }
-                }
-                val registry = SchemePackageImport.decodeRegistry(
-                    importPrefs.getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
-                )
-                val record = SchemePackageImport.SchemePackageRecord(
-                    packageName = plan.packageName,
-                    version = plan.packageVersion,
-                    schemeIds = schemeIds,
-                    files = transaction.installedFiles,
-                    source = importSource,
-                    dir = dirName,
-                )
-                importPrefs.edit {
-                    putString(
-                        SchemePackageImport.KEY_PACKAGE_REGISTRY,
-                        SchemePackageImport.encodeRegistry(registry.withRecord(record)),
-                    )
-                }
-                // 新目录启用 id = 新方案表顺序（见上）；switchDirectory
-                // 会先读分目录键，旧顺序不覆盖会让切换用错表。
-                SchemaManager.saveEnabledIds(prefs, dirName, schemeIds)
-                val backupDir = transaction.backupDir
-                cleanupImportFiles()
-                importPlan = null
-                importStagedEntries = emptyList()
-                importKeptFiles = emptyList()
-                importInstalling = false
-                // 安装成功后切到新目录（看切换结果），下载交接的来源标记复位。
-                downloadPage = false
-                importFromDownload = false
-                importSource = SchemePackageImport.PackageSource.LOCAL
-                val started = switchDirectory(
-                    dirName,
-                    forceReload = true,
-                    onBeforeRollback = {
-                        SchemePackageImport.rollbackTransaction(backupDir, targetDir)
-                    },
-                    onSwitchDone = { ok ->
-                        if (ok) SchemePackageImport.cleanupBackup(backupDir)
-                    },
-                )
-                transferred = started
-                if (!started) {
-                    // 守门竞态：安装已换位、切换未启动。标志由本处直复位
-                    // （无 reload 作业会复位它）；备份与日志保留，新目录
-                    // 内容完整，用户重新确认导入即可重装或手动切换。
-                    EngineDeployState.setRunning(false)
-                }
-            } catch (e: Exception) {
-                if (e is kotlinx.coroutines.CancellationException) {
-                    importInstalling = false
-                    throw e
-                }
-                val failure = (e as? InstallFailedException)?.failure
-                // 失败先重启引擎、再置失败态（顺序见上）：安装失败时引擎
-                // 仍在旧目录上，reload 重部署旧目录；SWAP_FAILED 先恢复
-                // 到完整旧版再 reload；引擎为空则直复位标志。
-                if (failure == SchemePackageImport.TransactionFailure.SWAP_FAILED) {
-                    // NonCancellable：恢复中途取消会把失败处理本身打断、
-                    // importInstalling 滞留 true，恢复必须跑完。
-                    withContext(Dispatchers.IO + NonCancellable) {
-                        SchemePackageImport.recoverIncompleteTransactions(
-                            DataManager.schemeDirsRoot,
-                        )
-                    }
-                }
-                val engine = EngineFactory.current()
-                if (engine != null) {
-                    engine.reload()
-                } else {
-                    EngineDeployState.setRunning(false)
-                }
-                importError = if (failure ==
-                    SchemePackageImport.TransactionFailure.PREVALIDATION
-                ) {
-                    ImportErrorKind.INVALID_PACKAGE
-                } else {
-                    ImportErrorKind.INSTALL_FAILED
-                }
-                importInstalling = false
-            } finally {
-                // 未移交时释放导入操作锁；已移交切换时由切换协程结束时
-                // 释放（本处不重复释放，endOperation 凭 id 校验亦会挡下）。
-                if (!transferred) {
-                    SchemeSwitchCoordinator.endOperation(operationId)
-                }
-            }
-        }
-    }
-
+    // ---- 第三期远程下载：手动 URL → cacheDir 暂存 → 直接导入 ----
     // ---- 第三期远程下载：手动 URL → cacheDir 暂存 → 二期校验 / 安装 ----
     /** 下载条目读回（菜单打开下载页时刷新一次，之后改动即时写回）。 */
     fun loadDownloadEntries() {
@@ -960,7 +671,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     0,
                 )
             val total = body.contentLength()
-            if (total > SchemePackageImport.MAX_ZIP_BYTES) {
+            if (total > MAX_IMPORT_ZIP_BYTES) {
                 return DownloadOutcome.Failed(
                     SchemeDownload.DownloadErrorKind.TOO_LARGE,
                     0,
@@ -977,7 +688,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         if (count == 0) continue
                         output.write(buffer, 0, count)
                         downloaded += count
-                        if (downloaded > SchemePackageImport.MAX_ZIP_BYTES) {
+                        if (downloaded > MAX_IMPORT_ZIP_BYTES) {
                             return DownloadOutcome.Failed(
                                 SchemeDownload.DownloadErrorKind.TOO_LARGE,
                                 0,
@@ -1007,11 +718,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
 
     /**
      * 发起下载：下载到导入流程共用的固定临时 zip（与 SAF 导入互斥，
-     * 守门同口径），成功后走 validateZipFile 交接二期校验 / 安装；
-     * 失败按下载口径明示并删暂存。下载跑应用级作用域（appScope，与
-     * 协调器同生命周期）：离开页面不再取消下载；取消仍经 cancelDownload
-     * （Call + Job 双中断），暂存残留 cacheDir 由系统清理（与二期同口径）。
-     * 局限：进度与校验交接状态仍是页内快照态，重进页面看不到进行中
+     * 守门同口径），成功后直接走 runImport 导入新目录；失败按下载
+     * 口径明示并删暂存。下载跑应用级作用域（appScope）：离开页面不
+     * 再取消下载；取消仍经 cancelDownload（Call + Job 双中断），暂存
+     * 残留 cacheDir 由系统清理。
+     * 局限：进度与导入交接状态仍是页内快照态，重进页面看不到进行中
      * 的下载、完成交接写到已销毁的组合态即丢失（下载本身不取消、
      * 临时 zip 仍在缓存），重进需重新下载才可见结果——进程级下载
      * 状态不在本批范围，见汇报残余项。
@@ -1021,7 +732,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         url: String,
         headers: List<Pair<String, String>>,
     ) {
-        if (downloadRunning || importBusy || SchemeSwitchCoordinator.isBusy()) return
+        if (downloadRunning || importBusy || EngineDeployState.isRunning() || dirSwitching) return
         downloadRunning = true
         downloadError = null
         downloadProgressBytes = 0L
@@ -1040,18 +751,17 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     is DownloadOutcome.Success -> {
                         importBusy = true
                         try {
-                            validateZipFile(
+                            runImport(
                                 tmpZip,
                                 SchemePackageImport.sanitizePackageName(entryName),
-                                fromDownload = true,
                             )
                         } finally {
                             importBusy = false
+                            tmpZip.delete()
                         }
                     }
                     is DownloadOutcome.Failed -> {
                         tmpZip.delete()
-                        File(context.cacheDir, IMPORT_STAGING_DIR_NAME).deleteRecursively()
                         downloadError = DownloadErrorState(outcome.kind, outcome.httpCode)
                     }
                 }
@@ -1127,12 +837,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
 
     Scaffold(
         topBar = {
-            // 导入流程中顶栏跟随流程态：校验页标题为校验结果、返回即取消；
-            // 等待 / 错误页标题为导入方案、返回即清错误；其余为一期原顶栏。
-            // 校验页与等待页的返回在安装进行中禁用（落盘在 NonCancellable
-            // 里跑，关页不中断安装，关了也无处回写状态）。
-            // 下载交接的校验 / 错误页标题跟随下载方案（与导入区分）。
-            val inImportFlow = importPlan != null || importError != null || importBusy
+            // 导入进行中顶栏跟随流程态：标题为导入方案（下载交接的导入
+            // 进行中标题为下载方案）；返回在导入进行中禁用（导入跑完
+            // 才落盘收尾，关页不中断它）。其余为原顶栏。
+            val inImportFlow = importBusy
             val inDownloadFlow = downloadPage || downloadFormOpen ||
                 downloadRunning || downloadError != null
             CenterAlignedTopAppBar(
@@ -1140,11 +848,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     Text(
                         stringResource(
                             when {
-                                importPlan != null -> R.string.schema_import
-                                dirBrowser -> R.string.schema_dir_switch
                                 inImportFlow ->
-                                    if (importFromDownload) R.string.schema_download
+                                    if (downloadPage) R.string.schema_download
                                     else R.string.schema_import
+                                dirBrowser -> R.string.schema_dir_switch
                                 inDownloadFlow -> R.string.schema_download
                                 else -> R.string.schema_settings
                             },
@@ -1157,8 +864,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     IconButton(
                         onClick = {
                             when {
-                                importPlan != null -> cancelImport()
-                                importError != null -> clearImportError()
                                 downloadFormOpen -> {
                                     downloadFormOpen = false
                                     downloadFormError = null
@@ -1178,7 +883,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                 }
                             }
                         },
-                        enabled = !importInstalling && !importBusy && !dirSwitching,
+                        enabled = !importBusy && !dirSwitching,
                     ) {
                         Icon(
                             Icons.AutoMirrored.Filled.ArrowBack,
@@ -1191,8 +896,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 actions = {
                     // 下载列表页右上角 ＋：新增下载条目（表单页 / 进行中 /
                     // 错误页不给，防流程中途切走）。
-                    if (downloadPage && importPlan == null && !importBusy &&
-                        importError == null && !downloadFormOpen &&
+                    if (downloadPage && !importBusy &&
+                        !downloadFormOpen &&
                         !downloadRunning && downloadError == null
                     ) {
                         IconButton(onClick = { openDownloadForm(null) }) {
@@ -1272,24 +977,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             )
         },
     ) { padding ->
-        // 导入流程页整体替换列表内容（校验页 / 等待页 / 错误页）。
-        if (importPlan != null) {
-            ImportValidationPage(
-                plan = importPlan!!,
-                targetDirExists = importTargetDir?.exists() == true,
-                keptFiles = importKeptFiles,
-                installing = importInstalling,
-                error = importError,
-                onConfirm = { confirmImport() },
-                onCancel = { cancelImport() },
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(padding)
-                    .padding(horizontal = 16.dp),
-            )
-            return@Scaffold
-        }
+        // 导入等待页整体替换列表内容（无确认页、无错误页，失败只 toast）。
         if (importBusy) {
             Column(
                 modifier = Modifier
@@ -1299,7 +987,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 verticalArrangement = Arrangement.Center,
             ) {
                 Text(
-                    stringResource(R.string.schema_import_validating),
+                    stringResource(R.string.schema_import_installing),
                     fontSize = rowSubFontSize,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -1308,33 +996,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             }
             return@Scaffold
         }
-        if (importError != null) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .verticalScroll(rememberScrollState())
-                    .padding(padding)
-                    .padding(horizontal = 16.dp),
-            ) {
-                Spacer(Modifier.height(16.dp))
-                Text(
-                    importErrorText(importError!!),
-                    fontSize = rowFontSize,
-                    color = MaterialTheme.colorScheme.error,
-                )
-                Spacer(Modifier.height(16.dp))
-                Button(
-                    onClick = {
-                        clearImportError()
-                    },
-                ) {
-                    Text(stringResource(R.string.schema_banner_close))
-                }
-            }
-            return@Scaffold
-        }
         // 第三期下载页整体替换列表内容（表单 / 进度 / 错误 / 条目列表）。
-        // 导入交接分支在前：下载成功后的校验 / 安装仍走二期页面。
+        // 导入等待分支在前：下载成功后的导入仍走等待页。
         if (downloadFormOpen) {
             // 新增表单：分组卡片形态——标签卡片 + 卡内输入框，
             // HTTP 请求头区 + 添加 Header、深色保存钮。保存即保存条目
@@ -2352,20 +2015,7 @@ private fun saveOrder(prefs: SharedPreferences, dir: String, schemas: List<Schem
     SchemeEnabled.writeEnabledMirror(prefs, ids)
 }
 
-// ---- 第二期本地导入：校验结果页与规划构造（界面层，规划逻辑见 SchemePackageImport） ----
-
-/** 导入错误种类（界面文案据此映射，规划层只给原因枚举）。 */
-private enum class ImportErrorKind {
-    COPY_FAILED,
-    NOT_ZIP,
-    NO_SCHEMA,
-    TOO_LARGE,
-    NO_SPACE,
-    VALIDATE_FAILED,
-    INSTALL_FAILED,
-    INVALID_PACKAGE,
-    IO_ERROR,
-}
+// ---- 远程下载：结果与错误类型（界面层） ----
 
 /** 下载阶段结果：成功即已落到临时 zip；失败带口径与 HTTP 状态码。 */
 private sealed interface DownloadOutcome {
@@ -2376,7 +2026,7 @@ private sealed interface DownloadOutcome {
     ) : DownloadOutcome
 }
 
-/** 下载错误页状态（校验 / 安装阶段失败仍走 ImportErrorKind）。 */
+/** 下载错误页状态。 */
 private data class DownloadErrorState(
     val kind: SchemeDownload.DownloadErrorKind,
     val httpCode: Int,
@@ -2404,7 +2054,7 @@ private fun downloadErrorText(error: DownloadErrorState): String = when (error.k
         stringResource(R.string.schema_download_error_http, error.httpCode)
     SchemeDownload.DownloadErrorKind.REDIRECT_DOWNGRADE ->
         stringResource(R.string.schema_download_error_redirect)
-    // 体积上限与二期同口径、同文案（zip ≤ 512MB）。
+    // 体积上限与导入同口径、同文案（zip ≤ 256MiB）。
     SchemeDownload.DownloadErrorKind.TOO_LARGE ->
         stringResource(R.string.schema_import_error_too_large)
     SchemeDownload.DownloadErrorKind.INCOMPLETE ->
@@ -2417,324 +2067,6 @@ private const val IMPORT_TMP_ZIP_NAME = "scheme-import.zip"
 /** 有界复制中超限的内部信号（与 IOException 分开映射为 TOO_LARGE）。 */
 private class ZipTooLargeException : Exception()
 
-/** 事务安装失败的内部信号（携带 TransactionFailure 供错误映射用）。 */
-private class InstallFailedException(
-    val failure: SchemePackageImport.TransactionFailure,
-) : Exception()
-
-/** zip 解压暂存目录名（cacheDir 下，用完即删）。 */
-private const val IMPORT_STAGING_DIR_NAME = "scheme-import-staging"
-
-private sealed interface ImportPlanOutcome {
-    data class Ready(
-        val plan: SchemeImportPlan,
-        /** extractZip 的原始条目（相对路径 + 字节数），供事务安装核对用。 */
-        val stagedEntries: List<SchemePackageImport.StagedEntry>,
-    ) : ImportPlanOutcome
-
-    data class Failed(val error: ImportErrorKind) : ImportPlanOutcome
-}
-
-/**
- * 旧目录受保护文件盘点（确认页“将被保留”摘要与 inheritProtected 同口径，
- * 但 default.custom.yaml 除外：事务随后会用新方案表重写它）。
- */
-private fun protectedKeptFiles(dir: File): List<String> =
-    SchemePackageImport.listRelativeFiles(dir).filter { rel ->
-        if (rel == "default.custom.yaml") return@filter false
-        val name = rel.substringAfterLast('/')
-        rel.contains(".userdb") || rel.endsWith(".custom.yaml") ||
-            rel == "user.yaml" || rel == "installation.yaml"
-    }.sorted()
-
-/**
- * 解压前空间预检（IO 线程调用）：按 ZipFile 中央目录声明量估算解压总量，
- * 与暂存所在分区（cacheDir）的可用空间比较；估算量 + 部署余量超过可用
- * 空间时返回 false（调用方按既有 NO_SPACE 口径报错），否则返回 true。
- * 分区口径：预检必须用 cacheDir 所在分区（暂存解压落在这里），不许用
- * schemeDirsRoot 的分区（那是最终落盘分区，解压后终检才用它）。
- * 估算局限：声明 size 为 -1 的条目（data-descriptor）按压缩大小计入，
- * 压缩大小 ≤ 解压大小，故估算量是下限——预检只保证“估算都装不下时
- * 一定失败”，不保证“预检通过就一定够”（终检仍按实际总体积把关）。
- * 估算失败（zip 打不开、StatFs 读失败）时返回 true 放行，让解压阶段
- * 的精确错误（NOT_ZIP / IO_ERROR / TOTAL_TOO_LARGE）说了算，不以
- * 含糊的预检误报 NO_SPACE。
- */
-private fun precheckExtractSpace(zipFile: File, cacheDir: File): Boolean {
-    val estimated = runCatching {
-        java.util.zip.ZipFile(zipFile).use { zf ->
-            var total = 0L
-            for (entry in zf.entries()) {
-                if (entry.isDirectory) continue
-                val declared = if (entry.size >= 0L) {
-                    entry.size
-                } else {
-                    entry.compressedSize.coerceAtLeast(0L)
-                }
-                total = if (Long.MAX_VALUE - total < declared) Long.MAX_VALUE else total + declared
-            }
-            total
-        }
-    }.getOrNull() ?: return true
-    val available = runCatching {
-        StatFs(cacheDir.path).availableBytes
-    }.getOrNull() ?: return true
-    val needed = if (Long.MAX_VALUE - estimated < SchemePackageImport.FREE_SPACE_MARGIN_BYTES) {
-        Long.MAX_VALUE
-    } else {
-        estimated + SchemePackageImport.FREE_SPACE_MARGIN_BYTES
-    }
-    return available >= needed
-}
-
-/**
- * 由临时 zip 构造安装规划（IO 线程调用）：解压 → 登记读回 → 目标目录
- * 现存文件盘点 → 规划。失败时暂存目录已由 extractZip 清掉或为空，调用方
- * 再调 cleanupImportFiles 兜底。包名由调用方从 SAF 显示名净化后传入
- * （临时 zip 文件名固定，不能作包名）。多目录模型下现存文件按目标独立
- * 目录盘点（新目录为空表，替换安装按目录内现存文件算）；登记查找按
- * 目标目录名过滤（见 planInstall 的 dir 参数）。
- */
-private fun buildImportPlan(
-    context: Context,
-    zipFile: File,
-    stagingDir: File,
-    packageName: String,
-    targetDir: File,
-): ImportPlanOutcome {
-    val extracted = when (val result = SchemePackageImport.extractZip(zipFile, stagingDir)) {
-        is SchemePackageImport.ExtractResult.Ok -> result.extracted
-        is SchemePackageImport.ExtractResult.Failed -> return ImportPlanOutcome.Failed(
-            when (result.reason) {
-                SchemePackageImport.ExtractFailure.NOT_ZIP -> ImportErrorKind.NOT_ZIP
-                SchemePackageImport.ExtractFailure.ZIP_TOO_LARGE,
-                SchemePackageImport.ExtractFailure.ENTRY_TOO_LARGE,
-                SchemePackageImport.ExtractFailure.TOTAL_TOO_LARGE -> ImportErrorKind.TOO_LARGE
-                SchemePackageImport.ExtractFailure.TOO_MANY_ENTRIES,
-                SchemePackageImport.ExtractFailure.ENTRY_PATH_TOO_LONG,
-                SchemePackageImport.ExtractFailure.ENTRY_PATH_TOO_DEEP,
-                SchemePackageImport.ExtractFailure.DUPLICATE_ENTRY,
-                SchemePackageImport.ExtractFailure.ENTRY_CONFLICT -> ImportErrorKind.INVALID_PACKAGE
-                SchemePackageImport.ExtractFailure.IO_ERROR -> ImportErrorKind.IO_ERROR
-            },
-        )
-    }
-    val staged = SchemePackageImport.stagedPackageOf(stagingDir, extracted.entries)
-    val preSkipped = extracted.skippedTraversal.map {
-        SchemePackageImport.SkippedFile(it, SchemePackageImport.SkipReason.TRAVERSAL)
-    }
-    val registry = SchemePackageImport.decodeRegistry(
-        context.getSharedPreferences(
-            SchemePackageImport.PREFS_NAME,
-            Context.MODE_PRIVATE,
-        ).getString(SchemePackageImport.KEY_PACKAGE_REGISTRY, null),
-    )
-    val existingUser = SchemePackageImport.listRelativeFiles(targetDir)
-    val existingSharedIds = DataManager.sharedDataDir.listFiles()
-        ?.mapNotNull { file ->
-            file.name.removeSuffix(".schema.yaml")
-                .takeIf { file.name.endsWith(".schema.yaml") }
-        }?.toSet().orEmpty()
-    return when (
-        val result = SchemePackageImport.planInstall(
-            packageName = packageName,
-            zipBytes = zipFile.length(),
-            staged = staged,
-            preSkipped = preSkipped,
-            existingUserFiles = existingUser,
-            existingSharedSchemeIds = existingSharedIds,
-            registry = registry,
-            dir = targetDir.name,
-        )
-    ) {
-        is PlanResult.Success -> ImportPlanOutcome.Ready(result.plan, extracted.entries)
-        is PlanResult.Failed -> ImportPlanOutcome.Failed(
-            when (result.reason) {
-                SchemePackageImport.PlanFailure.NO_SCHEMA -> ImportErrorKind.NO_SCHEMA
-                SchemePackageImport.PlanFailure.ZIP_TOO_LARGE,
-                SchemePackageImport.PlanFailure.ENTRY_TOO_LARGE,
-                SchemePackageImport.PlanFailure.TOTAL_TOO_LARGE -> ImportErrorKind.TOO_LARGE
-            },
-        )
-    }
-}
-
-@Composable
-private fun importErrorText(error: ImportErrorKind): String = when (error) {
-    ImportErrorKind.COPY_FAILED -> stringResource(R.string.schema_import_error_copy)
-    ImportErrorKind.NOT_ZIP -> stringResource(R.string.schema_import_error_zip)
-    ImportErrorKind.NO_SCHEMA -> stringResource(R.string.schema_import_error_no_schema)
-    ImportErrorKind.TOO_LARGE -> stringResource(R.string.schema_import_error_too_large)
-    ImportErrorKind.NO_SPACE -> stringResource(R.string.schema_import_error_no_space)
-    ImportErrorKind.VALIDATE_FAILED -> stringResource(R.string.schema_import_error_validate)
-    ImportErrorKind.INSTALL_FAILED -> stringResource(R.string.schema_import_error_install)
-    ImportErrorKind.INVALID_PACKAGE -> stringResource(R.string.schema_import_error_invalid_package)
-    ImportErrorKind.IO_ERROR -> stringResource(R.string.schema_import_error_io)
-}
-
-/**
- * 导入确认页（轻量）：只给用户真正需要的信息——包名、包内方案数、
- * 同名目录替换一行（存在时）；确认安装 / 取消；安装中进度与失败提示。
- * 文件明细、逐行保留/跳过清单、“校验结果”措辞全部去掉。
- */
-@Composable
-private fun ImportValidationPage(
-    plan: SchemeImportPlan,
-    targetDirExists: Boolean,
-    keptFiles: List<String>,
-    installing: Boolean,
-    error: ImportErrorKind?,
-    onConfirm: () -> Unit,
-    onCancel: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Spacer(Modifier.height(4.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Text(
-                    plan.packageName,
-                    fontSize = 16.sp,
-                    lineHeight = 21.sp,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    stringResource(R.string.schema_import_summary_schemes, plan.schemes.size),
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        if (targetDirExists) {
-            Spacer(Modifier.height(12.dp))
-            ScreenComponent.WarningCard {
-                Text(
-                    stringResource(R.string.schema_import_replace_dir),
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = ScreenComponent.warningContentColor(),
-                )
-            }
-        }
-        // 将被替换：规划落盘文件数 + 方案 id 列表（旧目录不存在时也显示）；
-        // 将被保留：旧目录现存的受保护文件（旧目录不存在时不显示）。
-        // 保持简化设计，不恢复文件明细。
-        Spacer(Modifier.height(12.dp))
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-        ) {
-            Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                Text(
-                    stringResource(
-                        R.string.schema_import_summary_replace,
-                        plan.installFiles.size,
-                    ),
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    fontWeight = FontWeight.SemiBold,
-                )
-                plan.schemes.forEach { scheme ->
-                    Text(
-                        scheme.id,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-        }
-        if (targetDirExists && keptFiles.isNotEmpty()) {
-            Spacer(Modifier.height(12.dp))
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            ) {
-                Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Text(
-                        stringResource(R.string.schema_import_summary_kept),
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    keptFiles.forEach { name ->
-                        Text(
-                            name,
-                            fontSize = 14.sp,
-                            lineHeight = 20.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-        }
-        if (error != null) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                importErrorText(error),
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                color = MaterialTheme.colorScheme.error,
-            )
-        }
-        if (installing) {
-            Spacer(Modifier.height(8.dp))
-            Text(
-                stringResource(R.string.schema_import_installing),
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            Spacer(Modifier.height(4.dp))
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-        }
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = onConfirm,
-            enabled = !installing,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.schema_import_confirm))
-        }
-        TextButton(
-            onClick = onCancel,
-            enabled = !installing,
-            modifier = Modifier.fillMaxWidth(),
-        ) {
-            Text(stringResource(R.string.schema_import_cancel))
-        }
-        Spacer(Modifier.height(16.dp))
-    }
-}
-
-/** 方案目录显示名：初始目录显示“默认”，其余显示目录名原样。 */
 @Composable
 private fun dirDisplayName(name: String): String =
     if (name == SchemeDirs.INITIAL_DIR) {
