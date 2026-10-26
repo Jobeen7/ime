@@ -543,6 +543,8 @@ enum class ImportFailure {
     NOT_ZIP,
     TOO_LARGE,
     NO_SCHEMA,
+    /** 怪包：重复/冲突/超长/超深/超条目——包本身有问题，与磁盘错误区分。 */
+    BAD_PACKAGE,
     IO_ERROR,
     DEPLOY_FAILED,
     DEPLOY_TIMEOUT,

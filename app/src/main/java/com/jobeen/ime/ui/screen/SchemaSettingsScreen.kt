@@ -119,7 +119,6 @@ import com.jobeen.ime.data.manager.SchemeSwitchPolicy
 import com.jobeen.ime.data.manager.SchemeEnabled
 import com.jobeen.ime.data.manager.discoverSchemes
 import com.jobeen.ime.data.manager.effectiveEnabledIds
-import com.jobeen.ime.data.manager.importPackage
 import com.jobeen.ime.data.manager.repairSchemeFiles
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.engine.RimeEngine
@@ -464,33 +463,35 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
 
     // ---- 导入：SAF 选 zip / 下载完成 → 直接导入新目录（无确认页） ----
     // runImportPick（SAF 复制）与 startDownload（下载完成）共用 runImport：
-    // 校验→解压→T9 注入→写启用表→切指针→部署→选首位方案；失败只 toast。
+    // 解压→规划→事务换位→切指针→镜像→换位后注入→部署→选首位新方案；失败只 toast。
     // 导入中 importBusy 置位（等待页 + 顶栏返回禁用），跑完落主列表刷新。
     /** 导入失败种类 → toast 文案（部署失败/超时均已回滚指针，见 runImport）。 */
     fun importFailureString(failure: ImportFailure): Int = when (failure) {
         ImportFailure.NOT_ZIP -> R.string.schema_import_error_zip
         ImportFailure.TOO_LARGE -> R.string.schema_import_error_too_large
         ImportFailure.NO_SCHEMA -> R.string.schema_import_error_no_schema
+        ImportFailure.BAD_PACKAGE -> R.string.schema_import_error_invalid_package
         ImportFailure.IO_ERROR -> R.string.schema_import_error_io
         ImportFailure.DEPLOY_FAILED -> R.string.schema_import_error_install
         ImportFailure.DEPLOY_TIMEOUT -> R.string.schema_deploy_timeout
     }
 
     /**
-     * SAF / 下载共用的导入飞行（见 SchemeImport.importPackage）。
-     * 成功与部署失败都落到主列表并刷新（部署失败/超时时指针＋镜像
-     * 回滚到导入前，与切换失败同口径）；校验类失败只 toast，指针与列表不动。
+     * SAF / 下载共用的导入飞行（见 SchemePackageImport.importPackageTransaction）。
+     * 成功与部署失败都落到主列表并刷新（部署失败时内容已回滚、超时时内容不动，
+     * 指针＋镜像均回滚到导入前，与切换失败同口径）；校验类失败只 toast，指针与列表不动。
      * 调用方负责 importBusy 的置位与复位、暂存 zip 的删除。
      */
     suspend fun runImport(zipFile: File, fallbackName: String) {
         // 部署失败回滚用：导入前指针与镜像（与切换失败同口径）。
         val prevDir = currentDir
         val prevOrder = enabledSchemas.map { it.id }
-        val outcome = importPackage(
+        val outcome = SchemePackageImport.importPackageTransaction(
             zipFile = zipFile,
             fallbackName = fallbackName,
             schemeDirsRoot = DataManager.schemeDirsRoot,
             sharedDir = DataManager.sharedDataDir,
+            cacheDir = context.cacheDir,
             writeMirror = { ids -> SchemeEnabled.writeEnabledMirror(prefs, ids) },
             setCurrentDir = { dir ->
                 SchemeDirs.setCurrentDirName(context, dir)
@@ -512,9 +513,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             if (outcome.failure == ImportFailure.DEPLOY_FAILED ||
                 outcome.failure == ImportFailure.DEPLOY_TIMEOUT
             ) {
-                // 部署失败/超时：指针＋镜像回滚到导入前（目标 custom
-                // 已写可留，下次切过去即用）；孤儿部署随后若完成，
-                // 部署的是回滚后的旧目录，无害。
+                // 部署失败/超时：指针＋镜像回滚到导入前（与切换失败同口径）。
+                // 注意：超时孤儿随后若完成，编的是新目录内容（作业可能已过
+                // userDataDir 读点），但它不写指针与镜像，故不破坏回滚；
+                // 内容回滚只在 FAILED 时由导入内做，超时绝不能内容回滚
+                // （会删孤儿脚下的目录）。
                 runCatching {
                     SchemeDirs.setCurrentDirName(context, prevDir)
                     currentDir = prevDir

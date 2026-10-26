@@ -8,6 +8,10 @@ import java.io.IOException
 object SchemeEnabled {
     private val ITEM_PATTERN = Regex("[A-Za-z0-9_.\\-]+")
 
+    /** 启用表 ID 白名单：全匹配 [A-Za-z0-9_.\-]+ 且不等于 "."、".."。 */
+    fun isValidSchemaId(id: String): Boolean =
+        ITEM_PATTERN.matches(id) && id != "." && id != ".."
+
     /**
      * 根据传入的 ID 列表生成或修改 YAML 文本中的 schema_list 序列。
      *
@@ -24,9 +28,7 @@ object SchemeEnabled {
      * - 返回文本始终以单个换行符结尾。
      */
     fun patchSchemaListYaml(existingText: String?, ids: List<String>): String {
-        val validIds = ids.filter { id ->
-            ITEM_PATTERN.matches(id) && id != "." && id != ".."
-        }
+        val validIds = ids.filter { id -> isValidSchemaId(id) }
 
         val newLines = validIds.map { "    - schema: $it" }
         
@@ -107,9 +109,7 @@ object SchemeEnabled {
      * 并抛 IOException；父目录按需创建；ID 白名单过滤与 patchSchemaListYaml 内一致。
      */
     fun writeEnabledCustomFile(customFile: File, ids: List<String>) {
-        val validIds = ids.filter { id ->
-            ITEM_PATTERN.matches(id) && id != "." && id != ".."
-        }
+        val validIds = ids.filter { id -> isValidSchemaId(id) }
 
         customFile.parentFile?.mkdirs()
 
