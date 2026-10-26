@@ -147,8 +147,13 @@ fun MainScreen(
         interactSeq++
         fabFaded = false
     }
-    LaunchedEffect(interactSeq, fabExpanded, fabAnyRunning) {
-        if (fabExpanded || fabAnyRunning) {
+    // 原汁原味（视频实测）：闲置 3 秒后整钮淡到 0.4（闲置中心
+    // #707A7F 对墙纸 #23363E 解出约 0.40；拖动/展开时中心皆为
+    // 纯白 #FFFFFF，即不透明）；触摸/拖动/展开/运行中恒为 1。
+    // 拖动中途不淡：dragging 进 effect 键与条件，松手才重计
+    // 3 秒（旧实现长拖超 3 秒会在拖动中途变淡）。
+    LaunchedEffect(interactSeq, fabExpanded, fabAnyRunning, dragging) {
+        if (fabExpanded || fabAnyRunning || dragging) {
             fabFaded = false
         } else {
             delay(3000)
@@ -156,7 +161,7 @@ fun MainScreen(
         }
     }
     val fabAlpha by animateFloatAsState(
-        targetValue = if (fabFaded) 0.5f else 1f,
+        targetValue = if (fabFaded) 0.4f else 1f,
         label = "fabFade",
     )
     fun fracToPx(f: Offset, size: IntSize): Offset {
