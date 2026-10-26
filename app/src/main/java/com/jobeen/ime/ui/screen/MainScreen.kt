@@ -165,15 +165,6 @@ fun MainScreen(
                                     onSync()
                                 },
                             )
-                            // × 项在栈底、贴主钮：只收起，任何时候都可点
-                            // （进行中也不拦截收起，收起本身不取消任务）。
-                            FabAction(
-                                label = stringResource(R.string.fab_close),
-                                icon = Icons.Filled.Close,
-                                running = false,
-                                enabled = true,
-                                onClick = { fabExpanded = false },
-                            )
                         }
                         Spacer(Modifier.height(12.dp))
                     }
