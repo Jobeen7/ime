@@ -351,20 +351,6 @@ object SchemePackageImport {
         return minOf(180_000L + steps * 30_000L, 1_800_000L)
     }
 
-    /**
-     * zip magic 纯谓词：PK\x03\x04（普通 zip）、PK\x05\x06（空 zip）、
-     * PK\x07\x08（分卷）通过；其余一律不通过。.cskin 本身就是 zip，
-     * 过 magic 后走正常校验流程、无方案时应为 NO_SCHEMA，绝不特判为
-     * NOT_ZIP。
-     */
-    fun hasZipMagic(header: ByteArray): Boolean {
-        if (header.size < 4) return false
-        if (header[0] != 0x50.toByte() || header[1] != 0x4B.toByte()) return false
-        return (header[2] == 0x03.toByte() && header[3] == 0x04.toByte()) ||
-            (header[2] == 0x05.toByte() && header[3] == 0x06.toByte()) ||
-            (header[2] == 0x07.toByte() && header[3] == 0x08.toByte())
-    }
-
     data class SkippedFile(
         val relPath: String,
         val reason: SkipReason,
@@ -1004,7 +990,7 @@ object SchemePackageImport {
     //      未就位：不要重试安装，先调 recoverIncompleteTransactions 恢复
     //      到完整旧版，再由用户重新确认。
     // 注意：installTransaction 本身已写候选目录的 default.custom.yaml
-    // （方案表见下），调用方不要再调 writeDefaultCustomSchemaList 重写。
+    // （方案表见下），调用方不要再重写。
 
     /**
      * 受保护文件继承：把旧目录下的受保护文件拷进候选目录——实路径语义，

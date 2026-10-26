@@ -18,7 +18,7 @@ import com.jobeen.ime.ui.theme.ImeTheme
 
 /**
  * RIME 页宿主：与设置 home 的 FAB 共用同一套部署/同步动作
- * （部署 = RimeApi.deploy；同步 = WebDavSync.syncSchemeDir 目录同步）。
+ * （部署 = RimeApi.deploy；同步 = 一键同步：方案上传/下载＋词典同步）。
  */
 class RimeActivity : ComponentActivity() {
 

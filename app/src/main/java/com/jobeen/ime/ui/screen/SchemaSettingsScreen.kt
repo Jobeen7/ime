@@ -114,7 +114,6 @@ import com.jobeen.ime.data.manager.ImportFailure
 import com.jobeen.ime.data.manager.ImportOutcome
 import com.jobeen.ime.data.manager.MAX_IMPORT_ZIP_BYTES
 import com.jobeen.ime.data.manager.SchemePackageImport
-import com.jobeen.ime.data.manager.SchemeSwitchCoordinator
 import com.jobeen.ime.data.manager.SchemeSwitchPolicy
 import com.jobeen.ime.data.manager.SchemeEnabled
 import com.jobeen.ime.data.manager.discoverSchemes
@@ -916,7 +915,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                             // 切换 / 部署 / 导入校验 / 下载进行中禁用。
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.schema_download)) },
-                                enabled = !SchemeSwitchCoordinator.isBusy() && !importBusy &&
+                                enabled = !dirSwitching && !deployRunning && !importBusy &&
                                     !downloadRunning,
                                 onClick = {
                                     menuExpanded = false
@@ -928,7 +927,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                             // 切换 / 部署进行中禁用（维护期守卫与一期同口径）。
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.schema_import)) },
-                                enabled = !SchemeSwitchCoordinator.isBusy() && !importBusy &&
+                                enabled = !dirSwitching && !deployRunning && !importBusy &&
                                     !downloadRunning,
                                 onClick = {
                                     menuExpanded = false
@@ -950,7 +949,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                             // 点“使用此文件夹”整套切换并重新部署。
                             DropdownMenuItem(
                                 text = { Text(stringResource(R.string.schema_dir_switch)) },
-                                enabled = !SchemeSwitchCoordinator.isBusy() && !importBusy &&
+                                enabled = !dirSwitching && !deployRunning && !importBusy &&
                                     !downloadRunning,
                                 onClick = {
                                     menuExpanded = false

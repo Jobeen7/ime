@@ -25,8 +25,7 @@ import timber.log.Timber
  *   源移进根下 [MIGRATION_BACKUP_DIR]；任一步失败都不写总标志，
  *   并把原因写进 [KEY_MIGRATION_ERROR] 供设置页显示（成功时清除）；
  * - 本文件只有 [migrationPlan]、[migrationMoves]、[sanitizeDirName]、
- *   [isValidDirName]、[schemesInDir]、[writeDefaultCustomSchemaList]、
- *   [sameContent] 是纯逻辑（可 JVM 单测），其余走 SharedPreferences /
+ *   [isValidDirName]、[schemesInDir]、[sameContent] 是纯逻辑（可 JVM 单测），其余走 SharedPreferences /
  *   磁盘，需 Android 环境；[ensureMigrated] 的 JVM 可测核心是接受
  *   [MigrationStore] 的内部重载。
  */
@@ -109,35 +108,6 @@ object SchemeDirs {
             }
             ?.sorted()
             .orEmpty()
-    }
-
-    /**
-     * 写目录的 default.custom.yaml：patch 包裹的 schema_list（librime 用户层
-     * 覆盖口径）。空表时删文件（引擎回落 shared 层内置 Lite）。
-     * 每项 id 都经 [SchemePackageImport.yamlPlainScalar] 转义（canonical
-     * 实现，本处不另写转义，避免两套转义分化；事务写好的转义表在
-     * 切换时被本函数重写的问题即由此消除）。写盘先写同目录 .tmp
-     * 再 rename 覆盖：rename 失败删 tmp、旧文件原样（不留半写文件）。
-     */
-    fun writeDefaultCustomSchemaList(dir: File, ids: List<String>) {
-        val file = File(dir, "default.custom.yaml")
-        if (ids.isEmpty()) {
-            file.delete()
-            return
-        }
-        dir.mkdirs()
-        val tmp = File(dir, "default.custom.yaml.tmp")
-        tmp.writeText(
-            buildString {
-                appendLine("patch:")
-                appendLine("  schema_list:")
-                ids.forEach { appendLine("    - ${SchemePackageImport.yamlPlainScalar(it)}") }
-            },
-        )
-        if (!tmp.renameTo(file)) {
-            tmp.delete()
-            throw java.io.IOException("rename default.custom.yaml.tmp failed")
-        }
     }
 
     /** 迁移规划：可移动项与目标已存在的冲突项。冲突项绝不静默丢弃。 */

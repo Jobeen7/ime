@@ -58,6 +58,13 @@ class SchemeSyncTest {
         assertFalse(WebDavSync.isValidSchemeRel("x.userdb"))
         assertFalse(WebDavSync.isValidSchemeRel("x.log"))
         assertFalse(WebDavSync.isValidSchemeRel("a.tmp"))
+        // .5 排除规则续留（已删 SchemeDirSyncTest 的用例口径）：
+        assertFalse(WebDavSync.isValidSchemeRel("scheme-archive/old.zip"))
+        assertFalse(WebDavSync.isValidSchemeRel("installation.yaml"))
+        assertFalse(WebDavSync.isValidSchemeRel("sub/installation.yaml"))
+        assertFalse(WebDavSync.isValidSchemeRel("wanxiang-lts-zh-hans.gram"))
+        assertFalse(WebDavSync.isValidSchemeRel("a.lock"))
+        assertFalse(WebDavSync.isValidSchemeRel("wanxiang_lite.userdict.txt"))
     }
 
     @Test
