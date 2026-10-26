@@ -109,9 +109,17 @@ object WanxiangUpdateManager {
     }
 
     /**
-     * 当前更新源：共享目标即内置 Lite；目录目标先按目录内容判变体
-     * （[variantNameOfDir]，Base 与 Lite 共用方案 id、必须按目录判），
-     * 目录判定不明时回退按当前方案 id 派生；仍不明或非万象则无源。
+     * 当前更新源：共享目标即内置 Lite；目录目标只按目录内容判变体
+     * （[resolveDirUpdateSource]）。变体不明（多变体并存的合并
+     * 目录、无变体标记的目录）时一律 [UpdateSource.NoSource]，
+     * 绝不回退按当前方案 id 派生：Base 与 Lite 共用 wanxiang_t9 /
+     * wanxiang_english 等方案 id，按 id 猜会把 Base 目录误判为
+     * Lite，随后整目录 dicts 被 Lite 包替换、Base 专属词库全丢，
+     * 而版本与指纹记录又自洽地记为 Lite、无自愈提示。无源好过
+     * 猜错源：无源时更新页只展示本地信息、不提供检查与下载。
+     * [currentSchemaId]/[currentSchemaName] 仅为调用签名兼容而
+     * 保留，目录目标判定不再使用它们（变体是方案包的属性，
+     * 不是当前方案的属性）。
      */
     fun resolveUpdateSource(
         target: UpdateTarget,
@@ -122,10 +130,17 @@ object WanxiangUpdateManager {
             return UpdateSource.Wanxiang("Lite", SCHEMA_ZIP_NAME)
         }
         if (target !is UpdateTarget.Dir) return UpdateSource.NoSource
-        val dirFile = File(DataManager.schemeDirsRoot, target.dirName)
-        val variant = variantNameOfDir(dirFile)
-            ?: currentSchemaId?.let { variantNameOf(it, currentSchemaName ?: it) }
-        return when (variant) {
+        return resolveDirUpdateSource(File(DataManager.schemeDirsRoot, target.dirName))
+    }
+
+    /**
+     * 目录目标的更新源判定（纯函数，可单测）：只信目录内容判
+     * 定的变体（[variantNameOfDir]）。单一变体 → 对应官方包；
+     * 多变体并存或无变体标记 → NoSource，绝不按共用方案 id
+     * 猜 Lite（见 [resolveUpdateSource] 的误判后果）。
+     */
+    internal fun resolveDirUpdateSource(dirFile: File): UpdateSource {
+        return when (variantNameOfDir(dirFile)) {
             "Lite" -> UpdateSource.Wanxiang("Lite", SCHEMA_ZIP_NAME)
             "Base" -> UpdateSource.Wanxiang("Base", SCHEMA_BASE_ZIP_NAME)
             "Pure" -> UpdateSource.Wanxiang("Pure", SCHEMA_PURE_ZIP_NAME)
@@ -658,6 +673,10 @@ object WanxiangUpdateManager {
      * Pure、wanxiang_lite 系与 wanxiang_t9 为 Lite），id 识别不出再按方案名
      * 关键词兜底；都不命中返回 null（调用方回退显示方案名）。不写死某个
      * 变体——用户可自备任意变体的方案包，展示必须跟着实际方案走。
+     * 仅供展示：wanxiang_t9 / wanxiang_english 是 Base 与 Lite 共用
+     * 的方案 id，本函数对它们固定判 Lite 在 Base 目录上是错的；
+     * 更新源判定绝不能用本函数，须用按目录内容判定的
+     * [resolveDirUpdateSource]（变体不明即无源，不猜）。
      */
     fun variantNameOf(schemaId: String, schemaName: String): String? {
         val id = schemaId.trim().lowercase()
@@ -689,7 +708,8 @@ object WanxiangUpdateManager {
      *   案文件（wanxiang.schema.yaml）→ Base；含 wanxiang_pro 系 →
      *   Pro；含 wanxiang_pure 系 → Pure。
      * - 多个主方案文件并存（合并目录）时变体不明，返回 null，调
-     *   用方回退按方案 id 派生；目录不存在、不可读、读异常同样
+     *   用方不得回退按方案 id 派生（共用 id 会误判，见
+     *   [resolveUpdateSource]）；目录不存在、不可读、读异常同样
      *   返回 null。
      */
     fun variantNameOfDir(dir: java.io.File): String? {

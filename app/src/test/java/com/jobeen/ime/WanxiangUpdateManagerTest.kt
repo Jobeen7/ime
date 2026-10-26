@@ -327,6 +327,87 @@ class WanxiangUpdateManagerTest {
         assertNull(WanxiangUpdateManager.variantNameOfDir(File("/nonexistent-dir-xyz")))
     }
 
+    // ---- 目录目标更新源判定：只信目录内容，变体不明即无源 ----
+
+    @Test
+    fun dirSource_mergedBaseAndLite_isNoSource() {
+        // 缺陷 2 核心：Base 与 Lite 合并进同一目录（多主方案并存），
+        // 即使当前方案是共用的 wanxiang_t9，也绝不能静默落到 Lite
+        // 包源——否则整目录 dicts 会被 Lite 包替换、Base 词库全丢。
+        val dir = dirWith(
+            "wanxiang.schema.yaml", "wanxiang_lite.schema.yaml",
+            "wanxiang_t9.schema.yaml", "wanxiang_english.schema.yaml",
+        )
+        try {
+            assertEquals(
+                WanxiangUpdateManager.UpdateSource.NoSource,
+                WanxiangUpdateManager.resolveDirUpdateSource(dir),
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun dirSource_singleVariantMapsToItsOwnPackage() {
+        val base = dirWith("wanxiang.schema.yaml", "wanxiang_t9.schema.yaml")
+        val lite = dirWith("wanxiang_lite.schema.yaml", "wanxiang_t9.schema.yaml")
+        val pure = dirWith("wanxiang_pure.schema.yaml")
+        val pro = dirWith("wanxiang_pro.schema.yaml")
+        try {
+            assertEquals(
+                WanxiangUpdateManager.UpdateSource.Wanxiang(
+                    "Base", "rime-wanxiang-base.zip",
+                ),
+                WanxiangUpdateManager.resolveDirUpdateSource(base),
+            )
+            assertEquals(
+                WanxiangUpdateManager.UpdateSource.Wanxiang(
+                    "Lite", "rime-wanxiang-lite.zip",
+                ),
+                WanxiangUpdateManager.resolveDirUpdateSource(lite),
+            )
+            assertEquals(
+                WanxiangUpdateManager.UpdateSource.Wanxiang(
+                    "Pure", "rime-wanxiang-pure.zip",
+                ),
+                WanxiangUpdateManager.resolveDirUpdateSource(pure),
+            )
+            assertEquals(
+                WanxiangUpdateManager.UpdateSource.UnsupportedVariant,
+                WanxiangUpdateManager.resolveDirUpdateSource(pro),
+            )
+        } finally {
+            base.deleteRecursively()
+            lite.deleteRecursively()
+            pure.deleteRecursively()
+            pro.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun dirSource_noVariantMarker_isNoSourceDespiteSharedSchemaId() {
+        // 只有共用方案文件、无变体主方案文件时同样不明：按方案 id
+        // 派生会猜 Lite，与合并目录同属静默猜错，必须判无源。
+        val dir = dirWith("wanxiang_t9.schema.yaml", "wanxiang_english.schema.yaml")
+        try {
+            assertEquals(
+                WanxiangUpdateManager.UpdateSource.NoSource,
+                WanxiangUpdateManager.resolveDirUpdateSource(dir),
+            )
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun dirSource_missingDir_isNoSource() {
+        assertEquals(
+            WanxiangUpdateManager.UpdateSource.NoSource,
+            WanxiangUpdateManager.resolveDirUpdateSource(File("/nonexistent-dir-xyz")),
+        )
+    }
+
     private companion object {
         const val REMOTE_PUB = "2026-10-09T00:00:00Z"
         const val OLD_PUB = "2026-01-01T00:00:00Z"
