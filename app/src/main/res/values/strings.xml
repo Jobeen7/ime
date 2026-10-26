@@ -90,10 +90,6 @@
     <string name="fab_deploy_busy">部署进行中，请稍后再试</string>
     <string name="fab_dir_sync_success">目录同步完成：上传 %1$d 个，下载 %2$d 个</string>
     <string name="fab_dir_sync_partial">目录同步完成：上传 %1$d 个，下载 %2$d 个，%3$d 个文件失败</string>
-    <string name="fab_dir_sync_paused_note">；本地文件骤减，已暂停跟删</string>
-    <string name="schema_sync_pause_title">同步跟删已暂停</string>
-    <string name="schema_sync_pause_desc">目录 %1$s 本地文件骤减，远端旧文件未跟删；确认后将强制同步一次，远端按当前本地文件清理。</string>
-    <string name="schema_sync_pause_confirm">确认清理</string>
     <string name="fab_sync_failed">同步失败</string>
     <string name="fab_sync_not_configured">请先到用户词典页填写 WebDAV 配置</string>
     <string name="fab_sync_engine_not_ready">词典服务未就绪，请稍后重试</string>

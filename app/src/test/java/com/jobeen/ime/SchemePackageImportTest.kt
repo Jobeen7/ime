@@ -3,6 +3,7 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.data.manager.SchemePackageImport
+import com.jobeen.ime.data.manager.hasZipMagic
 import com.jobeen.ime.data.manager.SchemePackageImport.EntryKind
 import com.jobeen.ime.data.manager.SchemePackageImport.PlanResult
 import com.jobeen.ime.data.manager.SchemePackageImport.SchemePackageRecord
@@ -1196,12 +1197,12 @@ class SchemePackageImportTest {
 
     @Test
     fun hasZipMagic_acceptsOnlyZipSignatures() {
-        assertTrue(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x03, 0x04)))
-        assertTrue(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x05, 0x06)))
-        assertTrue(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x07, 0x08)))
-        assertFalse(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x01, 0x02)))
-        assertFalse(SchemePackageImport.hasZipMagic(byteArrayOf(0x50, 0x4B, 0x03)))
-        assertFalse(SchemePackageImport.hasZipMagic(byteArrayOf()))
-        assertFalse(SchemePackageImport.hasZipMagic("Rar!".toByteArray()))
+        assertTrue(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x03, 0x04)))
+        assertTrue(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x05, 0x06)))
+        assertTrue(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x07, 0x08)))
+        assertFalse(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x01, 0x02)))
+        assertFalse(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x03)))
+        assertFalse(hasZipMagic(byteArrayOf()))
+        assertFalse(hasZipMagic("Rar!".toByteArray()))
     }
 }
