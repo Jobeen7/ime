@@ -55,6 +55,8 @@ private val LightColorScheme = lightColorScheme(
     surface = SurfaceLight,
     onSurface = OnSurfaceLight,
 
+    surfaceContainer = SurfaceContainerLight,
+
     surfaceVariant = SurfaceVariantLight,
     onSurfaceVariant = OnSurfaceVariantLight,
 
@@ -88,6 +90,8 @@ private val DarkColorScheme = darkColorScheme(
 
     surface = SurfaceDark,
     onSurface = OnSurfaceDark,
+
+    surfaceContainer = SurfaceContainerDark,
 
     surfaceVariant = SurfaceVariantDark,
     onSurfaceVariant = OnSurfaceVariantDark,

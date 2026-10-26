@@ -312,8 +312,8 @@ object ScreenComponent {
                 enabled = enabled,
                 modifier = Modifier.scale(SWITCH_SCALE),
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.primary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
                     uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                     uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
                 ),
