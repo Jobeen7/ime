@@ -18,20 +18,25 @@ object KeyboardThemePresets {
         colors = KeyboardColors.ColorScheme(
             keyBackground = Color.rgb(58, 58, 60),
             keyPressed = Color.rgb(72, 72, 74),
-            keyBorderStroke = Color.argb(40, 255, 255, 255),
+            // 皮肤深色按键无描边（键面纯色＋间距分隔），描边清零。
+            keyBorderStroke = Color.argb(0, 0, 0, 0),
             specialKeyBackground = Color.rgb(58, 58, 60),
             specialKeyPressed = Color.rgb(72, 72, 74),
-            specialKeyBorderStroke = Color.argb(120, 46, 46, 46),
+            specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
             accentKeyBackground = Color.rgb(156, 130, 74),
             accentKeyPressed = Color.rgb(72, 72, 74),
             accentKeyBorderStroke = Color.rgb(156, 130, 74),
             keyText = Color.rgb(255, 255, 255),
             specialKeyText = Color.rgb(255, 255, 255),
             accentKeyText = Color.rgb(255, 255, 255),
-            altText = Color.rgb(130, 130, 130),
-            background = Color.rgb(22, 22, 22),
+            // 皮肤深色次要文字（九键数字角标）#FFFFFF66。
+            altText = Color.argb(102, 255, 255, 255),
+            // 皮肤深色键盘底 #00000003，近纯黑。
+            background = Color.rgb(0, 0, 0),
             panel = KeyboardColors.ColorScheme.PanelColors(
-                background = Color.rgb(22, 22, 22),
+                // 与键盘底同黑，否则候选条与键区之间出一道深灰接缝；
+                // 皮肤工具栏/候选面板底同样是 #00000003。
+                background = Color.rgb(0, 0, 0),
                 toolbarText = Color.rgb(255, 255, 255),
                 toolbarActived = Color.rgb(10, 132, 255), // #0A84FF，与长按弹窗高亮同值（BaseKeyboard 的 LONG_PRESS_HIGHLIGHT_BLUE）
                 toolbarIcon = Color.rgb(255, 255, 255),
