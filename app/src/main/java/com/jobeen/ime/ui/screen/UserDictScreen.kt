@@ -215,8 +215,6 @@ fun UserDictScreen(
                                 subtitle = stringResource(R.string.user_dict_switch_dict),
                                 onClick = { if (!state.busy) showDictDialog = true },
                                 icon = Icons.Filled.MenuBook,
-                                iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                                iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                             )
                         }
                     }
@@ -229,8 +227,6 @@ fun UserDictScreen(
                             subtitle = stringResource(R.string.user_dict_export_desc),
                             onClick = { if (enabled) onExport() },
                             icon = Icons.Filled.Upload,
-                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                         GroupDivider()
                         NavRow(
@@ -238,8 +234,6 @@ fun UserDictScreen(
                             subtitle = stringResource(R.string.user_dict_import_desc),
                             onClick = { if (enabled) onImport() },
                             icon = Icons.Filled.Download,
-                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                     }
 
@@ -341,8 +335,6 @@ fun UserDictScreen(
                             subtitle = "上次上传：${formatTime(state.lastUpload)}",
                             onClick = { if (enabled) onUpload() },
                             icon = Icons.Filled.CloudUpload,
-                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                         GroupDivider()
                         NavRow(
@@ -353,8 +345,6 @@ fun UserDictScreen(
                             ),
                             onClick = { if (enabled) onDownload() },
                             icon = Icons.Filled.CloudDownload,
-                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                         GroupDivider()
                         NavRow(
@@ -362,8 +352,6 @@ fun UserDictScreen(
                             subtitle = stringResource(R.string.user_dict_upload_schemes_hint),
                             onClick = { if (!state.busy) onUploadSchemes() },
                             icon = Icons.Filled.CloudUpload,
-                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                         GroupDivider()
                         NavRow(
@@ -371,8 +359,6 @@ fun UserDictScreen(
                             subtitle = stringResource(R.string.user_dict_download_schemes_hint),
                             onClick = { if (!state.busy) onDownloadSchemes() },
                             icon = Icons.Filled.CloudDownload,
-                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                         GroupDivider()
                         NavRow(
@@ -380,8 +366,6 @@ fun UserDictScreen(
                             subtitle = stringResource(R.string.user_dict_deleted_words_hint),
                             onClick = { if (!state.busy) onShowDeletedWords() },
                             icon = Icons.Filled.RestoreFromTrash,
-                            iconContainer = MaterialTheme.colorScheme.primaryContainer,
-                            iconTint = MaterialTheme.colorScheme.onPrimaryContainer,
                         )
                     }
                 }

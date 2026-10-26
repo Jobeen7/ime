@@ -187,16 +187,14 @@ object ScreenComponent {
     }
 
     /**
-     * 导航行：彩色方块图标 + 标题 + 右箭头，无副标题。
-     * 方块颜色由调用方按组内顺序取 Material 容器色循环，图标本身用轮廓图标。
+     * 导航行：单色图标 + 标题 + 右箭头，无副标题时只有一行。
+     * 图标不带彩色底块，颜色跟随主题正文色（浅色黑、深色白）。
      */
     @Composable
     fun NavRow(
         title: String,
         onClick: () -> Unit,
         icon: ImageVector,
-        iconContainer: Color,
-        iconTint: Color,
         titleColor: Color = MaterialTheme.colorScheme.onSurface,
         showChevron: Boolean = true,
         subtitle: String? = null,
@@ -208,20 +206,12 @@ object ScreenComponent {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(iconContainer),
-                contentAlignment = Alignment.Center,
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = iconTint,
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(20.dp),
+            )
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
