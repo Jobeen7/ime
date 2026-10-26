@@ -19,6 +19,7 @@ import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
@@ -160,16 +161,51 @@ object KeyboardStateManager {
     // 部署完成的方案刷新只剩 handleEngineMessage 一条触发通道（清点
     // Q9 已删 MessageHandler 的双通道透传），其余调用方（onAttach /
     // onConfigChanged）都是用户节奏、不突发：在飞时直接跳过即可，
-    // 不再养单飞＋尾随重跑的合并装置
-    private val refreshInFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    // 不再养单飞＋尾随重跑的合并装置。但“直接跳过”会吃掉两条部署期
+    // 刷新：部署中早退的、部署中被单飞丢弃的（尤其 Finish 刷新撞上在
+    // 飞的早退刷新时），且失败部署根本没有 Finish 可重触发。补救只记
+    // 一个待补齐标志，不排队、不重试链：部署标志由真变假（成功与失败
+    // 的收尾都会复位）或在飞收尾时（部署恰在早退检查后复位），补齐一次；
+    // 补齐跑本身持有单飞权，不会被单飞再次吃掉；补齐撞上在飞刷新时不
+    // 消费标志，留待在飞收尾重试。无标志时部署结束不刷，attach 不多跑。
+    private val refreshPolicy = DeployRefreshPolicy()
+    private val deployWatcherStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
     fun refreshSchemas() {
-        if (!refreshInFlight.compareAndSet(false, true)) return
+        ensureDeployWatcher()
+        if (!refreshPolicy.tryStart(isDeploying = EngineDeployState.isRunning())) return
         appScope.launch {
             try {
                 refreshSchemasOnce()
             } finally {
-                refreshInFlight.set(false)
+                refreshPolicy.release()
+                tryAlignRefresh()
+            }
+        }
+    }
+
+    /** 有待补齐标志且部署已结束时补齐一次；无标志、部署中或撞单飞时不刷。 */
+    private fun tryAlignRefresh() {
+        if (!refreshPolicy.tryStartAlignment(isDeploying = EngineDeployState.isRunning())) return
+        appScope.launch {
+            try {
+                refreshSchemasOnce()
+            } finally {
+                refreshPolicy.release()
+                tryAlignRefresh()
+            }
+        }
+    }
+
+    /** 部署结束的唯一观察点：只在真变假时触发补齐判定，平时不刷。 */
+    private fun ensureDeployWatcher() {
+        if (!deployWatcherStarted.compareAndSet(false, true)) return
+        appScope.launch {
+            var wasRunning = EngineDeployState.isRunning()
+            EngineDeployState.running.collect { running ->
+                val deployEnded = wasRunning && !running
+                wasRunning = running
+                if (deployEnded) tryAlignRefresh()
             }
         }
     }
@@ -190,8 +226,12 @@ object KeyboardStateManager {
                     EngineMessage.Schema(it.id, it.name, it.layout, it.punctuation, it.kind)
                 }
             }
-            // 部署进行中：只更新方案表，不选方案、不切布局、不碰引擎。
-            if (EngineDeployState.isRunning()) return
+            // 部署进行中：只更新方案表，不选方案、不切布局、不碰引擎，
+            // 但记待补齐标志——部署结束/失败后由观察点或在飞收尾补齐一次。
+            if (EngineDeployState.isRunning()) {
+                refreshPolicy.markPending()
+                return
+            }
             currentSchema = schemas.firstOrNull()
             currentSchema?.id?.let { EngineFactory.current()?.selectSchema(it) }
 
@@ -199,6 +239,8 @@ object KeyboardStateManager {
             if (keyboardAttached) {
                 switchTo(currentSchema?.layout ?: defaultKeyboardName)
             }
+            // 完整刷新跑完：UI 已按最新磁盘对齐，待补齐标志不再欠账。
+            refreshPolicy.markAligned()
     }
 
     private fun create(name: String): IKeyboard {
@@ -351,5 +393,54 @@ object KeyboardStateManager {
         lastAppliedEmpty = lastInputEmpty
         lastAppliedComposing = isComposing
         keyboard.updateEditorInfo(info, lastInputEmpty, isComposing)
+    }
+}
+
+/**
+ * 部署期刷新补齐的纯决策状态机（无 Android / 协程依赖，可单测）。
+ * 语义：单飞权仍是唯一并发门；待补齐标志最多一个，不排队、不计数、
+ * 不重试链。标志只在两种丢失时记下：部署中早退的刷新、部署中被单飞
+ * 丢弃的刷新。补齐尝试拿权成功后才清标志——撞单飞时标志保留，留待
+ * 在飞收尾重试，因此补齐本身不会被单飞吃掉；清标志与补齐读盘之间
+ * 新记的标志要么被本次全量刷新覆盖（丢弃发生在读盘前），要么补齐
+ * 跑遇部署中早退时重记，不丢账。
+ */
+internal class DeployRefreshPolicy {
+    private val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val pending = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    val isInFlight: Boolean get() = inFlight.get()
+    val isPending: Boolean get() = pending.get()
+
+    /** 正常刷新入口：拿到单飞权返回 true；拿不到时仅当部署中才记待补齐。 */
+    fun tryStart(isDeploying: Boolean): Boolean {
+        if (inFlight.compareAndSet(false, true)) return true
+        if (isDeploying) pending.set(true)
+        return false
+    }
+
+    /** 部署中早退的刷新：记待补齐。 */
+    fun markPending() {
+        pending.set(true)
+    }
+
+    /** 完整刷新跑完：UI 已按最新磁盘对齐，清待补齐。 */
+    fun markAligned() {
+        pending.set(false)
+    }
+
+    fun release() {
+        inFlight.set(false)
+    }
+
+    /**
+     * 补齐尝试：仅当有待补齐且部署已结束时拿单飞权并清标志；
+     * 无标志、部署中或撞单飞时返回 false 且不消费标志。
+     */
+    fun tryStartAlignment(isDeploying: Boolean): Boolean {
+        if (!pending.get() || isDeploying) return false
+        if (!inFlight.compareAndSet(false, true)) return false
+        pending.set(false)
+        return true
     }
 }
