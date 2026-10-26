@@ -1887,77 +1887,124 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /**
      * 执行一次全量部署并等待其返回。
      * - timeoutMs <= 0 时直接返回 FAILED，不启动部署。
-     * - deployMutex.tryLock() 抢不到返回 FAILED；EngineDeployState 已在跑
-     *   或有超时孤儿在跑时返回 FAILED（孤儿存活期禁新部署）。
+     * - deployMutex.tryLock() 抢不到返回 FAILED；入口守门与 reload()
+     *   共用 [deployGateAllows]：已在跑、有超时孤儿在跑、作用域已死
+     *   时均返回 FAILED。查—置段与 reload 入口共用 deployGateLock，
+     *   两路不可能同时看到空闲并各置位各派发。
      * - 置位 SchemeDeployState.isDeploying 与 EngineDeployState.setRunning(true)，
      *   标志由部署作业收尾复位（先复位再 complete，等待方醒来时状态已一致）。
-     * - 通过 sendJob 串行投递任务：deploy() -> joinMaintenanceThread() ->
-     *   合成 Deploy Finish（与 Reload 同一收尾，见问题 7 修复）。
+     * - 通过 sendDeployJob 串行投递任务：deploy() -> joinMaintenanceThread() ->
+     *   合成 Deploy Finish（与 Reload 同一收尾）。
+     * - 作业在就绪门处被丢弃（引擎已 STOPPED）时丢弃回调立即完成
+     *   deferred 为 FAILED：此前 deferred 永不完成，等待方空等满
+     *   整个 timeoutMs（180–1800 秒）才返回 TIMEOUT_RUNNING 并记
+     *   孤儿，而孤儿的唯一复位点在永不执行的作业体内——门控本身
+     *   堵死了复位路径，此后每次调用都在孤儿门处直接 FAILED。
+     *   本处不另查生命周期状态：RimeSession/RimeDaemon 未向引擎
+     *   暴露当前状态，丢弃回调已覆盖 STOPPED 时的全部结果
+     *   （快失败、无孤儿、无滞留标志）；STARTING 时作业不被丢，
+     *   whenReady 会等到 READY 再执行，语义不变。
      * - 使用 withTimeoutOrNull(timeoutMs) 等待：超时只取消等待、作业继续跑，
      *   返回 TIMEOUT_RUNNING 并记孤儿标志；调用方取消时 CancellationException
-     *   穿透，同样记孤儿（作业收尾时复位）。
+     *   穿透，同样记孤儿（作业收尾时复位）。例外：超时/取消时作用域
+     *   已死，说明作业已死而非在跑，不记孤儿、直接复位并返回 FAILED
+     *   （取消路径仍重抛）。
      * - 等待方 finally 只解锁互斥，绝不提前复位标志（否则孤儿存活期
-     *   的守门与 running 指示会提前失效）。
-     * - 引擎作用域已死时直接返回 FAILED，不记孤儿（作业根本不会跑，
-     *   记了就永远卡住后续部署）。
+     *   的守门与 running 指示会提前失效）——上条的作用域已死分支
+     *   是唯一例外：此时作业已死，复位不会误清在跑部署的标志。
      * - 超时系数说明：Base 冷编译实测约 20 秒、热编译约 12 秒，
      *   180 秒起步已有 9 倍余量，不改系数；超时是语义问题不是时限问题。
      */
     suspend fun deployAndAwait(timeoutMs: Long): DeployAwaitResult {
         if (timeoutMs <= 0) return DeployAwaitResult.FAILED
         if (!deployMutex.tryLock()) return DeployAwaitResult.FAILED
-        if (EngineDeployState.isRunning() || EngineDeployState.isOrphanRunning()) {
+        val gateOk = synchronized(deployGateLock) {
+            val ok = deployGateAllows(
+                EngineDeployState.isRunning(),
+                EngineDeployState.isOrphanRunning(),
+                scope.isActive,
+            )
+            if (ok) {
+                SchemeDeployState.isDeploying = true
+                EngineDeployState.setRunning(true)
+            }
+            ok
+        }
+        if (!gateOk) {
             deployMutex.unlock()
             return DeployAwaitResult.FAILED
         }
-        if (!scope.isActive) {
-            deployMutex.unlock()
-            return DeployAwaitResult.FAILED
-        }
-        SchemeDeployState.isDeploying = true
-        EngineDeployState.setRunning(true)
         try {
             val deferred = CompletableDeferred<DeployAwaitResult>()
-            sendJob {
-                try {
-                    // 作业取消只记失败、不重抛杀消费循环（原实现重抛，
-                    // 循环若不捕获则整个 jobs 队列陪葬；记 FAILED 已足够诚实）。
-                    val result = try {
-                        deploy()
-                        joinMaintenanceThread()
-                        actions.send(
-                            Action.RimeMessage(
-                                RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+            sendDeployJob(
+                block = {
+                    try {
+                        // 作业取消只记失败、不重抛杀消费循环（原实现重抛，
+                        // 循环若不捕获则整个 jobs 队列陪葬；记 FAILED 已足够诚实）。
+                        val result = try {
+                            deploy()
+                            joinMaintenanceThread()
+                            actions.send(
+                                Action.RimeMessage(
+                                    RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                                )
                             )
-                        )
-                        DeployAwaitResult.COMPLETED
-                    } catch (e: CancellationException) {
-                        DeployAwaitResult.FAILED
-                    } catch (e: Exception) {
-                        DeployAwaitResult.FAILED
+                            DeployAwaitResult.COMPLETED
+                        } catch (e: CancellationException) {
+                            DeployAwaitResult.FAILED
+                        } catch (e: Exception) {
+                            DeployAwaitResult.FAILED
+                        }
+                        // 标志先于 complete 复位：等待方醒来时状态已一致，
+                        // 不会把刚完成的部署误判为忙；以下均为非挂起调用，
+                        // 作业取消也不会打断这段收尾。
+                        SchemeDeployState.isDeploying = false
+                        EngineDeployState.setRunning(false)
+                        EngineDeployState.setOrphanRunning(false)
+                        deferred.complete(result)
+                    } finally {
+                        // 兜底复位（幂等）：complete 前后的任何异常路径都不滞留标志。
+                        SchemeDeployState.isDeploying = false
+                        EngineDeployState.setRunning(false)
+                        EngineDeployState.setOrphanRunning(false)
                     }
-                    // 标志先于 complete 复位：等待方醒来时状态已一致，
-                    // 不会把刚完成的部署误判为忙；以下均为非挂起调用，
-                    // 作业取消也不会打断这段收尾。
+                },
+                // 作业体被就绪门丢弃：等待方立即得 FAILED，不空等超时、
+                // 不记孤儿；三项标志复位。孤儿复位在此是安全的：孤儿
+                // 标志的本意是“可能有部署在跑”，而被丢弃的作业已死；
+                // 即使另一路等待方此前已因超时记了孤儿，jobs 消费是
+                // 串行的，native 部署永不并发，新部署至多多一次排队
+                // 执行，远好于孤儿永久钉死（见报告契约审计）。
+                onDropped = {
                     SchemeDeployState.isDeploying = false
                     EngineDeployState.setRunning(false)
                     EngineDeployState.setOrphanRunning(false)
-                    deferred.complete(result)
-                } finally {
-                    // 兜底复位（幂等）：complete 前后的任何异常路径都不滞留标志。
-                    SchemeDeployState.isDeploying = false
-                    EngineDeployState.setRunning(false)
-                    EngineDeployState.setOrphanRunning(false)
-                }
-            }
+                    deferred.complete(DeployAwaitResult.FAILED)
+                },
+            )
             return withTimeoutOrNull(timeoutMs) {
                 deferred.await()
             } ?: run {
-                EngineDeployState.setOrphanRunning(true)
-                DeployAwaitResult.TIMEOUT_RUNNING
+                // 结果判定走共用纯函数（单元测试覆盖）：作用域已死
+                // 时为 FAILED 且不记孤儿，见 deployWaitTimeoutResult。
+                val timeoutResult = deployWaitTimeoutResult(scope.isActive)
+                if (timeoutResult == DeployAwaitResult.FAILED) {
+                    SchemeDeployState.isDeploying = false
+                    EngineDeployState.setRunning(false)
+                    EngineDeployState.setOrphanRunning(false)
+                } else {
+                    EngineDeployState.setOrphanRunning(true)
+                }
+                timeoutResult
             }
         } catch (e: CancellationException) {
-            EngineDeployState.setOrphanRunning(true)
+            if (!scope.isActive) {
+                SchemeDeployState.isDeploying = false
+                EngineDeployState.setRunning(false)
+                EngineDeployState.setOrphanRunning(false)
+            } else {
+                EngineDeployState.setOrphanRunning(true)
+            }
             throw e
         } finally {
             deployMutex.unlock()
