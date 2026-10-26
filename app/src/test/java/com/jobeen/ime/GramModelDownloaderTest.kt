@@ -5,6 +5,8 @@ import com.jobeen.ime.base.ngram.UpdateImportGate
 import com.jobeen.ime.base.ngram.deployBlocksUpdate
 import com.jobeen.ime.data.manager.EngineDeployState
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -33,20 +35,30 @@ class GramModelDownloaderTest {
 
     // ---- 更新/导入交叉闸：更新两路与导入事务互斥 ----
 
+    // 断言与旧版逐条对应，仅调用形态随凭证 API 迁移（抢占返回凭证、
+    // 释放交回凭证）；新增他方凭证误放不生效一节。旧版首行的裸释放
+    // （防前序用例泄漏）已无对应物：本类是交叉闸唯一测试使用者，
+    // 且每次抢放成对、无泄漏源。
     @Test
     fun updateImportGate_secondAcquireRejectedUntilRelease() {
-        UpdateImportGate.release()
-        assertTrue(UpdateImportGate.tryAcquire())
+        val first = UpdateImportGate.tryAcquire()
+        assertNotNull(first)
         try {
             assertTrue(UpdateImportGate.isHeld)
             // 对方（更新或导入）持有期间，另一方入口必须被拒
-            assertFalse(UpdateImportGate.tryAcquire())
+            assertNull(UpdateImportGate.tryAcquire())
+            // 他方凭证误放不生效：持有仍在、入口仍被拒
+            UpdateImportGate.release(Any())
+            assertTrue(UpdateImportGate.isHeld)
+            assertNull(UpdateImportGate.tryAcquire())
         } finally {
-            UpdateImportGate.release()
+            UpdateImportGate.release(first)
         }
         assertFalse(UpdateImportGate.isHeld)
-        assertTrue(UpdateImportGate.tryAcquire())
-        UpdateImportGate.release()
+        val second = UpdateImportGate.tryAcquire()
+        assertNotNull(second)
+        UpdateImportGate.release(second)
+        assertFalse(UpdateImportGate.isHeld)
     }
 
     // ---- 部署挡更新判定：进行中或超时孤儿任一即挡 ----

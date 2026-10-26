@@ -507,7 +507,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         // 本处抢闸失败即整单放弃——换位与回滚会删/盖目标目录，
         // 绝不能与更新换位交错。抢闸失败不置失败 toast 之外的
         // 状态：调用方的 importBusy 由其 finally 复位。
-        if (!UpdateImportGate.tryAcquire()) {
+        val gateToken = UpdateImportGate.tryAcquire()
+        if (gateToken == null) {
             ToastUtil.showToast(context.getString(R.string.schema_update_busy))
             return
         }
@@ -527,7 +528,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                 currentDir = dir
             },
             deploy = { timeout ->
-                (EngineFactory.current() as? RimeEngine)?.deployAndAwait(timeout)
+                // 事务全程已持交叉闸，内部部署必须走不持闸变体：
+                // 持闸变体会把自己的事务当对方挡掉、整单 FAILED。
+                (EngineFactory.current() as? RimeEngine)
+                    ?.deployAndAwait(timeout, acquireUpdateImportGate = false)
                     ?: DeployAwaitResult.FAILED
             },
             selectSchema = { id ->
@@ -557,7 +561,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
         }
         loadSchemas()
         } finally {
-            UpdateImportGate.release()
+            UpdateImportGate.release(gateToken)
         }
     }
 

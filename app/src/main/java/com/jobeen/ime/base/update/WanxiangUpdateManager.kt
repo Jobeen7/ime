@@ -974,7 +974,8 @@ object WanxiangUpdateManager {
             Timber.w("部署进行中，忽略本次方案更新调用")
             return DownloadResult.BUSY
         }
-        if (!UpdateImportGate.tryAcquire()) {
+        val gateToken = UpdateImportGate.tryAcquire()
+        if (gateToken == null) {
             Timber.w("方案导入进行中，忽略本次方案更新调用")
             return DownloadResult.BUSY
         }
@@ -1003,7 +1004,7 @@ object WanxiangUpdateManager {
                 DownloadGate.release()
             }
         } finally {
-            UpdateImportGate.release()
+            UpdateImportGate.release(gateToken)
         }
     }
 
@@ -1141,10 +1142,11 @@ object WanxiangUpdateManager {
             // 外层 finally 的启动清理清掉，现用词库与记录保持
             // 旧的自洽状态，下次更新可重跑。检查与 rename 间无
             // 挂起点；本闸此时由本次更新自己持有，故此处只读
-            // 部署状态、不读本闸。残余窗口只剩检查到 rename 间
-            // 另一线程刚启动部署的瞬间（无挂起、无 IO，极短），
-            // 部署侧若要彻底关掉它，须在部署入口同样读本闸
-            // （见汇报未决项）。
+            // 部署状态、不读本闸。残余窗口已由部署侧封闭：
+            // deployAndAwait 入口在置位运行标志前抢占交叉闸，
+            // 更新持闸期间任何部署入口都抢不到闸；reload 入口
+            // 读闸拒入，仅剩读闸到派发间的微秒级间隙（更新完成
+            // 回调的 reload 会在换位后重编一次）。
             var deployAborted = false
             try {
             if (deployBlocksUpdate()) {

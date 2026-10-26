@@ -71,17 +71,25 @@ object DownloadGate {
  * 更新入口与换位前复核读部署状态即可覆盖。
  */
 object UpdateImportGate {
-    private val held = java.util.concurrent.atomic.AtomicBoolean(false)
+    // 持有者凭证（非 Boolean）：部署侧的超时/取消/丢弃三路都可能
+    // 在等待方之后释放同一把闸，裸 Boolean 的重复释放会在新持有
+    // 者刚抢到闸的瞬间把它误清；凭证 CAS 只清自己名下的持有，
+    // 他方持有或已释放时误放一律不生效，重复释放同样安全。
+    private val holder = java.util.concurrent.atomic.AtomicReference<Any?>()
 
-    /** 抢占交叉闸：成功返回 true 并持有至 [release]；已有对方持有返回 false */
-    fun tryAcquire(): Boolean = held.compareAndSet(false, true)
+    /** 抢占交叉闸：成功返回持有凭证（非 null，释放时原样交回），已有对方持有返回 null */
+    fun tryAcquire(): Any? {
+        val token = Any()
+        return if (holder.compareAndSet(null, token)) token else null
+    }
 
-    fun release() {
-        held.set(false)
+    /** 释放交叉闸：凭证与当前持有者一致时才清；凭证为 null 时不做任何事 */
+    fun release(token: Any?) {
+        if (token != null) holder.compareAndSet(token, null)
     }
 
     /** 当前是否有更新或导入事务持有交叉闸（同步读，供界面守门即时判断） */
-    val isHeld: Boolean get() = held.get()
+    val isHeld: Boolean get() = holder.get() != null
 }
 
 /**
@@ -185,7 +193,8 @@ object GramModelDownloader {
             Timber.w("部署进行中，忽略本次语法模型下载调用")
             return DownloadResult.BUSY
         }
-        if (!UpdateImportGate.tryAcquire()) {
+        val gateToken = UpdateImportGate.tryAcquire()
+        if (gateToken == null) {
             Timber.w("方案导入进行中，忽略本次语法模型下载调用")
             return DownloadResult.BUSY
         }
@@ -212,7 +221,7 @@ object GramModelDownloader {
                 DownloadGate.release()
             }
         } finally {
-            UpdateImportGate.release()
+            UpdateImportGate.release(gateToken)
         }
     }
 
