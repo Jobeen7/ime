@@ -48,7 +48,11 @@ class InputFeedbacks private constructor() {
 
         private val feedbackPrefsListener =
             SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
-                if (key != null && key.startsWith("keyboard.feedback.")) {
+                // clear() 以 key == null 回调（重置清空偏好时）：此时重读反馈域，
+                // 否则已缓存的旧反馈值会在服务存活期间继续生效。
+                // refreshFeedbackCache 只读反馈域四项＋系统触感开关＋振动器，
+                // 不碰其他偏好域；非反馈域单键回调仍忽略，不变全量重读。
+                if (key == null || key.startsWith("keyboard.feedback.")) {
                     appContextRef?.let { refreshFeedbackCache(it) }
                 }
             }
