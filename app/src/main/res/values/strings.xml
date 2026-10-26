@@ -430,6 +430,10 @@
     <string name="user_dict_upload">上传到服务器</string>
     <string name="user_dict_download">从服务器下载</string>
     <string name="user_dict_download_hint">可跨词典名选择 · 上次：%1$s</string>
+    <string name="user_dict_upload_schemes">上传方案目录</string>
+    <string name="user_dict_upload_schemes_hint">将全部方案目录上传到服务器</string>
+    <string name="user_dict_download_schemes">下载方案目录</string>
+    <string name="user_dict_download_schemes_hint">从服务器下载方案目录到本地</string>
     <string name="user_dict_deleted_words">已删除的词</string>
     <string name="user_dict_deleted_words_hint">长按候选词删除的词，可在此恢复</string>
     <string name="user_dict_deleted_words_empty">暂无已删除的词</string>

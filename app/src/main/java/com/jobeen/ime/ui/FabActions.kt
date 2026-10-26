@@ -7,7 +7,6 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.RimeSyncPrefs
-import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.awaitSchemasReady
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.daemon.RimeSession
@@ -83,20 +82,16 @@ object FabActions {
     }
 
     /**
-     * 一键同步：目录同步（覆盖原词库合并定义之外的整目录同步）。
-     * 成功且删除传播因骤减暂停时，把暂停原因持久化到
-     * [RimeSyncPrefs]（目录名 + 原因），并在提示中带上“本地文件骤减，
-     * 已暂停跟删”；成功且未暂停时，若暂停标志属于当前目录则清除
-     * （骤减条件已不存在，标志不再有效）。force 重跑（设置页“确认
-     * 清理”入口）由调用方先清除标志再以 forceDeletePropagation=true
-     * 调用，结果同样经本函数 Toast + 待显示通知。
+     * 一键同步：先上传方案目录、再下载方案目录、最后同步全部词典
+     * （三段顺序跑、共用 WebDAV 锁；新模型只增量、不删对端文件，
+     * 故无删除传播暂停与 force 重跑）。方案上传或下载失败即整体
+     * 失败并短路后续段；词典单本失败只记 failed、报部分成功。
      */
     fun sync(
         context: Context,
         scope: CoroutineScope,
         sessionProvider: () -> RimeSession,
         onNotConfigured: () -> Unit,
-        forceDeletePropagation: Boolean = false,
     ) {
         if (FabSyncState.isRunning()) return
         if (!UserDictPrefs.isConfigured()) {
@@ -107,46 +102,54 @@ object FabActions {
         FabSyncState.setRunning(true)
         scope.launch {
             try {
-                val result = WebDavSync.syncSchemeDir(
-                    sessionProvider(),
-                    forceDeletePropagation,
-                )
-                result.onSuccess { r ->
-                    var msg = if (r.failedFiles.isEmpty()) {
-                        context.getString(
-                            R.string.fab_dir_sync_success,
-                            r.uploaded,
-                            r.downloaded,
-                        )
-                    } else {
-                        context.getString(
-                            R.string.fab_dir_sync_partial,
-                            r.uploaded,
-                            r.downloaded,
-                            r.failedFiles.size,
-                        )
-                    }
-                    val dir = SchemeDirs.currentDirName(context)
-                    if (r.deletePropagationPaused) {
-                        RimeSyncPrefs.setDeletePropagationPaused(
-                            context,
-                            dir,
-                            r.deletePropagationPauseReason,
-                        )
-                        msg += context.getString(R.string.fab_dir_sync_paused_note)
-                    } else if (RimeSyncPrefs.deletePropagationPause(context)?.dir == dir) {
-                        RimeSyncPrefs.clearDeletePropagationPaused(context)
-                    }
-                    ToastUtil.showToast(msg)
-                    RimeSyncPrefs.postNotice(context, msg)
-                }.onFailure {
-                    Timber.w(it, "FAB dir sync failed")
+                val upResult = WebDavSync.uploadSchemes()
+                if (upResult.isFailure) {
+                    Timber.w(upResult.exceptionOrNull(), "FAB schemes upload failed")
                     ToastUtil.showToast(context.getString(R.string.fab_sync_failed))
                     RimeSyncPrefs.postNotice(
                         context,
                         context.getString(R.string.fab_sync_failed),
                     )
+                    return@launch
                 }
+                val downResult = WebDavSync.downloadSchemes()
+                if (downResult.isFailure) {
+                    Timber.w(downResult.exceptionOrNull(), "FAB schemes download failed")
+                    ToastUtil.showToast(context.getString(R.string.fab_sync_failed))
+                    RimeSyncPrefs.postNotice(
+                        context,
+                        context.getString(R.string.fab_sync_failed),
+                    )
+                    return@launch
+                }
+                val up = upResult.getOrThrow()
+                val down = downResult.getOrThrow()
+                WebDavSync.syncAllDicts(sessionProvider())
+                    .onSuccess { failedDicts ->
+                        val msg = if (failedDicts.isEmpty()) {
+                            context.getString(
+                                R.string.fab_dir_sync_success,
+                                up,
+                                down,
+                            )
+                        } else {
+                            context.getString(
+                                R.string.fab_dir_sync_partial,
+                                up,
+                                down,
+                                failedDicts.size,
+                            )
+                        }
+                        ToastUtil.showToast(msg)
+                        RimeSyncPrefs.postNotice(context, msg)
+                    }.onFailure {
+                        Timber.w(it, "FAB dict sync failed")
+                        ToastUtil.showToast(context.getString(R.string.fab_sync_failed))
+                        RimeSyncPrefs.postNotice(
+                            context,
+                            context.getString(R.string.fab_sync_failed),
+                        )
+                    }
             } catch (e: Exception) {
                 Timber.w(e, "FAB dir sync failed")
                 ToastUtil.showToast(context.getString(R.string.fab_sync_engine_not_ready))
