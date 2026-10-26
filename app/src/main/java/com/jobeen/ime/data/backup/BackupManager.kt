@@ -12,6 +12,7 @@ import com.jobeen.ime.data.database.dedupeClipboardByText
 import com.jobeen.ime.data.database.PhraseRecord
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
+import com.jobeen.ime.data.manager.SchemaManager
 import androidx.room.withTransaction
 import org.json.JSONArray
 import org.json.JSONObject
@@ -502,6 +503,29 @@ object BackupManager {
     }
 
     /** 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误 */
+    /**
+     * 判定偏好条目是否属于旧多目录方案残留，命中则不还原。
+     * - prefsName 为 scheme_dirs 时恒为 true，整文件内容都不还原；
+     * - 否则 key 以 SchemaManager.KEY_ENABLED_IDS + "_" 开头、且后缀非空时为 true（分键残留）；
+     * - 全局键 SchemaManager.KEY_ENABLED_IDS 本身恒为 false，保留还原。
+     * （表名取备份载荷里的字面名，不跟随代码常量改名：旧备份里的
+     * scheme_dirs 表无论现常量为何值，都必须跳过。）
+     */
+    internal fun isLegacyMultiDirPref(prefsName: String, key: String): Boolean {
+        if (prefsName == "scheme_dirs") return true
+        val prefix = SchemaManager.KEY_ENABLED_IDS + "_"
+        return key.startsWith(prefix) && key.length > prefix.length
+    }
+
+    /**
+     * 整表跳过回写的文件：设备本地表（见 DEVICE_LOCAL_PREFS）与
+     * 现行多目录状态文件 scheme_dirs。调用方必须在循环开头、
+     * 创建 editor 之前判断——一旦 editor.clear() 执行，跳过已无意义。
+     * （字面名 scheme_dirs，不跟随常量改名，与 isLegacyMultiDirPref 同口径。）
+     */
+    internal fun isSkippedPrefsFile(name: String): Boolean =
+        name in DEVICE_LOCAL_PREFS || name == "scheme_dirs"
+
     private suspend fun applyPayload(parsed: ParsedBackup) {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
@@ -537,13 +561,21 @@ object BackupManager {
 
         // —— prefs 整表覆盖（先清后写，与备份时点的一致状态）
         for ((name, entries) in parsed.prefs) {
-            // 设备本地状态偏好跳过回写（见 DEVICE_LOCAL_PREFS，含
-            // WebDAV 整表）：备份里的下载记录/同步配置与本机实际
-            // 状态无关，整表覆盖回去会让本机状态被别台设备顶掉
-            if (name in DEVICE_LOCAL_PREFS) continue
+            // 整表跳过的文件根本不碰：循环开头 continue，绝不走到
+            // 下面的 editor.clear()。scheme_dirs 是现行多目录状态
+            // （current_dir / migrated_to_dirs），不是旧残留——先
+            // clear 再逐条跳过会把它清空，且回滚回放走同一路径
+            // 同样救不回来；与 DEVICE_LOCAL_PREFS 的“整表跳过
+            // 不碰”口径一致。
+            if (isSkippedPrefsFile(name)) continue
             val editor = appContext.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
             editor.clear()
-            for ((key, value) in entries) putPrefValue(editor, key, value)
+            for ((key, value) in entries) {
+                // 旧多目录方案残留不还原（见 isLegacyMultiDirPref）；
+                // 其余条目按原口径整表覆盖。
+                if (isLegacyMultiDirPref(name, key)) continue
+                putPrefValue(editor, key, value)
+            }
             // prefs 回写必须同步落盘：随后可能马上重启进程，异步 apply 有丢失窗口；
             // 同步提交失败必须让整个还原判失败（触发快照回滚），只记日志继续
             // 会留下数据库是新数据、偏好是旧数据的混杂状态

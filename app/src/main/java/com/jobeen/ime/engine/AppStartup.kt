@@ -9,6 +9,9 @@ import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.data.ThemeStore
+import com.jobeen.ime.data.manager.SchemeDirs
+import com.jobeen.ime.data.manager.SchemePackageImport
+import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -52,6 +55,19 @@ object AppStartup {
             // 抛错（损坏日志会被隔离），不在引擎的硬依赖内：一次恢复
             // 异常绝不能把引擎启动永久堵死
             runStep("recoverInterruptedUpdate") { WanxiangUpdateManager.recoverInterruptedUpdate() }
+            // 导入事务崩溃恢复（此前生产代码零调用点，事务只完成一半）：
+            // 先恢复未完成事务（换位前崩溃回旧版、TARGET_MOVED 备份移回、
+            // SWAPPED 保留新版），再扫 SWAPPED 残留（指针已不在该目录的
+            // 备份+日志可删，指针仍在的保留）。只在启动时调用（无安装进行中），
+            // 且在引擎读方案目录之前。
+            runStep("recoverIncompleteImportTransactions") {
+                val root = DataManager.schemeDirsRoot
+                SchemePackageImport.recoverIncompleteTransactions(root)
+                SchemePackageImport.sweepSwappedBackups(
+                    root,
+                    SchemeDirs.currentDirName(context),
+                )
+            }
             if (resourcesReady) {
                 runStep("setupEngine") { setupEngine(context) }
             } else {
@@ -79,10 +95,11 @@ object AppStartup {
     }
 
     private fun setupLogger(context: Context) {
-        // 仅 debug 构建开启日志：AppLogBuffer 的 Timber 缓冲收集 + DebugTree。
-        // release（assembleRelease）不装任何 timber Tree → Timber 全部 no-op，不输出、零开销；
+        // 缓冲日志在 debug 与 release 都装（BufferTree）：诊断导出在
+        // 正式版也需要日志，否则导出恒为空（2026-10-26 实测：正式版
+        // 诊断包只有 7 行头、0 条目）。DebugTree 仍仅 debug 构建装。
         // 崩溃记录由 CrashTrap 单点落盘（Application.onCreate 已安装，不经此处）。
-        AppLogBuffer.install(context, enableLogging = BuildConfig.DEBUG)
+        AppLogBuffer.install(context, enableLogging = true)
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }

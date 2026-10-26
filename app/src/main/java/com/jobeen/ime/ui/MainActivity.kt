@@ -11,9 +11,12 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jobeen.ime.base.util.appScope
+import com.jobeen.ime.data.manager.EngineDeployState
+import com.jobeen.ime.engine.rime.daemon.RimeDaemon
+import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.ImeInputMethodService
@@ -36,9 +39,36 @@ class MainActivity : ComponentActivity() {
         if (result.resultCode != RESULT_OK) finish()
     }
 
+    // FAB 会话：按名共享，复用引擎，不随本页销毁而停引擎。
+    // 运行状态不再本地持有：部署订阅 EngineDeployState.running，
+    // 同步订阅 FabSyncState.running（进程级，两处 Activity 共用）。
+    private var fabSession: RimeSession? = null
+
+    /**
+     * 红条状态：从系统输入法设置读当前 IME（复用 isImeConfigured，不另写
+     * 第二套判断）。onResume 刷新——用户在系统选择器切走/切回后回到
+     * 设置页，红条立即跟上，不用重启应用。
+     */
+    private var imeConfiguredState = mutableStateOf(true)
+
+    override fun onResume() {
+        super.onResume()
+        imeConfiguredState.value = isImeConfigured()
+    }
+
+    /** 系统输入法选择器（红条点按动作；系统级弹窗，非应用内页面）。 */
+    private fun showImePicker() {
+        val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
+        imm.showInputMethodPicker()
+    }
+
+    private fun fabSession(): RimeSession =
+        fabSession ?: RimeDaemon.createSession(FAB_SESSION_NAME).also { fabSession = it }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        imeConfiguredState.value = isImeConfigured()
 
         val initState = ImeApplication.getInstance().state.value
         if (initState != ImeApplication.AppState.Finished) {
@@ -48,15 +78,21 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            var themeMode by remember { mutableIntStateOf(KeyboardManager.Theme.getMode(this@MainActivity)) }
+            val deployRunning by EngineDeployState.running.collectAsStateWithLifecycle()
+            val syncRunning by FabSyncState.running.collectAsStateWithLifecycle()
+            // 应用主题已删除（Lee 2026-10-25 定）：恒跟随系统。旧手动值
+            // 在此一次性迁回跟随系统，其余页面读同一偏好即跟随。
+            if (KeyboardManager.Theme.getMode(this@MainActivity) !=
+                KeyboardManager.Theme.MODE_SYSTEM
+            ) {
+                KeyboardManager.Theme.setMode(
+                    this@MainActivity,
+                    KeyboardManager.Theme.MODE_SYSTEM,
+                )
+            }
 
-            ImeTheme(themeMode = themeMode) {
+            ImeTheme(themeMode = KeyboardManager.Theme.MODE_SYSTEM) {
                 MainScreen(
-                    currentThemeMode = themeMode,
-                    onThemeModeChanged = { mode ->
-                        KeyboardManager.Theme.setMode(this@MainActivity, mode)
-                        themeMode = mode
-                    },
                     onOpenImeSetup = {
                         setupImeLauncher.launch(
                             Intent(this@MainActivity, SetupActivity::class.java)
@@ -67,6 +103,18 @@ class MainActivity : ComponentActivity() {
                             Intent(this@MainActivity, SchemaSettingsActivity::class.java)
                         )
                     },
+                    onOpenSchemeUpdate = {
+                        startActivity(
+                            Intent(this@MainActivity, SchemeUpdateActivity::class.java)
+                        )
+                    },
+                    onOpenRime = {
+                        startActivity(
+                            Intent(this@MainActivity, RimeActivity::class.java)
+                        )
+                    },
+                    isImeConfigured = imeConfiguredState.value,
+                    onOpenImePicker = { showImePicker() },
                     onOpenKeyboardSettings = {
                         startActivity(
                             Intent(this@MainActivity, KeyboardSettingsActivity::class.java)
@@ -117,7 +165,22 @@ class MainActivity : ComponentActivity() {
                         startActivity(
                             Intent(this@MainActivity, AboutActivity::class.java)
                         )
-                    }
+                    },
+                    onDeploy = { FabActions.deploy(this@MainActivity, appScope) },
+                    onSync = {
+                        FabActions.sync(
+                            this@MainActivity,
+                            appScope,
+                            sessionProvider = { fabSession() },
+                            onNotConfigured = {
+                                startActivity(
+                                    Intent(this@MainActivity, UserDictActivity::class.java),
+                                )
+                            },
+                        )
+                    },
+                    deployRunning = deployRunning,
+                    syncRunning = syncRunning,
                 )
             }
         }
@@ -133,5 +196,9 @@ class MainActivity : ComponentActivity() {
             Settings.Secure.getString(contentResolver, Settings.Secure.DEFAULT_INPUT_METHOD)
         val ourId = ourComponent.flattenToShortString()
         return isEnabled && currentId == ourId
+    }
+
+    companion object {
+        private const val FAB_SESSION_NAME = "home-fab"
     }
 }

@@ -12,8 +12,10 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -86,7 +88,9 @@ object ScreenComponent {
         Box(
             modifier = Modifier
                 .width(buttonWidth)
-                .height(32.dp)
+                // 与去定高后的 Button 同高（自然高、字号再大也不裁）：
+                // 最小 40dp（Material Button 自然高），内容更高时随内容长。
+                .defaultMinSize(minHeight = 40.dp)
                 .clip(RoundedCornerShape(8.dp))
                 .background(containerColor),
         ) {
@@ -135,9 +139,9 @@ object ScreenComponent {
             }
             Card(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp),
+                shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
+                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
                 ),
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
             ) {
@@ -151,6 +155,127 @@ object ScreenComponent {
             }
         }
     }
+
+    /**
+     * 分组卡片：一张卡片装多行，组内行之间只用发丝线分隔，行自身无圆角无阴影。
+     * 卡片即“一页中的一组”。
+     */
+    @Composable
+    fun GroupCard(
+        modifier: Modifier = Modifier,
+        content: @Composable ColumnScope.() -> Unit,
+    ) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+            Column(modifier = Modifier.fillMaxWidth()) {
+                content()
+            }
+        }
+    }
+
+    /** 分组卡片内的发丝线：装饰性分隔，无语义。 */
+    @Composable
+    fun GroupDivider() {
+        HorizontalDivider(
+            modifier = Modifier.padding(horizontal = 16.dp),
+            thickness = 0.5.dp,
+            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+        )
+    }
+
+    /**
+     * 导航行：单色图标 + 标题 + 右箭头，无副标题时只有一行。
+     * 图标不带彩色底块，颜色跟随主题正文色（浅色黑、深色白）。
+     */
+    @Composable
+    fun NavRow(
+        title: String,
+        onClick: () -> Unit,
+        icon: ImageVector,
+        titleColor: Color = MaterialTheme.colorScheme.onSurface,
+        showChevron: Boolean = true,
+        subtitle: String? = null,
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable(onClick = onClick)
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(20.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    fontSize = 16.sp,
+                    lineHeight = 21.sp,
+                    fontWeight = FontWeight.Medium,
+                    color = titleColor,
+                    maxLines = 1,
+                )
+                if (subtitle != null) {
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = subtitle,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                    )
+                }
+            }
+            if (showChevron) {
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                    modifier = Modifier.size(20.dp),
+                )
+            }
+        }
+    }
+
+    /** 琥珀色警告卡（内容流中的 Inline Alert，非 Banner）：深浅主题各一套琥珀色。 */
+    @Composable
+    fun WarningCard(
+        modifier: Modifier = Modifier,
+        content: @Composable ColumnScope.() -> Unit,
+    ) {
+        val dark = isSystemInDarkTheme()
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = if (dark) Color(0xFF40300A) else Color(0xFFFFF0C2),
+            ),
+            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+            ) {
+                content()
+            }
+        }
+    }
+
+    /** 琥珀色警告卡内的文字色，与 WarningCard 容器配对。 */
+    @Composable
+    fun warningContentColor(): Color =
+        if (isSystemInDarkTheme()) Color(0xFFFFD54A) else Color(0xFF6D4C00)
 
     @Composable
     fun SwitchRow(
@@ -180,8 +305,8 @@ object ScreenComponent {
                 enabled = enabled,
                 modifier = Modifier.scale(SWITCH_SCALE),
                 colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.primary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.4f),
+                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
+                    checkedTrackColor = MaterialTheme.colorScheme.primary,
                     uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
                     uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
                 ),
@@ -333,78 +458,61 @@ object ScreenComponent {
         }
     }
 
+    /**
+     * 重置应用设置二次确认（关于页与 RIME 页共用，同一动作、同一文案）：
+     * step 1 = 首确认（范围说明 + 不可撤销），step 2 = 再次确认；
+     * 两次都只有取消 / 继续，绝不加“不再询问”。
+     */
     @Composable
-    fun ClickableSettingItem(
-        title: String,
-        subtitle: String,
-        onClick: () -> Unit,
-        icon: ImageVector? = null,
-        showSpacer: Boolean = false,
+    fun ResetConfirmDialogs(
+        step: Int,
+        onStepChange: (Int) -> Unit,
+        onConfirmed: () -> Unit,
     ) {
-        val interactionSource = remember { MutableInteractionSource() }
-        val isPressed by interactionSource.collectIsPressedAsState()
-        val elevation by animateDpAsState(
-            targetValue = if (isPressed) 0.dp else 0.dp,
-            animationSpec = spring(stiffness = Spring.StiffnessHigh),
-            label = "elevation",
-        )
-
-        Card(
-            onClick = onClick,
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surface,
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = elevation),
-        ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (icon != null) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(18.dp),
+        if (step == 1) {
+            AlertDialog(
+                onDismissRequest = { onStepChange(0) },
+                title = { Text(stringResource(R.string.about_reset)) },
+                text = {
+                    Text(
+                        stringResource(R.string.about_reset_footnote) +
+                            stringResource(R.string.about_reset_confirm1_msg),
+                    )
+                },
+                confirmButton = {
+                    TextButton(onClick = { onStepChange(2) }) {
+                        Text(stringResource(R.string.about_reset_continue))
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { onStepChange(0) }) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                },
+            )
+        }
+        if (step == 2) {
+            AlertDialog(
+                onDismissRequest = { onStepChange(0) },
+                title = { Text(stringResource(R.string.about_reset_confirm2_title)) },
+                text = { Text(stringResource(R.string.about_reset_confirm2_msg)) },
+                confirmButton = {
+                    TextButton(onClick = {
+                        onStepChange(0)
+                        onConfirmed()
+                    }) {
+                        Text(
+                            stringResource(R.string.about_reset_confirm),
+                            color = MaterialTheme.colorScheme.error,
                         )
                     }
-                    Spacer(Modifier.width(12.dp))
-                }
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        title,
-                        style = MaterialTheme.typography.bodyLarge,
-                        fontWeight = FontWeight.Medium,
-                        fontSize = 15.sp,
-                    )
-                    if (showSpacer) {
-                        Spacer(modifier = Modifier.height(2.dp))
+                },
+                dismissButton = {
+                    TextButton(onClick = { onStepChange(0) }) {
+                        Text(stringResource(R.string.cancel))
                     }
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = rowSubFontSize,
-                    )
-                }
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                    modifier = Modifier.size(20.dp),
-                )
-            }
+                },
+            )
         }
     }
 

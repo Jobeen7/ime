@@ -5,7 +5,10 @@ import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.ngram.DownloadGate
 import com.jobeen.ime.base.ngram.DownloadRecord
 import com.jobeen.ime.base.ngram.DownloadResult
+import com.jobeen.ime.base.ngram.UpdateImportGate
+import com.jobeen.ime.base.ngram.deployBlocksUpdate
 import com.jobeen.ime.base.ngram.gramFileInstallLock
+import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -26,23 +29,37 @@ import java.util.zip.ZipFile
 import kotlin.concurrent.withLock
 
 /**
- * 万象输入方案在线更新管理器。
+ * 万象输入方案在线更新管理器（多目录模型：更新跟随当前方案）。
  *
- * 下载地址（Jobeen 指定，只用 lite 版，不用 Base/Pro/Pure）：
- * - 方案包：https://github.com/amzxyz/rime-wanxiang/releases/download/{tag}/rime-wanxiang-lite.zip
+ * 下载地址（Jobeen 指定）：
+ * - 方案包：https://github.com/amzxyz/rime-wanxiang/releases/download/{tag}/{变体包名}
+ *   变体包名经官方 Releases 页核实：Lite=rime-wanxiang-lite.zip、
+ *   Base=rime-wanxiang-base.zip、Pure=rime-wanxiang-pure.zip；
+ *   Pro 因辅助码类型（pro-*-fuzhu.zip 的 * 段）无法从目录推断，暂不支持。
  * - 语法模型：https://github.com/amzxyz/RIME-LMDG/releases/download/LTS/wanxiang-lts-zh-hans.gram
+ *   （全变体共用，仍落共享目录；非万象目录不显示模型行）。
+ *
+ * 更新目标（[UpdateTarget]）：当前目录自带 dicts/ 时更新该目录，
+ * 否则更新共享目录（内置 Lite 的词库就在共享层）；非万象目录无官方
+ * 更新源，不自动检查，只展示本地版本与词库指纹。
  *
  * 安全策略（修改时必须遵守）：
  * 1. 只更新纯数据文件：dicts/ 下的词库 + 语法模型 .gram。
  *    App 内置的 *.schema.yaml 经过深度定制（UI 元数据 layout/kind、能力开关 options、
  *    自定义 filter 链），绝不能被上游覆盖；lua/ 与定制 schema 深度集成，
  *    opencc/ App 未使用，均不更新。
- * 2. 只写 sharedDataDir，绝不碰 userDataDir（用户词库、自定义配置不受影响）。
+ * 2. 目录目标只写该目录（dicts/ 整体 staging＋rename 切换），绝不碰
+ *    *.userdb、*.userdict.txt、default.custom.yaml、自定义短语等用户数据；
+ *    共享目标只写 sharedDataDir，绝不碰各用户目录。
  * 3. 下载用 .part 临时文件，成功后原子替换；词库先完整解压到与现用目录
  *    同级的 staging 目录校验，再整目录 rename 切换，不逐文件搬移。
  * 4. 全部网络与文件 IO 在 Dispatchers.IO，绝不阻塞主线程；下载为流式，
  *    不把整个文件载入内存（语法模型约 400MB）。
  * 5. 词库与语法模型紧耦合（上游 RIME-LMDG 说明），必须配套更新，不单独更新其中之一。
+ * 6. 版本与词库指纹记录按目标分键：共享目标沿用旧裸键（存量直接沿用，
+ *    无需迁移）；目录目标用 `dir:<目录名>:<键>` 前缀，App 升版清理
+ *    （[ensureVersionHousekeeping]）只清共享侧裸键，不动目录记录
+ *    （目录记录描述的是用户导入的包，不随 App 版本变）。
  */
 object WanxiangUpdateManager {
 
@@ -56,9 +73,102 @@ object WanxiangUpdateManager {
     private const val GRAM_FILE_NAME = "wanxiang-lts-zh-hans.gram"
     private const val SCHEMA_ZIP_NAME = "rime-wanxiang-lite.zip"
 
-    /** 方案包下载地址模式：只取 lite 版 */
-    private fun schemaUrl(tag: String): String =
-        "https://github.com/amzxyz/rime-wanxiang/releases/download/$tag/rime-wanxiang-lite.zip"
+    /** 方案包下载地址模式：变体对应官方包名（见类注释核实结果） */
+    private fun schemaUrl(tag: String, assetName: String): String =
+        "https://github.com/amzxyz/rime-wanxiang/releases/download/$tag/$assetName"
+    private const val SCHEMA_BASE_ZIP_NAME = "rime-wanxiang-base.zip"
+    private const val SCHEMA_PURE_ZIP_NAME = "rime-wanxiang-pure.zip"
+
+    /** 更新目标：内置 Lite 走共享目录；导入目录走该目录本身。 */
+    sealed interface UpdateTarget {
+        data object Shared : UpdateTarget
+        data class Dir(val dirName: String) : UpdateTarget
+    }
+
+    /** 更新源：万象变体对应官方包名；非万象无源；Pro 辅助码类型无法推断。 */
+    sealed interface UpdateSource {
+        data class Wanxiang(val variant: String, val assetName: String) : UpdateSource
+        data object NoSource : UpdateSource
+        data object UnsupportedVariant : UpdateSource
+    }
+
+    /**
+     * 当前更新目标：当前目录自带 dicts/ 即该目录，否则共享目录
+     * （内置 Lite 的词库在共享层；空目录引擎回落共享 Lite，同口径）。
+     */
+    fun resolveUpdateTarget(
+        context: android.content.Context = com.jobeen.ime.base.util.appContext,
+    ): UpdateTarget {
+        val dirName = SchemeDirs.currentDirName(context)
+        val dirFile = File(DataManager.schemeDirsRoot, dirName)
+        return if (File(dirFile, "dicts").isDirectory) {
+            UpdateTarget.Dir(dirName)
+        } else {
+            UpdateTarget.Shared
+        }
+    }
+
+    /**
+     * 当前更新源：共享目标即内置 Lite；目录目标只按目录内容判变体
+     * （[resolveDirUpdateSource]）。变体不明（多变体并存的合并
+     * 目录、无变体标记的目录）时一律 [UpdateSource.NoSource]，
+     * 绝不回退按当前方案 id 派生：Base 与 Lite 共用 wanxiang_t9 /
+     * wanxiang_english 等方案 id，按 id 猜会把 Base 目录误判为
+     * Lite，随后整目录 dicts 被 Lite 包替换、Base 专属词库全丢，
+     * 而版本与指纹记录又自洽地记为 Lite、无自愈提示。无源好过
+     * 猜错源：无源时更新页只展示本地信息、不提供检查与下载。
+     * [currentSchemaId]/[currentSchemaName] 仅为调用签名兼容而
+     * 保留，目录目标判定不再使用它们（变体是方案包的属性，
+     * 不是当前方案的属性）。
+     */
+    fun resolveUpdateSource(
+        target: UpdateTarget,
+        currentSchemaId: String?,
+        currentSchemaName: String?,
+    ): UpdateSource {
+        if (target is UpdateTarget.Shared) {
+            return UpdateSource.Wanxiang("Lite", SCHEMA_ZIP_NAME)
+        }
+        if (target !is UpdateTarget.Dir) return UpdateSource.NoSource
+        return resolveDirUpdateSource(File(DataManager.schemeDirsRoot, target.dirName))
+    }
+
+    /**
+     * 目录目标的更新源判定（纯函数，可单测）：只信目录内容判
+     * 定的变体（[variantNameOfDir]）。单一变体 → 对应官方包；
+     * 多变体并存或无变体标记 → NoSource，绝不按共用方案 id
+     * 猜 Lite（见 [resolveUpdateSource] 的误判后果）。
+     */
+    internal fun resolveDirUpdateSource(dirFile: File): UpdateSource {
+        return when (variantNameOfDir(dirFile)) {
+            "Lite" -> UpdateSource.Wanxiang("Lite", SCHEMA_ZIP_NAME)
+            "Base" -> UpdateSource.Wanxiang("Base", SCHEMA_BASE_ZIP_NAME)
+            "Pure" -> UpdateSource.Wanxiang("Pure", SCHEMA_PURE_ZIP_NAME)
+            "Pro" -> UpdateSource.UnsupportedVariant
+            else -> UpdateSource.NoSource
+        }
+    }
+
+    /** 更新目标的词库目录：共享走 shared/dicts，目录走该目录下的 dicts。 */
+    private fun targetDictsDir(target: UpdateTarget): File = when (target) {
+        UpdateTarget.Shared -> File(DataManager.sharedDataDir, "dicts")
+        is UpdateTarget.Dir -> File(File(DataManager.schemeDirsRoot, target.dirName), "dicts")
+    }
+
+    /** 更新目标的根目录：共享走 sharedDataDir，目录走该目录（staging/trash 与 dicts 同级）。 */
+    private fun targetRootDir(target: UpdateTarget): File = when (target) {
+        UpdateTarget.Shared -> DataManager.sharedDataDir
+        is UpdateTarget.Dir -> File(DataManager.schemeDirsRoot, target.dirName)
+    }
+
+    /**
+     * 词库侧记录键：共享目标沿用旧裸键（存量直接沿用）；目录目标加
+     * `dir:<目录名>:` 前缀。语法模型侧键（共享模型）一律不加前缀。
+     */
+    private fun scopedKey(target: UpdateTarget, key: String): String = when (target) {
+        UpdateTarget.Shared -> key
+        is UpdateTarget.Dir -> "dir:${target.dirName}:$key"
+    }
 
     /** zip 中只允许更新此前缀下的词库文件，其余一律跳过 */
     private val ALLOWED_PREFIXES = listOf("dicts/")
@@ -164,6 +274,10 @@ object WanxiangUpdateManager {
         val schemaZipSha256: String = "",
         /** 语法模型在 GitHub 登记的官方 SHA-256（同上） */
         val gramSha256: String = "",
+        /** 本次检查/更新对应的目标（共享或目录），下载时据此落盘 */
+        val target: UpdateTarget = UpdateTarget.Shared,
+        /** 本次检查/更新对应的官方包名（Lite/Base/Pure） */
+        val assetName: String = SCHEMA_ZIP_NAME,
         /**
          * 语法模型是否有更新：由检查流程按 [resolveGramUpdate] 的判定
          * 在构造时写入。不能再从 gramLocalPublishedAt 派生：上游原地
@@ -290,28 +404,36 @@ object WanxiangUpdateManager {
     /**
      * 获取本地信息（词库指纹、模型指纹），纯本地计算，用于"本地信息"展示。
      * 必须在协程中调用（内部已切换到 IO）。
+     * [target] 决定读哪份词库与版本记录；[includeGram] 为 false 时不碰
+     * 模型文件（非万象目录不显示模型行，也就不触发 400MB 指纹计算）。
      */
     suspend fun getLocalInfo(
         prefs: android.content.SharedPreferences,
+        target: UpdateTarget = UpdateTarget.Shared,
+        includeGram: Boolean = true,
     ): LocalInfo = withContext(Dispatchers.IO) {
-        val dictsDir = File(DataManager.sharedDataDir, "dicts")
+        val dictsDir = targetDictsDir(target)
         val gramFile = File(DataManager.sharedDataDir, GRAM_FILE_NAME)
         LocalInfo(
-            // 未在线更新过则显示内置版本：优先读解压落盘的 shared/version.txt
-            // （随打包换版自动跟随，不依赖手改常量——常量曾停在 v18.0.15 与
-            // 实际内置 18.1.0 脱节，方案页本地版本错报）
-            schemaVersion = prefs.getString(KEY_SCHEMA_VERSION, null)
-                ?: readBundledSchemaVersion()
-                ?: BUILTIN_SCHEMA_VERSION,
+            // 未在线更新过则显示内置版本：共享目标优先读解压落盘的
+            // shared/version.txt（随打包换版自动跟随，不依赖手改常量——
+            // 常量曾停在 v18.0.15 与实际内置 18.1.0 脱节，方案页本地版本错报）；
+            // 目录目标读该目录的 version.txt，没有则未知（空串，界面显示"—"）。
+            schemaVersion = prefs.getString(scopedKey(target, KEY_SCHEMA_VERSION), null)
+                ?: if (target is UpdateTarget.Shared) {
+                    readBundledSchemaVersion() ?: BUILTIN_SCHEMA_VERSION
+                } else {
+                    readDirVersionText(targetRootDir(target)) ?: ""
+                },
             dictFingerprint = try {
-                cachedDictsFingerprint(prefs, dictsDir)
+                cachedDictsFingerprint(prefs, dictsDir, target)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 Timber.w(e, "词库指纹计算失败")
                 ""
             },
-            gramFingerprint = if (gramFile.isFile) {
+            gramFingerprint = if (includeGram && gramFile.isFile) {
                 try {
                     cachedFileFingerprint(prefs, gramFile)
                 } catch (e: CancellationException) {
@@ -432,20 +554,28 @@ object WanxiangUpdateManager {
     }
 
     private fun recoverInterruptedUpdateInternal() {
+        // 词库切换残留：共享根 + 当前目录根（目录目标更新中断时
+        // staging/trash 在目录内）；模型残留只在共享根（模型全局共享）。
+        recoverDictsRoot(DataManager.sharedDataDir)
+        val currentDir = runCatching { SchemeDirs.currentDirName() }.getOrNull()
+        if (currentDir != null) {
+            val dirFile = File(DataManager.schemeDirsRoot, currentDir)
+            if (dirFile.isDirectory) recoverDictsRoot(dirFile)
+        }
+        recoverGramRoot()
+        // 旧版事务日志/提交标记残留（S11 后不再读写）：直接清掉（仅共享根）
         val root = DataManager.sharedDataDir
-        // 旧共用临时名遗留：两下载器曾共用「目标名 + .part」作半成品
-        // 名（<language>.gram.part，language 不止默认一种），拆分后缀
-        // 后已无人再写它，残留文件只占空间（可达数百 MB），启动清
-        // 理时按模式统一清掉。现行半成品后缀已逐项核对、均不匹配
-        // 「.gram.part」结尾，不会误删在途下载：GMD 是
-        // <language>.gmdl.part、本类 gram 是 <目标名>.wx.part、
-        // 方案包 .part 在 cacheDir 的工作目录里、不在本目录
-        root.listFiles { f -> f.isFile && f.name.endsWith(".gram.part") }
-            ?.forEach { it.delete() }
+        File(root, UPDATE_TXN_FILE).delete()
+        File(root, UPDATE_TXN_COMMITTED_FILE).delete()
+        File(root, "$UPDATE_TXN_FILE.tmp").delete()
+        File(root, "$GRAM_BACKUP_FILE.tmp").delete()
+        File(root, "$GRAM_BACKUP_FILE.restore").delete()
+    }
+
+    /** 按状态修复某根目录下的词库切换残留（不碰模型文件）。 */
+    private fun recoverDictsRoot(root: File) {
         val dicts = File(root, "dicts")
         val trash = File(root, DICTS_TRASH_DIR)
-        val gram = File(root, GRAM_FILE_NAME)
-        val gramBackup = File(root, GRAM_BACKUP_FILE)
 
         // 按状态修复（不读任何日志）：词库切换中断在两个 rename
         // 之间时 dicts 缺位、旧词库在 trash 里，回位；切换已完成
@@ -459,6 +589,24 @@ object WanxiangUpdateManager {
         } else if (dicts.exists() && trash.exists()) {
             trash.deleteRecursivelyNoFollow()
         }
+        File(root, DICTS_STAGING_DIR).deleteRecursivelyNoFollow()
+    }
+
+    /** 按状态修复共享根下的模型残留。 */
+    private fun recoverGramRoot() {
+        val root = DataManager.sharedDataDir
+        // 旧共用临时名遗留：两下载器曾共用「目标名 + .part」作半成品
+        // 名（<language>.gram.part，language 不止默认一种），拆分后缀
+        // 后已无人再写它，残留文件只占空间（可达数百 MB），启动清
+        // 理时按模式统一清掉。现行半成品后缀已逐项核对、均不匹配
+        // 「.gram.part」结尾，不会误删在途下载：GMD 是
+        // <language>.gmdl.part、本类 gram 是 <目标名>.wx.part、
+        // 方案包 .part 在 cacheDir 的工作目录里、不在本目录
+        root.listFiles { f -> f.isFile && f.name.endsWith(".gram.part") }
+            ?.forEach { it.delete() }
+        val gram = File(root, GRAM_FILE_NAME)
+        val gramBackup = File(root, GRAM_BACKUP_FILE)
+
         // 语法模型：旧流程的备份只在 gram 缺位时是唯一完好副本，
         // 回位；gram 在位时备份是过期残留，删之（新流程不再产生
         // 备份，rename 本身原子替换）
@@ -468,18 +616,17 @@ object WanxiangUpdateManager {
         } else {
             gramBackup.delete()
         }
-        File(root, DICTS_STAGING_DIR).deleteRecursivelyNoFollow()
-        // 旧版事务日志/提交标记残留（S11 后不再读写）：直接清掉
-        File(root, UPDATE_TXN_FILE).delete()
-        File(root, UPDATE_TXN_COMMITTED_FILE).delete()
-        File(root, "$UPDATE_TXN_FILE.tmp").delete()
-        File(root, "$GRAM_BACKUP_FILE.tmp").delete()
-        File(root, "$GRAM_BACKUP_FILE.restore").delete()
     }
 
     /** 内置方案版本：读资源解压落盘的 shared/version.txt（如 "18.1.0"），补上 v 前缀与常量口径对齐 */
-    private fun readBundledSchemaVersion(): String? = runCatching {
-        val f = File(DataManager.sharedDataDir, "version.txt")
+    private fun readBundledSchemaVersion(): String? =
+        readVersionText(File(DataManager.sharedDataDir, "version.txt"))
+
+    /** 目录方案版本：读该目录的 version.txt（导入包自带时才有），口径与内置一致 */
+    private fun readDirVersionText(dirFile: File): String? =
+        readVersionText(File(dirFile, "version.txt"))
+
+    private fun readVersionText(f: File): String? = runCatching {
         if (f.isFile) {
             f.readText().trim().takeIf { it.isNotEmpty() }?.let { "v$it" }
         } else {
@@ -502,6 +649,7 @@ object WanxiangUpdateManager {
     private suspend fun cachedDictsFingerprint(
         prefs: android.content.SharedPreferences,
         dictsDir: File,
+        target: UpdateTarget = UpdateTarget.Shared,
     ): String {
         // 词库状态键只用各文件的路径+长度+修改时间（stat 级别，开销可忽略）
         val stateParts = mutableListOf<String>()
@@ -510,10 +658,12 @@ object WanxiangUpdateManager {
             .forEach { stateParts.add("${it.relativeTo(dictsDir).path}|${it.length()}|${it.lastModified()}") }
         stateParts.sort()
         val state = DictFingerprint.combine(stateParts)
-        val cached = prefs.getString(KEY_FP_DICT, null)
-        if (cached != null && prefs.getString(KEY_FP_DICT_STATE, null) == state) return cached
+        val fpKey = scopedKey(target, KEY_FP_DICT)
+        val stateKey = scopedKey(target, KEY_FP_DICT_STATE)
+        val cached = prefs.getString(fpKey, null)
+        if (cached != null && prefs.getString(stateKey, null) == state) return cached
         val fp = dictsContentFingerprint(dictsDir)
-        prefs.edit().putString(KEY_FP_DICT, fp).putString(KEY_FP_DICT_STATE, state).apply()
+        prefs.edit().putString(fpKey, fp).putString(stateKey, state).apply()
         return fp
     }
 
@@ -523,6 +673,10 @@ object WanxiangUpdateManager {
      * Pure、wanxiang_lite 系与 wanxiang_t9 为 Lite），id 识别不出再按方案名
      * 关键词兜底；都不命中返回 null（调用方回退显示方案名）。不写死某个
      * 变体——用户可自备任意变体的方案包，展示必须跟着实际方案走。
+     * 仅供展示：wanxiang_t9 / wanxiang_english 是 Base 与 Lite 共用
+     * 的方案 id，本函数对它们固定判 Lite 在 Base 目录上是错的；
+     * 更新源判定绝不能用本函数，须用按目录内容判定的
+     * [resolveDirUpdateSource]（变体不明即无源，不猜）。
      */
     fun variantNameOf(schemaId: String, schemaName: String): String? {
         val id = schemaId.trim().lowercase()
@@ -544,6 +698,38 @@ object WanxiangUpdateManager {
             name == "万象拼音" -> "Base"
             else -> null
         }
+    }
+
+    /**
+     * 按目录内容判定万象变体：目录即方案包，变体是包的属性而不
+     * 是方案的属性——Base 与 Lite 共用 wanxiang_t9 / wanxiang_english
+     * 两个方案 id，按当前方案 id 派生会把 Base 目录误判为 Lite。
+     * - 目录含 wanxiang_lite 系主方案文件 → Lite；含 wanxiang 主方
+     *   案文件（wanxiang.schema.yaml）→ Base；含 wanxiang_pro 系 →
+     *   Pro；含 wanxiang_pure 系 → Pure。
+     * - 多个主方案文件并存（合并目录）时变体不明，返回 null，调
+     *   用方不得回退按方案 id 派生（共用 id 会误判，见
+     *   [resolveUpdateSource]）；目录不存在、不可读、读异常同样
+     *   返回 null。
+     */
+    fun variantNameOfDir(dir: java.io.File): String? {
+        if (!dir.isDirectory) return null
+        val names = try {
+            dir.list()?.toSet() ?: return null
+        } catch (_: Exception) {
+            return null
+        }
+        val hasLite = names.any { it.startsWith("wanxiang_lite") && it.endsWith(".schema.yaml") }
+        val hasBase = "wanxiang.schema.yaml" in names
+        val hasPro = names.any { it.startsWith("wanxiang_pro") && it.endsWith(".schema.yaml") }
+        val hasPure = names.any { it.startsWith("wanxiang_pure") && it.endsWith(".schema.yaml") }
+        val found = listOfNotNull(
+            if (hasLite) "Lite" else null,
+            if (hasBase) "Base" else null,
+            if (hasPro) "Pro" else null,
+            if (hasPure) "Pure" else null,
+        )
+        return found.singleOrNull()
     }
 
     /** 指纹截断显示，如 "21012108...939392"，与设计稿一致。 */
@@ -610,6 +796,8 @@ object WanxiangUpdateManager {
      */
     suspend fun checkForUpdates(
         prefs: android.content.SharedPreferences,
+        target: UpdateTarget = UpdateTarget.Shared,
+        source: UpdateSource.Wanxiang = UpdateSource.Wanxiang("Lite", SCHEMA_ZIP_NAME),
     ): Result<UpdateInfo> = withContext(Dispatchers.IO) {
         runCatching {
             // 版本切换先清理旧指纹记录/缓存（幂等，见该函数注释）
@@ -627,7 +815,7 @@ object WanxiangUpdateManager {
                 gramRelease.assets.firstOrNull { it.name == GRAM_FILE_NAME }?.digest,
             )
             val schemaZipSha256 = resolveRegisteredDigest(
-                schemaRelease.assets.firstOrNull { it.name == SCHEMA_ZIP_NAME }?.digest,
+                schemaRelease.assets.firstOrNull { it.name == source.assetName }?.digest,
             )
             // 模型内容兜底：记录为空/过期时以本地文件真实指纹为准。指纹
             // 走文件状态缓存（cachedFileFingerprint），文件未变时不重哈希
@@ -661,19 +849,23 @@ object WanxiangUpdateManager {
                 }
             }
 
-            // 本地版本先定下来（记录缺失时以实际部署的内置版本为准，
-            // 不只信记录），下方 UpdateInfo 共用
+            // 本地版本先定下来（记录缺失时以实际部署的版本为准，
+            // 目录目标读该目录的 version.txt，没有则未知，下方 UpdateInfo 共用
             val localSchemaVersion = resolveLocalSchemaVersion(
-                recordedVersion = prefs.getString(KEY_SCHEMA_VERSION, null),
-                bundledVersion = readBundledSchemaVersion(),
+                recordedVersion = prefs.getString(scopedKey(target, KEY_SCHEMA_VERSION), null),
+                bundledVersion = if (target is UpdateTarget.Shared) {
+                    readBundledSchemaVersion()
+                } else {
+                    readDirVersionText(targetRootDir(target))
+                },
             )
 
             // 远端词库指纹：不再实时取数（原 Range 抠 zip 中央目录
             // 的整套机器已按 S3 退役）——只有下载流程留下的记录、
             // 且记录版本与远端标签一致时才作数，其余为未知，界面
             // 显示「—」；远端是否有更新由版本号比对判定
-            val dictRemoteFp = prefs.getString(KEY_DICT_REMOTE_FP, null)
-                .takeIf { prefs.getString(KEY_DICT_REMOTE_FP_VER, null) == schemaRelease.tag_name }
+            val dictRemoteFp = prefs.getString(scopedKey(target, KEY_DICT_REMOTE_FP), null)
+                .takeIf { prefs.getString(scopedKey(target, KEY_DICT_REMOTE_FP_VER), null) == schemaRelease.tag_name }
             // 远端模型指纹：以本次检查响应拿到的远端登记摘要为准
             // （非空即用）——它就是远端当前文件的真实指纹。下载记录
             // 只说明「上次下载时」的值：远端原地换包后记录仍是旧值，
@@ -695,6 +887,8 @@ object WanxiangUpdateManager {
                 schemaZipSha256 = schemaZipSha256,
                 gramSha256 = gramSha256,
                 gramUpdateAvailable = gramDecision.updateAvailable,
+                target = target,
+                assetName = source.assetName,
             )
         }.onFailure {
             Timber.e(it, "检查方案更新失败")
@@ -755,13 +949,20 @@ object WanxiangUpdateManager {
     /**
      * 下载并应用更新。防重入占位用跨下载器共用的 [DownloadGate]
      * （与语法模型单独下载共用一把，见该类注释）：[downloadAndApply]
-     * 入口第一行抢占，持有到整个函数结束（含在 updateMutex 上排队
+     * 入口抢占，持有到整个函数结束（含在 updateMutex 上排队
      * 等锁期间）。updateMutex 只保证串行、挡不住「排队重跑一遍」，
      * 且旧写法任何一次调用结束都会把运行状态置回 false，先结束者
      * 会让排队中的调用假复位；闸把「排队」也算作进行中，重复调用
      * 在入口即被拒，并与语法模型下载跨路互斥。
-     * @return 三态结果：被拒（已有任一路下载在跑）为
-     * [DownloadResult.BUSY]，与失败严格区分
+     * 交叉守门（先于一切状态置位与文件写入）：部署进行中（含
+     * 超时孤儿）或导入事务进行中时一律 BUSY，不触碰运行状态
+     * 与完成记录——被拒不得表现为失败；部署状态只在入口与换位
+     * 前各读一次（见 [downloadAndApplyLocked] 步骤 4 前的复核），
+     * 入口读不到导入换位阶段的部署（那时部署还没开始），故另
+     * 用 [UpdateImportGate] 与导入事务互斥。锁序固定：先交叉闸、
+     * 后 DownloadGate，释放反序；交叉闸被拒时尚未抢 DownloadGate。
+     * @return 三态结果：被拒（已有任一路下载在跑、部署进行中、
+     * 导入事务进行中）为 [DownloadResult.BUSY]，与失败严格区分
      */
     suspend fun downloadAndApply(
         prefs: android.content.SharedPreferences,
@@ -769,28 +970,41 @@ object WanxiangUpdateManager {
         cacheDir: File,
         onProgress: (UpdateProgress) -> Unit = {},
     ): DownloadResult {
-        if (!DownloadGate.tryAcquire()) {
-            Timber.w("已有大文件下载在进行中，忽略本次方案更新调用")
+        if (deployBlocksUpdate()) {
+            Timber.w("部署进行中，忽略本次方案更新调用")
             return DownloadResult.BUSY
         }
-        runningState.value = true
-        progressState.value = null
+        val gateToken = UpdateImportGate.tryAcquire()
+        if (gateToken == null) {
+            Timber.w("方案导入进行中，忽略本次方案更新调用")
+            return DownloadResult.BUSY
+        }
         try {
-            val ok = updateMutex.withLock {
-                downloadAndApplyLocked(prefs, info, cacheDir) { progress ->
-                    progressState.value = progress
-                    onProgress(progress)
-                }
+            if (!DownloadGate.tryAcquire()) {
+                Timber.w("已有大文件下载在进行中，忽略本次方案更新调用")
+                return DownloadResult.BUSY
             }
-            val result = if (ok) DownloadResult.SUCCESS else DownloadResult.FAILED
-            lastResultState.value = DownloadRecord(result, System.currentTimeMillis())
-            return result
-        } finally {
-            // 先复位状态再放闸：闸未放时无人能抢入并置位，
-            // 不会出现新调用的 true 被本处 false 覆盖
+            runningState.value = true
             progressState.value = null
-            runningState.value = false
-            DownloadGate.release()
+            try {
+                val ok = updateMutex.withLock {
+                    downloadAndApplyLocked(prefs, info, cacheDir) { progress ->
+                        progressState.value = progress
+                        onProgress(progress)
+                    }
+                }
+                val result = if (ok) DownloadResult.SUCCESS else DownloadResult.FAILED
+                lastResultState.value = DownloadRecord(result, System.currentTimeMillis())
+                return result
+            } finally {
+                // 先复位状态再放闸：闸未放时无人能抢入并置位，
+                // 不会出现新调用的 true 被本处 false 覆盖
+                progressState.value = null
+                runningState.value = false
+                DownloadGate.release()
+            }
+        } finally {
+            UpdateImportGate.release(gateToken)
         }
     }
 
@@ -813,13 +1027,13 @@ object WanxiangUpdateManager {
         try {
             // 1. 下载方案包（只取其中 dicts/ 词库）
             if (info.schemaUpdateAvailable) {
-                val zipFile = File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX")
+                val zipFile = File(workDir, "${info.assetName}$PART_SUFFIX")
                 zipFile.delete()
-                val ok = downloadFile(schemaUrl(info.schemaRemoteVersion), zipFile, MAX_SCHEMA_BYTES) { d, t ->
+                val ok = downloadFile(schemaUrl(info.schemaRemoteVersion, info.assetName), zipFile, MAX_SCHEMA_BYTES) { d, t ->
                     onProgress(UpdateProgress(UpdateProgress.Stage.SCHEMA_DOWNLOAD, d, t))
                 }
                 if (!ok) return@withContext false
-                val finalZip = File(workDir, "rime-wanxiang-lite.zip")
+                val finalZip = File(workDir, info.assetName)
                 finalZip.delete()
                 check(zipFile.renameTo(finalZip)) { "方案包落盘失败" }
                 // 校验口径（S2）：GitHub 登记摘要非空才比对、不一致
@@ -839,9 +1053,9 @@ object WanxiangUpdateManager {
 
                 // 2. 解压词库到 staging 目录并校验（暂不切换，等模型也下载
                 // 成功后一起应用）。staging 必须与现用 dicts 同级（同在
-                // sharedDataDir 下）：应用时整目录 rename 切换，跨文件系统
+                // 目标根目录下）：应用时整目录 rename 切换，跨文件系统
                 // （如 cacheDir 在内部存储）rename 会失败
-                extractDir = File(DataManager.sharedDataDir, DICTS_STAGING_DIR).apply {
+                extractDir = File(targetRootDir(info.target), DICTS_STAGING_DIR).apply {
                     deleteRecursivelyNoFollow()
                     mkdirs()
                 }
@@ -912,8 +1126,8 @@ object WanxiangUpdateManager {
             // 之间时，启动清理（recoverInterruptedUpdate）按盘上状
             // 态把 trash 回位；用户重跑一次更新即可，不再为一个手动
             // 操作养回滚体系
-            val dictsDir = File(DataManager.sharedDataDir, "dicts")
-            val trashDir = File(DataManager.sharedDataDir, DICTS_TRASH_DIR)
+            val dictsDir = targetDictsDir(info.target)
+            val trashDir = File(targetRootDir(info.target), DICTS_TRASH_DIR)
             val changedDicts = extractDir != null
             val changedGram = gramPartial != null && gramTarget != null
             // 跨下载器安装锁（见 gramFileInstallLock）：从切换起
@@ -922,7 +1136,23 @@ object WanxiangUpdateManager {
             // （否则记录会对上另一路的文件）。
             // 锁序固定：外层 updateMutex 已先持有，本锁恒在其内层
             gramFileInstallLock.lock()
+            // 换位前复核：下载中途部署启动时，入口守门已拦不住
+            // 本次下载；此处是动现用文件前的最后一道关——部署
+            // 进行中（含超时孤儿）即放弃切换与记录，staging 由
+            // 外层 finally 的启动清理清掉，现用词库与记录保持
+            // 旧的自洽状态，下次更新可重跑。检查与 rename 间无
+            // 挂起点；本闸此时由本次更新自己持有，故此处只读
+            // 部署状态、不读本闸。残余窗口已由部署侧封闭：
+            // deployAndAwait 入口在置位运行标志前抢占交叉闸，
+            // 更新持闸期间任何部署入口都抢不到闸；reload 入口
+            // 读闸拒入，仅剩读闸到派发间的微秒级间隙（更新完成
+            // 回调的 reload 会在换位后重编一次）。
+            var deployAborted = false
             try {
+            if (deployBlocksUpdate()) {
+                Timber.w("部署进行中，放弃本次词库切换")
+                deployAborted = true
+            } else {
             extractDir?.let { staging ->
                 // 上一轮残留 trash 不得挡住本次切换：切换已完成时它
                 // 只是旧副本，就此作废
@@ -946,13 +1176,13 @@ object WanxiangUpdateManager {
             // 上游回撤版本等情形下把未变更侧的记录改退，并压过实际
             // 部署版本（本地方案版本解析是记录优先）
             prefs.edit().apply {
-                if (changedDicts) putString(KEY_SCHEMA_VERSION, info.schemaRemoteVersion)
+                if (changedDicts) putString(scopedKey(info.target, KEY_SCHEMA_VERSION), info.schemaRemoteVersion)
                 if (changedGram) putString(KEY_GRAM_PUBLISHED_AT, info.gramRemotePublishedAt)
-                // 词库指纹仅在本次下载了方案包时更新
+                // 词库指纹仅在本次下载了方案包时更新（词库侧记录按目标分键）
                 if (info.schemaUpdateAvailable) {
                     newDictFp?.let {
-                        putString(KEY_DICT_REMOTE_FP, it)
-                        putString(KEY_DICT_REMOTE_FP_VER, info.schemaRemoteVersion)
+                        putString(scopedKey(info.target, KEY_DICT_REMOTE_FP), it)
+                        putString(scopedKey(info.target, KEY_DICT_REMOTE_FP_VER), info.schemaRemoteVersion)
                     }
                 }
                 // 模型指纹仅在本次下载了模型时更新
@@ -963,9 +1193,11 @@ object WanxiangUpdateManager {
                     }
                 }
             }.apply()
+            }
             } finally {
                 gramFileInstallLock.unlock()
             }
+            if (deployAborted) return@withContext false
             true
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e

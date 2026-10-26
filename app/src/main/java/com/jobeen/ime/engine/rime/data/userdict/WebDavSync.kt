@@ -1,7 +1,9 @@
 package com.jobeen.ime.engine.rime.data.userdict
 
 import com.jobeen.ime.base.util.appContext
+import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.engine.rime.daemon.RimeSession
+import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -16,6 +18,8 @@ import okhttp3.Response
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Locale
 import java.net.URI
 import java.net.URLEncoder
 import java.text.Normalizer
@@ -173,7 +177,34 @@ object WebDavSync {
                         throw httpError("上传", response.code, errorDetail(response))
                     }
                     // 成功即完成：不再读响应 ETag、不再补查记基准
-                    // （清点 S1 定论，ETag 状态机整套退场）
+                    // （清点 S1 定论，ETag 状态机整套退场）。
+                }
+                // PUT 2xx 后的轻复核（14）：只认“写到了该地址且长度一致”。
+                // HEAD 失败/非 2xx 时不推翻 PUT 2xx（只记警告，部分服务
+                // 器禁 HEAD）；长度明确不一致时视为未写成功，不记上传
+                // 时间、不报成功，调用方按失败处理。
+                try {
+                    val head = Request.Builder()
+                        .url(remoteUrl(fileName))
+                        .header("Authorization", authHeader())
+                        .head()
+                        .build()
+                    client.newCall(head).execute().use { response ->
+                        if (response.isSuccessful) {
+                            val declared = response.header("Content-Length")?.toLongOrNull()
+                            if (declared != null && declared != tempFile.length()) {
+                                throw IllegalStateException(
+                                    "上传后复核长度不符（本地 ${tempFile.length()}，远端 $declared）"
+                                )
+                            }
+                        } else {
+                            Timber.w("Upload recheck HEAD non-2xx: ${response.code}")
+                        }
+                    }
+                } catch (e: IllegalStateException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "Upload recheck HEAD failed, PUT 2xx stands")
                 }
                 UserDictPrefs.setLastUploadTime(fileName, System.currentTimeMillis())
                 Timber.i("User dict '$dictName' uploaded: $count entries")
@@ -590,7 +621,466 @@ object WebDavSync {
     suspend fun testConnection(): Result<List<RemoteEntry>> = withContext(Dispatchers.IO) {
         runCatching { parseRemoteEntries(propfindDirXml()) }
     }
+
+    // ---- 方案目录同步（RIME 页 / FAB 同步共用，与词典合并同步并存） ----
+    //
+    // 口径（Lee 定，多目录模型）：只同步当前方案目录，远端根 = 已配置的
+    // 同步目录 + UUID + 当前目录名；切换目录后同步对象跟着变，不跨目录
+    // 同步（旧单目录远端内容留在 UUID 根下，不进新目录、不自动删除）。
+    // 用户词典页原有的词库合并上传/下载保持不动（那是另一条线：同步根目录下的 <词典>.userdict.txt）。
+    //
+    // 文件集合：当前目录下全部文件，除外——
+    // - build/（部署输出，部署可再生）
+    // - *.userdb/（运行中 LevelDB，见下）
+    // - installation.yaml（本机安装标识）
+    // - *.gram（语法模型，可经更新通道重下）
+    // - scheme-archive/（已去掉的归档功能残留目录，不复活）
+    // - *.lock / *.log / *.tmp（临时文件）
+    // - *.userdict.txt（词典文本由词库阶段专管，不走文件同步）
+    // 词库处理（选定：导出后同步，不停引擎快照）：运行中 LevelDB 不能
+    // 直接按文件同步（句柄打开、文件随时变，拷出来也可能是不一致快照），
+    // 停引擎快照又会打断打字。故词库内容以热导出文本形式同步：每本词典
+    // 先 GET 远端文本合并导入（404 = 首次上传，跳过；其他失败中止整次
+    // 同步，防没合并就覆盖丢词），再热导出 PUT；导入导出全走运行中引擎
+    // 的句柄，无需停引擎。代价与词典合并同步相同：LevelDB 内部元数据
+    // （精确 dee 历史）不随文本走，词/码/权重本身完整。
+    /** 远端当前目录文件夹的完整 URL（显示用，与同步用同一构成）。 */
+    fun dirSyncRemoteUrl(context: android.content.Context): String {
+        val dir = com.jobeen.ime.data.manager.SchemeDirs.currentDirName(context)
+        val encodedDir = URLEncoder.encode(dir, Charsets.UTF_8.name()).replace("+", "%20")
+        return "${UserDictPrefs.syncDirUrl()}/${RimeSyncPrefs.syncFolderUuid(context)}/$encodedDir"
+    }
+
+    private fun dirUrl(base: String, rel: String): String {
+        val encoded = rel.split("/").joinToString("/") {
+            URLEncoder.encode(it, Charsets.UTF_8.name()).replace("+", "%20")
+        }
+        return "$base/$encoded"
+    }
+
+    internal data class DirEntry(
+        val relPath: String,
+        val isDirectory: Boolean,
+        val lastModifiedMs: Long?,
+    )
+
+    private val lastModifiedRegex =
+        Regex("<(?:\\w+:)?getlastmodified>(.*?)</(?:\\w+:)?getlastmodified>",
+            RegexOption.IGNORE_CASE)
+    private val rfc1123Format =
+        SimpleDateFormat("EEE, dd MMM yyyy HH:mm:ss z", Locale.US)
+    private val iso8601Format =
+        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", Locale.US)
+
+    private fun parseLastModified(raw: String?): Long? {
+        if (raw.isNullOrBlank()) return null
+        return runCatching { rfc1123Format.parse(raw.trim())?.time }
+            .getOrNull()
+            ?: runCatching { iso8601Format.parse(raw.trim())?.time }.getOrNull()
+    }
+
+    private suspend fun propfindDirEntries(dirUrl: String): List<DirEntry> =
+        withContext(Dispatchers.IO) {
+            checkConfigured()
+            val body = """
+                <?xml version="1.0" encoding="utf-8"?>
+                <d:propfind xmlns:d="DAV:"><d:prop><d:displayname/><d:resourcetype/><d:getlastmodified/></d:prop></d:propfind>
+            """.trimIndent().toRequestBody("application/xml; charset=utf-8".toMediaType())
+            val request = Request.Builder()
+                .url(if (dirUrl.endsWith("/")) dirUrl else "$dirUrl/")
+                .header("Authorization", authHeader())
+                .header("Depth", "1")
+                .method("PROPFIND", body)
+                .build()
+            val xml = client.newCall(request).execute().use { response ->
+                when {
+                    response.isSuccessful -> response.body?.string().orEmpty()
+                    // UUID 文件夹尚不存在 = 首次同步，视为空远端（后续 MKCOL/PUT 会建）
+                    response.code == 404 -> return@withContext emptyList()
+                    else -> throw httpError("列出远端目录", response.code, errorDetail(response))
+                }
+            }
+            val dirPath = runCatching { decodeHref(URI(dirUrl).path) }
+                .getOrDefault("").trimEnd('/')
+            responseRegex.findAll(xml).mapNotNull { match ->
+                val content = match.groupValues[1]
+                val href = hrefRegex.find(content)?.groupValues?.get(1)?.trim()
+                    ?: return@mapNotNull null
+                val path = hrefPath(decodeHref(unescapeXmlEntities(href))).trimEnd('/')
+                if (path.isEmpty() || path == dirPath) return@mapNotNull null
+                val name = path.substringAfterLast("/")
+                if (name.isEmpty()) return@mapNotNull null
+                val isCollection = collectionRegex.containsMatchIn(content)
+                val mtime = parseLastModified(
+                    lastModifiedRegex.find(content)?.groupValues?.get(1),
+                )
+                DirEntry(name, isCollection, mtime)
+            }.distinct().toList()
+        }
+
+    /** MKCOL（失败只记日志：目录已存在回 405 属正常，后续 PUT 会报真实原因）。 */
+    private fun mkcolQuiet(url: String) {
+        runCatching {
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", authHeader())
+                .method("MKCOL", "".toRequestBody(null))
+                .build()
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful && response.code != 405) {
+                    Timber.w("MKCOL $url -> HTTP ${response.code}")
+                }
+            }
+        }.onFailure { Timber.w(it, "MKCOL failed: $url") }
+    }
+
+    /** 下载结果三态：OK 成功落盘；NOT_FOUND 远端无此文件；FAILED 真失败。 */
+    internal enum class HttpGetResult { OK, NOT_FOUND, FAILED }
+
+    /** 词典阶段按下载三态的动作：OK 导入、NOT_FOUND 跳过合并、FAILED 本词典失败。 */
+    internal enum class DictDownloadAction { IMPORT, SKIP, FAIL }
+
+    internal fun dictDownloadAction(result: HttpGetResult): DictDownloadAction = when (result) {
+        HttpGetResult.OK -> DictDownloadAction.IMPORT
+        HttpGetResult.NOT_FOUND -> DictDownloadAction.SKIP
+        HttpGetResult.FAILED -> DictDownloadAction.FAIL
+    }
+
+    /**
+     * rename 参数仅供单测注入失败；生产路径用 File.renameTo。
+     */
+    internal fun atomicReplace(
+        tmp: File,
+        target: File,
+        rename: (File, File) -> Boolean = { a, b -> a.renameTo(b) },
+    ): Boolean {
+        if (!rename(tmp, target)) {
+            tmp.delete()
+            return false
+        }
+        return true
+    }
+
+    private fun httpPutFile(url: String, file: File) {
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", authHeader())
+            .put(file.asRequestBody("application/octet-stream".toMediaType()))
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw httpError("上传", response.code, errorDetail(response))
+            }
+        }
+    }
+
+    /**
+     * GET 到目标文件（流式 + 上限），三态返回。
+     * 原子替换：先写同目录 tmp、校验（非空；有 Content-Length 则核对长度）
+     * 成功后直接 rename 覆盖目标，全程不预删旧目标；rename 失败或任何
+     * 失败路径只删 tmp、旧目标原样保留。真失败返回 FAILED（不抛错，
+     * 调用方按三态记账），404 返回 NOT_FOUND。
+     */
+    private fun httpGetToFile(url: String, target: File): HttpGetResult {
+        val request = Request.Builder()
+            .url(url)
+            .header("Authorization", authHeader())
+            .header("Accept-Encoding", "identity")
+            .get()
+            .build()
+        return runCatching {
+            client.newCall(request).execute().use { response ->
+                when {
+                    response.code == 404 -> HttpGetResult.NOT_FOUND
+                    !response.isSuccessful ->
+                        throw httpError("下载", response.code, errorDetail(response))
+                    else -> {
+                        val body = response.body
+                            ?: throw IllegalStateException("下载内容为空")
+                        val parent = target.parentFile
+                            ?: throw IllegalStateException("下载目标无父目录")
+                        val tmp = File(parent, "${target.name}.tmp-${System.nanoTime()}")
+                        try {
+                            val written = tmp.outputStream().use { out ->
+                                body.byteStream().copyToWithLimit(out, MAX_SYNC_FILE_BYTES)
+                            }
+                            val declared = body.contentLength()
+                            if (written == 0L) throw IllegalStateException("下载的文件为空")
+                            if (declared >= 0 && written != declared) {
+                                throw IllegalStateException("下载长度与 Content-Length 不符")
+                            }
+                            if (!atomicReplace(tmp, target)) {
+                                throw IllegalStateException("下载文件替换失败，旧文件已保留")
+                            }
+                        } catch (e: Exception) {
+                            tmp.delete()
+                            throw e
+                        }
+                        HttpGetResult.OK
+                    }
+                }
+            }
+        }.onFailure { Timber.w(it, "Dir sync download failed: $url") }
+            .getOrElse { HttpGetResult.FAILED }
+    }
+
+    // ---------------- 方案目录同步（多目录口径） ----------------
+    // 远端布局：同步根下单一 schemes/ 文件夹，内按目录名分层
+    // （schemes/<目录名>/<方案文件>）；只增量、不删对端任何文件；
+    // 与词典同步共用 syncMutex（不另设锁、不跨触发）。
+
+    private fun schemesUrl(): String = "${UserDictPrefs.syncDirUrl()}/schemes"
+
+    private fun ensureSchemesDir() {
+        ensureSyncDir()
+        mkcolQuiet(schemesUrl())
+    }
+
+    // 受保护条目（.6 口径＋ .5 排除规则续留）：build 段、.userdb 段、
+    // 顶层 scheme-archive 目录，以及 installation.yaml、.userdict.txt、
+    // .gram、.lock、.log、.tmp 文件（部署元数据、词典文本快照、大
+    // 模型与临时锁不走文件同步通道，见已删 SchemeDirSyncTest 的用例）。
+    private fun isProtectedSchemeRel(rel: String): Boolean {
+        val segments = rel.split('/')
+        if (segments.firstOrNull() == "scheme-archive") return true
+        for (segment in segments) {
+            if (segment == "build" || segment.endsWith(".userdb")) return true
+        }
+        val fileName = rel.substringAfterLast('/')
+        return fileName == "installation.yaml" ||
+            fileName.endsWith(".userdict.txt") ||
+            fileName.endsWith(".gram") ||
+            fileName.endsWith(".lock") ||
+            fileName.endsWith(".log") ||
+            fileName.endsWith(".tmp")
+    }
+
+    internal fun isValidSchemeRel(rel: String): Boolean {
+        if (rel.isEmpty() || rel.startsWith("/")) return false
+        val segments = rel.split('/')
+        for (segment in segments) {
+            if (segment.isEmpty() || segment == "..") return false
+        }
+        return !isProtectedSchemeRel(rel)
+    }
+
+    /**
+     * 收集待上传的方案文件（相对路径含目录名前缀）。
+     * 根下 build 目录、点号目录与 scheme-archive（同名目录归档，
+     * 非方案目录）不进同步；符号链接不进同步（防越界读）；
+     * 单目录内相对路径超 6 段或受保护条目跳过；总数上限 1000。
+     */
+    internal fun collectUploadFiles(root: File): List<String> {
+        val canonical = root.canonicalFile
+        val out = mutableListOf<String>()
+        val dirs = canonical.listFiles()
+            ?.filter {
+                it.isDirectory && it.name != "build" && it.name != "scheme-archive" &&
+                    !it.name.startsWith(".")
+            }
+            ?.sortedBy { it.name }
+            ?: emptyList()
+        for (dir in dirs) {
+            dir.walkTopDown().filter { it.isFile }.forEach { file ->
+                if (out.size >= 1000) return@forEach
+                if (file.canonicalFile != file.absoluteFile) return@forEach
+                val fileRel = file.relativeTo(dir).path.replace(File.separatorChar, '/')
+                if (fileRel.split('/').size > 6) return@forEach
+                if (!isValidSchemeRel(fileRel)) return@forEach
+                out.add("${dir.name}/$fileRel")
+            }
+            if (out.size >= 1000) break
+        }
+        return out
+    }
+
+    /**
+     * 上传全部方案目录到远端 schemes/（裸 PUT，逐文件失败即整体失败）。
+     * 必须在后台线程调用；返回上传文件数。
+     */
+    suspend fun uploadSchemes(): Result<Int> = syncMutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkConfigured()
+                ensureSchemesDir()
+                val root = DataManager.schemeDirsRoot
+                var count = 0
+                for (rel in collectUploadFiles(root)) {
+                    httpPutFile(remoteUrl("schemes/$rel"), File(root, rel))
+                    count++
+                }
+                count
+            }
+        }
+    }
+
+    /**
+     * 从远端 schemes/ 下载全部方案文件到本地（tmp＋rename 原子替换；
+     * 404 视为远端已删、跳过不计；其余失败记入失败清单、最后整体失败）。
+     * 递归口径与 .6 一致（自 schemes/ 根起 calls 0-4 层，单目录内路径
+     * 至多 4 段）；总数上限 1000。必须在后台线程调用。
+     */
+    suspend fun downloadSchemes(): Result<Int> = syncMutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkConfigured()
+                ensureSchemesDir()
+                val root = DataManager.schemeDirsRoot.canonicalFile
+                val files = mutableListOf<String>()
+                suspend fun collect(dirRel: String, depth: Int) {
+                    if (depth > 4 || files.size >= 1000) return
+                    val dirUrl = if (dirRel.isEmpty()) schemesUrl() + "/" else schemesUrl() + "/" + dirRel + "/"
+                    val entries = propfindDirEntries(dirUrl)
+                    for (entry in entries) {
+                        if (files.size >= 1000) return
+                        val rel = if (dirRel.isEmpty()) entry.relPath else "$dirRel/${entry.relPath}"
+                        // 根级 scheme-archive 是同名目录归档，非方案目录，
+                        // 上传侧已排除；下载侧同样跳过整棵子树（不删远端旧份）。
+                        if (rel.substringBefore('/') == "scheme-archive") continue
+                        if (entry.isDirectory) {
+                            if (depth < 4) collect(rel, depth + 1)
+                        } else {
+                            val fileRel = rel.substringAfter('/', "")
+                            if (fileRel.isEmpty()) continue
+                            if (isValidSchemeRel(fileRel) && rel !in files) files.add(rel)
+                        }
+                    }
+                }
+                collect("", 0)
+                var count = 0
+                val failed = mutableListOf<String>()
+                for (rel in files) {
+                    val target = File(root, rel)
+                    val canonical = target.canonicalFile
+                    if (canonical != root && !canonical.path.startsWith(root.path + File.separator)) {
+                        Timber.w("skip schemes download outside root: $rel")
+                        failed += rel
+                        continue
+                    }
+                    target.parentFile?.mkdirs()
+                    when (httpGetToFile(remoteUrl("schemes/$rel"), target)) {
+                        HttpGetResult.OK -> count++
+                        HttpGetResult.NOT_FOUND -> Unit // 远端已删，跳过不计
+                        HttpGetResult.FAILED -> failed += rel
+                    }
+                }
+                if (failed.isNotEmpty()) {
+                    throw IllegalStateException("下载方案文件失败：${failed.size} 个")
+                }
+                count
+            }
+        }
+    }
+
+    /** UUID 根的直接子项（清理旧残留用）：仅文件可删，文件夹只计跳过。 */
+    data class UuidRootEntry(val name: String, val isDirectory: Boolean)
+
+    /**
+     * 列出 UUID 根的直接子项（12d 清理旧残留用）。
+     * UUID 文件夹不存在（404）视为空（首次同步前）；注意：.5 时代
+     * 直接落在 UUID 根下的旧文件与现行按目录分的词典文件夹都在此列出，
+     * 调用方只删文件、绝不自动删文件夹，误删活目录的风险由“只删文件”兜底。
+     */
+    suspend fun listUuidRootEntries(uuid: String): Result<List<UuidRootEntry>> =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkConfigured()
+                val url = "${UserDictPrefs.syncDirUrl()}/$uuid"
+                propfindDirEntries(url).map { UuidRootEntry(it.relPath, it.isDirectory) }
+            }
+        }
+
+    /**
+     * 删远端单个文件：2xx 或 404（已不在）视为成功，其余返回 false。
+     * 只删文件，调用方不得拿它删目录（目录删除不在本函数口径内）。
+     */
+    suspend fun deleteRemoteFile(url: String): Boolean = withContext(Dispatchers.IO) {
+        runCatching {
+            checkConfigured()
+            val request = Request.Builder()
+                .url(url)
+                .header("Authorization", authHeader())
+                .delete()
+                .build()
+            client.newCall(request).execute().use { response ->
+                response.isSuccessful || response.code == 404
+            }
+        }.getOrDefault(false)
+    }
+
+    /** UUID 根下某文件的远端 URL（按段编码，与下载路径同口径）。 */
+    fun uuidFileUrl(uuid: String, name: String): String =
+        dirUrl("${UserDictPrefs.syncDirUrl()}/$uuid", name)
+
+    /**
+     * 词典全量同步（自旧 syncSchemeDir 第 3 步抽出，口径原样保留）：
+     * 每本词典先下载合并再 PUT；单本失败记 failed、不中止循环；
+     * 取词典列表失败则整体失败。远端布局沿用旧口径（uuid/当前目录），
+     * 不动已存词典位置；与方案上传/下载共用 syncMutex。
+     * 成功时返回失败词典文件名清单（空＝全部成功）。
+     */
+    suspend fun syncAllDicts(session: RimeSession): Result<List<String>> = syncMutex.withLock {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                checkConfigured()
+                val uuid = RimeSyncPrefs.syncFolderUuid(appContext)
+                val dir = com.jobeen.ime.data.manager.SchemeDirs.currentDirName(appContext)
+                val uuidBase = "${UserDictPrefs.syncDirUrl()}/$uuid"
+                val base = "$uuidBase/${URLEncoder.encode(dir, Charsets.UTF_8.name()).replace("+", "%20")}"
+                ensureSyncDir()
+                mkcolQuiet(uuidBase)
+                mkcolQuiet(base)
+                val failed = mutableListOf<String>()
+                val dicts = session.runOnReady { getUserDictList() }
+                for (dict in dicts) {
+                    runCatching {
+                        val remoteDictUrl = dirUrl(base, remoteFileName(dict))
+                        val tmpIn = File(appContext.cacheDir, "dirsync-download-$dict-${System.nanoTime()}.txt")
+                        try {
+                            when (dictDownloadAction(httpGetToFile(remoteDictUrl, tmpIn))) {
+                                DictDownloadAction.IMPORT -> {
+                                    val count = session.runOnReady {
+                                        UserDictManager.importUserDictInChunks(tmpIn) { chunk ->
+                                            importUserDictLive(dict, chunk.absolutePath)
+                                        }
+                                    }
+                                    if (count < 0) {
+                                        throw IllegalStateException("导入用户词典失败：$dict")
+                                    }
+                                }
+                                DictDownloadAction.SKIP -> Unit // 首次上传，跳过合并
+                                DictDownloadAction.FAIL ->
+                                    throw IllegalStateException("下载词典失败：$dict")
+                            }
+                        } finally {
+                            tmpIn.delete()
+                        }
+                        val tmpOut = File(appContext.cacheDir, "dirsync-upload-$dict-${System.nanoTime()}.txt")
+                        try {
+                            val count = session.runOnReady {
+                                exportUserDictLive(dict, tmpOut.absolutePath)
+                            }
+                            if (count < 0) {
+                                throw IllegalStateException("导出用户词典失败：$dict")
+                            }
+                            httpPutFile(remoteDictUrl, tmpOut)
+                        } finally {
+                            tmpOut.delete()
+                        }
+                    }.onFailure {
+                        failed += remoteFileName(dict)
+                        Timber.w(it, "Dir sync dict failed: $dict")
+                    }
+                }
+                failed
+            }
+        }
+    }
+
+    /** 单文件同步上限：与本地导入单条目上限同口径（256MB）。 */
+    private const val MAX_SYNC_FILE_BYTES = 256L * 1024 * 1024
 }
+
 
 private val xmlEntityRegex =
     Regex("&(amp|lt|gt|quot|apos|#\\d+|#x[0-9a-fA-F]+);")

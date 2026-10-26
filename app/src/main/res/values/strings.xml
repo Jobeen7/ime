@@ -1,12 +1,9 @@
 <resources>
+    <string name="hero_app_name">Jime</string>
+    <string name="about_version_pill">版本 %1$s(%2$d)</string>
     <!-- app_name 由 build.gradle.kts 的 resValue 生成（debug 为 Jime Debug），不在此定义 -->
     <string name="done">done</string>
 
-    <string name="basic_settings">基本设置</string>
-    <string name="theme">应用主题</string>
-    <string name="theme_follow_system">跟随系统</string>
-    <string name="theme_light">浅色</string>
-    <string name="theme_dark">深色</string>
 
     <string name="key_feedback">按键设置</string>
     <string name="key_sound">启用按键音</string>
@@ -84,9 +81,96 @@
 
     <!-- Schema Settings -->
     <string name="schema_settings">输入方案</string>
+    <!-- FAB 栈：部署 / 同步 -->
+    <string name="fab_deploy">部署</string>
+    <string name="fab_sync">同步</string>
+    <string name="fab_deploy_done">部署完成</string>
+    <string name="fab_deploy_failed">部署失败，请稍后重试</string>
+    <string name="fab_deploy_busy">部署进行中，请稍后再试</string>
+    <string name="fab_dir_sync_success">目录同步完成：上传 %1$d 个，下载 %2$d 个</string>
+    <string name="fab_dir_sync_partial">目录同步完成：上传 %1$d 个，下载 %2$d 个，%3$d 个文件失败</string>
+    <string name="fab_sync_failed">同步失败</string>
+    <string name="fab_sync_not_configured">请先到用户词典页填写 WebDAV 配置</string>
+    <string name="fab_sync_engine_not_ready">词典服务未就绪，请稍后重试</string>
     <string name="schema_settings_desc">启用方案、可选方案</string>
-    <string name="enabled_schemas">当前启用的方案</string>
-    <string name="available_schemas">所有可选的方案</string>
+    <!-- 第一期方案切换：列表编辑 / 切换横幅 -->
+    <string name="schema_menu_more">更多操作</string>
+    <string name="schema_enabled_only_footnote">此处仅显示当前已启用的方案。如需增删或排序，请点击右上角“…”→“方案列表编辑”。</string>
+    <string name="schema_source_builtin">内置</string>
+    <string name="schema_source_user">用户</string>
+    <string name="schema_list_edit">方案列表编辑</string>
+    <!-- 多目录：方案目录切换 / 管理页全部方案区 / 部署进度 -->
+    <string name="schema_dir_switch">方案目录切换</string>
+    <string name="schema_dir_current">当前方案目录：%1$s</string>
+    <string name="schema_dir_use">使用此文件夹</string>
+    <string name="schema_dir_schemes">%1$d 个方案</string>
+    <string name="schema_dir_default_name">默认</string>
+    <string name="schema_dir_current_badge">当前</string>
+    <string name="schema_dir_empty">暂无方案目录</string>
+    <string name="schema_dir_empty_schemes">此目录暂无方案</string>
+    <string name="schema_dir_breadcrumb">方案目录 / %1$s</string>
+    <string name="schema_dir_switching">正在切换目录并重新部署…</string>
+    <string name="schema_dir_switch_failed">切换目录失败，已回退到上一目录</string>
+    <string name="schema_manage_all">全部方案</string>
+    <string name="schema_manage_deploying">方案部署中…</string>
+    <string name="schema_manage_deploy_failed">部署失败，已恢复原顺序</string>
+    <string name="schema_deploy_timeout">部署超时，已回退，稍后可重试</string>
+    <string name="schema_import_replace_dir">已存在同名目录，将替换为新包内容，输入历史与手动配置会被保留</string>
+    <string name="schema_dir_migration_failed">方案目录迁移失败</string>
+    <!-- 方案列表管理页：勾选卡 + 保存 pill + 拖拽卡 -->
+    <string name="schema_manage_selected">已选方案</string>
+    <string name="schema_manage_save">保存</string>
+    <string name="schema_manage_footnote">取消勾选当前方案后，首位方案接任当前；至少保留一个方案。</string>
+    <string name="schema_switching">正在切换…</string>
+    <string name="schema_deploying">正在部署…（部署期间请勿切换）</string>
+    <string name="schema_deploy_stranded">部署已结束，但方案表为空</string>
+    <string name="schema_rolling_back">正在回退到上一方案…</string>
+    <string name="schema_switch_failed">切换失败</string>
+    <string name="schema_rolled_back">切换失败，已回退到上一方案</string>
+    <string name="schema_switch_retry">重试</string>
+    <string name="schema_banner_close">关闭</string>
+    <!-- 第二期本地导入：菜单 / 校验结果页 / 安装确认 / 错误 -->
+    <string name="schema_import">导入方案</string>
+    <string name="schema_import_validating">正在校验方案包…</string>
+    <string name="schema_import_installing">正在安装…</string>
+    <string name="schema_import_summary_schemes">包内方案 %1$d 个</string>
+    <string name="schema_import_summary_replace">将被替换：%1$d 个文件</string>
+    <string name="schema_import_summary_kept">将被保留</string>
+    <string name="schema_import_confirm">确认安装</string>
+    <string name="schema_import_cancel">取消</string>
+    <string name="schema_import_error_copy">读取文件失败，请重试</string>
+    <string name="schema_import_error_zip">不是有效的方案包 zip</string>
+    <string name="schema_import_error_no_schema">包内没有方案文件（*.schema.yaml）</string>
+    <string name="schema_import_error_too_large">方案包过大，超过上限</string>
+    <string name="schema_import_error_no_space">存储空间不足，无法导入</string>
+    <string name="schema_import_error_install">安装失败，请重试</string>
+    <string name="schema_import_error_validate">校验失败，请重试</string>
+    <string name="schema_import_error_invalid_package">方案包内容无效，请检查后重试</string>
+    <string name="schema_import_error_io">存储读写失败，请检查空间后重试</string>
+    <!-- 第三期远程下载：菜单 / 条目列表 / 表单 / 进度 / 错误 -->
+    <string name="schema_download">下载方案</string>
+    <string name="schema_download_empty">暂无已保存的下载条目，点右上角 + 新增</string>
+    <string name="schema_download_add">新增下载方案</string>
+    <string name="schema_download_name">方案名称</string>
+    <string name="schema_download_url">下载地址</string>
+    <string name="schema_download_header">请求头（每次下载时输入，不保存）</string>
+    <string name="schema_download_header_name">请求头名</string>
+    <string name="schema_download_header_value">请求头值</string>
+    <string name="schema_download_add_header">添加 Header</string>
+    <string name="schema_download_header_remove">删除</string>
+    <string name="schema_download_save">保存</string>
+    <string name="schema_download_cancel">取消</string>
+    <string name="schema_download_row_download">下载</string>
+    <string name="schema_download_downloading">正在下载…</string>
+    <string name="schema_download_cancel_download">取消下载</string>
+    <string name="schema_download_error_empty_name">请填写方案名称</string>
+    <string name="schema_download_error_url">下载地址无效，仅支持 HTTPS 地址</string>
+    <string name="schema_download_error_header">请求头格式无效（名只能含字母、数字与 !#$%&amp;\'*+-.^_`|~，值不能含换行）</string>
+    <string name="schema_download_error_network">下载失败，请检查网络后重试</string>
+    <string name="schema_download_error_http">下载失败（HTTP %1$d）</string>
+    <string name="schema_download_error_redirect">服务器要求跳转到非加密地址，已拒绝</string>
+    <string name="schema_download_error_incomplete">下载不完整，请重试</string>
+    <string name="schema_source_url">URL</string>
     <string name="remove">移除</string>
     <string name="add">添加</string>
     <string name="drag_to_reorder">长按拖动排序</string>
@@ -96,11 +180,48 @@
 
     <string name="about">关于</string>
     <string name="about_us">关于我们</string>
+    <!-- 诊断与复位卡 -->
+    <string name="about_diag_export">导出诊断日志</string>
+    <string name="about_diag_share">导出诊断日志</string>
+    <string name="about_diag_failed">导出失败，请重试</string>
+    <string name="about_diag_empty">暂无日志可导出</string>
+    <string name="about_reset">重置应用设置</string>
+    <string name="about_reset_footnote">重置后回到默认安装状态：仅内置 Lite 方案可用，全部方案目录、WebDAV 绑定与学习词全部清除。</string>
+    <string name="rime_title">RIME</string>
+    <string name="ime_not_current_switch">不是当前输入法，点按切换输入法</string>
+    <string name="rime_deploy">部署</string>
+    <string name="rime_deploy_running">部署中…</string>
+    <string name="rime_sync">同步</string>
+    <string name="rime_sync_running">同步中…</string>
+    <string name="rime_reset">方案重置</string>
+    <string name="rime_manage">方案列表管理</string>
+    <string name="rime_notice">键盘显示 RIME 通知</string>
+    <string name="rime_notice_desc">部署/同步完成后，下次打开键盘时在键盘区提示一次。关闭后不再提示。</string>
+    <string name="rime_sync_folder">同步文件夹</string>
+    <string name="rime_sync_folder_path">完整远程路径</string>
+    <string name="rime_sync_folder_unconfigured">未配置 WebDAV，配置后此处显示完整远程路径</string>
+    <string name="rime_sync_folder_edit_title">编辑同步文件夹</string>
+    <string name="rime_sync_cleanup_orphans">清理旧同步残留</string>
+    <string name="rime_sync_cleanup_empty">远端同步文件夹根下没有残留文件</string>
+    <string name="rime_sync_cleanup_failed">列出远端文件失败</string>
+    <string name="rime_sync_cleanup_confirm">远端同步文件夹根下有 %1$d 个文件、%2$d 个文件夹。确认只删除这 %1$d 个文件吗？文件夹不会被删除。</string>
+    <string name="rime_sync_cleanup_done">已删除 %1$d 个文件，跳过 %2$d 个文件夹</string>
+    <string name="rime_sync_cleanup_failed_count">，%1$d 个删除失败</string>
+    <string name="rime_sync_folder_path_edit_title">编辑完整远程路径</string>
+    <string name="rime_sync_folder_invalid">文件夹名不能为空，不能包含 / \ 或空白</string>
+    <string name="rime_sync_path_invalid">路径格式不对，末尾必须是当前目录名</string>
+    <string name="rime_sync_path_server_changed">服务器地址请到用户词典页修改，这里只能改同步路径与文件夹</string>
+    <string name="about_reset_confirm1_msg">此操作不可撤销，确定要继续吗？</string>
+    <string name="about_reset_confirm2_title">再次确认</string>
+    <string name="about_reset_confirm2_msg">确定要清除全部设置并回到默认状态吗？</string>
+    <string name="about_reset_continue">继续</string>
+    <string name="about_reset_confirm">确认重置</string>
+    <string name="about_reset_busy">正在重置…</string>
+    <string name="about_reset_failed">重置失败，请重试</string>
     <string name="about_us_desc">应用信息、版本更新</string>
     <string name="about_app_info">应用信息</string>
     <string name="about_description">应用简介</string>
     <string name="about_description_text">Jime 是一款简洁、高效的智能拼音输入法，支持多种输入方案，致力于提供流畅舒适的输入体验。</string>
-    <string name="about_update">版本更新</string>
     <string name="check_update">检查更新</string>
     <string name="current_version">当前版本 v%1$s</string>
     <string name="checking_update">检查中</string>
@@ -124,7 +245,6 @@
     <string name="view_licenses">查看</string>
     <string name="licenses_index">第三方组件与许可证</string>
     <string name="app_logs">运行日志</string>
-    <string name="open_logs_page">打开日志页</string>
     <string name="copy_logs">复制日志</string>
     <string name="copy_last_crash">复制最近崩溃信息</string>
     <string name="last_crash_time">最近一次崩溃：%1$s</string>
@@ -142,6 +262,7 @@
     <string name="schema_update_title">方案更新</string>
     <string name="schema_update_desc">检查词库与语法模型的在线更新</string>
     <string name="schema_update_check">检查更新</string>
+    <string name="schema_update_busy">方案更新进行中，请稍后再试</string>
     <string name="schema_update_checking">检查中…</string>
     <string name="schema_update_check_failed">检查失败，请稍后重试</string>
     <string name="schema_update_local_info">本地信息</string>
@@ -166,6 +287,10 @@
     <string name="schema_update_success">更新完成，已重新部署</string>
     <string name="schema_update_failed">更新失败，请重试</string>
     <string name="schema_update_builtin">内置版本</string>
+    <string name="schema_update_target">更新目标</string>
+    <string name="schema_update_target_shared">共享词库（内置）</string>
+    <string name="schema_update_no_source">该目录无官方更新源，不自动检查</string>
+    <string name="schema_update_pro_unsupported">Pro 变体辅助码类型无法从目录推断，暂不支持自动更新</string>
 
     <!-- Text Editing Panel -->
     <string name="move_cursor_up">上移光标</string>
@@ -241,7 +366,6 @@
     <string name="menu_theme">主题设置</string>
     <string name="menu_about">关于</string>
     <string name="choose_schema">选择输入方案</string>
-    <string name="tag_default">默认</string>
     <string name="tag_layout_t9">九宫格</string>
     <string name="tag_layout_t15">15键</string>
     <string name="tag_layout_full">全键盘</string>
@@ -319,6 +443,10 @@
     <string name="user_dict_upload">上传到服务器</string>
     <string name="user_dict_download">从服务器下载</string>
     <string name="user_dict_download_hint">可跨词典名选择 · 上次：%1$s</string>
+    <string name="user_dict_upload_schemes">上传方案目录</string>
+    <string name="user_dict_upload_schemes_hint">将全部方案目录上传到服务器</string>
+    <string name="user_dict_download_schemes">下载方案目录</string>
+    <string name="user_dict_download_schemes_hint">从服务器下载方案目录到本地</string>
     <string name="user_dict_deleted_words">已删除的词</string>
     <string name="user_dict_deleted_words_hint">长按候选词删除的词，可在此恢复</string>
     <string name="user_dict_deleted_words_empty">暂无已删除的词</string>
@@ -331,6 +459,8 @@
     <string name="user_dict_remote_empty">服务器上没有备份文件</string>
     <string name="user_dict_downloading_from">正在下载 %1$s，输入法将短暂重启…</string>
     <string name="user_dict_no_dict">暂无用户词典</string>
+    <string name="user_dict_load_failed">词典列表加载失败，请重试</string>
+    <string name="user_dict_retry">重试</string>
     <string name="user_dict_switch_dict">点击切换词典</string>
     <string name="user_dict_advanced">高级</string>
     <string name="user_dict_allow_http">允许明文 HTTP</string>
