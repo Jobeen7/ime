@@ -10,6 +10,8 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -64,7 +66,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.util.lerp
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
@@ -89,6 +93,16 @@ import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
 
 /** 辅助触控式 FAB 深色：参考图外盘色，固定深灰，双主题同色（不跟随主题）。 */
 private val FabAssistiveDark = Color(0xFF202931)
+
+// 主钮 4 层实心圆颜色（原版录屏实测）：静止外盘/深环/浅环/
+// 中心，拖动时外盘/深环/浅环变亮、中心恒纯白。
+private val FabOuterRest = Color(0xFF182023)
+private val FabOuterDrag = Color(0xFF354C56)
+private val FabDeepRest = Color(0xFF4D5357)
+private val FabDeepDrag = Color(0xFFA6B8BB)
+private val FabLightRest = Color(0xFF787C80)
+private val FabLightDrag = Color(0xFFC0D1D9)
+private val FabCenterColor = Color(0xFFFFFFFF)
 
 /**
  * 设置 home：顶部 hero（居中 logo + Jime）+ 一页一组卡片，
@@ -474,7 +488,9 @@ fun MainScreen(
                             if (!fabAnyRunning) fabExpanded = !fabExpanded
                         },
                         shape = CircleShape,
-                        containerColor = FabAssistiveDark,
+                        // 与静止外盘同色：Canvas 若小于钮面，露出的边环与外盘无缝；
+                        // 拖动时 Canvas 放大到 75dp，盖住整个钮面。
+                        containerColor = Color(0xFF182023),
                         contentColor = Color.White,
                     ) {
                         if (fabAnyRunning) {
@@ -486,12 +502,10 @@ fun MainScreen(
                         } else {
                             // 收起与展开同一图标（iPhone 辅助触控样式）：
                             // 展开后不再显示 ×，再点主钮即收起（onClick
-                            // 的 fabExpanded 取反逻辑不变）。
-                            Icon(
-                                painter = painterResource(R.drawable.ic_fab_assistive),
-                                contentDescription = null,
-                                modifier = Modifier.size(26.dp),
-                            )
+                            // 的 fabExpanded 取反逻辑不变）。图标按原版
+                            // 录屏实测画 4 层实心圆（非 .12 的细描边），
+                            // 拖动时变大＋各圈变亮（见 AssistiveTouchIcon）。
+                            AssistiveTouchIcon(dragging = dragging)
                         }
                     }
                 }
@@ -500,6 +514,48 @@ fun MainScreen(
     }
 
     BackHandler(enabled = fabExpanded) { fabExpanded = false }
+}
+
+/**
+ * 主钮图标：4 层实心圆由外向内叠画（原版录屏实测，禁止画成细描边——
+ * .12 的细线就是“只像白色中心”的根因）。
+ * 静止 60dp；拖动时 0.15s 内放大到 75dp，各层半径分数与颜色同步
+ * 向拖动值过渡（中心 0.226→0.282，浅环 0.298→0.317，深环
+ * 0.345→0.351，外盘恒 0.50）；停稳/松手 0.15s 对称缩回。
+ * 按下不动不放大（放大只跟随移动）；闲置变淡沿用外层 fabAlpha，
+ * 不在这里做；松手后变淡延迟视频量不到，沿用现有 3 秒机制。
+ */
+@Composable
+private fun AssistiveTouchIcon(dragging: Boolean) {
+    val dragProgress by animateFloatAsState(
+        targetValue = if (dragging) 1f else 0f,
+        animationSpec = tween(150),
+        label = "fabDragGrow",
+    )
+    Canvas(modifier = Modifier.size(60.dp * (1f + 0.25f * dragProgress))) {
+        val side = size.minDimension
+        val c = center
+        drawCircle(
+            color = lerp(FabOuterRest, FabOuterDrag, dragProgress),
+            radius = 0.50f * side,
+            center = c,
+        )
+        drawCircle(
+            color = lerp(FabDeepRest, FabDeepDrag, dragProgress),
+            radius = lerp(0.345f, 0.351f, dragProgress) * side,
+            center = c,
+        )
+        drawCircle(
+            color = lerp(FabLightRest, FabLightDrag, dragProgress),
+            radius = lerp(0.298f, 0.317f, dragProgress) * side,
+            center = c,
+        )
+        drawCircle(
+            color = FabCenterColor,
+            radius = lerp(0.226f, 0.282f, dragProgress) * side,
+            center = c,
+        )
+    }
 }
 
 /** FAB 栈展开后的单个动作：圆形深色钮（辅助触控式，52dp）
