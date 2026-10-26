@@ -16,6 +16,7 @@ import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -51,6 +52,9 @@ object FabSyncState {
  * 仍等引擎方案表就绪（每 2s 轮询，最多 10 分钟），超时按失败处理。
  */
 object FabActions {
+
+    /** 同步下载后部署时、等候进行中部署结束的上限：与 deploy() 的等候上限同口径。 */
+    private const val DEPLOY_WAIT_TIMEOUT_MS = 600_000L
 
     fun deploy(context: Context, scope: CoroutineScope) {
         if (EngineDeployState.isRunning()) {
@@ -92,9 +96,56 @@ object FabActions {
     }
 
     /**
+     * 同步下载后的顺序部署：与 deploy() 同机制（Action.Reload 进作业
+     * 队列串行 + 等方案表就绪），但跑在同步协程内、顺序等完成。
+     * 部署进行中时先等它结束再 reload（reload 虽串行排队，但
+     * awaitSchemasReady 会被旧部署的方案表误报为就绪）；等候上限与
+     * deploy() 同口径。部署失败只记日志 + 下次键盘出现时通知，不
+     * 中断后续词典同步（词典与方案相互独立；下载的文件已落盘，
+     * 下次部署即生效）。引擎不可用时直接返回，词典同步自会报
+     * 引擎未就绪。
+     */
+    private suspend fun deployDownloadedSchemes(context: Context) {
+        val engine = EngineFactory.current()
+        if (engine == null) {
+            Timber.w("FAB sync: engine not ready, skip deploy after download")
+            return
+        }
+        val waitDeadline = System.currentTimeMillis() + DEPLOY_WAIT_TIMEOUT_MS
+        while (EngineDeployState.isRunning() && System.currentTimeMillis() < waitDeadline) {
+            delay(1000L)
+        }
+        if (EngineDeployState.isRunning()) {
+            Timber.w("FAB sync: deploy skipped, another deploy still running")
+            return
+        }
+        // 与 deploy() 相同的部署前规范化：旧版写出的裸字符串
+        // schema_list 项 librime 读不到，规范化失败也不拦部署。
+        runCatching {
+            val dir = java.io.File(DataManager.schemeDirsRoot, SchemeDirs.currentDirName(context))
+            SchemeEnabled.normalizeCustomFileToMapFormat(java.io.File(dir, "default.custom.yaml"))
+        }
+        runCatching { engine.reload() }
+        val ready = awaitSchemasReady(
+            poll = {
+                runCatching {
+                    EngineFactory.current()?.schemasList()?.isNotEmpty() == true
+                }.getOrDefault(false)
+            },
+            timeoutMs = 600_000L,
+            intervalMs = 2000L,
+        )
+        if (!ready) {
+            Timber.w("FAB sync: deploy timed out waiting for schemas")
+            RimeSyncPrefs.postNotice(context, context.getString(R.string.fab_deploy_failed))
+        }
+    }
+
+    /**
      * 一键同步：先上传方案目录、再下载方案目录、最后同步全部词典
      * （三段顺序跑、共用 WebDAV 锁；新模型只增量、不删对端文件，
-     * 故无删除传播暂停与 force 重跑）。方案上传或下载失败即整体
+     * 故无删除传播暂停与 force 重跑）。下载成功后先部署一次（下载的
+     * 方案不部署不生效），再同步词典。方案上传或下载失败即整体
      * 失败并短路后续段；词典单本失败只记 failed、报部分成功。
      */
     fun sync(
@@ -132,6 +183,9 @@ object FabActions {
                     )
                     return@launch
                 }
+                // 下载的方案只有部署后才生效：此处顺序部署（与 deploy()
+                // 同机制），词典同步不受部署成败影响、照常继续。
+                deployDownloadedSchemes(context)
                 val up = upResult.getOrThrow()
                 val down = downResult.getOrThrow()
                 WebDavSync.syncAllDicts(sessionProvider())
