@@ -8,19 +8,21 @@
 #   5. dex 名单         —— native 按名查找的方法/类被 R8 改名即闪退
 #                         （v1.0.986 教训）；已删符号残留说明删除未落盘
 #
-# 用法：tools/verify_release.sh <apk> [versionName] [versionCode]
-#   versionName/versionCode 缺省从 app/build.gradle.kts 读取。
+# 用法：tools/verify_release.sh <apk> <versionName> <versionCode>
+#   versionName/versionCode 必须显式传入（即本次要发布的版本），不许缺省：
+#   缺省时脚本会按当前 checkout 的 app/build.gradle.kts 取期望版本，
+#    checkout 与待验包版本不一致时，旧包会因“与旧 checkout 一致”
+#   而被放行——期望版本只能来自操作员当次的发布意图，不能来自
+#   checkout 的现成值。人工使用只多敲两个已知参数，调用方无脚本
+#   依赖（仓内无脚本调用本文件），故选显式传参而非保留缺省。
 #   期望签名指纹与 resource.zip 哈希为下方常量：换签名 key 或换内置
 #   万象包时，必须同步更新这两个常量（更新本身就是一次显式决策）。
 # 退出码：0 = 全部通过；1 = 有检查失败（逐行 [FAIL] 标出）。
 set -u
 
-APK="${1:?usage: verify_release.sh <apk> [versionName] [versionCode]}"
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-GRADLE_KTS="$REPO_ROOT/app/build.gradle.kts"
-
-EXPECTED_VERSION_NAME="${2:-$(sed -n 's/.*versionName = "\([^"]*\)".*/\1/p' "$GRADLE_KTS" | head -1)}"
-EXPECTED_VERSION_CODE="${3:-$(sed -n 's/.*versionCode = \([0-9]*\).*/\1/p' "$GRADLE_KTS" | head -1)}"
+APK="${1:?usage: verify_release.sh <apk> <versionName> <versionCode>}"
+EXPECTED_VERSION_NAME="${2:?usage: verify_release.sh <apk> <versionName> <versionCode>}"
+EXPECTED_VERSION_CODE="${3:?usage: verify_release.sh <apk> <versionName> <versionCode>}"
 EXPECTED_SIGNER_SHA256="511831cbb45c4248d15508c0ca1fe563799b31be2b45ac07b40ded6bf9a44744"
 EXPECTED_RESOURCE_SHA256="971fcde47837786f8fefec9b6e9fad09d3d639c6960c836511859f04383cc199"
 # 自编 sherpa-onnx 库（关 TTS）在 APK lib/arm64-v8a 下的未压缩字节数
@@ -84,6 +86,10 @@ check "libsherpa-onnx-cxx-api.so bytes" $? "got=$GOT_CXXAPI expected=$EXPECTED_S
 
 # 5. dex 名单：native 按名查找的类/方法必须在（librime_jni/jni_env.h 的
 #    FindClass/GetMethodID 清单 + proguard keep 的回调类）；已删符号必须不在。
+#    proguard-rules.pro 里具名的 native 回调方法只有两个（Rime keep 段），
+#    两者都在 PRESENT_REQUIRED 内：handleMessage 与 handleNativeNotification
+#    （此前只列了后者，前者被 R8 改名/删除时脚本会漏报）。其余 keep 段
+#    均为整类保留或构造器，类名本身已在名单内。
 unzip -o -q "$APK" "classes*.dex" -d "$TMPDIR_V"
 DEX_STRINGS="$(strings "$TMPDIR_V"/classes*.dex)"
 PRESENT_REQUIRED="
@@ -101,6 +107,7 @@ Lcom/jobeen/ime/engine/rime/core/SchemaItem;
 Lcom/jobeen/ime/engine/rime/data/opencc/OpenCCDictManager;
 Lcom/jobeen/ime/engine/rime/data/userdict/UserDictManager;
 Lcom/jobeen/ime/base/marisa/MarisaJNI;
+handleMessage
 handleNativeNotification
 "
 for sym in $PRESENT_REQUIRED; do
