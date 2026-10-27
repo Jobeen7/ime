@@ -483,27 +483,120 @@ object ModelDownloader {
             staging.deleteRecursively()
             throw IOException("New model is incomplete before installation")
         }
-        // 三步换名（同父目录 rename 都是原子操作）：旧目录先改名备份、
-        // 新目录就位、最后删备份。此前是先 deleteRecursively 再 rename，
-        // 两步之间进程被杀或 rename 失败即新旧模型全失、只能整包重下
+        // 整体换装（自愈恢复、旧目录让位、新目录就位、在位校验后删
+        // 备份）见 replaceModelDirectory：任一步失败抛 IOException，
+        // 备份原地保留（下次安装仍可自愈）；失败时 staging 残存由
+        // 这里清理，成功时 staging 已随换名消失、无须清理。
+        try {
+            replaceModelDirectory(staging, modelDir)
+        } catch (e: IOException) {
+            staging.deleteRecursively()
+            throw e
+        }
+    }
+
+    /**
+     * 把已校验完整的 staging 新模型整体换到 modelDir（同父目录换名三步，
+     * 原子换名、无半套写进最终目录）。失败一律抛 IOException——调用方
+     * [extractAndInstall] 捕获后返回 false，下载层报失败；错误信息点名
+     * 失败步骤与备份去向。
+     *
+     * 备份处置（R1-3：只有确认恢复成功、或新模型完整提交并在位校验后，才动 .old）：
+     * - 正目录缺失且备份存在：先恢复备份；恢复失败抛错、备份原地保留，
+     *   绝不删除——下次安装仍可自愈；恢复成功后备份已随换名消失，无须再删。
+     * - 正目录与备份并存：在位模型完整时备份是已被取代的旧模型，删之腾出
+     *   让位位置（删失败抛错、备份保留）；在位模型残缺时先删残缺在位、
+     *   以备份恢复在位，再按正常换装走（恢复出的旧模型随后被换下）。
+     * - 新模型就位后先在位校验完整，才删刚换下的旧备份；删失败抛错
+     *   （新模型已在位、备份保留，下次安装按「并存」分支处理）。
+     * - 就位失败回滚：回滚失败抛错、备份保留（下次安装走自愈分支），
+     *   绝不在此删备份。
+     *
+     * [rename] 注入点：生产默认即 File.renameTo；主机单测以此注入失败——
+     * 同父目录换名在 root 测试用户下无法用只读/占位使其失败（已实测：
+     * 0555 父目录下 rename 仍成功；目录→非空目录/文件才必败，但自愈与
+     * 就位分支的目标路径按构造不可能处于那种状态），故失败分支不用
+     * 文件系统状态注入，见 ModelDownloaderFaultTest。
+     */
+    internal fun replaceModelDirectory(
+        staging: File,
+        modelDir: File,
+        rename: (File, File) -> Boolean = { source, destination -> source.renameTo(destination) },
+    ) {
+        val parent = modelDir.parentFile
+            ?: error("Model directory has no parent: ${modelDir.absolutePath}")
+        parent.mkdirs()
         val backup = File(parent, modelDir.name + ".old")
-        // 自愈：上次安装恰好中断在换名之间（正目录缺失、备份还在）先回滚
+        // 自愈：上次安装恰好中断在换名之间（正目录缺失、备份还在）先恢复。
+        // 恢复失败必须抛错且保留备份：旧代码此处不验返回值、随后无条件
+        // 删备份，恢复失败即最后一把旧模型丢失。
         if (!modelDir.exists() && backup.exists()) {
-            backup.renameTo(modelDir)
+            if (!rename(backup, modelDir)) {
+                throw IOException(
+                    "Failed to restore model backup: $backup -> $modelDir; " +
+                        "backup kept for next install",
+                )
+            }
         }
-        backup.deleteRecursively()
+        // 正目录与备份并存：上次安装中断在「新目录已就位、备份未删」，
+        // 或残缺在位与备份并存。完整在位→备份已被取代，删之腾位；
+        // 残缺在位→备份是最后一把好模型，先恢复在位再正常换装。
+        if (modelDir.exists() && backup.exists()) {
+            if (findModel(modelDir) == null) {
+                modelDir.deleteRecursively()
+                if (!rename(backup, modelDir)) {
+                    throw IOException(
+                        "Failed to restore model backup over incomplete model: " +
+                            "$backup -> $modelDir; backup kept for next install",
+                    )
+                }
+            } else {
+                val removed = backup.deleteRecursively()
+                if (!removed && backup.exists()) {
+                    throw IOException("Failed to remove stale model backup: $backup")
+                }
+            }
+        }
         val hadOld = modelDir.exists()
-        if (hadOld && !modelDir.renameTo(backup)) {
-            staging.deleteRecursively()
-            throw IOException("Failed to move old model aside: $modelDir")
+        if (hadOld && !rename(modelDir, backup)) {
+            throw IOException("Failed to move old model aside: $modelDir -> $backup")
         }
-        if (!staging.renameTo(modelDir)) {
-            // 新目录就位失败：把旧模型改回来，不能留下空目录
-            if (hadOld) backup.renameTo(modelDir)
-            staging.deleteRecursively()
-            throw IOException("Failed to move new model into place: $staging")
+        if (!rename(staging, modelDir)) {
+            // 新目录就位失败：把旧模型改回来，不能留下空目录。
+            // 回滚失败同样抛错、备份保留（下次安装走自愈分支），绝不删备份。
+            if (hadOld && !rename(backup, modelDir)) {
+                throw IOException(
+                    "Failed to move new model into place and failed to restore old model: " +
+                        "staging=$staging, backup=$backup kept for next install",
+                )
+            }
+            throw IOException(
+                "Failed to move new model into place: $staging -> $modelDir; " +
+                    "old model restored",
+            )
         }
-        backup.deleteRecursively()
+        // 新模型已提交：在位再次校验完整，才删刚换下的旧备份。
+        if (hadOld) {
+            if (findModel(modelDir) == null) {
+                // 在位新模型不完整：清掉它、把旧模型换回来；回滚失败则
+                // 备份保留，下次安装走自愈分支。
+                modelDir.deleteRecursively()
+                if (!rename(backup, modelDir)) {
+                    throw IOException(
+                        "Installed model incomplete and failed to restore old model: " +
+                            "backup=$backup kept for next install",
+                    )
+                }
+                throw IOException("Installed model incomplete, old model restored: $modelDir")
+            }
+            val removed = backup.deleteRecursively()
+            if (!removed && backup.exists()) {
+                throw IOException(
+                    "Failed to remove old model backup after new model installed: " +
+                        "$backup; new model is in place, backup kept",
+                )
+            }
+        }
         Timber.i("Speech model installed: %s", modelDir.absolutePath)
     }
 
