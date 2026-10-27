@@ -129,6 +129,8 @@
     <string name="schema_rolled_back">切换失败，已回退到上一方案</string>
     <string name="schema_switch_retry">重试</string>
     <string name="schema_banner_close">关闭</string>
+    <string name="init_timeout_title">初始化超时</string>
+    <string name="init_timeout_message">初始化没有在预期时间内完成，可能是仍在后台进行，也可能是已经失败。</string>
     <!-- 第二期本地导入：菜单 / 校验结果页 / 安装确认 / 错误 -->
     <string name="schema_import">导入方案</string>
     <string name="schema_import_validating">正在校验方案包…</string>
