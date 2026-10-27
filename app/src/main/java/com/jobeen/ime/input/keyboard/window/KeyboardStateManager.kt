@@ -107,6 +107,10 @@ object KeyboardStateManager {
         currentKeyboardName?.let { name ->
             keyboards[name]?.let { kb ->
                 kb.onAttach()
+                // 同布局重挂此前直接重显缓存键盘、不走 switchTo，空格键文案
+                // 仍是旧方案名：重显时也刷一次当前方案名（Emoji/Symbol
+                // 的 updateSpaceKeyText 为空实现，此调用无影响）。
+                kb.updateSpaceKeyText(currentSchema?.name.orEmpty())
                 callback?.onShowKeyboard(kb)
             }
         }
@@ -374,6 +378,22 @@ object KeyboardStateManager {
                 }
             }
 
+            is EngineMessage.Schema -> {
+                // 引擎内切方案（switcher/lua 等，不走 Action.SelectSchema）
+                // 与设置页直接调引擎 selectSchema：此前落入 else 空分支，
+                // currentSchema 不更新；后续 switchTo 去重键仍等于旧方案
+                // 而早退，空格文案滞留。在本分支内同步推进 currentSchema
+                // 再走 switchTo：引擎回声（本机 rotate/select 已先刷过）
+                // 因去重键相等而早退、不重复刷；非回声必刷。
+                // 与 rotate/select/onAttach 同线程（applicationScope 为
+                // MainScope），本分支不另起协程、不搬移队列。
+                val (resolved, target) = resolveEngineSchemaTarget(
+                    schemas, message, currentKeyboardName, defaultKeyboardName
+                )
+                currentSchema = resolved
+                switchTo(target)
+            }
+
             else -> {}
         }
     }
@@ -405,6 +425,31 @@ object KeyboardStateManager {
  * 新记的标志要么被本次全量刷新覆盖（丢弃发生在读盘前），要么补齐
  * 跑遇部署中早退时重记，不丢账。
  */
+
+/**
+ * 引擎方案消息的纯决策（无 Android / 协程依赖，可单测）：由
+ * [KeyboardStateManager.handleEngineMessage] 的 Schema 分支调用。
+ * - 方案解析：已知表内有同 id 项时取表内项——与 rotateSchema 的
+ *   indexOf 等值语义一致，且能补回补取失败时原始消息缺失的
+ *   layout/punctuation/kind（原始串只有 id/name 两段）；表内无此
+ *   id 时原样用消息。
+ * - 切换目标：解析后 layout 非空时即该 layout；layout 为空且当前
+ *   已有键盘时以当前键盘名为目标——只刷空格文案与标点模式，不虚
+ *   构一个布局（空 layout 时硬 fallback 到 Qwerty 会把键盘错切走）；
+ *   当前尚无键盘时退回默认布局，与 onAttach 首挂口径一致。
+ * 返回 (解析后方案, switchTo 目标)。
+ */
+internal fun resolveEngineSchemaTarget(
+    known: List<EngineMessage.Schema>,
+    message: EngineMessage.Schema,
+    currentKeyboardName: String?,
+    defaultKeyboardName: String,
+): Pair<EngineMessage.Schema, String> {
+    val resolved = known.find { it.id == message.id } ?: message
+    val target = resolved.layout.ifEmpty { currentKeyboardName ?: defaultKeyboardName }
+    return resolved to target
+}
+
 internal class DeployRefreshPolicy {
     private val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
     private val pending = java.util.concurrent.atomic.AtomicBoolean(false)
