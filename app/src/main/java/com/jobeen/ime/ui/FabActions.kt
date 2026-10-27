@@ -237,6 +237,10 @@ object FabActions {
             } catch (e: Exception) {
                 Timber.w(e, "FAB dir sync failed")
                 ToastUtil.showToast(context.getString(R.string.fab_sync_engine_not_ready))
+                RimeSyncPrefs.postNotice(
+                    context,
+                    context.getString(R.string.fab_sync_engine_not_ready),
+                )
             } finally {
                 FabSyncState.setRunning(false)
             }
