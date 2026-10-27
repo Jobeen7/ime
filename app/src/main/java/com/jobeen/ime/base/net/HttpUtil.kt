@@ -6,10 +6,8 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.serialization.json.Json
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import org.json.JSONObject
 import timber.log.Timber
@@ -26,7 +24,7 @@ import kotlin.coroutines.resumeWithException
  * ```json
  * { "code": 0, "msg": "success", "data": { ... } }
  * ```
- * - [get]/[post] 为泛型方法，成功时直接返回 `data` 反序列化后的对象实例；
+ * - [get] 为泛型方法，成功时直接返回 `data` 反序列化后的对象实例；
  * - 当 `code != 0` 时自动 Toast 提示 `msg` 并抛出 [ApiException]，调用方无需额外处理业务错误码。
  */
 object HttpUtil {
@@ -44,16 +42,6 @@ object HttpUtil {
 
     internal suspend inline fun <reified T> get(path: String): T {
         val raw = rawRequest(Request.Builder().url(ApiConfig.BASE_URL + appendVersion(path)).build())
-        return unwrap(raw)
-    }
-
-    internal suspend inline fun <reified T> post(path: String, body: String): T {
-        val mediaType = "application/json; charset=utf-8".toMediaType()
-        val request = Request.Builder()
-            .url(ApiConfig.BASE_URL + path)
-            .post(body.toRequestBody(mediaType))
-            .build()
-        val raw = rawRequest(request)
         return unwrap(raw)
     }
 
