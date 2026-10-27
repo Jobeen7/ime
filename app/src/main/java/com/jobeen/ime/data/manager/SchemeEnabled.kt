@@ -23,8 +23,13 @@ object SchemeEnabled {
      * - 若 existingText 为 null 或空白，返回以 "# Written by Jime scheme settings." 开头的全新文本。
      * - 若无 patch 段，在末尾追加 patch: 及其下的 schema_list: 和序列项。
      * - 若有 patch 段但无 schema_list 行，在 patch: 行之后、下一顶格行之前插入。
-     * - 若有 schema_list 行，丢弃冒号后的非空白内容，替换随后的连续 `- ` 项。
-     * - 已知取舍：序列在第一个不是 `- ` 项的行处结束，空行、注释行同样截断序列。
+     * - 若有 schema_list 行，丢弃冒号后的非空白内容，替换其后解析侧序列
+     *   段内的全部项：扫描在解析侧的终结行处停止（首个非空行、非注释行
+     *   且缩进 <= schema_list 缩进的行，或文件尾），其间空行、注释行、
+     *   全角空格行等解析侧跳过的行只跳过不终结，段内旧项无论隔着多少
+     *   跳过行都不复活；跳过行本身原样保留，后续键不受影响。
+     * - 对互异的有效 ID，patch 后经解析侧读到的结果恰好等于传入的
+     *   过滤后 ID 列表，顺序与传入一致。
      * - 返回文本始终以单个换行符结尾。
      */
     fun patchSchemaListYaml(existingText: String?, ids: List<String>): String {
@@ -82,17 +87,37 @@ object SchemeEnabled {
             if (schemaListIdx == -1) {
                 lines.addAll(patchIdx + 1, listOf("  schema_list:") + newLines)
             } else {
+                // 截断边界与解析侧 [SchemePackageImport.parseSchemaListFromCustomYaml]
+                // 对齐：解析侧跳过空行/注释行，且只在缩进 <= schema_list 缩进
+                // 的首个非跳过行处结束；其间缩进更深的非项行（如全角空格行、
+                // 裸键行、单独破折号行）同样只跳过不结束。旧实现在首个
+                // 非 `- ` 行处截断，空行/注释行之后的旧项会留在文本里，
+                // 解析时又被读到，即旧项复活。此处扫描到同一终结行，
+                // 只删其中解析侧认作序列项的行，其余行原样保留。
+                val listIndent = lines[schemaListIdx].takeWhile { it == ' ' || it == '\t' }.length
                 lines[schemaListIdx] = "  schema_list:"
-                
-                var seqEnd = schemaListIdx + 1
-                while (seqEnd < lines.size && lines[seqEnd].trim().startsWith("- ")) {
-                    seqEnd++
+
+                val itemIndices = mutableListOf<Int>()
+                var scan = schemaListIdx + 1
+                while (scan < lines.size) {
+                    val line = lines[scan].trimEnd()
+                    if (line.isBlank() || line.trimStart().startsWith("#")) {
+                        scan++
+                        continue
+                    }
+                    val indent = line.takeWhile { it == ' ' || it == '\t' }.length
+                    if (indent <= listIndent) break
+                    val content = line.trimStart()
+                    if (Regex("""^-\s+(\S.*)$""").matchEntire(content) != null) {
+                        itemIndices.add(scan)
+                    }
+                    scan++
                 }
-                
-                for (i in seqEnd - 1 downTo schemaListIdx + 1) {
+
+                for (i in itemIndices.asReversed()) {
                     lines.removeAt(i)
                 }
-                
+
                 lines.addAll(schemaListIdx + 1, newLines)
             }
         }
