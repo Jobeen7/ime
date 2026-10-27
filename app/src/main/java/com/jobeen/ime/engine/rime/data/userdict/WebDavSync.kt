@@ -916,11 +916,123 @@ object WebDavSync {
         }
     }
 
+    /** 方案下载目标：远端相对路径（schemes/ 下）与 PROPFIND 给出的远端修改时间（无则 null）。 */
+    internal data class SchemeDownloadTarget(val rel: String, val remoteLastModifiedMs: Long?)
+
     /**
-     * 从远端 schemes/ 下载全部方案文件到本地（tmp＋rename 原子替换；
-     * 404 视为远端已删、跳过不计；其余失败记入失败清单、最后整体失败）。
-     * 递归口径与 .6 一致（自 schemes/ 根起 calls 0-4 层，单目录内路径
-     * 至多 4 段）；总数上限 1000。必须在后台线程调用。
+     * 新旧比较（下载侧）：远端文件是否值得下载覆盖本地文件。
+     * 本地不存在 → 下载；远端无修改时间 → 下载（无法证明陈旧时沿用旧行为，
+     * 不以缺失的元数据静默丢更新）；远端修改时间晚于本地 → 下载；
+     * 远端等于或早于本地 → 跳过，远端旧文件不得覆盖本地新改。
+     * 注意：比较双方是服务器时钟与本机文件时钟，时钟偏差下仍可能误判，
+     * 但误判方向被收敛：下载成功后本地时间戳钉为远端时间（见换位），
+     * 同一远端版本不会因本机时钟偏快而被反复跳过。
+     */
+    internal fun shouldDownloadSchemeFile(remoteLastModifiedMs: Long?, localFile: File): Boolean {
+        // 本地缺失，或活路径被目录占位（损坏态）→ 下载，让下载/换位环节
+        // 按旧行为报失败，不以“跳过”把损坏态静默报成功。
+        if (!localFile.exists() || localFile.isDirectory) return true
+        if (remoteLastModifiedMs == null) return true
+        return remoteLastModifiedMs > localFile.lastModified()
+    }
+
+    /** 暂存目录名前缀（位于方案根的父目录下，与根同文件系统，换位 rename 可直达）。 */
+    internal const val SCHEME_STAGING_PREFIX = ".schemes-download-staging-"
+
+    /**
+     * 以本地为底建暂存树：复制 [collectUploadFiles] 选出的全部本地
+     * 同步文件（与上传侧同一过滤、同一 6 段内层深度、同一 1000 上限），
+     * 并保留各文件原修改时间。受保护条目、点号目录、根下散文件、
+     * 超深文件不在底本内，下载与换位都不会触碰它们。
+     * 返回复制的相对路径清单。
+     */
+    internal fun buildSchemeStagingTree(root: File, staging: File): List<String> {
+        val rels = collectUploadFiles(root)
+        for (rel in rels) {
+            val src = File(root, rel)
+            val dst = File(staging, rel)
+            dst.parentFile?.mkdirs()
+            src.copyTo(dst, overwrite = true)
+            dst.setLastModified(src.lastModified())
+        }
+        return rels
+    }
+
+    /**
+     * 把暂存树换位到活目录：逐文件 rename（同文件系统时原子替换，
+     * rename 失败时退回“拷到同目录 tmp 再 rename”）；换位不删除活目录
+     * 里任何文件——暂存树没有的文件（受保护条目、本地独有文件、
+     * 远端已删而本地仍保留的文件）原样不动。
+     * 时间戳：已下载文件换位后钉为远端修改时间（有值时），使下次
+     * 新旧比较在同一服务器时钟下收敛；未下载的底本文件换位后恢复
+     * 换位前活文件的时间戳，换位本身不改变它们的“新旧”。
+     * 任一文件换位失败即抛错：换位是本地操作，网络失败已在换位前
+     * 全部拦截；换位中途失败是残余风险——此前已换位的文件保持已换位，
+     * 调用方按整体失败处理，下次同步重走下载（远端版本仍以远端时间为准）。
+     * 返回换位的文件相对路径清单。
+     */
+    internal fun commitSchemeStagingTree(
+        staging: File,
+        root: File,
+        downloadedRels: Set<String>,
+        remoteLastModifiedMsByRel: Map<String, Long?>,
+    ): List<String> {
+        val committed = mutableListOf<String>()
+        val stagingFiles = staging.walkTopDown().filter { it.isFile }
+            .map { it.relativeTo(staging).path.replace(File.separatorChar, '/') }
+            .sorted()
+        for (rel in stagingFiles) {
+            val staged = File(staging, rel)
+            val live = File(root, rel)
+            val canonical = live.canonicalFile
+            if (canonical != root && !canonical.path.startsWith(root.path + File.separator)) {
+                throw IllegalStateException("方案下载换位越界：$rel")
+            }
+            live.parentFile?.mkdirs()
+            val oldExists = live.exists()
+            val oldMtime = if (oldExists) live.lastModified() else null
+            val moved = staged.renameTo(live) || run {
+                // 跨设备等 rename 失败时的退路：与 httpGetToFile 同口径的 tmp＋rename。
+                val tmp = File(live.parentFile, "${live.name}.tmp-${System.nanoTime()}")
+                try {
+                    staged.copyTo(tmp, overwrite = true)
+                    if (!atomicReplace(tmp, live)) {
+                        tmp.delete()
+                        false
+                    } else {
+                        staged.delete()
+                        true
+                    }
+                } catch (e: Exception) {
+                    tmp.delete()
+                    false
+                }
+            }
+            if (!moved) {
+                throw IllegalStateException("方案下载换位失败：$rel")
+            }
+            if (rel in downloadedRels) {
+                remoteLastModifiedMsByRel[rel]?.let { live.setLastModified(it) }
+            } else if (oldExists && oldMtime != null) {
+                live.setLastModified(oldMtime)
+            }
+            committed += rel
+        }
+        return committed
+    }
+
+    /**
+     * 从远端 schemes/ 下载全部方案文件到本地，staging 覆盖式换位：
+     * 先以本地为底复制暂存树，再把下载成功的文件叠加进暂存树，
+     * 全部成功才换位到活目录；任一下载失败即弃暂存、活目录原样不动。
+     * 404 视为远端已删、跳过不计：暂存底本保留本地文件，换位后仍在，
+     * 本地文件不因远端删除而消失。
+     * 新旧比较：本地已有且远端不更新（无修改时间除外）时跳过下载、
+     * 不计数、不失败；远端旧文件不得覆盖本地新改。
+     * 深度与上传侧对齐：递归自 schemes/ 根起至 6 层，单目录内路径
+     * 至多 6 段（总段数至多 7），与 [collectUploadFiles] 的上限一致；
+     * 总数上限 1000。必须在后台线程调用；返回实际下载文件数
+     * （跳过的新旧文件与 404 文件均不计入）。
      */
     suspend fun downloadSchemes(): Result<Int> = syncMutex.withLock {
         withContext(Dispatchers.IO) {
@@ -928,48 +1040,79 @@ object WebDavSync {
                 checkConfigured()
                 ensureSchemesDir()
                 val root = DataManager.schemeDirsRoot.canonicalFile
-                val files = mutableListOf<String>()
+                val targets = mutableListOf<SchemeDownloadTarget>()
+                val seen = mutableSetOf<String>()
                 suspend fun collect(dirRel: String, depth: Int) {
-                    if (depth > 4 || files.size >= 1000) return
+                    if (depth > 6 || targets.size >= 1000) return
                     val dirUrl = if (dirRel.isEmpty()) schemesUrl() + "/" else schemesUrl() + "/" + dirRel + "/"
                     val entries = propfindDirEntries(dirUrl)
                     for (entry in entries) {
-                        if (files.size >= 1000) return
+                        if (targets.size >= 1000) return
                         val rel = if (dirRel.isEmpty()) entry.relPath else "$dirRel/${entry.relPath}"
                         // 根级 scheme-archive 是同名目录归档，非方案目录，
                         // 上传侧已排除；下载侧同样跳过整棵子树（不删远端旧份）。
                         if (rel.substringBefore('/') == "scheme-archive") continue
                         if (entry.isDirectory) {
-                            if (depth < 4) collect(rel, depth + 1)
+                            if (depth < 6) collect(rel, depth + 1)
                         } else {
                             val fileRel = rel.substringAfter('/', "")
                             if (fileRel.isEmpty()) continue
-                            if (isValidSchemeRel(fileRel) && rel !in files) files.add(rel)
+                            if (rel.split('/').size > 7) continue
+                            if (isValidSchemeRel(fileRel) && seen.add(rel)) {
+                                targets += SchemeDownloadTarget(rel, entry.lastModifiedMs)
+                            }
                         }
                     }
                 }
                 collect("", 0)
-                var count = 0
-                val failed = mutableListOf<String>()
-                for (rel in files) {
-                    val target = File(root, rel)
-                    val canonical = target.canonicalFile
-                    if (canonical != root && !canonical.path.startsWith(root.path + File.separator)) {
-                        Timber.w("skip schemes download outside root: $rel")
-                        failed += rel
-                        continue
-                    }
-                    target.parentFile?.mkdirs()
-                    when (httpGetToFile(remoteUrl("schemes/$rel"), target)) {
-                        HttpGetResult.OK -> count++
-                        HttpGetResult.NOT_FOUND -> Unit // 远端已删，跳过不计
-                        HttpGetResult.FAILED -> failed += rel
-                    }
+                // 暂存树与根同文件系统（根的父目录下）；上轮崩溃残留的
+                // 同名前缀暂存目录尽力清掉（换位未完成的部分下次重下即可）。
+                val stagingParent = root.parentFile ?: appContext.cacheDir
+                runCatching {
+                    stagingParent.listFiles()
+                        ?.filter { it.isDirectory && it.name.startsWith(SCHEME_STAGING_PREFIX) }
+                        ?.forEach { it.deleteRecursively() }
                 }
-                if (failed.isNotEmpty()) {
-                    throw IllegalStateException("下载方案文件失败：${failed.size} 个")
+                val staging = File(stagingParent, "$SCHEME_STAGING_PREFIX${System.nanoTime()}")
+                try {
+                    buildSchemeStagingTree(root, staging)
+                    var count = 0
+                    val failed = mutableListOf<String>()
+                    val downloaded = mutableSetOf<String>()
+                    val remoteMtimes = mutableMapOf<String, Long?>()
+                    for (target in targets) {
+                        val rel = target.rel
+                        val live = File(root, rel)
+                        val canonical = live.canonicalFile
+                        if (canonical != root && !canonical.path.startsWith(root.path + File.separator)) {
+                            Timber.w("skip schemes download outside root: $rel")
+                            failed += rel
+                            continue
+                        }
+                        // 新旧比较在下载前：跳过的文件不进暂存叠加，
+                        // 换位后活文件保持本地新版本。
+                        if (!shouldDownloadSchemeFile(target.remoteLastModifiedMs, live)) continue
+                        val staged = File(staging, rel)
+                        staged.parentFile?.mkdirs()
+                        when (httpGetToFile(remoteUrl("schemes/$rel"), staged)) {
+                            HttpGetResult.OK -> {
+                                count++
+                                downloaded += rel
+                                remoteMtimes[rel] = target.remoteLastModifiedMs
+                            }
+                            HttpGetResult.NOT_FOUND -> Unit // 远端已删：暂存底本保留，换位后仍在；不计、不失败
+                            HttpGetResult.FAILED -> failed += rel
+                        }
+                    }
+                    if (failed.isNotEmpty()) {
+                        throw IllegalStateException("下载方案文件失败：${failed.size} 个")
+                    }
+                    // 全部成功才换位：此前下载只写暂存，活目录未被触碰。
+                    commitSchemeStagingTree(staging, root, downloaded, remoteMtimes)
+                    count
+                } finally {
+                    staging.deleteRecursively()
                 }
-                count
             }
         }
     }
