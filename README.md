@@ -1,9 +1,8 @@
 # Jime
 
-基于 Rime 引擎的安卓输入法（万象拼音方案，九宫格/全键盘，离线语音输入）。
+基于 Rime 引擎的安卓手机输入法：内置万象拼音方案，支持九宫格与全键盘，语音输入完全离线。
 
-- 隐私说明见 [PRIVACY.md](PRIVACY.md)
-- 第三方组件与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)，本项目许可证见 [LICENSE](LICENSE)
+Jime 为日常打字而做：它会记住你的选词习惯，常用词越打越靠前；方案与词库可以多目录管理、在线更新；你的词库与设置可以通过 WebDAV 同步、在本机加密备份。打字全程离线，不上传输入内容。
 
 ## 特色功能
 
@@ -14,6 +13,12 @@
 - 会学习你的选词习惯，常用词自动靠前
 - 支持万象语法模型，长句输入时候选更准确
 - 方案与词库可在线更新到万象官方最新版
+
+### 方案目录
+
+- 可建多个方案目录（比如一套日常、一套工作），切换后重新部署，部署完成即生效
+- 导入方案包走事务化安装：中途失败时旧方案原封不动，用户词与自定义配置不受影响
+- 每个目录有自己的启用方案与用户词，互不干扰
 
 ### 语音
 
@@ -54,11 +59,9 @@
 - 从网络下载的文件以 SHA-256 摘要校验为主，校验通过才安装使用；应用更新包在官方未提供摘要时，以文件大小与签名证书（须与已安装版本一致）校验兜底
 - 详细说明见 [PRIVACY.md](PRIVACY.md)
 
-## 文档
+## 文档与许可证
 
 - 键盘主题数据格式说明见 [docs/theme-format.md](docs/theme-format.md)
+- 隐私说明见 [PRIVACY.md](PRIVACY.md)
 - 第三方组件与许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
-
-## 许可证
-
-本项目以 BSD-3-Clause 许可证发布，见 [LICENSE](LICENSE)。输入引擎基于 librime，拼音方案来自[万象拼音](https://github.com/amzxyz/rime-wanxiang)，离线语音识别基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)，详见第三方声明。
+- 本项目以 BSD-3-Clause 许可证发布，见 [LICENSE](LICENSE)。输入引擎基于 librime，拼音方案来自[万象拼音](https://github.com/amzxyz/rime-wanxiang)，离线语音识别基于 [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)，详见第三方声明。
