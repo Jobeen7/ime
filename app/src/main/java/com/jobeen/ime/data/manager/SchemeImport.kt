@@ -260,6 +260,30 @@ data class InjectResult(
 )
 
 /**
+ * 原子写盘（换位后注入用）：同目录写 `<文件名>.tmp` 再 rename 覆盖，
+ * 与 [SchemeEnabled.writeEnabledCustomFile] 同口径。写盘中途失败时
+ * 原文件保持旧内容（不截断、不半写），tmp 删掉；返回 false 表示
+ * 写盘未完成（调用方记 skipped）。同一线程同步执行，不换线程/队列；
+ * tmp 名与启用表的 tmp 名（default.custom.yaml.tmp）不冲突。
+ */
+internal fun writeInjectFileAtomically(file: File, text: String): Boolean {
+    val parent = file.parentFile ?: return false
+    val tmpFile = File(parent, file.name + ".tmp")
+    return try {
+        tmpFile.writeText(text)
+        if (!tmpFile.renameTo(file)) {
+            tmpFile.delete()
+            false
+        } else {
+            true
+        }
+    } catch (_: Exception) {
+        tmpFile.delete()
+        false
+    }
+}
+
+/**
  * 对本次解压出的根级方案文件做 T9 字段注入（只改 schema: 段内四键）。
  *
  * 契约：
@@ -269,7 +293,7 @@ data class InjectResult(
  * - 映射键：段内有则替换值（保留原缩进、值加双引号），无则插到段尾
  *   （用段内首个键的缩进，无则两空格）；其余行（含 options/speller）原样不动。
  * - wanxiang_english 不写 candidateKind，段内已有则删行。
- * - 写盘异常记 skipped，不中断。
+ * - 写盘走 tmp＋rename 原子写：写盘失败记 skipped、不中断，且原文件内容不变。
  */
 fun injectT9Fields(dir: File, filenameStems: List<String>): InjectResult {
     var injected = 0
@@ -341,7 +365,8 @@ private val OPTIONS_INJECTIONS: Map<String, List<OptionItem>> = mapOf(
  * - 无 options: 段时在文件尾追加整段；有则逐项比对：缺项补整项，
  *   已有项的 lock/value 与旧值不符则纠正，key/keys 原样不动。
  * - 已正确的文件不改写（幂等，不 churn mtime）。
- * - 解析不到 schema_id 或写盘异常记 skipped，不中断。
+ * - 解析不到 schema_id 或写盘异常记 skipped，不中断；写盘走 tmp＋rename
+ *   原子写，失败时原文件内容不变。
  */
 fun injectOptionsSegments(dir: File, filenameStems: List<String>): InjectResult {
     var injected = 0
@@ -361,8 +386,7 @@ fun injectOptionsSegments(dir: File, filenameStems: List<String>): InjectResult 
         val ok = try {
             val lines = file.readText().split("\n")
             val out = transformOptionsLines(lines, expected)
-            if (out != lines) file.writeText(out.joinToString("\n"))
-            true
+            if (out != lines) writeInjectFileAtomically(file, out.joinToString("\n")) else true
         } catch (_: Exception) {
             false
         }
@@ -470,8 +494,9 @@ private fun optionItemLines(item: OptionItem): List<String> = listOf(
 
 /**
  * 改写单个方案文件的 schema: 段：映射键替换/插入，english 删 candidateKind。
- * 返回 false 当且仅当找不到顶格 `schema:` 行（调用方记 skipped）。
- * 行尾换行按原文保留（split/join 不增不减）。已正确的文件不改写（幂等）。
+ * 返回 false 当且仅当找不到顶格 `schema:` 行或原子写盘失败（调用方记 skipped）；
+ * 写盘失败时原文件内容不变。行尾换行按原文保留（split/join 不增不减）。
+ * 已正确的文件不改写（幂等）。
  */
 private fun injectSchemaFields(
     file: File,
@@ -480,7 +505,7 @@ private fun injectSchemaFields(
 ): Boolean {
     val lines = file.readText().split("\n")
     val out = transformSchemaLines(lines, fields, deleteCandidateKind) ?: return false
-    if (out != lines) file.writeText(out.joinToString("\n"))
+    if (out != lines && !writeInjectFileAtomically(file, out.joinToString("\n"))) return false
     return true
 }
 

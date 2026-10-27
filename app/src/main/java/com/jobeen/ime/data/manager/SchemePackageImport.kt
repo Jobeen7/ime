@@ -1671,8 +1671,15 @@ object SchemePackageImport {
     /**
      * UI 导入统一事务编排（runImport 唯一入口，替代原位 importPackage）：
      * 解压→规划→事务换位→切指针→镜像→换位后注入→部署→选首位新方案。
-     * 失败语义：换位前任何失败目标原样；部署 FAILED 时内容回滚（备份恢复）；
-     * 部署超时只由调用方回滚指针+镜像，内容不动（孤儿仍在跑，绝不能删它脚下的目录）。
+     * 失败语义：换位前任何失败目标原样；换位后注入任一文件 skipped 时
+     * 在部署前返回 IO_ERROR（不部署、不选方案，不静默成功）；此时已换位
+     * 内容与 SWAPPED 备份/日志原样保留，指针＋镜像已切新目录且本路径
+     * 不回滚（调用方仅在 DEPLOY_FAILED/DEPLOY_TIMEOUT 时回滚指针＋镜像）。
+     * 部署 FAILED 时内容回滚（备份恢复）；部署超时只由调用方回滚指针+镜像，
+     * 内容不动（孤儿仍在跑，绝不能删它脚下的目录）。超时孤儿随后完成时
+     * 由引擎侧孤儿收尾当场对齐（RimeEngine deployAndAwait 作业体在发
+     * Finish 前重读指针＋镜像、变了则重编当前指针目录），不一致不留到
+     * 下次部署；本函数的部署 lambda 只返回一次结果，仍无孤儿完成回调。
      * 暂存 staging 成功失败都删（extractZip 失败时已自删，finally 删是幂等）；
      * 成功路径调 cleanupBackup + 清同目录 SWAPPED 残留；暂存 zip 由调用方 finally 删。
      * 取消重抛（部署等待处交付），不转失败 toast。
@@ -1780,6 +1787,18 @@ object SchemePackageImport {
                 writeMirror(enabled)
                 val inject = injectT9Fields(targetDir, newSchemaIds)
                 val optionsInject = injectOptionsSegments(targetDir, newSchemaIds)
+                // 换位后注入成功路径校验：任一文件 skipped 即整体失败，
+                // 不静默成功、不部署、不选方案。此时部署尚未启动，故无
+                // 孤儿风险；已换位内容与 SWAPPED 备份/日志原样保留
+                // （与 DEPLOY_FAILED 的新目录孤儿口径一致）；指针＋镜像
+                // 已切新目录，本路径不回滚（调用方仅在 DEPLOY_* 时回滚）。
+                val injectSkipped = (inject.skipped + optionsInject.skipped).distinct()
+                if (injectSkipped.isNotEmpty()) {
+                    return ImportOutcome.Failed(
+                        ImportFailure.IO_ERROR,
+                        RuntimeException("inject skipped: ${injectSkipped.joinToString(",")}"),
+                    )
+                }
                 // 部署超时按已安装字节和（D3b），不含跳过文件与注入增量。
                 val sizeByRaw = extracted.entries.associate { it.relPath to it.sizeBytes }
                 val installedBytes = transaction.installedFiles.sumOf {
