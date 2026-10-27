@@ -12,7 +12,6 @@ import com.jobeen.ime.data.database.dedupeClipboardByText
 import com.jobeen.ime.data.database.PhraseRecord
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
-import com.jobeen.ime.data.manager.SchemaManager
 import androidx.room.withTransaction
 import org.json.JSONArray
 import org.json.JSONObject
@@ -504,17 +503,22 @@ object BackupManager {
 
     /** 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误 */
     /**
-     * 判定偏好条目是否属于旧多目录方案残留，命中则不还原。
-     * - prefsName 为 scheme_dirs 时恒为 true，整文件内容都不还原；
-     * - 否则 key 以 SchemaManager.KEY_ENABLED_IDS + "_" 开头、且后缀非空时为 true（分键残留）；
-     * - 全局键 SchemaManager.KEY_ENABLED_IDS 本身恒为 false，保留还原。
+     * 判定偏好条目是否属于旧多目录状态残留，命中则不还原。
+     * 只有 prefsName 为 scheme_dirs 时为 true——该文件整表已由
+     * [isSkippedPrefsFile] 在创建 editor 之前跳过，此处是第二道 guard。
+     * 注意：schema_settings 里的分目录键 enabled_schema_ids_<目录>
+     * 不是残留，而是现行模型的一部分（SchemaManager.saveEnabledIds 双写
+     * 分目录键＋全局镜像键；重置与迁移路径读写初始目录的分目录键），必须
+     * 写回。旧实现把分目录键当残留跳过，又因还原先 editor.clear()，
+     * 导致已迁移设备还原后各目录自定义顺序丢失、回落目录方案表顺序，
+     * 且全局镜像键兜不了底：各目录顺序只存在各自的分目录键里，而
+     * scheme_dirs 整表不还原、目标机 current_dir 未必等于备份时目录，
+     * 镜像又只含备份时当前目录一家的顺序。
      * （表名取备份载荷里的字面名，不跟随代码常量改名：旧备份里的
      * scheme_dirs 表无论现常量为何值，都必须跳过。）
      */
     internal fun isLegacyMultiDirPref(prefsName: String, key: String): Boolean {
-        if (prefsName == "scheme_dirs") return true
-        val prefix = SchemaManager.KEY_ENABLED_IDS + "_"
-        return key.startsWith(prefix) && key.length > prefix.length
+        return prefsName == "scheme_dirs"
     }
 
     /**
@@ -571,8 +575,10 @@ object BackupManager {
             val editor = appContext.getSharedPreferences(name, Context.MODE_PRIVATE).edit()
             editor.clear()
             for ((key, value) in entries) {
-                // 旧多目录方案残留不还原（见 isLegacyMultiDirPref）；
-                // 其余条目按原口径整表覆盖。
+                // 旧多目录状态文件条目不还原（见 isLegacyMultiDirPref；
+                // scheme_dirs 整表已在循环开头跳过，此处是第二道 guard）。
+                // schema_settings 的分目录键是现行模型，必须写回，
+                // 不再按旧口径跳过。
                 if (isLegacyMultiDirPref(name, key)) continue
                 putPrefValue(editor, key, value)
             }
