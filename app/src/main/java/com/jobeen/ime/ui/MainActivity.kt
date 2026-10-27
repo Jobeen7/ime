@@ -68,6 +68,11 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        // 跟随系统主题的迁移已落到共享入口
+        // KeyboardManager.Theme（getMode 读即迁移）：此处在
+        // setContent 之前再显式迁一次，组合副作用不再留在
+        // setContent 内；直启其它页不依赖本页也已迁完。
+        KeyboardManager.Theme.migrateToSystem(this)
         imeConfiguredState.value = isImeConfigured()
 
         val initState = ImeApplication.getInstance().state.value
@@ -80,17 +85,8 @@ class MainActivity : ComponentActivity() {
         setContent {
             val deployRunning by EngineDeployState.running.collectAsStateWithLifecycle()
             val syncRunning by FabSyncState.running.collectAsStateWithLifecycle()
-            // 应用主题已删除（Lee 2026-10-25 定）：恒跟随系统。旧手动值
-            // 在此一次性迁回跟随系统，其余页面读同一偏好即跟随。
-            if (KeyboardManager.Theme.getMode(this@MainActivity) !=
-                KeyboardManager.Theme.MODE_SYSTEM
-            ) {
-                KeyboardManager.Theme.setMode(
-                    this@MainActivity,
-                    KeyboardManager.Theme.MODE_SYSTEM,
-                )
-            }
-
+            // 应用主题已删除：恒跟随系统（迁移见
+            // KeyboardManager.Theme.migrateToSystem / getMode）。
             ImeTheme(themeMode = KeyboardManager.Theme.MODE_SYSTEM) {
                 MainScreen(
                     onOpenImeSetup = {

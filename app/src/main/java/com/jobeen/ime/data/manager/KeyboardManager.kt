@@ -16,9 +16,23 @@ object KeyboardManager {
         const val MODE_LIGHT = 1
         const val MODE_DARK = 2
 
+        /**
+         * 应用主题已删除（恒跟随系统）：旧手动值（LIGHT/DARK）在此
+         * 一次性迁回跟随系统，幂等。迁移落在本共享读入口而非某
+         * 个 Activity：全部页面都经 getMode 读模式，直启的其它页
+         * （任务恢复、键盘内直启等，不经过 MainActivity）首次读取
+         * 即已迁完，不再短暂沿用旧模式。
+         */
+        fun migrateToSystem(context: Context) {
+            val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            if (prefs.getInt("$PREFIX.mode", MODE_SYSTEM) != MODE_SYSTEM) {
+                setMode(context, MODE_SYSTEM)
+            }
+        }
+
         fun getMode(context: Context): Int {
-            return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getInt("$PREFIX.mode", MODE_SYSTEM)
+            migrateToSystem(context)
+            return MODE_SYSTEM
         }
 
         fun setMode(context: Context, mode: Int) {
