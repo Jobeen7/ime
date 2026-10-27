@@ -523,7 +523,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 与 deployAndAwait（先 deployMutex 后 deployGateLock）无环。
         synchronized(deployGateLock) {
             scope.cancel()
-            SchemeDeployState.isDeploying = false
             EngineDeployState.setRunning(false)
             EngineDeployState.setOrphanRunning(false)
         }
@@ -988,7 +987,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 的 running 标志除此之外无任何复位方——作业体内的
                 // finally 根本不会执行。此前该路径让 running 永久滞留
                 // 真，守门与 FAB 部署永久走“忙”路径。回调只复位
-                // running：Reload 不置 isDeploying、不记孤儿。
+                // running：不记孤儿。
                 sendDeployJob(
                     block = {
                         EngineDeployState.setRunning(true)
@@ -1913,7 +1912,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      *   waitingGaveUp 放闸——孤儿仍在编译，放闸会让更新换位撞上它。
      *   凭证 CAS 使重复释放无害，丢弃回调与等待方 finally 的双放不
      *   会误清后来的持有者。
-     * - 置位 SchemeDeployState.isDeploying 与 EngineDeployState.setRunning(true)，
+     * - 置位 EngineDeployState.setRunning(true)，
      *   标志由部署作业收尾复位（先复位再 complete，等待方醒来时状态已一致）。
      * - 通过 sendDeployJob 串行投递任务：deploy() -> joinMaintenanceThread() ->
      *   合成 Deploy Finish（与 Reload 同一收尾）。
@@ -1958,7 +1957,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 scope.isActive,
             )
             if (ok) {
-                SchemeDeployState.isDeploying = true
                 EngineDeployState.setRunning(true)
             }
             ok
@@ -1995,7 +1993,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 标志先于 complete 复位：等待方醒来时状态已一致，
                         // 不会把刚完成的部署误判为忙；以下均为非挂起调用，
                         // 作业取消也不会打断这段收尾。
-                        SchemeDeployState.isDeploying = false
                         EngineDeployState.setRunning(false)
                         EngineDeployState.setOrphanRunning(false)
                         deferred.complete(result)
@@ -2003,20 +2000,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 兜底复位（幂等）：complete 前后的任何异常路径都不滞留标志。
                         // 等待方已放弃时（超时/取消，孤儿仍在跑）由作业体放闸；
                         // 否则放闸归等待方 finally——凭证 CAS 使双放无害。
-                        SchemeDeployState.isDeploying = false
                         EngineDeployState.setRunning(false)
                         EngineDeployState.setOrphanRunning(false)
                         if (waitingGaveUp.get()) UpdateImportGate.release(gateToken)
                     }
                 },
                 // 作业体被就绪门丢弃：等待方立即得 FAILED，不空等超时、
-                // 不记孤儿；三项标志复位。孤儿复位在此是安全的：孤儿
+                // 不记孤儿；两项标志复位。孤儿复位在此是安全的：孤儿
                 // 标志的本意是“可能有部署在跑”，而被丢弃的作业已死；
                 // 即使另一路等待方此前已因超时记了孤儿，jobs 消费是
                 // 串行的，native 部署永不并发，新部署至多多一次排队
                 // 执行，远好于孤儿永久钉死（见报告契约审计）。
                 onDropped = {
-                    SchemeDeployState.isDeploying = false
                     EngineDeployState.setRunning(false)
                     EngineDeployState.setOrphanRunning(false)
                     deferred.complete(DeployAwaitResult.FAILED)
@@ -2029,7 +2024,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 时为 FAILED 且不记孤儿，见 deployWaitTimeoutResult。
                 val timeoutResult = deployWaitTimeoutResult(scope.isActive)
                 if (timeoutResult == DeployAwaitResult.FAILED) {
-                    SchemeDeployState.isDeploying = false
                     EngineDeployState.setRunning(false)
                     EngineDeployState.setOrphanRunning(false)
                 } else {
@@ -2041,7 +2035,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
         } catch (e: CancellationException) {
             if (!scope.isActive) {
-                SchemeDeployState.isDeploying = false
                 EngineDeployState.setRunning(false)
                 EngineDeployState.setOrphanRunning(false)
             } else {
