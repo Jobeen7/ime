@@ -38,7 +38,7 @@ sealed interface UpdateCheckResult {
         val apkUrl: String,
         val apkSize: Long,
         val pageUrl: String,
-        /** 资产 SHA-256（hex）；GitHub 未提供时为空，此时回退到大小+签名校验 */
+        /** 资产 SHA-256（hex）；GitHub 未提供时为空，此时下载环节仅做大小校验，签名不一致由系统安装器拒绝 */
         val apkSha256: String = "",
     ) : UpdateCheckResult
 }
