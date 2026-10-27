@@ -1,6 +1,6 @@
-# SPDX-FileCopyrightText: 2015 - 2024 Rime community
+# SPDX-FileCopyrightText: 2026 Jime contributors
 #
-# SPDX-License-Identifier: GPL-3.0-or-later
+# SPDX-License-Identifier: BSD-3-Clause
 
 set(Marisa_FOUND TRUE)
 set(Marisa_LIBRARY marisa)
