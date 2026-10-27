@@ -174,6 +174,16 @@ fun MainScreen(
             fabFaded = true
         }
     }
+    // 运行开始自动收起：任一运行源起跑（fabAnyRunning 由 false
+    // 变 true）时，若扇出正展开则收起；已收起时不写状态，无额外
+    // 副作用；运行结束不自动再展开。fabExpanded 刻意不进键：触发
+    // 点只应是运行状态变化，而非扇出自身的开关。运行指示与上
+    // 述变淡 effect 均不动。
+    LaunchedEffect(fabAnyRunning) {
+        if (fabAnyRunning && fabExpanded) {
+            fabExpanded = false
+        }
+    }
     val fabAlpha by animateFloatAsState(
         targetValue = if (fabFaded) 0.4f else 1f,
         label = "fabFade",
