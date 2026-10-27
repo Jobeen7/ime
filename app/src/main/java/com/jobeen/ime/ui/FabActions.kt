@@ -5,6 +5,7 @@ package com.jobeen.ime.ui
 import android.content.Context
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.SchemeDirs
@@ -12,6 +13,8 @@ import com.jobeen.ime.data.manager.SchemeEnabled
 import com.jobeen.ime.data.manager.awaitSchemasReady
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.engine.EngineFactory
+import com.jobeen.ime.engine.IEngine
+import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
@@ -45,16 +48,53 @@ object FabSyncState {
  * 类；结果 surfacing 与原两处一致：Toast + [RimeSyncPrefs.postNotice]
  *（键盘下次出现时显示），同步未配置时回调给调用方处理导航。
  *
- * 部署：走引擎统一部署路径（Action.Reload，进作业队列串行执行），
+ * 部署：走引擎统一部署路径（deployAndAwait，进作业队列串行执行），
  * 不直连会话 deploy()（会打断进行中的切换部署编译，见原 MainActivity
- * 注释）。转圈状态直接订阅 [EngineDeployState.running]：reload() 入口
- * 即同步置位，覆盖动作排队等待的窗口，作业 finally 复位；完成判定
- * 仍等引擎方案表就绪（每 2s 轮询，最多 10 分钟），超时按失败处理。
+ * 注释）。转圈状态直接订阅 [EngineDeployState.running]：部署入口
+ * 即同步置位，作业 finally 复位；完成判定以部署作业的 Finish/失败
+ * 信号为准（deployAndAwait 的 COMPLETED），方案表非空只作辅助条件：
+ * COMPLETED 后仍须方案表非空才报成功，任一不满足都按失败处理。
+ * 丢弃（忙/交叉闸/作用域已死）、编译失败、超时在跑一律不是成功。
  */
 object FabActions {
 
     /** 同步下载后部署时、等候进行中部署结束的上限：与 deploy() 的等候上限同口径。 */
     private const val DEPLOY_WAIT_TIMEOUT_MS = 600_000L
+
+    /**
+     * 一次部署并判定成败：以部署作业的 Finish/失败信号为准，方案表
+     * 非空只作辅助条件、不能单独定成功。
+     * deployAndAwait 的 COMPLETED = 部署作业走完 deploy()+join 并发出
+     * Finish；FAILED = 入口被挡（忙/孤儿/交叉闸/作用域已死）、作业被丢弃
+     * 或编译失败；TIMEOUT_RUNNING = 等候超时、作业仍在后台跑（记孤儿，
+     * 下次部署会被忙门挡下）。三者中只有 COMPLETED 能走向成功，且
+     * 成功还须方案表非空（COMPLETED 后按旧口径 2s 间隔轮询复核，
+     * 上限同 DEPLOY_WAIT_TIMEOUT_MS；表恒空说明部署产出无效，仍算
+     * 失败）。本函数不捕获 CancellationException（调用方取消时穿透；
+     * sync() 外层 catch 的既有捕获行为不在此改）。
+     */
+    private suspend fun deployAndCheckSchemas(engine: IEngine?): Boolean {
+        val result = (engine as? RimeEngine)
+            ?.deployAndAwait(DEPLOY_WAIT_TIMEOUT_MS)
+            ?: DeployAwaitResult.FAILED
+        if (result != DeployAwaitResult.COMPLETED) {
+            Timber.w("FAB deploy not completed: $result")
+            return false
+        }
+        val ready = awaitSchemasReady(
+            poll = {
+                runCatching {
+                    EngineFactory.current()?.schemasList()?.isNotEmpty() == true
+                }.getOrDefault(false)
+            },
+            timeoutMs = DEPLOY_WAIT_TIMEOUT_MS,
+            intervalMs = 2000L,
+        )
+        if (!ready) {
+            Timber.w("FAB deploy completed but schemas still empty")
+        }
+        return ready
+    }
 
     fun deploy(context: Context, scope: CoroutineScope) {
         if (EngineDeployState.isRunning()) {
@@ -74,21 +114,11 @@ object FabActions {
             SchemeEnabled.normalizeCustomFileToMapFormat(java.io.File(dir, "default.custom.yaml"))
         }
         scope.launch {
-            runCatching { engine.reload() }
-            val ready = awaitSchemasReady(
-                poll = {
-                    runCatching {
-                        EngineFactory.current()?.schemasList()?.isNotEmpty() == true
-                    }.getOrDefault(false)
-                },
-                timeoutMs = 600_000L,
-                intervalMs = 2000L,
-            )
-            if (ready) {
+            val deployed = deployAndCheckSchemas(engine)
+            if (deployed) {
                 ToastUtil.showToast(context.getString(R.string.fab_deploy_done))
                 RimeSyncPrefs.postNotice(context, context.getString(R.string.fab_deploy_done))
             } else {
-                Timber.w("FAB deploy timed out waiting for schemas")
                 ToastUtil.showToast(context.getString(R.string.fab_deploy_failed))
                 RimeSyncPrefs.postNotice(context, context.getString(R.string.fab_deploy_failed))
             }
@@ -96,11 +126,11 @@ object FabActions {
     }
 
     /**
-     * 同步下载后的顺序部署：与 deploy() 同机制（Action.Reload 进作业
-     * 队列串行 + 等方案表就绪），但跑在同步协程内、顺序等完成。
-     * 部署进行中时先等它结束再 reload（reload 虽串行排队，但
-     * awaitSchemasReady 会被旧部署的方案表误报为就绪）；等候上限与
-     * deploy() 同口径。部署失败只记日志 + 下次键盘出现时通知，不
+     * 同步下载后的顺序部署：与 deploy() 同机制（deployAndAwait 进作业
+     * 队列串行 + COMPLETED 后方案表复核），但跑在同步协程内、顺序等完成。
+     * 部署进行中时先等它结束再部署（旧部署的方案表会误报为就绪，
+     * 故先等 running 清零；等候上限与 deploy() 同口径；仍在跑则跳过
+     * 本次部署）。部署失败只记日志 + 下次键盘出现时通知，不
      * 中断后续词典同步（词典与方案相互独立；下载的文件已落盘，
      * 下次部署即生效）。引擎不可用时直接返回，词典同步自会报
      * 引擎未就绪。
@@ -125,18 +155,8 @@ object FabActions {
             val dir = java.io.File(DataManager.schemeDirsRoot, SchemeDirs.currentDirName(context))
             SchemeEnabled.normalizeCustomFileToMapFormat(java.io.File(dir, "default.custom.yaml"))
         }
-        runCatching { engine.reload() }
-        val ready = awaitSchemasReady(
-            poll = {
-                runCatching {
-                    EngineFactory.current()?.schemasList()?.isNotEmpty() == true
-                }.getOrDefault(false)
-            },
-            timeoutMs = 600_000L,
-            intervalMs = 2000L,
-        )
-        if (!ready) {
-            Timber.w("FAB sync: deploy timed out waiting for schemas")
+        if (!deployAndCheckSchemas(engine)) {
+            Timber.w("FAB sync: deploy failed")
             RimeSyncPrefs.postNotice(context, context.getString(R.string.fab_deploy_failed))
         }
     }
