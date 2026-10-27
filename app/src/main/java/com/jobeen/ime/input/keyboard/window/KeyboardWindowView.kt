@@ -686,8 +686,14 @@ class KeyboardWindowView(
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        // 旋转/分屏等配置变化后全高可能已变，缓存失效待下次查询重算
+        // 旋转/分屏等配置变化后全高可能已变，缓存失效待下次查询重算；
+        // 底部边距同属窗口几何缓存一并失效（0 为未缓存哨兵，resolve 时
+        // 重算，insets 监听也会回填）。注意与 refreshColors() 内的清零
+        // 不是重复：那是配色全量刷新路径（且服务侧只在配色实际变化时
+        // 才走），无配色变化的纯旋转/分屏此前走不到那里，旧边距被
+        // resolveBottomInset() 的 cached > 0 短路直接复用。
         cachedFullScreenHeight = -1
+        cachedBottomInset = 0
     }
 
     private fun dpToPx(dp: Int): Int {
