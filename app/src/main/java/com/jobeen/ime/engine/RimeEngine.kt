@@ -29,6 +29,7 @@ import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.SchemaManager
+import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.engine.event.KeyEvent
 import com.jobeen.ime.engine.event.KeyModifiers
 import com.jobeen.ime.engine.rime.host.BehaviorHost
@@ -1916,6 +1917,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      *   标志由部署作业收尾复位（先复位再 complete，等待方醒来时状态已一致）。
      * - 通过 sendDeployJob 串行投递任务：deploy() -> joinMaintenanceThread() ->
      *   合成 Deploy Finish（与 Reload 同一收尾）。
+     * - 超时孤儿对齐（案-O5）：作业体在首次部署编完后、发 Finish 之前，
+     *   若等待方已放弃且指针目录＋镜像快照相对作业启动时变了（调用方
+     *   超时回滚：切换/导入回滚指针＋镜像，管理页回滚同目录 custom＋
+     *   镜像），说明 native 表编的是已回滚掉的目标内容——当场再跑一次
+     *   deploy() + joinMaintenanceThread()，重编当前指针目录内容，
+     *   Finish 只发一次（对齐后的那次）。快照不变时（FAB 等无回滚的
+     *   超时）不重编；快照读失败时按不变处理、走旧行为，绝不因一次
+     *   偏好读取失败把已成功的部署打成 FAILED。对齐跑在同一作业体
+     *   内：不调 deployAndAwait（入口守门会因 running 真而 FAILED，
+     *   且互斥/守门锁序不容作业内重入），不新开协程/作用域、不拿新
+     *   锁，running/orphanRunning 在对齐结束前保持真、新部署仍被
+     *   守门挡下，闸的释放仍归作业体 finally（切换路）或等待方
+     *   finally（导入路不持闸）。重选不另做：Finish 收尾（引擎内
+     *   镜像为空时回写、键盘侧按盘＋镜像刷新选首位）已覆盖选方案。
      * - 作业在就绪门处被丢弃（引擎已 STOPPED）时丢弃回调立即完成
      *   deferred 为 FAILED：此前 deferred 永不完成，等待方空等满
      *   整个 timeoutMs（180–1800 秒）才返回 TIMEOUT_RUNNING 并记
@@ -1969,6 +1984,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 等待方是否已放弃等待（超时/取消）：放弃后作业仍在跑，
         // 放闸归作业体收尾；未放弃时放闸归等待方 finally。
         val waitingGaveUp = java.util.concurrent.atomic.AtomicBoolean(false)
+        // 孤儿对齐快照读点（案-O5）：指针目录名＋镜像原始串。快照
+        // 在作业体内 deploy() 之前现读（最贴近 startRime 读 userDataDir
+        // 的时点），而非入口处取值——入口到作业执行之间指针仍可能被
+        // 换位。读失败返回 null，判定函数按“不变”处理（见下）。
+        val readDeployTarget: () -> OrphanDeployTarget? = {
+            runCatching {
+                val ctx = context ?: return@runCatching null
+                OrphanDeployTarget(
+                    dir = SchemeDirs.currentDirName(ctx),
+                    mirror = ctx.getSharedPreferences(
+                        SchemaManager.PREFS_NAME, Context.MODE_PRIVATE
+                    ).getString(SchemaManager.KEY_ENABLED_IDS, "") ?: "",
+                )
+            }.getOrNull()
+        }
         try {
             val deferred = CompletableDeferred<DeployAwaitResult>()
             sendDeployJob(
@@ -1977,8 +2007,26 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 作业取消只记失败、不重抛杀消费循环（原实现重抛，
                         // 循环若不捕获则整个 jobs 队列陪葬；记 FAILED 已足够诚实）。
                         val result = try {
+                            val targetBefore = readDeployTarget()
                             deploy()
                             joinMaintenanceThread()
+                            // 孤儿对齐（案-O5）：等待方已放弃（超时/取消
+                            // 分支已置 waitingGaveUp，置位发生在调用方
+                            // 回滚之前）且尾快照变了，才重编当前指针
+                            // 目录；否则 native 表即当前目标，不多编
+                            // 一次。重编失败走与首编相同的 FAILED 映
+                            // 射、不发 Finish（原失败路径同口径）。
+                            if (orphanDeployNeedsRealign(
+                                    waitingGaveUp.get(), targetBefore, readDeployTarget()
+                                )
+                            ) {
+                                Timber.w(
+                                    "Orphan deploy target changed during wait; " +
+                                        "redeploying current dir to realign native schemas"
+                                )
+                                deploy()
+                                joinMaintenanceThread()
+                            }
                             actions.send(
                                 Action.RimeMessage(
                                     RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
@@ -2119,3 +2167,29 @@ internal fun deployGateAllows(
  */
 internal fun deployWaitTimeoutResult(scopeActive: Boolean): DeployAwaitResult =
     if (scopeActive) DeployAwaitResult.TIMEOUT_RUNNING else DeployAwaitResult.FAILED
+
+/**
+ * 超时孤儿部署的目标快照：作业启动时读到的指针目录名＋镜像原始串。
+ * 镜像比原始串（不解析成列表）：回滚写镜像与快照读同一偏好键、同一
+ * 拼接格式，串相等即启用表未变；串不等即回滚（或等价改动）发生。
+ */
+internal data class OrphanDeployTarget(val dir: String, val mirror: String)
+
+/**
+ * 孤儿对齐判定（案-O5，纯函数，单元测试覆盖）：
+ * - 等待方未放弃（正常完成）时恒 false：调用方仍在等结果，指针
+ *   变动不是回滚，且多编一次会改完成语义、浪费一次全量编译。
+ * - 等待方已放弃但快照不变时 false：无回滚的超时（如 FAB 部署），
+ *   native 表即当前目标，重编纯属浪费。
+ * - 等待方已放弃且指针或镜像任一变了时 true：切换/导入回滚指针＋
+ *   镜像、管理页回滚同目录 custom＋镜像，native 表编的是已回滚掉
+ *   的内容，必须在孤儿收尾当场重编当前指针目录，不留到下次部署。
+ * - 任一快照读不到（null）时 false：无法证明回滚发生，盲目重编会
+ *   把无回滚的超时也拖进双倍编译；读失败的部署走旧行为（Finish
+ *   照发、结果 COMPLETED），残余只在快照读点本身，不扩散。
+ */
+internal fun orphanDeployNeedsRealign(
+    waitingGaveUp: Boolean,
+    before: OrphanDeployTarget?,
+    after: OrphanDeployTarget?,
+): Boolean = waitingGaveUp && before != null && after != null && before != after

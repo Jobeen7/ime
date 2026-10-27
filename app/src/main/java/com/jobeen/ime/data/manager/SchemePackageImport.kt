@@ -1810,7 +1810,9 @@ object SchemePackageImport {
                 val deployed = deploy(deployTimeoutMs(installedBytes))
                 if (deployed == DeployAwaitResult.TIMEOUT_RUNNING) {
                     // 超时：内容不动、备份与日志保留（SWAPPED 设计），只由调用方
-                    // 回滚指针+镜像；孤儿完成不写指针与镜像。
+                    // 回滚指针+镜像；孤儿完成不写指针与镜像。孤儿随后完成时
+                    // 由引擎侧孤儿收尾当场对齐（见 RimeEngine deployAndAwait），
+                    // 本函数无孤儿完成回调，对齐不在此处做。
                     return ImportOutcome.Failed(ImportFailure.DEPLOY_TIMEOUT)
                 }
                 if (deployed != DeployAwaitResult.COMPLETED) {
