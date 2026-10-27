@@ -131,7 +131,7 @@ class PredictionManager(private val context: Context) {
             if (contextStr.isEmpty()) continue
             // 查询段持锁：防止与 loadModels/destroy 并发导致 native use-after-free
             val words = mutex.withLock { pred.predictNextWords(contextStr) }
-            if (words.size >= 5) {
+            if (words.isNotEmpty()) {
                 val prefers = CandidatePreferCache.snapshot(context)
                 val candidates = words.mapIndexed { index, it ->
                     val gramScore = preparedCtx?.let { ctx -> db?.query(ctx, it.word) } ?: 0.0
