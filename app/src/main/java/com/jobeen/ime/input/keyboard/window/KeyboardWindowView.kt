@@ -661,18 +661,21 @@ class KeyboardWindowView(
         return (fullHeight * percent / 100).coerceAtLeast(minimumHeight)
     }
 
-    /** 全屏高度缓存：onMeasure/onLayout 一轮内会被多处反复调用，每次都查
+    /** 窗口高度缓存：onMeasure/onLayout 一轮内会被多处反复调用，每次都查
      * WindowManager 是纯浪费；同一窗口生命周期内结果不变，缓存复用。
-     * -1 表示未缓存；配置变化、窗口销毁、配色实际变化走全量刷新时失效。 */
+     * -1 表示未缓存；配置变化、窗口销毁、配色实际变化走全量刷新时失效。
+     * 注意：这里是「当前窗口」高度（分屏下即分屏窗口高），不是整机最大
+     * 高度——键盘高度百分比以此为基准，分屏下才不会被放大。函数名
+     * fullScreenHeight 为历史名称，仅保留以减少调用点改动。 */
     private var cachedFullScreenHeight: Int = -1
 
     private fun fullScreenHeight(): Int {
         cachedFullScreenHeight.takeIf { it > 0 }?.let { return it }
         val height = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            wm.maximumWindowMetrics.bounds.height()
+            wm.currentWindowMetrics.bounds.height()
         } else {
             val dm = android.util.DisplayMetrics()
-            @Suppress("DEPRECATION") (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.getRealMetrics(
+            @Suppress("DEPRECATION") (context.getSystemService(Context.WINDOW_SERVICE) as WindowManager).defaultDisplay.getMetrics(
                 dm
             )
             dm.heightPixels
@@ -705,7 +708,7 @@ class KeyboardWindowView(
     private fun computeBottomInset(): Int {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             val insets = WindowInsetsCompat.toWindowInsetsCompat(
-                wm.maximumWindowMetrics.windowInsets, this
+                wm.currentWindowMetrics.windowInsets, this
             )
             val navBars = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
             val mandatory = insets.getInsets(WindowInsetsCompat.Type.mandatorySystemGestures())
