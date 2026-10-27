@@ -797,8 +797,11 @@ object SchemePackageImport {
      * 超限时删掉暂存目录并返回失败，不留半解压。路径穿越条目跳过并
      * 记入 skippedTraversal 样例（供规划页告警，见 [ExtractedPackage]）；
      * 落盘另有 canonical 守卫。边界失败一律用新增变体，不复用 NOT_ZIP；
-     * 暂存删/建失败与写出 IO 错误走 IO_ERROR；只有 zip 格式本身损坏
-     * （ZipException）才走 NOT_ZIP。
+     * 暂存删/建失败（预检）与条目写出 IO 错误走 IO_ERROR；zip 格式本身
+     * 损坏（ZipException，含条目数据损坏）走 NOT_ZIP；其余未预料的
+     * Exception 兜底同样走 NOT_ZIP（InterruptedException 与
+     * CancellationException 除外，均重抛）——不要把本段读成“只有
+     * ZipException 才走 NOT_ZIP”，那与实际兜底分支不符。
      */
     fun extractZip(zipFile: File, stagingDir: File): ExtractResult {
         if (zipFile.length() > MAX_ZIP_BYTES) return ExtractResult.Failed(ExtractFailure.ZIP_TOO_LARGE)
