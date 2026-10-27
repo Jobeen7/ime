@@ -1524,6 +1524,18 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                                     }
                                 }
                                 manageDeploying = false
+                                // S6：盘上表已恢复，页内内存态必须同步回盘上顺序。
+                                // 旧代码把 loadSchemas 放在取消重抛之后，保存协程被
+                                // 取消时只恢复了磁盘、内存仍滞留新顺序（管理页草稿
+                                // 以 enabledSchemas 为 initialEnabled 重建，也跟着滞留）。
+                                // 此处先同步恢复两列（与保存时乐观更新同口径、主线程），
+                                // 再重抛取消；非取消路径随后仍走 loadSchemas 从盘上
+                                // 重算（含当前方案置顶），覆盖本次同步恢复。
+                                val prevIds = prevEnabled.map { it.id }.toSet()
+                                enabledSchemas.clear()
+                                enabledSchemas.addAll(prevEnabled)
+                                availableSchemas.clear()
+                                availableSchemas.addAll(all.filter { it.id !in prevIds })
                                 if (e is kotlinx.coroutines.CancellationException) throw e
                                 manageDeployError = if (deployTimedOut) {
                                     msgManageDeployTimeout
