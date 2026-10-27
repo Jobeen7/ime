@@ -978,7 +978,15 @@ class ClipboardView(
         val cleanText = text.replace('\n', ' ')
         var start = 0
         while (start < cleanText.length && lines.size < maxLines) {
+            // 剪-O2：首字放不下时 Paint.breakText 返回 0，旧代码照此
+            // 截出空行且 start 不推进——行布局路径产空白行（maxLines
+            // 封顶才停）、编辑路径（maxLines=Int.MAX_VALUE）理论上
+            // 可不推进卡死。强制进 1 字：每轮 start 严格递增，循环
+            // 至多 length 轮必终止，且每行至少含 1 个源字符、永不
+            // 产空白行（count==0 时 1 ≤ 剩余长度，substring 安全；
+            // breakText 正常返回值本就不超剩余长度）。
             val count = paint.breakText(cleanText, start, cleanText.length, true, maxWidth, null)
+                .coerceAtLeast(1)
             var line = cleanText.substring(start, start + count)
             start += count
             if (start < cleanText.length && lines.size == maxLines - 1) {
