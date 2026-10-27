@@ -291,8 +291,16 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                         updateInfo = result
                     }
                 }
-                UpdateCheckResult.Latest -> toast(msgLatest)
-                UpdateCheckResult.Failed -> toast(msgCheckFailed)
+                UpdateCheckResult.Latest -> {
+                    // 下载进行中不清除：卡片内含下载进度行与安装按钮，
+                    // 清掉会藏起进行中的下载（检查按钮在下载时仍可用）。
+                    if (!downloading) updateInfo = null
+                    toast(msgLatest)
+                }
+                UpdateCheckResult.Failed -> {
+                    if (!downloading) updateInfo = null
+                    toast(msgCheckFailed)
+                }
             }
         }
     }
