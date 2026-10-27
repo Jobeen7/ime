@@ -12,6 +12,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -263,11 +264,30 @@ object ModelDownloader {
         val joiner: File,
     )
 
+    /**
+     * 语-O2：下载器本身的进程内互斥（协程 Mutex，与本文件 suspend +
+     * Dispatchers.IO 风格一致）。UI 层已有「下载中禁重复触发」，但
+     * Activity 重建后新旧 composition 可并发调 downloadModel→download，
+     * 两路会同时写同一组归档/staging/模型路径。持锁范围覆盖整次下载
+     * （下载＋解压＋安装）：第二路挂起等待、不占线程，可取消
+     * （等待中取消抛 CancellationException，与现有取消口径一致）；
+     * 等到锁后自己再完整跑一遍（归档按 SHA 复用、安装换名幂等），
+     * 返回自己这一遍的结果。checkForUpdate 不写模型文件、不持此锁
+     * （只读＋volatile 公示目标）。锁只在 download 内单次获取，
+     * 体内无任何再取此锁的调用，无嵌套死锁。
+     */
+    private val downloadMutex = Mutex()
+
     suspend fun download(
         context: Context,
         onProgress: (Progress) -> Unit = {},
         onExtract: (current: Long, total: Long) -> Unit = { _, _ -> },
-    ): Boolean = withContext(Dispatchers.IO) {
+    ): Boolean {
+        // 锁在 withContext 之外获取：等待挂起在调用方协程、不占线程；
+        // 持锁期间体内的 return@withContext 仍走 finally 解锁。
+        downloadMutex.lock()
+        try {
+            return withContext(Dispatchers.IO) {
         // 目标与下载地址都由本类按 GitHub 官方资产解析（见 resolveTarget），
         // 不再向清单服务器要包；代理前缀形态与旧清单给的地址一致（国内
         // 直连 github.com 下载 Release 资产基本不可达），完整性不依赖
@@ -310,6 +330,10 @@ object ModelDownloader {
         // 安装成功后记录目标 identity，供后续检查更新时比对
         storeManifestId(context, target.identity)
         true
+            }
+        } finally {
+            downloadMutex.unlock()
+        }
     }
 
     private suspend fun ensureArchive(
