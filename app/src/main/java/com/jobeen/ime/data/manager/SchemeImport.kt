@@ -112,7 +112,15 @@ fun isProtectedEntry(rel: String): Boolean {
  * - 写盘成功记 installed 并累计写出字节数；相对路径只有一段且以 `.schema.yaml` 结尾时，
  *   把文件名去掉后缀的主干记入 newSchemaIds（保持顺序，不去重）。
  * - ZipFile 必须可靠关闭。
+ *
+ * @deprecated 旧编排入口：唯一入口为 SchemePackageImport.importPackageTransaction，
+ * 新代码勿用；本文件内旧 importPackage 仍内部调用它。本文件的 injectT9Fields、
+ * injectOptionsSegments、repairSchemeFiles、determineDirName 仍在生产使用，不受此影响。
  */
+@Deprecated(
+    message = "旧导入入口，唯一入口为 SchemePackageImport.importPackageTransaction",
+    level = DeprecationLevel.WARNING,
+)
 fun extractZip(zipFile: File, targetDir: File): ExtractResult {
     targetDir.mkdirs()
     ZipFile(zipFile).use { zip ->
@@ -592,7 +600,15 @@ fun repairSchemeFiles(dir: File) {
  *   [ImportFailure.DEPLOY_TIMEOUT]，指针回滚由调用方负责（见 runImport，
  *   与切换失败同口径）；成功才选首个新方案。
  * - zipFile 本身由调用方负责删除（暂存）；取消（[CancellationException]）重抛。
+ *
+ * @deprecated 旧编排入口：唯一入口为 SchemePackageImport.importPackageTransaction，
+ * 新代码勿用；本文件内的 injectT9Fields、injectOptionsSegments、repairSchemeFiles、
+ * determineDirName 仍在生产使用，不受此影响。
  */
+@Deprecated(
+    message = "旧导入入口，唯一入口为 SchemePackageImport.importPackageTransaction",
+    level = DeprecationLevel.WARNING,
+)
 suspend fun importPackage(
     zipFile: File,
     fallbackName: String,
