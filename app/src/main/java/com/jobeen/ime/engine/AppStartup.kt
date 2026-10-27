@@ -155,7 +155,14 @@ object AppStartup {
         val app = context.applicationContext as ImeApplication
         app.notifyState(ImeApplication.AppState.ResourcePreparing)
         runBlocking(Dispatchers.IO) {
-            ResourceExtractorUtil.extract(context, RESOURCE_ASSET, destDir)
+            // extract 返回 false（任一单文件二次 rename 仍失败）即整体
+            // 失败：抛错让外层 runStep 记失败、resourcesReady=false、
+            // 本轮跳过引擎；版本标记写在成功之后，失败时不写，
+            // 下次启动重走解压（旧行为：extract 返回 Unit、无失败
+            // 信号，缺文件也会写标记、下次不再重解）。
+            if (!ResourceExtractorUtil.extract(context, RESOURCE_ASSET, destDir)) {
+                error("Resource extraction failed; version marker not written")
+            }
             versionFile.writeText("$currentVc:${md5.orEmpty()}")
         }
     }
