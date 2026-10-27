@@ -68,7 +68,7 @@ Jime 基于开源组件构建。本文件是随应用分发的第三方组件索
 |---|---|---|
 | 万象拼音方案与词库（amzxyz/rime-wanxiang） | 内置输入方案与词库、方案更新 | CC BY 4.0（见下） |
 | RIME-LMDG 语法模型（amzxyz） | 语法模型下载源 | 见其仓库说明 |
-| predict.marisa 预测模型 | 内置候选预测模型数据（marisa-trie 格式） | 沿用自此前内置包，历次换方案包时原样保留；大小与 sha256 登记见 tools/wanxiang-builtin/README.md。其最初出处与许可未能确证，标注待核 |
+| predict.marisa 预测模型 | 内置候选预测模型数据（marisa-trie 格式） | 内置万象方案包随包分发物（resource.zip 内 `model/predict.marisa`），不在官方 lite zip 内，历次换方案包时原样保留；大小 37,366,176 字节与 sha256 登记见 tools/wanxiang-builtin/README.md，build-resource.sh 打包时校验一致后才进新包 |
 
 万象拼音方案与词库由 amzxyz 维护（https://github.com/amzxyz/rime-wanxiang），以 Creative Commons Attribution 4.0 International（CC BY 4.0）许可发布，许可证全文见 https://creativecommons.org/licenses/by/4.0/ 。Jime 内置的方案文件包含本地修改（方案清单启用、布局字段注入、功能选项段与 T9 拼写规则调整，明细见 tools/wanxiang-builtin/README.md）。
 
