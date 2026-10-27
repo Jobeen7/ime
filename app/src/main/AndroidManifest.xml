@@ -6,7 +6,6 @@
         android:tag="@string/empty_attribution_tag"
         android:label="@string/attribution_label" />
 
-    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- App 内自更新：下载正式版 APK 后调起系统安装 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INTERNET" />
