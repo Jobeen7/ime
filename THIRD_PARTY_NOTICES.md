@@ -76,9 +76,9 @@ Jime 基于开源组件构建。本文件是随应用分发的第三方组件索
 
 | 组件 | 用途 | 许可证 |
 |---|---|---|
-| Xiaolai Mono（小赖字体等宽版） | 键盘等宽字体显示 | SIL OFL 1.1 |
+| Xiaolai Mono 子集（随应用分发的文件名为 `fonts/jime-mono-regular.ttf`） | 键盘等宽字体显示 | SIL OFL 1.1 |
 
-Xiaolai Mono：Copyright 2020-2024 LXGW (https://github.com/lxgw/kose-font)，Copyright 2014 Nozomi Seto (https://ja.osdn.net/projects/setofont/)。以 SIL Open Font License 1.1 发布，许可证全文见 `licenses/OFL-1.1.txt`（官方文本主页 https://openfontlicense.org ）。
+Xiaolai Mono：Copyright 2020-2024 LXGW (https://github.com/lxgw/kose-font)，Copyright 2014 Nozomi Seto (https://ja.osdn.net/projects/setofont/)。以 SIL Open Font License 1.1 发布，许可证全文见 `licenses/OFL-1.1.txt`（官方文本主页 https://openfontlicense.org ）。随应用分发的为该字体的子集：仅含 5 个码位（6 字形，含 .notdef），文件已改名 `jime-mono-regular.ttf`，不以原保留字体名分发；字体内部 nameID 未改动。
 
 ## 许可证全文索引
 

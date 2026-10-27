@@ -141,7 +141,7 @@ class InputBoxLayerView(
     private val titlePaint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.LEFT
         isFakeBoldText = true
-        typeface = FontManager.fromAsset(context, "fonts/xiaolai-mono-regular.ttf")
+        typeface = FontManager.fromAsset(context, "fonts/jime-mono-regular.ttf")
     }
     private val selectionPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     // onDraw 复用对象：旧实现每帧新建多个 Paint/RectF，且光标闪烁的静止期
