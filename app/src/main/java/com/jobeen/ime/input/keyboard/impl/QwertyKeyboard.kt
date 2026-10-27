@@ -10,6 +10,7 @@ import com.jobeen.ime.engine.event.KeyEvent
 import com.jobeen.ime.input.keyboard.key.AltTextKeyView
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
+import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.ImageKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
 import com.jobeen.ime.input.keyboard.key.alphabetKey
@@ -18,6 +19,7 @@ import com.jobeen.ime.input.keyboard.key.capsLockKey
 import com.jobeen.ime.input.keyboard.key.layoutSwitchKey
 import com.jobeen.ime.input.keyboard.key.peroidKey
 import com.jobeen.ime.input.keyboard.key.returnKey
+import com.jobeen.ime.input.keyboard.key.returnKeyVariantForTheme
 import com.jobeen.ime.input.keyboard.key.schemaSwitchKey
 import com.jobeen.ime.input.keyboard.key.spaceKey
 
@@ -25,7 +27,11 @@ import com.jobeen.ime.input.keyboard.key.spaceKey
 class QwertyKeyboard(
     context: Context,
     colors: KeyboardColors.ColorScheme,
-) : BaseKeyboard(context, colors, buildLayout()) {
+) : BaseKeyboard(
+    context,
+    colors,
+    buildLayout(returnKeyVariantForTheme(KeyboardColors.themeFor(context).id)),
+) {
 
     enum class CapsState { None, Once, Lock }
 
@@ -34,7 +40,7 @@ class QwertyKeyboard(
     companion object {
         const val NAME = "Qwerty"
 
-        fun buildLayout(): List<List<KeyDef>> {
+        fun buildLayout(returnVariant: Variant): List<List<KeyDef>> {
             return listOf(
                 listOf(
                     alphabetKey("q", "1"),
@@ -75,7 +81,7 @@ class QwertyKeyboard(
                     peroidKey(percentWidth = 0.13f),
                     spaceKey(percentWidth = 0.44f),
                     schemaSwitchKey(0.13f),
-                    returnKey(percentWidth = 0.15f),
+                    returnKey(percentWidth = 0.15f, variant = returnVariant),
                 ),
             )
         }

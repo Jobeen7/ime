@@ -15,6 +15,7 @@ import com.jobeen.ime.input.keyboard.key.layoutSwitchKey
 import com.jobeen.ime.input.keyboard.key.mixedAlphabetKey
 import com.jobeen.ime.input.keyboard.key.peroidKey
 import com.jobeen.ime.input.keyboard.key.returnKey
+import com.jobeen.ime.input.keyboard.key.returnKeyVariantForTheme
 import com.jobeen.ime.input.keyboard.key.schemaSwitchKey
 import com.jobeen.ime.input.keyboard.key.segmentKey
 import com.jobeen.ime.input.keyboard.key.sidePannelKey
@@ -24,7 +25,11 @@ import com.jobeen.ime.input.keyboard.key.spaceKey
 class T9Keyboard(
     context: Context,
     colors: KeyboardColors.ColorScheme,
-) : BaseKeyboard(context, colors, Layout), ISidePanelKeyboard {
+) : BaseKeyboard(
+    context,
+    colors,
+    buildLayout(returnKeyVariantForTheme(KeyboardColors.themeFor(context).id)),
+), ISidePanelKeyboard {
     private val fullWidthPunctuations = listOf("，", "。", "？", "！", "：", "~", "...")
     private val halfWidthPunctuations = listOf(",", ".", "!", "?", ":", "~", "...")
     var punctuations = fullWidthPunctuations
@@ -59,7 +64,9 @@ class T9Keyboard(
     companion object {
         const val NAME = "T9"
 
-        val Layout: List<List<KeyDef>> = listOf(
+        // 布局按构造时主题现算（不再是类加载时单例）：回车变体
+        // 随主题取，静态单例会在主题间串色——正是本次要修的根因
+        fun buildLayout(returnVariant: Variant): List<List<KeyDef>> = listOf(
             listOf(
                 sidePannelKey(rowSpan = 3, visableRow = 4),
                 segmentKey(percentWidth = 0.22333f),
@@ -77,7 +84,7 @@ class T9Keyboard(
                 mixedAlphabetKey("7", "PQRS", 0.22333f),
                 mixedAlphabetKey("8", "TUV", 0.22333f),
                 mixedAlphabetKey("9", "WXYZ", 0.22333f),
-                returnKey(percentWidth = 0.18f, rowSpan = 2),
+                returnKey(percentWidth = 0.18f, rowSpan = 2, variant = returnVariant),
             ),
             listOf(
                 layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f),

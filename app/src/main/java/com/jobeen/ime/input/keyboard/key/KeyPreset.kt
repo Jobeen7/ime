@@ -4,6 +4,7 @@ import android.graphics.Typeface
 import android.graphics.Typeface.BOLD
 import android.view.KeyEvent
 import com.jobeen.ime.R
+import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Border
@@ -191,17 +192,36 @@ fun symbolSwitchKey(percentWidth: Float): KeyDef = KeyDef(
     behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.LayoutSwitchAction(SymbolKeyboard.NAME))),
 )
 
-fun returnKey(percentWidth: Float, rowSpan: Int = 1): KeyDef = KeyDef(
+/**
+ * 回车键变体按主题取（2026-10-27 澄清的原意）：仅素白（light）
+ * 与暗夜（amoled）跟随普通键；其余主题（含落日、莫奈、自定义
+ * 主题）与未知 id 一律取 Accent（上游行为：落日橙色、莫奈主色）。
+ * 纯逻辑：不读偏好、不碰 Android 框架，可直接单测。
+ */
+fun returnKeyVariantForTheme(themeId: String): Variant =
+    if (themeId == KeyboardTheme.LIGHT_DEFAULT_ID ||
+        themeId == KeyboardTheme.DARK_DEFAULT_ID
+    ) {
+        Variant.Normal
+    } else {
+        Variant.Accent
+    }
+
+fun returnKey(
+    percentWidth: Float,
+    rowSpan: Int = 1,
+    variant: Variant = Variant.Accent,
+): KeyDef = KeyDef(
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_return,
         viewId = KeyView.button_return,
         percentWidth = percentWidth,
-        // 回车键与普通按键同色（Jobeen 指令）：不再用 Accent 变体
-        // （金色 #9C824A 底＋金色描边＋白前景），常态/按压/描边/图标
-        // 染色全部随普通键口径（keyBackground/keyPressed/
-        // keyBorderStroke/keyText）。Accent 变体本身保留在主题模型
-        // 里（方案弹窗等其他 accent 用途不动），只是回车不再取它
-        variant = Variant.Normal,
+        // 变体由调用方按当前主题传入（returnKeyVariantForTheme）：
+        // 素白/暗夜取 Normal（常态/按压/描边/图标染色全部随普通键
+        // 口径），其余主题取 Accent。缺省 Accent 即上游行为。
+        // Accent 变体本身保留在主题模型里（方案弹窗等其他 accent
+        // 用途不动），这里只改回车的取法
+        variant = variant,
         border = Border.Special,
         rowSpan = rowSpan,
         alignSpanEnd = rowSpan > 1,

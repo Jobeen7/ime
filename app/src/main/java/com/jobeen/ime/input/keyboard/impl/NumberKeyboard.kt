@@ -17,13 +17,18 @@ import com.jobeen.ime.input.keyboard.key.symbolSwitchKey
 import com.jobeen.ime.input.keyboard.key.miniSpaceKey
 import com.jobeen.ime.input.keyboard.key.resumeLayoutKey
 import com.jobeen.ime.input.keyboard.key.returnKey
+import com.jobeen.ime.input.keyboard.key.returnKeyVariantForTheme
 import com.jobeen.ime.input.keyboard.key.sidePannelKey
 
 @SuppressLint("ViewConstructor")
 class NumberKeyboard(
     context: Context,
     colors: KeyboardColors.ColorScheme,
-) : BaseKeyboard(context, colors, Layout), ISidePanelKeyboard {
+) : BaseKeyboard(
+    context,
+    colors,
+    buildLayout(returnKeyVariantForTheme(KeyboardColors.themeFor(context).id)),
+), ISidePanelKeyboard {
 
     init {
         this.onPossibleCandidatePinYin(emptyList())
@@ -37,7 +42,9 @@ class NumberKeyboard(
         // 0.18，数字列随之由 0.23333 收为 0.22333（与 T9 字母列
         // 同宽）；底行回车涨到 0.18 后，从宽键「0」扣回 0.03
         // （0.23333→0.20333），其余底行键不变
-        val Layout: List<List<KeyDef>> = listOf(
+        // 布局按构造时主题现算（不再是类加载时单例）：回车变体
+        // 随主题取，静态单例会在主题间串色——正是本次要修的根因
+        fun buildLayout(returnVariant: Variant): List<List<KeyDef>> = listOf(
             listOf(
                 sidePannelKey(rowSpan = 3, visableRow = 4),
                 commitKey("1", percentWidth = 0.22333f, fontSize = 22f),
@@ -64,7 +71,7 @@ class NumberKeyboard(
                 commitKey("0", percentWidth = 0.20333f, variant = Variant.Alternative),
                 commitKey(".", percentWidth = 0.13f, variant = Variant.Alternative),
                 atKey(percentWidth = 0.10333f),
-                returnKey(percentWidth = 0.18f),
+                returnKey(percentWidth = 0.18f, variant = returnVariant),
             ),
         )
     }
