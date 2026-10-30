@@ -88,21 +88,21 @@ class InputStatsFormatTest {
 
     @Test
     fun ratings_thresholdsAndZeroStateDefaults() {
-        // 零数据态与图示一致：速度无数据→C，准确率无数据→S+。
-        assertEquals("C", speedRating(null))
-        assertEquals("S+", accuracyRating(null))
-        assertEquals("S+", speedRating(400.0))
-        assertEquals("S", speedRating(300.0))
-        assertEquals("A", speedRating(200.0))
-        assertEquals("B", speedRating(120.0))
-        assertEquals("C", speedRating(60.0))
-        assertEquals("D", speedRating(59.9))
-        assertEquals("S+", accuracyRating(0.99))
-        assertEquals("S", accuracyRating(0.97))
-        assertEquals("A", accuracyRating(0.95))
-        assertEquals("B", accuracyRating(0.90))
-        assertEquals("C", accuracyRating(0.80))
-        assertEquals("D", accuracyRating(0.79))
+        // 2026-10-31 Jobeen 定：评级与段位统一用段位名，无数据为炼气期。
+        assertEquals("炼气期", speedRating(null))
+        assertEquals("炼气期", accuracyRating(null))
+        assertEquals("化神期", speedRating(400.0))
+        assertEquals("元婴期", speedRating(300.0))
+        assertEquals("金丹期", speedRating(200.0))
+        assertEquals("筑基期", speedRating(120.0))
+        assertEquals("炼气期", speedRating(60.0))
+        assertEquals("炼气期", speedRating(59.9))
+        assertEquals("化神期", accuracyRating(0.99))
+        assertEquals("元婴期", accuracyRating(0.97))
+        assertEquals("金丹期", accuracyRating(0.95))
+        assertEquals("筑基期", accuracyRating(0.90))
+        assertEquals("炼气期", accuracyRating(0.80))
+        assertEquals("炼气期", accuracyRating(0.79))
     }
 
     @Test

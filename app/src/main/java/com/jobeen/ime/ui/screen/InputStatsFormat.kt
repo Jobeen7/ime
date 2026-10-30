@@ -68,33 +68,31 @@ fun stageExpText(rank: InputStats.Rank): String {
 }
 
 /**
- * 迅速评级（全局最快速度驱动；无数据时为 C，与图示零数据态一致）。
- * 阈值（字／分钟）为提议口径，交回等否决：S+≥400、S≥300、
- * A≥200、B≥120、C≥60、D 其余。
+ * 迅速评级（全局最快速度驱动；与段位统一用段位名，2026-10-31 Jobeen 定）。
+ * 阈值（字／分钟）：化神≥400、元婴≥300、金丹≥200、筑基≥120、其余炼气；
+ * 无数据为炼气期。
  */
 fun speedRating(speed: Double?): String = when {
-    speed == null -> "C"
-    speed >= 400.0 -> "S+"
-    speed >= 300.0 -> "S"
-    speed >= 200.0 -> "A"
-    speed >= 120.0 -> "B"
-    speed >= 60.0 -> "C"
-    else -> "D"
+    speed == null -> "炼气期"
+    speed >= 400.0 -> "化神期"
+    speed >= 300.0 -> "元婴期"
+    speed >= 200.0 -> "金丹期"
+    speed >= 120.0 -> "筑基期"
+    else -> "炼气期"
 }
 
 /**
- * 精准评级（本年准确率推断值驱动；无数据时为 S+，与图示零数据
- * 态一致）。阈值（推断准确率）为提议口径，交回等否决：
- * S+≥99%、S≥97%、A≥95%、B≥90%、C≥80%、D 其余。
+ * 精准评级（本年准确率推断值驱动；与段位统一用段位名，2026-10-31 Jobeen 定）。
+ * 阈值（推断准确率）：化神≥99%、元婴≥97%、金丹≥95%、筑基≥90%、其余炼气；
+ * 无数据为炼气期。
  */
 fun accuracyRating(accuracy: Double?): String = when {
-    accuracy == null -> "S+"
-    accuracy >= 0.99 -> "S+"
-    accuracy >= 0.97 -> "S"
-    accuracy >= 0.95 -> "A"
-    accuracy >= 0.90 -> "B"
-    accuracy >= 0.80 -> "C"
-    else -> "D"
+    accuracy == null -> "炼气期"
+    accuracy >= 0.99 -> "化神期"
+    accuracy >= 0.97 -> "元婴期"
+    accuracy >= 0.95 -> "金丹期"
+    accuracy >= 0.90 -> "筑基期"
+    else -> "炼气期"
 }
 
 /**
