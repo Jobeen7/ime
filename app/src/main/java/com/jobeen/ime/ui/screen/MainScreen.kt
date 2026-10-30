@@ -69,9 +69,14 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.util.lerp
+import androidx.compose.foundation.border
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -92,8 +97,6 @@ import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
 
 /** 辅助触控式 FAB 深色：参考图外盘色，固定深灰，双主题同色（不跟随主题）。 */
-private val FabAssistiveDark = Color(0xFF202931)
-
 // 主钮 4 层实心圆颜色（原版录屏实测）：静止外盘/深环/浅环/
 // 中心，拖动时外盘/深环/浅环变亮、中心恒纯白。
 private val FabOuterRest = Color(0xFF182023)
@@ -568,8 +571,11 @@ private fun AssistiveTouchIcon(dragging: Boolean) {
     }
 }
 
-/** FAB 栈展开后的单个动作：圆形深色钮（辅助触控式，52dp）
- * ＋小字标签在下；图标为浅色。块 52dp、图标 26dp。 */
+/** FAB 栈展开后的单个动作：圆形玻璃钮（磨砂近似，52dp）
+ * ＋小字标签在下；块 52dp、图标 32dp。玻璃是近似实现：
+ * 半透明填充＋1dp 描边＋顶部高光渐变＋轻阴影，深浅按主题背景亮度判定；
+ * 不是 iOS 真液态玻璃（无实时折射、无背景实时模糊）。
+ * 图标与进度圈用 onSurface：浅色玻璃上白色看不见。 */
 @Composable
 private fun FabAction(
     label: String,
@@ -578,6 +584,11 @@ private fun FabAction(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
+    // 深浅按主题背景亮度判定，不跟随系统深浅色（自定义主题背景与系统可能不一致）。
+    val lightGlass = MaterialTheme.colorScheme.background.luminance() > 0.5f
+    val glassFill = if (lightGlass) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.18f)
+    val glassStroke = if (lightGlass) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.25f)
+    val glassHighlight = if (lightGlass) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.25f)
     Column(
         modifier = Modifier
             .clickable(enabled = enabled, onClick = onClick),
@@ -586,22 +597,34 @@ private fun FabAction(
         Box(
             modifier = Modifier
                 .size(52.dp)
+                .shadow(4.dp, CircleShape)
                 .clip(CircleShape)
-                .background(FabAssistiveDark),
+                .background(glassFill)
+                .drawBehind {
+                    drawRect(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(glassHighlight, Color.Transparent),
+                            startY = 0f,
+                            endY = size.height * 0.5f,
+                        ),
+                        size = size,
+                    )
+                }
+                .border(1.dp, glassStroke, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             if (running) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(26.dp),
-                    color = Color.White,
+                    color = MaterialTheme.colorScheme.onSurface,
                     strokeWidth = 2.dp,
                 )
             } else {
                 Icon(
                     painter = icon,
                     contentDescription = label,
-                    modifier = Modifier.size(26.dp),
-                    tint = Color.White,
+                    modifier = Modifier.size(32.dp),
+                    tint = MaterialTheme.colorScheme.onSurface,
                 )
             }
         }
