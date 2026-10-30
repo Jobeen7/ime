@@ -12,6 +12,7 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -89,6 +90,8 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -951,42 +954,43 @@ private fun AssistiveTouchIcon(dragging: Boolean) {
  * 半透明填充＋1dp 描边＋顶部高光渐变＋轻阴影，深浅按主题背景亮度判定；
  * 不是 iOS 真液态玻璃（无实时折射、无背景实时模糊）。
  * 图标与进度圈用 onSurface：浅色玻璃上白色看不见。
- * 符号不用 Icon/ImageVector：改 Canvas 手绘路径，只画符号本身、
- * 不经过矢量画笔与着色滤镜，杜绝符号外多余底形。 */
+ * 部署符号为用户提供的单向圆箭头 PNG（改细版），经 SrcIn 染成 onSurface；
+ * 同步符号为用户提供的双向圆箭头 SVG 转成的 Canvas 路径（64 视口），
+ * 以 onSurface 填充；两符号同色、笔触已对齐（128px 框下 10px 对 9.8px）。 */
 private enum class FabGlyph { DEPLOY, SYNC }
 
-/** 部署符号：向下箭头＋托盘（24 视口坐标，源自 Material Download 的两段路径）。 */
-private val deployGlyphPath = Path().apply {
-    moveTo(5f, 20f)
-    lineTo(19f, 20f)
-    lineTo(19f, 18f)
-    lineTo(5f, 18f)
-    close()
-    moveTo(19f, 9f)
-    lineTo(15f, 9f)
-    lineTo(15f, 3f)
-    lineTo(9f, 3f)
-    lineTo(9f, 9f)
-    lineTo(5f, 9f)
-    lineTo(12f, 16f)
-    close()
-}
-
-/** 同步符号：两段带箭头的环形带（24 视口坐标，外径 8、内径 5.6、圆心 12,12）。 */
+/** 同步符号：用户提供的双向圆箭头 SVG 原样转成的路径（64 视口坐标）。 */
 private val syncGlyphPath = Path().apply {
-    val outer = Rect(4f, 4f, 20f, 20f)
-    val inner = Rect(6.4f, 6.4f, 17.6f, 17.6f)
-    // 上箭头：顺时针，外弧 -90° 起扫 130° 至 40°，箭头尖沿切线外伸。
-    arcTo(outer, -90f, 130f, false)
-    lineTo(15.666f, 18.209f)
-    lineTo(16.290f, 15.599f)
-    arcTo(inner, 40f, -130f, false)
+    moveTo(32f, 10f)
+    cubicTo(25.758f, 10f, 20.127047f, 12.603297f, 16.123047f, 16.779297f)
+    cubicTo(15.309047f, 17.628297f, 15.467187f, 19.044516f, 16.367188f, 19.728516f)
+    cubicTo(17.186188f, 20.351516f, 18.340547f, 20.254812f, 19.060547f, 19.507812f)
+    cubicTo(22.332547f, 16.115813f, 26.915f, 14f, 32f, 14f)
+    cubicTo(41.264096f, 14f, 48.886f, 21.000559f, 49.880859f, 30f)
+    lineTo(46.119141f, 30f)
+    cubicTo(45.225141f, 30f, 44.698031f, 31.003281f, 45.207031f, 31.738281f)
+    lineTo(51.089844f, 40.240234f)
+    cubicTo(51.529844f, 40.877234f, 52.471109f, 40.877234f, 52.912109f, 40.240234f)
+    lineTo(58.792969f, 31.738281f)
+    cubicTo(59.300969f, 31.003281f, 58.774859f, 30f, 57.880859f, 30f)
+    lineTo(53.90625f, 30f)
+    cubicTo(52.895455f, 18.787514f, 43.475609f, 10f, 32f, 10f)
     close()
-    // 下箭头：顺时针，外弧 90° 起扫 130° 至 220°，箭头尖沿切线外伸。
-    arcTo(outer, 90f, 130f, true)
-    lineTo(8.334f, 5.792f)
-    lineTo(7.710f, 8.401f)
-    arcTo(inner, 220f, -130f, false)
+    moveTo(12f, 23.283203f)
+    cubicTo(11.654375f, 23.283203f, 11.308391f, 23.441266f, 11.087891f, 23.759766f)
+    lineTo(5.2070312f, 32.261719f)
+    cubicTo(4.6990313f, 32.996719f, 5.2251406f, 34f, 6.1191406f, 34f)
+    lineTo(10.09375f, 34f)
+    cubicTo(11.104545f, 45.212486f, 20.524391f, 54f, 32f, 54f)
+    cubicTo(38.242f, 54f, 43.872953f, 51.396703f, 47.876953f, 47.220703f)
+    cubicTo(48.690953f, 46.371703f, 48.532812f, 44.955484f, 47.632812f, 44.271484f)
+    cubicTo(46.813812f, 43.648484f, 45.659453f, 43.745188f, 44.939453f, 44.492188f)
+    cubicTo(41.667453f, 47.884187f, 37.085f, 50f, 32f, 50f)
+    cubicTo(22.735904f, 50f, 15.114f, 42.999441f, 14.119141f, 34f)
+    lineTo(17.880859f, 34f)
+    cubicTo(18.774859f, 34f, 19.301969f, 32.996719f, 18.792969f, 32.261719f)
+    lineTo(12.910156f, 23.759766f)
+    cubicTo(12.690156f, 23.441266f, 12.345625f, 23.283203f, 12f, 23.283203f)
     close()
 }
 
@@ -1034,14 +1038,22 @@ private fun FabAction(
                     strokeWidth = 2.dp,
                 )
             } else {
-                val glyphPath = if (glyph == FabGlyph.DEPLOY) deployGlyphPath else syncGlyphPath
                 val glyphColor = MaterialTheme.colorScheme.onSurface
-                Canvas(
-                    modifier = Modifier.size(32.dp),
-                ) {
-                    val scale = size.width / 24f
-                    withTransform({ scale(scale, scale) }) {
-                        drawPath(glyphPath, color = glyphColor)
+                if (glyph == FabGlyph.DEPLOY) {
+                    Image(
+                        painter = painterResource(R.drawable.ic_fab_deploy),
+                        contentDescription = null,
+                        modifier = Modifier.size(32.dp),
+                        colorFilter = ColorFilter.tint(glyphColor, BlendMode.SrcIn),
+                    )
+                } else {
+                    Canvas(
+                        modifier = Modifier.size(32.dp),
+                    ) {
+                        val scale = size.width / 64f
+                        withTransform({ scale(scale, scale) }) {
+                            drawPath(syncGlyphPath, color = glyphColor)
+                        }
                     }
                 }
             }
