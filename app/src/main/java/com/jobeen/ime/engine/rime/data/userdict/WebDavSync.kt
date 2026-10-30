@@ -100,8 +100,9 @@ object WebDavSync {
         return body.replace(Regex("\\s+"), " ").take(400)
     }
 
-    private fun httpError(action: String, code: Int, detail: String): WebDavHttpException {
-        val msg = if (detail.isEmpty()) "${action}失败：HTTP $code" else "${action}失败：HTTP $code（$detail）"
+    private fun httpError(action: String, code: Int, detail: String, url: String = ""): WebDavHttpException {
+        val base = if (detail.isEmpty()) "${action}失败：HTTP $code" else "${action}失败：HTTP $code（$detail）"
+        val msg = if (url.isEmpty()) base else "$base：$url"
         return WebDavHttpException(code, msg)
     }
 
@@ -763,6 +764,34 @@ object WebDavSync {
         return true
     }
 
+    /**
+     * 远端父目录链（自顶向下，不含文件本身）：WebDAV MKCOL 只建单级，
+     * PUT 的父目录缺失即 409——上传前必须逐级建。纯函数，供单测。
+     */
+    internal fun remoteParentDirRels(fullRel: String): List<String> {
+        val segments = fullRel.split("/").dropLast(1)
+        val out = mutableListOf<String>()
+        var prefix = ""
+        for (segment in segments) {
+            prefix = if (prefix.isEmpty()) segment else "$prefix/$segment"
+            out.add(prefix)
+        }
+        return out
+    }
+
+    /**
+     * 上传前逐级建父目录（用户 2026-10-28 诊断包：FAB 方案上传 HTTP 409，
+     * 因 schemes/<目录名>/ 及更深父目录从未建过）。本调用内去重；
+     * MKCOL 失败只记日志，PUT 会报出真实原因（与 ensureSchemesDir 同口径）。
+     */
+    private fun ensureRemoteParentDirs(fullRel: String, ensured: MutableSet<String>) {
+        for (prefix in remoteParentDirRels(fullRel)) {
+            if (ensured.add(prefix)) {
+                mkcolQuiet(remoteUrl(prefix))
+            }
+        }
+    }
+
     private fun httpPutFile(url: String, file: File) {
         val request = Request.Builder()
             .url(url)
@@ -771,7 +800,8 @@ object WebDavSync {
             .build()
         client.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                throw httpError("上传", response.code, errorDetail(response))
+                // 报错带上失败文件的 URL：此前只有状态码，定不了是哪一级父目录缺失。
+                throw httpError("上传", response.code, errorDetail(response), url)
             }
         }
     }
@@ -907,7 +937,11 @@ object WebDavSync {
                 ensureSchemesDir()
                 val root = DataManager.schemeDirsRoot
                 var count = 0
+                // 父目录链本调用内去重（含 schemes/ 本身：即使 ensureSchemesDir
+                // 的 MKCOL 刚失败，逐级重建也能自愈，不依赖它已成功）。
+                val ensuredDirs = mutableSetOf<String>()
                 for (rel in collectUploadFiles(root)) {
+                    ensureRemoteParentDirs("schemes/$rel", ensuredDirs)
                     httpPutFile(remoteUrl("schemes/$rel"), File(root, rel))
                     count++
                 }

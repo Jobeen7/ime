@@ -55,4 +55,31 @@ class WebDavSyncTest {
             dir.deleteRecursively()
         }
     }
+
+    // ---- 上传前父目录链（FAB 方案上传 HTTP 409 修复） ----
+    // WebDAV MKCOL 只建单级，PUT 的父目录缺失即 409；上传前必须自顶向下逐级建。
+
+    @Test
+    fun remoteParentDirRels_topLevelFile() {
+        assertEquals(
+            listOf("schemes"),
+            WebDavSync.remoteParentDirRels("schemes/file.yaml"),
+        )
+    }
+
+    @Test
+    fun remoteParentDirRels_oneDirLevel() {
+        assertEquals(
+            listOf("schemes", "schemes/default"),
+            WebDavSync.remoteParentDirRels("schemes/default/wanxiang_lite.schema.yaml"),
+        )
+    }
+
+    @Test
+    fun remoteParentDirRels_deepNesting_topDown() {
+        assertEquals(
+            listOf("schemes", "schemes/default", "schemes/default/a", "schemes/default/a/b"),
+            WebDavSync.remoteParentDirRels("schemes/default/a/b/c.yaml"),
+        )
+    }
 }
