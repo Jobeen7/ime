@@ -94,7 +94,7 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         if (isEnabled) {
             repeatStarted = true
             onRepeatListener?.invoke(this@CustomGestureView)
-            repeatHandler.postDelayed(repeatRunnable, RepeatInterval)
+            repeatHandler.postDelayed(repeatRunnable, repeatIntervalMs)
         }
     }
 
@@ -103,6 +103,19 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     var swipeRepeatEnabled = false
     var swipeThresholdX = 24f
     var swipeThresholdY = 24f
+
+    /**
+     * 手势可调口径（2026-10-29 批量第 4 项）：由按键面按偏好注入，
+     * 默认值 = 旧常量（长按 250ms、重复 100ms、双击沿用旧长按口径 250ms、
+     * 速度门 0 = 不限制）。速度门按整段手势平均速度判定：未达标的
+     * 慢滑段不产生步进（位移不补发，达标后的新位移照常计步）。
+     */
+    var longPressDelayMs: Long = longPressDelay
+    var repeatIntervalMs: Long = RepeatInterval
+    var doubleTapTimeoutMs: Long = longPressDelay
+    var minSwipeVelocityPxPerSec: Float = 0f
+    /** 松开振动参与标记（结构属性）：按键面置 true，实际发振由反馈缓存的开关 gating */
+    var releaseFeedbackEnabled: Boolean = false
 
     private var swipeRepeatTriggered = false
     private var swipeLastX = -1f
@@ -132,6 +145,16 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     var onRepeatListener: ((View) -> Unit)? = null
     var onGestureListener: OnGestureListener? = null
     var soundEffect: InputFeedbacks.SoundEffect = InputFeedbacks.SoundEffect.Standard
+
+    /**
+     * 皮肤逐键音效（B2 详设 §7.2-3）：覆写装配期随 KeyDef 注入的
+     * 已接纳资产 id；非空时 DOWN 播该音效（未就绪回退出厂 pop）。
+     * null = 无皮肤绑定，走原 soundEffect 路径，逐字节同 1.1.14。
+     */
+    var skinSoundAssetId: String? = null
+
+    /** 逐键显式静音（皮肤 sound:""）：true 时 DOWN 不发任何点按音。 */
+    var skinSoundMuted: Boolean = false
     private val touchSlop: Float = ViewConfiguration.get(ctx).scaledTouchSlop.toFloat()
 
     init {
@@ -189,16 +212,25 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                 drawableHotspotChanged(x, y)
                 isPressed = true
                 InputFeedbacks.hapticFeedback(this)
-                InputFeedbacks.soundEffect(context, soundEffect)
+                // 发声时机不变（DOWN 一次）：皮肤绑定优先于标准 pop，
+                // 静音标记压过一切（详设 §7.2-3/§7.3 同闸口径）
+                val skinAsset = skinSoundAssetId
+                if (skinSoundMuted) {
+                    // 显式静音：不发声
+                } else if (skinAsset != null) {
+                    InputFeedbacks.skinSoundEffect(context, skinAsset)
+                } else {
+                    InputFeedbacks.soundEffect(context, soundEffect)
+                }
                 onTouchDownListener?.invoke(this)
                 dispatchGestureEvent(GestureType.Down, x, y)
                 if (longPressEnabled) {
                     repeatHandler.removeCallbacks(longPressRunnable)
-                    repeatHandler.postDelayed(longPressRunnable, longPressDelay)
+                    repeatHandler.postDelayed(longPressRunnable, longPressDelayMs)
                 }
                 if (repeatEnabled) {
                     repeatHandler.removeCallbacks(repeatRunnable)
-                    repeatHandler.postDelayed(repeatRunnable, longPressDelay)
+                    repeatHandler.postDelayed(repeatRunnable, longPressDelayMs)
                 }
                 if (swipeEnabled) {
                     swipeLastX = x
@@ -269,8 +301,8 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
                     }
                 }
                 if ((!swipeEnabled && !keyboardGestureEnabled) || (longPressTriggered && !keyboardGestureEnabled && !swipeEnabled) || (repeatStarted && !swipeEnabled && !keyboardGestureEnabled)) return true
-                val countX = consumeSwipe(x, SwipeAxis.X)
-                val countY = consumeSwipe(y, SwipeAxis.Y)
+                val countX = consumeSwipe(x, SwipeAxis.X, x, y, event.eventTime, event.downTime)
+                val countY = consumeSwipe(y, SwipeAxis.Y, x, y, event.eventTime, event.downTime)
                 dispatchGestureEvent(GestureType.Move, x, y, countX, countY)
                 swipeLastX = x
                 swipeLastY = y
@@ -302,6 +334,8 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
     /** 主动抬起（UP / 追踪指针的 POINTER_UP）的统一收尾：触发抬起回调与点击判定 */
     private fun handleRelease(x: Float, y: Float) {
         isPressed = false
+        // 松开振动：仅按键面参与；CANCEL 不走此处（系统打断不算抬起）
+        if (releaseFeedbackEnabled) InputFeedbacks.hapticFeedbackRelease(this)
         onTouchUpListener?.invoke(this)
         dispatchGestureEvent(GestureType.Up, x, y)
         val shouldPerformClick =
@@ -310,7 +344,7 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         if (shouldPerformClick) {
             if (doubleTapEnabled) {
                 val now = System.currentTimeMillis()
-                if (maybeDoubleTap && now - lastClickTime <= longPressDelay) {
+                if (maybeDoubleTap && now - lastClickTime <= doubleTapTimeoutMs) {
                     maybeDoubleTap = false
                     onDoubleTapListener?.invoke(this)
                 } else {
@@ -351,7 +385,25 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         }
     }
 
-    private fun consumeSwipe(current: Float, axis: SwipeAxis): Int {
+    private fun consumeSwipe(
+        current: Float,
+        axis: SwipeAxis,
+        x: Float,
+        y: Float,
+        eventTimeMs: Long,
+        downTimeMs: Long,
+    ): Int {
+        // 速度门：整段手势平均速度未达门限时本段不计步（门限 0 = 不限制）
+        val minVelocity = minSwipeVelocityPxPerSec
+        if (minVelocity > 0f) {
+            val elapsedSec = (eventTimeMs - downTimeMs) / 1000f
+            if (elapsedSec > 0f) {
+                val dx = x - downX
+                val dy = y - downY
+                val dist = kotlin.math.sqrt(dx * dx + dy * dy)
+                if (dist / elapsedSec < minVelocity) return 0
+            }
+        }
         val unconsumed: Float
         val threshold: Float
         when (axis) {

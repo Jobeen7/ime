@@ -55,24 +55,29 @@ import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.ui.theme.ExpressiveShapes
 import com.jobeen.ime.ui.theme.ImeTheme
+import com.jobeen.ime.ui.theme.AppAppearance
+import com.jobeen.ime.ui.theme.AppAppearanceMode
 import com.jobeen.ime.ui.theme.SuccessContainerLight
 import com.jobeen.ime.ui.theme.SuccessDark
 import com.jobeen.ime.ui.theme.SuccessLight
 
 class SetupActivity : ComponentActivity() {
+    // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
+    private var createdAppearanceMode: AppAppearanceMode? = null
 
     private var isImeEnabled by mutableStateOf(false)
     private var isImeDefault by mutableStateOf(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        createdAppearanceMode = AppAppearance.getMode(this)
 
         checkImeStatus()
 
         setContent {
-            val themeMode = remember { mutableIntStateOf(KeyboardManager.Theme.getMode(this)) }
+            val themeMode = remember { mutableIntStateOf(AppAppearance.themeMode(this)) }
 
-            ImeTheme(themeMode = themeMode.intValue) {
+            ImeTheme(themeMode = themeMode.intValue, dynamicColor = AppAppearance.useDynamicColor(this)) {
                 SetupScreen(
                     isImeEnabled = isImeEnabled,
                     isImeDefault = isImeDefault,
@@ -90,6 +95,12 @@ class SetupActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         checkImeStatus()
+        val recordedAppearanceMode = createdAppearanceMode
+        if (recordedAppearanceMode != null &&
+            AppAppearance.appearanceModeChanged(recordedAppearanceMode, AppAppearance.getMode(this))
+        ) {
+            recreate()
+        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

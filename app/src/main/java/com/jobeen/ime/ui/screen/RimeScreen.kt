@@ -7,28 +7,14 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.List
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.RocketLaunch
-import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,7 +34,6 @@ import java.net.URLEncoder
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
-import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.ResetConfirmDialogs
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
@@ -72,7 +57,6 @@ fun RimeScreen(
     onDeploy: () -> Unit,
     syncRunning: Boolean,
     onSync: () -> Unit,
-    onOpenManage: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -140,31 +124,12 @@ fun RimeScreen(
         }
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = { Text(stringResource(R.string.rime_title)) },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
-                        )
-                    }
-                },
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(padding)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-        ) {
+    SettingsPageScaffold(
+        title = stringResource(R.string.rime_title),
+        onBack = onBack,
+    ) {
             GroupCard {
                 NavRow(
-                    icon = Icons.Filled.RocketLaunch,
                     title = stringResource(R.string.rime_deploy),
                     subtitle = if (deployRunning) {
                         stringResource(R.string.rime_deploy_running)
@@ -173,9 +138,7 @@ fun RimeScreen(
                     },
                     onClick = { if (!deployRunning) onDeploy() },
                 )
-                GroupDivider()
                 NavRow(
-                    icon = Icons.Filled.Sync,
                     title = stringResource(R.string.rime_sync),
                     subtitle = if (syncRunning) {
                         stringResource(R.string.rime_sync_running)
@@ -184,9 +147,7 @@ fun RimeScreen(
                     },
                     onClick = { if (!syncRunning) onSync() },
                 )
-                GroupDivider()
                 NavRow(
-                    icon = Icons.Filled.Refresh,
                     title = stringResource(R.string.rime_reset),
                     subtitle = if (resetting) {
                         stringResource(R.string.about_reset_busy)
@@ -197,20 +158,12 @@ fun RimeScreen(
                     onClick = { if (!resetting) resetStep = 1 },
                 )
             }
-            Spacer(modifier = Modifier.height(16.dp))
-            GroupCard {
-                NavRow(
-                    icon = Icons.Filled.List,
-                    title = stringResource(R.string.rime_manage),
-                    onClick = onOpenManage,
-                )
-            }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             GroupCard {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                        .padding(vertical = 6.dp),
                 ) {
                     SwitchRow(
                         title = stringResource(R.string.rime_notice),
@@ -228,13 +181,13 @@ fun RimeScreen(
                     )
                 }
             }
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(20.dp))
             GroupCard {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .clickable { uuidEdit = syncFolderUuid }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(vertical = 12.dp),
                 ) {
                     Text(
                         text = stringResource(R.string.rime_sync_folder),
@@ -247,13 +200,12 @@ fun RimeScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                GroupDivider()
                 Column(
                     modifier = Modifier
                         .clickable(enabled = webdavConfigured) {
                             pathEdit = syncRemotePath
                         }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(vertical = 12.dp),
                 ) {
                     Text(
                         text = stringResource(R.string.rime_sync_folder_path),
@@ -270,7 +222,6 @@ fun RimeScreen(
                         modifier = Modifier.padding(top = 4.dp),
                     )
                 }
-                GroupDivider()
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -295,7 +246,7 @@ fun RimeScreen(
                                 }
                             }
                         }
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(vertical = 12.dp),
                 ) {
                     Text(
                         text = stringResource(R.string.rime_sync_cleanup_orphans),
@@ -304,7 +255,6 @@ fun RimeScreen(
                     )
                 }
             }
-        }
     }
 
     // 重置二次确认：与关于页同一对话框、同一动作，绝不加“不再询问”。
@@ -317,10 +267,10 @@ fun RimeScreen(
     // 同步文件夹编辑：单段名，非法不保存、弹窗不关闭。
     uuidEdit?.let { initial ->
         var text by remember { mutableStateOf(initial) }
-        AlertDialog(
+        SettingsDialog(
             onDismissRequest = { uuidEdit = null },
-            title = { Text(stringResource(R.string.rime_sync_folder_edit_title)) },
-            text = {
+            title = stringResource(R.string.rime_sync_folder_edit_title),
+            body = {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -328,31 +278,33 @@ fun RimeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    if (RimeSyncPrefs.setSyncFolderUuid(context, text)) {
-                        refreshSyncDisplay()
-                        uuidEdit = null
-                    } else {
-                        toast(context.getString(R.string.rime_sync_folder_invalid))
-                    }
-                }) { Text(stringResource(R.string.schema_manage_save)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { uuidEdit = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.cancel),
+                    onClick = { uuidEdit = null },
+                ),
+                SettingsDialogAction(
+                    text = stringResource(R.string.schema_manage_save),
+                    onClick = {
+                        if (RimeSyncPrefs.setSyncFolderUuid(context, text)) {
+                            refreshSyncDisplay()
+                            uuidEdit = null
+                        } else {
+                            toast(context.getString(R.string.rime_sync_folder_invalid))
+                        }
+                    },
+                ),
+            ),
         )
     }
 
     // 完整远程路径编辑：拆回同步路径与文件夹名（服务器地址不动）。
     pathEdit?.let { initial ->
         var text by remember { mutableStateOf(initial) }
-        AlertDialog(
+        SettingsDialog(
             onDismissRequest = { pathEdit = null },
-            title = { Text(stringResource(R.string.rime_sync_folder_path_edit_title)) },
-            text = {
+            title = stringResource(R.string.rime_sync_folder_path_edit_title),
+            body = {
                 OutlinedTextField(
                     value = text,
                     onValueChange = { text = it },
@@ -360,27 +312,29 @@ fun RimeScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    when (applyEditedRemotePath(context, text)) {
-                        PathEditOutcome.OK -> {
-                            refreshSyncDisplay()
-                            pathEdit = null
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.cancel),
+                    onClick = { pathEdit = null },
+                ),
+                SettingsDialogAction(
+                    text = stringResource(R.string.schema_manage_save),
+                    onClick = {
+                        when (applyEditedRemotePath(context, text)) {
+                            PathEditOutcome.OK -> {
+                                refreshSyncDisplay()
+                                pathEdit = null
+                            }
+                            PathEditOutcome.INVALID -> {
+                                toast(context.getString(R.string.rime_sync_path_invalid))
+                            }
+                            PathEditOutcome.SERVER_CHANGED -> {
+                                toast(context.getString(R.string.rime_sync_path_server_changed))
+                            }
                         }
-                        PathEditOutcome.INVALID -> {
-                            toast(context.getString(R.string.rime_sync_path_invalid))
-                        }
-                        PathEditOutcome.SERVER_CHANGED -> {
-                            toast(context.getString(R.string.rime_sync_path_server_changed))
-                        }
-                    }
-                }) { Text(stringResource(R.string.schema_manage_save)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { pathEdit = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+                    },
+                ),
+            ),
         )
     }
 
@@ -388,20 +342,16 @@ fun RimeScreen(
     cleanupEntries?.let { entries ->
         val fileCount = entries.count { !it.isDirectory }
         val dirCount = entries.count { it.isDirectory }
-        AlertDialog(
+        SettingsConfirmDialog(
             onDismissRequest = { cleanupEntries = null },
-            title = { Text(stringResource(R.string.rime_sync_cleanup_orphans)) },
-            text = {
-                Text(
-                    stringResource(
-                        R.string.rime_sync_cleanup_confirm,
-                        fileCount,
-                        dirCount,
-                    )
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
+            title = stringResource(R.string.rime_sync_cleanup_orphans),
+            text = stringResource(
+                R.string.rime_sync_cleanup_confirm,
+                fileCount,
+                dirCount,
+            ),
+            confirmText = stringResource(R.string.schema_manage_save),
+            onConfirm = {
                     val doomed = entries.filter { !it.isDirectory }
                     cleanupEntries = null
                     scope.launch {
@@ -432,13 +382,8 @@ fun RimeScreen(
                         }
                         toast(msg)
                     }
-                }) { Text(stringResource(R.string.schema_manage_save)) }
             },
-            dismissButton = {
-                TextButton(onClick = { cleanupEntries = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
-            },
+            dismissText = stringResource(R.string.cancel),
         )
     }
 }

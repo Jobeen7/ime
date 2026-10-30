@@ -16,6 +16,8 @@ import android.provider.Settings
 import android.view.View
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.KeyboardManager
+import com.jobeen.ime.skin.diag.DiagLog
+import java.io.File
 import timber.log.Timber
 
 class InputFeedbacks private constructor() {
@@ -31,6 +33,19 @@ class InputFeedbacks private constructor() {
         @Volatile private var popSoundId: Int = 0
         @Volatile private var isPopLoaded = false
         private val lock = Any()
+
+        // ---- 皮肤音效注册表（B2 详设 §7.2）：快照切换期由
+        // SkinSnapshotProvider 安装/卸载；load 异步，就绪前播
+        // 出厂 pop（不进应用事务状态机，裁定 §10.1-8） ----
+        @Volatile private var skinSounds: Map<String, Int> = emptyMap()
+        @Volatile private var skinSoundsLoaded: Set<String> = emptySet()
+        /** soundId → 资产 id（load 完成回调反查用，只在 lock 内读写）。 */
+        private val pendingSkinLoads = mutableMapOf<Int, String>()
+        /** 自定义音效池状态：路径变化时惰性换装，load 异步、就绪前播出厂音 */
+        @Volatile private var customSoundId: Int = 0
+        @Volatile private var customSoundLoadedPath: String? = null
+        private var pendingCustomSampleId: Int = 0
+        private var pendingCustomPath: String? = null
         private const val VIBRATION_ATTRIBUTION_TAG = "keyboard_feedback"
 
         // ---- 反馈设置缓存：避免每次按键重复读 SP / Binder IPC ----
@@ -41,6 +56,11 @@ class InputFeedbacks private constructor() {
         @Volatile private var cachedAmplitude: Int? = null
         @Volatile private var cachedSystemHaptic: Boolean? = null
         @Volatile private var cachedSoundEnabled: Boolean? = null
+        @Volatile private var cachedSoundVolume: Int? = null
+        @Volatile private var cachedCustomSoundEnabled: Boolean? = null
+        @Volatile private var cachedCustomSoundPath: String? = null
+        @Volatile private var cachedVibrationDurationMs: Int? = null
+        @Volatile private var cachedReleaseVibrationEnabled: Boolean? = null
         @Volatile private var cachedVibrator: Vibrator? = null
         private var appContextRef: Context? = null
         private var feedbackPrefs: SharedPreferences? = null
@@ -96,6 +116,11 @@ class InputFeedbacks private constructor() {
             cachedAmplitude = null
             cachedSystemHaptic = null
             cachedSoundEnabled = null
+            cachedSoundVolume = null
+            cachedCustomSoundEnabled = null
+            cachedCustomSoundPath = null
+            cachedVibrationDurationMs = null
+            cachedReleaseVibrationEnabled = null
             cachedVibrator = null
             release()
         }
@@ -105,6 +130,12 @@ class InputFeedbacks private constructor() {
             cachedFollowSystem = KeyboardManager.Keyboard.Feedback.getVibrationFollowSystem(app)
             cachedAmplitude = KeyboardManager.Keyboard.Feedback.getVibrationAmplitude(app)
             cachedSoundEnabled = KeyboardManager.Keyboard.Feedback.getSoundEnabled(app)
+            cachedSoundVolume = KeyboardManager.Keyboard.Feedback.getSoundVolume(app)
+            cachedCustomSoundEnabled = KeyboardManager.Keyboard.Feedback.isCustomSoundEnabled(app)
+            cachedCustomSoundPath = KeyboardManager.Keyboard.Feedback.getCustomSoundPath(app)
+            cachedVibrationDurationMs = KeyboardManager.Keyboard.Feedback.getVibrationDurationMs(app)
+            cachedReleaseVibrationEnabled =
+                KeyboardManager.Keyboard.Feedback.isReleaseVibrationEnabled(app)
             cachedSystemHaptic = readSystemHapticEnabled(app)
             cachedVibrator = createVibrator(app)
         }
@@ -135,8 +166,29 @@ class InputFeedbacks private constructor() {
                         if (status == 0 && sampleId == popSoundId) {
                             isPopLoaded = true
                             Timber.d("Pop sound loaded successfully.")
-                        } else {
-                            Timber.e("Pop sound load failed with status: $status")
+                        } else if (status != 0) {
+                            Timber.e("Sound load failed with status: $status")
+                            synchronized(lock) {
+                                if (sampleId == pendingCustomSampleId) {
+                                    pendingCustomSampleId = 0
+                                    pendingCustomPath = null
+                                }
+                            }
+                        }
+                        if (status == 0) {
+                            val assetId = synchronized(lock) {
+                                pendingSkinLoads.remove(sampleId)
+                            }
+                            if (assetId != null) {
+                                skinSoundsLoaded = skinSoundsLoaded + assetId
+                            }
+                            synchronized(lock) {
+                                if (sampleId == pendingCustomSampleId && pendingCustomPath != null) {
+                                    customSoundLoadedPath = pendingCustomPath
+                                    pendingCustomSampleId = 0
+                                    pendingCustomPath = null
+                                }
+                            }
                         }
                     }
                     val appContext = context.applicationContext
@@ -158,9 +210,127 @@ class InputFeedbacks private constructor() {
             if (soundPool == null) initSoundPool(context)
             when (effect) {
                 SoundEffect.Standard -> {
-                    if (isPopLoaded && popSoundId != 0) {
-                        soundPool?.play(popSoundId, 1.0f, 1.0f, 1, 0, 1.0f)
+                    ensureCustomSoundLoaded()
+                    val vol = (cachedSoundVolume ?: 100) / 100f
+                    val customId = customSoundId
+                    if (cachedCustomSoundEnabled == true && customId != 0 &&
+                        customSoundLoadedPath != null
+                    ) {
+                        soundPool?.play(customId, vol, vol, 1, 0, 1.0f)
+                    } else if (isPopLoaded && popSoundId != 0) {
+                        soundPool?.play(popSoundId, vol, vol, 1, 0, 1.0f)
                     }
+                }
+            }
+        }
+
+        /** 设置页试听：与按键音同闸（开关＋铃声模式门），所听即按键所发 */
+        fun previewSoundEffect(context: Context) {
+            soundEffect(context, SoundEffect.Standard)
+        }
+
+        /**
+         * 自定义音效惰性换装：开关/路径由缓存驱动（偏好监听器刷新）。
+         * 路径变化时卸载旧音、加载新音（load 异步，本次按键先播出厂音）；
+         * 开关关闭或路径清空时卸载。
+         */
+        private fun ensureCustomSoundLoaded() {
+            val pool = soundPool ?: return
+            val enabled = cachedCustomSoundEnabled == true
+            val path = cachedCustomSoundPath?.takeIf { it.isNotEmpty() }
+            synchronized(lock) {
+                if (!enabled || path == null) {
+                    if (customSoundId != 0) {
+                        runCatching { pool.unload(customSoundId) }
+                        customSoundId = 0
+                    }
+                    customSoundLoadedPath = null
+                    pendingCustomSampleId = 0
+                    pendingCustomPath = null
+                    return
+                }
+                if (customSoundLoadedPath == path || pendingCustomPath == path) return
+                if (customSoundId != 0) runCatching { pool.unload(customSoundId) }
+                customSoundId = 0
+                customSoundLoadedPath = null
+                val sampleId = runCatching { pool.load(path, 1) }.getOrDefault(0)
+                if (sampleId != 0) {
+                    pendingCustomSampleId = sampleId
+                    pendingCustomPath = path
+                }
+            }
+        }
+
+        /**
+         * 安装一版快照的皮肤音效（旧版整表卸载）：快照切换期由
+         * 装配层调用（详设 §7.2-1）。load 异步进行，完成前该键
+         * 播出厂 pop（见 [skinSoundEffect]）。
+         */
+        fun installSkinSounds(context: Context, files: Map<String, File>) {
+            if (soundPool == null) initSoundPool(context)
+            synchronized(lock) {
+                val pool = soundPool
+                for ((_, soundId) in skinSounds) {
+                    runCatching { pool?.unload(soundId) }
+                }
+                skinSounds = emptyMap()
+                skinSoundsLoaded = emptySet()
+                pendingSkinLoads.clear()
+                if (pool == null || files.isEmpty()) return
+                val loaded = mutableMapOf<String, Int>()
+                for ((assetId, file) in files) {
+                    val soundId = runCatching { pool.load(file.absolutePath, 1) }
+                        .getOrDefault(0)
+                    if (soundId != 0) {
+                        loaded[assetId] = soundId
+                        pendingSkinLoads[soundId] = assetId
+                    }
+                }
+                skinSounds = loaded
+            }
+        }
+
+        /** 卸载全部皮肤音效（回内置默认/失效时）。 */
+        fun clearSkinSounds() {
+            synchronized(lock) {
+                for ((_, soundId) in skinSounds) {
+                    runCatching { soundPool?.unload(soundId) }
+                }
+                skinSounds = emptyMap()
+                skinSoundsLoaded = emptySet()
+                pendingSkinLoads.clear()
+            }
+        }
+
+        /**
+         * 逐键皮肤音（按键 DOWN 触发）：与 [soundEffect] 同闸
+         * （App 开关 + 铃声模式门，B1 总闸零新增判定）；资产未
+         * 就绪（load 未完成/未安装）时先播出厂 pop 并记一条
+         * DEBUG，就绪后自动生效（详设 §7.2-2）。
+         */
+        fun skinSoundEffect(context: Context, assetId: String) {
+            ensureFeedbackCache(context)
+            if (cachedSoundEnabled != true) return
+            if (!RingerGate.shouldPlay(context)) return
+            if (soundPool == null) initSoundPool(context)
+            val vol = (cachedSoundVolume ?: 100) / 100f
+            val soundId = skinSounds[assetId]
+            if (soundId != null && assetId in skinSoundsLoaded) {
+                soundPool?.play(soundId, vol, vol, 1, 0, 1.0f)
+            } else {
+                DiagLog.d(
+                    "audio", "sound_load_pending_fallback",
+                    mapOf("assetId" to assetId),
+                )
+                // 皮肤音未就绪：自定义音效次之，出厂音最后
+                ensureCustomSoundLoaded()
+                val customId = customSoundId
+                if (cachedCustomSoundEnabled == true && customId != 0 &&
+                    customSoundLoadedPath != null
+                ) {
+                    soundPool?.play(customId, vol, vol, 1, 0, 1.0f)
+                } else if (isPopLoaded && popSoundId != 0) {
+                    soundPool?.play(popSoundId, vol, vol, 1, 0, 1.0f)
                 }
             }
         }
@@ -171,6 +341,13 @@ class InputFeedbacks private constructor() {
                 soundPool = null
                 popSoundId = 0
                 isPopLoaded = false
+                skinSounds = emptyMap()
+                skinSoundsLoaded = emptySet()
+                pendingSkinLoads.clear()
+                customSoundId = 0
+                customSoundLoadedPath = null
+                pendingCustomSampleId = 0
+                pendingCustomPath = null
             }
         }
 
@@ -269,11 +446,32 @@ class InputFeedbacks private constructor() {
         }
 
         fun hapticFeedback(view: View, longPress: Boolean) {
-            hapticFeedback(view, longPress, keyUp = false)
+            ensureFeedbackCache(view.context)
+            hapticFeedback(
+                view, longPress, keyUp = false,
+                pressDuration = cachedVibrationDurationMs?.toLong() ?: 15L,
+            )
         }
 
         fun hapticFeedback(view: View) {
-            hapticFeedback(view, false, keyUp = false)
+            ensureFeedbackCache(view.context)
+            hapticFeedback(
+                view, false, keyUp = false,
+                pressDuration = cachedVibrationDurationMs?.toLong() ?: 15L,
+            )
+        }
+
+        /**
+         * 松开振动：仅按键面抬起时调用，开关关时静默；其余闸口
+         * （总开关／跟随系统／振动器）与按压共用主函数。
+         */
+        fun hapticFeedbackRelease(view: View) {
+            ensureFeedbackCache(view.context)
+            if (cachedReleaseVibrationEnabled != true) return
+            hapticFeedback(
+                view, false, keyUp = true,
+                pressDuration = cachedVibrationDurationMs?.toLong() ?: 15L,
+            )
         }
     }
 }

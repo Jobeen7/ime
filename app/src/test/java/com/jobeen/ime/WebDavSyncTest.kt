@@ -45,6 +45,65 @@ class WebDavSyncTest {
         assertFalse(WebDavSync.isSyncSkippedDict("wanxiang"))
     }
 
+    // ---- 截图 6 项：词典同步健壮性 ----
+
+    @Test
+    fun safeDictName_rejectsTraversal() {
+        assertTrue(WebDavSync.isSafeDictName("wanxiang_lite"))
+        assertFalse(WebDavSync.isSafeDictName(""))
+        assertFalse(WebDavSync.isSafeDictName("   "))
+        assertFalse(WebDavSync.isSafeDictName("../escape"))
+        assertFalse(WebDavSync.isSafeDictName("a/b"))
+        assertFalse(WebDavSync.isSafeDictName("a\\b"))
+        assertFalse(WebDavSync.isSafeDictName(".."))
+        assertFalse(WebDavSync.isSafeDictName("a..b"))
+        assertFalse(WebDavSync.isSafeDictName("."))
+    }
+
+    @Test
+    fun safeRemoteFile_rejectsTraversalSegments() {
+        assertTrue(WebDavSync.isSafeRemoteFile("wanxiang_lite.userdict.txt"))
+        assertTrue(WebDavSync.isSafeRemoteFile("sub/dir/file.txt"))
+        assertFalse(WebDavSync.isSafeRemoteFile(""))
+        assertFalse(WebDavSync.isSafeRemoteFile("../escape.txt"))
+        assertFalse(WebDavSync.isSafeRemoteFile("a//b.txt"))
+        assertFalse(WebDavSync.isSafeRemoteFile("a/./b.txt"))
+        assertFalse(WebDavSync.isSafeRemoteFile("a\\b.txt"))
+        assertFalse(WebDavSync.isSafeRemoteFile("/abs.txt"))
+    }
+
+    @Test
+    fun syncQuota_blocksOverBudget() {
+        val quota = WebDavSync.SyncQuota(100L)
+        assertTrue(quota.tryAdd(60L))
+        assertTrue(quota.tryAdd(40L))
+        assertEquals(100L, quota.usedBytes)
+        assertFalse(quota.tryAdd(1L))
+        assertEquals(100L, quota.usedBytes)
+        assertFalse(quota.tryAdd(-1L))
+    }
+
+    @Test
+    fun throttleWaitMs_math() {
+        // 8MB/s：已读 8MB、耗时 500ms → 还需等 500ms。
+        assertEquals(500L, WebDavSync.throttleWaitMs(8L * 1024 * 1024, 500L, 8L * 1024 * 1024))
+        // 已读 8MB、耗时 1200ms → 不超速，不等。
+        assertEquals(0L, WebDavSync.throttleWaitMs(8L * 1024 * 1024, 1200L, 8L * 1024 * 1024))
+        assertEquals(0L, WebDavSync.throttleWaitMs(0L, 0L, 8L * 1024 * 1024))
+        assertEquals(0L, WebDavSync.throttleWaitMs(100L, 0L, 0L))
+    }
+
+    @Test
+    fun throttledStream_passesBytesAtHighRate() {
+        val data = "hello webdav".toByteArray()
+        val stream = WebDavSync.ThrottledInputStream(
+            data.inputStream(), Long.MAX_VALUE / 2,
+        )
+        val out = stream.readBytes()
+        assertTrue(out.contentEquals(data))
+        stream.close()
+    }
+
     // ---- C5 原子替换 ----
 
     @Test

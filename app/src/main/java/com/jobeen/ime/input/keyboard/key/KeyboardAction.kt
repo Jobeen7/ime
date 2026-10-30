@@ -47,6 +47,13 @@ sealed class KeyboardAction {
 
     data object RotateSchema : KeyboardAction()
 
+    /**
+     * 命名方案直切换（重点候选 8-3）：value = 方案 ID（优先）或
+     * 方案名原文；ID/名解析在 KeyboardWindowView.transformed
+     *（SchemaTargetResolver），未命中时丢弃并记日志、不切换。
+     */
+    data class SwitchSchemaByValue(val value: String) : KeyboardAction()
+
     data class SelectSchema(val schemaId: String) : KeyboardAction()
 
     data object ShowInputMethodPickerAction : KeyboardAction()

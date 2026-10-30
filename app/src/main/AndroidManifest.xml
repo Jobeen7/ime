@@ -9,6 +9,8 @@
     <!-- App 内自更新：下载正式版 APK 后调起系统安装 -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- 云端语音会话前检查网络可用性（普通权限，无需用户授权） -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
@@ -16,6 +18,8 @@
     <!-- MANAGE_EXTERNAL_STORAGE 已删除（2026-10-06 审查）：全仓从未请求或行使
          该全文件访问权限，纯增权限面与商店政策风险，无功能收益 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+    <!-- 后台定期同步：跨重启持久化任务需此权限（JobScheduler setPersisted） -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
     <application
         android:name="com.jobeen.ime.ImeApplication"
@@ -34,12 +38,24 @@
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime">
+            android:theme="@style/Theme.Ime" />
+
+        <!-- 桌面图标入口：LAUNCHER 挂在别名上（关于页开关已删，
+             别名保留为唯一启动入口；主 Activity 本身不是启动入口，
+             应用内显式启动不受影响）。 -->
+        <activity-alias
+            android:name=".ui.LauncherAlias"
+            android:targetActivity=".ui.MainActivity"
+            android:exported="true"
+            android:enabled="true"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
+            android:label="@string/app_name">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
-        </activity>
+        </activity-alias>
 
         <activity
             android:name=".ui.InitActivity"
@@ -61,9 +77,16 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
-            android:name=".ui.KeyboardThemeSettingsActivity"
+            android:name=".ui.ToolbarActivity"
             android:exported="false"
-            android:label="@string/keyboard_theme"
+            android:label="@string/toolbar_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.AppearanceActivity"
+            android:exported="false"
+            android:label="@string/appearance_title"
             android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
@@ -125,6 +148,20 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.SkinDiagnosticsActivity"
+            android:exported="false"
+            android:label="@string/skin_diag_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.WordCreationActivity"
+            android:exported="false"
+            android:label="@string/word_creation_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.AboutActivity"
             android:exported="false"
             android:label="@string/about_us"
@@ -153,6 +190,27 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.SkinLibraryActivity"
+            android:exported="false"
+            android:label="皮肤库"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.SkinDevActivity"
+            android:exported="false"
+            android:label="皮肤开发模式"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.InputStatsActivity"
+            android:exported="false"
+            android:label="输入统计"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.PredictionSettingsActivity"
             android:exported="false"
             android:label="@string/prediction_candidates"
@@ -163,6 +221,13 @@
             android:name=".ui.VoiceSettingsActivity"
             android:exported="false"
             android:label="@string/voice_settings"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.CloudVoicePluginsActivity"
+            android:exported="false"
+            android:label="@string/cloud_voice_plugins"
             android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
@@ -188,6 +253,11 @@
             android:name=".base.speech.SpeechRecognitionService"
             android:exported="false"
             android:process=":speech" />
+
+        <service
+            android:name=".engine.rime.data.userdict.PeriodicSyncJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 
 </manifest>

@@ -12,7 +12,11 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -108,6 +112,22 @@ private val ExpressiveShapesScheme = Shapes(
     extraLarge = ExpressiveShapes.extraLarge,
 )
 
+/**
+ * 莫奈色卡片面：全部设置页的分组卡片与弹出卡片统一用此色
+ * （2026-10-30 莫奈色轮）。与页面主题的动态取色开关解耦：
+ * 浅色取动态浅色方案的容器色，深色取动态深色方案的容器色；
+ * 动态取色不可用（低版本／取色失败）时回落现有静态容器色。
+ * 未被 ImeTheme 包裹时默认浅色静态色（安全值，永不透明）。
+ */
+val LocalMonetCardColor = compositionLocalOf { SurfaceContainerLight }
+
+/**
+ * 莫奈色卡片面取值（纯函数，可 JVM 单测）：动态容器色优先，
+ * 无动态色时按深浅回落静态容器色。
+ */
+fun monetCardContainerColor(dynamicContainer: Color?, dark: Boolean): Color =
+    dynamicContainer ?: if (dark) SurfaceContainerDark else SurfaceContainerLight
+
 @SuppressLint("ContextCastToActivity")
 @Composable
 fun ImeTheme(
@@ -130,12 +150,29 @@ fun ImeTheme(
         else -> LightColorScheme
     }
 
-    MaterialTheme(
-        colorScheme = colorScheme,
-        typography = Typography,
-        shapes = ExpressiveShapesScheme,
-        content = content,
-    )
+    // 卡片面与页面动态开关解耦：只要系统支持动态取色就取动态容器色。
+    val context = LocalContext.current
+    val monetCardColor = remember(darkTheme) {
+        val dynamicContainer =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                runCatching {
+                    if (darkTheme) dynamicDarkColorScheme(context).surfaceContainer
+                    else dynamicLightColorScheme(context).surfaceContainer
+                }.getOrNull()
+            } else {
+                null
+            }
+        monetCardContainerColor(dynamicContainer, darkTheme)
+    }
+
+    CompositionLocalProvider(LocalMonetCardColor provides monetCardColor) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = Typography,
+            shapes = ExpressiveShapesScheme,
+            content = content,
+        )
+    }
 
     val activity = LocalContext.current as? Activity
     SideEffect {

@@ -5,6 +5,7 @@
 package com.jobeen.ime.input.keyboard.key.widget
 
 import android.annotation.SuppressLint
+import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
@@ -13,7 +14,10 @@ import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.Typeface
 import androidx.annotation.ColorInt
+import com.jobeen.ime.data.keyboard.theme.FontRole
+import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.data.keyboard.theme.SkinFonts
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -22,6 +26,7 @@ import androidx.core.graphics.withSave
 import timber.log.Timber
 
 abstract class SidePanelRender(
+    protected val context: Context,
     protected var theme: KeyboardColors.ColorScheme,
     private val density: Float,
     visibleItemCount: Int,
@@ -88,6 +93,15 @@ abstract class SidePanelRender(
     private val clipPath = Path()
     private val textBounds = Rect()
     private val typefaceCache = mutableMapOf<Int, Typeface>()
+
+    /**
+     * 字族跟随（2026-10-27 新增分流）：侧栏绘制是 60–120fps 热
+     * 路径，逐帧查快照不可取——只在族名变化时清一次缓存（每
+     * 帧一次 volatile 读 + 字符串比较，无逐项分配），其余帧走
+     * 原缓存。渲染实例跨皮肤复用时也不会沿用旧字体。
+     */
+    private var cachedSkinFamily: String? = null
+    private var cachedFontVersion: Int = -1
 
     var items: List<Item> = emptyList()
         private set
@@ -159,6 +173,13 @@ abstract class SidePanelRender(
     ) {
         val itemHeight = itemHeight(panel.height())
         if (itemHeight <= 0f) return
+        val skinFamily = SkinFonts.familyName()
+        val fontVersion = GlobalFonts.version(context)
+        if (skinFamily != cachedSkinFamily || fontVersion != cachedFontVersion) {
+            cachedSkinFamily = skinFamily
+            cachedFontVersion = fontVersion
+            typefaceCache.clear()
+        }
         canvas.withSave {
             // 根据拉伸方向应用不同的变换
             if (stretch != 0f) {
@@ -204,7 +225,8 @@ abstract class SidePanelRender(
                 textPaint.color = item.textColor
                 textPaint.textSize = dp(item.textSize)
                 textPaint.typeface = typefaceCache.getOrPut(item.textStyle) {
-                    Typeface.create(Typeface.DEFAULT, item.textStyle)
+                    GlobalFonts.typefaceFor(context, FontRole.SIDEPANEL, item.textStyle)
+                        ?: Typeface.create(Typeface.DEFAULT, item.textStyle)
                 }
                 textPaint.textAlign = Paint.Align.LEFT
                 val bounds = textBounds

@@ -19,6 +19,7 @@ import com.jobeen.ime.input.panel.component.ClipboardView
 import com.jobeen.ime.input.panel.component.ClipboardTab
 import com.jobeen.ime.input.panel.component.ConfirmOverlay
 import com.jobeen.ime.input.panel.component.TextEditView
+import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.component.MenuGridView
 import com.jobeen.ime.input.panel.ComposingRenderer
 import com.jobeen.ime.input.panel.state.ComposingStateRender
@@ -56,6 +57,14 @@ class KawaiiPanel(
         data object CollapseCandidates : TouchResult()
         data object LongPressExpand : TouchResult()
         data object LongPressClearPhrases : TouchResult()
+
+        /**
+         * 自定义工具栏按钮的手势执行结果（工具栏编辑轮）：View 的
+         * 自定义手势机按槽位抉择后发出，承载已转译的键盘动作；
+         * 面板层只做触感反馈并经 [PanelListener.onSidePanelAction]
+         * 交服务执行（与按键动作同一通道，不新开执行链）。
+         */
+        data class CustomKeyAction(val action: KeyboardAction) : TouchResult()
     }
 
     sealed class State {
@@ -819,7 +828,9 @@ class KawaiiPanel(
 
     private fun showCopyIfRecent(text: String) {
         if (suppressCopyBanner) return
-        copyText = text
+        // 接线轮 R4：提示条显示验证码优先的提示态（跟踪本条时），
+        // 去重键仍用原文（提示态与原文是同一条的不同显示）。
+        copyText = ClipboardManager.promptState.displayTextFor(text)
         val recentTime = ClipboardManager.lastCopyTimestamp
         if (recentTime <= lastShownCopyTimestamp || System.currentTimeMillis() - recentTime >= 5 * 60 * 1000L) return
         if (text == lastShownCopyText) return
@@ -938,9 +949,17 @@ class KawaiiPanel(
 
                 TouchResult.LongPressClearPhrases -> showClearPhrasesConfirm()
 
+                is TouchResult.CustomKeyAction -> {
+                    InputFeedbacks.hapticFeedback(view)
+                    listener?.onSidePanelAction(result.action)
+                }
+
                 null -> {
                     if (state == State.Copy && copyText != null) {
                         listener?.onCopyTextCommit(copyText ?: "")
+                        // 接线轮 R4：已提交的提示清掉，同一提示不再复现；
+                        // 原文去重键（lastShownCopyText）仍挡回放。
+                        ClipboardManager.promptState.clear()
                         state = State.Idle
                     }
                 }
@@ -972,6 +991,14 @@ class KawaiiPanel(
 
     fun hideTextEditing() {
         if (state == State.TextEditing) state = State.Idle
+    }
+
+    /**
+     * 粘贴后返回键盘（2026-10-29 批量第 4 项）：与工具栏切键盘键在
+     * 剪贴板态的回落同口径（剪贴板态 → Idle），其余态不动。
+     */
+    override fun returnToKeyboard() {
+        if (state == State.Clipboard) state = State.Idle
     }
 
     private var addPhraseActive = false
@@ -1029,7 +1056,8 @@ class KawaiiPanel(
         if (text == lastShownCopyText) return
         val time = ClipboardManager.lastCopyTimestamp
         if (time > lastShownCopyTimestamp && System.currentTimeMillis() - time < 5 * 60 * 1000L) {
-            copyText = text
+            // 接线轮 R4：同 showCopyIfRecent，显示取提示态，记录仍用原文。
+            copyText = ClipboardManager.promptState.displayTextFor(text)
             lastShownCopyTimestamp = time
             lastShownCopyText = text
             state = State.Copy

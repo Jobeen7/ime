@@ -15,6 +15,8 @@ import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.ui.screen.RimeScreen
 import com.jobeen.ime.ui.theme.ImeTheme
+import com.jobeen.ime.ui.theme.AppAppearance
+import com.jobeen.ime.ui.theme.AppAppearanceMode
 
 /**
  * RIME 页宿主：与设置 home 的 FAB 共用同一套部署/同步动作
@@ -22,19 +24,36 @@ import com.jobeen.ime.ui.theme.ImeTheme
  * 同步 = FabActions.sync：一键同步：方案上传/下载＋词典同步）。
  */
 class RimeActivity : ComponentActivity() {
+    // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
+    private var createdAppearanceMode: AppAppearanceMode? = null
 
     private val rimeSession by lazy { RimeDaemon.createSession("rime") }
 
+    /**
+     * 返回即刷新：从外观页返回时，若应用外观模式已变则重建本页，
+     * 主题立即生效；模式未变不重建；重建后新模式即记录值，不循环。
+     */
+    override fun onResume() {
+        super.onResume()
+        val recordedAppearanceMode = createdAppearanceMode
+        if (recordedAppearanceMode != null &&
+            AppAppearance.appearanceModeChanged(recordedAppearanceMode, AppAppearance.getMode(this))
+        ) {
+            recreate()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        createdAppearanceMode = AppAppearance.getMode(this)
         enableEdgeToEdge()
         setContent {
             val themeMode = remember {
-                mutableIntStateOf(KeyboardManager.Theme.getMode(this))
+                mutableIntStateOf(AppAppearance.themeMode(this))
             }
             val deployRunning by EngineDeployState.running.collectAsStateWithLifecycle()
             val syncRunning by FabSyncState.running.collectAsStateWithLifecycle()
-            ImeTheme(themeMode = themeMode.intValue) {
+            ImeTheme(themeMode = themeMode.intValue, dynamicColor = AppAppearance.useDynamicColor(this)) {
                 RimeScreen(
                     onBack = { finish() },
                     deployRunning = deployRunning,
@@ -57,12 +76,6 @@ class RimeActivity : ComponentActivity() {
                                     ),
                                 )
                             },
-                        )
-                    },
-                    onOpenManage = {
-                        startActivity(
-                            Intent(this@RimeActivity, SchemaSettingsActivity::class.java)
-                                .putExtra(SchemaSettingsActivity.EXTRA_OPEN_MANAGE, true),
                         )
                     },
                 )

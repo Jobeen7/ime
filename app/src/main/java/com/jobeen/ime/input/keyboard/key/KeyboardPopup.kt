@@ -7,6 +7,7 @@ import android.view.View
 import android.widget.LinearLayout
 import android.widget.PopupWindow
 import android.widget.TextView
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.dimensions.dp
 
 class KeyboardPopup(private val context: Context) {
@@ -92,8 +93,25 @@ class KeyboardPopup(private val context: Context) {
         val anchorCenterX = loc[0] + anchor.width / 2
         val anchorTop = loc[1]
 
-        val popupX = (anchorCenterX - totalWidth / 2).coerceAtLeast(0)
-        val popupY = (anchorTop - totalHeight - context.dp(6)).coerceAtLeast(0)
+        // 气泡溢出检测（默认开）：窗口尺寸已知时走调位解析
+        // （上方不够翻到下方、下方不够贴底边、横向夹内）；
+        // 关闭或窗口尺寸未知时保持旧行为（只贴边夹取）。
+        val overflowGap = context.dp(6)
+        val rootView = anchor.rootView
+        val checkEnabled = SkinSnapshotProvider.peek()?.bubbleOverflowCheck ?: true
+        val (popupX, popupY) = if (checkEnabled && rootView != null &&
+            rootView.width > 0 && rootView.height > 0
+        ) {
+            val pos = PopupOverflow.resolve(
+                anchorCenterX, anchorTop, anchor.height,
+                totalWidth, totalHeight,
+                rootView.width, rootView.height, overflowGap,
+            )
+            pos.x to pos.y
+        } else {
+            (anchorCenterX - totalWidth / 2).coerceAtLeast(0) to
+                (anchorTop - totalHeight - overflowGap).coerceAtLeast(0)
+        }
 
         val screenWidth = context.resources.displayMetrics.widthPixels
         val ratio = anchorCenterX.toFloat() / screenWidth
@@ -131,6 +149,15 @@ class KeyboardPopup(private val context: Context) {
         return true
     }
 
+    /**
+     * 清除高亮（接线轮 R5/R6：出界取消时的视觉态——无选中项，
+     * 抬手不提交；下次 show() 会按锚点重算初始选中）。
+     */
+    fun clearSelection() {
+        selectedIndex = -1
+        applyItemBackgrounds()
+    }
+
     val itemCount: Int get() = itemViews.size
 
     val itemStep: Float get() = context.dp(42 + 4).toFloat()
@@ -147,6 +174,9 @@ class KeyboardPopup(private val context: Context) {
     }
 
     fun isShowing(): Boolean = popupWindow?.isShowing == true
+
+    /** 弹出项的显示文本（接线轮 R6：长按格解析的格内容；行格无空位）。 */
+    fun itemLabel(action: KeyboardAction): String = actionLabel(action)
 
     private fun actionLabel(action: KeyboardAction): String = when (action) {
         is KeyboardAction.CommitAction -> action.text
@@ -165,6 +195,7 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.LangSwitchAction -> "LangSwitchAction"
         is KeyboardAction.RotateSchema -> "RotateSchema"
         is KeyboardAction.SelectSchema -> "SelectSchema"
+        is KeyboardAction.SwitchSchemaByValue -> "SwitchSchemaByValue"
         is KeyboardAction.ShowInputMethodPickerAction -> "ShowInputMethodPickerAction"
         is KeyboardAction.VoiceInputAction -> "VoiceInputAction"
         is KeyboardAction.StopVoiceInputAction -> "StopVoiceInputAction"

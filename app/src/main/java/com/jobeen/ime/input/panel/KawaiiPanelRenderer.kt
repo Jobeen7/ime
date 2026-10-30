@@ -20,6 +20,16 @@ class ComposingRenderer(
     var showComment: Boolean = true,
     var candidateBorder: Boolean = true,
     var expandBorder: Boolean = true,
+    /** 候选字背景圆角（2026-10-28 截图 6 项）：默认 6dp，与旧写死值一致。 */
+    var candidateRadiusDp: Float = 6f,
+    /**
+     * 预测态右缘关闭键独立样式（2026-10-28 截图 6 项）：
+     * null = 复用候选字背景（颜色与圆角各跟各的默认值）；
+     * 非 null 时仅该按钮用独立背景色/圆角，组字态展开键不受影响
+     * （组字态构造时不传这两个参数）。
+     */
+    var edgeBgColor: Int? = null,
+    var edgeRadiusDp: Float? = null,
     override var recording: Boolean = false,
 ) : IRenderer {
 
@@ -53,7 +63,9 @@ class ComposingRenderer(
     // 成员复用：draw() 内零分配
     private val indexPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val commentPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pillBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val edgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fadePaint = Paint()
     private val bgGradPaint = Paint()
 
@@ -107,10 +119,12 @@ class ComposingRenderer(
         // 每帧从 paints 同步属性到复用 paint（recording 变暗直接作用于复用 paint，不再改 paints）
         indexPaint.set(paints.candidateIndexPaint)
         textPaint.set(paints.candidateTextPaint)
+        commentPaint.set(paints.candidateCommentPaint)
         pillBgPaint.set(paints.candidateBgPaint)
         if (recording) {
             indexPaint.color = dimColor(indexPaint.color)
             textPaint.color = dimColor(textPaint.color)
+            commentPaint.color = dimColor(commentPaint.color)
             pillBgPaint.color = dimColor(pillBgPaint.color)
         }
         val indexBaseSize = indexPaint.textSize
@@ -118,7 +132,7 @@ class ComposingRenderer(
 
         val pillH = 34f * density
         val pillY = (height - pillH) / 2f
-        val pillR = 6f * density
+        val pillR = candidateRadiusDp * density
         val hPad = horizontalPaddingDp * density
         val sidePad = hPad + 4f * density
         val pillPad = 8f * density
@@ -171,7 +185,7 @@ class ComposingRenderer(
                 val textW = measureTextCached(textPaint, c.text)
                 val commentStr = if (showComment && c.comment.isNotEmpty()) " ${c.comment}" else ""
                 val commentW =
-                    if (commentStr.isNotEmpty()) measureCommentCached(indexPaint, commentStr) else 0f
+                    if (commentStr.isNotEmpty()) measureCommentCached(commentPaint, commentStr) else 0f
                 val contentW = indexW + textW + commentW + pillPad * 2
                 val scale = if (contentW >= maxPillW) {
                     (maxPillW / contentW).coerceAtLeast(minScale)
@@ -193,7 +207,7 @@ class ComposingRenderer(
                     sIndexW = if (showIndex) indexPaint.measureText("${i + 1}. ") else 0f
                     sTextW = textPaint.measureText(c.text)
                     sCommentW =
-                        if (commentStr.isNotEmpty()) indexPaint.measureText(commentStr) else 0f
+                        if (commentStr.isNotEmpty()) commentPaint.measureText(commentStr) else 0f
                     indexPaint.textSize = indexBaseSize
                     textPaint.textSize = textBaseSize
                 }
@@ -265,7 +279,7 @@ class ComposingRenderer(
                             layout.commentText,
                             commentX,
                             textY,
-                            indexPaint,
+                            commentPaint,
                         )
                     }
                 }
@@ -301,10 +315,21 @@ class ComposingRenderer(
             dividerX, pillY + pillH / 4f, dividerX, pillY + pillH * 3f / 4f, paints.dividerPaint
         )
         if (expandBorder) {
-            canvas.drawRoundRect(
-                expandBtnLeft, pillY, expandBtnRight, pillY + pillH, pillR, pillR,
-                pillBgPaint,
-            )
+            val edgeColor = edgeBgColor
+            if (edgeColor != null) {
+                edgeBgPaint.set(pillBgPaint)
+                edgeBgPaint.color = dimColor(edgeColor)
+                val edgeR = (edgeRadiusDp ?: candidateRadiusDp) * density
+                canvas.drawRoundRect(
+                    expandBtnLeft, pillY, expandBtnRight, pillY + pillH, edgeR, edgeR,
+                    edgeBgPaint,
+                )
+            } else {
+                canvas.drawRoundRect(
+                    expandBtnLeft, pillY, expandBtnRight, pillY + pillH, pillR, pillR,
+                    pillBgPaint,
+                )
+            }
         }
         val cx = expandBtnLeft + expandBtnW / 2f
         val cy = pillY + pillH / 2f

@@ -3,38 +3,25 @@ package com.jobeen.ime.ui.screen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import com.jobeen.ime.ui.theme.LocalMonetCardColor
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -57,47 +44,16 @@ fun BackupScreen(
     onRestoreWithPassword: (password: String) -> Unit,
 ) {
     val barFontSize = 18.sp
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        stringResource(R.string.backup_title),
-                        fontSize = barFontSize,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
-                            modifier = Modifier.scale(0.8f),
-                            tint = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Spacer(Modifier.height(12.dp))
+    SettingsPageScaffold(
+        title = stringResource(R.string.backup_title),
+        onBack = onBack,
+    ) {
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    containerColor = LocalMonetCardColor.current,
                 ),
             ) {
                 Text(
@@ -107,7 +63,7 @@ fun BackupScreen(
                 )
             }
 
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(20.dp))
 
             Button(
                 onClick = { state.showCreatePasswordDialog = true },
@@ -136,10 +92,9 @@ fun BackupScreen(
             )
 
             state.busyText?.let {
-                Spacer(Modifier.height(16.dp))
+                Spacer(Modifier.height(20.dp))
                 Text(text = it, style = MaterialTheme.typography.bodyMedium)
             }
-        }
     }
 
     if (state.showCreatePasswordDialog) {
@@ -148,10 +103,10 @@ fun BackupScreen(
         var error by androidx.compose.runtime.remember { mutableStateOf<String?>(null) }
         val tooShort = stringResource(R.string.backup_password_too_short)
         val mismatch = stringResource(R.string.backup_password_mismatch)
-        AlertDialog(
+        SettingsDialog(
             onDismissRequest = { state.showCreatePasswordDialog = false },
-            title = { Text(stringResource(R.string.backup_create)) },
-            text = {
+            title = stringResource(R.string.backup_create),
+            body = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(
                         value = pw,
@@ -175,32 +130,34 @@ fun BackupScreen(
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = {
-                    when {
-                        pw.length < 8 -> error = tooShort
-                        pw != pw2 -> error = mismatch
-                        else -> {
-                            state.showCreatePasswordDialog = false
-                            onCreateBackup(pw)
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.backup_cancel),
+                    onClick = { state.showCreatePasswordDialog = false },
+                ),
+                SettingsDialogAction(
+                    text = stringResource(R.string.backup_confirm_create),
+                    onClick = {
+                        when {
+                            pw.length < 8 -> error = tooShort
+                            pw != pw2 -> error = mismatch
+                            else -> {
+                                state.showCreatePasswordDialog = false
+                                onCreateBackup(pw)
+                            }
                         }
-                    }
-                }) { Text(stringResource(R.string.backup_confirm_create)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { state.showCreatePasswordDialog = false }) {
-                    Text(stringResource(R.string.backup_cancel))
-                }
-            },
+                    },
+                ),
+            ),
         )
     }
 
     if (state.showRestorePasswordDialog) {
         var pw by androidx.compose.runtime.remember { mutableStateOf("") }
-        AlertDialog(
+        SettingsDialog(
             onDismissRequest = { state.showRestorePasswordDialog = false },
-            title = { Text(stringResource(R.string.backup_restore_from_file)) },
-            text = {
+            title = stringResource(R.string.backup_restore_from_file),
+            body = {
                 OutlinedTextField(
                     value = pw,
                     onValueChange = { pw = it },
@@ -210,20 +167,20 @@ fun BackupScreen(
                     modifier = Modifier.fillMaxWidth(),
                 )
             },
-            confirmButton = {
-                TextButton(
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.backup_cancel),
+                    onClick = { state.showRestorePasswordDialog = false },
+                ),
+                SettingsDialogAction(
+                    text = stringResource(R.string.backup_confirm_restore),
                     onClick = {
                         state.showRestorePasswordDialog = false
                         onRestoreWithPassword(pw)
                     },
                     enabled = pw.isNotEmpty(),
-                ) { Text(stringResource(R.string.backup_confirm_restore)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { state.showRestorePasswordDialog = false }) {
-                    Text(stringResource(R.string.backup_cancel))
-                }
-            },
+                ),
+            ),
         )
     }
 }

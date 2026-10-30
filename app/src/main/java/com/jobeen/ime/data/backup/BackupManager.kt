@@ -187,6 +187,21 @@ object BackupManager {
             )
         }
         root.put("candidateSortings", sortings)
+
+        // —— 输入统计（2026-10-29 批量第 4 项）：文件型数据不进 prefs
+        // 枚举，须显式采集；内容仅计数与时长、无输入内容（InputStats
+        // 自身口径）。超 1MB 的异常文件跳过（不阻塞整包备份）。
+        val statsFile = File(appContext.filesDir, "input_stats/stats.json")
+        if (statsFile.isFile) {
+            val bytes = runCatching { statsFile.readBytes() }.getOrNull()
+            if (bytes != null) {
+                if (bytes.size <= 1_048_576) {
+                    root.put("input_stats_json", String(bytes, Charsets.UTF_8))
+                } else {
+                    Timber.w("input stats file too large, skipped in backup")
+                }
+            }
+        }
         return root
     }
 
@@ -363,6 +378,8 @@ object BackupManager {
         val phrases: List<PhraseRecord>,
         val prefers: List<CandidatePrefer>,
         val sortings: List<CandidateSorting>,
+        /** 输入统计文件内容（null = 旧备份无此字段，还原时不碰现文件） */
+        val inputStatsJson: String?,
     )
 
     /**
@@ -471,6 +488,19 @@ object BackupManager {
                 phrases = phraseList,
                 prefers = preferList,
                 sortings = sortingList,
+                // 输入统计文件：有字段时必须是合法 JSON 对象，否则整包判失败
+                // （解析阶段拦截，不写脏文件；无字段 = 旧备份，不碰现文件）
+                inputStatsJson = if (!root.has("input_stats_json")) {
+                    null
+                } else {
+                    val raw = root.optString("input_stats_json")
+                    try {
+                        JSONObject(raw)
+                    } catch (e: Exception) {
+                        throw BackupException("输入统计内容不是合法 JSON")
+                    }
+                    raw
+                },
             )
         } catch (e: BackupException) {
             throw e
@@ -590,6 +620,20 @@ object BackupManager {
 
         // 引擎侧候选偏好有内存快照，还原后显式失效，不依赖随后的杀进程重启
         CandidatePreferCache.invalidate()
+
+        // —— 输入统计文件：写回后还原流程末尾重启进程，InputStats
+        // 下次启动读回新文件；无字段（旧备份）时不碰现文件。
+        // 临时文件＋改名：中途失败不留半截 stats.json（启动侧损坏
+        // 本就容错为空，但能不脏就不脏）
+        parsed.inputStatsJson?.let { json ->
+            val dir = File(appContext.filesDir, "input_stats")
+            runCatching { dir.mkdirs() }
+            val tmp = File(dir, "stats.json.tmp")
+            tmp.writeText(json, Charsets.UTF_8)
+            if (!tmp.renameTo(File(dir, "stats.json"))) {
+                throw BackupException("输入统计写入失败，还原中止")
+            }
+        }
     }
 
     private fun putPrefValue(

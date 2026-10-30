@@ -182,6 +182,7 @@ dependencies {
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.timber)
     implementation(libs.okhttp)
+    implementation(libs.rhino)
     implementation(libs.commons.compress)
     implementation(libs.zxing.android.embedded)
     implementation(libs.splitties.bitflags)

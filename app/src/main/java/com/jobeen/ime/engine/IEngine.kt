@@ -28,6 +28,15 @@ interface IEngine {
     fun undo(service: InputMethodService)
     fun redo(service: InputMethodService)
     fun commit(text: String)
+    /**
+     * 成对提交（2026-10-28 截图 6 项）：提交 pair（如 "()"），
+     * 落屏后光标回退到两符号之间。默认实现退化为普通提交
+     * （成对文本照常上屏，仅光标留在闭符号之后，不丢字）；
+     * RimeEngine 覆写为有序成对路径。
+     */
+    fun commitPair(pair: String, opener: String) {
+        commit(pair)
+    }
     fun resortCandidates(candidates: List<EngineMessage.Candidate>): Unit?
     fun deleteCandidate(index: Int): Unit?
     fun predict(commit: String = "")

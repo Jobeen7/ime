@@ -5,20 +5,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.BugReport
-import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Button
@@ -26,13 +20,10 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
+import com.jobeen.ime.ui.theme.LocalMonetCardColor
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -42,7 +33,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -62,19 +52,16 @@ import com.jobeen.ime.base.log.DiagExport
 import timber.log.Timber
 import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
-import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.ResetConfirmDialogs
-import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
+fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnostics: () -> Unit = {}) {
     val context = LocalContext.current
     val versionName = remember {
         try {
@@ -305,47 +292,16 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        stringResource(R.string.about_us),
-                        fontSize = barFontSize,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
-                            modifier = Modifier.scale(0.8f),
-                            tint = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Spacer(Modifier.height(12.dp))
+    SettingsPageScaffold(
+        title = stringResource(R.string.about_us),
+        onBack = onBack,
+    ) {
 
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                    containerColor = LocalMonetCardColor.current,
                 ),
             ) {
                 Column(
@@ -524,20 +480,19 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                 NavRow(
                     title = stringResource(R.string.about_diag_export),
                     onClick = { scope.launch { exportDiag() } },
-                    icon = Icons.Filled.BugReport,
                 )
-                GroupDivider()
+                NavRow(
+                    title = stringResource(R.string.skin_diag_title),
+                    onClick = onOpenDiagnostics,
+                )
                 NavRow(
                     title = stringResource(R.string.about_reset),
                     onClick = { if (!resetting) resetStep = 1 },
-                    icon = Icons.Filled.Refresh,
                     titleColor = MaterialTheme.colorScheme.error,
                 )
-                GroupDivider()
                 NavRow(
                     title = stringResource(R.string.licenses_index),
                     onClick = { showLicenses = true },
-                    icon = Icons.Filled.Description,
                 )
             }
             if (resetting) {
@@ -549,8 +504,23 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
                 )
             }
 
-            Spacer(Modifier.height(32.dp))
-        }
+            Spacer(Modifier.height(8.dp))
+
+            // 隐私说明（原云端语音插件页顶部全文移至此处，文案与字符串不变）：
+            // 本页无分段标题样式，故以卡片内标题行＋正文呈现，不另起蓝标题。
+            GroupCard {
+                Text(
+                    text = stringResource(R.string.cloud_voice_privacy_group),
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = stringResource(R.string.cloud_voice_privacy_text),
+                    fontSize = rowSubFontSize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+
     }
 
     // 重置二次确认：两次都只有取消 / 继续，绝不加“不再询问”。

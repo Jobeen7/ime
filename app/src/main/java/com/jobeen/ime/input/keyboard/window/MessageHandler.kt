@@ -1,9 +1,12 @@
 package com.jobeen.ime.input.keyboard.window
 
 import android.inputmethodservice.InputMethodService
+import android.view.KeyEvent
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.data.EngineMessage
+import com.jobeen.ime.engine.data.PairCommitQueue
 import com.jobeen.ime.input.ImeInputMethodService
+import com.jobeen.ime.skin.diag.DiagLog
 
 class MessageHandler(
     private val service: InputMethodService,
@@ -17,10 +20,40 @@ class MessageHandler(
     suspend fun handle(message: EngineMessage) {
         when (message) {
             is EngineMessage.Commit -> {
+                // 成对提交的光标回退量：每次 Commit 处理必出队一次
+                // （拦截态同样出队丢弃），正常提交出队得 0、无操作。
+                val cursorBack = PairCommitQueue.poll()
                 // 剪贴板搜索态：上屏文本改道进搜索查询，不写入目标应用
                 if (window?.interceptCommit(message.text) == true) return
-                (service as ImeInputMethodService).activeInputConnection()
-                    ?.commitText(message.text, 1)
+                // 性能埋点（2026-10-29 item-1 B）：提交终点，与
+                // BaseKeyboard.onAction 的按键起点配对（拦截态不记）。
+                com.jobeen.ime.skin.perf.PerfMonitor.noteCommit()
+                // 输入统计（2026-10-29 item-1 C）：提交次数＋字数
+                // （空提交不记；拦截态已在上方 return，不记）。
+                com.jobeen.ime.input.stats.InputStats.noteCommit(message.text)
+                val ic = (service as ImeInputMethodService).activeInputConnection()
+                ic?.commitText(message.text, 1)
+                if (cursorBack > 0 && ic != null) {
+                    try {
+                        repeat(cursorBack) {
+                            ic.sendKeyEvent(
+                                KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DPAD_LEFT),
+                            )
+                            ic.sendKeyEvent(
+                                KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_DPAD_LEFT),
+                            )
+                        }
+                    } catch (e: Exception) {
+                        DiagLog.e(
+                            "SkinDiag", "pair_cursor_back_failed",
+                            mapOf(
+                                "cursorBack" to cursorBack.toString(),
+                                "error" to e.javaClass.simpleName,
+                            ),
+                            e,
+                        )
+                    }
+                }
                 // 连发 Commit（如连打上屏）不必每条都同步探针：与选区路径
                 // 共用 24ms 合并通道，窗口内只探最后一次（探针每次直探，
                 // 无帧缓存可命中旧结果，见清点 S14）

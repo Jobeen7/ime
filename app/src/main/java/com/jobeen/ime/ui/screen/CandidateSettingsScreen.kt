@@ -1,37 +1,21 @@
 package com.jobeen.ime.ui.screen
 
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
+import com.jobeen.ime.ui.screen.ScreenComponent.SliderRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
-import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -52,43 +36,29 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
     var borderEnabled by remember {
         mutableStateOf(CandidateManager.isBorderEnabled(context))
     }
+    var lineLimitEnabled by remember {
+        mutableStateOf(CandidateManager.isLineLimitEnabled(context))
+    }
+    var maxLines by remember {
+        mutableFloatStateOf(CandidateManager.getMaxLines(context).toFloat())
+    }
+    var autoShrinkEnabled by remember {
+        mutableStateOf(CandidateManager.isAutoShrinkEnabled(context))
+    }
+    var fullDisplayEnabled by remember {
+        mutableStateOf(CandidateManager.isFullDisplayEnabled(context))
+    }
+    var inlineSuggestionEnabled by remember {
+        mutableStateOf(CandidateManager.isInlineSuggestionEnabled(context))
+    }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.prediction_candidates),
-                        fontSize = barFontSize,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.back),
-                            modifier = Modifier.scale(0.8f),
-                            tint = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Spacer(Modifier.height(4.dp))
-
-            SettingsGroup(title = stringResource(R.string.model_prediction)) {
+    SettingsPageScaffold(
+        title = stringResource(R.string.prediction_candidates),
+        onBack = onBack,
+    ) {
+        // 候选页分组（2026-10-29 批量第 3 项，按参考分类重组）：
+            // 候选内容（预测与增强）＋窗口显示（序号、注释、边框）。
+            SettingsGroup(title = stringResource(R.string.candidate_content)) {
                 SwitchRow(
                     title = stringResource(R.string.model_prediction_enable),
                     checked = predictionEnabled,
@@ -96,10 +66,8 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                         predictionEnabled = it
                         CandidateManager.setPredictionEnabled(context, it)
                     },
+                    showDivider = true,
                 )
-            }
-
-            SettingsGroup(title = stringResource(R.string.model_enhance)) {
                 SwitchRow(
                     title = stringResource(R.string.model_rerank_enable),
                     checked = rerankEnabled,
@@ -110,7 +78,7 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                 )
             }
 
-            SettingsGroup(title = stringResource(R.string.candidate_layout)) {
+            SettingsGroup(title = stringResource(R.string.candidate_window)) {
                 SwitchRow(
                     title = stringResource(R.string.candidate_show_index),
                     checked = showIndex,
@@ -136,8 +104,60 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                         borderEnabled = it
                         CandidateManager.setBorderEnabled(context, it)
                     },
+                    showDivider = true,
+                )
+                SwitchRow(
+                    title = stringResource(R.string.candidate_line_limit),
+                    checked = lineLimitEnabled,
+                    onCheckedChange = {
+                        lineLimitEnabled = it
+                        CandidateManager.setLineLimitEnabled(context, it)
+                    },
+                    showDivider = true,
+                )
+                SliderRow(
+                    title = stringResource(R.string.candidate_max_lines),
+                    value = maxLines,
+                    valueLabel = "${maxLines.toInt()} 行",
+                    range = 1f..10f,
+                    enabled = lineLimitEnabled,
+                    onValueChange = {
+                        maxLines = it
+                        CandidateManager.setMaxLines(context, it.toInt())
+                    },
+                    showDivider = true,
+                )
+                SwitchRow(
+                    title = stringResource(R.string.candidate_auto_shrink),
+                    checked = autoShrinkEnabled,
+                    onCheckedChange = {
+                        autoShrinkEnabled = it
+                        CandidateManager.setAutoShrinkEnabled(context, it)
+                    },
+                    showDivider = true,
+                )
+                SwitchRow(
+                    title = stringResource(R.string.candidate_full_display),
+                    checked = fullDisplayEnabled,
+                    onCheckedChange = {
+                        fullDisplayEnabled = it
+                        CandidateManager.setFullDisplayEnabled(context, it)
+                    },
+                    showDivider = true,
+                )
+                SwitchRow(
+                    title = stringResource(R.string.candidate_inline_suggestion),
+                    checked = inlineSuggestionEnabled,
+                    onCheckedChange = {
+                        inlineSuggestionEnabled = it
+                        CandidateManager.setInlineSuggestionEnabled(context, it)
+                    },
+                )
+                Text(
+                    text = stringResource(R.string.candidate_inline_suggestion_note),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-        }
     }
 }

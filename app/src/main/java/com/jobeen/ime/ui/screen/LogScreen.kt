@@ -4,8 +4,11 @@ import android.content.ClipData
 import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.os.Build
 import android.os.PersistableBundle
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -21,14 +24,13 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.DeleteSweep
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -41,6 +43,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -49,6 +52,8 @@ import com.jobeen.ime.base.CrashTrap
 import com.jobeen.ime.base.log.AppLogBuffer
 import com.jobeen.ime.base.log.AppLogEntry
 import com.jobeen.ime.base.util.ToastUtil
+import com.jobeen.ime.skin.diag.DiagExporter
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.data.manager.takeCodePoints
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import kotlinx.coroutines.Dispatchers
@@ -79,7 +84,7 @@ fun LogScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(stringResource(R.string.app_logs), fontSize = barFontSize) },
+                title = { Text(stringResource(R.string.app_logs), fontSize = barFontSize, fontWeight = FontWeight.Bold) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
@@ -105,6 +110,50 @@ fun LogScreen(onBack: () -> Unit) {
                             )
                         }
                     }
+                    // 导出诊断日志（详设十三.5）：DiagLog 近期日志 +
+                    // CrashTrap 崩溃文件打成单个 zip 走系统分享
+                    val exportFailedLabel = stringResource(R.string.diag_export_failed)
+                    IconButton(onClick = {
+                        scope.launch {
+                            val zip = withContext(Dispatchers.IO) {
+                                runCatching {
+                                    DiagLog.flush()
+                                    DiagExporter.buildExportZip(
+                                        logsDir = DiagLog.logsDir()
+                                            ?: File(context.filesDir, "logs"),
+                                        // CrashTrap 的崩溃目录（filesDir/crash）
+                                        crashDir = File(context.filesDir, "crash"),
+                                        outDir = File(context.cacheDir, "shared"),
+                                        // 性能报告目录（2026-10-29 item-1 B）
+                                        performanceDir = File(
+                                            context.filesDir,
+                                            "Logs/performance",
+                                        ),
+                                    )
+                                }.getOrNull()
+                            }
+                            if (zip == null) {
+                                ToastUtil.showToast(context, exportFailedLabel)
+                            } else {
+                                val uri = FileProvider.getUriForFile(
+                                    context,
+                                    "${context.packageName}.fileprovider",
+                                    zip,
+                                )
+                                val intent = Intent(Intent.ACTION_SEND).apply {
+                                    type = "application/zip"
+                                    putExtra(Intent.EXTRA_STREAM, uri)
+                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(Intent.createChooser(intent, null))
+                            }
+                        }
+                    }) {
+                        Icon(
+                            Icons.Filled.Share,
+                            contentDescription = stringResource(R.string.export_diag_logs),
+                        )
+                    }
                     val logsLabel = stringResource(R.string.app_logs)
                     IconButton(onClick = { copyLogs(context, logText, logsLabel) }, enabled = entries.isNotEmpty()) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_logs))
@@ -124,7 +173,7 @@ fun LogScreen(onBack: () -> Unit) {
                         Icon(Icons.Filled.DeleteSweep, contentDescription = stringResource(R.string.clear_logs))
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background),
+                
             )
         },
     ) { padding ->

@@ -39,6 +39,24 @@ class ImeApplication : Application() {
         super.onCreate()
         instance = this
         CrashTrap.install(this)
+        // 诊断日志基建（详设十三章）：崩溃仍由 CrashTrap 单点落盘，
+        // 本设施记 v3 子系统的结构化元数据日志，供日志页导出
+        com.jobeen.ime.skin.diag.DiagLog.init(this)
+        // 导出链路抢先装：AppStartup 在 Default 线程异步装缓冲，
+        // 而皮肤库启动对账在 IO 线程同时跑——对账失败的 DiagLog
+        // 若抢在缓冲安装前发出，只落文件、进不了导出 zip。
+        // 此处主线程同步装一次（install 自带 installed 幂等，
+        // AppStartup.setupLogger 的二次调用是空操作），关掉该竞态窗。
+        com.jobeen.ime.base.log.AppLogBuffer.install(this, enableLogging = true)
+        // 性能埋点（2026-10-29 item-1 B）：落盘目录锚定＋进程
+        // 启动时刻（冷启动起点，首个键盘窗口挂接时结算）。
+        com.jobeen.ime.skin.perf.PerfMonitor.configure(filesDir)
+        com.jobeen.ime.skin.perf.PerfMonitor.noteProcessStart(
+            android.os.Process.getStartElapsedRealtime(),
+        )
+        // 输入统计（2026-10-29 item-1 C）：存储目录锚定＋读回
+        // 已有数据（本地存储，不上传）。
+        com.jobeen.ime.input.stats.InputStats.configure(filesDir)
         if (isMainProcess()) {
             // 兜底：AppStartup 内部每步已独立捕获，这里再防一次未预料的异常直接杀进程
             val handler = CoroutineExceptionHandler { _, e ->

@@ -4,40 +4,23 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.CloudUpload
-import androidx.compose.material.icons.filled.RestoreFromTrash
-import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.MenuBook
-import androidx.compose.material.icons.filled.Upload
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -45,21 +28,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
-import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
-import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
+import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.SingleChoiceDialog
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
-import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -77,6 +56,11 @@ class UserDictUiState {
     var webdavAllowHttp by mutableStateOf(false)
     var lastUpload by mutableStateOf(0L)
     var lastDownload by mutableStateOf(0L)
+    /** 后台定期同步（2026-10-29 批量第 5 项）：开关／间隔／上次结果 */
+    var periodicSyncEnabled by mutableStateOf(false)
+    var periodicIntervalHours by mutableStateOf(24)
+    var lastPeriodicSync by mutableStateOf(0L)
+    var lastPeriodicSyncOk by mutableStateOf(false)
     /** 服务器上的备份文件列表；非空时弹出选择对话框 */
     var remoteFiles by mutableStateOf<List<String>?>(null)
     /** 已删除词管理对话框：非空时打开，内容为当前已删词列表 */
@@ -113,10 +97,14 @@ fun UserDictScreen(
     onShowDeletedWords: () -> Unit,
     onRestoreDeletedWord: (String) -> Unit,
     onDismissDeletedWords: () -> Unit,
+    onOpenWordCreation: () -> Unit,
+    onPeriodicSyncEnabledChange: (Boolean) -> Unit,
+    onPeriodicIntervalChange: (Int) -> Unit,
     onRetryDictList: () -> Unit = {},
 ) {
     var showDictDialog by remember { mutableStateOf(false) }
     var showHttpRiskConfirm by remember { mutableStateOf(false) }
+    var showIntervalDialog by remember { mutableStateOf(false) }
     var serverText by remember { mutableStateOf(state.webdavServer) }
     var usernameText by remember { mutableStateOf(state.webdavUsername) }
     var passwordText by remember { mutableStateOf(state.webdavPassword) }
@@ -125,43 +113,11 @@ fun UserDictScreen(
     val dicts = state.dicts
     val enabled = !state.busy && state.selectedDict != null
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        text = stringResource(R.string.user_dict),
-                        fontSize = barFontSize,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = null,
-                            modifier = Modifier.scale(0.8f),
-                            tint = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Spacer(Modifier.height(4.dp))
-
-            if (state.busy) {
+    SettingsPageScaffold(
+        title = stringResource(R.string.user_dict),
+        onBack = onBack,
+    ) {
+        if (state.busy) {
                 Text(
                     text = state.busyMessage,
                     style = MaterialTheme.typography.bodyMedium,
@@ -177,7 +133,7 @@ fun UserDictScreen(
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
+                            .padding(vertical = 16.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
                         Text(
@@ -208,40 +164,39 @@ fun UserDictScreen(
                 }
                 else -> {
                     if (dicts.size > 1) {
-                        SectionHeader(stringResource(R.string.user_dict))
                         GroupCard {
                             NavRow(
                                 title = state.selectedDict.orEmpty(),
                                 subtitle = stringResource(R.string.user_dict_switch_dict),
                                 onClick = { if (!state.busy) showDictDialog = true },
-                                icon = Icons.Filled.MenuBook,
                             )
                         }
                     }
 
-                    SectionHeader(stringResource(R.string.user_dict_manual_backup))
+                    SettingsGroup(title = stringResource(R.string.word_creation_title)) {
+                        NavRow(
+                            title = stringResource(R.string.word_creation_title),
+                            subtitle = stringResource(R.string.word_creation_desc),
+                            onClick = { if (!state.busy) onOpenWordCreation() },
+                        )
+                    }
 
-                    GroupCard {
+                    SettingsGroup(title = stringResource(R.string.user_dict_manual_backup)) {
                         NavRow(
                             title = stringResource(R.string.user_dict_export),
                             subtitle = stringResource(R.string.user_dict_export_desc),
                             onClick = { if (enabled) onExport() },
-                            icon = Icons.Filled.Upload,
                         )
-                        GroupDivider()
                         NavRow(
                             title = stringResource(R.string.user_dict_import),
                             subtitle = stringResource(R.string.user_dict_import_desc),
                             onClick = { if (enabled) onImport() },
-                            icon = Icons.Filled.Download,
                         )
                     }
 
-                    SectionHeader(stringResource(R.string.user_dict_webdav_sync))
-
-                    // WebDAV 表单：字段与保存逻辑不动，只收进分组卡片。
-                    GroupCard {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
+                    SettingsGroup(title = stringResource(R.string.user_dict_webdav_sync)) {
+                        // WebDAV 表单：字段与保存逻辑不动，只收进分组卡片。
+                        Column(Modifier.padding(vertical = 12.dp)) {
                             OutlinedTextField(
                                 value = serverText,
                                 onValueChange = { serverText = it },
@@ -308,12 +263,48 @@ fun UserDictScreen(
                         }
                     }
 
-                    Spacer(Modifier.height(4.dp))
 
-                    SectionHeader(stringResource(R.string.user_dict_advanced))
+                    SettingsGroup(title = stringResource(R.string.user_dict_periodic_sync)) {
+                        SwitchRow(
+                            title = stringResource(R.string.user_dict_periodic_sync),
+                            checked = state.periodicSyncEnabled,
+                            onCheckedChange = onPeriodicSyncEnabledChange,
+                            showDivider = true,
+                        )
+                        NavRow(
+                            title = stringResource(R.string.user_dict_periodic_interval),
+                            subtitle = stringResource(
+                                R.string.user_dict_periodic_every_hours,
+                                state.periodicIntervalHours,
+                            ),
+                            onClick = { showIntervalDialog = true },
+                        )
+                        val lastSyncText = if (state.lastPeriodicSync <= 0L) {
+                            formatTime(0L)
+                        } else {
+                            formatTime(state.lastPeriodicSync) + "（" +
+                                stringResource(
+                                    if (state.lastPeriodicSyncOk) {
+                                        R.string.user_dict_periodic_last_ok
+                                    } else {
+                                        R.string.user_dict_periodic_last_failed
+                                    }
+                                ) + "）"
+                        }
+                        Text(
+                            text = stringResource(
+                                R.string.user_dict_periodic_last_sync,
+                                lastSyncText,
+                            ),
+                            modifier = Modifier.padding(vertical = 10.dp),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
 
-                    GroupCard {
-                        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+
+                    SettingsGroup(title = stringResource(R.string.user_dict_advanced)) {
+                        Column(Modifier.padding(vertical = 8.dp)) {
                             SwitchRow(
                                 title = stringResource(R.string.user_dict_allow_http),
                                 checked = state.webdavAllowHttp,
@@ -329,14 +320,11 @@ fun UserDictScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        GroupDivider()
                         NavRow(
                             title = stringResource(R.string.user_dict_upload),
                             subtitle = "上次上传：${formatTime(state.lastUpload)}",
                             onClick = { if (enabled) onUpload() },
-                            icon = Icons.Filled.CloudUpload,
                         )
-                        GroupDivider()
                         NavRow(
                             title = stringResource(R.string.user_dict_download),
                             subtitle = stringResource(
@@ -344,35 +332,25 @@ fun UserDictScreen(
                                 formatTime(state.lastDownload),
                             ),
                             onClick = { if (enabled) onDownload() },
-                            icon = Icons.Filled.CloudDownload,
                         )
-                        GroupDivider()
                         NavRow(
                             title = stringResource(R.string.user_dict_upload_schemes),
                             subtitle = stringResource(R.string.user_dict_upload_schemes_hint),
                             onClick = { if (!state.busy) onUploadSchemes() },
-                            icon = Icons.Filled.CloudUpload,
                         )
-                        GroupDivider()
                         NavRow(
                             title = stringResource(R.string.user_dict_download_schemes),
                             subtitle = stringResource(R.string.user_dict_download_schemes_hint),
                             onClick = { if (!state.busy) onDownloadSchemes() },
-                            icon = Icons.Filled.CloudDownload,
                         )
-                        GroupDivider()
                         NavRow(
                             title = stringResource(R.string.user_dict_deleted_words),
                             subtitle = stringResource(R.string.user_dict_deleted_words_hint),
                             onClick = { if (!state.busy) onShowDeletedWords() },
-                            icon = Icons.Filled.RestoreFromTrash,
                         )
                     }
                 }
             }
-
-            Spacer(Modifier.height(32.dp))
-        }
     }
 
     if (showDictDialog && dicts != null) {
@@ -401,10 +379,11 @@ fun UserDictScreen(
 
     val deletedWords = state.deletedWords
     if (deletedWords != null) {
-        AlertDialog(
+        SettingsDialog(
             onDismissRequest = onDismissDeletedWords,
-            title = { Text(stringResource(R.string.user_dict_deleted_words)) },
-            text = {
+            title = stringResource(R.string.user_dict_deleted_words),
+            scrollable = false,
+            body = {
                 if (deletedWords.isEmpty()) {
                     Text(stringResource(R.string.user_dict_deleted_words_empty))
                 } else {
@@ -423,46 +402,53 @@ fun UserDictScreen(
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = onDismissDeletedWords) {
-                    Text(stringResource(R.string.user_dict_dialog_close))
-                }
-            },
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.user_dict_dialog_close),
+                    onClick = onDismissDeletedWords,
+                ),
+            ),
         )
     }
 
     if (showHttpRiskConfirm) {
-        AlertDialog(
+        SettingsConfirmDialog(
             onDismissRequest = { showHttpRiskConfirm = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    showHttpRiskConfirm = false
-                    onAllowHttpChange(true)
-                }) {
-                    Text(stringResource(R.string.user_dict_allow_http_confirm_ok))
-                }
+            title = stringResource(R.string.user_dict_allow_http_confirm_title),
+            text = stringResource(R.string.user_dict_allow_http_confirm_msg),
+            confirmText = stringResource(R.string.user_dict_allow_http_confirm_ok),
+            onConfirm = {
+                showHttpRiskConfirm = false
+                onAllowHttpChange(true)
             },
-            dismissButton = {
-                TextButton(onClick = { showHttpRiskConfirm = false }) {
-                    Text(stringResource(R.string.user_dict_cancel))
-                }
-            },
-            title = { Text(stringResource(R.string.user_dict_allow_http_confirm_title)) },
-            text = { Text(stringResource(R.string.user_dict_allow_http_confirm_msg)) },
+            dismissText = stringResource(R.string.user_dict_cancel),
         )
     }
 
     val noticeMsg = state.noticeMessage
     if (noticeMsg != null) {
-        AlertDialog(
+        SettingsConfirmDialog(
             onDismissRequest = onDismissNotice,
-            confirmButton = {
-                TextButton(onClick = onDismissNotice) {
-                    Text(stringResource(R.string.user_dict_dialog_close))
-                }
+            title = state.noticeTitle,
+            text = noticeMsg,
+            confirmText = stringResource(R.string.user_dict_dialog_close),
+            onConfirm = onDismissNotice,
+        )
+    }
+
+    if (showIntervalDialog) {
+        val options = com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncPrefs.INTERVAL_OPTIONS
+        SingleChoiceDialog(
+            title = stringResource(R.string.user_dict_periodic_interval),
+            options = options.map {
+                stringResource(R.string.user_dict_periodic_every_hours, it)
             },
-            title = { Text(state.noticeTitle) },
-            text = { Text(noticeMsg) },
+            selectedIndex = options.indexOf(state.periodicIntervalHours),
+            onSelect = { index ->
+                onPeriodicIntervalChange(options[index])
+                showIntervalDialog = false
+            },
+            onDismiss = { showIntervalDialog = false },
         )
     }
 }

@@ -1,0 +1,139 @@
+{
+  "formatVersion": 3,
+  "meta": {
+    "id": "g1-keymodel-demo",
+    "name": "G1 单键演示",
+    "author": "",
+    "version": "1.0"
+  },
+  "styles": {
+    "keyBackground": "#FFFFFFFF",
+    "keyPressed": "#FFEEEEEE",
+    "keyBorderStroke": "#FFD8D8D8",
+    "keyText": "#FF141414",
+    "specialKeyBackground": "#FFF2F2F2",
+    "specialKeyText": "#FF141414",
+    "accentKeyBackground": "#FF9C824A",
+    "accentKeyText": "#FFFFFFFF",
+    "altText": "#FF999999",
+    "background": "#FFF5F5F5"
+  },
+  "textSizes": {
+    "main": 20,
+    "sub": 11,
+    "symbol": 14
+  },
+  "derivationFormulas": {
+    "specialKeyBorderStroke": "darken(face, 0.12)"
+  },
+  "derivation": {
+    "face": "#FFFFFFFF",
+    "pressed": "#FFEEEEEE",
+    "bed": "#FFF5F5F5",
+    "ink": "#FF141414",
+    "accent": "#FF9C824A",
+    "hint": "#FF999999"
+  },
+  "keyStyles": {
+    "gold": {
+      "face": "#FFFFF4E0",
+      "pressed": "#FFF0DCC0",
+      "text": "#FF7A5A00",
+      "altText": "#FF9C824A",
+      "border": "#FFD8B878",
+      "icon": "#FF9C824A"
+    }
+  },
+  "keyMappings": {
+    "KEY_Q": {
+      "image": "img_keyface",
+      "textSizes": {
+        "main": 24
+      },
+      "tap": {
+        "type": "text",
+        "value": "q"
+      }
+    },
+    "KEY_W": {
+      "swipeLeft": {
+        "type": "command",
+        "action": "cursor_left"
+      },
+      "swipeRight": {
+        "type": "command",
+        "action": "cursor_right"
+      },
+      "tap": {
+        "type": "text",
+        "value": "w"
+      }
+    },
+    "KEY_E": {
+      "subLabel": "小字",
+      "geometry": {
+        "contentCenterX": 0.5,
+        "contentCenterY": 0.4,
+        "hInsetDp": 2,
+        "vInsetDp": 2,
+        "heightFactor": 0.9
+      },
+      "tap": {
+        "type": "text",
+        "value": "e"
+      }
+    },
+    "KEY_R": {
+      "foregroundLayers": [
+        {
+          "type": "text",
+          "text": "角标",
+          "color": "#FFFF0000",
+          "size": 10,
+          "biasX": 0.85,
+          "biasY": 0.2
+        },
+        {
+          "type": "image",
+          "image": "img_badge",
+          "biasX": 0.15,
+          "biasY": 0.2
+        }
+      ],
+      "tap": {
+        "type": "text",
+        "value": "r"
+      }
+    },
+    "KEY_A": {
+      "style": "gold",
+      "tap": {
+        "type": "text",
+        "value": "a"
+      }
+    },
+    "KEY_S": {
+      "label": "候选",
+      "dynamicText": "candidateFirst",
+      "tap": {
+        "type": "text",
+        "value": "s"
+      }
+    },
+    "KEY_D": {
+      "geometry": {
+        "widthFactor": 1.25
+      },
+      "tap": {
+        "type": "text",
+        "value": "d"
+      }
+    },
+    "KEY_PERIOD": {
+      "tap": {
+        "type": "text",
+        "value": "。"
+      }
+    }
+  }
+}

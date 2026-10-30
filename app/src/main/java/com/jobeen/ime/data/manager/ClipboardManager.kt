@@ -93,6 +93,79 @@ object ClipboardManager {
         }
     }
 
+    /** 剪贴板监听开关（默认开）：关 = 不注册系统剪贴板监听、不做补偿检查，历史保留 */
+    fun isListeningEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("clipboard.listening", true)
+    }
+
+    fun setListeningEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean("clipboard.listening", enabled)
+        }
+        if (enabled) startMonitoring(context) else stopMonitoring(context)
+    }
+
+    /**
+     * 去重开关（默认开）：开 = 重复复制静默忽略；关 = 重复复制把该条
+     * 顶到最前并刷新时间。同一文本仍只留一行（text 唯一约束，不做表结构迁移）。
+     */
+    fun isDedupEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("clipboard.dedup", true)
+    }
+
+    fun setDedupEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean("clipboard.dedup", enabled)
+        }
+    }
+
+    /** 粘贴输出规则（默认原样） */
+    enum class OutputRule { AS_IS, TRIM, NEWLINE_TO_SPACE }
+
+    fun getOutputRule(context: Context): OutputRule {
+        return when (
+            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+                .getString("clipboard.output_rule", "as_is")
+        ) {
+            "trim" -> OutputRule.TRIM
+            "newline_to_space" -> OutputRule.NEWLINE_TO_SPACE
+            else -> OutputRule.AS_IS
+        }
+    }
+
+    fun setOutputRule(context: Context, rule: OutputRule) {
+        val value = when (rule) {
+            OutputRule.AS_IS -> "as_is"
+            OutputRule.TRIM -> "trim"
+            OutputRule.NEWLINE_TO_SPACE -> "newline_to_space"
+        }
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putString("clipboard.output_rule", value)
+        }
+    }
+
+    /** 粘贴后返回键盘（默认关）：开 = 点历史条目上屏后收起剪贴板面板回键盘 */
+    fun isReturnAfterPasteEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("clipboard.return_after_paste", false)
+    }
+
+    fun setReturnAfterPasteEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean("clipboard.return_after_paste", enabled)
+        }
+    }
+
+    /** 粘贴输出变换（纯函数）：原样／去首尾空白／换行转空格（其余内容不动） */
+    fun applyOutputRule(text: String, rule: OutputRule): String = when (rule) {
+        OutputRule.AS_IS -> text
+        OutputRule.TRIM -> text.trim()
+        OutputRule.NEWLINE_TO_SPACE -> text.replace("\r\n", " ")
+            .replace('\n', ' ').replace('\r', ' ')
+    }
+
     // ── 历史记录 ──
 
     data class Entry(
@@ -424,6 +497,8 @@ object ClipboardManager {
         context: Context,
         fromClipChangedEvent: Boolean = false,
     ): Boolean {
+        // 监听关 = 全口径停采：面板打开时的补偿检查同样不采（只留历史）
+        if (!isListeningEnabled(context)) return false
         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
         // 读剪贴板可能抛 SecurityException（如后台限制/OEM 行为），不能让监听协程崩掉
         val clip = runCatching { cm.primaryClip }.getOrNull() ?: return false
@@ -457,10 +532,13 @@ object ClipboardManager {
             // 复制了同一文本。命中放行时只摘除该条抑制并走正常入库，
             // 其余条目的抑制不受影响；未放行即继续抑制、不算新记录。
             val suppressionHash = removedSuppressionHash(context, text)
+            val dedup = isDedupEnabled(context)
             if (suppressionHash != null) {
                 if (!fromClipChangedEvent) return@withLock false
                 liftRemovedSuppression(context, suppressionHash)
             } else if (latest?.text == text) {
+                // 去重关：重复复制不再静默忽略，顶到最前并刷新时间（仍只留一行）
+                if (!dedup) return@withLock addEntry(context, text, notify = true)
                 return@withLock false
             }
 
@@ -468,11 +546,16 @@ object ClipboardManager {
             if (isNew) {
                 lastCopyText = text
                 lastCopyTimestamp = System.currentTimeMillis()
+                // 提示条状态（重点候选 8-5）：新文本即喂提示态（只读抽取，
+                // 绝不回写历史）；去重／抑制分支不更新（仍是同一文本）。
+                promptState.onClipboardText(text)
                 // 入库失败不再冒充「有新条目」：内容仍在系统剪贴板里，
                 // 下次变化事件/补偿检查会再试；冒充成功只会让面板
                 // 白刷新一次、还把监听侧的成败口径搅浑
                 return@withLock addEntry(context, text, notify = false)
             }
+            // 已存在但非最新行：去重关时同样顶到最前
+            if (!dedup) return@withLock addEntry(context, text, notify = true)
             false
         }
     }
@@ -483,6 +566,8 @@ object ClipboardManager {
      */
     fun startMonitoring(context: Context) {
         stopMonitoring(context)
+        // 监听关时不注册、不补偿（设置开关切换时由 setListeningEnabled 直调启停）
+        if (!isListeningEnabled(context)) return
         val app = context.applicationContext
         val cm =
             app.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -528,6 +613,9 @@ object ClipboardManager {
 
     @Volatile var lastCopyText: String? = null
         private set
+
+    /** 剪贴板提示条状态（重点候选 8-5）：提示条 UI（待接）读取本态显示。 */
+    val promptState = ClipboardPromptState()
 
     @Volatile var lastCopyTimestamp: Long = 0L
         private set

@@ -10,6 +10,35 @@ import com.jobeen.ime.input.panel.PanelAction
 sealed class ToolbarButton {
     abstract val action: PanelAction
     abstract fun draw(canvas: Canvas, cx: Float, cy: Float, paints: Paints, density: Float)
+
+    /**
+     * 工具栏按钮底（2026-10-29 外观轮全局样式）：全局值未设时
+     * 不画（现行透明行为）；设了则在内容外扩 7dp 处画圆角底＋边框。
+     */
+    protected fun drawButtonBackground(
+        canvas: Canvas,
+        cx: Float,
+        cy: Float,
+        halfW: Float,
+        halfH: Float,
+        paints: Paints,
+        density: Float,
+    ) {
+        val bg = paints.toolbarButtonBg ?: return
+        val pad = 7f * density
+        val left = cx - halfW - pad
+        val top = cy - halfH - pad
+        val right = cx + halfW + pad
+        val bottom = cy + halfH + pad
+        val radius = paints.toolbarButtonRadiusDp * density
+        paints.toolbarButtonBgPaint.color = bg
+        canvas.drawRoundRect(left, top, right, bottom, radius, radius, paints.toolbarButtonBgPaint)
+        if (paints.toolbarButtonBorderPaint.strokeWidth > 0f) {
+            canvas.drawRoundRect(
+                left, top, right, bottom, radius, radius, paints.toolbarButtonBorderPaint,
+            )
+        }
+    }
 }
 
 class TextButton(
@@ -18,6 +47,9 @@ class TextButton(
 ) : ToolbarButton() {
     override fun draw(canvas: Canvas, cx: Float, cy: Float, paints: Paints, density: Float) {
         val textY = cy - (paints.toolbarTextPaint.descent() + paints.toolbarTextPaint.ascent()) / 2f
+        val halfW = paints.toolbarTextPaint.measureText(label) / 2f
+        val halfH = (paints.toolbarTextPaint.descent() - paints.toolbarTextPaint.ascent()) / 2f
+        drawButtonBackground(canvas, cx, cy, halfW, halfH, paints, density)
         canvas.drawText(label, cx, textY, paints.toolbarTextPaint)
     }
 }
@@ -33,6 +65,7 @@ class ImageButton(
         val d = drawable ?: return
         val iw = d.intrinsicWidth.toFloat() * iconScale
         val ih = d.intrinsicHeight.toFloat() * iconScale
+        drawButtonBackground(canvas, cx, cy, iw / 2f, ih / 2f, paints, density)
         d.setTint(paints.toolbarIconColor)
         d.setBounds(
             (cx - iw / 2f).toInt(), (cy - ih / 2f).toInt(),
@@ -63,6 +96,7 @@ class ToggleImageButton(
         if (d == null) return
         val iw = d.intrinsicWidth.toFloat() * iconScale
         val ih = d.intrinsicHeight.toFloat() * iconScale
+        drawButtonBackground(canvas, cx, cy, iw / 2f, ih / 2f, paints, density)
         d.setTint(paints.toolbarIconColor)
         d.setBounds(
             (cx - iw / 2f).toInt(), (cy - ih / 2f).toInt(),

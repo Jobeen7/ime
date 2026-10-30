@@ -1,10 +1,8 @@
 package com.jobeen.ime.ui.screen
 
 import android.content.Context
-import android.content.Intent
 import android.content.SharedPreferences
 import android.net.Uri
-import android.os.StatFs
 import android.provider.OpenableColumns
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -20,7 +18,6 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -46,7 +43,6 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -54,18 +50,16 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
+import com.jobeen.ime.ui.theme.LocalMonetCardColor
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.CenterAlignedTopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -83,7 +77,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.graphicsLayer
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -108,7 +101,6 @@ import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
-import com.jobeen.ime.ui.FabActions
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.SchemaManager
@@ -127,20 +119,14 @@ import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.core.SchemaItem
-import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
-import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
-import com.jobeen.ime.ui.screen.ScreenComponent.ProgressButton
-import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
-import com.jobeen.ime.ui.theme.ExpressiveShapes
 import kotlin.math.roundToInt
 import androidx.core.content.edit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -153,7 +139,7 @@ import okhttp3.Request
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
+fun SchemaSettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val prefs =
         remember { context.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE) }
@@ -161,7 +147,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     val availableSchemas = remember { mutableStateListOf<SchemaItem>() }
     // 本地信息（打开页面即计算，用于"本地信息"卡片展示）
     var currentSchemaName by remember { mutableStateOf("") }
-    var editMode by remember { mutableStateOf(openManage) }
+    var editMode by remember { mutableStateOf(false) }
     var menuExpanded by remember { mutableStateOf(false) }
     var currentSchemeId by remember { mutableStateOf("") }
     // 多目录模型：当前目录名（引擎 user 目录 = 根 / 此名）；目录切换、
@@ -896,7 +882,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
             val inImportFlow = importBusy
             val inDownloadFlow = downloadPage || downloadFormOpen ||
                 downloadRunning || downloadError != null
-            CenterAlignedTopAppBar(
+            TopAppBar(
                 title = {
                     Text(
                         stringResource(
@@ -974,6 +960,8 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         DropdownMenu(
                             expanded = menuExpanded,
                             onDismissRequest = { menuExpanded = false },
+                            // 菜单卡面＝莫奈色（2026-10-30 莫奈色轮）。
+                            containerColor = LocalMonetCardColor.current,
                         ) {
                             // 第三期新增「下载方案」：打开已保存下载条目列表。
                             // 切换 / 部署 / 导入校验 / 下载进行中禁用。
@@ -1024,9 +1012,6 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         }
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
             )
         },
     ) { padding ->
@@ -1068,7 +1053,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        containerColor = LocalMonetCardColor.current,
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 ) {
@@ -1096,7 +1081,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        containerColor = LocalMonetCardColor.current,
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 ) {
@@ -1299,7 +1284,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            containerColor = LocalMonetCardColor.current,
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     ) {
@@ -1557,7 +1542,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(16.dp),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                        containerColor = LocalMonetCardColor.current,
                     ),
                     elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                 ) {
@@ -1622,10 +1607,10 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
     // 管理页保存的部署进度框：部署中不可关闭；失败时明示并可关闭
     // （顺序已自动恢复，见 onSave 回滚）。
     if (manageDeploying) {
-        AlertDialog(
+        SettingsDialog(
             onDismissRequest = {},
-            title = { Text(stringResource(R.string.schema_manage_save)) },
-            text = {
+            title = stringResource(R.string.schema_manage_save),
+            body = {
                 Column {
                     Text(
                         stringResource(R.string.schema_manage_deploying),
@@ -1636,19 +1621,16 @@ fun SchemaSettingsScreen(onBack: () -> Unit, openManage: Boolean = false) {
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 }
             },
-            confirmButton = {},
+            actions = emptyList(),
         )
     }
     if (manageDeployError != null) {
-        AlertDialog(
+        SettingsConfirmDialog(
             onDismissRequest = { manageDeployError = null },
-            title = { Text(stringResource(R.string.schema_manage_save)) },
-            text = { Text(manageDeployError!!) },
-            confirmButton = {
-                TextButton(onClick = { manageDeployError = null }) {
-                    Text(stringResource(R.string.schema_banner_close))
-                }
-            },
+            title = stringResource(R.string.schema_manage_save),
+            text = manageDeployError!!,
+            confirmText = stringResource(R.string.schema_banner_close),
+            onConfirm = { manageDeployError = null },
         )
     }
 }
@@ -1736,7 +1718,7 @@ private fun SchemaManageContent(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                containerColor = LocalMonetCardColor.current,
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
@@ -1759,7 +1741,7 @@ private fun SchemaManageContent(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                containerColor = LocalMonetCardColor.current,
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
@@ -2108,7 +2090,7 @@ private fun SchemeDirBrowserContent(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            containerColor = LocalMonetCardColor.current,
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     ) {
@@ -2196,7 +2178,7 @@ private fun SchemeDirBrowserContent(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(16.dp),
                         colors = CardDefaults.cardColors(
-                            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                            containerColor = LocalMonetCardColor.current,
                         ),
                         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
                     ) {

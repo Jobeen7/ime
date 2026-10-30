@@ -89,6 +89,7 @@ class KeyboardWindow(
 
     fun onFinishInputView(finishingInput: Boolean) {
         panel.onFinishInputView(finishingInput)
+        view.onFinishInputView()
     }
 
     fun onWindowShown() = view.onAttach()

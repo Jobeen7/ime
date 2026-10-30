@@ -18,12 +18,17 @@ import okhttp3.Response
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.IOException
+import java.io.InputStream
+import java.io.OutputStream
 import java.text.SimpleDateFormat
 import java.util.Locale
 import java.net.URI
 import java.net.URLEncoder
 import java.text.Normalizer
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
+import com.jobeen.ime.skin.diag.DiagLog
 
 /**
  * 用户词典 WebDAV 同步：把词典导出为文本文件后 PUT 上传，或 GET 下载后合并导入。
@@ -132,6 +137,125 @@ object WebDavSync {
     // 本身。ETag 相关纯函数（captureETag/putPrecondition/
     // remoteChangedDecision/postPutRecheckAdoptable 等）已一并删除。
 
+    // ---- 同步健壮性（2026-10-28 截图 6 项；WebDAV 范围不变，
+    // 只加固现有词典/方案同步，皮肤不同步） ----
+
+    /** 本轮上传总量预算：512MB；超出即中止本轮并记日志（不静默截断）。 */
+    internal const val SYNC_RUN_MAX_BYTES = 512L * 1024 * 1024
+
+    /** 下载限速：8MB/s（正常词典/方案下载不受影响，只压超大流）。 */
+    internal const val SYNC_DOWNLOAD_BYTES_PER_SECOND = 8L * 1024 * 1024
+
+    /**
+     * 上传侧词典名黑名单（纯函数）：只允许简单名——空、含 / 或 \、
+     * 含 ..、等于 . 或 ..、含控制字符一律拒绝（防路径穿越与
+     * 缓存临时文件名逃逸）。
+     */
+    internal fun isSafeDictName(dictName: String): Boolean {
+        if (dictName.isBlank()) return false
+        if (dictName == "." || dictName == "..") return false
+        if (dictName.contains("..")) return false
+        if ('/' in dictName || '\\' in dictName) return false
+        if (dictName.any { it.code < 0x20 }) return false
+        return true
+    }
+
+    /**
+     * 下载侧远端文件名黑名单（纯函数）：按 / 分段逐段校验——空段、
+     * .、..、含 \、含控制字符一律拒绝（百分号编码不洗掉 ..，
+     * 故编码前先拦）。远端列表给出的名字同样过此门。
+     */
+    internal fun isSafeRemoteFile(remoteFile: String): Boolean {
+        if (remoteFile.isBlank()) return false
+        for (segment in remoteFile.split("/")) {
+            if (segment.isEmpty() || segment == "." || segment == "..") return false
+            if ('\\' in segment) return false
+            if (segment.any { it.code < 0x20 }) return false
+        }
+        return true
+    }
+
+    /** 本轮上传总量账本（纯状态，可单测）：超预算时 tryAdd 返回 false。 */
+    internal class SyncQuota(private val maxBytes: Long) {
+        var usedBytes: Long = 0L
+            private set
+
+        fun tryAdd(bytes: Long): Boolean {
+            if (bytes < 0) return false
+            if (usedBytes + bytes > maxBytes) return false
+            usedBytes += bytes
+            return true
+        }
+    }
+
+    /**
+     * 限速等待量（纯函数，可单测）：按恒定速率预算，已读字节超出
+     * “速率 × 已耗时” 的部分换算成等待毫秒；未超则 0。
+     */
+    internal fun throttleWaitMs(
+        bytesRead: Long,
+        elapsedMs: Long,
+        maxBytesPerSecond: Long,
+    ): Long {
+        if (maxBytesPerSecond <= 0 || bytesRead <= 0 || elapsedMs < 0) return 0L
+        val allowedMs = bytesRead * 1000L / maxBytesPerSecond
+        return (allowedMs - elapsedMs).coerceAtLeast(0L)
+    }
+
+    /**
+     * 限速输入流：按恒定速率放行，超速时睡眠（单次睡眠封顶 1 秒，
+     * 避免一次长睡拖住取消）。只用于下载流；取消/异常时原样透传。
+     */
+    internal class ThrottledInputStream(
+        private val source: InputStream,
+        private val maxBytesPerSecond: Long,
+    ) : InputStream() {
+        private var bytesRead: Long = 0L
+        private val startMs: Long = System.currentTimeMillis()
+
+        override fun read(): Int {
+            val value = source.read()
+            if (value >= 0) throttle(1)
+            return value
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            val count = source.read(buffer, offset, length)
+            if (count > 0) throttle(count.toLong())
+            return count
+        }
+
+        override fun close() = source.close()
+
+        private fun throttle(count: Long) {
+            bytesRead += count
+            val elapsed = System.currentTimeMillis() - startMs
+            val wait = throttleWaitMs(bytesRead, elapsed, maxBytesPerSecond)
+            if (wait > 0) {
+                try {
+                    Thread.sleep(wait.coerceAtMost(1000L))
+                } catch (e: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+            }
+        }
+    }
+
+    /** 连接测试四合一：失败时停在哪一步（按检查顺序：可达 → TLS → 凭证 → 远端根）。 */
+    enum class ConnectionStep { REACHABLE, TLS, AUTH, ROOT }
+
+    /** 连接测试四合一结果：四项各一布尔 + 失败步 + 状态码 + 异常类名（均元数据）。 */
+    data class ConnectionTestResult(
+        val reachable: Boolean,
+        val tlsOk: Boolean,
+        val authOk: Boolean,
+        val rootOk: Boolean,
+        val failedStep: ConnectionStep?,
+        val httpCode: Int?,
+        val errorClass: String?,
+        val entries: List<RemoteEntry>?,
+    )
+
     /**
      * 上传当前词典到 WebDAV 服务器，返回导出的词条数。
      * 必须在后台线程调用。
@@ -142,6 +266,8 @@ object WebDavSync {
     private suspend fun uploadLocked(dictName: String, session: RimeSession): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             checkConfigured()
+            // 上传侧黑名单：非法词典名直接拒绝（不拼远端路径、不建临时文件）。
+            require(isSafeDictName(dictName)) { "词典名非法，拒绝上传" }
             // 先确保同步目录存在：坚果云对不存在的目录直接返回 403
             ensureSyncDir()
             val fileName = remoteFileName(dictName)
@@ -447,6 +573,9 @@ object WebDavSync {
     ): Result<Int> = withContext(Dispatchers.IO) {
         runCatching {
             checkConfigured()
+            // 下载侧黑名单：非法词典名/远端文件名直接拒绝（不拼远端路径）。
+            require(isSafeDictName(dictName)) { "词典名非法，拒绝下载" }
+            require(isSafeRemoteFile(remoteFile)) { "远端文件名非法，拒绝下载" }
             val sameName = remoteFile == remoteFileName(dictName)
             // 下载成败只由 GET 与合并导入决定（第十八批口径）：
             // 直接 GET，不再有 PROPFIND 前后观察与补查记账（清点
@@ -480,8 +609,9 @@ object WebDavSync {
                         throw IllegalStateException("远端文件过大，拒绝下载")
                     }
                     tempFile.outputStream().use { out ->
-                        body.byteStream()
-                            .copyToWithLimit(out, UserDictManager.MAX_DICT_FILE_BYTES)
+                        ThrottledInputStream(
+                            body.byteStream(), SYNC_DOWNLOAD_BYTES_PER_SECOND,
+                        ).copyToWithLimit(out, UserDictManager.MAX_DICT_FILE_BYTES)
                     }
                 }
                 // Rime 原生同步快照（*.userdb.txt）列序为「码⇥词⇥权重」，
@@ -616,11 +746,127 @@ object WebDavSync {
     }
 
     /**
+     * 连接测试四合一（2026-10-28 截图 6 项）：按顺序判四步——
+     * 可达（无凭证 HEAD 有任何 HTTP 响应即算可达）→ TLS（HTTPS
+     * 握手异常即 TLS 失败；明文 HTTP 无 TLS 可验，算通过）→
+     * 凭证（PROPFIND 401 即凭证无效）→ 远端根（PROPFIND 207/200
+     * 且可解析即通过；404 = 根不存在、403 = 无权限、其它码同列）。
+     * 步骤 1 不发凭证；失败步只记元数据（步名 + 状态码 + 异常类名），
+     * 不记地址、响应正文与凭证。调用方仍用 [testConnection]。
+     */
+    suspend fun testConnectionDetailed(): ConnectionTestResult =
+        withContext(Dispatchers.IO) {
+            // 配置门：缺用户名/口令归凭证步；其余配置非法归可达步。
+            if (UserDictPrefs.username.isBlank() || UserDictPrefs.password.isEmpty()) {
+                return@withContext ConnectionTestResult(
+                    reachable = false, tlsOk = false, authOk = false, rootOk = false,
+                    failedStep = ConnectionStep.AUTH, httpCode = null,
+                    errorClass = "IllegalArgumentException", entries = null,
+                )
+            }
+            try {
+                checkConfigured()
+            } catch (e: Exception) {
+                return@withContext ConnectionTestResult(
+                    reachable = false, tlsOk = false, authOk = false, rootOk = false,
+                    failedStep = ConnectionStep.REACHABLE, httpCode = null,
+                    errorClass = e.javaClass.simpleName, entries = null,
+                )
+            }
+            // 步骤 1：无凭证 HEAD——任何 HTTP 响应都算可达 + TLS 通过。
+            val headRequest = Request.Builder()
+                .url(UserDictPrefs.syncDirUrl())
+                .head()
+                .build()
+            try {
+                client.newCall(headRequest).execute().use { /* 响应本身即证明 */ }
+            } catch (e: SSLException) {
+                return@withContext ConnectionTestResult(
+                    reachable = true, tlsOk = false, authOk = false, rootOk = false,
+                    failedStep = ConnectionStep.TLS, httpCode = null,
+                    errorClass = e.javaClass.simpleName, entries = null,
+                )
+            } catch (e: IOException) {
+                return@withContext ConnectionTestResult(
+                    reachable = false, tlsOk = false, authOk = false, rootOk = false,
+                    failedStep = ConnectionStep.REACHABLE, httpCode = null,
+                    errorClass = e.javaClass.simpleName, entries = null,
+                )
+            }
+            // 步骤 2：带凭证 PROPFIND——401 归凭证步，其余失败归远端根步。
+            val entries = try {
+                parseRemoteEntries(propfindDirXml())
+            } catch (e: WebDavHttpException) {
+                val step = if (e.httpCode == 401) {
+                    ConnectionStep.AUTH
+                } else {
+                    ConnectionStep.ROOT
+                }
+                return@withContext ConnectionTestResult(
+                    reachable = true, tlsOk = true,
+                    authOk = step != ConnectionStep.AUTH, rootOk = false,
+                    failedStep = step, httpCode = e.httpCode,
+                    errorClass = e.javaClass.simpleName, entries = null,
+                )
+            } catch (e: SSLException) {
+                return@withContext ConnectionTestResult(
+                    reachable = true, tlsOk = false, authOk = false, rootOk = false,
+                    failedStep = ConnectionStep.TLS, httpCode = null,
+                    errorClass = e.javaClass.simpleName, entries = null,
+                )
+            } catch (e: IOException) {
+                return@withContext ConnectionTestResult(
+                    reachable = false, tlsOk = false, authOk = false, rootOk = false,
+                    failedStep = ConnectionStep.REACHABLE, httpCode = null,
+                    errorClass = e.javaClass.simpleName, entries = null,
+                )
+            } catch (e: Exception) {
+                return@withContext ConnectionTestResult(
+                    reachable = true, tlsOk = true, authOk = true, rootOk = false,
+                    failedStep = ConnectionStep.ROOT, httpCode = null,
+                    errorClass = e.javaClass.simpleName, entries = null,
+                )
+            }
+            ConnectionTestResult(
+                reachable = true, tlsOk = true, authOk = true, rootOk = true,
+                failedStep = null, httpCode = null, errorClass = null, entries = entries,
+            )
+        }
+
+    /**
      * 测试连接：对同步目录做 PROPFIND，返回目录内的所有条目（文件和子目录）。
+     * 内部走四合一（见 [testConnectionDetailed]），失败时异常信息点名
+     * 失败步（+ 状态码 + 异常类名），失败记一条诊断日志（元数据）。
      * 必须在后台线程调用。
      */
     suspend fun testConnection(): Result<List<RemoteEntry>> = withContext(Dispatchers.IO) {
-        runCatching { parseRemoteEntries(propfindDirXml()) }
+        val detailed = testConnectionDetailed()
+        if (detailed.rootOk && detailed.entries != null) {
+            Result.success(detailed.entries)
+        } else {
+            val stepName = when (detailed.failedStep) {
+                ConnectionStep.REACHABLE -> "服务器不可达"
+                ConnectionStep.TLS -> "TLS 握手失败"
+                ConnectionStep.AUTH -> "凭证无效"
+                ConnectionStep.ROOT -> "远端根目录不可用"
+                null -> "连接测试失败"
+            }
+            val code = detailed.httpCode?.let { "（HTTP $it）" }.orEmpty()
+            val err = detailed.errorClass?.let { "（$it）" }.orEmpty()
+            DiagLog.w(
+                "webdav", "connection_test_failed",
+                mapOf(
+                    "step" to (detailed.failedStep?.name ?: "unknown"),
+                    "httpCode" to (detailed.httpCode?.toString() ?: ""),
+                    "error" to (detailed.errorClass ?: ""),
+                ),
+            )
+            Result.failure(
+                WebDavHttpException(
+                    detailed.httpCode ?: 0, "连接测试失败：$stepName$code$err",
+                ),
+            )
+        }
     }
 
     // ---- 方案目录同步（RIME 页 / FAB 同步共用，与词典合并同步并存） ----
@@ -855,7 +1101,9 @@ object WebDavSync {
                         val tmp = File(parent, "${target.name}.tmp-${System.nanoTime()}")
                         try {
                             val written = tmp.outputStream().use { out ->
-                                body.byteStream().copyToWithLimit(out, MAX_SYNC_FILE_BYTES)
+                                ThrottledInputStream(
+                                    body.byteStream(), SYNC_DOWNLOAD_BYTES_PER_SECOND,
+                                ).copyToWithLimit(out, MAX_SYNC_FILE_BYTES)
                             }
                             val declared = body.contentLength()
                             if (written == 0L) {
@@ -964,6 +1212,7 @@ object WebDavSync {
                 checkConfigured()
                 ensureSchemesDir()
                 val root = DataManager.schemeDirsRoot
+                val quota = SyncQuota(SYNC_RUN_MAX_BYTES)
                 var count = 0
                 // 父目录链本调用内去重（含 schemes/ 本身：即使 ensureSchemesDir
                 // 的 MKCOL 刚失败，逐级重建也能自愈，不依赖它已成功）。
@@ -973,8 +1222,18 @@ object WebDavSync {
                 Timber.d("FAB sync: upload files=${files.size}")
                 for (rel in files) {
                     Timber.d("FAB sync: upload file $rel")
+                    val file = File(root, rel)
+                    // 本轮总量配额：超预算即中止本轮（已传文件保留，
+                    // 不静默截断），失败记日志进诊断缓冲。
+                    if (!quota.tryAdd(file.length())) {
+                        Timber.w(
+                            "Scheme upload quota exceeded: used=${quota.usedBytes}, " +
+                                "next=${file.length()}, max=$SYNC_RUN_MAX_BYTES",
+                        )
+                        throw IllegalStateException("本轮上传总量超限，已传 $count 个文件后中止")
+                    }
                     ensureRemoteParentDirs("schemes/$rel", ensuredDirs)
-                    httpPutFile(remoteUrl("schemes/$rel"), File(root, rel))
+                    httpPutFile(remoteUrl("schemes/$rel"), file)
                     count++
                 }
                 count

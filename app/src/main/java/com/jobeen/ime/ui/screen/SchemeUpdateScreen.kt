@@ -6,26 +6,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.CenterAlignedTopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -36,7 +28,6 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -55,12 +46,8 @@ import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.data.DataManager
-import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
-import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
+import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.ProgressButton
-import com.jobeen.ime.ui.screen.ScreenComponent.SectionHeader
-import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
-import com.jobeen.ime.ui.screen.ScreenComponent.rowFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -282,50 +269,18 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            CenterAlignedTopAppBar(
-                title = {
-                    Text(
-                        stringResource(R.string.schema_update_title),
-                        fontSize = barFontSize,
-                        fontWeight = FontWeight.Bold,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = stringResource(R.string.back),
-                            modifier = Modifier.scale(0.8f),
-                            tint = MaterialTheme.colorScheme.onSurface,
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
-    ) { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(padding)
-                .padding(horizontal = 16.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Spacer(Modifier.height(4.dp))
+    SettingsPageScaffold(
+        title = stringResource(R.string.schema_update_title),
+        onBack = onBack,
+    ) {
 
             // 语法模型是万象专属：非万象目录不显示模型区（含下载按钮）。
             if (updateSource is WanxiangUpdateManager.UpdateSource.Wanxiang) {
-            SectionHeader(stringResource(R.string.schema_model_grammar))
-            GroupCard {
+            SettingsGroup(title = stringResource(R.string.schema_model_grammar)) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                        .padding(vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Column(Modifier.weight(1f)) {
@@ -371,20 +326,17 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
             }
             }
 
-            SectionHeader(stringResource(R.string.schema_update_local_info))
-            GroupCard {
+            SettingsGroup(title = stringResource(R.string.schema_update_local_info)) {
                 val local = localInfo
                 val noGram = stringResource(R.string.schema_update_no_gram)
                 UpdateInfoRow(
                     label = stringResource(R.string.schema_update_current_schema),
                     value = currentSchemaName.ifEmpty { "—" },
                 )
-                GroupDivider()
                 UpdateInfoRow(
                     label = stringResource(R.string.schema_update_local_schema),
                     value = local?.schemaVersion?.takeIf { it.isNotEmpty() } ?: "—",
                 )
-                GroupDivider()
                 UpdateInfoRow(
                     label = stringResource(R.string.schema_update_local_dict),
                     value = local?.dictFingerprint?.takeIf { it.isNotEmpty() }?.let {
@@ -393,7 +345,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                 )
                 // 非万象目录不显示模型行（模型是万象专属）。
                 if (updateSource is WanxiangUpdateManager.UpdateSource.Wanxiang) {
-                    GroupDivider()
                     UpdateInfoRow(
                         label = stringResource(R.string.schema_update_local_gram),
                         value = local?.gramFingerprint?.let {
@@ -416,14 +367,12 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                 val gramDiff = info.gramRemoteFingerprint != null &&
                     local?.gramFingerprint != null &&
                     info.gramRemoteFingerprint != local.gramFingerprint
-                SectionHeader(stringResource(R.string.schema_update_remote_info))
-                GroupCard {
+                SettingsGroup(title = stringResource(R.string.schema_update_remote_info)) {
                     UpdateInfoRow(
                         label = stringResource(R.string.schema_update_remote_schema),
                         value = info.schemaRemoteVersion,
                         valueColor = if (schemaDiff) diffColor else darkColor,
                     )
-                    GroupDivider()
                     UpdateInfoRow(
                         label = stringResource(R.string.schema_update_remote_dict),
                         value = info.dictRemoteFingerprint?.let {
@@ -431,7 +380,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                         } ?: "—",
                         valueColor = if (dictDiff) diffColor else darkColor,
                     )
-                    GroupDivider()
                     UpdateInfoRow(
                         label = stringResource(R.string.schema_update_remote_gram),
                         value = info.gramRemoteFingerprint?.let {
@@ -550,8 +498,6 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
                     }
                 }
             }
-            Spacer(Modifier.height(16.dp))
-        }
     }
 }
 
@@ -564,7 +510,7 @@ private fun UpdateInfoRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 12.dp),
+            .padding(vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(

@@ -1,0 +1,23 @@
+{
+  "formatVersion": 3,
+  "contents": [
+    {
+      "type": "skin",
+      "id": "g1-keymodel-demo",
+      "path": "skin.json",
+      "sha256": "f3ca6460c89829a692bca78f173a157a0a61e6e04bc71a50470a9f19ce78d1e7"
+    },
+    {
+      "type": "asset",
+      "id": "img_keyface",
+      "path": "assets/img_keyface.png",
+      "sha256": "eaee0b34a2cf19cb719b83090563774f9f0e99385e2f06fae1ce97a9ec960e49"
+    },
+    {
+      "type": "asset",
+      "id": "img_badge",
+      "path": "assets/img_badge.png",
+      "sha256": "cb3a211863ed347825fd9d120df7f9342b68af015a01de4bedf2753ccfc9d98a"
+    }
+  ]
+}

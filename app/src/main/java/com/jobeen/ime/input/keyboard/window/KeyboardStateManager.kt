@@ -17,6 +17,8 @@ import com.jobeen.ime.input.keyboard.impl.IKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
+import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
@@ -48,6 +50,15 @@ object KeyboardStateManager {
     private var keyboardAttached = false
     private var schemas: List<EngineMessage.Schema> = emptyList()
     private var currentSchema: EngineMessage.Schema? = null
+
+    /**
+     * 当前方案推进（2026-10-29 item-1 C）：赋值后同步给输入统计
+     * 的方案分桶；全部 currentSchema 赋值点皆经此处，不直接赋值。
+     */
+    private fun updateCurrentSchema(schema: EngineMessage.Schema?) {
+        currentSchema = schema
+        com.jobeen.ime.input.stats.InputStats.setScheme(schema?.id.orEmpty())
+    }
     private var defaultKeyboardName = QwertyKeyboard.NAME
 
     // 打字状态：由 Status 消息驱动（RimeEngine 不参与）
@@ -87,6 +98,13 @@ object KeyboardStateManager {
 
     fun getSchemas(): List<EngineMessage.Schema> = schemas
     fun getCurrentSchema(): EngineMessage.Schema? = currentSchema
+
+    /** 当前回车键类型文本（重点候选 8-8 动态文字供给）：取最近一次
+     * 编辑框信息的 imeOptions 动作；无信息时为 ENTER。 */
+    fun currentReturnKeyType(): String {
+        val info = lastEditorInfo ?: return "ENTER"
+        return ReturnKeyTypeText.fromImeAction(info.imeOptions and EditorInfo.IME_MASK_ACTION)
+    }
     fun get(name: String): IKeyboard? = keyboards[name]
 
 
@@ -142,7 +160,7 @@ object KeyboardStateManager {
         }
         if (schemas.isEmpty()) return ""
         val index = schemas.indexOf(currentSchema)
-        currentSchema = if (index >= 0) schemas[(index + 1) % schemas.size] else schemas.first()
+        updateCurrentSchema(if (index >= 0) schemas[(index + 1) % schemas.size] else schemas.first())
         switchTo(currentSchema?.layout ?: QwertyKeyboard.NAME)
         return currentSchema?.id.orEmpty()
     }
@@ -156,7 +174,7 @@ object KeyboardStateManager {
         }
         val schema = schemas.find { it.id == schemaId } ?: return ""
         if (currentSchema?.id == schemaId) return schemaId
-        currentSchema = schema
+        updateCurrentSchema(schema)
         EngineFactory.current()?.selectSchema(schema.id)
         switchTo(schema.layout.ifEmpty { QwertyKeyboard.NAME })
         return schema.id
@@ -236,7 +254,7 @@ object KeyboardStateManager {
                 refreshPolicy.markPending()
                 return
             }
-            currentSchema = schemas.firstOrNull()
+            updateCurrentSchema(schemas.firstOrNull())
             currentSchema?.id?.let { EngineFactory.current()?.selectSchema(it) }
 
             // 只有在已经挂载到窗口时才切换键盘布局，避免在 factory 尚未注入、
@@ -264,7 +282,29 @@ object KeyboardStateManager {
 
     private var lastSwitchKey: Pair<String, String?>? = null
 
+    /**
+     * 切换到目标键盘。目标先经自创布局的主键盘位解析（皮肤 v3
+     * B3 §3.3）：生效皮肤绑定了有效自创布局时，主键盘名改指
+     * `custom:<layoutId>`；场景/工具键盘名原样。startInput 的
+     * 场景强制目标走 [switchToResolved] 直达，不经此解析。
+     * 横屏分支（2026-10-27 矩阵扩展）：竖屏绑定不存在但横屏
+     * 绑定存在且当前为横屏时，主键盘名改指横屏绑定——旋转
+     * 重建经 rebuild → switchTo(当前名) 走同一分支，横竖切换
+     * 自动往返（竖屏回内置布局，横屏进横屏专属布局）。
+     */
     fun switchTo(name: String) {
+        val landscape = appContext.resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val target = CustomLayoutRuntime.resolveSwitchTarget(
+            SkinSnapshotProvider.current(appContext),
+            name,
+            currentSchema?.layout ?: defaultKeyboardName,
+            landscape,
+        )
+        switchToResolved(target)
+    }
+
+    private fun switchToResolved(name: String) {
         // 同键盘 + 同方案的重复切换直接早退：旧实现每次都重设空格键文案/
         // 标点模式并回调 onKeyboardChanged（触发窗口侧重排），而调用方
         // （refreshSchemas、resume 等）经常同参数连调多次
@@ -336,13 +376,15 @@ object KeyboardStateManager {
             (variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)
-        val start = when {
+        // 场景强制键盘（数字/电话/密码）不被自创布局替换（B3
+        // §3.3 优先级表第一行）：走直达通道；主键盘位走 switchTo 解析
+        when {
             inputClass == InputType.TYPE_CLASS_NUMBER ||
-                inputClass == InputType.TYPE_CLASS_PHONE -> NumberKeyboard.NAME
-            isPasswordText -> QwertyKeyboard.NAME
-            else -> currentSchema?.layout ?: defaultKeyboardName
+                inputClass == InputType.TYPE_CLASS_PHONE ->
+                switchToResolved(NumberKeyboard.NAME)
+            isPasswordText -> switchToResolved(QwertyKeyboard.NAME)
+            else -> switchTo(currentSchema?.layout ?: defaultKeyboardName)
         }
-        switchTo(start)
     }
 
     fun resume() {
@@ -398,8 +440,18 @@ object KeyboardStateManager {
                 val (resolved, target) = resolveEngineSchemaTarget(
                     schemas, message, currentKeyboardName, defaultKeyboardName
                 )
-                currentSchema = resolved
-                switchTo(target)
+                updateCurrentSchema(resolved)
+                // 启动时序保护：键盘窗口尚未建立（factory 未注入，
+                // 唯一设置点是窗口建视图时）时，switchTo 经 create
+                // 取 factory 会抛错（切输入法回来进程重建、消息先到
+                // 即闪退）。此时只推进 currentSchema、不切换；视图
+                // 建立后 onAttach 会按 currentSchema 布局切到正确
+                // 键盘，方案不丢失。未挂载时记一条元数据日志。
+                if (keyboardAttached) {
+                    switchTo(target)
+                } else {
+                    Timber.w("engine_schema_switch_deferred: keyboard not attached")
+                }
             }
 
             else -> {}

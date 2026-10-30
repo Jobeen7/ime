@@ -18,6 +18,7 @@ import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.input.panel.PanelAction
+import com.jobeen.ime.input.panel.menu.KeyboardMenuEntries
 import splitties.dimensions.dp
 import splitties.views.dsl.constraintlayout.centerHorizontally
 import splitties.views.dsl.constraintlayout.constraintLayout
@@ -41,93 +42,70 @@ class MenuGridView(
         val action: PanelAction,
     )
 
-    // Each inner array is one horizontally scrollable page.
-    private val items = arrayOf(
-        arrayOf(
+    // 菜单页入口（重点候选 8-10）：顺序与动作取 KeyboardMenuEntries
+    // 注册表；标签与图标由本视图按 id 映射（新增入口只改注册表＋
+    // 本映射，不动分页逻辑；页内行数自适应，6 项页为 4＋2 两行）。
+    private val items: Array<Array<MenuItem>> = KeyboardMenuEntries.PAGES.map { page ->
+        page.map { entry ->
             MenuItem(
-                context.getString(R.string.menu_emoji),
-                R.drawable.ic_keyboard_emoticon,
-                PanelAction.EmojiKeyboard
-            ),
-            MenuItem(
-                context.getString(R.string.menu_symbol),
-                R.drawable.ic_keyboard_symbol,
-                PanelAction.SymbolKeyboard
-            ),
-            MenuItem(
-                context.getString(R.string.model_prediction),
-                R.drawable.ic_keyboard_lightbulb_on_outline,
-                PanelAction.TogglePrediction
-            ),
-            MenuItem(
-                context.getString(R.string.menu_candidate_comment),
-                R.drawable.ic_keyboard_bubble,
-                PanelAction.ToggleShowComment
-            ),
-            MenuItem(
-                context.getString(R.string.menu_traditional_chinese),
-                R.drawable.ic_keyboard_traditional_ch,
-                PanelAction.ToggleTraditionalChinese
-            ),
-            MenuItem(
-                context.getString(R.string.menu_ascii_mode),
-                R.drawable.ic_keyboard_english_mode,
-                PanelAction.ToggleAsciiMode
-            ),
-            MenuItem(
-                context.getString(R.string.menu_emoji_input),
-                R.drawable.ic_keyboard_sticker_emoji,
-                PanelAction.ToggleEmojiInput
-            ),
-            MenuItem(
-                context.getString(R.string.menu_voice),
-                R.drawable.ic_keyboard_voice,
-                PanelAction.ToggleVoice
-            ),
-        ),
-        arrayOf(
-            MenuItem(
-                context.getString(R.string.menu_clipboard),
-                R.drawable.ic_keyboard_clipboard,
-                PanelAction.Clipboard
-            ),
-            MenuItem(
-                context.getString(R.string.phrase_tab),
-                R.drawable.ic_keyboard_star_david,
-                PanelAction.CommonPhrases
-            ),
-            MenuItem(
-                context.getString(R.string.menu_cursor),
-                R.drawable.ic_keyboard_cursor_move,
-                PanelAction.CursorMove
-            ),
-            MenuItem(
-                context.getString(R.string.menu_schema),
-                R.drawable.ic_keyboard_tune,
-                PanelAction.SchemaSettings
-            ),
-            MenuItem(
-                context.getString(R.string.menu_settings),
-                R.drawable.ic_keyboard_setting,
-                PanelAction.Settings
-            ),
-            MenuItem(
-                context.getString(R.string.menu_theme),
-                R.drawable.ic_keyboard_palette,
-                PanelAction.Palette
-            ),
-            MenuItem(
-                context.getString(R.string.menu_reload_engine),
-                R.drawable.ic_keyboard_reload,
-                PanelAction.ReloadEngine
-            ),
-            MenuItem(
-                context.getString(R.string.menu_about),
-                R.drawable.ic_keyboard_information_outline,
-                PanelAction.About
-            ),
-        ),
-    )
+                context.getString(labelResFor(entry.id)),
+                iconResFor(entry.id),
+                entry.action,
+            )
+        }.toTypedArray()
+    }.toTypedArray()
+
+    private fun labelResFor(id: String): Int = when (id) {
+        "emoji" -> R.string.menu_emoji
+        "symbol" -> R.string.menu_symbol
+        "prediction" -> R.string.model_prediction
+        "candidate_comment" -> R.string.menu_candidate_comment
+        "traditional_chinese" -> R.string.menu_traditional_chinese
+        "ascii_mode" -> R.string.menu_ascii_mode
+        "emoji_input" -> R.string.menu_emoji_input
+        "voice" -> R.string.menu_voice
+        "clipboard" -> R.string.menu_clipboard
+        "phrases" -> R.string.phrase_tab
+        "cursor" -> R.string.menu_cursor
+        "schema_settings" -> R.string.menu_schema
+        "settings" -> R.string.menu_settings
+        "theme" -> R.string.menu_theme
+        "reload_engine" -> R.string.menu_reload_engine
+        "about" -> R.string.menu_about
+        "select_all" -> R.string.select_all
+        "copy" -> R.string.copy
+        "paste" -> R.string.paste
+        "undo" -> R.string.menu_undo
+        "redo" -> R.string.menu_redo
+        "deploy_sync" -> R.string.menu_deploy_sync
+        else -> R.string.menu_settings
+    }
+
+    private fun iconResFor(id: String): Int = when (id) {
+        "emoji" -> R.drawable.ic_keyboard_emoticon
+        "symbol" -> R.drawable.ic_keyboard_symbol
+        "prediction" -> R.drawable.ic_keyboard_lightbulb_on_outline
+        "candidate_comment" -> R.drawable.ic_keyboard_bubble
+        "traditional_chinese" -> R.drawable.ic_keyboard_traditional_ch
+        "ascii_mode" -> R.drawable.ic_keyboard_english_mode
+        "emoji_input" -> R.drawable.ic_keyboard_sticker_emoji
+        "voice" -> R.drawable.ic_keyboard_voice
+        "clipboard" -> R.drawable.ic_keyboard_clipboard
+        "phrases" -> R.drawable.ic_keyboard_star_david
+        "cursor" -> R.drawable.ic_keyboard_cursor_move
+        "schema_settings" -> R.drawable.ic_keyboard_tune
+        "settings" -> R.drawable.ic_keyboard_setting
+        "theme" -> R.drawable.ic_keyboard_palette
+        "reload_engine" -> R.drawable.ic_keyboard_reload
+        "about" -> R.drawable.ic_keyboard_information_outline
+        "select_all" -> R.drawable.ic_toolbar_select_all
+        "copy" -> R.drawable.ic_toolbar_copy
+        "paste" -> R.drawable.ic_toolbar_paste
+        "undo" -> R.drawable.ic_keyboard_undo
+        "redo" -> R.drawable.ic_keyboard_redo
+        "deploy_sync" -> R.drawable.ic_keyboard_clipboard_cloud
+        else -> R.drawable.ic_keyboard_setting
+    }
 
     private val columns = 4
     private val radius = dp(16).toFloat()

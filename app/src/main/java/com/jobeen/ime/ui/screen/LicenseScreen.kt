@@ -9,17 +9,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -33,7 +25,6 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
-import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -66,40 +57,21 @@ fun LicenseScreen(onBack: () -> Unit) {
         }
     }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        selected ?: stringResource(R.string.open_source_licenses),
-                        fontSize = barFontSize,
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = {
-                        if (selected != null) selected = null else onBack()
-                    }) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = null)
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
-                ),
-            )
-        },
-    ) { padding ->
+    SettingsPageLazyScaffold(
+        title = selected ?: stringResource(R.string.open_source_licenses),
+        onBack = { if (selected != null) selected = null else onBack() },
+    ) {
         if (selected == null) {
             LazyColumn(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding),
+                modifier = Modifier.fillMaxSize(),
             ) {
+
                 items(files) { name ->
                     Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .clickable { selected = name }
-                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                            .padding(vertical = 14.dp),
                     ) {
                         Text(
                             text = if (name == INDEX_FILE) {
@@ -116,16 +88,14 @@ fun LicenseScreen(onBack: () -> Unit) {
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    HorizontalDivider()
                 }
             }
         } else {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(padding)
                     .verticalScroll(rememberScrollState())
-                    .padding(16.dp),
+                    .padding(vertical = 16.dp),
             ) {
                 Text(
                     text = detailText,

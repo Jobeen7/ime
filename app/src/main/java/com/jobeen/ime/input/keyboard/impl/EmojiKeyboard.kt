@@ -158,6 +158,7 @@ class EmojiKeyboard(
 
     override fun name(): String = NAME
     override fun updateSpaceKeyText(text: String) {}
+    override fun updateDynamicTexts(values: Map<String, String>) {}
     override fun updatePunctuationMode(mode: PunctuationMode) {}
     override fun updateEditorInfo(info: EditorInfo, empty: Boolean, isComposing: Boolean) {}
 

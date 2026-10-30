@@ -15,6 +15,9 @@ interface IPanel {
     fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>)
     fun exitAddPhraseMode()
 
+    /** 粘贴后返回键盘（默认空实现）：剪贴板态 → Idle，其余态不动 */
+    fun returnToKeyboard() {}
+
     /** 剪贴板搜索态是否激活（窗口布局要据此拉高窗口、插入结果列表区）。 */
     val clipSearchActive: Boolean get() = false
 

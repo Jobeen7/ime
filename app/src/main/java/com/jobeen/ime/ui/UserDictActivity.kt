@@ -16,10 +16,14 @@ import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictManager
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
+import com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncPrefs
+import com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncScheduler
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.ui.screen.UserDictScreen
 import com.jobeen.ime.ui.screen.UserDictUiState
 import com.jobeen.ime.ui.theme.ImeTheme
+import com.jobeen.ime.ui.theme.AppAppearance
+import com.jobeen.ime.ui.theme.AppAppearanceMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,6 +40,8 @@ import java.io.File
  * 导入/导出使用热路径直接操作运行中引擎的词库，无需停止 Rime，导入后立即生效。
  */
 class UserDictActivity : ComponentActivity() {
+    // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
+    private var createdAppearanceMode: AppAppearanceMode? = null
 
     private val uiState = UserDictUiState()
     private var session: RimeSession? = null
@@ -51,6 +57,7 @@ class UserDictActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        createdAppearanceMode = AppAppearance.getMode(this)
         enableEdgeToEdge()
 
         uiState.webdavServer = UserDictPrefs.server
@@ -60,11 +67,16 @@ class UserDictActivity : ComponentActivity() {
         uiState.webdavAllowHttp = UserDictPrefs.allowHttp
         uiState.lastUpload = UserDictPrefs.lastUploadTime
         uiState.lastDownload = UserDictPrefs.lastDownloadTime
+        refreshPeriodicSyncState()
+        // 强制停止后持久任务不再唤醒：开关仍开着但任务丢了时，在此补调度
+        if (PeriodicSyncPrefs.enabled && !PeriodicSyncScheduler.isScheduled(this)) {
+            PeriodicSyncScheduler.schedule(this)
+        }
 
-        val themeMode = KeyboardManager.Theme.getMode(this)
+        val themeMode = AppAppearance.themeMode(this)
 
         setContent {
-            ImeTheme(themeMode = themeMode) {
+            ImeTheme(themeMode = themeMode, dynamicColor = AppAppearance.useDynamicColor(this)) {
                 UserDictScreen(
                     state = uiState,
                     onBack = { finish() },
@@ -112,6 +124,33 @@ class UserDictActivity : ComponentActivity() {
                         )
                     },
                     onDismissDeletedWords = { uiState.deletedWords = null },
+                    onOpenWordCreation = {
+                        startActivity(
+                            android.content.Intent(
+                                this@UserDictActivity,
+                                WordCreationActivity::class.java,
+                            )
+                        )
+                    },
+                    onPeriodicSyncEnabledChange = { enabled ->
+                        PeriodicSyncPrefs.enabled = enabled
+                        uiState.periodicSyncEnabled = enabled
+                        if (enabled) {
+                            PeriodicSyncScheduler.schedule(this@UserDictActivity)
+                        } else {
+                            PeriodicSyncScheduler.cancel(this@UserDictActivity)
+                        }
+                        ToastUtil.showToast(
+                            if (enabled) "已开启后台定期同步" else "已关闭后台定期同步"
+                        )
+                    },
+                    onPeriodicIntervalChange = { hours ->
+                        PeriodicSyncPrefs.intervalHours = hours
+                        uiState.periodicIntervalHours = hours
+                        if (PeriodicSyncPrefs.enabled) {
+                            PeriodicSyncScheduler.schedule(this@UserDictActivity)
+                        }
+                    },
                     onRetryDictList = { loadDictList() },
                 )
             }
@@ -127,6 +166,22 @@ class UserDictActivity : ComponentActivity() {
         if (uiState.dicts == null) {
             loadDictList()
         }
+        // 后台任务可能在外跑过：回来时刷新上次同步显示
+        refreshPeriodicSyncState()
+        val recordedAppearanceMode = createdAppearanceMode
+        if (recordedAppearanceMode != null &&
+            AppAppearance.appearanceModeChanged(recordedAppearanceMode, AppAppearance.getMode(this))
+        ) {
+            recreate()
+        }
+    }
+
+    /** 后台定期同步状态 → 界面状态（开关／间隔／上次结果） */
+    private fun refreshPeriodicSyncState() {
+        uiState.periodicSyncEnabled = PeriodicSyncPrefs.enabled
+        uiState.periodicIntervalHours = PeriodicSyncPrefs.intervalHours
+        uiState.lastPeriodicSync = PeriodicSyncPrefs.lastSyncTime
+        uiState.lastPeriodicSyncOk = PeriodicSyncPrefs.lastSyncOk
     }
 
     override fun onDestroy() {

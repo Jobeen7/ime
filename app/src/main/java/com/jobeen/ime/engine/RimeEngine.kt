@@ -36,6 +36,7 @@ import com.jobeen.ime.engine.rime.host.BehaviorHost
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
+import com.jobeen.ime.engine.data.PairCommitQueue
 import com.jobeen.ime.engine.rime.behavior.InputKey
 import com.jobeen.ime.engine.rime.behavior.InputString
 import com.jobeen.ime.engine.rime.behavior.Reset
@@ -204,6 +205,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data object Segment : Action
         data class SelectSchema(val schemaId: String) : Action
         data class Commit(val text: String) : Action
+        /** 成对提交：pair 为开闭合写文本，opener 为单开符号（组字竞态回退用）。 */
+        data class CommitPair(val pair: String, val opener: String) : Action
         data object InputCleared : Action
         data object Reload : Action
     }
@@ -914,6 +917,40 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 }
             }
 
+            is Action.ForwardDelete -> {
+                serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
+                sendJob {
+                    // 组字判定在 job 内以 getRawInput 现读（与退格
+                    // handleBackspaceInJob 同纪律）：组字中前删按
+                    // 重点候选 8-9 只删编码右侧——composition 快照
+                    // 的 caret 未到 preedit 末尾时，送内部 Delete
+                    // 给 Rime 删码右字符（Rime 消费，不碰宿主文本）；
+                    // caret 已到末尾时不动（右侧无码）。内部合成键
+                    // isVirtual=false：即使未消费也被透传门控拦下，
+                    // 绝不补发宿主 DEL；快照滞后时宁可漏删一次。
+                    if (getRawInput().isNotEmpty()) {
+                        val composition = compositionCached
+                        if (ForwardDeleteDecision.shouldDeleteCodeRight(
+                                composition.preedit, composition.cursorPos,
+                            )
+                        ) {
+                            processKey(KeyMapping.Key_Delete, 0U, false)
+                            DiagLog.d("fwd_delete", "composing_code_right")
+                        } else {
+                            DiagLog.d("fwd_delete", "noop_composing")
+                        }
+                        return@sendJob
+                    }
+                    // 选区/后文不在 job 内判：上一键的 Commit 可能
+                    // 尚在消息管线中未落屏，按旧选区判定会吞删——
+                    // 宿主段回 reduce 在执行时点重读（学
+                    // forwardUnhandledKey 的判定点纪律，详设 §5.2-2）
+                    dispatchAction(Action.ForwardDeleteHost)
+                }
+            }
+
+            Action.ForwardDeleteHost -> forwardDeleteOnHost()
+
             is Action.Predict -> requestPrediction(
                 action.commit,
                 fieldGenOverride = action.fieldGen,
@@ -973,6 +1010,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
 
             is Action.Commit -> requestCommit(action.text)
+            is Action.CommitPair -> requestCommitPair(action.pair, action.opener)
             Action.InputCleared -> {
                 invalidatePendingCandidates()
                 invalidatePendingPrediction()
@@ -2102,6 +2140,44 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     //前端提交
     override fun commit(text: String) {
         dispatchAction(Action.Commit(text))
+    }
+
+    /**
+     * 成对提交（2026-10-28 截图 6 项）：经同一作业通道投递，
+     * 不直送 actions（直送会超车排队中的 native 提交，见
+     * requestCommit 的超车注释）。
+     */
+    override fun commitPair(pair: String, opener: String) {
+        dispatchAction(Action.CommitPair(pair, opener))
+    }
+
+    private fun requestCommitPair(pair: String, opener: String) {
+        // 成对不参与搭配学习、打断打字学习链，与前端提交同口径。
+        lastLearnSegment = null
+        sendJob {
+            // 直接上屏：前文缓存失效，后续预测读新鲜前文
+            invalidateBeforeCursorCache()
+            if (compositionCached.preedit?.isNotEmpty() == true) {
+                // 门与作业之间组字已起：退化为普通单字提交（与直接
+                // 敲开符号一致），不成对、不丢字。
+                commitCurrentSelection(opener)
+                return@sendJob
+            }
+            // 回退量走侧队列（JNI 构造签名固定，消息体带不了）：
+            // 入队在 emit 之前、同一作业内；emit 抛错（消息未产生）
+            // 时回滚入队，避免污染下一条提交。
+            pendingFrontendPredictions.offerAndEmit(
+                pair, predictionFieldGen.get(),
+            ) {
+                PairCommitQueue.offer(1)
+                try {
+                    emitCommit(pair)
+                } catch (e: Exception) {
+                    PairCommitQueue.removeLast()
+                    throw e
+                }
+            }
+        }
     }
 
     private fun requestCommit(text: String) {

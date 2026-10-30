@@ -9,6 +9,9 @@ import android.view.Gravity
 import android.view.View
 import android.widget.PopupWindow
 import android.widget.TextView
+import com.jobeen.ime.data.keyboard.theme.FontRole
+import com.jobeen.ime.data.keyboard.theme.GlobalFonts
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.dimensions.dp
 
 class KeyPreviewPopup(private val context: Context) {
@@ -38,13 +41,32 @@ class KeyPreviewPopup(private val context: Context) {
         contentView.setText(text)
         contentView.setTextColor(textColor)
         bgDrawable.setColor(bgColor)
+        // 字族跟随（2026-10-27 新增分流）：弹窗视图复用，每次
+        // 弹出时按当前皮肤重取一次（缓存查找，无皮肤时回默认）。
+        contentView.typeface = GlobalFonts.typefaceFor(context, FontRole.POPUP, Typeface.NORMAL) ?: Typeface.DEFAULT
 
         anchor.getLocationInWindow(loc)
         val anchorCenterX = loc[0] + anchor.width / 2
         val anchorTop = loc[1]
 
-        val popupX = anchorCenterX - popupSize / 2
-        val popupY = anchorTop - popupSize - context.dp(6)
+        // 气泡溢出检测（默认开，与长按弹出气泡同口径）：
+        // 开启且窗口尺寸已知时走调位解析；关闭或尺寸未知时
+        // 保持旧行为（不夹取，原样显示）。
+        val gap = context.dp(6)
+        val rootView = anchor.rootView
+        val checkEnabled = SkinSnapshotProvider.peek()?.bubbleOverflowCheck ?: true
+        val (popupX, popupY) = if (checkEnabled && rootView != null &&
+            rootView.width > 0 && rootView.height > 0
+        ) {
+            val pos = PopupOverflow.resolve(
+                anchorCenterX, anchorTop, anchor.height,
+                popupSize, popupSize,
+                rootView.width, rootView.height, gap,
+            )
+            pos.x to pos.y
+        } else {
+            anchorCenterX - popupSize / 2 to anchorTop - popupSize - gap
+        }
 
         // PopupWindow 对象只建一次复用（此前每次按键新建一个窗口对象并走一遍
         // 完整的窗口增删装配，是按键抖动来源之一）：已显示时只更新位置

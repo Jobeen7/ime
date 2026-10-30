@@ -2,13 +2,9 @@ package com.jobeen.ime.ui.screen
 
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,33 +18,25 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -63,11 +51,13 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
+import com.jobeen.ime.ui.theme.LocalMonetCardColor
 import com.jobeen.ime.ui.theme.SuccessDark
 import com.jobeen.ime.ui.theme.SuccessLight
 
@@ -117,16 +107,23 @@ object ScreenComponent {
         }
     }
 
+    /**
+     * 分组：组标题＋卡片一体（统一装饰系统）。
+     * 组标题与组行标题同色（onSurface，深色白、浅色黑）、14sp；
+     * 标题与卡间距 6dp；卡后留 20dp 组末间距。
+     * 卡内横向留白由卡片提供，行自身不再加横向边距。
+     */
     @Composable
     fun SettingsGroup(
         title: String,
         icon: ImageVector? = null,
+        titleColor: androidx.compose.ui.graphics.Color = MaterialTheme.colorScheme.onSurface,
         content: @Composable () -> Unit,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             Row(
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
+                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 6.dp),
             ) {
                 if (icon != null) {
                     Icon(
@@ -139,33 +136,23 @@ object ScreenComponent {
                 }
                 Text(
                     text = title,
-                    fontSize = 13.sp,
+                    fontSize = 14.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = titleColor,
                 )
             }
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceContainer,
-                ),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 8.dp),
-                ) {
-                    content()
-                }
+            GroupCard {
+                content()
             }
+            Spacer(Modifier.height(20.dp))
         }
     }
 
     /**
-     * 分组卡片：一张卡片装多行，组内行之间只用发丝线分隔，行自身无圆角无阴影。
-     * 卡片即“一页中的一组”。
+     * 分组卡片：一张卡片装多行，行之间无分隔线、靠行内纵向留白区分。
+     * 卡片即“一页中的一组”；卡内横向 16dp、纵向 8dp 留白由卡片统一提供，
+     * 行自身不再加横向边距（此前各行各自加边距、有的加有的不加，是外观页
+     * 内容贴屏边的根因之一）。
      */
     @Composable
     fun GroupCard(
@@ -176,53 +163,55 @@ object ScreenComponent {
             modifier = modifier.fillMaxWidth(),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceContainer,
+                // 分组卡片面＝莫奈色（2026-10-30 莫奈色轮，浅／深两模式皆然）。
+                containerColor = LocalMonetCardColor.current,
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
-            Column(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+            ) {
                 content()
             }
         }
-    }
-
-    /** 分组卡片内的发丝线：装饰性分隔，无语义。 */
-    @Composable
-    fun GroupDivider() {
-        HorizontalDivider(
-            modifier = Modifier.padding(horizontal = 16.dp),
-            thickness = 0.5.dp,
-            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-        )
     }
 
     /**
      * 导航行：单色图标 + 标题 + 右箭头，无副标题时只有一行。
      * 图标不带彩色底块，颜色跟随主题正文色（浅色黑、深色白）。
      */
+    /**
+     * 导航行：图标（可选）＋标题＋副标题，无箭头（可点性由整行点按承担）。
+     * 须放在卡片内：横向留白由卡片提供，行自身只留纵向 12dp。
+     * 图标只用于主页组行；组页与详情页行不传图标（标题＋副标题）。
+     */
     @Composable
     fun NavRow(
         title: String,
         onClick: () -> Unit,
-        icon: ImageVector,
+        icon: ImageVector? = null,
         titleColor: Color = MaterialTheme.colorScheme.onSurface,
-        showChevron: Boolean = true,
         subtitle: String? = null,
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .rowAnchor(title)
+                .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(
-                imageVector = icon,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurface,
-                modifier = Modifier.size(20.dp),
-            )
-            Spacer(Modifier.width(12.dp))
+            if (icon != null) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurface,
+                    modifier = Modifier.size(20.dp),
+                )
+                Spacer(Modifier.width(12.dp))
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
@@ -242,14 +231,6 @@ object ScreenComponent {
                         maxLines = 1,
                     )
                 }
-            }
-            if (showChevron) {
-                Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
-                    modifier = Modifier.size(20.dp),
-                )
             }
         }
     }
@@ -284,6 +265,10 @@ object ScreenComponent {
     fun warningContentColor(): Color =
         if (isSystemInDarkTheme()) Color(0xFFFFD54A) else Color(0xFF6D4C00)
 
+    /**
+     * 开关行：标题 16sp，纵向 12dp；须放在卡片内，横向留白由卡片提供。
+     * showDivider 保留参数以兼容调用点，按对齐要求不再绘制分隔线。
+     */
     @Composable
     fun SwitchRow(
         title: String,
@@ -295,14 +280,14 @@ object ScreenComponent {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .rowAnchor(title)
+                .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.weight(1f),
-                fontSize = rowSubFontSize,
                 color = if (enabled) MaterialTheme.colorScheme.onSurface
                 else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
             )
@@ -319,14 +304,12 @@ object ScreenComponent {
                 ),
             )
         }
-        if (showDivider) {
-            HorizontalDivider(
-                thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-        }
     }
 
+    /**
+     * 操作行：标题 16sp、副标题 14sp，纵向 12dp；须放在卡片内。
+     * showDivider 保留参数以兼容调用点，按对齐要求不再绘制分隔线。
+     */
     @Composable
     fun ActionRow(
         title: String,
@@ -337,14 +320,14 @@ object ScreenComponent {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .rowAnchor(title)
+                .padding(vertical = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
-                    fontSize = rowSubFontSize,
                 )
                 if (subtitle != null) {
                     Spacer(Modifier.height(2.dp))
@@ -352,21 +335,22 @@ object ScreenComponent {
                         text = subtitle,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = rowSubFontSize,
                     )
                 }
             }
             Spacer(Modifier.width(12.dp))
             trailing()
         }
-        if (showDivider) {
-            HorizontalDivider(
-                thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
-        }
     }
 
+    /**
+     * 滑杆行：标题 16sp、值标签 14sp，纵向 12dp；须放在卡片内。
+     * 横向留白全部由页边距＋卡片内边距提供，本行不再自带内缩：
+     * 2026-10-29 批量轮的 inset 只是贴在三行上的补丁，页级与卡片级
+     * 仍无留白才是贴边裁切的根因；补丁随统一装饰系统废除。
+     * 滑块不再用 offset 补偿，拇指位置由滑块自身几何决定，落在卡内。
+     * showDivider 保留参数以兼容调用点，按对齐要求不再绘制分隔线。
+     */
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     fun SliderRow(
@@ -382,7 +366,8 @@ object ScreenComponent {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(vertical = 6.dp),
+                .rowAnchor(title)
+                .padding(vertical = 12.dp),
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -392,32 +377,36 @@ object ScreenComponent {
                     text = title,
                     style = MaterialTheme.typography.bodyLarge,
                     modifier = Modifier.weight(1f),
-                    fontSize = rowSubFontSize,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     color = if (enabled) MaterialTheme.colorScheme.onSurface
                     else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                 )
                 Text(
                     text = valueLabel,
                     style = MaterialTheme.typography.bodyMedium,
-                    fontSize = rowSubFontSize,
                     fontWeight = FontWeight.Medium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                     color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
                     else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
                 )
             }
             Spacer(modifier = Modifier.height(4.dp))
+            // 圆点轨道：显式 20dp 圆点拇指（不依赖 M3 版本默认拇指样式；
+            // 此前 3dp 竖条拇指即旧“蓝点”的一种形态）；轨道仍 4dp、
+            // 主色激活段。滑杆在卡片 16dp 横向留白内，圆点边缘不超出卡片。
             Slider(
                 value = value,
                 onValueChange = onValueChange,
                 onValueChangeFinished = onValueChangeFinished,
                 valueRange = range,
                 enabled = enabled,
-                modifier = Modifier.offset(x = (-6).dp),
                 thumb = {
                     Box(
                         modifier = Modifier
-                            .size(width = 3.dp, height = 14.dp)
-                            .clip(RoundedCornerShape(1.dp))
+                            .size(20.dp)
+                            .clip(CircleShape)
                             .background(MaterialTheme.colorScheme.primary),
                     )
                 },
@@ -431,12 +420,6 @@ object ScreenComponent {
                         ),
                     )
                 },
-            )
-        }
-        if (showDivider) {
-            HorizontalDivider(
-                thickness = 0.5.dp,
-                color = MaterialTheme.colorScheme.outlineVariant,
             )
         }
     }
@@ -477,48 +460,28 @@ object ScreenComponent {
         onConfirmed: () -> Unit,
     ) {
         if (step == 1) {
-            AlertDialog(
+            SettingsConfirmDialog(
                 onDismissRequest = { onStepChange(0) },
-                title = { Text(stringResource(R.string.about_reset)) },
-                text = {
-                    Text(
-                        stringResource(R.string.about_reset_footnote) +
-                            stringResource(R.string.about_reset_confirm1_msg),
-                    )
-                },
-                confirmButton = {
-                    TextButton(onClick = { onStepChange(2) }) {
-                        Text(stringResource(R.string.about_reset_continue))
-                    }
-                },
-                dismissButton = {
-                    TextButton(onClick = { onStepChange(0) }) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                },
+                title = stringResource(R.string.about_reset),
+                text = stringResource(R.string.about_reset_footnote) +
+                    stringResource(R.string.about_reset_confirm1_msg),
+                confirmText = stringResource(R.string.about_reset_continue),
+                onConfirm = { onStepChange(2) },
+                dismissText = stringResource(R.string.cancel),
             )
         }
         if (step == 2) {
-            AlertDialog(
+            SettingsConfirmDialog(
                 onDismissRequest = { onStepChange(0) },
-                title = { Text(stringResource(R.string.about_reset_confirm2_title)) },
-                text = { Text(stringResource(R.string.about_reset_confirm2_msg)) },
-                confirmButton = {
-                    TextButton(onClick = {
-                        onStepChange(0)
-                        onConfirmed()
-                    }) {
-                        Text(
-                            stringResource(R.string.about_reset_confirm),
-                            color = MaterialTheme.colorScheme.error,
-                        )
-                    }
+                title = stringResource(R.string.about_reset_confirm2_title),
+                text = stringResource(R.string.about_reset_confirm2_msg),
+                confirmText = stringResource(R.string.about_reset_confirm),
+                onConfirm = {
+                    onStepChange(0)
+                    onConfirmed()
                 },
-                dismissButton = {
-                    TextButton(onClick = { onStepChange(0) }) {
-                        Text(stringResource(R.string.cancel))
-                    }
-                },
+                dismissText = stringResource(R.string.cancel),
+                confirmColor = MaterialTheme.colorScheme.error,
             )
         }
     }
@@ -531,18 +494,11 @@ object ScreenComponent {
         onSelect: (Int) -> Unit,
         onDismiss: () -> Unit,
     ) {
-        AlertDialog(
+        SettingsDialog(
             onDismissRequest = onDismiss,
-            shape = RoundedCornerShape(16.dp),
-            containerColor = MaterialTheme.colorScheme.surface,
-            title = {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
-                )
-            },
-            text = {
+            title = title,
+            scrollable = false,
+            body = {
                 Column(
                     modifier = Modifier
                         .heightIn(max = 320.dp)
@@ -582,14 +538,12 @@ object ScreenComponent {
                     }
                 }
             },
-            confirmButton = {
-                TextButton(onClick = onDismiss) {
-                    Text(
-                        stringResource(R.string.cancel),
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            },
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.cancel),
+                    onClick = onDismiss,
+                ),
+            ),
         )
     }
 

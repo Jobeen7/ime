@@ -14,8 +14,8 @@ import com.jobeen.ime.input.panel.PanelAction
 import com.jobeen.ime.input.panel.PanelListener
 import com.jobeen.ime.input.panel.component.TextEditView
 import com.jobeen.ime.ui.AboutActivity
-import com.jobeen.ime.ui.KeyboardThemeSettingsActivity
 import com.jobeen.ime.ui.MainActivity
+import com.jobeen.ime.ui.SkinLibraryActivity
 import com.jobeen.ime.ui.SchemaSettingsActivity
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.launch
@@ -23,6 +23,13 @@ import kotlinx.coroutines.launch
 class PanelActionListener(
     private val service: ImeInputMethodService,
 ) : PanelListener {
+
+    /**
+     * 部署／同步菜单入口回调（重点候选 8-10）：由服务层挂接
+     * KeyboardDeployController 的请求＋确认＋进度提示；未挂接时
+     * 点按无动作（绝不静默部署）。
+     */
+    var onDeploySyncRequest: (() -> Unit)? = null
 
     override fun onCandidateSelected(candidate: EngineMessage.Candidate) {
         service.engine?.selectCandidate(candidate)
@@ -41,6 +48,7 @@ class PanelActionListener(
             )
 
             PanelAction.ReloadEngine -> service.engine?.reload()
+            PanelAction.DeploySync -> onDeploySyncRequest?.invoke()
             PanelAction.Undo -> service.engine?.undo(service)
             PanelAction.Redo -> service.engine?.redo(service)
             PanelAction.SelectAll ->
@@ -50,8 +58,11 @@ class PanelActionListener(
             PanelAction.Paste ->
                 service.activeInputConnection()?.performContextMenuAction(android.R.id.paste)
 
+            // 调色板（主题设置页脱钩后改跳库页：内置主题与皮肤卡
+            // 同页切换；原主题设置页不再有任何 UI 入口，仅保留类与
+            // 注册，见报告——旧主题分享/刷新/内置跟随开关随之无 UI 入口）。
             PanelAction.Palette -> service.startActivity(
-                Intent(service, KeyboardThemeSettingsActivity::class.java).apply {
+                Intent(service, SkinLibraryActivity::class.java).apply {
                     addFlags(
                         Intent.FLAG_ACTIVITY_NEW_TASK or
                             Intent.FLAG_ACTIVITY_CLEAR_TOP or
@@ -101,7 +112,15 @@ class PanelActionListener(
     }
 
     override fun onClipboardItemClick(entry: ClipboardManager.Entry) {
-        service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(entry.text))
+        // 粘贴输出规则（2026-10-29 批量第 4 项）：上屏前按规则变换文本
+        val text = ClipboardManager.applyOutputRule(
+            entry.text, ClipboardManager.getOutputRule(service)
+        )
+        service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(text))
+        // 粘贴后返回：收起剪贴板面板回键盘（默认关，不动旧行为）
+        if (ClipboardManager.isReturnAfterPasteEnabled(service)) {
+            service.keyboardWindow?.panel?.returnToKeyboard()
+        }
     }
 
     override fun onPhraseClick(phrase: PhraseManager.Phrase) {

@@ -10,6 +10,8 @@ import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
 import android.widget.OverScroller
+import com.jobeen.ime.data.keyboard.theme.FontRole
+import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.engine.data.EngineMessage
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -41,6 +43,18 @@ class PreeditPinnerView(context: Context) : View(context) {
             }
         }
 
+    /** 行内联想（2026-10-29 批量第 5 项）：首选候选的淡色预览，缀在组字内容后；
+     *  仅显示、不参与输入；组字为空时 onMeasure/onDraw 本就直接返回，天然不显示 */
+    var inlineSuggestion: String? = null
+        set(value) {
+            if (field != value) {
+                field = value
+                pendingScrollToEnd = value != null
+                requestLayout()
+                invalidate()
+            }
+        }
+
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.DEFAULT_BOLD
@@ -65,6 +79,8 @@ class PreeditPinnerView(context: Context) : View(context) {
     private var textScale = 1f
     private val scrolledTextPaint = Paint()
     private val scrolledSecondaryTextPaint = Paint()
+    private val ghostPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val scrolledGhostPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val scroller = OverScroller(context)
     private var velocityTracker: VelocityTracker? = null
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
@@ -85,8 +101,19 @@ class PreeditPinnerView(context: Context) : View(context) {
         textPaint.textSize = textSize
         secondaryTextPaint.color = secondaryTextColor
         secondaryTextPaint.textSize = textSize - 2
+        // 预编辑字族（2026-10-29 外观轮）：皮肤字族＞全局预编辑
+        // 选择＞系统默认；无选择时保持原有粗体默认。
+        textPaint.typeface =
+            GlobalFonts.typefaceFor(context, FontRole.PREEDIT, Typeface.BOLD)
+                ?: Typeface.DEFAULT_BOLD
+        secondaryTextPaint.typeface =
+            GlobalFonts.typefaceFor(context, FontRole.PREEDIT, Typeface.BOLD)
+                ?: Typeface.DEFAULT_BOLD
         scrolledTextPaint.set(textPaint)
         scrolledSecondaryTextPaint.set(secondaryTextPaint)
+        ghostPaint.set(secondaryTextPaint)
+        ghostPaint.alpha = 0x66
+        scrolledGhostPaint.set(ghostPaint)
         minScale = if (textPaint.textSize > 0f) (10f * density) / textPaint.textSize else 1f
         invalidate()
     }
@@ -108,6 +135,9 @@ class PreeditPinnerView(context: Context) : View(context) {
         for (item in items) {
             totalW += paintFor(item).measureText(item.text)
         }
+        val ghost = inlineSuggestion
+        val ghostW = if (ghost != null) ghostPaint.measureText(ghost) else 0f
+        totalW += ghostW
         contentWidth = totalW + pad * 2
 
         if (contentWidth > maxWidth) {
@@ -115,15 +145,18 @@ class PreeditPinnerView(context: Context) : View(context) {
             textScale = fitScale.coerceAtLeast(minScale).coerceAtMost(1f)
             scrolledTextPaint.textSize = textPaint.textSize * textScale
             scrolledSecondaryTextPaint.textSize = secondaryTextPaint.textSize * textScale
+            scrolledGhostPaint.textSize = ghostPaint.textSize * textScale
             var scaledW = 0f
             for (item in items) {
                 scaledW += scrolledPaintFor(item).measureText(item.text)
             }
+            if (ghost != null) scaledW += scrolledGhostPaint.measureText(ghost)
             contentWidth = scaledW + pad * 2
         } else {
             textScale = 1f
             scrolledTextPaint.textSize = textPaint.textSize
             scrolledSecondaryTextPaint.textSize = secondaryTextPaint.textSize
+            scrolledGhostPaint.textSize = ghostPaint.textSize
         }
 
         // 最终绘制宽度逐项算好存下：onDraw 此前对同一批 item 再逐个
@@ -165,6 +198,11 @@ class PreeditPinnerView(context: Context) : View(context) {
             // 宽度优先用 onMeasure 的缓存；尺寸对不上（数据刚变更）时回退实测
             x += if (widths != null && widths.size == items.size) widths[i]
             else paint.measureText(item.text)
+        }
+        // 行内联想：首选候选淡色缀后，仅预览
+        val ghost = inlineSuggestion
+        if (ghost != null) {
+            canvas.drawText(ghost, x, textY, scrolledGhostPaint)
         }
 
         canvas.restore()

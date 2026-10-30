@@ -12,12 +12,19 @@ import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.speech.VoiceUndoLedger
 import com.jobeen.ime.base.util.InputConnectionUtil
+import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.ClipboardManager
+import com.jobeen.ime.data.manager.DeployAwaitResult
+import com.jobeen.ime.data.manager.KeyboardDeployController
+import com.jobeen.ime.data.manager.KeyboardDeployPhase
+import com.jobeen.ime.data.manager.KeyboardDeployProgress
+import com.jobeen.ime.data.manager.KeyboardDeployTexts
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.engine.EngineFactory
+import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.IEngine
 import com.jobeen.ime.input.keyboard.window.KeyboardWindow
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
@@ -45,6 +52,11 @@ class ImeInputMethodService : InputMethodService() {
     var scope: CoroutineScope? = null
     var messageObserveJob: Job? = null
     private var showingDialog: android.app.Dialog? = null
+
+    // 接线轮 R7：键盘内部署控制器（窗口创建时挂接；同步恒 null，
+    // 见 onCreateInputView 注释）与上次已提示阶段（阶段进入才提示一次）。
+    private var deployController: KeyboardDeployController? = null
+    private var lastDeployToastPhase: KeyboardDeployPhase? = null
     private var lastSelectionStart = 0
     private var lastSelectionEnd = 0
 
@@ -68,6 +80,23 @@ class ImeInputMethodService : InputMethodService() {
 
     private val candidatePrefs: SharedPreferences by lazy {
         getSharedPreferences(CandidateManager.PREFS_NAME, MODE_PRIVATE)
+    }
+
+    /**
+     * 皮肤库颜色模式偏好（2026-10-27 第一组）：与库页菜单共用
+     * `skin_library` / `color_mode`（见 SkinColorMode 存储契约）。
+     * 不监听它，库页改动只会在下次重建/配置变化时生效；监听后
+     * 键变化经 onConfigChanged 走 KeyboardWindowView 的
+     * scheduleRefreshColors，键盘即时换板。服务与设置页同进程
+     * （仅语音走 :speech 进程），监听跨组件生效。
+     */
+    private val skinColorPrefs: SharedPreferences by lazy {
+        getSharedPreferences(com.jobeen.ime.skin.runtime.SkinColorMode.PREFS_NAME, MODE_PRIVATE)
+    }
+
+    /** 外观页偏好（2026-10-29 外观轮）：全局样式／字体／视频开关改动经同一监听进窗口刷新。 */
+    private val appearancePrefs: SharedPreferences by lazy {
+        getSharedPreferences(com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs.PREFS_NAME, MODE_PRIVATE)
     }
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -104,6 +133,8 @@ class ImeInputMethodService : InputMethodService() {
         themePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         schemaPrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         candidatePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        skinColorPrefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        appearancePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         InputFeedbacks.initFeedbackCache(this)
     }
 
@@ -121,11 +152,30 @@ class ImeInputMethodService : InputMethodService() {
             (it.view.parent as? ViewGroup)?.removeView(it.view)
             return it.view
         }
+        val panelListener = PanelActionListener(this)
         val window = KeyboardWindow(
             service = this,
             keyboardStateManager = KeyboardStateManager,
-            panelActionListener = PanelActionListener(this),
+            panelActionListener = panelListener,
         )
+        // 接线轮 R7：部署／同步菜单项的服务层接线（此前回调恒空，
+        // 点按无动作）。部署复用引擎 deployAndAwait 互斥（超时
+        // 600 秒，与设置侧同值）；同步恒为 null——词库 WebDAV
+        // 同步须持设置侧会话（RimeSession＋已配 WebDAV 绑定），
+        // 键盘服务内无此基础设施；只写本地同步目录的接口不上传，
+        // 接上会误导用户以为已同步，故不接。菜单文案“部署／同步”
+        // 为既有文案不动，进度／成功文案只说部署。
+        deployController = KeyboardDeployController(
+            deploy = {
+                (EngineFactory.current() as? RimeEngine)?.deployAndAwait(600_000L)
+                    ?: DeployAwaitResult.FAILED
+            },
+            sync = null,
+            hasPreedit = { KeyboardStateManager.isComposingNow },
+        ).also { controller ->
+            controller.onProgressChanged = { progress -> onDeployProgress(progress) }
+        }
+        panelListener.onDeploySyncRequest = { handleDeploySyncRequest() }
         keyboardWindow = window
         // onCreate 已初始化；防御性兜底：若为空（不应发生）则重建，避免 !! 崩溃
         val listener = keyActionListener
@@ -135,6 +185,59 @@ class ImeInputMethodService : InputMethodService() {
         // 新建窗口（销毁重建路径）时重建一次，让键盘用本次实例解析出的新配色生成。
         KeyboardStateManager.rebuild()
         return window.view
+    }
+
+    /**
+     * 接线轮 R7：键盘内“部署／同步”点按入口。
+     * 无组字直接执行；有组字先弹确认框（明示丢字风险），
+     * 确认才继续；运行中重复请求直接忽略，不排队。
+     * 退键关闭确认框视为取消（经 showDialog 的 onDismiss
+     * 参入，不自设监听），避免待确认态无框可点而卡住。
+     */
+    private fun handleDeploySyncRequest() {
+        val controller = deployController ?: return
+        if (controller.requestDeploy()) {
+            scope?.launch {
+                controller.execute()
+                onDeployFinished()
+            }
+        } else if (controller.progress.phase == KeyboardDeployPhase.NEEDS_CONFIRM) {
+            val dialog = android.app.AlertDialog.Builder(this)
+                .setTitle(R.string.deploy_confirm_title)
+                .setMessage(R.string.deploy_confirm_message)
+                .setPositiveButton(R.string.deploy_confirm_continue) { _, _ ->
+                    if (controller.confirmPending()) {
+                        scope?.launch {
+                            controller.execute()
+                            onDeployFinished()
+                        }
+                    }
+                }
+                .setNegativeButton(R.string.deploy_confirm_cancel) { _, _ ->
+                    controller.cancelPending()
+                }
+                .create()
+            showDialog(dialog, onDismiss = { controller.cancelPending() })
+        }
+    }
+
+    /** 接线轮 R7：阶段进入才提示一次（重复进度回调不重复弹）。 */
+    private fun onDeployProgress(progress: KeyboardDeployProgress) {
+        if (progress.phase == lastDeployToastPhase) return
+        lastDeployToastPhase = progress.phase
+        val text = KeyboardDeployTexts.toastFor(progress) ?: return
+        keyboardWindow?.showToast(text)
+    }
+
+    /**
+     * 接线轮 R7：部署成功后刷新——重建键盘与面板（refreshColors
+     * 内含 rebuild），再显式刷一次选项态（同方案部署也可能改
+     * 选项值；差分守卫，无变化时无动作）。
+     */
+    private fun onDeployFinished() {
+        if (deployController?.progress?.phase != KeyboardDeployPhase.SUCCESS) return
+        keyboardWindow?.view?.refreshColors()
+        keyboardWindow?.view?.refreshOptionStateAsync()
     }
 
     /**
@@ -271,7 +374,8 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onWindowHidden() {
         keyboardWindow?.onWindowHidden()
-        ClipboardManager.stopMonitoring(this)
+        // 重点候选 8-5：键盘收起时不再停监听——提示条需在下次出现时
+        // 显示收起期间复制的最新剪贴板／验证码；监听只在 onDestroy 停。
         super.onWindowHidden()
     }
 

@@ -101,3 +101,5 @@
 -keep class com.jobeen.ime.engine.rime.data.opencc.OpenCCDictManager { *; }
 -keep class com.jobeen.ime.engine.rime.data.userdict.UserDictManager { *; }
 -keep class com.jobeen.ime.base.marisa.MarisaJNI { *; }
+# 云端语音脚本引擎（纯 Java 实现，解释执行，不生成类；正式包防 R8 误删其反射入口）
+-keep class org.mozilla.javascript.** { *; }

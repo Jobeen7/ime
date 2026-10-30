@@ -9,6 +9,7 @@ import com.jobeen.ime.R
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
+import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.input.keyboard.key.AltTextKeyView
 import com.jobeen.ime.input.keyboard.key.CustomGestureView
 import com.jobeen.ime.input.keyboard.key.ImageKeyView
@@ -21,8 +22,12 @@ import com.jobeen.ime.input.keyboard.key.KeyboardPopup
 import com.jobeen.ime.input.keyboard.key.KeyView
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
+import com.jobeen.ime.input.keyboard.key.SwipeThresholds
 import com.jobeen.ime.input.keyboard.key.TextKeyView
-import kotlin.math.roundToInt
+import com.jobeen.ime.skin.runtime.KeyOverrideApplier
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
+import com.jobeen.ime.skin.symbol.SymbolGridResolver
+import com.jobeen.ime.skin.symbol.SymbolGridSpec
 import splitties.dimensions.dp
 import splitties.views.dsl.constraintlayout.above
 import splitties.views.dsl.constraintlayout.below
@@ -60,9 +65,34 @@ abstract class BaseKeyboard(
     private var spaceKeyView: TextKeyView? = null
     private var returnKeyView: ImageKeyView? = null
     private var returnKeyIcon: Int = 0
+    /** G1 动态文字运行时跟随：可原地刷新文本的动态键（setter + 来源 + 静态回退）。 */
+    private data class DynamicView(
+        val setText: (String) -> Unit,
+        val source: String,
+        val fallback: String,
+    )
+
+    private val dynamicViews = mutableListOf<DynamicView>()
 
     override fun updateSpaceKeyText(text: String) {
         spaceKeyView?.updateText(text)
+    }
+
+    override fun updateDynamicTexts(values: Map<String, String>) {
+        for (dynamic in dynamicViews) {
+            dynamic.setText(
+                KeyOverrideApplier.resolveDynamicDisplayText(
+                    dynamic.fallback, dynamic.source, values,
+                ),
+            )
+        }
+    }
+
+    private fun textSetter(view: KeyView): ((String) -> Unit)? = when (view) {
+        is TextKeyView -> { text -> view.updateText(text) }
+        is AltTextKeyView -> { text -> view.updateText(text) }
+        is ImageTextKeyView -> { text -> view.updateText(text) }
+        else -> null
     }
 
     protected open fun updateSidePanel(items: List<KeyDef>) {
@@ -199,6 +229,35 @@ abstract class BaseKeyboard(
                 spaceKeyView = this
             }
             borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
+            // 手势可调口径（2026-10-29 批量第 4 项）：建键时按偏好注入，
+            // 与滑动阈值同口径（建键时取值，下次键盘重建生效）
+            longPressDelayMs = KeyboardManager.Keyboard.Gesture.getLongPressTimeoutMs(context).toLong()
+            repeatIntervalMs = KeyboardManager.Keyboard.Gesture.getRepeatIntervalMs(context).toLong()
+            doubleTapTimeoutMs = KeyboardManager.Keyboard.Gesture.getDoubleTapTimeoutMs(context).toLong()
+            minSwipeVelocityPxPerSec =
+                KeyboardManager.Keyboard.Gesture.getMinSwipeVelocityPxPerSec(context).toFloat()
+            // 松开振动参与：按键面结构属性，实际发振由反馈缓存的开关 gating
+            releaseFeedbackEnabled = true
+            val slideStepChars = KeyboardManager.Keyboard.Gesture.getSlideStepChars(context)
+            // 皮肤逐键音效注入（详设 §7.2-3）：解析结果已由覆写
+            // 装配器挂在 def 上；出厂 def 两字段恒为默认，注入后
+            // 播放路径与 1.1.14 一致
+            skinSoundAssetId = def.skinSoundAssetId
+            skinSoundMuted = def.skinSoundMuted
+            // G1 前景多层叠加：视图建成后挂一次（文本/图标层压主文字之上）
+            attachForegroundLayers()
+            // G1 动态文字运行时跟随：记下可刷新文本的动态键
+            // （来源 + 静态回退），供 updateDynamicTexts 原地刷新。
+            val dynamicSource = def.appearance.skinDynamicText
+            if (dynamicSource != null) {
+                textSetter(this)?.let { setter ->
+                    dynamicViews += DynamicView(
+                        setter,
+                        dynamicSource,
+                        def.appearance.skinDynamicFallback ?: (displayText ?: ""),
+                    )
+                }
+            }
             onPressedChanged = { key ->
                 if (key.isPressed) {
                     val isSwitchAction = def.behaviors.any { b ->
@@ -233,26 +292,41 @@ abstract class BaseKeyboard(
                     }
 
                     is KeyDef.Popup.Keyboard -> {
-                        var selectedIndex = 0
-                        var startIndex = 0
+                        var gridHighlight: Int? = null
+                        var gridSpec: SymbolGridSpec? = null
                         var originX = 0f
                         var initialMove = true
-                        setOnTouchListener { _, event ->
+                        setOnTouchListener { view, event ->
                             when (event.actionMasked) {
                                 android.view.MotionEvent.ACTION_MOVE -> {
                                     if (keyboardPopup.isShowing()) {
                                         if (initialMove) {
                                             originX = event.x
-                                            startIndex = keyboardPopup.selectedIndex
                                             initialMove = false
+                                            // 接线轮 R6：单行格＝弹出项本身（无空位），
+                                            // 步距＝itemStep、抖动＝半步，复现旧 roundToInt 手感；
+                                            // dy=0（单行忽略纵向漂移）。
+                                            val start = keyboardPopup.selectedIndex
+                                            gridHighlight = start
+                                            gridSpec = SymbolGridSpec.create(
+                                                cells = popup.keys.map { keyboardPopup.itemLabel(it) },
+                                                columns = popup.keys.size,
+                                                anchorIndex = start,
+                                                defaultIndex = start,
+                                                cellSizePx = keyboardPopup.itemStep,
+                                                sensitivity = 1f,
+                                                jitterPx = keyboardPopup.itemStep / 2f,
+                                            )
                                         }
-                                        val dx = event.x - originX
-                                        val step = keyboardPopup.itemStep
-                                        val idx = (startIndex + dx / step).roundToInt()
-                                            .coerceIn(0, keyboardPopup.itemCount - 1)
-                                        if (idx != selectedIndex) {
-                                            selectedIndex = idx
-                                            keyboardPopup.selectIndex(idx)
+                                        val spec = gridSpec ?: return@setOnTouchListener true
+                                        val h = SymbolGridResolver.highlightFor(
+                                            spec, event.x - originX, 0f,
+                                        )
+                                        if (h != gridHighlight) {
+                                            gridHighlight = h
+                                            if (h != null) keyboardPopup.selectIndex(h)
+                                            else keyboardPopup.clearSelection()
+                                            InputFeedbacks.hapticFeedback(view)
                                         }
                                         return@setOnTouchListener true
                                     }
@@ -264,18 +338,20 @@ abstract class BaseKeyboard(
                         }
                         setOnLongClickListener {
                             showKeyboardPopup(it as KeyView, popup.keys)
-                            selectedIndex = keyboardPopup.selectedIndex
-                            startIndex = selectedIndex
+                            gridHighlight = keyboardPopup.selectedIndex
                             initialMove = true
                             return@setOnLongClickListener true
                         }
                         onTouchUpListener = {
                             if (keyboardPopup.isShowing()) {
-                                val item = popup.keys.getOrNull(selectedIndex)
-                                if (item != null) {
-                                    onAction(item)
+                                // 接线轮 R6：出界取消（highlight 为 null）时只关闭不提交；
+                                // 回界内恢复后抬手照常提交恢复格。
+                                val h = gridHighlight
+                                if (h != null) {
+                                    popup.keys.getOrNull(h)?.let { onAction(it) }
                                 }
                                 keyboardPopup.dismiss()
+                                gridHighlight = null
                             }
                         }
                     }
@@ -335,13 +411,36 @@ abstract class BaseKeyboard(
 
                     is KeyDef.Behavior.Swipe -> {
                         swipeEnabled = true
-                        swipeThresholdX = dp(800f)
-                        swipeThresholdY = dp(36f)
+                        // G1 左右滑：仅当左右动作至少其一存在时开 X 阈值，
+                        // 否则 X 阈值仍为 800dp（与旧行为一致，纵滑不受横向漂移干扰）。
+                        val hasHorizontal = behavior.leftAction != null ||
+                            behavior.rightAction != null
+                        // 滑动触发距离（2026-10-28 截图 6 项）：逐键 > 皮肤 > 设置 > 36dp；
+                        // 800dp 等效禁用槽原样保留，不走可调解析。
+                        val snapshot = SkinSnapshotProvider.peek()
+                        val threshold = SwipeThresholds.resolve(
+                            def.id?.let { snapshot?.keyOverrides?.get(it)?.swipeThresholdDp },
+                            snapshot?.swipeThresholdDp,
+                            KeyboardManager.Keyboard.SwipeThreshold.getDp(context),
+                        )
+                        swipeThresholdX = dp(if (hasHorizontal) threshold else 800f)
+                        swipeThresholdY = dp(threshold)
                         onGestureListener = CustomGestureView.OnGestureListener { _, event ->
                             when (event.type) {
                                 CustomGestureView.GestureType.Up -> {
                                     if (!event.consumed) {
+                                        // 主导轴判定：横向步数绝对值不小于纵向且
+                                        // 有左右动作时走横向，否则走旧纵向口径
+                                        // （平手时纵向优先，旧皮肤行为不变）。
                                         val action = when {
+                                            hasHorizontal && event.totalX != 0 &&
+                                                kotlin.math.abs(event.totalX) >=
+                                                kotlin.math.abs(event.totalY) ->
+                                                if (event.totalX < 0) {
+                                                    behavior.leftAction
+                                                } else {
+                                                    behavior.rightAction
+                                                }
                                             event.totalY < 0 -> behavior.upAction
                                             event.totalY > 0 -> behavior.downAction
                                             else -> null
@@ -371,7 +470,8 @@ abstract class BaseKeyboard(
                         onGestureListener = CustomGestureView.OnGestureListener { _, event ->
                             if (event.type == CustomGestureView.GestureType.Move && event.countX != 0) {
                                 val direction = if (event.countX > 0) 1 else -1
-                                repeat(kotlin.math.abs(event.countX)) {
+                                // 滑动步长：每步进移动 slideStepChars 个字符（默认 1）
+                                repeat(kotlin.math.abs(event.countX) * slideStepChars) {
                                     onAction(KeyboardAction.CursorMoveAction(direction))
                                 }
                                 // 消费掉手势，抬手时不再触发按键点击（空格）
@@ -428,6 +528,12 @@ abstract class BaseKeyboard(
     }
 
     protected open fun onAction(action: KeyboardAction) {
+        // 性能埋点（2026-10-29 item-1 B）：按键分发起点，终点在
+        // MessageHandler 的 Commit 处理（配对窗口 2s，首个提交为准）。
+        com.jobeen.ime.skin.perf.PerfMonitor.noteKeyPress()
+        // 输入统计（2026-10-29 item-1 C）：按键计数（语音拖动
+        // 探针除外，见 InputStats.noteKeyPress）。
+        com.jobeen.ime.input.stats.InputStats.noteKeyPress(action)
         val transformed = if (action is KeyboardAction.ReturnAction) {
             if (action.force) {
                 action

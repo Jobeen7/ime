@@ -52,6 +52,15 @@ class PreeditPinner(context: Context) : IPinner {
         if (items.isEmpty()) lastMeasuredItems = null
     }
 
+    /** 行内联想（2026-10-29 批量第 5 项）：换幽灵文本即换宽度，
+     *  测宽缓存必须失效，否则下次 show 会沿用不含幽灵文本的旧宽度 */
+    fun setInlineSuggestion(text: String?) {
+        if (view.inlineSuggestion != text) {
+            view.inlineSuggestion = text
+            lastMeasuredItems = null
+        }
+    }
+
     fun show(context: Context, windowManager: WindowManager, anchorView: View, hPad: Int) {
         val items = view.preeditItems
         if (items.isEmpty()) {

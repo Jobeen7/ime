@@ -2,14 +2,18 @@ package com.jobeen.ime.input
 
 import android.annotation.SuppressLint
 import android.inputmethodservice.InputMethodService
+import android.text.InputType
 import android.view.inputmethod.EditorInfo
+import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.IEngine
 import com.jobeen.ime.engine.event.KeyEvent
 import com.jobeen.ime.engine.event.KeyModifiers
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
+import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.ImeInputMethodService
+import com.jobeen.ime.skin.diag.DiagLog
 
 class KeyActionListener(
     private val service: InputMethodService,
@@ -18,6 +22,15 @@ class KeyActionListener(
     private val engine: IEngine? get() = EngineFactory.current()
 
     override fun onKeyAction(action: KeyboardAction) {
+        // 接线轮 R1：键盘动作事件喂给通知状态（锁定变化时窗口
+        // 经回调以 post 重建键盘，不在分发中途同步重建）。
+        com.jobeen.ime.skin.runtime.SkinRuntimeState.onEvent(
+            com.jobeen.ime.skin.notify.NotificationEvent(
+                com.jobeen.ime.skin.notify.NotificationSource.KEYBOARD_ACTION,
+                com.jobeen.ime.skin.notify.NotificationActionNames.nameOf(action),
+                null,
+            ),
+        )
         when (action) {
             is KeyboardAction.KeySequenceAction -> {
                 engine?.processKey(service, action.asKeyEvent())
@@ -32,7 +45,7 @@ class KeyActionListener(
             }
 
             is KeyboardAction.CommitAction -> {
-                engine?.commit(action.text)
+                commitOrPair(action.text)
             }
 
             is KeyboardAction.BackspaceAction -> {
@@ -111,5 +124,61 @@ class KeyActionListener(
 
             else -> {}
         }
+    }
+
+    /**
+     * 按键提交：符号成对（2026-10-28 截图 6 项）只在此分支判定，
+     * LiteralCommitAction（皮肤字面提交）不受影响、保持字面精确。
+     * 门：开关开 + 非组字 + 非密码框 + 单开符号 + 引号前文守卫。
+     * 前文只在引号类且前门全过时读一次（跨进程 Binder 调用，括号
+     * 类不读）。成对路径抛错时回退普通提交，永不丢字；异常只记
+     * 元数据（操作 + 阶段 + 异常类名），不记提交文本。
+     */
+    private fun commitOrPair(text: String) {
+        val e = engine ?: return
+        val enabled = KeyboardManager.Keyboard.SymbolPairing.isEnabled(service)
+        val composing = KeyboardStateManager.isComposingNow
+        val password = isPasswordField()
+        val beforeCursor: String? =
+            if (text.length == 1 && PairingPolicy.isQuote(text[0]) &&
+                enabled && !composing && !password
+            ) {
+                try {
+                    service.currentInputConnection?.getTextBeforeCursor(1, 0)?.toString()
+                } catch (ex: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+        if (!PairingPolicy.shouldPair(text, enabled, composing, password, beforeCursor)) {
+            e.commit(text)
+            return
+        }
+        val pair = PairingPolicy.pairText(text[0]) ?: run {
+            e.commit(text)
+            return
+        }
+        try {
+            e.commitPair(pair, text)
+        } catch (ex: Exception) {
+            DiagLog.e(
+                "SkinDiag", "pair_commit_failed",
+                mapOf("stage" to "commit_pair", "error" to ex.javaClass.simpleName),
+                ex,
+            )
+            e.commit(text)
+        }
+    }
+
+    /** 密码框判定（与 KeyboardStateManager.startInput 同口径）：文本类 + 三种密码 variation。 */
+    private fun isPasswordField(): Boolean {
+        val info = service.currentInputEditorInfo ?: return false
+        val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
+        val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+        return inputClass == InputType.TYPE_CLASS_TEXT &&
+            (variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
+                variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)
     }
 }

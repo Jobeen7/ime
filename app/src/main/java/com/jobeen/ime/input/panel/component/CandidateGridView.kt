@@ -14,15 +14,19 @@ import androidx.core.graphics.withRotation
 import androidx.core.graphics.withSave
 import com.jobeen.ime.base.util.slideUpCollapse
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.data.manager.CandidateLinePolicy
+import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.roundToInt
 
 @SuppressLint("ViewConstructor")
 class CandidateGridView(
@@ -35,6 +39,31 @@ class CandidateGridView(
     var maxVisibleColumn: Int = 5,   // 保留并真正使用
 ) : ComponentView(context, colors) {
 
+    /**
+     * 候选栏行策略（2026-10-29 批量第 4 项）：show/updateCandidates
+     * 时按偏好同步；父容器布局时读这组缓存（不走偏好 I/O）。
+     */
+    var lineLimitEnabled: Boolean = true
+    var lineMax: Int = 5
+    var lineAutoShrink: Boolean = true
+    var fullDisplay: Boolean = true
+
+    /** 按偏好同步行策略（候选到达时调用，偏好变化下次候选到达生效） */
+    private fun syncLinePolicy() {
+        lineLimitEnabled = CandidateManager.isLineLimitEnabled(context)
+        lineMax = CandidateManager.getMaxLines(context)
+        lineAutoShrink = CandidateManager.isAutoShrinkEnabled(context)
+        fullDisplay = CandidateManager.isFullDisplayEnabled(context)
+        maxVisibleRow = if (lineLimitEnabled) lineMax else Int.MAX_VALUE
+    }
+
+    /** 内容总行数（网格画布已算好的行布局） */
+    fun contentRowCount(): Int = gridCanvas.contentRows()
+
+    /** 自然行高 = 网格最小行高 32dp（与画布 onSizeChanged 同值） */
+    fun naturalRowHeightPx(): Int =
+        (32f * resources.displayMetrics.density).roundToInt()
+
     // ── 布局数据类 ──
     private class WordPos(
         val row: Int, val xStart: Float, val width: Float,        // 分配后的显示宽度
@@ -43,6 +72,13 @@ class CandidateGridView(
 
     private var allCandidates: List<EngineMessage.Candidate> = emptyList()
     var onCandidatesReordered: ((List<EngineMessage.Candidate>) -> Unit)? = null
+
+    /**
+     * 候选字背景圆角（2026-10-28 截图 6 项）：dp；refreshTheme 时
+     * 从当前皮肤快照同步，无皮肤时 6（旧写死值）。网格高亮矩形
+     * 与药丸圆角共用此值。
+     */
+    var candidateRadiusDp: Float = 6f
     var onDragComplete: ((List<EngineMessage.Candidate>) -> Unit)? = null
     var onWordForget: ((EngineMessage.Candidate, Float, Float) -> Unit)? = null
 
@@ -164,6 +200,9 @@ class CandidateGridView(
             sepPaint.color = pc.candidateDivider
             pressPaint.color = pc.candidateBackground
         }
+
+        /** 内容总行数：行布局已算好时 = 最大行号 + 1，未算好时 0 */
+        fun contentRows(): Int = positions.maxOfOrNull { it.row }?.plus(1) ?: 0
 
         fun recomputeLayout() {
             maxScrollCache = null
@@ -305,7 +344,7 @@ class CandidateGridView(
                                 if (isTarget) {
                                     val d = resources.displayMetrics.density
                                     canvas.drawRoundRect(
-                                        0f, y, rowWidth, y + rowH, 6f * d, 6f * d, pressPaint
+                                        0f, y, rowWidth, y + rowH, candidateRadiusDp * d, candidateRadiusDp * d, pressPaint
                                     )
                                 }
                                 val textX = cellPad - sx + shakeOff
@@ -326,20 +365,32 @@ class CandidateGridView(
                             if (isTarget) {
                                 val d = resources.displayMetrics.density
                                 canvas.drawRoundRect(
-                                    rectLeft, y, rectRight, y + rowH, 6f * d, 6f * d, pressPaint
+                                    rectLeft, y, rectRight, y + rowH, candidateRadiusDp * d, candidateRadiusDp * d, pressPaint
                                 )
                             }
-                            val txtLeft = pos.xStart + shakeOff + (pos.width - tw) / 2f
+                            // 完整显示关：普通格内超宽词截断加省略号
+                            // （超宽独行词走横向滚动，不截）
+                            val displayText = if (fullDisplay) {
+                                c.text
+                            } else {
+                                val avail = pos.width - cellPad * 2f
+                                CandidateLinePolicy.truncateWithEllipsis(
+                                    c.text, avail, textPaint::measureText
+                                )
+                            }
+                            val displayW = if (displayText === c.text) tw
+                                else textPaint.measureText(displayText)
+                            val txtLeft = pos.xStart + shakeOff + (pos.width - displayW) / 2f
                             val textX = txtLeft.coerceAtLeast(rectLeft)
                             val textY = y + rowH / 2f - textCenterDy
                             if (shakeAngle != 0f) {
-                                val cx = textX + tw / 2f
+                                val cx = textX + displayW / 2f
                                 val cy = textY
                                 canvas.withRotation(shakeAngle, cx, cy) {
-                                    drawText(c.text, textX, textY, textPaint)
+                                    drawText(displayText, textX, textY, textPaint)
                                 }
                             } else {
-                                canvas.drawText(c.text, textX, textY, textPaint)
+                                canvas.drawText(displayText, textX, textY, textPaint)
                             }
                         }
                     }
@@ -373,7 +424,7 @@ class CandidateGridView(
                 val oldAlpha = bgPaint.alpha
                 bgPaint.alpha = 160
                 canvas.drawRoundRect(
-                    dragLeft, dragTop, dragLeft + effectiveDragW, dragTop + rowH, 6f * d, 6f * d, bgPaint
+                    dragLeft, dragTop, dragLeft + effectiveDragW, dragTop + rowH, candidateRadiusDp * d, candidateRadiusDp * d, bgPaint
                 )
                 bgPaint.alpha = oldAlpha
                 bgPaint.color = oldColor
@@ -881,6 +932,7 @@ class CandidateGridView(
     fun refreshTheme(context: Context) {
         val colors = KeyboardColors.resolve(context)
         refreshTheme(colors)
+        candidateRadiusDp = SkinSnapshotProvider.peek()?.candidateRadiusDp ?: 6f
 
         gridCanvas.updateColors(colors.panel)
         sidePanelKey.refreshTheme(colors)
@@ -891,6 +943,7 @@ class CandidateGridView(
     private var collapseAnimating = false
 
     fun show(list: List<EngineMessage.Candidate>) {
+        syncLinePolicy()
         allCandidates = list
         // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽
         gridCanvas.resetDragIfOutOfBounds()
@@ -916,6 +969,7 @@ class CandidateGridView(
     }
 
     fun updateCandidates(list: List<EngineMessage.Candidate>) {
+        syncLinePolicy()
         allCandidates = list
         // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽
         gridCanvas.resetDragIfOutOfBounds()

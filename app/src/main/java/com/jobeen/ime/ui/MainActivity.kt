@@ -22,8 +22,12 @@ import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.ui.screen.MainScreen
 import com.jobeen.ime.ui.theme.ImeTheme
+import com.jobeen.ime.ui.theme.AppAppearance
+import com.jobeen.ime.ui.theme.AppAppearanceMode
 
 class MainActivity : ComponentActivity() {
+    // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
+    private var createdAppearanceMode: AppAppearanceMode? = null
 
     private val initLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -54,6 +58,12 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         imeConfiguredState.value = isImeConfigured()
+        val recordedAppearanceMode = createdAppearanceMode
+        if (recordedAppearanceMode != null &&
+            AppAppearance.appearanceModeChanged(recordedAppearanceMode, AppAppearance.getMode(this))
+        ) {
+            recreate()
+        }
     }
 
     /** 系统输入法选择器（红条点按动作；系统级弹窗，非应用内页面）。 */
@@ -67,6 +77,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        createdAppearanceMode = AppAppearance.getMode(this)
         enableEdgeToEdge()
         // 跟随系统主题的迁移已落到共享入口
         // KeyboardManager.Theme（getMode 读即迁移）：此处在
@@ -87,7 +98,7 @@ class MainActivity : ComponentActivity() {
             val syncRunning by FabSyncState.running.collectAsStateWithLifecycle()
             // 应用主题已删除：恒跟随系统（迁移见
             // KeyboardManager.Theme.migrateToSystem / getMode）。
-            ImeTheme(themeMode = KeyboardManager.Theme.MODE_SYSTEM) {
+            ImeTheme(themeMode = AppAppearance.themeMode(this@MainActivity), dynamicColor = AppAppearance.useDynamicColor(this@MainActivity)) {
                 MainScreen(
                     onOpenImeSetup = {
                         setupImeLauncher.launch(
@@ -116,9 +127,24 @@ class MainActivity : ComponentActivity() {
                             Intent(this@MainActivity, KeyboardSettingsActivity::class.java)
                         )
                     },
-                    onOpenKeyboardThemeSettings = {
+                    onOpenSkinLibrary = {
                         startActivity(
-                            Intent(this@MainActivity, KeyboardThemeSettingsActivity::class.java)
+                            Intent(this@MainActivity, SkinLibraryActivity::class.java)
+                        )
+                    },
+                    onOpenToolbar = {
+                        startActivity(
+                            Intent(this@MainActivity, ToolbarActivity::class.java)
+                        )
+                    },
+                    onOpenInputStats = {
+                        startActivity(
+                            Intent(this@MainActivity, InputStatsActivity::class.java)
+                        )
+                    },
+                    onOpenAppearance = {
+                        startActivity(
+                            Intent(this@MainActivity, AppearanceActivity::class.java)
                         )
                     },
                     onOpenClipboard = {
