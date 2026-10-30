@@ -504,23 +504,6 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
                 )
             }
 
-            Spacer(Modifier.height(8.dp))
-
-            // 隐私说明（原云端语音插件页顶部全文移至此处，文案与字符串不变）：
-            // 本页无分段标题样式，故以卡片内标题行＋正文呈现，不另起蓝标题。
-            GroupCard {
-                Text(
-                    text = stringResource(R.string.cloud_voice_privacy_group),
-                    style = MaterialTheme.typography.bodyLarge,
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    text = stringResource(R.string.cloud_voice_privacy_text),
-                    fontSize = rowSubFontSize,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-
     }
 
     // 重置二次确认：两次都只有取消 / 继续，绝不加“不再询问”。

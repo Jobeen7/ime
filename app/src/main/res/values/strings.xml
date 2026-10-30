@@ -558,8 +558,7 @@
     <string name="cloud_voice_plugins">云端语音插件</string>
     <string name="cloud_voice_plugins_desc">可选的云端识别（默认离线）</string>
     <string name="cloud_voice_open">打开</string>
-    <string name="cloud_voice_privacy_group">隐私说明</string>
-    <string name="cloud_voice_privacy_text">云端语音是可选功能，默认关闭，本机离线识别永远可用。开启并选择插件后，录音会发送到该插件声明的厂商服务；Jime 不收取费用、不经手你的密钥，厂商按其自己的规则计费，计费与用量以厂商说明为准。密钥只加密存在本机，绝不进入插件脚本、日志与诊断导出。</string>
+
     <string name="cloud_voice_opt_in">开启云端语音</string>
     <string name="cloud_voice_opt_in_desc">关闭时一律使用本机离线识别；开启后仍需选择插件并填写密钥才会走云端。</string>
     <string name="cloud_voice_group">插件</string>
