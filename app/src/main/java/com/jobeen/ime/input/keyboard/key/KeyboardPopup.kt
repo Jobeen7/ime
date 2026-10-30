@@ -198,6 +198,10 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.SwitchSchemaByValue -> "SwitchSchemaByValue"
         is KeyboardAction.ShowInputMethodPickerAction -> "ShowInputMethodPickerAction"
         is KeyboardAction.VoiceInputAction -> "VoiceInputAction"
+        is KeyboardAction.LiteralCommitAction -> action.text
+        is KeyboardAction.DeleteForwardAction -> "DeleteForwardAction"
+        is KeyboardAction.OpenSystemImePickerAction -> "OpenSystemImePickerAction"
+        is KeyboardAction.HideKeyboardAction -> "HideKeyboardAction"
         is KeyboardAction.StopVoiceInputAction -> "StopVoiceInputAction"
         is KeyboardAction.VoiceDragPosition -> "VoiceDragPosition"
         is KeyboardAction.VoiceDragUp -> "VoiceDragUp"
