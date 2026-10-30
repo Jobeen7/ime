@@ -19,7 +19,6 @@ import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -126,47 +125,11 @@ object FabActions {
     }
 
     /**
-     * 同步下载后的顺序部署：与 deploy() 同机制（deployAndAwait 进作业
-     * 队列串行 + COMPLETED 后方案表复核），但跑在同步协程内、顺序等完成。
-     * 部署进行中时先等它结束再部署（旧部署的方案表会误报为就绪，
-     * 故先等 running 清零；等候上限与 deploy() 同口径；仍在跑则跳过
-     * 本次部署）。部署失败只记日志 + 下次键盘出现时通知，不
-     * 中断后续词典同步（词典与方案相互独立；下载的文件已落盘，
-     * 下次部署即生效）。引擎不可用时直接返回，词典同步自会报
-     * 引擎未就绪。
-     */
-    private suspend fun deployDownloadedSchemes(context: Context) {
-        val engine = EngineFactory.current()
-        if (engine == null) {
-            Timber.w("FAB sync: engine not ready, skip deploy after download")
-            return
-        }
-        val waitDeadline = System.currentTimeMillis() + DEPLOY_WAIT_TIMEOUT_MS
-        while (EngineDeployState.isRunning() && System.currentTimeMillis() < waitDeadline) {
-            delay(1000L)
-        }
-        if (EngineDeployState.isRunning()) {
-            Timber.w("FAB sync: deploy skipped, another deploy still running")
-            return
-        }
-        // 与 deploy() 相同的部署前规范化：旧版写出的裸字符串
-        // schema_list 项 librime 读不到，规范化失败也不拦部署。
-        runCatching {
-            val dir = java.io.File(DataManager.schemeDirsRoot, SchemeDirs.currentDirName(context))
-            SchemeEnabled.normalizeCustomFileToMapFormat(java.io.File(dir, "default.custom.yaml"))
-        }
-        if (!deployAndCheckSchemas(engine)) {
-            Timber.w("FAB sync: deploy failed")
-            RimeSyncPrefs.postNotice(context, context.getString(R.string.fab_deploy_failed))
-        }
-    }
-
-    /**
-     * 一键同步：先上传方案目录、再下载方案目录、最后同步全部词典
-     * （三段顺序跑、共用 WebDAV 锁；新模型只增量、不删对端文件，
-     * 故无删除传播暂停与 force 重跑）。下载成功后先部署一次（下载的
-     * 方案不部署不生效），再同步词典。方案上传或下载失败即整体
-     * 失败并短路后续段；词典单本失败只记 failed、报部分成功。
+     * 一键同步：只同步用户词（词典段）。方案文件（yaml、lua、词库
+     * dict.yaml）不参与同步——方案词库随方案更新走；手动上传/下载
+     * 方案目录仍在用户词典页。部署段随方案下载一起拿掉（无可部署
+     * 内容）；手动部署仍走 FAB 部署按钮（与菜单重启引擎同机制）。
+     * 词典单本失败只记 failed、报部分成功；取词典列表失败则整体失败。
      */
     fun sync(
         context: Context,
@@ -183,63 +146,17 @@ object FabActions {
         FabSyncState.setRunning(true)
         scope.launch {
             try {
-                // 诊断日志（同步卡住定位用，无行为变化）：各段起止＋上传逐文件，
-                // 诊断包里最后一段未闭合的行即卡住位置。
-                Timber.d("FAB sync: stage upload start")
-                val upResult = WebDavSync.uploadSchemes()
-                if (upResult.isFailure) {
-                    Timber.w(upResult.exceptionOrNull(), "FAB schemes upload failed")
-                    ToastUtil.showToast(context.getString(R.string.fab_sync_failed))
-                    RimeSyncPrefs.postNotice(
-                        context,
-                        context.getString(R.string.fab_sync_failed),
-                    )
-                    return@launch
-                }
-                Timber.d("FAB sync: stage upload done: ${upResult.getOrThrow()} files")
-                Timber.d("FAB sync: stage download start")
-                val downResult = WebDavSync.downloadSchemes()
-                if (downResult.isFailure) {
-                    Timber.w(downResult.exceptionOrNull(), "FAB schemes download failed")
-                    ToastUtil.showToast(context.getString(R.string.fab_sync_failed))
-                    RimeSyncPrefs.postNotice(
-                        context,
-                        context.getString(R.string.fab_sync_failed),
-                    )
-                    return@launch
-                }
-                val downSummary = downResult.getOrThrow()
-                Timber.d("FAB sync: stage download done: ${downSummary.count} files, skipped empty=${downSummary.skippedEmpty.size}")
-                // 下载的方案只有部署后才生效：此处顺序部署（与 deploy()
-                // 同机制），词典同步不受部署成败影响、照常继续。
-                Timber.d("FAB sync: stage deploy start")
-                deployDownloadedSchemes(context)
-                Timber.d("FAB sync: stage deploy done")
-                val up = upResult.getOrThrow()
-                val down = downSummary.count
-                val skippedEmpty = downSummary.skippedEmpty
                 Timber.d("FAB sync: stage dict start")
                 WebDavSync.syncAllDicts(sessionProvider())
                     .onSuccess { failedDicts ->
                         Timber.d("FAB sync: stage dict done: failed=${failedDicts.size}")
-                        val msg = when {
-                            failedDicts.isNotEmpty() -> context.getString(
-                                R.string.fab_dir_sync_partial,
-                                up,
-                                down,
+                        val msg = if (failedDicts.isNotEmpty()) {
+                            context.getString(
+                                R.string.fab_dict_sync_partial,
                                 failedDicts.size,
                             )
-                            skippedEmpty.isNotEmpty() -> context.getString(
-                                R.string.fab_dir_sync_skipped,
-                                up,
-                                down,
-                                skippedEmpty.size,
-                            )
-                            else -> context.getString(
-                                R.string.fab_dir_sync_success,
-                                up,
-                                down,
-                            )
+                        } else {
+                            context.getString(R.string.fab_dict_sync_success)
                         }
                         ToastUtil.showToast(msg)
                         RimeSyncPrefs.postNotice(context, msg)
@@ -253,7 +170,7 @@ object FabActions {
                         )
                     }
             } catch (e: Exception) {
-                Timber.w(e, "FAB dir sync failed")
+                Timber.w(e, "FAB dict sync failed")
                 ToastUtil.showToast(context.getString(R.string.fab_sync_engine_not_ready))
                 RimeSyncPrefs.postNotice(
                     context,

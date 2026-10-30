@@ -37,6 +37,14 @@ class WebDavSyncTest {
         assertEquals(WebDavSync.SchemeDownloadAction.SKIP_EMPTY, WebDavSync.schemeDownloadAction(HttpGetResult.EMPTY))
     }
 
+    @Test
+    fun isSyncSkippedDict_statsOnly() {
+        // stats 是输入统计数据库（方案 input_stats.db_name），不是用户词库，同步跳过。
+        assertTrue(WebDavSync.isSyncSkippedDict("stats"))
+        assertFalse(WebDavSync.isSyncSkippedDict("wanxiang_lite"))
+        assertFalse(WebDavSync.isSyncSkippedDict("wanxiang"))
+    }
+
     // ---- C5 原子替换 ----
 
     @Test

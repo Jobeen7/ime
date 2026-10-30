@@ -764,6 +764,13 @@ object WebDavSync {
     }
 
     /**
+     * 词典同步跳过名单：stats 是方案 input_stats.db_name 声明的输入统计数据库
+     * （/tj、/btj 等统计查询用），不是用户词库；它以 stats.userdb 落盘故出现在
+     * 词典列表里，但导出恒返回 -1。本机统计数据不跨设备同步，跳过不计失败。
+     */
+    internal fun isSyncSkippedDict(dict: String): Boolean = dict == "stats"
+
+    /**
      * rename 参数仅供单测注入失败；生产路径用 File.renameTo。
      */
     internal fun atomicReplace(
@@ -1225,7 +1232,8 @@ object WebDavSync {
     /**
      * 词典全量同步（自旧 syncSchemeDir 第 3 步抽出，口径原样保留）：
      * 每本词典先下载合并再 PUT；单本失败记 failed、不中止循环；
-     * 取词典列表失败则整体失败。远端布局沿用旧口径（uuid/当前目录），
+     * 取词典列表失败则整体失败。stats（输入统计数据库，非用户词库）
+     * 跳过不计失败。远端布局沿用旧口径（uuid/当前目录），
      * 不动已存词典位置；与方案上传/下载共用 syncMutex。
      * 成功时返回失败词典文件名清单（空＝全部成功）。
      */
@@ -1243,6 +1251,10 @@ object WebDavSync {
                 val failed = mutableListOf<String>()
                 val dicts = session.runOnReady { getUserDictList() }
                 for (dict in dicts) {
+                    if (isSyncSkippedDict(dict)) {
+                        Timber.d("Dir sync dict skipped: $dict")
+                        continue
+                    }
                     runCatching {
                         val remoteDictUrl = dirUrl(base, remoteFileName(dict))
                         val tmpIn = File(appContext.cacheDir, "dirsync-download-$dict-${System.nanoTime()}.txt")
