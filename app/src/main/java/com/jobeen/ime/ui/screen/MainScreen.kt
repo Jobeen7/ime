@@ -662,12 +662,13 @@ private fun FabAction(
                 )
             } else {
                 val glyphPath = if (glyph == FabGlyph.DEPLOY) deployGlyphPath else syncGlyphPath
+                val glyphColor = MaterialTheme.colorScheme.onSurface
                 Canvas(
                     modifier = Modifier.size(32.dp),
                 ) {
                     val scale = size.width / 24f
                     withTransform({ scale(scale, scale) }) {
-                        drawPath(glyphPath, color = MaterialTheme.colorScheme.onSurface)
+                        drawPath(glyphPath, color = glyphColor)
                     }
                 }
             }
