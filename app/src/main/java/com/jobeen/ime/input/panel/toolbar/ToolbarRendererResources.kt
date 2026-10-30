@@ -17,4 +17,14 @@ data class ToolbarRendererResources(
     val copy: Drawable?,
     val paste: Drawable?,
     val search: Drawable?,
+    // 工具栏中央区自定义的候选池图标（ToolbarConfig.POOL 中其余动作）；
+    // 默认 null 仅为兼容未传参的构造点，正式构造点应全部传齐，
+    // 缺图标的按钮绘制为空白但动作仍可触发。
+    val symbol: Drawable? = null,
+    val phrases: Drawable? = null,
+    val voice: Drawable? = null,
+    val cursor: Drawable? = null,
+    val undo: Drawable? = null,
+    val redo: Drawable? = null,
+    val palette: Drawable? = null,
 )

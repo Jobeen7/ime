@@ -101,7 +101,7 @@ class KeyboardWindowView(
     context: Context,
     private val keyboardStateManager: KeyboardStateManager,
     private val panelListener: PanelListener? = null,
-) : FrameLayout(context), IManagedView {
+) : FrameLayout(context), IManagedView, SkinRuntime.SkinWindow {
 
     companion object {
         const val PANEL_HEIGHT_DP = 48
