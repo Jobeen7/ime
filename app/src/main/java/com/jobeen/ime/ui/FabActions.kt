@@ -183,6 +183,9 @@ object FabActions {
         FabSyncState.setRunning(true)
         scope.launch {
             try {
+                // 诊断日志（同步卡住定位用，无行为变化）：各段起止＋上传逐文件，
+                // 诊断包里最后一段未闭合的行即卡住位置。
+                Timber.d("FAB sync: stage upload start")
                 val upResult = WebDavSync.uploadSchemes()
                 if (upResult.isFailure) {
                     Timber.w(upResult.exceptionOrNull(), "FAB schemes upload failed")
@@ -193,6 +196,8 @@ object FabActions {
                     )
                     return@launch
                 }
+                Timber.d("FAB sync: stage upload done: ${upResult.getOrThrow()} files")
+                Timber.d("FAB sync: stage download start")
                 val downResult = WebDavSync.downloadSchemes()
                 if (downResult.isFailure) {
                     Timber.w(downResult.exceptionOrNull(), "FAB schemes download failed")
@@ -203,13 +208,18 @@ object FabActions {
                     )
                     return@launch
                 }
+                Timber.d("FAB sync: stage download done: ${downResult.getOrThrow()} files")
                 // 下载的方案只有部署后才生效：此处顺序部署（与 deploy()
                 // 同机制），词典同步不受部署成败影响、照常继续。
+                Timber.d("FAB sync: stage deploy start")
                 deployDownloadedSchemes(context)
+                Timber.d("FAB sync: stage deploy done")
                 val up = upResult.getOrThrow()
                 val down = downResult.getOrThrow()
+                Timber.d("FAB sync: stage dict start")
                 WebDavSync.syncAllDicts(sessionProvider())
                     .onSuccess { failedDicts ->
+                        Timber.d("FAB sync: stage dict done: failed=${failedDicts.size}")
                         val msg = if (failedDicts.isEmpty()) {
                             context.getString(
                                 R.string.fab_dir_sync_success,
@@ -227,6 +237,7 @@ object FabActions {
                         ToastUtil.showToast(msg)
                         RimeSyncPrefs.postNotice(context, msg)
                     }.onFailure {
+                        Timber.d("FAB sync: stage dict done: failed")
                         Timber.w(it, "FAB dict sync failed")
                         ToastUtil.showToast(context.getString(R.string.fab_sync_failed))
                         RimeSyncPrefs.postNotice(

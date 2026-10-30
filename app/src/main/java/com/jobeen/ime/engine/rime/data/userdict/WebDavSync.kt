@@ -940,7 +940,11 @@ object WebDavSync {
                 // 父目录链本调用内去重（含 schemes/ 本身：即使 ensureSchemesDir
                 // 的 MKCOL 刚失败，逐级重建也能自愈，不依赖它已成功）。
                 val ensuredDirs = mutableSetOf<String>()
-                for (rel in collectUploadFiles(root)) {
+                // 诊断日志（同步卡住定位用）：上传文件数＋逐文件，最后一行即卡住的文件。
+                val files = collectUploadFiles(root)
+                Timber.d("FAB sync: upload files=${files.size}")
+                for (rel in files) {
+                    Timber.d("FAB sync: upload file $rel")
                     ensureRemoteParentDirs("schemes/$rel", ensuredDirs)
                     httpPutFile(remoteUrl("schemes/$rel"), File(root, rel))
                     count++
