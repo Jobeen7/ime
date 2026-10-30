@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
@@ -53,7 +52,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
@@ -92,15 +94,20 @@ object ScreenComponent {
                 // 最小 40dp（Material Button 自然高），内容更高时随内容长。
                 .defaultMinSize(minHeight = 40.dp)
                 .clip(RoundedCornerShape(8.dp))
-                .background(containerColor),
+                .background(containerColor)
+                // 进度条按比例绘制，不参与布局：此前内层 Box 用 fillMaxHeight，
+                // 在 wrap-content 父容器里取到最大约束，把整行撑到满屏高。
+                .drawBehind {
+                    val w = size.width * fraction
+                    if (w > 0f) {
+                        drawRect(
+                            color = progressColor.copy(alpha = 0.3f),
+                            topLeft = Offset.Zero,
+                            size = Size(w, size.height),
+                        )
+                    }
+                },
         ) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.CenterStart)
-                    .fillMaxHeight()
-                    .fillMaxWidth(fraction)
-                    .background(progressColor.copy(alpha = 0.3f)),
-            )
             Text(
                 text = "${(fraction * 100).toInt()}%",
                 color = progressColor,
