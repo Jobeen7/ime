@@ -208,30 +208,37 @@ object FabActions {
                     )
                     return@launch
                 }
-                Timber.d("FAB sync: stage download done: ${downResult.getOrThrow()} files")
+                val downSummary = downResult.getOrThrow()
+                Timber.d("FAB sync: stage download done: ${downSummary.count} files, skipped empty=${downSummary.skippedEmpty.size}")
                 // 下载的方案只有部署后才生效：此处顺序部署（与 deploy()
                 // 同机制），词典同步不受部署成败影响、照常继续。
                 Timber.d("FAB sync: stage deploy start")
                 deployDownloadedSchemes(context)
                 Timber.d("FAB sync: stage deploy done")
                 val up = upResult.getOrThrow()
-                val down = downResult.getOrThrow()
+                val down = downSummary.count
+                val skippedEmpty = downSummary.skippedEmpty
                 Timber.d("FAB sync: stage dict start")
                 WebDavSync.syncAllDicts(sessionProvider())
                     .onSuccess { failedDicts ->
                         Timber.d("FAB sync: stage dict done: failed=${failedDicts.size}")
-                        val msg = if (failedDicts.isEmpty()) {
-                            context.getString(
-                                R.string.fab_dir_sync_success,
-                                up,
-                                down,
-                            )
-                        } else {
-                            context.getString(
+                        val msg = when {
+                            failedDicts.isNotEmpty() -> context.getString(
                                 R.string.fab_dir_sync_partial,
                                 up,
                                 down,
                                 failedDicts.size,
+                            )
+                            skippedEmpty.isNotEmpty() -> context.getString(
+                                R.string.fab_dir_sync_skipped,
+                                up,
+                                down,
+                                skippedEmpty.size,
+                            )
+                            else -> context.getString(
+                                R.string.fab_dir_sync_success,
+                                up,
+                                down,
                             )
                         }
                         ToastUtil.showToast(msg)

@@ -738,15 +738,29 @@ object WebDavSync {
     }
 
     /** 下载结果三态：OK 成功落盘；NOT_FOUND 远端无此文件；FAILED 真失败。 */
-    internal enum class HttpGetResult { OK, NOT_FOUND, FAILED }
+    internal enum class HttpGetResult { OK, NOT_FOUND, FAILED, EMPTY }
 
-    /** 词典阶段按下载三态的动作：OK 导入、NOT_FOUND 跳过合并、FAILED 本词典失败。 */
+    /** 词典阶段按下载四态的动作：OK 导入、NOT_FOUND 跳过合并、FAILED 本词典失败；EMPTY（远端空文件）仍按本词典失败计，保持现行部分成功口径（与方案下载的跳过不同：词典单本失败本就只记失败、不中断整段）。 */
     internal enum class DictDownloadAction { IMPORT, SKIP, FAIL }
 
     internal fun dictDownloadAction(result: HttpGetResult): DictDownloadAction = when (result) {
         HttpGetResult.OK -> DictDownloadAction.IMPORT
         HttpGetResult.NOT_FOUND -> DictDownloadAction.SKIP
         HttpGetResult.FAILED -> DictDownloadAction.FAIL
+        HttpGetResult.EMPTY -> DictDownloadAction.FAIL
+    }
+
+    /** 方案下载结果摘要：count 为换位文件数，skippedEmpty 为远端空文件（跳过、本地不动、下次重下）。 */
+    data class SchemeDownloadSummary(val count: Int, val skippedEmpty: List<String>)
+
+    /** 方案阶段按下载四态的动作：OK 计入换位、NOT_FOUND 忽略（远端已删）、EMPTY 跳过不失败、FAILED 整段失败。 */
+    internal enum class SchemeDownloadAction { COUNT, IGNORE, SKIP_EMPTY, FAIL }
+
+    internal fun schemeDownloadAction(result: HttpGetResult): SchemeDownloadAction = when (result) {
+        HttpGetResult.OK -> SchemeDownloadAction.COUNT
+        HttpGetResult.NOT_FOUND -> SchemeDownloadAction.IGNORE
+        HttpGetResult.EMPTY -> SchemeDownloadAction.SKIP_EMPTY
+        HttpGetResult.FAILED -> SchemeDownloadAction.FAIL
     }
 
     /**
@@ -837,7 +851,14 @@ object WebDavSync {
                                 body.byteStream().copyToWithLimit(out, MAX_SYNC_FILE_BYTES)
                             }
                             val declared = body.contentLength()
-                            if (written == 0L) throw IllegalStateException("下载的文件为空")
+                            if (written == 0L) {
+                                // 远端空文件：声明长度>0却实得 0 是截断，仍按失败；
+                                // 声明 0 或未知长度且实得 0 才是真空文件：不写盘、
+                                // 不失败，调用方按跳过处理（本地旧文件不动，下次重下）。
+                                if (declared > 0) throw IllegalStateException("下载长度与 Content-Length 不符")
+                                tmp.delete()
+                                return@use HttpGetResult.EMPTY
+                            }
                             if (declared >= 0 && written != declared) {
                                 throw IllegalStateException("下载长度与 Content-Length 不符")
                             }
@@ -1072,7 +1093,7 @@ object WebDavSync {
      * 总数上限 1000。必须在后台线程调用；返回实际下载文件数
      * （跳过的新旧文件与 404 文件均不计入）。
      */
-    suspend fun downloadSchemes(): Result<Int> = syncMutex.withLock {
+    suspend fun downloadSchemes(): Result<SchemeDownloadSummary> = syncMutex.withLock {
         withContext(Dispatchers.IO) {
             runCatching {
                 checkConfigured()
@@ -1116,6 +1137,7 @@ object WebDavSync {
                     buildSchemeStagingTree(root, staging)
                     var count = 0
                     val failed = mutableListOf<String>()
+                    val skippedEmpty = mutableListOf<String>()
                     val downloaded = mutableSetOf<String>()
                     val remoteMtimes = mutableMapOf<String, Long?>()
                     for (target in targets) {
@@ -1132,22 +1154,27 @@ object WebDavSync {
                         if (!shouldDownloadSchemeFile(target.remoteLastModifiedMs, live)) continue
                         val staged = File(staging, rel)
                         staged.parentFile?.mkdirs()
-                        when (httpGetToFile(remoteUrl("schemes/$rel"), staged)) {
-                            HttpGetResult.OK -> {
+                        when (schemeDownloadAction(httpGetToFile(remoteUrl("schemes/$rel"), staged))) {
+                            SchemeDownloadAction.COUNT -> {
                                 count++
                                 downloaded += rel
                                 remoteMtimes[rel] = target.remoteLastModifiedMs
                             }
-                            HttpGetResult.NOT_FOUND -> Unit // 远端已删：暂存底本保留，换位后仍在；不计、不失败
-                            HttpGetResult.FAILED -> failed += rel
+                            SchemeDownloadAction.IGNORE -> Unit // 远端已删：暂存底本保留，换位后仍在；不计、不失败
+                            SchemeDownloadAction.SKIP_EMPTY -> {
+                                Timber.w("skip schemes download empty file: $rel")
+                                skippedEmpty += rel
+                            }
+                            SchemeDownloadAction.FAIL -> failed += rel
                         }
                     }
                     if (failed.isNotEmpty()) {
                         throw IllegalStateException("下载方案文件失败：${failed.size} 个")
                     }
                     // 全部成功才换位：此前下载只写暂存，活目录未被触碰。
+                    // 空文件只跳过（不进暂存、不换位），不阻断其余文件提交。
                     commitSchemeStagingTree(staging, root, downloaded, remoteMtimes)
-                    count
+                    SchemeDownloadSummary(count, skippedEmpty)
                 } finally {
                     staging.deleteRecursively()
                 }

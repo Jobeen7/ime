@@ -353,8 +353,10 @@ class UserDictActivity : ComponentActivity() {
         lifecycleScope.launch {
             val result = WebDavSync.downloadSchemes()
             setIdle()
-            result.onSuccess { count ->
-                ToastUtil.showToast("已下载 $count 个方案文件")
+            result.onSuccess { summary ->
+                val skipNote =
+                    if (summary.skippedEmpty.isNotEmpty()) "，${summary.skippedEmpty.size} 个空文件已跳过" else ""
+                ToastUtil.showToast("已下载 ${summary.count} 个方案文件$skipNote")
             }.onFailure {
                 Timber.w(it, "downloadSchemes failed")
                 showNotice("操作失败", it.message ?: "下载失败")

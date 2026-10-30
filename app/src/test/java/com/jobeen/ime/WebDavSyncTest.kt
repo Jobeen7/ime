@@ -13,7 +13,7 @@ import java.io.File
 import java.nio.file.Files
 
 /**
- * WebDAV 同步的 JVM 可测部分：词典下载三态映射与原子替换。
+ * WebDAV 同步的 JVM 可测部分：词典/方案下载四态映射与原子替换。
  * 旧目录同步（mtime 末写胜出、删除传播、骤减暂停）已随多目录
  * 改写退场，其纯函数与用例一并删除，不再覆盖。
  */
@@ -24,6 +24,17 @@ class WebDavSyncTest {
         assertEquals(DictDownloadAction.IMPORT, WebDavSync.dictDownloadAction(HttpGetResult.OK))
         assertEquals(DictDownloadAction.SKIP, WebDavSync.dictDownloadAction(HttpGetResult.NOT_FOUND))
         assertEquals(DictDownloadAction.FAIL, WebDavSync.dictDownloadAction(HttpGetResult.FAILED))
+        // 远端空文件在词典侧仍按本词典失败计（现行部分成功口径不变）。
+        assertEquals(DictDownloadAction.FAIL, WebDavSync.dictDownloadAction(HttpGetResult.EMPTY))
+    }
+
+    @Test
+    fun schemeDownloadAction_mapsQuadState() {
+        assertEquals(WebDavSync.SchemeDownloadAction.COUNT, WebDavSync.schemeDownloadAction(HttpGetResult.OK))
+        assertEquals(WebDavSync.SchemeDownloadAction.IGNORE, WebDavSync.schemeDownloadAction(HttpGetResult.NOT_FOUND))
+        assertEquals(WebDavSync.SchemeDownloadAction.FAIL, WebDavSync.schemeDownloadAction(HttpGetResult.FAILED))
+        // 远端空文件在方案侧只跳过、不阻断其余文件提交。
+        assertEquals(WebDavSync.SchemeDownloadAction.SKIP_EMPTY, WebDavSync.schemeDownloadAction(HttpGetResult.EMPTY))
     }
 
     // ---- C5 原子替换 ----
