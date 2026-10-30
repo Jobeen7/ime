@@ -247,10 +247,16 @@ object KeyboardStateManager {
             refreshPolicy.markAligned()
     }
 
-    private fun create(name: String): IKeyboard {
-        val factory = keyboardFactory
-            ?: error("KeyboardStateManager.keyboardFactory must be set before creating keyboards")
+    private fun create(name: String): IKeyboard? {
+        // 已创建过的实例直接复用，不依赖 factory：factory 在服务销毁时清掉，
+        // 但注册表里的实例仍可切换；此前先查 factory 再查注册表，
+        // 切已存在键盘也会在 factory 清掉后崩溃。
         keyboards[name]?.let { return it }
+        // factory 尚未注入（View 未构造，如引擎先报 Schema 消息）时不崩溃：
+        // 本次创建顺延——View 构造时设 factory，随后 onAttach 在
+        // currentKeyboardName 为空时重新 switchTo，届时再建。
+        // （用户 2026-10-28 诊断包 10:51:10 启动崩溃即此竞态。）
+        val factory = keyboardFactory ?: return null
         val keyboard = factory(name)
         keyboards[name] = keyboard
         return keyboard
@@ -282,7 +288,9 @@ object KeyboardStateManager {
     }
 
     private fun attachNew(name: String) {
-        val keyboard = create(name)
+        // factory 未注入时 create 返回 null：本次不建、不改状态（顺延至 View onAttach），
+        // 不再像此前那样抛错崩进程。
+        val keyboard = create(name) ?: return
         keyboard.keyActionListener = keyActionListener
         currentKeyboardName = name
         keyboard.onAttach()
