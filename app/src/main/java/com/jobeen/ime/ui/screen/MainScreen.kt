@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
@@ -45,6 +46,7 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.SystemUpdateAlt
+import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
@@ -67,7 +69,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.util.lerp
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.alpha
@@ -444,7 +446,7 @@ fun MainScreen(
                             ) {
                                 FabAction(
                                     label = stringResource(R.string.fab_deploy),
-                                    icon = painterResource(R.drawable.ic_fab_deploy),
+                                    icon = Icons.Filled.Download,
                                     running = deployRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -455,7 +457,7 @@ fun MainScreen(
                                 )
                                 FabAction(
                                     label = stringResource(R.string.fab_sync),
-                                    icon = painterResource(R.drawable.ic_fab_sync),
+                                    icon = Icons.Filled.Sync,
                                     running = syncRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -579,7 +581,7 @@ private fun AssistiveTouchIcon(dragging: Boolean) {
 @Composable
 private fun FabAction(
     label: String,
-    icon: Painter,
+    icon: ImageVector,
     running: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -621,7 +623,7 @@ private fun FabAction(
                 )
             } else {
                 Icon(
-                    painter = icon,
+                    imageVector = icon,
                     contentDescription = label,
                     modifier = Modifier.size(32.dp),
                     tint = MaterialTheme.colorScheme.onSurface,
