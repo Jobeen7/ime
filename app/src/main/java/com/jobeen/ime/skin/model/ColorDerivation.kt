@@ -6,7 +6,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlin.math.pow
 
 /**
- * 颜色派生（2026-10-27 并入项，元书 6 色 → 令牌模型）：
+ * 颜色派生（2026-10-27 并入项，6 基色 → 令牌模型）：
  *
  * 皮肤文件可用 `derivation` 段声明 6 个基础色，校验期展开为
  * 完整的 28 字段令牌表；显式 `styles` 逐字段优先于派生值。
@@ -14,7 +14,7 @@ import kotlin.math.pow
  * 派生展开后的令牌快照就是样式引用解析的目标（链路顺序：
  * 派生 → 快照 → 样式引用，见 KeyStyleResolver）。
  *
- * 6 基色语义（元书 B01 云白为参照例：face 白、pressed 浅灰、
+ * 6 基色语义（B01 云白为参照例：face 白、pressed 浅灰、
  * bed 近透明、ink 深灰、accent 金 #9C824A、hint 浅灰）：
  * - face：普通键面；pressed：按压键面；bed：键盘底板/面板底；
  * - ink：主文字；accent：强调键面与激活态；hint：副文字/序号。
@@ -37,7 +37,7 @@ object ColorDerivation {
         val hint: Int,
     ) {
         companion object {
-            /** derivation 段的 6 个字段名（与元书基色一一对应）。 */
+            /** derivation 段的 6 个字段名（与 6 基色一一对应）。 */
             val FIELD_NAMES = listOf("face", "pressed", "bed", "ink", "accent", "hint")
         }
     }

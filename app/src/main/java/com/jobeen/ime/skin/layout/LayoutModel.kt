@@ -34,7 +34,7 @@ data class LayoutKeyModel(
     val swipeDown: SkinAction?,
     val longPress: List<SkinAction>?,
     /**
-     * 横屏宽度权重（2026-10-27 并入项，仓模型）：横屏构建期取
+     * 横屏宽度权重（2026-10-27 并入项）：横屏构建期取
      * 本值代替 widthWeight；null = 跟竖屏权重。文件存原始值，
      * 与 widthWeight 同口径永不归一化回写。
      */

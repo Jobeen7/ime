@@ -5,7 +5,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
 /**
- * 单键样式（2026-10-27 并入项，元书样式名引用 + 仓单键样式覆盖）：
+ * 单键样式（2026-10-27 并入项，样式名引用 + 单键覆盖）：
  *
  * - 皮肤文件 `keyStyles` 表：样式名 → 5 角色 → 取值字符串；
  * - 键（keyMappings 条目 / 自创布局键节点）以 `style` 引用样式名，
