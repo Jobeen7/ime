@@ -1,0 +1,139 @@
+diff --git a/deps/glog b/deps/glog
+index 7b134a5..53d58e4 160000
+--- a/deps/glog
++++ b/deps/glog
+@@ -1 +1 @@
+-Subproject commit 7b134a5c82c0c0b5698bb6bf7a835b230c5638e4
++Subproject commit 53d58e4531c7c90f71ddab503d915e027432447a
+diff --git a/deps/leveldb b/deps/leveldb
+index 99b3c03..7ee830d 160000
+--- a/deps/leveldb
++++ b/deps/leveldb
+@@ -1 +1 @@
+-Subproject commit 99b3c03b3284f5886f9ef9a4ef703d57373e61be
++Subproject commit 7ee830d02b623e8ffe0b95d59a74db1e58da04c5
+diff --git a/deps/marisa-trie b/deps/marisa-trie
+index 3e87d53..38180f6 160000
+--- a/deps/marisa-trie
++++ b/deps/marisa-trie
+@@ -1 +1 @@
+-Subproject commit 3e87d53b78e15f2f43783d5e376561a8c9722051
++Subproject commit 38180f6d3653cd2c88dd7047711e75f48f84527c
+diff --git a/deps/yaml-cpp b/deps/yaml-cpp
+index 2f86d13..1e0876c 160000
+--- a/deps/yaml-cpp
++++ b/deps/yaml-cpp
+@@ -1 +1 @@
+-Subproject commit 2f86d13775d119edbb69af52e5f566fd65c6953b
++Subproject commit 1e0876c671268661deb2628040e3959e1e9d6e69
+diff --git a/src/rime/dict/user_dictionary.h b/src/rime/dict/user_dictionary.h
+index 7060aa8..7bfaabf 100644
+--- a/src/rime/dict/user_dictionary.h
++++ b/src/rime/dict/user_dictionary.h
+@@ -78,6 +78,10 @@ class UserDictionary : public Class<UserDictionary, const Ticket&> {
+ 
+   const string& name() const { return name_; }
+   TickCount tick() const { return tick_; }
++  // The underlying database, possibly shared with the running engine through
++  // the component's db pool. Added for hot import/export without shutting
++  // Rime down (Jime user dict sync).
++  an<Db> db() const { return db_; }
+ 
+   RIME_DLL static an<DictEntry> CreateDictEntry(const string& key,
+                                                 const string& value,
+diff --git a/src/rime/gear/memory.cc b/src/rime/gear/memory.cc
+index 9da80fa..8fe5f34 100644
+--- a/src/rime/gear/memory.cc
++++ b/src/rime/gear/memory.cc
+@@ -128,6 +128,13 @@ bool Memory::ProcessSegmentOnCommit(CommitEntry& commit_entry,
+ void Memory::OnCommit(Context* ctx) {
+   if (!user_dict_ || user_dict_->readonly())
+     return;
++  // Jime: skip user-dict self-learning when the current input field opts out
++  // of personalized learning (password fields /
++  // IME_FLAG_NO_PERSONALIZED_LEARNING). The Android side sets this option via
++  // RimeSetOption on every input start; it is not a schema switch so schema
++  // changes never reset it.
++  if (ctx && ctx->get_option("__no_personalized_learning"))
++    return;
+   StartSession();
+   CommitEntry commit_entry(this);
+   for (auto& seg : ctx->composition()) {
+diff --git a/src/rime/lever/deployment_tasks.cc b/src/rime/lever/deployment_tasks.cc
+index 6e6ff89..fd6e842 100644
+--- a/src/rime/lever/deployment_tasks.cc
++++ b/src/rime/lever/deployment_tasks.cc
+@@ -215,10 +215,11 @@ bool WorkspaceUpdate::Run(Deployer* deployer) {
+       return;
+     }
+     the<DeploymentTask> t(new SchemaUpdate(schema_path));
+-    if (t->Run(deployer))
++    if (t->Run(deployer)) {
+       ++success;
+-    else
++    } else {
+       ++failure;
++    }
+   };
+   auto schema_component = Config::Require("schema");
+   for (auto it = schema_list->begin(); it != schema_list->end(); ++it) {
+diff --git a/src/rime/lever/levers_api_impl.h b/src/rime/lever/levers_api_impl.h
+index 60263a7..5af80ae 100644
+--- a/src/rime/lever/levers_api_impl.h
++++ b/src/rime/lever/levers_api_impl.h
+@@ -110,6 +110,7 @@ static Bool rime_levers_get_available_schema_list(
+     item.name = const_cast<char*>(info.name.c_str());
+     item.layout = const_cast<char*>(info.layout.c_str());
+     item.punctuation = const_cast<char*>(info.punctuation.c_str());
++    item.kind = const_cast<char*>("");
+     item.reserved = const_cast<SchemaInfo*>(&info);
+     ++list->size;
+   }
+@@ -131,6 +132,7 @@ static Bool rime_levers_get_selected_schema_list(RimeSwitcherSettings* settings,
+     item.name = NULL;
+     item.layout = const_cast<char*>("");
+     item.punctuation = const_cast<char*>("");
++    item.kind = const_cast<char*>("");
+     item.reserved = NULL;
+     ++list->size;
+   }
+diff --git a/src/rime_api.h b/src/rime_api.h
+index 450cfc0..b281f0f 100644
+--- a/src/rime_api.h
++++ b/src/rime_api.h
+@@ -223,6 +223,7 @@ typedef struct rime_schema_list_item_t {
+   char* name;
+   char* layout;
+   char* punctuation;
++  char* kind;
+   void* reserved;
+ } RimeSchemaListItem;
+ 
+diff --git a/src/rime_api_impl.h b/src/rime_api_impl.h
+index 9eb192d..40347f6 100644
+--- a/src/rime_api_impl.h
++++ b/src/rime_api_impl.h
+@@ -627,7 +627,14 @@ RIME_DEPRECATED Bool RimeGetSchemaList(RimeSchemaList* output) {
+     strcpy(x.layout, schema.layout().c_str());
+     x.punctuation = new char[schema.punctuation().length() + 1];
+     strcpy(x.punctuation, schema.punctuation().c_str());
+-    x.reserved = NULL;
++    string kind_str;
++    if (schema.config() && schema.config()->GetString("schema/kind", &kind_str)) {
++      x.kind = new char[kind_str.length() + 1];
++      strcpy(x.kind, kind_str.c_str());
++    } else {
++      x.kind = new char[1];
++      x.kind[0] = '\0';
++    }
+     ++output->size;
+   }
+   if (output->size == 0) {
+@@ -647,6 +654,7 @@ RIME_DEPRECATED void RimeFreeSchemaList(RimeSchemaList* schema_list) {
+       delete[] schema_list->list[i].name;
+       delete[] schema_list->list[i].layout;
+       delete[] schema_list->list[i].punctuation;
++      delete[] schema_list->list[i].kind;
+     }
+     delete[] schema_list->list;
+   }
