@@ -47,6 +47,8 @@
 -dontwarn org.tukaani.xz.**
 -dontwarn org.objectweb.asm.**
 -dontwarn java.lang.reflect.AnnotatedType
+# Rhino optimizer 引用 JDK 专属 jdk.dynalink（Android 无此包，JVM invokedynamic 路径，运行时不可达），加 dontwarn 即可
+-dontwarn jdk.dynalink.**
 
 # 引擎实现构造器保留（EngineFactory 已改直接构造，此为双保险，防 R8 删无参构造）
 -keep class * implements com.jobeen.ime.engine.IEngine {
