@@ -38,7 +38,6 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Backup
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.ContentPaste
-import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
@@ -46,7 +45,6 @@ import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.SystemUpdateAlt
-import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Card
@@ -67,9 +65,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.util.lerp
 import androidx.compose.foundation.border
 import androidx.compose.ui.draw.alpha
@@ -446,7 +446,7 @@ fun MainScreen(
                             ) {
                                 FabAction(
                                     label = stringResource(R.string.fab_deploy),
-                                    icon = Icons.Filled.Download,
+                                    glyph = FabGlyph.DEPLOY,
                                     running = deployRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -457,7 +457,7 @@ fun MainScreen(
                                 )
                                 FabAction(
                                     label = stringResource(R.string.fab_sync),
-                                    icon = Icons.Filled.Sync,
+                                    glyph = FabGlyph.SYNC,
                                     running = syncRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -577,11 +577,50 @@ private fun AssistiveTouchIcon(dragging: Boolean) {
  * ＋小字标签在下；块 52dp、图标 32dp。玻璃是近似实现：
  * 半透明填充＋1dp 描边＋顶部高光渐变＋轻阴影，深浅按主题背景亮度判定；
  * 不是 iOS 真液态玻璃（无实时折射、无背景实时模糊）。
- * 图标与进度圈用 onSurface：浅色玻璃上白色看不见。 */
+ * 图标与进度圈用 onSurface：浅色玻璃上白色看不见。
+ * 符号不用 Icon/ImageVector：改 Canvas 手绘路径，只画符号本身、
+ * 不经过矢量画笔与着色滤镜，杜绝符号外多余底形。 */
+private enum class FabGlyph { DEPLOY, SYNC }
+
+/** 部署符号：向下箭头＋托盘（24 视口坐标，源自 Material Download 的两段路径）。 */
+private val deployGlyphPath = Path().apply {
+    moveTo(5f, 20f)
+    lineTo(19f, 20f)
+    lineTo(19f, 18f)
+    lineTo(5f, 18f)
+    close()
+    moveTo(19f, 9f)
+    lineTo(15f, 9f)
+    lineTo(15f, 3f)
+    lineTo(9f, 3f)
+    lineTo(9f, 9f)
+    lineTo(5f, 9f)
+    lineTo(12f, 16f)
+    close()
+}
+
+/** 同步符号：两段带箭头的环形带（24 视口坐标，外径 8、内径 5.6、圆心 12,12）。 */
+private val syncGlyphPath = Path().apply {
+    val outer = Rect(4f, 4f, 20f, 20f)
+    val inner = Rect(6.4f, 6.4f, 17.6f, 17.6f)
+    // 上箭头：顺时针，外弧 -90° 起扫 130° 至 40°，箭头尖沿切线外伸。
+    arcTo(outer, -90f, 130f, false)
+    lineTo(15.666f, 18.209f)
+    lineTo(16.290f, 15.599f)
+    arcTo(inner, 40f, -130f, false)
+    close()
+    // 下箭头：顺时针，外弧 90° 起扫 130° 至 220°，箭头尖沿切线外伸。
+    arcTo(outer, 90f, 130f, true)
+    lineTo(8.334f, 5.792f)
+    lineTo(7.710f, 8.401f)
+    arcTo(inner, 220f, -130f, false)
+    close()
+}
+
 @Composable
 private fun FabAction(
     label: String,
-    icon: ImageVector,
+    glyph: FabGlyph,
     running: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
@@ -622,12 +661,15 @@ private fun FabAction(
                     strokeWidth = 2.dp,
                 )
             } else {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = label,
+                val glyphPath = if (glyph == FabGlyph.DEPLOY) deployGlyphPath else syncGlyphPath
+                Canvas(
                     modifier = Modifier.size(32.dp),
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
+                ) {
+                    val scale = size.width / 24f
+                    withTransform({ scale(scale, scale) }) {
+                        drawPath(glyphPath, color = MaterialTheme.colorScheme.onSurface)
+                    }
+                }
             }
         }
         Spacer(Modifier.height(2.dp))
