@@ -76,8 +76,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.drawscope.withTransform
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -87,9 +85,6 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.scale
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.input.pointer.pointerInput
@@ -112,10 +107,16 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.kyant.backdrop.Backdrop
+import com.kyant.backdrop.backdrops.layerBackdrop
+import com.kyant.backdrop.backdrops.rememberLayerBackdrop
+import com.kyant.backdrop.drawBackdrop
+import com.kyant.backdrop.effects.blur
+import com.kyant.backdrop.effects.lens
 import com.jobeen.ime.R
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
+import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
-import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 
 /** 辅助触控式 FAB 深色：参考图外盘色，固定深灰，双主题同色（不跟随主题）。 */
 // 主钮 4 层实心圆颜色（原版录屏实测）：静止外盘/深环/浅环/
@@ -135,8 +136,8 @@ private val FabCenterColor = Color(0xFFFFFFFF)
  * 搜索按行标题＋副标题过滤，无匹配的组自动隐藏。
  * 应用外观（Lee 2026-10-29 定）：自动／亮色／暗色／莫奈色，
  * 只影响设置页，与皮肤颜色模式独立。
- * FAB 只放在主页：辅助触控式深色圆钮，可拖动、松手贴边；
- * 展开时部署、同步两动作自钮位扇出（圆形深色钮＋浅色图标）。
+ * FAB 只放在主页：辅助触控式玻璃圆钮，可拖动、松手贴边；
+ * 展开时部署、同步两动作自钮位扇出（圆形玻璃钮＋onSurface 图标）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -199,6 +200,8 @@ fun MainScreen(
     val fabSizePx = with(density) { 60.dp.toPx() }
     val fabMarginPx = with(density) { 16.dp.toPx() }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
+    // FAB 玻璃背景层：记录设置页内容，供三钮做液态玻璃折射＋模糊。
+    val fabBackdrop = rememberLayerBackdrop()
     var fabFrac by remember {
         mutableStateOf(
             Offset(
@@ -480,6 +483,7 @@ fun MainScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
+                    .layerBackdrop(fabBackdrop)
                     .verticalScroll(
                         if (searchOpen) searchScroll
                         else if (openGroup == null) homeScroll
@@ -584,26 +588,35 @@ fun MainScreen(
                 }
                 Spacer(Modifier.height(16.dp))
             } else if (openGroup == null) {
-                // 搜索卡：卡片行，标题＋示例副标题，无描边框、无放大镜；
-                // 点按进独立搜索页（进页时收起测试面板，与进子页一致）。
-                GroupCard(
-                    modifier = Modifier.clickable {
-                        testInputState.onNavigateAway()
-                        searchOpen = true
-                    },
+                // 搜索胶囊：圆角胶囊＋放大镜＋提示文，点按进独立搜索页
+                // （进页时收起测试面板，与进子页一致）；搜索逻辑本身
+                // 不变（独立搜索页＋目录过滤），胶囊只是入口形态。
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(28.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                        .clickable {
+                            testInputState.onNavigateAway()
+                            searchOpen = true
+                        }
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
                 ) {
-                    Text(
-                        text = stringResource(R.string.main_search_hint),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = stringResource(R.string.main_search_example),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Filled.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.main_search_hint),
+                            fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
-                Spacer(Modifier.height(12.dp))
                 // 测试输入面板：覆盖式底部面板（不占主页布局），打开即聚焦并调键盘。
                 if (testInputState.isOpen) {
                     TestInputPanelSheet(
@@ -617,36 +630,51 @@ fun MainScreen(
                         },
                     )
                 }
-                // “设置”区：一张卡含全部 6 组（组行带图标、无箭头、
+                // “设置”区：一张卡含全部 6 组（分类行带图标、无箭头、
                 // 无分隔线）；组行点按走单页组直达通用规则（见组行 onClick）。
-                // 主页“设置”区头与组标题同色（onSurface），不再用主色（绿）。
-            SettingsGroup(
-                title = stringResource(R.string.main_settings_header),
-                titleColor = MaterialTheme.colorScheme.onSurface,
-            ) {
-                    visibleGroups.forEach { (group, _) ->
-                        NavRow(
-                            title = groupTitle(group),
-                            subtitle = groupSubtitle(group),
-                            onClick = {
-                                fabExpanded = false
-                                testInputState.onNavigateAway()
-                                // 单页组直达（通用规则，替代原先仅关于组的特判）：
-                                // 组内仅 1 页时直接进页，不经过只剩自己一行的
-                                // 组页（外观组即此 bug：组页只剩外观自己一行）；
-                                // 多页组仍置 openGroup 进组页。详情页返回时
-                                // openGroup 从未被单页组置位，故落回主页组列，
-                                // 不再落回单行组页。测试输入面板只属于主页，
-                                // 离页联动收起不变。
-                                val direct = directPageForGroup(allEntries, group)
-                                if (direct != null) {
-                                    rowClicks.getValue(direct.key)()
-                                } else {
-                                    openGroup = group
-                                }
-                            },
-                            icon = groupIcon(group),
-                        )
+                Text(
+                    text = stringResource(R.string.main_settings_header),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(start = 4.dp, top = 12.dp, bottom = 8.dp),
+                )
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = LocalMonetCardColor.current,
+                    ),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        visibleGroups.forEachIndexed { index, (group, _) ->
+                            CategoryRow(
+                                title = groupTitle(group),
+                                subtitle = groupSubtitle(group),
+                                icon = groupIcon(group),
+                                onClick = {
+                                    fabExpanded = false
+                                    testInputState.onNavigateAway()
+                                    // 单页组直达（通用规则，替代原先仅关于组的特判）：
+                                    // 组内仅 1 页时直接进页，不经过只剩自己一行的
+                                    // 组页（外观组即此 bug：组页只剩外观自己一行）；
+                                    // 多页组仍置 openGroup 进组页。详情页返回时
+                                    // openGroup 从未被单页组置位，故落回主页组列，
+                                    // 不再落回单行组页。测试输入面板只属于主页，
+                                    // 离页联动收起不变。
+                                    val direct = directPageForGroup(allEntries, group)
+                                    if (direct != null) {
+                                        rowClicks.getValue(direct.key)()
+                                    } else {
+                                        openGroup = group
+                                    }
+                                },
+                            )
+                            if (index < visibleGroups.lastIndex) {
+                                Spacer(Modifier.height(4.dp))
+                            }
+                        }
                     }
                 }
 
@@ -656,14 +684,17 @@ fun MainScreen(
             } else {
                 val group = openGroup
                 if (group != null) {
-                    // 组页行：标题＋副标题，无图标、无箭头、无分隔线。
+                    // 组页行：标题＋副标题，无图标、无箭头，行间发丝线分隔。
                     GroupCard {
-                        openRows.forEach { row ->
+                        openRows.forEachIndexed { index, row ->
                             NavRow(
                                 title = row.title,
                                 subtitle = row.subtitle,
                                 onClick = rowClicks.getValue(row.key),
                             )
+                            if (index < openRows.lastIndex) {
+                                GroupDivider()
+                            }
                         }
                     }
                     Spacer(Modifier.height(16.dp))
@@ -703,6 +734,7 @@ fun MainScreen(
                                 FabAction(
                                     label = stringResource(R.string.fab_deploy),
                                     glyph = FabGlyph.DEPLOY,
+                                    backdrop = fabBackdrop,
                                     running = deployRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -714,6 +746,7 @@ fun MainScreen(
                                 FabAction(
                                     label = stringResource(R.string.fab_sync),
                                     glyph = FabGlyph.SYNC,
+                                    backdrop = fabBackdrop,
                                     running = syncRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -758,16 +791,26 @@ fun MainScreen(
                             touch()
                             if (!fabAnyRunning) fabExpanded = !fabExpanded
                         },
+                        modifier = Modifier.drawBackdrop(
+                            backdrop = fabBackdrop,
+                            // 圆角 50% 在方形钮面上即圆形；lens 只支持
+                            // CornerBasedShape，CircleShape 会抛异常，故不用它。
+                            shape = { RoundedCornerShape(50) },
+                            effects = {
+                                blur(2.dp.toPx())
+                                lens(12.dp.toPx(), 24.dp.toPx())
+                            },
+                        ),
                         shape = CircleShape,
-                        // 与静止外盘同色：Canvas 若小于钮面，露出的边环与外盘无缝；
+                        // 玻璃底：钮面即 Backdrop 模糊＋折射层，container 透明；
                         // 拖动时 Canvas 放大到 75dp，盖住整个钮面。
-                        containerColor = Color(0xFF182023),
-                        contentColor = Color.White,
+                        containerColor = Color.Transparent,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
                     ) {
                         if (fabAnyRunning) {
                             CircularProgressIndicator(
                                 modifier = Modifier.size(26.dp),
-                                color = Color.White,
+                                color = MaterialTheme.colorScheme.onSurface,
                                 strokeWidth = 2.dp,
                             )
                         } else {
@@ -949,50 +992,11 @@ private fun AssistiveTouchIcon(dragging: Boolean) {
     }
 }
 
-/** FAB 栈展开后的单个动作：圆形玻璃钮（磨砂近似，52dp）
- * ＋小字标签在下；块 52dp、图标 32dp。玻璃是近似实现：
- * 半透明填充＋1dp 描边＋顶部高光渐变＋轻阴影，深浅按主题背景亮度判定；
- * 不是 iOS 真液态玻璃（无实时折射、无背景实时模糊）。
- * 图标与进度圈用 onSurface：浅色玻璃上白色看不见。
- * 部署符号为用户提供的单向圆箭头 PNG（改细版），经 SrcIn 染成 onSurface；
- * 同步符号为用户提供的双向圆箭头 SVG 转成的 Canvas 路径（64 视口），
- * 以 onSurface 填充；两符号同色、笔触已对齐（128px 框下 10px 对 9.8px）。 */
+/** FAB 栈展开后的单个动作：圆形玻璃钮（52dp）＋小字标签在下；
+ * 图标 32dp。Backdrop 玻璃底（模糊＋折射，圆角 50% 即圆形），字形与进度圈均为
+ * onSurface（SrcIn 染色）。两动作字形为等尺寸圆箭头 PNG
+ *（内容 120×120，128 框）：部署单向、同步双向。 */
 private enum class FabGlyph { DEPLOY, SYNC }
-
-/** 同步符号：用户提供的双向圆箭头 SVG 转成的路径（64 视口坐标；坐标已按内容框中心缩放，使内容框充满图标框，与预览图一致）。 */
-private val syncGlyphPath = Path().apply {
-    moveTo(32f, 6.21337f)
-    cubicTo(24.6836f, 6.21337f, 18.0835f, 9.26474f, 13.3903f, 14.1595f)
-    cubicTo(12.4362f, 15.1546f, 12.6216f, 16.8146f, 13.6765f, 17.6164f)
-    cubicTo(14.6364f, 18.3466f, 15.9895f, 18.2332f, 16.8334f, 17.3577f)
-    cubicTo(20.6686f, 13.3818f, 26.0398f, 10.9018f, 32f, 10.9018f)
-    cubicTo(42.8586f, 10.9018f, 51.7924f, 19.1073f, 52.9585f, 29.6558f)
-    lineTo(48.5493f, 29.6558f)
-    cubicTo(47.5014f, 29.6558f, 46.8836f, 30.8317f, 47.4802f, 31.6932f)
-    lineTo(54.3756f, 41.6585f)
-    cubicTo(54.8913f, 42.4052f, 55.9946f, 42.4052f, 56.5115f, 41.6585f)
-    lineTo(63.4046f, 31.6932f)
-    cubicTo(64f, 30.8317f, 63.3833f, 29.6558f, 62.3355f, 29.6558f)
-    lineTo(57.6767f, 29.6558f)
-    cubicTo(56.492f, 16.5134f, 45.4508f, 6.21337f, 32f, 6.21337f)
-    close()
-    moveTo(8.55761f, 21.7829f)
-    cubicTo(8.1525f, 21.7829f, 7.74696f, 21.9681f, 7.48851f, 22.3415f)
-    lineTo(0.595437f, 32.3068f)
-    cubicTo(0f, 33.1683f, 0.616663f, 34.3442f, 1.66454f, 34.3442f)
-    lineTo(6.32325f, 34.3442f)
-    cubicTo(7.50803f, 47.4866f, 18.5492f, 57.7866f, 32f, 57.7866f)
-    cubicTo(39.3164f, 57.7866f, 45.9165f, 54.7353f, 50.6097f, 49.8405f)
-    cubicTo(51.5638f, 48.8454f, 51.3784f, 47.1854f, 50.3235f, 46.3836f)
-    cubicTo(49.3636f, 45.6534f, 48.0105f, 45.7668f, 47.1666f, 46.6423f)
-    cubicTo(43.3314f, 50.6182f, 37.9602f, 53.0982f, 32f, 53.0982f)
-    cubicTo(21.1414f, 53.0982f, 12.2076f, 44.8927f, 11.0415f, 34.3442f)
-    lineTo(15.4507f, 34.3442f)
-    cubicTo(16.4986f, 34.3442f, 17.1164f, 33.1683f, 16.5198f, 32.3068f)
-    lineTo(9.62442f, 22.3415f)
-    cubicTo(9.36655f, 21.9681f, 8.96272f, 21.7829f, 8.55761f, 21.7829f)
-    close()
-}
 
 @Composable
 private fun FabAction(
@@ -1001,12 +1005,9 @@ private fun FabAction(
     running: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
+    backdrop: Backdrop,
 ) {
-    // 深浅按主题背景亮度判定，不跟随系统深浅色（自定义主题背景与系统可能不一致）。
-    val lightGlass = MaterialTheme.colorScheme.background.luminance() > 0.5f
-    val glassFill = if (lightGlass) Color.White.copy(alpha = 0.55f) else Color.White.copy(alpha = 0.18f)
-    val glassStroke = if (lightGlass) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.25f)
-    val glassHighlight = if (lightGlass) Color.White.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.25f)
+    // 动作钮：Backdrop 玻璃底（模糊＋折射），字形与进度圈均为 onSurface；不再用深色实心底。
     Column(
         modifier = Modifier
             .clickable(enabled = enabled, onClick = onClick),
@@ -1015,20 +1016,16 @@ private fun FabAction(
         Box(
             modifier = Modifier
                 .size(52.dp)
-                .shadow(4.dp, CircleShape)
-                .clip(CircleShape)
-                .background(glassFill)
-                .drawBehind {
-                    drawRect(
-                        brush = Brush.verticalGradient(
-                            colors = listOf(glassHighlight, Color.Transparent),
-                            startY = 0f,
-                            endY = size.height * 0.5f,
-                        ),
-                        size = size,
-                    )
-                }
-                .border(1.dp, glassStroke, CircleShape),
+                .drawBackdrop(
+                    backdrop = backdrop,
+                    // 圆角 50% 在方形钮面上即圆形；lens 只支持
+                    // CornerBasedShape，CircleShape 会抛异常，故不用它。
+                    shape = { RoundedCornerShape(50) },
+                    effects = {
+                        blur(2.dp.toPx())
+                        lens(12.dp.toPx(), 24.dp.toPx())
+                    },
+                )
             contentAlignment = Alignment.Center,
         ) {
             if (running) {
@@ -1039,23 +1036,15 @@ private fun FabAction(
                 )
             } else {
                 val glyphColor = MaterialTheme.colorScheme.onSurface
-                if (glyph == FabGlyph.DEPLOY) {
-                    Image(
-                        painter = painterResource(R.drawable.ic_fab_deploy),
-                        contentDescription = null,
-                        modifier = Modifier.size(32.dp),
-                        colorFilter = ColorFilter.tint(glyphColor, BlendMode.SrcIn),
-                    )
-                } else {
-                    Canvas(
-                        modifier = Modifier.size(32.dp),
-                    ) {
-                        val scale = size.width / 64f
-                        withTransform({ scale(scale, scale) }) {
-                            drawPath(syncGlyphPath, color = glyphColor)
-                        }
-                    }
-                }
+                Image(
+                    painter = painterResource(
+                        if (glyph == FabGlyph.DEPLOY) R.drawable.ic_fab_deploy
+                        else R.drawable.ic_fab_sync,
+                    ),
+                    contentDescription = null,
+                    modifier = Modifier.size(32.dp),
+                    colorFilter = ColorFilter.tint(glyphColor, BlendMode.SrcIn),
+                )
             }
         }
         Spacer(Modifier.height(2.dp))
@@ -1064,6 +1053,46 @@ private fun FabAction(
             fontSize = 11.sp,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/** 主页分类行：图标＋粗体标题＋灰色副标题，无分隔线、无右箭头。 */
+@Composable
+private fun CategoryRow(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(24.dp),
+        )
+        Spacer(Modifier.width(14.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
     }
 }
 

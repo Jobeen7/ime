@@ -62,6 +62,14 @@ Jime 基于开源组件构建。本文件是随应用分发的第三方组件索
 | Splitties | 安卓 DSL 工具集 | Copyright (C) 2015 Louis CAD | Apache-2.0 |
 | zxing-android-embedded（基于 ZXing） | 二维码扫描 | JourneyApps 与 ZXing 作者 | Apache-2.0 |
 
+## 界面效果
+
+| 组件 | 用途 | 版权 | 许可证 |
+|---|---|---|---|
+| AndroidLiquidGlass Backdrop（Kyant0） | FAB 液态玻璃背景 | Kyant0 / AndroidLiquidGlass 作者 | Apache-2.0 |
+
+Backdrop 以源码移植方式引入（`app/src/main/java/com/kyant/backdrop/`，非 Maven 依赖），用于主页三钮（主钮＋部署／同步动作钮）的玻璃底（模糊＋折射）。移植改动：Android 单模块无 expect/actual 机制，actual 关键字去掉，实现即 Android 版原文，common 版 RuntimeShader 接口原样并入；Lens.kt 去掉 RoundedRectangularShape 分支（需 kyant shapes 依赖，未引入；本工程只用 androidx CornerBasedShape，行为不变）；@Language 注解去掉（IDE 提示用，无运行时作用）。旧设备降级为库内守卫：API 31 以下 RenderEffect、API 33 以下 RuntimeShader 自动不生效（仍绘制背景层）。许可证全文见 `licenses/Apache-2.0.txt`。
+
 ## 数据与方案
 
 | 组件 | 用途 | 说明 |
