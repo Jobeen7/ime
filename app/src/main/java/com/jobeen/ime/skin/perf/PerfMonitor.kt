@@ -2,8 +2,12 @@ package com.jobeen.ime.skin.perf
 
 import android.app.ActivityManager
 import android.content.Context
+import android.content.SharedPreferences
+import android.os.Handler
+import android.os.Looper
 import android.os.Process
 import android.os.SystemClock
+import com.jobeen.ime.skin.diag.DiagPrefs
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -31,7 +35,12 @@ import kotlinx.serialization.json.put
  */
 object PerfMonitor {
 
-    enum class Event { COLD_START, KEY_TO_COMMIT, SKIN_APPLY, SLOW_FRAME, MEMORY }
+    enum class Event {
+        COLD_START, KEY_TO_COMMIT, SKIN_APPLY, SLOW_FRAME, MEMORY,
+        // P4 分段探针（默认关闭的诊断门控之下才记；聚合按事件 pooled，
+        // 逐条明细（含 step/stage 名）在 JSONL 里，见 noteStartupStep/noteStage）：
+        STARTUP_STEP, KEY_DISPATCH, KEY_ENGINE, KEY_COMMIT, MAIN_LAG,
+    }
 
     data class Aggregate(val count: Long, val avg: Double, val max: Long)
 
@@ -43,12 +52,110 @@ object PerfMonitor {
 
     internal var clockMs: () -> Long = { SystemClock.elapsedRealtime() }
 
+    /**
+     * P4 诊断门控（复用 DiagPrefs.diagnostic_mode，默认关）：
+     * 缓存的 @Volatile 标志，热路径只读它——关时探针在读表前即返回，
+     * 不读钟、不加锁、不聚合、不落盘（DiagLog 的 DEBUG 是每次读偏好，
+     * 热路径照搬会丢“零开销”，故此处用监听刷新缓存）。
+     * 注意：本标志只门控 P4 新增探针；既有 record() 调用（COLD_START 等）
+     * 行为不变——关掉它们会抹掉已有的常驻诊断，P4 不动。
+     */
+    @Volatile
+    internal var diagnosticEnabled = false
+
     private val lock = Any()
     private val aggregates = mutableMapOf<Event, Aggregate>()
     private var perfDir: File? = null
     private var processStartMs: Long = -1L
     private var coldStartRecorded = false
     private var lastPressMs: Long = 0L
+
+    /** 门控监听强持有（SharedPreferences 弱持有监听，不持有会被 GC 掉）。 */
+    private var gateListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    private var watchdog: MainThreadWatchdog? = null
+
+    private val defaultWatchdogFactory: ((Long) -> Unit) -> MainThreadWatchdog? = { onLag ->
+        runCatching {
+            val handler = Handler(Looper.getMainLooper())
+            MainThreadWatchdog(
+                post = { r -> handler.post(r) },
+                remove = { r -> handler.removeCallbacks(r) },
+                clockMs = { SystemClock.elapsedRealtime() },
+                onLag = onLag,
+            )
+        }.getOrNull()
+    }
+
+    /** 仅测试用：替换看门狗工厂（JVM 单测里默认工厂触 Looper 会抛 stub 异常，被 runCatching 兜成 null）。 */
+    internal var watchdogFactory: ((Long) -> Unit) -> MainThreadWatchdog? = defaultWatchdogFactory
+
+    /**
+     * 诊断门控开关：开则起主线程看门狗，关则停它。
+     * 看门狗只在门控开时跑——关时主线程零附加 runnable。
+     */
+    fun setDiagnosticEnabled(enabled: Boolean) {
+        diagnosticEnabled = enabled
+        if (enabled) {
+            if (watchdog == null) {
+                watchdog = watchdogFactory { lag -> record(Event.MAIN_LAG, lag) }
+                watchdog?.start()
+            }
+        } else {
+            watchdog?.stop()
+            watchdog = null
+        }
+    }
+
+    /** 绑定诊断门控到偏好：启动时读一次现值，之后键变化经监听刷新缓存。 */
+    fun bindDiagnosticGate(context: Context) {
+        val prefs = DiagPrefs.prefs(context)
+        setDiagnosticEnabled(prefs.getBoolean(DiagPrefs.KEY_DIAGNOSTIC_MODE, false))
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { changed, key ->
+            if (key == DiagPrefs.KEY_DIAGNOSTIC_MODE) {
+                setDiagnosticEnabled(changed.getBoolean(DiagPrefs.KEY_DIAGNOSTIC_MODE, false))
+            }
+        }
+        gateListener = listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    /**
+     * 分段探针起点：门控开时返回当前钟，关时返回 -1（调用方把 -1
+     * 原样传给 [noteStage] 即 no-op）。长方法体用这对标记，避免整段
+     * 包进 lambda 重缩进；短方法体直接用 [measureStage]。
+     */
+    internal fun stageStart(): Long = if (diagnosticEnabled) clockMs() else -1L
+
+    /** 分段探针终点：只记阶段名对应的耗时，绝不记按键内容、候选词、剪贴板。 */
+    internal fun noteStage(event: Event, startMs: Long) {
+        if (!diagnosticEnabled || startMs < 0L) return
+        record(event, clockMs() - startMs)
+    }
+
+    /**
+     * 短方法体的分段探针：门控关时直接跑 block（一次 volatile 读之外零开销）；
+     * 开时量 block 的同步耗时并记入事件聚合与 JSONL。函数类型参数放最后，
+     * 调用方 trailing-lambda 绑定不变。抛错时 finally 仍记（耗时含异常路径）。
+     */
+    internal inline fun <T> measureStage(event: Event, block: () -> T): T {
+        if (!diagnosticEnabled) return block()
+        val start = clockMs()
+        try {
+            return block()
+        } finally {
+            record(event, clockMs() - start)
+        }
+    }
+
+    /** 启动单步耗时（AppStartup.runStep 调）：门控关时直接返回，零聚合零落盘。 */
+    internal fun noteStartupStep(name: String, durationMs: Long, ok: Boolean) {
+        if (!diagnosticEnabled) return
+        record(
+            Event.STARTUP_STEP, durationMs,
+            mapOf("step" to name, "ok" to ok.toString()),
+        )
+    }
 
     private val writer = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "perf-writer").apply { isDaemon = true }
@@ -159,7 +266,7 @@ object PerfMonitor {
         runCatching { writer.submit {}.get() }
     }
 
-    /** 仅测试用：清聚合与配对状态（不碰落盘目录配置）。 */
+    /** 仅测试用：清聚合与配对状态（不碰落盘目录配置），并复位诊断门控与看门狗。 */
     internal fun resetForTest() {
         synchronized(lock) {
             aggregates.clear()
@@ -167,5 +274,9 @@ object PerfMonitor {
             lastPressMs = 0L
             processStartMs = -1L
         }
+        diagnosticEnabled = false
+        watchdog?.stop()
+        watchdog = null
+        watchdogFactory = defaultWatchdogFactory
     }
 }

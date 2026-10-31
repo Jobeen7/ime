@@ -568,14 +568,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun processKey(service: InputMethodService, key: KeyEvent) {
-        // 部署期按键门：见 DeployKeyGate。门必须放在 dispatchAction
-        // 之前——键一旦入动作队列，就会在部署作业之后执行。
-        // 只记日志不弹提示：部署中连续打字时提示会刷屏。
-        if (DeployKeyGate.shouldDrop()) {
-            Timber.d("processKey dropped during deploy")
-            return
+        // P4 分段探针（引擎段）：量 processKey 同步部分的耗时（门禁判定 +
+        // 入动作队列）；门控关时 measureStage 直接跑原体，零附加开销。
+        // 跨异步的键→提交总耗时仍由既有 KEY_TO_COMMIT 粗配对覆盖，
+        // 本探针不做逐键配对（快打下单 lastPressMs 会被覆盖，见该探针注释）。
+        com.jobeen.ime.skin.perf.PerfMonitor.measureStage(
+            com.jobeen.ime.skin.perf.PerfMonitor.Event.KEY_ENGINE,
+        ) {
+            // 部署期按键门：见 DeployKeyGate。门必须放在 dispatchAction
+            // 之前——键一旦入动作队列，就会在部署作业之后执行。
+            // 只记日志不弹提示：部署中连续打字时提示会刷屏。
+            if (DeployKeyGate.shouldDrop()) {
+                Timber.d("processKey dropped during deploy")
+                return@measureStage
+            }
+            dispatchAction(Action.ProcessKey(service, key))
         }
-        dispatchAction(Action.ProcessKey(service, key))
     }
 
     private fun processKeyInternal(key: KeyEvent) {

@@ -82,15 +82,28 @@ object AppStartup {
         }
     }
 
-    /** 单步执行：独立捕获异常并记日志，返回是否成功（供显式依赖判断）。 */
-    private fun runStep(name: String, block: () -> Unit): Boolean =
-        runCatching(block)
+    /**
+     * 单步执行：独立捕获异常并记日志，返回是否成功（供显式依赖判断）。
+     * P4 分段探针：每步耗时（成功与否都记，ok 进 meta）走诊断门控——
+     * 门控关时只多两次 elapsedRealtime 读数，不聚合不落盘。
+     */
+    private fun runStep(name: String, block: () -> Unit): Boolean {
+        val start = android.os.SystemClock.elapsedRealtime()
+        return runCatching(block)
             .onFailure { e ->
                 // 用 android.util.Log 确保 release 包（Timber 无 tree）也能在 logcat 看到
                 android.util.Log.e("AppStartup", "step $name failed", e)
                 Timber.e(e, "AppStartup step failed: %s", name)
             }
+            .also { result ->
+                com.jobeen.ime.skin.perf.PerfMonitor.noteStartupStep(
+                    name,
+                    android.os.SystemClock.elapsedRealtime() - start,
+                    result.isSuccess,
+                )
+            }
             .isSuccess
+    }
 
     private fun setupThemeStore(context: Context) {
         ThemeStore.refresh()
@@ -105,6 +118,9 @@ object AppStartup {
         if (BuildConfig.DEBUG) {
             Timber.plant(Timber.DebugTree())
         }
+        // P4 诊断门控：启动时读一次现值并挂监听，之后设置页开关变化
+        // 经监听刷新 PerfMonitor 的缓存标志（热路径不再每次读偏好）。
+        com.jobeen.ime.skin.perf.PerfMonitor.bindDiagnosticGate(context)
     }
 
     private fun setupEngine(context: Context) {

@@ -22,6 +22,10 @@ class KeyActionListener(
     private val engine: IEngine? get() = EngineFactory.current()
 
     override fun onKeyAction(action: KeyboardAction) {
+        // P4 分段探针（分发段）：起点标记；门控关时 stageStart 返回 -1，
+        // 末尾 noteStage 即 no-op。早返回路径（MultiReturnAction 取不到
+        // 输入连接）不产生样本——该路径本就不走到引擎分发。
+        val dispatchStart = com.jobeen.ime.skin.perf.PerfMonitor.stageStart()
         // 接线轮 R1：键盘动作事件喂给通知状态（锁定变化时窗口
         // 经回调以 post 重建键盘，不在分发中途同步重建）。
         com.jobeen.ime.skin.runtime.SkinRuntimeState.onEvent(
@@ -124,6 +128,9 @@ class KeyActionListener(
 
             else -> {}
         }
+        com.jobeen.ime.skin.perf.PerfMonitor.noteStage(
+            com.jobeen.ime.skin.perf.PerfMonitor.Event.KEY_DISPATCH, dispatchStart,
+        )
     }
 
     /**

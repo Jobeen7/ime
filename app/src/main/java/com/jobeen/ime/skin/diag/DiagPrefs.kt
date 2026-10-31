@@ -10,11 +10,14 @@ import com.jobeen.ime.data.manager.KeyboardManager
  * （[KeyboardManager.PREFS_NAME]），键名自带 skin.diag 前缀隔离。
  */
 object DiagPrefs {
-    private const val KEY_DIAGNOSTIC_MODE = "skin.diag.diagnostic_mode"
+    internal const val KEY_DIAGNOSTIC_MODE = "skin.diag.diagnostic_mode"
+
+    /** 诊断偏好文件（PerfMonitor 的门控监听与本开关共用同一文件与键）。 */
+    fun prefs(context: Context): android.content.SharedPreferences =
+        context.getSharedPreferences(KeyboardManager.PREFS_NAME, Context.MODE_PRIVATE)
 
     fun isDiagnosticMode(context: Context): Boolean =
-        context.getSharedPreferences(KeyboardManager.PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_DIAGNOSTIC_MODE, false)
+        prefs(context).getBoolean(KEY_DIAGNOSTIC_MODE, false)
 
     fun setDiagnosticMode(context: Context, enabled: Boolean) {
         context.getSharedPreferences(KeyboardManager.PREFS_NAME, Context.MODE_PRIVATE).edit {

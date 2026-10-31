@@ -20,6 +20,9 @@ class MessageHandler(
     suspend fun handle(message: EngineMessage) {
         when (message) {
             is EngineMessage.Commit -> {
+                // P4 分段探针（提交段）：量 Commit 分支同步处理的耗时；
+                // 拦截态早返回不产生样本（拦截的提交本就不走提交处理）。
+                val commitStart = com.jobeen.ime.skin.perf.PerfMonitor.stageStart()
                 // 成对提交的光标回退量：每次 Commit 处理必出队一次
                 // （拦截态同样出队丢弃），正常提交出队得 0、无操作。
                 val cursorBack = PairCommitQueue.poll()
@@ -58,6 +61,9 @@ class MessageHandler(
                 // 共用 24ms 合并通道，窗口内只探最后一次（探针每次直探，
                 // 无帧缓存可命中旧结果，见清点 S14）
                 (service as ImeInputMethodService).scheduleNotifyInputChanged()
+                com.jobeen.ime.skin.perf.PerfMonitor.noteStage(
+                    com.jobeen.ime.skin.perf.PerfMonitor.Event.KEY_COMMIT, commitStart,
+                )
             }
 
             is EngineMessage.Candidates -> {
