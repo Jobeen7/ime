@@ -25,6 +25,7 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 import java.net.URI
 import java.net.URLEncoder
+import java.security.MessageDigest
 import java.text.Normalizer
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLException
@@ -257,6 +258,82 @@ object WebDavSync {
     )
 
     /**
+     * PUT 前复读的最大次数：每次复读发现远端变化就重合并重导出
+     * 再试一次；达到次数后仍变化则 PUT 最新合并结果（残余毫秒
+     * 窗口接受），不改成功契约。
+     */
+    internal const val PUT_REREAD_MAX_ATTEMPTS = 3
+
+    /**
+     * 流式 SHA-256（不整段进内存；超限直接失败）。
+     * 不关闭输入流，调用方负责关闭（用 use 包住）。
+     */
+    private fun sha256Stream(input: InputStream, maxBytes: Long): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        var total = 0L
+        val buffer = ByteArray(8192)
+        while (true) {
+            val n = input.read(buffer)
+            if (n < 0) break
+            total += n
+            if (total > maxBytes) throw IllegalStateException("内容超限，拒绝哈希")
+            digest.update(buffer, 0, n)
+        }
+        return digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xFF) }
+    }
+
+    /**
+     * 复读远端词典文件的 SHA-256（流式哈希，不整段进内存）。
+     * 远端不存在（404）返回 null；其余失败直接抛错（调用方中止
+     * 本次上传，不在未核实的情况下覆盖远端）。只做比较用，不
+     * 做写入，不带任何前置条件。必须在后台线程调用。
+     */
+    private fun fetchRemoteDictHash(fileName: String): String? {
+        val request = Request.Builder()
+            .url(remoteUrl(fileName))
+            .header("Authorization", authHeader())
+            .header("Accept-Encoding", "identity")
+            .get()
+            .build()
+        client.newCall(request).execute().use { response ->
+            if (response.code == 404) return null
+            if (!response.isSuccessful) throw httpError("复读远端", response.code, errorDetail(response))
+            val body = response.body ?: throw IllegalStateException("复读远端内容为空")
+            if (body.contentLength() > UserDictManager.MAX_DICT_FILE_BYTES) {
+                throw IllegalStateException("远端文件过大，拒绝复读")
+            }
+            return body.byteStream().use { sha256Stream(it, UserDictManager.MAX_DICT_FILE_BYTES) }
+        }
+    }
+
+    /**
+     * PUT 前复读重试（纯决策循环，不直接碰网络与引擎，便于单测）：
+     * 每次复读取当前远端哈希，与上次合并进本地的快照哈希比对；
+     * 相等即 PUT，不等则重合并重导出（调用方负责，返回刚合并的
+     * 快照哈希）后继续；有限次后仍变化则 PUT 最新合并结果
+     * （残余毫秒窗口接受）。复读或合并抛错时直接向上传播
+     * （调用方中止本次上传）。
+     */
+    internal suspend fun putWithRereadRetry(
+        initialHash: String?,
+        fetchHash: suspend () -> String?,
+        mergeAndReexport: suspend () -> String?,
+        put: suspend () -> Unit,
+        maxAttempts: Int = PUT_REREAD_MAX_ATTEMPTS,
+    ) {
+        var last = initialHash
+        repeat(maxAttempts) {
+            val current = fetchHash()
+            if (current == last) {
+                put()
+                return
+            }
+            last = mergeAndReexport()
+        }
+        put()
+    }
+
+    /**
      * 上传当前词典到 WebDAV 服务器，返回导出的词条数。
      * 必须在后台线程调用。
      */
@@ -277,35 +354,62 @@ object WebDavSync {
             // 场——S4）。远端文件不存在（GET 404）即首次上传、跳
             // 过合并直接新建；其余下载失败（网络/认证等）中止本
             // 次上传——没合并成就不许覆盖远端。
-            downloadLocked(dictName, session).exceptionOrNull()?.let { e ->
+            val downloadResult = downloadLocked(dictName, session)
+            downloadResult.exceptionOrNull()?.let { e ->
                 if (!(e is WebDavHttpException && e.httpCode == 404)) throw e
             }
+            // 复读比较的基准：初次下载合并进本地的那份远端快照哈希；
+            // 404（远端尚无文件）时基准为空，复读仍为空才算未变。
+            val initialSnapshotHash: String? = downloadResult.getOrNull()?.snapshotHash
             val tempFile = File(appContext.cacheDir, "webdav-upload-${dictName}-${System.nanoTime()}.txt")
             try {
-                val count = session.runOnReady {
+                var exportedCount = session.runOnReady {
                     exportUserDictLive(dictName, tempFile.absolutePath)
                 }
-                if (count < 0) throw IllegalStateException("导出用户词典失败")
-                val builder = Request.Builder()
-                    .url(remoteUrl(fileName))
-                    .header("Authorization", authHeader())
-                    .put(tempFile.asRequestBody(textPlain))
-                // 无条件裸 PUT，不带任何前置条件（第二十批终局
-                // 形态，Jobeen 口径：上传就是要成功）：第十八批
-                // 「有什么发什么」的 If-Match、第十九批弱 ETag 置
-                // 空后仅剩的日期条件 If-Unmodified-Since，在真机上
-                // 都被服务器恒回 412、上传永远失败（两轮真机坐
-                // 实）。防丢词靠上方上传前的下载合并本身：远端较
-                // 新的词已先并进本地、随这份合并结果一起写回，不
-                // 靠前置条件。412 若仍出现（服务器自身原因）走下
-                // 方通用失败口径，不再有专属话术。
-                client.newCall(builder.build()).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        throw httpError("上传", response.code, errorDetail(response))
-                    }
-                    // 成功即完成：不再读响应 ETag、不再补查记基准
-                    // （清点 S1 定论，ETag 状态机整套退场）。
-                }
+                if (exportedCount < 0) throw IllegalStateException("导出用户词典失败")
+                // PUT 前复读加固（轻量，不用 ETag/If-Match）：下载合并与
+                // PUT 之间远端又被改过时，重合并重导出再试（有限次）；
+                // 复读失败（网络/超限）直接中止本次上传，不在未核实
+                // 的情况下覆盖远端；有限次后仍变化则 PUT 最新一次
+                // 合并结果，残余毫秒窗口（最终复读与 PUT 之间远端
+                // 又变了）接受。删除词表链不在此列：它有逐词时间
+                // 戳合并加下轮收敛的自有机制，见 syncDeletedWords。
+                putWithRereadRetry(
+                    initialHash = initialSnapshotHash,
+                    fetchHash = { fetchRemoteDictHash(fileName) },
+                    mergeAndReexport = {
+                        val merged = downloadLocked(dictName, session).getOrThrow()
+                        tempFile.delete()
+                        val newCount = session.runOnReady {
+                            exportUserDictLive(dictName, tempFile.absolutePath)
+                        }
+                        if (newCount < 0) throw IllegalStateException("导出用户词典失败")
+                        exportedCount = newCount
+                        merged.snapshotHash
+                    },
+                    put = {
+                        val builder = Request.Builder()
+                            .url(remoteUrl(fileName))
+                            .header("Authorization", authHeader())
+                            .put(tempFile.asRequestBody(textPlain))
+                        // 无条件裸 PUT，不带任何前置条件（第二十批终局
+                        // 形态，Jobeen 口径：上传就是要成功）：第十八批
+                        // 「有什么发什么」的 If-Match、弱 ETag 置
+                        // 空后仅剩的日期条件 If-Unmodified-Since，在真机上
+                        // 都被服务器恒回 412、上传永远失败（两轮真机坐
+                        // 实）。防丢词靠上方上传前的下载合并本身：远端较
+                        // 新的词已先并进本地、随这份合并结果一起写回，不
+                        // 靠前置条件。412 若仍出现（服务器自身原因）走下
+                        // 方通用失败口径，不再有专属话术。
+                        client.newCall(builder.build()).execute().use { response ->
+                            if (!response.isSuccessful) {
+                                throw httpError("上传", response.code, errorDetail(response))
+                            }
+                            // 成功即完成：不再读响应 ETag、不再补查记基准
+                            // （按既定决策，ETag 状态机整套退场）。
+                        }
+                    },
+                )
                 // PUT 2xx 后的轻复核（14）：只认“写到了该地址且长度一致”。
                 // HEAD 失败/非 2xx 时不推翻 PUT 2xx（只记警告，部分服务
                 // 器禁 HEAD）；长度明确不一致时视为未写成功，不记上传
@@ -334,11 +438,11 @@ object WebDavSync {
                     Timber.w(e, "Upload recheck HEAD failed, PUT 2xx stands")
                 }
                 UserDictPrefs.setLastUploadTime(fileName, System.currentTimeMillis())
-                Timber.i("User dict '$dictName' uploaded: $count entries")
+                Timber.i("User dict '$dictName' uploaded: $exportedCount entries")
                 // 删除词表随词典同步一起走（并集合并，失败不影响词典同步结果）
                 runCatching { syncDeletedWords() }
                     .onFailure { Timber.w(it, "Deleted words sync failed") }
-                count
+                exportedCount
             } finally {
                 tempFile.delete()
             }
@@ -563,14 +667,21 @@ object WebDavSync {
         session: RimeSession,
         remoteFile: String = remoteFileName(dictName),
     ): Result<Int> = syncMutex.withLock {
-        downloadLocked(dictName, session, remoteFile)
+        downloadLocked(dictName, session, remoteFile).map { it.count }
     }
+
+    /**
+     * 下载合并结果：导出的词条数加刚下载的远端裸字节哈希。
+     * 哈希用于上传前复读比较（远端变没变），转换（.userdb.txt
+     * 转置）不改哈希口径，比较的是远端文件本身。
+     */
+    private data class DownloadedDict(val count: Int, val snapshotHash: String)
 
     private suspend fun downloadLocked(
         dictName: String,
         session: RimeSession,
         remoteFile: String = remoteFileName(dictName),
-    ): Result<Int> = withContext(Dispatchers.IO) {
+    ): Result<DownloadedDict> = withContext(Dispatchers.IO) {
         runCatching {
             checkConfigured()
             // 下载侧黑名单：非法词典名/远端文件名直接拒绝（不拼远端路径）。
@@ -614,6 +725,12 @@ object WebDavSync {
                         ).copyToWithLimit(out, UserDictManager.MAX_DICT_FILE_BYTES)
                     }
                 }
+                // 复读比较的基准：刚下载的远端裸字节哈希（转换前，
+                // 转换只改本地导入形态，不改“远端变没变”的判断）。
+                // 流式哈希，不整段进内存。
+                val snapshotHash = tempFile.inputStream().use {
+                    sha256Stream(it, UserDictManager.MAX_DICT_FILE_BYTES)
+                }
                 // Rime 原生同步快照（*.userdb.txt）列序为「码⇥词⇥权重」，
                 // 先转置为「词⇥码⇥权重」再走合并导入
                 if (remoteFile.endsWith(".userdb.txt", ignoreCase = true)) {
@@ -641,7 +758,7 @@ object WebDavSync {
                     UserDictPrefs.setLastDownloadTime(remoteFile, System.currentTimeMillis())
                 }
                 Timber.i("User dict '$dictName' downloaded and imported: $count entries")
-                count
+                DownloadedDict(count, snapshotHash)
             } finally {
                 tempFile.delete()
             }
@@ -1173,6 +1290,14 @@ object WebDavSync {
     }
 
     /**
+     * 相对路径里是否有段首为 . 的段（如 .hidden）。
+     * 下载侧只对目录条目调用，效果即拦住整棵点号目录子树；
+     * 不对文件条目调用，文件仍走 isValidSchemeRel 的口径。
+     */
+    internal fun hasDotDirSegment(rel: String): Boolean =
+        rel.split('/').any { it.startsWith(".") }
+
+    /**
      * 收集待上传的方案文件（相对路径含目录名前缀）。
      * 根下 build 目录、点号目录与 scheme-archive（同名目录归档，
      * 非方案目录）不进同步；符号链接不进同步（防越界读）；
@@ -1190,7 +1315,9 @@ object WebDavSync {
             ?: emptyList()
         for (dir in dirs) {
             dir.walkTopDown().filter { it.isFile }.forEach { file ->
-                if (out.size >= 1000) return@forEach
+                // 达上限即真跳出（return out），不再遍历剩余文件：
+                // 原 return@forEach 只跳过当前文件，整棵树仍会被走完。
+                if (out.size >= 1000) return out
                 if (file.canonicalFile != file.absoluteFile) return@forEach
                 val fileRel = file.relativeTo(dir).path.replace(File.separatorChar, '/')
                 if (fileRel.split('/').size > 6) return@forEach
@@ -1377,6 +1504,14 @@ object WebDavSync {
                         // 根级 scheme-archive 是同名目录归档，非方案目录，
                         // 上传侧已排除；下载侧同样跳过整棵子树（不删远端旧份）。
                         if (rel.substringBefore('/') == "scheme-archive") continue
+                        // 点号目录整棵跳过：只校验 fileRel（第一个 / 之后）
+                        // 会漏掉目录名段，远端 .hidden 型目录会被写进
+                        // user/.hidden/，而列表页过滤点号目录后成界面
+                        // 不可见的隐形目录；此处在递归前拦住整棵子树。
+                        if (entry.isDirectory && hasDotDirSegment(rel)) {
+                            Timber.w("skip dot scheme dir: $rel")
+                            continue
+                        }
                         if (entry.isDirectory) {
                             if (depth < 6) collect(rel, depth + 1)
                         } else {

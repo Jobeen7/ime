@@ -90,4 +90,28 @@ class SchemeSyncTest {
             out,
         )
     }
+
+    @Test
+    fun hasDotDirSegment_rejectsDotDirs() {
+        assertTrue(WebDavSync.hasDotDirSegment(".hidden"))
+        assertTrue(WebDavSync.hasDotDirSegment("a/.hidden"))
+        assertTrue(WebDavSync.hasDotDirSegment("a/.hidden/b.yaml"))
+        assertFalse(WebDavSync.hasDotDirSegment("a/b.yaml"))
+        assertFalse(WebDavSync.hasDotDirSegment("mydir"))
+        assertFalse(WebDavSync.hasDotDirSegment(""))
+    }
+
+    @Test
+    fun collectUploadFiles_stopsAt1000InSingleDir() {
+        val root = createTempDir()
+        for (i in 0 until 1500) {
+            touch(root, "big/f$i.yaml")
+        }
+        val out = WebDavSync.collectUploadFiles(root)
+        // 单目录内达上限即真跳出，不再遍历剩余文件（旧 return@forEach
+        // 只跳过当前文件，整棵树仍会被走完；上限本身前后都为 1000，
+        // 遍历停止由 early return 保证，此处断言上限与单目录来源）。
+        assertEquals(1000, out.size)
+        assertTrue(out.all { it.startsWith("big/") })
+    }
 }

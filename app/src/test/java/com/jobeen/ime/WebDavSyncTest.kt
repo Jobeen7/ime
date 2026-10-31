@@ -5,9 +5,11 @@ package com.jobeen.ime
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync.DictDownloadAction
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync.HttpGetResult
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 import java.io.File
 import java.nio.file.Files
@@ -159,5 +161,99 @@ class WebDavSyncTest {
             listOf("schemes", "schemes/default", "schemes/default/a", "schemes/default/a/b"),
             WebDavSync.remoteParentDirRels("schemes/default/a/b/c.yaml"),
         )
+    }
+
+    // ---- PUT 前复读重试（词典上传轻量加固，不用 ETag/If-Match） ----
+    // 只测决策循环本身（哈希序列驱动），网络与引擎不在此测。
+
+    @Test
+    fun putWithRereadRetry_unchanged_putsWithoutMerge() = runBlocking {
+        var merges = 0
+        var puts = 0
+        WebDavSync.putWithRereadRetry(
+            initialHash = "A",
+            fetchHash = { "A" },
+            mergeAndReexport = { merges++; "A" },
+            put = { puts++ },
+        )
+        assertEquals(0, merges)
+        assertEquals(1, puts)
+    }
+
+    @Test
+    fun putWithRereadRetry_firstCreate_putsWithoutMerge() = runBlocking {
+        var merges = 0
+        var puts = 0
+        WebDavSync.putWithRereadRetry(
+            initialHash = null,
+            fetchHash = { null },
+            mergeAndReexport = { merges++; null },
+            put = { puts++ },
+        )
+        assertEquals(0, merges)
+        assertEquals(1, puts)
+    }
+
+    @Test
+    fun putWithRereadRetry_changedOnce_mergesOnceThenPuts() = runBlocking {
+        val fetched = mutableListOf("B", "B")
+        var merges = 0
+        var puts = 0
+        WebDavSync.putWithRereadRetry(
+            initialHash = "A",
+            fetchHash = { fetched.removeAt(0) },
+            mergeAndReexport = { merges++; "B" },
+            put = { puts++ },
+        )
+        assertEquals(1, merges)
+        assertEquals(1, puts)
+    }
+
+    @Test
+    fun putWithRereadRetry_missingThenCreated_mergesOnceThenPuts() = runBlocking {
+        val fetched = mutableListOf<String?>("X", "X")
+        var merges = 0
+        var puts = 0
+        WebDavSync.putWithRereadRetry(
+            initialHash = null,
+            fetchHash = { fetched.removeAt(0) },
+            mergeAndReexport = { merges++; "X" },
+            put = { puts++ },
+        )
+        assertEquals(1, merges)
+        assertEquals(1, puts)
+    }
+
+    @Test
+    fun putWithRereadRetry_alwaysChanging_putsLatestAfterBound() = runBlocking {
+        var fetched = 0
+        var merges = 0
+        var puts = 0
+        WebDavSync.putWithRereadRetry(
+            initialHash = "A",
+            fetchHash = { "R${++fetched}" },
+            mergeAndReexport = { merges++; "R$fetched" },
+            put = { puts++ },
+            maxAttempts = 3,
+        )
+        assertEquals(3, merges)
+        assertEquals(1, puts)
+    }
+
+    @Test
+    fun putWithRereadRetry_fetchFails_abortsWithoutPut() = runBlocking {
+        var puts = 0
+        try {
+            WebDavSync.putWithRereadRetry(
+                initialHash = "A",
+                fetchHash = { throw IllegalStateException("复读失败") },
+                mergeAndReexport = { "A" },
+                put = { puts++ },
+            )
+            fail("复读失败应直接抛错，不应 PUT")
+        } catch (e: IllegalStateException) {
+            assertEquals("复读失败", e.message)
+        }
+        assertEquals(0, puts)
     }
 }
