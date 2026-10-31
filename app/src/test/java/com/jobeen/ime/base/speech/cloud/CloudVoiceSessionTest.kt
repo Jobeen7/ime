@@ -112,12 +112,15 @@ class CloudVoiceSessionTest {
 
     // 注意：onBudgetDisabled 须保持末参——旧用例用尾随 lambda 传它，
     // 在它之后加参会把尾随 lambda 错绑到新参上（本次已踩过一次）。
+    // 新增的 gate/generation 是非函数类型参，放在它之前，不影响尾随绑定。
     private fun session(
         script: String,
         sink: RecordingSink,
         listener: SessionListener,
         recorder: FakeRecorder,
         grace: ManualScheduler? = null,
+        gate: CloudVoiceGeneration? = null,
+        generation: Long = 0L,
         onBudgetDisabled: () -> Unit = {},
     ): CloudVoiceSession = CloudVoiceSession(
         plugin = fixture(script),
@@ -138,7 +141,109 @@ class CloudVoiceSessionTest {
         transport = FakeTransport(),
         codec = JdkBase64Codec,
         graceScheduler = grace?.scheduler,
+        generationGate = gate,
+        generation = generation,
     )
+
+    @Test
+    fun session_supersededLateResults_dropped() {
+        // S1 世代守卫：旧会话宽限窗内窗口已开新会话，旧会话的
+        // 迟到 partial 不得写进新会话的输入框，新会话自身不受影响。
+        val gate = CloudVoiceGeneration()
+        val sinkA = RecordingSink()
+        val listenerA = SessionListener()
+        val recorderA = FakeRecorder()
+        val graceA = ManualScheduler()
+        val scriptA = baseScript("function audio(ctx) { cb.partial('旧'); }")
+        val a = session(scriptA, sinkA, listenerA, recorderA, grace = graceA, gate = gate, generation = gate.next())
+        a.start()
+        assertTrue(listenerA.started.await(10, TimeUnit.SECONDS))
+        recorderA.onChunk!!.invoke(byteArrayOf(0))
+        Thread.sleep(300)
+        assertEquals(listOf("preview:旧"), sinkA.calls)
+        a.stop(discard = false)
+
+        val sinkB = RecordingSink()
+        val listenerB = SessionListener()
+        val recorderB = FakeRecorder()
+        val scriptB = baseScript("function audio(ctx) { cb.partial('新'); }")
+        val b = session(scriptB, sinkB, listenerB, recorderB, gate = gate, generation = gate.next())
+        b.start()
+        assertTrue(listenerB.started.await(10, TimeUnit.SECONDS))
+        recorderB.onChunk!!.invoke(byteArrayOf(0))
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline && !sinkB.calls.contains("preview:新")) {
+            Thread.sleep(100)
+        }
+        assertEquals(listOf("preview:新"), sinkB.calls)
+
+        // 旧会话宽限窗内又到的 partial：必须丢弃，不得改写收尾。
+        recorderA.onChunk!!.invoke(byteArrayOf(1))
+        Thread.sleep(500)
+        assertEquals(listOf("preview:旧"), sinkA.calls)
+        assertEquals(listOf("preview:新"), sinkB.calls)
+    }
+
+    @Test
+    fun session_supersededGraceTimeout_settlesNothing() {
+        // S1 世代守卫：旧会话宽限超时结算时若已被新会话取代，
+        // 超时也不得提交旧 partial；杀旧宿主本身不受影响。
+        val gate = CloudVoiceGeneration()
+        val sink = RecordingSink()
+        val listener = SessionListener()
+        val recorder = FakeRecorder()
+        val grace = ManualScheduler()
+        val script = baseScript("function audio(ctx) { cb.partial('半句'); }")
+        val s = session(script, sink, listener, recorder, grace = grace, gate = gate, generation = gate.next())
+        s.start()
+        assertTrue(listener.started.await(10, TimeUnit.SECONDS))
+        recorder.onChunk!!.invoke(byteArrayOf(0))
+        Thread.sleep(300)
+        assertEquals(listOf("preview:半句"), sink.calls)
+        s.stop(discard = false)
+        gate.next()
+        grace.fire()
+        assertEquals(listOf("preview:半句"), sink.calls)
+    }
+
+    @Test
+    fun session_graceSchedulerFailure_finalizesImmediately() {
+        // S1 收尾看门狗：宽限调度本身抛错时不得让 stopping 永久为真、
+        // 宿主永不释放，须立即按超时结算（与超时语义一致，只是提前）。
+        val sink = RecordingSink()
+        val listener = SessionListener()
+        val recorder = FakeRecorder()
+        val script = baseScript("function audio(ctx) { cb.partial('半句'); }")
+        val s = CloudVoiceSession(
+            plugin = fixture(script),
+            settings = emptyMap(),
+            secrets = MapSecretStore(),
+            sink = sink,
+            listener = listener,
+            markBudgetDisabled = {},
+            recorderFactory = { onChunk, onAmplitude, onInitFailed, onCaptureFailed, onFocusLost ->
+                recorder.onChunk = onChunk
+                recorder.onAmplitude = onAmplitude
+                recorder.onInitFailed = onInitFailed
+                recorder.onCaptureFailed = onCaptureFailed
+                recorder.onFocusLost = onFocusLost
+                recorder
+            },
+            networkAvailable = { true },
+            transport = FakeTransport(),
+            codec = JdkBase64Codec,
+            graceScheduler = { _, _ -> throw RuntimeException("scheduler boom") },
+        )
+        s.start()
+        assertTrue(listener.started.await(10, TimeUnit.SECONDS))
+        recorder.onChunk!!.invoke(byteArrayOf(0))
+        Thread.sleep(300)
+        assertEquals(listOf("preview:半句"), sink.calls)
+        s.stop(discard = false)
+        assertEquals(listOf("preview:半句", "commit:半句"), sink.calls)
+    }
+
+
 
     @Test
     fun session_partialPreviews_finalCommits() {

@@ -61,6 +61,7 @@ import com.jobeen.ime.base.speech.cloud.BuiltinPlugins
 import com.jobeen.ime.base.speech.cloud.CloudSessionFailure
 import com.jobeen.ime.base.speech.cloud.CloudVoiceGate
 import com.jobeen.ime.base.speech.cloud.CloudVoiceGateResult
+import com.jobeen.ime.base.speech.cloud.CloudVoiceGeneration
 import com.jobeen.ime.base.speech.cloud.CloudVoiceSession
 import com.jobeen.ime.base.speech.cloud.KeystoreSecretStore
 import com.jobeen.ime.base.speech.cloud.PluginStore
@@ -244,6 +245,9 @@ class KeyboardWindowView(
     // 云端语音会话（严格可选）：与离线共用 isVoiceRecording 旗标与
     // 浮层，退出一律经 stopCloudVoice；离线路径不受任何影响。
     private var cloudVoiceSession: CloudVoiceSession? = null
+
+    /** 云端会话世代门：每次启动新会话递增，旧会话迟到结果凭此丢弃。 */
+    private val cloudVoiceGeneration = CloudVoiceGeneration()
     private var cloudVoiceActive = false
 
     private var isVoiceRecording = false
@@ -1555,6 +1559,8 @@ class KeyboardWindowView(
                     text
                 }
             },
+            generationGate = cloudVoiceGeneration,
+            generation = cloudVoiceGeneration.next(),
         )
         cloudVoiceSession = session
         cloudVoiceActive = true

@@ -6,6 +6,7 @@ import android.os.Looper
 import android.view.inputmethod.InputConnection
 import com.jobeen.ime.base.speech.VoiceRecorder
 import com.jobeen.ime.input.ImeInputMethodService
+import java.util.concurrent.atomic.AtomicLong
 import timber.log.Timber
 
 /** 云端会话失败原因（只作原因码，不携带识别文本与密钥）。 */
@@ -71,12 +72,29 @@ class ServiceTextSink(
 }
 
 /**
+ * 云端会话世代门：窗口持有单例，每次启动新会话递增。
+ * 旧会话在新会话开始后到达的任何结果（文本提交、完成／失败通知、
+ * 幅度）一律丢弃，不串入新会话；宽限本身的结算语义不受影响——
+ * 无新会话时旧会话仍按 .7 宽限走完。杀旧宿主等清理动作不设门，
+ * 旧宿主到期仍正常释放。无门（旧调用方）时恒真，行为不变。
+ */
+class CloudVoiceGeneration {
+    private val current = AtomicLong(0)
+
+    fun next(): Long = current.incrementAndGet()
+
+    fun isCurrent(gen: Long): Boolean = current.get() == gen
+}
+
+/**
  * 云端语音会话：录音采集 → 插件宿主 → 文本收尾。
  *
  * 时序：宿主就绪后才开始采集（就绪前喂的音频宿主会丢弃）；
  * 插件自结束／失败／超时停用时先停采集、再结算、再通知视图；
  * 视图显式停止时视图自己负责界面收尾，会话只结算文本。
- * 停止后一切宿主与采集回调一律丢弃，不串入下一会话。
+ * 停止后一切宿主与采集回调一律丢弃，不串入下一会话；
+ * 世代门进一步保证：已被新会话取代的旧会话，其宽限内迟到
+ * 结果与超时结算也不落屏（杀旧宿主的清理动作不受门影响）。
  */
 class CloudVoiceSession(
     private val plugin: PluginStore.InstalledPlugin,
@@ -98,6 +116,8 @@ class CloudVoiceSession(
     private val displayTransform: (String) -> String = { it },
     private val graceTimeoutMs: Long = GRACE_TIMEOUT_MS,
     private val graceScheduler: ((Long, () -> Unit) -> (() -> Unit))? = null,
+    private val generationGate: CloudVoiceGeneration? = null,
+    private val generation: Long = 0L,
 ) {
     companion object {
         /**
@@ -135,6 +155,13 @@ class CloudVoiceSession(
     /** 是否已出过 partial（窗口层空探针 discard 的判断依据）。 */
     val hasPartial: Boolean get() = settle.hasPartial
 
+    /**
+     * 世代门：无门时恒真；有门时仅当本会话仍是窗口当前会话才真。
+     * 只门文本提交与完成／失败通知，不门杀旧宿主等清理动作。
+     */
+    private fun isCurrentGeneration(): Boolean =
+        generationGate?.isCurrent(generation) ?: true
+
     fun start() {
         if (stopped) return
         if (!networkAvailable()) {
@@ -152,7 +179,7 @@ class CloudVoiceSession(
                     if (stopped) return
                     recorder = recorderFactory(
                         { chunk -> onRecorderChunk(chunk) },
-                        { amp -> postMain { listener.onAmplitude(amp) } },
+                        { amp -> postMain { if (isCurrentGeneration()) listener.onAmplitude(amp) } },
                         { onRecorderInitFailed() },
                         { onRecorderCaptureFailed() },
                         { onRecorderFocusLost() },
@@ -164,6 +191,7 @@ class CloudVoiceSession(
                 override fun onPartial(text: String) {
                     if (stopped) return
                     postMain {
+                        if (!isCurrentGeneration()) return@postMain
                         Timber.i(
                             "cloudVoice partial plugin=%s len=%d",
                             plugin.meta.id, text.length,
@@ -175,6 +203,7 @@ class CloudVoiceSession(
                 override fun onFinal(text: String) {
                     if (stopped) return
                     postMain {
+                        if (!isCurrentGeneration()) return@postMain
                         Timber.i(
                             "cloudVoice final plugin=%s len=%d",
                             plugin.meta.id, text.length,
@@ -190,9 +219,11 @@ class CloudVoiceSession(
                         if (stopping) {
                             // 宽限中服务端报错：不再清预览（用户已松手，
                             // 预览即已说出的话），按已到 partial 结算收尾。
-                            settle.stop(discard = false)
+                            // 世代门只门结算，杀旧宿主的清理照常跑。
+                            if (isCurrentGeneration()) settle.stop(discard = false)
                             finalizeGrace()
                         } else {
+                            if (!isCurrentGeneration()) return@postMain
                             settle.onError()
                             listener.onFailed(CloudSessionFailure.GENERIC)
                         }
@@ -204,9 +235,10 @@ class CloudVoiceSession(
                     stopRecorder()
                     postMain {
                         if (stopping) {
-                            settle.onEnded()
+                            if (isCurrentGeneration()) settle.onEnded()
                             finalizeGrace()
                         } else {
+                            if (!isCurrentGeneration()) return@postMain
                             settle.onEnded()
                             listener.onDone()
                         }
@@ -220,7 +252,7 @@ class CloudVoiceSession(
                     // 不通知失败，只按已到 partial 结算收尾。
                     if (stopping) {
                         postMain {
-                            settle.stop(discard = false)
+                            if (isCurrentGeneration()) settle.stop(discard = false)
                             finalizeGrace()
                         }
                         return
@@ -228,6 +260,7 @@ class CloudVoiceSession(
                     markBudgetDisabled()
                     stopRecorder()
                     postMain {
+                        if (!isCurrentGeneration()) return@postMain
                         settle.onError()
                         listener.onFailed(CloudSessionFailure.BUDGET)
                     }
@@ -281,6 +314,11 @@ class CloudVoiceSession(
         currentHost.requestStop()
         val scheduler = graceScheduler ?: { delay, task -> defaultGraceScheduler(delay, task) }
         graceCancel = runCatching { scheduler(graceTimeoutMs) { finalizeGraceFromTimeout() } }.getOrNull()
+        if (graceCancel == null) {
+            // 调度失败：不等宽限，立即按超时结算，避免 stopping 永久为真、
+            // 宿主永不释放；结算语义与超时一致，只是提前。
+            finalizeGraceFromTimeout()
+        }
     }
 
     /** 默认宽限调度：主线程 Handler 延时＋可取消（与注入调度器同口径）。 */
@@ -304,7 +342,7 @@ class CloudVoiceSession(
     /** 宽限超时：按已到 partial 结算，再走宽限收尾。 */
     private fun finalizeGraceFromTimeout() {
         if (!stopping) return
-        settle.stop(discard = false)
+        if (isCurrentGeneration()) settle.stop(discard = false)
         finalizeGrace()
     }
 
@@ -324,6 +362,7 @@ class CloudVoiceSession(
         stopped = true
         stopRecorder()
         postMain {
+            if (!isCurrentGeneration()) return@postMain
             settle.onError()
             listener.onFailed(CloudSessionFailure.GENERIC)
         }
@@ -335,6 +374,7 @@ class CloudVoiceSession(
         stopped = true
         stopRecorder()
         postMain {
+            if (!isCurrentGeneration()) return@postMain
             settle.stop(discard = false)
             listener.onDone()
         }
@@ -346,6 +386,7 @@ class CloudVoiceSession(
         stopped = true
         stopRecorder()
         postMain {
+            if (!isCurrentGeneration()) return@postMain
             settle.stop(discard = false)
             listener.onDone()
         }
