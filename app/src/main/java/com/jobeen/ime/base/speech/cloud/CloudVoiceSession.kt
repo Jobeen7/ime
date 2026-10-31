@@ -155,6 +155,9 @@ class CloudVoiceSession(
     /** 是否已出过 partial（窗口层空探针 discard 的判断依据）。 */
     val hasPartial: Boolean get() = settle.hasPartial
 
+    /** 测试可读：宿主是否仍被持有（终结后应为 null）。 */
+    internal val hasLiveHost: Boolean get() = host != null
+
     /**
      * 世代门：无门时恒真；有门时仅当本会话仍是窗口当前会话才真。
      * 只门文本提交与完成／失败通知，不门杀旧宿主等清理动作。
@@ -225,6 +228,7 @@ class CloudVoiceSession(
                         } else {
                             if (!isCurrentGeneration()) return@postMain
                             settle.onError()
+                            terminateHost()
                             listener.onFailed(CloudSessionFailure.GENERIC)
                         }
                     }
@@ -240,6 +244,7 @@ class CloudVoiceSession(
                         } else {
                             if (!isCurrentGeneration()) return@postMain
                             settle.onEnded()
+                            terminateHost()
                             listener.onDone()
                         }
                     }
@@ -262,6 +267,7 @@ class CloudVoiceSession(
                     postMain {
                         if (!isCurrentGeneration()) return@postMain
                         settle.onError()
+                        terminateHost()
                         listener.onFailed(CloudSessionFailure.BUDGET)
                     }
                 }
@@ -364,6 +370,7 @@ class CloudVoiceSession(
         postMain {
             if (!isCurrentGeneration()) return@postMain
             settle.onError()
+            terminateHost()
             listener.onFailed(CloudSessionFailure.GENERIC)
         }
     }
@@ -376,6 +383,7 @@ class CloudVoiceSession(
         postMain {
             if (!isCurrentGeneration()) return@postMain
             settle.stop(discard = false)
+            terminateHost()
             listener.onDone()
         }
     }
@@ -388,8 +396,20 @@ class CloudVoiceSession(
         postMain {
             if (!isCurrentGeneration()) return@postMain
             settle.stop(discard = false)
+            terminateHost()
             listener.onDone()
         }
+    }
+
+    /**
+     * 非宽限终结统一收尾：杀宿主、置空、标 stopped（置于通知之前，
+     * 使终结可观测；停采集仍由各路径到达时立即做，块里再停会多录
+     * 音频）。宽限路径不走这里，继续走 finalizeGrace。
+     */
+    private fun terminateHost() {
+        host?.kill()
+        host = null
+        stopped = true
     }
 
     /**

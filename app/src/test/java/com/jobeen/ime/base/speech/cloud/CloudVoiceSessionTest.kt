@@ -408,6 +408,77 @@ class CloudVoiceSessionTest {
     }
 
     @Test
+    fun session_nonGraceEnded_terminatesHost_noGraceRearm() {
+        // S7 统一终结：非宽限 ended 后宿主须死、stopped 须置位，
+        // 事后再调 stop 不得重新武装宽限。
+        val sink = RecordingSink()
+        val listener = SessionListener()
+        val recorder = FakeRecorder()
+        val grace = ManualScheduler()
+        val script = baseScript("function audio(ctx) { cb.partial('半句'); cb.ended(); }")
+        val s = session(script, sink, listener, recorder, grace = grace)
+        s.start()
+        assertTrue(listener.started.await(10, TimeUnit.SECONDS))
+        recorder.onChunk!!.invoke(byteArrayOf(0))
+        assertTrue(listener.done.await(10, TimeUnit.SECONDS))
+        assertEquals(listOf("preview:半句", "commit:半句"), sink.calls)
+        assertFalse(s.hasLiveHost)
+        s.stop(discard = false)
+        assertTrue(grace.task == null)
+    }
+
+    @Test
+    fun session_recorderInitFailed_terminatesHost() {
+        // S7 统一终结：录音器初始化失败是真泄漏点——失败后宿主须死，
+        // 否则窗口已无句柄、宿主（工作线程 + socket）一直残留。
+        val sink = RecordingSink()
+        val listener = SessionListener()
+        val recorder = FakeRecorder()
+        val script = baseScript("function audio(ctx) {}")
+        val s = session(script, sink, listener, recorder)
+        s.start()
+        assertTrue(listener.started.await(10, TimeUnit.SECONDS))
+        recorder.onInitFailed!!.invoke()
+        assertTrue(listener.failed.await(10, TimeUnit.SECONDS))
+        assertEquals(CloudSessionFailure.GENERIC, listener.failure)
+        assertFalse(s.hasLiveHost)
+    }
+
+    @Test
+    fun session_recorderCaptureFailed_terminatesHost() {
+        val sink = RecordingSink()
+        val listener = SessionListener()
+        val recorder = FakeRecorder()
+        val script = baseScript("function audio(ctx) { cb.partial('半句'); }")
+        val s = session(script, sink, listener, recorder)
+        s.start()
+        assertTrue(listener.started.await(10, TimeUnit.SECONDS))
+        recorder.onChunk!!.invoke(byteArrayOf(0))
+        Thread.sleep(300)
+        recorder.onCaptureFailed!!.invoke()
+        assertTrue(listener.done.await(10, TimeUnit.SECONDS))
+        assertEquals(listOf("preview:半句", "commit:半句"), sink.calls)
+        assertFalse(s.hasLiveHost)
+    }
+
+    @Test
+    fun session_recorderFocusLost_terminatesHost() {
+        val sink = RecordingSink()
+        val listener = SessionListener()
+        val recorder = FakeRecorder()
+        val script = baseScript("function audio(ctx) { cb.partial('半句'); }")
+        val s = session(script, sink, listener, recorder)
+        s.start()
+        assertTrue(listener.started.await(10, TimeUnit.SECONDS))
+        recorder.onChunk!!.invoke(byteArrayOf(0))
+        Thread.sleep(300)
+        recorder.onFocusLost!!.invoke()
+        assertTrue(listener.done.await(10, TimeUnit.SECONDS))
+        assertEquals(listOf("preview:半句", "commit:半句"), sink.calls)
+        assertFalse(s.hasLiveHost)
+    }
+
+    @Test
     fun session_networkUnavailable_failsWithoutStartingRecorder() {
         val sink = RecordingSink()
         val listener = SessionListener()
