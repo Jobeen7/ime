@@ -450,6 +450,21 @@ class ImeInputMethodService : InputMethodService() {
         themePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         schemaPrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         candidatePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        // onCreate 注册了 5 个偏好监听：漏掉的 2 个（肤色/外观）此前随服务
+        // 销毁残留——SharedPreferences 强持有监听、监听持有 keyboardWindow。
+        skinColorPrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        appearancePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        // 销毁时若有弹窗在展示必须主动关掉，否则窗口泄漏（WindowLeaked）。
+        // 先置空字段再 dismiss：弹窗自带的 onDismiss 回调见字段已空即 no-op，
+        // 销毁路径不会因此再跑一次用户回调。
+        val dialog = showingDialog
+        showingDialog = null
+        showingDialogOnDismiss = null
+        dialog?.dismiss()
+        // 待确认的部署随服务销毁一并取消，控制器置空避免残留引用。
+        // （运行中的部署由上面 scope?.cancel() 覆盖；此处只清待确认态。）
+        deployController?.cancelPending()
+        deployController = null
         super.onDestroy()
     }
 
