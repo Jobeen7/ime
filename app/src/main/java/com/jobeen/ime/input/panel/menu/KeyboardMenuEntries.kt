@@ -12,10 +12,10 @@ import com.jobeen.ime.input.panel.PanelAction
  * 并保留菜单原有开关项（不因重构丢失入口）：
  * - 第 1 页：原菜单开关／工具项（原样保留）；
  * - 第 2 页：原菜单剪贴板／工具／设置项（原样保留）；
- * - 第 3 页（新增）：工具栏池中原菜单没有的 5 项（全选／复制／
- *   粘贴／撤销／重做）＋部署／同步入口（执行见
- *   KeyboardDeployController，接线层在 PanelActionListener
- *   的 DeploySync 分支挂回调）。
+ * - 第 3 页已删（2026-10-31 用户定：菜单第三页的 6 项全选／复制／
+ *   粘贴／撤销／重做／部署／同步均不需要）：整页移除，菜单剩 2 页，
+ *   分页点随之变 2 个；动作本身保留（工具栏池／FAB 侧仍有入口），
+ *   仅菜单不再提供。
  *
  * 标签与图标由视图层按 id 映射（R.string／R.drawable），本表
  * 只定顺序、id 与动作；id 唯一、每页不超过 8 项（4 列 × 2 行，
@@ -45,14 +45,6 @@ object KeyboardMenuEntries {
             Entry("theme", PanelAction.Palette),
             Entry("reload_engine", PanelAction.ReloadEngine),
             Entry("about", PanelAction.About),
-        ),
-        listOf(
-            Entry("select_all", PanelAction.SelectAll),
-            Entry("copy", PanelAction.Copy),
-            Entry("paste", PanelAction.Paste),
-            Entry("undo", PanelAction.Undo),
-            Entry("redo", PanelAction.Redo),
-            Entry("deploy_sync", PanelAction.DeploySync),
         ),
     )
 
