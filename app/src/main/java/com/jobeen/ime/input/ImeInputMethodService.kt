@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import kotlin.math.roundToInt
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.speech.VoiceUndoLedger
@@ -62,6 +63,13 @@ class ImeInputMethodService : InputMethodService() {
     private var lastDeployToastPhase: KeyboardDeployPhase? = null
     private var lastSelectionStart = 0
     private var lastSelectionEnd = 0
+
+    /**
+     * 内联自动填充（Android 11+ IME Inline Autofill）：建议膨胀线程与
+     * 响应代次。膨胀是异步 IPC 回调：代次保证旧响应在新响应到达后不再上屏。
+     */
+    private val inlineAutofillExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+    private var inlineAutofillGeneration = 0
 
     /** onUpdateSelection 的探针合并：窗口内连发只保留最后一次 */
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -375,6 +383,77 @@ class ImeInputMethodService : InputMethodService() {
         super.onFinishInputView(finishingInput)
     }
 
+    /**
+     * 内联自动填充（Android 11+）：向密码管理器声明可接受的胶囊规格。
+     * 样式只声明 v1 版本（空 Style＝渲染细节交密码管理器自带样式），
+     * 尺寸上限＝条区（全宽×条高），数量上限 6。API 30 以下框架不调用。
+     * 与 JIME 已有「内联建议」（幽灵文本）无关，是另一功能。
+     */
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.R)
+    override fun onCreateInlineSuggestionsRequest(
+        extras: android.os.Bundle,
+    ): android.view.inputmethod.InlineSuggestionsRequest? {
+        val metrics = resources.displayMetrics
+        val styles = androidx.autofill.inline.UiVersions.newStylesBuilder()
+            .addStyle(androidx.autofill.inline.v1.InlineSuggestionUi.newStyleBuilder().build())
+            .build()
+        val spec = android.widget.inline.InlinePresentationSpec.Builder(
+            android.util.Size(0, 0),
+            android.util.Size(
+                metrics.widthPixels,
+                (com.jobeen.ime.input.keyboard.window.KeyboardWindowView.PANEL_HEIGHT_DP *
+                    metrics.density).roundToInt(),
+            ),
+        ).setStyle(styles).build()
+        return android.view.inputmethod.InlineSuggestionsRequest.Builder(listOf(spec))
+            .setMaxSuggestionCount(6)
+            .build()
+    }
+
+    /**
+     * 内联自动填充：密码管理器建议到达。空列表即隐藏；非空则逐条膨胀
+     * （pinned 进右固定槽，余下进滚动区），全部到齐后在主线程一次上屏；
+     * 代次过期（更新的响应已到／服务已销毁）的膨胀结果直接丢弃。
+     * 胶囊点击由系统直接填入，绝不走 commitText、绝不进用户词库。
+     */
+    @androidx.annotation.RequiresApi(android.os.Build.VERSION_CODES.R)
+    override fun onInlineSuggestionsResponse(
+        response: android.view.inputmethod.InlineSuggestionsResponse,
+    ): Boolean {
+        val view = keyboardWindow?.view ?: return true
+        val suggestions = response.inlineSuggestions
+        if (suggestions.isEmpty()) {
+            mainHandler.post { view.hideInlineAutofill() }
+            return true
+        }
+        val generation = ++inlineAutofillGeneration
+        val pinnedViews =
+            java.util.Collections.synchronizedList(mutableListOf<android.view.View>())
+        val scrollViews =
+            java.util.Collections.synchronizedList(mutableListOf<android.view.View>())
+        val remaining = java.util.concurrent.atomic.AtomicInteger(suggestions.size)
+        val size = android.util.Size(
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+        )
+        for (suggestion in suggestions) {
+            val pinned = suggestion.info?.isPinned == true
+            suggestion.inflate(this, size, inlineAutofillExecutor) { contentView ->
+                if (contentView != null) {
+                    (if (pinned) pinnedViews else scrollViews).add(contentView)
+                }
+                if (remaining.decrementAndGet() == 0) {
+                    mainHandler.post {
+                        if (generation == inlineAutofillGeneration) {
+                            view.showInlineAutofill(pinnedViews.toList(), scrollViews.toList())
+                        }
+                    }
+                }
+            }
+        }
+        return true
+    }
+
     override fun onWindowHidden() {
         keyboardWindow?.onWindowHidden()
         // 重点候选 8-5：键盘收起时不再停监听——提示条需在下次出现时
@@ -435,6 +514,9 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onDestroy() {
+        // 内联自动填充：作废在途响应（迟到回调不再上屏），停膨胀线程。
+        inlineAutofillGeneration++
+        inlineAutofillExecutor.shutdown()
         // 清掉还没跑的选区探针合并任务，避免销毁后它再碰输入连接
         mainHandler.removeCallbacks(pendingNotifyInputChanged)
         messageObserveJob?.cancel()

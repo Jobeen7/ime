@@ -20,10 +20,12 @@ okhttp = "4.12.1"
 commonsCompress = "1.27.1"
 zxing = "4.3.0"
 rhino = "1.8.0"
+autofill = "1.1.0"
 
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-autofill = { group = "androidx.autofill", name = "autofill", version.ref = "autofill" }
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-junit = { group = "androidx.test.ext", name = "junit", version.ref = "junitVersion" }
 androidx-espresso-core = { group = "androidx.test.espresso", name = "espresso-core", version.ref = "espressoCore" }

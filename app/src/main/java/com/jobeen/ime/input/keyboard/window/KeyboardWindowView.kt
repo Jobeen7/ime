@@ -116,6 +116,15 @@ class KeyboardWindowView(
     private var cachedColors: KeyboardColors.ColorScheme = KeyboardColors.resolve(context)
 
     /**
+     * 内联自动填充条区覆盖层（Android 11+）：密码管理器胶囊的宿主，覆盖在
+     * 条区矩形上；默认 GONE。条区视图本身从不 GONE，隐藏本层即恢复正常条区。
+     */
+    private val inlineAutofillBar = InlineAutofillBar(context)
+
+    /** 内联自动填充会话有效标志：onStartInput 置真，onFinishInputView 置假。 */
+    private var inlineFieldActive: Boolean = false
+
+    /**
      * 主题视频背景（2026-10-29 外观轮）：懒建，失败回调复评
      * 视频层状态（失败→静态背景，GIF 层随之恢复）。
      */
@@ -555,6 +564,9 @@ class KeyboardWindowView(
 
         addView(panel.view, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
 
+        // 内联自动填充覆盖层：后加＝画在条区视图之上，矩形与条区相同。
+        addView(inlineAutofillBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT))
+
         addView(
             panel.candidateGrid, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         )
@@ -703,6 +715,33 @@ class KeyboardWindowView(
         }
     }
 
+    /**
+     * 内联自动填充：新建议到达（服务在主线程回调）。
+     * 仅当未组字且输入会话有效时显示，否则丢弃（不缓存旧建议，组字结束
+     * 后不复活）；显示时本层以窗口底色盖住条区，条区视图本身不动，
+     * 隐藏即恢复正常条区。点击由系统直接填入，不走 commitText。
+     */
+    fun showInlineAutofill(pinned: List<View>, scrollable: List<View>) {
+        if (!inlineAutofillShouldShow(
+                pinned.isNotEmpty() || scrollable.isNotEmpty(),
+                lastComposing != null,
+                inlineFieldActive,
+            )
+        ) return
+        inlineAutofillBar.setBackgroundColor(cachedColors.background)
+        inlineAutofillBar.setSuggestions(pinned, scrollable)
+        inlineAutofillBar.visibility = View.VISIBLE
+        requestLayout()
+    }
+
+    /** 内联自动填充隐藏：清空胶囊、恢复正常条区；已隐藏时无操作。 */
+    fun hideInlineAutofill() {
+        if (inlineAutofillBar.visibility == View.GONE) return
+        inlineAutofillBar.clear()
+        inlineAutofillBar.visibility = View.GONE
+        requestLayout()
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val density = resources.displayMetrics.density
         val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
@@ -726,10 +765,18 @@ class KeyboardWindowView(
         val clipStripH = clipSearchStripHeight(cHeight, barH, bPad, bottomInset)
         for (i in 0 until childCount) {
             val child = getChildAt(i)
-            if (child === panel.view || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
+            if (child === panel.view || child === inlineAutofillBar || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
             child.measure(
                 MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
+            )
+        }
+
+        // 内联自动填充覆盖层：与条区同尺寸（全宽×条高），GONE 时不度量。
+        if (!inlineAutofillBar.isGone) {
+            inlineAutofillBar.measure(
+                MeasureSpec.makeMeasureSpec(totalWidth, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(barH, MeasureSpec.EXACTLY),
             )
         }
 
@@ -792,6 +839,9 @@ class KeyboardWindowView(
 
         panel.view.layout(0, stripH, right - left, stripH + barH)
 
+        // 内联自动填充覆盖层：与条区同矩形，画在条区视图之上。
+        inlineAutofillBar.layout(0, stripH, right - left, stripH + barH)
+
         // 搜索态：键盘整体下移一段（结果列表区在上），尺寸与行高不变
         val clipStripH = clipSearchStripHeight(
             cHeight, barH, dpToPx(KeyboardManager.Keyboard.Padding.getBottomDp(context)),
@@ -799,7 +849,7 @@ class KeyboardWindowView(
         )
         for (i in 0 until childCount) {
             val child = getChildAt(i)
-            if (child === panel.view || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
+            if (child === panel.view || child === inlineAutofillBar || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
             if (clipStripH > 0 && child !== panel.candidateGrid) {
                 child.layout(hPad, y0 + clipStripH, hPad + contentW, y0 + clipStripH + cHeight)
             } else {
@@ -859,6 +909,9 @@ class KeyboardWindowView(
     private var passwordField = false
 
     fun onStartInput(info: EditorInfo) {
+        // 新输入会话：旧字段的内联胶囊过期，先清；会话标志随即置真。
+        hideInlineAutofill()
+        inlineFieldActive = true
         passwordField = com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(info)
         panel.suppressCopyBanner = passwordField
         panel.view.setExpanded(false)
@@ -873,6 +926,9 @@ class KeyboardWindowView(
 
     /** 输入结束（服务 finishInputView 转发）：视频停解码、静态背景接管。 */
     fun onFinishInputView() {
+        // 离开输入框：内联胶囊失效，会话标志置假，迟到的建议回调不再显示。
+        inlineFieldActive = false
+        hideInlineAutofill()
         videoController.onInputFinished()
     }
 
@@ -1299,6 +1355,8 @@ class KeyboardWindowView(
     }
 
     fun updateDynamicPreedit(items: List<EngineMessage.DynamicPreedit.DynamicPreeditItem>) {
+        // 用户开始组字：内联胶囊隐藏，恢复正常候选；新建议须由服务重发。
+        if (items.isNotEmpty()) hideInlineAutofill()
         preeditPinner.updateDynamicPreedit(items)
         // 行内联想：组字变化时先算幽灵文本，再按含幽灵文本的宽度显隐
         refreshInlineSuggestion()
