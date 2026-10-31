@@ -46,23 +46,8 @@ object ResourceExtractorUtil {
             var entry: ZipEntry? = zip.nextEntry
 
             while (entry != null) {
-                val name = entry.name.trimEnd('/')
-                val simpleName = File(name).name
-
-                if (shouldSkip(name, simpleName)) {
-                    Timber.d("  skipped: %s", name)
-                    zip.closeEntry()
-                    entry = zip.nextEntry
-                    continue
-                }
-
-                val destFile = File(destDir, name).canonicalFile
-
-                // 必须带分隔符比较：纯前缀会被 "<dest>2/..." 这类同前缀兄弟目录绕过
-                if (destFile.path != destCanonicalPath &&
-                    !destFile.path.startsWith(destCanonicalPath + File.separator)
-                ) {
-                    Timber.w("  skipped illegal path: %s", name)
+                val destFile = resolveDestFile(destDir, destCanonicalPath, entry.name)
+                if (destFile == null) {
                     zip.closeEntry()
                     entry = zip.nextEntry
                     continue
@@ -71,31 +56,9 @@ object ResourceExtractorUtil {
                 if (entry.isDirectory) {
                     destFile.mkdirs()
                 } else {
-                    destFile.parentFile?.mkdirs()
-                    // 先写临时文件再原子 rename：mmap 后的旧映射指向旧 inode，
-                    // 不会被原地截断覆写导致 SIGBUS
-                    val tmpFile = File(destFile.parentFile, "${destFile.name}.tmp")
-                    tmpFile.outputStream().use { out ->
-                        zip.copyTo(out, 64 * 1024)
-                    }
-                    if (!tmpFile.renameTo(destFile)) {
-                        // rename 失败（极少见，同目录不可能跨文件系统）：
-                        // 先删目标再 rename —— 旧 mmap 映射仍指向被删的旧 inode，
-                        // 不会 SIGBUS。再失败即整体失败（不再回退原地 copy
-                        // 覆盖——那恰恰是 tmp+rename 要避免的截断覆写，也不再
-                        // 只记日志继续：旧行为二次失败仅记日志、仍计 fileCount
-                        // 并记“extracted”，上层无法感知失败却写了版本标记，
-                        // 下次启动不再重解、缺文件永久存在）。此处删 tmp、
-                        // 返回 false，调用方不写版本标记，下次启动重解压。
-                        destFile.delete()
-                        if (!tmpFile.renameTo(destFile)) {
-                            Timber.w("  rename failed, extraction aborted: %s", name)
-                            tmpFile.delete()
-                            return false
-                        }
-                    }
+                    if (!writeEntryFile(zip, destFile)) return false
                     fileCount++
-                    Timber.d("  extracted: %s", name)
+                    Timber.d("  extracted: %s", entry.name)
                 }
 
                 zip.closeEntry()
@@ -104,6 +67,59 @@ object ResourceExtractorUtil {
             Timber.d("Zip extraction complete: %d files", fileCount)
             true
         }
+    }
+
+    /**
+     * 条目目标解析（全量与差量共用）：跳过条目（白名单外的系统文件）
+     * 与非法路径（zip slip）时记日志并返回 null；其余返回规范化目标文件。
+     */
+    internal fun resolveDestFile(destDir: File, destCanonicalPath: String, rawName: String): File? {
+        val name = rawName.trimEnd('/')
+        val simpleName = File(name).name
+        if (shouldSkip(name, simpleName)) {
+            Timber.d("  skipped: %s", name)
+            return null
+        }
+        val destFile = File(destDir, name).canonicalFile
+        // 必须带分隔符比较：纯前缀会被 "<dest>2/..." 这类同前缀兄弟目录绕过
+        if (destFile.path != destCanonicalPath &&
+            !destFile.path.startsWith(destCanonicalPath + File.separator)
+        ) {
+            Timber.w("  skipped illegal path: %s", name)
+            return null
+        }
+        return destFile
+    }
+
+    /**
+     * 单文件落盘（全量与差量共用）：先写临时文件再原子 rename。
+     * mmap 后的旧映射指向旧 inode，不会被原地截断覆写导致 SIGBUS。
+     * rename 失败时先删目标再 rename 一次；二次失败返回 false，
+     * 调用方按整体失败处理（不写版本标记，下次启动重解）。
+     */
+    internal fun writeEntryFile(zip: ZipInputStream, destFile: File): Boolean {
+        destFile.parentFile?.mkdirs()
+        val tmpFile = File(destFile.parentFile, "${destFile.name}.tmp")
+        tmpFile.outputStream().use { out ->
+            zip.copyTo(out, 64 * 1024)
+        }
+        if (!tmpFile.renameTo(destFile)) {
+            // rename 失败（极少见，同目录不可能跨文件系统）：
+            // 先删目标再 rename —— 旧 mmap 映射仍指向被删的旧 inode，
+            // 不会 SIGBUS。再失败即整体失败（不再回退原地 copy
+            // 覆盖——那恰恰是 tmp+rename 要避免的截断覆写，也不再
+            // 只记日志继续：旧行为二次失败仅记日志、仍计 fileCount
+            // 并记“extracted”，上层无法感知失败却写了版本标记，
+            // 下次启动不再重解、缺文件永久存在）。此处删 tmp、
+            // 返回 false，调用方不写版本标记，下次启动重解压。
+            destFile.delete()
+            if (!tmpFile.renameTo(destFile)) {
+                Timber.w("  rename failed, extraction aborted: %s", destFile.path)
+                tmpFile.delete()
+                return false
+            }
+        }
+        return true
     }
 
     private fun shouldSkip(path: String, simpleName: String): Boolean {

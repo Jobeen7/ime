@@ -7,6 +7,7 @@ import com.jobeen.ime.base.CrashTrap
 import com.jobeen.ime.base.log.AppLogBuffer
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.ResourceExtractorUtil
+import com.jobeen.ime.base.util.extractWithManifest
 import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
@@ -42,6 +43,9 @@ import java.security.MessageDigest
 object AppStartup {
     private const val VERSION_FILE = "version.txt"
     private const val RESOURCE_ASSET = "resource.zip"
+
+    /** 差量清单（与 resource.zip 成对提交，见 tools/gen_resource_manifest.py）。 */
+    private const val RESOURCE_MANIFEST_ASSET = "resource-manifest.json"
 
     private val lock = Any()
 
@@ -185,12 +189,17 @@ object AppStartup {
         val app = context.applicationContext as ImeApplication
         app.notifyState(ImeApplication.AppState.ResourcePreparing)
         runBlocking(Dispatchers.IO) {
-            // extract 返回 false（任一单文件二次 rename 仍失败）即整体
+            // 差量解压（清单缺失/非法时内部全量重解，合同与旧 extract 一致）：
+            // 返回 false（任一单文件二次 rename 仍失败，或修剪失败）即整体
             // 失败：抛错让外层 runStep 记失败、resourcesReady=false、
             // 本轮跳过引擎；版本标记写在成功之后，失败时不写，
-            // 下次启动重走解压（旧行为：extract 返回 Unit、无失败
-            // 信号，缺文件也会写标记、下次不再重解）。
-            if (!ResourceExtractorUtil.extract(context, RESOURCE_ASSET, destDir)) {
+            // 下次启动重走差量（已写条目下次比对跳过，天然可续）。
+            // 前两级（versionCode+哨兵零 I/O、MD5 二次确认）均未变，
+            // 差量只替代本级全量解压；每日冷启动仍走零 I/O 短路。
+            if (!extractWithManifest(
+                    context, RESOURCE_ASSET, RESOURCE_MANIFEST_ASSET, destDir,
+                )
+            ) {
                 error("Resource extraction failed; version marker not written")
             }
             versionFile.writeText("$currentVc:${md5.orEmpty()}")

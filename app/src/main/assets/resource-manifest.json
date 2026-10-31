@@ -1,0 +1,429 @@
+{
+  "version": 1,
+  "zipSha256": "971fcde47837786f8fefec9b6e9fad09d3d639c6960c836511859f04383cc199",
+  "preserve": [
+    "shared/opencc/wanxiang/Custom_"
+  ],
+  "entries": [
+    {
+      "path": "model/predict.marisa",
+      "size": 37366176,
+      "crc": "df286972"
+    },
+    {
+      "path": "shared/AGENTS.md",
+      "size": 11055,
+      "crc": "593998c0"
+    },
+    {
+      "path": "shared/README.md",
+      "size": 6753,
+      "crc": "d36ecdab"
+    },
+    {
+      "path": "shared/custom/wanxiang_abbrev.custom.yaml",
+      "size": 275,
+      "crc": "22d11ed0"
+    },
+    {
+      "path": "shared/custom/wanxiang_english.custom.yaml",
+      "size": 374,
+      "crc": "ae39754f"
+    },
+    {
+      "path": "shared/custom/wanxiang_lite.custom.yaml",
+      "size": 1575,
+      "crc": "fd4916c8"
+    },
+    {
+      "path": "shared/custom/wanxiang_mixedcode.custom.yaml",
+      "size": 370,
+      "crc": "2948aae2"
+    },
+    {
+      "path": "shared/custom/wanxiang_phrase.custom.yaml",
+      "size": 275,
+      "crc": "22d11ed0"
+    },
+    {
+      "path": "shared/custom/wanxiang_reverse.custom.yaml",
+      "size": 599,
+      "crc": "e8e1a94a"
+    },
+    {
+      "path": "shared/custom/万象键位映射.jpg",
+      "size": 1086001,
+      "crc": "501584bb"
+    },
+    {
+      "path": "shared/custom/赞赏.jpg",
+      "size": 106513,
+      "crc": "e5e090fc"
+    },
+    {
+      "path": "shared/custom_phrase.dict.yaml",
+      "size": 1492,
+      "crc": "cf8a4143"
+    },
+    {
+      "path": "shared/default.yaml",
+      "size": 6393,
+      "crc": "0115b509"
+    },
+    {
+      "path": "shared/dicts/abbrev.dict.yaml",
+      "size": 558072,
+      "crc": "6e6be79d"
+    },
+    {
+      "path": "shared/dicts/cuoyin.lite.dict.yaml",
+      "size": 7640,
+      "crc": "db03cda3"
+    },
+    {
+      "path": "shared/dicts/diming.lite.dict.yaml",
+      "size": 2953515,
+      "crc": "7190037d"
+    },
+    {
+      "path": "shared/dicts/duoyin.lite.dict.yaml",
+      "size": 124436,
+      "crc": "8fbf3723"
+    },
+    {
+      "path": "shared/dicts/en.dict.yaml",
+      "size": 1568996,
+      "crc": "cf86781b"
+    },
+    {
+      "path": "shared/dicts/jichu.lite.dict.yaml",
+      "size": 44383469,
+      "crc": "e6bd7d63"
+    },
+    {
+      "path": "shared/dicts/mingren.lite.dict.yaml",
+      "size": 596803,
+      "crc": "a029f13b"
+    },
+    {
+      "path": "shared/dicts/mixed.dict.yaml",
+      "size": 35913,
+      "crc": "b5eb4e41"
+    },
+    {
+      "path": "shared/dicts/t9_abbrev.dict.yaml",
+      "size": 514659,
+      "crc": "0ab6411c"
+    },
+    {
+      "path": "shared/dicts/yiren.lite.dict.yaml",
+      "size": 380053,
+      "crc": "ce5036e2"
+    },
+    {
+      "path": "shared/dicts/zi.lite.dict.yaml",
+      "size": 547153,
+      "crc": "9fcf0563"
+    },
+    {
+      "path": "shared/lua/data/chaifen.txt",
+      "size": 0,
+      "crc": "00000000"
+    },
+    {
+      "path": "shared/lua/data/en_abbrev.txt",
+      "size": 2476,
+      "crc": "ffdda64c"
+    },
+    {
+      "path": "shared/lua/data/english_chinese.txt",
+      "size": 1308578,
+      "crc": "c2ce6976"
+    },
+    {
+      "path": "shared/lua/data/others.txt",
+      "size": 30663,
+      "crc": "c2a209d4"
+    },
+    {
+      "path": "shared/lua/data/sentence.txt",
+      "size": 313,
+      "crc": "1e1ab8e8"
+    },
+    {
+      "path": "shared/lua/data/tips_show.txt",
+      "size": 192537,
+      "crc": "2eae93db"
+    },
+    {
+      "path": "shared/lua/wanxiang/auto_phrase.lua",
+      "size": 10104,
+      "crc": "018ed8e0"
+    },
+    {
+      "path": "shared/lua/wanxiang/bit.lua",
+      "size": 3505,
+      "crc": "5b96803b"
+    },
+    {
+      "path": "shared/lua/wanxiang/context_reorder.lua",
+      "size": 28881,
+      "crc": "f44dc815"
+    },
+    {
+      "path": "shared/lua/wanxiang/custom_phrase.lua",
+      "size": 6953,
+      "crc": "216d8079"
+    },
+    {
+      "path": "shared/lua/wanxiang/input_statistics.lua",
+      "size": 32266,
+      "crc": "e7f1e397"
+    },
+    {
+      "path": "shared/lua/wanxiang/key_binder.lua",
+      "size": 8124,
+      "crc": "8e93932f"
+    },
+    {
+      "path": "shared/lua/wanxiang/librime.lua",
+      "size": 28216,
+      "crc": "09719b15"
+    },
+    {
+      "path": "shared/lua/wanxiang/number_conversion.lua",
+      "size": 15624,
+      "crc": "01a5a03b"
+    },
+    {
+      "path": "shared/lua/wanxiang/random_tools.lua",
+      "size": 14354,
+      "crc": "de9e4f45"
+    },
+    {
+      "path": "shared/lua/wanxiang/set_schema.lua",
+      "size": 6151,
+      "crc": "432ed2f9"
+    },
+    {
+      "path": "shared/lua/wanxiang/shijian.lua",
+      "size": 129716,
+      "crc": "a39cd61a"
+    },
+    {
+      "path": "shared/lua/wanxiang/super_calculator.lua",
+      "size": 128038,
+      "crc": "fab29f80"
+    },
+    {
+      "path": "shared/lua/wanxiang/super_comment_preedit.lua",
+      "size": 21575,
+      "crc": "47de6156"
+    },
+    {
+      "path": "shared/lua/wanxiang/super_english.lua",
+      "size": 26892,
+      "crc": "6919c425"
+    },
+    {
+      "path": "shared/lua/wanxiang/super_filter.lua",
+      "size": 29797,
+      "crc": "1f7f93d3"
+    },
+    {
+      "path": "shared/lua/wanxiang/super_lookup.lua",
+      "size": 57521,
+      "crc": "17e74556"
+    },
+    {
+      "path": "shared/lua/wanxiang/super_processor.lua",
+      "size": 30787,
+      "crc": "3f6461d5"
+    },
+    {
+      "path": "shared/lua/wanxiang/super_replacer.lua",
+      "size": 59165,
+      "crc": "7bdf410c"
+    },
+    {
+      "path": "shared/lua/wanxiang/super_tips.lua",
+      "size": 9177,
+      "crc": "8b062176"
+    },
+    {
+      "path": "shared/lua/wanxiang/unicode_conversion.lua",
+      "size": 17636,
+      "crc": "a88e8fc6"
+    },
+    {
+      "path": "shared/lua/wanxiang/userdb.lua",
+      "size": 2853,
+      "crc": "deb1685c"
+    },
+    {
+      "path": "shared/lua/wanxiang/version_display.lua",
+      "size": 952,
+      "crc": "db8ad4d8"
+    },
+    {
+      "path": "shared/lua/wanxiang/wanxiang.lua",
+      "size": 13587,
+      "crc": "d55ee5e4"
+    },
+    {
+      "path": "shared/opencc/wanxiang/Custom_Emoji.txt",
+      "size": 22,
+      "crc": "e244a0bf"
+    },
+    {
+      "path": "shared/opencc/wanxiang/Custom_STPhrases.txt",
+      "size": 19,
+      "crc": "a8cd4865"
+    },
+    {
+      "path": "shared/opencc/wanxiang/HKVariants.ocd2",
+      "size": 4893,
+      "crc": "459721e4"
+    },
+    {
+      "path": "shared/opencc/wanxiang/STCharacters.ocd2",
+      "size": 45302,
+      "crc": "b48d424b"
+    },
+    {
+      "path": "shared/opencc/wanxiang/STPhrases.ocd2",
+      "size": 925883,
+      "crc": "fb997e33"
+    },
+    {
+      "path": "shared/opencc/wanxiang/TWVariants.ocd2",
+      "size": 4595,
+      "crc": "872677ad"
+    },
+    {
+      "path": "shared/opencc/wanxiang/emoji.ocd2",
+      "size": 147511,
+      "crc": "56fd1a82"
+    },
+    {
+      "path": "shared/opencc/wanxiang_emoji.json",
+      "size": 630,
+      "crc": "b2445d92"
+    },
+    {
+      "path": "shared/opencc/wanxiang_s2hk.json",
+      "size": 905,
+      "crc": "4934fe84"
+    },
+    {
+      "path": "shared/opencc/wanxiang_s2t.json",
+      "size": 784,
+      "crc": "9d428321"
+    },
+    {
+      "path": "shared/opencc/wanxiang_s2tw.json",
+      "size": 906,
+      "crc": "7a0fca3a"
+    },
+    {
+      "path": "shared/version.txt",
+      "size": 7,
+      "crc": "88aec4f6"
+    },
+    {
+      "path": "shared/wanxiang_abbrev.dict.yaml",
+      "size": 233,
+      "crc": "10af99a6"
+    },
+    {
+      "path": "shared/wanxiang_abbrev.schema.yaml",
+      "size": 699,
+      "crc": "4d5577c5"
+    },
+    {
+      "path": "shared/wanxiang_abbrev_t9.dict.yaml",
+      "size": 239,
+      "crc": "ec92bb2d"
+    },
+    {
+      "path": "shared/wanxiang_abbrev_t9.schema.yaml",
+      "size": 711,
+      "crc": "99e2eb88"
+    },
+    {
+      "path": "shared/wanxiang_algebra.yaml",
+      "size": 136967,
+      "crc": "50f42c4c"
+    },
+    {
+      "path": "shared/wanxiang_english.dict.yaml",
+      "size": 179,
+      "crc": "c57aa5fd"
+    },
+    {
+      "path": "shared/wanxiang_english.schema.yaml",
+      "size": 5954,
+      "crc": "9fb38317"
+    },
+    {
+      "path": "shared/wanxiang_lite.dict.yaml",
+      "size": 1386,
+      "crc": "637d1717"
+    },
+    {
+      "path": "shared/wanxiang_lite.schema.yaml",
+      "size": 32605,
+      "crc": "7d825df7"
+    },
+    {
+      "path": "shared/wanxiang_mixedcode.dict.yaml",
+      "size": 309,
+      "crc": "d3bb3b69"
+    },
+    {
+      "path": "shared/wanxiang_mixedcode.schema.yaml",
+      "size": 1008,
+      "crc": "8cf6abb2"
+    },
+    {
+      "path": "shared/wanxiang_phrase.schema.yaml",
+      "size": 780,
+      "crc": "3d1447d9"
+    },
+    {
+      "path": "shared/wanxiang_phrase_t9.schema.yaml",
+      "size": 785,
+      "crc": "646be0c9"
+    },
+    {
+      "path": "shared/wanxiang_reverse.dict.yaml",
+      "size": 6576733,
+      "crc": "982709b7"
+    },
+    {
+      "path": "shared/wanxiang_reverse.schema.yaml",
+      "size": 829,
+      "crc": "012e4d66"
+    },
+    {
+      "path": "shared/wanxiang_symbols.yaml",
+      "size": 98894,
+      "crc": "2a4b970a"
+    },
+    {
+      "path": "shared/wanxiang_t9.schema.yaml",
+      "size": 21236,
+      "crc": "a775534e"
+    },
+    {
+      "path": "shared/wanxiang_t9i.schema.yaml",
+      "size": 20889,
+      "crc": "05212e64"
+    },
+    {
+      "path": "shared/weasel.yaml",
+      "size": 26646,
+      "crc": "89d66637"
+    }
+  ]
+}
