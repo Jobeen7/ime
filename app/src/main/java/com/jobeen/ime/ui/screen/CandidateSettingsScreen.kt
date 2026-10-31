@@ -33,6 +33,9 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
     var showComment by remember {
         mutableStateOf(CandidateManager.isShowComment(context))
     }
+    var inlineInputModeEnabled by remember {
+        mutableStateOf(CandidateManager.isInlineInputModeEnabled(context))
+    }
     var borderEnabled by remember {
         mutableStateOf(CandidateManager.isBorderEnabled(context))
     }
@@ -94,6 +97,15 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                     onCheckedChange = {
                         showComment = it
                         CandidateManager.setShowComment(context, it)
+                    },
+                    showDivider = true,
+                )
+                SwitchRow(
+                    title = stringResource(R.string.candidate_inline_input_mode),
+                    checked = inlineInputModeEnabled,
+                    onCheckedChange = {
+                        inlineInputModeEnabled = it
+                        CandidateManager.setInlineInputModeEnabled(context, it)
                     },
                     showDivider = true,
                 )

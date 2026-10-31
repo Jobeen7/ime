@@ -99,6 +99,18 @@ import com.jobeen.ime.input.keyboard.impl.T15Keyboard
 import com.jobeen.ime.input.panel.PanelListener
 import kotlin.math.roundToInt
 
+/**
+ * 内嵌输入模式：组字串直送应用输入框的纯函数（供 JVM 测试）。
+ * 把多段组字拼成一串（与药丸显示的拼接口径一致）；直送时恒调
+ * setComposingText（空串即清组字区，绝不用 finishComposingText——
+ * 后者在部分编辑器里是把组字提交为正文，删空组字时会误上屏）。
+ * 只传纯文本，不带任何视觉 span，编辑器按自身默认渲染；
+ * IC 调用与药丸显隐本身走真机验证。
+ */
+internal fun inlinePreeditJoined(
+    items: List<EngineMessage.DynamicPreedit.DynamicPreeditItem>,
+): String = items.joinToString("") { it.text }
+
 @SuppressLint("ViewConstructor")
 class KeyboardWindowView(
     context: Context,
@@ -1323,11 +1335,15 @@ class KeyboardWindowView(
         lastCandidateFirst = list.firstOrNull()?.text
         lastCandidateComment = list.firstOrNull()?.comment?.takeIf { it.isNotEmpty() }
         pushDynamicTexts()
-        // 行内联想：首选到后刷新气泡幽灵文本；气泡正显示时重测宽重显
-        refreshInlineSuggestion()
-        if (preeditPinner.view.preeditItems.isNotEmpty()) {
-            val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
-            preeditPinner.show(context, wm, panel.view, hPad)
+        // 内嵌输入模式：组字串已直送输入框，悬浮药丸（含行内联想幽灵文本）不显示。
+        // （关中药丸半途切开时，候选到达先于下一次组字更新，此门把旧药丸挡下。）
+        if (!CandidateManager.isInlineInputModeEnabled(context)) {
+            // 行内联想：首选到后刷新气泡幽灵文本；气泡正显示时重测宽重显
+            refreshInlineSuggestion()
+            if (preeditPinner.view.preeditItems.isNotEmpty()) {
+                val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
+                preeditPinner.show(context, wm, panel.view, hPad)
+            }
         }
     }
 
@@ -1357,14 +1373,25 @@ class KeyboardWindowView(
     fun updateDynamicPreedit(items: List<EngineMessage.DynamicPreedit.DynamicPreeditItem>) {
         // 用户开始组字：内联胶囊隐藏，恢复正常候选；新建议须由服务重发。
         if (items.isNotEmpty()) hideInlineAutofill()
-        preeditPinner.updateDynamicPreedit(items)
-        // 行内联想：组字变化时先算幽灵文本，再按含幽灵文本的宽度显隐
-        refreshInlineSuggestion()
-        if (items.isEmpty()) {
+        // 内嵌输入模式：组字串直送应用输入框（纯文本、无 span），不显示悬浮药丸；
+        // 关时走现有药丸路径。开关即时读偏好，下一次组字更新即生效。
+        // （主线程路径：引擎消息流跑在服务 Main 作用域，IC 调用与上屏同线程；
+        // 经 activeInputConnection，与上屏走同一连接，桥接态下写虚拟连接。）
+        if (CandidateManager.isInlineInputModeEnabled(context)) {
+            val joined = inlinePreeditJoined(items)
+            val ic = (context as? ImeInputMethodService)?.activeInputConnection()
+            ic?.setComposingText(joined, 1)
             preeditPinner.hide(wm)
         } else {
-            val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
-            preeditPinner.show(context, wm, panel.view, hPad)
+            preeditPinner.updateDynamicPreedit(items)
+            // 行内联想：组字变化时先算幽灵文本，再按含幽灵文本的宽度显隐
+            refreshInlineSuggestion()
+            if (items.isEmpty()) {
+                preeditPinner.hide(wm)
+            } else {
+                val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
+                preeditPinner.show(context, wm, panel.view, hPad)
+            }
         }
         // 接线轮 R1：预编辑变化事件（只比较变化，不记文本内容；
         // 通知解析已禁 matchKey／matchValue，事件恒双空）。

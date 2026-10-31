@@ -624,6 +624,7 @@
     <string name="candidate_layout">候选词布局</string>
     <string name="candidate_show_index">显示序列号</string>
     <string name="candidate_show_comment">显示注释</string>
+    <string name="candidate_inline_input_mode">内嵌输入模式</string>
     <string name="candidate_border">绘制候选词边框</string>
     <string name="menu_reload_engine">重启引擎</string>
     <string name="menu_undo">撤销</string>

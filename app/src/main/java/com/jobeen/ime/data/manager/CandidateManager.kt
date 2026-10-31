@@ -158,6 +158,18 @@ object CandidateManager {
             putBoolean("candidate.inline_suggestion", enabled)
         }
     }
+
+    /** 内嵌输入模式（默认关）：开时组字串直送应用输入框内嵌显示（纯文本），关时走悬浮药丸。 */
+    fun isInlineInputModeEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("candidate.inline_input_mode", false)
+    }
+
+    fun setInlineInputModeEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean("candidate.inline_input_mode", enabled)
+        }
+    }
 }
 
 /**
