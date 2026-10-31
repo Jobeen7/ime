@@ -18,22 +18,26 @@ import com.jobeen.ime.data.manager.KeyboardManager
  * 键名前缀区分（`app.*`／`global_style.*`／`font.*`）。
  */
 enum class AppAppearanceMode(val stored: String) {
+    /** 跟随系统：深浅随系统，不动态取色；存量值 "auto"（恢复其原意）。 */
+    FOLLOW_SYSTEM("auto"),
     MONET("monet"),
     LIGHT("light"),
     DARK("dark");
 
     companion object {
         /**
-         * 解析存量值：未知／空 → 莫奈色（新默认）；旧值 "auto" 同样
-         * 映射为莫奈色（2026-10-30 自动改莫奈色，见 [AppAppearance.getMode]
-         * 的写回迁移）。显式三项之外不存在其它取值。
+         * 解析存量值：未知／空 → 跟随系统（2026-11-01 新默认，
+         * 取代 2026-10-31 的莫奈色默认）；"auto" → 跟随系统
+         * （恢复其原意，不再是 2026-10-30 的 auto→莫奈色迁移）；
+         * "monet" 仍为莫奈色——显式莫奈色用户不动。
          */
         fun parse(raw: String?): AppAppearanceMode =
             when (raw) {
+                "auto" -> FOLLOW_SYSTEM
                 "monet" -> MONET
                 "light" -> LIGHT
                 "dark" -> DARK
-                else -> MONET
+                else -> FOLLOW_SYSTEM
             }
     }
 }
@@ -43,14 +47,13 @@ object AppAppearance {
     private const val KEY_MODE = "app.mode"
 
     /**
-     * 读模式（含存量迁移）：存量 "auto" 读到即改写为 "monet" 并返回
-     * 莫奈色；其余值按 [AppAppearanceMode.parse] 解析。迁移只写一次，
-     * 之后读到的已是 "monet"，不再写。
+     * 读模式：直接按 [AppAppearanceMode.parse] 解析，不做写回迁移
+     * （2026-11-01 起删掉 auto→monet 的迁移写回：存量 "auto" 即
+     * 跟随系统；已存 "monet" 的用户原样读为莫奈色，不动）。
      */
     fun getMode(context: Context): AppAppearanceMode {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val raw = prefs.getString(KEY_MODE, null)
-        if (raw == "auto") setMode(context, AppAppearanceMode.MONET)
         return AppAppearanceMode.parse(raw)
     }
 
@@ -62,15 +65,16 @@ object AppAppearance {
 
     /**
      * 映射到 ImeTheme 的 themeMode（纯函数，可 JVM 单测）：
-     * 莫奈色＝跟随系统深浅（动态取色另由 [useDynamicColorFor] 开关，
-     * 低版本自动回落普通亮／暗）；亮／暗固定。自动项已于 2026-10-30
-     * 并入莫奈色，不再有跟随系统但不动态取色的模式。
+     * 跟随系统与莫奈色＝跟随系统深浅（暗→暗、亮→亮）；区别只在
+     * 动态取色：莫奈色另由 [useDynamicColorFor] 开关（低版本自动
+     * 回落普通亮／暗），跟随系统一律不动态取色；亮／暗固定。
      */
     fun themeModeFor(mode: AppAppearanceMode, isSystemDark: Boolean): Int =
         when (mode) {
             AppAppearanceMode.LIGHT -> KeyboardManager.Theme.MODE_LIGHT
             AppAppearanceMode.DARK -> KeyboardManager.Theme.MODE_DARK
-            AppAppearanceMode.MONET ->
+            AppAppearanceMode.MONET,
+            AppAppearanceMode.FOLLOW_SYSTEM ->
                 if (isSystemDark) KeyboardManager.Theme.MODE_DARK
                 else KeyboardManager.Theme.MODE_LIGHT
         }

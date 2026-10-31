@@ -14,12 +14,19 @@ import org.junit.Test
 class AppAppearanceTest {
 
     @Test
-    fun modes_areExactlyMonetLightDark() {
-        // 2026-10-30 莫奈色轮：列表并为 3 项，莫奈色排首（接替自动的默认位）。
+    fun modes_areExactlyFollowSystemMonetLightDark() {
+        // 【用户定规则变更 2026-11-01，取代 2026-10-31 莫奈色默认】
+        // 默认改跟随系统：枚举 4 项，跟随系统排首（贴合旧自动优先惯例）。
         assertEquals(
-            listOf(AppAppearanceMode.MONET, AppAppearanceMode.LIGHT, AppAppearanceMode.DARK),
+            listOf(
+                AppAppearanceMode.FOLLOW_SYSTEM,
+                AppAppearanceMode.MONET,
+                AppAppearanceMode.LIGHT,
+                AppAppearanceMode.DARK,
+            ),
             AppAppearanceMode.entries,
         )
+        assertEquals("auto", AppAppearanceMode.FOLLOW_SYSTEM.stored)
     }
 
     @Test
@@ -65,14 +72,36 @@ class AppAppearanceTest {
     }
 
     @Test
-    fun parse_legacyAutoAndUnknownFallBackToMonet() {
-        // 存量“auto”用户迁移到莫奈色（getMode 的写回是代码级，
-        // 无 Robolectric 的 JVM 单测覆盖不到，见交回报告）。
-        assertEquals(AppAppearanceMode.MONET, AppAppearanceMode.parse(null))
-        assertEquals(AppAppearanceMode.MONET, AppAppearanceMode.parse("bogus"))
-        assertEquals(AppAppearanceMode.MONET, AppAppearanceMode.parse("auto"))
+    fun parse_unknownAndEmptyFallBackToFollowSystem() {
+        // 【用户定规则变更 2026-11-01，取代 2026-10-30 auto→莫奈色迁移】
+        // 未知／空 → 跟随系统（新默认）；"auto" 恢复原意 → 跟随系统；
+        // getMode 不再有 auto→monet 写回（需 Context，无 Robolectric 的
+        // JVM 单测覆盖不到，见交回报告）。
+        // 显式莫奈色用户不动："monet" 仍解析为莫奈色。
+        assertEquals(AppAppearanceMode.FOLLOW_SYSTEM, AppAppearanceMode.parse(null))
+        assertEquals(AppAppearanceMode.FOLLOW_SYSTEM, AppAppearanceMode.parse("bogus"))
+        assertEquals(AppAppearanceMode.FOLLOW_SYSTEM, AppAppearanceMode.parse("auto"))
         assertEquals(AppAppearanceMode.MONET, AppAppearanceMode.parse("monet"))
         assertEquals(AppAppearanceMode.LIGHT, AppAppearanceMode.parse("light"))
         assertEquals(AppAppearanceMode.DARK, AppAppearanceMode.parse("dark"))
+    }
+
+    @Test
+    fun followSystem_followsSystemShadeWithoutDynamicColor() {
+        // 跟随系统：深浅映射与莫奈色相同，但一律不动态取色。
+        assertEquals(
+            KeyboardManager.Theme.MODE_LIGHT,
+            AppAppearance.themeModeFor(AppAppearanceMode.FOLLOW_SYSTEM, false),
+        )
+        assertEquals(
+            KeyboardManager.Theme.MODE_DARK,
+            AppAppearance.themeModeFor(AppAppearanceMode.FOLLOW_SYSTEM, true),
+        )
+        assertFalse(AppAppearance.useDynamicColorFor(AppAppearanceMode.FOLLOW_SYSTEM, 30))
+        assertFalse(AppAppearance.useDynamicColorFor(AppAppearanceMode.FOLLOW_SYSTEM, 31))
+        assertFalse(AppAppearance.useDynamicColorFor(AppAppearanceMode.FOLLOW_SYSTEM, 36))
+        // 显式莫奈色不受影响：存量值与动态取色均原样。
+        assertEquals("monet", AppAppearanceMode.MONET.stored)
+        assertTrue(AppAppearance.useDynamicColorFor(AppAppearanceMode.MONET, 31))
     }
 }

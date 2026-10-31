@@ -85,8 +85,10 @@ fun AppearanceScreen(
 ) {
     val context = LocalContext.current
     var showModeDialog by remember { mutableStateOf(false) }
-    // 2026-10-30 自动并入莫奈色：选项为莫奈色／亮色／暗色（与枚举顺序一致）。
+    // 2026-11-01 默认跟随系统：选项为跟随系统／莫奈色／亮色／暗色
+    // （与枚举顺序一致；标签与 modeValues 按下标配对，增项须同序增标签）。
     val modeLabels = listOf(
+        stringResource(R.string.app_appearance_follow_system),
         stringResource(R.string.app_appearance_monet),
         stringResource(R.string.app_appearance_light),
         stringResource(R.string.app_appearance_dark),

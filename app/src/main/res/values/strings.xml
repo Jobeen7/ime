@@ -701,6 +701,7 @@
 
     <string name="appearance_title">外观</string>
     <string name="app_appearance">应用外观</string>
+    <string name="app_appearance_follow_system">跟随系统</string>
     <string name="app_appearance_light">亮色</string>
     <string name="app_appearance_dark">暗色</string>
     <string name="app_appearance_monet">莫奈色</string>
