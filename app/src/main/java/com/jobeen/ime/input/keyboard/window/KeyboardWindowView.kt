@@ -697,8 +697,9 @@ class KeyboardWindowView(
         }.getOrDefault(false)
         if (hidden != toolbarHiddenCached) {
             toolbarHiddenCached = hidden
-            panel.view.visibility = if (hidden) View.GONE else View.VISIBLE
-            requestLayout()
+            // 只藏中间按钮区：条区视图常 VISIBLE（组字时同一条区画候选，
+            // GONE 会连候选一起藏）；条高也不归零，见 onMeasure/onLayout。
+            panel.view.toolbarHidden = hidden
         }
     }
 
@@ -706,9 +707,9 @@ class KeyboardWindowView(
         val density = resources.displayMetrics.density
         val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
         val bPad = dpToPx(effectiveBottomInsetDp())
-        // 隐藏时工具栏条高为 0：条区不占高，键盘区上移；覆盖层（剪贴板／
-        // 菜单等）不受影响（各自仍按内容高布局）。
-        val barH = if (toolbarHiddenCached) 0 else (PANEL_HEIGHT_DP * density).roundToInt()
+        // 隐藏时条高不变：条区仍在，只空中间按钮区（首尾固定槽与候选
+        // 仍可显示）；覆盖层（剪贴板／菜单等）不受影响（各自仍按内容高布局）。
+        val barH = (PANEL_HEIGHT_DP * density).roundToInt()
         val cHeight = contentHeight()
         val totalWidth = MeasureSpec.getSize(widthMeasureSpec)
         val bottomInset = resolveBottomInset()
@@ -783,7 +784,7 @@ class KeyboardWindowView(
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
-        val barH = if (toolbarHiddenCached) 0 else (PANEL_HEIGHT_DP * resources.displayMetrics.density).roundToInt()
+        val barH = (PANEL_HEIGHT_DP * resources.displayMetrics.density).roundToInt()
         val cHeight = contentHeight()
         val contentW = right - left - 2 * hPad
         val stripH = if (addPhraseActive) (fullScreenHeight() * 0.20f).roundToInt() else 0

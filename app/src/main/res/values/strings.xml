@@ -766,7 +766,7 @@
     <string name="toolbar_custom_toolbars">自定义工具栏</string>
     <string name="toolbar_new_toolbar">新建自定义工具栏</string>
     <string name="toolbar_select_toolbar">选择自定义工具栏</string>
-    <string name="toolbar_hide_toolbar">隐藏输入工具栏</string>
+    <string name="toolbar_hide_toolbar">隐藏工具栏</string>
     <string name="toolbar_main_note">换皮肤后各存各的，互不干扰；列表为空时回落皮肤或默认工具栏；改动在工具栏下次刷新时生效。</string>
     <string name="toolbar_empty_note">列表为空时用皮肤或默认工具栏。</string>
     <string name="toolbar_add_button">添加按钮</string>

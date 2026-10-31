@@ -32,6 +32,42 @@ internal fun customPressedFaceActive(
 ): Boolean = pressAlpha > 0 && pressRadiusMax > 0f && pressRadius < pressRadiusMax &&
     pressCx in slotLeft..slotRight
 
+/**
+ * 工具栏触摸分区：左固定槽 / 右固定槽 / 中间区。纯函数（与 hitTest
+ * 同一套几何：48dp 边缘触摸区，右槽优先），供 JVM 测试；hitTest 直接
+ * 用它分区，保证绘制与命中对同一 x 的判断一致。
+ */
+internal enum class ToolbarHitRegion { MENU, CLOSE, CENTER }
+
+internal fun toolbarHitRegion(
+    x: Float,
+    width: Int,
+    density: Float,
+    horizontalPaddingDp: Float,
+    centerHorizontalPaddingDp: Float,
+): ToolbarHitRegion {
+    val hPad = (horizontalPaddingDp + 4) * density
+    val fixedW = 32f * density
+    val edgeTouchW = 48f * density
+    val menuCenter = hPad + fixedW / 2f
+    val closeCenter = width - hPad - fixedW / 2f
+    val menuTouchLeft = (menuCenter - edgeTouchW / 2f).coerceAtLeast(0f)
+    val menuTouchRight = (menuCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
+    val closeTouchLeft = (closeCenter - edgeTouchW / 2f).coerceAtLeast(0f)
+    val closeTouchRight = (closeCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
+    return when (x) {
+        in closeTouchLeft..closeTouchRight -> ToolbarHitRegion.CLOSE
+        in menuTouchLeft..menuTouchRight -> ToolbarHitRegion.MENU
+        else -> ToolbarHitRegion.CENTER
+    }
+}
+
+/** 隐藏时中间区命中被压制；首尾固定槽不受影响。纯函数，供 JVM 测试。 */
+internal fun toolbarCenterHitSuppressed(
+    toolbarHidden: Boolean,
+    region: ToolbarHitRegion,
+): Boolean = toolbarHidden && region == ToolbarHitRegion.CENTER
+
 class ToolbarRenderer(
     private val resources: ToolbarRendererResources,
     var horizontalPaddingDp: Float = 0f,
@@ -85,6 +121,12 @@ class ToolbarRenderer(
     var clipSelectedTextColor: Int = 0
     var clipSelectedBgColor: Int = 0
     override var recording: Boolean = false
+    /**
+     * 工具栏隐藏：true 时只藏中间按钮区，首尾 32dp 固定槽照常绘制
+     * 与响应，候选渲染（ComposingRenderer）不受影响。条高不归零，
+     * 由窗口层保证；此处只管本渲染器的绘制与命中。
+     */
+    var toolbarHidden: Boolean = false
 
     private data class ClipGeom(
         val capsuleLeft: Float, val capsuleRight: Float, val capsuleTop: Float, val capsuleH: Float,
@@ -228,6 +270,7 @@ class ToolbarRenderer(
 
     /** 纯探针（View 手势机 DOWN 用，无副作用，不改按压态）。 */
     fun userCenterHit(x: Float, width: Int, density: Float): UserCenterItem? {
+        if (toolbarHidden) return null
         if (clipMode || copyText != null) return null
         val slots = userCenterSlots(width, density) ?: return null
         return slots.firstOrNull { x in it.left..it.right && it.right > it.left }?.item
@@ -555,7 +598,10 @@ class ToolbarRenderer(
         val centerAreaLeft = menuLeft + fixedW + centerPad
         val centerAreaW = width - centerAreaLeft - hPad - fixedW - centerPad
 
-        if (pressRadius > 0f && pressRadiusMax > 0f) {
+        // 隐藏时中间区的按压涟漪一并跳过（首尾槽的涟漪照常）。
+        val centerRippleSuppressed = toolbarHidden &&
+            pressCx in centerAreaLeft..(centerAreaLeft + centerAreaW)
+        if (pressRadius > 0f && pressRadiusMax > 0f && !centerRippleSuppressed) {
             val progress = (pressRadius / pressRadiusMax).coerceIn(0f, 1f)
             val currentAlpha = (pressAlpha * (1f - progress)).toInt().coerceIn(0, 255)
             if (currentAlpha > 0) {
@@ -587,7 +633,9 @@ class ToolbarRenderer(
             }
         }
 
-        if (copyText != null) {
+        // 隐藏时中间区整段跳过（复制 pill、用户中央区、中央按钮皆不画）；
+        // 首尾固定槽在上下两段照常绘制。
+        if (!toolbarHidden) if (copyText != null) {
             val t = copyText!!
             val textPaint = if (recording) dimTextPaint.apply {
                 set(paints.candidateTextPaint)
@@ -1121,6 +1169,13 @@ class ToolbarRenderer(
         val centerAreaLeft = hPad + fixedW + centerPad
         val centerAreaW = width - centerAreaLeft - hPad - fixedW - centerPad
         val otherW = centerAreaW / centerButtons.size
+
+        // 隐藏时中间区命中一律压制（首尾槽照常）；分区几何与上文同口径。
+        if (toolbarCenterHitSuppressed(
+                toolbarHidden,
+                toolbarHitRegion(x, width, density, horizontalPaddingDp, centerHorizontalPaddingDp),
+            )
+        ) return null
 
         when (x) {
             in closeTouchLeft..closeTouchRight -> {

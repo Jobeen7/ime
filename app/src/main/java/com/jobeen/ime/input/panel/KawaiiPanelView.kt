@@ -55,6 +55,29 @@ class KawaiiPanelView(context: Context) : View(context) {
             invalidate()
         }
 
+    /**
+     * 工具栏隐藏：只藏中间按钮区，首尾固定槽与候选渲染不受影响；
+     * 条区仍在（条高不归零，见窗口层）。标志存在 View 层，
+     * 绘制与触摸前经 syncToolbarHiddenToRenderer 同步到当前渲染器。
+     */
+    var toolbarHidden: Boolean = false
+        set(value) {
+            if (field == value) return
+            field = value
+            (currentRenderer as? ToolbarRenderer)?.toolbarHidden = value
+            invalidate()
+        }
+
+    /**
+     * 渲染器在状态切换时常新建（init 块内直接赋值，故 currentRenderer
+     * 不能带自定义 setter）：新建实例的隐藏标志默认关，绘制与触摸
+     * 前在此统一从 View 层同步，隐藏不因渲染器重建而丢失。
+     */
+    private fun syncToolbarHiddenToRenderer() {
+        val renderer = currentRenderer as? ToolbarRenderer ?: return
+        if (renderer.toolbarHidden != toolbarHidden) renderer.toolbarHidden = toolbarHidden
+    }
+
     fun collapse() {
         if (!isExpanded) return
         isExpanded = false
@@ -309,6 +332,7 @@ class KawaiiPanelView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         if (width <= 0 || height <= 0) return
+        syncToolbarHiddenToRenderer()
         // 用户自定义栏背景（工具栏编辑轮）优先于渐变底；透明＝不画底。
         val userBg = userBarBackground
         if (userBg is ToolbarBackground.Transparent) {
@@ -435,6 +459,7 @@ class KawaiiPanelView(context: Context) : View(context) {
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(event: MotionEvent): Boolean {
+        syncToolbarHiddenToRenderer()
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 // 已有手指在进行手势时，第二根手指不重启手势

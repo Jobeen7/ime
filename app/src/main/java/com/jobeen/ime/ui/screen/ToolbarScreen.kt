@@ -393,8 +393,9 @@ private fun ToolbarMainPage(
             subtitle = stringResource(R.string.toolbar_edit_current_hint),
             onClick = onEditCurrent,
         )
-        // 隐藏输入工具栏：全局开关（不分皮肤），开＝不渲染工具栏区，
-        // 改动在工具栏下次刷新时生效（与工具栏编辑同口径）。
+        // 隐藏工具栏：全局开关（不分皮肤），开＝只藏中间按钮区
+        // （首尾固定槽与候选不受影响，条高不变），改动在工具栏
+        // 下次刷新时生效（与工具栏编辑同口径）。
         SwitchRow(
             title = stringResource(R.string.toolbar_hide_toolbar),
             checked = hideToolbar,
