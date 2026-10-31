@@ -111,4 +111,31 @@ class SchemeEnabledTest {
             assertEquals(original, custom.readText())
         }
     }
+
+    @Test
+    fun writeEnabledCustomFile_concurrentWritesDoNotCollide() {
+        runWithTempDir { root ->
+            val custom = File(root, "default.custom.yaml")
+            val errors = mutableListOf<Throwable>()
+            val threads = (0 until 8).map { i ->
+                Thread {
+                    try {
+                        SchemeEnabled.writeEnabledCustomFile(custom, listOf("s$i"))
+                    } catch (t: Throwable) {
+                        synchronized(errors) { errors.add(t) }
+                    }
+                }
+            }
+            threads.forEach { it.start() }
+            threads.forEach { it.join() }
+            // 固定 .tmp 名时并发写必互踩（后写者删 tmp 会删先写者的 tmp，
+            // rename 撞空）；带 nanoTime 后缀后各写各的 tmp，全成功。
+            assertTrue(errors.isEmpty())
+            // 最后写者胜出：文件是某一轮的完整启用表，不是撕裂的半截文本。
+            val text = custom.readText()
+            assertTrue(text.contains("schema_list:"))
+            assertTrue(text.contains("    - schema: s"))
+            assertTrue(root.walkTopDown().none { ".tmp" in it.name })
+        }
+    }
 }

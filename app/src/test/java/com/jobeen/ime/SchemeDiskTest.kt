@@ -99,6 +99,37 @@ class SchemeDiskTest {
     }
 
     @Test
+    fun parseSchemaFile_t9FallbackUsesWholeSegments() {
+        runWithTempDir { root ->
+            // t9/t9i 自成一段 → 九宫格；t9 非整段 → 全键盘。
+            // 旧 contains 口径会把后四组误判成九宫格；t9i 须保持九宫格
+            // （它是内置九键方案，与 t9 同口径）。
+            val cases = mapOf(
+                "t9" to "T9",
+                "wanxiang_t9" to "T9",
+                "wanxiang_t9i" to "T9",
+                "wanxiang_abbrev_t9" to "T9",
+                "wanxiang_phrase_t9" to "T9",
+                "t9_pinyin" to "T9",
+                "pinyin_t9like" to "",
+                "my_t9x" to "",
+                "at9" to "",
+                "wanxiang_lite" to "",
+                "wanxiang_english" to "",
+            )
+            for ((id, expected) in cases) {
+                val file = writeSchemaFile(
+                    root, "$id.schema.yaml",
+                    "schema:\n" +
+                        "  schema_id: $id\n" +
+                        "  name: $id\n",
+                )
+                assertEquals(id, expected, parseSchemaFile(file)?.layout)
+            }
+        }
+    }
+
+    @Test
     fun parseSchemaFile_noSchemaSectionReturnsNull() {
         runWithTempDir { root ->
             val file = writeSchemaFile(

@@ -3,8 +3,10 @@
 package com.jobeen.ime.data.manager
 
 import java.io.File
+import java.io.IOException
 import java.util.zip.ZipFile
 import kotlinx.coroutines.CancellationException
+import timber.log.Timber
 
 /**
  * 第二期本地导入：方案包校验、安装规划与落盘（纯逻辑，不依赖 Android 框架，
@@ -357,6 +359,19 @@ object SchemePackageImport {
         if (totalBytes <= 0L) return 180_000L
         val steps = totalBytes / (8L * 1024 * 1024)
         return minOf(180_000L + steps * 30_000L, 1_800_000L)
+    }
+
+    /**
+     * 目录部署超时（纯函数）：把目录下全部文件字节数加总后走
+     * [deployTimeoutMs]。FAB 部署与切换路径共用这一套算法（切换路径
+     * 以前是自己加总再调 deployTimeoutMs，口径与此相同）；枚举失败
+     * 按 0 字节计（180 秒基线），不抛异常。
+     */
+    fun deployTimeoutForDir(dir: File): Long {
+        val totalBytes = runCatching {
+            dir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        }.getOrDefault(0L)
+        return deployTimeoutMs(totalBytes)
     }
 
     data class SkippedFile(
@@ -1116,6 +1131,13 @@ object SchemePackageImport {
     private fun journalFileFor(parentDir: File, operationId: String): File =
         File(parentDir, ".install-$operationId.journal")
 
+    /**
+     * 写安装日志：先写同目录 tmp 再 rename 覆盖（同一文件系统内原子换位）。
+     * 直接 writeText 一旦写一半被杀，日志即截断、恢复时无法解析；
+     * tmp＋rename 则要么是旧阶段的完整日志、要么是新阶段的完整日志，
+     * 不存在半截日志。rename 失败删 tmp 并抛错（旧日志原样保留，
+     * 恢复按旧阶段处置，不会把一次失败的阶段推进误当成已推进）。
+     */
     private fun writeJournal(
         journalFile: File,
         operationId: String,
@@ -1124,15 +1146,19 @@ object SchemePackageImport {
         backupDir: File,
         stage: JournalStage,
     ) {
-        journalFile.writeText(
-            buildString {
-                appendLine("operationId=$operationId")
-                appendLine("target=${targetDir.absolutePath}")
-                appendLine("candidate=${candidateDir.absolutePath}")
-                appendLine("backup=${backupDir.absolutePath}")
-                appendLine("stage=${stage.name}")
-            },
-        )
+        val content = buildString {
+            appendLine("operationId=$operationId")
+            appendLine("target=${targetDir.absolutePath}")
+            appendLine("candidate=${candidateDir.absolutePath}")
+            appendLine("backup=${backupDir.absolutePath}")
+            appendLine("stage=${stage.name}")
+        }
+        val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp-${System.nanoTime()}")
+        tmpFile.writeText(content)
+        if (!tmpFile.renameTo(journalFile)) {
+            tmpFile.delete()
+            throw IOException("journal rename failed: ${tmpFile.path} -> ${journalFile.path}")
+        }
     }
 
     private data class ParsedJournal(
@@ -1468,17 +1494,28 @@ object SchemePackageImport {
     }
 
     /**
-     * 回滚：把备份恢复为目标（删当前目标、备份 rename 回目标），
+     * 回滚：把备份恢复为目标（三次 rename，无 delete 换位），
      * 并清掉引用该备份的日志。备份不存在返回 false；其余失败同样 false。
      * 调用时机：部署/确认失败后，确认新版不要了才调（不可逆地丢弃新版）。
+     * 每一步失败都能回到上一步的完整状态，不存在“目标已删一半、
+     * 备份还没就位”的中间态：目标 rename 走先失败则目标原样、直接
+     * 返回；备份 rename 失败则把刚挪走的目标挪回来再返回；最后删
+     * 挪走的旧目标，删失败只是残留、不影响正确性。
      */
     fun rollbackTransaction(backupDir: File, targetDir: File): Boolean {
         if (!backupDir.exists()) return false
-        if (targetDir.exists()) {
-            targetDir.deleteRecursively()
-            if (targetDir.exists()) return false
+        val discarded = if (targetDir.exists()) {
+            File(targetDir.parentFile, ".discarded-${System.nanoTime()}").also { discardedDir ->
+                if (!targetDir.renameTo(discardedDir)) return false
+            }
+        } else {
+            null
         }
-        if (!backupDir.renameTo(targetDir)) return false
+        if (!backupDir.renameTo(targetDir)) {
+            discarded?.renameTo(targetDir)
+            return false
+        }
+        discarded?.deleteRecursively()
         deleteJournalsReferencing(backupDir)
         return true
     }
@@ -1528,7 +1565,8 @@ object SchemePackageImport {
      *   TARGET_MOVED 且备份还在，备份随日志一并清掉——目标已重建，
      *   旧备份已无人认领（sweep 只认 SWAPPED），不删即成永久孤儿；
      * - 阶段 SWAPPED：已是完整新版，备份与日志原样保留（供回滚/清理用）；
-     * - 未知阶段：按“目标在则删候选、目标缺失且备份在则备份移回”处置。
+     * - 未知阶段：按“目标在则删候选、目标缺失且备份在则备份移回”处置；
+     * - 日志无法解析：保留文件并记诊断日志，不上报、不阻塞其他日志。
      * 绝不留“目标缺失且候选与备份都不在”的半吊子之外的状态：该情形
      * 本身已是装前无目录态，删日志即完成。本函数只在无安装进行时调用
      * （启动时、或 SWAP_FAILED 后重试前）。
@@ -1541,8 +1579,12 @@ object SchemePackageImport {
             ?.sortedBy { it.name }
             .orEmpty()
         for (journal in journals) {
+            // 日志无法解析（截断/缺键）：保留文件并记诊断日志，不上报、
+            // 不阻塞其他日志恢复。删日志会丢掉可能是唯一线索的恢复记录，
+            // 且写日志已改 tmp＋rename，半截日志本不应再出现；残留的
+            // 坏日志以后每次启动都会被重扫跳过，不影响其他恢复。
             val parsed = parseJournal(journal) ?: run {
-                journal.delete()
+                Timber.w("Unparseable install journal kept for diagnosis: ${journal.absolutePath}")
                 continue
             }
             when (parsed.stage) {

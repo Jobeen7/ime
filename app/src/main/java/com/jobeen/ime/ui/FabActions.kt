@@ -10,6 +10,7 @@ import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.SchemeEnabled
+import com.jobeen.ime.data.manager.SchemePackageImport
 import com.jobeen.ime.data.manager.awaitSchemasReady
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.engine.EngineFactory
@@ -57,8 +58,23 @@ object FabSyncState {
  */
 object FabActions {
 
-    /** 同步下载后部署时、等候进行中部署结束的上限：与 deploy() 的等候上限同口径。 */
-    private const val DEPLOY_WAIT_TIMEOUT_MS = 600_000L
+    /**
+     * 部署完成后等方案表刷新的上限：表刷新只需几十秒，与部署超时
+     * 解耦（以前与部署共用 600 秒，部署完成后的等待被不必要拉长）。
+     */
+    private const val SCHEMAS_READY_TIMEOUT_MS = 60_000L
+
+    /**
+     * 当前目录部署超时：与切换路径同一套算法（见
+     * SchemePackageImport.deployTimeoutMs：180 秒起、按目录大小算、
+     * 上限 1800 秒）。切换路径是自己加总再调 deployTimeoutMs，口径与
+     * deployTimeoutForDir 相同；FAB 以前是固定 600 秒，大目录会误报
+     * 失败、小目录则比切换路径更宽松，两处现已统一。
+     */
+    internal fun deployTimeoutForCurrentDir(context: Context): Long {
+        val dir = java.io.File(DataManager.schemeDirsRoot, SchemeDirs.currentDirName(context))
+        return SchemePackageImport.deployTimeoutForDir(dir)
+    }
 
     /**
      * 一次部署并判定成败：以部署作业的 Finish/失败信号为准，方案表
@@ -68,13 +84,14 @@ object FabActions {
      * 或编译失败；TIMEOUT_RUNNING = 等候超时、作业仍在后台跑（记孤儿，
      * 下次部署会被忙门挡下）。三者中只有 COMPLETED 能走向成功，且
      * 成功还须方案表非空（COMPLETED 后按旧口径 2s 间隔轮询复核，
-     * 上限同 DEPLOY_WAIT_TIMEOUT_MS；表恒空说明部署产出无效，仍算
-     * 失败）。本函数不捕获 CancellationException（调用方取消时穿透；
+     * 上限 SCHEMAS_READY_TIMEOUT_MS；表恒空说明部署产出无效，仍算
+     * 失败）。部署超时用 deployTimeoutForCurrentDir（与切换路径同
+     * 算法）。本函数不捕获 CancellationException（调用方取消时穿透；
      * sync() 外层 catch 的既有捕获行为不在此改）。
      */
-    private suspend fun deployAndCheckSchemas(engine: IEngine?): Boolean {
+    private suspend fun deployAndCheckSchemas(context: Context, engine: IEngine?): Boolean {
         val result = (engine as? RimeEngine)
-            ?.deployAndAwait(DEPLOY_WAIT_TIMEOUT_MS)
+            ?.deployAndAwait(deployTimeoutForCurrentDir(context))
             ?: DeployAwaitResult.FAILED
         if (result != DeployAwaitResult.COMPLETED) {
             Timber.w("FAB deploy not completed: $result")
@@ -86,7 +103,7 @@ object FabActions {
                     EngineFactory.current()?.schemasList()?.isNotEmpty() == true
                 }.getOrDefault(false)
             },
-            timeoutMs = DEPLOY_WAIT_TIMEOUT_MS,
+            timeoutMs = SCHEMAS_READY_TIMEOUT_MS,
             intervalMs = 2000L,
         )
         if (!ready) {
@@ -113,7 +130,7 @@ object FabActions {
             SchemeEnabled.normalizeCustomFileToMapFormat(java.io.File(dir, "default.custom.yaml"))
         }
         scope.launch {
-            val deployed = deployAndCheckSchemas(engine)
+            val deployed = deployAndCheckSchemas(context, engine)
             if (deployed) {
                 ToastUtil.showToast(context.getString(R.string.fab_deploy_done))
                 RimeSyncPrefs.postNotice(context, context.getString(R.string.fab_deploy_done))

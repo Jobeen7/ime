@@ -219,7 +219,24 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private val daemon by lazy { RimeDaemon }
-    private val scope by lazy { CoroutineScope(SupervisorJob() + Dispatchers.Default) }
+
+    /**
+     * jobs/动作等投递通道的宿主作用域：兜底 handler 与 preferDbScope
+     * 同构（只记非取消异常日志、不杀进程）。没有它时，关库后旧引用
+     * 的 sendJob 在异步补投里抛 ClosedSendChannelException，会走默认
+     * 未捕获异常处理杀进程；handler 是第二层兜底，第一层仍是
+     * enqueueJob 的 isClosedForSend 丢弃与 runCatching。
+     */
+    private val scope by lazy {
+        CoroutineScope(
+            SupervisorJob() + Dispatchers.Default +
+                kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
+                    if (e !is CancellationException) {
+                        Timber.w(e, "Uncaught failure in RimeEngine scope")
+                    }
+                }
+        )
+    }
 
     /**
      * 选词偏好写的发起通道：实际落库、裁剪与计数落点由
@@ -1492,9 +1509,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private fun enqueueJob(entry: QueuedJob) {
         if (jobs.trySend(entry).isFailure) {
+            // 通道已关（引擎 finalize 后旧引用仍调 sendJob）：直接丢弃，
+            // 不许再异步补投——已关通道的 send 必抛 ClosedSendChannelException，
+            // 无 handler 时会走默认未捕获异常处理杀进程。关库后的作业
+            // 本就无处执行，丢弃是正确语义（finalize 已清全部置位，
+            // 丢弃回调只由消费循环调，不由本路径调，见消费循环注释）。
+            if (jobs.isClosedForSend) return
             // 队列满说明引擎正被长任务堵住：任务都是控制类（导词典、
-            // 清屏、切方案等），不许丢，转异步挂起入队等空位
-            scope.launch { jobs.send(entry) }
+            // 清屏、切方案等），不许丢，转异步挂起入队等空位；补投仍
+            // 可能撞上关库窗口，故用 runCatching 兜底（handler 是第三层）。
+            scope.launch { runCatching { jobs.send(entry) } }
         }
     }
 

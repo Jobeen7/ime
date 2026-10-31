@@ -120,13 +120,18 @@ object SchemeDirs {
      * 迁移规划（纯函数）：根的每个孩子（build/、初始目录自身、备份目录
      * 除外）→ 初始目录下同名位置；目标已存在时进冲突表（不覆盖、
      * 不删除，由执行侧按内容比对处置）。空根或已是纯目录根时返回空表。
+     * 根是目录但枚举失败（listFiles() 返回 null）时抛错，不按空表处理：
+     * 空表会被执行侧当成“无待迁移文件”而置位，导致旧方案永久丢失；
+     * 抛错后 ensureMigrated 记错误、不置位，下次读取重试。
      */
     fun migrationPlan(root: File): MigrationPlan {
         if (!root.isDirectory) return MigrationPlan(emptyList(), emptyList())
+        val children = root.listFiles()
+            ?: throw IllegalStateException("cannot list root dir: ${root.absolutePath}")
         val initial = File(root, INITIAL_DIR)
         val moves = mutableListOf<Pair<File, File>>()
         val conflicts = mutableListOf<Pair<File, File>>()
-        for (child in root.listFiles().orEmpty()) {
+        for (child in children) {
             if (child.name == "build" ||
                 child.name == INITIAL_DIR ||
                 child.name == MIGRATION_BACKUP_DIR
@@ -299,8 +304,12 @@ object SchemeDirs {
         }
         // 终检查：源平铺目录除 build/、初始目录自身、备份目录外无未处理文件；
         // 分目录启用列表与迁移前状态一致（旧值存在且本轮复制时须等于旧值）。
+        // 枚举失败（listFiles() 返回 null）与“无剩余文件”是两回事：前者
+        // 必须返回失败、不置位，否则会把未处理文件误当成已处理。
         if (root.isDirectory) {
-            val leftover = root.listFiles().orEmpty().filter { child ->
+            val listed = root.listFiles()
+                ?: return "leftover check failed: cannot list root"
+            val leftover = listed.filter { child ->
                 child.name != "build" &&
                     child.name != INITIAL_DIR &&
                     child.name != MIGRATION_BACKUP_DIR

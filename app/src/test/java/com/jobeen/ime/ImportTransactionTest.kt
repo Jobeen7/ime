@@ -997,4 +997,44 @@ class ImportTransactionTest {
             root.deleteRecursively()
         }
     }
+
+    @Test
+    fun recovery_unparseableJournalIsKeptAndDoesNotBlockOthers() {
+        val root = Files.createTempDirectory("import-tx-test").toFile()
+        try {
+            val roots = File(root, "dirs").apply { mkdirs() }
+            // 坏日志：截断、缺 candidate/backup 键（旧行为：直接删掉，
+            // 丢掉可能是唯一线索的恢复记录）。
+            val badJournal = File(roots, ".install-bad.journal")
+            badJournal.writeText(
+                "operationId=bad\n" +
+                    "target=${File(roots, "mydir").absolutePath}\n" +
+                    "stage=VERIFIED\n",
+            )
+            // 好日志：VERIFIED 阶段，目标在、候选在，恢复应正常走完。
+            val target = File(roots, "mydir").apply { mkdirs() }
+            File(target, "a.schema.yaml").writeText(schemaText("A"))
+            val candidate = File(roots, ".install-op1").apply { mkdirs() }
+            File(candidate, "c.schema.yaml").writeText(schemaText("C"))
+            val backup = File(roots, ".backup-op1")
+            File(roots, ".install-op1.journal").writeText(
+                "operationId=op1\n" +
+                    "target=${target.absolutePath}\n" +
+                    "candidate=${candidate.absolutePath}\n" +
+                    "backup=${backup.absolutePath}\n" +
+                    "stage=VERIFIED\n",
+            )
+            val results = SchemePackageImport.recoverIncompleteTransactions(roots)
+            assertEquals(1, results.size)
+            assertTrue(results[0].restoredOld)
+            assertFalse(File(roots, ".install-op1.journal").exists())
+            assertFalse(candidate.exists())
+            // 坏日志保留、不上报、不阻塞好日志；第二次启动仍在（重扫跳过）。
+            assertTrue(badJournal.exists())
+            assertEquals(0, SchemePackageImport.recoverIncompleteTransactions(roots).size)
+            assertTrue(badJournal.exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }

@@ -342,4 +342,66 @@ class SchemeDirsTest {
             root.deleteRecursively()
         }
     }
+
+    // ---- 迁移枚举 null 与空区分 ----
+
+    /** listFiles() 恒返回 null 的 File：模拟目录枚举失败（权限/IO 故障）。 */
+    private class NullListDir(path: String) : File(path) {
+        override fun listFiles(): Array<File>? = null
+    }
+
+    @Test
+    fun migrationPlan_nullListingThrowsInsteadOfEmptyPlan() {
+        val real = Files.createTempDirectory("schemedirs-null").toFile()
+        try {
+            File(real, "a.schema.yaml").writeText("a")
+            val root = NullListDir(real.absolutePath)
+            var thrown: String? = null
+            try {
+                SchemeDirs.migrationPlan(root)
+            } catch (e: IllegalStateException) {
+                thrown = e.message
+            }
+            // 枚举失败不按空表处理：空表会被当成“无待迁移文件”而置位，
+            // 旧方案永久丢失；抛错后 ensureMigrated 记错误、不置位、可重试。
+            assertTrue(thrown != null && thrown.contains("cannot list"))
+        } finally {
+            real.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_nullListing_doesNotSetAndRecordsError() {
+        val real = Files.createTempDirectory("schemedirs-null").toFile()
+        try {
+            File(real, "a.schema.yaml").writeText("a")
+            val root = NullListDir(real.absolutePath)
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            SchemeDirs.ensureMigrated(root, store)
+            assertFalse(store.migrated)
+            assertTrue(store.error != null && store.error!!.contains("cannot list"))
+        } finally {
+            real.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun runMigration_nullListing_returnsFailureInsteadOfClean() {
+        val real = Files.createTempDirectory("schemedirs-null").toFile()
+        try {
+            File(real, "a.schema.yaml").writeText("a")
+            val root = NullListDir(real.absolutePath)
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            val failure = SchemeDirs.runMigration(
+                root,
+                SchemeDirs.MigrationPlan(emptyList(), emptyList()),
+                store,
+            )
+            // 终检枚举失败与“无剩余文件”是两回事：前者必须返回失败、
+            // 不置位，否则会把未处理文件误当成已处理。
+            assertTrue(failure != null && failure.contains("cannot list"))
+        } finally {
+            real.deleteRecursively()
+        }
+    }
 }

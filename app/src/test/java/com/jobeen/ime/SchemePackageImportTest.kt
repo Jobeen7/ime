@@ -1234,4 +1234,110 @@ class SchemePackageImportTest {
         assertFalse(hasZipMagic(byteArrayOf()))
         assertFalse(hasZipMagic("Rar!".toByteArray()))
     }
+
+    // ---- 日志原子写（tmp＋rename）与三次 rename 回滚 ----
+
+    @Test
+    fun installTransaction_journalIsCompleteAndLeavesNoTmp() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target").apply { mkdirs() }
+            File(target, "wanxiang_pro.schema.yaml").writeText("old schema")
+            val staging = File(root, "staging").apply { mkdirs() }
+            File(staging, "wanxiang_pro.schema.yaml")
+                .writeText("schema:\n  name: Pro\n  version: 18.1.7\n")
+            File(staging, "wanxiang_pro.dict.yaml").writeText("dict")
+            val entries = listOf(
+                StagedEntry(
+                    "wanxiang_pro.schema.yaml",
+                    File(staging, "wanxiang_pro.schema.yaml").length(),
+                ),
+                StagedEntry(
+                    "wanxiang_pro.dict.yaml",
+                    File(staging, "wanxiang_pro.dict.yaml").length(),
+                ),
+            )
+            val result = SchemePackageImport.installTransaction(
+                stagingDir = staging,
+                targetDir = target,
+                plan = transactionPlan(
+                    listOf("wanxiang_pro.schema.yaml", "wanxiang_pro.dict.yaml"),
+                ),
+                stagedEntries = entries,
+                operationId = "op1",
+            )
+            val tx = (result as SchemePackageImport.InstallTransactionResult.Success).transaction
+            // 日志五键齐全、可解析：恢复能认出 SWAPPED 阶段且不判为旧版恢复。
+            val journalText = tx.journalFile.readText()
+            assertTrue(journalText.contains("operationId=op1"))
+            assertTrue(journalText.contains("target="))
+            assertTrue(journalText.contains("candidate="))
+            assertTrue(journalText.contains("backup="))
+            assertTrue(journalText.contains("stage=SWAPPED"))
+            assertTrue(root.walkTopDown().none { ".tmp" in it.name })
+            val recovered = SchemePackageImport.recoverIncompleteTransactions(root)
+            assertEquals(1, recovered.size)
+            assertFalse(recovered.single().restoredOld)
+            assertTrue(tx.journalFile.isFile)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    /** renameTo 恒失败的 File：模拟 rename 失败路径（真实文件系统 rename 几乎总成功）。 */
+    private class FailRenameFile(path: String) : File(path) {
+        override fun renameTo(dest: File): Boolean = false
+    }
+
+    @Test
+    fun rollbackTransaction_targetRenameFailureKeepsBoth() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val realTarget = File(root, "target").apply { mkdirs() }
+            File(realTarget, "f.txt").writeText("new")
+            val backup = File(root, "backup").apply { mkdirs() }
+            File(backup, "f.txt").writeText("old")
+            val target = FailRenameFile(realTarget.absolutePath)
+            assertFalse(SchemePackageImport.rollbackTransaction(backup, target))
+            // 目标 rename 失败：目标原样、备份原样、无 discarded 残留。
+            assertEquals("new", File(realTarget, "f.txt").readText())
+            assertEquals("old", File(backup, "f.txt").readText())
+            assertTrue(root.walkTopDown().none { ".discarded-" in it.name })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun rollbackTransaction_backupRenameFailureRestoresTarget() {
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target").apply { mkdirs() }
+            File(target, "f.txt").writeText("new")
+            val realBackup = File(root, "backup").apply { mkdirs() }
+            File(realBackup, "f.txt").writeText("old")
+            val backup = FailRenameFile(realBackup.absolutePath)
+            assertFalse(SchemePackageImport.rollbackTransaction(backup, target))
+            // 备份 rename 失败：刚挪走的目标挪回来（仍是新版内容）、备份原样、无残留。
+            assertEquals("new", File(target, "f.txt").readText())
+            assertEquals("old", File(realBackup, "f.txt").readText())
+            assertTrue(root.walkTopDown().none { ".discarded-" in it.name })
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun deployTimeoutForDir_sumsFilesRecursively() {
+        val root = Files.createTempDirectory("deploy-timeout").toFile()
+        try {
+            assertEquals(180_000L, SchemePackageImport.deployTimeoutForDir(root))
+            val sub = File(root, "sub").apply { mkdirs() }
+            File(sub, "big.bin").writeBytes(ByteArray(8 * 1024 * 1024))
+            assertEquals(210_000L, SchemePackageImport.deployTimeoutForDir(root))
+            assertEquals(180_000L, SchemePackageImport.deployTimeoutForDir(File(root, "missing")))
+        } finally {
+            root.deleteRecursively()
+        }
+    }
 }
