@@ -10,7 +10,16 @@ import org.mozilla.javascript.ScriptableObject
 import timber.log.Timber
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.concurrent.ArrayBlockingQueue
+import java.util.concurrent.Callable
+import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
+import java.util.concurrent.ThreadFactory
+import java.util.concurrent.ThreadPoolExecutor
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
 
@@ -76,6 +85,38 @@ class PluginHost(
         Thread(runnable, "cloud-voice-worker")
     }
 
+    /**
+     * 独立网络执行器：HTTP 调用跑在此线程，不占音频工作线程做 socket I/O。
+     * 单线程＋有界队列（脚本回调串行，正常情况下队列恒空；满了直接拒，
+     * 桥接返 network_busy，绝不让工作线程无限排队）。守护线程，防会话
+     * 遗弃后拖住进程退出；正常路径 killInternal 会显式 shutdown。
+     */
+    private val networkExecutor = ThreadPoolExecutor(
+        1, 1, 0L, TimeUnit.MILLISECONDS,
+        ArrayBlockingQueue<Runnable>(NETWORK_QUEUE_CAPACITY),
+        ThreadFactory { runnable ->
+            Thread(runnable, "cloud-voice-network").apply { isDaemon = true }
+        },
+        ThreadPoolExecutor.AbortPolicy(),
+    )
+
+    /** 音频积压计数（已投递未完成，含正在跑的一块）：投递线程增、工作线程完成时减；超上限直接丢弃，不进工作队列。 */
+    private val audioBacklog = AtomicInteger(0)
+
+    /** 累计丢弃的音频块数（拥塞可观察：节流日志＋测试可读计数）。 */
+    private val audioDropped = AtomicLong(0)
+
+    private val lastCongestionLogNanos = AtomicLong(0)
+
+    /** 密钥访问串行化：auth 代附（网络线程）与签名桥（工作线程）共用同一 SecretStore，串行化后不依赖 store 自身的线程安全。 */
+    private val secretsLock = Any()
+
+    /** 测试可读：当前音频积压（内部可见，不属公开契约）。 */
+    internal val audioBacklogSize: Int get() = audioBacklog.get()
+
+    /** 测试可读：累计丢弃的音频块数（内部可见，不属公开契约）。 */
+    internal val audioDroppedCount: Long get() = audioDropped.get()
+
     @Volatile
     private var closed = false
 
@@ -123,28 +164,67 @@ class PluginHost(
         }
     }
 
-    /** 喂一块 PCM（base64）：工作线程上调 audio，50ms 预算。 */
+    /**
+     * 喂一块 PCM（base64）：工作线程上调 audio，50ms 预算。
+     * 积压超上限直接丢弃（拥塞保护）：工作线程被慢网络拖住时，
+     * 录音回调仍在产块，队列绝不能无限增长；丢弃记数＋节流日志，
+     * 停止／杀实例时不回放陈旧块（见 killInternal 清空与任务内 closed 检查）。
+     */
     fun audio(pcmBase64: String) {
-        post {
-            val current = session ?: return@post
-            if (closed) return@post
+        if (closed) return
+        if (audioBacklog.incrementAndGet() > MAX_AUDIO_BACKLOG) {
+            audioBacklog.decrementAndGet()
+            logCongestion(audioDropped.incrementAndGet())
+            return
+        }
+        val posted = post {
             try {
-                currentOp = "audio"
-                current.callFunction("audio", arrayOf(buildAudioCtx(pcmBase64)), EVENT_BUDGET_MS)
-            } catch (e: ScriptBudgetExceeded) {
-                onBudgetExceeded("audio")
-            } catch (e: Exception) {
+                val current = session ?: return@post
+                if (closed) return@post
+                try {
+                    currentOp = "audio"
+                    current.callFunction("audio", arrayOf(buildAudioCtx(pcmBase64)), EVENT_BUDGET_MS)
+                } catch (e: ScriptBudgetExceeded) {
+                    onBudgetExceeded("audio")
+                } catch (e: Exception) {
+                    Timber.w(
+                        "cloudVoice session failed plugin=%s op=audio err=%s",
+                        plugin.meta.id, sanitizeScriptError(e).kind,
+                    )
+                    failSession("audio_failed")
+                }
+            } finally {
+                audioBacklog.decrementAndGet()
+            }
+        }
+        if (!posted) {
+            // 投递失败（已关闭或线程池已停）：任务不会跑，计数须还回去；
+            // killInternal 另会把计数清零（会话已死，计数不再被读）。
+            audioBacklog.decrementAndGet()
+        }
+    }
+
+    /** 拥塞日志（节流 1 秒，避免慢网络期间每块都刷一条日志）。 */
+    private fun logCongestion(dropped: Long) {
+        val now = System.nanoTime()
+        val last = lastCongestionLogNanos.get()
+        if (dropped == 1L || now - last > CONGESTION_LOG_INTERVAL_NANOS) {
+            if (lastCongestionLogNanos.compareAndSet(last, now)) {
                 Timber.w(
-                    "cloudVoice session failed plugin=%s op=audio err=%s",
-                    plugin.meta.id, sanitizeScriptError(e).kind,
+                    "cloudVoice audio congested plugin=%s backlog=%d dropped=%d",
+                    plugin.meta.id, MAX_AUDIO_BACKLOG, dropped,
                 )
-                failSession("audio_failed")
             }
         }
     }
 
-    /** 正常结束：调 stop（500ms 预算），随后释放会话与工作线程。 */
+    /**
+     * 正常结束：调 stop（500ms 预算），随后释放会话与工作线程。
+     * 先取消在途 HTTP：会话将结束，挂起的网络不再有意义，工作线程
+     * 不应再被慢网络拖住才跑得到 stop 任务。
+     */
     fun stop() {
+        cancelInflightNetwork()
         post {
             if (closed) return@post
             try {
@@ -163,18 +243,30 @@ class PluginHost(
         }
     }
 
-    /** 立即杀实例（不调 stop）：停用、卸载、异常收尾走此口。 */
+    /**
+     * 立即杀实例（不调 stop）：停用、卸载、异常收尾走此口。
+     * 先从调用线程取消在途 HTTP：工作线程若正堵在慢网络上，
+     * 取消 socket 后它立即解堵，随后排队的 killInternal 才能跑到。
+     */
     fun kill() {
+        cancelInflightNetwork()
         post { killInternal() }
+    }
+
+    /** 从调用线程取消在途 HTTP（Call.cancel 线程安全；假传输无此能力时空操作）。 */
+    private fun cancelInflightNetwork() {
+        runCatching { (transport as? CancellableTransport)?.cancelInflight() }
     }
 
     /**
      * 工作线程投递：已关闭或线程池已停时静默丢弃（会话已死，
      * 后续投递皆无意义；绝不向调用方抛 RejectedExecutionException）。
+     * 返回是否成功投递（audio 计数用：投递失败的任务不会跑，
+     * 调用方须把先增的计数还回去）。
      */
-    private fun post(task: () -> Unit) {
-        if (closed) return
-        runCatching { worker.execute(task) }
+    private fun post(task: () -> Unit): Boolean {
+        if (closed) return false
+        return runCatching { worker.execute(task) }.isSuccess
     }
 
     private fun killInternal() {
@@ -186,6 +278,14 @@ class PluginHost(
         openSockets.clear()
         runCatching { session?.close() }
         session = null
+        // 取消时清空：工作队列里排队的音频任务随 shutdownNow 丢弃，
+        // 停止后绝不回放陈旧 PCM；计数清零（被丢弃的任务不会再减计数）。
+        val dropped = audioDropped.get()
+        if (dropped > 0L) {
+            Timber.w("cloudVoice audio dropped total plugin=%s dropped=%d", plugin.meta.id, dropped)
+        }
+        audioBacklog.set(0)
+        runCatching { networkExecutor.shutdownNow() }
         worker.shutdownNow()
     }
 
@@ -252,6 +352,15 @@ class PluginHost(
         return net
     }
 
+    /**
+     * net.httpPost 桥接：同步返回契约不变（{ok, status?, bodyBase64?, error?}），
+     * 但 HTTP 调用本身跑在独立网络执行器上，不占音频工作线程做 socket I/O。
+     * 工作线程只等 Future 结果；执行器满了直接返 network_busy，不排队。
+     * 注意：Rhino 墙钟预算只在执行 JS 指令时触发，阻塞中的桥接调用
+     * 它拦不住；真正的取消靠 kill／stop 从调用线程取消在途 Call
+     * （见 [cancelInflightNetwork]），预算超时自动取消需把 httpPost
+     * 改为异步回调（改脚本契约），本批不做。
+     */
     private fun netHttpPost(args: Array<Any?>): NativeObject {
         val url = asJsString(args.getOrNull(0)) ?: return errorResult("bad_args")
         val headers = readHeaders(args.getOrNull(1)) ?: return errorResult("bad_args")
@@ -260,13 +369,19 @@ class PluginHost(
             base64.decode(bodyBase64)
         }.getOrNull() ?: return errorResult("bad_body")
         val contentType = asJsString(args.getOrNull(3))
+        val shim = NetworkShim(
+            allowedHosts = plugin.meta.hosts.map { it.lowercase() }.toSet(),
+            authHeaders = plugin.meta.authHeaders,
+            secretResolver = { field -> synchronized(secretsLock) { secrets.get(plugin.meta.id, field) } },
+            transport = transport,
+        )
+        val future = try {
+            networkExecutor.submit(Callable { shim.httpPost(url, headers, body, contentType) })
+        } catch (e: RejectedExecutionException) {
+            return errorResult("network_busy")
+        }
         return try {
-            val response = NetworkShim(
-                allowedHosts = plugin.meta.hosts.map { it.lowercase() }.toSet(),
-                authHeaders = plugin.meta.authHeaders,
-                secretResolver = { field -> secrets.get(plugin.meta.id, field) },
-                transport = transport,
-            ).httpPost(url, headers, body, contentType)
+            val response = future.get()
             val out = NativeObject()
             out.put("ok", out, true)
             out.put("status", out, response.status)
@@ -275,8 +390,14 @@ class PluginHost(
                 base64.encodeToString(response.body),
             )
             out
-        } catch (e: NetworkException) {
-            errorResult(e.reason)
+        } catch (e: ExecutionException) {
+            when (val cause = e.cause) {
+                is NetworkException -> errorResult(cause.reason)
+                else -> errorResult("internal")
+            }
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            errorResult("internal")
         }
     }
 
@@ -333,6 +454,15 @@ class PluginHost(
     private fun dispatchWsMessage(text: String?, bytes: ByteArray?) {
         val current = session ?: return
         if (closed) return
+        // 二进制入站先按字节数拦截，再做 Base64：编码前拦住，绝不为超限帧
+        // 分配 1.33 倍字符串；字节上限由字符上限换算（每 3 字节变 4 字符），
+        // 接受集与原来完全一致（字符数超限的帧原来也在编码后被丢弃）。
+        // 说明：OkHttp 公共 API 无入站帧上限设置，帧本身由 OkHttp 物化
+        // 不可避免；此处是物化后、放大前的拦截，帧层硬上限需换实现，另议。
+        if (bytes != null && bytes.size > MAX_WS_INBOUND_BYTES) {
+            Timber.w("cloudVoice ws message dropped plugin=%s bytes=%d", plugin.meta.id, bytes.size)
+            return
+        }
         val data = text ?: bytes?.let { base64.encodeToString(it) } ?: return
         if (data.length > MAX_WS_INBOUND_CHARS) {
             Timber.w("cloudVoice ws message dropped plugin=%s len=%d", plugin.meta.id, data.length)
@@ -436,7 +566,7 @@ class PluginHost(
                 .toSet()
             if (field !in secretKeys) return@BridgeFunction null
             if (message.length > MAX_CRYPTO_MESSAGE_CHARS) return@BridgeFunction null
-            val secret = secrets.get(plugin.meta.id, field) ?: return@BridgeFunction null
+            val secret = synchronized(secretsLock) { secrets.get(plugin.meta.id, field) } ?: return@BridgeFunction null
             runCatching {
                 val mac = javax.crypto.Mac.getInstance("HmacSHA1")
                 mac.init(
@@ -713,7 +843,20 @@ class PluginHost(
         const val MAX_SANDBOX_BYTES = 10L * 1024 * 1024
         const val MAX_LIST_ENTRIES = 256
         const val MAX_WS_INBOUND_CHARS = 1024 * 1024
+
+        /** WS 二进制入站字节上限：由字符上限换算（每 3 字节变 4 字符），与原来接受集一致。 */
+        const val MAX_WS_INBOUND_BYTES = MAX_WS_INBOUND_CHARS * 3 / 4
+
+        /** 音频积压上限（块数）：超了直接丢弃，防慢网络期间队列无限增长。 */
+        const val MAX_AUDIO_BACKLOG = 32
+
+        /** 网络执行器队列容量（任务数）：满了直接拒，桥接返 network_busy。 */
+        const val NETWORK_QUEUE_CAPACITY = 4
+
         const val MAX_CRYPTO_MESSAGE_CHARS = 4096
+
+        /** 拥塞日志节流间隔（纳秒，1 秒）。 */
+        private const val CONGESTION_LOG_INTERVAL_NANOS = 1_000_000_000L
 
         private val FILE_NAME_REGEX = Regex("^[A-Za-z0-9._-]{1,64}$")
     }

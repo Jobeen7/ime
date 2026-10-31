@@ -10,6 +10,7 @@ import java.io.File
 import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /** 会话宿主：真实引擎＋内存传输／密钥，验桥接、隔离、预算、沙箱文件。 */
 class PluginHostTest {
@@ -431,6 +432,235 @@ class PluginHostTest {
             host.audio("AAAA")
             assertTrue(listener.endedLatch.await(10, TimeUnit.SECONDS))
         } finally {
+            host.kill()
+        }
+    }
+
+    // ---- 本批新增：网络执行器／WS 编码前拦截／音频有界队列／kill 取消 ----
+
+    private class DummyWsHandle : NetworkTransport.WsHandle {
+        override fun send(text: String): Boolean = true
+        override fun sendBytes(bytes: ByteArray): Boolean = true
+        override fun close() {}
+    }
+
+    private class RecordingTransport : NetworkTransport {
+        @Volatile var httpThreadName: String? = null
+        override fun httpPost(url: String, headers: Map<String, String>, body: ByteArray): HttpResponse {
+            httpThreadName = Thread.currentThread().name
+            return HttpResponse(200, "ok".toByteArray())
+        }
+        override fun websocket(
+            url: String,
+            headers: Map<String, String>,
+            listener: NetworkTransport.WsListener,
+        ): NetworkTransport.WsHandle {
+            return DummyWsHandle()
+        }
+    }
+
+    private class CapturingTransport : NetworkTransport {
+        @Volatile var wsListener: NetworkTransport.WsListener? = null
+        val connectLatch = CountDownLatch(1)
+        override fun httpPost(url: String, headers: Map<String, String>, body: ByteArray): HttpResponse {
+            return HttpResponse(200, "ok".toByteArray())
+        }
+        override fun websocket(
+            url: String,
+            headers: Map<String, String>,
+            listener: NetworkTransport.WsListener,
+        ): NetworkTransport.WsHandle {
+            wsListener = listener
+            connectLatch.countDown()
+            return DummyWsHandle()
+        }
+    }
+
+    private class BlockingTransport : NetworkTransport {
+        val startedLatch = CountDownLatch(1)
+        val releaseLatch = CountDownLatch(1)
+        private val calls = AtomicInteger(0)
+        override fun httpPost(url: String, headers: Map<String, String>, body: ByteArray): HttpResponse {
+            if (calls.incrementAndGet() == 1) {
+                startedLatch.countDown()
+                releaseLatch.await(30, TimeUnit.SECONDS)
+            }
+            return HttpResponse(200, "ok".toByteArray())
+        }
+        override fun websocket(
+            url: String,
+            headers: Map<String, String>,
+            listener: NetworkTransport.WsListener,
+        ): NetworkTransport.WsHandle {
+            return DummyWsHandle()
+        }
+    }
+
+    private class CancellableBlockingTransport : NetworkTransport, CancellableTransport {
+        val startedLatch = CountDownLatch(1)
+        val blockLatch = CountDownLatch(1)
+        val completedLatch = CountDownLatch(1)
+        override fun httpPost(url: String, headers: Map<String, String>, body: ByteArray): HttpResponse {
+            startedLatch.countDown()
+            blockLatch.await(30, TimeUnit.SECONDS)
+            completedLatch.countDown()
+            return HttpResponse(200, "ok".toByteArray())
+        }
+        override fun cancelInflight() {
+            blockLatch.countDown()
+        }
+        override fun websocket(
+            url: String,
+            headers: Map<String, String>,
+            listener: NetworkTransport.WsListener,
+        ): NetworkTransport.WsHandle {
+            return DummyWsHandle()
+        }
+    }
+
+    private fun wsScript(): String = """
+        register({
+          id: 'p1', version: '1.0', hosts: ['asr.example.com'],
+          features: [{ type: 'voice.asr', sampleRate: 16000 }],
+          settings: [
+            { key: 'api_key', type: 'secret', label: '密钥' },
+            { key: 'model', type: 'text', label: '模型' }
+          ],
+          auth: [{ header: 'Authorization', field: 'api_key', prefix: 'Bearer ' }]
+        });
+        function start(ctx) { net.websocketConnect('wss://asr.example.com/ws', {}); }
+        function stop(ctx) {}
+        function audio(ctx) {}
+        function onMessage(ctx) { cb.partial(ctx.data); }
+    """.trimIndent()
+
+    private fun wsHost(transport: NetworkTransport): Pair<PluginHost, RecordingListener> {
+        val secrets = MapSecretStore()
+        secrets.put("p1", "api_key", "fixture-secret")
+        val listener = RecordingListener()
+        val host = PluginHost(fixture(wsScript()), emptyMap(), secrets, transport, listener, JdkBase64Codec)
+        return host to listener
+    }
+
+    @Test
+    fun httpPost_runsOnNetworkExecutor() {
+        val script = baseScript(
+            "function audio(ctx) { var r = net.httpPost('https://asr.example.com/v1/asr', {}, '', 'application/json'); if (r.ok) { cb.partial('posted'); } else { cb.partial('failed:' + r.error); } }",
+        )
+        val transport = RecordingTransport()
+        val secrets = MapSecretStore()
+        secrets.put("p1", "api_key", "fixture-secret")
+        val listener = RecordingListener()
+        val host = PluginHost(fixture(script), emptyMap(), secrets, transport, listener, JdkBase64Codec)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            host.audio("AAAA")
+            assertTrue(listener.partialLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(listOf("posted"), listener.partials)
+            assertEquals("cloud-voice-network", transport.httpThreadName)
+        } finally {
+            host.kill()
+        }
+    }
+
+    @Test
+    fun wsInboundSmallBytes_delivered() {
+        val transport = CapturingTransport()
+        val (host, listener) = wsHost(transport)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
+            val ws = transport.wsListener ?: fail("websocket listener must be captured")
+            ws.onMessage(null, "hi".toByteArray())
+            assertTrue(listener.partialLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(listOf("aGk="), listener.partials)
+        } finally {
+            host.kill()
+        }
+    }
+
+    @Test
+    fun wsInboundOversizeBytes_droppedBeforeEncode() {
+        val transport = CapturingTransport()
+        val (host, listener) = wsHost(transport)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
+            val ws = transport.wsListener ?: fail("websocket listener must be captured")
+            ws.onMessage(null, ByteArray(900_000) { 7 })
+            Thread.sleep(500)
+            assertEquals(emptyList<String>(), listener.partials)
+            assertEquals(1L, listener.partialLatch.count)
+        } finally {
+            host.kill()
+        }
+    }
+
+    @Test
+    fun audioQueue_boundedAndDropsWhenWorkerBlocked() {
+        val script = baseScript(
+            "function audio(ctx) { net.httpPost('https://asr.example.com/v1/asr', {}, '', 'application/json'); }",
+        )
+        val transport = BlockingTransport()
+        val secrets = MapSecretStore()
+        secrets.put("p1", "api_key", "fixture-secret")
+        val listener = RecordingListener()
+        val host = PluginHost(fixture(script), emptyMap(), secrets, transport, listener, JdkBase64Codec)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            host.audio("AAAA")
+            assertTrue(transport.startedLatch.await(10, TimeUnit.SECONDS))
+            repeat(40) { host.audio("AAAA") }
+            assertTrue(
+                "backlog must stay bounded, was=${host.audioBacklogSize}",
+                host.audioBacklogSize <= PluginHost.MAX_AUDIO_BACKLOG,
+            )
+            assertTrue(
+                "congestion must drop blocks, dropped=${host.audioDroppedCount}",
+                host.audioDroppedCount > 0,
+            )
+            transport.releaseLatch.countDown()
+            val deadline = System.currentTimeMillis() + 10_000
+            while (host.audioBacklogSize != 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+            }
+            assertEquals(0, host.audioBacklogSize)
+            assertEquals(1L, listener.errorLatch.count)
+        } finally {
+            transport.releaseLatch.countDown()
+            host.kill()
+        }
+    }
+
+    @Test
+    fun kill_cancelsInflightHttp() {
+        val script = baseScript(
+            "function audio(ctx) { net.httpPost('https://asr.example.com/v1/asr', {}, '', 'application/json'); }",
+        )
+        val transport = CancellableBlockingTransport()
+        val secrets = MapSecretStore()
+        secrets.put("p1", "api_key", "fixture-secret")
+        val listener = RecordingListener()
+        val host = PluginHost(fixture(script), emptyMap(), secrets, transport, listener, JdkBase64Codec)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            host.audio("AAAA")
+            assertTrue(transport.startedLatch.await(10, TimeUnit.SECONDS))
+            host.kill()
+            // 关键断言：测试线程从未手动放行，放行只能来自 kill 的取消。
+            assertTrue(transport.completedLatch.await(5, TimeUnit.SECONDS))
+            val deadline = System.currentTimeMillis() + 5_000
+            while (host.audioBacklogSize != 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+            }
+            assertEquals(0, host.audioBacklogSize)
+        } finally {
+            transport.blockLatch.countDown()
             host.kill()
         }
     }
