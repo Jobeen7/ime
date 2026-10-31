@@ -100,7 +100,7 @@ class PluginHost(
         ThreadPoolExecutor.AbortPolicy(),
     )
 
-    /** 音频积压计数（已投递未完成，含正在跑的一块）：投递线程增、工作线程完成时减；超上限直接丢弃，不进工作队列。 */
+    /** 音频积压毫秒数（已投递未完成，含正在跑的一块）：投递线程增、工作线程完成时减；超上限直接丢弃，不进工作队列。 */
     private val audioBacklog = AtomicInteger(0)
 
     /** 累计丢弃的音频块数（拥塞可观察：节流日志＋测试可读计数）。 */
@@ -111,7 +111,7 @@ class PluginHost(
     /** 密钥访问串行化：auth 代附（网络线程）与签名桥（工作线程）共用同一 SecretStore，串行化后不依赖 store 自身的线程安全。 */
     private val secretsLock = Any()
 
-    /** 测试可读：当前音频积压（内部可见，不属公开契约）。 */
+    /** 测试可读：当前音频积压毫秒数（内部可见，不属公开契约）。 */
     internal val audioBacklogSize: Int get() = audioBacklog.get()
 
     /** 测试可读：累计丢弃的音频块数（内部可见，不属公开契约）。 */
@@ -166,14 +166,17 @@ class PluginHost(
 
     /**
      * 喂一块 PCM（base64）：工作线程上调 audio，50ms 预算。
-     * 积压超上限直接丢弃（拥塞保护）：工作线程被慢网络拖住时，
-     * 录音回调仍在产块，队列绝不能无限增长；丢弃记数＋节流日志，
-     * 停止／杀实例时不回放陈旧块（见 killInternal 清空与任务内 closed 检查）。
+     * 积压按时长计（毫秒）超上限直接丢弃（拥塞保护）：工作线程被慢
+     * 网络拖住时，录音回调仍在产块，队列绝不能无限增长；丢弃记数
+     * ＋节流日志，停止／杀实例时不回放陈旧块（见 killInternal 清空
+     * 与任务内 closed 检查）。按时长不按块数：块大小一改，旧按块
+     * 数的界会静默改变实际秒数；短块按实际字节计量，不钻空子。
      */
     fun audio(pcmBase64: String) {
         if (closed) return
-        if (audioBacklog.incrementAndGet() > MAX_AUDIO_BACKLOG) {
-            audioBacklog.decrementAndGet()
+        val chunkMs = pcmBase64ToMs(pcmBase64)
+        if (audioBacklog.addAndGet(chunkMs) > MAX_AUDIO_BACKLOG_MS) {
+            audioBacklog.addAndGet(-chunkMs)
             logCongestion(audioDropped.incrementAndGet())
             return
         }
@@ -194,14 +197,27 @@ class PluginHost(
                     failSession("audio_failed")
                 }
             } finally {
-                audioBacklog.decrementAndGet()
+                audioBacklog.addAndGet(-chunkMs)
             }
         }
         if (!posted) {
             // 投递失败（已关闭或线程池已停）：任务不会跑，计数须还回去；
             // killInternal 另会把计数清零（会话已死，计数不再被读）。
-            audioBacklog.decrementAndGet()
+            audioBacklog.addAndGet(-chunkMs)
         }
+    }
+
+    /**
+     * base64 音频块换算毫秒（16kHz 单声道 16bit 下 32 字节 = 1ms）：
+     * 按字母表字符数算解码字节（兼容带／不带填充、有／无换行），
+     * 非空块最少计 1ms，避免极小块绕过预算致工作队列无限增长。
+     */
+    private fun pcmBase64ToMs(base64: String): Int {
+        if (base64.isEmpty()) return 0
+        val bytes = base64.count {
+            it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '+' || it == '/'
+        } * 3 / 4
+        return maxOf(1, bytes / 32)
     }
 
     /** 拥塞日志（节流 1 秒，避免慢网络期间每块都刷一条日志）。 */
@@ -211,8 +227,8 @@ class PluginHost(
         if (dropped == 1L || now - last > CONGESTION_LOG_INTERVAL_NANOS) {
             if (lastCongestionLogNanos.compareAndSet(last, now)) {
                 Timber.w(
-                    "cloudVoice audio congested plugin=%s backlog=%d dropped=%d",
-                    plugin.meta.id, MAX_AUDIO_BACKLOG, dropped,
+                    "cloudVoice audio congested plugin=%s backlogMs=%d dropped=%d",
+                    plugin.meta.id, MAX_AUDIO_BACKLOG_MS, dropped,
                 )
             }
         }
@@ -874,8 +890,12 @@ class PluginHost(
         /** WS 二进制入站字节上限：由字符上限换算（每 3 字节变 4 字符），与原来接受集一致。 */
         const val MAX_WS_INBOUND_BYTES = MAX_WS_INBOUND_CHARS * 3 / 4
 
-        /** 音频积压上限（块数）：超了直接丢弃，防慢网络期间队列无限增长。 */
-        const val MAX_AUDIO_BACKLOG = 32
+        /**
+         * 音频积压上限（毫秒）：超了直接丢弃，防慢网络期间队列无限增长。
+         * 1280ms = 旧 32 块界 × 40ms（16kHz、1280 字节／块），实际 bound 不变，
+         * 只是计量单位从块数换成时长，块大小变化不再静默改变预算秒数。
+         */
+        const val MAX_AUDIO_BACKLOG_MS = 1280
 
         /** 网络执行器队列容量（任务数）：满了直接拒，桥接返 network_busy。 */
         const val NETWORK_QUEUE_CAPACITY = 4

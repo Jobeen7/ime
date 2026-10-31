@@ -614,10 +614,13 @@ class PluginHostTest {
             assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
             host.audio("AAAA")
             assertTrue(transport.startedLatch.await(10, TimeUnit.SECONDS))
-            repeat(40) { host.audio("AAAA") }
+            // P7 前者：预算改按时长计（毫秒），标准块（1708 字符 ≈ 40ms）
+            // 41 块共 1601ms，超 1280ms 预算后须丢弃；界本身与旧 32 块等价。
+            val standardBlock = "A".repeat(1708)
+            repeat(40) { host.audio(standardBlock) }
             assertTrue(
                 "backlog must stay bounded, was=${host.audioBacklogSize}",
-                host.audioBacklogSize <= PluginHost.MAX_AUDIO_BACKLOG,
+                host.audioBacklogSize <= PluginHost.MAX_AUDIO_BACKLOG_MS,
             )
             assertTrue(
                 "congestion must drop blocks, dropped=${host.audioDroppedCount}",
@@ -630,6 +633,48 @@ class PluginHostTest {
             }
             assertEquals(0, host.audioBacklogSize)
             assertEquals(1L, listener.errorLatch.count)
+        } finally {
+            transport.releaseLatch.countDown()
+            host.kill()
+        }
+    }
+
+    @Test
+    fun audioQueue_shortBlocks_meteredByDurationNotCount() {
+        // P7 前者：预算按时长计，不按块数计。200 个极小块（每块 1ms）
+        // 远未达 1280ms 预算时一律不得丢弃（旧按块数计 32 块即丢）；
+        // 继续喂满预算后才开始丢弃。
+        val script = baseScript(
+            "function audio(ctx) { net.httpPost('https://asr.example.com/v1/asr', {}, '', 'application/json'); }",
+        )
+        val transport = BlockingTransport()
+        val secrets = MapSecretStore()
+        secrets.put("p1", "api_key", "fixture-secret")
+        val listener = RecordingListener()
+        val host = PluginHost(fixture(script), emptyMap(), secrets, transport, listener, JdkBase64Codec)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            host.audio("AAAA")
+            assertTrue(transport.startedLatch.await(10, TimeUnit.SECONDS))
+            repeat(200) { host.audio("AAAA") }
+            assertEquals(0L, host.audioDroppedCount)
+            // 30 个标准块（每块 40ms）把累计推过 1280ms 预算，才开始丢弃。
+            repeat(30) { host.audio("A".repeat(1708)) }
+            assertTrue(
+                "congestion must drop blocks once duration budget exceeded, dropped=${host.audioDroppedCount}",
+                host.audioDroppedCount > 0,
+            )
+            assertTrue(
+                "backlog must stay bounded, was=${host.audioBacklogSize}",
+                host.audioBacklogSize <= PluginHost.MAX_AUDIO_BACKLOG_MS,
+            )
+            transport.releaseLatch.countDown()
+            val deadline = System.currentTimeMillis() + 10_000
+            while (host.audioBacklogSize != 0 && System.currentTimeMillis() < deadline) {
+                Thread.sleep(50)
+            }
+            assertEquals(0, host.audioBacklogSize)
         } finally {
             transport.releaseLatch.countDown()
             host.kill()
