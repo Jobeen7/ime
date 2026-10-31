@@ -306,7 +306,9 @@ class NetworkShimTest {
     // ---- 本批新增：连接时 SSRF 守卫（假 Dns，不依赖真实解析）----
 
     private fun staticDns(addresses: List<InetAddress>): Dns =
-        Dns { _ -> addresses }
+        object : Dns {
+            override fun lookup(hostname: String): List<InetAddress> = addresses
+        }
 
     private fun addr(literal: String): InetAddress = InetAddress.getByName(literal)
 
