@@ -381,13 +381,22 @@ class Rime : RimeApi, RimeLifecycleOwner {
         return handled
     }
 
-    private fun emitResponse(commit: () -> CommitProto = { getCommit() }) {
-        val c = commit()
+    private fun emitResponse(commit: (() -> CommitProto)? = null) {
+        // 一次 JNI 快照取代三次往返（getCommit + getContext +
+        // getBulkCandidates）：快照内 commit/context/bulk 同批取，
+        // bulk 的 highlighted 直接取自同批 context（此前由 Kotlin 侧从
+        // context 转交，不再重复取 context）。自定义 commit 传入时
+        // （如 simulateKeySequence 已先取 commit），快照的 commit 被
+        // 丢弃——此时 native 侧已无待取 commit（先取已消费），快照
+        // 读回空 commit 无副作用。
+        val snapshot = getSnapshotAfterKey()
+        val c = commit?.invoke() ?: (snapshot[0] as CommitProto)
+        val context = snapshot[1] as ContextProto
+        val bulkCandidates = snapshot[2] as Array<Any>
         if (c.text?.isNotEmpty() == true) {
             handleMessage(RimeMessage.MessageType.Commit.ordinal, arrayOf(c))
         }
         // 不再单独调 getStatus()：其结果无人消费，isComposing 由 context.input 推导
-        val context = getContext()
         handleMessage(
             RimeMessage.MessageType.Status.ordinal, arrayOf(
                 StatusProto(
@@ -428,14 +437,14 @@ class Rime : RimeApi, RimeLifecycleOwner {
             handleComposition(CompositionProto())
             handleMessage(
                 RimeMessage.MessageType.Candidate.ordinal,
-                getBulkCandidates(context.menu.highlightedCandidateIndex)
+                bulkCandidates
             )
             return
         }
         handleComposition(context.composition)
         handleMessage(
             RimeMessage.MessageType.Candidate.ordinal,
-            getBulkCandidates(context.menu.highlightedCandidateIndex)
+            bulkCandidates
         )
     }
 
@@ -816,6 +825,15 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
         @JvmStatic
         external fun getBulkCandidates(highlighted: Int): Array<Any>
+
+        /**
+         * 一次 JNI 取回按键响应全量：[commit, context, bulk] 三元数组，
+         * bulk 与 getBulkCandidates 同形（[size, highlighted, candidates]）。
+         * 供 emitResponse 一次往返取代三次；getCommit/getContext/
+         * getBulkCandidates 各自保留（simulateKeySequence 仍直调 getCommit）。
+         */
+        @JvmStatic
+        external fun getSnapshotAfterKey(): Array<Any>
 
         @JvmStatic
         external fun getInputConfirmedPosition(): Int

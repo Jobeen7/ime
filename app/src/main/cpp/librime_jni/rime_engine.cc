@@ -548,15 +548,16 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getCandidates(
     return toJavaCandidateArray(env, list);
 }
 
-JNIEXPORT jobjectArray JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_getBulkCandidates(
-        JNIEnv *env, jclass, jint highlighted) {
-    auto [size, hl, list] = RimeEngine::instance().bulkCandidates(highlighted);
+namespace {
 
+// bulk 三元数组 [size, highlighted, candidates]：getBulkCandidates 与
+// 快照共用同一构造，保证两路形状一致（Kotlin 侧 Candidate 消息解析只认此形）。
+jobjectArray toJavaBulkArray(JNIEnv *env, int size, int highlighted,
+                             const std::vector<CandidateData> &list) {
     jni::LocalRef<> sizeObj(
             env, env->NewObject(jni::g_refs->Integer, jni::g_refs->IntegerCtor, size));
     jni::LocalRef<> hlObj(env, env->NewObject(jni::g_refs->Integer,
-                                              jni::g_refs->IntegerCtor, hl));
+                                              jni::g_refs->IntegerCtor, highlighted));
     jni::LocalRef<jobjectArray> listObj(env, toJavaCandidateArray(env, list));
 
     jobjectArray result =
@@ -568,6 +569,43 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getBulkCandidates(
     env->SetObjectArrayElement(result, 0, sizeObj.get());
     env->SetObjectArrayElement(result, 1, hlObj.get());
     env->SetObjectArrayElement(result, 2, listObj.get());
+    return result;
+}
+
+}  // namespace
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_jobeen_ime_engine_rime_core_Rime_getBulkCandidates(
+        JNIEnv *env, jclass, jint highlighted) {
+    auto [size, hl, list] = RimeEngine::instance().bulkCandidates(highlighted);
+    return toJavaBulkArray(env, size, hl, list);
+}
+
+JNIEXPORT jobjectArray JNICALL
+Java_com_jobeen_ime_engine_rime_core_Rime_getSnapshotAfterKey(JNIEnv *env,
+                                                               jclass) {
+    // 一次 JNI 取回按键响应全量：commit + context + bulk 首屏。
+    // bulk 的 highlighted 直接取自同批 context（此前由 Kotlin 侧从
+    // context 转交，不再重复取 context）；三次 native 会话读仍在
+    // C++ 内完成，省的是两次 JNI 往返（marshalling 与局部引用管理）。
+    auto commit = RimeEngine::instance().commit();
+    auto ctx = RimeEngine::instance().context();
+    auto [size, hl, list] =
+            RimeEngine::instance().bulkCandidates(ctx->menu.highlightedIndex);
+
+    jni::LocalRef<> commitObj(env, toJavaCommit(env, *commit));
+    jni::LocalRef<> contextObj(env, toJavaContext(env, *ctx));
+    jni::LocalRef<jobjectArray> bulkObj(env, toJavaBulkArray(env, size, hl, list));
+
+    jobjectArray result =
+            env->NewObjectArray(3, jni::g_refs->Object, nullptr);
+    if (result == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
+    env->SetObjectArrayElement(result, 0, commitObj.get());
+    env->SetObjectArrayElement(result, 1, contextObj.get());
+    env->SetObjectArrayElement(result, 2, bulkObj.get());
     return result;
 }
 

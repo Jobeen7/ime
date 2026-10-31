@@ -42,6 +42,7 @@ import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserStore
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
+import com.jobeen.ime.engine.data.candidatesContentEqual
 import com.jobeen.ime.skin.model.DynamicTextSource
 import com.jobeen.ime.input.keyboard.impl.EmojiKeyboard
 import com.jobeen.ime.skin.diag.DiagLog
@@ -1225,7 +1226,24 @@ class KeyboardWindowView(
         currentKeyboard?.updateDynamicTexts(values)
     }
 
+    // 上一帧候选（内容拷贝）与 hasMore：无变化帧丢弃的比对基线。
+    // score 不参与比对（见 candidatesContentEqual）；组字刷新走独立
+    // DynamicPreedit 路径，丢弃候选帧不影响组字显示。
+    private var lastCandidateList: List<EngineMessage.Candidate>? = null
+    private var lastCandidateHasMore: Boolean = false
+
     fun setCandidates(list: List<EngineMessage.Candidate>, hasMore: Boolean = false) {
+        // 无变化帧丢弃：同一候选表重复分发时跳过面板重绘（末尾无条件
+        // invalidate）、动态文本推送与行内联想刷新——每键都有的开销。
+        // 组字气泡的显隐由 DynamicPreedit 路径负责，本处不另补 show。
+        val last = lastCandidateList
+        if (last != null && hasMore == lastCandidateHasMore &&
+            candidatesContentEqual(last, list)
+        ) {
+            return
+        }
+        lastCandidateList = list.toList()
+        lastCandidateHasMore = hasMore
         panel.setCandidates(list, hasMore)
         lastCandidateFirst = list.firstOrNull()?.text
         lastCandidateComment = list.firstOrNull()?.comment?.takeIf { it.isNotEmpty() }

@@ -73,3 +73,24 @@ sealed class EngineMessage {
         }
     }
 }
+
+/**
+ * 无变化候选帧比较：只看内容字段（index/text/comment/type，按序）。
+ * 不能用 data class 自带 equals——score 是 var 评分，单调变化不代表
+ * 内容变，用 equals 会让丢弃永不生效。调用方另比 hasMore（total 的
+ * 首屏可见效果）；highlighted 不走 setCandidates 路径（UI 不消费
+ * Candidates.highlighted），组字刷新走独立 DynamicPreedit 路径，
+ * 故两者都不列入本比较。
+ */
+internal fun candidatesContentEqual(
+    a: List<EngineMessage.Candidate>,
+    b: List<EngineMessage.Candidate>,
+): Boolean {
+    if (a.size != b.size) return false
+    return a.indices.all { i ->
+        val x = a[i]
+        val y = b[i]
+        x.index == y.index && x.text == y.text &&
+            x.comment == y.comment && x.type == y.type
+    }
+}
