@@ -12,6 +12,7 @@ import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.speech.VoiceUndoLedger
 import com.jobeen.ime.base.util.InputConnectionUtil
+import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.ClipboardManager
@@ -29,6 +30,8 @@ import com.jobeen.ime.engine.IEngine
 import com.jobeen.ime.input.keyboard.window.KeyboardWindow
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.panel.component.TextEditView
+import com.jobeen.ime.ui.FabActions
+import timber.log.Timber
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -389,6 +392,38 @@ class ImeInputMethodService : InputMethodService() {
         // 语音失败提示也在用；本开关只管部署/同步结果通知。）
         runCatching {
             RimeSyncPrefs.drainNotice(this)?.let { keyboardWindow?.showToast(it) }
+        }
+        // 部署失败单发补跑：上次部署失败时引擎记的标记，在本次出现时
+        // 恰好消费一次 deployAndAwait（成功静默——Finish 收尾已刷新
+        // 方案表；失败按 FAB 失败口径弹提示＋投递通知；超时在跑静默，
+        // 后台结果仍经 Failure 处理器通知）。补跑自身的失败不续订
+        // （PendingRedeploy 补跑期抑制），finally 解除抑制。
+        val currentEngine = engine as? RimeEngine
+        if (currentEngine?.consumePendingRedeploy() == true) {
+            scope?.launch {
+                try {
+                    val result = currentEngine.deployAndAwait(
+                        FabActions.deployTimeoutForCurrentDir(this@ImeInputMethodService)
+                    )
+                    when (result) {
+                        DeployAwaitResult.COMPLETED -> {
+                            Timber.d("Pending redeploy completed")
+                        }
+                        DeployAwaitResult.FAILED -> {
+                            ToastUtil.showToast(getString(R.string.fab_deploy_failed))
+                            RimeSyncPrefs.postNotice(
+                                this@ImeInputMethodService,
+                                getString(R.string.fab_deploy_failed),
+                            )
+                        }
+                        DeployAwaitResult.TIMEOUT_RUNNING -> {
+                            Timber.w("Pending redeploy still running in background")
+                        }
+                    }
+                } finally {
+                    currentEngine.finishRedeployRetry()
+                }
+            }
         }
         if (messageObserveJob == null) {
             messageObserveJob = scope?.let { scope ->

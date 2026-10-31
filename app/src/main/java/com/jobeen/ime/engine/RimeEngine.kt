@@ -10,6 +10,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputConnection
 import androidx.core.content.edit
 import com.jobeen.ime.ImeApplication
+import com.jobeen.ime.R
 import com.jobeen.ime.base.ngram.UpdateImportGate
 import com.jobeen.ime.base.speech.VoiceUndoLedger
 import com.jobeen.ime.base.util.InputConnectionUtil
@@ -29,6 +30,7 @@ import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.DeployKeyGate
 import com.jobeen.ime.data.manager.EngineDeployState
+import com.jobeen.ime.data.manager.RimeSyncPrefs
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.engine.event.KeyEvent
@@ -1356,6 +1358,25 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is EngineMessage.Depoly -> {
                 when (msg.state) {
                     EngineMessage.Depoly.State.Start -> state.initialized = false
+                    // native 部署结果：Success/Failure 到达时完成部署作业
+                    // 等待的 outcome（无 waiter 时为空操作）。Failure 除
+                    // 完成 outcome 外还做两件 waiter 无关的事：标记单发
+                    // 补跑（下次键盘出现时补一次），以及投递待显示通知
+                    // （设置侧部署/同步完成时同款通道，下次出现时显示；
+                    // 即时 Toast 归各 waiter 调用方——FAB/菜单/切换/导入
+                    // 在 FAILED 时各自已弹，避免此处再弹一次重复）。
+                    EngineMessage.Depoly.State.Success ->
+                        pendingDeployOutcome?.complete(true)
+                    EngineMessage.Depoly.State.Failure -> {
+                        pendingDeployOutcome?.complete(false)
+                        pendingRedeploy.markFailed()
+                        context?.let {
+                            RimeSyncPrefs.postNotice(
+                                it,
+                                it.getString(R.string.fab_deploy_failed),
+                            )
+                        }
+                    }
                     EngineMessage.Depoly.State.Finish -> {
                         state.initialized = true
                         val triggerHook = !state.initHookTriggered
@@ -2045,6 +2066,22 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     // 部署等待互斥：同一时刻只允许一个 deployAndAwait 持有。
     private val deployMutex = Mutex()
 
+    // 部署失败单发补跑（见 PendingRedeploy）：native 失败处理器与
+    // 部署作业失败路径标记，下次键盘出现时消费一次 deployAndAwait。
+    private val pendingRedeploy = PendingRedeploy()
+
+    // 本次部署作业等待的 native 成功/失败通知：部署作业在 deploy()
+    // 前创建并挂在这里，Depoly 处理器在 Success/Failure 到达时完成它；
+    // 无 waiter 的 reload/initialize 路径不挂，处理器完成调用为空操作。
+    @Volatile
+    private var pendingDeployOutcome: CompletableDeferred<Boolean>? = null
+
+    /** 下次键盘出现时消费一次失败补跑：true = 本次出现应补跑一次。 */
+    fun consumePendingRedeploy(): Boolean = pendingRedeploy.consumeForRetry()
+
+    /** 补跑结束（无论成败）后解除补跑期抑制：补跑自身的失败不续订。 */
+    fun finishRedeployRetry() = pendingRedeploy.finishRetry()
+
     /**
      * 执行一次全量部署并等待其返回。
      * - timeoutMs <= 0 时直接返回 FAILED，不启动部署。
@@ -2066,7 +2103,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * - 置位 EngineDeployState.setRunning(true)，
      *   标志由部署作业收尾复位（先复位再 complete，等待方醒来时状态已一致）。
      * - 通过 sendDeployJob 串行投递任务：deploy() -> joinMaintenanceThread() ->
-     *   合成 Deploy Finish（与 Reload 同一收尾）。
+     *   等 native 成功/失败通知（上限 DEPLOY_OUTCOME_TIMEOUT_MS，超时按未知
+     *   走既有成功路径）-> 失败不合成 Finish、返回 FAILED 并记单发补跑
+     *   （下次键盘出现时补一次）；成功走孤儿对齐＋合成 Deploy Finish
+     *   （与 Reload 同一收尾）。此前 join 后无条件合成 Finish，native
+     *   维护失败也被报成成功（Failure 通知经转换后被 Depoly 处理器丢弃）。
      * - 超时孤儿对齐（案-O5）：作业体在首次部署编完后、发 Finish 之前，
      *   若等待方已放弃且指针目录＋镜像快照相对作业启动时变了（调用方
      *   超时回滚：切换/导入回滚指针＋镜像，管理页回滚同目录 custom＋
@@ -2158,34 +2199,58 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 循环若不捕获则整个 jobs 队列陪葬；记 FAILED 已足够诚实）。
                         val result = try {
                             val targetBefore = readDeployTarget()
+                            // native 结果挂钩：deploy() 前挂好，Success/
+                            // Failure 通知到达时 Depoly 处理器完成它；
+                            // join 返回前通知已入队，等待只是跨分发线程
+                            // 的毫秒级异步，超时按未知处理（走既有成功路径）。
+                            val outcomeDeferred = CompletableDeferred<Boolean>()
+                            pendingDeployOutcome = outcomeDeferred
                             deploy()
                             joinMaintenanceThread()
-                            // 孤儿对齐（案-O5）：等待方已放弃（超时/取消
-                            // 分支已置 waitingGaveUp，置位发生在调用方
-                            // 回滚之前）且尾快照变了，才重编当前指针
-                            // 目录；否则 native 表即当前目标，不多编
-                            // 一次。重编失败走与首编相同的 FAILED 映
-                            // 射、不发 Finish（原失败路径同口径）。
-                            if (orphanDeployNeedsRealign(
-                                    waitingGaveUp.get(), targetBefore, readDeployTarget()
-                                )
-                            ) {
-                                Timber.w(
-                                    "Orphan deploy target changed during wait; " +
-                                        "redeploying current dir to realign native schemas"
-                                )
-                                deploy()
-                                joinMaintenanceThread()
+                            val nativeOutcome = withTimeoutOrNull(DEPLOY_OUTCOME_TIMEOUT_MS) {
+                                outcomeDeferred.await()
                             }
-                            actions.send(
-                                Action.RimeMessage(
-                                    RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                            if (nativeOutcome == false) {
+                                // native 维护失败：不合成 Finish（原失败路径
+                                // 同口径：initialized 保持 Start 置的 false，
+                                // 不刷新方案表），返回 FAILED；补跑标记已由
+                                // Failure 处理器记下，此处幂等再记一次。
+                                Timber.w("Deploy failed natively; no Finish synthesized")
+                                pendingRedeploy.markFailed()
+                                DeployAwaitResult.FAILED
+                            } else {
+                                // 孤儿对齐（案-O5）：等待方已放弃（超时/取消
+                                // 分支已置 waitingGaveUp，置位发生在调用方
+                                // 回滚之前）且尾快照变了，才重编当前指针
+                                // 目录；否则 native 表即当前目标，不多编
+                                // 一次。重编失败走与首编相同的 FAILED 映
+                                // 射、不发 Finish（原失败路径同口径）。
+                                if (orphanDeployNeedsRealign(
+                                        waitingGaveUp.get(), targetBefore, readDeployTarget()
+                                    )
+                                ) {
+                                    Timber.w(
+                                        "Orphan deploy target changed during wait; " +
+                                            "redeploying current dir to realign native schemas"
+                                    )
+                                    deploy()
+                                    joinMaintenanceThread()
+                                }
+                                actions.send(
+                                    Action.RimeMessage(
+                                        RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                                    )
                                 )
-                            )
-                            DeployAwaitResult.COMPLETED
+                                DeployAwaitResult.COMPLETED
+                            }
                         } catch (e: CancellationException) {
+                            // 作业执行失败（非入口守门失败）：与 native 失败
+                            // 同口径记单发补跑；作用域已死时标记随引擎实例
+                            // 销毁而失效，不产生跨实例补跑。
+                            pendingRedeploy.markFailed()
                             DeployAwaitResult.FAILED
                         } catch (e: Exception) {
+                            pendingRedeploy.markFailed()
                             DeployAwaitResult.FAILED
                         }
                         // 标志先于 complete 复位：等待方醒来时状态已一致，
@@ -2346,6 +2411,36 @@ internal fun deployGateAllows(
     orphanRunning: Boolean,
     scopeActive: Boolean,
 ): Boolean = scopeActive && !running && !orphanRunning
+
+/** 部署作业等待 native 成功/失败通知的上限：通知在 join 返回前已入队，分发只是毫秒级异步；超时按未知处理（走既有成功路径，不把通知丢失误报为失败）。 */
+private const val DEPLOY_OUTCOME_TIMEOUT_MS = 10_000L
+
+/**
+ * 部署失败单发补跑：失败标记 → 下次键盘出现时恰好消费一次补跑；
+ * 补跑自身的失败不得续订（否则每次出现都重编），补跑结束后的新失败
+ * 仍可再次标记。两字段同锁：先标记后消费的竞态下消费清标记、
+ * 补跑期内标记被抑制，两种顺序都只补跑一次。
+ */
+internal class PendingRedeploy {
+    private val lock = Any()
+    private var pending = false
+    private var retryInProgress = false
+
+    fun markFailed() = synchronized(lock) {
+        if (!retryInProgress) pending = true
+    }
+
+    fun consumeForRetry(): Boolean = synchronized(lock) {
+        val had = pending
+        pending = false
+        if (had) retryInProgress = true
+        had
+    }
+
+    fun finishRetry() = synchronized(lock) {
+        retryInProgress = false
+    }
+}
 
 /**
  * deployAndAwait 等待超时的结果判定：作用域已死说明部署作业已死
