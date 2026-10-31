@@ -1025,7 +1025,7 @@ private fun FabAction(
                         blur(2.dp.toPx())
                         lens(12.dp.toPx(), 24.dp.toPx())
                     },
-                )
+                ),
             contentAlignment = Alignment.Center,
         ) {
             if (running) {

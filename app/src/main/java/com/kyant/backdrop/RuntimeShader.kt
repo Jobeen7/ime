@@ -32,6 +32,7 @@ interface RuntimeShader {
 
     fun setIntUniform(name: String, value: Int)
     fun setIntUniform(name: String, value1: Int, value2: Int)
+    fun setIntUniform(name: String, value1: Int, value2: Int, value3: Int)
     fun setIntUniform(name: String, value1: Int, value2: Int, value3: Int, value4: Int)
     fun setIntUniform(name: String, values: IntArray)
 

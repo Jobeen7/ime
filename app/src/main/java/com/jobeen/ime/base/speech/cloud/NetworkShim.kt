@@ -53,7 +53,7 @@ interface CancellableTransport {
 
 class OkHttpNetworkTransport(
     private val client: OkHttpClient = defaultClient(),
-    private val maxResponseBytes: Long = NetworkShim.MAX_RESPONSE_BODY,
+    private val maxResponseBytes: Long = NetworkShim.MAX_RESPONSE_BODY.toLong(),
 ) : NetworkTransport, CancellableTransport {
 
     /** 在途 HTTP 调用（供 kill／stop 从调用线程取消，Call.cancel 线程安全）。 */
