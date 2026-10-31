@@ -2,6 +2,8 @@ package com.jobeen.ime.engine
 
 import android.content.Context
 import com.jobeen.ime.ImeApplication
+import com.jobeen.ime.base.isEngineSetupGated
+import com.jobeen.ime.base.CrashTrap
 import com.jobeen.ime.base.log.AppLogBuffer
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.ResourceExtractorUtil
@@ -106,8 +108,20 @@ object AppStartup {
     }
 
     private fun setupEngine(context: Context) {
+        // 崩溃循环熔断：10 秒内 ≥3 次崩溃后，10 分钟内不再建引擎
+        // （只拦引擎启动；资源失败时本步本就跳过，熔断拦住时键盘状态
+        // 与该情形一致；设置页等不依赖引擎的入口不受影响）。
+        if (isEngineSetupGated(context)) {
+            android.util.Log.w("AppStartup", "Engine setup gated by crash breaker; retry after cooldown")
+            Timber.w("Engine setup gated by crash breaker; retry after cooldown")
+            return
+        }
         val app = context.applicationContext as ImeApplication
         val engine = EngineFactory.switchTo(context, RimeEngine::class)
+        // Native 信号取证：switchTo 已触达 Rime 伴生对象、.so 已加载，
+        // 此时安装覆盖后续全部 Native 代码（同进程信号全局，含语音 .so）。
+        // 安装失败仅丢 Native 取证，不影响引擎启动。
+        CrashTrap.installNativeHandler(context)
         engine.observeMessages(app.applicationScope) {
             KeyboardStateManager.handleEngineMessage(it)
         }

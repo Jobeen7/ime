@@ -103,5 +103,10 @@
 -keep class com.jobeen.ime.engine.rime.data.opencc.OpenCCDictManager { *; }
 -keep class com.jobeen.ime.engine.rime.data.userdict.UserDictManager { *; }
 -keep class com.jobeen.ime.base.marisa.MarisaJNI { *; }
+# Native 信号处理器入口：CrashTrap.installNativeCrashHandler ↔
+# Java_com_jobeen_ime_base_CrashTrap_installNativeCrashHandler，类名与方法名
+# 任一被改都会在 setupEngine 时抛 UnsatisfiedLinkError（被 runCatching 兜住，
+# 只丢 Native 取证），故整类保留。
+-keep class com.jobeen.ime.base.CrashTrap { *; }
 # 云端语音脚本引擎（纯 Java 实现，解释执行，不生成类；正式包防 R8 误删其反射入口）
 -keep class org.mozilla.javascript.** { *; }

@@ -6,11 +6,15 @@
 
 #include <rime_api.h>
 
+#include <csignal>
+#include <ctime>
 #include <cstdlib>
+#include <fcntl.h>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <tuple>
+#include <unistd.h>
 #include <vector>
 
 #include "jni_env.h"
@@ -309,7 +313,115 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *) {
     return JNI_VERSION_1_6;
 }
 
+// ---- Native crash evidence (CrashTrap companion) ----
+// Minimal async-signal-safe handler: appends one journal line
+// "<epochMs> native:<signum>:<faultAddrHex>\n" to a pre-opened fd (the same
+// crash_journal.txt the Java handler appends to with O_APPEND), then
+// restores the default handler and re-raises so the process dies exactly
+// as it would without this handler. It NEVER returns to the faulting code
+// and NEVER swallows the crash: a native crash still terminates the
+// process by its signal (tombstone included); this handler only adds one
+// evidence line for the crash-loop breaker. No backtrace: backtrace() is
+// not async-signal-safe. No malloc/stdio/JNI inside the handler, and no
+// sprintf anywhere on this path (hand-rolled digit conversion only).
+// Runs on a dedicated alternate stack (sigaltstack + SA_ONSTACK) so a
+// stack-overflow fault can still record its line.
+namespace {
+
+int g_crash_journal_fd = -1;
+
+// Fixed alternate stack: 16 KiB, comfortably above MINSIGSTKSZ and far
+// more than the ~40-byte journal line plus call frames need.
+char g_crash_alt_stack[16384];
+
+void crash_write_all(const char *buf, int len) {
+    while (len > 0) {
+        ssize_t n = ::write(g_crash_journal_fd, buf, static_cast<size_t>(len));
+        if (n <= 0) return;
+        buf += n;
+        len -= static_cast<int>(n);
+    }
+}
+
+int crash_append_u64(char *buf, int pos, unsigned long long value, int base) {
+    char tmp[32];
+    int digits = 0;
+    if (value == 0) {
+        tmp[digits++] = '0';
+    } else {
+        while (value > 0) {
+            int d = static_cast<int>(value % static_cast<unsigned long long>(base));
+            tmp[digits++] = static_cast<char>(d < 10 ? '0' + d : 'a' + d - 10);
+            value /= static_cast<unsigned long long>(base);
+        }
+    }
+    for (int i = digits - 1; i >= 0; --i) buf[pos++] = tmp[i];
+    return pos;
+}
+
+void native_crash_handler(int sig, siginfo_t *info, void *) {
+    if (g_crash_journal_fd >= 0) {
+        struct timespec ts;
+        long long ms = 0;
+        if (::clock_gettime(CLOCK_REALTIME, &ts) == 0) {
+            ms = static_cast<long long>(ts.tv_sec) * 1000LL + ts.tv_nsec / 1000000LL;
+        }
+        char buf[128];
+        int pos = 0;
+        pos = crash_append_u64(buf, pos, static_cast<unsigned long long>(ms), 10);
+        const char *mid = " native:";
+        for (int i = 0; mid[i] != '\0'; ++i) buf[pos++] = mid[i];
+        pos = crash_append_u64(buf, pos, static_cast<unsigned long long>(sig), 10);
+        buf[pos++] = ':';
+        pos = crash_append_u64(
+            buf, pos,
+            reinterpret_cast<unsigned long long>(info ? info->si_addr : nullptr), 16);
+        buf[pos++] = '\n';
+        crash_write_all(buf, pos);
+    }
+    struct sigaction sa;
+    ::sigemptyset(&sa.sa_mask);
+    sa.sa_handler = SIG_DFL;
+    sa.sa_flags = 0;
+    ::sigaction(sig, &sa, nullptr);
+    ::raise(sig);
+    // raise() with the default disposition must terminate; if it ever
+    // returns, exit immediately rather than resuming the faulting code.
+    ::_exit(128 + sig);
+}
+
+}  // namespace
+
 extern "C" {
+
+JNIEXPORT jboolean JNICALL
+Java_com_jobeen_ime_base_CrashTrap_installNativeCrashHandler(
+        JNIEnv *env, jclass, jstring journal_path) {
+    jni::StringChars path(env, journal_path);
+    if (g_crash_journal_fd >= 0) {
+        ::close(g_crash_journal_fd);
+        g_crash_journal_fd = -1;
+    }
+    int fd = ::open(path.get(), O_WRONLY | O_CREAT | O_APPEND, 0600);
+    if (fd < 0) return JNI_FALSE;
+    g_crash_journal_fd = fd;
+    stack_t ss;
+    ss.ss_sp = g_crash_alt_stack;
+    ss.ss_flags = 0;
+    ss.ss_size = sizeof(g_crash_alt_stack);
+    ::sigaltstack(&ss, nullptr);
+    struct sigaction sa;
+    ::sigemptyset(&sa.sa_mask);
+    sa.sa_sigaction = native_crash_handler;
+    sa.sa_flags = SA_SIGINFO | SA_ONSTACK;
+    const int signals[] = {SIGSEGV, SIGABRT, SIGBUS, SIGILL, SIGFPE};
+    for (int sig : signals) {
+        // Partial install is still useful (other signals covered);
+        // keep going rather than failing the whole install.
+        ::sigaction(sig, &sa, nullptr);
+    }
+    return JNI_TRUE;
+}
 
 JNIEXPORT void JNICALL
 Java_com_jobeen_ime_engine_rime_core_Rime_bootstrap(

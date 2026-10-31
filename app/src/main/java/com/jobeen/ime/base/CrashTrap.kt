@@ -77,23 +77,55 @@ object CrashTrap {
                     }
                     (info.versionName ?: "unknown") to code
                 }.getOrElse { "unknown" to -1L }
+                val procName = currentProcessName(appContext)
+                val nowMs = System.currentTimeMillis()
                 val text = buildString {
                     append(
                         crashHeader(
                             thread.name,
-                            System.currentTimeMillis(),
-                            currentProcessName(appContext),
+                            nowMs,
+                            procName,
                             versionName,
                             versionCode,
                         ),
                     )
                     append(writer.toString())
                 }
-                crashFile(appContext).writeText(text)
+                // 有界落盘：先轮转（旧当前→.1、.1→.2），再写截断后的新当前，
+                // 最后向崩溃日志追加一行（供循环熔断计数；Native 信号崩溃
+                // 也写同一日志，见 installNativeHandler）。
+                val dir = crashDir(appContext.filesDir)
+                dir.mkdirs()
+                val name = crashFileName(procName)
+                rotateCrashFiles(dir, name)
+                File(dir, name).writeText(truncateCrashText(text))
+                appendCrashJournal(File(dir, JOURNAL_FILE_NAME), nowMs, "java")
             }
             previous?.uncaughtException(thread, throwable)
         }
     }
+
+    /**
+     * 安装 Native 信号取证处理器（best-effort：失败只丢 Native 取证，
+     * 不影响 Java 捕获与调用方流程）。须在引擎 .so 已加载后调用
+     * （AppStartup.setupEngine 在 switchTo 之后调）；处理器本身只向
+     * 预开的日志 fd 写信号号 + 故障地址，随后恢复默认处理器并重发信号，
+     * 进程仍按原样死于该信号，绝不吞崩溃。
+     */
+    fun installNativeHandler(context: Context): Boolean {
+        val filesDir = context.filesDir ?: return false
+        return runCatching {
+            val dir = crashDir(filesDir)
+            dir.mkdirs()
+            System.loadLibrary("rime_jni")
+            installNativeCrashHandler(File(dir, JOURNAL_FILE_NAME).absolutePath)
+        }.onFailure {
+            android.util.Log.w("CrashTrap", "Native crash handler install failed", it)
+        }.getOrDefault(false)
+    }
+
+    /** Native 信号处理器入口（rime_engine.cc）：名须与 JNI 符号一致，见 proguard keep。 */
+    private external fun installNativeCrashHandler(journalPath: String): Boolean
 
     /**
      * 读最近一次崩溃记录（crash/ 子目录的全部进程文件里取修改时间
@@ -116,10 +148,16 @@ object CrashTrap {
     fun readPendingCrash(context: Context): String? =
         readPendingCrashInfo(context)?.text
 
-    /** 清除全部崩溃记录（crash/ 子目录内的全部进程文件） */
+    /**
+     * 清除全部崩溃记录（crash/ 子目录内符合崩溃文件名的文件，含轮转备份）。
+     * 崩溃日志与熔断 trip 不在此列：它们是熔断机制的状态，清日志不应
+     * 顺带解除一次进行中的熔断冷却。
+     */
     fun clearPendingCrashes(context: Context) {
         val filesDir = context.filesDir ?: return
-        crashDir(filesDir).listFiles()?.forEach { it.delete() }
+        crashDir(filesDir).listFiles { file ->
+            file.isFile && isCrashFileName(file.name)
+        }?.forEach { it.delete() }
     }
 
     /** 文件名是否为崩溃记录（现行按进程命名） */
@@ -130,13 +168,8 @@ object CrashTrap {
     internal fun crashFileName(processName: String): String =
         FILE_PREFIX + sanitize(processName) + FILE_SUFFIX
 
-    private fun crashDir(filesDir: File): File = File(filesDir, CRASH_DIR_NAME)
-
-    private fun crashFile(context: Context): File {
-        val dir = crashDir(context.filesDir)
-        dir.mkdirs()
-        return File(dir, crashFileName(currentProcessName(context)))
-    }
+    /** 崩溃子目录（供 CrashBreaker 的日志/熔断文件共用同一目录）。 */
+    internal fun crashDir(filesDir: File): File = File(filesDir, CRASH_DIR_NAME)
 
     /** 进程名里的冒号等字符换成下划线，保证文件名在各文件系统上合法 */
     private fun sanitize(processName: String): String =

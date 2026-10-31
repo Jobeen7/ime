@@ -167,7 +167,9 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
                 entries = entries,
             )
             if (pendingCrash != null) {
-                txt += "\n\n=== 最近崩溃 ===\n" + pendingCrash.text
+                // 导出侧同样截断：新记录写侧已 cap，但旧版落盘的超长记录仍可能被导出。
+                txt += "\n\n=== 最近崩溃 ===\n" +
+                    com.jobeen.ime.base.truncateCrashText(pendingCrash.text)
             }
             step = "write-zip"
             // 落盘必须进 cacheDir/shared/（file_paths.xml 唯一覆盖诊断 zip 的根）；
