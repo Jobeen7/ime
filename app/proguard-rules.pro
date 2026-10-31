@@ -50,11 +50,10 @@
 # Rhino optimizer 引用 JDK 专属 jdk.dynalink（Android 无此包，JVM invokedynamic 路径，运行时不可达），加 dontwarn 即可
 -dontwarn jdk.dynalink.**
 
-# 引擎实现构造器保留（EngineFactory 已改直接构造，此为双保险，防 R8 删无参构造）
--keep class * implements com.jobeen.ime.engine.IEngine {
-    <init>();
-}
-
+# （Z4 已删）引擎实现构造器保留：原为“双保险”，但 EngineFactory
+# 已是直接构造（RimeEngine::class -> RimeEngine()），R8 可达性分析
+# 本就保留该构造器；删后由发布构建的 mapping + dex 实测验证
+# （RimeEngine 的 <init> 仍在），失败则恢复本条。
 # ===== Jime JNI 反射保留规则（jni_env.h:166-222，FindClass + GetMethodID）=====
 # R8 会改名/删除这些"看起来没被调用"的构造器，GetMethodID 返回 null 即 native 崩溃
 -keep class com.jobeen.ime.engine.rime.core.Rime {
