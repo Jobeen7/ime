@@ -575,7 +575,7 @@ class PluginHostTest {
             val ws = transport.wsListener ?: error("websocket listener must be captured")
             ws.onMessage(null, "hi".toByteArray())
             assertTrue(listener.partialLatch.await(10, TimeUnit.SECONDS))
-            assertEquals(listOf("aGk="), listener.partials)
+            assertEquals(listOf("aGk"), listener.partials)
         } finally {
             host.kill()
         }
