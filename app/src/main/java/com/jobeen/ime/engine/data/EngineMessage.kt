@@ -17,6 +17,12 @@ sealed class EngineMessage {
         val total: Int = -1,
         /** true 表示这是分页补取的追加页，UI 应并入当前列表而非整表替换 */
         val append: Boolean = false,
+        /**
+         * 帧版本号：首屏取 restoreCandidates 的 requestId，追加页取批次号，
+         * 未版本化（合成帧如清空、联想）缺省 0。消费侧凭它丢弃迟到旧帧；
+         * 追加页不走 setCandidates，版本号不与首屏混比。
+         */
+        val revision: Long = 0L,
     ) : EngineMessage() {}
 
     data class Status(val isComposing: Boolean = false) : EngineMessage()
@@ -94,3 +100,11 @@ internal fun candidatesContentEqual(
             x.comment == y.comment && x.type == y.type
     }
 }
+
+/**
+ * 候选帧版本号放行判定：revision 0 = 未版本化，恒放行（且调用方不
+ * 推进已应用版本号）；其余仅当严格大于已应用版本号时放行——等于
+ * （重复投递）与小于（迟到旧帧）一律丢弃。
+ */
+internal fun shouldApplyCandidateFrame(revision: Long, lastAppliedRevision: Long): Boolean =
+    revision <= 0L || revision > lastAppliedRevision

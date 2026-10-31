@@ -1019,7 +1019,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             is Action.CandidatesReady -> {
                 if (action.requestId == state.latestCandidateRequestId.get()) {
-                    emitMessage(action.message)
+                    // 首屏版本号：取 restoreCandidates 的 requestId。
+                    // 消费侧凭它丢弃迟到旧帧；追加页不走本通道，版本号
+                    // 另取批次号（见 loadMoreCandidates），两路不混比。
+                    emitMessage(action.message.copy(revision = action.requestId))
                 }
             }
 
@@ -1670,6 +1673,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             page = 0,
                             total = start,
                             append = true,
+                            revision = batch,
                         )
                     )
                     return@sendJob
@@ -1708,6 +1712,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             page = 0,
                             total = candidateBatchTotal,
                             append = true,
+                            revision = batch,
                         )
                     )
                 }

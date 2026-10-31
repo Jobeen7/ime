@@ -51,8 +51,12 @@ class KeyboardWindow(
         view.keyActionListener = listener
     }
 
-    fun setCandidates(list: List<EngineMessage.Candidate>, hasMore: Boolean = false) {
-        view.setCandidates(list, hasMore)
+    fun setCandidates(
+        list: List<EngineMessage.Candidate>,
+        hasMore: Boolean = false,
+        revision: Long = 0L,
+    ) {
+        view.setCandidates(list, hasMore, revision)
     }
 
     /** 剪贴板搜索态截获上屏文本，转发给面板决定是否消费。 */

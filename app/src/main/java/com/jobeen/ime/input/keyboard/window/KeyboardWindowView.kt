@@ -43,6 +43,7 @@ import com.jobeen.ime.input.panel.toolbar.ToolbarUserStore
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.candidatesContentEqual
+import com.jobeen.ime.engine.data.shouldApplyCandidateFrame
 import com.jobeen.ime.skin.model.DynamicTextSource
 import com.jobeen.ime.input.keyboard.impl.EmojiKeyboard
 import com.jobeen.ime.skin.diag.DiagLog
@@ -1232,7 +1233,24 @@ class KeyboardWindowView(
     private var lastCandidateList: List<EngineMessage.Candidate>? = null
     private var lastCandidateHasMore: Boolean = false
 
-    fun setCandidates(list: List<EngineMessage.Candidate>, hasMore: Boolean = false) {
+    // 已应用的首屏候选帧版本号（-1 = 尚未应用任何版本化帧）：
+    // 窗口生命周期内 requestId 单调递增，迟到旧帧凭它丢弃。
+    private var lastAppliedCandidateRevision: Long = -1L
+
+    fun setCandidates(
+        list: List<EngineMessage.Candidate>,
+        hasMore: Boolean = false,
+        revision: Long = 0L,
+    ) {
+        // 版本号先行：旧帧（revision <= 已应用）直接丢弃；revision 0
+        // = 未版本化（合成帧如清空、联想），恒放行且不推进版本号。
+        // 版本号通过后再比内容（P2）：内容等价帧同样丢弃。
+        if (!shouldApplyCandidateFrame(revision, lastAppliedCandidateRevision)) {
+            return
+        }
+        if (revision > 0L) {
+            lastAppliedCandidateRevision = revision
+        }
         // 无变化帧丢弃：同一候选表重复分发时跳过面板重绘（末尾无条件
         // invalidate）、动态文本推送与行内联想刷新——每键都有的开销。
         // 组字气泡的显隐由 DynamicPreedit 路径负责，本处不另补 show。

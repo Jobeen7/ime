@@ -68,7 +68,7 @@ class MessageHandler(
                     window?.appendCandidates(message.list, message.total)
                 } else {
                     val hasMore = message.total < 0 || message.list.size < message.total
-                    window?.setCandidates(message.list, hasMore)
+                    window?.setCandidates(message.list, hasMore, message.revision)
                 }
             }
 
