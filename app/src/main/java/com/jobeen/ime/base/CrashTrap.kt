@@ -37,6 +37,24 @@ object CrashTrap {
         val occurredAtMs: Long,
     )
 
+    /**
+     * 崩溃记录头行：版本号随崩溃落盘，读诊断包时一眼区分新旧崩溃
+     * （2026-10-31 观察项：旧记录无版本号，曾被误认成当前版本崩溃）。
+     * 旧记录无此行时读侧不做任何假设，正文原样展示。
+     */
+    internal fun crashHeader(
+        threadName: String,
+        timeMs: Long,
+        processName: String,
+        versionName: String,
+        versionCode: Long,
+    ): String = buildString {
+        append("thread: ").append(threadName).append('\n')
+        append("time: ").append(timeMs).append('\n')
+        append("process: ").append(processName).append('\n')
+        append("version: ").append(versionName).append(" (").append(versionCode).append(')').append('\n')
+    }
+
     fun install(context: Context) {
         val appContext = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
@@ -48,10 +66,27 @@ object CrashTrap {
                 // 返回空串，文件里会只剩 thread/time 两行
                 val writer = StringWriter()
                 PrintWriter(writer).use { throwable.printStackTrace(it) }
+                // 版本号取不到时不挡崩溃落盘：行照写、值标 unknown
+                val (versionName, versionCode) = runCatching {
+                    @Suppress("DEPRECATION")
+                    val info = appContext.packageManager.getPackageInfo(appContext.packageName, 0)
+                    val code = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        info.longVersionCode
+                    } else {
+                        info.versionCode.toLong()
+                    }
+                    (info.versionName ?: "unknown") to code
+                }.getOrElse { "unknown" to -1L }
                 val text = buildString {
-                    append("thread: ").append(thread.name).append('\n')
-                    append("time: ").append(System.currentTimeMillis()).append('\n')
-                    append("process: ").append(currentProcessName(appContext)).append('\n')
+                    append(
+                        crashHeader(
+                            thread.name,
+                            System.currentTimeMillis(),
+                            currentProcessName(appContext),
+                            versionName,
+                            versionCode,
+                        ),
+                    )
                     append(writer.toString())
                 }
                 crashFile(appContext).writeText(text)

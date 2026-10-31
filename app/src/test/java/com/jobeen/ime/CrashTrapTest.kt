@@ -27,6 +27,24 @@ class CrashTrapTest {
     }
 
     @Test
+    fun crashHeader_includesVersionLineAfterProcess() {
+        // 2026-10-31 观察项：崩溃记录须带版本号，否则旧崩溃
+        // 在诊断包里会被误认成当前版本的崩溃
+        val header = CrashTrap.crashHeader(
+            threadName = "main",
+            timeMs = 1793282340490L,
+            processName = "com.jobeen.ime",
+            versionName = "1.1.16.6",
+            versionCode = 163L,
+        )
+        assertTrue(header.startsWith("thread: main\n"))
+        assertTrue(header.contains("time: 1793282340490\n"))
+        assertTrue(header.contains("process: com.jobeen.ime\n"))
+        assertTrue(header.contains("version: 1.1.16.6 (163)\n"))
+        assertTrue(header.indexOf("version: ") > header.indexOf("process: "))
+    }
+
+    @Test
     fun isCrashFileName_matchesCurrentNamesOnly() {
         // 原断言：旧版单文件名 last_crash.txt 判 true（兼容读/清）；
         // 新断言（清点 D16）：兼容支已拆，判 false
