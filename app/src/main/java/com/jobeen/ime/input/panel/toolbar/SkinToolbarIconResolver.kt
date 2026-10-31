@@ -82,10 +82,41 @@ object SkinToolbarIconResolver {
         return BitmapDrawable(context.resources, bitmap)
     }
 
-    /** 单文件解码（失败返回 null 并记日志；BitmapFactory 抛异常亦然）。 */
+    /** 图标解码上限（与键图同值；图标只在小尺寸使用，超限即降采样）。 */
+    private const val MAX_ICON_SIDE_PX = 512
+
+    /**
+     * 单文件解码（失败返回 null 并记日志；BitmapFactory 抛异常亦然）。
+     * 两遍式降采样（照抄键图店写法）：先 bounds 探尺寸，再按 2 的幂
+     * 降采样到边长上限内，绝不以原尺寸解码——超大图（如 8192²）
+     * 原尺寸解码会瞬间占数百 MB 内存；OOM 亦捕获，降级为回退
+     * 内置图标（返回 null），不崩进程。
+     */
     internal fun decodeIconFile(file: File, skinId: String, assetId: String): Bitmap? {
         return try {
-            BitmapFactory.decodeFile(file.absolutePath) ?: run {
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(file.absolutePath, bounds)
+            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+                DiagLog.w(
+                    "toolbar", "toolbar_icon_decode_failed",
+                    mapOf(
+                        "skinId" to skinId, "assetId" to assetId,
+                        "errorClass" to "null_bitmap",
+                    ),
+                )
+                return null
+            }
+            var sample = 1
+            while (bounds.outWidth / sample > MAX_ICON_SIDE_PX ||
+                bounds.outHeight / sample > MAX_ICON_SIDE_PX
+            ) {
+                sample *= 2
+            }
+            val options = BitmapFactory.Options().apply {
+                inSampleSize = sample
+                inPreferredConfig = Bitmap.Config.ARGB_8888
+            }
+            BitmapFactory.decodeFile(file.absolutePath, options) ?: run {
                 DiagLog.w(
                     "toolbar", "toolbar_icon_decode_failed",
                     mapOf(
@@ -95,6 +126,16 @@ object SkinToolbarIconResolver {
                 )
                 null
             }
+        } catch (error: OutOfMemoryError) {
+            DiagLog.w(
+                "toolbar", "toolbar_icon_decode_failed",
+                mapOf(
+                    "skinId" to skinId, "assetId" to assetId,
+                    "errorClass" to "OutOfMemoryError",
+                ),
+                throwable = error,
+            )
+            null
         } catch (error: Exception) {
             DiagLog.w(
                 "toolbar", "toolbar_icon_decode_failed",

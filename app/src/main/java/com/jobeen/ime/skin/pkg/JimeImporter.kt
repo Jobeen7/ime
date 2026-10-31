@@ -356,7 +356,13 @@ class JimeImporter(
         if (backgroundSpec != null) {
             val assetContent = manifest.byId(backgroundSpec.assetId)
             val bytes = assetContent?.let { byPath[it.path]?.bytes }
-            val size = bytes?.let { imageProbe.bounds(it) }
+            val size = bytes?.let {
+                try {
+                    imageProbe.bounds(it)
+                } catch (oom: OutOfMemoryError) {
+                    null
+                }
+            }
             when {
                 bytes == null || size == null -> {
                     backgroundDropped = true
@@ -376,6 +382,7 @@ class JimeImporter(
             }
         }
         checkAudioAssets(manifest, byPath, issues)
+        checkImageAssets(manifest, byPath, issues, backgroundSpec?.assetId)
 
         // ---- 身份/冲突判定（七.4） ----
         val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
@@ -499,21 +506,31 @@ class JimeImporter(
                             .roundToInt().coerceAtLeast(1)
                         val scaledH = (ctx.targetHeightPx * policy.backgroundScale)
                             .roundToInt().coerceAtLeast(1)
-                        val prepared = backgroundPreparer.prepare(
-                            BackgroundPreparer.Request(
-                                assetBytes = assetBytes,
-                                assetSha256 = background.assetSha256,
-                                genDir = skinDir,
-                                targetWidthPx = scaledW,
-                                targetHeightPx = scaledH,
-                                blurRadiusDp = background.blurRadius,
-                                imageAdjust = background.imageAdjust,
-                                overlayColorArgb = snapshotForBackground.colorScheme.background,
-                                overlayAlpha = background.overlayAlpha,
-                                preparedKey = background.preparedKey,
-                            ),
-                        )
-                        if (prepared is BackgroundPreparer.Result.Failed) {
+                        val prepared = try {
+                            backgroundPreparer.prepare(
+                                BackgroundPreparer.Request(
+                                    assetBytes = assetBytes,
+                                    assetSha256 = background.assetSha256,
+                                    genDir = skinDir,
+                                    targetWidthPx = scaledW,
+                                    targetHeightPx = scaledH,
+                                    blurRadiusDp = background.blurRadius,
+                                    imageAdjust = background.imageAdjust,
+                                    overlayColorArgb = snapshotForBackground.colorScheme.background,
+                                    overlayAlpha = background.overlayAlpha,
+                                    preparedKey = background.preparedKey,
+                                ),
+                            )
+                        } catch (oom: OutOfMemoryError) {
+                            null
+                        }
+                        if (prepared == null) {
+                            backgroundDropped = true
+                            issues += SkinIssue(
+                                "appearance.background", SkinIssue.Kind.RESOURCE_FALLBACK,
+                                "background_prepare_oom",
+                            )
+                        } else if (prepared is BackgroundPreparer.Result.Failed) {
                             backgroundDropped = true
                             issues += SkinIssue(
                                 "appearance.background", SkinIssue.Kind.RESOURCE_FALLBACK,
@@ -639,6 +656,46 @@ class JimeImporter(
             } else {
                 acceptedCount++
                 acceptedBytes += bytes.size
+            }
+        }
+    }
+
+    /**
+     * 图片资产维度校验（背景图除外，背景图已在上文单独校验并有
+     * 专属回退旗标）：清单内全部 IMAGE 类资产逐项探尺寸，不可解码
+     * 或超上限（与背景图同口径：边长 8192、像素 64M）只记
+     * RESOURCE_FALLBACK 报告项，不剔除文件、不中断导入——运行期
+     * 解码已两遍降采样兜底，超大图不会以原尺寸进内存；本校验的
+     * 价值是让报告显式指出哪项资产超限（运行期将以降低分辨率
+     * 使用）。OOM 视为不可解码，继续校验下一项，不崩导入。
+     */
+    private fun checkImageAssets(
+        manifest: PackageManifest,
+        byPath: Map<String, ZipSafeExtractor.ExtractedFile>,
+        issues: MutableList<SkinIssue>,
+        backgroundAssetId: String?,
+    ) {
+        for (content in manifest.assets()) {
+            if (PackageManifest.assetKindOf(content.path) != AssetKind.IMAGE) continue
+            if (content.id == backgroundAssetId) continue
+            val bytes = byPath[content.path]?.bytes
+            val size = bytes?.let {
+                try {
+                    imageProbe.bounds(it)
+                } catch (oom: OutOfMemoryError) {
+                    null
+                }
+            }
+            when {
+                bytes == null || size == null -> issues += SkinIssue(
+                    "image:${content.id}", SkinIssue.Kind.RESOURCE_FALLBACK,
+                    "image_undecodable",
+                )
+                size.width > MAX_IMAGE_SIDE || size.height > MAX_IMAGE_SIDE ||
+                    size.pixels > MAX_IMAGE_PIXELS -> issues += SkinIssue(
+                    "image:${content.id}", SkinIssue.Kind.RESOURCE_FALLBACK,
+                    "image_oversized",
+                )
             }
         }
     }

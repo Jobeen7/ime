@@ -13,6 +13,9 @@ class AppResetTest {
 
     @Test
     fun whitelist_containsAllKnownPrefsAndRejectsUnknown() {
+        // 本表须与全库 PREFS_NAME 逐项对齐（2026-10-31 grep 核查共 20 个，
+        // 含 db_maintenance 与 jime_fab 这两个无 PREFS_NAME 常量项）：
+        // 新增偏好文件时同步更新此表与白名单，有意豁免须注明。
         val expected = setOf(
             "keyboard_settings",
             "schema_settings",
@@ -29,6 +32,11 @@ class AppResetTest {
             "speech_model_prefs",
             "user_dict_sync",
             "db_maintenance",
+            "skin_library",
+            "appearance_settings",
+            "symbol_bar",
+            "cloud_voice",
+            "jime_fab",
         )
         assertEquals(expected, AppReset.RESET_PREFS_NAMES)
         for (name in expected) {

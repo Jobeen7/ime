@@ -79,6 +79,10 @@ object SkinSnapshotProvider {
         synchronized(lock) {
             if (loadAttempted) return
             loadAttempted = true
+            // 先等启动对账收敛（上限 3 秒、超时放行，见 SkinLibrary）：
+            // 否则首个键盘构造会在 PENDING 回退落盘前采纳快照，错过
+            // 回退，直到下次失效或进程重启。等待永不抛。
+            runCatching { runBlocking { SkinLibrary.awaitBootstrap() } }
             val snapshot = runCatching { loadVerified(context) }.getOrNull()
             if (snapshot != null) {
                 installLocked(context, snapshot)

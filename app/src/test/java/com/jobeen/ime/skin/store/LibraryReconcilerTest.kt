@@ -134,6 +134,61 @@ class LibraryReconcilerTest {
     }
 
     @Test
+    fun pendingActiveRollsBackToLastGood_otherSkinsUntouched() = runBlocking {
+        // 启动场景 1 的多皮肤版：s1 待回退、s2 已验证——回退只动 s1，
+        // 不扰动其它皮肤的索引与代次（与单皮肤 A2 区分）。
+        val f = Fixture()
+        val hash1 = f.skinGen("s1", 1)
+        val hash2 = f.skinGen("s1", 2)
+        val hashS2 = f.skinGen("s2", 1)
+        f.store.writeLastGood(LastGoodPointer("s1", hash1, 1))
+        f.store.writeActive(ActiveRecord("s1", hash2, 2, ApplyState.PENDING, 5))
+        val report = f.reconciler.reconcile()
+        assertTrue(report.activeResolution is ActiveResolver.Resolution.RollbackToLastGood)
+        val active = f.active()
+        assertEquals(1, active.generation)
+        assertEquals(hash1, active.hash)
+        assertEquals(ApplyState.VERIFIED, active.state)
+        assertEquals(hashS2, f.indexEntry("s2")!!.hash)
+        assertTrue(f.layout.skinGenDir("s2", 1).exists())
+    }
+
+    @Test
+    fun pendingActiveWithCorruptLastGoodDefaults() = runBlocking {
+        // 启动场景 2：PENDING + 损坏的 Last-Good 文件——指针非 Ok，
+        // 按 RollbackToDefault 回到无皮肤，不崩、不把库当空库
+        // （磁盘代次仍登记在索引内）。
+        val f = Fixture()
+        f.skinGen("s1", 1)
+        val hash2 = f.skinGen("s1", 2)
+        f.layout.lastGoodFile.writeText("{broken")
+        f.store.writeActive(ActiveRecord("s1", hash2, 2, ApplyState.PENDING, 5))
+        val report = f.reconciler.reconcile()
+        assertTrue(report.activeResolution is ActiveResolver.Resolution.RollbackToDefault)
+        assertEquals(null, f.active().skinId)
+        assertTrue(f.indexEntry("s1") != null)
+    }
+
+    @Test
+    fun corruptIndexRebuiltFromDisk_multiSkin() = runBlocking {
+        // 启动场景 3 的多皮肤版：索引损坏、磁盘代次完整——从磁盘
+        // 重建后两皮肤均登记（s2 取最新代次），且不自动生效任一皮肤
+        // （与单皮肤 I4 区分；无 active 记录时对账不凭空写一条，
+        // 故此处断言 Missing 而非空 skinId）。
+        val f = Fixture()
+        val hashS1 = f.skinGen("s1", 1)
+        f.skinGen("s2", 1)
+        val hashS2Gen2 = f.skinGen("s2", 2)
+        f.layout.indexFile.writeText("{broken")
+        val report = f.reconciler.reconcile()
+        assertTrue(report.indexRebuilt)
+        assertEquals(hashS1, f.indexEntry("s1")!!.hash)
+        assertEquals(hashS2Gen2, f.indexEntry("s2")!!.hash)
+        assertTrue(report.activeResolution is ActiveResolver.Resolution.NoSkin)
+        assertTrue(f.store.readActive() is SkinLibraryStore.ReadResult.Missing)
+    }
+
+    @Test
     fun oldGenerationsAreRecycled() = runBlocking {
         val f = Fixture()
         f.skinGen("s1", 1)

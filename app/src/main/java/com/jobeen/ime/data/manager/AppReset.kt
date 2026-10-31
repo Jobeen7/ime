@@ -1,7 +1,9 @@
 package com.jobeen.ime.data.manager
 
 import android.content.Context
+import com.jobeen.ime.base.speech.cloud.PluginStore
 import com.jobeen.ime.base.update.WanxiangUpdateManager
+import com.jobeen.ime.data.App
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.data.DataManager
 import java.io.File
@@ -21,12 +23,15 @@ import kotlinx.coroutines.withContext
  * - WebDAV 绑定清掉（属偏好，随白名单清空而清；同步 UUID 随之作废，
  *   旧远端文件夹不自动删除，下次同步生成新 UUID）
  * - 学习词清零（各目录用户词库 LevelDB 随目录删除而清）
+ * - 皮肤库清掉（skin_library 目录整树删除，与方案目录同序：删方案
+ *   目录之后、清偏好之前，失败即中止、不动偏好）
  *
  * 刻意不动：shared/（内置 Lite 数据住在这里，删了就没兜底）、
  * filesDir（语音纠错词对与语音模型不是方案设置，不在此列）、
  * cacheDir（临时文件）。顺序：先删方案目录根的孩子（失败即中止，
- * 不动偏好），再清偏好、写回启用表，最后重启引擎（新引擎在空
- * 初始目录上启动，shared 层 Lite 即为全部可用方案）。
+ * 不动偏好），再删皮肤库整树（失败即中止，不动偏好），再清偏好、
+ * 写回启用表，最后重启引擎（新引擎在空初始目录上启动，shared 层
+ * Lite 即为全部可用方案）。
  */
 object AppReset {
     /** 内置 Lite 方案集，顺序与默认 default.yaml 的 schema_list 一致。 */
@@ -58,6 +63,13 @@ object AppReset {
         "speech_model_prefs", // ModelDownloader 私有 PREFS_NAME：语音模型
         "user_dict_sync", // UserDictPrefs 私有 PREFS_NAME：用户词同步绑定
         "db_maintenance", // AppDatabase 私有 MAINTENANCE_PREFS：数据库维护
+        // 皮肤 / 外观 / 云端语音 / FAB（审查补齐：此前重置漏清，皮肤
+        // 残留会导致重置后旧皮肤仍生效）
+        "skin_library", // SkinLibraryPrefs 私有 PREFS_NAME：皮肤库偏好（字面值避包循环：同值公开常量在 SkinColorMode，而 SkinColorMode 引用 KeyboardManager）
+        "appearance_settings", // AppAppearance 公开 PREFS_NAME：外观设置（字面值避包循环：AppAppearance 引用 KeyboardManager）
+        "symbol_bar", // SharedPrefsSymbolBarTypeStore 私有 PREFS_NAME：符号栏类型
+        PluginStore.PREFS_NAME, // cloud_voice：云端语音插件凭据与选择
+        "jime_fab", // MainScreen 直写 getSharedPreferences("jime_fab")：FAB 位置与展开态（无 PREFS_NAME 常量）
     )
 
     /** 白名单判定（纯逻辑，可 JVM 单测）：只有白名单内的偏好文件才清空。 */
@@ -68,11 +80,19 @@ object AppReset {
             runCatching {
                 val root = DataManager.schemeDirsRoot
                 val failures = mutableListOf<String>()
-                root.listFiles()?.forEach { child ->
+                // 方案目录恒 mkdirs，故 listFiles() 为 null 只可能是 IO 错误：
+                // 此时不得静默跳过删目录又继续清偏好，直接中止。
+                val children = root.listFiles()
+                    ?: throw IOException("无法列出方案目录")
+                children.forEach { child ->
                     if (!child.deleteRecursively()) failures += child.name
                 }
                 if (failures.isNotEmpty()) {
                     throw IOException("无法清除：${failures.joinToString("、")}")
+                }
+                // 皮肤库整树删除（删方案目录之后、清偏好之前，失败即中止）。
+                if (App.skinLibraryDir.exists() && !App.skinLibraryDir.deleteRecursively()) {
+                    throw IOException("无法清除皮肤库")
                 }
                 val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
                 // 偏好目录存在却列不出文件时不得静默照常清偏好：此时无法

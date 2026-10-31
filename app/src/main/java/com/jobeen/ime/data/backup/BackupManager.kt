@@ -3,6 +3,7 @@ package com.jobeen.ime.data.backup
 import android.content.Context
 import android.os.Build
 import com.jobeen.ime.base.util.appContext
+import com.jobeen.ime.data.App
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.CandidatePrefer
 import com.jobeen.ime.data.database.CandidateSorting
@@ -32,7 +33,7 @@ import javax.crypto.spec.SecretKeySpec
 
 /**
  * 整体备份与还原：设置（全部 SharedPreferences）+ 剪贴板历史 + 常用语 +
- * 选词偏好 + 候选排序，导出为单个口令加密文件（.jbk）。
+ * 选词偏好 + 候选排序 + 皮肤库文件，导出为单个口令加密文件（.jbk）。
  *
  * 加密格式：文件 = 头部 JSONObject 的 UTF-8 字节 + '\n' + 密文。头部含
  * format/version/kdf/iterations/salt/iv，明文可见但不含任何数据；头部
@@ -46,6 +47,11 @@ import javax.crypto.spec.SecretKeySpec
  * 采集（包本身有口令加密），还原时整表跳过回写——服务器地址、账号
  * 口令与同步时刻都是本机配置/状态，不随备份跨设备走（清点 S8 定论，
  * 替代原脱敏＋回填五层规则与密码专用迁移通道）。
+ *
+ * 皮肤库文件（index.json + skins/ + assets/）随包走、合并写回：
+ * 只覆盖同路径文件，不删除备份中没有的现文件；空库不写该段、
+ * 原始字节超 32MB 整段跳过只记日志（不阻塞整包）；旧备份无此段
+ * 时还原不碰现皮肤。写回后重启进程，下次启动对账收敛索引。
  *
  * 还原是整体覆盖，且严格分两段：先把解密后的内容完整解析为内存对象
  * （此阶段零写入，任何结构/类型错误直接拒绝，不留半还原状态），再执行
@@ -202,7 +208,58 @@ object BackupManager {
                 }
             }
         }
+
+        // —— 皮肤库文件：index.json + skins/ + assets/（合并写回，见 KDoc）；
+        // 空库或超限时 collectSkinLibraryJson 返回 null，即不写该段。
+        collectSkinLibraryJson()?.let { root.put("skin_library", it) }
         return root
+    }
+
+    /** 皮肤库备份原始字节上限：超限整段跳过只记日志（仿 input_stats 跳过模式）。 */
+    private const val SKIN_BACKUP_MAX_RAW_BYTES = 32L * 1024 * 1024
+
+    /**
+     * 皮肤库段采集：index.json（文本，读不到则 null）+ skins/ 与 assets/
+     * 下全部文件（相对路径 → Base64）。只认 App.skinLibraryDir 这一唯一
+     * 目录来源；相对路径须过 canonical 校验（防符号链接逃逸）；空库
+     * （无 index 且无文件）返回 null，即不写该段；原始字节总量超
+     * 32MB 整段跳过只记日志（不阻塞整包）。
+     */
+    private fun collectSkinLibraryJson(): JSONObject? {
+        val rootDir = App.skinLibraryDir
+        val indexFile = File(rootDir, "index.json")
+        val indexText = if (indexFile.isFile) {
+            runCatching { indexFile.readText(Charsets.UTF_8) }.onFailure {
+                Timber.w("skin index unreadable, skipped in backup")
+            }.getOrNull()
+        } else {
+            null
+        }
+        val canonicalRoot = runCatching { rootDir.canonicalPath }.getOrNull() ?: return null
+        val filesJson = JSONObject()
+        var totalBytes = 0L
+        for (sub in listOf("skins", "assets")) {
+            val subDir = File(rootDir, sub)
+            if (!subDir.isDirectory) continue
+            for (file in subDir.walkTopDown().filter { it.isFile }.sortedBy { it.path }) {
+                val canonical = runCatching { file.canonicalPath }.getOrNull() ?: continue
+                if (!canonical.startsWith(canonicalRoot + File.separator)) continue
+                val rel = "$sub/" + file.relativeTo(subDir).path.replace(File.separatorChar, '/')
+                if (!isValidSkinRelPath(rel)) continue
+                val bytes = runCatching { file.readBytes() }.getOrNull() ?: continue
+                totalBytes += bytes.size
+                if (totalBytes > SKIN_BACKUP_MAX_RAW_BYTES) {
+                    Timber.w("skin library too large, skipped in backup")
+                    return null
+                }
+                filesJson.put(rel, bytes.toBase64())
+            }
+        }
+        if (indexText == null && filesJson.length() == 0) return null
+        val section = JSONObject()
+        if (indexText != null) section.put("index", indexText)
+        section.put("files", filesJson)
+        return section
     }
 
     private fun encodePrefValue(value: Any): JSONObject {
@@ -372,6 +429,14 @@ object BackupManager {
     }
 
     /** 解析完成、等待写入的还原数据（解析阶段零写入） */
+    /** 皮肤库备份段（null = 旧备份无此段，还原时不碰现皮肤）。 */
+    private data class SkinBackup(
+        /** index.json 文本（null = 备份时无 index 或读不到，还原时不写 index） */
+        val index: String?,
+        /** 相对路径（skins/… 或 assets/…）→ 原始字节（已在解析阶段 Base64 解码） */
+        val files: Map<String, ByteArray>,
+    )
+
     private class ParsedBackup(
         val prefs: Map<String, Map<String, Any>>,
         val clipboard: List<ClipboardRecord>,
@@ -380,6 +445,8 @@ object BackupManager {
         val sortings: List<CandidateSorting>,
         /** 输入统计文件内容（null = 旧备份无此字段，还原时不碰现文件） */
         val inputStatsJson: String?,
+        /** 皮肤库段（null = 旧备份无此字段，还原时不碰现皮肤） */
+        val skinLibrary: SkinBackup?,
     )
 
     /**
@@ -501,6 +568,40 @@ object BackupManager {
                     }
                     raw
                 },
+                // 皮肤库段：无字段 = 旧备份，不碰现皮肤；有字段则相对路径
+                // 逐项白名单校验、Base64 逐项解码，任一非法整包判失败
+                // （解析阶段拦截，不写脏文件）。index 只要求是文本，不
+                // 硬校验其 JSON 结构——损坏索引由下次启动对账重建，
+                // 不值得为此判整包失败；文件内容损坏则无自愈，必须拦截。
+                skinLibrary = if (!root.has("skin_library")) {
+                    null
+                } else {
+                    val section = root.getJSONObject("skin_library")
+                    val index = when (val v = section.opt("index")) {
+                        null -> null
+                        is String -> v
+                        else -> throw BackupException("皮肤备份索引不是文本")
+                    }
+                    val filesJson = when (val v = section.opt("files")) {
+                        null -> JSONObject()
+                        is JSONObject -> v
+                        else -> throw BackupException("皮肤备份文件表不是对象")
+                    }
+                    val files = LinkedHashMap<String, ByteArray>()
+                    val keys = filesJson.keys()
+                    while (keys.hasNext()) {
+                        val rel = keys.next()
+                        if (!isValidSkinRelPath(rel)) {
+                            throw BackupException("皮肤备份包含非法相对路径")
+                        }
+                        files[rel] = when (val v = filesJson.opt(rel)) {
+                            is String -> v.fromBase64()
+                                ?: throw BackupException("皮肤备份文件内容损坏")
+                            else -> throw BackupException("皮肤备份文件内容损坏")
+                        }
+                    }
+                    SkinBackup(index = index, files = files)
+                },
             )
         } catch (e: BackupException) {
             throw e
@@ -516,6 +617,21 @@ object BackupManager {
     private fun isValidPrefsName(name: String): Boolean =
         name.isNotEmpty() && name != "." && name != ".." &&
             PREFS_NAME_PATTERN.matches(name)
+
+    /**
+     * 皮肤备份文件相对路径白名单（解析阶段防穿越）：仅 skins/ 与 assets/
+     * 下的普通文件路径；段为空、含 . / ..、含反斜杠、绝对路径一律拒绝。
+     * index.json 不走此口径（它是段内独立字段，不在 files 表中）。
+     */
+    internal fun isValidSkinRelPath(path: String): Boolean {
+        if (path.isEmpty()) return false
+        if (path.startsWith("/") || path.contains('\\')) return false
+        val parts = path.split('/')
+        if (parts.size < 2) return false
+        if (parts[0] != "skins" && parts[0] != "assets") return false
+        if (parts.any { it.isEmpty() || it == "." || it == ".." }) return false
+        return true
+    }
 
     /** 严格解析单个 prefs 值：未知类型标签或类型不符直接抛错（解析阶段拦截） */
     private fun parsePrefValue(obj: JSONObject): Any = when (obj.optString("t")) {
@@ -632,6 +748,36 @@ object BackupManager {
             tmp.writeText(json, Charsets.UTF_8)
             if (!tmp.renameTo(File(dir, "stats.json"))) {
                 throw BackupException("输入统计写入失败，还原中止")
+            }
+        }
+
+        // —— 皮肤库文件（合并写回，非整表覆盖）：只覆盖备份中同路径的
+        // 文件，不删除备份中没有的现文件；无字段（旧备份）时不碰现
+        // 皮肤。写回后还原流程末尾重启进程，下次启动对账会把磁盘
+        // 孤儿代次重新登记、把损坏索引重建，因此此处不做索引一致性
+        // 校验。临时文件＋改名：中途失败不留半截文件；失败回滚会
+        // 写回旧文件内容，但不删除失败还原中途新增的文件（残留由
+        // 下次启动对账登记，不损坏库）。
+        parsed.skinLibrary?.let { skin ->
+            val rootDir = App.skinLibraryDir
+            runCatching { rootDir.mkdirs() }
+            skin.index?.let { indexText ->
+                val tmp = File(rootDir, "index.json.tmp")
+                tmp.writeText(indexText, Charsets.UTF_8)
+                if (!tmp.renameTo(File(rootDir, "index.json"))) {
+                    throw BackupException("皮肤索引写入失败，还原中止")
+                }
+            }
+            for ((rel, bytes) in skin.files) {
+                // 解析阶段已白名单校验，此处只做落盘（与 prefs 名口径一致：
+                // 输入已在解析阶段全量校验，写入段不再有解析错误）。
+                val target = File(rootDir, rel)
+                runCatching { target.parentFile?.mkdirs() }
+                val tmp = File(target.parentFile, "${target.name}.tmp")
+                tmp.writeBytes(bytes)
+                if (!tmp.renameTo(target)) {
+                    throw BackupException("皮肤文件写入失败（$rel），还原中止")
+                }
             }
         }
     }
