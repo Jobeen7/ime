@@ -17,8 +17,8 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 162
-        versionName = "1.1.16.5"
+        versionCode = 163
+        versionName = "1.1.16.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 应用名/输入法名不写在 strings.xml 里：debug 需要在同一资源名上
@@ -41,6 +41,11 @@ plugins {
     }
 
     packaging {
+        // window-core 与 window-core-jvm
+        // 两个包都带同路径 LICENSE 文本，类不冲突、仅资源文件撞路径，排除即可
+        resources {
+            excludes += "META-INF/androidx/window/window-core/LICENSE.txt"
+        }
         jniLibs {
             useLegacyPackaging = true
             // QNN 运行时已删除：剔除 sherpa-onnx AAR 内随包的 QNN 原生库
