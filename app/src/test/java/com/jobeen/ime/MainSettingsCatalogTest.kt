@@ -159,7 +159,7 @@ class MainSettingsCatalogTest {
         val keys = catalogPages().map { it.key }
         assertEquals(
             listOf(
-                "schema", "scheme_update", "rime", "candidates", "keyboard", "skin",
+                "schema", "scheme_update", "rime", "candidates", "skin", "keyboard",
                 "toolbar", "appearance", "clipboard", "voice", "stats", "userdict",
                 "backup", "files", "about",
             ),
