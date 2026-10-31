@@ -855,6 +855,10 @@ class KeyboardWindowView(
         passwordField = com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(info)
         panel.suppressCopyBanner = passwordField
         panel.view.setExpanded(false)
+        // 隐藏工具栏开关重读点：从设置页回聊天时窗口已挂载、无颜色／
+        // 通知变化，旧三个刷新点（挂载／颜色／通知）都不触发，唯有
+        // onStartInput 必经；在此重读 hideToolbar，开关当次回聊天即生效。
+        refreshToolbarHidden()
         panel.onStartInputView()
         keyboardStateManager.startInput(info)
         videoController.onInputStarted()
