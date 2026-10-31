@@ -5,6 +5,7 @@ package com.jobeen.ime
 import com.jobeen.ime.data.manager.DeployKeyGate
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.awaitSchemasReady
+import com.jobeen.ime.data.manager.isDeployWindow
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -57,6 +58,25 @@ class EngineDeployStateTest {
             EngineDeployState.setRunning(false)
             EngineDeployState.setOrphanRunning(false)
             assertFalse(DeployKeyGate.shouldDrop())
+        } finally {
+            EngineDeployState.setRunning(false)
+            EngineDeployState.setOrphanRunning(false)
+        }
+    }
+
+    @Test
+    fun deployWindow_truthTable() {
+        try {
+            EngineDeployState.setRunning(false)
+            EngineDeployState.setOrphanRunning(false)
+            assertFalse(isDeployWindow())
+            EngineDeployState.setRunning(true)
+            assertTrue(isDeployWindow())
+            EngineDeployState.setRunning(false)
+            EngineDeployState.setOrphanRunning(true)
+            assertTrue(isDeployWindow())
+            EngineDeployState.setRunning(true)
+            assertTrue(isDeployWindow())
         } finally {
             EngineDeployState.setRunning(false)
             EngineDeployState.setOrphanRunning(false)

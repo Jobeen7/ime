@@ -8,6 +8,7 @@ import com.jobeen.ime.engine.rime.data.opencc.OpenCCDictManager
 import com.jobeen.ime.engine.rime.data.userdict.UserDictManager
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.isStorageAvailable
+import com.jobeen.ime.data.manager.isDeployWindow
 import com.jobeen.ime.engine.data.CommandSymbol
 import com.jobeen.ime.engine.data.EngineMessage
 import kotlinx.coroutines.CancellationException
@@ -141,7 +142,12 @@ class Rime : RimeApi, RimeLifecycleOwner {
      * （各调用点本就容忍补取失败）。
      */
     private suspend fun <T> snapshotOnRimeMain(block: suspend () -> T): T? =
-        runCatching {
+        // 部署窗口内不向 rime-main 排队：部署占着 rime-main 时补取要等
+        // 最长 2 秒才超时，逐条 Schema/Option 消息堵住分发线程；直接
+        // 返回 null 等价于补取超时后的既有回落（保留旧缓存、原消息
+        // 转发），只是省掉等待。部署窗口判定见 isDeployWindow。
+        if (isDeployWindow()) null
+        else runCatching {
             kotlinx.coroutines.withTimeoutOrNull(SNAPSHOT_TIMEOUT_MS) {
                 withRimeContext { block() }
             }

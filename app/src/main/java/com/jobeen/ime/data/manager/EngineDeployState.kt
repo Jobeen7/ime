@@ -42,17 +42,21 @@ object EngineDeployState {
 }
 
 /**
- * 部署期按键门：部署进行中（running）或超时孤儿仍在跑（orphan）
- * 时，打字键一律丢弃，不入动作队列。否则键会排在部署作业之后、
- * 以新方案执行（旧键进新方案），或在部署 Start 消息处理后被
- * initialized 检查静默丢掉——两种结果全凭时序。
+ * 部署窗口：部署进行中（running）或超时孤儿仍在跑（orphan）。
  * 口径与 deployGateAllows 的部署忙判断一致（running 或 orphan 即忙）；
- * 孤儿由部署作业收尾或 finalize 复位，不会钉死，故门不会长关。
+ * 孤儿由部署作业收尾或 finalize 复位，不会钉死。
+ */
+internal fun isDeployWindow(): Boolean =
+    EngineDeployState.isRunning() || EngineDeployState.isOrphanRunning()
+
+/**
+ * 部署期按键门：部署窗口内打字键一律丢弃，不入动作队列。否则键会
+ * 排在部署作业之后、以新方案执行（旧键进新方案），或在部署 Start
+ * 消息处理后被 initialized 检查静默丢掉——两种结果全凭时序。
  * 判定本身可单测；接线在 RimeEngine.processKey 入口。
  */
 internal object DeployKeyGate {
-    fun shouldDrop(): Boolean =
-        EngineDeployState.isRunning() || EngineDeployState.isOrphanRunning()
+    fun shouldDrop(): Boolean = isDeployWindow()
 }
 
 /** deployAndAwait 的三态结果：完成 / 失败 / 超时但部署仍在后台继续。 */
