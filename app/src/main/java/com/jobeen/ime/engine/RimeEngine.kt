@@ -31,6 +31,7 @@ import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.DeployKeyGate
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.RimeSyncPrefs
+import com.jobeen.ime.data.manager.isDeployWindow
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.engine.event.KeyEvent
@@ -59,6 +60,7 @@ import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.RimeMessage
 import com.jobeen.ime.data.App.modelDir
 import com.jobeen.ime.engine.rime.data.DataManager.sharedDataDir
+import com.jobeen.ime.engine.rime.data.DataManager.userDataDir
 import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.engine.rime.util.OptionsApplier
 import com.jobeen.ime.skin.diag.DiagLog
@@ -79,6 +81,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.withTimeoutOrNull
 import timber.log.Timber
+import java.io.File
 import java.lang.ref.WeakReference
 import kotlin.lazy
 
@@ -1065,17 +1068,47 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     block = {
                         EngineDeployState.setRunning(true)
                         try {
-                            deploy()
-                            // join 超时是防永久卡死的护栏，不是编译时限：600 秒取
-                            // awaitSchemasReady 的既有默认值口径。超时只让本作业失败
-                            // （转非取消异常，消费循环只丢本作业、不杀整条 jobs 队列；
-                            // finally 照常复位标志），不中断 native 侧仍在阻塞的 join
-                            // 线程；残余 3a 定论同上（补齐观察点以 running 为准，孤儿期不早触发）。
-                            try {
-                                withTimeout(600_000) { joinMaintenanceThread() }
-                            } catch (e: TimeoutCancellationException) {
-                                EngineDeployState.setRunning(false)
-                                throw IllegalStateException("deploy join timeout")
+                            // 输入未变时跳过 deploy()+join（与
+                            // deployAndAwaitIfChanged 同口径）：Finish 收尾
+                            // 照常，方案表与选项由 Finish 处理器刷新。
+                            val reloadCtx = this@RimeEngine.context
+                            val reloadPre = if (reloadCtx != null) {
+                                withContext(Dispatchers.IO) {
+                                    computeCurrentDeployFingerprint(reloadCtx)
+                                }
+                            } else {
+                                null
+                            }
+                            val reloadStored = reloadCtx?.let {
+                                readStoredDeployFingerprint(it)
+                            }
+                            if (reloadCtx != null && shouldSkipDeploy(
+                                    reloadStored, reloadPre, deployProductsPresent(), false
+                                )
+                            ) {
+                                Timber.d("Reload skipped: deploy inputs unchanged")
+                            } else {
+                                deploy()
+                                // join 超时是防永久卡死的护栏，不是编译时限：600 秒取
+                                // awaitSchemasReady 的既有默认值口径。超时只让本作业失败
+                                // （转非取消异常，消费循环只丢本作业、不杀整条 jobs 队列；
+                                // finally 照常复位标志），不中断 native 侧仍在阻塞的 join
+                                // 线程；残余 3a 定论同上（补齐观察点以 running 为准，孤儿期不早触发）。
+                                try {
+                                    withTimeout(600_000) { joinMaintenanceThread() }
+                                } catch (e: TimeoutCancellationException) {
+                                    EngineDeployState.setRunning(false)
+                                    throw IllegalStateException("deploy join timeout")
+                                }
+                                // 成功且部署前后指纹稳定时才存（部署中输入变了则不存）。
+                                if (reloadCtx != null && reloadPre != null) {
+                                    val reloadPost = withContext(Dispatchers.IO) {
+                                        computeCurrentDeployFingerprint(reloadCtx)
+                                    }
+                                    if (reloadPost != null && reloadPost == reloadPre) {
+                                        storeDeployFingerprint(reloadCtx, reloadPost)
+                                    }
+                                }
                             }
                             actions.send(
                                 Action.RimeMessage(
@@ -2081,6 +2114,70 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     /** 补跑结束（无论成败）后解除补跑期抑制：补跑自身的失败不续订。 */
     fun finishRedeployRetry() = pendingRedeploy.finishRetry()
+
+    /** 当前部署输入指纹：目录名＋启用镜像串＋两棵树清单；任一步读失败返回 null（按 miss 处理，绝不误跳过）。 */
+    private fun computeCurrentDeployFingerprint(ctx: Context): String? {
+        val dirName = SchemeDirs.currentDirName(ctx)
+        val mirror = ctx.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(SchemaManager.KEY_ENABLED_IDS, "") ?: ""
+        val files = collectDeployInputs(userDataDir, sharedDataDir) ?: return null
+        return computeDeployFingerprint(dirName, mirror, files)
+    }
+
+    private fun readStoredDeployFingerprint(ctx: Context): String? {
+        val dirName = SchemeDirs.currentDirName(ctx)
+        return ctx.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE)
+            .getString(deployFingerprintKey(dirName), null)
+    }
+
+    private fun storeDeployFingerprint(ctx: Context, fingerprint: String) {
+        val dirName = SchemeDirs.currentDirName(ctx)
+        ctx.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putString(deployFingerprintKey(dirName), fingerprint)
+        }
+    }
+
+    /** 当前目录部署产物存在：staging build 目录非空；缺产物时跳过无意义（无旧表可复用）。 */
+    private fun deployProductsPresent(): Boolean {
+        val staging = File(userDataDir, "build")
+        return staging.isDirectory && (staging.listFiles()?.isNotEmpty() == true)
+    }
+
+    /**
+     * 部署输入未变时跳过部署的 deployAndAwait：指纹命中且产物存在时
+     * 不调 deploy()+join，直接发 Finish 收尾（Finish 处理器刷新方案表
+     * 与选项，与正常部署同一收尾）；其余情况直调 deployAndAwait，成功
+     * 且部署前后指纹稳定时才存新指纹（部署中输入变了则不存，下次再编）。
+     * forceFull=true 时永不跳过（切换/导入误调时的硬约束；切换/导入
+     * 本身仍直调 deployAndAwait，不走本函数）。冷启动无维护快速启动
+     * 已由 librime mtime 跳过覆盖，不在本函数处理。
+     * 异步维护旧表打字不做（需产品决策：与部署期按键门禁矛盾——维护
+     * 中的键要么被门丢弃、要么在旧表上打，两种语义只能取其一）。
+     */
+    suspend fun deployAndAwaitIfChanged(
+        timeoutMs: Long,
+        forceFull: Boolean = false,
+    ): DeployAwaitResult {
+        if (forceFull) return deployAndAwait(timeoutMs)
+        if (isDeployWindow()) return deployAndAwait(timeoutMs)
+        val ctx = context ?: return deployAndAwait(timeoutMs)
+        val pre = withContext(Dispatchers.IO) { computeCurrentDeployFingerprint(ctx) }
+        val stored = readStoredDeployFingerprint(ctx)
+        if (shouldSkipDeploy(stored, pre, deployProductsPresent(), forceFull)) {
+            dispatchAction(
+                Action.RimeMessage(
+                    RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
+                )
+            )
+            return DeployAwaitResult.COMPLETED
+        }
+        val result = deployAndAwait(timeoutMs)
+        if (result == DeployAwaitResult.COMPLETED && pre != null) {
+            val post = withContext(Dispatchers.IO) { computeCurrentDeployFingerprint(ctx) }
+            if (post != null && post == pre) storeDeployFingerprint(ctx, post)
+        }
+        return result
+    }
 
     /**
      * 执行一次全量部署并等待其返回。

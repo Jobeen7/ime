@@ -170,7 +170,7 @@ class ImeInputMethodService : InputMethodService() {
         // 为既有文案不动，进度／成功文案只说部署。
         deployController = KeyboardDeployController(
             deploy = {
-                (EngineFactory.current() as? RimeEngine)?.deployAndAwait(600_000L)
+                (EngineFactory.current() as? RimeEngine)?.deployAndAwaitIfChanged(600_000L)
                     ?: DeployAwaitResult.FAILED
             },
             sync = null,

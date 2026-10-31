@@ -52,7 +52,7 @@ object FabSyncState {
  * 不直连会话 deploy()（会打断进行中的切换部署编译，见原 MainActivity
  * 注释）。转圈状态直接订阅 [EngineDeployState.running]：部署入口
  * 即同步置位，作业 finally 复位；完成判定以部署作业的 Finish/失败
- * 信号为准（deployAndAwait 的 COMPLETED），方案表非空只作辅助条件：
+ * 信号为准（deployAndAwaitIfChanged 的 COMPLETED，含输入未变跳过），方案表非空只作辅助条件：
  * COMPLETED 后仍须方案表非空才报成功，任一不满足都按失败处理。
  * 丢弃（忙/交叉闸/作用域已死）、编译失败、超时在跑一律不是成功。
  */
@@ -79,19 +79,20 @@ object FabActions {
     /**
      * 一次部署并判定成败：以部署作业的 Finish/失败信号为准，方案表
      * 非空只作辅助条件、不能单独定成功。
-     * deployAndAwait 的 COMPLETED = 部署作业走完 deploy()+join 并发出
-     * Finish；FAILED = 入口被挡（忙/孤儿/交叉闸/作用域已死）、作业被丢弃
-     * 或编译失败；TIMEOUT_RUNNING = 等候超时、作业仍在后台跑（记孤儿，
-     * 下次部署会被忙门挡下）。三者中只有 COMPLETED 能走向成功，且
-     * 成功还须方案表非空（COMPLETED 后按旧口径 2s 间隔轮询复核，
-     * 上限 SCHEMAS_READY_TIMEOUT_MS；表恒空说明部署产出无效，仍算
-     * 失败）。部署超时用 deployTimeoutForCurrentDir（与切换路径同
-     * 算法）。本函数不捕获 CancellationException（调用方取消时穿透；
-     * sync() 外层 catch 的既有捕获行为不在此改）。
+     * deployAndAwaitIfChanged 的 COMPLETED = 部署作业走完 deploy()+join
+     * 并发出 Finish，或输入未变时跳过部署直接发出 Finish（见
+     * deployAndAwaitIfChanged）；FAILED = 入口被挡（忙/孤儿/交叉闸/
+     * 作用域已死）、作业被丢弃或编译失败；TIMEOUT_RUNNING = 等候超时、
+     * 作业仍在后台跑（记孤儿，下次部署会被忙门挡下）。三者中只有
+     * COMPLETED 能走向成功，且成功还须方案表非空（COMPLETED 后按旧口径
+     * 2s 间隔轮询复核，上限 SCHEMAS_READY_TIMEOUT_MS；表恒空说明部署
+     * 产出无效，仍算失败）。部署超时用 deployTimeoutForCurrentDir（与
+     * 切换路径同算法）。本函数不捕获 CancellationException（调用方取消
+     * 时穿透；sync() 外层 catch 的既有捕获行为不在此改）。
      */
     private suspend fun deployAndCheckSchemas(context: Context, engine: IEngine?): Boolean {
         val result = (engine as? RimeEngine)
-            ?.deployAndAwait(deployTimeoutForCurrentDir(context))
+            ?.deployAndAwaitIfChanged(deployTimeoutForCurrentDir(context))
             ?: DeployAwaitResult.FAILED
         if (result != DeployAwaitResult.COMPLETED) {
             Timber.w("FAB deploy not completed: $result")
