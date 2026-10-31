@@ -10,10 +10,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
@@ -62,6 +64,8 @@ import com.jobeen.ime.ui.screen.SettingsSectionTitle
 import com.jobeen.ime.ui.theme.AppAppearanceMode
 import java.io.ByteArrayOutputStream
 import kotlin.math.roundToInt
+import androidx.compose.foundation.border
+import androidx.compose.ui.unit.sp
 
 /**
  * 外观页：分类列表页（与键盘设置同构）。主页行＝键盘皮肤／视频背景／
@@ -471,8 +475,12 @@ private fun GlobalStyleDialog(
                 R.string.global_style_dialog_custom_desc
             },
         ),
+        // body 内边距：左右 12dp，上 4dp，下 12dp
+        bodyPadding = PaddingValues(start = 12.dp, end = 12.dp),
         body = {
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // 分区之间不再另加间距：每个分区自带上下 4dp，
+            // 相邻两区之间正好 8dp。
+            Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
                 GlobalStyleSection(
                     title = stringResource(R.string.global_section_keyboard_full),
                     expanded = keyboardExpanded,
@@ -498,6 +506,7 @@ private fun GlobalStyleDialog(
                             value = draft.keyboardTopCornerDp ?: 16f,
                             valueLabel = "%.1f dp".format(draft.keyboardTopCornerDp ?: 16f),
                             range = 0f..32f,
+                            steps = 31,
                             onValueChange = { draft = draft.copy(keyboardTopCornerDp = it) },
                         )
                     }
@@ -533,6 +542,7 @@ private fun GlobalStyleDialog(
                         value = draft.key.borderWidthDp ?: 1f,
                         valueLabel = "%.1f dp".format(draft.key.borderWidthDp ?: 1f),
                         range = 0f..4f,
+                        steps = 7,
                         enabled = borderCustom,
                         onValueChange = {
                             draft = draft.copy(key = draft.key.copy(borderWidthDp = it))
@@ -564,6 +574,7 @@ private fun GlobalStyleDialog(
                         value = draft.key.cornerRadiusDp ?: 12f,
                         valueLabel = "%.1f dp".format(draft.key.cornerRadiusDp ?: 12f),
                         range = 0f..32f,
+                        steps = 31,
                         enabled = radiusCustom,
                         onValueChange = {
                             draft = draft.copy(key = draft.key.copy(cornerRadiusDp = it))
@@ -626,6 +637,7 @@ private fun GlobalStyleDialog(
                         value = draft.toolbar.borderWidthDp ?: 1f,
                         valueLabel = "%.1f dp".format(draft.toolbar.borderWidthDp ?: 1f),
                         range = 0f..4f,
+                        steps = 7,
                         enabled = toolbarBorderCustom,
                         onValueChange = {
                             draft = draft.copy(
@@ -659,6 +671,7 @@ private fun GlobalStyleDialog(
                         value = draft.toolbar.cornerRadiusDp ?: 12f,
                         valueLabel = "%.1f dp".format(draft.toolbar.cornerRadiusDp ?: 12f),
                         range = 0f..32f,
+                        steps = 31,
                         enabled = toolbarRadiusCustom,
                         onValueChange = {
                             draft = draft.copy(
@@ -709,6 +722,7 @@ private fun GlobalStyleDialog(
                         value = draft.backgroundBlur.radiusDp ?: 16f,
                         valueLabel = "%.1f dp".format(draft.backgroundBlur.radiusDp ?: 16f),
                         range = 0f..32f,
+                        steps = 31,
                         enabled = frostBlurOn,
                         onValueChange = {
                             draft = draft.copy(
@@ -721,6 +735,7 @@ private fun GlobalStyleDialog(
                         value = draft.frostOverlayAlpha ?: 0.25f,
                         valueLabel = "%.1f%%".format((draft.frostOverlayAlpha ?: 0.25f) * 100),
                         range = 0f..1f,
+                        steps = 99,
                         onValueChange = { draft = draft.copy(frostOverlayAlpha = it) },
                     )
                     Text(
@@ -831,42 +846,56 @@ private fun GlobalStyleDialog(
     }
 }
 
-/** 全局样式对话框分段：标题行可点折叠，默认展开。 */
+/**
+ * 全局样式对话框分区，
+ * 18dp 圆角 + surface 底色（与对话框同色，看不见卡片边界）、
+ * 标题 16sp 常规字重、minHeight 52dp、padding 16dp、▾/▸ 在文字左侧。
+ */
 @Composable
-/** 全局样式对话框分区：子卡式（与 SettingsDialog 的分段子卡同口径：surface 底卡）。 */
 private fun GlobalStyleSection(
     title: String,
     expanded: Boolean,
     onToggle: () -> Unit,
     content: @Composable () -> Unit,
 ) {
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface,
-        ),
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(MaterialTheme.colorScheme.surface),
     ) {
-        Column(
+        Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+                .heightIn(min = 52.dp)
+                .clickable { onToggle() }
+                .padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
+            Text(
+                text = "${if (expanded) "▾" else "▸"} $title",
+                fontSize = 16.sp,
+                lineHeight = 22.sp,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+        }
+        if (expanded) {
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { onToggle() }
-                    .padding(vertical = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                    .padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
             ) {
-                Text(title, fontWeight = FontWeight.Bold)
-                Text(if (expanded) "▼" else "▶")
+                content()
             }
-            if (expanded) content()
         }
     }
 }
 
-/** 全局样式对话框颜色行：药丸式（字段·色名），点按进预设色选择。 */
+/**
+ * 全局样式对话框颜色行：描边药丸
+ * ——透明底 + 1dp 描边 + 主色文字，整宽。
+ */
 @Composable
 private fun GlobalStyleColorPill(
     field: String,
@@ -876,17 +905,25 @@ private fun GlobalStyleColorPill(
     Box(
         modifier = Modifier
             .fillMaxWidth()
+            // MaterialButton 自带 6dp 上下 inset，视觉高 40dp；用 6dp 间距等效。
             .padding(vertical = 6.dp)
+            .height(40.dp)
             .clip(RoundedCornerShape(50))
-            .background(MaterialTheme.colorScheme.primaryContainer)
-            .clickable { onClick() }
-            .padding(vertical = 12.dp),
+            .border(
+                width = 1.dp,
+                color = MaterialTheme.colorScheme.outline,
+                shape = RoundedCornerShape(50),
+            )
+            .clickable { onClick() },
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            text = "$field·$colorName",
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
+            // text = "$title · $value"（中点两侧各一个空格）
+            text = "$field · $colorName",
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium,
+            letterSpacing = 0.1.sp,
+            color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )

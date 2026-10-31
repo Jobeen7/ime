@@ -120,6 +120,7 @@ import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.core.SchemaItem
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
+import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.rowFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
 import kotlin.math.roundToInt
@@ -1344,11 +1345,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                     }
                                 }
                                 if (index < downloadEntries.lastIndex) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(horizontal = 16.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant
-                                            .copy(alpha = 0.5f),
-                                    )
+                                    GroupDivider()
                                 }
                             }
                         }
@@ -1584,10 +1581,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                                 }
                             }
                             if (index < enabledSchemas.lastIndex) {
-                                HorizontalDivider(
-                                    modifier = Modifier.padding(horizontal = 16.dp),
-                                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                                )
+                                GroupDivider()
                             }
                         }
                     }
@@ -1788,10 +1782,7 @@ private fun SchemaManageContent(
                         }
                     }
                     if (index < draftAvailable.lastIndex) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        )
+                        GroupDivider()
                     }
                 }
             }
@@ -1930,10 +1921,7 @@ private fun ManageEnabledList(
                         }
                     }
                     if (index < items.lastIndex) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(horizontal = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        )
+                        GroupDivider()
                     }
                 }
             }
@@ -2147,11 +2135,7 @@ private fun SchemeDirBrowserContent(
                                     )
                                 }
                                 if (index < dirs.lastIndex) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(horizontal = 16.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant
-                                            .copy(alpha = 0.5f),
-                                    )
+                                    GroupDivider()
                                 }
                             }
                         }
@@ -2196,11 +2180,7 @@ private fun SchemeDirBrowserContent(
                                         .padding(horizontal = 16.dp, vertical = 12.dp),
                                 )
                                 if (index < schemes.lastIndex) {
-                                    HorizontalDivider(
-                                        modifier = Modifier.padding(horizontal = 16.dp),
-                                        color = MaterialTheme.colorScheme.outlineVariant
-                                            .copy(alpha = 0.5f),
-                                    )
+                                    GroupDivider()
                                 }
                             }
                         }

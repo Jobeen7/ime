@@ -5,6 +5,7 @@ package com.jobeen.ime.ui.screen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -27,6 +28,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -112,7 +114,7 @@ fun SettingsPageScaffold(
                     Text(
                         text = title,
                         fontSize = ScreenComponent.barFontSize,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                     )
                 },
                 navigationIcon = {
@@ -124,6 +126,11 @@ fun SettingsPageScaffold(
                     }
                 },
                 actions = actions,
+                // 顶栏不设背景，透出窗口底色；
+                // TopAppBar 默认用 surface，比列表底色更亮，会把顶栏和内容切成两块。
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
@@ -171,7 +178,7 @@ fun SettingsPageLazyScaffold(
                     Text(
                         text = title,
                         fontSize = ScreenComponent.barFontSize,
-                        fontWeight = FontWeight.Bold,
+                        fontWeight = FontWeight.Medium,
                     )
                 },
                 navigationIcon = {
@@ -183,6 +190,11 @@ fun SettingsPageLazyScaffold(
                     }
                 },
                 actions = actions,
+                // 顶栏不设背景，透出窗口底色；
+                // TopAppBar 默认用 surface，比列表底色更亮，会把顶栏和内容切成两块。
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background,
+                ),
             )
         },
     ) { padding ->
@@ -221,9 +233,14 @@ data class SettingsDialogAction(
 
 /**
  * 通用设置对话框：对话框＋子卡分段＋操作字（参考对话框结构，颜色用 Jime 主题）。
- * 对话框底＝ surfaceContainerHigh 圆角 28dp；分段子卡＝ surface 圆角 16dp；
+ * 对话框底＝莫奈卡片色 圆角 28dp；分段子卡＝ surface 圆角 20dp；
  * 操作字默认主题强调色；3 个及以上操作字左右铺开，2 个及以下靠右。
  * scrollable 为 false 时内容自身滚动（如单选列表自带滚动），默认整框滚动。
+ *
+ * 内边距分层（对齐 MaterialAlertDialogBuilder）：标题／说明 24dp；
+ * 正文由 bodyPadding 决定——外观编辑器按
+ * 内边距（左右 12dp，上 4dp，下 12dp）传 12dp，
+ * 其余对话框保持 24dp；操作字外层 12dp，叠加 TextButton 自带 12dp 后文字对齐 24dp。
  */
 @Composable
 fun SettingsDialog(
@@ -234,13 +251,13 @@ fun SettingsDialog(
     body: (@Composable () -> Unit)? = null,
     actions: List<SettingsDialogAction>,
     scrollable: Boolean = true,
+    bodyPadding: PaddingValues = PaddingValues(horizontal = 24.dp),
 ) {
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
             shape = RoundedCornerShape(28.dp),
             colors = CardDefaults.cardColors(
-                // 弹出卡片面＝莫奈色（2026-10-30 莫奈色轮，取代旧 surfaceContainerHigh
-                // 层级；内层分区卡仍用 surface，保持对话框内层级）。
+                // 弹出卡片面＝莫奈卡片色。
                 containerColor = LocalMonetCardColor.current,
             ),
         ) {
@@ -249,12 +266,12 @@ fun SettingsDialog(
                 modifier = Modifier
                     .fillMaxWidth()
                     .then(if (scrollable) Modifier.verticalScroll(scroll) else Modifier)
-                    .padding(horizontal = 24.dp, vertical = 20.dp),
+                    .padding(vertical = 20.dp),
             ) {
                 Text(
                     text = title,
                     style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 24.dp),
                 )
                 if (description != null) {
                     Spacer(Modifier.height(8.dp))
@@ -262,6 +279,7 @@ fun SettingsDialog(
                         text = description,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 24.dp),
                     )
                 }
                 if (sections.isNotEmpty() || body != null) {
@@ -269,7 +287,8 @@ fun SettingsDialog(
                 }
                 sections.forEach { (sectionTitle, sectionContent) ->
                     Card(
-                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.padding(horizontal = 24.dp),
+                        shape = RoundedCornerShape(20.dp),
                         colors = CardDefaults.cardColors(
                             containerColor = MaterialTheme.colorScheme.surface,
                         ),
@@ -291,11 +310,19 @@ fun SettingsDialog(
                     Spacer(Modifier.height(12.dp))
                 }
                 if (body != null) {
-                    body()
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bodyPadding),
+                    ) {
+                        body()
+                    }
                     Spacer(Modifier.height(16.dp))
                 }
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp),
                     horizontalArrangement =
                         if (actions.size >= 3) Arrangement.SpaceBetween
                         else Arrangement.End,

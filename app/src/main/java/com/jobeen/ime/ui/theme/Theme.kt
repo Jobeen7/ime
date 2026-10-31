@@ -28,8 +28,8 @@ object ExpressiveShapes {
     val extraSmall = RoundedCornerShape(4.dp)
     val small = RoundedCornerShape(8.dp)
     val medium = RoundedCornerShape(12.dp)
-    val large = RoundedCornerShape(16.dp)
-    val extraLarge = RoundedCornerShape(24.dp)
+    val large = RoundedCornerShape(20.dp)
+    val extraLarge = RoundedCornerShape(28.dp)
 }
 
 private val LightColorScheme = lightColorScheme(
@@ -60,6 +60,10 @@ private val LightColorScheme = lightColorScheme(
     onSurface = OnSurfaceLight,
 
     surfaceContainer = SurfaceContainerLight,
+    surfaceContainerLowest = SurfaceContainerLowestLight,
+    surfaceContainerLow = SurfaceContainerLowLight,
+    surfaceContainerHigh = SurfaceContainerHighLight,
+    surfaceContainerHighest = SurfaceContainerHighestLight,
 
     surfaceVariant = SurfaceVariantLight,
     onSurfaceVariant = OnSurfaceVariantLight,
@@ -96,6 +100,10 @@ private val DarkColorScheme = darkColorScheme(
     onSurface = OnSurfaceDark,
 
     surfaceContainer = SurfaceContainerDark,
+    surfaceContainerLowest = SurfaceContainerLowestDark,
+    surfaceContainerLow = SurfaceContainerLowDark,
+    surfaceContainerHigh = SurfaceContainerHighDark,
+    surfaceContainerHighest = SurfaceContainerHighestDark,
 
     surfaceVariant = SurfaceVariantDark,
     onSurfaceVariant = OnSurfaceVariantDark,
@@ -165,7 +173,8 @@ fun ImeTheme(
         monetCardContainerColor(dynamicContainer, darkTheme)
     }
 
-    CompositionLocalProvider(LocalMonetCardColor provides monetCardColor) {
+    // 卡片面＝colorScheme.surface：页面用 background、卡片用 surface，靠色阶分层，不跟随壁纸取色。
+    CompositionLocalProvider(LocalMonetCardColor provides colorScheme.surface) {
         MaterialTheme(
             colorScheme = colorScheme,
             typography = Typography,

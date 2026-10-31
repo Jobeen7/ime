@@ -62,10 +62,22 @@ import com.jobeen.ime.ui.theme.SuccessDark
 import com.jobeen.ime.ui.theme.SuccessLight
 
 object ScreenComponent {
-    val barFontSize = 18.sp
-    val rowFontSize = 15.sp
-    val rowSubFontSize = 13.sp
-    const val SWITCH_SCALE = 0.75f
+    val barFontSize = 22.sp
+    // 行标题 16sp / 行副标题 14sp
+    // （androidx.preference 默认 ?attr/textAppearanceListItem 为 16sp，
+    //  summary 为 14sp；此前 15/13 是自有取值）。
+    val rowFontSize = 16.sp
+    val rowSubFontSize = 14.sp
+    const val SWITCH_SCALE = 1f
+
+    /**
+     * 行间分隔：同组各行连成一整块 20dp 圆角面，视觉上就是「没有分隔线」。
+     * 保留此函数只为兼容既有调用点，不绘制任何内容。
+     */
+    @Composable
+    fun GroupDivider() {
+        // 有意留空：无分隔线列表。
+    }
 
     @Composable
     fun ProgressButton(progress: Float, extracting: Boolean = false, width: Dp = 72.dp) {
@@ -121,26 +133,22 @@ object ScreenComponent {
         content: @Composable () -> Unit,
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 6.dp),
-            ) {
-                if (icon != null) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(16.dp),
-                    )
-                    Spacer(Modifier.width(6.dp))
-                }
-                Text(
-                    text = title,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    color = titleColor,
-                )
-            }
+            // 分组标题
+            // 13sp / Bold / colorPrimary / minHeight 40dp / padding 16-12-16-8
+            Text(
+                text = title,
+                fontSize = 13.sp,
+                lineHeight = 18.sp,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = 40.dp)
+                    .padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 8.dp),
+            )
+            // 分类标题与首行之间 6dp
+            // outRect.bottom = dp(6)。
+            Spacer(Modifier.height(6.dp))
             GroupCard {
                 content()
             }
@@ -161,7 +169,7 @@ object ScreenComponent {
     ) {
         Card(
             modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 // 分组卡片面＝莫奈色（2026-10-30 莫奈色轮，浅／深两模式皆然）。
                 containerColor = LocalMonetCardColor.current,
@@ -244,7 +252,7 @@ object ScreenComponent {
         val dark = isSystemInDarkTheme()
         Card(
             modifier = modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(16.dp),
+            shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
                 containerColor = if (dark) Color(0xFF40300A) else Color(0xFFFFF0C2),
             ),
@@ -296,12 +304,6 @@ object ScreenComponent {
                 onCheckedChange = onCheckedChange,
                 enabled = enabled,
                 modifier = Modifier.scale(SWITCH_SCALE),
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = MaterialTheme.colorScheme.onPrimary,
-                    checkedTrackColor = MaterialTheme.colorScheme.primary,
-                    uncheckedThumbColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    uncheckedTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                ),
             )
         }
     }
@@ -362,6 +364,9 @@ object ScreenComponent {
         showDivider: Boolean = false,
         enabled: Boolean = true,
         onValueChangeFinished: (() -> Unit)? = null,
+        // 滑块调用都传了 stepSize（0.5 / 1 / 0.1），轨道上因此有一排刻度点。
+        // Compose 里对应 steps = (max-min)/step - 1；steps = 0 时只有两端 stop 点、没有刻度点。
+        steps: Int = 0,
     ) {
         Column(
             modifier = Modifier
@@ -369,57 +374,33 @@ object ScreenComponent {
                 .rowAnchor(title)
                 .padding(vertical = 12.dp),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    text = title,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f),
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = if (enabled) MaterialTheme.colorScheme.onSurface
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-                )
-                Text(
-                    text = valueLabel,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f),
-                )
-            }
+            // 滑块标签：标签是一行 14sp 的「标题 · 值+单位」，
+            // 不是「标题靠左、数值靠右」两栏；标签上方 12dp、下方紧接滑块。
+            Text(
+                text = "$title · $valueLabel",
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+            )
             Spacer(modifier = Modifier.height(4.dp))
-            // 圆点轨道：显式 20dp 圆点拇指（不依赖 M3 版本默认拇指样式；
-            // 此前 3dp 竖条拇指即旧“蓝点”的一种形态）；轨道仍 4dp、
-            // 主色激活段。滑杆在卡片 16dp 横向留白内，圆点边缘不超出卡片。
+            // 滑块就是原生 Slider，
+            // 不设 style、不设 thumb、不设 track —— 外观全部由 Material 库默认提供。
+            // material3 1.4.0 的默认轨道（ActiveTrackHeight 16dp、
+            // HandleShape=CornerFull 的 4×44 竖条把手、把手与轨道间 6dp 间隙、两端 stop 点），
+            // 唯一需要显式给的是 steps —— 没有它就只有两端 stop 点，不会出现刻度点。
             Slider(
                 value = value,
                 onValueChange = onValueChange,
                 onValueChangeFinished = onValueChangeFinished,
                 valueRange = range,
+                steps = steps,
                 enabled = enabled,
-                thumb = {
-                    Box(
-                        modifier = Modifier
-                            .size(20.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary),
-                    )
-                },
-                track = { sliderState ->
-                    SliderDefaults.Track(
-                        sliderState = sliderState,
-                        modifier = Modifier.height(4.dp),
-                        colors = SliderDefaults.colors(
-                            activeTrackColor = MaterialTheme.colorScheme.primary,
-                            inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
-                        ),
-                    )
-                },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
             )
         }
     }
