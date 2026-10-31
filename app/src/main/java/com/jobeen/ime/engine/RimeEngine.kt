@@ -67,6 +67,7 @@ import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.input.ImeInputMethodService
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -557,6 +558,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 与 deployAndAwait（先 deployMutex 后 deployGateLock）无环。
         synchronized(deployGateLock) {
             scope.cancel()
+            resendScope.cancel()
             EngineDeployState.setRunning(false)
             EngineDeployState.setOrphanRunning(false)
         }
@@ -1557,7 +1559,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private fun dispatchAction(action: Action) {
         if (actions.trySend(action).isSuccess) return
         if (action.isDroppable()) return
-        scope.launch { actions.send(action) }
+        resendScope.launch { actions.send(action) }
     }
 
     private fun Action.isDroppable(): Boolean = when (this) {
@@ -1583,7 +1585,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             // 队列满说明引擎正被长任务堵住：任务都是控制类（导词典、
             // 清屏、切方案等），不许丢，转异步挂起入队等空位；补投仍
             // 可能撞上关库窗口，故用 runCatching 兜底（handler 是第三层）。
-            scope.launch { runCatching { jobs.send(entry) } }
+            // 补投走单并发重发域（见 createResendDispatcher），保满队列
+            // 边界的严格 FIFO。
+            resendScope.launch { runCatching { jobs.send(entry) } }
         }
     }
 
@@ -2104,6 +2108,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     // 部署等待互斥：同一时刻只允许一个 deployAndAwait 持有。
     private val deployMutex = Mutex()
 
+    // 队列满时控制类补投的专属域（单并发，严格 FIFO，见
+    // createResendDispatcher）：与主 scope 分离，finalize 时随主 scope
+    // 一并取消——关库后的补投被取消而不抛 ClosedSendChannelException
+    // （dispatchAction 的补投无 runCatching，靠本域的 handler 兜底记日志）。
+    private val resendScope = CoroutineScope(
+        SupervisorJob() + createResendDispatcher() +
+            kotlinx.coroutines.CoroutineExceptionHandler { _, e ->
+                if (e !is CancellationException) {
+                    Timber.w(e, "Rime resend failed")
+                }
+            }
+    )
+
     // 部署失败单发补跑（见 PendingRedeploy）：native 失败处理器与
     // 部署作业失败路径标记，下次键盘出现时消费一次 deployAndAwait。
     private val pendingRedeploy = PendingRedeploy()
@@ -2513,6 +2530,16 @@ internal fun deployGateAllows(
     orphanRunning: Boolean,
     scopeActive: Boolean,
 ): Boolean = scopeActive && !running && !orphanRunning
+
+/**
+ * 队列满时控制类补投的专属域：单并发。补投协程在多线程域上乱序起跑
+ * 时，后起跑的 send 会先进入通道发送队列、超车先起跑的；单并发域
+ * 按起跑顺序执行任务，挂起后按通道发送队列（FIFO）顺序恢复，合起来
+ * 严格 FIFO。正常深度是个位数、512/256 只是异常兜底，满队列本身
+ * 即异常态——本域只修该边界的顺序，不改正常路径。生产与测试共用本工厂。
+ */
+internal fun createResendDispatcher(): CoroutineDispatcher =
+    Dispatchers.Default.limitedParallelism(1)
 
 /** 部署作业等待 native 成功/失败通知的上限：通知在 join 返回前已入队，分发只是毫秒级异步；超时按未知处理（走既有成功路径，不把通知丢失误报为失败）。 */
 private const val DEPLOY_OUTCOME_TIMEOUT_MS = 10_000L

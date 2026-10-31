@@ -64,6 +64,13 @@ abstract class BaseKeyboard(
     private var spanPanelViews: List<KeyView> = emptyList()
     private var spaceKeyView: TextKeyView? = null
     private var returnKeyView: ImageKeyView? = null
+
+    /**
+     * 布局键→视图注册表：组装期建成（行内键＋跨行键全量），不重建布局
+     * 即可按 KeyDef 单键失效。键以布局的 KeyDef 本体标识（同一键盘
+     * 实例内稳定；KeyDef 为 open class、按实例相等）。
+     */
+    private val keyViewsByDef: Map<KeyDef, KeyView>
     private var returnKeyIcon: Int = 0
     /** G1 动态文字运行时跟随：可原地刷新文本的动态键（setter + 来源 + 静态回退）。 */
     private data class DynamicView(
@@ -76,6 +83,19 @@ abstract class BaseKeyboard(
 
     override fun updateSpaceKeyText(text: String) {
         spaceKeyView?.updateText(text)
+    }
+
+    /**
+     * 单键失效：只重绘该键视图，不触整窗 requestLayout。
+     * update 可选地先改该键的文本/图标（如 TextKeyView.updateText），
+     * 再由本方法重绘；update 本身已带 invalidate 的键无需再调。
+     * 未知 def 直接返回。函数类型参数在最后，trailing-lambda 可直挂。
+     */
+    fun invalidateKey(def: KeyDef, update: (KeyView) -> Unit = {}) {
+        keyViewsByDef[def]?.let { view ->
+            update(view)
+            view.invalidate()
+        }
     }
 
     override fun updateDynamicTexts(values: Map<String, String>) {
@@ -129,10 +149,13 @@ abstract class BaseKeyboard(
         val spanViews = spanDefs.map { createKeyView(it.def).also { v -> v.id = generateViewId() } }
         spanPanelViews = spanViews
 
+        val registry = mutableMapOf<KeyDef, KeyView>()
+        spanDefs.forEachIndexed { i, sd -> registry[sd.def] = spanViews[i] }
+
         keyRows = keyLayout.mapIndexed { rowIndex, row ->
             val parts =
                 row.filterNot { it.appearance.rowSpan > 1 }
-            val keyViews = parts.map(::createKeyView)
+            val keyViews = parts.map { def -> createKeyView(def).also { registry[def] = it } }
             val leftSpanWidth = spanDefs
                 .filter { rowIndex in it.startRow..it.endRow && !it.alignEnd }
                 .maxOfOrNull { it.def.appearance.percentWidth } ?: 0f
@@ -198,6 +221,9 @@ abstract class BaseKeyboard(
                 matchConstraintPercentWidth = sd.def.appearance.percentWidth
             })
         }
+
+        // 注册表收口：行内键在行装配时已记，跨行键在上文已记。
+        keyViewsByDef = registry
 
         rippleView = KeyboardRippleView(context).apply {
             id = generateViewId()
