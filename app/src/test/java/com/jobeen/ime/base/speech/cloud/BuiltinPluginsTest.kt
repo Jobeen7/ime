@@ -62,8 +62,11 @@ class BuiltinPluginsTest {
 
     private class RecordingTransport : NetworkTransport {
         data class WsCall(val url: String, val headers: Map<String, String>)
+        data class HttpCall(val url: String, val headers: Map<String, String>, val body: ByteArray)
 
         val wsCalls = mutableListOf<WsCall>()
+        val httpCalls = mutableListOf<HttpCall>()
+        var httpResponseBody: ByteArray = "ok".toByteArray()
         val sentTexts = mutableListOf<String>()
         val sentBytes = mutableListOf<ByteArray>()
         private var listener: NetworkTransport.WsListener? = null
@@ -72,7 +75,10 @@ class BuiltinPluginsTest {
             url: String,
             headers: Map<String, String>,
             body: ByteArray,
-        ): HttpResponse = HttpResponse(200, "ok".toByteArray())
+        ): HttpResponse {
+            httpCalls.add(HttpCall(url, headers, body))
+            return HttpResponse(200, httpResponseBody)
+        }
 
         override fun websocket(
             url: String,
@@ -177,10 +183,14 @@ class BuiltinPluginsTest {
                 listOf("api_key" to SettingType.SECRET, "model" to SettingType.SELECT),
                 listOf(AuthHeaderDecl("X-Api-Key", "api_key", "")),
             ),
-            "builtin.qwen" to Triple(
-                listOf("dashscope.aliyuncs.com"),
-                listOf("api_key" to SettingType.SECRET, "model" to SettingType.TEXT),
-                listOf(AuthHeaderDecl("Authorization", "api_key", "bearer ")),
+            "builtin.nls" to Triple(
+                listOf("nls-meta.cn-shanghai.aliyuncs.com", "nls-gateway-cn-shanghai.aliyuncs.com"),
+                listOf(
+                    "appkey" to SettingType.TEXT,
+                    "access_key_id" to SettingType.TEXT,
+                    "access_key_secret" to SettingType.SECRET,
+                ),
+                emptyList(),
             ),
             "builtin.tencent" to Triple(
                 listOf("asr.cloud.tencent.com"),
@@ -224,9 +234,6 @@ class BuiltinPluginsTest {
             modelDecl.options,
         )
         assertEquals("", modelDecl.defaultValue)
-        val qwen = installedFromAsset(store, "builtin.qwen").meta
-        val qwenModel = qwen.settings.single { it.key == "model" }
-        assertEquals("qwen-audio-3.1-asr-flash-streaming", qwenModel.defaultValue)
         val tencent = installedFromAsset(store, "builtin.tencent").meta
         val categoryDecl = tencent.settings.single { it.key == "category" }
         assertEquals(
@@ -320,60 +327,257 @@ class BuiltinPluginsTest {
         assertEquals("16k_zh", runWith("标准版 · 流式", "Hy-ASR-3.0-preview"))
     }
 
+    /** 阿里云 POP 编码（与测试文件内腾讯用 percentEncode 不同：! ' ( ) * 亦编码）。 */
+    private fun popPercentEncode(value: String): String {
+        val sb = StringBuilder()
+        for (b in value.toByteArray(Charsets.UTF_8)) {
+            val c = b.toInt() and 0xFF
+            val ch = c.toChar()
+            if (ch.isLetterOrDigit() || ch in "-_.~") {
+                sb.append(ch)
+            } else {
+                sb.append('%').append("%02X".format(c))
+            }
+        }
+        return sb.toString()
+    }
+
+    private fun popDecode(value: String): String {
+        val bytes = ArrayList<Byte>()
+        var i = 0
+        while (i < value.length) {
+            val c = value[i]
+            if (c == '%' && i + 2 < value.length) {
+                val b = value.substring(i + 1, i + 3).toIntOrNull(16)
+                if (b != null) {
+                    bytes.add(b.toByte())
+                    i += 3
+                    continue
+                }
+            }
+            bytes.add(c.code.toByte())
+            i++
+        }
+        return String(bytes.toByteArray(), Charsets.UTF_8)
+    }
+
     @Test
-    fun qwenSession_modelSettingOverridesPayload() {
-        val store = PluginStore(tempDir(), MapPrefsStore())
-        val plugin = installedFromAsset(store, "builtin.qwen")
-        val transport = RecordingTransport()
-        val secrets = MapSecretStore()
-        secrets.put("builtin.qwen", "api_key", "test-api-key")
-        val listener = RecordingListener()
-        val host = PluginHost(
+    fun nlsPopSignature_matchesOfflineFixture() {
+        // 官方文档固定参数（虚拟密钥、已过期时间戳，仅离线核对算法）。
+        val params = sortedMapOf(
+            "AccessKeyId" to "my_access_key_id",
+            "Action" to "CreateToken",
+            "Format" to "JSON",
+            "RegionId" to "cn-shanghai",
+            "SignatureMethod" to "HMAC-SHA1",
+            "SignatureNonce" to "b924c8c3-6d03-4c5d-ad36-d984d3116788",
+            "SignatureVersion" to "1.0",
+            "Timestamp" to "2019-04-18T08:32:31Z",
+            "Version" to "2019-02-28",
+        )
+        val canonical = params.entries.joinToString("&") {
+            popPercentEncode(it.key) + "=" + popPercentEncode(it.value)
+        }
+        assertEquals(
+            "AccessKeyId=my_access_key_id&Action=CreateToken&Format=JSON&RegionId=cn-shanghai" +
+                "&SignatureMethod=HMAC-SHA1&SignatureNonce=b924c8c3-6d03-4c5d-ad36-d984d3116788" +
+                "&SignatureVersion=1.0&Timestamp=2019-04-18T08%3A32%3A31Z&Version=2019-02-28",
+            canonical,
+        )
+        val stringToSign = "GET&" + popPercentEncode("/") + "&" + popPercentEncode(canonical)
+        val mac = Mac.getInstance("HmacSHA1")
+        mac.init(SecretKeySpec("my_access_key_secret&".toByteArray(Charsets.UTF_8), "HmacSHA1"))
+        val sig = java.util.Base64.getEncoder()
+            .encodeToString(mac.doFinal(stringToSign.toByteArray(Charsets.UTF_8)))
+        assertEquals("hHq4yNsPitlfDJ2L0nQPdugdEzM=", sig)
+    }
+
+    private fun nlsHost(
+        store: PluginStore,
+        transport: RecordingTransport,
+        secrets: MapSecretStore,
+        listener: RecordingListener,
+    ): PluginHost {
+        val plugin = installedFromAsset(store, "builtin.nls")
+        transport.httpResponseBody =
+            """{"Token":{"Id":"test-token-123","ExpireTime":1999999999}}"""
+                .toByteArray(Charsets.UTF_8)
+        secrets.put("builtin.nls", "access_key_secret", "test-ak-secret")
+        return PluginHost(
             plugin,
-            mapOf("model" to "custom-model-x"),
+            mapOf("appkey" to "test-appkey", "access_key_id" to "test-ak-id"),
             secrets,
             transport,
             listener,
             JdkBase64Codec,
         )
+    }
+
+    @Test
+    fun nlsSession_tokenAndTranscriptionFlow() {
+        val store = PluginStore(tempDir(), MapPrefsStore())
+        val transport = RecordingTransport()
+        val secrets = MapSecretStore()
+        val listener = RecordingListener()
+        val host = nlsHost(store, transport, secrets, listener)
         try {
             host.start()
             assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
-            val runTask = transport.sentTexts.single()
-            assertTrue(runTask.contains("\"model\":\"custom-model-x\""))
+            // Token 请求：POST 上海元数据端点，表单体含 POP 签名。
+            val http = transport.httpCalls.single()
+            assertEquals("https://nls-meta.cn-shanghai.aliyuncs.com/", http.url)
+            assertEquals("application/x-www-form-urlencoded", http.headers["Content-Type"])
+            val form = String(http.body, Charsets.UTF_8)
+            val sigEncoded = form.substringAfter("&Signature=", "")
+            assertTrue(sigEncoded.isNotEmpty())
+            val rawParams = form.substringBefore("&Signature=").split("&").associate {
+                val kv = it.split("=", limit = 2)
+                popDecode(kv[0]) to popDecode(kv[1])
+            }
+            assertEquals("CreateToken", rawParams["Action"])
+            assertEquals("2019-02-28", rawParams["Version"])
+            assertEquals("cn-shanghai", rawParams["RegionId"])
+            assertEquals("test-ak-id", rawParams["AccessKeyId"])
+            // 签名验算：重算必须与表单签名一致（单测编解码去填充，与桥接同口径）。
+            val canonical = rawParams.entries.sortedBy { it.key }.joinToString("&") {
+                popPercentEncode(it.key) + "=" + popPercentEncode(it.value)
+            }
+            val stringToSign = "POST&" + popPercentEncode("/") + "&" + popPercentEncode(canonical)
+            assertEquals(
+                popPercentEncode(hmacSha1Base64("test-ak-secret&", stringToSign)),
+                sigEncoded,
+            )
+            // WS 连接带 token，首条为 StartTranscription（appkey 在 header 内）。
+            assertEquals(
+                "wss://nls-gateway-cn-shanghai.aliyuncs.com/ws/v1?token=test-token-123",
+                transport.wsCalls.single().url,
+            )
+            val startJson = transport.sentTexts.single()
+            assertTrue(startJson.contains("\"name\":\"StartTranscription\""))
+            assertTrue(startJson.contains("\"namespace\":\"SpeechTranscriber\""))
+            assertTrue(startJson.contains("\"appkey\":\"test-appkey\""))
+            assertTrue(startJson.contains("\"format\":\"pcm\""))
+            assertTrue(startJson.contains("\"sample_rate\":16000"))
+            assertTrue(startJson.contains("\"enable_intermediate_result\":true"))
+            assertTrue(startJson.contains("\"enable_punctuation_prediction\":true"))
+            assertTrue(Regex("\"task_id\":\"[0-9a-f]{32}\"").containsMatchIn(startJson))
+            assertTrue(Regex("\"message_id\":\"[0-9a-f]{32}\"").containsMatchIn(startJson))
+            // 任务确认后音频才发出；中间结果预览、句末提交、停止后任务完成结束。
+            transport.injectText(
+                """{"header":{"namespace":"SpeechTranscriber","name":"TranscriptionStarted","status":20000000}}""",
+            )
+            host.audio("AAAA")
+            awaitCondition { transport.sentBytes.isNotEmpty() }
+            transport.injectText(
+                """{"header":{"namespace":"SpeechTranscriber","name":"TranscriptionResultChanged","status":20000000},"payload":{"index":1,"time":1000,"result":"今天天气"}}""",
+            )
+            assertTrue(listener.partialLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(listOf("今天天气"), listener.partials)
+            transport.injectText(
+                """{"header":{"namespace":"SpeechTranscriber","name":"SentenceEnd","status":20000000},"payload":{"index":1,"time":1500,"begin_time":0,"result":"今天天气很好。"}}""",
+            )
+            assertTrue(listener.finalLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(listOf("今天天气很好。"), listener.finals)
+            // 注意：宿主 stop() 发完 StopTranscription 即杀会话（见 PluginHost.stop），
+            // 故完成事件须在 stop 之前注入；stop 本身的发包由下个单测覆盖。
+            transport.injectText(
+                """{"header":{"namespace":"SpeechTranscriber","name":"TranscriptionCompleted","status":20000000}}""",
+            )
+            assertTrue(listener.endedLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(listOf("今天天气很好。"), listener.finals)
         } finally {
             host.kill()
         }
     }
 
     @Test
-    fun qwenSession_endpointAndHeartbeat() {
+    fun nlsSession_stopSendsStopTranscription() {
         val store = PluginStore(tempDir(), MapPrefsStore())
-        val plugin = installedFromAsset(store, "builtin.qwen")
         val transport = RecordingTransport()
         val secrets = MapSecretStore()
-        secrets.put("builtin.qwen", "api_key", "test-api-key")
         val listener = RecordingListener()
-        val host = PluginHost(
-            plugin,
-            emptyMap(),
-            secrets,
-            transport,
-            listener,
-            JdkBase64Codec,
-        )
+        val host = nlsHost(store, transport, secrets, listener)
         try {
             host.start()
             assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
-            assertEquals(
-                "wss://dashscope.aliyuncs.com/api-ws/v1/inference",
-                transport.wsCalls.single().url,
-            )
-            val runTask = transport.sentTexts.single()
-            assertTrue(runTask.contains("\"heartbeat\":true"))
+            assertEquals(1, transport.sentTexts.size)
+            host.stop()
+            awaitCondition { transport.sentTexts.size == 2 }
+            val stopJson = transport.sentTexts[1]
+            assertTrue(stopJson.contains("\"name\":\"StopTranscription\""))
+            assertTrue(stopJson.contains("\"namespace\":\"SpeechTranscriber\""))
+            val startTask = Regex("\"task_id\":\"([0-9a-f]{32})\"")
+                .find(transport.sentTexts[0])!!.groupValues[1]
+            assertTrue(stopJson.contains("\"task_id\":\"$startTask\""))
         } finally {
             host.kill()
         }
+    }
+
+    @Test
+    fun nlsSession_tailPartialCommittedOnCompleted() {
+        val store = PluginStore(tempDir(), MapPrefsStore())
+        val transport = RecordingTransport()
+        val secrets = MapSecretStore()
+        val listener = RecordingListener()
+        val host = nlsHost(store, transport, secrets, listener)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            transport.injectText(
+                """{"header":{"namespace":"SpeechTranscriber","name":"TranscriptionStarted","status":20000000}}""",
+            )
+            transport.injectText(
+                """{"header":{"namespace":"SpeechTranscriber","name":"TranscriptionResultChanged","status":20000000},"payload":{"index":1,"time":1000,"result":"尾巴"}}""",
+            )
+            assertTrue(listener.partialLatch.await(10, TimeUnit.SECONDS))
+            // 无 SentenceEnd 直接完成：未提交的尾部须先提交再结束，不丢字。
+            transport.injectText(
+                """{"header":{"namespace":"SpeechTranscriber","name":"TranscriptionCompleted","status":20000000}}""",
+            )
+            assertTrue(listener.endedLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(listOf("尾巴"), listener.finals)
+        } finally {
+            host.kill()
+        }
+    }
+
+    @Test
+    fun ensure_prunesRemovedQwen() {
+        val store = PluginStore(tempDir(), MapPrefsStore())
+        val secrets = MapSecretStore()
+        // 旧版千问残留（内联最小脚本，不依赖已删资产）。
+        val qwenScript = """
+            register({
+              id: 'builtin.qwen', version: '1.2', hosts: ['dashscope.aliyuncs.com'],
+              features: [{ type: 'voice.asr', sampleRate: 16000 }],
+              settings: [{ key: 'api_key', type: 'secret', label: 'API 密钥' }],
+              auth: [{ header: 'Authorization', field: 'api_key', prefix: 'bearer ' }]
+            });
+            function start(ctx) {}
+            function audio(ctx) {}
+            function onMessage(ctx) {}
+            function stop(ctx) {}
+            function onSocketClosed() {}
+        """.trimIndent()
+        assertTrue(store.seedBuiltin(qwenScript.toByteArray(Charsets.UTF_8)) is PluginStore.SeedResult.Seeded)
+        store.setPreferred("builtin.qwen")
+        secrets.put("builtin.qwen", "api_key", "old-key")
+        val assets = mapOf(
+            "cloud_plugins/builtin.doubao/plugin.js" to assetBytes("builtin.doubao"),
+            "cloud_plugins/builtin.nls/plugin.js" to assetBytes("builtin.nls"),
+            "cloud_plugins/builtin.tencent/plugin.js" to assetBytes("builtin.tencent"),
+        )
+        val results = BuiltinPlugins.ensure(store, { assets[it] }, secrets)
+        assertEquals(3, results.size)
+        assertTrue(results.all { it is PluginStore.SeedResult.Seeded })
+        assertNull(store.get("builtin.qwen"))
+        assertNull(store.getPreferred())
+        assertFalse(secrets.has("builtin.qwen", "api_key"))
+        assertEquals(
+            listOf("builtin.doubao", "builtin.nls", "builtin.tencent"),
+            store.list().map { it.id },
+        )
     }
 
     @Test
@@ -394,17 +598,17 @@ class BuiltinPluginsTest {
         val store = PluginStore(tempDir(), MapPrefsStore())
         val assets = mapOf(
             "cloud_plugins/builtin.doubao/plugin.js" to assetBytes("builtin.doubao"),
-            "cloud_plugins/builtin.qwen/plugin.js" to assetBytes("builtin.qwen"),
+            "cloud_plugins/builtin.nls/plugin.js" to assetBytes("builtin.nls"),
             "cloud_plugins/builtin.tencent/plugin.js" to assetBytes("builtin.tencent"),
         )
-        val first = BuiltinPlugins.ensure(store) { assets[it] }
+        val first = BuiltinPlugins.ensure(store, { assets[it] })
         assertEquals(3, first.size)
         assertTrue(first.all { it is PluginStore.SeedResult.Seeded })
         assertEquals(
-            listOf("builtin.doubao", "builtin.qwen", "builtin.tencent"),
+            listOf("builtin.doubao", "builtin.nls", "builtin.tencent"),
             store.list().map { it.id },
         )
-        val second = BuiltinPlugins.ensure(store) { assets[it] }
+        val second = BuiltinPlugins.ensure(store, { assets[it] })
         assertEquals(3, second.size)
         assertTrue(second.all { it is PluginStore.SeedResult.Unchanged })
     }
@@ -412,30 +616,30 @@ class BuiltinPluginsTest {
     @Test
     fun ensure_upgradeClearsPreferredOnlyOnMetaChange() {
         val store = PluginStore(tempDir(), MapPrefsStore())
-        val qwen = assetBytes("builtin.qwen")
+        val nls = assetBytes("builtin.nls")
         val assets = mutableMapOf(
             "cloud_plugins/builtin.doubao/plugin.js" to assetBytes("builtin.doubao"),
-            "cloud_plugins/builtin.qwen/plugin.js" to qwen,
+            "cloud_plugins/builtin.nls/plugin.js" to nls,
             "cloud_plugins/builtin.tencent/plugin.js" to assetBytes("builtin.tencent"),
         )
-        BuiltinPlugins.ensure(store) { assets[it] }
-        store.setPreferred("builtin.qwen")
-        // 仅版本号变化：升级但不清首选（千问脚本现为 1.2，故 1.2→1.3）。
-        assets["cloud_plugins/builtin.qwen/plugin.js"] =
-            String(qwen, Charsets.UTF_8).replace("version: '1.2'", "version: '1.3'")
+        BuiltinPlugins.ensure(store, { assets[it] })
+        store.setPreferred("builtin.nls")
+        // 仅版本号变化：升级但不清首选（NLS 脚本现为 1.0，故 1.0→1.1）。
+        assets["cloud_plugins/builtin.nls/plugin.js"] =
+            String(nls, Charsets.UTF_8).replace("version: '1.0'", "version: '1.1'")
                 .toByteArray(Charsets.UTF_8)
-        val versionOnly = BuiltinPlugins.ensure(store) { assets[it] }
+        val versionOnly = BuiltinPlugins.ensure(store, { assets[it] })
             .filterIsInstance<PluginStore.SeedResult.Updated>()
             .singleOrNull()
         assertNotNull(versionOnly)
         assertEquals(false, versionOnly!!.reselectNeeded)
-        assertEquals("builtin.qwen", store.getPreferred())
+        assertEquals("builtin.nls", store.getPreferred())
         // 域名变化：升级且清首选。
-        assets["cloud_plugins/builtin.qwen/plugin.js"] =
-            String(qwen, Charsets.UTF_8)
-                .replace("dashscope.aliyuncs.com", "example.invalid")
+        assets["cloud_plugins/builtin.nls/plugin.js"] =
+            String(nls, Charsets.UTF_8)
+                .replace("nls-gateway-cn-shanghai.aliyuncs.com", "example.invalid")
                 .toByteArray(Charsets.UTF_8)
-        val metaChanged = BuiltinPlugins.ensure(store) { assets[it] }
+        val metaChanged = BuiltinPlugins.ensure(store, { assets[it] })
             .filterIsInstance<PluginStore.SeedResult.Updated>()
             .singleOrNull()
         assertNotNull(metaChanged)
@@ -613,20 +817,20 @@ class BuiltinPluginsTest {
     }
 
     @Test
-    fun shimDirect_qwenUrlReachesTransport() {
+    fun shimDirect_doubaoAuthHeaderReachesTransport() {
         val store = PluginStore(tempDir(), MapPrefsStore())
-        val qwen = installedFromAsset(store, "builtin.qwen")
+        val doubao = installedFromAsset(store, "builtin.doubao")
         val secrets = MapSecretStore()
-        secrets.put("builtin.qwen", "api_key", "test-api-key")
+        secrets.put("builtin.doubao", "api_key", "test-api-key")
         val transport = RecordingTransport()
         val shim = NetworkShim(
-            allowedHosts = qwen.meta.hosts.map { it.lowercase() }.toSet(),
-            authHeaders = qwen.meta.authHeaders,
-            secretResolver = { field -> secrets.get(qwen.meta.id, field) },
+            allowedHosts = doubao.meta.hosts.map { it.lowercase() }.toSet(),
+            authHeaders = doubao.meta.authHeaders,
+            secretResolver = { field -> secrets.get(doubao.meta.id, field) },
             transport = transport,
         )
         shim.websocket(
-            "wss://dashscope.aliyuncs.com/api-ws/v1/inference/",
+            "wss://openspeech.bytedance.com/test",
             emptyMap(),
             object : NetworkTransport.WsListener {
                 override fun onMessage(text: String?, bytes: ByteArray?) {}
@@ -635,66 +839,7 @@ class BuiltinPluginsTest {
             },
         )
         assertEquals(1, transport.wsCalls.size)
-        assertEquals("bearer test-api-key", transport.wsCalls.single().headers["Authorization"])
-    }
-
-    @Test
-    fun qwenSession_contract() {
-        val store = PluginStore(tempDir(), MapPrefsStore())
-        val plugin = installedFromAsset(store, "builtin.qwen")
-        val transport = RecordingTransport()
-        val secrets = MapSecretStore()
-        secrets.put("builtin.qwen", "api_key", "test-api-key")
-        val listener = RecordingListener()
-        val host = PluginHost(
-            plugin,
-            emptyMap(),
-            secrets,
-            transport,
-            listener,
-            JdkBase64Codec,
-        )
-        try {
-            host.start()
-            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
-            assertTrue(
-                "no ws call; script-error fired=${listener.errorLatch.count == 0L}",
-                transport.wsCalls.isNotEmpty(),
-            )
-            val call = transport.wsCalls.single()
-            assertEquals("wss://dashscope.aliyuncs.com/api-ws/v1/inference", call.url)
-            assertEquals("bearer test-api-key", call.headers["Authorization"])
-            val runTask = transport.sentTexts.single()
-            assertTrue(runTask.contains("\"action\":\"run-task\""))
-            assertTrue(runTask.contains("\"model\":\"qwen-audio-3.1-asr-flash-streaming\""))
-            assertTrue(runTask.contains("\"format\":\"pcm\""))
-            assertTrue(runTask.contains("\"sample_rate\":16000"))
-            val pcm = byteArrayOf(1, 2, 3, 4)
-            host.audio(JdkBase64Codec.encodeToString(pcm))
-            assertStaysEmpty { transport.sentBytes.size }
-            transport.injectText(
-                "{\"header\":{\"event\":\"task-started\"}," +
-                    "\"payload\":{\"output\":{}}}",
-            )
-            awaitCondition { transport.sentBytes.size == 1 }
-            assertTrue(transport.sentBytes.single().contentEquals(pcm))
-            transport.injectText(
-                "{\"header\":{\"event\":\"result-generated\"}," +
-                    "\"payload\":{\"output\":{\"sentence\":{\"text\":\"你好\",\"sentence_end\":false}}}}",
-            )
-            assertTrue(listener.partialLatch.await(10, TimeUnit.SECONDS))
-            assertEquals(listOf("你好"), listener.partials)
-            transport.injectText(
-                "{\"header\":{\"event\":\"result-generated\"}," +
-                    "\"payload\":{\"output\":{\"sentence\":{\"text\":\"你好世界\",\"sentence_end\":true}}}}",
-            )
-            assertTrue(listener.finalLatch.await(10, TimeUnit.SECONDS))
-            assertEquals(listOf("你好世界"), listener.finals)
-            transport.injectText("{\"header\":{\"event\":\"task-finished\"},\"payload\":{}}")
-            assertTrue(listener.endedLatch.await(10, TimeUnit.SECONDS))
-        } finally {
-            host.kill()
-        }
+        assertEquals("test-api-key", transport.wsCalls.single().headers["X-Api-Key"])
     }
 
     @Test

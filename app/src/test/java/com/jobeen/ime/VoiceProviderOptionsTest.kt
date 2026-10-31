@@ -59,11 +59,11 @@ class VoiceProviderOptionsTest {
     fun rows_withPlugins_localFirstThenPluginsInOrder() {
         val rows = voiceProviderRows(
             modelReady = true,
-            plugins = listOf(plugin("builtin.qwen"), plugin("user.custom")),
+            plugins = listOf(plugin("builtin.nls"), plugin("user.custom")),
             preferredId = "user.custom",
-            secretsMissingIds = setOf("builtin.qwen"),
+            secretsMissingIds = setOf("builtin.nls"),
         )
-        assertEquals(listOf("local", "builtin.qwen", "user.custom"), rows.map { it.key })
+        assertEquals(listOf("local", "builtin.nls", "user.custom"), rows.map { it.key })
         assertTrue(!rows[0].selected)
         assertTrue(!rows[1].selected)
         assertEquals(VoiceProviderStatus.PLUGIN_SECRETS_MISSING, rows[1].status)
@@ -75,12 +75,12 @@ class VoiceProviderOptionsTest {
     fun dialogPartition_onlineFirstLocalSecondOrderPreserved() {
         val rows = voiceProviderRows(
             modelReady = true,
-            plugins = listOf(plugin("builtin.qwen"), plugin("user.custom")),
+            plugins = listOf(plugin("builtin.nls"), plugin("user.custom")),
             preferredId = null,
             secretsMissingIds = emptySet(),
         )
         val (online, local) = partitionProviderDialogRows(rows)
-        assertEquals(listOf("builtin.qwen", "user.custom"), online.map { it.key })
+        assertEquals(listOf("builtin.nls", "user.custom"), online.map { it.key })
         assertEquals(listOf("local"), local.map { it.key })
     }
 
@@ -103,7 +103,7 @@ class VoiceProviderOptionsTest {
         // 提示侧由 PLUGIN_UNAVAILABLE 覆盖。
         val rows = voiceProviderRows(
             modelReady = true,
-            plugins = listOf(plugin("builtin.qwen")),
+            plugins = listOf(plugin("builtin.nls")),
             preferredId = "builtin.gone",
             secretsMissingIds = emptySet(),
         )
@@ -172,10 +172,10 @@ class VoiceProviderOptionsTest {
         assertEquals(
             VoiceProviderHint.CLOUD_NOT_ENABLED,
             voiceProviderHint(
-                preferredId = "builtin.qwen",
+                preferredId = "builtin.nls",
                 modelReady = true,
                 optIn = false,
-                secretsMissingIds = setOf("builtin.qwen"),
+                secretsMissingIds = setOf("builtin.nls"),
                 preferredInstalled = true,
             ),
         )
@@ -186,10 +186,10 @@ class VoiceProviderOptionsTest {
         assertEquals(
             VoiceProviderHint.PLUGIN_SECRETS_MISSING,
             voiceProviderHint(
-                preferredId = "builtin.qwen",
+                preferredId = "builtin.nls",
                 modelReady = true,
                 optIn = true,
-                secretsMissingIds = setOf("builtin.qwen"),
+                secretsMissingIds = setOf("builtin.nls"),
                 preferredInstalled = true,
             ),
         )
@@ -210,7 +210,7 @@ class VoiceProviderOptionsTest {
         assertEquals(
             VoiceProviderHint.NONE,
             voiceProviderHint(
-                preferredId = "builtin.qwen",
+                preferredId = "builtin.nls",
                 modelReady = false,
                 optIn = true,
                 secretsMissingIds = emptySet(),

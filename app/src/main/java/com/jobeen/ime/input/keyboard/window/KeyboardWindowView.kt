@@ -1472,16 +1472,17 @@ class KeyboardWindowView(
     private fun tryStartCloudVoice(): Boolean {
         val prefs = SharedPrefsStore(context, PluginStore.PREFS_NAME)
         val store = PluginStore(context.filesDir, prefs)
-        // 内置插件路由前种子安装（缺失即补，失败不阻塞路由判定）。
+        val secrets = KeystoreSecretStore(prefs)
+        // 内置插件路由前种子安装（缺失即补，失败不阻塞路由判定；
+        // 已下架内置一并清除，含其密钥）。
         runCatching {
-            BuiltinPlugins.ensure(store) { name ->
+            BuiltinPlugins.ensure(store, { name ->
                 context.assets.open(name).use { it.readBytes() }
-            }
+            }, secrets)
         }
         if (!store.isOptIn()) return false
         val preferred = store.getPreferred() ?: return false
         val installed = store.get(preferred)
-        val secrets = KeystoreSecretStore(prefs)
         val secretsMissing = installed?.meta?.authHeaders
             ?.any { !secrets.has(preferred, it.field) } ?: true
         val gate = CloudVoiceGate.decide(

@@ -203,9 +203,9 @@ fun VoiceSettingsScreen(
     LaunchedEffect(Unit) {
         val changed = withContext(Dispatchers.IO) {
             runCatching {
-                BuiltinPlugins.ensure(pluginStore) { name ->
+                BuiltinPlugins.ensure(pluginStore, { name ->
                     runCatching { context.assets.open(name).use { it.readBytes() } }.getOrNull()
-                }
+                }, secretStore)
             }.getOrDefault(emptyList())
         }
         if (changed.isNotEmpty()) refreshProviderState()

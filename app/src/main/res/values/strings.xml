@@ -572,7 +572,7 @@
     <string name="cloud_voice_delete">删除</string>
     <string name="cloud_voice_builtin">内置</string>
     <string name="cloud_voice_builtin_doubao">豆包</string>
-    <string name="cloud_voice_builtin_qwen">千问</string>
+    <string name="cloud_voice_builtin_nls">阿里云</string>
     <string name="cloud_voice_builtin_tencent">腾讯</string>
     <string name="cloud_voice_clear_preferred">清除首选插件</string>
     <string name="cloud_voice_clear">清除</string>

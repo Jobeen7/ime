@@ -14,11 +14,28 @@ object BuiltinPlugins {
 
     val SPECS = listOf(
         Spec("builtin.doubao", "cloud_plugins/builtin.doubao/plugin.js"),
-        Spec("builtin.qwen", "cloud_plugins/builtin.qwen/plugin.js"),
+        Spec("builtin.nls", "cloud_plugins/builtin.nls/plugin.js"),
         Spec("builtin.tencent", "cloud_plugins/builtin.tencent/plugin.js"),
     )
 
+    /** 已下架的内置插件：种子安装时连同残留一并清除（目录＋首选＋设置＋密钥）。 */
+    val REMOVED = listOf("builtin.qwen")
+
     fun isBuiltin(id: String): Boolean = id.startsWith("builtin.")
+
+    fun pruneRemoved(store: PluginStore, secrets: SecretStore?) {
+        for (id in REMOVED) {
+            if (store.get(id) != null) {
+                store.uninstall(id, secrets)
+            } else {
+                // 目录已清但密钥残留时一并清掉；无残留时为无操作。
+                runCatching { secrets?.deleteForPlugin(id) }
+                    .onFailure {
+                        Timber.w("cloudVoice prune secrets failed plugin=%s err=%s", id, it.javaClass.simpleName)
+                    }
+            }
+        }
+    }
 
     /**
      * 种子安装全部内置插件：单个失败只记元数据日志，不影响其余项，
@@ -28,7 +45,9 @@ object BuiltinPlugins {
     fun ensure(
         store: PluginStore,
         readAsset: (String) -> ByteArray?,
+        secrets: SecretStore? = null,
     ): List<PluginStore.SeedResult> {
+        pruneRemoved(store, secrets)
         val out = ArrayList<PluginStore.SeedResult>()
         for (spec in SPECS) {
             val bytes = runCatching { readAsset(spec.assetPath) }.getOrNull()

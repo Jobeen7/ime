@@ -578,12 +578,15 @@ class PluginHost(
      * 签名。字段必须属于本插件的 SECRET 设置，否则返 null；文本超
      * 限、密钥未填、算签失败一律返 null。密钥值永不进入脚本空间，
      * 与 authHeaders 代附同信任模型；除本函数外不暴露任何密码学原语。
+     * 可选第三参为密钥后缀（如阿里云 POP 签名要求密钥后补 "&"）：
+     * 不传即原密钥，传了则以“密钥＋后缀”作 HMAC 密钥；后缀本身不涉密。
      */
     private fun buildCryptoBridge(): NativeObject {
         val crypto = NativeObject()
         crypto.put("hmacSha1Base64", crypto, BridgeFunction { args ->
             val field = asJsString(args.getOrNull(0)) ?: return@BridgeFunction null
             val message = asJsString(args.getOrNull(1)) ?: return@BridgeFunction null
+            val keySuffix = asJsString(args.getOrNull(2)) ?: ""
             val secretKeys = plugin.meta.settings
                 .filter { it.type == SettingType.SECRET }
                 .map { it.key }
@@ -595,7 +598,7 @@ class PluginHost(
                 val mac = javax.crypto.Mac.getInstance("HmacSHA1")
                 mac.init(
                     javax.crypto.spec.SecretKeySpec(
-                        secret.toByteArray(Charsets.UTF_8),
+                        (secret + keySuffix).toByteArray(Charsets.UTF_8),
                         "HmacSHA1",
                     ),
                 )

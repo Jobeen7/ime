@@ -188,9 +188,9 @@ fun CloudVoicePluginsScreen(
     // 内置插件首次打开即种子安装（IO 线程），装完刷新列表。
     LaunchedEffect(Unit) {
         val changed = withContext(Dispatchers.IO) {
-            BuiltinPlugins.ensure(store) { name ->
+            BuiltinPlugins.ensure(store, { name ->
                 runCatching { context.assets.open(name).use { it.readBytes() } }.getOrNull()
-            }
+            }, secrets)
         }
         if (changed.isNotEmpty()) refresh()
         // 目标插件入口链：种子安装完成后落在目标插件详情页；
@@ -923,7 +923,7 @@ private fun SecretFieldRow(
 /** 内置插件展示名（插件身份显示）；非内置返回 null，用原始 id。 */
 internal fun builtinDisplayName(id: String): Int? = when (id) {
     "builtin.doubao" -> R.string.cloud_voice_builtin_doubao
-    "builtin.qwen" -> R.string.cloud_voice_builtin_qwen
+    "builtin.nls" -> R.string.cloud_voice_builtin_nls
     "builtin.tencent" -> R.string.cloud_voice_builtin_tencent
     else -> null
 }
