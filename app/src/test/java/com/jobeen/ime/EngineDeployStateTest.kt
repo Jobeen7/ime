@@ -2,6 +2,7 @@
 
 package com.jobeen.ime
 
+import com.jobeen.ime.data.manager.DeployKeyGate
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.awaitSchemasReady
 import kotlinx.coroutines.runBlocking
@@ -26,6 +27,40 @@ class EngineDeployStateTest {
         assertTrue(EngineDeployState.running.value)
         EngineDeployState.setRunning(false)
         assertFalse(EngineDeployState.isRunning())
+    }
+
+    @Test
+    fun deployKeyGate_dropsWhenRunning() {
+        try {
+            EngineDeployState.setRunning(true)
+            EngineDeployState.setOrphanRunning(false)
+            assertTrue(DeployKeyGate.shouldDrop())
+        } finally {
+            EngineDeployState.setRunning(false)
+        }
+    }
+
+    @Test
+    fun deployKeyGate_dropsWhenOrphan() {
+        try {
+            EngineDeployState.setRunning(false)
+            EngineDeployState.setOrphanRunning(true)
+            assertTrue(DeployKeyGate.shouldDrop())
+        } finally {
+            EngineDeployState.setOrphanRunning(false)
+        }
+    }
+
+    @Test
+    fun deployKeyGate_passesWhenIdle() {
+        try {
+            EngineDeployState.setRunning(false)
+            EngineDeployState.setOrphanRunning(false)
+            assertFalse(DeployKeyGate.shouldDrop())
+        } finally {
+            EngineDeployState.setRunning(false)
+            EngineDeployState.setOrphanRunning(false)
+        }
     }
 
     @Test

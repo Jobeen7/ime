@@ -27,6 +27,7 @@ import com.jobeen.ime.data.manager.applySavedCandidateOrder
 import com.jobeen.ime.data.manager.candidateSortingKey
 import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.DeployAwaitResult
+import com.jobeen.ime.data.manager.DeployKeyGate
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.SchemeDirs
@@ -560,6 +561,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun processKey(service: InputMethodService, key: KeyEvent) {
+        // 部署期按键门：见 DeployKeyGate。门必须放在 dispatchAction
+        // 之前——键一旦入动作队列，就会在部署作业之后执行。
+        // 只记日志不弹提示：部署中连续打字时提示会刷屏。
+        if (DeployKeyGate.shouldDrop()) {
+            Timber.d("processKey dropped during deploy")
+            return
+        }
         dispatchAction(Action.ProcessKey(service, key))
     }
 

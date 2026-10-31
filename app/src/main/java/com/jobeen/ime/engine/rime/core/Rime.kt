@@ -60,6 +60,9 @@ class Rime : RimeApi, RimeLifecycleOwner {
     private val deferredFinalizeScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val deferredFinalizeScheduled = AtomicBoolean(false)
 
+    /** STOPPING 阶段收到 startup 时的延迟执行标记：停机完成时由 finalize 末尾消费并重走 startup */
+    private val startupPending = AtomicBoolean(false)
+
     /** 每次 startup() 递增：延迟 finalize 执行前比对，防止误停「排队之后又被重启好」的新一代引擎 */
     private val startupGeneration = java.util.concurrent.atomic.AtomicInteger(0)
 
@@ -550,7 +553,18 @@ class Rime : RimeApi, RimeLifecycleOwner {
             return
         }
         if (lifecycle.currentState != RimeLifecycle.State.STOPPED) {
-            Timber.w("Skip starting rime: not at stopped state!")
+            // 停机进行中收到的启动请求不能丢弃：否则停机完成后引擎
+            // 一直停着、调用方须自己重试。只登记一次，停机完成时
+            // 由 finalize 末尾消费并重走 startup（自带 STOPPED 守门，
+            // 与并发启动竞态时后到的直接跳过）。STARTING 期不登记：
+            // 启动已在进行中，本次请求即它本身。
+            if (lifecycle.currentState == RimeLifecycle.State.STOPPING) {
+                if (startupPending.compareAndSet(false, true)) {
+                    Timber.i("Rime startup() deferred until stopping completes")
+                }
+            } else {
+                Timber.w("Skip starting rime: not at stopped state!")
+            }
             return
         }
         registerMessageHandler(::handleRimeMessage)
@@ -571,6 +585,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 }
                 lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
                 unregisterMessageHandler(::handleRimeMessage)
+                // 消费停机期间登记的启动请求（见 startup()）：若并发启动
+                // 已先跑到 STARTING，本次重走 startup 会自带守门跳过。
+                if (startupPending.compareAndSet(true, false)) {
+                    startup()
+                }
             }
             RimeLifecycle.State.STARTING -> {
                 // 启动尚未完成时收到的停止请求不能丢弃：否则会话已全部销毁、
