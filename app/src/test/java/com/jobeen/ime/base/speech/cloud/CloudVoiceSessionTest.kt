@@ -94,11 +94,30 @@ class CloudVoiceSessionTest {
         $body
     """.trimIndent()
 
+    /** 手动宽限调度器：捕获超时任务，测试手动触发（代替主线程 Handler）。 */
+    private class ManualScheduler {
+        var task: (() -> Unit)? = null
+        var cancelled = false
+        val scheduler: (Long, () -> Unit) -> (() -> Unit) = { _, t ->
+            task = t
+            { cancelled = true }
+        }
+
+        fun fire() {
+            val t = task
+            task = null
+            t?.invoke()
+        }
+    }
+
+    // 注意：onBudgetDisabled 须保持末参——旧用例用尾随 lambda 传它，
+    // 在它之后加参会把尾随 lambda 错绑到新参上（本次已踩过一次）。
     private fun session(
         script: String,
         sink: RecordingSink,
         listener: SessionListener,
         recorder: FakeRecorder,
+        grace: ManualScheduler? = null,
         onBudgetDisabled: () -> Unit = {},
     ): CloudVoiceSession = CloudVoiceSession(
         plugin = fixture(script),
@@ -118,6 +137,7 @@ class CloudVoiceSessionTest {
         networkAvailable = { true },
         transport = FakeTransport(),
         codec = JdkBase64Codec,
+        graceScheduler = grace?.scheduler,
     )
 
     @Test
@@ -189,16 +209,50 @@ class CloudVoiceSessionTest {
         s.stop(discard = true)
         assertEquals(listOf("preview:留着", "clear"), sink.calls)
 
+        // 2026-10-31 优雅停止改规格（报告中标明）：正常松手不再立即
+        // 结算，宽限内等服务端终结或超时，超时才按已到 partial 提交。
         val sink2 = RecordingSink()
         val listener2 = SessionListener()
         val recorder2 = FakeRecorder()
-        val s2 = session(script, sink2, listener2, recorder2)
+        val grace = ManualScheduler()
+        val s2 = session(script, sink2, listener2, recorder2, grace = grace)
         s2.start()
         assertTrue(listener2.started.await(10, TimeUnit.SECONDS))
         recorder2.onChunk!!.invoke(byteArrayOf(0))
         Thread.sleep(300)
         s2.stop(discard = false)
+        assertEquals(listOf("preview:留着"), sink2.calls)
+        grace.fire()
         assertEquals(listOf("preview:留着", "commit:留着"), sink2.calls)
+    }
+
+    @Test
+    fun session_stopKeep_lateFinalFromStopCall_commitsWithoutDuplication() {
+        // 2026-10-31 一句话末尾丢字：stop 指令发出后服务端才回的尾巴
+        // （final＋ended）须照常结算，旧 stop-kill 语义会杀会话丢尾巴。
+        val sink = RecordingSink()
+        val listener = SessionListener()
+        val recorder = FakeRecorder()
+        val grace = ManualScheduler()
+        val script = baseScript(
+            "function audio(ctx) { cb.partial('半句'); } " +
+                "function stop(ctx) { cb.final('半句尾巴'); cb.ended(); }",
+        )
+        val s = session(script, sink, listener, recorder, grace = grace)
+        s.start()
+        assertTrue(listener.started.await(10, TimeUnit.SECONDS))
+        recorder.onChunk!!.invoke(byteArrayOf(0))
+        Thread.sleep(300)
+        assertEquals(listOf("preview:半句"), sink.calls)
+        s.stop(discard = false)
+        val deadline = System.currentTimeMillis() + 5000
+        while (System.currentTimeMillis() < deadline && !sink.calls.contains("commit:半句尾巴")) {
+            Thread.sleep(100)
+        }
+        assertEquals(listOf("preview:半句", "commit:半句尾巴"), sink.calls)
+        // 宽限已由 ended 收尾，超时再触发也不重复提交。
+        grace.fire()
+        assertEquals(listOf("preview:半句", "commit:半句尾巴"), sink.calls)
     }
 
     @Test

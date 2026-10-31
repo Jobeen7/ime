@@ -244,6 +244,30 @@ class PluginHost(
     }
 
     /**
+     * 优雅停止：只调脚本 stop，不杀会话——调用方（CloudVoiceSession
+     * 宽限收尾）等服务端 final／ended 或宽限超时后再 kill。stop 指令
+     * 本身失败时走 listener.onError，由调用方宽限收尾 quiet 处理，
+     * 不在此处 kill（避免服务端尾巴还在途时 socket 被关）。
+     */
+    fun requestStop() {
+        post {
+            if (closed) return@post
+            try {
+                currentOp = "stop"
+                session?.callFunction("stop", arrayOf(buildSimpleCtx()), BACKGROUND_BUDGET_MS)
+            } catch (e: ScriptBudgetExceeded) {
+                listener.onBudgetDisabled()
+            } catch (e: Exception) {
+                Timber.w(
+                    "cloudVoice session stop failed plugin=%s err=%s",
+                    plugin.meta.id, sanitizeScriptError(e).kind,
+                )
+                listener.onError()
+            }
+        }
+    }
+
+    /**
      * 立即杀实例（不调 stop）：停用、卸载、异常收尾走此口。
      * 先从调用线程取消在途 HTTP：工作线程若正堵在慢网络上，
      * 取消 socket 后它立即解堵，随后排队的 killInternal 才能跑到。

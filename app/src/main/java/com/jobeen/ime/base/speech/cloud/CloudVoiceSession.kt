@@ -96,7 +96,18 @@ class CloudVoiceSession(
     private val transport: NetworkTransport = OkHttpNetworkTransport(),
     private val codec: Base64Codec = AndroidBase64Codec,
     private val displayTransform: (String) -> String = { it },
+    private val graceTimeoutMs: Long = GRACE_TIMEOUT_MS,
+    private val graceScheduler: ((Long, () -> Unit) -> (() -> Unit))? = null,
 ) {
+    companion object {
+        /**
+         * 显式停止后的宽限：服务端收到 stop 指令后回 final／ended
+         * 通常数百毫秒；宽限内到的尾巴照常结算，超时则按已到
+         * partial 结算，不无限等（2026-10-31 一句话末尾丢字：
+         * 旧语义停录即杀 socket，服务端在途尾巴必丢）。
+         */
+        const val GRACE_TIMEOUT_MS = 1500L
+    }
     interface Listener {
         fun onStarted()
         fun onAmplitude(amp: Float)
@@ -108,6 +119,13 @@ class CloudVoiceSession(
 
     @Volatile
     private var stopped = false
+
+    /** 宽限收尾中：已停采集、已发 stop 指令，未结算、未杀会话。 */
+    @Volatile
+    private var stopping = false
+
+    /** 宽限超时取消句柄（注入调度器时由调用方提供，默认走主线程 Handler）。 */
+    private var graceCancel: (() -> Unit)? = null
 
     private var host: PluginHost? = null
     private var recorder: CloudRecorder? = null
@@ -169,8 +187,15 @@ class CloudVoiceSession(
                     if (stopped) return
                     stopRecorder()
                     postMain {
-                        settle.onError()
-                        listener.onFailed(CloudSessionFailure.GENERIC)
+                        if (stopping) {
+                            // 宽限中服务端报错：不再清预览（用户已松手，
+                            // 预览即已说出的话），按已到 partial 结算收尾。
+                            settle.stop(discard = false)
+                            finalizeGrace()
+                        } else {
+                            settle.onError()
+                            listener.onFailed(CloudSessionFailure.GENERIC)
+                        }
                     }
                 }
 
@@ -178,13 +203,28 @@ class CloudVoiceSession(
                     if (stopped) return
                     stopRecorder()
                     postMain {
-                        settle.onEnded()
-                        listener.onDone()
+                        if (stopping) {
+                            settle.onEnded()
+                            finalizeGrace()
+                        } else {
+                            settle.onEnded()
+                            listener.onDone()
+                        }
                     }
                 }
 
                 override fun onBudgetDisabled() {
                     if (stopped) return
+                    // 宽限中 stop 指令本身超预算：旧语义下 stop 后回调
+                    // 本就被 stopped 门丢弃，故此处同样不标记禁用、
+                    // 不通知失败，只按已到 partial 结算收尾。
+                    if (stopping) {
+                        postMain {
+                            settle.stop(discard = false)
+                            finalizeGrace()
+                        }
+                        return
+                    }
                     markBudgetDisabled()
                     stopRecorder()
                     postMain {
@@ -199,14 +239,73 @@ class CloudVoiceSession(
         created.start()
     }
 
-    /** 显式停止：停采集、结算文本、调脚本 stop；界面收尾归视图。 */
+    /**
+     * 显式停止：界面收尾归视图，会话只结算文本。
+     * discard=true（探针／主动丢弃）：旧语义不变，立即清预览并杀会话。
+     * discard=false（正常松手）：优雅停止——停采集、发 stop 指令但
+     * 不立即结算、不杀会话；宽限内到的 final／ended 照常结算，
+     * 宽限超时或服务端终结时再按已到 partial 结算并杀会话。
+     * 宽限中再调 stop(discard=true)，丢弃胜出：取消宽限、清预览、杀会话。
+     */
     fun stop(discard: Boolean) {
         if (stopped) return
-        stopped = true
+        if (stopping) {
+            if (!discard) return
+            runCatching { graceCancel?.invoke() }
+            graceCancel = null
+            stopping = false
+            stopped = true
+            stopRecorder()
+            settle.stop(discard = true)
+            host?.kill()
+            host = null
+            return
+        }
+        if (discard) {
+            stopped = true
+            stopRecorder()
+            settle.stop(discard = true)
+            host?.stop()
+            host = null
+            return
+        }
+        stopping = true
         stopRecorder()
-        settle.stop(discard)
-        host?.stop()
+        val currentHost = host
+        if (currentHost == null) {
+            stopping = false
+            stopped = true
+            settle.stop(discard = false)
+            return
+        }
+        currentHost.requestStop()
+        val scheduler = graceScheduler ?: { delay, task -> defaultGraceScheduler(delay, task) }
+        graceCancel = runCatching { scheduler(graceTimeoutMs) { finalizeGraceFromTimeout() } }.getOrNull()
+    }
+
+    /** 默认宽限调度：主线程 Handler 延时＋可取消（与注入调度器同口径）。 */
+    private fun defaultGraceScheduler(delay: Long, task: () -> Unit): () -> Unit {
+        val runnable = Runnable { task() }
+        runCatching { mainHandler.postDelayed(runnable, delay) }
+        return { runCatching { mainHandler.removeCallbacks(runnable) } }
+    }
+
+    /** 宽限收尾：结算已由各终结分支完成，此处只杀会话、关宽限门。 */
+    private fun finalizeGrace() {
+        if (!stopping) return
+        stopping = false
+        stopped = true
+        runCatching { graceCancel?.invoke() }
+        graceCancel = null
+        host?.kill()
         host = null
+    }
+
+    /** 宽限超时：按已到 partial 结算，再走宽限收尾。 */
+    private fun finalizeGraceFromTimeout() {
+        if (!stopping) return
+        settle.stop(discard = false)
+        finalizeGrace()
     }
 
     private fun stopRecorder() {
