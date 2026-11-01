@@ -362,6 +362,12 @@ data class ValidatedSkin(
      * 网格优先于旧版单行（见 resolveHintGrid）。
      */
     val hintSymbolsGridStyles: Map<String, HintSymbolsGridStyle> = emptyMap(),
+    /**
+     * 长按符号全节点注册表：顶层 hintSymbolNodes，样式名 →
+     * 显示文本＋动作；颜色／几何按同名查 keyStyles／
+     * keyGeometries。无效节点逐项丢弃并记 issue。
+     */
+    val hintSymbolNodes: Map<String, HintSymbolNode> = emptyMap(),
     /** 状态驱动通知（重点候选 8-1）：顶层 notifications 校验结果；未定义即空表。 */
     val notifications: List<SkinNotification> = emptyList(),
     /** 条件样式（重点候选 8-1）：顶层 conditionStyles 校验结果；未定义即空表。 */

@@ -745,6 +745,35 @@ object SkinValidator {
             }
         }
 
+        // ---- hintSymbolNodes（长按符号全节点注册表） ----
+        // 非对象整段记 issue；单项无动作／动作非法逐项丢弃并记
+        // issue，不拒整包；颜色／几何按同名查 keyStyles 表。
+        var hintSymbolNodes: Map<String, HintSymbolNode> = emptyMap()
+        val hintSymbolNodesNode = tree["hintSymbolNodes"]
+        if (hintSymbolNodesNode != null) {
+            val hintSymbolNodesObj = hintSymbolNodesNode as? JsonObject
+            if (hintSymbolNodesObj == null) {
+                issues += SkinIssue(
+                    "hintSymbolNodes", SkinIssue.Kind.FIELD_FALLBACK,
+                    "hint_symbol_nodes_not_object",
+                )
+            } else {
+                val nodeTable = LinkedHashMap<String, HintSymbolNode>()
+                for ((name, node) in hintSymbolNodesObj) {
+                    val parsed = HintSymbolNodeParser.parse(node)
+                    if (parsed == null) {
+                        issues += SkinIssue(
+                            "hintSymbolNodes.$name", SkinIssue.Kind.FIELD_FALLBACK,
+                            "hint_symbol_node_invalid",
+                        )
+                    } else {
+                        nodeTable[name] = parsed
+                    }
+                }
+                hintSymbolNodes = nodeTable
+            }
+        }
+
         // ---- keyMappings（B2 强类型解析；单项无效只剔该项，逐项报告） ----
         var keyMappingsCount = 0
         var keyOverrides: Map<String, KeyOverride> = emptyMap()
@@ -1002,6 +1031,7 @@ object SkinValidator {
                 keyAnimations = keyAnimations,
                 hintSymbolsStyles = hintSymbolsStyles,
                 hintSymbolsGridStyles = hintSymbolsGridStyles,
+                hintSymbolNodes = hintSymbolNodes,
                 keyboardGeometry = KeyboardGeometrySpec(
                     presence = keyboardPresence,
                     values = keyboardValues,

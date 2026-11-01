@@ -1209,6 +1209,17 @@ object SkinKeyMappingsParser {
     /** 动作子集 delay 的毫秒上限（主线程阻塞有界；超限解析期剔除）。 */
     const val DELAY_MAX_MS = 1000
 
+    /**
+     * 单动作节点解析（长按符号节点等复用）：与 keyMappings 单动作
+     * 同口径；非法返回 null（调用方记 issue 丢弃该节点）。
+     * 槽位取 TAP：面板格为点按式触发，voice_input（仅长按槽）
+     * 在此不合法，与键映射口径一致。
+     */
+    fun parseActionNode(node: JsonElement): SkinAction? {
+        val rejections = mutableListOf<KeyBindingRejection>()
+        return parseAction("hintSymbolNode", KeySlot.TAP, node, rejections)
+    }
+
     private fun parseAction(
         keyId: String,
         slot: KeySlot,

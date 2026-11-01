@@ -166,6 +166,17 @@ class SkinSnapshotBuilderTest {
     }
 
     @Test
+    fun snapshotCarriesHintSymbolNodes() {
+        val snapshot = build(
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"}, "hintSymbolNodes":
+              {"up": {"text": "↑", "action": {"type": "symbol", "value": "↑"}}}}""",
+        )
+        val node = snapshot.hintSymbolNodes.getValue("up")
+        assertEquals("↑", node.text)
+        assertEquals("↑", node.displayText)
+    }
+
+    @Test
     fun snapshotAdmitsOnlyReferencedSounds() {        val json = """
             {"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
              "audio": {"tap": "snd_tap"},

@@ -29,6 +29,12 @@ class KeyboardPopup(private val context: Context) {
     // PopupWindow（长按弹层是用户高频操作）。现在容器/窗口/条目视图各建
     // 一次：条目数变化才增删视图，颜色/文案变化只更新属性。
 
+    /**
+     * 长按面板显示：itemLabels 为逐格显示文本（缺省走 [actionLabel]），
+     * itemTextColors 为逐格前景色（缺省／null 项走 textColor），
+     * initialSelectedIndex 为初始选中（缺省走锚点三分位规则）。
+     * 三项皆为长按面板挂载的可选覆写，工厂弹窗调用保持原行为。
+     */
     fun show(
         anchor: View,
         items: List<KeyboardAction>,
@@ -36,6 +42,9 @@ class KeyboardPopup(private val context: Context) {
         bgColor: Int,
         keyBgColor: Int,
         keyPressedColor: Int,
+        itemLabels: List<String>? = null,
+        itemTextColors: List<Int?>? = null,
+        initialSelectedIndex: Int? = null,
     ) {
         popupWindow?.dismiss()
 
@@ -79,8 +88,8 @@ class KeyboardPopup(private val context: Context) {
             itemViews = itemList
         }
         items.forEachIndexed { i, action ->
-            itemViews[i].text = actionLabel(action)
-            itemViews[i].setTextColor(textColor)
+            itemViews[i].text = itemLabels?.getOrNull(i) ?: actionLabel(action)
+            itemViews[i].setTextColor(itemTextColors?.getOrNull(i) ?: textColor)
         }
 
         val measureSpec = View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED)
@@ -115,11 +124,12 @@ class KeyboardPopup(private val context: Context) {
 
         val screenWidth = context.resources.displayMetrics.widthPixels
         val ratio = anchorCenterX.toFloat() / screenWidth
-        selectedIndex = when {
-            ratio < 1f / 3f -> 0
-            ratio > 2f / 3f -> (itemCount - 1).coerceAtLeast(0)
-            else -> (itemCount / 2).coerceAtLeast(0)
-        }
+        selectedIndex = initialSelectedIndex?.coerceIn(0, (itemCount - 1).coerceAtLeast(0))
+            ?: when {
+                ratio < 1f / 3f -> 0
+                ratio > 2f / 3f -> (itemCount - 1).coerceAtLeast(0)
+                else -> (itemCount / 2).coerceAtLeast(0)
+            }
         applyItemBackgrounds()
 
         val wbg = windowBg ?: GradientDrawable().also { windowBg = it }

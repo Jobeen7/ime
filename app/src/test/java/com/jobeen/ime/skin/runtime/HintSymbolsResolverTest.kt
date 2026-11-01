@@ -3,8 +3,12 @@
 package com.jobeen.ime.skin.runtime
 
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.input.keyboard.key.KeyboardAction
+import com.jobeen.ime.skin.model.HintSymbolNode
 import com.jobeen.ime.skin.model.HintSymbolsStyle
 import com.jobeen.ime.skin.model.KeyStyleRole
+import com.jobeen.ime.skin.model.SkinAction
+import com.jobeen.ime.skin.model.WhitelistAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -56,5 +60,90 @@ class HintSymbolsResolverTest {
         )
         assertNull(resolved.background)
         assertNull(resolved.selectedBackground)
+    }
+
+    // ---- 长按面板（旧版单行）决议 ----
+
+    private val testToRuntime: (SkinAction) -> KeyboardAction = { action ->
+        when (action) {
+            is SkinAction.Text -> KeyboardAction.CommitAction(action.value)
+            else -> KeyboardAction.NoOpAction
+        }
+    }
+
+    private fun legacyPanelFixture(): HintSymbolsResolver.LegacyPanel? {
+        val styles = mapOf(
+            "legacy1" to HintSymbolsStyle(
+                symbolStyles = listOf("a", "dangling", "b"),
+                selectedIndex = 2,
+            ),
+        )
+        val nodes = mapOf(
+            "a" to HintSymbolNode("A!", SkinAction.Text("a")),
+            "b" to HintSymbolNode(null, SkinAction.Command(WhitelistAction.SYMBOL, "β")),
+        )
+        return HintSymbolsResolver.resolveLegacyPanel(
+            null, "legacy1", styles, nodes, testToRuntime,
+        )
+    }
+
+    @Test
+    fun legacyPanelSkipsDanglingNamesAndClampsInitialIndex() {
+        val panel = legacyPanelFixture()!!
+        assertEquals(listOf("a", "b"), panel.styleNames)
+        assertEquals(
+            listOf(KeyboardAction.CommitAction("a"), KeyboardAction.NoOpAction),
+            panel.actions,
+        )
+        // a 显式文本优先；b 无文本时回落符号字面值；初始选中 2 夹取到过滤后末位 1
+        assertEquals(listOf("A!", "β"), panel.labels)
+        assertEquals(1, panel.initialIndex)
+    }
+
+    @Test
+    fun legacyPanelNullWhenGridStylePresent() {
+        val panel = HintSymbolsResolver.resolveLegacyPanel(
+            "grid1", "legacy1",
+            mapOf("legacy1" to HintSymbolsStyle(symbolStyles = listOf("a"))),
+            mapOf("a" to HintSymbolNode(null, SkinAction.Text("a"))),
+            testToRuntime,
+        )
+        assertNull(panel)
+    }
+
+    @Test
+    fun legacyPanelNullWhenStyleOrNodesMissing() {
+        assertNull(
+            HintSymbolsResolver.resolveLegacyPanel(
+                null, null, emptyMap(), emptyMap(), testToRuntime,
+            ),
+        )
+        assertNull(
+            HintSymbolsResolver.resolveLegacyPanel(
+                null, "missing",
+                mapOf("legacy1" to HintSymbolsStyle(symbolStyles = listOf("a"))),
+                mapOf("a" to HintSymbolNode(null, SkinAction.Text("a"))),
+                testToRuntime,
+            ),
+        )
+        assertNull(
+            HintSymbolsResolver.resolveLegacyPanel(
+                null, "legacy1",
+                mapOf("legacy1" to HintSymbolsStyle(symbolStyles = listOf("dangling"))),
+                emptyMap(),
+                testToRuntime,
+            ),
+        )
+    }
+
+    @Test
+    fun itemTextColorsResolveAgainstStyleTable() {
+        val keyStyles = mapOf(
+            "t1" to mapOf(KeyStyleRole.TEXT to "keyText"),
+        )
+        val colors = HintSymbolsResolver.resolveItemTextColors(
+            listOf("t1", "missing"), keyStyles, scheme,
+        )
+        assertEquals(listOf(10, null), colors)
     }
 }

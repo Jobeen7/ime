@@ -57,6 +57,30 @@ class HintSymbolsValidatorTest {
     }
 
     @Test
+    fun hintSymbolNodesSectionParsesAndDropsInvalidItems() {
+        val valid = validate(
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+                "stylesDark": {"keyBackground": "#FF222222"},
+                "appearance": {"background": {"type": "asset", "asset": "bg_main"}},
+                "hintSymbolNodes": {
+                    "good": {"text": "↑", "action": {"type": "symbol", "value": "↑"}},
+                    "noText": {"action": {"type": "symbol", "value": "、"}},
+                    "noAction": {"text": "↑"},
+                    "badAction": {"text": "↑", "action": {"type": "sequence"}}
+                }}""",
+        )
+        assertEquals(2, valid.skin.hintSymbolNodes.size)
+        assertEquals("↑", valid.skin.hintSymbolNodes.getValue("good").text)
+        assertEquals("、", valid.skin.hintSymbolNodes.getValue("noText").displayText)
+        assertTrue(
+            valid.issues.any { it.path == "hintSymbolNodes.noAction" },
+        )
+        assertTrue(
+            valid.issues.any { it.path == "hintSymbolNodes.badAction" },
+        )
+    }
+
+    @Test
     fun keyMappingHintFieldsAttach() {
         val valid = validate(
             """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},

@@ -27,6 +27,7 @@ import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.SwipeThresholds
 import com.jobeen.ime.input.keyboard.key.TextKeyView
 import com.jobeen.ime.skin.model.StyleStatePriority
+import com.jobeen.ime.skin.runtime.HintSymbolsResolver
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.SymbolGridResolver
@@ -590,6 +591,87 @@ abstract class BaseKeyboard(
                     }
                 }
             }
+            // 长按面板挂载（旧版单行）：仅无工厂长按的键才挂接——
+            // 有 Preview/Keyboard 弹窗或 LongPress 行为的键保持原行为；
+            // 网格版样式名存在时不挂旧版（网格面板另行挂载）。
+            // 挂接位置在行为循环之后、按住上档链式接线之前，
+            // 使上档链式钩子能追加在面板的抬手回调之后。
+            val hasFactoryLongPress = def.popups?.any {
+                it is KeyDef.Popup.Preview || it is KeyDef.Popup.Keyboard
+            } == true || def.behaviors.any { it is KeyDef.Behavior.LongPress }
+            if (!hasFactoryLongPress) {
+                val panelSnapshot = SkinSnapshotProvider.peek()
+                val legacyPanel = HintSymbolsResolver.resolveLegacyPanel(
+                    def.appearance.skinHintSymbolsGridStyle,
+                    def.appearance.skinHintSymbolsStyle,
+                    panelSnapshot?.hintSymbolsStyles ?: emptyMap(),
+                    panelSnapshot?.hintSymbolNodes ?: emptyMap(),
+                    KeyOverrideApplier::toRuntime,
+                )
+                if (legacyPanel != null) {
+                    var panelHighlight: Int? = null
+                    var panelSpec: SymbolGridSpec? = null
+                    var panelOriginX = 0f
+                    var panelInitialMove = true
+                    setOnTouchListener { view, event ->
+                        when (event.actionMasked) {
+                            android.view.MotionEvent.ACTION_MOVE -> {
+                                if (keyboardPopup.isShowing()) {
+                                    if (panelInitialMove) {
+                                        panelOriginX = event.x
+                                        panelInitialMove = false
+                                        // 单行格＝面板项本身（无空位），步距＝itemStep、
+                                        // 抖动＝半步，复现工厂弹窗手感；dy=0（单行忽略纵向漂移）。
+                                        val start = keyboardPopup.selectedIndex
+                                        panelHighlight = start
+                                        panelSpec = SymbolGridSpec.create(
+                                            cells = legacyPanel.labels,
+                                            columns = legacyPanel.actions.size,
+                                            anchorIndex = start,
+                                            defaultIndex = start,
+                                            cellSizePx = keyboardPopup.itemStep,
+                                            sensitivity = 1f,
+                                            jitterPx = keyboardPopup.itemStep / 2f,
+                                        )
+                                    }
+                                    val spec = panelSpec ?: return@setOnTouchListener true
+                                    val h = SymbolGridResolver.highlightFor(
+                                        spec, event.x - panelOriginX, 0f,
+                                    )
+                                    if (h != panelHighlight) {
+                                        panelHighlight = h
+                                        if (h != null) keyboardPopup.selectIndex(h)
+                                        else keyboardPopup.clearSelection()
+                                        InputFeedbacks.hapticFeedback(view)
+                                    }
+                                    return@setOnTouchListener true
+                                }
+                            }
+
+                            else -> {}
+                        }
+                        false
+                    }
+                    setOnLongClickListener {
+                        showLegacyPanel(it as KeyView, legacyPanel)
+                        panelHighlight = keyboardPopup.selectedIndex
+                        panelInitialMove = true
+                        return@setOnLongClickListener true
+                    }
+                    onTouchUpListener = {
+                        if (keyboardPopup.isShowing()) {
+                            // 出界取消（highlight 为 null）时只关闭不提交；
+                            // 回界内恢复后抬手照常提交恢复格（与工厂弹窗同口径）。
+                            val h = panelHighlight
+                            if (h != null) {
+                                legacyPanel.actions.getOrNull(h)?.let { onAction(it) }
+                            }
+                            keyboardPopup.dismiss()
+                            panelHighlight = null
+                        }
+                    }
+                }
+            }
             if (hasMomentaryShift) {
                 // 按住上档链式接线：popups/语音分支已占位时
                 // 不得覆盖（单槽位监听），一律追加在原监听之后；
@@ -652,6 +734,44 @@ abstract class BaseKeyboard(
                 KeyDef.Appearance.Variant.None -> Color.TRANSPARENT
             },
             keyPressedColor = LONG_PRESS_HIGHLIGHT_BLUE,
+        )
+    }
+
+    /**
+     * 长按面板（旧版单行）显示：与工厂弹窗同色口径，面板级
+     * 背景样式可解时用样式面色（面板背景／选中背景），逐格
+     * 显示文本与前景色走注册表节点（无前景色时走变体默认色），
+     * 初始选中走样式 selectedIndex（工厂三分位规则不适用）。
+     */
+    private fun showLegacyPanel(view: KeyView, panel: HintSymbolsResolver.LegacyPanel) {
+        val snapshot = SkinSnapshotProvider.peek()
+        val backgrounds = snapshot?.let {
+            HintSymbolsResolver.resolveBackgrounds(panel.style, it.keyStyles, colors)
+        }
+        val itemTextColors = snapshot?.let {
+            HintSymbolsResolver.resolveItemTextColors(panel.styleNames, it.keyStyles, colors)
+        }
+        keyboardPopup.show(
+            anchor = view,
+            items = panel.actions,
+            textColor = when (view.def.variant) {
+                KeyDef.Appearance.Variant.Normal, KeyDef.Appearance.Variant.AltForeground -> colors.keyText
+                KeyDef.Appearance.Variant.Alternative -> colors.specialKeyText
+                KeyDef.Appearance.Variant.Accent -> colors.accentKeyText
+                KeyDef.Appearance.Variant.None -> colors.keyText
+            },
+            bgColor = backgrounds?.background?.face ?: colors.keyBackground,
+            keyBgColor = when (view.def.variant) {
+                KeyDef.Appearance.Variant.Normal, KeyDef.Appearance.Variant.AltForeground -> colors.keyBackground
+                KeyDef.Appearance.Variant.Alternative -> colors.specialKeyBackground
+                KeyDef.Appearance.Variant.Accent -> colors.accentKeyBackground
+                KeyDef.Appearance.Variant.None -> Color.TRANSPARENT
+            },
+            keyPressedColor = backgrounds?.selectedBackground?.face
+                ?: LONG_PRESS_HIGHLIGHT_BLUE,
+            itemLabels = panel.labels,
+            itemTextColors = itemTextColors,
+            initialSelectedIndex = panel.initialIndex,
         )
     }
 

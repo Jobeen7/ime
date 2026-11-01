@@ -1,5 +1,6 @@
 package com.jobeen.ime.skin.model
 
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -108,5 +109,46 @@ object KeyStyleParser {
             table[name] = roles
         }
         return table to warnings
+    }
+}
+
+/**
+ * 长按符号全节点（注册表值）：显示文本 + 动作。
+ *
+ * 格式（顶层 `hintSymbolNodes` 表，名 → 节点）：
+ * `{"text": "↑", "action": {"type": "symbol", "value": "↑"}}`。
+ * - text：面板格内显示文本；缺失／空白 = null，面板按
+ *   [displayText] 回落（符号／字面提交取字面值，其余为空白格，
+ *   空白格仍可选中执行）；
+ * - action：必填，经 [SkinKeyMappingsParser.parseActionNode]
+ *   与键映射同口径解析；非法则整节点丢弃。
+ *
+ * 颜色与几何不进本节点：同名在 `keyStyles`／`keyGeometries`
+ * 表中有条目时面板按名取用（名是跨表连接键，与对端样式名
+ * 跨表引用同口径）；无条目时面板用默认色。
+ */
+data class HintSymbolNode(
+    val text: String?,
+    val action: SkinAction,
+) {
+    /** 面板格显示文本：显式文本优先，次为符号／字面提交的字面值，其余为空。 */
+    val displayText: String get() = text?.takeIf { it.isNotEmpty() } ?: when (action) {
+        is SkinAction.Text -> action.value
+        is SkinAction.Command ->
+            if (action.action == WhitelistAction.SYMBOL) action.value.orEmpty() else ""
+        else -> ""
+    }
+}
+
+/** 长按符号全节点纯解析（非法节点返回 null，调用方记 issue 丢弃）。 */
+object HintSymbolNodeParser {
+
+    fun parse(node: JsonElement?): HintSymbolNode? {
+        val obj = node as? JsonObject ?: return null
+        val actionNode = obj["action"] ?: return null
+        val action = SkinKeyMappingsParser.parseActionNode(actionNode) ?: return null
+        val text = (obj["text"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+            ?.takeIf { it.isNotEmpty() }
+        return HintSymbolNode(text, action)
     }
 }
