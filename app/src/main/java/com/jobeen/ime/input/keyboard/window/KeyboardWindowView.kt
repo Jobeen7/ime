@@ -378,6 +378,11 @@ class KeyboardWindowView(
                 null
             }
 
+            is KeyboardAction.BoardCommitReturnAction -> {
+                keyboardStateManager.returnFromBoardAfterCommit()
+                null
+            }
+
             is KeyboardAction.ShowInputMethodPickerAction -> {
                 val dialog = SchemaPickerDialog.build(
                     context = context,

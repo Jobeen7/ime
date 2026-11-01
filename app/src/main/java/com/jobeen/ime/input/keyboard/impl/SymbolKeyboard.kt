@@ -27,8 +27,11 @@ import com.jobeen.ime.input.keyboard.key.KeyboardPopup
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
+import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BarSide
+import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.skin.symbol.SharedPrefsSymbolBarTypeStore
 import com.jobeen.ime.skin.symbol.SymbolBarState
 import com.jobeen.ime.skin.symbol.SymbolBarTypeCycler
@@ -78,7 +81,12 @@ class SymbolKeyboard(
     )
 
     private val gridView = GridKeyboardView(context, colors, COLUMNS, ROWS).apply {
-        onKeyAction = { action -> keyActionListener?.onKeyAction(action) }
+        onKeyAction = { action ->
+            keyActionListener?.onKeyAction(action)
+            // 板内提交：未锁定时提交后自动返回（审计 G）；
+            // 分类切换的提交由侧栏内部拦截，不经过此处。
+            if (action is KeyboardAction.CommitAction) maybeAutoReturn()
+        }
         onKeyPressed = { key -> triggerRipple(key) }
     }
 
@@ -196,7 +204,7 @@ class SymbolKeyboard(
             for (key in barSpec.keys) {
                 val keyCell = cell(key.tap)
                 keyCell.setOnClickListener {
-                    keyActionListener?.onKeyAction(KeyboardAction.CommitAction(key.tap))
+                    dispatchBoardCommit(key.tap)
                 }
                 // 长按角标格：位移选格（接线轮 R6 同款逻辑的单行版）。
                 var popupHighlight: Int? = null
@@ -250,7 +258,7 @@ class SymbolKeyboard(
                             popupHighlight = null
                             if (event.actionMasked == MotionEvent.ACTION_UP && h != null) {
                                 key.corners.getOrNull(h)?.let {
-                                    keyActionListener?.onKeyAction(KeyboardAction.CommitAction(it))
+                                    dispatchBoardCommit(it)
                                 }
                             }
                             true
@@ -337,6 +345,25 @@ class SymbolKeyboard(
         val cx = keyLoc[0] + key.width / 2f - boardLoc[0]
         val cy = keyLoc[1] + key.height / 2f - boardLoc[1]
         rippleView.startRipple(cx, cy, key)
+    }
+
+    /**
+     * 板内提交（审计 G）：提交先转发（窗口层透传服务层上屏），
+     * 再按锁态决定是否自动返回；锁定时常驻板内。
+     */
+    private fun dispatchBoardCommit(text: String) {
+        keyActionListener?.onKeyAction(KeyboardAction.CommitAction(text))
+        maybeAutoReturn()
+    }
+
+    private fun maybeAutoReturn() {
+        if (BoardAutoReturn.shouldReturnAfterCommit(
+                KeyboardTypes.SYMBOLIC,
+                KeyboardStateManager.isBoardLocked(KeyboardTypes.SYMBOLIC),
+            )
+        ) {
+            keyActionListener?.onKeyAction(KeyboardAction.BoardCommitReturnAction)
+        }
     }
 
     override fun onAttach() {

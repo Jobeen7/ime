@@ -57,6 +57,14 @@ sealed class KeyboardAction {
     /** 表情板锁定切换（审计 G）：与符号板锁互不干扰。 */
     data object ToggleEmojiLockAction : KeyboardAction()
 
+    /**
+     * 板提交后自动返回（审计 G）：仅由符号/表情板在未锁定
+     * 提交后发出；窗口层拦截走类型模型的上一类型返回
+     * （对端 returnLastKeyboard 口径），不下发引擎；显式
+     * 返回键仍走 ResumeAction，两者目标口径不同，不得混用。
+     */
+    data object BoardCommitReturnAction : KeyboardAction()
+
     data object RotateSchema : KeyboardAction()
 
     /**

@@ -17,6 +17,9 @@ import com.jobeen.ime.input.keyboard.key.KeyView
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
+import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
+import com.jobeen.ime.skin.model.KeyboardTypes
+import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.input.keyboard.key.TextKeyView
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -61,7 +64,12 @@ class EmojiKeyboard(
     )
 
     private val gridView = GridKeyboardView(context, colors, COLUMNS, ROWS).apply {
-        onKeyAction = { action -> keyActionListener?.onKeyAction(action) }
+        onKeyAction = { action ->
+            keyActionListener?.onKeyAction(action)
+            // 板内提交：未锁定时提交后自动返回（审计 G）；
+            // 分类切换的提交由侧栏内部拦截，不经过此处。
+            if (action is KeyboardAction.CommitAction) maybeAutoReturn()
+        }
         onKeyPressed = { key -> triggerRipple(key) }
     }
 
@@ -180,6 +188,17 @@ class EmojiKeyboard(
         val cx = keyLoc[0] + key.width / 2f - boardLoc[0]
         val cy = keyLoc[1] + key.height / 2f - boardLoc[1]
         rippleView.startRipple(cx, cy, key)
+    }
+
+    /** 板内提交后自动返回（审计 G）：锁定时常驻板内。 */
+    private fun maybeAutoReturn() {
+        if (BoardAutoReturn.shouldReturnAfterCommit(
+                KeyboardTypes.EMOJIS,
+                KeyboardStateManager.isBoardLocked(KeyboardTypes.EMOJIS),
+            )
+        ) {
+            keyActionListener?.onKeyAction(KeyboardAction.BoardCommitReturnAction)
+        }
     }
 
     override fun onAttach() {

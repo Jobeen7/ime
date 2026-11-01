@@ -123,6 +123,27 @@ object KeyboardStateManager {
     /** 翻转表情板锁，返回翻转后的锁定态。 */
     fun toggleEmojiLock(): Boolean = boardLocks.toggleEmoji()
 
+    /**
+     * 板提交后自动返回（审计 G，对端 returnLastKeyboard 口径）：
+     * 优先回上一类型（进板前的主键盘通常即上一类型），上一
+     * 类型缺失或与当前相同时退主类型，再缺失时退旧 resume
+     * 路径（按方案布局切主键盘）。显式返回键不走本函数，
+     * 仍走 resume()（旧行为：按方案布局回主键盘）。
+     */
+    fun returnFromBoardAfterCommit() {
+        val last = typeState.last
+        if (last != null && last != typeState.current) {
+            switchKeyboardType(last)
+            return
+        }
+        val primary = typeState.primary
+        if (primary != null && primary != typeState.current) {
+            switchKeyboardType(primary)
+            return
+        }
+        resume()
+    }
+
     /** 输入模式 → 初始类型（纯决策，供首挂与换肤复位用）。 */
     fun initialKeyboardType(asciiMode: Boolean): String = typeState.initialType(asciiMode)
 

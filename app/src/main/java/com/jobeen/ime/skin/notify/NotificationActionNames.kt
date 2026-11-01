@@ -30,6 +30,7 @@ object NotificationActionNames {
         is KeyboardAction.ToggleAsciiModeAction -> "ToggleAsciiModeAction"
         is KeyboardAction.ToggleSymbolicLockAction -> "ToggleSymbolicLockAction"
         is KeyboardAction.ToggleEmojiLockAction -> "ToggleEmojiLockAction"
+        is KeyboardAction.BoardCommitReturnAction -> "BoardCommitReturnAction"
         is KeyboardAction.RotateSchema -> "RotateSchema"
         is KeyboardAction.SwitchSchemaByValue -> "SwitchSchemaByValue"
         is KeyboardAction.SelectSchema -> "SelectSchema"
