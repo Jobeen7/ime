@@ -309,6 +309,18 @@ data class KeyOverride(
      */
     val popupChars: List<String>? = null,
     /**
+     * 长按符号样式名（现行 form）：引用顶层 hintSymbolsStyles
+     * 表中的样式；null = 未配（长按面板挂载时无符号列表）。
+     * 样式本体解析见 [HintSymbolsStyle]，面板挂载为后续项。
+     */
+    val hintSymbolsStyle: String? = null,
+    /**
+     * 短按气泡样式（hintStyle 节点）：只取尺寸与溢出检测两项
+     * 接入现有按键预览弹窗；null = 未配（弹窗走默认尺寸与
+     * 顶层 bubbleOverflowCheck）。
+     */
+    val hintStyle: HintBubbleStyle? = null,
+    /**
      * 单键图标（参考项）：Material Symbols 名（见 MaterialSymbols
      * 注册表）；null = 不覆写。未知名不在解析期拒绝，装配期回退
      * （保留原文本/图片）并记日志，永不拒皮。
@@ -455,6 +467,8 @@ object SkinKeyMappingsParser {
             val foregroundLayers = parseForegroundLayers(keyId, entry, fieldWarnings)
             val dynamicText = parseDynamicText(keyId, entry, rejections)
             val popupChars = parsePopupChars(keyId, entry, rejections)
+            val hintSymbolsStyle = parseStyleName(keyId, entry, rejections, "hintSymbolsStyle")
+            val hintStyle = HintSymbolsParser.parseBubble(entry["hintStyle"])
             val icon = parseIcon(keyId, entry, rejections)
             val pressedIcon = parsePressedIcon(keyId, entry, rejections)
             val pressedImage = parsePressedImage(keyId, entry, rejections)
@@ -494,7 +508,8 @@ object SkinKeyMappingsParser {
                 image == null && subLabel == null && subLabelTop == null &&
                 textSizes.isNullOrEmpty() &&
                 (geometry == null || geometry.isEmpty) && foregroundLayers.isNullOrEmpty() &&
-                dynamicText == null && popupChars == null && icon == null &&
+                dynamicText == null && popupChars == null && hintSymbolsStyle == null &&
+                hintStyle == null && icon == null &&
                 pressedIcon == null && pressedImage == null &&
                 swipeThresholdDp == null && preeditTap == null && preeditSwipeUp == null &&
                 preeditSwipeDown == null && preeditSwipeLeft == null &&
@@ -525,6 +540,8 @@ object SkinKeyMappingsParser {
                 foregroundLayers = foregroundLayers?.takeIf { it.isNotEmpty() },
                 dynamicText = dynamicText,
                 popupChars = popupChars,
+                hintSymbolsStyle = hintSymbolsStyle,
+                hintStyle = hintStyle,
                 icon = icon,
                 pressedIcon = pressedIcon,
                 pressedImage = pressedImage,

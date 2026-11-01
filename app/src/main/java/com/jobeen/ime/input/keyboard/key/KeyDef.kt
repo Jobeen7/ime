@@ -130,6 +130,18 @@ open class KeyDef(
         /** G1 前景多层叠加（装配期已解析，渲染层按序叠加、后层压前层）。 */
         var skinForegroundLayers: List<com.jobeen.ime.skin.model.ResolvedForegroundLayer>? = null
         /**
+         * 长按符号样式名（现行 form）：只由覆写装配器写在它生成
+         * 的外观副本上；快照 hintSymbolsStyles 表中的样式名，
+         * 长按面板挂载时按名取样式（面板本身为后续项）。
+         */
+        var skinHintSymbolsStyle: String? = null
+        /**
+         * 短按气泡样式（hintStyle 节点）：只由覆写装配器写在它
+         * 生成的外观副本上；现有按键预览弹窗按此取气泡尺寸与
+         * 溢出检测，未配时走默认尺寸与顶层 bubbleOverflowCheck。
+         */
+        var skinHintBubble: com.jobeen.ime.skin.model.HintBubbleStyle? = null
+        /**
          * 单键图标（参考项）：Material Symbols 名，只由覆写
          * 装配器写在它生成的外观副本上（出厂外观恒为 null → 渲染与
          * v1.1.14 一致）；文本键以符号字形代主显文本，图片键以符号

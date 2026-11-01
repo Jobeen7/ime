@@ -9,6 +9,8 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.skin.model.AdmittedSound
 import com.jobeen.ime.skin.model.Degradation
 import com.jobeen.ime.skin.model.DynamicTextSource
+import com.jobeen.ime.skin.model.HintBubbleSize
+import com.jobeen.ime.skin.model.HintBubbleStyle
 import com.jobeen.ime.skin.model.KeyAnimationSpec
 import com.jobeen.ime.skin.model.KeyForegroundLayer
 import com.jobeen.ime.skin.model.KeyAnimationDef
@@ -791,6 +793,33 @@ class KeyOverrideApplierTest {
         assertEquals(listOf(spin), result.byId("KEY_Q").appearance.skinAnimations)
         // 无逐键槽时样式动效生效
         assertEquals(listOf(styleAnim), result.byId("KEY_W").appearance.skinAnimations)
+    }
+
+    @Test
+    fun hintSymbolsStyleAndBubbleCarryToAppearance() {
+        val factory = QwertyKeyboard.buildLayout(Variant.Accent)
+        val result = KeyOverrideApplier.apply(
+            "Qwerty", factory,
+            snapshot(
+                mapOf(
+                    "KEY_Q" to KeyOverride(
+                        hintSymbolsStyle = "qHintSymbols",
+                        hintStyle = HintBubbleStyle(
+                            size = HintBubbleSize(60f, 40f),
+                            checkIfOverflowsParentHeight = false,
+                        ),
+                    ),
+                ),
+            ),
+            noPlaceholders,
+        )
+        val appearance = result.byId("KEY_Q").appearance
+        assertEquals("qHintSymbols", appearance.skinHintSymbolsStyle)
+        assertEquals(HintBubbleSize(60f, 40f), appearance.skinHintBubble?.size)
+        assertEquals(false, appearance.skinHintBubble?.checkIfOverflowsParentHeight)
+        // 未配键不携带（出厂外观恒为 null）。
+        assertNull(result.byId("KEY_W").appearance.skinHintSymbolsStyle)
+        assertNull(result.byId("KEY_W").appearance.skinHintBubble)
     }
 
     @Test

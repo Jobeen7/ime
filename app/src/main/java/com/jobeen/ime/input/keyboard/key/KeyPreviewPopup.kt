@@ -32,11 +32,19 @@ class KeyPreviewPopup(private val context: Context) {
     }
     private val loc = IntArray(2)
 
+    /**
+     * 按键短按气泡：尺寸与溢出检测可由逐键 hintStyle 覆盖
+     * （未传时走默认 52dp 方形与顶层 bubbleOverflowCheck）；
+     * 窗口对象仍只建一次复用，尺寸变化时经 update 生效。
+     */
     fun show(
         anchor: View,
         text: String,
         textColor: Int,
         bgColor: Int,
+        bubbleWidthPx: Int? = null,
+        bubbleHeightPx: Int? = null,
+        checkOverflow: Boolean? = null,
     ) {
         contentView.setText(text)
         contentView.setTextColor(textColor)
@@ -48,32 +56,36 @@ class KeyPreviewPopup(private val context: Context) {
         anchor.getLocationInWindow(loc)
         val anchorCenterX = loc[0] + anchor.width / 2
         val anchorTop = loc[1]
+        val width = bubbleWidthPx?.takeIf { it > 0 } ?: popupSize
+        val height = bubbleHeightPx?.takeIf { it > 0 } ?: popupSize
 
         // 气泡溢出检测（默认开，与长按弹出气泡同口径）：
+        // 逐键 hintStyle 值优先于顶层 bubbleOverflowCheck；
         // 开启且窗口尺寸已知时走调位解析；关闭或尺寸未知时
         // 保持旧行为（不夹取，原样显示）。
         val gap = context.dp(6)
         val rootView = anchor.rootView
-        val checkEnabled = SkinSnapshotProvider.peek()?.bubbleOverflowCheck ?: true
+        val checkEnabled = checkOverflow
+            ?: SkinSnapshotProvider.peek()?.bubbleOverflowCheck ?: true
         val (popupX, popupY) = if (checkEnabled && rootView != null &&
             rootView.width > 0 && rootView.height > 0
         ) {
             val pos = PopupOverflow.resolve(
                 anchorCenterX, anchorTop, anchor.height,
-                popupSize, popupSize,
+                width, height,
                 rootView.width, rootView.height, gap,
             )
             pos.x to pos.y
         } else {
-            anchorCenterX - popupSize / 2 to anchorTop - popupSize - gap
+            anchorCenterX - width / 2 to anchorTop - height - gap
         }
 
         // PopupWindow 对象只建一次复用（此前每次按键新建一个窗口对象并走一遍
         // 完整的窗口增删装配，是按键抖动来源之一）：已显示时只更新位置
         val popup = popupWindow ?: PopupWindow(
             contentView,
-            popupSize,
-            popupSize,
+            width,
+            height,
             false,
         ).apply {
             isOutsideTouchable = false
@@ -81,8 +93,12 @@ class KeyPreviewPopup(private val context: Context) {
             elevation = context.dp(8f)
         }.also { popupWindow = it }
         if (popup.isShowing) {
-            popup.update(popupX, popupY, popupSize, popupSize)
+            popup.update(popupX, popupY, width, height)
         } else {
+            // 复用窗口的创建尺寸恒为首次尺寸：逐键尺寸变化时
+            // 先改宽高再显示，否则会沿用旧尺寸。
+            popup.width = width
+            popup.height = height
             popup.showAtLocation(
                 anchor,
                 Gravity.TOP or Gravity.START,

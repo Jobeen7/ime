@@ -924,6 +924,10 @@ object KeyOverrideApplier {
                 copy.appearance.skinDynamicText = source.jsonName
                 copy.appearance.skinDynamicFallback = staticText
             }
+            // 长按符号样式名与短按气泡样式随副本保留：前者供
+            // 未来长按面板按名取样式，后者供预览弹窗取尺寸与溢出。
+            override?.hintSymbolsStyle?.let { copy.appearance.skinHintSymbolsStyle = it }
+            override?.hintStyle?.let { copy.appearance.skinHintBubble = it }
             // 单键图标：先经别名层规范化（重点候选
             // 8-7：逻辑名→注册表名，注册表名直通），注册表内才写外观，
             // 未知名回退原文本/图片并记日志（只记作者原图标名）。

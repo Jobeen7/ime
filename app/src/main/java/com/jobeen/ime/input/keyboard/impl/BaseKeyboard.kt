@@ -609,9 +609,15 @@ abstract class BaseKeyboard(
 
     private fun showPreview(view: KeyView) {
         val text = view.displayText ?: return
+        // 逐键短按气泡（hintStyle）：尺寸与溢出检测由皮肤逐键
+        // 指定，未配时弹窗走默认尺寸与顶层 bubbleOverflowCheck。
+        val hintBubble = view.def.skinHintBubble
         previewPopup.show(
             anchor = view,
             text = text,
+            bubbleWidthPx = hintBubble?.size?.let { context.dp(it.width) },
+            bubbleHeightPx = hintBubble?.size?.let { context.dp(it.height) },
+            checkOverflow = hintBubble?.checkIfOverflowsParentHeight,
             textColor = when (view.def.variant) {
                 KeyDef.Appearance.Variant.Normal, KeyDef.Appearance.Variant.AltForeground -> colors.keyText
                 KeyDef.Appearance.Variant.Alternative -> colors.specialKeyText
