@@ -78,6 +78,19 @@ abstract class KeyView(
     override fun updateMode(punctuationMode: PunctuationMode) = Unit
 
     var bordered: Boolean = true
+
+    /**
+     * 运行时底色覆盖（回车键按动作分色用）：非空时 setupBackgroundWithPress
+     * 优先用它，不动 KeyDef 的皮肤面色（换回时不丢皮肤原色）。
+     * 调用方改值后须调 [refreshBackground] 重建背景。
+     */
+    var backgroundOverride: Int? = null
+
+    /** 按当前 backgroundOverride/def/变体重建键背景（运行时换色用）。 */
+    fun refreshBackground() {
+        setupBackgroundWithPress()
+    }
+
     var borderStroke: Boolean = true
         set(value) {
             field = value
@@ -269,8 +282,8 @@ abstract class KeyView(
 
     protected fun setupBackgroundWithPress() {
         // 单键样式色优先（2026-10-27 并入项）：有解析色时覆盖变体取色，
-        // 无样式时表达式与原逻辑逐字节一致。
-        val bkgColor = def.skinFaceColor ?: when (def.variant) {
+        // 无样式时表达式与原逻辑逐字节一致。运行时覆盖最优先。
+        val bkgColor = backgroundOverride ?: def.skinFaceColor ?: when (def.variant) {
             Variant.Normal, Variant.AltForeground -> colors.keyBackground
             Variant.Alternative -> colors.specialKeyBackground
             Variant.Accent -> colors.accentKeyBackground

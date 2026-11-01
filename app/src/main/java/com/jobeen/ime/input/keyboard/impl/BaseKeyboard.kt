@@ -96,6 +96,9 @@ abstract class BaseKeyboard(
     /** 文字回车键刷新器（自定义布局的文本回车键，建键时按行为记下）。 */
     private val enterTextSetters = mutableListOf<(String) -> Unit>()
 
+    /** 回车键视图（文本回车键，建键时按行为记下；底色分色用）。 */
+    private val enterKeyViews = mutableListOf<KeyView>()
+
     override fun updateSpaceKeyText(text: String) {
         // 参数 text 是回退值（方案名）：皮肤有空格文案时不用它，
         // 只有皮肤未定义空格文案时才写它（现行行为）。
@@ -299,6 +302,7 @@ abstract class BaseKeyboard(
                     b is KeyDef.Behavior.Press && b.action is KeyboardAction.ReturnAction
                 }) {
                 textSetter(this)?.let { enterTextSetters += it }
+                enterKeyViews += this
             }
             // G1 动态文字运行时跟随：记下可刷新文本的动态键
             // （来源 + 静态回退），供 updateDynamicTexts 原地刷新。
@@ -653,6 +657,25 @@ abstract class BaseKeyboard(
             com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(action)
         }
         enterTextSetters.forEach { it(enterLabel) }
+        // 回车键底色分色（默认灰 vs 动作 accent）：空输入/组字中恒为
+        // 默认灰（此时回车只换行）；动作型走主题 accent，其余走默认灰。
+        // 覆盖只作用于视图，不动 KeyDef 皮肤面色；图标回车与文本回车同口径。
+        val enterBackground =
+            if (!empty && !isComposing &&
+                com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.isAccentBackground(action)
+            ) {
+                colors.accentKeyBackground
+            } else {
+                com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.defaultGray
+            }
+        returnKeyView?.let {
+            it.backgroundOverride = enterBackground
+            it.refreshBackground()
+        }
+        enterKeyViews.forEach {
+            it.backgroundOverride = enterBackground
+            it.refreshBackground()
+        }
     }
 
     override fun updatePunctuationMode(mode: PunctuationMode) {
