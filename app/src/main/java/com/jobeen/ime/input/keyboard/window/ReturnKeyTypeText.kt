@@ -52,7 +52,7 @@ object ReturnKeyTypeText {
     }
 
     /**
-     * 回车键底色是否走主题 accent：动作型（前往/搜索/发送/下一步/完成）
+     * 回车键底色是否走主题 accent：动作型（前往/搜索/发送/完成）
      * 走 accent（对端 [1,4,6,7,9] 蓝组，实测色即主题绿 #23C891）；
      * 其余（含换行、上一步、未指定）走默认灰。
      * 空输入/组字中恒为换行，走默认灰（调用方据此先行判定）。
@@ -75,7 +75,7 @@ object ReturnKeyTypeText {
         EditorInfo.IME_ACTION_GO -> "前往"
         EditorInfo.IME_ACTION_SEND -> "发送"
         EditorInfo.IME_ACTION_SEARCH -> "搜索"
-        EditorInfo.IME_ACTION_NEXT -> "下一步"
+        EditorInfo.IME_ACTION_NEXT -> "前往"
         EditorInfo.IME_ACTION_PREVIOUS -> "上一步"
         EditorInfo.IME_ACTION_DONE -> "完成"
         else -> "换行"

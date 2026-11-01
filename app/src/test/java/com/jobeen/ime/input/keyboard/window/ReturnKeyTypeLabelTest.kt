@@ -16,7 +16,7 @@ class ReturnKeyTypeLabelTest {
         assertEquals("前往", ReturnKeyTypeText.labelFor(EditorInfo.IME_ACTION_GO))
         assertEquals("发送", ReturnKeyTypeText.labelFor(EditorInfo.IME_ACTION_SEND))
         assertEquals("搜索", ReturnKeyTypeText.labelFor(EditorInfo.IME_ACTION_SEARCH))
-        assertEquals("下一步", ReturnKeyTypeText.labelFor(EditorInfo.IME_ACTION_NEXT))
+        assertEquals("前往", ReturnKeyTypeText.labelFor(EditorInfo.IME_ACTION_NEXT))
         assertEquals("上一步", ReturnKeyTypeText.labelFor(EditorInfo.IME_ACTION_PREVIOUS))
         assertEquals("完成", ReturnKeyTypeText.labelFor(EditorInfo.IME_ACTION_DONE))
     }
