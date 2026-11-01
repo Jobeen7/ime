@@ -36,7 +36,7 @@ import java.security.MessageDigest
  *   删文件等于把刚发出的 URI 变成死链；cacheDir 由系统在空间紧张时回收。
  *
  * 约束：
- * - 只发具体图片类型（png/gif/jpeg/webp）；通配 image/* 不发，因为编辑器侧按
+ * - 只发具体图片类型（png/gif/jpeg/webp）；通配类型不发，因为编辑器侧按
  *   具体类型匹配，通配类型无法保证被接受。
  * - opts 原样透传，输入法不解读、不注入：它是编辑器应用自定义的附加数据。
  * - flags 在调用方 flags 基础上或上授权位，不丢弃调用方传入的其他位。
