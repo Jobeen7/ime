@@ -495,6 +495,9 @@ object KeyOverrideApplier {
     private fun KeyOverride.hasEffect(): Boolean {
         if (label != null || soundRef != null) return true
         if (popupChars != null || icon != null) return true
+        // Wave-7 长按符号样式名／短按气泡样式：有配即有效，否则
+        // 仅含 hint 字段的覆写会被 hasEffect 门滤掉、carry 丢失。
+        if (hintSymbolsStyle != null || hintStyle != null) return true
         if (styleRef != null || !styleOverrides.isNullOrEmpty()) return true
         if (image != null || subLabel != null || subLabelTop != null || dynamicText != null) return true
         if (!textSizes.isNullOrEmpty()) return true
