@@ -75,7 +75,7 @@ class SkinScriptSandbox {
         onLog: (String) -> Unit = {},
     ): SkinScriptRunOutcome {
         if (source.toByteArray(Charsets.UTF_8).size > PluginContract.MAX_SCRIPT_BYTES) {
-            return SkinScriptRunOutcome.Failed(SkinScriptFailure.TOO_LARGE)
+            return SkinScriptRunOutcome.Failed(SkinScriptFailure.TooLarge)
         }
         val logs = ArrayList<String>()
         return try {
@@ -92,7 +92,7 @@ class SkinScriptSandbox {
                 )
             }
         } catch (e: ScriptBudgetExceeded) {
-            SkinScriptRunOutcome.Failed(SkinScriptFailure.BUDGET_EXCEEDED)
+            SkinScriptRunOutcome.Failed(SkinScriptFailure.BudgetExceeded)
         } catch (e: Exception) {
             // Sanitized kind only: never the message (it may quote source).
             SkinScriptRunOutcome.Failed(
