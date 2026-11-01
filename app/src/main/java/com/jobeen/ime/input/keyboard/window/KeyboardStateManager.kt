@@ -7,6 +7,7 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.PunctuationMode
+import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.discoverSchemes
@@ -17,8 +18,10 @@ import com.jobeen.ime.input.keyboard.impl.IKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
+import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
+import com.jobeen.ime.skin.store.SkinTypePrefs
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collect
@@ -79,12 +82,77 @@ object KeyboardStateManager {
             for (kb in keyboards.values) kb.keyActionListener = value
         }
 
+    // ---- 多主槽一期：键盘类型状态（状态支持，不含动作接线） ----
+    // currentKeyboardType 是“当前键盘所属类型”，与 currentKeyboardName
+    // （运行时名，如 custom:<布局 id>）并行存在：同一运行时名可被
+    // 多类型共享（如两类型绑定同一布局），类型才是切换与去重的
+    // 语义单位。类型切换只改本状态与键盘实例，不碰方案与引擎。
+    private val typeState = KeyboardTypeState()
+
+    /** 当前键盘类型；null = 尚未确立（首挂前）。 */
+    val currentKeyboardType: String? get() = typeState.current
+
+    /** 主键盘类型（最近一次主类型 pinyin/alphabetic）；工具类型不改它。 */
+    val primaryKeyboardType: String? get() = typeState.primary
+
+    /** 上一键盘类型（最近一次类型切换前的类型）；供 returnLastKeyboard 用。 */
+    val lastKeyboardType: String? get() = typeState.last
+
+    /** 当前类型所归属的皮肤 id（换肤复位判定用；null = 无皮肤/未确立）。 */
+    private var lastTypeSkinId: String? = null
+
+    /** 输入模式 → 初始类型（纯决策，供首挂与换肤复位用）。 */
+    fun initialKeyboardType(asciiMode: Boolean): String = typeState.initialType(asciiMode)
+
+    /**
+     * 按类型切换键盘（多主槽一期唯一的类型切换入口；中英键、
+     * returnPrimary/returnLast 与后续接线轮皆经此函数，不直接
+     * 调 switchToResolved）。目标经类型解析（含内置回退，永不
+     * 空白）；factory 未注入致建键盘失败时类型状态不动，View
+     * 建好后 onAttach 首挂分支会重走本函数。
+     */
+    fun switchKeyboardType(type: String) {
+        val landscape = appContext.resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val target = CustomLayoutRuntime.resolveTypeTarget(
+            SkinSnapshotProvider.current(appContext),
+            type,
+            currentSchema?.layout ?: defaultKeyboardName,
+            landscape,
+        )
+        switchToResolvedWithType(target, type)
+    }
+
+    /**
+     * 回到主键盘（状态支持；无新动作类型，接线轮由按键调用
+     * 本函数）。主类型未确立时为空操作。
+     */
+    fun returnPrimaryKeyboard() {
+        val primary = typeState.primary ?: return
+        if (primary != typeState.current) switchKeyboardType(primary)
+    }
+
+    /**
+     * 回到上一键盘（状态支持；无新动作类型）。切换后 last 与
+     * current 对调，故连续调用即在两者间往返。上一类型未确
+     * 立时为空操作。
+     */
+    fun returnLastKeyboard() {
+        val last = typeState.last ?: return
+        if (last != typeState.current) switchKeyboardType(last)
+    }
+
+    /** 中英切换目标（状态支持；接线轮由中英键调用本函数再切类型）。 */
+    fun toggleMainTypeTarget(): String = typeState.toggleMainTarget()
+
     /** 服务销毁时调用：释放注册表与回调，避免持有已销毁的 View/Context */
     fun onDestroy() {
         keyboards.clear()
         callback = null
         currentKeyboardName = null
         keyboardAttached = false
+        typeState.reset()
+        lastTypeSkinId = null
         // factory 闭包持有 View、lastEditorInfo 持有输入框信息、keyActionListener 链条持有 View，
         // 服务销毁后不再需要，全部释放避免小泄漏
         keyboardFactory = null
@@ -110,41 +178,84 @@ object KeyboardStateManager {
 
     fun onAttach() {
         if (schemas.isEmpty()) refreshSchemas()
+        val snapshot = SkinSnapshotProvider.current(appContext)
+        val landscape = appContext.resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
         if (currentKeyboardName == null) {
-            switchTo(currentSchema?.layout ?: defaultKeyboardName)
+            // 首挂：先确立类型再按类型切（旧路径首挂按方案布局名
+            // 切；类型路径在无表皮肤上经 pinyin 旧绑定回落到同一
+            // 目标，内置行为不变）。类型来源：已确立的沿用 → 本
+            // 皮肤存过的恢复 → 按输入模式初始（中文 pinyin、英文
+            // alphabetic）。factory 未注入时 switchKeyboardType
+            // 不提交类型，View 建好后再次 onAttach 会重走本分支。
+            val skinId = snapshot?.ref?.skinId
+            val stored = skinId?.let {
+                runCatching { SkinTypePrefs.getType(appContext, it) }.getOrNull()
+            }
+            val ascii = runCatching {
+                CandidateManager.isAsciiModeEnabled(appContext)
+            }.getOrDefault(false)
+            val type = typeState.current ?: stored ?: typeState.initialType(ascii)
+            typeState.establish(type)
+            lastTypeSkinId = skinId
+            switchKeyboardType(type)
             return
         }
         if (keyboardAttached) return
-        // 重挂时若当前方案布局已变（键盘收起期间切了方案），不直接
-        // 复现旧键盘实例，改走 switchTo 同步布局与空格键文案。
-        val targetLayout = currentSchema?.layout ?: defaultKeyboardName
-        // 先经与 switchTo 相同的自创布局解析再比较：当前键盘名
-        // 可能是 custom:<布局 id>，而方案布局名是 T9——未解析
-        // 直接比较恒不等，必走 switchTo 并撞上同名同方案去重
-        // 早返，视图不挂回；解析后名相等即走重显分支。
-        val landscape = appContext.resources.configuration.orientation ==
-            android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        val resolved = CustomLayoutRuntime.resolveSwitchTarget(
-            SkinSnapshotProvider.current(appContext),
-            targetLayout,
-            targetLayout,
-            landscape,
-        )
-        if (resolved != currentKeyboardName) {
-            switchTo(targetLayout)
-            return
+        // 换肤复位（类型状态按皮肤隔离）：快照皮肤已变时，本皮肤
+        // 存过的类型恢复、无存过类型时回初始类型；皮肤未变时
+        // 不动类型，走下方的重挂决策。皮肤 id 为空（无皮肤生
+        // 效）时亦不动类型（类型解析本身已按无表回退）。
+        val skinId = snapshot?.ref?.skinId
+        if (skinId != null && skinId != lastTypeSkinId) {
+            val stored = runCatching {
+                SkinTypePrefs.getType(appContext, skinId)
+            }.getOrNull()
+            if (stored != null && stored != typeState.current) {
+                switchKeyboardType(stored)
+                return
+            }
+            if (stored == null) {
+                val ascii = runCatching {
+                    CandidateManager.isAsciiModeEnabled(appContext)
+                }.getOrDefault(false)
+                val initial = typeState.initialType(ascii)
+                if (initial != typeState.current) {
+                    switchKeyboardType(initial)
+                    return
+                }
+            }
+            lastTypeSkinId = skinId
         }
-        currentKeyboardName?.let { name ->
-            keyboards[name]?.let { kb ->
-                kb.onAttach()
-                // 同布局重挂此前直接重显缓存键盘、不走 switchTo：重显时
-                // 也刷一次空格文案（皮肤文案优先，无文案时回落当前方案名；
-                // Emoji/Symbol 的 updateSpaceKeyText 为空实现，此调用无影响）。
-                kb.updateSpaceKeyText(currentSchema?.name.orEmpty())
-                callback?.onShowKeyboard(kb)
+        // 重挂时若当前方案布局已变（键盘收起期间切了方案），不直接
+        // 复现旧键盘实例，改走切换同步布局与空格键文案。
+        // round-1 空白修复的类型化推广（先解析再比较原则不变）：
+        // 有类型时按类型解析目标名比较——当前键盘名可能是
+        // custom:<布局 id>，而方案布局名是 T9，未解析直接比较
+        // 恒不等，必走切换并撞上去重早返，视图不挂回；无类型
+        // （旧路径）时沿用旧按名解析比较，内置行为不变。
+        val targetLayout = currentSchema?.layout ?: defaultKeyboardName
+        when (
+            val action = decideReattach(
+                snapshot, currentKeyboardName!!, typeState.current, targetLayout, landscape,
+            )
+        ) {
+            is ReattachAction.SwitchType -> switchKeyboardType(action.type)
+            is ReattachAction.SwitchName -> switchTo(action.name)
+            ReattachAction.Reshow -> {
+                currentKeyboardName?.let { name ->
+                    keyboards[name]?.let { kb ->
+                        kb.onAttach()
+                        // 同布局重挂此前直接重显缓存键盘、不走 switchTo：重显时
+                        // 也刷一次空格文案（皮肤文案优先，无文案时回落当前方案名；
+                        // Emoji/Symbol 的 updateSpaceKeyText 为空实现，此调用无影响）。
+                        kb.updateSpaceKeyText(currentSchema?.name.orEmpty())
+                        callback?.onShowKeyboard(kb)
+                    }
+                }
+                keyboardAttached = true
             }
         }
-        keyboardAttached = true
     }
 
     fun onDetach() {
@@ -292,7 +403,11 @@ object KeyboardStateManager {
         return keyboard
     }
 
-    private var lastSwitchKey: Pair<String, String?>? = null
+    // 去重键（多主槽一期）：（运行时名，类型，方案）——名必须
+    // 留在键内，否则换肤后同类型同方案会把新目标名吞掉（名由
+    // 类型解析得出，皮肤一换名即变）；类型必须在键内，否则两
+    // 类型共享同一运行时名时切类型会被旧（名，方案）键早退。
+    private var lastSwitchKey: Triple<String, String?, String?>? = null
 
     /**
      * 切换到目标键盘。目标先经自创布局的主键盘位解析（皮肤 v3
@@ -317,15 +432,27 @@ object KeyboardStateManager {
     }
 
     private fun switchToResolved(name: String) {
-        // 同键盘 + 同方案的重复切换直接早退：旧实现每次都重设空格键文案/
+        // 按名直达（场景/工具键盘）：类型不动——名到类型的反查
+        // 属后续接线轮，本轮名路径只保证不破坏既有类型状态。
+        switchToResolvedWithType(name, typeState.current)
+    }
+
+    private fun switchToResolvedWithType(name: String, type: String?) {
+        // 同键盘 + 同类型 + 同方案的重复切换直接早退：旧实现每次都重设空格键文案/
         // 标点模式并回调 onKeyboardChanged（触发窗口侧重排），而调用方
         // （refreshSchemas、resume 等）经常同参数连调多次
-        val key = name to currentSchema?.id
+        val key = Triple(name, type, currentSchema?.id)
         if (name == currentKeyboardName && key == lastSwitchKey) return
         lastSwitchKey = key
         if (name != currentKeyboardName) {
             detachCurrent()
             attachNew(name)
+        }
+        // 类型提交点（唯一）：只有确实挂上目标键盘（新挂或已是
+        // 当前）才提交；factory 未注入致 attachNew 空转时名未
+        // 变，类型亦不动。类型实际变化时记 last、主类型与持久化。
+        if (currentKeyboardName == name && type != null && typeState.switchTo(type)) {
+            persistType(type)
         }
         val kb = keyboards[name]
         kb?.updateSpaceKeyText(currentSchema?.name.orEmpty())
@@ -337,6 +464,13 @@ object KeyboardStateManager {
         // （rebuild 也走 switchTo，一并覆盖）
         lastImeAction = -1
         updateReturnKeyIfNeeded()
+    }
+
+    /** 类型持久化（按皮肤隔离，见 SkinTypePrefs）：无快照时只留内存态，不写盘。 */
+    private fun persistType(type: String) {
+        val skinId = SkinSnapshotProvider.peek()?.ref?.skinId ?: return
+        lastTypeSkinId = skinId
+        runCatching { SkinTypePrefs.setType(appContext, skinId, type) }
     }
 
     private fun attachNew(name: String) {
@@ -559,5 +693,98 @@ internal class DeployRefreshPolicy {
         if (!inFlight.compareAndSet(false, true)) return false
         pending.set(false)
         return true
+    }
+}
+
+/**
+ * 键盘类型纯状态机（无 Android / 协程依赖，可单测），由
+ * [KeyboardStateManager] 持有唯一实例。
+ * - current：当前类型；primary：最近一次主类型（中英切换的两
+ *   端 pinyin/alphabetic 之一）；last：上一次类型。
+ * - 主类型切换更新 primary，工具类型（emojis/symbolic/数字/
+ *   自定义）不改 primary——returnPrimary 恒回主键盘，不回工具键盘。
+ * - 切换到同一类型返回 false（调用方不记 last、不写持久化）。
+ */
+internal class KeyboardTypeState {
+    var current: String? = null
+        private set
+    var primary: String? = null
+        private set
+    var last: String? = null
+        private set
+
+    /** 输入模式 → 初始类型：中文 → pinyin，英文（ascii）→ alphabetic。 */
+    fun initialType(asciiMode: Boolean): String =
+        if (asciiMode) KeyboardTypes.ALPHABETIC else KeyboardTypes.PINYIN
+
+    fun switchTo(type: String): Boolean {
+        if (type == current) return false
+        last = current
+        current = type
+        if (type in KeyboardTypes.MAIN) primary = type
+        return true
+    }
+
+    /** 首挂确立：仅当尚未确立时置 current 与 primary，last 不动。 */
+    fun establish(type: String) {
+        if (current == null) {
+            current = type
+            primary = type
+        }
+    }
+
+    /** 中英切换目标：pinyin↔alphabetic；其余类型 → primary 或 pinyin。 */
+    fun toggleMainTarget(): String = when (current) {
+        KeyboardTypes.PINYIN -> KeyboardTypes.ALPHABETIC
+        KeyboardTypes.ALPHABETIC -> KeyboardTypes.PINYIN
+        else -> primary ?: KeyboardTypes.PINYIN
+    }
+
+    fun reset() {
+        current = null
+        primary = null
+        last = null
+    }
+}
+
+/** 重挂决策（[KeyboardStateManager.onAttach] 的纯决策部分，可单测）。 */
+internal sealed interface ReattachAction {
+    /** 目标名与当前名相等：重显缓存键盘实例，不切换。 */
+    data object Reshow : ReattachAction
+
+    /** 目标名不等：按类型重新切换（类型解析路径）。 */
+    data class SwitchType(val type: String) : ReattachAction
+
+    /** 目标名不等：按名重新切换（旧路径，类型未确立时）。 */
+    data class SwitchName(val name: String) : ReattachAction
+}
+
+/**
+ * 重挂决策（round-1 空白修复 b3458e5a 的类型化推广）：先经与
+ * 切换路径相同的解析算出目标名再比较，绝不拿未解析的方案
+ * 布局名直接比当前键盘名。
+ * - 有类型：类型解析目标 == 当前名 → 重显；否则按类型切。
+ * - 无类型：旧按名解析目标 == 当前名 → 重显；否则按名切。
+ * 两种路径的目标计算与 switchKeyboardType/switchTo 的目标计算
+ * 同源（同一解析函数、同一 schemaDefault），决策与切换不可能
+ * 因解析口径不同而相撞（旧 bug 正是口径不同所致）。
+ */
+internal fun decideReattach(
+    snapshot: com.jobeen.ime.skin.model.SkinSnapshot?,
+    currentName: String,
+    currentType: String?,
+    schemaLayout: String,
+    landscape: Boolean,
+): ReattachAction {
+    return if (currentType != null) {
+        val target = CustomLayoutRuntime.resolveTypeTarget(
+            snapshot, currentType, schemaLayout, landscape,
+        )
+        if (target == currentName) ReattachAction.Reshow else ReattachAction.SwitchType(currentType)
+    } else {
+        val target = CustomLayoutRuntime.resolveSwitchTarget(
+            snapshot, schemaLayout, schemaLayout, landscape,
+        )
+        if (target == currentName) ReattachAction.Reshow else ReattachAction.SwitchName(schemaLayout)
     }
 }

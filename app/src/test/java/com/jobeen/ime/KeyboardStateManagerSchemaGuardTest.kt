@@ -36,4 +36,32 @@ class KeyboardStateManagerSchemaGuardTest {
         assertEquals("s2", KeyboardStateManager.getCurrentSchema()?.id)
         assertNull(KeyboardStateManager.get("Qwerty"))
     }
+
+    // ---------- 多主槽一期：类型状态（纯决策部分，不触 Android） ----------
+
+    @Test
+    fun initialKeyboardType_byInputMode() {
+        reset()
+        assertEquals("pinyin", KeyboardStateManager.initialKeyboardType(asciiMode = false))
+        assertEquals("alphabetic", KeyboardStateManager.initialKeyboardType(asciiMode = true))
+    }
+
+    @Test
+    fun returnPrimaryAndLast_noopWhenUnset() {
+        reset()
+        // 未确立主/上一类型时为空操作，不得触 Android 状态。
+        KeyboardStateManager.returnPrimaryKeyboard()
+        KeyboardStateManager.returnLastKeyboard()
+        assertNull(KeyboardStateManager.currentKeyboardType)
+        assertNull(KeyboardStateManager.primaryKeyboardType)
+        assertNull(KeyboardStateManager.lastKeyboardType)
+    }
+
+    @Test
+    fun onDestroy_clearsTypeState() {
+        reset()
+        assertNull(KeyboardStateManager.currentKeyboardType)
+        assertNull(KeyboardStateManager.primaryKeyboardType)
+        assertNull(KeyboardStateManager.lastKeyboardType)
+    }
 }
