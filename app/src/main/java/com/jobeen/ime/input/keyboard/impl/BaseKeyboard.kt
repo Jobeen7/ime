@@ -666,7 +666,12 @@ abstract class BaseKeyboard(
             ) {
                 colors.accentKeyBackground
             } else {
-                com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.defaultGray
+                // 深色回车默认灰走对端半透明值（浅色仍走实心灰）：
+                // 深浅由当前方案键面亮度判定，不读主题 id。
+                com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.defaultGrayForDark(
+                    com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText
+                        .isDarkBackground(colors.keyBackground),
+                )
             }
         returnKeyView?.let {
             it.backgroundOverride = enterBackground

@@ -33,4 +33,26 @@ class ReturnKeyBackgroundTest {
     fun defaultGrayMatchesSampledPeerValue() {
         assertEquals(0xFFB7BCC4.toInt(), ReturnKeyTypeText.defaultGray)
     }
+
+    @Test
+    fun darkDefaultGrayMatchesPeerTranslucentValue() {
+        // 对端深色 systemButton #D1D1D624 → Android ARGB。
+        assertEquals(0x24D1D1D6.toInt(), ReturnKeyTypeText.darkDefaultGray)
+        assertEquals(
+            ReturnKeyTypeText.darkDefaultGray,
+            ReturnKeyTypeText.defaultGrayForDark(true),
+        )
+        assertEquals(
+            ReturnKeyTypeText.defaultGray,
+            ReturnKeyTypeText.defaultGrayForDark(false),
+        )
+    }
+
+    @Test
+    fun darkBackgroundDetectionByKeyFaceLuminance() {
+        assertTrue(ReturnKeyTypeText.isDarkBackground(0xFF3A3A3C.toInt()))
+        assertTrue(ReturnKeyTypeText.isDarkBackground(0xFF000000.toInt()))
+        assertFalse(ReturnKeyTypeText.isDarkBackground(0xFFFFFFFF.toInt()))
+        assertFalse(ReturnKeyTypeText.isDarkBackground(0xFFF5EEE6.toInt()))
+    }
 }
