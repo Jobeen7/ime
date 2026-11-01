@@ -55,6 +55,12 @@ enum class StyleField(val path: String) {
     PANEL_PREFERRED_TEXT("panel.preferredText"),
     PANEL_PREFERRED_COMMENT("panel.preferredComment"),
     PANEL_PREFERRED_INDEX("panel.preferredIndex"),
+    /**
+     * 竖网格分隔线色（审计 I 项，对应同名节点 separatorColor）：
+     * 缺失时回落 candidateDivider（见 valueIn）；横条分隔线
+     * 不走此字段（仍用 candidateDivider，见网格 updateColors 注释）。
+     */
+    PANEL_VERTICAL_SEPARATOR("panel.verticalSeparator"),
     PINNER_BACKGROUND("pinner.background"),
     PINNER_TEXT_COLOR("pinner.textColor"),
     PINNER_SECONDARY_TEXT_COLOR("pinner.secondaryTextColor"),
@@ -95,6 +101,7 @@ enum class StyleField(val path: String) {
         PANEL_PREFERRED_COMMENT -> scheme.panel.preferredComment
             ?: scheme.panel.candidateComment ?: scheme.panel.candidateIndex
         PANEL_PREFERRED_INDEX -> scheme.panel.preferredIndex ?: scheme.panel.candidateIndex
+        PANEL_VERTICAL_SEPARATOR -> scheme.panel.verticalSeparator ?: scheme.panel.candidateDivider
         PINNER_BACKGROUND -> scheme.pinner.background
         PINNER_TEXT_COLOR -> scheme.pinner.textColor
         PINNER_SECONDARY_TEXT_COLOR -> scheme.pinner.secondaryTextColor

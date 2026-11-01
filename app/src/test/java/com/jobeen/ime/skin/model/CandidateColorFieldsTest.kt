@@ -123,6 +123,25 @@ class CandidateColorFieldsTest {
     }
 
     @Test
+    fun verticalSeparatorFlowsToScheme() {
+        val scheme = build(base(""""verticalSeparator": "#FF123456"""))
+        assertEquals(0xFF123456.toInt(), scheme.panel.verticalSeparator)
+    }
+
+    @Test
+    fun verticalSeparatorAbsentIsNull() {
+        val scheme = build(base(""""candidateText": "#FF000000"""))
+        assertNull(scheme.panel.verticalSeparator)
+    }
+
+    @Test
+    fun verticalSeparatorValueInFallsBackToDivider() {
+        val panel = defaultScheme.panel.copy(candidateDivider = 607, verticalSeparator = null)
+        val scheme = defaultScheme.copy(panel = panel)
+        assertEquals(607, StyleField.PANEL_VERTICAL_SEPARATOR.valueIn(scheme))
+    }
+
+    @Test
     fun candidateCommentValueInFallsBackToIndex() {
         // 导出/令牌解析口径：未指定注释色时取序号色。
         val panel = defaultScheme.panel.copy(candidateIndex = 606, candidateComment = null)

@@ -241,7 +241,9 @@ class CandidateGridView(
         fun updateColors(pc: KeyboardColors.ColorScheme.PanelColors) {
             bgPaint.color = areaBackground ?: pc.background
             textPaint.color = pc.candidateText
-            sepPaint.color = pc.candidateDivider
+            // 竖分隔线色（审计 I 项）：缺失回落 candidateDivider；
+            // 横条分隔线（Paints.dividerPaint）不走此字段。
+            sepPaint.color = pc.verticalSeparator ?: pc.candidateDivider
             // 按压色（审计 I 项）：缺失回落候选底（旧口径）；此前
             // pressPaint 只用于拖动目标，现兼按压格底。
             pressPaint.color = pc.candidatePressed ?: pc.candidateBackground

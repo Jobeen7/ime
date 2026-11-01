@@ -81,6 +81,11 @@ object KeyboardColors {
             val preferredText: Int? = null,
             val preferredComment: Int? = null,
             val preferredIndex: Int? = null,
+            /**
+             * 竖网格分隔线色（审计 I 项）：null = 未指定（回落
+             * candidateDivider）。横条分隔线不走此字段。
+             */
+            val verticalSeparator: Int? = null,
         )
 
         @Serializable

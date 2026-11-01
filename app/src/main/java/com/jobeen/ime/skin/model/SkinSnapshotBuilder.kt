@@ -363,6 +363,7 @@ object SkinSnapshotBuilder {
         StyleField.PANEL_PREFERRED_TEXT -> copy(panel = panel.copy(preferredText = value))
         StyleField.PANEL_PREFERRED_COMMENT -> copy(panel = panel.copy(preferredComment = value))
         StyleField.PANEL_PREFERRED_INDEX -> copy(panel = panel.copy(preferredIndex = value))
+        StyleField.PANEL_VERTICAL_SEPARATOR -> copy(panel = panel.copy(verticalSeparator = value))
         StyleField.PINNER_BACKGROUND -> copy(pinner = pinner.copy(background = value))
         StyleField.PINNER_TEXT_COLOR -> copy(pinner = pinner.copy(textColor = value))
         StyleField.PINNER_SECONDARY_TEXT_COLOR -> copy(
