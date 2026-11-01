@@ -425,6 +425,7 @@ class KawaiiPanelView(context: Context) : View(context) {
             it.pressRadius = 0f
             it.pressAlpha = 0
         }
+        clearStripPressed()
         super.onDetachedFromWindow()
     }
     private val longPressHandler = Handler(Looper.getMainLooper())
@@ -501,6 +502,17 @@ class KawaiiPanelView(context: Context) : View(context) {
                     customTapInvalid = false
                     longPressHandler.postDelayed(customLongPressRunnable, 500)
                 }
+                // 横条按压反馈（审计 I 项）：DOWN 命中候选即置位，
+                // 渲染器当帧起画按压底；非候选命中（展开钮等）不置位。
+                (currentRenderer as? ComposingRenderer)?.let { renderer ->
+                    val hit = renderer.hitTest(
+                        event.getX(0), event.getY(0), width, height, scrollX, isExpanded, screenDensity,
+                    )
+                    if (hit is KawaiiPanel.TouchResult.SelectCandidate && hit.index >= 0) {
+                        renderer.pressedIndex = hit.index
+                        invalidate()
+                    }
+                }
             }
 
             MotionEvent.ACTION_MOVE -> {
@@ -546,6 +558,8 @@ class KawaiiPanelView(context: Context) : View(context) {
                     ))
                 ) {
                     isScrolling = true
+                    // 滑成滚动即取消按压（按压底不跟手走）。
+                    clearStripPressed()
                     val renderer = currentRenderer as ComposingRenderer
                     scrollX = (scrollX + dx).coerceIn(-renderer.maxScrollX, 0f)
                     invalidate()
@@ -575,14 +589,25 @@ class KawaiiPanelView(context: Context) : View(context) {
                 cancelDelayedTaps()
                 longPressHandler.removeCallbacks(longPressRunnable)
                 clearCustomGesture()
+                clearStripPressed()
                 parent.requestDisallowInterceptTouchEvent(false)
             }
         }
         return true
     }
 
+    /** 横条按压清零（审计 I 项）：抬手／取消／滑动／分离时调用。 */
+    private fun clearStripPressed() {
+        val renderer = currentRenderer as? ComposingRenderer ?: return
+        if (renderer.pressedIndex != -1) {
+            renderer.pressedIndex = -1
+            invalidate()
+        }
+    }
+
     /** 主动抬起的统一收尾（坐标取抬起的那根手指） */
     private fun handleUp(upX: Float, upY: Float) {
+        clearStripPressed()
         longPressHandler.removeCallbacks(longPressRunnable)
         parent.requestDisallowInterceptTouchEvent(false)
         // 自定义钮手势收尾（优先于既有路：本手势起于自定义钮时，

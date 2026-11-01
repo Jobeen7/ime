@@ -52,7 +52,14 @@ class KawaiiPanel(
             val tapY: Float = Float.NaN,
         ) : TouchResult()
 
-        data class SelectCandidate(val candidate: EngineMessage.Candidate) : TouchResult()
+        /**
+         * 候选点选。index = 候选在当前批次中的下标（审计 I 项按压
+         * 跟踪用；默认 -1 兼容旧构造点，渲染器命中时恒填实值）。
+         */
+        data class SelectCandidate(
+            val candidate: EngineMessage.Candidate,
+            val index: Int = -1,
+        ) : TouchResult()
         data object ExpandCandidates : TouchResult()
         data object CollapseCandidates : TouchResult()
         data object LongPressExpand : TouchResult()

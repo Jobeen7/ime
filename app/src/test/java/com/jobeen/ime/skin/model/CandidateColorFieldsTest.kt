@@ -80,6 +80,26 @@ class CandidateColorFieldsTest {
     }
 
     @Test
+    fun candidatePressedFlowsToScheme() {
+        val scheme = build(base(""""candidatePressed": "#FF445566"""))
+        assertEquals(0xFF445566.toInt(), scheme.panel.candidatePressed)
+    }
+
+    @Test
+    fun candidatePressedAbsentIsNull() {
+        val scheme = build(base(""""candidateText": "#FF000000"""))
+        assertNull(scheme.panel.candidatePressed)
+    }
+
+    @Test
+    fun candidatePressedValueInFallsBackToBackground() {
+        // 导出/令牌解析口径：未指定按压色时取候选底。
+        val panel = defaultScheme.panel.copy(candidateBackground = 604, candidatePressed = null)
+        val scheme = defaultScheme.copy(panel = panel)
+        assertEquals(604, StyleField.PANEL_CANDIDATE_PRESSED.valueIn(scheme))
+    }
+
+    @Test
     fun candidateCommentValueInFallsBackToIndex() {
         // 导出/令牌解析口径：未指定注释色时取序号色。
         val panel = defaultScheme.panel.copy(candidateIndex = 606, candidateComment = null)

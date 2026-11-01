@@ -215,7 +215,9 @@ class CandidateGridView(
             bgPaint.color = areaBackground ?: pc.background
             textPaint.color = pc.candidateText
             sepPaint.color = pc.candidateDivider
-            pressPaint.color = pc.candidateBackground
+            // 按压色（审计 I 项）：缺失回落候选底（旧口径）；此前
+            // pressPaint 只用于拖动目标，现兼按压格底。
+            pressPaint.color = pc.candidatePressed ?: pc.candidateBackground
         }
 
         /** 内容总行数：行布局已算好时 = 最大行号 + 1，未算好时 0 */
@@ -381,6 +383,16 @@ class CandidateGridView(
                         } else 0f
                         val shakeOff = shakeSin * 0.8f * densityF
                         val shakeAngle = shakeSin * shakeMaxAngle
+
+                        // 按压反馈（审计 I 项）：pressedIndex 此前只被
+                        // 追踪、从未绘制；现以按压色铺满本格（文字前画）。
+                        if (i == pressedIndex) {
+                            val d = resources.displayMetrics.density
+                            canvas.drawRoundRect(
+                                pos.xStart + shakeOff, y, pos.xStart + pos.width + shakeOff, y + rowH,
+                                candidateRadiusDp * d, candidateRadiusDp * d, pressPaint,
+                            )
+                        }
 
                         if (pos.extraWide) {
                             val sx = rowScrollX[pos.row] ?: 0f

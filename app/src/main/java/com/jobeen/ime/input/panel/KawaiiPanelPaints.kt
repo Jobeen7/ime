@@ -80,6 +80,11 @@ class Paints(context: Context) {
      */
     var candidateIndexSizeDp: Float = CANDIDATE_INDEX_DP
     var candidateCommentSizeDp: Float = CANDIDATE_COMMENT_DP
+    /**
+     * 候选按压底色（审计 I 项）：updateColors 从 panel 同步；
+     * null = 未指定（渲染回落候选底）。
+     */
+    var candidatePressedColor: Int? = null
 
     fun updateColors(context: Context) {
         val scheme = KeyboardColors.resolve(context)
@@ -102,6 +107,7 @@ class Paints(context: Context) {
             SkinSnapshotProvider.peek()?.candidateIndexSizeDp ?: CANDIDATE_INDEX_DP
         candidateCommentSizeDp =
             SkinSnapshotProvider.peek()?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
+        candidatePressedColor = panel.candidatePressed
         // 工具栏按钮表面（全局样式层）：皮肤样式 presence 决定
         // 全局按键值是否生效；跟随按键时半径取生效键圆角。
         val global = GlobalStylePrefs.get(context)

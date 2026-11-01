@@ -66,6 +66,11 @@ object KeyboardColors {
              * 此处接线后注释色首次跟随主题，见 Paints）。
              */
             val candidateComment: Int? = null,
+            /**
+             * 候选按压底色（审计 I 项）：null = 未指定（渲染回落
+             * candidateBackground；此前按压无任何视觉反馈）。
+             */
+            val candidatePressed: Int? = null,
         )
 
         @Serializable

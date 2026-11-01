@@ -86,6 +86,14 @@ class ComposingRenderer(
     private val selectedTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val commentPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pillBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val pressedBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    /**
+     * 当前按压的候选下标（审计 I 项）：视图 DOWN 命中后置位，
+     * 抬手／取消／滑动／分离时清零；-1 = 无按压。仅绘制用，
+     * 不参与命中与分发。
+     */
+    var pressedIndex: Int = -1
     private val edgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val fadePaint = Paint()
     private val bgGradPaint = Paint()
@@ -144,12 +152,15 @@ class ComposingRenderer(
         selectedTextPaint.set(paints.selectedCandidateTextPaint)
         commentPaint.set(paints.candidateCommentPaint)
         pillBgPaint.set(paints.candidateBgPaint)
+        pressedBgPaint.set(paints.candidateBgPaint)
+        pressedBgPaint.color = paints.candidatePressedColor ?: pillBgPaint.color
         if (recording) {
             indexPaint.color = dimColor(indexPaint.color)
             textPaint.color = dimColor(textPaint.color)
             selectedTextPaint.color = dimColor(selectedTextPaint.color)
             commentPaint.color = dimColor(commentPaint.color)
             pillBgPaint.color = dimColor(pillBgPaint.color)
+            pressedBgPaint.color = dimColor(pressedBgPaint.color)
         }
         val indexBaseSize = indexPaint.textSize
         val textBaseSize = textPaint.textSize
@@ -287,7 +298,15 @@ class ComposingRenderer(
                     val pillTextPaint =
                         if (i == highlightedIndex) selectedTextPaint else textPaint
 
-                    if (candidateBorder) {
+                    // 按压反馈（审计 I 项）：按压态药丸铺按压色（缺失
+                    // 回落候选底），与边框模式无关；常态仍只在边框
+                    // 模式下画底（旧口径不变）。
+                    if (i == pressedIndex) {
+                        drawRoundRect(
+                            pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
+                            pressedBgPaint,
+                        )
+                    } else if (candidateBorder) {
                         drawRoundRect(
                             pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
                             pillBgPaint,
@@ -407,7 +426,7 @@ class ComposingRenderer(
         for (pill in lastPills) {
             if (adjustedX >= pill.left && adjustedX <= pill.right) {
                 val c = candidates.find { it.index == pill.index } ?: return null
-                return KawaiiPanel.TouchResult.SelectCandidate(c)
+                return KawaiiPanel.TouchResult.SelectCandidate(c, pill.index)
             }
         }
         return null
