@@ -43,6 +43,7 @@ object NotificationActionNames {
         is KeyboardAction.UndoAction -> "UndoAction"
         is KeyboardAction.RedoAction -> "RedoAction"
         is KeyboardAction.HostUndoAction -> "HostUndoAction"
+        is KeyboardAction.HostRedoAction -> "HostRedoAction"
         is KeyboardAction.LiteralCommitAction -> "LiteralCommitAction"
         is KeyboardAction.DeleteForwardAction -> "DeleteForwardAction"
         is KeyboardAction.DeleteTextAction -> "DeleteTextAction"

@@ -576,6 +576,8 @@ class KeyOverrideApplierTest {
                 KeyboardAction.DeleteTextAction,
             SkinAction.Command(WhitelistAction.HASH_UNDO) to
                 KeyboardAction.HostUndoAction,
+            SkinAction.Command(WhitelistAction.HASH_REDO) to
+                KeyboardAction.HostRedoAction,
             SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_UP) to
                 KeyboardAction.KeyCodeAction(92),
             SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_DOWN) to

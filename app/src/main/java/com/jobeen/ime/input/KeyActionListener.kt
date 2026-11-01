@@ -224,6 +224,20 @@ class KeyActionListener(
                 }
             }
 
+            // 宿主文本重做（#redo）：与 #undo 同口径，见上。
+            is KeyboardAction.HostRedoAction -> {
+                try {
+                    service.currentInputConnection?.performContextMenuAction(
+                        android.R.id.redo,
+                    )
+                } catch (ex: Exception) {
+                    DiagLog.w(
+                        "keymap", "host_redo_failed",
+                        mapOf("error" to ex.javaClass.simpleName),
+                    )
+                }
+            }
+
             is KeyboardAction.MultiReturnAction -> {
                 engine?.resetComposition()
 

@@ -112,6 +112,14 @@ sealed class KeyboardAction {
     data object HostUndoAction : KeyboardAction()
 
     /**
+     * 宿主文本重做（#redo）：经当前输入连接
+     * performContextMenuAction(android.R.id.redo)，尽力而为、
+     * 宿主相关；与引擎内重做（RedoAction）不同，不可混用。
+     * 连接为空时空操作，不伪造成功，不回退删字。
+     */
+    data object HostRedoAction : KeyboardAction()
+
+    /**
      * 字面提交（皮肤覆写专用内部类型，裁定 B2 / 详设 §3.4）：
      * 与 CommitAction 同义上屏，但不经 Qwerty 的标点全半角转换、
      * 不随 Caps 大写。只由皮肤覆写装配产生，永不写入皮肤格式。

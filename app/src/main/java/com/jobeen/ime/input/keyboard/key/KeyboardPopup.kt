@@ -240,5 +240,6 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.UndoAction -> "UndoAction"
         is KeyboardAction.RedoAction -> "RedoAction"
         is KeyboardAction.HostUndoAction -> "HostUndoAction"
+        is KeyboardAction.HostRedoAction -> "HostRedoAction"
     }
 }
