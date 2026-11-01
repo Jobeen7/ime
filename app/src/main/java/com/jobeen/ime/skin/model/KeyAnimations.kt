@@ -103,9 +103,9 @@ object KeyAnimationDefParser {
     fun parseTable(
         node: JsonElement?,
     ): Pair<Map<String, KeyAnimationDef>, List<String>> {
-        if (node == null) return emptyMap() to emptyList()
+        if (node == null) return emptyMap<String, KeyAnimationDef>() to emptyList<String>()
         val obj = node as? JsonObject
-            ?: return emptyMap() to listOf("key_animations_not_object")
+            ?: return emptyMap<String, KeyAnimationDef>() to listOf("key_animations_not_object")
         val table = LinkedHashMap<String, KeyAnimationDef>()
         val warnings = mutableListOf<String>()
         for ((name, defNode) in obj) {
