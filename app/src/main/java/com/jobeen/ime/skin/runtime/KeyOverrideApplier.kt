@@ -175,9 +175,22 @@ object KeyOverrideApplier {
                 // styleRef > 布局键自带 styleRef），无样式名时为 null。
                 val geometry = resolveStyleGeometry(def, override, snapshot)
                 // 审计 H 项：样式动效名经动效表解析（图片帧过滤为
-                // 接纳资产，未知动效名记日志丢弃）。
-                val animations = resolveStyleAnimations(
-                    layoutName, def, geometry, snapshot,
+                // 接纳资产，未知动效名记日志丢弃）。Wave-4：逐键
+                // animations 槽非空时优先于样式动效（逐键名全被
+                // 滤掉时亦不回落样式——错名保持可见，只记日志）。
+                val animations = if (!override?.animations.isNullOrEmpty()) {
+                    resolveStyleAnimations(
+                        layoutName, def, override?.animations, snapshot,
+                    )
+                } else {
+                    resolveStyleAnimations(
+                        layoutName, def, geometry?.animationNames, snapshot,
+                    )
+                }
+                // Wave-4 状态前景色：样式名 → 该样式 TEXT 角色色
+                // （未知样式名记日志回落 null，键不被拒绝）。
+                val stateColors = resolveStateForegroundColors(
+                    layoutName, def, override, snapshot, effectiveScheme,
                 )
                 // 接线轮 R1：通知按样式名匹配（布局键自带 styleRef
                 // 或覆写 styleRef；无样式引用键不命中）。
@@ -210,6 +223,7 @@ object KeyOverrideApplier {
                         style = style,
                         geometry = geometry,
                         animations = animations,
+                        stateColors = stateColors,
                         tiers = snapshot.textSizes,
                         imageAssets = snapshot.imageAssets,
                         scheme = effectiveScheme,
@@ -329,20 +343,20 @@ object KeyOverrideApplier {
     }
 
     /**
-     * 样式动效解析（审计 H 项）：样式几何面的动效名 → 动效表
-     * 定义；未知动效名记日志丢弃。cartoon/physics 的图片帧只
-     * 留快照已接纳资产，全被滤掉时整条丢弃（无图不动效，
-     * 不崩溃）。无动效名或解析后为空时返回 null（不复制）。
+     * 动效名解析（审计 H 项 + Wave-4 逐键 animations 槽共用）：
+     * 动效名 → 动效表定义；未知动效名记日志丢弃。cartoon/
+     * physics 的图片帧只留快照已接纳资产，全被滤掉时整条丢弃
+     * （无图不动效，不崩溃）。无动效名或解析后为空时返回 null。
      */
     private fun resolveStyleAnimations(
         layoutName: String,
         def: KeyDef,
-        geometry: com.jobeen.ime.skin.model.KeyStyleGeometry?,
+        names: List<String>?,
         snapshot: SkinSnapshot,
     ): List<com.jobeen.ime.skin.model.KeyAnimationDef>? {
-        val names = geometry?.animationNames?.takeIf { it.isNotEmpty() } ?: return null
+        val list = names?.takeIf { it.isNotEmpty() } ?: return null
         val resolved = mutableListOf<com.jobeen.ime.skin.model.KeyAnimationDef>()
-        for (name in names) {
+        for (name in list) {
             val animation = snapshot.keyAnimations[name]
             if (animation == null) {
                 DiagLog.w(
@@ -382,6 +396,59 @@ object KeyOverrideApplier {
         return resolved.takeIf { it.isNotEmpty() }
     }
 
+    /** Wave-4 状态前景色（样式名 TEXT 角色解析结果；单槽 null = 未指定/未知样式）。 */
+    private data class StateForegroundColors(
+        val uppercased: Int?,
+        val capsLocked: Int?,
+        val swipeUp: Int?,
+        val swipeDown: Int?,
+    )
+
+    /**
+     * Wave-4 状态前景色解析：四槽样式名各取其样式 TEXT 角色色
+     * （与锁定通知前景取色同口径）；未知样式名记日志回落 null，
+     * 四槽全空时返回 null（不触发复制）。
+     */
+    private fun resolveStateForegroundColors(
+        layoutName: String,
+        def: KeyDef,
+        override: KeyOverride?,
+        snapshot: SkinSnapshot,
+        scheme: KeyboardColors.ColorScheme,
+    ): StateForegroundColors? {
+        if (override == null) return null
+        fun textOf(styleName: String?): Int? {
+            if (styleName == null) return null
+            val resolution = KeyStyleResolver.resolve(
+                styleRef = styleName,
+                overrides = null,
+                keyStyles = snapshot.keyStyles,
+                scheme = scheme,
+            )
+            if (resolution.warnings.isNotEmpty()) {
+                DiagLog.w(
+                    "keymap", "key_state_style_fallback",
+                    mapOf(
+                        "layout" to layoutName,
+                        "keyId" to def.id,
+                        "style" to styleName,
+                        "warnings" to resolution.warnings.joinToString(";"),
+                    ),
+                )
+            }
+            return resolution.style?.text
+        }
+        val colors = StateForegroundColors(
+            uppercased = textOf(override.uppercasedForegroundStyle),
+            capsLocked = textOf(override.capsLockedForegroundStyle),
+            swipeUp = textOf(override.swipeUpForegroundStyle),
+            swipeDown = textOf(override.swipeDownForegroundStyle),
+        )
+        return if (colors.uppercased == null && colors.capsLocked == null &&
+            colors.swipeUp == null && colors.swipeDown == null
+        ) null else colors
+    }
+
     /** 布局键自带覆盖（低）+ 覆写覆盖（高）按角色合并。 */
     private fun mergeStyleOverrides(
         base: Map<String, String>?,
@@ -413,6 +480,18 @@ object KeyOverrideApplier {
         if (swipeLeft != null && swipeLeft != SkinAction.SequencePlaceholder) return true
         if (swipeRight != null && swipeRight != SkinAction.SequencePlaceholder) return true
         if (longPress != null && longPress.any { it != SkinAction.SequencePlaceholder }) return true
+        // Wave-4 状态动作/重复/动效/状态前景样式槽
+        if (preeditTap != null && preeditTap != SkinAction.SequencePlaceholder) return true
+        if (preeditSwipeUp != null && preeditSwipeUp != SkinAction.SequencePlaceholder) return true
+        if (preeditSwipeDown != null && preeditSwipeDown != SkinAction.SequencePlaceholder) return true
+        if (preeditSwipeLeft != null && preeditSwipeLeft != SkinAction.SequencePlaceholder) return true
+        if (preeditSwipeRight != null && preeditSwipeRight != SkinAction.SequencePlaceholder) return true
+        if (uppercasedTap != null && uppercasedTap != SkinAction.SequencePlaceholder) return true
+        if (repeat != null && repeat != SkinAction.SequencePlaceholder) return true
+        if (!animations.isNullOrEmpty()) return true
+        if (swipeUpForegroundStyle != null || swipeDownForegroundStyle != null ||
+            uppercasedForegroundStyle != null || capsLockedForegroundStyle != null
+        ) return true
         return false
     }
 
@@ -473,6 +552,8 @@ object KeyOverrideApplier {
         geometry: com.jobeen.ime.skin.model.KeyStyleGeometry? = null,
         /** 审计 H 项：本键样式动效定义（null = 无样式动效）。 */
         animations: List<com.jobeen.ime.skin.model.KeyAnimationDef>? = null,
+        /** Wave-4：本键状态前景色（null = 无状态样式指定）。 */
+        stateColors: StateForegroundColors? = null,
         tiers: Map<KeyTextRole, Float>,
         imageAssets: Map<String, String>,
         scheme: com.jobeen.ime.data.keyboard.theme.KeyboardColors.ColorScheme,
@@ -558,13 +639,48 @@ object KeyOverrideApplier {
             keyAnimation = keyAnimation,
         )
 
+        // Wave-4 状态前景色：样式名已在装配期解析为 TEXT 角色色；
+        // null 槽（未指定或未知样式）保持出厂/样式色不动。
+        stateColors?.let {
+            if (it.uppercased != null) appearance.skinUppercasedTextColor = it.uppercased
+            if (it.capsLocked != null) appearance.skinCapsLockedTextColor = it.capsLocked
+            if (it.swipeUp != null) appearance.skinSwipeUpTextColor = it.swipeUp
+            if (it.swipeDown != null) appearance.skinSwipeDownTextColor = it.swipeDown
+        }
+
         var behaviors = def.behaviors
         var extraPopup: KeyDef.Popup.Keyboard? = null
         if (override != null) {
-            override.tap?.let { tap ->
-                if (tap != SkinAction.SequencePlaceholder) {
+            // Wave-4 点击三态合并：tap/preeditTap/uppercasedTap
+            // 任一 present 即重建 Press（其余态沿用出厂 Press）；
+            // 出厂无 Press 且无 tap 时以 NoOp 为基底（状态动作
+            // 仍可附着，普通点击无操作——不静默改动作者原意）。
+            val tapWritten = override.tap?.takeIf { it != SkinAction.SequencePlaceholder }
+            val preeditWritten = override.preeditTap
+                ?.takeIf { it != SkinAction.SequencePlaceholder }
+            val uppercasedWritten = override.uppercasedTap
+                ?.takeIf { it != SkinAction.SequencePlaceholder }
+            if (tapWritten != null || preeditWritten != null || uppercasedWritten != null) {
+                val factoryPress = behaviors
+                    .filterIsInstance<KeyDef.Behavior.Press>().firstOrNull()
+                val baseAction = tapWritten?.let { toRuntime(it) } ?: factoryPress?.action
+                if (baseAction == null) {
                     behaviors = behaviors.replaceSlot<KeyDef.Behavior.Press> {
-                        KeyDef.Behavior.Press(toRuntime(tap))
+                        KeyDef.Behavior.Press(
+                            action = KeyboardAction.NoOpAction,
+                            preeditAction = preeditWritten?.let { toRuntime(it) },
+                            uppercasedAction = uppercasedWritten?.let { toRuntime(it) },
+                        )
+                    }
+                } else {
+                    behaviors = behaviors.replaceSlot<KeyDef.Behavior.Press> {
+                        KeyDef.Behavior.Press(
+                            action = baseAction,
+                            preeditAction = preeditWritten?.let { toRuntime(it) }
+                                ?: factoryPress?.preeditAction,
+                            uppercasedAction = uppercasedWritten?.let { toRuntime(it) }
+                                ?: factoryPress?.uppercasedAction,
+                        )
                     }
                 }
             }
@@ -572,8 +688,18 @@ object KeyOverrideApplier {
             val downWritten = override.swipeDown?.takeIf { it != SkinAction.SequencePlaceholder }
             val leftWritten = override.swipeLeft?.takeIf { it != SkinAction.SequencePlaceholder }
             val rightWritten = override.swipeRight?.takeIf { it != SkinAction.SequencePlaceholder }
+            val preUpWritten = override.preeditSwipeUp
+                ?.takeIf { it != SkinAction.SequencePlaceholder }
+            val preDownWritten = override.preeditSwipeDown
+                ?.takeIf { it != SkinAction.SequencePlaceholder }
+            val preLeftWritten = override.preeditSwipeLeft
+                ?.takeIf { it != SkinAction.SequencePlaceholder }
+            val preRightWritten = override.preeditSwipeRight
+                ?.takeIf { it != SkinAction.SequencePlaceholder }
             if (upWritten != null || downWritten != null ||
-                leftWritten != null || rightWritten != null
+                leftWritten != null || rightWritten != null ||
+                preUpWritten != null || preDownWritten != null ||
+                preLeftWritten != null || preRightWritten != null
             ) {
                 val factorySwipe = behaviors.filterIsInstance<KeyDef.Behavior.Swipe>().firstOrNull()
                 val merged = KeyDef.Behavior.Swipe(
@@ -581,8 +707,23 @@ object KeyOverrideApplier {
                     downAction = downWritten?.let { toRuntime(it) } ?: factorySwipe?.downAction,
                     leftAction = leftWritten?.let { toRuntime(it) } ?: factorySwipe?.leftAction,
                     rightAction = rightWritten?.let { toRuntime(it) } ?: factorySwipe?.rightAction,
+                    preeditUpAction = preUpWritten?.let { toRuntime(it) }
+                        ?: factorySwipe?.preeditUpAction,
+                    preeditDownAction = preDownWritten?.let { toRuntime(it) }
+                        ?: factorySwipe?.preeditDownAction,
+                    preeditLeftAction = preLeftWritten?.let { toRuntime(it) }
+                        ?: factorySwipe?.preeditLeftAction,
+                    preeditRightAction = preRightWritten?.let { toRuntime(it) }
+                        ?: factorySwipe?.preeditRightAction,
                 )
                 behaviors = behaviors.replaceSlot<KeyDef.Behavior.Swipe> { merged }
+            }
+            // Wave-4 重复槽：有出厂 Repeat 时替换、无时新增
+            // （replaceSlot 本就先滤后加，与出厂行为一致）。
+            override.repeat?.takeIf { it != SkinAction.SequencePlaceholder }?.let { repeat ->
+                behaviors = behaviors.replaceSlot<KeyDef.Behavior.Repeat> {
+                    KeyDef.Behavior.Repeat(toRuntime(repeat))
+                }
             }
             override.longPress?.let { longPress ->
                 val effective = longPress.filter { it != SkinAction.SequencePlaceholder }
@@ -643,8 +784,16 @@ object KeyOverrideApplier {
             }
             latched.action?.let { action ->
                 if (action != SkinAction.SequencePlaceholder) {
+                    // 通知动作替换普通动作时保留出厂状态动作
+                    // （Wave-4：否则锁定会悄悄吃掉 preedit/uppercased）。
+                    val factoryPress = behaviors
+                        .filterIsInstance<KeyDef.Behavior.Press>().firstOrNull()
                     behaviors = behaviors.replaceSlot<KeyDef.Behavior.Press> {
-                        KeyDef.Behavior.Press(toRuntime(action))
+                        KeyDef.Behavior.Press(
+                            action = toRuntime(action),
+                            preeditAction = factoryPress?.preeditAction,
+                            uppercasedAction = factoryPress?.uppercasedAction,
+                        )
                     }
                 }
             }
@@ -659,6 +808,10 @@ object KeyOverrideApplier {
                     downAction = downWritten?.let { toRuntime(it) } ?: factorySwipe?.downAction,
                     leftAction = factorySwipe?.leftAction,
                     rightAction = factorySwipe?.rightAction,
+                    preeditUpAction = factorySwipe?.preeditUpAction,
+                    preeditDownAction = factorySwipe?.preeditDownAction,
+                    preeditLeftAction = factorySwipe?.preeditLeftAction,
+                    preeditRightAction = factorySwipe?.preeditRightAction,
                 )
                 behaviors = behaviors.replaceSlot<KeyDef.Behavior.Swipe> { merged }
             }

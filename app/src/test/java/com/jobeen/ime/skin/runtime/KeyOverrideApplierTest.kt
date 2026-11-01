@@ -11,7 +11,10 @@ import com.jobeen.ime.skin.model.Degradation
 import com.jobeen.ime.skin.model.DynamicTextSource
 import com.jobeen.ime.skin.model.KeyAnimationSpec
 import com.jobeen.ime.skin.model.KeyForegroundLayer
+import com.jobeen.ime.skin.model.KeyAnimationDef
 import com.jobeen.ime.skin.model.KeyOverride
+import com.jobeen.ime.skin.model.KeyStyleGeometry
+import com.jobeen.ime.skin.model.KeyStyleRole
 import com.jobeen.ime.skin.model.SkinAction
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SoundBindings
@@ -51,6 +54,9 @@ class KeyOverrideApplierTest {
     private fun snapshot(
         overrides: Map<String, KeyOverride> = emptyMap(),
         sounds: SoundBindings = SoundBindings.EMPTY,
+        keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
+        keyGeometries: Map<String, KeyStyleGeometry> = emptyMap(),
+        keyAnimations: Map<String, KeyAnimationDef> = emptyMap(),
     ) = SkinSnapshot(
         ref = SkinGenRef("skin-1", "h".repeat(64), 1),
         name = "test",
@@ -62,6 +68,9 @@ class KeyOverrideApplierTest {
         layoutId = null,
         keyOverrides = overrides,
         soundBindings = sounds,
+        keyStyles = keyStyles,
+        keyGeometries = keyGeometries,
+        keyAnimations = keyAnimations,
     )
 
     private val noPlaceholders = emptyMap<String, String>()
@@ -703,5 +712,105 @@ class KeyOverrideApplierTest {
                 ),
             ),
         )
+    }
+
+    // ---------- Wave-4 状态动作/重复/动效/状态前景样式 ----------
+
+    @Test
+    fun stateSlotsAndRepeatMergedIntoBehaviors() {
+        val factory = QwertyKeyboard.buildLayout(Variant.Accent)
+        val factoryPress = factory.byId("KEY_Q")
+            .behaviors.filterIsInstance<KeyDef.Behavior.Press>().single()
+        val result = KeyOverrideApplier.apply(
+            "Qwerty", factory,
+            snapshot(
+                mapOf(
+                    "KEY_Q" to KeyOverride(
+                        preeditTap = SkinAction.Text("p"),
+                        uppercasedTap = SkinAction.Text("U"),
+                        preeditSwipeUp = SkinAction.Text("s"),
+                        repeat = SkinAction.Text("r"),
+                    ),
+                ),
+            ),
+            noPlaceholders,
+        )
+        val copied = result.byId("KEY_Q")
+        val press = copied.behaviors.filterIsInstance<KeyDef.Behavior.Press>().single()
+        // 普通动作沿用出厂，状态动作各就其位
+        assertEquals(factoryPress.action, press.action)
+        assertEquals(
+            KeyboardAction.KeySequenceAction("p"),
+            press.preeditAction,
+        )
+        assertEquals(
+            KeyboardAction.KeySequenceAction("U"),
+            press.uppercasedAction,
+        )
+        val swipe = copied.behaviors.filterIsInstance<KeyDef.Behavior.Swipe>().single()
+        assertEquals(
+            KeyboardAction.KeySequenceAction("s"),
+            swipe.preeditUpAction,
+        )
+        assertNull(swipe.upAction)
+        val repeat = copied.behaviors.filterIsInstance<KeyDef.Behavior.Repeat>().single()
+        assertEquals(KeyboardAction.KeySequenceAction("r"), repeat.action)
+        // 未命中键原对象透传
+        assertSame(factory.byId("KEY_W"), result.byId("KEY_W"))
+    }
+
+    @Test
+    fun perKeyAnimationsBeatStyleAnimations() {
+        val spin = KeyAnimationDef.Scale(0.9f, 80, 120, true)
+        val styleAnim = KeyAnimationDef.Scale(0.8f, 60, 100, false)
+        val factory = QwertyKeyboard.buildLayout(Variant.Accent)
+        val result = KeyOverrideApplier.apply(
+            "Qwerty", factory,
+            snapshot(
+                mapOf(
+                    "KEY_Q" to KeyOverride(
+                        styleRef = "geo",
+                        animations = listOf("spin"),
+                    ),
+                    "KEY_W" to KeyOverride(styleRef = "geo"),
+                ),
+                keyGeometries = mapOf(
+                    "geo" to KeyStyleGeometry(animationNames = listOf("style-anim")),
+                ),
+                keyAnimations = mapOf("spin" to spin, "style-anim" to styleAnim),
+            ),
+            noPlaceholders,
+        )
+        // 逐键槽优先于样式动效
+        assertEquals(listOf(spin), result.byId("KEY_Q").appearance.skinAnimations)
+        // 无逐键槽时样式动效生效
+        assertEquals(listOf(styleAnim), result.byId("KEY_W").appearance.skinAnimations)
+    }
+
+    @Test
+    fun stateForegroundStylesResolveToTextRole() {
+        val factory = QwertyKeyboard.buildLayout(Variant.Accent)
+        val result = KeyOverrideApplier.apply(
+            "Qwerty", factory,
+            snapshot(
+                mapOf(
+                    "KEY_Q" to KeyOverride(
+                        uppercasedForegroundStyle = "hot",
+                        capsLockedForegroundStyle = "locked",
+                        swipeUpForegroundStyle = "hot",
+                    ),
+                ),
+                keyStyles = mapOf(
+                    "hot" to mapOf(KeyStyleRole.TEXT to "#FF0000"),
+                    "locked" to mapOf(KeyStyleRole.TEXT to "#00FF00"),
+                ),
+            ),
+            noPlaceholders,
+        )
+        val appearance = result.byId("KEY_Q").appearance
+        assertEquals(0xFFFF0000.toInt(), appearance.skinUppercasedTextColor)
+        assertEquals(0xFF00FF00.toInt(), appearance.skinCapsLockedTextColor)
+        assertEquals(0xFFFF0000.toInt(), appearance.skinSwipeUpTextColor)
+        assertNull(appearance.skinSwipeDownTextColor)
     }
 }
