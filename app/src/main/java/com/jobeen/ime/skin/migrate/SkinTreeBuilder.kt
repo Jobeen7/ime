@@ -49,23 +49,28 @@ object SkinTreeBuilder {
     }
 
     private fun JsonObjectBuilder.writeStylesFrom(scheme: KeyboardColors.ColorScheme) {
+        // 导出用原始值：null 字段不写入（复原保持 null）；回落值
+        // 只用于渲染／令牌解析，写入会把“未指定”扶正为常态色。
         for (field in StyleField.entries) {
             val path = field.path
+            val raw = field.rawValueIn(scheme) ?: continue
             if ('.' !in path) {
-                put(path, SkinJson.formatColor(field.valueIn(scheme)))
+                put(path, SkinJson.formatColor(raw))
             }
         }
         putJsonObject("panel") {
             for (field in StyleField.entries) {
                 if (field.path.startsWith("panel.")) {
-                    put(field.path.removePrefix("panel."), SkinJson.formatColor(field.valueIn(scheme)))
+                    val raw = field.rawValueIn(scheme) ?: continue
+                    put(field.path.removePrefix("panel."), SkinJson.formatColor(raw))
                 }
             }
         }
         putJsonObject("pinner") {
             for (field in StyleField.entries) {
                 if (field.path.startsWith("pinner.")) {
-                    put(field.path.removePrefix("pinner."), SkinJson.formatColor(field.valueIn(scheme)))
+                    val raw = field.rawValueIn(scheme) ?: continue
+                    put(field.path.removePrefix("pinner."), SkinJson.formatColor(raw))
                 }
             }
         }

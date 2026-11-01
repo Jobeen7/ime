@@ -3,7 +3,9 @@ package com.jobeen.ime.skin.model
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.intOrNull
 
 /**
  * 区域样式解析（审计 B / I 项：工具栏、预编辑、候选区）。

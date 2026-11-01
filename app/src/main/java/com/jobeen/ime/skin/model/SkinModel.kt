@@ -106,6 +106,22 @@ enum class StyleField(val path: String) {
         PINNER_TEXT_COLOR -> scheme.pinner.textColor
         PINNER_SECONDARY_TEXT_COLOR -> scheme.pinner.secondaryTextColor
     }
+
+    /**
+     * 导出用原始值（可空）：null 字段导出时不写入树，复原保持
+     * null（round-trip 精确）；valueIn 的回落只用于渲染／令牌
+     * 解析，不用于导出（否则 null 会被回落值“扶正”，复原失真）。
+     */
+    fun rawValueIn(scheme: KeyboardColors.ColorScheme): Int? = when (this) {
+        PANEL_CANDIDATE_COMMENT -> scheme.panel.candidateComment
+        PANEL_CANDIDATE_PRESSED -> scheme.panel.candidatePressed
+        PANEL_PREFERRED_BACKGROUND -> scheme.panel.preferredBackground
+        PANEL_PREFERRED_TEXT -> scheme.panel.preferredText
+        PANEL_PREFERRED_COMMENT -> scheme.panel.preferredComment
+        PANEL_PREFERRED_INDEX -> scheme.panel.preferredIndex
+        PANEL_VERTICAL_SEPARATOR -> scheme.panel.verticalSeparator
+        else -> valueIn(scheme)
+    }
 }
 
 /** 几何字段全集（定稿三.4）：只出现在 appearance，单位 dp 浮点。 */
