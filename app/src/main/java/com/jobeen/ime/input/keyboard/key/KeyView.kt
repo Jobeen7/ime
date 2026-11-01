@@ -25,6 +25,7 @@ import androidx.core.graphics.drawable.toDrawable
 import androidx.core.view.doOnPreDraw
 import androidx.core.view.updateLayoutParams
 import com.jobeen.ime.R
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.PunctuationMode.CharacterSet
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
@@ -123,6 +124,12 @@ abstract class KeyView(
 
     open val displayText: String? get() = null
 
+    /** 变换目标标签视图（工具项 14）：文本键子类覆写为 mainText，无标签键为 null。 */
+    protected open val labelView: android.view.View? get() = null
+
+    /** 常态图片键面（工具项 14 变换目标；无图片面时为 null）。 */
+    private var faceView: android.view.View? = null
+
     /** 按压态独立图片层（重点候选 8-2）：构造期解码、初始隐藏，按压显隐。 */
     private var pressedFaceView: android.view.View? = null
 
@@ -170,6 +177,10 @@ abstract class KeyView(
     private var transformAnimator: ValueAnimator? = null
     private var transformActive: Boolean = false
     private var transformBase: TransformBase? = null
+    /** 当前变换的目标视图（工具项 14：startTransform 解析后记下，复原／脱窗同视图）。 */
+    private var transformView: android.view.View? = null
+    /** 已记过 WARN 的未知变换目标（每串一次，避免按压刷日志）。 */
+    private val loggedUnknownTransformTargets = mutableSetOf<String>()
     private var transformCurrentFraction: Float = 0f
     /**
      * 审计 H 项 transform 代次：取消旧动画器会同步触发其结束
@@ -230,6 +241,7 @@ abstract class KeyView(
                 isFocusable = false
                 background = faceSpriteDrawable
             }
+            this.faceView = faceView
             appearanceView.apply {
                 add(faceView, lParams(0, 0) {
                     startToStart = parentId
@@ -251,6 +263,7 @@ abstract class KeyView(
                         ?: android.widget.ImageView.ScaleType.CENTER_CROP
                     setImageBitmap(faceBitmap)
                 }
+                this.faceView = faceView
                 appearanceView.apply {
                     add(faceView, lParams(0, 0) {
                         startToStart = parentId
@@ -749,6 +762,31 @@ abstract class KeyView(
     }
 
     /**
+     * 工具项 14：transform 目标视图（未知目标回落整键并记一次 WARN；
+     * 无对应层时同样回落整键，不丢动画）。
+     */
+    private fun transformViewFor(
+        def: com.jobeen.ime.skin.model.KeyAnimationDef.Transform,
+    ): android.view.View {
+        return when (resolveTransformTarget(def.target)) {
+            TransformTarget.WHOLE_KEY -> appearanceView
+            TransformTarget.FACE -> faceView ?: appearanceView
+            TransformTarget.PRESSED_FACE -> pressedFaceView ?: appearanceView
+            TransformTarget.LABEL -> labelView ?: appearanceView
+            null -> {
+                val target = def.target ?: ""
+                if (loggedUnknownTransformTargets.add(target)) {
+                    DiagLog.w(
+                        "animation", "transform_target_unknown",
+                        mapOf("target" to target),
+                    )
+                }
+                appearanceView
+            }
+        }
+    }
+
+    /**
      * 审计 H 项 transform 启动：从当前键面变换值插值到终态
      * （endScale/endTranslation/endAlpha/endRotationDeg，null
      * 项不变；平移单位 dp 或尺寸占比）。贝塞尔优先于 easing 名；
@@ -757,7 +795,8 @@ abstract class KeyView(
     private fun startTransform(
         def: com.jobeen.ime.skin.model.KeyAnimationDef.Transform,
     ) {
-        val view = appearanceView
+        val view = transformViewFor(def)
+        transformView = view
         transformGeneration++
         val generation = transformGeneration
         transformAnimator?.cancel()
@@ -816,6 +855,7 @@ abstract class KeyView(
     private fun restoreTransform(
         def: com.jobeen.ime.skin.model.KeyAnimationDef.Transform,
     ) {
+        if (transformView == null) transformView = transformViewFor(def)
         val from = transformCurrentFraction
         transformGeneration++
         val generation = transformGeneration
@@ -849,7 +889,7 @@ abstract class KeyView(
         fraction: Float,
     ) {
         val base = transformBase ?: return
-        val view = appearanceView
+        val view = transformView ?: appearanceView
         def.endScale?.let { end ->
             view.scaleX = base.scaleX + (end - base.scaleX) * fraction
             view.scaleY = base.scaleY + (end - base.scaleY) * fraction
@@ -1084,10 +1124,12 @@ abstract class KeyView(
         transformAnimator = null
         if (transformActive) {
             transformActive = false
-            appearanceView.translationX = 0f
-            appearanceView.translationY = 0f
-            appearanceView.rotation = 0f
-            appearanceView.alpha = if (isEnabled) 1f else 0.3f
+            val view = transformView ?: appearanceView
+            view.translationX = 0f
+            view.translationY = 0f
+            view.rotation = 0f
+            view.alpha = if (isEnabled) 1f else 0.3f
+            transformView = null
         }
         super.onDetachedFromWindow()
     }
@@ -1149,6 +1191,9 @@ class TextKeyView(
     def: KeyDef.Appearance.Text,
 ) : KeyView(ctx, colors, def) {
     override val displayText: String? get() = mainText.text.toString()
+
+    /** 工具项 14：变换 label 目标即主标签视图。 */
+    override val labelView: android.view.View? get() = mainText
 
     override fun updateMode(punctuationMode: PunctuationMode) {
         val text = mainText.text.toString()
@@ -1243,6 +1288,9 @@ class AltTextKeyView(
 ) : KeyView(ctx, colors, def) {
 
     override val displayText: String? get() = mainText.text.toString()
+
+    /** 工具项 14：变换 label 目标即主标签视图。 */
+    override val labelView: android.view.View? get() = mainText
 
     override fun updateMode(punctuationMode: PunctuationMode) {
         val text = mainText.text.toString()
@@ -1555,6 +1603,9 @@ class ImageTextKeyView(
 ) : KeyView(ctx, colors, def) {
 
     override val displayText: String? get() = mainText.text.toString()
+
+    /** 工具项 14：变换 label 目标即主标签视图。 */
+    override val labelView: android.view.View? get() = mainText
 
     override fun updateMode(punctuationMode: PunctuationMode) {
         val text = mainText.text.toString()

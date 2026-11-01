@@ -62,6 +62,12 @@ sealed interface KeyAnimationDef {
 
     /** 变换：触发时对键面做终态插值动画。 */
     data class Transform(
+        /**
+         * 目标（工具项 14 渲染口径，见 resolveTransformTarget）：
+         * null/空白 = 整键；face = 常态图片面；pressedFace = 按压
+         * 图片面；label = 主标签；未知串回落整键并记一次 WARN。
+         * 前景层无名称身份，不在本词汇内。
+         */
         val target: String?,
         val trigger: KeyAnimationTrigger,
         val durationMs: Int,
