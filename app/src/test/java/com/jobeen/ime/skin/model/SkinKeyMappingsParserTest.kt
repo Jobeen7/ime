@@ -89,6 +89,9 @@ class SkinKeyMappingsParserTest {
             "#toggleEmbeddedInputMode" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT),
             "#toggleScriptView" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW),
             "#clearSystemPasteboard" to SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD),
+            "#toggleSymbolBar" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SYMBOL_BAR),
+            "#keyboardMenu" to SkinAction.Command(WhitelistAction.HASH_KEYBOARD_MENU),
+            "#toggleCommandView" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_COMMAND_VIEW),
         )
         // 白名单封闭性：样本表必须覆盖枚举全集（除 voice_input 单独覆盖）
         assertEquals(

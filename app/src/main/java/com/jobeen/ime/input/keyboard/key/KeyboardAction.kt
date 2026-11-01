@@ -210,6 +210,21 @@ sealed class KeyboardAction {
     /** 候选栏展开/收起切换（审计 E：#candidatesBarStateToggle）。 */
     data object CandidatesBarToggleAction : KeyboardAction()
 
+    /** 键盘菜单开关（#keyboardMenu）：面板菜单态与空闲态往返。 */
+    data object KeyboardMenuAction : KeyboardAction()
+
+    /**
+     * 符号条开关（#toggleSymbolBar）：目标 UI（悬浮符号条）
+     * 不在本轮，分发为显式记日志的空操作，不伪造界面。
+     */
+    data object ToggleSymbolBarAction : KeyboardAction()
+
+    /**
+     * 命令面板开关（#toggleCommandView）：目标 UI（命令面板）
+     * 不在本轮，分发为显式记日志的空操作，不伪造界面。
+     */
+    data object ToggleCommandViewAction : KeyboardAction()
+
     /**
      * 瞬时上档（审计 E：shift）：标记动作，按键面据此接按下/
      * 抬起钩子（非点击分发）；直接分发到监听时为空操作。

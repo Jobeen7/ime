@@ -1311,6 +1311,9 @@ object KeyOverrideApplier {
             WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW -> KeyboardAction.ToggleScriptViewAction
             WhitelistAction.HASH_CLEAR_CLIPBOARD ->
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR)
+            WhitelistAction.HASH_TOGGLE_SYMBOL_BAR -> KeyboardAction.ToggleSymbolBarAction
+            WhitelistAction.HASH_KEYBOARD_MENU -> KeyboardAction.KeyboardMenuAction
+            WhitelistAction.HASH_TOGGLE_COMMAND_VIEW -> KeyboardAction.ToggleCommandViewAction
         }
         SkinAction.SequencePlaceholder ->
             error("sequence 占位不得转运行时动作（详设 §3.6）")

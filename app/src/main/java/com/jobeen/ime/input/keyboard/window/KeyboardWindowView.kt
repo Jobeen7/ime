@@ -425,6 +425,25 @@ class KeyboardWindowView(
                 null
             }
 
+            // 键盘菜单开关（#keyboardMenu）：面板菜单态与空闲态往返。
+            is KeyboardAction.KeyboardMenuAction -> {
+                panel.toggleMenu()
+                null
+            }
+
+            // 符号条／命令面板开关：目标 UI 不在本轮（完整符号条
+            // 与命令面板均已排除），分发到此即记日志的空操作，
+            // 不伪造界面、不下发引擎。
+            is KeyboardAction.ToggleSymbolBarAction -> {
+                DiagLog.w("keymap", "toggle_symbol_bar_unimplemented", emptyMap())
+                null
+            }
+
+            is KeyboardAction.ToggleCommandViewAction -> {
+                DiagLog.w("keymap", "toggle_command_view_unimplemented", emptyMap())
+                null
+            }
+
             // 板锁切换（审计 G）：窗口层拦截翻转，不下发引擎；
             // 锁条件现值立即并入运行态（不等异步选项刷新），
             // 使条件样式门控在下次键盘构建时即取新锁态。

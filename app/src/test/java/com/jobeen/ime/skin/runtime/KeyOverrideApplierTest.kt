@@ -590,6 +590,12 @@ class KeyOverrideApplierTest {
                 KeyboardAction.ToggleScriptViewAction,
             SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD) to
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR),
+            SkinAction.Command(WhitelistAction.HASH_TOGGLE_SYMBOL_BAR) to
+                KeyboardAction.ToggleSymbolBarAction,
+            SkinAction.Command(WhitelistAction.HASH_KEYBOARD_MENU) to
+                KeyboardAction.KeyboardMenuAction,
+            SkinAction.Command(WhitelistAction.HASH_TOGGLE_COMMAND_VIEW) to
+                KeyboardAction.ToggleCommandViewAction,
         )
         // 覆盖白名单全集
         assertEquals(

@@ -146,6 +146,16 @@ enum class WhitelistAction(
      */
     HASH_TOGGLE_SCRIPT_VIEW("#toggleScriptView", ValueRule.FORBIDDEN),
     HASH_CLEAR_CLIPBOARD("#clearSystemPasteboard", ValueRule.FORBIDDEN),
+    /**
+     * 新增 # 快捷指令（多主类型补充）：
+     * - #keyboardMenu：键盘菜单开关（真实目标：面板菜单态切换）。
+     * - #toggleSymbolBar / #toggleCommandView：解析＋映射＋分发
+     *   均已接通，但目标 UI 不在本轮（完整符号条／命令面板均
+     *   已排除）：分发为显式记日志的空操作，不伪造界面。
+     */
+    HASH_TOGGLE_SYMBOL_BAR("#toggleSymbolBar", ValueRule.FORBIDDEN),
+    HASH_KEYBOARD_MENU("#keyboardMenu", ValueRule.FORBIDDEN),
+    HASH_TOGGLE_COMMAND_VIEW("#toggleCommandView", ValueRule.FORBIDDEN),
     ;
 
     enum class ValueRule { REQUIRED, FORBIDDEN }
