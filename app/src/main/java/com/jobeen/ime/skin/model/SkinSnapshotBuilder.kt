@@ -282,6 +282,7 @@ object SkinSnapshotBuilder {
             conditionStyles = validated.conditionStyles,
             symbolBar = validated.symbolBar,
             subClassifiedSymbols = validated.subClassifiedSymbols,
+            unknownNodes = validated.unknownNodes,
         )
     }
 

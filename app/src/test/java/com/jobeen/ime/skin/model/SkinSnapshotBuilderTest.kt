@@ -189,6 +189,30 @@ class SkinSnapshotBuilderTest {
     }
 
     @Test
+    fun snapshotCarriesUnknownNodesVerbatim() {
+        val snapshot = build(
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+              "futureTopLevel": {"keep": ["me", {"deep": true}]},
+              "futureFlag": 42}""",
+        )
+        // 已知键不进未知表；未知键逐字节级原样（JsonElement 结构相等）。
+        assertEquals(
+            setOf("futureTopLevel", "futureFlag"),
+            snapshot.unknownNodes.keys,
+        )
+        assertEquals(
+            Json.parseToJsonElement("""{"keep": ["me", {"deep": true}]}"""),
+            snapshot.unknownNodes.getValue("futureTopLevel"),
+        )
+        assertEquals(
+            Json.parseToJsonElement("42"),
+            snapshot.unknownNodes.getValue("futureFlag"),
+        )
+        // 透传不改变已知字段的解析。
+        assertEquals(0xFFFFFFFF.toInt(), snapshot.colorScheme.keyBackground)
+    }
+
+    @Test
     fun snapshotAdmitsOnlyReferencedSounds() {        val json = """
             {"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
              "audio": {"tap": "snd_tap"},

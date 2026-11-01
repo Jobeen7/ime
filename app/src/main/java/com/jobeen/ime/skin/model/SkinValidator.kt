@@ -89,6 +89,31 @@ object SkinValidator {
     const val MAX_KEY_IMAGE_BYTES = 1024L * 1024L
 
     /**
+     * 校验消费的顶层键集合（未知节点透传的补集口径）：
+     * 校验器从树上读取并落入类型化字段的全部顶层键；
+     * 树上除此之外的键即“未知节点”，原样透传到快照
+     * （不做任何语义解读；未来校验新增键时须同步补进本表，
+     * 否则新键会被误归为未知节点）。
+     */
+    private val KNOWN_TOP_LEVEL_KEYS = setOf(
+        "appearance", "audio", "bubbleOverflowCheck",
+        "candidateCommentSizeDp", "candidateContextMenu", "candidateIndexSizeDp",
+        "candidateRadiusDp", "conditionStyles", "derivation", "derivationDark",
+        "derivationFormulas", "fontFamily", "formatVersion", "geometry",
+        "hintSymbolNodes", "hintSymbolsGridStyles", "hintSymbolsStyles",
+        "horizontalCandidateStyle", "horizontalCandidates", "horizontalCandidatesLayout",
+        "horizontalCandidatesStyle", "keyAnimation", "keyAnimations", "keyMappings",
+        "keyShadow", "keySound", "keyStyles", "layoutId", "layoutIdLandscape",
+        "meta", "minAppVersion", "notifications", "predictionCloseBg",
+        "predictionCloseRadiusDp", "preeditHeight", "preeditStyle", "roleFonts",
+        "spaceAnimation", "sprites", "styles", "stylesDark", "subClassifiedSymbols",
+        "suppressKeyboard", "suppressToolbar", "swipeThresholdDp", "symbolBar",
+        "textSizes", "toolbar", "toolbarButtonBackgroundStyle", "toolbarHeight",
+        "toolbarLayout", "toolbarStyle", "verticalBottomRow", "verticalCandidateStyle",
+        "verticalCandidates", "verticalCandidatesLayout", "verticalCandidatesStyle",
+    )
+
+    /**
      * @param currentVersionCode 当前 App versionCode（minAppVersion 门）。
      * @param fallbacks 全局偏好现值（几何回填链第二级）。
      * @param assetKind 资产逻辑 id → 类别；查无此 id 返回 null。
@@ -1100,6 +1125,9 @@ object SkinValidator {
                 keyShadow = keyShadow,
                 keyAnimation = keyAnimation,
                 spaceAnimation = spaceAnimationOrNull,
+                // 未知节点原样透传（快照层；文件层本就逐字节保留，
+                // 快照→skin.json 再生成器未来落地后才构成完整往返）。
+                unknownNodes = tree.filterKeys { it !in KNOWN_TOP_LEVEL_KEYS },
             ),
             issues = issues,
         )

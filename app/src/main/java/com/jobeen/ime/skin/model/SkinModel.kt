@@ -5,14 +5,16 @@ import com.jobeen.ime.skin.notify.ConditionStyle
 import com.jobeen.ime.skin.notify.SkinNotification
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolBarSpec
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
 /**
  * v3 皮肤强类型模型（定稿三章 + 第十章 32 叶子 + 第九章校验口径）。
  *
  * 原始 JSON 树是唯一存储真相（[ValidatedSkin.tree]）；本模型只是
- * 校验后的只读视图：已知字段给出有效值与 presence，未知/未支持
- * 节点不进模型、留在树里随存储与导出原样往返。
+ * 校验后的只读视图：已知字段给出有效值与 presence，未知顶层
+ * 节点原样进 [ValidatedSkin.unknownNodes] 透传到快照（不做语义
+ * 解读），随存储与导出原样往返。
  */
 
 /** 配色叶子字段注册表（定稿十章）：路径与 ColorScheme 取值口径一一对应。 */
@@ -377,6 +379,11 @@ data class ValidatedSkin(
     val symbolBar: SymbolBarSpec? = null,
     /** 二级分类符号：顶层 subClassifiedSymbols 校验结果；null = 走既有一级表。 */
     val subClassifiedSymbols: SubClassifiedSymbols? = null,
+    /**
+     * 未知顶层节点（原样透传）：校验未消费的顶层键 → 原始 JsonElement；
+     * 已知键不进入本表（见 SkinValidator.KNOWN_TOP_LEVEL_KEYS）。
+     */
+    val unknownNodes: Map<String, JsonElement> = emptyMap(),
     /** 拟态双阴影（2026-10-29 item-1）：顶层 keyShadow 校验结果；缺省关闭。 */
     val keyShadow: KeyShadowSpec = KeyShadowSpec(),
     /** 按键动效（2026-10-29 item-1）：顶层 keyAnimation 校验结果；缺省关闭。 */
