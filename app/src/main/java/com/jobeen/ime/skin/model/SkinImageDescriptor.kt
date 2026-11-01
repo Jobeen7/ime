@@ -378,6 +378,15 @@ fun SpriteFrame.cropRect(sheetWidth: Int, sheetHeight: Int): SpriteRect? {
     return SpriteRect(left, top, right - left, bottom - top)
 }
 
+/** 查帧结果的裁剪口径：帧缺失 = 整图；帧存在但与 sheet 无交集 = null（脏数据，整描述失效）。 */
+fun cropOrFull(frame: SpriteFrame?, sheetWidth: Int, sheetHeight: Int): SpriteRect? {
+    if (frame == null) {
+        if (sheetWidth <= 0 || sheetHeight <= 0) return null
+        return SpriteRect(0, 0, sheetWidth, sheetHeight)
+    }
+    return frame.cropRect(sheetWidth, sheetHeight)
+}
+
 /**
  * 9-patch 切片几何（纯函数；渲染层按此切图绘制）。
  * 源空间为 sheet 像素，目标空间为绘制 bounds 像素；cap 边框在

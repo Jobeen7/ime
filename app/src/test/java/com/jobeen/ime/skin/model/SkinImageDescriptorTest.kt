@@ -183,6 +183,17 @@ class SkinImageDescriptorTest {
     }
 
     @Test
+    fun cropOrFull_missingFrameIsWholeSheetAndOutsideIsNull() {
+        assertEquals(SpriteRect(0, 0, 400, 200), cropOrFull(null, 400, 200))
+        assertNull(cropOrFull(null, 0, 200))
+        assertEquals(
+            SpriteRect(200, 0, 200, 200),
+            cropOrFull(SpriteFrame(SpriteRect(200, 0, 200, 200)), 400, 200),
+        )
+        assertNull(cropOrFull(SpriteFrame(SpriteRect(500, 0, 10, 10)), 400, 200))
+    }
+
+    @Test
     fun contentModeDstRect_fitCentersAndFillCrops() {
         val fit = contentModeDstRect(ImageContentMode.SCALE_ASPECT_FIT, 200, 100, 100f, 100f)
         assertEquals(ContentModeRect(0f, 25f, 100f, 75f), fit)
