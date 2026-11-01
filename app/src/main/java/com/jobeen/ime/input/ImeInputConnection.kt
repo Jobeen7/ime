@@ -477,6 +477,18 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
 
     override fun closeConnection() {}
 
+    /**
+     * 图片内容接收端：恒返回 false，但不是无理由的平拒。
+     * - 本连接是桥接模式下的虚拟连接，内容只写内部 Editable 文本，
+     *   绘制层也不渲染图片位，故不存在可落图片的位置；接受图片等于
+     *   谎报成功后丢弃，或把图片转发真实编辑器、破坏“文本走虚拟、
+     *   真实编辑器隔离”的桥接不变量，二者都不可取。
+     * - 因此不调用 inputContentInfo.requestPermission：不读内容就
+     *   不取授权，不给发送方留下一个无人释放的临时授权。
+     * - 给真实编辑器发图片走 [ImageContentCommit]（以真实连接为目标，
+     *   桥接态下它同样如实得到这里的 false）；本方法只负责桥接态的
+     *   诚实拒绝。行为与此前一致（恒 false），改动仅为说明原因。
+     */
     override fun commitContent(
         inputContentInfo: InputContentInfo,
         flags: Int,
