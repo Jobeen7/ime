@@ -137,12 +137,12 @@ class SkinImageDescriptorTest {
         )
         val badFile = badMode as SkinImageDescriptor.File
         assertEquals(ImageContentMode.SCALE_TO_FILL, badFile.contentMode)
-        assertTrue(badModeIssues.any { it.reason == "content_mode_invalid" })
+        assertTrue(badModeIssues.any { it.detail == "content_mode_invalid" })
         val (badType, badTypeIssues) = parseDescriptor(
             """{"buttonStyleType": "geometry", "normalColor": "#FFFFFFFF"}""",
         )
         assertNull(badType)
-        assertTrue(badTypeIssues.any { it.reason == "image_descriptor_type_invalid" })
+        assertTrue(badTypeIssues.any { it.detail == "image_descriptor_type_invalid" })
     }
 
     @Test
