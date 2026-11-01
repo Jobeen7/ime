@@ -1144,12 +1144,12 @@ class ToolbarRenderer(
         val hPad = (horizontalPaddingDp + 4) * density
         val fixedW = 32f * density
         val edgeTouchW = 48f * density
-        val menuCenter = hPad + fixedW / 2f
-        val closeCenter = width - hPad - fixedW / 2f
-        val menuTouchLeft = (menuCenter - edgeTouchW / 2f).coerceAtLeast(0f)
-        val menuTouchRight = (menuCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
-        val closeTouchLeft = (closeCenter - edgeTouchW / 2f).coerceAtLeast(0f)
-        val closeTouchRight = (closeCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
+        val clipMenuCenter = hPad + fixedW / 2f
+        val clipCloseCenter = width - hPad - fixedW / 2f
+        val clipMenuTouchLeft = (clipMenuCenter - edgeTouchW / 2f).coerceAtLeast(0f)
+        val clipMenuTouchRight = (clipMenuCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
+        val clipCloseTouchLeft = (clipCloseCenter - edgeTouchW / 2f).coerceAtLeast(0f)
+        val clipCloseTouchRight = (clipCloseCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
 
         if (clipMode) {
             val g = clipGeom(width, height, density)
@@ -1162,8 +1162,8 @@ class ToolbarRenderer(
             if (clipSearchMode) {
                 // 搜索态：左箭头=退出搜索，动作区 slot0=清除查询/退出，
                 // slot1 与搜索框本身点击无动作，收起键照常
-                if (x in menuTouchLeft..menuTouchRight) {
-                    setPress(menuCenter)
+                if (x in clipMenuTouchLeft..clipMenuTouchRight) {
+                    setPress(clipMenuCenter)
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.ClipSearchExit, tapX = x, tapY = y
                     )
@@ -1176,7 +1176,7 @@ class ToolbarRenderer(
                         PanelAction.ClipSearchClear, tapX = x, tapY = y
                     )
                 }
-                if (x in closeTouchLeft..closeTouchRight) {
+                if (x in clipCloseTouchLeft..clipCloseTouchRight) {
                     setPress((g.closeLeft + g.closeRight) / 2f)
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.CloseKeyboard, tapX = x, tapY = y
@@ -1187,8 +1187,8 @@ class ToolbarRenderer(
             if (clipEditMode) {
                 // 编辑态：左箭头=取消编辑，动作区 slot1=取消、slot0=保存，
                 // 编辑框本身点击无动作，收起键照常
-                if (x in menuTouchLeft..menuTouchRight) {
-                    setPress(menuCenter)
+                if (x in clipMenuTouchLeft..clipMenuTouchRight) {
+                    setPress(clipMenuCenter)
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.ClipEditCancel, tapX = x, tapY = y
                     )
@@ -1202,7 +1202,7 @@ class ToolbarRenderer(
                         tapX = x, tapY = y
                     )
                 }
-                if (x in closeTouchLeft..closeTouchRight) {
+                if (x in clipCloseTouchLeft..clipCloseTouchRight) {
                     setPress((g.closeLeft + g.closeRight) / 2f)
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.CloseKeyboard, tapX = x, tapY = y
@@ -1213,8 +1213,8 @@ class ToolbarRenderer(
             if (clipMultiMode) {
                 // 多选态：左箭头=退出多选，动作区 slot1=退出、slot0=删除所选，
                 // 胶囊区点击无动作，收起键照常
-                if (x in menuTouchLeft..menuTouchRight) {
-                    setPress(menuCenter)
+                if (x in clipMenuTouchLeft..clipMenuTouchRight) {
+                    setPress(clipMenuCenter)
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.ClipMultiExit, tapX = x, tapY = y
                     )
@@ -1228,7 +1228,7 @@ class ToolbarRenderer(
                         tapX = x, tapY = y
                     )
                 }
-                if (x in closeTouchLeft..closeTouchRight) {
+                if (x in clipCloseTouchLeft..clipCloseTouchRight) {
                     setPress((g.closeLeft + g.closeRight) / 2f)
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.CloseKeyboard, tapX = x, tapY = y
@@ -1238,8 +1238,8 @@ class ToolbarRenderer(
             }
             if (clipReorderMode) {
                 // 排序态：左箭头与动作区（完成）都退出排序，收起键照常
-                if (x in menuTouchLeft..menuTouchRight) {
-                    setPress(menuCenter)
+                if (x in clipMenuTouchLeft..clipMenuTouchRight) {
+                    setPress(clipMenuCenter)
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.ClipReorderExit, tapX = x, tapY = y
                     )
@@ -1250,7 +1250,7 @@ class ToolbarRenderer(
                         PanelAction.ClipReorderExit, tapX = x, tapY = y
                     )
                 }
-                if (x in closeTouchLeft..closeTouchRight) {
+                if (x in clipCloseTouchLeft..clipCloseTouchRight) {
                     setPress((g.closeLeft + g.closeRight) / 2f)
                     return KawaiiPanel.TouchResult.ToolbarAction(
                         PanelAction.CloseKeyboard, tapX = x, tapY = y
@@ -1258,8 +1258,8 @@ class ToolbarRenderer(
                 }
                 return null
             }
-            if (x in menuTouchLeft..menuTouchRight) {
-                setPress(menuCenter)
+            if (x in clipMenuTouchLeft..clipMenuTouchRight) {
+                setPress(clipMenuCenter)
                 return KawaiiPanel.TouchResult.ToolbarAction(
                     PanelAction.SwitchKeyboard, tapX = x, tapY = y
                 )
@@ -1286,7 +1286,7 @@ class ToolbarRenderer(
                 }
                 return KawaiiPanel.TouchResult.ToolbarAction(action, tapX = x, tapY = y)
             }
-            if (x in closeTouchLeft..closeTouchRight) {
+            if (x in clipCloseTouchLeft..clipCloseTouchRight) {
                 setPress((g.closeLeft + g.closeRight) / 2f)
                 return KawaiiPanel.TouchResult.ToolbarAction(
                     PanelAction.CloseKeyboard, tapX = x, tapY = y
