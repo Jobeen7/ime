@@ -138,6 +138,20 @@ abstract class KeyView(
             id = def.viewId
         }
         visibility = def.visibility
+        // 审计 A 项可视区域：宽度占比 + 横向对齐经既有
+        // layoutMargin 机制在 onLayout 落到键面（左/右内缩和
+        // = 1 - 宽度占比）；纵向对齐无高度占比时不改变全高
+        // 键面（对端 bounds 本身只给宽度），仅模型保留。
+        def.skinVisibleBounds?.let { bounds ->
+            val widthFraction = bounds.widthFraction ?: 1f
+            val shrink = (1f - widthFraction).coerceIn(0f, 1f)
+            layoutMarginLeft = when (bounds.horizontal) {
+                com.jobeen.ime.skin.model.KeyBoundsHorizontal.LEFT -> 0f
+                com.jobeen.ime.skin.model.KeyBoundsHorizontal.RIGHT -> shrink
+                else -> shrink / 2f
+            }
+            layoutMarginRight = shrink - layoutMarginLeft
+        }
 
         // 等价化简：旧 if/else 两支殊途同归，只剩「Special 且无边框」一种不建背景
         if (def.border != Border.Special || bordered) {
@@ -296,30 +310,70 @@ abstract class KeyView(
             Variant.None -> Color.TRANSPARENT
         }
         val hasShape = (bordered && def.border != Border.Off) || def.border == Border.On
+        // 审计 A 项：样式几何面（渐变/阴影/描边/圆角/下边缘任一
+        // 指定）→ 样式键面；全无时与原逻辑逐字节一致（旧形）。
+        // 样式圆角优先于全局圆角；样式描边宽优先于全局描边宽。
+        val radiusPx = def.skinCornerRadiusDp?.let { dp(it) } ?: radius
+        val continuous = def.skinCornerCurve ==
+            com.jobeen.ime.skin.model.KeyCornerCurve.CONTINUOUS
+        val styled = def.skinGradient != null || def.skinPressedGradient != null ||
+            def.skinShadow != null || def.skinBorderWidthDp != null ||
+            def.skinPressedBorderColor != null || def.skinLowerEdgeColor != null ||
+            def.skinPressedLowerEdgeColor != null ||
+            def.skinCornerRadiusDp != null || def.skinCornerCurve != null
+        val strokeWidthPx = def.skinBorderWidthDp?.let { dp(it).roundToInt() }
+            ?: strokeWidthFor()
         val normalBg: Drawable = if (hasShape) {
-            // 拟态双阴影（2026-10-29 item-1）：快照 keyShadow 开启且
-            // 装饰开关开时常态层换三层阴影形；装饰关 = 平面旧形。
-            // 按压层保持平面（压在阴影之上显隐，阴影不重复绘制）。
-            // 快照未就绪（peek 为 null）时走旧形。
-            val shadow = com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()?.keyShadow
-            val decorationOn =
-                com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Decoration
-                    .isEnabled(context)
-            if (shadow?.enabled == true && decorationOn) {
-                dualShadowKeyBackgroundDrawable(
-                    bkgColor, strokeColorFor(), radius, strokeWidthFor(),
-                    hMargin, vMargin,
-                    shadow.lightColor, shadow.darkColor,
-                    dp(shadow.offsetDp).roundToInt(),
+            if (styled) {
+                styledFaceDrawable(
+                    fillColor = bkgColor,
+                    gradient = def.skinGradient,
+                    strokeColor = strokeColorFor(pressed = false),
+                    strokeWidthPx = strokeWidthPx,
+                    shadowLayer = def.skinShadow?.normal,
+                    lowerEdgeColor = def.skinLowerEdgeColor,
+                    radiusPx = radiusPx,
+                    continuous = continuous,
                 )
             } else {
-                createShapeBkg(bkgColor)
+                // 拟态双阴影（2026-10-29 item-1）：快照 keyShadow 开启且
+                // 装饰开关开时常态层换三层阴影形；装饰关 = 平面旧形。
+                // 按压层保持平面（压在阴影之上显隐，阴影不重复绘制）。
+                // 快照未就绪（peek 为 null）时走旧形。
+                val shadow = com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()?.keyShadow
+                val decorationOn =
+                    com.jobeen.ime.data.manager.KeyboardManager.Keyboard.Decoration
+                        .isEnabled(context)
+                if (shadow?.enabled == true && decorationOn) {
+                    dualShadowKeyBackgroundDrawable(
+                        bkgColor, strokeColorFor(), radius, strokeWidthFor(),
+                        hMargin, vMargin,
+                        shadow.lightColor, shadow.darkColor,
+                        dp(shadow.offsetDp).roundToInt(),
+                    )
+                } else {
+                    createShapeBkg(bkgColor)
+                }
             }
         } else {
             Color.TRANSPARENT.toDrawable()
         }
         val pressedBg: Drawable = if (hasShape) {
-            createShapeBkg(pressedColor)
+            if (styled) {
+                styledFaceDrawable(
+                    fillColor = pressedColor,
+                    gradient = def.skinPressedGradient,
+                    strokeColor = strokeColorFor(pressed = true),
+                    strokeWidthPx = strokeWidthPx,
+                    shadowLayer = def.skinShadow?.pressed ?: def.skinShadow?.normal,
+                    lowerEdgeColor = def.skinPressedLowerEdgeColor
+                        ?: def.skinLowerEdgeColor,
+                    radiusPx = radiusPx,
+                    continuous = continuous,
+                )
+            } else {
+                createShapeBkg(pressedColor)
+            }
         } else {
             InsetDrawable(
                 pressedColor.toDrawable(),
@@ -330,6 +384,52 @@ abstract class KeyView(
         pressedBg.alpha = 0
         pressedLayerAlpha = 0
         appearanceView.background = layered
+        // 样式阴影用模糊画笔，须软件层（只在有阴影时设置；
+        // 无阴影键不碰图层类型，保持既有渲染路径）。
+        if (styled && def.skinShadow != null) {
+            appearanceView.setLayerType(
+                android.view.View.LAYER_TYPE_SOFTWARE, null,
+            )
+        }
+    }
+
+    /**
+     * 审计 A 项样式键面（带键间距内缩的 LayerDrawable 单层）：
+     * 填充取渐变（有值时优先于纯色）、描边取按压态色（未指定
+     * 时回落常态描边）、阴影取生效色与 dp→px 换算、下边缘条
+     * 固定 1dp（对端只给颜色、不给厚度）。
+     */
+    private fun styledFaceDrawable(
+        fillColor: Int,
+        gradient: com.jobeen.ime.skin.model.KeyGradient?,
+        strokeColor: Int,
+        strokeWidthPx: Int,
+        shadowLayer: com.jobeen.ime.skin.model.KeyShadowLayer?,
+        lowerEdgeColor: Int?,
+        radiusPx: Float,
+        continuous: Boolean,
+    ): Drawable {
+        val face = StyledKeyDrawable(
+            solidColor = fillColor,
+            gradient = gradient,
+            cornerRadiusPx = radiusPx,
+            strokeWidthPx = strokeWidthPx,
+            strokeColor = strokeColor,
+            continuous = continuous,
+            shadowColor = shadowLayer?.effectiveColor(),
+            shadowRadiusPx = shadowLayer?.let { dp(it.radiusDp) } ?: 0f,
+            shadowDxPx = shadowLayer?.let { dp(it.offsetXDp) } ?: 0f,
+            shadowDyPx = shadowLayer?.let { dp(it.offsetYDp) } ?: 0f,
+            lowerEdgeColor = lowerEdgeColor,
+            lowerEdgeHeightPx = if (lowerEdgeColor != null) {
+                dp(1f).roundToInt().coerceAtLeast(1)
+            } else {
+                0
+            },
+        )
+        return LayerDrawable(arrayOf(face)).apply {
+            setLayerInset(0, hMargin, vMargin, hMargin, vMargin)
+        }
     }
 
     private fun interpolatorFor(
@@ -344,8 +444,14 @@ abstract class KeyView(
 
     private fun strokeWidthFor(): Int = dp(colors.keyBorderWidthDp).roundToInt()
 
-    private fun strokeColorFor(): Int {
-        var strokeColor = def.skinBorderColor ?: when (def.variant) {
+    private fun strokeColorFor(pressed: Boolean = false): Int {
+        // 审计 A 项：按压描边未指定时回落常态描边（与阴影/
+        // 下边缘的按压回落口径一致）。
+        var strokeColor = if (pressed) {
+            def.skinPressedBorderColor ?: def.skinBorderColor
+        } else {
+            def.skinBorderColor
+        } ?: when (def.variant) {
             Variant.Alternative -> colors.specialKeyBorderStroke
             Variant.Accent -> colors.accentKeyBorderStroke
             else -> colors.keyBorderStroke
