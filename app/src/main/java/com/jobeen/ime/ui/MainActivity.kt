@@ -1,6 +1,7 @@
 package com.jobeen.ime.ui
 
 import android.content.ComponentName
+import android.content.Context
 import android.content.Intent
 import android.os.Bundle
 import android.provider.DocumentsContract
@@ -20,6 +21,7 @@ import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.ImeInputMethodService
+import com.jobeen.ime.skin.script.SkinScriptActivity
 import com.jobeen.ime.ui.screen.MainScreen
 import com.jobeen.ime.ui.theme.ImeTheme
 import com.jobeen.ime.ui.theme.AppAppearance
@@ -222,5 +224,17 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         private const val FAB_SESSION_NAME = "home-fab"
+
+        /**
+         * App-level scripts navigation entry (management UI).
+         * The settings-catalog row that calls this is a held item for
+         * the coordinator (MainScreen/MainSettingsCatalog are outside
+         * this wave's exclusive files); this entry is the exact call
+         * that row must use. Requires the SkinScriptActivity manifest
+         * entry (also held) before it can actually launch.
+         */
+        fun openSkinScripts(context: Context) {
+            context.startActivity(SkinScriptActivity.intent(context))
+        }
     }
 }

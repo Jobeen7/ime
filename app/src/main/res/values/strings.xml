@@ -84,6 +84,18 @@
     <string name="skin_diag_layout">布局绑定</string>
     <string name="skin_diag_degradation">降级情况</string>
     <string name="skin_diag_suggestion">修复建议</string>
+    <!-- 应用级脚本管理 -->
+    <string name="skin_script_title">脚本管理</string>
+    <string name="skin_script_empty">暂无脚本</string>
+    <string name="skin_script_id">脚本 ID</string>
+    <string name="skin_script_name">名称</string>
+    <string name="skin_script_source">脚本源码</string>
+    <string name="skin_script_add">添加脚本</string>
+    <string name="skin_script_remove">删除</string>
+    <string name="skin_script_enabled">启用</string>
+    <string name="skin_script_run_test">试运行</string>
+    <string name="skin_script_run_result">运行结果：%1$s</string>
+    <string name="skin_script_add_failed">添加失败：%1$s</string>
     <!-- 批量第 5 项：后台定期同步 -->
     <string name="user_dict_periodic_sync">后台定期同步</string>
     <string name="user_dict_periodic_interval">同步间隔</string>
