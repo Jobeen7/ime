@@ -52,6 +52,54 @@ object SkinJson {
         }
     }
 
+    /**
+     * `keyboards` 表解析（多主槽一期）：skin.json 顶层 `keyboards`
+     * 对象 → 类型名 → [KeyboardTypeEntry]。字段级回退口径，与
+     * 校验器其余字段一致：整表/单项形态不对、字段值非法时只丢
+     * 该项/该字段，皮肤照常成立，绝不因表损坏而拒皮肤。
+     * - 项形态：对象（含 layoutId/layoutIdLandscape/heightPercent/
+     *   heightPercentLandscape 任一有效字段）或字符串简写（即
+     *   layoutId）；其余形态（数字/数组/空对象/全空对象）丢弃。
+     * - 高度域 50–200（与布局文件 heightPercent 同口径），域外
+     *   或非数字丢弃该字段，不丢整项。
+     * - 本函数只读原始树：校验器不认 `keyboards` 键（未知顶层
+     *   节点原样保留在树里），快照工厂在覆盖层合并后的生效树
+     *   上调用本函数，故覆盖层亦可改表。
+     */
+    fun parseKeyboards(tree: JsonObject): Map<String, KeyboardTypeEntry> {
+        val table = tree["keyboards"] as? JsonObject ?: return emptyMap()
+        val out = LinkedHashMap<String, KeyboardTypeEntry>()
+        for ((type, raw) in table) {
+            if (type.isBlank()) continue
+            val entry = when (raw) {
+                is JsonPrimitive -> if (raw.isString) {
+                    raw.content.takeIf { it.isNotBlank() }
+                        ?.let { KeyboardTypeEntry(layoutId = it) }
+                } else {
+                    null
+                }
+                is JsonObject -> KeyboardTypeEntry(
+                    layoutId = raw.stringField("layoutId"),
+                    layoutIdLandscape = raw.stringField("layoutIdLandscape"),
+                    heightPercent = raw.rangedPercent("heightPercent"),
+                    heightPercentLandscape = raw.rangedPercent("heightPercentLandscape"),
+                )
+                else -> null
+            } ?: continue
+            if (entry == KeyboardTypeEntry()) continue
+            out[type] = entry
+        }
+        return out
+    }
+
+    private fun JsonObject.stringField(name: String): String? =
+        (get(name) as? JsonPrimitive)?.takeIf { it.isString }
+            ?.content?.takeIf { it.isNotBlank() }
+
+    private fun JsonObject.rangedPercent(name: String): Double? =
+        (get(name) as? JsonPrimitive)?.content?.toDoubleOrNull()
+            ?.takeIf { it in 50.0..200.0 }
+
     /** ARGB Int → #AARRGGBB（与 ReadableTheme 的 HexColorSerializer 同口径）。 */
     fun formatColor(argb: Int): String = "#%08X".format(argb)
 

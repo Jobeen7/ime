@@ -195,6 +195,52 @@ data class KeySoundSpec(
     val system: String? = null,
 )
 
+/**
+ * 内置键盘类型名（skin.json `keyboards` 表的保留键；其余任意非空
+ * 键均为自定义类型，与方案正交——类型切换不改方案，方案切换
+ * 不改类型）。手机竖/横屏两方向共用此表，不分设备形态。
+ */
+object KeyboardTypes {
+    const val ALPHABETIC = "alphabetic"
+    const val PINYIN = "pinyin"
+    const val EMOJIS = "emojis"
+    const val IMAGES = "images"
+    const val NUMERIC = "numeric"
+    const val NUMBER_PAD = "numberPad"
+    const val SYMBOLIC = "symbolic"
+
+    /** 7 个内置类型。 */
+    val BUILTIN: Set<String> = setOf(
+        ALPHABETIC, PINYIN, EMOJIS, IMAGES, NUMERIC, NUMBER_PAD, SYMBOLIC,
+    )
+
+    /** 主键盘类型：中英切换只在这两者之间往返。 */
+    val MAIN: Set<String> = setOf(PINYIN, ALPHABETIC)
+}
+
+/**
+ * `keyboards` 表单项（skin.json `keyboards.<类型>`，见
+ * [SkinJson.parseKeyboards]）：布局绑定与键盘高度均为可选；
+ * 全空项不占位（与未声明同等处理）。高度域与布局文件顶层
+ * heightPercent 同口径：50–200，域外值解析期丢弃。
+ * 本表只描述“类型 → 布局/高度”的映射，不承载键盘实例；
+ * 引用解析（布局 id → 已解析布局）在快照工厂层完成。
+ */
+data class KeyboardTypeEntry(
+    /** 竖屏布局绑定（库内布局 id）；null = 无自定义布局。 */
+    val layoutId: String? = null,
+    /** 横屏布局绑定；null = 横屏沿用竖屏绑定（见快照工厂）。 */
+    val layoutIdLandscape: String? = null,
+    /** 该类型键盘高度百分比；null = 未指定（走既有高度链）。 */
+    val heightPercent: Double? = null,
+    /** 横屏专属高度；null = 横屏沿用竖屏值。 */
+    val heightPercentLandscape: Double? = null,
+) {
+    /** 按方向取高度：横屏无专属值时回落竖屏值。 */
+    fun heightPercentFor(landscape: Boolean): Double? =
+        if (landscape) heightPercentLandscape ?: heightPercent else heightPercent
+}
+
 /** 校验通过的皮肤文档（只读视图；原始树在 [tree]）。 */
 data class ValidatedSkin(
     val tree: JsonObject,
