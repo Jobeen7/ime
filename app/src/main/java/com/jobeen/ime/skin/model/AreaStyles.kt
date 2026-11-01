@@ -52,6 +52,55 @@ data class VhLengthSpec(
         }
 }
 
+/**
+ * 高度分量（高度和规则的输入形态）：dp 绝对值或视口百分比。
+ * 对端高度和 = 组字区 + 工具栏 + 按键区（+ 底边距），各项可
+ * 混写数字（dp）与 `'Nvh'` 字符串——本类型即该混合形态的
+ * Jime 表达（单项口径见 [VhLengthSpec]）。
+ */
+sealed interface HeightPart {
+    data class Dp(val value: Float) : HeightPart
+    data class Vh(val percent: Float) : HeightPart
+}
+
+/**
+ * 解析混合高度输入：数字 → dp；`'Nvh'` 字符串（大小写不敏感，
+ * 前后空白容忍）→ vh 百分比；纯数字字符串 → dp；其余（null、
+ * 非法字符串、布尔等）→ null（调用方跳过，不拒包）。
+ */
+fun parseHeightPart(raw: Any?): HeightPart? = when (raw) {
+    is Number -> HeightPart.Dp(raw.toFloat())
+    is String -> {
+        val s = raw.trim()
+        when {
+            s.endsWith("vh", ignoreCase = true) ->
+                s.dropLast(2).trim().toFloatOrNull()
+                    ?.takeIf { it.isFinite() }?.let { HeightPart.Vh(it) }
+            else -> s.toFloatOrNull()?.takeIf { it.isFinite() }?.let { HeightPart.Dp(it) }
+        }
+    }
+    else -> null
+}
+
+/**
+ * 高度和（纯函数）：各分量按视口高度换算后相加；null 分量
+ * 跳过；负分量钳到 0（高度无负值）。Jime 窗口实测仍走 px
+ * 整数组合（onMeasure 的 stripH + barH + cHeight + 边距），
+ * 本函数供皮肤模型/转换器侧的 dp/vh 混合高度合成，不改
+ * 窗口实测路径（单位不同，硬接线只会添乱）。
+ */
+fun sumHeights(screenHeightDp: Float, vararg parts: HeightPart?): Float {
+    var total = 0f
+    for (part in parts) {
+        total += when (part) {
+            is HeightPart.Dp -> part.value.coerceAtLeast(0f)
+            is HeightPart.Vh -> (screenHeightDp * part.percent / 100f).coerceAtLeast(0f)
+            null -> 0f
+        }
+    }
+    return total
+}
+
 private val VH_PATTERN = Regex("""^\s*(\d+(?:\.\d+)?)\s*vh\s*$""", RegexOption.IGNORE_CASE)
 
 /**
