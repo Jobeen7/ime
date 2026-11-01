@@ -343,6 +343,11 @@ data class ValidatedSkin(
     val predictionCloseRadiusDp: Float? = null,
     /** 工具栏构成（2026-10-27 工具栏进皮肤）：顶层 toolbar 节点校验结果；未定义时 present=false。 */
     val toolbar: SkinToolbarSpec = SkinToolbarSpec(),
+    /**
+     * 工具栏高度（审计 B 项）：顶层 toolbarHeight，数字 = dp，
+     * `"Nvh"` = 视口高度百分比；null = 未定义（走旧 48dp 写死值）。
+     */
+    val toolbarHeight: VhLengthSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */
     val textSizes: Map<KeyTextRole, Float> = emptyMap(),
 )

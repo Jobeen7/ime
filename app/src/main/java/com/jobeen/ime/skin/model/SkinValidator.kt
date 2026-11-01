@@ -433,6 +433,13 @@ object SkinValidator {
             }
         }
 
+        // ---- 工具栏高度（审计 B 项） ----
+        // 数字 = dp（16..120），字符串 "Nvh" = 视口高度百分比（0..50）；
+        // 非法记 issue 并回落旧 48dp（不拒包）。
+        val toolbarHeight = parseVhLength(
+            tree["toolbarHeight"], "toolbarHeight", issues, 16f..120f,
+        )
+
         // ---- styles（浅色板） ----
         // 显式 styles 逐字段优先于派生展开（2026-10-27 并入项口径）；
         // 派生失败只记 issue，不单独拒包（无配色拒绝由下方统一口径裁决）。
@@ -855,6 +862,7 @@ object SkinValidator {
                 predictionCloseBg = predictionCloseBg,
                 predictionCloseRadiusDp = predictionCloseRadiusDp,
                 toolbar = toolbarSpec,
+                toolbarHeight = toolbarHeight,
                 textSizes = skinTextSizes,
                 notifications = notifications,
                 conditionStyles = conditionStyles,

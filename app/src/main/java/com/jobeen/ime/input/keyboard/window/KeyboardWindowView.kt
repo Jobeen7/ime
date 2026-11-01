@@ -811,7 +811,7 @@ class KeyboardWindowView(
         val bPad = dpToPx(effectiveBottomInsetDp())
         // 隐藏时条高不变：条区仍在，只空中间按钮区（首尾固定槽与候选
         // 仍可显示）；覆盖层（剪贴板／菜单等）不受影响（各自仍按内容高布局）。
-        val barH = (PANEL_HEIGHT_DP * density).roundToInt()
+        val barH = panelBarHeightPx(density)
         val cHeight = contentHeight()
         val totalWidth = MeasureSpec.getSize(widthMeasureSpec)
         val bottomInset = resolveBottomInset()
@@ -894,7 +894,7 @@ class KeyboardWindowView(
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
-        val barH = (PANEL_HEIGHT_DP * resources.displayMetrics.density).roundToInt()
+        val barH = panelBarHeightPx(resources.displayMetrics.density)
         val cHeight = contentHeight()
         val contentW = right - left - 2 * hPad
         val stripH = if (addPhraseActive) (fullScreenHeight() * 0.20f).roundToInt() else 0
@@ -1146,6 +1146,18 @@ class KeyboardWindowView(
             return snapshot.effectiveGeometry.getValue(GeometryField.BOTTOM_INSET).roundToInt()
         }
         return KeyboardManager.Keyboard.Padding.getBottomDp(context)
+    }
+
+    /**
+     * 条区高度（审计 B 项）：皮肤 toolbarHeight 优先（数字 = dp；
+     * `"Nvh"` 按全屏高度换算），未定义/快照缺失走旧 48dp。
+     * onMeasure 与 onLayout 同调本函数，度量与布局不得各算一套。
+     */
+    private fun panelBarHeightPx(density: Float): Int {
+        val spec = SkinSnapshotProvider.peek()?.toolbarHeight
+            ?: return (PANEL_HEIGHT_DP * density).roundToInt()
+        val screenHeightDp = fullScreenHeight() / density
+        return (spec.resolveDp(screenHeightDp, PANEL_HEIGHT_DP.toFloat()) * density).roundToInt()
     }
 
     /**

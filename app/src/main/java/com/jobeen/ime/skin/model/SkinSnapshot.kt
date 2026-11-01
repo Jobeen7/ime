@@ -116,6 +116,8 @@ data class SkinSnapshot(
      * `buttons == null` = 皮肤未定义中央区（走 App 配置）。
      */
     val toolbar: SkinToolbarSnapshot = SkinToolbarSnapshot(),
+    /** 工具栏高度（审计 B 项）：null = 未定义（窗口走旧 48dp）。 */
+    val toolbarHeight: VhLengthSpec? = null,
     /**
      * 状态驱动通知（重点候选 8-1，接线轮 R1）：校验结果透传；
      * 运行态按此建锁定表，快照切换时同步重置。
