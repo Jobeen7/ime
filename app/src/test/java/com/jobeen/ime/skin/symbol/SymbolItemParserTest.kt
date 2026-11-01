@@ -69,11 +69,40 @@ class SymbolItemParserTest {
         assertNull(SymbolItemParser.parseItem(element("\"\"")))
         assertNull(SymbolItemParser.parseItem(element("""{"value": "x"}""")))
         assertNull(SymbolItemParser.parseItem(element("""{"label": "X", "value": ""}""")))
-        // action 项缺 styleName：整项丢弃（对端升级口径）。
-        assertNull(
-            SymbolItemParser.parseItem(element("""{"label": "X", "action": "resume"}""")),
-        )
+        assertNull(SymbolItemParser.parseItem(element("""{"label": "X"}""")))
         assertNull(SymbolItemParser.parseItem(element("""42""")))
+    }
+
+    @Test
+    fun actionItemWithoutStyleNameParsesWithEmptyStyle() {
+        val item = SymbolItemParser.parseItem(
+            element("""{"label": "X", "action": "resume"}"""),
+        ) as SymbolItem.LabelActionStyle
+        assertEquals("", item.styleName)
+        assertEquals(KeyboardAction.ResumeAction, SymbolItemActionResolver.resolve(item))
+        val emptyNamed = SymbolItemParser.parseItem(
+            element("""{"label": "X", "action": "resume", "styleName": ""}"""),
+        ) as SymbolItem.LabelActionStyle
+        assertEquals("", emptyNamed.styleName)
+    }
+
+    @Test
+    fun actionAlwaysComesFromDataSourceNeverFromStyle() {
+        // 样式名未知、缺省皆不影响分发：动作只由数据项的 action 定。
+        val unknownStyle = SymbolItem.LabelActionStyle(
+            label = "返回", action = "resume", styleName = "nonexistent_style",
+        )
+        assertEquals(
+            KeyboardAction.ResumeAction,
+            SymbolItemActionResolver.resolve(unknownStyle),
+        )
+        val noStyle = SymbolItem.LabelActionStyle(
+            label = "锁定", action = "symbolic_lock_toggle", styleName = "",
+        )
+        assertEquals(
+            KeyboardAction.ToggleSymbolicLockAction,
+            SymbolItemActionResolver.resolve(noStyle),
+        )
     }
 
     @Test
