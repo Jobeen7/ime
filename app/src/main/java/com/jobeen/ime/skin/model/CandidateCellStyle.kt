@@ -4,6 +4,7 @@ package com.jobeen.ime.skin.model
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * 候选单元格样式（对端 candidateStyle 全字段，Jime 侧模型）：
