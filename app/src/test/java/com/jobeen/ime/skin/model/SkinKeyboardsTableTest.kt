@@ -19,7 +19,7 @@ class SkinKeyboardsTableTest {
             tree(
                 """{"keyboards": {
                     "alphabetic": {"layoutId": "alpha-lay"},
-                    "pinyin": {"layoutId": "pin-lay", "heightPercent": 42},
+                    "pinyin": {"layoutId": "pin-lay", "heightPercent": 120},
                     "emojis": {"layoutId": "emo-lay"},
                     "images": {"layoutId": "img-lay"},
                     "numeric": {"layoutId": "num-lay"},
@@ -31,7 +31,7 @@ class SkinKeyboardsTableTest {
         )
         assertEquals(KeyboardTypes.BUILTIN + "myBoard", parsed.keys)
         assertEquals("pin-lay", parsed.getValue("pinyin").layoutId)
-        assertEquals(42.0, parsed.getValue("pinyin").heightPercent)
+        assertEquals(120.0, parsed.getValue("pinyin").heightPercent)
         assertEquals("custom-lay", parsed.getValue("myBoard").layoutId)
     }
 
@@ -83,6 +83,7 @@ class SkinKeyboardsTableTest {
         val result = SkinValidator.validate(
             tree(
                 """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+                    "stylesDark": {"keyBackground": "#FF222222"},
                     "keyboards": {"pinyin": {"layoutId": "pin-lay"}}}""",
             ),
             157,

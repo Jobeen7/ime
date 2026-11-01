@@ -45,7 +45,8 @@ class SkinSnapshotKeyboardTableTest {
 
     private fun build(table: Map<String, KeyboardTypeResolved>): SkinSnapshot {
         val tree = kotlinx.serialization.json.Json.parseToJsonElement(
-            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"}}""",
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+               "stylesDark": {"keyBackground": "#FF222222"}}""",
         ) as kotlinx.serialization.json.JsonObject
         val validated = SkinValidator.validate(
             tree, 157, GeometryFallbacks(12f, 6f, 5f, 10f), assetKind = { null },
