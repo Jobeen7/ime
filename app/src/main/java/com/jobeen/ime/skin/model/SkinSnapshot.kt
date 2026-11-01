@@ -223,7 +223,7 @@ data class KeyboardTypeResolved(
      * 布局（横屏专属布局不进竖屏），调用方走内置回退。
      */
     fun resolvedFor(landscape: Boolean): ResolvedLayout? =
-        if (landscape) landscape ?: portrait else portrait
+        if (landscape) this.landscape ?: portrait else portrait
 
     /** 按方向取解析结论（横屏回落竖屏布局时结论仍为竖屏项的结论）。 */
     fun resolutionFor(landscape: Boolean): LayoutResolution =
