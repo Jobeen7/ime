@@ -26,6 +26,7 @@ import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.SwipeThresholds
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import com.jobeen.ime.skin.model.StyleStatePriority
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.SymbolGridResolver
@@ -712,17 +713,36 @@ abstract class BaseKeyboard(
         }
     }
 
+    /**
+     * 大写态前景色（子类覆写：QwertyKeyboard 按当前大写态取
+     * 锁定/大写色；缺省 null = 默认色）。滑动暂显清除时恢复到
+     * 该色（§5 序：滑动＞锁定＞大写＞基础），而非直接回默认。
+     */
+    protected open fun capsForegroundColor(appearance: KeyDef.Appearance): Int? = null
+
     private fun applyTransientSwipeColor(view: View, def: KeyDef, direction: SwipeDirection?) {
-        val color = when (direction) {
-            SwipeDirection.UP -> def.appearance.skinSwipeUpTextColor
-            SwipeDirection.DOWN -> def.appearance.skinSwipeDownTextColor
-            else -> null
-        }
+        // §5 序：滑动色优先；该方向无滑动色时退大写态色（再无则默认色，
+        // 由 setMainTextColor 的 null 回落处理）。
+        val color = StyleStatePriority.foregroundColor(
+            swipeUpColor = def.appearance.skinSwipeUpTextColor,
+            swipeDownColor = def.appearance.skinSwipeDownTextColor,
+            capsLockedColor = null,
+            uppercasedColor = null,
+            swipeDir = when (direction) {
+                SwipeDirection.UP -> StyleStatePriority.SwipeDir.UP
+                SwipeDirection.DOWN -> StyleStatePriority.SwipeDir.DOWN
+                else -> StyleStatePriority.SwipeDir.NONE
+            },
+            isCapsLocked = false,
+            isUppercased = false,
+        ) ?: capsForegroundColor(def.appearance)
         setMainTextColor(view, def.appearance, color)
     }
 
     private fun clearTransientSwipeColor(view: View, def: KeyDef) {
-        setMainTextColor(view, def.appearance, null)
+        // §5 恢复口径：滑动色清除后回到大写态色（无则默认色，
+        // 由 setMainTextColor 的 null 回落处理）。
+        setMainTextColor(view, def.appearance, capsForegroundColor(def.appearance))
     }
 
     override fun onAttach() = Timber.d("Keyboard onAttach")
@@ -819,11 +839,13 @@ internal fun resolvePressAction(
     behavior: KeyDef.Behavior.Press,
     isComposing: Boolean,
     isUppercased: Boolean,
-): KeyboardAction {
-    if (isComposing && behavior.preeditAction != null) return behavior.preeditAction
-    if (isUppercased && behavior.uppercasedAction != null) return behavior.uppercasedAction
-    return behavior.action
-}
+): KeyboardAction = StyleStatePriority.action(
+    preeditAction = behavior.preeditAction,
+    uppercasedAction = behavior.uppercasedAction,
+    baseAction = behavior.action,
+    isComposing = isComposing,
+    isUppercased = isUppercased,
+)
 
 /**
  * 滑动主导轴判定（与旧 Up 分支逐字同口径）：横向步数绝对值

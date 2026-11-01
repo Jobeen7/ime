@@ -17,6 +17,7 @@ import com.jobeen.ime.input.keyboard.key.ImageKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
 import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.model.StyleStatePriority
 import com.jobeen.ime.skin.layout.BuiltinLayoutApplier
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.PlaceholderValues
@@ -247,7 +248,7 @@ class QwertyKeyboard(
         capsState = CapsState.None
         momentaryShiftActive = false
         updateKeyTextForState(capsState)
-        applyCapsColors(capsState)
+        applyCapsColors()
     }
 
     override fun name(): String {
@@ -262,7 +263,7 @@ class QwertyKeyboard(
             CapsState.Momentary -> CapsState.Momentary
         }
         updateKeyTextForState(capsState)
-        applyCapsColors(capsState)
+        applyCapsColors()
     }
 
 
@@ -305,17 +306,25 @@ class QwertyKeyboard(
      * Once/Momentary 取 uppercased，None 恢复默认色；图片键无
      * 主文字自然跳过。无样式时全程默认色（行为与旧一致）。
      */
-    private fun applyCapsColors(state: CapsState) {
+    /** 大写态前景色（§5 序：锁定＞大写＞基础，基础由调用方回落默认色）。 */
+    override fun capsForegroundColor(appearance: KeyDef.Appearance): Int? =
+        StyleStatePriority.foregroundColor(
+            swipeUpColor = null,
+            swipeDownColor = null,
+            capsLockedColor = appearance.skinCapsLockedTextColor,
+            uppercasedColor = appearance.skinUppercasedTextColor,
+            swipeDir = StyleStatePriority.SwipeDir.NONE,
+            isCapsLocked = capsState == CapsState.Lock,
+            isUppercased = capsState != CapsState.None,
+        )
+
+    /** 大写前景色：遍历全部文字键主文字，取当前大写态色（无则默认色）。 */
+    private fun applyCapsColors() {
         for (row in keyRows) {
             for (i in 0 until row.childCount) {
                 val child = row.getChildAt(i) as? KeyView ?: continue
                 val appearance = child.def
-                val color = when (state) {
-                    CapsState.Lock -> appearance.skinCapsLockedTextColor
-                        ?: appearance.skinUppercasedTextColor
-                    CapsState.Once, CapsState.Momentary -> appearance.skinUppercasedTextColor
-                    CapsState.None -> null
-                }
+                val color = capsForegroundColor(appearance)
                 when (child) {
                     is TextKeyView -> child.mainText.setTextColor(
                         color ?: defaultMainTextColor(appearance)
