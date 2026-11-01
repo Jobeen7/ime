@@ -166,11 +166,9 @@ fun catalogRows(): List<CatalogRow> = listOf(
     CatalogRow(R.string.clipboard_dedup, "clipboard", R.string.clipboard_rules),
     CatalogRow(R.string.clipboard_output_rule, "clipboard", R.string.clipboard_rules),
     CatalogRow(R.string.clipboard_return_after_paste, "clipboard", R.string.clipboard_rules),
-    // 语音：模型组／插件组／纠错组。
+    // 语音：模型组／插件组。
     CatalogRow(R.string.voice_recognition_model, "voice", R.string.voice_model_group),
     CatalogRow(R.string.cloud_voice_plugins, "voice", R.string.cloud_voice_plugins),
-    CatalogRow(R.string.voice_correction_enable, "voice", R.string.voice_correction_group),
-    CatalogRow(R.string.voice_correction_clear_pairs, "voice", R.string.voice_correction_group),
     // 词典：造词／手动备份／定期同步／高级。
     CatalogRow(R.string.word_creation_title, "userdict", R.string.word_creation_title),
     CatalogRow(R.string.user_dict_export, "userdict", R.string.user_dict_manual_backup),

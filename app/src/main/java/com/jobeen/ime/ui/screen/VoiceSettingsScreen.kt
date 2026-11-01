@@ -38,7 +38,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.jobeen.ime.R
 import com.jobeen.ime.base.speech.ModelDownloader
 import com.jobeen.ime.base.speech.SherpaSpeechClient
-import com.jobeen.ime.base.speech.VoiceCorrectionStore
 import com.jobeen.ime.base.speech.VoiceInputSwitchStore
 import com.jobeen.ime.base.speech.cloud.BuiltinPlugins
 import com.jobeen.ime.base.speech.cloud.KeystoreSecretStore
@@ -88,14 +87,6 @@ fun VoiceSettingsScreen(
     var updateCheckState by remember { mutableStateOf<UpdateCheckState>(UpdateCheckState.Idle) }
     var progressFraction by remember { mutableStateOf(0f) }
     var isExtracting by remember { mutableStateOf(false) }
-
-    // 语音专名纠错：与输入法服务同文件、同进程的词对存储实例
-    // （开关与清除经 Store 的跨实例同步即时作用到服务侧实例）
-    val correctionStore = remember {
-        VoiceCorrectionStore.shared(File(context.filesDir, VoiceCorrectionStore.FILE_NAME))
-    }
-    var correctionEnabled by remember { mutableStateOf(correctionStore.enabled) }
-    var correctionsCleared by remember { mutableStateOf(false) }
 
     // 语音输入总开关：默认开；关闭后两个语音启动入口均不启动
     // （空格长按、工具栏语音键、自定义语音按钮同经该口）。
@@ -241,9 +232,7 @@ fun VoiceSettingsScreen(
         }
         // 语音页（2026-10-29 23:52 视频行结构，hub／细则替掉后）：
         // 单页行结构，顺序＝启用开关（裸行）→麦克风权限行→
-        // 首选语音输入行→本地语音模型行→JS语音插件行→专名纠错
-        // （专名纠错为 23:32 决定 3“留”的推导落位：视频四行无处
-        // 安放，故保留为第 5 块，仅保功能不增新功能，等否决）。
+        // 首选语音输入行→本地语音模型行→JS语音插件行。
         // 行在同一张 GroupCard 内（标题＋副标题行式，分隔线按
         // Jime 统一装饰系统不画）；提示小字与用法说明保留在行间／页底。
 
@@ -378,42 +367,6 @@ fun VoiceSettingsScreen(
             subtitle = stringResource(R.string.cloud_voice_plugins_desc),
             onClick = { onOpenCloudVoicePlugins(null) },
         )
-            SwitchRow(
-                title = stringResource(R.string.voice_correction_enable),
-                checked = correctionEnabled,
-                onCheckedChange = {
-                    correctionEnabled = it
-                    correctionStore.setEnabled(it)
-                },
-                showDivider = true,
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable {
-                        correctionStore.clear()
-                        correctionsCleared = true
-                    }
-                    .padding(vertical = 12.dp),
-            ) {
-                Column(Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.voice_correction_clear_pairs),
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = if (correctionsCleared) {
-                            stringResource(R.string.voice_correction_cleared)
-                        } else {
-                            stringResource(R.string.voice_correction_clear_desc)
-                        },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
         }
         Spacer(Modifier.height(12.dp))
         Text(

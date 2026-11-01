@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import java.io.File
 import kotlin.math.roundToInt
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.base.feedback.InputFeedbacks
@@ -116,6 +117,12 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        // 已删除功能的残留清理：删掉旧版语音专名纠错学到的词对文件
+        // （及其 tmp）；只删不建，文件不存在时为空操作，后续不再生成。
+        runCatching {
+            File(filesDir, "voice_corrections.tsv").delete()
+            File(filesDir, "voice_corrections.tsv.tmp").delete()
+        }
         virtualInputConnection.addOnChangeListener {
             if (phraseAddBridgeActive) {
                 // 桥接文本是本地 Editable：程序性改字（清空/替换）可以
@@ -733,11 +740,6 @@ class ImeInputMethodService : InputMethodService() {
         val text = probeAroundCursorText(ic)
         keyboardWindow?.onInputChanged(text, virtualInputConnection = phraseAddBridgeActive)
         if (text.isEmpty()) engine?.onInputCleared()
-        // 语音纠错沉淀借同一探针节奏观察上屏后编辑（未武装时为空转检查）；
-        // 本次探针结果（文本、光标位）随回调下传，沉淀侧能据此判定
-        // 的帧不再自读整窗
-        com.jobeen.ime.base.speech.SherpaSpeechClient.onEditorTextProbed(
-            this, text, currentSelectionSignature().first
-        )
+
     }
 }

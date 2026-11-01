@@ -749,8 +749,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 是否禁止个性化学习：统一判定在 [InputFieldPolicy]（密码类输入框，
      * 或输入框声明了 IME_FLAG_NO_PERSONALIZED_LEARNING）。
      * 生效范围：本 engine 的选词偏好表/缓存/预测/重排，以及经由
-     * [NO_PERSONALIZED_LEARNING_OPTION] 控制的 librime native 用户词典自学习；
-     * 语音纠错学习（VoiceCorrectionSession）也过同一判定。
+     * [NO_PERSONALIZED_LEARNING_OPTION] 控制的 librime native 用户词典自学习。
      */
     private fun isNoPersonalizedLearning(info: EditorInfo?): Boolean =
         com.jobeen.ime.base.util.InputFieldPolicy.isNoPersonalizedLearning(info)
@@ -1984,10 +1983,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val userKey: String?
         if (learnable) {
             val segment = TraditionalConverter.toSimplified(commit)
-            // 语音纠错沉淀：打字上屏词段是用户亲手选定的正形，与搭配
-            // 学习共用此入口，交给语音侧与刚上屏的语音段配对（未武装
-            // 时为空转检查）。密码/免学习输入框已在函数头统一拦下。
-            com.jobeen.ime.base.speech.SherpaSpeechClient.notifyTypedSegment(segment)
             if (com.jobeen.ime.base.ngram.UserCollocationStore.isLearnableSegment(segment)) {
                 lastLearnSegment?.let { prev ->
                     predictionManager?.learnCollocation(prev, segment)

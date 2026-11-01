@@ -4,7 +4,6 @@
   - WebDAV 配置（含明文密码）
   - 剪贴板历史（独立库 clipboard_database）
   - 方案/模型/日志/下载缓存（external 的 shared/、model/、log/、download/）
-  - 语音纠错表（filesDir 根下 voice_corrections.tsv，含用户改词记录）
   - 搭配学习表（filesDir 根下 user_collocations.tsv，由打字习惯派生的词对）
   - 崩溃自捕获文件（filesDir/crash/ 子目录，含异常堆栈；按目录整体排除）
   - 设备本地状态偏好（speech_model_prefs、wanxiang_update：下载/更新
@@ -20,8 +19,6 @@
         <exclude domain="external" path="model/" />
         <exclude domain="external" path="log/" />
         <exclude domain="external" path="download/" />
-        <exclude domain="file" path="voice_corrections.tsv" />
-    <exclude domain="file" path="voice_corrections.tsv.tmp" />
         <exclude domain="file" path="user_collocations.tsv" />
         <exclude domain="file" path="user_collocations.tsv.tmp" />
         <exclude domain="file" path="crash/" />
@@ -38,8 +35,6 @@
         <exclude domain="external" path="model/" />
         <exclude domain="external" path="log/" />
         <exclude domain="external" path="download/" />
-        <exclude domain="file" path="voice_corrections.tsv" />
-        <exclude domain="file" path="voice_corrections.tsv.tmp" />
         <exclude domain="file" path="user_collocations.tsv" />
         <exclude domain="file" path="user_collocations.tsv.tmp" />
         <exclude domain="file" path="crash/" />

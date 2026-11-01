@@ -874,31 +874,8 @@ object SherpaSpeechClient {
         }
     }
 
-    /** 语音专名纠错词表：与识别解耦的独立小文件存储，损坏即整体不纠。 */
-    private val correctionStore by lazy {
-        VoiceCorrectionStore.shared(File(appContext.filesDir, VoiceCorrectionStore.FILE_NAME))
-    }
-
     /**
-     * 输入法服务的选区探针回调：把编辑观察转给纠错沉淀会话。
-     * [probeText]/[probeCursorPos] 是服务当帧探针的结果（1 字探针文本
-     * 与光标位），随回调下传供沉淀侧复用，省掉同帧的重复跨进程读。
-     */
-    fun onEditorTextProbed(
-        service: ImeInputMethodService,
-        probeText: String,
-        probeCursorPos: Int,
-    ) {
-        VoiceCorrectionSession.onInputChanged(service, probeText, probeCursorPos)
-    }
-
-    /** 打字上屏词段回调（引擎搭配学习同一入口）：供纠错沉淀配对正形。 */
-    fun notifyTypedSegment(segment: String) {
-        VoiceCorrectionSession.onTypedWord(segment)
-    }
-
-    /**
-     * 输入视图结束/切换输入框：解除纠错沉淀观察；另作废上一框的
+     * 输入视图结束/切换输入框：作废上一框的
      * 显示快照与「已松手待就绪」的保留音频（见下）。
      */
     fun onInputViewFinished() {
@@ -917,7 +894,6 @@ object SherpaSpeechClient {
         // 开与字段不变的 restart 都不经本函数，纪元不变，同框
         // 落回（N13）不受影响
         editorEpoch.advance()
-        VoiceCorrectionSession.disarm()
         // 显示快照一并作废（不限于下方的待结算音频分支）：快照
         // 的成立前提是「文本显示在当前框的屏上」，视图结束即不
         // 成立——不清的话，切到新框后再按，接管结算会走快照
@@ -1372,7 +1348,7 @@ object SherpaSpeechClient {
      * 新会话开始前的上一会话接管结算：上一会话松手后 DONE 未回（或
      * 回信丢失）时用户又长按，旧实现直接清 composingText 开始新会话，
      * 未定稿文本被吞。改为先按快照就地结算（不等 DONE）：待弃文本
-     * 同步清屏，待定稿文本走与 finishSession 同款的异步纠错/转换尾
+     * 同步清屏，待定稿文本走与 finishSession 同款的异步转换尾
      * 上屏；结算在入口按代次声明，迟到的 DONE 此后被代次去重挡下。
      * 状态字段不在此复位——紧接着的 startHoldSession 会逐项覆写。
      */
@@ -1434,7 +1410,7 @@ object SherpaSpeechClient {
             // 作废判据只认发起时捕获的状态：上一代自身被丢弃已
             // 在同步段按 prevDiscard 处理（不会走到本尾）；尾内
             // 再读 live 的 discarding 读到的是后继会话的丢弃——
-            // 它在纠错挂起期间被上滑丢弃时，按旧判据会把上一句
+            // 它在转换挂起期间被上滑丢弃时，按旧判据会把上一句
             // 的结算一并作废（连坐丢句），故此处不再查它
             if (settledGen != prevGen) return@launch
             var screenIc = service.activeInputConnection()
@@ -1446,12 +1422,11 @@ object SherpaSpeechClient {
             // 写屏、不 finishComposingText、不登记账本（见尾部各门控）
             var writeBlocked = false
             if (!prevText.isNullOrBlank()) {
-                val corrected = withContext(Dispatchers.Default) { correctionStore.correct(prevText) }
-                // 挂起恢复复检（F4）：纠错挂起期间纪元已推进则封
+                // 挂起恢复复检（F4）：转换挂起期间纪元已推进则封
                 // 锁写屏（接管前已换框的情形在尾执行的首次复检即
                 // 判出，本尾虽经 Main 投递、两次挂起前无写屏点）
                 if (!editorEpoch.isCurrent(prevSessionEpoch)) writeBlocked = true
-                val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
+                val displayText = withContext(Dispatchers.Default) { toDisplayText(prevText) }
                 // 挂起恢复复检（F4）：繁简转换挂起期间已换框同上
                 if (!editorEpoch.isCurrent(prevSessionEpoch)) writeBlocked = true
                 // 写屏前密码兜底（F4）
@@ -1479,24 +1454,14 @@ object SherpaSpeechClient {
                     if (landed) {
                         prevDisplay = displayText
                     }
-                    // 命中记账（L3，口径同 finishSession 落屏点）：
-                    // 只记真正落屏且当前框可学习的结果
-                    if (landed && !com.jobeen.ime.base.util.InputFieldPolicy
-                            .isNoPersonalizedLearning(service.currentInputEditorInfo)
-                    ) {
-                        correctionStore.recordHits(corrected.applied)
-                    }
                 }
             } else if (displayedSnapshot != null) {
                 // composing 快照为空、但本代确有文本经显示循环上
-                // 屏：快照是未过专名纠错的展示文本，此处同走纠错
-                // ＋繁简后重写落屏，落屏与账本都记纠错后的展示文本
-                val corrected = withContext(Dispatchers.Default) {
-                    correctionStore.correct(displayedSnapshot)
-                }
+                // 屏：快照是展示文本，此处同走繁简后重写落屏，
+                // 落屏与账本都记展示文本
                 // 挂起恢复复检（F4，同主支口径）：两次挂起后逐点复检
                 if (!editorEpoch.isCurrent(prevSessionEpoch)) writeBlocked = true
-                val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
+                val displayText = withContext(Dispatchers.Default) { toDisplayText(displayedSnapshot) }
                 if (!editorEpoch.isCurrent(prevSessionEpoch)) writeBlocked = true
                 // 写屏前密码兜底（F4）
                 if (com.jobeen.ime.base.util.InputFieldPolicy.isPasswordField(
@@ -1510,20 +1475,13 @@ object SherpaSpeechClient {
                 screenIc = liveIc
                 if (liveIc != null) {
                     // 落屏维持证据式判定：连接有效即屏上快照会被
-                    // 下方 finishComposingText 转正落屏；纠错重写
-                    // 成功时落的是纠错后文本，重写被拒时落的仍是
+                    // 下方 finishComposingText 转正落屏；转换重写
+                    // 成功时落的是转换后文本，重写被拒时落的仍是
                     // 原快照——两种情形落屏文本不同，prevDisplay
                     // 须按实际落屏者记（账本据此）
                     val writeOk = liveIc.setComposingText(displayText, 1)
                     prevDisplay = if (writeOk) displayText else displayedSnapshot
                     landed = true
-                    // 命中记账（L3，口径同主支落屏点）：本支连接
-                    // 有效即落屏成立，只记当前框可学习的结果
-                    if (!com.jobeen.ime.base.util.InputFieldPolicy
-                            .isNoPersonalizedLearning(service.currentInputEditorInfo)
-                    ) {
-                        correctionStore.recordHits(corrected.applied)
-                    }
                 }
             }
             // 空形态补检：上一代无文本、无快照、只剩等 DONE 时，
@@ -1545,15 +1503,15 @@ object SherpaSpeechClient {
                     VoiceUndoLedger.recordCommittedSegment(it)
                 }
             }
-            // 不触发 onDone、不武装沉淀：新会话正在进行，UI 收尾与
-            // 沉淀观察归新会话自己的结算
+            // 不触发 onDone：新会话正在进行，UI 收尾归
+            // 新会话自己的结算
         }
     }
 
     /**
      * 会话结算单一入口（DONE 回信 / DONE 超时 / 等 DONE 断连分流都
      * 走这里）：入口先同步快照（text/discarding/service/gen）并同步
-     * 复位本代状态，纠错/繁简/上屏走异步尾；同一代次只结算一次，
+     * 复位本代状态，繁简/上屏走异步尾；同一代次只结算一次，
      * 超时强制结算与迟到的 DONE 交错到达时后到的一律在入口被代次
      * 去重丢弃，不重复上屏。
      */
@@ -1566,7 +1524,7 @@ object SherpaSpeechClient {
         // 不是现取当前纪元——换框已在本函数被调用前完成的情形，
         // 现取只会取到新框的纪元而误判同框）。异步尾在每次挂起恢
         // 复后与写屏前以它复检：纪元已推进即发起框已结束，整段丢
-        // 弃（不写屏、不登记账本、不武装沉淀，见尾内各门控）
+        // 弃（不写屏、不登记账本，见尾内各门控）
         val startEpoch = activeSessionEpoch
         // 同步快照 + 同步复位：快照之后到达的回信会被代次校验丢弃，
         // 异步尾只认这份快照，不再读共享状态
@@ -1589,19 +1547,18 @@ object SherpaSpeechClient {
         resetState()
         if (service == null) return
         service.scope?.launch(Dispatchers.Main) {
-            // 代次口径（D5）：本代被新会话取代只隔离 UI 收尾与沉淀
+            // 代次口径（D5）：本代被新会话取代只隔离 UI 收尾
             // 武装，快照文本必须先上屏再退出——此前三处代次复验失败
-            // 即整尾作废，DONE 已到、纠错已算完时用户恰好开始新会话，
+            // 即整尾作废，DONE 已到、转换已算完时用户恰好开始新会话，
             // 整句就此被吞。文本去留不再由代次决定（见下方各处）
             var screenIc = service.activeInputConnection()
-            var committed: CorrectResult? = null
             var committedDisplay: String? = null
             // 本次是否真的对有效连接执行了上屏提交（账本登记门控）
             var landed = false
             // 写屏封锁（F4）：发起框纪元已推进（换框）或当前字段
             // 是密码框时置位——封锁后本尾一切编辑器写动作（写屏、
             // 清组字、finishComposingText）整段放弃；账本登记本就
-            // 受 landed 门控、沉淀武装受 committed 门控，随写屏放
+            // 受 landed 门控，随写屏放
             // 弃自然不发生；UI 收尾（onDone/onFailed 与提示消费）
             // 不是编辑器写入，不在此列、照常走完
             var writeBlocked = false
@@ -1617,13 +1574,11 @@ object SherpaSpeechClient {
                     screenIc?.setComposingText("", 1)
                 }
             } else if (!text.isNullOrBlank()) {
-                // 定稿先过专名同音纠错（词表与规则均为简体，必须赶在
-                // 繁简转换之前），再在后台转换，回主线程上屏收尾，
+                // 定稿在后台转换，回主线程上屏收尾，
                 // DONE 后的转换→上屏→finishComposingText 顺序不变
-                val corrected = withContext(Dispatchers.Default) { correctionStore.correct(text) }
-                // 挂起恢复复检一（F4）：纠错挂起期间已换框则封锁写屏
+                // 挂起恢复复检一（F4）：转换挂起期间已换框则封锁写屏
                 if (!editorEpoch.isCurrent(startEpoch)) writeBlocked = true
-                val displayText = withContext(Dispatchers.Default) { toDisplayText(corrected.text) }
+                val displayText = withContext(Dispatchers.Default) { toDisplayText(text) }
                 // 挂起恢复复检二（F4）：繁简转换挂起期间已换框同上
                 if (!editorEpoch.isCurrent(startEpoch)) writeBlocked = true
                 // 写屏前密码兜底（F4）：本尾不经会话入口，入口的
@@ -1635,9 +1590,8 @@ object SherpaSpeechClient {
                 ) writeBlocked = true
                 // 两次挂起之后、写屏之前重取连接：挂起期间切框时
                 // 先前抓的连接已指向旧框。连接失效（取不到）时本次
-                // 提交不发生，committed 不置、账本不登记（见下方门控）。
-                // 写屏封锁时不取连接、不写屏：committed/landed 维持
-                // 空与否，下方账本登记与沉淀武装随之不发生
+                // 提交不发生，账本不登记（见下方门控）。
+                // 写屏封锁时不取连接、不写屏，下方账本登记随之不发生
                 val liveIc = if (writeBlocked) null else service.activeInputConnection()
                 screenIc = liveIc
                 if (liveIc != null) {
@@ -1646,22 +1600,12 @@ object SherpaSpeechClient {
                     // 上组字态、下方 finishComposingText 即转正，
                     // 改写被拒不否定在屏事实）。两类皆无（写入被
                     // 拒、屏上又不是这段文本）时不算落屏：
-                    // committed 不置、账本不登记——按已落屏登记会
+                    // 账本不登记——按已落屏登记会
                     // 产生幽灵账目（撤销误删＋清恢复栈，见下方）
                     val writeOk = liveIc.setComposingText(displayText, 1)
                     landed = writeOk || displayedSnapshot == displayText
                     if (landed) {
-                        committed = corrected
                         committedDisplay = displayText
-                    }
-                    // 命中记账（L3）：correct 只算不记，记账由落
-                    // 屏点在此显式调用——只记真正落屏、且当前框
-                    // 可学习（非密码/非无痕）的结果；被封锁、连
-                    // 接失效未落屏的纠错不虚增命中
-                    if (landed && !com.jobeen.ime.base.util.InputFieldPolicy
-                            .isNoPersonalizedLearning(service.currentInputEditorInfo)
-                    ) {
-                        correctionStore.recordHits(corrected.applied)
                     }
                 }
             } else {
@@ -1695,15 +1639,10 @@ object SherpaSpeechClient {
                     VoiceUndoLedger.recordCommittedSegment(it)
                 }
             }
-            // 本代已被新会话取代：沉淀武装与 UI 收尾归新会话管
+            // 本代已被新会话取代：UI 收尾归新会话管
             //（onDone 会把新会话的录音标志清掉、令其松手不再发
             // STOP），文本既已上屏，本尾到此退出
             if (activeGen != 0 && activeGen != gen) return@launch
-            // 上屏后武装纠错沉淀：观察用户对这段文本的亲手修改，
-            // 学成词对供下次定稿自动纠正（无观察条件时内部自行放弃）
-            committed?.let {
-                VoiceCorrectionSession.arm(service, correctionStore, it.text, it.applied)
-            }
             if (startFailureHint != null) {
                 // 结算完成路径的失败提示补消费：失败文案此前只在
                 // 窗口层的 onFailed 回调里被取走展示，正常完成走
