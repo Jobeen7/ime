@@ -13,10 +13,20 @@ import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 class Paints(context: Context) {
     companion object {
-        /** 候选主文字字号（dp）：对端候选字号 18。 */
+        /** 候选主文字字号（dp）：三参考皮肤横条 candidateStyle.textFontSize 皆 18。 */
         const val CANDIDATE_TEXT_DP = 18f
-        /** 候选副文字字号（dp）：序号与注释，对端候选字号 16。 */
-        const val CANDIDATE_SECONDARY_DP = 16f
+        /**
+         * 候选序号字号（dp，E2 对端实测值）：三参考皮肤横条
+         * candidateStyle.indexFontSize 皆 18，旧 16 为误设。
+         */
+        const val CANDIDATE_INDEX_DP = 18f
+        /**
+         * 候选注释字号（dp，E2 对端实测值）：横条 candidateStyle
+         * commentFontSize 在两皮肤为 11、一皮肤为 14；取多数 11
+         * （首轮记录的 11–12 区间亦佐证 11；14 为单皮肤离群值）。
+         * 竖格 commentFontSize（12 / 18）不走此画笔：网格只画主文字。
+         */
+        const val CANDIDATE_COMMENT_DP = 11f
     }
 
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -131,8 +141,7 @@ class Paints(context: Context) {
         toolbarTextPaint.textSize = 16f * density
         candidateTextPaint.textSize = CANDIDATE_TEXT_DP * density
         selectedCandidateTextPaint.textSize = CANDIDATE_TEXT_DP * density
-        candidateIndexPaint.textSize = CANDIDATE_SECONDARY_DP * density
-        // 注释此前未显式设字号（Paint 默认值），与序号同取副字号。
-        candidateCommentPaint.textSize = CANDIDATE_SECONDARY_DP * density
+        candidateIndexPaint.textSize = CANDIDATE_INDEX_DP * density
+        candidateCommentPaint.textSize = CANDIDATE_COMMENT_DP * density
     }
 }
