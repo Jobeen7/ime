@@ -189,14 +189,10 @@ object KeyboardStateManager {
     fun toggleMainTypeTarget(): String = typeState.toggleMainTarget()
 
     /**
-     * 中英切换（状态支持；接线轮由中英键调用本函数，不新增
-     * 动作类型）：在 pinyin↔alphabetic 间切类型，不写 ascii
-     * 偏好——现中英键只翻偏好（KeyActionListener 的
-     * ToggleAsciiModeAction 分支），而布局不跟偏好走，故在
-     * t9/lite 上按中英键换不了键盘；本函数改走类型切换，偏
-     * 好与类型的同步关系（菜单 ascii 开关是否跟随类型、切回
-     * pinyin 时引擎 ascii 选项是否复位）由接线轮定，见 Wave-4
-     * 接线项——本波不改偏好、不改菜单文件。
+     * 主类型往返（纠正 2：keyboardType 动作的引擎，与中英切换
+     * 无关）：在 pinyin↔alphabetic 间切类型。皮肤绑定
+     * keyboardType 动作且目标为主类型往返时经此函数；中英键
+     * （ToggleAsciiModeAction）只翻 ascii 偏好，不走这里。
      */
     fun toggleMainType() {
         switchKeyboardType(toggleMainTypeTarget())
@@ -619,10 +615,11 @@ object KeyboardStateManager {
     }
 
     /**
-     * 中英开关显示态（Wave-4 类型一致）：主类型已确立时以
-     * 类型为准（alphabetic = 英文态）；未确立时（首附着前）
-     * 退偏好派生初始类型（与 onAttach 同口径），菜单/工具栏
-     * 在键盘出现前不显示过期态。
+     * 主类型英文态查询（纠正 2：仅供 keyboardType 动作侧读取
+     * 类型态；菜单／工具栏中英开关显示态已恢复为 ascii 偏好，
+     * 不再经此函数）：主类型已确立时以类型为准（alphabetic =
+     * 英文态）；未确立时（首附着前）退偏好派生初始类型（与
+     * onAttach 同口径）。
      */
     fun isMainTypeAlphabetic(context: Context): Boolean {
         val primary = typeState.primary

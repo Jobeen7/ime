@@ -32,6 +32,14 @@ sealed class KeyboardAction {
 
     data class LayoutSwitchAction(val target: String) : KeyboardAction()
 
+    /**
+     * 键盘类型切换（纠正 2：与中英切换并存的独立机制）：
+     * 皮肤 keyboardType 动作绑定，目标为类型名（含自定义名），
+     * 经类型状态入口切换；与按名切换的 LayoutSwitchAction 不同
+     * （后者只认布局名，不更新类型状态）。
+     */
+    data class SwitchKeyboardTypeAction(val type: String) : KeyboardAction()
+
     data object ResumeAction : KeyboardAction()
 
     data object BackspaceAction : KeyboardAction()

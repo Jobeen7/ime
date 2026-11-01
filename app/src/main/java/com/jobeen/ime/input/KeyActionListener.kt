@@ -106,13 +106,24 @@ class KeyActionListener(
                 @SuppressLint("NewApi") service.switchToNextInputMethod(false)
             }
 
-            // 中英切换（Wave-4 E5）：改走键盘类型切换（pinyin↔
-            // alphabetic，工具类型 → 主类型），不再只翻 ascii 偏好
-            // ——偏好在 t9/lite 上被方案 lock 钉死，翻偏好换不了
-            // 键盘；偏好本身不动（菜单/工具栏显示改走类型，见
-            // KeyboardStateManager.isMainTypeAlphabetic）。
+            // 中英切换（纠正 2，2026-11-01 定）：#中英切换 =
+            // RIME ascii_mode 翻转，与菜单 ascii 开关同款逻辑——
+            // 只翻偏好（引擎侧经偏好应用跟随），绝不切键盘类型。
+            // 布局切换是另一机制（keyboardType 动作，见
+            // SwitchKeyboardTypeAction），两者并存、互不替代。
             is KeyboardAction.ToggleAsciiModeAction -> {
-                KeyboardStateManager.toggleMainType()
+                CandidateManager.setAsciiModeEnabled(
+                    service,
+                    !CandidateManager.isAsciiModeEnabled(service),
+                )
+            }
+
+            // 键盘类型切换（纠正 2 新增，与中英切换并存的独立
+            // 机制）：皮肤绑定 keyboardType 时切类型（含自定义名），
+            // 经类型状态入口（含内置回退，永不空白）；窗口层
+            // transformed 直通至此，不拦截。
+            is KeyboardAction.SwitchKeyboardTypeAction -> {
+                KeyboardStateManager.switchKeyboardType(action.type)
             }
 
             is KeyboardAction.SelectSchema -> {

@@ -1225,6 +1225,8 @@ object KeyOverrideApplier {
             action.keyCode, action.ctrl, action.shift, action.alt, action.meta,
         )
         is SkinAction.Combine -> KeyboardAction.CombineAction(action.actions.map { toRuntime(it) })
+        is SkinAction.KeyboardType ->
+            KeyboardAction.SwitchKeyboardTypeAction(action.type)
         is SkinAction.Command -> when (action.action) {
             WhitelistAction.COMMIT_DIRECT ->
                 KeyboardAction.LiteralCommitAction(requireNotNull(action.value))

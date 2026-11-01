@@ -61,10 +61,10 @@ enum class WhitelistAction(
     REDO("redo", ValueRule.FORBIDDEN),
     VOICE_INPUT("voice_input", ValueRule.FORBIDDEN),
     /**
-     * 中英切换（2026-11-01 皮肤批）：转换目标 enzh 键用——
-     * 对端语言键无单一动作名（对端走键盘类型切换），Jime 侧以此
-     * 白名单动作接菜单现成的 ascii 开关路径（非 switch_layout 回
-     * 同网格的静默无操作）。
+     * 中英切换（纠正 2，2026-11-01 定）：转换目标 enzh 键用——
+     * #中英切换 = RIME ascii_mode 翻转，Jime 侧以此白名单动作
+     * 接菜单现成的 ascii 开关路径（只翻偏好，不切类型；类型切
+     * 换走独立的 keyboardType 动作，见 SkinAction.KeyboardType）。
      */
     TOGGLE_ASCII_MODE("toggle_ascii_mode", ValueRule.FORBIDDEN),
     /**
@@ -216,6 +216,13 @@ sealed interface SkinAction {
      * 分发；子动作同样经本解析器解析（含嵌套 combine）。
      */
     data class Combine(val actions: List<SkinAction>) : SkinAction
+
+    /**
+     * 键盘类型切换（纠正 2：与中英切换并存的独立机制）：
+     * 对端 keyboardType 对象形式的 Jime 映射——value 为类型名
+     * （含自定义名），运行时经类型状态入口切换；空值解析期剔除。
+     */
+    data class KeyboardType(val type: String) : SkinAction
 
     /**
      * sequence 占位（历史类型，保留仅为模型兼容）：Batch 3 裁定
@@ -1156,6 +1163,13 @@ object SkinKeyMappingsParser {
             "sendKeys" -> parseSendKeys(keyId, slot, obj, rejections)
             // 审计 E：sendKeyEvent——直送应用的按键＋修饰键。
             "sendKeyEvent" -> parseSendKeyEvent(keyId, slot, obj, rejections)
+            // 纠正 2：keyboardType——独立于中英切换的类型切换动作。
+            "keyboardType" -> {
+                val value = obj["value"].stringContentOrNull()
+                    ?: return reject(BindingRejectReason.VALUE_MISSING)
+                if (value.isBlank()) return reject(BindingRejectReason.VALUE_INVALID)
+                SkinAction.KeyboardType(value)
+            }
             // 审计 E：combine——有序子动作列表（≤8 项，子动作
             // 同经本解析器；任一子项非法则整组剔除）。
             "combine" -> {
