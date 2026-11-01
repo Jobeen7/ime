@@ -198,6 +198,10 @@ object KeyboardStateManager {
             val type = typeState.current ?: stored ?: typeState.initialType(ascii)
             typeState.establish(type)
             lastTypeSkinId = skinId
+            // 首挂确立亦写持久化：switchKeyboardType 内仅在类型
+            // 实际变化时写盘，而 establish 后的切换是同值切换、
+            // 不写盘；此处补写，使进程重启后仍恢复本皮肤类型。
+            persistType(type)
             switchKeyboardType(type)
             return
         }
