@@ -225,9 +225,6 @@ sealed class KeyboardAction {
      */
     data object ToggleCommandViewAction : KeyboardAction()
 
-    /** 向前删除（deleteForward）：光标右侧一字／选区／组字右侧。 */
-    data object DeleteForwardAction : KeyboardAction()
-
     /** RIME 选项翻转（rimeOption）：仅布尔选项，不持久化。 */
     data class ToggleRimeOptionAction(val option: String) : KeyboardAction()
 
