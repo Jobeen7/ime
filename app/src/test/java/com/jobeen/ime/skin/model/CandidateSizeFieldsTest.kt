@@ -25,7 +25,7 @@ class CandidateSizeFieldsTest {
     @Test
     fun sizeFieldsParse() {
         val skin = validated(
-            """{"formatVersion": 3,
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
                "candidateIndexSizeDp": 20, "candidateCommentSizeDp": 13}""",
         )
         assertEquals(20f, skin.candidateIndexSizeDp)
@@ -34,7 +34,7 @@ class CandidateSizeFieldsTest {
 
     @Test
     fun sizeFieldsAbsentAreNull() {
-        val skin = validated("""{"formatVersion": 3}""")
+        val skin = validated("""{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"}}""")
         assertNull(skin.candidateIndexSizeDp)
         assertNull(skin.candidateCommentSizeDp)
     }
@@ -43,7 +43,7 @@ class CandidateSizeFieldsTest {
     fun sizeFieldsOutOfRangeAreDropped() {
         // 8..32dp 外的值记问题并丢弃（渲染回落对端默认值），而非截断。
         val skin = validated(
-            """{"formatVersion": 3,
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
                "candidateIndexSizeDp": 40, "candidateCommentSizeDp": 4}""",
         )
         assertNull(skin.candidateIndexSizeDp)
