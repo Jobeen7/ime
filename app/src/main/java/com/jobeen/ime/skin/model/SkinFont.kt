@@ -1,6 +1,7 @@
 package com.jobeen.ime.skin.model
 
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -97,7 +98,77 @@ object SkinFontRanges {
     }
 }
 
+/** 字体候选值解析结果：按声明顺序的规范化候选表（首项即旧单值）。 */
+data class ParsedFontCandidates(
+    val candidates: List<String>,
+    val issues: List<SkinIssue>,
+)
+
 object SkinFontParser {
+
+    /**
+     * 字体候选值解析（审计 C 项：字重优先级＝数组顺序）：
+     * 节点可为单个字符串或字符串数组；每项规范化为系统名
+     * 小写或内嵌字体声明原文；"default" 项跳过（不记 issue，
+     * 与旧单值口径一致）；未知项／非字符串项逐项丢弃并记
+     * issue；重复项去重（保留首次顺序）。空白项按调用方给
+     * 的 blankCode 记 issue（null = 静默跳过，沿用旧 roleFonts
+     * 口径；fontFamily 沿用旧 font_family_empty）。
+     */
+    fun parseCandidates(
+        node: JsonElement?,
+        path: String,
+        faceByLower: Map<String, String>,
+        systemFamilies: Set<String>,
+        blankCode: String?,
+        unknownCode: String,
+        notStringCode: String,
+    ): ParsedFontCandidates {
+        if (node == null) return ParsedFontCandidates(emptyList(), emptyList())
+        val items: List<JsonElement> = when (node) {
+            is JsonArray -> node
+            is JsonPrimitive -> listOf(node)
+            else -> return ParsedFontCandidates(
+                emptyList(),
+                listOf(
+                    SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, notStringCode),
+                ),
+            )
+        }
+        val candidates = mutableListOf<String>()
+        val issues = mutableListOf<SkinIssue>()
+        for ((index, item) in items.withIndex()) {
+            val itemPath = if (node is JsonArray) "$path[$index]" else path
+            val raw = (item as? JsonPrimitive)
+                ?.takeIf { it.isString }?.contentOrNull?.trim()
+            when {
+                raw == null -> issues += SkinIssue(
+                    itemPath, SkinIssue.Kind.FIELD_FALLBACK, notStringCode,
+                )
+                raw.isEmpty() -> {
+                    if (blankCode != null) {
+                        issues += SkinIssue(
+                            itemPath, SkinIssue.Kind.FIELD_FALLBACK, blankCode,
+                        )
+                    }
+                }
+                raw.lowercase() == "default" -> Unit
+                raw.lowercase() in systemFamilies -> {
+                    val canonical = raw.lowercase()
+                    if (canonical !in candidates) candidates += canonical
+                }
+                faceByLower[raw.lowercase()] != null -> {
+                    val canonical = faceByLower.getValue(raw.lowercase())
+                    if (canonical !in candidates) candidates += canonical
+                }
+                else -> issues += SkinIssue(
+                    itemPath, SkinIssue.Kind.FIELD_FALLBACK, unknownCode,
+                )
+            }
+        }
+        return ParsedFontCandidates(candidates, issues)
+    }
+
 
     /**
      * 皮肤内嵌字体单件上限（与全局字体导入同值

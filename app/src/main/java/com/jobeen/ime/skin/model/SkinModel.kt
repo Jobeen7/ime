@@ -355,11 +355,23 @@ data class ValidatedSkin(
      */
     val fontFamily: String? = null,
     /**
+     * 字体优先级表（审计 C 项）：顶层 fontFamily 的完整候选
+     * 顺序（首项即 [fontFamily]）；渲染按序试取，首个可解析
+     * 者胜出。空 = 未指定。
+     */
+    val fontFamilies: List<String> = emptyList(),
+    /**
      * 分角色字体（2026-10-29 item-1）：顶层 roleFonts 校验结果，
      * 角色 → 规范化系统字族名（仅有效项）；空 = 无逐角色指定。
      * 分层：皮肤逐角色 > 皮肤 fontFamily > 全局逐角色 > 系统默认。
      */
     val roleFonts: Map<com.jobeen.ime.data.keyboard.theme.FontRole, String> = emptyMap(),
+    /**
+     * 分角色字体优先级表（审计 C 项）：角色 → 完整候选顺序
+     * （首项即 [roleFonts] 中的值）；仅含有效候选的角色入表。
+     */
+    val roleFontFamilies: Map<com.jobeen.ime.data.keyboard.theme.FontRole, List<String>> =
+        emptyMap(),
     /**
      * 皮肤内嵌字体（审计 C 项）：顶层 fontFaces 校验结果（名 →
      * 清单资产逻辑 id）；fontFamily / roleFonts 取值与其中某项

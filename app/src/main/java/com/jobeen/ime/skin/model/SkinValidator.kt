@@ -298,34 +298,26 @@ object SkinValidator {
         val faceByLower: Map<String, String> =
             skinFontFaces.associate { it.name.lowercase() to it.name }
 
-        // ---- 字族（2026-10-27 新增分流：顶层 fontFamily） ----
-        var fontFamily: String? = null
-        val fontPrimitive = tree["fontFamily"] as? JsonPrimitive
-        if (fontPrimitive != null && fontPrimitive.isString) {
-            val raw = fontPrimitive.contentOrNull?.trim()
-            when {
-                raw.isNullOrEmpty() -> issues += SkinIssue(
-                    "fontFamily", SkinIssue.Kind.FIELD_FALLBACK, "font_family_empty",
-                )
-                raw.lowercase() == "default" -> Unit // 显式默认别名：等价于未指定，不记 issue
-                raw.lowercase() in SYSTEM_FONT_FAMILIES -> fontFamily = raw.lowercase()
-                faceByLower[raw.lowercase()] != null ->
-                    fontFamily = faceByLower.getValue(raw.lowercase())
-                else -> issues += SkinIssue(
-                    "fontFamily", SkinIssue.Kind.FIELD_FALLBACK, "font_family_unknown",
-                )
-            }
-        } else if (tree.containsKey("fontFamily")) {
-            issues += SkinIssue(
-                "fontFamily", SkinIssue.Kind.FIELD_FALLBACK, "font_family_not_string",
-            )
-        }
+        // ---- 字族（2026-10-27 新增分流 + 审计 C 项：顶层 fontFamily） ----
+        // 单值或数组：数组顺序即优先级，首项即旧单值 fontFamily；
+        // "default" = 该项跟随（不记 issue），未知／非字符串项
+        // 逐项丢弃并记 issue，绝不拒包。
+        val parsedFontFamily = SkinFontParser.parseCandidates(
+            tree["fontFamily"], "fontFamily", faceByLower, SYSTEM_FONT_FAMILIES,
+            "font_family_empty", "font_family_unknown", "font_family_not_string",
+        )
+        issues += parsedFontFamily.issues
+        val fontFamilies = parsedFontFamily.candidates
+        val fontFamily = fontFamilies.firstOrNull()
 
         // ---- 分角色字体（2026-10-29 item-1：顶层 roleFonts） ----
         // 角色名取全局字体层的 8 角色（stored 名）；值与 fontFamily
-        // 同口径（白名单族名；"default"/空白 = 该角色跟随，不记
-        // issue；未知族名/非字符串逐项丢弃并记 issue，绝不拒包）。
+        // 同口径（白名单族名／内嵌名；单值或数组，数组顺序即优
+        // 先级；"default"/空白 = 该角色跟随，不记 issue；未知族
+        // 名/非字符串逐项丢弃并记 issue，绝不拒包）。
         val roleFonts = mutableMapOf<com.jobeen.ime.data.keyboard.theme.FontRole, String>()
+        val roleFontFamilies =
+            mutableMapOf<com.jobeen.ime.data.keyboard.theme.FontRole, List<String>>()
         val roleFontsNode = tree["roleFonts"]
         if (roleFontsNode != null) {
             val roleFontsObj = roleFontsNode as? JsonObject
@@ -344,22 +336,14 @@ object SkinValidator {
                         )
                         continue
                     }
-                    val raw = (valueNode as? JsonPrimitive)
-                        ?.takeIf { it.isString }?.contentOrNull?.trim()
-                    when {
-                        raw == null -> issues += SkinIssue(
-                            "roleFonts.$name", SkinIssue.Kind.FIELD_FALLBACK,
-                            "role_fonts_not_string",
-                        )
-                        raw.isEmpty() || raw.lowercase() == "default" -> Unit
-                        raw.lowercase() in SYSTEM_FONT_FAMILIES ->
-                            roleFonts[role] = raw.lowercase()
-                        faceByLower[raw.lowercase()] != null ->
-                            roleFonts[role] = faceByLower.getValue(raw.lowercase())
-                        else -> issues += SkinIssue(
-                            "roleFonts.$name", SkinIssue.Kind.FIELD_FALLBACK,
-                            "role_fonts_unknown_family",
-                        )
+                    val parsed = SkinFontParser.parseCandidates(
+                        valueNode, "roleFonts.$name", faceByLower, SYSTEM_FONT_FAMILIES,
+                        null, "role_fonts_unknown_family", "role_fonts_not_string",
+                    )
+                    issues += parsed.issues
+                    if (parsed.candidates.isNotEmpty()) {
+                        roleFonts[role] = parsed.candidates.first()
+                        roleFontFamilies[role] = parsed.candidates
                     }
                 }
             }
@@ -940,7 +924,9 @@ object SkinValidator {
                     values = keyboardValues,
                 ),
                 fontFamily = fontFamily,
+                fontFamilies = fontFamilies,
                 roleFonts = roleFonts,
+                roleFontFamilies = roleFontFamilies,
                 skinFontFaces = skinFontFaces,
                 fontRanges = fontRanges,
                 bubbleOverflowCheck = bubbleOverflowCheck,

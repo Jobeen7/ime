@@ -297,10 +297,18 @@ object GlobalFonts {
         }
         val snapshot = SkinSnapshotProvider.peek()
         if (snapshot != null) {
-            snapshot.roleFonts[role]?.let { candidate ->
+            // 审计 C 项：按候选顺序试取，首个可解析者胜出；
+            // 内嵌缺失／未知族名都继续下一候选、下一级。
+            // 旧手工快照可能只填单值字段：列表为空时回落单值。
+            val roleCandidates = snapshot.roleFontFamilies[role]
+                ?: snapshot.roleFonts[role]?.let { listOf(it) } ?: emptyList()
+            for (candidate in roleCandidates) {
                 skinCandidateTypeface(context, snapshot, candidate, style)?.let { return it }
             }
-            snapshot.fontFamily?.let { candidate ->
+            val familyCandidates = snapshot.fontFamilies.ifEmpty {
+                snapshot.fontFamily?.let { listOf(it) } ?: emptyList()
+            }
+            for (candidate in familyCandidates) {
                 skinCandidateTypeface(context, snapshot, candidate, style)?.let { return it }
             }
         }
@@ -333,21 +341,28 @@ object GlobalFonts {
         role: FontRole? = null,
         /** 皮肤声明的内嵌字体名（声明原文；匹配大小写不敏感）。 */
         skinFaceNames: List<String> = emptyList(),
+        /** 审计 C 项：完整候选顺序（空时回落单值字段，同 typefaceFor）。 */
+        skinFamilyCandidates: List<String> = emptyList(),
+        roleFontCandidates: Map<FontRole, List<String>> = emptyMap(),
     ): EffectiveSource {
-        val roleRaw = role?.let { roleFonts[it] }
-        if (roleRaw != null) {
-            SkinFonts.findFaceName(roleRaw, skinFaceNames)?.let {
+        val roleCandidateList = roleFontCandidates[role]
+            ?: role?.let { roleFonts[it] }?.let { listOf(it) } ?: emptyList()
+        for (candidate in roleCandidateList) {
+            SkinFonts.findFaceName(candidate, skinFaceNames)?.let {
                 return EffectiveSource.SkinBundled(it)
             }
-            SkinFonts.resolveFamily(roleRaw)?.let {
+            SkinFonts.resolveFamily(candidate)?.let {
                 return EffectiveSource.SkinRole(it)
             }
         }
-        if (skinFamilyRaw != null) {
-            SkinFonts.findFaceName(skinFamilyRaw, skinFaceNames)?.let {
+        val familyCandidateList = skinFamilyCandidates.ifEmpty {
+            skinFamilyRaw?.let { listOf(it) } ?: emptyList()
+        }
+        for (candidate in familyCandidateList) {
+            SkinFonts.findFaceName(candidate, skinFaceNames)?.let {
                 return EffectiveSource.SkinBundled(it)
             }
-            SkinFonts.resolveFamily(skinFamilyRaw)?.let {
+            SkinFonts.resolveFamily(candidate)?.let {
                 return EffectiveSource.Skin(it)
             }
         }

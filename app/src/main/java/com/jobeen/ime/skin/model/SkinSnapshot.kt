@@ -48,6 +48,11 @@ data class SkinSnapshot(
     val fontFamily: String? = null,
     /** 分角色字体（2026-10-29 item-1）：皮肤内逐角色字族（仅有效项）。 */
     val roleFonts: Map<com.jobeen.ime.data.keyboard.theme.FontRole, String> = emptyMap(),
+    /** 字体优先级表（审计 C 项）：校验结果直传（首项即 fontFamily）。 */
+    val fontFamilies: List<String> = emptyList(),
+    /** 分角色字体优先级表（审计 C 项）：校验结果直传。 */
+    val roleFontFamilies: Map<com.jobeen.ime.data.keyboard.theme.FontRole, List<String>> =
+        emptyMap(),
     /** 皮肤内嵌字体（审计 C 项）：校验结果直传（名 → 资产逻辑 id）。 */
     val skinFontFaces: List<SkinFontFace> = emptyList(),
     /**
