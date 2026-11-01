@@ -100,6 +100,29 @@ class CandidateColorFieldsTest {
     }
 
     @Test
+    fun preferredColorsFlowToScheme() {
+        val scheme = build(
+            base(
+                """"preferredBackground": "#FF112233", "preferredText": "#FF445566",
+                   "preferredComment": "#FF778899", "preferredIndex": "#FFAABBCC"""",
+            ),
+        )
+        assertEquals(0xFF112233.toInt(), scheme.panel.preferredBackground)
+        assertEquals(0xFF445566.toInt(), scheme.panel.preferredText)
+        assertEquals(0xFF778899.toInt(), scheme.panel.preferredComment)
+        assertEquals(0xFFAABBCC.toInt(), scheme.panel.preferredIndex)
+    }
+
+    @Test
+    fun preferredColorsAbsentAreNull() {
+        val scheme = build(base(""""candidateText": "#FF000000"""))
+        assertNull(scheme.panel.preferredBackground)
+        assertNull(scheme.panel.preferredText)
+        assertNull(scheme.panel.preferredComment)
+        assertNull(scheme.panel.preferredIndex)
+    }
+
+    @Test
     fun candidateCommentValueInFallsBackToIndex() {
         // 导出/令牌解析口径：未指定注释色时取序号色。
         val panel = defaultScheme.panel.copy(candidateIndex = 606, candidateComment = null)

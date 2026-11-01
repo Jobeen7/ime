@@ -46,6 +46,15 @@ enum class StyleField(val path: String) {
     PANEL_CANDIDATE_COMMENT("panel.candidateComment"),
     /** 候选按压底色（审计 I 项）：缺失时回落 candidateBackground（见 valueIn）。 */
     PANEL_CANDIDATE_PRESSED("panel.candidatePressed"),
+    /**
+     * 首选候选色（审计 I 项）：第 1 个候选的底／文字／注释／序号色，
+     * null = 未指定（关闭首选着色；valueIn 回落对应常态色，
+     * 回落值与常态相同、视觉上等价于关闭）。
+     */
+    PANEL_PREFERRED_BACKGROUND("panel.preferredBackground"),
+    PANEL_PREFERRED_TEXT("panel.preferredText"),
+    PANEL_PREFERRED_COMMENT("panel.preferredComment"),
+    PANEL_PREFERRED_INDEX("panel.preferredIndex"),
     PINNER_BACKGROUND("pinner.background"),
     PINNER_TEXT_COLOR("pinner.textColor"),
     PINNER_SECONDARY_TEXT_COLOR("pinner.secondaryTextColor"),
@@ -81,6 +90,11 @@ enum class StyleField(val path: String) {
         PANEL_CANDIDATE_DIVIDER -> scheme.panel.candidateDivider
         PANEL_CANDIDATE_COMMENT -> scheme.panel.candidateComment ?: scheme.panel.candidateIndex
         PANEL_CANDIDATE_PRESSED -> scheme.panel.candidatePressed ?: scheme.panel.candidateBackground
+        PANEL_PREFERRED_BACKGROUND -> scheme.panel.preferredBackground ?: scheme.panel.candidateBackground
+        PANEL_PREFERRED_TEXT -> scheme.panel.preferredText ?: scheme.panel.candidateText
+        PANEL_PREFERRED_COMMENT -> scheme.panel.preferredComment
+            ?: scheme.panel.candidateComment ?: scheme.panel.candidateIndex
+        PANEL_PREFERRED_INDEX -> scheme.panel.preferredIndex ?: scheme.panel.candidateIndex
         PINNER_BACKGROUND -> scheme.pinner.background
         PINNER_TEXT_COLOR -> scheme.pinner.textColor
         PINNER_SECONDARY_TEXT_COLOR -> scheme.pinner.secondaryTextColor

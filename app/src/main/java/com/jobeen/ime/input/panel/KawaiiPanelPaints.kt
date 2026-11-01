@@ -85,6 +85,14 @@ class Paints(context: Context) {
      * null = 未指定（渲染回落候选底）。
      */
     var candidatePressedColor: Int? = null
+    /**
+     * 首选候选色（审计 I 项）：updateColors 从 panel 同步；
+     * null = 未指定（首选着色关闭）。
+     */
+    var preferredBackground: Int? = null
+    var preferredText: Int? = null
+    var preferredComment: Int? = null
+    var preferredIndex: Int? = null
 
     fun updateColors(context: Context) {
         val scheme = KeyboardColors.resolve(context)
@@ -108,6 +116,10 @@ class Paints(context: Context) {
         candidateCommentSizeDp =
             SkinSnapshotProvider.peek()?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
         candidatePressedColor = panel.candidatePressed
+        preferredBackground = panel.preferredBackground
+        preferredText = panel.preferredText
+        preferredComment = panel.preferredComment
+        preferredIndex = panel.preferredIndex
         // 工具栏按钮表面（全局样式层）：皮肤样式 presence 决定
         // 全局按键值是否生效；跟随按键时半径取生效键圆角。
         val global = GlobalStylePrefs.get(context)

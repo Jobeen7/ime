@@ -87,6 +87,10 @@ class ComposingRenderer(
     private val commentPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pillBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pressedBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val preferredBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val preferredTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val preferredIndexPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val preferredCommentPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     /**
      * 当前按压的候选下标（审计 I 项）：视图 DOWN 命中后置位，
@@ -154,6 +158,16 @@ class ComposingRenderer(
         pillBgPaint.set(paints.candidateBgPaint)
         pressedBgPaint.set(paints.candidateBgPaint)
         pressedBgPaint.color = paints.candidatePressedColor ?: pillBgPaint.color
+        // 首选色（审计 I 项）：有值才启用（null = 关闭），画笔先取
+        // 常态色打底、再覆首选色；启用标志供绘制分支判断。
+        preferredBgPaint.set(paints.candidateBgPaint)
+        paints.preferredBackground?.let { preferredBgPaint.color = it }
+        preferredTextPaint.set(paints.candidateTextPaint)
+        paints.preferredText?.let { preferredTextPaint.color = it }
+        preferredIndexPaint.set(paints.candidateIndexPaint)
+        paints.preferredIndex?.let { preferredIndexPaint.color = it }
+        preferredCommentPaint.set(paints.candidateCommentPaint)
+        paints.preferredComment?.let { preferredCommentPaint.color = it }
         if (recording) {
             indexPaint.color = dimColor(indexPaint.color)
             textPaint.color = dimColor(textPaint.color)
@@ -161,6 +175,10 @@ class ComposingRenderer(
             commentPaint.color = dimColor(commentPaint.color)
             pillBgPaint.color = dimColor(pillBgPaint.color)
             pressedBgPaint.color = dimColor(pressedBgPaint.color)
+            preferredBgPaint.color = dimColor(preferredBgPaint.color)
+            preferredTextPaint.color = dimColor(preferredTextPaint.color)
+            preferredIndexPaint.color = dimColor(preferredIndexPaint.color)
+            preferredCommentPaint.color = dimColor(preferredCommentPaint.color)
         }
         val indexBaseSize = indexPaint.textSize
         val textBaseSize = textPaint.textSize
@@ -293,18 +311,33 @@ class ComposingRenderer(
                     selectedTextPaint.textSize = textBaseSize * layout.scale
                     val textY =
                         pillY + pillH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
-                    // 高亮候选（Rime 选中项）用选中文字色，其余用候选文字色；
-                    // 序号与注释两色不变（与选中文字色同画笔体系无关）。
+                    // 高亮候选（Rime 选中项）用选中文字色；其次首选
+                    // 文字色（仅 i==0 且引擎选中不在首位时可见，
+                    // 选中态优先于首选是既有“选中态文字色”口径），
+                    // 其余用候选文字色。
                     val pillTextPaint =
-                        if (i == highlightedIndex) selectedTextPaint else textPaint
+                        if (i == highlightedIndex) selectedTextPaint
+                        else if (i == 0 && paints.preferredText != null) preferredTextPaint
+                        else textPaint
+                    // 序号／注释同理：首选色只在首位、且非按压时生效。
+                    val idxPaint =
+                        if (i == 0 && paints.preferredIndex != null) preferredIndexPaint else indexPaint
+                    val cmtPaint =
+                        if (i == 0 && paints.preferredComment != null) preferredCommentPaint else commentPaint
 
                     // 按压反馈（审计 I 项）：按压态药丸铺按压色（缺失
-                    // 回落候选底），与边框模式无关；常态仍只在边框
+                    // 回落候选底），与边框模式无关；首选底在首位、
+                    // 非按压时铺（与边框模式无关）；常态仍只在边框
                     // 模式下画底（旧口径不变）。
                     if (i == pressedIndex) {
                         drawRoundRect(
                             pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
                             pressedBgPaint,
+                        )
+                    } else if (i == 0 && paints.preferredBackground != null) {
+                        drawRoundRect(
+                            pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
+                            preferredBgPaint,
                         )
                     } else if (candidateBorder) {
                         drawRoundRect(
@@ -316,7 +349,7 @@ class ComposingRenderer(
                     val drawIndex = showIndex
                     if (drawIndex) {
                         drawText(
-                            indexLabel(i), pill.left + pillPad, textY, indexPaint,
+                            indexLabel(i), pill.left + pillPad, textY, idxPaint,
                         )
                     }
 
@@ -330,7 +363,7 @@ class ComposingRenderer(
                             layout.commentText,
                             commentX,
                             textY,
-                            commentPaint,
+                            cmtPaint,
                         )
                     }
                 }

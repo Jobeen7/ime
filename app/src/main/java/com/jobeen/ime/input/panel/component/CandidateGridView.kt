@@ -144,6 +144,9 @@ class CandidateGridView(
         /** 区样式生效尺寸（审计 B 项）：可用宽高，尺寸未到时为 0（调用方回落视图尺寸）。 */
         private var effW = 0f
         private var effH = 0f
+        /** 首选色（审计 I 项）：updateColors 从 panel 同步；null = 关闭。 */
+        private var preferredBg: Int? = null
+        private var preferredText: Int? = null
 
         var positions = emptyList<WordPos>()
             private set
@@ -218,6 +221,10 @@ class CandidateGridView(
             // 按压色（审计 I 项）：缺失回落候选底（旧口径）；此前
             // pressPaint 只用于拖动目标，现兼按压格底。
             pressPaint.color = pc.candidatePressed ?: pc.candidateBackground
+            // 首选色（审计 I 项）：null = 关闭（网格无引擎选中态，
+            // 首位文字色直接取首选色，无优先级冲突）。
+            preferredBg = pc.preferredBackground
+            preferredText = pc.preferredText
         }
 
         /** 内容总行数：行布局已算好时 = 最大行号 + 1，未算好时 0 */
@@ -374,6 +381,10 @@ class CandidateGridView(
                     // 被拖动项仅隐藏内容，其右侧分割线仍需绘制
                     if (i != dragIndex) {
                         val c = allCandidates[i]
+                        // 首选文字色（审计 I 项）：本格画完即还原，
+                        // 避免 textPaint 的色污染后续格。
+                        val savedTextColor = textPaint.color
+                        if (i == 0) preferredText?.let { textPaint.color = it }
                         val tw = textWidths.getOrElse(i) { 0f }
                         val isTarget = i == dragTargetIndex && dragIndex >= 0
 
@@ -386,12 +397,22 @@ class CandidateGridView(
 
                         // 按压反馈（审计 I 项）：pressedIndex 此前只被
                         // 追踪、从未绘制；现以按压色铺满本格（文字前画）。
+                        // 首选底次之（首位、非按压时）；两者皆无则不铺底。
                         if (i == pressedIndex) {
                             val d = resources.displayMetrics.density
                             canvas.drawRoundRect(
                                 pos.xStart + shakeOff, y, pos.xStart + pos.width + shakeOff, y + rowH,
                                 candidateRadiusDp * d, candidateRadiusDp * d, pressPaint,
                             )
+                        } else if (i == 0 && preferredBg != null) {
+                            val d = resources.displayMetrics.density
+                            val oldPressColor = pressPaint.color
+                            pressPaint.color = preferredBg!!
+                            canvas.drawRoundRect(
+                                pos.xStart + shakeOff, y, pos.xStart + pos.width + shakeOff, y + rowH,
+                                candidateRadiusDp * d, candidateRadiusDp * d, pressPaint,
+                            )
+                            pressPaint.color = oldPressColor
                         }
 
                         if (pos.extraWide) {
@@ -450,6 +471,7 @@ class CandidateGridView(
                                 canvas.drawText(displayText, textX, textY, textPaint)
                             }
                         }
+                        textPaint.color = savedTextColor
                     }
 
                     if (i + 1 < positions.size && !pos.extraWide) {

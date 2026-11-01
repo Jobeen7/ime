@@ -71,6 +71,16 @@ object KeyboardColors {
              * candidateBackground；此前按压无任何视觉反馈）。
              */
             val candidatePressed: Int? = null,
+            /**
+             * 首选候选色（审计 I 项）：第 1 个候选的底／文字／
+             * 注释／序号色；null = 未指定（首选着色关闭）。
+             * 不设对端默认值：三参考皮肤的首选绿各不相同
+             * （#23C891 / #27dfa1 / #1fb382），无统一值可取。
+             */
+            val preferredBackground: Int? = null,
+            val preferredText: Int? = null,
+            val preferredComment: Int? = null,
+            val preferredIndex: Int? = null,
         )
 
         @Serializable
