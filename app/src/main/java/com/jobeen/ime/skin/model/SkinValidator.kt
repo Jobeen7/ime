@@ -701,6 +701,34 @@ object SkinValidator {
             }
         }
 
+        // ---- hintSymbolsGridStyles（网格版：长按符号网格样式表） ----
+        // 口径与旧版表一致：非对象整段记 issue；单项无效逐项丢弃。
+        var hintSymbolsGridStyles: Map<String, HintSymbolsGridStyle> = emptyMap()
+        val hintSymbolsGridStylesNode = tree["hintSymbolsGridStyles"]
+        if (hintSymbolsGridStylesNode != null) {
+            val hintSymbolsGridStylesObj = hintSymbolsGridStylesNode as? JsonObject
+            if (hintSymbolsGridStylesObj == null) {
+                issues += SkinIssue(
+                    "hintSymbolsGridStyles", SkinIssue.Kind.FIELD_FALLBACK,
+                    "hint_symbols_grid_styles_not_object",
+                )
+            } else {
+                val gridTable = LinkedHashMap<String, HintSymbolsGridStyle>()
+                for ((name, styleNode) in hintSymbolsGridStylesObj) {
+                    val parsed = HintSymbolsGridParser.parseStyle(styleNode)
+                    if (parsed == null) {
+                        issues += SkinIssue(
+                            "hintSymbolsGridStyles.$name", SkinIssue.Kind.FIELD_FALLBACK,
+                            "hint_symbols_grid_style_invalid",
+                        )
+                    } else {
+                        gridTable[name] = parsed
+                    }
+                }
+                hintSymbolsGridStyles = gridTable
+            }
+        }
+
         // ---- keyMappings（B2 强类型解析；单项无效只剔该项，逐项报告） ----
         var keyMappingsCount = 0
         var keyOverrides: Map<String, KeyOverride> = emptyMap()
@@ -957,6 +985,7 @@ object SkinValidator {
                 keyGeometries = keyGeometries,
                 keyAnimations = keyAnimations,
                 hintSymbolsStyles = hintSymbolsStyles,
+                hintSymbolsGridStyles = hintSymbolsGridStyles,
                 keyboardGeometry = KeyboardGeometrySpec(
                     presence = keyboardPresence,
                     values = keyboardValues,

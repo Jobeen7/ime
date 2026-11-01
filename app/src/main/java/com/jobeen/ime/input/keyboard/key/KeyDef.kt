@@ -136,6 +136,12 @@ open class KeyDef(
          */
         var skinHintSymbolsStyle: String? = null
         /**
+         * 长按符号网格样式名（网格版）：只由覆写装配器写在它生成
+         * 的外观副本上；快照 hintSymbolsGridStyles 表中的样式名，
+         * 非空时优先于 skinHintSymbolsStyle（面板手势挂载为后续项）。
+         */
+        var skinHintSymbolsGridStyle: String? = null
+        /**
          * 短按气泡样式（hintStyle 节点）：只由覆写装配器写在它
          * 生成的外观副本上；现有按键预览弹窗按此取气泡尺寸与
          * 溢出检测，未配时走默认尺寸与顶层 bubbleOverflowCheck。

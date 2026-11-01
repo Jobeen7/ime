@@ -338,6 +338,12 @@ data class ValidatedSkin(
      * 旧 form 节点（无 symbolStyles）在此整体无效。
      */
     val hintSymbolsStyles: Map<String, HintSymbolsStyle> = emptyMap(),
+    /**
+     * 长按符号网格样式表（网格版）：顶层 hintSymbolsGridStyles，
+     * 样式名 → 网格样式；无效项逐项丢弃并记 issue，不拒整包。
+     * 网格优先于旧版单行（见 resolveHintGrid）。
+     */
+    val hintSymbolsGridStyles: Map<String, HintSymbolsGridStyle> = emptyMap(),
     /** 状态驱动通知（重点候选 8-1）：顶层 notifications 校验结果；未定义即空表。 */
     val notifications: List<SkinNotification> = emptyList(),
     /** 条件样式（重点候选 8-1）：顶层 conditionStyles 校验结果；未定义即空表。 */

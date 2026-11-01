@@ -322,6 +322,13 @@ data class KeyOverride(
      */
     val hintSymbolsStyle: String? = null,
     /**
+     * 长按符号网格样式名（网格版）：引用顶层 hintSymbolsGridStyles
+     * 表中的样式；非空时优先于 [hintSymbolsStyle]（双兼容口径，
+     * 见 resolveHintGrid），空时回落旧版单行。样式本体解析见
+     * [HintSymbolsGridStyle]，面板手势挂载为后续项。
+     */
+    val hintSymbolsGridStyle: String? = null,
+    /**
      * 短按气泡样式（hintStyle 节点）：只取尺寸与溢出检测两项
      * 接入现有按键预览弹窗；null = 未配（弹窗走默认尺寸与
      * 顶层 bubbleOverflowCheck）。
@@ -475,6 +482,8 @@ object SkinKeyMappingsParser {
             val dynamicText = parseDynamicText(keyId, entry, rejections)
             val popupChars = parsePopupChars(keyId, entry, rejections)
             val hintSymbolsStyle = parseStyleName(keyId, entry, rejections, "hintSymbolsStyle")
+            val hintSymbolsGridStyle =
+                parseStyleName(keyId, entry, rejections, "hintSymbolsGridStyle")
             val hintStyle = HintSymbolsParser.parseBubble(entry["hintStyle"])
             val icon = parseIcon(keyId, entry, rejections)
             val pressedIcon = parsePressedIcon(keyId, entry, rejections)
@@ -516,6 +525,7 @@ object SkinKeyMappingsParser {
                 textSizes.isNullOrEmpty() &&
                 (geometry == null || geometry.isEmpty) && foregroundLayers.isNullOrEmpty() &&
                 dynamicText == null && popupChars == null && hintSymbolsStyle == null &&
+                hintSymbolsGridStyle == null &&
                 hintStyle == null && icon == null &&
                 pressedIcon == null && pressedImage == null &&
                 swipeThresholdDp == null && preeditTap == null && preeditSwipeUp == null &&
@@ -548,6 +558,7 @@ object SkinKeyMappingsParser {
                 dynamicText = dynamicText,
                 popupChars = popupChars,
                 hintSymbolsStyle = hintSymbolsStyle,
+                hintSymbolsGridStyle = hintSymbolsGridStyle,
                 hintStyle = hintStyle,
                 icon = icon,
                 pressedIcon = pressedIcon,

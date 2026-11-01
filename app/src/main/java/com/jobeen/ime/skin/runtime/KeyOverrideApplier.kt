@@ -497,7 +497,8 @@ object KeyOverrideApplier {
         if (popupChars != null || icon != null) return true
         // Wave-7 长按符号样式名／短按气泡样式：有配即有效，否则
         // 仅含 hint 字段的覆写会被 hasEffect 门滤掉、carry 丢失。
-        if (hintSymbolsStyle != null || hintStyle != null) return true
+        // 网格样式名同口径（仅含网格字段的覆写亦有效）。
+        if (hintSymbolsStyle != null || hintSymbolsGridStyle != null || hintStyle != null) return true
         if (styleRef != null || !styleOverrides.isNullOrEmpty()) return true
         if (image != null || subLabel != null || subLabelTop != null || dynamicText != null) return true
         if (!textSizes.isNullOrEmpty()) return true
@@ -930,6 +931,9 @@ object KeyOverrideApplier {
             // 长按符号样式名与短按气泡样式随副本保留：前者供
             // 未来长按面板按名取样式，后者供预览弹窗取尺寸与溢出。
             override?.hintSymbolsStyle?.let { copy.appearance.skinHintSymbolsStyle = it }
+            override?.hintSymbolsGridStyle?.let {
+                copy.appearance.skinHintSymbolsGridStyle = it
+            }
             override?.hintStyle?.let { copy.appearance.skinHintBubble = it }
             // 单键图标：先经别名层规范化（重点候选
             // 8-7：逻辑名→注册表名，注册表名直通），注册表内才写外观，

@@ -262,6 +262,7 @@ object SkinSnapshotBuilder {
             keyGeometries = validated.keyGeometries,
             keyAnimations = validated.keyAnimations,
             hintSymbolsStyles = validated.hintSymbolsStyles,
+            hintSymbolsGridStyles = validated.hintSymbolsGridStyles,
             textSizes = validated.textSizes,
             imageAssets = imageAssets,
             soundBindings = soundBindings,

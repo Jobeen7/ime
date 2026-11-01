@@ -88,6 +88,8 @@ data class SkinSnapshot(
     val keyAnimations: Map<String, KeyAnimationDef> = emptyMap(),
     /** 长按符号样式表（现行 form）：样式名 → 长按符号样式；面板挂载时按键名取用。 */
     val hintSymbolsStyles: Map<String, HintSymbolsStyle> = emptyMap(),
+    /** 长按符号网格样式表（网格版）：样式名 → 网格样式；非空时优先于旧版单行。 */
+    val hintSymbolsGridStyles: Map<String, HintSymbolsGridStyle> = emptyMap(),
     /** G1 皮肤级分档字号（校验通过值；装配器逐键与逐键覆写合并）。 */
     val textSizes: Map<KeyTextRole, Float> = emptyMap(),
     /**
