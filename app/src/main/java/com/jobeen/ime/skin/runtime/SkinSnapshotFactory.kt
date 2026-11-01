@@ -19,6 +19,8 @@ import com.jobeen.ime.skin.model.AssetKind
 import com.jobeen.ime.skin.model.AudioAssetFacts
 import com.jobeen.ime.skin.model.BindingRejectReason
 import com.jobeen.ime.skin.model.GeometryFallbacks
+import com.jobeen.ime.skin.model.KeyboardTypeResolved
+import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.model.LayoutResolution
 import com.jobeen.ime.skin.model.MemoryTier
 import com.jobeen.ime.skin.model.PackageManifest
@@ -209,24 +211,77 @@ object SkinSnapshotFactory {
         }
         val (targetW, targetH) = backgroundTargetPx(context)
         val audioFacts = manifestAudioFacts(libraryLayout, manifest)
-        val (resolvedLayout, layoutResolution) = resolveSnapshotLayout(
-            context, libraryLayout, validated.layoutId, ref,
-        )
+        // 多主槽一期：`keyboards` 表逐项解析——每项的每个方向
+        // 各走一次既有 resolveSnapshotLayout（同一索引、同一
+        // 校验、同一回退口径），表项解析失败只影响该项该方向，
+        // 不影响皮肤其余部分与旧单布局字段。无表皮肤得空表，
+        // 旧行为逐字节不变。
+        val keyboardEntries = SkinJson.parseKeyboards(effectiveTree)
+        val resolvedKeyboards: Map<String, KeyboardTypeResolved> =
+            keyboardEntries.mapValues { (_, entry) ->
+                val (portrait, portraitResolution) =
+                    if (entry.layoutId != null) {
+                        resolveSnapshotLayout(context, libraryLayout, entry.layoutId, ref)
+                    } else {
+                        null to LayoutResolution.NOT_SET
+                    }
+                val (landscape, landscapeResolution) =
+                    if (entry.layoutIdLandscape != null) {
+                        resolveSnapshotLayout(
+                            context, libraryLayout, entry.layoutIdLandscape, ref,
+                            binding = "landscape",
+                        )
+                    } else {
+                        null to LayoutResolution.NOT_SET
+                    }
+                KeyboardTypeResolved(
+                    portrait = portrait,
+                    landscape = landscape,
+                    portraitResolution = portraitResolution,
+                    landscapeResolution = landscapeResolution,
+                    heightPercent = entry.heightPercent,
+                    heightPercentLandscape = entry.heightPercentLandscape,
+                )
+            }
+        // 旧单布局字段桥接：顶层绑定优先（与改前同一解析；若
+        // 该 id 恰为某表项同方向绑定则复用表项结果，避免同一
+        // 布局解析两次、诊断日志重复）；未设顶层绑定时以
+        // pinyin 项桥接——有表无顶层绑定的皮肤，主键盘旧路径
+        // 仍能命中 pinyin 布局；pinyin 项亦无有效绑定时旧字段
+        // 为空，旧路径走方案默认键盘，永不空白。
+        val pinyinResolved = resolvedKeyboards[KeyboardTypes.PINYIN]
+        val (resolvedLayout, layoutResolution) = when (validated.layoutId) {
+            null -> pinyinResolved?.portrait to
+                (pinyinResolved?.portraitResolution ?: LayoutResolution.NOT_SET)
+            // 按表项“声明 id”匹配（而非已解析 id）：绑定失败时
+            // 已解析为 null 仍命中表项，复用其失败结论，不重复
+            // 解析、不重复记日志；同一 id 在多项出现时结果相同。
+            else -> keyboardEntries.entries.firstOrNull {
+                it.value.layoutId == validated.layoutId
+            }?.let { resolvedKeyboards.getValue(it.key) }
+                ?.let { it.portrait to it.portraitResolution }
+                ?: resolveSnapshotLayout(context, libraryLayout, validated.layoutId, ref)
+        }
         // 横屏绑定（2026-10-27 第一组 + 矩阵扩展）：与竖屏绑定
         // 独立解析——无竖屏绑定时横屏绑定仍可激活（内置布局
         // 竖屏 + 横屏专属布局，见 CustomLayoutRuntime 的主键盘
         // 位映射）。横屏绑定缺失/文件损坏/校验无效时一律回退：
         // 有竖屏布局时回退竖屏布局的横屏权重变体，无竖屏布局
-        // 时回退方案默认键盘，永不空白。
-        val (resolvedLandscape, landscapeResolution) =
-            if (validated.layoutIdLandscape != null) {
-                resolveSnapshotLayout(
+        // 时回退方案默认键盘，永不空白。未设顶层横屏绑定时以
+        // pinyin 项横屏绑定桥接（无横屏绑定则为 null，消费方
+        // 回落竖屏布局的横屏权重变体，与改前一致）。
+        val (resolvedLandscape, landscapeResolution) = when (validated.layoutIdLandscape) {
+            null -> pinyinResolved?.landscape to
+                (pinyinResolved?.landscapeResolution ?: LayoutResolution.NOT_SET)
+            else -> keyboardEntries.entries.firstOrNull {
+                it.value.layoutIdLandscape == validated.layoutIdLandscape
+            }?.let { resolvedKeyboards.getValue(it.key) }
+                ?.let { it.landscape to it.landscapeResolution }
+                ?: resolveSnapshotLayout(
                     context, libraryLayout, validated.layoutIdLandscape, ref,
                     binding = "landscape",
                 )
-            } else {
-                null to LayoutResolution.NOT_SET
-            }
+        }
         val assetExtById = manifest.assets().associate {
             it.id to it.path.substringAfterLast('.', "").lowercase()
         }
@@ -264,6 +319,7 @@ object SkinSnapshotFactory {
             layoutResolution = layoutResolution,
             resolvedLayoutLandscape = resolvedLandscape,
             landscapeLayoutResolution = landscapeResolution,
+            resolvedKeyboards = resolvedKeyboards,
             builtinLayouts = builtinResolution.layouts,
             globalBlur = GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundBlur,
         )
