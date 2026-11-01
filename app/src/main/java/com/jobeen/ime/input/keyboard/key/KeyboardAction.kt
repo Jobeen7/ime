@@ -150,6 +150,17 @@ sealed class KeyboardAction {
     /** 打开本应用设置（审计 E：settings）：MainActivity 意图。 */
     data object SettingsAction : KeyboardAction()
 
+    /**
+     * 应用级脚本动作（脚本接线波次）：
+     * - [RunScriptAction]：运行应用级脚本库中的一个脚本（值 = 脚本 id）；
+     *   执行在后台线程，返回值按脚本桥接规则转动作（见 SkinScriptKeyBridge）。
+     * - [OpenScriptsAction]：打开脚本管理页。
+     */
+    data class RunScriptAction(val scriptId: String) : KeyboardAction()
+
+    /** 打开脚本管理页（open_script）。 */
+    data object OpenScriptsAction : KeyboardAction()
+
     /** 打开系统设置（审计 E：systemSettings）：系统设置意图。 */
     data object SystemSettingsAction : KeyboardAction()
 

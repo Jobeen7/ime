@@ -630,6 +630,8 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.END -> R.string.action_end
         WhitelistAction.SETTINGS -> R.string.action_settings
         WhitelistAction.SYSTEM_SETTINGS -> R.string.action_system_settings
+        WhitelistAction.RUN_SCRIPT -> R.string.action_run_script
+        WhitelistAction.OPEN_SCRIPT -> R.string.action_open_script
         WhitelistAction.NONE -> R.string.action_none
         WhitelistAction.DISMISS_KEYBOARD -> R.string.action_dismiss_keyboard
         WhitelistAction.OPEN_URL -> R.string.action_open_url

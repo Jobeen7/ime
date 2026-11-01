@@ -99,6 +99,15 @@ enum class WhitelistAction(
     MOMENTARY_SHIFT("shift", ValueRule.FORBIDDEN),
     SYMBOL("symbol", ValueRule.REQUIRED),
     /**
+     * 应用级脚本动作（脚本接线波次；Jime 格式名均为 snake_case）：
+     * - run_script：value = 应用级脚本 id（必填；空值 VALUE_INVALID）；
+     *   皮肤只引用 id，绝不携带脚本源码——皮肤内嵌脚本已废止，
+     *   脚本内容只存在于应用级脚本库，由用户在管理页维护；
+     * - open_script：无值；打开脚本管理页。
+     */
+    RUN_SCRIPT("run_script", ValueRule.REQUIRED),
+    OPEN_SCRIPT("open_script", ValueRule.FORBIDDEN),
+    /**
      * 审计 E # 快捷指令集（对端 §6.3 原名，含中文名；格式名
      * 即指令本身，写在 command 节点的 action 字段）：
      * - 未列入者（#subCollectionPageUp/Down：Jime 无二级符号集；
@@ -1165,6 +1174,11 @@ object SkinKeyMappingsParser {
                     return reject(BindingRejectReason.VALUE_INVALID)
                 }
                 if (action == WhitelistAction.SWITCH_SCHEMA &&
+                    value.isNullOrBlank()
+                ) {
+                    return reject(BindingRejectReason.VALUE_INVALID)
+                }
+                if (action == WhitelistAction.RUN_SCRIPT &&
                     value.isNullOrBlank()
                 ) {
                     return reject(BindingRejectReason.VALUE_INVALID)

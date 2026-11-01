@@ -1218,6 +1218,10 @@ object KeyOverrideApplier {
             WhitelistAction.END -> KeyboardAction.AppKeyEventAction(123)
             WhitelistAction.SETTINGS -> KeyboardAction.SettingsAction
             WhitelistAction.SYSTEM_SETTINGS -> KeyboardAction.SystemSettingsAction
+            // 应用级脚本动作（脚本接线波次）。
+            WhitelistAction.RUN_SCRIPT ->
+                KeyboardAction.RunScriptAction(requireNotNull(action.value))
+            WhitelistAction.OPEN_SCRIPT -> KeyboardAction.OpenScriptsAction
             WhitelistAction.NONE -> KeyboardAction.NoOpAction
             WhitelistAction.DISMISS_KEYBOARD -> KeyboardAction.HideKeyboardAction
             WhitelistAction.OPEN_URL ->

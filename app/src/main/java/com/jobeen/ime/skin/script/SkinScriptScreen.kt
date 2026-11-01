@@ -43,11 +43,12 @@ import kotlinx.coroutines.withContext
  * plus a test run (onEvent "test") to prove a script loads and runs.
  *
  * This screen manages scripts ONLY. It does not wire any key action to
- * any script: no runScript/openScript/#toggleScriptView action exists
- * here, and test runs go through [SkinScriptRunner.runScript] on a
+ * any script: key bindings that run/open scripts live in the key-action
+ * wiring (whitelist + runtime mapping + dispatch, see SkinScriptKeyBridge),
+ * not here; test runs go through [SkinScriptRunner.runScript] on a
  * background dispatcher (never the main thread — see the runner doc).
  * The runner result value is displayed as opaque data, not interpreted
- * as an action; interpretation belongs to the later wiring wave.
+ * as an action; interpretation belongs to the key-action bridge.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

@@ -53,6 +53,8 @@ object NotificationActionNames {
         is KeyboardAction.NoOpAction -> "NoOpAction"
         is KeyboardAction.SettingsAction -> "SettingsAction"
         is KeyboardAction.SystemSettingsAction -> "SystemSettingsAction"
+        is KeyboardAction.RunScriptAction -> "RunScriptAction"
+        is KeyboardAction.OpenScriptsAction -> "OpenScriptsAction"
         is KeyboardAction.ReturnPrimaryAction -> "ReturnPrimaryAction"
         is KeyboardAction.ReturnLastAction -> "ReturnLastAction"
         is KeyboardAction.ClipboardAction -> "ClipboardAction"

@@ -34,9 +34,10 @@ package com.jobeen.ime.skin.script
  * single [SkinScriptRunner] instance carries no locking for the store,
  * matching the store's own single-thread coordination contract.
  *
- * NO action wiring in this wave: the returned value is opaque data. The
- * later wave decides what (if anything) a value means — e.g. interpreting
- * it as an action name — and adds the action bridge then.
+ * NO action wiring in this class: the returned value is opaque data.
+ * The key-action wiring wave interprets it (see [SkinScriptKeyBridge]:
+ * only an exact no-value whitelist action name becomes a dispatchable
+ * action; anything else stays data) and adds the action bridge there.
  */
 class SkinScriptRunner(
     private val store: SkinScriptRegistry,

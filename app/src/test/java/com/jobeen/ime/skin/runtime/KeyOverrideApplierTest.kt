@@ -531,6 +531,10 @@ class KeyOverrideApplierTest {
             SkinAction.Command(WhitelistAction.SETTINGS) to KeyboardAction.SettingsAction,
             SkinAction.Command(WhitelistAction.SYSTEM_SETTINGS) to
                 KeyboardAction.SystemSettingsAction,
+            SkinAction.Command(WhitelistAction.RUN_SCRIPT, "s.one") to
+                KeyboardAction.RunScriptAction("s.one"),
+            SkinAction.Command(WhitelistAction.OPEN_SCRIPT) to
+                KeyboardAction.OpenScriptsAction,
             SkinAction.Command(WhitelistAction.NONE) to KeyboardAction.NoOpAction,
             SkinAction.Command(WhitelistAction.DISMISS_KEYBOARD) to
                 KeyboardAction.HideKeyboardAction,

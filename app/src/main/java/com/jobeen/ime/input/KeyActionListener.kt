@@ -1,6 +1,7 @@
 package com.jobeen.ime.input
 
 import android.annotation.SuppressLint
+import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
@@ -14,13 +15,30 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.ImeInputMethodService
+import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.script.SkinScriptActivity
+import com.jobeen.ime.skin.script.SkinScriptKeyBridge
+import com.jobeen.ime.skin.script.SkinScriptRunner
+import com.jobeen.ime.skin.script.SkinScriptStore
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class KeyActionListener(
     private val service: InputMethodService,
 ) : KeyActionListener {
 
     private val engine: IEngine? get() = EngineFactory.current()
+
+    /**
+     * 按键脚本执行器（惰性构造，只包文件目录引用，执行前无 I/O）：
+     * 与管理页用同一脚本库（service.filesDir 下同一目录），故
+     * 管理页的添加／开关即时对按键生效，无需同步。
+     */
+    private val scriptRunner: SkinScriptRunner by lazy {
+        SkinScriptRunner(SkinScriptStore(service.filesDir))
+    }
 
     override fun onKeyAction(action: KeyboardAction) {
         // P4 分段探针（分发段）：起点标记；门控关时 stageStart 返回 -1，
@@ -297,6 +315,43 @@ class KeyActionListener(
             // 候选序号选择（审计 E：#次选/#三选）：窗口路径凭上一帧
             // 候选表解析；直接分发无候选表，丢弃（transformed 已拦截）。
             is KeyboardAction.SelectCandidateIndexAction -> Unit
+
+            // 打开脚本管理页（open_script）：服务上下文起 Activity
+            // 必须带 NEW_TASK（管理页入口本身是 Activity 上下文入口，
+            // 不带该标志；此处显式补齐，不改入口本身的任务语义）。
+            is KeyboardAction.OpenScriptsAction -> {
+                service.startActivity(
+                    SkinScriptActivity.intent(service)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+
+            // 运行应用级脚本（run_script）：执行走后台（Runner 预算
+            // 最高 500ms，主线程执行会卡 UI）；返回值转成的动作回
+            // 主线程再分发（与 combine 递归分发同口径）；无动作时
+            // 只记脚本 id 与原因元数据，绝不记返回值与脚本日志行。
+            is KeyboardAction.RunScriptAction -> {
+                appScope.launch(Dispatchers.Default) {
+                    when (val outcome =
+                        SkinScriptKeyBridge.runForKey(scriptRunner, action.scriptId)
+                    ) {
+                        is SkinScriptKeyBridge.KeyRunOutcome.Dispatch -> {
+                            withContext(Dispatchers.Main) {
+                                onKeyAction(outcome.action)
+                            }
+                        }
+                        is SkinScriptKeyBridge.KeyRunOutcome.NoAction -> {
+                            DiagLog.w(
+                                "keymap", "script_key_no_action",
+                                mapOf(
+                                    "scriptId" to action.scriptId,
+                                    "reason" to outcome.reason.name.lowercase(),
+                                ),
+                            )
+                        }
+                    }
+                }
+            }
 
             // 常用语／候选栏切换（审计 E：#showPhraseView /
             // #candidatesBarStateToggle）：窗口路径拦截；直接分发

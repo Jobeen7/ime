@@ -865,6 +865,8 @@
     <string name="action_home">行首</string>
     <string name="action_end">行尾</string>
     <string name="action_settings">打开设置</string>
+    <string name="action_run_script">运行脚本</string>
+    <string name="action_open_script">打开脚本管理</string>
     <string name="action_system_settings">打开系统设置</string>
     <string name="action_none">无操作</string>
     <string name="action_dismiss_keyboard">收起键盘</string>
