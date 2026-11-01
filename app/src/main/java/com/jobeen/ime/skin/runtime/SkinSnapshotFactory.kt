@@ -343,8 +343,8 @@ object SkinSnapshotFactory {
         fun add(raw: String?) {
             if (!raw.isNullOrBlank()) ids += raw
         }
-        add((tree["layoutId"] as? JsonPrimitive)?.contentOrNull)
-        add((tree["layoutIdLandscape"] as? JsonPrimitive)?.contentOrNull)
+        add((tree["layoutId"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull)
+        add((tree["layoutIdLandscape"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull)
         for (entry in SkinJson.parseKeyboards(tree).values) {
             add(entry.layoutId)
             add(entry.layoutIdLandscape)
