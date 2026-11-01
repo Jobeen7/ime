@@ -858,6 +858,8 @@
     <string name="action_redo">重做</string>
     <string name="action_voice_input">语音输入</string>
     <string name="action_toggle_ascii_mode">中英切换</string>
+    <string name="action_symbolic_lock_toggle">符号板锁定切换</string>
+    <string name="action_emoji_lock_toggle">表情板锁定切换</string>
     <string name="slot_tap">点按</string>
     <string name="slot_long_press">长按</string>
     <string name="slot_double_tap">双击</string>

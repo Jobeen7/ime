@@ -622,6 +622,8 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.REDO -> R.string.action_redo
         WhitelistAction.VOICE_INPUT -> R.string.action_voice_input
         WhitelistAction.TOGGLE_ASCII_MODE -> R.string.action_toggle_ascii_mode
+        WhitelistAction.SYMBOLIC_LOCK_TOGGLE -> R.string.action_symbolic_lock_toggle
+        WhitelistAction.EMOJI_LOCK_TOGGLE -> R.string.action_emoji_lock_toggle
     },
 )
 
