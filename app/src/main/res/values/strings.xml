@@ -211,6 +211,7 @@
     <string name="row_sub_candidates">预测、序号与候选显示</string>
     <string name="row_sub_keyboard">按键音、振动、高度与手势</string>
     <string name="row_sub_skin">皮肤库、导入与颜色模式</string>
+    <string name="row_sub_skin_scripts">管理应用级脚本</string>
     <string name="row_sub_appearance">视频背景、全局样式、字体与应用外观</string>
     <string name="row_sub_clipboard">历史记录与保存规则</string>
     <string name="row_sub_voice">离线识别与云端语音插件</string>

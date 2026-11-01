@@ -134,6 +134,7 @@ class MainActivity : ComponentActivity() {
                             Intent(this@MainActivity, SkinLibraryActivity::class.java)
                         )
                     },
+                    onOpenSkinScripts = { openSkinScripts(this@MainActivity) },
                     onOpenToolbar = {
                         startActivity(
                             Intent(this@MainActivity, ToolbarActivity::class.java)

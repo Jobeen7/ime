@@ -69,7 +69,7 @@ fun directPageForGroup(
 // ---- 设置目录整树（通用渲染器＋搜索页用） ----
 
 /**
- * 目录页：主页 14 个入口页。标题／副标题以字符串资源记，
+ * 目录页：主页入口页。标题／副标题以字符串资源记，
  * 调用方（可组合函数内）解析后供搜索与渲染用。
  */
 data class CatalogPage(
@@ -100,6 +100,7 @@ fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("rime", R.string.rime_title, R.string.row_sub_rime, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("candidates", R.string.prediction_candidates, R.string.row_sub_candidates, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("skin", R.string.keyboard_theme, R.string.row_sub_skin, MainSettingGroup.KEYBOARD),
+    CatalogPage("scripts", R.string.skin_script_title, R.string.row_sub_skin_scripts, MainSettingGroup.KEYBOARD),
     CatalogPage("keyboard", R.string.keyboard_settings, R.string.row_sub_keyboard, MainSettingGroup.KEYBOARD),
     CatalogPage("toolbar", R.string.toolbar_title, R.string.toolbar_settings_desc, MainSettingGroup.KEYBOARD),
     CatalogPage("appearance", R.string.appearance_title, R.string.row_sub_appearance, MainSettingGroup.APPEARANCE),

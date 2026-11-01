@@ -155,16 +155,30 @@ class MainSettingsCatalogTest {
     }
 
     @Test
-    fun catalogPages_fifteenKeysInOrder() {
+    fun catalogPages_sixteenKeysInOrder() {
         val keys = catalogPages().map { it.key }
         assertEquals(
             listOf(
-                "schema", "scheme_update", "rime", "candidates", "skin", "keyboard",
+                "schema", "scheme_update", "rime", "candidates", "skin", "scripts", "keyboard",
                 "toolbar", "appearance", "clipboard", "voice", "stats", "userdict",
                 "backup", "files", "about",
             ),
             keys,
         )
+    }
+
+    @Test
+    fun catalogPages_scriptsPage_isKeyboardGroupSkinAdjacent() {
+        // 脚本管理挂在键盘组皮肤入口之后：脚本由皮肤键触发，
+        // 入口与皮肤相邻，不另立组、不进单页组直达判定（键盘组
+        // 仍为多页，点组仍进组页）。
+        val page = catalogPages().single { it.key == "scripts" }
+        assertEquals(MainSettingGroup.KEYBOARD, page.group)
+        assertEquals("skin", catalogPages()[catalogPages().indexOf(page) - 1].key)
+        assertNull(directPageForGroup(
+            catalogPages().map { MainSettingEntry(it.key, "", "", it.group) },
+            MainSettingGroup.KEYBOARD,
+        ))
     }
 
     @Test

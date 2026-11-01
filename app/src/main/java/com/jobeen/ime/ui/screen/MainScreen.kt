@@ -150,6 +150,7 @@ fun MainScreen(
     onOpenImePicker: () -> Unit = {},
     onOpenKeyboardSettings: () -> Unit,
     onOpenSkinLibrary: () -> Unit,
+    onOpenSkinScripts: () -> Unit = {},
     onOpenToolbar: () -> Unit = {},
     onOpenAppearance: () -> Unit = {},
     onOpenInputStats: () -> Unit = {},
@@ -298,7 +299,7 @@ fun MainScreen(
             .apply()
     }
 
-    // 14 行目录：标题＋副标题＋组＋点击动作；入口与目的地与改版前完全一致，
+    // 目录行：标题＋副标题＋组＋点击动作；入口与目的地与改版前完全一致，
     // 只改呈现（主页组卡片＋子页行），不改偏好键、不改回调、不碰键盘服务。
     // 行表唯一来源＝目录表 catalogPages（键、标题、副标题、组与之一致）。
     val rowClicks: Map<String, () -> Unit> = mapOf(
@@ -308,6 +309,7 @@ fun MainScreen(
         "candidates" to onOpenModelSettings,
         "keyboard" to onOpenKeyboardSettings,
         "skin" to onOpenSkinLibrary,
+        "scripts" to onOpenSkinScripts,
         "toolbar" to onOpenToolbar,
         "appearance" to onOpenAppearance,
         "clipboard" to onOpenClipboard,
