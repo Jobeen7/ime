@@ -27,4 +27,5 @@ data class ToolbarRendererResources(
     val undo: Drawable? = null,
     val redo: Drawable? = null,
     val palette: Drawable? = null,
+    val traditionalChinese: Drawable? = null,
 )

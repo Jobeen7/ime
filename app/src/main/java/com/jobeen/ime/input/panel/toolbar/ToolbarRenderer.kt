@@ -532,6 +532,7 @@ class ToolbarRenderer(
         "undo" -> resources.undo
         "redo" -> resources.redo
         "palette" -> resources.palette
+        "traditional_chinese" -> resources.traditionalChinese
         "menu" -> resources.menu
         "arrow" -> resources.arrow
         "expand" -> resources.expand

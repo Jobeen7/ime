@@ -272,6 +272,7 @@ class KawaiiPanelView(context: Context) : View(context) {
                 context.getDrawable(R.drawable.ic_toolbar_copy),
                 context.getDrawable(R.drawable.ic_toolbar_paste),
                 context.getDrawable(R.drawable.ic_keyboard_search),
+                traditionalChinese = context.getDrawable(R.drawable.ic_keyboard_traditional_ch),
             ),
             hPad,
             centerActions = ToolbarConfig.DEFAULT_ACTIONS,

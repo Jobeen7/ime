@@ -40,12 +40,14 @@ object ToolbarConfig {
         Item("undo", PanelAction.Undo, "撤销"),
         Item("redo", PanelAction.Redo, "重做"),
         Item("palette", PanelAction.Palette, "主题"),
+        Item("traditional_chinese", PanelAction.ToggleTraditionalChinese, "简繁"),
     )
 
     private val BY_ID: Map<String, Item> = POOL.associateBy { it.id }
 
-    /** 出厂默认 = 改版前的固定五项，顺序不变。 */
-    val DEFAULT_IDS: List<String> = listOf("emoji", "select_all", "copy", "paste", "clipboard")
+    /** 出厂默认 = 固定六项，顺序不变（末项为简繁）。 */
+    val DEFAULT_IDS: List<String> =
+        listOf("emoji", "select_all", "copy", "paste", "clipboard", "traditional_chinese")
 
     val DEFAULT_ACTIONS: List<PanelAction> = DEFAULT_IDS.map { BY_ID.getValue(it).action }
 

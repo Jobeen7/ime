@@ -1,6 +1,7 @@
 package com.jobeen.ime.input
 
 import android.content.Intent
+import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.PhraseManager
@@ -71,6 +72,14 @@ class PanelActionListener(
                 })
 
             PanelAction.ToggleVoice -> service.keyboardWindow?.toggleVoiceLocked()
+
+            // 简繁（工具栏路径）：与菜单同款切换逻辑；工具栏按钮无
+            // 开关态着色（着色逻辑只在菜单网格），故不刷新任何开关显示，
+            // 切换对后续候选批次生效（与菜单路径一致）。
+            PanelAction.ToggleTraditionalChinese -> CandidateManager.setTraditionalChineseEnabled(
+                service,
+                !CandidateManager.isTraditionalChineseEnabled(service),
+            )
 
             PanelAction.Settings -> service.startActivity(
                 Intent(service, MainActivity::class.java).apply {
