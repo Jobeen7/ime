@@ -16,8 +16,11 @@ import com.jobeen.ime.input.panel.component.ClipboardTab
 import com.jobeen.ime.skin.icon.IconAlias
 import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.skin.model.SkinToolbarSnapshot
+import com.jobeen.ime.skin.model.ToolbarLayoutSpec
+import com.jobeen.ime.skin.model.ToolbarSlot
 import com.jobeen.ime.skin.model.ToolbarStyleSpec
 import com.jobeen.ime.skin.model.contentRect
+import com.jobeen.ime.skin.model.toolbarSlotGeometry
 
 /**
  * 自定义钮按压态：涟漪动画进行中（alpha>0 且半径未到峰值）且按压点落在该槽内。
@@ -86,6 +89,40 @@ internal fun toolbarCenterHitSuppressed(
     region: ToolbarHitRegion,
 ): Boolean = toolbarHidden && region == ToolbarHitRegion.CENTER
 
+/**
+ * 槽位排列版触摸分区（审计 B 项）：首尾槽中心取槽位几何，
+ * 缺失的槽不产生分区（落入中央区）；无布局时与旧分区一致。
+ */
+internal fun toolbarHitRegionLayout(
+    x: Float,
+    width: Int,
+    density: Float,
+    leftPadDp: Float,
+    rightPadDp: Float,
+    centerPadDp: Float,
+    slots: List<ToolbarSlot>,
+): ToolbarHitRegion {
+    val geo = toolbarSlotGeometry(
+        width, density, (leftPadDp + 4) * density, (rightPadDp + 4) * density,
+        centerPadDp * density, slots,
+    )
+    val edgeTouchW = 48f * density
+    // 右槽优先（与旧分区一致）：窄条上两触摸区重叠时归右槽。
+    val closeCenter = geo.closeCenter
+    if (closeCenter != null &&
+        x in (closeCenter - edgeTouchW / 2f).coerceAtLeast(0f)..(closeCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
+    ) {
+        return ToolbarHitRegion.CLOSE
+    }
+    val menuCenter = geo.menuCenter
+    if (menuCenter != null &&
+        x in (menuCenter - edgeTouchW / 2f).coerceAtLeast(0f)..(menuCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
+    ) {
+        return ToolbarHitRegion.MENU
+    }
+    return ToolbarHitRegion.CENTER
+}
+
 class ToolbarRenderer(
     private val resources: ToolbarRendererResources,
     var horizontalPaddingDp: Float = 0f,
@@ -116,6 +153,11 @@ class ToolbarRenderer(
      * null = 未定义（旧口径：无条背景、无边框、无附加内边距）。
      */
     var toolbarStyle: ToolbarStyleSpec? = null,
+    /**
+     * 工具栏布局（审计 B 项）：构造点经快照传入，长驻渲染器由
+     * refreshTheme 重设；null = 未定义（出厂排列）。
+     */
+    var toolbarLayout: ToolbarLayoutSpec? = null,
 ) : IRenderer {
 
     var textEditingMode: Boolean = false
@@ -257,17 +299,21 @@ class ToolbarRenderer(
         userCenter = null
     }
 
-    /** 中央区几何（与 draw／hitTest 同口径，含样式左右内边距）。 */
+    /** 中央区几何（与 draw／hitTest 同口径，含样式内边距与槽位排列）。 */
     private fun centerArea(width: Int, density: Float): Pair<Float, Float> {
         val style = toolbarStyle
         val hPad = (horizontalPaddingDp + 4 + (style?.insets?.left ?: 0f)) * density
         val rPad = (horizontalPaddingDp + 4 + (style?.insets?.right ?: 0f)) * density
-        val fixedW = 32f * density
-        val centerPad = centerHorizontalPaddingDp * density
-        val left = hPad + fixedW + centerPad
-        val w = width - left - rPad - fixedW - centerPad
-        return left to w
+        val geo = toolbarSlotGeometry(
+            width, density, hPad, rPad,
+            centerHorizontalPaddingDp * density, effectiveSlots(),
+        )
+        return geo.centerLeft to geo.centerWidth
     }
+
+    /** 生效槽位排列：皮肤未定义布局时为出厂排列。 */
+    private fun effectiveSlots(): List<ToolbarSlot> =
+        toolbarLayout?.slots ?: ToolbarLayoutSpec.DEFAULT.slots
 
     /** 用户中央区槽位：项＋左右界（池钮槽宽为 0 时命中跳过）。 */
     private data class UserCenterSlot(val item: UserCenterItem, val left: Float, val right: Float)
@@ -647,11 +693,14 @@ class ToolbarRenderer(
             )
         }
 
-        val menuLeft = hPad
-        val menuCenter = menuLeft + fixedW / 2f
+        // 槽位排列（审计 B 项）：默认左菜单、中央区、右收起；
+        // 皮肤 toolbarLayout 改排列时三槽按新顺序落位，缺失的槽不画。
+        val slots = effectiveSlots()
         val centerPad = centerHorizontalPaddingDp * density
-        val centerAreaLeft = menuLeft + fixedW + centerPad
-        val centerAreaW = width - centerAreaLeft - rPad - fixedW - centerPad
+        val geo = toolbarSlotGeometry(width, density, hPad, rPad, centerPad, slots)
+        val menuCenter = geo.menuCenter
+        val centerAreaLeft = geo.centerLeft
+        val centerAreaW = geo.centerWidth
 
         // 隐藏时中间区的按压涟漪一并跳过（首尾槽的涟漪照常）。
         val centerRippleSuppressed = toolbarHidden &&
@@ -673,7 +722,8 @@ class ToolbarRenderer(
 
         // 最左侧槽：皮肤展开图标优先（解码失败则回落内置菜单/返回）；
         // 剪贴板态（drawClipbar）不走此分支，仍用内置返回箭头。
-        run {
+        // 布局无菜单槽时整段跳过（menuCenter 为 null）。
+        if (menuCenter != null) run {
             val d = skinExpandDrawable() ?: skinExpandSymbolDrawable()
                 ?: if (textEditingMode || copyText != null || showArrow) resources.arrow else resources.menu
             if (d != null) {
@@ -758,7 +808,8 @@ class ToolbarRenderer(
             canvas.drawText(ellipsized, drawX, textY, textPaint)
         } else if (userCenter != null) {
             drawUserCenter(canvas, height, width, paints, density)
-        } else if (centerButtons.isNotEmpty()) {
+        } else if (centerButtons.isNotEmpty() && ToolbarSlot.CENTER in slots) {
+            // 布局无中央槽时池钮行不画（用户自定义区是用户层，仍画跨度）。
             val otherW = centerAreaW / centerButtons.size
             for ((i, btn) in centerButtons.withIndex()) {
                 val savedColor = paints.toolbarIconColor
@@ -776,12 +827,12 @@ class ToolbarRenderer(
             }
         }
 
-        val expandLeft = width - rPad - fixedW
-        val expandCenter = expandLeft + fixedW / 2f
+        val expandCenter = geo.closeCenter
         // 最右侧槽：皮肤收起图标优先（资产 > 符号名 > 结构覆盖），
         // 均缺失回落内置收起图；展开态仍旋转 180°（与内置图行为一致）。
+        // 布局无收起槽时整段跳过。
         val expandIcon = skinCollapseDrawable() ?: skinCollapseSymbolDrawable() ?: expandDrawable()
-        if (expandIcon != null) {
+        if (expandCenter != null && expandIcon != null) {
             expandIcon.setTint(paints.toolbarIconColor)
             val iw = expandIcon.intrinsicWidth.toFloat() * iconScale
             val ih = expandIcon.intrinsicHeight.toFloat() * iconScale
@@ -1245,54 +1296,58 @@ class ToolbarRenderer(
         }
         val effHPad = (effLeftPadDp + 4) * density
         val effRPad = (effRightPadDp + 4) * density
-        val menuCenterEff = effHPad + fixedW / 2f
-        val closeCenterEff = width - effRPad - fixedW / 2f
-        val menuTouchLeftEff = (menuCenterEff - edgeTouchW / 2f).coerceAtLeast(0f)
-        val menuTouchRightEff = (menuCenterEff + edgeTouchW / 2f).coerceAtMost(width.toFloat())
-        val closeTouchLeftEff = (closeCenterEff - edgeTouchW / 2f).coerceAtLeast(0f)
-        val closeTouchRightEff = (closeCenterEff + edgeTouchW / 2f).coerceAtMost(width.toFloat())
+        // 槽位几何（审计 B 项）：与 draw 同一套排列与内边距。
+        val slots = effectiveSlots()
         val centerPad = centerHorizontalPaddingDp * density
-        val centerAreaLeft = effHPad + fixedW + centerPad
-        val centerAreaW = width - centerAreaLeft - effRPad - fixedW - centerPad
+        val geo = toolbarSlotGeometry(width, density, effHPad, effRPad, centerPad, slots)
+        val centerAreaLeft = geo.centerLeft
+        val centerAreaW = geo.centerWidth
         val otherW = centerAreaW / centerButtons.size
 
         // 隐藏时中间区命中一律压制（首尾槽照常）；分区几何与上文同口径。
         if (toolbarCenterHitSuppressed(
                 toolbarHidden,
-                toolbarHitRegionPads(x, width, density, effLeftPadDp, effRightPadDp, centerHorizontalPaddingDp),
+                toolbarHitRegionLayout(x, width, density, effLeftPadDp, effRightPadDp, centerHorizontalPaddingDp, slots),
             )
         ) return null
 
-        when (x) {
-            in closeTouchLeftEff..closeTouchRightEff -> {
-                pressCx = closeCenterEff
-                pressCy = barCy
-                pressRadiusMax = height * 0.55f
-                pressRadius = 0f
-                return KawaiiPanel.TouchResult.ToolbarAction(
-                    PanelAction.CloseKeyboard,
-                    tapX = x,
-                    tapY = y,
-                )
-            }
-
-            in menuTouchLeftEff..menuTouchRightEff -> {
-                pressCx = menuCenterEff
-                pressCy = barCy
-                pressRadiusMax = height * 0.55f
-                pressRadius = 0f
-                return KawaiiPanel.TouchResult.ToolbarAction(
-                    PanelAction.SwitchKeyboard,
-                    tapX = x,
-                    tapY = y,
-                )
-            }
-
-            else -> {
-                if (copyText != null) return null
-                // 用户覆盖中央区：池钮走既有动作路；自定义钮返回 null
-                // （手势归 View 的自定义手势机，命中探针走 userCenterHit）。
-                if (userCenter != null) {
+        val closeCenter = geo.closeCenter
+        val menuCenter = geo.menuCenter
+        val closeTouchLeft = closeCenter?.let { (it - edgeTouchW / 2f).coerceAtLeast(0f) }
+        val closeTouchRight = closeCenter?.let { (it + edgeTouchW / 2f).coerceAtMost(width.toFloat()) }
+        val menuTouchLeft = menuCenter?.let { (it - edgeTouchW / 2f).coerceAtLeast(0f) }
+        val menuTouchRight = menuCenter?.let { (it + edgeTouchW / 2f).coerceAtMost(width.toFloat()) }
+        if (closeCenter != null && closeTouchLeft != null && closeTouchRight != null &&
+            x in closeTouchLeft..closeTouchRight
+        ) {
+            pressCx = closeCenter
+            pressCy = barCy
+            pressRadiusMax = height * 0.55f
+            pressRadius = 0f
+            return KawaiiPanel.TouchResult.ToolbarAction(
+                PanelAction.CloseKeyboard,
+                tapX = x,
+                tapY = y,
+            )
+        }
+        if (menuCenter != null && menuTouchLeft != null && menuTouchRight != null &&
+            x in menuTouchLeft..menuTouchRight
+        ) {
+            pressCx = menuCenter
+            pressCy = barCy
+            pressRadiusMax = height * 0.55f
+            pressRadius = 0f
+            return KawaiiPanel.TouchResult.ToolbarAction(
+                PanelAction.SwitchKeyboard,
+                tapX = x,
+                tapY = y,
+            )
+        }
+        if (copyText != null) return null
+        // 用户覆盖中央区：池钮走既有动作路；自定义钮返回 null
+        // （手势归 View 的自定义手势机，命中探针走 userCenterHit）。
+        // 用户层高于皮肤层：自定义区在跨度内仍命中，不受中央槽缺失影响。
+        if (userCenter != null) {
                     val slots = userCenterSlots(width, density) ?: return null
                     val slot = slots.firstOrNull {
                         x in it.left..it.right && it.right > it.left
@@ -1311,6 +1366,8 @@ class ToolbarRenderer(
                         tapY = y,
                     )
                 }
+                // 布局无中央槽时池钮行不命中（与绘制一致）。
+                if (ToolbarSlot.CENTER !in slots) return null
                 val index = ((x - centerAreaLeft) / otherW).toInt()
                     .takeIf { it in centerButtons.indices } ?: return null
                 if (textEditingMode && centerButtons[index].action in TEXT_EDIT_DISABLED) return null
@@ -1323,8 +1380,6 @@ class ToolbarRenderer(
                     tapX = x,
                     tapY = y,
                 )
-            }
-        }
     }
 
     var showArrow: Boolean = false

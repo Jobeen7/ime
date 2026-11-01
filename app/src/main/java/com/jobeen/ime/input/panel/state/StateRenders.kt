@@ -52,6 +52,8 @@ private fun StateRenderContext.buildToolbarRenderer(
         // 工具栏样式（审计 B 项）：独立于工具栏构成（toolbar 节点），
         // 无 toolbarStyle 节点时为 null，不影响构成抉择。
         toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle,
+        // 工具栏布局（审计 B 项）：同上，独立于构成抉择。
+        toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout,
     ).apply {
         this.showArrow = showArrow
         this.textEditingMode = textEditingMode

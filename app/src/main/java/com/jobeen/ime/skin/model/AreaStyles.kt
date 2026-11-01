@@ -192,6 +192,125 @@ fun ToolbarStyleSpec.contentRect(
     )
 }
 
+/**
+ * 工具栏槽位（审计 B 项）：单行条的三个区。
+ * 对端 toolbarLayout 是 HStack 的 Cell 序列（菜单钮、滑动钮组、
+ * 收起钮），Jime 条恰为左槽＋中央区＋右槽三段式，故布局数据
+ * 收敛为三槽的排列（中央区对应滑动钮组位置）；多行（VStack）
+ * 不在 Jime 单行条的形态内，不接受（见报告）。
+ */
+enum class ToolbarSlot { MENU, CENTER, CLOSE }
+
+/** 工具栏布局规格：去重后的槽位排列；空排列不出现（解析失败返回 null）。 */
+data class ToolbarLayoutSpec(val slots: List<ToolbarSlot>) {
+    companion object {
+        /** 出厂排列：左菜单、中央区、右收起（与旧固定行一致）。 */
+        val DEFAULT = ToolbarLayoutSpec(listOf(ToolbarSlot.MENU, ToolbarSlot.CENTER, ToolbarSlot.CLOSE))
+    }
+}
+
+/**
+ * 解析 toolbarLayout 节点：字符串数组（"menu" / "center" / "close"）。
+ * 非法项逐项丢弃并记 issue；全部丢弃或非数组时返回 null（走默认排列）。
+ */
+fun parseToolbarLayout(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): ToolbarLayoutSpec? {
+    if (node == null) return null
+    val array = node as? kotlinx.serialization.json.JsonArray
+    if (array == null) {
+        issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "toolbar_layout_not_array")
+        return null
+    }
+    val slots = LinkedHashSet<ToolbarSlot>()
+    for (element in array) {
+        val raw = (element as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        val slot = when (raw) {
+            "menu" -> ToolbarSlot.MENU
+            "center" -> ToolbarSlot.CENTER
+            "close" -> ToolbarSlot.CLOSE
+            else -> null
+        }
+        if (slot == null) {
+            issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "toolbar_layout_bad_slot")
+        } else if (!slots.add(slot)) {
+            issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "toolbar_layout_duplicate_slot")
+        }
+    }
+    if (slots.isEmpty()) return null
+    return ToolbarLayoutSpec(slots.toList())
+}
+
+/**
+ * 工具栏槽位几何（纯函数，绘制与命中共用）。
+ * 槽位按排列从左到右落位：固定槽各 32dp，中央区取剩余宽度
+ * （两侧各留一个中央内边距）；缺失的槽不占位，中央区缺失时
+ * [centerLeft]/[centerWidth] 仍为两固定槽之间的跨度（供复制
+ * 药丸等瞬态中央内容与隐藏压制复用，按钮行本身不画）。
+ */
+data class ToolbarSlotGeometry(
+    val menuCenter: Float?,
+    val closeCenter: Float?,
+    val centerLeft: Float,
+    val centerWidth: Float,
+) {
+    val hasMenu: Boolean get() = menuCenter != null
+    val hasClose: Boolean get() = closeCenter != null
+}
+
+fun toolbarSlotGeometry(
+    width: Int,
+    density: Float,
+    leftPadPx: Float,
+    rightPadPx: Float,
+    centerPadPx: Float,
+    slots: List<ToolbarSlot>,
+): ToolbarSlotGeometry {
+    val fixedW = 32f * density
+    val hasCenter = ToolbarSlot.CENTER in slots
+    // 中央区左/右的固定槽：有中央区时按其分界，无中央区时
+    // 首槽在左、其余在右（与旧行“左菜单右收起”一致）。
+    val centerIndex = slots.indexOf(ToolbarSlot.CENTER)
+    val leftSlots = if (centerIndex >= 0) {
+        slots.subList(0, centerIndex)
+    } else if (slots.isNotEmpty()) {
+        slots.subList(0, 1)
+    } else {
+        emptyList()
+    }
+    val rightSlots = if (centerIndex >= 0) {
+        slots.subList(centerIndex + 1, slots.size)
+    } else if (slots.size > 1) {
+        slots.subList(1, slots.size)
+    } else {
+        emptyList()
+    }
+    var menuCenter: Float? = null
+    var closeCenter: Float? = null
+    var leftCursor = leftPadPx
+    for (slot in leftSlots) {
+        val center = leftCursor + fixedW / 2f
+        if (slot == ToolbarSlot.MENU) menuCenter = center else closeCenter = center
+        leftCursor += fixedW
+    }
+    var rightCursor = width - rightPadPx
+    for (slot in rightSlots.reversed()) {
+        rightCursor -= fixedW
+        val center = rightCursor + fixedW / 2f
+        if (slot == ToolbarSlot.MENU) menuCenter = center else closeCenter = center
+    }
+    val centerLeft = if (hasCenter) leftCursor + centerPadPx else leftCursor
+    val centerRight = if (hasCenter) rightCursor - centerPadPx else rightCursor
+    return ToolbarSlotGeometry(
+        menuCenter = menuCenter,
+        closeCenter = closeCenter,
+        centerLeft = centerLeft,
+        centerWidth = (centerRight - centerLeft).coerceAtLeast(0f),
+    )
+}
+
 /** 解析颜色字符串节点：非法记 issue 并返回 null（调用方回落）。 */
 fun parseStyleColor(
     node: JsonElement?,

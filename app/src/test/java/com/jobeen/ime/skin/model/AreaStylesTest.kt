@@ -128,4 +128,58 @@ class AreaStylesTest {
         assertNull(parseToolbarStyle(null, "toolbarStyle", issues))
         assertTrue(issues.isEmpty())
     }
+
+    @Test
+    fun toolbarLayoutParsesOrderAndDedupes() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement("""["close", "center", "menu", "menu"]""")
+        val layout = parseToolbarLayout(node, "toolbarLayout", issues)
+        assertEquals(
+            listOf(ToolbarSlot.CLOSE, ToolbarSlot.CENTER, ToolbarSlot.MENU),
+            layout?.slots,
+        )
+        assertTrue(issues.any { it.detail == "toolbar_layout_duplicate_slot" })
+    }
+
+    @Test
+    fun toolbarLayoutBadSlotDroppedAndEmptyIsNull() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement("""["bogus"]""")
+        assertNull(parseToolbarLayout(node, "toolbarLayout", issues))
+        assertTrue(issues.any { it.detail == "toolbar_layout_bad_slot" })
+    }
+
+    @Test
+    fun toolbarSlotGeometryDefaultMatchesOldRow() {
+        // 旧固定行：左菜单（内边距 12dp + 固定 32dp）、中央区、右收起。
+        val geo = toolbarSlotGeometry(1080, 3f, 36f, 36f, 36f, ToolbarLayoutSpec.DEFAULT.slots)
+        assertEquals(36f + 48f, geo.menuCenter)
+        assertEquals(1080f - 36f - 48f, geo.closeCenter)
+        assertEquals(36f + 96f + 36f, geo.centerLeft, 0f)
+        assertEquals(1080f - 36f - 96f - 36f - (36f + 96f + 36f), geo.centerWidth, 0f)
+    }
+
+    @Test
+    fun toolbarSlotGeometrySwappedOrderMirrorsSlots() {
+        val geo = toolbarSlotGeometry(
+            1080, 3f, 36f, 36f, 36f,
+            listOf(ToolbarSlot.CLOSE, ToolbarSlot.CENTER, ToolbarSlot.MENU),
+        )
+        assertEquals(36f + 48f, geo.closeCenter)
+        assertEquals(1080f - 36f - 48f, geo.menuCenter)
+        assertTrue(geo.centerWidth > 0f)
+    }
+
+    @Test
+    fun toolbarSlotGeometryWithoutCenterSpansFixedZones() {
+        val geo = toolbarSlotGeometry(
+            1080, 3f, 36f, 36f, 36f,
+            listOf(ToolbarSlot.MENU, ToolbarSlot.CLOSE),
+        )
+        assertEquals(36f + 48f, geo.menuCenter)
+        assertEquals(1080f - 36f - 48f, geo.closeCenter)
+        // 无中央槽时跨度 = 左固定槽后到右固定槽前（不计中央内边距）。
+        assertEquals(36f + 96f, geo.centerLeft, 0f)
+        assertEquals(1080f - 36f - 96f - (36f + 96f), geo.centerWidth, 0f)
+    }
 }

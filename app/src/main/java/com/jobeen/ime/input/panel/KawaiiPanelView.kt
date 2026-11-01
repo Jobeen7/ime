@@ -293,6 +293,7 @@ class KawaiiPanelView(context: Context) : View(context) {
             }
             // 工具栏样式（审计 B 项）：独立于构成抉择，快照直取。
             renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
+            renderer.toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout
             applyUserToolbar(renderer)
         }
     }
@@ -309,6 +310,7 @@ class KawaiiPanelView(context: Context) : View(context) {
             SkinToolbarApplier.applyTo(renderer, context)
             // 工具栏样式与构成抉择无关：有样式即应用，无样式清掉旧样式。
             renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
+            renderer.toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout
             applyUserToolbar(renderer)
         }
         invalidate()
