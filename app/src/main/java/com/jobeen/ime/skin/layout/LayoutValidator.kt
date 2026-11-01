@@ -457,6 +457,17 @@ object LayoutValidator {
         // ---- 可选动作槽（§2.5-12）：无效只丢该槽/该元素 ----
         val swipeUp = parseOptionalSlot(key, "swipeUp", KeySlot.SWIPE_UP, path, slotDropped)
         val swipeDown = parseOptionalSlot(key, "swipeDown", KeySlot.SWIPE_DOWN, path, slotDropped)
+        // 工具项 11：布局键槽位与 keyMappings 对齐（槽位复用口径
+        // 与 keyMappings 解析一致：状态槽用 TAP，方向槽用对应方向）。
+        val swipeLeft = parseOptionalSlot(key, "swipeLeft", KeySlot.SWIPE_LEFT, path, slotDropped)
+        val swipeRight = parseOptionalSlot(key, "swipeRight", KeySlot.SWIPE_RIGHT, path, slotDropped)
+        val preeditTap = parseOptionalSlot(key, "preeditTap", KeySlot.TAP, path, slotDropped)
+        val preeditSwipeUp = parseOptionalSlot(key, "preeditSwipeUp", KeySlot.SWIPE_UP, path, slotDropped)
+        val preeditSwipeDown = parseOptionalSlot(key, "preeditSwipeDown", KeySlot.SWIPE_DOWN, path, slotDropped)
+        val preeditSwipeLeft = parseOptionalSlot(key, "preeditSwipeLeft", KeySlot.SWIPE_LEFT, path, slotDropped)
+        val preeditSwipeRight = parseOptionalSlot(key, "preeditSwipeRight", KeySlot.SWIPE_RIGHT, path, slotDropped)
+        val uppercasedTap = parseOptionalSlot(key, "uppercasedTap", KeySlot.TAP, path, slotDropped)
+        val repeat = parseOptionalSlot(key, "repeat", KeySlot.TAP, path, slotDropped)
         val longPress = parseLongPressSlot(key, path, slotDropped)
 
         if (!structurallyValid) return null
@@ -470,6 +481,15 @@ object LayoutValidator {
             swipeUp = swipeUp,
             swipeDown = swipeDown,
             longPress = longPress,
+            swipeLeft = swipeLeft,
+            swipeRight = swipeRight,
+            preeditTap = preeditTap,
+            preeditSwipeUp = preeditSwipeUp,
+            preeditSwipeDown = preeditSwipeDown,
+            preeditSwipeLeft = preeditSwipeLeft,
+            preeditSwipeRight = preeditSwipeRight,
+            uppercasedTap = uppercasedTap,
+            repeat = repeat,
             landscapeWidthWeight = landscapeWeight,
             styleRef = styleRef,
             styleOverrides = styleOverrides,

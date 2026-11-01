@@ -23,6 +23,15 @@ class LayoutKeyDefBuilderTest {
         tap: SkinAction = SkinAction.Text(stableId),
         swipeUp: SkinAction? = null,
         swipeDown: SkinAction? = null,
+        swipeLeft: SkinAction? = null,
+        swipeRight: SkinAction? = null,
+        preeditTap: SkinAction? = null,
+        preeditSwipeUp: SkinAction? = null,
+        preeditSwipeDown: SkinAction? = null,
+        preeditSwipeLeft: SkinAction? = null,
+        preeditSwipeRight: SkinAction? = null,
+        uppercasedTap: SkinAction? = null,
+        repeat: SkinAction? = null,
         longPress: List<SkinAction>? = null,
         landscapeWeight: Double? = null,
         styleRef: String? = null,
@@ -36,6 +45,15 @@ class LayoutKeyDefBuilderTest {
         tap = tap,
         swipeUp = swipeUp,
         swipeDown = swipeDown,
+        swipeLeft = swipeLeft,
+        swipeRight = swipeRight,
+        preeditTap = preeditTap,
+        preeditSwipeUp = preeditSwipeUp,
+        preeditSwipeDown = preeditSwipeDown,
+        preeditSwipeLeft = preeditSwipeLeft,
+        preeditSwipeRight = preeditSwipeRight,
+        uppercasedTap = uppercasedTap,
+        repeat = repeat,
         longPress = longPress,
         landscapeWidthWeight = landscapeWeight,
         styleRef = styleRef,
@@ -155,6 +173,45 @@ class LayoutKeyDefBuilderTest {
         assertTrue(
             b.behaviors.filterIsInstance<KeyDef.Behavior.LongPress>().single().action
                 is KeyboardAction.ClearAction,
+        )
+    }
+
+    @Test
+    fun fullSlotsBuildBehaviors() {
+        val layout = layoutOf(
+            listOf(
+                key(
+                    "a",
+                    tap = SkinAction.Text("t"),
+                    swipeLeft = SkinAction.Text("l"),
+                    swipeRight = SkinAction.Text("r"),
+                    preeditTap = SkinAction.Text("p"),
+                    preeditSwipeUp = SkinAction.Text("pu"),
+                    preeditSwipeDown = SkinAction.Text("pd"),
+                    preeditSwipeLeft = SkinAction.Text("pl"),
+                    preeditSwipeRight = SkinAction.Text("pr"),
+                    uppercasedTap = SkinAction.Text("u"),
+                    repeat = SkinAction.Command(WhitelistAction.DELETE_FORWARD),
+                ),
+            ),
+        )
+        val def = LayoutKeyDefBuilder.build(layout, emptyMap())[0][0]
+        val press = def.behaviors.filterIsInstance<KeyDef.Behavior.Press>().single()
+        assertEquals("t", (press.action as KeyboardAction.KeySequenceAction).sequence)
+        assertEquals("p", (press.preeditAction as KeyboardAction.KeySequenceAction).sequence)
+        assertEquals("u", (press.uppercasedAction as KeyboardAction.KeySequenceAction).sequence)
+        val swipe = def.behaviors.filterIsInstance<KeyDef.Behavior.Swipe>().single()
+        assertNull(swipe.upAction)
+        assertNull(swipe.downAction)
+        assertEquals("l", (swipe.leftAction as KeyboardAction.KeySequenceAction).sequence)
+        assertEquals("r", (swipe.rightAction as KeyboardAction.KeySequenceAction).sequence)
+        assertEquals("pu", (swipe.preeditUpAction as KeyboardAction.KeySequenceAction).sequence)
+        assertEquals("pd", (swipe.preeditDownAction as KeyboardAction.KeySequenceAction).sequence)
+        assertEquals("pl", (swipe.preeditLeftAction as KeyboardAction.KeySequenceAction).sequence)
+        assertEquals("pr", (swipe.preeditRightAction as KeyboardAction.KeySequenceAction).sequence)
+        assertTrue(
+            def.behaviors.filterIsInstance<KeyDef.Behavior.Repeat>().single().action
+                is KeyboardAction.DeleteForwardAction,
         )
     }
 

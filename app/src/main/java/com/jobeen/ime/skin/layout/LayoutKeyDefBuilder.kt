@@ -109,13 +109,33 @@ object LayoutKeyDefBuilder {
         // 自创布局构建不走此路；防御性跳键，永不崩溃。
         val tapAction = key.tap?.let { KeyOverrideApplier.toRuntime(it) } ?: return null
         val label = KeyOverrideApplier.substitute(key.label, placeholders)
-        val behaviors = mutableSetOf<KeyDef.Behavior>(KeyDef.Behavior.Press(tapAction))
-        if (key.swipeUp != null || key.swipeDown != null) {
+        // 工具项 11：点击三态与覆写层同口径（Press.preeditAction /
+        // uppercasedAction）；无状态槽时两参为 null，行为与旧版一致。
+        val behaviors = mutableSetOf<KeyDef.Behavior>(
+            KeyDef.Behavior.Press(
+                tapAction,
+                preeditAction = key.preeditTap?.let { KeyOverrideApplier.toRuntime(it) },
+                uppercasedAction = key.uppercasedTap?.let { KeyOverrideApplier.toRuntime(it) },
+            ),
+        )
+        if (key.swipeUp != null || key.swipeDown != null ||
+            key.swipeLeft != null || key.swipeRight != null ||
+            key.preeditSwipeUp != null || key.preeditSwipeDown != null ||
+            key.preeditSwipeLeft != null || key.preeditSwipeRight != null
+        ) {
             behaviors += KeyDef.Behavior.Swipe(
                 upAction = key.swipeUp?.let { KeyOverrideApplier.toRuntime(it) },
                 downAction = key.swipeDown?.let { KeyOverrideApplier.toRuntime(it) },
+                leftAction = key.swipeLeft?.let { KeyOverrideApplier.toRuntime(it) },
+                rightAction = key.swipeRight?.let { KeyOverrideApplier.toRuntime(it) },
+                preeditUpAction = key.preeditSwipeUp?.let { KeyOverrideApplier.toRuntime(it) },
+                preeditDownAction = key.preeditSwipeDown?.let { KeyOverrideApplier.toRuntime(it) },
+                preeditLeftAction = key.preeditSwipeLeft?.let { KeyOverrideApplier.toRuntime(it) },
+                preeditRightAction = key.preeditSwipeRight?.let { KeyOverrideApplier.toRuntime(it) },
             )
         }
+        // 工具项 11：重复槽与覆写层同口径（Behavior.Repeat）。
+        key.repeat?.let { behaviors += KeyDef.Behavior.Repeat(KeyOverrideApplier.toRuntime(it)) }
         var popups: Array<KeyDef.Popup>? = null
         key.longPress?.let { longPress ->
             when {

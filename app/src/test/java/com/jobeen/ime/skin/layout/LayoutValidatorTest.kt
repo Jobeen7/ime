@@ -7,6 +7,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
+import com.jobeen.ime.skin.model.SkinAction
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
@@ -602,6 +603,64 @@ class LayoutValidatorTest {
             layout(rowsOf(row(key())), patchOf = JsonPrimitive("t9")),
         )
         assertEquals("t9", result.layout.patchOf)
+    }
+
+    @Test
+    fun layoutKeyFullSlotsParsed() {
+        val model = valid(
+            layout(
+                rowsOf(
+                    row(
+                        key(
+                            "a",
+                            extra = {
+                                put("swipeLeft", textTap("l"))
+                                put("swipeRight", textTap("r"))
+                                put("preeditTap", textTap("p"))
+                                put("preeditSwipeUp", textTap("pu"))
+                                put("preeditSwipeDown", textTap("pd"))
+                                put("preeditSwipeLeft", textTap("pl"))
+                                put("preeditSwipeRight", textTap("pr"))
+                                put("uppercasedTap", textTap("u"))
+                                put("repeat", textTap("rep"))
+                            },
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val parsed = model.rows[0][0]
+        assertEquals(SkinAction.Text("l"), parsed.swipeLeft)
+        assertEquals(SkinAction.Text("r"), parsed.swipeRight)
+        assertEquals(SkinAction.Text("p"), parsed.preeditTap)
+        assertEquals(SkinAction.Text("pu"), parsed.preeditSwipeUp)
+        assertEquals(SkinAction.Text("pd"), parsed.preeditSwipeDown)
+        assertEquals(SkinAction.Text("pl"), parsed.preeditSwipeLeft)
+        assertEquals(SkinAction.Text("pr"), parsed.preeditSwipeRight)
+        assertEquals(SkinAction.Text("u"), parsed.uppercasedTap)
+        assertEquals(SkinAction.Text("rep"), parsed.repeat)
+    }
+
+    @Test
+    fun layoutKeyInvalidNewSlotDroppedWithoutReject() {
+        val model = valid(
+            layout(
+                rowsOf(
+                    row(
+                        key(
+                            "a",
+                            extra = {
+                                put("swipeLeft", JsonPrimitive(42))
+                                put("preeditTap", textTap("p"))
+                            },
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val parsed = model.rows[0][0]
+        assertNull(parsed.swipeLeft)
+        assertEquals(SkinAction.Text("p"), parsed.preeditTap)
     }
 
     @Test

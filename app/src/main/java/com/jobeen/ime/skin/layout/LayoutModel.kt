@@ -33,6 +33,19 @@ data class LayoutKeyModel(
     val swipeUp: SkinAction?,
     val swipeDown: SkinAction?,
     val longPress: List<SkinAction>?,
+    /** 左右滑动作（工具项 11：布局键槽位与 keyMappings 对齐）。 */
+    val swipeLeft: SkinAction? = null,
+    val swipeRight: SkinAction? = null,
+    /** 组合态点击／滑动动作（工具项 11：与 keyMappings 槽位对齐）。 */
+    val preeditTap: SkinAction? = null,
+    val preeditSwipeUp: SkinAction? = null,
+    val preeditSwipeDown: SkinAction? = null,
+    val preeditSwipeLeft: SkinAction? = null,
+    val preeditSwipeRight: SkinAction? = null,
+    /** 大写态点击动作（工具项 11：与 keyMappings 槽位对齐）。 */
+    val uppercasedTap: SkinAction? = null,
+    /** 长按重复动作（工具项 11：与 keyMappings 槽位对齐）。 */
+    val repeat: SkinAction? = null,
     /**
      * 横屏宽度权重（2026-10-27 并入项）：横屏构建期取
      * 本值代替 widthWeight；null = 跟竖屏权重。文件存原始值，
