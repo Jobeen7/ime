@@ -52,6 +52,12 @@ data class SoundBindings(
     val rejected: List<RejectedSound>,
     /** 极低内存档整段跳过接纳（裁定七）：此时 admitted 恒空、rejected 恒空。 */
     val skippedByDegradation: Boolean,
+    /** keySound 动作映射（仅已接纳资产；字符精确匹配）。 */
+    val keySoundActions: Map<String, String> = emptyMap(),
+    /** keySound 三槽（仅已接纳资产；未接纳/未配置为 null）。 */
+    val keySoundDelete: String? = null,
+    val keySoundInput: String? = null,
+    val keySoundSystem: String? = null,
 ) {
     companion object {
         val EMPTY = SoundBindings(
@@ -90,6 +96,10 @@ object SkinSoundAdmission {
         facts: (String) -> AudioAssetFacts?,
         audioBudgetBytes: Long,
         skipAll: Boolean,
+        keySoundActions: Map<String, String> = emptyMap(),
+        keySoundDelete: String? = null,
+        keySoundInput: String? = null,
+        keySoundSystem: String? = null,
     ): SoundBindings {
         if (skipAll) {
             return SoundBindings(
@@ -163,6 +173,10 @@ object SkinSoundAdmission {
             defaultTapAssetId = defaultTapAssetId?.takeIf { it in admitted },
             rejected = rejected,
             skippedByDegradation = false,
+            keySoundActions = keySoundActions.filterValues { it in admitted },
+            keySoundDelete = keySoundDelete?.takeIf { it in admitted },
+            keySoundInput = keySoundInput?.takeIf { it in admitted },
+            keySoundSystem = keySoundSystem?.takeIf { it in admitted },
         )
     }
 }

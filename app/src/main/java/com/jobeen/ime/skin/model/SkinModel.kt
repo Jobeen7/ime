@@ -187,6 +187,14 @@ data class StylesSpec(
     val surfaceStyle: KeyboardColors.SurfaceStyle?,
 )
 
+/** 顶层 keySound 校验结果：动作字符映射 + 三槽引用（均为资产 id）。 */
+data class KeySoundSpec(
+    val actions: Map<String, String> = emptyMap(),
+    val delete: String? = null,
+    val input: String? = null,
+    val system: String? = null,
+)
+
 /** 校验通过的皮肤文档（只读视图；原始树在 [tree]）。 */
 data class ValidatedSkin(
     val tree: JsonObject,
@@ -222,6 +230,13 @@ data class ValidatedSkin(
     val sequenceBindingCount: Int,
     /** audio 映射 slot → 资产 id（B2 起经快照接纳判定后应用）。 */
     val audioRefs: Map<String, String>,
+    /**
+     * 按键音映射（顶层 keySound）：字符 → 资产 id 的逐键覆写 +
+     * delete/input/system 三槽。校验期只做引用存在性提示（与
+     * audio 同口径），接纳判定在快照构建期；未接纳的引用在
+     * 解析链按级回退，不静音不报错。
+     */
+    val keySound: KeySoundSpec = KeySoundSpec(),
     /** 单键样式表（2026-10-27 并入项）：样式名 → 角色 → 取值字符串（令牌路径或字面色）。 */
     val keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
     /** 状态驱动通知（重点候选 8-1）：顶层 notifications 校验结果；未定义即空表。 */

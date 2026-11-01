@@ -638,6 +638,57 @@ object SkinValidator {
             }
         }
 
+        // ---- keySound（按键音；与 audio 同口径：只做引用存在性提示，
+        // 接纳判定在快照构建期；非法引用逐项丢弃，不影响其它槽） ----
+        val keySoundActions = mutableMapOf<String, String>()
+        val keySoundNode = tree["keySound"] as? JsonObject
+        if (tree["keySound"] != null && keySoundNode == null) {
+            issues += SkinIssue("keySound", SkinIssue.Kind.FIELD_FALLBACK, "keysound_not_object")
+        }
+        fun keySoundSlot(name: String): String? {
+            val node = keySoundNode?.get(name) ?: return null
+            val assetId = (node as? JsonPrimitive)?.contentOrNull
+            if (assetId == null) {
+                issues += SkinIssue(
+                    "keySound.$name", SkinIssue.Kind.FIELD_FALLBACK, "keysound_ref_not_string",
+                )
+                return null
+            }
+            if (assetKind(assetId) == null) {
+                issues += SkinIssue(
+                    "keySound.$name", SkinIssue.Kind.RESOURCE_FALLBACK, "keysound_asset_missing",
+                )
+            }
+            return assetId
+        }
+        if (keySoundNode != null) {
+            val actions = keySoundNode["actions"] as? JsonObject
+            if (keySoundNode["actions"] != null && actions == null) {
+                issues += SkinIssue(
+                    "keySound.actions", SkinIssue.Kind.FIELD_FALLBACK, "keysound_actions_not_object",
+                )
+            }
+            if (actions != null) {
+                for ((char, node) in actions) {
+                    val assetId = (node as? JsonPrimitive)?.contentOrNull
+                    if (assetId == null) {
+                        issues += SkinIssue(
+                            "keySound.actions.$char",
+                            SkinIssue.Kind.FIELD_FALLBACK, "keysound_ref_not_string",
+                        )
+                    } else {
+                        keySoundActions[char] = assetId
+                        if (assetKind(assetId) == null) {
+                            issues += SkinIssue(
+                                "keySound.actions.$char",
+                                SkinIssue.Kind.RESOURCE_FALLBACK, "keysound_asset_missing",
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
         // ---- toolbar（2026-10-27 工具栏进皮肤：顶层节点，逐项丢弃不拒包） ----
         // 按钮池判定复用 ToolbarConfig（未知 id 即非法）；资产类别沿用
         // 传入的 manifest 口径（IMAGE 资产机制，与背景同口径）。
@@ -749,6 +800,12 @@ object SkinValidator {
                 keyRejections = keyRejections,
                 sequenceBindingCount = sequenceBindingCount,
                 audioRefs = audioRefs,
+                keySound = KeySoundSpec(
+                    actions = keySoundActions,
+                    delete = keySoundSlot("delete"),
+                    input = keySoundSlot("input"),
+                    system = keySoundSlot("system"),
+                ),
                 keyStyles = keyStyles,
                 keyboardGeometry = KeyboardGeometrySpec(
                     presence = keyboardPresence,

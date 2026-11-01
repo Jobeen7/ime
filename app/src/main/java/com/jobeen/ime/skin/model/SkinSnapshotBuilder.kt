@@ -112,10 +112,15 @@ object SkinSnapshotBuilder {
             )
         }
 
-        // 音效接纳（详设 §7.1）：被引用集合 = audio.tap + 逐键 sound 字段；
-        // 接纳次序 = 清单顺序，未入清单的引用追加在后（facts 恒 null → MISSING）
+        // 音效接纳（详设 §7.1）：被引用集合 = audio.tap + keySound
+        // 全量 + 逐键 sound 字段；接纳次序 = 清单顺序，未入清单的
+        // 引用追加在后（facts 恒 null → MISSING）
         val referenced = LinkedHashSet<String>()
         validated.audioRefs["tap"]?.let { referenced += it }
+        validated.keySound.actions.values.forEach { referenced += it }
+        listOfNotNull(
+            validated.keySound.delete, validated.keySound.input, validated.keySound.system,
+        ).forEach { referenced += it }
         for (override in validated.keyOverrides.values) {
             override.soundRef?.takeIf { it.isNotEmpty() }?.let { referenced += it }
         }
@@ -124,6 +129,10 @@ object SkinSnapshotBuilder {
         val soundBindings = SkinSoundAdmission.admit(
             referencedInOrder = inManifest + notInManifest,
             defaultTapAssetId = validated.audioRefs["tap"],
+            keySoundActions = validated.keySound.actions,
+            keySoundDelete = validated.keySound.delete,
+            keySoundInput = validated.keySound.input,
+            keySoundSystem = validated.keySound.system,
             facts = audioFacts,
             audioBudgetBytes = policy.audioBudgetBytes,
             skipAll = tier == MemoryTier.EXTREME,

@@ -163,7 +163,9 @@ object KeyOverrideApplier {
                     }
                     suppressed.takeIf { o -> o.hasEffect() }
                 }
-                val sound = resolveSound(override, snapshot.soundBindings)
+                val pressAction = def.behaviors
+                    .filterIsInstance<KeyDef.Behavior.Press>().firstOrNull()?.action
+                val sound = resolveSound(override, snapshot.soundBindings, pressAction)
                 val style = resolveKeyStyle(
                     layoutName, def, override, snapshot, effectiveScheme,
                     gatedStyleNames, activeStyleNames,
@@ -333,13 +335,40 @@ object KeyOverrideApplier {
         return false
     }
 
-    /** 音效三级解析（详设 §7.2-1）：逐键未接纳时按字段级回退到全局级。 */
-    fun resolveSound(override: KeyOverride?, bindings: SoundBindings): SoundPlan {
+    /** 音效解析（不带按键动作时 keySound 一级跳过，等价于旧三级链）。 */
+    fun resolveSound(override: KeyOverride?, bindings: SoundBindings): SoundPlan =
+        resolveSound(override, bindings, null)
+
+    /**
+     * 音效四级解析（详设 §7.2-1 扩展）：逐键覆写 > keySound >
+     * 全局 tap > 出厂。keySound 内：删除键走 delete 槽；输入
+     * 动作按精确文本查 actions 表、未命中走 input 槽；其它动作
+     * 走 system 槽。逐键引用未接纳时同样逐级回退，不静音不报错。
+     */
+    fun resolveSound(
+        override: KeyOverride?,
+        bindings: SoundBindings,
+        action: KeyboardAction?,
+    ): SoundPlan {
         val ref = override?.soundRef
         if (ref != null) {
             if (ref.isEmpty()) return SoundPlan.Muted
             if (ref in bindings.admitted) return SoundPlan.Play(ref)
-            // 引用未接纳（缺失/被剔）→ 回退全局级，不静音不报错
+            // 引用未接纳（缺失/被剔）→ 逐级回退，不静音不报错
+        }
+        if (action != null) {
+            val mapped = when (action) {
+                is KeyboardAction.BackspaceAction -> bindings.keySoundDelete
+                is KeyboardAction.KeySequenceAction ->
+                    bindings.keySoundActions[action.sequence] ?: bindings.keySoundInput
+                is KeyboardAction.CommitAction ->
+                    bindings.keySoundActions[action.text] ?: bindings.keySoundInput
+                is KeyboardAction.SpaceAction ->
+                    bindings.keySoundActions[" "] ?: bindings.keySoundInput
+                is KeyboardAction.MultiReturnAction -> bindings.keySoundInput
+                else -> bindings.keySoundSystem
+            }
+            if (mapped != null) return SoundPlan.Play(mapped)
         }
         val tap = bindings.defaultTapAssetId
         return if (tap != null) SoundPlan.Play(tap) else SoundPlan.Inherit
