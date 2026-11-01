@@ -55,6 +55,13 @@ class Paints(context: Context) {
     val toolbarButtonBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE
     }
+    /**
+     * 横条候选区背景（审计 B 项）：皮肤 horizontalCandidatesStyle
+     * 指定时组字条用它代替面板底；null = 现行面板底。
+     * 组字渲染器（ComposingRenderer）与条视图底渐变共用此值，
+     * 工具栏态不用（见 KawaiiPanelView.onDraw 的渲染器守卫）。
+     */
+    var candidateStripBg: Int? = null
 
     fun updateColors(context: Context) {
         val scheme = KeyboardColors.resolve(context)
@@ -69,6 +76,7 @@ class Paints(context: Context) {
         selectedCandidateTextPaint.color = panel.selectedCandidateText
         candidateIndexPaint.color = panel.candidateIndex
         toolbarPressedColor = panel.toolbarPressed
+        candidateStripBg = SkinSnapshotProvider.peek()?.horizontalCandidatesStyle?.background
         // 工具栏按钮表面（全局样式层）：皮肤样式 presence 决定
         // 全局按键值是否生效；跟随按键时半径取生效键圆角。
         val global = GlobalStylePrefs.get(context)

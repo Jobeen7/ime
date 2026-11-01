@@ -358,7 +358,13 @@ class KawaiiPanelView(context: Context) : View(context) {
             val dst = RectF((width - w) / 2f, (height - h) / 2f, (width + w) / 2f, (height + h) / 2f)
             canvas.drawBitmap(bitmap, null, dst, null)
         } else if (!barSharedBackground) {
-            val bgColor = paints.bgPaint.color
+            // 横条区背景（审计 B 项）：仅组字渲染器态用区样式背景，
+            // 工具栏态仍用面板底（区样式只属于候选区）。
+            val bgColor = if (currentRenderer is ComposingRenderer) {
+                paints.candidateStripBg ?: paints.bgPaint.color
+            } else {
+                paints.bgPaint.color
+            }
             val kbBg = paints.keyboardBackground
             if (width != bgGradW || height != bgGradH || bgColor != bgGradColor || kbBg != bgGradKeyboardBg) {
                 bgGradPaint.set(paints.bgPaint)

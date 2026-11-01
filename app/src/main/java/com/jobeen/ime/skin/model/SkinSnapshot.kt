@@ -126,6 +126,10 @@ data class SkinSnapshot(
     val preeditHeight: VhLengthSpec? = null,
     /** 预编辑样式（审计 B 项）：null = 未定义。 */
     val preeditStyle: PreeditStyleSpec? = null,
+    /** 横条候选区样式（审计 B 项）：null = 未定义。 */
+    val horizontalCandidatesStyle: CandidateAreaStyleSpec? = null,
+    /** 竖网格候选区样式（审计 B 项）：null = 未定义。 */
+    val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /**
      * 状态驱动通知（重点候选 8-1，接线轮 R1）：校验结果透传；
      * 运行态按此建锁定表，快照切换时同步重置。

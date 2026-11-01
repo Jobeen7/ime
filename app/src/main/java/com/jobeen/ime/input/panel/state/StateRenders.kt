@@ -126,6 +126,7 @@ class ComposingStateRender(
             candidateBorder = settings.candidateBorder,
             expandBorder = settings.expandBorder,
             candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f,
+            areaStyle = snapshot?.horizontalCandidatesStyle,
         ).also {
             it.recording = ctx.recording
             it.highlightedIndex = highlightedIndex
@@ -161,6 +162,7 @@ class PredictionStateRender(
             candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f,
             edgeBgColor = snapshot?.predictionCloseBg,
             edgeRadiusDp = snapshot?.predictionCloseRadiusDp,
+            areaStyle = snapshot?.horizontalCandidatesStyle,
         ).also {
             it.recording = ctx.recording
             it.highlightedIndex = highlightedIndex

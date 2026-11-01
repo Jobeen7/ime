@@ -181,6 +181,30 @@ class AreaStylesTest {
     }
 
     @Test
+    fun candidateAreaStyleParsesInsetsAndBackground() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement(
+            """{"insets": {"bottom": 3, "left": 4, "right": 4, "top": 3},
+               "background": "#FF112233"}""",
+        )
+        val style = parseCandidateAreaStyle(node, "verticalCandidatesStyle", issues)
+        assertTrue(issues.isEmpty())
+        assertEquals(4f, style?.insets?.left)
+        assertEquals(3f, style?.insets?.top)
+        assertEquals(0xFF112233.toInt(), style?.background)
+    }
+
+    @Test
+    fun candidateAreaStyleHorizontalDefaultsToNoBackground() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement("""{"insets": {"left": 3}}""")
+        val style = parseCandidateAreaStyle(node, "horizontalCandidatesStyle", issues)
+        assertEquals(3f, style?.insets?.left)
+        assertNull(style?.background)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
     fun preeditStyleParsesAllFields() {
         val issues = mutableListOf<SkinIssue>()
         val node = Json.parseToJsonElement(

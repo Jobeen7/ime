@@ -21,6 +21,7 @@ import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
+import com.jobeen.ime.skin.model.AreaInsets
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -79,6 +80,12 @@ class CandidateGridView(
      * 与药丸圆角共用此值。
      */
     var candidateRadiusDp: Float = 6f
+    /**
+     * 竖网格候选区样式（审计 B 项）：refreshTheme 从快照同步；
+     * insets 使画布内缩（命中同步偏移），background 覆盖网格底。
+     */
+    var areaInsets: AreaInsets = AreaInsets()
+    var areaBackground: Int? = null
     var onDragComplete: ((List<EngineMessage.Candidate>) -> Unit)? = null
     var onWordForget: ((EngineMessage.Candidate, Float, Float) -> Unit)? = null
 
@@ -127,6 +134,9 @@ class CandidateGridView(
         private var rowH = 0f
         private var cellPad = 0f
         private var minWordSpace = 0f
+        /** 区样式生效尺寸（审计 B 项）：可用宽高，尺寸未到时为 0（调用方回落视图尺寸）。 */
+        private var effW = 0f
+        private var effH = 0f
 
         var positions = emptyList<WordPos>()
             private set
@@ -195,7 +205,7 @@ class CandidateGridView(
             }
 
         fun updateColors(pc: KeyboardColors.ColorScheme.PanelColors) {
-            bgPaint.color = pc.background
+            bgPaint.color = areaBackground ?: pc.background
             textPaint.color = pc.candidateText
             sepPaint.color = pc.candidateDivider
             pressPaint.color = pc.candidateBackground
@@ -213,7 +223,7 @@ class CandidateGridView(
                 return
             }
 
-            val rowWidth = width.toFloat()
+            val rowWidth = if (effW > 0f) effW else width.toFloat()
             // 文本宽度只在这里测一次，绘制与命中测试复用缓存
             textWidths = FloatArray(allCandidates.size) {
                 textPaint.measureText(allCandidates[it].text)
@@ -295,19 +305,42 @@ class CandidateGridView(
             minWordSpace = 8f * d   // 词间最小间距，保证分隔线可绘制
             sepPaint.strokeWidth = 1f * d
             updateColors(colors.panel)
-            val minRowH = 32f * d
-            visibleRows = (h / minRowH).toInt().coerceIn(1, maxVisibleRow)
-            rowH = h.toFloat() / visibleRows
-            recomputeLayout()
+            refreshAreaGeometry()
             resetScroll()
+        }
+
+        /**
+         * 区样式生效尺寸（审计 B 项）：画布可用宽高 = 视图尺寸
+         * 减区 insets；行高与可见行数按可用高算，布局按可用宽算。
+         * onSizeChanged 与 refreshTheme（insets 变化但尺寸不变时）
+         * 共用；不碰滚动（主题刷新不重置滚动位置）。
+         */
+        fun refreshAreaGeometry() {
+            val w = width
+            val h = height
+            if (w <= 0 || h <= 0) return
+            val d = resources.displayMetrics.density
+            effW = (w - (areaInsets.left + areaInsets.right) * d).coerceAtLeast(0f)
+            effH = (h - (areaInsets.top + areaInsets.bottom) * d).coerceAtLeast(0f)
+            val minRowH = 32f * d
+            visibleRows = (effH / minRowH).toInt().coerceIn(1, maxVisibleRow)
+            rowH = if (visibleRows > 0) effH / visibleRows else 0f
+            maxScrollCache = null
+            recomputeLayout()
+            invalidate()
         }
 
         override fun onDraw(canvas: Canvas) {
             if (width <= 0 || height <= 0) return
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
 
-            val rowWidth = width.toFloat()
-            val h = height.toFloat()
+            // 区样式内缩（审计 B 项）：内容在 (leftPx, topPx) 平移后的
+            // 网格坐标系内绘制，裁剪到可用区；拖动图一并在系内画。
+            val insetDensity = resources.displayMetrics.density
+            val leftPx = areaInsets.left * insetDensity
+            val topPx = areaInsets.top * insetDensity
+            val rowWidth = if (effW > 0f) effW else width.toFloat()
+            val h = if (effH > 0f) effH else height.toFloat()
 
             val firstRow = (scrollOffsetY / rowH).toInt().coerceAtLeast(0)
             val yOff = -(scrollOffsetY - firstRow * rowH) + stretch
@@ -316,7 +349,10 @@ class CandidateGridView(
             val densityF = resources.displayMetrics.density
 
             canvas.withSave {
-                clipRect(0f, 0f, rowWidth, h)
+                clipRect(leftPx, topPx, leftPx + rowWidth, topPx + h)
+                translate(leftPx, topPx)
+                canvas.withSave {
+                    clipRect(0f, 0f, rowWidth, h)
                 val startIdx = rowStartIndex.getOrElse(firstRow) { 0 }
                 for (i in startIdx until positions.size) {
                     val pos = positions[i]
@@ -407,34 +443,36 @@ class CandidateGridView(
                 }
             }
 
-            if (dragIndex >= 0 && dragIndex in allCandidates.indices) {
-                val c = allCandidates[dragIndex]
-                val dragW = textWidths.getOrElse(dragIndex) { 0f } + cellPad * 2
-                // 超宽候选的拖动图有效宽度钳到视口宽：起点计算与实际
-                // 绘制宽度同用钳后值。dragLeft/dragTop 经 dragOrigin
-                // 计算，尺寸先钳到视口、coerceIn 区间恒非空（旧写法
-                // dragW > width 时上限为负、必抛 IllegalArgumentException）
-                val effectiveDragW = minOf(dragW, width.toFloat())
-                val dragLeft = dragOrigin(dragFingerX, dragW, width.toFloat())
-                val dragTop = dragOrigin(dragFingerY, rowH, height.toFloat())
+                if (dragIndex >= 0 && dragIndex in allCandidates.indices) {
+                    val c = allCandidates[dragIndex]
+                    val dragW = textWidths.getOrElse(dragIndex) { 0f } + cellPad * 2
+                    // 超宽候选的拖动图有效宽度钳到视口宽：起点计算与实际
+                    // 绘制宽度同用钳后值。dragLeft/dragTop 经 dragOrigin
+                    // 计算，尺寸先钳到视口、coerceIn 区间恒非空（旧写法
+                    // dragW > width 时上限为负、必抛 IllegalArgumentException）
+                    // 手指坐标是视图坐标，进平移后的网格系须减内缩偏移。
+                    val effectiveDragW = minOf(dragW, rowWidth)
+                    val dragLeft = dragOrigin(dragFingerX - leftPx, dragW, rowWidth)
+                    val dragTop = dragOrigin(dragFingerY - topPx, rowH, h)
 
-                val d = resources.displayMetrics.density
-                val oldColor = bgPaint.color
-                bgPaint.color = sepPaint.color
-                val oldAlpha = bgPaint.alpha
-                bgPaint.alpha = 160
-                canvas.drawRoundRect(
-                    dragLeft, dragTop, dragLeft + effectiveDragW, dragTop + rowH, candidateRadiusDp * d, candidateRadiusDp * d, bgPaint
-                )
-                bgPaint.alpha = oldAlpha
-                bgPaint.color = oldColor
+                    val d = resources.displayMetrics.density
+                    val oldColor = bgPaint.color
+                    bgPaint.color = sepPaint.color
+                    val oldAlpha = bgPaint.alpha
+                    bgPaint.alpha = 160
+                    canvas.drawRoundRect(
+                        dragLeft, dragTop, dragLeft + effectiveDragW, dragTop + rowH, candidateRadiusDp * d, candidateRadiusDp * d, bgPaint
+                    )
+                    bgPaint.alpha = oldAlpha
+                    bgPaint.color = oldColor
 
-                canvas.drawText(
-                    c.text,
-                    dragLeft + cellPad,
-                    dragTop + rowH / 2f - textCenterDy,
-                    textPaint
-                )
+                    canvas.drawText(
+                        c.text,
+                        dragLeft + cellPad,
+                        dragTop + rowH / 2f - textCenterDy,
+                        textPaint
+                    )
+                }
             }
 
             // 补取判定不在绘制调用栈内直接回调 listener：post 到帧后执行，
@@ -479,8 +517,16 @@ class CandidateGridView(
 
         private fun hitTest(x: Float, y: Float): Int {
             if (positions.isEmpty() || rowH <= 0f) return -1
+            // 区样式内缩（审计 B 项）：命中坐标先减内缩偏移，
+            // 落在可用区外的一律不命中（与绘制裁剪一致）。
+            val d = resources.displayMetrics.density
+            val ax = x - areaInsets.left * d
+            val ay = y - areaInsets.top * d
+            val availW = if (effW > 0f) effW else width.toFloat()
+            val availH = if (effH > 0f) effH else height.toFloat()
+            if (ax < 0f || ay < 0f || ax > availW || ay > availH) return -1
             // 由纵坐标直接定位行，只扫该行候选（原实现每个 MOVE 事件全量线性扫描）
-            val adjustedY = y + scrollOffsetY
+            val adjustedY = ay + scrollOffsetY
             val row = (adjustedY / rowH).toInt()
             if (row < 0 || row >= rowStartIndex.size) return -1
             var i = rowStartIndex[row]
@@ -488,7 +534,7 @@ class CandidateGridView(
             while (i < positions.size && positions[i].row == row) {
                 val pos = positions[i]
                 if (pos.extraWide) return i
-                if (x in pos.xStart..(pos.xStart + pos.width)) return i
+                if (ax in pos.xStart..(pos.xStart + pos.width)) return i
                 i++
             }
             return -1
@@ -932,9 +978,15 @@ class CandidateGridView(
     fun refreshTheme(context: Context) {
         val colors = KeyboardColors.resolve(context)
         refreshTheme(colors)
-        candidateRadiusDp = SkinSnapshotProvider.peek()?.candidateRadiusDp ?: 6f
+        val snapshot = SkinSnapshotProvider.peek()
+        candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f
+        // 区样式（审计 B 项）：insets 变化但尺寸不变时，onSizeChanged
+        // 不跑，须显式重算画布几何（不重置滚动）。
+        areaInsets = snapshot?.verticalCandidatesStyle?.insets ?: AreaInsets()
+        areaBackground = snapshot?.verticalCandidatesStyle?.background
 
         gridCanvas.updateColors(colors.panel)
+        gridCanvas.refreshAreaGeometry()
         sidePanelKey.refreshTheme(colors)
         invalidate()
     }

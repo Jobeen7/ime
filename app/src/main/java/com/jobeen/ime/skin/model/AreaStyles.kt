@@ -361,6 +361,37 @@ fun parsePreeditStyle(
     )
 }
 
+/**
+ * 候选区样式（审计 B 项）：`horizontalCandidatesStyle` /
+ * `verticalCandidatesStyle` 节点（对端同名）。
+ * - insets：区内边距（dp）。横条：左右叠加到条侧边距上、
+ *   上下压缩药丸高度；竖网格：画布内缩（命中同步偏移）。
+ * - background：区背景色。横条缺失时用面板底；竖网格缺失时
+ *   用 panel.background（网格旧口径）。
+ */
+data class CandidateAreaStyleSpec(
+    val insets: AreaInsets = AreaInsets(),
+    val background: Int? = null,
+)
+
+/** 解析候选区样式节点：缺失返回 null，非对象记 issue 并返回 null。 */
+fun parseCandidateAreaStyle(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): CandidateAreaStyleSpec? {
+    if (node == null) return null
+    val obj = node as? JsonObject
+    if (obj == null) {
+        issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "candidate_area_style_not_object")
+        return null
+    }
+    return CandidateAreaStyleSpec(
+        insets = parseAreaInsets(obj["insets"], "$path.insets", issues),
+        background = parseStyleColor(obj["background"], "$path.background", issues),
+    )
+}
+
 /** 解析颜色字符串节点：非法记 issue 并返回 null（调用方回落）。 */
 fun parseStyleColor(
     node: JsonElement?,

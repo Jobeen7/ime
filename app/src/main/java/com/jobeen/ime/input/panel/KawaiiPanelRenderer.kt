@@ -10,6 +10,7 @@ import androidx.core.graphics.withClip
 import androidx.core.graphics.withRotation
 import androidx.core.graphics.withSave
 import com.jobeen.ime.engine.data.EngineMessage
+import com.jobeen.ime.skin.model.CandidateAreaStyleSpec
 
 class ComposingRenderer(
     var candidates: List<EngineMessage.Candidate>,
@@ -30,11 +31,28 @@ class ComposingRenderer(
      */
     var edgeBgColor: Int? = null,
     var edgeRadiusDp: Float? = null,
+    /**
+     * 横条候选区样式（审计 B 项）：构造期经快照传入；与
+     * candidateRadiusDp 同口径——皮肤切换后下次进组字态生效。
+     */
+    var areaStyle: CandidateAreaStyleSpec? = null,
     override var recording: Boolean = false,
 ) : IRenderer {
 
     private fun dimColor(color: Int): Int {
         return if (recording) (color and 0x00FFFFFF) or 0x5A000000.toInt() else color
+    }
+
+    /** 区样式生效几何（审计 B 项）：左右内边距叠加到条侧边距上，上下压缩药丸高度（下限 12dp）。 */
+    private fun effLeftPadPx(density: Float): Float =
+        horizontalPaddingDp * density + 4f * density + (areaStyle?.insets?.left ?: 0f) * density
+
+    private fun effRightPadPx(density: Float): Float =
+        horizontalPaddingDp * density + 4f * density + (areaStyle?.insets?.right ?: 0f) * density
+
+    private fun effPillHPx(density: Float): Float {
+        val insets = areaStyle?.insets ?: return 34f * density
+        return (34f - insets.top - insets.bottom).coerceAtLeast(12f) * density
     }
 
     /** 序号标签预生成（绘制期每帧拼 "${i+1}. " 是纯浪费） */
@@ -135,20 +153,20 @@ class ComposingRenderer(
         val indexBaseSize = indexPaint.textSize
         val textBaseSize = textPaint.textSize
 
-        val pillH = 34f * density
+        val pillH = effPillHPx(density)
         val pillY = (height - pillH) / 2f
         val pillR = candidateRadiusDp * density
-        val hPad = horizontalPaddingDp * density
-        val sidePad = hPad + 4f * density
+        val leftPad = effLeftPadPx(density)
+        val rightPad = effRightPadPx(density)
         val pillPad = 8f * density
         val gap = 6f * density
 
         val expandBtnW = 32f * density
         val expandBtnGap = 16f * density
-        val expandBtnRight = width.toFloat() - sidePad
+        val expandBtnRight = width.toFloat() - rightPad
         val expandBtnLeft = expandBtnRight - expandBtnW
         val pillsEnd = expandBtnLeft - expandBtnGap
-        val maxPillW = pillsEnd - sidePad
+        val maxPillW = pillsEnd - leftPad
 
         val minTextSize = 12f * density
         val minScale = minTextSize / minOf(textBaseSize, indexBaseSize)
@@ -180,7 +198,7 @@ class ComposingRenderer(
             }
             val newLayouts = ArrayList<PillLayout>(candidates.size)
             val newPills = ArrayList<PillRect>(candidates.size)
-            var x = sidePad
+            var x = leftPad
             for ((i, c) in candidates.withIndex()) {
                 val indexW = if (showIndex) {
                     indexWidthCache.getOrPut(i) { indexPaint.measureText("${i + 1}. ") }
@@ -224,7 +242,7 @@ class ComposingRenderer(
             }
             layouts = newLayouts
             lastPills = newPills
-            maxScrollX = maxOf(0f, x - sidePad - pillsEnd)
+            maxScrollX = maxOf(0f, x - leftPad - pillsEnd)
             // 写缓存
             cachedLayouts = newLayouts
             cachedPills = newPills
@@ -295,7 +313,7 @@ class ComposingRenderer(
                 }
             }
 
-            val bgColor = paints.bgPaint.color
+            val bgColor = paints.candidateStripBg ?: paints.bgPaint.color
             val fk = FadeKey(width, fadeStart, dividerX, bgColor)
             if (fk != fadeKey) {
                 fadePaint.shader = LinearGradient(
@@ -308,7 +326,7 @@ class ComposingRenderer(
             drawRect(fadeStart, 0f, dividerX, height.toFloat(), fadePaint)
         }
 
-        val bgColor = paints.bgPaint.color
+        val bgColor = paints.candidateStripBg ?: paints.bgPaint.color
         val bgk = BgGradKey(height, bgColor, paints.keyboardBackground)
         if (bgk != bgGradKey) {
             bgGradPaint.set(paints.bgPaint)
@@ -367,11 +385,11 @@ class ComposingRenderer(
         scrollX: Float, isExpanded: Boolean, density: Float,
     ): KawaiiPanel.TouchResult? {
         if (candidates.isEmpty()) return null
-        val pillH = 34f * density
+        val pillH = effPillHPx(density)
         val pillY = (height - pillH) / 2f
         if (y < pillY || y > pillY + pillH) return null
 
-        val expandRightMargin = horizontalPaddingDp * density + 4f * density
+        val expandRightMargin = effRightPadPx(density)
         val expandBtnW = 32f * density
         val expandBtnLeft = width - expandRightMargin - expandBtnW
         val expandBtnRight = width - expandRightMargin

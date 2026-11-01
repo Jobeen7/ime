@@ -208,6 +208,8 @@ object SkinSnapshotBuilder {
             toolbarLayout = validated.toolbarLayout,
             preeditHeight = validated.preeditHeight,
             preeditStyle = validated.preeditStyle,
+            horizontalCandidatesStyle = validated.horizontalCandidatesStyle,
+            verticalCandidatesStyle = validated.verticalCandidatesStyle,
             keyOverrides = validated.keyOverrides,
             keyStyles = validated.keyStyles,
             keyGeometries = validated.keyGeometries,
