@@ -259,6 +259,24 @@ object KeyboardTypes {
 
     /** 主键盘类型：中英切换只在这两者之间往返。 */
     val MAIN: Set<String> = setOf(PINYIN, ALPHABETIC)
+
+    /**
+     * 临时类型：只活在当前一次附着内，永不写持久化，收起或
+     * 切走即复位（不跨收起、不进 last 往返链）。目前仅此一名；
+     * 其它 temp_ 前缀名不具此语义（按普通自定义类型处理）。
+     */
+    const val TEMP_PINYIN = "temp_pinyin"
+
+    /** 工具类型（keyboards 表条目，非键盘类）：布局切换板 / 返回路径板 / 悬浮面板。 */
+    const val LAYOUT_SWITCH = "layoutSwitch"
+    const val RETURN_PATH = "returnPath"
+    const val FLOAT_PANEL = "floatPanel"
+
+    /** 工具类型集（表条目口径；无对应 Jime 键盘类，解析与切换走通用表路径）。 */
+    val TOOL: Set<String> = setOf(LAYOUT_SWITCH, RETURN_PATH, FLOAT_PANEL)
+
+    fun isTemp(type: String?): Boolean = type == TEMP_PINYIN
+    fun isTool(type: String?): Boolean = type in TOOL
 }
 
 /**

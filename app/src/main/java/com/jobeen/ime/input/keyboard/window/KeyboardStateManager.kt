@@ -329,6 +329,12 @@ object KeyboardStateManager {
             }
         }
         keyboardAttached = false
+        // 临时类型收起复位：temp_pinyin 不跨收起存活，回到主类型
+        // （无主类型时按输入模式初始类型）；下次附着不再回到临时板。
+        val ascii = runCatching {
+            CandidateManager.isAsciiModeEnabled(appContext)
+        }.getOrDefault(false)
+        typeState.clearTemp(typeState.primary ?: typeState.initialType(ascii))
     }
 
     fun onConfigChanged(key: String) {
@@ -530,6 +536,7 @@ object KeyboardStateManager {
 
     /** 类型持久化（按皮肤隔离，见 SkinTypePrefs）：无快照时只留内存态，不写盘。 */
     private fun persistType(type: String) {
+        if (!shouldPersistType(type)) return
         val skinId = SkinSnapshotProvider.peek()?.ref?.skinId ?: return
         lastTypeSkinId = skinId
         runCatching { SkinTypePrefs.setType(appContext, skinId, type) }
@@ -810,9 +817,22 @@ internal class KeyboardTypeState {
 
     fun switchTo(type: String): Boolean {
         if (type == current) return false
-        last = current
+        // 临时类型不进 last 往返链：从临时切走时 last 保持临时前
+        // 的类型（返回上一键盘不回到已失效的临时板）。
+        if (!KeyboardTypes.isTemp(current)) last = current
         current = type
         if (type in KeyboardTypes.MAIN) primary = type
+        return true
+    }
+
+    /**
+     * 临时类型复位（收起时调用）：当前为临时类型时回到 fallback
+     * （主类型），last 不动（已指向临时前类型）；非临时时不动。
+     * 返回是否发生了复位。
+     */
+    fun clearTemp(fallback: String): Boolean {
+        if (!KeyboardTypes.isTemp(current)) return false
+        current = fallback
         return true
     }
 
@@ -838,9 +858,12 @@ internal class KeyboardTypeState {
     }
 }
 
+/** 类型是否写持久化（纯决策，可单测）：临时类型永不写盘。 */
+internal fun shouldPersistType(type: String): Boolean = !KeyboardTypes.isTemp(type)
+
 /**
  * 首挂类型恢复（纯决策，可单测）：存过的类型只有主类型
- * （pinyin/alphabetic）才恢复；工具类型、自定义类型、空值
+ * （pinyin/alphabetic）才恢复；工具类型、自定义类型、临时类型、空值
  * 一律回落按输入模式的初始主类型（中文 → pinyin，英文 →
  * alphabetic）。理由：工具板是 transient 的——进程重建的首挂
  * 键盘必须是主键盘，收起前停在符号/表情板上留下的存过类型

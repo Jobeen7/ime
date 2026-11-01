@@ -522,6 +522,7 @@ object KeyOverrideApplier {
         if (swipeUpForegroundStyle != null || swipeDownForegroundStyle != null ||
             uppercasedForegroundStyle != null || capsLockedForegroundStyle != null
         ) return true
+        if (showSwipeIndicators) return true
         return false
     }
 
@@ -681,6 +682,10 @@ object KeyOverrideApplier {
             if (it.capsLocked != null) appearance.skinCapsLockedTextColor = it.capsLocked
             if (it.swipeUp != null) appearance.skinSwipeUpTextColor = it.swipeUp
             if (it.swipeDown != null) appearance.skinSwipeDownTextColor = it.swipeDown
+        }
+        // 多主类型补充：滑动方向指示（仅 true 写透，false = 不覆写出厂）。
+        if (override?.showSwipeIndicators == true) {
+            appearance.skinShowSwipeIndicators = true
         }
 
         var behaviors = def.behaviors

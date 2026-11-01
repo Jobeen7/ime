@@ -85,6 +85,8 @@ open class KeyDef(
         var skinCapsLockedTextColor: Int? = null
         /** 上滑中主文字暂显色（审计 E：滑动方向前景样式）。 */
         var skinSwipeUpTextColor: Int? = null
+        /** 滑动方向指示（多主类型补充）：true = 显示上下滑方向标记；视图渲染后续。 */
+        var skinShowSwipeIndicators: Boolean = false
         /** 下滑中主文字暂显色（审计 E：滑动方向前景样式）。 */
         var skinSwipeDownTextColor: Int? = null
         /** G1 图标染色（keyStyles icon 角色解析结果；无图标的键忽略）。 */

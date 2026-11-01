@@ -5,6 +5,7 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
 
 /**
  * 键覆写强类型模型（定稿三.5 / 四章；Batch 2 详设 §3）：
@@ -394,6 +395,12 @@ data class KeyOverride(
     val swipeDownForegroundStyle: String? = null,
     val uppercasedForegroundStyle: String? = null,
     val capsLockedForegroundStyle: String? = null,
+    /**
+     * 滑动方向指示（多主类型补充）：true = 该键显示上下滑
+     * 方向标记（提示可滑切类型）；缺省 false。渲染接线后续
+     * （本字段只解析进 Appearance，视图暂不画标记）。
+     */
+    val showSwipeIndicators: Boolean = false,
 )
 
 /** G1 字段级解析警告（样式警告通道之外的字段回退记录：键、字段、原因）。 */
@@ -459,11 +466,29 @@ object SkinKeyMappingsParser {
             val label = parseLabel(keyId, entry, rejections)
             val soundRef = parseSoundRef(keyId, entry, rejections)
             val tap = parseSingle(keyId, KeySlot.TAP, entry["tap"], rejections, sequenceSlots)
-            val swipeUp =
-                parseSingle(keyId, KeySlot.SWIPE_UP, entry["swipeUp"], rejections, sequenceSlots)
+            // 滑动切类型映射（多主类型补充）：swipeUpKeyboard /
+            // swipeDownKeyboard 写类型名时合成键盘类型切换动作；
+            // 显式 swipeUp/swipeDown（含 sequence 占位）优先，不被覆盖。
+            // 类型名不做白名单（自定义类型亦可）；空白值记 VALUE_INVALID
+            // 剔除。对端万象皮肤只在 symbolic/emojis 间归一，那是该
+            // 皮肤自己的选择，不是 Jime 规则。
+            fun swipeTypeTarget(field: String): String? {
+                val node = entry[field] ?: return null
+                val raw = node.stringContentOrNull()
+                if (raw == null || raw.isBlank()) {
+                    rejections += KeyBindingRejection(keyId, null, BindingRejectReason.VALUE_INVALID)
+                    return null
+                }
+                return raw
+            }
+            val swipeUp = parseSingle(
+                keyId, KeySlot.SWIPE_UP, entry["swipeUp"], rejections, sequenceSlots,
+            ) ?: swipeTypeTarget("swipeUpKeyboard")?.let { SkinAction.KeyboardType(it) }
             val swipeDown = parseSingle(
                 keyId, KeySlot.SWIPE_DOWN, entry["swipeDown"], rejections, sequenceSlots,
-            )
+            ) ?: swipeTypeTarget("swipeDownKeyboard")?.let { SkinAction.KeyboardType(it) }
+            val showSwipeIndicators =
+                (entry["showSwipeIndicators"] as? JsonPrimitive)?.booleanOrNull == true
             val swipeLeft = parseSingle(
                 keyId, KeySlot.SWIPE_LEFT, entry["swipeLeft"], rejections, sequenceSlots,
             )
@@ -533,7 +558,7 @@ object SkinKeyMappingsParser {
                 preeditSwipeRight == null && uppercasedTap == null && repeat == null &&
                 animations.isNullOrEmpty() && swipeUpForegroundStyle == null &&
                 swipeDownForegroundStyle == null && uppercasedForegroundStyle == null &&
-                capsLockedForegroundStyle == null
+                capsLockedForegroundStyle == null && !showSwipeIndicators
             ) {
                 continue // 全字段被剔/未写：该键完全回退出厂，不进覆写表
             }
@@ -577,6 +602,7 @@ object SkinKeyMappingsParser {
                 swipeDownForegroundStyle = swipeDownForegroundStyle,
                 uppercasedForegroundStyle = uppercasedForegroundStyle,
                 capsLockedForegroundStyle = capsLockedForegroundStyle,
+                showSwipeIndicators = showSwipeIndicators,
             )
         }
         return ParseResult(overrides, rejections, sequenceSlots, styleWarnings, fieldWarnings)
