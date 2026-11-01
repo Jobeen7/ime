@@ -325,7 +325,16 @@ class KeyboardWindowView(
         get() = keyboardStateManager.keyActionListener
         set(value) {
             keyboardStateManager.keyActionListener = KeyActionListener { action ->
-                transformed(action)?.let { value.onKeyAction(it) }
+                // 组合动作（审计 E：combine）：窗口路径先展开——子动作
+                // 各经 transformed（布局切换/返回/语音等拦截照常生效），
+                // 再交下游分发；嵌套 combine 由下游递归处理。
+                if (action is KeyboardAction.CombineAction) {
+                    for (sub in action.actions) {
+                        transformed(sub)?.let { value.onKeyAction(it) }
+                    }
+                } else {
+                    transformed(action)?.let { value.onKeyAction(it) }
+                }
             }
         }
 
@@ -354,12 +363,58 @@ class KeyboardWindowView(
             }
 
             is KeyboardAction.LayoutSwitchAction -> {
-                keyboardStateManager.switchTo(action.target)
+                // Wave-4 类型一致：布局切换键同步类型状态——表内绑定
+                // 或内置名可反查类型时走类型切换（类型解析含内置回
+                // 退，永不空白）；查不到时沿用旧按名切换（类型不动，
+                // 语义与旧路径一致）。
+                val landscape = context.resources.configuration.orientation ==
+                    android.content.res.Configuration.ORIENTATION_LANDSCAPE
+                val type = CustomLayoutRuntime.typeForLayoutName(
+                    SkinSnapshotProvider.current(context),
+                    action.target,
+                    landscape,
+                )
+                if (type != null) {
+                    keyboardStateManager.switchKeyboardType(type)
+                } else {
+                    keyboardStateManager.switchTo(action.target)
+                }
                 null
             }
 
             is KeyboardAction.ResumeAction -> {
-                keyboardStateManager.resume()
+                // Wave-4：显式返回键 = 回主键盘（returnPrimary 口径）；
+                // 主类型未确立时退旧按方案布局返回。
+                keyboardStateManager.resumeToPrimary()
+                null
+            }
+
+            // 收起键盘（审计 E：dismissKeyboard）：此前 HideKeyboardAction
+            // 无任何接应（transformed 直通、分发层 else 吞掉），此处拦截。
+            is KeyboardAction.HideKeyboardAction -> {
+                (context as ImeInputMethodService).requestHideSelf(0)
+                null
+            }
+
+            // 候选序号选择（审计 E：#次选/#三选）：凭窗口上一帧候选
+            // 表解析，表外序号或无候选帧时丢弃（不下发引擎）。
+            is KeyboardAction.SelectCandidateIndexAction -> {
+                lastCandidateList?.getOrNull(action.index)?.let { candidate ->
+                    EngineFactory.current()?.selectCandidate(candidate)
+                }
+                null
+            }
+
+            // 打开常用语（审计 E：#showPhraseView）：复用面板加词层
+            // 入口（桥接输入连接，与面板 AddPhrase 同源）。
+            is KeyboardAction.ShowPhraseViewAction -> {
+                enterAddPhraseMode((context as ImeInputMethodService).virtualInputConnection)
+                null
+            }
+
+            // 候选栏展开/收起切换（审计 E：#candidatesBarStateToggle）。
+            is KeyboardAction.CandidatesBarToggleAction -> {
+                panel.view.setExpanded(!panel.view.isExpanded)
                 null
             }
 

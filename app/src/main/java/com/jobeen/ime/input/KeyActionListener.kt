@@ -88,13 +88,13 @@ class KeyActionListener(
                 @SuppressLint("NewApi") service.switchToNextInputMethod(false)
             }
 
-            // 中英切换（转换目标 enzh 键）：与菜单 ascii 开关同款——
-            // 只写偏好，引擎偏好监听同批重刷运行时选项，即时生效。
+            // 中英切换（Wave-4 E5）：改走键盘类型切换（pinyin↔
+            // alphabetic，工具类型 → 主类型），不再只翻 ascii 偏好
+            // ——偏好在 t9/lite 上被方案 lock 钉死，翻偏好换不了
+            // 键盘；偏好本身不动（菜单/工具栏显示改走类型，见
+            // KeyboardStateManager.isMainTypeAlphabetic）。
             is KeyboardAction.ToggleAsciiModeAction -> {
-                CandidateManager.setAsciiModeEnabled(
-                    service,
-                    !CandidateManager.isAsciiModeEnabled(service),
-                )
+                KeyboardStateManager.toggleMainType()
             }
 
             is KeyboardAction.SelectSchema -> {
@@ -135,6 +135,173 @@ class KeyActionListener(
                 )
             }
 
+            // 字面提交（审计 E：symbol 通道与 commit_direct）：经
+            // 引擎直接上屏，不经组字、不经标点转换、不成对。
+            // 注意：此前本分支缺失，LiteralCommitAction 落入 else
+            // 被静默吞掉（Qwerty 变换层只保证了“原样下发”，分发
+            // 层并无接应）；本分支补齐该通道，commit_direct 键与
+            // 符号键自此才真正上屏。
+            is KeyboardAction.LiteralCommitAction -> {
+                engine?.commit(action.text)
+            }
+
+            // 组合按键序列（审计 E：sendKeys）：逐个经引擎按键通道。
+            is KeyboardAction.SendKeysAction -> {
+                for (combo in action.keys) {
+                    engine?.processKey(
+                        service,
+                        KeyEvent.CodeEvent(combo.keyCode, combo.modifiers, isVirtual = true),
+                    )
+                }
+            }
+
+            // 直送应用的按键（审计 E：sendKeyEvent / tab / escape /
+            // 行首行尾）：绕过引擎，经输入连接直发应用。
+            is KeyboardAction.AppKeyEventAction -> {
+                com.jobeen.ime.base.util.InputConnectionUtil.sendCombinationKeyEvent(
+                    service, action.keyCode,
+                    ctrl = action.ctrl, shift = action.shift,
+                    alt = action.alt, meta = action.meta,
+                )
+            }
+
+            // 组合动作（审计 E：combine）：直接分发路径按序递归；
+            // 窗口路径由窗口包装先展开（子动作各经 transformed），
+            // 不会到达此处。
+            is KeyboardAction.CombineAction -> {
+                for (sub in action.actions) onKeyAction(sub)
+            }
+
+            // 打开链接（审计 E：openURL）：白名单外一律丢弃记日志。
+            is KeyboardAction.OpenUrlAction -> {
+                if (!OpenUrlPolicy.isAllowed(action.url)) {
+                    DiagLog.w(
+                        "keymap", "open_url_blocked",
+                        mapOf("scheme" to action.url.substringBefore(":", "")),
+                    )
+                } else {
+                    try {
+                        service.startActivity(
+                            android.content.Intent(
+                                android.content.Intent.ACTION_VIEW,
+                                android.net.Uri.parse(action.url),
+                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    } catch (ex: Exception) {
+                        DiagLog.w(
+                            "keymap", "open_url_failed",
+                            mapOf("error" to ex.javaClass.simpleName),
+                        )
+                    }
+                }
+            }
+
+            // 刻意空操作（审计 E：none）：显式吞掉，不回退出厂行为。
+            is KeyboardAction.NoOpAction -> Unit
+
+            // 瞬时上档（审计 E：shift）：直接分发无按下/抬起上下文，
+            // 恒为空操作；真正语义只在按键面按下/抬起钩子实现。
+            is KeyboardAction.MomentaryShiftAction -> Unit
+
+            // 打开本应用设置（审计 E：settings）：与面板设置同款意图。
+            is KeyboardAction.SettingsAction -> {
+                service.startActivity(
+                    android.content.Intent(
+                        service, com.jobeen.ime.ui.MainActivity::class.java,
+                    ).apply {
+                        addFlags(
+                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                        )
+                    },
+                )
+            }
+
+            // 打开系统设置（审计 E：systemSettings）。
+            is KeyboardAction.SystemSettingsAction -> {
+                service.startActivity(
+                    android.content.Intent(
+                        android.provider.Settings.ACTION_SETTINGS,
+                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+
+            // 隐藏键盘（审计 E：dismissKeyboard）：窗口路径由
+            // transformed 拦截；此处接应无窗口的直接分发路径。
+            is KeyboardAction.HideKeyboardAction -> {
+                service.requestHideSelf(0)
+            }
+
+            // 回主键盘／回上一键盘（审计 E：returnPrimary/Last）：
+            // 经类型状态切换，窗口路径直通至此（transformed 不拦截）。
+            is KeyboardAction.ReturnPrimaryAction -> {
+                KeyboardStateManager.returnPrimaryKeyboard()
+            }
+
+            is KeyboardAction.ReturnLastAction -> {
+                KeyboardStateManager.returnLastKeyboard()
+            }
+
+            // 剪贴板（审计 E：#cut/copy/paste/clearSystemPasteboard）：
+            // 经输入连接（cut/copy/paste）或系统剪贴板（clear）。
+            is KeyboardAction.ClipboardAction -> {
+                when (action.kind) {
+                    KeyboardAction.ClipboardAction.Kind.CUT ->
+                        service.currentInputConnection?.performContextMenuAction(
+                            android.R.id.cut,
+                        )
+                    KeyboardAction.ClipboardAction.Kind.COPY ->
+                        service.currentInputConnection?.performContextMenuAction(
+                            android.R.id.copy,
+                        )
+                    KeyboardAction.ClipboardAction.Kind.PASTE ->
+                        service.currentInputConnection?.performContextMenuAction(
+                            android.R.id.paste,
+                        )
+                    KeyboardAction.ClipboardAction.Kind.CLEAR -> {
+                        val clipboard = service.getSystemService(
+                            android.content.Context.CLIPBOARD_SERVICE,
+                        ) as? android.content.ClipboardManager
+                        if (clipboard != null) {
+                            if (android.os.Build.VERSION.SDK_INT >=
+                                android.os.Build.VERSION_CODES.P
+                            ) {
+                                clipboard.clearPrimaryClip()
+                            } else {
+                                clipboard.primaryClip =
+                                    android.content.ClipData.newPlainText("", "")
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 简繁切换（审计 E：#简繁切换）：翻转繁体偏好。
+            is KeyboardAction.ToggleTraditionalAction -> {
+                CandidateManager.setTraditionalChineseEnabled(
+                    service,
+                    !CandidateManager.isTraditionalChineseEnabled(service),
+                )
+            }
+
+            // 内嵌输入切换（审计 E：#toggleEmbeddedInputMode）。
+            is KeyboardAction.ToggleEmbeddedInputAction -> {
+                CandidateManager.setInlineInputModeEnabled(
+                    service,
+                    !CandidateManager.isInlineInputModeEnabled(service),
+                )
+            }
+
+            // 候选序号选择（审计 E：#次选/#三选）：窗口路径凭上一帧
+            // 候选表解析；直接分发无候选表，丢弃（transformed 已拦截）。
+            is KeyboardAction.SelectCandidateIndexAction -> Unit
+
+            // 常用语／候选栏切换（审计 E：#showPhraseView /
+            // #candidatesBarStateToggle）：窗口路径拦截；直接分发
+            // 无窗口/面板句柄，丢弃。
+            is KeyboardAction.ShowPhraseViewAction,
+            is KeyboardAction.CandidatesBarToggleAction -> Unit
 
             else -> {}
         }

@@ -285,6 +285,56 @@ object CustomLayoutRuntime {
         )
     }
 
+    /**
+     * 布局名 → 键盘类型反查（Wave-4 布局切换键用，纯决策）：
+     * - 表内绑定：任一方向的已解析布局 id 命中 → 该类型；
+     * - 旧顶层绑定（竖屏／横屏）id 命中 → pinyin（旧绑定即
+     *   pinyin 主槽回落，与 resolveTypeTarget 第 2 步同口径）；
+     * - 内置名：Qwerty → alphabetic（全键盘即英文键盘），
+     *   T9/T15 → pinyin（中文布局），Symbol → symbolic，
+     *   Emoji → emojis，Number → numeric（numberPad 为场景
+     *   键盘，不由皮肤切换键寻址）；
+     * - 其余（未声明自创 id、未知名）→ null，调用方沿用旧按
+     *   名切换（类型不动）。
+     * 注意 Qwerty 的歧义：pinyin 类型在无绑定时亦可回落到方案
+     * 默认全键盘；但皮肤作者写 switch_layout "Qwerty" 时指的
+     * 是英文键盘本身，故此处恒指 alphabetic。
+     */
+    fun typeForLayoutName(
+        snapshot: SkinSnapshot?,
+        name: String,
+        landscape: Boolean = false,
+    ): String? {
+        val customId = layoutIdOf(name)
+        if (customId != null) {
+            val tableType = snapshot?.resolvedKeyboards?.entries?.firstNotNullOfOrNull { (type, entry) ->
+                val hit = if (landscape) {
+                    entry.landscape?.layoutId == customId || entry.portrait?.layoutId == customId
+                } else {
+                    entry.portrait?.layoutId == customId
+                }
+                if (hit) type else null
+            }
+            if (tableType != null) return tableType
+            val legacyId = if (landscape) {
+                snapshot?.resolvedLayoutLandscape?.layoutId
+                    ?: snapshot?.resolvedLayout?.layoutId
+            } else {
+                snapshot?.resolvedLayout?.layoutId
+            }
+            if (customId == legacyId) return KeyboardTypes.PINYIN
+            return null
+        }
+        return when (name) {
+            QwertyKeyboard.NAME -> KeyboardTypes.ALPHABETIC
+            T9Keyboard.NAME, T15Keyboard.NAME -> KeyboardTypes.PINYIN
+            SymbolKeyboard.NAME -> KeyboardTypes.SYMBOLIC
+            EmojiKeyboard.NAME -> KeyboardTypes.EMOJIS
+            NumberKeyboard.NAME -> KeyboardTypes.NUMERIC
+            else -> null
+        }
+    }
+
     fun resolveSwitchTarget(
         snapshot: SkinSnapshot?,
         requested: String,

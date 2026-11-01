@@ -603,6 +603,21 @@ object KeyboardStateManager {
         switchTo(currentSchema?.layout ?: defaultKeyboardName)
     }
 
+    /**
+     * 显式返回键（Wave-4）：回主键盘（returnPrimary 口径）——
+     * 主类型已确立时按类型切（与当前主键盘一致），未确立时
+     * 退旧按方案布局返回。板提交后自动返回不走本函数（走
+     * returnFromBoardAfterCommit 的上一类型口径）。
+     */
+    fun resumeToPrimary() {
+        val primary = typeState.primary
+        if (primary != null) {
+            switchKeyboardType(primary)
+        } else {
+            resume()
+        }
+    }
+
     fun onInputChanged(info: EditorInfo?, text: String, virtualInputConnection: Boolean = false) {
         if (info != null) {
             val effectiveInfo = if (virtualInputConnection) {
