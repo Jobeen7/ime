@@ -48,6 +48,8 @@ class Paints(context: Context) {
     val candidateCommentPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { }
     var toolbarPressedColor: Int = 0
     var toolbarIconColor: Int = 0
+    /** 工具栏开关启用色（E6）：updateColors 从 panel.toolbarActived 同步。 */
+    var toolbarActivedColor: Int = 0
     var keyboardBackground: Int = 0
     /**
      * 工具栏按钮表面（2026-10-29 外观轮全局样式）：null＝不画
@@ -102,6 +104,8 @@ class Paints(context: Context) {
         dividerPaint.color = panel.candidateDivider
         toolbarTextPaint.color = panel.toolbarText
         toolbarIconColor = panel.toolbarIcon
+        // 开关启用色（E6）：工具栏池钮开关态着色用；菜单网格同口径。
+        toolbarActivedColor = panel.toolbarActived
         candidateBgPaint.color = panel.candidateBackground
         candidateTextPaint.color = panel.candidateText
         selectedCandidateTextPaint.color = panel.selectedCandidateText

@@ -12,6 +12,7 @@ import com.jobeen.ime.input.panel.toolbar.SkinToolbarApplier
 import com.jobeen.ime.input.panel.toolbar.ToolbarConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
 import com.jobeen.ime.input.panel.toolbar.ToolbarRendererResources
+import com.jobeen.ime.input.panel.toolbar.ToolbarToggleState
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
@@ -54,6 +55,8 @@ private fun StateRenderContext.buildToolbarRenderer(
         toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle,
         // 工具栏布局（审计 B 项）：同上，独立于构成抉择。
         toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout,
+        // 开关启用判定（E6）：与菜单网格同口径。
+        toggleActive = { action -> ToolbarToggleState.isActive(context, action) },
     ).apply {
         this.showArrow = showArrow
         this.textEditingMode = textEditingMode

@@ -158,6 +158,12 @@ class ToolbarRenderer(
      * refreshTheme 重设；null = 未定义（出厂排列）。
      */
     var toolbarLayout: ToolbarLayoutSpec? = null,
+    /**
+     * 开关启用判定（E6）：构造点注入（StateRenders /
+     * KawaiiPanelView，以 ToolbarToggleState.isActive 绑定上下文）；
+     * null = 无判定（旧口径：池钮一律常态色）。函数型参数置末。
+     */
+    var toggleActive: ((PanelAction) -> Boolean)? = null,
 ) : IRenderer {
 
     var textEditingMode: Boolean = false
@@ -814,14 +820,19 @@ class ToolbarRenderer(
             for ((i, btn) in centerButtons.withIndex()) {
                 val savedColor = paints.toolbarIconColor
                 val disabled = (textEditingMode && btn.action in TEXT_EDIT_DISABLED) || recording
+                // 开关着色（E6）：开关且启用 → 启用色；禁用优先变暗
+                // （与既有 disabled 分支同 save/restore 口径）。
+                val toggleOn = !disabled && toggleActive?.invoke(btn.action) == true
                 if (disabled) {
                     paints.toolbarIconColor = (savedColor and 0x00FFFFFF) or 0x62000000.toInt()
+                } else if (toggleOn) {
+                    paints.toolbarIconColor = paints.toolbarActivedColor
                 }
                 btn.draw(
                     canvas, centerAreaLeft + otherW * i + otherW / 2f,
                     barCy, paints, density,
                 )
-                if (disabled) {
+                if (disabled || toggleOn) {
                     paints.toolbarIconColor = savedColor
                 }
             }
