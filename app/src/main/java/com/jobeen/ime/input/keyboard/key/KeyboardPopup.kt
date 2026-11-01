@@ -239,5 +239,6 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.MultiReturnAction -> "MultiReturnAction"
         is KeyboardAction.UndoAction -> "UndoAction"
         is KeyboardAction.RedoAction -> "RedoAction"
+        is KeyboardAction.HostUndoAction -> "HostUndoAction"
     }
 }

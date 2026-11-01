@@ -103,6 +103,15 @@ sealed class KeyboardAction {
     data object RedoAction : KeyboardAction()
 
     /**
+     * 宿主文本撤销（#undo）：经当前输入连接
+     * performContextMenuAction(android.R.id.undo)，尽力而为、
+     * 宿主相关；与引擎内撤销（UndoAction：清组字／语音账本
+     * 删除）不同，不可混用。连接为空时空操作，不伪造成功，
+     * 不回退删字。
+     */
+    data object HostUndoAction : KeyboardAction()
+
+    /**
      * 字面提交（皮肤覆写专用内部类型，裁定 B2 / 详设 §3.4）：
      * 与 CommitAction 同义上屏，但不经 Qwerty 的标点全半角转换、
      * 不随 Caps 大写。只由皮肤覆写装配产生，永不写入皮肤格式。

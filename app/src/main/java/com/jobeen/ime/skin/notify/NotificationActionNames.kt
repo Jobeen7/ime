@@ -42,6 +42,7 @@ object NotificationActionNames {
         is KeyboardAction.MultiReturnAction -> "MultiReturnAction"
         is KeyboardAction.UndoAction -> "UndoAction"
         is KeyboardAction.RedoAction -> "RedoAction"
+        is KeyboardAction.HostUndoAction -> "HostUndoAction"
         is KeyboardAction.LiteralCommitAction -> "LiteralCommitAction"
         is KeyboardAction.DeleteForwardAction -> "DeleteForwardAction"
         is KeyboardAction.DeleteTextAction -> "DeleteTextAction"

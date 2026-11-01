@@ -208,6 +208,22 @@ class KeyActionListener(
                 engine?.redo(service)
             }
 
+            // 宿主文本撤销（#undo）：经当前输入连接的上下文菜单
+            // 动作，尽力而为（返回值不作成功判定）；宿主不支持
+            // 时无效果，不回退删字；连接为空不崩溃。
+            is KeyboardAction.HostUndoAction -> {
+                try {
+                    service.currentInputConnection?.performContextMenuAction(
+                        android.R.id.undo,
+                    )
+                } catch (ex: Exception) {
+                    DiagLog.w(
+                        "keymap", "host_undo_failed",
+                        mapOf("error" to ex.javaClass.simpleName),
+                    )
+                }
+            }
+
             is KeyboardAction.MultiReturnAction -> {
                 engine?.resetComposition()
 

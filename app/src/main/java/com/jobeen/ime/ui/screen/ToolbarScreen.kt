@@ -653,6 +653,7 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.HASH_COPY -> R.string.action_hash_copy
         WhitelistAction.HASH_PASTE -> R.string.action_hash_paste
         WhitelistAction.HASH_DELETE_TEXT -> R.string.action_hash_delete_text
+        WhitelistAction.HASH_UNDO -> R.string.action_hash_undo
         WhitelistAction.HASH_VERTICAL_PAGE_UP -> R.string.action_hash_vertical_page_up
         WhitelistAction.HASH_VERTICAL_PAGE_DOWN -> R.string.action_hash_vertical_page_down
         WhitelistAction.HASH_SHOW_PHRASE_VIEW -> R.string.action_hash_show_phrase_view

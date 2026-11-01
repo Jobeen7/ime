@@ -130,6 +130,7 @@ enum class WhitelistAction(
     HASH_COPY("#copy", ValueRule.FORBIDDEN),
     HASH_PASTE("#paste", ValueRule.FORBIDDEN),
     HASH_DELETE_TEXT("#deleteText", ValueRule.FORBIDDEN),
+    HASH_UNDO("#undo", ValueRule.FORBIDDEN),
     HASH_VERTICAL_PAGE_UP("#verticalCandidatesPageUp", ValueRule.FORBIDDEN),
     HASH_VERTICAL_PAGE_DOWN("#verticalCandidatesPageDown", ValueRule.FORBIDDEN),
     HASH_SHOW_PHRASE_VIEW("#showPhraseView", ValueRule.FORBIDDEN),

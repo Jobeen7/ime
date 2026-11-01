@@ -1305,6 +1305,7 @@ object KeyOverrideApplier {
             WhitelistAction.HASH_PASTE ->
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.PASTE)
             WhitelistAction.HASH_DELETE_TEXT -> KeyboardAction.DeleteTextAction
+            WhitelistAction.HASH_UNDO -> KeyboardAction.HostUndoAction
             WhitelistAction.HASH_VERTICAL_PAGE_UP -> KeyboardAction.KeyCodeAction(92)
             WhitelistAction.HASH_VERTICAL_PAGE_DOWN -> KeyboardAction.KeyCodeAction(93)
             WhitelistAction.HASH_SHOW_PHRASE_VIEW -> KeyboardAction.ShowPhraseViewAction

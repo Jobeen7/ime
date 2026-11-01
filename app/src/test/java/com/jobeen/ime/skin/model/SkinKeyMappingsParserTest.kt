@@ -81,6 +81,7 @@ class SkinKeyMappingsParserTest {
             "#copy" to SkinAction.Command(WhitelistAction.HASH_COPY),
             "#paste" to SkinAction.Command(WhitelistAction.HASH_PASTE),
             "#deleteText" to SkinAction.Command(WhitelistAction.HASH_DELETE_TEXT),
+            "#undo" to SkinAction.Command(WhitelistAction.HASH_UNDO),
             "#verticalCandidatesPageUp" to SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_UP),
             "#verticalCandidatesPageDown" to SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_DOWN),
             "#showPhraseView" to SkinAction.Command(WhitelistAction.HASH_SHOW_PHRASE_VIEW),
