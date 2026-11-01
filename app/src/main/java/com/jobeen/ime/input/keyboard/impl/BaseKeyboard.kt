@@ -81,6 +81,9 @@ abstract class BaseKeyboard(
 
     private val dynamicViews = mutableListOf<DynamicView>()
 
+    /** 文字回车键刷新器（自定义布局的文本回车键，建键时按行为记下）。 */
+    private val enterTextSetters = mutableListOf<(String) -> Unit>()
+
     override fun updateSpaceKeyText(text: String) {
         spaceKeyView?.updateText(text)
     }
@@ -272,6 +275,15 @@ abstract class BaseKeyboard(
             skinSoundMuted = def.skinSoundMuted
             // G1 前景多层叠加：视图建成后挂一次（文本/图标层压主文字之上）
             attachForegroundLayers()
+            // 文字回车键跟随（回车文案跟 returnKeyType）：自定义布局
+            // 的文本回车键（Press ReturnAction 的文本键）记下刷新器，
+            // updateEditorInfo 按编辑框动作改文案；内置图标回车键
+            // 另走图标（textSetter 对 ImageKeyView 为空，自然排除）。
+            if (def.behaviors.any { b ->
+                    b is KeyDef.Behavior.Press && b.action is KeyboardAction.ReturnAction
+                }) {
+                textSetter(this)?.let { enterTextSetters += it }
+            }
             // G1 动态文字运行时跟随：记下可刷新文本的动态键
             // （来源 + 静态回退），供 updateDynamicTexts 原地刷新。
             val dynamicSource = def.appearance.skinDynamicText
@@ -617,6 +629,14 @@ abstract class BaseKeyboard(
             returnKeyIcon = icon
             returnKeyView?.img?.imageResource = returnKeyIcon
         }
+        // 文字回车键文案跟随编辑框动作：空输入/组字中恒为换行
+        // （与图标回车口径一致：此时回车只换行，不发送/搜索）。
+        val enterLabel = if (empty || isComposing) {
+            "换行"
+        } else {
+            com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(action)
+        }
+        enterTextSetters.forEach { it(enterLabel) }
     }
 
     override fun updatePunctuationMode(mode: PunctuationMode) {
