@@ -627,7 +627,7 @@ object KeyboardStateManager {
     fun isMainTypeAlphabetic(context: Context): Boolean {
         val primary = typeState.primary
         if (primary != null) return primary == KeyboardTypes.ALPHABETIC
-        return initialType(CandidateManager.isAsciiModeEnabled(context)) ==
+        return typeState.initialType(CandidateManager.isAsciiModeEnabled(context)) ==
             KeyboardTypes.ALPHABETIC
     }
 
