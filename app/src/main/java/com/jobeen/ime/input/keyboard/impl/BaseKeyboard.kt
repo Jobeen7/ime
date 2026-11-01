@@ -311,6 +311,15 @@ abstract class BaseKeyboard(
             skinSoundMuted = def.skinSoundMuted
             // G1 前景多层叠加：视图建成后挂一次（文本/图标层压主文字之上）
             attachForegroundLayers()
+            // 滑动方向指示：flag 为总闸，方向以合并后滑动行为为准
+            // （含滑动切换键盘的 SwitchKeyboardTypeAction）。
+            if (def.appearance.skinShowSwipeIndicators) {
+                val swipes = def.behaviors.filterIsInstance<KeyDef.Behavior.Swipe>()
+                attachSwipeIndicators(
+                    hasUp = swipes.any { it.upAction != null },
+                    hasDown = swipes.any { it.downAction != null },
+                )
+            }
             // 前景层实时变量：含变量的文本层刷新器随视图登记，
             // 与主显动态键同一批由 updateDynamicTexts 刷新。
             this@BaseKeyboard.foregroundDynamicViews += foregroundDynamics

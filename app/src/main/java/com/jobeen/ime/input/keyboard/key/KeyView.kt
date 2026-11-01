@@ -396,6 +396,50 @@ abstract class KeyView(
         }
     }
 
+    private var swipeIndicatorsAttached = false
+
+    /**
+     * 滑动方向指示（多主类型补充）：由 BaseKeyboard 在视图建成后
+     * 调用一次（与 attachForegroundLayers 同批）。flag 为总闸，
+     * 方向以调用方传入的合并后滑动动作为准——无动作的方向不置
+     * 标，不凭空造标。顶／底边居中各一静态小 chevron（⌃／⌄，
+     * 10sp，主文字色）；仅 appearanceView 内加子视图，不碰背景
+     * drawable 数学；静态标记，按压不改态；重复调用只挂一次。
+     */
+    fun attachSwipeIndicators(hasUp: Boolean, hasDown: Boolean) {
+        if (swipeIndicatorsAttached) return
+        swipeIndicatorsAttached = true
+        if (!def.skinShowSwipeIndicators) return
+        if (!hasUp && !hasDown) return
+        val color = def.skinTextColor ?: when (def.variant) {
+            Variant.Normal, Variant.AltForeground -> colors.keyText
+            Variant.Alternative -> colors.specialKeyText
+            Variant.Accent -> colors.accentKeyText
+            Variant.None -> colors.keyText
+        }
+        fun chevron(text: String, top: Boolean) {
+            val view = TextView(context).apply {
+                isClickable = false
+                isFocusable = false
+                background = null
+                includeFontPadding = false
+                this.text = text
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 10f)
+                gravity = android.view.Gravity.CENTER
+                setTextColor(color)
+            }
+            appearanceView.apply {
+                add(view, lParams(wrapContent, wrapContent) {
+                    startToStart = parentId
+                    endToEnd = parentId
+                    if (top) topToTop = parentId else bottomToBottom = parentId
+                })
+            }
+        }
+        if (hasUp) chevron("⌃", true)
+        if (hasDown) chevron("⌄", false)
+    }
+
     private var pressedLayerAlpha = 0
     private var bgAnimator: Animator? = null
 
