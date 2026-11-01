@@ -96,7 +96,9 @@ enum class GeometryField(val jsonName: String) {
  * - keyRadiusDp / keyHGapDp / keyVGapDp 分别对应圆角、键横/纵间距，
  *   区间与 appearance 几何一致（0..40 / 0..20 / 0..20）；
  * - heightPercent 为键盘高度百分比，区间取 App 现有竖屏滑条
- *   20..50 与横屏滑条 30..70 的并集 20..70，竖横屏同值生效。
+ *   20..50 与横屏滑条 30..70 的并集 20..70，竖横屏同值生效；
+ * - heightPercentLandscape 为横屏专属高度百分比（同区间），仅横屏
+ *   生效、优先于 heightPercent；未指定时横屏回落 heightPercent。
  * 优先级：geometry 有效值 > appearance 有效值 > App 设置（见
  * [SkinSnapshotBuilder] 与 [KeyboardColors.resolve]，冲突时记
  * INFO issue，不静默覆盖）。
@@ -106,6 +108,7 @@ enum class KeyboardGeometryField(val jsonName: String) {
     KEY_H_GAP("keyHGapDp"),
     KEY_V_GAP("keyVGapDp"),
     HEIGHT_PERCENT("heightPercent"),
+    HEIGHT_PERCENT_LANDSCAPE("heightPercentLandscape"),
 }
 
 /** 键盘级几何校验结果：只含文件显式给出的有效值；缺失/坏值不在此表，消费点回退下一级。 */

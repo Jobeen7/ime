@@ -57,6 +57,7 @@ object SkinValidator {
         KeyboardGeometryField.KEY_H_GAP to 0f..20f,
         KeyboardGeometryField.KEY_V_GAP to 0f..20f,
         KeyboardGeometryField.HEIGHT_PERCENT to 20f..70f,
+        KeyboardGeometryField.HEIGHT_PERCENT_LANDSCAPE to 20f..70f,
     )
 
     /**

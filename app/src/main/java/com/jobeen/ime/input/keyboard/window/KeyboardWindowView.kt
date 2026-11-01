@@ -119,6 +119,22 @@ class KeyboardWindowView(
 ) : FrameLayout(context), IManagedView, SkinRuntime.SkinWindow {
 
     companion object {
+        /**
+         * 键盘高度百分比决议（纯函数，可单测）：
+         * 布局专用 > 皮肤横屏专属（仅横屏） > 皮肤通用 > App 竖/横屏设置。
+         * 调用方只负责取值，方向与回退口径全在此。
+         */
+        fun resolveHeightPercent(
+            layoutPercent: Int?,
+            skinPercent: Int?,
+            skinLandscapePercent: Int?,
+            isLandscape: Boolean,
+            appPortraitPercent: Int,
+            appLandscapePercent: Int,
+        ): Int = layoutPercent
+            ?: (if (isLandscape) skinLandscapePercent ?: skinPercent else skinPercent)
+            ?: (if (isLandscape) appLandscapePercent else appPortraitPercent)
+
         const val PANEL_HEIGHT_DP = 48
 
         /** 配色刷新防抖窗口：窗口内的多次设置变更合并为一次全量刷新 */
@@ -1409,11 +1425,14 @@ class KeyboardWindowView(
     }
 
     private fun contentHeight(): Int {
-        // 高度百分比优先级（2026-10-28 布局专用高度加入）：
+        // 高度百分比优先级（2026-10-28 布局专用高度加入；2026-11-01
+        // 横屏专属高度加入）：
         // 1. 当前布局的布局专用 heightPercent（内置覆盖/自创布局
         //    文件顶层，50–200；横屏取横屏绑定，无则取竖屏绑定）；
-        // 2. 皮肤 geometry heightPercent（竖横屏同值覆盖 App 设置）；
-        // 3. 未指定时按方向读原有竖/横屏设置。peek() 不触发快照
+        // 2. 皮肤 geometry 横屏专属 heightPercentLandscape（仅横屏，
+        //    优先于通用 heightPercent）；
+        // 3. 皮肤 geometry heightPercent（竖横屏同值覆盖 App 设置）；
+        // 4. 未指定时按方向读原有竖/横屏设置。peek() 不触发快照
         // 加载（应用事务的强制 refreshColors 已先装好快照并重建
         // 键盘，重测时快照必已就位）；快照缺失 = 无皮肤生效，
         // 走原路径。当前键盘为空（尚未显示）时布局项取不到，
@@ -1433,17 +1452,25 @@ class KeyboardWindowView(
             }
             else -> snapshot.builtinLayouts[currentName]?.heightPercent?.roundToInt()
         }
-        val skinPercent = snapshot
-            ?.keyboardGeometry
+        val geometry = snapshot?.keyboardGeometry
+        val skinPercent = geometry
             ?.takeIf { KeyboardGeometryField.HEIGHT_PERCENT in it.presence }
             ?.values
             ?.getValue(KeyboardGeometryField.HEIGHT_PERCENT)
             ?.roundToInt()
-        val percent = layoutPercent ?: skinPercent ?: if (isLandscape) {
-            KeyboardManager.Keyboard.getHeightPercentLandscape(context)
-        } else {
-            KeyboardManager.Keyboard.getHeightPercent(context)
-        }
+        val skinLandscapePercent = geometry
+            ?.takeIf { KeyboardGeometryField.HEIGHT_PERCENT_LANDSCAPE in it.presence }
+            ?.values
+            ?.getValue(KeyboardGeometryField.HEIGHT_PERCENT_LANDSCAPE)
+            ?.roundToInt()
+        val percent = resolveHeightPercent(
+            layoutPercent,
+            skinPercent,
+            skinLandscapePercent,
+            isLandscape,
+            KeyboardManager.Keyboard.getHeightPercent(context),
+            KeyboardManager.Keyboard.getHeightPercentLandscape(context),
+        )
         val fullHeight = fullScreenHeight()
         return (fullHeight * percent / 100).coerceAtLeast(minimumHeight)
     }
