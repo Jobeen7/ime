@@ -35,7 +35,7 @@ class BoardLockConditionTest {
     fun parserNormalizesDollarPrefixedLockKey() {
         val (parsed, dropped) = ConditionStyleParser.parse(
             conditionArray(
-                """[{"conditionKey": "\$symbolicKeyboardLockState", "conditionValue": true, "styleName": "locked"}]""",
+                """[{"conditionKey": "${'$'}symbolicKeyboardLockState", "conditionValue": true, "styleName": "locked"}]""",
             ),
         )
         assertEquals(0, dropped)
