@@ -69,25 +69,25 @@ class CandidateColorFieldsTest {
 
     @Test
     fun candidateCommentFlowsToScheme() {
-        val scheme = build(base(""""candidateComment": "#FF112233"""))
+        val scheme = build(base(""""candidateComment": "#FF112233""""))
         assertEquals(0xFF112233.toInt(), scheme.panel.candidateComment)
     }
 
     @Test
     fun candidateCommentAbsentIsNull() {
-        val scheme = build(base(""""candidateText": "#FF000000"""))
+        val scheme = build(base(""""candidateText": "#FF000000""""))
         assertNull(scheme.panel.candidateComment)
     }
 
     @Test
     fun candidatePressedFlowsToScheme() {
-        val scheme = build(base(""""candidatePressed": "#FF445566"""))
+        val scheme = build(base(""""candidatePressed": "#FF445566""""))
         assertEquals(0xFF445566.toInt(), scheme.panel.candidatePressed)
     }
 
     @Test
     fun candidatePressedAbsentIsNull() {
-        val scheme = build(base(""""candidateText": "#FF000000"""))
+        val scheme = build(base(""""candidateText": "#FF000000""""))
         assertNull(scheme.panel.candidatePressed)
     }
 
@@ -115,7 +115,7 @@ class CandidateColorFieldsTest {
 
     @Test
     fun preferredColorsAbsentAreNull() {
-        val scheme = build(base(""""candidateText": "#FF000000"""))
+        val scheme = build(base(""""candidateText": "#FF000000""""))
         assertNull(scheme.panel.preferredBackground)
         assertNull(scheme.panel.preferredText)
         assertNull(scheme.panel.preferredComment)
@@ -124,13 +124,13 @@ class CandidateColorFieldsTest {
 
     @Test
     fun verticalSeparatorFlowsToScheme() {
-        val scheme = build(base(""""verticalSeparator": "#FF123456"""))
+        val scheme = build(base(""""verticalSeparator": "#FF123456""""))
         assertEquals(0xFF123456.toInt(), scheme.panel.verticalSeparator)
     }
 
     @Test
     fun verticalSeparatorAbsentIsNull() {
-        val scheme = build(base(""""candidateText": "#FF000000"""))
+        val scheme = build(base(""""candidateText": "#FF000000""""))
         assertNull(scheme.panel.verticalSeparator)
     }
 
