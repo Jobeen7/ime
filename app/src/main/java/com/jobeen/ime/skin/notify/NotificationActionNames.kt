@@ -44,6 +44,7 @@ object NotificationActionNames {
         is KeyboardAction.RedoAction -> "RedoAction"
         is KeyboardAction.LiteralCommitAction -> "LiteralCommitAction"
         is KeyboardAction.DeleteForwardAction -> "DeleteForwardAction"
+        is KeyboardAction.DeleteTextAction -> "DeleteTextAction"
         is KeyboardAction.OpenSystemImePickerAction -> "OpenSystemImePickerAction"
         is KeyboardAction.HideKeyboardAction -> "HideKeyboardAction"
         is KeyboardAction.SendKeysAction -> "SendKeysAction"

@@ -94,6 +94,29 @@ class KeyActionListener(
                 engine?.deleteForward(service)
             }
 
+            // 删除选中文本（#deleteText）：仅删当前选区；无选区
+            // 空操作，绝不回退为退格；组字中禁行（选区与组字
+            // 重叠，连接侧删除会损坏组字态，见 DeleteTextPolicy）。
+            // 读选区与提交皆经当前输入连接（与剪贴板动作同口径，
+            // 不走短语桥虚拟连接）；连接异常只记元数据，不崩溃。
+            is KeyboardAction.DeleteTextAction -> {
+                try {
+                    val ic = service.currentInputConnection
+                    val selected = runCatching { ic?.getSelectedText(0) }.getOrNull()
+                    if (ic != null && DeleteTextPolicy.shouldDelete(
+                            KeyboardStateManager.isComposingNow, selected,
+                        )
+                    ) {
+                        ic.commitText("", 1)
+                    }
+                } catch (ex: Exception) {
+                    DiagLog.w(
+                        "keymap", "delete_text_failed",
+                        mapOf("error" to ex.javaClass.simpleName),
+                    )
+                }
+            }
+
             // RIME 选项翻转（rimeOption）：引擎侧异步读现值取反；
             // 三态以上选项不适用，不持久化（见 SkinAction 文档）。
             is KeyboardAction.ToggleRimeOptionAction -> {

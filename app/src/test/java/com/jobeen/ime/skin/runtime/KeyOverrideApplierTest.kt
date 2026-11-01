@@ -572,6 +572,8 @@ class KeyOverrideApplierTest {
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.COPY),
             SkinAction.Command(WhitelistAction.HASH_PASTE) to
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.PASTE),
+            SkinAction.Command(WhitelistAction.HASH_DELETE_TEXT) to
+                KeyboardAction.DeleteTextAction,
             SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_UP) to
                 KeyboardAction.KeyCodeAction(92),
             SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_DOWN) to

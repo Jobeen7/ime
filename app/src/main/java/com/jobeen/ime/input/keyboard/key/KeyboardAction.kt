@@ -116,6 +116,13 @@ sealed class KeyboardAction {
      */
     data object DeleteForwardAction : KeyboardAction()
 
+    /**
+     * 删除选中文本（#deleteText）：仅删当前选区；无选区空操作，
+     * 绝不回退为退格；组字中分发层禁行（选区与组字重叠时连接
+     * 侧删除会损坏组字态，见 DeleteTextPolicy）。
+     */
+    data object DeleteTextAction : KeyboardAction()
+
     /** 打开系统输入法选择器：服务层路由（裁定记录 §11-2），不经引擎。 */
     data object OpenSystemImePickerAction : KeyboardAction()
 

@@ -204,6 +204,7 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.VoiceInputAction -> "VoiceInputAction"
         is KeyboardAction.LiteralCommitAction -> action.text
         is KeyboardAction.DeleteForwardAction -> "DeleteForwardAction"
+        is KeyboardAction.DeleteTextAction -> "DeleteTextAction"
         is KeyboardAction.OpenSystemImePickerAction -> "OpenSystemImePickerAction"
         is KeyboardAction.HideKeyboardAction -> "HideKeyboardAction"
         is KeyboardAction.SendKeysAction -> "SendKeysAction"
