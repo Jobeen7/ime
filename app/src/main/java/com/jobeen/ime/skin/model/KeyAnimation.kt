@@ -34,6 +34,15 @@ data class KeyAnimationSpec(
     /** 单程时长 ms（50..300）；缺省 120。 */
     val durationMs: Int = DEFAULT_DURATION_MS,
     val easing: KeyAnimationEasing = KeyAnimationEasing.EASE_OUT,
+    /**
+     * 审计 H 项：压下/抬起分段时长（对端 scale 的 pressDuration /
+     * releaseDuration）；null = 沿用 durationMs。抬起时长只在
+     * autoReverse 时生效（非自动回弹时抬起不做缩放动画）。
+     */
+    val pressDurationMs: Int? = null,
+    val releaseDurationMs: Int? = null,
+    /** 抬起是否自动回弹到 1.0（对端 isAutoReverse）；缺省 true。 */
+    val autoReverse: Boolean = true,
 ) {
     companion object {
         const val DEFAULT_PRESSED_SCALE: Float = 0.96f
@@ -142,6 +151,44 @@ object KeyAnimationParser {
             }
         }
 
-        return KeyAnimationSpec(enabled, pressedScale, durationMs, easing) to issues
+        // 审计 H 项：压下/抬起分段时长（对端字段名）与自动回弹开关；
+        // 非法时逐项回退（分段为 null = 沿用 durationMs，开关为 true）。
+        fun splitDuration(field: String): Int? {
+            val node = obj[field] ?: return null
+            val primitive = node as? JsonPrimitive
+            val value = if (primitive != null && !primitive.isString) {
+                primitive.content.toIntOrNull()
+            } else {
+                null
+            }
+            if (value == null || value < KeyAnimationSpec.MIN_DURATION_MS ||
+                value > KeyAnimationSpec.MAX_DURATION_MS
+            ) {
+                fallback(field, "key_animation_duration_invalid")
+                return null
+            }
+            return value
+        }
+        val pressDurationMs = splitDuration("pressDuration")
+        val releaseDurationMs = splitDuration("releaseDuration")
+        var autoReverse = true
+        val autoReverseNode = obj["isAutoReverse"] ?: obj["autoReverse"]
+        if (autoReverseNode != null) {
+            val primitive = autoReverseNode as? JsonPrimitive
+            if (primitive != null && !primitive.isString) {
+                try {
+                    autoReverse = primitive.content.toBooleanStrict()
+                } catch (e: IllegalArgumentException) {
+                    fallback("isAutoReverse", "key_animation_autoreverse_invalid")
+                }
+            } else {
+                fallback("isAutoReverse", "key_animation_autoreverse_invalid")
+            }
+        }
+
+        return KeyAnimationSpec(
+            enabled, pressedScale, durationMs, easing,
+            pressDurationMs, releaseDurationMs, autoReverse,
+        ) to issues
     }
 }
