@@ -95,6 +95,7 @@ import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.core.RimeSchema
 import com.jobeen.ime.engine.rime.util.OptionsApplier
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
 import com.jobeen.ime.input.panel.PanelListener
@@ -120,6 +121,12 @@ class KeyboardWindowView(
 ) : FrameLayout(context), IManagedView, SkinRuntime.SkinWindow {
 
     companion object {
+        /** 选项态刷新竞态重试上限（切方案/会话未就绪时重读次数）。 */
+        private const val OPTION_REFRESH_RETRIES = 3
+
+        /** 选项态刷新竞态重试间隔（毫秒）。 */
+        private const val OPTION_REFRESH_RETRY_DELAY_MS = 200L
+
         /**
          * 键盘高度百分比决议（纯函数，可单测）：
          * 布局专用 > 皮肤横屏专属（仅横屏） > 皮肤通用 > App 竖/横屏设置。
@@ -1388,10 +1395,28 @@ class KeyboardWindowView(
             }.orEmpty()
         appScope.launch {
             val engine = EngineFactory.current() as? IRimeJob ?: return@launch
-            val rimeSchema = engine.awaitJob<RimeSchema?>(null) { currentSchema() }
-                ?: return@launch
-            if (rimeSchema.schemaId != schemaId) return@launch
-            val switches = rimeSchema.switches.map { sw ->
+            // 切方案竞态自愈（动态值刷新口径）：引擎切方案走 actions
+            // 通道、本刷新读方案走 jobs 通道，两条串行通道之间无
+            // 先后保证——首读可能读到旧方案（或会话未就绪读到
+            // null）。旧口径此时静默丢弃，且 feed 的 schemaId 已
+            // 推进（下次同方案附着不再触发），选项标签就此滞留旧值
+            // 直到下次切方案/部署。改有界重试：方案不一致或读空时
+            // 最多重读 3 次（间隔 200ms，成功路径零延迟）；期间有
+            // 更新的刷新启动（seq 变化）即中止，不与新刷新打架；
+            // 3 次仍不一致则放弃（与旧口径同效，等待下次触发）。
+            var rimeSchema = engine.awaitJob<RimeSchema?>(null) { currentSchema() }
+            var attempts = 0
+            while ((rimeSchema == null || rimeSchema.schemaId != schemaId) &&
+                seq == optionRefreshSeq && attempts < OPTION_REFRESH_RETRIES
+            ) {
+                delay(OPTION_REFRESH_RETRY_DELAY_MS)
+                if (seq != optionRefreshSeq) return@launch
+                rimeSchema = engine.awaitJob<RimeSchema?>(null) { currentSchema() }
+                attempts++
+            }
+            val currentRimeSchema = rimeSchema
+            if (currentRimeSchema == null || currentRimeSchema.schemaId != schemaId) return@launch
+            val switches = currentRimeSchema.switches.map { sw ->
                 OptionLabelResolver.Switch(sw.name, sw.options, sw.states)
             }
             val wanted = (switches.flatMap { it.optionNames } + conditionOptionNames).toSet()
