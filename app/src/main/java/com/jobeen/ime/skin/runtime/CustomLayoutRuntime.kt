@@ -1,10 +1,14 @@
 package com.jobeen.ime.skin.runtime
 
+import com.jobeen.ime.input.keyboard.impl.EmojiKeyboard
+import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
+import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.model.LayoutResolution
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.VariantResolver
@@ -137,6 +141,150 @@ object CustomLayoutRuntime {
      *    横屏绑定不改竖屏行为：竖屏下无竖屏绑定时主键盘名
      *    恒原样返回内置布局。
      */
+    /**
+     * 类型目标解析（多主槽一期）：（类型 + 方向）→ 键盘运行时名。
+     * 旧 [resolveSwitchTarget]（按名解析）保持冻结语义，本函数
+     * 是类型维度的唯一新解析入口；调用方不得混用两者。
+     *
+     * 回退链（任一步命中即停，永不空白）：
+     * 1. 表项该方向已解析布局 → `custom:<layoutId>`；
+     * 2. 仅 pinyin：表项无有效绑定时回落旧顶层绑定（竖屏取
+     *    resolvedLayout，横屏取 resolvedLayoutLandscape、无则
+     *    取 resolvedLayout 的横屏权重变体所指布局）；
+     * 3. 内置出厂键盘（[builtinKeyboardName]）：emojis → 表情
+     *    键盘；images → 暂无 images 键盘实现前以表情键盘兜底
+     *    （实现落地后改指 images 键盘，见 Wave-4 接线项）；
+     *    numeric/numberPad → 数字键盘（两者现共用同一数字
+     *    键盘实现，表项仍可各自绑定不同自定义布局与高度）；
+     *    symbolic → 符号键盘；alphabetic → 全键盘；pinyin →
+     *    方案默认布局；未声明的自定义类型 → 方案默认布局。
+     * 表项已声明但绑定解析失败（缺失/非法）与未声明同等处理：
+     * 一律走第 2/3 步，绝不因声明了坏绑定而空白。
+     */
+    fun resolveTypeTarget(
+        snapshot: SkinSnapshot?,
+        type: String,
+        schemaDefault: String,
+        landscape: Boolean = false,
+    ): String {
+        val entry = snapshot?.resolvedKeyboards?.get(type)
+        val resolved = entry?.resolvedFor(landscape)
+        if (resolved != null) return nameFor(resolved.layoutId)
+        if (type == KeyboardTypes.PINYIN) {
+            val legacy = if (landscape) {
+                snapshot?.resolvedLayoutLandscape ?: snapshot?.resolvedLayout
+            } else {
+                snapshot?.resolvedLayout
+            }
+            if (legacy != null) return nameFor(legacy.layoutId)
+        }
+        return builtinKeyboardName(type, schemaDefault)
+    }
+
+    /**
+     * 类型 → 内置出厂键盘名（回退链末级，永不返回未知名）：
+     * createKeyboard 对未知名亦回落全键盘，故本表外再无空白
+     * 路径。images 暂指表情键盘是过渡口径，不是类型语义。
+     */
+    fun builtinKeyboardName(type: String, schemaDefault: String): String = when (type) {
+        KeyboardTypes.ALPHABETIC -> QwertyKeyboard.NAME
+        KeyboardTypes.PINYIN -> schemaDefault
+        KeyboardTypes.EMOJIS -> EmojiKeyboard.NAME
+        KeyboardTypes.IMAGES -> EmojiKeyboard.NAME
+        KeyboardTypes.NUMERIC, KeyboardTypes.NUMBER_PAD -> NumberKeyboard.NAME
+        KeyboardTypes.SYMBOLIC -> SymbolKeyboard.NAME
+        else -> schemaDefault
+    }
+
+    /**
+     * 按类型取生效布局（多主槽一期）：与 [effectiveLayout] 同一
+     * 装配器、同一覆写语义，只改布局来源——先取表项该方向
+     * 已解析布局，pinyin 无表项时回落旧顶层绑定；其余类型无
+     * 绑定时返回 null，调用方走内置键盘（绝不空白）。
+     * 旧 [effectiveLayout] 不改：它仍只认旧单布局字段，供
+     * 旧主键盘位路径使用；新类型路径的构建接线（按名建键盘
+     * 时传入类型）属后续接线轮，本函数先行提供布局来源。
+     */
+    fun effectiveLayoutForType(
+        snapshot: SkinSnapshot?,
+        type: String,
+        placeholders: Map<String, String>,
+        landscape: Boolean = false,
+        isDark: Boolean = false,
+        mnemonicEnabled: Boolean = true,
+        decorationEnabled: Boolean = true,
+    ): List<List<KeyDef>>? {
+        if (snapshot == null) return null
+        val resolved = snapshot.resolvedKeyboards[type]?.resolvedFor(landscape)
+            ?: if (type == KeyboardTypes.PINYIN) {
+                if (landscape) {
+                    snapshot.resolvedLayoutLandscape ?: snapshot.resolvedLayout
+                } else {
+                    snapshot.resolvedLayout
+                }
+            } else {
+                null
+            }
+            ?: return null
+        return applyResolved(
+            snapshot, resolved, placeholders, landscape, isDark,
+            mnemonicEnabled, decorationEnabled,
+        )
+    }
+
+    /**
+     * 按布局 id 取生效布局（多主槽一期）：供按名建键盘的调用方
+     * 在类型未知时按 `custom:<layoutId>` 反查——先查类型表两
+     * 方向，再查旧单布局字段；查无返回 null（调用方走回退链）。
+     */
+    fun effectiveLayoutForLayoutId(
+        snapshot: SkinSnapshot?,
+        layoutId: String,
+        placeholders: Map<String, String>,
+        landscape: Boolean = false,
+        isDark: Boolean = false,
+        mnemonicEnabled: Boolean = true,
+        decorationEnabled: Boolean = true,
+    ): List<List<KeyDef>>? {
+        if (snapshot == null) return null
+        val fromTable = snapshot.resolvedKeyboards.values.firstNotNullOfOrNull { entry ->
+            if (landscape) entry.landscape?.takeIf { it.layoutId == layoutId }
+                ?: entry.portrait?.takeIf { it.layoutId == layoutId } else {
+                entry.portrait?.takeIf { it.layoutId == layoutId }
+            }
+        }
+        val resolved = fromTable
+            ?: snapshot.resolvedLayout?.takeIf { it.layoutId == layoutId }
+            ?: snapshot.resolvedLayoutLandscape?.takeIf { it.layoutId == layoutId }
+            ?: return null
+        return applyResolved(
+            snapshot, resolved, placeholders, landscape, isDark,
+            mnemonicEnabled, decorationEnabled,
+        )
+    }
+
+    /** 已解析布局过 keyMappings 覆写装配（与 [effectiveLayout] 同一调用）。 */
+    private fun applyResolved(
+        snapshot: SkinSnapshot,
+        resolved: com.jobeen.ime.skin.model.ResolvedLayout,
+        placeholders: Map<String, String>,
+        landscape: Boolean,
+        isDark: Boolean,
+        mnemonicEnabled: Boolean,
+        decorationEnabled: Boolean,
+    ): List<List<KeyDef>>? {
+        val base = if (landscape) resolved.baseLayoutLandscape else resolved.baseLayout
+        return KeyOverrideApplier.apply(
+            nameFor(resolved.layoutId), base, snapshot, placeholders,
+            scheme = snapshot.effectiveColorScheme(isDark),
+            notifications = SkinRuntimeState.latchedNotifications(),
+            gatedStyleNames = SkinRuntimeState.gatedStyleNames(),
+            activeStyleNames = SkinRuntimeState.activeStyleNames(),
+            mnemonicEnabled = mnemonicEnabled,
+            decorationEnabled = decorationEnabled,
+        )
+    }
+
     fun resolveSwitchTarget(
         snapshot: SkinSnapshot?,
         requested: String,
