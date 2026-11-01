@@ -133,7 +133,8 @@ object KeyOverrideApplier {
         // 接线轮 R1：通知表非空时同样走装配（锁定可能命中样式引用键）。
         // 动效规格非空时同样走装配（全部键须写动效规格）。
         if (overrides.isEmpty() && !hasGlobalSound && snapshot.keyStyles.isEmpty() &&
-            snapshot.textSizes.isEmpty() && notifications.isEmpty() &&
+            snapshot.keyGeometries.isEmpty() && snapshot.textSizes.isEmpty() &&
+            notifications.isEmpty() &&
             keyAnim == null && spaceAnim == null
         ) {
             return factoryLayout

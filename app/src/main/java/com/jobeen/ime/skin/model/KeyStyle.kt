@@ -48,6 +48,23 @@ data class KeyStyleWarning(
 object KeyStyleParser {
 
     /**
+     * 几何面键（由样式几何解析器消费，见 KeyStyleGeometryParser）：
+     * 角色解析时静默跳过，不记未知角色警告（含 geometry 子对象
+     * 与平铺对端字段两种写法）。逐键 styleOverrides 里的几何键
+     * 同样跳过——几何面只在样式表层绑定，不随逐键覆盖生效。
+     */
+    val GEOMETRY_KEYS: Set<String> = setOf(
+        "geometry", "animations",
+        "normalColor", "highlightColor", "colorLocation", "colorGradientType",
+        "colorStartPoint", "colorEndPoint",
+        "normalShadowColor", "highlightShadowColor", "shadowOpacity",
+        "highlightShadowOpacity", "shadowRadius", "shadowOffset",
+        "borderSize", "normalBorderColor", "highlightBorderColor",
+        "normalLowerEdgeColor", "highlightLowerEdgeColor",
+        "cornerRadius", "cornerCurve", "bounds",
+    )
+
+    /**
      * 解析一个角色 → 取值字符串对象（样式表项 / styleOverrides 共用）。
      * 返回（有效映射， 警告）：未知角色/非字符串值逐项丢弃并记警告。
      */
@@ -58,9 +75,7 @@ object KeyStyleParser {
         val roles = LinkedHashMap<KeyStyleRole, String>()
         val warnings = mutableListOf<KeyStyleWarning>()
         for ((name, valueNode) in node) {
-            // 几何/动效键由样式几何解析器消费（见 KeyStyleGeometryParser），
-            // 不是颜色角色：此处静默跳过，不记未知角色警告。
-            if (name == "geometry" || name == "animations") continue
+            if (name in GEOMETRY_KEYS) continue
             val role = KeyStyleRole.byJsonName(name)
             if (role == null) {
                 warnings += KeyStyleWarning(owner, null, "unknown_role:$name")
