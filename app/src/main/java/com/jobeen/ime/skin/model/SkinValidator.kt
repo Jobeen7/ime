@@ -535,7 +535,10 @@ object SkinValidator {
         // ---- keyStyles（2026-10-27 并入项：单键样式表） ----
         // 表本身只做形态校验（解析在快照应用期，目标 = 派生展开后
         // 的令牌快照）；无效项逐项丢弃并记 issue，不拒整包。
+        // 几何面（审计 A 项）同表解析：样式项的 geometry 子对象
+        // 或平铺对端字段 → keyGeometries，角色解析不受影响。
         var keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap()
+        var keyGeometries: Map<String, KeyStyleGeometry> = emptyMap()
         val keyStylesNode = tree["keyStyles"]
         if (keyStylesNode != null) {
             val keyStylesObj = keyStylesNode as? JsonObject
@@ -553,6 +556,20 @@ object SkinValidator {
                         SkinIssue.Kind.FIELD_FALLBACK, warning.reason,
                     )
                 }
+                val geometries = LinkedHashMap<String, KeyStyleGeometry>()
+                for ((name, styleNode) in keyStylesObj) {
+                    val styleObj = styleNode as? JsonObject ?: continue
+                    val (geometry, geometryWarnings) =
+                        KeyStyleGeometryParser.parseEntry(styleObj)
+                    if (geometry != null) geometries[name] = geometry
+                    for (warning in geometryWarnings) {
+                        issues += SkinIssue(
+                            "keyStyles.$name.geometry",
+                            SkinIssue.Kind.FIELD_FALLBACK, warning,
+                        )
+                    }
+                }
+                keyGeometries = geometries
             }
         }
 
@@ -809,6 +826,7 @@ object SkinValidator {
                     system = keySoundSlot("system"),
                 ),
                 keyStyles = keyStyles,
+                keyGeometries = keyGeometries,
                 keyboardGeometry = KeyboardGeometrySpec(
                     presence = keyboardPresence,
                     values = keyboardValues,

@@ -205,6 +205,7 @@ object SkinSnapshotBuilder {
             predictionCloseRadiusDp = validated.predictionCloseRadiusDp,
             keyOverrides = validated.keyOverrides,
             keyStyles = validated.keyStyles,
+            keyGeometries = validated.keyGeometries,
             textSizes = validated.textSizes,
             imageAssets = imageAssets,
             soundBindings = soundBindings,

@@ -67,6 +67,8 @@ data class SkinSnapshot(
     val keyOverrides: Map<String, KeyOverride> = emptyMap(),
     /** 单键样式表（2026-10-27 并入项）：样式名 → 角色 → 取值字符串；装配器按快照方案解析。 */
     val keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
+    /** 样式几何表（审计 A 项）：样式名 → 非颜色几何面；装配器按样式名取用。 */
+    val keyGeometries: Map<String, KeyStyleGeometry> = emptyMap(),
     /** G1 皮肤级分档字号（校验通过值；装配器逐键与逐键覆写合并）。 */
     val textSizes: Map<KeyTextRole, Float> = emptyMap(),
     /**

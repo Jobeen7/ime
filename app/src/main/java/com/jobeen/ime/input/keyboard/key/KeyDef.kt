@@ -57,6 +57,22 @@ open class KeyDef(
         var skinTextColor: Int? = null
         var skinAltTextColor: Int? = null
         var skinBorderColor: Int? = null
+        /**
+         * 审计 A 项几何面（只由覆写装配器写在它生成的外观副本上）：
+         * 渐变（有值时渲染优先于纯色面）、逐样式阴影、描边宽、
+         * 按压描边、下边缘色、圆角、可视区域；null = 该项无样式
+         * 指定（渲染沿用既有口径）。出厂外观恒为 null。
+         */
+        var skinGradient: com.jobeen.ime.skin.model.KeyGradient? = null
+        var skinPressedGradient: com.jobeen.ime.skin.model.KeyGradient? = null
+        var skinShadow: com.jobeen.ime.skin.model.KeyPerStyleShadow? = null
+        var skinBorderWidthDp: Float? = null
+        var skinPressedBorderColor: Int? = null
+        var skinLowerEdgeColor: Int? = null
+        var skinPressedLowerEdgeColor: Int? = null
+        var skinCornerRadiusDp: Float? = null
+        var skinCornerCurve: com.jobeen.ime.skin.model.KeyCornerCurve? = null
+        var skinVisibleBounds: com.jobeen.ime.skin.model.KeyVisibleBounds? = null
         /** G1 图标染色（keyStyles icon 角色解析结果；无图标的键忽略）。 */
         var skinIconTintColor: Int? = null
         /**

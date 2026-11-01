@@ -285,6 +285,8 @@ data class ValidatedSkin(
     val keySound: KeySoundSpec = KeySoundSpec(),
     /** 单键样式表（2026-10-27 并入项）：样式名 → 角色 → 取值字符串（令牌路径或字面色）。 */
     val keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
+    /** 样式几何表（审计 A 项）：样式名 → 非颜色几何面（渐变/阴影/描边/圆角/下边缘/可视区域/动效名）；无几何的样式不在此表。 */
+    val keyGeometries: Map<String, KeyStyleGeometry> = emptyMap(),
     /** 状态驱动通知（重点候选 8-1）：顶层 notifications 校验结果；未定义即空表。 */
     val notifications: List<SkinNotification> = emptyList(),
     /** 条件样式（重点候选 8-1）：顶层 conditionStyles 校验结果；未定义即空表。 */

@@ -170,6 +170,9 @@ object KeyOverrideApplier {
                     layoutName, def, override, snapshot, effectiveScheme,
                     gatedStyleNames, activeStyleNames,
                 )
+                // 审计 A 项：样式几何面与颜色角色同样式名绑定（覆写
+                // styleRef > 布局键自带 styleRef），无样式名时为 null。
+                val geometry = resolveStyleGeometry(def, override, snapshot)
                 // 接线轮 R1：通知按样式名匹配（布局键自带 styleRef
                 // 或覆写 styleRef；无样式引用键不命中）。
                 val styleRef = override?.styleRef ?: def.skinStyleRef
@@ -183,7 +186,7 @@ object KeyOverrideApplier {
                     keyAnim
                 }
                 val needsCopy = override != null || sound != SoundPlan.Inherit ||
-                    style != null || widthChanged || latched != null ||
+                    style != null || geometry != null || widthChanged || latched != null ||
                     animForKey != null ||
                     (snapshot.textSizes.isNotEmpty() &&
                         def.appearance is KeyDef.Appearance.Text)
@@ -198,6 +201,7 @@ object KeyOverrideApplier {
                         dynamicTexts = dynamicTexts,
                         sound = sound,
                         style = style,
+                        geometry = geometry,
                         tiers = snapshot.textSizes,
                         imageAssets = snapshot.imageAssets,
                         scheme = effectiveScheme,
@@ -301,6 +305,21 @@ object KeyOverrideApplier {
         return resolution.style
     }
 
+    /**
+     * 样式几何面解析（审计 A 项）：与颜色角色同样式名绑定；
+     * 几何面本身已是解析后的颜色值，不再走令牌解析。无样式
+     * 名或样式无几何面时返回 null（不复制、不记日志——缺失
+     * 样式的警告已由颜色解析一处负责）。
+     */
+    private fun resolveStyleGeometry(
+        def: KeyDef,
+        override: KeyOverride?,
+        snapshot: SkinSnapshot,
+    ): com.jobeen.ime.skin.model.KeyStyleGeometry? {
+        val styleRef = override?.styleRef ?: def.skinStyleRef ?: return null
+        return snapshot.keyGeometries[styleRef]
+    }
+
     /** 布局键自带覆盖（低）+ 覆写覆盖（高）按角色合并。 */
     private fun mergeStyleOverrides(
         base: Map<String, String>?,
@@ -388,6 +407,8 @@ object KeyOverrideApplier {
         dynamicTexts: Map<DynamicTextSource, String>,
         sound: SoundPlan,
         style: KeyStyleResolver.ResolvedKeyStyle?,
+        /** 审计 A 项：本键样式几何面（null = 无几何指定）。 */
+        geometry: com.jobeen.ime.skin.model.KeyStyleGeometry? = null,
         tiers: Map<KeyTextRole, Float>,
         imageAssets: Map<String, String>,
         scheme: com.jobeen.ime.data.keyboard.theme.KeyboardColors.ColorScheme,
@@ -467,6 +488,7 @@ object KeyOverrideApplier {
             style = style,
             imageAssetId = imageAssetId,
             geometry = override?.geometry,
+            styleGeometry = geometry,
             foreground = foreground,
             keyAnimation = keyAnimation,
         )
@@ -527,6 +549,9 @@ object KeyOverrideApplier {
                 val color = KeyStyleResolver.resolveValue(raw, scheme)
                 if (color != null) {
                     appearance.skinFaceColor = color
+                    // 锁定通知纯色优先于样式渐变：渐变在渲染层优先
+                    // 于面色，不清则通知背景色永不生效。
+                    appearance.skinGradient = null
                 } else {
                     DiagLog.w(
                         "keymap", "notification_style_fallback",
@@ -760,6 +785,8 @@ object KeyOverrideApplier {
         style: KeyStyleResolver.ResolvedKeyStyle?,
         imageAssetId: String?,
         geometry: com.jobeen.ime.skin.model.KeyGeometryOverride?,
+        /** 审计 A 项：样式几何面（与逐键几何覆写 geometry 是两槽）。 */
+        styleGeometry: com.jobeen.ime.skin.model.KeyStyleGeometry? = null,
         foreground: List<ResolvedForegroundLayer>?,
         keyAnimation: com.jobeen.ime.skin.model.KeyAnimationSpec?,
     ): KeyDef.Appearance {
@@ -853,8 +880,24 @@ object KeyOverrideApplier {
         rebuilt.skinPressedColor = style?.pressed
         rebuilt.skinTextColor = style?.text
         rebuilt.skinAltTextColor = style?.altText
-        rebuilt.skinBorderColor = style?.border
+        // 审计 A 项：描边/下边缘取几何面字面值优先、角色值其次
+        // （几何面是对端字面色，角色是 Jime 令牌/字面色；两者
+        // 皆无时为 null，渲染沿用方案默认描边）。
+        rebuilt.skinBorderColor = styleGeometry?.normalBorderColor ?: style?.border
         rebuilt.skinIconTintColor = style?.iconTint
+        rebuilt.skinGradient = styleGeometry?.gradientNormal
+        rebuilt.skinPressedGradient = styleGeometry?.gradientHighlight
+        rebuilt.skinShadow = styleGeometry?.shadow
+        rebuilt.skinBorderWidthDp = styleGeometry?.borderWidthDp
+        rebuilt.skinPressedBorderColor =
+            styleGeometry?.highlightBorderColor ?: style?.pressedBorder
+        rebuilt.skinLowerEdgeColor =
+            styleGeometry?.normalLowerEdgeColor ?: style?.lowerEdge
+        rebuilt.skinPressedLowerEdgeColor =
+            styleGeometry?.highlightLowerEdgeColor ?: style?.pressedLowerEdge
+        rebuilt.skinCornerRadiusDp = styleGeometry?.cornerRadiusDp
+        rebuilt.skinCornerCurve = styleGeometry?.cornerCurve
+        rebuilt.skinVisibleBounds = styleGeometry?.bounds
         rebuilt.skinImageAssetId = imageAssetId
         rebuilt.skinTextSize = mainSize
         rebuilt.skinAltTextSize = altSize
