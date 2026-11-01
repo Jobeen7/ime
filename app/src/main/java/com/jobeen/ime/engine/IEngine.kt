@@ -29,6 +29,24 @@ interface IEngine {
     fun redo(service: InputMethodService)
     fun commit(text: String)
     /**
+     * 向前删除（deleteForward 动作入口）：组字中删编码右侧、
+     * 否则删选区／光标右侧（表情整体），右侧无物时空操作。
+     * 缺省空实现（非 Rime 引擎无此通道时不崩溃）。
+     */
+    fun deleteForward(service: InputMethodService) {}
+    /**
+     * RIME 布尔选项翻转（rimeOption 动作入口）：引擎侧异步
+     * 读现值后取反写回；三态以上选项不适用；不持久化。
+     * 缺省空实现。
+     */
+    fun toggleRuntimeOption(option: String) {}
+    /**
+     * 关闭联想（sendKeyEvent 前置）：取消在途联想、清联想
+     * 可见态并以空候选帧通知 UI 收起；不碰组字与文档文本。
+     * 缺省空实现。
+     */
+    fun dismissPredictions() {}
+    /**
      * 成对提交（2026-10-28 截图 6 项）：提交 pair（如 "()"），
      * 落屏后光标回退到两符号之间。默认实现退化为普通提交
      * （成对文本照常上屏，仅光标留在闭符号之后，不丢字）；

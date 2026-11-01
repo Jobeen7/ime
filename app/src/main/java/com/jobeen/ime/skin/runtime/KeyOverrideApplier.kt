@@ -1236,6 +1236,9 @@ object KeyOverrideApplier {
         is SkinAction.Combine -> KeyboardAction.CombineAction(action.actions.map { toRuntime(it) })
         is SkinAction.KeyboardType ->
             KeyboardAction.SwitchKeyboardTypeAction(action.type)
+        is SkinAction.RimeOption -> KeyboardAction.ToggleRimeOptionAction(action.name)
+        is SkinAction.Snippet -> KeyboardAction.SnippetAction(action.template)
+        is SkinAction.Delay -> KeyboardAction.DelayAction(action.ms)
         is SkinAction.Command -> when (action.action) {
             WhitelistAction.COMMIT_DIRECT ->
                 KeyboardAction.LiteralCommitAction(requireNotNull(action.value))

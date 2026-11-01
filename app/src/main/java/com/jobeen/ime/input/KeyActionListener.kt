@@ -17,6 +17,7 @@ import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.model.SnippetExpander
 import com.jobeen.ime.skin.script.SkinScriptActivity
 import com.jobeen.ime.skin.script.SkinScriptKeyBridge
 import com.jobeen.ime.skin.script.SkinScriptRunner
@@ -83,6 +84,43 @@ class KeyActionListener(
                             KeyEvent.CodeEvent.keyCode("DEL"), KeyModifiers.Empty
                         )
                     )
+                }
+            }
+
+            // 向前删除（deleteForward，Wave-4 遗留缺口补齐）：
+            // 引擎侧 ForwardDelete 全语义（组字删编码右侧、选区／
+            // 光标右侧整体删、右侧无物空操作），本分支只做接应。
+            is KeyboardAction.DeleteForwardAction -> {
+                engine?.deleteForward(service)
+            }
+
+            // RIME 选项翻转（rimeOption）：引擎侧异步读现值取反；
+            // 三态以上选项不适用，不持久化（见 SkinAction 文档）。
+            is KeyboardAction.ToggleRimeOptionAction -> {
+                engine?.toggleRuntimeOption(action.option)
+            }
+
+            // 模板文本上屏（snippet）：日期展开后字面提交；光标位
+            // 在全文上屏后按标记后单元数向左移（DPAD 步进）。
+            // 顺序残余：上屏与移光标走引擎两条通道（actions/jobs），
+            // 正常路径上屏先行；极端交错下光标位需真机复核。
+            is KeyboardAction.SnippetAction -> {
+                val expanded = SnippetExpander.expand(action.template)
+                engine?.commit(expanded.text)
+                repeat(expanded.cursorUnitsFromEnd) {
+                    engine?.moveCursor(service, -1)
+                }
+            }
+
+            // 子动作间停顿（delay，combine 专用）：分发线程有界
+            // 阻塞；毫秒上限解析期已钳（≤1000ms），此处不二次钳制。
+            is KeyboardAction.DelayAction -> {
+                if (action.ms > 0) {
+                    try {
+                        Thread.sleep(action.ms.toLong())
+                    } catch (ex: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                    }
                 }
             }
 
@@ -185,13 +223,26 @@ class KeyActionListener(
             }
 
             // 直送应用的按键（审计 E：sendKeyEvent / tab / escape /
-            // 行首行尾）：绕过引擎，经输入连接直发应用。
+            // 行首行尾）：绕过引擎，经输入连接直发应用；对端全
+            // 语义前置：先清组字（不提交）、先关联想；焦点在
+            // 本键盘自有输入框（当前字段属本包）时空操作；坏键名
+            // 解析期已剔除（VALUE_INVALID），到此恒为合法键码。
+            // 顺序残余：清组字／关联想走引擎通道、按键直发同步，
+            // 正常路径前置先行；极端交错下需真机复核。
             is KeyboardAction.AppKeyEventAction -> {
-                com.jobeen.ime.base.util.InputConnectionUtil.sendCombinationKeyEvent(
-                    service, action.keyCode,
-                    ctrl = action.ctrl, shift = action.shift,
-                    alt = action.alt, meta = action.meta,
-                )
+                val ownField =
+                    service.currentInputEditorInfo?.packageName == service.packageName
+                if (ownField) {
+                    DiagLog.w("keymap", "send_key_event_own_field", emptyMap())
+                } else {
+                    engine?.resetComposition()
+                    engine?.dismissPredictions()
+                    com.jobeen.ime.base.util.InputConnectionUtil.sendCombinationKeyEvent(
+                        service, action.keyCode,
+                        ctrl = action.ctrl, shift = action.shift,
+                        alt = action.alt, meta = action.meta,
+                    )
+                }
             }
 
             // 组合动作（审计 E：combine）：直接分发路径按序递归；

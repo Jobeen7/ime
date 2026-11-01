@@ -225,6 +225,18 @@ sealed class KeyboardAction {
      */
     data object ToggleCommandViewAction : KeyboardAction()
 
+    /** 向前删除（deleteForward）：光标右侧一字／选区／组字右侧。 */
+    data object DeleteForwardAction : KeyboardAction()
+
+    /** RIME 选项翻转（rimeOption）：仅布尔选项，不持久化。 */
+    data class ToggleRimeOptionAction(val option: String) : KeyboardAction()
+
+    /** 模板文本上屏（snippet）：日期展开＋光标位，分发时展开。 */
+    data class SnippetAction(val template: String) : KeyboardAction()
+
+    /** 子动作间停顿（delay，combine 专用）：毫秒数（≤1000）。 */
+    data class DelayAction(val ms: Int) : KeyboardAction()
+
     /**
      * 瞬时上档（审计 E：shift）：标记动作，按键面据此接按下/
      * 抬起钩子（非点击分发）；直接分发到监听时为空操作。

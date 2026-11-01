@@ -190,6 +190,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
         /** 前删宿主段：组字已在 job 内确立为空，选区/后文在此执行时点重读。 */
         data object ForwardDeleteHost : Action
+
+        /** 关闭联想（sendKeyEvent 前置）：仅清联想态，不碰组字与文档。 */
+        data object DismissPredictions : Action
         /**
          * @property fieldGen 发起时刻的输入框代次（在分发点捕获）：
          * 预测的基底读取与框复检都以这一代为准——代次若等到
@@ -805,6 +808,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         dispatchAction(Action.SelectSchema(schemaId))
     }
 
+    override fun deleteForward(service: InputMethodService) {
+        dispatchAction(Action.ForwardDelete(service))
+    }
+
+    override fun toggleRuntimeOption(option: String) {
+        sendJob {
+            val current = getRuntimeOption(option)
+            setRuntimeOption(option, !current)
+        }
+    }
+
+    override fun dismissPredictions() {
+        dispatchAction(Action.DismissPredictions)
+    }
+
     override fun undo(service: InputMethodService) {
         dispatchAction(Action.Undo(service))
     }
@@ -996,6 +1014,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
 
             Action.ForwardDeleteHost -> forwardDeleteOnHost()
+
+            Action.DismissPredictions -> {
+                invalidatePendingPrediction()
+                if (state.predictionVisible) {
+                    state.predictionVisible = false
+                    emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
+                }
+            }
 
             is Action.Predict -> requestPrediction(
                 action.commit,

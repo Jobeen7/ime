@@ -236,6 +236,28 @@ sealed interface SkinAction {
     data class KeyboardType(val type: String) : SkinAction
 
     /**
+     * RIME 选项开关（动作子集）：value 为选项名，运行时翻转
+     * 该选项的布尔值。注意对端口径：三态以上选项不能经此路
+     * 切换（只翻布尔）；经此路改动的状态 RIME 不记忆持久化
+     * （需持久化走方案切换器）。
+     */
+    data class RimeOption(val name: String) : SkinAction
+
+    /**
+     * 模板文本（动作子集，对端 snippet）：value 为模板，上屏时
+     * 经 SnippetExpander 展开 `{{date:格式}}` 后字面提交；
+     * `{{cursor}}` 标光标位；农历变量暂不支持（原样保留）。
+     */
+    data class Snippet(val template: String) : SkinAction
+
+    /**
+     * 子动作间停顿（动作子集，combine 专用）：毫秒数；顶层
+     * （非 combine 内）出现解析期剔除。上限见
+     * [DELAY_MAX_MS]（主线程阻塞有界）。
+     */
+    data class Delay(val ms: Int) : SkinAction
+
+    /**
      * sequence 占位（历史类型，保留仅为模型兼容）：Batch 3 裁定
      * 删除该占位（详设 §6.6）后，解析器对 type=sequence 一律以
      * SEQUENCE_REMOVED 拒绝，不再产生本类型；文件中已有的
@@ -1181,11 +1203,15 @@ object SkinKeyMappingsParser {
     }
 
     /** 解析单个动作节点；无效返回 null 并记录剔除原因。 */
+    /** 动作子集 delay 的毫秒上限（主线程阻塞有界；超限解析期剔除）。 */
+    const val DELAY_MAX_MS = 1000
+
     private fun parseAction(
         keyId: String,
         slot: KeySlot,
         node: JsonElement,
         rejections: MutableList<KeyBindingRejection>,
+        inCombine: Boolean = false,
     ): SkinAction? {
         fun reject(reason: BindingRejectReason): SkinAction? {
             rejections += KeyBindingRejection(keyId, slot, reason)
@@ -1218,6 +1244,32 @@ object SkinKeyMappingsParser {
                 if (value.isBlank()) return reject(BindingRejectReason.VALUE_INVALID)
                 SkinAction.KeyboardType(value)
             }
+            // 动作子集：rimeOption——翻转 RIME 布尔选项。
+            "rimeOption" -> {
+                val value = obj["value"].stringContentOrNull()
+                    ?: return reject(BindingRejectReason.VALUE_MISSING)
+                if (value.isBlank()) return reject(BindingRejectReason.VALUE_INVALID)
+                SkinAction.RimeOption(value)
+            }
+            // 动作子集：snippet——模板文本（日期展开＋光标位）。
+            "snippet" -> {
+                val value = obj["value"].stringContentOrNull()
+                    ?: return reject(BindingRejectReason.VALUE_MISSING)
+                if (value.isBlank()) return reject(BindingRejectReason.VALUE_INVALID)
+                SkinAction.Snippet(value)
+            }
+            // 动作子集：delay——combine 专用，顶层出现即剔除；
+            // value 为毫秒数（JSON 数字，0..DELAY_MAX_MS）。
+            "delay" -> {
+                if (!inCombine) return reject(BindingRejectReason.VALUE_INVALID)
+                val raw = obj["value"] as? JsonPrimitive
+                val ms = raw?.takeIf { !it.isString }?.content?.toIntOrNull()
+                    ?: return reject(BindingRejectReason.VALUE_MISSING)
+                if (ms < 0 || ms > DELAY_MAX_MS) {
+                    return reject(BindingRejectReason.VALUE_INVALID)
+                }
+                SkinAction.Delay(ms)
+            }
             // 审计 E：combine——有序子动作列表（≤8 项，子动作
             // 同经本解析器；任一子项非法则整组剔除）。
             "combine" -> {
@@ -1228,8 +1280,10 @@ object SkinKeyMappingsParser {
                 val actions = mutableListOf<SkinAction>()
                 for (element in array) {
                     // 子项失败时 parseAction 已记一条剔除，整组直接
-                    // 剔除（不再追加第二条）。
-                    val sub = parseAction(keyId, slot, element, rejections) ?: return null
+                    // 剔除（不再追加第二条）。子项恒以 combine 内
+                    // 口径解析（delay 仅在此合法）。
+                    val sub = parseAction(keyId, slot, element, rejections, inCombine = true)
+                        ?: return null
                     actions += sub
                 }
                 SkinAction.Combine(actions)
