@@ -18,8 +18,12 @@ class CandidateCellStyleTest {
 
     private fun validated(json: String): ValidatedSkin {
         val trimmed = json.trimEnd()
-        val withDark = if (json.contains("\"stylesDark\"")) json
-        else trimmed.dropLast(1) + """, "stylesDark": {"keyBackground": "#FF222222"}}"""
+        // 校验硬要求：浅色板至少一色＋深色段声明，否则整包拒绝。
+        val withLight = if (json.contains("\"styles\"")) json
+        else trimmed.dropLast(1) + """, "styles": {"keyBackground": "#FFFFFFFF"}}"""
+        val withDark = if (withLight.contains("\"stylesDark\"")) withLight
+        else withLight.trimEnd().dropLast(1) +
+            """, "stylesDark": {"keyBackground": "#FF222222"}}"""
         val tree = Json.parseToJsonElement(withDark) as JsonObject
         val result = SkinValidator.validate(tree, 143, fallbacks, assetKind = { null })
         assertTrue(result is SkinValidator.Result.Valid)
