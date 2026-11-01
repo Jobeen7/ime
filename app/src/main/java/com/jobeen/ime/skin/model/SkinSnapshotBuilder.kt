@@ -326,6 +326,8 @@ object SkinSnapshotBuilder {
         StyleField.PANEL_TOOLBAR_PRESSED -> copy(panel = panel.copy(toolbarPressed = value))
         StyleField.PANEL_CANDIDATE_BACKGROUND -> copy(panel = panel.copy(candidateBackground = value))
         StyleField.PANEL_CANDIDATE_TEXT -> copy(panel = panel.copy(candidateText = value))
+        StyleField.PANEL_SELECTED_CANDIDATE_TEXT ->
+            copy(panel = panel.copy(selectedCandidateText = value))
         StyleField.PANEL_CANDIDATE_INDEX -> copy(panel = panel.copy(candidateIndex = value))
         StyleField.PANEL_CANDIDATE_DIVIDER -> copy(panel = panel.copy(candidateDivider = value))
         StyleField.PINNER_BACKGROUND -> copy(pinner = pinner.copy(background = value))

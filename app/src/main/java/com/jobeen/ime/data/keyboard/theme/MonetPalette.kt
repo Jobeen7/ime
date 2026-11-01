@@ -71,6 +71,7 @@ object MonetPalette {
                 candidateText = keyText,
                 candidateIndex = altText,
                 candidateDivider = withAlpha(100, altText),
+                selectedCandidateText = Color.rgb(35, 200, 145),
                 toolbarPressed = keyPressed,
             ),
             pinner = KeyboardColors.ColorScheme.PinnerColors(
@@ -133,6 +134,7 @@ object MonetPalette {
                 candidateText = keyText,
                 candidateIndex = altText,
                 candidateDivider = withAlpha(100, altText),
+                selectedCandidateText = Color.rgb(35, 200, 145),
                 toolbarPressed = keyPressed,
             ),
             pinner = KeyboardColors.ColorScheme.PinnerColors(
@@ -172,6 +174,7 @@ object MonetPalette {
             candidateText = Color.rgb(26, 27, 32),
             candidateIndex = Color.rgb(116, 119, 127),
             candidateDivider = Color.argb(100, 116, 119, 127),
+            selectedCandidateText = Color.rgb(35, 200, 145),
             toolbarPressed = Color.rgb(226, 226, 236),
         ),
         pinner = KeyboardColors.ColorScheme.PinnerColors(
@@ -208,6 +211,7 @@ object MonetPalette {
             candidateText = Color.rgb(227, 226, 230),
             candidateIndex = Color.rgb(142, 144, 153),
             candidateDivider = Color.argb(100, 142, 144, 153),
+            selectedCandidateText = Color.rgb(35, 200, 145),
             toolbarPressed = Color.rgb(46, 48, 54),
         ),
         pinner = KeyboardColors.ColorScheme.PinnerColors(

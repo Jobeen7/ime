@@ -7,7 +7,11 @@ import com.jobeen.ime.engine.data.EngineMessage
 interface IPanel {
     val view: View
     var recording: Boolean
-    fun setCandidates(list: List<EngineMessage.Candidate>, hasMore: Boolean = false)
+    fun setCandidates(
+        list: List<EngineMessage.Candidate>,
+        hasMore: Boolean = false,
+        highlightedIndex: Int = 0,
+    )
     /** 分页补取的追加页并入当前候选列表；total 为引擎侧确切总数（-1=未知） */
     fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int) {}
     fun refreshTheme()

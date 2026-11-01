@@ -56,6 +56,7 @@ data class CompactTheme(
                         candidateIndex = colors.panel.candidateIndex,
                         candidateDivider = colors.panel.candidateDivider,
                         toolbarPressed = colors.panel.toolbarPressed,
+                        selectedCandidateText = colors.panel.selectedCandidateText,
                     ),
                     pinner = CompactPinner(
                         background = colors.pinner.background,
@@ -129,6 +130,7 @@ data class CompactColors(
             candidateIndex = panel.candidateIndex,
             candidateDivider = panel.candidateDivider,
             toolbarPressed = panel.toolbarPressed,
+            selectedCandidateText = panel.selectedCandidateText,
         ),
         pinner = KeyboardColors.ColorScheme.PinnerColors(
             background = pinner.background,
@@ -157,6 +159,7 @@ data class CompactPanel(
     @SerialName("ci") val candidateIndex: Int,
     @SerialName("cd") val candidateDivider: Int,
     @SerialName("tp") val toolbarPressed: Int,
+    @SerialName("sct") val selectedCandidateText: Int = candidateText,
 )
 
 @Serializable

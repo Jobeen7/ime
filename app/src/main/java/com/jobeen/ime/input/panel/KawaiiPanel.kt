@@ -69,8 +69,15 @@ class KawaiiPanel(
 
     sealed class State {
         data object Idle : State()
-        data class Composing(val candidates: List<EngineMessage.Candidate>) : State()
-        data class Prediction(val candidates: List<EngineMessage.Candidate>) : State()
+        data class Composing(
+            val candidates: List<EngineMessage.Candidate>,
+            /** Rime 高亮候选在 candidates 中的下标（经字形过滤重映射后；-1 = 无可见高亮）。 */
+            val highlightedIndex: Int = 0,
+        ) : State()
+        data class Prediction(
+            val candidates: List<EngineMessage.Candidate>,
+            val highlightedIndex: Int = 0,
+        ) : State()
         data object Menu : State()
         data object Clipboard : State()
         data object TextEditing : State()
@@ -86,7 +93,11 @@ class KawaiiPanel(
             // 现在条带/展开一致复用：原地更新候选，网格仅展开时同步。
             if (field is State.Composing && value is State.Composing) {
                 (currentStateRender as? ComposingStateRender)?.candidates = value.candidates
+                (currentStateRender as? ComposingStateRender)?.highlightedIndex =
+                    value.highlightedIndex
                 (view.currentRenderer as? ComposingRenderer)?.candidates = value.candidates
+                (view.currentRenderer as? ComposingRenderer)?.highlightedIndex =
+                    value.highlightedIndex
                 if (view.isExpanded) candidateGrid.updateCandidates(value.candidates)
                 confirmOverlay.dismiss()
                 field = value
@@ -94,7 +105,11 @@ class KawaiiPanel(
             }
             if (field is State.Prediction && value is State.Prediction) {
                 (currentStateRender as? PredictionStateRender)?.candidates = value.candidates
+                (currentStateRender as? PredictionStateRender)?.highlightedIndex =
+                    value.highlightedIndex
                 (view.currentRenderer as? ComposingRenderer)?.candidates = value.candidates
+                (view.currentRenderer as? ComposingRenderer)?.highlightedIndex =
+                    value.highlightedIndex
                 if (view.isExpanded) candidateGrid.updateCandidates(value.candidates)
                 confirmOverlay.dismiss()
                 field = value
@@ -155,8 +170,12 @@ class KawaiiPanel(
 
     private fun createStateRender(state: State): IStateRender = when (state) {
         State.Idle -> IdleStateRender(renderContext)
-        is State.Composing -> ComposingStateRender(renderContext, state.candidates)
-        is State.Prediction -> PredictionStateRender(renderContext, state.candidates)
+        is State.Composing -> ComposingStateRender(
+            renderContext, state.candidates, state.highlightedIndex,
+        )
+        is State.Prediction -> PredictionStateRender(
+            renderContext, state.candidates, state.highlightedIndex,
+        )
             State.Menu -> MenuStateRender(renderContext)
             State.Clipboard -> ClipboardStateRender(renderContext, clipboardTab)
         State.TextEditing -> TextEditingStateRender(renderContext)
@@ -208,13 +227,24 @@ class KawaiiPanel(
             )
         }
         onDragComplete = { candidates ->
-            (view.currentRenderer as? ComposingRenderer)?.candidates = candidates
+            // 拖拽只换顺序不换项：高亮跟项走（按对象找新下标），
+            // 找不到时沿用旧下标钳制到表内（拖拽不删项，理论上必找到）。
+            val renderer = view.currentRenderer as? ComposingRenderer
+            val oldHighlightedItem = renderer?.candidates?.getOrNull(
+                renderer.highlightedIndex,
+            )
+            val newHighlighted = oldHighlightedItem?.let { candidates.indexOf(it) }
+                ?.takeIf { it >= 0 }
+                ?: (renderer?.highlightedIndex ?: 0)
+                    .coerceIn(0, (candidates.size - 1).coerceAtLeast(0))
+            renderer?.candidates = candidates
+            renderer?.highlightedIndex = newHighlighted
             // 面板状态必须同步成新顺序：state 仍是拖前列表时，之后任何
             // 一次同态候选刷新走 setter 都会用拖前列表覆盖网格，拖拽
             // 结果当场或下个按键即被打回原位
             when (state) {
-                is State.Composing -> state = State.Composing(candidates)
-                is State.Prediction -> state = State.Prediction(candidates)
+                is State.Composing -> state = State.Composing(candidates, newHighlighted)
+                is State.Prediction -> state = State.Prediction(candidates, newHighlighted)
                 else -> {}
             }
             this@KawaiiPanel.listener?.onCandidateGridDragComplete(candidates)
@@ -943,7 +973,7 @@ class KawaiiPanel(
                                 return@forEach
                             }
                         }
-                        if (predictions) setCandidates(emptyList()) else v.setExpanded(true)
+                        if (predictions) setCandidates(emptyList(), false, 0) else v.setExpanded(true)
                     }
                 }
 
@@ -1065,9 +1095,13 @@ class KawaiiPanel(
     }
 
     @SuppressLint("UseCompatLoadingForDrawables")
-    override fun setCandidates(list: List<EngineMessage.Candidate>, hasMore: Boolean) {
+    override fun setCandidates(
+        list: List<EngineMessage.Candidate>,
+        hasMore: Boolean,
+        highlightedIndex: Int,
+    ) {
         if (!view.isLaidOut) {
-            view.post { setCandidates(list, hasMore) }
+            view.post { setCandidates(list, hasMore, highlightedIndex) }
             return
         }
         candidateGrid.hasMoreCandidates = hasMore
@@ -1077,6 +1111,10 @@ class KawaiiPanel(
         // 本机字体无字形的单字候选（扩展区生僻字）不进列表：显示出来
         // 是方框、点选打出对方也看不到。条带与网格共用此列表，一致
         val displayList = list.filter { candidateGrid.isDisplayable(it) }
+        // 高亮下标经字形过滤重映射：高亮项被滤掉时无可见高亮（-1），
+        // 不把绿标错给另一候选（空格提交的仍是 Rime 侧原高亮项）。
+        val visibleHighlighted = list.getOrNull(highlightedIndex)
+            ?.let { displayList.indexOf(it) } ?: -1
         if (clipSearchActive || clipEditActive) {
             // 文本输入态（搜索/编辑）钉住：不切换面板状态，
             // 工具栏在输入框与候选行之间轮显
@@ -1085,9 +1123,12 @@ class KawaiiPanel(
                     val r = view.currentRenderer
                     if (r is ComposingRenderer) {
                         r.candidates = displayList
+                        r.highlightedIndex = visibleHighlighted
                     } else {
                         view.currentRenderer =
-                            ComposingStateRender(renderContext, displayList).createToolbarRenderer()
+                            ComposingStateRender(
+                                renderContext, displayList, visibleHighlighted,
+                            ).createToolbarRenderer()
                     }
                 }
                 list.isNotEmpty() && hasMore -> {
@@ -1143,7 +1184,11 @@ class KawaiiPanel(
                     return@forEach
                 }
             }
-            state = if (predictions) State.Prediction(list) else State.Composing(list)
+            state = if (predictions) {
+                State.Prediction(list, visibleHighlighted)
+            } else {
+                State.Composing(list, visibleHighlighted)
+            }
             // 展开态的网格更新已由 state setter 的同态复用分支（或跨态时
             // applyStateRender 的 showExpand）完成，此处再调一次是每键全量
             // 网格布局 ×2，旧实现一直双跑
@@ -1183,12 +1228,13 @@ class KawaiiPanel(
             is State.Composing -> {
                 val merged = s.candidates + displayable
                 candidateGrid.hasMoreCandidates = total < 0 || rawCandidateLoaded < total
-                state = State.Composing(merged)
+                // 追加页接在后面，前页下标不变，高亮原样保留
+                state = State.Composing(merged, s.highlightedIndex)
             }
             is State.Prediction -> {
                 val merged = s.candidates + displayable
                 candidateGrid.hasMoreCandidates = total < 0 || rawCandidateLoaded < total
-                state = State.Prediction(merged)
+                state = State.Prediction(merged, s.highlightedIndex)
             }
             else -> {}
         }

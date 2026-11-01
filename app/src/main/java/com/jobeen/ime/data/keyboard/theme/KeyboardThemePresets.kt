@@ -49,6 +49,7 @@ object KeyboardThemePresets {
                 candidateText = Color.rgb(255, 255, 255),
                 candidateIndex = Color.rgb(130, 130, 130),
                 candidateDivider = Color.argb(120, 130, 130, 130),
+                selectedCandidateText = Color.rgb(35, 200, 145),
             ),
             pinner = KeyboardColors.ColorScheme.PinnerColors(
                 background = Color.rgb(22, 22, 22),
@@ -88,6 +89,7 @@ object KeyboardThemePresets {
                 candidateText = Color.rgb(20, 20, 20),
                 candidateIndex = Color.rgb(120, 120, 125),
                 candidateDivider = Color.argb(100, 140, 140, 145),
+                selectedCandidateText = Color.rgb(35, 200, 145),
                 // 同暗夜：涟漪叠在面板底 225 灰上，230 与底几乎同色
                 // （混合后约 1.0:1、不可见）；墨色取正文 keyText 纯黑、
                 // 峰值 alpha 160，混合后约 5.8:1（alpha 120 时用深灰
@@ -132,6 +134,7 @@ object KeyboardThemePresets {
                 candidateText = Color.rgb(50, 40, 35),
                 candidateIndex = Color.rgb(140, 120, 110),
                 candidateDivider = Color.argb(100, 220, 200, 185),
+                selectedCandidateText = Color.rgb(35, 200, 145),
                 // 同上：原值与面板底 242,235,228 几乎同色（混合后约
                 // 1.1:1）；墨色取正文 keyText 50,40,35、峰值 alpha 160，
                 // 混合后约 4.1:1（暖灰 120,100,90 在 alpha 120 时只有

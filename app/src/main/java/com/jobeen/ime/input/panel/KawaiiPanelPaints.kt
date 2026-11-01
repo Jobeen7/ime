@@ -20,6 +20,8 @@ class Paints(context: Context) {
     }
     val candidateBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     val candidateTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { }
+    /** 选中候选文字画笔：颜色取 panel.selectedCandidateText，其余同候选画笔。 */
+    val selectedCandidateTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { }
     val candidateIndexPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { }
     /**
      * 候选注释画笔（2026-10-29 外观轮）：注释此前与序号共用
@@ -57,6 +59,7 @@ class Paints(context: Context) {
         toolbarIconColor = panel.toolbarIcon
         candidateBgPaint.color = panel.candidateBackground
         candidateTextPaint.color = panel.candidateText
+        selectedCandidateTextPaint.color = panel.selectedCandidateText
         candidateIndexPaint.color = panel.candidateIndex
         toolbarPressedColor = panel.toolbarPressed
         // 工具栏按钮表面（全局样式层）：皮肤样式 presence 决定
@@ -97,6 +100,8 @@ class Paints(context: Context) {
                 ?: Typeface.DEFAULT_BOLD
         candidateTextPaint.typeface =
             GlobalFonts.typefaceFor(context, FontRole.CANDIDATE, Typeface.NORMAL)
+        selectedCandidateTextPaint.typeface =
+            GlobalFonts.typefaceFor(context, FontRole.CANDIDATE, Typeface.NORMAL)
         candidateIndexPaint.typeface =
             GlobalFonts.typefaceFor(context, FontRole.INDEX, Typeface.NORMAL)
         candidateCommentPaint.typeface =
@@ -107,6 +112,7 @@ class Paints(context: Context) {
         dividerPaint.strokeWidth = 1f * density
         toolbarTextPaint.textSize = 16f * density
         candidateTextPaint.textSize = 17f * density
+        selectedCandidateTextPaint.textSize = 17f * density
         candidateIndexPaint.textSize = 14f * density
     }
 }

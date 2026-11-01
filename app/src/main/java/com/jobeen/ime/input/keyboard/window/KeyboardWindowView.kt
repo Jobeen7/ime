@@ -1301,6 +1301,7 @@ class KeyboardWindowView(
     // DynamicPreedit 路径，丢弃候选帧不影响组字显示。
     private var lastCandidateList: List<EngineMessage.Candidate>? = null
     private var lastCandidateHasMore: Boolean = false
+    private var lastCandidateHighlightedIndex: Int = 0
 
     // 已应用的首屏候选帧版本号（-1 = 尚未应用任何版本化帧）：
     // 窗口生命周期内 requestId 单调递增，迟到旧帧凭它丢弃。
@@ -1310,6 +1311,7 @@ class KeyboardWindowView(
         list: List<EngineMessage.Candidate>,
         hasMore: Boolean = false,
         revision: Long = 0L,
+        highlightedIndex: Int = 0,
     ) {
         // 版本号先行：旧帧（revision <= 已应用）直接丢弃；revision 0
         // = 未版本化（合成帧如清空、联想），恒放行且不推进版本号。
@@ -1325,13 +1327,15 @@ class KeyboardWindowView(
         // 组字气泡的显隐由 DynamicPreedit 路径负责，本处不另补 show。
         val last = lastCandidateList
         if (last != null && hasMore == lastCandidateHasMore &&
+            highlightedIndex == lastCandidateHighlightedIndex &&
             candidatesContentEqual(last, list)
         ) {
             return
         }
         lastCandidateList = list.toList()
         lastCandidateHasMore = hasMore
-        panel.setCandidates(list, hasMore)
+        lastCandidateHighlightedIndex = highlightedIndex
+        panel.setCandidates(list, hasMore, highlightedIndex)
         lastCandidateFirst = list.firstOrNull()?.text
         lastCandidateComment = list.firstOrNull()?.comment?.takeIf { it.isNotEmpty() }
         pushDynamicTexts()

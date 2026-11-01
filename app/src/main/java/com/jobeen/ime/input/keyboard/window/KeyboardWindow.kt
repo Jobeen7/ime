@@ -55,8 +55,9 @@ class KeyboardWindow(
         list: List<EngineMessage.Candidate>,
         hasMore: Boolean = false,
         revision: Long = 0L,
+        highlightedIndex: Int = 0,
     ) {
-        view.setCandidates(list, hasMore, revision)
+        view.setCandidates(list, hasMore, revision, highlightedIndex)
     }
 
     /** 剪贴板搜索态截获上屏文本，转发给面板决定是否消费。 */

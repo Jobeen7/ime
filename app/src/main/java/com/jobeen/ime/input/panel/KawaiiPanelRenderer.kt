@@ -59,10 +59,13 @@ class ComposingRenderer(
 
     private var lastPills: List<PillRect> = emptyList()
     var maxScrollX: Float = 0f
+    /** Rime 高亮候选在 candidates 中的下标（默认首个）；-1 = 无可见高亮。 */
+    var highlightedIndex: Int = 0
 
     // 成员复用：draw() 内零分配
     private val indexPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG)
+    private val selectedTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val commentPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val pillBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
     private val edgeBgPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -119,11 +122,13 @@ class ComposingRenderer(
         // 每帧从 paints 同步属性到复用 paint（recording 变暗直接作用于复用 paint，不再改 paints）
         indexPaint.set(paints.candidateIndexPaint)
         textPaint.set(paints.candidateTextPaint)
+        selectedTextPaint.set(paints.selectedCandidateTextPaint)
         commentPaint.set(paints.candidateCommentPaint)
         pillBgPaint.set(paints.candidateBgPaint)
         if (recording) {
             indexPaint.color = dimColor(indexPaint.color)
             textPaint.color = dimColor(textPaint.color)
+            selectedTextPaint.color = dimColor(selectedTextPaint.color)
             commentPaint.color = dimColor(commentPaint.color)
             pillBgPaint.color = dimColor(pillBgPaint.color)
         }
@@ -252,8 +257,13 @@ class ComposingRenderer(
 
                     indexPaint.textSize = indexBaseSize * layout.scale
                     textPaint.textSize = textBaseSize * layout.scale
+                    selectedTextPaint.textSize = textBaseSize * layout.scale
                     val textY =
                         pillY + pillH / 2f - (textPaint.descent() + textPaint.ascent()) / 2f
+                    // 高亮候选（Rime 选中项）用选中文字色，其余用候选文字色；
+                    // 序号与注释两色不变（与选中文字色同画笔体系无关）。
+                    val pillTextPaint =
+                        if (i == highlightedIndex) selectedTextPaint else textPaint
 
                     if (candidateBorder) {
                         drawRoundRect(
@@ -271,7 +281,7 @@ class ComposingRenderer(
 
                     val textX =
                         if (drawIndex) pill.left + pillPad + layout.indexW else pill.left + pillPad
-                    drawText(c.text, textX, textY, textPaint)
+                    drawText(c.text, textX, textY, pillTextPaint)
 
                     if (showComment && layout.commentText.isNotEmpty()) {
                         val commentX = textX + layout.textW

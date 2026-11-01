@@ -106,6 +106,7 @@ class ComposingStateRender(
     private val ctx: StateRenderContext,
     // var：同态新批次复用本对象时原地更新，展开时 showExpand 读到的才是最新批次
     var candidates: List<EngineMessage.Candidate>,
+    var highlightedIndex: Int = 0,
 ) : IStateRender {
 
     override fun createToolbarRenderer(): ComposingRenderer {
@@ -120,7 +121,10 @@ class ComposingStateRender(
             candidateBorder = settings.candidateBorder,
             expandBorder = settings.expandBorder,
             candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f,
-        ).also { it.recording = ctx.recording }
+        ).also {
+            it.recording = ctx.recording
+            it.highlightedIndex = highlightedIndex
+        }
     }
 
     override fun showExpand(isExpanded: Boolean) {
@@ -136,6 +140,7 @@ class ComposingStateRender(
 class PredictionStateRender(
     private val ctx: StateRenderContext,
     var candidates: List<EngineMessage.Candidate>,
+    var highlightedIndex: Int = 0,
 ) : IStateRender {
     override fun createToolbarRenderer(): ComposingRenderer {
         val settings = ctx.candidateDisplaySettings()
@@ -151,7 +156,10 @@ class PredictionStateRender(
             candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f,
             edgeBgColor = snapshot?.predictionCloseBg,
             edgeRadiusDp = snapshot?.predictionCloseRadiusDp,
-        ).also { it.recording = ctx.recording }
+        ).also {
+            it.recording = ctx.recording
+            it.highlightedIndex = highlightedIndex
+        }
     }
 
     override fun showExpand(isExpanded: Boolean) {

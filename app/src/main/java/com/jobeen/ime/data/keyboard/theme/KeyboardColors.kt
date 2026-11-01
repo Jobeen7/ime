@@ -58,6 +58,8 @@ object KeyboardColors {
             val candidateIndex: Int,
             val candidateDivider: Int,
             val toolbarPressed: Int,
+            /** 选中候选文字色：未指定时与 candidateText 同值（旧行为不变）。 */
+            val selectedCandidateText: Int = candidateText,
         )
 
         @Serializable

@@ -97,6 +97,7 @@ data class ReadableTheme(
                         candidateIndex = colors.panel.candidateIndex,
                         candidateDivider = colors.panel.candidateDivider,
                         toolbarPressed = colors.panel.toolbarPressed,
+                        selectedCandidateText = colors.panel.selectedCandidateText,
                     ),
                     pinner = ReadablePinner(
                         background = colors.pinner.background,
@@ -147,6 +148,7 @@ data class ReadableColors(
             candidateIndex = panel.candidateIndex,
             candidateDivider = panel.candidateDivider,
             toolbarPressed = panel.toolbarPressed,
+            selectedCandidateText = panel.selectedCandidateText,
         )
         val pinnerColors = KeyboardColors.ColorScheme.PinnerColors(
             background = pinner.background,
@@ -196,6 +198,7 @@ data class ReadablePanel(
     @Serializable(with = HexColorSerializer::class) val candidateIndex: Int,
     @Serializable(with = HexColorSerializer::class) val candidateDivider: Int,
     @Serializable(with = HexColorSerializer::class) val toolbarPressed: Int,
+    @Serializable(with = HexColorSerializer::class) val selectedCandidateText: Int = candidateText,
 )
 
 @Serializable

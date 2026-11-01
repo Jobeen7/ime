@@ -39,6 +39,7 @@ enum class StyleField(val path: String) {
     PANEL_TOOLBAR_PRESSED("panel.toolbarPressed"),
     PANEL_CANDIDATE_BACKGROUND("panel.candidateBackground"),
     PANEL_CANDIDATE_TEXT("panel.candidateText"),
+    PANEL_SELECTED_CANDIDATE_TEXT("panel.selectedCandidateText"),
     PANEL_CANDIDATE_INDEX("panel.candidateIndex"),
     PANEL_CANDIDATE_DIVIDER("panel.candidateDivider"),
     PINNER_BACKGROUND("pinner.background"),
@@ -71,6 +72,7 @@ enum class StyleField(val path: String) {
         PANEL_TOOLBAR_PRESSED -> scheme.panel.toolbarPressed
         PANEL_CANDIDATE_BACKGROUND -> scheme.panel.candidateBackground
         PANEL_CANDIDATE_TEXT -> scheme.panel.candidateText
+        PANEL_SELECTED_CANDIDATE_TEXT -> scheme.panel.selectedCandidateText
         PANEL_CANDIDATE_INDEX -> scheme.panel.candidateIndex
         PANEL_CANDIDATE_DIVIDER -> scheme.panel.candidateDivider
         PINNER_BACKGROUND -> scheme.pinner.background
