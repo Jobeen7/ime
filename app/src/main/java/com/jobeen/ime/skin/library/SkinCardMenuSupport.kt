@@ -99,17 +99,33 @@ object SkinCardMenuSupport {
         layoutParsed: Boolean,
         layoutRows: Int?,
         layoutKeys: Int?,
-    ): List<Pair<String, String>> = listOf(
-        "名称" to name.ifBlank { id },
-        "皮肤 id" to id,
-        "版本" to "第 $generation 版",
-        "大小" to formatSkinSize(sizeBytes),
-        "更新" to formatSkinTime(updatedAt),
-        "状态" to when {
+        hasDemoImage: Boolean = false,
+        readmeText: String? = null,
+    ): List<Pair<String, String>> = buildList {
+        add("名称" to name.ifBlank { id })
+        add("皮肤 id" to id)
+        add("版本" to "第 $generation 版")
+        add("大小" to formatSkinSize(sizeBytes))
+        add("更新" to formatSkinTime(updatedAt))
+        add("状态" to when {
             isActive -> "生效中"
             isLastGood -> "上个皮肤"
             else -> "未生效"
-        },
-        "布局" to layoutSummaryText(layoutParsed, layoutRows, layoutKeys),
-    )
+        })
+        add("布局" to layoutSummaryText(layoutParsed, layoutRows, layoutKeys))
+        add("演示图" to if (hasDemoImage) "有" else "无")
+        if (readmeText == null) {
+            add("说明文档" to "无")
+        } else {
+            add("说明文档" to "有（${readmeText.length}字）")
+            readmeSnippet(readmeText)?.let { add("说明内容" to it) }
+        }
+    }
+
+    /** 说明原文摘要：超长截断并加省略号；纯文本原文照字面展示，不执行链接/图片。 */
+    fun readmeSnippet(text: String?, maxChars: Int = 200): String? {
+        if (text == null) return null
+        if (text.length <= maxChars) return text
+        return text.take(maxChars) + "…"
+    }
 }

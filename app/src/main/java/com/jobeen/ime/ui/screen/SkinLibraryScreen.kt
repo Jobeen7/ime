@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -59,6 +60,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -90,6 +92,8 @@ import com.jobeen.ime.skin.library.genericPreviewRows
 import com.jobeen.ime.skin.library.miniPreviewPalette
 import com.jobeen.ime.skin.library.shareSkin
 import com.jobeen.ime.skin.model.Degradation
+import com.jobeen.ime.skin.model.SkinPackageDocs
+import com.jobeen.ime.skin.model.SkinPackageDocsParser
 import com.jobeen.ime.skin.pkg.JimeImporter
 import com.jobeen.ime.skin.pkg.SkinPackages
 import com.jobeen.ime.skin.qr.SkinQrImporter
@@ -129,7 +133,7 @@ private data class SkinLogView(
     val lines: List<String>,
 )
 
-/** 长按菜单“详情”对话框的数据：索引条目＋生效态＋快照布局摘要。 */
+/** 长按菜单“详情”对话框的数据：索引条目＋生效态＋快照布局摘要＋演示资料。 */
 private data class SkinDetails(
     val entry: SkinIndexEntry,
     val isActive: Boolean,
@@ -137,7 +141,22 @@ private data class SkinDetails(
     val layoutParsed: Boolean,
     val layoutRows: Int?,
     val layoutKeys: Int?,
+    /** 快照演示资料（演示图 presence＋说明原文）；无快照时为 null。 */
+    val packageDocs: SkinPackageDocs? = null,
+    /** 按需解码的演示图（长边压到 1024px 以内）；无图/解码失败时为 null。 */
+    val demoBitmap: Bitmap? = null,
 )
+
+/** 代次目录下的演示图按需解码（调用方在 IO 线程调用；失败返回 null）。 */
+private fun decodeDemoBitmap(genDir: File): Bitmap? = runCatching {
+    val file = SkinPackageDocsParser.demoImageFile(genDir) ?: return null
+    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    file.inputStream().use { BitmapFactory.decodeStream(it, null, bounds) }
+    var sample = 1
+    while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1024) sample *= 2
+    val opts = BitmapFactory.Options().apply { inSampleSize = sample }
+    file.inputStream().use { BitmapFactory.decodeStream(it, null, opts) }
+}.getOrNull()
 
 private suspend fun loadLibraryState(): LibraryUiState = withContext(Dispatchers.IO) {
     val store = SkinLibrary.store
@@ -877,6 +896,15 @@ fun SkinLibraryScreen(
                                             SkinGenRef(entry.id, entry.hash, entry.generation),
                                         )
                                     }
+                                    val demoBitmap = withContext(Dispatchers.IO) {
+                                        if (snapshot?.packageDocs?.hasDemoImage == true) {
+                                            decodeDemoBitmap(
+                                                SkinLibrary.layout.fileFromRelative(entry.dir),
+                                            )
+                                        } else {
+                                            null
+                                        }
+                                    }
                                     val base = snapshot?.resolvedLayout?.baseLayout
                                     skinDetails = SkinDetails(
                                         entry = entry,
@@ -885,6 +913,8 @@ fun SkinLibraryScreen(
                                         layoutParsed = snapshot != null,
                                         layoutRows = base?.size,
                                         layoutKeys = base?.sumOf { it.size },
+                                        packageDocs = snapshot?.packageDocs,
+                                        demoBitmap = demoBitmap,
                                     )
                                 }
                             },
@@ -1115,8 +1145,18 @@ fun SkinLibraryScreen(
                         layoutParsed = details.layoutParsed,
                         layoutRows = details.layoutRows,
                         layoutKeys = details.layoutKeys,
+                        hasDemoImage = details.packageDocs?.hasDemoImage == true,
+                        readmeText = details.packageDocs?.readmeText,
                     )) {
                         Text("$label：$value", fontSize = 13.sp)
+                    }
+                    details.demoBitmap?.let { bitmap ->
+                        Image(
+                            bitmap = bitmap.asImageBitmap(),
+                            contentDescription = "演示图",
+                            contentScale = ContentScale.FillWidth,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                     }
                 }
             },

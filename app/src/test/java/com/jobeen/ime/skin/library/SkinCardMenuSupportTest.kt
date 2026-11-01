@@ -125,9 +125,34 @@ class SkinCardMenuSupportTest {
         assertEquals("上个皮肤", map["状态"])
         assertEquals("4 行 33 键", map["布局"])
         assertEquals(
-            listOf("名称", "皮肤 id", "版本", "大小", "更新", "状态", "布局"),
+            listOf("名称", "皮肤 id", "版本", "大小", "更新", "状态", "布局", "演示图", "说明文档"),
             rows.map { it.first },
         )
+        assertEquals("无", map["演示图"])
+        assertEquals("无", map["说明文档"])
+    }
+
+    @Test
+    fun skinDetailRows_withDocs_showsDemoAndReadmeSnippet() {
+        val readme = "第一行说明。".repeat(40)
+        val rows = SkinCardMenuSupport.skinDetailRows(
+            name = "A", id = "skin-a", generation = 1, sizeBytes = 0,
+            updatedAt = 0L, isActive = true, isLastGood = false,
+            layoutParsed = true, layoutRows = 4, layoutKeys = 33,
+            hasDemoImage = true, readmeText = readme,
+        )
+        val map = rows.toMap()
+        assertEquals("有", map["演示图"])
+        assertEquals("有（${readme.length}字）", map["说明文档"])
+        assertEquals(readme.take(200) + "…", map["说明内容"])
+    }
+
+    @Test
+    fun readmeSnippet_shortAndNull() {
+        assertEquals(null, SkinCardMenuSupport.readmeSnippet(null))
+        assertEquals("abc", SkinCardMenuSupport.readmeSnippet("abc"))
+        assertEquals("a".repeat(200), SkinCardMenuSupport.readmeSnippet("a".repeat(200)))
+        assertEquals("a".repeat(200) + "…", SkinCardMenuSupport.readmeSnippet("a".repeat(201)))
     }
 
     @Test
