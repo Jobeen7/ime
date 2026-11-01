@@ -331,28 +331,57 @@ object SkinSnapshotFactory {
     }
 
     /**
-     * G1 坐标放宽口径（校验前 Best-effort）：皮肤 layoutId 所指
-     * 库内布局的全部逻辑 ID；任一步失败返回空集（回落缺省口径）。
-     * 与 [resolveSnapshotLayout] 读同一索引与同一 layout.json，
-     * 只是提前到校验之前，使坐标覆写不被校验器当成未知键剔掉。
+     * 覆写坐标的布局 id 并集（纯函数，可单测）：顶层竖屏／横屏
+     * 绑定，加上 `keyboards` 表每项的竖屏／横屏绑定。只收非空
+     * 字符串；表项形态错误由 [SkinJson.parseKeyboards] 的字段级
+     * 回退口径先行丢弃（不进并集、不报错）。
+     */
+    internal fun overrideLayoutIds(
+        tree: kotlinx.serialization.json.JsonObject,
+    ): Set<String> {
+        val ids = LinkedHashSet<String>()
+        fun add(raw: String?) {
+            if (!raw.isNullOrBlank()) ids += raw
+        }
+        add((tree["layoutId"] as? JsonPrimitive)?.contentOrNull)
+        add((tree["layoutIdLandscape"] as? JsonPrimitive)?.contentOrNull)
+        for (entry in SkinJson.parseKeyboards(tree).values) {
+            add(entry.layoutId)
+            add(entry.layoutIdLandscape)
+        }
+        return ids
+    }
+
+    /**
+     * G1 坐标放宽口径（校验前 Best-effort）：并集内各布局的
+     * 全部逻辑 ID；单个布局缺失／文件损坏只跳过该布局（不
+     * 拖垮其余布局的坐标），无库布局／无绑定时为空集（回落
+     * 缺省口径）。与 [resolveSnapshotLayout] 读同一索引与同
+     * 一 layout.json，只是提前到校验之前，使坐标覆写不被校验
+     * 器当成未知键剔掉。旧口径只取顶层竖屏绑定：仅主类型绑
+     * 定的布局坐标可覆写，其余类型专属布局的坐标在校验期即
+     * 被当成未知键剔掉（导入端早已按包内全布局并集接纳，
+     * 快照端与之脱节）；本并集补齐该脱节。
      */
     private fun layoutCoordIds(
         tree: kotlinx.serialization.json.JsonObject,
         libraryLayout: SkinLibraryLayout?,
     ): Set<String> {
         val layout = libraryLayout ?: return emptySet()
-        val layoutId = (tree["layoutId"] as? JsonPrimitive)?.contentOrNull
-            ?: return emptySet()
         val index = runCatching {
             runBlocking { SkinLibraryStore(layout).readIndex() }
                 as? SkinLibraryStore.ReadResult.Ok
         }.getOrNull()?.value ?: return emptySet()
-        val entry = index.layouts.firstOrNull { it.id == layoutId } ?: return emptySet()
-        val file = File(layout.fileFromRelative(entry.dir), "layout.json")
-        val layoutTree = runCatching {
-            SkinJson.parseObject(file.readText())
-        }.getOrNull() ?: return emptySet()
-        return LayoutModel.logicalIdsFromTree(layoutTree, layoutId)
+        val ids = LinkedHashSet<String>()
+        for (layoutId in overrideLayoutIds(tree)) {
+            val entry = index.layouts.firstOrNull { it.id == layoutId } ?: continue
+            val file = File(layout.fileFromRelative(entry.dir), "layout.json")
+            val layoutTree = runCatching {
+                SkinJson.parseObject(file.readText())
+            }.getOrNull() ?: continue
+            ids += LayoutModel.logicalIdsFromTree(layoutTree, layoutId)
+        }
+        return ids
     }
 
     /**
