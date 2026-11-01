@@ -135,6 +135,20 @@ class KeyboardWindowView(
             ?: (if (isLandscape) skinLandscapePercent ?: skinPercent else skinPercent)
             ?: (if (isLandscape) appLandscapePercent else appPortraitPercent)
 
+        /**
+         * 类型高度（多主槽一期，纯函数，可单测）：快照类型表该
+         * 类型该方向的高度百分比；无表项/无高度/无类型时为 null，
+         * 调用方走既有高度链。类型高度取自表项本身，与布局文件
+         * 顶层高度是两级（表项优先于布局，见 contentHeight）。
+         */
+        fun typeHeightPercent(
+            snapshot: com.jobeen.ime.skin.model.SkinSnapshot?,
+            type: String?,
+            isLandscape: Boolean,
+        ): Int? = type?.let {
+            snapshot?.resolvedKeyboards?.get(it)?.heightPercentFor(isLandscape)?.roundToInt()
+        }
+
         const val PANEL_HEIGHT_DP = 48
 
         /** 配色刷新防抖窗口：窗口内的多次设置变更合并为一次全量刷新 */
@@ -1426,7 +1440,9 @@ class KeyboardWindowView(
 
     private fun contentHeight(): Int {
         // 高度百分比优先级（2026-10-28 布局专用高度加入；2026-11-01
-        // 横屏专属高度加入）：
+        // 横屏专属高度加入；多主槽一期加入类型高度）：
+        // 0. 当前类型的表项高度（keyboards 表该类型该方向，横屏
+        //    无专属值时回落竖屏值；无类型/无表项/无高度时跳过）；
         // 1. 当前布局的布局专用 heightPercent（内置覆盖/自创布局
         //    文件顶层，50–200；横屏取横屏绑定，无则取竖屏绑定）；
         // 2. 皮肤 geometry 横屏专属 heightPercentLandscape（仅横屏，
@@ -1437,6 +1453,9 @@ class KeyboardWindowView(
         // 键盘，重测时快照必已就位）；快照缺失 = 无皮肤生效，
         // 走原路径。当前键盘为空（尚未显示）时布局项取不到，
         // 安全回退到皮肤级/App 设置，显示后重测即生效。
+        // 类型取自状态管理器当前类型：场景键盘（数字/密码直达）
+        // 不改类型，故场景键盘高度不受上一个类型高度牵连，仍走
+        // 既有链；类型高度只在类型键盘显示时生效。
         val isLandscape = resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val snapshot = SkinSnapshotProvider.peek()
         val currentName = currentKeyboard?.name()
@@ -1463,7 +1482,10 @@ class KeyboardWindowView(
             ?.values
             ?.getValue(KeyboardGeometryField.HEIGHT_PERCENT_LANDSCAPE)
             ?.roundToInt()
-        val percent = resolveHeightPercent(
+        val typePercent = typeHeightPercent(
+            snapshot, keyboardStateManager.currentKeyboardType, isLandscape,
+        )
+        val percent = typePercent ?: resolveHeightPercent(
             layoutPercent,
             skinPercent,
             skinLandscapePercent,
