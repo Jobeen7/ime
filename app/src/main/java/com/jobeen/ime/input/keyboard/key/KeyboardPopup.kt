@@ -194,6 +194,8 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.CursorMoveAction -> "CursorMoveAction"
         is KeyboardAction.LangSwitchAction -> "LangSwitchAction"
         is KeyboardAction.ToggleAsciiModeAction -> "ToggleAsciiModeAction"
+        is KeyboardAction.ToggleSymbolicLockAction -> "ToggleSymbolicLockAction"
+        is KeyboardAction.ToggleEmojiLockAction -> "ToggleEmojiLockAction"
         is KeyboardAction.RotateSchema -> "RotateSchema"
         is KeyboardAction.SelectSchema -> "SelectSchema"
         is KeyboardAction.SwitchSchemaByValue -> "SwitchSchemaByValue"

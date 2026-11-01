@@ -67,6 +67,12 @@ enum class WhitelistAction(
      * 同网格的静默无操作）。
      */
     TOGGLE_ASCII_MODE("toggle_ascii_mode", ValueRule.FORBIDDEN),
+    /**
+     * 符号/表情板锁定切换（审计 G）：无值；窗口层拦截翻转
+     * 对应板锁，不下发引擎。
+     */
+    SYMBOLIC_LOCK_TOGGLE("symbolic_lock_toggle", ValueRule.FORBIDDEN),
+    EMOJI_LOCK_TOGGLE("emoji_lock_toggle", ValueRule.FORBIDDEN),
     ;
 
     enum class ValueRule { REQUIRED, FORBIDDEN }

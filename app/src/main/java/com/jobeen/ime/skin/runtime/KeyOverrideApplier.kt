@@ -920,6 +920,8 @@ object KeyOverrideApplier {
             WhitelistAction.OPEN_SCHEMA_PICKER -> KeyboardAction.ShowInputMethodPickerAction
             WhitelistAction.SWITCH_SYSTEM_IME -> KeyboardAction.LangSwitchAction
             WhitelistAction.TOGGLE_ASCII_MODE -> KeyboardAction.ToggleAsciiModeAction
+            WhitelistAction.SYMBOLIC_LOCK_TOGGLE -> KeyboardAction.ToggleSymbolicLockAction
+            WhitelistAction.EMOJI_LOCK_TOGGLE -> KeyboardAction.ToggleEmojiLockAction
             WhitelistAction.OPEN_SYSTEM_IME_PICKER -> KeyboardAction.OpenSystemImePickerAction
             WhitelistAction.HIDE_KEYBOARD -> KeyboardAction.HideKeyboardAction
             WhitelistAction.CAPS -> KeyboardAction.CapsAction

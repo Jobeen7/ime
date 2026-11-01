@@ -79,6 +79,7 @@ import com.jobeen.ime.skin.model.GeometryField
 import com.jobeen.ime.skin.model.KeyboardGeometryField
 import com.jobeen.ime.skin.model.OptionLabelResolver
 import com.jobeen.ime.skin.model.OptionStateMapper
+import com.jobeen.ime.skin.notify.ConditionCurrent
 import com.jobeen.ime.skin.notify.ConditionStyleParser
 import com.jobeen.ime.skin.notify.NotificationEvent
 import com.jobeen.ime.skin.notify.NotificationSource
@@ -359,6 +360,21 @@ class KeyboardWindowView(
 
             is KeyboardAction.ResumeAction -> {
                 keyboardStateManager.resume()
+                null
+            }
+
+            // 板锁切换（审计 G）：窗口层拦截翻转，不下发引擎；
+            // 锁条件现值立即并入运行态（不等异步选项刷新），
+            // 使条件样式门控在下次键盘构建时即取新锁态。
+            is KeyboardAction.ToggleSymbolicLockAction -> {
+                keyboardStateManager.toggleSymbolicLock()
+                pushLockConditionCurrent()
+                null
+            }
+
+            is KeyboardAction.ToggleEmojiLockAction -> {
+                keyboardStateManager.toggleEmojiLock()
+                pushLockConditionCurrent()
                 null
             }
 
@@ -1257,6 +1273,22 @@ class KeyboardWindowView(
      *   并原地推送（无值／多选项开关／态标签不足回落静态 label）。
      * 读值失败（引擎未就绪等）静默跳过，不崩不记值。
      */
+    /**
+     * 板锁条件现值即时推送（审计 G）：在现有条件总表上只
+     * 覆盖两把锁的键，不动 rime 选项与 symbolLock——异步
+     * 选项刷新随后仍会以全量映射覆盖，口径一致。
+     */
+    private fun pushLockConditionCurrent() {
+        SkinRuntimeState.updateConditionCurrent(
+            SkinRuntimeState.conditionCurrent() + mapOf(
+                ConditionStyleParser.SYMBOLIC_LOCK_KEY to
+                    ConditionCurrent.Bool(keyboardStateManager.symbolicBoardLocked),
+                ConditionStyleParser.EMOJI_LOCK_KEY to
+                    ConditionCurrent.Bool(keyboardStateManager.emojiBoardLocked),
+            ),
+        )
+    }
+
     fun refreshOptionStateAsync() {
         val seq = ++optionRefreshSeq
         val schemaId = keyboardStateManager.getCurrentSchema()?.id ?: return
@@ -1299,6 +1331,8 @@ class KeyboardWindowView(
                 OptionStateMapper.mapConditionCurrent(
                     conditionOptionNames, values,
                     currentKeyboard?.name() == SymbolKeyboard.NAME,
+                    keyboardStateManager.symbolicBoardLocked,
+                    keyboardStateManager.emojiBoardLocked,
                 ),
             )
             // 接线轮 R3：选项标签经纯映射填入钩子并原地推送

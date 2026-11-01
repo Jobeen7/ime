@@ -70,6 +70,12 @@ object ConditionEvaluator {
 object ConditionStyleParser {
 
     const val SYMBOL_LOCK_KEY = "symbolLock"
+
+    /** 符号板锁定态条件键（审计 G；与 symbolLock“板活动”不同）。 */
+    const val SYMBOLIC_LOCK_KEY = "symbolicKeyboardLockState"
+
+    /** 表情板锁定态条件键（审计 G）。 */
+    const val EMOJI_LOCK_KEY = "emojiKeyboardLockState"
     const val RIME_OPTION_PREFIX = "rime$"
 
     /** @return 解析出的条件样式表与丢弃项数（坏项只记数，调用方转 issue）。 */
@@ -85,9 +91,13 @@ object ConditionStyleParser {
     }
 
     private fun parseEntry(obj: JsonObject): ConditionStyle? {
+        // 锁键接受无前缀与 $ 前缀两种写法（对端文档以 $ 引用变量名）：
+        // $ 前缀只在此处剥离、存规范名，现值表只用规范名查。
         val conditionKey = obj["conditionKey"].stringContentOrNull()
-            ?.takeIf { it.isNotEmpty() } ?: return null
+            ?.takeIf { it.isNotEmpty() }?.removePrefix("$") ?: return null
         if (conditionKey != SYMBOL_LOCK_KEY &&
+            conditionKey != SYMBOLIC_LOCK_KEY &&
+            conditionKey != EMOJI_LOCK_KEY &&
             !(conditionKey.startsWith(RIME_OPTION_PREFIX) &&
                 conditionKey.length > RIME_OPTION_PREFIX.length)
         ) {

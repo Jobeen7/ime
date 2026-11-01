@@ -48,6 +48,15 @@ sealed class KeyboardAction {
     /** 中英切换：切换 ascii 模式（菜单 ascii 开关同款逻辑）。 */
     data object ToggleAsciiModeAction : KeyboardAction()
 
+    /**
+     * 符号板锁定切换（审计 G）：翻转符号板锁定态；窗口层
+     * 拦截处理，不下发引擎。锁定态本身不由返回动作清除。
+     */
+    data object ToggleSymbolicLockAction : KeyboardAction()
+
+    /** 表情板锁定切换（审计 G）：与符号板锁互不干扰。 */
+    data object ToggleEmojiLockAction : KeyboardAction()
+
     data object RotateSchema : KeyboardAction()
 
     /**
