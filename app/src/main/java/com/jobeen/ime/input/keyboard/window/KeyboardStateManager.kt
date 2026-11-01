@@ -118,7 +118,19 @@ object KeyboardStateManager {
         // 重挂时若当前方案布局已变（键盘收起期间切了方案），不直接
         // 复现旧键盘实例，改走 switchTo 同步布局与空格键文案。
         val targetLayout = currentSchema?.layout ?: defaultKeyboardName
-        if (targetLayout != currentKeyboardName) {
+        // 先经与 switchTo 相同的自创布局解析再比较：当前键盘名
+        // 可能是 custom:<布局 id>，而方案布局名是 T9——未解析
+        // 直接比较恒不等，必走 switchTo 并撞上同名同方案去重
+        // 早返，视图不挂回；解析后名相等即走重显分支。
+        val landscape = appContext.resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val resolved = CustomLayoutRuntime.resolveSwitchTarget(
+            SkinSnapshotProvider.current(appContext),
+            targetLayout,
+            targetLayout,
+            landscape,
+        )
+        if (resolved != currentKeyboardName) {
             switchTo(targetLayout)
             return
         }
