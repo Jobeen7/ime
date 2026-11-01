@@ -89,6 +89,8 @@ data class KeyForegroundLayer(
     val text: String? = null,
     /** image 层资产逻辑 id；text 层恒为 null。 */
     val image: String? = null,
+    /** image 层内容模式（审计 D 项）；null = 旧口径 FIT_CENTER。 */
+    val contentMode: ImageContentMode? = null,
     /** 层颜色原始值：令牌路径或字面色（装配期按快照解析，非法则整层丢弃）。 */
     val colorRaw: String? = null,
     /** text 层字号（8..40）；null = SUB 档位（副文字级）。 */
@@ -118,6 +120,8 @@ data class ResolvedForegroundLayer(
     val size: Float? = null,
     val biasX: Float = 0.5f,
     val biasY: Float = 0.5f,
+    /** image 层内容模式（审计 D 项）；null = 旧口径 FIT_CENTER。 */
+    val contentMode: ImageContentMode? = null,
 )
 
 /**

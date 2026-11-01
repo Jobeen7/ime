@@ -36,6 +36,7 @@ import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.widget.SidePanelRender
 import com.jobeen.ime.input.keyboard.key.widget.SidePanelView
 import com.jobeen.ime.skin.icon.MaterialSymbols
+import com.jobeen.ime.skin.image.toScaleType
 import splitties.dimensions.dp
 import splitties.views.dsl.constraintlayout.centerInParent
 import splitties.views.dsl.constraintlayout.constraintLayout
@@ -223,7 +224,9 @@ abstract class KeyView(
             val faceView = android.widget.ImageView(ctx).apply {
                 isClickable = false
                 isFocusable = false
-                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                // 审计 D 项：覆写指定模式时用描述模式，否则旧口径 CENTER_CROP。
+                scaleType = def.skinFaceContentMode?.toScaleType()
+                    ?: android.widget.ImageView.ScaleType.CENTER_CROP
                 setImageBitmap(faceBitmap)
             }
             appearanceView.apply {
@@ -245,7 +248,9 @@ abstract class KeyView(
             val pressedFaceView = android.widget.ImageView(ctx).apply {
                 isClickable = false
                 isFocusable = false
-                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                // 审计 D 项：覆写指定模式时用描述模式，否则旧口径 CENTER_CROP。
+                scaleType = def.skinPressedFaceContentMode?.toScaleType()
+                    ?: android.widget.ImageView.ScaleType.CENTER_CROP
                 setImageBitmap(pressedFaceBitmap)
                 visibility = android.view.View.GONE
             }
@@ -350,7 +355,9 @@ abstract class KeyView(
                     val imageView = android.widget.ImageView(context).apply {
                         isClickable = false
                         isFocusable = false
-                        scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                        // 审计 D 项：层指定模式时用描述模式，否则旧口径 FIT_CENTER。
+                        scaleType = layer.contentMode?.toScaleType()
+                            ?: android.widget.ImageView.ScaleType.FIT_CENTER
                         setImageBitmap(bitmap)
                     }
                     appearanceView.apply {

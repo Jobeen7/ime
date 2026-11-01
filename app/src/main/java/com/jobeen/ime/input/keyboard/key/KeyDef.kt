@@ -95,6 +95,11 @@ open class KeyDef(
          * 由 SkinKeyImageStore 在冷路径按 id 解析。
          */
         var skinImageAssetId: String? = null
+        /**
+         * 键面图片内容模式（审计 D 项）：仅覆写装配器写（image
+         * 已接纳时取覆写值）；null = 旧口径 CENTER_CROP。
+         */
+        var skinFaceContentMode: com.jobeen.ime.skin.model.ImageContentMode? = null
         /** G1 分档字号解析结果：主文字（null = 出厂 textSize）。 */
         var skinTextSize: Float? = null
         /** G1 分档字号解析结果：副文字（null = 出厂 altTextSize / 11f）。 */
@@ -142,6 +147,11 @@ open class KeyDef(
          * 在冷路径按 id 解析，与 skinImageAssetId 同机制）。
          */
         var skinPressedImageAssetId: String? = null
+        /**
+         * 按压态图片内容模式（审计 D 项）：仅覆写装配器写
+         * （pressedImage 已接纳时取覆写值）；null = 旧口径 CENTER_CROP。
+         */
+        var skinPressedFaceContentMode: com.jobeen.ime.skin.model.ImageContentMode? = null
         /**
          * G1 动态文字运行时跟随：来源 json 名（candidateFirst/composing），
          * 由覆写装配器写在它生成的外观副本上；键盘层据此在候选/组字

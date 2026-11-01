@@ -260,6 +260,12 @@ data class KeyOverride(
      */
     val image: String? = null,
     /**
+     * 键面图片内容模式（审计 D 项）：对端样式层 contentMode 在
+     * Jime 整图键面的对应物；null = 旧口径 CENTER_CROP。仅在
+     * [image] 已接纳时生效；非法值解析期丢弃（只丢模式，不丢图）。
+     */
+    val imageContentMode: ImageContentMode? = null,
+    /**
      * G1 附加文字：字符串，用副文字角色渲染；"" 在解析期归一为
      * null（空值 = 无附加文字）；null = 不覆写。
      */
@@ -302,6 +308,11 @@ data class KeyOverride(
      * image 相同（快照清单在册才接纳，未接纳记日志回退）。
      */
     val pressedImage: String? = null,
+    /**
+     * 按压态图片内容模式（审计 D 项）：与 [imageContentMode] 同口径；
+     * null = 旧口径 CENTER_CROP。仅在 [pressedImage] 已接纳时生效。
+     */
+    val pressedImageContentMode: ImageContentMode? = null,
     /**
      * 逐键滑动阈值（2026-10-28 截图 6 项）：dp；null = 不覆写
      * （走皮肤级/全局设置/默认 36dp）。非法值解析期丢弃。
@@ -418,6 +429,7 @@ object SkinKeyMappingsParser {
             val longPress = parseLongPress(keyId, entry["longPress"], rejections, sequenceSlots)
             val (styleRef, styleOverrides) = parseStyle(keyId, entry, rejections, styleWarnings)
             val image = parseImage(keyId, entry, rejections)
+            val imageContentMode = parseKeyContentMode(keyId, entry, "imageContentMode", fieldWarnings)
             val subLabel = parseSubLabel(keyId, entry, rejections)
             val subLabelTop = parseSubLabel(keyId, entry, rejections, "subLabelTop")
             val textSizes = parseTextSizes(keyId, entry, fieldWarnings)
@@ -428,6 +440,8 @@ object SkinKeyMappingsParser {
             val icon = parseIcon(keyId, entry, rejections)
             val pressedIcon = parsePressedIcon(keyId, entry, rejections)
             val pressedImage = parsePressedImage(keyId, entry, rejections)
+            val pressedImageContentMode =
+                parseKeyContentMode(keyId, entry, "pressedImageContentMode", fieldWarnings)
             val swipeThresholdDp = parseSwipeThreshold(keyId, entry, fieldWarnings)
             val preeditTap =
                 parseSingle(keyId, KeySlot.TAP, entry["preeditTap"], rejections, sequenceSlots)
@@ -485,6 +499,7 @@ object SkinKeyMappingsParser {
                 styleRef = styleRef,
                 styleOverrides = styleOverrides,
                 image = image,
+                imageContentMode = imageContentMode,
                 subLabel = subLabel,
                 subLabelTop = subLabelTop,
                 textSizes = textSizes,
@@ -495,6 +510,7 @@ object SkinKeyMappingsParser {
                 icon = icon,
                 pressedIcon = pressedIcon,
                 pressedImage = pressedImage,
+                pressedImageContentMode = pressedImageContentMode,
                 swipeThresholdDp = swipeThresholdDp,
                 preeditTap = preeditTap,
                 preeditSwipeUp = preeditSwipeUp,
@@ -695,9 +711,26 @@ object SkinKeyMappingsParser {
         return KeyForegroundLayer(
             type = type,
             image = image,
+            contentMode = parseLayerContentMode(keyId, obj, path, warnings),
             biasX = parseBias(keyId, obj, "biasX", path, warnings),
             biasY = parseBias(keyId, obj, "biasY", path, warnings),
         )
+    }
+
+    /** 前景 image 层内容模式：缺失为 null（旧口径 FIT_CENTER）；非法记警告并丢弃。 */
+    private fun parseLayerContentMode(
+        keyId: String,
+        obj: JsonObject,
+        path: String,
+        warnings: MutableList<KeyFieldWarning>,
+    ): ImageContentMode? {
+        val node = obj["contentMode"] ?: return null
+        val raw = node.stringContentOrNull()
+        val mode = ImageContentMode.byJsonName(raw)
+        if (mode == null) {
+            warnings += KeyFieldWarning(keyId, "$path.contentMode", "content_mode_invalid")
+        }
+        return mode
     }
 
     private fun parseBias(
@@ -917,6 +950,25 @@ object SkinKeyMappingsParser {
             return null
         }
         return raw // 资产存在性/类型/尺寸由校验器清单口径与快照接纳口径判定
+    }
+
+    /**
+     * 键面图片内容模式（审计 D 项）：字符串须为 contentMode 名；
+     * 缺失为 null（旧口径），非法记字段警告并丢弃（不丢图）。
+     */
+    private fun parseKeyContentMode(
+        keyId: String,
+        entry: JsonObject,
+        field: String,
+        warnings: MutableList<KeyFieldWarning>,
+    ): ImageContentMode? {
+        val node = entry[field] ?: return null
+        val raw = node.stringContentOrNull()
+        val mode = ImageContentMode.byJsonName(raw)
+        if (mode == null) {
+            warnings += KeyFieldWarning(keyId, field, "content_mode_invalid")
+        }
+        return mode
     }
 
     /**

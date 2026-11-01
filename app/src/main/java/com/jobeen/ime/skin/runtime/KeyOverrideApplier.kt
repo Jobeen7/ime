@@ -639,6 +639,11 @@ object KeyOverrideApplier {
             keyAnimation = keyAnimation,
         )
 
+        // 审计 D 项：键面图片内容模式（仅图片已接纳时写槽；未接纳
+        // 时模式无载体，置 null 使渲染走旧口径——无图时本就无面层）。
+        appearance.skinFaceContentMode =
+            if (imageAssetId != null) override?.imageContentMode else null
+
         // Wave-4 状态前景色：样式名已在装配期解析为 TEXT 角色色；
         // null 槽（未指定或未知样式）保持出厂/样式色不动。
         stateColors?.let {
@@ -921,10 +926,12 @@ object KeyOverrideApplier {
                 }
             }
             // 按压态独立图片键面（重点候选 8-2）：仅已接纳资产写槽，
-            // 未接纳记日志回退常态图片（或颜色键面）。
+            // 未接纳记日志回退常态图片（或颜色键面）。模式与资产同
+            // 进退：未接纳时不写模式槽（渲染无压图层，模式无载体）。
             override?.pressedImage?.let { id ->
                 if (id in imageAssets) {
                     copy.appearance.skinPressedImageAssetId = id
+                    copy.appearance.skinPressedFaceContentMode = override?.pressedImageContentMode
                 } else {
                     DiagLog.w(
                         "keymap", "key_pressed_image_fallback",
@@ -979,6 +986,7 @@ object KeyOverrideApplier {
                         imageAssetId = assetId,
                         biasX = layer.biasX ?: 0.5f,
                         biasY = layer.biasY ?: 0.5f,
+                        contentMode = layer.contentMode,
                     )
                 }
                 else -> Unit // 解析期已过滤类型，此处防御性跳过
