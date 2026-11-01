@@ -20,6 +20,8 @@ import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
+import com.jobeen.ime.skin.symbol.SymbolItem
+import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.input.keyboard.key.TextKeyView
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -37,15 +39,15 @@ class EmojiKeyboard(
         private const val ROWS = 5
         private var categorys: List<Pair<Category, Array<String>>> = Symbol.Emoji
 
-        private fun keyDef(text: String): KeyDef {
+        private fun keyDef(item: SymbolItem): KeyDef {
             return KeyDef(
                 appearance = KeyDef.Appearance.Text(
-                    displayText = text, textSize = 18f,
+                    displayText = item.displayText, textSize = 18f,
                     percentWidth = 1f / COLUMNS,
                     variant = KeyDef.Appearance.Variant.Alternative,
                 ),
                 behaviors = setOf(
-                    KeyDef.Behavior.Press(KeyboardAction.CommitAction(text))
+                    KeyDef.Behavior.Press(SymbolItemActionResolver.resolve(item))
                 ),
             )
         }
@@ -127,7 +129,7 @@ class EmojiKeyboard(
             if (action is KeyboardAction.CommitAction && categorys.any { it.first.label == action.text }) {
                 val symbols = categorys.firstOrNull { it.first.label == action.text }?.second
                     ?: return@setOnItemActionListener
-                gridView.setItems(symbols.map { keyDef(it) })
+                gridView.setItems(symbols.map { keyDef(SymbolItem.Plain(it)) })
                 val index = categorys.indexOfFirst { it.first.label == action.text }
                 if (index >= 0) sidePanelKey.selectIndex(index)
             } else {
@@ -211,7 +213,7 @@ class EmojiKeyboard(
 
     fun reset() {
         val (_, symbols) = categorys.first()
-        gridView.setItems(symbols.map { keyDef(it) })
+        gridView.setItems(symbols.map { keyDef(SymbolItem.Plain(it)) })
         sidePanelKey.selectIndex(0)
         sidePanelKey.resetPosition()
     }

@@ -32,6 +32,8 @@ import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BarSide
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
+import com.jobeen.ime.skin.symbol.SymbolItem
+import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.skin.symbol.SharedPrefsSymbolBarTypeStore
 import com.jobeen.ime.skin.symbol.SymbolBarState
 import com.jobeen.ime.skin.symbol.SymbolBarTypeCycler
@@ -54,15 +56,15 @@ class SymbolKeyboard(
         private const val ROWS = 5
         private var categorys: List<Pair<Category, Array<String>>> = Symbol.Symbol
 
-        private fun keyDef(text: String): KeyDef {
+        private fun keyDef(item: SymbolItem): KeyDef {
             return KeyDef(
                 appearance = KeyDef.Appearance.Text(
-                    displayText = text, textSize = 18f,
+                    displayText = item.displayText, textSize = 18f,
                     percentWidth = 1f / COLUMNS,
                     variant = KeyDef.Appearance.Variant.Alternative,
                 ),
                 behaviors = setOf(
-                    KeyDef.Behavior.Press(KeyboardAction.CommitAction(text))
+                    KeyDef.Behavior.Press(SymbolItemActionResolver.resolve(item))
                 ),
             )
         }
@@ -285,7 +287,7 @@ class SymbolKeyboard(
     private fun applyCategory(label: String) {
         val index = categorys.indexOfFirst { it.first.label == label }
         if (index < 0) return
-        gridView.setItems(categorys[index].second.map { keyDef(it) })
+        gridView.setItems(categorys[index].second.map { keyDef(SymbolItem.Plain(it)) })
         sidePanelKey.selectIndex(index)
         barSwitchBtn?.text = label
     }
@@ -390,7 +392,7 @@ class SymbolKeyboard(
             applyCategory(restored)
         } else {
             val (_, symbols) = categorys.first()
-            gridView.setItems(symbols.map { keyDef(it) })
+            gridView.setItems(symbols.map { keyDef(SymbolItem.Plain(it)) })
             sidePanelKey.selectIndex(0)
             barSwitchBtn?.text = categorys.first().first.label
         }
