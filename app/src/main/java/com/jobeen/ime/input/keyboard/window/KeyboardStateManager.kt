@@ -145,6 +145,20 @@ object KeyboardStateManager {
     /** 中英切换目标（状态支持；接线轮由中英键调用本函数再切类型）。 */
     fun toggleMainTypeTarget(): String = typeState.toggleMainTarget()
 
+    /**
+     * 中英切换（状态支持；接线轮由中英键调用本函数，不新增
+     * 动作类型）：在 pinyin↔alphabetic 间切类型，不写 ascii
+     * 偏好——现中英键只翻偏好（KeyActionListener 的
+     * ToggleAsciiModeAction 分支），而布局不跟偏好走，故在
+     * t9/lite 上按中英键换不了键盘；本函数改走类型切换，偏
+     * 好与类型的同步关系（菜单 ascii 开关是否跟随类型、切回
+     * pinyin 时引擎 ascii 选项是否复位）由接线轮定，见 Wave-4
+     * 接线项——本波不改偏好、不改菜单文件。
+     */
+    fun toggleMainType() {
+        switchKeyboardType(toggleMainTypeTarget())
+    }
+
     /** 服务销毁时调用：释放注册表与回调，避免持有已销毁的 View/Context */
     fun onDestroy() {
         keyboards.clear()
