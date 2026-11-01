@@ -131,7 +131,7 @@ class ForegroundLiveValuesTest {
             dynamicTexts = mapOf(DynamicTextSource.CANDIDATE_FIRST to "你好"),
         )
         val copied = result.flatten().first { it.id == "KEY_Q" }
-        val layers = copied.skinForegroundLayers!!
+        val layers = copied.appearance.skinForegroundLayers!!
         assertEquals(2, layers.size)
         assertEquals("首选：你好", layers[0].text)
         assertEquals("首选：\$rimeCandidate", layers[0].dynamicTemplate)
