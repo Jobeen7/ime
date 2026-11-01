@@ -198,7 +198,7 @@ class SkinImageDescriptorTest {
         val fit = contentModeDstRect(ImageContentMode.SCALE_ASPECT_FIT, 200, 100, 100f, 100f)
         assertEquals(ContentModeRect(0f, 25f, 100f, 75f), fit)
         val fill = contentModeDstRect(ImageContentMode.SCALE_ASPECT_FILL, 100, 200, 100f, 100f)
-        assertEquals(ContentModeRect(-50f, 0f, 150f, 100f), fill)
+        assertEquals(ContentModeRect(0f, -50f, 100f, 150f), fill)
         val center = contentModeDstRect(ImageContentMode.CENTER, 20, 20, 100f, 100f)
         assertEquals(ContentModeRect(40f, 40f, 60f, 60f), center)
         assertFalse(fit == fill)

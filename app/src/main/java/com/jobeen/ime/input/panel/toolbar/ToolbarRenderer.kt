@@ -281,7 +281,8 @@ class ToolbarRenderer(
     ) {
         val bg = buttonBackground ?: return
         if (slotRight <= slotLeft) return
-        val size = 32f * density
+        // 方框边 = 32dp，但不超出槽宽（中央区钮多致槽窄时不压邻槽）。
+        val size = minOf(32f * density, slotRight - slotLeft)
         val cx = (slotLeft + slotRight) / 2f
         val pressed = pressAlpha > 0 && pressCx in slotLeft..slotRight
         val drawable = if (pressed) bg.highlight else bg.normal
