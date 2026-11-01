@@ -177,7 +177,7 @@ class AreaStylesTest {
         val node = Json.parseToJsonElement("\"1.53vh\"")
         val spec = parseVhLength(node, "preeditHeight", issues, 12f..64f)
         assertTrue(issues.isEmpty())
-        assertEquals(12.24f, spec?.resolveDp(800f, 30f), 0.001f)
+        assertEquals(12.24f, spec!!.resolveDp(800f, 30f), 0.001f)
     }
 
     @Test
