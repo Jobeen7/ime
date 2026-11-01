@@ -113,4 +113,78 @@ sealed class KeyboardAction {
 
     /** 隐藏键盘：服务层路由（裁定记录 §11-2），不经引擎。 */
     data object HideKeyboardAction : KeyboardAction()
+
+    /**
+     * 组合按键序列（审计 E：sendKeys）：有序的（键码，修饰键）
+     * 组合，逐个经引擎按键通道下发（区别于 KeySequenceAction
+     * 的整串文本事件）。
+     */
+    data class SendKeyCombo(
+        val keyCode: Int,
+        val modifiers: KeyModifiers = KeyModifiers.Empty,
+    )
+
+    data class SendKeysAction(val keys: List<SendKeyCombo>) : KeyboardAction()
+
+    /**
+     * 直送应用的按键事件（审计 E：sendKeyEvent / tab / escape /
+     * 行首行尾）：绕过引擎，经输入连接直发应用，不参与组字。
+     */
+    data class AppKeyEventAction(
+        val keyCode: Int,
+        val ctrl: Boolean = false,
+        val shift: Boolean = false,
+        val alt: Boolean = false,
+        val meta: Boolean = false,
+    ) : KeyboardAction()
+
+    /** 组合动作（审计 E：combine）：按序逐个分发子动作。 */
+    data class CombineAction(val actions: List<KeyboardAction>) : KeyboardAction()
+
+    /** 打开链接（审计 E：openURL）：仅 http/https 由分发层放行。 */
+    data class OpenUrlAction(val url: String) : KeyboardAction()
+
+    /** 刻意空操作（审计 E：none）：分发层显式吞掉，不回退出厂行为。 */
+    data object NoOpAction : KeyboardAction()
+
+    /** 打开本应用设置（审计 E：settings）：MainActivity 意图。 */
+    data object SettingsAction : KeyboardAction()
+
+    /** 打开系统设置（审计 E：systemSettings）：系统设置意图。 */
+    data object SystemSettingsAction : KeyboardAction()
+
+    /** 回主键盘（审计 E：returnPrimaryKeyboard）：经类型状态回主类型。 */
+    data object ReturnPrimaryAction : KeyboardAction()
+
+    /** 回上一键盘（审计 E：returnLastKeyboard）：经类型状态回上一类型。 */
+    data object ReturnLastAction : KeyboardAction()
+
+    /** 剪贴板动作（审计 E：#cut/copy/paste/clearSystemPasteboard）：经输入连接。 */
+    data class ClipboardAction(val kind: Kind) : KeyboardAction() {
+        enum class Kind { CUT, COPY, PASTE, CLEAR }
+    }
+
+    /** 简繁切换（审计 E：#简繁切换）：翻转繁体偏好。 */
+    data object ToggleTraditionalAction : KeyboardAction()
+
+    /** 内嵌输入切换（审计 E：#toggleEmbeddedInputMode）：翻转内嵌偏好。 */
+    data object ToggleEmbeddedInputAction : KeyboardAction()
+
+    /**
+     * 按序号选候选（审计 E：#次选上屏/#三选上屏）：index 为候选
+     * 表顺序（0 = 首选）；窗口层凭上一帧候选表解析，解析不到丢弃。
+     */
+    data class SelectCandidateIndexAction(val index: Int) : KeyboardAction()
+
+    /** 打开常用语视图（审计 E：#showPhraseView）：窗口层接窗口加词层。 */
+    data object ShowPhraseViewAction : KeyboardAction()
+
+    /** 候选栏展开/收起切换（审计 E：#candidatesBarStateToggle）。 */
+    data object CandidatesBarToggleAction : KeyboardAction()
+
+    /**
+     * 瞬时上档（审计 E：shift）：标记动作，按键面据此接按下/
+     * 抬起钩子（非点击分发）；直接分发到监听时为空操作。
+     */
+    data object MomentaryShiftAction : KeyboardAction()
 }
