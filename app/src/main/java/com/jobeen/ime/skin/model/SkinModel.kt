@@ -368,6 +368,11 @@ data class ValidatedSkin(
      */
     val skinFontFaces: List<SkinFontFace> = emptyList(),
     /**
+     * 按码位区间指派字体（审计 C 项）：顶层 fontRanges 校验结果；
+     * 声明顺序即优先级（重叠时先胜出）。空 = 无区间指派。
+     */
+    val fontRanges: List<SkinFontRange> = emptyList(),
+    /**
      * 气泡溢出检测（2026-10-28 截图 6 项）：顶层 bubbleOverflowCheck；
      * true = 短按提示气泡与长按弹出气泡超出键盘高度时自动调位，
      * false = 旧行为（只贴边夹取，不翻转）。默认开。

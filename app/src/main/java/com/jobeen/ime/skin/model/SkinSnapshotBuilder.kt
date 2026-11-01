@@ -229,6 +229,7 @@ object SkinSnapshotBuilder {
             roleFonts = validated.roleFonts,
             skinFontFaces = validated.skinFontFaces,
             skinFontAssets = skinFontAssets,
+            fontRanges = validated.fontRanges,
             keyShadow = validated.keyShadow,
             keyAnimation = validated.keyAnimation,
             spaceAnimation = validated.spaceAnimation,

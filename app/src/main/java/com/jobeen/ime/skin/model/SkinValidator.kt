@@ -365,6 +365,19 @@ object SkinValidator {
             }
         }
 
+        // ---- 按码位区间指派字体（审计 C 项：顶层 fontRanges） ----
+        // family 与 fontFamily 同口径：系统白名单或已声明内嵌
+        // 字体名；单项非法只剔该项。声明顺序即优先级（先胜出）。
+        val parsedFontRanges = SkinFontParser.parseRanges(tree) { raw ->
+            val lower = raw.lowercase()
+            when {
+                lower in SYSTEM_FONT_FAMILIES -> lower
+                else -> faceByLower[lower]
+            }
+        }
+        issues += parsedFontRanges.issues
+        val fontRanges = parsedFontRanges.ranges
+
         // ---- 气泡溢出检测（2026-10-28 截图 6 项：默认开） ----
         // 严格布尔：非布尔值记 FIELD_FALLBACK 并保持默认开，不拒包。
         var bubbleOverflowCheck = true
@@ -929,6 +942,7 @@ object SkinValidator {
                 fontFamily = fontFamily,
                 roleFonts = roleFonts,
                 skinFontFaces = skinFontFaces,
+                fontRanges = fontRanges,
                 bubbleOverflowCheck = bubbleOverflowCheck,
                 swipeThresholdDp = swipeThresholdDp,
                 candidateRadiusDp = candidateRadiusDp,

@@ -264,6 +264,21 @@ object GlobalFonts {
     }
 
     /**
+     * 区间段字族 Typeface（审计 C 项，渲染层按段调用）：
+     * family 为内嵌名 → 内嵌字体（字节缺失／损坏返回 null，
+     * 调用方用基础字体）；系统名 → 系统字族；未知 → null。
+     * 快照外（无皮肤）时只认系统字族名。
+     */
+    @Synchronized
+    fun typefaceForFamily(context: Context, family: String, style: Int): Typeface? {
+        val snapshot = SkinSnapshotProvider.peek()
+        if (snapshot != null) {
+            return skinCandidateTypeface(context, snapshot, family, style)
+        }
+        return SkinFonts.resolveFamily(family)?.let { systemTypeface(it, style) }
+    }
+
+    /**
      * 角色字族 Typeface；null＝调用方用系统默认。
      * 分层（2026-10-29 item-1，审计 C 项扩展）：皮肤逐角色 ＞
      * 皮肤 fontFamily ＞ 全局逐角色 ＞ 系统默认；每层候选值先

@@ -56,6 +56,8 @@ data class SkinSnapshot(
      * 查无者不入表，渲染回落下一级字体。
      */
     val skinFontAssets: Map<String, String> = emptyMap(),
+    /** 按码位区间指派字体（审计 C 项）：校验结果直传。 */
+    val fontRanges: List<SkinFontRange> = emptyList(),
     /** 拟态双阴影（2026-10-29 item-1）：皮肤级阴影规格；缺省关闭。 */
     val keyShadow: KeyShadowSpec = KeyShadowSpec(),
     /** 按键动效（2026-10-29 item-1）：全部键动效规格；缺省关闭。 */
