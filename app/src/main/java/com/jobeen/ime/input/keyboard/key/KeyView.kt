@@ -1214,6 +1214,9 @@ class TextKeyView(
         // 切换时 updateMode 逐键调用，未变的键不应连带整排重排（L6）
         if (mainText.text.toString() == text?.toString()) return
         mainText.text = text
+        // 分段字体（工具项 10）：图标贴回前挂段跨，图标键整体换
+        // 文本时段跨随旧文本丢弃，不污染字形。
+        applyKeyFontSpans(mainText, mainText.typeface?.style ?: Typeface.NORMAL)
         // 单键图标（参考项）：大小写/全半角更新会重设文本，
         // 图标键须把字形贴回去；无图标时 apply 返回 false，无行为变化。
         MaterialSymbols.applyToTextView(mainText, context, def.skinIconSymbol)
@@ -1395,6 +1398,8 @@ class AltTextKeyView(
         // 同 TextKeyView：值未变不重设，避免全/半角切换整排重排（L6）
         if (mainText.text.toString() == text?.toString()) return
         mainText.text = text
+        // 分段字体（工具项 10）：图标贴回前挂段跨。
+        applyKeyFontSpans(mainText, mainText.typeface?.style ?: Typeface.NORMAL)
         // 单键图标（参考项）：文本更新后把字形贴回去（同 TextKeyView）。
         MaterialSymbols.applyToTextView(mainText, context, def.skinIconSymbol)
         mainText.doOnPreDraw {
@@ -1649,6 +1654,8 @@ class ImageTextKeyView(
         // 同 TextKeyView：值未变不重设，避免全/半角切换整排重排（L6）
         if (mainText.text.toString() == text?.toString()) return
         mainText.text = text
+        // 分段字体（工具项 10）：图标贴回前挂段跨。
+        applyKeyFontSpans(mainText, mainText.typeface?.style ?: Typeface.NORMAL)
         // 单键图标（参考项）：文本更新后把字形贴回去（同 TextKeyView）。
         MaterialSymbols.applyToTextView(mainText, context, def.skinIconSymbol)
         mainText.doOnPreDraw {
