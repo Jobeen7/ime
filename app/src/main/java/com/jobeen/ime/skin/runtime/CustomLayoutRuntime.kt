@@ -1,8 +1,11 @@
 package com.jobeen.ime.skin.runtime
 
 import com.jobeen.ime.input.keyboard.impl.EmojiKeyboard
+import com.jobeen.ime.input.keyboard.impl.FloatPanelKeyboard
+import com.jobeen.ime.input.keyboard.impl.LayoutSwitchKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
+import com.jobeen.ime.input.keyboard.impl.ReturnPathKeyboard
 import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
@@ -193,6 +196,11 @@ object CustomLayoutRuntime {
         KeyboardTypes.IMAGES -> EmojiKeyboard.NAME
         KeyboardTypes.NUMERIC, KeyboardTypes.NUMBER_PAD -> NumberKeyboard.NAME
         KeyboardTypes.SYMBOLIC -> SymbolKeyboard.NAME
+        // 工具类型无绑定时走内置工具板（不再回落方案默认主键盘，
+        // 否则用户要点工具板却看到主键盘，且无从察觉切错了类型）。
+        KeyboardTypes.LAYOUT_SWITCH -> LayoutSwitchKeyboard.NAME
+        KeyboardTypes.RETURN_PATH -> ReturnPathKeyboard.NAME
+        KeyboardTypes.FLOAT_PANEL -> FloatPanelKeyboard.NAME
         else -> schemaDefault
     }
 

@@ -47,8 +47,11 @@ import com.jobeen.ime.engine.data.shouldApplyCandidateFrame
 import com.jobeen.ime.skin.model.DynamicTextSource
 import com.jobeen.ime.input.keyboard.impl.EmojiKeyboard
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.input.keyboard.impl.FloatPanelKeyboard
+import com.jobeen.ime.input.keyboard.impl.LayoutSwitchKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
+import com.jobeen.ime.input.keyboard.impl.ReturnPathKeyboard
 import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
 import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
@@ -607,6 +610,9 @@ class KeyboardWindowView(
                 SymbolKeyboard.NAME -> SymbolKeyboard(context, cachedColors)
                 EmojiKeyboard.NAME -> EmojiKeyboard(context, cachedColors)
                 NumberKeyboard.NAME -> NumberKeyboard(context, cachedColors)
+                LayoutSwitchKeyboard.NAME -> LayoutSwitchKeyboard(context, cachedColors)
+                ReturnPathKeyboard.NAME -> ReturnPathKeyboard(context, cachedColors)
+                FloatPanelKeyboard.NAME -> FloatPanelKeyboard(context, cachedColors)
                 else -> QwertyKeyboard(context, cachedColors)
             }
         }

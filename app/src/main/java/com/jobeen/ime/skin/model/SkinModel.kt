@@ -275,7 +275,7 @@ object KeyboardTypes {
     const val RETURN_PATH = "returnPath"
     const val FLOAT_PANEL = "floatPanel"
 
-    /** 工具类型集（表条目口径；无对应 Jime 键盘类，解析与切换走通用表路径）。 */
+    /** 工具类型集（表条目口径；绑定布局时走通用布局键盘，无绑定时走内置工具板）。 */
     val TOOL: Set<String> = setOf(LAYOUT_SWITCH, RETURN_PATH, FLOAT_PANEL)
 
     fun isTemp(type: String?): Boolean = type == TEMP_PINYIN

@@ -214,4 +214,33 @@ class KeyboardTypeResolveTest {
             CustomLayoutRuntime.effectiveLayoutForLayoutId(snap, "nope", emptyMap()),
         )
     }
+
+    @Test
+    fun toolTypesFallBackToToolBoardsNotSchemaDefault() {
+        val snap = snapshot()
+        // 无绑定工具类型不再回落方案默认主键盘，而是内置工具板。
+        assertEquals(
+            "layoutSwitch",
+            CustomLayoutRuntime.resolveTypeTarget(snap, "layoutSwitch", "T9"),
+        )
+        assertEquals(
+            "returnPath",
+            CustomLayoutRuntime.resolveTypeTarget(snap, "returnPath", "T9"),
+        )
+        assertEquals(
+            "floatPanel",
+            CustomLayoutRuntime.resolveTypeTarget(snap, "floatPanel", "T9"),
+        )
+    }
+
+    @Test
+    fun toolTypeBoundLayoutWinsOverToolBoard() {
+        val snap = snapshot(
+            table = mapOf("layoutSwitch" to typeEntry(portrait = "switch-lay")),
+        )
+        assertEquals(
+            "custom:switch-lay",
+            CustomLayoutRuntime.resolveTypeTarget(snap, "layoutSwitch", "T9"),
+        )
+    }
 }
