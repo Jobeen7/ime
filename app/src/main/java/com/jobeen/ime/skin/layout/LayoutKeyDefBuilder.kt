@@ -131,7 +131,7 @@ object LayoutKeyDefBuilder {
             }
         }
         // 空格键与出厂同待遇：viewId 供 BaseKeyboard 的空格文案
-        // 下发（updateSpaceKeyText 写方案名）命中，边框走 Special
+        // 下发命中（皮肤空格文案优先，无文案时回落方案名），边框走 Special
         val isSpace = tapAction is KeyboardAction.SpaceAction
         return KeyDef(
             appearance = KeyDef.Appearance.Text(

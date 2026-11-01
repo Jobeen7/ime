@@ -63,7 +63,19 @@ abstract class BaseKeyboard(
 
     private var spanPanelViews: List<KeyView> = emptyList()
     private var spaceKeyView: TextKeyView? = null
+    /** 空格键的皮肤文案（建键时记下的布局 label；空串 = 皮肤未定义）。 */
+    private var spaceKeySkinText: String? = null
     private var returnKeyView: ImageKeyView? = null
+
+    companion object {
+        /**
+         * 空格文案决议（空格标跟皮肤走）：皮肤空格文案非空时用皮肤文案；
+         * 皮肤未定义空格文案（空串/缺失）时回落传入的方案名（现行行为）。
+         * 纯函数，可单测；视图刷新本身依赖 Android View，走真机验收。
+         */
+        fun resolveSpaceText(skinText: String?, fallback: String): String =
+            if (!skinText.isNullOrEmpty()) skinText else fallback
+    }
 
     /**
      * 布局键→视图注册表：组装期建成（行内键＋跨行键全量），不重建布局
@@ -85,7 +97,9 @@ abstract class BaseKeyboard(
     private val enterTextSetters = mutableListOf<(String) -> Unit>()
 
     override fun updateSpaceKeyText(text: String) {
-        spaceKeyView?.updateText(text)
+        // 参数 text 是回退值（方案名）：皮肤有空格文案时不用它，
+        // 只有皮肤未定义空格文案时才写它（现行行为）。
+        spaceKeyView?.updateText(resolveSpaceText(spaceKeySkinText, text))
     }
 
     /**
@@ -256,6 +270,8 @@ abstract class BaseKeyboard(
             }
             if (def.appearance.viewId == KeyView.button_space && this is TextKeyView) {
                 spaceKeyView = this
+                spaceKeySkinText =
+                    (def.appearance as? KeyDef.Appearance.Text)?.displayText
             }
             borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
             // 手势可调口径（2026-10-29 批量第 4 项）：建键时按偏好注入，

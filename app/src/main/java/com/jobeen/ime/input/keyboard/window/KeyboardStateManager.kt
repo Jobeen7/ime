@@ -137,9 +137,9 @@ object KeyboardStateManager {
         currentKeyboardName?.let { name ->
             keyboards[name]?.let { kb ->
                 kb.onAttach()
-                // 同布局重挂此前直接重显缓存键盘、不走 switchTo，空格键文案
-                // 仍是旧方案名：重显时也刷一次当前方案名（Emoji/Symbol
-                // 的 updateSpaceKeyText 为空实现，此调用无影响）。
+                // 同布局重挂此前直接重显缓存键盘、不走 switchTo：重显时
+                // 也刷一次空格文案（皮肤文案优先，无文案时回落当前方案名；
+                // Emoji/Symbol 的 updateSpaceKeyText 为空实现，此调用无影响）。
                 kb.updateSpaceKeyText(currentSchema?.name.orEmpty())
                 callback?.onShowKeyboard(kb)
             }
