@@ -163,7 +163,10 @@ object SkinToolbarParser {
                         is JsonPrimitive -> element.contentOrNull to null
                         is JsonObject -> {
                             (element["id"] as? JsonPrimitive)?.contentOrNull to
-                                (element["icon"] as? JsonPrimitive)?.contentOrNull
+                                // 通用图标槽：字符串或平台映射对象均解析为
+                                // Android 侧 Material 名（对象缺 android 时
+                                // 以 SF→Material 起始表查 ios，查不到 = 无图标）。
+                                element["icon"]?.let { IconSlot.resolveAndroidName(it) }
                         }
                         else -> null to null
                     }
@@ -195,10 +198,12 @@ object SkinToolbarParser {
                         }
                         else -> null to iconRaw
                     }
-                    // icon 字段非字符串时 iconRaw 为 null，已按“无图标”处理；
-                    // 但节点存在且非字符串属类型错，补记一项（不丢钮）。
+                    // icon 字段既非字符串又非平台映射对象时 iconRaw 为
+                    // null，已按“无图标”处理；节点存在且形态非法属类型
+                    // 错，补记一项（不丢钮）。对象形态合法但无可用键时
+                    // 属“未配置”，不记此项。
                     if (element is JsonObject && element.containsKey("icon") &&
-                        element["icon"] !is JsonPrimitive
+                        element["icon"] !is JsonPrimitive && element["icon"] !is JsonObject
                     ) {
                         drop("buttons", id, "toolbar_icon_not_string", SkinIssue.Kind.FIELD_FALLBACK)
                     }

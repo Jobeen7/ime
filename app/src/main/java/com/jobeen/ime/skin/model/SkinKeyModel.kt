@@ -983,9 +983,12 @@ object SkinKeyMappingsParser {
     }
 
     /**
-     * 单键图标解析（参考项）：须为非空字符串，否则字段级
-     * 丢弃（STRUCTURE）；名称是否在 Material Symbols 注册表内
-     * 不在此判定——装配期未知回退并记日志，永不拒皮。
+     * 单键图标解析（通用图标槽，见 IconSlot）：字符串（Material
+     * 名，`material:` 前缀照剥）或平台映射对象（取 android，
+     * 缺失时以 SF→Material 起始表查 ios，查不到 = 未配置）；
+     * 空白字符串字段级丢弃（STRUCTURE）；对象无可用键 = 未配置
+     * （静默 null，不记 rejection）。名称是否在 Material Symbols
+     * 注册表内不在此判定——装配期未知回退并记日志，永不拒皮。
      */
     private fun parseIcon(
         keyId: String,
@@ -993,27 +996,25 @@ object SkinKeyMappingsParser {
         rejections: MutableList<KeyBindingRejection>,
     ): String? {
         val node = entry["icon"] ?: return null
-        val raw = node.stringContentOrNull()
-        if (raw == null || raw.isEmpty()) {
+        if (node is JsonPrimitive && node.stringContentOrNull().isNullOrEmpty()) {
             rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
             return null
         }
-        return raw
+        return IconSlot.resolveAndroidName(node)
     }
 
-    /** 按压态独立图标（重点候选 8-2）：与 icon 同口径（非空字符串，否则字段级回退）。 */
+    /** 按压态独立图标（重点候选 8-2）：与 icon 同口径；缺失时渲染回落常态图标。 */
     private fun parsePressedIcon(
         keyId: String,
         entry: JsonObject,
         rejections: MutableList<KeyBindingRejection>,
     ): String? {
         val node = entry["pressedIcon"] ?: return null
-        val raw = node.stringContentOrNull()
-        if (raw == null || raw.isEmpty()) {
+        if (node is JsonPrimitive && node.stringContentOrNull().isNullOrEmpty()) {
             rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
             return null
         }
-        return raw
+        return IconSlot.resolveAndroidName(node)
     }
 
     /** 按压态独立图片键面（重点候选 8-2）：与 image 同口径（非空字符串，否则字段级回退）。 */
