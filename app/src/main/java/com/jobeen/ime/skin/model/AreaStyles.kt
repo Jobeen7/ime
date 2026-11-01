@@ -368,10 +368,19 @@ fun parsePreeditStyle(
  *   上下压缩药丸高度；竖网格：画布内缩（命中同步偏移）。
  * - background：区背景色。横条缺失时用面板底；竖网格缺失时
  *   用 panel.background（网格旧口径）。
+ * - 候选项内边距（审计 I 项，null = 旧写死值）：横条节点读
+ *   pillPadDp / pillGapDp；竖网格节点读 cellPadDp /
+ *   minWordSpaceDp / minRowHeightDp。字段写错节点时被消费点
+ *   忽略（两节点共用一规格类型，解析不分节点）。
  */
 data class CandidateAreaStyleSpec(
     val insets: AreaInsets = AreaInsets(),
     val background: Int? = null,
+    val pillPadDp: Float? = null,
+    val pillGapDp: Float? = null,
+    val cellPadDp: Float? = null,
+    val minWordSpaceDp: Float? = null,
+    val minRowHeightDp: Float? = null,
 )
 
 /** 解析候选区样式节点：缺失返回 null，非对象记 issue 并返回 null。 */
@@ -389,6 +398,11 @@ fun parseCandidateAreaStyle(
     return CandidateAreaStyleSpec(
         insets = parseAreaInsets(obj["insets"], "$path.insets", issues),
         background = parseStyleColor(obj["background"], "$path.background", issues),
+        pillPadDp = parseDpField(obj["pillPadDp"], "$path.pillPadDp", issues, 0f..32f),
+        pillGapDp = parseDpField(obj["pillGapDp"], "$path.pillGapDp", issues, 0f..32f),
+        cellPadDp = parseDpField(obj["cellPadDp"], "$path.cellPadDp", issues, 0f..32f),
+        minWordSpaceDp = parseDpField(obj["minWordSpaceDp"], "$path.minWordSpaceDp", issues, 0f..32f),
+        minRowHeightDp = parseDpField(obj["minRowHeightDp"], "$path.minRowHeightDp", issues, 16f..96f),
     )
 }
 

@@ -123,6 +123,7 @@ class ComposingRenderer(
     private var cachedTextTextSize: Float = -1f
     private var cachedShowIndex: Boolean = false
     private var cachedShowComment: Boolean = false
+    private var cachedAreaStyle: CandidateAreaStyleSpec? = null
 
     // 渐变缓存：只在尺寸/颜色变化时重建
     private var fadeKey: FadeKey? = null
@@ -158,8 +159,9 @@ class ComposingRenderer(
         val pillR = candidateRadiusDp * density
         val leftPad = effLeftPadPx(density)
         val rightPad = effRightPadPx(density)
-        val pillPad = 8f * density
-        val gap = 6f * density
+        // 候选项内边距（审计 I 项）：横条样式节点未定义时走旧写死值。
+        val pillPad = (areaStyle?.pillPadDp ?: 8f) * density
+        val gap = (areaStyle?.pillGapDp ?: 6f) * density
 
         val expandBtnW = 32f * density
         val expandBtnGap = 16f * density
@@ -180,6 +182,7 @@ class ComposingRenderer(
             && textBaseSize == cachedTextTextSize
             && showIndex == cachedShowIndex
             && showComment == cachedShowComment
+            && areaStyle === cachedAreaStyle
         val layouts: List<PillLayout>
         if (layoutValid) {
             layouts = cachedLayouts
@@ -255,6 +258,7 @@ class ComposingRenderer(
             cachedTextTextSize = textBaseSize
             cachedShowIndex = showIndex
             cachedShowComment = showComment
+            cachedAreaStyle = areaStyle
         }
 
         val dividerX = (pillsEnd + expandBtnLeft) / 2f

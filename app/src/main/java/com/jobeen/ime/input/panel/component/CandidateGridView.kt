@@ -86,6 +86,13 @@ class CandidateGridView(
      */
     var areaInsets: AreaInsets = AreaInsets()
     var areaBackground: Int? = null
+    /**
+     * 候选项内边距（审计 I 项）：refreshTheme 从竖网格样式节点同步；
+     * null = 旧写死值（cellPad 6dp、词间距 8dp、最小行高 32dp）。
+     */
+    var cellPadDp: Float? = null
+    var minWordSpaceDp: Float? = null
+    var minRowHeightDp: Float? = null
     var onDragComplete: ((List<EngineMessage.Candidate>) -> Unit)? = null
     var onWordForget: ((EngineMessage.Candidate, Float, Float) -> Unit)? = null
 
@@ -301,8 +308,6 @@ class CandidateGridView(
             maxScrollCache = null
             val d = resources.displayMetrics.density
             textPaint.textSize = com.jobeen.ime.input.panel.Paints.CANDIDATE_TEXT_DP * d
-            cellPad = 6f * d
-            minWordSpace = 8f * d   // 词间最小间距，保证分隔线可绘制
             sepPaint.strokeWidth = 1f * d
             updateColors(colors.panel)
             refreshAreaGeometry()
@@ -320,9 +325,13 @@ class CandidateGridView(
             val h = height
             if (w <= 0 || h <= 0) return
             val d = resources.displayMetrics.density
+            // 候选项内边距单源：尺寸变化与主题刷新都走这里重算，
+            // 避免 onSizeChanged 与 refreshTheme 各写一份漂移。
+            cellPad = (cellPadDp ?: 6f) * d
+            minWordSpace = (minWordSpaceDp ?: 8f) * d   // 词间最小间距，保证分隔线可绘制
             effW = (w - (areaInsets.left + areaInsets.right) * d).coerceAtLeast(0f)
             effH = (h - (areaInsets.top + areaInsets.bottom) * d).coerceAtLeast(0f)
-            val minRowH = 32f * d
+            val minRowH = (minRowHeightDp ?: 32f) * d
             visibleRows = (effH / minRowH).toInt().coerceIn(1, maxVisibleRow)
             rowH = if (visibleRows > 0) effH / visibleRows else 0f
             maxScrollCache = null
@@ -984,6 +993,9 @@ class CandidateGridView(
         // 不跑，须显式重算画布几何（不重置滚动）。
         areaInsets = snapshot?.verticalCandidatesStyle?.insets ?: AreaInsets()
         areaBackground = snapshot?.verticalCandidatesStyle?.background
+        cellPadDp = snapshot?.verticalCandidatesStyle?.cellPadDp
+        minWordSpaceDp = snapshot?.verticalCandidatesStyle?.minWordSpaceDp
+        minRowHeightDp = snapshot?.verticalCandidatesStyle?.minRowHeightDp
 
         gridCanvas.updateColors(colors.panel)
         gridCanvas.refreshAreaGeometry()

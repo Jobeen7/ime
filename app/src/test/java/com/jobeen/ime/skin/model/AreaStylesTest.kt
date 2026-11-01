@@ -195,6 +195,35 @@ class AreaStylesTest {
     }
 
     @Test
+    fun candidateAreaStyleItemInsetsParse() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement(
+            """{"pillPadDp": 10, "pillGapDp": 4,
+               "cellPadDp": 8, "minWordSpaceDp": 12, "minRowHeightDp": 40}""",
+        )
+        val style = parseCandidateAreaStyle(node, "horizontalCandidatesStyle", issues)
+        assertTrue(issues.isEmpty())
+        assertEquals(10f, style?.pillPadDp)
+        assertEquals(4f, style?.pillGapDp)
+        assertEquals(8f, style?.cellPadDp)
+        assertEquals(12f, style?.minWordSpaceDp)
+        assertEquals(40f, style?.minRowHeightDp)
+    }
+
+    @Test
+    fun candidateAreaStyleItemInsetsAbsentAreNull() {
+        val issues = mutableListOf<SkinIssue>()
+        val style = parseCandidateAreaStyle(
+            Json.parseToJsonElement("""{"insets": {"left": 3}}"""),
+            "verticalCandidatesStyle", issues,
+        )
+        assertNull(style?.pillPadDp)
+        assertNull(style?.cellPadDp)
+        assertNull(style?.minRowHeightDp)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
     fun candidateAreaStyleHorizontalDefaultsToNoBackground() {
         val issues = mutableListOf<SkinIssue>()
         val node = Json.parseToJsonElement("""{"insets": {"left": 3}}""")
