@@ -72,6 +72,14 @@ class Paints(context: Context) {
      * 工具栏态不用（见 KawaiiPanelView.onDraw 的渲染器守卫）。
      */
     var candidateStripBg: Int? = null
+    /**
+     * 候选序号／注释生效字号（审计 I 项）：updateColors 从快照
+     * 同步（缺失 = E2 对端默认值），applyDensity 消费；主题刷新
+     * 时 KawaiiPanelView.refreshTheme 追加 applyDensity，使字号
+     * 随皮肤切换即时生效（此前 refreshTheme 只刷颜色）。
+     */
+    var candidateIndexSizeDp: Float = CANDIDATE_INDEX_DP
+    var candidateCommentSizeDp: Float = CANDIDATE_COMMENT_DP
 
     fun updateColors(context: Context) {
         val scheme = KeyboardColors.resolve(context)
@@ -90,6 +98,10 @@ class Paints(context: Context) {
         candidateCommentPaint.color = panel.candidateComment ?: panel.candidateIndex
         toolbarPressedColor = panel.toolbarPressed
         candidateStripBg = SkinSnapshotProvider.peek()?.horizontalCandidatesStyle?.background
+        candidateIndexSizeDp =
+            SkinSnapshotProvider.peek()?.candidateIndexSizeDp ?: CANDIDATE_INDEX_DP
+        candidateCommentSizeDp =
+            SkinSnapshotProvider.peek()?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
         // 工具栏按钮表面（全局样式层）：皮肤样式 presence 决定
         // 全局按键值是否生效；跟随按键时半径取生效键圆角。
         val global = GlobalStylePrefs.get(context)
@@ -141,7 +153,7 @@ class Paints(context: Context) {
         toolbarTextPaint.textSize = 16f * density
         candidateTextPaint.textSize = CANDIDATE_TEXT_DP * density
         selectedCandidateTextPaint.textSize = CANDIDATE_TEXT_DP * density
-        candidateIndexPaint.textSize = CANDIDATE_INDEX_DP * density
-        candidateCommentPaint.textSize = CANDIDATE_COMMENT_DP * density
+        candidateIndexPaint.textSize = candidateIndexSizeDp * density
+        candidateCommentPaint.textSize = candidateCommentSizeDp * density
     }
 }

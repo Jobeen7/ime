@@ -300,6 +300,10 @@ class KawaiiPanelView(context: Context) : View(context) {
 
     fun refreshTheme() {
         paints.updateColors(context)
+        // 字号随皮肤切换即时生效（updateColors 只同步字号变量，
+        // 实际 Paint 字号由 applyDensity 写；此前 refreshTheme 不刷
+        // 密度，皮肤字号字段须追加这一行）。
+        paints.applyDensity(resources.displayMetrics.density)
         val barStyle = GlobalStylePrefs.get(context)
         barSharedBackground = barStyle.sharedBackground
         barBlurAlpha = if (barStyle.barBlur) 140 else 255

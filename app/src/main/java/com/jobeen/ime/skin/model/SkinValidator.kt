@@ -456,6 +456,14 @@ object SkinValidator {
         // ---- 预编辑样式（审计 B 项） ----
         val preeditStyle = parsePreeditStyle(tree["preeditStyle"], "preeditStyle", issues)
 
+        // ---- 候选序号／注释字号（审计 I 项） ----
+        val candidateIndexSizeDp = parseDpField(
+            tree["candidateIndexSizeDp"], "candidateIndexSizeDp", issues, 8f..32f,
+        )
+        val candidateCommentSizeDp = parseDpField(
+            tree["candidateCommentSizeDp"], "candidateCommentSizeDp", issues, 8f..32f,
+        )
+
         // ---- 候选区样式（审计 B 项） ----
         val horizontalCandidatesStyle = parseCandidateAreaStyle(
             tree["horizontalCandidatesStyle"], "horizontalCandidatesStyle", issues,
@@ -893,6 +901,8 @@ object SkinValidator {
                 preeditStyle = preeditStyle,
                 horizontalCandidatesStyle = horizontalCandidatesStyle,
                 verticalCandidatesStyle = verticalCandidatesStyle,
+                candidateIndexSizeDp = candidateIndexSizeDp,
+                candidateCommentSizeDp = candidateCommentSizeDp,
                 textSizes = skinTextSizes,
                 notifications = notifications,
                 conditionStyles = conditionStyles,

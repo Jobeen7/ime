@@ -210,6 +210,8 @@ object SkinSnapshotBuilder {
             preeditStyle = validated.preeditStyle,
             horizontalCandidatesStyle = validated.horizontalCandidatesStyle,
             verticalCandidatesStyle = validated.verticalCandidatesStyle,
+            candidateIndexSizeDp = validated.candidateIndexSizeDp,
+            candidateCommentSizeDp = validated.candidateCommentSizeDp,
             keyOverrides = validated.keyOverrides,
             keyStyles = validated.keyStyles,
             keyGeometries = validated.keyGeometries,

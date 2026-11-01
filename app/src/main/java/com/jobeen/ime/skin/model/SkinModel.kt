@@ -364,6 +364,12 @@ data class ValidatedSkin(
     val preeditStyle: PreeditStyleSpec? = null,
     /** 横条候选区样式（审计 B 项）：顶层 horizontalCandidatesStyle；null = 未定义。 */
     val horizontalCandidatesStyle: CandidateAreaStyleSpec? = null,
+    /**
+     * 候选序号／注释字号（审计 I 项）：顶层 candidateIndexSizeDp /
+     * candidateCommentSizeDp（dp）；null = 未定义（走 E2 对端默认值 18 / 11）。
+     */
+    val candidateIndexSizeDp: Float? = null,
+    val candidateCommentSizeDp: Float? = null,
     /** 竖网格候选区样式（审计 B 项）：顶层 verticalCandidatesStyle；null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */

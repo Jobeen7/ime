@@ -128,6 +128,9 @@ data class SkinSnapshot(
     val preeditStyle: PreeditStyleSpec? = null,
     /** 横条候选区样式（审计 B 项）：null = 未定义。 */
     val horizontalCandidatesStyle: CandidateAreaStyleSpec? = null,
+    /** 候选序号／注释字号（审计 I 项）：null = 未定义（走对端默认值）。 */
+    val candidateIndexSizeDp: Float? = null,
+    val candidateCommentSizeDp: Float? = null,
     /** 竖网格候选区样式（审计 B 项）：null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /**
