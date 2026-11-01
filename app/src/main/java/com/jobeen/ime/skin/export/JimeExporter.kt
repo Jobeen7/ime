@@ -5,6 +5,7 @@ import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.layout.BuiltinLayouts
 import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.SkinJson
+import com.jobeen.ime.skin.model.SkinPackageDocsParser
 import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import java.io.File
@@ -140,6 +141,23 @@ class JimeExporter(
             ) + layoutContents + assetContents,
         )
 
+        // 演示资料（审计 K 余项）：包根松散文件，校验通过才随包导出；
+        // 导出形态与导入一致——清单外裸条目，接收端凭包根豁免接纳。
+        val docPayloads = mutableListOf<Pair<String, ByteArray>>()
+        SkinPackageDocsParser.demoImageFile(skinGenDir)?.let { file ->
+            runCatching { file.readBytes() }.getOrNull()?.let {
+                docPayloads += SkinPackageDocsParser.DEMO_FILE_NAME to it
+            }
+        }
+        File(skinGenDir, SkinPackageDocsParser.README_FILE_NAME)
+            .takeIf { it.isFile }
+            ?.let { file ->
+                val bytes = runCatching { file.readBytes() }.getOrNull()
+                if (bytes != null && SkinPackageDocsParser.readmeTextOrNull(bytes) != null) {
+                    docPayloads += SkinPackageDocsParser.README_FILE_NAME to bytes
+                }
+            }
+
         ZipOutputStream(out.buffered()).use { zip ->
             fun put(path: String, bytes: ByteArray) {
                 zip.putNextEntry(ZipEntry(path))
@@ -150,6 +168,7 @@ class JimeExporter(
             put("skin.json", skinBytes)
             for ((path, bytes) in layoutPayloads) put(path, bytes)
             for ((path, bytes) in assetPayloads) put(path, bytes)
+            for ((path, bytes) in docPayloads) put(path, bytes)
         }
         return Result.Exported(
             skinId = skinId,

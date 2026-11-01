@@ -636,6 +636,13 @@ class JimeImporter(
         }
         val listedPaths = manifest.contents.map { it.path }.toSet()
         for (file in byPath.keys) {
+            // 包根演示资料是清单外松散文件（导入期校验后随代次落盘）：
+            // 未列入清单不算违规；豁免只认包根精确名，嵌套同名文件仍须列入清单。
+            if (file == SkinPackageDocsParser.DEMO_FILE_NAME ||
+                file == SkinPackageDocsParser.README_FILE_NAME
+            ) {
+                continue
+            }
             if (file != MANIFEST_PATH && file !in listedPaths) return "unlisted_file:$file"
         }
         for (content in manifest.contents) {

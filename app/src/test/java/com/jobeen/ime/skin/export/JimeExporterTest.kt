@@ -170,6 +170,74 @@ class JimeExporterTest {
     }
 
     @Test
+    fun docsRoundTrip_unlistedRootDemoAndReadmeSurviveImportAndExport() = runBlocking {
+        val root = Files.createTempDirectory("jime-docs-roundtrip").toFile()
+        val layout = SkinLibraryLayout(root).apply { ensureDirs() }
+        val store = SkinLibraryStore(layout)
+        val importer = JimeImporter(
+            layout = layout,
+            store = store,
+            importTransaction = ImportTransaction(layout, store),
+            imageProbe = object : ImageInfoProbe {
+                override fun bounds(bytes: ByteArray) = ImageSize(64, 32)
+            },
+            audioProbe = object : AudioInfoProbe {
+                override fun probe(bytes: ByteArray) = AudioInfo(500, 44100, 2)
+            },
+            backgroundPreparer = FakePreparer(),
+            defaultScheme = defaultScheme,
+        )
+        val skinBytes = skinJson.encodeToByteArray()
+        val layoutBytes = layoutJson.encodeToByteArray()
+        val demoBytes = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3,
+        )
+        val readmeBytes = "用法：切换中英文。".encodeToByteArray()
+        val contents = listOf(
+            PackageManifest.Content("skin", "skin-a", "skin.json", DigestUtil.sha256Hex(skinBytes)),
+            PackageManifest.Content(
+                "layout", "lay-1", "layouts/lay-1.json", DigestUtil.sha256Hex(layoutBytes),
+            ),
+        )
+        val files = listOf(
+            ZipSafeExtractor.ExtractedFile("skin.json", skinBytes),
+            ZipSafeExtractor.ExtractedFile("layouts/lay-1.json", layoutBytes),
+            ZipSafeExtractor.ExtractedFile(
+                "manifest.json", PackageManifest.toJson(PackageManifest(3, contents))
+                    .encodeToByteArray(),
+            ),
+            // 包根演示资料：故意不列入清单——豁免后导入不得拒绝。
+            ZipSafeExtractor.ExtractedFile("demo.png", demoBytes),
+            ZipSafeExtractor.ExtractedFile("README.md", readmeBytes),
+        )
+        val ctx = JimeImporter.Context(
+            currentVersionCode = 143,
+            fallbacks = GeometryFallbacks(12f, 6f, 5f, 10f),
+            tier = MemoryTier.NORMAL,
+            targetWidthPx = 64,
+            targetHeightPx = 32,
+        )
+        val outcome = importer.importFiles(files, ctx, JimeImporter.ConflictMode.FAIL)
+        assertTrue("unlisted root docs must not reject the package", outcome is JimeImporter.Outcome.Imported)
+
+        val out = ByteArrayOutputStream()
+        val exported = JimeExporter(layout, store).export("skin-a", out)
+        assertTrue(exported is JimeExporter.Result.Exported)
+        val zipFile = File(root, "out.jime").apply { writeBytes(out.toByteArray()) }
+        val extracted = ZipSafeExtractor.extract(zipFile)
+        assertTrue(extracted is ZipSafeExtractor.Result.Ok)
+        val byPath = (extracted as ZipSafeExtractor.Result.Ok).files.associateBy { it.path }
+        assertTrue(byPath.getValue("demo.png").bytes.contentEquals(demoBytes))
+        assertTrue(byPath.getValue("README.md").bytes.contentEquals(readmeBytes))
+        // 演示资料仍是清单外松散文件，不进入 manifest 资产闭包。
+        val exportedManifest = PackageManifest.parse(
+            byPath.getValue("manifest.json").bytes.decodeToString(),
+        )!!
+        assertTrue(exportedManifest.contents.none { it.path == "demo.png" })
+        assertTrue(exportedManifest.contents.none { it.path == "README.md" })
+    }
+
+    @Test
     fun exportMissingSkinFails() = runBlocking {
         val root = Files.createTempDirectory("jime-export-missing").toFile()
         val layout = SkinLibraryLayout(root).apply { ensureDirs() }
