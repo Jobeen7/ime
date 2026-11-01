@@ -5,11 +5,16 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.graphics.drawable.GradientDrawable
+import android.util.TypedValue
+import android.view.Gravity
 import android.view.MotionEvent
 import android.view.VelocityTracker
 import android.view.View
 import android.view.ViewConfiguration
+import android.widget.LinearLayout
 import android.widget.OverScroller
+import android.widget.TextView
 import androidx.core.graphics.withRotation
 import androidx.core.graphics.withSave
 import com.jobeen.ime.base.util.slideUpCollapse
@@ -22,6 +27,8 @@ import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.skin.model.AreaInsets
+import com.jobeen.ime.skin.model.VerticalBottomRowNames
+import com.jobeen.ime.skin.model.VerticalBottomRowSpec
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -39,6 +46,31 @@ internal fun effectiveGridLimits(
     skinMaxColumns: Int?,
     userMaxRows: Int,
 ): Pair<Int, Int> = (skinMaxRows ?: userMaxRows) to (skinMaxColumns ?: 5)
+
+/** 竖网格底部钮行钮种（规范顺序：翻页上／翻页下／返回或收起／退格）。 */
+internal enum class BottomRowButtonKind { PAGE_UP, PAGE_DOWN, RETURN_OR_COLLAPSE, BACKSPACE }
+
+/** 竖网格底部钮行钮（标签＋钮种；视图层按钮种分发）。 */
+internal data class BottomRowButton(val label: String, val kind: BottomRowButtonKind)
+
+/**
+ * 竖网格底部钮行钮表（纯函数，供单测）：仅声明为真的钮入表，
+ * 顺序恒为规范顺序；返回钮文案双名同认（“返回”／“收起”原值，
+ * 其余值回落“返回”）；无钮行（null／全否）为空表。
+ */
+internal fun bottomRowButtons(spec: VerticalBottomRowSpec?): List<BottomRowButton> {
+    if (spec == null || !spec.hasAny) return emptyList()
+    return buildList {
+        if (spec.pageUp) add(BottomRowButton("▲", BottomRowButtonKind.PAGE_UP))
+        if (spec.pageDown) add(BottomRowButton("▼", BottomRowButtonKind.PAGE_DOWN))
+        if (spec.returnOrCollapse) {
+            val label = spec.returnLabel?.takeIf { VerticalBottomRowNames.isReturnLabel(it) }
+                ?: VerticalBottomRowNames.RETURN
+            add(BottomRowButton(label, BottomRowButtonKind.RETURN_OR_COLLAPSE))
+        }
+        if (spec.backspace) add(BottomRowButton("⌫", BottomRowButtonKind.BACKSPACE))
+    }
+}
 
 @SuppressLint("ViewConstructor")
 class CandidateGridView(
@@ -82,6 +114,81 @@ class CandidateGridView(
     /** 自然行高 = 网格最小行高 32dp（与画布 onSizeChanged 同值） */
     fun naturalRowHeightPx(): Int =
         (32f * resources.displayMetrics.density).roundToInt()
+
+    /**
+     * 竖网格底部钮行（对端 verticalCandidatesLayout 第二行）：
+     * refreshTheme 从快照同步；null／全否 = 无钮行。钮行占网格
+     * 内高（窗口 gridH 不变，画布让出一自然行），故窗口无需改动。
+     */
+    var bottomRowSpec: VerticalBottomRowSpec? = null
+
+    /** 底部钮行高度：有钮行时一自然行，否则 0。 */
+    fun bottomRowHeightPx(): Int =
+        if (bottomRowSpec != null) naturalRowHeightPx() else 0
+
+    private val bottomStrip = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        visibility = View.GONE
+    }
+
+    /** 按当前钮行规范重建钮条（钮表纯函数见 [bottomRowButtons]）。 */
+    private fun rebuildBottomStrip() {
+        val buttons = bottomRowButtons(bottomRowSpec)
+        bottomStrip.removeAllViews()
+        if (buttons.isEmpty()) {
+            bottomStrip.visibility = View.GONE
+            return
+        }
+        // 主题色先取局部变量：GradientDrawable.apply 内自带 colors
+        // （渐变色数组）会遮蔽外层主题 colors，须避开该遮蔽。
+        val keyBg = colors.keyBackground
+        val keyPressed = colors.keyPressed
+        val keyText = colors.keyText
+        bottomStrip.visibility = View.VISIBLE
+        buttons.forEach { button ->
+            val bg = GradientDrawable().apply {
+                setColor(keyBg)
+                cornerRadius = candidateRadiusDp * resources.displayMetrics.density
+            }
+            val buttonView = TextView(context).apply {
+                text = button.label
+                gravity = Gravity.CENTER
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+                setIncludeFontPadding(false)
+                isClickable = true
+                isFocusable = false
+                setTextColor(keyText)
+                background = bg
+                setOnTouchListener { _, event ->
+                    // 按压态反馈：按下换按键色，抬手／取消恢复
+                    // （返回 false，Click 照常触发）。
+                    when (event.actionMasked) {
+                        MotionEvent.ACTION_DOWN -> bg.setColor(keyPressed)
+                        MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                            bg.setColor(keyBg)
+                    }
+                    false
+                }
+                setOnClickListener {
+                    when (button.kind) {
+                        BottomRowButtonKind.PAGE_UP -> gridCanvas.pageUp()
+                        BottomRowButtonKind.PAGE_DOWN -> gridCanvas.pageDown()
+                        BottomRowButtonKind.RETURN_OR_COLLAPSE ->
+                            onSidePanelAction?.invoke(
+                                KeyboardAction.CandidatesBarToggleAction,
+                            )
+                        BottomRowButtonKind.BACKSPACE ->
+                            onSidePanelAction?.invoke(KeyboardAction.BackspaceAction)
+                    }
+                }
+            }
+            bottomStrip.addView(
+                buttonView,
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f),
+            )
+        }
+    }
 
     // ── 布局数据类 ──
     private class WordPos(
@@ -970,6 +1077,21 @@ class CandidateGridView(
             scrollOffsetY = scrollOffsetY.coerceIn(0f, maxScroll)
         }
 
+        /**
+         * 底部钮行整页滚动：按可见行数上下翻页，钳制到
+         * [0, maxScroll]；绘制末尾统一判定补取，下翻到底
+         * 时自然触发 [onNeedMoreCandidates]。
+         */
+        fun pageUp() {
+            scrollOffsetY = (scrollOffsetY - visibleRows * rowH).coerceAtLeast(0f)
+            invalidate()
+        }
+
+        fun pageDown() {
+            scrollOffsetY = (scrollOffsetY + visibleRows * rowH).coerceAtMost(maxScroll)
+            invalidate()
+        }
+
         private fun springBackIfNeeded(): Boolean {
             val maxScrollInt = maxScroll.toInt()
             val currentScroll = scrollOffsetY.toInt()
@@ -1050,6 +1172,7 @@ class CandidateGridView(
 
         addView(sidePanelKey, lParams(0, matchParent))
         addView(gridCanvas, lParams(0, matchParent))
+        addView(bottomStrip, lParams(0, matchParent))
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -1058,16 +1181,23 @@ class CandidateGridView(
         // 侧边栏隐藏（审计 I 项）时宽 0、网格占满宽；显示时旧口径 15%。
         val sw = if (showSidePanel) (tw * 0.15f).toInt() else 0
         val gw = tw - sw
-        sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
-        gridCanvas.measure(mES(gw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
+        // 底部钮行占网格内高：画布与侧栏各让出一自然行，钮条全宽在底。
+        val stripH = bottomRowHeightPx()
+        val canvasH = (th - stripH).coerceAtLeast(0)
+        sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(canvasH, MeasureSpec.EXACTLY))
+        gridCanvas.measure(mES(gw, MeasureSpec.EXACTLY), mES(canvasH, MeasureSpec.EXACTLY))
+        bottomStrip.measure(mES(tw, MeasureSpec.EXACTLY), mES(stripH, MeasureSpec.EXACTLY))
         setMeasuredDimension(tw, th)
     }
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val h = b - t
         val sw = if (showSidePanel) ((r - l) * 0.15f).toInt() else 0
-        sidePanelKey.layout(0, 0, sw, h)
-        gridCanvas.layout(sw, 0, r - l, h)
+        val stripH = bottomRowHeightPx()
+        val canvasH = (h - stripH).coerceAtLeast(0)
+        sidePanelKey.layout(0, 0, sw, canvasH)
+        gridCanvas.layout(sw, 0, r - l, canvasH)
+        if (stripH > 0) bottomStrip.layout(0, canvasH, r - l, h)
     }
 
     private fun mES(size: Int, mode: Int) = MeasureSpec.makeMeasureSpec(size, mode)
@@ -1086,6 +1216,13 @@ class CandidateGridView(
         minRowHeightDp = snapshot?.verticalCandidatesStyle?.minRowHeightDp
         skinMaxRows = snapshot?.verticalMaxRows
         skinMaxColumns = snapshot?.verticalMaxColumns
+        // 底部钮行：规范变化时重建钮条并重新布局（网格内高重分）；
+        // 颜色变化时同样重建（钮色取当前主题色）。
+        val newBottomRowSpec = snapshot?.verticalBottomRow?.takeIf { it.hasAny }
+        val bottomSpecChanged = newBottomRowSpec != bottomRowSpec
+        bottomRowSpec = newBottomRowSpec
+        rebuildBottomStrip()
+        if (bottomSpecChanged) requestLayout()
         // 行列上限立即生效（不等下批候选到达才 syncLinePolicy）。
         syncLinePolicy()
         // 侧边栏有无立即生效：可见性 + 重新布局（网格占满宽）。
