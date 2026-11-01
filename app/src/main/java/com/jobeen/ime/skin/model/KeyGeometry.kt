@@ -38,6 +38,28 @@ fun parsePeerColor(raw: String): Int? {
     }
 }
 
+/**
+ * 对端 16 进制色 → Jime 16 进制色（转换器用）：`#RRGGBB` 原样；
+ * `#RRGGBBAA` → `#AARRGGBB`（alpha 从末尾移到开头）；`#` 可省
+ * （对端文档：`#` 可选；输出恒带 `#`）；非法 → null。
+ * 口径警告：两解析器绝不可混用——[parsePeerColor] 读 RRGGBBAA，
+ * `SkinJson.parseColor` 读 AARRGGBB；同一字面量经两者解析的
+ * alpha 字节不同（见 HexColorTest 的对照用例）。
+ */
+fun convertPeerHexToJimeHex(raw: String): String? {
+    val s = raw.trim().removePrefix("#")
+    if (s.isEmpty() ||
+        s.any { it !in '0'..'9' && it !in 'a'..'f' && it !in 'A'..'F' }
+    ) {
+        return null
+    }
+    return when (s.length) {
+        6 -> "#$s"
+        8 -> "#" + s.substring(6, 8) + s.substring(0, 6)
+        else -> null
+    }
+}
+
 /** 渐变类型：axial=线性，radial=径向，conic=锥形（扫掠）。 */
 enum class KeyGradientType {
     LINEAR,
