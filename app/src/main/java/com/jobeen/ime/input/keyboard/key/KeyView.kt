@@ -131,6 +131,61 @@ abstract class KeyView(
         setClipToPadding(false)
     }
 
+    /** 审计 H 项 cartoon 播放器（帧视图 + 帧表 + 帧率 + 播放状态）。 */
+    private class CartoonPlayer(
+        val view: android.widget.ImageView,
+        val frames: List<android.graphics.Bitmap>,
+        val fps: Int,
+    ) {
+        var index: Int = 0
+        var running: Boolean = false
+        val step: Runnable = Runnable {
+            if (!running) return@Runnable
+            view.setImageBitmap(frames[index % frames.size])
+            index++
+            view.postDelayed(step, (1000L / fps).coerceAtLeast(16L))
+        }
+
+        fun start() {
+            if (running) return
+            running = true
+            index = 0
+            view.visibility = android.view.View.VISIBLE
+            view.post(step)
+        }
+
+        fun stop() {
+            running = false
+            view.removeCallbacks(step)
+            view.visibility = android.view.View.GONE
+        }
+    }
+
+    private val cartoonPlayers = mutableListOf<CartoonPlayer>()
+    private val physicsBitmaps =
+        mutableListOf<Pair<com.jobeen.ime.skin.model.KeyAnimationDef.Physics,
+            List<android.graphics.Bitmap>>>()
+    private val physicsViews = mutableListOf<android.view.View>()
+    private var transformAnimator: ValueAnimator? = null
+    private var transformActive: Boolean = false
+    private var transformBase: TransformBase? = null
+    private var transformCurrentFraction: Float = 0f
+    /**
+     * 审计 H 项 transform 代次：取消旧动画器会同步触发其结束
+     * 回调，代次让过期回调直接返回，不与新动画器争抢。
+     */
+    private var transformGeneration: Int = 0
+
+    /** 审计 H 项 transform 起点（启动时捕获的键面变换值）。 */
+    private data class TransformBase(
+        val scaleX: Float,
+        val scaleY: Float,
+        val transX: Float,
+        val transY: Float,
+        val alpha: Float,
+        val rotation: Float,
+    )
+
     init {
         isEnabled = true
         isHapticFeedbackEnabled = false
@@ -204,7 +259,53 @@ abstract class KeyView(
                 })
             }
         }
+        // 审计 H 项动效层（构造期解码、初始隐藏；无样式动效时零附加层）：
+        // cartoon 帧铺满键面（与常态图片同裁剪），physics 位图按定义
+        // 备用（按压时生成粒子视图，构造期不加层）。
+        val styleAnimations = def.skinAnimations
+        if (!styleAnimations.isNullOrEmpty()) {
+            for (animation in styleAnimations) {
+                when (animation) {
+                    is com.jobeen.ime.skin.model.KeyAnimationDef.Cartoon -> {
+                        val frames = animation.images.mapNotNull {
+                            com.jobeen.ime.skin.runtime.SkinKeyImageStore.resolve(it)
+                        }
+                        if (frames.isEmpty()) continue
+                        val frameView = android.widget.ImageView(ctx).apply {
+                            isClickable = false
+                            isFocusable = false
+                            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                            visibility = android.view.View.GONE
+                            animation.targetScale?.let { scale ->
+                                scaleX = scale
+                                scaleY = scale
+                            }
+                        }
+                        cartoonPlayers += CartoonPlayer(frameView, frames, animation.fps)
+                        appearanceView.apply {
+                            add(frameView, lParams(0, 0) {
+                                startToStart = parentId
+                                endToEnd = parentId
+                                topToTop = parentId
+                                bottomToBottom = parentId
+                            })
+                        }
+                    }
+                    is com.jobeen.ime.skin.model.KeyAnimationDef.Physics -> {
+                        val bitmaps = animation.images.mapNotNull {
+                            com.jobeen.ime.skin.runtime.SkinKeyImageStore.resolve(it)
+                        }
+                        if (bitmaps.isNotEmpty()) {
+                            physicsBitmaps += animation to bitmaps
+                        }
+                    }
+                    else -> Unit
+                }
+            }
+        }
     }
+
+
 
     /**
      * G1 前景多层叠加（由 BaseKeyboard 在视图建成后调用一次）：
@@ -432,6 +533,212 @@ abstract class KeyView(
         }
     }
 
+    /**
+     * 审计 H 项 physics 粒子：按压时生成粒子视图（Jime 粒子数约定：
+     * 随机图 5 粒、指定图每图 1 粒、上限 8 粒；对端不给粒子数）。
+     * 粒子从起点（含随机偏移）运动到终点，透明开关控制淡出、
+     * 旋转开关控制角度插值；动画结束时视图自移除。
+     */
+    private fun spawnPhysicsParticles() {
+        if (physicsBitmaps.isEmpty()) return
+        val view = appearanceView
+        if (view.width == 0 || view.height == 0) return
+        for ((def, bitmaps) in physicsBitmaps) {
+            val count = if (def.randomImage) 5 else min(bitmaps.size, 8)
+            repeat(count) { index ->
+                val bitmap = if (def.randomImage) {
+                    bitmaps[kotlin.random.Random.nextInt(bitmaps.size)]
+                } else {
+                    bitmaps[index % bitmaps.size]
+                }
+                val particle = android.widget.ImageView(context).apply {
+                    isClickable = false
+                    isFocusable = false
+                    scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                    setImageBitmap(bitmap)
+                }
+                appearanceView.apply {
+                    add(particle, lParams(dp(24), dp(24)) {
+                        startToStart = parentId
+                        endToEnd = parentId
+                        topToTop = parentId
+                        bottomToBottom = parentId
+                    })
+                }
+                fun offset(value: Float?, size: Int): Float {
+                    if (value == null) return 0f
+                    return if (def.positionUnit ==
+                        com.jobeen.ime.skin.model.KeyAnimationPositionUnit.FRACTION
+                    ) {
+                        value * size
+                    } else {
+                        dp(value)
+                    }
+                }
+                val randomX = def.randomOffsetX?.let {
+                    (kotlin.random.Random.nextFloat() * 2f - 1f) * offset(it, view.width)
+                } ?: 0f
+                val randomY = def.randomOffsetY?.let {
+                    (kotlin.random.Random.nextFloat() * 2f - 1f) * offset(it, view.height)
+                } ?: 0f
+                val startX = offset(def.startX, view.width) + randomX
+                val startY = offset(def.startY, view.height) + randomY
+                val endX = offset(def.endX, view.width) + randomX
+                val endY = offset(def.endY, view.height) + randomY
+                particle.translationX = startX
+                particle.translationY = startY
+                if (def.useRotation) {
+                    particle.rotation = def.startAngleDeg ?: 0f
+                }
+                physicsViews += particle
+                val animator = particle.animate()
+                    .translationX(endX)
+                    .translationY(endY)
+                    .setDuration(def.durationMs.toLong())
+                if (def.useRotation) {
+                    animator.rotation(def.endAngleDeg ?: particle.rotation)
+                }
+                if (def.useOpacity) {
+                    animator.alpha(0f)
+                }
+                animator.withEndAction {
+                    appearanceView.removeView(particle)
+                    physicsViews -= particle
+                }.start()
+            }
+        }
+    }
+
+    /**
+     * 审计 H 项 transform 启动：从当前键面变换值插值到终态
+     * （endScale/endTranslation/endAlpha/endRotationDeg，null
+     * 项不变；平移单位 dp 或尺寸占比）。贝塞尔优先于 easing 名；
+     * hold 时只跑一程并保持，重复/回弹在 hold 下不生效。
+     */
+    private fun startTransform(
+        def: com.jobeen.ime.skin.model.KeyAnimationDef.Transform,
+    ) {
+        val view = appearanceView
+        transformGeneration++
+        val generation = transformGeneration
+        transformAnimator?.cancel()
+        view.animate().cancel()
+        transformBase = TransformBase(
+            view.scaleX, view.scaleY, view.translationX, view.translationY,
+            view.alpha, view.rotation,
+        )
+        def.anchorX?.let { if (view.width > 0) view.pivotX = it * view.width }
+        def.anchorY?.let { if (view.height > 0) view.pivotY = it * view.height }
+        transformActive = true
+        transformCurrentFraction = 0f
+        val animator = ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = def.durationMs.toLong()
+            startDelay = def.delayMs.toLong()
+            interpolator = def.bezier?.let {
+                android.view.animation.PathInterpolator(it[0], it[1], it[2], it[3])
+            } ?: interpolatorFor(def.easing)
+            if (!def.holdUntilRelease) {
+                repeatCount = def.repeatCount
+                repeatMode = if (def.autoReverse) {
+                    ValueAnimator.REVERSE
+                } else {
+                    ValueAnimator.RESTART
+                }
+            }
+            addUpdateListener { animated ->
+                transformCurrentFraction = animated.animatedValue as Float
+                applyTransformFraction(def, transformCurrentFraction)
+            }
+            addListener(object : Animator.AnimatorListener {
+                override fun onAnimationStart(animation: Animator) = Unit
+                override fun onAnimationCancel(animation: Animator) = Unit
+                override fun onAnimationRepeat(animation: Animator) = Unit
+                override fun onAnimationEnd(animation: Animator) {
+                    if (generation != transformGeneration) return
+                    transformAnimator = null
+                    if (def.holdUntilRelease) return
+                    val atEnd = !def.autoReverse || def.repeatCount % 2 == 0
+                    if (def.restoreOnFinish && atEnd) {
+                        restoreTransform(def)
+                    } else if (def.restoreOnFinish) {
+                        // 自动回弹已回到起点，无须复原。
+                        transformActive = false
+                    }
+                    // restoreOnFinish=false：终态保持，active 保留，
+                    // 脱窗时复原（见 onDetachedFromWindow）。
+                }
+            })
+        }
+        transformAnimator = animator
+        animator.start()
+    }
+
+    /** 审计 H 项 transform 复原：按抬起时长从当前进度插值回起点。 */
+    private fun restoreTransform(
+        def: com.jobeen.ime.skin.model.KeyAnimationDef.Transform,
+    ) {
+        val from = transformCurrentFraction
+        transformGeneration++
+        val generation = transformGeneration
+        transformAnimator?.cancel()
+        val animator = ValueAnimator.ofFloat(from, 0f).apply {
+            duration = def.releaseDurationMs.toLong()
+            interpolator = interpolatorFor(def.easing)
+            addUpdateListener { animated ->
+                transformCurrentFraction = animated.animatedValue as Float
+                applyTransformFraction(def, transformCurrentFraction)
+            }
+            addListener(object : Animator.AnimatorListener {
+                override fun onAnimationStart(animation: Animator) = Unit
+                override fun onAnimationCancel(animation: Animator) = Unit
+                override fun onAnimationRepeat(animation: Animator) = Unit
+                override fun onAnimationEnd(animation: Animator) {
+                    if (generation != transformGeneration) return
+                    transformAnimator = null
+                    transformActive = false
+                    applyTransformFraction(def, 0f)
+                }
+            })
+        }
+        transformAnimator = animator
+        animator.start()
+    }
+
+    /** 审计 H 项 transform 插值：终态为绝对目标值（平移按单位换算）。 */
+    private fun applyTransformFraction(
+        def: com.jobeen.ime.skin.model.KeyAnimationDef.Transform,
+        fraction: Float,
+    ) {
+        val base = transformBase ?: return
+        val view = appearanceView
+        def.endScale?.let { end ->
+            view.scaleX = base.scaleX + (end - base.scaleX) * fraction
+            view.scaleY = base.scaleY + (end - base.scaleY) * fraction
+        }
+        fun translate(value: Float?, size: Int): Float? {
+            if (value == null) return null
+            return if (def.positionUnit ==
+                com.jobeen.ime.skin.model.KeyAnimationPositionUnit.FRACTION
+            ) {
+                value * size
+            } else {
+                dp(value)
+            }
+        }
+        translate(def.endTranslationX, view.width)?.let { end ->
+            view.translationX = base.transX + (end - base.transX) * fraction
+        }
+        translate(def.endTranslationY, view.height)?.let { end ->
+            view.translationY = base.transY + (end - base.transY) * fraction
+        }
+        def.endAlpha?.let { end ->
+            view.alpha = base.alpha + (end - base.alpha) * fraction
+        }
+        def.endRotationDeg?.let { end ->
+            view.rotation = base.rotation + (end - base.rotation) * fraction
+        }
+    }
+
     private fun interpolatorFor(
         easing: com.jobeen.ime.skin.model.KeyAnimationEasing,
     ): TimeInterpolator = when (easing) {
@@ -486,17 +793,78 @@ abstract class KeyView(
             pressedFaceView?.visibility =
                 if (pressed) android.view.View.VISIBLE else android.view.View.GONE
             onPressedContentChanged(pressed)
-            // 按键动效（2026-10-29 item-1 最小版：按压缩放自动回弹）：
-            // ViewPropertyAnimator 零分配复用，与按压层淡入淡出互不干扰；
-            // 规格由装配期写在外观上（未配/降级关闭时为 null，不动效）。
-            def.skinKeyAnimation?.let { spec ->
-                val target = if (pressed) spec.pressedScale else 1f
-                appearanceView.animate()
-                    .scaleX(target)
-                    .scaleY(target)
-                    .setDuration(spec.durationMs.toLong())
-                    .setInterpolator(interpolatorFor(spec.easing))
-                    .start()
+            // 审计 H 项动效触发（与按压层淡入淡出互不干扰）：
+            // - transform 拥有键面变换时，缩放类动效让路（同视图属性）；
+            // - 否则样式 scale 定义优先于全局动效规格；
+            // - cartoon 按压播、抬起停；physics 按压时抛粒子；
+            // - transform 按 trigger 在压下/抬起时启动，hold 时抬起复原。
+            val styleAnimations = def.skinAnimations
+            val transformDef = styleAnimations?.filterIsInstance<
+                com.jobeen.ime.skin.model.KeyAnimationDef.Transform
+                >()?.firstOrNull()
+            if (transformDef == null) {
+                val styleScale = styleAnimations?.filterIsInstance<
+                    com.jobeen.ime.skin.model.KeyAnimationDef.Scale
+                    >()?.firstOrNull()
+                if (styleScale != null) {
+                    if (pressed || styleScale.autoReverse) {
+                        val target = if (pressed) styleScale.scale else 1f
+                        val duration = if (pressed) {
+                            styleScale.pressDurationMs
+                        } else {
+                            styleScale.releaseDurationMs
+                        }
+                        appearanceView.animate()
+                            .scaleX(target)
+                            .scaleY(target)
+                            .setDuration(duration.toLong())
+                            .setInterpolator(interpolatorFor(
+                                com.jobeen.ime.skin.model.KeyAnimationEasing.EASE_OUT,
+                            ))
+                            .start()
+                    }
+                } else {
+                    // 按键动效（2026-10-29 item-1）：按压缩放自动回弹；
+                    // 分段时长（审计 H 项）未指定时沿用单程时长，
+                    // autoReverse=false 时抬起保持缩放（脱窗时复位）。
+                    def.skinKeyAnimation?.let { spec ->
+                        if (pressed || spec.autoReverse) {
+                            val target = if (pressed) spec.pressedScale else 1f
+                            val duration = if (pressed) {
+                                spec.pressDurationMs ?: spec.durationMs
+                            } else {
+                                spec.releaseDurationMs ?: spec.durationMs
+                            }
+                            appearanceView.animate()
+                                .scaleX(target)
+                                .scaleY(target)
+                                .setDuration(duration.toLong())
+                                .setInterpolator(interpolatorFor(spec.easing))
+                                .start()
+                        }
+                    }
+                }
+            }
+            if (pressed) {
+                cartoonPlayers.forEach { it.start() }
+                spawnPhysicsParticles()
+                if (transformDef != null &&
+                    transformDef.trigger ==
+                    com.jobeen.ime.skin.model.KeyAnimationTrigger.PRESS
+                ) {
+                    startTransform(transformDef)
+                }
+            } else {
+                cartoonPlayers.forEach { it.stop() }
+                if (transformDef != null) {
+                    if (transformDef.trigger ==
+                        com.jobeen.ime.skin.model.KeyAnimationTrigger.RELEASE
+                    ) {
+                        startTransform(transformDef)
+                    } else if (transformDef.holdUntilRelease && transformActive) {
+                        restoreTransform(transformDef)
+                    }
+                }
             }
         }
         val bg = appearanceView.background
@@ -564,6 +932,24 @@ abstract class KeyView(
         appearanceView.animate().cancel()
         appearanceView.scaleX = 1f
         appearanceView.scaleY = 1f
+        // 审计 H 项动效复位：停帧序列、清粒子、停变换并复原
+        // （alpha 按启用态复原，不干扰 setEnabled 的 0.3 暗态）。
+        cartoonPlayers.forEach { it.stop() }
+        physicsViews.toList().forEach { particle ->
+            particle.animate().cancel()
+            appearanceView.removeView(particle)
+        }
+        physicsViews.clear()
+        transformGeneration++
+        transformAnimator?.cancel()
+        transformAnimator = null
+        if (transformActive) {
+            transformActive = false
+            appearanceView.translationX = 0f
+            appearanceView.translationY = 0f
+            appearanceView.rotation = 0f
+            appearanceView.alpha = if (isEnabled) 1f else 0.3f
+        }
         super.onDetachedFromWindow()
     }
 
