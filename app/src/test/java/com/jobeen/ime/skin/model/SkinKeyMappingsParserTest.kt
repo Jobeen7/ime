@@ -49,6 +49,7 @@ class SkinKeyMappingsParserTest {
             "clear" to SkinAction.Command(WhitelistAction.CLEAR),
             "undo" to SkinAction.Command(WhitelistAction.UNDO),
             "redo" to SkinAction.Command(WhitelistAction.REDO),
+            "toggle_ascii_mode" to SkinAction.Command(WhitelistAction.TOGGLE_ASCII_MODE),
         )
         // 白名单封闭性：样本表必须覆盖枚举全集（除 voice_input 单独覆盖）
         assertEquals(

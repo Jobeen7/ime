@@ -647,7 +647,9 @@ object SkinValidator {
         }
         fun keySoundSlot(name: String): String? {
             val node = keySoundNode?.get(name) ?: return null
-            val assetId = (node as? JsonPrimitive)?.contentOrNull
+            // 资产 id 必须是 JSON 字符串：contentOrNull 对数字/布尔也会
+            // 返回字面量，故须显式 isString，否则 123 会被当成合法引用。
+            val assetId = (node as? JsonPrimitive)?.takeIf { it.isString }?.content
             if (assetId == null) {
                 issues += SkinIssue(
                     "keySound.$name", SkinIssue.Kind.FIELD_FALLBACK, "keysound_ref_not_string",
@@ -670,7 +672,7 @@ object SkinValidator {
             }
             if (actions != null) {
                 for ((char, node) in actions) {
-                    val assetId = (node as? JsonPrimitive)?.contentOrNull
+                    val assetId = (node as? JsonPrimitive)?.takeIf { it.isString }?.content
                     if (assetId == null) {
                         issues += SkinIssue(
                             "keySound.actions.$char",

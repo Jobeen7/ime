@@ -82,9 +82,9 @@ class LegacySkinSaverTest {
             targetHeightPx = 50,
             assetSha256 = { null },
         )
-        // 配色 28+2 叶子逐项一致；几何取皮肤 appearance（口径甲值），非源主题默认
+        // 配色 29+2 叶子逐项一致；几何取皮肤 appearance（口径甲值），非源主题默认
         assertEquals(scheme.copy(cornerRadius = 9f), restored.colorScheme)
-        assertEquals(StyleField.entries.size, 28)
+        assertEquals(StyleField.entries.size, 29)
         assertNull(tree["layoutId"])
         assertNull(tree["keyMappings"])
     }

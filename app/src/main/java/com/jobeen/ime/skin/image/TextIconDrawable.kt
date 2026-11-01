@@ -1,7 +1,6 @@
 package com.jobeen.ime.skin.image
 
 import android.graphics.Canvas
-import android.graphics.Color
 import android.graphics.ColorFilter
 import android.graphics.Paint
 import android.graphics.PixelFormat
@@ -23,11 +22,16 @@ class TextIconDrawable(
         val color: Int,
         /** 字号占边界高度的比例。 */
         val sizeFraction: Float,
-        val typeface: Typeface = Typeface.DEFAULT,
+        /** null = 系统默认字体（JVM 单测下 Typeface.DEFAULT 为空，故不用它作默认值）。 */
+        val typeface: Typeface? = null,
     )
 
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        textAlign = Paint.Align.CENTER
+    // 懒初始化：构造时不碰 Android 方法（JVM 单测只读 lines 数据，
+    // 从不 draw）；Paint 只在真机绘制/改透明度时创建。
+    private val paint: Paint by lazy {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            textAlign = Paint.Align.CENTER
+        }
     }
 
     override fun draw(canvas: Canvas) {
@@ -67,15 +71,15 @@ class TextIconDrawable(
         /** 对端 cnen 等价：黑字双行“中／EN”（原图 72×72 字形层，底为键背景）。 */
         fun cnen(): TextIconDrawable = TextIconDrawable(
             listOf(
-                Line("中", Color.BLACK, 0.50f),
-                Line("EN", Color.BLACK, 0.28f),
+                Line("中", 0xFF000000.toInt(), 0.50f),
+                Line("EN", 0xFF000000.toInt(), 0.28f),
             ),
         )
 
-        /** 对端 encn 等价：绿字“英”（原图主色 #0FBC7A）。 */
+        /** 对端 encn 等价：绿字“英”（原图主色 #0FBC7A；字面量，不走 parseColor）。 */
         fun encn(): TextIconDrawable = TextIconDrawable(
             listOf(
-                Line("英", Color.parseColor("#0FBC7A"), 0.66f),
+                Line("英", 0xFF0FBC7A.toInt(), 0.66f),
             ),
         )
     }

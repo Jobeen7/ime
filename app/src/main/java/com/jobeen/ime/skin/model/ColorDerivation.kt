@@ -97,6 +97,7 @@ object ColorDerivation {
             StyleField.PANEL_TOOLBAR_PRESSED to base.pressed,
             StyleField.PANEL_CANDIDATE_BACKGROUND to base.bed,
             StyleField.PANEL_CANDIDATE_TEXT to base.ink,
+            StyleField.PANEL_SELECTED_CANDIDATE_TEXT to base.accent,
             StyleField.PANEL_CANDIDATE_INDEX to base.hint,
             StyleField.PANEL_CANDIDATE_DIVIDER to mix(base.bed, base.ink, 0.15f),
             StyleField.PINNER_BACKGROUND to base.face,

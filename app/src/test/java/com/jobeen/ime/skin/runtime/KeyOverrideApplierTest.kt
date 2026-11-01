@@ -507,6 +507,8 @@ class KeyOverrideApplierTest {
             SkinAction.Command(WhitelistAction.CLEAR) to KeyboardAction.ClearAction,
             SkinAction.Command(WhitelistAction.UNDO) to KeyboardAction.UndoAction,
             SkinAction.Command(WhitelistAction.REDO) to KeyboardAction.RedoAction,
+            SkinAction.Command(WhitelistAction.TOGGLE_ASCII_MODE) to
+                KeyboardAction.ToggleAsciiModeAction,
             SkinAction.Command(WhitelistAction.VOICE_INPUT) to
                 KeyboardAction.VoiceInputAction(),
         )

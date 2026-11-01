@@ -431,7 +431,7 @@ class ToolbarUserStoreTest {
         // 首行新建，其后池行（emoji 已添加标灰），最后未进列表的自定义行。
         assertTrue(rows[0] is ToolbarUserStore.ToolbarAddRow.NewCustom)
         val pool = rows.filterIsInstance<ToolbarUserStore.ToolbarAddRow.Pool>()
-        assertEquals(12, pool.size)
+        assertEquals(13, pool.size)
         assertEquals("emoji", pool[0].id)
         assertEquals("表情", pool[0].label)
         assertTrue(pool[0].added)
