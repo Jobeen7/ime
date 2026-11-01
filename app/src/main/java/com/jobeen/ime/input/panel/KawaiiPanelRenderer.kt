@@ -53,6 +53,12 @@ class ComposingRenderer(
      * 组字态默认 false（旧展开／收起口径不变）。
      */
     var edgeTapClosesPredictions: Boolean = false,
+    /**
+     * 首选色生效范围（首选色只属于 RIME 候选首位）：组字态
+     * true；预测／联想态必须传 false——预测首项不是 RIME
+     * 首选候选，不得染首选色（此前共用渲染器致预测首项误染）。
+     */
+    var preferredEnabled: Boolean = true,
 ) : IRenderer {
 
     private fun dimColor(color: Int): Int {
@@ -359,13 +365,14 @@ class ComposingRenderer(
                     // 其余用候选文字色。
                     val pillTextPaint =
                         if (i == highlightedIndex) selectedTextPaint
-                        else if (i == 0 && paints.preferredText != null) preferredTextPaint
+                        else if (preferredEnabled && i == 0 && paints.preferredText != null) preferredTextPaint
                         else textPaint
-                    // 序号／注释同理：首选色只在首位、且非按压时生效。
+                    // 序号／注释同理：首选色只在首位、且非按压时生效；
+                    // 预测态 preferredEnabled=false 时一律不染首选色。
                     val idxPaint =
-                        if (i == 0 && paints.preferredIndex != null) preferredIndexPaint else indexPaint
+                        if (preferredEnabled && i == 0 && paints.preferredIndex != null) preferredIndexPaint else indexPaint
                     val cmtPaint =
-                        if (i == 0 && paints.preferredComment != null) preferredCommentPaint else commentPaint
+                        if (preferredEnabled && i == 0 && paints.preferredComment != null) preferredCommentPaint else commentPaint
 
                     // 按压反馈（审计 I 项）：按压态药丸铺按压色（缺失
                     // 回落候选底），与边框模式无关；首选底在首位、
@@ -376,7 +383,7 @@ class ComposingRenderer(
                             pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
                             pressedBgPaint,
                         )
-                    } else if (i == 0 && paints.preferredBackground != null) {
+                    } else if (preferredEnabled && i == 0 && paints.preferredBackground != null) {
                         drawRoundRect(
                             pill.left, pillY, pill.right, pillY + pillH, pillR, pillR,
                             preferredBgPaint,

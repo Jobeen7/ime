@@ -172,6 +172,8 @@ data class SkinSnapshot(
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /** 竖网格候选单元格样式全字段：null = 未定义。 */
     val verticalCandidateStyle: CandidateCellStyleSpec? = null,
+    /** 竖网格底部钮行：null = 未声明（旧网格无钮行）。 */
+    val verticalBottomRow: VerticalBottomRowSpec? = null,
     /**
      * 状态驱动通知（重点候选 8-1，接线轮 R1）：校验结果透传；
      * 运行态按此建锁定表，快照切换时同步重置。

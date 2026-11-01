@@ -494,6 +494,8 @@ data class ValidatedSkin(
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /** 竖网格候选单元格样式全字段：顶层 verticalCandidateStyle；null = 未定义。 */
     val verticalCandidateStyle: CandidateCellStyleSpec? = null,
+    /** 竖网格底部钮行：顶层 verticalBottomRow；null = 未声明（旧网格无钮行）。 */
+    val verticalBottomRow: VerticalBottomRowSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */
     val textSizes: Map<KeyTextRole, Float> = emptyMap(),
 )

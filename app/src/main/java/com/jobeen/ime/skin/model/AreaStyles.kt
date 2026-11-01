@@ -572,6 +572,94 @@ fun parseVerticalLayout(
     return null
 }
 
+/**
+ * 竖网格底部钮行（对端 verticalCandidatesLayout 第二行）：
+ * 依次为翻页上／翻页下／返回或收起／退格四钮。Jime JSON 以
+ * 顶层 `verticalBottomRow` 对象显式声明各钮有无（转换器把
+ * 对端布局数组第二行的四格映射到此）；缺失 = 不声明（旧网格
+ * 无钮行，行为不变）。钮行渲染挂载为后续项；动作映射已定：
+ * 翻页 → 纵向翻页动作，返回或收起 → 候选栏展开／收起切换，
+ * 退格 → 退格。
+ */
+data class VerticalBottomRowSpec(
+    val pageUp: Boolean = false,
+    val pageDown: Boolean = false,
+    val returnOrCollapse: Boolean = false,
+    val backspace: Boolean = false,
+    /** 返回钮文案（转换器原值）；判定归属只认 [VerticalBottomRowNames]。 */
+    val returnLabel: String? = null,
+) {
+    /** 任一钮声明时为真（全否 = 无钮行，与缺失同效）。 */
+    val hasAny: Boolean get() = pageUp || pageDown || returnOrCollapse || backspace
+}
+
+/**
+ * 底部返回钮名称归属：返回钮在不同皮肤中写作“返回”或“收起”，
+ * 两者皆指同一钮位（动作 = 候选栏展开／收起切换），转换器与
+ * 解析必须双名同认，绝不可只认其一。
+ */
+object VerticalBottomRowNames {
+    const val RETURN = "返回"
+    const val COLLAPSE = "收起"
+
+    fun isReturnLabel(label: String?): Boolean =
+        label == RETURN || label == COLLAPSE
+}
+
+/** 解析竖网格底部钮行节点：缺失返回 null，非对象记 issue 并返回 null。 */
+fun parseVerticalBottomRow(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): VerticalBottomRowSpec? {
+    if (node == null) return null
+    val obj = node as? JsonObject
+    if (obj == null) {
+        issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "vertical_bottom_row_not_object")
+        return null
+    }
+    fun flag(name: String): Boolean {
+        val raw = obj[name] as? JsonPrimitive ?: return false
+        return raw.booleanOrNull ?: run {
+            issues += SkinIssue("$path.$name", SkinIssue.Kind.FIELD_FALLBACK, "bottom_row_flag_not_bool")
+            false
+        }
+    }
+    val label = (obj["returnLabel"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        ?.takeIf { it.isNotBlank() }
+    return VerticalBottomRowSpec(
+        pageUp = flag("pageUp"),
+        pageDown = flag("pageDown"),
+        returnOrCollapse = flag("returnOrCollapse"),
+        backspace = flag("backspace"),
+        returnLabel = label,
+    )
+}
+
+/**
+ * 候选上限的对端文档默认值（转换器发射口径，非 Jime 渲染默认值）：
+ *
+ * - 横条 maxColumns 文档默认 7；竖网格 maxRows 文档默认 4、
+ *   maxColumns 文档默认 5。
+ * - Jime 渲染侧缺失口径不变（Wave-3 既定偏差，保留）：横条
+ *   缺失 = 不限（套用 7 会截断现行滚动条）；竖行数缺失 = 走
+ *   用户行数偏好、列数缺省 5。转换器在转换对端节点缺失项时
+ *   发射此处默认值，使转换产物与对端行为一致；Jime 侧绝不
+ *   在渲染时把缺失读成此处默认值。
+ */
+object PeerCandidateDefaults {
+    const val HORIZONTAL_MAX_COLUMNS = 7
+    const val VERTICAL_MAX_ROWS = 4
+    const val VERTICAL_MAX_COLUMNS = 5
+}
+
+/** 竖网格行数解析：皮肤值优先，缺失走用户行数偏好（不套用文档默认 4）。 */
+fun resolveVerticalMaxRows(skinMaxRows: Int?, userPolicyRows: Int): Int =
+    skinMaxRows ?: userPolicyRows
+
+/** 横条候选上限解析：皮肤值优先，缺失 = 不限（不套用文档默认 7）。 */
+fun resolveHorizontalMaxColumns(skinMaxColumns: Int?): Int? = skinMaxColumns
+
 /** 候选上下文菜单动作（审计 I 项）：点选／复制／遗忘三者之一。 */
 enum class CandidateMenuAction { SELECT, COPY, FORGET }
 

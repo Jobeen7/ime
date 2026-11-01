@@ -184,6 +184,12 @@ class CandidateGridView(
         /** 首选色（审计 I 项）：updateColors 从 panel 同步；null = 关闭。 */
         private var preferredBg: Int? = null
         private var preferredText: Int? = null
+        /**
+         * 首选色生效范围：RIME 候选 true；预测／联想展开时由
+         * show() 置 false——预测首项不是 RIME 首选候选，不得染
+         * 首选色（与横条渲染器同口径）。
+         */
+        var preferredEnabled: Boolean = true
 
         var positions = emptyList<WordPos>()
             private set
@@ -423,7 +429,7 @@ class CandidateGridView(
                         // 首选文字色（审计 I 项）：本格画完即还原，
                         // 避免 textPaint 的色污染后续格。
                         val savedTextColor = textPaint.color
-                        if (i == 0) preferredText?.let { textPaint.color = it }
+                        if (i == 0 && preferredEnabled) preferredText?.let { textPaint.color = it }
                         val tw = textWidths.getOrElse(i) { 0f }
                         val isTarget = i == dragTargetIndex && dragIndex >= 0
 
@@ -443,7 +449,7 @@ class CandidateGridView(
                                 pos.xStart + shakeOff, y, pos.xStart + pos.width + shakeOff, y + rowH,
                                 candidateRadiusDp * d, candidateRadiusDp * d, pressPaint,
                             )
-                        } else if (i == 0 && preferredBg != null) {
+                        } else if (i == 0 && preferredEnabled && preferredBg != null) {
                             val d = resources.displayMetrics.density
                             val oldPressColor = pressPaint.color
                             pressPaint.color = preferredBg!!
@@ -1100,8 +1106,9 @@ class CandidateGridView(
     /** 收起动画进行中：此间 visibility 仍为 VISIBLE，show() 需特殊处理 */
     private var collapseAnimating = false
 
-    fun show(list: List<EngineMessage.Candidate>) {
+    fun show(list: List<EngineMessage.Candidate>, preferredEnabled: Boolean = true) {
         syncLinePolicy()
+        gridCanvas.preferredEnabled = preferredEnabled
         allCandidates = list
         // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽
         gridCanvas.resetDragIfOutOfBounds()

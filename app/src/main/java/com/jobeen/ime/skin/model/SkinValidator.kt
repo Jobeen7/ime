@@ -509,6 +509,11 @@ object SkinValidator {
             tree["verticalCandidatesStyle"], "verticalCandidatesStyle", issues,
         )
 
+        // ---- 竖网格底部钮行（翻页／返回或收起／退格） ----
+        val verticalBottomRow = parseVerticalBottomRow(
+            tree["verticalBottomRow"], "verticalBottomRow", issues,
+        )
+
         // ---- 候选单元格样式全字段（字号／字重／内边距／背景内边距／圆角） ----
         val horizontalCandidateStyle = parseCandidateCellStyle(
             tree["horizontalCandidateStyle"], "horizontalCandidateStyle", issues,
@@ -1015,6 +1020,7 @@ object SkinValidator {
                 candidateCommentSizeDp = candidateCommentSizeDp,
                 horizontalCandidateStyle = horizontalCandidateStyle,
                 verticalCandidateStyle = verticalCandidateStyle,
+                verticalBottomRow = verticalBottomRow,
                 horizontalMaxColumns = horizontalMaxColumns,
                 horizontalExpandLeft = horizontalExpandLeft,
                 verticalMaxRows = verticalCandidates?.maxRows,

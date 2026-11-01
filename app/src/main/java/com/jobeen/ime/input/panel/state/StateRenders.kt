@@ -173,6 +173,8 @@ class PredictionStateRender(
             maxColumns = snapshot?.horizontalMaxColumns,
             expandLeft = snapshot?.horizontalExpandLeft ?: false,
             edgeTapClosesPredictions = true,
+            // 预测首项不是 RIME 首选候选：首选色在此态关闭。
+            preferredEnabled = false,
         ).also {
             it.recording = ctx.recording
             it.highlightedIndex = highlightedIndex
@@ -180,7 +182,8 @@ class PredictionStateRender(
     }
 
     override fun showExpand(isExpanded: Boolean) {
-        if (isExpanded) ctx.candidateGrid.show(candidates)
+        // 预测展开同样不是 RIME 候选：首选色关闭。
+        if (isExpanded) ctx.candidateGrid.show(candidates, preferredEnabled = false)
     }
 
     override fun hideExpand() {
