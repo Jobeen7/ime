@@ -1467,15 +1467,9 @@ private fun SkinLibraryCard(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.padding(top = 6.dp),
             )
-            Text(
-                text = buildString {
-                    if (isActive) append("生效中 ")
-                    if (isLastGood) append("上个皮肤 ")
-                    append("第 ${entry.generation} 版")
-                },
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            // 副标题已删：生效中与卡片绿框＋对勾重复、菜单应用项灰化已表意；
+            // 上个皮肤是内部回退指针，不宜作卡片文案；代次计数卡片上价值低。
+            // isActive/isLastGood 参数保留（菜单/回退/详情等处仍用）。
         }
     }
 }
