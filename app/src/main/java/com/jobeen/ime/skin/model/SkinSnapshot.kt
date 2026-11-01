@@ -131,6 +131,8 @@ data class SkinSnapshot(
     /** 候选序号／注释字号（审计 I 项）：null = 未定义（走对端默认值）。 */
     val candidateIndexSizeDp: Float? = null,
     val candidateCommentSizeDp: Float? = null,
+    /** 横条候选上限（审计 I 项）：null = 不限。 */
+    val horizontalMaxColumns: Int? = null,
     /** 竖网格候选区样式（审计 B 项）：null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /**

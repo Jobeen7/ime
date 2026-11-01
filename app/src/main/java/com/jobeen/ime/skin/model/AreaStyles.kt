@@ -406,6 +406,45 @@ fun parseCandidateAreaStyle(
     )
 }
 
+/**
+ * 横条候选节点（审计 I 项）：`horizontalCandidates`（对端同名）。
+ * 仅 maxColumns 生效：横条一次布局的候选上限；null = 不限
+ * （现行无界滚动口径。对端文档默认 7，但节点缺失时 Jime
+ * 不套用 7——套用会截断现行滚动条，属回归；显式写值才生效）。
+ */
+data class HorizontalCandidatesSpec(
+    val maxColumns: Int? = null,
+)
+
+/** 解析横条候选节点：缺失返回 null，非对象记 issue 并返回 null。 */
+fun parseHorizontalCandidates(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): HorizontalCandidatesSpec? {
+    if (node == null) return null
+    val obj = node as? JsonObject
+    if (obj == null) {
+        issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "horizontal_candidates_not_object")
+        return null
+    }
+    val raw = (obj["maxColumns"] as? JsonPrimitive)?.intOrNull
+    val maxColumns = when {
+        raw == null -> {
+            if (obj["maxColumns"] != null) {
+                issues += SkinIssue("$path.maxColumns", SkinIssue.Kind.FIELD_FALLBACK, "max_columns_not_int")
+            }
+            null
+        }
+        raw !in 1..20 -> {
+            issues += SkinIssue("$path.maxColumns", SkinIssue.Kind.FIELD_FALLBACK, "max_columns_out_of_range")
+            null
+        }
+        else -> raw
+    }
+    return HorizontalCandidatesSpec(maxColumns = maxColumns)
+}
+
 /** 解析颜色字符串节点：非法记 issue 并返回 null（调用方回落）。 */
 fun parseStyleColor(
     node: JsonElement?,

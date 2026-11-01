@@ -37,6 +37,12 @@ class ComposingRenderer(
      */
     var areaStyle: CandidateAreaStyleSpec? = null,
     override var recording: Boolean = false,
+    /**
+     * 横条候选上限（审计 I 项）：构造期经快照传入；null = 不限。
+     * 布局与绘制皆按截断后的列表走，命中跟随 lastPills 自动
+     * 受限；高亮下标 ≥ 上限时该候选不可见（旧口径：恒可见）。
+     */
+    var maxColumns: Int? = null,
 ) : IRenderer {
 
     private fun dimColor(color: Int): Int {
@@ -136,6 +142,7 @@ class ComposingRenderer(
     private var cachedShowIndex: Boolean = false
     private var cachedShowComment: Boolean = false
     private var cachedAreaStyle: CandidateAreaStyleSpec? = null
+    private var cachedMaxColumns: Int? = null
 
     // 渐变缓存：只在尺寸/颜色变化时重建
     private var fadeKey: FadeKey? = null
@@ -212,6 +219,10 @@ class ComposingRenderer(
             && showIndex == cachedShowIndex
             && showComment == cachedShowComment
             && areaStyle === cachedAreaStyle
+            && maxColumns == cachedMaxColumns
+        // 横条上限（审计 I 项）：布局与绘制共用截断列表；截断后
+        // 位置编号（1. 2. …）与引擎下标皆与原列表前 N 项一致。
+        val layoutCandidates = maxColumns?.let { candidates.take(it) } ?: candidates
         val layouts: List<PillLayout>
         if (layoutValid) {
             layouts = cachedLayouts
@@ -228,10 +239,10 @@ class ComposingRenderer(
                 commentWidthCache.clear()
                 indexWidthCache.clear()
             }
-            val newLayouts = ArrayList<PillLayout>(candidates.size)
-            val newPills = ArrayList<PillRect>(candidates.size)
+            val newLayouts = ArrayList<PillLayout>(layoutCandidates.size)
+            val newPills = ArrayList<PillRect>(layoutCandidates.size)
             var x = leftPad
-            for ((i, c) in candidates.withIndex()) {
+            for ((i, c) in layoutCandidates.withIndex()) {
                 val indexW = if (showIndex) {
                     indexWidthCache.getOrPut(i) { indexPaint.measureText("${i + 1}. ") }
                 } else {
@@ -288,6 +299,7 @@ class ComposingRenderer(
             cachedShowIndex = showIndex
             cachedShowComment = showComment
             cachedAreaStyle = areaStyle
+            cachedMaxColumns = maxColumns
         }
 
         val dividerX = (pillsEnd + expandBtnLeft) / 2f
@@ -301,7 +313,7 @@ class ComposingRenderer(
                 // 可见区间裁剪：只绘制可见候选（lastPills 保持全量供 hitTest）
                 val visLeft = -scrollX
                 val visRight = pillsEnd - scrollX
-                for ((i, c) in candidates.withIndex()) {
+                for ((i, c) in layoutCandidates.withIndex()) {
                     val layout = layouts[i]
                     val pill = layout.rect
                     if (pill.right < visLeft || pill.left > visRight) continue

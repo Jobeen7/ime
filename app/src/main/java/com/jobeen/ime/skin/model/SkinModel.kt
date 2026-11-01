@@ -387,6 +387,11 @@ data class ValidatedSkin(
      */
     val candidateIndexSizeDp: Float? = null,
     val candidateCommentSizeDp: Float? = null,
+    /**
+     * 横条候选上限（审计 I 项）：顶层 horizontalCandidates.maxColumns；
+     * null = 不限（现行无界滚动）。
+     */
+    val horizontalMaxColumns: Int? = null,
     /** 竖网格候选区样式（审计 B 项）：顶层 verticalCandidatesStyle；null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */

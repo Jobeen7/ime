@@ -195,6 +195,35 @@ class AreaStylesTest {
     }
 
     @Test
+    fun horizontalCandidatesMaxColumnsParses() {
+        val issues = mutableListOf<SkinIssue>()
+        val spec = parseHorizontalCandidates(
+            Json.parseToJsonElement("""{"maxColumns": 7}"""),
+            "horizontalCandidates", issues,
+        )
+        assertEquals(7, spec?.maxColumns)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun horizontalCandidatesAbsentIsNull() {
+        val issues = mutableListOf<SkinIssue>()
+        assertNull(parseHorizontalCandidates(null, "horizontalCandidates", issues))
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun horizontalCandidatesOutOfRangeIsDropped() {
+        val issues = mutableListOf<SkinIssue>()
+        val spec = parseHorizontalCandidates(
+            Json.parseToJsonElement("""{"maxColumns": 0}"""),
+            "horizontalCandidates", issues,
+        )
+        assertNull(spec?.maxColumns)
+        assertTrue(issues.isNotEmpty())
+    }
+
+    @Test
     fun candidateAreaStyleItemInsetsParse() {
         val issues = mutableListOf<SkinIssue>()
         val node = Json.parseToJsonElement(

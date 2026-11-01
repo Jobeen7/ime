@@ -212,6 +212,7 @@ object SkinSnapshotBuilder {
             verticalCandidatesStyle = validated.verticalCandidatesStyle,
             candidateIndexSizeDp = validated.candidateIndexSizeDp,
             candidateCommentSizeDp = validated.candidateCommentSizeDp,
+            horizontalMaxColumns = validated.horizontalMaxColumns,
             keyOverrides = validated.keyOverrides,
             keyStyles = validated.keyStyles,
             keyGeometries = validated.keyGeometries,
