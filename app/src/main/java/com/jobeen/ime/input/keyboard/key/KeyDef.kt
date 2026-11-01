@@ -73,6 +73,12 @@ open class KeyDef(
         var skinCornerRadiusDp: Float? = null
         var skinCornerCurve: com.jobeen.ime.skin.model.KeyCornerCurve? = null
         var skinVisibleBounds: com.jobeen.ime.skin.model.KeyVisibleBounds? = null
+        /**
+         * 审计 H 项动效（只由覆写装配器写在它生成的外观副本上）：
+         * 本键样式动效名经动效表解析后的定义列表（图片帧已过滤
+         * 为快照接纳资产）；null/空 = 无样式动效（走全局动效）。
+         */
+        var skinAnimations: List<com.jobeen.ime.skin.model.KeyAnimationDef>? = null
         /** G1 图标染色（keyStyles icon 角色解析结果；无图标的键忽略）。 */
         var skinIconTintColor: Int? = null
         /**

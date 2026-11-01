@@ -69,6 +69,8 @@ data class SkinSnapshot(
     val keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
     /** 样式几何表（审计 A 项）：样式名 → 非颜色几何面；装配器按样式名取用。 */
     val keyGeometries: Map<String, KeyStyleGeometry> = emptyMap(),
+    /** 动效表（审计 H 项）：动效名 → 动效定义；装配器按样式动效名取用。 */
+    val keyAnimations: Map<String, KeyAnimationDef> = emptyMap(),
     /** G1 皮肤级分档字号（校验通过值；装配器逐键与逐键覆写合并）。 */
     val textSizes: Map<KeyTextRole, Float> = emptyMap(),
     /**

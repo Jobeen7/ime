@@ -287,6 +287,8 @@ data class ValidatedSkin(
     val keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
     /** 样式几何表（审计 A 项）：样式名 → 非颜色几何面（渐变/阴影/描边/圆角/下边缘/可视区域/动效名）；无几何的样式不在此表。 */
     val keyGeometries: Map<String, KeyStyleGeometry> = emptyMap(),
+    /** 动效表（审计 H 项）：动效名 → 动效定义；样式几何面的动效名经此表解析。 */
+    val keyAnimations: Map<String, KeyAnimationDef> = emptyMap(),
     /** 状态驱动通知（重点候选 8-1）：顶层 notifications 校验结果；未定义即空表。 */
     val notifications: List<SkinNotification> = emptyList(),
     /** 条件样式（重点候选 8-1）：顶层 conditionStyles 校验结果；未定义即空表。 */

@@ -173,6 +173,11 @@ object KeyOverrideApplier {
                 // 审计 A 项：样式几何面与颜色角色同样式名绑定（覆写
                 // styleRef > 布局键自带 styleRef），无样式名时为 null。
                 val geometry = resolveStyleGeometry(def, override, snapshot)
+                // 审计 H 项：样式动效名经动效表解析（图片帧过滤为
+                // 接纳资产，未知动效名记日志丢弃）。
+                val animations = resolveStyleAnimations(
+                    layoutName, def, geometry, snapshot,
+                )
                 // 接线轮 R1：通知按样式名匹配（布局键自带 styleRef
                 // 或覆写 styleRef；无样式引用键不命中）。
                 val styleRef = override?.styleRef ?: def.skinStyleRef
@@ -186,7 +191,8 @@ object KeyOverrideApplier {
                     keyAnim
                 }
                 val needsCopy = override != null || sound != SoundPlan.Inherit ||
-                    style != null || geometry != null || widthChanged || latched != null ||
+                    style != null || geometry != null || animations != null ||
+                    widthChanged || latched != null ||
                     animForKey != null ||
                     (snapshot.textSizes.isNotEmpty() &&
                         def.appearance is KeyDef.Appearance.Text)
@@ -202,6 +208,7 @@ object KeyOverrideApplier {
                         sound = sound,
                         style = style,
                         geometry = geometry,
+                        animations = animations,
                         tiers = snapshot.textSizes,
                         imageAssets = snapshot.imageAssets,
                         scheme = effectiveScheme,
@@ -320,6 +327,60 @@ object KeyOverrideApplier {
         return snapshot.keyGeometries[styleRef]
     }
 
+    /**
+     * 样式动效解析（审计 H 项）：样式几何面的动效名 → 动效表
+     * 定义；未知动效名记日志丢弃。cartoon/physics 的图片帧只
+     * 留快照已接纳资产，全被滤掉时整条丢弃（无图不动效，
+     * 不崩溃）。无动效名或解析后为空时返回 null（不复制）。
+     */
+    private fun resolveStyleAnimations(
+        layoutName: String,
+        def: KeyDef,
+        geometry: com.jobeen.ime.skin.model.KeyStyleGeometry?,
+        snapshot: SkinSnapshot,
+    ): List<com.jobeen.ime.skin.model.KeyAnimationDef>? {
+        val names = geometry?.animationNames?.takeIf { it.isNotEmpty() } ?: return null
+        val resolved = mutableListOf<com.jobeen.ime.skin.model.KeyAnimationDef>()
+        for (name in names) {
+            val animation = snapshot.keyAnimations[name]
+            if (animation == null) {
+                DiagLog.w(
+                    "keymap", "key_animation_unknown",
+                    mapOf(
+                        "layout" to layoutName,
+                        "keyId" to def.id,
+                        "animation" to name,
+                    ),
+                )
+                continue
+            }
+            val admitted = when (animation) {
+                is com.jobeen.ime.skin.model.KeyAnimationDef.Cartoon -> {
+                    val kept = animation.images.filter { it in snapshot.imageAssets }
+                    if (kept.isEmpty()) null else animation.copy(images = kept)
+                }
+                is com.jobeen.ime.skin.model.KeyAnimationDef.Physics -> {
+                    val kept = animation.images.filter { it in snapshot.imageAssets }
+                    if (kept.isEmpty()) null else animation.copy(images = kept)
+                }
+                else -> animation
+            }
+            if (admitted == null) {
+                DiagLog.w(
+                    "keymap", "key_animation_images_fallback",
+                    mapOf(
+                        "layout" to layoutName,
+                        "keyId" to def.id,
+                        "animation" to name,
+                    ),
+                )
+                continue
+            }
+            resolved += admitted
+        }
+        return resolved.takeIf { it.isNotEmpty() }
+    }
+
     /** 布局键自带覆盖（低）+ 覆写覆盖（高）按角色合并。 */
     private fun mergeStyleOverrides(
         base: Map<String, String>?,
@@ -409,6 +470,8 @@ object KeyOverrideApplier {
         style: KeyStyleResolver.ResolvedKeyStyle?,
         /** 审计 A 项：本键样式几何面（null = 无几何指定）。 */
         geometry: com.jobeen.ime.skin.model.KeyStyleGeometry? = null,
+        /** 审计 H 项：本键样式动效定义（null = 无样式动效）。 */
+        animations: List<com.jobeen.ime.skin.model.KeyAnimationDef>? = null,
         tiers: Map<KeyTextRole, Float>,
         imageAssets: Map<String, String>,
         scheme: com.jobeen.ime.data.keyboard.theme.KeyboardColors.ColorScheme,
@@ -489,6 +552,7 @@ object KeyOverrideApplier {
             imageAssetId = imageAssetId,
             geometry = override?.geometry,
             styleGeometry = geometry,
+            styleAnimations = animations,
             foreground = foreground,
             keyAnimation = keyAnimation,
         )
@@ -787,6 +851,8 @@ object KeyOverrideApplier {
         geometry: com.jobeen.ime.skin.model.KeyGeometryOverride?,
         /** 审计 A 项：样式几何面（与逐键几何覆写 geometry 是两槽）。 */
         styleGeometry: com.jobeen.ime.skin.model.KeyStyleGeometry? = null,
+        /** 审计 H 项：样式动效定义（与全局动效 keyAnimation 是两槽）。 */
+        styleAnimations: List<com.jobeen.ime.skin.model.KeyAnimationDef>? = null,
         foreground: List<ResolvedForegroundLayer>?,
         keyAnimation: com.jobeen.ime.skin.model.KeyAnimationSpec?,
     ): KeyDef.Appearance {
@@ -898,6 +964,7 @@ object KeyOverrideApplier {
         rebuilt.skinCornerRadiusDp = styleGeometry?.cornerRadiusDp
         rebuilt.skinCornerCurve = styleGeometry?.cornerCurve
         rebuilt.skinVisibleBounds = styleGeometry?.bounds
+        rebuilt.skinAnimations = styleAnimations
         rebuilt.skinImageAssetId = imageAssetId
         rebuilt.skinTextSize = mainSize
         rebuilt.skinAltTextSize = altSize

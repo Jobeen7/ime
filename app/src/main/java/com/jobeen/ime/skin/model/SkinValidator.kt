@@ -573,6 +573,21 @@ object SkinValidator {
             }
         }
 
+        // ---- keyAnimations（审计 H 项：动效表） ----
+        // 非对象/未知类型/缺关键字段的项整项丢弃并记 issue，不拒整包。
+        var keyAnimations: Map<String, KeyAnimationDef> = emptyMap()
+        if (tree["keyAnimations"] != null) {
+            val (table, tableWarnings) =
+                KeyAnimationDefParser.parseTable(tree["keyAnimations"])
+            keyAnimations = table
+            for (warning in tableWarnings) {
+                issues += SkinIssue(
+                    "keyAnimations",
+                    SkinIssue.Kind.FIELD_FALLBACK, warning,
+                )
+            }
+        }
+
         // ---- keyMappings（B2 强类型解析；单项无效只剔该项，逐项报告） ----
         var keyMappingsCount = 0
         var keyOverrides: Map<String, KeyOverride> = emptyMap()
@@ -827,6 +842,7 @@ object SkinValidator {
                 ),
                 keyStyles = keyStyles,
                 keyGeometries = keyGeometries,
+                keyAnimations = keyAnimations,
                 keyboardGeometry = KeyboardGeometrySpec(
                     presence = keyboardPresence,
                     values = keyboardValues,
