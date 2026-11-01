@@ -209,7 +209,11 @@ object KeyboardStateManager {
             val ascii = runCatching {
                 CandidateManager.isAsciiModeEnabled(appContext)
             }.getOrDefault(false)
-            val type = typeState.current ?: stored ?: typeState.initialType(ascii)
+            // 首挂恢复只认主类型：进程重建时存过的工具类型
+            // （如收起前停在符号/表情板上留下的 symbolic/emojis）
+            // 不得成为首挂键盘，须回落按输入模式的初始主类型；
+            // 换肤分支的存过类型恢复不受此限（见下方的换肤复位）。
+            val type = typeState.current ?: resolveFirstAttachType(stored, ascii)
             typeState.establish(type)
             lastTypeSkinId = skinId
             // 首挂确立亦写持久化：switchKeyboardType 内仅在类型
@@ -763,6 +767,20 @@ internal class KeyboardTypeState {
         primary = null
         last = null
     }
+}
+
+/**
+ * 首挂类型恢复（纯决策，可单测）：存过的类型只有主类型
+ * （pinyin/alphabetic）才恢复；工具类型、自定义类型、空值
+ * 一律回落按输入模式的初始主类型（中文 → pinyin，英文 →
+ * alphabetic）。理由：工具板是 transient 的——进程重建的首挂
+ * 键盘必须是主键盘，收起前停在符号/表情板上留下的存过类型
+ * 不能把首挂定在板上；已确立的内存类型（typeState.current）
+ * 不走本函数（调用方优先沿用，见 onAttach 首挂分支）。
+ */
+internal fun resolveFirstAttachType(stored: String?, asciiMode: Boolean): String {
+    if (stored != null && stored in KeyboardTypes.MAIN) return stored
+    return if (asciiMode) KeyboardTypes.ALPHABETIC else KeyboardTypes.PINYIN
 }
 
 /** 重挂决策（[KeyboardStateManager.onAttach] 的纯决策部分，可单测）。 */
