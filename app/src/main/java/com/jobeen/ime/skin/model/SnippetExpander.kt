@@ -2,8 +2,6 @@
 package com.jobeen.ime.skin.model
 
 import java.text.SimpleDateFormat
-import java.time.LocalDateTime
-import java.time.ZoneId
 import java.util.Date
 import java.util.Locale
 
@@ -39,15 +37,19 @@ object SnippetExpander {
     private val DATE_VAR = Regex("""\{\{date:([^}]*)\}\}""")
     private const val CURSOR_VAR = "{{cursor}}"
 
-    fun expand(template: String, now: LocalDateTime = LocalDateTime.now()): Expanded {
+    /**
+     * @param now 展开时刻（缺省当前时间；测试注入固定时间）。
+     *   用 java.util.Date 而不用 java.time（minSdk 24 且项目
+     *   未启用 desugaring，java.time 在旧设备上会缺类崩溃）。
+     */
+    fun expand(template: String, now: Date = Date()): Expanded {
         val withDates = DATE_VAR.replace(template) { match ->
             val format = match.groupValues[1]
             runCatching {
                 val javaFormat = format
                     .replace("eeee", "EEEE")
                     .replace("eee", "EEE")
-                val date = Date.from(now.atZone(ZoneId.systemDefault()).toInstant())
-                SimpleDateFormat(javaFormat, Locale.CHINA).format(date)
+                SimpleDateFormat(javaFormat, Locale.CHINA).format(now)
             }.getOrNull() ?: match.value
         }
         val cursorIndex = withDates.indexOf(CURSOR_VAR)

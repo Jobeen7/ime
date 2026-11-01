@@ -2,7 +2,8 @@ package com.jobeen.ime.skin.model
 
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
-import java.time.LocalDateTime
+import java.util.Calendar
+import java.util.GregorianCalendar
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -105,7 +106,7 @@ class ActionTypesTest {
 
     @Test
     fun snippetExpandsDatesAndCursor() {
-        val now = LocalDateTime.of(2026, 11, 1, 12, 59, 0)
+        val now = GregorianCalendar(2026, Calendar.NOVEMBER, 1, 12, 59, 0).time
         // 2026-11-01 为星期日（中文地域：全名 星期日，短名 周日）。
         val expanded = SnippetExpander.expand(
             "今天是{{date:yyyy-MM-dd}} {{date:eeee}} {{date:eee}} {{date:HH:mm}}",
