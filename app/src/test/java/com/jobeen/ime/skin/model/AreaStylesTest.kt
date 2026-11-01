@@ -206,6 +206,52 @@ class AreaStylesTest {
     }
 
     @Test
+    fun horizontalLayoutObjectLeftParses() {
+        val issues = mutableListOf<SkinIssue>()
+        val spec = parseHorizontalLayout(
+            Json.parseToJsonElement("""{"expandPosition": "left"}"""),
+            "horizontalCandidatesLayout", issues,
+        )
+        assertTrue(spec?.expandLeft == true)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun horizontalLayoutPeerArrayOrderDerivesRight() {
+        // 对端 HStack 原形：[horizontalCandidates, expandButton] = 钮在右。
+        val issues = mutableListOf<SkinIssue>()
+        val spec = parseHorizontalLayout(
+            Json.parseToJsonElement("""["horizontalCandidates", "expandButton"]"""),
+            "horizontalCandidatesLayout", issues,
+        )
+        assertTrue(spec?.expandLeft == false)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun horizontalLayoutPeerArrayReversedDerivesLeft() {
+        val issues = mutableListOf<SkinIssue>()
+        val spec = parseHorizontalLayout(
+            Json.parseToJsonElement("""["expandButton", "horizontalCandidates"]"""),
+            "horizontalCandidatesLayout", issues,
+        )
+        assertTrue(spec?.expandLeft == true)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun horizontalLayoutInvalidPositionIsDropped() {
+        val issues = mutableListOf<SkinIssue>()
+        assertNull(
+            parseHorizontalLayout(
+                Json.parseToJsonElement("""{"expandPosition": "middle"}"""),
+                "horizontalCandidatesLayout", issues,
+            ),
+        )
+        assertTrue(issues.isNotEmpty())
+    }
+
+    @Test
     fun horizontalCandidatesAbsentIsNull() {
         val issues = mutableListOf<SkinIssue>()
         assertNull(parseHorizontalCandidates(null, "horizontalCandidates", issues))

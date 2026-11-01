@@ -133,6 +133,8 @@ data class SkinSnapshot(
     val candidateCommentSizeDp: Float? = null,
     /** 横条候选上限（审计 I 项）：null = 不限。 */
     val horizontalMaxColumns: Int? = null,
+    /** 横条展开钮在左（审计 I 项）：false = 右（默认）。 */
+    val horizontalExpandLeft: Boolean = false,
     /** 竖网格候选区样式（审计 B 项）：null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /**

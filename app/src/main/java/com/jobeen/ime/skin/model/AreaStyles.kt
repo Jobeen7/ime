@@ -416,6 +416,51 @@ data class HorizontalCandidatesSpec(
     val maxColumns: Int? = null,
 )
 
+/**
+ * 横条布局（审计 I 项）：`horizontalCandidatesLayout`（对端同名）。
+ * 仅展开钮位置生效：对端为 HStack [horizontalCandidates,
+ * expandButton]（钮在右）；对象写法 expandPosition "left" /
+ * "right" 显式指定；数组写法按两子项先后推导（钮在前 = 左）。
+ * 其它布局信息（多行等）Jime 单行条不消费。
+ */
+data class HorizontalLayoutSpec(
+    val expandLeft: Boolean = false,
+)
+
+/** 解析横条布局节点：缺失返回 null（默认右）；非法记 issue 并返回 null。 */
+fun parseHorizontalLayout(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): HorizontalLayoutSpec? {
+    if (node == null) return null
+    when (node) {
+        is JsonObject -> {
+            val raw = (node["expandPosition"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+            return when (raw) {
+                "left" -> HorizontalLayoutSpec(expandLeft = true)
+                // 字段缺失 = 默认右（不记 issue）。
+                "right", null -> HorizontalLayoutSpec(expandLeft = false)
+                else -> {
+                    issues += SkinIssue("$path.expandPosition", SkinIssue.Kind.FIELD_FALLBACK, "expand_position_invalid")
+                    null
+                }
+            }
+        }
+        is kotlinx.serialization.json.JsonArray -> {
+            val names = node.mapNotNull { (it as? JsonPrimitive)?.takeIf { p -> p.isString }?.contentOrNull }
+            val candIdx = names.indexOf("horizontalCandidates")
+            val expandIdx = names.indexOf("expandButton")
+            if (candIdx < 0 || expandIdx < 0) return null
+            return HorizontalLayoutSpec(expandLeft = expandIdx < candIdx)
+        }
+        else -> {
+            issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "horizontal_layout_not_object_or_array")
+            return null
+        }
+    }
+}
+
 /** 解析横条候选节点：缺失返回 null，非对象记 issue 并返回 null。 */
 fun parseHorizontalCandidates(
     node: JsonElement?,

@@ -468,6 +468,9 @@ object SkinValidator {
         val horizontalMaxColumns = parseHorizontalCandidates(
             tree["horizontalCandidates"], "horizontalCandidates", issues,
         )?.maxColumns
+        val horizontalExpandLeft = parseHorizontalLayout(
+            tree["horizontalCandidatesLayout"], "horizontalCandidatesLayout", issues,
+        )?.expandLeft ?: false
 
         // ---- 候选区样式（审计 B 项） ----
         val horizontalCandidatesStyle = parseCandidateAreaStyle(
@@ -909,6 +912,7 @@ object SkinValidator {
                 candidateIndexSizeDp = candidateIndexSizeDp,
                 candidateCommentSizeDp = candidateCommentSizeDp,
                 horizontalMaxColumns = horizontalMaxColumns,
+                horizontalExpandLeft = horizontalExpandLeft,
                 textSizes = skinTextSizes,
                 notifications = notifications,
                 conditionStyles = conditionStyles,

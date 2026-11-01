@@ -43,6 +43,11 @@ class ComposingRenderer(
      * 受限；高亮下标 ≥ 上限时该候选不可见（旧口径：恒可见）。
      */
     var maxColumns: Int? = null,
+    /**
+     * 横条展开钮在左（审计 I 项）：构造期经快照传入；false = 右
+     * （默认）。绘制（钮区／药丸区／渐隐／分隔线）与命中同步镜像。
+     */
+    var expandLeft: Boolean = false,
 ) : IRenderer {
 
     private fun dimColor(color: Int): Int {
@@ -146,7 +151,7 @@ class ComposingRenderer(
 
     // 渐变缓存：只在尺寸/颜色变化时重建
     private var fadeKey: FadeKey? = null
-    private data class FadeKey(val width: Int, val fadeStart: Float, val dividerX: Float, val bgColor: Int)
+    private data class FadeKey(val width: Int, val fadeStart: Float, val dividerX: Float, val bgColor: Int, val expandLeft: Boolean)
     private var bgGradKey: BgGradKey? = null
     private data class BgGradKey(val height: Int, val bgColor: Int, val keyboardBg: Int)
 
@@ -201,10 +206,24 @@ class ComposingRenderer(
 
         val expandBtnW = 32f * density
         val expandBtnGap = 16f * density
-        val expandBtnRight = width.toFloat() - rightPad
-        val expandBtnLeft = expandBtnRight - expandBtnW
-        val pillsEnd = expandBtnLeft - expandBtnGap
-        val maxPillW = pillsEnd - leftPad
+        // 横条布局镜像（审计 I 项）：左钮时钮区在左、药丸区在右，
+        // 其余几何（药丸起点、右边界、滚动公式）同形平移。
+        val expandBtnLeft: Float
+        val expandBtnRight: Float
+        val pillsStart: Float
+        val pillsEnd: Float
+        if (expandLeft) {
+            expandBtnLeft = leftPad
+            expandBtnRight = leftPad + expandBtnW
+            pillsStart = expandBtnRight + expandBtnGap
+            pillsEnd = width.toFloat() - rightPad
+        } else {
+            expandBtnRight = width.toFloat() - rightPad
+            expandBtnLeft = expandBtnRight - expandBtnW
+            pillsEnd = expandBtnLeft - expandBtnGap
+            pillsStart = leftPad
+        }
+        val maxPillW = pillsEnd - pillsStart
 
         val minTextSize = 12f * density
         val minScale = minTextSize / minOf(textBaseSize, indexBaseSize)
@@ -241,7 +260,7 @@ class ComposingRenderer(
             }
             val newLayouts = ArrayList<PillLayout>(layoutCandidates.size)
             val newPills = ArrayList<PillRect>(layoutCandidates.size)
-            var x = leftPad
+            var x = pillsStart
             for ((i, c) in layoutCandidates.withIndex()) {
                 val indexW = if (showIndex) {
                     indexWidthCache.getOrPut(i) { indexPaint.measureText("${i + 1}. ") }
@@ -285,7 +304,7 @@ class ComposingRenderer(
             }
             layouts = newLayouts
             lastPills = newPills
-            maxScrollX = maxOf(0f, x - leftPad - pillsEnd)
+            maxScrollX = maxOf(0f, x - pillsStart - pillsEnd)
             // 写缓存
             cachedLayouts = newLayouts
             cachedPills = newPills
@@ -302,17 +321,23 @@ class ComposingRenderer(
             cachedMaxColumns = maxColumns
         }
 
-        val dividerX = (pillsEnd + expandBtnLeft) / 2f
+        // 分隔线与渐隐镜像（审计 I 项）：左钮时分隔线在钮区与
+        // 药丸区之间、渐隐由钮侧向药丸侧淡出；右钮为旧口径。
+        val dividerX = if (expandLeft) (expandBtnRight + pillsStart) / 2f
+            else (pillsEnd + expandBtnLeft) / 2f
         val fadeW = 24f * density
         val fadeStart = (dividerX - fadeW).coerceAtLeast(0f)
+        val fadeEnd = dividerX + fadeW
+        val clipLeft = if (expandLeft) pillsStart else 0f
+        val clipRight = if (expandLeft) width.toFloat() else pillsEnd
 
-        canvas.withClip(0f, 0f, pillsEnd, height.toFloat()) {
+        canvas.withClip(clipLeft, 0f, clipRight, height.toFloat()) {
             withSave {
                 translate(scrollX, 0f)
 
                 // 可见区间裁剪：只绘制可见候选（lastPills 保持全量供 hitTest）
-                val visLeft = -scrollX
-                val visRight = pillsEnd - scrollX
+                val visLeft = clipLeft - scrollX
+                val visRight = clipRight - scrollX
                 for ((i, c) in layoutCandidates.withIndex()) {
                     val layout = layouts[i]
                     val pill = layout.rect
@@ -382,16 +407,28 @@ class ComposingRenderer(
             }
 
             val bgColor = paints.candidateStripBg ?: paints.bgPaint.color
-            val fk = FadeKey(width, fadeStart, dividerX, bgColor)
+            val fk = FadeKey(width, fadeStart, dividerX, bgColor, expandLeft)
             if (fk != fadeKey) {
-                fadePaint.shader = LinearGradient(
-                    fadeStart, 0f, dividerX, 0f,
-                    Color.TRANSPARENT, bgColor,
-                    Shader.TileMode.CLAMP,
-                )
+                fadePaint.shader = if (expandLeft) {
+                    LinearGradient(
+                        dividerX, 0f, fadeEnd, 0f,
+                        bgColor, Color.TRANSPARENT,
+                        Shader.TileMode.CLAMP,
+                    )
+                } else {
+                    LinearGradient(
+                        fadeStart, 0f, dividerX, 0f,
+                        Color.TRANSPARENT, bgColor,
+                        Shader.TileMode.CLAMP,
+                    )
+                }
                 fadeKey = fk
             }
-            drawRect(fadeStart, 0f, dividerX, height.toFloat(), fadePaint)
+            if (expandLeft) {
+                drawRect(dividerX, 0f, fadeEnd, height.toFloat(), fadePaint)
+            } else {
+                drawRect(fadeStart, 0f, dividerX, height.toFloat(), fadePaint)
+            }
         }
 
         val bgColor = paints.candidateStripBg ?: paints.bgPaint.color
@@ -406,7 +443,12 @@ class ComposingRenderer(
             )
             bgGradKey = bgk
         }
-        canvas.drawRect(pillsEnd, 0f, width.toFloat(), height.toFloat(), bgGradPaint)
+        // 钮区底渐变：左钮时钮区在左（[0, pillsStart]），右钮为旧口径。
+        if (expandLeft) {
+            canvas.drawRect(0f, 0f, pillsStart, height.toFloat(), bgGradPaint)
+        } else {
+            canvas.drawRect(pillsEnd, 0f, width.toFloat(), height.toFloat(), bgGradPaint)
+        }
         canvas.drawLine(
             dividerX, pillY + pillH / 4f, dividerX, pillY + pillH * 3f / 4f, paints.dividerPaint
         )
@@ -457,10 +499,16 @@ class ComposingRenderer(
         val pillY = (height - pillH) / 2f
         if (y < pillY || y > pillY + pillH) return null
 
-        val expandRightMargin = effRightPadPx(density)
         val expandBtnW = 32f * density
-        val expandBtnLeft = width - expandRightMargin - expandBtnW
-        val expandBtnRight = width - expandRightMargin
+        val expandBtnLeft: Float
+        val expandBtnRight: Float
+        if (expandLeft) {
+            expandBtnLeft = effLeftPadPx(density)
+            expandBtnRight = expandBtnLeft + expandBtnW
+        } else {
+            expandBtnRight = width - effRightPadPx(density)
+            expandBtnLeft = expandBtnRight - expandBtnW
+        }
         if (x in expandBtnLeft..expandBtnRight) {
             return if (isExpanded) KawaiiPanel.TouchResult.CollapseCandidates
             else KawaiiPanel.TouchResult.ExpandCandidates
