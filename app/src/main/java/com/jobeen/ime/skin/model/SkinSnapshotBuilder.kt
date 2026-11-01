@@ -249,6 +249,8 @@ object SkinSnapshotBuilder {
             verticalCandidatesStyle = validated.verticalCandidatesStyle,
             candidateIndexSizeDp = validated.candidateIndexSizeDp,
             candidateCommentSizeDp = validated.candidateCommentSizeDp,
+            horizontalCandidateStyle = validated.horizontalCandidateStyle,
+            verticalCandidateStyle = validated.verticalCandidateStyle,
             horizontalMaxColumns = validated.horizontalMaxColumns,
             horizontalExpandLeft = validated.horizontalExpandLeft,
             verticalMaxRows = validated.verticalMaxRows,

@@ -41,7 +41,7 @@ class CandidateSizeFieldsTest {
 
     @Test
     fun sizeFieldsOutOfRangeAreDropped() {
-        // 8..32dp 外的值记问题并丢弃（渲染回落对端默认值），而非截断。
+        // 8..32dp 外的值记问题并丢弃（渲染回落 Jime 默认），而非截断。
         val skin = validated(
             """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
                "candidateIndexSizeDp": 40, "candidateCommentSizeDp": 4}""",

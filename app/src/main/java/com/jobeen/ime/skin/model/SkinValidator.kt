@@ -509,6 +509,14 @@ object SkinValidator {
             tree["verticalCandidatesStyle"], "verticalCandidatesStyle", issues,
         )
 
+        // ---- 候选单元格样式全字段（字号／字重／内边距／背景内边距／圆角） ----
+        val horizontalCandidateStyle = parseCandidateCellStyle(
+            tree["horizontalCandidateStyle"], "horizontalCandidateStyle", issues,
+        )
+        val verticalCandidateStyle = parseCandidateCellStyle(
+            tree["verticalCandidateStyle"], "verticalCandidateStyle", issues,
+        )
+
         // ---- styles（浅色板） ----
         // 显式 styles 逐字段优先于派生展开（2026-10-27 并入项口径）；
         // 派生失败只记 issue，不单独拒包（无配色拒绝由下方统一口径裁决）。
@@ -976,6 +984,8 @@ object SkinValidator {
                 verticalCandidatesStyle = verticalCandidatesStyle,
                 candidateIndexSizeDp = candidateIndexSizeDp,
                 candidateCommentSizeDp = candidateCommentSizeDp,
+                horizontalCandidateStyle = horizontalCandidateStyle,
+                verticalCandidateStyle = verticalCandidateStyle,
                 horizontalMaxColumns = horizontalMaxColumns,
                 horizontalExpandLeft = horizontalExpandLeft,
                 verticalMaxRows = verticalCandidates?.maxRows,

@@ -150,9 +150,11 @@ data class SkinSnapshot(
     val preeditStyle: PreeditStyleSpec? = null,
     /** 横条候选区样式（审计 B 项）：null = 未定义。 */
     val horizontalCandidatesStyle: CandidateAreaStyleSpec? = null,
-    /** 候选序号／注释字号（审计 I 项）：null = 未定义（走对端默认值）。 */
+    /** 候选序号／注释字号（审计 I 项）：null = 未定义（走 Jime 默认 16 / 16）。 */
     val candidateIndexSizeDp: Float? = null,
     val candidateCommentSizeDp: Float? = null,
+    /** 横条候选单元格样式全字段：null = 未定义。 */
+    val horizontalCandidateStyle: CandidateCellStyleSpec? = null,
     /** 横条候选上限（审计 I 项）：null = 不限。 */
     val horizontalMaxColumns: Int? = null,
     /** 横条展开钮在左（审计 I 项）：false = 右（默认）。 */
@@ -166,6 +168,8 @@ data class SkinSnapshot(
     val candidateContextMenu: List<CandidateMenuItem> = emptyList(),
     /** 竖网格候选区样式（审计 B 项）：null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
+    /** 竖网格候选单元格样式全字段：null = 未定义。 */
+    val verticalCandidateStyle: CandidateCellStyleSpec? = null,
     /**
      * 状态驱动通知（重点候选 8-1，接线轮 R1）：校验结果透传；
      * 运行态按此建锁定表，快照切换时同步重置。

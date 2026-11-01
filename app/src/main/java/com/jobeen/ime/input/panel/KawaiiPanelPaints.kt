@@ -16,17 +16,18 @@ class Paints(context: Context) {
         /** 候选主文字字号（dp）：三参考皮肤横条 candidateStyle.textFontSize 皆 18。 */
         const val CANDIDATE_TEXT_DP = 18f
         /**
-         * 候选序号字号（dp，E2 对端实测值）：三参考皮肤横条
-         * candidateStyle.indexFontSize 皆 18，旧 16 为误设。
+         * 候选序号字号（dp，Jime 自有默认）：皮肤缺失时回落此值。
+         * 2026-11-01 纠正：恢复纠正前既有值 16——此前 18 是单套
+         * 参考皮肤的值，不作通用回落（字号是按皮肤取值）。
          */
-        const val CANDIDATE_INDEX_DP = 18f
+        const val CANDIDATE_INDEX_DP = 16f
         /**
-         * 候选注释字号（dp，E2 对端实测值）：横条 candidateStyle
-         * commentFontSize 在两皮肤为 11、一皮肤为 14；取多数 11
-         * （首轮记录的 11–12 区间亦佐证 11；14 为单皮肤离群值）。
-         * 竖格 commentFontSize（12 / 18）不走此画笔：网格只画主文字。
+         * 候选注释字号（dp，Jime 自有默认）：皮肤缺失时回落此值。
+         * 2026-11-01 纠正：恢复纠正前既有值 16（序号与注释同取
+         * 副字号）——此前 11 是单套参考皮肤的值，不作通用回落。
+         * 竖格 commentFontSize 不走此画笔：网格只画主文字。
          */
-        const val CANDIDATE_COMMENT_DP = 11f
+        const val CANDIDATE_COMMENT_DP = 16f
     }
 
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
@@ -76,7 +77,7 @@ class Paints(context: Context) {
     var candidateStripBg: Int? = null
     /**
      * 候选序号／注释生效字号（审计 I 项）：updateColors 从快照
-     * 同步（缺失 = E2 对端默认值），applyDensity 消费；主题刷新
+     * 同步（缺失 = Jime 默认 16 / 16），applyDensity 消费；主题刷新
      * 时 KawaiiPanelView.refreshTheme 追加 applyDensity，使字号
      * 随皮肤切换即时生效（此前 refreshTheme 只刷颜色）。
      */
@@ -115,10 +116,14 @@ class Paints(context: Context) {
         candidateCommentPaint.color = panel.candidateComment ?: panel.candidateIndex
         toolbarPressedColor = panel.toolbarPressed
         candidateStripBg = SkinSnapshotProvider.peek()?.horizontalCandidatesStyle?.background
+        // 单元格全字段优先于旧顶层字号字段，缺失回落 Jime 默认。
+        val sizeSnapshot = SkinSnapshotProvider.peek()
         candidateIndexSizeDp =
-            SkinSnapshotProvider.peek()?.candidateIndexSizeDp ?: CANDIDATE_INDEX_DP
+            sizeSnapshot?.horizontalCandidateStyle?.indexSizeDp
+                ?: sizeSnapshot?.candidateIndexSizeDp ?: CANDIDATE_INDEX_DP
         candidateCommentSizeDp =
-            SkinSnapshotProvider.peek()?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
+            sizeSnapshot?.horizontalCandidateStyle?.commentSizeDp
+                ?: sizeSnapshot?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
         candidatePressedColor = panel.candidatePressed
         preferredBackground = panel.preferredBackground
         preferredText = panel.preferredText
