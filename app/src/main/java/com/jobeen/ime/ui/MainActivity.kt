@@ -227,11 +227,10 @@ class MainActivity : ComponentActivity() {
 
         /**
          * App-level scripts navigation entry (management UI).
-         * The settings-catalog row that calls this is a held item for
-         * the coordinator (MainScreen/MainSettingsCatalog are outside
-         * this wave's exclusive files); this entry is the exact call
-         * that row must use. Requires the SkinScriptActivity manifest
-         * entry (also held) before it can actually launch.
+         * The settings-catalog row that calls this is wired in
+         * MainScreen/MainSettingsCatalog; this entry is the exact call
+         * that row uses. Requires the SkinScriptActivity manifest
+         * entry (registered) before it can actually launch.
          */
         fun openSkinScripts(context: Context) {
             context.startActivity(SkinScriptActivity.intent(context))

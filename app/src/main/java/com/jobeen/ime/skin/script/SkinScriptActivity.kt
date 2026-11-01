@@ -12,11 +12,9 @@ import com.jobeen.ime.ui.theme.ImeTheme
 /**
  * App-level script management host: lists/adds/removes/toggles scripts.
  *
- * HELD ITEM (not touched in this wave, per exclusive-file scope):
- * registering this Activity in AndroidManifest.xml. Until the coordinator
- * adds that entry, launch via [MainActivity.openSkinScripts] only after
- * the manifest entry lands — starting an unregistered Activity crashes.
- * The management Screen itself needs no other host changes.
+ * Registered in AndroidManifest.xml (`.skin.script.SkinScriptActivity`);
+ * launch via [MainActivity.openSkinScripts]. The management Screen
+ * itself needs no other host changes.
  */
 class SkinScriptActivity : ComponentActivity() {
 
