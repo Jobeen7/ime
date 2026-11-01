@@ -238,6 +238,88 @@ class JimeExporterTest {
     }
 
     @Test
+    fun sidecarRoundTrip_unlistedYamlSurvivesImportAndExport() = runBlocking {
+        val root = Files.createTempDirectory("jime-sidecar-roundtrip").toFile()
+        val layout = SkinLibraryLayout(root).apply { ensureDirs() }
+        val store = SkinLibraryStore(layout)
+        val importer = JimeImporter(
+            layout = layout,
+            store = store,
+            importTransaction = ImportTransaction(layout, store),
+            imageProbe = object : ImageInfoProbe {
+                override fun bounds(bytes: ByteArray) = ImageSize(64, 32)
+            },
+            audioProbe = object : AudioInfoProbe {
+                override fun probe(bytes: ByteArray) = AudioInfo(500, 44100, 2)
+            },
+            backgroundPreparer = FakePreparer(),
+            defaultScheme = defaultScheme,
+        )
+        val imageBytes = byteArrayOf(11, 22, 33)
+        val imageSha = DigestUtil.sha256Hex(imageBytes)
+        val audioBytes = byteArrayOf(44, 55)
+        val skinBytes = skinJson.encodeToByteArray()
+        val layoutBytes = layoutJson.encodeToByteArray()
+        val sidecarBytes = "btn:\n  rect: {x: 0, y: 0, width: 10, height: 10}\n"
+            .encodeToByteArray()
+        val contents = listOf(
+            PackageManifest.Content("skin", "skin-a", "skin.json", DigestUtil.sha256Hex(skinBytes)),
+            PackageManifest.Content(
+                "layout", "lay-1", "layouts/lay-1.json", DigestUtil.sha256Hex(layoutBytes),
+            ),
+            PackageManifest.Content(
+                "asset", "bg_main", "assets/bg.png", imageSha,
+            ),
+            PackageManifest.Content(
+                "asset", "tap_main", "assets/tap.ogg", DigestUtil.sha256Hex(audioBytes),
+            ),
+        )
+        val files = listOf(
+            ZipSafeExtractor.ExtractedFile("skin.json", skinBytes),
+            ZipSafeExtractor.ExtractedFile("layouts/lay-1.json", layoutBytes),
+            ZipSafeExtractor.ExtractedFile("assets/bg.png", imageBytes),
+            ZipSafeExtractor.ExtractedFile("assets/tap.ogg", audioBytes),
+            ZipSafeExtractor.ExtractedFile(
+                "manifest.json", PackageManifest.toJson(PackageManifest(3, contents))
+                    .encodeToByteArray(),
+            ),
+            // sidecar：故意不列入清单——豁免后导入不得拒绝。
+            ZipSafeExtractor.ExtractedFile("assets/bg.yaml", sidecarBytes),
+        )
+        val ctx = JimeImporter.Context(
+            currentVersionCode = 143,
+            fallbacks = GeometryFallbacks(12f, 6f, 5f, 10f),
+            tier = MemoryTier.NORMAL,
+            targetWidthPx = 64,
+            targetHeightPx = 32,
+        )
+        val outcome = importer.importFiles(files, ctx, JimeImporter.ConflictMode.FAIL)
+        assertTrue("unlisted sidecar must not reject the package", outcome is JimeImporter.Outcome.Imported)
+
+        // 导入落盘：代次目录 sidecars/<资产 sha>.yaml。
+        val index = (store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
+        val skinEntry = index.skins.first { it.id == "skin-a" }
+        val genDir = layout.fileFromRelative(skinEntry.dir)
+        val stored = java.io.File(java.io.File(genDir, "sidecars"), "$imageSha.yaml")
+        assertTrue(stored.isFile)
+        assertTrue(stored.readBytes().contentEquals(sidecarBytes))
+
+        val out = ByteArrayOutputStream()
+        val exported = JimeExporter(layout, store).export("skin-a", out)
+        assertTrue(exported is JimeExporter.Result.Exported)
+        val zipFile = File(root, "out.jime").apply { writeBytes(out.toByteArray()) }
+        val extracted = ZipSafeExtractor.extract(zipFile)
+        assertTrue(extracted is ZipSafeExtractor.Result.Ok)
+        val byPath = (extracted as ZipSafeExtractor.Result.Ok).files.associateBy { it.path }
+        assertTrue(byPath.getValue("assets/bg.yaml").bytes.contentEquals(sidecarBytes))
+        // sidecar 仍是清单外松散文件，不进入 manifest 资产闭包。
+        val exportedManifest = PackageManifest.parse(
+            byPath.getValue("manifest.json").bytes.decodeToString(),
+        )!!
+        assertTrue(exportedManifest.contents.none { it.path == "assets/bg.yaml" })
+    }
+
+    @Test
     fun exportMissingSkinFails() = runBlocking {
         val root = Files.createTempDirectory("jime-export-missing").toFile()
         val layout = SkinLibraryLayout(root).apply { ensureDirs() }

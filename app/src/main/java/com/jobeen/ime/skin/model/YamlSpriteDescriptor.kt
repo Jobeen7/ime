@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.jobeen.ime.skin.model
 
+import java.io.File
+
 /**
  * 精灵图描述文件形态（对端 structure.md：PNG 旁的
  * `resources/<name>.yaml`，子图名 → rect/insets 映射）：
@@ -192,6 +194,42 @@ object YamlSpriteDescriptor {
             merged[asset] = base
         }
         return Merged(merged, conflicts)
+    }
+
+    /** 代次目录下的 sidecar 子目录（工具项 7 接线口径）。 */
+    const val SIDECAR_DIR = "sidecars"
+
+    /**
+     * 资产包内路径 → 其 sidecar 包内路径（工具项 7 接线口径）：
+     * 与资产同目录同名、后缀改 .yaml（如 assets/bg.png →
+     * assets/bg.yaml）；无后缀的资产路径无 sidecar，返回 null。
+     */
+    fun sidecarPathFor(assetPath: String): String? {
+        val dot = assetPath.lastIndexOf('.')
+        val slash = assetPath.lastIndexOf('/')
+        if (dot < 0 || dot < slash) return null
+        return assetPath.substring(0, dot) + ".yaml"
+    }
+
+    /**
+     * 从代次目录读 sidecar 表（工具项 7 接线口径，纯文件 IO）：
+     * 代次目录 sidecars/<资产 sha256>.yaml → 按清单资产逻辑 id
+     * 归集；缺失/不可读/解析零帧者静默跳过（调用方合并时文件
+     * 胜 JSON 表；包内非法 sidecar 由导入期报告，此处不重复）。
+     */
+    fun loadSidecarMaps(
+        genDir: File,
+        assets: List<PackageManifest.Content>,
+    ): Map<String, Map<String, SpriteFrame>> {
+        val maps = LinkedHashMap<String, Map<String, SpriteFrame>>()
+        for (content in assets) {
+            val file = File(File(genDir, SIDECAR_DIR), "${content.sha256}.yaml")
+            if (!file.isFile) continue
+            val text = runCatching { file.readText() }.getOrNull() ?: continue
+            val parsed = parse(text)
+            if (parsed.frames.isNotEmpty()) maps[content.id] = parsed.frames
+        }
+        return maps
     }
 
     private fun String.unquote(): String {

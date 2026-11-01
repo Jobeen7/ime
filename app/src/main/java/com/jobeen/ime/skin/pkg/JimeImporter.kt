@@ -21,6 +21,7 @@ import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.SkinIssue
 import com.jobeen.ime.skin.model.SkinJson
 import com.jobeen.ime.skin.model.SkinPackageDocsParser
+import com.jobeen.ime.skin.model.YamlSpriteDescriptor
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
 import com.jobeen.ime.skin.model.SkinValidator
 import com.jobeen.ime.skin.store.ImportTransaction
@@ -524,6 +525,37 @@ class JimeImporter(
                         "readme_invalid",
                     )
                 }
+                // 精灵图 sidecar（工具项 7）：与清单资产同目录同名、
+                // 后缀 .yaml 的包内文件；校验通过（≥1 帧）才随代次
+                // 落盘（sidecars/<资产 sha>.yaml），工厂快照期按资
+                // 产逻辑 id 合并进精灵图表（文件胜 JSON 表）；失效
+                // 只入报告、不拦整包（无 sidecar 时只走 JSON 表）。
+                val sidecarDir = File(skinDir, YamlSpriteDescriptor.SIDECAR_DIR)
+                for (content in manifest.assets()) {
+                    val sidecarPath =
+                        YamlSpriteDescriptor.sidecarPathFor(content.path) ?: continue
+                    val sidecarBytes = byPath[sidecarPath]?.bytes ?: continue
+                    val text = runCatching { sidecarBytes.decodeToString() }.getOrNull()
+                    if (text == null) {
+                        issues += SkinIssue(
+                            "package.sidecar", SkinIssue.Kind.RESOURCE_FALLBACK,
+                            "sidecar_invalid:${content.id}",
+                        )
+                        continue
+                    }
+                    val parsed = YamlSpriteDescriptor.parse(text)
+                    if (parsed.frames.isEmpty()) {
+                        if (parsed.issues.isNotEmpty()) {
+                            issues += SkinIssue(
+                                "package.sidecar", SkinIssue.Kind.RESOURCE_FALLBACK,
+                                "sidecar_invalid:${content.id}",
+                            )
+                        }
+                        continue
+                    }
+                    sidecarDir.mkdirs()
+                    File(sidecarDir, "${content.sha256}.yaml").writeBytes(sidecarBytes)
+                }
                 // 背景预处理（冷路径，§2.6）：失败回退纯色并报告，不连累整包
                 val background = snapshotForBackground?.background
                 if (background != null) {
@@ -635,7 +667,14 @@ class JimeImporter(
             return "manifest_duplicate_path"
         }
         val listedPaths = manifest.contents.map { it.path }.toSet()
+        // 精灵图 sidecar（工具项 7）：与清单资产同目录同名、
+        // 后缀 .yaml 的包内文件是清单外松散文件，未列入清单
+        // 不算违规（豁免只认按资产路径算出的精确 sidecar 路径）。
+        val sidecarPaths = manifest.assets().mapNotNull {
+            YamlSpriteDescriptor.sidecarPathFor(it.path)
+        }.toSet()
         for (file in byPath.keys) {
+            if (file in sidecarPaths) continue
             // 包根演示资料是清单外松散文件（导入期校验后随代次落盘）：
             // 未列入清单不算违规；豁免只认包根精确名，嵌套同名文件仍须列入清单。
             if (file == SkinPackageDocsParser.DEMO_FILE_NAME ||

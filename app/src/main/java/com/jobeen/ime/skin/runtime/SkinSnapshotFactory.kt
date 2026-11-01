@@ -33,6 +33,7 @@ import com.jobeen.ime.skin.model.SkinPackageDocs
 import com.jobeen.ime.skin.model.SkinPackageDocsParser
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
+import com.jobeen.ime.skin.model.YamlSpriteDescriptor
 import com.jobeen.ime.skin.model.SkinValidator
 import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibraryLayout
@@ -165,7 +166,33 @@ object SkinSnapshotFactory {
         val packageDocs = skinJsonFile.parentFile?.let {
             SkinPackageDocsParser.fromDir(it)
         } ?: SkinPackageDocs()
-        return snapshot?.copy(overlayVersion = overlayVersion, packageDocs = packageDocs)
+        if (snapshot == null) return null
+        var finalSnapshot = snapshot.copy(
+            overlayVersion = overlayVersion, packageDocs = packageDocs,
+        )
+        // 精灵图 sidecar（工具项 7）：代次目录 sidecars/<资产 sha>.yaml，
+        // 按清单资产逻辑 id 合并进精灵图表（文件胜 JSON 表，冲突记日志）。
+        val sidecarMaps = skinJsonFile.parentFile?.let {
+            YamlSpriteDescriptor.loadSidecarMaps(it, manifest.assets())
+        } ?: emptyMap()
+        if (sidecarMaps.isNotEmpty()) {
+            val merged = YamlSpriteDescriptor.mergeSpriteMaps(
+                finalSnapshot.spriteMaps, sidecarMaps,
+            )
+            if (merged.conflicts.isNotEmpty()) {
+                DiagLog.w(
+                    "sprite", "sidecar_conflicts",
+                    mapOf(
+                        "skinId" to ref.skinId,
+                        "conflicts" to merged.conflicts.joinToString(";") {
+                            "${it.asset}:${it.image}"
+                        },
+                    ),
+                )
+            }
+            finalSnapshot = finalSnapshot.copy(spriteMaps = merged.maps)
+        }
+        return finalSnapshot
     }
 
     fun buildFromTree(

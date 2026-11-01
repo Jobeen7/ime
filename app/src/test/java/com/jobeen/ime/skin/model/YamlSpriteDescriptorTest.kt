@@ -101,4 +101,43 @@ class YamlSpriteDescriptorTest {
             merged.conflicts,
         )
     }
+
+    @Test
+    fun sidecarPathForReplacesExtension() {
+        assertEquals(
+            "assets/bg.yaml",
+            YamlSpriteDescriptor.sidecarPathFor("assets/bg.png"),
+        )
+        assertEquals(
+            "assets/a.b.9.yaml",
+            YamlSpriteDescriptor.sidecarPathFor("assets/a.b.9.png"),
+        )
+        assertEquals(null, YamlSpriteDescriptor.sidecarPathFor("assets/bg"))
+        assertEquals("bg.yaml", YamlSpriteDescriptor.sidecarPathFor("bg.png"))
+    }
+
+    @Test
+    fun loadSidecarMapsKeysByAssetIdAndSkipsInvalid() {
+        val root = java.nio.file.Files.createTempDirectory("jime-sidecar").toFile()
+        val sidecarDir = java.io.File(root, "sidecars").apply { mkdirs() }
+        java.io.File(sidecarDir, "sha-png.yaml").writeText(
+            "btn:\n  rect: {x: 1, y: 2, width: 10, height: 20}\n",
+        )
+        java.io.File(sidecarDir, "sha-bad.yaml").writeText(
+            "no_rect:\n  insets:\n    top: 1\n",
+        )
+        val maps = YamlSpriteDescriptor.loadSidecarMaps(
+            root,
+            listOf(
+                PackageManifest.Content("asset", "bg_main", "assets/bg.png", "sha-png"),
+                PackageManifest.Content("asset", "bad", "assets/bad.png", "sha-bad"),
+                PackageManifest.Content("asset", "missing", "assets/m.png", "sha-none"),
+            ),
+        )
+        assertEquals(setOf("bg_main"), maps.keys)
+        assertEquals(
+            SpriteRect(1, 2, 10, 20),
+            maps.getValue("bg_main").getValue("btn").rect,
+        )
+    }
 }

@@ -6,6 +6,7 @@ import com.jobeen.ime.skin.layout.BuiltinLayouts
 import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.SkinJson
 import com.jobeen.ime.skin.model.SkinPackageDocsParser
+import com.jobeen.ime.skin.model.YamlSpriteDescriptor
 import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import java.io.File
@@ -158,6 +159,22 @@ class JimeExporter(
                 }
             }
 
+        // 精灵图 sidecar（工具项 7）：代次目录 sidecars/<资产 sha>.yaml，
+        // 校验通过才随包导出为资产同目录同名 .yaml 裸条目（接收端凭豁免接纳）。
+        val sidecarPayloads = mutableListOf<Pair<String, ByteArray>>()
+        for (content in sourceManifest.assets()) {
+            val sidecarPath = YamlSpriteDescriptor.sidecarPathFor(content.path) ?: continue
+            val file = File(
+                File(skinGenDir, YamlSpriteDescriptor.SIDECAR_DIR),
+                "${content.sha256}.yaml",
+            )
+            if (!file.isFile) continue
+            val bytes = runCatching { file.readBytes() }.getOrNull() ?: continue
+            val text = runCatching { bytes.decodeToString() }.getOrNull() ?: continue
+            if (YamlSpriteDescriptor.parse(text).frames.isEmpty()) continue
+            sidecarPayloads += sidecarPath to bytes
+        }
+
         ZipOutputStream(out.buffered()).use { zip ->
             fun put(path: String, bytes: ByteArray) {
                 zip.putNextEntry(ZipEntry(path))
@@ -169,6 +186,7 @@ class JimeExporter(
             for ((path, bytes) in layoutPayloads) put(path, bytes)
             for ((path, bytes) in assetPayloads) put(path, bytes)
             for ((path, bytes) in docPayloads) put(path, bytes)
+            for ((path, bytes) in sidecarPayloads) put(path, bytes)
         }
         return Result.Exported(
             skinId = skinId,
