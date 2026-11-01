@@ -397,6 +397,12 @@ data class ValidatedSkin(
      * 推导；false = 右（默认，对端 HStack 顺序亦为右）。
      */
     val horizontalExpandLeft: Boolean = false,
+    /**
+     * 竖网格行列上限（审计 I 项）：顶层 verticalCandidates.maxRows /
+     * maxColumns；null = 未定义（行数走用户偏好、列数默认 5）。
+     */
+    val verticalMaxRows: Int? = null,
+    val verticalMaxColumns: Int? = null,
     /** 竖网格候选区样式（审计 B 项）：顶层 verticalCandidatesStyle；null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */

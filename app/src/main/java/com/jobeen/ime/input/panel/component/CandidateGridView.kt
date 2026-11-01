@@ -29,6 +29,17 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.roundToInt
 
+/**
+ * 竖网格生效行列上限（审计 I 项）：皮肤值优先于用户行数偏好；
+ * 皮肤未定义时行数走用户偏好、列数走默认 5（对端文档默认值）。
+ * syncLinePolicy 与 refreshTheme 共用，单测钉优先级。
+ */
+internal fun effectiveGridLimits(
+    skinMaxRows: Int?,
+    skinMaxColumns: Int?,
+    userMaxRows: Int,
+): Pair<Int, Int> = (skinMaxRows ?: userMaxRows) to (skinMaxColumns ?: 5)
+
 @SuppressLint("ViewConstructor")
 class CandidateGridView(
     context: Context,
@@ -55,7 +66,14 @@ class CandidateGridView(
         lineMax = CandidateManager.getMaxLines(context)
         lineAutoShrink = CandidateManager.isAutoShrinkEnabled(context)
         fullDisplay = CandidateManager.isFullDisplayEnabled(context)
-        maxVisibleRow = if (lineLimitEnabled) lineMax else Int.MAX_VALUE
+        // 皮肤行列上限优先（审计 I 项）：皮肤未定义时回落用户偏好／默认。
+        val limits = effectiveGridLimits(
+            skinMaxRows,
+            skinMaxColumns,
+            if (lineLimitEnabled) lineMax else Int.MAX_VALUE,
+        )
+        maxVisibleRow = limits.first
+        maxVisibleColumn = limits.second
     }
 
     /** 内容总行数（网格画布已算好的行布局） */
@@ -93,6 +111,12 @@ class CandidateGridView(
     var cellPadDp: Float? = null
     var minWordSpaceDp: Float? = null
     var minRowHeightDp: Float? = null
+    /**
+     * 竖网格行列上限（审计 I 项）：refreshTheme 从竖网格候选节点
+     * 同步；null = 未定义（syncLinePolicy 回落用户偏好／默认 5）。
+     */
+    var skinMaxRows: Int? = null
+    var skinMaxColumns: Int? = null
     var onDragComplete: ((List<EngineMessage.Candidate>) -> Unit)? = null
     var onWordForget: ((EngineMessage.Candidate, Float, Float) -> Unit)? = null
 
@@ -1030,6 +1054,10 @@ class CandidateGridView(
         cellPadDp = snapshot?.verticalCandidatesStyle?.cellPadDp
         minWordSpaceDp = snapshot?.verticalCandidatesStyle?.minWordSpaceDp
         minRowHeightDp = snapshot?.verticalCandidatesStyle?.minRowHeightDp
+        skinMaxRows = snapshot?.verticalMaxRows
+        skinMaxColumns = snapshot?.verticalMaxColumns
+        // 行列上限立即生效（不等下批候选到达才 syncLinePolicy）。
+        syncLinePolicy()
 
         gridCanvas.updateColors(colors.panel)
         gridCanvas.refreshAreaGeometry()

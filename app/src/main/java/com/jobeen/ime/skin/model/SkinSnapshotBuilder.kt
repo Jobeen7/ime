@@ -214,6 +214,8 @@ object SkinSnapshotBuilder {
             candidateCommentSizeDp = validated.candidateCommentSizeDp,
             horizontalMaxColumns = validated.horizontalMaxColumns,
             horizontalExpandLeft = validated.horizontalExpandLeft,
+            verticalMaxRows = validated.verticalMaxRows,
+            verticalMaxColumns = validated.verticalMaxColumns,
             keyOverrides = validated.keyOverrides,
             keyStyles = validated.keyStyles,
             keyGeometries = validated.keyGeometries,

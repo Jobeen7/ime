@@ -490,6 +490,48 @@ fun parseHorizontalCandidates(
     return HorizontalCandidatesSpec(maxColumns = maxColumns)
 }
 
+/**
+ * 竖网格候选节点（审计 I 项）：`verticalCandidates`（对端同名）。
+ * 仅 maxRows / maxColumns 生效（行列上限）；null = 未定义
+ * （行数走用户行数偏好、列数走默认 5，与对端文档默认值一致）。
+ */
+data class VerticalCandidatesSpec(
+    val maxRows: Int? = null,
+    val maxColumns: Int? = null,
+)
+
+/** 解析竖网格候选节点：缺失返回 null，非对象记 issue 并返回 null。 */
+fun parseVerticalCandidates(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): VerticalCandidatesSpec? {
+    if (node == null) return null
+    val obj = node as? JsonObject
+    if (obj == null) {
+        issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "vertical_candidates_not_object")
+        return null
+    }
+    fun intField(name: String): Int? {
+        val raw = (obj[name] as? JsonPrimitive)?.intOrNull
+        if (raw == null) {
+            if (obj[name] != null) {
+                issues += SkinIssue("$path.$name", SkinIssue.Kind.FIELD_FALLBACK, "grid_limit_not_int")
+            }
+            return null
+        }
+        if (raw !in 1..10) {
+            issues += SkinIssue("$path.$name", SkinIssue.Kind.FIELD_FALLBACK, "grid_limit_out_of_range")
+            return null
+        }
+        return raw
+    }
+    return VerticalCandidatesSpec(
+        maxRows = intField("maxRows"),
+        maxColumns = intField("maxColumns"),
+    )
+}
+
 /** 解析颜色字符串节点：非法记 issue 并返回 null（调用方回落）。 */
 fun parseStyleColor(
     node: JsonElement?,
