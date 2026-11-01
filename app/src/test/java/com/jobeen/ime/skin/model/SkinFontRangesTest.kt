@@ -32,7 +32,7 @@ class SkinFontRangesTest {
                 """"fontFaces": [{"name": "MyFont", "url": "font-a"}],
                   "fontRanges": [
                     {"location": 0, "length": 128, "family": "SERIF"},
-                    {"location": 0x4E00, "length": 100, "family": "myfont"}
+{"family":"myfont","length":100,"location":19968}
                   ]""",
             ),
         )
@@ -53,7 +53,7 @@ class SkinFontRangesTest {
                   {"location": 0, "length": 10, "family": "serif"},
                   {"location": -1, "length": 10, "family": "serif"},
                   {"location": 0, "length": 0, "family": "serif"},
-                  {"location": 0x110000, "length": 1, "family": "serif"},
+                  {"location": 1114112, "length": 1, "family": "serif"},
                   {"location": 0, "length": 10, "family": "nope"},
                   {"location": 0, "length": 10},
                   "serif"
