@@ -23,6 +23,7 @@ import com.jobeen.ime.input.panel.component.ConfirmOverlay
 import com.jobeen.ime.input.panel.component.TextEditView
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.component.MenuGridView
+import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.panel.ComposingRenderer
 import com.jobeen.ime.input.panel.state.ComposingStateRender
 import com.jobeen.ime.input.panel.state.CopyStateRender
@@ -362,10 +363,10 @@ class KawaiiPanel(
                     menuGridView.refreshPredictionState()
                 }
                 PanelAction.ToggleAsciiMode -> {
-                    CandidateManager.setAsciiModeEnabled(
-                        context,
-                        !CandidateManager.isAsciiModeEnabled(context),
-                    )
+                    // Wave-4 类型一致：菜单中英与键盘中英键同口径——
+                    // 切主键盘类型，不再翻偏好（偏好在 t9/lite 下
+                    // 被引擎锁定、无实际效果，翻转只会让显示态过期）。
+                    KeyboardStateManager.toggleMainType()
                     menuGridView.refreshPredictionState()
                 }
                 else -> {

@@ -618,6 +618,19 @@ object KeyboardStateManager {
         }
     }
 
+    /**
+     * 中英开关显示态（Wave-4 类型一致）：主类型已确立时以
+     * 类型为准（alphabetic = 英文态）；未确立时（首附着前）
+     * 退偏好派生初始类型（与 onAttach 同口径），菜单/工具栏
+     * 在键盘出现前不显示过期态。
+     */
+    fun isMainTypeAlphabetic(context: Context): Boolean {
+        val primary = typeState.primary
+        if (primary != null) return primary == KeyboardTypes.ALPHABETIC
+        return initialType(CandidateManager.isAsciiModeEnabled(context)) ==
+            KeyboardTypes.ALPHABETIC
+    }
+
     fun onInputChanged(info: EditorInfo?, text: String, virtualInputConnection: Boolean = false) {
         if (info != null) {
             val effectiveInfo = if (virtualInputConnection) {

@@ -600,7 +600,18 @@ class KeyboardWindowView(
         // 横屏权重变体；旋转重建键盘时自动切换，无须重建快照。
         val landscape = context.resources.configuration.orientation ==
             android.content.res.Configuration.ORIENTATION_LANDSCAPE
-        val effective = CustomLayoutRuntime.effectiveLayout(
+        // Wave-4 类型表优先：按布局 id 反查类型表（含旧顶层
+        // 绑定）；查不到时沿用旧顶层绑定生效布局（旧路径语义，
+        // 类型表外自创布局仍可建出，永不空白）。
+        val layoutId = CustomLayoutRuntime.layoutIdOf(name)
+        val effective = layoutId?.let {
+            CustomLayoutRuntime.effectiveLayoutForLayoutId(
+                snapshot, it, PlaceholderValues.current(context), landscape = landscape,
+                isDark = SkinColorMode.isDark(context),
+                mnemonicEnabled = KeyboardManager.Keyboard.Mnemonic.isEnabled(context),
+                decorationEnabled = KeyboardManager.Keyboard.Decoration.isEnabled(context),
+            )
+        } ?: CustomLayoutRuntime.effectiveLayout(
             snapshot, PlaceholderValues.current(context), landscape = landscape,
             isDark = SkinColorMode.isDark(context),
             mnemonicEnabled = KeyboardManager.Keyboard.Mnemonic.isEnabled(context),
@@ -617,7 +628,8 @@ class KeyboardWindowView(
             } ?: QwertyKeyboard.NAME
             return createKeyboard(fallback)
         }
-        val effectiveLayoutId = if (landscape && snapshot?.resolvedLayoutLandscape != null) {
+        // 日志用实际布局 id：表查命中即该 id，否则旧顶层绑定 id。
+        val effectiveLayoutId = layoutId ?: if (landscape && snapshot?.resolvedLayoutLandscape != null) {
             snapshot.resolvedLayoutLandscape.layoutId
         } else {
             snapshot?.resolvedLayout?.layoutId

@@ -18,6 +18,7 @@ import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.input.panel.PanelAction
+import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.panel.menu.KeyboardMenuEntries
 import splitties.dimensions.dp
 import splitties.views.dsl.constraintlayout.centerHorizontally
@@ -415,7 +416,7 @@ class MenuGridView(
         PanelAction.ToggleShowComment -> CandidateManager.isShowComment(context)
         PanelAction.ToggleTraditionalChinese -> CandidateManager.isTraditionalChineseEnabled(context)
         PanelAction.ToggleEmojiInput -> CandidateManager.isEmojiEnabled(context)
-        PanelAction.ToggleAsciiMode -> CandidateManager.isAsciiModeEnabled(context)
+        PanelAction.ToggleAsciiMode -> KeyboardStateManager.isMainTypeAlphabetic(context)
         else -> false
     }
 

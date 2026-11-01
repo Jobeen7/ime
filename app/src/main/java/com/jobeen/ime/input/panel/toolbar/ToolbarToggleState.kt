@@ -3,6 +3,7 @@ package com.jobeen.ime.input.panel.toolbar
 import android.content.Context
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.input.panel.PanelAction
+import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 
 /**
  * 工具栏开关态（E6）：对端工具栏钮以条件前景区分开关态；
@@ -24,7 +25,7 @@ object ToolbarToggleState {
         PanelAction.ToggleShowComment -> CandidateManager.isShowComment(context)
         PanelAction.ToggleTraditionalChinese -> CandidateManager.isTraditionalChineseEnabled(context)
         PanelAction.ToggleEmojiInput -> CandidateManager.isEmojiEnabled(context)
-        PanelAction.ToggleAsciiMode -> CandidateManager.isAsciiModeEnabled(context)
+        PanelAction.ToggleAsciiMode -> KeyboardStateManager.isMainTypeAlphabetic(context)
         else -> false
     }
 
