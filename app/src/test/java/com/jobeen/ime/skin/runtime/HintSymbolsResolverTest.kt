@@ -5,6 +5,7 @@ package com.jobeen.ime.skin.runtime
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.skin.model.HintSymbolNode
+import com.jobeen.ime.skin.model.HintSymbolsGridStyle
 import com.jobeen.ime.skin.model.HintSymbolsStyle
 import com.jobeen.ime.skin.model.KeyStyleRole
 import com.jobeen.ime.skin.model.SkinAction
@@ -83,7 +84,7 @@ class HintSymbolsResolverTest {
             "b" to HintSymbolNode(null, SkinAction.Command(WhitelistAction.SYMBOL, "β")),
         )
         return HintSymbolsResolver.resolveLegacyPanel(
-            null, "legacy1", styles, nodes, testToRuntime,
+            "legacy1", styles, nodes, testToRuntime,
         )
     }
 
@@ -101,26 +102,15 @@ class HintSymbolsResolverTest {
     }
 
     @Test
-    fun legacyPanelNullWhenGridStylePresent() {
-        val panel = HintSymbolsResolver.resolveLegacyPanel(
-            "grid1", "legacy1",
-            mapOf("legacy1" to HintSymbolsStyle(symbolStyles = listOf("a"))),
-            mapOf("a" to HintSymbolNode(null, SkinAction.Text("a"))),
-            testToRuntime,
-        )
-        assertNull(panel)
-    }
-
-    @Test
     fun legacyPanelNullWhenStyleOrNodesMissing() {
         assertNull(
             HintSymbolsResolver.resolveLegacyPanel(
-                null, null, emptyMap(), emptyMap(), testToRuntime,
+                null, emptyMap(), emptyMap(), testToRuntime,
             ),
         )
         assertNull(
             HintSymbolsResolver.resolveLegacyPanel(
-                null, "missing",
+                "missing",
                 mapOf("legacy1" to HintSymbolsStyle(symbolStyles = listOf("a"))),
                 mapOf("a" to HintSymbolNode(null, SkinAction.Text("a"))),
                 testToRuntime,
@@ -128,12 +118,87 @@ class HintSymbolsResolverTest {
         )
         assertNull(
             HintSymbolsResolver.resolveLegacyPanel(
-                null, "legacy1",
+                "legacy1",
                 mapOf("legacy1" to HintSymbolsStyle(symbolStyles = listOf("dangling"))),
                 emptyMap(),
                 testToRuntime,
             ),
         )
+    }
+
+    // ---- 长按网格面板决议 ----
+
+    @Test
+    fun gridPanelResolvesCellsSkippingEmptyAndDangling() {
+        val style = HintSymbolsGridStyle(
+            symbolRows = listOf(listOf("a", null, "dangling"), listOf("b")),
+        )
+        val nodes = mapOf(
+            "a" to HintSymbolNode("A!", SkinAction.Text("a")),
+            "b" to HintSymbolNode(null, SkinAction.Command(WhitelistAction.SYMBOL, "β")),
+        )
+        val keyStyles = mapOf(
+            "a" to mapOf(
+                KeyStyleRole.TEXT to "keyText",
+                KeyStyleRole.FACE to "#FF112233",
+            ),
+        )
+        val panel = HintSymbolsResolver.resolveGridPanel(
+            "grid1", mapOf("grid1" to style), nodes, keyStyles, scheme, testToRuntime,
+        )!!
+        assertEquals(2, panel.rows.size)
+        val cellA = panel.rows[0][0]!!
+        assertEquals(KeyboardAction.CommitAction("a"), cellA.action)
+        assertEquals("A!", cellA.label)
+        assertEquals(10, cellA.textColor)
+        assertEquals(0xFF112233.toInt(), cellA.faceColor)
+        assertNull(panel.rows[0][1])
+        assertNull(panel.rows[0][2])
+        val cellB = panel.rows[1][0]!!
+        assertEquals(KeyboardAction.NoOpAction, cellB.action)
+        assertEquals("β", cellB.label)
+        assertNull(cellB.textColor)
+        assertNull(cellB.faceColor)
+    }
+
+    @Test
+    fun gridPanelNullWhenNameMissingOrAllEmpty() {
+        assertNull(
+            HintSymbolsResolver.resolveGridPanel(
+                null, emptyMap(), emptyMap(), emptyMap(), scheme, testToRuntime,
+            ),
+        )
+        assertNull(
+            HintSymbolsResolver.resolveGridPanel(
+                "missing",
+                mapOf("grid1" to HintSymbolsGridStyle(symbolRows = listOf(listOf("a")))),
+                mapOf("a" to HintSymbolNode(null, SkinAction.Text("a"))),
+                emptyMap(), scheme, testToRuntime,
+            ),
+        )
+        assertNull(
+            HintSymbolsResolver.resolveGridPanel(
+                "grid1",
+                mapOf("grid1" to HintSymbolsGridStyle(symbolRows = listOf(listOf("dangling")))),
+                emptyMap(), emptyMap(), scheme, testToRuntime,
+            ),
+        )
+    }
+
+    @Test
+    fun gridBackgroundsResolveAgainstStyleTable() {
+        val style = HintSymbolsGridStyle(
+            symbolRows = listOf(listOf("a")),
+            backgroundStyle = "panelBg",
+            selectedBackgroundStyle = "selectedBg",
+        )
+        val keyStyles = mapOf(
+            "panelBg" to mapOf(KeyStyleRole.FACE to "#FF112233"),
+            "selectedBg" to mapOf(KeyStyleRole.FACE to "accentKeyBackground"),
+        )
+        val resolved = HintSymbolsResolver.resolveGridBackgrounds(style, keyStyles, scheme)
+        assertEquals(0xFF112233.toInt(), resolved.background?.face)
+        assertEquals(7, resolved.selectedBackground?.face)
     }
 
     @Test

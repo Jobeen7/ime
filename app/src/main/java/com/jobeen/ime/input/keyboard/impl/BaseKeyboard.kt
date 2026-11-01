@@ -19,6 +19,7 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyPreviewPopup
+import com.jobeen.ime.input.keyboard.key.HintGridPopup
 import com.jobeen.ime.input.keyboard.key.KeyboardPopup
 import com.jobeen.ime.input.keyboard.key.KeyView
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
@@ -26,12 +27,14 @@ import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.SwipeThresholds
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import com.jobeen.ime.skin.model.HintGridSelection
 import com.jobeen.ime.skin.model.StyleStatePriority
 import com.jobeen.ime.skin.runtime.HintSymbolsResolver
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.SymbolGridResolver
 import com.jobeen.ime.skin.symbol.SymbolGridSpec
+import kotlin.math.abs
 import splitties.dimensions.dp
 import splitties.views.dsl.constraintlayout.above
 import splitties.views.dsl.constraintlayout.below
@@ -59,6 +62,7 @@ abstract class BaseKeyboard(
     override var keyActionListener: KeyActionListener? = null
     private val previewPopup = KeyPreviewPopup(context)
     private val keyboardPopup = KeyboardPopup(context)
+    private val hintGridPopup = HintGridPopup(context)
     // 复用坐标数组，避免每次按键分配
     private val keyLoc = IntArray(2)
     private val boardLoc = IntArray(2)
@@ -591,18 +595,32 @@ abstract class BaseKeyboard(
                     }
                 }
             }
-            // 长按面板挂载（旧版单行）：仅无工厂长按的键才挂接——
-            // 有 Preview/Keyboard 弹窗或 LongPress 行为的键保持原行为；
-            // 网格版样式名存在时不挂旧版（网格面板另行挂载）。
-            // 挂接位置在行为循环之后、按住上档链式接线之前，
-            // 使上档链式钩子能追加在面板的抬手回调之后。
+            // 长按面板挂载：仅无工厂长按的键才挂接——有 Preview/
+            // Keyboard 弹窗或 LongPress 行为的键保持原行为；
+            // 网格版优先，网格无效时回落旧版单行。挂接位置在
+            // 行为循环之后、按住上档链式接线之前，使上档链式
+            // 钩子能追加在面板的抬手回调之后。
             val hasFactoryLongPress = def.popups?.any {
                 it is KeyDef.Popup.Preview || it is KeyDef.Popup.Keyboard
             } == true || def.behaviors.any { it is KeyDef.Behavior.LongPress }
-            if (!hasFactoryLongPress) {
-                val panelSnapshot = SkinSnapshotProvider.peek()
-                val legacyPanel = HintSymbolsResolver.resolveLegacyPanel(
+            val panelSnapshot = SkinSnapshotProvider.peek()
+            val gridPanel = if (!hasFactoryLongPress) {
+                HintSymbolsResolver.resolveGridPanel(
                     def.appearance.skinHintSymbolsGridStyle,
+                    panelSnapshot?.hintSymbolsGridStyles ?: emptyMap(),
+                    panelSnapshot?.hintSymbolNodes ?: emptyMap(),
+                    panelSnapshot?.keyStyles ?: emptyMap(),
+                    colors,
+                    KeyOverrideApplier::toRuntime,
+                )
+            } else {
+                null
+            }
+            if (gridPanel != null) {
+                mountGridPanel(this, gridPanel)
+            }
+            if (!hasFactoryLongPress && gridPanel == null) {
+                val legacyPanel = HintSymbolsResolver.resolveLegacyPanel(
                     def.appearance.skinHintSymbolsStyle,
                     panelSnapshot?.hintSymbolsStyles ?: emptyMap(),
                     panelSnapshot?.hintSymbolNodes ?: emptyMap(),
@@ -775,6 +793,129 @@ abstract class BaseKeyboard(
         )
     }
 
+    /**
+     * 长按网格面板手势挂载：手指按下位置为位移原点（对端语义，
+     * 非气泡出现位置）；阈值内维持初始态（显式 selected 格或
+     * 无高亮——引擎阈值内分支恒回原点格，不适用于无 selected
+     * 的情形，故视图层自行区分）；超阈值走位移引擎，换选震动
+     * 一次；越界清除高亮（抬手取消，移回可重选）；抬手提交
+     * 当前高亮格，无高亮不提交；CANCEL 关闭面板（不提交）。
+     */
+    private fun mountGridPanel(keyView: KeyView, panel: HintSymbolsResolver.GridPanel) {
+        val style = panel.style
+        val initialHighlight: Pair<Int, Int>? = style.selectedRow?.let { row ->
+            style.selectedCol?.let { col ->
+                if (style.cellAt(row, col) != null) row to col else null
+            }
+        }
+        val origin: Pair<Int, Int>? = HintGridSelection.initialCell(style)
+        var downX = 0f
+        var downY = 0f
+        var gridHighlight: Pair<Int, Int>? = initialHighlight
+        keyView.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN -> {
+                    downX = event.x
+                    downY = event.y
+                }
+
+                android.view.MotionEvent.ACTION_MOVE -> {
+                    if (hintGridPopup.isShowing()) {
+                        val dx = event.x - downX
+                        val dy = event.y - downY
+                        val h = if (abs(dx) <= style.moveThreshold &&
+                            abs(dy) <= style.moveThreshold
+                        ) {
+                            initialHighlight
+                        } else {
+                            HintGridSelection.selectByDisplacement(
+                                style, origin, dx, dy,
+                                hintGridPopup.cellStepX, hintGridPopup.cellStepY,
+                            )
+                        }
+                        if (h != gridHighlight) {
+                            gridHighlight = h
+                            if (h != null) hintGridPopup.selectCell(h.first, h.second)
+                            else hintGridPopup.clearSelection()
+                            InputFeedbacks.hapticFeedback(view)
+                        }
+                        return@setOnTouchListener true
+                    }
+                }
+
+                android.view.MotionEvent.ACTION_CANCEL -> {
+                    if (hintGridPopup.isShowing()) {
+                        hintGridPopup.dismiss()
+                        gridHighlight = null
+                    }
+                }
+
+                else -> {}
+            }
+            false
+        }
+        keyView.setOnLongClickListener {
+            showGridPanel(keyView, panel, initialHighlight)
+            gridHighlight = hintGridPopup.selectedCell
+            return@setOnLongClickListener true
+        }
+        keyView.onTouchUpListener = {
+            if (hintGridPopup.isShowing()) {
+                val h = gridHighlight
+                if (h != null) {
+                    panel.rows.getOrNull(h.first)?.getOrNull(h.second)?.let { onAction(it.action) }
+                }
+                hintGridPopup.dismiss()
+                gridHighlight = null
+            }
+        }
+    }
+
+    /**
+     * 长按网格面板显示：格尺寸走样式 size，未配时走锚键尺寸
+     * （锚键未布局时回落 42dp）；面板级背景样式可解时用样式
+     * 面色，否则走默认键色与长按高亮蓝；初始选中只取显式
+     * selected（无 selected 时弹出后无高亮）。
+     */
+    private fun showGridPanel(
+        view: KeyView,
+        panel: HintSymbolsResolver.GridPanel,
+        initialSelectedCell: Pair<Int, Int>?,
+    ) {
+        val snapshot = SkinSnapshotProvider.peek()
+        val backgrounds = snapshot?.let {
+            HintSymbolsResolver.resolveGridBackgrounds(panel.style, it.keyStyles, colors)
+        }
+        val style = panel.style
+        val cellWidthPx = style.size?.let { context.dp(it.width).toInt() }
+            ?: view.width.takeIf { it > 0 } ?: context.dp(42).toInt()
+        val cellHeightPx = style.size?.let { context.dp(it.height).toInt() }
+            ?: view.height.takeIf { it > 0 } ?: context.dp(42).toInt()
+        hintGridPopup.show(
+            anchor = view,
+            keyboardView = this,
+            panel = panel,
+            cellWidthPx = cellWidthPx.coerceAtLeast(1),
+            cellHeightPx = cellHeightPx.coerceAtLeast(1),
+            spacingHPx = context.dp(style.spacingHorizontal).toInt(),
+            spacingVPx = context.dp(style.spacingVertical).toInt(),
+            insetLeftPx = context.dp(style.insets.left).toInt(),
+            insetTopPx = context.dp(style.insets.top).toInt(),
+            insetRightPx = context.dp(style.insets.right).toInt(),
+            insetBottomPx = context.dp(style.insets.bottom).toInt(),
+            textColor = when (view.def.variant) {
+                KeyDef.Appearance.Variant.Normal, KeyDef.Appearance.Variant.AltForeground -> colors.keyText
+                KeyDef.Appearance.Variant.Alternative -> colors.specialKeyText
+                KeyDef.Appearance.Variant.Accent -> colors.accentKeyText
+                KeyDef.Appearance.Variant.None -> colors.keyText
+            },
+            bgColor = backgrounds?.background?.face ?: colors.keyBackground,
+            selectedBgColor = backgrounds?.selectedBackground?.face
+                ?: LONG_PRESS_HIGHLIGHT_BLUE,
+            initialSelectedCell = initialSelectedCell,
+        )
+    }
+
     protected open fun onAction(action: KeyboardAction) {
         // 性能埋点（2026-10-29 item-1 B）：按键分发起点，终点在
         // MessageHandler 的 Commit 处理（配对窗口 2s，首个提交为准）。
@@ -873,6 +1014,7 @@ abstract class BaseKeyboard(
         resetSidePanelPosition()
         previewPopup.dismiss()
         keyboardPopup.dismiss()
+        hintGridPopup.dismiss()
     }
 
     abstract override fun name(): String
