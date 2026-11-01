@@ -423,6 +423,12 @@ data class ValidatedSkin(
     /** 工具栏构成（2026-10-27 工具栏进皮肤）：顶层 toolbar 节点校验结果；未定义时 present=false。 */
     val toolbar: SkinToolbarSpec = SkinToolbarSpec(),
     /**
+     * 区域压制（区域门控）：顶层 suppressToolbar / suppressKeyboard；
+     * true = 该区域缺席（不是透明），缺省 false（不压制，现存皮肤行为不变）。
+     */
+    val suppressToolbar: Boolean = false,
+    val suppressKeyboard: Boolean = false,
+    /**
      * 工具栏高度（审计 B 项）：顶层 toolbarHeight，数字 = dp，
      * `"Nvh"` = 视口高度百分比；null = 未定义（走旧 48dp 写死值）。
      */

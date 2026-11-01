@@ -834,7 +834,11 @@ class KeyboardWindowView(
     private var toolbarHiddenCached: Boolean = false
 
     private fun refreshToolbarHidden() {
-        val hidden = runCatching {
+        // 皮肤压制（区域门控）与用户隐藏偏好取或：任一成立即藏
+        // 中间按钮区（条区视图本身仍 VISIBLE，候选照常画）。
+        val skinSuppressed =
+            SkinSnapshotProvider.peek()?.suppressToolbar == true
+        val hidden = skinSuppressed || runCatching {
             ToolbarUserStore.load(File(context.filesDir, ToolbarUserStore.FILE_NAME)).data.hideToolbar
         }.getOrDefault(false)
         if (hidden != toolbarHiddenCached) {

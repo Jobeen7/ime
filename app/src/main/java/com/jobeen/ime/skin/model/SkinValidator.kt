@@ -453,6 +453,17 @@ object SkinValidator {
         // ---- 工具栏样式（审计 B 项） ----
         val toolbarStyle = parseToolbarStyle(tree["toolbarStyle"], "toolbarStyle", issues)
 
+        // ---- 区域压制（区域门控）：非布尔值记 issue 并按不压制计。 ----
+        fun suppressFlag(name: String): Boolean {
+            val raw = tree[name] as? JsonPrimitive ?: return false
+            return raw.booleanOrNull ?: run {
+                issues += SkinIssue(name, SkinIssue.Kind.FIELD_FALLBACK, "suppress_not_bool")
+                false
+            }
+        }
+        val suppressToolbar = suppressFlag("suppressToolbar")
+        val suppressKeyboard = suppressFlag("suppressKeyboard")
+
         // ---- 工具栏布局（审计 B 项） ----
         val toolbarLayout = parseToolbarLayout(tree["toolbarLayout"], "toolbarLayout", issues)
 
@@ -1007,6 +1018,8 @@ object SkinValidator {
                 predictionCloseBg = predictionCloseBg,
                 predictionCloseRadiusDp = predictionCloseRadiusDp,
                 toolbar = toolbarSpec,
+                suppressToolbar = suppressToolbar,
+                suppressKeyboard = suppressKeyboard,
                 toolbarHeight = toolbarHeight,
                 toolbarStyle = toolbarStyle,
                 toolbarLayout = toolbarLayout,

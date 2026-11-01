@@ -139,6 +139,9 @@ data class SkinSnapshot(
     val toolbarHeight: VhLengthSpec? = null,
     /** 工具栏样式（审计 B 项）：null = 未定义（渲染走旧口径）。 */
     val toolbarStyle: ToolbarStyleSpec? = null,
+    /** 区域压制（区域门控）：true = 该区域缺席（不是透明）；缺省 false。 */
+    val suppressToolbar: Boolean = false,
+    val suppressKeyboard: Boolean = false,
     /** 工具栏布局（审计 B 项）：null = 未定义（出厂排列）。 */
     val toolbarLayout: ToolbarLayoutSpec? = null,
     /**

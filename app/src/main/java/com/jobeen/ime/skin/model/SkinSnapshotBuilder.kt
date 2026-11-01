@@ -274,6 +274,8 @@ object SkinSnapshotBuilder {
             resolvedKeyboards = resolvedKeyboards,
             builtinLayouts = builtinLayouts,
             toolbar = toolbarSnapshot,
+            suppressToolbar = validated.suppressToolbar,
+            suppressKeyboard = validated.suppressKeyboard,
             spriteMaps = validated.spriteMaps,
             notifications = validated.notifications,
             conditionStyles = validated.conditionStyles,
