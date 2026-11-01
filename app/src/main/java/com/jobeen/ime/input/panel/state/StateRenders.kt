@@ -49,6 +49,9 @@ private fun StateRenderContext.buildToolbarRenderer(
                 (24f * context.resources.displayMetrics.density).toInt().coerceAtLeast(1),
             )
         },
+        // 工具栏样式（审计 B 项）：独立于工具栏构成（toolbar 节点），
+        // 无 toolbarStyle 节点时为 null，不影响构成抉择。
+        toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle,
     ).apply {
         this.showArrow = showArrow
         this.textEditingMode = textEditingMode

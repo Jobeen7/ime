@@ -115,6 +115,83 @@ fun parseAreaInsets(
     )
 }
 
+/**
+ * 工具栏样式（审计 B 项）：顶层 `toolbarStyle` 节点。
+ * - insets：条内边距（dp），左右叠加到 App 横向内边距上、
+ *   上下决定内容垂直中心，缺失边为 0；
+ * - background：条背景色，null = 不画（现行渐变底）；
+ * - borderWidthDp / borderColor：条边框，颜色缺失时不画边框；
+ * - cornerRadiusDp：背景与边框共用圆角，缺失为直角。
+ * 背景图（对端 backgroundStyle 的图片形态）不在此：Jime 条背景
+ * 已由面板渐变底 + 用户自定义栏背景覆盖，图片形态属 D 项机制。
+ */
+data class ToolbarStyleSpec(
+    val insets: AreaInsets = AreaInsets(),
+    val background: Int? = null,
+    val borderWidthDp: Float? = null,
+    val borderColor: Int? = null,
+    val cornerRadiusDp: Float? = null,
+)
+
+/** 解析 toolbarStyle 节点：缺失返回 null，非对象记 issue 并返回 null。 */
+fun parseToolbarStyle(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): ToolbarStyleSpec? {
+    if (node == null) return null
+    val obj = node as? JsonObject
+    if (obj == null) {
+        issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "toolbar_style_not_object")
+        return null
+    }
+    return ToolbarStyleSpec(
+        insets = parseAreaInsets(obj["insets"], "$path.insets", issues),
+        background = parseStyleColor(obj["background"], "$path.background", issues),
+        borderWidthDp = parseDpField(obj["borderWidthDp"], "$path.borderWidthDp", issues, 0f..8f),
+        borderColor = parseStyleColor(obj["borderColor"], "$path.borderColor", issues),
+        cornerRadiusDp = parseDpField(obj["cornerRadiusDp"], "$path.cornerRadiusDp", issues, 0f..32f),
+    )
+}
+
+/**
+ * 工具栏内容矩形（纯几何，供渲染器与单测共用同一数学）。
+ * 背景与边框画满整条（对端 backgroundStyle 覆盖整条），
+ * insets 只约束内容槽位：左右叠加在 App 横向内边距上，
+ * 上下决定内容垂直中心 [cy]。
+ */
+data class ToolbarContentRect(
+    val left: Float,
+    val top: Float,
+    val right: Float,
+    val bottom: Float,
+    val cy: Float,
+    val radiusPx: Float,
+    val borderWidthPx: Float,
+)
+
+/** 由样式与条尺寸算内容矩形。 */
+fun ToolbarStyleSpec.contentRect(
+    width: Int,
+    height: Int,
+    density: Float,
+    appHPadPx: Float,
+): ToolbarContentRect {
+    val left = appHPadPx + insets.left * density
+    val right = (width - appHPadPx - insets.right * density).coerceAtLeast(left)
+    val top = insets.top * density
+    val bottom = (height - insets.bottom * density).coerceAtLeast(top)
+    return ToolbarContentRect(
+        left = left,
+        top = top,
+        right = right,
+        bottom = bottom,
+        cy = (top + bottom) / 2f,
+        radiusPx = (cornerRadiusDp ?: 0f) * density,
+        borderWidthPx = (borderWidthDp ?: 0f) * density,
+    )
+}
+
 /** 解析颜色字符串节点：非法记 issue 并返回 null（调用方回落）。 */
 fun parseStyleColor(
     node: JsonElement?,

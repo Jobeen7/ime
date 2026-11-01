@@ -16,6 +16,8 @@ import com.jobeen.ime.input.panel.component.ClipboardTab
 import com.jobeen.ime.skin.icon.IconAlias
 import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.skin.model.SkinToolbarSnapshot
+import com.jobeen.ime.skin.model.ToolbarStyleSpec
+import com.jobeen.ime.skin.model.contentRect
 
 /**
  * 自定义钮按压态：涟漪动画进行中（alpha>0 且半径未到峰值）且按压点落在该槽内。
@@ -45,12 +47,28 @@ internal fun toolbarHitRegion(
     density: Float,
     horizontalPaddingDp: Float,
     centerHorizontalPaddingDp: Float,
+): ToolbarHitRegion = toolbarHitRegionPads(
+    x, width, density, horizontalPaddingDp, horizontalPaddingDp, centerHorizontalPaddingDp,
+)
+
+/**
+ * 工具栏触摸分区（左右内边距可不对称版）：皮肤 toolbarStyle
+ * 的左右 insets 叠加到 App 横向内边距上后，首尾槽中心随之移动，
+ * 分区必须用生效后的内边距算，否则隐藏压制在样式条上错位。
+ * centerHorizontalPaddingDp 仅为签名兼容（分区不依赖中央内边距）。
+ */
+internal fun toolbarHitRegionPads(
+    x: Float,
+    width: Int,
+    density: Float,
+    leftPadDp: Float,
+    rightPadDp: Float,
+    centerHorizontalPaddingDp: Float,
 ): ToolbarHitRegion {
-    val hPad = (horizontalPaddingDp + 4) * density
     val fixedW = 32f * density
     val edgeTouchW = 48f * density
-    val menuCenter = hPad + fixedW / 2f
-    val closeCenter = width - hPad - fixedW / 2f
+    val menuCenter = (leftPadDp + 4) * density + fixedW / 2f
+    val closeCenter = width - (rightPadDp + 4) * density - fixedW / 2f
     val menuTouchLeft = (menuCenter - edgeTouchW / 2f).coerceAtLeast(0f)
     val menuTouchRight = (menuCenter + edgeTouchW / 2f).coerceAtMost(width.toFloat())
     val closeTouchLeft = (closeCenter - edgeTouchW / 2f).coerceAtLeast(0f)
@@ -92,6 +110,12 @@ class ToolbarRenderer(
      * 本类只负责“非资产 id → 注册表”这一段接线。
      */
     private val symbolIconProvider: ((String) -> Drawable?)? = null,
+    /**
+     * 工具栏样式（审计 B 项）：构造点经快照传入（StateRenders /
+     * KawaiiPanelView），长驻渲染器由 refreshTheme 重设；
+     * null = 未定义（旧口径：无条背景、无边框、无附加内边距）。
+     */
+    var toolbarStyle: ToolbarStyleSpec? = null,
 ) : IRenderer {
 
     var textEditingMode: Boolean = false
@@ -233,13 +257,15 @@ class ToolbarRenderer(
         userCenter = null
     }
 
-    /** 中央区几何（与 draw／hitTest 同口径）。 */
+    /** 中央区几何（与 draw／hitTest 同口径，含样式左右内边距）。 */
     private fun centerArea(width: Int, density: Float): Pair<Float, Float> {
-        val hPad = (horizontalPaddingDp + 4) * density
+        val style = toolbarStyle
+        val hPad = (horizontalPaddingDp + 4 + (style?.insets?.left ?: 0f)) * density
+        val rPad = (horizontalPaddingDp + 4 + (style?.insets?.right ?: 0f)) * density
         val fixedW = 32f * density
         val centerPad = centerHorizontalPaddingDp * density
         val left = hPad + fixedW + centerPad
-        val w = width - left - hPad - fixedW - centerPad
+        val w = width - left - rPad - fixedW - centerPad
         return left to w
     }
 
@@ -567,6 +593,13 @@ class ToolbarRenderer(
     private val pressPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
     }
+    /** 样式条背景／边框画笔（审计 B 项）：颜色逐帧由样式写入，不复用涟漪画笔。 */
+    private val styleBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.FILL
+    }
+    private val styleBorderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE
+    }
     // draw 期复用：旧实现每次绘制新建 2-3 个 Paint（工具栏每帧重绘时持续分配）
     private val copyBgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val dimTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -590,14 +623,35 @@ class ToolbarRenderer(
         scrollX: Float, isExpanded: Boolean, density: Float,
     ) {
         if (width <= 0 || height <= 0) return
-        val hPad = (horizontalPaddingDp + 4) * density
+        // 样式内边距（审计 B 项）：左右叠加到 App 横向内边距上，
+        // 上下决定内容垂直中心；无样式时与旧几何逐字节一致。
+        // 内容矩形与单测共用同一数学（contentRect），绘制与命中
+        // 不得各算一套（命中见 hitTest 主条分支）。
+        val style = toolbarStyle
+        val contentRect = style?.contentRect(
+            width, height, density, (horizontalPaddingDp + 4) * density,
+        )
+        val hPad = contentRect?.left ?: (horizontalPaddingDp + 4) * density
+        val rPad = contentRect?.let { width - it.right } ?: hPad
+        val barCy = contentRect?.cy ?: height / 2f
         val fixedW = 32f * density
+
+        // 样式条背景（满条画，圆角共用样式值；录制变暗与面板同口径）。
+        // 在涟漪之前画，涟漪压在背景上；剪贴板态（drawClipbar）同样
+        // 以此为条底（其自有内容画在其上），边框只框主条（见文末）。
+        if (style?.background != null) {
+            styleBgPaint.color = dimColor(style.background)
+            val radius = (style.cornerRadiusDp ?: 0f) * density
+            canvas.drawRoundRect(
+                0f, 0f, width.toFloat(), height.toFloat(), radius, radius, styleBgPaint,
+            )
+        }
 
         val menuLeft = hPad
         val menuCenter = menuLeft + fixedW / 2f
         val centerPad = centerHorizontalPaddingDp * density
         val centerAreaLeft = menuLeft + fixedW + centerPad
-        val centerAreaW = width - centerAreaLeft - hPad - fixedW - centerPad
+        val centerAreaW = width - centerAreaLeft - rPad - fixedW - centerPad
 
         // 隐藏时中间区的按压涟漪一并跳过（首尾槽的涟漪照常）。
         val centerRippleSuppressed = toolbarHidden &&
@@ -627,8 +681,8 @@ class ToolbarRenderer(
                 val iw = d.intrinsicWidth.toFloat() * iconScale
                 val ih = d.intrinsicHeight.toFloat() * iconScale
                 d.setBounds(
-                    (menuCenter - iw / 2f).toInt(), (height / 2f - ih / 2f).toInt(),
-                    (menuCenter + iw / 2f).toInt(), (height / 2f + ih / 2f).toInt(),
+                    (menuCenter - iw / 2f).toInt(), (barCy - ih / 2f).toInt(),
+                    (menuCenter + iw / 2f).toInt(), (barCy + ih / 2f).toInt(),
                 )
                 d.draw(canvas)
             }
@@ -649,7 +703,7 @@ class ToolbarRenderer(
             val pillH = 34f * density
             val pillPad = 8f * density
             val clipLeft = centerAreaLeft + 16f * density
-            val clipRight = width - hPad - fixedW - centerPad - 16f * density
+            val clipRight = width - rPad - fixedW - centerPad - 16f * density
             val textCenterY = height / 2f
             val gap = 8f * density
             val iconW =
@@ -714,7 +768,7 @@ class ToolbarRenderer(
                 }
                 btn.draw(
                     canvas, centerAreaLeft + otherW * i + otherW / 2f,
-                    height / 2f, paints, density,
+                    barCy, paints, density,
                 )
                 if (disabled) {
                     paints.toolbarIconColor = savedColor
@@ -722,7 +776,7 @@ class ToolbarRenderer(
             }
         }
 
-        val expandLeft = width - hPad - fixedW
+        val expandLeft = width - rPad - fixedW
         val expandCenter = expandLeft + fixedW / 2f
         // 最右侧槽：皮肤收起图标优先（资产 > 符号名 > 结构覆盖），
         // 均缺失回落内置收起图；展开态仍旋转 180°（与内置图行为一致）。
@@ -732,14 +786,27 @@ class ToolbarRenderer(
             val iw = expandIcon.intrinsicWidth.toFloat() * iconScale
             val ih = expandIcon.intrinsicHeight.toFloat() * iconScale
             expandIcon.setBounds(
-                (expandCenter - iw / 2f).toInt(), (height / 2f - ih / 2f).toInt(),
-                (expandCenter + iw / 2f).toInt(), (height / 2f + ih / 2f).toInt(),
+                (expandCenter - iw / 2f).toInt(), (barCy - ih / 2f).toInt(),
+                (expandCenter + iw / 2f).toInt(), (barCy + ih / 2f).toInt(),
             )
             if (!textEditingMode && isExpanded) {
-                canvas.withRotation(180f, expandCenter, height / 2f) { expandIcon.draw(this) }
+                canvas.withRotation(180f, expandCenter, barCy) { expandIcon.draw(this) }
             } else {
                 expandIcon.draw(canvas)
             }
+        }
+
+        // 样式边框（主条末尾画，压在内容上框住整条；剪贴板态
+        // 已在 drawClipbar 提前返回，不框剪贴板条）。
+        if (style?.borderColor != null && (style.borderWidthDp ?: 0f) > 0f) {
+            val bw = style.borderWidthDp!! * density
+            styleBorderPaint.color = style.borderColor
+            styleBorderPaint.strokeWidth = bw
+            val radius = (style.cornerRadiusDp ?: 0f) * density
+            val half = bw / 2f
+            canvas.drawRoundRect(
+                half, half, width - half, height - half, radius, radius, styleBorderPaint,
+            )
         }
     }
 
@@ -1166,22 +1233,40 @@ class ToolbarRenderer(
             return null
         }
 
+        // 主条生效几何（审计 B 项）：与 draw 同口径的样式内边距；
+        // 剪贴板态已在上文提前返回，不走此分支。
+        val style = toolbarStyle
+        val effLeftPadDp = horizontalPaddingDp + (style?.insets?.left ?: 0f)
+        val effRightPadDp = horizontalPaddingDp + (style?.insets?.right ?: 0f)
+        val barCy = if (style == null) {
+            height / 2f
+        } else {
+            ((style.insets.top * density) + (height - style.insets.bottom * density)) / 2f
+        }
+        val effHPad = (effLeftPadDp + 4) * density
+        val effRPad = (effRightPadDp + 4) * density
+        val menuCenterEff = effHPad + fixedW / 2f
+        val closeCenterEff = width - effRPad - fixedW / 2f
+        val menuTouchLeftEff = (menuCenterEff - edgeTouchW / 2f).coerceAtLeast(0f)
+        val menuTouchRightEff = (menuCenterEff + edgeTouchW / 2f).coerceAtMost(width.toFloat())
+        val closeTouchLeftEff = (closeCenterEff - edgeTouchW / 2f).coerceAtLeast(0f)
+        val closeTouchRightEff = (closeCenterEff + edgeTouchW / 2f).coerceAtMost(width.toFloat())
         val centerPad = centerHorizontalPaddingDp * density
-        val centerAreaLeft = hPad + fixedW + centerPad
-        val centerAreaW = width - centerAreaLeft - hPad - fixedW - centerPad
+        val centerAreaLeft = effHPad + fixedW + centerPad
+        val centerAreaW = width - centerAreaLeft - effRPad - fixedW - centerPad
         val otherW = centerAreaW / centerButtons.size
 
         // 隐藏时中间区命中一律压制（首尾槽照常）；分区几何与上文同口径。
         if (toolbarCenterHitSuppressed(
                 toolbarHidden,
-                toolbarHitRegion(x, width, density, horizontalPaddingDp, centerHorizontalPaddingDp),
+                toolbarHitRegionPads(x, width, density, effLeftPadDp, effRightPadDp, centerHorizontalPaddingDp),
             )
         ) return null
 
         when (x) {
-            in closeTouchLeft..closeTouchRight -> {
-                pressCx = closeCenter
-                pressCy = height / 2f
+            in closeTouchLeftEff..closeTouchRightEff -> {
+                pressCx = closeCenterEff
+                pressCy = barCy
                 pressRadiusMax = height * 0.55f
                 pressRadius = 0f
                 return KawaiiPanel.TouchResult.ToolbarAction(
@@ -1191,9 +1276,9 @@ class ToolbarRenderer(
                 )
             }
 
-            in menuTouchLeft..menuTouchRight -> {
-                pressCx = menuCenter
-                pressCy = height / 2f
+            in menuTouchLeftEff..menuTouchRightEff -> {
+                pressCx = menuCenterEff
+                pressCy = barCy
                 pressRadiusMax = height * 0.55f
                 pressRadius = 0f
                 return KawaiiPanel.TouchResult.ToolbarAction(
@@ -1217,7 +1302,7 @@ class ToolbarRenderer(
                         return null
                     }
                     pressCx = (slot.left + slot.right) / 2f
-                    pressCy = height / 2f
+                    pressCy = barCy
                     pressRadiusMax = height * 0.55f
                     pressRadius = 0f
                     return KawaiiPanel.TouchResult.ToolbarAction(
@@ -1230,7 +1315,7 @@ class ToolbarRenderer(
                     .takeIf { it in centerButtons.indices } ?: return null
                 if (textEditingMode && centerButtons[index].action in TEXT_EDIT_DISABLED) return null
                 pressCx = centerAreaLeft + otherW * index + otherW / 2f
-                pressCy = height / 2f
+                pressCy = barCy
                 pressRadiusMax = height * 0.55f
                 pressRadius = 0f
                 return KawaiiPanel.TouchResult.ToolbarAction(

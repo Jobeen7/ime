@@ -291,6 +291,8 @@ class KawaiiPanelView(context: Context) : View(context) {
             SkinToolbarApplier.resolveFor(context)?.let { applied ->
                 renderer.updateSkinToolbar(applied.toolbar, applied.icons)
             }
+            // 工具栏样式（审计 B 项）：独立于构成抉择，快照直取。
+            renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
             applyUserToolbar(renderer)
         }
     }
@@ -305,6 +307,8 @@ class KawaiiPanelView(context: Context) : View(context) {
         // 其后用户覆盖层再压一层（工具栏编辑轮，分层：用户＞皮肤＞默认）。
         (currentRenderer as? ToolbarRenderer)?.let { renderer ->
             SkinToolbarApplier.applyTo(renderer, context)
+            // 工具栏样式与构成抉择无关：有样式即应用，无样式清掉旧样式。
+            renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
             applyUserToolbar(renderer)
         }
         invalidate()

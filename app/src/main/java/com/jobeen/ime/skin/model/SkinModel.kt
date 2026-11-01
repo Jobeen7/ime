@@ -348,6 +348,8 @@ data class ValidatedSkin(
      * `"Nvh"` = 视口高度百分比；null = 未定义（走旧 48dp 写死值）。
      */
     val toolbarHeight: VhLengthSpec? = null,
+    /** 工具栏样式（审计 B 项）：顶层 toolbarStyle；null = 未定义。 */
+    val toolbarStyle: ToolbarStyleSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */
     val textSizes: Map<KeyTextRole, Float> = emptyMap(),
 )

@@ -204,6 +204,7 @@ object SkinSnapshotBuilder {
             predictionCloseBg = validated.predictionCloseBg,
             predictionCloseRadiusDp = validated.predictionCloseRadiusDp,
             toolbarHeight = validated.toolbarHeight,
+            toolbarStyle = validated.toolbarStyle,
             keyOverrides = validated.keyOverrides,
             keyStyles = validated.keyStyles,
             keyGeometries = validated.keyGeometries,

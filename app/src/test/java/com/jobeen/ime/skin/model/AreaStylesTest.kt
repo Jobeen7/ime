@@ -89,4 +89,43 @@ class AreaStylesTest {
         assertEquals(2f, insets.top, 0f)
         assertTrue(issues.any { it.path == "toolbarStyle.insets.left" })
     }
+
+    @Test
+    fun toolbarStyleParsesAllFields() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement(
+            """{"insets": {"bottom": 4, "left": 6, "right": 6, "top": 0},
+               "background": "#FF112233", "borderWidthDp": 1, "borderColor": "#FF000000",
+               "cornerRadiusDp": 8}""",
+        )
+        val style = parseToolbarStyle(node, "toolbarStyle", issues)
+        assertTrue(issues.isEmpty())
+        assertEquals(6f, style?.insets?.left)
+        assertEquals(4f, style?.insets?.bottom)
+        assertEquals(0xFF112233.toInt(), style?.background)
+        assertEquals(1f, style?.borderWidthDp)
+        assertEquals(8f, style?.cornerRadiusDp)
+    }
+
+    @Test
+    fun toolbarStyleContentRectStacksInsetsOnAppPad() {
+        // 对端 insets {left 6, right 6}：App 横向内边距 12dp 之上再叠加。
+        val style = ToolbarStyleSpec(
+            insets = AreaInsets(left = 6f, top = 0f, right = 6f, bottom = 4f),
+            cornerRadiusDp = 8f,
+        )
+        val rect = style.contentRect(1080, 144, 3f, 12f * 3f)
+        assertEquals(54f, rect.left, 0f)
+        assertEquals(1026f, rect.right, 0f)
+        // 上下内边距决定内容垂直中心：(0 + (144 - 12)) / 2 = 66。
+        assertEquals(66f, rect.cy, 0f)
+        assertEquals(24f, rect.radiusPx, 0f)
+    }
+
+    @Test
+    fun toolbarStyleAbsentIsNull() {
+        val issues = mutableListOf<SkinIssue>()
+        assertNull(parseToolbarStyle(null, "toolbarStyle", issues))
+        assertTrue(issues.isEmpty())
+    }
 }
