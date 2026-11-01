@@ -21,8 +21,9 @@ import java.io.File
  * - 高亮解码失败 → 高亮回退常态（变体选择规则，见
  *   SkinImageDescriptor 模型注释）；
  * - 常态与高亮同 sheet 时只解码一次；
- * - assetImage 描述由 [builtinImageProvider] 解析（App 内置图
- *   注册表接线前为 null → 背景为 null 并记一条 WARN）。
+ * - assetImage 描述由 [builtinImageProvider] 解析（SkinToolbarApplier
+ *   注入 BuiltinImageRegistry.contextProvider；无此资源时背景为
+ *   null 并记一条 WARN）。
  */
 object ToolbarButtonBackgroundResolver {
 

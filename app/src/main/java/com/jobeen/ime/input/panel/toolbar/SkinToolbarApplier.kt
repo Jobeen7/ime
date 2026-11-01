@@ -3,6 +3,7 @@ package com.jobeen.ime.input.panel.toolbar
 import android.content.Context
 import android.graphics.drawable.Drawable
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.image.BuiltinImageRegistry
 import com.jobeen.ime.skin.model.SkinToolbarSnapshot
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
@@ -49,6 +50,7 @@ object SkinToolbarApplier {
                 buttonBackground = ToolbarButtonBackgroundResolver.resolve(
                     context, snapshot.ref.skinId,
                     toolbar.buttonBackground, snapshot.spriteMaps,
+                    BuiltinImageRegistry.contextProvider(context),
                 ),
             )
         }.onFailure { error ->
