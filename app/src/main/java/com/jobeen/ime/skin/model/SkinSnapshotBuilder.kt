@@ -61,6 +61,8 @@ object SkinSnapshotBuilder {
         builtinLayouts: Map<String, LayoutModel> = emptyMap(),
         /** 资产逻辑 id → 清单 path 扩展名（小写，无点；工具栏图标寻址用）。 */
         assetExt: (String) -> String? = { null },
+        /** 多主槽一期：工厂层按 `keyboards` 表逐项解析后的类型表；只透传。 */
+        resolvedKeyboards: Map<String, KeyboardTypeResolved> = emptyMap(),
     ): SkinSnapshot {
         val policy = DegradationPolicy.forTier(tier)
 
@@ -210,6 +212,7 @@ object SkinSnapshotBuilder {
             layoutResolution = layoutResolution,
             resolvedLayoutLandscape = resolvedLayoutLandscape,
             landscapeLayoutResolution = landscapeLayoutResolution,
+            resolvedKeyboards = resolvedKeyboards,
             builtinLayouts = builtinLayouts,
             toolbar = toolbarSnapshot,
             notifications = validated.notifications,

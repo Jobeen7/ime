@@ -134,6 +134,19 @@ data class SkinSnapshot(
      * SkinSnapshotProvider.refreshIfOverlayChanged）。
      */
     val overlayVersion: Long = 0L,
+    /**
+     * 多主槽一期：类型 → 方向已解析布局表（快照工厂按
+     * `keyboards` 表逐项解析后注入；无表皮肤为空表）。
+     * - [layoutId] 的含义不变：仍是顶层 layoutId 绑定（兼容
+     *   旧调用方），绝不复用为“当前类型”——当前类型是运行
+     *   态（KeyboardStateManager）的可变状态，不属于不可变
+     *   快照；类型切换只改状态管理器，不重建快照。
+     * - 旧单布局字段（resolvedLayout/resolvedLayoutLandscape）
+     *   照常保留：无表皮肤走旧路径；有表皮肤且未设顶层绑定
+     *   时，工厂以 pinyin 项桥接旧字段（见 SkinSnapshotFactory），
+     *   使旧生效布局路径仍能命中主键盘布局。
+     */
+    val resolvedKeyboards: Map<String, KeyboardTypeResolved> = emptyMap(),
 ) {
     /** 是否携带深色板（旧单色板皮肤为 false，恒取浅色板）。 */
     val hasDarkPalette: Boolean get() = darkColorScheme != null
@@ -184,6 +197,42 @@ data class ResolvedLayout(
      */
     val heightPercent: Double? = null,
 )
+
+/**
+ * 单类型已解析结果（多主槽一期）：竖/横屏两个方向独立绑定，
+ * 各自独立解析结论；高度取自 `keyboards` 表项本身（与布局
+ * 文件顶层 heightPercent 是两级：表项高度优先于布局高度，
+ * 见 KeyboardWindowView.contentHeight 的优先级注释）。
+ */
+data class KeyboardTypeResolved(
+    /** 竖屏方向已解析布局；null = 该方向无有效绑定。 */
+    val portrait: ResolvedLayout? = null,
+    /** 横屏方向已解析布局；null = 该方向无有效绑定。 */
+    val landscape: ResolvedLayout? = null,
+    val portraitResolution: LayoutResolution = LayoutResolution.NOT_SET,
+    val landscapeResolution: LayoutResolution = LayoutResolution.NOT_SET,
+    /** 表项竖屏高度百分比（50–200 已在解析期过滤）；null = 未指定。 */
+    val heightPercent: Double? = null,
+    /** 表项横屏专属高度；null = 横屏沿用竖屏值。 */
+    val heightPercentLandscape: Double? = null,
+) {
+    /**
+     * 按方向取已解析布局：横屏无绑定时回落竖屏布局（其
+     * baseLayoutLandscape 即横屏权重变体，与旧横屏绑定
+     * 缺失时回落竖屏布局同口径）；竖屏无绑定时不取横屏
+     * 布局（横屏专属布局不进竖屏），调用方走内置回退。
+     */
+    fun resolvedFor(landscape: Boolean): ResolvedLayout? =
+        if (landscape) landscape ?: portrait else portrait
+
+    /** 按方向取解析结论（横屏回落竖屏布局时结论仍为竖屏项的结论）。 */
+    fun resolutionFor(landscape: Boolean): LayoutResolution =
+        if (landscape && this.landscape != null) landscapeResolution else portraitResolution
+
+    /** 按方向取高度：横屏无专属值时回落竖屏值。 */
+    fun heightPercentFor(landscape: Boolean): Double? =
+        if (landscape) heightPercentLandscape ?: heightPercent else heightPercent
+}
 
 /** 快照中的背景状态：预处理产物引用 + 生效参数（已含降级处理）。 */
 data class BackgroundSnapshot(
