@@ -25,6 +25,12 @@ enum class KeyStyleRole(val jsonName: String) {
     ALT_TEXT("altText"),
     BORDER("border"),
     ICON("icon"),
+    /** 按压态描边（审计 A 项：highlightBorderColor 的角色面）。 */
+    PRESSED_BORDER("pressedBorder"),
+    /** 下边缘色（审计 A 项：normalLowerEdgeColor 的角色面）。 */
+    LOWER_EDGE("lowerEdge"),
+    /** 按压态下边缘色（审计 A 项：highlightLowerEdgeColor 的角色面）。 */
+    PRESSED_LOWER_EDGE("pressedLowerEdge"),
     ;
 
     companion object {
@@ -52,6 +58,9 @@ object KeyStyleParser {
         val roles = LinkedHashMap<KeyStyleRole, String>()
         val warnings = mutableListOf<KeyStyleWarning>()
         for ((name, valueNode) in node) {
+            // 几何/动效键由样式几何解析器消费（见 KeyStyleGeometryParser），
+            // 不是颜色角色：此处静默跳过，不记未知角色警告。
+            if (name == "geometry" || name == "animations") continue
             val role = KeyStyleRole.byJsonName(name)
             if (role == null) {
                 warnings += KeyStyleWarning(owner, null, "unknown_role:$name")

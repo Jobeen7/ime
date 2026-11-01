@@ -256,3 +256,338 @@ object KeyGradientParser {
         return KeyGradientPoint(cx, cy)
     }
 }
+
+/** 单支阴影层：颜色（对端口径）× 不透明度 × 模糊半径 × 偏移。 */
+data class KeyShadowLayer(
+    val color: Int,
+    val opacity: Float,
+    val radiusDp: Float,
+    val offsetXDp: Float,
+    val offsetYDp: Float,
+) {
+    /**
+     * 生效阴影色：颜色自带 alpha 再乘不透明度（对端 shadowOpacity
+     * 与颜色 alpha 相乘口径）；结果 alpha 钳制 0..255。
+     */
+    fun effectiveColor(): Int {
+        val alpha = (color ushr 24) and 0xFF
+        val effective = (alpha * opacity).toInt().coerceIn(0, 255)
+        return (color and 0x00FFFFFF) or (effective shl 24)
+    }
+}
+
+/** 逐样式阴影：常态层与按压层各一支；任一缺失时渲染层回落另一支。 */
+data class KeyPerStyleShadow(
+    val normal: KeyShadowLayer?,
+    val pressed: KeyShadowLayer?,
+)
+
+/** 圆角曲线：rounded=圆弧（既有行为），continuous=连续曲线。 */
+enum class KeyCornerCurve {
+    ROUNDED,
+    CONTINUOUS,
+}
+
+/** 可视区域水平对齐（对端 bounds alignment 横向）。 */
+enum class KeyBoundsHorizontal {
+    LEFT,
+    CENTER,
+    RIGHT,
+}
+
+/** 可视区域纵向对齐（对端 bounds alignment 纵向）。 */
+enum class KeyBoundsVertical {
+    TOP,
+    CENTER,
+    BOTTOM,
+}
+
+/**
+ * 可视区域（对端 bounds）：键面在单元格内的可见宽度占比与九向对齐。
+ * widthFraction 为 null = 宽度不限（只取对齐）；对齐缺省均为居中。
+ */
+data class KeyVisibleBounds(
+    val widthFraction: Float?,
+    val horizontal: KeyBoundsHorizontal = KeyBoundsHorizontal.CENTER,
+    val vertical: KeyBoundsVertical = KeyBoundsVertical.CENTER,
+)
+
+/**
+ * 样式几何（一个 keyStyles 表项的非颜色面）：渐变、阴影、描边、
+ * 圆角、下边缘、可视区域与动效名引用。颜色字段均为对端口径
+ * 解析后的 Android ARGB；动效名在装配期经动效表解析。
+ */
+data class KeyStyleGeometry(
+    val gradientNormal: KeyGradient? = null,
+    val gradientHighlight: KeyGradient? = null,
+    val shadow: KeyPerStyleShadow? = null,
+    val borderWidthDp: Float? = null,
+    val cornerRadiusDp: Float? = null,
+    val cornerCurve: KeyCornerCurve? = null,
+    val normalBorderColor: Int? = null,
+    val highlightBorderColor: Int? = null,
+    val normalLowerEdgeColor: Int? = null,
+    val highlightLowerEdgeColor: Int? = null,
+    val bounds: KeyVisibleBounds? = null,
+    val animationNames: List<String> = emptyList(),
+) {
+    val isEmpty: Boolean get() =
+        gradientNormal == null && gradientHighlight == null && shadow == null &&
+            borderWidthDp == null && cornerRadiusDp == null && cornerCurve == null &&
+            normalBorderColor == null && highlightBorderColor == null &&
+            normalLowerEdgeColor == null && highlightLowerEdgeColor == null &&
+            bounds == null && animationNames.isEmpty()
+}
+
+object KeyStyleGeometryParser {
+
+    /**
+     * 解析一个样式表项的几何面：优先读 `geometry` 子对象（Jime
+     * 写法）；无子对象时直接读表项本身的对端同名字段（对端
+     * 背景样式平铺写法）。`animations` 数组只在表项层读。
+     * 返回（几何， 警告原因码）；几何全空时返回 null 几何（不占位）。
+     */
+    fun parseEntry(
+        entry: JsonObject,
+    ): Pair<KeyStyleGeometry?, List<String>> {
+        val warnings = mutableListOf<String>()
+        val geometryNode = entry["geometry"]
+        val geometry: JsonObject = when {
+            geometryNode == null -> entry
+            geometryNode is JsonObject -> geometryNode
+            else -> {
+                warnings += "style_geometry_invalid"
+                entry
+            }
+        }
+        val (gradientNormal, gradientHighlight, gradientWarnings) =
+            KeyGradientParser.parseFaces(geometry)
+        warnings += gradientWarnings
+        val (shadow, shadowWarnings) = KeyPerStyleShadowParser.parse(geometry)
+        warnings += shadowWarnings
+        val borderWidthDp = parseDp(geometry, "borderSize", 0f, 8f, warnings)
+        val cornerRadiusDp = parseDp(geometry, "cornerRadius", 0f, 40f, warnings)
+        val cornerCurve = parseCornerCurve(geometry["cornerCurve"], warnings)
+        fun peerColor(field: String): Int? {
+            val raw = (geometry[field] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                ?: return null
+            return parsePeerColor(raw) ?: run {
+                warnings += "style_geometry_${field}_invalid"
+                null
+            }
+        }
+        val bounds = parseBounds(geometry["bounds"], warnings)
+        val animationNames = parseAnimationNames(entry["animations"], warnings)
+        val result = KeyStyleGeometry(
+            gradientNormal = gradientNormal,
+            gradientHighlight = gradientHighlight,
+            shadow = shadow,
+            borderWidthDp = borderWidthDp,
+            cornerRadiusDp = cornerRadiusDp,
+            cornerCurve = cornerCurve,
+            normalBorderColor = peerColor("normalBorderColor"),
+            highlightBorderColor = peerColor("highlightBorderColor"),
+            normalLowerEdgeColor = peerColor("normalLowerEdgeColor"),
+            highlightLowerEdgeColor = peerColor("highlightLowerEdgeColor"),
+            bounds = bounds,
+            animationNames = animationNames,
+        )
+        return result.takeIf { !it.isEmpty } to warnings
+    }
+
+    private fun parseDp(
+        geometry: JsonObject,
+        field: String,
+        min: Float,
+        max: Float,
+        warnings: MutableList<String>,
+    ): Float? {
+        val node = geometry[field] ?: return null
+        val primitive = node as? JsonPrimitive
+        val value = if (primitive != null && !primitive.isString) {
+            primitive.content.toFloatOrNull()
+        } else {
+            null
+        }
+        if (value == null || !value.isFinite() || value < min || value > max) {
+            warnings += "style_geometry_${field}_invalid"
+            return null
+        }
+        return value
+    }
+
+    private fun parseCornerCurve(
+        node: JsonElement?,
+        warnings: MutableList<String>,
+    ): KeyCornerCurve? {
+        if (node == null) return null
+        val raw = (node as? JsonPrimitive)?.takeIf { it.isString }?.content?.lowercase()
+        return when (raw) {
+            "continuous" -> KeyCornerCurve.CONTINUOUS
+            "rounded" -> KeyCornerCurve.ROUNDED
+            else -> {
+                warnings += "style_geometry_corner_curve_invalid"
+                null
+            }
+        }
+    }
+
+    private fun parseBounds(
+        node: JsonElement?,
+        warnings: MutableList<String>,
+    ): KeyVisibleBounds? {
+        if (node == null) return null
+        val obj = node as? JsonObject
+            ?: run {
+                warnings += "style_geometry_bounds_invalid"
+                return null
+            }
+        var horizontal = KeyBoundsHorizontal.CENTER
+        var vertical = KeyBoundsVertical.CENTER
+        val rawAlignment = (obj["alignment"] as? JsonPrimitive)
+            ?.takeIf { it.isString }?.content?.lowercase()
+        if (rawAlignment != null) {
+            var recognized = false
+            for (token in rawAlignment.split('-', '_', ' ')) {
+                when (token) {
+                    "left" -> {
+                        horizontal = KeyBoundsHorizontal.LEFT
+                        recognized = true
+                    }
+                    "right" -> {
+                        horizontal = KeyBoundsHorizontal.RIGHT
+                        recognized = true
+                    }
+                    "top" -> {
+                        vertical = KeyBoundsVertical.TOP
+                        recognized = true
+                    }
+                    "bottom" -> {
+                        vertical = KeyBoundsVertical.BOTTOM
+                        recognized = true
+                    }
+                    "center", "centre" -> recognized = true
+                    "" -> Unit
+                    else -> warnings += "style_geometry_bounds_alignment_invalid"
+                }
+            }
+            if (!recognized && rawAlignment.isNotBlank()) {
+                warnings += "style_geometry_bounds_alignment_invalid"
+            }
+        }
+        val width = SizeFraction.parseFloat(obj["width"])?.let { value ->
+            if (value <= 0f || value > 1f) {
+                warnings += "style_geometry_bounds_width_invalid"
+                null
+            } else {
+                value
+            }
+        }
+        return KeyVisibleBounds(width, horizontal, vertical)
+    }
+
+    private fun parseAnimationNames(
+        node: JsonElement?,
+        warnings: MutableList<String>,
+    ): List<String> {
+        if (node == null) return emptyList()
+        val array = node as? JsonArray
+            ?: run {
+                warnings += "style_geometry_animations_invalid"
+                return emptyList()
+            }
+        val names = mutableListOf<String>()
+        for (item in array) {
+            val name = (item as? JsonPrimitive)?.takeIf { it.isString }?.content
+            if (name.isNullOrBlank()) {
+                warnings += "style_geometry_animations_invalid"
+            } else {
+                names += name
+            }
+        }
+        return names
+    }
+}
+
+object KeyPerStyleShadowParser {
+
+    /**
+     * 解析逐样式阴影：normalShadowColor / highlightShadowColor（对端口径）、
+     * shadowOpacity（两支共用，缺省 1.0）、highlightShadowOpacity（按压支覆盖）、
+     * shadowRadius（dp，缺省 0）、shadowOffset {x, y}（dp，缺省 0,0）。
+     * 两支颜色皆无 → 无阴影（null）；单支有色时另一支为 null（渲染层回落）。
+     */
+    fun parse(
+        geometry: JsonObject,
+    ): Pair<KeyPerStyleShadow?, List<String>> {
+        val warnings = mutableListOf<String>()
+        fun color(field: String): Int? {
+            val raw = (geometry[field] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                ?: return null
+            return parsePeerColor(raw) ?: run {
+                warnings += "style_geometry_${field}_invalid"
+                null
+            }
+        }
+        fun opacity(field: String, default: Float): Float {
+            val node = geometry[field] ?: return default
+            val primitive = node as? JsonPrimitive
+            val value = if (primitive != null && !primitive.isString) {
+                primitive.content.toFloatOrNull()
+            } else {
+                null
+            }
+            if (value == null || !value.isFinite() || value < 0f || value > 1f) {
+                warnings += "style_geometry_${field}_invalid"
+                return default
+            }
+            return value
+        }
+        fun dpField(field: String, default: Float, min: Float, max: Float): Float {
+            val node = geometry[field] ?: return default
+            val primitive = node as? JsonPrimitive
+            val value = if (primitive != null && !primitive.isString) {
+                primitive.content.toFloatOrNull()
+            } else {
+                null
+            }
+            if (value == null || !value.isFinite() || value < min || value > max) {
+                warnings += "style_geometry_${field}_invalid"
+                return default
+            }
+            return value
+        }
+        fun offset(): Pair<Float, Float> {
+            val obj = geometry["shadowOffset"] as? JsonObject ?: return 0f to 0f
+            fun axis(name: String): Float {
+                val primitive = obj[name] as? JsonPrimitive
+                val value = if (primitive != null && !primitive.isString) {
+                    primitive.content.toFloatOrNull()
+                } else {
+                    null
+                }
+                if (value == null || !value.isFinite() || value < -64f || value > 64f) {
+                    warnings += "style_geometry_shadow_offset_invalid"
+                    return 0f
+                }
+                return value
+            }
+            return axis("x") to axis("y")
+        }
+        val normalColor = color("normalShadowColor")
+        val highlightColor = color("highlightShadowColor")
+        if (normalColor == null && highlightColor == null) return null to warnings
+        val opacity = opacity("shadowOpacity", 1f)
+        val highlightOpacity = opacity("highlightShadowOpacity", opacity)
+        val radius = dpField("shadowRadius", 0f, 0f, 64f)
+        val (offsetX, offsetY) = offset()
+        fun layer(color: Int?, layerOpacity: Float): KeyShadowLayer? =
+            color?.let {
+                KeyShadowLayer(it, layerOpacity, radius, offsetX, offsetY)
+            }
+        return KeyPerStyleShadow(
+            normal = layer(normalColor, opacity),
+            pressed = layer(highlightColor, highlightOpacity),
+        ) to warnings
+    }
+}

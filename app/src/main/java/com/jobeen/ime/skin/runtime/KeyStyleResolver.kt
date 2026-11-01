@@ -29,10 +29,17 @@ object KeyStyleResolver {
         val border: Int? = null,
         /** G1 图标染色（无图标的键渲染层忽略本值）。 */
         val iconTint: Int? = null,
+        /** 审计 A 项：按压态描边（null = 按压沿用常态描边）。 */
+        val pressedBorder: Int? = null,
+        /** 审计 A 项：下边缘色（null = 无下边缘条）。 */
+        val lowerEdge: Int? = null,
+        /** 审计 A 项：按压态下边缘色（null = 按压沿用常态下边缘）。 */
+        val pressedLowerEdge: Int? = null,
     ) {
         val isEmpty: Boolean get() =
             face == null && pressed == null && text == null && altText == null &&
-                border == null && iconTint == null
+                border == null && iconTint == null && pressedBorder == null &&
+                lowerEdge == null && pressedLowerEdge == null
     }
 
     data class Resolution(
@@ -79,6 +86,9 @@ object KeyStyleResolver {
             altText = valueFor(KeyStyleRole.ALT_TEXT),
             border = valueFor(KeyStyleRole.BORDER),
             iconTint = valueFor(KeyStyleRole.ICON),
+            pressedBorder = valueFor(KeyStyleRole.PRESSED_BORDER),
+            lowerEdge = valueFor(KeyStyleRole.LOWER_EDGE),
+            pressedLowerEdge = valueFor(KeyStyleRole.PRESSED_LOWER_EDGE),
         )
         return Resolution(resolved.takeIf { !it.isEmpty }, warnings)
     }
