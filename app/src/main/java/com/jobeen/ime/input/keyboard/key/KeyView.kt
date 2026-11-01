@@ -313,6 +313,19 @@ abstract class KeyView(
 
 
     /**
+     * 前景层实时变量刷新器（审计 K 余项）：模板 + 文本写盘，
+     * 由键盘层在候选/组字变化时与主显动态文字同批刷新；
+     * 函数类型参数在最后。
+     */
+    data class ForegroundDynamic(
+        val template: String,
+        val setText: (String) -> Unit,
+    )
+
+    /** 含实时变量的前景文本层刷新器（attachForegroundLayers 建层时记下）。 */
+    val foregroundDynamics = mutableListOf<ForegroundDynamic>()
+
+    /**
      * G1 前景多层叠加（由 BaseKeyboard 在视图建成后调用一次）：
      * 按装配顺序加入 appearanceView，后层压前层、压主文字之上；
      * image 层位图缺失时跳过该层（失败日志由 Store 记一次）。
@@ -336,6 +349,13 @@ abstract class KeyView(
                         )
                         gravity = android.view.Gravity.CENTER
                         setTextColor(layer.color ?: colors.altText)
+                    }
+                    // 含实时变量的层：记下模板与写盘，供键盘层原地刷新
+                    // （初始文本已是构建期快照解析值，此处只记刷新器）。
+                    layer.dynamicTemplate?.let { template ->
+                        foregroundDynamics += ForegroundDynamic(template) { text ->
+                            textView.text = text
+                        }
                     }
                     appearanceView.apply {
                         add(textView, lParams(wrapContent, wrapContent) {

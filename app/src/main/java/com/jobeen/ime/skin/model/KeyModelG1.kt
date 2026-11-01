@@ -122,6 +122,15 @@ data class ResolvedForegroundLayer(
     val biasY: Float = 0.5f,
     /** image 层内容模式（审计 D 项）；null = 旧口径 FIT_CENTER。 */
     val contentMode: ImageContentMode? = null,
+    /**
+     * 前景层实时变量模板（审计 K 余项）：原文含对端特殊变量
+     * （$rimePreedit/$rimeCandidate/$rimeCandidateComment/
+     * $rimeSchemaName/$returnKeyType）时记原文，否则 null；
+     * 视图层据此在候选/组字/方案/回车类型变化时原地刷新，
+     * 与主显动态文字同一供给链（见 pushDynamicTexts）。
+     * text 字段恒为构建期快照解析值。
+     */
+    val dynamicTemplate: String? = null,
 )
 
 /**
@@ -178,6 +187,22 @@ sealed interface DynamicTextSource {
     companion object {
         const val OPTION_LABEL_PREFIX = "optionLabel$"
         const val OPTION_LABEL_ABBREV_PREFIX = "optionLabelAbbreviated$"
+
+        /**
+         * 对端 text 特殊变量 → 本地动态文字来源（审计 K 余项）：
+         * $rimePreedit = 组字串，$rimeCandidate = 首选候选，
+         * $rimeCandidateComment = 首候选注释，$rimeSchemaName =
+         * 当前方案名，$returnKeyType = 回车键类型；其余记号
+         * 返回 null（调用方原样保留，与占位替换同口径）。
+         */
+        fun fromPeerVariable(token: String): DynamicTextSource? = when (token) {
+            "\$rimePreedit" -> COMPOSING
+            "\$rimeCandidate" -> CANDIDATE_FIRST
+            "\$rimeCandidateComment" -> CANDIDATE_COMMENT
+            "\$rimeSchemaName" -> SCHEME_NAME
+            "\$returnKeyType" -> RETURN_KEY_TYPE
+            else -> null
+        }
 
         fun byJsonName(name: String): DynamicTextSource? {
             when (name) {

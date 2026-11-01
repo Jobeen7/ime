@@ -62,6 +62,32 @@ object KeyOverrideApplier {
         return value ?: fallback
     }
 
+    /**
+     * 前景层实时变量解析（纯函数，审计 K 余项）：模板中的对端
+     * 特殊变量按 [DynamicTextSource.fromPeerVariable] 映射到
+     * 本地动态文字来源，以 values（来源 json 名 → 值）求值；
+     * 无值/空值时替为空串（实时变量无静态回退，空候选即空白，
+     * 永不原样露出记号）；未知记号原样保留（调用方再走
+     * substitute，占位口径记 WARN）。值本身绝不记日志。
+     */
+    fun resolveForegroundLiveText(
+        template: String,
+        values: Map<String, String>,
+    ): String =
+        TOKEN.replace(template) { match ->
+            val source = DynamicTextSource.fromPeerVariable(match.value) ?: return@replace match.value
+            values[source.jsonName]?.takeIf { it.isNotEmpty() } ?: ""
+        }
+
+    /** 模板含已知实时变量时返回原文（视图层刷新用），否则 null。 */
+    fun foregroundLiveTemplate(text: String?): String? {
+        if (text.isNullOrEmpty()) return null
+        val hasLive = TOKEN.findAll(text).any {
+            DynamicTextSource.fromPeerVariable(it.value) != null
+        }
+        return text.takeIf { hasLive }
+    }
+
     /** 逐键音效解析结果（三级链：逐键 → 全局 tap → 出厂，详设 §7.2）。 */
     sealed interface SoundPlan {
         /** 沿用出厂行为（标准点按音）。 */
@@ -619,7 +645,7 @@ object KeyOverrideApplier {
         // ---- 前景层：颜色解析、image 层接纳判定（未接纳整层丢弃） ----
         val foreground = resolveForeground(
             override?.foregroundLayers, tiers, override?.textSizes, imageAssets, scheme,
-            layoutName, def.id,
+            layoutName, def.id, placeholders, dynamicTexts,
         )
 
         val appearance = rebuildAppearance(
@@ -942,7 +968,11 @@ object KeyOverrideApplier {
         }
     }
 
-    /** 前景层装配期解析（text 层颜色非法回落副文字色；image 层未接纳丢弃）。 */
+    /**
+     * 前景层装配期解析（text 层颜色非法回落副文字色；image 层未接纳丢弃；
+     * text 层文本与主显同口径：先解实时变量快照、再走占位替换，
+     * 含实时变量的模板另记 dynamicTemplate 供视图层原地刷新）。
+     */
     private fun resolveForeground(
         layers: List<KeyForegroundLayer>?,
         tiers: Map<KeyTextRole, Float>,
@@ -951,22 +981,29 @@ object KeyOverrideApplier {
         scheme: com.jobeen.ime.data.keyboard.theme.KeyboardColors.ColorScheme,
         layoutName: String,
         keyId: String?,
+        placeholders: Map<String, String> = emptyMap(),
+        dynamicTexts: Map<DynamicTextSource, String> = emptyMap(),
     ): List<ResolvedForegroundLayer>? {
         if (layers.isNullOrEmpty()) return null
+        val liveValues = dynamicTexts.entries.associate { it.key.jsonName to it.value }
         val resolved = mutableListOf<ResolvedForegroundLayer>()
         for (layer in layers) {
             when (layer.type) {
                 "text" -> {
                     val color = KeyStyleResolver.resolveValue(layer.colorRaw, scheme)
                         ?: scheme.altText
+                    val text = layer.text?.let {
+                        substitute(resolveForegroundLiveText(it, liveValues), placeholders)
+                    }
                     resolved += ResolvedForegroundLayer(
                         type = "text",
-                        text = layer.text,
+                        text = text,
                         color = color,
                         size = layer.size ?: keySizes?.get(KeyTextRole.SUB)
                             ?: tiers[KeyTextRole.SUB],
                         biasX = layer.biasX ?: 0.5f,
                         biasY = layer.biasY ?: 0.5f,
+                        dynamicTemplate = foregroundLiveTemplate(layer.text),
                     )
                 }
                 "image" -> {

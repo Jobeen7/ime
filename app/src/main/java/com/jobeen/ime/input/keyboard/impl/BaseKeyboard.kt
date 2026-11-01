@@ -95,6 +95,9 @@ abstract class BaseKeyboard(
 
     private val dynamicViews = mutableListOf<DynamicView>()
 
+    /** 前景层实时变量刷新器（审计 K 余项：与主显动态键同批刷新）。 */
+    private val foregroundDynamicViews = mutableListOf<KeyView.ForegroundDynamic>()
+
     /** 文字回车键刷新器（自定义布局的文本回车键，建键时按行为记下）。 */
     private val enterTextSetters = mutableListOf<(String) -> Unit>()
 
@@ -126,6 +129,12 @@ abstract class BaseKeyboard(
                 KeyOverrideApplier.resolveDynamicDisplayText(
                     dynamic.fallback, dynamic.source, values,
                 ),
+            )
+        }
+        // 前景层实时变量与主显同一供给、同一线程、同一批刷新。
+        for (dynamic in foregroundDynamicViews) {
+            dynamic.setText(
+                KeyOverrideApplier.resolveForegroundLiveText(dynamic.template, values),
             )
         }
     }
@@ -296,6 +305,9 @@ abstract class BaseKeyboard(
             skinSoundMuted = def.skinSoundMuted
             // G1 前景多层叠加：视图建成后挂一次（文本/图标层压主文字之上）
             attachForegroundLayers()
+            // 前景层实时变量：含变量的文本层刷新器随视图登记，
+            // 与主显动态键同一批由 updateDynamicTexts 刷新。
+            this@BaseKeyboard.foregroundDynamicViews += foregroundDynamics
             // 文字回车键跟随（回车文案跟 returnKeyType）：自定义布局
             // 的文本回车键（Press ReturnAction 的文本键）记下刷新器，
             // updateEditorInfo 按编辑框动作改文案；内置图标回车键
