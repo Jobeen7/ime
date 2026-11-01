@@ -269,8 +269,9 @@ class KeyActionListener(
                             ) {
                                 clipboard.clearPrimaryClip()
                             } else {
-                                clipboard.primaryClip =
-                                    android.content.ClipData.newPlainText("", "")
+                                clipboard.setPrimaryClip(
+                                    android.content.ClipData.newPlainText("", ""),
+                                )
                             }
                         }
                     }
