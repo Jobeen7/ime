@@ -205,6 +205,13 @@ object SkinSnapshotBuilder {
             assetSha256(id)?.let { imageAssets[id] = it }
         }
 
+        // 皮肤内嵌字体接纳（审计 C 项）：声明且清单在册即接纳，
+        // 查无（未入清单/文件缺失）不入表，渲染回落下一级字体。
+        val skinFontAssets = LinkedHashMap<String, String>()
+        for (face in validated.skinFontFaces) {
+            assetSha256(face.assetId)?.let { skinFontAssets[face.assetId] = it }
+        }
+
         return SkinSnapshot(
             ref = ref,
             name = validated.metaName,
@@ -220,6 +227,8 @@ object SkinSnapshotBuilder {
             keyboardGeometry = keyboardGeometry,
             fontFamily = validated.fontFamily,
             roleFonts = validated.roleFonts,
+            skinFontFaces = validated.skinFontFaces,
+            skinFontAssets = skinFontAssets,
             keyShadow = validated.keyShadow,
             keyAnimation = validated.keyAnimation,
             spaceAnimation = validated.spaceAnimation,

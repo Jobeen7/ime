@@ -30,4 +30,15 @@ object SkinFonts {
         if (normalized == "default") return null
         return normalized.takeIf { it in SkinValidator.SYSTEM_FONT_FAMILIES }
     }
+
+    /**
+     * 内嵌字体名匹配（纯函数，可 JVM 单测）：raw 与某声明名
+     * 大小写不敏感相等时返回声明原文，否则 null。系统字族名
+     * 不走此路（见 [resolveFamily]）。
+     */
+    fun findFaceName(raw: String?, faceNames: List<String>): String? {
+        if (raw.isNullOrBlank()) return null
+        val trimmed = raw.trim()
+        return faceNames.firstOrNull { it.equals(trimmed, ignoreCase = true) }
+    }
 }

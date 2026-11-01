@@ -145,11 +145,29 @@ object GlobalFonts {
     private val loggedMissingFiles = mutableSetOf<String>()
     private var cachedVersion = -1
 
+    /**
+     * 皮肤内嵌字体字节源（审计 C 项）：由快照安装时注入
+     * （内容寻址资产文件，见 SkinSnapshotProvider），快照
+     * 卸载／无内嵌字体时置 null。测试／预览可直接注入。
+     */
+    @Volatile
+    var skinFontBytesProvider: ((String) -> ByteArray?)? = null
+    private val skinFontCache = LinkedHashMap<Pair<String, Int>, Typeface>()
+    private val loggedMissingSkinFonts = mutableSetOf<String>()
+
     @Synchronized
     fun clearCaches() {
         systemCache.clear()
         fileCache.clear()
+        skinFontCache.clear()
         cachedVersion = -1
+    }
+
+    /** 快照切换时清空内嵌字体缓存与缺失日志（新皮肤同名资产可能已补齐）。 */
+    @Synchronized
+    fun clearSkinFontCache() {
+        skinFontCache.clear()
+        loggedMissingSkinFonts.clear()
     }
 
     private fun sha12(bytes: ByteArray): String {
@@ -190,11 +208,68 @@ object GlobalFonts {
     }
 
     /**
+     * 皮肤候选值解析（审计 C 项）：内嵌字体名优先于系统字族名。
+     * 内嵌字体字节缺失／损坏返回 null，调用方继续下一级（绝不
+     * 以缺失字体占位）；系统族名经白名单复核，未知值返回 null
+     * （调用方继续下一级，与旧“未知回落全局”同口径）。
+     */
+    private fun skinCandidateTypeface(
+        context: Context,
+        snapshot: com.jobeen.ime.skin.model.SkinSnapshot,
+        candidate: String,
+        style: Int,
+    ): Typeface? {
+        val face = snapshot.skinFontFaces.firstOrNull {
+            it.name.equals(candidate.trim(), ignoreCase = true)
+        }
+        if (face != null) return bundledTypeface(context, face.assetId, style)
+        val family = SkinFonts.resolveFamily(candidate) ?: return null
+        return systemTypeface(family, style)
+    }
+
+    /**
+     * 内嵌字体 Typeface（审计 C 项）：字节经注入源取，落盘到
+     * cacheDir/skin-fonts/<内容哈希>.bin 后 createFromFile（与
+     * 全局导入同款建族口径，minSdk 24 下无 ByteBuffer 方案）。
+     * 字节缺失／建族失败返回 null（调用方回落下一级），只记
+     * 资产 id，不记字体内容；缓存文件按内容哈希命名，旧皮肤
+     * 残留文件不影响新皮肤（cacheDir 由系统按需清理）。
+     */
+    private fun bundledTypeface(context: Context, assetId: String, style: Int): Typeface? {
+        skinFontCache[assetId to style]?.let { return it }
+        val bytes = runCatching { skinFontBytesProvider?.invoke(assetId) }.getOrNull()
+        if (bytes.isNullOrEmpty()) {
+            if (loggedMissingSkinFonts.add(assetId)) {
+                DiagLog.w("font", "skin_font_missing", mapOf("asset" to assetId))
+            }
+            return null
+        }
+        return try {
+            val dir = File(context.cacheDir, "skin-fonts")
+            if (!dir.exists()) dir.mkdirs()
+            val file = File(dir, sha12(bytes) + ".bin")
+            if (!file.isFile) file.writeBytes(bytes)
+            val typeface = Typeface.createFromFile(file)
+            skinFontCache[assetId to style] = typeface
+            typeface
+        } catch (e: Exception) {
+            if (loggedMissingSkinFonts.add(assetId)) {
+                DiagLog.w(
+                    "font", "skin_font_invalid",
+                    mapOf("asset" to assetId, "reason" to (e.javaClass.simpleName ?: "unknown")),
+                )
+            }
+            null
+        }
+    }
+
+    /**
      * 角色字族 Typeface；null＝调用方用系统默认。
-     * 分层（2026-10-29 item-1）：皮肤逐角色 ＞ 皮肤 fontFamily
-     * ＞ 全局逐角色 ＞ 系统默认。皮肤逐角色只由皮肤内 roleFonts
-     * 给出（校验期已规范化，此处再经白名单复核）；未知皮肤族名
-     * 记一次 WARN（只记族名字符串，不记输入内容）。
+     * 分层（2026-10-29 item-1，审计 C 项扩展）：皮肤逐角色 ＞
+     * 皮肤 fontFamily ＞ 全局逐角色 ＞ 系统默认；每层候选值先
+     * 试内嵌字体、再试系统字族，内嵌缺失／未知族名都继续下
+     * 一级。未知皮肤族名（既非内嵌名、亦非系统名）记一次 WARN
+     * （只记族名字符串，不记输入内容）。
      */
     @Synchronized
     fun typefaceFor(context: Context, role: FontRole, style: Int): Typeface? {
@@ -202,16 +277,25 @@ object GlobalFonts {
         if (v != cachedVersion) {
             systemCache.clear()
             fileCache.clear()
+            skinFontCache.clear()
             cachedVersion = v
         }
         val snapshot = SkinSnapshotProvider.peek()
-        val roleFamily = snapshot?.roleFonts?.get(role)?.let { SkinFonts.resolveFamily(it) }
-        if (roleFamily != null) return systemTypeface(roleFamily, style)
+        if (snapshot != null) {
+            snapshot.roleFonts[role]?.let { candidate ->
+                skinCandidateTypeface(context, snapshot, candidate, style)?.let { return it }
+            }
+            snapshot.fontFamily?.let { candidate ->
+                skinCandidateTypeface(context, snapshot, candidate, style)?.let { return it }
+            }
+        }
         val rawSkin = snapshot?.fontFamily
-        val skinFamily = SkinFonts.resolveFamily(rawSkin)
-        if (skinFamily != null) return systemTypeface(skinFamily, style)
+        val isFace = rawSkin != null && snapshot?.skinFontFaces?.any {
+            it.name.equals(rawSkin.trim(), ignoreCase = true)
+        } == true
         if (rawSkin != null && rawSkin.isNotBlank() &&
             !rawSkin.trim().equals("default", ignoreCase = true) &&
+            !isFace && SkinFonts.resolveFamily(rawSkin) == null &&
             loggedUnknownSkinFamilies.add(rawSkin.trim())
         ) {
             DiagLog.w(
@@ -226,17 +310,32 @@ object GlobalFonts {
         }
     }
 
-    /** 角色生效说明（纯解析，可单测）：皮肤逐角色／皮肤族名／全局选择／系统默认四态。 */
+    /** 角色生效说明（纯解析，可单测）：皮肤内嵌／皮肤逐角色／皮肤族名／全局选择／系统默认。 */
     fun effectiveSource(
         skinFamilyRaw: String?,
         choice: FontChoice,
         roleFonts: Map<FontRole, String> = emptyMap(),
         role: FontRole? = null,
+        /** 皮肤声明的内嵌字体名（声明原文；匹配大小写不敏感）。 */
+        skinFaceNames: List<String> = emptyList(),
     ): EffectiveSource {
-        val roleFamily = role?.let { roleFonts[it] }?.let { SkinFonts.resolveFamily(it) }
-        if (roleFamily != null) return EffectiveSource.SkinRole(roleFamily)
-        val skinFamily = SkinFonts.resolveFamily(skinFamilyRaw)
-        if (skinFamily != null) return EffectiveSource.Skin(skinFamily)
+        val roleRaw = role?.let { roleFonts[it] }
+        if (roleRaw != null) {
+            SkinFonts.findFaceName(roleRaw, skinFaceNames)?.let {
+                return EffectiveSource.SkinBundled(it)
+            }
+            SkinFonts.resolveFamily(roleRaw)?.let {
+                return EffectiveSource.SkinRole(it)
+            }
+        }
+        if (skinFamilyRaw != null) {
+            SkinFonts.findFaceName(skinFamilyRaw, skinFaceNames)?.let {
+                return EffectiveSource.SkinBundled(it)
+            }
+            SkinFonts.resolveFamily(skinFamilyRaw)?.let {
+                return EffectiveSource.Skin(it)
+            }
+        }
         return when (choice) {
             FontChoice.Follow -> EffectiveSource.Default
             is FontChoice.System -> EffectiveSource.Global(choice.family)
@@ -248,6 +347,8 @@ object GlobalFonts {
         data class Skin(val family: String) : EffectiveSource()
         /** 皮肤内逐角色（2026-10-29 item-1）：高于皮肤单值 fontFamily。 */
         data class SkinRole(val family: String) : EffectiveSource()
+        /** 皮肤内嵌字体（审计 C 项）：声明名，高于同层系统字族名。 */
+        data class SkinBundled(val name: String) : EffectiveSource()
         data class Global(val family: String) : EffectiveSource()
         data class GlobalFile(val fileId: String) : EffectiveSource()
         data object Default : EffectiveSource()

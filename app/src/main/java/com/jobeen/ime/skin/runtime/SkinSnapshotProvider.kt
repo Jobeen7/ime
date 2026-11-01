@@ -5,6 +5,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.DigestUtil
+import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleMode
 import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
@@ -167,6 +168,7 @@ object SkinSnapshotProvider {
         SkinRuntimeState.reset(snapshot.notifications, snapshot.conditionStyles)
         syncSkinSoundsLocked(context, snapshot)
         syncKeyImagesLocked(snapshot)
+        syncSkinFontsLocked(snapshot)
         updateBackgroundBitmapLocked(context, snapshot)
         // 性能埋点（2026-10-29 item-1 B）：快照安装完成时采样一次
         // 内存（冷路径，安装频率低，不进热路径）。
@@ -338,6 +340,30 @@ object SkinSnapshotProvider {
         val layout = SkinLibrary.layout
         val shaById = snapshot.imageAssets
         SkinKeyImageStore.bytesProvider = { assetId ->
+            val sha = shaById[assetId]
+            if (sha == null) {
+                null
+            } else {
+                val file = layout.assetFiles(sha).firstOrNull { it.isFile }
+                runCatching { file?.readBytes() }.getOrNull()
+            }
+        }
+    }
+
+    /**
+     * 皮肤内嵌字体字节源同步（审计 C 项）：快照切换时清空旧
+     * 缓存并按当前快照的接纳表注入内容寻址读取（查无文件
+     * 返回 null，渲染回落下一级字体，与单键图片同款口径）。
+     */
+    private fun syncSkinFontsLocked(snapshot: SkinSnapshot) {
+        GlobalFonts.clearSkinFontCache()
+        if (snapshot.skinFontAssets.isEmpty()) {
+            GlobalFonts.skinFontBytesProvider = null
+            return
+        }
+        val layout = SkinLibrary.layout
+        val shaById = snapshot.skinFontAssets
+        GlobalFonts.skinFontBytesProvider = { assetId ->
             val sha = shaById[assetId]
             if (sha == null) {
                 null

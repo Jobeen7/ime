@@ -289,6 +289,15 @@ object SkinValidator {
             )
         }
 
+        // ---- 皮肤内嵌字体（审计 C 项：顶层 fontFaces） ----
+        // 在 fontFamily / roleFonts 之前解析：两者取值可引用
+        // 此处声明的内嵌字体名（大小写不敏感，存声明原文）。
+        val parsedFontFaces = SkinFontParser.parse(tree, assetKind, assetBytes)
+        issues += parsedFontFaces.issues
+        val skinFontFaces = parsedFontFaces.faces
+        val faceByLower: Map<String, String> =
+            skinFontFaces.associate { it.name.lowercase() to it.name }
+
         // ---- 字族（2026-10-27 新增分流：顶层 fontFamily） ----
         var fontFamily: String? = null
         val fontPrimitive = tree["fontFamily"] as? JsonPrimitive
@@ -300,6 +309,8 @@ object SkinValidator {
                 )
                 raw.lowercase() == "default" -> Unit // 显式默认别名：等价于未指定，不记 issue
                 raw.lowercase() in SYSTEM_FONT_FAMILIES -> fontFamily = raw.lowercase()
+                faceByLower[raw.lowercase()] != null ->
+                    fontFamily = faceByLower.getValue(raw.lowercase())
                 else -> issues += SkinIssue(
                     "fontFamily", SkinIssue.Kind.FIELD_FALLBACK, "font_family_unknown",
                 )
@@ -343,6 +354,8 @@ object SkinValidator {
                         raw.isEmpty() || raw.lowercase() == "default" -> Unit
                         raw.lowercase() in SYSTEM_FONT_FAMILIES ->
                             roleFonts[role] = raw.lowercase()
+                        faceByLower[raw.lowercase()] != null ->
+                            roleFonts[role] = faceByLower.getValue(raw.lowercase())
                         else -> issues += SkinIssue(
                             "roleFonts.$name", SkinIssue.Kind.FIELD_FALLBACK,
                             "role_fonts_unknown_family",
@@ -915,6 +928,7 @@ object SkinValidator {
                 ),
                 fontFamily = fontFamily,
                 roleFonts = roleFonts,
+                skinFontFaces = skinFontFaces,
                 bubbleOverflowCheck = bubbleOverflowCheck,
                 swipeThresholdDp = swipeThresholdDp,
                 candidateRadiusDp = candidateRadiusDp,
@@ -1176,7 +1190,7 @@ object SkinValidator {
         }
         when (assetKind(assetId)) {
             AssetKind.IMAGE -> Unit
-            AssetKind.AUDIO, AssetKind.VIDEO, AssetKind.OTHER -> {
+            AssetKind.AUDIO, AssetKind.VIDEO, AssetKind.FONT, AssetKind.OTHER -> {
                 issues += SkinIssue(
                     "appearance.background", SkinIssue.Kind.RESOURCE_FALLBACK, "background_asset_wrong_type",
                 )

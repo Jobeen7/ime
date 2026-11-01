@@ -197,7 +197,7 @@ data class GeometryFallbacks(
 }
 
 /** 资产类别（引用校验用，定稿七.3：类型错按字段级回退）。 */
-enum class AssetKind { IMAGE, AUDIO, VIDEO, OTHER }
+enum class AssetKind { IMAGE, AUDIO, VIDEO, FONT, OTHER }
 
 /** appearance.background 校验结果（资产引用已按清单解析）。 */
 data class BackgroundSpec(
@@ -360,6 +360,13 @@ data class ValidatedSkin(
      * 分层：皮肤逐角色 > 皮肤 fontFamily > 全局逐角色 > 系统默认。
      */
     val roleFonts: Map<com.jobeen.ime.data.keyboard.theme.FontRole, String> = emptyMap(),
+    /**
+     * 皮肤内嵌字体（审计 C 项）：顶层 fontFaces 校验结果（名 →
+     * 清单资产逻辑 id）；fontFamily / roleFonts 取值与其中某项
+     * name 相同（大小写不敏感）时引用该内嵌字体，优先于系统
+     * 字族名。空 = 皮肤未声明内嵌字体。
+     */
+    val skinFontFaces: List<SkinFontFace> = emptyList(),
     /**
      * 气泡溢出检测（2026-10-28 截图 6 项）：顶层 bubbleOverflowCheck；
      * true = 短按提示气泡与长按弹出气泡超出键盘高度时自动调位，

@@ -48,6 +48,14 @@ data class SkinSnapshot(
     val fontFamily: String? = null,
     /** 分角色字体（2026-10-29 item-1）：皮肤内逐角色字族（仅有效项）。 */
     val roleFonts: Map<com.jobeen.ime.data.keyboard.theme.FontRole, String> = emptyMap(),
+    /** 皮肤内嵌字体（审计 C 项）：校验结果直传（名 → 资产逻辑 id）。 */
+    val skinFontFaces: List<SkinFontFace> = emptyList(),
+    /**
+     * 已接纳内嵌字体资产：资产逻辑 id → 实体 sha256（内容寻址，
+     * 与 imageAssets 同款口径）。接纳 = 校验期声明且清单在册；
+     * 查无者不入表，渲染回落下一级字体。
+     */
+    val skinFontAssets: Map<String, String> = emptyMap(),
     /** 拟态双阴影（2026-10-29 item-1）：皮肤级阴影规格；缺省关闭。 */
     val keyShadow: KeyShadowSpec = KeyShadowSpec(),
     /** 按键动效（2026-10-29 item-1）：全部键动效规格；缺省关闭。 */

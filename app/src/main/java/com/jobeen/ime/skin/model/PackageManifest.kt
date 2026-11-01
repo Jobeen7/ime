@@ -39,6 +39,9 @@ data class PackageManifest(
         /** 视频扩展名（2026-10-29 外观轮主题视频背景：格式白名单）。 */
         val VIDEO_EXTENSIONS = setOf("mp4", "webm")
 
+        /** 字体扩展名（审计 C 项：皮肤内嵌字体，与全局字体导入同口径）。 */
+        val FONT_EXTENSIONS = setOf("ttf", "otf")
+
         private val json = Json { ignoreUnknownKeys = true }
 
         fun parse(text: String): PackageManifest? =
@@ -54,6 +57,7 @@ data class PackageManifest(
                 in IMAGE_EXTENSIONS -> AssetKind.IMAGE
                 in AUDIO_EXTENSIONS -> AssetKind.AUDIO
                 in VIDEO_EXTENSIONS -> AssetKind.VIDEO
+                in FONT_EXTENSIONS -> AssetKind.FONT
                 else -> AssetKind.OTHER
             }
         }
