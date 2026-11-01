@@ -352,6 +352,11 @@ data class ValidatedSkin(
     val toolbarStyle: ToolbarStyleSpec? = null,
     /** 工具栏布局（审计 B 项）：顶层 toolbarLayout；null = 未定义（出厂排列）。 */
     val toolbarLayout: ToolbarLayoutSpec? = null,
+    /**
+     * 预编辑高度（审计 B 项）：顶层 preeditHeight，数字 = dp，
+     * `"Nvh"` = 视口高度百分比；null = 未定义（走旧 30dp 药丸高）。
+     */
+    val preeditHeight: VhLengthSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */
     val textSizes: Map<KeyTextRole, Float> = emptyMap(),
 )

@@ -55,6 +55,13 @@ class PreeditPinnerView(context: Context) : View(context) {
             }
         }
 
+    /**
+     * 药丸高度（审计 B 项）：皮肤 preeditHeight 优先，缺失为旧 30dp。
+     * 宿主（PreeditPinner）在主题刷新时写入；onMeasure 直接取用，
+     * 宿主手动 measure 前已 forceLayout，无须此处 requestLayout。
+     */
+    var pillHeightDp: Float = 30f
+
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.DEFAULT_BOLD
@@ -129,7 +136,7 @@ class PreeditPinnerView(context: Context) : View(context) {
             setMeasuredDimension(0, 0)
             return
         }
-        val pillH = 30f * density
+        val pillH = pillHeightDp * density
 
         var totalW = 0f
         for (item in items) {

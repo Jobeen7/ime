@@ -446,6 +446,13 @@ object SkinValidator {
         // ---- 工具栏布局（审计 B 项） ----
         val toolbarLayout = parseToolbarLayout(tree["toolbarLayout"], "toolbarLayout", issues)
 
+        // ---- 预编辑高度（审计 B 项） ----
+        // 数字 = dp（12..64），字符串 "Nvh" = 视口高度百分比；
+        // 非法记 issue 并回落旧 30dp（不拒包）。
+        val preeditHeight = parseVhLength(
+            tree["preeditHeight"], "preeditHeight", issues, 12f..64f,
+        )
+
         // ---- styles（浅色板） ----
         // 显式 styles 逐字段优先于派生展开（2026-10-27 并入项口径）；
         // 派生失败只记 issue，不单独拒包（无配色拒绝由下方统一口径裁决）。
@@ -871,6 +878,7 @@ object SkinValidator {
                 toolbarHeight = toolbarHeight,
                 toolbarStyle = toolbarStyle,
                 toolbarLayout = toolbarLayout,
+                preeditHeight = preeditHeight,
                 textSizes = skinTextSizes,
                 notifications = notifications,
                 conditionStyles = conditionStyles,

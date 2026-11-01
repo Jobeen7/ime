@@ -171,6 +171,25 @@ class AreaStylesTest {
     }
 
     @Test
+    fun preeditHeightVhResolvesAgainstScreenHeight() {
+        // 对端 1.53vh：800dp 视口高 → 12.24dp。
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement("\"1.53vh\"")
+        val spec = parseVhLength(node, "preeditHeight", issues, 12f..64f)
+        assertTrue(issues.isEmpty())
+        assertEquals(12.24f, spec?.resolveDp(800f, 30f), 0.001f)
+    }
+
+    @Test
+    fun preeditHeightNumberIsDp() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement("15")
+        val spec = parseVhLength(node, "preeditHeight", issues, 12f..64f)
+        assertEquals(15f, spec?.dp)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
     fun toolbarSlotGeometryWithoutCenterSpansFixedZones() {
         val geo = toolbarSlotGeometry(
             1080, 3f, 36f, 36f, 36f,

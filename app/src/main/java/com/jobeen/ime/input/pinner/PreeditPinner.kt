@@ -8,6 +8,7 @@ import android.view.View
 import android.view.WindowManager
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.data.EngineMessage
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 class PreeditPinner(context: Context) : IPinner {
 
@@ -42,6 +43,12 @@ class PreeditPinner(context: Context) : IPinner {
         val pinner = KeyboardColors.resolve(context).pinner
         val textSize = 15f * context.resources.displayMetrics.density
         view.applyTheme(pinner.background, pinner.textColor, pinner.secondaryTextColor, textSize)
+        // 药丸高度（审计 B 项）：皮肤 preeditHeight 优先（vh 按
+        // 屏幕高度换算），缺失回落旧 30dp；高度变化同样失效缓存。
+        val density = context.resources.displayMetrics.density
+        val screenHeightDp = context.resources.displayMetrics.heightPixels / density
+        view.pillHeightDp = SkinSnapshotProvider.peek()
+            ?.preeditHeight?.resolveDp(screenHeightDp, 30f) ?: 30f
         // 主题变化可能改变尺寸，失效 measure 缓存
         lastMeasuredItems = null
     }
