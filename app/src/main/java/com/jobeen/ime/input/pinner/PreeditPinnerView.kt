@@ -13,6 +13,7 @@ import android.widget.OverScroller
 import com.jobeen.ime.data.keyboard.theme.FontRole
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.engine.data.EngineMessage
+import com.jobeen.ime.skin.model.PreeditStyleSpec
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -69,7 +70,17 @@ class PreeditPinnerView(context: Context) : View(context) {
     private val secondaryTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         typeface = Typeface.DEFAULT_BOLD
     }
-    private val pad = 10f * context.resources.displayMetrics.density
+    /**
+     * 药丸水平内边距（审计 B 项）：皮肤 preeditStyle.paddingDp
+     * 优先（缺失时取 preeditStyle.insets.left），缺省旧 10dp。
+     * density 在构造后才赋值，pad 以 getter 惰性求值。
+     */
+    var pillPadDp: Float = 10f
+
+    /** 药丸圆角（审计 B 项）：皮肤 preeditStyle.cornerRadiusDp，缺省旧 8dp。 */
+    var pillCornerRadiusDp: Float = 8f
+
+    private val pad get() = pillPadDp * density
     private val density = context.resources.displayMetrics.density
 
     private var pendingScrollToEnd = false
@@ -116,6 +127,11 @@ class PreeditPinnerView(context: Context) : View(context) {
         secondaryTextPaint.typeface =
             GlobalFonts.typefaceFor(context, FontRole.PREEDIT, Typeface.BOLD)
                 ?: Typeface.DEFAULT_BOLD
+        syncDerivedPaints()
+    }
+
+    /** 派生画笔同步（applyTheme 与 applySkinStyle 共用）：滚动态画笔、幽灵画笔与最小缩放一律跟随主画笔现值。 */
+    private fun syncDerivedPaints() {
         scrolledTextPaint.set(textPaint)
         scrolledSecondaryTextPaint.set(secondaryTextPaint)
         ghostPaint.set(secondaryTextPaint)
@@ -123,6 +139,30 @@ class PreeditPinnerView(context: Context) : View(context) {
         scrolledGhostPaint.set(ghostPaint)
         minScale = if (textPaint.textSize > 0f) (10f * density) / textPaint.textSize else 1f
         invalidate()
+    }
+
+    /**
+     * 皮肤预编辑样式（审计 B 项）：在 applyTheme 之后调用，
+     * 逐项覆盖令牌值（缺失项不动令牌值）；字号变化后派生画笔
+     * 与最小缩放一并重算。高度不在此（宿主按 preeditHeight >
+     * preeditStyle.heightDp > 30dp 的优先级写 pillHeightDp）。
+     */
+    fun applySkinStyle(style: PreeditStyleSpec?) {
+        if (style == null) return
+        style.background?.let { bgPaint.color = it }
+        style.textColor?.let { textPaint.color = it }
+        style.secondaryTextColor?.let { secondaryTextPaint.color = it }
+        style.fontSizeDp?.let {
+            textPaint.textSize = it * density
+            // 副字号未单独指定时跟随主字号 -2dp（与 applyTheme 同口径）。
+            if (style.secondaryFontSizeDp == null) {
+                secondaryTextPaint.textSize = it * density - 2f * density
+            }
+        }
+        style.secondaryFontSizeDp?.let { secondaryTextPaint.textSize = it * density }
+        style.cornerRadiusDp?.let { pillCornerRadiusDp = it }
+        pillPadDp = style.paddingDp ?: if (style.insets.left > 0f) style.insets.left else pillPadDp
+        syncDerivedPaints()
     }
 
     private fun paintFor(item: EngineMessage.DynamicPreedit.DynamicPreeditItem): Paint =
@@ -188,7 +228,7 @@ class PreeditPinnerView(context: Context) : View(context) {
     override fun onDraw(canvas: Canvas) {
         val items = preeditItems
         if (items.isEmpty()) return
-        val r = 8f * density
+        val r = pillCornerRadiusDp * density
 
         canvas.drawRoundRect(0f, 0f, width.toFloat(), height.toFloat(), r, r, bgPaint)
 

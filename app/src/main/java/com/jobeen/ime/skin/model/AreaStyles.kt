@@ -311,6 +311,56 @@ fun toolbarSlotGeometry(
     )
 }
 
+/**
+ * 预编辑样式（审计 B 项）：顶层 `preeditStyle` 节点。
+ * 对端 preeditStyle = backgroundStyle + foregroundStyle + insets；
+ * Jime 侧展开为药丸几何与文字：高度另有顶层 preeditHeight
+ * （优先于此处的 heightDp），字色/底色缺失时回落 styles.pinner
+ * 令牌；insets.left 在 paddingDp 缺失时充当水平内边距，
+ * insets.top/bottom 不消费（药丸在其自身高度内垂直居中，
+ * 无条内偏移语义——见报告）。
+ */
+data class PreeditStyleSpec(
+    val heightDp: Float? = null,
+    val cornerRadiusDp: Float? = null,
+    val paddingDp: Float? = null,
+    val fontSizeDp: Float? = null,
+    val secondaryFontSizeDp: Float? = null,
+    val textColor: Int? = null,
+    val secondaryTextColor: Int? = null,
+    val background: Int? = null,
+    val insets: AreaInsets = AreaInsets(),
+)
+
+/** 解析 preeditStyle 节点：缺失返回 null，非对象记 issue 并返回 null。 */
+fun parsePreeditStyle(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): PreeditStyleSpec? {
+    if (node == null) return null
+    val obj = node as? JsonObject
+    if (obj == null) {
+        issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "preedit_style_not_object")
+        return null
+    }
+    return PreeditStyleSpec(
+        heightDp = parseDpField(obj["heightDp"], "$path.heightDp", issues, 12f..64f),
+        cornerRadiusDp = parseDpField(obj["cornerRadiusDp"], "$path.cornerRadiusDp", issues, 0f..32f),
+        paddingDp = parseDpField(obj["paddingDp"], "$path.paddingDp", issues, 0f..32f),
+        fontSizeDp = parseDpField(obj["fontSizeDp"], "$path.fontSizeDp", issues, 8f..32f),
+        secondaryFontSizeDp = parseDpField(
+            obj["secondaryFontSizeDp"], "$path.secondaryFontSizeDp", issues, 8f..32f,
+        ),
+        textColor = parseStyleColor(obj["textColor"], "$path.textColor", issues),
+        secondaryTextColor = parseStyleColor(
+            obj["secondaryTextColor"], "$path.secondaryTextColor", issues,
+        ),
+        background = parseStyleColor(obj["background"], "$path.background", issues),
+        insets = parseAreaInsets(obj["insets"], "$path.insets", issues),
+    )
+}
+
 /** 解析颜色字符串节点：非法记 issue 并返回 null（调用方回落）。 */
 fun parseStyleColor(
     node: JsonElement?,

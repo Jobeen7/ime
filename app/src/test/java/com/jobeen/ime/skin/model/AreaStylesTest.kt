@@ -181,6 +181,36 @@ class AreaStylesTest {
     }
 
     @Test
+    fun preeditStyleParsesAllFields() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement(
+            """{"heightDp": 32, "cornerRadiusDp": 10, "paddingDp": 12,
+               "fontSizeDp": 16, "secondaryFontSizeDp": 14,
+               "textColor": "#FF000000", "secondaryTextColor": "#FF666666",
+               "background": "#FFFFFFFF", "insets": {"left": 8, "top": 2}}""",
+        )
+        val style = parsePreeditStyle(node, "preeditStyle", issues)
+        assertTrue(issues.isEmpty())
+        assertEquals(32f, style?.heightDp)
+        assertEquals(10f, style?.cornerRadiusDp)
+        assertEquals(12f, style?.paddingDp)
+        assertEquals(16f, style?.fontSizeDp)
+        assertEquals(14f, style?.secondaryFontSizeDp)
+        assertEquals(0xFF000000.toInt(), style?.textColor)
+        assertEquals(8f, style?.insets?.left)
+    }
+
+    @Test
+    fun preeditStyleBadColorDroppedWithIssue() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement("""{"textColor": "notacolor", "paddingDp": 12}""")
+        val style = parsePreeditStyle(node, "preeditStyle", issues)
+        assertNull(style?.textColor)
+        assertEquals(12f, style?.paddingDp)
+        assertTrue(issues.any { it.path == "preeditStyle.textColor" })
+    }
+
+    @Test
     fun preeditHeightNumberIsDp() {
         val issues = mutableListOf<SkinIssue>()
         val node = Json.parseToJsonElement("15")

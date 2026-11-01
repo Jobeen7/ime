@@ -357,6 +357,8 @@ data class ValidatedSkin(
      * `"Nvh"` = 视口高度百分比；null = 未定义（走旧 30dp 药丸高）。
      */
     val preeditHeight: VhLengthSpec? = null,
+    /** 预编辑样式（审计 B 项）：顶层 preeditStyle；null = 未定义。 */
+    val preeditStyle: PreeditStyleSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */
     val textSizes: Map<KeyTextRole, Float> = emptyMap(),
 )

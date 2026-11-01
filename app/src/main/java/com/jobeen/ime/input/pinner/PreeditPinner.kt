@@ -43,12 +43,15 @@ class PreeditPinner(context: Context) : IPinner {
         val pinner = KeyboardColors.resolve(context).pinner
         val textSize = 15f * context.resources.displayMetrics.density
         view.applyTheme(pinner.background, pinner.textColor, pinner.secondaryTextColor, textSize)
-        // 药丸高度（审计 B 项）：皮肤 preeditHeight 优先（vh 按
-        // 屏幕高度换算），缺失回落旧 30dp；高度变化同样失效缓存。
+        // 药丸高度（审计 B 项）：顶层 preeditHeight 优先（vh 按
+        // 屏幕高度换算），其次 preeditStyle.heightDp，缺失回落旧 30dp；
+        // 样式其余项在 applyTheme 之后覆盖令牌值。
         val density = context.resources.displayMetrics.density
         val screenHeightDp = context.resources.displayMetrics.heightPixels / density
-        view.pillHeightDp = SkinSnapshotProvider.peek()
-            ?.preeditHeight?.resolveDp(screenHeightDp, 30f) ?: 30f
+        val snapshot = SkinSnapshotProvider.peek()
+        view.applySkinStyle(snapshot?.preeditStyle)
+        view.pillHeightDp = snapshot?.preeditHeight?.resolveDp(screenHeightDp, 30f)
+            ?: snapshot?.preeditStyle?.heightDp ?: 30f
         // 主题变化可能改变尺寸，失效 measure 缓存
         lastMeasuredItems = null
     }
