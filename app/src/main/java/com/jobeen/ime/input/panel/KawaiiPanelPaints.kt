@@ -12,6 +12,13 @@ import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 class Paints(context: Context) {
+    companion object {
+        /** 候选主文字字号（dp）：对端候选字号 18。 */
+        const val CANDIDATE_TEXT_DP = 18f
+        /** 候选副文字字号（dp）：序号与注释，对端候选字号 16。 */
+        const val CANDIDATE_SECONDARY_DP = 16f
+    }
+
     val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     val dividerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     val toolbarTextPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -111,8 +118,10 @@ class Paints(context: Context) {
     fun applyDensity(density: Float) {
         dividerPaint.strokeWidth = 1f * density
         toolbarTextPaint.textSize = 16f * density
-        candidateTextPaint.textSize = 17f * density
-        selectedCandidateTextPaint.textSize = 17f * density
-        candidateIndexPaint.textSize = 14f * density
+        candidateTextPaint.textSize = CANDIDATE_TEXT_DP * density
+        selectedCandidateTextPaint.textSize = CANDIDATE_TEXT_DP * density
+        candidateIndexPaint.textSize = CANDIDATE_SECONDARY_DP * density
+        // 注释此前未显式设字号（Paint 默认值），与序号同取副字号。
+        candidateCommentPaint.textSize = CANDIDATE_SECONDARY_DP * density
     }
 }

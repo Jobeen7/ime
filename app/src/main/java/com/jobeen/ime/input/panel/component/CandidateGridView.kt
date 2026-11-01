@@ -290,7 +290,7 @@ class CandidateGridView(
             super.onSizeChanged(w, h, oldw, oldh)
             maxScrollCache = null
             val d = resources.displayMetrics.density
-            textPaint.textSize = 17f * d
+            textPaint.textSize = com.jobeen.ime.input.panel.Paints.CANDIDATE_TEXT_DP * d
             cellPad = 6f * d
             minWordSpace = 8f * d   // 词间最小间距，保证分隔线可绘制
             sepPaint.strokeWidth = 1f * d
