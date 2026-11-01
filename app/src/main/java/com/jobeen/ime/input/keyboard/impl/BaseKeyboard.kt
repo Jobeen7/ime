@@ -615,8 +615,8 @@ abstract class BaseKeyboard(
         previewPopup.show(
             anchor = view,
             text = text,
-            bubbleWidthPx = hintBubble?.size?.let { context.dp(it.width) },
-            bubbleHeightPx = hintBubble?.size?.let { context.dp(it.height) },
+            bubbleWidthPx = hintBubble?.size?.let { context.dp(it.width).toInt() },
+            bubbleHeightPx = hintBubble?.size?.let { context.dp(it.height).toInt() },
             checkOverflow = hintBubble?.checkIfOverflowsParentHeight,
             textColor = when (view.def.variant) {
                 KeyDef.Appearance.Variant.Normal, KeyDef.Appearance.Variant.AltForeground -> colors.keyText
