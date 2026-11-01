@@ -167,6 +167,7 @@ class PredictionStateRender(
             areaStyle = snapshot?.horizontalCandidatesStyle,
             maxColumns = snapshot?.horizontalMaxColumns,
             expandLeft = snapshot?.horizontalExpandLeft ?: false,
+            edgeTapClosesPredictions = true,
         ).also {
             it.recording = ctx.recording
             it.highlightedIndex = highlightedIndex

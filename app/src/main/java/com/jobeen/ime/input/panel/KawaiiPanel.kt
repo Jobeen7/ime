@@ -75,6 +75,12 @@ class KawaiiPanel(
             val candidate: EngineMessage.Candidate,
             val items: List<com.jobeen.ime.skin.model.CandidateMenuItem>,
         ) : TouchResult()
+        /**
+         * 联想关闭（K-predict）：预测态边缘钮点按。样式（关闭底色／
+         * 圆角）此前已接线，点按动作此前仍是展开／收起；现按审计
+         * 改为关闭联想（复用长按清空路径）。
+         */
+        data object ClosePredictions : TouchResult()
 
         /**
          * 自定义工具栏按钮的手势执行结果（工具栏编辑轮）：View 的
@@ -1046,6 +1052,19 @@ class KawaiiPanel(
                 TouchResult.LongPressClearPhrases -> showClearPhrasesConfirm()
 
                 is TouchResult.CandidateMenu -> showCandidateMenu(result.candidate, result.items)
+
+                // K-predict：复用长按清空路径（空表 → State.Idle）；
+                // 混批（非全联想）时回落展开，与长按口径一致。
+                TouchResult.ClosePredictions -> {
+                    if (state is State.Prediction) {
+                        val candidates = (state as State.Prediction).candidates
+                        val allPredictions = candidates.all {
+                            it.type == Candidate.TYPE_IME_PREDICTION
+                        }
+                        if (allPredictions) setCandidates(emptyList(), false, 0)
+                        else v.setExpanded(true)
+                    }
+                }
 
                 is TouchResult.CustomKeyAction -> {
                     InputFeedbacks.hapticFeedback(view)

@@ -457,6 +457,7 @@ class KawaiiPanelView(context: Context) : View(context) {
             is KawaiiPanel.TouchResult.ToolbarAction -> result.action is PanelAction.CloseKeyboard
 
             is KawaiiPanel.TouchResult.CollapseCandidates -> true
+            is KawaiiPanel.TouchResult.ClosePredictions -> true
             else -> false
         }
     }

@@ -48,6 +48,11 @@ class ComposingRenderer(
      * （默认）。绘制（钮区／药丸区／渐隐／分隔线）与命中同步镜像。
      */
     var expandLeft: Boolean = false,
+    /**
+     * 预测态边缘钮点按即关闭（K-predict）：仅预测态渲染器置 true；
+     * 组字态默认 false（旧展开／收起口径不变）。
+     */
+    var edgeTapClosesPredictions: Boolean = false,
 ) : IRenderer {
 
     private fun dimColor(color: Int): Int {
@@ -510,6 +515,8 @@ class ComposingRenderer(
             expandBtnLeft = expandBtnRight - expandBtnW
         }
         if (x in expandBtnLeft..expandBtnRight) {
+            // K-predict：预测态边缘钮点按即关闭联想（不再展开／收起）。
+            if (edgeTapClosesPredictions) return KawaiiPanel.TouchResult.ClosePredictions
             return if (isExpanded) KawaiiPanel.TouchResult.CollapseCandidates
             else KawaiiPanel.TouchResult.ExpandCandidates
         }
