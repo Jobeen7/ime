@@ -42,6 +42,8 @@ enum class StyleField(val path: String) {
     PANEL_SELECTED_CANDIDATE_TEXT("panel.selectedCandidateText"),
     PANEL_CANDIDATE_INDEX("panel.candidateIndex"),
     PANEL_CANDIDATE_DIVIDER("panel.candidateDivider"),
+    /** 候选注释色（审计 I 项）：缺失时回落 candidateIndex（见 valueIn）。 */
+    PANEL_CANDIDATE_COMMENT("panel.candidateComment"),
     PINNER_BACKGROUND("pinner.background"),
     PINNER_TEXT_COLOR("pinner.textColor"),
     PINNER_SECONDARY_TEXT_COLOR("pinner.secondaryTextColor"),
@@ -75,6 +77,7 @@ enum class StyleField(val path: String) {
         PANEL_SELECTED_CANDIDATE_TEXT -> scheme.panel.selectedCandidateText
         PANEL_CANDIDATE_INDEX -> scheme.panel.candidateIndex
         PANEL_CANDIDATE_DIVIDER -> scheme.panel.candidateDivider
+        PANEL_CANDIDATE_COMMENT -> scheme.panel.candidateComment ?: scheme.panel.candidateIndex
         PINNER_BACKGROUND -> scheme.pinner.background
         PINNER_TEXT_COLOR -> scheme.pinner.textColor
         PINNER_SECONDARY_TEXT_COLOR -> scheme.pinner.secondaryTextColor

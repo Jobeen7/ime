@@ -60,6 +60,12 @@ object KeyboardColors {
             val toolbarPressed: Int,
             /** 选中候选文字色：未指定时与 candidateText 同值（旧行为不变）。 */
             val selectedCandidateText: Int = candidateText,
+            /**
+             * 候选注释色（审计 I 项）：null = 未指定（渲染回落
+             * candidateIndex；旧画笔此前从未赋值、恒为黑色，
+             * 此处接线后注释色首次跟随主题，见 Paints）。
+             */
+            val candidateComment: Int? = null,
         )
 
         @Serializable

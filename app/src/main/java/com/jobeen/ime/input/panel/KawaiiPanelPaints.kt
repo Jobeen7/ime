@@ -75,6 +75,9 @@ class Paints(context: Context) {
         candidateTextPaint.color = panel.candidateText
         selectedCandidateTextPaint.color = panel.selectedCandidateText
         candidateIndexPaint.color = panel.candidateIndex
+        // 注释色（审计 I 项）：此前 updateColors 从未赋值，画笔恒为
+        // 默认黑色；现接线为皮肤注释色，缺失回落序号色。
+        candidateCommentPaint.color = panel.candidateComment ?: panel.candidateIndex
         toolbarPressedColor = panel.toolbarPressed
         candidateStripBg = SkinSnapshotProvider.peek()?.horizontalCandidatesStyle?.background
         // 工具栏按钮表面（全局样式层）：皮肤样式 presence 决定
