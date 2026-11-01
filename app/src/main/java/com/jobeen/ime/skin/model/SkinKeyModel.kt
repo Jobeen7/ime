@@ -60,6 +60,13 @@ enum class WhitelistAction(
     UNDO("undo", ValueRule.FORBIDDEN),
     REDO("redo", ValueRule.FORBIDDEN),
     VOICE_INPUT("voice_input", ValueRule.FORBIDDEN),
+    /**
+     * 中英切换（2026-11-01 皮肤批）：转换目标 enzh 键用——
+     * 对端语言键无单一动作名（对端走键盘类型切换），Jime 侧以此
+     * 白名单动作接菜单现成的 ascii 开关路径（非 switch_layout 回
+     * 同网格的静默无操作）。
+     */
+    TOGGLE_ASCII_MODE("toggle_ascii_mode", ValueRule.FORBIDDEN),
     ;
 
     enum class ValueRule { REQUIRED, FORBIDDEN }

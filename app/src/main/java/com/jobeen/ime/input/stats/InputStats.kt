@@ -172,6 +172,7 @@ object InputStats {
             is KeyboardAction.MultiReturnAction -> "回车"
             is KeyboardAction.CapsAction -> "shift"
             is KeyboardAction.LangSwitchAction -> "中文"
+            is KeyboardAction.ToggleAsciiModeAction -> "中/英"
             else -> null
         } ?: return null
         val folded = when (raw) {
@@ -479,7 +480,8 @@ object InputStats {
         is KeyboardAction.RotateSchema,
         is KeyboardAction.SwitchSchemaByValue,
         is KeyboardAction.SelectSchema,
-        is KeyboardAction.LangSwitchAction -> Category.SWITCH
+        is KeyboardAction.LangSwitchAction,
+        is KeyboardAction.ToggleAsciiModeAction -> Category.SWITCH
         is KeyboardAction.KeySequenceAction,
         is KeyboardAction.CommitAction,
         is KeyboardAction.LiteralCommitAction -> Category.INPUT

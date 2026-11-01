@@ -596,7 +596,7 @@ private fun ToolbarEditPage(
     }
 }
 
-/** 动作名（资源文案，与 21 项白名单一一对应）。 */
+/** 动作名（资源文案，与白名单一一对应）。 */
 @Composable
 internal fun whitelistActionLabel(action: WhitelistAction): String = stringResource(
     when (action) {
@@ -621,6 +621,7 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.UNDO -> R.string.action_undo
         WhitelistAction.REDO -> R.string.action_redo
         WhitelistAction.VOICE_INPUT -> R.string.action_voice_input
+        WhitelistAction.TOGGLE_ASCII_MODE -> R.string.action_toggle_ascii_mode
     },
 )
 

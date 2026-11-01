@@ -27,6 +27,7 @@ object NotificationActionNames {
         is KeyboardAction.SpaceAction -> "SpaceAction"
         is KeyboardAction.CursorMoveAction -> "CursorMoveAction"
         is KeyboardAction.LangSwitchAction -> "LangSwitchAction"
+        is KeyboardAction.ToggleAsciiModeAction -> "ToggleAsciiModeAction"
         is KeyboardAction.RotateSchema -> "RotateSchema"
         is KeyboardAction.SwitchSchemaByValue -> "SwitchSchemaByValue"
         is KeyboardAction.SelectSchema -> "SelectSchema"

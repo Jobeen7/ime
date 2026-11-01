@@ -45,6 +45,9 @@ sealed class KeyboardAction {
 
     data object LangSwitchAction : KeyboardAction()
 
+    /** 中英切换：切换 ascii 模式（菜单 ascii 开关同款逻辑）。 */
+    data object ToggleAsciiModeAction : KeyboardAction()
+
     data object RotateSchema : KeyboardAction()
 
     /**

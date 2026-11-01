@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.inputmethodservice.InputMethodService
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
+import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.IEngine
@@ -85,6 +86,15 @@ class KeyActionListener(
 
             is KeyboardAction.LangSwitchAction -> {
                 @SuppressLint("NewApi") service.switchToNextInputMethod(false)
+            }
+
+            // 中英切换（转换目标 enzh 键）：与菜单 ascii 开关同款——
+            // 只写偏好，引擎偏好监听同批重刷运行时选项，即时生效。
+            is KeyboardAction.ToggleAsciiModeAction -> {
+                CandidateManager.setAsciiModeEnabled(
+                    service,
+                    !CandidateManager.isAsciiModeEnabled(service),
+                )
             }
 
             is KeyboardAction.SelectSchema -> {
