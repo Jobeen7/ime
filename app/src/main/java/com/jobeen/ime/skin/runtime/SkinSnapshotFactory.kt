@@ -26,6 +26,8 @@ import com.jobeen.ime.skin.model.MemoryTier
 import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.ResolvedLayout
 import com.jobeen.ime.skin.model.SkinJson
+import com.jobeen.ime.skin.model.SkinPackageDocs
+import com.jobeen.ime.skin.model.SkinPackageDocsParser
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
 import com.jobeen.ime.skin.model.SkinValidator
@@ -153,7 +155,13 @@ object SkinSnapshotFactory {
             }
         }
         val snapshot = buildFromTree(context, effectiveTree, manifest, ref, libraryLayout)
-        return snapshot?.copy(overlayVersion = overlayVersion)
+        // 演示资料（审计 K 余项）：与 skin.json 同代次目录的
+        // demo.png / README.md，校验后随快照表面（UI 取图仍按
+        // 代次目录读文件，本处只记校验结果，不读图进内存）。
+        val packageDocs = skinJsonFile.parentFile?.let {
+            SkinPackageDocsParser.fromDir(it)
+        } ?: SkinPackageDocs()
+        return snapshot?.copy(overlayVersion = overlayVersion, packageDocs = packageDocs)
     }
 
     fun buildFromTree(

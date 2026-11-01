@@ -199,6 +199,13 @@ data class SkinSnapshot(
      *   使旧生效布局路径仍能命中主键盘布局。
      */
     val resolvedKeyboards: Map<String, KeyboardTypeResolved> = emptyMap(),
+    /**
+     * 皮肤包演示资料（审计 K 余项）：包根演示图与说明的校验
+     * 结果；仅代次目录构建路径注入（工厂 buildFromFiles），
+     * 其余构造路径为空。演示图本体不进快照，UI 以
+     * [SkinPackageDocsParser.demoImageFile] 按代次目录取文件。
+     */
+    val packageDocs: SkinPackageDocs = SkinPackageDocs(),
 ) {
     /** 是否携带深色板（旧单色板皮肤为 false，恒取浅色板）。 */
     val hasDarkPalette: Boolean get() = darkColorScheme != null

@@ -20,6 +20,7 @@ import com.jobeen.ime.skin.model.MemoryTier
 import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.SkinIssue
 import com.jobeen.ime.skin.model.SkinJson
+import com.jobeen.ime.skin.model.SkinPackageDocsParser
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
 import com.jobeen.ime.skin.model.SkinValidator
 import com.jobeen.ime.skin.store.ImportTransaction
@@ -496,6 +497,33 @@ class JimeImporter(
                 val skinDir = File(it, "skins/$finalSkinId").apply { mkdirs() }
                 File(skinDir, "skin.json").writeBytes(finalSkinBytes)
                 File(skinDir, "manifest.json").writeText(finalManifestJson)
+                // 演示资料（审计 K 余项）：源包根 demo.png / README.md
+                // 校验通过才随代次落盘；失效只入报告、不拦整包，
+                // 缺失亦不拦包（无图/无说明时 UI 仅不展示该项）。
+                val packageDocs = SkinPackageDocsParser.fromBytes(
+                    byPath[SkinPackageDocsParser.DEMO_FILE_NAME]?.bytes,
+                    byPath[SkinPackageDocsParser.README_FILE_NAME]?.bytes,
+                )
+                if (packageDocs.hasDemoImage) {
+                    File(skinDir, SkinPackageDocsParser.DEMO_FILE_NAME).writeBytes(
+                        byPath.getValue(SkinPackageDocsParser.DEMO_FILE_NAME).bytes,
+                    )
+                } else if (byPath.containsKey(SkinPackageDocsParser.DEMO_FILE_NAME)) {
+                    issues += SkinIssue(
+                        "package.demo", SkinIssue.Kind.RESOURCE_FALLBACK,
+                        "demo_image_invalid",
+                    )
+                }
+                if (packageDocs.readmeText != null) {
+                    File(skinDir, SkinPackageDocsParser.README_FILE_NAME).writeBytes(
+                        byPath.getValue(SkinPackageDocsParser.README_FILE_NAME).bytes,
+                    )
+                } else if (byPath.containsKey(SkinPackageDocsParser.README_FILE_NAME)) {
+                    issues += SkinIssue(
+                        "package.readme", SkinIssue.Kind.RESOURCE_FALLBACK,
+                        "readme_invalid",
+                    )
+                }
                 // 背景预处理（冷路径，§2.6）：失败回退纯色并报告，不连累整包
                 val background = snapshotForBackground?.background
                 if (background != null) {
