@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 对端 wxicon 的等价形式（原图为绿色手写体 p 字形，不进包；工具栏菜单钮前景用）：
+     原创矢量路径（按字形描述绘制，非描摹原图）：微倾竖干＋上部圆腹＋
+     腹底笔画向左超干；绿色取原图主色 #1BC886，线宽 14/200，圆头圆角。
+     未用字体法：AOSP 无保证可用的手写体族（cursive 在 AOSP 回落无衬线，
+     非手写体；OEM 是否映射手写体未定），故按任务 fallback 用矢量。 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M72,28 L60,172 M72,36 C118,30 148,58 138,96 C129,128 96,142 64,136 C52,133 44,128 38,120"
+        android:strokeWidth="14"
+        android:strokeColor="#FF1BC886"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

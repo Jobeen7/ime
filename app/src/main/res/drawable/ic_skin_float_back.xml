@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 对端 float_back 的等价形式（原图为灰圆角矩形＋投影，不进包）：
+     主体 #D0D3DA 圆角矩形，下方一层半透明圆角矩形作投影。
+     圆角 16dp 为固定近似值（原图圆角约占矩形边长的三分之一；
+     原图按 9-patch 拉伸时角部不拉伸，固定圆角与原图行为一致）。
+     视觉以真机为准。 -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#26000000" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+    <item
+        android:bottom="4dp"
+        android:left="2dp"
+        android:right="2dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFD0D3DA" />
+            <corners android:radius="16dp" />
+        </shape>
+    </item>
+</layer-list>

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 对端 toolbar_circle 的等价形式（原图为左右双帧条，不进包）：
+     IMG1 常态白圆、IMG2 高亮灰圆（实测常态 #FFFFFF、高亮 #D0D4DB），
+     故此处为按压态选择器：常态白圆，按压灰圆。 -->
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="true">
+        <shape android:shape="oval">
+            <solid android:color="#FFD0D4DB" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="#FFFFFFFF" />
+        </shape>
+    </item>
+</selector>
