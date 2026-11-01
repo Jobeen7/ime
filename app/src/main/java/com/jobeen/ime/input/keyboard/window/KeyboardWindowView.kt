@@ -34,6 +34,10 @@ import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.skin.symbolbar.AppSymbolBarTypeStore
+import com.jobeen.ime.skin.symbolbar.SymbolBarConfigLoader
+import com.jobeen.ime.skin.symbolbar.SymbolBarLoadResult
+import com.jobeen.ime.skin.symbolbar.resolveCurrentType
 import com.jobeen.ime.data.keyboard.theme.VideoPrefs
 import com.jobeen.ime.data.manager.CandidateLinePolicy
 import com.jobeen.ime.data.manager.CandidateManager
@@ -331,6 +335,60 @@ class KeyboardWindowView(
 
     private val imeToastView = ImeToastView(context)
 
+    // 应用级符号栏：打开态只存于视图（键盘切换/收起即关闭），类型由
+    // AppSymbolBarTypeStore 记住；与皮肤内符号条的类型记忆分开。
+    private var symbolBarView: SymbolBarView? = null
+    private val symbolBarTypeStore by lazy { AppSymbolBarTypeStore(context) }
+    private val symbolBarHeightPx: Int get() = symbolBarView?.barHeightPx ?: 0
+
+    fun toggleSymbolBar() {
+        if (symbolBarView != null) closeSymbolBar() else openSymbolBar()
+    }
+
+    private fun openSymbolBar() {
+        when (val result = SymbolBarConfigLoader.load(SymbolBarConfigLoader.defaultFile(context))) {
+            SymbolBarLoadResult.Missing -> {
+                showImeToast("符号栏未配置")
+                return
+            }
+            SymbolBarLoadResult.Invalid -> {
+                showImeToast("符号栏配置无效")
+                return
+            }
+            is SymbolBarLoadResult.Ok -> {
+                val config = result.config
+                val type = resolveCurrentType(config.types, symbolBarTypeStore.load())
+                    ?: run {
+                        showImeToast("符号栏配置无效")
+                        return
+                    }
+                symbolBarTypeStore.save(type)
+                val bar = SymbolBarView(
+                    context,
+                    cachedColors,
+                    onAction = { keyActionListener.onKeyAction(it) },
+                    onClose = { closeSymbolBar() },
+                    onTypeSelected = { selected ->
+                        symbolBarTypeStore.save(selected)
+                        symbolBarView?.bind(config, config.panelFor(selected), selected)
+                        requestLayout()
+                    },
+                )
+                bar.bind(config, config.panelFor(type), type)
+                symbolBarView = bar
+                addView(bar)
+                requestLayout()
+            }
+        }
+    }
+
+    private fun closeSymbolBar() {
+        val bar = symbolBarView ?: return
+        removeView(bar)
+        symbolBarView = null
+        requestLayout()
+    }
+
     var keyActionListener: KeyActionListener
         get() = keyboardStateManager.keyActionListener
         set(value) {
@@ -434,14 +492,16 @@ class KeyboardWindowView(
                 null
             }
 
-            // 符号条／命令面板开关：目标 UI 不在本轮（完整符号条
-            // 与命令面板均已排除），分发到此即记日志的空操作，
-            // 不伪造界面、不下发引擎。
+            // 应用级符号栏开关（#toggleSymbolBar）：首次打开、再次关闭；
+            // 打开态不记住（键盘切换/收起即关，见 onShowKeyboard 与
+            // onKeyboardChanged），类型由存储记住。
             is KeyboardAction.ToggleSymbolBarAction -> {
-                DiagLog.w("keymap", "toggle_symbol_bar_unimplemented", emptyMap())
+                toggleSymbolBar()
                 null
             }
 
+            // 命令面板开关：目标 UI 不在本轮（命令面板已排除），
+            // 分发到此即记日志的空操作，不伪造界面、不下发引擎。
             is KeyboardAction.ToggleCommandViewAction -> {
                 DiagLog.w("keymap", "toggle_command_view_unimplemented", emptyMap())
                 null
@@ -684,6 +744,7 @@ class KeyboardWindowView(
         pushDynamicTexts()
         addKeyboardView(keyboard)
         feedSchemeAndReturnKeyEvents()
+        closeSymbolBar()
     }
 
     fun onHideKeyboard(keyboard: IKeyboard) {
@@ -696,6 +757,7 @@ class KeyboardWindowView(
         pushDynamicTexts()
         addKeyboardView(keyboard)
         feedSchemeAndReturnKeyEvents()
+        closeSymbolBar()
     }
 
     init {
@@ -931,12 +993,19 @@ class KeyboardWindowView(
         val clipStripH = clipSearchStripHeight(cHeight, barH, bPad, bottomInset)
         for (i in 0 until childCount) {
             val child = getChildAt(i)
-            if (child === panel.view || child === inlineAutofillBar || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
+            if (child === panel.view || child === inlineAutofillBar || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child === symbolBarView || child.isGone) continue
             child.measure(
                 MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
             )
         }
+
+        // 应用级符号栏：键盘内容宽 × 配置高；窗口总高相应拉高一栏，
+        // 键盘本身全尺寸不变（下移，见 onLayout）。
+        symbolBarView?.measure(
+            MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(symbolBarHeightPx, MeasureSpec.EXACTLY),
+        )
 
         // 内联自动填充覆盖层：与条区同尺寸（全宽×条高），GONE 时不度量。
         if (!inlineAutofillBar.isGone) {
@@ -991,7 +1060,7 @@ class KeyboardWindowView(
             )
         }
 
-        val totalHeight = stripH + barH + clipStripH + cHeight + bPad + bottomInset
+        val totalHeight = stripH + barH + clipStripH + cHeight + bPad + bottomInset + symbolBarHeightPx
         setMeasuredDimension(totalWidth, totalHeight)
     }
 
@@ -1015,13 +1084,17 @@ class KeyboardWindowView(
         )
         for (i in 0 until childCount) {
             val child = getChildAt(i)
-            if (child === panel.view || child === inlineAutofillBar || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child.isGone) continue
+            if (child === panel.view || child === inlineAutofillBar || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child === symbolBarView || child.isGone) continue
             if (clipStripH > 0 && child !== panel.candidateGrid) {
-                child.layout(hPad, y0 + clipStripH, hPad + contentW, y0 + clipStripH + cHeight)
+                child.layout(hPad, y0 + clipStripH + symbolBarHeightPx, hPad + contentW, y0 + clipStripH + symbolBarHeightPx + cHeight)
             } else {
-                child.layout(hPad, y0, hPad + contentW, y0 + cHeight)
+                child.layout(hPad, y0 + symbolBarHeightPx, hPad + contentW, y0 + symbolBarHeightPx + cHeight)
             }
         }
+
+        // 应用级符号栏：键盘区顶部一栏；覆盖层（候选网格／菜单等）
+        // 仍按 y0 布局，栏以后加子视图画在其上。
+        symbolBarView?.layout(hPad, y0, hPad + contentW, y0 + symbolBarHeightPx)
 
         // 候选栏行策略（2026-10-29 批量第 4 项）：展开网格按行策略定高，
         // 内容不足且自动收缩时缩到内容高度，键盘区其余部分照常显示
