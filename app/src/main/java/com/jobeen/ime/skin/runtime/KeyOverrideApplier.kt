@@ -500,7 +500,10 @@ object KeyOverrideApplier {
         // 网格样式名同口径（仅含网格字段的覆写亦有效）。
         if (hintSymbolsStyle != null || hintSymbolsGridStyle != null || hintStyle != null) return true
         if (styleRef != null || !styleOverrides.isNullOrEmpty()) return true
-        if (image != null || subLabel != null || subLabelTop != null || dynamicText != null) return true
+        // 工具项 8：精灵图引用与按压面图同样是有效内容（否则仅含图
+        // 的覆写在装配期被滤掉；pressedImage 字符串形态此前亦漏列）。
+        if (image != null || imageRef != null || pressedImage != null || pressedImageRef != null ||
+            subLabel != null || subLabelTop != null || dynamicText != null) return true
         if (!textSizes.isNullOrEmpty()) return true
         if (geometry != null && !geometry.isEmpty) return true
         if (!foregroundLayers.isNullOrEmpty()) return true
@@ -647,6 +650,19 @@ object KeyOverrideApplier {
             }
         }
 
+        // ---- 精灵图键面（工具项 8）：sheet 须在册，否则同口径回退颜色键面 ----
+        val imageSpriteRef = override?.imageRef?.let { ref ->
+            if (ref.file in imageAssets) {
+                ref
+            } else {
+                DiagLog.w(
+                    "keymap", "key_image_fallback",
+                    mapOf("layout" to layoutName, "keyId" to def.id, "asset" to ref.file),
+                )
+                null
+            }
+        }
+
         // ---- 前景层：颜色解析、image 层接纳判定（未接纳整层丢弃） ----
         val foreground = resolveForeground(
             override?.foregroundLayers, tiers, override?.textSizes, imageAssets, scheme,
@@ -673,7 +689,13 @@ object KeyOverrideApplier {
         // 审计 D 项：键面图片内容模式（仅图片已接纳时写槽；未接纳
         // 时模式无载体，置 null 使渲染走旧口径——无图时本就无面层）。
         appearance.skinFaceContentMode =
-            if (imageAssetId != null) override?.imageContentMode else null
+            if (imageAssetId != null || imageSpriteRef != null) {
+                override?.imageContentMode
+            } else {
+                null
+            }
+        // 精灵图引用槽（工具项 8）：渲染期按 sheet+子图裁剪，见 KeyView 面层。
+        appearance.skinFaceSpriteRef = imageSpriteRef
 
         // Wave-4 状态前景色：样式名已在装配期解析为 TEXT 角色色；
         // null 槽（未指定或未知样式）保持出厂/样式色不动。
@@ -978,6 +1000,19 @@ object KeyOverrideApplier {
                     DiagLog.w(
                         "keymap", "key_pressed_image_fallback",
                         mapOf("layout" to layoutName, "keyId" to def.id, "asset" to id),
+                    )
+                }
+            }
+            // 按压态精灵图键面（工具项 8）：与常态精灵图面同口径。
+            override?.pressedImageRef?.let { ref ->
+                if (ref.file in imageAssets) {
+                    copy.appearance.skinPressedFaceSpriteRef = ref
+                    copy.appearance.skinPressedFaceContentMode =
+                        override?.pressedImageContentMode
+                } else {
+                    DiagLog.w(
+                        "keymap", "key_pressed_image_fallback",
+                        mapOf("layout" to layoutName, "keyId" to def.id, "asset" to ref.file),
                     )
                 }
             }

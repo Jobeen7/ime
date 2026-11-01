@@ -18,6 +18,7 @@ import com.jobeen.ime.skin.model.KeyOverride
 import com.jobeen.ime.skin.model.KeyStyleGeometry
 import com.jobeen.ime.skin.model.KeyStyleRole
 import com.jobeen.ime.skin.model.SkinAction
+import com.jobeen.ime.skin.model.SkinImageRef
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SoundBindings
 import com.jobeen.ime.skin.model.WhitelistAction
@@ -859,5 +860,25 @@ class KeyOverrideApplierTest {
         assertEquals(0xFF00FF00.toInt(), appearance.skinCapsLockedTextColor)
         assertEquals(0xFFFF0000.toInt(), appearance.skinSwipeUpTextColor)
         assertNull(appearance.skinSwipeDownTextColor)
+    }
+
+    @Test
+    fun spriteRefPassesThroughWhenSheetAccepted() {
+        val snap = snapshot(
+            mapOf("KEY_Q" to KeyOverride(imageRef = SkinImageRef("sheet1", "btn"))),
+        ).copy(imageAssets = mapOf("sheet1" to "sha"))
+        val result = applyQwerty(snap)
+        val appearance = result.byId("KEY_Q").appearance
+        assertEquals(SkinImageRef("sheet1", "btn"), appearance.skinFaceSpriteRef)
+        assertNull(appearance.skinImageAssetId)
+    }
+
+    @Test
+    fun spriteRefDroppedWhenSheetNotAccepted() {
+        val snap = snapshot(
+            mapOf("KEY_Q" to KeyOverride(imageRef = SkinImageRef("sheet1", "btn"))),
+        )
+        val result = applyQwerty(snap)
+        assertNull(result.byId("KEY_Q").appearance.skinFaceSpriteRef)
     }
 }

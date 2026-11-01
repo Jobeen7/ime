@@ -102,6 +102,12 @@ open class KeyDef(
          * 已接纳时取覆写值）；null = 旧口径 CENTER_CROP。
          */
         var skinFaceContentMode: com.jobeen.ime.skin.model.ImageContentMode? = null
+        /**
+         * 键面精灵图引用（工具项 8）：仅覆写装配器写（sheet 已接纳
+         * 时取覆写值）；null = 未用精灵图（走整图键面）。渲染期按
+         * sheet+子图裁剪（帧矩形＋cap 边框），见 KeyView 面层。
+         */
+        var skinFaceSpriteRef: com.jobeen.ime.skin.model.SkinImageRef? = null
         /** G1 分档字号解析结果：主文字（null = 出厂 textSize）。 */
         var skinTextSize: Float? = null
         /** G1 分档字号解析结果：副文字（null = 出厂 altTextSize / 11f）。 */
@@ -172,6 +178,11 @@ open class KeyDef(
          * （pressedImage 已接纳时取覆写值）；null = 旧口径 CENTER_CROP。
          */
         var skinPressedFaceContentMode: com.jobeen.ime.skin.model.ImageContentMode? = null
+        /**
+         * 按压态精灵图引用（工具项 8）：仅覆写装配器写；null = 未用
+         * 精灵图（走整图按压面）。渲染口径与常态精灵图面相同。
+         */
+        var skinPressedFaceSpriteRef: com.jobeen.ime.skin.model.SkinImageRef? = null
         /**
          * G1 动态文字运行时跟随：来源 json 名（candidateFirst/composing），
          * 由覆写装配器写在它生成的外观副本上；键盘层据此在候选/组字

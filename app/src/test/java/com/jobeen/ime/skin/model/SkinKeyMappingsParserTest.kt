@@ -565,4 +565,50 @@ class SkinKeyMappingsParserTest {
             SkinKeyCodes.parseModifiers(listOf("control", "option")),
         )
     }
+
+    @Test
+    fun imageObjectFormParsesSpriteRef() {
+        val result = parseEntry(
+            """{"tap": {"type": "text", "value": "q"},
+              "image": {"file": "sheet1", "image": "btn"}}""",
+        )
+        val override = result.overrides.getValue("KEY_Q")
+        assertNull(override.image)
+        assertEquals(SkinImageRef("sheet1", "btn"), override.imageRef)
+    }
+
+    @Test
+    fun imageRefAloneKeepsOverride() {
+        val result = parseEntry("""{"image": {"file": "sheet1", "image": "btn"}}""")
+        val override = result.overrides.getValue("KEY_Q")
+        assertEquals(SkinImageRef("sheet1", "btn"), override.imageRef)
+    }
+
+    @Test
+    fun imageStringFormUnchanged() {
+        val result = parseEntry(
+            """{"tap": {"type": "text", "value": "q"}, "image": "pic1"}""",
+        )
+        val override = result.overrides.getValue("KEY_Q")
+        assertEquals("pic1", override.image)
+        assertNull(override.imageRef)
+    }
+
+    @Test
+    fun imageObjectMissingFieldRejected() {
+        val result = parseEntry("""{"image": {"file": "sheet1"}}""")
+        assertNull(result.overrides["KEY_Q"])
+        assertTrue(result.rejections.isNotEmpty())
+    }
+
+    @Test
+    fun pressedImageObjectFormParsesSpriteRef() {
+        val result = parseEntry(
+            """{"tap": {"type": "text", "value": "q"},
+              "pressedImage": {"file": "sheet1", "image": "btn_pressed"}}""",
+        )
+        val override = result.overrides.getValue("KEY_Q")
+        assertNull(override.pressedImage)
+        assertEquals(SkinImageRef("sheet1", "btn_pressed"), override.pressedImageRef)
+    }
 }

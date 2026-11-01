@@ -327,6 +327,14 @@ data class KeyOverride(
      */
     val imageContentMode: ImageContentMode? = null,
     /**
+     * 键面精灵图引用（工具项 8）：`image` 字段的对象形态
+     * `{file: <sheet 资产逻辑 id>, image: <子图名>}`；与字符串
+     * 形态互斥（同一字段两种写法，对象形态不写 [image]）。
+     * null = 未用精灵图（走整图键面）。接纳口径与 [image] 相同
+     * （sheet 须在快照清单在册，否则装配期回退颜色键面）。
+     */
+    val imageRef: SkinImageRef? = null,
+    /**
      * G1 附加文字：字符串，用副文字角色渲染；"" 在解析期归一为
      * null（空值 = 无附加文字）；null = 不覆写。
      */
@@ -393,6 +401,11 @@ data class KeyOverride(
      * null = 旧口径 CENTER_CROP。仅在 [pressedImage] 已接纳时生效。
      */
     val pressedImageContentMode: ImageContentMode? = null,
+    /**
+     * 按压态精灵图引用（工具项 8）：与 [imageRef] 同口径，对象形态
+     * 的 `pressedImage` 字段；null = 未用精灵图（走整图按压面）。
+     */
+    val pressedImageRef: SkinImageRef? = null,
     /**
      * 逐键滑动阈值（2026-10-28 截图 6 项）：dp；null = 不覆写
      * （走皮肤级/全局设置/默认 36dp）。非法值解析期丢弃。
@@ -534,6 +547,7 @@ object SkinKeyMappingsParser {
             val (styleRef, styleOverrides) = parseStyle(keyId, entry, rejections, styleWarnings)
             val image = parseImage(keyId, entry, rejections)
             val imageContentMode = parseKeyContentMode(keyId, entry, "imageContentMode", fieldWarnings)
+            val imageRef = parseImageRef(keyId, entry, "image", rejections)
             val subLabel = parseSubLabel(keyId, entry, rejections)
             val subLabelTop = parseSubLabel(keyId, entry, rejections, "subLabelTop")
             val textSizes = parseTextSizes(keyId, entry, fieldWarnings)
@@ -550,6 +564,7 @@ object SkinKeyMappingsParser {
             val pressedImage = parsePressedImage(keyId, entry, rejections)
             val pressedImageContentMode =
                 parseKeyContentMode(keyId, entry, "pressedImageContentMode", fieldWarnings)
+            val pressedImageRef = parseImageRef(keyId, entry, "pressedImage", rejections)
             val swipeThresholdDp = parseSwipeThreshold(keyId, entry, fieldWarnings)
             val preeditTap =
                 parseSingle(keyId, KeySlot.TAP, entry["preeditTap"], rejections, sequenceSlots)
@@ -581,13 +596,13 @@ object SkinKeyMappingsParser {
             if (label == null && soundRef == null && tap == null && swipeUp == null &&
                 swipeDown == null && swipeLeft == null && swipeRight == null &&
                 longPress == null && styleRef == null && styleOverrides.isNullOrEmpty() &&
-                image == null && subLabel == null && subLabelTop == null &&
+                image == null && imageRef == null && subLabel == null && subLabelTop == null &&
                 textSizes.isNullOrEmpty() &&
                 (geometry == null || geometry.isEmpty) && foregroundLayers.isNullOrEmpty() &&
                 dynamicText == null && popupChars == null && hintSymbolsStyle == null &&
                 hintSymbolsGridStyle == null &&
                 hintStyle == null && icon == null &&
-                pressedIcon == null && pressedImage == null &&
+                pressedIcon == null && pressedImage == null && pressedImageRef == null &&
                 swipeThresholdDp == null && preeditTap == null && preeditSwipeUp == null &&
                 preeditSwipeDown == null && preeditSwipeLeft == null &&
                 preeditSwipeRight == null && uppercasedTap == null && repeat == null &&
@@ -610,6 +625,7 @@ object SkinKeyMappingsParser {
                 styleOverrides = styleOverrides,
                 image = image,
                 imageContentMode = imageContentMode,
+                imageRef = imageRef,
                 subLabel = subLabel,
                 subLabelTop = subLabelTop,
                 textSizes = textSizes,
@@ -623,6 +639,7 @@ object SkinKeyMappingsParser {
                 icon = icon,
                 pressedIcon = pressedIcon,
                 pressedImage = pressedImage,
+                pressedImageRef = pressedImageRef,
                 pressedImageContentMode = pressedImageContentMode,
                 swipeThresholdDp = swipeThresholdDp,
                 preeditTap = preeditTap,
@@ -661,12 +678,35 @@ object SkinKeyMappingsParser {
         rejections: MutableList<KeyBindingRejection>,
     ): String? {
         val node = entry["image"] ?: return null
+        // 对象形态走 parseImageRef（精灵图引用），此处不记拒绝。
+        if (node is JsonObject) return null
         val raw = node.stringContentOrNull()
         if (raw == null || raw.isEmpty()) {
             rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
             return null
         }
         return raw // 资产存在性/类型/尺寸由校验器清单口径与快照接纳口径判定
+    }
+
+    /**
+     * 精灵图引用形态（工具项 8）：`image`/`pressedImage` 字段的对象
+     * 写法 `{file, image}`；非对象写法返回 null（字符串形态由
+     * parseImage/parsePressedImage 处理）；对象缺 file/image 记拒绝。
+     */
+    private fun parseImageRef(
+        keyId: String,
+        entry: JsonObject,
+        field: String,
+        rejections: MutableList<KeyBindingRejection>,
+    ): SkinImageRef? {
+        val node = entry[field] as? JsonObject ?: return null
+        val file = node["file"].stringContentOrNull()?.takeIf { it.isNotBlank() }
+        val image = node["image"].stringContentOrNull()?.takeIf { it.isNotBlank() }
+        if (file == null || image == null) {
+            rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
+            return null
+        }
+        return SkinImageRef(file, image)
     }
 
     /**
@@ -1059,6 +1099,8 @@ object SkinKeyMappingsParser {
         rejections: MutableList<KeyBindingRejection>,
     ): String? {
         val node = entry["pressedImage"] ?: return null
+        // 对象形态走 parseImageRef（精灵图引用），此处不记拒绝。
+        if (node is JsonObject) return null
         val raw = node.stringContentOrNull()
         if (raw == null || raw.isEmpty()) {
             rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
