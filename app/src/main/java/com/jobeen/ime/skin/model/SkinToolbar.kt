@@ -98,6 +98,11 @@ data class SkinToolbarSnapshot(
     val collapseIcon: SkinToolbarIconRef? = null,
     val expandSymbol: String? = null,
     val collapseSymbol: String? = null,
+    /**
+     * 全体工具栏钮的背景图（审计 D 项）：描述 + sheet 内容寻址
+     * 引用；null = 未定义（钮无背景图，旧口径）。
+     */
+    val buttonBackground: SkinImageDescriptorSnapshot? = null,
 )
 
 object SkinToolbarParser {

@@ -122,6 +122,11 @@ data class SkinSnapshot(
     val toolbarStyle: ToolbarStyleSpec? = null,
     /** 工具栏布局（审计 B 项）：null = 未定义（出厂排列）。 */
     val toolbarLayout: ToolbarLayoutSpec? = null,
+    /**
+     * 精灵图映射表（审计 D 项）：快照直传校验结果（sheet 资产
+     * 逻辑 id → 子图名 → 帧）；空表 = 未定义（描述按整图计）。
+     */
+    val spriteMaps: Map<String, Map<String, SpriteFrame>> = emptyMap(),
     /** 预编辑高度（审计 B 项）：null = 未定义（走旧 30dp）。 */
     val preeditHeight: VhLengthSpec? = null,
     /** 预编辑样式（审计 B 项）：null = 未定义。 */

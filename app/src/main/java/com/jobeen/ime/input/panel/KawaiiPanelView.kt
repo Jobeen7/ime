@@ -292,7 +292,7 @@ class KawaiiPanelView(context: Context) : View(context) {
             // 用出厂默认（构造参数已传入）。其后用户覆盖层再压一层
             // （有用户配置则胜出，无则不动既有路）。
             SkinToolbarApplier.resolveFor(context)?.let { applied ->
-                renderer.updateSkinToolbar(applied.toolbar, applied.icons)
+                renderer.updateSkinToolbar(applied.toolbar, applied.icons, applied.buttonBackground)
             }
             // 工具栏样式（审计 B 项）：独立于构成抉择，快照直取。
             renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle

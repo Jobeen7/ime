@@ -159,6 +159,12 @@ class ToolbarRenderer(
      */
     var toolbarLayout: ToolbarLayoutSpec? = null,
     /**
+     * 工具栏钮背景图（审计 D 项）：构造点经 SkinToolbarApplier
+     * 解析结果传入；null = 未定义（钮无背景，旧口径）。
+     * 长驻渲染器由 updateSkinToolbar 重设，回落时清掉。
+     */
+    var buttonBackground: ToolbarButtonBackgroundResolver.Resolved? = null,
+    /**
      * 开关启用判定（E6）：构造点注入（StateRenders /
      * KawaiiPanelView，以 ToolbarToggleState.isActive 绑定上下文）；
      * null = 无判定（旧口径：池钮一律常态色）。函数型参数置末。
@@ -256,6 +262,32 @@ class ToolbarRenderer(
             (centerY - size / 2f).toInt(),
             (centerX + size / 2f).toInt(),
             (centerY + size / 2f).toInt(),
+        )
+        drawable.draw(canvas)
+    }
+
+    /**
+     * 工具栏钮背景（审计 D 项）：在图标下画一层 32dp 方框内的
+     * 描述图（描述自身含 9-patch／内容模式，不再 tint）；按压态
+     * （涟漪锚点落在本槽）用高亮变体。无背景时零操作。
+     * 自定义钮（自有背景面）与剪贴板条不走此钩子。
+     */
+    private fun drawButtonBackground(
+        canvas: Canvas,
+        slotLeft: Float,
+        slotRight: Float,
+        cy: Float,
+        density: Float,
+    ) {
+        val bg = buttonBackground ?: return
+        if (slotRight <= slotLeft) return
+        val size = 32f * density
+        val cx = (slotLeft + slotRight) / 2f
+        val pressed = pressAlpha > 0 && pressCx in slotLeft..slotRight
+        val drawable = if (pressed) bg.highlight else bg.normal
+        drawable.setBounds(
+            (cx - size / 2f).toInt(), (cy - size / 2f).toInt(),
+            (cx + size / 2f).toInt(), (cy + size / 2f).toInt(),
         )
         drawable.draw(canvas)
     }
@@ -373,6 +405,7 @@ class ToolbarRenderer(
                     if (disabled) {
                         paints.toolbarIconColor = (savedColor and 0x00FFFFFF) or 0x62000000.toInt()
                     }
+                    drawButtonBackground(canvas, slot.left, slot.right, cy, density)
                     ImageButton(
                         iconFor(item.action, emptyMap()), item.action, iconScale = iconScale,
                     ).draw(canvas, cx, cy, paints, density)
@@ -563,6 +596,7 @@ class ToolbarRenderer(
         fallbackCenterIconOverrides = iconOverrides
         skinToolbarSnapshot = null
         skinIconDrawables = emptyMap()
+        buttonBackground = null
         centerButtons = buildCenterButtons()
     }
 
@@ -570,9 +604,11 @@ class ToolbarRenderer(
     fun updateSkinToolbar(
         snapshot: SkinToolbarSnapshot,
         icons: Map<String, Drawable?>,
+        buttonBackground: ToolbarButtonBackgroundResolver.Resolved? = null,
     ) {
         skinToolbarSnapshot = snapshot
         skinIconDrawables = icons
+        this.buttonBackground = buttonBackground
         centerButtons = buildCenterButtons()
     }
 
@@ -730,6 +766,7 @@ class ToolbarRenderer(
         // 剪贴板态（drawClipbar）不走此分支，仍用内置返回箭头。
         // 布局无菜单槽时整段跳过（menuCenter 为 null）。
         if (menuCenter != null) run {
+            drawButtonBackground(canvas, menuCenter - fixedW / 2f, menuCenter + fixedW / 2f, barCy, density)
             val d = skinExpandDrawable() ?: skinExpandSymbolDrawable()
                 ?: if (textEditingMode || copyText != null || showArrow) resources.arrow else resources.menu
             if (d != null) {
@@ -828,6 +865,10 @@ class ToolbarRenderer(
                 } else if (toggleOn) {
                     paints.toolbarIconColor = paints.toolbarActivedColor
                 }
+                drawButtonBackground(
+                    canvas, centerAreaLeft + otherW * i,
+                    centerAreaLeft + otherW * (i + 1), barCy, density,
+                )
                 btn.draw(
                     canvas, centerAreaLeft + otherW * i + otherW / 2f,
                     barCy, paints, density,
@@ -844,6 +885,7 @@ class ToolbarRenderer(
         // 布局无收起槽时整段跳过。
         val expandIcon = skinCollapseDrawable() ?: skinCollapseSymbolDrawable() ?: expandDrawable()
         if (expandCenter != null && expandIcon != null) {
+            drawButtonBackground(canvas, expandCenter - fixedW / 2f, expandCenter + fixedW / 2f, barCy, density)
             expandIcon.setTint(paints.toolbarIconColor)
             val iw = expandIcon.intrinsicWidth.toFloat() * iconScale
             val ih = expandIcon.intrinsicHeight.toFloat() * iconScale

@@ -42,6 +42,8 @@ private fun StateRenderContext.buildToolbarRenderer(
         centerIconOverrides = emptyMap(),
         skinToolbar = skinApplied?.toolbar,
         skinToolbarIcons = skinApplied?.icons ?: emptyMap(),
+        // 工具栏钮背景图（审计 D 项）：与构成同批解析结果。
+        buttonBackground = skinApplied?.buttonBackground,
         // Symbol 名解析接线（参考项）：中央按钮 icon 不是
         // 包内资产 id 时查 Material Symbols 注册表。
         symbolIconProvider = { name ->

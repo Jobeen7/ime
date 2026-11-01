@@ -148,6 +148,11 @@ object SkinSnapshotBuilder {
             val sha = assetSha256(assetId) ?: return null
             return SkinToolbarIconRef(assetId, sha, assetExt(assetId) ?: "")
         }
+        /** 精灵图 sheet 引用（与图标引用同口径；清单查无返回 null）。 */
+        fun sheetRef(assetId: String): SkinImageSheetRef? {
+            val sha = assetSha256(assetId) ?: return null
+            return SkinImageSheetRef(assetId, sha, assetExt(assetId) ?: "")
+        }
         val toolbarSnapshot = SkinToolbarSnapshot(
             present = validated.toolbar.present,
             buttons = validated.toolbar.buttons?.map { button ->
@@ -161,6 +166,26 @@ object SkinSnapshotBuilder {
             // 渲染期无注册表时回退内置图标，注册表分流接线后解析。
             expandSymbol = validated.toolbar.expandIconSymbol,
             collapseSymbol = validated.toolbar.collapseIconSymbol,
+            // 工具栏钮背景图（审计 D 项）：常态 sheet 清单查无 →
+            // 整描述丢弃（无可画的常态）；高亮 sheet 查无 → 高亮
+            // 置空（渲染回退常态）；内置图无 sheet，空表直传。
+            buttonBackground = validated.toolbarButtonBackground?.let { descriptor ->
+                when (descriptor) {
+                    is SkinImageDescriptor.Asset -> SkinImageDescriptorSnapshot(descriptor, emptyMap())
+                    is SkinImageDescriptor.File -> {
+                        val normalRef = sheetRef(descriptor.normal.file) ?: return@let null
+                        val sheets = LinkedHashMap<String, SkinImageSheetRef>()
+                        sheets[normalRef.assetId] = normalRef
+                        val keptHighlight = descriptor.highlight?.takeIf { ref ->
+                            sheetRef(ref.file)?.also { sheets[it.assetId] = it } != null
+                        }
+                        SkinImageDescriptorSnapshot(
+                            descriptor.copy(highlight = keptHighlight),
+                            sheets,
+                        )
+                    }
+                }
+            },
         )
 
         // G1 单键图片接纳（详设 §7.1 同款口径的轻量版）：被引用集合 =
@@ -232,6 +257,7 @@ object SkinSnapshotBuilder {
             resolvedKeyboards = resolvedKeyboards,
             builtinLayouts = builtinLayouts,
             toolbar = toolbarSnapshot,
+            spriteMaps = validated.spriteMaps,
             notifications = validated.notifications,
             conditionStyles = validated.conditionStyles,
             symbolBar = validated.symbolBar,

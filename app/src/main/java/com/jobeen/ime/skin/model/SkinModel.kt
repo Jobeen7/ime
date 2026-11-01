@@ -396,6 +396,16 @@ data class ValidatedSkin(
     /** 工具栏布局（审计 B 项）：顶层 toolbarLayout；null = 未定义（出厂排列）。 */
     val toolbarLayout: ToolbarLayoutSpec? = null,
     /**
+     * 工具栏钮背景图（审计 D 项）：顶层 toolbarButtonBackgroundStyle
+     * 解析结果；null = 未定义（钮无背景图，旧口径）。
+     */
+    val toolbarButtonBackground: SkinImageDescriptor? = null,
+    /**
+     * 精灵图映射表（审计 D 项）：顶层 sprites 解析结果（sheet 资产
+     * 逻辑 id → 子图名 → 帧）；空表 = 未定义（描述按整图计）。
+     */
+    val spriteMaps: Map<String, Map<String, SpriteFrame>> = emptyMap(),
+    /**
      * 预编辑高度（审计 B 项）：顶层 preeditHeight，数字 = dp，
      * `"Nvh"` = 视口高度百分比；null = 未定义（走旧 30dp 药丸高）。
      */

@@ -23,24 +23,32 @@ object SkinToolbarApplier {
     data class Applied(
         val toolbar: SkinToolbarSnapshot,
         val icons: Map<String, Drawable>,
+        /** 工具栏钮背景图解析结果；null = 未定义或解析失败（不画背景）。 */
+        val buttonBackground: ToolbarButtonBackgroundResolver.Resolved? = null,
     )
 
     fun resolveFor(context: Context): Applied? {
         return runCatching {
             val snapshot = SkinSnapshotProvider.peek() ?: return null
             val toolbar = snapshot.toolbar
-            val hasAny = toolbar.present && (
+            // 背景图独立于 toolbar 节点（与 toolbarStyle 同口径）：
+            // 仅定义背景图的皮肤亦须返回 Applied（中央区/边缘走回落）。
+            val hasAny = toolbar.buttonBackground != null || (toolbar.present && (
                 toolbar.buttons != null ||
                     toolbar.expandIcon != null ||
                     toolbar.collapseIcon != null ||
                     toolbar.expandSymbol != null ||
                     toolbar.collapseSymbol != null
-            )
+            ))
             if (!hasAny) return null
             Applied(
                 toolbar = toolbar,
                 icons = SkinToolbarIconResolver.resolve(
                     context, snapshot.ref.skinId, toolbar,
+                ),
+                buttonBackground = ToolbarButtonBackgroundResolver.resolve(
+                    context, snapshot.ref.skinId,
+                    toolbar.buttonBackground, snapshot.spriteMaps,
                 ),
             )
         }.onFailure { error ->
@@ -60,7 +68,7 @@ object SkinToolbarApplier {
     fun applyTo(renderer: ToolbarRenderer, context: Context) {
         val applied = resolveFor(context)
         if (applied != null) {
-            renderer.updateSkinToolbar(applied.toolbar, applied.icons)
+            renderer.updateSkinToolbar(applied.toolbar, applied.icons, applied.buttonBackground)
         } else {
             renderer.updateCenterActions(
                 ToolbarConfig.DEFAULT_ACTIONS,

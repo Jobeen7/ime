@@ -446,6 +446,16 @@ object SkinValidator {
         // ---- 工具栏布局（审计 B 项） ----
         val toolbarLayout = parseToolbarLayout(tree["toolbarLayout"], "toolbarLayout", issues)
 
+        // ---- 工具栏钮背景图（审计 D 项） + 精灵图映射表 ----
+        // 顶层 `toolbarButtonBackgroundStyle`（对端同名）为全体工具栏
+        // 钮的背景描述；`sprites` 为 sheet 资产 id → 子图映射表。
+        // 两者缺失皆为 null/空表（旧口径：钮无背景图）；非法记 issue
+        // 并丢弃对应节点（不拒包）。
+        val toolbarButtonBackground = parseImageDescriptor(
+            tree["toolbarButtonBackgroundStyle"], "toolbarButtonBackgroundStyle", issues,
+        )
+        val spriteMaps = parseSpriteMaps(tree["sprites"], "sprites", issues)
+
         // ---- 预编辑高度（审计 B 项） ----
         // 数字 = dp（12..64），字符串 "Nvh" = 视口高度百分比；
         // 非法记 issue 并回落旧 30dp（不拒包）。
@@ -914,6 +924,8 @@ object SkinValidator {
                 toolbarHeight = toolbarHeight,
                 toolbarStyle = toolbarStyle,
                 toolbarLayout = toolbarLayout,
+                toolbarButtonBackground = toolbarButtonBackground,
+                spriteMaps = spriteMaps,
                 preeditHeight = preeditHeight,
                 preeditStyle = preeditStyle,
                 horizontalCandidatesStyle = horizontalCandidatesStyle,
