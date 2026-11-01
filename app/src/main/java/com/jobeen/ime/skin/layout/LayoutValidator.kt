@@ -1,6 +1,7 @@
 package com.jobeen.ime.skin.layout
 
 import com.jobeen.ime.skin.model.KeySlot
+import com.jobeen.ime.skin.model.SizeFraction
 import com.jobeen.ime.skin.model.KeyStyleParser
 import com.jobeen.ime.skin.model.SkinAction
 import com.jobeen.ime.skin.model.SkinJson
@@ -296,10 +297,13 @@ object LayoutValidator {
         }
 
         // ---- widthWeight（§2.5-7）：缺省 1.0；非有限数或越界不静默修复 ----
+        // 审计 A 项：另接受对端分数写法 "a/b" 与 {"percentage": n}，
+        // 换算为数值权重后进同一区间校验与构建期归一化（分数转
+        // 权重无损：构建期只用相对比例，行和不变量由构建器守恒）。
         var weight = DEFAULT_WEIGHT
         val weightNode = key["widthWeight"]
         if (weightNode != null) {
-            val parsed = (weightNode as? JsonPrimitive).strictDoubleOrNull()
+            val parsed = parseWeight(weightNode)
             if (parsed == null || !parsed.isFinite() ||
                 parsed < MIN_WEIGHT - EPS || parsed > MAX_WEIGHT + EPS
             ) {
@@ -315,7 +319,7 @@ object LayoutValidator {
         var landscapeWeight: Double? = null
         val landscapeNode = key["landscapeWidthWeight"]
         if (landscapeNode != null) {
-            val parsed = (landscapeNode as? JsonPrimitive).strictDoubleOrNull()
+            val parsed = parseWeight(landscapeNode)
             if (parsed == null || !parsed.isFinite() ||
                 parsed < MIN_WEIGHT - EPS || parsed > MAX_WEIGHT + EPS
             ) {
@@ -529,6 +533,22 @@ object LayoutValidator {
     /** 严格数值读取：JSON 字符串不算数值（与 SkinValidator 同口径）。 */
     private fun JsonPrimitive?.strictDoubleOrNull(): Double? =
         if (this == null || isString) null else doubleOrNull
+
+    /**
+     * 宽度权重读取：数值沿用严格口径；字符串/对象走对端分数
+     * 解析（"a/b"、{"percentage": n}、纯数字字符串）。其余形态
+     * 返回 null，调用方按原处置（竖屏无效整布局、横屏字段回退）。
+     */
+    private fun parseWeight(node: JsonElement): Double? =
+        when (node) {
+            is JsonPrimitive -> if (node.isString) {
+                SizeFraction.parse(node)
+            } else {
+                node.strictDoubleOrNull()
+            }
+            is JsonObject -> SizeFraction.parse(node)
+            else -> null
+        }
 
     private fun JsonPrimitive?.strictIntOrNull(): Int? =
         if (this == null || isString) null else intOrNull
