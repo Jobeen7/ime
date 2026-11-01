@@ -66,7 +66,7 @@ class SymbolItemParserTest {
 
     @Test
     fun invalidItemsAreDropped() {
-        assertNull(SymbolItemParser.parseItem(element("""""")))
+        assertNull(SymbolItemParser.parseItem(element("\"\"")))
         assertNull(SymbolItemParser.parseItem(element("""{"value": "x"}""")))
         assertNull(SymbolItemParser.parseItem(element("""{"label": "X", "value": ""}""")))
         // action 项缺 styleName：整项丢弃（对端升级口径）。
