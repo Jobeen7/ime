@@ -1015,6 +1015,11 @@ object KeyOverrideApplier {
     /** 强类型动作 → 运行时动作（详设 §3.2 映射表；占位类型不得到达此处）。 */
     fun toRuntime(action: SkinAction): KeyboardAction = when (action) {
         is SkinAction.Text -> KeyboardAction.KeySequenceAction(action.value)
+        is SkinAction.SendKeys -> KeyboardAction.SendKeysAction(action.keys)
+        is SkinAction.SendKeyEvent -> KeyboardAction.AppKeyEventAction(
+            action.keyCode, action.ctrl, action.shift, action.alt, action.meta,
+        )
+        is SkinAction.Combine -> KeyboardAction.CombineAction(action.actions.map { toRuntime(it) })
         is SkinAction.Command -> when (action.action) {
             WhitelistAction.COMMIT_DIRECT ->
                 KeyboardAction.LiteralCommitAction(requireNotNull(action.value))
@@ -1043,6 +1048,48 @@ object KeyOverrideApplier {
             WhitelistAction.UNDO -> KeyboardAction.UndoAction
             WhitelistAction.REDO -> KeyboardAction.RedoAction
             WhitelistAction.VOICE_INPUT -> KeyboardAction.VoiceInputAction()
+            // 审计 E 新增命令。
+            WhitelistAction.SYMBOL ->
+                KeyboardAction.LiteralCommitAction(requireNotNull(action.value))
+            WhitelistAction.TAB -> KeyboardAction.AppKeyEventAction(61)
+            WhitelistAction.ESCAPE -> KeyboardAction.AppKeyEventAction(111)
+            WhitelistAction.HOME -> KeyboardAction.AppKeyEventAction(122)
+            WhitelistAction.END -> KeyboardAction.AppKeyEventAction(123)
+            WhitelistAction.SETTINGS -> KeyboardAction.SettingsAction
+            WhitelistAction.SYSTEM_SETTINGS -> KeyboardAction.SystemSettingsAction
+            WhitelistAction.NONE -> KeyboardAction.NoOpAction
+            WhitelistAction.DISMISS_KEYBOARD -> KeyboardAction.HideKeyboardAction
+            WhitelistAction.OPEN_URL ->
+                KeyboardAction.OpenUrlAction(requireNotNull(action.value))
+            WhitelistAction.RETURN_PRIMARY_KEYBOARD -> KeyboardAction.ReturnPrimaryAction
+            WhitelistAction.RETURN_LAST_KEYBOARD -> KeyboardAction.ReturnLastAction
+            WhitelistAction.MOMENTARY_SHIFT -> KeyboardAction.MomentaryShiftAction
+            // 审计 E # 快捷指令集。
+            WhitelistAction.HASH_TRADITIONAL -> KeyboardAction.ToggleTraditionalAction
+            WhitelistAction.HASH_RIME_SWITCHER -> KeyboardAction.ShowInputMethodPickerAction
+            WhitelistAction.HASH_SECOND_CANDIDATE -> KeyboardAction.SelectCandidateIndexAction(1)
+            WhitelistAction.HASH_THIRD_CANDIDATE -> KeyboardAction.SelectCandidateIndexAction(2)
+            WhitelistAction.HASH_SWITCH_SCHEME -> KeyboardAction.RotateSchema
+            WhitelistAction.HASH_LINE_START -> KeyboardAction.AppKeyEventAction(122)
+            WhitelistAction.HASH_LINE_END -> KeyboardAction.AppKeyEventAction(123)
+            WhitelistAction.HASH_NEWLINE -> KeyboardAction.CommitAction("\n")
+            WhitelistAction.HASH_ENTER -> KeyboardAction.ReturnAction()
+            WhitelistAction.HASH_RETYPE -> KeyboardAction.ClearAction
+            WhitelistAction.HASH_CUT ->
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CUT)
+            WhitelistAction.HASH_COPY ->
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.COPY)
+            WhitelistAction.HASH_PASTE ->
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.PASTE)
+            WhitelistAction.HASH_VERTICAL_PAGE_UP -> KeyboardAction.KeyCodeAction(92)
+            WhitelistAction.HASH_VERTICAL_PAGE_DOWN -> KeyboardAction.KeyCodeAction(93)
+            WhitelistAction.HASH_SHOW_PHRASE_VIEW -> KeyboardAction.ShowPhraseViewAction
+            WhitelistAction.HASH_CANDIDATES_BAR_TOGGLE -> KeyboardAction.CandidatesBarToggleAction
+            WhitelistAction.HASH_RIME_PREV_PAGE -> KeyboardAction.KeyCodeAction(92)
+            WhitelistAction.HASH_RIME_NEXT_PAGE -> KeyboardAction.KeyCodeAction(93)
+            WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT -> KeyboardAction.ToggleEmbeddedInputAction
+            WhitelistAction.HASH_CLEAR_CLIPBOARD ->
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR)
         }
         SkinAction.SequencePlaceholder ->
             error("sequence 占位不得转运行时动作（详设 §3.6）")

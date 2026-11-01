@@ -52,6 +52,40 @@ class SkinKeyMappingsParserTest {
             "toggle_ascii_mode" to SkinAction.Command(WhitelistAction.TOGGLE_ASCII_MODE),
             "symbolic_lock_toggle" to SkinAction.Command(WhitelistAction.SYMBOLIC_LOCK_TOGGLE),
             "emoji_lock_toggle" to SkinAction.Command(WhitelistAction.EMOJI_LOCK_TOGGLE),
+            "tab" to SkinAction.Command(WhitelistAction.TAB),
+            "escape" to SkinAction.Command(WhitelistAction.ESCAPE),
+            "home" to SkinAction.Command(WhitelistAction.HOME),
+            "end" to SkinAction.Command(WhitelistAction.END),
+            "settings" to SkinAction.Command(WhitelistAction.SETTINGS),
+            "system_settings" to SkinAction.Command(WhitelistAction.SYSTEM_SETTINGS),
+            "none" to SkinAction.Command(WhitelistAction.NONE),
+            "dismiss_keyboard" to SkinAction.Command(WhitelistAction.DISMISS_KEYBOARD),
+            "open_url" to SkinAction.Command(WhitelistAction.OPEN_URL, "https://example.com"),
+            "return_primary_keyboard" to SkinAction.Command(WhitelistAction.RETURN_PRIMARY_KEYBOARD),
+            "return_last_keyboard" to SkinAction.Command(WhitelistAction.RETURN_LAST_KEYBOARD),
+            "shift" to SkinAction.Command(WhitelistAction.MOMENTARY_SHIFT),
+            "symbol" to SkinAction.Command(WhitelistAction.SYMBOL, "€"),
+            "#简繁切换" to SkinAction.Command(WhitelistAction.HASH_TRADITIONAL),
+            "#RimeSwitcher" to SkinAction.Command(WhitelistAction.HASH_RIME_SWITCHER),
+            "#次选上屏" to SkinAction.Command(WhitelistAction.HASH_SECOND_CANDIDATE),
+            "#三选上屏" to SkinAction.Command(WhitelistAction.HASH_THIRD_CANDIDATE),
+            "#方案切换" to SkinAction.Command(WhitelistAction.HASH_SWITCH_SCHEME),
+            "#行首" to SkinAction.Command(WhitelistAction.HASH_LINE_START),
+            "#行尾" to SkinAction.Command(WhitelistAction.HASH_LINE_END),
+            "#换行" to SkinAction.Command(WhitelistAction.HASH_NEWLINE),
+            "#Enter" to SkinAction.Command(WhitelistAction.HASH_ENTER),
+            "#重输" to SkinAction.Command(WhitelistAction.HASH_RETYPE),
+            "#cut" to SkinAction.Command(WhitelistAction.HASH_CUT),
+            "#copy" to SkinAction.Command(WhitelistAction.HASH_COPY),
+            "#paste" to SkinAction.Command(WhitelistAction.HASH_PASTE),
+            "#verticalCandidatesPageUp" to SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_UP),
+            "#verticalCandidatesPageDown" to SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_DOWN),
+            "#showPhraseView" to SkinAction.Command(WhitelistAction.HASH_SHOW_PHRASE_VIEW),
+            "#candidatesBarStateToggle" to SkinAction.Command(WhitelistAction.HASH_CANDIDATES_BAR_TOGGLE),
+            "#rimePreviousPage" to SkinAction.Command(WhitelistAction.HASH_RIME_PREV_PAGE),
+            "#rimeNextPage" to SkinAction.Command(WhitelistAction.HASH_RIME_NEXT_PAGE),
+            "#toggleEmbeddedInputMode" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT),
+            "#clearSystemPasteboard" to SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD),
         )
         // 白名单封闭性：样本表必须覆盖枚举全集（除 voice_input 单独覆盖）
         assertEquals(
@@ -330,5 +364,177 @@ class SkinKeyMappingsParserTest {
         val blank = parseEntry("""{"pressedIcon": "", "pressedImage": 7}""")
         assertNull(blank.overrides["KEY_Q"]?.pressedIcon)
         assertNull(blank.overrides["KEY_Q"]?.pressedImage)
+    }
+
+    // ---------- 审计 E 新增节点与槽位 ----------
+
+    @Test
+    fun symbolNodeParsedAsLiteralCommand() {
+        val result = parseEntry("""{"tap": {"type": "symbol", "value": "€"}}""")
+        assertTrue(result.rejections.isEmpty())
+        assertEquals(
+            SkinAction.Command(WhitelistAction.SYMBOL, "€"),
+            result.overrides.getValue("KEY_Q").tap,
+        )
+        val blank = parseEntry("""{"tap": {"type": "symbol", "value": " "}}""")
+        assertEquals(BindingRejectReason.VALUE_INVALID, blank.rejections.single().reason)
+    }
+
+    @Test
+    fun sendKeysNodeParsedWithModifiers() {
+        val result = parseEntry(
+            """{"tap": {"type": "sendKeys", "keys": [
+                {"key": "a", "modifiers": ["ctrl"]},
+                {"key": "enter"}
+            ]}}""",
+        )
+        assertTrue(result.rejections.isEmpty())
+        val keys = (result.overrides.getValue("KEY_Q").tap as SkinAction.SendKeys).keys
+        assertEquals(2, keys.size)
+        assertEquals(29, keys[0].keyCode)
+        assertTrue(keys[0].modifiers.ctrl)
+        assertEquals(66, keys[1].keyCode)
+        // 未知键名／未知修饰键整组剔除
+        assertEquals(
+            BindingRejectReason.VALUE_INVALID,
+            parseEntry("""{"tap": {"type": "sendKeys", "keys": [{"key": "nope"}]}}""")
+                .rejections.single().reason,
+        )
+        assertEquals(
+            BindingRejectReason.VALUE_INVALID,
+            parseEntry(
+                """{"tap": {"type": "sendKeys", "keys": [{"key": "a", "modifiers": ["function"]}]}}""",
+            ).rejections.single().reason,
+        )
+    }
+
+    @Test
+    fun sendKeyEventNodeParsed() {
+        val result = parseEntry(
+            """{"tap": {"type": "sendKeyEvent", "key": "s", "modifiers": ["ctrl", "shift"]}}""",
+        )
+        assertTrue(result.rejections.isEmpty())
+        assertEquals(
+            SkinAction.SendKeyEvent(47, ctrl = true, shift = true),
+            result.overrides.getValue("KEY_Q").tap,
+        )
+    }
+
+    @Test
+    fun combineNodeParsedInOrderAndRejectsOnBadChild() {
+        val result = parseEntry(
+            """{"tap": {"type": "combine", "actions": [
+                {"type": "text", "value": "a"},
+                {"type": "command", "action": "space"}
+            ]}}""",
+        )
+        assertTrue(result.rejections.isEmpty())
+        assertEquals(
+            SkinAction.Combine(
+                listOf(
+                    SkinAction.Text("a"),
+                    SkinAction.Command(WhitelistAction.SPACE),
+                ),
+            ),
+            result.overrides.getValue("KEY_Q").tap,
+        )
+        val bad = parseEntry(
+            """{"tap": {"type": "combine", "actions": [
+                {"type": "text", "value": "a"},
+                {"type": "command", "action": "nope"}
+            ]}}""",
+        )
+        assertNull(bad.overrides["KEY_Q"]?.tap)
+        assertEquals(1, bad.rejections.size)
+        assertEquals(BindingRejectReason.UNKNOWN_ACTION, bad.rejections.single().reason)
+    }
+
+    @Test
+    fun momentaryShiftOnlyInTapSlot() {
+        val bad = parseEntry(
+            """{"swipeUp": {"type": "command", "action": "shift"}}""",
+        )
+        assertEquals(BindingRejectReason.BAD_SLOT, bad.rejections.single().reason)
+    }
+
+    @Test
+    fun unmappedHashShortcutsRejectedAsUnknown() {
+        for (name in listOf(
+            "#subCollectionPageUp", "#showPasteboardView",
+            "#rimeDeploy", "#rimeSync", "#keyboardPerformance",
+        )) {
+            val result = parseEntry(
+                """{"tap": {"type": "command", "action": "$name"}}""",
+            )
+            assertEquals(
+                "$name 应按未知动作剔除",
+                BindingRejectReason.UNKNOWN_ACTION,
+                result.rejections.single().reason,
+            )
+        }
+    }
+
+    @Test
+    fun openUrlBlankValueRejected() {
+        val result = parseEntry(
+            """{"tap": {"type": "command", "action": "open_url", "value": " "}}""",
+        )
+        assertEquals(BindingRejectReason.VALUE_INVALID, result.rejections.single().reason)
+    }
+
+    @Test
+    fun preeditUppercasedRepeatAnimationAndStateStyleSlotsParsed() {
+        val result = parseEntry(
+            """{
+                "tap": {"type": "text", "value": "q"},
+                "preeditTap": {"type": "command", "action": "space"},
+                "preeditSwipeUp": {"type": "text", "value": "u"},
+                "uppercasedTap": {"type": "command", "action": "caps"},
+                "repeat": {"type": "command", "action": "delete"},
+                "animations": ["pop", "spin"],
+                "swipeUpForegroundStyle": "hot",
+                "swipeDownForegroundStyle": "cold",
+                "uppercasedForegroundStyle": "upper",
+                "capsLockedForegroundStyle": "locked"
+            }""",
+        )
+        assertTrue(result.rejections.isEmpty())
+        val override = result.overrides.getValue("KEY_Q")
+        assertEquals(SkinAction.Command(WhitelistAction.SPACE), override.preeditTap)
+        assertEquals(SkinAction.Text("u"), override.preeditSwipeUp)
+        assertEquals(SkinAction.Command(WhitelistAction.CAPS), override.uppercasedTap)
+        assertEquals(SkinAction.Command(WhitelistAction.DELETE), override.repeat)
+        assertEquals(listOf("pop", "spin"), override.animations)
+        assertEquals("hot", override.swipeUpForegroundStyle)
+        assertEquals("cold", override.swipeDownForegroundStyle)
+        assertEquals("upper", override.uppercasedForegroundStyle)
+        assertEquals("locked", override.capsLockedForegroundStyle)
+    }
+
+    @Test
+    fun animationsExcessItemsDropped() {
+        val names = (1..10).joinToString(", ") { "\"a$it\"" }
+        val result = parseEntry("""{"animations": [$names]}""")
+        assertEquals(8, result.overrides.getValue("KEY_Q").animations?.size)
+        assertEquals(2, result.rejections.size)
+    }
+
+    @Test
+    fun keyCodeTableCoversLettersDigitsAndNamedKeys() {
+        assertEquals(29, SkinKeyCodes.keyCode("a"))
+        assertEquals(54, SkinKeyCodes.keyCode("Z"))
+        assertEquals(7, SkinKeyCodes.keyCode("0"))
+        assertEquals(16, SkinKeyCodes.keyCode("9"))
+        assertEquals(61, SkinKeyCodes.keyCode("tab"))
+        assertEquals(111, SkinKeyCodes.keyCode("escape"))
+        assertEquals(122, SkinKeyCodes.keyCode("home"))
+        assertEquals(123, SkinKeyCodes.keyCode("end"))
+        assertNull(SkinKeyCodes.keyCode("function"))
+        assertNull(SkinKeyCodes.keyCode("nope"))
+        assertNull(SkinKeyCodes.parseModifiers(listOf("function")))
+        assertEquals(
+            SkinKeyCodes.ParsedModifiers(ctrl = true, alt = true),
+            SkinKeyCodes.parseModifiers(listOf("control", "option")),
+        )
     }
 }

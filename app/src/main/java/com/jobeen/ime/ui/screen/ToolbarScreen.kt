@@ -624,6 +624,40 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.TOGGLE_ASCII_MODE -> R.string.action_toggle_ascii_mode
         WhitelistAction.SYMBOLIC_LOCK_TOGGLE -> R.string.action_symbolic_lock_toggle
         WhitelistAction.EMOJI_LOCK_TOGGLE -> R.string.action_emoji_lock_toggle
+        WhitelistAction.TAB -> R.string.action_tab
+        WhitelistAction.ESCAPE -> R.string.action_escape
+        WhitelistAction.HOME -> R.string.action_home
+        WhitelistAction.END -> R.string.action_end
+        WhitelistAction.SETTINGS -> R.string.action_settings
+        WhitelistAction.SYSTEM_SETTINGS -> R.string.action_system_settings
+        WhitelistAction.NONE -> R.string.action_none
+        WhitelistAction.DISMISS_KEYBOARD -> R.string.action_dismiss_keyboard
+        WhitelistAction.OPEN_URL -> R.string.action_open_url
+        WhitelistAction.RETURN_PRIMARY_KEYBOARD -> R.string.action_return_primary_keyboard
+        WhitelistAction.RETURN_LAST_KEYBOARD -> R.string.action_return_last_keyboard
+        WhitelistAction.MOMENTARY_SHIFT -> R.string.action_momentary_shift
+        WhitelistAction.SYMBOL -> R.string.action_symbol
+        WhitelistAction.HASH_TRADITIONAL -> R.string.action_hash_traditional
+        WhitelistAction.HASH_RIME_SWITCHER -> R.string.action_hash_rime_switcher
+        WhitelistAction.HASH_SECOND_CANDIDATE -> R.string.action_hash_second_candidate
+        WhitelistAction.HASH_THIRD_CANDIDATE -> R.string.action_hash_third_candidate
+        WhitelistAction.HASH_SWITCH_SCHEME -> R.string.action_hash_switch_scheme
+        WhitelistAction.HASH_LINE_START -> R.string.action_hash_line_start
+        WhitelistAction.HASH_LINE_END -> R.string.action_hash_line_end
+        WhitelistAction.HASH_NEWLINE -> R.string.action_hash_newline
+        WhitelistAction.HASH_ENTER -> R.string.action_hash_enter
+        WhitelistAction.HASH_RETYPE -> R.string.action_hash_retype
+        WhitelistAction.HASH_CUT -> R.string.action_hash_cut
+        WhitelistAction.HASH_COPY -> R.string.action_hash_copy
+        WhitelistAction.HASH_PASTE -> R.string.action_hash_paste
+        WhitelistAction.HASH_VERTICAL_PAGE_UP -> R.string.action_hash_vertical_page_up
+        WhitelistAction.HASH_VERTICAL_PAGE_DOWN -> R.string.action_hash_vertical_page_down
+        WhitelistAction.HASH_SHOW_PHRASE_VIEW -> R.string.action_hash_show_phrase_view
+        WhitelistAction.HASH_CANDIDATES_BAR_TOGGLE -> R.string.action_hash_candidates_bar_toggle
+        WhitelistAction.HASH_RIME_PREV_PAGE -> R.string.action_hash_rime_prev_page
+        WhitelistAction.HASH_RIME_NEXT_PAGE -> R.string.action_hash_rime_next_page
+        WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT -> R.string.action_hash_toggle_embedded_input
+        WhitelistAction.HASH_CLEAR_CLIPBOARD -> R.string.action_hash_clear_clipboard
     },
 )
 

@@ -515,6 +515,64 @@ class KeyOverrideApplierTest {
                 KeyboardAction.ToggleEmojiLockAction,
             SkinAction.Command(WhitelistAction.VOICE_INPUT) to
                 KeyboardAction.VoiceInputAction(),
+            SkinAction.Command(WhitelistAction.TAB) to KeyboardAction.AppKeyEventAction(61),
+            SkinAction.Command(WhitelistAction.ESCAPE) to KeyboardAction.AppKeyEventAction(111),
+            SkinAction.Command(WhitelistAction.HOME) to KeyboardAction.AppKeyEventAction(122),
+            SkinAction.Command(WhitelistAction.END) to KeyboardAction.AppKeyEventAction(123),
+            SkinAction.Command(WhitelistAction.SETTINGS) to KeyboardAction.SettingsAction,
+            SkinAction.Command(WhitelistAction.SYSTEM_SETTINGS) to
+                KeyboardAction.SystemSettingsAction,
+            SkinAction.Command(WhitelistAction.NONE) to KeyboardAction.NoOpAction,
+            SkinAction.Command(WhitelistAction.DISMISS_KEYBOARD) to
+                KeyboardAction.HideKeyboardAction,
+            SkinAction.Command(WhitelistAction.OPEN_URL, "https://example.com") to
+                KeyboardAction.OpenUrlAction("https://example.com"),
+            SkinAction.Command(WhitelistAction.RETURN_PRIMARY_KEYBOARD) to
+                KeyboardAction.ReturnPrimaryAction,
+            SkinAction.Command(WhitelistAction.RETURN_LAST_KEYBOARD) to
+                KeyboardAction.ReturnLastAction,
+            SkinAction.Command(WhitelistAction.MOMENTARY_SHIFT) to
+                KeyboardAction.MomentaryShiftAction,
+            SkinAction.Command(WhitelistAction.SYMBOL, "€") to
+                KeyboardAction.LiteralCommitAction("€"),
+            SkinAction.Command(WhitelistAction.HASH_TRADITIONAL) to
+                KeyboardAction.ToggleTraditionalAction,
+            SkinAction.Command(WhitelistAction.HASH_RIME_SWITCHER) to
+                KeyboardAction.ShowInputMethodPickerAction,
+            SkinAction.Command(WhitelistAction.HASH_SECOND_CANDIDATE) to
+                KeyboardAction.SelectCandidateIndexAction(1),
+            SkinAction.Command(WhitelistAction.HASH_THIRD_CANDIDATE) to
+                KeyboardAction.SelectCandidateIndexAction(2),
+            SkinAction.Command(WhitelistAction.HASH_SWITCH_SCHEME) to KeyboardAction.RotateSchema,
+            SkinAction.Command(WhitelistAction.HASH_LINE_START) to
+                KeyboardAction.AppKeyEventAction(122),
+            SkinAction.Command(WhitelistAction.HASH_LINE_END) to
+                KeyboardAction.AppKeyEventAction(123),
+            SkinAction.Command(WhitelistAction.HASH_NEWLINE) to KeyboardAction.CommitAction("\n"),
+            SkinAction.Command(WhitelistAction.HASH_ENTER) to KeyboardAction.ReturnAction(),
+            SkinAction.Command(WhitelistAction.HASH_RETYPE) to KeyboardAction.ClearAction,
+            SkinAction.Command(WhitelistAction.HASH_CUT) to
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CUT),
+            SkinAction.Command(WhitelistAction.HASH_COPY) to
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.COPY),
+            SkinAction.Command(WhitelistAction.HASH_PASTE) to
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.PASTE),
+            SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_UP) to
+                KeyboardAction.KeyCodeAction(92),
+            SkinAction.Command(WhitelistAction.HASH_VERTICAL_PAGE_DOWN) to
+                KeyboardAction.KeyCodeAction(93),
+            SkinAction.Command(WhitelistAction.HASH_SHOW_PHRASE_VIEW) to
+                KeyboardAction.ShowPhraseViewAction,
+            SkinAction.Command(WhitelistAction.HASH_CANDIDATES_BAR_TOGGLE) to
+                KeyboardAction.CandidatesBarToggleAction,
+            SkinAction.Command(WhitelistAction.HASH_RIME_PREV_PAGE) to
+                KeyboardAction.KeyCodeAction(92),
+            SkinAction.Command(WhitelistAction.HASH_RIME_NEXT_PAGE) to
+                KeyboardAction.KeyCodeAction(93),
+            SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT) to
+                KeyboardAction.ToggleEmbeddedInputAction,
+            SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD) to
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR),
         )
         // 覆盖白名单全集
         assertEquals(
@@ -589,6 +647,60 @@ class KeyOverrideApplierTest {
             "静态",
             KeyOverrideApplier.resolveDynamicDisplayText(
                 "静态", null, mapOf("candidateFirst" to "首选"),
+            ),
+        )
+    }
+
+    @Test
+    fun newNodeTypesMapToRuntime() {
+        assertEquals(
+            KeyboardAction.SendKeysAction(
+                listOf(
+                    KeyboardAction.SendKeyCombo(
+                        29,
+                        com.jobeen.ime.engine.event.KeyModifiers(
+                            com.jobeen.ime.engine.event.KeyModifier.Control,
+                        ),
+                    ),
+                    KeyboardAction.SendKeyCombo(66),
+                ),
+            ),
+            KeyOverrideApplier.toRuntime(
+                SkinAction.SendKeys(
+                    listOf(
+                        KeyboardAction.SendKeyCombo(
+                            29,
+                            com.jobeen.ime.engine.event.KeyModifiers(
+                                com.jobeen.ime.engine.event.KeyModifier.Control,
+                            ),
+                        ),
+                        KeyboardAction.SendKeyCombo(66),
+                    ),
+                ),
+            ),
+        )
+        assertEquals(
+            KeyboardAction.AppKeyEventAction(31, ctrl = true, shift = true),
+            KeyOverrideApplier.toRuntime(SkinAction.SendKeyEvent(31, ctrl = true, shift = true)),
+        )
+        assertEquals(
+            KeyboardAction.CombineAction(
+                listOf(
+                    KeyboardAction.KeySequenceAction("a"),
+                    KeyboardAction.SpaceAction,
+                    KeyboardAction.CombineAction(listOf(KeyboardAction.ReturnAction())),
+                ),
+            ),
+            KeyOverrideApplier.toRuntime(
+                SkinAction.Combine(
+                    listOf(
+                        SkinAction.Text("a"),
+                        SkinAction.Command(WhitelistAction.SPACE),
+                        SkinAction.Combine(
+                            listOf(SkinAction.Command(WhitelistAction.ENTER)),
+                        ),
+                    ),
+                ),
             ),
         )
     }

@@ -73,13 +73,71 @@ enum class WhitelistAction(
      */
     SYMBOLIC_LOCK_TOGGLE("symbolic_lock_toggle", ValueRule.FORBIDDEN),
     EMOJI_LOCK_TOGGLE("emoji_lock_toggle", ValueRule.FORBIDDEN),
+    /**
+     * 审计 E 新增命令（Jime 格式名均为 snake_case，对端名由
+     * 转换器映射，不直接进格式）：
+     * - tab/escape/home/end：直送应用的按键（绕过引擎）；
+     * - settings/system_settings：应用内设置／系统设置意图；
+     * - none：刻意空操作；dismiss_keyboard：收起键盘别名；
+     * - open_url：打开链接（仅 http/https 由分发层放行）；
+     * - return_primary_keyboard/return_last_keyboard：经类型
+     *   状态回主键盘／上一键盘；
+     * - shift：瞬时上档（仅 tap 槽，按住生效、抬手复原）；
+     * - symbol：符号通道（字面提交，不经组字与标点转换）。
+     */
+    TAB("tab", ValueRule.FORBIDDEN),
+    ESCAPE("escape", ValueRule.FORBIDDEN),
+    HOME("home", ValueRule.FORBIDDEN),
+    END("end", ValueRule.FORBIDDEN),
+    SETTINGS("settings", ValueRule.FORBIDDEN),
+    SYSTEM_SETTINGS("system_settings", ValueRule.FORBIDDEN),
+    NONE("none", ValueRule.FORBIDDEN),
+    DISMISS_KEYBOARD("dismiss_keyboard", ValueRule.FORBIDDEN),
+    OPEN_URL("open_url", ValueRule.REQUIRED),
+    RETURN_PRIMARY_KEYBOARD("return_primary_keyboard", ValueRule.FORBIDDEN),
+    RETURN_LAST_KEYBOARD("return_last_keyboard", ValueRule.FORBIDDEN),
+    MOMENTARY_SHIFT("shift", ValueRule.FORBIDDEN),
+    SYMBOL("symbol", ValueRule.REQUIRED),
+    /**
+     * 审计 E # 快捷指令集（对端 §6.3 原名，含中文名；格式名
+     * 即指令本身，写在 command 节点的 action 字段）：
+     * - 未列入者（#subCollectionPageUp/Down：Jime 无二级符号集；
+     *   #showPasteboardView：面板无键动作直达口；#rimeDeploy /
+     *   #rimeSync：无键动作直达口；#keyboardPerformance：无对应
+     *   视图）解析期按未知动作剔除，不静默空操作。
+     */
+    HASH_TRADITIONAL("#简繁切换", ValueRule.FORBIDDEN),
+    HASH_RIME_SWITCHER("#RimeSwitcher", ValueRule.FORBIDDEN),
+    HASH_SECOND_CANDIDATE("#次选上屏", ValueRule.FORBIDDEN),
+    HASH_THIRD_CANDIDATE("#三选上屏", ValueRule.FORBIDDEN),
+    HASH_SWITCH_SCHEME("#方案切换", ValueRule.FORBIDDEN),
+    HASH_LINE_START("#行首", ValueRule.FORBIDDEN),
+    HASH_LINE_END("#行尾", ValueRule.FORBIDDEN),
+    HASH_NEWLINE("#换行", ValueRule.FORBIDDEN),
+    HASH_ENTER("#Enter", ValueRule.FORBIDDEN),
+    HASH_RETYPE("#重输", ValueRule.FORBIDDEN),
+    HASH_CUT("#cut", ValueRule.FORBIDDEN),
+    HASH_COPY("#copy", ValueRule.FORBIDDEN),
+    HASH_PASTE("#paste", ValueRule.FORBIDDEN),
+    HASH_VERTICAL_PAGE_UP("#verticalCandidatesPageUp", ValueRule.FORBIDDEN),
+    HASH_VERTICAL_PAGE_DOWN("#verticalCandidatesPageDown", ValueRule.FORBIDDEN),
+    HASH_SHOW_PHRASE_VIEW("#showPhraseView", ValueRule.FORBIDDEN),
+    HASH_CANDIDATES_BAR_TOGGLE("#candidatesBarStateToggle", ValueRule.FORBIDDEN),
+    HASH_RIME_PREV_PAGE("#rimePreviousPage", ValueRule.FORBIDDEN),
+    HASH_RIME_NEXT_PAGE("#rimeNextPage", ValueRule.FORBIDDEN),
+    HASH_TOGGLE_EMBEDDED_INPUT("#toggleEmbeddedInputMode", ValueRule.FORBIDDEN),
+    HASH_CLEAR_CLIPBOARD("#clearSystemPasteboard", ValueRule.FORBIDDEN),
     ;
 
     enum class ValueRule { REQUIRED, FORBIDDEN }
 
-    /** 绑定位限制（定稿四.5）：voice_input 仅长按，其余任意槽。 */
+    /** 绑定位限制（定稿四.5）：voice_input 仅长按，shift 仅点按，其余任意槽。 */
     val allowedSlots: Set<KeySlot>
-        get() = if (this == VOICE_INPUT) setOf(KeySlot.LONG_PRESS) else KeySlot.entries.toSet()
+        get() = when (this) {
+            VOICE_INPUT -> setOf(KeySlot.LONG_PRESS)
+            MOMENTARY_SHIFT -> setOf(KeySlot.TAP)
+            else -> KeySlot.entries.toSet()
+        }
 
     companion object {
         fun fromFormatName(name: String): WhitelistAction? =
@@ -114,6 +172,32 @@ sealed interface SkinAction {
         val action: WhitelistAction,
         val value: String? = null,
     ) : SkinAction
+
+    /**
+     * 组合按键序列（审计 E：sendKeys）：有序的（键码，修饰键）
+     * 组合，运行时逐个经引擎按键通道下发。
+     */
+    data class SendKeys(
+        val keys: List<com.jobeen.ime.input.keyboard.key.KeyboardAction.SendKeyCombo>,
+    ) : SkinAction
+
+    /**
+     * 直送应用的按键事件（审计 E：sendKeyEvent）：绕过引擎，
+     * 经输入连接直发应用；修饰键以布尔字段携带。
+     */
+    data class SendKeyEvent(
+        val keyCode: Int,
+        val ctrl: Boolean = false,
+        val shift: Boolean = false,
+        val alt: Boolean = false,
+        val meta: Boolean = false,
+    ) : SkinAction
+
+    /**
+     * 组合动作（审计 E：combine）：有序子动作列表，运行时按序
+     * 分发；子动作同样经本解析器解析（含嵌套 combine）。
+     */
+    data class Combine(val actions: List<SkinAction>) : SkinAction
 
     /**
      * sequence 占位（历史类型，保留仅为模型兼容）：Batch 3 裁定
@@ -223,6 +307,38 @@ data class KeyOverride(
      * （走皮肤级/全局设置/默认 36dp）。非法值解析期丢弃。
      */
     val swipeThresholdDp: Float? = null,
+    /**
+     * 审计 E 组字态动作（实时判定，非通知锁存）：组字中按下/
+     * 滑动时改用对应动作；null = 该槽无组字态动作（走常态）。
+     * 占位符在装配期按无动作处理（与 tap 槽同口径）。
+     */
+    val preeditTap: SkinAction? = null,
+    val preeditSwipeUp: SkinAction? = null,
+    val preeditSwipeDown: SkinAction? = null,
+    val preeditSwipeLeft: SkinAction? = null,
+    val preeditSwipeRight: SkinAction? = null,
+    /**
+     * 审计 E 大写态动作：大写（Once/Lock/瞬时上档）时点按改用
+     * 对应动作；null = 无大写态动作（走常态，Qwerty 变换照常）。
+     */
+    val uppercasedTap: SkinAction? = null,
+    /** 审计 E 重复动作：按住以 100ms 间隔重复分发；null = 不覆写。 */
+    val repeat: SkinAction? = null,
+    /**
+     * 审计 H 逐键动效槽（Wave-4）：动效表中的动效名列表（≤8，
+     * 超限后项丢弃）；装配期经动效表解析后写 Appearance 的
+     * skinAnimations 字段，优先于样式动效。
+     */
+    val animations: List<String>? = null,
+    /**
+     * 审计 E 方向/大写态前景样式：样式表中的样式名；装配期取
+     * 其 text 角色色写 Appearance 对应字段，未知样式名记日志
+     * 回退（不拒整键）。null = 未配。
+     */
+    val swipeUpForegroundStyle: String? = null,
+    val swipeDownForegroundStyle: String? = null,
+    val uppercasedForegroundStyle: String? = null,
+    val capsLockedForegroundStyle: String? = null,
 )
 
 /** G1 字段级解析警告（样式警告通道之外的字段回退记录：键、字段、原因）。 */
@@ -313,6 +429,33 @@ object SkinKeyMappingsParser {
             val pressedIcon = parsePressedIcon(keyId, entry, rejections)
             val pressedImage = parsePressedImage(keyId, entry, rejections)
             val swipeThresholdDp = parseSwipeThreshold(keyId, entry, fieldWarnings)
+            val preeditTap =
+                parseSingle(keyId, KeySlot.TAP, entry["preeditTap"], rejections, sequenceSlots)
+            val preeditSwipeUp = parseSingle(
+                keyId, KeySlot.SWIPE_UP, entry["preeditSwipeUp"], rejections, sequenceSlots,
+            )
+            val preeditSwipeDown = parseSingle(
+                keyId, KeySlot.SWIPE_DOWN, entry["preeditSwipeDown"], rejections, sequenceSlots,
+            )
+            val preeditSwipeLeft = parseSingle(
+                keyId, KeySlot.SWIPE_LEFT, entry["preeditSwipeLeft"], rejections, sequenceSlots,
+            )
+            val preeditSwipeRight = parseSingle(
+                keyId, KeySlot.SWIPE_RIGHT, entry["preeditSwipeRight"], rejections, sequenceSlots,
+            )
+            val uppercasedTap = parseSingle(
+                keyId, KeySlot.TAP, entry["uppercasedTap"], rejections, sequenceSlots,
+            )
+            val repeat = parseSingle(keyId, KeySlot.TAP, entry["repeat"], rejections, sequenceSlots)
+            val animations = parseAnimations(keyId, entry, rejections)
+            val swipeUpForegroundStyle =
+                parseStyleName(keyId, entry, rejections, "swipeUpForegroundStyle")
+            val swipeDownForegroundStyle =
+                parseStyleName(keyId, entry, rejections, "swipeDownForegroundStyle")
+            val uppercasedForegroundStyle =
+                parseStyleName(keyId, entry, rejections, "uppercasedForegroundStyle")
+            val capsLockedForegroundStyle =
+                parseStyleName(keyId, entry, rejections, "capsLockedForegroundStyle")
             if (label == null && soundRef == null && tap == null && swipeUp == null &&
                 swipeDown == null && swipeLeft == null && swipeRight == null &&
                 longPress == null && styleRef == null && styleOverrides.isNullOrEmpty() &&
@@ -321,7 +464,12 @@ object SkinKeyMappingsParser {
                 (geometry == null || geometry.isEmpty) && foregroundLayers.isNullOrEmpty() &&
                 dynamicText == null && popupChars == null && icon == null &&
                 pressedIcon == null && pressedImage == null &&
-                swipeThresholdDp == null
+                swipeThresholdDp == null && preeditTap == null && preeditSwipeUp == null &&
+                preeditSwipeDown == null && preeditSwipeLeft == null &&
+                preeditSwipeRight == null && uppercasedTap == null && repeat == null &&
+                animations.isNullOrEmpty() && swipeUpForegroundStyle == null &&
+                swipeDownForegroundStyle == null && uppercasedForegroundStyle == null &&
+                capsLockedForegroundStyle == null
             ) {
                 continue // 全字段被剔/未写：该键完全回退出厂，不进覆写表
             }
@@ -348,6 +496,18 @@ object SkinKeyMappingsParser {
                 pressedIcon = pressedIcon,
                 pressedImage = pressedImage,
                 swipeThresholdDp = swipeThresholdDp,
+                preeditTap = preeditTap,
+                preeditSwipeUp = preeditSwipeUp,
+                preeditSwipeDown = preeditSwipeDown,
+                preeditSwipeLeft = preeditSwipeLeft,
+                preeditSwipeRight = preeditSwipeRight,
+                uppercasedTap = uppercasedTap,
+                repeat = repeat,
+                animations = animations,
+                swipeUpForegroundStyle = swipeUpForegroundStyle,
+                swipeDownForegroundStyle = swipeDownForegroundStyle,
+                uppercasedForegroundStyle = uppercasedForegroundStyle,
+                capsLockedForegroundStyle = capsLockedForegroundStyle,
             )
         }
         return ParseResult(overrides, rejections, sequenceSlots, styleWarnings, fieldWarnings)
@@ -779,6 +939,57 @@ object SkinKeyMappingsParser {
         return value
     }
 
+    /**
+     * 审计 H 逐键动效名表：数组 ≤8 项；非字符串/空串项逐项丢弃
+     * （各记一条 STRUCTURE 剔除），超限后项逐项丢弃；剔空 → null。
+     */
+    private fun parseAnimations(
+        keyId: String,
+        entry: JsonObject,
+        rejections: MutableList<KeyBindingRejection>,
+    ): List<String>? {
+        val node = entry["animations"] ?: return null
+        val array = node as? JsonArray
+        if (array == null) {
+            rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
+            return null
+        }
+        val kept = mutableListOf<String>()
+        for (element in array) {
+            val raw = element.stringContentOrNull()
+            if (raw == null || raw.isEmpty()) {
+                rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
+                continue
+            }
+            if (kept.size >= 8) {
+                rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
+                continue
+            }
+            kept += raw
+        }
+        return kept.ifEmpty { null }
+    }
+
+    /**
+     * 审计 E 方向/大写态前景样式名：须为非空字符串，否则字段级
+     * 回退（只丢该字段）；样式名是否存在由装配期判定（未知记
+     * 日志回退，不拒整键）。
+     */
+    private fun parseStyleName(
+        keyId: String,
+        entry: JsonObject,
+        rejections: MutableList<KeyBindingRejection>,
+        field: String,
+    ): String? {
+        val node = entry[field] ?: return null
+        val raw = node.stringContentOrNull()
+        if (raw == null || raw.isEmpty()) {
+            rejections += KeyBindingRejection(keyId, null, BindingRejectReason.STRUCTURE)
+            return null
+        }
+        return raw
+    }
+
     private fun parseSingle(
         keyId: String,
         slot: KeySlot,
@@ -847,6 +1058,33 @@ object SkinKeyMappingsParser {
                     ?: return reject(BindingRejectReason.VALUE_MISSING)
                 SkinAction.Text(value)
             }
+            // 审计 E：符号通道——字面提交，不经组字与标点转换。
+            "symbol" -> {
+                val value = obj["value"].stringContentOrNull()
+                    ?: return reject(BindingRejectReason.VALUE_MISSING)
+                if (value.isBlank()) return reject(BindingRejectReason.VALUE_INVALID)
+                SkinAction.Command(WhitelistAction.SYMBOL, value)
+            }
+            // 审计 E：sendKeys——有序组合序列（≤16 组）。
+            "sendKeys" -> parseSendKeys(keyId, slot, obj, rejections)
+            // 审计 E：sendKeyEvent——直送应用的按键＋修饰键。
+            "sendKeyEvent" -> parseSendKeyEvent(keyId, slot, obj, rejections)
+            // 审计 E：combine——有序子动作列表（≤8 项，子动作
+            // 同经本解析器；任一子项非法则整组剔除）。
+            "combine" -> {
+                val array = obj["actions"] as? JsonArray
+                    ?: return reject(BindingRejectReason.STRUCTURE)
+                if (array.isEmpty()) return reject(BindingRejectReason.VALUE_MISSING)
+                if (array.size > 8) return reject(BindingRejectReason.VALUE_INVALID)
+                val actions = mutableListOf<SkinAction>()
+                for (element in array) {
+                    // 子项失败时 parseAction 已记一条剔除，整组直接
+                    // 剔除（不再追加第二条）。
+                    val sub = parseAction(keyId, slot, element, rejections) ?: return null
+                    actions += sub
+                }
+                SkinAction.Combine(actions)
+            }
             // sequence 占位已删除（B3 裁定，详设 §6.6）：格式不保留
             // 该名，解析一律拒绝；文件节点本身在树层原样往返
             "sequence" -> return reject(BindingRejectReason.SEQUENCE_REMOVED)
@@ -879,6 +1117,12 @@ object SkinKeyMappingsParser {
                 ) {
                     return reject(BindingRejectReason.VALUE_INVALID)
                 }
+                if ((action == WhitelistAction.OPEN_URL ||
+                    action == WhitelistAction.SYMBOL) &&
+                    value.isNullOrBlank()
+                ) {
+                    return reject(BindingRejectReason.VALUE_INVALID)
+                }
                 if (slot !in action.allowedSlots) {
                     return reject(BindingRejectReason.BAD_SLOT)
                 }
@@ -886,5 +1130,79 @@ object SkinKeyMappingsParser {
             }
             else -> reject(BindingRejectReason.UNKNOWN_ACTION)
         }
+    }
+
+    /** sendKeys 节点解析：keys 数组，每项 {key, modifiers?}。 */
+    private fun parseSendKeys(
+        keyId: String,
+        slot: KeySlot,
+        obj: JsonObject,
+        rejections: MutableList<KeyBindingRejection>,
+    ): SkinAction? {
+        fun reject(reason: BindingRejectReason): SkinAction? {
+            rejections += KeyBindingRejection(keyId, slot, reason)
+            return null
+        }
+        val array = obj["keys"] as? JsonArray ?: return reject(BindingRejectReason.STRUCTURE)
+        if (array.isEmpty()) return reject(BindingRejectReason.VALUE_MISSING)
+        if (array.size > 16) return reject(BindingRejectReason.VALUE_INVALID)
+        val keys = mutableListOf<com.jobeen.ime.input.keyboard.key.KeyboardAction.SendKeyCombo>()
+        for (element in array) {
+            val item = element as? JsonObject ?: return reject(BindingRejectReason.STRUCTURE)
+            val keyName = item["key"].stringContentOrNull()
+                ?: return reject(BindingRejectReason.VALUE_MISSING)
+            val keyCode = SkinKeyCodes.keyCode(keyName)
+                ?: return reject(BindingRejectReason.VALUE_INVALID)
+            val modifiersNode = item["modifiers"]
+            val modifiers = if (modifiersNode == null) {
+                SkinKeyCodes.ParsedModifiers()
+            } else {
+                val rawList = (modifiersNode as? JsonArray)
+                    ?.mapNotNull { it.stringContentOrNull() }
+                    ?: return reject(BindingRejectReason.STRUCTURE)
+                if (rawList.size != (modifiersNode as JsonArray).size) {
+                    return reject(BindingRejectReason.STRUCTURE)
+                }
+                SkinKeyCodes.parseModifiers(rawList)
+                    ?: return reject(BindingRejectReason.VALUE_INVALID)
+            }
+            keys += com.jobeen.ime.input.keyboard.key.KeyboardAction.SendKeyCombo(
+                keyCode, modifiers.toKeyModifiers(),
+            )
+        }
+        return SkinAction.SendKeys(keys)
+    }
+
+    /** sendKeyEvent 节点解析：{key, modifiers?}。 */
+    private fun parseSendKeyEvent(
+        keyId: String,
+        slot: KeySlot,
+        obj: JsonObject,
+        rejections: MutableList<KeyBindingRejection>,
+    ): SkinAction? {
+        fun reject(reason: BindingRejectReason): SkinAction? {
+            rejections += KeyBindingRejection(keyId, slot, reason)
+            return null
+        }
+        val keyName = obj["key"].stringContentOrNull()
+            ?: return reject(BindingRejectReason.VALUE_MISSING)
+        val keyCode = SkinKeyCodes.keyCode(keyName)
+            ?: return reject(BindingRejectReason.VALUE_INVALID)
+        val modifiersNode = obj["modifiers"]
+        val modifiers = if (modifiersNode == null) {
+            SkinKeyCodes.ParsedModifiers()
+        } else {
+            val rawList = (modifiersNode as? JsonArray)
+                ?.mapNotNull { it.stringContentOrNull() }
+                ?: return reject(BindingRejectReason.STRUCTURE)
+            if (rawList.size != (modifiersNode as JsonArray).size) {
+                return reject(BindingRejectReason.STRUCTURE)
+            }
+            SkinKeyCodes.parseModifiers(rawList)
+                ?: return reject(BindingRejectReason.VALUE_INVALID)
+        }
+        return SkinAction.SendKeyEvent(
+            keyCode, modifiers.ctrl, modifiers.shift, modifiers.alt, modifiers.meta,
+        )
     }
 }
