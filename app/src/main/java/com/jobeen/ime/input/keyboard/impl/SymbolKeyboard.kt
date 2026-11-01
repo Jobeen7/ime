@@ -114,6 +114,21 @@ class SymbolKeyboard(
     private val sideReturnBtn =
         TextKeyView(context, colors, returnKeyDef.appearance as KeyDef.Appearance.Text)
 
+    /**
+     * 板锁钮（返回钮上方半格）：点按分发已有锁切换动作，
+     * 文案即锁态（🔒 常驻／🔓 提交后返回）；窗口切换锁态
+     * 不重建键盘，钮文案须自刷新（见 [refreshLockBtn]）。
+     */
+    private val sideLockBtn =
+        TextKeyView(
+            context, colors,
+            KeyDef.Appearance.Text(
+                displayText = "🔓", textSize = 15f,
+                percentWidth = 1f,
+                variant = KeyDef.Appearance.Variant.Alternative,
+            ),
+        )
+
     // 接线轮 R5：皮肤符号栏（快照有 symbolBar 规格时才建条；
     // 无规格时本键盘与旧行为完全一致；栏高 48dp）。
     private val barSpec = SkinSnapshotProvider.peek()?.symbolBar
@@ -134,6 +149,19 @@ class SymbolKeyboard(
         sideReturnBtn.onPressedChanged = { key ->
             if (key.isPressed) triggerRipple(key)
         }
+
+        sideLockBtn.borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
+        sideLockBtn.hMargin = 0
+        sideLockBtn.vMargin = 0
+        sideLockBtn.setOnClickListener {
+            // 窗口层同步翻转锁态（不重建键盘），随后自刷新文案。
+            keyActionListener?.onKeyAction(KeyboardAction.ToggleSymbolicLockAction)
+            refreshLockBtn()
+        }
+        sideLockBtn.onPressedChanged = { key ->
+            if (key.isPressed) triggerRipple(key)
+        }
+        refreshLockBtn()
 
         isClickable = true
 
@@ -276,6 +304,7 @@ class SymbolKeyboard(
         }
 
         addView(sidePanelKey, lParams(0, matchParent))
+        addView(sideLockBtn, lParams(0, matchParent))
         addView(sideReturnBtn, lParams(0, matchParent))
         addView(gridView, lParams(0, matchParent))
         barView?.let { addView(it, lParams(matchParent, 0)) }
@@ -302,9 +331,13 @@ class SymbolKeyboard(
         val barH = if (barView?.visibility == View.VISIBLE) context.dp(48) else 0
         val contentH = th - barH
         val sidePanelH = contentH * 3 / 4
+        // 侧栏底区一分为二：上半板锁钮、下半返回钮。
+        val returnRegionH = contentH - sidePanelH
+        val lockH = returnRegionH / 2
         sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH, MeasureSpec.EXACTLY))
+        sideLockBtn.measure(mES(sw, MeasureSpec.EXACTLY), mES(lockH, MeasureSpec.EXACTLY))
         sideReturnBtn.measure(
-            mES(sw, MeasureSpec.EXACTLY), mES(contentH - sidePanelH, MeasureSpec.EXACTLY)
+            mES(sw, MeasureSpec.EXACTLY), mES(returnRegionH - lockH, MeasureSpec.EXACTLY)
         )
         gridView.measure(mES(gw, MeasureSpec.EXACTLY), mES(contentH, MeasureSpec.EXACTLY))
         barView?.measure(mES(tw, MeasureSpec.EXACTLY), mES(barH, MeasureSpec.EXACTLY))
@@ -321,7 +354,9 @@ class SymbolKeyboard(
         val sidePanelH = contentH * 3 / 4
         barView?.layout(0, 0, r - l, barH)
         sidePanelKey.layout(0, barH, sw, barH + sidePanelH)
-        sideReturnBtn.layout(0, barH + sidePanelH, sw, barH + contentH)
+        val lockH = (contentH - sidePanelH) / 2
+        sideLockBtn.layout(0, barH + sidePanelH, sw, barH + sidePanelH + lockH)
+        sideReturnBtn.layout(0, barH + sidePanelH + lockH, sw, barH + contentH)
         gridView.layout(sw, barH, r - l, barH + contentH)
         rippleView.layout(0, 0, r - l, b - t)
     }
@@ -368,8 +403,15 @@ class SymbolKeyboard(
         }
     }
 
+    /** 板锁钮文案即锁态：窗口切换不重建键盘，附着与点按后自刷新。 */
+    private fun refreshLockBtn() {
+        sideLockBtn.mainText.text =
+            if (KeyboardStateManager.symbolicBoardLocked) "🔒" else "🔓"
+    }
+
     override fun onAttach() {
         reset()
+        refreshLockBtn()
         // 接线轮 R5：有皮肤栏规格时打开栏（状态对象默认关闭，
         // 键盘策略在附着时打开；关闭钮仅隐藏本实例的栏，
         // 下次附着重新显示——类型记忆不受影响）。

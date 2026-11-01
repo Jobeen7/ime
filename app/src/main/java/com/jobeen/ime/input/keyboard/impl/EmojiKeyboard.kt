@@ -97,6 +97,21 @@ class EmojiKeyboard(
     private val sideReturnBtn =
         TextKeyView(context, colors, returnKeyDef.appearance as KeyDef.Appearance.Text)
 
+    /**
+     * 板锁钮（返回钮上方半格）：点按分发已有锁切换动作，
+     * 文案即锁态（🔒 常驻／🔓 提交后返回）；窗口切换锁态
+     * 不重建键盘，钮文案须自刷新（见 [refreshLockBtn]）。
+     */
+    private val sideLockBtn =
+        TextKeyView(
+            context, colors,
+            KeyDef.Appearance.Text(
+                displayText = "🔓", textSize = 15f,
+                percentWidth = 1f,
+                variant = KeyDef.Appearance.Variant.Alternative,
+            ),
+        )
+
     private val sidePanelItemDefs: List<KeyDef>
 
     init {
@@ -109,6 +124,19 @@ class EmojiKeyboard(
         sideReturnBtn.onPressedChanged = { key ->
             if (key.isPressed) triggerRipple(key)
         }
+
+        sideLockBtn.borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
+        sideLockBtn.hMargin = 0
+        sideLockBtn.vMargin = 0
+        sideLockBtn.setOnClickListener {
+            // 窗口层同步翻转锁态（不重建键盘），随后自刷新文案。
+            keyActionListener?.onKeyAction(KeyboardAction.ToggleEmojiLockAction)
+            refreshLockBtn()
+        }
+        sideLockBtn.onPressedChanged = { key ->
+            if (key.isPressed) triggerRipple(key)
+        }
+        refreshLockBtn()
 
         isClickable = true
 
@@ -138,6 +166,7 @@ class EmojiKeyboard(
         }
 
         addView(sidePanelKey, lParams(0, matchParent))
+        addView(sideLockBtn, lParams(0, matchParent))
         addView(sideReturnBtn, lParams(0, matchParent))
         addView(gridView, lParams(0, matchParent))
         addView(rippleView, LayoutParams(matchParent, matchParent))
@@ -149,9 +178,13 @@ class EmojiKeyboard(
         val sw = (tw * 0.15f).toInt()
         val gw = tw - sw
         val sidePanelH = th * 3 / 4
+        // 侧栏底区一分为二：上半板锁钮、下半返回钮。
+        val returnRegionH = th - sidePanelH
+        val lockH = returnRegionH / 2
         sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH, MeasureSpec.EXACTLY))
+        sideLockBtn.measure(mES(sw, MeasureSpec.EXACTLY), mES(lockH, MeasureSpec.EXACTLY))
         sideReturnBtn.measure(
-            mES(sw, MeasureSpec.EXACTLY), mES(th - sidePanelH, MeasureSpec.EXACTLY)
+            mES(sw, MeasureSpec.EXACTLY), mES(returnRegionH - lockH, MeasureSpec.EXACTLY)
         )
         gridView.measure(mES(gw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
         // 波纹层是全屏覆盖层：此前从未被 measure/layout，宽高恒为 0，
@@ -164,7 +197,9 @@ class EmojiKeyboard(
         val sw = ((r - l) * 0.15f).toInt()
         val sidePanelH = (b - t) * 3 / 4
         sidePanelKey.layout(0, 0, sw, sidePanelH)
-        sideReturnBtn.layout(0, sidePanelH, sw, b - t)
+        val lockH = ((b - t) - sidePanelH) / 2
+        sideLockBtn.layout(0, sidePanelH, sw, sidePanelH + lockH)
+        sideReturnBtn.layout(0, sidePanelH + lockH, sw, b - t)
         gridView.layout(sw, 0, r - l, b - t)
         rippleView.layout(0, 0, r - l, b - t)
     }
@@ -203,8 +238,15 @@ class EmojiKeyboard(
         }
     }
 
+    /** 板锁钮文案即锁态：窗口切换不重建键盘，附着与点按后自刷新。 */
+    private fun refreshLockBtn() {
+        sideLockBtn.mainText.text =
+            if (KeyboardStateManager.emojiBoardLocked) "🔒" else "🔓"
+    }
+
     override fun onAttach() {
         reset()
+        refreshLockBtn()
     }
 
     override fun onDetach() {
