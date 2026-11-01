@@ -177,6 +177,18 @@ class SkinSnapshotBuilderTest {
     }
 
     @Test
+    fun snapshotCarriesSubClassifiedSymbols() {
+        val snapshot = build(
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"}, "subClassifiedSymbols":
+              {"parents": [{"label": "数学", "subCategories": [
+                {"label": "运算", "symbols": ["+", "-"]}]}]}}""",
+        )
+        val symbols = snapshot.subClassifiedSymbols!!
+        assertEquals(listOf("数学"), symbols.parents.map { it.label })
+        assertEquals(listOf("运算"), symbols.parents[0].subCategories.map { it.label })
+    }
+
+    @Test
     fun snapshotAdmitsOnlyReferencedSounds() {        val json = """
             {"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
              "audio": {"tap": "snd_tap"},

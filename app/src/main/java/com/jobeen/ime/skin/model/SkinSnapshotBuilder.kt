@@ -281,6 +281,7 @@ object SkinSnapshotBuilder {
             notifications = validated.notifications,
             conditionStyles = validated.conditionStyles,
             symbolBar = validated.symbolBar,
+            subClassifiedSymbols = validated.subClassifiedSymbols,
         )
     }
 

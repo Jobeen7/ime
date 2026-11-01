@@ -3,6 +3,7 @@ package com.jobeen.ime.skin.model
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.notify.ConditionStyle
 import com.jobeen.ime.skin.notify.SkinNotification
+import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolBarSpec
 import kotlinx.serialization.json.JsonObject
 
@@ -374,6 +375,8 @@ data class ValidatedSkin(
     val conditionStyles: List<ConditionStyle> = emptyList(),
     /** 符号栏（重点候选 8-6）：顶层 symbolBar 校验结果；null = 无自定义栏。 */
     val symbolBar: SymbolBarSpec? = null,
+    /** 二级分类符号：顶层 subClassifiedSymbols 校验结果；null = 走既有一级表。 */
+    val subClassifiedSymbols: SubClassifiedSymbols? = null,
     /** 拟态双阴影（2026-10-29 item-1）：顶层 keyShadow 校验结果；缺省关闭。 */
     val keyShadow: KeyShadowSpec = KeyShadowSpec(),
     /** 按键动效（2026-10-29 item-1）：顶层 keyAnimation 校验结果；缺省关闭。 */

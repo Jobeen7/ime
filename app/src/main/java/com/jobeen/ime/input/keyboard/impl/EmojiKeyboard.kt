@@ -2,9 +2,14 @@ package com.jobeen.ime.input.keyboard.impl
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Color
 import android.graphics.Typeface
+import android.view.Gravity
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
+import android.widget.LinearLayout
+import android.widget.TextView
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.PunctuationMode
@@ -19,10 +24,14 @@ import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.skin.model.KeyboardTypes
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
+import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
+import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
 import com.jobeen.ime.data.Symbol.Category
@@ -112,6 +121,22 @@ class EmojiKeyboard(
             ),
         )
 
+    /**
+     * 二级面板数据源：皮肤定义二级表时用皮肤表，否则既有一级表
+     * 转二级（每父仅一“全部”子类，此时子条隐藏、行为与旧板一致）。
+     */
+    private val twoStageSymbols: SubClassifiedSymbols =
+        SkinSnapshotProvider.peek()?.subClassifiedSymbols
+            ?: SubClassifiedSymbols.fromSingleLevel(categorys)
+    private val boardState = SubClassifiedBoardState(twoStageSymbols)
+
+    /** 二级子条（48dp 横条，网格之上；单子类时隐藏）。 */
+    private val subStripView: LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setBackgroundColor(colors.specialKeyBackground)
+        visibility = View.GONE
+    }
+
     private val sidePanelItemDefs: List<KeyDef>
 
     init {
@@ -140,13 +165,13 @@ class EmojiKeyboard(
 
         isClickable = true
 
-        sidePanelItemDefs = categorys.mapIndexed { index, (category, _) ->
+        sidePanelItemDefs = boardState.parentLabels.mapIndexed { index, label ->
             KeyDef(
                 appearance = KeyDef.Appearance.Text(
-                    displayText = category.label, textSize = 15f, percentWidth = 0.5f,
+                    displayText = label, textSize = 15f, percentWidth = 0.5f,
                     margin = false, variant = KeyDef.Appearance.Variant.Alternative,
                 ),
-                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(category.label))),
+                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(label))),
                 // 功能锚点（定稿五.6）：序号 = 分类表顺序，只登记不覆写
                 id = KeyIds.Emoji.CATS.getOrNull(index),
             )
@@ -154,22 +179,95 @@ class EmojiKeyboard(
         sidePanelKey.updateItems(sidePanelItemDefs)
 
         sidePanelKey.setOnItemActionListener { action ->
-            if (action is KeyboardAction.CommitAction && categorys.any { it.first.label == action.text }) {
-                val symbols = categorys.firstOrNull { it.first.label == action.text }?.second
-                    ?: return@setOnItemActionListener
-                gridView.setItems(symbols.map { keyDef(SymbolItem.Plain(it)) })
-                val index = categorys.indexOfFirst { it.first.label == action.text }
-                if (index >= 0) sidePanelKey.selectIndex(index)
+            if (action is KeyboardAction.CommitAction && boardState.parentLabels.any { it == action.text }) {
+                applyCategory(action.text)
             } else {
                 keyActionListener?.onKeyAction(action)
             }
         }
+        rebuildSubStrip()
 
         addView(sidePanelKey, lParams(0, matchParent))
         addView(sideLockBtn, lParams(0, matchParent))
         addView(sideReturnBtn, lParams(0, matchParent))
         addView(gridView, lParams(0, matchParent))
+        addView(subStripView, lParams(matchParent, 0))
         addView(rippleView, LayoutParams(matchParent, matchParent))
+    }
+
+    private fun applyCategory(label: String) {
+        val index = boardState.parentLabels.indexOf(label)
+        if (index < 0) return
+        boardState.selectParent(index)
+        gridView.setItems(boardState.currentItems.map { keyDef(it) })
+        sidePanelKey.selectIndex(index)
+        rebuildSubStrip()
+    }
+
+    /**
+     * 二级子条重建：当前父类子类少于 2 个时隐藏（既有一级表
+     * 转二级的常态，板行为与旧板一致）；否则横排子类格，格内
+     * 居中标签＋右上角标（badgeText，无角标时不画）；点格切
+     * 子类（只换网格，不动父类选中）；选中格以按压色标示。
+     */
+    private fun rebuildSubStrip() {
+        val subs = boardState.currentParent?.subCategories.orEmpty()
+        if (subs.size < 2) {
+            subStripView.visibility = View.GONE
+            subStripView.removeAllViews()
+            return
+        }
+        subStripView.visibility = View.VISIBLE
+        subStripView.removeAllViews()
+        subs.forEachIndexed { index, sub ->
+            val cell = FrameLayout(context).apply {
+                setBackgroundColor(
+                    if (index == boardState.subIndex) colors.specialKeyPressed
+                    else Color.TRANSPARENT,
+                )
+                setOnClickListener {
+                    if (boardState.selectSub(index)) {
+                        gridView.setItems(boardState.currentItems.map { keyDef(it) })
+                        rebuildSubStrip()
+                    }
+                }
+            }
+            val label = TextView(context).apply {
+                gravity = Gravity.CENTER
+                setTextSize(15f)
+                setTextColor(colors.specialKeyText)
+                text = sub.label
+            }
+            cell.addView(
+                label,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            sub.badgeText?.let { badge ->
+                val badgeView = TextView(context).apply {
+                    gravity = Gravity.CENTER
+                    setTextSize(9f)
+                    setTextColor(colors.specialKeyText)
+                    text = badge
+                }
+                cell.addView(
+                    badgeView,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        Gravity.TOP or Gravity.END,
+                    ),
+                )
+            }
+            subStripView.addView(
+                cell,
+                LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f,
+                ),
+            )
+        }
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -177,16 +275,20 @@ class EmojiKeyboard(
         val th = MeasureSpec.getSize(heightMeasureSpec)
         val sw = (tw * 0.15f).toInt()
         val gw = tw - sw
-        val sidePanelH = th * 3 / 4
+        // 子条占顶 48dp（隐藏时 0），其余内容整体下移并压缩。
+        val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
+        val contentH = th - subH
+        val sidePanelH = contentH * 3 / 4
         // 侧栏底区一分为二：上半板锁钮、下半返回钮。
-        val returnRegionH = th - sidePanelH
+        val returnRegionH = contentH - sidePanelH
         val lockH = returnRegionH / 2
         sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH, MeasureSpec.EXACTLY))
         sideLockBtn.measure(mES(sw, MeasureSpec.EXACTLY), mES(lockH, MeasureSpec.EXACTLY))
         sideReturnBtn.measure(
             mES(sw, MeasureSpec.EXACTLY), mES(returnRegionH - lockH, MeasureSpec.EXACTLY)
         )
-        gridView.measure(mES(gw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
+        gridView.measure(mES(gw, MeasureSpec.EXACTLY), mES(contentH, MeasureSpec.EXACTLY))
+        subStripView.measure(mES(tw, MeasureSpec.EXACTLY), mES(subH, MeasureSpec.EXACTLY))
         // 波纹层是全屏覆盖层：此前从未被 measure/layout，宽高恒为 0，
         // startRipple 在尺寸守卫处直接返回、波纹从不显示（L1）
         rippleView.measure(mES(tw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
@@ -195,12 +297,15 @@ class EmojiKeyboard(
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val sw = ((r - l) * 0.15f).toInt()
-        val sidePanelH = (b - t) * 3 / 4
-        sidePanelKey.layout(0, 0, sw, sidePanelH)
-        val lockH = ((b - t) - sidePanelH) / 2
-        sideLockBtn.layout(0, sidePanelH, sw, sidePanelH + lockH)
-        sideReturnBtn.layout(0, sidePanelH + lockH, sw, b - t)
-        gridView.layout(sw, 0, r - l, b - t)
+        val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
+        val contentH = (b - t) - subH
+        val sidePanelH = contentH * 3 / 4
+        subStripView.layout(0, 0, r - l, subH)
+        sidePanelKey.layout(0, subH, sw, subH + sidePanelH)
+        val lockH = (contentH - sidePanelH) / 2
+        sideLockBtn.layout(0, subH + sidePanelH, sw, subH + sidePanelH + lockH)
+        sideReturnBtn.layout(0, subH + sidePanelH + lockH, sw, subH + contentH)
+        gridView.layout(sw, subH, r - l, subH + contentH)
         rippleView.layout(0, 0, r - l, b - t)
     }
 
@@ -254,9 +359,10 @@ class EmojiKeyboard(
     }
 
     fun reset() {
-        val (_, symbols) = categorys.first()
-        gridView.setItems(symbols.map { keyDef(SymbolItem.Plain(it)) })
+        boardState.selectParent(0)
+        gridView.setItems(boardState.currentItems.map { keyDef(it) })
         sidePanelKey.selectIndex(0)
+        rebuildSubStrip()
         sidePanelKey.resetPosition()
     }
 }

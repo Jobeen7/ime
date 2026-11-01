@@ -194,6 +194,8 @@ data class SkinSnapshot(
      * null = 无自定义栏（走现有符号键盘）。
      */
     val symbolBar: com.jobeen.ime.skin.symbol.SymbolBarSpec? = null,
+    /** 二级分类符号：皮肤定义时板用二级面板，否则走既有一级表。 */
+    val subClassifiedSymbols: com.jobeen.ime.skin.symbol.SubClassifiedSymbols? = null,
     /**
      * 覆盖层版本（2026-10-29 item-1 D1）：构建本快照时叠加的
      * 覆盖层文件版本；0 = 无覆盖层。进程内覆盖层变化后重建的

@@ -35,6 +35,8 @@ import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.skin.symbol.SharedPrefsSymbolBarTypeStore
+import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
+import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolBarState
 import com.jobeen.ime.skin.symbol.SymbolBarTypeCycler
 import com.jobeen.ime.skin.symbol.SymbolGridResolver
@@ -137,6 +139,22 @@ class SymbolKeyboard(
     private var barSwitchBtn: TextView? = null
     private val barPopup = KeyboardPopup(context)
 
+    /**
+     * 二级面板数据源：皮肤定义二级表时用皮肤表，否则既有一级表
+     * 转二级（每父仅一“全部”子类，此时子条隐藏、行为与旧板一致）。
+     */
+    private val twoStageSymbols: SubClassifiedSymbols =
+        SkinSnapshotProvider.peek()?.subClassifiedSymbols
+            ?: SubClassifiedSymbols.fromSingleLevel(categorys)
+    private val boardState = SubClassifiedBoardState(twoStageSymbols)
+
+    /** 二级子条（48dp 横条，栏条之下、网格之上；单子类时隐藏）。 */
+    private val subStripView: LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setBackgroundColor(colors.specialKeyBackground)
+        visibility = View.GONE
+    }
+
     private val sidePanelItemDefs: List<KeyDef>
 
     init {
@@ -165,13 +183,13 @@ class SymbolKeyboard(
 
         isClickable = true
 
-        sidePanelItemDefs = categorys.mapIndexed { index, (category, _) ->
+        sidePanelItemDefs = boardState.parentLabels.mapIndexed { index, label ->
             KeyDef(
                 appearance = KeyDef.Appearance.Text(
-                    displayText = category.label, textSize = 15f, percentWidth = 0.5f,
+                    displayText = label, textSize = 15f, percentWidth = 0.5f,
                     margin = false, variant = KeyDef.Appearance.Variant.Alternative,
                 ),
-                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(category.label))),
+                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(label))),
                 // 功能锚点（定稿五.6）：序号 = 分类表顺序，只登记不覆写
                 id = KeyIds.Symbol.CATS.getOrNull(index),
             )
@@ -179,7 +197,7 @@ class SymbolKeyboard(
         sidePanelKey.updateItems(sidePanelItemDefs)
 
         sidePanelKey.setOnItemActionListener { action ->
-            if (action is KeyboardAction.CommitAction && categorys.any { it.first.label == action.text }) {
+            if (action is KeyboardAction.CommitAction && boardState.parentLabels.any { it == action.text }) {
                 applyCategory(action.text)
                 // 接线轮 R5：侧栏选类同样持久化（与栏上切换同一记忆）。
                 barState.switchType(action.text)
@@ -187,6 +205,7 @@ class SymbolKeyboard(
                 keyActionListener?.onKeyAction(action)
             }
         }
+        rebuildSubStrip()
 
         // 接线轮 R5：符号栏条（皮肤规格驱动；关闭钮恒贴外缘，
         // 切换钮居内；栏键点按提交、长按出角标格）。
@@ -307,6 +326,7 @@ class SymbolKeyboard(
         addView(sideLockBtn, lParams(0, matchParent))
         addView(sideReturnBtn, lParams(0, matchParent))
         addView(gridView, lParams(0, matchParent))
+        addView(subStripView, lParams(matchParent, 0))
         barView?.let { addView(it, lParams(matchParent, 0)) }
         addView(rippleView, LayoutParams(matchParent, matchParent))
     }
@@ -314,11 +334,79 @@ class SymbolKeyboard(
     private fun categoryLabels(): List<String> = categorys.map { it.first.label }
 
     private fun applyCategory(label: String) {
-        val index = categorys.indexOfFirst { it.first.label == label }
+        val index = boardState.parentLabels.indexOf(label)
         if (index < 0) return
-        gridView.setItems(categorys[index].second.map { keyDef(SymbolItem.Plain(it)) })
+        boardState.selectParent(index)
+        gridView.setItems(boardState.currentItems.map { keyDef(it) })
         sidePanelKey.selectIndex(index)
         barSwitchBtn?.text = label
+        rebuildSubStrip()
+    }
+
+    /**
+     * 二级子条重建：当前父类子类少于 2 个时隐藏（既有一级表
+     * 转二级的常态，板行为与旧板一致）；否则横排子类格，格内
+     * 居中标签＋右上角标（badgeText，无角标时不画）；点格切
+     * 子类（只换网格，不动父类选中）；选中格以按压色标示。
+     */
+    private fun rebuildSubStrip() {
+        val subs = boardState.currentParent?.subCategories.orEmpty()
+        if (subs.size < 2) {
+            subStripView.visibility = View.GONE
+            subStripView.removeAllViews()
+            return
+        }
+        subStripView.visibility = View.VISIBLE
+        subStripView.removeAllViews()
+        subs.forEachIndexed { index, sub ->
+            val cell = FrameLayout(context).apply {
+                setBackgroundColor(
+                    if (index == boardState.subIndex) colors.specialKeyPressed
+                    else Color.TRANSPARENT,
+                )
+                setOnClickListener {
+                    if (boardState.selectSub(index)) {
+                        gridView.setItems(boardState.currentItems.map { keyDef(it) })
+                        rebuildSubStrip()
+                    }
+                }
+            }
+            val label = TextView(context).apply {
+                gravity = Gravity.CENTER
+                setTextSize(15f)
+                setTextColor(colors.specialKeyText)
+                text = sub.label
+            }
+            cell.addView(
+                label,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            sub.badgeText?.let { badge ->
+                val badgeView = TextView(context).apply {
+                    gravity = Gravity.CENTER
+                    setTextSize(9f)
+                    setTextColor(colors.specialKeyText)
+                    text = badge
+                }
+                cell.addView(
+                    badgeView,
+                    FrameLayout.LayoutParams(
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        FrameLayout.LayoutParams.WRAP_CONTENT,
+                        Gravity.TOP or Gravity.END,
+                    ),
+                )
+            }
+            subStripView.addView(
+                cell,
+                LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f,
+                ),
+            )
+        }
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -327,9 +415,10 @@ class SymbolKeyboard(
         val sw = (tw * 0.15f).toInt()
         val gw = tw - sw
         // 接线轮 R5：栏可见时占顶 48dp，其余内容整体下移并压缩；
-        // 栏隐藏时 barH=0，与旧布局完全一致。
+        // 栏隐藏时 barH=0，与旧布局完全一致。子条同口径占顶 48dp。
         val barH = if (barView?.visibility == View.VISIBLE) context.dp(48) else 0
-        val contentH = th - barH
+        val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
+        val contentH = th - barH - subH
         val sidePanelH = contentH * 3 / 4
         // 侧栏底区一分为二：上半板锁钮、下半返回钮。
         val returnRegionH = contentH - sidePanelH
@@ -340,6 +429,7 @@ class SymbolKeyboard(
             mES(sw, MeasureSpec.EXACTLY), mES(returnRegionH - lockH, MeasureSpec.EXACTLY)
         )
         gridView.measure(mES(gw, MeasureSpec.EXACTLY), mES(contentH, MeasureSpec.EXACTLY))
+        subStripView.measure(mES(tw, MeasureSpec.EXACTLY), mES(subH, MeasureSpec.EXACTLY))
         barView?.measure(mES(tw, MeasureSpec.EXACTLY), mES(barH, MeasureSpec.EXACTLY))
         // 同 EmojiKeyboard：波纹层补 measure/layout，否则宽高恒 0、
         // 波纹从不显示（L1）
@@ -350,14 +440,17 @@ class SymbolKeyboard(
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val sw = ((r - l) * 0.15f).toInt()
         val barH = if (barView?.visibility == View.VISIBLE) context.dp(48) else 0
-        val contentH = (b - t) - barH
+        val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
+        val contentH = (b - t) - barH - subH
         val sidePanelH = contentH * 3 / 4
         barView?.layout(0, 0, r - l, barH)
-        sidePanelKey.layout(0, barH, sw, barH + sidePanelH)
+        subStripView.layout(0, barH, r - l, barH + subH)
+        val top = barH + subH
+        sidePanelKey.layout(0, top, sw, top + sidePanelH)
         val lockH = (contentH - sidePanelH) / 2
-        sideLockBtn.layout(0, barH + sidePanelH, sw, barH + sidePanelH + lockH)
-        sideReturnBtn.layout(0, barH + sidePanelH + lockH, sw, barH + contentH)
-        gridView.layout(sw, barH, r - l, barH + contentH)
+        sideLockBtn.layout(0, top + sidePanelH, sw, top + sidePanelH + lockH)
+        sideReturnBtn.layout(0, top + sidePanelH + lockH, sw, top + contentH)
+        gridView.layout(sw, top, r - l, top + contentH)
         rippleView.layout(0, 0, r - l, b - t)
     }
 
@@ -428,15 +521,17 @@ class SymbolKeyboard(
     }
 
     fun reset() {
-        // 接线轮 R5：类型记忆恢复（存过且仍在分类表内时），否则首类。
+        // 接线轮 R5：类型记忆恢复（存过且仍在父类表内时），否则首类。
         val restored = barState.currentType
-        if (restored != null && categorys.any { it.first.label == restored }) {
+        if (restored != null && boardState.parentLabels.contains(restored)) {
             applyCategory(restored)
         } else {
-            val (_, symbols) = categorys.first()
-            gridView.setItems(symbols.map { keyDef(SymbolItem.Plain(it)) })
+            boardState.selectParent(0)
+            gridView.setItems(boardState.currentItems.map { keyDef(it) })
             sidePanelKey.selectIndex(0)
-            barSwitchBtn?.text = categorys.first().first.label
+            barSwitchBtn?.text = boardState.parentLabels.firstOrNull()
+                ?: categorys.first().first.label
+            rebuildSubStrip()
         }
         sidePanelKey.resetPosition()
     }

@@ -8,6 +8,7 @@ import com.jobeen.ime.skin.notify.ConditionStyle
 import com.jobeen.ime.skin.notify.ConditionStyleParser
 import com.jobeen.ime.skin.notify.SkinNotification
 import com.jobeen.ime.skin.notify.SkinNotificationParser
+import com.jobeen.ime.skin.symbol.SubClassifiedSymbolsParser
 import com.jobeen.ime.skin.symbol.SymbolBarParser
 import com.jobeen.ime.skin.symbol.SymbolBarSpec
 import kotlinx.serialization.json.JsonArray
@@ -982,6 +983,27 @@ object SkinValidator {
             }
         }
 
+        // ---- subClassifiedSymbols：顶层数组或 {parents}，非法父／子类逐项丢弃不拒包 ----
+        var subClassifiedSymbols: com.jobeen.ime.skin.symbol.SubClassifiedSymbols? = null
+        val subClassifiedNode = tree["subClassifiedSymbols"]
+        if (subClassifiedNode != null) {
+            if (subClassifiedNode !is JsonObject && subClassifiedNode !is JsonArray) {
+                issues += SkinIssue(
+                    "subClassifiedSymbols", SkinIssue.Kind.FIELD_FALLBACK,
+                    "sub_classified_symbols_not_array_or_object",
+                )
+            } else {
+                val (parsed, dropped) = SubClassifiedSymbolsParser.parse(subClassifiedNode)
+                subClassifiedSymbols = parsed
+                if (dropped > 0) {
+                    issues += SkinIssue(
+                        "subClassifiedSymbols", SkinIssue.Kind.FIELD_FALLBACK,
+                        "sub_classified_symbols_dropped:$dropped",
+                    )
+                }
+            }
+        }
+
         // ---- keyShadow（2026-10-29 item-1 拟态）：顶层对象，非法字段逐项回退默认值 ----
         val (keyShadow, keyShadowIssues) = KeyShadowParser.parse(tree["keyShadow"])
         issues += keyShadowIssues
@@ -1074,6 +1096,7 @@ object SkinValidator {
                 notifications = notifications,
                 conditionStyles = conditionStyles,
                 symbolBar = symbolBar,
+                subClassifiedSymbols = subClassifiedSymbols,
                 keyShadow = keyShadow,
                 keyAnimation = keyAnimation,
                 spaceAnimation = spaceAnimationOrNull,
