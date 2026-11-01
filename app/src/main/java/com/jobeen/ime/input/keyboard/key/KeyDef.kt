@@ -79,6 +79,14 @@ open class KeyDef(
          * 为快照接纳资产）；null/空 = 无样式动效（走全局动效）。
          */
         var skinAnimations: List<com.jobeen.ime.skin.model.KeyAnimationDef>? = null
+        /** 大写激活时主文字色（审计 E：uppercased 前景样式，Qwerty 消费）。 */
+        var skinUppercasedTextColor: Int? = null
+        /** 大写锁定后主文字色（审计 E：caps-locked 前景样式，Qwerty 消费）。 */
+        var skinCapsLockedTextColor: Int? = null
+        /** 上滑中主文字暂显色（审计 E：滑动方向前景样式）。 */
+        var skinSwipeUpTextColor: Int? = null
+        /** 下滑中主文字暂显色（审计 E：滑动方向前景样式）。 */
+        var skinSwipeDownTextColor: Int? = null
         /** G1 图标染色（keyStyles icon 角色解析结果；无图标的键忽略）。 */
         var skinIconTintColor: Int? = null
         /**
@@ -238,7 +246,13 @@ open class KeyDef(
     }
 
     sealed class Behavior {
-        class Press(val action: KeyboardAction) : Behavior()
+        class Press(
+            val action: KeyboardAction,
+            /** 组合（preedit）存在时的点击动作（审计 E：preeditStateAction）。 */
+            val preeditAction: KeyboardAction? = null,
+            /** 大写激活时的点击动作（审计 E：uppercasedStateAction）。 */
+            val uppercasedAction: KeyboardAction? = null,
+        ) : Behavior()
         class LongPress(val action: KeyboardAction) : Behavior()
         class Repeat(val action: KeyboardAction) : Behavior()
         class Swipe(
@@ -247,6 +261,11 @@ open class KeyDef(
             /** G1 左右滑（null = 该方向不出厂/不覆写；缺省 null 与旧行为一致）。 */
             val leftAction: KeyboardAction? = null,
             val rightAction: KeyboardAction? = null,
+            /** 组合中各方向滑动动作（审计 E：preeditStateAction 方向版）。 */
+            val preeditUpAction: KeyboardAction? = null,
+            val preeditDownAction: KeyboardAction? = null,
+            val preeditLeftAction: KeyboardAction? = null,
+            val preeditRightAction: KeyboardAction? = null,
         ) : Behavior()
 
         /** 空格键左右滑动移动光标（连续触发，每跨过一个阈值移动一格） */

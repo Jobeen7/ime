@@ -3,6 +3,7 @@ package com.jobeen.ime.input.keyboard.impl
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
+import android.view.View
 import android.view.inputmethod.EditorInfo
 import androidx.constraintlayout.widget.ConstraintLayout
 import com.jobeen.ime.R
@@ -21,6 +22,7 @@ import com.jobeen.ime.input.keyboard.key.KeyPreviewPopup
 import com.jobeen.ime.input.keyboard.key.KeyboardPopup
 import com.jobeen.ime.input.keyboard.key.KeyView
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
+import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.SwipeThresholds
 import com.jobeen.ime.input.keyboard.key.TextKeyView
@@ -417,12 +419,31 @@ abstract class BaseKeyboard(
                     else -> {}
                 }
             }
+            // 按住上档标记（审计 E：momentary shift）：循环结束
+            // 后再链式接线（见循环后），避免与 popups/语音分支
+            // 的单槽位监听互相覆盖。
+            var hasMomentaryShift = false
             def.behaviors.forEach { behavior ->
                 when (behavior) {
                     is KeyDef.Behavior.Press -> {
-                        setOnClickListener({
-                            onAction(behavior.action)
-                        })
+                        if (behavior.action is KeyboardAction.MomentaryShiftAction) {
+                            // 按住上档不走点击分发：按下/抬手由文末
+                            // 链式钩子驱动大写状态（无点击语义）。
+                            hasMomentaryShift = true
+                        } else {
+                            setOnClickListener({
+                                // 分发期状态解析（审计 E：preedit >
+                                // uppercased > normal）：组合与大写在点击
+                                // 瞬间求值，不在装配期定死。
+                                onAction(
+                                    resolvePressAction(
+                                        behavior,
+                                        KeyboardStateManager.isComposingNow,
+                                        isUppercased,
+                                    )
+                                )
+                            })
+                        }
                     }
 
                     is KeyDef.Behavior.LongPress -> {
@@ -485,29 +506,44 @@ abstract class BaseKeyboard(
                         swipeThresholdY = dp(threshold)
                         onGestureListener = CustomGestureView.OnGestureListener { _, event ->
                             when (event.type) {
+                                // 滑动方向前景色（审计 E）：滑动中按方向
+                                // 暂显该方向色（仅上/下有样式槽），抬手/
+                                // 取消恢复默认色；无样式时全程默认色。
+                                CustomGestureView.GestureType.Move -> {
+                                    applyTransientSwipeColor(
+                                        this,
+                                        def,
+                                        swipeDirectionFor(
+                                            hasHorizontal,
+                                            event.totalX,
+                                            event.totalY,
+                                        ),
+                                    )
+                                    false
+                                }
+
                                 CustomGestureView.GestureType.Up -> {
+                                    clearTransientSwipeColor(this, def)
                                     if (!event.consumed) {
-                                        // 主导轴判定：横向步数绝对值不小于纵向且
-                                        // 有左右动作时走横向，否则走旧纵向口径
-                                        // （平手时纵向优先，旧皮肤行为不变）。
-                                        val action = when {
-                                            hasHorizontal && event.totalX != 0 &&
-                                                kotlin.math.abs(event.totalX) >=
-                                                kotlin.math.abs(event.totalY) ->
-                                                if (event.totalX < 0) {
-                                                    behavior.leftAction
-                                                } else {
-                                                    behavior.rightAction
-                                                }
-                                            event.totalY < 0 -> behavior.upAction
-                                            event.totalY > 0 -> behavior.downAction
-                                            else -> null
-                                        }
+                                        val action = resolveSwipeAction(
+                                            behavior,
+                                            swipeDirectionFor(
+                                                hasHorizontal,
+                                                event.totalX,
+                                                event.totalY,
+                                            ),
+                                            KeyboardStateManager.isComposingNow,
+                                        )
                                         if (action != null) {
                                             onAction(action)
                                             true
                                         } else false
                                     } else false
+                                }
+
+                                CustomGestureView.GestureType.Cancel -> {
+                                    clearTransientSwipeColor(this, def)
+                                    false
                                 }
 
                                 else -> false
@@ -539,6 +575,21 @@ abstract class BaseKeyboard(
                             }
                         }
                     }
+                }
+            }
+            if (hasMomentaryShift) {
+                // 按住上档链式接线：popups/语音分支已占位时
+                // 不得覆盖（单槽位监听），一律追加在原监听之后；
+                // 循环后接线与 Set 迭代顺序无关。
+                val prevDown = onTouchDownListener
+                val prevUp = onTouchUpListener
+                onTouchDownListener = { v ->
+                    prevDown?.invoke(v)
+                    onMomentaryShiftDown()
+                }
+                onTouchUpListener = { v ->
+                    prevUp?.invoke(v)
+                    onMomentaryShiftUp()
                 }
             }
         }
@@ -610,6 +661,50 @@ abstract class BaseKeyboard(
             action
         }
         keyActionListener?.onKeyAction(transformed)
+    }
+
+    /** 大写是否激活（含按住上档）：Qwerty 覆写；其余键盘恒 false。 */
+    protected open val isUppercased: Boolean get() = false
+
+    /** 按住上档按下：Qwerty 覆写（进 Momentary）；其余键盘无操作。 */
+    protected open fun onMomentaryShiftDown() {}
+
+    /** 按住上档抬手：Qwerty 覆写（回 None）；其余键盘无操作。 */
+    protected open fun onMomentaryShiftUp() {}
+
+    /**
+     * 主文字默认色（TextKeyView/AltTextKeyView 构造期同口径）：
+     * 图标色 > 皮肤文字色 > 变体色。滑动/大写暂显色恢复时共用。
+     */
+    protected fun defaultMainTextColor(appearance: KeyDef.Appearance): Int =
+        appearance.skinIconTintColor ?: appearance.skinTextColor ?: when (appearance.variant) {
+            KeyDef.Appearance.Variant.Normal,
+            KeyDef.Appearance.Variant.AltForeground -> colors.keyText
+            KeyDef.Appearance.Variant.Alternative -> colors.specialKeyText
+            KeyDef.Appearance.Variant.Accent -> colors.accentKeyText
+            KeyDef.Appearance.Variant.None -> colors.keyText
+        }
+
+    private fun setMainTextColor(view: View, appearance: KeyDef.Appearance, color: Int?) {
+        val target = color ?: defaultMainTextColor(appearance)
+        when (view) {
+            is TextKeyView -> view.mainText.setTextColor(target)
+            is AltTextKeyView -> view.mainText.setTextColor(target)
+            else -> Unit
+        }
+    }
+
+    private fun applyTransientSwipeColor(view: View, def: KeyDef, direction: SwipeDirection?) {
+        val color = when (direction) {
+            SwipeDirection.UP -> def.appearance.skinSwipeUpTextColor
+            SwipeDirection.DOWN -> def.appearance.skinSwipeDownTextColor
+            else -> null
+        }
+        setMainTextColor(view, def.appearance, color)
+    }
+
+    private fun clearTransientSwipeColor(view: View, def: KeyDef) {
+        setMainTextColor(view, def.appearance, null)
     }
 
     override fun onAttach() = Timber.d("Keyboard onAttach")
@@ -690,5 +785,68 @@ abstract class BaseKeyboard(
             }
         }
         spanPanelViews.forEach { it.updateMode(mode) }
+    }
+}
+
+/** 滑动方向（纯决策，与 CustomGestureView 事件口径一致）。 */
+internal enum class SwipeDirection { UP, DOWN, LEFT, RIGHT }
+
+/**
+ * 分发期点击动作解析（审计 E：preedit > uppercased > normal）：
+ * 组合中 preedit 动作优先；无 preedit 动作时大写动作次之；
+ * 均无时用普通动作。组合且无 preedit 时不跳过大写（两态
+ * 独立，preedit 只压过普通，不压过大写缺省）。
+ */
+internal fun resolvePressAction(
+    behavior: KeyDef.Behavior.Press,
+    isComposing: Boolean,
+    isUppercased: Boolean,
+): KeyboardAction {
+    if (isComposing && behavior.preeditAction != null) return behavior.preeditAction
+    if (isUppercased && behavior.uppercasedAction != null) return behavior.uppercasedAction
+    return behavior.action
+}
+
+/**
+ * 滑动主导轴判定（与旧 Up 分支逐字同口径）：横向步数绝对值
+ * 不小于纵向且有左右动作时走横向，否则走纵向；零位移无方向。
+ */
+internal fun swipeDirectionFor(
+    hasHorizontal: Boolean,
+    totalX: Int,
+    totalY: Int,
+): SwipeDirection? = when {
+    hasHorizontal && totalX != 0 &&
+        kotlin.math.abs(totalX) >= kotlin.math.abs(totalY) ->
+        if (totalX < 0) SwipeDirection.LEFT else SwipeDirection.RIGHT
+    totalY < 0 -> SwipeDirection.UP
+    totalY > 0 -> SwipeDirection.DOWN
+    else -> null
+}
+
+/**
+ * 分发期滑动动作解析：组合中该方向 preedit 动作优先，
+ * 否则该方向普通动作；无方向或该方向无动作时为 null。
+ */
+internal fun resolveSwipeAction(
+    behavior: KeyDef.Behavior.Swipe,
+    direction: SwipeDirection?,
+    isComposing: Boolean,
+): KeyboardAction? {
+    if (direction == null) return null
+    if (isComposing) {
+        val preedit = when (direction) {
+            SwipeDirection.UP -> behavior.preeditUpAction
+            SwipeDirection.DOWN -> behavior.preeditDownAction
+            SwipeDirection.LEFT -> behavior.preeditLeftAction
+            SwipeDirection.RIGHT -> behavior.preeditRightAction
+        }
+        if (preedit != null) return preedit
+    }
+    return when (direction) {
+        SwipeDirection.UP -> behavior.upAction
+        SwipeDirection.DOWN -> behavior.downAction
+        SwipeDirection.LEFT -> behavior.leftAction
+        SwipeDirection.RIGHT -> behavior.rightAction
     }
 }

@@ -9,6 +9,7 @@ import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.event.KeyEvent
 import com.jobeen.ime.input.keyboard.key.AltTextKeyView
+import com.jobeen.ime.input.keyboard.key.KeyView
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -46,7 +47,12 @@ class QwertyKeyboard(
     layout,
 ) {
 
-    enum class CapsState { None, Once, Lock }
+    enum class CapsState {
+        None, Once, Lock,
+
+        /** 按住上档（审计 E：momentary shift）：按住期间大写，抬手即回。 */
+        Momentary,
+    }
 
     var punctuationState: PunctuationMode = PunctuationMode.FullWidth
 
@@ -104,6 +110,8 @@ class QwertyKeyboard(
                 CapsState.None -> CapsState.Once
                 CapsState.Once -> CapsState.Lock
                 CapsState.Lock -> CapsState.None
+                // 按住期间 caps 键不改状态（Momentary 只由抬手结束）。
+                CapsState.Momentary -> CapsState.Momentary
             }
 
             is KeyboardAction.CommitAction -> KeyboardAction.CommitAction(
@@ -123,6 +131,22 @@ class QwertyKeyboard(
 
             else -> action to null
         }
+
+        /**
+         * 按住上档按下目标（纯决策）：仅 None 时进 Momentary；
+         * 已是 Once/Lock/Momentary 时按下不改状态（抬手亦不改，
+         * 由 active 标志位保证成对无操作）。
+         */
+        internal fun momentaryDownTarget(state: CapsState): CapsState? =
+            if (state == CapsState.None) CapsState.Momentary else null
+
+        /**
+         * 按住上档抬手目标（纯决策）：仅当本次按下激活且仍为
+         * Momentary 时回 None；其余（未激活、期间被 caps 键改
+         * 态）均不改状态。
+         */
+        internal fun momentaryUpTarget(state: CapsState, active: Boolean): CapsState? =
+            if (active && state == CapsState.Momentary) CapsState.None else null
 
         fun buildLayout(returnVariant: Variant): List<List<KeyDef>> {
             return listOf(
@@ -172,6 +196,9 @@ class QwertyKeyboard(
     }
 
     private var capsState = CapsState.None
+
+    /** 按住上档是否由本键按下（按下时已是 Once/Lock 则按下/抬手均无操作）。 */
+    private var momentaryShiftActive = false
     private val letterKeyViews = mutableListOf<AltTextKeyView>()
     private var capsKeyView: ImageKeyView? = null
 
@@ -218,7 +245,9 @@ class QwertyKeyboard(
     override fun onAttach() {
         super.onAttach()
         capsState = CapsState.None
+        momentaryShiftActive = false
         updateKeyTextForState(capsState)
+        applyCapsColors(capsState)
     }
 
     override fun name(): String {
@@ -230,8 +259,10 @@ class QwertyKeyboard(
             CapsState.None -> CapsState.Once
             CapsState.Once -> CapsState.Lock
             CapsState.Lock -> CapsState.None
+            CapsState.Momentary -> CapsState.Momentary
         }
         updateKeyTextForState(capsState)
+        applyCapsColors(capsState)
     }
 
 
@@ -244,10 +275,58 @@ class QwertyKeyboard(
         capsKeyView?.img?.setImageResource(
             when (state) {
                 CapsState.None -> R.drawable.ic_keyboard_capslock_none
-                CapsState.Once -> R.drawable.ic_keyboard_capslock_once
+                // 按住上档与点按一次同图标（均为临时大写）。
+                CapsState.Once, CapsState.Momentary -> R.drawable.ic_keyboard_capslock_once
                 CapsState.Lock -> R.drawable.ic_keyboard_capslock_lock
             }
         )
+    }
+
+    /** 大写激活口径：None 之外（含 Momentary）均视为大写。 */
+    override val isUppercased: Boolean get() = capsState != CapsState.None
+
+    override fun onMomentaryShiftDown() {
+        if (previewMode) return
+        val target = momentaryDownTarget(capsState)
+        momentaryShiftActive = target != null
+        if (target != null) switchCapsState(target)
+    }
+
+    override fun onMomentaryShiftUp() {
+        if (previewMode) return
+        val target = momentaryUpTarget(capsState, momentaryShiftActive)
+        momentaryShiftActive = false
+        if (target != null) switchCapsState(target)
+    }
+
+    /**
+     * 大写前景色（审计 E：uppercased/caps-locked 样式）：遍历全部
+     * 文字键主文字——Lock 取 capsLocked（缺省退 uppercased），
+     * Once/Momentary 取 uppercased，None 恢复默认色；图片键无
+     * 主文字自然跳过。无样式时全程默认色（行为与旧一致）。
+     */
+    private fun applyCapsColors(state: CapsState) {
+        for (row in keyRows) {
+            for (i in 0 until row.childCount) {
+                val child = row.getChildAt(i) as? KeyView ?: continue
+                val appearance = child.def
+                val color = when (state) {
+                    CapsState.Lock -> appearance.skinCapsLockedTextColor
+                        ?: appearance.skinUppercasedTextColor
+                    CapsState.Once, CapsState.Momentary -> appearance.skinUppercasedTextColor
+                    CapsState.None -> null
+                }
+                when (child) {
+                    is TextKeyView -> child.mainText.setTextColor(
+                        color ?: defaultMainTextColor(appearance)
+                    )
+                    is AltTextKeyView -> child.mainText.setTextColor(
+                        color ?: defaultMainTextColor(appearance)
+                    )
+                    else -> Unit
+                }
+            }
+        }
     }
 
     override fun updatePunctuationMode(mode: PunctuationMode) {
