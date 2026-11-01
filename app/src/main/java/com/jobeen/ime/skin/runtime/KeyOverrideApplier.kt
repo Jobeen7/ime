@@ -1253,6 +1253,7 @@ object KeyOverrideApplier {
             WhitelistAction.HASH_RIME_PREV_PAGE -> KeyboardAction.KeyCodeAction(92)
             WhitelistAction.HASH_RIME_NEXT_PAGE -> KeyboardAction.KeyCodeAction(93)
             WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT -> KeyboardAction.ToggleEmbeddedInputAction
+            WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW -> KeyboardAction.ToggleScriptViewAction
             WhitelistAction.HASH_CLEAR_CLIPBOARD ->
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR)
         }

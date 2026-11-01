@@ -87,6 +87,7 @@ class SkinKeyMappingsParserTest {
             "#rimePreviousPage" to SkinAction.Command(WhitelistAction.HASH_RIME_PREV_PAGE),
             "#rimeNextPage" to SkinAction.Command(WhitelistAction.HASH_RIME_NEXT_PAGE),
             "#toggleEmbeddedInputMode" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT),
+            "#toggleScriptView" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW),
             "#clearSystemPasteboard" to SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD),
         )
         // 白名单封闭性：样本表必须覆盖枚举全集（除 voice_input 单独覆盖）

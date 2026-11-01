@@ -161,6 +161,15 @@ sealed class KeyboardAction {
     /** 打开脚本管理页（open_script）。 */
     data object OpenScriptsAction : KeyboardAction()
 
+    /**
+     * 切换脚本视图（#toggleScriptView）：脚本视图即应用级脚本
+     * 管理页。键盘按键只在键盘前台时送达，此时管理页必然不
+     * 在前台，故按键可达的切换方向恒为显示；收起方向由管理
+     * 页自身的返回键承担，不由按键实现。分发上与
+     * [OpenScriptsAction] 同目的地、不同动作种类。
+     */
+    data object ToggleScriptViewAction : KeyboardAction()
+
     /** 打开系统设置（审计 E：systemSettings）：系统设置意图。 */
     data object SystemSettingsAction : KeyboardAction()
 

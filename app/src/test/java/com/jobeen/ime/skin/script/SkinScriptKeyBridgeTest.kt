@@ -40,6 +40,10 @@ class SkinScriptKeyBridgeTest {
             SkinAction.Command(WhitelistAction.OPEN_SCRIPT),
             SkinScriptKeyBridge.resolveReturnAction("open_script"),
         )
+        assertEquals(
+            SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW),
+            SkinScriptKeyBridge.resolveReturnAction("#toggleScriptView"),
+        )
     }
 
     @Test

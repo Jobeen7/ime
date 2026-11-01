@@ -220,6 +220,7 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.ClipboardAction -> "ClipboardAction"
         is KeyboardAction.ToggleTraditionalAction -> "ToggleTraditionalAction"
         is KeyboardAction.ToggleEmbeddedInputAction -> "ToggleEmbeddedInputAction"
+        is KeyboardAction.ToggleScriptViewAction -> "ToggleScriptViewAction"
         is KeyboardAction.SelectCandidateIndexAction -> "SelectCandidateIndexAction"
         is KeyboardAction.ShowPhraseViewAction -> "ShowPhraseViewAction"
         is KeyboardAction.CandidatesBarToggleAction -> "CandidatesBarToggleAction"

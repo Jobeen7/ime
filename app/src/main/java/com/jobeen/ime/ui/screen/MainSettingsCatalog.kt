@@ -93,7 +93,7 @@ data class CatalogRow(
     val focusTitleRes: Int? = null,
 )
 
-/** 14 个入口页：与主页行一一对应，键与主页行键一致。 */
+/** 入口页：与主页行一一对应，键与主页行键一致。 */
 fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("schema", R.string.schema_settings, R.string.row_sub_schema_settings, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("scheme_update", R.string.schema_update_title, R.string.row_sub_scheme_update, MainSettingGroup.INPUT_CANDIDATE),

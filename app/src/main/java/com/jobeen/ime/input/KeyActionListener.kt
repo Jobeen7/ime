@@ -316,10 +316,14 @@ class KeyActionListener(
             // 候选表解析；直接分发无候选表，丢弃（transformed 已拦截）。
             is KeyboardAction.SelectCandidateIndexAction -> Unit
 
-            // 打开脚本管理页（open_script）：服务上下文起 Activity
-            // 必须带 NEW_TASK（管理页入口本身是 Activity 上下文入口，
+            // 打开脚本管理页（open_script）／切换脚本视图
+            // （#toggleScriptView）：两者同目的地、不同动作种类；
+            // 切换的收起方向由管理页返回键承担（见动作注释），
+            // 故分发层同作打开处理。服务上下文起 Activity 必须
+            // 带 NEW_TASK（管理页入口本身是 Activity 上下文入口，
             // 不带该标志；此处显式补齐，不改入口本身的任务语义）。
-            is KeyboardAction.OpenScriptsAction -> {
+            is KeyboardAction.OpenScriptsAction,
+            is KeyboardAction.ToggleScriptViewAction -> {
                 service.startActivity(
                     SkinScriptActivity.intent(service)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),

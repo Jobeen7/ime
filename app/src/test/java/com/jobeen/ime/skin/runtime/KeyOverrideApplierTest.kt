@@ -584,6 +584,8 @@ class KeyOverrideApplierTest {
                 KeyboardAction.KeyCodeAction(93),
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT) to
                 KeyboardAction.ToggleEmbeddedInputAction,
+            SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW) to
+                KeyboardAction.ToggleScriptViewAction,
             SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD) to
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR),
         )

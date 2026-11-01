@@ -84,5 +84,9 @@ class NotificationActionNamesTest {
             "OpenScriptsAction",
             NotificationActionNames.nameOf(KeyboardAction.OpenScriptsAction),
         )
+        assertEquals(
+            "ToggleScriptViewAction",
+            NotificationActionNames.nameOf(KeyboardAction.ToggleScriptViewAction),
+        )
     }
 }

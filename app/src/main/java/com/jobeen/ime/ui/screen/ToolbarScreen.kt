@@ -659,6 +659,7 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.HASH_RIME_PREV_PAGE -> R.string.action_hash_rime_prev_page
         WhitelistAction.HASH_RIME_NEXT_PAGE -> R.string.action_hash_rime_next_page
         WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT -> R.string.action_hash_toggle_embedded_input
+        WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW -> R.string.action_hash_toggle_script_view
         WhitelistAction.HASH_CLEAR_CLIPBOARD -> R.string.action_hash_clear_clipboard
     },
 )

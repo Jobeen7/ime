@@ -895,6 +895,7 @@
     <string name="action_hash_rime_prev_page">候选上页</string>
     <string name="action_hash_rime_next_page">候选下页</string>
     <string name="action_hash_toggle_embedded_input">内嵌输入切换</string>
+    <string name="action_hash_toggle_script_view">脚本视图切换</string>
     <string name="action_hash_clear_clipboard">清空剪贴板</string>
     <string name="action_emoji_lock_toggle">表情板锁定切换</string>
     <string name="slot_tap">点按</string>

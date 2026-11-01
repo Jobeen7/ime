@@ -135,6 +135,15 @@ enum class WhitelistAction(
     HASH_RIME_PREV_PAGE("#rimePreviousPage", ValueRule.FORBIDDEN),
     HASH_RIME_NEXT_PAGE("#rimeNextPage", ValueRule.FORBIDDEN),
     HASH_TOGGLE_EMBEDDED_INPUT("#toggleEmbeddedInputMode", ValueRule.FORBIDDEN),
+    /**
+     * 脚本视图切换（脚本接线波次）：Jime 侧 # 名（沿 # 快捷指令
+     * 约定），格式名即指令本身。脚本视图 = 应用级脚本管理页；
+     * 键盘按键只在键盘前台时送达，此时管理页必然不在前台，
+     * 故按键可达的切换方向恒为显示，收起由管理页返回键承担
+     * ——分发上与 open_script 同目的地，但动作种类不同（通知
+     * 匹配与弹窗标签可区分两者）。
+     */
+    HASH_TOGGLE_SCRIPT_VIEW("#toggleScriptView", ValueRule.FORBIDDEN),
     HASH_CLEAR_CLIPBOARD("#clearSystemPasteboard", ValueRule.FORBIDDEN),
     ;
 
