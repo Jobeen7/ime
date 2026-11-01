@@ -69,7 +69,6 @@ data class KeyGradient(
  *
  * - 数字 → 本身；
  * - 字符串 "a/b"（a、b 有限数，b 非零，结果为正）→ a/b；
- * - 字符串纯数字 → 该数字；
  * - 对象 {"percentage": n} → n；
  * - 其余 → null（调用方按字段回退处理）。
  */
@@ -113,7 +112,8 @@ object SizeFraction {
             val result = a / b
             return result.takeIf { it.isFinite() && it > 0.0 }
         }
-        return s.toDoubleOrNull()?.takeIf { it.isFinite() && it > 0.0 }
+        // 非分数字符串不算数（沿用布局权重严格读取口径：字符串数值无效）。
+        return null
     }
 }
 

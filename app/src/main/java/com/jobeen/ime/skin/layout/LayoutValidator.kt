@@ -536,8 +536,9 @@ object LayoutValidator {
 
     /**
      * 宽度权重读取：数值沿用严格口径；字符串/对象走对端分数
-     * 解析（"a/b"、{"percentage": n}、纯数字字符串）。其余形态
-     * 返回 null，调用方按原处置（竖屏无效整布局、横屏字段回退）。
+     * 解析（"a/b"、{"percentage": n}；纯数字字符串不算数，仍按
+     * 严格读取口径无效）。其余形态返回 null，调用方按原处置
+     * （竖屏无效整布局、横屏字段回退）。
      */
     private fun parseWeight(node: JsonElement): Double? =
         when (node) {
