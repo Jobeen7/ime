@@ -216,6 +216,7 @@ object SkinSnapshotBuilder {
             horizontalExpandLeft = validated.horizontalExpandLeft,
             verticalMaxRows = validated.verticalMaxRows,
             verticalMaxColumns = validated.verticalMaxColumns,
+            verticalSidePanel = validated.verticalSidePanel,
             keyOverrides = validated.keyOverrides,
             keyStyles = validated.keyStyles,
             keyGeometries = validated.keyGeometries,

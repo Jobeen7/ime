@@ -532,6 +532,43 @@ fun parseVerticalCandidates(
     )
 }
 
+/**
+ * 竖网格布局（审计 I 项）：`verticalCandidatesLayout`（对端同名）。
+ * 仅侧边栏有无生效：对端第二行是翻页／回车／退格钮行，Jime
+ * 无翻页钮 UI（网格靠滚动翻页）、侧边栏是标点键——故可消费
+ * 的布局 datum 是侧边栏 presence；钮行本身不复现（见报告）。
+ * 对象写法 {"sidePanel": false} 隐藏；数组写法（对端原形）
+ * 与字段缺失皆默认显示。
+ */
+data class VerticalLayoutSpec(
+    val sidePanel: Boolean = true,
+)
+
+/** 解析竖网格布局节点：缺失返回 null（默认显示侧边栏）。 */
+fun parseVerticalLayout(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): VerticalLayoutSpec? {
+    if (node == null) return null
+    if (node is JsonObject) {
+        val raw = node["sidePanel"]
+        if (raw == null) return VerticalLayoutSpec(sidePanel = true)
+        val bool = (raw as? JsonPrimitive)?.booleanOrNull
+        if (bool == null) {
+            issues += SkinIssue("$path.sidePanel", SkinIssue.Kind.FIELD_FALLBACK, "side_panel_not_bool")
+            return VerticalLayoutSpec(sidePanel = true)
+        }
+        return VerticalLayoutSpec(sidePanel = bool)
+    }
+    if (node is kotlinx.serialization.json.JsonArray) {
+        // 对端原形：两行布局数组，不含侧边栏信息，默认显示。
+        return VerticalLayoutSpec(sidePanel = true)
+    }
+    issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "vertical_layout_not_object_or_array")
+    return null
+}
+
 /** 解析颜色字符串节点：非法记 issue 并返回 null（调用方回落）。 */
 fun parseStyleColor(
     node: JsonElement?,

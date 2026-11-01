@@ -117,6 +117,11 @@ class CandidateGridView(
      */
     var skinMaxRows: Int? = null
     var skinMaxColumns: Int? = null
+    /**
+     * 竖网格侧边栏显示（审计 I 项）：refreshTheme 从竖网格布局
+     * 节点同步；false = 网格占满宽（侧边栏 GONE + 宽 0）。
+     */
+    var showSidePanel: Boolean = true
     var onDragComplete: ((List<EngineMessage.Candidate>) -> Unit)? = null
     var onWordForget: ((EngineMessage.Candidate, Float, Float) -> Unit)? = null
 
@@ -1028,7 +1033,8 @@ class CandidateGridView(
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val tw = MeasureSpec.getSize(widthMeasureSpec)
         val th = MeasureSpec.getSize(heightMeasureSpec)
-        val sw = (tw * 0.15f).toInt()
+        // 侧边栏隐藏（审计 I 项）时宽 0、网格占满宽；显示时旧口径 15%。
+        val sw = if (showSidePanel) (tw * 0.15f).toInt() else 0
         val gw = tw - sw
         sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
         gridCanvas.measure(mES(gw, MeasureSpec.EXACTLY), mES(th, MeasureSpec.EXACTLY))
@@ -1037,7 +1043,7 @@ class CandidateGridView(
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val h = b - t
-        val sw = ((r - l) * 0.15f).toInt()
+        val sw = if (showSidePanel) ((r - l) * 0.15f).toInt() else 0
         sidePanelKey.layout(0, 0, sw, h)
         gridCanvas.layout(sw, 0, r - l, h)
     }
@@ -1060,6 +1066,14 @@ class CandidateGridView(
         skinMaxColumns = snapshot?.verticalMaxColumns
         // 行列上限立即生效（不等下批候选到达才 syncLinePolicy）。
         syncLinePolicy()
+        // 侧边栏有无立即生效：可见性 + 重新布局（网格占满宽）。
+        val newShowSidePanel = snapshot?.verticalSidePanel ?: true
+        if (newShowSidePanel != showSidePanel) {
+            showSidePanel = newShowSidePanel
+            sidePanelKey.visibility = if (showSidePanel) android.view.View.VISIBLE
+                else android.view.View.GONE
+            requestLayout()
+        }
 
         gridCanvas.updateColors(colors.panel)
         gridCanvas.refreshAreaGeometry()

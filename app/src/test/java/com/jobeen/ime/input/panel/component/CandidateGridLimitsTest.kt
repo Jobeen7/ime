@@ -2,6 +2,7 @@ package com.jobeen.ime.input.panel.component
 
 import com.jobeen.ime.skin.model.SkinIssue
 import com.jobeen.ime.skin.model.parseVerticalCandidates
+import com.jobeen.ime.skin.model.parseVerticalLayout
 import kotlinx.serialization.json.Json
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -40,6 +41,29 @@ class CandidateGridLimitsTest {
         assertNull(spec?.maxRows)
         assertNull(spec?.maxColumns)
         assertTrue(issues.isNotEmpty())
+    }
+
+    @Test
+    fun verticalLayoutSidePanelFalseHides() {
+        val issues = mutableListOf<SkinIssue>()
+        val spec = parseVerticalLayout(
+            Json.parseToJsonElement("""{"sidePanel": false}"""),
+            "verticalCandidatesLayout", issues,
+        )
+        assertTrue(spec?.sidePanel == false)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun verticalLayoutAbsentDefaultsToShown() {
+        val issues = mutableListOf<SkinIssue>()
+        assertNull(parseVerticalLayout(null, "verticalCandidatesLayout", issues))
+        val peerArray = parseVerticalLayout(
+            Json.parseToJsonElement("""[["verticalCandidates"], ["pageUp", "pageDown"]]"""),
+            "verticalCandidatesLayout", issues,
+        )
+        assertTrue(peerArray?.sidePanel == true)
+        assertTrue(issues.isEmpty())
     }
 
     @Test

@@ -410,6 +410,11 @@ data class ValidatedSkin(
      */
     val verticalMaxRows: Int? = null,
     val verticalMaxColumns: Int? = null,
+    /**
+     * 竖网格侧边栏显示（审计 I 项）：顶层 verticalCandidatesLayout
+     * 推导；true = 显示（默认，对端布局原形亦默认显示）。
+     */
+    val verticalSidePanel: Boolean = true,
     /** 竖网格候选区样式（审计 B 项）：顶层 verticalCandidatesStyle；null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */
