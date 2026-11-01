@@ -57,6 +57,13 @@ data class LayoutModel(
      * App 设置）。键盘显示该布局时覆盖皮肤级 geometry 高度。
      */
     val heightPercent: Double? = null,
+    /**
+     * 横屏补丁声明（2026-11-02 工具项 6）：文件顶层 patchOf，
+     * 指向本布局作为横屏补丁的竖屏布局 id；仅快照工厂的横屏
+     * 绑定路径认领（展开后才成完整横屏布局），竖屏绑定不认领。
+     * null = 完整布局（非补丁）。
+     */
+    val patchOf: String? = null,
 ) {
     val keyCount: Int get() = rows.sumOf { it.size }
 

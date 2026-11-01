@@ -11,8 +11,11 @@ import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.layout.BuiltinLayoutResolution
+import com.jobeen.ime.skin.layout.LandscapePatch
 import com.jobeen.ime.skin.layout.LayoutModel
 import com.jobeen.ime.skin.layout.LayoutResolver
+import com.jobeen.ime.skin.layout.LayoutValidation
+import com.jobeen.ime.skin.layout.LayoutValidator
 import com.jobeen.ime.skin.layout.resolveBuiltinLayouts
 import com.jobeen.ime.skin.media.AndroidAudioInfoProbe
 import com.jobeen.ime.skin.model.AssetKind
@@ -38,6 +41,7 @@ import com.jobeen.ime.skin.store.SkinOverlayStore
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import java.io.File
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 
@@ -452,6 +456,17 @@ object SkinSnapshotFactory {
             )
             return null to LayoutResolution.MISSING
         }
+        // 横屏补丁展开（2026-11-02 工具项 6）：横屏绑定指向的布局
+        // 文件若声明 patchOf，则它不是完整布局而是对竖屏布局的
+        // 增量——在此展开成完整横屏布局再返回；任何展开失败都按
+        // 横屏绑定无效处理，调用方回退竖屏布局的横屏权重变体，
+        // 永不渲染半截布局。竖屏绑定不认领 patchOf。
+        if (binding == "landscape" && tree["patchOf"] != null) {
+            return expandLandscapePatch(
+                context, libraryLayout, tree, layoutId, entry.generation, ref,
+                orientationField,
+            )
+        }
         return when (
             val outcome = LayoutResolver.resolve(
                 tree, layoutId, entry.generation, PlaceholderValues.current(context),
@@ -498,6 +513,73 @@ object SkinSnapshotFactory {
                 resolved to LayoutResolution.RESOLVED
             }
         }
+    }
+
+    /**
+     * 横屏补丁展开（工具项 6，resolveSnapshotLayout 的横屏分支）：
+     * 补丁文件本身须校验通过；patchOf 指向的竖屏布局须存在且
+     * 校验通过、且本身不是补丁（补丁不链式展开，防循环与半截
+     * 展开）。任一失败返回 INVALID，调用方回退竖屏布局。
+     */
+    private fun expandLandscapePatch(
+        context: Context,
+        libraryLayout: SkinLibraryLayout?,
+        tree: JsonObject,
+        layoutId: String,
+        generation: Int,
+        ref: SkinGenRef,
+        orientationField: Map<String, Any?>,
+    ): Pair<ResolvedLayout?, LayoutResolution> {
+        fun fail(reason: String): Pair<ResolvedLayout?, LayoutResolution> {
+            DiagLog.w(
+                "layout", "layout_fallback_default",
+                mapOf(
+                    "skinId" to ref.skinId, "layoutId" to layoutId,
+                    "reason" to reason,
+                ) + orientationField,
+            )
+            return null to LayoutResolution.INVALID
+        }
+        if (libraryLayout == null) return fail("library_unavailable")
+        val patch = (LayoutValidator.validate(tree, layoutId) as? LayoutValidation.Valid)
+            ?.layout ?: return fail("patch_invalid")
+        // 校验器对非法声明记 issue 回退为 null；原始声明仍在，
+        // 故此处 null 一律是声明非法（含自指），不是“无补丁”。
+        val portraitId = patch.patchOf ?: return fail("patch_of_invalid")
+        val portrait = loadPatchPortrait(libraryLayout, portraitId)
+            ?: return fail("patch_portrait_missing_or_invalid")
+        if (portrait.patchOf != null) return fail("patch_chain")
+        val resolved = LandscapePatch.expandToResolved(
+            patch, portrait, layoutId, generation, PlaceholderValues.current(context),
+        )
+        DiagLog.i(
+            "layout", "layout_resolved",
+            mapOf(
+                "layoutId" to layoutId, "generation" to generation,
+                "keyCount" to resolved.baseLayout.sumOf { it.size },
+                "rowCount" to resolved.baseLayout.size,
+                "patchOf" to portraitId,
+            ) + orientationField,
+        )
+        return resolved to LayoutResolution.RESOLVED
+    }
+
+    /**
+     * 补丁的竖屏布局原模型（只读，不走横屏展开路径，故补丁
+     * 链在此截断）：索引缺失、文件不可读、解析失败、校验无效
+     * 任一命中返回 null。
+     */
+    private fun loadPatchPortrait(
+        libraryLayout: SkinLibraryLayout,
+        portraitId: String,
+    ): LayoutModel? {
+        val index = (runBlocking { SkinLibraryStore(libraryLayout).readIndex() }
+            as? SkinLibraryStore.ReadResult.Ok)?.value ?: return null
+        val entry = index.layouts.firstOrNull { it.id == portraitId } ?: return null
+        val file = File(libraryLayout.fileFromRelative(entry.dir), "layout.json")
+        val tree = runCatching { SkinJson.parseObject(file.readText()) }.getOrNull()
+            ?: return null
+        return (LayoutValidator.validate(tree, portraitId) as? LayoutValidation.Valid)?.layout
     }
 
     /**

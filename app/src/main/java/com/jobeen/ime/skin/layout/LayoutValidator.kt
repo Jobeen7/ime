@@ -147,6 +147,25 @@ object LayoutValidator {
             }
         }
 
+        // ---- 横屏补丁声明（2026-11-02 工具项 6）：文件顶层 patchOf，
+        // 指向本布局作为横屏补丁的竖屏布局 id；仅快照工厂的横屏
+        // 绑定路径认领。形态非法（非字符串/空白/自指）只字段回退
+        // （null + issue）；工厂横屏路径见原始声明仍在时按展开失败
+        // 处理（回退竖屏布局，永不渲染半截布局）。
+        var patchOf: String? = null
+        val patchNode = root["patchOf"]
+        if (patchNode != null) {
+            val raw = (patchNode as? JsonPrimitive)?.takeIf { it.isString }?.content
+            if (raw.isNullOrBlank() || raw == expectedId) {
+                fallback(
+                    "patchOf",
+                    if (raw == expectedId) "patch_of_self" else "patch_of_invalid",
+                )
+            } else {
+                patchOf = raw
+            }
+        }
+
         // ---- rows 结构与硬限（§2.5-3/4/5） ----
         val rowsNode = root["rows"]
         val rowsArray = rowsNode as? JsonArray
@@ -185,6 +204,7 @@ object LayoutValidator {
                     name = resolvedName,
                     rows = parsedRows.map { checkNotNull(it) },
                     heightPercent = layoutHeightPercent,
+                    patchOf = patchOf,
                 ),
                 issues = issues,
             )

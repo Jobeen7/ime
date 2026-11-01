@@ -50,12 +50,14 @@ class LayoutValidatorTest {
         id: String? = layoutId,
         name: String? = "测试布局",
         formatVersion: Int? = 3,
+        patchOf: JsonElement? = null,
     ): JsonObject = buildJsonObject {
         if (formatVersion != null) put("formatVersion", formatVersion)
         put("meta", buildJsonObject {
             if (id != null) put("id", id)
             if (name != null) put("name", name)
         })
+        if (patchOf != null) put("patchOf", patchOf)
         put("rows", rows)
     }
 
@@ -592,5 +594,36 @@ class LayoutValidatorTest {
             "style_overrides_not_object",
             result.issues.reasonsAt("rows[0].keys[0].styleOverrides").single(),
         )
+    }
+
+    @Test
+    fun patchOfStringKept() {
+        val result = validResult(
+            layout(rowsOf(row(key())), patchOf = JsonPrimitive("t9")),
+        )
+        assertEquals("t9", result.layout.patchOf)
+    }
+
+    @Test
+    fun patchOfAbsentIsNull() {
+        assertNull(valid(layout(rowsOf(row(key())))).patchOf)
+    }
+
+    @Test
+    fun patchOfNonStringDroppedWithIssue() {
+        val result = validResult(
+            layout(rowsOf(row(key())), patchOf = JsonPrimitive(42)),
+        )
+        assertNull(result.layout.patchOf)
+        assertEquals("patch_of_invalid", result.issues.reasonsAt("patchOf").single())
+    }
+
+    @Test
+    fun patchOfSelfDroppedWithIssue() {
+        val result = validResult(
+            layout(rowsOf(row(key())), patchOf = JsonPrimitive(layoutId)),
+        )
+        assertNull(result.layout.patchOf)
+        assertEquals("patch_of_self", result.issues.reasonsAt("patchOf").single())
     }
 }

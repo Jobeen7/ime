@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 package com.jobeen.ime.skin.layout
 
+import com.jobeen.ime.skin.model.ResolvedLayout
+
 /**
  * 横屏补丁展开（多主类型补充）：横屏补丁不是完整布局，而是
  * 对竖屏布局的增量——展开后得到完整横屏布局：
@@ -13,15 +15,41 @@ package com.jobeen.ime.skin.layout
  * - 身份：展开结果沿用竖屏布局的 layoutId 与 name（它就是
  *   该布局的横屏形态，不是新布局）。
  *
- * 本函数只做展开引擎。补丁文件形态（某布局文件声明自己是
- * 另一布局的横屏补丁）与快照工厂接线为后续项：文件侧未定
- * 义 patchOf 字段前，转换器应先展开再把完整横屏布局交给
- * 快照工厂（工厂只认完整布局，见 KeyboardTypeEntry 的
- * layoutIdLandscape 口径）。
+ * 本函数只做展开引擎。补丁文件形态：布局文件顶层声明
+ * `patchOf: <竖屏布局 id>`；快照工厂的横屏绑定路径认领该声明
+ * （见 [expandToResolved]），竖屏绑定不认领；转换器预展开过
+ * 的完整布局（无 patchOf）走既有路径，无须工厂展开。
  *
  * 纯函数，可直接单测。
  */
 object LandscapePatch {
+
+    /**
+     * 补丁展开成快照可用的横屏已解析布局（纯函数）：
+     * 展开结果的键身份沿用竖屏布局（键逻辑 id 由展开后模型的
+     * layoutId 即竖屏 id 生成，皮肤键覆写按竖屏键命中）；
+     * 已解析布局的 layoutId 仍取横屏绑定 id（patch 文件 id），
+     * 供解析日志与绑定核对；name 与 heightPercent 取展开结果。
+     */
+    fun expandToResolved(
+        patch: LayoutModel,
+        portrait: LayoutModel,
+        bindingId: String,
+        generation: Int,
+        placeholders: Map<String, String>,
+    ): ResolvedLayout {
+        val expanded = expand(portrait, patch)
+        return ResolvedLayout(
+            layoutId = bindingId,
+            generation = generation,
+            name = expanded.name,
+            baseLayout = LayoutKeyDefBuilder.build(expanded, placeholders),
+            baseLayoutLandscape = LayoutKeyDefBuilder.build(
+                expanded, placeholders, landscape = true,
+            ),
+            heightPercent = expanded.heightPercent,
+        )
+    }
 
     fun expand(portrait: LayoutModel, patch: LayoutModel): LayoutModel {
         val rows = ArrayList<List<LayoutKeyModel>>(maxOf(portrait.rows.size, patch.rows.size))
