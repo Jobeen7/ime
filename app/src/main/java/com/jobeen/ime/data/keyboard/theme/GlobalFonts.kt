@@ -238,7 +238,7 @@ object GlobalFonts {
     private fun bundledTypeface(context: Context, assetId: String, style: Int): Typeface? {
         skinFontCache[assetId to style]?.let { return it }
         val bytes = runCatching { skinFontBytesProvider?.invoke(assetId) }.getOrNull()
-        if (bytes.isNullOrEmpty()) {
+        if (bytes == null || bytes.isEmpty()) {
             if (loggedMissingSkinFonts.add(assetId)) {
                 DiagLog.w("font", "skin_font_missing", mapOf("asset" to assetId))
             }
