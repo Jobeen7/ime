@@ -216,7 +216,10 @@ object SkinSnapshotFactory {
         // 校验、同一回退口径），表项解析失败只影响该项该方向，
         // 不影响皮肤其余部分与旧单布局字段。无表皮肤得空表，
         // 旧行为逐字节不变。
-        val keyboardEntries = SkinJson.parseKeyboards(effectiveTree)
+        // 注意：本函数入参 tree 即调用方传来的生效树（覆盖层已
+        // 合并），解析它即解析生效树；effectiveTree 只存在于
+        // buildFromFiles 的作用域，不可在此引用。
+        val keyboardEntries = SkinJson.parseKeyboards(tree)
         val resolvedKeyboards: Map<String, KeyboardTypeResolved> =
             keyboardEntries.mapValues { (_, entry) ->
                 val (portrait, portraitResolution) =
