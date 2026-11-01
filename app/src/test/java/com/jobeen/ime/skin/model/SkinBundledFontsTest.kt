@@ -75,7 +75,7 @@ class SkinBundledFontsTest {
             listOf(SkinFontFace("MyFont", "font-a")),
             result.skin.skinFontFaces,
         )
-        val codes = result.issues.map { it.code }
+        val codes = result.issues.map { it.detail }
         assertTrue("font_face_not_font" in codes)
         assertTrue("font_face_duplicate_name" in codes)
         assertTrue("font_face_name_empty" in codes)
@@ -98,7 +98,7 @@ class SkinBundledFontsTest {
     fun nonArrayFontFacesFallsBackToEmpty() {
         val result = validate(baseJson(""""fontFaces": {"name": "X", "url": "font-a"}"""))
         assertTrue(result.skin.skinFontFaces.isEmpty())
-        assertTrue(result.issues.any { it.code == "font_faces_not_array" })
+        assertTrue(result.issues.any { it.detail == "font_faces_not_array" })
     }
 
     @Test

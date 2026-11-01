@@ -44,7 +44,7 @@ class SkinFontPriorityTest {
             result.skin.roleFontFamilies,
         )
         assertEquals("monospace", result.skin.roleFonts[FontRole.KEY])
-        val codes = result.issues.map { it.code }
+        val codes = result.issues.map { it.detail }
         assertTrue("font_family_unknown" in codes)
         assertTrue("font_family_not_string" in codes)
         assertTrue("font_family_empty" in codes)
@@ -72,7 +72,7 @@ class SkinFontPriorityTest {
     fun nonStringFamilyNodeFallsBackToEmpty() {
         val result = validate(baseJson(""""fontFamily": {"x": 1}"""))
         assertTrue(result.skin.fontFamilies.isEmpty())
-        assertTrue(result.issues.any { it.code == "font_family_not_string" })
+        assertTrue(result.issues.any { it.detail == "font_family_not_string" })
     }
 
     @Test

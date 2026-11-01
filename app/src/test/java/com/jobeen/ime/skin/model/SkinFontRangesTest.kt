@@ -61,7 +61,7 @@ class SkinFontRangesTest {
             ),
         )
         assertEquals(listOf(SkinFontRange(0, 10, "serif")), result.skin.fontRanges)
-        val codes = result.issues.map { it.code }
+        val codes = result.issues.map { it.detail }
         assertTrue("font_range_location_invalid" in codes)
         assertTrue("font_range_length_invalid" in codes)
         assertTrue("font_range_overflow" in codes)
@@ -74,7 +74,7 @@ class SkinFontRangesTest {
     fun nonArrayRangesFallsBackToEmpty() {
         val result = validate(baseJson(""""fontRanges": {"location": 0}"""))
         assertTrue(result.skin.fontRanges.isEmpty())
-        assertTrue(result.issues.any { it.code == "font_ranges_not_array" })
+        assertTrue(result.issues.any { it.detail == "font_ranges_not_array" })
     }
 
     @Test
