@@ -569,6 +569,56 @@ fun parseVerticalLayout(
     return null
 }
 
+/** 候选上下文菜单动作（审计 I 项）：点选／复制／遗忘三者之一。 */
+enum class CandidateMenuAction { SELECT, COPY, FORGET }
+
+/** 候选上下文菜单项（审计 I 项）：皮肤 candidateContextMenu 数组元素。 */
+data class CandidateMenuItem(
+    val name: String,
+    val action: CandidateMenuAction,
+)
+
+/**
+ * 解析候选上下文菜单节点：数组元素 {name, action}；非法元素
+ * （缺名／空名／未知动作／非对象）记 issue 并丢弃；节点缺失
+ * 或非数组返回空表（= 无菜单，旧长按行为不变）。
+ */
+fun parseCandidateContextMenu(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): List<CandidateMenuItem> {
+    if (node == null) return emptyList()
+    val arr = node as? kotlinx.serialization.json.JsonArray
+    if (arr == null) {
+        issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "candidate_menu_not_array")
+        return emptyList()
+    }
+    return arr.mapNotNull { el ->
+        val obj = el as? JsonObject
+        if (obj == null) {
+            issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "candidate_menu_item_not_object")
+            return@mapNotNull null
+        }
+        val name = (obj["name"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+            ?.takeIf { it.isNotEmpty() }
+        val action = when (
+            (obj["action"] as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        ) {
+            "select" -> CandidateMenuAction.SELECT
+            "copy" -> CandidateMenuAction.COPY
+            "forget" -> CandidateMenuAction.FORGET
+            else -> null
+        }
+        if (name == null || action == null) {
+            issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "candidate_menu_item_invalid")
+            null
+        } else {
+            CandidateMenuItem(name, action)
+        }
+    }
+}
+
 /** 解析颜色字符串节点：非法记 issue 并返回 null（调用方回落）。 */
 fun parseStyleColor(
     node: JsonElement?,

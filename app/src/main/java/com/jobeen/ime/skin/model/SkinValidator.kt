@@ -477,6 +477,9 @@ object SkinValidator {
         val verticalSidePanel = parseVerticalLayout(
             tree["verticalCandidatesLayout"], "verticalCandidatesLayout", issues,
         )?.sidePanel ?: true
+        val candidateContextMenu = parseCandidateContextMenu(
+            tree["candidateContextMenu"], "candidateContextMenu", issues,
+        )
 
         // ---- 候选区样式（审计 B 项） ----
         val horizontalCandidatesStyle = parseCandidateAreaStyle(
@@ -922,6 +925,7 @@ object SkinValidator {
                 verticalMaxRows = verticalCandidates?.maxRows,
                 verticalMaxColumns = verticalCandidates?.maxColumns,
                 verticalSidePanel = verticalSidePanel,
+                candidateContextMenu = candidateContextMenu,
                 textSizes = skinTextSizes,
                 notifications = notifications,
                 conditionStyles = conditionStyles,

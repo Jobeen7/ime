@@ -415,6 +415,11 @@ data class ValidatedSkin(
      * 推导；true = 显示（默认，对端布局原形亦默认显示）。
      */
     val verticalSidePanel: Boolean = true,
+    /**
+     * 候选上下文菜单（审计 I 项）：顶层 candidateContextMenu；
+     * 空表 = 未定义（旧长按行为不变）。
+     */
+    val candidateContextMenu: List<CandidateMenuItem> = emptyList(),
     /** 竖网格候选区样式（审计 B 项）：顶层 verticalCandidatesStyle；null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /** G1 皮肤级分档字号：角色 → 字号（缺失角色回落出厂字号）。 */

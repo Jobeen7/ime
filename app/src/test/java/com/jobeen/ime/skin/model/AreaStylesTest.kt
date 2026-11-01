@@ -195,6 +195,47 @@ class AreaStylesTest {
     }
 
     @Test
+    fun candidateContextMenuParses() {
+        val issues = mutableListOf<SkinIssue>()
+        val items = parseCandidateContextMenu(
+            Json.parseToJsonElement(
+                """[{"name": "上屏", "action": "select"},
+                    {"name": "复制", "action": "copy"},
+                    {"name": "遗忘", "action": "forget"}]""",
+            ),
+            "candidateContextMenu", issues,
+        )
+        assertEquals(3, items.size)
+        assertEquals(CandidateMenuAction.SELECT, items[0].action)
+        assertEquals("复制", items[1].name)
+        assertEquals(CandidateMenuAction.FORGET, items[2].action)
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun candidateContextMenuInvalidItemsDropped() {
+        val issues = mutableListOf<SkinIssue>()
+        val items = parseCandidateContextMenu(
+            Json.parseToJsonElement(
+                """[{"name": "上屏", "action": "select"},
+                    {"name": "未知", "action": "explode"},
+                    {"action": "copy"},
+                    {"name": "", "action": "forget"}]""",
+            ),
+            "candidateContextMenu", issues,
+        )
+        assertEquals(1, items.size)
+        assertEquals(3, issues.size)
+    }
+
+    @Test
+    fun candidateContextMenuAbsentIsEmpty() {
+        val issues = mutableListOf<SkinIssue>()
+        assertTrue(parseCandidateContextMenu(null, "candidateContextMenu", issues).isEmpty())
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
     fun horizontalCandidatesMaxColumnsParses() {
         val issues = mutableListOf<SkinIssue>()
         val spec = parseHorizontalCandidates(

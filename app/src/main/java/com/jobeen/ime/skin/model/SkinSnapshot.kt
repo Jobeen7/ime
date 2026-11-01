@@ -140,6 +140,8 @@ data class SkinSnapshot(
     val verticalMaxColumns: Int? = null,
     /** 竖网格侧边栏显示（审计 I 项）：true = 显示（默认）。 */
     val verticalSidePanel: Boolean = true,
+    /** 候选上下文菜单（审计 I 项）：空表 = 未定义。 */
+    val candidateContextMenu: List<CandidateMenuItem> = emptyList(),
     /** 竖网格候选区样式（审计 B 项）：null = 未定义。 */
     val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
     /**

@@ -391,6 +391,8 @@ class KawaiiPanelView(context: Context) : View(context) {
 
     private var pressAnimator: ValueAnimator? = null
     private var expandLongPressed = false
+    /** 候选菜单长按已发（审计 I 项）：与 expandLongPressed 同理，抬手不补点选。 */
+    private var menuLongPressed = false
     private var dragTotalX = 0f
     private var dragTotalY = 0f
 
@@ -439,6 +441,14 @@ class KawaiiPanelView(context: Context) : View(context) {
         } else if (result is KawaiiPanel.TouchResult.ToolbarAction && result.action is PanelAction.AddPhrase) {
             expandLongPressed = true
             onTap?.invoke(KawaiiPanel.TouchResult.LongPressClearPhrases)
+        } else if (result is KawaiiPanel.TouchResult.SelectCandidate) {
+            // 候选菜单（审计 I 项）：皮肤定义菜单时横条长按发菜单，
+            // 未定义时旧行为不变（长按候选无动作）。
+            val menu = SkinSnapshotProvider.peek()?.candidateContextMenu.orEmpty()
+            if (menu.isNotEmpty()) {
+                menuLongPressed = true
+                onTap?.invoke(KawaiiPanel.TouchResult.CandidateMenu(result.candidate, menu))
+            }
         }
     }
 
@@ -490,6 +500,7 @@ class KawaiiPanelView(context: Context) : View(context) {
                 dragTotalY = 0f
                 isScrolling = false
                 expandLongPressed = false
+                menuLongPressed = false
                 parent.requestDisallowInterceptTouchEvent(true)
                 if (!recording) longPressHandler.postDelayed(longPressRunnable, 500)
                 // 自定义钮 DOWN 探针（仅自定义钮建手势态，池钮不动既有路）。
@@ -633,7 +644,7 @@ class KawaiiPanelView(context: Context) : View(context) {
             }
             return
         }
-        if (expandLongPressed) return
+        if (expandLongPressed || menuLongPressed) return
         if (!isScrolling) {
             val result = currentRenderer.hitTest(
                 upX, upY, width, height, scrollX, isExpanded, screenDensity,

@@ -1,6 +1,8 @@
 package com.jobeen.ime.input.panel
 
 import android.annotation.SuppressLint
+import android.content.ClipData
+import android.content.ClipboardManager as SystemClipboardManager
 import android.content.Context
 import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
@@ -64,6 +66,15 @@ class KawaiiPanel(
         data object CollapseCandidates : TouchResult()
         data object LongPressExpand : TouchResult()
         data object LongPressClearPhrases : TouchResult()
+        /**
+         * 候选上下文菜单（审计 I 项）：皮肤 candidateContextMenu
+         * 定义时，长按候选（横条／网格）发此结果而非遗忘确认；
+         * items 为皮肤菜单项（已过滤非法动作）。
+         */
+        data class CandidateMenu(
+            val candidate: EngineMessage.Candidate,
+            val items: List<com.jobeen.ime.skin.model.CandidateMenuItem>,
+        ) : TouchResult()
 
         /**
          * 自定义工具栏按钮的手势执行结果（工具栏编辑轮）：View 的
@@ -224,14 +235,16 @@ class KawaiiPanel(
         onNeedMoreCandidates = { this@KawaiiPanel.listener?.onRequestMoreCandidates() }
         onWordForget = { candidate, x, y ->
             confirmOverlay.confirm(
-                message = context.getString(
-                    R.string.candidate_forget_confirm,
-                    if (candidate.text.length > 5) candidate.text.take(5) + "..." else candidate.text
-                ),
+                message = candidateForgetMessage(candidate),
                 onConfirm = { handleCandidateForget(candidate) },
                 cardX = x,
                 cardY = y,
             )
+        }
+        // 候选菜单（审计 I 项）：皮肤定义菜单时网格长按走菜单
+        // 而非遗忘确认；同一 onTap 通道分发，与横条长按一致。
+        onCandidateMenu = { candidate, items ->
+            view.onTap?.invoke(TouchResult.CandidateMenu(candidate, items))
         }
         onDragComplete = { candidates ->
             // 拖拽只换顺序不换项：高亮跟项走（按对象找新下标），
@@ -856,6 +869,51 @@ class KawaiiPanel(
         listener?.onCandidateForget(candidate)
     }
 
+    /** 遗忘确认文案（长按遗忘与菜单遗忘共用：超 5 字截断加省略号）。 */
+    private fun candidateForgetMessage(candidate: EngineMessage.Candidate): String =
+        context.getString(
+            R.string.candidate_forget_confirm,
+            if (candidate.text.length > 5) candidate.text.take(5) + "..." else candidate.text,
+        )
+
+    /**
+     * 候选上下文菜单（审计 I 项）：ConfirmOverlay 动作列居中弹出
+     * （不用系统对话框：IME 服务上下文无窗口令牌；不用锚点：
+     * 横条与网格的触点坐标系与 Overlay 不同，居中可避错位）。
+     * 动作复用既有通道：点选 → onCandidateSelected；复制 →
+     * 系统剪贴板；遗忘 → 遗忘确认（菜单本身可含遗忘，功能不丢）。
+     */
+    private fun showCandidateMenu(
+        candidate: EngineMessage.Candidate,
+        items: List<com.jobeen.ime.skin.model.CandidateMenuItem>,
+    ) {
+        confirmOverlay.actions(
+            message = "",
+            items = items.map { item ->
+                item.name to {
+                    when (item.action) {
+                        com.jobeen.ime.skin.model.CandidateMenuAction.SELECT ->
+                            listener?.onCandidateSelected(candidate)
+                        com.jobeen.ime.skin.model.CandidateMenuAction.COPY -> {
+                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                                as? SystemClipboardManager
+                            clipboard?.setPrimaryClip(
+                                ClipData.newPlainText("candidate", candidate.text),
+                            )
+                        }
+                        com.jobeen.ime.skin.model.CandidateMenuAction.FORGET ->
+                            confirmOverlay.confirm(
+                                message = candidateForgetMessage(candidate),
+                                onConfirm = { handleCandidateForget(candidate) },
+                            )
+                    }
+                }
+            },
+            centerHorizontal = true,
+            centerVertical = true,
+        )
+    }
+
     fun onSelectionUpdate(start: Int, end: Int) {
         textEditingView.setSelection(start, end)
     }
@@ -986,6 +1044,8 @@ class KawaiiPanel(
                 }
 
                 TouchResult.LongPressClearPhrases -> showClearPhrasesConfirm()
+
+                is TouchResult.CandidateMenu -> showCandidateMenu(result.candidate, result.items)
 
                 is TouchResult.CustomKeyAction -> {
                     InputFeedbacks.hapticFeedback(view)

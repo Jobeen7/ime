@@ -124,6 +124,14 @@ class CandidateGridView(
     var showSidePanel: Boolean = true
     var onDragComplete: ((List<EngineMessage.Candidate>) -> Unit)? = null
     var onWordForget: ((EngineMessage.Candidate, Float, Float) -> Unit)? = null
+    /**
+     * 候选菜单回调（审计 I 项）：皮肤定义菜单时网格长按抬手
+     * 走此回调而非 onWordForget；未定义时 onWordForget 不变。
+     */
+    var onCandidateMenu: ((
+        EngineMessage.Candidate,
+        List<com.jobeen.ime.skin.model.CandidateMenuItem>,
+    ) -> Unit)? = null
 
     /**
      * 候选在本机是否可显示：只判定单个 CJK 表意字——用网格实际绘制的
@@ -840,19 +848,27 @@ class CandidateGridView(
                             springBackIfNeeded()
                         }
                         if (!longPressMoved && longPressIndex >= 0 && longPressIndex in allCandidates.indices) {
-                            val firstRow = (scrollOffsetY / rowH).toInt().coerceAtLeast(0)
-                            val yOff = -(scrollOffsetY - firstRow * rowH) + stretch
-                            val pos = positions[longPressIndex]
-                            val rowY = (pos.row - firstRow) * rowH + yOff
-                            val rightEdge = if (pos.extraWide) width.toFloat() else pos.xStart + pos.width
-                            val d = resources.displayMetrics.density
-                            val wordVisibleRow = pos.row - firstRow
-                            val above = wordVisibleRow >= visibleRows - 2
-                            this@CandidateGridView.onWordForget?.invoke(
-                                allCandidates[longPressIndex],
-                                (rightEdge - 40f * d).coerceAtLeast(4f * d),
-                                if (above) rowY - 96f * d else rowY + rowH + 4f * d
-                            )
+                            val candidate = allCandidates[longPressIndex]
+                            // 候选菜单（审计 I 项）：皮肤定义菜单时走菜单，
+                            // 菜单可自含遗忘，功能不丢；未定义时旧遗忘确认不变。
+                            val menu = SkinSnapshotProvider.peek()?.candidateContextMenu.orEmpty()
+                            if (menu.isNotEmpty()) {
+                                this@CandidateGridView.onCandidateMenu?.invoke(candidate, menu)
+                            } else {
+                                val firstRow = (scrollOffsetY / rowH).toInt().coerceAtLeast(0)
+                                val yOff = -(scrollOffsetY - firstRow * rowH) + stretch
+                                val pos = positions[longPressIndex]
+                                val rowY = (pos.row - firstRow) * rowH + yOff
+                                val rightEdge = if (pos.extraWide) width.toFloat() else pos.xStart + pos.width
+                                val d = resources.displayMetrics.density
+                                val wordVisibleRow = pos.row - firstRow
+                                val above = wordVisibleRow >= visibleRows - 2
+                                this@CandidateGridView.onWordForget?.invoke(
+                                    candidate,
+                                    (rightEdge - 40f * d).coerceAtLeast(4f * d),
+                                    if (above) rowY - 96f * d else rowY + rowH + 4f * d
+                                )
+                            }
                         }
                         invalidate()
                         parent.requestDisallowInterceptTouchEvent(false)
