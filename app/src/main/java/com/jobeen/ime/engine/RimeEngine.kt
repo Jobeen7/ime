@@ -931,7 +931,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
                 sendJob {
                     if (compositionCached.preedit?.isNotEmpty() == true) {
-                        // 正在输入拼音：上滑撤销=清除当前正在打的拼音。
+                        // 正在输入拼音：下滑撤销=清除当前正在打的拼音。
                         // 不能给编辑器发 Ctrl+Z，拼音在输入法内部，编辑器撤销够不着还会产生副作用。
                         actions.send(Action.Reset)
                     } else {
@@ -1069,6 +1069,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 复位前滞留的易变旧帧抢在新组字前补发（审查 A-2）
                 messageChannel.clearPending()
                 flowBehavior(Reset())
+                // 组字已复位：同步清编辑器侧组字区（setComposingText
+                // 空串），不等异步组字更新回推；否则编辑器侧残留的
+                // 组字段会被后续动作转正（如撤销时预测被记录上屏）。
+                // 绝不用 finishComposingText（那会把组字段转正，与
+                // “只清不录”相反）。
+                sendJob {
+                    withContext(Dispatchers.Main.immediate) {
+                        inputConnection()?.setComposingText("", 1)
+                    }
+                }
             }
 
             is Action.SelectCandidatePinYin -> flowBehavior(SelectPinYin(action.pinYin))
