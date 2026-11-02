@@ -17,6 +17,7 @@ import android.view.MotionEvent
 import android.view.View
 import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
+import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.panel.toolbar.CustomButtonSlot
@@ -236,6 +237,16 @@ class KawaiiPanelView(context: Context) : View(context) {
         invalidate()
     }
 
+    /**
+     * 状态切换后重压用户覆盖层：状态渲染器每次新建（只含皮肤／
+     * 默认），须在此复用 applyUserToolbar 压上用户栏，否则用户
+     * 工具栏在第一次状态切换后即消失、直到主题刷新才恢复。
+     * 非 ToolbarRenderer 态（组字／预测用 ComposingRenderer）不动。
+     */
+    fun reapplyUserToolbar() {
+        (currentRenderer as? ToolbarRenderer)?.let { applyUserToolbar(it) }
+    }
+
     private fun decodeToolbarImage(file: File, id: String): Bitmap? {
         return runCatching {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
@@ -297,6 +308,8 @@ class KawaiiPanelView(context: Context) : View(context) {
             // 工具栏样式（审计 B 项）：独立于构成抉择，快照直取。
             renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
             renderer.toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout
+            // P4：锁定通知样式解析用当前配色方案（与 refreshTheme 同步）。
+            renderer.scheme = KeyboardColors.resolve(context)
             applyUserToolbar(renderer)
         }
     }
@@ -318,6 +331,8 @@ class KawaiiPanelView(context: Context) : View(context) {
             // 工具栏样式与构成抉择无关：有样式即应用，无样式清掉旧样式。
             renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
             renderer.toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout
+            // P4：锁定通知样式解析用当前配色方案（主题变化时同步）。
+            renderer.scheme = KeyboardColors.resolve(context)
             applyUserToolbar(renderer)
         }
         invalidate()

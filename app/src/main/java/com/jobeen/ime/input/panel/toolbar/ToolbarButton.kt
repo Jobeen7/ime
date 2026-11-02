@@ -23,8 +23,10 @@ sealed class ToolbarButton {
         halfH: Float,
         paints: Paints,
         density: Float,
+        /** P4：锁定通知背景样式覆盖（null = 全局钮底，旧口径）。 */
+        bgOverride: Int? = null,
     ) {
-        val bg = paints.toolbarButtonBg ?: return
+        val bg = bgOverride ?: paints.toolbarButtonBg ?: return
         val pad = 7f * density
         val left = cx - halfW - pad
         val top = cy - halfH - pad
@@ -60,13 +62,16 @@ class ImageButton(
     private val rotation: Float = 0f,
     private val mirrorX: Boolean = false,
     private val iconScale: Float = 1f,
+    /** P4：锁定通知样式覆盖（null = 全局钮底／图标色，旧口径）。 */
+    private val bgColor: Int? = null,
+    private val iconTint: Int? = null,
 ) : ToolbarButton() {
     override fun draw(canvas: Canvas, cx: Float, cy: Float, paints: Paints, density: Float) {
         val d = drawable ?: return
         val iw = d.intrinsicWidth.toFloat() * iconScale
         val ih = d.intrinsicHeight.toFloat() * iconScale
-        drawButtonBackground(canvas, cx, cy, iw / 2f, ih / 2f, paints, density)
-        d.setTint(paints.toolbarIconColor)
+        drawButtonBackground(canvas, cx, cy, iw / 2f, ih / 2f, paints, density, bgColor)
+        d.setTint(iconTint ?: paints.toolbarIconColor)
         d.setBounds(
             (cx - iw / 2f).toInt(), (cy - ih / 2f).toInt(),
             (cx + iw / 2f).toInt(), (cy + ih / 2f).toInt(),

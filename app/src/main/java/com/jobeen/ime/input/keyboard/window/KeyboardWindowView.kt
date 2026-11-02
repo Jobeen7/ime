@@ -980,7 +980,10 @@ class KeyboardWindowView(
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val density = resources.displayMetrics.density
-        val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
+        // S5：左右内边距按侧生效（皮肤值优先于全局水平边距）。
+        val lPad = dpToPx(effectiveLeftInsetDp())
+        val rPad = dpToPx(effectiveRightInsetDp())
+        val tPad = dpToPx(effectiveTopInsetDp())
         val bPad = dpToPx(effectiveBottomInsetDp())
         // 隐藏时条高不变：条区仍在，只空中间按钮区（首尾固定槽与候选
         // 仍可显示）；覆盖层（剪贴板／菜单等）不受影响（各自仍按内容高布局）。
@@ -988,7 +991,7 @@ class KeyboardWindowView(
         val cHeight = contentHeight()
         val totalWidth = MeasureSpec.getSize(widthMeasureSpec)
         val bottomInset = resolveBottomInset()
-        val contentW = (totalWidth - 2 * hPad).coerceAtLeast(0)
+        val contentW = (totalWidth - lPad - rPad).coerceAtLeast(0)
 
         val stripH = if (addPhraseActive) (fullScreenHeight() * 0.20f).roundToInt() else 0
 
@@ -1068,22 +1071,26 @@ class KeyboardWindowView(
             )
         }
 
-        val totalHeight = stripH + barH + clipStripH + cHeight + bPad + bottomInset + symbolBarHeightPx
+        // S5：顶部内边距计入窗口总高（整块键盘下移，见 onLayout 的 y0）。
+        val totalHeight = tPad + stripH + barH + clipStripH + cHeight + bPad + bottomInset + symbolBarHeightPx
         setMeasuredDimension(totalWidth, totalHeight)
     }
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
-        val hPad = dpToPx(KeyboardManager.Keyboard.Padding.getHorizontalDp(context))
+        // S5：左右内边距按侧生效，顶部内边距整块下移（与 onMeasure 同值）。
+        val lPad = dpToPx(effectiveLeftInsetDp())
+        val rPad = dpToPx(effectiveRightInsetDp())
+        val tPad = dpToPx(effectiveTopInsetDp())
         val barH = panelBarHeightPx(resources.displayMetrics.density)
         val cHeight = contentHeight()
-        val contentW = right - left - 2 * hPad
+        val contentW = right - left - lPad - rPad
         val stripH = if (addPhraseActive) (fullScreenHeight() * 0.20f).roundToInt() else 0
-        val y0 = stripH + barH
+        val y0 = tPad + stripH + barH
 
-        panel.view.layout(0, stripH, right - left, stripH + barH)
+        panel.view.layout(0, tPad + stripH, right - left, tPad + stripH + barH)
 
         // 内联自动填充覆盖层：与条区同矩形，画在条区视图之上。
-        inlineAutofillBar.layout(0, stripH, right - left, stripH + barH)
+        inlineAutofillBar.layout(0, tPad + stripH, right - left, tPad + stripH + barH)
 
         // 搜索态：键盘整体下移一段（结果列表区在上），尺寸与行高不变
         val clipStripH = clipSearchStripHeight(
@@ -1094,15 +1101,15 @@ class KeyboardWindowView(
             val child = getChildAt(i)
             if (child === panel.view || child === inlineAutofillBar || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child === symbolBarView || child.isGone) continue
             if (clipStripH > 0 && child !== panel.candidateGrid) {
-                child.layout(hPad, y0 + clipStripH + symbolBarHeightPx, hPad + contentW, y0 + clipStripH + symbolBarHeightPx + cHeight)
+                child.layout(lPad, y0 + clipStripH + symbolBarHeightPx, lPad + contentW, y0 + clipStripH + symbolBarHeightPx + cHeight)
             } else {
-                child.layout(hPad, y0 + symbolBarHeightPx, hPad + contentW, y0 + symbolBarHeightPx + cHeight)
+                child.layout(lPad, y0 + symbolBarHeightPx, lPad + contentW, y0 + symbolBarHeightPx + cHeight)
             }
         }
 
         // 应用级符号栏：键盘区顶部一栏；覆盖层（候选网格／菜单等）
         // 仍按 y0 布局，栏以后加子视图画在其上。
-        symbolBarView?.layout(hPad, y0, hPad + contentW, y0 + symbolBarHeightPx)
+        symbolBarView?.layout(lPad, y0, lPad + contentW, y0 + symbolBarHeightPx)
 
         // 候选栏行策略（2026-10-29 批量第 4 项）：展开网格按行策略定高，
         // 内容不足且自动收缩时缩到内容高度，键盘区其余部分照常显示
@@ -1112,15 +1119,15 @@ class KeyboardWindowView(
             candidateGrid.lineLimitEnabled, candidateGrid.lineAutoShrink,
             candidateGrid.naturalRowHeightPx(), cHeight,
         )
-        candidateGrid.layout(hPad, y0, hPad + contentW, y0 + gridH)
-        panel.textEditingView.layout(hPad, y0, hPad + contentW, y0 + cHeight)
+        candidateGrid.layout(lPad, y0, lPad + contentW, y0 + gridH)
+        panel.textEditingView.layout(lPad, y0, lPad + contentW, y0 + cHeight)
         panel.clipboardView.layout(
-            hPad, y0, hPad + contentW,
+            lPad, y0, lPad + contentW,
             y0 + if (clipStripH > 0) clipStripH else cHeight
         )
-        panel.menuGridView.layout(hPad, y0, hPad + contentW, y0 + cHeight)
-        panel.confirmOverlay.layout(hPad, y0, hPad + contentW, y0 + cHeight)
-        addPhraseLayer.layout(0, 0, right - left, stripH)
+        panel.menuGridView.layout(lPad, y0, lPad + contentW, y0 + cHeight)
+        panel.confirmOverlay.layout(lPad, y0, lPad + contentW, y0 + cHeight)
+        addPhraseLayer.layout(0, tPad, right - left, tPad + stripH)
         val toastLeft = ((right - left) - imeToastView.measuredWidth) / 2
         val bottomPadding = dpToPx(KeyboardManager.Keyboard.Padding.getBottomDp(context))
         val toastBottom = bottom - top - bottomPadding - resolveBottomInset() - dpToPx(12)
@@ -1297,8 +1304,17 @@ class KeyboardWindowView(
             }
         }
         val bitmap = SkinSnapshotProvider.currentBackgroundBitmap()
-        if (bitmap != null && !bitmap.isRecycled) {
-            val base = android.graphics.drawable.BitmapDrawable(resources, bitmap)
+        // S8：背景优先级——位图＞渐变＞纯色（视频／GIF 在上层另处理，
+        // 此处只定窗口底；渐变缺省时回落纯色，位图失效时回落渐变）。
+        val base: android.graphics.drawable.Drawable? =
+            if (bitmap != null && !bitmap.isRecycled) {
+                android.graphics.drawable.BitmapDrawable(resources, bitmap)
+            } else {
+                SkinSnapshotProvider.peek()?.backgroundGradient?.let {
+                    GradientBackgroundDrawable(it)
+                }
+            }
+        if (base != null) {
             // 磨砂叠加层：位图背景上再盖一层半透明遮罩（深色下黑、浅色下白），
             // 强度为 0 或未设时不盖；动图背景不走此路（与模糊同口径）。
             val overlay = GlobalStyleResolver.effectiveFrostOverlay(
@@ -1330,6 +1346,34 @@ class KeyboardWindowView(
             return snapshot.effectiveGeometry.getValue(GeometryField.BOTTOM_INSET).roundToInt()
         }
         return KeyboardManager.Keyboard.Padding.getBottomDp(context)
+    }
+
+    /**
+     * 容器内边距生效值（S5）：皮肤 presence 指定时取皮肤值，
+     * 否则左右沿用全局水平边距、顶部为 0（无皮肤值时布局与旧版一致）。
+     */
+    private fun effectiveTopInsetDp(): Int {
+        val snapshot = SkinSnapshotProvider.peek()
+        if (snapshot != null && GeometryField.TOP_INSET in snapshot.geometryPresence) {
+            return snapshot.effectiveGeometry.getValue(GeometryField.TOP_INSET).roundToInt()
+        }
+        return 0
+    }
+
+    private fun effectiveLeftInsetDp(): Int {
+        val snapshot = SkinSnapshotProvider.peek()
+        if (snapshot != null && GeometryField.LEFT_INSET in snapshot.geometryPresence) {
+            return snapshot.effectiveGeometry.getValue(GeometryField.LEFT_INSET).roundToInt()
+        }
+        return KeyboardManager.Keyboard.Padding.getHorizontalDp(context)
+    }
+
+    private fun effectiveRightInsetDp(): Int {
+        val snapshot = SkinSnapshotProvider.peek()
+        if (snapshot != null && GeometryField.RIGHT_INSET in snapshot.geometryPresence) {
+            return snapshot.effectiveGeometry.getValue(GeometryField.RIGHT_INSET).roundToInt()
+        }
+        return KeyboardManager.Keyboard.Padding.getHorizontalDp(context)
     }
 
     /**
@@ -1443,12 +1487,17 @@ class KeyboardWindowView(
 
     /** 接线轮 R1：方案／回车类型变化时喂给通知状态（变化才喂）。 */
     private fun feedSchemeAndReturnKeyEvents() {
-        val schemaId = keyboardStateManager.getCurrentSchema()?.id
+        val schema = keyboardStateManager.getCurrentSchema()
+        val schemaId = schema?.id
         if (schemaId != lastFedSchemaId) {
             lastFedSchemaId = schemaId
             if (schemaId != null) {
+                // P1：方案事件带名（ID 或名二选一匹配，名空时只带 ID）。
                 SkinRuntimeState.onEvent(
-                    NotificationEvent(NotificationSource.SCHEME, schemaId, null),
+                    NotificationEvent(
+                        NotificationSource.SCHEME, schemaId,
+                        schema?.name?.takeIf { it.isNotEmpty() },
+                    ),
                 )
             }
             refreshOptionStateAsync()
@@ -1458,6 +1507,14 @@ class KeyboardWindowView(
             lastFedReturnKeyType = returnType
             SkinRuntimeState.onEvent(
                 NotificationEvent(NotificationSource.RETURN_KEY_TYPE, returnType, null),
+            )
+            // A6：回车类型现值同步进条件表（条件样式门控用，
+            // 与通知事件同触发，键盘重建时装配器取用）。
+            SkinRuntimeState.updateConditionCurrent(
+                SkinRuntimeState.conditionCurrent() + mapOf(
+                    ConditionStyleParser.RETURN_KEY_TYPE_KEY to
+                        ConditionCurrent.StringValue(returnType),
+                ),
             )
         }
     }
@@ -1681,11 +1738,17 @@ class KeyboardWindowView(
             }
         }
         // 接线轮 R1：预编辑变化事件（只比较变化，不记文本内容；
-        // 通知解析已禁 matchKey／matchValue，事件恒双空）。
+        // A4：事件带空／非空布尔信号，matchKey 仍禁，文本绝不
+        // 进入匹配与日志；快照比对去重，同空否重复事件不重建）。
         val joined = items.joinToString("") { it.text }
         if (joined != lastFedPreedit) {
             lastFedPreedit = joined
-            SkinRuntimeState.onEvent(NotificationEvent(NotificationSource.PREEDIT, null, null))
+            SkinRuntimeState.onEvent(
+                NotificationEvent(
+                    NotificationSource.PREEDIT, null,
+                    if (items.isEmpty()) "empty" else "nonempty",
+                ),
+            )
         }
         lastComposing = items.joinToString("") { it.text }.takeIf { it.isNotEmpty() }
         pushDynamicTexts()

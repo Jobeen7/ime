@@ -212,6 +212,9 @@ class KawaiiPanel(
         val render = createStateRender(state)
         currentStateRender = render
         view.currentRenderer = render.createToolbarRenderer()
+        // 新渲染器只含皮肤／默认：重压用户覆盖层（用户＞皮肤＞默认），
+        // 否则用户工具栏在状态切换后丢失（连同用户栏背景半残）。
+        view.reapplyUserToolbar()
         if (state is State.Prediction) view.setExpanded(false)
         render.showExpand(view.isExpanded)
         view.invalidate()

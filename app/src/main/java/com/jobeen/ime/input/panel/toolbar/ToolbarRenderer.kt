@@ -15,12 +15,15 @@ import com.jobeen.ime.input.panel.Paints
 import com.jobeen.ime.input.panel.component.ClipboardTab
 import com.jobeen.ime.skin.icon.IconAlias
 import com.jobeen.ime.skin.icon.MaterialSymbols
+import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.model.SkinToolbarSnapshot
 import com.jobeen.ime.skin.model.ToolbarLayoutSpec
 import com.jobeen.ime.skin.model.ToolbarSlot
 import com.jobeen.ime.skin.model.ToolbarStyleSpec
 import com.jobeen.ime.skin.model.contentRect
 import com.jobeen.ime.skin.model.toolbarSlotGeometry
+import com.jobeen.ime.skin.runtime.KeyStyleResolver
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 /**
  * 自定义钮按压态：涟漪动画进行中（alpha>0 且半径未到峰值）且按压点落在该槽内。
@@ -170,6 +173,11 @@ class ToolbarRenderer(
      * null = 无判定（旧口径：池钮一律常态色）。函数型参数置末。
      */
     var toggleActive: ((PanelAction) -> Boolean)? = null,
+    /**
+     * 当前配色方案（P4：锁定通知样式解析用，由面板视图在构建与
+     * refreshTheme 时同步；null = 不解析样式覆盖，只换动作）。
+     */
+    var scheme: KeyboardColors.ColorScheme? = null,
 ) : IRenderer {
 
     var textEditingMode: Boolean = false
@@ -501,12 +509,32 @@ class ToolbarRenderer(
         val resolved = ToolbarSkinResolution.resolve(skinToolbarSnapshot, fallbackCenterActions)
         // 接线轮 R1：锁定通知按按钮 id 命中工具栏键时替换点按动作
         // （图标保持原钮身份，不跟新动作走；无映射的命令不替换）。
+        // P4：同项的背景／前景样式一并覆盖（与键覆写同口径：背景
+        // 样式取 face 色作钮底，前景样式取 text 色作图标色；无
+        // scheme 时不解析样式，只换动作）。
         val latched = com.jobeen.ime.skin.runtime.SkinRuntimeState.latchedNotifications()
+        val snapshot = SkinSnapshotProvider.peek()
+        val currentScheme = scheme
         return resolved.centerActions.map { action ->
             val actionId = ToolbarConfig.POOL.find { it.action == action }?.id
-            val effective = actionId?.let { latched[it]?.action }
+            val notification = actionId?.let { latched[it] }
+            val effective = notification?.action
                 ?.let { ToolbarNotificationAction.panelActionFor(it) } ?: action
-            ImageButton(iconForResolved(action, resolved), effective, iconScale = iconScale)
+            fun styleColor(styleName: String?, pick: (KeyStyleResolver.ResolvedKeyStyle) -> Int?): Int? {
+                if (styleName == null || currentScheme == null) return null
+                val resolution = KeyStyleResolver.resolve(
+                    styleRef = styleName,
+                    overrides = null,
+                    keyStyles = snapshot?.keyStyles ?: emptyMap(),
+                    scheme = currentScheme,
+                )
+                return resolution.style?.let(pick)
+            }
+            ImageButton(
+                iconForResolved(action, resolved), effective, iconScale = iconScale,
+                bgColor = styleColor(notification?.backgroundStyle) { it.face },
+                iconTint = styleColor(notification?.foregroundStyle) { it.text },
+            )
         }
     }
 
