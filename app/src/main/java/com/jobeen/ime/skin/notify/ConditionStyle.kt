@@ -13,10 +13,12 @@ import kotlinx.serialization.json.intOrNull
  * 条件样式（重点候选 8-1，轻量变体）：只换样式不换动作。
  *
  * 皮肤顶层 `conditionStyles` 数组的一项：
- * - conditionKey：符号键盘锁定态（`symbolLock`）或 rime 选项
- *   （`rime$<选项名>`）；其他键名非法，整项丢弃；
- * - conditionValue：布尔（选项开关／锁定态）或整数数组
- *   （锁定态多值集合；空数组非法，整项丢弃）；
+ * - conditionKey：符号键盘锁定态（`symbolLock`）、回车类型
+ *   （`returnKeyType`）或 rime 选项（`rime$<选项名>`）；其他
+ *   键名非法，整项丢弃；
+ * - conditionValue：布尔（选项开关／锁定态）、整数数组
+ *   （多值集合；空数组非法，整项丢弃）或字符串／字符串数组
+ *   （回车类型名集合；空／全空非法，整项丢弃）；
  * - styleName：单个样式名或样式名数组（空／全空非法，整项丢弃）。
  *
  * 语义：条件样式门控同名样式——键的 styleRef 被某项命名且该项
@@ -28,12 +30,14 @@ import kotlinx.serialization.json.intOrNull
 sealed interface ConditionValue {
     data class Bool(val value: Boolean) : ConditionValue
     data class Ints(val values: Set<Int>) : ConditionValue
+    data class Strings(val values: Set<String>) : ConditionValue
 }
 
-/** 条件现值（供给方提供）：布尔或单个整数。 */
+/** 条件现值（供给方提供）：布尔、单个整数或单个字符串。 */
 sealed interface ConditionCurrent {
     data class Bool(val value: Boolean) : ConditionCurrent
     data class IntValue(val value: Int) : ConditionCurrent
+    data class StringValue(val value: String) : ConditionCurrent
 }
 
 data class ConditionStyle(
@@ -63,6 +67,8 @@ object ConditionEvaluator {
                 current is ConditionCurrent.Bool && current.value == expected.value
             is ConditionValue.Ints ->
                 current is ConditionCurrent.IntValue && current.value in expected.values
+            is ConditionValue.Strings ->
+                current is ConditionCurrent.StringValue && current.value in expected.values
         }
     }
 }
@@ -77,6 +83,9 @@ object ConditionStyleParser {
     /** 表情板锁定态条件键（审计 G）。 */
     const val EMOJI_LOCK_KEY = "emojiKeyboardLockState"
     const val RIME_OPTION_PREFIX = "rime$"
+
+    /** 回车类型条件键（A6；现值为回车类型名，如 ENTER／GO）。 */
+    const val RETURN_KEY_TYPE_KEY = "returnKeyType"
 
     /** @return 解析出的条件样式表与丢弃项数（坏项只记数，调用方转 issue）。 */
     fun parse(node: JsonArray): Pair<List<ConditionStyle>, Int> {
@@ -98,12 +107,21 @@ object ConditionStyleParser {
         if (conditionKey != SYMBOL_LOCK_KEY &&
             conditionKey != SYMBOLIC_LOCK_KEY &&
             conditionKey != EMOJI_LOCK_KEY &&
+            conditionKey != RETURN_KEY_TYPE_KEY &&
             !(conditionKey.startsWith(RIME_OPTION_PREFIX) &&
                 conditionKey.length > RIME_OPTION_PREFIX.length)
         ) {
             return null
         }
         val conditionValue = parseValue(obj["conditionValue"]) ?: return null
+        // 字符串值只对 returnKeyType 有意义（现值为类型名字符串）；
+        // rime 选项（布尔）与锁定态（布尔／整数）现值永不为字符串，
+        // 字符串条件在彼处是坏项（整项丢弃，不留永不命中规则）。
+        if (conditionValue is ConditionValue.Strings &&
+            conditionKey != RETURN_KEY_TYPE_KEY
+        ) {
+            return null
+        }
         val styleNames = parseStyleNames(obj["styleName"]) ?: return null
         return ConditionStyle(conditionKey, conditionValue, styleNames)
     }
@@ -111,16 +129,38 @@ object ConditionStyleParser {
     private fun parseValue(node: JsonElement?): ConditionValue? {
         if (node == null) return null
         if (node is JsonPrimitive) {
+            if (node.isString) {
+                val name = node.content.takeIf { it.isNotEmpty() } ?: return null
+                return ConditionValue.Strings(setOf(name))
+            }
             val bool = node.booleanOrNull ?: return null
             return ConditionValue.Bool(bool)
         }
         if (node is JsonArray) {
             val ints = LinkedHashSet<Int>()
+            val strings = LinkedHashSet<String>()
+            var kind: String? = null
             for (element in node) {
-                ints += (element as? JsonPrimitive)?.intOrNull ?: return null
+                val primitive = element as? JsonPrimitive ?: return null
+                val int = primitive.intOrNull
+                if (int != null && primitive.isString.not()) {
+                    if (kind == "strings") return null
+                    kind = "ints"
+                    ints += int
+                } else if (primitive.isString) {
+                    if (kind == "ints") return null
+                    kind = "strings"
+                    val name = primitive.content.takeIf { it.isNotEmpty() } ?: return null
+                    strings += name
+                } else {
+                    return null
+                }
             }
-            if (ints.isEmpty()) return null
-            return ConditionValue.Ints(ints)
+            return when (kind) {
+                "ints" -> ConditionValue.Ints(ints)
+                "strings" -> ConditionValue.Strings(strings)
+                else -> null
+            }
         }
         return null
     }

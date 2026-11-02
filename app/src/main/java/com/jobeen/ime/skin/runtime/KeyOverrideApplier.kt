@@ -1,8 +1,11 @@
 package com.jobeen.ime.skin.runtime
 
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.engine.event.KeyModifier
+import com.jobeen.ime.engine.event.KeyModifiers
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
+import com.jobeen.ime.skin.notify.NotificationActionNames
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.DynamicTextSource
 import com.jobeen.ime.skin.model.KeyForegroundLayer
@@ -428,12 +431,19 @@ object KeyOverrideApplier {
         val capsLocked: Int?,
         val swipeUp: Int?,
         val swipeDown: Int?,
+        /** 状态前景字号（S6）：取自状态样式的几何 fontSizeDp，null = 跟主字号。 */
+        val uppercasedSize: Float? = null,
+        val capsLockedSize: Float? = null,
+        val swipeUpSize: Float? = null,
+        val swipeDownSize: Float? = null,
     )
 
     /**
      * Wave-4 状态前景色解析：四槽样式名各取其样式 TEXT 角色色
      * （与锁定通知前景取色同口径）；未知样式名记日志回落 null，
      * 四槽全空时返回 null（不触发复制）。
+     * S6：四槽字号各取其样式几何 fontSizeDp（快照 keyGeometries），
+     * 未指定字号的样式只出颜色、不出字号（渲染跟主字号）。
      */
     private fun resolveStateForegroundColors(
         layoutName: String,
@@ -464,14 +474,24 @@ object KeyOverrideApplier {
             }
             return resolution.style?.text
         }
+        fun sizeOf(styleName: String?): Float? {
+            if (styleName == null) return null
+            return snapshot.keyGeometries[styleName]?.fontSizeDp
+        }
         val colors = StateForegroundColors(
             uppercased = textOf(override.uppercasedForegroundStyle),
             capsLocked = textOf(override.capsLockedForegroundStyle),
             swipeUp = textOf(override.swipeUpForegroundStyle),
             swipeDown = textOf(override.swipeDownForegroundStyle),
+            uppercasedSize = sizeOf(override.uppercasedForegroundStyle),
+            capsLockedSize = sizeOf(override.capsLockedForegroundStyle),
+            swipeUpSize = sizeOf(override.swipeUpForegroundStyle),
+            swipeDownSize = sizeOf(override.swipeDownForegroundStyle),
         )
         return if (colors.uppercased == null && colors.capsLocked == null &&
-            colors.swipeUp == null && colors.swipeDown == null
+            colors.swipeUp == null && colors.swipeDown == null &&
+            colors.uppercasedSize == null && colors.capsLockedSize == null &&
+            colors.swipeUpSize == null && colors.swipeDownSize == null
         ) null else colors
     }
 
@@ -607,8 +627,11 @@ object KeyOverrideApplier {
         val mainText = dynamicValue ?: staticText
         val isSymbol = isSymbolKey(mainText)
         val mainRole = if (isSymbol) KeyTextRole.SYMBOL else KeyTextRole.MAIN
-        val mainSize = override?.textSizes?.get(mainRole) ?: tiers[mainRole]
-        val altSize = override?.textSizes?.get(KeyTextRole.SUB) ?: tiers[KeyTextRole.SUB]
+        // S1：逐样式字号居中——键覆写 > 样式 > 全局档位。
+        val mainSize = override?.textSizes?.get(mainRole)
+            ?: geometry?.fontSizeDp ?: tiers[mainRole]
+        val altSize = override?.textSizes?.get(KeyTextRole.SUB)
+            ?: geometry?.altFontSizeDp ?: tiers[KeyTextRole.SUB]
 
         // ---- 副文字：Text 转 AltText、AltText 替换副显、其余外观忽略 ----
         // （ImageText 是 Text 子类但无副文字槽，同样属忽略之列。）
@@ -699,11 +722,16 @@ object KeyOverrideApplier {
 
         // Wave-4 状态前景色：样式名已在装配期解析为 TEXT 角色色；
         // null 槽（未指定或未知样式）保持出厂/样式色不动。
+        // S6：状态前景字号平行写入，null 槽渲染跟主字号。
         stateColors?.let {
             if (it.uppercased != null) appearance.skinUppercasedTextColor = it.uppercased
             if (it.capsLocked != null) appearance.skinCapsLockedTextColor = it.capsLocked
             if (it.swipeUp != null) appearance.skinSwipeUpTextColor = it.swipeUp
             if (it.swipeDown != null) appearance.skinSwipeDownTextColor = it.swipeDown
+            if (it.uppercasedSize != null) appearance.skinUppercasedTextSize = it.uppercasedSize
+            if (it.capsLockedSize != null) appearance.skinCapsLockedTextSize = it.capsLockedSize
+            if (it.swipeUpSize != null) appearance.skinSwipeUpTextSize = it.swipeUpSize
+            if (it.swipeDownSize != null) appearance.skinSwipeDownTextSize = it.swipeDownSize
         }
         // 多主类型补充：滑动方向指示（仅 true 写透，false = 不覆写出厂）。
         if (override?.showSwipeIndicators == true) {
@@ -1221,11 +1249,14 @@ object KeyOverrideApplier {
         rebuilt.skinTopText = subLabelTop
         rebuilt.skinContentBiasX = geometry?.contentCenterX
         rebuilt.skinContentBiasY = geometry?.contentCenterY
-        rebuilt.skinHInsetDp = geometry?.hInsetDp
-        rebuilt.skinVInsetDp = geometry?.vInsetDp
+        // S2：内边距布局键几何优先，样式次之，全局边距由渲染层回落。
+        rebuilt.skinHInsetDp = geometry?.hInsetDp ?: styleGeometry?.hInsetDp
+        rebuilt.skinVInsetDp = geometry?.vInsetDp ?: styleGeometry?.vInsetDp
         rebuilt.skinHeightFactor = geometry?.heightFactor
         rebuilt.skinForegroundLayers = foreground
         rebuilt.skinIconSymbol = appearance.skinIconSymbol
+        // S1：图标字形字号取样式，缺省 24 由渲染层回落。
+        rebuilt.skinIconSizeDp = styleGeometry?.iconSizeDp
         rebuilt.skinKeyAnimation = keyAnimation
         return rebuilt
     }
@@ -1355,6 +1386,39 @@ object KeyOverrideApplier {
             WhitelistAction.HASH_TOGGLE_SYMBOL_BAR -> KeyboardAction.ToggleSymbolBarAction
             WhitelistAction.HASH_KEYBOARD_MENU -> KeyboardAction.KeyboardMenuAction
             WhitelistAction.HASH_TOGGLE_COMMAND_VIEW -> KeyboardAction.ToggleCommandViewAction
+            // 通知动作补齐（P3；值已在通知解析期校验，此处非法只
+            // 作空操作，绝不因皮肤数据崩键盘）。
+            WhitelistAction.CHARACTER ->
+                KeyboardAction.KeySequenceAction(requireNotNull(action.value))
+            WhitelistAction.SEND_KEYS -> {
+                val combos = NotificationActionNames.parseSendKeysValue(
+                    action.value ?: "",
+                ) ?: emptyList()
+                KeyboardAction.SendKeysAction(combos.map { combo ->
+                    val mods = mutableListOf<KeyModifier>()
+                    if (combo.ctrl) mods += KeyModifier.Control
+                    if (combo.shift) mods += KeyModifier.Shift
+                    if (combo.alt) mods += KeyModifier.Alt
+                    if (combo.meta) mods += KeyModifier.Meta
+                    KeyboardAction.SendKeyCombo(combo.keyCode, KeyModifiers(*mods.toTypedArray()))
+                })
+            }
+            WhitelistAction.SEND_KEY_EVENT -> {
+                val combo = NotificationActionNames.parseKeyCombo(action.value ?: "")
+                if (combo == null) {
+                    KeyboardAction.NoOpAction
+                } else {
+                    KeyboardAction.AppKeyEventAction(
+                        combo.keyCode, combo.ctrl, combo.shift, combo.alt, combo.meta,
+                    )
+                }
+            }
+            WhitelistAction.RIME_OPTION ->
+                KeyboardAction.ToggleRimeOptionAction(requireNotNull(action.value))
+            WhitelistAction.DELAY ->
+                KeyboardAction.DelayAction(action.value?.toIntOrNull() ?: 0)
+            WhitelistAction.SNIPPET ->
+                KeyboardAction.SnippetAction(requireNotNull(action.value))
         }
         SkinAction.SequencePlaceholder ->
             error("sequence 占位不得转运行时动作（详设 §3.6）")

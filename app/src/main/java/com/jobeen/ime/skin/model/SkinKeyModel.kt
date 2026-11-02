@@ -159,6 +159,26 @@ enum class WhitelistAction(
     HASH_TOGGLE_SYMBOL_BAR("#toggleSymbolBar", ValueRule.FORBIDDEN),
     HASH_KEYBOARD_MENU("#keyboardMenu", ValueRule.FORBIDDEN),
     HASH_TOGGLE_COMMAND_VIEW("#toggleCommandView", ValueRule.FORBIDDEN),
+    /**
+     * 通知动作补齐（1:1 差距 P3；Jime 格式名均为 snake_case，
+     * 对端名由转换器映射）：
+     * - character：送 Rime 组字（非字面提交），value＝字符，必填；
+     * - send_keys：直送应用组合键，value＝逗号分隔组合（见
+     *   NotificationActionNames.parseSendKeysValue），必填；
+     * - send_key_event：直送应用单键事件，value＝组合（键名／
+     *   键码＋修饰键），必填；
+     * - rime_option：翻转 rime 选项，value＝选项名，必填；
+     * - delay：子动作间停顿，value＝毫秒数（0–1000），必填；
+     * - snippet：片段展开，value＝模板，必填。
+     * combine 未入白名单：通知动作格式为单值，组合动作需
+     * 动作列表，格式无法承载；按键组合走既有 SkinAction.Combine。
+     */
+    CHARACTER("character", ValueRule.REQUIRED),
+    SEND_KEYS("send_keys", ValueRule.REQUIRED),
+    SEND_KEY_EVENT("send_key_event", ValueRule.REQUIRED),
+    RIME_OPTION("rime_option", ValueRule.REQUIRED),
+    DELAY("delay", ValueRule.REQUIRED),
+    SNIPPET("snippet", ValueRule.REQUIRED),
     ;
 
     enum class ValueRule { REQUIRED, FORBIDDEN }

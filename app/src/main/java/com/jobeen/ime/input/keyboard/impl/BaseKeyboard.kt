@@ -981,11 +981,31 @@ abstract class BaseKeyboard(
     }
 
     /**
+     * 主文字字号（S6，与 setMainTextColor 平行）：null = 跟主字号
+     * （appearance.skinTextSize），仍空时不动（留初始字号）。
+     */
+    private fun setMainTextSize(view: View, appearance: KeyDef.Appearance, size: Float?) {
+        val target = size ?: appearance.skinTextSize ?: return
+        when (view) {
+            is TextKeyView -> view.mainText.setTextSize(
+                android.util.TypedValue.COMPLEX_UNIT_DIP, target,
+            )
+            is AltTextKeyView -> view.mainText.setTextSize(
+                android.util.TypedValue.COMPLEX_UNIT_DIP, target,
+            )
+            else -> Unit
+        }
+    }
+
+    /**
      * 大写态前景色（子类覆写：QwertyKeyboard 按当前大写态取
      * 锁定/大写色；缺省 null = 默认色）。滑动暂显清除时恢复到
      * 该色（§5 序：滑动＞锁定＞大写＞基础），而非直接回默认。
      */
     protected open fun capsForegroundColor(appearance: KeyDef.Appearance): Int? = null
+
+    /** 大写态前景字号（S6，与 capsForegroundColor 平行；缺省 null = 主字号）。 */
+    protected open fun capsForegroundSize(appearance: KeyDef.Appearance): Float? = null
 
     private fun applyTransientSwipeColor(view: View, def: KeyDef, direction: SwipeDirection?) {
         // §5 序：滑动色优先；该方向无滑动色时退大写态色（再无则默认色，
@@ -1004,12 +1024,21 @@ abstract class BaseKeyboard(
             isUppercased = false,
         ) ?: capsForegroundColor(def.appearance)
         setMainTextColor(view, def.appearance, color)
+        // S6：滑动字号同序（该方向滑动字号＞大写态字号＞主字号）。
+        val size = when (direction) {
+            SwipeDirection.UP -> def.appearance.skinSwipeUpTextSize
+            SwipeDirection.DOWN -> def.appearance.skinSwipeDownTextSize
+            else -> null
+        } ?: capsForegroundSize(def.appearance)
+        setMainTextSize(view, def.appearance, size)
     }
 
     private fun clearTransientSwipeColor(view: View, def: KeyDef) {
         // §5 恢复口径：滑动色清除后回到大写态色（无则默认色，
         // 由 setMainTextColor 的 null 回落处理）。
         setMainTextColor(view, def.appearance, capsForegroundColor(def.appearance))
+        // S6：字号同序恢复（大写态字号＞主字号）。
+        setMainTextSize(view, def.appearance, capsForegroundSize(def.appearance))
     }
 
     override fun onAttach() = Timber.d("Keyboard onAttach")

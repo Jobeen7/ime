@@ -48,11 +48,13 @@ class KeyActionListener(
         val dispatchStart = com.jobeen.ime.skin.perf.PerfMonitor.stageStart()
         // 接线轮 R1：键盘动作事件喂给通知状态（锁定变化时窗口
         // 经回调以 post 重建键盘，不在分发中途同步重建）。
+        // A5：事件带区分值（切方案／切类型／rime 选项取参数值，
+        // 其余动作空），通知可按参数值匹配，不只按种类。
         com.jobeen.ime.skin.runtime.SkinRuntimeState.onEvent(
             com.jobeen.ime.skin.notify.NotificationEvent(
                 com.jobeen.ime.skin.notify.NotificationSource.KEYBOARD_ACTION,
                 com.jobeen.ime.skin.notify.NotificationActionNames.nameOf(action),
-                null,
+                com.jobeen.ime.skin.notify.NotificationActionNames.valueOf(action),
             ),
         )
         when (action) {

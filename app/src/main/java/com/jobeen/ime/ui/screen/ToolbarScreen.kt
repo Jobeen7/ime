@@ -359,13 +359,20 @@ fun ToolbarScreen(onBack: () -> Unit) {
                     persist(next)
                     toolbarFormOpen = false
                     // 新建后直进该栏的按钮编辑；编辑既有栏关对话框回栏列表。
+                    // 两路都须先设草稿（与主入口 enterEdit 同口径：以被
+                    // 编辑栏当前列起步），否则编辑页列表为空／残留，添加
+                    // 会整列覆盖原列。
                     if (isNew) {
                         editToolbarId = config.id
+                        editSeed = null
+                        editDraft = currentList()
                         page = ToolbarPage.EDIT
                     }
                 },
                 onEditButtons = { id ->
                     editToolbarId = id
+                    editSeed = null
+                    editDraft = currentList()
                     page = ToolbarPage.EDIT
                     toolbarFormOpen = false
                 },
@@ -673,6 +680,13 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.UNDO -> R.string.action_undo
         WhitelistAction.REDO -> R.string.action_redo
         WhitelistAction.VOICE_INPUT -> R.string.action_voice_input
+        // P3 新增通知动作（工具栏按钮亦可指派，执行见 KeyOverrideApplier）。
+        WhitelistAction.CHARACTER -> R.string.action_character
+        WhitelistAction.SEND_KEYS -> R.string.action_send_keys
+        WhitelistAction.SEND_KEY_EVENT -> R.string.action_send_key_event
+        WhitelistAction.RIME_OPTION -> R.string.action_rime_option
+        WhitelistAction.DELAY -> R.string.action_delay
+        WhitelistAction.SNIPPET -> R.string.action_snippet
         WhitelistAction.TOGGLE_ASCII_MODE -> R.string.action_toggle_ascii_mode
         WhitelistAction.SYMBOLIC_LOCK_TOGGLE -> R.string.action_symbolic_lock_toggle
         WhitelistAction.EMOJI_LOCK_TOGGLE -> R.string.action_emoji_lock_toggle

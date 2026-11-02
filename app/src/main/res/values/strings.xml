@@ -858,6 +858,12 @@
     <string name="action_undo">撤销</string>
     <string name="action_redo">重做</string>
     <string name="action_voice_input">语音输入</string>
+    <string name="action_character">输入字符</string>
+    <string name="action_send_keys">发送按键组合</string>
+    <string name="action_send_key_event">发送按键事件</string>
+    <string name="action_rime_option">切换 Rime 选项</string>
+    <string name="action_delay">延迟</string>
+    <string name="action_snippet">插入片段</string>
     <string name="action_toggle_ascii_mode">中英切换</string>
     <string name="action_symbolic_lock_toggle">符号板锁定切换</string>
     <string name="action_tab">制表键</string>

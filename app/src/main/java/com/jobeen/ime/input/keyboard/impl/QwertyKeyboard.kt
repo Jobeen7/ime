@@ -318,6 +318,16 @@ class QwertyKeyboard(
             isUppercased = capsState != CapsState.None,
         )
 
+    /** 大写态前景字号（S6，与 capsForegroundColor 同序；缺省 null = 主字号）。 */
+    override fun capsForegroundSize(appearance: KeyDef.Appearance): Float? =
+        if (capsState == CapsState.Lock) {
+            appearance.skinCapsLockedTextSize ?: appearance.skinUppercasedTextSize
+        } else if (capsState != CapsState.None) {
+            appearance.skinUppercasedTextSize
+        } else {
+            null
+        }
+
     /** 大写前景色：遍历全部文字键主文字，取当前大写态色（无则默认色）。 */
     private fun applyCapsColors() {
         for (row in keyRows) {
@@ -325,13 +335,29 @@ class QwertyKeyboard(
                 val child = row.getChildAt(i) as? KeyView ?: continue
                 val appearance = child.def
                 val color = capsForegroundColor(appearance)
+                // S6：大写态字号同序（无则跟主字号，仍空不动）。
+                val size = capsForegroundSize(appearance) ?: appearance.skinTextSize
                 when (child) {
-                    is TextKeyView -> child.mainText.setTextColor(
-                        color ?: defaultMainTextColor(appearance)
-                    )
-                    is AltTextKeyView -> child.mainText.setTextColor(
-                        color ?: defaultMainTextColor(appearance)
-                    )
+                    is TextKeyView -> {
+                        child.mainText.setTextColor(
+                            color ?: defaultMainTextColor(appearance)
+                        )
+                        if (size != null) {
+                            child.mainText.setTextSize(
+                                android.util.TypedValue.COMPLEX_UNIT_DIP, size,
+                            )
+                        }
+                    }
+                    is AltTextKeyView -> {
+                        child.mainText.setTextColor(
+                            color ?: defaultMainTextColor(appearance)
+                        )
+                        if (size != null) {
+                            child.mainText.setTextSize(
+                                android.util.TypedValue.COMPLEX_UNIT_DIP, size,
+                            )
+                        }
+                    }
                     else -> Unit
                 }
             }

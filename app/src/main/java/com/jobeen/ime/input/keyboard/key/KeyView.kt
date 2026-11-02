@@ -122,6 +122,11 @@ abstract class KeyView(
     @FloatRange(0.0, 1.0)
     var layoutMarginRight = 0f
 
+    /** 可视区域高度占比（S7）：null = 全高；纵向对齐见 layoutVertical。 */
+    var layoutHeightFraction: Float? = null
+    var layoutVertical: com.jobeen.ime.skin.model.KeyBoundsVertical =
+        com.jobeen.ime.skin.model.KeyBoundsVertical.CENTER
+
     open val displayText: String? get() = null
 
     /** 变换目标标签视图（工具项 14）：文本键子类覆写为 mainText，无标签键为 null。 */
@@ -207,8 +212,8 @@ abstract class KeyView(
         visibility = def.visibility
         // 审计 A 项可视区域：宽度占比 + 横向对齐经既有
         // layoutMargin 机制在 onLayout 落到键面（左/右内缩和
-        // = 1 - 宽度占比）；纵向对齐无高度占比时不改变全高
-        // 键面（对端 bounds 本身只给宽度），仅模型保留。
+        // = 1 - 宽度占比）；S7：高度占比 + 纵向对齐同样经
+        // onLayout 落到键面（无高度占比时纵向对齐不改变全高键面）。
         def.skinVisibleBounds?.let { bounds ->
             val widthFraction = bounds.widthFraction ?: 1f
             val shrink = (1f - widthFraction).coerceIn(0f, 1f)
@@ -218,6 +223,8 @@ abstract class KeyView(
                 else -> shrink / 2f
             }
             layoutMarginRight = shrink - layoutMarginLeft
+            layoutHeightFraction = bounds.heightFraction
+            layoutVertical = bounds.vertical
         }
 
         // 等价化简：旧 if/else 两支殊途同归，只剩「Special 且无边框」一种不建背景
@@ -1136,17 +1143,38 @@ abstract class KeyView(
 
     override fun onLayout(changed: Boolean, left: Int, top: Int, right: Int, bottom: Int) {
         boundsValid = false
-        if (layoutMarginLeft != 0f || layoutMarginRight != 0f) {
+        val heightFraction = layoutHeightFraction
+        if (layoutMarginLeft != 0f || layoutMarginRight != 0f || heightFraction != null) {
             val w = right - left
             val h = bottom - top
             val layoutWidth = (w * (1f - layoutMarginLeft - layoutMarginRight)).roundToInt()
+            // S7：高度占比 + 纵向对齐——键面高按占比缩，顶边按
+            // 对齐落（TOP 贴顶、CENTER 居中、BOTTOM 贴底）。
+            val layoutHeight = if (heightFraction != null) {
+                (h * heightFraction.coerceIn(0f, 1f)).roundToInt()
+            } else {
+                h
+            }
+            // 局部名避让接收者属性（updateLayoutParams 内 topMargin
+            // 指接收者属性，局部同名会被判为 val 重赋值）。
+            val topMarginPx = if (heightFraction != null) {
+                when (layoutVertical) {
+                    com.jobeen.ime.skin.model.KeyBoundsVertical.TOP -> 0
+                    com.jobeen.ime.skin.model.KeyBoundsVertical.BOTTOM -> h - layoutHeight
+                    else -> (h - layoutHeight) / 2
+                }
+            } else {
+                0
+            }
             appearanceView.updateLayoutParams<LayoutParams> {
                 leftMargin = (w * layoutMarginLeft).roundToInt()
                 rightMargin = (w * layoutMarginRight).roundToInt()
+                topMargin = topMarginPx
+                height = layoutHeight
             }
             appearanceView.measure(
                 MeasureSpec.makeMeasureSpec(layoutWidth, MeasureSpec.EXACTLY),
-                MeasureSpec.makeMeasureSpec(h, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(layoutHeight, MeasureSpec.EXACTLY),
             )
         }
         super.onLayout(changed, left, top, right, bottom)
@@ -1561,7 +1589,8 @@ class ImageKeyView(
                 isFocusable = false
                 background = null
                 gravity = android.view.Gravity.CENTER
-                setTextSize(TypedValue.COMPLEX_UNIT_DIP, 24f)
+                // S1：图标字形字号取样式，缺省 24。
+                setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.skinIconSizeDp ?: 24f)
                 setTextColor(
                     // 集成接线：图片键符号字形同样走 icon 角色，无则回落文字色。
                     def.skinIconTintColor ?: def.skinTextColor ?: when (def.variant) {

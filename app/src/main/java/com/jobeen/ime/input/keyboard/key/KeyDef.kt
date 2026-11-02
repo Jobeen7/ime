@@ -89,6 +89,11 @@ open class KeyDef(
         var skinShowSwipeIndicators: Boolean = false
         /** 下滑中主文字暂显色（审计 E：滑动方向前景样式）。 */
         var skinSwipeDownTextColor: Int? = null
+        /** 状态前景字号（S6，dp）：与上四色平行，null = 跟主字号。 */
+        var skinUppercasedTextSize: Float? = null
+        var skinCapsLockedTextSize: Float? = null
+        var skinSwipeUpTextSize: Float? = null
+        var skinSwipeDownTextSize: Float? = null
         /** G1 图标染色（keyStyles icon 角色解析结果；无图标的键忽略）。 */
         var skinIconTintColor: Int? = null
         /**
@@ -162,6 +167,11 @@ open class KeyDef(
          * 字形代工厂图片。未知名装配期已回退，不会到达此处。
          */
         var skinIconSymbol: String? = null
+        /**
+         * 图标字形字号（S1，dp）：样式 geometry.iconFontSize；
+         * null = 渲染层回落 24。
+         */
+        var skinIconSizeDp: Float? = null
         /**
          * 按压态独立图标（重点候选 8-2）：Material Symbols 名，只由覆写
          * 装配器写在它生成的外观副本上；渲染切换要求常态图标已配。
