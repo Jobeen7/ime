@@ -294,14 +294,32 @@ class KeyOverrideApplierTest {
 
     @Test
     fun swipeOverrideMergesFactoryOtherSide() {
-        val result = applyQwerty(
+        // 出厂侧由测试夹具提供（退格出厂滑动已随用户决定去掉，
+        // 不再依赖它）：皮肤只覆写下滑时，出厂上滑保留、合并成双向滑动。
+        val factoryKey = KeyDef(
+            appearance = KeyDef.Appearance.Text(
+                displayText = "t",
+                textSize = 18f,
+                percentWidth = 0.1f,
+                variant = Variant.Alternative,
+            ),
+            behaviors = setOf(
+                KeyDef.Behavior.Press(KeyboardAction.CommitAction("t")),
+                KeyDef.Behavior.Swipe(upAction = KeyboardAction.UndoAction),
+            ),
+            id = "KEY_TEST",
+        )
+        val result = KeyOverrideApplier.apply(
+            "Qwerty",
+            listOf(listOf(factoryKey)),
             snapshot(
                 mapOf(
-                    "KEY_DELETE" to KeyOverride(swipeDown = SkinAction.Text("x")),
+                    "KEY_TEST" to KeyOverride(swipeDown = SkinAction.Text("x")),
                 ),
             ),
+            noPlaceholders,
         )
-        val swipe = result.byId("KEY_DELETE").behaviors
+        val swipe = result.flatten().single().behaviors
             .filterIsInstance<KeyDef.Behavior.Swipe>().single()
         assertEquals(KeyboardAction.UndoAction, swipe.upAction) // 出厂上滑保留
         assertEquals(KeyboardAction.KeySequenceAction("x"), swipe.downAction)

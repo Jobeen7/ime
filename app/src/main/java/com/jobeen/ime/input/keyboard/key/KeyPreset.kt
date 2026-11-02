@@ -108,10 +108,6 @@ fun backspaceKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyD
     behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.BackspaceAction),
         KeyDef.Behavior.Repeat(KeyboardAction.BackspaceAction),
-        KeyDef.Behavior.Swipe(
-            upAction = KeyboardAction.UndoAction,
-            downAction = KeyboardAction.RedoAction,
-        ),
     ),
 )
 
