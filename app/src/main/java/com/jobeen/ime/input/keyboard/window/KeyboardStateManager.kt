@@ -255,7 +255,16 @@ object KeyboardStateManager {
             // （如收起前停在符号/表情板上留下的 symbolic/emojis）
             // 不得成为首挂键盘，须回落按输入模式的初始主类型；
             // 换肤分支的存过类型恢复不受此限（见下方的换肤复位）。
-            val type = typeState.current ?: resolveFirstAttachType(stored, ascii)
+            val rawType = typeState.current ?: resolveFirstAttachType(stored, ascii)
+            // 首挂同样对账（进程重建时存过的类型也可能是上个方案留下的）；
+            // 方案布局未知时 typeForLayoutName 为空，对账不动原值。
+            val type = reconcileOpenType(
+                currentSchema?.layout?.let {
+                    CustomLayoutRuntime.typeForLayoutName(snapshot, it, landscape)
+                },
+                rawType,
+                ascii,
+            ) ?: rawType
             typeState.establish(type)
             lastTypeSkinId = skinId
             // 首挂确立亦写持久化：switchKeyboardType 内仅在类型
@@ -299,6 +308,19 @@ object KeyboardStateManager {
         // 恒不等，必走切换并撞上去重早返，视图不挂回；无类型
         // （旧路径）时沿用旧按名解析比较，内置行为不变。
         val targetLayout = currentSchema?.layout ?: defaultKeyboardName
+        // 打开对账：切方案只切布局不动类型，留存主类型可能是上个
+        // 方案留下的陈旧类型（打开即 26 键＋万象九键之类）；ascii
+        // 开着是主动英文，保留；否则以方案为准回主类型。工具板、
+        // 自定义类型与未知方案布局不动；切换后写盘，下次打开即正。
+        val reconciledType = reconcileOpenType(
+            CustomLayoutRuntime.typeForLayoutName(snapshot, targetLayout, landscape),
+            typeState.current,
+            runCatching { CandidateManager.isAsciiModeEnabled(appContext) }.getOrDefault(false),
+        )
+        if (reconciledType != null && reconciledType != typeState.current) {
+            switchKeyboardType(reconciledType)
+            return
+        }
         when (
             val action = decideReattach(
                 snapshot, currentKeyboardName!!, typeState.current, targetLayout, landscape,
@@ -886,6 +908,20 @@ internal fun shouldPersistType(type: String): Boolean = !KeyboardTypes.isTemp(ty
 internal fun resolveFirstAttachType(stored: String?, asciiMode: Boolean): String {
     if (stored != null && stored in KeyboardTypes.MAIN) return stored
     return if (asciiMode) KeyboardTypes.ALPHABETIC else KeyboardTypes.PINYIN
+}
+
+/**
+ * 打开时方案与留存类型对账（纯决策，可单测）：切方案只切布局不动类型，
+ * 留存主类型可能是上个方案留下的陈旧类型（打开即布局与方案名对不上）；
+ * ascii 开着是主动英文，保留；否则以方案的主类型为准。工具板、自定义
+ * 类型、未知方案布局与空类型一律不动，返回原值。
+ */
+internal fun reconcileOpenType(schemeType: String?, current: String?, asciiMode: Boolean): String? {
+    if (asciiMode) return current
+    if (schemeType in KeyboardTypes.MAIN && current in KeyboardTypes.MAIN && schemeType != current) {
+        return schemeType
+    }
+    return current
 }
 
 /** 重挂决策（[KeyboardStateManager.onAttach] 的纯决策部分，可单测）。 */
