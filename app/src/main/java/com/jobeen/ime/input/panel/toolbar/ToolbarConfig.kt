@@ -45,9 +45,9 @@ object ToolbarConfig {
 
     private val BY_ID: Map<String, Item> = POOL.associateBy { it.id }
 
-    /** 出厂默认 = 固定六项，顺序不变（末项为简繁）。 */
+    /** 出厂默认 = 固定五项，顺序不变。 */
     val DEFAULT_IDS: List<String> =
-        listOf("emoji", "select_all", "copy", "paste", "clipboard", "traditional_chinese")
+        listOf("emoji", "select_all", "copy", "paste", "clipboard")
 
     val DEFAULT_ACTIONS: List<PanelAction> = DEFAULT_IDS.map { BY_ID.getValue(it).action }
 

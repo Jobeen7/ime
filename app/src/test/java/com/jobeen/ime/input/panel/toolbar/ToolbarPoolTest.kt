@@ -6,7 +6,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 工具栏中央池：简繁进池并成为第 6 个出厂默认列；
+ * 工具栏中央池：简繁仍在池中（可添加），但不再是出厂默认列；
  * 动作路由本身依赖 Android 服务，走真机验收。
  */
 class ToolbarPoolTest {
@@ -20,10 +20,10 @@ class ToolbarPoolTest {
     }
 
     @Test
-    fun defaultColumnsAreSixWithTraditionalChineseLast() {
-        assertEquals(6, ToolbarConfig.DEFAULT_IDS.size)
-        assertEquals("traditional_chinese", ToolbarConfig.DEFAULT_IDS.last())
-        assertTrue(ToolbarConfig.DEFAULT_ACTIONS.contains(PanelAction.ToggleTraditionalChinese))
+    fun defaultColumnsAreFiveWithoutTraditionalChinese() {
+        assertEquals(5, ToolbarConfig.DEFAULT_IDS.size)
+        assertEquals("clipboard", ToolbarConfig.DEFAULT_IDS.last())
+        assertTrue(!ToolbarConfig.DEFAULT_ACTIONS.contains(PanelAction.ToggleTraditionalChinese))
     }
 
     @Test
