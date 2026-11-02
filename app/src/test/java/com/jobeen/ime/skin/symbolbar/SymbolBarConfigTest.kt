@@ -243,6 +243,18 @@ class SymbolBarConfigTest {
     }
 
     @Test
+    fun orientationChange_resetsOnlyOnDefinedChange() {
+        // 方向值：0=未定义，1=竖屏，2=横屏，3=方形（Configuration.orientation）。
+        assertTrue(shouldResetSymbolBarOnOrientationChange(1, 2))
+        assertTrue(shouldResetSymbolBarOnOrientationChange(2, 1))
+        assertTrue(shouldResetSymbolBarOnOrientationChange(1, 3))
+        assertFalse(shouldResetSymbolBarOnOrientationChange(1, 1))
+        assertFalse(shouldResetSymbolBarOnOrientationChange(0, 2))
+        assertFalse(shouldResetSymbolBarOnOrientationChange(1, 0))
+        assertFalse(shouldResetSymbolBarOnOrientationChange(0, 0))
+    }
+
+    @Test
     fun loaderMissingInvalidAndOk() {
         val dir = java.nio.file.Files.createTempDirectory("symbolbar-test").toFile()
         try {

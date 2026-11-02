@@ -32,6 +32,7 @@ import com.jobeen.ime.engine.IEngine
 import com.jobeen.ime.input.keyboard.window.KeyboardWindow
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.panel.component.TextEditView
+import com.jobeen.ime.skin.symbolbar.shouldResetSymbolBarOnOrientationChange
 import com.jobeen.ime.ui.FabActions
 import timber.log.Timber
 import kotlinx.coroutines.CoroutineScope
@@ -45,6 +46,7 @@ import kotlinx.coroutines.launch
 class ImeInputMethodService : InputMethodService() {
     internal val engine: IEngine? get() = EngineFactory.current()
     internal var keyboardWindow: KeyboardWindow? = null
+    private var lastOrientation = Configuration.ORIENTATION_UNDEFINED
     internal var keyActionListener: KeyActionListener? = null
 
     /** 桥接模式：添加常用语时为真，所有提交/删除/语音输出写入 [virtualInputConnection] 而非真实编辑器。 */
@@ -117,6 +119,7 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onCreate() {
         super.onCreate()
+        lastOrientation = resources.configuration.orientation
         // 已删除功能的残留清理：删掉旧版语音专名纠错学到的词对文件
         // （及其 tmp）；只删不建，文件不存在时为空操作，后续不再生成。
         runCatching {
@@ -158,6 +161,14 @@ class ImeInputMethodService : InputMethodService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
+        // 横竖屏切换关闭符号栏（指南口径：打开态不记住；视图在配置
+        // 变化时复用，不随窗口重建而消失，故须显式关闭）。
+        if (shouldResetSymbolBarOnOrientationChange(lastOrientation, newConfig.orientation)) {
+            keyboardWindow?.view?.onOrientationChanged()
+        }
+        if (newConfig.orientation != Configuration.ORIENTATION_UNDEFINED) {
+            lastOrientation = newConfig.orientation
+        }
         // 任何配置变化此前都无条件全量重建键盘（字体缩放/区域等与外观
         // 无关的变化也触发）；改走带变更检测的版本，配色未变不重建
         keyboardWindow?.view?.refreshColorsIfChanged()

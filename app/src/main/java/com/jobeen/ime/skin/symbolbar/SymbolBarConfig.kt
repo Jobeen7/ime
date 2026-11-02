@@ -168,6 +168,14 @@ fun bubbleIndexForDisplacement(
 fun resolveCurrentType(types: List<String>, stored: String?): String =
     if (stored != null && stored in types) stored else types[0]
 
+/**
+ * 横竖屏切换是否复位符号栏打开态（指南口径：收起/切换/横竖屏切换后
+ * 均关闭）。纯函数；方向值取 Configuration.orientation（0=未定义，
+ * 1=竖屏，2=横屏，3=方形）：未定义不触发，已定义且变化才触发。
+ */
+fun shouldResetSymbolBarOnOrientationChange(oldOrientation: Int, newOrientation: Int): Boolean =
+    oldOrientation != 0 && newOrientation != 0 && oldOrientation != newOrientation
+
 /** 完整符号栏配置（解析结果；panels 含不在 type 列表中的类型——忽略但保留）。 */
 data class SymbolBarConfig(
     val closeButtonOnLeft: Boolean,

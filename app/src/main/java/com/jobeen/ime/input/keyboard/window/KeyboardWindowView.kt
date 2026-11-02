@@ -389,6 +389,14 @@ class KeyboardWindowView(
         requestLayout()
     }
 
+    /**
+     * 横竖屏切换：符号栏打开态不记住，须关闭（指南口径；视图在
+     * 配置变化时复用，不随窗口重建而消失，故须显式关闭）。
+     */
+    fun onOrientationChanged() {
+        closeSymbolBar()
+    }
+
     var keyActionListener: KeyActionListener
         get() = keyboardStateManager.keyActionListener
         set(value) {
