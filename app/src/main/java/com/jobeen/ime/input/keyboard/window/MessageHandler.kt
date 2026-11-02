@@ -6,6 +6,7 @@ import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.PairCommitQueue
 import com.jobeen.ime.input.ImeInputMethodService
+import com.jobeen.ime.input.TypedUndoLedger
 import com.jobeen.ime.skin.diag.DiagLog
 
 class MessageHandler(
@@ -36,6 +37,10 @@ class MessageHandler(
                 com.jobeen.ime.input.stats.InputStats.noteCommit(message.text)
                 val ic = (service as ImeInputMethodService).activeInputConnection()
                 ic?.commitText(message.text, 1)
+                // 打字上屏入账（拦截态已在上方 return，不落屏不登记；
+                // 空提交由 record 忽略）：下滑撤销在污染会话内凭此
+                // 整段直删，不再把命运交给编辑器撤销栈。
+                if (ic != null) TypedUndoLedger.record(message.text)
                 if (cursorBack > 0 && ic != null) {
                     try {
                         repeat(cursorBack) {

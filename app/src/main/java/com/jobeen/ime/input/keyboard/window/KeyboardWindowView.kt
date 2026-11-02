@@ -79,6 +79,7 @@ import com.jobeen.ime.base.speech.cloud.SharedPrefsStore
 import com.jobeen.ime.base.speech.cloud.VoiceRecorderAdapter
 import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.input.ImeInputMethodService
+import com.jobeen.ime.input.TypedUndoLedger
 import com.jobeen.ime.input.ImeInputConnection
 import com.jobeen.ime.input.dialog.SchemaPickerDialog
 import com.jobeen.ime.input.keyboard.impl.GenericLayoutKeyboard
@@ -1731,6 +1732,10 @@ class KeyboardWindowView(
         // 经 activeInputConnection，与上屏走同一连接，桥接态下写虚拟连接。）
         if (CandidateManager.isInlineInputModeEnabled(context)) {
             val joined = inlinePreeditJoined(items)
+            // 内嵌组字送进编辑器即污染本会话撤销栈（见 TypedUndoLedger）：
+            // 此后组字清除会在编辑器栈里留下一条“清前含组字文本”的
+            // 删除记录，下滑撤销绝不能再发 Ctrl+Z 去撤销它。
+            if (joined.isNotEmpty()) TypedUndoLedger.markComposingSent()
             val ic = (context as? ImeInputMethodService)?.activeInputConnection()
             ic?.setComposingText(joined, 1)
             preeditPinner.hide(wm)

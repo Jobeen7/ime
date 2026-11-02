@@ -372,6 +372,9 @@ class ImeInputMethodService : InputMethodService() {
     private fun invalidateSpeechAfterInputEnd() {
         com.jobeen.ime.base.speech.SherpaSpeechClient.onInputViewFinished()
         VoiceUndoLedger.clearAll()
+        // 打字账本与污染标记与语音账本同生命周期：输入框结束
+        // 时整表作废，旧框的账与污染标记不能带进新框。
+        TypedUndoLedger.clearAll()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {

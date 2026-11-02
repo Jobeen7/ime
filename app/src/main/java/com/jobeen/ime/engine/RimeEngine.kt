@@ -65,6 +65,7 @@ import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.engine.rime.util.OptionsApplier
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.input.ImeInputMethodService
+import com.jobeen.ime.input.TypedUndoLedger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
@@ -944,7 +945,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             // 盲发 Ctrl+Z 经常删不完一整段。不命中（上屏
                             // 后打过字/移过光标/账本无账）才回落 Ctrl+Z。
                             val undoneByLedger = ic != null && VoiceUndoLedger.tryUndo(ic)
-                            if (!undoneByLedger) {
+                            // 污染会话内才查打字账本（未污染会话保持正式版
+                            // 原样：语音账本不命中即直发 Ctrl+Z，打字账本
+                            // 只作污染会话内的直删后备，不改变正常会话
+                            // 的撤销粒度）；落点按 TypedUndoLedger
+                            // .decideUndoFallback 真值表执行——污染且
+                            // 两账本都不命中时空操作，绝不把 Ctrl+Z
+                            // 发进被污染的编辑器撤销栈（那正是清掉的
+                            // 组字以已上屏文本复活的路径）。
+                            val poisoned = TypedUndoLedger.isPoisoned()
+                            val undoneByTyped = !undoneByLedger && poisoned &&
+                                ic != null && TypedUndoLedger.tryUndo(ic)
+                            if (TypedUndoLedger.decideUndoFallback(
+                                    undoneByLedger, undoneByTyped, poisoned
+                                ) == TypedUndoLedger.UndoFallback.SEND_CTRL_Z
+                            ) {
                                 InputConnectionUtil.sendCombinationKeyEvent(
                                     ic, KEYCODE_Z, ctrl = true
                                 )
@@ -972,7 +987,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             // 不命中（期间打过字/删过字/无恢复账）才回落
                             // 组合键——打字撤销的恢复仍走编辑器自己的栈
                             val redoneByLedger = ic != null && VoiceUndoLedger.tryRedo(ic)
-                            if (!redoneByLedger) {
+                            // 打字账本的恢复只在污染会话内接管（与撤销
+                            // 对称：直删只发生在污染会话内）；未污染会
+                            // 话仍直发 Ctrl+Shift+Z。恢复不设污染门：
+                            // 编辑器重做只能重做被编辑器撤销过的编辑，
+                            // 而污染会话内编辑器撤销已被拦下，清组字
+                            // 那条记录从未被编辑器撤销过，重做够不着它。
+                            val redoneByTyped = !redoneByLedger &&
+                                TypedUndoLedger.isPoisoned() &&
+                                ic != null && TypedUndoLedger.tryRedo(ic)
+                            if (!redoneByLedger && !redoneByTyped) {
                                 InputConnectionUtil.sendCombinationKeyEvent(
                                     ic, KEYCODE_Z, ctrl = true, shift = true
                                 )
