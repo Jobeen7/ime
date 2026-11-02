@@ -433,6 +433,8 @@ data class CandidateAreaStyleSpec(
     val cellPadDp: Float? = null,
     val minWordSpaceDp: Float? = null,
     val minRowHeightDp: Float? = null,
+    /** 分隔线可见（S10）：null = 未写 = 可见（默认）。 */
+    val dividerVisible: Boolean? = null,
 )
 
 /** 解析候选区样式节点：缺失返回 null，非对象记 issue 并返回 null。 */
@@ -455,6 +457,7 @@ fun parseCandidateAreaStyle(
         cellPadDp = parseDpField(obj["cellPadDp"], "$path.cellPadDp", issues, 0f..32f),
         minWordSpaceDp = parseDpField(obj["minWordSpaceDp"], "$path.minWordSpaceDp", issues, 0f..32f),
         minRowHeightDp = parseDpField(obj["minRowHeightDp"], "$path.minRowHeightDp", issues, 16f..96f),
+        dividerVisible = (obj["dividerVisible"] as? JsonPrimitive)?.booleanOrNull,
     )
 }
 

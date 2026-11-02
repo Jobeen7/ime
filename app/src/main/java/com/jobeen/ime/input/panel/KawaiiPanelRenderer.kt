@@ -461,9 +461,12 @@ class ComposingRenderer(
         } else {
             canvas.drawRect(pillsEnd, 0f, width.toFloat(), height.toFloat(), bgGradPaint)
         }
-        canvas.drawLine(
-            dividerX, pillY + pillH / 4f, dividerX, pillY + pillH * 3f / 4f, paints.dividerPaint
-        )
+        // S10：分隔线可见开关（默认可见）。
+        if (paints.candidateDividerVisible) {
+            canvas.drawLine(
+                dividerX, pillY + pillH / 4f, dividerX, pillY + pillH * 3f / 4f, paints.dividerPaint
+            )
+        }
         if (expandBorder) {
             val edgeColor = edgeBgColor
             if (edgeColor != null) {

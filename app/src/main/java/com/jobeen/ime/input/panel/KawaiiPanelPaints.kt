@@ -84,6 +84,16 @@ class Paints(context: Context) {
     var candidateIndexSizeDp: Float = CANDIDATE_INDEX_DP
     var candidateCommentSizeDp: Float = CANDIDATE_COMMENT_DP
     /**
+     * 候选主文字生效字号（候选字号参数；缺省 18）：
+     * updateColors 从横条单元格样式同步（无横条样式时回落 18，
+     * 与 CandidateSizeResolution.JIME_DEFAULT_TEXT_DP 同值）。
+     */
+    var candidateTextSizeDp: Float = CANDIDATE_TEXT_DP
+    // （候选字重不设变量：updateFonts 直接从快照现取，避免
+    // updateColors／updateFonts 调用顺序依赖，见下。）
+    /** 横条分隔线可见（S10）：默认可见，皮肤写 false 时隐藏。 */
+    var candidateDividerVisible: Boolean = true
+    /**
      * 候选按压底色（审计 I 项）：updateColors 从 panel 同步；
      * null = 未指定（渲染回落候选底）。
      */
@@ -116,6 +126,9 @@ class Paints(context: Context) {
         candidateCommentPaint.color = panel.candidateComment ?: panel.candidateIndex
         toolbarPressedColor = panel.toolbarPressed
         candidateStripBg = SkinSnapshotProvider.peek()?.horizontalCandidatesStyle?.background
+        // S10：横条分隔线可见性（未写 = 可见）。
+        candidateDividerVisible =
+            SkinSnapshotProvider.peek()?.horizontalCandidatesStyle?.dividerVisible ?: true
         // 单元格全字段优先于旧顶层字号字段，缺失回落 Jime 默认。
         val sizeSnapshot = SkinSnapshotProvider.peek()
         candidateIndexSizeDp =
@@ -124,6 +137,10 @@ class Paints(context: Context) {
         candidateCommentSizeDp =
             sizeSnapshot?.horizontalCandidateStyle?.commentSizeDp
                 ?: sizeSnapshot?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
+        // 候选主文字字号（S9；主文字无旧顶层字段，只读横条样式）。
+        candidateTextSizeDp =
+            sizeSnapshot?.horizontalCandidateStyle?.textSizeDp ?: CANDIDATE_TEXT_DP
+        // 字重在 updateFonts 现取（避免与 updateColors 的调用顺序依赖）。
         candidatePressedColor = panel.candidatePressed
         preferredBackground = panel.preferredBackground
         preferredText = panel.preferredText
@@ -165,10 +182,16 @@ class Paints(context: Context) {
         toolbarTextPaint.typeface =
             GlobalFonts.typefaceFor(context, FontRole.TOOLBAR, Typeface.BOLD)
                 ?: Typeface.DEFAULT_BOLD
+        // S9：候选字重（≥600 粗体，其余常规；无字重时常规）。
+        // 现取快照，避免依赖 updateColors 的调用顺序。
+        val candidateWeight =
+            SkinSnapshotProvider.peek()?.horizontalCandidateStyle?.textWeight?.weight
+        val candidateStyle =
+            if ((candidateWeight ?: 400) >= 600) Typeface.BOLD else Typeface.NORMAL
         candidateTextPaint.typeface =
-            GlobalFonts.typefaceFor(context, FontRole.CANDIDATE, Typeface.NORMAL)
+            GlobalFonts.typefaceFor(context, FontRole.CANDIDATE, candidateStyle)
         selectedCandidateTextPaint.typeface =
-            GlobalFonts.typefaceFor(context, FontRole.CANDIDATE, Typeface.NORMAL)
+            GlobalFonts.typefaceFor(context, FontRole.CANDIDATE, candidateStyle)
         candidateIndexPaint.typeface =
             GlobalFonts.typefaceFor(context, FontRole.INDEX, Typeface.NORMAL)
         candidateCommentPaint.typeface =
@@ -178,8 +201,8 @@ class Paints(context: Context) {
     fun applyDensity(density: Float) {
         dividerPaint.strokeWidth = 1f * density
         toolbarTextPaint.textSize = 16f * density
-        candidateTextPaint.textSize = CANDIDATE_TEXT_DP * density
-        selectedCandidateTextPaint.textSize = CANDIDATE_TEXT_DP * density
+        candidateTextPaint.textSize = candidateTextSizeDp * density
+        selectedCandidateTextPaint.textSize = candidateTextSizeDp * density
         candidateIndexPaint.textSize = candidateIndexSizeDp * density
         candidateCommentPaint.textSize = candidateCommentSizeDp * density
     }

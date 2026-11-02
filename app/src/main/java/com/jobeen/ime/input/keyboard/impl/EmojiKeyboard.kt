@@ -246,10 +246,22 @@ class EmojiKeyboard(
                 ),
             )
             sub.badgeText?.let { badge ->
+                // S12：角标字号／颜色按皮肤（未写沿用旧 9／specialKeyText；
+                // 选中格用高亮色，未写高亮时沿用常规色）。
+                val badgeSnap = SkinSnapshotProvider.peek()
+                val badgeSelected = index == boardState.subIndex
                 val badgeView = TextView(context).apply {
                     gravity = Gravity.CENTER
-                    setTextSize(9f)
-                    setTextColor(colors.specialKeyText)
+                    setTextSize(badgeSnap?.symbolBadgeFontSizeDp ?: 9f)
+                    setTextColor(
+                        if (badgeSelected) {
+                            badgeSnap?.symbolBadgeHighlightColor
+                                ?: badgeSnap?.symbolBadgeNormalColor
+                                ?: colors.specialKeyText
+                        } else {
+                            badgeSnap?.symbolBadgeNormalColor ?: colors.specialKeyText
+                        },
+                    )
                     text = badge
                 }
                 cell.addView(

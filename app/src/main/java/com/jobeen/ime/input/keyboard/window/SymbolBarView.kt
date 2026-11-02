@@ -25,6 +25,7 @@ import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.skin.model.SkinAction
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.SkinColorMode
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbolbar.SymbolBarCell
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfig
 import com.jobeen.ime.skin.symbolbar.SymbolBarKey
@@ -71,7 +72,12 @@ class SymbolBarView(
         val isDark = SkinColorMode.isDark(context)
         val barBg = config.background?.let { if (isDark) it.dark else it.light } ?: colors.background
         setBackgroundColor(barBg)
-        for (cell in symbolBarCells(config.closeButtonOnLeft)) {
+        // S11：横向符号 RTL 时整行镜像（关闭钮／类型钮随行反转）。
+        val barCells = symbolBarCells(config.closeButtonOnLeft)
+        val orderedCells =
+            if (SkinSnapshotProvider.peek()?.horizontalSymbolsRtl == true) barCells.reversed()
+            else barCells
+        for (cell in orderedCells) {
             val view = when (cell) {
                 SymbolBarCell.Close -> buildCloseCell()
                 SymbolBarCell.TypeSwitch -> buildTypeCell()
