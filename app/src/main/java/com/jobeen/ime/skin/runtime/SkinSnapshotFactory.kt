@@ -276,11 +276,32 @@ object SkinSnapshotFactory {
                     } else {
                         null to LayoutResolution.NOT_SET
                     }
+                // G4：深色绑定各走一次同口径解析（失败只影响该项该方向，
+                // 深色缺失时解析层回落由 resolvedFor 处理，不在此补浅色）。
+                val (portraitDark, portraitDarkResolution) =
+                    if (entry.layoutIdDark != null) {
+                        resolveSnapshotLayout(context, libraryLayout, entry.layoutIdDark, ref)
+                    } else {
+                        null to LayoutResolution.NOT_SET
+                    }
+                val (landscapeDark, landscapeDarkResolution) =
+                    if (entry.layoutIdLandscapeDark != null) {
+                        resolveSnapshotLayout(
+                            context, libraryLayout, entry.layoutIdLandscapeDark, ref,
+                            binding = "landscape",
+                        )
+                    } else {
+                        null to LayoutResolution.NOT_SET
+                    }
                 KeyboardTypeResolved(
                     portrait = portrait,
                     landscape = landscape,
                     portraitResolution = portraitResolution,
                     landscapeResolution = landscapeResolution,
+                    portraitDark = portraitDark,
+                    landscapeDark = landscapeDark,
+                    portraitDarkResolution = portraitDarkResolution,
+                    landscapeDarkResolution = landscapeDarkResolution,
                     heightPercent = entry.heightPercent,
                     heightPercentLandscape = entry.heightPercentLandscape,
                 )
@@ -362,6 +383,10 @@ object SkinSnapshotFactory {
             resolvedLayoutLandscape = resolvedLandscape,
             landscapeLayoutResolution = landscapeResolution,
             resolvedKeyboards = resolvedKeyboards,
+            // G1：类型样式集引用（表项 styleSet；缺失集名在 builder 层丢弃）。
+            typeStyleRefs = keyboardEntries.mapNotNull { (type, entry) ->
+                entry.styleSet?.takeIf { it.isNotBlank() }?.let { type to it }
+            }.toMap(),
             builtinLayouts = builtinResolution.layouts,
             globalBlur = GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundBlur,
         )
@@ -387,6 +412,9 @@ object SkinSnapshotFactory {
         for (entry in SkinJson.parseKeyboards(tree).values) {
             add(entry.layoutId)
             add(entry.layoutIdLandscape)
+            // G4：深色绑定同属可覆写布局 id。
+            add(entry.layoutIdDark)
+            add(entry.layoutIdLandscapeDark)
         }
         return ids
     }

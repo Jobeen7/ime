@@ -40,6 +40,8 @@ data class SkinSnapshot(
     /** appearance 有效值（含回填结果）：底距等不在 ColorScheme 内的消费点读此表。 */
     val effectiveGeometry: Map<GeometryField, Float>,
     val background: BackgroundSnapshot?,
+    /** 键盘背景渐变（S8）：纯渐变背景时取此值（无位图背景时生效）。 */
+    val backgroundGradient: KeyGradient? = null,
     val degradations: Set<Degradation>,
     val layoutId: String?,
     /** 键盘级几何（2026-10-27 新增分流）：顶层 geometry 有效值；消费点按 presence 逐项回退。 */
@@ -166,6 +168,8 @@ data class SkinSnapshot(
     val horizontalMaxColumns: Int? = null,
     /** 横条展开钮在左（审计 I 项）：false = 右（默认）。 */
     val horizontalExpandLeft: Boolean = false,
+    /** 横向符号 RTL（S11）：true = 横向符号行从右向左排，默认 LTR。 */
+    val horizontalSymbolsRtl: Boolean = false,
     /** 竖网格行列上限（审计 I 项）：null = 未定义。 */
     val verticalMaxRows: Int? = null,
     val verticalMaxColumns: Int? = null,
@@ -196,6 +200,13 @@ data class SkinSnapshot(
     val symbolBar: com.jobeen.ime.skin.symbol.SymbolBarSpec? = null,
     /** 二级分类符号：皮肤定义时板用二级面板，否则走既有一级表。 */
     val subClassifiedSymbols: com.jobeen.ime.skin.symbol.SubClassifiedSymbols? = null,
+    /**
+     * 分类符号角标（S12，symbolBadge 节）：缺省字号 9、颜色
+     * specialKeyText；highlight 未写时选中沿用 normal 色。
+     */
+    val symbolBadgeFontSizeDp: Float? = null,
+    val symbolBadgeNormalColor: Int? = null,
+    val symbolBadgeHighlightColor: Int? = null,
     /** 未知顶层节点原样透传（见 ValidatedSkin.unknownNodes；快照不解读）。 */
     val unknownNodes: Map<String, kotlinx.serialization.json.JsonElement> = emptyMap(),
     /**
@@ -219,6 +230,14 @@ data class SkinSnapshot(
      */
     val resolvedKeyboards: Map<String, KeyboardTypeResolved> = emptyMap(),
     /**
+     * 类型样式集（G1）：类型 → 解析后的样式集；无条目 = 该类型
+     * 沿用包级样式。键路径（effectiveLayoutForType）按此换样式，
+     * 面板颜色按类型换样式属后续轮（面板共享、需类型感知刷新）。
+     */
+    val typeStyles: Map<String, TypeStyleSet> = emptyMap(),
+    /** 类型区域集（G2）：类型 → 区域参数；面板接线属后续轮。 */
+    val typeAreas: Map<String, TypeAreaSet> = emptyMap(),
+    /**
      * 皮肤包演示资料（审计 K 余项）：包根演示图与说明的校验
      * 结果；仅代次目录构建路径注入（工厂 buildFromFiles），
      * 其余构造路径为空。演示图本体不进快照，UI 以
@@ -233,6 +252,12 @@ data class SkinSnapshot(
      * 按模式取板（经四变体回退链调色轴决策，结果与旧三元表达式
      * 逐字节一致：深色且有深色板 → 深色板，其余 → 浅色板）。
      */
+    /** 按类型取样式集（G1）：无集或类型未引用时返回 null（调用方回落包级）。 */
+    fun styleSetFor(type: String): TypeStyleSet? = typeStyles[type]
+
+    /** 按类型取区域集（G2）：未声明时返回 null（调用方回落包级）。 */
+    fun areaSetFor(type: String): TypeAreaSet? = typeAreas[type]
+
     fun effectiveColorScheme(isDark: Boolean): KeyboardColors.ColorScheme {
         val (palette, _) = VariantResolver.resolvePalette(isDark, darkColorScheme != null)
         return if (palette == VariantPalette.DARK) darkColorScheme!! else colorScheme
@@ -289,6 +314,12 @@ data class KeyboardTypeResolved(
     val landscape: ResolvedLayout? = null,
     val portraitResolution: LayoutResolution = LayoutResolution.NOT_SET,
     val landscapeResolution: LayoutResolution = LayoutResolution.NOT_SET,
+    /** 深色竖屏已解析布局（G4）；null = 深色沿用浅色竖屏。 */
+    val portraitDark: ResolvedLayout? = null,
+    /** 深色横屏已解析布局（G4）；null = 深色横屏沿用深色竖屏／浅色横屏。 */
+    val landscapeDark: ResolvedLayout? = null,
+    val portraitDarkResolution: LayoutResolution = LayoutResolution.NOT_SET,
+    val landscapeDarkResolution: LayoutResolution = LayoutResolution.NOT_SET,
     /** 表项竖屏高度百分比（50–200 已在解析期过滤）；null = 未指定。 */
     val heightPercent: Double? = null,
     /** 表项横屏专属高度；null = 横屏沿用竖屏值。 */
@@ -299,13 +330,38 @@ data class KeyboardTypeResolved(
      * baseLayoutLandscape 即横屏权重变体，与旧横屏绑定
      * 缺失时回落竖屏布局同口径）；竖屏无绑定时不取横屏
      * 布局（横屏专属布局不进竖屏），调用方走内置回退。
+     * G4：深色优先取深色绑定，缺失时按方向回落浅色
+     * （深色横屏 → 深色竖屏 → 浅色横屏 → 浅色竖屏）。
      */
-    fun resolvedFor(landscape: Boolean): ResolvedLayout? =
-        if (landscape) this.landscape ?: portrait else portrait
+    fun resolvedFor(landscape: Boolean, isDark: Boolean = false): ResolvedLayout? {
+        // 注意：参数 landscape（Boolean）遮蔽同名属性，属性须用 this. 限定。
+        if (!isDark) {
+            return if (landscape) this.landscape ?: portrait else portrait
+        }
+        return if (landscape) {
+            landscapeDark ?: portraitDark ?: this.landscape ?: portrait
+        } else {
+            portraitDark ?: portrait
+        }
+    }
 
     /** 按方向取解析结论（横屏回落竖屏布局时结论仍为竖屏项的结论）。 */
-    fun resolutionFor(landscape: Boolean): LayoutResolution =
-        if (landscape && this.landscape != null) landscapeResolution else portraitResolution
+    fun resolutionFor(landscape: Boolean, isDark: Boolean = false): LayoutResolution {
+        if (!isDark) {
+            return if (landscape && this.landscape != null) landscapeResolution
+            else portraitResolution
+        }
+        return if (landscape) {
+            when {
+                landscapeDark != null -> landscapeDarkResolution
+                portraitDark != null -> portraitDarkResolution
+                landscape != null -> landscapeResolution
+                else -> portraitResolution
+            }
+        } else {
+            if (portraitDark != null) portraitDarkResolution else portraitResolution
+        }
+    }
 
     /** 按方向取高度：横屏无专属值时回落竖屏值。 */
     fun heightPercentFor(landscape: Boolean): Double? =

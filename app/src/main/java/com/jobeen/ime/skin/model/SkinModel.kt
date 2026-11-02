@@ -133,6 +133,10 @@ enum class GeometryField(val jsonName: String) {
     KEY_H_MARGIN("keyHMargin"),
     KEY_V_MARGIN("keyVMargin"),
     BOTTOM_INSET("bottomInsetDp"),
+    /** 容器内边距（S5；缺省 0，与 bottomInsetDp 同口径 0..48）。 */
+    TOP_INSET("topInsetDp"),
+    LEFT_INSET("leftInsetDp"),
+    RIGHT_INSET("rightInsetDp"),
 }
 
 /**
@@ -190,12 +194,19 @@ data class GeometryFallbacks(
     val keyHMargin: Float,
     val keyVMargin: Float,
     val bottomInsetDp: Float,
+    /** 容器上／左／右内边距回落：App 无此三项设置，缺省 0。 */
+    val topInsetDp: Float = 0f,
+    val leftInsetDp: Float = 0f,
+    val rightInsetDp: Float = 0f,
 ) {
     fun valueOf(field: GeometryField): Float = when (field) {
         GeometryField.CORNER_RADIUS -> cornerRadius
         GeometryField.KEY_H_MARGIN -> keyHMargin
         GeometryField.KEY_V_MARGIN -> keyVMargin
         GeometryField.BOTTOM_INSET -> bottomInsetDp
+        GeometryField.TOP_INSET -> topInsetDp
+        GeometryField.LEFT_INSET -> leftInsetDp
+        GeometryField.RIGHT_INSET -> rightInsetDp
     }
 }
 
@@ -204,7 +215,7 @@ enum class AssetKind { IMAGE, AUDIO, VIDEO, FONT, OTHER }
 
 /** appearance.background 校验结果（资产引用已按清单解析）。 */
 data class BackgroundSpec(
-    /** 资产逻辑 id（皮肤文件内的引用名）。 */
+    /** 资产逻辑 id（皮肤文件内的引用名）；纯渐变背景为空串（无资产）。 */
     val assetId: String,
     val blurRadius: Float,
     val overlayAlpha: Float,
@@ -216,6 +227,13 @@ data class BackgroundSpec(
      * 错类/缺失时本字段丢弃、静态段仍有效（字段级回退）。
      */
     val videoAssetId: String? = null,
+    /**
+     * 键盘背景渐变（S8）：appearance.background type="gradient" 时
+     * 解析（与键面渐变同字段口径：normalColor＋colorLocation＋
+     * colorGradientType＋起止点）；null = 无渐变。渐变在位图
+     * 背景之下、纯色之上（视频／GIF／位图在上时盖住它）。
+     */
+    val gradient: KeyGradient? = null,
 )
 
 /** appearance 校验结果：几何 presence 与有效值（坏值已回填、presence 记 false）。 */
@@ -231,6 +249,41 @@ data class AppearanceSpec(
 data class StylesSpec(
     val colors: Map<StyleField, Int>,
     val surfaceStyle: KeyboardColors.SurfaceStyle?,
+)
+
+/**
+ * 样式集原始校验结果（G1，skin.json 顶层 `styleSets.<名>`）：
+ * 与主样式段同口径（显式 styles＋派生 derivation，深色段
+ * stylesDark＋derivationDark 回填浅色板），单键样式表同表解析。
+ */
+data class StyleSetRaw(
+    val styles: StylesSpec,
+    val darkStyles: StylesSpec?,
+    val keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
+    val keyGeometries: Map<String, KeyStyleGeometry> = emptyMap(),
+)
+
+/** 类型样式集解析结果（G1）：快照层按类型取用的生效样式。 */
+data class TypeStyleSet(
+    val colorScheme: KeyboardColors.ColorScheme,
+    val darkColorScheme: KeyboardColors.ColorScheme?,
+    val keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap(),
+    val keyGeometries: Map<String, KeyStyleGeometry> = emptyMap(),
+)
+
+/**
+ * 类型区域集（G2，keyboards.<类型>.areas）：该类型专属的
+ * 面板区域参数；全部可空，未写项沿用包级区域值。
+ * 面板接线（按类型切换面板区域）属后续轮，本批只落数据层
+ * 与快照透传，见 effectiveLayoutForType 处的 G1 接线说明。
+ */
+data class TypeAreaSet(
+    val toolbarHeight: VhLengthSpec? = null,
+    val preeditHeight: VhLengthSpec? = null,
+    val horizontalCandidatesStyle: CandidateAreaStyleSpec? = null,
+    val verticalCandidatesStyle: CandidateAreaStyleSpec? = null,
+    val horizontalCandidateStyle: CandidateCellStyleSpec? = null,
+    val verticalCandidateStyle: CandidateCellStyleSpec? = null,
 )
 
 /** 顶层 keySound 校验结果：动作字符映射 + 三槽引用（均为资产 id）。 */
@@ -299,6 +352,18 @@ data class KeyboardTypeEntry(
     val heightPercent: Double? = null,
     /** 横屏专属高度；null = 横屏沿用竖屏值。 */
     val heightPercentLandscape: Double? = null,
+    /**
+     * 类型样式集引用（G1）：styleSets 中的集名；null = 沿用包级样式。
+     * 引用缺失集名时解析层忽略（回落包级样式，不拒包）。
+     */
+    val styleSet: String? = null,
+    /**
+     * 深色布局绑定（G4）：深色模式时该类型用的布局 id；
+     * null = 深色沿用浅色绑定（与横屏回落竖屏同口径）。
+     */
+    val layoutIdDark: String? = null,
+    /** 深色横屏布局绑定；null = 深色横屏沿用深色竖屏／浅色横屏。 */
+    val layoutIdLandscapeDark: String? = null,
 ) {
     /** 按方向取高度：横屏无专属值时回落竖屏值。 */
     fun heightPercentFor(landscape: Boolean): Double? =
@@ -330,6 +395,10 @@ data class ValidatedSkin(
      * 声明深色板（旧单色板皮肤，快照恒取浅色板）。
      */
     val darkStyles: StylesSpec? = null,
+    /** 样式集原始校验结果（G1）：顶层 styleSets 逐集解析；空表 = 未声明。 */
+    val styleSets: Map<String, StyleSetRaw> = emptyMap(),
+    /** 类型区域集（G2）：keyboards.<类型>.areas 逐类型解析；空表 = 未声明。 */
+    val typeAreas: Map<String, TypeAreaSet> = emptyMap(),
     val keyMappingsPresent: Boolean,
     val keyMappingsCount: Int,
     /** keyMappings 强类型解析结果（B2 起应用）：校验通过的逐键覆写。 */
@@ -379,6 +448,13 @@ data class ValidatedSkin(
     val symbolBar: SymbolBarSpec? = null,
     /** 二级分类符号：顶层 subClassifiedSymbols 校验结果；null = 走既有一级表。 */
     val subClassifiedSymbols: SubClassifiedSymbols? = null,
+    /**
+     * 分类符号角标（S12，顶层 symbolBadge 节）：字号／常规色／
+     * 选中高亮色；null = 未写（渲染缺省 9／specialKeyText）。
+     */
+    val symbolBadgeFontSizeDp: Float? = null,
+    val symbolBadgeNormalColor: Int? = null,
+    val symbolBadgeHighlightColor: Int? = null,
     /**
      * 未知顶层节点（原样透传）：校验未消费的顶层键 → 原始 JsonElement；
      * 已知键不进入本表（见 SkinValidator.KNOWN_TOP_LEVEL_KEYS）。
@@ -514,6 +590,8 @@ data class ValidatedSkin(
      * 推导；false = 右（默认，对端 HStack 顺序亦为右）。
      */
     val horizontalExpandLeft: Boolean = false,
+    /** 横向符号 RTL（S11）：顶层 horizontalSymbolsRtl；false = LTR（默认）。 */
+    val horizontalSymbolsRtl: Boolean = false,
     /**
      * 竖网格行列上限（审计 I 项）：顶层 verticalCandidates.maxRows /
      * maxColumns；null = 未定义（行数走用户偏好、列数默认 5）。

@@ -47,6 +47,9 @@ object SkinValidator {
         GeometryField.KEY_H_MARGIN to 0f..20f,
         GeometryField.KEY_V_MARGIN to 0f..20f,
         GeometryField.BOTTOM_INSET to 0f..48f,
+        GeometryField.TOP_INSET to 0f..48f,
+        GeometryField.LEFT_INSET to 0f..48f,
+        GeometryField.RIGHT_INSET to 0f..48f,
     )
     private val BLUR_RANGE = 0f..25f
     private val ALPHA_RANGE = 0f..1f
@@ -102,12 +105,14 @@ object SkinValidator {
         "derivationFormulas", "fontFamily", "formatVersion", "geometry",
         "hintSymbolNodes", "hintSymbolsGridStyles", "hintSymbolsStyles",
         "horizontalCandidateStyle", "horizontalCandidates", "horizontalCandidatesLayout",
-        "horizontalCandidatesStyle", "keyAnimation", "keyAnimations", "keyMappings",
-        "keyShadow", "keySound", "keyStyles", "layoutId", "layoutIdLandscape",
+        "horizontalCandidatesStyle", "horizontalSymbolsRtl", "keyAnimation", "keyAnimations",
+        "keyMappings", "keyShadow", "keySound", "keyStyles", "keyboards", "layoutId",
+        "layoutIdLandscape",
         "meta", "minAppVersion", "notifications", "predictionCloseBg",
         "predictionCloseRadiusDp", "preeditHeight", "preeditStyle", "roleFonts",
-        "spaceAnimation", "sprites", "styles", "stylesDark", "subClassifiedSymbols",
-        "suppressKeyboard", "suppressToolbar", "swipeThresholdDp", "symbolBar",
+        "spaceAnimation", "sprites", "styleSets", "styles", "stylesDark",
+        "subClassifiedSymbols", "suppressKeyboard", "suppressToolbar", "swipeThresholdDp",
+        "symbolBadge", "symbolBar",
         "textSizes", "toolbar", "toolbarButtonBackgroundStyle", "toolbarHeight",
         "toolbarLayout", "toolbarStyle", "verticalBottomRow", "verticalCandidateStyle",
         "verticalCandidates", "verticalCandidatesLayout", "verticalCandidatesStyle",
@@ -528,6 +533,9 @@ object SkinValidator {
         val horizontalExpandLeft = parseHorizontalLayout(
             tree["horizontalCandidatesLayout"], "horizontalCandidatesLayout", issues,
         )?.expandLeft ?: false
+        // S11：横向符号 RTL（未写 = LTR）。
+        val horizontalSymbolsRtl =
+            (tree["horizontalSymbolsRtl"] as? JsonPrimitive)?.booleanOrNull ?: false
         val verticalCandidates = parseVerticalCandidates(
             tree["verticalCandidates"], "verticalCandidates", issues,
         )
@@ -663,39 +671,77 @@ object SkinValidator {
         // 的令牌快照）；无效项逐项丢弃并记 issue，不拒整包。
         // 几何面（审计 A 项）同表解析：样式项的 geometry 子对象
         // 或平铺对端字段 → keyGeometries，角色解析不受影响。
-        var keyStyles: Map<String, Map<KeyStyleRole, String>> = emptyMap()
-        var keyGeometries: Map<String, KeyStyleGeometry> = emptyMap()
-        val keyStylesNode = tree["keyStyles"]
-        if (keyStylesNode != null) {
-            val keyStylesObj = keyStylesNode as? JsonObject
-            if (keyStylesObj == null) {
+        // （抽取为 parseKeyStylesSection：主段与 G1 样式集共用，
+        // 行为与抽取前一致，issue 路径由 path 参数决定。）
+        val (keyStyles, keyGeometries) =
+            parseKeyStylesSection(tree["keyStyles"], "keyStyles", issues)
+
+        // ---- styleSets（G1）：顶层样式集，逐集与主段同口径解析 ----
+        // 非对象整段丢弃记 issue；集内 styles 缺失时该集无效（只记
+        // issue、不拒包，引用它的类型回落包级样式）；深色段未声明
+        // 时该集无深色板（深色沿用浅色板，与主段 darkStyles 为 null
+        // 同口径）；单键样式表复用主段解析（issue 路径带集名前缀）。
+        val styleSets = LinkedHashMap<String, StyleSetRaw>()
+        val styleSetsNode = tree["styleSets"]
+        if (styleSetsNode != null) {
+            val styleSetsObj = styleSetsNode as? JsonObject
+            if (styleSetsObj == null) {
                 issues += SkinIssue(
-                    "keyStyles", SkinIssue.Kind.FIELD_FALLBACK, "key_styles_not_object",
+                    "styleSets", SkinIssue.Kind.FIELD_FALLBACK, "style_sets_not_object",
                 )
             } else {
-                val (table, tableWarnings) = KeyStyleParser.parseTable(keyStylesObj)
-                keyStyles = table
-                for (warning in tableWarnings) {
-                    issues += SkinIssue(
-                        "keyStyles.${warning.owner}" +
-                            (warning.role?.let { ".${it.jsonName}" } ?: ""),
-                        SkinIssue.Kind.FIELD_FALLBACK, warning.reason,
+                for ((setName, setNode) in styleSetsObj) {
+                    if (setName.isBlank()) continue
+                    val setObj = setNode as? JsonObject
+                    if (setObj == null) {
+                        issues += SkinIssue(
+                            "styleSets.$setName", SkinIssue.Kind.FIELD_FALLBACK,
+                            "style_set_not_object",
+                        )
+                        continue
+                    }
+                    val (setColors, setSurface) = parseColorSection(
+                        tree = setObj,
+                        stylesKey = "styles",
+                        derivationKey = "derivation",
+                        issues = issues,
+                    )
+                    if (setObj["styles"] == null && setObj["derivation"] == null) {
+                        issues += SkinIssue(
+                            "styleSets.$setName", SkinIssue.Kind.FIELD_FALLBACK,
+                            "style_set_no_styles",
+                        )
+                        continue
+                    }
+                    val setDark: StylesSpec? =
+                        if (setObj["stylesDark"] is JsonObject ||
+                            setObj["derivationDark"] is JsonObject
+                        ) {
+                            val (darkExplicit, darkSurface) = parseColorSection(
+                                tree = setObj,
+                                stylesKey = "stylesDark",
+                                derivationKey = "derivationDark",
+                                issues = issues,
+                            )
+                            val darkColors = setColors.toMutableMap()
+                            for ((field, value) in darkExplicit) darkColors[field] = value
+                            StylesSpec(
+                                colors = darkColors,
+                                surfaceStyle = darkSurface ?: setSurface,
+                            )
+                        } else {
+                            null
+                        }
+                    val (setKeyStyles, setKeyGeometries) = parseKeyStylesSection(
+                        setObj["keyStyles"], "styleSets.$setName.keyStyles", issues,
+                    )
+                    styleSets[setName] = StyleSetRaw(
+                        styles = StylesSpec(colors = setColors, surfaceStyle = setSurface),
+                        darkStyles = setDark,
+                        keyStyles = setKeyStyles,
+                        keyGeometries = setKeyGeometries,
                     )
                 }
-                val geometries = LinkedHashMap<String, KeyStyleGeometry>()
-                for ((name, styleNode) in keyStylesObj) {
-                    val styleObj = styleNode as? JsonObject ?: continue
-                    val (geometry, geometryWarnings) =
-                        KeyStyleGeometryParser.parseEntry(styleObj)
-                    if (geometry != null) geometries[name] = geometry
-                    for (warning in geometryWarnings) {
-                        issues += SkinIssue(
-                            "keyStyles.$name.geometry",
-                            SkinIssue.Kind.FIELD_FALLBACK, warning,
-                        )
-                    }
-                }
-                keyGeometries = geometries
             }
         }
 
@@ -1029,6 +1075,60 @@ object SkinValidator {
             }
         }
 
+        // ---- typeAreas（G2）：keyboards.<类型>.areas，逐类型区域参数 ----
+        // 与包级区域段同解析口径（同字段、同范围、同 issue 语义），
+        // 非对象／空对象均视为未声明（不记 issue、不占位）；
+        // 面板接线属后续轮，本批只落数据层与快照透传。
+        val typeAreas = LinkedHashMap<String, TypeAreaSet>()
+        val keyboardsNode = tree["keyboards"] as? JsonObject
+        if (keyboardsNode != null) {
+            for ((type, entryNode) in keyboardsNode) {
+                if (type.isBlank()) continue
+                val entryObj = entryNode as? JsonObject ?: continue
+                val areasObj = entryObj["areas"] as? JsonObject ?: continue
+                val areaPath = "keyboards.$type.areas"
+                val areaSet = TypeAreaSet(
+                    toolbarHeight = parseVhLength(
+                        areasObj["toolbarHeight"], "$areaPath.toolbarHeight",
+                        issues, 16f..120f,
+                    ),
+                    preeditHeight = parseVhLength(
+                        areasObj["preeditHeight"], "$areaPath.preeditHeight",
+                        issues, 12f..64f,
+                    ),
+                    horizontalCandidatesStyle = parseCandidateAreaStyle(
+                        areasObj["horizontalCandidatesStyle"],
+                        "$areaPath.horizontalCandidatesStyle", issues,
+                    ),
+                    verticalCandidatesStyle = parseCandidateAreaStyle(
+                        areasObj["verticalCandidatesStyle"],
+                        "$areaPath.verticalCandidatesStyle", issues,
+                    ),
+                    horizontalCandidateStyle = parseCandidateCellStyle(
+                        areasObj["horizontalCandidateStyle"],
+                        "$areaPath.horizontalCandidateStyle", issues,
+                    ),
+                    verticalCandidateStyle = parseCandidateCellStyle(
+                        areasObj["verticalCandidateStyle"],
+                        "$areaPath.verticalCandidateStyle", issues,
+                    ),
+                )
+                if (areaSet != TypeAreaSet()) typeAreas[type] = areaSet
+            }
+        }
+
+        // ---- symbolBadge（S12）：顶层对象，非法字段逐项回落渲染缺省 ----
+        val badgeObj = tree["symbolBadge"] as? JsonObject
+        val symbolBadgeFontSizeDp = parseDpField(
+            badgeObj?.get("fontSizeDp"), "symbolBadge.fontSizeDp", issues, 6f..20f,
+        )
+        val symbolBadgeNormalColor = parseStyleColor(
+            badgeObj?.get("normalColor"), "symbolBadge.normalColor", issues,
+        )
+        val symbolBadgeHighlightColor = parseStyleColor(
+            badgeObj?.get("highlightColor"), "symbolBadge.highlightColor", issues,
+        )
+
         // ---- keyShadow（2026-10-29 item-1 拟态）：顶层对象，非法字段逐项回退默认值 ----
         val (keyShadow, keyShadowIssues) = KeyShadowParser.parse(tree["keyShadow"])
         issues += keyShadowIssues
@@ -1061,6 +1161,8 @@ object SkinValidator {
                 ),
                 styles = StylesSpec(colors = colors, surfaceStyle = surfaceStyle),
                 darkStyles = darkStyles,
+                styleSets = styleSets,
+                typeAreas = typeAreas,
                 keyMappingsPresent = tree["keyMappings"] != null,
                 keyMappingsCount = keyMappingsCount,
                 keyOverrides = keyOverrides,
@@ -1113,6 +1215,7 @@ object SkinValidator {
                 verticalBottomRow = verticalBottomRow,
                 horizontalMaxColumns = horizontalMaxColumns,
                 horizontalExpandLeft = horizontalExpandLeft,
+                horizontalSymbolsRtl = horizontalSymbolsRtl,
                 verticalMaxRows = verticalCandidates?.maxRows,
                 verticalMaxColumns = verticalCandidates?.maxColumns,
                 verticalSidePanel = verticalSidePanel,
@@ -1122,6 +1225,9 @@ object SkinValidator {
                 conditionStyles = conditionStyles,
                 symbolBar = symbolBar,
                 subClassifiedSymbols = subClassifiedSymbols,
+                symbolBadgeFontSizeDp = symbolBadgeFontSizeDp,
+                symbolBadgeNormalColor = symbolBadgeNormalColor,
+                symbolBadgeHighlightColor = symbolBadgeHighlightColor,
                 keyShadow = keyShadow,
                 keyAnimation = keyAnimation,
                 spaceAnimation = spaceAnimationOrNull,
@@ -1131,6 +1237,51 @@ object SkinValidator {
             ),
             issues = issues,
         )
+    }
+
+    /**
+     * 单键样式表解析（主段 keyStyles 与 G1 样式集内 keyStyles 共用）：
+     * 返回（角色表，几何表）；节点缺失时两表皆空；非对象记 issue
+     * 并返回空表。issue 路径由 [path] 决定（主段 "keyStyles"，
+     * 样式集 "styleSets.<集名>.keyStyles"）。
+     */
+    private fun parseKeyStylesSection(
+        node: kotlinx.serialization.json.JsonElement?,
+        path: String,
+        issues: MutableList<SkinIssue>,
+    ): Pair<Map<String, Map<KeyStyleRole, String>>, Map<String, KeyStyleGeometry>> {
+        if (node == null) return emptyMap<String, Map<KeyStyleRole, String>>() to
+            emptyMap<String, KeyStyleGeometry>()
+        val keyStylesObj = node as? JsonObject
+        if (keyStylesObj == null) {
+            issues += SkinIssue(
+                path, SkinIssue.Kind.FIELD_FALLBACK, "key_styles_not_object",
+            )
+            return emptyMap<String, Map<KeyStyleRole, String>>() to
+                emptyMap<String, KeyStyleGeometry>()
+        }
+        val (table, tableWarnings) = KeyStyleParser.parseTable(keyStylesObj)
+        for (warning in tableWarnings) {
+            issues += SkinIssue(
+                "$path.${warning.owner}" +
+                    (warning.role?.let { ".${it.jsonName}" } ?: ""),
+                SkinIssue.Kind.FIELD_FALLBACK, warning.reason,
+            )
+        }
+        val geometries = LinkedHashMap<String, KeyStyleGeometry>()
+        for ((name, styleNode) in keyStylesObj) {
+            val styleObj = styleNode as? JsonObject ?: continue
+            val (geometry, geometryWarnings) =
+                KeyStyleGeometryParser.parseEntry(styleObj)
+            if (geometry != null) geometries[name] = geometry
+            for (warning in geometryWarnings) {
+                issues += SkinIssue(
+                    "$path.$name.geometry",
+                    SkinIssue.Kind.FIELD_FALLBACK, warning,
+                )
+            }
+        }
+        return table to geometries
     }
 
     /**
@@ -1351,6 +1502,33 @@ object SkinValidator {
         }
         val type = (obj["type"] as? JsonPrimitive)?.contentOrNull
         val assetId = (obj["asset"] as? JsonPrimitive)?.contentOrNull
+        // S8：纯渐变背景（无资产）：与键面渐变同字段口径取 normal 支；
+        // 不足两色时整段无效（回落纯色，不以单色占位）。
+        if (type == "gradient") {
+            val (gradient, _, gradientWarnings) = KeyGradientParser.parseFaces(obj)
+            for (warning in gradientWarnings) {
+                issues += SkinIssue(
+                    "appearance.background", SkinIssue.Kind.FIELD_FALLBACK, warning,
+                )
+            }
+            if (gradient == null) {
+                issues += SkinIssue(
+                    "appearance.background", SkinIssue.Kind.RESOURCE_FALLBACK,
+                    "background_gradient_invalid",
+                )
+                return null
+            }
+            val overlay = validateRangedFloat(
+                obj["overlayAlpha"], ALPHA_RANGE, 0f,
+                "appearance.background.overlayAlpha", issues,
+            )
+            return BackgroundSpec(
+                assetId = "",
+                blurRadius = 0f,
+                overlayAlpha = overlay,
+                gradient = gradient,
+            )
+        }
         if (type != "asset" || assetId == null) {
             issues += SkinIssue(
                 "appearance.background", SkinIssue.Kind.RESOURCE_FALLBACK, "background_ref_invalid",
@@ -1381,6 +1559,14 @@ object SkinValidator {
         val imageAdjust = ImageAdjust.parse(
             obj["imageAdjust"], "appearance.background.imageAdjust", issues,
         )
+        // S8：资产背景亦可附渐变（位图失效时回落渐变，仍在纯色之上）；
+        // 无渐变字段时 parseFaces 返回空渐变，不记警告。
+        val (assetGradient, _, assetGradientWarnings) = KeyGradientParser.parseFaces(obj)
+        for (warning in assetGradientWarnings) {
+            issues += SkinIssue(
+                "appearance.background", SkinIssue.Kind.FIELD_FALLBACK, warning,
+            )
+        }
         // 主题视频背景（2026-10-29 外观轮）：只认 VIDEO 类资产；
         // 错类／缺失时只丢视频字段、静态段仍有效（字段级回退，
         // 与背景图错类整段回退不同——视频是静态之上的叠加层）。
@@ -1407,6 +1593,7 @@ object SkinValidator {
             overlayAlpha = overlay,
             imageAdjust = imageAdjust,
             videoAssetId = videoAssetId,
+            gradient = assetGradient,
         )
     }
 

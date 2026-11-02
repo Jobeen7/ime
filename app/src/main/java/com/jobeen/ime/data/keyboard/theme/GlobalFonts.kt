@@ -64,6 +64,14 @@ sealed class FontChoice {
     }
 }
 
+/**
+ * 内嵌字体字重匹配谓词（P5，纯函数，可单测）：未声明字重
+ * 的文件匹配任意请求；否则粗体请求取字重 ≥600，常规请求
+ * 取字重 <600（与 skinCandidateTypeface 的过滤同口径）。
+ */
+internal fun fontWeightMatches(faceWeight: Int?, bold: Boolean): Boolean =
+    faceWeight == null || (bold && faceWeight >= 600) || (!bold && faceWeight < 600)
+
 object GlobalFonts {
     const val PREFS_NAME = AppAppearance.PREFS_NAME
     private const val KEY_VERSION = "font.version"
@@ -219,9 +227,15 @@ object GlobalFonts {
         candidate: String,
         style: Int,
     ): Typeface? {
-        val face = snapshot.skinFontFaces.firstOrNull {
+        // P5：同名字族按字重匹配——请求粗体取字重 ≥600 的文件，
+        // 请求常规取字重 <600 的文件；未声明字重的文件匹配任意
+        // 请求（不过滤）。无字重匹配时返回 null，调用方继续下
+        // 一候选（不以错字重文件占位）。
+        val faces = snapshot.skinFontFaces.filter {
             it.name.equals(candidate.trim(), ignoreCase = true)
         }
+        val bold = (style and Typeface.BOLD) != 0
+        val face = faces.firstOrNull { face -> fontWeightMatches(face.weight, bold) }
         if (face != null) return bundledTypeface(context, face.assetId, style)
         val family = SkinFonts.resolveFamily(candidate) ?: return null
         return systemTypeface(family, style)

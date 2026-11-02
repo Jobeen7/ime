@@ -325,13 +325,15 @@ enum class KeyBoundsVertical {
 }
 
 /**
- * 可视区域（对端 bounds）：键面在单元格内的可见宽度占比与九向对齐。
- * widthFraction 为 null = 宽度不限（只取对齐）；对齐缺省均为居中。
+ * 可视区域（对端 bounds）：键面在单元格内的可见宽／高占比与九向对齐。
+ * widthFraction／heightFraction 为 null = 该向不限（只取对齐）；
+ * 对齐缺省均为居中。
  */
 data class KeyVisibleBounds(
     val widthFraction: Float?,
     val horizontal: KeyBoundsHorizontal = KeyBoundsHorizontal.CENTER,
     val vertical: KeyBoundsVertical = KeyBoundsVertical.CENTER,
+    val heightFraction: Float? = null,
 )
 
 /**
@@ -352,13 +354,22 @@ data class KeyStyleGeometry(
     val highlightLowerEdgeColor: Int? = null,
     val bounds: KeyVisibleBounds? = null,
     val animationNames: List<String> = emptyList(),
+    /** 逐样式字号（S1）：主文字／副文字／图标字形，dp；null = 回落键覆写／全局档位。 */
+    val fontSizeDp: Float? = null,
+    val altFontSizeDp: Float? = null,
+    val iconSizeDp: Float? = null,
+    /** 逐样式内边距（S2）：横／纵，dp；null = 回落布局键几何／全局边距。 */
+    val hInsetDp: Float? = null,
+    val vInsetDp: Float? = null,
 ) {
     val isEmpty: Boolean get() =
         gradientNormal == null && gradientHighlight == null && shadow == null &&
             borderWidthDp == null && cornerRadiusDp == null && cornerCurve == null &&
             normalBorderColor == null && highlightBorderColor == null &&
             normalLowerEdgeColor == null && highlightLowerEdgeColor == null &&
-            bounds == null && animationNames.isEmpty()
+            bounds == null && animationNames.isEmpty() &&
+            fontSizeDp == null && altFontSizeDp == null && iconSizeDp == null &&
+            hInsetDp == null && vInsetDp == null
 }
 
 object KeyStyleGeometryParser {
@@ -389,6 +400,13 @@ object KeyStyleGeometryParser {
         warnings += shadowWarnings
         val borderWidthDp = parseDp(geometry, "borderSize", 0f, 8f, warnings)
         val cornerRadiusDp = parseDp(geometry, "cornerRadius", 0f, 40f, warnings)
+        // S1／S2：逐样式字号与内边距（与文字档位同值域 8..40，
+        // 图标字形放宽至 8..48，内边距与键边距同值域 0..20）。
+        val fontSizeDp = parseDp(geometry, "fontSize", 8f, 40f, warnings)
+        val altFontSizeDp = parseDp(geometry, "altFontSize", 8f, 40f, warnings)
+        val iconSizeDp = parseDp(geometry, "iconFontSize", 8f, 48f, warnings)
+        val hInsetDp = parseDp(geometry, "hInsetDp", 0f, 20f, warnings)
+        val vInsetDp = parseDp(geometry, "vInsetDp", 0f, 20f, warnings)
         val cornerCurve = parseCornerCurve(geometry["cornerCurve"], warnings)
         fun peerColor(field: String): Int? {
             val raw = (geometry[field] as? JsonPrimitive)?.takeIf { it.isString }?.content
@@ -413,6 +431,11 @@ object KeyStyleGeometryParser {
             highlightLowerEdgeColor = peerColor("highlightLowerEdgeColor"),
             bounds = bounds,
             animationNames = animationNames,
+            fontSizeDp = fontSizeDp,
+            altFontSizeDp = altFontSizeDp,
+            iconSizeDp = iconSizeDp,
+            hInsetDp = hInsetDp,
+            vInsetDp = vInsetDp,
         )
         return result.takeIf { !it.isEmpty } to warnings
     }
@@ -505,7 +528,16 @@ object KeyStyleGeometryParser {
                 value
             }
         }
-        return KeyVisibleBounds(width, horizontal, vertical)
+        // S7：高度占比与宽度同口径（0,1]，非法只警告、不丢整项。
+        val height = SizeFraction.parseFloat(obj["height"])?.let { value ->
+            if (value <= 0f || value > 1f) {
+                warnings += "style_geometry_bounds_height_invalid"
+                null
+            } else {
+                value
+            }
+        }
+        return KeyVisibleBounds(width, horizontal, vertical, height)
     }
 
     private fun parseAnimationNames(
@@ -536,7 +568,8 @@ object KeyPerStyleShadowParser {
     /**
      * 解析逐样式阴影：normalShadowColor / highlightShadowColor（对端口径）、
      * shadowOpacity（两支共用，缺省 1.0）、highlightShadowOpacity（按压支覆盖）、
-     * shadowRadius（dp，缺省 0）、shadowOffset {x, y}（dp，缺省 0,0）。
+     * shadowRadius（dp，缺省 3）、shadowOffset {x, y}（dp，缺省 0,3；
+     * A7：对端缺省，非 0,0）。
      * 两支颜色皆无 → 无阴影（null）；单支有色时另一支为 null（渲染层回落）。
      */
     fun parse(
@@ -580,8 +613,8 @@ object KeyPerStyleShadowParser {
             return value
         }
         fun offset(): Pair<Float, Float> {
-            val obj = geometry["shadowOffset"] as? JsonObject ?: return 0f to 0f
-            fun axis(name: String): Float {
+            val obj = geometry["shadowOffset"] as? JsonObject ?: return 0f to 3f
+            fun axis(name: String, default: Float): Float {
                 val primitive = obj[name] as? JsonPrimitive
                 val value = if (primitive != null && !primitive.isString) {
                     primitive.content.toFloatOrNull()
@@ -590,18 +623,18 @@ object KeyPerStyleShadowParser {
                 }
                 if (value == null || !value.isFinite() || value < -64f || value > 64f) {
                     warnings += "style_geometry_shadow_offset_invalid"
-                    return 0f
+                    return default
                 }
                 return value
             }
-            return axis("x") to axis("y")
+            return axis("x", 0f) to axis("y", 3f)
         }
         val normalColor = color("normalShadowColor")
         val highlightColor = color("highlightShadowColor")
         if (normalColor == null && highlightColor == null) return null to warnings
         val opacity = opacity("shadowOpacity", 1f)
         val highlightOpacity = opacity("highlightShadowOpacity", opacity)
-        val radius = dpField("shadowRadius", 0f, 0f, 64f)
+        val radius = dpField("shadowRadius", 3f, 0f, 64f)
         val (offsetX, offsetY) = offset()
         fun layer(color: Int?, layerOpacity: Float): KeyShadowLayer? =
             color?.let {

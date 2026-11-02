@@ -175,9 +175,11 @@ object CustomLayoutRuntime {
         type: String,
         schemaDefault: String,
         landscape: Boolean = false,
+        isDark: Boolean = false,
     ): String {
         val entry = snapshot?.resolvedKeyboards?.get(type)
-        val resolved = entry?.resolvedFor(landscape)
+        // G4：深色优先取深色绑定（resolvedFor 内含回落链）。
+        val resolved = entry?.resolvedFor(landscape, isDark)
         if (resolved != null) return nameFor(resolved.layoutId)
         if (type == KeyboardTypes.PINYIN) {
             val legacy = if (landscape) {
@@ -257,7 +259,7 @@ object CustomLayoutRuntime {
         decorationEnabled: Boolean = true,
     ): List<List<KeyDef>>? {
         if (snapshot == null) return null
-        val resolved = snapshot.resolvedKeyboards[type]?.resolvedFor(landscape)
+        val resolved = snapshot.resolvedKeyboards[type]?.resolvedFor(landscape, isDark)
             ?: if (type == KeyboardTypes.PINYIN) {
                 if (landscape) {
                     snapshot.resolvedLayoutLandscape ?: snapshot.resolvedLayout
@@ -268,8 +270,21 @@ object CustomLayoutRuntime {
                 null
             }
             ?: return null
+        // G1：该类型有样式集时，键装配走类型样式（包级样式只作回落）；
+        // copy 为浅拷贝（映射共享），只换样式四字段，不动布局／区域／背景。
+        // 面板颜色按类型换样式属后续轮（面板共享、需类型感知刷新）。
+        val effective = snapshot.styleSetFor(type)?.let { set ->
+            snapshot.copy(
+                colorScheme = set.colorScheme,
+                // 集无深色板时传 null（effectiveColorScheme 按无深色板
+                // 回落浅色集，绝不混包级深色板）。
+                darkColorScheme = set.darkColorScheme,
+                keyStyles = set.keyStyles,
+                keyGeometries = set.keyGeometries,
+            )
+        } ?: snapshot
         return applyResolved(
-            snapshot, resolved, placeholders, landscape, isDark,
+            effective, resolved, placeholders, landscape, isDark,
             mnemonicEnabled, decorationEnabled,
         )
     }
@@ -289,8 +304,17 @@ object CustomLayoutRuntime {
         decorationEnabled: Boolean = true,
     ): List<List<KeyDef>>? {
         if (snapshot == null) return null
+        // G4：按名反查时深色绑定亦在候选内（深色优先，浅色兜底）。
         val fromTable = snapshot.resolvedKeyboards.values.firstNotNullOfOrNull { entry ->
-            if (landscape) entry.landscape?.takeIf { it.layoutId == layoutId }
+            val darkFirst = if (isDark) {
+                if (landscape) entry.landscapeDark?.takeIf { it.layoutId == layoutId }
+                    ?: entry.portraitDark?.takeIf { it.layoutId == layoutId } else {
+                    entry.portraitDark?.takeIf { it.layoutId == layoutId }
+                }
+            } else {
+                null
+            }
+            darkFirst ?: if (landscape) entry.landscape?.takeIf { it.layoutId == layoutId }
                 ?: entry.portrait?.takeIf { it.layoutId == layoutId } else {
                 entry.portrait?.takeIf { it.layoutId == layoutId }
             }

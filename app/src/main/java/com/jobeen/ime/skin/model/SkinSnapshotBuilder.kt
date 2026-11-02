@@ -63,6 +63,12 @@ object SkinSnapshotBuilder {
         assetExt: (String) -> String? = { null },
         /** 多主槽一期：工厂层按 `keyboards` 表逐项解析后的类型表；只透传。 */
         resolvedKeyboards: Map<String, KeyboardTypeResolved> = emptyMap(),
+        /**
+         * 类型样式集引用（G1）：工厂层从 `keyboards` 表取的类型 →
+         * styleSets 集名；本类按 validated.styleSets 合成解析后的
+         * 类型样式集（引用缺失集名时该类型无集，回落包级样式）。
+         */
+        typeStyleRefs: Map<String, String> = emptyMap(),
     ): SkinSnapshot {
         val policy = DegradationPolicy.forTier(tier)
 
@@ -222,6 +228,9 @@ object SkinSnapshotBuilder {
             darkStylePresence = validated.darkStyles?.colors?.keys,
             effectiveGeometry = effective,
             background = background,
+            // S8：纯渐变背景（spec 有渐变且无资产时 background 为 null，
+            // 渐变走独立字段；有资产时渐变不生效，位图优先）。
+            backgroundGradient = validated.appearance.background?.gradient,
             degradations = policy.degradations(),
             layoutId = validated.layoutId,
             keyboardGeometry = keyboardGeometry,
@@ -254,6 +263,7 @@ object SkinSnapshotBuilder {
             verticalBottomRow = validated.verticalBottomRow,
             horizontalMaxColumns = validated.horizontalMaxColumns,
             horizontalExpandLeft = validated.horizontalExpandLeft,
+            horizontalSymbolsRtl = validated.horizontalSymbolsRtl,
             verticalMaxRows = validated.verticalMaxRows,
             verticalMaxColumns = validated.verticalMaxColumns,
             verticalSidePanel = validated.verticalSidePanel,
@@ -273,6 +283,28 @@ object SkinSnapshotBuilder {
             resolvedLayoutLandscape = resolvedLayoutLandscape,
             landscapeLayoutResolution = landscapeLayoutResolution,
             resolvedKeyboards = resolvedKeyboards,
+            // G1：类型样式集（与包级板同一合成口径；几何板不分类型，
+            // 故键盘级几何仍用包级 keyboardGeometry）。
+            typeStyles = typeStyleRefs.mapNotNull { (type, setName) ->
+                val raw = validated.styleSets[setName] ?: return@mapNotNull null
+                val setScheme = applyKeyboardGeometry(
+                    buildScheme(raw.styles, defaultScheme, presence, effective),
+                    keyboardGeometry, presence, effective, defaultScheme,
+                )
+                val setDarkScheme = raw.darkStyles?.let { dark ->
+                    applyKeyboardGeometry(
+                        buildScheme(dark, defaultScheme, presence, effective),
+                        keyboardGeometry, presence, effective, defaultScheme,
+                    )
+                }
+                type to TypeStyleSet(
+                    colorScheme = setScheme,
+                    darkColorScheme = setDarkScheme,
+                    keyStyles = raw.keyStyles,
+                    keyGeometries = raw.keyGeometries,
+                )
+            }.toMap(),
+            typeAreas = validated.typeAreas,
             builtinLayouts = builtinLayouts,
             toolbar = toolbarSnapshot,
             suppressToolbar = validated.suppressToolbar,
@@ -282,6 +314,9 @@ object SkinSnapshotBuilder {
             conditionStyles = validated.conditionStyles,
             symbolBar = validated.symbolBar,
             subClassifiedSymbols = validated.subClassifiedSymbols,
+            symbolBadgeFontSizeDp = validated.symbolBadgeFontSizeDp,
+            symbolBadgeNormalColor = validated.symbolBadgeNormalColor,
+            symbolBadgeHighlightColor = validated.symbolBadgeHighlightColor,
             unknownNodes = validated.unknownNodes,
         )
     }

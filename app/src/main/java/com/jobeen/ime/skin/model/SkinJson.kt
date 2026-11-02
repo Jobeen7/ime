@@ -83,11 +83,19 @@ object SkinJson {
                     layoutIdLandscape = raw.stringField("layoutIdLandscape"),
                     heightPercent = raw.rangedPercent("heightPercent"),
                     heightPercentLandscape = raw.rangedPercent("heightPercentLandscape"),
+                    layoutIdDark = raw.stringField("layoutIdDark"),
+                    layoutIdLandscapeDark = raw.stringField("layoutIdLandscapeDark"),
+                    styleSet = raw.stringField("styleSet"),
                 )
                 else -> null
             } ?: continue
             if (entry == KeyboardTypeEntry()) continue
             out[type] = entry
+        }
+        // G3：numberPad 别名——无自有绑定时继承 numeric（自有绑定优先）；
+        // 对端 numberPad 与 numeric 同义，Jime 模型层统一，不改类型表结构。
+        if ("numberPad" !in out && "numeric" in out) {
+            out["numberPad"] = out.getValue("numeric")
         }
         return out
     }

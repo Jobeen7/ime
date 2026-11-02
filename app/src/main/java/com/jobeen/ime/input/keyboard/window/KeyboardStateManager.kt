@@ -21,6 +21,7 @@ import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
 import com.jobeen.ime.skin.symbol.BoardLockState
+import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.store.SkinTypePrefs
 import com.jobeen.ime.base.util.appScope
@@ -162,6 +163,7 @@ object KeyboardStateManager {
             type,
             currentSchema?.layout ?: defaultKeyboardName,
             landscape,
+            SkinColorMode.isDark(appContext),
         )
         switchToResolvedWithType(target, type)
     }
@@ -300,6 +302,7 @@ object KeyboardStateManager {
         when (
             val action = decideReattach(
                 snapshot, currentKeyboardName!!, typeState.current, targetLayout, landscape,
+                SkinColorMode.isDark(appContext),
             )
         ) {
             is ReattachAction.SwitchType -> switchKeyboardType(action.type)
@@ -913,10 +916,11 @@ internal fun decideReattach(
     currentType: String?,
     schemaLayout: String,
     landscape: Boolean,
+    isDark: Boolean = false,
 ): ReattachAction {
     return if (currentType != null) {
         val target = CustomLayoutRuntime.resolveTypeTarget(
-            snapshot, currentType, schemaLayout, landscape,
+            snapshot, currentType, schemaLayout, landscape, isDark,
         )
         if (target == currentName) ReattachAction.Reshow else ReattachAction.SwitchType(currentType)
     } else {

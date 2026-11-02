@@ -24,6 +24,13 @@ data class SkinFontFace(
     val name: String,
     /** 清单资产逻辑 id（fontFace.url）。 */
     val assetId: String,
+    /**
+     * 字重（P5；对端 fontFace.weight，如 400／700）：
+     * null = 未声明（选族时不过滤，匹配任意请求字重）；
+     * 同名多字重以此区分（见 SkinFontParser 去重与
+     * GlobalFonts.skinCandidateTypeface 的字重匹配）。
+     */
+    val weight: Int? = null,
 )
 
 /** 皮肤内嵌字体解析结果。 */
@@ -197,7 +204,7 @@ object SkinFontParser {
         }
         val faces = mutableListOf<SkinFontFace>()
         val issues = mutableListOf<SkinIssue>()
-        val seenNames = mutableSetOf<String>()
+        val seenNames = mutableSetOf<Pair<String, Int?>>()
         for ((index, item) in array.withIndex()) {
             val obj = item as? JsonObject
             if (obj == null) {
@@ -225,7 +232,18 @@ object SkinFontParser {
                 )
                 continue
             }
-            if (!seenNames.add(name.lowercase())) {
+            // P5：字重（标准 100–900；非法只记 issue、按未声明处理，
+            // 不丢整项）。去重以（名，字重）为准：同名不同字重为
+            // 不同字体文件（常规／粗体），均保留；同名同字重仍去重。
+            val weightRaw = (obj["weight"] as? JsonPrimitive)?.intOrNull
+            val weight = weightRaw?.takeIf { it in 100..900 }
+            if (obj["weight"] != null && weight == null) {
+                issues += SkinIssue(
+                    "fontFaces[$index].weight", SkinIssue.Kind.FIELD_FALLBACK,
+                    "font_face_weight_invalid",
+                )
+            }
+            if (!seenNames.add(name.lowercase() to weight)) {
                 issues += SkinIssue(
                     "fontFaces[$index].name", SkinIssue.Kind.FIELD_FALLBACK,
                     "font_face_duplicate_name",
@@ -251,7 +269,7 @@ object SkinFontParser {
                 )
                 continue
             }
-            faces += SkinFontFace(name, url)
+            faces += SkinFontFace(name, url, weight)
         }
         return ParsedSkinFontFaces(faces, issues)
     }
