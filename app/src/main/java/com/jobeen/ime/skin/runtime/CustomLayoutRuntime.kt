@@ -187,7 +187,21 @@ object CustomLayoutRuntime {
             } else {
                 snapshot?.resolvedLayout
             }
-            if (legacy != null) return nameFor(legacy.layoutId)
+            // 类别匹配（2026-11-02 修：26 键皮肤布局劫持 T9）：
+            // 方案布局是 Qwerty 时只接受 26 键皮肤布局，是 T9/T15 时只接受
+            // 非 26 键皮肤布局；不匹配时不回落旧绑定，走原厂布局（样式仍走
+            // 皮肤）。方案布局不在三者内时维持旧行为（不改未知路径）。
+            // 与 ALPHABETIC 分支对称：英文只接受 26 键皮肤布局。
+            if (legacy != null) {
+                val requestedIs26 = when (schemaDefault) {
+                    QwertyKeyboard.NAME -> true
+                    T9Keyboard.NAME, T15Keyboard.NAME -> false
+                    else -> null
+                }
+                if (requestedIs26 == null || is26KeyLayout(legacy, landscape) == requestedIs26) {
+                    return nameFor(legacy.layoutId)
+                }
+            }
         }
         // 皮肤跟布局走（布局层）：无表皮肤切英文时，若皮肤主布局
         // 本身就是 26 键布局，用皮肤自己的 26 键布局，不回落原厂
@@ -419,10 +433,18 @@ object CustomLayoutRuntime {
             }
         }
         if (target in MAIN_LAYOUT_NAMES) {
+            // 类别匹配（2026-11-02 修，与 resolveTypeTarget 同口径）：
+            // 皮肤旧布局只替换同类主布局——Qwerty 只接受 26 键皮肤布局，
+            // T9/T15 只接受非 26 键皮肤布局；不匹配时保留原厂目标名。
+            val requestedIs26 = target == QwertyKeyboard.NAME
             if (resolved != null) {
-                target = nameFor(resolved.layoutId)
+                if (is26KeyLayout(resolved, landscape) == requestedIs26) {
+                    target = nameFor(resolved.layoutId)
+                }
             } else if (landscape && landscapeResolved != null) {
-                target = nameFor(landscapeResolved.layoutId)
+                if (is26KeyLayout(landscapeResolved, landscape) == requestedIs26) {
+                    target = nameFor(landscapeResolved.layoutId)
+                }
             }
         }
         return target

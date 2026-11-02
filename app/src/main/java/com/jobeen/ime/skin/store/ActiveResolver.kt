@@ -4,7 +4,9 @@ package com.jobeen.ime.skin.store
  * 生效记录的启动裁决（详设 §2.4 状态机 + §2.8.2 的纯逻辑部分）：
  *
  * - active 缺失/损坏 → 无 v3 生效（走旧路径，§2.8.2）
- * - state=pending → 上次应用未验证完成，回退 Last-Good（R5 两态口径）
+ * - state=pending 且所指代次完整、hash 一致 → 保留 pending（2026-11-02
+ *   修复批 S1：重启在首帧验证前不回滚；验证留待下次键盘绘制时完成）
+ * - state=pending 但所指代次缺失/不完整/hash 不符 → 回退 Last-Good
  * - state=verified 但所指代次缺失/不完整/hash 不符 → 同样回退（A-7）
  * - Last-Good 本身无效 → 回退内置默认（skinId null 记录）
  *
@@ -19,6 +21,12 @@ object ActiveResolver {
     sealed interface Resolution {
         /** active 有效，运行态可直接采用。 */
         data class Verified(val record: ActiveRecord) : Resolution
+
+        /**
+         * pending 保留：目标代次在盘上有效，调用方不得改写 active.json，
+         * 运行态按该记录加载快照并在下次键盘绘制时完成验证推进。
+         */
+        data class KeepPending(val record: ActiveRecord) : Resolution
 
         /** 无 v3 皮肤生效（缺失/损坏/未设），走现行内置主题路径。 */
         data class NoSkin(val reason: String) : Resolution
@@ -44,7 +52,11 @@ object ActiveResolver {
         val skinId = record.skinId ?: return Resolution.NoSkin("no_skin_selected")
         return when (record.state) {
             ApplyState.PENDING ->
-                lastGoodResolution(lastGood, genState, now, "pending_at_startup")
+                if (isTargetValid(skinId, record.generation, record.hash, genState)) {
+                    Resolution.KeepPending(record)
+                } else {
+                    lastGoodResolution(lastGood, genState, now, "pending_at_startup")
+                }
             ApplyState.VERIFIED ->
                 if (isTargetValid(skinId, record.generation, record.hash, genState)) {
                     Resolution.Verified(record)

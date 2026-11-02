@@ -32,6 +32,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -58,6 +59,7 @@ import com.jobeen.ime.input.panel.toolbar.ToolbarSkinState
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserData
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserStore
 import com.jobeen.ime.skin.model.WhitelistAction
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
@@ -436,10 +438,33 @@ private fun ToolbarMainPage(
     onNewToolbar: () -> Unit,
 ) {
     val state = data.skins[skinId] ?: ToolbarSkinState()
-    val currentCount = if (activeToolbar != null) {
-        activeToolbar.buttons.count { it.enabled }
-    } else {
-        state.buttons.count { it.enabled }
+    val context = LocalContext.current
+    val skinIds = SkinSnapshotProvider.current(context)?.toolbar?.buttons?.map { it.id }
+    val currentCount = ToolbarUserStore.mainPageCount(
+        activeToolbar?.buttons,
+        state.buttons,
+        skinIds,
+    )
+    // 主页计数诊断（2026-11-02 修复批）：只在生效列变化时记一次，
+    // 与 mainPageCount 同口径的来源列 + 各列规模，便于下次主页与
+    // 编辑页计数不一致时直接定位是哪一列胜出。
+    LaunchedEffect(activeToolbar?.buttons, state.buttons, skinIds) {
+        val source = when {
+            activeToolbar?.buttons != null -> "active"
+            state.buttons.isNotEmpty() -> "user"
+            skinIds != null -> "skin"
+            else -> "default"
+        }
+        DiagLog.d(
+            "toolbar", "main_page_count",
+            mapOf(
+                "count" to currentCount,
+                "source" to source,
+                "activeEnabled" to (activeToolbar?.buttons?.count { it.enabled } ?: -1),
+                "userEnabled" to state.buttons.count { it.enabled },
+                "skinIds" to (skinIds?.size ?: -1),
+            ),
+        )
     }
     SettingsGroup(title = stringResource(R.string.toolbar_current)) {
         NavRow(

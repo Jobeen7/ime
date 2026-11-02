@@ -11,6 +11,18 @@ import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
+/**
+ * 面板配色按类型取（G1）：快照存在时按当前键盘类型取样式集色板，
+ * 无快照时走全局 resolve。type = null 时取包级（旧行为）。
+ * 调用方（面板刷新链）把当前键盘类型传进来；面板不直接依赖
+ * KeyboardStateManager（窗口层持有类型，面板只收参数）。
+ */
+internal fun panelColorScheme(context: Context, type: String?): KeyboardColors.ColorScheme {
+    val snapshot = SkinSnapshotProvider.peek()
+    return snapshot?.effectiveColorSchemeForType(type, SkinColorMode.isDark(context))
+        ?: KeyboardColors.resolve(context)
+}
+
 class Paints(context: Context) {
     companion object {
         /** 候选主文字字号（dp）：三参考皮肤横条 candidateStyle.textFontSize 皆 18。 */
@@ -107,8 +119,9 @@ class Paints(context: Context) {
     var preferredComment: Int? = null
     var preferredIndex: Int? = null
 
-    fun updateColors(context: Context) {
-        val scheme = KeyboardColors.resolve(context)
+    fun updateColors(context: Context, type: String? = null) {
+        val scheme = panelColorScheme(context, type)
+        val snapshot = SkinSnapshotProvider.peek()
         val panel = scheme.panel
         bgPaint.color = panel.background
         keyboardBackground = scheme.background
@@ -125,21 +138,20 @@ class Paints(context: Context) {
         // 默认黑色；现接线为皮肤注释色，缺失回落序号色。
         candidateCommentPaint.color = panel.candidateComment ?: panel.candidateIndex
         toolbarPressedColor = panel.toolbarPressed
-        candidateStripBg = SkinSnapshotProvider.peek()?.horizontalCandidatesStyle?.background
+        candidateStripBg = snapshot?.horizontalCandidatesStyleFor(type)?.background
         // S10：横条分隔线可见性（未写 = 可见）。
         candidateDividerVisible =
-            SkinSnapshotProvider.peek()?.horizontalCandidatesStyle?.dividerVisible ?: true
+            snapshot?.horizontalCandidatesStyleFor(type)?.dividerVisible ?: true
         // 单元格全字段优先于旧顶层字号字段，缺失回落 Jime 默认。
-        val sizeSnapshot = SkinSnapshotProvider.peek()
         candidateIndexSizeDp =
-            sizeSnapshot?.horizontalCandidateStyle?.indexSizeDp
-                ?: sizeSnapshot?.candidateIndexSizeDp ?: CANDIDATE_INDEX_DP
+            snapshot?.horizontalCandidateStyleFor(type)?.indexSizeDp
+                ?: snapshot?.candidateIndexSizeDp ?: CANDIDATE_INDEX_DP
         candidateCommentSizeDp =
-            sizeSnapshot?.horizontalCandidateStyle?.commentSizeDp
-                ?: sizeSnapshot?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
+            snapshot?.horizontalCandidateStyleFor(type)?.commentSizeDp
+                ?: snapshot?.candidateCommentSizeDp ?: CANDIDATE_COMMENT_DP
         // 候选主文字字号（S9；主文字无旧顶层字段，只读横条样式）。
         candidateTextSizeDp =
-            sizeSnapshot?.horizontalCandidateStyle?.textSizeDp ?: CANDIDATE_TEXT_DP
+            snapshot?.horizontalCandidateStyleFor(type)?.textSizeDp ?: CANDIDATE_TEXT_DP
         // 字重在 updateFonts 现取（避免与 updateColors 的调用顺序依赖）。
         candidatePressedColor = panel.candidatePressed
         preferredBackground = panel.preferredBackground
@@ -149,7 +161,6 @@ class Paints(context: Context) {
         // 工具栏按钮表面（全局样式层）：皮肤样式 presence 决定
         // 全局按键值是否生效；跟随按键时半径取生效键圆角。
         val global = GlobalStylePrefs.get(context)
-        val snapshot = SkinSnapshotProvider.peek()
         val stylePresence = snapshot?.let {
             val dark = SkinColorMode.isDark(context)
             if (dark) it.darkStylePresence ?: it.stylePresence else it.stylePresence

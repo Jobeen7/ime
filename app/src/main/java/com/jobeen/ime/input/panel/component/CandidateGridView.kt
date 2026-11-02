@@ -29,6 +29,7 @@ import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.skin.model.AreaInsets
 import com.jobeen.ime.skin.model.VerticalBottomRowNames
 import com.jobeen.ime.skin.model.VerticalBottomRowSpec
+import com.jobeen.ime.input.panel.panelColorScheme
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -1202,18 +1203,19 @@ class CandidateGridView(
 
     private fun mES(size: Int, mode: Int) = MeasureSpec.makeMeasureSpec(size, mode)
 
-    fun refreshTheme(context: Context) {
-        val colors = KeyboardColors.resolve(context)
+    fun refreshTheme(context: Context, type: String? = null) {
+        val colors = panelColorScheme(context, type)
         refreshTheme(colors)
         val snapshot = SkinSnapshotProvider.peek()
         candidateRadiusDp = snapshot?.candidateRadiusDp ?: 6f
         // 区样式（审计 B 项）：insets 变化但尺寸不变时，onSizeChanged
-        // 不跑，须显式重算画布几何（不重置滚动）。
-        areaInsets = snapshot?.verticalCandidatesStyle?.insets ?: AreaInsets()
-        areaBackground = snapshot?.verticalCandidatesStyle?.background
-        cellPadDp = snapshot?.verticalCandidatesStyle?.cellPadDp
-        minWordSpaceDp = snapshot?.verticalCandidatesStyle?.minWordSpaceDp
-        minRowHeightDp = snapshot?.verticalCandidatesStyle?.minRowHeightDp
+        // 不跑，须显式重算画布几何（不重置滚动）。G2：类型区域集
+        // 写了竖网格区样式时优先，否则回落包级。
+        areaInsets = snapshot?.verticalCandidatesStyleFor(type)?.insets ?: AreaInsets()
+        areaBackground = snapshot?.verticalCandidatesStyleFor(type)?.background
+        cellPadDp = snapshot?.verticalCandidatesStyleFor(type)?.cellPadDp
+        minWordSpaceDp = snapshot?.verticalCandidatesStyleFor(type)?.minWordSpaceDp
+        minRowHeightDp = snapshot?.verticalCandidatesStyleFor(type)?.minRowHeightDp
         skinMaxRows = snapshot?.verticalMaxRows
         skinMaxColumns = snapshot?.verticalMaxColumns
         // 底部钮行：规范变化时重建钮条并重新布局（网格内高重分）；

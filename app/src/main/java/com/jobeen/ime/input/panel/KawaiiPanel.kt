@@ -1336,13 +1336,27 @@ class KawaiiPanel(
         candidateGrid.onPossibleCandidatePinYin(pinyins)
     }
 
+    /**
+     * 面板上次按其刷新的键盘类型（G1/G2 类型感知刷新）：面板共享、
+     * 不持有状态管理器，类型由窗口层在键盘变化时传进来；未传时
+     * 沿用上次类型（通知/方向刷新不把类型色板打回包级），从未传
+     * 过时取包级（旧行为）。
+     */
+    private var lastPanelType: String? = null
+
     override fun refreshTheme() {
+        refreshTheme(null)
+    }
+
+    fun refreshTheme(type: String?) {
+        val effectiveType = type ?: lastPanelType
+        lastPanelType = effectiveType
         // 同一配色只解析一次再分发：旧实现每个子视图各 resolve 一遍（共 5 次，
         // 每次都读主题配置并构建整套 ColorScheme）
         renderContext.invalidateDisplaySettings()
-        val colors = KeyboardColors.resolve(context)
-        view.refreshTheme()
-        candidateGrid.refreshTheme(context)
+        val colors = panelColorScheme(context, effectiveType)
+        view.refreshTheme(effectiveType)
+        candidateGrid.refreshTheme(context, effectiveType)
         clipboardView.refreshTheme(colors)
         menuGridView.refreshTheme(colors)
         textEditingView.refreshTheme(colors)

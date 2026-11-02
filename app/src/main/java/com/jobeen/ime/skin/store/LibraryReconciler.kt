@@ -98,12 +98,17 @@ class LibraryReconciler(
                 }
             }
             is ActiveResolver.Resolution.Verified -> Unit
+            // 保留 pending：active.json 不动，验证留待下次键盘绘制。
+            is ActiveResolver.Resolution.KeepPending -> Unit
         }
 
         // 受保护代次（永不回收）：生效代次 + Last-Good 代次（§2.5.4）
+        // 保留的 pending 代次同样受保护，否则回收会毁掉待验证目标。
         val protectedGens = mutableSetOf<Pair<String, Int>>()
         when (resolution) {
             is ActiveResolver.Resolution.Verified ->
+                protectedGens += resolution.record.skinId!! to resolution.record.generation
+            is ActiveResolver.Resolution.KeepPending ->
                 protectedGens += resolution.record.skinId!! to resolution.record.generation
             is ActiveResolver.Resolution.RollbackToLastGood ->
                 protectedGens += resolution.target.skinId!! to resolution.target.generation

@@ -115,7 +115,9 @@ class LibraryReconcilerTest {
     }
 
     @Test
-    fun pendingActiveRollsBackToLastGood_A2() = runBlocking {
+    fun pendingActiveValidKeepsPending_A2() = runBlocking {
+        // S1（2026-11-02 修复批）：PENDING 且目标代次有效时启动不回滚，
+        // active.json 原样保留 PENDING，验证留待下次键盘绘制。
         val f = Fixture()
         val hash1 = f.skinGen("s1", 1)
         val hash2 = f.skinGen("s1", 2)
@@ -123,20 +125,20 @@ class LibraryReconcilerTest {
         f.store.writeActive(ActiveRecord("s1", hash2, 2, ApplyState.PENDING, 5))
         val report = f.reconciler.reconcile()
         val resolution = report.activeResolution
-        assertTrue(resolution is ActiveResolver.Resolution.RollbackToLastGood)
+        assertTrue(resolution is ActiveResolver.Resolution.KeepPending)
         val active = f.active()
-        assertEquals(1, active.generation)
-        assertEquals(hash1, active.hash)
-        assertEquals(ApplyState.VERIFIED, active.state)
-        // gen-2 是最新代次、gen-1 是 last-good：两代都保留
+        assertEquals(2, active.generation)
+        assertEquals(hash2, active.hash)
+        assertEquals(ApplyState.PENDING, active.state)
+        // gen-2 是保留的 pending 代次、gen-1 是 last-good：两代都保留
         assertTrue(f.layout.skinGenDir("s1", 2).exists())
         assertTrue(f.layout.skinGenDir("s1", 1).exists())
     }
 
     @Test
-    fun pendingActiveRollsBackToLastGood_otherSkinsUntouched() = runBlocking {
-        // 启动场景 1 的多皮肤版：s1 待回退、s2 已验证——回退只动 s1，
-        // 不扰动其它皮肤的索引与代次（与单皮肤 A2 区分）。
+    fun pendingActiveValidKeepsPending_otherSkinsUntouched() = runBlocking {
+        // 启动场景 1 的多皮肤版：s1 保留 pending、s2 已验证——对账只
+        // 动 s1 的裁决，不扰动其它皮肤的索引与代次。
         val f = Fixture()
         val hash1 = f.skinGen("s1", 1)
         val hash2 = f.skinGen("s1", 2)
@@ -144,25 +146,43 @@ class LibraryReconcilerTest {
         f.store.writeLastGood(LastGoodPointer("s1", hash1, 1))
         f.store.writeActive(ActiveRecord("s1", hash2, 2, ApplyState.PENDING, 5))
         val report = f.reconciler.reconcile()
-        assertTrue(report.activeResolution is ActiveResolver.Resolution.RollbackToLastGood)
+        assertTrue(report.activeResolution is ActiveResolver.Resolution.KeepPending)
         val active = f.active()
-        assertEquals(1, active.generation)
-        assertEquals(hash1, active.hash)
-        assertEquals(ApplyState.VERIFIED, active.state)
+        assertEquals(2, active.generation)
+        assertEquals(hash2, active.hash)
+        assertEquals(ApplyState.PENDING, active.state)
         assertEquals(hashS2, f.indexEntry("s2")!!.hash)
         assertTrue(f.layout.skinGenDir("s2", 1).exists())
     }
 
     @Test
-    fun pendingActiveWithCorruptLastGoodDefaults() = runBlocking {
-        // 启动场景 2：PENDING + 损坏的 Last-Good 文件——指针非 Ok，
-        // 按 RollbackToDefault 回到无皮肤，不崩、不把库当空库
-        // （磁盘代次仍登记在索引内）。
+    fun pendingActiveValidKeepsPending_despiteCorruptLastGood() = runBlocking {
+        // PENDING 且目标有效时，损坏的 Last-Good 文件不再导致回退：
+        // 目标本身有效，Last-Good 指针是否完好无关。
         val f = Fixture()
         f.skinGen("s1", 1)
         val hash2 = f.skinGen("s1", 2)
         f.layout.lastGoodFile.writeText("{broken")
         f.store.writeActive(ActiveRecord("s1", hash2, 2, ApplyState.PENDING, 5))
+        val report = f.reconciler.reconcile()
+        assertTrue(report.activeResolution is ActiveResolver.Resolution.KeepPending)
+        val active = f.active()
+        assertEquals(2, active.generation)
+        assertEquals(hash2, active.hash)
+        assertEquals(ApplyState.PENDING, active.state)
+        assertTrue(f.indexEntry("s1") != null)
+    }
+
+    @Test
+    fun pendingActiveInvalidWithCorruptLastGoodDefaults() = runBlocking {
+        // 启动场景 2：PENDING + 目标 hash 不符 + 损坏的 Last-Good——
+        // 目标无效且无可用 Last-Good，按 RollbackToDefault 回到无皮肤，
+        // 不崩、不把库当空库（磁盘代次仍登记在索引内）。
+        val f = Fixture()
+        f.skinGen("s1", 1)
+        f.skinGen("s1", 2)
+        f.layout.lastGoodFile.writeText("{broken")
+        f.store.writeActive(ActiveRecord("s1", "0".repeat(64), 2, ApplyState.PENDING, 5))
         val report = f.reconciler.reconcile()
         assertTrue(report.activeResolution is ActiveResolver.Resolution.RollbackToDefault)
         assertEquals(null, f.active().skinId)

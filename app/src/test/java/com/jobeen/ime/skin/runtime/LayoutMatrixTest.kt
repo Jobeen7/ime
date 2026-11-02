@@ -116,8 +116,15 @@ class LayoutMatrixTest {
                 CustomLayoutRuntime.resolveSwitchTarget(snap, main, "Qwerty"),
             )
         }
-        // 横屏：主键盘名改指横屏绑定
-        for (main in listOf("Qwerty", "T9", "T15")) {
+        // 横屏：主键盘名改指横屏绑定；类别匹配才改指（单键横屏绑定非 26 键，
+        // Qwerty 类别不匹配 → 走原厂）。
+        assertEquals(
+            "Qwerty",
+            CustomLayoutRuntime.resolveSwitchTarget(
+                snap, "Qwerty", "Qwerty", landscape = true,
+            ),
+        )
+        for (main in listOf("T9", "T15")) {
             assertEquals(
                 "custom:lay-ls",
                 CustomLayoutRuntime.resolveSwitchTarget(

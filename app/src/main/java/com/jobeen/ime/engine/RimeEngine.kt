@@ -66,6 +66,7 @@ import com.jobeen.ime.engine.rime.util.OptionsApplier
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.input.ImeInputMethodService
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -98,6 +99,9 @@ import kotlin.lazy
 internal const val BORROWED_DEL_MARKER: Int = 1 shl 29
 
 class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
+
+    /** 组字清除后防撤销复活（见 UndoClearGuard）：复位时 arm，Ctrl+Z 撤销后消费。 */
+    private val undoClearGuard = UndoClearGuard()
 
     companion object {
         /**
@@ -657,6 +661,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 }
 
                 KEYCODE_DEL -> {
+                    // 删字即会话边界：守卫失效。
+                    undoClearGuard.clear()
                     // 判断与处理收进本 job 内完成（见 handleBackspaceInJob）：
                     // 不再先在本 job 取组字状态、再经 actions 队列转发处理，
                     // 避免跨队列期间组字变化导致按旧状态误判
@@ -944,9 +950,26 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             // 后打过字/移过光标/账本无账）才回落 Ctrl+Z。
                             val undoneByLedger = ic != null && VoiceUndoLedger.tryUndo(ic)
                             if (!undoneByLedger) {
+                                val beforeUndo = ic?.getTextBeforeCursor(4096, 0)?.toString()
                                 InputConnectionUtil.sendCombinationKeyEvent(
                                     ic, KEYCODE_Z, ctrl = true
                                 )
+                                // 防复活：Ctrl+Z 若把刚清掉的组字以已上屏
+                                // 文本复活（编辑器撤销栈口径），立即删掉
+                                // 撤销增量；账本路径不走宿主栈，守卫留待
+                                // 下一次 Ctrl+Z 撤销。编辑器落盘有延迟，
+                                // 隔 100ms 再读撤销后文本。
+                                if (ic != null && undoClearGuard.hasGuard()) {
+                                    delay(100)
+                                    val afterUndo = ic.getTextBeforeCursor(4096, 0)?.toString()
+                                    val strip = undoClearGuard.consume(beforeUndo, afterUndo)
+                                    if (strip > 0) {
+                                        ic.deleteSurroundingText(strip, 0)
+                                        DiagLog.d("undo_guard", "stripped")
+                                    } else {
+                                        DiagLog.d("undo_guard", "miss")
+                                    }
+                                }
                             }
                         }
                     }
@@ -982,6 +1005,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
 
             is Action.ForwardDelete -> {
+                // 前删即会话边界：守卫失效。
+                undoClearGuard.clear()
                 serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
                 sendJob {
                     // 组字判定在 job 内以 getRawInput 现读（与退格
@@ -1076,7 +1101,33 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // “只清不录”相反）。
                 sendJob {
                     withContext(Dispatchers.Main.immediate) {
-                        inputConnection()?.setComposingText("", 1)
+                        // 撤销守卫快照：在 sendJob 内读（RimeApi 作用域）；
+                        // 若 clearComposition 的组字回写已先到而读空，则
+                        // 落到下面的差分路径，仍能从编辑器文本定段。
+                        val clearedPreedit = compositionCached.preedit
+                        val ic = inputConnection()
+                        if (ic != null) {
+                            if (!clearedPreedit.isNullOrEmpty()) {
+                                undoClearGuard.arm(clearedPreedit)
+                                DiagLog.d("undo_guard", "armed_preedit")
+                                ic.setComposingText("", 1)
+                            } else {
+                                // 引擎侧无组字、编辑器侧仍有组字段时（如内嵌
+                                // 模式拼出的 joined 串）：以清前/清后光标前
+                                // 文本差分定被清段；编辑器落盘有延迟，隔
+                                // 100ms 再读清后文本。
+                                val before = ic.getTextBeforeCursor(4096, 0)?.toString()
+                                ic.setComposingText("", 1)
+                                if (before != null) {
+                                    delay(100)
+                                    val after = ic.getTextBeforeCursor(4096, 0)?.toString()
+                                    undoClearGuard.armFromDiff(before, after)
+                                    if (undoClearGuard.hasGuard()) {
+                                        DiagLog.d("undo_guard", "armed_diff")
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -1094,7 +1145,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 }
             }
 
-            is Action.Commit -> requestCommit(action.text)
+            is Action.Commit -> {
+                // 上屏即会话边界：守卫失效，后续撤销不再受其约束。
+                undoClearGuard.clear()
+                requestCommit(action.text)
+            }
             is Action.CommitPair -> requestCommitPair(action.pair, action.opener)
             Action.InputCleared -> {
                 invalidatePendingCandidates()
@@ -1908,6 +1963,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun onFinishInputView() {
+        undoClearGuard.clear()
         inputConnection = null
         editorInfo = null
         lastLearnSegment = null
@@ -1943,6 +1999,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 付到新框（代次与禁学习复检都拦不住同为可学习框的切换）
         val fieldKey = InputFieldKey.of(info)
         if (!restarting || isInputFieldChanged(lastInputFieldKey, fieldKey)) {
+            // 换框即会话边界：守卫失效。
+            undoClearGuard.clear()
             predictionFieldGen.incrementAndGet()
             // 前端提交队列整队清空：条目带的是旧框代次、再无认
             // 领方，留着只会占住新框的队首（认领侧另有代次校
@@ -2488,6 +2546,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private fun requestCommitPair(pair: String, opener: String) {
         // 成对不参与搭配学习、打断打字学习链，与前端提交同口径。
+        // 上屏即会话边界：守卫失效。
+        undoClearGuard.clear()
         lastLearnSegment = null
         sendJob {
             // 直接上屏：前文缓存失效，后续预测读新鲜前文

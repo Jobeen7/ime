@@ -344,6 +344,19 @@ class SpeechOverlayView(
                 .setInterpolator(DecelerateInterpolator()).start()
         }
         waveView.startAnim()
+        // 语音波形偶发不动钉根因（2026-11-02 修复批）：show() 时记
+        // 一次绘制链 + 音量链状态。浮层已出但波形不动时，本条可直
+        // 接区分：线程没跑 / Surface 无效 / 引擎冬眠未唤醒 / 振幅
+        // 没喂进来（末次振幅久远或恒零）。只记日志，不改行为。
+        val waveDiag = (waveView as? ParticleWaveView)?.waveDiagnostics()
+            ?: "type=$waveViewType"
+        val renderDiag = (waveView.view as? RenderView)?.renderDiagnostics()
+            ?: "not-render-view"
+        val ampAge = android.os.SystemClock.uptimeMillis() - lastAmpUptimeMs
+        com.jobeen.ime.skin.diag.DiagLog.d(
+            "voice_wave",
+            "show wave=$waveDiag render=$renderDiag lastAmp=$lastAmp ampAgeMs=$ampAge",
+        )
     }
 
     fun hide() {
@@ -355,7 +368,16 @@ class SpeechOverlayView(
             }.start()
     }
 
+    /** 音量链诊断：末次振幅与到达时刻（show() 时记入诊断日志）。 */
+    @Volatile
+    private var lastAmp = Float.NaN
+
+    @Volatile
+    private var lastAmpUptimeMs = 0L
+
     fun updateAmplitude(amplitude: Float) {
+        lastAmp = amplitude
+        lastAmpUptimeMs = android.os.SystemClock.uptimeMillis()
         val a = (amplitude.coerceIn(0f, 1f) * 1.6).coerceAtMost(1.0)
         val mapped = ln(1.0 + 18.0 * a) / ln(1.0 + 18.0)
         val vol = (mapped * 100).toInt().coerceIn(0, 100)

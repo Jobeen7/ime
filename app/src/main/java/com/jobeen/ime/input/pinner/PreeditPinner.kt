@@ -6,13 +6,19 @@ import android.os.IBinder
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.data.EngineMessage
+import com.jobeen.ime.input.panel.panelColorScheme
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 class PreeditPinner(context: Context) : IPinner {
 
     override val view: PreeditPinnerView = PreeditPinnerView(context)
+
+    /**
+     * 面板按类型刷新用（G2）：窗口层在键盘变化时设置当前类型，
+     * refreshTheme 按此取 preedit 高度与药丸配色；null = 包级。
+     */
+    var panelType: String? = null
 
     /**
      * 常驻窗口：addView 只在首次 show 时发生一次，之后 hide() 只把 view 设为 GONE
@@ -40,7 +46,7 @@ class PreeditPinner(context: Context) : IPinner {
     }
 
     override fun refreshTheme(context: Context) {
-        val pinner = KeyboardColors.resolve(context).pinner
+        val pinner = panelColorScheme(context, panelType).pinner
         val textSize = 15f * context.resources.displayMetrics.density
         view.applyTheme(pinner.background, pinner.textColor, pinner.secondaryTextColor, textSize)
         // 药丸高度（审计 B 项）：顶层 preeditHeight 优先（vh 按
@@ -50,7 +56,7 @@ class PreeditPinner(context: Context) : IPinner {
         val screenHeightDp = context.resources.displayMetrics.heightPixels / density
         val snapshot = SkinSnapshotProvider.peek()
         view.applySkinStyle(snapshot?.preeditStyle)
-        view.pillHeightDp = snapshot?.preeditHeight?.resolveDp(screenHeightDp, 30f)
+        view.pillHeightDp = snapshot?.preeditHeightFor(panelType)?.resolveDp(screenHeightDp, 30f)
             ?: snapshot?.preeditStyle?.heightDp ?: 30f
         // 主题变化可能改变尺寸，失效 measure 缓存
         lastMeasuredItems = null

@@ -257,6 +257,25 @@ abstract class RenderView @JvmOverloads constructor(
     val isRunning: Boolean
         get() = renderThread != null && renderThread!!.running
 
+    /**
+     * 绘制链诊断（语音波形偶发不动钉根因用，2026-11-02 修复批）：
+     * 只读状态快照，不改行为；show() 时由 SpeechOverlayView 记入
+     * 诊断日志，与音量链（末次振幅）对照，区分“线程没跑 /
+     * Surface 无效 / 线程暂停”与“振幅没喂进来”。
+     */
+    fun renderDiagnostics(): String {
+        val rt = renderThread
+        val surfaceValid = try {
+            holder?.surface?.isValid
+        } catch (_: Throwable) {
+            null
+        }
+        return "startAnim=$isStartAnim thread=" +
+            (rt?.state?.name ?: "null") +
+            " running=${rt?.running} destroyed=${rt?.destroyed} paused=${rt?.isPause}" +
+            " surfaceValid=$surfaceValid"
+    }
+
     open fun release() {
         stopAnim()
         surfaceLock.withLock {

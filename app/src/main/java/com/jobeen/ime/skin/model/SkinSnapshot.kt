@@ -258,6 +258,39 @@ data class SkinSnapshot(
     /** 按类型取区域集（G2）：未声明时返回 null（调用方回落包级）。 */
     fun areaSetFor(type: String): TypeAreaSet? = typeAreas[type]
 
+    /**
+     * 面板配色按类型取（G1 面板颜色）：该类型有样式集时用其色板
+     * （深色板口径与 effectiveColorScheme 一致：深色且有深色板 →
+     * 深色板，否则浅色板）；无集时回落包级 effectiveColorScheme。
+     * 面板共享、键盘按类型切换：面板刷新时以当前类型调本函数。
+     */
+    fun effectiveColorSchemeForType(type: String?, isDark: Boolean): KeyboardColors.ColorScheme {
+        val set = type?.let { typeStyles[it] }
+        if (set != null) {
+            return if (isDark && set.darkColorScheme != null) set.darkColorScheme else set.colorScheme
+        }
+        return effectiveColorScheme(isDark)
+    }
+
+    /** 面板区域按类型取（G2）：类型区域集写了该项时优先，否则回落包级。 */
+    fun toolbarHeightFor(type: String?): VhLengthSpec? =
+        type?.let { typeAreas[it]?.toolbarHeight } ?: toolbarHeight
+
+    fun preeditHeightFor(type: String?): VhLengthSpec? =
+        type?.let { typeAreas[it]?.preeditHeight } ?: preeditHeight
+
+    fun horizontalCandidatesStyleFor(type: String?): CandidateAreaStyleSpec? =
+        type?.let { typeAreas[it]?.horizontalCandidatesStyle } ?: horizontalCandidatesStyle
+
+    fun verticalCandidatesStyleFor(type: String?): CandidateAreaStyleSpec? =
+        type?.let { typeAreas[it]?.verticalCandidatesStyle } ?: verticalCandidatesStyle
+
+    fun horizontalCandidateStyleFor(type: String?): CandidateCellStyleSpec? =
+        type?.let { typeAreas[it]?.horizontalCandidateStyle } ?: horizontalCandidateStyle
+
+    fun verticalCandidateStyleFor(type: String?): CandidateCellStyleSpec? =
+        type?.let { typeAreas[it]?.verticalCandidateStyle } ?: verticalCandidateStyle
+
     fun effectiveColorScheme(isDark: Boolean): KeyboardColors.ColorScheme {
         val (palette, _) = VariantResolver.resolvePalette(isDark, darkColorScheme != null)
         return if (palette == VariantPalette.DARK) darkColorScheme!! else colorScheme

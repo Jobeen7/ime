@@ -95,11 +95,18 @@ class SkinApplier(context: Context) {
             // 视图仍 attached，误判活窗口会让首帧等待必然 2s 超时回滚。
             // 2026-10-28 修复：首帧闩等待已移到 IO 线程（awaitFirstDrawLatch），
             // 主线程应用不再自锁；真正不绘制的窗口仍 2s 超时回滚。
-            if (SkinRuntime.canVerifyInline()) {
+            val result = if (SkinRuntime.canVerifyInline()) {
                 transaction().apply(ref)
             } else {
                 deferredApply(ref)
             }
+            // 皮肤应用诊断（2026-11-02 修复批）：每次应用记结果类型
+            // 与代次，与 undo_guard / voice_wave 同批进诊断日志。
+            DiagLog.d(
+                "skin_apply", result::class.simpleName ?: "unknown",
+                mapOf("skinId" to ref.skinId, "gen" to ref.generation),
+            )
+            result
         } finally {
             com.jobeen.ime.skin.perf.PerfMonitor.record(
                 com.jobeen.ime.skin.perf.PerfMonitor.Event.SKIN_APPLY,

@@ -10,7 +10,9 @@ import com.jobeen.ime.skin.store.SkinGenRef
  * 回滚时不报实际生效的皮肤；新文案一律报实际结果：回滚类结果必须
  * 说出回退到的皮肤（restoredRef 为 null = 内置默认键盘）。
  * 纯函数，不依赖 Compose，便于单测。
- * 延迟路径 AppliedPending 单独立文案，不与已验证 Applied 混同。
+ * 延迟路径 AppliedPending 文案（2026-11-02 用户定）：点下即报“已切换到”
+ *（快照暂存时已装好，下次键盘必用新皮肤），不再报“已暂存”；
+ * PENDING→VERIFIED 晋升与画失败回滚逻辑本身不动。
  */
 fun applyResultMessage(
     result: ApplyTransaction.Result,
@@ -22,7 +24,7 @@ fun applyResultMessage(
         is ApplyTransaction.Result.Applied ->
             "已应用：${name(result.ref)}"
         is ApplyTransaction.Result.AppliedPending ->
-            "已暂存：${name(result.ref)}（下次绘制时验证）"
+            "已切换到：${name(result.ref)}"
         is ApplyTransaction.Result.BuildFailed ->
             "应用失败：${name(result.ref)}（构建失败）"
         is ApplyTransaction.Result.SwitchFailedRolledBack ->

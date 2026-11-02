@@ -71,17 +71,36 @@ class CustomLayoutRuntimeTest {
         baseLayout = listOf(listOf(keyDef("lay-a:K-1", "q"))),
     )
 
+    private fun lettersLayout(id: String): ResolvedLayout {
+        val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm").map { row ->
+            row.map { ch -> keyDef("$id:$ch", ch.toString()) }
+        }
+        return ResolvedLayout(layoutId = id, generation = 1, name = id, baseLayout = rows)
+    }
+
     // ---------- 目标解析（§3.3 优先级表） ----------
 
     @Test
     fun mainSlotNamesRedirectToCustomWhenResolved() {
         val snap = snapshot(resolvedA)
-        for (main in listOf("Qwerty", "T9", "T15")) {
+        // 类别匹配（2026-11-02）：单键旧布局属非 26 键，只替换 T9/T15；
+        // Qwerty 类别不匹配 → 走原厂。
+        assertEquals(
+            "Qwerty",
+            CustomLayoutRuntime.resolveSwitchTarget(snap, "Qwerty", "Qwerty"),
+        )
+        for (main in listOf("T9", "T15")) {
             assertEquals(
                 "custom:lay-a",
                 CustomLayoutRuntime.resolveSwitchTarget(snap, main, "Qwerty"),
             )
         }
+        // 26 键旧布局替换 Qwerty。
+        val snap26 = snapshot(lettersLayout("lay-26"))
+        assertEquals(
+            "custom:lay-26",
+            CustomLayoutRuntime.resolveSwitchTarget(snap26, "Qwerty", "Qwerty"),
+        )
     }
 
     @Test
@@ -120,9 +139,10 @@ class CustomLayoutRuntimeTest {
             "custom:lay-a",
             CustomLayoutRuntime.resolveSwitchTarget(snap, "custom:lay-a", "Qwerty"),
         )
-        // 指向别的布局：先回退方案默认，再按主键盘位归一到当前已解析布局
+        // 指向别的布局：先回退方案默认，再按主键盘位归一；类别不匹配
+        // （单键旧布局非 26 键 vs Qwerty）时归一不发生，走原厂 Qwerty。
         assertEquals(
-            "custom:lay-a",
+            "Qwerty",
             CustomLayoutRuntime.resolveSwitchTarget(snap, "custom:lay-b", "Qwerty"),
         )
     }

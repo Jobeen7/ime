@@ -19,9 +19,10 @@ class ApplyResultTextTest {
     }
 
     @Test
-    fun appliedPendingDistinguishedFromApplied() {
+    fun appliedPendingReportsSwitched() {
+        // 2026-11-02 用户定：点下即报“已切换到”（快照已装好），不再报“已暂存”。
         assertEquals(
-            "已暂存：皮肤A（下次绘制时验证）",
+            "已切换到：皮肤A",
             applyResultMessage(ApplyTransaction.Result.AppliedPending(refA), resolve),
         )
     }

@@ -314,8 +314,8 @@ class KawaiiPanelView(context: Context) : View(context) {
         }
     }
 
-    fun refreshTheme() {
-        paints.updateColors(context)
+    fun refreshTheme(type: String? = null) {
+        paints.updateColors(context, type)
         // 字号随皮肤切换即时生效（updateColors 只同步字号变量，
         // 实际 Paint 字号由 applyDensity 写；此前 refreshTheme 不刷
         // 密度，皮肤字号字段须追加这一行）。
@@ -331,8 +331,9 @@ class KawaiiPanelView(context: Context) : View(context) {
             // 工具栏样式与构成抉择无关：有样式即应用，无样式清掉旧样式。
             renderer.toolbarStyle = SkinSnapshotProvider.peek()?.toolbarStyle
             renderer.toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout
-            // P4：锁定通知样式解析用当前配色方案（主题变化时同步）。
-            renderer.scheme = KeyboardColors.resolve(context)
+            // P4：锁定通知样式解析用当前配色方案（主题变化时同步；
+            // G1：有类型样式集时取类型色板）。
+            renderer.scheme = panelColorScheme(context, type)
             applyUserToolbar(renderer)
         }
         invalidate()

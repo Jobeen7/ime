@@ -766,6 +766,12 @@ class KeyboardWindowView(
         addKeyboardView(keyboard)
         feedSchemeAndReturnKeyEvents()
         closeSymbolBar()
+        // G1/G2 面板按类型刷新：键盘按类型切换时面板共享不重建，
+        // 此处把当前类型喂给面板（颜色 + 区域按类型样式集/区域集取）。
+        val type = keyboardStateManager.currentKeyboardType
+        panel.refreshTheme(type)
+        preeditPinner.panelType = type
+        preeditPinner.refreshTheme(context)
     }
 
     init {
@@ -1240,7 +1246,8 @@ class KeyboardWindowView(
         applyWindowBackground()
         syncVideoBackground()
         applyWindowCorners()
-        panel.refreshTheme()
+        panel.refreshTheme(keyboardStateManager.currentKeyboardType)
+        preeditPinner.panelType = keyboardStateManager.currentKeyboardType
         refreshToolbarHidden()
         addPhraseLayer.refreshTheme(cachedColors)
         imeToastView.refreshTheme(cachedColors)
@@ -1382,7 +1389,8 @@ class KeyboardWindowView(
      * onMeasure 与 onLayout 同调本函数，度量与布局不得各算一套。
      */
     private fun panelBarHeightPx(density: Float): Int {
-        val spec = SkinSnapshotProvider.peek()?.toolbarHeight
+        val spec = SkinSnapshotProvider.peek()
+            ?.toolbarHeightFor(keyboardStateManager.currentKeyboardType)
             ?: return (PANEL_HEIGHT_DP * density).roundToInt()
         val screenHeightDp = fullScreenHeight() / density
         return (spec.resolveDp(screenHeightDp, PANEL_HEIGHT_DP.toFloat()) * density).roundToInt()
@@ -1481,7 +1489,7 @@ class KeyboardWindowView(
      */
     fun refreshNotificationState() {
         keyboardStateManager.rebuild()
-        panel.refreshTheme()
+        panel.refreshTheme(keyboardStateManager.currentKeyboardType)
         refreshToolbarHidden()
     }
 

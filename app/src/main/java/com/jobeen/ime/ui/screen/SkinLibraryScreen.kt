@@ -62,7 +62,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -112,6 +115,7 @@ import com.jobeen.ime.skin.store.SkinLibrary
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import java.io.File
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -274,9 +278,25 @@ fun SkinLibraryScreen(
     var pendingExportSkinId by remember { mutableStateOf<String?>(null) }
     var qrShareSkinId by remember { mutableStateOf<String?>(null) }
     var pendingConflictFile by remember { mutableStateOf<File?>(null) }
+    // 切换成功绿勾（2026-11-02 用户定：切换文案改为绿勾图；非空 = 正显示的皮肤名，仅作无障碍描述）。
+    var switchCheck by remember { mutableStateOf<String?>(null) }
 
     fun toast(message: String) {
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+    }
+
+    /** 切换结果反馈：成功（已验证／暂存）显示绿勾图，失败仍用文字说明原因。 */
+    fun showSwitchResult(result: ApplyTransaction.Result, resolveName: (String) -> String?) {
+        val ref = when (result) {
+            is ApplyTransaction.Result.Applied -> result.ref
+            is ApplyTransaction.Result.AppliedPending -> result.ref
+            else -> null
+        }
+        if (ref != null) {
+            switchCheck = resolveName(ref.skinId) ?: ref.skinId
+        } else {
+            toast(applyResultMessage(result, resolveName))
+        }
     }
 
     fun refresh() {
@@ -284,6 +304,12 @@ fun SkinLibraryScreen(
     }
 
     LaunchedEffect(Unit) { state = loadLibraryState() }
+    LaunchedEffect(switchCheck) {
+        if (switchCheck != null) {
+            delay(500)
+            switchCheck = null
+        }
+    }
     // 迷你预览：对索引中尚未缓存且未失败过的皮肤构建快照取配色；
     // 背景图不解码（见 SkinMiniPreview 说明），失败只记元数据日志。
     LaunchedEffect(state.index.skins, previewNonce) {
@@ -747,7 +773,7 @@ fun SkinLibraryScreen(
                                 themeFollowSystem = true
                                 themeLightId = KeyboardTheme.LIGHT_DEFAULT_ID
                                 themeDarkId = KeyboardTheme.DARK_DEFAULT_ID
-                                toast("已切换到：${context.getString(R.string.builtin_theme_default)}")
+                                switchCheck = context.getString(R.string.builtin_theme_default)
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -770,7 +796,7 @@ fun SkinLibraryScreen(
                                 KeyboardManager.Keyboard.setThemeId(context, monetTheme.id)
                                 themeFollowSystem = false
                                 themeId = monetTheme.id
-                                toast("已切换到：${monetTheme.name}")
+                                switchCheck = monetTheme.name
                             }
                         },
                         modifier = Modifier.weight(1f),
@@ -837,10 +863,10 @@ fun SkinLibraryScreen(
                                         val result = applier.applySkin(
                                             SkinGenRef(entry.id, entry.hash, entry.generation),
                                         )
-                                        toast(applyResultMessage(result) { id ->
+                                        showSwitchResult(result) { id ->
                                             state.index.skins.firstOrNull { it.id == id }
                                                 ?.name?.ifBlank { null }
-                                        })
+                                        }
                                     }
                                 }
                             },
@@ -849,10 +875,10 @@ fun SkinLibraryScreen(
                                     val result = applier.applySkin(
                                         SkinGenRef(entry.id, entry.hash, entry.generation),
                                     )
-                                    toast(applyResultMessage(result) { id ->
+                                    showSwitchResult(result) { id ->
                                         state.index.skins.firstOrNull { it.id == id }
                                             ?.name?.ifBlank { null }
-                                    })
+                                    }
                                 }
                             },
                             onExport = {
@@ -932,10 +958,10 @@ fun SkinLibraryScreen(
                                             previewCache.remove(key)
                                             previewFailedKeys = previewFailedKeys - key
                                             previewNonce++
-                                            toast(applyResultMessage(result) { id ->
+                                            showSwitchResult(result) { id ->
                                                 state.index.skins.firstOrNull { it.id == id }
                                                     ?.name?.ifBlank { null }
-                                            })
+                                            }
                                         } else {
                                             DiagLog.e(
                                                 "library", "skin_reload_failed",
@@ -995,6 +1021,18 @@ fun SkinLibraryScreen(
     }
 
     // ---- 对话框组 ----
+    switchCheck?.let { name ->
+        Dialog(
+            onDismissRequest = { switchCheck = null },
+            properties = DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Image(
+                painter = painterResource(R.drawable.skin_switch_check),
+                contentDescription = name,
+                modifier = Modifier.size(72.dp),
+            )
+        }
+    }
     dialogText?.let { (title, body) ->
         SettingsDialog(
             onDismissRequest = { dialogText = null },

@@ -243,6 +243,10 @@ class ApplyTransaction(
         return when (resolution) {
             is ActiveResolver.Resolution.Verified ->
                 PreviousState(resolution.record, resolution.record.toGenRef())
+            // 保留的 pending 即当前 live 态：新应用失败时回退到它
+            // （仍是 pending，下次绘制时继续验证，不凭空回默认）。
+            is ActiveResolver.Resolution.KeepPending ->
+                PreviousState(resolution.record, resolution.record.toGenRef())
             is ActiveResolver.Resolution.RollbackToLastGood ->
                 PreviousState(resolution.target, resolution.target.toGenRef())
             else -> PreviousState(ActiveRecord(), null)

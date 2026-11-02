@@ -513,6 +513,18 @@ class ParticleWaveView @JvmOverloads constructor(
         }
     }
 
+    /**
+     * 粒子引擎诊断（语音波形偶发不动钉根因用，2026-11-02 修复批）：
+     * 只读 volatile 状态，不改行为；与 RenderView 诊断拼在一起，
+     * 可区分“引擎冬眠未唤醒 / 振幅恒零 / 视图未附着”。
+     */
+    fun waveDiagnostics(): String {
+        val sinceWake = SystemClock.uptimeMillis() - lastWakeUptimeMs
+        return "sleeping=$isEngineSleeping attached=$isViewAttached" +
+            " rawInput=$rawInputVolume target=$targetVolume volume=$volume" +
+            " silentFrames=$silentFrameCount sinceWakeMs=$sinceWake"
+    }
+
     // ========== IWaveAnimView 接口实现 ==========
     override val view: View get() = this
 

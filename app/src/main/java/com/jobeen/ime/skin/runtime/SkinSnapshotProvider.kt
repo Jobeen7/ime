@@ -81,12 +81,17 @@ object SkinSnapshotProvider {
             if (loadAttempted) return
             loadAttempted = true
             // 先等启动对账收敛（上限 3 秒、超时放行，见 SkinLibrary）：
-            // 否则首个键盘构造会在 PENDING 回退落盘前采纳快照，错过
-            // 回退，直到下次失效或进程重启。等待永不抛。
+            // 对账已把有效 pending 保留（S1），此处采纳其快照是预期
+            // 行为，验证留待窗口挂载后的首帧完成。等待永不抛。
             runCatching { runBlocking { SkinLibrary.awaitBootstrap() } }
-            val snapshot = runCatching { loadVerified(context) }.getOrNull()
-            if (snapshot != null) {
-                installLocked(context, snapshot)
+            val loaded = runCatching { loadStartup(context) }.getOrNull()
+            if (loaded != null) {
+                installLocked(context, loaded.first)
+                if (loaded.second) {
+                    // 保留的 pending：进程内待验证标记已丢，需重挂，
+                    // 否则首帧验证永不触发、pending 永久悬空。
+                    SkinRuntime.armPendingVerification(loaded.first.ref)
+                }
             }
         }
     }
@@ -389,15 +394,18 @@ object SkinSnapshotProvider {
         return runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
     }
 
-    /** 启动加载：只采 verified 且代次完整、hash 一致的记录（ActiveResolver 同口径）。 */
-    private fun loadVerified(context: Context): SkinSnapshot? {
+    /**
+     * 启动加载：采 verified 或保留的 pending 记录（代次完整、hash 一致，
+     * ActiveResolver 同口径）；返回快照与「记录是否为 pending」。
+     */
+    private fun loadStartup(context: Context): Pair<SkinSnapshot, Boolean>? {
         val store = SkinLibrary.store
         val layout = SkinLibrary.layout
         val active = runBlocking { store.readActive() }
         val record = (active as? com.jobeen.ime.skin.store.SkinLibraryStore.ReadResult.Ok)?.value
             ?: return null
         val skinId = record.skinId ?: return null
-        if (record.state != ApplyState.VERIFIED) return null
+        if (record.state != ApplyState.VERIFIED && record.state != ApplyState.PENDING) return null
         val valid = ActiveResolver.isTargetValid(skinId, record.generation, record.hash) { id, gen ->
             val dir = layout.skinGenDir(id, gen)
             val complete = layout.isSkinGenComplete(dir)
@@ -410,8 +418,9 @@ object SkinSnapshotProvider {
         }
         if (!valid) return null
         val appContext = context.applicationContext
-        return SkinSnapshotFactory.buildFromGenDir(
+        val snapshot = SkinSnapshotFactory.buildFromGenDir(
             appContext, layout, SkinGenRef(skinId, record.hash!!, record.generation),
-        )
+        ) ?: return null
+        return snapshot to (record.state == ApplyState.PENDING)
     }
 }

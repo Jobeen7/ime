@@ -354,6 +354,28 @@ object ToolbarUserStore {
         }
 
     /**
+     * 主页“当前”计数（纯函数，与编辑页生效列同一口径，2026-11-02 修）：
+     * 自定义栏生效时计其启用项；否则用户列非空计其启用项；用户列空时
+     * 与 enterEdit 起步列一致——皮肤栏已定义计池内映射项，未定义计
+     * 出厂默认 5 项。主页计数恒等于编辑页打开时看到的列长，不再出现
+     * 主页 0 个、编辑页 5 个的自相矛盾。
+     */
+    fun mainPageCount(
+        activeButtons: List<ToolbarButtonEntry>?,
+        userButtons: List<ToolbarButtonEntry>,
+        skinButtonIds: List<String>?,
+    ): Int =
+        if (activeButtons != null) {
+            activeButtons.count { it.enabled }
+        } else if (userButtons.isNotEmpty()) {
+            userButtons.count { it.enabled }
+        } else if (skinButtonIds != null) {
+            skinButtonIds.count { ToolbarConfig.item(it) != null }
+        } else {
+            ToolbarConfig.DEFAULT_IDS.size
+        }
+
+    /**
      * 编辑草稿写盘门控（纯函数）：非起步情形（seed == null）恒写盘；
      * 起步情形仅草稿与起步列不同时写盘——光打开看看不改动时草稿
      * 等于起步列，不写盘，用户列保持空、回落语义不变。
