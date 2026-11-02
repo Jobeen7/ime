@@ -13,6 +13,7 @@ import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.model.LayoutResolution
+import com.jobeen.ime.skin.model.ResolvedLayout
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.VariantResolver
 import com.jobeen.ime.skin.model.VariantTree
@@ -154,15 +155,20 @@ object CustomLayoutRuntime {
      * 2. 仅 pinyin：表项无有效绑定时回落旧顶层绑定（竖屏取
      *    resolvedLayout，横屏取 resolvedLayoutLandscape、无则
      *    取 resolvedLayout 的横屏权重变体所指布局）；
+     * 2b. 仅 alphabetic：无表项且旧顶层绑定本身是 26 键布局时
+     *    回落旧顶层绑定（皮肤跟布局走，布局层；对端 config.yaml
+     *    按类型分键盘的等价口径）；旧绑定非 26 键（如九宫格）
+     *    时不回落，走第 3 步原厂全键盘；
      * 3. 内置出厂键盘（[builtinKeyboardName]）：emojis → 表情
      *    键盘；images → 暂无 images 键盘实现前以表情键盘兜底
      *    （实现落地后改指 images 键盘，见 Wave-4 接线项）；
      *    numeric/numberPad → 数字键盘（两者现共用同一数字
      *    键盘实现，表项仍可各自绑定不同自定义布局与高度）；
-     *    symbolic → 符号键盘；alphabetic → 全键盘；pinyin →
-     *    方案默认布局；未声明的自定义类型 → 方案默认布局。
+     *    symbolic → 符号键盘；alphabetic → 全键盘（无 26 键
+     *    旧绑定时）；pinyin → 方案默认布局；未声明的自定义
+     *    类型 → 方案默认布局。
      * 表项已声明但绑定解析失败（缺失/非法）与未声明同等处理：
-     * 一律走第 2/3 步，绝不因声明了坏绑定而空白。
+     * 一律走第 2/2b/3 步，绝不因声明了坏绑定而空白。
      */
     fun resolveTypeTarget(
         snapshot: SkinSnapshot?,
@@ -181,7 +187,35 @@ object CustomLayoutRuntime {
             }
             if (legacy != null) return nameFor(legacy.layoutId)
         }
+        // 皮肤跟布局走（布局层）：无表皮肤切英文时，若皮肤主布局
+        // 本身就是 26 键布局，用皮肤自己的 26 键布局，不回落原厂
+        // 全键盘；主布局非 26 键（如九宫格）时仍走原厂（英文需要
+        // 26 个字母键，九宫格给不了）。
+        if (type == KeyboardTypes.ALPHABETIC) {
+            val legacy = if (landscape) {
+                snapshot?.resolvedLayoutLandscape ?: snapshot?.resolvedLayout
+            } else {
+                snapshot?.resolvedLayout
+            }
+            if (legacy != null && is26KeyLayout(legacy, landscape)) {
+                return nameFor(legacy.layoutId)
+            }
+        }
         return builtinKeyboardName(type, schemaDefault)
+    }
+
+    /**
+     * 布局是否为 26 键布局：行结构中含 a–z 全部单字母文本键
+     * （与键位排列无关；图片字母键不计入，缺失时按非 26 键处理）。
+     * 纯函数，可单测。
+     */
+    fun is26KeyLayout(layout: ResolvedLayout, landscape: Boolean): Boolean {
+        val rows = if (landscape) layout.baseLayoutLandscape else layout.baseLayout
+        val letters = rows.flatten().mapNotNull { def ->
+            (def.appearance as? KeyDef.Appearance.Text)?.displayText
+                ?.singleOrNull()?.lowercaseChar()
+        }.toSet()
+        return ('a'..'z').all { it in letters }
     }
 
     /**

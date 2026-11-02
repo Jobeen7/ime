@@ -13,7 +13,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
-/** 类型目标解析（多主槽一期）：表项 → pinyin 旧绑定 → 内置回退，永不空白。 */
+/** 类型目标解析（多主槽一期）：表项 → pinyin 旧绑定 → alphabetic 无表且旧绑定为 26 键时回落旧绑定 → 内置回退，永不空白。 */
 class KeyboardTypeResolveTest {
 
     private val scheme = KeyboardColors.ColorScheme(
@@ -241,6 +241,66 @@ class KeyboardTypeResolveTest {
         assertEquals(
             "custom:switch-lay",
             CustomLayoutRuntime.resolveTypeTarget(snap, "layoutSwitch", "T9"),
+        )
+    }
+
+    // 皮肤跟布局走（布局层）：26 键旧绑定供英文类型回落，非 26 键不回落。
+    private fun lettersLayout(id: String): ResolvedLayout {
+        val rows = listOf("qwertyuiop", "asdfghjkl", "zxcvbnm").map { row ->
+            row.map { ch -> keyDef(ch.toString()) }
+        }
+        return ResolvedLayout(layoutId = id, generation = 1, name = id, baseLayout = rows)
+    }
+
+    private fun t9Layout(id: String): ResolvedLayout {
+        val rows = listOf(
+            listOf("1", "2", "3").map { keyDef(it) },
+            listOf("ABC", "DEF").map { keyDef(it) },
+        )
+        return ResolvedLayout(layoutId = id, generation = 1, name = id, baseLayout = rows)
+    }
+
+    @Test
+    fun alphabeticWithoutTableUsesSkin26KeyLegacy() {
+        val snap = snapshot(legacy = lettersLayout("pinyin26"))
+        assertEquals(
+            "custom:pinyin26",
+            CustomLayoutRuntime.resolveTypeTarget(snap, "alphabetic", "T9"),
+        )
+        val land = snapshot(
+            legacy = lettersLayout("pinyin26"),
+            legacyLandscape = lettersLayout("pinyin26-land"),
+        )
+        assertEquals(
+            "custom:pinyin26-land",
+            CustomLayoutRuntime.resolveTypeTarget(land, "alphabetic", "T9", landscape = true),
+        )
+        // 横屏无旧绑定 → 竖屏旧布局。
+        assertEquals(
+            "custom:pinyin26",
+            CustomLayoutRuntime.resolveTypeTarget(snap, "alphabetic", "T9", landscape = true),
+        )
+    }
+
+    @Test
+    fun alphabeticWithoutTableKeepsFactoryWhenLegacyNot26Key() {
+        val snap = snapshot(legacy = t9Layout("t9skin"))
+        assertEquals("Qwerty", CustomLayoutRuntime.resolveTypeTarget(snap, "alphabetic", "T9"))
+        assertEquals(
+            "Qwerty",
+            CustomLayoutRuntime.resolveTypeTarget(snap, "alphabetic", "T9", landscape = true),
+        )
+    }
+
+    @Test
+    fun alphabeticTableEntryStillWinsOver26KeyLegacy() {
+        val snap = snapshot(
+            table = mapOf("alphabetic" to typeEntry(portrait = "alpha-lay")),
+            legacy = lettersLayout("pinyin26"),
+        )
+        assertEquals(
+            "custom:alpha-lay",
+            CustomLayoutRuntime.resolveTypeTarget(snap, "alphabetic", "T9"),
         )
     }
 }
