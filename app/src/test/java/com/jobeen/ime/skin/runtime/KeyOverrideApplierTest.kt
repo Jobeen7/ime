@@ -621,6 +621,28 @@ class KeyOverrideApplierTest {
                 KeyboardAction.KeyboardMenuAction,
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_COMMAND_VIEW) to
                 KeyboardAction.ToggleCommandViewAction,
+            // P3 新增通知动作的运行时映射。
+            SkinAction.Command(WhitelistAction.CHARACTER, "a") to
+                KeyboardAction.KeySequenceAction("a"),
+            SkinAction.Command(WhitelistAction.SEND_KEYS, "ctrl+a") to
+                KeyboardAction.SendKeysAction(
+                    listOf(
+                        KeyboardAction.SendKeyCombo(
+                            29,
+                            com.jobeen.ime.engine.event.KeyModifiers(
+                                com.jobeen.ime.engine.event.KeyModifier.Control,
+                            ),
+                        ),
+                    ),
+                ),
+            SkinAction.Command(WhitelistAction.SEND_KEY_EVENT, "ctrl+a") to
+                KeyboardAction.AppKeyEventAction(29, ctrl = true),
+            SkinAction.Command(WhitelistAction.RIME_OPTION, "ascii") to
+                KeyboardAction.ToggleRimeOptionAction("ascii"),
+            SkinAction.Command(WhitelistAction.DELAY, "100") to
+                KeyboardAction.DelayAction(100),
+            SkinAction.Command(WhitelistAction.SNIPPET, "hi") to
+                KeyboardAction.SnippetAction("hi"),
         )
         // 覆盖白名单全集
         assertEquals(

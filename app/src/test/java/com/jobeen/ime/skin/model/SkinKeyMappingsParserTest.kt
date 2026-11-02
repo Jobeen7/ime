@@ -95,6 +95,13 @@ class SkinKeyMappingsParserTest {
             "#toggleSymbolBar" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SYMBOL_BAR),
             "#keyboardMenu" to SkinAction.Command(WhitelistAction.HASH_KEYBOARD_MENU),
             "#toggleCommandView" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_COMMAND_VIEW),
+            // P3 新增通知动作（解析期值格式已校验，样本须合法）。
+            "character" to SkinAction.Command(WhitelistAction.CHARACTER, "a"),
+            "send_keys" to SkinAction.Command(WhitelistAction.SEND_KEYS, "ctrl+a"),
+            "send_key_event" to SkinAction.Command(WhitelistAction.SEND_KEY_EVENT, "ctrl+a"),
+            "rime_option" to SkinAction.Command(WhitelistAction.RIME_OPTION, "ascii"),
+            "delay" to SkinAction.Command(WhitelistAction.DELAY, "100"),
+            "snippet" to SkinAction.Command(WhitelistAction.SNIPPET, "hi"),
         )
         // 白名单封闭性：样本表必须覆盖枚举全集（除 voice_input 单独覆盖）
         assertEquals(

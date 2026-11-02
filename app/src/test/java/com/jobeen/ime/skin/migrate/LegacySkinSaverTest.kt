@@ -61,14 +61,29 @@ class LegacySkinSaverTest {
         )
         assertTrue(validated is SkinValidator.Result.Valid)
         validated as SkinValidator.Result.Valid
-        // 口径甲：四几何 presence 全指定、值 = 偏好现值（外观零变化）
-        assertEquals(GeometryField.entries.toSet(), validated.skin.appearance.presence)
+        // 口径甲：旧四几何 presence 全指定、值 = 偏好现值（外观零变化）；
+        // S5 新增三内边距不在旧主题内，迁移后保持缺席（窗口按
+        // 全局水平边距／0 回落，与旧布局一致），故不按 entries 全集断言。
+        assertEquals(
+            setOf(
+                GeometryField.CORNER_RADIUS,
+                GeometryField.KEY_H_MARGIN,
+                GeometryField.KEY_V_MARGIN,
+                GeometryField.BOTTOM_INSET,
+            ),
+            validated.skin.appearance.presence,
+        )
         assertEquals(
             mapOf(
                 GeometryField.CORNER_RADIUS to 9f,
                 GeometryField.KEY_H_MARGIN to 3f,
                 GeometryField.KEY_V_MARGIN to 4f,
                 GeometryField.BOTTOM_INSET to 12f,
+                // S5 三内边距缺席时回填缺省 0（窗口消费点另按
+                // 全局水平边距／0 回落，与旧布局一致）。
+                GeometryField.TOP_INSET to 0f,
+                GeometryField.LEFT_INSET to 0f,
+                GeometryField.RIGHT_INSET to 0f,
             ),
             validated.skin.appearance.effectiveGeometry,
         )

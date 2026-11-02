@@ -131,7 +131,8 @@ class SkinValidatorTest {
               "layoutId": "layout_custom_01",
               "appearance": {
                 "background": {"type": "asset", "asset": "bg_main", "blurRadius": 15, "overlayAlpha": 0.2},
-                "cornerRadius": 8.0, "keyHMargin": 5.0, "keyVMargin": 8.0, "bottomInsetDp": 16.0
+                "cornerRadius": 8.0, "keyHMargin": 5.0, "keyVMargin": 8.0, "bottomInsetDp": 16.0,
+                "topInsetDp": 2.0, "leftInsetDp": 3.0, "rightInsetDp": 4.0
               },
               "styles": {"keyBackground": "#FFFFFFFF", "panel": {"candidateText": "#FF141414"}},
               "keyMappings": {"KEY_Q": {"label": "Q", "tap": {"type": "text", "value": "q"}}},

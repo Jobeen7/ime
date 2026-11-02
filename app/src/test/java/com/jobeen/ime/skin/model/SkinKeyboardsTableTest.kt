@@ -57,7 +57,8 @@ class SkinKeyboardsTableTest {
             ),
         )
         // pinyin 全字段非法 → 全空项不占位；其余非法项同理。
-        assertEquals(setOf("numeric"), parsed.keys)
+        // G3：numberPad 无自有绑定时继承 numeric，故表含别名项。
+        assertEquals(setOf("numeric", "numberPad"), parsed.keys)
         assertEquals(55.5, parsed.getValue("numeric").heightPercent)
         assertNull(parsed.getValue("numeric").layoutId)
     }
