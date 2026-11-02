@@ -11,6 +11,7 @@ import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.SchemaManager
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.discoverSchemes
+import com.jobeen.ime.data.schemaLayoutTag
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.rime.data.DataManager
@@ -309,9 +310,9 @@ object KeyboardStateManager {
                     keyboards[name]?.let { kb ->
                         kb.onAttach()
                         // 同布局重挂此前直接重显缓存键盘、不走 switchTo：重显时
-                        // 也刷一次空格文案（皮肤文案优先，无文案时回落当前方案名；
+                        // 也刷一次空格文案（皮肤文案优先，无文案时回落当前布局标签；
                         // Emoji/Symbol 的 updateSpaceKeyText 为空实现，此调用无影响）。
-                        kb.updateSpaceKeyText(currentSchema?.name.orEmpty())
+                        kb.updateSpaceKeyText(spaceFallbackText(name))
                         callback?.onShowKeyboard(kb)
                     }
                 }
@@ -505,6 +506,15 @@ object KeyboardStateManager {
         switchToResolvedWithType(name, typeState.current)
     }
 
+    /**
+     * 空格回落文案（类型感知）：当前布局标签（九宫格／15键／全键盘）；
+     * 皮肤无空格文案时用它，不再只用方案名——切类型（方案不变）时
+     * 文案跟布局走，不滞留旧方案名。皮肤文案优先口径在
+     * BaseKeyboard.resolveSpaceText，不变。
+     */
+    fun spaceFallbackText(layoutName: String): String =
+        schemaLayoutTag(appContext, layoutName)
+
     private fun switchToResolvedWithType(name: String, type: String?) {
         // 同键盘 + 同类型 + 同方案的重复切换直接早退：旧实现每次都重设空格键文案/
         // 标点模式并回调 onKeyboardChanged（触发窗口侧重排），而调用方
@@ -523,7 +533,7 @@ object KeyboardStateManager {
             persistType(type)
         }
         val kb = keyboards[name]
-        kb?.updateSpaceKeyText(currentSchema?.name.orEmpty())
+        kb?.updateSpaceKeyText(spaceFallbackText(name))
         kb?.updatePunctuationMode(PunctuationMode.from(currentSchema?.punctuation.orEmpty()))
         kb?.let { callback?.onKeyboardChanged(it) }
         // 切到的键盘实例（新切换或 rebuild 后重建的）还没被下发过 imeAction，
