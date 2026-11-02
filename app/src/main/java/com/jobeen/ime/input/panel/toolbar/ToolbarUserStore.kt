@@ -338,6 +338,31 @@ object ToolbarUserStore {
         return EffectiveToolbar(buttons, null)
     }
 
+    /**
+     * 编辑起步列（纯函数）：皮肤工具栏已定义时取其钮 id（仅池内项，
+     * 与渲染层 ToolbarSkinResolution 的 mapNotNull 口径一致）；
+     * 未定义时取默认（出厂默认 5 项）。调用方只在用户列为空时用
+     * 它作编辑草稿；草稿本身不写盘（见 [shouldPersistEdit]）。
+     */
+    fun seedEntries(skinButtonIds: List<String>?): List<ToolbarButtonEntry> =
+        if (skinButtonIds != null) {
+            skinButtonIds.mapNotNull { id ->
+                ToolbarConfig.item(id)?.let { ToolbarButtonEntry(id) }
+            }
+        } else {
+            ToolbarConfig.DEFAULT_IDS.map { ToolbarButtonEntry(it) }
+        }
+
+    /**
+     * 编辑草稿写盘门控（纯函数）：非起步情形（seed == null）恒写盘；
+     * 起步情形仅草稿与起步列不同时写盘——光打开看看不改动时草稿
+     * 等于起步列，不写盘，用户列保持空、回落语义不变。
+     */
+    fun shouldPersistEdit(
+        seed: List<ToolbarButtonEntry>?,
+        draft: List<ToolbarButtonEntry>,
+    ): Boolean = seed == null || draft != seed
+
     private fun resolveEntries(
         entries: List<ToolbarButtonEntry>,
         data: ToolbarUserData,

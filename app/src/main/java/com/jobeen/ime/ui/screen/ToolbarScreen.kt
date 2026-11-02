@@ -102,6 +102,11 @@ fun ToolbarScreen(onBack: () -> Unit) {
     var page by remember { mutableStateOf(ToolbarPage.MAIN) }
     // 编辑目标列：null＝当前皮肤默认列；toolbarId＝该自定义栏的列。
     var editToolbarId by remember { mutableStateOf<String?>(null) }
+    // 编辑草稿（仅皮肤默认列起步情形）：seed == null 表示非起步
+    // （用户列非空或自定义栏编辑），草稿即当前列；seed 非空时
+    // 草稿起步于生效列，且仅草稿与起步列不同时才写盘。
+    var editSeed by remember { mutableStateOf<List<ToolbarButtonEntry>?>(null) }
+    var editDraft by remember { mutableStateOf<List<ToolbarButtonEntry>>(emptyList()) }
     // 自定义按钮表单目标：null＝新建；id＝编辑既有定义。
     var customFormId by remember { mutableStateOf<String?>(null) }
     // 自定义栏表单目标：null＝新建；id＝编辑既有栏。
@@ -125,6 +130,8 @@ fun ToolbarScreen(onBack: () -> Unit) {
 
     fun backToMain() {
         editToolbarId = null
+        editSeed = null
+        editDraft = emptyList()
         page = ToolbarPage.MAIN
     }
     BackHandler(enabled = page != ToolbarPage.MAIN) { backToMain() }
@@ -152,6 +159,28 @@ fun ToolbarScreen(onBack: () -> Unit) {
             )
         }
         persist(next)
+    }
+
+    /** 进入编辑页：皮肤默认列且用户列为空时以生效列起步（不写盘）；其余用当前列。 */
+    fun enterEdit() {
+        val targetId = currentSkinState().activeToolbarId
+        editToolbarId = targetId
+        if (targetId == null && currentSkinState().buttons.isEmpty()) {
+            val skinButtonIds =
+                SkinSnapshotProvider.current(context)?.toolbar?.buttons?.map { it.id }
+            editSeed = ToolbarUserStore.seedEntries(skinButtonIds)
+            editDraft = editSeed!!
+        } else {
+            editSeed = null
+            editDraft = currentList()
+        }
+        page = ToolbarPage.EDIT
+    }
+
+    /** 草稿提交：非起步情形、或草稿与起步列不同时才写盘。 */
+    fun applyEditList(next: List<ToolbarButtonEntry>) {
+        editDraft = next
+        if (ToolbarUserStore.shouldPersistEdit(editSeed, next)) setCurrentList(next)
     }
 
     @Composable
@@ -182,10 +211,7 @@ fun ToolbarScreen(onBack: () -> Unit) {
                 activeToolbar = activeToolbar(),
                 hideToolbar = data.hideToolbar,
                 onHideChange = { persist(data.copy(hideToolbar = it)) },
-                onEditCurrent = {
-                    editToolbarId = currentSkinState().activeToolbarId
-                    page = ToolbarPage.EDIT
-                },
+                onEditCurrent = { enterEdit() },
                 onOpenToolbars = { page = ToolbarPage.TOOLBARS },
                 onNewToolbar = {
                     toolbarFormId = null
@@ -194,8 +220,8 @@ fun ToolbarScreen(onBack: () -> Unit) {
             )
             ToolbarPage.EDIT -> ToolbarEditPage(
                 title = editTitle(),
-                list = currentList(),
-                onListChange = ::setCurrentList,
+                list = editDraft,
+                onListChange = ::applyEditList,
                 defOf = { data.customButtons[it] },
                 onAdd = { addDialog = true },
                 onEditCustom = { id ->
@@ -221,14 +247,14 @@ fun ToolbarScreen(onBack: () -> Unit) {
         }
         if (addDialog) {
             ToolbarAddDialog(
-                list = currentList(),
+                list = editDraft,
                 customButtons = data.customButtons,
                 onAddPool = { id ->
-                    setCurrentList(currentList() + ToolbarButtonEntry(id))
+                    applyEditList(editDraft + ToolbarButtonEntry(id))
                     addDialog = false
                 },
                 onAddCustom = { id ->
-                    setCurrentList(currentList() + ToolbarButtonEntry(id))
+                    applyEditList(editDraft + ToolbarButtonEntry(id))
                     addDialog = false
                 },
                 onNewCustom = {
@@ -248,7 +274,33 @@ fun ToolbarScreen(onBack: () -> Unit) {
                         customButtons = data.customButtons + (def.id to def),
                     )
                     // 新建保存后进当前列（列表未满时；满则只存定义）。
-                    if (isNew && currentList().size < ToolbarUserStore.MAX_BUTTONS) {
+                    // 编辑页内新建走草稿：追加到草稿，草稿与起步列不同
+                    // 才连同列写盘（加钮恒不同；只看不改不写盘）。
+                    if (isNew && page == ToolbarPage.EDIT &&
+                        editDraft.size < ToolbarUserStore.MAX_BUTTONS
+                    ) {
+                        val draftNext = editDraft + ToolbarButtonEntry(def.id)
+                        editDraft = draftNext
+                        if (ToolbarUserStore.shouldPersistEdit(editSeed, draftNext)) {
+                            next = if (editToolbarId == null) {
+                                val state = next.skins[skinId] ?: ToolbarSkinState()
+                                next.copy(
+                                    skins = next.skins +
+                                        (skinId to state.copy(buttons = draftNext)),
+                                )
+                            } else {
+                                val config = next.customToolbars[editToolbarId]
+                                if (config != null) {
+                                    next.copy(
+                                        customToolbars = next.customToolbars +
+                                            (editToolbarId!! to config.copy(
+                                                buttons = draftNext,
+                                            )),
+                                    )
+                                } else next
+                            }
+                        }
+                    } else if (isNew && currentList().size < ToolbarUserStore.MAX_BUTTONS) {
                         if (editToolbarId == null) {
                             val state = next.skins[skinId] ?: ToolbarSkinState()
                             next = next.copy(
