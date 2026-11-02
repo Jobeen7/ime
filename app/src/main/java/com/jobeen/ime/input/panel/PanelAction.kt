@@ -37,6 +37,6 @@ sealed class PanelAction {
     data object Copy : PanelAction()
     data object Paste : PanelAction()
 
-    /** 键盘内执行部署／同步（重点候选 8-10 菜单入口，执行见 KeyboardDeployController）。 */
+    /** 键盘内执行部署／同步（执行见 KeyboardDeployController；非菜单入口）。 */
     data object DeploySync : PanelAction()
 }

@@ -238,8 +238,9 @@ sealed class KeyboardAction {
     data object KeyboardMenuAction : KeyboardAction()
 
     /**
-     * 符号条开关（#toggleSymbolBar）：目标 UI（悬浮符号条）
-     * 不在本轮，分发为显式记日志的空操作，不伪造界面。
+     * 符号条开关（#toggleSymbolBar）：窗口层实现（首次打开、
+     * 再次关闭；打开态不记住，键盘切换／收起即关，见
+     * KeyboardWindowView.toggleSymbolBar）。
      */
     data object ToggleSymbolBarAction : KeyboardAction()
 

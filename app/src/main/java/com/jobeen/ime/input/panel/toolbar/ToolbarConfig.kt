@@ -5,9 +5,9 @@ import com.jobeen.ime.input.panel.PanelAction
 /**
  * 工具栏中央区按钮注册表（静态，不含用户配置）：
  *
- * App 自定义工具栏功能已随第四组删除移除（2026-10-28）：
- * 设置里的工具栏自定义页与 `toolbar_config` 存储路径已删除，
- * 无皮肤工具栏时一律用出厂默认五项，不再读任何用户存值。
+ * 用户工具栏现存（ToolbarUserStore，toolbar_user.json），
+ * 设置里的工具栏自定义页（ToolbarScreen）可编辑；无皮肤
+ * 工具栏且无用户工具栏时用出厂默认五项。
  *
  * 本对象仅剩皮肤工具栏系统共用的静态映射，供三处复用：
  * 皮肤工具栏解析（ToolbarSkinResolution）、皮肤校验

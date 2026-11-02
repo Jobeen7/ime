@@ -13,7 +13,7 @@ import com.jobeen.ime.skin.model.SkinToolbarSnapshot
  *    App 的中央区清单与单钮图标覆盖一律忽略。皮肤未定义中央区
  *    （`buttons == null`：无 toolbar 节点、节点无 buttons 字段、
  *    buttons 非数组、或原数组全被逐项丢弃）→ 用出厂默认五项
- *    （App 自定义配置已随第四组删除移除，无存储值）。
+ *    （用户工具栏另见 ToolbarUserStore，不在本优先级内）。
  * 2. 边缘图标：左右各独立。皮肤给了 expandIcon（最左侧，展开）
  *    / collapseIcon（最右侧，收起）且解码成功 → 用皮肤图标；
  *    否则用内置图标。App 侧没有边缘图标设置，无冲突。

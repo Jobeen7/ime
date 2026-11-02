@@ -72,12 +72,10 @@ class MenuGridView(
         "theme" -> R.string.menu_theme
         "reload_engine" -> R.string.menu_reload_engine
         "about" -> R.string.menu_about
-        "select_all" -> R.string.select_all
-        "copy" -> R.string.copy
-        "paste" -> R.string.paste
-        "undo" -> R.string.menu_undo
-        "redo" -> R.string.menu_redo
-        "deploy_sync" -> R.string.menu_deploy_sync
+        // 注：select_all／copy／paste／undo／redo／deploy_sync
+        // 曾在此映射，现无菜单入口产生这些 id（入口唯一来源
+        // KeyboardMenuEntries.PAGES），已随 P2 清理删除；未知 id
+        // 走 else 回落，不再为无入口 id 保留映射。
         else -> R.string.menu_settings
     }
 
@@ -98,12 +96,7 @@ class MenuGridView(
         "theme" -> R.drawable.ic_keyboard_palette
         "reload_engine" -> R.drawable.ic_keyboard_reload
         "about" -> R.drawable.ic_keyboard_information_outline
-        "select_all" -> R.drawable.ic_toolbar_select_all
-        "copy" -> R.drawable.ic_toolbar_copy
-        "paste" -> R.drawable.ic_toolbar_paste
-        "undo" -> R.drawable.ic_keyboard_undo
-        "redo" -> R.drawable.ic_keyboard_redo
-        "deploy_sync" -> R.drawable.ic_keyboard_clipboard_cloud
+        // 注：同上，无入口 id 的图标映射已随 P2 清理删除。
         else -> R.drawable.ic_keyboard_setting
     }
 
