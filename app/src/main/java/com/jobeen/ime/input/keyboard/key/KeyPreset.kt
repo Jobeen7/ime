@@ -108,6 +108,12 @@ fun backspaceKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyD
     behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.BackspaceAction),
         KeyDef.Behavior.Repeat(KeyboardAction.BackspaceAction),
+        // 用户规格（2026-11-02）：上滑清空（组字中清组字码、不组字时
+        // 清已上屏的字，见 engine.clear 分支）、下滑引擎撤销。
+        KeyDef.Behavior.Swipe(
+            upAction = KeyboardAction.ClearAction,
+            downAction = KeyboardAction.UndoAction,
+        ),
     ),
 )
 

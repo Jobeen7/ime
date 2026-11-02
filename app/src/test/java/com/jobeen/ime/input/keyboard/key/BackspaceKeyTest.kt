@@ -1,17 +1,17 @@
 package com.jobeen.ime.input.keyboard.key
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 退格键出厂行为（用户决定）：只有点按＋按住重复删字，
- * 无上下滑撤销／重做绑定（从来不是他的设定，已去掉）。
+ * 退格键出厂行为（用户规格，2026-11-02 定）：
+ * 点按删一字、按住重复删字、上滑清空、下滑引擎撤销。
+ * （.11 去掉滑动绑定的改法不对，已按此改回；测试随用户规格改，见报告。）
  */
 class BackspaceKeyTest {
 
     @Test
-    fun backspaceHasOnlyPressAndRepeatDelete() {
+    fun backspaceFactoryBehaviorsMatchUserSpec() {
         val behaviors = backspaceKey().behaviors
         assertEquals(
             listOf(KeyboardAction.BackspaceAction),
@@ -21,6 +21,8 @@ class BackspaceKeyTest {
             listOf(KeyboardAction.BackspaceAction),
             behaviors.filterIsInstance<KeyDef.Behavior.Repeat>().map { it.action },
         )
-        assertTrue(behaviors.filterIsInstance<KeyDef.Behavior.Swipe>().isEmpty())
+        val swipe = behaviors.filterIsInstance<KeyDef.Behavior.Swipe>().single()
+        assertEquals(KeyboardAction.ClearAction, swipe.upAction)
+        assertEquals(KeyboardAction.UndoAction, swipe.downAction)
     }
 }
