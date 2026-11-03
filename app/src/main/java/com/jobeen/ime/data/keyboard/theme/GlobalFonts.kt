@@ -148,7 +148,20 @@ object GlobalFonts {
     // ---- 解析 ----
 
     private val systemCache = LinkedHashMap<Pair<String, Int>, Typeface>()
-    private val fileCache = LinkedHashMap<Pair<String, Int>, Typeface>()
+
+    /**
+     * 导入字体文件缓存键（第 5 批 §2）：文件 id + 字形 + 文件长度
+     * + mtime——同名文件被替换后自动得新键，不再以旧文件 id
+     * 命中 stale Typeface（对方 R17：路径 + mtime + 长度同款）。
+     */
+    private data class FileFontKey(
+        val fileId: String,
+        val style: Int,
+        val lengthBytes: Long,
+        val lastModifiedMs: Long,
+    )
+
+    private val fileCache = LinkedHashMap<FileFontKey, Typeface>()
     private val loggedUnknownSkinFamilies = mutableSetOf<String>()
     private val loggedMissingFiles = mutableSetOf<String>()
     private var cachedVersion = -1
@@ -178,6 +191,27 @@ object GlobalFonts {
         loggedMissingSkinFonts.clear()
     }
 
+    /**
+     * IO 预热（第 5 批 §2）：快照安装后在 IO 段把皮肤内嵌字体
+     * 常用字形先建进缓存，使绘制期首次加载不加异步回调（否则
+     * 闪烁，对方 R19 同款）；坏字体逐个返回 null、调用方继续
+     * 下一级（整条链保留，见 typefaceFor），绝不拖垮整组回落。
+     * 调用方必须在 IO 线程调本函数（Typeface.createFromFile
+     * 不进 UI 线程）；失败静默（缺失／损坏已在 bundledTypeface
+     * 内记一次日志，渲染回落下一级）。
+     */
+    @Synchronized
+    fun prewarmSkinFonts(
+        context: Context,
+        snapshot: com.jobeen.ime.skin.model.SkinSnapshot,
+    ) {
+        val assetIds = snapshot.skinFontFaces.map { it.assetId }.distinct()
+        for (assetId in assetIds) {
+            runCatching { bundledTypeface(context, assetId, Typeface.NORMAL) }
+            runCatching { bundledTypeface(context, assetId, Typeface.BOLD) }
+        }
+    }
+
     private fun sha12(bytes: ByteArray): String {
         val digest = java.security.MessageDigest.getInstance("SHA-256")
         return digest.digest(bytes).joinToString("") { "%02x".format(it) }.take(12)
@@ -205,7 +239,8 @@ object GlobalFonts {
             return null
         }
         return try {
-            fileCache.getOrPut(fileId to style) { Typeface.createFromFile(file) }
+            val key = FileFontKey(fileId, style, file.length(), file.lastModified())
+            fileCache.getOrPut(key) { Typeface.createFromFile(file) }
         } catch (e: Exception) {
             DiagLog.w(
                 "font", "font_create_failed",

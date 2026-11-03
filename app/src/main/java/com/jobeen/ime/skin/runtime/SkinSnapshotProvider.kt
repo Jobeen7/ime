@@ -2,7 +2,6 @@ package com.jobeen.ime.skin.runtime
 
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
@@ -12,6 +11,7 @@ import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.image.AndroidBackgroundPreparer
 import com.jobeen.ime.skin.image.BackgroundRebuilder
+import com.jobeen.ime.skin.image.BoundedBitmapDecoder
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
 import com.jobeen.ime.skin.store.ActiveResolver
@@ -178,6 +178,14 @@ object SkinSnapshotProvider {
         // 性能埋点（2026-10-29 item-1 B）：快照安装完成时采样一次
         // 内存（冷路径，安装频率低，不进热路径）。
         com.jobeen.ime.skin.perf.PerfMonitor.sampleMemory(context)
+        // 第 5 批 §2：IO 预热——键图与内嵌字体在 IO 段先解进缓存，
+        // 使后续键盘构建／绘制期命中缓存、不在 UI 线程解码、不
+        // 因首次加载加异步回调而闪烁；安装本身不等待预热完成。
+        val appContext = context.applicationContext
+        rebuildScope.launch {
+            runCatching { SkinKeyImageStore.prewarm(snapshot.imageAssets.keys) }
+            runCatching { GlobalFonts.prewarmSkinFonts(appContext, snapshot) }
+        }
     }
 
     /**
@@ -283,7 +291,10 @@ object SkinSnapshotProvider {
                     )
                     is BackgroundRebuilder.Outcome.Rebuilt -> {
                         val bitmap = runCatching {
-                            BitmapFactory.decodeFile(outcome.file.absolutePath)
+                            BoundedBitmapDecoder.decodeFile(
+                                outcome.file,
+                                background.targetWidthPx, background.targetHeightPx,
+                            )
                         }.getOrNull()
                         if (bitmap == null) {
                             DiagLog.w(
@@ -385,13 +396,17 @@ object SkinSnapshotProvider {
         currentBitmapKey = null
     }
 
-    /** 解码预处理产物（已是目标尺寸，采样率 1）；产物缺失返回 null，背景回退纯色。 */
+    /** 解码预处理产物（目标尺寸上限两遍式：合法产物采样率 1，超大产物降采样到目标；产物缺失返回 null，背景回退纯色）。 */
     private fun decodePrepared(context: Context, snapshot: SkinSnapshot): Bitmap? {
         val background = snapshot.background ?: return null
         val genDir = SkinLibrary.layout.skinGenDir(snapshot.ref.skinId, snapshot.ref.generation)
         val file = File(File(genDir, "prepared"), "${background.preparedKey}.webp")
         if (!file.isFile) return null
-        return runCatching { BitmapFactory.decodeFile(file.absolutePath) }.getOrNull()
+        return runCatching {
+            BoundedBitmapDecoder.decodeFile(
+                file, background.targetWidthPx, background.targetHeightPx,
+            )
+        }.getOrNull()
     }
 
     /**

@@ -642,6 +642,10 @@
     <string name="deploy_confirm_message">部署将丢弃未提交的组字，是否继续？</string>
     <string name="deploy_confirm_continue">继续部署</string>
     <string name="deploy_confirm_cancel">取消</string>
+    <string name="open_url_confirm_title">打开链接</string>
+    <string name="open_url_confirm_message">是否打开以下链接？\n%1$s</string>
+    <string name="open_url_confirm_open">打开</string>
+    <string name="open_url_confirm_cancel">取消</string>
     <string name="empty_attribution_tag"/>
     <string name="attribution_label">键盘震动反馈</string>
     <string name="user_dict">用户词典</string>

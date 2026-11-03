@@ -64,6 +64,11 @@ import com.jobeen.ime.engine.rime.data.DataManager.userDataDir
 import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.engine.rime.util.OptionsApplier
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.input.ClearedTextLedger
+import com.jobeen.ime.input.EnterDecision
+import com.jobeen.ime.input.EnterField
+import com.jobeen.ime.input.EnterFieldBoundary
+import com.jobeen.ime.input.EnterOutcome
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.input.TypedUndoLedger
 import kotlinx.coroutines.CompletableDeferred
@@ -185,6 +190,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         data class SelectCandidate(val candidate: Candidate) : Action
         data class Clear(val service: InputMethodService) : Action
         data class Undo(val service: InputMethodService) : Action
+
+        /**
+         * 回车键精简决策（2026-11-03）：软回车键（ReturnAction 经
+         * IEngine.processEnter）与注入的回车键（processKey 的
+         * ENTER 经 reduce 截获）都汇到这里，字段属性在分发时点
+         * 捕获，组字中在 sendEnterJob 执行时点现读原始输入。
+         * 下滑 Undo 分支与本分支无关，不动。
+         */
+        data class Enter(
+            val service: InputMethodService,
+            val field: EnterField,
+            val isLongPress: Boolean,
+            val hasDedicatedNewlineKey: Boolean,
+        ) : Action
         data class Redo(val service: InputMethodService) : Action
 
         /** 前删（定稿四.4）：reduce 串行点入队 job 判组字，禁手势线程预判。 */
@@ -591,6 +610,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
     }
 
+    override fun processEnter(
+        service: InputMethodService,
+        field: EnterField,
+        isLongPress: Boolean,
+        hasDedicatedNewlineKey: Boolean,
+    ) {
+        // 与 processKey 同口径的部署期按键门：部署中回车键同样丢弃，
+        // 不单独放行（分发点在主线程，字段属性已由调用方映射好）。
+        if (DeployKeyGate.shouldDrop()) {
+            Timber.d("processEnter dropped during deploy")
+            return
+        }
+        dispatchAction(Action.Enter(service, field, isLongPress, hasDedicatedNewlineKey))
+    }
+
     private fun processKeyInternal(key: KeyEvent) {
         if (!state.initialized) {
             return
@@ -605,12 +639,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             is KeyEvent.CodeEvent -> {
                 when (key.keyCode) {
-                    // 空格/回车/退格的去向取决于执行时点的实时组字，
+                    // 空格/退格的去向取决于执行时点的实时组字，
                     // 只能留在 job 内串行判定（见 sendStatefulKeyJob）；
                     // 但入 job 的动作本身经 Action 二次分发，与普通键
                     // 的 Behavior 在 reduce 同一点入队，避免状态键凭
-                    // 直达 sendJob 插到在途普通键之前（见 StatefulKey）
-                    KEYCODE_SPACE, KEYCODE_ENTER, KEYCODE_DEL ->
+                    // 直达 sendJob 插到在途普通键之前（见 StatefulKey）。
+                    // 回车不再走状态键：reduce 截获 ENTER 后汇到
+                    // Action.Enter，走精简决策（见 sendEnterJob）。
+                    KEYCODE_SPACE, KEYCODE_DEL ->
                         dispatchAction(Action.StatefulKey(key))
 
                     KEYCODE_APOSTROPHE -> {
@@ -633,16 +669,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     /**
-     * 空格/回车/退格的分类 job（经 Action.StatefulKey 在 reduce 里
-     * 调用，入队点与普通键的 Behavior 对齐，见 StatefulKey）：三者
+     * 空格/退格的分类 job（经 Action.StatefulKey 在 reduce 里
+     * 调用，入队点与普通键的 Behavior 对齐，见 StatefulKey）：两者
      * 的去向都取决于 jobs 串行执行时点的实时组字（getRawInput），
      * 不能在分发侧凭组字缓存预判——compositionCached.preedit 是
      * 展示串而非原始输入，且分发时点上先行按键的 job 可能尚未
      * 执行、缓存滞后于在途按键，预判会重蹈退格注释里跨队列按旧
-     * 状态误判的覆辙。空格/回车在空组字时直通文本、非空时在本 job
+     * 状态误判的覆辙。空格在空组字时直通文本、非空时在本 job
      * 内同步转交 Rime（与退格的 handleBackspaceInJob 同口径，见
      * 下方非空分支）；退格的判断与处理更必须同 job 完成
-     * （见 handleBackspaceInJob）。
+     * （见 handleBackspaceInJob）。回车不再走本函数：见 sendEnterJob。
      */
     private fun sendStatefulKeyJob(key: KeyEvent.CodeEvent) {
         sendJob {
@@ -666,16 +702,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     return@sendJob
                 }
 
-                KEYCODE_ENTER -> {
-                    if (getRawInput().isEmpty()) {
-                        // 同空格分支：经 emitCommit 与 native 上屏同
-                        // FIFO，避免回车超车上一键的文字先行触发发送
-                        emitCommit("\n")
-                        return@sendJob
-                    }
-                }
             }
-            // 组字非空的空格/回车（退格已在上方分支内处理）：在本 job
+            // 组字非空的空格（退格已在上方分支内处理）：在本 job
             // 内同步转交 Rime，与 InputKey.invoke() 的转交内容逐字
             // 等价（键码映射＋修饰键＋isVirtual），只是不再绕回
             // actions 队尾另发一个 job。此前绕回 actions 时，本键的
@@ -686,11 +714,59 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             // 状态（flowedLocked 的 InputKey 分支只是 invoke 转交），
             // 跳过 flowBehavior 这一跳不丢队列维护，与退格经
             // backspaceInJob 在本 job 内直达 Rime 同构。
+            // 回车不再走本函数：见 sendEnterJob（精简决策）。
             processKey(
                 KeyMapping.keyCodeToVal(key.keyCode),
                 key.modifiers.toInt().toUInt(),
                 key.isVirtual,
             )
+            return@sendJob
+        }
+    }
+
+    /**
+     * 回车键精简决策执行（与下滑 Undo 分支无关，不动其账本与门）：
+     * 组字只读本 job 执行时点的原始输入（getRawInput），与空格／
+     * 退格同纪律——分发时点先行按键的 job 可能尚未执行，分发侧
+     * 预判会按旧状态误判。发动作走主线程的输入连接（与 Undo
+     * 分支同口径的 withContext(Dispatchers.Main.immediate)，
+     * job 内挂起等主线程执行完才放行后续 job，不超车）；
+     * 插换行走 emitCommit("\n") 的 FIFO 路径；无动作为空操作。
+     * 组字中上屏候选与旧回车非空分支同口径：同步转交 Rime。
+     */
+    private fun sendEnterJob(enter: Action.Enter) {
+        sendJob {
+            val composing = getRawInput().isNotEmpty()
+            when (
+                val outcome = EnterDecision.decide(
+                    composing = composing,
+                    field = enter.field,
+                    hasDedicatedNewlineKey = enter.hasDedicatedNewlineKey,
+                    isLongPress = enter.isLongPress,
+                )
+            ) {
+                EnterOutcome.CommitCandidate -> {
+                    processKey(
+                        KeyMapping.keyCodeToVal(KEYCODE_ENTER),
+                        0u,
+                        true,
+                    )
+                }
+
+                is EnterOutcome.PerformAction -> {
+                    withContext(Dispatchers.Main.immediate) {
+                        inputConnection()?.performEditorAction(
+                            EnterFieldBoundary.toEditorAction(outcome.action),
+                        )
+                    }
+                }
+
+                EnterOutcome.InsertNewline -> {
+                    emitCommit("\n")
+                }
+
+                EnterOutcome.NoOp -> Unit
+            }
             return@sendJob
         }
     }
@@ -916,7 +992,30 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         when (action) {
             is Action.ProcessKey -> {
                 serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
-                processKeyInternal(action.key)
+                val key = action.key
+                if (key is KeyEvent.CodeEvent && key.keyCode == KEYCODE_ENTER) {
+                    // 注入的回车键（SendKeys 等）同样走精简决策：
+                    // 字段属性在此由当前编辑框信息映射，长按与
+                    // 专用换行键均无（注入键无长按概念、无键盘身份），
+                    // 与软回车键汇合到 Action.Enter，不再进状态键旧路径。
+                    dispatchAction(
+                        Action.Enter(
+                            action.service,
+                            EnterFieldBoundary.fromEditorInfo(
+                                action.service.currentInputEditorInfo,
+                            ),
+                            isLongPress = false,
+                            hasDedicatedNewlineKey = false,
+                        ),
+                    )
+                } else {
+                    processKeyInternal(key)
+                }
+            }
+
+            is Action.Enter -> {
+                serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
+                sendEnterJob(action)
             }
 
             is Action.StatefulKey -> sendStatefulKeyJob(action.key)
@@ -932,38 +1031,59 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is Action.Undo -> {
                 serviceRef = (action.service as? ImeInputMethodService)?.let(::WeakReference)
                 sendJob {
-                    if (compositionCached.preedit?.isNotEmpty() == true) {
-                        // 正在输入拼音：下滑撤销=清除当前正在打的拼音。
-                        // 不能给编辑器发 Ctrl+Z，拼音在输入法内部，编辑器撤销够不着还会产生副作用。
-                        actions.send(Action.Reset)
-                    } else {
-                        withContext(Dispatchers.Main.immediate) {
-                            val ic = inputConnection()
-                            // 先查语音上屏账本：最近一段语音文字还在光标前
-                            // 原样躺着就整段直删。语音走组字转正，编辑器
-                            // 撤销栈的记账口径不一（分多步、甚至不入栈），
-                            // 盲发 Ctrl+Z 经常删不完一整段。不命中（上屏
-                            // 后打过字/移过光标/账本无账）才回落 Ctrl+Z。
-                            val undoneByLedger = ic != null && VoiceUndoLedger.tryUndo(ic)
-                            // 污染会话内才查打字账本（未污染会话保持正式版
-                            // 原样：语音账本不命中即直发 Ctrl+Z，打字账本
-                            // 只作污染会话内的直删后备，不改变正常会话
-                            // 的撤销粒度）；落点按 TypedUndoLedger
-                            // .decideUndoFallback 真值表执行——污染且
-                            // 两账本都不命中时空操作，绝不把 Ctrl+Z
-                            // 发进被污染的编辑器撤销栈（那正是清掉的
-                            // 组字以已上屏文本复活的路径）。
-                            val poisoned = TypedUndoLedger.isPoisoned()
-                            val undoneByTyped = !undoneByLedger && poisoned &&
-                                ic != null && TypedUndoLedger.tryUndo(ic)
-                            if (TypedUndoLedger.decideUndoFallback(
-                                    undoneByLedger, undoneByTyped, poisoned
-                                ) == TypedUndoLedger.UndoFallback.SEND_CTRL_Z
-                            ) {
-                                InputConnectionUtil.sendCombinationKeyEvent(
-                                    ic, KEYCODE_Z, ctrl = true
-                                )
-                            }
+                    // 下滑永远撤销，不分组字状态（用户口径：有无组字
+                    // 都一样）。组字清理只走上滑，下滑绝不清组字——
+                    // 旧分支“组字中下滑 = Reset 清组字”已删。
+                    // 组字中账本不查：光标前先是组字串，账本以后缀
+                    // 对段，对上也会删到组字头上（deleteSurrounding
+                    // Text 只删光标前相邻字），故组字中跳过账本：
+                    // 污染会话空操作（发 Ctrl+Z 会复活），未污染会
+                    // 话直发 Ctrl+Z（药丸组字不在编辑器内，不受影响）。
+                    withContext(Dispatchers.Main.immediate) {
+                        val ic = inputConnection()
+                        val composing = compositionCached.preedit?.isNotEmpty() == true
+                        // 先查上滑清字账本：上滑清掉的已上屏文字记在
+                        // 这里，命中就原样写回，不走 Ctrl+Z。污染会话
+                        // 内 Ctrl+Z 已被拦（防清掉的组字复活），不查
+                        // 这本，清掉的文字就没有任何地方可回——两个
+                        // 既有账本记的都不是它（语音记语音段、打字
+                        // 记打出来的段，都是「还在编辑器里」的文本，
+                        // 而清掉的这段已经不在编辑器里了）。
+                        // 组字中三账本一律不查（与 .17 门一致：光标前
+                        // 先是组字串，账本以后缀对段，对上也会删到
+                        // 组字头上）；组字中＋内嵌开那一格保持 .17
+                        // 现状（污染空操作、未污染 Ctrl+Z），不动。
+                        val restoredByCleared = !composing && ic != null &&
+                            ClearedTextLedger.tryRestore(ic)
+                        // 再查语音上屏账本：最近一段语音文字还在光标前
+                        // 原样躺着就整段直删。语音走组字转正，编辑器
+                        // 撤销栈的记账口径不一（分多步、甚至不入栈），
+                        // 盲发 Ctrl+Z 经常删不完一整段。不命中（上屏
+                        // 后打过字/移过光标/账本无账）才回落 Ctrl+Z。
+                        val undoneByLedger = !composing && !restoredByCleared &&
+                            ic != null && VoiceUndoLedger.tryUndo(ic)
+                        // 污染会话内才查打字账本（未污染会话保持正式版
+                        // 原样：语音账本不命中即直发 Ctrl+Z，打字账本
+                        // 只作污染会话内的直删后备，不改变正常会话
+                        // 的撤销粒度）；落点按 TypedUndoLedger
+                        // .decideUndoFallback 真值表执行——污染且
+                        // 三账本都不命中时空操作，绝不把 Ctrl+Z
+                        // 发进被污染的编辑器撤销栈（那正是清掉的
+                        // 组字以已上屏文本复活的路径）。
+                        val poisoned = TypedUndoLedger.isPoisoned()
+                        val undoneByTyped = !composing && !restoredByCleared &&
+                            !undoneByLedger && poisoned &&
+                            ic != null && TypedUndoLedger.tryUndo(ic)
+                        if (TypedUndoLedger.decideUndoFallback(
+                                voiceHit = undoneByLedger,
+                                typedHit = undoneByTyped,
+                                clearedHit = restoredByCleared,
+                                poisoned = poisoned,
+                            ) == TypedUndoLedger.UndoFallback.SEND_CTRL_Z
+                        ) {
+                            InputConnectionUtil.sendCombinationKeyEvent(
+                                ic, KEYCODE_Z, ctrl = true
+                            )
                         }
                     }
                 }
@@ -1591,17 +1711,58 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 处理造成卡顿。按段删（前文→后文），每轮先探长度、
                         // 探到 0 或删除无进展即停，段数设上限防异常输入框
                         // 让循环失控；极端长文删不完时用户可再触发一次。
+                        //
+                        // 清空入账：累计被删文本记进 ClearedTextLedger，下滑
+                        // 撤销据此原样写回，不再依赖 Ctrl+Z——污染会话内
+                        // Ctrl+Z 已被拦（防清掉的组字复活），不记账的话
+                        // 清掉的已上屏文字就没有任何地方可回。超出上限即
+                        // 停止累计并标记溢出，删完不记账（超长段恢复无实际
+                        // 意义，也不该让账本常驻大字符串）。
+                        val cleared = StringBuilder()
+                        var overflow = false
                         var chunks = 0
                         while (chunks++ < MAX_CLEAR_CHUNKS) {
-                            val n = ic.getTextBeforeCursor(CLEAR_CHUNK_CHARS, 0)?.length ?: 0
-                            if (n == 0 || !ic.deleteSurroundingText(n, 0)) break
+                            val text = ic.getTextBeforeCursor(CLEAR_CHUNK_CHARS, 0)
+                            if (text.isNullOrEmpty()) break
+                            if (!ic.deleteSurroundingText(text.length, 0)) break
+                            // 前文由近及远删，还原顺序要插到最前
+                            if (!overflow) {
+                                if (cleared.length + text.length >
+                                    ClearedTextLedger.MAX_RECORDABLE_CHARS
+                                ) {
+                                    overflow = true
+                                } else {
+                                    cleared.insert(0, text)
+                                }
+                            }
                         }
                         chunks = 0
                         while (chunks++ < MAX_CLEAR_CHUNKS) {
-                            val n = ic.getTextAfterCursor(CLEAR_CHUNK_CHARS, 0)?.length ?: 0
-                            if (n == 0 || !ic.deleteSurroundingText(0, n)) break
+                            val text = ic.getTextAfterCursor(CLEAR_CHUNK_CHARS, 0)
+                            if (text.isNullOrEmpty()) break
+                            if (!ic.deleteSurroundingText(0, text.length)) break
+                            // 后文由近及远删，还原顺序按原序追加
+                            if (!overflow) {
+                                if (cleared.length + text.length >
+                                    ClearedTextLedger.MAX_RECORDABLE_CHARS
+                                ) {
+                                    overflow = true
+                                } else {
+                                    cleared.append(text)
+                                }
+                            }
                         }
                         invalidateBeforeCursorCache()
+                        // 锚点是清空后光标前紧邻的前文：清前文时光标已左移
+                        // 到删除起点，清后文不动光标，故此刻读到的正是恢复
+                        // 时要核对的位置。
+                        if (!overflow && cleared.isNotEmpty()) {
+                            val anchor = runCatching {
+                                ic.getTextBeforeCursor(ClearedTextLedger.ANCHOR_CHARS, 0)
+                                    ?.toString()
+                            }.getOrNull().orEmpty()
+                            ClearedTextLedger.record(cleared.toString(), anchor)
+                        }
                     }
                 }
             }

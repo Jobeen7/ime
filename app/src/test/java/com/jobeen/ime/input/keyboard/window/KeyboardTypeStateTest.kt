@@ -167,6 +167,55 @@ class KeyboardTypeStateTest {
     }
 
     @Test
+    fun nonMainTypeNeverOverridesFieldKeyboardOnReattach() {
+        // 名／类型脱节：文本字段的 startInput 已把名切回 T9、类型却
+        // 留在数字板上；重挂时当前名即字段键盘，不得再按陈旧板类型
+        // 翻回数字键盘（重启／换框后首键盘变数字即此路径）。
+        assertEquals(
+            ReattachAction.Reshow,
+            decideReattach(snapshot(), "T9", "numeric", "T9", landscape = false),
+        )
+        assertEquals(
+            ReattachAction.Reshow,
+            decideReattach(snapshot(), "T9", "symbolic", "T9", landscape = false),
+        )
+        assertEquals(
+            ReattachAction.Reshow,
+            decideReattach(snapshot(), "T9", "emojis", "T9", landscape = false),
+        )
+        assertEquals(
+            ReattachAction.Reshow,
+            decideReattach(snapshot(), "T9", "my-board", "T9", landscape = false),
+        )
+        // 数字字段同理：当前名已是数字键盘时不被符号板翻走。
+        assertEquals(
+            ReattachAction.Reshow,
+            decideReattach(snapshot(), "Number", "symbolic", "T9", landscape = false),
+        )
+        // 主类型不受此限：中英语言选择照常按类型切。
+        assertEquals(
+            ReattachAction.SwitchType("alphabetic"),
+            decideReattach(snapshot(), "T9", "alphabetic", "T9", landscape = false),
+        )
+    }
+
+    @Test
+    fun firstAttachRawFiltersSurvivingNonMainType() {
+        // 存活主类型沿用。
+        assertEquals("pinyin", resolveFirstAttachRaw("pinyin", "alphabetic", false))
+        assertEquals("alphabetic", resolveFirstAttachRaw("alphabetic", null, false))
+        // 存活非主类型不得成为首挂键盘：回落存过主类型／初始主类型。
+        assertEquals("alphabetic", resolveFirstAttachRaw("numeric", "alphabetic", false))
+        assertEquals("pinyin", resolveFirstAttachRaw("symbolic", null, false))
+        assertEquals("alphabetic", resolveFirstAttachRaw("emojis", null, true))
+        // 存活空时走原有存过／初始口径。
+        assertEquals("alphabetic", resolveFirstAttachRaw(null, "alphabetic", false))
+        assertEquals("pinyin", resolveFirstAttachRaw(null, "numeric", false))
+        assertEquals("pinyin", resolveFirstAttachRaw(null, null, false))
+        assertEquals("alphabetic", resolveFirstAttachRaw(null, null, true))
+    }
+
+    @Test
     fun builtinBehaviorUnchangedWithoutType() {
         // 无类型（旧路径）：内置键盘重挂仍重显。
         assertEquals(

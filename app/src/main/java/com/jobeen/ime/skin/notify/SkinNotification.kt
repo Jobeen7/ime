@@ -101,8 +101,12 @@ class NotificationState(notifications: List<SkinNotification>) {
     private val latched = LinkedHashMap<String, SkinNotification>()
 
     /**
-     * 事件命中或清除锁定返回 true（锁定表可能变化，调用方以
-     * 快照比对定是否真正变化）；既无命中又无清除返回 false。
+     * 事件命中或清除锁定返回 true；既无命中又无清除、或命中项
+     * 已是当前锁定值（重复锁定）时返回 false——即返回值本身
+     * 就是“锁定表是否真正变化”，调用方不再需要快照比对。
+     * （旧口径：命中即返回 true，重复锁定靠调用方快照过滤；
+     * 2026-11-03 起精确化，唯一主调用方 SkinRuntimeState.onEvent
+     * 的对外语义不变，见其注释。）
      */
     fun onEvent(event: NotificationEvent): Boolean {
         var changed = false
@@ -123,7 +127,7 @@ class NotificationState(notifications: List<SkinNotification>) {
             }
         }
         val hit = rules.firstOrNull { it.matches(event) }
-        if (hit != null) {
+        if (hit != null && latched[hit.targetStyle] != hit) {
             latched[hit.targetStyle] = hit
             changed = true
         }

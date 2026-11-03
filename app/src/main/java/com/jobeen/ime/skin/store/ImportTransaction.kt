@@ -52,6 +52,12 @@ class ImportTransaction(
         layout.ensureDirs()
         val staging = File(layout.stagingDir, uuid())
         var stage = "build"
+        // 第 5 批 §1 提交失败双删：本笔已 rename 到库内的目标
+        // （新代次目录／新资产文件）在此登记；失败时与暂存区
+        // 一并删（索引未更新时删目标 = 库零变化，不留孤儿）。
+        // 索引写成功后（stage=post_index）不再删目标——此时
+        // 目标已是索引指向的活代次，删之即毁库。
+        val renamedTargets = mutableListOf<File>()
         // 失败日志用：构建回调报出的皮肤/布局 id（构建中途失败时仍为空，属实记录）。
         val builtIds = mutableListOf<String>()
         return try {
@@ -99,6 +105,7 @@ class ImportTransaction(
                 val target = layout.skinGenDir(staged.id, generation)
                 target.parentFile?.mkdirs()
                 check(staged.dir.renameTo(target)) { "rename staged skin ${staged.id} failed" }
+                renamedTargets += target
                 newSkinEntries += SkinIndexEntry(
                     id = staged.id,
                     name = staged.name,
@@ -118,6 +125,7 @@ class ImportTransaction(
                 val target = layout.layoutGenDir(staged.id, generation)
                 target.parentFile?.mkdirs()
                 check(staged.dir.renameTo(target)) { "rename staged layout ${staged.id} failed" }
+                renamedTargets += target
                 newLayoutEntries += LayoutIndexEntry(
                     id = staged.id,
                     hash = staged.hash,
@@ -134,6 +142,7 @@ class ImportTransaction(
                 val ext = staged.file.extension.ifBlank { null }
                 val target = layout.assetFile(staged.sha256, ext)
                 check(staged.file.renameTo(target)) { "rename staged asset ${staged.sha256} failed" }
+                renamedTargets += target
                 importedAssetShas += staged.sha256
             }
             SkinFaultHooks.hit(SkinFaultHooks.Point.I3)
@@ -159,6 +168,8 @@ class ImportTransaction(
                 assets = newIndex.assets.map { it.copy(refcountCache = refcounts[it.sha256] ?: 0) },
             )
             store.writeIndex(newIndex)
+            // 索引已落盘：此后失败不得再删目标（目标已是活代次）。
+            stage = "post_index"
             SkinFaultHooks.hit(SkinFaultHooks.Point.I5)
 
             runCatching { staging.deleteRecursively() }
@@ -172,8 +183,17 @@ class ImportTransaction(
             )
             Result.Imported(newSkinEntries, newLayoutEntries, skippedSkins, skippedLayouts)
         } catch (e: Exception) {
-            // rename 前失败库零变化；rename 后失败已入库代次留作孤儿待对账（§2.3.3）
+            // 第 5 批 §1 双删：暂存区恒删；索引写成功前已 rename 的
+            // 目标亦删（索引未指过去，删 = 库零变化，不留孤儿待对账）。
+            // 索引写成功后（post_index）的失败不删目标（已是活代次）。
             runCatching { staging.deleteRecursively() }
+            if (stage != "post_index") {
+                for (target in renamedTargets) {
+                    runCatching {
+                        if (target.isDirectory) target.deleteRecursively() else target.delete()
+                    }
+                }
+            }
             DiagLog.e(
                 "store", "import_failed",
                 mapOf(

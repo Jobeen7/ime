@@ -7,6 +7,7 @@ import android.view.inputmethod.InputConnection
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.event.KeyEvent
+import com.jobeen.ime.input.EnterField
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 
@@ -14,6 +15,20 @@ interface IEngine {
     fun initialize(context: Context)
     fun finalize()
     fun processKey(service: InputMethodService, key: KeyEvent): Unit?
+
+    /**
+     * 回车键精简决策入口（2026-11-03）：软回车键与注入的回车键
+     * 都走这里，不再经 processKey 的状态键旧路径。字段属性在
+     * 分发时点由 EditorInfo 映射（多行／不要换行标志／动作），
+     * 组字中由实现方在串行 job 执行时点现读原始输入判定。
+     * 缺省空实现（非 Rime 引擎无此通道时不崩溃）。
+     */
+    fun processEnter(
+        service: InputMethodService,
+        field: EnterField,
+        isLongPress: Boolean,
+        hasDedicatedNewlineKey: Boolean,
+    ) {}
     fun selectCandidate(candidate: EngineMessage.Candidate)
     /** 分页补取下一页候选（首屏只取少量，UI 滚动到底时请求）；无更多时应为空操作 */
     fun loadMoreCandidates() {}

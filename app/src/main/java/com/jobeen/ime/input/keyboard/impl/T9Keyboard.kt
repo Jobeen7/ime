@@ -41,6 +41,8 @@ class T9Keyboard(
     colors,
     layout,
 ), ISidePanelKeyboard {
+    /** 九宫格有专用换行键（第二行那颗）：回车键决策与显示据此去换行。 */
+    override val hasDedicatedNewlineKey: Boolean = true
     private val fullWidthPunctuations = listOf("，", "。", "？", "！", "：", "~", "...")
     private val halfWidthPunctuations = listOf(",", ".", "!", "?", ":", "~", "...")
     var punctuations = fullWidthPunctuations

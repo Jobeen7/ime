@@ -13,6 +13,8 @@ import com.jobeen.ime.data.database.dedupeClipboardByText
 import com.jobeen.ime.data.database.PhraseRecord
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
+import com.jobeen.ime.skin.script.SkinScriptIds
+import com.jobeen.ime.skin.script.SkinScriptStore
 import androidx.room.withTransaction
 import org.json.JSONArray
 import org.json.JSONObject
@@ -52,6 +54,18 @@ import javax.crypto.spec.SecretKeySpec
  * 只覆盖同路径文件，不删除备份中没有的现文件；空库不写该段、
  * 原始字节超 32MB 整段跳过只记日志（不阻塞整包）；旧备份无此段
  * 时还原不碰现皮肤。写回后重启进程，下次启动对账收敛索引。
+ *
+ * 皮肤脚本文件（filesDir/skin_scripts/<id>/script.js + meta.json）
+ * 随包走、整表替换写回（与皮肤库合并写回不同，见下）：脚本是
+ * 用户数据而非库代次，备份即该时点的全部脚本，还原即回到该
+ * 时点——段内文件全量写回、段外现文件删除；旧备份无此段时
+ * 还原不碰现脚本；新备份即使无脚本也带空段（files 为空），
+ * 使还原失败时的快照回放总能把脚本恢复到还原前状态（含还原
+ * 前无脚本时删干净，而非留下失败还原中途新增的孤儿脚本）。
+ * 采集只认 <id>/script.js 与 <id>/meta.json（半写 .tmp 与其它
+ * 文件跳过不进包）；相对路径逐项白名单校验（id 须过脚本 id
+ * 口径），原始字节超 32MB 整段跳过只记日志（不阻塞整包，
+ * 此时该包还原不碰脚本）。
  *
  * 还原是整体覆盖，且严格分两段：先把解密后的内容完整解析为内存对象
  * （此阶段零写入，任何结构/类型错误直接拒绝，不留半还原状态），再执行
@@ -212,6 +226,11 @@ object BackupManager {
         // —— 皮肤库文件：index.json + skins/ + assets/（合并写回，见 KDoc）；
         // 空库或超限时 collectSkinLibraryJson 返回 null，即不写该段。
         collectSkinLibraryJson()?.let { root.put("skin_library", it) }
+
+        // —— 皮肤脚本文件：filesDir/skin_scripts（整表替换写回，见 KDoc）；
+        // 超限时 collectSkinScriptsJson 返回 null，即不写该段；无脚本
+        // 时带空段，使还原失败回放能恢复到“还原前无脚本”状态。
+        collectSkinScriptsJson()?.let { root.put("skin_scripts", it) }
         return root
     }
 
@@ -258,6 +277,44 @@ object BackupManager {
         if (indexText == null && filesJson.length() == 0) return null
         val section = JSONObject()
         if (indexText != null) section.put("index", indexText)
+        section.put("files", filesJson)
+        return section
+    }
+
+    /** 皮肤脚本备份原始字节上限：超限整段跳过只记日志（仿皮肤库跳过模式）。 */
+    private const val SKIN_SCRIPTS_BACKUP_MAX_RAW_BYTES = 32L * 1024 * 1024
+
+    /**
+     * 皮肤脚本段采集：filesDir/skin_scripts 下全部有效文件
+     * （相对路径 → Base64）。只认 filesDir/skin_scripts 这一唯一
+     * 目录来源；相对路径须过 canonical 校验（防符号链接逃逸）
+     * 与 [isValidSkinScriptRelPath]（仅 <id>/script.js 与
+     * <id>/meta.json，半写 .tmp 与其它文件跳过不进包）；无脚本
+     * 时返回空 files 段（非 null，见 KDoc 回放口径）；原始字节
+     * 总量超限返回 null，即不写该段。
+     */
+    private fun collectSkinScriptsJson(): JSONObject? {
+        val rootDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
+        val filesJson = JSONObject()
+        if (rootDir.isDirectory) {
+            val canonicalRoot = runCatching { rootDir.canonicalPath }.getOrNull()
+                ?: return null
+            var totalBytes = 0L
+            for (file in rootDir.walkTopDown().filter { it.isFile }.sortedBy { it.path }) {
+                val canonical = runCatching { file.canonicalPath }.getOrNull() ?: continue
+                if (!canonical.startsWith(canonicalRoot + File.separator)) continue
+                val rel = file.relativeTo(rootDir).path.replace(File.separatorChar, '/')
+                if (!isValidSkinScriptRelPath(rel)) continue
+                val bytes = runCatching { file.readBytes() }.getOrNull() ?: continue
+                totalBytes += bytes.size
+                if (totalBytes > SKIN_SCRIPTS_BACKUP_MAX_RAW_BYTES) {
+                    Timber.w("skin scripts too large, skipped in backup")
+                    return null
+                }
+                filesJson.put(rel, bytes.toBase64())
+            }
+        }
+        val section = JSONObject()
         section.put("files", filesJson)
         return section
     }
@@ -437,6 +494,12 @@ object BackupManager {
         val files: Map<String, ByteArray>,
     )
 
+    /** 皮肤脚本备份段（null = 旧备份无此段，还原时不碰现脚本）。 */
+    private data class SkinScriptsBackup(
+        /** 相对路径（<id>/script.js 或 <id>/meta.json）→ 原始字节（已在解析阶段 Base64 解码） */
+        val files: Map<String, ByteArray>,
+    )
+
     private class ParsedBackup(
         val prefs: Map<String, Map<String, Any>>,
         val clipboard: List<ClipboardRecord>,
@@ -447,6 +510,8 @@ object BackupManager {
         val inputStatsJson: String?,
         /** 皮肤库段（null = 旧备份无此字段，还原时不碰现皮肤） */
         val skinLibrary: SkinBackup?,
+        /** 皮肤脚本段（null = 旧备份无此字段，还原时不碰现脚本） */
+        val skinScripts: SkinScriptsBackup?,
     )
 
     /**
@@ -602,6 +667,35 @@ object BackupManager {
                     }
                     SkinBackup(index = index, files = files)
                 },
+                // 皮肤脚本段：无字段 = 旧备份，不碰现脚本；有字段则
+                // 相对路径逐项白名单校验、Base64 逐项解码，任一非法
+                // 整包判失败（解析阶段拦截，不写脏文件）。缺 files
+                // 表视为空段（整表替换即清掉现脚本，与采集口径一致：
+                // 采集无脚本时写空段，旧备份则根本无此字段）。
+                skinScripts = if (!root.has("skin_scripts")) {
+                    null
+                } else {
+                    val section = root.getJSONObject("skin_scripts")
+                    val filesJson = when (val v = section.opt("files")) {
+                        null -> JSONObject()
+                        is JSONObject -> v
+                        else -> throw BackupException("脚本备份文件表不是对象")
+                    }
+                    val files = LinkedHashMap<String, ByteArray>()
+                    val keys = filesJson.keys()
+                    while (keys.hasNext()) {
+                        val rel = keys.next()
+                        if (!isValidSkinScriptRelPath(rel)) {
+                            throw BackupException("脚本备份包含非法相对路径")
+                        }
+                        files[rel] = when (val v = filesJson.opt(rel)) {
+                            is String -> v.fromBase64()
+                                ?: throw BackupException("脚本备份文件内容损坏")
+                            else -> throw BackupException("脚本备份文件内容损坏")
+                        }
+                    }
+                    SkinScriptsBackup(files = files)
+                },
             )
         } catch (e: BackupException) {
             throw e
@@ -631,6 +725,22 @@ object BackupManager {
         if (parts[0] != "skins" && parts[0] != "assets") return false
         if (parts.any { it.isEmpty() || it == "." || it == ".." }) return false
         return true
+    }
+
+    /**
+     * 皮肤脚本备份文件相对路径白名单（解析阶段防穿越）：仅
+     * <id>/script.js 与 <id>/meta.json 两段路径放行；id 须过脚本
+     * id 口径（无分隔符、非 . / ..）；段为空、含 . / ..、含反斜杠、
+     * 绝对路径、更深嵌套、半写 .tmp 一律拒绝。
+     */
+    internal fun isValidSkinScriptRelPath(path: String): Boolean {
+        if (path.isEmpty()) return false
+        if (path.startsWith("/") || path.contains('\\')) return false
+        val parts = path.split('/')
+        if (parts.size != 2) return false
+        if (!SkinScriptIds.isValid(parts[0])) return false
+        return parts[1] == SkinScriptStore.SCRIPT_FILE ||
+            parts[1] == SkinScriptStore.META_FILE
     }
 
     /** 严格解析单个 prefs 值：未知类型标签或类型不符直接抛错（解析阶段拦截） */
@@ -777,6 +887,30 @@ object BackupManager {
                 tmp.writeBytes(bytes)
                 if (!tmp.renameTo(target)) {
                     throw BackupException("皮肤文件写入失败（$rel），还原中止")
+                }
+            }
+        }
+
+        // —— 皮肤脚本文件（整表替换，非合并写回，见 KDoc）：先删
+        // 整树再写备份内文件；无字段（旧备份）时不碰现脚本。
+        // 临时文件＋改名：中途失败不留半截文件；失败回滚走同一
+        // 整表替换路径写回还原前快照，故失败还原不留孤儿脚本
+        // （快照由新版采集产生，恒带此段；超限跳段的快照除外，
+        // 见 KDoc——该情形下回放不碰脚本）。
+        parsed.skinScripts?.let { scripts ->
+            val scriptsDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
+            if (scriptsDir.exists() && !scriptsDir.deleteRecursively()) {
+                throw BackupException("脚本库写入失败，还原中止")
+            }
+            runCatching { scriptsDir.mkdirs() }
+            for ((rel, bytes) in scripts.files) {
+                // 解析阶段已白名单校验，此处只做落盘。
+                val target = File(scriptsDir, rel)
+                runCatching { target.parentFile?.mkdirs() }
+                val tmp = File(target.parentFile, "${target.name}.tmp")
+                tmp.writeBytes(bytes)
+                if (!tmp.renameTo(target)) {
+                    throw BackupException("脚本文件写入失败（$rel），还原中止")
                 }
             }
         }

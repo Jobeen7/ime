@@ -2,8 +2,8 @@ package com.jobeen.ime.data.manager
 
 import android.content.SharedPreferences
 import androidx.core.content.edit
+import com.jobeen.ime.skin.store.AtomicFiles
 import java.io.File
-import java.io.IOException
 
 object SchemeEnabled {
     private val ITEM_PATTERN = Regex("[A-Za-z0-9_.\\-]+")
@@ -130,15 +130,15 @@ object SchemeEnabled {
     
     /**
      * 写目录启用表：读 customFile 现有文本（不存在视为空，读失败抛 IOException），
-     * 经 patchSchemaListYaml 算新文本后写同目录 tmp 再 rename 覆盖；rename 失败删 tmp
-     * 并抛 IOException；父目录按需创建；ID 白名单过滤与 patchSchemaListYaml 内一致。
-     * tmp 名带 nanoTime 后缀（与 httpGetToFile 同口径）：固定 .tmp 名在并发写时
-     * 会互踩（后写者删 tmp 会删掉先写者的 tmp），带时间戳后各写各的 tmp。
+     * 经 patchSchemaListYaml 算新文本后经 [AtomicFiles] 原子写
+     * （共用实现：tmp＋fsync＋rename，tmp 名带 nanoTime 后缀防
+     * 并发写互踩）；父目录按需创建；ID 白名单过滤与
+     * patchSchemaListYaml 内一致。写失败时 AtomicFiles 已清 tmp
+     * 并抛错，本函数不再二次删 tmp（旧实现自删 tmp 的口径由
+     * 共用实现承接，失败仍抛错、旧文件原样保留）。
      */
     fun writeEnabledCustomFile(customFile: File, ids: List<String>) {
         val validIds = ids.filter { id -> isValidSchemaId(id) }
-
-        customFile.parentFile?.mkdirs()
 
         val existingText = if (customFile.exists()) {
             customFile.readText()
@@ -147,21 +147,7 @@ object SchemeEnabled {
         }
 
         val newText = patchSchemaListYaml(existingText, validIds)
-        val parent = customFile.parentFile
-        val tmpFile = if (parent != null) {
-            File(parent, customFile.name + ".tmp-${System.nanoTime()}")
-        } else {
-            File(customFile.name + ".tmp-${System.nanoTime()}")
-        }
-        try {
-            tmpFile.writeText(newText)
-            if (!tmpFile.renameTo(customFile)) {
-                throw IOException("rename failed: ${tmpFile.path} -> ${customFile.path}")
-            }
-        } catch (e: Exception) {
-            tmpFile.delete()
-            throw e
-        }
+        AtomicFiles.write(customFile, newText)
     }
 
     /**

@@ -72,14 +72,17 @@ object SkinRuntimeState {
     /**
      * 喂入一则通知事件。
      * @return 锁定表是否真正变化（失配／重复锁定返回 false）。
+     * 变化判定由 [NotificationState.onEvent] 精确给出（清除或
+     * 命中值不同才为 true），本处不再做两次全量 Map 快照比对：
+     * 每键一次的快照复制在长预编辑会话里是纯浪费，且与精确
+     * 返回值等价（清除使表缩小、命中值不同使表项不同，余者
+     * 表恒等；Map 相等与顺序无关，重复写入同值不算变化）。
      */
     fun onEvent(event: NotificationEvent): Boolean {
         val state = notificationState ?: return false
-        val before = state.snapshot()
         if (!state.onEvent(event)) return false
-        val changed = before != state.snapshot()
-        if (changed) notifyStateChanged()
-        return changed
+        notifyStateChanged()
+        return true
     }
 
     /** 当前锁定表（目标样式名／工具栏按钮 id → 通知）。 */

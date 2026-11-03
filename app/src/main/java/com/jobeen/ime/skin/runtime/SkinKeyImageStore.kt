@@ -3,6 +3,7 @@ package com.jobeen.ime.skin.runtime
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.image.ImageDecodePolicy
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -30,7 +31,13 @@ object SkinKeyImageStore {
     private val resolved = ConcurrentHashMap.newKeySet<String>()
     private val logged = ConcurrentHashMap.newKeySet<String>()
 
-    /** 按资产 id 取位图（null = 无图/解码失败，调用方回退颜色键面）。 */
+    /**
+     * 按资产 id 取位图（null = 无图/解码失败，调用方回退颜色键面）。
+     * 第 5 批 §2：在途合并——整个解析加锁，同一 key 并发调用只
+     * 解码一次（后来者直接取缓存／失败记录）；失败结果亦缓存，
+     * 快照切换（clear）前不再重试（世代变更语义由 clear 承载）。
+     */
+    @Synchronized
     fun resolve(assetId: String): Bitmap? {
         if (assetId in resolved) return cache[assetId]
         val bytes = runCatching { bytesProvider?.invoke(assetId) }.getOrNull()
@@ -45,6 +52,18 @@ object SkinKeyImageStore {
             DiagLog.w("keymap", "key_image_decode_fallback", mapOf("asset" to assetId))
         }
         return bitmap
+    }
+
+    /**
+     * IO 预热（第 5 批 §2）：快照安装后在 IO 段把常用键图先解进
+     * 缓存，使后续键盘构建期 resolve 命中缓存、不在 UI 线程解码。
+     * 上限 [ImageDecodePolicy.PREWARM_MAX_KEYS] 条，超出者仍走
+     * 首次构建解码（旧口径）；调用方必须在 IO 线程调本函数。
+     */
+    fun prewarm(assetIds: Iterable<String>) {
+        for (assetId in assetIds.take(ImageDecodePolicy.PREWARM_MAX_KEYS)) {
+            runCatching { resolve(assetId) }
+        }
     }
 
     /** 直接注入已解码位图（测试/预览用；生产路径走 bytesProvider）。 */
@@ -67,12 +86,17 @@ object SkinKeyImageStore {
         bytesProvider = null
     }
 
-    /** 解码（两遍式降采样：先 bounds 算采样率，再解码；失败返回 null）。 */
+    /**
+     * 解码（两遍式降采样：先 bounds 算采样率，再解码；失败返回 null）。
+     * 第 5 批 §2：bounds 像素超 24MP 硬上限直接拒（与
+     * BoundedBitmapDecoder 同口径，不另造解码器）。
+     */
     fun decode(bytes: ByteArray): Bitmap? {
         if (bytes.isEmpty()) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+        if (ImageDecodePolicy.exceedsPixelBudget(bounds.outWidth, bounds.outHeight)) return null
         var sample = 1
         while (bounds.outWidth / sample > MAX_SIDE_PX ||
             bounds.outHeight / sample > MAX_SIDE_PX

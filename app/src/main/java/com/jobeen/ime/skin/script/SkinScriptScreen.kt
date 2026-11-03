@@ -24,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +50,11 @@ import kotlinx.coroutines.withContext
  * background dispatcher (never the main thread — see the runner doc).
  * The runner result value is displayed as opaque data, not interpreted
  * as an action; interpretation belongs to the key-action bridge.
+ *
+ * 主线程纪律：store 的 list/add/remove/setEnabled 皆为文件 I/O，
+ * 一律经后台调度器执行、回主线程再刷状态；首屏列表也不在组合
+ * 期间同步读盘（初始为空列表，后台载入后刷新——首帧会短暂显
+ * 空态，属本改动的已知外观变化，语义与失败提示不变）。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -56,17 +62,25 @@ fun SkinScriptScreen(
     store: SkinScriptStore,
     onBack: () -> Unit,
 ) {
-    var scripts by remember { mutableStateOf(store.list()) }
+    var scripts by remember { mutableStateOf(emptyList<SkinScriptMeta>()) }
     var newId by remember { mutableStateOf("") }
     var newName by remember { mutableStateOf("") }
     var newSource by remember { mutableStateOf("") }
     var addError by remember { mutableStateOf<String?>(null) }
     var runResult by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var runningTestId by remember { mutableStateOf<String?>(null) }
     val runner = remember { SkinScriptRunner(store) }
     val scope = rememberCoroutineScope()
 
     fun refresh() {
-        scripts = store.list()
+        scope.launch {
+            scripts = withContext(Dispatchers.IO) { store.list() }
+        }
+    }
+
+    // 首屏：组合期间不读盘，后台载入后刷状态。
+    LaunchedEffect(Unit) {
+        scripts = withContext(Dispatchers.IO) { store.list() }
     }
 
     BackHandler(onBack = onBack)
@@ -111,15 +125,20 @@ fun SkinScriptScreen(
                 Spacer(Modifier.height(8.dp))
                 Button(
                     onClick = {
-                        when (val result = store.add(newId, newName, newSource)) {
-                            is SkinScriptAddResult.Added -> {
-                                addError = null
-                                newId = ""
-                                newName = ""
-                                newSource = ""
-                                refresh()
+                        scope.launch {
+                            val result = withContext(Dispatchers.IO) {
+                                store.add(newId, newName, newSource)
                             }
-                            else -> addError = addFailureText(result)
+                            when (result) {
+                                is SkinScriptAddResult.Added -> {
+                                    addError = null
+                                    newId = ""
+                                    newName = ""
+                                    newSource = ""
+                                    refresh()
+                                }
+                                else -> addError = addFailureText(result)
+                            }
                         }
                     },
                 ) {
@@ -149,8 +168,12 @@ fun SkinScriptScreen(
                         Switch(
                             checked = meta.enabled,
                             onCheckedChange = { enabled ->
-                                store.setEnabled(meta.id, enabled)
-                                refresh()
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        store.setEnabled(meta.id, enabled)
+                                    }
+                                    refresh()
+                                }
                             },
                         )
                     }
@@ -158,11 +181,22 @@ fun SkinScriptScreen(
                     Row {
                         TextButton(
                             onClick = {
-                                scope.launch {
-                                    val result = withContext(Dispatchers.Default) {
-                                        runner.runScript(meta.id, "test")
+                                // 测试运行单飞：已有测试进行中时忽略重复
+                                // 点击（按键路径的同脚本取消上一运行见
+                                // KeyActionListener；管理页测试是显式点按，
+                                // 忽略比取消更符合“点一次跑一次”的预期）。
+                                if (runningTestId == null) {
+                                    runningTestId = meta.id
+                                    scope.launch {
+                                        try {
+                                            val result = withContext(Dispatchers.Default) {
+                                                runner.runScript(meta.id, "test")
+                                            }
+                                            runResult = meta.id to runResultText(result)
+                                        } finally {
+                                            if (runningTestId == meta.id) runningTestId = null
+                                        }
                                     }
-                                    runResult = meta.id to runResultText(result)
                                 }
                             },
                         ) {
@@ -170,9 +204,13 @@ fun SkinScriptScreen(
                         }
                         TextButton(
                             onClick = {
-                                store.remove(meta.id)
-                                if (runResult?.first == meta.id) runResult = null
-                                refresh()
+                                scope.launch {
+                                    withContext(Dispatchers.IO) {
+                                        store.remove(meta.id)
+                                    }
+                                    if (runResult?.first == meta.id) runResult = null
+                                    refresh()
+                                }
                             },
                         ) {
                             Text(stringResource(R.string.skin_script_remove))

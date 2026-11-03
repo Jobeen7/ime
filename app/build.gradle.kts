@@ -17,8 +17,8 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 173
-        versionName = "1.1.16.16"
+        versionCode = 174
+        versionName = "1.1.16.17"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 应用名/输入法名不写在 strings.xml 里：debug 需要在同一资源名上
@@ -147,8 +147,12 @@ tasks.named("preBuild") {
 
 // release 构建 fail-fast：JIME 持久签名未配置时，release 的 signingConfig
 // 不会被赋值，AGP 产出未签名包——能装但覆盖不了已发布版本，且构建不报错、
-// 极易误发。仅当本次调用包含 assemble/bundle/install/publish 的 Release
-// 任务时拦截；debug 构建、单元测试、lint 等不受影响（debug 仍可回退默认签名）。
+// 极易误发。仅当本次调用包含 release 产物任务时拦截；debug 构建、单元测试、
+// lint 等不受影响（debug 仍可回退默认签名）。产物任务判定：任务名含
+// Release 且以前缀 assemble/bundle/install/publish/package/sign 任一
+// 开头——旧版只筛前四类，漏了直接跑 packageRelease（assemble 的
+// 依赖链外单点产物入口）与签名任务；testReleaseUnitTest、lintRelease、
+// mergeReleaseResources 等非产物任务前缀不在此列，恒不拦截。
 // 判断按实际任务图（taskGraph.whenReady）而非 startParameter 原始字符串：
 // 命令行缩写（aR）与聚合任务（build 经 assemble 带出 assembleRelease）的
 // 原始字符串都对不上 Release 任务名，会漏拦；任务图展开后是真实任务名。
@@ -163,7 +167,8 @@ if (!jimeSigningConfigured) {
                     val name = task.name
                     name.contains("Release") &&
                         (name.startsWith("assemble") || name.startsWith("bundle") ||
-                            name.startsWith("install") || name.startsWith("publish"))
+                            name.startsWith("install") || name.startsWith("publish") ||
+                            name.startsWith("package") || name.startsWith("sign"))
                 }
                 if (releaseTaskRequested) {
                     throw GradleException(

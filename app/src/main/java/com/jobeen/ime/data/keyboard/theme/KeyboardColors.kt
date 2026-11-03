@@ -208,28 +208,48 @@ object KeyboardColors {
         )
     }
 
+    /**
+     * 内置主题深浅的唯一决定因素（2026-11-03：只留颜色模式三项）。
+     * 卡片只选主题家族（默认双槽／莫奈色／导入固定主题），深浅一律由
+     * 颜色模式决定，默认与自定义皮肤同口径（自定义皮肤见快照分支的
+     * SkinColorMode.isDark，与此同源）：
+     * - LIGHT/DARK：强制取对应浅色／深色槽位（莫奈色与导入固定主题
+     *   在此亦被强制到槽位，现行行为保留）；
+     * - SYSTEM：主题 id 在浅／深槽位对内时按系统深浅取槽位（选了
+     *   跟随就强制跟随，旧的顶栏关跟随固定住默认对的遗留状态不再
+     *   生效）；主题 id 在槽位对之外时返回固定主题本身（莫奈色调
+     *   色板自身按系统深浅分支；单色板导入主题无深浅变体，保持原样）。
+     * 纯函数，可 JVM 单测；旧的跟随开关（KeyboardManager follow_system）
+     * 不再被本函数读取，仅作遗留存储。
+     */
+    fun effectiveBuiltinThemeId(
+        mode: LibraryColorMode,
+        themeId: String,
+        lightThemeId: String,
+        darkThemeId: String,
+        isSystemDark: Boolean,
+    ): String = when (mode) {
+        LibraryColorMode.LIGHT -> lightThemeId
+        LibraryColorMode.DARK -> darkThemeId
+        LibraryColorMode.SYSTEM -> when (themeId) {
+            lightThemeId, darkThemeId ->
+                if (isSystemDark) darkThemeId else lightThemeId
+            else -> themeId
+        }
+    }
+
     fun themeFor(context: Context): KeyboardTheme {
-        // 库页颜色模式（skin_library 偏好，见 SkinLibraryPrefs）驱动内置
-        // 主题：LIGHT/DARK 强制取对应浅色/深色主题 id；SYSTEM 走下方
-        // 现行路径（跟随系统深浅或固定主题 id）。v3 快照分支在
-        // resolve() 中优先于本函数，不受颜色模式影响（单色板皮肤在
-        // 任何模式下画同一套配色，见降级矩阵）。
-        when (SkinLibraryPrefs.getColorMode(context)) {
-            LibraryColorMode.LIGHT ->
-                return KeyboardTheme.byId(KeyboardManager.Keyboard.getLightThemeId(context))
-            LibraryColorMode.DARK ->
-                return KeyboardTheme.byId(KeyboardManager.Keyboard.getDarkThemeId(context))
-            LibraryColorMode.SYSTEM -> Unit
-        }
-        val followSystem = KeyboardManager.Keyboard.getFollowSystem(context)
-        if (followSystem) {
-            val isDark = context.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK ==
-                    Configuration.UI_MODE_NIGHT_YES
-            val themeId = if (isDark) KeyboardManager.Keyboard.getDarkThemeId(context)
-                else KeyboardManager.Keyboard.getLightThemeId(context)
-            return KeyboardTheme.byId(themeId)
-        }
-        val themeId = KeyboardManager.Keyboard.getThemeId(context)
+        // v3 快照分支在 resolve() 中优先于本函数；无快照时走下方
+        // 颜色模式唯一决定逻辑（见 effectiveBuiltinThemeId）。
+        val isDark = context.resources.configuration.uiMode and
+            Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
+        val themeId = effectiveBuiltinThemeId(
+            SkinLibraryPrefs.getColorMode(context),
+            KeyboardManager.Keyboard.getThemeId(context),
+            KeyboardManager.Keyboard.getLightThemeId(context),
+            KeyboardManager.Keyboard.getDarkThemeId(context),
+            isDark,
+        )
         return KeyboardTheme.byId(themeId)
     }
 }

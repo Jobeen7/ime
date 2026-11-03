@@ -77,6 +77,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.jobeen.ime.data.ThemeStore
 import com.jobeen.ime.R
+import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.keyboard.theme.KeyboardThemePresets
 import com.jobeen.ime.data.keyboard.theme.MonetPalette
@@ -250,9 +251,7 @@ fun SkinLibraryScreen(
     var showBatchDeleteConfirm by remember { mutableStateOf(false) }
     // 内置主题卡选中态（主题设置页脱钩后，库页为内置主题唯一切换入口）：
     // 偏好在本地镜像，点卡/扫码导入旧主题时同步更新，回页时重读。
-    var themeFollowSystem by remember {
-        mutableStateOf(KeyboardManager.Keyboard.getFollowSystem(context))
-    }
+    // 深浅不由卡片决定，一律走颜色模式三项（见 KeyboardColors.effectiveBuiltinThemeId）。
     var themeId by remember {
         mutableStateOf(KeyboardManager.Keyboard.getThemeId(context))
     }
@@ -357,7 +356,7 @@ fun SkinLibraryScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 devMode = SkinLibraryPrefs.isDevMode(context)
-                themeFollowSystem = KeyboardManager.Keyboard.getFollowSystem(context)
+                colorMode = SkinLibraryPrefs.getColorMode(context)
                 themeId = KeyboardManager.Keyboard.getThemeId(context)
                 themeLightId = KeyboardManager.Keyboard.getLightThemeId(context)
                 themeDarkId = KeyboardManager.Keyboard.getDarkThemeId(context)
@@ -446,7 +445,6 @@ fun SkinLibraryScreen(
                 when (ThemeImport.import(importedTheme)) {
                     is ThemeImport.Outcome.Applied -> {
                         ThemeImport.apply(context, importedTheme)
-                        themeFollowSystem = false
                         themeId = importedTheme.id
                         dialogText = "已导入旧主题" to
                             if (state.active?.skinId != null) {
@@ -530,11 +528,10 @@ fun SkinLibraryScreen(
     // 无主题卡选中；跟随系统时以当前系统深浅对应的那张为选中。
     val skinActive = state.active?.skinId != null
     val systemDark = isSystemInDarkTheme()
-    val effectiveThemeId = if (themeFollowSystem) {
-        if (systemDark) themeDarkId else themeLightId
-    } else {
-        themeId
-    }
+    // 生效主题 id 与键盘侧 KeyboardColors.themeFor 同口径（颜色模式唯一决定深浅）。
+    val effectiveThemeId = KeyboardColors.effectiveBuiltinThemeId(
+        colorMode, themeId, themeLightId, themeDarkId, systemDark,
+    )
 
     Scaffold(
         topBar = {
@@ -554,35 +551,9 @@ fun SkinLibraryScreen(
                             expanded = showTopMenu,
                             onDismissRequest = { showTopMenu = false },
                         ) {
-                            // 跟随系统（2026-10-29 批量第 6 项）：仅选默认
-                            // 主题时出现；开启后键盘皮肤自动跟随系统深浅。
-                            // 自定义皮肤生效时由颜色模式三项接管，此处不出现；
-                            // 莫奈色自带动态取色，不需要此项。只翻跟随开关，
-                            // 不动浅/深槽位（老用户原有槽位即合并对）。
-                            if (!skinActive && effectiveThemeId in setOf(
-                                    KeyboardTheme.DARK_DEFAULT_ID,
-                                    KeyboardTheme.LIGHT_DEFAULT_ID,
-                                )
-                            ) {
-                                DropdownMenuItem(
-                                    text = {
-                                        Text(
-                                            (if (themeFollowSystem) "✓ " else "") +
-                                                stringResource(R.string.keyboard_theme_follow_system),
-                                        )
-                                    },
-                                    onClick = {
-                                        showTopMenu = false
-                                        val follow = !themeFollowSystem
-                                        KeyboardManager.Keyboard.setFollowSystem(context, follow)
-                                        themeFollowSystem = follow
-                                        DiagLog.i(
-                                            "library", "builtin_follow_system_changed",
-                                            mapOf("follow" to follow.toString()),
-                                        )
-                                    },
-                                )
-                            }
+                            // 唯一的跟随系统入口在下方颜色模式三项（跟随系统／浅色／深色）；
+                            // 此处不再另设一个跟随开关：默认主题点卡即置内部跟随标记，
+                            // 莫奈色与导入旧主题点卡／导入即置固定标记，行为见 KeyboardColors.themeFor。
                             DropdownMenuItem(
                                 text = { Text("导入皮肤") },
                                 onClick = {
@@ -728,21 +699,25 @@ fun SkinLibraryScreen(
         ) {
             // 内置主题卡（主题设置页脱钩后，库页为内置主题唯一切换入口）：
             // 2026-10-29 批量第 6 项：暗夜＋素白合并为一张“默认”卡
-            // （深浅双模式：预览与生效皆随系统深浅取对应预设；点卡即
-            // 切跟随开＋浅素白／深暗夜）；落日已删（旧存值由读入口迁移，
-            // 不再出卡）；莫奈色保留原行为（点卡即切固定主题）。
-            // 选中态与皮肤卡一致（绿框＋对勾）；多选模式下不可点
-            // （不参与批量删除）。
+            // （浅素白／深暗夜双槽）；落日已删（旧存值由读入口迁移，
+            // 不再出卡）。2026-11-03 单一深浅控制：卡片只选主题家族，
+            // 深浅一律由颜色模式三项决定（跟随系统／浅色／深色），
+            // 点卡不再翻跟随开关。选中态与皮肤卡一致（绿框＋对勾）；
+            // 多选模式下不可点（不参与批量删除）。
             item {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     val defaultTheme = KeyboardTheme.byId(
-                        if (systemDark) {
-                            KeyboardTheme.DARK_DEFAULT_ID
-                        } else {
-                            KeyboardTheme.LIGHT_DEFAULT_ID
+                        when (colorMode) {
+                            SkinColorMode.DARK -> KeyboardTheme.DARK_DEFAULT_ID
+                            SkinColorMode.LIGHT -> KeyboardTheme.LIGHT_DEFAULT_ID
+                            SkinColorMode.SYSTEM -> if (systemDark) {
+                                KeyboardTheme.DARK_DEFAULT_ID
+                            } else {
+                                KeyboardTheme.LIGHT_DEFAULT_ID
+                            }
                         },
                     )
                     BuiltinThemeCard(
@@ -763,14 +738,18 @@ fun SkinLibraryScreen(
                                         return@runBusy
                                     }
                                 }
-                                KeyboardManager.Keyboard.setFollowSystem(context, true)
+                                // 切默认双槽：主题 id 置入槽位对内，跟随系统下
+                                // effectiveBuiltinThemeId 即按系统取槽位。
+                                KeyboardManager.Keyboard.setThemeId(
+                                    context, KeyboardTheme.DARK_DEFAULT_ID,
+                                )
                                 KeyboardManager.Keyboard.setLightThemeId(
                                     context, KeyboardTheme.LIGHT_DEFAULT_ID,
                                 )
                                 KeyboardManager.Keyboard.setDarkThemeId(
                                     context, KeyboardTheme.DARK_DEFAULT_ID,
                                 )
-                                themeFollowSystem = true
+                                themeId = KeyboardTheme.DARK_DEFAULT_ID
                                 themeLightId = KeyboardTheme.LIGHT_DEFAULT_ID
                                 themeDarkId = KeyboardTheme.DARK_DEFAULT_ID
                                 switchCheck = context.getString(R.string.builtin_theme_default)
@@ -792,9 +771,9 @@ fun SkinLibraryScreen(
                                         return@runBusy
                                     }
                                 }
-                                KeyboardManager.Keyboard.setFollowSystem(context, false)
+                                // 切莫奈主题：只置主题 id，深浅由颜色模式三项决定；
+                                // 跟随系统下莫奈调色板自身按系统深浅分支。
                                 KeyboardManager.Keyboard.setThemeId(context, monetTheme.id)
-                                themeFollowSystem = false
                                 themeId = monetTheme.id
                                 switchCheck = monetTheme.name
                             }
@@ -1334,7 +1313,6 @@ fun SkinLibraryScreen(
                                     runBusy {
                                         ThemeStore.overwrite(index, pending)
                                         ThemeImport.apply(context, pending)
-                                        themeFollowSystem = false
                                         themeId = pending.id
                                         dialogText = "已导入旧主题" to
                                             "已覆盖“${theme.name}”，并设“${pending.name}”为当前主题。"

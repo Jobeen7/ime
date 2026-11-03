@@ -254,8 +254,10 @@ object KeyboardStateManager {
             // 首挂恢复只认主类型：进程重建时存过的工具类型
             // （如收起前停在符号/表情板上留下的 symbolic/emojis）
             // 不得成为首挂键盘，须回落按输入模式的初始主类型；
+            // 同进程内 currentName 被清空后重走首挂时，存活的
+            // 非主类型（如之前点 123 留下的 numeric）同口径过滤；
             // 换肤分支的存过类型恢复不受此限（见下方的换肤复位）。
-            val rawType = typeState.current ?: resolveFirstAttachType(stored, ascii)
+            val rawType = resolveFirstAttachRaw(typeState.current, stored, ascii)
             // 首挂同样对账（进程重建时存过的类型也可能是上个方案留下的）；
             // 方案布局未知时 typeForLayoutName 为空，对账不动原值。
             val type = reconcileOpenType(
@@ -911,6 +913,18 @@ internal fun resolveFirstAttachType(stored: String?, asciiMode: Boolean): String
 }
 
 /**
+ * 首挂类型来源（纯决策，可单测）：存活的当前类型亦只认主类型——
+ * 同进程内 currentName 被清空（如挂接失败）后重走首挂时，之前
+ * 留在数字／符号板上的非主类型不得直接成为首挂键盘，与进程
+ * 重建的存过类型同口径；存活主类型沿用，存活非主／空时走存过
+ * 类型／初始主类型。
+ */
+internal fun resolveFirstAttachRaw(current: String?, stored: String?, asciiMode: Boolean): String {
+    if (current != null && current in KeyboardTypes.MAIN) return current
+    return resolveFirstAttachType(stored, asciiMode)
+}
+
+/**
  * 打开时方案与留存类型对账（纯决策，可单测）：切方案只切布局不动类型，
  * 留存主类型可能是上个方案留下的陈旧类型（打开即布局与方案名对不上）；
  * ascii 开着是主动英文，保留；否则以方案的主类型为准。工具板、自定义
@@ -942,6 +956,9 @@ internal sealed interface ReattachAction {
  * 布局名直接比当前键盘名。
  * - 有类型：类型解析目标 == 当前名 → 重显；否则按类型切。
  * - 无类型：旧按名解析目标 == 当前名 → 重显；否则按名切。
+ * - 非主类型（数字／符号／表情／自定义板）：一律重显当前名，
+ *   绝不按类型切（首挂只认主类型同原则；陈旧板类型不得在重挂
+ *   时覆盖字段键盘）。
  * 两种路径的目标计算与 switchKeyboardType/switchTo 的目标计算
  * 同源（同一解析函数、同一 schemaDefault），决策与切换不可能
  * 因解析口径不同而相撞（旧 bug 正是口径不同所致）。
@@ -955,6 +972,15 @@ internal fun decideReattach(
     isDark: Boolean = false,
 ): ReattachAction {
     return if (currentType != null) {
+        // 非主类型不得在重挂时翻回（与首挂只认主类型同原则）：
+        // 按名切换不改类型，文本字段的 startInput 先把名切回主键盘、
+        // 类型却留在板上；重挂时当前名已是字段键盘（startInput 先行），
+        // 若仍信这个陈旧板类型，就会把字段键盘翻回板上（重启／换框
+        // 后首键盘变数字／符号／表情板即此路径）。主类型（中英语言
+        // 选择）不受此限，照常按类型切、跨收起保留。
+        if (currentType !in KeyboardTypes.MAIN) {
+            return ReattachAction.Reshow
+        }
         val target = CustomLayoutRuntime.resolveTypeTarget(
             snapshot, currentType, schemaLayout, landscape, isDark,
         )

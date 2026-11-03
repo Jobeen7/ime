@@ -1752,7 +1752,7 @@ class KeyboardWindowView(
         }
         // 接线轮 R1：预编辑变化事件（只比较变化，不记文本内容；
         // A4：事件带空／非空布尔信号，matchKey 仍禁，文本绝不
-        // 进入匹配与日志；快照比对去重，同空否重复事件不重建）。
+        // 进入匹配与日志；精确变化检测去重，同空否重复事件不重建）。
         val joined = items.joinToString("") { it.text }
         if (joined != lastFedPreedit) {
             lastFedPreedit = joined

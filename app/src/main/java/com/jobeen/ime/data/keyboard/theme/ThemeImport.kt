@@ -27,9 +27,9 @@ object ThemeImport {
     fun import(theme: KeyboardTheme): Outcome =
         if (ThemeStore.import(theme)) Outcome.Applied(theme) else Outcome.NeedsOverwriteSlot(theme)
 
-    /** 与主题设置页 finishImport 相同的生效：关跟随、设主题 id。 */
+    /** 与主题设置页 finishImport 相同的生效：只设主题 id，深浅由颜色模式三项决定
+     *（跟随系统下槽位对外的固定主题保持原样，见 KeyboardColors.effectiveBuiltinThemeId）。 */
     fun apply(context: Context, theme: KeyboardTheme) {
-        KeyboardManager.Keyboard.setFollowSystem(context, false)
         KeyboardManager.Keyboard.setThemeId(context, theme.id)
     }
 }

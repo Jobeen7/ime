@@ -5,6 +5,7 @@ import android.view.KeyEvent
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.PairCommitQueue
+import com.jobeen.ime.input.ClearedTextLedger
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.input.TypedUndoLedger
 import com.jobeen.ime.skin.diag.DiagLog
@@ -41,6 +42,10 @@ class MessageHandler(
                 // 空提交由 record 忽略）：下滑撤销在污染会话内凭此
                 // 整段直删，不再把命运交给编辑器撤销栈。
                 if (ic != null) TypedUndoLedger.record(message.text)
+                // 新文字落屏即作废「上滑清掉的文字」的恢复未来（通用
+                // 撤销语义）：清完又打了字，那段就不再是最后一次编辑，
+                // 下滑不该再把旧文字插回当前光标处。
+                if (ic != null && message.text.isNotEmpty()) ClearedTextLedger.invalidate()
                 if (cursorBack > 0 && ic != null) {
                     try {
                         repeat(cursorBack) {

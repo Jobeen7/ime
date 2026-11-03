@@ -99,6 +99,7 @@ class JimeExporter(
                 val path = "layouts/${content.id}.json"
                 layoutContents += PackageManifest.Content(
                     PackageManifest.TYPE_LAYOUT, content.id, path, DigestUtil.sha256Hex(bytes),
+                    bytes.size.toLong(),
                 )
                 layoutPayloads += path to bytes
                 continue
@@ -112,6 +113,7 @@ class JimeExporter(
             val path = "layouts/${content.id}.json"
             layoutContents += PackageManifest.Content(
                 PackageManifest.TYPE_LAYOUT, content.id, path, DigestUtil.sha256Hex(bytes),
+                bytes.size.toLong(),
             )
             layoutPayloads += path to bytes
         }
@@ -128,6 +130,7 @@ class JimeExporter(
             val path = "assets/$fileName"
             assetContents += PackageManifest.Content(
                 PackageManifest.TYPE_ASSET, content.id, path, DigestUtil.sha256Hex(bytes),
+                bytes.size.toLong(),
             )
             assetPayloads += path to bytes
         }
@@ -138,6 +141,7 @@ class JimeExporter(
                 PackageManifest.Content(
                     PackageManifest.TYPE_SKIN, skinId, "skin.json",
                     DigestUtil.sha256Hex(skinBytes),
+                    skinBytes.size.toLong(),
                 ),
             ) + layoutContents + assetContents,
         )

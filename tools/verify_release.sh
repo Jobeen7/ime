@@ -129,6 +129,58 @@ for sym in $ABSENT_REQUIRED; do
     check "dex lacks $sym" $? "deleted symbol must not ship"
 done
 
+# 6. resource 清单一致性（resource-manifest.json 已入库、
+#    resource.zip 被 gitignore）：清单与 zip 是一对，zip 一换
+#    清单必须同步重算（见 tools/gen_resource_manifest.py）。
+#    本项只校验报警/失败：不一致即 [FAIL] 拦住本次验包；绝不
+#    删除已入库清单、不改构建产物逻辑。任一文件缺失时无法
+#    比对，只告警跳过（zip 被 gitignore，缺失属合法检出态），
+#    不因此判失败；校验本身不写任何文件。
+MANIFEST="app/src/main/assets/resource-manifest.json"
+SRC_ZIP="app/src/main/assets/resource.zip"
+if [ -f "$MANIFEST" ] && [ -f "$SRC_ZIP" ]; then
+    MANIFEST_CHECK="$(python3 - "$MANIFEST" "$SRC_ZIP" <<'PY' 2>&1
+import hashlib, json, sys, zipfile
+manifest_path, zip_path = sys.argv[1], sys.argv[2]
+try:
+    manifest = json.load(open(manifest_path, encoding="utf-8"))
+    zip_bytes = open(zip_path, "rb").read()
+    zip_sha = hashlib.sha256(zip_bytes).hexdigest()
+    if manifest.get("zipSha256") != zip_sha:
+        print("zipSha256 mismatch")
+        sys.exit(0)
+    want = {(e["path"], e["size"], e["crc"]) for e in manifest.get("entries", [])}
+    with zipfile.ZipFile(zip_path) as zf:
+        got = {(i.filename, i.file_size, "%08x" % (i.CRC & 0xFFFFFFFF))
+               for i in zf.infolist() if not i.is_dir()}
+    # 清单生成时排除的提取器跳过项（见 gen_resource_manifest.py）
+    # 不在 want 里：只报 want/got 的双向差集，跳过项不在差集内
+    # 才算一致——此处直接比对会把跳过项算成 got 多余，故先减去
+    # 生成器同款跳过规则的条目。
+    skip_segs = {"__MACOSX", ".DS_Store", "PaxHeader"}
+    def skipped(name):
+        simple = name.rsplit("/", 1)[-1]
+        return (not simple) or simple.startswith("._") or \
+            any(seg in skip_segs for seg in name.split("/"))
+    got = {e for e in got if not skipped(e[0])}
+    if want != got:
+        print("entries differ: manifest-only=%d zip-only=%d" % (
+            len(want - got), len(got - want)))
+    else:
+        print("OK")
+except Exception as exc:
+    print("manifest check error: %s" % exc.__class__.__name__)
+PY
+)"
+    if [ "$MANIFEST_CHECK" = "OK" ]; then
+        check "resource-manifest matches resource.zip" 0 "$MANIFEST_CHECK"
+    else
+        check "resource-manifest matches resource.zip" 1 "$MANIFEST_CHECK"
+    fi
+else
+    echo "[WARN] resource-manifest check skipped (manifest or resource.zip absent)"
+fi
+
 if [ "$FAILURES" -eq 0 ]; then
     echo "VERDICT: ALL PASS"
     exit 0

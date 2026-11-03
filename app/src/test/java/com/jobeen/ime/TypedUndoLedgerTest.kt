@@ -1,6 +1,7 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.input.TypedUndoLedger
+import com.jobeen.ime.input.TypedUndoLedger.HostUndoFallback
 import com.jobeen.ime.input.TypedUndoLedger.UndoFallback
 import org.junit.Assert.assertEquals
 import org.junit.Test
@@ -63,28 +64,74 @@ class TypedUndoLedgerTest {
 
     @Test
     fun fallback_voiceHitAlwaysDone() {
-        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(true, false, false))
-        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(true, false, true))
-        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(true, true, false))
-        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(true, true, true))
+        // 口径驱动的测试改动（本批）：decideUndoFallback 由 3 参
+        // （voiceHit、typedHit、poisoned）改为 4 参，新增 clearedHit
+        // （上滑清字账本命中）；以下断言按新签名重写，旧语义不变。
+        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(true, false, false, false))
+        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(true, false, false, true))
+        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(true, true, false, false))
+        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(true, true, false, true))
     }
 
     @Test
     fun fallback_typedHitAlwaysDone() {
-        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(false, true, false))
-        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(false, true, true))
+        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(false, true, false, false))
+        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(false, true, false, true))
+    }
+
+    @Test
+    fun fallback_clearedHitAlwaysDone() {
+        // 上滑清字账本命中：清掉的已上屏文字已原样写回，任何会话
+        // 状态下都不再发 Ctrl+Z（污染会话内发了会让组字复活）
+        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(false, false, true, false))
+        assertEquals(UndoFallback.DONE, TypedUndoLedger.decideUndoFallback(false, false, true, true))
     }
 
     @Test
     fun fallback_poisonedWithoutHitIsNoop() {
-        // 关键行：污染会话内两账本都不命中时空操作，绝不发 Ctrl+Z
-        assertEquals(UndoFallback.NOOP, TypedUndoLedger.decideUndoFallback(false, false, true))
+        // 关键行：污染会话内三账本都不命中时空操作，绝不发 Ctrl+Z
+        assertEquals(UndoFallback.NOOP, TypedUndoLedger.decideUndoFallback(false, false, false, true))
     }
 
     @Test
     fun fallback_unpoisonedWithoutHitSendsCtrlZ() {
         // 未污染会话保持正式版原样
-        assertEquals(UndoFallback.SEND_CTRL_Z, TypedUndoLedger.decideUndoFallback(false, false, false))
+        assertEquals(UndoFallback.SEND_CTRL_Z, TypedUndoLedger.decideUndoFallback(false, false, false, false))
+    }
+
+    // ---- decideHostUndoFallback：皮肤 #undo 改道落点真值表 ----
+    // 与下滑表同一账本顺序（已清除→语音→打字），区别只在未污染
+    // 无命中时的回落：下滑发 Ctrl+Z，#undo 发宿主上下文菜单撤销。
+
+    @Test
+    fun hostUndo_anyLedgerHitIsDone() {
+        assertEquals(HostUndoFallback.DONE, TypedUndoLedger.decideHostUndoFallback(true, false, false, false, false))
+        assertEquals(HostUndoFallback.DONE, TypedUndoLedger.decideHostUndoFallback(false, true, false, false, false))
+        assertEquals(HostUndoFallback.DONE, TypedUndoLedger.decideHostUndoFallback(false, false, true, false, false))
+        assertEquals(HostUndoFallback.DONE, TypedUndoLedger.decideHostUndoFallback(true, true, true, true, false))
+    }
+
+    @Test
+    fun hostUndo_poisonedWithoutHitIsNoopNeverHost() {
+        // 关键行：污染会话内三账本都不命中时空操作，绝不回退宿主撤销
+        assertEquals(HostUndoFallback.NOOP, TypedUndoLedger.decideHostUndoFallback(false, false, false, true, false))
+        assertEquals(HostUndoFallback.NOOP, TypedUndoLedger.decideHostUndoFallback(false, false, false, true, true))
+    }
+
+    @Test
+    fun hostUndo_unpoisonedWithoutHitFallsBackToHost() {
+        // 未污染无命中时保持 #undo 原有行为：宿主上下文菜单撤销
+        assertEquals(HostUndoFallback.HOST_UNDO, TypedUndoLedger.decideHostUndoFallback(false, false, false, false, false))
+        assertEquals(HostUndoFallback.HOST_UNDO, TypedUndoLedger.decideHostUndoFallback(false, false, false, false, true))
+    }
+
+    @Test
+    fun hostUndo_composingGateBlocksLedgerHits() {
+        // 组字中门：组字中账本不查——即便传入账本命中，污染门
+        // 之外的结果也不得为 DONE（污染→NOOP，未污染→HOST_UNDO），
+        // 与下滑 .17 的 !composing 门同一语义
+        assertEquals(HostUndoFallback.NOOP, TypedUndoLedger.decideHostUndoFallback(true, true, true, true, true))
+        assertEquals(HostUndoFallback.HOST_UNDO, TypedUndoLedger.decideHostUndoFallback(true, true, true, false, true))
     }
 
     // ---- decideTypedRedoApply：恢复前的前文核对 ----

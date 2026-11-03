@@ -75,6 +75,11 @@ class SkinLibraryAdmin(
         // 删皮肤后清无主视频资产（2026-10-29 外观轮）：共享资产
         // 目录不随皮肤目录走，末引用者删后视频即成孤儿。
         VideoAssetPruner.pruneUnreferencedVideos(layout)
+        // 第 5 批 §1：同口径清无主非视频资产（模型引用 + 剩余
+        // 引用计数为零 + canonical 落在素材根内才删；图片缓存
+        // 不全局清，见 SkinAssetPruner 注释——生效皮肤的键图
+        // 字节源随快照，删非生效皮肤不得断它）。
+        com.jobeen.ime.skin.store.SkinAssetPruner.pruneUnreferenced(layout)
         return Result.Done(skinId)
     }
 

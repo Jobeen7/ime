@@ -47,6 +47,35 @@ class NotificationConditionTest {
     }
 
     @Test
+    fun onEvent_returnsTrueOnlyOnRealChange() {
+        val (rules, _) = SkinNotificationParser.parse(
+            notificationArray(
+                """[
+                    {"source": "rime_option", "matchKey": "ascii_mode", "matchValue": "true",
+                     "targetStyle": "accent", "backgroundStyle": "#FF0000"},
+                    {"source": "rime_option", "matchKey": "ascii_mode", "matchValue": "false",
+                     "targetStyle": "accent", "backgroundStyle": "#0000FF"},
+                    {"source": "scheme", "matchKey": "wanxiang",
+                     "targetStyle": "s1", "backgroundStyle": "#00FF00"}
+                ]""",
+            ),
+        )
+        val state = NotificationState(rules)
+        // 首命中：变化
+        assertTrue(state.onEvent(NotificationEvent(NotificationSource.RIME_OPTION, "ascii_mode", "true")))
+        // 重复锁定同值：无变化（旧口径此处返回 true，靠调用方快照过滤）
+        assertFalse(state.onEvent(NotificationEvent(NotificationSource.RIME_OPTION, "ascii_mode", "true")))
+        // 同目标新命中替换：变化
+        assertTrue(state.onEvent(NotificationEvent(NotificationSource.RIME_OPTION, "ascii_mode", "false")))
+        // 方案命中后失配清除：变化；再失配一次：既无命中又无清除，无变化
+        assertTrue(state.onEvent(NotificationEvent(NotificationSource.SCHEME, "wanxiang", null)))
+        assertTrue(state.onEvent(NotificationEvent(NotificationSource.SCHEME, "other", null)))
+        assertFalse(state.onEvent(NotificationEvent(NotificationSource.SCHEME, "other", null)))
+        assertNull(state.latchedFor("s1"))
+        assertEquals("#0000FF", state.latchedFor("accent")?.backgroundStyle)
+    }
+
+    @Test
     fun preedit_matchesWithoutKeyOrValue() {
         val (rules, dropped) = SkinNotificationParser.parse(
             notificationArray(

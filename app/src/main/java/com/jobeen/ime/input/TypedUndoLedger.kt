@@ -7,7 +7,7 @@ import com.jobeen.ime.base.speech.VoiceUndoLedger
  * 打字上屏段的撤销账本 + 内嵌组字污染标记。
  *
  * 背景（2026-11-02 真机定性，.15 原样复活）：内嵌输入开时，Rime 组字
- * 串经 setComposingText 直送编辑器；下滑清组字（Reset）后，组字串
+ * 串经 setComposingText 直送编辑器；清组字（Reset，如上滑清空）后，组字串
  * 的清除以 setComposingText("") 落到编辑器，被编辑器记成一次普通
  * 文本删除；此后无组字下滑若原样发 Ctrl+Z，编辑器撤销这次删除，
  * 就把清掉前的组字以已上屏文本带回来（恢复时组字属性丢失）。
@@ -20,11 +20,15 @@ import com.jobeen.ime.base.speech.VoiceUndoLedger
  *    栈里留下一条“清前含组字文本”的删除记录；标记由
  *    KeyboardWindowView 在内嵌直送非空组字时置位，随输入框
  *    结束整表作废（与语音账本同生命周期）。
- * 2. 污染会话内的下滑撤销：先查语音账本（既有口径不变），再查
- *    本账本——命中则按上屏段整段直删（一次下滑只删最新一段，
- *    与语音“一次删完连续多段”不同，打字段按段撤销）；两账本
- *    都不命中时直接空操作，绝不回落 Ctrl+Z。未污染会话仍回
+ * 2. 污染会话内的下滑撤销：先查上滑清字账本（[ClearedTextLedger]，
+ *    清掉的已上屏文字原样写回，不走 Ctrl+Z），再查语音账本（既有
+ *    口径不变），最后查本账本——命中则按上屏段整段直删（一次下滑
+ *    只删最新一段，与语音“一次删完连续多段”不同，打字段按段撤销）；
+ *    三账本都不命中时直接空操作，绝不回落 Ctrl+Z。未污染会话仍回
  *    落 Ctrl+Z（正式版行为，一字不动）。
+ *    皮肤 #undo（HostUndoAction）走同一账本路径（见
+ *    [decideHostUndoFallback]），只是未污染且三账本都不命中时回落
+ *    宿主上下文菜单撤销而非 Ctrl+Z；污染会话内同样绝不回退宿主。
  *
  * 登记口径：MessageHandler 把 EngineMessage.Commit 落屏到编辑器
  * 后登记（拦截态不落屏、不登记；空提交忽略）。恢复口径与语音
@@ -169,18 +173,50 @@ object TypedUndoLedger {
     /**
      * 纯判定：下滑撤销落点真值表（RimeEngine Undo 分支即按此表
      * 执行，单测直接覆盖全表）。
+     * - 上滑清字账本命中 → DONE（已写回，不再发键）：清掉的已上屏
+     *   文字由 [ClearedTextLedger] 原样送回，不经过编辑器撤销栈，
+     *   故污染会话内也能找回，且不会让清掉的组字复活；
      * - 语音账本或打字账本命中 → DONE（已直删，不再发键）；
-     * - 两账本都不命中且会话被污染 → NOOP（绝不把 Ctrl+Z 发进
+     * - 三账本都不命中且会话被污染 → NOOP（绝不把 Ctrl+Z 发进
      *   被污染的编辑器撤销栈，那正是清掉的组字复活的路径）；
-     * - 两账本都不命中且会话未污染 → SEND_CTRL_Z（正式版原样）。
+     * - 三账本都不命中且会话未污染 → SEND_CTRL_Z（正式版原样）。
      */
     internal fun decideUndoFallback(
         voiceHit: Boolean,
         typedHit: Boolean,
+        clearedHit: Boolean,
         poisoned: Boolean,
     ): UndoFallback = when {
-        voiceHit || typedHit -> UndoFallback.DONE
+        clearedHit || voiceHit || typedHit -> UndoFallback.DONE
         poisoned -> UndoFallback.NOOP
         else -> UndoFallback.SEND_CTRL_Z
+    }
+
+    /** 皮肤 #undo（HostUndoAction）的落点：账本命中、宿主撤销、空操作 */
+    enum class HostUndoFallback { DONE, HOST_UNDO, NOOP }
+
+    /**
+     * 纯判定：皮肤 #undo 落点真值表（KeyActionListener 的
+     * HostUndoAction 分支即按此表执行，调用方先按 !composing 门
+     * 算出三账本命中——组字中账本不查，与下滑 .17 门一致）。
+     * - 组字中三账本一律不查：本函数以 [composing] 为门，组字中
+     *   即便传入命中也只认污染门（污染→NOOP，未污染→HOST_UNDO），
+     *   绝不让账本删到组字头上；
+     * - 任一账本命中 → DONE（已写回／已直删，不再发宿主撤销）；
+     * - 三账本都不命中且会话被污染 → NOOP（绝不回退宿主撤销，
+     *   宿主撤销栈同样可能把清掉的组字复活）；
+     * - 三账本都不命中且会话未污染 → HOST_UNDO（原有行为：经
+     *   输入连接的上下文菜单撤销，尽力而为）。
+     */
+    internal fun decideHostUndoFallback(
+        clearedHit: Boolean,
+        voiceHit: Boolean,
+        typedHit: Boolean,
+        poisoned: Boolean,
+        composing: Boolean,
+    ): HostUndoFallback = when {
+        !composing && (clearedHit || voiceHit || typedHit) -> HostUndoFallback.DONE
+        poisoned -> HostUndoFallback.NOOP
+        else -> HostUndoFallback.HOST_UNDO
     }
 }

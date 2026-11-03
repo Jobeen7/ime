@@ -166,7 +166,10 @@ class ApplyTransaction(
             }
         }
         if (!runPort("rollback_first_render", ref) { ports.awaitFirstRender() }) {
-            runPort("rollback_restore", previous.ref) { ports.switchRuntime(previous.ref) }
+            // 首渲失败：运行态不得停留在未验证的回退候选上，按
+            // 应用失败同口径恢复到回退前状态（重建上一好快照再
+            // 切，见 restorePrevious；结果仍如实报回退未完成）。
+            restorePrevious(previous, "rollback_first_render_failed", ref)
             return Result.RollbackUnavailable("first_render_failed").also {
                 DiagLog.w(
                     "store", "rollback_unavailable",
@@ -209,6 +212,15 @@ class ApplyTransaction(
     /**
      * 恢复旧代次：先原子改回旧记录，再把运行态切回（§2.4 切换异常口径；A-6 注入点）。
      * 返回实际恢复的引用（null = 内置默认），供回滚结果向 UI 交代实际生效的皮肤。
+     *
+     * 2026-11-03 修复（回滚切不回上一好的真缺陷）：真实端口的
+     * switchRuntime 只接受本事务 staged 的快照——失败皮肤构建后
+     * staged 即失败皮肤，不重建上一好就恒返回 false；旧实现忽略
+     * 该返回值，导致记录已写回上一好、运行态仍停留在失败皮肤
+     * 上，UI 却报“已回退到上一好”。故此处先重建上一好快照再
+     * 切换；上一好重建／切换任一失败时退到内置默认（记录同步
+     * 改写为默认，键盘永不留失败皮肤、永不空白；Last-Good 指针
+     * 保留，用户可手动再回退到它）。
      */
     private suspend fun restorePrevious(
         previous: PreviousState,
@@ -217,18 +229,30 @@ class ApplyTransaction(
     ): SkinGenRef? {
         SkinFaultHooks.hit(SkinFaultHooks.Point.A6)
         runCatching { store.writeActive(previous.record) }
-        runPort("restore_switch", previous.ref) { ports.switchRuntime(previous.ref) }
+        val restored: SkinGenRef? = if (previous.ref == null) {
+            runPort("restore_switch", null) { ports.switchRuntime(null) }
+            null
+        } else if (
+            runPort("restore_build", previous.ref) { ports.buildSnapshot(previous.ref) } &&
+            runPort("restore_switch", previous.ref) { ports.switchRuntime(previous.ref) }
+        ) {
+            previous.ref
+        } else {
+            runCatching { store.writeActive(ActiveRecord(appliedAt = clock())) }
+            runPort("restore_switch_default", null) { ports.switchRuntime(null) }
+            null
+        }
         DiagLog.w(
             "store", "apply_rolled_back",
             mapOf(
                 "reason" to reason,
                 "failedSkinId" to failedRef.skinId,
                 "failedGen" to failedRef.generation,
-                "toSkinId" to previous.record.skinId,
-                "toGen" to previous.record.generation,
+                "toSkinId" to restored?.skinId,
+                "toGen" to (restored?.generation ?: 0),
             ),
         )
-        return previous.ref
+        return restored
     }
 
     /**

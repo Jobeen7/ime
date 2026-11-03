@@ -42,8 +42,13 @@ import org.mozilla.javascript.NativeObject
  *   JavaAdapter, JavaImporter, importClass, importPackage from scope.
  * - No cross-script state: every run gets a FRESH RhinoSession, so one
  *   script's globals, prototypes and monkey-patches die with its run.
- * - No unbounded run: eval and the onEvent call each carry a wall-clock
- *   budget (see RUN_BUDGET_MS); overrun kills the run, never retries.
+ * - No unbounded run: eval and the onEvent call SHARE ONE wall-clock
+ *   deadline (see RUN_BUDGET_MS): the remaining budget is recomputed
+ *   before each stage, so a script cannot take 500ms in eval plus
+ *   another 500ms in onEvent. Overrun kills the run, never retries.
+ *   (The host register setup eval inside RhinoSession.create is host
+ *   code with its own constant budget, not script time, and is not
+ *   charged to the script deadline.)
  * - No unbounded input/output: source size is re-checked here even
  *   though the store already caps it; log lines and return values are
  *   capped; script source and error messages are never logged (only the
@@ -55,10 +60,14 @@ import org.mozilla.javascript.NativeObject
  *   can run up to the sampling granularity past the deadline, and the
  *   500ms budget itself runs on the caller's thread — callers MUST run
  *   scripts off the main thread (see [SkinScriptRunner.runScript]).
- * - No heap cap: a script can allocate large arrays within its budget
- *   (bounded by the source-size cap and the budget, not by bytes). A
- *   future wave that runs untrusted third-party scripts should add a
- *   heap/observation guard before widening distribution.
+ * - No heap cap (unchanged by the batch-4 budget work, deliberately
+ *   not faked): Rhino exposes no reliable per-session heap limit, so
+ *   a script can still allocate large arrays within its budget. What
+ *   bounds it in practice is the source-size cap, the wall-clock
+ *   budget, and the log/return caps — not a byte budget. A future
+ *   wave that runs untrusted third-party scripts should add a
+ *   heap/observation guard before widening distribution; this wave
+ *   does not claim one exists.
  * - JS `eval`/`Function` inside the script still work, but stay inside
  *   the same denied-class scope: they can compute, they cannot escape.
  * - `skin.log` lines reach the caller's log surface; a hostile script
@@ -81,11 +90,24 @@ class SkinScriptSandbox {
         return try {
             RhinoSession.create().use { session ->
                 session.putBridge("skin", buildSkinBridge(logs, onLog))
-                session.eval(source, "skin-script", RUN_BUDGET_MS)
+                // 单一墙钟预算：eval 与 onEvent 调用共享同一截止
+                // 时间，每段开始前按剩余时间重算预算；任一段超限
+                // 即整轮失败。剩余 ≤0 时直接按超预算失败，不再进
+                // 入下一段（避免零预算调用仍跑一段采样粒度）。
+                val deadlineNanos = System.nanoTime() + RUN_BUDGET_MS * 1_000_000L
+                val evalRemainingMs = remainingMs(deadlineNanos)
+                if (evalRemainingMs <= 0L) {
+                    return SkinScriptRunOutcome.Failed(SkinScriptFailure.BudgetExceeded)
+                }
+                session.eval(source, "skin-script", evalRemainingMs)
                 val fn = session.getFunction("onEvent")
                     ?: return SkinScriptRunOutcome.Skipped(SkinScriptSkip.NO_HANDLER)
+                val callRemainingMs = remainingMs(deadlineNanos)
+                if (callRemainingMs <= 0L) {
+                    return SkinScriptRunOutcome.Failed(SkinScriptFailure.BudgetExceeded)
+                }
                 val ctx = buildCtx(event, args)
-                val raw = session.callFunction(fn, arrayOf(ctx), RUN_BUDGET_MS)
+                val raw = session.callFunction(fn, arrayOf(ctx), callRemainingMs)
                 SkinScriptRunOutcome.Ok(
                     value = capReturn(raw),
                     logLines = logs.toList(),
@@ -100,6 +122,10 @@ class SkinScriptSandbox {
             )
         }
     }
+
+    /** 截止时间剩余毫秒（可为负，调用方据此判超限）。 */
+    private fun remainingMs(deadlineNanos: Long): Long =
+        (deadlineNanos - System.nanoTime()) / 1_000_000L
 
     private fun buildSkinBridge(
         logs: MutableList<String>,
@@ -140,7 +166,10 @@ class SkinScriptSandbox {
     }
 
     companion object {
-        /** Per-call wall-clock budget (matches the voice host's background budget). */
+        /**
+         * 全流程墙钟预算（eval＋onEvent 调用共享一个截止时间，
+         * 不是每段各 500ms；与语音宿主后台预算同值）。
+         */
         const val RUN_BUDGET_MS = 500L
         const val MAX_LOG_LINE_CHARS = 1000
         const val MAX_LOG_LINES = 50

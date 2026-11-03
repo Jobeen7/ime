@@ -44,7 +44,15 @@ sealed class KeyboardAction {
 
     data object BackspaceAction : KeyboardAction()
 
-    data class ReturnAction(val force: Boolean = false) : KeyboardAction()
+    /**
+     * 回车键动作。force 只是“是否长按”这一决策输入（精简决策后
+     * 不再跳过变换）；hasDedicatedNewlineKey 由按键所在键盘在
+     * 分发时填入（九宫格 true，其他键盘 false），不以键宽或图标判定。
+     */
+    data class ReturnAction(
+        val force: Boolean = false,
+        val hasDedicatedNewlineKey: Boolean = false,
+    ) : KeyboardAction()
 
     data object SpaceAction : KeyboardAction()
 
@@ -103,11 +111,12 @@ sealed class KeyboardAction {
     data object RedoAction : KeyboardAction()
 
     /**
-     * 宿主文本撤销（#undo）：经当前输入连接
+     * 宿主文本撤销（#undo）：先走与引擎内撤销（UndoAction）同一
+     * 账本路径（上滑清字账本→语音账本→打字账本，组字中不查账本，
+     * 污染会话内三账本都不命中时空操作）；仅未污染且三账本都不
+     * 命中时才经当前输入连接
      * performContextMenuAction(android.R.id.undo)，尽力而为、
-     * 宿主相关；与引擎内撤销（UndoAction：清组字／语音账本
-     * 删除）不同，不可混用。连接为空时空操作，不伪造成功，
-     * 不回退删字。
+     * 宿主相关。连接为空时空操作，不伪造成功，不回退删字。
      */
     data object HostUndoAction : KeyboardAction()
 

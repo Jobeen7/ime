@@ -312,7 +312,11 @@ object WebDavSync {
      * 相等即 PUT，不等则重合并重导出（调用方负责，返回刚合并的
      * 快照哈希）后继续；有限次后仍变化则 PUT 最新合并结果
      * （残余毫秒窗口接受）。复读或合并抛错时直接向上传播
-     * （调用方中止本次上传）。
+     * （调用方中止本次上传）。耗尽时只记尝试次数元数据（不记
+     * 哈希值与词典名）：最终 PUT 仍是无条件裸 PUT，最后一次
+     * GET 到 PUT 之间的窗口仍在——复读只能收窄窗口，不能消除
+     * 它；消除窗口须前置条件写入，而该方案已被用户否决，本
+     * 函数绝不引入 ETag/If-Match。
      */
     internal suspend fun putWithRereadRetry(
         initialHash: String?,
@@ -330,6 +334,10 @@ object WebDavSync {
             }
             last = mergeAndReexport()
         }
+        Timber.w(
+            "webdav put reread exhausted attempts=%d, final put proceeds; last-get-to-put window remains",
+            maxAttempts,
+        )
         put()
     }
 

@@ -15,6 +15,9 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.ImeInputMethodService
+import com.jobeen.ime.R
+import com.jobeen.ime.base.speech.SherpaSpeechClient
+import com.jobeen.ime.base.speech.VoiceUndoLedger
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.SnippetExpander
@@ -23,8 +26,10 @@ import com.jobeen.ime.skin.script.SkinScriptKeyBridge
 import com.jobeen.ime.skin.script.SkinScriptRunner
 import com.jobeen.ime.skin.script.SkinScriptStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.util.concurrent.ConcurrentHashMap
 
 class KeyActionListener(
     private val service: InputMethodService,
@@ -40,6 +45,17 @@ class KeyActionListener(
     private val scriptRunner: SkinScriptRunner by lazy {
         SkinScriptRunner(SkinScriptStore(service.filesDir))
     }
+
+    /**
+     * 同脚本在途运行（单飞，取消上一运行）：同一 scriptId 再按
+     * 下时，先取消上一任务再起新任务。取消只拦得住尚未切回主
+     * 线程的分发（withContext 抛取消异常，动作不分发）；Rhino
+     * 求值本身不可中断，在途求值仍会在后台跑完，但其分发已被
+     * 取消、不会落地。串行排队（等上一运行跑完再跑下一运行）
+     * 会把旧结果也分发一次，重复动作更糟，故不取串行。完成
+     * 的任务经 invokeOnCompletion 自清，避免表无限增长。
+     */
+    private val scriptJobs = ConcurrentHashMap<String, Job>()
 
     override fun onKeyAction(action: KeyboardAction) {
         // P4 分段探针（分发段）：起点标记；门控关时 stageStart 返回 -1，
@@ -101,6 +117,13 @@ class KeyActionListener(
             // 重叠，连接侧删除会损坏组字态，见 DeleteTextPolicy）。
             // 读选区与提交皆经当前输入连接（与剪贴板动作同口径，
             // 不走短语桥虚拟连接）；连接异常只记元数据，不崩溃。
+            //
+            // 清字入账：删除成功即把「被清掉的这段」连同删除点前的
+            // 锚点记进 ClearedTextLedger，下滑撤销据此原样送回，不再
+            // 依赖 Ctrl+Z——污染会话内 Ctrl+Z 已被拦（防清掉的组字
+            // 复活），不记账的话清掉的已上屏文字就没有任何地方可回。
+            // 锚点必须在删除**之前**现读：删完光标已落在删除点，
+            // 那时读到的前文才是恢复时要核对的位置。
             is KeyboardAction.DeleteTextAction -> {
                 try {
                     val ic = service.currentInputConnection
@@ -109,7 +132,15 @@ class KeyActionListener(
                             KeyboardStateManager.isComposingNow, selected,
                         )
                     ) {
-                        ic.commitText("", 1)
+                        // 有选区时 getTextBeforeCursor 取的是选区之前的
+                        // 文本（与 VoiceUndoLedger 同口径），正是删除点
+                        // 紧邻的前文；取失败按空锚点记（恢复走严判）。
+                        val anchor = runCatching {
+                            ic.getTextBeforeCursor(ClearedTextLedger.ANCHOR_CHARS, 0)?.toString()
+                        }.getOrNull().orEmpty()
+                        if (ic.commitText("", 1)) {
+                            ClearedTextLedger.record(selected?.toString().orEmpty(), anchor)
+                        }
                     }
                 } catch (ex: Exception) {
                     DiagLog.w(
@@ -149,14 +180,25 @@ class KeyActionListener(
                 }
             }
 
-            is KeyboardAction.ReturnAction, KeyboardAction.SpaceAction -> {
-                val character = when (action) {
-                    is KeyboardAction.ReturnAction -> "ENTER"
-                    KeyboardAction.SpaceAction -> "SPACE"
-                }
+            // 回车精简决策：软回车键不再经 processKey 的状态键
+            // 旧路径（图标变换、force 旁路、空探针均已删）。字段
+            // 属性在分发时点由当前编辑框信息映射（框架属性，
+            // 无信息时按单行＋未声明动作计）；组字中由引擎串行
+            // job 执行时点现读原始输入判定，不在此处预判。
+            // 显式绑定的 MultiReturnAction 不走本分支，原样不动。
+            is KeyboardAction.ReturnAction -> {
+                engine?.processEnter(
+                    service,
+                    EnterFieldBoundary.fromEditorInfo(service.currentInputEditorInfo),
+                    isLongPress = action.force,
+                    hasDedicatedNewlineKey = action.hasDedicatedNewlineKey,
+                )
+            }
+
+            is KeyboardAction.SpaceAction -> {
                 engine?.processKey(
                     service, KeyEvent.CodeEvent(
-                        KeyEvent.CodeEvent.keyCode(character), KeyModifiers.Empty
+                        KeyEvent.CodeEvent.keyCode("SPACE"), KeyModifiers.Empty
                     )
                 )
             }
@@ -210,14 +252,47 @@ class KeyActionListener(
                 engine?.redo(service)
             }
 
-            // 宿主文本撤销（#undo）：经当前输入连接的上下文菜单
-            // 动作，尽力而为（返回值不作成功判定）；宿主不支持
-            // 时无效果，不回退删字；连接为空不崩溃。
+            // 宿主文本撤销（#undo）：改道为与下滑 UndoAction 同一
+            // 账本路径——先查上滑清字账本（原样写回），再查语音
+            // 账本、打字账本（污染会话内才查打字账本，与下滑
+            // 一致）；三账本都不命中且会话被污染时空操作，绝不
+            // 回退宿主撤销（宿主撤销栈同样可能把清掉的组字复活）；
+            // 未污染且三账本都不命中时保持原有行为：经当前输入
+            // 连接的上下文菜单动作，尽力而为（返回值不作成功判
+            // 定）；宿主不支持时无效果，不回退删字；连接为空不崩溃。
+            // 组字中三账本一律不查（与下滑 .17 门一致），污染门
+            // 仍按 decideHostUndoFallback 执行。
+            // 生产方核查：HostUndoAction 的唯一生产方是皮肤
+            // #undo 映射（KeyOverrideApplier.HASH_UNDO），无非皮肤
+            // 调用方（工具栏仅作 #undo 文案映射，KeyPreset 下滑用
+            // 的是 UndoAction），故改本分支即只改皮肤 #undo 路径，
+            // 不存在需要保留的另一条非皮肤宿主撤销路径。
             is KeyboardAction.HostUndoAction -> {
                 try {
-                    service.currentInputConnection?.performContextMenuAction(
-                        android.R.id.undo,
-                    )
+                    val ic = service.currentInputConnection
+                    val composing = KeyboardStateManager.isComposingNow
+                    val clearedHit = !composing && ic != null &&
+                        ClearedTextLedger.tryRestore(ic)
+                    val voiceHit = !composing && !clearedHit && ic != null &&
+                        VoiceUndoLedger.tryUndo(ic)
+                    val poisoned = TypedUndoLedger.isPoisoned()
+                    val typedHit = !composing && !clearedHit && !voiceHit &&
+                        poisoned && ic != null && TypedUndoLedger.tryUndo(ic)
+                    when (
+                        TypedUndoLedger.decideHostUndoFallback(
+                            clearedHit = clearedHit,
+                            voiceHit = voiceHit,
+                            typedHit = typedHit,
+                            poisoned = poisoned,
+                            composing = composing,
+                        )
+                    ) {
+                        TypedUndoLedger.HostUndoFallback.DONE,
+                        TypedUndoLedger.HostUndoFallback.NOOP -> Unit
+                        TypedUndoLedger.HostUndoFallback.HOST_UNDO -> {
+                            ic?.performContextMenuAction(android.R.id.undo)
+                        }
+                    }
                 } catch (ex: Exception) {
                     DiagLog.w(
                         "keymap", "host_undo_failed",
@@ -308,6 +383,13 @@ class KeyActionListener(
             }
 
             // 打开链接（审计 E：openURL）：白名单外一律丢弃记日志。
+            // 白名单内先弹确认（与部署确认同款 IMS showDialog 范
+            // 式：挂键盘窗口 token 的确认框，用户看清链接再决定）；
+            // 确认才起意图，取消只记 scheme 元数据。无安全确认面
+            // 时（服务非 IMS、或键盘窗口未挂上无 token）不硬造假
+            // 确认：退回改前直开行为（长度上限仍由白名单守），并
+            // 记一条元数据日志——该路径的确认缺口如实列入残余。
+            // 日志恒只记 scheme，不记完整链接。
             is KeyboardAction.OpenUrlAction -> {
                 if (!OpenUrlPolicy.isAllowed(action.url)) {
                     DiagLog.w(
@@ -315,18 +397,35 @@ class KeyActionListener(
                         mapOf("scheme" to action.url.substringBefore(":", "")),
                     )
                 } else {
-                    try {
-                        service.startActivity(
-                            android.content.Intent(
-                                android.content.Intent.ACTION_VIEW,
-                                android.net.Uri.parse(action.url),
-                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
-                        )
-                    } catch (ex: Exception) {
+                    val imeService = service as? ImeInputMethodService
+                    val hasToken = imeService?.keyboardWindow?.view?.windowToken != null
+                    if (imeService != null && hasToken) {
+                        val dialog = android.app.AlertDialog.Builder(imeService)
+                            .setTitle(R.string.open_url_confirm_title)
+                            .setMessage(
+                                imeService.getString(
+                                    R.string.open_url_confirm_message, action.url,
+                                ),
+                            )
+                            .setPositiveButton(R.string.open_url_confirm_open) { _, _ ->
+                                openUrl(action.url)
+                            }
+                            .setNegativeButton(R.string.open_url_confirm_cancel) { _, _ ->
+                                DiagLog.w(
+                                    "keymap", "open_url_cancelled",
+                                    mapOf(
+                                        "scheme" to action.url.substringBefore(":", ""),
+                                    ),
+                                )
+                            }
+                            .create()
+                        imeService.showDialog(dialog)
+                    } else {
                         DiagLog.w(
-                            "keymap", "open_url_failed",
-                            mapOf("error" to ex.javaClass.simpleName),
+                            "keymap", "open_url_no_confirm_surface",
+                            mapOf("scheme" to action.url.substringBefore(":", "")),
                         )
+                        openUrl(action.url)
                     }
                 }
             }
@@ -451,14 +550,38 @@ class KeyActionListener(
             // 最高 500ms，主线程执行会卡 UI）；返回值转成的动作回
             // 主线程再分发（与 combine 递归分发同口径）；无动作时
             // 只记脚本 id 与原因元数据，绝不记返回值与脚本日志行。
+            // 会话绑定：启动时捕获输入目标身份＋输入框纪元（树内
+            // 已有机制：InputFieldKey 字段身份＋SherpaSpeechClient
+            // 的 EditorEpoch，不另造代次），切回主线程分发前复检
+            // 两者仍一致才分发——启动后换框／输入结束推进了纪元，
+            // 或字段身份已变，过期结果直接丢弃并只记元数据，绝不
+            // 把旧框脚本的动作写进新框。无输入框时身份为空、纪元
+            // 仍比对（纪元推进仍能拦住旧会话结果）。
             is KeyboardAction.RunScriptAction -> {
-                appScope.launch(Dispatchers.Default) {
+                val captured = ScriptRunSession.capture(
+                    service.currentInputEditorInfo,
+                    SherpaSpeechClient.currentEditorEpoch(),
+                )
+                scriptJobs[action.scriptId]?.cancel()
+                val job = appScope.launch(Dispatchers.Default) {
                     when (val outcome =
                         SkinScriptKeyBridge.runForKey(scriptRunner, action.scriptId)
                     ) {
                         is SkinScriptKeyBridge.KeyRunOutcome.Dispatch -> {
                             withContext(Dispatchers.Main) {
-                                onKeyAction(outcome.action)
+                                if (ScriptRunSession.isCurrent(
+                                        captured,
+                                        service.currentInputEditorInfo,
+                                        SherpaSpeechClient.currentEditorEpoch(),
+                                    )
+                                ) {
+                                    onKeyAction(outcome.action)
+                                } else {
+                                    DiagLog.w(
+                                        "keymap", "script_key_stale_session",
+                                        mapOf("scriptId" to action.scriptId),
+                                    )
+                                }
                             }
                         }
                         is SkinScriptKeyBridge.KeyRunOutcome.NoAction -> {
@@ -472,6 +595,8 @@ class KeyActionListener(
                         }
                     }
                 }
+                scriptJobs[action.scriptId] = job
+                job.invokeOnCompletion { scriptJobs.remove(action.scriptId, job) }
             }
 
             // 常用语／候选栏切换（审计 E：#showPhraseView /
@@ -485,6 +610,26 @@ class KeyActionListener(
         com.jobeen.ime.skin.perf.PerfMonitor.noteStage(
             com.jobeen.ime.skin.perf.PerfMonitor.Event.KEY_DISPATCH, dispatchStart,
         )
+    }
+
+    /**
+     * 起浏览器意图打开链接（open_url 确认后的唯一出口与无确认
+     * 面时的回退出口共用）：失败只记异常类名，不记链接。
+     */
+    private fun openUrl(url: String) {
+        try {
+            service.startActivity(
+                android.content.Intent(
+                    android.content.Intent.ACTION_VIEW,
+                    android.net.Uri.parse(url),
+                ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        } catch (ex: Exception) {
+            DiagLog.w(
+                "keymap", "open_url_failed",
+                mapOf("error" to ex.javaClass.simpleName),
+            )
+        }
     }
 
     /**
@@ -541,5 +686,38 @@ class KeyActionListener(
             (variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)
+    }
+}
+
+/**
+ * 按键脚本启动会话快照（纯数据，可单测）：输入目标身份
+ * [InputFieldKey]（包名／字段 id／输入类型／imeOptions，IMS 与
+ * 引擎联想共用的字段口径）＋输入框纪元（SherpaSpeechClient 的
+ * EditorEpoch 现值，换框／输入结束时推进）。两者任一变化即判
+ * 会话已变：同框收起再打开身份与纪元皆不变，复检放行；换框
+ * 或输入结束必推进纪元，过期分发被拦。无输入框时身份为空、
+ * 纪元照常比对（纪元推进仍能拦住旧框结果）。
+ */
+internal data class ScriptRunSession(
+    val field: InputFieldKey?,
+    val epoch: Long,
+) {
+    companion object {
+        fun capture(editorInfo: EditorInfo?, epoch: Long): ScriptRunSession =
+            ScriptRunSession(InputFieldKey.of(editorInfo), epoch)
+
+        /** 字段口径复检（纯逻辑，可单测）。 */
+        fun isCurrent(
+            captured: ScriptRunSession,
+            field: InputFieldKey?,
+            epoch: Long,
+        ): Boolean = captured.field == field && captured.epoch == epoch
+
+        /** 编辑器口径复检：先取字段身份，再走字段口径。 */
+        fun isCurrent(
+            captured: ScriptRunSession,
+            editorInfo: EditorInfo?,
+            epoch: Long,
+        ): Boolean = isCurrent(captured, InputFieldKey.of(editorInfo), epoch)
     }
 }

@@ -180,6 +180,71 @@ class ApplyTransactionTest {
         assertTrue(result is ApplyTransaction.Result.RollbackUnavailable)
     }
 
+    /**
+     * 模拟真实 SkinApplier 端口的 staged 语义：switchRuntime 只接受
+     * 本事务刚构建的快照（staged），切其它引用恒返回 false；null
+     *（回默认）不受 staged 限制。旧 restorePrevious 不重建上一好
+     * 就直接切，在此端口下回滚恒失败——本测试钉住修复后的行为。
+     */
+    private class StagedPorts : ApplyTransaction.Ports {
+        var buildBehavior: (SkinGenRef) -> Boolean = { true }
+        var firstRenderResult = true
+        var staged: SkinGenRef? = null
+        var installed: SkinGenRef? = null
+
+        override fun buildSnapshot(ref: SkinGenRef): Boolean {
+            if (!buildBehavior(ref)) return false
+            staged = ref
+            return true
+        }
+
+        override fun switchRuntime(ref: SkinGenRef?): Boolean {
+            if (ref == null) {
+                installed = null
+                return true
+            }
+            if (staged != ref) return false
+            installed = ref
+            return true
+        }
+
+        override suspend fun awaitFirstRender(): Boolean = firstRenderResult
+    }
+
+    @Test
+    fun firstRenderFailureRestoresPreviousRuntimeWithStagedPorts() = runBlocking {
+        val f = Fixture()
+        val ports = StagedPorts()
+        val tx = ApplyTransaction(f.layout, f.store, ports) { 7_000L }
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), tx.apply(ref1))
+        assertEquals(ref1, ports.installed)
+        ports.firstRenderResult = false
+        val result = tx.apply(ref2)
+        assertEquals(ApplyTransaction.Result.FirstRenderFailedRolledBack(ref2, ref1), result)
+        // 运行态必须真切回上一好，而非只把记录写回（旧实现此处仍停在 ref2）
+        assertEquals(ref1, ports.installed)
+        assertEquals(1, f.active().generation)
+    }
+
+    @Test
+    fun restoreBuildFailureFallsBackToDefault() = runBlocking {
+        val f = Fixture()
+        val ports = StagedPorts()
+        val tx = ApplyTransaction(f.layout, f.store, ports) { 7_000L }
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), tx.apply(ref1))
+        // 上一好代次在回滚重建时损坏：退默认，不留失败皮肤
+        ports.buildBehavior = { ref -> ref != ref1 }
+        ports.firstRenderResult = false
+        val result = tx.apply(ref2)
+        assertEquals(ApplyTransaction.Result.FirstRenderFailedRolledBack(ref2, null), result)
+        assertEquals(null, ports.installed)
+        assertEquals(null, f.active().skinId)
+    }
+
     @Test
     fun revertToDefaultKeepsLastGood() = runBlocking {
         val f = Fixture()

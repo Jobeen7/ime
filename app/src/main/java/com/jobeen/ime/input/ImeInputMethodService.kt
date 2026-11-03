@@ -188,15 +188,19 @@ class ImeInputMethodService : InputMethodService() {
             panelActionListener = panelListener,
         )
         // 接线轮 R7：部署／同步菜单项的服务层接线（此前回调恒空，
-        // 点按无动作）。部署复用引擎 deployAndAwait 互斥（超时
-        // 600 秒，与设置侧同值）；同步恒为 null——词库 WebDAV
+        // 点按无动作）。部署复用引擎 deployAndAwait 互斥（超时走
+        // FAB／切换路径共用的 deployTimeoutForDir 口径：180 秒
+        // 基线＋每 8MB 加 30 秒、上限 1800 秒，不再是键盘侧独
+        // 有的固定 600 秒）；同步恒为 null——词库 WebDAV
         // 同步须持设置侧会话（RimeSession＋已配 WebDAV 绑定），
         // 键盘服务内无此基础设施；只写本地同步目录的接口不上传，
         // 接上会误导用户以为已同步，故不接。菜单文案“部署／同步”
         // 为既有文案不动，进度／成功文案只说部署。
         deployController = KeyboardDeployController(
             deploy = {
-                (EngineFactory.current() as? RimeEngine)?.deployAndAwaitIfChanged(600_000L)
+                (EngineFactory.current() as? RimeEngine)?.deployAndAwaitIfChanged(
+                    FabActions.deployTimeoutForCurrentDir(this@ImeInputMethodService),
+                )
                     ?: DeployAwaitResult.FAILED
             },
             sync = null,
@@ -375,6 +379,8 @@ class ImeInputMethodService : InputMethodService() {
         // 打字账本与污染标记与语音账本同生命周期：输入框结束
         // 时整表作废，旧框的账与污染标记不能带进新框。
         TypedUndoLedger.clearAll()
+        // 上滑清字账本同理：旧框清掉的文字不能拿到新框去写回。
+        ClearedTextLedger.clearAll()
     }
 
     override fun onFinishInputView(finishingInput: Boolean) {

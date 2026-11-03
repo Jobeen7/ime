@@ -1,6 +1,7 @@
 package com.jobeen.ime.skin.script
 
 import com.jobeen.ime.base.speech.cloud.PluginContract
+import com.jobeen.ime.skin.store.AtomicFiles
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -18,8 +19,9 @@ import java.io.File
  * ids, and every resolved dir is checked to stay under the store root
  * (defense in depth against a crafted meta/id reaching the filesystem).
  *
- * Writes are atomic-ish (temp file + rename) so a half-written meta never
- * parses as a live script. list() only reports entries whose meta parses
+ * Writes are atomic via [AtomicFiles.write] (temp file + fsync +
+ * rename) so a half-written meta never parses as a live script.
+ * list() only reports entries whose meta parses
  * AND whose script file exists; a half-installed dir stays invisible.
  */
 class SkinScriptStore(
@@ -63,8 +65,12 @@ class SkinScriptStore(
         dir.mkdirs()
         val meta = SkinScriptMeta(id = id, name = cleanName, enabled = true)
         val ok = runCatching {
-            writeAtomic(File(dir, SCRIPT_FILE), source.toByteArray(Charsets.UTF_8))
-            writeAtomic(File(dir, META_FILE), json.encodeToString(meta).toByteArray(Charsets.UTF_8))
+            AtomicFiles.write(
+                File(dir, SCRIPT_FILE), source.toByteArray(Charsets.UTF_8),
+            )
+            AtomicFiles.write(
+                File(dir, META_FILE), json.encodeToString(meta).toByteArray(Charsets.UTF_8),
+            )
         }.isSuccess
         if (!ok) {
             runCatching { dir.deleteRecursively() }
@@ -87,7 +93,7 @@ class SkinScriptStore(
         val meta = readMeta(dir) ?: return false
         if (meta.enabled == enabled) return true
         return runCatching {
-            writeAtomic(
+            AtomicFiles.write(
                 File(dir, META_FILE),
                 json.encodeToString(meta.copy(enabled = enabled)).toByteArray(Charsets.UTF_8),
             )
@@ -110,17 +116,6 @@ class SkinScriptStore(
         if (!file.isFile) return null
         return runCatching { json.decodeFromString<SkinScriptMeta>(file.readText(Charsets.UTF_8)) }
             .getOrNull()
-    }
-
-    private fun writeAtomic(target: File, bytes: ByteArray) {
-        val tmp = File(target.parentFile, target.name + ".tmp")
-        tmp.writeBytes(bytes)
-        if (!tmp.renameTo(target)) {
-            // renameTo can fail across filesystems; same dir here, so a
-            // failure is a real error — clean up and surface it.
-            runCatching { tmp.delete() }
-            error("atomic write failed for ${target.name}")
-        }
     }
 
     companion object {

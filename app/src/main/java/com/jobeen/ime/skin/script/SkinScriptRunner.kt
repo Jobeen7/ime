@@ -27,7 +27,8 @@ package com.jobeen.ime.skin.script
  *   source text and never a raw exception message.
  *
  * THREADING: [runScript] runs synchronously on the calling thread with a
- * 500ms wall-clock budget. Callers MUST call it off the main thread
+ * single 500ms total wall-clock budget shared by script eval and the
+ * onEvent call (not 500ms each — see SkinScriptSandbox). Callers MUST call it off the main thread
  * (background dispatcher / worker thread); calling it on the main thread
  * can stall the UI for up to the budget. The sandbox itself is fresh per
  * run, so concurrent runs on different threads are independent — but a

@@ -35,6 +35,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.contentOrNull
 
 /**
  * .jime 导入管线（详设 §3.1，步骤写死）：
@@ -220,6 +221,13 @@ class JimeImporter(
         val skinBytes = byPath.getValue(skinContent.path).bytes
         val skinTree = SkinJson.parseObject(skinBytes.decodeToString())
             ?: return rejected("skin_unparseable", issues, skinId = skinContent.id)
+        // 第 5 批 §1：可移植归档暂存校验（配置上限／条目数上限／
+        // 页数上限／键映射条目上限；重名与 SHA 已由上文校验）。
+        // id 前缀与根页无环不设拒绝（见 PortableSkinArchive：
+        // Jime id 命名空间与对方前缀无对应，布局不引用布局故无环）。
+        PortableSkinArchive.validate(manifest, byPath, skinTree).rejected?.let {
+            return rejected(it.reason, issues, skinId = skinContent.id)
+        }
         // 身份权威在 manifest：皮肤树自报 id 与清单不一致即身份含混，整包拒绝
         val validatedPreview = SkinValidator.validate(
             skinTree, ctx.currentVersionCode, ctx.fallbacks, { null },
@@ -689,6 +697,12 @@ class JimeImporter(
             if (DigestUtil.sha256Hex(file.bytes) != content.sha256) {
                 return "manifest_sha_mismatch:${content.path}"
             }
+            // 第 5 批 §1：清单大小若在场必等于实际字节数（旧清单无此字段时不验）。
+            if (content.sizeBytes != null &&
+                (content.sizeBytes < 0 || content.sizeBytes != file.bytes.size.toLong())
+            ) {
+                return "manifest_size_mismatch:${content.path}"
+            }
             if (content.type !in KNOWN_TYPES) return "manifest_unknown_type:${content.type}"
         }
         return null
@@ -776,10 +790,16 @@ class JimeImporter(
 
     /**
      * 副本改写：只改格式已知的引用位置（meta.id、layoutId、
-     * keyMappings 的自创布局键前缀），其余节点原样（七.4）。
+     * layoutIdLandscape、keyboards 表四向绑定、keyMappings 的
+     * 自创布局键前缀），其余节点原样（七.4）。
      * keyMappings 前缀改写是 B3 补齐项（详设 §5.2 待核 1）：自创
      * 布局键的逻辑 ID 以 `{layoutId}:` 起头，布局换副本 id 时，
      * 引用它的覆写条目键名必须同步改写，否则覆写全部悬空。
+     * 第 5 批 §1 补齐：此前 keyboards 表绑定与横屏绑定未改写，
+     * 副本皮肤的类型绑定会悬空指向被冲突方；label 与提交文本
+     * 等资源外字段一律不动（只重写资源／身份引用字段）。
+     * 动作／功能 id（键动作类型、工具栏钮 id）属内置词表，
+     * 非包作用域 id，不改写（改写会破坏语义）。
      */
     private fun rewriteSkinTreeRefs(
         tree: JsonObject,
@@ -797,6 +817,50 @@ class JimeImporter(
         val copiedLayoutId = layoutId?.let { copies[it] }
         if (copiedLayoutId != null) {
             result = JsonObject(result + ("layoutId" to JsonPrimitive(copiedLayoutId)))
+        }
+        val landscapeId = (result["layoutIdLandscape"] as? JsonPrimitive)?.content
+        val copiedLandscapeId = landscapeId?.let { copies[it] }
+        if (copiedLandscapeId != null) {
+            result = JsonObject(
+                result + ("layoutIdLandscape" to JsonPrimitive(copiedLandscapeId)),
+            )
+        }
+        val keyboards = result["keyboards"] as? JsonObject
+        if (keyboards != null) {
+            var keyboardsChanged = false
+            val rewrittenKeyboards = LinkedHashMap<String, JsonElement>()
+            for ((type, rawEntry) in keyboards) {
+                when (rawEntry) {
+                    is JsonPrimitive -> {
+                        val copied = rawEntry.contentOrNull?.takeIf { it.isNotEmpty() }
+                            ?.let { copies[it] }
+                        if (copied != null) {
+                            rewrittenKeyboards[type] = JsonPrimitive(copied)
+                            keyboardsChanged = true
+                        } else {
+                            rewrittenKeyboards[type] = rawEntry
+                        }
+                    }
+                    is JsonObject -> {
+                        var entry: JsonObject = rawEntry
+                        var entryChanged = false
+                        for (field in KEYBOARD_BINDING_FIELDS) {
+                            val bound = (entry[field] as? JsonPrimitive)?.content
+                            val copied = bound?.let { copies[it] }
+                            if (copied != null) {
+                                entry = JsonObject(entry + (field to JsonPrimitive(copied)))
+                                entryChanged = true
+                            }
+                        }
+                        if (entryChanged) keyboardsChanged = true
+                        rewrittenKeyboards[type] = entry
+                    }
+                    else -> rewrittenKeyboards[type] = rawEntry
+                }
+            }
+            if (keyboardsChanged) {
+                result = JsonObject(result + ("keyboards" to JsonObject(rewrittenKeyboards)))
+            }
         }
         val mappings = result["keyMappings"] as? JsonObject
         if (mappings != null) {
@@ -864,6 +928,11 @@ class JimeImporter(
 
         private val KNOWN_TYPES = setOf(
             PackageManifest.TYPE_SKIN, PackageManifest.TYPE_LAYOUT, PackageManifest.TYPE_ASSET,
+        )
+
+        /** keyboards 表内的布局绑定字段（副本改写用；其余表项字段原样不动）。 */
+        private val KEYBOARD_BINDING_FIELDS = listOf(
+            "layoutId", "layoutIdLandscape", "layoutIdDark", "layoutIdLandscapeDark",
         )
     }
 }

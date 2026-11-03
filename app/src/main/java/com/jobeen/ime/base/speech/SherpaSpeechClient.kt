@@ -194,6 +194,13 @@ object SherpaSpeechClient {
 
     fun isHolding(): Boolean = holding.get()
 
+    /**
+     * 当前输入框纪元只读快照（按键脚本会话复检用）：只读
+     * [editorEpoch] 的现值，绝不推进。推进权仍只在
+     * [onInputViewFinished]（IMS 投递的换框／视图结束作废点）。
+     */
+    internal fun currentEditorEpoch(): Long = editorEpoch.current()
+
     private var uiJob: Job? = null
     private var serviceRef: WeakReference<ImeInputMethodService>? = null
 

@@ -3,8 +3,8 @@
 package com.jobeen.ime.data.manager
 
 import java.io.File
-import java.io.IOException
 import java.util.zip.ZipFile
+import com.jobeen.ime.skin.store.AtomicFiles
 import kotlinx.coroutines.CancellationException
 import timber.log.Timber
 
@@ -1132,11 +1132,12 @@ object SchemePackageImport {
         File(parentDir, ".install-$operationId.journal")
 
     /**
-     * 写安装日志：先写同目录 tmp 再 rename 覆盖（同一文件系统内原子换位）。
+     * 写安装日志：经 [AtomicFiles] 共用原子写（tmp＋fsync＋rename）。
      * 直接 writeText 一旦写一半被杀，日志即截断、恢复时无法解析；
      * tmp＋rename 则要么是旧阶段的完整日志、要么是新阶段的完整日志，
-     * 不存在半截日志。rename 失败删 tmp 并抛错（旧日志原样保留，
-     * 恢复按旧阶段处置，不会把一次失败的阶段推进误当成已推进）。
+     * 不存在半截日志。写失败时共用实现已清 tmp 并抛 IOException
+     * （旧日志原样保留，恢复按旧阶段处置，不会把一次失败的阶段
+     * 推进误当成已推进）——失败口径与旧实现一致。
      */
     private fun writeJournal(
         journalFile: File,
@@ -1153,12 +1154,7 @@ object SchemePackageImport {
             appendLine("backup=${backupDir.absolutePath}")
             appendLine("stage=${stage.name}")
         }
-        val tmpFile = File(journalFile.parentFile, "${journalFile.name}.tmp-${System.nanoTime()}")
-        tmpFile.writeText(content)
-        if (!tmpFile.renameTo(journalFile)) {
-            tmpFile.delete()
-            throw IOException("journal rename failed: ${tmpFile.path} -> ${journalFile.path}")
-        }
+        AtomicFiles.write(journalFile, content)
     }
 
     private data class ParsedJournal(

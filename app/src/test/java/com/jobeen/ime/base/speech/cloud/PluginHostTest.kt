@@ -682,6 +682,27 @@ class PluginHostTest {
     }
 
     @Test
+    fun wsInboundOversizeBytes_killsSessionAndBlocksLaterFrames() {
+        val transport = CapturingTransport()
+        val (host, listener) = wsHost(transport)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
+            val ws = transport.wsListener ?: error("websocket listener must be captured")
+            ws.onMessage(null, ByteArray(900_000) { 7 })
+            // 超限帧除丢弃外须关闭连接、清理会话：监听方收到出错。
+            assertTrue(listener.errorLatch.await(10, TimeUnit.SECONDS))
+            // 会话已死：后续正常帧也不再投递（不是只丢超限那一帧）。
+            ws.onMessage(null, "hi".toByteArray())
+            Thread.sleep(500)
+            assertEquals(emptyList<String>(), listener.partials)
+        } finally {
+            host.kill()
+        }
+    }
+
+    @Test
     fun kill_cancelsInflightHttp() {
         val script = baseScript(
             "function audio(ctx) { net.httpPost('https://asr.example.com/v1/asr', {}, '', 'application/json'); }",

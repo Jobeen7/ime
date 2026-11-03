@@ -1,5 +1,6 @@
 package com.jobeen.ime.skin.runtime
 
+import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
 import com.jobeen.ime.data.manager.KeyboardManager
@@ -129,10 +130,21 @@ object SkinColorMode {
             .edit().putString(KEY, stored(mode)).apply()
     }
 
-    /** 当前配置下是否取深色板（SYSTEM 时读系统 uiMode）。 */
+    /**
+     * 当前配置下是否取深色板（SYSTEM 时读系统深浅）。
+     * 第 5 批 §3：系统夜间态以 UiModeManager 显式设置为准
+     * （对方 T22）——显式 YES/NO 优先于较旧的 configuration
+     * 回调值，消“系统已切深色、回调仍报旧值”一类竞态；
+     * UiModeManager 为 AUTO／未指定／取不到时回落 configuration
+     * 值（行为与改前一致）。单一颜色模式口径不变，不引入
+     * 第二套深浅控制。
+     */
     fun isDark(context: Context): Boolean {
+        val explicit = runCatching {
+            (context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager)?.nightMode
+        }.getOrNull()
         val systemNight = context.resources.configuration.uiMode and
             Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
-        return isDark(get(context), systemNight)
+        return isDark(get(context), NightModePolicy.resolve(explicit, systemNight))
     }
 }

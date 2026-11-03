@@ -11,6 +11,9 @@ import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.base.feedback.InputFeedbacks
+import com.jobeen.ime.input.EnterDecision
+import com.jobeen.ime.input.EnterFieldBoundary
+import com.jobeen.ime.input.EnterOutcome
 import com.jobeen.ime.input.keyboard.key.AltTextKeyView
 import com.jobeen.ime.input.keyboard.key.CustomGestureView
 import com.jobeen.ime.input.keyboard.key.ImageKeyView
@@ -91,6 +94,16 @@ abstract class BaseKeyboard(
      * 实例内稳定；KeyDef 为 open class、按实例相等）。
      */
     private val keyViewsByDef: Map<KeyDef, KeyView>
+    /**
+     * 本键盘有无专用换行键（回车精简决策输入，以键盘身份判定）：
+     * 九宫格覆写为 true（第二行那颗专用换行键），其他键盘恒 false。
+     * 只影响回车键决策与显示反推，不改任何键宽与布局。
+     */
+    open val hasDedicatedNewlineKey: Boolean = false
+    /**
+     * 回车键图标缓存：仅作显示去重（updateEditorInfo 内写），
+     * 精简决策后不再决定行为——onAction 不许再读它做变换。
+     */
     private var returnKeyIcon: Int = 0
     /** G1 动态文字运行时跟随：可原地刷新文本的动态键（setter + 来源 + 静态回退）。 */
     private data class DynamicView(
@@ -929,20 +942,13 @@ abstract class BaseKeyboard(
         // 输入统计（2026-10-29 item-1 C）：按键计数（语音拖动
         // 探针除外，见 InputStats.noteKeyPress）。
         com.jobeen.ime.input.stats.InputStats.noteKeyPress(action)
+        // 回车精简决策：图标不再决定行为（旧的按 returnKeyIcon
+        // 换成 MultiReturnAction 的变换已删），长按 force 旁路已删。
+        // 这里只把键盘身份（有无专用换行键）填进动作，真正的
+        // 决策在分发后的引擎串行 job 内由 EnterDecision 做；
+        // 显式绑定的 MultiReturnAction 不走本分支，原样不动。
         val transformed = if (action is KeyboardAction.ReturnAction) {
-            if (action.force) {
-                action
-            } else {
-                when (returnKeyIcon) {
-                    R.drawable.ic_keyboard_send -> KeyboardAction.MultiReturnAction("SEND")
-                    R.drawable.ic_keyboard_search -> KeyboardAction.MultiReturnAction("SEARCH")
-                    R.drawable.ic_keyboard_go -> KeyboardAction.MultiReturnAction("GO")
-                    R.drawable.ic_keyboard_arrow_right -> KeyboardAction.MultiReturnAction("NEXT")
-                    R.drawable.ic_keyboard_done -> KeyboardAction.MultiReturnAction("DONE")
-                    R.drawable.ic_keyboard_arrow_left -> KeyboardAction.MultiReturnAction("PREVIOUS")
-                    else -> action
-                }
-            }
+            action.copy(hasDedicatedNewlineKey = hasDedicatedNewlineKey)
         } else {
             action
         }
@@ -1061,30 +1067,46 @@ abstract class BaseKeyboard(
 
 
     override fun updateEditorInfo(info: EditorInfo, empty: Boolean, isComposing: Boolean) {
-        val action = info.imeOptions and EditorInfo.IME_MASK_ACTION
-        val icon = if (empty || isComposing) {
-            R.drawable.ic_keyboard_return
-        } else {
-            when (action) {
-                EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
-                EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
-                EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
-                EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
-                EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
-                EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
-                else -> R.drawable.ic_keyboard_return
+        // 回车精简决策反推显示：显示与行为同一来源（EnterDecision），
+        // 不再由空探针或图标单独定。empty 参数只为接口兼容而保留，
+        // 空框不再把回车翻回换行。isComposing 在此仅作显示时点的
+        // 预测输入（组字中显示为换行图标，与旧口径一致）；按键时
+        // 的组字以引擎 job 执行时点的原始输入为准，两者时点不同
+        // 但决策函数同一，逻辑不再各定各的。残余：状态管理器的
+        // 去重三元组（动作／空／组字）不含多行与不要换行标志，
+        // 同动作的单行↔多行换框时显示可能滞后一次输入变化，
+        // 按键行为本身在按键时点现算，不受显示滞后影响。
+        // empty 参数只为接口兼容而保留，不再参与决策。
+        val field = EnterFieldBoundary.fromEditorInfo(info)
+        val displayOutcome = EnterDecision.decide(
+            composing = isComposing,
+            field = field,
+            hasDedicatedNewlineKey = hasDedicatedNewlineKey,
+            isLongPress = false,
+        )
+        val (icon, enterLabel) = when (displayOutcome) {
+            is EnterOutcome.PerformAction -> {
+                val editorAction = EnterFieldBoundary.toEditorAction(displayOutcome.action)
+                val iconForAction = when (editorAction) {
+                    EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
+                    EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
+                    EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
+                    EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
+                    EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
+                    EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
+                    else -> R.drawable.ic_keyboard_return
+                }
+                iconForAction to
+                    com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(editorAction)
             }
+            // 上屏候选、插换行、无动作在显示上都落回车图标／换行文案：
+            // 无动作（九宫格多行无标志）显示上无法再区分，按键时无动作，
+            // 换行走专用换行键，此处不另发明图标。
+            else -> R.drawable.ic_keyboard_return to "换行"
         }
         if (icon != returnKeyIcon) {
             returnKeyIcon = icon
             returnKeyView?.img?.imageResource = returnKeyIcon
-        }
-        // 文字回车键文案跟随编辑框动作：空输入/组字中恒为换行
-        // （与图标回车口径一致：此时回车只换行，不发送/搜索）。
-        val enterLabel = if (empty || isComposing) {
-            "换行"
-        } else {
-            com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(action)
         }
         enterTextSetters.forEach { it(enterLabel) }
         // 回车底色跟皮肤走：不设 backgroundOverride（分色已撤）。

@@ -13,8 +13,9 @@ class AppResetTest {
 
     @Test
     fun whitelist_containsAllKnownPrefsAndRejectsUnknown() {
-        // 本表须与全库 PREFS_NAME 逐项对齐（2026-10-31 grep 核查共 20 个，
-        // 含 db_maintenance 与 jime_fab 这两个无 PREFS_NAME 常量项）：
+        // 本表须与全库 PREFS_NAME 逐项对齐（2026-11-03 grep 核查共 22 个，
+        // 含 db_maintenance 与 jime_fab 这两个无 PREFS_NAME 常量项，
+        // 另含 SkinTypePrefs / AppSymbolBarTypeStore 两个私有 PREFS_NAME 项）：
         // 新增偏好文件时同步更新此表与白名单，有意豁免须注明。
         val expected = setOf(
             "keyboard_settings",
@@ -35,6 +36,8 @@ class AppResetTest {
             "skin_library",
             "appearance_settings",
             "symbol_bar",
+            "skin_keyboard_type",
+            "app_symbol_bar",
             "cloud_voice",
             "jime_fab",
         )

@@ -19,6 +19,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
+import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.keyboard.theme.MonetPalette
 import com.jobeen.ime.data.manager.KeyboardManager
@@ -97,9 +98,9 @@ private fun buildDiagRows(context: Context): List<DiagRow> {
         if (snapshot != null) {
             DiagRow(tActive, "自定义皮肤：${snapshot.name}（${snapshot.ref.skinId}）", warn = false)
         } else {
-            val themeId = KeyboardManager.Keyboard.getThemeId(context)
-            val name = KeyboardTheme.byId(themeId).name
-            DiagRow(tActive, "内置主题：$name（$themeId）", warn = false)
+            // 生效主题（非存储主题 id）：默认双槽下跟随系统取槽位，莫奈色与导入固定主题取本身。
+            val effective = KeyboardColors.themeFor(context)
+            DiagRow(tActive, "内置主题：${effective.name}（${effective.id}）", warn = false)
         }
     }
     rows += check(tDual) {
@@ -111,26 +112,33 @@ private fun buildDiagRows(context: Context): List<DiagRow> {
                 DiagRow(tDual, "缺深色板：深色下沿用浅色板", warn = true)
             }
         } else {
-            val follow = KeyboardManager.Keyboard.getFollowSystem(context)
+            // 深浅唯一由颜色模式决定（见 KeyboardColors.effectiveBuiltinThemeId）：
+            // 跟随系统＋默认双槽＝按系统取槽位；跟随系统＋莫奈色＝调色板自身随系统；
+            // 浅色／深色＝强制对应槽位；跟随系统＋导入固定主题＝单色板保持原样。
+            val mode = SkinLibraryPrefs.getColorMode(context)
             val themeId = KeyboardManager.Keyboard.getThemeId(context)
-            when {
-                follow -> {
-                    val light = KeyboardTheme.byId(
-                        KeyboardManager.Keyboard.getLightThemeId(context)
-                    ).name
-                    val dark = KeyboardTheme.byId(
-                        KeyboardManager.Keyboard.getDarkThemeId(context)
-                    ).name
-                    DiagRow(tDual, "完整（跟随系统：浅色 $light／深色 $dark）", warn = false)
+            val lightId = KeyboardManager.Keyboard.getLightThemeId(context)
+            val darkId = KeyboardManager.Keyboard.getDarkThemeId(context)
+            when (mode) {
+                SkinColorMode.LIGHT ->
+                    DiagRow(tDual, "强制浅色：${KeyboardTheme.byId(lightId).name}", warn = false)
+                SkinColorMode.DARK ->
+                    DiagRow(tDual, "强制深色：${KeyboardTheme.byId(darkId).name}", warn = false)
+                SkinColorMode.SYSTEM -> when {
+                    themeId == lightId || themeId == darkId -> {
+                        val light = KeyboardTheme.byId(lightId).name
+                        val dark = KeyboardTheme.byId(darkId).name
+                        DiagRow(tDual, "完整（跟随系统：浅色 $light／深色 $dark）", warn = false)
+                    }
+                    themeId == MonetPalette.ID ->
+                        DiagRow(tDual, "完整（随系统动态取色）", warn = false)
+                    else ->
+                        DiagRow(
+                            tDual,
+                            "单色板（固定主题 ${KeyboardTheme.byId(themeId).name}）",
+                            warn = false,
+                        )
                 }
-                themeId == MonetPalette.ID ->
-                    DiagRow(tDual, "完整（随系统动态取色）", warn = false)
-                else ->
-                    DiagRow(
-                        tDual,
-                        "单色板（固定主题 ${KeyboardTheme.byId(themeId).name}）",
-                        warn = false,
-                    )
             }
         }
     }
@@ -145,13 +153,21 @@ private fun buildDiagRows(context: Context): List<DiagRow> {
             val effective = if (mode.effectiveDark(isSystemDark)) "深色" else "浅色"
             DiagRow(tColor, "$label（当前生效：$effective）", warn = false)
         } else {
-            val follow = KeyboardManager.Keyboard.getFollowSystem(context)
-            if (follow) {
-                val effective = if (isSystemDark) "深色" else "浅色"
-                DiagRow(tColor, "跟随系统（当前生效：$effective）", warn = false)
-            } else {
-                val themeId = KeyboardManager.Keyboard.getThemeId(context)
-                DiagRow(tColor, "固定：${KeyboardTheme.byId(themeId).name}", warn = false)
+            val mode = SkinLibraryPrefs.getColorMode(context)
+            val themeId = KeyboardManager.Keyboard.getThemeId(context)
+            val lightId = KeyboardManager.Keyboard.getLightThemeId(context)
+            val darkId = KeyboardManager.Keyboard.getDarkThemeId(context)
+            when (mode) {
+                SkinColorMode.LIGHT -> DiagRow(tColor, "强制浅色", warn = false)
+                SkinColorMode.DARK -> DiagRow(tColor, "强制深色", warn = false)
+                SkinColorMode.SYSTEM -> {
+                    val effective = if (isSystemDark) "深色" else "浅色"
+                    if (themeId == lightId || themeId == darkId || themeId == MonetPalette.ID) {
+                        DiagRow(tColor, "跟随系统（当前生效：$effective）", warn = false)
+                    } else {
+                        DiagRow(tColor, "固定：${KeyboardTheme.byId(themeId).name}", warn = false)
+                    }
+                }
             }
         }
     }

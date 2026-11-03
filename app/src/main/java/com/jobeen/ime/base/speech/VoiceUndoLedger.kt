@@ -137,8 +137,15 @@ object VoiceUndoLedger {
         return true
     }
 
-    /** 恢复核对时多读的前文锚点长度：足够定位删除点，又不至把大量无关前文纳入校验 */
-    private const val ANCHOR_CHARS = 16
+    /**
+     * 恢复核对时多读的前文锚点长度：足够定位删除点，又不至把大量无关前文纳入校验。
+     *
+     * internal 而非 private：[com.jobeen.ime.input.ClearedTextLedger] 的上滑清字账本复用本类的
+     * [buildRedoPrefix]／[decideRedoApply]，锚点长度必须是同一常量——
+     * [decideRedoApply] 以「锚点是否被截断」（锚点长与 ANCHOR_CHARS 的关系）
+     * 划分满锚点区间判定与短锚点严判，两处取值一旦不同，分界就会错位。
+     */
+    internal const val ANCHOR_CHARS = 16
 
     /**
      * 纯函数：由撤销时的现读窗口 [window] 与应删总长 [totalLen]

@@ -6,6 +6,10 @@ import kotlinx.serialization.json.Json
 /**
  * .jime 包清单（定稿七.1）：一包恰一份 manifest.json，
  * contents 逐条 {type, id, path, sha256}，type ∈ {skin, layout, asset}。
+ *
+ * 第 5 批 §1：每项追加可选 [Content.sizeBytes]（导出时现算、
+ * 导入时若在场必验等于实际字节数）。旧清单无此字段时解析为
+ * null（向后兼容：缺省 = 只验 SHA 的旧口径，不拒旧包）。
  */
 @Serializable
 data class PackageManifest(
@@ -18,6 +22,8 @@ data class PackageManifest(
         val id: String,
         val path: String,
         val sha256: String,
+        /** 该项字节数（第 5 批可移植归档清单项；null = 旧清单，未声明）。 */
+        val sizeBytes: Long? = null,
     )
 
     fun skin(): Content? = contents.firstOrNull { it.type == TYPE_SKIN }

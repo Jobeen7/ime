@@ -501,11 +501,20 @@ class PluginHost(
         // 不可避免；此处是物化后、放大前的拦截，帧层硬上限需换实现，另议。
         if (bytes != null && bytes.size > MAX_WS_INBOUND_BYTES) {
             Timber.w("cloudVoice ws message dropped plugin=%s bytes=%d", plugin.meta.id, bytes.size)
+            // 超限帧此前只丢弃、会话继续：同一对端可继续以超限
+            // 帧灌会话。改走 failSession：关全部在途连接、清会
+            // 话、通知监听方出错（与 onMessage 失败同口径）。
+            // 残余：OkHttp 公共接口无入站帧级上限，帧已由 OkHttp
+            // 物化后才到此处——物化前无法拦截，超限帧的物化内
+            // 存峰值仍在，本处只是物化后、放大前的拦截＋事后清理，
+            // 不是帧级硬上限。
+            failSession("ws_frame_too_large")
             return
         }
         val data = text ?: bytes?.let { base64.encodeToString(it) } ?: return
         if (data.length > MAX_WS_INBOUND_CHARS) {
             Timber.w("cloudVoice ws message dropped plugin=%s len=%d", plugin.meta.id, data.length)
+            failSession("ws_frame_too_large")
             return
         }
         val ctx = NativeObject()
@@ -866,11 +875,31 @@ class PluginHost(
                 (bytes[pos + 3].toInt() and 0xFF)
         }
 
-        /** gzip 解压（纯函数，供 net.gunzip 桥接使用；失败抛异常，由桥接
-         * 转 null）。 */
+        /**
+         * gzip 解压（纯函数，供 net.gunzip 桥接与豆包帧解析使用；
+         * 失败抛异常，由调用方转 null／丢帧）。按块累计输出字节：
+         * 输出超 [MAX_GUNZIP_BYTES] 立即中止并抛错，绝不把整段
+         * 解压结果先攒进内存——旧 copyTo 无输出上限，压缩炸弹
+         * （小压缩体解出超大输出）可直接撑爆堆。超限与损坏同按
+         * 坏帧处置：豆包路径丢帧、net.gunzip 桥接返 null；调用
+         * 方不重试、不恢复。残余：上限是解压后字节数，不是堆
+         * 占用——8MiB 输出本身仍会完整进内存一次，属设计内成本。
+         */
         internal fun gunzipBytes(data: ByteArray): ByteArray {
             val out = ByteArrayOutputStream()
-            GZIPInputStream(data.inputStream()).use { it.copyTo(out) }
+            val buffer = ByteArray(8192)
+            GZIPInputStream(data.inputStream()).use { gz ->
+                var total = 0L
+                while (true) {
+                    val read = gz.read(buffer)
+                    if (read < 0) break
+                    total += read
+                    if (total > MAX_GUNZIP_BYTES) {
+                        throw IllegalStateException("gunzip output exceeds limit")
+                    }
+                    out.write(buffer, 0, read)
+                }
+            }
             return out.toByteArray()
         }
 
@@ -886,6 +915,13 @@ class PluginHost(
         const val MAX_SANDBOX_BYTES = 10L * 1024 * 1024
         const val MAX_LIST_ENTRIES = 256
         const val MAX_WS_INBOUND_CHARS = 1024 * 1024
+
+        /**
+         * GZIP 解压后字节上限：WS 压缩帧本身已 ≤768KiB，JSON
+         * 文本约 10 倍膨胀余量即 8MiB——覆盖识别帧随 utterances
+         * 累积变大的合法情形，同时把压缩炸弹的输出钉在 8MiB 内。
+         */
+        const val MAX_GUNZIP_BYTES = 8 * 1024 * 1024
 
         /** WS 二进制入站字节上限：由字符上限换算（每 3 字节变 4 字符），与原来接受集一致。 */
         const val MAX_WS_INBOUND_BYTES = MAX_WS_INBOUND_CHARS * 3 / 4
