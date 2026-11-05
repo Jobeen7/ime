@@ -17,6 +17,7 @@ class ApplyTransactionTest {
 
     private class FakePorts : ApplyTransaction.Ports {
         var buildResult = true
+        var buildBehavior: (SkinGenRef) -> Boolean = { buildResult }
         var switchBehavior: (SkinGenRef?) -> Boolean = { true }
         var firstRenderResult = true
         val switchCalls = mutableListOf<SkinGenRef?>()
@@ -24,19 +25,26 @@ class ApplyTransactionTest {
         var stateAtSwitch: ApplyState? = null
         var stateAtFirstRender: ApplyState? = null
         var peekState: (suspend () -> ApplyState?)? = null
+        /** 切换成功后运行态的皮肤（null = 内置默认；只在成功时更新）。 */
+        var installed: SkinGenRef? = null
+        /** 首渲判定前注入故障（如把库目录置只读，令后续写记录失败）。 */
+        var onFirstRender: (() -> Unit)? = null
 
         override fun buildSnapshot(ref: SkinGenRef): Boolean {
             buildCalls++
-            return buildResult
+            return buildBehavior(ref)
         }
 
         override fun switchRuntime(ref: SkinGenRef?): Boolean {
             switchCalls += ref
             peekState?.let { stateAtSwitch = runBlocking { it() } }
-            return switchBehavior(ref)
+            val ok = switchBehavior(ref)
+            if (ok) installed = ref
+            return ok
         }
 
         override suspend fun awaitFirstRender(): Boolean {
+            onFirstRender?.invoke()
             peekState?.let { stateAtFirstRender = runBlocking { it() } }
             return firstRenderResult
         }
@@ -70,6 +78,27 @@ class ApplyTransactionTest {
 
         suspend fun active(): ActiveRecord =
             (store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+
+        /**
+         * 把 active.json 换成同名空目录并备份原文件：原子写经 tmp＋
+         * rename 覆盖目标，覆盖目录时 rename 必失败（root 亦然；
+         * chmod 权限位对 root 无效，不能用）。令后续 writeActive
+         * 抛错，测恢复的写失败分支；[unblockActiveWrite] 恢复原文件。
+         */
+        fun blockActiveWrite() {
+            val active = layout.activeFile
+            val bak = File(root, "active.json.bak-test")
+            check(active.renameTo(bak)) { "backup active.json failed" }
+            check(active.mkdir()) { "mkdir active.json failed" }
+        }
+
+        /** 恢复 [blockActiveWrite] 的备份（finally 里调）。 */
+        fun unblockActiveWrite() {
+            val active = layout.activeFile
+            val bak = File(root, "active.json.bak-test")
+            if (active.isDirectory) active.delete()
+            if (bak.isFile) bak.renameTo(active)
+        }
     }
 
     @Test
@@ -258,5 +287,159 @@ class ApplyTransactionTest {
         assertTrue(f.store.readLastGood() is SkinLibraryStore.ReadResult.Ok)
         val back = f.tx.rollbackToLastGood()
         assertEquals(ApplyTransaction.Result.RolledBackToLastGood(ref1), back)
+    }
+
+    // ---- 2026-11-05 审计 #1 项 2：回滚 fault injection ----
+    // 结果、运行快照（ports.installed）、磁盘 active/LastGood 三者
+    // 必须一致；任一步失败都返回 RollbackFailed，绝不声称已恢复。
+
+    @Test
+    fun restoreSwitchFalseFallsBackToDefault() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        assertEquals(ref1, f.ports.installed)
+        // 新皮肤切换失败，且切回上一好也返回 false：退默认。
+        f.ports.switchBehavior = { ref -> ref == null }
+        val result = f.tx.apply(ref2)
+        assertEquals(ApplyTransaction.Result.SwitchFailedRolledBack(ref2, null), result)
+        assertEquals(null, f.ports.installed)
+        assertEquals(null, f.active().skinId)
+    }
+
+    @Test
+    fun restoreSwitchThrowsFallsBackToDefault() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        // 切上一好抛异常与返回 false 同义（runPort 口径）：退默认。
+        f.ports.switchBehavior = { ref ->
+            if (ref == null) true else throw IllegalStateException("switch boom")
+        }
+        val result = f.tx.apply(ref2)
+        assertEquals(ApplyTransaction.Result.SwitchFailedRolledBack(ref2, null), result)
+        assertEquals(null, f.ports.installed)
+        assertEquals(null, f.active().skinId)
+    }
+
+    @Test
+    fun restoreDefaultSwitchFalseReportsRollbackFailed() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        // 全部切换都失败：上一好切不回、默认也切不回。
+        f.ports.switchBehavior = { false }
+        val result = f.tx.apply(ref2)
+        assertEquals(
+            ApplyTransaction.Result.RollbackFailed(
+                ref2, "switch_failed", "restore_default_switch_failed",
+            ),
+            result,
+        )
+        // 运行态仍是上一好（切换从未成功移动），记录仍是失败皮肤
+        // 的 pending（未被声称为已恢复），Last-Good 仍为 gen1。
+        assertEquals(ref1, f.ports.installed)
+        assertEquals(2, f.active().generation)
+        assertEquals(ApplyState.PENDING, f.active().state)
+        val lastGood = (f.store.readLastGood() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(1, lastGood.generation)
+    }
+
+    @Test
+    fun firstApplyRestoreDefaultSwitchFalseReportsRollbackFailed() = runBlocking {
+        val f = Fixture()
+        val ref = f.skinGen("s1", 1)
+        f.ports.switchBehavior = { false }
+        val result = f.tx.apply(ref)
+        assertEquals(
+            ApplyTransaction.Result.RollbackFailed(
+                ref, "switch_failed", "restore_default_switch_failed",
+            ),
+            result,
+        )
+        assertEquals(null, f.ports.installed)
+        assertEquals(1, f.active().generation)
+        assertEquals(ApplyState.PENDING, f.active().state)
+    }
+
+    @Test
+    fun restoreActiveWriteFailureReportsRollbackFailed() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        f.ports.firstRenderResult = false
+        // 首渲判定后把 active.json 换成目录：恢复的切换能成功、写记录失败。
+        f.ports.onFirstRender = { f.blockActiveWrite() }
+        val result: ApplyTransaction.Result
+        try {
+            result = f.tx.apply(ref2)
+        } finally {
+            f.unblockActiveWrite()
+        }
+        assertEquals(
+            ApplyTransaction.Result.RollbackFailed(
+                ref2, "first_render_failed", "restore_active_write_failed",
+            ),
+            result,
+        )
+        // 运行态已切回上一好，但记录仍是失败皮肤的 pending（写被
+        // 注入挡住、原文件未被改写），Last-Good 仍为 gen1。
+        assertEquals(ref1, f.ports.installed)
+        assertEquals(2, f.active().generation)
+        assertEquals(ApplyState.PENDING, f.active().state)
+        val lastGood = (f.store.readLastGood() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(1, lastGood.generation)
+    }
+
+    @Test
+    fun restoreDefaultWriteFailureReportsRollbackFailed() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        // 上一好重建失败 → 退默认；默认切换成功、写默认记录失败。
+        f.ports.buildBehavior = { ref -> ref != ref1 }
+        f.ports.firstRenderResult = false
+        f.ports.onFirstRender = { f.blockActiveWrite() }
+        val result: ApplyTransaction.Result
+        try {
+            result = f.tx.apply(ref2)
+        } finally {
+            f.unblockActiveWrite()
+        }
+        assertEquals(
+            ApplyTransaction.Result.RollbackFailed(
+                ref2, "first_render_failed", "restore_default_write_failed",
+            ),
+            result,
+        )
+        assertEquals(null, f.ports.installed)
+        assertEquals(2, f.active().generation)
+        assertEquals(ApplyState.PENDING, f.active().state)
+    }
+
+    @Test
+    fun revertToDefaultWriteFailureReportsUnavailable() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        f.tx.apply(ref1)
+        f.blockActiveWrite()
+        val result: ApplyTransaction.Result
+        try {
+            result = f.tx.revertToDefault()
+        } finally {
+            f.unblockActiveWrite()
+        }
+        assertEquals(
+            ApplyTransaction.Result.RollbackUnavailable("active_write_failed"),
+            result,
+        )
+        assertEquals(null, f.ports.installed)
+        assertEquals(1, f.active().generation)
+        assertEquals(ApplyState.VERIFIED, f.active().state)
     }
 }

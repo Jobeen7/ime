@@ -4,7 +4,6 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.image.ImageDecodePolicy
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * 单键图片键面位图解析（G1）：
@@ -16,6 +15,14 @@ import java.util.concurrent.ConcurrentHashMap
  *   null，渲染回退颜色键面并记一条 WARN（只记资产 id，不记内容）。
  * - 缓存上限：失败结果亦缓存（避免每次重建重复解码失败），
  *   快照切换/卸载时由 provider 清空。
+ *
+ * 代次令牌（2026-11-05 审计 #1 项 3）：缓存键为（代次，资产 id），
+ * resolve 开始时捕获代次与字节源、解码在锁外进行，完成后仅当
+ * 代次仍相同才写回——切换后才完成的旧皮肤解码绝不污染新皮肤
+ * 同名 assetId 的缓存；安装（代次更新＋缓存清理＋字节源注入）
+ * 经 [installProvider] 在同一把锁下原子完成。旧位图不立即
+ * recycle（仍可能被旧 KeyView 绘制）：退役后保留一个代次，
+ * 再切换时回收（见 [retireCurrentLocked]）。
  */
 object SkinKeyImageStore {
 
@@ -25,33 +32,90 @@ object SkinKeyImageStore {
     @Volatile
     var bytesProvider: ((String) -> ByteArray?)? = null
 
-    // ConcurrentHashMap 不接受 null 值：命中与否分两个容器记
-    // （cache 只存成功位图，resolved 记已解析过的 id 含失败）。
-    private val cache = ConcurrentHashMap<String, Bitmap>()
-    private val resolved = ConcurrentHashMap.newKeySet<String>()
-    private val logged = ConcurrentHashMap.newKeySet<String>()
+    /** 缓存键：代次＋资产 id——同名 assetId 在不同皮肤代次下内容不同，绝不串味。 */
+    private data class CacheKey(val generation: Long, val assetId: String)
+
+    private val lock = Any()
+    private var generation = 0L
+
+    // 以下容器一律由 lock 守卫（HashMap/HashSet 非线程安全）：
+    // cache 只存成功位图，resolved 记已解析过的键（含失败），
+    // inFlight 记正在解码的键（在途合并），retired 记已退役、
+    // 待延迟回收的位图（代次，位图）。
+    private val cache = HashMap<CacheKey, Bitmap>()
+    private val resolved = HashSet<CacheKey>()
+    private val logged = HashSet<CacheKey>()
+    private val inFlight = HashSet<CacheKey>()
+    private val retired = ArrayDeque<Pair<Long, Bitmap>>()
+
+    /** 测试缝：解码器（默认 [decode]）；生产不改。 */
+    internal var decoder: (ByteArray) -> Bitmap? = ::decode
+
+    /** 测试缝：位图回收（默认未回收才 recycle）；生产不改。 */
+    internal var bitmapRecycler: (Bitmap) -> Unit = { bitmap ->
+        if (!bitmap.isRecycled) bitmap.recycle()
+    }
+
+    /** 当前代次（测试用）。 */
+    internal val currentGeneration: Long
+        get() = synchronized(lock) { generation }
 
     /**
      * 按资产 id 取位图（null = 无图/解码失败，调用方回退颜色键面）。
-     * 第 5 批 §2：在途合并——整个解析加锁，同一 key 并发调用只
-     * 解码一次（后来者直接取缓存／失败记录）；失败结果亦缓存，
-     * 快照切换（clear）前不再重试（世代变更语义由 clear 承载）。
+     * 第 5 批 §2：在途合并——同一键并发调用只解码一次（后来者等
+     * 首个解码者完成后再重取，代次可能已变）；失败结果亦缓存，
+     * 快照切换前不再重试（世代变更语义由代次承载）。
+     * 解码在锁外进行：切换安装不被在途解码阻塞；过期结果不入缓存。
      */
-    @Synchronized
     fun resolve(assetId: String): Bitmap? {
-        if (assetId in resolved) return cache[assetId]
-        val bytes = runCatching { bytesProvider?.invoke(assetId) }.getOrNull()
-        val bitmap = if (bytes == null) {
-            null
-        } else {
-            runCatching { decode(bytes) }.getOrNull()
+        while (true) {
+            val key: CacheKey
+            val provider: ((String) -> ByteArray?)?
+            synchronized(lock) {
+                key = CacheKey(generation, assetId)
+                if (key in resolved) return cache[key]
+                if (key in inFlight) {
+                    // 等首个解码者完成（wait 释放锁，安装可并行），
+                    // 再从头重取：代次／字节源可能已变。
+                    try {
+                        (lock as Object).wait()
+                    } catch (e: InterruptedException) {
+                        Thread.currentThread().interrupt()
+                        return null
+                    }
+                    continue
+                }
+                inFlight += key
+                provider = bytesProvider
+            }
+            val bitmap = try {
+                val bytes = runCatching { provider?.invoke(assetId) }.getOrNull()
+                if (bytes == null) {
+                    null
+                } else {
+                    runCatching { decoder(bytes) }.getOrNull()
+                }
+            } finally {
+                synchronized(lock) {
+                    inFlight -= key
+                    (lock as Object).notifyAll()
+                }
+            }
+            synchronized(lock) {
+                if (generation != key.generation) {
+                    // 切换已发生：过期解码结果不入缓存、不记 resolved；
+                    // 位图本身返回给调用方（旧 KeyView 仍可用它绘制，
+                    // 预热调用方丢弃后由 GC 回收），绝不回收在用位图。
+                    return bitmap
+                }
+                resolved += key
+                if (bitmap != null) cache[key] = bitmap
+                if (bitmap == null && logged.add(key)) {
+                    DiagLog.w("keymap", "key_image_decode_fallback", mapOf("asset" to assetId))
+                }
+            }
+            return bitmap
         }
-        resolved += assetId
-        if (bitmap != null) cache[assetId] = bitmap
-        if (bitmap == null && logged.add(assetId)) {
-            DiagLog.w("keymap", "key_image_decode_fallback", mapOf("asset" to assetId))
-        }
-        return bitmap
     }
 
     /**
@@ -59,31 +123,70 @@ object SkinKeyImageStore {
      * 缓存，使后续键盘构建期 resolve 命中缓存、不在 UI 线程解码。
      * 上限 [ImageDecodePolicy.PREWARM_MAX_KEYS] 条，超出者仍走
      * 首次构建解码（旧口径）；调用方必须在 IO 线程调本函数。
+     * [shouldStop] 为真时提前停（安装方取消上一代次预热时用）。
      */
-    fun prewarm(assetIds: Iterable<String>) {
+    fun prewarm(assetIds: Iterable<String>, shouldStop: () -> Boolean = { false }) {
         for (assetId in assetIds.take(ImageDecodePolicy.PREWARM_MAX_KEYS)) {
+            if (shouldStop()) break
             runCatching { resolve(assetId) }
         }
     }
 
     /** 直接注入已解码位图（测试/预览用；生产路径走 bytesProvider）。 */
     fun put(assetId: String, bitmap: Bitmap?) {
-        resolved += assetId
-        if (bitmap != null) {
-            cache[assetId] = bitmap
-        } else {
-            cache.remove(assetId)
+        synchronized(lock) {
+            val key = CacheKey(generation, assetId)
+            resolved += key
+            if (bitmap != null) {
+                cache[key] = bitmap
+            } else {
+                cache.remove(key)
+            }
         }
     }
 
+    /**
+     * 原子安装字节源（快照切换唯一入口）：当前代次缓存退役、
+     * 代次推进、字节源注入在同一把锁下完成，中间不存在“已清
+     * 缓存、未换字节源”的窗口——该窗口内的 resolve 会把新代次
+     * 的失败结果误缓存下来。
+     */
+    fun installProvider(provider: ((String) -> ByteArray?)?) {
+        synchronized(lock) {
+            retireCurrentLocked()
+            bytesProvider = provider
+        }
+    }
+
+    /** 清空缓存与字节源（卸载／失效时用；同样推进代次，使在途解码过期）。 */
     fun clear() {
-        cache.values.forEach { bitmap ->
-            if (!bitmap.isRecycled) bitmap.recycle()
+        synchronized(lock) {
+            retireCurrentLocked()
+            bytesProvider = null
+        }
+    }
+
+    /**
+     * 当前代次退役（须持 lock）：缓存位图改记退役（不立即回收，
+     * 旧 KeyView 仍可能在绘制）；上上代次以前的退役位图此时回收
+     * ——旧视图至多滞留一个代次。代次随后推进。
+     */
+    private fun retireCurrentLocked() {
+        for ((key, bitmap) in cache) {
+            retired += key.generation to bitmap
         }
         cache.clear()
         resolved.clear()
         logged.clear()
-        bytesProvider = null
+        val iterator = retired.iterator()
+        while (iterator.hasNext()) {
+            val (gen, bitmap) = iterator.next()
+            if (gen < generation) {
+                iterator.remove()
+                runCatching { bitmapRecycler(bitmap) }
+            }
+        }
+        generation += 1
     }
 
     /**

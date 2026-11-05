@@ -22,7 +22,9 @@ import com.jobeen.ime.skin.store.SkinOverlayStore
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
@@ -62,6 +64,13 @@ object SkinSnapshotProvider {
      */
     private val rebuildScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val rebuildingKeys = mutableSetOf<String>()
+
+    /**
+     * 在途键图／字体预热任务（2026-11-05 审计 #1 项 3）：安装新
+     * 快照时取消上一代次的预热——旧预热的 resolve 即便跑完也不
+     * 入缓存（代次守卫），取消只是让它尽早停，不再白白解码。
+     */
+    private var prewarmJob: Job? = null
 
     /** 当前已验证快照（触发一次启动加载）；无 v3 皮肤生效时为 null。 */
     fun current(context: Context): SkinSnapshot? {
@@ -104,6 +113,7 @@ object SkinSnapshotProvider {
                 currentSnapshot = null
                 releaseBitmapLocked()
                 InputFeedbacks.clearSkinSounds()
+                prewarmJob?.cancel()
                 SkinKeyImageStore.clear()
                 // 运行态同步清空：旧皮肤的通知锁定不带到无皮肤态。
                 SkinRuntimeState.reset()
@@ -120,6 +130,7 @@ object SkinSnapshotProvider {
             currentSnapshot = null
             releaseBitmapLocked()
             InputFeedbacks.clearSkinSounds()
+            prewarmJob?.cancel()
             SkinKeyImageStore.clear()
             SkinRuntimeState.reset()
         }
@@ -181,9 +192,17 @@ object SkinSnapshotProvider {
         // 第 5 批 §2：IO 预热——键图与内嵌字体在 IO 段先解进缓存，
         // 使后续键盘构建／绘制期命中缓存、不在 UI 线程解码、不
         // 因首次加载加异步回调而闪烁；安装本身不等待预热完成。
+        // 旧预热先取消（2026-11-05 审计 #1 项 3）：切换后旧代次
+        // 的 resolve 即便跑完也不入缓存（代次守卫），取消只让它
+        // 尽早停。注意取消也停掉同任务内的字体预热——旧代次的
+        // 字体预热同样过期，停掉正确。
         val appContext = context.applicationContext
-        rebuildScope.launch {
-            runCatching { SkinKeyImageStore.prewarm(snapshot.imageAssets.keys) }
+        prewarmJob?.cancel()
+        prewarmJob = rebuildScope.launch {
+            val scope = this
+            runCatching {
+                SkinKeyImageStore.prewarm(snapshot.imageAssets.keys) { !scope.isActive }
+            }
             runCatching { GlobalFonts.prewarmSkinFonts(appContext, snapshot) }
         }
     }
@@ -347,15 +366,20 @@ object SkinSnapshotProvider {
     }
 
     /**
-     * G1 单键图片字节源同步：快照切换时清空旧缓存并按当前快照
-     * 的接纳表注入内容寻址读取（查无文件返回 null，渲染回退颜色键面）。
+     * G1 单键图片字节源同步：快照切换时经 [SkinKeyImageStore.installProvider]
+     * 原子完成“清旧缓存＋推进代次＋注入当前快照接纳表”（内容寻址
+     * 读取，查无文件返回 null，渲染回退颜色键面）。绝不先 clear 再
+     * 另行赋值 bytesProvider——两步之间 resolve 会把新代次的失败
+     * 结果误缓存（2026-11-05 审计 #1 项 3）。
      */
     private fun syncKeyImagesLocked(snapshot: SkinSnapshot) {
-        SkinKeyImageStore.clear()
-        if (snapshot.imageAssets.isEmpty()) return
+        if (snapshot.imageAssets.isEmpty()) {
+            SkinKeyImageStore.installProvider(null)
+            return
+        }
         val layout = SkinLibrary.layout
         val shaById = snapshot.imageAssets
-        SkinKeyImageStore.bytesProvider = { assetId ->
+        SkinKeyImageStore.installProvider { assetId ->
             val sha = shaById[assetId]
             if (sha == null) {
                 null

@@ -69,6 +69,7 @@ import com.jobeen.ime.input.EnterDecision
 import com.jobeen.ime.input.EnterField
 import com.jobeen.ime.input.EnterFieldBoundary
 import com.jobeen.ime.input.EnterOutcome
+import com.jobeen.ime.input.EnterSession
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.input.TypedUndoLedger
 import kotlinx.coroutines.CompletableDeferred
@@ -196,13 +197,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
          * IEngine.processEnter）与注入的回车键（processKey 的
          * ENTER 经 reduce 截获）都汇到这里，字段属性在分发时点
          * 捕获，组字中在 sendEnterJob 执行时点现读原始输入。
-         * 下滑 Undo 分支与本分支无关，不动。
+         * [session] 为入队时点的输入会话快照（字段身份＋代次，
+         * 见 [EnterSession]）：执行前复检，不一致丢弃，防旧会
+         * 话的 action 落到新字段上。下滑 Undo 分支与本分支无关，不动。
          */
         data class Enter(
             val service: InputMethodService,
             val field: EnterField,
             val isLongPress: Boolean,
             val hasDedicatedNewlineKey: Boolean,
+            val session: EnterSession,
         ) : Action
         data class Redo(val service: InputMethodService) : Action
 
@@ -622,8 +626,33 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             Timber.d("processEnter dropped during deploy")
             return
         }
-        dispatchAction(Action.Enter(service, field, isLongPress, hasDedicatedNewlineKey))
+        // 会话绑定（2026-11-05 审计 #1 项 4）：本函数由
+        // KeyActionListener 在主线程同步调用，与调用方映射 field
+        // 是同一调用栈、同一时点——此处取的字段身份与代次即分发
+        // 时点的会话；执行前在 sendEnterJob 复检。
+        dispatchAction(
+            Action.Enter(
+                service,
+                field,
+                isLongPress,
+                hasDedicatedNewlineKey,
+                captureEnterSession(service),
+            ),
+        )
     }
+
+    /**
+     * 捕获当前输入会话（字段身份＋代次）：调用方须在分发时点
+     * 同步调用——KeyActionListener 的软回车与 reduce 的注入回车
+     * 均满足（与 field 映射同一时点）。代次源为 prediction-
+     * FieldGen（onStartInputView 换框即推进，含 restarting 型
+     * 逻辑换框；同框重启不推进，在途回车仍属本框、照常执行）。
+     */
+    private fun captureEnterSession(service: InputMethodService): EnterSession =
+        EnterSession(
+            InputFieldKey.of(service.currentInputEditorInfo),
+            predictionFieldGen.get(),
+        )
 
     private fun processKeyInternal(key: KeyEvent) {
         if (!state.initialized) {
@@ -736,6 +765,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      */
     private fun sendEnterJob(enter: Action.Enter) {
         sendJob {
+            // 会话复检（2026-11-05 审计 #1 项 4）：入队后换框或
+            // 输入结束时，旧会话的回车一律丢弃——组字上屏与动作
+            // 执行都属旧会话，不得对新字段调 performEditorAction，
+            // 也不得把旧 Enter 键交进 Rime（会误上屏新框组字候选）。
+            // 同框重启（代次与身份皆不变）照常放行。
+            if (!enter.session.isCurrent(
+                    InputFieldKey.of(editorInfo),
+                    predictionFieldGen.get(),
+                )
+            ) {
+                Timber.d("sendEnterJob dropped stale session")
+                return@sendJob
+            }
             val composing = getRawInput().isNotEmpty()
             when (
                 val outcome = EnterDecision.decide(
@@ -998,6 +1040,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 字段属性在此由当前编辑框信息映射，长按与
                     // 专用换行键均无（注入键无长按概念、无键盘身份），
                     // 与软回车键汇合到 Action.Enter，不再进状态键旧路径。
+                    // 会话快照与字段属性同一时点捕获（见 processEnter）。
                     dispatchAction(
                         Action.Enter(
                             action.service,
@@ -1006,6 +1049,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             ),
                             isLongPress = false,
                             hasDedicatedNewlineKey = false,
+                            session = captureEnterSession(action.service),
                         ),
                     )
                 } else {

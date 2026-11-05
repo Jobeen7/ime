@@ -69,25 +69,78 @@ class EnterDecisionTest {
     }
 
     @Test
-    fun multiLineWithNoEnterActionPerformsActionOrDone() {
-        assertEquals(
-            EnterOutcome.PerformAction(EnterFieldAction.SEND),
-            EnterDecision.decide(
-                false,
-                field(isMultiLine = true, noEnterAction = true, action = EnterFieldAction.SEND),
-                false,
-                false,
-            ),
+    fun multiLineWithNoEnterActionNeverPerformsAction() {
+        // 2026-11-05 修正（审计 #1 项 1）：IME_FLAG_NO_ENTER_ACTION
+        // 的平台含义是“回车不得被 action 取代”，多行字段按回车恒
+        // 插换行（九宫格：换行走专用换行键，本键无动作），绝不因
+        // action=SEND/DONE 走 performEditorAction。旧单测把反向
+        // 语义断言为 SEND/DONE，本测试按平台语义改写。
+        for (action in listOf(
+            EnterFieldAction.SEND, EnterFieldAction.DONE, EnterFieldAction.UNSPECIFIED,
+        )) {
+            assertEquals(
+                EnterOutcome.InsertNewline,
+                EnterDecision.decide(
+                    false,
+                    field(isMultiLine = true, noEnterAction = true, action = action),
+                    false,
+                    false,
+                ),
+            )
+            assertEquals(
+                EnterOutcome.NoOp,
+                EnterDecision.decide(
+                    false,
+                    field(isMultiLine = true, noEnterAction = true, action = action),
+                    true,
+                    false,
+                ),
+            )
+        }
+    }
+
+    @Test
+    fun decisionMatrixSingleMultiByActionFlagAndDedicatedKey() {
+        // 回归矩阵：单行/多行 × SEND/DONE/UNSPECIFIED × 有无
+        // NO_ENTER_ACTION × 有无专用换行键（点按、非组字）。
+        // 单行恒发动作（标志不影响单行）；多行恒不发动作——无专
+        // 用换行键插换行、有专用换行键无动作，与标志、声明动作无关。
+        val actions = listOf(
+            EnterFieldAction.SEND, EnterFieldAction.DONE, EnterFieldAction.UNSPECIFIED,
         )
-        assertEquals(
-            EnterOutcome.PerformAction(EnterFieldAction.DONE),
-            EnterDecision.decide(
-                false,
-                field(isMultiLine = true, noEnterAction = true),
-                true,
-                false,
-            ),
-        )
+        for (action in actions) {
+            val expectedSingle = EnterOutcome.PerformAction(
+                if (action == EnterFieldAction.UNSPECIFIED) EnterFieldAction.DONE else action,
+            )
+            for (noEnterAction in listOf(false, true)) {
+                for (dedicated in listOf(false, true)) {
+                    assertEquals(
+                        expectedSingle,
+                        EnterDecision.decide(
+                            false,
+                            field(noEnterAction = noEnterAction, action = action),
+                            dedicated,
+                            false,
+                        ),
+                    )
+                    val expectedMulti: EnterOutcome =
+                        if (dedicated) EnterOutcome.NoOp else EnterOutcome.InsertNewline
+                    assertEquals(
+                        expectedMulti,
+                        EnterDecision.decide(
+                            false,
+                            field(
+                                isMultiLine = true,
+                                noEnterAction = noEnterAction,
+                                action = action,
+                            ),
+                            dedicated,
+                            false,
+                        ),
+                    )
+                }
+            }
+        }
     }
 
     @Test
@@ -118,7 +171,8 @@ class EnterDecisionTest {
     @Test
     fun longPressWithoutDedicatedKeyIsNewlineExceptComposing() {
         // 无专用换行键时长按等于插换行（手机上的 Shift+Enter 口子），
-        // 覆盖单行动作与多行不要换行标志两种点按会发动作的情形。
+        // 覆盖单行动作与多行不要换行标志两种情形：后者点按已是
+        // 换行（2026-11-05 修正），长按同样插换行。
         assertEquals(
             EnterOutcome.InsertNewline,
             EnterDecision.decide(
