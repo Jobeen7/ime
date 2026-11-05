@@ -12,7 +12,10 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -23,6 +26,7 @@ import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.keyboard.theme.MonetPalette
 import com.jobeen.ime.data.manager.KeyboardManager
+import com.jobeen.ime.skin.diag.DiagPrefs
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.library.SkinColorMode
 import com.jobeen.ime.skin.library.SkinLibraryPrefs
@@ -30,6 +34,7 @@ import com.jobeen.ime.skin.model.Degradation
 import com.jobeen.ime.skin.model.LayoutResolution
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
+import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 
 /**
  * 主题诊断（2026-10-29 批量第 5 项）：只读快照检查，不写任何状态。
@@ -43,6 +48,12 @@ private data class DiagRow(val title: String, val detail: String, val warn: Bool
 fun SkinDiagnosticsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val rows = remember { buildDiagRows(context) }
+    // 诊断模式开关（直连 DiagPrefs；此前全仓库零调用，App 内无任何
+    // UI 能打开，KeyFaceDiag 的 key= 行与 PerfMonitor 的 P4 探针在
+    // 真机上永远不触发——只加开关，不改诊断逻辑本身）。
+    var diagnosticEnabled by remember {
+        mutableStateOf(DiagPrefs.isDiagnosticMode(context))
+    }
 
     SettingsPageScaffold(
         title = stringResource(R.string.skin_diag_title),
@@ -68,6 +79,23 @@ fun SkinDiagnosticsScreen(onBack: () -> Unit) {
                         )
                     }
                 }
+            }
+            Spacer(Modifier.height(12.dp))
+            GroupCard {
+                SwitchRow(
+                    title = stringResource(R.string.skin_diag_diagnostic_mode),
+                    checked = diagnosticEnabled,
+                    onCheckedChange = { enabled ->
+                        DiagPrefs.setDiagnosticMode(context, enabled)
+                        diagnosticEnabled = enabled
+                    },
+                )
+                Text(
+                    text = stringResource(R.string.skin_diag_diagnostic_mode_desc),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 10.dp),
+                )
             }
     }
 }

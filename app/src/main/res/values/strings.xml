@@ -84,6 +84,8 @@
     <string name="skin_diag_layout">布局绑定</string>
     <string name="skin_diag_degradation">降级情况</string>
     <string name="skin_diag_suggestion">修复建议</string>
+    <string name="skin_diag_diagnostic_mode">诊断模式</string>
+    <string name="skin_diag_diagnostic_mode_desc">开启后才记录逐键面色诊断与分段探针（启动步骤、按键分发、引擎处理、提交上屏、主线程卡顿），用于定位皮肤与性能问题；关闭后不记录。</string>
     <!-- 应用级脚本管理 -->
     <string name="skin_script_title">脚本管理</string>
     <string name="skin_script_empty">暂无脚本</string>

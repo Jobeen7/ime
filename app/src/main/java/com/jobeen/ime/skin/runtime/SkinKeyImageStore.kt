@@ -61,6 +61,18 @@ object SkinKeyImageStore {
         get() = synchronized(lock) { generation }
 
     /**
+     * 性能面板「皮肤图片缓存」行：当前代次缓存项数与估算字节
+     * （位图 allocationByteCount 求和；退役滞留位图不在 cache 内，不计入）。
+     */
+    fun cacheStats(): Pair<Int, Long> = synchronized(lock) {
+        var bytes = 0L
+        for (bitmap in cache.values) {
+            bytes += runCatching { bitmap.allocationByteCount.toLong() }.getOrDefault(0L)
+        }
+        cache.size to bytes
+    }
+
+    /**
      * 按资产 id 取位图（null = 无图/解码失败，调用方回退颜色键面）。
      * 第 5 批 §2：在途合并——同一键并发调用只解码一次（后来者等
      * 首个解码者完成后再重取，代次可能已变）；失败结果亦缓存，
