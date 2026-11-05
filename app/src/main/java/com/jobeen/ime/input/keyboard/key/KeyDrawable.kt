@@ -97,6 +97,20 @@ fun borderedKeyBackgroundDrawable(
     strokeWidth: Int,
     hMargin: Int,
     vMargin: Int,
+): Drawable = borderedKeyBackgroundDrawable(
+    bkgColor, strokeColor, radius, strokeWidth, hMargin, vMargin, hMargin, vMargin,
+)
+
+/** L4 四边版：左／上／右／下内缩可各不相同；对称值与两值版逐像素一致。 */
+fun borderedKeyBackgroundDrawable(
+    @ColorInt bkgColor: Int,
+    @ColorInt strokeColor: Int,
+    radius: Float,
+    strokeWidth: Int,
+    hMarginLeft: Int,
+    vMarginTop: Int,
+    hMarginRight: Int,
+    vMarginBottom: Int,
 ): Drawable = LayerDrawable(
     arrayOf(
         GradientDrawable().apply {
@@ -107,7 +121,7 @@ fun borderedKeyBackgroundDrawable(
         },
     ),
 ).apply {
-    setLayerInset(0, hMargin, vMargin, hMargin, vMargin)
+    setLayerInset(0, hMarginLeft, vMarginTop, hMarginRight, vMarginBottom)
 }
 
 /**
@@ -124,6 +138,25 @@ fun dualShadowKeyBackgroundDrawable(
     strokeWidth: Int,
     hMargin: Int,
     vMargin: Int,
+    @ColorInt lightColor: Int,
+    @ColorInt darkColor: Int,
+    offsetPx: Int,
+): Drawable = dualShadowKeyBackgroundDrawable(
+    bkgColor, strokeColor, radius, strokeWidth,
+    hMargin, vMargin, hMargin, vMargin,
+    lightColor, darkColor, offsetPx,
+)
+
+/** L4 四边版：影层按四边内缩各自偏移；对称值与两值版逐像素一致。 */
+fun dualShadowKeyBackgroundDrawable(
+    @ColorInt bkgColor: Int,
+    @ColorInt strokeColor: Int,
+    radius: Float,
+    strokeWidth: Int,
+    hMarginLeft: Int,
+    vMarginTop: Int,
+    hMarginRight: Int,
+    vMarginBottom: Int,
     @ColorInt lightColor: Int,
     @ColorInt darkColor: Int,
     offsetPx: Int,
@@ -149,16 +182,16 @@ fun dualShadowKeyBackgroundDrawable(
         // 左上亮：左/上内缩减小、右/下内缩增大 → 整体向左上偏移。
         setLayerInset(
             0,
-            (hMargin - o).coerceAtLeast(0), (vMargin - o).coerceAtLeast(0),
-            hMargin + o, vMargin + o,
+            (hMarginLeft - o).coerceAtLeast(0), (vMarginTop - o).coerceAtLeast(0),
+            hMarginRight + o, vMarginBottom + o,
         )
         // 右下暗：反向偏移。
         setLayerInset(
             1,
-            hMargin + o, vMargin + o,
-            (hMargin - o).coerceAtLeast(0), (vMargin - o).coerceAtLeast(0),
+            hMarginLeft + o, vMarginTop + o,
+            (hMarginRight - o).coerceAtLeast(0), (vMarginBottom - o).coerceAtLeast(0),
         )
-        setLayerInset(2, hMargin, vMargin, hMargin, vMargin)
+        setLayerInset(2, hMarginLeft, vMarginTop, hMarginRight, vMarginBottom)
     }
 }
 

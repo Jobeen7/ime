@@ -46,6 +46,13 @@ open class KeyDef(
         var visibility: Int = View.VISIBLE,
         open val rowSpan: Int = 1,
         open val alignSpanEnd: Boolean = false,
+        /**
+         * L1 跨行列区间（可选）：span 在起始行键链中的列位置，
+         * [spanCol, spanColEnd)；null = 沿用 alignSpanEnd 旧口径
+         * （左 → [0,1)，右 → [n,n+1)）。仅 rowSpan > 1 的键有意义。
+         */
+        open val spanCol: Int? = null,
+        open val spanColEnd: Int? = null,
     ) {
         /**
          * 单键样式解析结果（2026-10-27 并入项）：只由覆写装配器
@@ -135,6 +142,11 @@ open class KeyDef(
         /** G1 可视区域附加内缩（dp，叠加于皮肤级键间距之上）。 */
         var skinHInsetDp: Float? = null
         var skinVInsetDp: Float? = null
+        /** L4 四边内缩（dp）：单边优先于对称值（缺边回落 h/v，见 KeyView）。 */
+        var skinLeftInsetDp: Float? = null
+        var skinRightInsetDp: Float? = null
+        var skinTopInsetDp: Float? = null
+        var skinBottomInsetDp: Float? = null
         /**
          * G1 可视高度乘子（0.5..1.0）：行高由网格固定，只能以对称
          * 竖向内缩实现可视收缩；渲染层按 (1-factor)*12dp 换算附加竖向内缩。
@@ -222,9 +234,12 @@ open class KeyDef(
              */
             override val rowSpan: Int = 1,
             override val alignSpanEnd: Boolean = false,
+            /** L1 跨行列区间（可选，见基类）；null = 沿用旧口径。 */
+            override val spanCol: Int? = null,
+            override val spanColEnd: Int? = null,
         ) : Appearance(
             percentWidth, variant, border, margin, viewId, visibility,
-            rowSpan, alignSpanEnd,
+            rowSpan, alignSpanEnd, spanCol, spanColEnd,
         )
 
         class AltText(
@@ -243,6 +258,8 @@ open class KeyDef(
             visibility: Int = View.VISIBLE,
             rowSpan: Int = 1,
             alignSpanEnd: Boolean = false,
+            spanCol: Int? = null,
+            spanColEnd: Int? = null,
         ) : Text(
             displayText,
             textSize,
@@ -254,7 +271,9 @@ open class KeyDef(
             viewId,
             visibility,
             rowSpan,
-            alignSpanEnd
+            alignSpanEnd,
+            spanCol,
+            spanColEnd,
         )
 
         class SidePannel(
@@ -290,9 +309,11 @@ open class KeyDef(
             viewId: Int = -1,
             rowSpan: Int = 1,
             alignSpanEnd: Boolean = false,
+            spanCol: Int? = null,
+            spanColEnd: Int? = null,
         ) : Text(
             displayText, textSize, textStyle, percentWidth, variant, border,
-            margin, viewId, View.VISIBLE, rowSpan, alignSpanEnd,
+            margin, viewId, View.VISIBLE, rowSpan, alignSpanEnd, spanCol, spanColEnd,
         )
     }
 

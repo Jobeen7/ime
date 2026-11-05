@@ -177,18 +177,31 @@ abstract class BaseKeyboard(
     }
 
     init {
-        data class SpanDef(val def: KeyDef, val startRow: Int, val endRow: Int, val alignEnd: Boolean)
+        /**
+         * L1 跨行列模型：spanCol = 其左侧的行内键数（0 = 行首，
+         * 已按起始行行内键数钳制）；null 列信息沿用 alignSpanEnd
+         * 旧口径（左 → 0，右 → 起始行行内键数）。
+         */
+        data class SpanDef(
+            val def: KeyDef,
+            val startRow: Int,
+            val endRow: Int,
+            val spanCol: Int,
+        )
 
         val spanDefs = mutableListOf<SpanDef>()
         for (ri in keyLayout.indices) {
+            val inRowCount = keyLayout[ri].count { it.appearance.rowSpan <= 1 }
             for (def in keyLayout[ri]) {
                 if (def.appearance.rowSpan > 1) {
+                    val col = def.appearance.spanCol
+                        ?: if (def.appearance.alignSpanEnd) inRowCount else 0
                     spanDefs.add(
                         SpanDef(
                             def,
                             ri,
                             (ri + def.appearance.rowSpan - 1).coerceAtMost(keyLayout.size - 1),
-                            def.appearance.alignSpanEnd,
+                            col.coerceIn(0, inRowCount),
                         )
                     )
                 }
@@ -200,37 +213,76 @@ abstract class BaseKeyboard(
         val registry = mutableMapOf<KeyDef, KeyView>()
         spanDefs.forEachIndexed { i, sd -> registry[sd.def] = spanViews[i] }
 
+        // L1 每行列布局：覆盖 span（按 spanCol 升序）、缩放因子
+        // spanScale = (1 − Σ覆盖 span 宽) / Σ行内键宽（行内键宽和
+        // 为 0 时取 1）。不变量成立时（Σ行内键宽 + Σ覆盖 span 宽
+        // = 1.0）spanScale = 1，旧布局逐像素不变；违反时行内键
+        // 等比缩放、spacer 恒为 span 自身宽，行总和恒为 1.0、
+        // 永不溢出（旧渲染以同口径缩放吸收超限，见 AGENTS.md
+        // 行和不变量；行宽重推见 LayoutKeyDefBuilder 空白目标）。
+        val rowSpans = keyLayout.indices.map { rowIndex ->
+            spanDefs.filter { rowIndex in it.startRow..it.endRow }
+                .sortedBy { it.spanCol }
+        }
+        val rowSpanScales = keyLayout.indices.map { rowIndex ->
+            val parts = keyLayout[rowIndex].filterNot { it.appearance.rowSpan > 1 }
+            val inRowSum = parts.sumOf { it.appearance.percentWidth.toDouble() }.toFloat()
+            val spanSum = rowSpans[rowIndex]
+                .sumOf { it.def.appearance.percentWidth.toDouble() }.toFloat()
+            if (inRowSum > 0f) ((1f - spanSum) / inRowSum).coerceAtLeast(0f) else 1f
+        }
+
         keyRows = keyLayout.mapIndexed { rowIndex, row ->
             val parts =
                 row.filterNot { it.appearance.rowSpan > 1 }
             val keyViews = parts.map { def -> createKeyView(def).also { registry[def] = it } }
-            val leftSpanWidth = spanDefs
-                .filter { rowIndex in it.startRow..it.endRow && !it.alignEnd }
-                .maxOfOrNull { it.def.appearance.percentWidth } ?: 0f
-            val rightSpanWidth = spanDefs
-                .filter { rowIndex in it.startRow..it.endRow && it.alignEnd }
-                .maxOfOrNull { it.def.appearance.percentWidth } ?: 0f
-            val occupiedWidth = leftSpanWidth + rightSpanWidth
-            val spanScale = if (occupiedWidth > 0f) 1f / (1f - occupiedWidth) else 1f
+            val covering = rowSpans[rowIndex]
+            val spanScale = rowSpanScales[rowIndex]
+            // 透明占位格（L1）：INVISIBLE（占位不交互；GONE 会塌掉
+            // 链宽），每覆盖 span 一个，宽 = span 自身 percentWidth
+            // （不缩放，与 span 视图恒对齐）。
+            val spacerViews = covering.map {
+                View(context).apply {
+                    visibility = View.INVISIBLE
+                    id = generateViewId()
+                }
+            }
+            // 合并链：行内键按序，spacer 插在其 spanCol 个键之后
+            // （spanCol = 其左侧的行内键数）；同列多 span 按
+            // spanDefs 序。
+            val elements = mutableListOf<Pair<View, Float>>()
+            var inserted = 0
+            for ((keyIndex, view) in keyViews.withIndex()) {
+                while (inserted < covering.size && covering[inserted].spanCol <= keyIndex) {
+                    val sd = covering[inserted]
+                    elements += spacerViews[inserted] to sd.def.appearance.percentWidth
+                    inserted++
+                }
+                elements += view to parts[keyIndex].appearance.percentWidth * spanScale
+            }
+            while (inserted < covering.size) {
+                val sd = covering[inserted]
+                elements += spacerViews[inserted] to sd.def.appearance.percentWidth
+                inserted++
+            }
 
             constraintLayout {
-                keyViews.forEachIndexed { index, view ->
+                elements.forEachIndexed { index, (view, width) ->
                     add(view, lParams {
                         centerVertically()
                         if (index == 0) {
                             leftOfParent()
                             horizontalChainStyle = LayoutParams.CHAIN_PACKED
                         } else {
-                            leftToRightOf(keyViews[index - 1])
+                            leftToRightOf(elements[index - 1].first)
                         }
-                        if (index == keyViews.size - 1) {
+                        if (index == elements.size - 1) {
                             rightOfParent()
                             horizontalChainStyle = LayoutParams.CHAIN_PACKED
                         } else {
-                            rightToLeftOf(keyViews[index + 1])
+                            rightToLeftOf(elements[index + 1].first)
                         }
-                        matchConstraintPercentWidth =
-                            parts[index].appearance.percentWidth * spanScale
+                        matchConstraintPercentWidth = width
                     })
                 }
                 // 原 expandKeypressArea 分支已删：该开关恒 false、全仓
@@ -243,30 +295,40 @@ abstract class BaseKeyboard(
                 else below(keyRows[index - 1])
                 if (index == keyRows.size - 1) bottomOfParent()
                 else above(keyRows[index + 1])
-                val leftSpanAtRow =
-                    spanDefs.indexOfFirst { index in it.startRow..it.endRow && !it.alignEnd }
-                val rightSpanAtRow =
-                    spanDefs.indexOfFirst { index in it.startRow..it.endRow && it.alignEnd }
-                if (leftSpanAtRow >= 0) {
-                    leftToRightOf(spanViews[leftSpanAtRow])
-                } else {
-                    leftOfParent()
-                }
-                if (rightSpanAtRow >= 0) {
-                    rightToLeftOf(spanViews[rightSpanAtRow])
-                } else {
-                    rightOfParent()
-                }
+                // L1：行恒整行全宽（span 占位由行内 spacer 承担，
+                // 不再把行夹在两侧 span 视图之间）。
+                leftOfParent()
+                rightOfParent()
             })
         }
 
         for (i in spanDefs.indices) {
             val sd = spanDefs[i]
+            // bias 取起始行列布局：占位格左缘 = 前置行内键宽和 ×
+            // spanScale + 前置 spacer 宽和；bias = 左缘 / (1 − span 宽)。
+            // 旧布局（左右边缘 span）：左 span 左缘 0 → bias 0，右 span
+            // 左缘 1−w → bias 1，与旧渲染逐像素一致。
+            val startParts =
+                keyLayout[sd.startRow].filterNot { it.appearance.rowSpan > 1 }
+            val startCovering = rowSpans[sd.startRow]
+            val startScale = rowSpanScales[sd.startRow]
+            var left = 0f
+            for (other in startCovering) {
+                if (other === sd) break
+                left += other.def.appearance.percentWidth
+            }
+            left += startParts.take(sd.spanCol)
+                .sumOf { it.appearance.percentWidth.toDouble() }.toFloat() * startScale
+            val spanWidth = sd.def.appearance.percentWidth
+            val bias =
+                if (1f - spanWidth > 0f) (left / (1f - spanWidth)).coerceIn(0f, 1f) else 0f
             add(spanViews[i], lParams {
                 topToTop = keyRows[sd.startRow].id
                 bottomToBottom = keyRows[sd.endRow].id
-                if (sd.alignEnd) rightOfParent() else leftOfParent()
-                matchConstraintPercentWidth = sd.def.appearance.percentWidth
+                leftOfParent()
+                rightOfParent()
+                horizontalBias = bias
+                matchConstraintPercentWidth = spanWidth
             })
         }
 

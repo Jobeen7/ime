@@ -104,6 +104,20 @@ abstract class KeyView(
     var hMargin: Int = (colors.keyHMargin + (def.skinHInsetDp ?: 0f)).let { dp(it).toInt() }
     var vMargin: Int = (colors.keyVMargin + (def.skinVInsetDp ?: 0f) +
         (def.skinHeightFactor?.let { (1f - it) * 12f } ?: 0f)).let { dp(it).toInt() }
+    // L4 四边内缩：单边优先于对称值（缺边回落 h/v）。hMargin/vMargin
+    // 仍为可外部置零的对称基值；四边差值 = dp(单边) − dp(对称值)。
+    // 对称皮肤（单边缺省或与对称值相等）差值恒为 0，逐像素不变；
+    // 网格键／侧栏键外观不带皮肤内缩，差值亦恒为 0，外部置零不受影响。
+    private val hMarginLeft: Int get() = hMargin + insetDelta(def.skinLeftInsetDp, def.skinHInsetDp)
+    private val hMarginRight: Int get() = hMargin + insetDelta(def.skinRightInsetDp, def.skinHInsetDp)
+    private val vMarginTop: Int get() = vMargin + insetDelta(def.skinTopInsetDp, def.skinVInsetDp)
+    private val vMarginBottom: Int get() = vMargin + insetDelta(def.skinBottomInsetDp, def.skinVInsetDp)
+
+    private fun insetDelta(side: Float?, symmetric: Float?): Int {
+        val sidePx = (side ?: symmetric)?.let { dp(it).toInt() } ?: 0
+        val symPx = symmetric?.let { dp(it).toInt() } ?: 0
+        return sidePx - symPx
+    }
     private var foregroundAttached = false
     var onPressedChanged: ((KeyView) -> Unit)? = null
     private var wasPressed = false
@@ -607,7 +621,7 @@ abstract class KeyView(
                 if (shadow?.enabled == true && decorationOn) {
                     dualShadowKeyBackgroundDrawable(
                         bkgColor, strokeColorFor(), radius, strokeWidthFor(),
-                        hMargin, vMargin,
+                        hMarginLeft, vMarginTop, hMarginRight, vMarginBottom,
                         shadow.lightColor, shadow.darkColor,
                         dp(shadow.offsetDp).roundToInt(),
                     )
@@ -637,7 +651,7 @@ abstract class KeyView(
         } else {
             InsetDrawable(
                 pressedColor.toDrawable(),
-                hMargin, vMargin, hMargin, vMargin,
+                hMarginLeft, vMarginTop, hMarginRight, vMarginBottom,
             )
         }
         val layered = LayerDrawable(arrayOf(normalBg, pressedBg))
@@ -688,7 +702,7 @@ abstract class KeyView(
             },
         )
         return LayerDrawable(arrayOf(face)).apply {
-            setLayerInset(0, hMargin, vMargin, hMargin, vMargin)
+            setLayerInset(0, hMarginLeft, vMarginTop, hMarginRight, vMarginBottom)
         }
     }
 
@@ -959,7 +973,7 @@ abstract class KeyView(
         // 边框宽来自配色（全局值恒生效，未设为 1dp，与旧硬编码一致）。
         return borderedKeyBackgroundDrawable(
             color, strokeColorFor(),
-            radius, strokeWidthFor(), hMargin, vMargin,
+            radius, strokeWidthFor(), hMarginLeft, vMarginTop, hMarginRight, vMarginBottom,
         )
     }
 

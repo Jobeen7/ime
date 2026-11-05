@@ -72,6 +72,7 @@ class MenuGridView(
         "theme" -> R.string.menu_theme
         "reload_engine" -> R.string.menu_reload_engine
         "about" -> R.string.menu_about
+        "performance" -> R.string.menu_performance
         // 注：select_all／copy／paste／undo／redo／deploy_sync
         // 曾在此映射，现无菜单入口产生这些 id（入口唯一来源
         // KeyboardMenuEntries.PAGES），已随 P2 清理删除；未知 id
@@ -96,6 +97,7 @@ class MenuGridView(
         "theme" -> R.drawable.ic_keyboard_palette
         "reload_engine" -> R.drawable.ic_keyboard_reload
         "about" -> R.drawable.ic_keyboard_information_outline
+        "performance" -> R.drawable.ic_keyboard_performance
         // 注：同上，无入口 id 的图标映射已随 P2 清理删除。
         else -> R.drawable.ic_keyboard_setting
     }

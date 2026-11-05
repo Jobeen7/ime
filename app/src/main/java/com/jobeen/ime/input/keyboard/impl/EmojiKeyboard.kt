@@ -40,7 +40,7 @@ import com.jobeen.ime.data.Symbol.Category
 class EmojiKeyboard(
     context: Context,
     private val colors: KeyboardColors.ColorScheme,
-) : FrameLayout(context), IKeyboard {
+) : FrameLayout(context), ISubCollectionPageable {
 
     companion object {
         const val NAME = "Emoji"
@@ -199,9 +199,20 @@ class EmojiKeyboard(
         val index = boardState.parentLabels.indexOf(label)
         if (index < 0) return
         boardState.selectParent(index)
-        gridView.setItems(boardState.currentItems.map { keyDef(it) })
+        gridView.setItems(boardState.visibleItems.map { keyDef(it) })
         sidePanelKey.selectIndex(index)
         rebuildSubStrip()
+    }
+
+    /**
+     * 二级集合翻页（P1-5）：当前子类按页翻；页内无更多时
+     * 返回 false（窗口层空操作，不换父类）。翻页后只换网格，
+     * 父类／子类选中与子条不动。
+     */
+    override fun pageSubCollection(forward: Boolean): Boolean {
+        val changed = if (forward) boardState.nextPage() else boardState.prevPage()
+        if (changed) gridView.setItems(boardState.visibleItems.map { keyDef(it) })
+        return changed
     }
 
     /**
@@ -227,7 +238,7 @@ class EmojiKeyboard(
                 )
                 setOnClickListener {
                     if (boardState.selectSub(index)) {
-                        gridView.setItems(boardState.currentItems.map { keyDef(it) })
+                        gridView.setItems(boardState.visibleItems.map { keyDef(it) })
                         rebuildSubStrip()
                     }
                 }
@@ -372,7 +383,7 @@ class EmojiKeyboard(
 
     fun reset() {
         boardState.selectParent(0)
-        gridView.setItems(boardState.currentItems.map { keyDef(it) })
+        gridView.setItems(boardState.visibleItems.map { keyDef(it) })
         sidePanelKey.selectIndex(0)
         rebuildSubStrip()
         sidePanelKey.resetPosition()

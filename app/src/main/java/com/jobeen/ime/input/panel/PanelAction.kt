@@ -17,6 +17,8 @@ sealed class PanelAction {
     data object Settings : PanelAction()
     data object SchemaSettings : PanelAction()
     data object About : PanelAction()
+    /** 键盘性能面板（P2-10）：菜单第 2 页右下角入口；关于不丢（App 设置首页关于组仍可进）。 */
+    data object Performance : PanelAction()
     data object ReloadEngine : PanelAction()
     data object Undo : PanelAction()
     data object Redo : PanelAction()

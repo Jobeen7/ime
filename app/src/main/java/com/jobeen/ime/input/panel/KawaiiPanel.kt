@@ -20,6 +20,7 @@ import com.jobeen.ime.input.panel.component.CandidateGridView
 import com.jobeen.ime.input.panel.component.ClipboardView
 import com.jobeen.ime.input.panel.component.ClipboardTab
 import com.jobeen.ime.input.panel.component.ConfirmOverlay
+import com.jobeen.ime.input.panel.component.PerformancePanelView
 import com.jobeen.ime.input.panel.component.TextEditView
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.component.MenuGridView
@@ -31,6 +32,7 @@ import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
 import com.jobeen.ime.input.panel.toolbar.ToolbarRendererResources
 import com.jobeen.ime.input.panel.state.IStateRender
 import com.jobeen.ime.input.panel.state.MenuStateRender
+import com.jobeen.ime.input.panel.state.PerformanceStateRender
 import com.jobeen.ime.input.panel.state.ClipboardStateRender
 import com.jobeen.ime.input.panel.state.PredictionStateRender
 import com.jobeen.ime.input.panel.state.StateRenderContext
@@ -106,6 +108,8 @@ class KawaiiPanel(
         data object Clipboard : State()
         data object TextEditing : State()
         data object Copy : State()
+        /** 性能面板（P2-10）：读 PerfMonitor.aggregates() 显示本进程累计。 */
+        data object Performance : State()
     }
 
     private var state: State = State.Idle
@@ -204,6 +208,7 @@ class KawaiiPanel(
             State.Clipboard -> ClipboardStateRender(renderContext, clipboardTab)
         State.TextEditing -> TextEditingStateRender(renderContext)
         is State.Copy -> CopyStateRender(renderContext, copyText)
+        State.Performance -> PerformanceStateRender(renderContext)
     }
 
     private fun applyStateRender(state: State) {
@@ -297,6 +302,11 @@ class KawaiiPanel(
         colors = resolvedColors,
     )
 
+    val performanceView = PerformancePanelView(
+        context = context,
+        colors = resolvedColors,
+    )
+
     val menuGridView = MenuGridView(context, resolvedColors)
 
     @SuppressLint("UseCompatLoadingForDrawables")
@@ -319,6 +329,7 @@ class KawaiiPanel(
         candidateGrid = candidateGrid,
         textEditingView = textEditingView,
         clipboardView = clipboardView,
+        performanceView = performanceView,
         menuGridView = menuGridView,
         recording = recording,
     )
@@ -336,6 +347,7 @@ class KawaiiPanel(
                     state = State.Clipboard
                 }
                 PanelAction.CursorMove -> state = State.TextEditing
+                PanelAction.Performance -> state = State.Performance
                 PanelAction.TogglePrediction -> {
                     CandidateManager.setPredictionEnabled(
                         context,
@@ -1021,7 +1033,7 @@ class KawaiiPanel(
 
                             PanelAction.SwitchKeyboard -> {
                                 when (state) {
-                                    State.Menu, State.Clipboard, State.TextEditing, State.Copy -> state = State.Idle
+                                    State.Menu, State.Clipboard, State.TextEditing, State.Copy, State.Performance -> state = State.Idle
 
                                     else -> listener?.onToolbarAction(result.action)
                                 }
@@ -1106,6 +1118,21 @@ class KawaiiPanel(
         }
     }
 
+    /**
+     * 打开剪贴板面板（P1-4：#showPasteboardView 键动作入口，
+     * 与菜单剪贴板项同目的地、同初始页签）。
+     */
+    fun showClipboard() {
+        clipboardTab = ClipboardTab.CLIPBOARD
+        clipboardView.clipTab = ClipboardTab.CLIPBOARD
+        state = State.Clipboard
+    }
+
+    /** 打开性能面板（P2-10：#keyboardPerformance 键动作与菜单入口）。 */
+    fun showPerformance() {
+        state = State.Performance
+    }
+
     fun showTextEditing() {
         view.setExpanded(false)
         state = State.TextEditing
@@ -1120,7 +1147,7 @@ class KawaiiPanel(
      * 剪贴板态的回落同口径（剪贴板态 → Idle），其余态不动。
      */
     override fun returnToKeyboard() {
-        if (state == State.Clipboard) state = State.Idle
+        if (state == State.Clipboard || state == State.Performance) state = State.Idle
     }
 
     private var addPhraseActive = false

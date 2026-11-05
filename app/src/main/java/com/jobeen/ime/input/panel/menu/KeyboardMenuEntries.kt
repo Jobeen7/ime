@@ -44,7 +44,9 @@ object KeyboardMenuEntries {
             Entry("settings", PanelAction.Settings),
             Entry("theme", PanelAction.Palette),
             Entry("reload_engine", PanelAction.ReloadEngine),
-            Entry("about", PanelAction.About),
+            // P2-10：性能面板顶掉「关于」（两页现均为满 8/8；关于不丢，
+            // App 设置首页关于组仍可进）。
+            Entry("performance", PanelAction.Performance),
         ),
     )
 

@@ -7,7 +7,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** skin.json `keyboards` 表解析：内置 7 类型 + 任意自定义类型，字段级回退。 */
+/** skin.json `keyboards` 表解析：内置 8 类型 + 任意自定义类型，字段级回退。 */
 class SkinKeyboardsTableTest {
 
     private fun tree(json: String): JsonObject =
@@ -25,6 +25,7 @@ class SkinKeyboardsTableTest {
                     "numeric": {"layoutId": "num-lay"},
                     "numberPad": {"layoutId": "pad-lay"},
                     "symbolic": {"layoutId": "sym-lay"},
+                    "kaomoji": {"layoutId": "kao-lay"},
                     "myBoard": {"layoutId": "custom-lay", "heightPercent": 60}
                 }}""",
             ),

@@ -618,13 +618,16 @@ object KeyOverrideApplier {
         /** 按键动效（2026-10-29 item-1）：本键生效规格（null = 无动效）。 */
         keyAnimation: com.jobeen.ime.skin.model.KeyAnimationSpec? = null,
     ): KeyDef {
-        // ---- 主显文本：动态快照 > 静态 label（占位替换） > 出厂 ----
+        // ---- 主显文本：锁定通知 label > 动态快照 > 静态 label（占位替换） > 出厂 ----
         // 静态文本另存为动态回退（运行时刷新无值时回落此处）。
         val factoryText = displayTextOf(def.appearance)
         val staticText = override?.label?.let { substitute(it, placeholders) } ?: factoryText
         val dynamicValue = override?.dynamicText?.let { dynamicTexts[it] }
             ?.takeIf { it.isNotEmpty() }
-        val mainText = dynamicValue ?: staticText
+        // P0-1：锁定通知的组字态文字优先（对端 whenPreeditChanged.text），
+        // 占位符照常展开（$returnKeyType 等）；label 为 null 时零改动。
+        val mainText = latched?.label?.let { substitute(it, placeholders) }
+            ?: dynamicValue ?: staticText
         val isSymbol = isSymbolKey(mainText)
         val mainRole = if (isSymbol) KeyTextRole.SYMBOL else KeyTextRole.MAIN
         // S1：逐样式字号居中——键覆写 > 样式 > 全局档位。
@@ -1150,6 +1153,8 @@ object KeyOverrideApplier {
                 viewId = appearance.viewId,
                 visibility = appearance.visibility,
                 rowSpan = appearance.rowSpan,
+                spanCol = appearance.spanCol,
+                spanColEnd = appearance.spanColEnd,
                 alignSpanEnd = appearance.alignSpanEnd,
             )
             is KeyDef.Appearance.ImageText -> KeyDef.Appearance.ImageText(
@@ -1163,6 +1168,8 @@ object KeyOverrideApplier {
                 margin = appearance.margin,
                 viewId = appearance.viewId,
                 rowSpan = appearance.rowSpan,
+                spanCol = appearance.spanCol,
+                spanColEnd = appearance.spanColEnd,
                 alignSpanEnd = appearance.alignSpanEnd,
             )
             is KeyDef.Appearance.Text -> if (subLabel != null || subLabelTop != null) {
@@ -1183,6 +1190,8 @@ object KeyOverrideApplier {
                     viewId = appearance.viewId,
                     visibility = appearance.visibility,
                     rowSpan = appearance.rowSpan,
+                    spanCol = appearance.spanCol,
+                    spanColEnd = appearance.spanColEnd,
                     alignSpanEnd = appearance.alignSpanEnd,
                 )
             } else {
@@ -1197,6 +1206,8 @@ object KeyOverrideApplier {
                     viewId = appearance.viewId,
                     visibility = appearance.visibility,
                     rowSpan = appearance.rowSpan,
+                    spanCol = appearance.spanCol,
+                    spanColEnd = appearance.spanColEnd,
                     alignSpanEnd = appearance.alignSpanEnd,
                 )
             }
@@ -1252,6 +1263,11 @@ object KeyOverrideApplier {
         // S2：内边距布局键几何优先，样式次之，全局边距由渲染层回落。
         rebuilt.skinHInsetDp = geometry?.hInsetDp ?: styleGeometry?.hInsetDp
         rebuilt.skinVInsetDp = geometry?.vInsetDp ?: styleGeometry?.vInsetDp
+        // L4：四边内缩同优先序（单边缺省时渲染层回落对应对称值）。
+        rebuilt.skinLeftInsetDp = geometry?.leftInsetDp ?: styleGeometry?.leftInsetDp
+        rebuilt.skinRightInsetDp = geometry?.rightInsetDp ?: styleGeometry?.rightInsetDp
+        rebuilt.skinTopInsetDp = geometry?.topInsetDp ?: styleGeometry?.topInsetDp
+        rebuilt.skinBottomInsetDp = geometry?.bottomInsetDp ?: styleGeometry?.bottomInsetDp
         rebuilt.skinHeightFactor = geometry?.heightFactor
         rebuilt.skinForegroundLayers = foreground
         rebuilt.skinIconSymbol = appearance.skinIconSymbol
@@ -1368,6 +1384,13 @@ object KeyOverrideApplier {
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CUT)
             WhitelistAction.HASH_COPY ->
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.COPY)
+            WhitelistAction.HASH_SELECT_TEXT -> KeyboardAction.SelectAllAction
+            WhitelistAction.HASH_SHOW_PASTEBOARD_VIEW -> KeyboardAction.ShowPasteboardAction
+            WhitelistAction.HASH_SUB_COLLECTION_PAGE_UP ->
+                KeyboardAction.SubCollectionPageUpAction
+            WhitelistAction.HASH_SUB_COLLECTION_PAGE_DOWN ->
+                KeyboardAction.SubCollectionPageDownAction
+            WhitelistAction.HASH_KEYBOARD_PERFORMANCE -> KeyboardAction.ShowPerformanceAction
             WhitelistAction.HASH_PASTE ->
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.PASTE)
             WhitelistAction.HASH_DELETE_TEXT -> KeyboardAction.DeleteTextAction

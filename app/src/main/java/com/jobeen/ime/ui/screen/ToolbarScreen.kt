@@ -758,6 +758,11 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.HASH_KEYBOARD_MENU -> R.string.action_hash_keyboard_menu
         WhitelistAction.HASH_TOGGLE_COMMAND_VIEW -> R.string.action_hash_toggle_command_view
         WhitelistAction.HASH_CLEAR_CLIPBOARD -> R.string.action_hash_clear_clipboard
+        WhitelistAction.HASH_SELECT_TEXT -> R.string.action_hash_select_text
+        WhitelistAction.HASH_SHOW_PASTEBOARD_VIEW -> R.string.action_hash_show_pasteboard_view
+        WhitelistAction.HASH_SUB_COLLECTION_PAGE_UP -> R.string.action_hash_sub_collection_page_up
+        WhitelistAction.HASH_SUB_COLLECTION_PAGE_DOWN -> R.string.action_hash_sub_collection_page_down
+        WhitelistAction.HASH_KEYBOARD_PERFORMANCE -> R.string.action_hash_keyboard_performance
     },
 )
 

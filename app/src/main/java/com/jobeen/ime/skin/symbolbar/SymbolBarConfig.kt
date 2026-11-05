@@ -190,6 +190,56 @@ data class SymbolBarConfig(
     fun panelFor(type: String): SymbolBarPanel = panels[type] ?: SymbolBarPanel.BLANK
 }
 
+/**
+ * 皮肤规格 → 应用级配置（P1-8：SymbolBarView 的“皮肤规格优先”分支）：
+ *
+ * - 皮肤 symbolBar 只有一套面板：键数不足 8 补空白键、超 8 截断
+ *   （与应用级 parsePanel 同口径）；角顺序 左上／右上／左下／
+ *   右下 → topLeft／topRight／bottomLeft／bottomRight。
+ * - 点按／角动作均为字面提交（SYMBOL 通道，不经组字）。
+ * - 皮肤规格无自有高度／颜色／类型表：高度取应用缺省 44dp、
+ *   内距 4dp、背景走键盘背景（null）、长按提示灰；类型表取
+ *   调用方传入的符号分类；各类型共用同一面板（类型切换只改
+ *   切换钮文案，不换面板内容——皮肤只有一套面板）。
+ * - 关闭钮位置取皮肤 closePosition；类型切换钮恒在另一端
+ *   （应用级模型只支持两端互换，皮肤两侧同位时切换钮强制
+ *   落另一端）。
+ */
+fun symbolBarConfigFromSkinSpec(
+    spec: com.jobeen.ime.skin.symbol.SymbolBarSpec,
+    types: List<String>,
+): SymbolBarConfig {
+    fun position(text: String): SymbolBarPosition =
+        SymbolBarPosition(
+            action = SkinAction.Command(WhitelistAction.SYMBOL, text),
+            text = text,
+            systemImageName = null,
+        )
+    val keys = ArrayList<SymbolBarKey>()
+    for (key in spec.keys.take(8)) {
+        val corners = key.corners
+        keys += SymbolBarKey(
+            center = position(key.tap),
+            topLeft = corners.getOrNull(0)?.let { position(it) },
+            topRight = corners.getOrNull(1)?.let { position(it) },
+            bottomLeft = corners.getOrNull(2)?.let { position(it) },
+            bottomRight = corners.getOrNull(3)?.let { position(it) },
+        )
+    }
+    while (keys.size < 8) keys += SymbolBarKey.BLANK
+    val panel = SymbolBarPanel(keys)
+    return SymbolBarConfig(
+        closeButtonOnLeft =
+            spec.closePosition == com.jobeen.ime.skin.symbol.BarSide.LEFT,
+        heightDp = 44,
+        cellInsetsDp = CellInsetsDp(4f, 4f, 4f, 4f),
+        background = null,
+        longPressHintColor = LightDark(0xFF888888.toInt(), 0xFF888888.toInt()),
+        types = types,
+        panels = types.associateWith { panel },
+    )
+}
+
 /** 配置加载结果（Missing → 提示「符号栏未配置」；Invalid → 「符号栏配置无效」）。 */
 sealed class SymbolBarLoadResult {
     data object Missing : SymbolBarLoadResult()

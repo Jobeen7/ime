@@ -60,6 +60,12 @@ data class SkinNotification(
     val action: SkinAction?,
     val swipeUpAction: SkinAction?,
     val swipeDownAction: SkinAction?,
+    /**
+     * 组字态键面文字（对端 whenPreeditChanged.text）；null = 不改
+     * 文字（常态 label／动态文字照常）。命中时装配期以占位替换
+     * 后的本值盖主显文本（优先于动态文字与静态 label）。
+     */
+    val label: String? = null,
     /** 锁定：true 时失配也不清除锁定；默认 false（失配恢复）。 */
     val locked: Boolean = false,
 ) {
@@ -173,6 +179,7 @@ object SkinNotificationParser {
         val foregroundStyle = obj["foregroundStyle"].stringContentOrNull()
             ?.takeIf { it.isNotEmpty() }
         val locked = (obj["locked"] as? JsonPrimitive)?.booleanOrNull ?: false
+        val label = obj["label"].stringContentOrNull()?.takeIf { it.isNotEmpty() }
         return SkinNotification(
             source = source,
             matchKey = matchKey,
@@ -183,6 +190,7 @@ object SkinNotificationParser {
             action = parseAction(obj["action"]),
             swipeUpAction = parseAction(obj["swipeUpAction"]),
             swipeDownAction = parseAction(obj["swipeDownAction"]),
+            label = label,
             locked = locked,
         )
     }

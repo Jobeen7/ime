@@ -514,6 +514,7 @@
     <string name="schema_files_desc">浏览、管理文件</string>
     <string name="menu_theme">主题设置</string>
     <string name="menu_about">关于</string>
+    <string name="menu_performance">性能</string>
     <string name="choose_schema">选择输入方案</string>
     <string name="tag_layout_t9">九宫格</string>
     <string name="tag_layout_t15">15键</string>
@@ -913,6 +914,11 @@
     <string name="action_hash_keyboard_menu">键盘菜单</string>
     <string name="action_hash_toggle_command_view">命令面板切换</string>
     <string name="action_hash_clear_clipboard">清空剪贴板</string>
+    <string name="action_hash_select_text">全选</string>
+    <string name="action_hash_show_pasteboard_view">剪贴板</string>
+    <string name="action_hash_sub_collection_page_up">二级集合上页</string>
+    <string name="action_hash_sub_collection_page_down">二级集合下页</string>
+    <string name="action_hash_keyboard_performance">性能</string>
     <string name="action_emoji_lock_toggle">表情板锁定切换</string>
     <string name="slot_tap">点按</string>
     <string name="slot_long_press">长按</string>

@@ -135,13 +135,23 @@ object SubClassifiedSymbolsParser {
 /**
  * 二级面板纯状态机：父类与子类各一索引；切父类时子类
  * 恒回首项；越界选择为空操作（索引不动）。
+ *
+ * 翻页（P1-5）：当前子类的符号项按 [pageSize] 切页（与板
+ * 网格 5 列 × 5 行一致）；切父类／子类时页码恒回 0；页内
+ * 无更多时 nextPage/prevPage 返回 false（调用方空操作，
+ * 不换父类、不循环绕回）。
  */
 class SubClassifiedBoardState(
     val symbols: SubClassifiedSymbols,
+    val pageSize: Int = DEFAULT_PAGE_SIZE,
 ) {
     var parentIndex: Int = 0
         private set
     var subIndex: Int = 0
+        private set
+
+    /** 当前页（0 起）；切父类／子类时恒回 0。 */
+    var page: Int = 0
         private set
 
     val currentParent: SymbolParentCategory? get() = symbols.parents.getOrNull(parentIndex)
@@ -151,16 +161,54 @@ class SubClassifiedBoardState(
     val subLabels: List<String>
         get() = currentParent?.subCategories?.map { it.label }.orEmpty()
 
+    /** 当前子类总页数（0 项时为 0 页）。 */
+    val pageCount: Int
+        get() {
+            val size = pageSize.coerceAtLeast(1)
+            return (currentItems.size + size - 1) / size
+        }
+
+    /** 当前页可见项（页码恒夹取有效范围）。 */
+    val visibleItems: List<SymbolItem>
+        get() {
+            if (currentItems.isEmpty()) return emptyList()
+            val size = pageSize.coerceAtLeast(1)
+            val clamped = page.coerceIn(0, (pageCount - 1).coerceAtLeast(0))
+            val from = clamped * size
+            return currentItems.subList(from, minOf(from + size, currentItems.size))
+        }
+
     fun selectParent(index: Int): Boolean {
         if (symbols.parents.getOrNull(index) == null) return false
         parentIndex = index
         subIndex = 0
+        page = 0
         return true
     }
 
     fun selectSub(index: Int): Boolean {
         if (currentParent?.subCategories?.getOrNull(index) == null) return false
         subIndex = index
+        page = 0
         return true
+    }
+
+    /** 下一页：已是末页时返回 false（页码不动）。 */
+    fun nextPage(): Boolean {
+        if (page + 1 >= pageCount) return false
+        page++
+        return true
+    }
+
+    /** 上一页：已是首页时返回 false（页码不动）。 */
+    fun prevPage(): Boolean {
+        if (page == 0) return false
+        page--
+        return true
+    }
+
+    companion object {
+        /** 每页格数：板网格 5 列 × 5 行。 */
+        const val DEFAULT_PAGE_SIZE = 25
     }
 }

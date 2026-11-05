@@ -194,15 +194,17 @@ object LayoutValidator {
         }
         if (totalKeys > MAX_TOTAL_KEYS) invalid("rows", "too_many_keys")
 
-        // ---- 跨行占位冲突（§2.5-10 / §2.3）：同侧覆盖区间重叠 → 整布局无效 ----
-        checkSpanConflicts(parsedRows, ::invalid)
+        // ---- 跨行占位冲突（L1，§2.5-10 / §2.3）：矩形相交才冲突；
+        // 冲突 span 字段级降级为普通键（布局保持有效），见
+        // checkSpanConflicts。降级后的行用于最终模型。
+        val resolvedRows = checkSpanConflicts(parsedRows, ::fallback)
 
         return if (issues.none { it.disposition == LayoutDisposition.INVALID_LAYOUT }) {
             LayoutValidation.Valid(
                 layout = LayoutModel(
                     layoutId = expectedId,
                     name = resolvedName,
-                    rows = parsedRows.map { checkNotNull(it) },
+                    rows = resolvedRows.map { checkNotNull(it) },
                     heightPercent = layoutHeightPercent,
                     patchOf = patchOf,
                 ),
@@ -408,6 +410,30 @@ object LayoutValidator {
             }
         }
 
+        // ---- spanCol/spanColEnd（L1）：可选整数列区间；非法只字段
+        // 回落旧口径（两值同丢），永不判整布局无效。0 ≤ spanCol <
+        // spanColEnd；上界不限（逻辑列网，渲染期按行内键数钳制）。
+        var spanCol: Int? = null
+        var spanColEnd: Int? = null
+        val spanColNode = key["spanCol"]
+        val spanColEndNode = key["spanColEnd"]
+        if (spanColNode != null || spanColEndNode != null) {
+            // 与 rowSpan 同口径：接受整数值 double（2.0），拒绝 1.5／字符串。
+            fun strictCol(node: JsonElement?): Int? =
+                (node as? JsonPrimitive)?.strictDoubleOrNull()
+                    ?.takeIf { it.isFinite() && it % 1.0 == 0.0 }?.toInt()
+            val parsedCol = strictCol(spanColNode)
+            val parsedEnd = strictCol(spanColEndNode)
+            if (parsedCol == null || parsedEnd == null ||
+                parsedCol < 0 || parsedEnd <= parsedCol
+            ) {
+                fallback("$path.spanCol", "span_col_invalid")
+            } else {
+                spanCol = parsedCol
+                spanColEnd = parsedEnd
+            }
+        }
+
         // ---- tap（§2.5-11）：自创键必填且必须有效（无出厂行为可回退，
         // 升格整布局无效）；内置布局文件可缺省（allowMissingTap），
         // 缺省 = 沿用出厂键行为，模型 tap 为 null。
@@ -477,6 +503,8 @@ object LayoutValidator {
             widthWeight = weight,
             rowSpan = rowSpan,
             alignSpanEnd = alignSpanEnd,
+            spanCol = spanCol,
+            spanColEnd = spanColEnd,
             tap = tap,
             swipeUp = swipeUp,
             swipeDown = swipeDown,
@@ -540,34 +568,87 @@ object LayoutValidator {
         return actions.ifEmpty { null }
     }
 
+    /**
+     * 跨行占位冲突（L1，§2.5-10 / §2.3）：矩形相交判定——行区间重叠
+     * 且 列区间重叠（或同占右边缘）才冲突；冲突不再判整布局无效，
+     * 改为字段级处理：后出现的冲突 span 降级为 rowSpan=1（保留在
+     * 起始行作普通键、宽度不变，列信息清零），记 FIELD_FALLBACK
+     * issue `span_conflict_downgraded`。降级后的键不再参与后续冲突
+     * 判定。降级行之外的覆盖行 authored 和低于 1.0，差额由构建器
+     * 空白键吸收（渲染总和仍为 1.0，无溢出）。
+     *
+     * 列区间：显式 spanCol/spanColEnd 用文件值；缺省沿用
+     * alignSpanEnd 旧口径（左 → [0,1)，右 → [n,n+1)，n = 起始行
+     * 行内键数）。右边缘 span（spanCol ≥ 起始行行内键数，含旧口径
+     * 右 span）几何上同占行右缘：即使两 span 的 [n,n+1) 区间因
+     * 起始行键数不同而错开，仍判冲突。
+     *
+     * @return 降级后的行（与入参同结构；null 行原样保留）。
+     */
     private fun checkSpanConflicts(
         rows: List<List<LayoutKeyModel>?>,
-        invalid: (String, String) -> Unit,
-    ) {
-        data class Span(val startRow: Int, val endRow: Int, val alignEnd: Boolean, val path: String)
+        fallback: (String, String) -> Unit,
+    ): List<List<LayoutKeyModel>?> {
+        data class Span(
+            val rowIndex: Int,
+            val keyIndex: Int,
+            val startRow: Int,
+            val endRow: Int,
+            val colStart: Int,
+            val colEnd: Int,
+            /** 右边缘 span：几何上同占行右缘（见上）。 */
+            val rightEdge: Boolean,
+            val path: String,
+        )
+        val mutableRows = rows.map { it?.toMutableList() }
+        fun inRowCount(rowIndex: Int): Int =
+            mutableRows[rowIndex]?.count { it.rowSpan == 1 } ?: 0
         val spans = mutableListOf<Span>()
-        for ((rowIndex, row) in rows.withIndex()) {
+        for ((rowIndex, row) in mutableRows.withIndex()) {
             row ?: continue
             for ((keyIndex, key) in row.withIndex()) {
-                if (key.rowSpan > 1) {
-                    spans += Span(
-                        startRow = rowIndex,
-                        endRow = rowIndex + key.rowSpan - 1,
-                        alignEnd = key.alignSpanEnd,
-                        path = "rows[$rowIndex].keys[$keyIndex].rowSpan",
+                if (key.rowSpan <= 1) continue
+                val n = inRowCount(rowIndex)
+                val colStart = key.spanCol ?: if (key.alignSpanEnd) n else 0
+                val colEnd = key.spanColEnd ?: (colStart + 1)
+                spans += Span(
+                    rowIndex = rowIndex,
+                    keyIndex = keyIndex,
+                    startRow = rowIndex,
+                    endRow = rowIndex + key.rowSpan - 1,
+                    colStart = colStart,
+                    colEnd = colEnd,
+                    rightEdge = colStart >= n,
+                    path = "rows[$rowIndex].keys[$keyIndex].rowSpan",
+                )
+            }
+        }
+        val active = spans.toMutableList()
+        var i = 0
+        while (i < active.size) {
+            val a = active[i]
+            var j = i + 1
+            while (j < active.size) {
+                val b = active[j]
+                val rowsOverlap = a.startRow <= b.endRow && b.startRow <= a.endRow
+                val colsOverlap = a.colStart < b.colEnd && b.colStart < a.colEnd
+                val bothRightEdge = a.rightEdge && b.rightEdge
+                if (rowsOverlap && (colsOverlap || bothRightEdge)) {
+                    // 后出现的降级为普通键（rowSpan=1，列信息清零）。
+                    val row = mutableRows[b.rowIndex]!!
+                    row[b.keyIndex] = row[b.keyIndex].copy(
+                        rowSpan = 1, spanCol = null, spanColEnd = null,
                     )
+                    fallback(b.path, "span_conflict_downgraded")
+                    active.removeAt(j)
+                    // 不 j++：移除后下一项顶替当前位置。
+                } else {
+                    j++
                 }
             }
+            i++
         }
-        for (i in spans.indices) {
-            for (j in i + 1 until spans.size) {
-                val a = spans[i]
-                val b = spans[j]
-                if (a.alignEnd == b.alignEnd && a.startRow <= b.endRow && b.startRow <= a.endRow) {
-                    invalid(b.path, "span_conflict")
-                }
-            }
-        }
+        return mutableRows.map { it?.toList() }
     }
 
     /** 严格数值读取：JSON 字符串不算数值（与 SkinValidator 同口径）。 */

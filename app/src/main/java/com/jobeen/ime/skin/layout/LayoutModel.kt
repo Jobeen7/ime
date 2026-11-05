@@ -25,6 +25,17 @@ data class LayoutKeyModel(
     val rowSpan: Int,
     val alignSpanEnd: Boolean,
     /**
+     * L1 跨行列区间（可选）：span 在起始行键链中的列位置，
+     * [spanCol, spanColEnd)——spanCol = 其左侧的行内键数（0 =
+     * 行首）；spanColEnd = 预留列区间的右端（仅冲突判定用，
+     * 几何定位只用 spanCol + 自身宽度）。缺省 = 沿用
+     * alignSpanEnd 旧口径（左 → [0,1)，右 → [n,n+1)，n = 起始
+     * 行行内键数）。校验：整数且 0 ≤ spanCol < spanColEnd，
+     * 非法 → 字段级回落旧口径（布局保持有效）。
+     */
+    val spanCol: Int? = null,
+    val spanColEnd: Int? = null,
+    /**
      * 点按动作；null = 文件未写 tap（仅内置布局文件允许，见
      * LayoutValidator.allowMissingTap）：沿用出厂键行为，不由
      * 布局文件定义。自创布局的 tap 必填，校验器保证非空。
