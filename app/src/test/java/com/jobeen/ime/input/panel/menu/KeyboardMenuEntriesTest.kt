@@ -48,7 +48,10 @@ class KeyboardMenuEntriesTest {
         val byId = KeyboardMenuEntries.ALL.associateBy { it.id }
         assertEquals(PanelAction.Settings, byId.getValue("settings").action)
         assertEquals(PanelAction.SchemaSettings, byId.getValue("schema_settings").action)
-        assertEquals(PanelAction.About, byId.getValue("about").action)
+        // 2026-11-05 用户定：菜单第 2 页右下角格放性能面板，顶掉「关于」
+        // （关于仍可从 App 设置首页关于组进）。
+        assertEquals(PanelAction.Performance, byId.getValue("performance").action)
+        assertTrue("about must not be in menu", "about" !in byId)
         assertEquals(PanelAction.ReloadEngine, byId.getValue("reload_engine").action)
         for (id in removedIds) {
             assertTrue("removed $id must not be in menu", id !in byId)

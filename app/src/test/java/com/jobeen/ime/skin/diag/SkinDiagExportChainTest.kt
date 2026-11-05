@@ -440,16 +440,40 @@ class SkinDiagExportChainTest {
     }
 
     @Test
-    fun applySwitchFailedRollsBack() = runBlocking {
+    fun applySwitchFailedRollbackFailsWhenSwitchRefusesAll() = runBlocking {
         val mirrored = captureDiagLog()
         val (layout, store, ports) = applyFixture()
+        // 全部切换都被拒绝：新皮肤切不过去，回退到默认也切不过去，
+        // 诚实结果是回滚失败（2026-11-05 审计 #1 项 2：不得声称
+        // 已回退），而不是旧口径的 SwitchFailedRolledBack。
         ports.switchBehavior = { false }
+        val tx = ApplyTransaction(layout, store, ports) { 7_000L }
+        val ref = skinGen(layout, "s1", 1)
+        val result = tx.apply(ref)
+        assertTrue(result is ApplyTransaction.Result.RollbackFailed)
+        result as ApplyTransaction.Result.RollbackFailed
+        assertEquals("switch_failed", result.stage)
+        assertEquals("restore_default_switch_failed", result.reason)
+        val entry = mirroredEvent(mirrored, "apply_rolled_back")
+        assertEquals("switch_failed", entry.context["reason"])
+        assertEquals("s1", entry.context["failedSkinId"])
+        assertEquals(false, entry.context["restored"])
+        assertEquals("restore_default_switch_failed", entry.context["restoreFailure"])
+    }
+
+    @Test
+    fun applySwitchFailedRollsBackToDefault() = runBlocking {
+        val mirrored = captureDiagLog()
+        val (layout, store, ports) = applyFixture()
+        // 只有切默认能成功：新皮肤切换失败，回退到默认成功。
+        ports.switchBehavior = { it == null }
         val tx = ApplyTransaction(layout, store, ports) { 7_000L }
         val ref = skinGen(layout, "s1", 1)
         assertTrue(tx.apply(ref) is ApplyTransaction.Result.SwitchFailedRolledBack)
         val entry = mirroredEvent(mirrored, "apply_rolled_back")
         assertEquals("switch_failed", entry.context["reason"])
         assertEquals("s1", entry.context["failedSkinId"])
+        assertEquals(true, entry.context["restored"])
     }
 
     @Test

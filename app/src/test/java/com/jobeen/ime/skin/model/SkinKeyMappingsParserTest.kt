@@ -95,6 +95,11 @@ class SkinKeyMappingsParserTest {
             "#toggleSymbolBar" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SYMBOL_BAR),
             "#keyboardMenu" to SkinAction.Command(WhitelistAction.HASH_KEYBOARD_MENU),
             "#toggleCommandView" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_COMMAND_VIEW),
+            "#selectText" to SkinAction.Command(WhitelistAction.HASH_SELECT_TEXT),
+            "#showPasteboardView" to SkinAction.Command(WhitelistAction.HASH_SHOW_PASTEBOARD_VIEW),
+            "#subCollectionPageUp" to SkinAction.Command(WhitelistAction.HASH_SUB_COLLECTION_PAGE_UP),
+            "#subCollectionPageDown" to SkinAction.Command(WhitelistAction.HASH_SUB_COLLECTION_PAGE_DOWN),
+            "#keyboardPerformance" to SkinAction.Command(WhitelistAction.HASH_KEYBOARD_PERFORMANCE),
             // P3 新增通知动作（解析期值格式已校验，样本须合法）。
             "character" to SkinAction.Command(WhitelistAction.CHARACTER, "a"),
             "send_keys" to SkinAction.Command(WhitelistAction.SEND_KEYS, "ctrl+a"),
@@ -475,9 +480,11 @@ class SkinKeyMappingsParserTest {
 
     @Test
     fun unmappedHashShortcutsRejectedAsUnknown() {
+        // #subCollectionPageUp、#showPasteboardView、#keyboardPerformance
+        // 自 v1.1.16.18 起已入白名单（审计 #2 P1-5/P1-4/P2-10），
+        // 不再按未知动作剔除；仍未列入的才按未知剔除。
         for (name in listOf(
-            "#subCollectionPageUp", "#showPasteboardView",
-            "#rimeDeploy", "#rimeSync", "#keyboardPerformance",
+            "#rimeDeploy", "#rimeSync",
         )) {
             val result = parseEntry(
                 """{"tap": {"type": "command", "action": "$name"}}""",
