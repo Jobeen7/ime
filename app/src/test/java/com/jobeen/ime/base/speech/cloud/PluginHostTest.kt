@@ -11,6 +11,7 @@ import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
+import okio.ByteString.Companion.toByteString
 
 /** 会话宿主：真实引擎＋内存传输／密钥，验桥接、隔离、预算、沙箱文件。 */
 class PluginHostTest {
@@ -573,9 +574,12 @@ class PluginHostTest {
             assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
             assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
             val ws = transport.wsListener ?: error("websocket listener must be captured")
-            ws.onMessage(null, "hi".toByteArray())
+            ws.onMessage(null, "hi".toByteArray().toByteString())
             assertTrue(listener.partialLatch.await(10, TimeUnit.SECONDS))
-            assertEquals(listOf("aGk"), listener.partials)
+            // 二进制入站现走 okio ByteString.base64()（标准带 padding，
+            // 与生产 AndroidBase64Codec 的 NO_WRAP 口径相同）；单测
+            // 注入的 JdkBase64Codec 是无 padding 版，只用于其它路径。
+            assertEquals(listOf("aGk="), listener.partials)
         } finally {
             host.kill()
         }
@@ -590,10 +594,68 @@ class PluginHostTest {
             assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
             assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
             val ws = transport.wsListener ?: error("websocket listener must be captured")
-            ws.onMessage(null, ByteArray(900_000) { 7 })
+            ws.onMessage(null, ByteArray(900_000) { 7 }.toByteString())
             Thread.sleep(500)
             assertEquals(emptyList<String>(), listener.partials)
             assertEquals(1L, listener.partialLatch.count)
+        } finally {
+            host.kill()
+        }
+    }
+
+    @Test
+    fun wsInboundSlightlyOverLimit_killsSession() {
+        // 略超限（上限＋1 字节）：边界必须拦，不能因「只超一点」放行。
+        val transport = CapturingTransport()
+        val (host, listener) = wsHost(transport)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
+            val ws = transport.wsListener ?: error("websocket listener must be captured")
+            ws.onMessage(null, ByteArray(PluginHost.MAX_WS_INBOUND_BYTES + 1) { 7 }.toByteString())
+            assertTrue(listener.errorLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(emptyList<String>(), listener.partials)
+        } finally {
+            host.kill()
+        }
+    }
+
+    @Test
+    fun wsInboundMultiMiBTextFrame_killsSession() {
+        // 多 MiB 文本帧：字符数超限即 failSession，不投递给脚本。
+        val transport = CapturingTransport()
+        val (host, listener) = wsHost(transport)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
+            val ws = transport.wsListener ?: error("websocket listener must be captured")
+            ws.onMessage("x".repeat(2 * 1024 * 1024), null)
+            assertTrue(listener.errorLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(emptyList<String>(), listener.partials)
+        } finally {
+            host.kill()
+        }
+    }
+
+    @Test
+    fun wsInboundMultiMiBBinaryFrame_killsSessionWithoutExpansion() {
+        // 多 MiB 二进制帧：超限帧绝不做 Base64 放大（1.33 倍字符串）、
+        // 不投递，会话立即失败；后续正常帧也不再投递。
+        val transport = CapturingTransport()
+        val (host, listener) = wsHost(transport)
+        try {
+            host.start()
+            assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
+            assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
+            val ws = transport.wsListener ?: error("websocket listener must be captured")
+            ws.onMessage(null, ByteArray(5 * 1024 * 1024) { 7 }.toByteString())
+            assertTrue(listener.errorLatch.await(10, TimeUnit.SECONDS))
+            assertEquals(emptyList<String>(), listener.partials)
+            ws.onMessage(null, "hi".toByteArray().toByteString())
+            Thread.sleep(500)
+            assertEquals(emptyList<String>(), listener.partials)
         } finally {
             host.kill()
         }
@@ -690,11 +752,11 @@ class PluginHostTest {
             assertTrue(listener.ready.await(10, TimeUnit.SECONDS))
             assertTrue(transport.connectLatch.await(10, TimeUnit.SECONDS))
             val ws = transport.wsListener ?: error("websocket listener must be captured")
-            ws.onMessage(null, ByteArray(900_000) { 7 })
+            ws.onMessage(null, ByteArray(900_000) { 7 }.toByteString())
             // 超限帧除丢弃外须关闭连接、清理会话：监听方收到出错。
             assertTrue(listener.errorLatch.await(10, TimeUnit.SECONDS))
             // 会话已死：后续正常帧也不再投递（不是只丢超限那一帧）。
-            ws.onMessage(null, "hi".toByteArray())
+            ws.onMessage(null, "hi".toByteArray().toByteString())
             Thread.sleep(500)
             assertEquals(emptyList<String>(), listener.partials)
         } finally {

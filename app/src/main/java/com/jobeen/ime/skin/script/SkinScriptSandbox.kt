@@ -5,6 +5,9 @@ import com.jobeen.ime.base.speech.cloud.PluginContract
 import com.jobeen.ime.base.speech.cloud.RhinoSession
 import com.jobeen.ime.base.speech.cloud.ScriptBudgetExceeded
 import com.jobeen.ime.base.speech.cloud.sanitizeScriptError
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.withTimeoutOrNull
 import org.mozilla.javascript.NativeObject
 
 /**
@@ -53,6 +56,17 @@ import org.mozilla.javascript.NativeObject
  *   though the store already caps it; log lines and return values are
  *   capped; script source and error messages are never logged (only the
  *   sanitized exception kind is reported).
+ * - No unbounded concurrency: ALL skin-script runs (key-triggered and
+ *   management-page test runs) share one global cap of
+ *   [MAX_CONCURRENT_SCRIPT_RUNS] concurrent runs, enforced here by an
+ *   atomic counter — a run past the cap fails immediately with
+ *   [SkinScriptFailure.TooManyConcurrent], never queues inside the
+ *   sandbox. The key-dispatch path additionally queues on
+ *   [acquireRunPermit] (bounded wait, cancellable) so a burst of key
+ *   presses waits for a slot instead of failing outright; the same
+ *   scriptId's earlier run is still cancelled first (single-flight,
+ *   see KeyActionListener). Input args are capped in count and total
+ *   chars ([MAX_SCRIPT_ARGS]/[MAX_SCRIPT_ARGS_CHARS]).
  *
  * RESIDUAL RISK (honest list, not waved away):
  * - The budget is sampled every 4096 interpreted instructions: a script
@@ -64,7 +78,13 @@ import org.mozilla.javascript.NativeObject
  *   not faked): Rhino exposes no reliable per-session heap limit, so
  *   a script can still allocate large arrays within its budget. What
  *   bounds it in practice is the source-size cap, the wall-clock
- *   budget, and the log/return caps — not a byte budget. A future
+ *   budget, the log/return/args caps, and the global concurrency cap
+ *   above — not a byte budget. The concurrency cap bounds the
+ *   *aggregate* allocation rate (at most 4 runs allocating at once),
+ *   but a single run can still spike the heap inside its 500ms
+ *   budget; that is the accepted trust boundary for user-installed
+ *   scripts on the owner's own device (scripts are installed by the
+ *   user, not fetched from a remote party — see below). A future
  *   wave that runs untrusted third-party scripts should add a
  *   heap/observation guard before widening distribution; this wave
  *   does not claim one exists.
@@ -86,6 +106,41 @@ class SkinScriptSandbox {
         if (source.toByteArray(Charsets.UTF_8).size > PluginContract.MAX_SCRIPT_BYTES) {
             return SkinScriptRunOutcome.Failed(SkinScriptFailure.TooLarge)
         }
+        if (args.size > MAX_SCRIPT_ARGS || argsTotalChars(args) > MAX_SCRIPT_ARGS_CHARS) {
+            return SkinScriptRunOutcome.Failed(SkinScriptFailure.TooLarge)
+        }
+        // 全局并发硬上限（原子计数，全部实例共用）：超限的运行立即
+        // 失败，不占槽、不排队（排队只在分发层做，见 acquireRunPermit）。
+        if (activeRuns.incrementAndGet() > MAX_CONCURRENT_SCRIPT_RUNS) {
+            activeRuns.decrementAndGet()
+            return SkinScriptRunOutcome.Failed(SkinScriptFailure.TooManyConcurrent)
+        }
+        try {
+            return runInner(source, event, args, onLog)
+        } finally {
+            activeRuns.decrementAndGet()
+        }
+    }
+
+    /** 输入参数总字符数（键＋值；超限即拒，不进沙箱）。 */
+    private fun argsTotalChars(args: Map<String, String>): Int {
+        var total = 0
+        for ((k, v) in args) {
+            total += k.length + v.length
+            if (total > MAX_SCRIPT_ARGS_CHARS) return total
+        }
+        return total
+    }
+
+    /** 当前在途运行数（单测与压力测试观测用）。 */
+    internal fun activeRunCount(): Int = activeRuns.get()
+
+    private fun runInner(
+        source: String,
+        event: String,
+        args: Map<String, String>,
+        onLog: (String) -> Unit,
+    ): SkinScriptRunOutcome {
         val logs = ArrayList<String>()
         return try {
             RhinoSession.create().use { session ->
@@ -174,6 +229,48 @@ class SkinScriptSandbox {
         const val MAX_LOG_LINE_CHARS = 1000
         const val MAX_LOG_LINES = 50
         const val MAX_RETURN_CHARS = 4096
+
+        /**
+         * 全局并发上限：全部皮肤脚本（按键触发＋管理页试跑）同时
+         * 最多 4 个在途运行。4 槽 × 500ms 预算封顶了脚本的总分配
+         * 速率与 CPU 占用，又不至于让连续按键的脚本互相饿死。
+         */
+        const val MAX_CONCURRENT_SCRIPT_RUNS = 4
+
+        /** 输入参数上限：个数与总字符数（键＋值），超限即拒。 */
+        const val MAX_SCRIPT_ARGS = 32
+        const val MAX_SCRIPT_ARGS_CHARS = 65_536
+
+        /**
+         * 分发层排队等许可的上限（毫秒）：4 槽全满时，第 5 个按键
+         * 脚本最多等 2 秒（约 4 轮 500ms 预算），超时即放弃本次
+         * 执行、不重试，只记元数据。等许可本身可取消：同 scriptId
+         * 再按取消旧任务时，排队中的旧任务随取消退出队列。
+         */
+        const val RUN_QUEUE_TIMEOUT_MS = 2_000L
+
+        /** 全局在途运行计数（全部沙箱实例共用；硬上限的执行点）。 */
+        private val activeRuns = AtomicInteger(0)
+
+        /**
+         * 分发层排队许可（与 [activeRuns] 同值 4 槽）：按键脚本
+         * 在后台任务里先取许可再进沙箱，取不到（超时）即放弃；
+         * 取到后必须在 finally 里调 [releaseRunPermit] 归还。
+         * 管理页试跑不走此许可，只受沙箱硬上限约束。
+         */
+        private val runPermits = Semaphore(MAX_CONCURRENT_SCRIPT_RUNS)
+
+        /** 排队取一次运行许可（可取消；超时返回 false）。 */
+        suspend fun acquireRunPermit(timeoutMs: Long = RUN_QUEUE_TIMEOUT_MS): Boolean =
+            withTimeoutOrNull(timeoutMs) {
+                runPermits.acquire()
+                true
+            } ?: false
+
+        /** 归还一次运行许可（与 [acquireRunPermit] 配对）。 */
+        fun releaseRunPermit() {
+            runPermits.release()
+        }
     }
 }
 
@@ -191,6 +288,9 @@ enum class SkinScriptSkip {
 sealed interface SkinScriptFailure {
     data object TooLarge : SkinScriptFailure
     data object BudgetExceeded : SkinScriptFailure
+
+    /** 全局并发上限已满：本次运行未执行（分发层排队超时时不产生本失败，只记元数据）。 */
+    data object TooManyConcurrent : SkinScriptFailure
 
     /** Script error, carrying only the sanitized exception kind, never source text. */
     data class Error(val kind: String) : SkinScriptFailure

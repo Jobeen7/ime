@@ -212,12 +212,130 @@ class ClearedTextLedgerTest {
         assertEquals(listOf("abc"), ic.committed)
         assertEquals(0, ClearedTextLedger.size())
     }
+
+    // ---- 光标绑定（审计 #1-9）：锚点相同 ≠ 同一位置 ----
+
+    @Test
+    fun restore_repeatedFullAnchor_moveToSecondPosition_refuses() {
+        // 核心回归：同一 16 字满锚点在两处重复出现。清第一处后
+        // 把光标移到第二处，锚点判定本身会放行（窗口以锚点结尾、
+        // 长度落在区间内），光标位置绑定必须拦住，不误插。
+        val anchor = "0123456789abcdef"
+        val first = FakeInputConnection(beforeCursor = anchor)
+        ClearedTextLedger.record("X", anchor, first)
+        assertEquals(16 to 16, ClearedTextLedger.peekCursor())
+        // 对照：光标不动，恢复成功
+        assertTrue(ClearedTextLedger.tryRestore(first))
+        assertEquals(listOf("X"), first.committed)
+
+        ClearedTextLedger.record("X", anchor, first)
+        // 移到第二处：光标前变为「锚点＋X＋锚点」，锚点判定放行
+        val moved = FakeInputConnection(beforeCursor = anchor + "X" + anchor)
+        assertFalse(ClearedTextLedger.tryRestore(moved))
+        assertTrue(moved.committed.isEmpty())
+        // 条目保留：移回原处仍可恢复（未接 onSelectionChanged 时）
+        assertEquals(1, ClearedTextLedger.size())
+        assertTrue(ClearedTextLedger.tryRestore(first))
+        // first 在上文已提交过一次 "X"，此次再提交一次，累计两次
+        assertEquals(listOf("X", "X"), first.committed)
+    }
+
+    @Test
+    fun restore_longField_fingerprint_moveRefuses() {
+        // 长字段（绝对位置不可知）：登记时存 256 字窗口指纹；
+        // 光标移到前文不足 256 字的位置，窗口变化即拒。
+        val before = "A".repeat(300)
+        val anchor = "A".repeat(16)
+        val at300 = FakeInputConnection(beforeCursor = before)
+        ClearedTextLedger.record("X", anchor, at300)
+        assertNull(ClearedTextLedger.peekCursor())
+        assertTrue(ClearedTextLedger.tryRestore(at300))
+
+        ClearedTextLedger.record("X", anchor, at300)
+        val at150 = FakeInputConnection(beforeCursor = "A".repeat(150))
+        assertFalse(ClearedTextLedger.tryRestore(at150))
+        assertTrue(at150.committed.isEmpty())
+        assertEquals(1, ClearedTextLedger.size())
+    }
+
+    @Test
+    fun restore_epochChanged_dropsEntry() {
+        // 编辑器会话重用：纪元推进后旧条目永不匹配，直接丢弃。
+        val saved = ClearedTextLedger.epochProvider
+        try {
+            ClearedTextLedger.epochProvider = { 7L }
+            ClearedTextLedger.record("abc", "前文")
+            ClearedTextLedger.epochProvider = { 7L }
+            val ic = FakeInputConnection(beforeCursor = "前文")
+            assertTrue(ClearedTextLedger.tryRestore(ic))
+
+            ClearedTextLedger.epochProvider = { 7L }
+            ClearedTextLedger.record("abc", "前文")
+            ClearedTextLedger.epochProvider = { 8L }
+            val ic2 = FakeInputConnection(beforeCursor = "前文")
+            assertFalse(ClearedTextLedger.tryRestore(ic2))
+            assertTrue(ic2.committed.isEmpty())
+            assertEquals(0, ClearedTextLedger.size())
+        } finally {
+            ClearedTextLedger.epochProvider = saved
+        }
+    }
+
+    @Test
+    fun selectionChange_invalidatesBoundEntryAndMoveBackStaysInvalid() {
+        // onSelectionChanged：位置已知的条目，任何不一致的选区
+        // 更新都立即作废；移开再移回原处也不恢复。
+        val ic = FakeInputConnection(beforeCursor = "前文")
+        ClearedTextLedger.record("abc", "前文", ic)
+        ClearedTextLedger.onSelectionChanged(2, 2)
+        assertEquals(1, ClearedTextLedger.size())
+        assertTrue(ClearedTextLedger.tryRestore(ic))
+
+        ClearedTextLedger.record("abc", "前文", ic)
+        ClearedTextLedger.onSelectionChanged(5, 5)
+        assertEquals(0, ClearedTextLedger.size())
+        assertFalse(ClearedTextLedger.tryRestore(ic))
+        // 移回原处：条目已在移开时作废，不再恢复
+        ClearedTextLedger.onSelectionChanged(2, 2)
+        assertEquals(0, ClearedTextLedger.size())
+    }
+
+    @Test
+    fun selectionChange_keepsUnboundEntry() {
+        // 未传连接的条目（位置未知）不受选区通知影响：删除动作
+        // 本身就会触发一次选区更新，清掉会让旧路径撤销立即失效。
+        ClearedTextLedger.record("abc", "前文")
+        ClearedTextLedger.onSelectionChanged(99, 99)
+        assertEquals(1, ClearedTextLedger.size())
+    }
+
+    @Test
+    fun record_withSelection_bindsRange() {
+        // 登记时有选区：起点/尾都记；恢复时选区已清但位置仍须一致。
+        val ic = FakeInputConnection(beforeCursor = "XY ", selected = "ab")
+        ClearedTextLedger.record("X", "XY ", ic)
+        assertEquals(3 to 5, ClearedTextLedger.peekCursor())
+        val cleared = FakeInputConnection(beforeCursor = "XY ")
+        assertFalse(ClearedTextLedger.tryRestore(cleared))
+        assertTrue(cleared.committed.isEmpty())
+    }
+
+    @Test
+    fun record_withIc_bindsCursor_withoutIcUnbound() {
+        val ic = FakeInputConnection(beforeCursor = "前文")
+        ClearedTextLedger.record("abc", "前文", ic)
+        assertEquals(2 to 2, ClearedTextLedger.peekCursor())
+        ClearedTextLedger.clearAll()
+        ClearedTextLedger.record("abc", "前文")
+        assertNull(ClearedTextLedger.peekCursor())
+    }
 }
 
 /**
  * 仅供本文件测试的最小 InputConnection 实现：getTextBeforeCursor
- * 不按长度截取、直接返回配置好的窗口（长度敏感情形由纯判定测试
- * 覆盖）；其余方法返回固定默认值，不触碰 Android 框架实现。
+ * 按长度截取（返回窗口尾部至多 n 字，与真实连接同口径——长度
+ * 敏感情形与光标位置绑定都依赖它）；其余方法返回固定默认值，
+ * 不触碰 Android 框架实现。
  */
 private class FakeInputConnection(
     var beforeCursor: CharSequence?,
@@ -227,7 +345,8 @@ private class FakeInputConnection(
     val committed = mutableListOf<String>()
 
     override fun getSelectedText(flags: Int): CharSequence? = selected
-    override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence? = beforeCursor
+    override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence? =
+        beforeCursor?.takeLast(n)
     override fun getTextAfterCursor(n: Int, flags: Int): CharSequence? = null
     override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
         if (commitResult) committed.add(text.toString())

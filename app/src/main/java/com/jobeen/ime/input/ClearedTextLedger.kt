@@ -3,6 +3,7 @@
 package com.jobeen.ime.input
 
 import android.view.inputmethod.InputConnection
+import com.jobeen.ime.base.speech.SherpaSpeechClient
 import com.jobeen.ime.base.speech.VoiceUndoLedger
 
 /**
@@ -33,6 +34,36 @@ import com.jobeen.ime.base.speech.VoiceUndoLedger
  * 与打字账本的分工：打字账本记的是「打出来、还在光标前躺着」的
  * 段，撤销是直删；本账本记的是「被上滑清掉、已经不在编辑器里」
  * 的段，撤销是写回。方向相反，不可混用。
+ *
+ * 光标绑定（审计 #1-9）：旧实现只比对文字锚点——同一锚点在
+ * 同一编辑框里重复出现时，清掉第一处、把光标移到第二处再撤销，
+ * 会把文字误插到第二处（满锚点 16 字时锚点判定本身拦不住，
+ * 见 [decideRestoreApply] 的区间分支）。本账本现把三样东西
+ * 记进条目，并在恢复时逐一核对：
+ *
+ * - 编辑器纪元（[SherpaSpeechClient.currentEditorEpoch]，登记时
+ *   现取）：换框／输入结束推进纪元后，旧条目永不匹配，直接丢弃
+ *   （纪元只进不退，丢了也不会再合用）。
+ * - 光标位置（登记时随连接现读，见 [readPosition]）：光标前
+ *   文本不足 [POSITION_CONTEXT_CHARS] 字时，读回的全长就是
+ *   绝对光标位置（选区起点）；字段更长时绝对位置不可知，改存
+ *   光标前 [POSITION_CONTEXT_CHARS] 字窗口本身作指纹。恢复时
+ *   现读同一窗口比对：光标移过、选区变过、前文被编辑过都会让
+ *   比对失败，不接管（条目保留，用户移回原处仍可恢复）。
+ * - 选区变化通知（[onSelectionChanged]，供
+ *   ImeInputMethodService.onUpdateSelection 接线）：光标位置
+ *   已知的条目，任何与记录不一致的选区更新都立即作废——光标
+ *   移开再移回原处也不恢复（条目已在移开时作废）。位置未知的
+ *   条目（登记时没传连接）不受此通知影响：删除动作本身就会
+ *   触发一次选区更新，无法区分「删除自带的更新」与「用户移
+ *   光标」，清掉会让旧路径的撤销立即失效；它们仍由锚点判定兜底。
+ *
+ * 接线残留（本文件只改账本，调用方不在本次改动范围）：登记处
+ * 须把当前连接传给 [record]（KeyActionListener 的 #deleteText
+ * 分支与 RimeEngine.clearInternal 各一处），服务须在
+ * onUpdateSelection 里调 [onSelectionChanged]；未接线前，新
+ * 绑定只在传了连接的登记路径上生效，未传连接的条目保持旧的
+ * 锚点判定（行为不变，不引入新失败面）。
  */
 object ClearedTextLedger {
 
@@ -63,10 +94,49 @@ object ClearedTextLedger {
      */
     internal const val MAX_RECORDABLE_CHARS = 4096
 
+    /**
+     * 光标位置指纹窗口（字）：登记／恢复时各读一次
+     * getTextBeforeCursor(本值)。读回不足本值即到字段头，长度
+     * 就是绝对光标位置；读满本值则绝对位置不可知，存窗口本身
+     * 作指纹。256 字覆盖锚点（16 字）的 16 倍，误判需同一
+     * 256 字窗口在另一位置完整重复；Binder 单次往返只传
+     * 至多 256 字，登记／恢复各一次，不成负担。
+     */
+    internal const val POSITION_CONTEXT_CHARS = 256
+
+    /**
+     * 编辑器纪元来源（单测可替换）。默认读语音客户端的进程级
+     * 输入框纪元（换框／输入结束时推进，与按键脚本会话复检
+     * 同一份纪元，不另造代次）。读失败（单测桩环境下
+     * SherpaSpeechClient 类初始化触 Android 桩）按 0 处理：
+     * 登记与恢复读到同一值，纪元判定恒过，不误伤旧行为。
+     */
+    internal var epochProvider: () -> Long = {
+        runCatching { SherpaSpeechClient.currentEditorEpoch() }.getOrDefault(0L)
+    }
+
     private data class Entry(
         val text: String,
         val prefix: String,
         val atMs: Long,
+        /** 登记时的编辑器纪元（只进不退；不匹配即会话已换）。 */
+        val epoch: Long,
+        /** 登记时光标／选区起点（绝对位置；不可知时为 null）。 */
+        val cursorStart: Int?,
+        /** 登记时选区尾（无选区时等于起点；不可知时为 null）。 */
+        val cursorEnd: Int?,
+        /**
+         * 登记时光标前窗口指纹（仅绝对位置不可知时存；
+         * 绝对位置已知时为 null，位置判定走起点／尾）。
+         */
+        val contextBefore: String?,
+    )
+
+    /** 登记时现读的位置快照（见 [record]）。 */
+    private data class PositionMark(
+        val start: Int?,
+        val end: Int?,
+        val contextBefore: String?,
     )
 
     private val entries = ArrayDeque<Entry>()
@@ -76,16 +146,24 @@ object ClearedTextLedger {
      * @param text 实际被删掉的文字（空串与超长段忽略）
      * @param anchorBeforeDelete 删除点紧邻的前文（删除**之前**现读的
      *   `getTextBeforeCursor`，只取尾部 [ANCHOR_CHARS] 字）
+     * @param ic 当前输入连接（可空）：传了才绑定光标位置（登记时
+     *   现读选区／光标前窗口）；不传时条目只有锚点，恢复走旧的
+     *   锚点判定（行为不变）。登记后连接即失效，账本不持有它。
      */
     @Synchronized
-    fun record(text: String, anchorBeforeDelete: String) {
+    fun record(text: String, anchorBeforeDelete: String, ic: InputConnection? = null) {
         if (text.isEmpty() || text.length > MAX_RECORDABLE_CHARS) return
         pruneExpired()
+        val position = ic?.let { readPosition(it) }
         entries.addLast(
             Entry(
                 text = text,
                 prefix = anchorBeforeDelete.takeLast(ANCHOR_CHARS),
                 atMs = System.currentTimeMillis(),
+                epoch = epochProvider(),
+                cursorStart = position?.start,
+                cursorEnd = position?.end,
+                contextBefore = position?.contextBefore,
             )
         )
         while (entries.size > MAX_ENTRIES) entries.removeFirst()
@@ -108,6 +186,17 @@ object ClearedTextLedger {
             pruneExpired()
             entries.lastOrNull()
         } ?: return false
+        // 纪元先行（无 Binder 开销）：会话已换的条目直接丢弃，
+        // 纪元只进不退，丢了也不会再合用。
+        if (entry.epoch != epochProvider()) {
+            synchronized(this) {
+                if (entries.lastOrNull() === entry) entries.removeLast()
+            }
+            return false
+        }
+        // 光标位置核对（有绑定才验）：移过光标、换过选区、前文
+        // 被编辑过都拒绝；条目保留，用户移回原处仍可恢复。
+        if (!positionMatches(entry, ic)) return false
         val before = runCatching {
             ic.getTextBeforeCursor(entry.prefix.length + entry.text.length, 0)?.toString()
         }.getOrNull()
@@ -119,6 +208,20 @@ object ClearedTextLedger {
             if (entries.lastOrNull() === entry) entries.removeLast()
         }
         return true
+    }
+
+    /**
+     * 选区／光标变化通知（供 ImeInputMethodService.onUpdateSelection
+     * 接线）：位置已知的条目，选区与记录不一致即作废；位置未知
+     * 的条目不动（见类文档：删除自带的选区更新无法与用户移
+     * 光标区分）。无条目时直接返回，不读连接。
+     */
+    @Synchronized
+    fun onSelectionChanged(start: Int, end: Int) {
+        entries.removeAll { entry ->
+            entry.cursorStart != null &&
+                (entry.cursorStart != start || entry.cursorEnd != end)
+        }
     }
 
     /** 输入框结束时整表作废：旧框的账不能拿到新框去写回 */
@@ -150,6 +253,18 @@ object ClearedTextLedger {
         entries.lastOrNull()?.let { it.text to it.prefix }
 
     /**
+     * 栈顶条目登记的光标／选区（起点, 尾）——单测用；
+     * 未绑定位置时为 null。
+     */
+    @Synchronized
+    internal fun peekCursor(): Pair<Int, Int>? =
+        entries.lastOrNull()?.let { entry ->
+            val start = entry.cursorStart ?: return@let null
+            val end = entry.cursorEnd ?: return@let null
+            start to end
+        }
+
+    /**
      * 纯判定：删除后状态是否仍未被改动过。
      *
      * 满锚点/短锚点的分界与区间判定直接复用语音账本的
@@ -169,6 +284,56 @@ object ClearedTextLedger {
     ): Boolean {
         if (prefix.isEmpty()) return beforeText.isNullOrEmpty()
         return VoiceUndoLedger.decideRedoApply(beforeText, prefix, clearedLength)
+    }
+
+    /**
+     * 登记时现读光标位置（有界一次 Binder 往返）。
+     *
+     * 有选区时 getTextBeforeCursor 取的是选区之前的文本，故
+     * before 长即选区起点；选区尾 = 起点 + 选区文本长。
+     * 读失败（连接异常）返回全 null——不绑定、不误判。
+     * 读到 null 按空串计（字段头，部分实现在空字段上返 null，
+     * 与空锚点口径一致）。
+     *
+     * 注意：部分自绘输入框可能把 getTextBeforeCursor 截断到
+     * 小于请求值；此时「读满即字段头」的推断不成立，绝对位置
+     * 会被低估。低估只会让恢复在错误位置上更易被拒（安全方向），
+     * 且锚点判定仍在，不会因此误插——但本绑定在该类输入框上
+     * 退化为锚点判定，不作额外保证。
+     */
+    private fun readPosition(ic: InputConnection): PositionMark {
+        val beforeResult = runCatching {
+            ic.getTextBeforeCursor(POSITION_CONTEXT_CHARS, 0)?.toString()
+        }
+        if (beforeResult.isFailure) return PositionMark(null, null, null)
+        val before = beforeResult.getOrNull().orEmpty()
+        val selected = runCatching { ic.getSelectedText(0)?.toString() }.getOrNull().orEmpty()
+        return if (before.length < POSITION_CONTEXT_CHARS) {
+            val start = before.length
+            val end = start + selected.length
+            PositionMark(start, end, null)
+        } else {
+            PositionMark(null, null, before)
+        }
+    }
+
+    /**
+     * 恢复时核对光标位置（有绑定才验，无绑定恒过、走锚点判定）。
+     *
+     * - 绝对位置已知：当前选区起点／尾必须与记录一致。恢复入口
+     *   已拒有选区情形，故此处尾恒等于起点；起点一致即光标未动。
+     * - 只有窗口指纹：当前光标前窗口必须与记录时完全一致。
+     *   光标移过、选区变过、前文被编辑过都会改变窗口。
+     * 读失败按不匹配处理（状态不明时不写回，安全方向）。
+     */
+    private fun positionMatches(entry: Entry, ic: InputConnection): Boolean {
+        if (entry.cursorStart == null && entry.contextBefore == null) return true
+        val mark = readPosition(ic)
+        if (entry.cursorStart != null) {
+            return mark.start == entry.cursorStart && mark.end == entry.cursorEnd
+        }
+        val current = mark.contextBefore ?: return false
+        return current == entry.contextBefore
     }
 
     /** 清掉已过期条目（队首最旧，过期必在队首一段连续区间内） */

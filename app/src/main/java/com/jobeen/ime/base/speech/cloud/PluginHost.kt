@@ -452,7 +452,7 @@ class PluginHost(
         )
         val handle = try {
             shim.websocket(url, headers, object : NetworkTransport.WsListener {
-                override fun onMessage(text: String?, bytes: ByteArray?) {
+                override fun onMessage(text: String?, bytes: okio.ByteString?) {
                     post { dispatchWsMessage(text, bytes) }
                 }
 
@@ -491,27 +491,31 @@ class PluginHost(
         return out
     }
 
-    private fun dispatchWsMessage(text: String?, bytes: ByteArray?) {
+    private fun dispatchWsMessage(text: String?, bytes: okio.ByteString?) {
         val current = session ?: return
         if (closed) return
         // 二进制入站先按字节数拦截，再做 Base64：编码前拦住，绝不为超限帧
         // 分配 1.33 倍字符串；字节上限由字符上限换算（每 3 字节变 4 字符），
         // 接受集与原来完全一致（字符数超限的帧原来也在编码后被丢弃）。
-        // 说明：OkHttp 公共 API 无入站帧上限设置，帧本身由 OkHttp 物化
-        // 不可避免；此处是物化后、放大前的拦截，帧层硬上限需换实现，另议。
+        // 零复制：帧以 OkHttp 的 ByteString 原样到达，此处直接取
+        // size、直接 base64() 编码，不再转 ByteArray 做第二份复制。
+        // Base64 编码与原来一致（标准带 padding、无换行，与生产
+        // AndroidBase64Codec 的 NO_WRAP 口径相同；单测用的无 padding
+        // 编解码器只影响其它路径，见 PluginHostTest 注释）。
+        // 传输层已在超限时先关 socket（1009），此处再 failSession：
+        // 关全部在途连接、清会话、通知监听方出错（与 onMessage
+        // 失败同口径），超限后同一会话不再接受后续帧。
+        // 残留边界（未谎称硬限）：OkHttp 公共 API 无入站帧上限设置，
+        // 帧本身由 OkHttp 物化后才到此处——物化前无法拦截，超限帧
+        // 的物化内存峰值仍在；要帧级硬上限须换掉 OkHttp 的
+        // WebSocket 实现（流式读帧体）。本处是物化后能做的最优：
+        // 零复制＋立即关 socket＋立即 failSession。
         if (bytes != null && bytes.size > MAX_WS_INBOUND_BYTES) {
             Timber.w("cloudVoice ws message dropped plugin=%s bytes=%d", plugin.meta.id, bytes.size)
-            // 超限帧此前只丢弃、会话继续：同一对端可继续以超限
-            // 帧灌会话。改走 failSession：关全部在途连接、清会
-            // 话、通知监听方出错（与 onMessage 失败同口径）。
-            // 残余：OkHttp 公共接口无入站帧级上限，帧已由 OkHttp
-            // 物化后才到此处——物化前无法拦截，超限帧的物化内
-            // 存峰值仍在，本处只是物化后、放大前的拦截＋事后清理，
-            // 不是帧级硬上限。
             failSession("ws_frame_too_large")
             return
         }
-        val data = text ?: bytes?.let { base64.encodeToString(it) } ?: return
+        val data = text ?: bytes?.base64() ?: return
         if (data.length > MAX_WS_INBOUND_CHARS) {
             Timber.w("cloudVoice ws message dropped plugin=%s len=%d", plugin.meta.id, data.length)
             failSession("ws_frame_too_large")

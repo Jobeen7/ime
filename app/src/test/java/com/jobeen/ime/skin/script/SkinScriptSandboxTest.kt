@@ -121,4 +121,111 @@ class SkinScriptSandboxTest {
         )
         assertNull((outcome as SkinScriptRunOutcome.Ok).value)
     }
+
+    // ---- 审计 #1-10：输入上限与全局并发硬上限 ----
+
+    @Test
+    fun tooManyArgs_rejected() {
+        val args = (1..33).associate { "k$it" to "v" }
+        val outcome = sandbox.run(
+            "function onEvent(ctx) { return 'ran'; }",
+            "press",
+            args,
+        )
+        assertEquals(
+            SkinScriptRunOutcome.Failed(SkinScriptFailure.TooLarge),
+            outcome,
+        )
+    }
+
+    @Test
+    fun tooManyArgChars_rejected() {
+        val outcome = sandbox.run(
+            "function onEvent(ctx) { return 'ran'; }",
+            "press",
+            mapOf("k" to "x".repeat(70_000)),
+        )
+        assertEquals(
+            SkinScriptRunOutcome.Failed(SkinScriptFailure.TooLarge),
+            outcome,
+        )
+    }
+
+    @Test
+    fun concurrentRuns_cappedAtFour() {
+        // 4 个慢脚本先占满槽（轮询确认 4 槽都被占住），第 5 个
+        // 在调用线程立即失败 TooManyConcurrent；4 个跑完后计数归零。
+        val slowScript = "function onEvent(ctx) { " +
+            "var t = Date.now(); while (Date.now() - t < 400) {} return 'done'; }"
+        val results = arrayOfNulls<SkinScriptRunOutcome>(4)
+        val threads = (0..3).map { i ->
+            Thread {
+                results[i] = sandbox.run(slowScript, "press", emptyMap())
+            }.also { it.isDaemon = true; it.start() }
+        }
+        val deadline = System.currentTimeMillis() + 10_000
+        while (sandbox.activeRunCount() < SkinScriptSandbox.MAX_CONCURRENT_SCRIPT_RUNS &&
+            System.currentTimeMillis() < deadline
+        ) {
+            Thread.sleep(20)
+        }
+        assertEquals(SkinScriptSandbox.MAX_CONCURRENT_SCRIPT_RUNS, sandbox.activeRunCount())
+        val fifth = sandbox.run(slowScript, "press", emptyMap())
+        assertEquals(
+            SkinScriptRunOutcome.Failed(SkinScriptFailure.TooManyConcurrent),
+            fifth,
+        )
+        threads.forEach { it.join(10_000) }
+        assertTrue(results.all { it is SkinScriptRunOutcome.Ok })
+        assertEquals(0, sandbox.activeRunCount())
+    }
+
+    @Test
+    fun largeAllocation_completesAndMemoryReclaimable() {
+        // 压力：脚本一次建 10M 字串（约 20MB 堆）并持有 300ms，
+        // 采样观测峰值；跑完＋GC 后堆回到基线附近（分配可回收、
+        // 无泄漏）。堆上限本身 Rhino 给不出（见沙箱注释），本
+        // 测试只证「单次大分配不崩、不漏」，不谎称已限堆。
+        val runtime = Runtime.getRuntime()
+        runtime.gc()
+        Thread.sleep(100)
+        val baseline = runtime.totalMemory() - runtime.freeMemory()
+        val peak = java.util.concurrent.atomic.AtomicLong(0)
+        val stop = java.util.concurrent.atomic.AtomicBoolean(false)
+        val sampler = Thread {
+            while (!stop.get()) {
+                val used = runtime.totalMemory() - runtime.freeMemory()
+                peak.accumulateAndGet(used) { a, b -> maxOf(a, b) }
+                Thread.sleep(10)
+            }
+        }.also { it.isDaemon = true; it.start() }
+        val outcome = try {
+            sandbox.run(
+                "function onEvent(ctx) { " +
+                    "var s = 'x'.repeat(10000000); " +
+                    "var t = Date.now(); while (Date.now() - t < 300) {} " +
+                    "return 'len:' + s.length; }",
+                "press",
+                emptyMap(),
+            )
+        } finally {
+            stop.set(true)
+            sampler.join(5_000)
+        }
+        val ok = outcome as? SkinScriptRunOutcome.Ok
+        assertEquals("len:10000000", ok?.value)
+        assertTrue(
+            "peak should exceed baseline by the 20MB string, peak=${peak.get()} baseline=$baseline",
+            peak.get() > baseline + 5 * 1024 * 1024,
+        )
+        runtime.gc()
+        Thread.sleep(100)
+        runtime.gc()
+        val after = runtime.totalMemory() - runtime.freeMemory()
+        assertTrue(
+            "heap should return near baseline after GC, after=$after baseline=$baseline",
+            after < baseline + 20 * 1024 * 1024,
+        )
+        assertEquals(0, sandbox.activeRunCount())
+    }
 }

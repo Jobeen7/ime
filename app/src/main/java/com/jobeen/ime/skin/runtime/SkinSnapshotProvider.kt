@@ -26,7 +26,6 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
 
 /**
  * 运行态快照持有者（详设 §2.7）：resolve() 的分流依据。
@@ -57,6 +56,55 @@ object SkinSnapshotProvider {
     private val lock = Any()
 
     /**
+     * 启动加载协程作用域（IO：对账等待＋快照构建都在后台做，
+     * 永不占主线程）。SupervisorJob：单次加载失败不牵连其它任务。
+     */
+    private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /**
+     * 安装代次：[install]/[invalidate] 每次递增。异步启动加载在
+     * 完成时比对代次——其间若有一次安装（用户应用皮肤、覆盖层
+     * 刷新、回退默认等）发生，启动加载的旧快照直接丢弃，绝不
+     * 覆盖用户的新选择。
+     */
+    private var startupLoadGeneration = 0
+
+    /**
+     * 启动加载的依赖缝（审计 #1-6 的可测性）：生产实现直调
+     * [SkinLibrary]/[loadStartup]/[install]；单测可替换为慢对账
+     * 注入与快照录制，验证首帧不阻塞与异步安装。接口直实现
+     * （显式 override、无 `by` 委托），不触发 AGENTS.md 的
+     * 接口委托增量陷阱。
+     */
+    internal interface StartupLoadDeps {
+        suspend fun awaitBootstrap()
+        suspend fun loadSnapshot(context: Context): Pair<SkinSnapshot, Boolean>?
+        fun installSnapshot(context: Context, snapshot: SkinSnapshot, pending: Boolean)
+    }
+
+    private object RealStartupLoadDeps : StartupLoadDeps {
+        override suspend fun awaitBootstrap() {
+            SkinLibrary.awaitBootstrap()
+        }
+
+        override suspend fun loadSnapshot(context: Context): Pair<SkinSnapshot, Boolean>? =
+            loadStartup(context)
+
+        override fun installSnapshot(context: Context, snapshot: SkinSnapshot, pending: Boolean) {
+            install(context, snapshot)
+            if (pending) {
+                SkinRuntime.armPendingVerification(snapshot.ref)
+            }
+            // 启动快照后到：首帧已按内置默认绘出，须通知窗口
+            // 重绘才能换上皮肤（refreshSkinTheme 内部 post，
+            // 任意线程调用安全）。
+            SkinRuntime.requestRefresh()
+        }
+    }
+
+    internal var startupLoadDeps: StartupLoadDeps = RealStartupLoadDeps
+
+    /**
      * 背景产物自愈（2026-10-28 修复轮）：导入期写产物、运行期按键
      * 取产物，档位/方向/高度任一漂移即键分裂永久缺失；缺失时在 IO
      * 线程按快照自带键重建一次，成功后装载并刷新窗口（冷路径，
@@ -84,23 +132,42 @@ object SkinSnapshotProvider {
     /** 当前快照的背景位图（已在冷路径解码；无背景/产物缺失时为 null）。 */
     fun currentBackgroundBitmap(): Bitmap? = currentBitmap
 
+    /**
+     * 启动加载（审计 #1-6）：首次调用只标记「已发起」并立即
+     * 返回，绝不在调用线程等待对账收敛——旧实现在同步锁内
+     * `runBlocking { SkinLibrary.awaitBootstrap() }`，冷启动时
+     * 首次 keyboard snapshot 查询发生在主线程会同步卡住最多
+     * 3 秒、延迟键盘首帧。
+     *
+     * 新口径：首帧先用当前快照（冷启动时为 null，即内置默认，
+     * 与无皮肤生效时同一回退）；对账与快照构建在 IO 线程异步
+     * 跑，完成后原子安装并通知窗口重绘。超时放行仍在
+     * [SkinLibrary.awaitBootstrap] 内（上限 3 秒）：对账超时
+     * 时按现有 store 状态加载，不阻塞首帧。
+     *
+     * 并发：多次调用只发起一次（[loadAttempted] 同步锁内判定）；
+     * 安装期间若用户已应用皮肤，启动加载的旧快照按代次丢弃。
+     */
     fun ensureLoaded(context: Context) {
-        if (loadAttempted) return
+        val generation: Int
         synchronized(lock) {
             if (loadAttempted) return
             loadAttempted = true
-            // 先等启动对账收敛（上限 3 秒、超时放行，见 SkinLibrary）：
-            // 对账已把有效 pending 保留（S1），此处采纳其快照是预期
-            // 行为，验证留待窗口挂载后的首帧完成。等待永不抛。
-            runCatching { runBlocking { SkinLibrary.awaitBootstrap() } }
-            val loaded = runCatching { loadStartup(context) }.getOrNull()
-            if (loaded != null) {
-                installLocked(context, loaded.first)
-                if (loaded.second) {
-                    // 保留的 pending：进程内待验证标记已丢，需重挂，
-                    // 否则首帧验证永不触发、pending 永久悬空。
-                    SkinRuntime.armPendingVerification(loaded.first.ref)
-                }
+            generation = startupLoadGeneration
+        }
+        // context 原样传进协程：applicationContext 的解析留在
+        // 依赖实现里（生产路径才需要；单测的假依赖不碰它，
+        // 故桩 Context 也能驱动本编排）。
+        startupScope.launch {
+            runCatching { startupLoadDeps.awaitBootstrap() }
+            val loaded = runCatching { startupLoadDeps.loadSnapshot(context) }.getOrNull()
+                ?: return@launch
+            val stillCurrent = synchronized(lock) {
+                generation == startupLoadGeneration && currentSnapshot == null
+            }
+            if (!stillCurrent) return@launch
+            runCatching {
+                startupLoadDeps.installSnapshot(context, loaded.first, loaded.second)
             }
         }
     }
@@ -109,6 +176,9 @@ object SkinSnapshotProvider {
     fun install(context: Context, snapshot: SkinSnapshot?) {
         synchronized(lock) {
             loadAttempted = true
+            // 安装代次递增：在途的异步启动加载完成时按代次丢弃，
+            // 不覆盖本次安装。
+            startupLoadGeneration++
             if (snapshot == null) {
                 currentSnapshot = null
                 releaseBitmapLocked()
@@ -127,6 +197,9 @@ object SkinSnapshotProvider {
     fun invalidate() {
         synchronized(lock) {
             loadAttempted = false
+            // 代次递增：在途的异步启动加载完成时按代次丢弃，
+            // 下次 ensureLoaded 重新发起加载。
+            startupLoadGeneration++
             currentSnapshot = null
             releaseBitmapLocked()
             InputFeedbacks.clearSkinSounds()
@@ -436,11 +509,12 @@ object SkinSnapshotProvider {
     /**
      * 启动加载：采 verified 或保留的 pending 记录（代次完整、hash 一致，
      * ActiveResolver 同口径）；返回快照与「记录是否为 pending」。
+     * suspend：调用方在协程里直接读 store，不再 runBlocking。
      */
-    private fun loadStartup(context: Context): Pair<SkinSnapshot, Boolean>? {
+    private suspend fun loadStartup(context: Context): Pair<SkinSnapshot, Boolean>? {
         val store = SkinLibrary.store
         val layout = SkinLibrary.layout
-        val active = runBlocking { store.readActive() }
+        val active = store.readActive()
         val record = (active as? com.jobeen.ime.skin.store.SkinLibraryStore.ReadResult.Ok)?.value
             ?: return null
         val skinId = record.skinId ?: return null

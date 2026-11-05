@@ -24,6 +24,7 @@ import com.jobeen.ime.skin.model.SnippetExpander
 import com.jobeen.ime.skin.script.SkinScriptActivity
 import com.jobeen.ime.skin.script.SkinScriptKeyBridge
 import com.jobeen.ime.skin.script.SkinScriptRunner
+import com.jobeen.ime.skin.script.SkinScriptSandbox
 import com.jobeen.ime.skin.script.SkinScriptStore
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -557,6 +558,13 @@ class KeyActionListener(
             // 或字段身份已变，过期结果直接丢弃并只记元数据，绝不
             // 把旧框脚本的动作写进新框。无输入框时身份为空、纪元
             // 仍比对（纪元推进仍能拦住旧会话结果）。
+            // 全局并发（审计 #1-10）：全部皮肤脚本共用 4 个并发槽
+            // （见 SkinScriptSandbox）。本任务先取许可再进沙箱：
+            // 排队等许可可取消——同 scriptId 再按取消旧任务时，
+            // 排队中的旧任务随取消退出队列，不占槽；超时未取到
+            // 即放弃本次执行（不入队、不重试），只记元数据。
+            // 同 scriptId 单飞取消口径不变（取消只拦分发，Rhino
+            // 求值本身不可中断，在途求值仍跑完但不落地）。
             is KeyboardAction.RunScriptAction -> {
                 val captured = ScriptRunSession.capture(
                     service.currentInputEditorInfo,
@@ -564,35 +572,46 @@ class KeyActionListener(
                 )
                 scriptJobs[action.scriptId]?.cancel()
                 val job = appScope.launch(Dispatchers.Default) {
-                    when (val outcome =
-                        SkinScriptKeyBridge.runForKey(scriptRunner, action.scriptId)
-                    ) {
-                        is SkinScriptKeyBridge.KeyRunOutcome.Dispatch -> {
-                            withContext(Dispatchers.Main) {
-                                if (ScriptRunSession.isCurrent(
-                                        captured,
-                                        service.currentInputEditorInfo,
-                                        SherpaSpeechClient.currentEditorEpoch(),
-                                    )
-                                ) {
-                                    onKeyAction(outcome.action)
-                                } else {
-                                    DiagLog.w(
-                                        "keymap", "script_key_stale_session",
-                                        mapOf("scriptId" to action.scriptId),
-                                    )
+                    if (!SkinScriptSandbox.acquireRunPermit()) {
+                        DiagLog.w(
+                            "keymap", "script_key_queue_timeout",
+                            mapOf("scriptId" to action.scriptId),
+                        )
+                        return@launch
+                    }
+                    try {
+                        when (val outcome =
+                            SkinScriptKeyBridge.runForKey(scriptRunner, action.scriptId)
+                        ) {
+                            is SkinScriptKeyBridge.KeyRunOutcome.Dispatch -> {
+                                withContext(Dispatchers.Main) {
+                                    if (ScriptRunSession.isCurrent(
+                                            captured,
+                                            service.currentInputEditorInfo,
+                                            SherpaSpeechClient.currentEditorEpoch(),
+                                        )
+                                    ) {
+                                        onKeyAction(outcome.action)
+                                    } else {
+                                        DiagLog.w(
+                                            "keymap", "script_key_stale_session",
+                                            mapOf("scriptId" to action.scriptId),
+                                        )
+                                    }
                                 }
                             }
+                            is SkinScriptKeyBridge.KeyRunOutcome.NoAction -> {
+                                DiagLog.w(
+                                    "keymap", "script_key_no_action",
+                                    mapOf(
+                                        "scriptId" to action.scriptId,
+                                        "reason" to outcome.reason.name.lowercase(),
+                                    ),
+                                )
+                            }
                         }
-                        is SkinScriptKeyBridge.KeyRunOutcome.NoAction -> {
-                            DiagLog.w(
-                                "keymap", "script_key_no_action",
-                                mapOf(
-                                    "scriptId" to action.scriptId,
-                                    "reason" to outcome.reason.name.lowercase(),
-                                ),
-                            )
-                        }
+                    } finally {
+                        SkinScriptSandbox.releaseRunPermit()
                     }
                 }
                 scriptJobs[action.scriptId] = job
