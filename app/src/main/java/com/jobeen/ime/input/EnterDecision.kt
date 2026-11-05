@@ -13,7 +13,12 @@ package com.jobeen.ime.input
  * - 组字中 → 上屏候选（走现有 Rime 回车路径），点按长按都一样。
  * - 单行＋声明了动作（SEARCH/SEND/GO/NEXT/PREVIOUS/DONE）→ 发该动作。
  * - 单行＋没声明动作（UNSPECIFIED，含 NONE）→ 发 DONE。
- * - 多行＋带不要换行标志 → 发声明的动作，没声明则 DONE。
+ * - 多行＋带不要换行标志 → 同无标志：无专用换行键插换行，
+ *   有专用换行键（九宫格）无动作。IME_FLAG_NO_ENTER_ACTION 的
+ *   平台含义是“回车不得被 action 取代”（多行字段需要回车插
+ *   换行），绝不是“按回车执行该 action”——声明了 SEND/DONE
+ *   也不得覆盖多行回车；显式发送走独立的发送键
+ *   （MultiReturnAction 绑定），不走本决策。
  * - 多行＋没带标志＋无专用换行键 → 插换行。
  * - 多行＋没带标志＋有专用换行键（九宫格）→ 无动作（换行走专用换行键）。
  * - 长按：无专用换行键时等于插换行（手机上的 Shift+Enter 口子，
@@ -85,18 +90,32 @@ object EnterDecision {
                 },
             )
         }
-        if (field.noEnterAction) {
-            return EnterOutcome.PerformAction(
-                if (field.action == EnterFieldAction.UNSPECIFIED) {
-                    EnterFieldAction.DONE
-                } else {
-                    field.action
-                },
-            )
-        }
+        // 多行：noEnterAction 不改变回车去向（见文件头决策表）——
+        // 标志只说“回车不得被 action 取代”，多行回车恒为换行／无动作。
         if (!hasDedicatedNewlineKey) {
             return EnterOutcome.InsertNewline
         }
         return EnterOutcome.NoOp
     }
+}
+
+/**
+ * 回车入队时的输入会话快照（纯数据，可单测；2026-11-05 审计 #1 项 4）：
+ * 字段身份 InputFieldKey（分发时点由 KeyActionListener 侧的
+ * EditorInfo 映射）＋输入框代次（引擎在 processEnter 入队时点
+ * 取的 predictionFieldGen 现值；注入回车在 reduce 分发点取）。
+ * 执行前（sendEnterJob）复检两者仍一致才执行——入队后换框
+ * （代次推进或字段身份变）或输入结束（身份变空）时旧会话的
+ * action 一律丢弃，绝不在新字段的 InputConnection 上执行。
+ * 与按键脚本的 ScriptRunSession 同构、代次源不同：脚本用语音
+ * 侧 EditorEpoch（只在真结束时推进），回车用引擎的 prediction-
+ * FieldGen（onStartInputView 换框即推进，含 restarting 型逻辑换框）。
+ */
+internal data class EnterSession(
+    val fieldKey: InputFieldKey?,
+    val fieldGen: Long,
+) {
+    /** 执行时点复检：字段身份与代次两者都须与入队时一致。 */
+    fun isCurrent(fieldKey: InputFieldKey?, fieldGen: Long): Boolean =
+        this.fieldKey == fieldKey && this.fieldGen == fieldGen
 }

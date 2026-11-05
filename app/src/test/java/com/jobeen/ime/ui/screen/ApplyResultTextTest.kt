@@ -59,12 +59,28 @@ class ApplyResultTextTest {
     }
 
     @Test
+    fun rollbackFailedNeverClaimsRestoredSkin() {
+        // 2026-11-05 审计 #1 项 2：回滚本身失败时不得报“已回退到”。
+        assertEquals(
+            "回滚失败：皮肤状态不确定，请重启键盘",
+            applyResultMessage(
+                ApplyTransaction.Result.RollbackFailed(refA, "switch_failed", "restore_default_switch_failed"),
+                resolve,
+            ),
+        )
+    }
+
+    @Test
     fun otherResultsMapped() {
         assertEquals("已恢复内置键盘", applyResultMessage(ApplyTransaction.Result.RevertedToDefault, resolve))
         assertEquals("皮肤无效，无法应用", applyResultMessage(ApplyTransaction.Result.TargetInvalid("x"), resolve))
         assertEquals(
             "回退不可用：没有可回退的皮肤",
             applyResultMessage(ApplyTransaction.Result.RollbackUnavailable("no_last_good"), resolve),
+        )
+        assertEquals(
+            "回退不可用：记录写入失败",
+            applyResultMessage(ApplyTransaction.Result.RollbackUnavailable("active_write_failed"), resolve),
         )
     }
 }

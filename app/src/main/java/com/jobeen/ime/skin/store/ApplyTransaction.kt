@@ -55,6 +55,18 @@ class ApplyTransaction(
          */
         data class SwitchFailedRolledBack(val ref: SkinGenRef, val restoredRef: SkinGenRef? = null) : Result
         data class FirstRenderFailedRolledBack(val ref: SkinGenRef, val restoredRef: SkinGenRef? = null) : Result
+        /**
+         * 回滚失败／持久状态不确定（2026-11-05 审计 #1 项 2）：
+         * 恢复上一代或默认的任一步失败时返回本结果，绝不返回声称
+         * 已恢复的 RolledBack 结果。[stage] 为触发回滚的应用阶段
+         * （switch_failed / first_render_failed），[reason] 为失败
+         * 的恢复步骤（restore_default_switch_failed /
+         * restore_active_write_failed / restore_default_write_failed；
+         * 上一好构建／切换失败本身只记日志、随后退默认，默认步骤
+         * 成功时仍按已恢复默认计）。调用方不得按默认理解当前
+         * 皮肤：运行态与磁盘记录以诊断日志与实际状态为准。
+         */
+        data class RollbackFailed(val ref: SkinGenRef, val stage: String, val reason: String) : Result
         data class TargetInvalid(val reason: String) : Result
         data class RolledBackToLastGood(val ref: SkinGenRef) : Result
         object RevertedToDefault : Result
@@ -95,14 +107,22 @@ class ApplyTransaction(
         )
 
         if (!runPort("switch", ref) { ports.switchRuntime(ref) }) {
-            val restored = restorePrevious(previous, "switch_failed", ref)
-            return Result.SwitchFailedRolledBack(ref, restored)
+            return when (val restored = restorePrevious(previous, "switch_failed", ref)) {
+                is RestoreOutcome.Restored ->
+                    Result.SwitchFailedRolledBack(ref, restored.ref)
+                is RestoreOutcome.Failed ->
+                    Result.RollbackFailed(ref, "switch_failed", restored.reason)
+            }
         }
         SkinFaultHooks.hit(SkinFaultHooks.Point.A3)
 
         if (!runPort("first_render", ref) { ports.awaitFirstRender() }) {
-            val restored = restorePrevious(previous, "first_render_failed", ref)
-            return Result.FirstRenderFailedRolledBack(ref, restored)
+            return when (val restored = restorePrevious(previous, "first_render_failed", ref)) {
+                is RestoreOutcome.Restored ->
+                    Result.FirstRenderFailedRolledBack(ref, restored.ref)
+                is RestoreOutcome.Failed ->
+                    Result.RollbackFailed(ref, "first_render_failed", restored.reason)
+            }
         }
         SkinFaultHooks.hit(SkinFaultHooks.Point.A4)
 
@@ -169,7 +189,15 @@ class ApplyTransaction(
             // 首渲失败：运行态不得停留在未验证的回退候选上，按
             // 应用失败同口径恢复到回退前状态（重建上一好快照再
             // 切，见 restorePrevious；结果仍如实报回退未完成）。
-            restorePrevious(previous, "rollback_first_render_failed", ref)
+            // 恢复本身失败也只记日志：返回值已是失败结果，不再
+            // 叠加声称恢复的断言（2026-11-05 审计 #1 项 2）。
+            val restored = restorePrevious(previous, "rollback_first_render_failed", ref)
+            if (restored is RestoreOutcome.Failed) {
+                DiagLog.w(
+                    "store", "rollback_restore_failed",
+                    mapOf("reason" to restored.reason, "skinId" to ref.skinId),
+                )
+            }
             return Result.RollbackUnavailable("first_render_failed").also {
                 DiagLog.w(
                     "store", "rollback_unavailable",
@@ -202,7 +230,13 @@ class ApplyTransaction(
                 DiagLog.w("store", "revert_unavailable", mapOf("reason" to "switch_failed"))
             }
         }
-        store.writeActive(ActiveRecord(appliedAt = clock()))
+        // 切换成功后写记录失败：运行态已是默认、记录仍指旧皮肤，
+        // 不得返回声称已恢复的成功结果（与 restorePrevious 同口径）。
+        if (!writeActiveChecked(ActiveRecord(appliedAt = clock()))) {
+            return Result.RollbackUnavailable("active_write_failed").also {
+                DiagLog.w("store", "revert_unavailable", mapOf("reason" to "active_write_failed"))
+            }
+        }
         DiagLog.i("store", "revert_to_default")
         return Result.RevertedToDefault
     }
@@ -210,37 +244,51 @@ class ApplyTransaction(
     // ---- 内部 ----
 
     /**
-     * 恢复旧代次：先原子改回旧记录，再把运行态切回（§2.4 切换异常口径；A-6 注入点）。
-     * 返回实际恢复的引用（null = 内置默认），供回滚结果向 UI 交代实际生效的皮肤。
+     * 恢复旧代次（2026-11-05 审计 #1 项 2 重写）：每一步的结果
+     * 都参与返回值，任一步失败都不声称恢复成功。
      *
-     * 2026-11-03 修复（回滚切不回上一好的真缺陷）：真实端口的
-     * switchRuntime 只接受本事务 staged 的快照——失败皮肤构建后
-     * staged 即失败皮肤，不重建上一好就恒返回 false；旧实现忽略
-     * 该返回值，导致记录已写回上一好、运行态仍停留在失败皮肤
-     * 上，UI 却报“已回退到上一好”。故此处先重建上一好快照再
-     * 切换；上一好重建／切换任一失败时退到内置默认（记录同步
-     * 改写为默认，键盘永不留失败皮肤、永不空白；Last-Good 指针
-     * 保留，用户可手动再回退到它）。
+     * 顺序（与 rollbackToLastGood“切换成功后才改记录”同口径，
+     * 审计建议的“先确认可用目标、再切运行态、最后持久化”）：
+     * 先重建上一好快照、再切运行态、切成功后才写 active 记录。
+     * 旧实现先写记录再切换：切换失败时记录已声称上一好、运行
+     * 态仍是失败皮肤，且 writeActive 的抛错被 runCatching 吞掉。
+     *
+     * 返回 [RestoreOutcome.Restored] 仅当运行态与记录双双落在
+     * 同一目标（ref = 上一好，null = 内置默认）；上一好重建／
+     * 切换失败时退默认，默认的切换／写记录再失败则返回
+     * [RestoreOutcome.Failed]（运行态与记录均未获确认，调用方
+     * 不得按默认理解）。Last-Good 指针保留，用户可手动再回退。
      */
     private suspend fun restorePrevious(
         previous: PreviousState,
         reason: String,
         failedRef: SkinGenRef,
-    ): SkinGenRef? {
+    ): RestoreOutcome {
         SkinFaultHooks.hit(SkinFaultHooks.Point.A6)
-        runCatching { store.writeActive(previous.record) }
-        val restored: SkinGenRef? = if (previous.ref == null) {
-            runPort("restore_switch", null) { ports.switchRuntime(null) }
-            null
+        val outcome: RestoreOutcome = if (previous.ref == null) {
+            restoreDefault()
         } else if (
-            runPort("restore_build", previous.ref) { ports.buildSnapshot(previous.ref) } &&
-            runPort("restore_switch", previous.ref) { ports.switchRuntime(previous.ref) }
+            !runPort("restore_build", previous.ref) { ports.buildSnapshot(previous.ref) }
         ) {
-            previous.ref
+            // 上一好重建失败：退默认（2026-11-03 既有口径）。
+            DiagLog.w(
+                "store", "restore_previous_failed",
+                mapOf("reason" to "restore_build_failed", "skinId" to previous.ref.skinId),
+            )
+            restoreDefault()
+        } else if (
+            !runPort("restore_switch", previous.ref) { ports.switchRuntime(previous.ref) }
+        ) {
+            DiagLog.w(
+                "store", "restore_previous_failed",
+                mapOf("reason" to "restore_switch_failed", "skinId" to previous.ref.skinId),
+            )
+            restoreDefault()
+        } else if (!writeActiveChecked(previous.record)) {
+            // 运行态已切回上一好、记录未落盘：不声称已恢复。
+            RestoreOutcome.Failed("restore_active_write_failed")
         } else {
-            runCatching { store.writeActive(ActiveRecord(appliedAt = clock())) }
-            runPort("restore_switch_default", null) { ports.switchRuntime(null) }
-            null
+            RestoreOutcome.Restored(previous.ref)
         }
         DiagLog.w(
             "store", "apply_rolled_back",
@@ -248,11 +296,57 @@ class ApplyTransaction(
                 "reason" to reason,
                 "failedSkinId" to failedRef.skinId,
                 "failedGen" to failedRef.generation,
-                "toSkinId" to restored?.skinId,
-                "toGen" to (restored?.generation ?: 0),
+                "restored" to (outcome is RestoreOutcome.Restored),
+                "toSkinId" to (outcome as? RestoreOutcome.Restored)?.ref?.skinId,
+                "toGen" to ((outcome as? RestoreOutcome.Restored)?.ref?.generation ?: 0),
+                "restoreFailure" to (outcome as? RestoreOutcome.Failed)?.reason,
             ),
         )
-        return restored
+        return outcome
+    }
+
+    /**
+     * 退到内置默认：切换成功后才写默认记录，两步都须成功才算
+     * 恢复到默认；任一步失败返回 [RestoreOutcome.Failed]。
+     */
+    private suspend fun restoreDefault(): RestoreOutcome {
+        if (!runPort("restore_switch_default", null) { ports.switchRuntime(null) }) {
+            return RestoreOutcome.Failed("restore_default_switch_failed")
+        }
+        return if (writeActiveChecked(ActiveRecord(appliedAt = clock()))) {
+            RestoreOutcome.Restored(null)
+        } else {
+            RestoreOutcome.Failed("restore_default_write_failed")
+        }
+    }
+
+    /** 恢复内部结果：已恢复（运行态与记录一致）／失败（均未获确认）。 */
+    private sealed interface RestoreOutcome {
+        data class Restored(val ref: SkinGenRef?) : RestoreOutcome
+        data class Failed(val reason: String) : RestoreOutcome
+    }
+
+    /**
+     * 写 active 记录并报真实结果：抛错（含磁盘写失败）返回 false，
+     * 调用方不得忽略。取消异常原样抛出，不按写失败计。
+     */
+    private suspend fun writeActiveChecked(record: ActiveRecord): Boolean {
+        return try {
+            store.writeActive(record)
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            DiagLog.w(
+                "store", "apply_active_write_failed",
+                mapOf(
+                    "skinId" to record.skinId,
+                    "error" to e.javaClass.simpleName,
+                ),
+                e,
+            )
+            false
+        }
     }
 
     /**

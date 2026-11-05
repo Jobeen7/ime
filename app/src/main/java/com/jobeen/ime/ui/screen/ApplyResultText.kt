@@ -31,6 +31,10 @@ fun applyResultMessage(
             "切换失败，已回退到：${effective(result.restoredRef)}"
         is ApplyTransaction.Result.FirstRenderFailedRolledBack ->
             "首次渲染失败，已回退到：${effective(result.restoredRef)}"
+        is ApplyTransaction.Result.RollbackFailed ->
+            // 2026-11-05 审计 #1 项 2：回滚本身失败时运行态与记录
+            // 均未获确认，不得按默认报“已回退到内置键盘”。
+            "回滚失败：皮肤状态不确定，请重启键盘"
         is ApplyTransaction.Result.TargetInvalid ->
             "皮肤无效，无法应用"
         is ApplyTransaction.Result.RolledBackToLastGood ->
@@ -48,5 +52,6 @@ private fun rollbackReasonText(reason: String): String = when (reason) {
     "build_failed" -> "构建失败"
     "switch_failed" -> "切换失败"
     "first_render_failed" -> "首次渲染失败"
+    "active_write_failed" -> "记录写入失败"
     else -> reason
 }
