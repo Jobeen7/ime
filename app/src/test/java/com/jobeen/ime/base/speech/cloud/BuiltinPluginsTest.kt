@@ -15,6 +15,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
+import okio.ByteString.Companion.toByteString
 
 /**
  * 内置云端语音插件：契约测试。脚本以 shipped assets 原文为准（单测
@@ -107,7 +108,7 @@ class BuiltinPluginsTest {
         }
 
         fun injectBytes(bytes: ByteArray) {
-            listener?.onMessage(null, bytes)
+            listener?.onMessage(null, bytes.toByteString())
         }
     }
 
@@ -833,7 +834,7 @@ class BuiltinPluginsTest {
             "wss://openspeech.bytedance.com/test",
             emptyMap(),
             object : NetworkTransport.WsListener {
-                override fun onMessage(text: String?, bytes: ByteArray?) {}
+                override fun onMessage(text: String?, bytes: okio.ByteString?) {}
                 override fun onClosed() {}
                 override fun onFailure() {}
             },

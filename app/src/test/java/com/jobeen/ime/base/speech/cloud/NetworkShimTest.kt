@@ -134,7 +134,7 @@ class NetworkShimTest {
         }
         try {
             s.websocket("https://asr.example.com/ws", emptyMap(), object : NetworkTransport.WsListener {
-                override fun onMessage(text: String?, bytes: ByteArray?) = Unit
+                override fun onMessage(text: String?, bytes: okio.ByteString?) = Unit
                 override fun onClosed() = Unit
                 override fun onFailure() = Unit
             })
@@ -159,7 +159,7 @@ class NetworkShimTest {
             "wss://asr.example.com/ws",
             emptyMap(),
             object : NetworkTransport.WsListener {
-                override fun onMessage(text: String?, bytes: ByteArray?) = Unit
+                override fun onMessage(text: String?, bytes: okio.ByteString?) = Unit
                 override fun onClosed() = Unit
                 override fun onFailure() = Unit
             },

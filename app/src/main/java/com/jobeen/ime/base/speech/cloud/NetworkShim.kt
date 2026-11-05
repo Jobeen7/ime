@@ -25,7 +25,13 @@ interface NetworkTransport {
     fun websocket(url: String, headers: Map<String, String>, listener: WsListener): WsHandle
 
     interface WsListener {
-        fun onMessage(text: String?, bytes: ByteArray?)
+        /**
+         * 入站帧（零复制约定）：二进制帧以 OkHttp 的 [okio.ByteString]
+         * 原样投递，宿主不得再转 [ByteArray]（整帧复制是审计 #1-8
+         * 的主缺口）。超限帧由传输层在投递前关掉 socket、宿主层
+         * failSession，见 [OkHttpNetworkTransport.websocket]。
+         */
+        fun onMessage(text: String?, bytes: okio.ByteString?)
         fun onClosed()
         fun onFailure()
     }
@@ -115,7 +121,20 @@ class OkHttpNetworkTransport(
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: okio.ByteString) {
-                listener.onMessage(null, bytes.toByteArray())
+                // 帧级上限前移（审计 #1-8）：OkHttp 公共 API 没有入站
+                // 帧大小设置，帧本身由 OkHttp 物化不可避免——此处
+                // 是物化后能做的最早拦截点。超限帧绝不转 ByteArray
+                // （不做第二份整帧复制）、不做 Base64 放大，先立即
+                // 关掉 socket（1009 帧过大，堵住后续帧继续灌入），
+                // 再原样投递给宿主，由宿主 failSession 关会话、清状态。
+                // 限内帧同样零复制投递，宿主直接对 ByteString 编码。
+                // 残留边界（未谎称硬限）：OkHttp 在回调前已把整帧读
+                // 进内存，超限帧的物化内存峰值仍在；要帧级硬上限
+                // 须换掉 OkHttp 的 WebSocket 实现（流式读帧体）。
+                if (bytes.size > PluginHost.MAX_WS_INBOUND_BYTES) {
+                    runCatching { webSocket.close(1009, "frame_too_large") }
+                }
+                listener.onMessage(null, bytes)
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
