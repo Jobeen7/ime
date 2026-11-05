@@ -127,6 +127,124 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         /** 清空输入框时的分段删除：每段字符数与最大段数 */
         private const val CLEAR_CHUNK_CHARS = 1000
         private const val MAX_CLEAR_CHUNKS = 64
+
+        /**
+         * 清空分流判定（纯函数，可单测）：组字中有未上屏串时走
+         * Action.Reset，只清组字、不动已上屏文字；否则删已上屏文字。
+         */
+        internal fun shouldResetComposing(preedit: String?): Boolean =
+            preedit?.isNotEmpty() == true
+
+        /**
+         * 清空入口三探针（可单测）：前文／后文／选区任一非空即有
+         * 可清内容。旧入口只探前文，光标在字段头时后文一字不删；
+         * 选区须单独探——光标在字段头且有选区时前文为空。
+         * 前文探针与旧入口同口径（不包异常）；后文／选区是新增
+         * 探针，连接异常时按无内容处理，不引入新的抛错路径。
+         */
+        internal fun hasClearableText(ic: InputConnection): Boolean {
+            if (!ic.getTextBeforeCursor(1, 0).isNullOrEmpty()) return true
+            if (!runCatching { ic.getTextAfterCursor(1, 0) }.getOrNull().isNullOrEmpty()) {
+                return true
+            }
+            return !runCatching { ic.getSelectedText(0) }.getOrNull().isNullOrEmpty()
+        }
+
+        /**
+         * 删已上屏文字并入账（InputConnection 桩上可单测，不依赖
+         * 真机；协程／分发／前文缓存失效仍在 clearInternal 内）：
+         * 入口过三探针才进；两轮分段删除循环与入账原样不动——
+         * 分段删（前文→后文）是为避开单次 deleteSurroundingText
+         * 在部分自绘输入框上的部分删除与卡顿，每轮先探长度、
+         * 探到 0 或删除无进展即停，段数设上限防异常输入框让循环
+         * 失控；极端长文删不完时用户可再触发一次。
+         *
+         * 选区处理（两轮循环之外）：第一轮删除会把选区连同前文
+         * 一起删掉（平台 deleteSurroundingText 删
+         * [起点-前长, 终点+后长] 整段），须先取下选区文本再删，
+         * 入账时按原序拼回（前文＋选区＋后文），否则下滑撤销
+         * 写回的串会丢掉中间被选中的一段；删选区用 commitText("",
+         * 1)，是本仓删选区的既有做法（见 DeleteTextPolicy）。
+         * 全选时两轮循环都直接跳过（前后文皆空），选区文本已
+         * 在第一步删掉、记在 cleared 里，字段仍被删净。
+         * commitText 失败时选区可能仍被第一轮连带删掉但未入账
+         * （只记确认删掉的部分，不重复、不谎报）。
+         *
+         * @return true 表示入口通过（调用方按旧口径失效前文缓存），
+         *   false 表示无可清内容、未做任何事。
+         */
+        internal fun clearCommittedText(ic: InputConnection): Boolean {
+            if (!hasClearableText(ic)) return false
+            val cleared = StringBuilder()
+            var overflow = false
+            // 选区先取后删（见上）
+            val selected = runCatching { ic.getSelectedText(0)?.toString() }
+                .getOrNull().orEmpty()
+            var selectionDeleted = false
+            if (selected.isNotEmpty()) {
+                selectionDeleted = runCatching { ic.commitText("", 1) }.getOrDefault(false)
+            }
+            var chunks = 0
+            while (chunks++ < MAX_CLEAR_CHUNKS) {
+                val text = ic.getTextBeforeCursor(CLEAR_CHUNK_CHARS, 0)
+                if (text.isNullOrEmpty()) break
+                if (!ic.deleteSurroundingText(text.length, 0)) break
+                // 前文由近及远删，还原顺序要插到最前
+                if (!overflow) {
+                    if (cleared.length + text.length >
+                        ClearedTextLedger.MAX_RECORDABLE_CHARS
+                    ) {
+                        overflow = true
+                    } else {
+                        cleared.insert(0, text)
+                    }
+                }
+            }
+            // 选区拼在已删前文之后、后文之前；只有确认删掉才记
+            if (selectionDeleted && !overflow) {
+                if (cleared.length + selected.length >
+                    ClearedTextLedger.MAX_RECORDABLE_CHARS
+                ) {
+                    overflow = true
+                } else {
+                    cleared.append(selected)
+                }
+            }
+            chunks = 0
+            while (chunks++ < MAX_CLEAR_CHUNKS) {
+                val text = ic.getTextAfterCursor(CLEAR_CHUNK_CHARS, 0)
+                if (text.isNullOrEmpty()) break
+                if (!ic.deleteSurroundingText(0, text.length)) break
+                // 后文由近及远删，还原顺序按原序追加
+                if (!overflow) {
+                    if (cleared.length + text.length >
+                        ClearedTextLedger.MAX_RECORDABLE_CHARS
+                    ) {
+                        overflow = true
+                    } else {
+                        cleared.append(text)
+                    }
+                }
+            }
+            // 锚点是清空后光标前紧邻的前文：清前文时光标已左移
+            // 到删除起点，清后文不动光标，故此刻读到的正是恢复
+            // 时要核对的位置。
+            //
+            // 清空入账：累计被删文本记进 ClearedTextLedger，下滑
+            // 撤销据此原样写回，不再依赖 Ctrl+Z——污染会话内
+            // Ctrl+Z 已被拦（防清掉的组字复活），不记账的话
+            // 清掉的已上屏文字就没有任何地方可回。超出上限即
+            // 停止累计并标记溢出，删完不记账（超长段恢复无实际
+            // 意义，也不该让账本常驻大字符串）。
+            if (!overflow && cleared.isNotEmpty()) {
+                val anchor = runCatching {
+                    ic.getTextBeforeCursor(ClearedTextLedger.ANCHOR_CHARS, 0)
+                        ?.toString()
+                }.getOrNull().orEmpty()
+                ClearedTextLedger.record(cleared.toString(), anchor, ic)
+            }
+            return true
+        }
     }
 
     private data class EngineState(
@@ -1744,69 +1862,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
         }
         sendJob {
-            if (compositionCached.preedit?.isNotEmpty() == true) {
+            if (shouldResetComposing(compositionCached.preedit)) {
                 actions.send(Action.Reset)
             } else {
                 withContext(Dispatchers.Main.immediate) {
                     val ic = inputConnection()
-                    if (ic != null && !ic.getTextBeforeCursor(1, 0).isNullOrEmpty()) {
-                        // 分段删除：旧实现单次 deleteSurroundingText(MAX, MAX)
-                        // 在部分 App 的自绘输入框上会只删一部分或触发全量文本
-                        // 处理造成卡顿。按段删（前文→后文），每轮先探长度、
-                        // 探到 0 或删除无进展即停，段数设上限防异常输入框
-                        // 让循环失控；极端长文删不完时用户可再触发一次。
-                        //
-                        // 清空入账：累计被删文本记进 ClearedTextLedger，下滑
-                        // 撤销据此原样写回，不再依赖 Ctrl+Z——污染会话内
-                        // Ctrl+Z 已被拦（防清掉的组字复活），不记账的话
-                        // 清掉的已上屏文字就没有任何地方可回。超出上限即
-                        // 停止累计并标记溢出，删完不记账（超长段恢复无实际
-                        // 意义，也不该让账本常驻大字符串）。
-                        val cleared = StringBuilder()
-                        var overflow = false
-                        var chunks = 0
-                        while (chunks++ < MAX_CLEAR_CHUNKS) {
-                            val text = ic.getTextBeforeCursor(CLEAR_CHUNK_CHARS, 0)
-                            if (text.isNullOrEmpty()) break
-                            if (!ic.deleteSurroundingText(text.length, 0)) break
-                            // 前文由近及远删，还原顺序要插到最前
-                            if (!overflow) {
-                                if (cleared.length + text.length >
-                                    ClearedTextLedger.MAX_RECORDABLE_CHARS
-                                ) {
-                                    overflow = true
-                                } else {
-                                    cleared.insert(0, text)
-                                }
-                            }
-                        }
-                        chunks = 0
-                        while (chunks++ < MAX_CLEAR_CHUNKS) {
-                            val text = ic.getTextAfterCursor(CLEAR_CHUNK_CHARS, 0)
-                            if (text.isNullOrEmpty()) break
-                            if (!ic.deleteSurroundingText(0, text.length)) break
-                            // 后文由近及远删，还原顺序按原序追加
-                            if (!overflow) {
-                                if (cleared.length + text.length >
-                                    ClearedTextLedger.MAX_RECORDABLE_CHARS
-                                ) {
-                                    overflow = true
-                                } else {
-                                    cleared.append(text)
-                                }
-                            }
-                        }
+                    // 删已上屏文字并入账（见 clearCommittedText）；
+                    // 入口通过才失效前文缓存，与旧口径一致。
+                    if (ic != null && clearCommittedText(ic)) {
                         invalidateBeforeCursorCache()
-                        // 锚点是清空后光标前紧邻的前文：清前文时光标已左移
-                        // 到删除起点，清后文不动光标，故此刻读到的正是恢复
-                        // 时要核对的位置。
-                        if (!overflow && cleared.isNotEmpty()) {
-                            val anchor = runCatching {
-                                ic.getTextBeforeCursor(ClearedTextLedger.ANCHOR_CHARS, 0)
-                                    ?.toString()
-                            }.getOrNull().orEmpty()
-                            ClearedTextLedger.record(cleared.toString(), anchor, ic)
-                        }
                     }
                 }
             }
