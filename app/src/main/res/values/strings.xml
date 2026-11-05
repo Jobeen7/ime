@@ -755,7 +755,8 @@
     <string name="global_blur_off">关</string>
     <string name="global_toolbar_radius">工具栏圆角</string>
     <string name="bar_icon_follow">跟随按键外观</string>
-    <string name="bar_icon_follow_note">开启后，状态栏图标跟随按键的背景、边框与圆角；关闭后用下方独立设置。</string>
+    <string name="bar_icon_follow_on_note">背景、边框、圆角跟随按键。</string>
+    <string name="bar_icon_follow_off_note">关闭后用下方独立设置。</string>
     <string name="frost_overlay">背景叠加强度</string>
     <string name="frost_overlay_note">在键盘背景上叠加一层半透明遮罩，强度越高背景越柔和。</string>
     <string name="global_apply">应用</string>

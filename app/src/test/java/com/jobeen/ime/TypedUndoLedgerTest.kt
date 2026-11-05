@@ -168,4 +168,65 @@ class TypedUndoLedgerTest {
     fun typedRedo_nullBefore_refuses() {
         assertEquals(false, TypedUndoLedger.decideTypedRedoApply(null, "你好", 3))
     }
+
+    // ---- decideComposingSwipeDown：组字中下滑藏 span 真值表 ----
+    // 口径（2026-11-05 藏 span 解）：组字中＋污染时下滑先藏 span，
+    // 藏态下再下滑走账本撤销；其余一律移交引擎（.17 原样）。
+
+    @Test
+    fun composingSwipeDown_composingPoisonedNotHidden_hidesSpan() {
+        assertEquals(
+            TypedUndoLedger.ComposingSwipeDown.HIDE_SPAN,
+            TypedUndoLedger.decideComposingSwipeDown(true, true, false),
+        )
+    }
+
+    @Test
+    fun composingSwipeDown_composingPoisonedHidden_undoesHidden() {
+        assertEquals(
+            TypedUndoLedger.ComposingSwipeDown.UNDO_HIDDEN,
+            TypedUndoLedger.decideComposingSwipeDown(true, true, true),
+        )
+    }
+
+    @Test
+    fun composingSwipeDown_notComposing_delegates() {
+        assertEquals(
+            TypedUndoLedger.ComposingSwipeDown.DELEGATE,
+            TypedUndoLedger.decideComposingSwipeDown(false, true, false),
+        )
+        assertEquals(
+            TypedUndoLedger.ComposingSwipeDown.DELEGATE,
+            TypedUndoLedger.decideComposingSwipeDown(false, true, true),
+        )
+    }
+
+    @Test
+    fun composingSwipeDown_notPoisoned_delegates() {
+        // 未污染会话组字中下滑仍走引擎（Ctrl+Z 格），藏 span
+        // 只接管污染会话的 .17 空操作格。
+        assertEquals(
+            TypedUndoLedger.ComposingSwipeDown.DELEGATE,
+            TypedUndoLedger.decideComposingSwipeDown(true, false, false),
+        )
+        assertEquals(
+            TypedUndoLedger.ComposingSwipeDown.DELEGATE,
+            TypedUndoLedger.decideComposingSwipeDown(true, false, true),
+        )
+    }
+
+    // ---- 藏态生命周期：置位／复位／随输入框结束作废 ----
+
+    @Test
+    fun composingSpanHidden_markClearAndClearAll() {
+        TypedUndoLedger.clearAll()
+        assertEquals(false, TypedUndoLedger.isComposingSpanHidden())
+        TypedUndoLedger.markComposingSpanHidden()
+        assertEquals(true, TypedUndoLedger.isComposingSpanHidden())
+        TypedUndoLedger.clearComposingSpanHidden()
+        assertEquals(false, TypedUndoLedger.isComposingSpanHidden())
+        TypedUndoLedger.markComposingSpanHidden()
+        TypedUndoLedger.clearAll()
+        assertEquals(false, TypedUndoLedger.isComposingSpanHidden())
+    }
 }

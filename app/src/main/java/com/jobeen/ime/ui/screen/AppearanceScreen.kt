@@ -598,94 +598,121 @@ private fun GlobalStyleDialog(
                         onClick = { blurChoiceOpen = true },
                     )
                 }
+                // 状态栏图标（2026-11-04 精简口径）：行清单见
+                // iconsSectionRows——跟随开只留开关＋短说明两行，
+                // 独立行全部收起（草稿值保留，再关即现）；跟随关
+                // 全行按密集版渲染（行内芯片、滑杆标签与数值同行、
+                // 行距收紧）。折叠行为与开关含义不变。
                 GlobalStyleSection(
                     title = stringResource(R.string.global_section_icons_full),
                     expanded = iconsExpanded,
                     onToggle = { iconsExpanded = !iconsExpanded },
                 ) {
-                    SwitchRow(
-                        title = stringResource(R.string.bar_icon_follow),
-                        checked = draft.linkToolbar,
-                        onCheckedChange = { draft = draft.copy(linkToolbar = it) },
-                    )
-                    Text(
-                        text = stringResource(R.string.bar_icon_follow_note),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    GlobalStyleColorPill(
-                        field = stringResource(R.string.toolbar_background),
-                        colorName = colorName(draft.toolbar.background),
-                        onClick = { colorTarget = ColorTarget.TOOLBAR_BG },
-                    )
-                    val toolbarBorderCustom = draft.toolbar.borderWidthDp != null
-                    SwitchRow(
-                        title = stringResource(R.string.global_border_custom),
-                        checked = toolbarBorderCustom,
-                        onCheckedChange = { checked ->
-                            draft = draft.copy(
-                                toolbar = draft.toolbar.copy(
-                                    borderWidthDp = if (checked) {
-                                        draft.toolbar.borderWidthDp ?: 1f
-                                    } else {
-                                        null
-                                    },
+                    for (row in iconsSectionRows(draft.linkToolbar)) {
+                        when (row) {
+                            IconsSectionRow.FOLLOW_SWITCH -> SwitchRow(
+                                title = stringResource(R.string.bar_icon_follow),
+                                checked = draft.linkToolbar,
+                                onCheckedChange = { draft = draft.copy(linkToolbar = it) },
+                            )
+                            IconsSectionRow.FOLLOW_NOTE -> Text(
+                                text = stringResource(
+                                    iconsFollowNoteRes(draft.linkToolbar),
                                 ),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                        },
-                    )
-                    SliderRow(
-                        title = stringResource(R.string.toolbar_border_width),
-                        value = draft.toolbar.borderWidthDp ?: 1f,
-                        valueLabel = "%.1f dp".format(draft.toolbar.borderWidthDp ?: 1f),
-                        range = 0f..4f,
-                        steps = 7,
-                        enabled = toolbarBorderCustom,
-                        onValueChange = {
-                            draft = draft.copy(
-                                toolbar = draft.toolbar.copy(borderWidthDp = it),
-                            )
-                        },
-                    )
-                    GlobalStyleColorPill(
-                        field = stringResource(R.string.toolbar_border_color),
-                        colorName = colorName(draft.toolbar.borderColor),
-                        onClick = { colorTarget = ColorTarget.TOOLBAR_BORDER },
-                    )
-                    val toolbarRadiusCustom = draft.toolbar.cornerRadiusDp != null
-                    SwitchRow(
-                        title = stringResource(R.string.global_radius_custom),
-                        checked = toolbarRadiusCustom,
-                        onCheckedChange = { checked ->
-                            draft = draft.copy(
-                                toolbar = draft.toolbar.copy(
-                                    cornerRadiusDp = if (checked) {
-                                        draft.toolbar.cornerRadiusDp ?: 12f
-                                    } else {
-                                        null
+                            IconsSectionRow.TOOLBAR_BACKGROUND ->
+                                GlobalStyleColorChipRow(
+                                    field = stringResource(R.string.toolbar_background),
+                                    colorName = colorName(draft.toolbar.background),
+                                    onClick = { colorTarget = ColorTarget.TOOLBAR_BG },
+                                )
+                            IconsSectionRow.BORDER_CUSTOM_SWITCH -> {
+                                val toolbarBorderCustom = draft.toolbar.borderWidthDp != null
+                                DenseSwitchRow(
+                                    title = stringResource(R.string.global_border_custom),
+                                    checked = toolbarBorderCustom,
+                                    onCheckedChange = { checked ->
+                                        draft = draft.copy(
+                                            toolbar = draft.toolbar.copy(
+                                                borderWidthDp = if (checked) {
+                                                    draft.toolbar.borderWidthDp ?: 1f
+                                                } else {
+                                                    null
+                                                },
+                                            ),
+                                        )
                                     },
-                                ),
+                                )
+                            }
+                            IconsSectionRow.BORDER_WIDTH_SLIDER -> {
+                                val toolbarBorderCustom = draft.toolbar.borderWidthDp != null
+                                DenseSliderRow(
+                                    title = stringResource(R.string.toolbar_border_width),
+                                    value = draft.toolbar.borderWidthDp ?: 1f,
+                                    valueLabel = "%.1f dp".format(
+                                        draft.toolbar.borderWidthDp ?: 1f,
+                                    ),
+                                    range = 0f..4f,
+                                    steps = 7,
+                                    enabled = toolbarBorderCustom,
+                                    onValueChange = {
+                                        draft = draft.copy(
+                                            toolbar = draft.toolbar.copy(borderWidthDp = it),
+                                        )
+                                    },
+                                )
+                            }
+                            IconsSectionRow.TOOLBAR_BORDER_COLOR ->
+                                GlobalStyleColorChipRow(
+                                    field = stringResource(R.string.toolbar_border_color),
+                                    colorName = colorName(draft.toolbar.borderColor),
+                                    onClick = { colorTarget = ColorTarget.TOOLBAR_BORDER },
+                                )
+                            IconsSectionRow.RADIUS_CUSTOM_SWITCH -> {
+                                val toolbarRadiusCustom = draft.toolbar.cornerRadiusDp != null
+                                DenseSwitchRow(
+                                    title = stringResource(R.string.global_radius_custom),
+                                    checked = toolbarRadiusCustom,
+                                    onCheckedChange = { checked ->
+                                        draft = draft.copy(
+                                            toolbar = draft.toolbar.copy(
+                                                cornerRadiusDp = if (checked) {
+                                                    draft.toolbar.cornerRadiusDp ?: 12f
+                                                } else {
+                                                    null
+                                                },
+                                            ),
+                                        )
+                                    },
+                                )
+                            }
+                            IconsSectionRow.TOOLBAR_RADIUS_SLIDER -> {
+                                val toolbarRadiusCustom = draft.toolbar.cornerRadiusDp != null
+                                DenseSliderRow(
+                                    title = stringResource(R.string.global_toolbar_radius),
+                                    value = draft.toolbar.cornerRadiusDp ?: 12f,
+                                    valueLabel = "%.1f dp".format(
+                                        draft.toolbar.cornerRadiusDp ?: 12f,
+                                    ),
+                                    range = 0f..32f,
+                                    steps = 31,
+                                    enabled = toolbarRadiusCustom,
+                                    onValueChange = {
+                                        draft = draft.copy(
+                                            toolbar = draft.toolbar.copy(cornerRadiusDp = it),
+                                        )
+                                    },
+                                )
+                            }
+                            IconsSectionRow.BLUR_SWITCH -> DenseSwitchRow(
+                                title = stringResource(R.string.global_blur_switch),
+                                checked = draft.barBlur,
+                                onCheckedChange = { draft = draft.copy(barBlur = it) },
                             )
-                        },
-                    )
-                    SliderRow(
-                        title = stringResource(R.string.global_toolbar_radius),
-                        value = draft.toolbar.cornerRadiusDp ?: 12f,
-                        valueLabel = "%.1f dp".format(draft.toolbar.cornerRadiusDp ?: 12f),
-                        range = 0f..32f,
-                        steps = 31,
-                        enabled = toolbarRadiusCustom,
-                        onValueChange = {
-                            draft = draft.copy(
-                                toolbar = draft.toolbar.copy(cornerRadiusDp = it),
-                            )
-                        },
-                    )
-                    SwitchRow(
-                        title = stringResource(R.string.global_blur_switch),
-                        checked = draft.barBlur,
-                        onCheckedChange = { draft = draft.copy(barBlur = it) },
-                    )
+                        }
+                    }
                 }
                 GlobalStyleSection(
                     title = stringResource(R.string.global_section_bar_full),
@@ -928,6 +955,137 @@ private fun GlobalStyleColorPill(
             color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/**
+ * 状态栏图标分区密集版（2026-11-04 精简口径，仅本分区用；
+ * 其余分区沿用 ScreenComponent 的标准行，不动已核对的布局）：
+ * 开关行纵向 6dp（标准行 12dp）；颜色行字段在左、取值芯片在右
+ * （芯片＝1dp 描边圆角 50 描边药丸，取值为跟随／预设色名）；
+ * 滑杆行标签与数值同行（标题在左、数值在右），滑块下方紧接。
+ */
+@Composable
+private fun DenseSwitchRow(
+    title: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.bodyLarge,
+            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.onSurface,
+        )
+        androidx.compose.material3.Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
+    }
+}
+
+@Composable
+private fun GlobalStyleColorChipRow(
+    field: String,
+    colorName: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = field,
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Box(
+            modifier = Modifier
+                .clip(RoundedCornerShape(50))
+                .border(
+                    width = 1.dp,
+                    color = MaterialTheme.colorScheme.outline,
+                    shape = RoundedCornerShape(50),
+                )
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = colorName,
+                fontSize = 14.sp,
+                fontWeight = FontWeight.Medium,
+                letterSpacing = 0.1.sp,
+                color = MaterialTheme.colorScheme.primary,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun DenseSliderRow(
+    title: String,
+    value: Float,
+    valueLabel: String,
+    range: ClosedFloatingPointRange<Float>,
+    onValueChange: (Float) -> Unit,
+    steps: Int = 0,
+    enabled: Boolean = true,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+    ) {
+        // 滑杆标签：标题靠左、数值靠右，同行（标准行是
+        // 「标题 · 值」单文本居左）。
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = title,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+                color = if (enabled) MaterialTheme.colorScheme.onSurface
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+            )
+            Text(
+                text = valueLabel,
+                fontSize = 14.sp,
+                lineHeight = 20.sp,
+                maxLines = 1,
+                color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
+                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
+            )
+        }
+        Spacer(modifier = Modifier.height(2.dp))
+        androidx.compose.material3.Slider(
+            value = value,
+            onValueChange = onValueChange,
+            valueRange = range,
+            steps = steps,
+            enabled = enabled,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(48.dp),
         )
     }
 }
