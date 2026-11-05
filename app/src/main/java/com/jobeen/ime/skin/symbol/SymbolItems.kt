@@ -86,7 +86,12 @@ object SymbolItemParser {
  * - Plain → 提交原文；LabelValue → 提交 value；
  * - LabelActionStyle → 动作名映射：resume/return 回主键盘，
  *   symbolic_lock_toggle / emoji_lock_toggle 翻对应板锁，
- *   未知动作名回落提交 label（点按永不丢动作）。
+ *   对端 `#` 快捷指令（与 WhitelistAction 的 `#` 项同名表，
+ *   见 SkinKeyModel）按键动作同口径分发；
+ * - 未知 `#` 快捷指令 → 安全默认 NoOpAction（绝不提交 label
+ *   文本上屏：对端 `{"shortcut": "#copy", "label": "复制"}` 这类
+ *   项此前会误上屏“复制”二字）；未知非 `#` 动作名沿旧口径
+ *   回落提交 label（点按永不丢动作）。
  * 动作恒取自数据项的 action 字段：本解析不查任何样式表，
  * styleName 取值（存在、缺省、未知）皆不影响分发结果。
  */
@@ -99,7 +104,47 @@ object SymbolItemActionResolver {
             "resume", "return" -> KeyboardAction.ResumeAction
             "symbolic_lock_toggle" -> KeyboardAction.ToggleSymbolicLockAction
             "emoji_lock_toggle" -> KeyboardAction.ToggleEmojiLockAction
-            else -> KeyboardAction.CommitAction(item.label)
+            "#cut" -> KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CUT)
+            "#copy" -> KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.COPY)
+            "#paste" -> KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.PASTE)
+            "#clearSystemPasteboard" ->
+                KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR)
+            "#selectText" -> KeyboardAction.SelectAllAction
+            "#deleteText" -> KeyboardAction.DeleteTextAction
+            "#undo" -> KeyboardAction.HostUndoAction
+            "#redo" -> KeyboardAction.HostRedoAction
+            "#showPasteboardView" -> KeyboardAction.ShowPasteboardAction
+            "#keyboardPerformance" -> KeyboardAction.ShowPerformanceAction
+            "#showPhraseView" -> KeyboardAction.ShowPhraseViewAction
+            "#keyboardMenu" -> KeyboardAction.KeyboardMenuAction
+            "#toggleSymbolBar" -> KeyboardAction.ToggleSymbolBarAction
+            "#toggleCommandView" -> KeyboardAction.ToggleCommandViewAction
+            "#subCollectionPageUp" -> KeyboardAction.SubCollectionPageUpAction
+            "#subCollectionPageDown" -> KeyboardAction.SubCollectionPageDownAction
+            "#简繁切换" -> KeyboardAction.ToggleTraditionalAction
+            "#中英切换" -> KeyboardAction.ToggleAsciiModeAction
+            "#次选上屏" -> KeyboardAction.SelectCandidateIndexAction(1)
+            "#三选上屏" -> KeyboardAction.SelectCandidateIndexAction(2)
+            "#方案切换" -> KeyboardAction.RotateSchema
+            "#RimeSwitcher" -> KeyboardAction.ShowInputMethodPickerAction
+            "#行首" -> KeyboardAction.AppKeyEventAction(122)
+            "#行尾" -> KeyboardAction.AppKeyEventAction(123)
+            "#换行" -> KeyboardAction.CommitAction("\n")
+            "#Enter" -> KeyboardAction.ReturnAction()
+            "#重输" -> KeyboardAction.ClearAction
+            "#candidatesBarStateToggle" -> KeyboardAction.CandidatesBarToggleAction
+            "#rimePreviousPage", "#verticalCandidatesPageUp" ->
+                KeyboardAction.KeyCodeAction(92)
+            "#rimeNextPage", "#verticalCandidatesPageDown" ->
+                KeyboardAction.KeyCodeAction(93)
+            "#toggleEmbeddedInputMode" -> KeyboardAction.ToggleEmbeddedInputAction
+            "#toggleScriptView" -> KeyboardAction.ToggleScriptViewAction
+            else -> if (item.action.startsWith("#")) {
+                // 未知快捷指令：安全默认（不提交 label 文本）。
+                KeyboardAction.NoOpAction
+            } else {
+                KeyboardAction.CommitAction(item.label)
+            }
         }
     }
 }

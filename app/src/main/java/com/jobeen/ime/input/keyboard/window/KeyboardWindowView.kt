@@ -23,6 +23,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.FrameLayout
 import java.io.File
 import com.jobeen.ime.input.keyboard.impl.IKeyboard
+import com.jobeen.ime.input.keyboard.impl.ISubCollectionPageable
 import com.jobeen.ime.input.keyboard.impl.BaseKeyboard
 import com.jobeen.ime.input.keyboard.impl.ISidePanelKeyboard
 import androidx.core.content.ContextCompat
@@ -35,9 +36,11 @@ import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.symbolbar.AppSymbolBarTypeStore
+import com.jobeen.ime.skin.symbolbar.SymbolBarConfig
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfigLoader
 import com.jobeen.ime.skin.symbolbar.SymbolBarLoadResult
 import com.jobeen.ime.skin.symbolbar.resolveCurrentType
+import com.jobeen.ime.skin.symbolbar.symbolBarConfigFromSkinSpec
 import com.jobeen.ime.data.keyboard.theme.VideoPrefs
 import com.jobeen.ime.data.manager.CandidateLinePolicy
 import com.jobeen.ime.data.manager.CandidateManager
@@ -347,40 +350,63 @@ class KeyboardWindowView(
     }
 
     private fun openSymbolBar() {
-        when (val result = SymbolBarConfigLoader.load(SymbolBarConfigLoader.defaultFile(context))) {
-            SymbolBarLoadResult.Missing -> {
-                showImeToast("符号栏未配置")
-                return
-            }
-            SymbolBarLoadResult.Invalid -> {
+        // P1-8：皮肤规格优先——快照有 symbolBar 时按皮肤规格建条，
+        // 不读应用级 symbol-bar.yaml；无皮肤规格时走旧应用级路径。
+        val skinSpec = SkinSnapshotProvider.peek()?.symbolBar
+        val loaded: Pair<SymbolBarConfig, String> = if (skinSpec != null) {
+            val types = skinSymbolBarTypes()
+            if (types.isEmpty()) {
                 showImeToast("符号栏配置无效")
                 return
             }
-            is SymbolBarLoadResult.Ok -> {
-                val config = result.config
-                val type = resolveCurrentType(config.types, symbolBarTypeStore.load())
-                    ?: run {
-                        showImeToast("符号栏配置无效")
-                        return
-                    }
-                symbolBarTypeStore.save(type)
-                val bar = SymbolBarView(
-                    context,
-                    cachedColors,
-                    onAction = { keyActionListener.onKeyAction(it) },
-                    onClose = { closeSymbolBar() },
-                    onTypeSelected = { selected ->
-                        symbolBarTypeStore.save(selected)
-                        symbolBarView?.bind(config, config.panelFor(selected), selected)
-                        requestLayout()
-                    },
-                )
-                bar.bind(config, config.panelFor(type), type)
-                symbolBarView = bar
-                addView(bar)
-                requestLayout()
+            val config = symbolBarConfigFromSkinSpec(skinSpec, types)
+            config to resolveCurrentType(config.types, symbolBarTypeStore.load())
+        } else {
+            when (val result = SymbolBarConfigLoader.load(SymbolBarConfigLoader.defaultFile(context))) {
+                SymbolBarLoadResult.Missing -> {
+                    showImeToast("符号栏未配置")
+                    return
+                }
+                SymbolBarLoadResult.Invalid -> {
+                    showImeToast("符号栏配置无效")
+                    return
+                }
+                is SymbolBarLoadResult.Ok -> {
+                    val config = result.config
+                    val type = resolveCurrentType(config.types, symbolBarTypeStore.load())
+                        ?: run {
+                            showImeToast("符号栏配置无效")
+                            return
+                        }
+                    config to type
+                }
             }
         }
+        val (config, type) = loaded
+        symbolBarTypeStore.save(type)
+        val bar = SymbolBarView(
+            context,
+            cachedColors,
+            onAction = { keyActionListener.onKeyAction(it) },
+            onClose = { closeSymbolBar() },
+            onTypeSelected = { selected ->
+                symbolBarTypeStore.save(selected)
+                symbolBarView?.bind(config, config.panelFor(selected), selected)
+                requestLayout()
+            },
+        )
+        bar.bind(config, config.panelFor(type), type)
+        symbolBarView = bar
+        addView(bar)
+        requestLayout()
+    }
+
+    /** 皮肤符号栏的类型表（P1-8）：皮肤二级父类标签优先，缺省内置符号分类。 */
+    private fun skinSymbolBarTypes(): List<String> {
+        val parents = SkinSnapshotProvider.peek()?.subClassifiedSymbols?.parents
+            ?.map { it.label }?.filter { it.isNotEmpty() }
+        if (!parents.isNullOrEmpty()) return parents
+        return com.jobeen.ime.data.Symbol.Symbol.map { it.first.label }
     }
 
     private fun closeSymbolBar() {
@@ -492,6 +518,33 @@ class KeyboardWindowView(
             // 候选栏展开/收起切换（审计 E：#candidatesBarStateToggle）。
             is KeyboardAction.CandidatesBarToggleAction -> {
                 panel.view.setExpanded(!panel.view.isExpanded)
+                null
+            }
+
+            // 打开剪贴板面板（P1-4：#showPasteboardView）：与菜单
+            // 剪贴板入口同目的地；面板不在前台时亦可达（按键路径）。
+            is KeyboardAction.ShowPasteboardAction -> {
+                panel.showClipboard()
+                null
+            }
+
+            // 打开性能面板（P2-10：#keyboardPerformance）：与菜单
+            // 性能入口同目的地。
+            is KeyboardAction.ShowPerformanceAction -> {
+                panel.showPerformance()
+                null
+            }
+
+            // 二级集合翻页（P1-5：#subCollectionPageUp/Down）：
+            // 只在符号／表情板上翻当前子类；其他键盘或页内无更多
+            // 时空操作（不换键盘、不下发引擎）。
+            is KeyboardAction.SubCollectionPageUpAction -> {
+                (currentKeyboard as? ISubCollectionPageable)?.pageSubCollection(true)
+                null
+            }
+
+            is KeyboardAction.SubCollectionPageDownAction -> {
+                (currentKeyboard as? ISubCollectionPageable)?.pageSubCollection(false)
                 null
             }
 
@@ -817,6 +870,9 @@ class KeyboardWindowView(
             panel.clipboardView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         )
         addView(
+            panel.performanceView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
+        )
+        addView(
             panel.menuGridView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT)
         )
         addView(
@@ -1011,7 +1067,7 @@ class KeyboardWindowView(
         val clipStripH = clipSearchStripHeight(cHeight, barH, bPad, bottomInset)
         for (i in 0 until childCount) {
             val child = getChildAt(i)
-            if (child === panel.view || child === inlineAutofillBar || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child === symbolBarView || child.isGone) continue
+            if (child === panel.view || child === inlineAutofillBar || child === panel.textEditingView || child === panel.clipboardView || child === panel.performanceView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child === symbolBarView || child.isGone) continue
             child.measure(
                 MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
@@ -1052,6 +1108,13 @@ class KeyboardWindowView(
 
         if (!panel.menuGridView.isGone) {
             panel.menuGridView.measure(
+                MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
+            )
+        }
+
+        if (!panel.performanceView.isGone) {
+            panel.performanceView.measure(
                 MeasureSpec.makeMeasureSpec(contentW, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(cHeight, MeasureSpec.EXACTLY),
             )
@@ -1106,7 +1169,7 @@ class KeyboardWindowView(
         )
         for (i in 0 until childCount) {
             val child = getChildAt(i)
-            if (child === panel.view || child === inlineAutofillBar || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child === symbolBarView || child.isGone) continue
+            if (child === panel.view || child === inlineAutofillBar || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.performanceView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child === symbolBarView || child.isGone) continue
             if (clipStripH > 0 && child !== panel.candidateGrid) {
                 child.layout(lPad, y0 + clipStripH + symbolBarHeightPx, lPad + contentW, y0 + clipStripH + symbolBarHeightPx + cHeight)
             } else {
@@ -1133,6 +1196,7 @@ class KeyboardWindowView(
             y0 + if (clipStripH > 0) clipStripH else cHeight
         )
         panel.menuGridView.layout(lPad, y0, lPad + contentW, y0 + cHeight)
+        panel.performanceView.layout(lPad, y0, lPad + contentW, y0 + cHeight)
         panel.confirmOverlay.layout(lPad, y0, lPad + contentW, y0 + cHeight)
         addPhraseLayer.layout(0, tPad, right - left, tPad + stripH)
         val toastLeft = ((right - left) - imeToastView.measuredWidth) / 2

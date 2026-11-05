@@ -8,9 +8,13 @@ import com.jobeen.ime.skin.notify.ConditionStyle
 import com.jobeen.ime.skin.notify.ConditionStyleParser
 import com.jobeen.ime.skin.notify.SkinNotification
 import com.jobeen.ime.skin.notify.SkinNotificationParser
+import com.jobeen.ime.skin.symbol.HorizontalSymbolsParser
+import com.jobeen.ime.skin.symbol.NumericSymbols
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbolsParser
 import com.jobeen.ime.skin.symbol.SymbolBarParser
 import com.jobeen.ime.skin.symbol.SymbolBarSpec
+import com.jobeen.ime.skin.symbol.T9HorizontalSymbolsParser
+import com.jobeen.ime.skin.symbol.T9SymbolsParser
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -113,6 +117,7 @@ object SkinValidator {
         "spaceAnimation", "sprites", "styleSets", "styles", "stylesDark",
         "subClassifiedSymbols", "suppressKeyboard", "suppressToolbar", "swipeThresholdDp",
         "symbolBadge", "symbolBar",
+        "t9HorizontalSymbols", "t9Symbols", "numericSymbols", "horizontalSymbols",
         "textSizes", "toolbar", "toolbarButtonBackgroundStyle", "toolbarHeight",
         "toolbarLayout", "toolbarStyle", "verticalBottomRow", "verticalCandidateStyle",
         "verticalCandidates", "verticalCandidatesLayout", "verticalCandidatesStyle",
@@ -1075,6 +1080,55 @@ object SkinValidator {
             }
         }
 
+        // ---- t9Symbols / t9HorizontalSymbols / numericSymbols /
+        // horizontalSymbols（P1-7）：此前解析器写好但无生产调用
+        // 点、顶层键也不在已知表内，节点被当未知透传；现解析进
+        // 快照（非法项逐项丢弃、只记 issue，不拒包），渲染见
+        // SymbolKeyboard（九宫格／数字作附加父类、横向条作横条）。
+        var t9Symbols: com.jobeen.ime.skin.symbol.T9SymbolsSpec? = null
+        val t9SymbolsNode = tree["t9Symbols"]
+        if (t9SymbolsNode != null) {
+            val (parsed, dropped) = T9SymbolsParser.parse(t9SymbolsNode)
+            t9Symbols = parsed
+            if (dropped > 0) {
+                issues += SkinIssue(
+                    "t9Symbols", SkinIssue.Kind.FIELD_FALLBACK,
+                    "t9_symbols_dropped:$dropped",
+                )
+            }
+        }
+        var t9HorizontalSymbols: com.jobeen.ime.skin.symbol.HorizontalSymbolsSpec? = null
+        val t9HorizontalNode = tree["t9HorizontalSymbols"]
+        if (t9HorizontalNode != null) {
+            val (parsed, dropped) = T9HorizontalSymbolsParser.parse(t9HorizontalNode)
+            t9HorizontalSymbols = parsed
+            if (dropped > 0) {
+                issues += SkinIssue(
+                    "t9HorizontalSymbols", SkinIssue.Kind.FIELD_FALLBACK,
+                    "t9_horizontal_symbols_dropped:$dropped",
+                )
+            }
+        }
+        var numericSymbols: com.jobeen.ime.skin.symbol.NumericSymbolsCollection? = null
+        val numericSymbolsNode = tree["numericSymbols"]
+        if (numericSymbolsNode != null) {
+            // 节点存在即解析（无 dataSource／空源时回落内置数字集，
+            // 与 NumericSymbols.parse 的既有口径一致）。
+            numericSymbols = NumericSymbols.parse(numericSymbolsNode)
+        }
+        var horizontalSymbols: com.jobeen.ime.skin.symbol.HorizontalSymbolsSpec? = null
+        val horizontalSymbolsNode = tree["horizontalSymbols"]
+        if (horizontalSymbolsNode != null) {
+            val (parsed, dropped) = HorizontalSymbolsParser.parse(horizontalSymbolsNode)
+            horizontalSymbols = parsed
+            if (dropped > 0) {
+                issues += SkinIssue(
+                    "horizontalSymbols", SkinIssue.Kind.FIELD_FALLBACK,
+                    "horizontal_symbols_dropped:$dropped",
+                )
+            }
+        }
+
         // ---- typeAreas（G2）：keyboards.<类型>.areas，逐类型区域参数 ----
         // 与包级区域段同解析口径（同字段、同范围、同 issue 语义），
         // 非对象／空对象均视为未声明（不记 issue、不占位）；
@@ -1225,6 +1279,10 @@ object SkinValidator {
                 conditionStyles = conditionStyles,
                 symbolBar = symbolBar,
                 subClassifiedSymbols = subClassifiedSymbols,
+                t9Symbols = t9Symbols,
+                t9HorizontalSymbols = t9HorizontalSymbols,
+                numericSymbols = numericSymbols,
+                horizontalSymbols = horizontalSymbols,
                 symbolBadgeFontSizeDp = symbolBadgeFontSizeDp,
                 symbolBadgeNormalColor = symbolBadgeNormalColor,
                 symbolBadgeHighlightColor = symbolBadgeHighlightColor,

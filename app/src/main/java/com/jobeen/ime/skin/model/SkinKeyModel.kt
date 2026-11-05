@@ -111,10 +111,8 @@ enum class WhitelistAction(
     /**
      * 审计 E # 快捷指令集（对端 §6.3 原名，含中文名；格式名
      * 即指令本身，写在 command 节点的 action 字段）：
-     * - 未列入者（#subCollectionPageUp/Down：Jime 无二级符号集；
-     *   #showPasteboardView：面板无键动作直达口；#rimeDeploy /
-     *   #rimeSync：无键动作直达口；#keyboardPerformance：无对应
-     *   视图）解析期按未知动作剔除，不静默空操作。
+     * - 未列入者（#rimeDeploy / #rimeSync：无键动作直达口）
+     *   解析期按未知动作剔除，不静默空操作。
      */
     HASH_TRADITIONAL("#简繁切换", ValueRule.FORBIDDEN),
     HASH_RIME_SWITCHER("#RimeSwitcher", ValueRule.FORBIDDEN),
@@ -128,7 +126,23 @@ enum class WhitelistAction(
     HASH_RETYPE("#重输", ValueRule.FORBIDDEN),
     HASH_CUT("#cut", ValueRule.FORBIDDEN),
     HASH_COPY("#copy", ValueRule.FORBIDDEN),
+    /**
+     * 全选（P0-2）：#selectText = 宿主文本全选（经输入连接
+     * performContextMenuAction(selectAll)，与面板 SelectAll 同款）。
+     */
+    HASH_SELECT_TEXT("#selectText", ValueRule.FORBIDDEN),
     HASH_PASTE("#paste", ValueRule.FORBIDDEN),
+    /**
+     * 剪贴板面板直达（P1-4）：#showPasteboardView = 打开面板
+     * 剪贴板态（与工具栏／菜单剪贴板入口同目的地）。
+     */
+    HASH_SHOW_PASTEBOARD_VIEW("#showPasteboardView", ValueRule.FORBIDDEN),
+    /**
+     * 二级集合翻页（P1-5）：#subCollectionPageUp/Down = 二级
+     * 符号板当前子类翻页（页内无更多时空操作，不换父类）。
+     */
+    HASH_SUB_COLLECTION_PAGE_UP("#subCollectionPageUp", ValueRule.FORBIDDEN),
+    HASH_SUB_COLLECTION_PAGE_DOWN("#subCollectionPageDown", ValueRule.FORBIDDEN),
     HASH_DELETE_TEXT("#deleteText", ValueRule.FORBIDDEN),
     HASH_UNDO("#undo", ValueRule.FORBIDDEN),
     HASH_REDO("#redo", ValueRule.FORBIDDEN),
@@ -159,6 +173,11 @@ enum class WhitelistAction(
     HASH_TOGGLE_SYMBOL_BAR("#toggleSymbolBar", ValueRule.FORBIDDEN),
     HASH_KEYBOARD_MENU("#keyboardMenu", ValueRule.FORBIDDEN),
     HASH_TOGGLE_COMMAND_VIEW("#toggleCommandView", ValueRule.FORBIDDEN),
+    /**
+     * 性能面板（P2-10）：#keyboardPerformance = 打开面板性能态
+     * （与菜单性能入口同目的地；命令面板仍排除，见下）。
+     */
+    HASH_KEYBOARD_PERFORMANCE("#keyboardPerformance", ValueRule.FORBIDDEN),
     /**
      * 通知动作补齐（1:1 差距 P3；Jime 格式名均为 snake_case，
      * 对端名由转换器映射）：
@@ -804,6 +823,32 @@ object SkinKeyMappingsParser {
             }
             return value
         }
+        // L4 四边内缩（对端 `insets` 对象口径）：单边优先于对称值，
+        // 缺边回落对应对称值（解析期保留两者，装配期按边解析）；
+        // `insets` 非对象时整段丢弃并记警告（对称值不受影响）。
+        val insetsNode = obj["insets"]
+        val insetsObj = insetsNode as? JsonObject
+        if (insetsNode != null && insetsObj == null) {
+            warnings += KeyFieldWarning(keyId, "geometry.insets", "geometry_value_invalid")
+        }
+        fun rangedInset(name: String): Float? {
+            val value = insetsObj?.get(name)?.strictFloatOrNull()
+            if (value == null) {
+                if (insetsObj != null && insetsObj.containsKey(name)) {
+                    warnings += KeyFieldWarning(
+                        keyId, "geometry.insets.$name", "geometry_value_invalid",
+                    )
+                }
+                return null
+            }
+            if (value !in KeyGeometryOverride.INSET_RANGE) {
+                warnings += KeyFieldWarning(
+                    keyId, "geometry.insets.$name", "geometry_value_invalid",
+                )
+                return null
+            }
+            return value
+        }
         return KeyGeometryOverride(
             widthFactor = ranged("widthFactor", KeyGeometryOverride.WIDTH_RANGE),
             heightFactor = ranged("heightFactor", KeyGeometryOverride.HEIGHT_RANGE),
@@ -811,6 +856,10 @@ object SkinKeyMappingsParser {
             contentCenterY = ranged("contentCenterY", KeyGeometryOverride.CENTER_RANGE),
             hInsetDp = ranged("hInsetDp", KeyGeometryOverride.INSET_RANGE),
             vInsetDp = ranged("vInsetDp", KeyGeometryOverride.INSET_RANGE),
+            leftInsetDp = rangedInset("left"),
+            rightInsetDp = rangedInset("right"),
+            topInsetDp = rangedInset("top"),
+            bottomInsetDp = rangedInset("bottom"),
         )
     }
 

@@ -200,6 +200,14 @@ data class SkinSnapshot(
     val symbolBar: com.jobeen.ime.skin.symbol.SymbolBarSpec? = null,
     /** 二级分类符号：皮肤定义时板用二级面板，否则走既有一级表。 */
     val subClassifiedSymbols: com.jobeen.ime.skin.symbol.SubClassifiedSymbols? = null,
+    /** 九宫格符号（P1-7）：顶层 t9Symbols 解析结果；null = 未声明。 */
+    val t9Symbols: com.jobeen.ime.skin.symbol.T9SymbolsSpec? = null,
+    /** 横向九键条（P1-7）：顶层 t9HorizontalSymbols 解析结果；null = 未声明。 */
+    val t9HorizontalSymbols: com.jobeen.ime.skin.symbol.HorizontalSymbolsSpec? = null,
+    /** 数字符号集（P1-7）：顶层 numericSymbols 解析结果；null = 未声明。 */
+    val numericSymbols: com.jobeen.ime.skin.symbol.NumericSymbolsCollection? = null,
+    /** 横向符号条（P1-7）：顶层 horizontalSymbols 解析结果；null = 未声明。 */
+    val horizontalSymbols: com.jobeen.ime.skin.symbol.HorizontalSymbolsSpec? = null,
     /**
      * 分类符号角标（S12，symbolBadge 节）：缺省字号 9、颜色
      * specialKeyText；highlight 未写时选中沿用 normal 色。

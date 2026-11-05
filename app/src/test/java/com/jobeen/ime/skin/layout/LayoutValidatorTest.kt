@@ -255,7 +255,8 @@ class LayoutValidatorTest {
 
     @Test
     fun spanConflictSameSideOnly() {
-        // 同侧（都贴左）区间重叠 → 无效
+        // 同侧（都贴左）区间重叠 → 后者字段级降级为普通键
+        // （L1 口径：跨行键冲突不再整布局判 Invalid，布局保持有效）。
         val conflict = layout(
             rowsOf(
                 row(key(stableId = "a", rowSpan = 2), key(stableId = "b", rowSpan = 2, label = "x")),
@@ -263,9 +264,16 @@ class LayoutValidatorTest {
                 row(key(stableId = "d")),
             ),
         )
+        val result = validResult(conflict)
+        assertEquals(1, result.layout.rows[0][1].rowSpan)
+        assertNull(result.layout.rows[0][1].spanCol)
         assertEquals(
-            "span_conflict",
-            invalid(conflict).reasonsAt("rows[0].keys[1].rowSpan").single(),
+            "span_conflict_downgraded",
+            result.issues.reasonsAt("rows[0].keys[1].rowSpan").single(),
+        )
+        assertEquals(
+            LayoutDisposition.FIELD_FALLBACK,
+            result.issues.single { it.path == "rows[0].keys[1].rowSpan" }.disposition,
         )
         // 异侧（一个贴右）不冲突
         val ok = layout(

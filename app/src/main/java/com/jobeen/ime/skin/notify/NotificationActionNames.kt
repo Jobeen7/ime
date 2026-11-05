@@ -75,6 +75,11 @@ object NotificationActionNames {
         is KeyboardAction.ToggleRimeOptionAction -> "ToggleRimeOptionAction"
         is KeyboardAction.SnippetAction -> "SnippetAction"
         is KeyboardAction.DelayAction -> "DelayAction"
+        is KeyboardAction.SelectAllAction -> "SelectAllAction"
+        is KeyboardAction.ShowPasteboardAction -> "ShowPasteboardAction"
+        is KeyboardAction.ShowPerformanceAction -> "ShowPerformanceAction"
+        is KeyboardAction.SubCollectionPageUpAction -> "SubCollectionPageUpAction"
+        is KeyboardAction.SubCollectionPageDownAction -> "SubCollectionPageDownAction"
     }
 
     /**

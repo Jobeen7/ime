@@ -57,6 +57,10 @@ object KeyTextSizeLimits {
  *   只能以对称竖向内缩实现可视收缩，>1 不放大（越界按非法丢弃）。
  * - contentCenterX/Y：主文字内容中心偏置，0..1（0.5 = 居中）。
  * - hInsetDp/vInsetDp：可视区域附加内缩，0..20dp（与皮肤级键间距叠加）。
+ * - left/right/top/bottomInsetDp：四边内缩（L4，对端 `insets` 对象
+ *   口径：`{"left": 2, "right": 2, "top": 5, "bottom": 5}`）；单边
+ *   优先于对称值（left/right 缺省回落 hInsetDp，top/bottom 缺省
+ *   回落 vInsetDp）；四边对称时行为与旧两值口径逐像素一致。
  *
  * 限制（装配器强制执行，见报告）：跨行键（rowSpan > 1）的宽覆写
  * 不生效（跨行宽度由跨行布局单独约束）；其余维照常生效。
@@ -68,10 +72,16 @@ data class KeyGeometryOverride(
     val contentCenterY: Float? = null,
     val hInsetDp: Float? = null,
     val vInsetDp: Float? = null,
+    val leftInsetDp: Float? = null,
+    val rightInsetDp: Float? = null,
+    val topInsetDp: Float? = null,
+    val bottomInsetDp: Float? = null,
 ) {
     val isEmpty: Boolean get() =
         widthFactor == null && heightFactor == null && contentCenterX == null &&
-            contentCenterY == null && hInsetDp == null && vInsetDp == null
+            contentCenterY == null && hInsetDp == null && vInsetDp == null &&
+            leftInsetDp == null && rightInsetDp == null &&
+            topInsetDp == null && bottomInsetDp == null
 
     companion object {
         val WIDTH_RANGE = 0.5f..2.0f

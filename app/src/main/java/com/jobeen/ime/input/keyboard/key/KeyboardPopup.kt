@@ -251,5 +251,10 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.RedoAction -> "RedoAction"
         is KeyboardAction.HostUndoAction -> "HostUndoAction"
         is KeyboardAction.HostRedoAction -> "HostRedoAction"
+        is KeyboardAction.SelectAllAction -> "SelectAllAction"
+        is KeyboardAction.ShowPasteboardAction -> "ShowPasteboardAction"
+        is KeyboardAction.ShowPerformanceAction -> "ShowPerformanceAction"
+        is KeyboardAction.SubCollectionPageUpAction -> "SubCollectionPageUpAction"
+        is KeyboardAction.SubCollectionPageDownAction -> "SubCollectionPageDownAction"
     }
 }

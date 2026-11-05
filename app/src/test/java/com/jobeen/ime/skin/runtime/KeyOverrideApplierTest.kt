@@ -621,6 +621,16 @@ class KeyOverrideApplierTest {
                 KeyboardAction.KeyboardMenuAction,
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_COMMAND_VIEW) to
                 KeyboardAction.ToggleCommandViewAction,
+            SkinAction.Command(WhitelistAction.HASH_SELECT_TEXT) to
+                KeyboardAction.SelectAllAction,
+            SkinAction.Command(WhitelistAction.HASH_SHOW_PASTEBOARD_VIEW) to
+                KeyboardAction.ShowPasteboardAction,
+            SkinAction.Command(WhitelistAction.HASH_SUB_COLLECTION_PAGE_UP) to
+                KeyboardAction.SubCollectionPageUpAction,
+            SkinAction.Command(WhitelistAction.HASH_SUB_COLLECTION_PAGE_DOWN) to
+                KeyboardAction.SubCollectionPageDownAction,
+            SkinAction.Command(WhitelistAction.HASH_KEYBOARD_PERFORMANCE) to
+                KeyboardAction.ShowPerformanceAction,
             // P3 新增通知动作的运行时映射。
             SkinAction.Command(WhitelistAction.CHARACTER, "a") to
                 KeyboardAction.KeySequenceAction("a"),

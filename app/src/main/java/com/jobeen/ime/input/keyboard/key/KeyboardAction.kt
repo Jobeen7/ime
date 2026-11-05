@@ -220,6 +220,24 @@ sealed class KeyboardAction {
     /** 回上一键盘（审计 E：returnLastKeyboard）：经类型状态回上一类型。 */
     data object ReturnLastAction : KeyboardAction()
 
+    /** 全选（P0-2：#selectText）：经输入连接全选宿主文本。 */
+    data object SelectAllAction : KeyboardAction()
+
+    /** 打开剪贴板面板（P1-4：#showPasteboardView）：窗口层接面板剪贴板态。 */
+    data object ShowPasteboardAction : KeyboardAction()
+
+    /** 打开性能面板（P2-10：#keyboardPerformance）：窗口层接面板性能态。 */
+    data object ShowPerformanceAction : KeyboardAction()
+
+    /**
+     * 二级集合翻页（P1-5：#subCollectionPageUp/Down）：
+     * 窗口层拦截，当前符号／表情板当前子类翻页；无板或页内
+     * 无更多时空操作，不换父类、不下发引擎。
+     */
+    data object SubCollectionPageUpAction : KeyboardAction()
+
+    data object SubCollectionPageDownAction : KeyboardAction()
+
     /** 剪贴板动作（审计 E：#cut/copy/paste/clearSystemPasteboard）：经输入连接。 */
     data class ClipboardAction(val kind: Kind) : KeyboardAction() {
         enum class Kind { CUT, COPY, PASTE, CLEAR }

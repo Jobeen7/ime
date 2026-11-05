@@ -246,6 +246,9 @@ object CustomLayoutRuntime {
         KeyboardTypes.IMAGES -> EmojiKeyboard.NAME
         KeyboardTypes.NUMERIC, KeyboardTypes.NUMBER_PAD -> NumberKeyboard.NAME
         KeyboardTypes.SYMBOLIC -> SymbolKeyboard.NAME
+        // P1-6：颜文字无内置数据源时回落符号板（视觉差一档，
+        // 不丢键）；内置颜文字表到位后再改本分支。
+        KeyboardTypes.KAOMOJI -> SymbolKeyboard.NAME
         // 工具类型无绑定时走内置工具板（不再回落方案默认主键盘，
         // 否则用户要点工具板却看到主键盘，且无从察觉切错了类型）。
         KeyboardTypes.LAYOUT_SWITCH -> LayoutSwitchKeyboard.NAME

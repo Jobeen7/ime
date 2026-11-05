@@ -74,8 +74,28 @@ object LayoutKeyDefBuilder {
                 )
             }
             if (built.isEmpty()) return@mapIndexed built
+            // L1：空白补位目标不再恒为 1.0——起于更早行、跨到本行的
+            // span 键已占本行宽度（其 percentWidth 不在 built 之和
+            // 内），目标 = 1 − 覆盖 span 宽；起于本行的 span 已在
+            // built 内，不重复计。目标与旧版一致时（无跨行覆盖）
+            // 短缺量与旧版逐值相同。
+            val coveringSpanWidth = layout.rows.withIndex().sumOf { (startRow, startKeys) ->
+                if (startRow >= rowIndex) {
+                    0.0
+                } else {
+                    startKeys.withIndex().sumOf { (keyIndex, key) ->
+                        val endRow = startRow + key.rowSpan - 1
+                        if (key.rowSpan > 1 && rowIndex <= endRow) {
+                            rowWeights[startRow][keyIndex] / maxWeight
+                        } else {
+                            0.0
+                        }
+                    }
+                }
+            }.toFloat()
             val shortfall =
-                1f - built.sumOf { it.appearance.percentWidth.toDouble() }.toFloat()
+                (1f - coveringSpanWidth) -
+                    built.sumOf { it.appearance.percentWidth.toDouble() }.toFloat()
             if (shortfall > BLANK_EPSILON) built + blankKey(shortfall) else built
         }
     }
@@ -167,6 +187,8 @@ object LayoutKeyDefBuilder {
                 viewId = if (isSpace) KeyView.button_space else -1,
                 rowSpan = key.rowSpan,
                 alignSpanEnd = key.alignSpanEnd,
+                spanCol = key.spanCol,
+                spanColEnd = key.spanColEnd,
             ),
             behaviors = behaviors,
             popups = popups,

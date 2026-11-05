@@ -3,8 +3,11 @@ package com.jobeen.ime.skin.model
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.notify.ConditionStyle
 import com.jobeen.ime.skin.notify.SkinNotification
+import com.jobeen.ime.skin.symbol.HorizontalSymbolsSpec
+import com.jobeen.ime.skin.symbol.NumericSymbolsCollection
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolBarSpec
+import com.jobeen.ime.skin.symbol.T9SymbolsSpec
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 
@@ -307,10 +310,16 @@ object KeyboardTypes {
     const val NUMERIC = "numeric"
     const val NUMBER_PAD = "numberPad"
     const val SYMBOLIC = "symbolic"
+    /**
+     * 颜文字板（P1-6）：对端独立键盘类型；Jime 无内置颜文字
+     * 数据源，先回落符号板（builtinKeyboardName），不丢键；
+     * 内置颜文字表到位后再改回落目标。
+     */
+    const val KAOMOJI = "kaomoji"
 
-    /** 7 个内置类型。 */
+    /** 8 个内置类型。 */
     val BUILTIN: Set<String> = setOf(
-        ALPHABETIC, PINYIN, EMOJIS, IMAGES, NUMERIC, NUMBER_PAD, SYMBOLIC,
+        ALPHABETIC, PINYIN, EMOJIS, IMAGES, NUMERIC, NUMBER_PAD, SYMBOLIC, KAOMOJI,
     )
 
     /** 主键盘类型：中英切换只在这两者之间往返。 */
@@ -448,6 +457,20 @@ data class ValidatedSkin(
     val symbolBar: SymbolBarSpec? = null,
     /** 二级分类符号：顶层 subClassifiedSymbols 校验结果；null = 走既有一级表。 */
     val subClassifiedSymbols: SubClassifiedSymbols? = null,
+    /**
+     * 九宫格符号（P1-7）：顶层 t9Symbols 校验结果；null = 未声明
+     * （符号板不附加九宫格父类）。
+     */
+    val t9Symbols: T9SymbolsSpec? = null,
+    /** 横向九键条（P1-7）：顶层 t9HorizontalSymbols 校验结果；null = 未声明。 */
+    val t9HorizontalSymbols: HorizontalSymbolsSpec? = null,
+    /**
+     * 数字符号集（P1-7）：顶层 numericSymbols 校验结果；null =
+     * 未声明（符号板不附加数字父类；声明而无数据源时取内置数字集）。
+     */
+    val numericSymbols: NumericSymbolsCollection? = null,
+    /** 横向符号条（P1-7）：顶层 horizontalSymbols 校验结果；null = 未声明。 */
+    val horizontalSymbols: HorizontalSymbolsSpec? = null,
     /**
      * 分类符号角标（S12，顶层 symbolBadge 节）：字号／常规色／
      * 选中高亮色；null = 未写（渲染缺省 9／specialKeyText）。

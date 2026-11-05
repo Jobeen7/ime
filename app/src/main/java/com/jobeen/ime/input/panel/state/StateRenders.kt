@@ -252,6 +252,27 @@ class TextEditingStateRender(
     }
 }
 
+/**
+ * 性能面板态（P2-10）：工具栏显示返回箭头（与剪贴板／编辑模式同
+ * 口径），展开栏展示本进程累计性能（PerfMonitor.aggregates()；
+ * 开发页 Compose 不能直接复用，只复用数据）。基础 5 项固定顺序
+ * 在前，P4 分段探针仅诊断模式开时才有、面板只显示已有项。
+ */
+class PerformanceStateRender(
+    private val ctx: StateRenderContext,
+) : IStateRender {
+    override fun createToolbarRenderer(): ToolbarRenderer =
+        ctx.buildToolbarRenderer(showArrow = true)
+
+    override fun showExpand(isExpanded: Boolean) {
+        ctx.performanceView.show()
+    }
+
+    override fun hideExpand() {
+        ctx.performanceView.hide()
+    }
+}
+
 /** 复制提示态：菜单栏显示复制内容药丸，无展开功能栏。 */
 class CopyStateRender(
     private val ctx: StateRenderContext,

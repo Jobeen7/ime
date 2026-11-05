@@ -302,6 +302,22 @@ class KeyActionListener(
                 }
             }
 
+            // 宿主文本全选（P0-2：#selectText）：经当前输入连接
+            // 的上下文菜单动作，尽力而为（返回值不作成功判定）；
+            // 宿主不支持时无效果，不回退删字；连接为空不崩溃。
+            is KeyboardAction.SelectAllAction -> {
+                try {
+                    service.currentInputConnection?.performContextMenuAction(
+                        android.R.id.selectAll,
+                    )
+                } catch (ex: Exception) {
+                    DiagLog.w(
+                        "keymap", "select_all_failed",
+                        mapOf("error" to ex.javaClass.simpleName),
+                    )
+                }
+            }
+
             // 宿主文本重做（#redo）：与 #undo 同口径，见上。
             is KeyboardAction.HostRedoAction -> {
                 try {

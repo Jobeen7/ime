@@ -361,6 +361,11 @@ data class KeyStyleGeometry(
     /** 逐样式内边距（S2）：横／纵，dp；null = 回落布局键几何／全局边距。 */
     val hInsetDp: Float? = null,
     val vInsetDp: Float? = null,
+    /** L4 四边内缩：单边优先于对称值（缺边回落 hInsetDp／vInsetDp）。 */
+    val leftInsetDp: Float? = null,
+    val rightInsetDp: Float? = null,
+    val topInsetDp: Float? = null,
+    val bottomInsetDp: Float? = null,
 ) {
     val isEmpty: Boolean get() =
         gradientNormal == null && gradientHighlight == null && shadow == null &&
@@ -369,7 +374,9 @@ data class KeyStyleGeometry(
             normalLowerEdgeColor == null && highlightLowerEdgeColor == null &&
             bounds == null && animationNames.isEmpty() &&
             fontSizeDp == null && altFontSizeDp == null && iconSizeDp == null &&
-            hInsetDp == null && vInsetDp == null
+            hInsetDp == null && vInsetDp == null &&
+            leftInsetDp == null && rightInsetDp == null &&
+            topInsetDp == null && bottomInsetDp == null
 }
 
 object KeyStyleGeometryParser {
@@ -407,6 +414,19 @@ object KeyStyleGeometryParser {
         val iconSizeDp = parseDp(geometry, "iconFontSize", 8f, 48f, warnings)
         val hInsetDp = parseDp(geometry, "hInsetDp", 0f, 20f, warnings)
         val vInsetDp = parseDp(geometry, "vInsetDp", 0f, 20f, warnings)
+        // L4 四边内缩（对端 `insets` 对象口径，读 `geometry` 节点内；
+        // 非对象时记警告、整段丢弃，对称值不受影响）。
+        val insetsNode = geometry["insets"]
+        val insetsObj = insetsNode as? JsonObject
+        if (insetsNode != null && insetsObj == null) {
+            warnings += "style_geometry_insets_invalid"
+        }
+        fun insetSide(name: String): Float? =
+            insetsObj?.let { parseDp(it, name, 0f, 20f, warnings) }
+        val leftInsetDp = insetSide("left")
+        val rightInsetDp = insetSide("right")
+        val topInsetDp = insetSide("top")
+        val bottomInsetDp = insetSide("bottom")
         val cornerCurve = parseCornerCurve(geometry["cornerCurve"], warnings)
         fun peerColor(field: String): Int? {
             val raw = (geometry[field] as? JsonPrimitive)?.takeIf { it.isString }?.content
@@ -436,6 +456,10 @@ object KeyStyleGeometryParser {
             iconSizeDp = iconSizeDp,
             hInsetDp = hInsetDp,
             vInsetDp = vInsetDp,
+            leftInsetDp = leftInsetDp,
+            rightInsetDp = rightInsetDp,
+            topInsetDp = topInsetDp,
+            bottomInsetDp = bottomInsetDp,
         )
         return result.takeIf { !it.isEmpty } to warnings
     }

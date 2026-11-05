@@ -5,6 +5,7 @@ import android.graphics.drawable.Drawable
 import com.jobeen.ime.input.panel.component.CandidateGridView
 import com.jobeen.ime.input.panel.component.ClipboardView
 import com.jobeen.ime.input.panel.component.MenuGridView
+import com.jobeen.ime.input.panel.component.PerformancePanelView
 import com.jobeen.ime.input.panel.component.TextEditView
 import com.jobeen.ime.input.panel.toolbar.ToolbarRendererResources
 
@@ -18,6 +19,7 @@ class StateRenderContext(
     val candidateGrid: CandidateGridView,
     val textEditingView: TextEditView,
     val clipboardView: ClipboardView,
+    val performanceView: PerformancePanelView,
     val menuGridView: MenuGridView,
     var recording: Boolean = false,
 ) {
