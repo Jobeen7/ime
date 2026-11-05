@@ -170,7 +170,7 @@ object KeyboardThemePresets {
     // ④ 长按角标、工具栏图片、浮动面板、数字九键与符号集合一律不搬。
     val WeChatGreenLight = KeyboardTheme(
         id = "wechat-green-light",
-        name = "微信绿·浅",
+        name = "26键·浅",
         colors = KeyboardColors.ColorScheme(
             keyBackground = Color.rgb(255, 255, 255),
             keyPressed = Color.rgb(171, 176, 186),
@@ -213,7 +213,7 @@ object KeyboardThemePresets {
 
     val WeChatGreenDark = KeyboardTheme(
         id = "wechat-green-dark",
-        name = "微信绿·深",
+        name = "26键·深",
         colors = KeyboardColors.ColorScheme(
             keyBackground = Color.argb(101, 209, 209, 209),
             keyPressed = Color.argb(36, 209, 209, 209),
