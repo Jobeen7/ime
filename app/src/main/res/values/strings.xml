@@ -160,6 +160,7 @@
     <string name="keyboard_theme_desc">主题设置、分享、导入</string>
     <string name="keyboard_theme_follow_system">跟随系统</string>
     <string name="builtin_theme_default">默认</string>
+    <string name="builtin_theme_wechat_green">26键</string>
     <string name="skin_follow_system_note">自定义皮肤生效中：开关控制皮肤浅/深色板（开=跟随系统，关=固定当前浅/深色）</string>
     <string name="keyboard_theme_light">浅色模式主题</string>
     <string name="keyboard_theme_dark">深色模式主题</string>

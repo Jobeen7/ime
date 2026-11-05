@@ -31,11 +31,10 @@ object MonetPalette {
         // 普通字母键：最亮表面 (neutral1_10 或 50)，在 100 底板上自然凸显
         val keyBackground = context.getColor(android.R.color.system_neutral1_10)
         val keyPressed = context.getColor(android.R.color.system_neutral2_200)
-        val border = context.getColor(android.R.color.system_neutral2_200)
+        // 2026-11-05：内置描边全部去掉（含回车强调键），三项描边透明。
         // 功能键（Shift/退格/符号）：使用 accent2_100 赋予温和的莫奈次级色调
         val specialBackground = context.getColor(android.R.color.system_accent2_100)
         val specialPressed = context.getColor(android.R.color.system_accent2_200)
-        val specialBorder = context.getColor(android.R.color.system_accent2_200)
         // 强调键（回车/搜索）：使用主色 accent1_600
         val accent = context.getColor(android.R.color.system_accent1_600)
         val accentPressed = context.getColor(android.R.color.system_accent1_700)
@@ -48,13 +47,13 @@ object MonetPalette {
         return KeyboardColors.ColorScheme(
             keyBackground = keyBackground,
             keyPressed = keyPressed,
-            keyBorderStroke = border,
+            keyBorderStroke = Color.argb(0, 0, 0, 0),
             specialKeyBackground = specialBackground,
             specialKeyPressed = specialPressed,
-            specialKeyBorderStroke = specialBorder,
+            specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
             accentKeyBackground = accent,
             accentKeyPressed = accentPressed,
-            accentKeyBorderStroke = accent,
+            accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
             keyText = keyText,
             specialKeyText = specialText,
             accentKeyText = accentText,
@@ -92,12 +91,10 @@ object MonetPalette {
         // 普通字母键：比底板高一阶 (neutral1_800)
         val keyBackground = context.getColor(android.R.color.system_neutral1_800)
         val keyPressed = context.getColor(android.R.color.system_neutral1_700)
-        val border = context.getColor(android.R.color.system_neutral2_700)
 
         // 功能键：使用 accent2_700，在明度和莫奈色相上同时与普通键(800)拉开层次
         val specialBackground = context.getColor(android.R.color.system_accent2_700)
         val specialPressed = context.getColor(android.R.color.system_accent2_600)
-        val specialBorder = context.getColor(android.R.color.system_accent2_600)
 
         // 强调键（回车/搜索）：深色模式下使用高明度低饱和的 accent1_200
         val accent = context.getColor(android.R.color.system_accent1_200)
@@ -112,13 +109,13 @@ object MonetPalette {
         return KeyboardColors.ColorScheme(
             keyBackground = keyBackground,
             keyPressed = keyPressed,
-            keyBorderStroke = border,
+            keyBorderStroke = Color.argb(0, 0, 0, 0),
             specialKeyBackground = specialBackground,
             specialKeyPressed = specialPressed,
-            specialKeyBorderStroke = specialBorder,
+            specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
             accentKeyBackground = accent,
             accentKeyPressed = accentPressed,
-            accentKeyBorderStroke = accent,
+            accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
             keyText = keyText,
             specialKeyText = specialText,
             accentKeyText = accentText,
@@ -152,13 +149,14 @@ object MonetPalette {
     val LightFallback = KeyboardColors.ColorScheme(
         keyBackground = Color.rgb(253, 251, 255),
         keyPressed = Color.rgb(226, 226, 236),
-        keyBorderStroke = Color.rgb(226, 226, 236),
+        // 2026-11-05：内置描边全部去掉（含回车强调键），三项描边透明。
+        keyBorderStroke = Color.argb(0, 0, 0, 0),
         specialKeyBackground = Color.rgb(220, 226, 249),
         specialKeyPressed = Color.rgb(198, 206, 235),
-        specialKeyBorderStroke = Color.rgb(198, 206, 235),
+        specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
         accentKeyBackground = Color.rgb(65, 95, 145),
         accentKeyPressed = Color.rgb(51, 78, 128),
-        accentKeyBorderStroke = Color.rgb(65, 95, 145),
+        accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
         keyText = Color.rgb(26, 27, 32),
         specialKeyText = Color.rgb(41, 50, 72),
         accentKeyText = Color.rgb(255, 255, 255),
@@ -189,13 +187,14 @@ object MonetPalette {
     val DarkFallback = KeyboardColors.ColorScheme(
         keyBackground = Color.rgb(30, 31, 37),
         keyPressed = Color.rgb(46, 48, 54),
-        keyBorderStroke = Color.rgb(46, 48, 54),
+        // 2026-11-05：内置描边全部去掉（含回车强调键），三项描边透明。
+        keyBorderStroke = Color.argb(0, 0, 0, 0),
         specialKeyBackground = Color.rgb(52, 60, 82),
         specialKeyPressed = Color.rgb(68, 77, 102),
-        specialKeyBorderStroke = Color.rgb(68, 77, 102),
+        specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
         accentKeyBackground = Color.rgb(170, 199, 255),
         accentKeyPressed = Color.rgb(196, 212, 244),
-        accentKeyBorderStroke = Color.rgb(170, 199, 255),
+        accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
         keyText = Color.rgb(227, 226, 230),
         specialKeyText = Color.rgb(218, 226, 249),
         accentKeyText = Color.rgb(17, 41, 75),
