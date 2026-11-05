@@ -354,26 +354,31 @@ object ToolbarUserStore {
         }
 
     /**
-     * 主页“当前”计数（纯函数，与编辑页生效列同一口径，2026-11-02 修）：
-     * 自定义栏生效时计其启用项；否则用户列非空计其启用项；用户列空时
-     * 与 enterEdit 起步列一致——皮肤栏已定义计池内映射项，未定义计
-     * 出厂默认 5 项。主页计数恒等于编辑页打开时看到的列长，不再出现
-     * 主页 0 个、编辑页 5 个的自相矛盾。
+     * 主页“当前”计数（纯函数，与键盘实际渲染列同一口径）：
+     * 计 [resolve] 抉择出的生效列长——自定义栏生效计其可渲染项，
+     * 否则用户列；用户层无配置（列空／全停用／全悬空）时 [resolve]
+     * 返回 null，渲染回落皮肤／默认，本函数同样回落：皮肤栏已定义
+     * 计池内映射项（与 ToolbarSkinResolution 同口径），未定义计
+     * 出厂默认 5 项。主页计数恒等于键盘实际渲染的中央区按钮数。
+     *
+     * 旧口径（2026-11-02 修）只修了“用户列空”一支：用户列非空
+     * 即计其启用项——全停用时计 0 而渲染回落默认 5 项，自定义栏
+     * 全停用／栏 id 悬空时同理错位；悬空引用亦未剔除。本口径以
+     * resolve 为唯一来源，上述情形全部与渲染一致。
      */
     fun mainPageCount(
-        activeButtons: List<ToolbarButtonEntry>?,
-        userButtons: List<ToolbarButtonEntry>,
+        skinId: String,
+        data: ToolbarUserData,
         skinButtonIds: List<String>?,
-    ): Int =
-        if (activeButtons != null) {
-            activeButtons.count { it.enabled }
-        } else if (userButtons.isNotEmpty()) {
-            userButtons.count { it.enabled }
-        } else if (skinButtonIds != null) {
+    ): Int {
+        val resolved = resolve(skinId, data)
+        if (resolved != null) return resolved.buttons.size
+        return if (skinButtonIds != null) {
             skinButtonIds.count { ToolbarConfig.item(it) != null }
         } else {
             ToolbarConfig.DEFAULT_IDS.size
         }
+    }
 
     /**
      * 编辑草稿写盘门控（纯函数）：非起步情形（seed == null）恒写盘；

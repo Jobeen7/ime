@@ -441,19 +441,20 @@ private fun ToolbarMainPage(
     val context = LocalContext.current
     val skinIds = SkinSnapshotProvider.current(context)?.toolbar?.buttons?.map { it.id }
     val currentCount = ToolbarUserStore.mainPageCount(
-        activeToolbar?.buttons,
-        state.buttons,
+        skinId,
+        data,
         skinIds,
     )
-    // 主页计数诊断（2026-11-02 修复批）：只在生效列变化时记一次，
-    // 与 mainPageCount 同口径的来源列 + 各列规模，便于下次主页与
-    // 编辑页计数不一致时直接定位是哪一列胜出。
-    LaunchedEffect(activeToolbar?.buttons, state.buttons, skinIds) {
+    // 主页计数诊断（2026-11-02 修复批，2026-11-06 改与 resolve 同口径）：
+    // 只在生效列变化时记一次，来源列按 resolve 抉择判定——栏 id 悬空
+    // 时 resolve 直接回落皮肤／默认、不看用户列，便于下次主页与键盘
+    // 实际渲染计数不一致时直接定位是哪一列胜出。
+    LaunchedEffect(state, activeToolbar, data.customButtons, skinIds) {
         val source = when {
-            activeToolbar?.buttons != null -> "active"
-            state.buttons.isNotEmpty() -> "user"
-            skinIds != null -> "skin"
-            else -> "default"
+            ToolbarUserStore.resolve(skinId, data) == null ->
+                if (skinIds != null) "skin" else "default"
+            state.activeToolbarId != null -> "active"
+            else -> "user"
         }
         DiagLog.d(
             "toolbar", "main_page_count",
