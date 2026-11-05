@@ -780,6 +780,56 @@ fun SkinLibraryScreen(
                         },
                         modifier = Modifier.weight(1f),
                     )
+                    // 微信绿家族卡（2026-11-05：浅绿／深绿双槽，与“默认”卡同口径；
+                    // 卡片只选主题家族，深浅由颜色模式三项决定）。
+                    val greenTheme = KeyboardTheme.byId(
+                        when (colorMode) {
+                            SkinColorMode.DARK -> KeyboardThemePresets.WeChatGreenDark.id
+                            SkinColorMode.LIGHT -> KeyboardThemePresets.WeChatGreenLight.id
+                            SkinColorMode.SYSTEM -> if (systemDark) {
+                                KeyboardThemePresets.WeChatGreenDark.id
+                            } else {
+                                KeyboardThemePresets.WeChatGreenLight.id
+                            }
+                        },
+                    )
+                    BuiltinThemeCard(
+                        theme = greenTheme,
+                        label = stringResource(R.string.builtin_theme_wechat_green),
+                        isActive = !skinActive &&
+                            effectiveThemeId in setOf(
+                                KeyboardThemePresets.WeChatGreenLight.id,
+                                KeyboardThemePresets.WeChatGreenDark.id,
+                            ),
+                        enabled = !busy && !multiSelect,
+                        onClick = {
+                            runBusy {
+                                if (state.active?.skinId != null) {
+                                    val reverted = applier.revertToDefault()
+                                    if (reverted !is ApplyTransaction.Result.RevertedToDefault) {
+                                        toast("切换失败：回退内置失败")
+                                        return@runBusy
+                                    }
+                                }
+                                // 切微信绿双槽：主题 id 置入槽位对内，跟随系统下
+                                // effectiveBuiltinThemeId 即按系统取槽位。
+                                KeyboardManager.Keyboard.setThemeId(
+                                    context, KeyboardThemePresets.WeChatGreenDark.id,
+                                )
+                                KeyboardManager.Keyboard.setLightThemeId(
+                                    context, KeyboardThemePresets.WeChatGreenLight.id,
+                                )
+                                KeyboardManager.Keyboard.setDarkThemeId(
+                                    context, KeyboardThemePresets.WeChatGreenDark.id,
+                                )
+                                themeId = KeyboardThemePresets.WeChatGreenDark.id
+                                themeLightId = KeyboardThemePresets.WeChatGreenLight.id
+                                themeDarkId = KeyboardThemePresets.WeChatGreenDark.id
+                                switchCheck = context.getString(R.string.builtin_theme_wechat_green)
+                            }
+                        },
+                        modifier = Modifier.weight(1f),
+                    )
                 }
             }
             // 多选行：标题行与行内批量删除链接已删（批量删除只在

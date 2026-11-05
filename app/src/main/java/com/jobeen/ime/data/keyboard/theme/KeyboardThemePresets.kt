@@ -25,7 +25,8 @@ object KeyboardThemePresets {
             specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
             accentKeyBackground = Color.rgb(156, 130, 74),
             accentKeyPressed = Color.rgb(72, 72, 74),
-            accentKeyBorderStroke = Color.rgb(156, 130, 74),
+            // 2026-11-05：内置描边全部去掉，回车强调键描边亦清零。
+            accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
             keyText = Color.rgb(255, 255, 255),
             specialKeyText = Color.rgb(255, 255, 255),
             accentKeyText = Color.rgb(255, 255, 255),
@@ -67,14 +68,15 @@ object KeyboardThemePresets {
         colors = KeyboardColors.ColorScheme(
             keyBackground = Color.rgb(255, 255, 255),
             keyPressed = Color.rgb(230, 230, 230),
-            keyBorderStroke = Color.rgb(210, 210, 215),
+            // 2026-11-05：内置描边全部去掉（含回车强调键），三项描边透明。
+            keyBorderStroke = Color.argb(0, 0, 0, 0),
             specialKeyText = Color.rgb(60, 60, 65),
             specialKeyBackground = Color.rgb(255, 255, 255),
             specialKeyPressed = Color.rgb(230, 230, 230),
-            specialKeyBorderStroke = Color.rgb(210, 210, 215),
+            specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
             accentKeyBackground = Color.rgb(156, 130, 74),
             accentKeyPressed = Color.rgb(140, 114, 62),
-            accentKeyBorderStroke = Color.rgb(156, 130, 74),
+            accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
             keyText = Color.rgb(0, 0, 0),
             accentKeyText = Color.rgb(255, 255, 255),
             altText = Color.rgb(120, 120, 125),
@@ -112,13 +114,14 @@ object KeyboardThemePresets {
         colors = KeyboardColors.ColorScheme(
             keyBackground = Color.rgb(245, 238, 230),
             keyPressed = Color.rgb(230, 215, 200),
-            keyBorderStroke = Color.rgb(230, 215, 200),
+            // 2026-11-05：内置描边全部去掉（含回车强调键），三项描边透明。
+            keyBorderStroke = Color.argb(0, 0, 0, 0),
             specialKeyBackground = Color.rgb(245, 238, 230),
             specialKeyPressed = Color.rgb(230, 215, 200),
-            specialKeyBorderStroke = Color.rgb(230, 215, 200),
+            specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
             accentKeyBackground = Color.rgb(242, 100, 25),
             accentKeyPressed = Color.rgb(220, 85, 15),
-            accentKeyBorderStroke = Color.rgb(242, 100, 25),
+            accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
             keyText = Color.rgb(50, 40, 35),
             specialKeyText = Color.rgb(120, 100, 90),
             accentKeyText = Color.rgb(255, 255, 255),
@@ -157,11 +160,107 @@ object KeyboardThemePresets {
         colors = MonetPalette.LightFallback,
     )
 
+    // 微信绿（2026-11-05：源包 upload-2.cskin「微信·绿最终版」，只搬全局色，
+    // 不加自定义布局，九宫格用内置那套）。近似写明，不藏着：
+    // ① 描边：源包无整圈描边，只有底边（浅 #9a9c9a／深 #1D1D1D），预设表达
+    //    不了底边，三项描边照暗夜先例全部清零（含回车强调键）。
+    // ② 回车绿：源包只在部分 return 类型下用绿（$returnKeyType 1,4,6,7,9
+    //    走绿，其余走灰色功能键色）；预设强调色是单一值，绿回车用于全部回车类型。
+    // ③ 键盘高：源包 25vh；预设无高度控制，走原厂默认高度。
+    // ④ 长按角标、工具栏图片、浮动面板、数字九键与符号集合一律不搬。
+    val WeChatGreenLight = KeyboardTheme(
+        id = "wechat-green-light",
+        name = "微信绿·浅",
+        colors = KeyboardColors.ColorScheme(
+            keyBackground = Color.rgb(255, 255, 255),
+            keyPressed = Color.rgb(171, 176, 186),
+            // 源包字母键无整圈描边，只有底边 #9a9c9a，预设表达不了，照暗夜先例清零。
+            keyBorderStroke = Color.argb(0, 0, 0, 0),
+            specialKeyBackground = Color.argb(128, 151, 159, 175),
+            specialKeyPressed = Color.argb(230, 255, 255, 255),
+            specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
+            accentKeyBackground = Color.rgb(35, 200, 148),
+            accentKeyPressed = Color.argb(230, 255, 255, 255),
+            // 回车强调键描边亦清零（源包同无整圈描边）。
+            accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
+            keyText = Color.rgb(0, 0, 0),
+            specialKeyText = Color.rgb(0, 0, 0),
+            accentKeyText = Color.rgb(255, 255, 255),
+            altText = Color.argb(85, 0, 0, 0),
+            // 源包键盘底 #D0D3DA01（alpha 01 近透明）；Jime 无模糊层，取实色近似。
+            background = Color.rgb(208, 211, 218),
+            panel = KeyboardColors.ColorScheme.PanelColors(
+                background = Color.rgb(208, 211, 218),
+                toolbarText = Color.rgb(80, 80, 80),
+                toolbarActived = Color.rgb(31, 179, 130),
+                toolbarIcon = Color.rgb(80, 80, 80),
+                toolbarPressed = Color.rgb(0, 0, 0),
+                candidateBackground = Color.rgb(255, 255, 255),
+                candidateText = Color.rgb(0, 0, 0),
+                candidateIndex = Color.rgb(120, 120, 125),
+                candidateDivider = Color.argb(100, 140, 140, 145),
+                selectedCandidateText = Color.rgb(31, 179, 130),
+            ),
+            pinner = KeyboardColors.ColorScheme.PinnerColors(
+                background = Color.rgb(255, 255, 255),
+                textColor = Color.rgb(0, 0, 0),
+                secondaryTextColor = Color.rgb(130, 130, 135),
+            ),
+            toastBackground = Color.rgb(45, 45, 48),
+            toastText = Color.rgb(255, 255, 255),
+        ),
+    )
+
+    val WeChatGreenDark = KeyboardTheme(
+        id = "wechat-green-dark",
+        name = "微信绿·深",
+        colors = KeyboardColors.ColorScheme(
+            keyBackground = Color.argb(101, 209, 209, 209),
+            keyPressed = Color.argb(36, 209, 209, 209),
+            // 源包字母键无整圈描边，只有底边 #1D1D1D，预设表达不了，照暗夜先例清零。
+            keyBorderStroke = Color.argb(0, 0, 0, 0),
+            specialKeyBackground = Color.argb(36, 209, 209, 209),
+            specialKeyPressed = Color.argb(89, 209, 209, 209),
+            specialKeyBorderStroke = Color.argb(0, 0, 0, 0),
+            accentKeyBackground = Color.rgb(35, 200, 148),
+            accentKeyPressed = Color.argb(89, 209, 209, 209),
+            // 回车强调键描边亦清零（源包同无整圈描边）。
+            accentKeyBorderStroke = Color.argb(0, 0, 0, 0),
+            keyText = Color.rgb(255, 255, 255),
+            specialKeyText = Color.rgb(255, 255, 255),
+            accentKeyText = Color.rgb(255, 255, 255),
+            altText = Color.rgb(182, 183, 185),
+            // 源包键盘底 #47474701（alpha 01 近透明）；Jime 无模糊层，取实色近似。
+            background = Color.rgb(71, 71, 71),
+            panel = KeyboardColors.ColorScheme.PanelColors(
+                background = Color.rgb(71, 71, 71),
+                toolbarText = Color.rgb(229, 229, 229),
+                toolbarActived = Color.rgb(39, 223, 161),
+                toolbarIcon = Color.rgb(229, 229, 229),
+                toolbarPressed = Color.rgb(255, 255, 255),
+                candidateBackground = Color.argb(220, 22, 22, 22),
+                candidateText = Color.rgb(255, 255, 255),
+                candidateIndex = Color.rgb(130, 130, 130),
+                candidateDivider = Color.argb(120, 130, 130, 130),
+                selectedCandidateText = Color.rgb(39, 223, 161),
+            ),
+            pinner = KeyboardColors.ColorScheme.PinnerColors(
+                background = Color.rgb(107, 107, 107),
+                textColor = Color.rgb(255, 255, 255),
+                secondaryTextColor = Color.rgb(120, 120, 120),
+            ),
+            toastBackground = Color.rgb(36, 36, 38),
+            toastText = Color.rgb(245, 245, 247),
+        ),
+    )
+
     val ALL: List<KeyboardTheme>
         get() = listOf(
             Amoled,
             Light,
             Sunset,
             Monet,
+            WeChatGreenLight,
+            WeChatGreenDark,
         ) + customThemes
 }

@@ -14,6 +14,54 @@ class KeyboardColorsEffectiveThemeTest {
     private val dark = "amoled"
     private val monet = "monet"
     private val imported = "custom_legacy"
+    private val greenLight = "wechat-green-light"
+    private val greenDark = "wechat-green-dark"
+
+    @Test
+    fun system_switchesGreenPairBySystemShade() {
+        // 微信绿双槽（2026-11-05）：点绿卡把浅／深槽位同时置为绿浅／绿深，
+        // 跟随系统时按系统深浅在绿浅／绿深之间切换。
+        assertEquals(
+            greenLight,
+            KeyboardColors.effectiveBuiltinThemeId(
+                SkinColorMode.SYSTEM, greenDark, greenLight, greenDark, false,
+            ),
+        )
+        assertEquals(
+            greenDark,
+            KeyboardColors.effectiveBuiltinThemeId(
+                SkinColorMode.SYSTEM, greenDark, greenLight, greenDark, true,
+            ),
+        )
+        assertEquals(
+            greenLight,
+            KeyboardColors.effectiveBuiltinThemeId(
+                SkinColorMode.SYSTEM, greenLight, greenLight, greenDark, false,
+            ),
+        )
+        assertEquals(
+            greenDark,
+            KeyboardColors.effectiveBuiltinThemeId(
+                SkinColorMode.SYSTEM, greenLight, greenLight, greenDark, true,
+            ),
+        )
+    }
+
+    @Test
+    fun lightAndDark_forceGreenSlots() {
+        assertEquals(
+            greenLight,
+            KeyboardColors.effectiveBuiltinThemeId(
+                SkinColorMode.LIGHT, greenDark, greenLight, greenDark, true,
+            ),
+        )
+        assertEquals(
+            greenDark,
+            KeyboardColors.effectiveBuiltinThemeId(
+                SkinColorMode.DARK, greenLight, greenLight, greenDark, false,
+            ),
+        )
+    }
 
     @Test
     fun system_forcesPairToFollowSystemShade() {

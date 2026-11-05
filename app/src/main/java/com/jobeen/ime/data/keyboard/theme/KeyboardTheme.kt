@@ -13,13 +13,15 @@ data class KeyboardTheme(
         const val LIGHT_DEFAULT_ID = "light"
         const val DARK_DEFAULT_ID = "amoled"
 
-        /** 库页主题卡：仅 4 内置；已导入自定义主题无卡（文件留盘、无切换入口）。 */
+        /** 库页主题卡：内置主题；已导入自定义主题无卡（文件留盘、无切换入口）。 */
         val BUILTINS: List<KeyboardTheme>
             get() = listOf(
                 KeyboardThemePresets.Amoled,
                 KeyboardThemePresets.Light,
                 KeyboardThemePresets.Sunset,
                 KeyboardThemePresets.Monet,
+                KeyboardThemePresets.WeChatGreenLight,
+                KeyboardThemePresets.WeChatGreenDark,
             )
 
         val DEFAULT: KeyboardTheme
