@@ -708,6 +708,8 @@ class ImeInputMethodService : InputMethodService() {
         lastSelectionStart = newSelStart
         lastSelectionEnd = newSelEnd
         keyboardWindow?.onSelectionUpdate(newSelStart, newSelEnd)
+        // 光标/选区变化：已登记位置的清字账本条目，位置不一致即作废
+        ClearedTextLedger.onSelectionChanged(newSelStart, newSelEnd)
         // 光标/选区变化：engine 侧光标前文本缓存失效
         engine?.onSelectionChanged()
         // 探针走 24ms 合并（见 scheduleNotifyInputChanged）；onStartInputView

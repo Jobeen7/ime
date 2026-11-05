@@ -58,12 +58,11 @@ import com.jobeen.ime.base.speech.VoiceUndoLedger
  *   触发一次选区更新，无法区分「删除自带的更新」与「用户移
  *   光标」，清掉会让旧路径的撤销立即失效；它们仍由锚点判定兜底。
  *
- * 接线残留（本文件只改账本，调用方不在本次改动范围）：登记处
- * 须把当前连接传给 [record]（KeyActionListener 的 #deleteText
- * 分支与 RimeEngine.clearInternal 各一处），服务须在
- * onUpdateSelection 里调 [onSelectionChanged]；未接线前，新
- * 绑定只在传了连接的登记路径上生效，未传连接的条目保持旧的
- * 锚点判定（行为不变，不引入新失败面）。
+ * 接线（v1.1.16.18 已完成）：登记处把当前连接传给 [record]
+ * （KeyActionListener 的 #deleteText 分支与 RimeEngine.clearInternal
+ * 各一处），服务在 onUpdateSelection 里调 [onSelectionChanged]。
+ * 删除动作自带的选区更新报的是删除点位置，与登记位置一致，不会
+ * 误作废；恢复写回后条目已弹出，后续选区更新不再影响它。
  */
 object ClearedTextLedger {
 

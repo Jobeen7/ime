@@ -144,7 +144,7 @@ class KeyActionListener(
                             ic.getTextBeforeCursor(ClearedTextLedger.ANCHOR_CHARS, 0)?.toString()
                         }.getOrNull().orEmpty()
                         if (ic.commitText("", 1)) {
-                            ClearedTextLedger.record(selected?.toString().orEmpty(), anchor)
+                            ClearedTextLedger.record(selected?.toString().orEmpty(), anchor, ic)
                         }
                     }
                 } catch (ex: Exception) {

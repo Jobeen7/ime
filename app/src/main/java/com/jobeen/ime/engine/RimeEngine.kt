@@ -1805,7 +1805,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                 ic.getTextBeforeCursor(ClearedTextLedger.ANCHOR_CHARS, 0)
                                     ?.toString()
                             }.getOrNull().orEmpty()
-                            ClearedTextLedger.record(cleared.toString(), anchor)
+                            ClearedTextLedger.record(cleared.toString(), anchor, ic)
                         }
                     }
                 }
