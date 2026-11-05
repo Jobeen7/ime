@@ -83,6 +83,10 @@ class KeyActionListener(
             }
 
             is KeyboardAction.ClearAction -> {
+                // 上滑清空组字：藏态随组字清空而失效（Reset 同步清
+                // 编辑器组字区），复位藏态，免 stale 藏态让下一次
+                // 组字中下滑跳过藏步直走账本。
+                TypedUndoLedger.clearComposingSpanHidden()
                 engine?.clear(service)
             }
 
@@ -245,7 +249,22 @@ class KeyActionListener(
             }
 
             is KeyboardAction.UndoAction -> {
-                engine?.undo(service)
+                // 组字中下滑藏 span（2026-11-05 藏 span 解）：组字中＋
+                // 内嵌开那一格 .17 是空操作——先藏起编辑器侧组字
+                // span（组字串移出编辑器显示，Rime 组字状态不动，
+                // 不提交），再下滑走账本撤销已上屏文字；其余一律
+                // 原样移交引擎 Undo 分支。RimeEngine Undo 分支不动。
+                when (
+                    TypedUndoLedger.decideComposingSwipeDown(
+                        composing = KeyboardStateManager.isComposingNow,
+                        poisoned = TypedUndoLedger.isPoisoned(),
+                        spanHidden = TypedUndoLedger.isComposingSpanHidden(),
+                    )
+                ) {
+                    TypedUndoLedger.ComposingSwipeDown.HIDE_SPAN -> hideComposingSpan()
+                    TypedUndoLedger.ComposingSwipeDown.UNDO_HIDDEN -> undoHiddenComposing()
+                    TypedUndoLedger.ComposingSwipeDown.DELEGATE -> engine?.undo(service)
+                }
             }
 
             is KeyboardAction.RedoAction -> {
@@ -686,6 +705,68 @@ class KeyActionListener(
             (variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD ||
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)
+    }
+
+    /**
+     * 藏起编辑器侧组字 span（藏 span 解第一步，只被 UndoAction
+     * 的 HIDE_SPAN 格调用）：经与内嵌直送同一连接
+     * （activeInputConnection，桥接态写虚拟连接）发空组字串，
+     * 组字串移出编辑器显示；Rime 组字状态不动，下一次组字更
+     * 新重发即恢复。绝不用 finishComposingText（会把组字提
+     * 交为正文，与「只藏不录」相反）；连接为空或发送失败时
+     * 不置藏态，本次下滑即 .17 空操作格（不补发引擎撤销——
+     * 污染会话内引擎分支同样空操作，可见结果一致）。
+     * 日志只记成败，不记组字文本。
+     */
+    private fun hideComposingSpan() {
+        val ic = (service as? ImeInputMethodService)?.activeInputConnection()
+            ?: service.currentInputConnection
+        val hidden = ic != null &&
+            runCatching { ic.setComposingText("", 1) }.getOrDefault(false)
+        if (hidden) {
+            TypedUndoLedger.markComposingSpanHidden()
+            DiagLog.d("undo", "composing_span_hidden")
+        } else {
+            DiagLog.w("undo", "composing_span_hide_failed")
+        }
+    }
+
+    /**
+     * 藏态下再下滑（藏 span 解第二步，只被 UndoAction 的
+     * UNDO_HIDDEN 格调用）：编辑器里已无组字串，光标前只剩
+     * 已上屏文字，按无组字口径走三账本撤销（上滑清字账本原
+     * 样写回 → 语音账本直删 → 打字账本直删，顺序与引擎 Undo
+     * 分支的无组字链一致）；污染会话三账本都不命中时空操作，
+     * 绝不回落 Ctrl+Z（与 decideUndoFallback 同门——Ctrl+Z
+     * 会把藏起的组字以已上屏文本复活）。日志只记三账本命中，
+     * 不记文本。
+     */
+    private fun undoHiddenComposing() {
+        val ic = (service as? ImeInputMethodService)?.activeInputConnection()
+            ?: service.currentInputConnection
+        val clearedHit = ic != null && ClearedTextLedger.tryRestore(ic)
+        val voiceHit = !clearedHit && ic != null && VoiceUndoLedger.tryUndo(ic)
+        val poisoned = TypedUndoLedger.isPoisoned()
+        val typedHit = !clearedHit && !voiceHit && poisoned &&
+            ic != null && TypedUndoLedger.tryUndo(ic)
+        when (
+            TypedUndoLedger.decideUndoFallback(
+                voiceHit = voiceHit,
+                typedHit = typedHit,
+                clearedHit = clearedHit,
+                poisoned = poisoned,
+            )
+        ) {
+            // 污染会话内 SEND_CTRL_Z 不可达（真值表保证）；即使
+            // 将来表变，也绝不从本路径把 Ctrl+Z 发进被污染的栈。
+            TypedUndoLedger.UndoFallback.DONE,
+            TypedUndoLedger.UndoFallback.NOOP,
+            TypedUndoLedger.UndoFallback.SEND_CTRL_Z -> Unit
+        }
+        DiagLog.d(
+            "undo", "composing_span_undo_hidden",
+            mapOf("cleared" to clearedHit, "voice" to voiceHit, "typed" to typedHit),
+        )
     }
 }
 

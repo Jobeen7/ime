@@ -57,6 +57,15 @@ object TypedUndoLedger {
     /** 本会话内嵌组字是否送进过编辑器（送进即污染，见类注释） */
     private var composingSentToEditor = false
 
+    /**
+     * 组字 span 藏态（2026-11-05 藏 span 解）：组字中＋内嵌开时下滑
+     * 先藏起编辑器侧组字 span（组字串移出编辑器显示，Rime 组字
+     * 状态不动），而非直接撤销或无动作。藏态下再下滑走账本撤销
+     * （只删已上屏文字），上滑清组字、下一次组字更新重发组字串
+     * 均复位；输入框结束整表作废时同清。
+     */
+    private var composingSpanHidden = false
+
     /** 登记一段刚真正落到编辑器里的打字上屏文字；空串忽略 */
     @Synchronized
     fun record(text: String) {
@@ -77,12 +86,33 @@ object TypedUndoLedger {
     @Synchronized
     fun isPoisoned(): Boolean = composingSentToEditor
 
+    /** 下滑藏起组字 span 后置位（藏态，见 [composingSpanHidden]） */
+    @Synchronized
+    fun markComposingSpanHidden() {
+        composingSpanHidden = true
+    }
+
+    /** 组字 span 当前是否处于藏态 */
+    @Synchronized
+    fun isComposingSpanHidden(): Boolean = composingSpanHidden
+
+    /**
+     * 清除藏态：组字呈现刷新（下一次组字更新重发组字串，编辑器
+     * 侧 span 随之重建）或组字被清空时调用；藏态下误留会让下
+     * 一次组字中下滑跳过藏步直走账本，故复位点须与呈现同步。
+     */
+    @Synchronized
+    fun clearComposingSpanHidden() {
+        composingSpanHidden = false
+    }
+
     /** 输入框结束时整表作废：旧框的账不能拿到新框去删 */
     @Synchronized
     fun clearAll() {
         entries.clear()
         redoUnits.clear()
         composingSentToEditor = false
+        composingSpanHidden = false
     }
 
     /**
@@ -218,5 +248,31 @@ object TypedUndoLedger {
         !composing && (clearedHit || voiceHit || typedHit) -> HostUndoFallback.DONE
         poisoned -> HostUndoFallback.NOOP
         else -> HostUndoFallback.HOST_UNDO
+    }
+
+    /** 组字中下滑（退格下滑）的落点：藏 span、藏态下账本撤销、原样移交引擎 */
+    enum class ComposingSwipeDown { HIDE_SPAN, UNDO_HIDDEN, DELEGATE }
+
+    /**
+     * 纯判定：组字中下滑落点真值表（KeyActionListener 的
+     * UndoAction 分支即按此表执行，.17 的「组字中＋内嵌开」
+     * 空操作格由此表接管——RimeEngine Undo 分支不动）。
+     * - 组字中＋污染（内嵌组字送进过编辑器）＋未藏 → HIDE_SPAN：
+     *   先藏起编辑器侧组字 span（不提交、不丢 Rime 组字状态），
+     *   本次下滑不再做别的；
+     * - 组字中＋污染＋已藏 → UNDO_HIDDEN：编辑器里已无组字串，
+     *   光标前只剩已上屏文字，按无组字口径走三账本撤销，污染
+     *   会话绝不回落 Ctrl+Z（与 decideUndoFallback 同门）；
+     * - 其余（未组字／未污染）→ DELEGATE：原样移交引擎
+     *   Undo 分支，行为与 .17 一字不动。
+     */
+    internal fun decideComposingSwipeDown(
+        composing: Boolean,
+        poisoned: Boolean,
+        spanHidden: Boolean,
+    ): ComposingSwipeDown = when {
+        composing && poisoned && !spanHidden -> ComposingSwipeDown.HIDE_SPAN
+        composing && poisoned && spanHidden -> ComposingSwipeDown.UNDO_HIDDEN
+        else -> ComposingSwipeDown.DELEGATE
     }
 }

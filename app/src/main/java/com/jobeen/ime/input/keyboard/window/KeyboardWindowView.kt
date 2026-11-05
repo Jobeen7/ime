@@ -1724,6 +1724,11 @@ class KeyboardWindowView(
     }
 
     fun updateDynamicPreedit(items: List<EngineMessage.DynamicPreedit.DynamicPreeditItem>) {
+        // 藏 span 复位：任何一次组字呈现刷新都重建编辑器侧组字
+        // 状态（内嵌分支重发 setComposingText，药丸分支重显药丸），
+        // 藏态至此失效——不清会让下一次组字中下滑跳过藏步直走
+        // 账本；重发本身不依赖文本是否变化，故无条件复位。
+        TypedUndoLedger.clearComposingSpanHidden()
         // 用户开始组字：内联胶囊隐藏，恢复正常候选；新建议须由服务重发。
         if (items.isNotEmpty()) hideInlineAutofill()
         // 内嵌输入模式：组字串直送应用输入框（纯文本、无 span），不显示悬浮药丸；

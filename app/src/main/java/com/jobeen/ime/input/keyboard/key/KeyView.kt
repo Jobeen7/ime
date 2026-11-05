@@ -554,15 +554,56 @@ abstract class KeyView(
         playSequentially(releaseFadeAnim1, releaseFadeAnim2)
     }
 
+    /** 上次已发面色诊断的签名（快照＋键＋来源＋取值）：变化才重发，压住按压态重建的重复行。 */
+    private var lastKeyFaceSig: String? = null
+
+    /**
+     * 真机灰诊断行（2026-11-05，诊断-only）：在最终取色点记快照
+     * id/代次、逐键样式解析结果与面色最终取值＋来源；签名变化
+     * 才发一条（键盘重建／快照换代／覆盖变化），渲染结果不动。
+     */
+    private fun logKeyFaceOnce(variantFace: Int) {
+        // 诊断模式关时直接返回：不 peek 快照、不拼签名，热路径零开销。
+        if (!com.jobeen.ime.skin.diag.DiagPrefs.isDiagnosticMode(context)) return
+        val snapshot = com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()
+        val info = KeyFaceDiag.resolve(
+            keyLabel = keyFaceLabel(),
+            skinId = snapshot?.ref?.skinId,
+            generation = snapshot?.ref?.generation,
+            keyStylesEmpty = snapshot?.keyStyles?.isEmpty() ?: true,
+            overrideColor = backgroundOverride,
+            skinFaceColor = def.skinFaceColor,
+            variantDefaultColor = variantFace,
+        )
+        val sig = "${info.skinId}|${info.generation}|${info.keyLabel}|${info.source}|${info.faceHex}"
+        if (sig == lastKeyFaceSig) return
+        lastKeyFaceSig = sig
+        KeyFaceDiag.log(info)
+    }
+
+    /** 诊断用键标识：主文字（字母键即字母本身），无文字键用 viewId；不记输入内容。 */
+    private fun keyFaceLabel(): String {
+        val text = when (val a = def) {
+            is KeyDef.Appearance.Text -> a.displayText
+            is KeyDef.Appearance.AltText -> a.displayText
+            is KeyDef.Appearance.ImageText -> a.displayText
+            else -> ""
+        }
+        return text.ifEmpty { "view:${def.viewId}" }
+    }
+
     protected fun setupBackgroundWithPress() {
         // 单键样式色优先（2026-10-27 并入项）：有解析色时覆盖变体取色，
         // 无样式时表达式与原逻辑逐字节一致。运行时覆盖最优先。
-        val bkgColor = backgroundOverride ?: def.skinFaceColor ?: when (def.variant) {
+        val variantFace = when (def.variant) {
             Variant.Normal, Variant.AltForeground -> colors.keyBackground
             Variant.Alternative -> colors.specialKeyBackground
             Variant.Accent -> colors.accentKeyBackground
             Variant.None -> Color.TRANSPARENT
         }
+        val bkgColor = backgroundOverride ?: def.skinFaceColor ?: variantFace
+        // 真机灰诊断行（只记元数据，不改渲染）：见 logKeyFaceOnce。
+        logKeyFaceOnce(variantFace)
         val pressedColor = def.skinPressedColor ?: when (def.variant) {
             Variant.Normal, Variant.AltForeground -> colors.keyPressed
             Variant.Alternative -> colors.specialKeyPressed
