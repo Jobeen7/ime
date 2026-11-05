@@ -2,6 +2,8 @@
 
 package com.jobeen.ime.input
 
+import android.view.inputmethod.ExtractedText
+import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
 import com.jobeen.ime.base.speech.SherpaSpeechClient
 import com.jobeen.ime.base.speech.VoiceUndoLedger
@@ -45,8 +47,10 @@ import com.jobeen.ime.base.speech.VoiceUndoLedger
  *   现取）：换框／输入结束推进纪元后，旧条目永不匹配，直接丢弃
  *   （纪元只进不退，丢了也不会再合用）。
  * - 光标位置（登记时随连接现读，见 [readPosition]）：光标前
- *   文本不足 [POSITION_CONTEXT_CHARS] 字时，读回的全长就是
- *   绝对光标位置（选区起点）；字段更长时绝对位置不可知，改存
+ *   文本不足 [POSITION_CONTEXT_CHARS] 字且经 getExtractedText
+ *   确认到达字段头时，读回的全长就是绝对光标位置（选区起点）；
+ *   读短但确认不了字段头时（部分自绘输入框截短返回值）不绑定
+ *   绝对位置、只记锚点；字段更长时绝对位置不可知，改存
  *   光标前 [POSITION_CONTEXT_CHARS] 字窗口本身作指纹。恢复时
  *   现读同一窗口比对：光标移过、选区变过、前文被编辑过都会让
  *   比对失败，不接管（条目保留，用户移回原处仍可恢复）。
@@ -286,7 +290,7 @@ object ClearedTextLedger {
     }
 
     /**
-     * 登记时现读光标位置（有界一次 Binder 往返）。
+     * 登记时现读光标位置（有界一次 Binder 往返，外加一次字段头确认）。
      *
      * 有选区时 getTextBeforeCursor 取的是选区之前的文本，故
      * before 长即选区起点；选区尾 = 起点 + 选区文本长。
@@ -294,11 +298,13 @@ object ClearedTextLedger {
      * 读到 null 按空串计（字段头，部分实现在空字段上返 null，
      * 与空锚点口径一致）。
      *
-     * 注意：部分自绘输入框可能把 getTextBeforeCursor 截断到
-     * 小于请求值；此时「读满即字段头」的推断不成立，绝对位置
-     * 会被低估。低估只会让恢复在错误位置上更易被拒（安全方向），
-     * 且锚点判定仍在，不会因此误插——但本绑定在该类输入框上
-     * 退化为锚点判定，不作额外保证。
+     * 读短时区分「确知到达字段头」与「只返回短窗口」：部分自绘
+     * 输入框会把 getTextBeforeCursor 截断到小于请求值，此时
+     * 「读短即字段头」的推断不成立，绝对位置会被低估，条目会被
+     * 提前作废（撤销静默失效）。读短时须经 [isAtFieldHead] 用
+     * getExtractedText 的绝对选区起点核对，确认不了字段头时
+     * 不绑定绝对位置、只记锚点（onSelectionChanged 不作废、
+     * 恢复走锚点判定）；读满 256 字时按现有分支存窗口指纹。
      */
     private fun readPosition(ic: InputConnection): PositionMark {
         val beforeResult = runCatching {
@@ -306,14 +312,37 @@ object ClearedTextLedger {
         }
         if (beforeResult.isFailure) return PositionMark(null, null, null)
         val before = beforeResult.getOrNull().orEmpty()
+        if (before.length >= POSITION_CONTEXT_CHARS) {
+            return PositionMark(null, null, before)
+        }
         val selected = runCatching { ic.getSelectedText(0)?.toString() }.getOrNull().orEmpty()
-        return if (before.length < POSITION_CONTEXT_CHARS) {
+        return if (isAtFieldHead(ic, before.length)) {
             val start = before.length
             val end = start + selected.length
             PositionMark(start, end, null)
         } else {
-            PositionMark(null, null, before)
+            PositionMark(null, null, null)
         }
+    }
+
+    /**
+     * 字段头确认：getExtractedText 返回的文本自字段头起
+     * （startOffset == 0）且选区起点恰等于读回的光标前长度时，
+     * 读回的短窗口就是字段头到光标的全部文字，绝对位置可信。
+     * 选区起点在两种口径下都与 startOffset == 0 时的绝对光标
+     * 一致，故只认 startOffset == 0 的情形；读失败／返回 null／
+     * 文本为空／文本非自字段头起／选区起点对不上时一律按
+     * 「不能确认」处理（安全方向：不绑定，退回锚点判定）。
+     */
+    private fun isAtFieldHead(ic: InputConnection, beforeLength: Int): Boolean {
+        val extracted = runCatching {
+            ic.getExtractedText(ExtractedTextRequest(), 0)
+        }.getOrNull() ?: return false
+        if (extracted.text == null) return false
+        if (extracted.startOffset != 0) return false
+        val start = extracted.selectionStart
+        if (start < 0) return false
+        return start == beforeLength
     }
 
     /**

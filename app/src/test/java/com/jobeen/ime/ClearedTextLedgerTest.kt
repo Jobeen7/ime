@@ -329,6 +329,40 @@ class ClearedTextLedgerTest {
         ClearedTextLedger.record("abc", "前文")
         assertNull(ClearedTextLedger.peekCursor())
     }
+
+    // ---- 截短返回：读短 ≠ 字段头，不绑定绝对位置（P3） ----
+
+    @Test
+    fun truncatedWindow_recordThenMoveCursor_restoreStillWorks() {
+        // 光标前实有 26 字，getTextBeforeCursor 只给最后 16 字；
+        // 选区起点（26）≠ 读回长度（16），字段头确认失败 → 不绑定
+        val anchor = "0123456789abcdef"
+        val backing = "0123456789" + anchor
+        val ic = TruncatingFakeInputConnection(backing)
+        ClearedTextLedger.record("X", anchor, ic)
+        assertNull(ClearedTextLedger.peekCursor())
+        // 移光标：未绑定位置的条目不受选区通知作废
+        ClearedTextLedger.onSelectionChanged(5, 5)
+        assertEquals(1, ClearedTextLedger.size())
+        // 移回原处恢复仍可用（锚点判定：窗口恰为 16 字锚点）
+        assertTrue(ClearedTextLedger.tryRestore(ic))
+        assertEquals(listOf("X"), ic.committed)
+        assertEquals(0, ClearedTextLedger.size())
+    }
+
+    @Test
+    fun truncatedWindow_moveToForgedPosition_restoreRefused() {
+        val anchor = "0123456789abcdef"
+        val backing = "0123456789" + anchor
+        val ic = TruncatingFakeInputConnection(backing)
+        ClearedTextLedger.record("X", anchor, ic)
+        assertNull(ClearedTextLedger.peekCursor())
+        // 移到伪造位置：光标前窗口是另一串 16 字，锚点对不上
+        val forged = TruncatingFakeInputConnection("QRSTUVWXYZ" + "fedcba9876543210")
+        assertFalse(ClearedTextLedger.tryRestore(forged))
+        assertTrue(forged.committed.isEmpty())
+        assertEquals(1, ClearedTextLedger.size())
+    }
 }
 
 /**
@@ -348,6 +382,20 @@ private class FakeInputConnection(
     override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence? =
         beforeCursor?.takeLast(n)
     override fun getTextAfterCursor(n: Int, flags: Int): CharSequence? = null
+    override fun getExtractedText(request: ExtractedTextRequest?, flags: Int): ExtractedText? {
+        // 如实返回全量文本与绝对选区起点：光标前长度与选区起点一致
+        // 时字段头确认通过（见 readPosition）。
+        val before = beforeCursor?.toString().orEmpty()
+        val sel = selected?.toString().orEmpty()
+        return ExtractedText().apply {
+            text = before + sel
+            startOffset = 0
+            selectionStart = before.length
+            selectionEnd = before.length + sel.length
+            partialStartOffset = 0
+            partialEndOffset = text.length
+        }
+    }
     override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
         if (commitResult) committed.add(text.toString())
         return commitResult
@@ -364,7 +412,6 @@ private class FakeInputConnection(
     override fun endBatchEdit(): Boolean = true
     override fun finishComposingText(): Boolean = false
     override fun getCursorCapsMode(reqModes: Int): Int = 0
-    override fun getExtractedText(request: ExtractedTextRequest, flags: Int): ExtractedText? = null
     override fun getHandler(): Handler? = null
     override fun performContextMenuAction(id: Int): Boolean = false
     override fun performEditorAction(editorAction: Int): Boolean = false
@@ -375,4 +422,62 @@ private class FakeInputConnection(
     override fun setComposingRegion(start: Int, end: Int): Boolean = false
     override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean = false
     override fun setSelection(start: Int, end: Int): Boolean = false
+}
+
+/**
+ * 截短桩：getTextBeforeCursor 不论请求多少字，恒只返回固定
+ * 16 字短窗口（模拟截短返回值的自绘输入框）；getExtractedText
+ * 如实返回全量文本与绝对选区起点（光标在 26 字处），故字段头
+ * 确认对不上、登记时不绑定绝对位置。其余方法返回固定默认值，
+ * 不触碰 Android 框架实现。
+ */
+private class TruncatingFakeInputConnection(
+    var beforeCursor: String,
+) : InputConnection {
+    val committed = mutableListOf<String>()
+
+    override fun getSelectedText(flags: Int): CharSequence? = ""
+    override fun getTextBeforeCursor(n: Int, flags: Int): CharSequence? =
+        beforeCursor.takeLast(WINDOW_CHARS)
+    override fun getTextAfterCursor(n: Int, flags: Int): CharSequence? = null
+    override fun getExtractedText(request: ExtractedTextRequest?, flags: Int): ExtractedText? =
+        ExtractedText().apply {
+            text = beforeCursor
+            startOffset = 0
+            selectionStart = beforeCursor.length
+            selectionEnd = beforeCursor.length
+            partialStartOffset = 0
+            partialEndOffset = beforeCursor.length
+        }
+    override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean {
+        committed.add(text.toString())
+        return true
+    }
+
+    override fun beginBatchEdit(): Boolean = true
+    override fun clearMetaKeyStates(states: Int): Boolean = false
+    override fun closeConnection() = Unit
+    override fun commitCompletion(text: CompletionInfo): Boolean = false
+    override fun commitContent(info: InputContentInfo, flags: Int, opts: Bundle?): Boolean = false
+    override fun commitCorrection(info: CorrectionInfo): Boolean = false
+    override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean = false
+    override fun deleteSurroundingTextInCodePoints(beforeLength: Int, afterLength: Int): Boolean = false
+    override fun endBatchEdit(): Boolean = true
+    override fun finishComposingText(): Boolean = false
+    override fun getCursorCapsMode(reqModes: Int): Int = 0
+    override fun getHandler(): Handler? = null
+    override fun performContextMenuAction(id: Int): Boolean = false
+    override fun performEditorAction(editorAction: Int): Boolean = false
+    override fun performPrivateCommand(action: String, data: Bundle): Boolean = false
+    override fun reportFullscreenMode(enabled: Boolean): Boolean = false
+    override fun requestCursorUpdates(cursorUpdateMode: Int): Boolean = false
+    override fun sendKeyEvent(event: KeyEvent): Boolean = false
+    override fun setComposingRegion(start: Int, end: Int): Boolean = false
+    override fun setComposingText(text: CharSequence, newCursorPosition: Int): Boolean = false
+    override fun setSelection(start: Int, end: Int): Boolean = false
+
+    companion object {
+        /** 截短后固定返回的窗口长度（字）。 */
+        const val WINDOW_CHARS = 16
+    }
 }

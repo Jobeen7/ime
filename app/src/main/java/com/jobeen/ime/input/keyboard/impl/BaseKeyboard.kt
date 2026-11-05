@@ -86,6 +86,51 @@ abstract class BaseKeyboard(
          */
         fun resolveSpaceText(skinText: String?, fallback: String): String =
             if (!skinText.isNullOrEmpty()) skinText else fallback
+
+        /**
+         * 跨行键在某行的占位格列号（纯函数，可单测）：显式 spanCol
+         * 按该行行内键数钳制；无显式值时靠右键（alignSpanEnd）在
+         * 每行都放最后（= 该行行内键数），靠左键放行首（0）。
+         * 起始行算出的列号只决定 span 视图自身的 bias，不决定
+         * 其他行的占位格位置——九宫格回车键在第 3 行 spanCol=3，
+         * 第 4 行有 4 个行内键，旧实现沿用 3 把占位格插在切换键
+         * 前面，切换键被后画的跨行回车键盖住（.18 回归）；修后
+         * 第 4 行列号为 4，占位格落在全部行内键之后。
+         */
+        fun spacerCol(spanCol: Int?, alignSpanEnd: Boolean, inRowCount: Int): Int =
+            spanCol?.coerceIn(0, inRowCount) ?: if (alignSpanEnd) inRowCount else 0
+
+        /** 行链一段：占位格（spacer）或行内键，宽为行宽占比。 */
+        data class RowElement(val isSpacer: Boolean, val width: Float)
+
+        /**
+         * 行链装配顺序（纯函数，可单测）：行内键按序，spacer 插在
+         * 其有效列号个键之后（列号 = 其左侧的行内键数）；同列多
+         * span 按给定序（调用方须先按列号升序排）。宽：行内键乘
+         * spanScale、spacer 取 span 自身宽（不缩放，与 span 视图恒对齐）。
+         */
+        fun assembleRowElements(
+            inRowWidths: List<Float>,
+            coveringCols: List<Int>,
+            coveringWidths: List<Float>,
+            spanScale: Float,
+        ): List<RowElement> {
+            require(coveringCols.size == coveringWidths.size)
+            val elements = mutableListOf<RowElement>()
+            var inserted = 0
+            for ((keyIndex, width) in inRowWidths.withIndex()) {
+                while (inserted < coveringCols.size && coveringCols[inserted] <= keyIndex) {
+                    elements += RowElement(true, coveringWidths[inserted])
+                    inserted++
+                }
+                elements += RowElement(false, width * spanScale)
+            }
+            while (inserted < coveringCols.size) {
+                elements += RowElement(true, coveringWidths[inserted])
+                inserted++
+            }
+            return elements
+        }
     }
 
     /**
@@ -180,7 +225,10 @@ abstract class BaseKeyboard(
         /**
          * L1 跨行列模型：spanCol = 其左侧的行内键数（0 = 行首，
          * 已按起始行行内键数钳制）；null 列信息沿用 alignSpanEnd
-         * 旧口径（左 → 0，右 → 起始行行内键数）。
+         * 旧口径（左 → 0，右 → 起始行行内键数）。spanCol 只决定
+         * span 视图自身的 bias；各行占位格的列号按该行各自的
+         * 行内键数重算（见 [spacerCol]），不沿用起始行列号——
+         * 否则行内键数多的行会把占位格插进键列中间。
          */
         data class SpanDef(
             val def: KeyDef,
@@ -194,14 +242,15 @@ abstract class BaseKeyboard(
             val inRowCount = keyLayout[ri].count { it.appearance.rowSpan <= 1 }
             for (def in keyLayout[ri]) {
                 if (def.appearance.rowSpan > 1) {
-                    val col = def.appearance.spanCol
-                        ?: if (def.appearance.alignSpanEnd) inRowCount else 0
+                    val col = spacerCol(
+                        def.appearance.spanCol, def.appearance.alignSpanEnd, inRowCount,
+                    )
                     spanDefs.add(
                         SpanDef(
                             def,
                             ri,
                             (ri + def.appearance.rowSpan - 1).coerceAtMost(keyLayout.size - 1),
-                            col.coerceIn(0, inRowCount),
+                            col,
                         )
                     )
                 }
@@ -213,22 +262,32 @@ abstract class BaseKeyboard(
         val registry = mutableMapOf<KeyDef, KeyView>()
         spanDefs.forEachIndexed { i, sd -> registry[sd.def] = spanViews[i] }
 
-        // L1 每行列布局：覆盖 span（按 spanCol 升序）、缩放因子
+        // L1 每行列布局：覆盖 span（按本行有效列号升序，见 spacerCol）、缩放因子
         // spanScale = (1 − Σ覆盖 span 宽) / Σ行内键宽（行内键宽和
         // 为 0 时取 1）。不变量成立时（Σ行内键宽 + Σ覆盖 span 宽
         // = 1.0）spanScale = 1，旧布局逐像素不变；违反时行内键
         // 等比缩放、spacer 恒为 span 自身宽，行总和恒为 1.0、
         // 永不溢出（旧渲染以同口径缩放吸收超限，见 AGENTS.md
         // 行和不变量；行宽重推见 LayoutKeyDefBuilder 空白目标）。
+        // rowSpans 每项为（跨行键定义，本行占位格列号）：同一跨行键
+        // 在不同行的列号可以不同（靠右键在每行都放最后）。
         val rowSpans = keyLayout.indices.map { rowIndex ->
+            val inRowCount = keyLayout[rowIndex].count { it.appearance.rowSpan <= 1 }
             spanDefs.filter { rowIndex in it.startRow..it.endRow }
-                .sortedBy { it.spanCol }
+                .map { sd ->
+                    sd to spacerCol(
+                        sd.def.appearance.spanCol,
+                        sd.def.appearance.alignSpanEnd,
+                        inRowCount,
+                    )
+                }
+                .sortedBy { it.second }
         }
         val rowSpanScales = keyLayout.indices.map { rowIndex ->
             val parts = keyLayout[rowIndex].filterNot { it.appearance.rowSpan > 1 }
             val inRowSum = parts.sumOf { it.appearance.percentWidth.toDouble() }.toFloat()
             val spanSum = rowSpans[rowIndex]
-                .sumOf { it.def.appearance.percentWidth.toDouble() }.toFloat()
+                .sumOf { it.first.def.appearance.percentWidth.toDouble() }.toFloat()
             if (inRowSum > 0f) ((1f - spanSum) / inRowSum).coerceAtLeast(0f) else 1f
         }
 
@@ -247,23 +306,23 @@ abstract class BaseKeyboard(
                     id = generateViewId()
                 }
             }
-            // 合并链：行内键按序，spacer 插在其 spanCol 个键之后
-            // （spanCol = 其左侧的行内键数）；同列多 span 按
-            // spanDefs 序。
-            val elements = mutableListOf<Pair<View, Float>>()
-            var inserted = 0
-            for ((keyIndex, view) in keyViews.withIndex()) {
-                while (inserted < covering.size && covering[inserted].spanCol <= keyIndex) {
-                    val sd = covering[inserted]
-                    elements += spacerViews[inserted] to sd.def.appearance.percentWidth
-                    inserted++
+            // 合并链：行内键按序，spacer 插在其本行有效列号个键之后
+            // （列号 = 其左侧的行内键数）；同列多 span 按 spanDefs 序。
+            // 顺序与宽度的纯函数见 assembleRowElements（可单测）。
+            val rowElements = assembleRowElements(
+                parts.map { it.appearance.percentWidth },
+                covering.map { it.second },
+                covering.map { it.first.def.appearance.percentWidth },
+                spanScale,
+            )
+            var keyCursor = 0
+            var spacerCursor = 0
+            val elements = rowElements.map { element ->
+                if (element.isSpacer) {
+                    spacerViews[spacerCursor++] to element.width
+                } else {
+                    keyViews[keyCursor++] to element.width
                 }
-                elements += view to parts[keyIndex].appearance.percentWidth * spanScale
-            }
-            while (inserted < covering.size) {
-                val sd = covering[inserted]
-                elements += spacerViews[inserted] to sd.def.appearance.percentWidth
-                inserted++
             }
 
             constraintLayout {
@@ -314,8 +373,8 @@ abstract class BaseKeyboard(
             val startScale = rowSpanScales[sd.startRow]
             var left = 0f
             for (other in startCovering) {
-                if (other === sd) break
-                left += other.def.appearance.percentWidth
+                if (other.first === sd) break
+                left += other.first.def.appearance.percentWidth
             }
             left += startParts.take(sd.spanCol)
                 .sumOf { it.appearance.percentWidth.toDouble() }.toFloat() * startScale
