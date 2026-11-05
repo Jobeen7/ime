@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -36,6 +37,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -57,7 +59,6 @@ import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.SingleChoiceDialog
-import com.jobeen.ime.ui.screen.ScreenComponent.SliderRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 import com.jobeen.ime.ui.screen.SettingsPageScaffold
 import com.jobeen.ime.ui.screen.SettingsSectionTitle
@@ -489,7 +490,7 @@ private fun GlobalStyleDialog(
                     onToggle = { keyboardExpanded = !keyboardExpanded },
                 ) {
                     val cornerCustom = draft.keyboardTopCornerDp != null
-                    SwitchRow(
+                    DenseSwitchRow(
                         title = stringResource(R.string.global_corner_custom),
                         checked = cornerCustom,
                         onCheckedChange = { checked ->
@@ -503,7 +504,7 @@ private fun GlobalStyleDialog(
                         },
                     )
                     if (cornerCustom) {
-                        SliderRow(
+                        DenseSliderRow(
                             title = stringResource(R.string.top_corner),
                             value = draft.keyboardTopCornerDp ?: 16f,
                             valueLabel = "%.1f dp".format(draft.keyboardTopCornerDp ?: 16f),
@@ -518,13 +519,13 @@ private fun GlobalStyleDialog(
                     expanded = keysExpanded,
                     onToggle = { keysExpanded = !keysExpanded },
                 ) {
-                    GlobalStyleColorPill(
+                    GlobalStyleColorChipRow(
                         field = stringResource(R.string.key_background),
                         colorName = colorName(draft.key.background),
                         onClick = { colorTarget = ColorTarget.KEY_BG },
                     )
                     val borderCustom = draft.key.borderWidthDp != null
-                    SwitchRow(
+                    DenseSwitchRow(
                         title = stringResource(R.string.global_border_custom),
                         checked = borderCustom,
                         onCheckedChange = { checked ->
@@ -539,7 +540,7 @@ private fun GlobalStyleDialog(
                             )
                         },
                     )
-                    SliderRow(
+                    DenseSliderRow(
                         title = stringResource(R.string.key_border_width),
                         value = draft.key.borderWidthDp ?: 1f,
                         valueLabel = "%.1f dp".format(draft.key.borderWidthDp ?: 1f),
@@ -550,13 +551,13 @@ private fun GlobalStyleDialog(
                             draft = draft.copy(key = draft.key.copy(borderWidthDp = it))
                         },
                     )
-                    GlobalStyleColorPill(
+                    GlobalStyleColorChipRow(
                         field = stringResource(R.string.key_border_color),
                         colorName = colorName(draft.key.borderColor),
                         onClick = { colorTarget = ColorTarget.KEY_BORDER },
                     )
                     val radiusCustom = draft.key.cornerRadiusDp != null
-                    SwitchRow(
+                    DenseSwitchRow(
                         title = stringResource(R.string.global_radius_custom),
                         checked = radiusCustom,
                         onCheckedChange = { checked ->
@@ -571,7 +572,7 @@ private fun GlobalStyleDialog(
                             )
                         },
                     )
-                    SliderRow(
+                    DenseSliderRow(
                         title = stringResource(R.string.key_radius),
                         value = draft.key.cornerRadiusDp ?: 12f,
                         valueLabel = "%.1f dp".format(draft.key.cornerRadiusDp ?: 12f),
@@ -586,9 +587,11 @@ private fun GlobalStyleDialog(
                     // 渲染链 effectiveBlur 已覆盖），不丢旧能力；半径
                     // 在磨砂分区调（本区不再重复放半径滑杆）。
                     // 模式切换保留已存半径（开时空值补 16）。
-                    NavRow(
-                        title = stringResource(R.string.global_blur_switch),
-                        subtitle = stringResource(
+                    // 三态行同样走行内芯片：字段在左、当前值芯片在右，
+                    // 点芯片开单选（与原 NavRow 同一动作、同一对话框）。
+                    DenseChoiceChipRow(
+                        field = stringResource(R.string.global_blur_switch),
+                        value = stringResource(
                             when (draft.backgroundBlur.mode) {
                                 BackgroundBlurMode.FOLLOW -> R.string.global_blur_follow
                                 BackgroundBlurMode.ON -> R.string.global_blur_on
@@ -598,30 +601,65 @@ private fun GlobalStyleDialog(
                         onClick = { blurChoiceOpen = true },
                     )
                 }
-                // 状态栏图标（2026-11-04 精简口径）：行清单见
-                // iconsSectionRows——跟随开只留开关＋短说明两行，
-                // 独立行全部收起（草稿值保留，再关即现）；跟随关
-                // 全行按密集版渲染（行内芯片、滑杆标签与数值同行、
+                // 状态栏图标（2026-11-06 按设计图重做）：
+                // iconsSectionRows——跟随开仍只留开关＋说明两行，
+                // 独立行全部收起（草稿值保留，再关即现）；说明行用
+                // 完整文案，下方同行内附摘要芯片行（背景·跟随／
+                // 边框·跟随／圆角·跟随＋右端「独立设置已收起」），
+                // 分区标题栏右端附「跟随开／关」芯片；跟随关全行
+                // 按密集版渲染（行内芯片、滑杆标签与数值同行、
                 // 行距收紧）。折叠行为与开关含义不变。
                 GlobalStyleSection(
                     title = stringResource(R.string.global_section_icons_full),
                     expanded = iconsExpanded,
                     onToggle = { iconsExpanded = !iconsExpanded },
+                    trailingChip = {
+                        FollowStateChip(followOn = draft.linkToolbar)
+                    },
                 ) {
                     for (row in iconsSectionRows(draft.linkToolbar)) {
                         when (row) {
-                            IconsSectionRow.FOLLOW_SWITCH -> SwitchRow(
+                            IconsSectionRow.FOLLOW_SWITCH -> DenseSwitchRow(
                                 title = stringResource(R.string.bar_icon_follow),
                                 checked = draft.linkToolbar,
                                 onCheckedChange = { draft = draft.copy(linkToolbar = it) },
                             )
-                            IconsSectionRow.FOLLOW_NOTE -> Text(
-                                text = stringResource(
-                                    iconsFollowNoteRes(draft.linkToolbar),
-                                ),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                            IconsSectionRow.FOLLOW_NOTE -> Column(
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text(
+                                    text = stringResource(
+                                        iconsFollowNoteRes(draft.linkToolbar),
+                                    ),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                // 跟随开摘要芯片行：三枚「·跟随」芯片在左、
+                                // 「独立设置已收起」在右；是说明行渲染的
+                                // 一部分，不另占行清单名额。
+                                if (draft.linkToolbar) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(top = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        for (chipRes in iconsFollowSummaryChips()) {
+                                            DenseChip(text = stringResource(chipRes))
+                                            Spacer(Modifier.width(8.dp))
+                                        }
+                                        Spacer(Modifier.weight(1f))
+                                        Text(
+                                            text = stringResource(
+                                                R.string.bar_icon_independent_collapsed,
+                                            ),
+                                            fontSize = 14.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 1,
+                                        )
+                                    }
+                                }
+                            }
                             IconsSectionRow.TOOLBAR_BACKGROUND ->
                                 GlobalStyleColorChipRow(
                                     field = stringResource(R.string.toolbar_background),
@@ -719,17 +757,17 @@ private fun GlobalStyleDialog(
                     expanded = barExpanded,
                     onToggle = { barExpanded = !barExpanded },
                 ) {
-                    SwitchRow(
+                    DenseSwitchRow(
                         title = stringResource(R.string.shared_background),
                         checked = draft.sharedBackground,
                         onCheckedChange = { draft = draft.copy(sharedBackground = it) },
                     )
-                    GlobalStyleColorPill(
+                    GlobalStyleColorChipRow(
                         field = stringResource(R.string.bar_background),
                         colorName = colorName(draft.barBackground),
                         onClick = { colorTarget = ColorTarget.BAR_BG },
                     )
-                    SwitchRow(
+                    DenseSwitchRow(
                         title = stringResource(R.string.global_blur_switch),
                         checked = draft.barBlur,
                         onCheckedChange = { draft = draft.copy(barBlur = it) },
@@ -746,7 +784,7 @@ private fun GlobalStyleDialog(
                     onToggle = { frostExpanded = !frostExpanded },
                 ) {
                     val frostBlurOn = draft.backgroundBlur.mode == BackgroundBlurMode.ON
-                    SliderRow(
+                    DenseSliderRow(
                         title = stringResource(R.string.blur_radius),
                         value = draft.backgroundBlur.radiusDp ?: 16f,
                         valueLabel = "%.1f dp".format(draft.backgroundBlur.radiusDp ?: 16f),
@@ -759,7 +797,7 @@ private fun GlobalStyleDialog(
                             )
                         },
                     )
-                    SliderRow(
+                    DenseSliderRow(
                         title = stringResource(R.string.frost_overlay),
                         value = draft.frostOverlayAlpha ?: 0.25f,
                         valueLabel = "%.1f%%".format((draft.frostOverlayAlpha ?: 0.25f) * 100),
@@ -879,12 +917,15 @@ private fun GlobalStyleDialog(
  * 全局样式对话框分区，
  * 18dp 圆角 + surface 底色（与对话框同色，看不见卡片边界）、
  * 标题 16sp 常规字重、minHeight 52dp、padding 16dp、▾/▸ 在文字左侧。
+ * trailingChip：标题栏右端芯片槽位（仅状态栏图标分区用，
+ * 显示「跟随开／关」状态芯片；其余分区不传）。
  */
 @Composable
 private fun GlobalStyleSection(
     title: String,
     expanded: Boolean,
     onToggle: () -> Unit,
+    trailingChip: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -907,7 +948,12 @@ private fun GlobalStyleSection(
                 fontSize = 16.sp,
                 lineHeight = 22.sp,
                 color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.weight(1f),
             )
+            if (trailingChip != null) {
+                Spacer(Modifier.width(8.dp))
+                trailingChip()
+            }
         }
         if (expanded) {
             Column(
@@ -922,40 +968,77 @@ private fun GlobalStyleSection(
 }
 
 /**
- * 全局样式对话框颜色行：描边药丸
- * ——透明底 + 1dp 描边 + 主色文字，整宽。
+ * 行内芯片（描边药丸，1dp 描边＋圆角 50＋主色文字）：
+ * 颜色行／三态选择行的取值芯片、跟随开摘要芯片共用。
+ * color 缺省＝主色；跟随关标题芯片传 onSurfaceVariant（灰）。
  */
 @Composable
-private fun GlobalStyleColorPill(
-    field: String,
-    colorName: String,
-    onClick: () -> Unit,
+private fun DenseChip(
+    text: String,
+    color: Color = MaterialTheme.colorScheme.primary,
 ) {
     Box(
         modifier = Modifier
-            .fillMaxWidth()
-            // MaterialButton 自带 6dp 上下 inset，视觉高 40dp；用 6dp 间距等效。
-            .padding(vertical = 6.dp)
-            .height(40.dp)
             .clip(RoundedCornerShape(50))
             .border(
                 width = 1.dp,
-                color = MaterialTheme.colorScheme.outline,
+                color = color,
                 shape = RoundedCornerShape(50),
             )
-            .clickable { onClick() },
+            .padding(horizontal = 12.dp, vertical = 6.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
-            // text = "$title · $value"（中点两侧各一个空格）
-            text = "$field · $colorName",
+            text = text,
             fontSize = 14.sp,
             fontWeight = FontWeight.Medium,
             letterSpacing = 0.1.sp,
-            color = MaterialTheme.colorScheme.primary,
+            color = color,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * 状态栏图标分区标题栏芯片：跟随开＝主色「跟随开」，
+ * 跟随关＝灰色「跟随关」（纯展示，不可点；开关在分区内）。
+ */
+@Composable
+private fun FollowStateChip(followOn: Boolean) {
+    DenseChip(
+        text = stringResource(iconsFollowStateChipRes(followOn)),
+        color = if (followOn) MaterialTheme.colorScheme.primary
+        else MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/**
+ * 行内选择芯片行：字段在左、当前值芯片在右，整行可点开单选
+ * （按键分区动态模糊三态用；与原 NavRow 同一动作、同一对话框，
+ * 只改排布）。
+ */
+@Composable
+private fun DenseChoiceChipRow(
+    field: String,
+    value: String,
+    onClick: () -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = field,
+            fontSize = 16.sp,
+            color = MaterialTheme.colorScheme.onSurface,
+            modifier = Modifier.weight(1f),
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        DenseChip(text = value)
     }
 }
 
@@ -1012,26 +1095,7 @@ private fun GlobalStyleColorChipRow(
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(50))
-                .border(
-                    width = 1.dp,
-                    color = MaterialTheme.colorScheme.outline,
-                    shape = RoundedCornerShape(50),
-                )
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = colorName,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 0.1.sp,
-                color = MaterialTheme.colorScheme.primary,
-                maxLines = 1,
-            )
-        }
+        DenseChip(text = colorName)
     }
 }
 
