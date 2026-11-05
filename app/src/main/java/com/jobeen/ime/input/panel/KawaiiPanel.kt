@@ -399,6 +399,14 @@ class KawaiiPanel(
             }
         }
         clipboardView.onItemClick = { entry -> listener?.onClipboardItemClick(entry) }
+        // 性能面板发送：报告文本经既有 onCopyTextCommit 上屏到宿主
+        // （PanelActionListener 走 CommitAction），再回键盘关闭面板
+        // （对端 0.1.0(39)「发送上屏到宿主并关闭面板」同款口径）。
+        performanceView.onSendReport = { text ->
+            listener?.onCopyTextCommit(text)
+            returnToKeyboard()
+        }
+        performanceView.onClose = { returnToKeyboard() }
         clipboardView.onSelectionChanged = { if (clipMultiActive) syncMultiRenderer() }
         clipboardView.onEditCursorMoved = { idx ->
             if (clipEditActive) {
