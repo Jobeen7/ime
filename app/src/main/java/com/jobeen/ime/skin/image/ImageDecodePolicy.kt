@@ -10,10 +10,13 @@ import java.io.File
  * 纯护栏常数与判定，Bitmap 侧的调用见 BoundedBitmapDecoder /
  * SkinKeyImageStore。
  *
- * - 24MP 硬上限：bounds 像素 > [MAX_PIXELS] 直接拒（不降采样、
- *   不进解码），与对方 R10 同档。注意：这是新增拒绝——此前
- *   超大图靠降采样可用；既有皮肤背景产物已是降采样后文件，
- *   不受影响；直接引用的超大原图自此拒收，见报告残余。
+ * - 解码上限（施工单 5 第 7 条，2026-11-07 定）：超限图不再
+ *   直接拒收，降采样到上限内使用——解码结果边长 ≤
+ *   [MAX_DECODE_SIDE]、像素 ≤ [MAX_DECODE_PIXELS]（与导入校验
+ *   口径 JimeImporter.MAX_IMAGE_SIDE／MAX_IMAGE_PIXELS 同值）；
+ *   解码始终有界（inSampleSize），绝不以原尺寸进内存。
+ *   旧口径（第 5 批 §2：bounds 像素超 24MP 硬上限直接拒）
+ *   已按该决定废止。
  * - 文件名白名单：`[A-Za-z0-9_.-]+` 且 ≠ `..`（对方 K14 同款）。
  * - canonical 目录内校验：相对引用解析后 canonical 必须落在
  *   素材根内，否则返回不放行（调用方按缺失回落）。
@@ -29,8 +32,13 @@ import java.io.File
  */
 object ImageDecodePolicy {
 
-    /** 像素硬上限：24_000_000（对方 R10）。 */
-    const val MAX_PIXELS = 24_000_000L
+    /**
+     * 解码结果上限：与导入校验口径同值（JimeImporter.MAX_IMAGE_SIDE／
+     * MAX_IMAGE_PIXELS，定稿十一.3）：解码后位图边长 ≤ 8192、像素
+     * ≤ 64M；超限原图降采样到上限内使用，不直接拒收。
+     */
+    const val MAX_DECODE_SIDE = 8192
+    const val MAX_DECODE_PIXELS = 64L * 1024 * 1024
 
     /** 解码并行度：2（对方 R34）。 */
     const val DECODE_PARALLELISM = 2
@@ -40,12 +48,6 @@ object ImageDecodePolicy {
 
     /** 文件名白名单（对方 K14）。 */
     val FILENAME_PATTERN: Regex = Regex("[A-Za-z0-9_.-]+")
-
-    /** 像素是否超 24MP 硬上限（Long 乘法，防 int 溢出）。 */
-    fun exceedsPixelBudget(width: Int, height: Int): Boolean {
-        if (width <= 0 || height <= 0) return true
-        return width.toLong() * height.toLong() > MAX_PIXELS
-    }
 
     /** 文件名是否合白名单（≠ `..`，不含路径分隔符）。 */
     fun isValidAssetFileName(name: String): Boolean =

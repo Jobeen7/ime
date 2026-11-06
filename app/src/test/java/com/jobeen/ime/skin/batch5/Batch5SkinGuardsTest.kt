@@ -161,12 +161,11 @@ class Batch5SkinGuardsTest {
     // ---- §2 图片护栏 ----
 
     @Test
-    fun imagePolicy_pixelBudgetFilenameAndRoot() {
-        assertFalse(ImageDecodePolicy.exceedsPixelBudget(6000, 4000))
-        assertTrue(ImageDecodePolicy.exceedsPixelBudget(6001, 4000))
-        // int 溢出安全：80000 x 80000 不以 int 乘法溢出为负而放行。
-        assertTrue(ImageDecodePolicy.exceedsPixelBudget(80000, 80000))
-        assertTrue(ImageDecodePolicy.exceedsPixelBudget(0, 100))
+    fun imagePolicy_decodeCapsFilenameAndRoot() {
+        // 施工单 5 第 7 条（用户决定改口径）：24MP 硬上限拒收已废止，
+        // 超限图降采样到上限内使用；解码上限与导入校验口径同值。
+        assertEquals(8192, ImageDecodePolicy.MAX_DECODE_SIDE)
+        assertEquals(64L * 1024 * 1024, ImageDecodePolicy.MAX_DECODE_PIXELS)
         assertTrue(ImageDecodePolicy.isValidAssetFileName("bg_main-1.png"))
         assertFalse(ImageDecodePolicy.isValidAssetFileName(".."))
         assertFalse(ImageDecodePolicy.isValidAssetFileName("a/b.png"))

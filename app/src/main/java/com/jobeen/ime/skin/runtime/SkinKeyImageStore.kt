@@ -203,15 +203,16 @@ object SkinKeyImageStore {
 
     /**
      * 解码（两遍式降采样：先 bounds 算采样率，再解码；失败返回 null）。
-     * 第 5 批 §2：bounds 像素超 24MP 硬上限直接拒（与
-     * BoundedBitmapDecoder 同口径，不另造解码器）。
+     * 施工单 5 第 7 条：超限键图不再直接拒收——采样循环把边长
+     * 压到 [MAX_SIDE_PX] 以内（512 边至多 262K 像素，恒在
+     * 8192 边／64M 像素上限内），24MP 图也降采样可用；旧口径
+     * （第 5 批 §2：bounds 像素超 24MP 硬上限直接拒）已废止。
      */
     fun decode(bytes: ByteArray): Bitmap? {
         if (bytes.isEmpty()) return null
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
         if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-        if (ImageDecodePolicy.exceedsPixelBudget(bounds.outWidth, bounds.outHeight)) return null
         var sample = 1
         while (bounds.outWidth / sample > MAX_SIDE_PX ||
             bounds.outHeight / sample > MAX_SIDE_PX

@@ -21,8 +21,10 @@ object BoundedBitmapDecoder {
 
     /**
      * 两遍式解码文件；目标尺寸任一 <=0 时返回 null（调用方传非法目标）。
-     * 第 5 批 §2：bounds 像素超 24MP 硬上限直接拒（不降采样、
-     * 不进解码；背景产物已是降采样后文件，不受影响）。
+     * 施工单 5 第 7 条：超限图不再直接拒收——采样率取目标采样与
+     * 上限采样（边长 ≤ [ImageDecodePolicy.MAX_DECODE_SIDE]、像素
+     * ≤ [ImageDecodePolicy.MAX_DECODE_PIXELS]）两者较大值，解码
+     * 结果恒在上限内；背景产物已是降采样后文件，不受影响。
      */
     fun decodeFile(file: File, targetWidthPx: Int, targetHeightPx: Int): Bitmap? {
         if (!file.isFile || targetWidthPx <= 0 || targetHeightPx <= 0) return null
@@ -30,12 +32,15 @@ object BoundedBitmapDecoder {
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(file.absolutePath, bounds)
             if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-            if (ImageDecodePolicy.exceedsPixelBudget(bounds.outWidth, bounds.outHeight)) {
-                return null
-            }
             val options = BitmapFactory.Options().apply {
-                inSampleSize = PixelOps.computeSampleSize(
-                    bounds.outWidth, bounds.outHeight, targetWidthPx, targetHeightPx,
+                inSampleSize = maxOf(
+                    PixelOps.computeSampleSize(
+                        bounds.outWidth, bounds.outHeight, targetWidthPx, targetHeightPx,
+                    ),
+                    PixelOps.computeCappedSampleSize(
+                        bounds.outWidth, bounds.outHeight,
+                        ImageDecodePolicy.MAX_DECODE_SIDE, ImageDecodePolicy.MAX_DECODE_PIXELS,
+                    ),
                 )
                 inPreferredConfig = Bitmap.Config.ARGB_8888
             }

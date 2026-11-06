@@ -160,4 +160,23 @@ object PixelOps {
         }
         return sample
     }
+
+    /**
+     * 上限采样率（施工单 5 第 7 条）：返回最小的 2 的幂采样率，
+     * 使采样后尺寸（按 ceil 计，BitmapFactory 实际解码尺寸只会
+     * 更小或相等）边长 ≤ maxSide 且像素 ≤ maxPixels；超限原图
+     * 由此降采样到上限内使用，不直接拒收。输入非法（任一 ≤0）
+     * 返回 1（调用方按原有非法输入口径处理）。
+     */
+    fun computeCappedSampleSize(srcWidth: Int, srcHeight: Int, maxSide: Int, maxPixels: Long): Int {
+        if (srcWidth <= 0 || srcHeight <= 0 || maxSide <= 0 || maxPixels <= 0) return 1
+        var sample = 1
+        while (true) {
+            val w = ((srcWidth.toLong() + sample - 1) / sample).toInt()
+            val h = ((srcHeight.toLong() + sample - 1) / sample).toInt()
+            if (w <= maxSide && h <= maxSide && w.toLong() * h.toLong() <= maxPixels) return sample
+            if (sample >= (1 shl 30)) return sample
+            sample *= 2
+        }
+    }
 }
