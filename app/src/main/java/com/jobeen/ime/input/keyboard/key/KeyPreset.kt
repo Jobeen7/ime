@@ -36,39 +36,6 @@ fun alphabetKey(
     )
 )
 
-/**
- * 绿预设 26 键字母键（2026-11-06 施工单 3：源包 pinyin_26 样式，
- * 施工单 4：只在绿预设分支用）：大写显示、无副标、字号 16；点按动作
- * 仍为小写字母（大写由 QwertyKeyboard.transformAction 按 Caps 态变换，
- * 与显示无关）。长按：popup != null 时挂长按弹窗（源包提示符
- * hintSymbols，动作一律 KeySequenceAction，与皮肤路径 toRuntime(Text)
- * 同口径）；否则 punctuation != null 时长按直接提交该标点（原有行为保留）。
- */
-fun greenAlphabetKey(
-    character: String,
-    punctuation: String? = null,
-    id: String? = null,
-    popup: KeyDef.Popup.Keyboard? = null,
-    percentWidth: Float = 0.1f,
-) = KeyDef(
-    id = id,
-    appearance = KeyDef.Appearance.Text(
-        displayText = character.uppercase(),
-        textSize = 16f,
-        percentWidth = percentWidth,
-        variant = Variant.Normal,
-    ),
-    behaviors = setOfNotNull(
-        KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(character)),
-        if (popup == null && punctuation != null) {
-            KeyDef.Behavior.LongPress(KeyboardAction.CommitAction(punctuation))
-        } else {
-            null
-        },
-    ),
-    popups = popup?.let { arrayOf(it) },
-)
-
 fun mixedAlphabetKey(
     digit: String, letters: String, percentWidth: Float = 0.23333f, id: String? = null,
 ) = KeyDef(
@@ -218,52 +185,6 @@ fun spaceKey(percentWidth: Float = 0.23333f, id: String? = null): KeyDef = KeyDe
     behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.SpaceAction),
         KeyDef.Behavior.LongPress(KeyboardAction.VoiceInputAction()),
-    ),
-)
-
-
-/**
- * 26 键空格键（2026-11-06 施工单 3：源包 spaceButton，白色面、
- * ⊔ 图标；空格标方案名口径只留九宫格，26 键不显示方案名）。
- * 点按空格、长按语音（与 spaceKey 同行为）。
- */
-fun spaceIconKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
-    id = id,
-    appearance = KeyDef.Appearance.Image(
-        src = R.drawable.ic_keyboard_space,
-        viewId = KeyView.button_space,
-        percentWidth = percentWidth,
-        variant = Variant.Normal,
-        border = Border.Special,
-    ),
-    behaviors = setOf(
-        KeyDef.Behavior.Press(KeyboardAction.SpaceAction),
-        KeyDef.Behavior.LongPress(KeyboardAction.VoiceInputAction()),
-    ),
-)
-
-/**
- * 26 键，。键（2026-11-06 施工单 3：源包 spaceRightButton，
- * 白色面；上“。”14、下“，”16——AltText 主副行对调后以
- * 平移贴到源包位置（。约 0.37／，约 0.59 键高）；点按提交
- * “，”——经 transformAction 按全半角标点模式转半角“,”；
- * 长按进符号键盘，沿用原 peroidKey 的长按落点）。
- */
-fun commaKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
-    id = id,
-    appearance = KeyDef.Appearance.AltText(
-        displayText = "。",
-        altText = "，",
-        altTextSize = 16f,
-        textSize = 14f,
-        mainTextTranslationY = 6,
-        altTextTranslationY = -10,
-        percentWidth = percentWidth,
-        variant = Variant.Normal,
-    ),
-    behaviors = setOf(
-        KeyDef.Behavior.Press(KeyboardAction.CommitAction("，")),
-        KeyDef.Behavior.LongPress(KeyboardAction.LayoutSwitchAction(SymbolKeyboard.NAME)),
     ),
 )
 

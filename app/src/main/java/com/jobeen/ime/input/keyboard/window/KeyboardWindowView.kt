@@ -35,7 +35,6 @@ import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
-import com.jobeen.ime.data.keyboard.theme.KeyboardThemePresets
 import com.jobeen.ime.skin.symbolbar.AppSymbolBarTypeStore
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfig
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfigLoader
@@ -1837,14 +1836,6 @@ class KeyboardWindowView(
         pushDynamicTexts()
     }
 
-    /** 绿预设是否生效（施工单 4 收口）：与 QwertyKeyboard.isGreenTheme 同一判定。 */
-    private fun isGreenTheme(): Boolean {
-        if (SkinSnapshotProvider.peek() != null) return false
-        val themeId = KeyboardColors.themeFor(context).id
-        return themeId == KeyboardThemePresets.WeChatGreenLight.id ||
-            themeId == KeyboardThemePresets.WeChatGreenDark.id
-    }
-
     private fun contentHeight(): Int {
         // 高度百分比优先级（2026-10-28 布局专用高度加入；2026-11-01
         // 横屏专属高度加入；多主槽一期加入类型高度）：
@@ -1892,18 +1883,7 @@ class KeyboardWindowView(
         val typePercent = typeHeightPercent(
             snapshot, keyboardStateManager.currentKeyboardType, isLandscape,
         )
-        // 26 键竖屏 25vh（源包 pinyin_26 keyboardHeight；施工单 4 收口：
-        // 只在绿预设（无皮肤）时生效；其余主题走既有高度链。
-        // 用户按类型显式设的高度优先，皮肤／自创布局高度仍走既有链）。
-        val qwertyPortraitPercent: Int? = if (
-            !isLandscape && snapshot == null && currentName == QwertyKeyboard.NAME &&
-            typePercent == null && isGreenTheme()
-        ) {
-            QwertyKeyboard.HEIGHT_PERCENT_PORTRAIT
-        } else {
-            null
-        }
-        val percent = typePercent ?: qwertyPortraitPercent ?: resolveHeightPercent(
+        val percent = typePercent ?: resolveHeightPercent(
             layoutPercent,
             skinPercent,
             skinLandscapePercent,

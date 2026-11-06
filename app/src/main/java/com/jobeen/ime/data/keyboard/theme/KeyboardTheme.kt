@@ -20,8 +20,6 @@ data class KeyboardTheme(
                 KeyboardThemePresets.Light,
                 KeyboardThemePresets.Sunset,
                 KeyboardThemePresets.Monet,
-                KeyboardThemePresets.WeChatGreenLight,
-                KeyboardThemePresets.WeChatGreenDark,
             )
 
         val DEFAULT: KeyboardTheme
