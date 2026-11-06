@@ -100,6 +100,8 @@ fun ToolbarScreen(onBack: () -> Unit) {
         SkinSnapshotProvider.current(context)?.ref?.skinId
             ?: ToolbarUserStore.BUILTIN_SKIN_KEY
     }
+    // 皮肤栏按钮 id（与 ToolbarMainPage 同口径）：列表行回落计数用。
+    val skinButtonIds = SkinSnapshotProvider.current(context)?.toolbar?.buttons?.map { it.id }
     var data by remember { mutableStateOf(ToolbarUserStore.load(storeFile).data) }
     var page by remember { mutableStateOf(ToolbarPage.MAIN) }
     // 编辑目标列：null＝当前皮肤默认列；toolbarId＝该自定义栏的列。
@@ -236,6 +238,8 @@ fun ToolbarScreen(onBack: () -> Unit) {
             ToolbarPage.TOOLBARS -> ToolbarToolbarsPage(
                 data = data,
                 activeId = currentSkinState().activeToolbarId,
+                skinId = skinId,
+                skinButtonIds = skinButtonIds,
                 onSelect = { selectDialog = true },
                 onOpenForm = { id ->
                     toolbarFormId = id
@@ -354,6 +358,9 @@ fun ToolbarScreen(onBack: () -> Unit) {
                 existing = toolbarFormId?.let { data.customToolbars[it] },
                 customButtons = data.customButtons,
                 imageDir = imageDir,
+                skinId = skinId,
+                data = data,
+                skinButtonIds = skinButtonIds,
                 onSave = { config, isNew ->
                     val next = data.copy(
                         customToolbars = data.customToolbars + (config.id to config),
@@ -402,6 +409,8 @@ fun ToolbarScreen(onBack: () -> Unit) {
             ToolbarSelectDialog(
                 data = data,
                 activeId = currentSkinState().activeToolbarId,
+                skinId = skinId,
+                skinButtonIds = skinButtonIds,
                 onUse = { id ->
                     persist(
                         data.copy(
@@ -898,6 +907,8 @@ private fun ToolbarColorDialog(
 private fun ToolbarToolbarsPage(
     data: ToolbarUserData,
     activeId: String?,
+    skinId: String,
+    skinButtonIds: List<String>?,
     onSelect: () -> Unit,
     onOpenForm: (String) -> Unit,
     onNew: () -> Unit,
@@ -939,7 +950,13 @@ private fun ToolbarToolbarsPage(
                     Text(
                         text = stringResource(
                             R.string.toolbar_config_summary,
-                            config.buttons.count { it.enabled },
+                            ToolbarUserStore.listRowCount(
+                                skinId,
+                                data,
+                                skinButtonIds,
+                                config,
+                                isActive,
+                            ),
                             toolbarBackgroundSummary(config.background),
                         ),
                         style = MaterialTheme.typography.bodyMedium,
@@ -975,6 +992,8 @@ private fun ToolbarToolbarsPage(
 private fun ToolbarSelectDialog(
     data: ToolbarUserData,
     activeId: String?,
+    skinId: String,
+    skinButtonIds: List<String>?,
     onUse: (String) -> Unit,
     onUseDefault: () -> Unit,
     onDismiss: () -> Unit,
@@ -1014,7 +1033,13 @@ private fun ToolbarSelectDialog(
                             Text(
                                 text = stringResource(
                                     R.string.toolbar_config_summary,
-                                    config.buttons.count { it.enabled },
+                                    ToolbarUserStore.listRowCount(
+                                        skinId,
+                                        data,
+                                        skinButtonIds,
+                                        config,
+                                        isActive,
+                                    ),
                                     toolbarBackgroundSummary(config.background),
                                 ),
                                 style = MaterialTheme.typography.bodyMedium,
@@ -1654,6 +1679,9 @@ private fun ToolbarToolbarFormDialog(
     existing: ToolbarCustomConfig?,
     customButtons: Map<String, ToolbarCustomButton>,
     imageDir: File,
+    skinId: String,
+    data: ToolbarUserData,
+    skinButtonIds: List<String>?,
     onSave: (ToolbarCustomConfig, Boolean) -> Unit,
     onEditButtons: (String) -> Unit,
     onDelete: (ToolbarCustomConfig) -> Unit,
@@ -1746,7 +1774,14 @@ private fun ToolbarToolbarFormDialog(
                     NavRow(
                         title = stringResource(R.string.toolbar_edit_buttons),
                         subtitle = stringResource(
-                            R.string.toolbar_button_count, existing.buttons.count { it.enabled },
+                            R.string.toolbar_button_count,
+                            ToolbarUserStore.listRowCount(
+                                skinId,
+                                data,
+                                skinButtonIds,
+                                existing,
+                                existing.id == data.skins[skinId]?.activeToolbarId,
+                            ),
                         ),
                         onClick = { onEditButtons(existing.id) },
                     )

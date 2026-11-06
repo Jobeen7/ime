@@ -381,6 +381,26 @@ object ToolbarUserStore {
     }
 
     /**
+     * 列表行计数（纯函数，与 .19 主页计数同一 resolve() 口径）：
+     * 计该自定义栏可渲染项（启用且引用可解，与渲染层逐项跳过同
+     * 口径）；非使用栏全停用／全悬空时计 0；使用中栏生效列为空
+     * 时渲染回落皮肤／默认，计回落列数（与 mainPageCount 同口
+     * 径），不再显示 0。
+     */
+    fun listRowCount(
+        skinId: String,
+        data: ToolbarUserData,
+        skinButtonIds: List<String>?,
+        config: ToolbarCustomConfig,
+        isActive: Boolean,
+    ): Int {
+        val effective = resolveEntries(config.buttons, data).size
+        if (effective > 0) return effective
+        if (!isActive) return 0
+        return mainPageCount(skinId, data, skinButtonIds)
+    }
+
+    /**
      * 编辑草稿写盘门控（纯函数）：非起步情形（seed == null）恒写盘；
      * 起步情形仅草稿与起步列不同时写盘——光打开看看不改动时草稿
      * 等于起步列，不写盘，用户列保持空、回落语义不变。
