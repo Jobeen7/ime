@@ -746,7 +746,7 @@
     <string name="global_section_frost">磨砂效果</string>
     <string name="global_section_keyboard_full">键盘整体·四角圆角</string>
     <string name="global_section_keys_full">按键·背景、边框与模糊</string>
-    <string name="global_section_icons_full">状态栏图标·独立或跟随按键</string>
+    <string name="global_section_icons_full">状态栏图标</string>
     <string name="global_section_bar_full">整条状态栏·背景与模糊</string>
     <string name="global_section_frost_full">磨砂效果·强度与叠加</string>
     <string name="global_corner_custom">自定义键盘四角</string>

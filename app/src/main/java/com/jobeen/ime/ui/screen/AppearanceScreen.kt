@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -601,7 +602,7 @@ private fun GlobalStyleDialog(
                         onClick = { blurChoiceOpen = true },
                     )
                 }
-                // 状态栏图标（2026-11-06 按设计图重做）：
+                // 状态栏图标（2026-11-06 按设计图重做；2026-11-06 排布修复）：
                 // iconsSectionRows——跟随开仍只留开关＋说明两行，
                 // 独立行全部收起（草稿值保留，再关即现）；说明行用
                 // 完整文案，下方同行内附摘要芯片行（背景·跟随／
@@ -609,10 +610,13 @@ private fun GlobalStyleDialog(
                 // 分区标题栏右端附「跟随开／关」芯片；跟随关全行
                 // 按密集版渲染（行内芯片、滑杆标签与数值同行、
                 // 行距收紧）。折叠行为与开关含义不变。
+                // 标题改为「状态栏图标」（6 字，旧 12 字＋芯片在真机
+                // 宽度下折成两行），标题栏强制单行不折行。
                 GlobalStyleSection(
                     title = stringResource(R.string.global_section_icons_full),
                     expanded = iconsExpanded,
                     onToggle = { iconsExpanded = !iconsExpanded },
+                    titleSingleLine = true,
                     trailingChip = {
                         FollowStateChip(followOn = draft.linkToolbar)
                     },
@@ -636,27 +640,34 @@ private fun GlobalStyleDialog(
                                 )
                                 // 跟随开摘要芯片行：三枚「·跟随」芯片在左、
                                 // 「独立设置已收起」在右；是说明行渲染的
-                                // 一部分，不另占行清单名额。
+                                // 一部分，不另占行清单名额。真机宽度下三枚
+                                // 芯片＋注记放不进一行（见本文件 GlobalStyleSection
+                                // 注释的排布预算），故用 FlowRow：注记占满整
+                                // 行宽度，宽度不够时自成一行右对齐，不截断。
                                 if (draft.linkToolbar) {
-                                    Row(
+                                    FlowRow(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(top = 8.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp),
                                     ) {
                                         for (chipRes in iconsFollowSummaryChips()) {
                                             DenseChip(text = stringResource(chipRes))
-                                            Spacer(Modifier.width(8.dp))
                                         }
-                                        Spacer(Modifier.weight(1f))
-                                        Text(
-                                            text = stringResource(
-                                                R.string.bar_icon_independent_collapsed,
-                                            ),
-                                            fontSize = 14.sp,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            maxLines = 1,
-                                        )
+                                        Box(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            contentAlignment = Alignment.CenterEnd,
+                                        ) {
+                                            Text(
+                                                text = stringResource(
+                                                    R.string.bar_icon_independent_collapsed,
+                                                ),
+                                                fontSize = 14.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -919,12 +930,32 @@ private fun GlobalStyleDialog(
  * 标题 16sp 常规字重、minHeight 52dp、padding 16dp、▾/▸ 在文字左侧。
  * trailingChip：标题栏右端芯片槽位（仅状态栏图标分区用，
  * 显示「跟随开／关」状态芯片；其余分区不传）。
+ * titleSingleLine：仅状态栏图标分区用——标题强制单行不折行
+ * （超宽时尾部省略，芯片始终可见）；其余分区不传，不动原行为。
+ *
+ * 排布预算（S24 Ultra 真机：屏宽 1440px ÷ 3.75＝384dp；Dialog
+ * 默认左右各留 24dp，对话框卡宽 336dp；body 左右 12dp、分
+ * 区左右 16dp 后标题栏可用 280dp；展开内容左右 12dp 后摘
+ * 要芯片行可用 288dp；字号按代码值 16sp／14sp，fontScale＝1.0，
+ * CJK 字宽按 1em 计）：
+ * - 标题栏：「▾ 」约 16dp＋「状态栏图标」6 字×16dp＝96dp＋
+ *   间距 8dp＋「跟随开」芯片（3 字×14dp＋左右 12dp＋描边
+ *   2dp＝68dp）≈188dp ≤280dp，余 92dp；旧 12 字标题约
+ *   284dp＞280dp，正是 2026-11-06 真机折行的根因。
+ *   字号放大到约 1.49 倍才到临界，三星最大字号约 1.3 倍仍放得下。
+ * - 摘要芯片行：单枚「背景·跟随」芯片约 86dp（4 字×14dp＋
+ *   间隔号约 4dp＋左右 12dp＋描边 2dp），三枚＋两道 8dp 间距
+ *   约 274dp ≤288dp；再加「独立设置已收起」8 字×14dp＝112dp
+ *   共约 394dp＞288dp，故注记必定另起一行（FlowRow＋占满整行
+ *   宽度右对齐）。若间隔号按全宽 14dp 计，三枚芯片约 304dp，
+ *   第三枚先换行，注记仍自成一行右对齐，两种计量下均无截断。
  */
 @Composable
 private fun GlobalStyleSection(
     title: String,
     expanded: Boolean,
     onToggle: () -> Unit,
+    titleSingleLine: Boolean = false,
     trailingChip: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
@@ -949,6 +980,8 @@ private fun GlobalStyleSection(
                 lineHeight = 22.sp,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f),
+                maxLines = if (titleSingleLine) 1 else Int.MAX_VALUE,
+                overflow = TextOverflow.Ellipsis,
             )
             if (trailingChip != null) {
                 Spacer(Modifier.width(8.dp))
