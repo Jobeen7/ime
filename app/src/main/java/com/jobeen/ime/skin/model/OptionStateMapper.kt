@@ -27,8 +27,6 @@ object OptionStateMapper {
         conditionOptionNames: List<String>,
         values: Map<String, Boolean>,
         symbolKeyboardActive: Boolean,
-        symbolicLocked: Boolean = false,
-        emojiLocked: Boolean = false,
     ): Map<String, ConditionCurrent> = buildMap {
         for (name in conditionOptionNames) {
             values[name]?.let { put(ConditionStyleParser.RIME_OPTION_PREFIX + name, ConditionCurrent.Bool(it)) }
@@ -36,14 +34,6 @@ object OptionStateMapper {
         put(
             ConditionStyleParser.SYMBOL_LOCK_KEY,
             ConditionCurrent.Bool(symbolKeyboardActive),
-        )
-        put(
-            ConditionStyleParser.SYMBOLIC_LOCK_KEY,
-            ConditionCurrent.Bool(symbolicLocked),
-        )
-        put(
-            ConditionStyleParser.EMOJI_LOCK_KEY,
-            ConditionCurrent.Bool(emojiLocked),
         )
     }
 

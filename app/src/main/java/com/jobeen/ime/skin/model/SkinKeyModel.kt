@@ -69,12 +69,6 @@ enum class WhitelistAction(
      */
     TOGGLE_ASCII_MODE("toggle_ascii_mode", ValueRule.FORBIDDEN),
     /**
-     * 符号/表情板锁定切换（审计 G）：无值；窗口层拦截翻转
-     * 对应板锁，不下发引擎。
-     */
-    SYMBOLIC_LOCK_TOGGLE("symbolic_lock_toggle", ValueRule.FORBIDDEN),
-    EMOJI_LOCK_TOGGLE("emoji_lock_toggle", ValueRule.FORBIDDEN),
-    /**
      * 审计 E 新增命令（Jime 格式名均为 snake_case，对端名由
      * 转换器映射，不直接进格式）：
      * - tab/escape/home/end：直送应用的按键（绕过引擎）；

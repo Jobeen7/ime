@@ -76,12 +76,6 @@ object ConditionEvaluator {
 object ConditionStyleParser {
 
     const val SYMBOL_LOCK_KEY = "symbolLock"
-
-    /** 符号板锁定态条件键（审计 G；与 symbolLock“板活动”不同）。 */
-    const val SYMBOLIC_LOCK_KEY = "symbolicKeyboardLockState"
-
-    /** 表情板锁定态条件键（审计 G）。 */
-    const val EMOJI_LOCK_KEY = "emojiKeyboardLockState"
     const val RIME_OPTION_PREFIX = "rime$"
 
     /** 回车类型条件键（A6；现值为回车类型名，如 ENTER／GO）。 */
@@ -100,13 +94,11 @@ object ConditionStyleParser {
     }
 
     private fun parseEntry(obj: JsonObject): ConditionStyle? {
-        // 锁键接受无前缀与 $ 前缀两种写法（对端文档以 $ 引用变量名）：
+        // 条件键接受无前缀与 $ 前缀两种写法（对端文档以 $ 引用变量名）：
         // $ 前缀只在此处剥离、存规范名，现值表只用规范名查。
         val conditionKey = obj["conditionKey"].stringContentOrNull()
             ?.takeIf { it.isNotEmpty() }?.removePrefix("$") ?: return null
         if (conditionKey != SYMBOL_LOCK_KEY &&
-            conditionKey != SYMBOLIC_LOCK_KEY &&
-            conditionKey != EMOJI_LOCK_KEY &&
             conditionKey != RETURN_KEY_TYPE_KEY &&
             !(conditionKey.startsWith(RIME_OPTION_PREFIX) &&
                 conditionKey.length > RIME_OPTION_PREFIX.length)
@@ -115,8 +107,8 @@ object ConditionStyleParser {
         }
         val conditionValue = parseValue(obj["conditionValue"]) ?: return null
         // 字符串值只对 returnKeyType 有意义（现值为类型名字符串）；
-        // rime 选项（布尔）与锁定态（布尔／整数）现值永不为字符串，
-        // 字符串条件在彼处是坏项（整项丢弃，不留永不命中规则）。
+        // rime 选项（布尔）现值永不为字符串，字符串条件在彼处是
+        // 坏项（整项丢弃，不留永不命中规则）。
         if (conditionValue is ConditionValue.Strings &&
             conditionKey != RETURN_KEY_TYPE_KEY
         ) {

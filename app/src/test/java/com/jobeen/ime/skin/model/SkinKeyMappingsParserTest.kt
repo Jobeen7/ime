@@ -50,8 +50,6 @@ class SkinKeyMappingsParserTest {
             "undo" to SkinAction.Command(WhitelistAction.UNDO),
             "redo" to SkinAction.Command(WhitelistAction.REDO),
             "toggle_ascii_mode" to SkinAction.Command(WhitelistAction.TOGGLE_ASCII_MODE),
-            "symbolic_lock_toggle" to SkinAction.Command(WhitelistAction.SYMBOLIC_LOCK_TOGGLE),
-            "emoji_lock_toggle" to SkinAction.Command(WhitelistAction.EMOJI_LOCK_TOGGLE),
             "tab" to SkinAction.Command(WhitelistAction.TAB),
             "escape" to SkinAction.Command(WhitelistAction.ESCAPE),
             "home" to SkinAction.Command(WhitelistAction.HOME),
@@ -199,6 +197,18 @@ class SkinKeyMappingsParserTest {
         )
         assertEquals(BindingRejectReason.UNKNOWN_ACTION, rejection.reason)
         assertEquals(KeySlot.TAP, rejection.slot)
+    }
+
+    @Test
+    fun lockToggleNamesRejectedAsUnknown() {
+        // 板锁已删（.22）：锁切换名不再是白名单动作，按未知动作剔除。
+        for (name in listOf("symbolic_lock_toggle", "emoji_lock_toggle")) {
+            val rejection = singleRejection(
+                """{"tap": {"type": "command", "action": "$name"}}""",
+            )
+            assertEquals("$name 应按未知动作剔除", BindingRejectReason.UNKNOWN_ACTION, rejection.reason)
+            assertEquals(KeySlot.TAP, rejection.slot)
+        }
     }
 
     @Test

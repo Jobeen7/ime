@@ -44,13 +44,6 @@ class SymbolItemParserTest {
             element("""{"label": "返回", "action": "resume", "styleName": "accent"}"""),
         ) as SymbolItem.LabelActionStyle
         assertEquals(KeyboardAction.ResumeAction, SymbolItemActionResolver.resolve(resume))
-        val lock = SymbolItemParser.parseItem(
-            element("""{"label": "锁定", "action": "symbolic_lock_toggle", "styleName": "lock"}"""),
-        ) as SymbolItem.LabelActionStyle
-        assertEquals(
-            KeyboardAction.ToggleSymbolicLockAction,
-            SymbolItemActionResolver.resolve(lock),
-        )
     }
 
     @Test
@@ -99,8 +92,9 @@ class SymbolItemParserTest {
         val noStyle = SymbolItem.LabelActionStyle(
             label = "锁定", action = "symbolic_lock_toggle", styleName = "",
         )
+        // 板锁已删（.22）：锁切换名按未知非 # 动作口径回落提交 label。
         assertEquals(
-            KeyboardAction.ToggleSymbolicLockAction,
+            KeyboardAction.CommitAction("锁定"),
             SymbolItemActionResolver.resolve(noStyle),
         )
     }

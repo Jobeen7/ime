@@ -6,7 +6,7 @@ import com.jobeen.ime.skin.notify.ConditionCurrent
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-/** 选项态映射（接线轮 R2）：条件现值含条件表声明的选项＋符号锁定态＋符号/表情板锁定态。 */
+/** 选项态映射（接线轮 R2）：条件现值含条件表声明的选项＋符号锁定态（板锁已删，不再喂锁键）。 */
 class OptionStateMapperTest {
 
     @Test
@@ -20,8 +20,6 @@ class OptionStateMapperTest {
             mapOf(
                 "rime\$ascii_mode" to ConditionCurrent.Bool(true),
                 "symbolLock" to ConditionCurrent.Bool(true),
-                "symbolicKeyboardLockState" to ConditionCurrent.Bool(false),
-                "emojiKeyboardLockState" to ConditionCurrent.Bool(false),
             ),
             current,
         )
@@ -37,8 +35,6 @@ class OptionStateMapperTest {
         assertEquals(
             mapOf(
                 "symbolLock" to ConditionCurrent.Bool(false),
-                "symbolicKeyboardLockState" to ConditionCurrent.Bool(false),
-                "emojiKeyboardLockState" to ConditionCurrent.Bool(false),
             ),
             current,
         )

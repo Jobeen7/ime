@@ -879,7 +879,6 @@
     <string name="action_delay">延迟</string>
     <string name="action_snippet">插入片段</string>
     <string name="action_toggle_ascii_mode">中英切换</string>
-    <string name="action_symbolic_lock_toggle">符号板锁定切换</string>
     <string name="action_tab">制表键</string>
     <string name="action_escape">退出键</string>
     <string name="action_home">行首</string>
@@ -928,7 +927,6 @@
     <string name="action_hash_sub_collection_page_up">二级集合上页</string>
     <string name="action_hash_sub_collection_page_down">二级集合下页</string>
     <string name="action_hash_keyboard_performance">性能</string>
-    <string name="action_emoji_lock_toggle">表情板锁定切换</string>
     <string name="slot_tap">点按</string>
     <string name="slot_long_press">长按</string>
     <string name="slot_double_tap">双击</string>

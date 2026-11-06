@@ -714,8 +714,6 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.DELAY -> R.string.action_delay
         WhitelistAction.SNIPPET -> R.string.action_snippet
         WhitelistAction.TOGGLE_ASCII_MODE -> R.string.action_toggle_ascii_mode
-        WhitelistAction.SYMBOLIC_LOCK_TOGGLE -> R.string.action_symbolic_lock_toggle
-        WhitelistAction.EMOJI_LOCK_TOGGLE -> R.string.action_emoji_lock_toggle
         WhitelistAction.TAB -> R.string.action_tab
         WhitelistAction.ESCAPE -> R.string.action_escape
         WhitelistAction.HOME -> R.string.action_home

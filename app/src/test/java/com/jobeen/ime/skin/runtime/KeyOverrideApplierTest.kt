@@ -539,10 +539,6 @@ class KeyOverrideApplierTest {
             SkinAction.Command(WhitelistAction.REDO) to KeyboardAction.RedoAction,
             SkinAction.Command(WhitelistAction.TOGGLE_ASCII_MODE) to
                 KeyboardAction.ToggleAsciiModeAction,
-            SkinAction.Command(WhitelistAction.SYMBOLIC_LOCK_TOGGLE) to
-                KeyboardAction.ToggleSymbolicLockAction,
-            SkinAction.Command(WhitelistAction.EMOJI_LOCK_TOGGLE) to
-                KeyboardAction.ToggleEmojiLockAction,
             SkinAction.Command(WhitelistAction.VOICE_INPUT) to
                 KeyboardAction.VoiceInputAction(),
             SkinAction.Command(WhitelistAction.TAB) to KeyboardAction.AppKeyEventAction(61),

@@ -85,7 +85,6 @@ object SymbolItemParser {
  * 板内 keyDef 不再一律 CommitAction——
  * - Plain → 提交原文；LabelValue → 提交 value；
  * - LabelActionStyle → 动作名映射：resume/return 回主键盘，
- *   symbolic_lock_toggle / emoji_lock_toggle 翻对应板锁，
  *   对端 `#` 快捷指令（与 WhitelistAction 的 `#` 项同名表，
  *   见 SkinKeyModel）按键动作同口径分发；
  * - 未知 `#` 快捷指令 → 安全默认 NoOpAction（绝不提交 label
@@ -102,8 +101,6 @@ object SymbolItemActionResolver {
         is SymbolItem.LabelValue -> KeyboardAction.CommitAction(item.value)
         is SymbolItem.LabelActionStyle -> when (item.action) {
             "resume", "return" -> KeyboardAction.ResumeAction
-            "symbolic_lock_toggle" -> KeyboardAction.ToggleSymbolicLockAction
-            "emoji_lock_toggle" -> KeyboardAction.ToggleEmojiLockAction
             "#cut" -> KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CUT)
             "#copy" -> KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.COPY)
             "#paste" -> KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.PASTE)

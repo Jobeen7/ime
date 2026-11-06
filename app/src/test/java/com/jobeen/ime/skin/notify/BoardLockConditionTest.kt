@@ -9,14 +9,17 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 板锁条件键（审计 G）：解析接受、$ 前缀归一、映射喂值、门控匹配。 */
+/**
+ * 板锁条件键已删（.22）：解析不再接受锁键、映射不再喂锁键。
+ * 整数条件与布尔现值的类型失配口径仍在（与键名无关）。
+ */
 class BoardLockConditionTest {
 
     private fun conditionArray(json: String): JsonArray =
         Json.parseToJsonElement(json) as JsonArray
 
     @Test
-    fun parserAcceptsBothLockKeys() {
+    fun parserRejectsLockKeys() {
         val (parsed, dropped) = ConditionStyleParser.parse(
             conditionArray(
                 """[
@@ -25,21 +28,19 @@ class BoardLockConditionTest {
                 ]""",
             ),
         )
-        assertEquals(0, dropped)
-        assertEquals(2, parsed.size)
-        assertEquals("symbolicKeyboardLockState", parsed[0].conditionKey)
-        assertEquals("emojiKeyboardLockState", parsed[1].conditionKey)
+        assertEquals(2, dropped)
+        assertEquals(0, parsed.size)
     }
 
     @Test
-    fun parserNormalizesDollarPrefixedLockKey() {
+    fun parserRejectsDollarPrefixedLockKey() {
         val (parsed, dropped) = ConditionStyleParser.parse(
             conditionArray(
                 """[{"conditionKey": "${'$'}symbolicKeyboardLockState", "conditionValue": true, "styleName": "locked"}]""",
             ),
         )
-        assertEquals(0, dropped)
-        assertEquals("symbolicKeyboardLockState", parsed[0].conditionKey)
+        assertEquals(1, dropped)
+        assertEquals(0, parsed.size)
     }
 
     @Test
@@ -53,26 +54,22 @@ class BoardLockConditionTest {
     }
 
     @Test
-    fun mapperFeedsLockKeysAlongsideSymbolLock() {
+    fun mapperNoLongerFeedsLockKeys() {
         val current = OptionStateMapper.mapConditionCurrent(
             conditionOptionNames = emptyList(),
             values = emptyMap(),
             symbolKeyboardActive = true,
-            symbolicLocked = true,
-            emojiLocked = false,
         )
         assertEquals(
             mapOf(
                 "symbolLock" to ConditionCurrent.Bool(true),
-                "symbolicKeyboardLockState" to ConditionCurrent.Bool(true),
-                "emojiKeyboardLockState" to ConditionCurrent.Bool(false),
             ),
             current,
         )
     }
 
     @Test
-    fun intConditionOnLockKeyNeverMatchesBoolCurrent() {
+    fun intConditionOnBoolCurrentNeverMatches() {
         // Int 形态无生产者：布尔现值对 Int 条件恒不成立（类型失配口径）。
         val entry = ConditionStyle(
             "symbolicKeyboardLockState",

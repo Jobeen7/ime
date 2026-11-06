@@ -20,7 +20,6 @@ import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
-import com.jobeen.ime.skin.symbol.BoardLockState
 import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.store.SkinTypePrefs
@@ -102,27 +101,6 @@ object KeyboardStateManager {
 
     /** 当前类型所归属的皮肤 id（换肤复位判定用；null = 无皮肤/未确立）。 */
     private var lastTypeSkinId: String? = null
-
-    // ---- 符号/表情板锁定（审计 G，进程级会话态） ----
-    // 两把锁互不干扰；返回/恢复动作不清除锁（sticky），只由
-    // 切换动作翻转或服务销毁清空。条件现值由窗口层经
-    // BoardLockState.conditionCurrent() 并入条件总表。
-    private val boardLocks = BoardLockState()
-
-    /** 符号板是否锁定（锁定 = 提交后不自动回主键盘）。 */
-    val symbolicBoardLocked: Boolean get() = boardLocks.symbolicLocked
-
-    /** 表情板是否锁定。 */
-    val emojiBoardLocked: Boolean get() = boardLocks.emojiLocked
-
-    /** 某类型板是否锁定；非板类型恒为不锁定。 */
-    fun isBoardLocked(boardType: String): Boolean = boardLocks.isLocked(boardType)
-
-    /** 翻转符号板锁，返回翻转后的锁定态。 */
-    fun toggleSymbolicLock(): Boolean = boardLocks.toggleSymbolic()
-
-    /** 翻转表情板锁，返回翻转后的锁定态。 */
-    fun toggleEmojiLock(): Boolean = boardLocks.toggleEmoji()
 
     /**
      * 板提交后自动返回（审计 G，对端 returnLastKeyboard 口径）：
@@ -206,7 +184,6 @@ object KeyboardStateManager {
         callback = null
         currentKeyboardName = null
         keyboardAttached = false
-        boardLocks.reset()
         typeState.reset()
         lastTypeSkinId = null
         // factory 闭包持有 View、lastEditorInfo 持有输入框信息、keyActionListener 链条持有 View，
