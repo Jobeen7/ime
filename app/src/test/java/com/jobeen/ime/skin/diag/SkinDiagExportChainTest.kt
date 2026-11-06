@@ -404,8 +404,8 @@ class SkinDiagExportChainTest {
         var buildResult = true
         var switchBehavior: (SkinGenRef?) -> Boolean = { true }
         var firstRenderResult = true
-        override fun buildSnapshot(ref: SkinGenRef): Boolean = buildResult
-        override fun switchRuntime(ref: SkinGenRef?): Boolean = switchBehavior(ref)
+        override suspend fun buildSnapshot(ref: SkinGenRef): Boolean = buildResult
+        override suspend fun switchRuntime(ref: SkinGenRef?): Boolean = switchBehavior(ref)
         override suspend fun awaitFirstRender(): Boolean = firstRenderResult
     }
 

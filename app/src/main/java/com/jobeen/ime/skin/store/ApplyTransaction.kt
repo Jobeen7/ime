@@ -4,6 +4,8 @@ import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.fault.SkinFaultHooks
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * 应用事务（详设 §2.4 状态机 + §2.5 Last-Good，步骤写死）：
@@ -26,11 +28,19 @@ class ApplyTransaction(
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
     interface Ports {
-        /** 构建快照（冷路径：含背景预处理复用）；false/异常 = 构建失败（A-1）。 */
-        fun buildSnapshot(ref: SkinGenRef): Boolean
+        /**
+         * 构建快照（冷路径：含背景预处理复用）；false/异常 = 构建失败（A-1）。
+         * 挂起函数：构建含文件读＋解析，调用方不得在主线程同步等它
+         *（审计 #2）；实现须把重活移出调用线程（见 SkinApplier）。
+         */
+        suspend fun buildSnapshot(ref: SkinGenRef): Boolean
 
-        /** 切换运行态引用；ref 为 null 表示回到内置默认皮肤。false/异常 = 切换失败。 */
-        fun switchRuntime(ref: SkinGenRef?): Boolean
+        /**
+         * 切换运行态引用；ref 为 null 表示回到内置默认皮肤。false/异常 = 切换失败。
+         * 挂起函数：切换含背景解码与状态写，调用方不得在主线程同步等它
+         *（审计 #2）。
+         */
+        suspend fun switchRuntime(ref: SkinGenRef?): Boolean
 
         /**
          * 等待切换后的首帧渲染完成；false = 未完成或异常，按未验证处理（A-3/A-4 口径）。
@@ -76,7 +86,16 @@ class ApplyTransaction(
     /** 当前生效状态的内部视图：回退目标记录与其引用。 */
     private data class PreviousState(val record: ActiveRecord, val ref: SkinGenRef?)
 
-    suspend fun apply(ref: SkinGenRef): Result {
+    /**
+     * 应用事务本体一律在 IO 线程跑：快照构建、索引／布局解析、
+     * 状态文件读写、背景解码全是文件／解码活，主线程只负责
+     * 发起与收结果（审计 #2）。首帧等待本身已在 IO 线程
+     *（awaitFirstDrawLatch），窗口刷新 post 与回调不受影响。
+     */
+    suspend fun apply(ref: SkinGenRef): Result =
+        withContext(Dispatchers.IO) { applyOnIo(ref) }
+
+    private suspend fun applyOnIo(ref: SkinGenRef): Result {
         if (!isTargetValidOnDisk(ref)) {
             DiagLog.w(
                 "store", "apply_target_invalid",
@@ -138,7 +157,10 @@ class ApplyTransaction(
     }
 
     /** 手动回退到 Last-Good（§2.5.3）：目标先验可用性，切换成功后才改记录。 */
-    suspend fun rollbackToLastGood(): Result {
+    suspend fun rollbackToLastGood(): Result =
+        withContext(Dispatchers.IO) { rollbackToLastGoodOnIo() }
+
+    private suspend fun rollbackToLastGoodOnIo(): Result {
         val pointer = (store.readLastGood() as? SkinLibraryStore.ReadResult.Ok)?.value
             ?: return Result.RollbackUnavailable("no_last_good").also {
                 DiagLog.w("store", "rollback_unavailable", mapOf("reason" to "no_last_good"))
@@ -224,7 +246,10 @@ class ApplyTransaction(
      * （它失败意味着键盘本身异常，无更下层可退）。Last-Good 指针
      * 保留，用户可再手动回退到它。
      */
-    suspend fun revertToDefault(): Result {
+    suspend fun revertToDefault(): Result =
+        withContext(Dispatchers.IO) { revertToDefaultOnIo() }
+
+    private suspend fun revertToDefaultOnIo(): Result {
         if (!runPort("revert_switch", null) { ports.switchRuntime(null) }) {
             return Result.RollbackUnavailable("switch_failed").also {
                 DiagLog.w("store", "revert_unavailable", mapOf("reason" to "switch_failed"))

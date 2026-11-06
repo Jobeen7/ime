@@ -3,7 +3,11 @@ package com.jobeen.ime.skin.store
 import com.jobeen.ime.base.util.DigestUtil
 import java.io.File
 import java.nio.file.Files
+import java.util.Collections
+import java.util.concurrent.Executors
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -30,14 +34,15 @@ class ApplyTransactionTest {
         /** 首渲判定前注入故障（如把库目录置只读，令后续写记录失败）。 */
         var onFirstRender: (() -> Unit)? = null
 
-        override fun buildSnapshot(ref: SkinGenRef): Boolean {
+        override suspend fun buildSnapshot(ref: SkinGenRef): Boolean {
             buildCalls++
             return buildBehavior(ref)
         }
 
-        override fun switchRuntime(ref: SkinGenRef?): Boolean {
+        override suspend fun switchRuntime(ref: SkinGenRef?): Boolean {
             switchCalls += ref
-            peekState?.let { stateAtSwitch = runBlocking { it() } }
+            val peek = peekState
+            if (peek != null) stateAtSwitch = peek()
             val ok = switchBehavior(ref)
             if (ok) installed = ref
             return ok
@@ -45,7 +50,8 @@ class ApplyTransactionTest {
 
         override suspend fun awaitFirstRender(): Boolean {
             onFirstRender?.invoke()
-            peekState?.let { stateAtFirstRender = runBlocking { it() } }
+            val peek = peekState
+            if (peek != null) stateAtFirstRender = peek()
             return firstRenderResult
         }
     }
@@ -115,6 +121,37 @@ class ApplyTransactionTest {
         assertEquals(ref.generation, active.generation)
         val lastGood = (f.store.readLastGood() as SkinLibraryStore.ReadResult.Ok).value
         assertEquals(LastGoodPointer(ref.skinId, ref.hash, ref.generation), lastGood)
+    }
+
+    /**
+     * 审计 #2：事务本体（含端口构建／切换／首渲等待）在 IO 线程跑，
+     * 调用线程（此处以单线程 TestMain 模拟主线程）只发起与收结果。
+     */
+    @Test
+    fun applyRunsPortsOffCallerThread() = runBlocking {
+        val f = Fixture()
+        val ref = f.skinGen("s1", 1)
+        val threads = Collections.synchronizedSet(mutableSetOf<String>())
+        f.ports.buildBehavior = { threads += Thread.currentThread().name; true }
+        f.ports.switchBehavior = { threads += Thread.currentThread().name; true }
+        f.ports.onFirstRender = { threads += Thread.currentThread().name }
+        val mainDispatcher = Executors.newSingleThreadExecutor { runnable ->
+            Thread(runnable, "TestMain")
+        }.asCoroutineDispatcher()
+        try {
+            withContext(mainDispatcher) {
+                val result = f.tx.apply(ref)
+                assertEquals(ApplyTransaction.Result.Applied(ref), result)
+            }
+        } finally {
+            mainDispatcher.close()
+        }
+        assertTrue("ports never ran: $threads", threads.isNotEmpty())
+        assertTrue("ports ran on caller thread: $threads", threads.none { it == "TestMain" })
+        assertTrue(
+            "ports not on IO workers: $threads",
+            threads.all { it.startsWith("DefaultDispatcher-worker-") },
+        )
     }
 
     @Test
@@ -221,13 +258,13 @@ class ApplyTransactionTest {
         var staged: SkinGenRef? = null
         var installed: SkinGenRef? = null
 
-        override fun buildSnapshot(ref: SkinGenRef): Boolean {
+        override suspend fun buildSnapshot(ref: SkinGenRef): Boolean {
             if (!buildBehavior(ref)) return false
             staged = ref
             return true
         }
 
-        override fun switchRuntime(ref: SkinGenRef?): Boolean {
+        override suspend fun switchRuntime(ref: SkinGenRef?): Boolean {
             if (ref == null) {
                 installed = null
                 return true

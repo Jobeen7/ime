@@ -1,8 +1,10 @@
 package com.jobeen.ime.skin.store
 
 import java.io.File
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 
 /**
@@ -35,44 +37,58 @@ class SkinLibraryStore(private val layout: SkinLibraryLayout) {
 
     suspend fun writeIndex(index: LibraryIndex) {
         writeMutex.withLock {
-            AtomicFiles.writeAtomically(
-                layout.root, layout.indexFile.name,
-                json.encodeToString(LibraryIndex.serializer(), index),
-            )
+            withContext(Dispatchers.IO) {
+                AtomicFiles.writeAtomically(
+                    layout.root, layout.indexFile.name,
+                    json.encodeToString(LibraryIndex.serializer(), index),
+                )
+            }
         }
     }
 
     suspend fun writeActive(record: ActiveRecord) {
         writeMutex.withLock {
-            AtomicFiles.writeAtomically(
-                layout.root, layout.activeFile.name,
-                json.encodeToString(ActiveRecord.serializer(), record),
-            )
+            withContext(Dispatchers.IO) {
+                AtomicFiles.writeAtomically(
+                    layout.root, layout.activeFile.name,
+                    json.encodeToString(ActiveRecord.serializer(), record),
+                )
+            }
         }
     }
 
     suspend fun writeLastGood(pointer: LastGoodPointer) {
         writeMutex.withLock {
-            AtomicFiles.writeAtomically(
-                layout.root, layout.lastGoodFile.name,
-                json.encodeToString(LastGoodPointer.serializer(), pointer),
-            )
+            withContext(Dispatchers.IO) {
+                AtomicFiles.writeAtomically(
+                    layout.root, layout.lastGoodFile.name,
+                    json.encodeToString(LastGoodPointer.serializer(), pointer),
+                )
+            }
         }
     }
 
     suspend fun clearLastGood() {
         writeMutex.withLock {
-            runCatching { layout.lastGoodFile.delete() }
+            withContext(Dispatchers.IO) {
+                runCatching { layout.lastGoodFile.delete() }
+            }
         }
     }
 
-    private inline fun <T> readJson(file: File, decode: (String) -> T): ReadResult<T> {
+    /**
+     * 读＋解析一律在 IO 线程：调用方在主线程时也不阻塞 UI
+     *（审计 #2：此前 readText＋decode 全在调用线程上）。
+     */
+    private suspend inline fun <T> readJson(file: File, crossinline decode: (String) -> T): ReadResult<T> {
         if (!file.isFile) return ReadResult.Missing
-        val text = runCatching { file.readText() }.getOrElse {
-            return ReadResult.Corrupt("read_failed:${it.javaClass.simpleName}")
+        return withContext(Dispatchers.IO) {
+            val text = runCatching { file.readText() }.getOrElse {
+                return@withContext ReadResult.Corrupt("read_failed:${it.javaClass.simpleName}")
+            }
+            runCatching { ReadResult.Ok(decode(text)) }
+                .getOrElse { ReadResult.Corrupt("parse_failed:${it.javaClass.simpleName}") }
         }
-        return runCatching { ReadResult.Ok(decode(text)) }
-            .getOrElse { ReadResult.Corrupt("parse_failed:${it.javaClass.simpleName}") }
     }
 
     companion object {

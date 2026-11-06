@@ -35,13 +35,16 @@ import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
 import com.jobeen.ime.skin.model.YamlSpriteDescriptor
 import com.jobeen.ime.skin.model.SkinValidator
+import com.jobeen.ime.skin.store.LayoutIndexEntry
+import com.jobeen.ime.skin.store.LibraryIndex
 import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinOverlayMerge
 import com.jobeen.ime.skin.store.SkinOverlayStore
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import java.io.File
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
@@ -103,7 +106,7 @@ object SkinSnapshotFactory {
      * （背景/布局引用随之按缺失处理——校验器会逐项回退并报告，
      * 但工厂路径只记日志，不出报告）。
      */
-    fun buildFromGenDir(
+    suspend fun buildFromGenDir(
         context: Context,
         layout: SkinLibraryLayout,
         ref: SkinGenRef,
@@ -118,7 +121,23 @@ object SkinSnapshotFactory {
         )
     }
 
-    fun buildFromFiles(
+    /**
+     * 构建入口（挂起函数）：skin.json／manifest／覆盖层／布局
+     * 文件的读＋解析全在 IO 线程（审计 #2）；调用方在主线程
+     * 发起也不阻塞 UI。构建期内索引只读一次、各 layout.json
+     * 只解析一次（见 [LayoutLookup]），本函数内不再有 runBlocking。
+     */
+    suspend fun buildFromFiles(
+        context: Context,
+        skinJsonFile: File,
+        manifestFile: File,
+        ref: SkinGenRef,
+        libraryLayout: SkinLibraryLayout? = null,
+    ): SkinSnapshot? = withContext(Dispatchers.IO) {
+        buildFromFilesOnIo(context, skinJsonFile, manifestFile, ref, libraryLayout)
+    }
+
+    private suspend fun buildFromFilesOnIo(
         context: Context,
         skinJsonFile: File,
         manifestFile: File,
@@ -195,13 +214,16 @@ object SkinSnapshotFactory {
         return finalSnapshot
     }
 
-    fun buildFromTree(
+    suspend fun buildFromTree(
         context: Context,
         tree: kotlinx.serialization.json.JsonObject,
         manifest: PackageManifest,
         ref: SkinGenRef,
         libraryLayout: SkinLibraryLayout? = null,
     ): SkinSnapshot? {
+        // 单次构建的布局来源：索引只读一次、各 layout.json 只解析
+        // 一次（审计 #2）；以下全部布局解析共用同一实例。
+        val layouts = LayoutLookup(libraryLayout)
         val assetKindById = manifest.assets().associate { content ->
             content.id to PackageManifest.assetKindOf(content.path)
         }
@@ -209,7 +231,7 @@ object SkinSnapshotFactory {
         // G1：与导入端同口径——皮肤所指布局的坐标 ID 另行可覆写，
         // 单键图片 1MB 上限以库内文件实际大小执行；任一步取不到时
         // 静默回落缺省口径（不改变此前行为，只补此前缺失的接线）。
-        val coordIds = layoutCoordIds(tree, libraryLayout)
+        val coordIds = layoutCoordIds(tree, layouts)
         val result = SkinValidator.validate(
             tree = tree,
             currentVersionCode = currentVersionCode(context),
@@ -263,14 +285,14 @@ object SkinSnapshotFactory {
             keyboardEntries.mapValues { (_, entry) ->
                 val (portrait, portraitResolution) =
                     if (entry.layoutId != null) {
-                        resolveSnapshotLayout(context, libraryLayout, entry.layoutId, ref)
+                        resolveSnapshotLayout(context, layouts, entry.layoutId, ref)
                     } else {
                         null to LayoutResolution.NOT_SET
                     }
                 val (landscape, landscapeResolution) =
                     if (entry.layoutIdLandscape != null) {
                         resolveSnapshotLayout(
-                            context, libraryLayout, entry.layoutIdLandscape, ref,
+                            context, layouts, entry.layoutIdLandscape, ref,
                             binding = "landscape",
                         )
                     } else {
@@ -280,14 +302,14 @@ object SkinSnapshotFactory {
                 // 深色缺失时解析层回落由 resolvedFor 处理，不在此补浅色）。
                 val (portraitDark, portraitDarkResolution) =
                     if (entry.layoutIdDark != null) {
-                        resolveSnapshotLayout(context, libraryLayout, entry.layoutIdDark, ref)
+                        resolveSnapshotLayout(context, layouts, entry.layoutIdDark, ref)
                     } else {
                         null to LayoutResolution.NOT_SET
                     }
                 val (landscapeDark, landscapeDarkResolution) =
                     if (entry.layoutIdLandscapeDark != null) {
                         resolveSnapshotLayout(
-                            context, libraryLayout, entry.layoutIdLandscapeDark, ref,
+                            context, layouts, entry.layoutIdLandscapeDark, ref,
                             binding = "landscape",
                         )
                     } else {
@@ -323,7 +345,7 @@ object SkinSnapshotFactory {
                 it.value.layoutId == validated.layoutId
             }?.let { resolvedKeyboards.getValue(it.key) }
                 ?.let { it.portrait to it.portraitResolution }
-                ?: resolveSnapshotLayout(context, libraryLayout, validated.layoutId, ref)
+                ?: resolveSnapshotLayout(context, layouts, validated.layoutId, ref)
         }
         // 横屏绑定（2026-10-27 第一组 + 矩阵扩展）：与竖屏绑定
         // 独立解析——无竖屏绑定时横屏绑定仍可激活（内置布局
@@ -341,7 +363,7 @@ object SkinSnapshotFactory {
             }?.let { resolvedKeyboards.getValue(it.key) }
                 ?.let { it.landscape to it.landscapeResolution }
                 ?: resolveSnapshotLayout(
-                    context, libraryLayout, validated.layoutIdLandscape, ref,
+                    context, layouts, validated.layoutIdLandscape, ref,
                     binding = "landscape",
                 )
         }
@@ -420,6 +442,57 @@ object SkinSnapshotFactory {
     }
 
     /**
+     * 单次构建的布局来源（审计 #2）：索引只读一次，各 layout.json
+     * 只解析一次。旧实现每次解析都 `runBlocking { readIndex() }`
+     * 再各读各的文件——单布局构建至少读两次索引、同一 layout.json
+     * 解析两次（坐标并集一次、解析一次），多槽皮肤可达四次。
+     * 本类由 [buildFromTree] 每构建新建、只在构建期内用，不跨
+     * 构建共享（索引快照不跨构建复用，代次切换不读脏数据）。
+     */
+    internal class LayoutLookup(private val libraryLayout: SkinLibraryLayout?) {
+        private val store: SkinLibraryStore? = libraryLayout?.let { SkinLibraryStore(it) }
+        private var index: LibraryIndex? = null
+        private var indexLoaded = false
+        private val trees = HashMap<String, JsonObject?>()
+
+        /** 库布局是否存在（false = 无库布局，走 MISSING 回退口径）。 */
+        val hasLibrary: Boolean get() = libraryLayout != null
+
+        /** 索引：首次调用读盘，此后复用同一快照。 */
+        suspend fun index(): LibraryIndex? {
+            if (!indexLoaded) {
+                indexLoaded = true
+                index = (store?.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
+            }
+            return index
+        }
+
+        /** 索引中的布局条目（无条目 = 索引缺失该布局）。 */
+        suspend fun entry(layoutId: String): LayoutIndexEntry? =
+            index()?.layouts?.firstOrNull { it.id == layoutId }
+
+        /**
+         * 布局文件树：同一 id 在构建期内只读＋解析一次；条目缺失
+         * 或文件不可读返回 null（调用方按既有口径区分 missing 与
+         * unreadable：先查 [entry]，有条目无树 = 文件不可读）。
+         */
+        suspend fun layoutTree(layoutId: String): JsonObject? {
+            if (trees.containsKey(layoutId)) return trees.getValue(layoutId)
+            val layout = libraryLayout
+            val tree = if (layout == null) {
+                null
+            } else {
+                entry(layoutId)?.let {
+                    val file = File(layout.fileFromRelative(it.dir), "layout.json")
+                    runCatching { SkinJson.parseObject(file.readText()) }.getOrNull()
+                }
+            }
+            trees[layoutId] = tree
+            return tree
+        }
+    }
+
+    /**
      * G1 坐标放宽口径（校验前 Best-effort）：并集内各布局的
      * 全部逻辑 ID；单个布局缺失／文件损坏只跳过该布局（不
      * 拖垮其余布局的坐标），无库布局／无绑定时为空集（回落
@@ -430,22 +503,14 @@ object SkinSnapshotFactory {
      * 被当成未知键剔掉（导入端早已按包内全布局并集接纳，
      * 快照端与之脱节）；本并集补齐该脱节。
      */
-    private fun layoutCoordIds(
+    private suspend fun layoutCoordIds(
         tree: kotlinx.serialization.json.JsonObject,
-        libraryLayout: SkinLibraryLayout?,
+        lookup: LayoutLookup,
     ): Set<String> {
-        val layout = libraryLayout ?: return emptySet()
-        val index = runCatching {
-            runBlocking { SkinLibraryStore(layout).readIndex() }
-                as? SkinLibraryStore.ReadResult.Ok
-        }.getOrNull()?.value ?: return emptySet()
+        if (!lookup.hasLibrary) return emptySet()
         val ids = LinkedHashSet<String>()
         for (layoutId in overrideLayoutIds(tree)) {
-            val entry = index.layouts.firstOrNull { it.id == layoutId } ?: continue
-            val file = File(layout.fileFromRelative(entry.dir), "layout.json")
-            val layoutTree = runCatching {
-                SkinJson.parseObject(file.readText())
-            }.getOrNull() ?: continue
+            val layoutTree = lookup.layoutTree(layoutId) ?: continue
             ids += LayoutModel.logicalIdsFromTree(layoutTree, layoutId)
         }
         return ids
@@ -457,9 +522,9 @@ object SkinSnapshotFactory {
      * 成立、皮肤其余部分全部生效，逐项记日志（铁律 4）；不触发
      * Last-Good（布局回退已在解析层完成，不属于新皮肤生效失败）。
      */
-    private fun resolveSnapshotLayout(
+    private suspend fun resolveSnapshotLayout(
         context: Context,
-        libraryLayout: SkinLibraryLayout?,
+        lookup: LayoutLookup,
         layoutId: String?,
         ref: SkinGenRef,
         /** 绑定角色：portrait = 竖屏主绑定（日志口径与改前一致， 不新增字段）；landscape = 横屏绑定（日志带 orientation 区分， 回退目标是竖屏布局而非内置默认）。 */
@@ -470,7 +535,7 @@ object SkinSnapshotFactory {
         // 竖屏主绑定保持改前日志形状（不新增字段，避免诊断消费方断裂）。
         val orientationField: Map<String, Any?> =
             if (binding == "landscape") mapOf("orientation" to "landscape") else emptyMap()
-        if (libraryLayout == null) {
+        if (!lookup.hasLibrary) {
             // 竖屏主绑定保持改前静默口径；横屏绑定是新增失败路径，
             // 按硬要求记日志（回退目标仍是竖屏布局）。
             if (binding == "landscape") {
@@ -484,9 +549,7 @@ object SkinSnapshotFactory {
             }
             return null to LayoutResolution.MISSING
         }
-        val index = (runBlocking { SkinLibraryStore(libraryLayout).readIndex() }
-            as? SkinLibraryStore.ReadResult.Ok)?.value
-        val entry = index?.layouts?.firstOrNull { it.id == layoutId }
+        val entry = lookup.entry(layoutId)
         if (entry == null) {
             DiagLog.w(
                 "layout", "layout_fallback_default",
@@ -497,8 +560,9 @@ object SkinSnapshotFactory {
             )
             return null to LayoutResolution.MISSING
         }
-        val file = File(libraryLayout.fileFromRelative(entry.dir), "layout.json")
-        val tree = runCatching { SkinJson.parseObject(file.readText()) }.getOrNull()
+        // 同一构建内 layout.json 只解析一次（[LayoutLookup] 缓存）：
+        // 有条目无树 = 文件不可读，与改前口径一致。
+        val tree = lookup.layoutTree(layoutId)
         if (tree == null) {
             // 代次目录损坏/文件缺失（§3.5 第 5 项）：按 missing 处理，
             // 索引对账（B1 启动对账）另行收敛
@@ -518,7 +582,7 @@ object SkinSnapshotFactory {
         // 永不渲染半截布局。竖屏绑定不认领 patchOf。
         if (binding == "landscape" && tree["patchOf"] != null) {
             return expandLandscapePatch(
-                context, libraryLayout, tree, layoutId, entry.generation, ref,
+                context, lookup, tree, layoutId, entry.generation, ref,
                 orientationField,
             )
         }
@@ -576,9 +640,9 @@ object SkinSnapshotFactory {
      * 校验通过、且本身不是补丁（补丁不链式展开，防循环与半截
      * 展开）。任一失败返回 INVALID，调用方回退竖屏布局。
      */
-    private fun expandLandscapePatch(
+    private suspend fun expandLandscapePatch(
         context: Context,
-        libraryLayout: SkinLibraryLayout?,
+        lookup: LayoutLookup,
         tree: JsonObject,
         layoutId: String,
         generation: Int,
@@ -595,13 +659,13 @@ object SkinSnapshotFactory {
             )
             return null to LayoutResolution.INVALID
         }
-        if (libraryLayout == null) return fail("library_unavailable")
+        if (!lookup.hasLibrary) return fail("library_unavailable")
         val patch = (LayoutValidator.validate(tree, layoutId) as? LayoutValidation.Valid)
             ?.layout ?: return fail("patch_invalid")
         // 校验器对非法声明记 issue 回退为 null；原始声明仍在，
         // 故此处 null 一律是声明非法（含自指），不是“无补丁”。
         val portraitId = patch.patchOf ?: return fail("patch_of_invalid")
-        val portrait = loadPatchPortrait(libraryLayout, portraitId)
+        val portrait = loadPatchPortrait(lookup, portraitId)
             ?: return fail("patch_portrait_missing_or_invalid")
         if (portrait.patchOf != null) return fail("patch_chain")
         val resolved = LandscapePatch.expandToResolved(
@@ -624,16 +688,12 @@ object SkinSnapshotFactory {
      * 链在此截断）：索引缺失、文件不可读、解析失败、校验无效
      * 任一命中返回 null。
      */
-    private fun loadPatchPortrait(
-        libraryLayout: SkinLibraryLayout,
+    private suspend fun loadPatchPortrait(
+        lookup: LayoutLookup,
         portraitId: String,
     ): LayoutModel? {
-        val index = (runBlocking { SkinLibraryStore(libraryLayout).readIndex() }
-            as? SkinLibraryStore.ReadResult.Ok)?.value ?: return null
-        val entry = index.layouts.firstOrNull { it.id == portraitId } ?: return null
-        val file = File(libraryLayout.fileFromRelative(entry.dir), "layout.json")
-        val tree = runCatching { SkinJson.parseObject(file.readText()) }.getOrNull()
-            ?: return null
+        val entry = lookup.entry(portraitId) ?: return null
+        val tree = lookup.layoutTree(portraitId) ?: return null
         return (LayoutValidator.validate(tree, portraitId) as? LayoutValidation.Valid)?.layout
     }
 

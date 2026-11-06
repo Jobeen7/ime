@@ -172,8 +172,18 @@ object SkinSnapshotProvider {
         }
     }
 
-    /** 应用事务验证完成后切换快照（ref 为 null = 回到内置默认）。 */
+    /**
+     * 应用事务验证完成后切换快照（ref 为 null = 回到内置默认）。
+     * 背景位图先在锁外解码、再持锁安装（审计 #2）：锁内不再做
+     * 同步解码。解码在调用线程跑——当前调用方均在 IO 线程
+     *（应用事务经 IO 包装、启动加载经 startupScope IO），主线
+     * 程调用方不得直接调本函数。
+     */
     fun install(context: Context, snapshot: SkinSnapshot?) {
+        // 背景解码先行：无条件解（锁外读 currentBitmapKey 是过期
+        // 读，绝不能据此跳过——快照可能已被替换；锁内对键未变的
+        // 冗余位图回收，行为与改前一致）。
+        val prepared = snapshot?.let { decodePrepared(context, it) }
         synchronized(lock) {
             loadAttempted = true
             // 安装代次递增：在途的异步启动加载完成时按代次丢弃，
@@ -188,7 +198,7 @@ object SkinSnapshotProvider {
                 // 运行态同步清空：旧皮肤的通知锁定不带到无皮肤态。
                 SkinRuntimeState.reset()
             } else {
-                installLocked(context, snapshot)
+                installLocked(context, snapshot, prepared)
             }
         }
     }
@@ -214,9 +224,10 @@ object SkinSnapshotProvider {
      * overlayVersion 与磁盘覆盖层版本不一致时重建并安装，返回
      * true；无快照、无变化或重建失败时返回 false（失败只记
      * 日志，不崩）。供覆盖层写入方（后续设置 UI）在防抖落盘后
-     * 调用；运行态本身不轮询磁盘。
+     * 调用；运行态本身不轮询磁盘。挂起函数：重建含文件读＋
+     * 解析，调用方不得在主线程同步等它（审计 #2）。
      */
-    fun refreshIfOverlayChanged(context: Context): Boolean {
+    suspend fun refreshIfOverlayChanged(context: Context): Boolean {
         val current = synchronized(lock) { currentSnapshot } ?: return false
         val layout = SkinLibrary.layout
         val diskVersion = runCatching {
@@ -251,14 +262,14 @@ object SkinSnapshotProvider {
 
     // ---- 内部 ----
 
-    private fun installLocked(context: Context, snapshot: SkinSnapshot) {
+    private fun installLocked(context: Context, snapshot: SkinSnapshot, prepared: Bitmap?) {
         currentSnapshot = snapshot
         // 运行态同步切换：新皮肤的通知表／条件表即刻生效，旧锁定丢弃。
         SkinRuntimeState.reset(snapshot.notifications, snapshot.conditionStyles)
         syncSkinSoundsLocked(context, snapshot)
         syncKeyImagesLocked(snapshot)
         syncSkinFontsLocked(snapshot)
-        updateBackgroundBitmapLocked(context, snapshot)
+        setBackgroundBitmapLocked(context, snapshot, prepared)
         // 性能埋点（2026-10-29 item-1 B）：快照安装完成时采样一次
         // 内存（冷路径，安装频率低，不进热路径）。
         com.jobeen.ime.skin.perf.PerfMonitor.sampleMemory(context)
@@ -281,16 +292,25 @@ object SkinSnapshotProvider {
     }
 
     /**
-     * 背景位图键处理（安装与模糊重建共用）：产物键变化时释放旧
-     * 位图、解码新产物；产物缺失时走异步自愈重建（成功后刷新窗口）。
+     * 背景位图安装（锁内只做指针交换与回收，绝不解码——解码
+     * 在 [install]/[refreshBackgroundBlur] 的锁外先行，审计 #2）：
+     * 产物键变化时释放旧位图、装入锁外已解的位图；产物缺失时
+     * 走异步自愈重建。锁外解出的位图若到锁内时键已未变（并发
+     * 安装抢先装了同键位图），且当前已有位图，回收冗余份；
+     * 同键但当前无位图（上次解码失败、重建未换入）时装入新解份，
+     * 与改前逐次重解口径一致。
      */
-    private fun updateBackgroundBitmapLocked(context: Context, snapshot: SkinSnapshot) {
+    private fun setBackgroundBitmapLocked(
+        context: Context,
+        snapshot: SkinSnapshot,
+        prepared: Bitmap?,
+    ) {
         val key = snapshot.background?.preparedKey
         if (key != currentBitmapKey) {
             releaseBitmapLocked()
             currentBitmapKey = key
             if (key != null) {
-                currentBitmap = decodePrepared(context, snapshot)
+                currentBitmap = prepared
                 if (currentBitmap == null) {
                     DiagLog.w(
                         "runtime", "background_bitmap_missing",
@@ -299,6 +319,10 @@ object SkinSnapshotProvider {
                     triggerBackgroundRebuild(context, snapshot)
                 }
             }
+        } else if (prepared != null && currentBitmap == null) {
+            currentBitmap = prepared
+        } else if (prepared != null) {
+            if (!prepared.isRecycled) prepared.recycle()
         }
     }
 
@@ -324,13 +348,18 @@ object SkinSnapshotProvider {
                 bg.assetSha256, bg.targetWidthPx, bg.targetHeightPx, blur, adjust,
             ),
         )
+        // 背景解码先行（锁外）：新产物键对应的位图在锁外解出，
+        // 再持锁换背景装入（审计 #2）；快照若已被替换，冗余位图回收。
+        val prepared = decodePrepared(context, snapshot.copy(background = newBg))
         synchronized(lock) {
             // 换背景期间快照可能已被其它安装替换：只在仍为同一
             // 代次时换背景，否则丢弃（新快照构建期已含最新全局值）。
             val current = currentSnapshot
             if (current != null && current.ref == snapshot.ref) {
                 currentSnapshot = current.copy(background = newBg)
-                updateBackgroundBitmapLocked(context, currentSnapshot!!)
+                setBackgroundBitmapLocked(context, currentSnapshot!!, prepared)
+            } else if (prepared != null) {
+                if (!prepared.isRecycled) prepared.recycle()
             }
         }
     }
