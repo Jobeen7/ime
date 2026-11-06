@@ -33,11 +33,14 @@ import com.jobeen.ime.input.keyboard.key.alphabetKey
 import com.jobeen.ime.input.keyboard.key.backspaceKey
 import com.jobeen.ime.input.keyboard.key.capsLockKey
 import com.jobeen.ime.input.keyboard.key.commaKey
+import com.jobeen.ime.input.keyboard.key.greenAlphabetKey
 import com.jobeen.ime.input.keyboard.key.layoutSwitchKey
+import com.jobeen.ime.input.keyboard.key.peroidKey
 import com.jobeen.ime.input.keyboard.key.returnKey
 import com.jobeen.ime.skin.runtime.EnterKeyVariant
 import com.jobeen.ime.input.keyboard.key.schemaSwitchKey
 import com.jobeen.ime.input.keyboard.key.spaceIconKey
+import com.jobeen.ime.input.keyboard.key.spaceKey
 
 @SuppressLint("ViewConstructor")
 class QwertyKeyboard(
@@ -85,6 +88,18 @@ class QwertyKeyboard(
                 action == EnterFieldAction.DONE
 
         /**
+         * 绿预设是否生效（施工单 4 收口）：无自定义皮肤快照、且当前
+         * 内置主题为绿预设（26键·浅／深）。布局分支与回车分色共用
+         * 同一判定。
+         */
+        internal fun isGreenTheme(context: Context): Boolean {
+            if (SkinSnapshotProvider.peek() != null) return false
+            val themeId = KeyboardColors.themeFor(context).id
+            return themeId == KeyboardThemePresets.WeChatGreenLight.id ||
+                themeId == KeyboardThemePresets.WeChatGreenDark.id
+        }
+
+        /**
          * 生效布局（详设 §4.2 接缝）：出厂布局经当前皮肤快照的覆写
          * 装配；无快照/无命中时恒等返回出厂布局。编辑器预览传入
          * 显式 layout 时不走此路（不碰全局快照槽，详设 §10.2-7）。
@@ -92,8 +107,14 @@ class QwertyKeyboard(
          * 皮肤、无皮肤跟内置主题），覆写在其结果上做。
          */
         fun effectiveLayout(context: Context, returnVariant: Variant): List<List<KeyDef>> {
-            val raw = buildLayout(returnVariant)
-            val snapshot = SkinSnapshotProvider.current(context) ?: return raw
+            val snapshot = SkinSnapshotProvider.current(context)
+            // 施工单 4 收口：绿预设（无皮肤快照）走对端排布，其余一律出厂布局。
+            val raw = if (snapshot == null && isGreenTheme(context)) {
+                buildGreenLayout(returnVariant)
+            } else {
+                buildLayout(returnVariant)
+            }
+            if (snapshot == null) return raw
             // 内置布局覆盖（2026-10-28）：皮肤含本键盘的内置布局文件时
             // 按文件重排（出厂键本体 + 文件排版/动作槽），再走既有覆写
             // 装配（样式/图片/字号等）；无覆盖/排空时恒用出厂布局。
@@ -173,29 +194,84 @@ class QwertyKeyboard(
         internal fun momentaryUpTarget(state: CapsState, active: Boolean): CapsState? =
             if (active && state == CapsState.Momentary) CapsState.None else null
 
+        /**
+         * 出厂 26 键布局（.19 原样，施工单 4：默认分支恢复此口径）：
+         * 小写字母＋副标、?123／!?#／方案名空格、实心图标。
+         */
         fun buildLayout(returnVariant: Variant): List<List<KeyDef>> {
             return listOf(
                 listOf(
-                    alphabetKey("q", popup = letterPopup("q", "1", 0), id = KeyIds.Qwerty.KEY_Q),
-                    alphabetKey("w", popup = letterPopup("w", "2", 1), id = KeyIds.Qwerty.KEY_W),
-                    alphabetKey("e", popup = letterPopup("e", "3", 1), id = KeyIds.Qwerty.KEY_E),
-                    alphabetKey("r", popup = letterPopup("r", "4", 1), id = KeyIds.Qwerty.KEY_R),
-                    alphabetKey("t", popup = letterPopup("t", "5", 1), id = KeyIds.Qwerty.KEY_T),
-                    alphabetKey("y", popup = letterPopup("y", "6", 1), id = KeyIds.Qwerty.KEY_Y),
-                    alphabetKey("u", popup = letterPopup("u", "7", 1), id = KeyIds.Qwerty.KEY_U),
-                    alphabetKey("i", popup = letterPopup("i", "8", 1), id = KeyIds.Qwerty.KEY_I),
-                    alphabetKey("o", popup = letterPopup("o", "9", 1), id = KeyIds.Qwerty.KEY_O),
-                    alphabetKey("p", popup = letterPopup("p", "0", 2), id = KeyIds.Qwerty.KEY_P),
+                    alphabetKey("q", "1", id = KeyIds.Qwerty.KEY_Q),
+                    alphabetKey("w", "2", id = KeyIds.Qwerty.KEY_W),
+                    alphabetKey("e", "3", id = KeyIds.Qwerty.KEY_E),
+                    alphabetKey("r", "4", id = KeyIds.Qwerty.KEY_R),
+                    alphabetKey("t", "5", id = KeyIds.Qwerty.KEY_T),
+                    alphabetKey("y", "6", id = KeyIds.Qwerty.KEY_Y),
+                    alphabetKey("u", "7", id = KeyIds.Qwerty.KEY_U),
+                    alphabetKey("i", "8", id = KeyIds.Qwerty.KEY_I),
+                    alphabetKey("o", "9", id = KeyIds.Qwerty.KEY_O),
+                    alphabetKey("p", "0", id = KeyIds.Qwerty.KEY_P),
+                ),
+                listOf(
+                    alphabetKey("a", "~", id = KeyIds.Qwerty.KEY_A),
+                    alphabetKey("s", "!", id = KeyIds.Qwerty.KEY_S),
+                    alphabetKey("d", "@", id = KeyIds.Qwerty.KEY_D),
+                    alphabetKey("f", "#", id = KeyIds.Qwerty.KEY_F),
+                    alphabetKey("g", "$", id = KeyIds.Qwerty.KEY_G, mainTextTranslationY = -2),
+                    alphabetKey("h", "%", id = KeyIds.Qwerty.KEY_H),
+                    alphabetKey("j", "^", id = KeyIds.Qwerty.KEY_J, altTextTranslationY = 4),
+                    alphabetKey("k", "&", id = KeyIds.Qwerty.KEY_K),
+                    alphabetKey("l", "*", id = KeyIds.Qwerty.KEY_L, altTextTranslationY = 4),
+                ),
+                listOf(
+                    capsLockKey(id = KeyIds.Qwerty.KEY_CAPS),
+                    alphabetKey("z", "(", id = KeyIds.Qwerty.KEY_Z),
+                    alphabetKey("x", ")", id = KeyIds.Qwerty.KEY_X),
+                    alphabetKey("c", ":", id = KeyIds.Qwerty.KEY_C),
+                    alphabetKey("v", ";", id = KeyIds.Qwerty.KEY_V),
+                    alphabetKey("b", ",", id = KeyIds.Qwerty.KEY_B),
+                    alphabetKey("n", "?", id = KeyIds.Qwerty.KEY_N),
+                    alphabetKey("m", "/", id = KeyIds.Qwerty.KEY_M),
+                    backspaceKey(id = KeyIds.Qwerty.KEY_DELETE),
+                ),
+                listOf(
+                    layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f, id = KeyIds.Qwerty.KEY_LAYOUT_NUMBER),
+                    peroidKey(percentWidth = 0.13f, id = KeyIds.Qwerty.KEY_PERIOD),
+                    spaceKey(percentWidth = 0.44f, id = KeyIds.Qwerty.KEY_SPACE),
+                    schemaSwitchKey(0.13f, id = KeyIds.Qwerty.KEY_SCHEMA),
+                    returnKey(percentWidth = 0.15f, variant = returnVariant, id = KeyIds.Qwerty.KEY_ENTER),
+                ),
+            )
+        }
+
+        /**
+         * 绿预设 26 键布局（2026-11-06 施工单 3：源包 pinyin_26 样式，
+         * 施工单 4：只在绿预设分支用，见 effectiveLayout）：大写无副标、
+         * 第四行排布、描边图标、长按提示符。
+         */
+        fun buildGreenLayout(returnVariant: Variant): List<List<KeyDef>> {
+            return listOf(
+                listOf(
+                    greenAlphabetKey("q", popup = letterPopup("q", "1", 0), id = KeyIds.Qwerty.KEY_Q),
+                    greenAlphabetKey("w", popup = letterPopup("w", "2", 1), id = KeyIds.Qwerty.KEY_W),
+                    greenAlphabetKey("e", popup = letterPopup("e", "3", 1), id = KeyIds.Qwerty.KEY_E),
+                    greenAlphabetKey("r", popup = letterPopup("r", "4", 1), id = KeyIds.Qwerty.KEY_R),
+                    greenAlphabetKey("t", popup = letterPopup("t", "5", 1), id = KeyIds.Qwerty.KEY_T),
+                    greenAlphabetKey("y", popup = letterPopup("y", "6", 1), id = KeyIds.Qwerty.KEY_Y),
+                    greenAlphabetKey("u", popup = letterPopup("u", "7", 1), id = KeyIds.Qwerty.KEY_U),
+                    greenAlphabetKey("i", popup = letterPopup("i", "8", 1), id = KeyIds.Qwerty.KEY_I),
+                    greenAlphabetKey("o", popup = letterPopup("o", "9", 1), id = KeyIds.Qwerty.KEY_O),
+                    greenAlphabetKey("p", popup = letterPopup("p", "0", 2), id = KeyIds.Qwerty.KEY_P),
                 ),
                 listOf(
                     // a／l 取 0.15 宽格（源包 pinyin_26 行 2 两端键宽；
                     // 键面 2/3 贴内侧的缩进在 init 里按屏宽现算，见下）。
-                    alphabetKey("a", "~", percentWidth = 0.15f, id = KeyIds.Qwerty.KEY_A),
-                    alphabetKey("s", "!", id = KeyIds.Qwerty.KEY_S),
-                    alphabetKey("d", "@", id = KeyIds.Qwerty.KEY_D),
-                    alphabetKey("f", "#", id = KeyIds.Qwerty.KEY_F),
-                    alphabetKey("g", "$", id = KeyIds.Qwerty.KEY_G),
-                    alphabetKey(
+                    greenAlphabetKey("a", "~", percentWidth = 0.15f, id = KeyIds.Qwerty.KEY_A),
+                    greenAlphabetKey("s", "!", id = KeyIds.Qwerty.KEY_S),
+                    greenAlphabetKey("d", "@", id = KeyIds.Qwerty.KEY_D),
+                    greenAlphabetKey("f", "#", id = KeyIds.Qwerty.KEY_F),
+                    greenAlphabetKey("g", "$", id = KeyIds.Qwerty.KEY_G),
+                    greenAlphabetKey(
                         "h",
                         popup = KeyDef.Popup.Keyboard(
                             label = "H",
@@ -207,19 +283,19 @@ class QwertyKeyboard(
                         ),
                         id = KeyIds.Qwerty.KEY_H,
                     ),
-                    alphabetKey("j", "^", id = KeyIds.Qwerty.KEY_J),
-                    alphabetKey("k", "&", id = KeyIds.Qwerty.KEY_K),
-                    alphabetKey("l", "*", percentWidth = 0.15f, id = KeyIds.Qwerty.KEY_L),
+                    greenAlphabetKey("j", "^", id = KeyIds.Qwerty.KEY_J),
+                    greenAlphabetKey("k", "&", id = KeyIds.Qwerty.KEY_K),
+                    greenAlphabetKey("l", "*", percentWidth = 0.15f, id = KeyIds.Qwerty.KEY_L),
                 ),
                 listOf(
                     capsLockKey(id = KeyIds.Qwerty.KEY_CAPS, iconSizeDp = 19f),
-                    alphabetKey("z", "(", id = KeyIds.Qwerty.KEY_Z),
-                    alphabetKey("x", ")", id = KeyIds.Qwerty.KEY_X),
-                    alphabetKey("c", ":", id = KeyIds.Qwerty.KEY_C),
-                    alphabetKey("v", ";", id = KeyIds.Qwerty.KEY_V),
-                    alphabetKey("b", ",", id = KeyIds.Qwerty.KEY_B),
-                    alphabetKey("n", "?", id = KeyIds.Qwerty.KEY_N),
-                    alphabetKey("m", "/", id = KeyIds.Qwerty.KEY_M),
+                    greenAlphabetKey("z", "(", id = KeyIds.Qwerty.KEY_Z),
+                    greenAlphabetKey("x", ")", id = KeyIds.Qwerty.KEY_X),
+                    greenAlphabetKey("c", ":", id = KeyIds.Qwerty.KEY_C),
+                    greenAlphabetKey("v", ";", id = KeyIds.Qwerty.KEY_V),
+                    greenAlphabetKey("b", ",", id = KeyIds.Qwerty.KEY_B),
+                    greenAlphabetKey("n", "?", id = KeyIds.Qwerty.KEY_N),
+                    greenAlphabetKey("m", "/", id = KeyIds.Qwerty.KEY_M),
                     backspaceKey(
                         id = KeyIds.Qwerty.KEY_DELETE,
                         src = R.drawable.ic_keyboard_backspace_outline,
@@ -281,13 +357,15 @@ class QwertyKeyboard(
 
     init {
         this.updatePunctuationMode(punctuationState)
-        // 26 键几何（2026-11-06 施工单 3：源包键面内缩）：无皮肤时
-        // 按源包键距覆写视图边距（字母横 2.5／功能横 3、纵 3.5dp，
-        // 全局 Gap 用户设置只对其他键盘生效）；皮肤生效时皮肤几何
-        // 优先，不覆写。行高由窗口高度（25vh）定，圆角沿用 9dp 缺省。
+        // 26 键几何（2026-11-06 施工单 3：源包键面内缩；施工单 4：
+        // 只在绿预设时按源包键距覆写视图边距（字母横 2.5／功能横 3、
+        // 纵 3.5dp）；其余主题沿用出厂边距（全局 Gap 用户设置）。
+        // 皮肤生效时皮肤几何优先，不覆写。行高由窗口高度（绿预设
+        // 25vh）定，圆角沿用 9dp 缺省。
         val noSnapshot = SkinSnapshotProvider.peek() == null
+        val greenLayout = noSnapshot && isGreenReturnTheme()
         val density = context.resources.displayMetrics.density
-        val indentDp = if (noSnapshot) {
+        val indentDp = if (greenLayout) {
             0.05f * context.resources.displayMetrics.widthPixels / density
         } else {
             0f
@@ -315,7 +393,7 @@ class QwertyKeyboard(
                         }
                     }
                 }
-                if (noSnapshot) {
+                if (greenLayout) {
                     val isLetterFace = child.def.variant == Variant.Normal
                     child.hMargin = ((if (isLetterFace) 2.5f else 3f) * density).toInt()
                     child.vMargin = (3.5f * density).toInt()
@@ -372,13 +450,8 @@ class QwertyKeyboard(
         refreshReturnKeyStyling()
     }
 
-    /** 绿预设回车分色是否生效：无皮肤快照且当前内置主题为绿预设（26键·浅／深）。 */
-    private fun isGreenReturnTheme(): Boolean {
-        if (SkinSnapshotProvider.peek() != null) return false
-        val themeId = KeyboardColors.themeFor(context).id
-        return themeId == KeyboardThemePresets.WeChatGreenLight.id ||
-            themeId == KeyboardThemePresets.WeChatGreenDark.id
-    }
+    /** 绿预设回车分色是否生效：与布局分支同一判定，见 companion isGreenTheme。 */
+    private fun isGreenReturnTheme(): Boolean = isGreenTheme(context)
 
     /**
      * 回车键绿/灰分色（2026-11-06 施工单 3：源包 enterButton）：

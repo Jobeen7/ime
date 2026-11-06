@@ -128,8 +128,7 @@ class KeyOverrideApplierTest {
         assertEquals("酷", (copied.appearance as KeyDef.Appearance.Text).displayText)
         // 未命中键原对象透传；输入布局零修改
         assertSame(layout.byId("KEY_W"), result.byId("KEY_W"))
-        // 出厂显示为大写（2026-11-06 施工单 3：26 键字母大写无副标）。
-        assertEquals("Q", (layout.byId("KEY_Q").appearance as KeyDef.Appearance.Text).displayText)
+        assertEquals("q", (layout.byId("KEY_Q").appearance as KeyDef.Appearance.Text).displayText)
     }
 
     @Test
@@ -268,14 +267,12 @@ class KeyOverrideApplierTest {
 
     @Test
     fun tapOverrideReplacesPressKeepsFactoryLongPress() {
-        // 出厂长按以 KEY_A 为夹具（2026-11-06 施工单 3 后 KEY_Q 的出厂
-        // 长按是提示符弹窗、无 LongPress 行为；KEY_A 仍保留长按“~”）。
         val result = applyQwerty(
-            snapshot(mapOf("KEY_A" to KeyOverride(tap = SkinAction.Text("x")))),
+            snapshot(mapOf("KEY_Q" to KeyOverride(tap = SkinAction.Text("x")))),
         )
-        val def = result.byId("KEY_A")
+        val def = result.byId("KEY_Q")
         assertEquals(KeyboardAction.KeySequenceAction("x"), def.pressAction())
-        assertEquals(KeyboardAction.CommitAction("~"), def.longPressAction())
+        assertEquals(KeyboardAction.CommitAction("1"), def.longPressAction())
     }
 
     @Test

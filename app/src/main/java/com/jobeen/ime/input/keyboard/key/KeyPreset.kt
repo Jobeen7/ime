@@ -12,14 +12,39 @@ import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Border
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 
 /**
- * 26 键字母键（2026-11-06 施工单 3：源包 pinyin_26 样式）：
- * 大写显示、无副标、字号 16；点按动作仍为小写字母（大写由
- * QwertyKeyboard.transformAction 按 Caps 态变换，与显示无关）。
- * 长按：popup != null 时挂长按弹窗（源包提示符 hintSymbols，
- * 动作一律 KeySequenceAction，与皮肤路径 toRuntime(Text) 同口径）；
- * 否则 punctuation != null 时长按直接提交该标点（原有行为保留）。
+ * 出厂 26 键字母键（.19 原样，施工单 4：默认分支恢复此口径）：
+ * 小写显示、副标为标点、字号 22；长按直接提交标点。
  */
 fun alphabetKey(
+    character: String,
+    punctuation: String,
+    altTextTranslationY: Int = 2,
+    mainTextTranslationY: Int = -2,
+    id: String? = null,
+) = KeyDef(
+    id = id,
+    appearance = KeyDef.Appearance.AltText(
+        displayText = character,
+        altText = punctuation,
+        textSize = 22f,
+        altTextTranslationY = altTextTranslationY,
+        mainTextTranslationY = mainTextTranslationY,
+        variant = Variant.Normal
+    ), behaviors = setOf(
+        KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(character)),
+        KeyDef.Behavior.LongPress(KeyboardAction.CommitAction(punctuation))
+    )
+)
+
+/**
+ * 绿预设 26 键字母键（2026-11-06 施工单 3：源包 pinyin_26 样式，
+ * 施工单 4：只在绿预设分支用）：大写显示、无副标、字号 16；点按动作
+ * 仍为小写字母（大写由 QwertyKeyboard.transformAction 按 Caps 态变换，
+ * 与显示无关）。长按：popup != null 时挂长按弹窗（源包提示符
+ * hintSymbols，动作一律 KeySequenceAction，与皮肤路径 toRuntime(Text)
+ * 同口径）；否则 punctuation != null 时长按直接提交该标点（原有行为保留）。
+ */
+fun greenAlphabetKey(
     character: String,
     punctuation: String? = null,
     id: String? = null,

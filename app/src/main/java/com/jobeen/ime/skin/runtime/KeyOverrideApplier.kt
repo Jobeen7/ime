@@ -743,9 +743,6 @@ object KeyOverrideApplier {
 
         var behaviors = def.behaviors
         var extraPopup: KeyDef.Popup.Keyboard? = null
-        // 长按覆写是否接管了长按槽（单项直接行为／多项候选条；
-        // 全占位时不接管，出厂原样保留）。
-        var longPressSlotOverridden = false
         if (override != null) {
             // Wave-4 点击三态合并：tap/preeditTap/uppercasedTap
             // 任一 present 即重建 Press（其余态沿用出厂 Press）；
@@ -827,7 +824,6 @@ object KeyOverrideApplier {
                     behaviors = behaviors.replaceSlot<KeyDef.Behavior.LongPress> {
                         KeyDef.Behavior.LongPress(toRuntime(effective.single()))
                     }
-                    longPressSlotOverridden = true
                 } else if (effective.size >= 2) {
                     // 多项长按（定稿四.7）：只装 Popup.Keyboard 候选条——
                     // 视图的长按监听是单槽，若同时装 LongPress 行为，
@@ -838,7 +834,6 @@ object KeyOverrideApplier {
                         label = mainText,
                         keys = effective.map { toRuntime(it) },
                     )
-                    longPressSlotOverridden = true
                 }
                 // effective 为空（全占位）→ 整槽回退出厂，不动 behaviors
             }
@@ -963,22 +958,12 @@ object KeyOverrideApplier {
                     ?: emptyList()
                 (base + popupCharsPopup).toTypedArray()
             }
-            extraPopup != null -> {
-                // 多项长按候选条取代出厂 Popup.Keyboard（26 键出厂自带
-                // 提示符弹窗，覆写后不得残留双候选条）；Preview/Menu 原样保留。
-                val base = factoryPopups?.filterNot { it is KeyDef.Popup.Keyboard }
-                    ?: emptyList()
-                (base + extraPopup).toTypedArray()
+            extraPopup == null -> factoryPopups
+            factoryPopups == null -> arrayOf(extraPopup)
+            else -> Array(factoryPopups.size + 1) { index ->
+                // 出厂弹窗在前，候选条监听最后注册胜出
+                if (index < factoryPopups.size) factoryPopups[index] else extraPopup
             }
-            longPressSlotOverridden -> {
-                // 单项长按直接行为同样接管长按槽：出厂 Popup.Keyboard
-                // 摘除（否则与 LongPress 行为并存，弹窗监听被遮蔽成死槽）；
-                // Preview/Menu 原样保留；摘空后回落 null。
-                val base = factoryPopups?.filterNot { it is KeyDef.Popup.Keyboard }
-                    ?: emptyList()
-                base.toTypedArray().takeIf { it.isNotEmpty() }
-            }
-            else -> factoryPopups
         }
 
         return KeyDef(
