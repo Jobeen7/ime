@@ -103,6 +103,42 @@ object KeyOverrideApplier {
         data object Muted : SoundPlan
     }
 
+    /** 下滑 Tab 提示字形（U+21E5；对端按 swipeDownAction "tab" 派生同款）。 */
+    private const val TAB_HINT_GLYPH = "⇥"
+
+    /** Tab 键码（KeyEvent.KEYCODE_TAB；与 [toRuntime] 的 TAB 映射同值）。 */
+    private const val TAB_KEY_CODE = 61
+
+    /**
+     * 副文字槽口径（与 copyWith 同口径）：AltText，或非 ImageText 的 Text。
+     */
+    private fun supportsSubLabel(appearance: KeyDef.Appearance): Boolean =
+        appearance is KeyDef.Appearance.AltText ||
+            (appearance is KeyDef.Appearance.Text &&
+                appearance !is KeyDef.Appearance.ImageText)
+
+    /**
+     * 副文字槽空闲：槽可用，且现有副显为空（有副显的键不被提示覆盖）。
+     */
+    private fun hasFreeSubLabelSlot(def: KeyDef): Boolean {
+        if (!supportsSubLabel(def.appearance)) return false
+        val alt = (def.appearance as? KeyDef.Appearance.AltText)?.altText
+        return alt.isNullOrBlank()
+    }
+
+    /**
+     * 本键是否需派生 TAB 下滑提示：副文字槽空闲，且出厂下滑动作为 Tab。
+     * （仅装配触发判定用：逐键覆写／锁定通知另行改下滑时，覆写非空
+     * 本就触发装配，无需在此预判。）
+     */
+    private fun needsTabHint(def: KeyDef): Boolean {
+        if (!hasFreeSubLabelSlot(def)) return false
+        val down = def.behaviors
+            .filterIsInstance<KeyDef.Behavior.Swipe>()
+            .firstOrNull()?.downAction
+        return down is KeyboardAction.AppKeyEventAction && down.keyCode == TAB_KEY_CODE
+    }
+
     /**
      * @param layoutName 布局 NAME（仅用于诊断日志）。
      * @param placeholders 占位符预计算值（[PlaceholderValues.current]）。
@@ -161,10 +197,14 @@ object KeyOverrideApplier {
         // G1：皮肤级分档字号非空时同样全局走装配（逐键字号替换）。
         // 接线轮 R1：通知表非空时同样走装配（锁定可能命中样式引用键）。
         // 动效规格非空时同样走装配（全部键须写动效规格）。
+        // TAB 下滑提示派生本身也是装配触发项（否则无其他触发项的
+        // 皮肤会整布局原样返回，提示派生不到）。
+        val needsTabHintPass = mnemonicEnabled &&
+            factoryLayout.any { row -> row.any { needsTabHint(it) } }
         if (overrides.isEmpty() && !hasGlobalSound && snapshot.keyStyles.isEmpty() &&
             snapshot.keyGeometries.isEmpty() && snapshot.textSizes.isEmpty() &&
             notifications.isEmpty() &&
-            keyAnim == null && spaceAnim == null
+            keyAnim == null && spaceAnim == null && !needsTabHintPass
         ) {
             return factoryLayout
         }
@@ -179,7 +219,7 @@ object KeyOverrideApplier {
                 val rawOverride = def.id?.let { overrides[it] }?.takeIf { it.hasEffect() }
                 // 拟态开关压制（冷路径）：助记关去附加小字、装饰关
                 // 去前景层；压制后无剩余效果的覆写按无覆写处理。
-                val override = rawOverride?.let {
+                var override = rawOverride?.let {
                     var suppressed = it
                     if (!mnemonicEnabled &&
                         (it.subLabel != null || it.subLabelTop != null)
@@ -225,6 +265,32 @@ object KeyOverrideApplier {
                 // 或覆写 styleRef；无样式引用键不命中）。
                 val styleRef = override?.styleRef ?: def.skinStyleRef
                 val latched = styleRef?.let { notifications[it] }
+                // TAB 下滑提示（施工单 5 第 10 项）：下滑 tab 的键在无显式
+                // subLabel 时补 "⇥" 副显——对端按 swipeDownAction 派生，
+                // 转换器不写 subLabel、布局行模型无此字段，故装配期派生。
+                // 生效下滑动作取锁定通知 > 逐键覆写 > 出厂（占位符 = 未写，
+                // 回落下一级）；助记关不派生（与显式 subLabel 压制同口径）。
+                if (mnemonicEnabled && override?.subLabel == null &&
+                    hasFreeSubLabelSlot(def)
+                ) {
+                    val latchedDown = latched?.swipeDownAction
+                        ?.takeIf { it != SkinAction.SequencePlaceholder }
+                    val overrideDown = override?.swipeDown
+                        ?.takeIf { it != SkinAction.SequencePlaceholder }
+                    val effectiveDownAction = when {
+                        latchedDown != null -> toRuntime(latchedDown)
+                        overrideDown != null -> toRuntime(overrideDown)
+                        else -> def.behaviors
+                            .filterIsInstance<KeyDef.Behavior.Swipe>()
+                            .firstOrNull()?.downAction
+                    }
+                    if (effectiveDownAction is KeyboardAction.AppKeyEventAction &&
+                        effectiveDownAction.keyCode == TAB_KEY_CODE
+                    ) {
+                        override = override?.copy(subLabel = TAB_HINT_GLYPH)
+                            ?: KeyOverride(subLabel = TAB_HINT_GLYPH)
+                    }
+                }
                 // 行宽归一化改变了本键宽度时也必须复制，否则归一化结果
                 // 会随未命中键的原样返回而丢失（行宽和不再守恒）。
                 val widthChanged = widths[index] != def.appearance.percentWidth
@@ -641,16 +707,14 @@ object KeyOverrideApplier {
         // 顶部小字与底部副文字同槽口径：两者任一存在即走 AltText。
         val subLabel = override?.subLabel
         val subLabelTop = override?.subLabelTop
-        val supportsSubLabel = def.appearance is KeyDef.Appearance.AltText ||
-            (def.appearance is KeyDef.Appearance.Text &&
-                def.appearance !is KeyDef.Appearance.ImageText)
-        if (subLabel != null && !supportsSubLabel) {
+        val subLabelSupported = supportsSubLabel(def.appearance)
+        if (subLabel != null && !subLabelSupported) {
             DiagLog.w(
                 "keymap", "sublabel_unsupported_appearance",
                 mapOf("layout" to layoutName, "keyId" to def.id),
             )
         }
-        if (subLabelTop != null && !supportsSubLabel) {
+        if (subLabelTop != null && !subLabelSupported) {
             DiagLog.w(
                 "keymap", "sublabel_top_unsupported_appearance",
                 mapOf("layout" to layoutName, "keyId" to def.id),
