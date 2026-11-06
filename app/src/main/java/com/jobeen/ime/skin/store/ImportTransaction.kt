@@ -5,6 +5,9 @@ import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.fault.SkinFaultHooks
 import java.io.File
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /**
  * 导入事务的机制层（详设 §2.3，步骤写死）：
@@ -28,6 +31,20 @@ class ImportTransaction(
     private val uuid: () -> String = { UUID.randomUUID().toString() },
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
+    companion object {
+        /**
+         * 提交锁按库根目录共享：生产每次 import 都新建 ImportTransaction
+         * （见 SkinPackages.importer），实例级锁拦不住跨实例并行导入；
+         * 锁只罩读索引→改名→写索引一段（构建与校验只碰本笔 staging，
+         * 不进锁）。单把锁、无嵌套，故无死锁；表项按库根数增长
+         * （生产 1 个），不回收。
+         */
+        private val commitLocks = ConcurrentHashMap<String, Mutex>()
+
+        private fun commitLockFor(root: File): Mutex =
+            commitLocks.getOrPut(root.absolutePath) { Mutex() }
+    }
+
     data class StagedSkin(val id: String, val name: String, val dir: File, val hash: String)
     data class StagedLayout(val id: String, val dir: File, val hash: String)
     data class StagedAsset(val sha256: String, val file: File)
@@ -69,105 +86,111 @@ class ImportTransaction(
             SkinFaultHooks.hit(SkinFaultHooks.Point.I2)
             verifyStaged(built)
 
-            val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
-                ?: LibraryIndex()
-
-            // 身份判定（定稿七.4）：同 id 同 hash → 跳过；同 id 异 hash 由
-            // 构建回调在 T3 层先行做副本判定，本机制层只处理无冲突入库
-            val skinsToImport = mutableListOf<StagedSkin>()
+            // 提交锁（同库根共享）：读索引→改名→写索引须整段串行——
+            // 同 id 会撞同一代次目录（rename 失败），异 id 会各自拿旧索引
+            // 快照写回、丢对方条目。构建回调与校验只碰本笔 staging
+            // （uuid 唯一），不进锁。
             val skippedSkins = mutableListOf<String>()
-            for (staged in built.skins) {
-                val existing = index.skins.firstOrNull { it.id == staged.id }
-                if (existing != null && existing.hash == staged.hash) {
-                    skippedSkins += staged.id
-                } else {
-                    skinsToImport += staged
-                }
-            }
-            val layoutsToImport = mutableListOf<StagedLayout>()
             val skippedLayouts = mutableListOf<String>()
-            for (staged in built.layouts) {
-                val existing = index.layouts.firstOrNull { it.id == staged.id }
-                if (existing != null && existing.hash == staged.hash) {
-                    skippedLayouts += staged.id
-                } else {
-                    layoutsToImport += staged
-                }
-            }
-
-            stage = "rename"
             val newSkinEntries = mutableListOf<SkinIndexEntry>()
-            for (staged in skinsToImport) {
-                val generation = nextGeneration(
-                    index.skins.firstOrNull { it.id == staged.id }?.generation,
-                    diskGenerations(layout.skinsDir, staged.id),
-                )
-                val target = layout.skinGenDir(staged.id, generation)
-                target.parentFile?.mkdirs()
-                check(staged.dir.renameTo(target)) { "rename staged skin ${staged.id} failed" }
-                renamedTargets += target
-                newSkinEntries += SkinIndexEntry(
-                    id = staged.id,
-                    name = staged.name,
-                    hash = staged.hash,
-                    generation = generation,
-                    dir = layout.skinGenRelative(staged.id, generation),
-                    sizeBytes = layout.dirBytes(target),
-                    updatedAt = clock(),
-                )
-            }
             val newLayoutEntries = mutableListOf<LayoutIndexEntry>()
-            for (staged in layoutsToImport) {
-                val generation = nextGeneration(
-                    index.layouts.firstOrNull { it.id == staged.id }?.generation,
-                    diskGenerations(layout.layoutsDir, staged.id),
-                )
-                val target = layout.layoutGenDir(staged.id, generation)
-                target.parentFile?.mkdirs()
-                check(staged.dir.renameTo(target)) { "rename staged layout ${staged.id} failed" }
-                renamedTargets += target
-                newLayoutEntries += LayoutIndexEntry(
-                    id = staged.id,
-                    hash = staged.hash,
-                    generation = generation,
-                    dir = layout.layoutGenRelative(staged.id, generation),
-                    sizeBytes = layout.dirBytes(target),
-                    updatedAt = clock(),
-                )
-            }
-            // 资产实体：内容寻址，已存在即去重跳过（定稿七.5）
             val importedAssetShas = mutableListOf<String>()
-            for (staged in built.assets) {
-                if (layout.assetFiles(staged.sha256).isNotEmpty()) continue
-                val ext = staged.file.extension.ifBlank { null }
-                val target = layout.assetFile(staged.sha256, ext)
-                check(staged.file.renameTo(target)) { "rename staged asset ${staged.sha256} failed" }
-                renamedTargets += target
-                importedAssetShas += staged.sha256
-            }
-            SkinFaultHooks.hit(SkinFaultHooks.Point.I3)
+            commitLockFor(layout.root).withLock {
+                val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
+                    ?: LibraryIndex()
 
-            stage = "index"
-            SkinFaultHooks.hit(SkinFaultHooks.Point.I4)
-            var newIndex = index.copy(
-                skins = mergeEntries(index.skins, newSkinEntries) { it.id },
-                layouts = mergeEntries(index.layouts, newLayoutEntries) { it.id },
-            )
-            // 资产条目并入后按引用图统一刷新 refcountCache（与对账同口径）
-            val knownShas = newIndex.assets.map { it.sha256 }.toMutableSet()
-            val assetEntries = newIndex.assets.toMutableList()
-            for (sha in importedAssetShas) {
-                if (knownShas.add(sha)) {
-                    val size = layout.assetFiles(sha).firstOrNull()?.length() ?: 0L
-                    assetEntries += AssetIndexEntry(sha256 = sha, sizeBytes = size, refcountCache = 0)
+                // 身份判定（定稿七.4）：同 id 同 hash → 跳过；同 id 异 hash 由
+                // 构建回调在 T3 层先行做副本判定，本机制层只处理无冲突入库
+                val skinsToImport = mutableListOf<StagedSkin>()
+                for (staged in built.skins) {
+                    val existing = index.skins.firstOrNull { it.id == staged.id }
+                    if (existing != null && existing.hash == staged.hash) {
+                        skippedSkins += staged.id
+                    } else {
+                        skinsToImport += staged
+                    }
                 }
+                val layoutsToImport = mutableListOf<StagedLayout>()
+                for (staged in built.layouts) {
+                    val existing = index.layouts.firstOrNull { it.id == staged.id }
+                    if (existing != null && existing.hash == staged.hash) {
+                        skippedLayouts += staged.id
+                    } else {
+                        layoutsToImport += staged
+                    }
+                }
+
+                stage = "rename"
+                for (staged in skinsToImport) {
+                    val generation = nextGeneration(
+                        index.skins.firstOrNull { it.id == staged.id }?.generation,
+                        diskGenerations(layout.skinsDir, staged.id),
+                    )
+                    val target = layout.skinGenDir(staged.id, generation)
+                    target.parentFile?.mkdirs()
+                    check(staged.dir.renameTo(target)) { "rename staged skin ${staged.id} failed" }
+                    renamedTargets += target
+                    newSkinEntries += SkinIndexEntry(
+                        id = staged.id,
+                        name = staged.name,
+                        hash = staged.hash,
+                        generation = generation,
+                        dir = layout.skinGenRelative(staged.id, generation),
+                        sizeBytes = layout.dirBytes(target),
+                        updatedAt = clock(),
+                    )
+                }
+                for (staged in layoutsToImport) {
+                    val generation = nextGeneration(
+                        index.layouts.firstOrNull { it.id == staged.id }?.generation,
+                        diskGenerations(layout.layoutsDir, staged.id),
+                    )
+                    val target = layout.layoutGenDir(staged.id, generation)
+                    target.parentFile?.mkdirs()
+                    check(staged.dir.renameTo(target)) { "rename staged layout ${staged.id} failed" }
+                    renamedTargets += target
+                    newLayoutEntries += LayoutIndexEntry(
+                        id = staged.id,
+                        hash = staged.hash,
+                        generation = generation,
+                        dir = layout.layoutGenRelative(staged.id, generation),
+                        sizeBytes = layout.dirBytes(target),
+                        updatedAt = clock(),
+                    )
+                }
+                // 资产实体：内容寻址，已存在即去重跳过（定稿七.5）
+                for (staged in built.assets) {
+                    if (layout.assetFiles(staged.sha256).isNotEmpty()) continue
+                    val ext = staged.file.extension.ifBlank { null }
+                    val target = layout.assetFile(staged.sha256, ext)
+                    check(staged.file.renameTo(target)) { "rename staged asset ${staged.sha256} failed" }
+                    renamedTargets += target
+                    importedAssetShas += staged.sha256
+                }
+                SkinFaultHooks.hit(SkinFaultHooks.Point.I3)
+
+                stage = "index"
+                SkinFaultHooks.hit(SkinFaultHooks.Point.I4)
+                var newIndex = index.copy(
+                    skins = mergeEntries(index.skins, newSkinEntries) { it.id },
+                    layouts = mergeEntries(index.layouts, newLayoutEntries) { it.id },
+                )
+                // 资产条目并入后按引用图统一刷新 refcountCache（与对账同口径）
+                val knownShas = newIndex.assets.map { it.sha256 }.toMutableSet()
+                val assetEntries = newIndex.assets.toMutableList()
+                for (sha in importedAssetShas) {
+                    if (knownShas.add(sha)) {
+                        val size = layout.assetFiles(sha).firstOrNull()?.length() ?: 0L
+                        assetEntries += AssetIndexEntry(sha256 = sha, sizeBytes = size, refcountCache = 0)
+                    }
+                }
+                newIndex = newIndex.copy(assets = assetEntries)
+                val refcounts = AssetRefcounts.compute(layout, newIndex)
+                newIndex = newIndex.copy(
+                    assets = newIndex.assets.map { it.copy(refcountCache = refcounts[it.sha256] ?: 0) },
+                )
+                store.writeIndex(newIndex)
             }
-            newIndex = newIndex.copy(assets = assetEntries)
-            val refcounts = AssetRefcounts.compute(layout, newIndex)
-            newIndex = newIndex.copy(
-                assets = newIndex.assets.map { it.copy(refcountCache = refcounts[it.sha256] ?: 0) },
-            )
-            store.writeIndex(newIndex)
             // 索引已落盘：此后失败不得再删目标（目标已是活代次）。
             stage = "post_index"
             SkinFaultHooks.hit(SkinFaultHooks.Point.I5)

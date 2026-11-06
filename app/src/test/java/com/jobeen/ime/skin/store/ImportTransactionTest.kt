@@ -1,8 +1,13 @@
 package com.jobeen.ime.skin.store
 
 import com.jobeen.ime.base.util.DigestUtil
+import com.jobeen.ime.skin.fault.SkinFaultHooks
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CyclicBarrier
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -13,6 +18,11 @@ import org.junit.Test
  * 导入事务机制层（详设 §2.3）：staging 生命周期、代次分配、
  * 同 id 同 hash 跳过、hash 复核、失败清理（库零变化）。
  * 包内容由测试回调直接在 staging 内摆好（校验管线属 T3）。
+ * 并行导入：提交段（读索引→改名→写索引）跨实例串行——
+ * 同 id 并行会撞同一代次目录（rename 失败），异 id 并行会
+ * 各自拿旧索引快照写回、丢对方条目（探针复现：同 id 9/30、
+ * 异 id 24/30）；两支测试用 I2 栅栏把两笔导入对齐在读索引
+ * 之前，否则时序可能自然串行、测不到竞态。
  */
 class ImportTransactionTest {
 
@@ -164,5 +174,85 @@ class ImportTransactionTest {
         assertEquals(1, result.layouts[0].generation)
         assertTrue(File(f.layout.layoutGenDir("l1", 1), "layout.json").isFile)
         assertEquals("layouts/l1/gen-1", f.index().layouts[0].dir)
+    }
+
+    @Test
+    fun parallelSameIdImports_bothSucceedWithDistinctGenerations() = runBlocking {
+        val f = Fixture()
+        try {
+            repeat(20) { round ->
+                val id = "race-$round"
+                val barrier = CyclicBarrier(2)
+                SkinFaultHooks.handler = { point ->
+                    if (point == SkinFaultHooks.Point.I2) barrier.await(30, TimeUnit.SECONDS)
+                }
+                val a = async(Dispatchers.Default) {
+                    f.tx.importPackage { staging ->
+                        ImportTransaction.BuiltPackage(
+                            skins = listOf(f.stageSkin(staging, id, salt = "v1")),
+                        )
+                    }
+                }
+                val b = async(Dispatchers.Default) {
+                    f.tx.importPackage { staging ->
+                        ImportTransaction.BuiltPackage(
+                            skins = listOf(f.stageSkin(staging, id, salt = "v2")),
+                        )
+                    }
+                }
+                val ra = a.await()
+                val rb = b.await()
+                assertTrue("round $round a failed: $ra", ra is ImportTransaction.Result.Imported)
+                assertTrue("round $round b failed: $rb", rb is ImportTransaction.Result.Imported)
+                val gens = listOf(
+                    (ra as ImportTransaction.Result.Imported).skins[0].generation,
+                    (rb as ImportTransaction.Result.Imported).skins[0].generation,
+                ).sorted()
+                assertEquals("round $round generations", listOf(1, 2), gens)
+                assertEquals(2, f.index().skins.first { it.id == id }.generation)
+                assertTrue(File(f.layout.skinGenDir(id, 1), "skin.json").isFile)
+                assertTrue(File(f.layout.skinGenDir(id, 2), "skin.json").isFile)
+            }
+        } finally {
+            SkinFaultHooks.handler = {}
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun parallelDifferentIdImports_bothEntriesKept() = runBlocking {
+        val f = Fixture()
+        try {
+            repeat(20) { round ->
+                val barrier = CyclicBarrier(2)
+                SkinFaultHooks.handler = { point ->
+                    if (point == SkinFaultHooks.Point.I2) barrier.await(30, TimeUnit.SECONDS)
+                }
+                val a = async(Dispatchers.Default) {
+                    f.tx.importPackage { staging ->
+                        ImportTransaction.BuiltPackage(
+                            skins = listOf(f.stageSkin(staging, "dx-$round", salt = "v1")),
+                        )
+                    }
+                }
+                val b = async(Dispatchers.Default) {
+                    f.tx.importPackage { staging ->
+                        ImportTransaction.BuiltPackage(
+                            skins = listOf(f.stageSkin(staging, "dy-$round", salt = "v1")),
+                        )
+                    }
+                }
+                val ra = a.await()
+                val rb = b.await()
+                assertTrue("round $round a failed: $ra", ra is ImportTransaction.Result.Imported)
+                assertTrue("round $round b failed: $rb", rb is ImportTransaction.Result.Imported)
+                val ids = f.index().skins.map { it.id }.toSet()
+                assertTrue("round $round missing dx-$round in $ids", ids.contains("dx-$round"))
+                assertTrue("round $round missing dy-$round in $ids", ids.contains("dy-$round"))
+            }
+        } finally {
+            SkinFaultHooks.handler = {}
+            f.root.deleteRecursively()
+        }
     }
 }
