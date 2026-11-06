@@ -26,8 +26,10 @@ import kotlinx.serialization.json.longOrNull
  * 皮肤库管理操作（详设 §2）：删除是 B1 唯一的破坏性库操作，
  * 口径写死——
  *
- * - 删生效中的皮肤：先经应用事务回退内置默认，成功后才删
- *   （运行态永不指向已删代次）；回退失败则拒绝删除。
+ * - 删生效中的皮肤：先删（tombstone + 原子索引提交），提交
+ *   成功后再经应用事务回退内置默认（运行态永不指向已删代次）；
+ *   提交前任一步失败则删除如同没发生；回退失败不翻案（皮肤确
+ *   已删，滞后记录由下次启动对账收敛，见 deleteSkinInner 第 4 步）。
  * - Last-Good 指针指向被删皮肤：一并清除（指针不得悬空）。
  * - 连带删除其草稿（草稿归属该 id，一并失效）。
  * - 删布局（B3 §4.6 按定稿改）：不再因被引用而拒绝——调用方先经
@@ -36,27 +38,40 @@ import kotlinx.serialization.json.longOrNull
  *   layoutId 未设处理并回退默认布局。连带其布局草稿。
  * - 资产实体不在此处回收：引用计数由启动对账全量重建（七.5）。
  *
- * 删除事务（tombstone + 原子索引提交，审计 #1-5）：
+ * 删除事务（tombstone + 原子索引提交，审计 #1-5；2026-11-07
+ * 审计问题 1 重排：回退挪到索引提交之后）：
  * 旧顺序「先删目录、后写索引」在索引写失败时留下「目录已删、
- * 旧索引仍指向」的半截状态。新顺序分四步，任一步失败都不丢数据：
+ * 旧索引仍指向」的半截状态；「先回退、后删」的旧顺序则在回退
+ * 成功后任一步失败时留下「目录／索引仍在、运行态与记录已是
+ * 默认」的半截状态，且管理层无 writeActive 可恢复。新顺序分
+ * 四步，提交前任一步失败都不丢数据、且不碰生效态：
  *
  * 1. 把待删目录原子 rename 到同库 `trash/` 下的 tombstone
  *    （同文件系统内 rename，成功即整目录瞬间搬走；tombstone
  *    内含 `delete-intent.json`，记 kind/id/atMs，是崩溃恢复的凭据）。
  * 2. 提交新索引（[SkinLibraryStore.writeIndex] 经 [com.jobeen.ime.skin.store.AtomicFiles]
- *    tmp+rename 原子替换，旧索引或新索引完整二选一）。
- * 3. 索引成功后才清 Last-Good、清无主资产，并异步清理 tombstone。
- * 4. 索引写失败则把目录从 tombstone 原样 rename 回去，返回
+ *    tmp+rename 原子替换，旧索引或新索引完整二选一）；失败则
+ *    把目录从 tombstone 原样 rename 回去，返回
  *    Refused（index_write_failed），索引与目录都保持删除前状态。
+ * 3. 索引成功后才清 Last-Good（现读现判），并异步清理 tombstone。
+ * 4. 删的是生效皮肤时才回退内置默认（提交后现读 active 判定）；
+ *    回退先重试一次，两次失败仍返回 Done（皮肤确已删干净）并记
+ *    日志：active 记录滞后指向已删皮肤，下次启动对账按
+ *    ActiveResolver 裁决收敛为默认，不悬空；修剪放回退之后，
+ *    回退失败时跳过（孤儿资产由下次启动异步回收）。
  *
- * 进程在三处被杀的收敛（[recoverPendingDeletes]，每次删除前与
+ * 进程在四处被杀的收敛（[recoverPendingDeletes]，每次删除前与
  * 下次管理操作时执行；启动对账本身也会收敛悬空条目）：
  * - rename 后、索引提交前被杀：tombstone 在、旧索引仍指向该 id
- *   → 恢复目录名（回滚），删除如同没发生；
- * - 索引提交后、tombstone 清理前被杀：tombstone 在、新索引已
- *   不含该 id → 删 tombstone（继续完成删除）；
+ *   → 恢复目录名（回滚），删除如同没发生，生效态全程未动；
+ * - 索引提交后、回退前被杀：tombstone 在、新索引已
+ *   不含该 id → 删 tombstone（继续完成删除）；active 记录仍
+ *   指已删皮肤，下次启动对账按 ActiveResolver 裁决收敛为默认；
  * - 索引写进行中被杀：索引原子写保证旧版或新版完整二选一，
- *   按上两条之一收敛，绝不出现半截索引。
+ *   按上两条之一收敛，绝不出现半截索引；
+ * - 回退进行中被杀：切换与写记录各至多完成其一；记录若已是
+ *   默认则一致，若仍指已删皮肤则下次启动对账收敛为默认；
+ *   运行态随进程重建，不残留。
  * 若同一 id 在崩溃后又被重新导入（目标目录已存在），tombstone
  * 视为过期残留、直接清理，不覆盖新目录。
  *
@@ -87,8 +102,9 @@ class SkinLibraryAdmin internal constructor(
     private val trashDir: File get() = File(layout.root, "trash")
 
     /**
-     * @param revertToDefault 生效中皮肤删除前由调用方执行的回退
-     * （应用事务 revertToDefault），返回是否成功；非生效皮肤不调用。
+     * @param revertToDefault 删的是生效皮肤时，索引提交后由调用方
+     * 执行的回退（应用事务 revertToDefault），返回是否成功；非生效
+     * 皮肤、或提交后 active 已改指他皮肤时不调用。
      */
     /**
      * 删除被拒绝记日志（2026-10-27 硬要求）：种类 + id + 原因。
@@ -115,12 +131,14 @@ class SkinLibraryAdmin internal constructor(
         val index = readIndex() ?: return@withLock Result.Refused("index_unavailable")
         val entry = index.skins.firstOrNull { it.id == skinId }
             ?: return@withLock Result.Refused("not_found")
-        val active = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
-        if (active?.skinId == skinId && !revertToDefault()) {
-            return@withLock Result.Refused("revert_failed")
-        }
-        val lastGood = (store.readLastGood() as? SkinLibraryStore.ReadResult.Ok)?.value
-        val clearLastGood = lastGood?.skinId == skinId
+        // 顺序（审计问题 1）：破坏性步骤先行、回退最后。旧顺序
+        // 先回退再删：回退成功后 tombstone／改名／索引提交任一步
+        // 失败，目录已恢复、索引仍在，但运行快照与 active 记录
+        // 已是默认——五项（目录／索引／active／Last-Good／快照）
+        // 不一致，且 AdminStore 没有 writeActive，管理层在结构上
+        // 无法把活动皮肤恢复回来。新顺序把回退挪到索引提交之后：
+        // 提交前任一步失败，active 记录／运行快照／Last-Good
+        // 全程未动，删除如同没发生，无需恢复路径。
         // 1. 先搬 tombstone，再提交索引（目录在索引提交前绝不消失）。
         val tombstone = prepareTombstone("skin", skinId)
             ?: return@withLock Result.Refused("tombstone_failed")
@@ -154,22 +172,52 @@ class SkinLibraryAdmin internal constructor(
             )
             return@withLock Result.Refused("index_write_failed")
         }
-        // 3. 索引已提交：异步清理 tombstone，再清指针与无主资产
-        // （清指针放提交后：提交前崩溃由启动对账清悬空指针；
-        // 提交后指针若未清，仍指向一个已不在索引里的 id，对账
-        // 同样会清，不悬空）。
+        // 3. 索引已提交：异步清理 tombstone，再清指针（清指针放
+        // 提交后：提交前崩溃由启动对账清悬空指针；提交后指针若
+        // 未清，仍指向一个已不在索引里的 id，对账同样会清，不悬空）。
+        // active／Last-Good 在此现读现判：提交前读的值在删除与
+        // 提交之间可能已变（用户另应用了皮肤），过期判定会误清
+        // 新指针、误回退新皮肤。
         scheduleTombstoneCleanup(tombstone)
-        if (clearLastGood) {
+        val lastGood = (store.readLastGood() as? SkinLibraryStore.ReadResult.Ok)?.value
+        if (lastGood?.skinId == skinId) {
             store.clearLastGood()
         }
-        // 删皮肤后清无主视频资产（2026-10-29 外观轮）：共享资产
-        // 目录不随皮肤目录走，末引用者删后视频即成孤儿。
-        VideoAssetPruner.pruneUnreferencedVideos(layout)
-        // 第 5 批 §1：同口径清无主非视频资产（模型引用 + 剩余
-        // 引用计数为零 + canonical 落在素材根内才删；图片缓存
-        // 不全局清，见 SkinAssetPruner 注释——生效皮肤的键图
-        // 字节源随快照，删非生效皮肤不得断它）。
-        com.jobeen.ime.skin.store.SkinAssetPruner.pruneUnreferenced(layout)
+        // 4. 提交后才回退生效态：删的是生效皮肤时才回退（现读
+        //    active 记录判定，中途改生效的皮肤不在此列）。
+        //    回退失败不翻案——目录与索引已无该皮肤，删除确已
+        //    成功，返回 Done；先重试一次（写记录的瞬时磁盘错
+        //    可自愈），两次都失败只记日志：active 记录滞后指向
+        //    已删皮肤，下次启动对账（LibraryReconciler 步骤 3）
+        //    按 ActiveResolver 裁决收敛为默认，不悬空。
+        //    修剪放回退之后：键图／字体／GIF／视频均为装后按
+        //    共享资产路径懒读，旧快照仍在装时修剪会让键面短暂
+        //    掉图；回退失败时跳过修剪（孤儿资产由下次启动异步
+        //    pruneOrphanAssets 回收），旧快照在装期间不断粮。
+        val active = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
+        val revertOk = if (active?.skinId == skinId) {
+            var ok = revertToDefault()
+            if (!ok) ok = revertToDefault()
+            if (!ok) {
+                DiagLog.w(
+                    "admin", "delete_revert_failed_after_commit",
+                    mapOf("kind" to "skin", "id" to skinId),
+                )
+            }
+            ok
+        } else {
+            true
+        }
+        if (revertOk) {
+            // 删皮肤后清无主视频资产（2026-10-29 外观轮）：共享资产
+            // 目录不随皮肤目录走，末引用者删后视频即成孤儿。
+            VideoAssetPruner.pruneUnreferencedVideos(layout)
+            // 第 5 批 §1：同口径清无主非视频资产（模型引用 + 剩余
+            // 引用计数为零 + canonical 落在素材根内才删；图片缓存
+            // 不全局清，见 SkinAssetPruner 注释——生效皮肤的键图
+            // 字节源随快照，删非生效皮肤不得断它）。
+            com.jobeen.ime.skin.store.SkinAssetPruner.pruneUnreferenced(layout)
+        }
         Result.Done(skinId)
     }
 

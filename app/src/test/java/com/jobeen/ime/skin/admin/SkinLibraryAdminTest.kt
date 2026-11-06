@@ -1,5 +1,6 @@
 package com.jobeen.ime.skin.admin
 
+import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.store.ActiveRecord
 import com.jobeen.ime.skin.store.ApplyState
 import com.jobeen.ime.skin.store.LastGoodPointer
@@ -29,6 +30,8 @@ class SkinLibraryAdminTest {
         private val real: SkinLibraryStore,
     ) : SkinLibraryAdmin.AdminStore {
         var failNextWrite = false
+        /** 下一次写索引时先把 active 记录翻成该值（模拟删除中途另应用了皮肤）。 */
+        var flipActiveOnWrite: ActiveRecord? = null
 
         override suspend fun readIndex(): SkinLibraryStore.ReadResult<LibraryIndex> =
             real.readIndex()
@@ -44,6 +47,7 @@ class SkinLibraryAdminTest {
                 failNextWrite = false
                 throw java.io.IOException("injected index write failure")
             }
+            flipActiveOnWrite?.let { real.writeActive(it); flipActiveOnWrite = null }
             real.writeIndex(index)
         }
 
@@ -132,24 +136,169 @@ class SkinLibraryAdminTest {
     }
 
     @Test
-    fun deleteActiveSkinRevertsFirstAndClearsLastGood() = runBlocking {
+    fun deleteActiveSkinCommitsFirstThenReverts() = runBlocking {
+        // 审计问题 1 新顺序（原“先回退”口径已废止，测试随口径改，
+        // 见施工单 5 第 4 条）：提交在回退之前；回退两次失败也不
+        // 翻案——皮肤确已删干净，返回 Done；active 记录滞后指向
+        // 已删皮肤（下次启动对账按 ActiveResolver 裁决收敛为默认）。
         val f = fixture()
         addSkin(f, "s1", "hash1")
         f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
         f.store.writeLastGood(LastGoodPointer("s1", "hash1", 1))
-        var reverted = false
-        val refused = f.admin.deleteSkin("s1") { false }
-        assertEquals(SkinLibraryAdmin.Result.Refused("revert_failed"), refused)
-        val ok = f.admin.deleteSkin("s1") {
-            reverted = true
+        var revertCalls = 0
+        val result = f.admin.deleteSkin("s1") {
+            revertCalls++
+            false
+        }
+        assertEquals(SkinLibraryAdmin.Result.Done("s1"), result)
+        assertEquals(2, revertCalls) // 失败重试一次
+        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
+        assertTrue(index.skins.isEmpty())
+        assertFalse(File(f.layout.skinsDir, "s1").exists())
+        assertTrue(f.store.readLastGood() is SkinLibraryStore.ReadResult.Missing)
+        val active = (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals("s1", active.skinId) // 滞后记录：对账收敛
+        // 回退成功支：写默认记录后 Done，active 已是默认
+        val f2 = fixture()
+        addSkin(f2, "s1", "hash1")
+        f2.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f2.store.writeLastGood(LastGoodPointer("s1", "hash1", 1))
+        val ok = f2.admin.deleteSkin("s1") {
             // 模拟事务回退后 active 已清空
+            f2.store.writeActive(ActiveRecord(appliedAt = 0L))
+            true
+        }
+        assertEquals(SkinLibraryAdmin.Result.Done("s1"), ok)
+        val active2 = (f2.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(null, active2.skinId)
+        assertTrue(f2.store.readLastGood() is SkinLibraryStore.ReadResult.Missing)
+    }
+
+    @Test
+    fun deleteActiveSkin_indexWriteFailure_revertNeverRunsAndSkinStaysActive() = runBlocking {
+        // 审计问题 1 验收支：回退成功、随后 tombstone／改名／索引
+        // 提交失败——新顺序下提交在回退之前，索引提交失败时回退
+        // 根本不运行；目录／索引／active 记录／Last-Good 全数保持
+        // 删除前状态，皮肤完整仍生效（运行快照亦未动：管理层除
+        // 回退回调外不碰运行态，回调未运行即快照未动）。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f.store.writeLastGood(LastGoodPointer("s1", "hash1", 1))
+        f.fake.failNextWrite = true
+        var revertCalls = 0
+        val result = f.admin.deleteSkin("s1") {
+            revertCalls++
+            true
+        }
+        assertEquals(SkinLibraryAdmin.Result.Refused("index_write_failed"), result)
+        assertEquals(0, revertCalls)
+        val genDir = f.layout.skinGenDir("s1", 1)
+        assertTrue(File(genDir, "skin.json").isFile)
+        assertTrue(File(genDir, "manifest.json").isFile)
+        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(listOf("s1"), index.skins.map { it.id })
+        val active = (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals("s1", active.skinId)
+        assertEquals(ApplyState.VERIFIED, active.state)
+        val lastGood = (f.store.readLastGood() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals("s1", lastGood.skinId)
+        assertTrue(trashChildren(f).isEmpty())
+    }
+
+    @Test
+    fun deleteActiveSkin_revertRetrySucceeds() = runBlocking {
+        // 提交后回退第一次失败、重试成功：删除 Done，active 已是默认。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f.store.writeLastGood(LastGoodPointer("s1", "hash1", 1))
+        var calls = 0
+        val result = f.admin.deleteSkin("s1") {
+            calls++
+            if (calls == 1) {
+                false // 模拟第一次写记录失败
+            } else {
+                f.store.writeActive(ActiveRecord(appliedAt = 0L))
+                true
+            }
+        }
+        assertEquals(SkinLibraryAdmin.Result.Done("s1"), result)
+        assertEquals(2, calls)
+        val active = (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(null, active.skinId)
+    }
+
+    @Test
+    fun deleteActiveSkin_keepsLastGoodPointingAtOtherSkin() = runBlocking {
+        // 提交后现读现判：Last-Good 指向他皮肤时不清除。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        addSkin(f, "s2", "hash2")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f.store.writeLastGood(LastGoodPointer("s2", "hash2", 1))
+        val result = f.admin.deleteSkin("s1") {
             f.store.writeActive(ActiveRecord(appliedAt = 0L))
             true
         }
-        assertTrue(reverted)
+        assertEquals(SkinLibraryAdmin.Result.Done("s1"), result)
+        val lastGood = (f.store.readLastGood() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals("s2", lastGood.skinId)
+    }
+
+    @Test
+    fun deleteActiveSkin_activeChangedMidDelete_doesNotRevertNewSkin() = runBlocking {
+        // 删除中途用户另应用了皮肤：提交后现读 active 已指新皮肤，
+        // 不回退，新皮肤保持生效。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        addSkin(f, "s2", "hash2")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f.fake.flipActiveOnWrite = ActiveRecord("s2", "hash2", 1, ApplyState.VERIFIED, 0L)
+        var revertCalls = 0
+        val result = f.admin.deleteSkin("s1") {
+            revertCalls++
+            true
+        }
+        assertEquals(SkinLibraryAdmin.Result.Done("s1"), result)
+        assertEquals(0, revertCalls)
+        val active = (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals("s2", active.skinId)
+    }
+
+    @Test
+    fun deleteActiveSkin_revertFailure_skipsPruneKeepsSharedVideo() = runBlocking {
+        // 回退失败时跳过修剪：旧快照仍在装，共享视频不断粮；
+        // 回退成功时正常修剪。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        writeVideoManifest(f, "s1", "vidsha1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        val failed = f.admin.deleteSkin("s1") { false }
+        assertEquals(SkinLibraryAdmin.Result.Done("s1"), failed)
+        assertTrue(File(f.layout.assetsDir, "vidsha1.mp4").isFile)
+
+        val f2 = fixture()
+        addSkin(f2, "s1", "hash1")
+        writeVideoManifest(f2, "s1", "vidsha1")
+        f2.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        val ok = f2.admin.deleteSkin("s1") {
+            f2.store.writeActive(ActiveRecord(appliedAt = 0L))
+            true
+        }
         assertEquals(SkinLibraryAdmin.Result.Done("s1"), ok)
-        val lastGood = f.store.readLastGood()
-        assertTrue(lastGood is SkinLibraryStore.ReadResult.Missing)
+        assertFalse(File(f2.layout.assetsDir, "vidsha1.mp4").exists())
+    }
+
+    /** 代次清单里挂一个视频资产（复用 VideoAssetPrunerTest 的写法）。 */
+    private fun writeVideoManifest(f: Fixture, id: String, sha: String) {
+        val contents = listOf(
+            PackageManifest.Content(PackageManifest.TYPE_ASSET, "vid-$id", "assets/vid-$id.mp4", sha),
+        )
+        File(f.layout.skinGenDir(id, 1), "manifest.json").writeText(
+            PackageManifest.toJson(PackageManifest(3, contents)),
+        )
+        File(f.layout.assetsDir, "$sha.mp4").writeBytes(byteArrayOf(9))
     }
 
     private suspend fun addLayout(f: Fixture, id: String) {

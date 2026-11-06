@@ -1122,7 +1122,7 @@ fun SkinLibraryScreen(
             onDismissRequest = { deleteSkinId = null },
             title = "删除皮肤？",
             text = if (state.active?.skinId == target) {
-                "该皮肤正在生效，删除前会先回退到内置默认主题。删除不可恢复。"
+                "该皮肤正在生效，删除后将回退到内置默认主题。删除不可恢复。"
             } else {
                 "删除不可恢复。"
             },
@@ -1252,7 +1252,7 @@ fun SkinLibraryScreen(
         SettingsConfirmDialog(
             onDismissRequest = { showBatchDeleteConfirm = false },
             title = "删除所选皮肤？",
-            text = "将删除 ${targets.size} 个皮肤，不可恢复。生效中的皮肤会先" +
+            text = "将删除 ${targets.size} 个皮肤，不可恢复。生效中的皮肤会在删除后" +
                 "回退内置默认；布局与其他皮肤不受影响。",
             confirmText = "删除",
             onConfirm = {
