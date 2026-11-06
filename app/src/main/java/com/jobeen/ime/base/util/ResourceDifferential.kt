@@ -21,11 +21,14 @@ import timber.log.Timber
  * 从 resource.zip 的中央目录生成，与 zip 成对提交。清单条目只含文件条目，
  * 目录条目与解压跳过类条目（__MACOSX 等）不在清单内。
  *
- * 三条安全线（均不依赖“清单一定最新”这一假设）：
+ * 四条安全线（均不依赖“清单一定最新”这一假设）：
  * - user/ 整树永不碰：修剪只走 destDir 下的 shared/ 与 model/ 两个子树。
  * - preserve 前缀（opencc 用户词典 Custom_*，配置 JSON 直接引用、
  *   用户可改的纯文本）：存在即跳过（不比对、不覆盖），缺失才填空，
  *   修剪时同样放过。
+ * - 用户下载的模型豁免修剪：shared/ 根下 *.gram（含旧流程备份
+ *   *.gram.update-backup）与 model/speech/（含安装备份 speech.old/），
+ *   见 [isUserDownloadedModel]——内置包不含、无从再生，删了须重下。
  * - 修剪双重否定：目标文件仅当既不在清单内、又不在本遍 zip 流里时才删。
  *   清单若过期（zip 已换、清单未再生）：新文件在流里出现过——
  *   解压时按“清单外条目照常解压”（只朝多写偏）已写入，修剪又因流内
@@ -80,6 +83,32 @@ internal fun parseManifest(json: String): ResourceManifest? {
 /** 路径是否在 preserve 前缀内（前缀匹配，如 shared/opencc/wanxiang/Custom_）。 */
 internal fun isPreserved(path: String, preserve: List<String>): Boolean =
     preserve.any { prefix -> path.startsWith(prefix) }
+
+/**
+ * 路径是否为用户下载的模型（修剪豁免；路径为 destDir 下的 `/` 相对路径）。
+ *
+ * 内置包不含、用户下载后落盘在 shared//model/ 下、无其他机制能再生——
+ * 修剪删了即丢、须重下，故豁免：
+ * - shared/ 根下的语法模型 `<grammar/language>.gram`：GRAM_FILE_NAME
+ *  （wanxiang-lts-zh-hans.gram）只是默认语言；grammar/language 取自
+ *   当前方案，语言不止默认一种（见 WanxiangUpdateManager.recoverGramRoot
+ *   注释），故按顶层 `*.gram` 后缀匹配；同理其旧流程备份
+ *   `<...>.gram.update-backup`——修剪跑在 recoverInterruptedUpdate
+ *   之前，备份是 gram 缺位时唯一的恢复来源。
+ * - model/speech/：本地语音模型（tokens.txt＋encoder/decoder/joiner.onnx），
+ *   及其安装备份 model/speech.old/（换名中断后跨重启自愈的唯一来源，
+ *   见 ModelDownloader.replaceModelDirectory）。
+ * 其余一律不豁免：shared/build/（Rime 编译输出，重部署再生；旧 build
+ * 留存反可能让部署读到过期编译结果）、dicts.staging/trash（恢复流程
+ * 自理）、*.part 半成品（下载重建）。
+ */
+internal fun isUserDownloadedModel(path: String): Boolean {
+    if (path.startsWith("model/speech/") || path.startsWith("model/speech.old/")) return true
+    if (!path.startsWith("shared/")) return false
+    val name = path.removePrefix("shared/")
+    if ('/' in name) return false
+    return name.endsWith(".gram") || name.endsWith(".gram.update-backup")
+}
 
 private fun crc32Of(file: File): Long {
     val crc = CRC32()
@@ -153,7 +182,7 @@ internal fun extractDifferential(
         }
     }
     // 修剪：只走 shared/ 与 model/ 两个子树、只删文件；清单内、
-    // 本遍流内、preserve 前缀内的文件一律保留；修剪失败同样整体失败。
+    // 本遍流内、preserve 前缀内、用户下载模型内的文件一律保留；修剪失败同样整体失败。
     for (subtree in listOf("shared", "model")) {
         val root = File(destDir, subtree)
         if (!root.isDirectory) continue
@@ -162,7 +191,8 @@ internal fun extractDifferential(
             .map { it.relativeTo(destDir).path.replace(File.separatorChar, '/') }
             .filter { path ->
                 path !in byPath && path !in streamPaths &&
-                    !isPreserved(path, manifest.preserve)
+                    !isPreserved(path, manifest.preserve) &&
+                    !isUserDownloadedModel(path)
             }
             .toList()
         for (path in surplus) {

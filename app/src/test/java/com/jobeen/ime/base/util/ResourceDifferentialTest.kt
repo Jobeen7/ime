@@ -245,6 +245,74 @@ class ResourceDifferentialTest {
         }
     }
 
+    // ---- 用户下载的模型豁免修剪（.22 第 3 项） ----
+
+    @Test
+    fun upgradeWithUserModels_gramAndSpeechSurvivePrune() {
+        runWithTempDir { dest ->
+            // 模拟 MD5 变化触发的升级提取：包内文件内容已变，目标盘上
+            // 已有用户下载的语法模型与语音模型。
+            val entries = mapOf("shared/a.txt" to "new".toByteArray())
+            val zip = zipBytes(entries)
+            File(dest, "shared/a.txt").apply { parentFile.mkdirs(); writeText("old") }
+            // 用户下载的模型（升级前已在盘上）
+            val gram = File(dest, "shared/wanxiang-lts-zh-hans.gram")
+                .apply { parentFile.mkdirs(); writeText("gram-bytes") }
+            val gramBackup = File(dest, "shared/wanxiang-lts-zh-hans.gram.update-backup")
+                .apply { parentFile.mkdirs(); writeText("gram-backup") }
+            val otherGram = File(dest, "shared/wanxiang-lts-zh-hant.gram")
+                .apply { parentFile.mkdirs(); writeText("other-lang-gram") }
+            val tokens = File(dest, "model/speech/tokens.txt")
+                .apply { parentFile.mkdirs(); writeText("tokens") }
+            val encoder = File(dest, "model/speech/encoder.onnx")
+                .apply { parentFile.mkdirs(); writeText("encoder") }
+            val speechOld = File(dest, "model/speech.old/encoder.onnx")
+                .apply { parentFile.mkdirs(); writeText("old-encoder") }
+            // 真残留：仍应修剪（含 shared/build/ 编译输出）
+            File(dest, "shared/stale.txt").apply { parentFile.mkdirs(); writeText("s") }
+            File(dest, "model/stale2.txt").apply { parentFile.mkdirs(); writeText("s") }
+            File(dest, "shared/build/wanxiang_lite.yaml")
+                .apply { parentFile.mkdirs(); writeText("b") }
+            assertEquals(
+                DifferentialResult.OK,
+                runDifferential(zip, entries, dest),
+            )
+            // 包内文件按差量更新
+            assertEquals("new", File(dest, "shared/a.txt").readText())
+            // 用户下载的模型都在
+            assertEquals("gram-bytes", gram.readText())
+            assertEquals("gram-backup", gramBackup.readText())
+            assertEquals("other-lang-gram", otherGram.readText())
+            assertEquals("tokens", tokens.readText())
+            assertEquals("encoder", encoder.readText())
+            assertEquals("old-encoder", speechOld.readText())
+            // 真残留已修剪
+            assertFalse(File(dest, "shared/stale.txt").exists())
+            assertFalse(File(dest, "model/stale2.txt").exists())
+            assertFalse(File(dest, "shared/build/wanxiang_lite.yaml").exists())
+        }
+    }
+
+    @Test
+    fun userDownloadedModel_paths() {
+        assertTrue(isUserDownloadedModel("shared/wanxiang-lts-zh-hans.gram"))
+        assertTrue(isUserDownloadedModel("shared/wanxiang-lts-zh-hant.gram"))
+        assertTrue(isUserDownloadedModel("shared/wanxiang-lts-zh-hans.gram.update-backup"))
+        assertTrue(isUserDownloadedModel("model/speech/tokens.txt"))
+        assertTrue(isUserDownloadedModel("model/speech/encoder.onnx"))
+        assertTrue(isUserDownloadedModel("model/speech.old/encoder.onnx"))
+        assertFalse(isUserDownloadedModel("shared/a.txt"))
+        assertFalse(isUserDownloadedModel("shared/build/wanxiang_lite.yaml"))
+        assertFalse(isUserDownloadedModel("shared/dicts/x.dict.yaml"))
+        assertFalse(isUserDownloadedModel("shared/dicts.staging/x.dict.yaml"))
+        assertFalse(isUserDownloadedModel("shared/wanxiang-lts-zh-hans.gram.wx.part"))
+        assertFalse(isUserDownloadedModel("shared/wanxiang-lts-zh-hans.gram.gmdl.part"))
+        assertFalse(isUserDownloadedModel("model/speech.tmp/encoder.onnx"))
+        assertFalse(isUserDownloadedModel("model/predict.marisa"))
+        assertFalse(isUserDownloadedModel("shared/sub/wanxiang-lts-zh-hans.gram"))
+        assertFalse(isUserDownloadedModel("user/keep.txt"))
+    }
+
     @Test
     fun blockedEntry_returnsFailedAndSkipsPrune() {
         runWithTempDir { dest ->
