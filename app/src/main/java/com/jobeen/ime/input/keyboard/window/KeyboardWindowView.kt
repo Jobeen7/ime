@@ -1883,7 +1883,17 @@ class KeyboardWindowView(
         val typePercent = typeHeightPercent(
             snapshot, keyboardStateManager.currentKeyboardType, isLandscape,
         )
-        val percent = typePercent ?: resolveHeightPercent(
+        // 26 键竖屏 25vh（源包 pinyin_26 keyboardHeight；无皮肤时生效；
+        // 用户按类型显式设的高度优先，皮肤／自创布局高度仍走既有链）。
+        val qwertyPortraitPercent: Int? = if (
+            !isLandscape && snapshot == null && currentName == QwertyKeyboard.NAME &&
+            typePercent == null
+        ) {
+            QwertyKeyboard.HEIGHT_PERCENT_PORTRAIT
+        } else {
+            null
+        }
+        val percent = typePercent ?: qwertyPortraitPercent ?: resolveHeightPercent(
             layoutPercent,
             skinPercent,
             skinLandscapePercent,

@@ -3,6 +3,7 @@ package com.jobeen.ime.input.keyboard.key
 import android.graphics.Typeface
 import android.graphics.Typeface.BOLD
 import android.view.KeyEvent
+import androidx.annotation.DrawableRes
 import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
@@ -10,25 +11,37 @@ import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Border
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 
+/**
+ * 26 键字母键（2026-11-06 施工单 3：源包 pinyin_26 样式）：
+ * 大写显示、无副标、字号 16；点按动作仍为小写字母（大写由
+ * QwertyKeyboard.transformAction 按 Caps 态变换，与显示无关）。
+ * 长按：popup != null 时挂长按弹窗（源包提示符 hintSymbols，
+ * 动作一律 KeySequenceAction，与皮肤路径 toRuntime(Text) 同口径）；
+ * 否则 punctuation != null 时长按直接提交该标点（原有行为保留）。
+ */
 fun alphabetKey(
     character: String,
-    punctuation: String,
-    altTextTranslationY: Int = 2,
-    mainTextTranslationY: Int = -2,
+    punctuation: String? = null,
     id: String? = null,
+    popup: KeyDef.Popup.Keyboard? = null,
+    percentWidth: Float = 0.1f,
 ) = KeyDef(
     id = id,
-    appearance = KeyDef.Appearance.AltText(
-        displayText = character,
-        altText = punctuation,
-        textSize = 22f,
-        altTextTranslationY = altTextTranslationY,
-        mainTextTranslationY = mainTextTranslationY,
-        variant = Variant.Normal
-    ), behaviors = setOf(
+    appearance = KeyDef.Appearance.Text(
+        displayText = character.uppercase(),
+        textSize = 16f,
+        percentWidth = percentWidth,
+        variant = Variant.Normal,
+    ),
+    behaviors = setOfNotNull(
         KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(character)),
-        KeyDef.Behavior.LongPress(KeyboardAction.CommitAction(punctuation))
-    )
+        if (popup == null && punctuation != null) {
+            KeyDef.Behavior.LongPress(KeyboardAction.CommitAction(punctuation))
+        } else {
+            null
+        },
+    ),
+    popups = popup?.let { arrayOf(it) },
 )
 
 fun mixedAlphabetKey(
@@ -83,13 +96,14 @@ fun sidePannelNormalItem(character: String, percentWidth: Float = 0.15f) = KeyDe
     behaviors = setOf(),
 )
 
-fun capsLockKey(id: String? = null): KeyDef = KeyDef(
+fun capsLockKey(id: String? = null, iconSizeDp: Float? = null): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.Image(
         src = R.drawable.ic_keyboard_capslock_none,
         viewId = KeyView.button_caps,
         percentWidth = 0.15f,
         variant = Variant.Alternative,
+        iconSizeDp = iconSizeDp,
     ),
     behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.CapsAction),
@@ -97,13 +111,19 @@ fun capsLockKey(id: String? = null): KeyDef = KeyDef(
 )
 
 
-fun backspaceKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
+fun backspaceKey(
+    percentWidth: Float = 0.15f,
+    id: String? = null,
+    @DrawableRes src: Int = R.drawable.ic_keyboard_backspace,
+    iconSizeDp: Float? = null,
+): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.Image(
-        src = R.drawable.ic_keyboard_backspace,
+        src = src,
         viewId = KeyView.button_backspace,
         percentWidth = percentWidth,
         variant = Variant.Alternative,
+        iconSizeDp = iconSizeDp,
     ),
     behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.BackspaceAction),
@@ -122,6 +142,7 @@ fun layoutSwitchKey(
     target: String,
     percentWidth: Float = 0.15f,
     id: String? = null,
+    popup: KeyDef.Popup.Keyboard? = null,
 ): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.Text(
@@ -130,10 +151,17 @@ fun layoutSwitchKey(
         percentWidth = percentWidth,
         variant = Variant.Alternative,
     ),
-    behaviors = setOf(
+    behaviors = setOfNotNull(
         KeyDef.Behavior.Press(KeyboardAction.LayoutSwitchAction(target)),
-        KeyDef.Behavior.LongPress(KeyboardAction.KeySequenceAction("/"))
+        // 弹窗在位时不另挂长按“/”（弹窗接管长按槽：单项 → LongPress，
+        // 多项 → Popup.Keyboard，见 BaseKeyboard 接线）。
+        if (popup == null) {
+            KeyDef.Behavior.LongPress(KeyboardAction.KeySequenceAction("/"))
+        } else {
+            null
+        },
     ),
+    popups = popup?.let { arrayOf(it) },
 )
 
 
@@ -169,6 +197,52 @@ fun spaceKey(percentWidth: Float = 0.23333f, id: String? = null): KeyDef = KeyDe
 )
 
 
+/**
+ * 26 键空格键（2026-11-06 施工单 3：源包 spaceButton，白色面、
+ * ⊔ 图标；空格标方案名口径只留九宫格，26 键不显示方案名）。
+ * 点按空格、长按语音（与 spaceKey 同行为）。
+ */
+fun spaceIconKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+    id = id,
+    appearance = KeyDef.Appearance.Image(
+        src = R.drawable.ic_keyboard_space,
+        viewId = KeyView.button_space,
+        percentWidth = percentWidth,
+        variant = Variant.Normal,
+        border = Border.Special,
+    ),
+    behaviors = setOf(
+        KeyDef.Behavior.Press(KeyboardAction.SpaceAction),
+        KeyDef.Behavior.LongPress(KeyboardAction.VoiceInputAction()),
+    ),
+)
+
+/**
+ * 26 键，。键（2026-11-06 施工单 3：源包 spaceRightButton，
+ * 白色面；上“。”14、下“，”16——AltText 主副行对调后以
+ * 平移贴到源包位置（。约 0.37／，约 0.59 键高）；点按提交
+ * “，”——经 transformAction 按全半角标点模式转半角“,”；
+ * 长按进符号键盘，沿用原 peroidKey 的长按落点）。
+ */
+fun commaKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+    id = id,
+    appearance = KeyDef.Appearance.AltText(
+        displayText = "。",
+        altText = "，",
+        altTextSize = 16f,
+        textSize = 14f,
+        mainTextTranslationY = 6,
+        altTextTranslationY = -10,
+        percentWidth = percentWidth,
+        variant = Variant.Normal,
+    ),
+    behaviors = setOf(
+        KeyDef.Behavior.Press(KeyboardAction.CommitAction("，")),
+        KeyDef.Behavior.LongPress(KeyboardAction.LayoutSwitchAction(SymbolKeyboard.NAME)),
+    ),
+)
+
+
 fun peroidKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.ImageText(
@@ -186,13 +260,20 @@ fun peroidKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
 )
 
 
-fun schemaSwitchKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
+fun schemaSwitchKey(
+    percentWidth: Float,
+    id: String? = null,
+    @DrawableRes src: Int = R.drawable.ic_keyboard_language,
+    variant: Variant = Variant.Alternative,
+    iconSizeDp: Float? = null,
+): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.Image(
-        src = R.drawable.ic_keyboard_language,
+        src = src,
         viewId = KeyView.button_lang,
         percentWidth = percentWidth,
-        variant = Variant.Alternative,
+        variant = variant,
+        iconSizeDp = iconSizeDp,
     ),
     behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.RotateSchema),
@@ -248,23 +329,40 @@ fun returnKey(
     rowSpan: Int = 1,
     variant: Variant = Variant.Accent,
     id: String? = null,
+    useTextLabel: Boolean = false,
 ): KeyDef = KeyDef(
     id = id,
-    appearance = KeyDef.Appearance.Image(
-        src = R.drawable.ic_keyboard_return,
-        viewId = KeyView.button_return,
-        percentWidth = percentWidth,
-        // 变体由调用方传入（生产路径为 EnterKeyVariant：皮肤生效取
-        // Accent、无皮肤按 returnKeyVariantForTheme 取）：素白/暗夜取
-        // Normal（常态/按压/描边/图标染色全部随普通键口径），其余
-        // 主题取 Accent。缺省 Accent 即上游行为。
-        // Accent 变体本身保留在主题模型里（方案弹窗等其他 accent
-        // 用途不动），这里只改回车的取法
-        variant = variant,
-        border = Border.Special,
-        rowSpan = rowSpan,
-        alignSpanEnd = rowSpan > 1,
-    ), behaviors = setOf(
+    appearance = if (useTextLabel) {
+        // 26 键文字回车（2026-11-06 施工单 3：源包 enterButton 按
+        // $returnKeyType 出文字；初始文案“换行”，首个 updateEditorInfo
+        // 按编辑框动作改写；绿/灰分色由 QwertyKeyboard 覆写）。
+        KeyDef.Appearance.Text(
+            displayText = "换行",
+            textSize = 16f,
+            viewId = KeyView.button_return,
+            percentWidth = percentWidth,
+            variant = variant,
+            border = Border.Special,
+            rowSpan = rowSpan,
+            alignSpanEnd = rowSpan > 1,
+        )
+    } else {
+        KeyDef.Appearance.Image(
+            src = R.drawable.ic_keyboard_return,
+            viewId = KeyView.button_return,
+            percentWidth = percentWidth,
+            // 变体由调用方传入（生产路径为 EnterKeyVariant：皮肤生效取
+            // Accent、无皮肤按 returnKeyVariantForTheme 取）：素白/暗夜取
+            // Normal（常态/按压/描边/图标染色全部随普通键口径），其余
+            // 主题取 Accent。缺省 Accent 即上游行为。
+            // Accent 变体本身保留在主题模型里（方案弹窗等其他 accent
+            // 用途不动），这里只改回车的取法
+            variant = variant,
+            border = Border.Special,
+            rowSpan = rowSpan,
+            alignSpanEnd = rowSpan > 1,
+        )
+    }, behaviors = setOf(
         KeyDef.Behavior.Press(KeyboardAction.ReturnAction()),
         KeyDef.Behavior.LongPress(KeyboardAction.ReturnAction(true)),
     )
