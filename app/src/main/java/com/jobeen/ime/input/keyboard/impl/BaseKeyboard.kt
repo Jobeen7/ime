@@ -555,7 +555,7 @@ abstract class BaseKeyboard(
                             false
                         }
                         setOnLongClickListener {
-                            showKeyboardPopup(it as KeyView, popup.keys)
+                            showKeyboardPopup(it as KeyView, popup.keys, popup.initialSelectedIndex)
                             gridHighlight = keyboardPopup.selectedIndex
                             initialMove = true
                             return@setOnLongClickListener true
@@ -874,7 +874,11 @@ abstract class BaseKeyboard(
         )
     }
 
-    private fun showKeyboardPopup(view: KeyView, keys: List<KeyboardAction>) {
+    private fun showKeyboardPopup(
+        view: KeyView,
+        keys: List<KeyboardAction>,
+        initialSelectedIndex: Int? = null,
+    ) {
         keyboardPopup.show(
             anchor = view,
             items = keys,
@@ -892,6 +896,7 @@ abstract class BaseKeyboard(
                 KeyDef.Appearance.Variant.None -> Color.TRANSPARENT
             },
             keyPressedColor = LONG_PRESS_HIGHLIGHT_BLUE,
+            initialSelectedIndex = initialSelectedIndex,
         )
     }
 

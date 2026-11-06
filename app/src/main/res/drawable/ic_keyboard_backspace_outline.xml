@@ -1,0 +1,23 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:autoMirrored="true"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- 26 键描边退格（2026-11-06 施工单 3：对端 delete.left 描边样式；
+         笔画宽 2.0／24 视口，对端笔画约 5px／51px 图标宽；圆角端点）。
+         键面 X 居右半部，与对端一致。 -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#ffffff"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M20,4H8.5L2.5,12L8.5,20H20a2,2 0 0,0 2,-2V6a2,2 0 0,0 -2,-2Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#ffffff"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M11.5,9L16,13.5M16,9L11.5,13.5" />
+</vector>

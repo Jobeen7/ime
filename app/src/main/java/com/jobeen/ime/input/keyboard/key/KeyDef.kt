@@ -295,6 +295,13 @@ open class KeyDef(
             viewId: Int = -1,
             override val rowSpan: Int = 1,
             override val alignSpanEnd: Boolean = false,
+            /**
+             * 图标绘制边（dp）：非空时图片键的 ImageView 按此正方形
+             * 尺寸布局（矢量/PNG 按 fitCenter 缩放），替代 wrapContent
+             * 的固有尺寸；空 = 沿用固有尺寸（旧行为）。26 键按对端
+             * 图标实测设（shift 19／退格 21／中英 24）。
+             */
+            val iconSizeDp: Float? = null,
         ) : Appearance(percentWidth, variant, border, margin, viewId)
 
         class ImageText(
@@ -348,7 +355,15 @@ open class KeyDef(
     sealed class Popup {
         open class Preview(val content: String) : Popup()
         class AltPreview(content: String, val alternative: String) : Preview(content)
-        class Keyboard(val label: String, val keys: List<KeyboardAction>) : Popup()
+        class Keyboard(
+            val label: String,
+            val keys: List<KeyboardAction>,
+            /**
+             * 初始选中下标：非空时弹窗以此项为选中（源包 hintSymbols
+             * 的 selectedIndex）；空 = 沿用三分位规则（旧行为）。
+             */
+            val initialSelectedIndex: Int? = null,
+        ) : Popup()
         class Menu(val items: Array<Item>) : Popup() {
             class Item(
                 val label: String,

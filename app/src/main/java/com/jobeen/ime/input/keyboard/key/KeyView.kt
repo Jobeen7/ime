@@ -1667,9 +1667,18 @@ class ImageKeyView(
                     iconView.visibility = android.view.View.INVISIBLE
                 }
             } else {
-                add(img, lParams(wrapContent, wrapContent) {
-                    centerInParent()
-                })
+                // iconSizeDp 非空时按指定边布局（26 键对端图标尺寸），
+                // 否则沿用固有尺寸（wrapContent，旧行为）。
+                val iconSize = def.iconSizeDp
+                if (iconSize != null) {
+                    add(img, lParams(dp(iconSize).toInt(), dp(iconSize).toInt()) {
+                        centerInParent()
+                    })
+                } else {
+                    add(img, lParams(wrapContent, wrapContent) {
+                        centerInParent()
+                    })
+                }
                 // 隐藏按键符号：工厂图标同样不绘制（键面空白，仍可点按）
                 if (KeyboardManager.Keyboard.Display.isHideSymbol(ctx)) {
                     img.visibility = android.view.View.INVISIBLE

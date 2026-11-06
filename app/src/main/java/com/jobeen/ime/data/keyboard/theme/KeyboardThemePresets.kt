@@ -164,10 +164,14 @@ object KeyboardThemePresets {
     // 不加自定义布局，九宫格用内置那套）。近似写明，不藏着：
     // ① 描边：源包无整圈描边，只有底边（浅 #9a9c9a／深 #1D1D1D），预设表达
     //    不了底边，三项描边照暗夜先例全部清零（含回车强调键）。
-    // ② 回车绿：源包只在部分 return 类型下用绿（$returnKeyType 1,4,6,7,9
-    //    走绿，其余走灰色功能键色）；预设强调色是单一值，绿回车用于全部回车类型。
-    // ③ 键盘高：源包 25vh；预设无高度控制，走原厂默认高度。
-    // ④ 长按角标、工具栏图片、浮动面板、数字九键与符号集合一律不搬。
+    // ② 回车绿（2026-11-06 已按源包分色，不再是全类型绿）：源包只在部分
+    //    return 类型下用绿（$returnKeyType 1,4,6,7,9 走绿，其余走灰色功能键色），
+    //    分色由 QwertyKeyboard.updateEditorInfo 按动作现算（绿预设＋无皮肤时生效）。
+    // ③ 键盘高（2026-11-06 已带）：源包 25vh，QwertyKeyboard.HEIGHT_PERCENT_PORTRAIT
+    //    ＝25，经 KeyboardWindowView.contentHeight 在无皮肤竖屏 26 键时取用。
+    // ④ 长按提示符（2026-11-06 已搬 q–p／h／123 三组，见 QwertyKeyboard.buildLayout）；
+    //    工具栏图片、浮动面板、数字九键与符号集合仍不搬；j／d／m 三组（脚本／
+    //    sendKeys）无 Jime 等价动作，未搬；上划／下划滑动动作与大写态滑动角标未搬。
     val WeChatGreenLight = KeyboardTheme(
         id = "wechat-green-light",
         name = "26键·浅",
@@ -187,10 +191,12 @@ object KeyboardThemePresets {
             specialKeyText = Color.rgb(0, 0, 0),
             accentKeyText = Color.rgb(255, 255, 255),
             altText = Color.argb(85, 0, 0, 0),
-            // 源包键盘底 #D0D3DA01（alpha 01 近透明）；Jime 无模糊层，取实色近似。
-            background = Color.rgb(208, 211, 218),
+            // 源包键盘底 #D0D3DA01（alpha 01 近透明），2026-11-06 按源包值取：
+            // Jime 窗口后无模糊层，键间缝与面板区将透出底下应用（对端为系统
+            // 毛玻璃灰 #E1E2E7），见施工单 3 差距 (f)。
+            background = Color.argb(1, 208, 211, 218),
             panel = KeyboardColors.ColorScheme.PanelColors(
-                background = Color.rgb(208, 211, 218),
+                background = Color.argb(1, 208, 211, 218),
                 toolbarText = Color.rgb(80, 80, 80),
                 toolbarActived = Color.rgb(31, 179, 130),
                 toolbarIcon = Color.rgb(80, 80, 80),
@@ -230,10 +236,11 @@ object KeyboardThemePresets {
             specialKeyText = Color.rgb(255, 255, 255),
             accentKeyText = Color.rgb(255, 255, 255),
             altText = Color.rgb(182, 183, 185),
-            // 源包键盘底 #47474701（alpha 01 近透明）；Jime 无模糊层，取实色近似。
-            background = Color.rgb(71, 71, 71),
+            // 源包键盘底 #47474701（alpha 01 近透明），2026-11-06 按源包值取；
+            // Jime 窗口后无模糊层，键间缝与面板区将透出底下应用，见浅色同款注释。
+            background = Color.argb(1, 71, 71, 71),
             panel = KeyboardColors.ColorScheme.PanelColors(
-                background = Color.rgb(71, 71, 71),
+                background = Color.argb(1, 71, 71, 71),
                 toolbarText = Color.rgb(229, 229, 229),
                 toolbarActived = Color.rgb(39, 223, 161),
                 toolbarIcon = Color.rgb(229, 229, 229),
