@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "zipSha256": "971fcde47837786f8fefec9b6e9fad09d3d639c6960c836511859f04383cc199",
+  "zipSha256": "c3ac3200809261b3c880a0f739cae37fee1b3bab9e91f206ebe891554836529c",
   "preserve": [
     "shared/opencc/wanxiang/Custom_"
   ],
@@ -17,8 +17,8 @@
     },
     {
       "path": "shared/README.md",
-      "size": 6753,
-      "crc": "d36ecdab"
+      "size": 6834,
+      "crc": "cd0f6f36"
     },
     {
       "path": "shared/custom/wanxiang_abbrev.custom.yaml",
@@ -82,8 +82,8 @@
     },
     {
       "path": "shared/dicts/diming.lite.dict.yaml",
-      "size": 2953515,
-      "crc": "7190037d"
+      "size": 2953385,
+      "crc": "57d0156b"
     },
     {
       "path": "shared/dicts/duoyin.lite.dict.yaml",
@@ -92,23 +92,23 @@
     },
     {
       "path": "shared/dicts/en.dict.yaml",
-      "size": 1568996,
-      "crc": "cf86781b"
+      "size": 1569051,
+      "crc": "c9bdcf69"
     },
     {
       "path": "shared/dicts/jichu.lite.dict.yaml",
-      "size": 44383469,
-      "crc": "e6bd7d63"
+      "size": 44388065,
+      "crc": "27ef899b"
     },
     {
       "path": "shared/dicts/mingren.lite.dict.yaml",
-      "size": 596803,
-      "crc": "a029f13b"
+      "size": 597043,
+      "crc": "906d3b9c"
     },
     {
       "path": "shared/dicts/mixed.dict.yaml",
-      "size": 35913,
-      "crc": "b5eb4e41"
+      "size": 35975,
+      "crc": "eed5c51a"
     },
     {
       "path": "shared/dicts/t9_abbrev.dict.yaml",
@@ -117,13 +117,13 @@
     },
     {
       "path": "shared/dicts/yiren.lite.dict.yaml",
-      "size": 380053,
-      "crc": "ce5036e2"
+      "size": 379957,
+      "crc": "b91f91dd"
     },
     {
       "path": "shared/dicts/zi.lite.dict.yaml",
-      "size": 547153,
-      "crc": "9fcf0563"
+      "size": 547161,
+      "crc": "866097e8"
     },
     {
       "path": "shared/lua/data/chaifen.txt",
@@ -268,7 +268,7 @@
     {
       "path": "shared/lua/wanxiang/wanxiang.lua",
       "size": 13587,
-      "crc": "d55ee5e4"
+      "crc": "0a56493d"
     },
     {
       "path": "shared/opencc/wanxiang/Custom_Emoji.txt",
@@ -328,7 +328,7 @@
     {
       "path": "shared/version.txt",
       "size": 7,
-      "crc": "88aec4f6"
+      "crc": "91b5f5b7"
     },
     {
       "path": "shared/wanxiang_abbrev.dict.yaml",
@@ -352,8 +352,8 @@
     },
     {
       "path": "shared/wanxiang_algebra.yaml",
-      "size": 136967,
-      "crc": "50f42c4c"
+      "size": 136927,
+      "crc": "fcf0dcd9"
     },
     {
       "path": "shared/wanxiang_english.dict.yaml",
