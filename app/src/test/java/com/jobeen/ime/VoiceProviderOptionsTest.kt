@@ -4,6 +4,8 @@ package com.jobeen.ime
 
 import com.jobeen.ime.base.speech.cloud.AuthHeaderDecl
 import com.jobeen.ime.base.speech.cloud.PluginMeta
+import com.jobeen.ime.ui.screen.PreferredProviderDisplay
+import com.jobeen.ime.ui.screen.preferredProviderDisplay
 import com.jobeen.ime.ui.screen.VoiceProviderHint
 import com.jobeen.ime.ui.screen.VoiceProviderStatus
 import com.jobeen.ime.ui.screen.VoiceProviderTag
@@ -26,6 +28,69 @@ class VoiceProviderOptionsTest {
             hosts = listOf("example.com"),
             capabilities = listOf("voice.asr"),
             authHeaders = authFields.map { AuthHeaderDecl(header = "X-$it", field = it) },
+        )
+    }
+
+    @Test
+    fun preferredDisplay_nullIsLocal() {
+        // 施工单 2：首选为空＝本地离线模型，副标题不再显示“未设置”。
+        assertEquals(
+            PreferredProviderDisplay.Local,
+            preferredProviderDisplay(preferredId = null, preferredMeta = null),
+        )
+    }
+
+    @Test
+    fun preferredDisplay_builtinPluginUsesBuiltinName() {
+        assertEquals(
+            PreferredProviderDisplay.BuiltinName(R.string.cloud_voice_builtin_nls),
+            preferredProviderDisplay(preferredId = "builtin.nls", preferredMeta = plugin("builtin.nls")),
+        )
+    }
+
+    @Test
+    fun preferredDisplay_userPluginUsesRawId() {
+        assertEquals(
+            PreferredProviderDisplay.RawId("user.custom"),
+            preferredProviderDisplay(preferredId = "user.custom", preferredMeta = plugin("user.custom")),
+        )
+    }
+
+    @Test
+    fun preferredDisplay_stalePreferredFallsBackToRawId() {
+        assertEquals(
+            PreferredProviderDisplay.RawId("builtin.gone"),
+            preferredProviderDisplay(preferredId = "builtin.gone", preferredMeta = null),
+        )
+    }
+
+    @Test
+    fun preferredDisplay_matchesDialogCheck_localSelectedShowsLocal() {
+        // 副标题与对话框打勾一致：选本地时对话框本地行打勾，页上副标题即本地离线模型。
+        val rows = voiceProviderRows(
+            modelReady = true,
+            plugins = listOf(plugin("builtin.nls")),
+            preferredId = null,
+            secretsMissingIds = emptySet(),
+        )
+        assertTrue(rows.single { it.isLocal }.selected)
+        assertEquals(
+            PreferredProviderDisplay.Local,
+            preferredProviderDisplay(preferredId = null, preferredMeta = null),
+        )
+        val cloudRows = voiceProviderRows(
+            modelReady = true,
+            plugins = listOf(plugin("builtin.nls")),
+            preferredId = "builtin.nls",
+            secretsMissingIds = emptySet(),
+        )
+        assertTrue(cloudRows.single { it.key == "builtin.nls" }.selected)
+        assertEquals(
+            PreferredProviderDisplay.BuiltinName(R.string.cloud_voice_builtin_nls),
+            preferredProviderDisplay(
+                preferredId = "builtin.nls",
+                preferredMeta = plugin("builtin.nls"),
+            ),
         )
     }
 

@@ -113,6 +113,29 @@ fun voiceProviderTags(isLocal: Boolean, isBuiltin: Boolean): List<VoiceProviderT
 }
 
 /**
+ * 首选语音输入法副标题的显示名来源（纯逻辑，可单测）：
+ * 首选 id 为空＝本地离线模型（与对话框打勾、路由同口径：null＝本地）；
+ * 已装插件有内置展示名则用展示名，否则用原始 id；首选指向已不在
+ * 列表的插件时同样回落原始 id。
+ */
+sealed interface PreferredProviderDisplay {
+    data object Local : PreferredProviderDisplay
+    data class BuiltinName(val resId: Int) : PreferredProviderDisplay
+    data class RawId(val id: String) : PreferredProviderDisplay
+}
+
+fun preferredProviderDisplay(
+    preferredId: String?,
+    preferredMeta: PluginMeta?,
+): PreferredProviderDisplay = when {
+    preferredId == null -> PreferredProviderDisplay.Local
+    preferredMeta != null -> builtinDisplayName(preferredMeta.id)?.let {
+        PreferredProviderDisplay.BuiltinName(it)
+    } ?: PreferredProviderDisplay.RawId(preferredMeta.id)
+    else -> PreferredProviderDisplay.RawId(preferredId)
+}
+
+/**
  * 页内提示判定（优先级即列出顺序）：
  * 无可用引擎（未选云端且本地未下载）＞已选插件不在已装列表（被删／过期首选）
  * ＞已选云端但开启开关关着＞已选插件缺密钥；其余为无提示。

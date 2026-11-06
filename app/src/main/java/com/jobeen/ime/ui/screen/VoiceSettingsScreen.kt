@@ -223,12 +223,12 @@ fun VoiceSettingsScreen(
         // 均取现有首选服务商状态（两态共用，故定义在分支外）。
         val preferredId = preferred
         val preferredMeta = preferredId?.let { id -> plugins.singleOrNull { it.id == id } }
-        val providerDisplay = when {
-            preferredId == null -> stringResource(R.string.voice_provider_local)
-            preferredMeta != null -> builtinDisplayName(preferredMeta.id)?.let {
-                stringResource(it)
-            } ?: preferredMeta.id
-            else -> preferredId
+        // 首选副标题与对话框打勾同源：null＝本地离线模型，不再显示“未设置”
+        // （显示名来源见 preferredProviderDisplay 纯函数）。
+        val providerDisplay = when (val display = preferredProviderDisplay(preferredId, preferredMeta)) {
+            PreferredProviderDisplay.Local -> stringResource(R.string.voice_provider_local)
+            is PreferredProviderDisplay.BuiltinName -> stringResource(display.resId)
+            is PreferredProviderDisplay.RawId -> display.id
         }
         // 语音页（2026-10-29 23:52 视频行结构，hub／细则替掉后）：
         // 单页行结构，顺序＝启用开关（裸行）→麦克风权限行→
@@ -266,11 +266,7 @@ fun VoiceSettingsScreen(
             }
             NavRow(
                 title = stringResource(R.string.voice_preferred_input),
-                subtitle = if (preferredId == null) {
-                    stringResource(R.string.voice_preferred_unset)
-                } else {
-                    providerDisplay
-                },
+                subtitle = providerDisplay,
                 onClick = { providerDialog = true },
             )
         val providerHint = voiceProviderHint(
