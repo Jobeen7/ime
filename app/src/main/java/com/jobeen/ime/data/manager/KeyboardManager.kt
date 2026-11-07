@@ -137,34 +137,94 @@ object KeyboardManager {
         }
 
         /**
-         * 已删内置主题迁移（2026-10-29 批量第 6 项：落日删除）：
-         * 幂等、仅在存有已删 id 时写回。主主题 id 为落日 → 改跟随
+         * 已删内置主题迁移（2026-10-29 批量第 6 项：落日删除；
+         * 2026-11-07 WO6 第 3 项：微信绿浅/深删除，v1.1.16.22）：
+         * 幂等、仅在存有已删 id 时写回。主主题 id 为已删 id → 改跟随
          * 开、主主题复位暗夜（主主题也必须复位，否则日后关跟随时
-         * 会经 byId 复活已删主题）；浅/深槽位为落日 → 只复位该槽位。
-         * 从不覆盖有效的非落日槽位（陈旧落日主主题＋现成跟随对不
-         * 应被改写）。非跟随的暗夜/素白用户不强制迁移（存值仍可
-         * 解析，库页默认卡对其显示生效中）。四个读入口各调一次：
-         * 库页与 KeyboardColors.resolve 经此读入口统一覆盖，服务与
-         * 界面行为一致；无落日存值时仅几次读。
+         * 会经 byId 复活已删主题）；浅/深槽位为已删 id → 只复位该槽位
+         * 到该槽默认值（槽位决定替代，与被删主题的深浅无关，混合槽位
+         * 同理：浅槽绿深也回浅色默认）。从不覆盖有效的非已删槽位
+         * （陈旧已删主主题＋现成跟随对不应被改写）。非跟随的暗夜/素白
+         * 用户不强制迁移（存值仍可解析，库页默认卡对其显示生效中）。
+         * 四个读入口各调一次：库页与 KeyboardColors.resolve 经此读入口
+         * 统一覆盖，服务与界面行为一致；无已删存值时仅几次读。
+         * 决策是纯函数 resolveRemovedBuiltinMigration（主机单测覆盖），
+         * 本函数只做偏好读写。
          */
         private fun migrateRemovedBuiltin(context: Context) {
             val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            val themeId = prefs.getString("$PREFIX.theme", KeyboardTheme.DEFAULT_ID)
-            val lightId = prefs.getString(KEY_LIGHT_THEME, KeyboardTheme.LIGHT_DEFAULT_ID)
-            val darkId = prefs.getString(KEY_DARK_THEME, KeyboardTheme.DARK_DEFAULT_ID)
-            if (themeId != "sunset" && lightId != "sunset" && darkId != "sunset") return
+            val migration = resolveRemovedBuiltinMigration(
+                prefs.getString("$PREFIX.theme", KeyboardTheme.DEFAULT_ID)
+                    ?: KeyboardTheme.DEFAULT_ID,
+                prefs.getString(KEY_LIGHT_THEME, KeyboardTheme.LIGHT_DEFAULT_ID)
+                    ?: KeyboardTheme.LIGHT_DEFAULT_ID,
+                prefs.getString(KEY_DARK_THEME, KeyboardTheme.DARK_DEFAULT_ID)
+                    ?: KeyboardTheme.DARK_DEFAULT_ID,
+            ) ?: return
             prefs.edit {
-                if (themeId == "sunset") {
+                if (migration.followSystem) {
                     putBoolean(KEY_FOLLOW_SYSTEM, true)
-                    putString("$PREFIX.theme", KeyboardTheme.DARK_DEFAULT_ID)
                 }
-                if (lightId == "sunset") {
-                    putString(KEY_LIGHT_THEME, KeyboardTheme.LIGHT_DEFAULT_ID)
-                }
-                if (darkId == "sunset") {
-                    putString(KEY_DARK_THEME, KeyboardTheme.DARK_DEFAULT_ID)
-                }
+                putString("$PREFIX.theme", migration.themeId)
+                putString(KEY_LIGHT_THEME, migration.lightThemeId)
+                putString(KEY_DARK_THEME, migration.darkThemeId)
             }
+        }
+
+        /**
+         * 已删内置主题 id：落日（2026-10-29 删）与微信绿浅/深
+         * （wechat-green-light/dark，2026-11-07 删绿预设，v1.1.16.22；
+         * .21 里在 KeyboardThemePresets.kt:176/:221）。
+         */
+        private val REMOVED_BUILTIN_IDS = setOf(
+            "sunset",
+            "wechat-green-light",
+            "wechat-green-dark",
+        )
+
+        /** 已删内置主题迁移的决策结果：三槽写回值＋主主题被删时是否跟随开。 */
+        data class RemovedBuiltinMigration(
+            val themeId: String,
+            val lightThemeId: String,
+            val darkThemeId: String,
+            val followSystem: Boolean,
+        )
+
+        /**
+         * 已删内置主题迁移的纯决策（主机单测覆盖）：
+         * - 三槽均无已删 id → 返回 null，不写回；
+         * - 主主题为已删 id → 跟随开、主主题复位深色默认（沿用落日口径）；
+         * - 浅/深槽位为已删 id → 只复位该槽位到该槽默认值；
+         * - 有效的槽位原样保留。
+         * 幂等：迁移结果再输入返回 null。
+         */
+        fun resolveRemovedBuiltinMigration(
+            themeId: String,
+            lightId: String,
+            darkId: String,
+        ): RemovedBuiltinMigration? {
+            if (themeId !in REMOVED_BUILTIN_IDS &&
+                lightId !in REMOVED_BUILTIN_IDS &&
+                darkId !in REMOVED_BUILTIN_IDS
+            ) return null
+            return RemovedBuiltinMigration(
+                themeId = if (themeId in REMOVED_BUILTIN_IDS) {
+                    KeyboardTheme.DARK_DEFAULT_ID
+                } else {
+                    themeId
+                },
+                lightThemeId = if (lightId in REMOVED_BUILTIN_IDS) {
+                    KeyboardTheme.LIGHT_DEFAULT_ID
+                } else {
+                    lightId
+                },
+                darkThemeId = if (darkId in REMOVED_BUILTIN_IDS) {
+                    KeyboardTheme.DARK_DEFAULT_ID
+                } else {
+                    darkId
+                },
+                followSystem = themeId in REMOVED_BUILTIN_IDS,
+            )
         }
 
         object Padding {
