@@ -9,12 +9,15 @@ import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import com.jobeen.ime.skin.store.VideoAssetPruner
 import java.io.File
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -157,9 +160,24 @@ class SkinLibraryAdmin internal constructor(
             return@withLock Result.Refused("rename_failed")
         }
         // 2. 提交索引：失败则原样恢复目录，索引与目录都保持删除前状态。
-        val committed = runCatching {
+        // 取消不走 runCatching：提交后取消若被降格为写失败，会把已
+        // 提交的删除误当未提交回滚——恢复的目录成无索引引用的孤儿，
+        // 且取消被吞。取消单独处理：重读索引核对 id 是否仍在，已提
+        // 交不恢复（留 tombstone 给恢复流程清理），未提交才恢复，
+        // 随后把取消重抛。
+        val committed = try {
             store.writeIndex(index.copy(skins = index.skins.filterNot { it.id == skinId }))
-        }.isSuccess
+            true
+        } catch (e: CancellationException) {
+            if (isIdStillReferenced("skin", skinId) == true) {
+                if (restoreTombstone(tombstone, "skin", skinId)) {
+                    runCatching { tombstone.deleteRecursively() }
+                }
+            }
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         if (!committed) {
             // 恢复失败时 tombstone 留待下次恢复重试（索引仍指向
             // 该 id，恢复会按「未提交」回滚；绝不删未归位的 tombstone）。
@@ -271,9 +289,21 @@ class SkinLibraryAdmin internal constructor(
             runCatching { tombstone.deleteRecursively() }
             return@withLock Result.Refused("rename_failed")
         }
-        val committed = runCatching {
+        // 取消不走 runCatching（与删皮肤同口径）：重读索引核对 id
+        // 是否仍在，已提交不恢复 tombstone，未提交才恢复，随后重抛。
+        val committed = try {
             store.writeIndex(index.copy(layouts = index.layouts.filterNot { it.id == layoutId }))
-        }.isSuccess
+            true
+        } catch (e: CancellationException) {
+            if (isIdStillReferenced("layout", layoutId) == true) {
+                if (restoreTombstone(tombstone, "layout", layoutId)) {
+                    runCatching { tombstone.deleteRecursively() }
+                }
+            }
+            throw e
+        } catch (e: Exception) {
+            false
+        }
         if (!committed) {
             // 恢复失败时 tombstone 留待下次恢复重试（索引仍指向
             // 该 id，恢复会按「未提交」回滚；绝不删未归位的 tombstone）。
@@ -289,6 +319,23 @@ class SkinLibraryAdmin internal constructor(
         scheduleTombstoneCleanup(tombstone)
         Result.Done(layoutId)
     }
+
+    /**
+     * 删除提交时取消：重读持久化索引核对该 id 是否仍被引用。
+     * true=仍在（未提交）→可回滚；false=已不在（已提交）→不回滚；
+     * null=索引不可读、无法裁决→不回滚（留 tombstone 给恢复流程）。
+     * 在 NonCancellable 下运行——调用方已处于取消投递中，读索引
+     * 的挂起点不得再抛取消。
+     */
+    private suspend fun isIdStillReferenced(kind: String, id: String): Boolean? =
+        withContext(NonCancellable) {
+            when (val read = store.readIndex()) {
+                is SkinLibraryStore.ReadResult.Ok ->
+                    if (kind == "skin") read.value.skins.any { it.id == id }
+                    else read.value.layouts.any { it.id == id }
+                else -> null
+            }
+        }
 
     /**
      * 崩溃恢复：按 trash/ 下的 tombstone 继续或回滚未完成的删除。

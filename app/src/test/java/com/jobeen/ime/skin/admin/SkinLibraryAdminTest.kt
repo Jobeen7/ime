@@ -11,6 +11,7 @@ import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -32,6 +33,10 @@ class SkinLibraryAdminTest {
         var failNextWrite = false
         /** 下一次写索引时先把 active 记录翻成该值（模拟删除中途另应用了皮肤）。 */
         var flipActiveOnWrite: ActiveRecord? = null
+        /** 下一次写索引前抛取消（模拟提交前、tombstone 已建时取消）。 */
+        var cancelBeforeNextWrite = false
+        /** 下一次写索引提交后抛取消（模拟提交后、调用方观测前取消）。 */
+        var cancelAfterNextWrite = false
 
         override suspend fun readIndex(): SkinLibraryStore.ReadResult<LibraryIndex> =
             real.readIndex()
@@ -47,8 +52,16 @@ class SkinLibraryAdminTest {
                 failNextWrite = false
                 throw java.io.IOException("injected index write failure")
             }
+            if (cancelBeforeNextWrite) {
+                cancelBeforeNextWrite = false
+                throw CancellationException("injected cancel before delete commit")
+            }
             flipActiveOnWrite?.let { real.writeActive(it); flipActiveOnWrite = null }
             real.writeIndex(index)
+            if (cancelAfterNextWrite) {
+                cancelAfterNextWrite = false
+                throw CancellationException("injected cancel after delete commit")
+            }
         }
 
         override suspend fun clearLastGood() = real.clearLastGood()
@@ -571,6 +584,48 @@ class SkinLibraryAdminTest {
         } finally {
             skinsDir.setWritable(true)
         }
+    }
+
+    @Test
+    fun deleteSkin_cancelAfterIndexCommit_doesNotRestoreAndRethrows() = runBlocking {
+        // 删除写入后取消：索引提交已落盘、随后取消——不回滚（目录
+        // 不搬回）、取消重抛；tombstone 留待恢复流程清理，恢复后收敛。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f.store.writeLastGood(LastGoodPointer("s1", "hash1", 1))
+        f.fake.cancelAfterNextWrite = true
+        val deferred = async { f.admin.deleteSkin("s1") { true } }
+        val error = runCatching { deferred.await() }.exceptionOrNull()
+        assertTrue(error is CancellationException)
+        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
+        assertTrue(index.skins.isEmpty())
+        assertFalse(File(f.layout.skinsDir, "s1").exists())
+        assertEquals(1, trashChildren(f).size)
+        f.admin.recoverPendingDeletes()
+        assertTrue(trashChildren(f).isEmpty())
+    }
+
+    @Test
+    fun deleteSkin_cancelBeforeIndexCommit_restoresAndRethrows() = runBlocking {
+        // 删除写入前取消：索引未提交——重读索引确认 id 仍在，目录
+        // 搬回原位、tombstone 清理，取消重抛；索引与目录保持删除前状态。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f.store.writeLastGood(LastGoodPointer("s1", "hash1", 1))
+        f.fake.cancelBeforeNextWrite = true
+        val deferred = async { f.admin.deleteSkin("s1") { true } }
+        val error = runCatching { deferred.await() }.exceptionOrNull()
+        assertTrue(error is CancellationException)
+        val genDir = f.layout.skinGenDir("s1", 1)
+        assertTrue(File(genDir, "skin.json").isFile)
+        assertTrue(File(genDir, "manifest.json").isFile)
+        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(listOf("s1"), index.skins.map { it.id })
+        assertTrue(trashChildren(f).isEmpty())
+        val active = (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals("s1", active.skinId)
     }
 
     @Test

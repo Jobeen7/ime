@@ -4,8 +4,10 @@ import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.skin.fault.SkinFaultHooks
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
@@ -250,6 +252,135 @@ class ImportTransactionTest {
                 assertTrue("round $round missing dx-$round in $ids", ids.contains("dx-$round"))
                 assertTrue("round $round missing dy-$round in $ids", ids.contains("dy-$round"))
             }
+        } finally {
+            SkinFaultHooks.handler = {}
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cancelBeforeRename_leavesLibraryUntouchedAndRethrows() = runBlocking {
+        // 取消在 rename 前（I2 注入）：库零变化，取消重抛给调用方，
+        // 不再像旧口径那样被 catch (Exception) 吞成 Failed。
+        val f = Fixture()
+        SkinFaultHooks.handler = { point ->
+            if (point == SkinFaultHooks.Point.I2) {
+                throw CancellationException("injected cancel before rename")
+            }
+        }
+        try {
+            val deferred = async(Dispatchers.Default) {
+                f.tx.importPackage { staging ->
+                    val asset = f.stageAsset(staging, byteArrayOf(1))
+                    val skin = f.stageSkin(staging, "s1", assetShas = listOf(asset.sha256))
+                    ImportTransaction.BuiltPackage(skins = listOf(skin), assets = listOf(asset))
+                }
+            }
+            val error = runCatching { deferred.await() }.exceptionOrNull()
+            assertTrue(error is CancellationException)
+            // 索引从未落盘（取消在写索引前）：f.index() 在 Missing 时
+            // 给空索引，不可直接 as Ok。
+            val index = f.index()
+            assertTrue(index.skins.isEmpty())
+            assertTrue(index.assets.isEmpty())
+            assertFalse(File(f.layout.skinsDir, "s1").exists())
+        } finally {
+            SkinFaultHooks.handler = {}
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cancelAfterRenameBeforeIndexCommit_rollsBackAndRethrows() = runBlocking {
+        // 目录 rename 后、索引提交前取消（I4 注入）：重读索引确认
+        // 未提交，已 rename 的目标回滚删除，取消重抛。
+        val f = Fixture()
+        SkinFaultHooks.handler = { point ->
+            if (point == SkinFaultHooks.Point.I4) {
+                throw CancellationException("injected cancel after rename, before index commit")
+            }
+        }
+        try {
+            val deferred = async(Dispatchers.Default) {
+                f.tx.importPackage { staging ->
+                    val asset = f.stageAsset(staging, byteArrayOf(1))
+                    val skin = f.stageSkin(staging, "s1", assetShas = listOf(asset.sha256))
+                    ImportTransaction.BuiltPackage(skins = listOf(skin), assets = listOf(asset))
+                }
+            }
+            val error = runCatching { deferred.await() }.exceptionOrNull()
+            assertTrue(error is CancellationException)
+            // 索引从未落盘（取消在写索引前）：f.index() 在 Missing 时
+            // 给空索引，不可直接 as Ok。
+            val index = f.index()
+            assertTrue(index.skins.isEmpty())
+            assertTrue(index.assets.isEmpty())
+            // 回滚删的是已 rename 的目标（代次目录与资产文件）；
+            // mkdirs() 建的空父目录 skins/s1/ 会留下，与旧通用
+            // catch 的回滚口径一致（无害，对账忽略空目录）。
+            assertFalse(f.layout.skinGenDir("s1", 1).exists())
+            assertTrue(f.layout.assetsDir.listFiles().isNullOrEmpty())
+        } finally {
+            SkinFaultHooks.handler = {}
+            f.root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun cancelAfterAtomicReplace_keepsCommittedIndexAndRethrows() = runBlocking {
+        // 窄窗口：取消在 AtomicFiles rename/fsync 后、writeIndex
+        // 返回前请求。提交边界（NonCancellable）使“I4 后、写索引
+        // 前请求的取消”与“写索引挂起期间请求的取消”走同一投递点
+        // （边界后 ensureActive）：写必跑完、stage 已是 post_index，
+        // 重读索引确认已提交，索引引用的目录与资产均存在且可读，
+        // 不删不回滚、取消重抛。故在 I4 后立即取消即覆盖该窗口，
+        // 无须轮询 tmp 文件（轮询在满载下会错过数毫秒写窗口）。
+        // 索引垫大（2000 条假条目）只为拉长 I4 到返回的时间，
+        // 让 I4 后立即取消在满载下也有充足余量。
+        val f = Fixture()
+        f.tx.importPackage { staging ->
+            val asset = f.stageAsset(staging, byteArrayOf(0))
+            val skin = f.stageSkin(staging, "s0", assetShas = listOf(asset.sha256))
+            ImportTransaction.BuiltPackage(skins = listOf(skin), assets = listOf(asset))
+        }
+        val base = f.index()
+        val bulk = (0 until 2000).map { i ->
+            SkinIndexEntry("bulk-$i", "bulk-$i", "hash-$i", 1, "skins/bulk-$i/gen-1", 10L, 0L)
+        }
+        f.store.writeIndex(base.copy(skins = base.skins + bulk))
+        val atI4 = CountDownLatch(1)
+        SkinFaultHooks.handler = { point ->
+            if (point == SkinFaultHooks.Point.I4) atI4.countDown()
+        }
+        var s1AssetSha: String? = null
+        try {
+            val deferred = async(Dispatchers.Default) {
+                f.tx.importPackage { staging ->
+                    val asset = f.stageAsset(staging, byteArrayOf(7, 7, 7))
+                    s1AssetSha = asset.sha256
+                    val skin = f.stageSkin(staging, "s1", assetShas = listOf(asset.sha256))
+                    ImportTransaction.BuiltPackage(skins = listOf(skin), assets = listOf(asset))
+                }
+            }
+            assertTrue("import did not reach I4", atI4.await(30, TimeUnit.SECONDS))
+            // I4 后立即取消：此时 rename 已做、写索引尚未开始或正
+            // 在进行；提交边界保证写跑完、取消在边界后投递。
+            deferred.cancel()
+            val error = runCatching { deferred.await() }.exceptionOrNull()
+            assertTrue(error is CancellationException)
+            val index = f.index()
+            val entry = index.skins.singleOrNull { it.id == "s1" }
+            assertTrue(entry != null)
+            val genDir = File(f.layout.root, entry!!.dir)
+            assertTrue(File(genDir, "skin.json").isFile)
+            assertTrue(File(genDir, "skin.json").readText().contains("\"s1\""))
+            assertTrue(File(genDir, "manifest.json").isFile)
+            val assetSha = s1AssetSha
+            assertTrue(assetSha != null)
+            assertTrue(index.assets.any { it.sha256 == assetSha })
+            val assetFile = f.layout.assetFile(assetSha!!, "png")
+            assertTrue(assetFile.isFile)
+            assertTrue(assetFile.readBytes().contentEquals(byteArrayOf(7, 7, 7)))
         } finally {
             SkinFaultHooks.handler = {}
             f.root.deleteRecursively()

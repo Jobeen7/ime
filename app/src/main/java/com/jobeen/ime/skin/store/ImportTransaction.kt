@@ -6,8 +6,13 @@ import com.jobeen.ime.skin.fault.SkinFaultHooks
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 /**
  * 导入事务的机制层（详设 §2.3，步骤写死）：
@@ -77,6 +82,13 @@ class ImportTransaction(
         val renamedTargets = mutableListOf<File>()
         // 失败日志用：构建回调报出的皮肤/布局 id（构建中途失败时仍为空，属实记录）。
         val builtIds = mutableListOf<String>()
+        // 本笔要提交的条目：声明在 try 之外——取消分支需在 catch 里
+        // 凭它们重读索引核对提交与否，不能只信内存 stage。
+        val skippedSkins = mutableListOf<String>()
+        val skippedLayouts = mutableListOf<String>()
+        val newSkinEntries = mutableListOf<SkinIndexEntry>()
+        val newLayoutEntries = mutableListOf<LayoutIndexEntry>()
+        val importedAssetShas = mutableListOf<String>()
         return try {
             staging.mkdirs()
             SkinFaultHooks.hit(SkinFaultHooks.Point.I1)
@@ -90,11 +102,6 @@ class ImportTransaction(
             // 同 id 会撞同一代次目录（rename 失败），异 id 会各自拿旧索引
             // 快照写回、丢对方条目。构建回调与校验只碰本笔 staging
             // （uuid 唯一），不进锁。
-            val skippedSkins = mutableListOf<String>()
-            val skippedLayouts = mutableListOf<String>()
-            val newSkinEntries = mutableListOf<SkinIndexEntry>()
-            val newLayoutEntries = mutableListOf<LayoutIndexEntry>()
-            val importedAssetShas = mutableListOf<String>()
             commitLockFor(layout.root).withLock {
                 val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
                     ?: LibraryIndex()
@@ -189,10 +196,19 @@ class ImportTransaction(
                 newIndex = newIndex.copy(
                     assets = newIndex.assets.map { it.copy(refcountCache = refcounts[it.sha256] ?: 0) },
                 )
-                store.writeIndex(newIndex)
+                // 提交边界：写索引＋记录已提交结果不可取消——取消若在
+                // 写索引挂起期间请求，会被推迟到本块结束后才投递；此
+                // 时原子 rename 已落盘、stage 已是 post_index，补偿
+                // 不会误删已提交的目标。
+                withContext(NonCancellable) {
+                    store.writeIndex(newIndex)
+                    stage = "post_index"
+                }
             }
-            // 索引已落盘：此后失败不得再删目标（目标已是活代次）。
-            stage = "post_index"
+            // 被推迟的取消在此投递——提交已完成且 stage 已是
+            // post_index；取消分支会重读索引确认已提交、不删目标，
+            // 再把取消重抛给调用方。
+            currentCoroutineContext().ensureActive()
             SkinFaultHooks.hit(SkinFaultHooks.Point.I5)
 
             runCatching { staging.deleteRecursively() }
@@ -205,6 +221,38 @@ class ImportTransaction(
                 ),
             )
             Result.Imported(newSkinEntries, newLayoutEntries, skippedSkins, skippedLayouts)
+        } catch (e: CancellationException) {
+            // 取消：绝不只信内存 stage——持提交锁重读持久化索引，核
+            // 对本次要提交的条目是否已被引用，再决定补偿；随后重抛。
+            // （取消若在写索引挂起期间请求，恢复时才投递：此时原子
+            // rename 已落盘，内存 stage 仍是 "index"，只凭 stage
+            // 删目标即毁库——此即本窗口的病根。）
+            runCatching { staging.deleteRecursively() }
+            val committed = if (renamedTargets.isEmpty()) {
+                false
+            } else {
+                isImportCommitted(newSkinEntries, newLayoutEntries, importedAssetShas)
+            }
+            if (committed == false) {
+                // 确认未提交：删已 rename 的目标，回滚到库零变化。
+                for (target in renamedTargets) {
+                    runCatching {
+                        if (target.isDirectory) target.deleteRecursively() else target.delete()
+                    }
+                }
+            }
+            // committed == true（已提交）或 null（索引不可读、无法
+            // 裁决）时不删目标：已提交的不动；无法裁决的留孤儿给启
+            // 动对账收敛（索引不可读时一律保留，与恢复流程同口径）。
+            DiagLog.i(
+                "store", "import_cancelled",
+                mapOf(
+                    "stage" to stage,
+                    "committed" to (committed?.toString() ?: "unknown"),
+                    "skinId" to newSkinEntries.firstOrNull()?.id,
+                ),
+            )
+            throw e
         } catch (e: Exception) {
             // 第 5 批 §1 双删：暂存区恒删；索引写成功前已 rename 的
             // 目标亦删（索引未指过去，删 = 库零变化，不留孤儿待对账）。
@@ -228,6 +276,38 @@ class ImportTransaction(
                 e,
             )
             Result.Failed(stage, e.message ?: e.javaClass.simpleName)
+        }
+    }
+
+    /**
+     * 持提交锁重读持久化索引，核对本次要提交的条目是否全已引用。
+     * true=已提交；false=确认未提交；null=索引不可读、无法裁决。
+     * 索引不存在（Missing）即未提交——无索引则无任何引用，与
+     * 「索引未落盘＝空库」同口径；只有损坏（Corrupt）才无法裁决。
+     * 在 NonCancellable 下运行——调用方已处于取消投递中，读索引
+     * 的挂起点不得再抛取消。
+     */
+    private suspend fun isImportCommitted(
+        newSkins: List<SkinIndexEntry>,
+        newLayouts: List<LayoutIndexEntry>,
+        assetShas: List<String>,
+    ): Boolean? = withContext(NonCancellable) {
+        commitLockFor(layout.root).withLock {
+            val current = when (val read = store.readIndex()) {
+                is SkinLibraryStore.ReadResult.Ok -> read.value
+                is SkinLibraryStore.ReadResult.Missing -> return@withLock false
+                is SkinLibraryStore.ReadResult.Corrupt -> return@withLock null
+            }
+            val skinsOk = newSkins.all { e ->
+                current.skins.any { it.id == e.id && it.generation == e.generation && it.dir == e.dir }
+            }
+            val layoutsOk = newLayouts.all { e ->
+                current.layouts.any { it.id == e.id && it.generation == e.generation && it.dir == e.dir }
+            }
+            val assetsOk = assetShas.all { sha ->
+                current.assets.any { it.sha256 == sha }
+            }
+            skinsOk && layoutsOk && assetsOk
         }
     }
 
