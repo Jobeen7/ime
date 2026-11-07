@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.DigestUtil
+import com.jobeen.ime.data.keyboard.theme.BackgroundBlurOverride
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleMode
 import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
@@ -20,6 +21,7 @@ import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibrary
 import com.jobeen.ime.skin.store.SkinOverlayStore
 import java.io.File
+import java.util.concurrent.Semaphore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -65,9 +67,55 @@ object SkinSnapshotProvider {
      * 安装代次：[install]/[invalidate] 每次递增。异步启动加载在
      * 完成时比对代次——其间若有一次安装（用户应用皮肤、覆盖层
      * 刷新、回退默认等）发生，启动加载的旧快照直接丢弃，绝不
-     * 覆盖用户的新选择。
+     * 覆盖用户的新选择。代次比对是快路径，最终裁决在 [install]
+     * 的锁内提交（token + 预期代次双重核对，见下）。
      */
     private var startupLoadGeneration = 0
+
+    /**
+     * 安装请求代次（.23 审计问题 2）：每次安装请求在开始准备
+     * 时分配一个单调递增的 request token 并记为最新；锁内提交
+     * 只认最新 token——先开始、后完成的旧请求到提交时已被更新
+     * 的请求取代，直接丢弃，绝不覆盖。token 必须在请求开始准备
+     * 时分配（快照构建／解码之前），提交时才分配无法区分新旧
+     * （后开始的旧请求会在提交时拿到更新的 token 而错误胜出）。
+     * 只读提交方（blur 重建）不分配、只捕获当前最新 token，
+     * 提交时核对未变才换背景（见 [refreshBackgroundBlur]）。
+     * 全部读写都在 [lock] 内，无需 @Volatile。
+     */
+    private var installRequestSequence = 0L
+    private var latestInstallToken = 0L
+
+    /**
+     * 开始一次安装请求：分配单调递增的 request token 并记为最新。
+     * 调用点：用户应用／回退／重装入口、覆盖层刷新开始、启动
+     * 加载发起时——一律在准备开始时调，绝不在提交时调。
+     */
+    internal fun allocateInstallToken(): Long = synchronized(lock) {
+        latestInstallToken = ++installRequestSequence
+        latestInstallToken
+    }
+
+    /** 测试缝：背景位图预解码（默认 [decodePrepared]）；生产不改。 */
+    internal var backgroundDecoder: (Context, SkinSnapshot) -> Bitmap? = ::decodePrepared
+
+    /** 测试缝：位图回收（默认未回收才 recycle）；生产不改。 */
+    internal var bitmapRecycler: (Bitmap) -> Unit = { bitmap ->
+        if (!bitmap.isRecycled) bitmap.recycle()
+    }
+
+    /** 测试缝：背景模糊全局覆盖（默认读 [GlobalStylePrefs]）；生产不改。 */
+    internal var blurOverrideProvider: (Context) -> BackgroundBlurOverride = { context ->
+        GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundBlur
+    }
+
+    /**
+     * 背景产物解码并发上限（.23 审计问题 2）：同一时刻最多 2 份
+     * 在解（与 ImageDecodePolicy.DECODE_PARALLELISM 同界），避免
+     * 多路安装并发时解码峰值叠加。每份产物已按目标尺寸预处理，
+     * 单份峰值有界；2 路并行约两屏位图。
+     */
+    private val backgroundDecodePermits = Semaphore(2)
 
     /**
      * 启动加载的依赖缝（审计 #1-6 的可测性）：生产实现直调
@@ -79,7 +127,13 @@ object SkinSnapshotProvider {
     internal interface StartupLoadDeps {
         suspend fun awaitBootstrap()
         suspend fun loadSnapshot(context: Context): Pair<SkinSnapshot, Boolean>?
-        fun installSnapshot(context: Context, snapshot: SkinSnapshot, pending: Boolean)
+        fun installSnapshot(
+            context: Context,
+            snapshot: SkinSnapshot,
+            pending: Boolean,
+            requestToken: Long,
+            expectedGeneration: Int,
+        )
     }
 
     private object RealStartupLoadDeps : StartupLoadDeps {
@@ -90,8 +144,18 @@ object SkinSnapshotProvider {
         override suspend fun loadSnapshot(context: Context): Pair<SkinSnapshot, Boolean>? =
             loadStartup(context)
 
-        override fun installSnapshot(context: Context, snapshot: SkinSnapshot, pending: Boolean) {
-            install(context, snapshot)
+        override fun installSnapshot(
+            context: Context,
+            snapshot: SkinSnapshot,
+            pending: Boolean,
+            requestToken: Long,
+            expectedGeneration: Int,
+        ) {
+            // 提交裁决在 install 内原子完成：被更新的请求取代时
+            // 返回 false，不得武装 pending 验证、不得请求重绘——
+            // 运行态仍在更新的皮肤上，旧快照的验证与重绘都是错的。
+            val accepted = install(context, snapshot, requestToken, expectedGeneration)
+            if (!accepted) return
             if (pending) {
                 SkinRuntime.armPendingVerification(snapshot.ref)
             }
@@ -147,12 +211,23 @@ object SkinSnapshotProvider {
      *
      * 并发：多次调用只发起一次（[loadAttempted] 同步锁内判定）；
      * 安装期间若用户已应用皮肤，启动加载的旧快照按代次丢弃。
+     * token 在发起时分配（.23 审计问题 2）：最终裁决在 [install]
+     * 的锁内提交（token + 预期代次双重核对）——发起后到提交前
+     * 的快路径比对（token 未变、代次未变、当前仍无快照）只是省
+     * 掉一次注定被拒的安装调用，不作最终裁决；检查与提交之间
+     * 的窗口（启动快照的锁外解码期用户完成一次应用）由 install
+     * 的原子核对兜底。
      */
     fun ensureLoaded(context: Context) {
+        val token: Long
         val generation: Int
         synchronized(lock) {
             if (loadAttempted) return
             loadAttempted = true
+            // 与 allocateInstallToken() 同款递增（此处已持锁，直接
+            // 内联，不再调一次 synchronized 方法）。
+            token = ++installRequestSequence
+            latestInstallToken = token
             generation = startupLoadGeneration
         }
         // context 原样传进协程：applicationContext 的解析留在
@@ -163,11 +238,12 @@ object SkinSnapshotProvider {
             val loaded = runCatching { startupLoadDeps.loadSnapshot(context) }.getOrNull()
                 ?: return@launch
             val stillCurrent = synchronized(lock) {
-                generation == startupLoadGeneration && currentSnapshot == null
+                token == latestInstallToken &&
+                    generation == startupLoadGeneration && currentSnapshot == null
             }
             if (!stillCurrent) return@launch
             runCatching {
-                startupLoadDeps.installSnapshot(context, loaded.first, loaded.second)
+                startupLoadDeps.installSnapshot(context, loaded.first, loaded.second, token, generation)
             }
         }
     }
@@ -178,29 +254,62 @@ object SkinSnapshotProvider {
      * 同步解码。解码在调用线程跑——当前调用方均在 IO 线程
      *（应用事务经 IO 包装、启动加载经 startupScope IO），主线
      * 程调用方不得直接调本函数。
+     *
+     * 返回是否接纳：token 已不是最新（有更新的安装请求开始）
+     * 或预期代次已变（启动加载期间发生过安装／失效）时拒绝，
+     * 解出的位图安全回收，运行态纹丝不动。调用方不得把被拒当
+     * 成功（事务层据此走失败／回退分支；启动加载被拒时不武装
+     * pending 验证、不请求重绘，见 RealStartupLoadDeps）。
+     * 无 token 的调用在本函数入口分配——只适用于准备全在
+     * install 内（仅背景解码）的调用方；快照构建在外的请求
+     *（应用事务、启动加载）必须在请求开始时调
+     * [allocateInstallToken] 并传 token，否则“后开始、先完成”
+     * 的新请求会被“先开始、后完成”的旧请求在提交时反超。
      */
-    fun install(context: Context, snapshot: SkinSnapshot?) {
+    fun install(context: Context, snapshot: SkinSnapshot?): Boolean =
+        install(context, snapshot, allocateInstallToken(), expectedGeneration = null)
+
+    internal fun install(
+        context: Context,
+        snapshot: SkinSnapshot?,
+        requestToken: Long,
+        expectedGeneration: Int? = null,
+    ): Boolean {
         // 背景解码先行：无条件解（锁外读 currentBitmapKey 是过期
         // 读，绝不能据此跳过——快照可能已被替换；锁内对键未变的
-        // 冗余位图回收，行为与改前一致）。
-        val prepared = snapshot?.let { decodePrepared(context, it) }
+        // 冗余位图回收，行为与改前一致）。解码受并发上限约束
+        //（见 decodeBackgroundBounded）。
+        val prepared = snapshot?.let { decodeBackgroundBounded(context, it) }
+        var accepted = false
         synchronized(lock) {
-            loadAttempted = true
-            // 安装代次递增：在途的异步启动加载完成时按代次丢弃，
-            // 不覆盖本次安装。
-            startupLoadGeneration++
-            if (snapshot == null) {
-                currentSnapshot = null
-                releaseBitmapLocked()
-                InputFeedbacks.clearSkinSounds()
-                prewarmJob?.cancel()
-                SkinKeyImageStore.clear()
-                // 运行态同步清空：旧皮肤的通知锁定不带到无皮肤态。
-                SkinRuntimeState.reset()
-            } else {
-                installLocked(context, snapshot, prepared)
+            val tokenCurrent = requestToken == latestInstallToken
+            val generationCurrent =
+                expectedGeneration == null || expectedGeneration == startupLoadGeneration
+            if (tokenCurrent && generationCurrent) {
+                loadAttempted = true
+                // 安装代次递增：在途的异步启动加载完成时按代次丢弃，
+                // 不覆盖本次安装。
+                startupLoadGeneration++
+                if (snapshot == null) {
+                    currentSnapshot = null
+                    releaseBitmapLocked()
+                    InputFeedbacks.clearSkinSounds()
+                    prewarmJob?.cancel()
+                    SkinKeyImageStore.clear()
+                    // 运行态同步清空：旧皮肤的通知锁定不带到无皮肤态。
+                    SkinRuntimeState.reset()
+                } else {
+                    installLocked(context, snapshot, prepared)
+                }
+                accepted = true
             }
         }
+        if (!accepted && prepared != null) {
+            // 被拒的 prepared 位图不得滞留：不入 currentBitmap、
+            // 不进任何缓存，立即回收（.23 审计问题 2）。
+            runCatching { bitmapRecycler(prepared) }
+        }
+        return accepted
     }
 
     /** 进程内失效（如库被外部清理后由设置页触发重读）。 */
@@ -210,6 +319,9 @@ object SkinSnapshotProvider {
             // 代次递增：在途的异步启动加载完成时按代次丢弃，
             // 下次 ensureLoaded 重新发起加载。
             startupLoadGeneration++
+            // token 同步推进：在途的安装请求（token 在失效前分配）
+            // 提交时按 token 被拒，不得在失效后又把旧快照装回来。
+            latestInstallToken = ++installRequestSequence
             currentSnapshot = null
             releaseBitmapLocked()
             InputFeedbacks.clearSkinSounds()
@@ -228,6 +340,12 @@ object SkinSnapshotProvider {
      * 解析，调用方不得在主线程同步等它（审计 #2）。
      */
     suspend fun refreshIfOverlayChanged(context: Context): Boolean {
+        // 只捕获、不分配：覆盖层刷新只是对当前快照的更新，不
+        // 是完整安装——它开始后若有完整安装请求开始，刷新在提
+        // 交时按捕获的 token 被拒；反过来刷新本身绝不能否决在
+        // 它之后开始的完整安装（分配 token 会让后开始的应用在
+        // 提交时被判过期）。
+        val tokenAtStart = synchronized(lock) { latestInstallToken }
         val current = synchronized(lock) { currentSnapshot } ?: return false
         val layout = SkinLibrary.layout
         val diskVersion = runCatching {
@@ -243,8 +361,7 @@ object SkinSnapshotProvider {
             )
             return false
         }
-        install(context, rebuilt)
-        return true
+        return install(context, rebuilt, tokenAtStart)
     }
 
     // ---- 编辑器预览位图槽（定稿十一.3 的第二份） ----
@@ -322,7 +439,7 @@ object SkinSnapshotProvider {
         } else if (prepared != null && currentBitmap == null) {
             currentBitmap = prepared
         } else if (prepared != null) {
-            if (!prepared.isRecycled) prepared.recycle()
+            runCatching { bitmapRecycler(prepared) }
         }
     }
 
@@ -334,11 +451,15 @@ object SkinSnapshotProvider {
      * 只记元数据（皮肤 id＋产物键），不记图片内容。
      */
     fun refreshBackgroundBlur(context: Context) {
+        // 只捕获、不分配（与 refreshIfOverlayChanged 同款口径）：
+        // blur 重建只是对当前快照背景段的更新，不得否决在它之后
+        // 开始的完整安装；提交时 token 变了就丢弃。
+        val tokenAtStart = synchronized(lock) { latestInstallToken }
         val snapshot = synchronized(lock) { currentSnapshot } ?: return
         val bg = snapshot.background ?: return
         val (blur, adjust) = GlobalStyleResolver.effectiveBlur(
             bg.specBlurRadius, bg.specImageAdjust, bg.blurDisabled,
-            GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundBlur,
+            blurOverrideProvider(context),
         )
         if (blur == bg.blurRadius && adjust == bg.imageAdjust) return
         val newBg = bg.copy(
@@ -350,16 +471,21 @@ object SkinSnapshotProvider {
         )
         // 背景解码先行（锁外）：新产物键对应的位图在锁外解出，
         // 再持锁换背景装入（审计 #2）；快照若已被替换，冗余位图回收。
-        val prepared = decodePrepared(context, snapshot.copy(background = newBg))
+        val prepared = decodeBackgroundBounded(context, snapshot.copy(background = newBg))
         synchronized(lock) {
-            // 换背景期间快照可能已被其它安装替换：只在仍为同一
-            // 代次时换背景，否则丢弃（新快照构建期已含最新全局值）。
+            // 换背景期间快照可能已被其它安装替换：只在 token 仍
+            // 为最新且仍为同一 ref 时换背景，否则丢弃（新快照构
+            // 建期已含最新全局值）。只核 ref 不够：同皮肤重装
+            //（同一 ref、新 token）后，旧 blur 值会盖掉重装带入
+            // 的新值。
             val current = currentSnapshot
-            if (current != null && current.ref == snapshot.ref) {
+            if (current != null && tokenAtStart == latestInstallToken &&
+                current.ref == snapshot.ref
+            ) {
                 currentSnapshot = current.copy(background = newBg)
                 setBackgroundBitmapLocked(context, currentSnapshot!!, prepared)
             } else if (prepared != null) {
-                if (!prepared.isRecycled) prepared.recycle()
+                runCatching { bitmapRecycler(prepared) }
             }
         }
     }
@@ -411,12 +537,10 @@ object SkinSnapshotProvider {
                         ),
                     )
                     is BackgroundRebuilder.Outcome.Rebuilt -> {
-                        val bitmap = runCatching {
-                            BoundedBitmapDecoder.decodeFile(
-                                outcome.file,
-                                background.targetWidthPx, background.targetHeightPx,
-                            )
-                        }.getOrNull()
+                        val bitmap = decodeFileBounded(
+                            outcome.file,
+                            background.targetWidthPx, background.targetHeightPx,
+                        )
                         if (bitmap == null) {
                             DiagLog.w(
                                 "runtime", "background_rebuild_failed",
@@ -431,7 +555,9 @@ object SkinSnapshotProvider {
                             if (currentSnapshot?.ref == snapshot.ref && currentBitmapKey == key) {
                                 val old = currentBitmap
                                 currentBitmap = bitmap
-                                if (old != null && old !== bitmap && !old.isRecycled) old.recycle()
+                                if (old != null && old !== bitmap) {
+                                    runCatching { bitmapRecycler(old) }
+                                }
                                 true
                             } else {
                                 false
@@ -440,7 +566,7 @@ object SkinSnapshotProvider {
                         if (stillCurrent) {
                             SkinRuntime.requestRefresh()
                         } else {
-                            if (!bitmap.isRecycled) bitmap.recycle()
+                            runCatching { bitmapRecycler(bitmap) }
                         }
                     }
                 }
@@ -517,9 +643,49 @@ object SkinSnapshotProvider {
     }
 
     private fun releaseBitmapLocked() {
-        currentBitmap?.let { if (!it.isRecycled) it.recycle() }
+        currentBitmap?.let { runCatching { bitmapRecycler(it) } }
         currentBitmap = null
         currentBitmapKey = null
+    }
+
+    /**
+     * 背景产物解码（有界）：经 [backgroundDecoder] 解出，同一时刻
+     * 最多 2 路在解（[backgroundDecodePermits]）。中断时按解码失败
+     * 计（返回 null，调用方走缺失／重建口径），并恢复中断标志。
+     * 调用方均在 IO 线程，阻塞等许可可接受；主线程不得调 install
+     * 与 refreshBackgroundBlur（见各函数文档）。
+     */
+    private fun decodeBackgroundBounded(context: Context, snapshot: SkinSnapshot): Bitmap? {
+        try {
+            backgroundDecodePermits.acquire()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return null
+        }
+        try {
+            return backgroundDecoder(context, snapshot)
+        } finally {
+            backgroundDecodePermits.release()
+        }
+    }
+
+    /**
+     * 文件产物解码（有界）：与 [decodeBackgroundBounded] 同界（最多
+     * 2 路在解）；中断时恢复中断标志并返回 null，解码抛错也按
+     * 失败计（返回 null，调用方走缺失／重建口径）。
+     */
+    private fun decodeFileBounded(file: File, widthPx: Int, heightPx: Int): Bitmap? {
+        try {
+            backgroundDecodePermits.acquire()
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            return null
+        }
+        try {
+            return runCatching { BoundedBitmapDecoder.decodeFile(file, widthPx, heightPx) }.getOrNull()
+        } finally {
+            backgroundDecodePermits.release()
+        }
     }
 
     /** 解码预处理产物（目标尺寸上限两遍式：合法产物采样率 1，超大产物降采样到目标；产物缺失返回 null，背景回退纯色）。 */

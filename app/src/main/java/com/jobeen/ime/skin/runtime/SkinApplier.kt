@@ -64,7 +64,7 @@ class SkinApplier(context: Context) {
      * 状态，必须在调用线程（主线程）上快照，绝不能随事务一起
      * 移到 IO 线程（审计 #2）；快照值经参数传入，事务全程用它。
      */
-    private fun ports(verifyInline: Boolean) = object : ApplyTransaction.Ports {
+    private fun ports(verifyInline: Boolean, requestToken: Long) = object : ApplyTransaction.Ports {
         override suspend fun buildSnapshot(ref: SkinGenRef): Boolean {
             val snapshot = SkinSnapshotFactory.buildFromGenDir(appContext, layout, ref)
             staged = snapshot
@@ -72,12 +72,15 @@ class SkinApplier(context: Context) {
         }
 
         override suspend fun switchRuntime(ref: SkinGenRef?): Boolean {
-            if (ref == null) {
-                SkinSnapshotProvider.install(appContext, null)
+            val accepted = if (ref == null) {
+                SkinSnapshotProvider.install(appContext, null, requestToken)
             } else {
                 val snapshot = staged?.takeIf { it.ref == ref } ?: return false
-                SkinSnapshotProvider.install(appContext, snapshot)
+                SkinSnapshotProvider.install(appContext, snapshot, requestToken)
             }
+            // 被更新的请求取代时 install 返回 false：事务层按切换
+            // 失败走恢复分支（不得按成功继续写 verified／晋升）。
+            if (!accepted) return false
             SkinRuntime.requestRefresh()
             return true
         }
@@ -90,7 +93,8 @@ class SkinApplier(context: Context) {
         }
     }
 
-    private fun transaction(verifyInline: Boolean) = ApplyTransaction(layout, store, ports(verifyInline))
+    private fun transaction(verifyInline: Boolean, requestToken: Long) =
+        ApplyTransaction(layout, store, ports(verifyInline, requestToken))
 
     /**
      * 皮肤应用入口：快照构建、索引／布局解析、状态文件读写、
@@ -103,6 +107,12 @@ class SkinApplier(context: Context) {
         // 性能埋点（2026-10-29 item-1 B）：皮肤应用事务耗时
         // （含首帧验证等待；失败路径同样记时，只记元数据）。
         val startMs = android.os.SystemClock.elapsedRealtime()
+        // 安装请求 token 在入口分配（.23 审计问题 2）：快照构建
+        // 是准备的一部分，token 必须在构建之前分配，提交时才
+        // 分配无法区分“先开始、后完成”的旧请求。同一实例的连
+        // 续应用由 mutex 串行；双实例／启动加载／覆盖层刷新与
+        // 本请求的先后以 token 裁决，晚开始的请求胜出。
+        val requestToken = SkinSnapshotProvider.allocateInstallToken()
         // 内联判据先在调用线程快照，再切 IO 跑事务。
         val verifyInline = SkinRuntime.canVerifyInline()
         try {
@@ -112,9 +122,9 @@ class SkinApplier(context: Context) {
                 // 2026-10-28 修复：首帧闩等待已移到 IO 线程（awaitFirstDrawLatch），
                 // 主线程应用不再自锁；真正不绘制的窗口仍 2s 超时回滚。
                 if (verifyInline) {
-                    transaction(verifyInline).apply(ref)
+                    transaction(verifyInline, requestToken).apply(ref)
                 } else {
-                    deferredApply(ref)
+                    deferredApply(ref, requestToken)
                 }
             }
             // 皮肤应用诊断（2026-11-02 修复批）：每次应用记结果类型
@@ -136,14 +146,16 @@ class SkinApplier(context: Context) {
     suspend fun rollbackToLastGood(): ApplyTransaction.Result = mutex.withLock {
         // 内联判据在调用线程快照（读窗口视图状态不得离主线程）。
         val verifyInline = SkinRuntime.canVerifyInline()
-        withContext(Dispatchers.IO) { rollbackToLastGoodOnIo(verifyInline) }
+        val requestToken = SkinSnapshotProvider.allocateInstallToken()
+        withContext(Dispatchers.IO) { rollbackToLastGoodOnIo(verifyInline, requestToken) }
     }
 
     private suspend fun rollbackToLastGoodOnIo(
         verifyInline: Boolean,
+        requestToken: Long,
     ): ApplyTransaction.Result {
         if (verifyInline) {
-            return transaction(verifyInline).rollbackToLastGood()
+            return transaction(verifyInline, requestToken).rollbackToLastGood()
         }
         val pointer = (store.readLastGood() as? SkinLibraryStore.ReadResult.Ok)?.value
             ?: return ApplyTransaction.Result.RollbackUnavailable("no_last_good").also {
@@ -173,7 +185,19 @@ class SkinApplier(context: Context) {
                 )
             }
         SkinRuntime.disarmPendingVerification()
-        SkinSnapshotProvider.install(appContext, snapshot)
+        // 被更新的请求取代时不写 VERIFIED、不报回退成功：运行态
+        // 仍在更新的皮肤上，写记录会把 active 指到未生效的皮肤。
+        if (!SkinSnapshotProvider.install(appContext, snapshot, requestToken)) {
+            return ApplyTransaction.Result.RollbackUnavailable("switch_failed").also {
+                DiagLog.w(
+                    "runtime", "rollback_unavailable",
+                    mapOf(
+                        "reason" to "switch_failed_superseded",
+                        "skinId" to ref.skinId, "gen" to ref.generation,
+                    ),
+                )
+            }
+        }
         store.writeActive(
             ActiveRecord(ref.skinId, ref.hash, ref.generation, ApplyState.VERIFIED,
                 System.currentTimeMillis()),
@@ -189,7 +213,8 @@ class SkinApplier(context: Context) {
         SkinRuntime.disarmPendingVerification()
         // disarm 只写 @Volatile 变量，主线程安全；事务本体在 IO 跑。
         val verifyInline = SkinRuntime.canVerifyInline()
-        withContext(Dispatchers.IO) { transaction(verifyInline).revertToDefault() }
+        val requestToken = SkinSnapshotProvider.allocateInstallToken()
+        withContext(Dispatchers.IO) { transaction(verifyInline, requestToken).revertToDefault() }
     }
 
     /**
@@ -199,10 +224,11 @@ class SkinApplier(context: Context) {
      * 无 active 皮肤时返回 true（无事可做）。
      */
     suspend fun reinstallActiveSnapshot(): Boolean = mutex.withLock {
-        withContext(Dispatchers.IO) { reinstallActiveSnapshotOnIo() }
+        val requestToken = SkinSnapshotProvider.allocateInstallToken()
+        withContext(Dispatchers.IO) { reinstallActiveSnapshotOnIo(requestToken) }
     }
 
-    private suspend fun reinstallActiveSnapshotOnIo(): Boolean {
+    private suspend fun reinstallActiveSnapshotOnIo(requestToken: Long): Boolean {
         val active = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
             ?: return true
         val skinId = active.skinId ?: return true
@@ -217,13 +243,13 @@ class SkinApplier(context: Context) {
                     mapOf("skinId" to skinId, "gen" to active.generation, "reason" to "build_failed"),
                 )
             }
-        SkinSnapshotProvider.install(appContext, snapshot)
+        if (!SkinSnapshotProvider.install(appContext, snapshot, requestToken)) return false
         SkinRuntime.requestRefresh()
         return true
     }
 
     /** 延迟验证路径：与事务同口径先验目标，再写 pending 并武装（R5）。 */
-    private suspend fun deferredApply(ref: SkinGenRef): ApplyTransaction.Result {
+    private suspend fun deferredApply(ref: SkinGenRef, requestToken: Long): ApplyTransaction.Result {
         if (!isTargetValid(ref)) {
             DiagLog.w(
                 "runtime", "apply_target_invalid",
@@ -237,7 +263,15 @@ class SkinApplier(context: Context) {
             ActiveRecord(ref.skinId, ref.hash, ref.generation, ApplyState.PENDING,
                 System.currentTimeMillis()),
         )
-        SkinSnapshotProvider.install(appContext, snapshot)
+        // 被更新的请求取代时不武装、不报 AppliedPending：运行态
+        // 仍在更新的皮肤上，武装旧 ref 会让下次首帧把旧皮肤晋升
+        // 为 verified。PENDING 记录本身先于安装写下（R5 崩溃恢复
+        // 口径）；与更新的请求同时在途时由下次启动对账收敛——
+        // 两屏同时应用在界面上不可达（同一时间只一屏可见），全
+        // 量修复需事务层在每次写记录前核对 token，不在本项范围。
+        if (!SkinSnapshotProvider.install(appContext, snapshot, requestToken)) {
+            return ApplyTransaction.Result.Superseded(ref)
+        }
         SkinRuntime.armPendingVerification(ref)
         DiagLog.i(
             "runtime", "apply_pending_deferred",

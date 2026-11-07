@@ -37,6 +37,8 @@ fun applyResultMessage(
             "回滚失败：皮肤状态不确定，请重启键盘"
         is ApplyTransaction.Result.TargetInvalid ->
             "皮肤无效，无法应用"
+        is ApplyTransaction.Result.Superseded ->
+            "已被更新的应用取代"
         is ApplyTransaction.Result.RolledBackToLastGood ->
             "已回退到：${name(result.ref)}"
         is ApplyTransaction.Result.RevertedToDefault ->

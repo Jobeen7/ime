@@ -78,6 +78,13 @@ class ApplyTransaction(
          */
         data class RollbackFailed(val ref: SkinGenRef, val stage: String, val reason: String) : Result
         data class TargetInvalid(val reason: String) : Result
+        /**
+         * 被更新的安装请求取代（.23 审计问题 2）：本请求开始后有
+         * 更新的安装请求开始并提交，本请求的安装被 provider 拒绝，
+         * 运行态仍在更新的皮肤上。本结果只表示“本次应用未生效”，
+         * 不表示故障——不得按失败报“回滚失败／请重启键盘”。
+         */
+        data class Superseded(val ref: SkinGenRef) : Result
         data class RolledBackToLastGood(val ref: SkinGenRef) : Result
         object RevertedToDefault : Result
         data class RollbackUnavailable(val reason: String) : Result

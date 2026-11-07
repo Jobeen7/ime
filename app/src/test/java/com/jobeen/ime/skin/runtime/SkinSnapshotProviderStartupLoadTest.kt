@@ -30,11 +30,15 @@ class SkinSnapshotProviderStartupLoadTest {
     private class FakeDeps(
         var snapshot: SkinSnapshot? = null,
         var pending: Boolean = false,
+        /** 为真时 installSnapshot 透传给真实 install（token＋预期代次核对）；为假只记录。 */
+        var delegateToRealInstall: Boolean = false,
     ) : SkinSnapshotProvider.StartupLoadDeps {
         val bootstrapCalls = AtomicInteger(0)
         val bootstrapEntered = CountDownLatch(1)
         val bootstrapRelease = CountDownLatch(1)
         val installed = mutableListOf<SkinSnapshot>()
+        val installAccepted = mutableListOf<Boolean>()
+        val installFinished = CountDownLatch(1)
         var installedPending: Boolean? = null
 
         override suspend fun awaitBootstrap() {
@@ -46,9 +50,22 @@ class SkinSnapshotProviderStartupLoadTest {
         override suspend fun loadSnapshot(context: Context): Pair<SkinSnapshot, Boolean>? =
             snapshot?.let { it to pending }
 
-        override fun installSnapshot(context: Context, snapshot: SkinSnapshot, pending: Boolean) {
+        override fun installSnapshot(
+            context: Context,
+            snapshot: SkinSnapshot,
+            pending: Boolean,
+            requestToken: Long,
+            expectedGeneration: Int,
+        ) {
             synchronized(installed) { installed += snapshot }
             installedPending = pending
+            if (delegateToRealInstall) {
+                val accepted = SkinSnapshotProvider.install(
+                    context, snapshot, requestToken, expectedGeneration,
+                )
+                synchronized(installAccepted) { installAccepted += accepted }
+            }
+            installFinished.countDown()
         }
     }
 
