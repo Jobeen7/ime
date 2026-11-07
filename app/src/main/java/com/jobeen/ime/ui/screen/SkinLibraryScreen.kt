@@ -1426,7 +1426,7 @@ private fun SkinLibraryCard(
 ) {
     var showMenu by remember { mutableStateOf(false) }
     var showLongPressMenu by remember { mutableStateOf(false) }
-    val borderColor = if (checked) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline
+    val borderColor = if (checked) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
@@ -1461,13 +1461,13 @@ private fun SkinLibraryCard(
                             .align(Alignment.TopStart)
                             .padding(4.dp)
                             .size(20.dp)
-                            .background(Color(0xFF4CAF50), CircleShape),
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Filled.Check,
                             contentDescription = if (multiSelect) "已选" else "生效中",
-                            tint = Color.White,
+                            tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(14.dp),
                         )
                     }
@@ -1575,7 +1575,7 @@ private fun BuiltinThemeCard(
     modifier: Modifier = Modifier,
     label: String? = null,
 ) {
-    val borderColor = if (isActive) Color(0xFF4CAF50) else MaterialTheme.colorScheme.outline
+    val borderColor = if (isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline
     Box(
         modifier = modifier
             .clip(RoundedCornerShape(12.dp))
@@ -1599,13 +1599,13 @@ private fun BuiltinThemeCard(
                             .align(Alignment.TopStart)
                             .padding(4.dp)
                             .size(20.dp)
-                            .background(Color(0xFF4CAF50), CircleShape),
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
                         contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             Icons.Filled.Check,
                             contentDescription = "生效中",
-                            tint = Color.White,
+                            tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(14.dp),
                         )
                     }

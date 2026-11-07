@@ -23,7 +23,6 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import com.jobeen.ime.ui.theme.LocalMonetCardColor
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -257,8 +256,9 @@ fun SettingsDialog(
         Card(
             shape = RoundedCornerShape(28.dp),
             colors = CardDefaults.cardColors(
-                // 弹出卡片面＝莫奈卡片色。
-                containerColor = LocalMonetCardColor.current,
+                // 弹出卡片面＝surfaceContainerHigh；框内分区卡为 surface，
+                // 两层色阶区分（分组卡仍用 LocalMonetCardColor＝surface，不动）。
+                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
             ),
         ) {
             val scroll = rememberScrollState()

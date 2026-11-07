@@ -48,7 +48,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -58,8 +57,6 @@ import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.ui.theme.LocalMonetCardColor
-import com.jobeen.ime.ui.theme.SuccessDark
-import com.jobeen.ime.ui.theme.SuccessLight
 
 object ScreenComponent {
     val barFontSize = 22.sp
@@ -83,11 +80,7 @@ object ScreenComponent {
     fun ProgressButton(progress: Float, extracting: Boolean = false, width: Dp = 72.dp) {
         val fraction = progress.coerceIn(0f, 1f)
         val buttonWidth = if (width > 0.dp) width else 72.dp
-        val containerColor = if (extracting) {
-            if (isSystemInDarkTheme()) SuccessDark else SuccessLight
-        } else {
-            MaterialTheme.colorScheme.primary
-        }
+        val containerColor = MaterialTheme.colorScheme.primary
         val progressColor = MaterialTheme.colorScheme.onPrimary
         Box(
             modifier = Modifier
@@ -243,18 +236,17 @@ object ScreenComponent {
         }
     }
 
-    /** 琥珀色警告卡（内容流中的 Inline Alert，非 Banner）：深浅主题各一套琥珀色。 */
+    /** 琥珀色警告卡（内容流中的 Inline Alert，非 Banner）：容器取 tertiaryContainer。 */
     @Composable
     fun WarningCard(
         modifier: Modifier = Modifier,
         content: @Composable ColumnScope.() -> Unit,
     ) {
-        val dark = isSystemInDarkTheme()
         Card(
             modifier = modifier.fillMaxWidth(),
             shape = RoundedCornerShape(20.dp),
             colors = CardDefaults.cardColors(
-                containerColor = if (dark) Color(0xFF40300A) else Color(0xFFFFF0C2),
+                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
             ),
             elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
         ) {
@@ -271,7 +263,7 @@ object ScreenComponent {
     /** 琥珀色警告卡内的文字色，与 WarningCard 容器配对。 */
     @Composable
     fun warningContentColor(): Color =
-        if (isSystemInDarkTheme()) Color(0xFFFFD54A) else Color(0xFF6D4C00)
+        MaterialTheme.colorScheme.onTertiaryContainer
 
     /**
      * 开关行：标题 16sp，纵向 12dp；须放在卡片内，横向留白由卡片提供。

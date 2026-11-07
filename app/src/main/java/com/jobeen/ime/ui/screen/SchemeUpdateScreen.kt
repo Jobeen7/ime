@@ -1,7 +1,6 @@
 package com.jobeen.ime.ui.screen
 
 import android.content.Context
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -357,8 +356,7 @@ fun SchemeUpdateScreen(onBack: () -> Unit) {
             val info = updateInfo
             if (info != null) {
                 val local = localInfo
-                val diffColor =
-                    if (isSystemInDarkTheme()) Color(0xFF69F0AE) else Color(0xFF2E7D32)
+                val diffColor = MaterialTheme.colorScheme.primary
                 val darkColor = MaterialTheme.colorScheme.onSurface
                 val schemaDiff = local != null && local.schemaVersion != info.schemaRemoteVersion
                 val dictDiff = info.dictRemoteFingerprint != null &&

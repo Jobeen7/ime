@@ -31,7 +31,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
@@ -366,8 +365,8 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
                         enabled = !checkingUpdate && !BuildConfig.DEBUG,
                         shape = RoundedCornerShape(24.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color.White,
-                            contentColor = MaterialTheme.colorScheme.primary,
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         ),
                         contentPadding = androidx.compose.foundation.layout.PaddingValues(
                             horizontal = 20.dp,

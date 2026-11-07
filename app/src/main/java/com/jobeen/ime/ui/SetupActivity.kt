@@ -11,7 +11,6 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -57,9 +56,6 @@ import com.jobeen.ime.ui.theme.ExpressiveShapes
 import com.jobeen.ime.ui.theme.ImeTheme
 import com.jobeen.ime.ui.theme.AppAppearance
 import com.jobeen.ime.ui.theme.AppAppearanceMode
-import com.jobeen.ime.ui.theme.SuccessContainerLight
-import com.jobeen.ime.ui.theme.SuccessDark
-import com.jobeen.ime.ui.theme.SuccessLight
 
 class SetupActivity : ComponentActivity() {
     // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
@@ -220,7 +216,7 @@ private fun SetupScreen(
                 shape = ExpressiveShapes.medium,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = if (isConfigured) if (isSystemInDarkTheme()) SuccessDark else SuccessLight
+                    contentColor = if (isConfigured) MaterialTheme.colorScheme.primary
                     else MaterialTheme.colorScheme.onSurfaceVariant,
                 ),
                 elevation = ButtonDefaults.buttonElevation(
@@ -249,9 +245,8 @@ private fun SetupStatusCard(
     actionText: String,
     onAction: () -> Unit,
 ) {
-    val isDark = isSystemInDarkTheme()
-    val successColor = if (isDark) SuccessDark else SuccessLight
-    val successContainer = if (isDark) SuccessDark.copy(alpha = 0.15f) else SuccessContainerLight
+    val successColor = MaterialTheme.colorScheme.primary
+    val successContainer = MaterialTheme.colorScheme.primaryContainer
 
     val iconColor by animateColorAsState(
         targetValue = if (isComplete) successColor else MaterialTheme.colorScheme.error,
@@ -267,8 +262,7 @@ private fun SetupStatusCard(
         shape = ExpressiveShapes.medium,
         colors = CardDefaults.cardColors(
             containerColor = if (isComplete) {
-                if (isDark) MaterialTheme.colorScheme.surface
-                else successContainer
+                successContainer
             } else {
                 MaterialTheme.colorScheme.surface
             },

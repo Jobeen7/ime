@@ -121,11 +121,13 @@ private val ExpressiveShapesScheme = Shapes(
 )
 
 /**
- * 莫奈色卡片面：全部设置页的分组卡片与弹出卡片统一用此色
+ * 莫奈色卡片面：全部设置页的分组卡片用此色（＝colorScheme.surface）
  * （2026-10-30 莫奈色轮）。与页面主题的动态取色开关解耦：
  * 浅色取动态浅色方案的容器色，深色取动态深色方案的容器色；
  * 动态取色不可用（低版本／取色失败）时回落现有静态容器色。
  * 未被 ImeTheme 包裹时默认浅色静态色（安全值，永不透明）。
+ * 弹出卡片（SettingsDialog）不用此色，改用 surfaceContainerHigh，
+ * 与框内分区卡（surface）分两层色阶。
  */
 val LocalMonetCardColor = compositionLocalOf { SurfaceContainerLight }
 
@@ -173,7 +175,8 @@ fun ImeTheme(
         monetCardContainerColor(dynamicContainer, darkTheme)
     }
 
-    // 卡片面＝colorScheme.surface：页面用 background、卡片用 surface，靠色阶分层，不跟随壁纸取色。
+    // 卡片面：分组卡＝colorScheme.surface，弹出卡＝surfaceContainerHigh；
+    // 页面用 background，靠色阶分层，不跟随壁纸取色。
     CompositionLocalProvider(LocalMonetCardColor provides colorScheme.surface) {
         MaterialTheme(
             colorScheme = colorScheme,
