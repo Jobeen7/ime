@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "zipSha256": "c3ac3200809261b3c880a0f739cae37fee1b3bab9e91f206ebe891554836529c",
+  "zipSha256": "23e801747ea8fb69fa8dee2d491dca2ab54479acdc50bac578fe3f8ddad4e58e",
   "preserve": [
     "shared/opencc/wanxiang/Custom_"
   ],
@@ -267,8 +267,8 @@
     },
     {
       "path": "shared/lua/wanxiang/wanxiang.lua",
-      "size": 13587,
-      "crc": "0a56493d"
+      "size": 13588,
+      "crc": "73bf6bf6"
     },
     {
       "path": "shared/opencc/wanxiang/Custom_Emoji.txt",
@@ -327,8 +327,8 @@
     },
     {
       "path": "shared/version.txt",
-      "size": 7,
-      "crc": "91b5f5b7"
+      "size": 8,
+      "crc": "4cf91a88"
     },
     {
       "path": "shared/wanxiang_abbrev.dict.yaml",
@@ -352,8 +352,8 @@
     },
     {
       "path": "shared/wanxiang_algebra.yaml",
-      "size": 136927,
-      "crc": "fcf0dcd9"
+      "size": 136950,
+      "crc": "8bba8070"
     },
     {
       "path": "shared/wanxiang_english.dict.yaml",
