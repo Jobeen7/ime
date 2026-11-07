@@ -162,6 +162,9 @@ target_compile_options(
 target_compile_options(
   rime-octagram-objs PRIVATE "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.")
 
+target_compile_options(
+  rime-predict-objs PRIVATE "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.")
+
 add_subdirectory(librime_jni)
 
 add_subdirectory(libmarisa_jni)
