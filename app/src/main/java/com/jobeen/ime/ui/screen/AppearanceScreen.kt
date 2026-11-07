@@ -5,12 +5,17 @@ package com.jobeen.ime.ui.screen
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalDragOrCancellation
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -28,20 +33,32 @@ import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
@@ -49,12 +66,20 @@ import com.jobeen.ime.data.keyboard.theme.BackgroundBlurMode
 import com.jobeen.ime.data.keyboard.theme.FontChoice
 import com.jobeen.ime.data.keyboard.theme.FontRole
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
+import android.content.Context
 import com.jobeen.ime.data.keyboard.theme.GlobalStyle
+import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
+import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.data.keyboard.theme.MonetPalette
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleMode
 import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.SkinFonts
 import com.jobeen.ime.data.keyboard.theme.SurfaceOverride
 import com.jobeen.ime.data.keyboard.theme.VideoPrefs
+import com.jobeen.ime.data.manager.KeyboardManager
+import com.jobeen.ime.skin.model.GeometryField
+import com.jobeen.ime.skin.model.KeyboardGeometryField
+import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
@@ -369,7 +394,7 @@ fun AppearanceScreen(
 }
 
 /** 颜色选择目标（预设色对话框共用）。 */
-private enum class ColorTarget {
+internal enum class ColorTarget {
     KEY_BG, KEY_BORDER, TOOLBAR_BG, TOOLBAR_BORDER, BAR_BG,
 }
 
@@ -425,8 +450,15 @@ private fun fontChoiceLabel(choice: FontChoice?): String = when (choice) {
 private enum class AppearanceCategory { VIDEO, GLOBAL, FONTS, APP }
 
 /**
- * 全局样式对话框编辑器（主题／自定义各一套草稿）：
- * 分段可折叠（入口默认全折叠，点卡展开；值标签一位小数，与图示一致）；
+ * 全局样式对话框编辑器（主题／自定义各一套草稿；2026-11-07 按视频定稿重设计）：
+ * 顶部实时预览（迷你键盘两行，按住看按压反馈）＋三标签
+ * （按键／工具栏／整体）＋五分区按标签分（按键＝按键分区；
+ * 工具栏＝状态栏图标＋整条状态栏；整体＝键盘整体＋磨砂效果）；
+ * 取值行＝整宽药丸（点开现有单选）；滑杆＝行内圆点滑杆
+ * （标签在上，自定义开关关时置灰）；开关＝标准 M3 Switch；
+ * 底部恢复默认／取消／应用 staged 不变（应用才写偏好）。
+ * 入口态：标签默认按键签，分区默认全折叠，点卡展开；
+ * 切标签不丢各分区展开态、不丢草稿值（状态挂在对话框级）。
  * 分段自定义开关＝字段有值（关＝写回跟随）；
  * 背景／边框颜色走预设色（含跟随）；改动 staged：恢复默认＝草稿复位
  * （默认即跟随，唯磨砂叠加强度默认 0.25），取消＝丢弃草稿，
@@ -445,6 +477,169 @@ private enum class AppearanceCategory { VIDEO, GLOBAL, FONTS, APP }
  * - 磨砂效果：模糊强度滑杆（＝模糊半径同一字段，仅模糊开时可用）／
  *   背景叠加强度滑杆＋说明（新字段，窗口背景叠加层）。
  */
+
+/** 对话框三标签：按键／工具栏／整体（定稿分段）。 */
+internal enum class GlobalStyleTab { KEYS, TOOLBAR, OVERALL }
+
+/** 五分区在三标签下的归属（定稿映射；每分区恰属一标签）。 */
+internal enum class GlobalStyleSectionId { KEYBOARD, KEYS, ICONS, BAR, FROST }
+
+/** 标签 → 该标签下的分区（渲染顺序；全量五分区恰覆盖一次）。 */
+internal fun sectionsForTab(tab: GlobalStyleTab): List<GlobalStyleSectionId> =
+    when (tab) {
+        GlobalStyleTab.KEYS -> listOf(GlobalStyleSectionId.KEYS)
+        GlobalStyleTab.TOOLBAR -> listOf(
+            GlobalStyleSectionId.ICONS,
+            GlobalStyleSectionId.BAR,
+        )
+        GlobalStyleTab.OVERALL -> listOf(
+            GlobalStyleSectionId.KEYBOARD,
+            GlobalStyleSectionId.FROST,
+        )
+    }
+
+/**
+ * 全局样式对话框状态（草稿＋标签＋各分区展开态；纯状态持有，
+ * 供 JVM 单测：切标签不丢草稿、不丢展开态）。
+ * 草稿与展开态都挂在对话框级（标签之上），切标签只换渲染的分区。
+ */
+internal class GlobalStyleDialogState(initial: GlobalStyle) {
+    var draft by mutableStateOf(initial)
+    var tab by mutableStateOf(GlobalStyleTab.KEYS)
+    private val expandedIds = mutableStateMapOf<GlobalStyleSectionId, Boolean>()
+
+    fun isExpanded(id: GlobalStyleSectionId): Boolean = expandedIds[id] == true
+    fun toggleSection(id: GlobalStyleSectionId) {
+        expandedIds[id] = !(expandedIds[id] == true)
+    }
+    fun selectTab(newTab: GlobalStyleTab) {
+        tab = newTab
+    }
+    fun updateDraft(transform: (GlobalStyle) -> GlobalStyle) {
+        draft = transform(draft)
+    }
+    fun resetDraft() {
+        draft = GlobalStyle()
+    }
+}
+
+/**
+ * 实时预览的键面样式（纯解析，供 JVM 单测）：
+ * 草稿值优先（背景／边框色／圆角／边框宽），未设（跟随）时取
+ * 当前键盘主题的底色（base：内置主题／快照／莫奈动态色板），
+ * 与渲染链 KeyboardColors.applyGlobalStyle 同一口径。
+ * 预览区颜色跟键盘主题走，不跟 App 主题混用。
+ */
+internal data class GlobalStylePreviewStyle(
+    val background: Int,
+    val keyBackground: Int,
+    val keyPressed: Int,
+    val keyBorderStroke: Int,
+    val keyBorderWidthDp: Float,
+    val keyCornerRadiusDp: Float,
+    val keyText: Int,
+)
+
+internal fun resolveGlobalStylePreviewStyle(
+    base: KeyboardColors.ColorScheme,
+    draft: GlobalStyle,
+    fallbackRadiusDp: Float,
+): GlobalStylePreviewStyle = GlobalStylePreviewStyle(
+    background = base.background,
+    keyBackground = GlobalStyleResolver.keyBackground(draft, emptySet())
+        ?: base.keyBackground,
+    keyPressed = base.keyPressed,
+    keyBorderStroke = GlobalStyleResolver.keyBorderStroke(draft, emptySet())
+        ?: base.keyBorderStroke,
+    keyBorderWidthDp = GlobalStyleResolver.clampBorderWidth(draft.key.borderWidthDp),
+    keyCornerRadiusDp = GlobalStyleResolver.keyCornerRadius(draft, false)
+        ?: fallbackRadiusDp,
+    keyText = base.keyText,
+)
+
+/** 预览键按压态：按住取键盘按压色（keyPressed），松开回键面色。 */
+internal fun previewKeyCellColor(pressed: Boolean, style: GlobalStylePreviewStyle): Int =
+    if (pressed) style.keyPressed else style.keyBackground
+
+/** 滑杆位置（0..1；与 M3 Slider 的 steps 口径一致：steps＋1 等分）。 */
+internal fun sliderFraction(value: Float, range: ClosedFloatingPointRange<Float>): Float =
+    ((value - range.start) / (range.endInclusive - range.start)).coerceIn(0f, 1f)
+
+internal fun sliderValueAtFraction(
+    fraction: Float,
+    range: ClosedFloatingPointRange<Float>,
+    steps: Int,
+): Float {
+    val f = fraction.coerceIn(0f, 1f)
+    if (steps <= 0) return range.start + f * (range.endInclusive - range.start)
+    val step = (range.endInclusive - range.start) / (steps + 1)
+    val snapped = range.start + (f * (steps + 1)).roundToInt() * step
+    return snapped.coerceIn(range.start, range.endInclusive)
+}
+
+/** 滑杆标签：标题与数值同一行（「边框粗细 · 1.0 dp」式）。 */
+internal fun sliderLabel(title: String, valueLabel: String): String = "$title · $valueLabel"
+
+/** 取值药丸文案：字段与取值同一行（「按键背景 · 跟随」式）。 */
+internal fun valuePillText(field: String, value: String): String = "$field · $value"
+
+/** 颜色药丸提交：选项下标 → 预设值（0＝跟随 null；其余＝预设 ARGB）。 */
+internal fun colorPresetValueAt(index: Int): Int? = COLOR_PRESETS[index].second
+
+/** 三态药丸提交：选项下标 → 模糊模式（跟随／开／关）。 */
+internal fun blurModeForOptionIndex(index: Int): BackgroundBlurMode =
+    BackgroundBlurMode.entries[index]
+
+/** 颜色药丸当前值：按选择目标取草稿对应字段。 */
+internal fun currentColorForTarget(draft: GlobalStyle, target: ColorTarget): Int? =
+    when (target) {
+        ColorTarget.KEY_BG -> draft.key.background
+        ColorTarget.KEY_BORDER -> draft.key.borderColor
+        ColorTarget.TOOLBAR_BG -> draft.toolbar.background
+        ColorTarget.TOOLBAR_BORDER -> draft.toolbar.borderColor
+        ColorTarget.BAR_BG -> draft.barBackground
+    }
+
+/**
+ * 预览底色板：THEME 模式取内置主题（莫奈走动态色板），
+ * CUSTOM 模式取当前快照（无快照回落内置主题）。
+ */
+private data class PreviewBase(
+    val scheme: KeyboardColors.ColorScheme,
+    val fallbackRadiusDp: Float,
+)
+
+private fun previewBase(context: Context, mode: GlobalStyleMode): PreviewBase {
+    val snapshot = if (mode == GlobalStyleMode.CUSTOM) {
+        SkinSnapshotProvider.current(context)
+    } else {
+        null
+    }
+    if (snapshot != null) {
+        val scheme = snapshot.effectiveColorScheme(SkinColorMode.isDark(context))
+        val skinHasRadius = GeometryField.CORNER_RADIUS in snapshot.geometryPresence ||
+            KeyboardGeometryField.KEY_RADIUS in snapshot.keyboardGeometry.presence
+        return PreviewBase(
+            scheme = scheme,
+            fallbackRadiusDp = if (skinHasRadius) {
+                scheme.cornerRadius
+            } else {
+                KeyboardManager.Keyboard.KeyRadius.getDp(context).toFloat()
+            },
+        )
+    }
+    val theme = KeyboardColors.themeFor(context)
+    val scheme = if (theme.id == MonetPalette.ID) {
+        MonetPalette.build(context)
+    } else {
+        theme.colors
+    }
+    return PreviewBase(
+        scheme = scheme,
+        fallbackRadiusDp = KeyboardManager.Keyboard.KeyRadius.getDp(context).toFloat(),
+    )
+}
+
 @Composable
 private fun GlobalStyleDialog(
     mode: GlobalStyleMode,
@@ -452,26 +647,17 @@ private fun GlobalStyleDialog(
     onApply: (GlobalStyle) -> Unit,
     onDismiss: () -> Unit,
 ) {
-    var draft by remember { mutableStateOf(initial) }
+    val context = LocalContext.current
+    val state = remember { GlobalStyleDialogState(initial) }
     var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
     var blurChoiceOpen by remember { mutableStateOf(false) }
-    // 入口态按 22:00 图示为折叠（5 分区子卡），点卡展开后为 22:02／22:03
-    // 展开态；此前默认全展开与入口图示不符，故改回折叠。
-    var keyboardExpanded by remember { mutableStateOf(false) }
-    var keysExpanded by remember { mutableStateOf(false) }
-    var iconsExpanded by remember { mutableStateOf(false) }
-    var barExpanded by remember { mutableStateOf(false) }
-    var frostExpanded by remember { mutableStateOf(false) }
+    // 预览底色：对话框打开时取一次当前键盘主题（模式决定取主题
+    // 还是快照）；草稿只覆盖其上的键面字段，预览随草稿实时变。
+    val previewBase = remember { previewBase(context, mode) }
 
     SettingsDialog(
         onDismissRequest = onDismiss,
-        title = stringResource(
-            if (mode == GlobalStyleMode.THEME) {
-                R.string.global_style_theme
-            } else {
-                R.string.global_style_custom
-            },
-        ),
+        title = stringResource(R.string.global_style_dialog_title),
         description = stringResource(
             if (mode == GlobalStyleMode.THEME) {
                 R.string.global_style_dialog_theme_desc
@@ -485,349 +671,387 @@ private fun GlobalStyleDialog(
             // 分区之间不再另加间距：每个分区自带上下 4dp，
             // 相邻两区之间正好 8dp。
             Column(verticalArrangement = Arrangement.spacedBy(0.dp)) {
-                GlobalStyleSection(
-                    title = stringResource(R.string.global_section_keyboard_full),
-                    expanded = keyboardExpanded,
-                    onToggle = { keyboardExpanded = !keyboardExpanded },
-                ) {
-                    val cornerCustom = draft.keyboardTopCornerDp != null
-                    DenseSwitchRow(
-                        title = stringResource(R.string.global_corner_custom),
-                        checked = cornerCustom,
-                        onCheckedChange = { checked ->
-                            draft = draft.copy(
-                                keyboardTopCornerDp = if (checked) {
-                                    draft.keyboardTopCornerDp ?: 16f
-                                } else {
-                                    null
+                GlobalStylePreview(
+                    style = resolveGlobalStylePreviewStyle(
+                        previewBase.scheme,
+                        state.draft,
+                        previewBase.fallbackRadiusDp,
+                    ),
+                )
+                Text(
+                    text = stringResource(R.string.global_style_preview_hint),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                Spacer(Modifier.height(16.dp))
+                GlobalStyleTabBar(
+                    selected = state.tab,
+                    onSelect = { state.selectTab(it) },
+                )
+                Spacer(Modifier.height(16.dp))
+                for (id in sectionsForTab(state.tab)) {
+                    when (id) {
+                        GlobalStyleSectionId.KEYBOARD -> GlobalStyleSection(
+                            title = stringResource(R.string.global_section_keyboard_full),
+                            expanded = state.isExpanded(GlobalStyleSectionId.KEYBOARD),
+                            onToggle = {
+                                state.toggleSection(GlobalStyleSectionId.KEYBOARD)
+                            },
+                        ) {
+                            val cornerCustom = state.draft.keyboardTopCornerDp != null
+                            DenseSwitchRow(
+                                title = stringResource(R.string.global_corner_custom),
+                                checked = cornerCustom,
+                                onCheckedChange = { checked ->
+                                    state.updateDraft {
+                                        it.copy(
+                                            keyboardTopCornerDp = if (checked) {
+                                                it.keyboardTopCornerDp ?: 16f
+                                            } else {
+                                                null
+                                            },
+                                        )
+                                    }
                                 },
                             )
-                        },
-                    )
-                    if (cornerCustom) {
-                        DenseSliderRow(
-                            title = stringResource(R.string.top_corner),
-                            value = draft.keyboardTopCornerDp ?: 16f,
-                            valueLabel = "%.1f dp".format(draft.keyboardTopCornerDp ?: 16f),
-                            range = 0f..32f,
-                            steps = 31,
-                            onValueChange = { draft = draft.copy(keyboardTopCornerDp = it) },
-                        )
-                    }
-                }
-                GlobalStyleSection(
-                    title = stringResource(R.string.global_section_keys_full),
-                    expanded = keysExpanded,
-                    onToggle = { keysExpanded = !keysExpanded },
-                ) {
-                    GlobalStyleColorChipRow(
-                        field = stringResource(R.string.key_background),
-                        colorName = colorName(draft.key.background),
-                        onClick = { colorTarget = ColorTarget.KEY_BG },
-                    )
-                    val borderCustom = draft.key.borderWidthDp != null
-                    DenseSwitchRow(
-                        title = stringResource(R.string.global_border_custom),
-                        checked = borderCustom,
-                        onCheckedChange = { checked ->
-                            draft = draft.copy(
-                                key = draft.key.copy(
-                                    borderWidthDp = if (checked) {
-                                        draft.key.borderWidthDp ?: 1f
-                                    } else {
-                                        null
-                                    },
-                                ),
-                            )
-                        },
-                    )
-                    DenseSliderRow(
-                        title = stringResource(R.string.key_border_width),
-                        value = draft.key.borderWidthDp ?: 1f,
-                        valueLabel = "%.1f dp".format(draft.key.borderWidthDp ?: 1f),
-                        range = 0f..4f,
-                        steps = 7,
-                        enabled = borderCustom,
-                        onValueChange = {
-                            draft = draft.copy(key = draft.key.copy(borderWidthDp = it))
-                        },
-                    )
-                    GlobalStyleColorChipRow(
-                        field = stringResource(R.string.key_border_color),
-                        colorName = colorName(draft.key.borderColor),
-                        onClick = { colorTarget = ColorTarget.KEY_BORDER },
-                    )
-                    val radiusCustom = draft.key.cornerRadiusDp != null
-                    DenseSwitchRow(
-                        title = stringResource(R.string.global_radius_custom),
-                        checked = radiusCustom,
-                        onCheckedChange = { checked ->
-                            draft = draft.copy(
-                                key = draft.key.copy(
-                                    cornerRadiusDp = if (checked) {
-                                        draft.key.cornerRadiusDp ?: 12f
-                                    } else {
-                                        null
-                                    },
-                                ),
-                            )
-                        },
-                    )
-                    DenseSliderRow(
-                        title = stringResource(R.string.key_radius),
-                        value = draft.key.cornerRadiusDp ?: 12f,
-                        valueLabel = "%.1f dp".format(draft.key.cornerRadiusDp ?: 12f),
-                        range = 0f..32f,
-                        steps = 31,
-                        enabled = radiusCustom,
-                        onValueChange = {
-                            draft = draft.copy(key = draft.key.copy(cornerRadiusDp = it))
-                        },
-                    )
-                    // 背景模糊三态（跟随／开／关）：关＝强制关（OFF，
-                    // 渲染链 effectiveBlur 已覆盖），不丢旧能力；半径
-                    // 在磨砂分区调（本区不再重复放半径滑杆）。
-                    // 模式切换保留已存半径（开时空值补 16）。
-                    // 三态行同样走行内芯片：字段在左、当前值芯片在右，
-                    // 点芯片开单选（与原 NavRow 同一动作、同一对话框）。
-                    DenseChoiceChipRow(
-                        field = stringResource(R.string.global_blur_switch),
-                        value = stringResource(
-                            when (draft.backgroundBlur.mode) {
-                                BackgroundBlurMode.FOLLOW -> R.string.global_blur_follow
-                                BackgroundBlurMode.ON -> R.string.global_blur_on
-                                BackgroundBlurMode.OFF -> R.string.global_blur_off
-                            },
-                        ),
-                        onClick = { blurChoiceOpen = true },
-                    )
-                }
-                // 状态栏图标（2026-11-06 按设计图重做；2026-11-06 排布修复）：
-                // iconsSectionRows——跟随开仍只留开关＋说明两行，
-                // 独立行全部收起（草稿值保留，再关即现）；说明行用
-                // 完整文案，下方同行内附摘要芯片行（背景·跟随／
-                // 边框·跟随／圆角·跟随＋右端「独立设置已收起」），
-                // 分区标题栏右端附「跟随开／关」芯片；跟随关全行
-                // 按密集版渲染（行内芯片、滑杆标签与数值同行、
-                // 行距收紧）。折叠行为与开关含义不变。
-                // 标题改为「状态栏图标」（6 字，旧 12 字＋芯片在真机
-                // 宽度下折成两行），标题栏强制单行不折行。
-                GlobalStyleSection(
-                    title = stringResource(R.string.global_section_icons_full),
-                    expanded = iconsExpanded,
-                    onToggle = { iconsExpanded = !iconsExpanded },
-                    titleSingleLine = true,
-                    trailingChip = {
-                        FollowStateChip(followOn = draft.linkToolbar)
-                    },
-                ) {
-                    for (row in iconsSectionRows(draft.linkToolbar)) {
-                        when (row) {
-                            IconsSectionRow.FOLLOW_SWITCH -> DenseSwitchRow(
-                                title = stringResource(R.string.bar_icon_follow),
-                                checked = draft.linkToolbar,
-                                onCheckedChange = { draft = draft.copy(linkToolbar = it) },
-                            )
-                            IconsSectionRow.FOLLOW_NOTE -> Column(
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    text = stringResource(
-                                        iconsFollowNoteRes(draft.linkToolbar),
-                                    ),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                                // 跟随开摘要芯片行：三枚「·跟随」芯片在左、
-                                // 「独立设置已收起」在右；是说明行渲染的
-                                // 一部分，不另占行清单名额。真机宽度下三枚
-                                // 芯片＋注记放不进一行（见本文件 GlobalStyleSection
-                                // 注释的排布预算），故用 FlowRow：注记占满整
-                                // 行宽度，宽度不够时自成一行右对齐，不截断。
-                                if (draft.linkToolbar) {
-                                    FlowRow(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(top = 8.dp),
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                                        verticalArrangement = Arrangement.spacedBy(8.dp),
-                                    ) {
-                                        for (chipRes in iconsFollowSummaryChips()) {
-                                            DenseChip(text = stringResource(chipRes))
-                                        }
-                                        Box(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            contentAlignment = Alignment.CenterEnd,
-                                        ) {
-                                            Text(
-                                                text = stringResource(
-                                                    R.string.bar_icon_independent_collapsed,
-                                                ),
-                                                fontSize = 14.sp,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                maxLines = 1,
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                            IconsSectionRow.TOOLBAR_BACKGROUND ->
-                                GlobalStyleColorChipRow(
-                                    field = stringResource(R.string.toolbar_background),
-                                    colorName = colorName(draft.toolbar.background),
-                                    onClick = { colorTarget = ColorTarget.TOOLBAR_BG },
-                                )
-                            IconsSectionRow.BORDER_CUSTOM_SWITCH -> {
-                                val toolbarBorderCustom = draft.toolbar.borderWidthDp != null
-                                DenseSwitchRow(
-                                    title = stringResource(R.string.global_border_custom),
-                                    checked = toolbarBorderCustom,
-                                    onCheckedChange = { checked ->
-                                        draft = draft.copy(
-                                            toolbar = draft.toolbar.copy(
-                                                borderWidthDp = if (checked) {
-                                                    draft.toolbar.borderWidthDp ?: 1f
-                                                } else {
-                                                    null
-                                                },
-                                            ),
-                                        )
-                                    },
-                                )
-                            }
-                            IconsSectionRow.BORDER_WIDTH_SLIDER -> {
-                                val toolbarBorderCustom = draft.toolbar.borderWidthDp != null
-                                DenseSliderRow(
-                                    title = stringResource(R.string.toolbar_border_width),
-                                    value = draft.toolbar.borderWidthDp ?: 1f,
+                            if (cornerCustom) {
+                                DottedSliderRow(
+                                    title = stringResource(R.string.top_corner),
+                                    value = state.draft.keyboardTopCornerDp ?: 16f,
                                     valueLabel = "%.1f dp".format(
-                                        draft.toolbar.borderWidthDp ?: 1f,
-                                    ),
-                                    range = 0f..4f,
-                                    steps = 7,
-                                    enabled = toolbarBorderCustom,
-                                    onValueChange = {
-                                        draft = draft.copy(
-                                            toolbar = draft.toolbar.copy(borderWidthDp = it),
-                                        )
-                                    },
-                                )
-                            }
-                            IconsSectionRow.TOOLBAR_BORDER_COLOR ->
-                                GlobalStyleColorChipRow(
-                                    field = stringResource(R.string.toolbar_border_color),
-                                    colorName = colorName(draft.toolbar.borderColor),
-                                    onClick = { colorTarget = ColorTarget.TOOLBAR_BORDER },
-                                )
-                            IconsSectionRow.RADIUS_CUSTOM_SWITCH -> {
-                                val toolbarRadiusCustom = draft.toolbar.cornerRadiusDp != null
-                                DenseSwitchRow(
-                                    title = stringResource(R.string.global_radius_custom),
-                                    checked = toolbarRadiusCustom,
-                                    onCheckedChange = { checked ->
-                                        draft = draft.copy(
-                                            toolbar = draft.toolbar.copy(
-                                                cornerRadiusDp = if (checked) {
-                                                    draft.toolbar.cornerRadiusDp ?: 12f
-                                                } else {
-                                                    null
-                                                },
-                                            ),
-                                        )
-                                    },
-                                )
-                            }
-                            IconsSectionRow.TOOLBAR_RADIUS_SLIDER -> {
-                                val toolbarRadiusCustom = draft.toolbar.cornerRadiusDp != null
-                                DenseSliderRow(
-                                    title = stringResource(R.string.global_toolbar_radius),
-                                    value = draft.toolbar.cornerRadiusDp ?: 12f,
-                                    valueLabel = "%.1f dp".format(
-                                        draft.toolbar.cornerRadiusDp ?: 12f,
+                                        state.draft.keyboardTopCornerDp ?: 16f,
                                     ),
                                     range = 0f..32f,
                                     steps = 31,
-                                    enabled = toolbarRadiusCustom,
-                                    onValueChange = {
-                                        draft = draft.copy(
-                                            toolbar = draft.toolbar.copy(cornerRadiusDp = it),
-                                        )
+                                    onValueChange = { v ->
+                                        state.updateDraft { it.copy(keyboardTopCornerDp = v) }
                                     },
                                 )
                             }
-                            IconsSectionRow.BLUR_SWITCH -> DenseSwitchRow(
+                        }
+                        GlobalStyleSectionId.KEYS -> GlobalStyleSection(
+                            title = stringResource(R.string.global_section_keys_full),
+                            expanded = state.isExpanded(GlobalStyleSectionId.KEYS),
+                            onToggle = {
+                                state.toggleSection(GlobalStyleSectionId.KEYS)
+                            },
+                        ) {
+                            GlobalStyleValuePill(
+                                text = valuePillText(
+                                    stringResource(R.string.key_background),
+                                    colorName(state.draft.key.background),
+                                ),
+                                onClick = { colorTarget = ColorTarget.KEY_BG },
+                            )
+                            val borderCustom = state.draft.key.borderWidthDp != null
+                            DenseSwitchRow(
+                                title = stringResource(R.string.global_border_custom),
+                                checked = borderCustom,
+                                onCheckedChange = { checked ->
+                                    state.updateDraft {
+                                        it.copy(
+                                            key = it.key.copy(
+                                                borderWidthDp = if (checked) {
+                                                    it.key.borderWidthDp ?: 1f
+                                                } else {
+                                                    null
+                                                },
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
+                            DottedSliderRow(
+                                title = stringResource(R.string.key_border_width),
+                                value = state.draft.key.borderWidthDp ?: 1f,
+                                valueLabel = "%.1f dp".format(state.draft.key.borderWidthDp ?: 1f),
+                                range = 0f..4f,
+                                steps = 7,
+                                enabled = borderCustom,
+                                onValueChange = { v ->
+                                    state.updateDraft {
+                                        it.copy(key = it.key.copy(borderWidthDp = v))
+                                    }
+                                },
+                            )
+                            GlobalStyleValuePill(
+                                text = valuePillText(
+                                    stringResource(R.string.key_border_color),
+                                    colorName(state.draft.key.borderColor),
+                                ),
+                                onClick = { colorTarget = ColorTarget.KEY_BORDER },
+                            )
+                            val radiusCustom = state.draft.key.cornerRadiusDp != null
+                            DenseSwitchRow(
+                                title = stringResource(R.string.global_radius_custom),
+                                checked = radiusCustom,
+                                onCheckedChange = { checked ->
+                                    state.updateDraft {
+                                        it.copy(
+                                            key = it.key.copy(
+                                                cornerRadiusDp = if (checked) {
+                                                    it.key.cornerRadiusDp ?: 12f
+                                                } else {
+                                                    null
+                                                },
+                                            ),
+                                        )
+                                    }
+                                },
+                            )
+                            DottedSliderRow(
+                                title = stringResource(R.string.key_radius),
+                                value = state.draft.key.cornerRadiusDp ?: 12f,
+                                valueLabel = "%.1f dp".format(state.draft.key.cornerRadiusDp ?: 12f),
+                                range = 0f..32f,
+                                steps = 31,
+                                enabled = radiusCustom,
+                                onValueChange = { v ->
+                                    state.updateDraft {
+                                        it.copy(key = it.key.copy(cornerRadiusDp = v))
+                                    }
+                                },
+                            )
+                            // 背景模糊三态（跟随／开／关）：关＝强制关（OFF，
+                            // 渲染链 effectiveBlur 已覆盖），不丢旧能力；半径
+                            // 在磨砂分区调（本区不再重复放半径滑杆）。
+                            // 模式切换保留已存半径（开时空值补 16）。
+                            GlobalStyleValuePill(
+                                text = valuePillText(
+                                    stringResource(R.string.global_blur_switch),
+                                    stringResource(
+                                        when (state.draft.backgroundBlur.mode) {
+                                            BackgroundBlurMode.FOLLOW -> R.string.global_blur_follow
+                                            BackgroundBlurMode.ON -> R.string.global_blur_on
+                                            BackgroundBlurMode.OFF -> R.string.global_blur_off
+                                        },
+                                    ),
+                                ),
+                                onClick = { blurChoiceOpen = true },
+                            )
+                        }
+                        GlobalStyleSectionId.ICONS -> GlobalStyleSection(
+                            title = stringResource(R.string.global_section_icons_full),
+                            expanded = state.isExpanded(GlobalStyleSectionId.ICONS),
+                            onToggle = {
+                                state.toggleSection(GlobalStyleSectionId.ICONS)
+                            },
+                        ) {
+                            for (row in iconsSectionRows(state.draft.linkToolbar)) {
+                                when (row) {
+                                    IconsSectionRow.FOLLOW_SWITCH -> DenseSwitchRow(
+                                        title = stringResource(R.string.bar_icon_follow),
+                                        checked = state.draft.linkToolbar,
+                                        onCheckedChange = { checked ->
+                                            state.updateDraft { it.copy(linkToolbar = checked) }
+                                        },
+                                    )
+                                    IconsSectionRow.FOLLOW_NOTE -> Text(
+                                        text = stringResource(
+                                            iconsFollowNoteRes(state.draft.linkToolbar),
+                                        ),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                    IconsSectionRow.TOOLBAR_BACKGROUND ->
+                                        GlobalStyleValuePill(
+                                            text = valuePillText(
+                                                stringResource(R.string.toolbar_background),
+                                                colorName(state.draft.toolbar.background),
+                                            ),
+                                            onClick = { colorTarget = ColorTarget.TOOLBAR_BG },
+                                        )
+                                    IconsSectionRow.BORDER_CUSTOM_SWITCH -> {
+                                        val toolbarBorderCustom =
+                                            state.draft.toolbar.borderWidthDp != null
+                                        DenseSwitchRow(
+                                            title = stringResource(R.string.global_border_custom),
+                                            checked = toolbarBorderCustom,
+                                            onCheckedChange = { checked ->
+                                                state.updateDraft {
+                                                    it.copy(
+                                                        toolbar = it.toolbar.copy(
+                                                            borderWidthDp = if (checked) {
+                                                                it.toolbar.borderWidthDp ?: 1f
+                                                            } else {
+                                                                null
+                                                            },
+                                                        ),
+                                                    )
+                                                }
+                                            },
+                                        )
+                                    }
+                                    IconsSectionRow.BORDER_WIDTH_SLIDER -> {
+                                        val toolbarBorderCustom =
+                                            state.draft.toolbar.borderWidthDp != null
+                                        DottedSliderRow(
+                                            title = stringResource(R.string.toolbar_border_width),
+                                            value = state.draft.toolbar.borderWidthDp ?: 1f,
+                                            valueLabel = "%.1f dp".format(
+                                                state.draft.toolbar.borderWidthDp ?: 1f,
+                                            ),
+                                            range = 0f..4f,
+                                            steps = 7,
+                                            enabled = toolbarBorderCustom,
+                                            onValueChange = { v ->
+                                                state.updateDraft {
+                                                    it.copy(
+                                                        toolbar = it.toolbar.copy(borderWidthDp = v),
+                                                    )
+                                                }
+                                            },
+                                        )
+                                    }
+                                    IconsSectionRow.TOOLBAR_BORDER_COLOR ->
+                                        GlobalStyleValuePill(
+                                            text = valuePillText(
+                                                stringResource(R.string.toolbar_border_color),
+                                                colorName(state.draft.toolbar.borderColor),
+                                            ),
+                                            onClick = { colorTarget = ColorTarget.TOOLBAR_BORDER },
+                                        )
+                                    IconsSectionRow.RADIUS_CUSTOM_SWITCH -> {
+                                        val toolbarRadiusCustom =
+                                            state.draft.toolbar.cornerRadiusDp != null
+                                        DenseSwitchRow(
+                                            title = stringResource(R.string.global_radius_custom),
+                                            checked = toolbarRadiusCustom,
+                                            onCheckedChange = { checked ->
+                                                state.updateDraft {
+                                                    it.copy(
+                                                        toolbar = it.toolbar.copy(
+                                                            cornerRadiusDp = if (checked) {
+                                                                it.toolbar.cornerRadiusDp ?: 12f
+                                                            } else {
+                                                                null
+                                                            },
+                                                        ),
+                                                    )
+                                                }
+                                            },
+                                        )
+                                    }
+                                    IconsSectionRow.TOOLBAR_RADIUS_SLIDER -> {
+                                        val toolbarRadiusCustom =
+                                            state.draft.toolbar.cornerRadiusDp != null
+                                        DottedSliderRow(
+                                            title = stringResource(R.string.global_toolbar_radius),
+                                            value = state.draft.toolbar.cornerRadiusDp ?: 12f,
+                                            valueLabel = "%.1f dp".format(
+                                                state.draft.toolbar.cornerRadiusDp ?: 12f,
+                                            ),
+                                            range = 0f..32f,
+                                            steps = 31,
+                                            enabled = toolbarRadiusCustom,
+                                            onValueChange = { v ->
+                                                state.updateDraft {
+                                                    it.copy(
+                                                        toolbar = it.toolbar.copy(
+                                                            cornerRadiusDp = v,
+                                                        ),
+                                                    )
+                                                }
+                                            },
+                                        )
+                                    }
+                                    IconsSectionRow.BLUR_SWITCH -> DenseSwitchRow(
+                                        title = stringResource(R.string.global_blur_switch),
+                                        checked = state.draft.barBlur,
+                                        onCheckedChange = { checked ->
+                                            state.updateDraft { it.copy(barBlur = checked) }
+                                        },
+                                    )
+                                }
+                            }
+                        }
+                        GlobalStyleSectionId.BAR -> GlobalStyleSection(
+                            title = stringResource(R.string.global_section_bar_full),
+                            expanded = state.isExpanded(GlobalStyleSectionId.BAR),
+                            onToggle = {
+                                state.toggleSection(GlobalStyleSectionId.BAR)
+                            },
+                        ) {
+                            DenseSwitchRow(
+                                title = stringResource(R.string.shared_background),
+                                checked = state.draft.sharedBackground,
+                                onCheckedChange = { checked ->
+                                    state.updateDraft { it.copy(sharedBackground = checked) }
+                                },
+                            )
+                            GlobalStyleValuePill(
+                                text = valuePillText(
+                                    stringResource(R.string.bar_background),
+                                    colorName(state.draft.barBackground),
+                                ),
+                                onClick = { colorTarget = ColorTarget.BAR_BG },
+                            )
+                            DenseSwitchRow(
                                 title = stringResource(R.string.global_blur_switch),
-                                checked = draft.barBlur,
-                                onCheckedChange = { draft = draft.copy(barBlur = it) },
+                                checked = state.draft.barBlur,
+                                onCheckedChange = { checked ->
+                                    state.updateDraft { it.copy(barBlur = checked) }
+                                },
+                            )
+                            Text(
+                                text = stringResource(R.string.shared_background_note),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        GlobalStyleSectionId.FROST -> GlobalStyleSection(
+                            title = stringResource(R.string.global_section_frost_full),
+                            expanded = state.isExpanded(GlobalStyleSectionId.FROST),
+                            onToggle = {
+                                state.toggleSection(GlobalStyleSectionId.FROST)
+                            },
+                        ) {
+                            val frostBlurOn =
+                                state.draft.backgroundBlur.mode == BackgroundBlurMode.ON
+                            DottedSliderRow(
+                                title = stringResource(R.string.blur_radius),
+                                value = state.draft.backgroundBlur.radiusDp ?: 16f,
+                                valueLabel = "%.1f dp".format(
+                                    state.draft.backgroundBlur.radiusDp ?: 16f,
+                                ),
+                                range = 0f..32f,
+                                steps = 31,
+                                enabled = frostBlurOn,
+                                onValueChange = { v ->
+                                    state.updateDraft {
+                                        it.copy(
+                                            backgroundBlur = it.backgroundBlur.copy(radiusDp = v),
+                                        )
+                                    }
+                                },
+                            )
+                            DottedSliderRow(
+                                title = stringResource(R.string.frost_overlay),
+                                value = state.draft.frostOverlayAlpha ?: 0.25f,
+                                valueLabel = "%.1f%%".format(
+                                    (state.draft.frostOverlayAlpha ?: 0.25f) * 100,
+                                ),
+                                range = 0f..1f,
+                                steps = 99,
+                                onValueChange = { v ->
+                                    state.updateDraft { it.copy(frostOverlayAlpha = v) }
+                                },
+                            )
+                            Text(
+                                text = stringResource(R.string.frost_overlay_note),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                     }
-                }
-                GlobalStyleSection(
-                    title = stringResource(R.string.global_section_bar_full),
-                    expanded = barExpanded,
-                    onToggle = { barExpanded = !barExpanded },
-                ) {
-                    DenseSwitchRow(
-                        title = stringResource(R.string.shared_background),
-                        checked = draft.sharedBackground,
-                        onCheckedChange = { draft = draft.copy(sharedBackground = it) },
-                    )
-                    GlobalStyleColorChipRow(
-                        field = stringResource(R.string.bar_background),
-                        colorName = colorName(draft.barBackground),
-                        onClick = { colorTarget = ColorTarget.BAR_BG },
-                    )
-                    DenseSwitchRow(
-                        title = stringResource(R.string.global_blur_switch),
-                        checked = draft.barBlur,
-                        onCheckedChange = { draft = draft.copy(barBlur = it) },
-                    )
-                    Text(
-                        text = stringResource(R.string.shared_background_note),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                GlobalStyleSection(
-                    title = stringResource(R.string.global_section_frost_full),
-                    expanded = frostExpanded,
-                    onToggle = { frostExpanded = !frostExpanded },
-                ) {
-                    val frostBlurOn = draft.backgroundBlur.mode == BackgroundBlurMode.ON
-                    DenseSliderRow(
-                        title = stringResource(R.string.blur_radius),
-                        value = draft.backgroundBlur.radiusDp ?: 16f,
-                        valueLabel = "%.1f dp".format(draft.backgroundBlur.radiusDp ?: 16f),
-                        range = 0f..32f,
-                        steps = 31,
-                        enabled = frostBlurOn,
-                        onValueChange = {
-                            draft = draft.copy(
-                                backgroundBlur = draft.backgroundBlur.copy(radiusDp = it),
-                            )
-                        },
-                    )
-                    DenseSliderRow(
-                        title = stringResource(R.string.frost_overlay),
-                        value = draft.frostOverlayAlpha ?: 0.25f,
-                        valueLabel = "%.1f%%".format((draft.frostOverlayAlpha ?: 0.25f) * 100),
-                        range = 0f..1f,
-                        steps = 99,
-                        onValueChange = { draft = draft.copy(frostOverlayAlpha = it) },
-                    )
-                    Text(
-                        text = stringResource(R.string.frost_overlay_note),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
                 }
             }
         },
         actions = listOf(
             SettingsDialogAction(
                 text = stringResource(R.string.reset_default),
-                onClick = { draft = GlobalStyle() },
+                onClick = { state.resetDraft() },
             ),
             SettingsDialogAction(
                 text = stringResource(R.string.cancel),
@@ -835,7 +1059,7 @@ private fun GlobalStyleDialog(
             ),
             SettingsDialogAction(
                 text = stringResource(R.string.global_apply),
-                onClick = { onApply(draft) },
+                onClick = { onApply(state.draft) },
             ),
         ),
     )
@@ -843,13 +1067,7 @@ private fun GlobalStyleDialog(
     // 颜色选择（写草稿，不写偏好；预设含跟随＝null）。
     val target = colorTarget
     if (target != null) {
-        val current = when (target) {
-            ColorTarget.KEY_BG -> draft.key.background
-            ColorTarget.KEY_BORDER -> draft.key.borderColor
-            ColorTarget.TOOLBAR_BG -> draft.toolbar.background
-            ColorTarget.TOOLBAR_BORDER -> draft.toolbar.borderColor
-            ColorTarget.BAR_BG -> draft.barBackground
-        }
+        val current = currentColorForTarget(state.draft, target)
         val title = when (target) {
             ColorTarget.KEY_BG -> stringResource(R.string.key_background)
             ColorTarget.KEY_BORDER -> stringResource(R.string.key_border_color)
@@ -875,21 +1093,21 @@ private fun GlobalStyleDialog(
                     colorTarget = null
                     return@SingleChoiceDialog
                 }
-                val value = COLOR_PRESETS[index].second
+                val value = colorPresetValueAt(index)
                 when (target) {
-                    ColorTarget.KEY_BG -> draft = draft.copy(
-                        key = draft.key.copy(background = value),
-                    )
-                    ColorTarget.KEY_BORDER -> draft = draft.copy(
-                        key = draft.key.copy(borderColor = value),
-                    )
-                    ColorTarget.TOOLBAR_BG -> draft = draft.copy(
-                        toolbar = draft.toolbar.copy(background = value),
-                    )
-                    ColorTarget.TOOLBAR_BORDER -> draft = draft.copy(
-                        toolbar = draft.toolbar.copy(borderColor = value),
-                    )
-                    ColorTarget.BAR_BG -> draft = draft.copy(barBackground = value)
+                    ColorTarget.KEY_BG -> state.updateDraft {
+                        it.copy(key = it.key.copy(background = value))
+                    }
+                    ColorTarget.KEY_BORDER -> state.updateDraft {
+                        it.copy(key = it.key.copy(borderColor = value))
+                    }
+                    ColorTarget.TOOLBAR_BG -> state.updateDraft {
+                        it.copy(toolbar = it.toolbar.copy(background = value))
+                    }
+                    ColorTarget.TOOLBAR_BORDER -> state.updateDraft {
+                        it.copy(toolbar = it.toolbar.copy(borderColor = value))
+                    }
+                    ColorTarget.BAR_BG -> state.updateDraft { it.copy(barBackground = value) }
                 }
                 colorTarget = null
             },
@@ -904,19 +1122,21 @@ private fun GlobalStyleDialog(
                 stringResource(R.string.global_blur_on),
                 stringResource(R.string.global_blur_off),
             ),
-            selectedIndex = BackgroundBlurMode.entries.indexOf(draft.backgroundBlur.mode),
+            selectedIndex = BackgroundBlurMode.entries.indexOf(state.draft.backgroundBlur.mode),
             onSelect = { index ->
-                val mode = BackgroundBlurMode.entries[index]
-                draft = draft.copy(
-                    backgroundBlur = draft.backgroundBlur.copy(
-                        mode = mode,
-                        radiusDp = if (mode == BackgroundBlurMode.ON) {
-                            draft.backgroundBlur.radiusDp ?: 16f
-                        } else {
-                            draft.backgroundBlur.radiusDp
-                        },
-                    ),
-                )
+                val mode = blurModeForOptionIndex(index)
+                state.updateDraft {
+                    it.copy(
+                        backgroundBlur = it.backgroundBlur.copy(
+                            mode = mode,
+                            radiusDp = if (mode == BackgroundBlurMode.ON) {
+                                it.backgroundBlur.radiusDp ?: 16f
+                            } else {
+                                it.backgroundBlur.radiusDp
+                            },
+                        ),
+                    )
+                }
                 blurChoiceOpen = false
             },
             onDismiss = { blurChoiceOpen = false },
@@ -925,38 +1145,25 @@ private fun GlobalStyleDialog(
 }
 
 /**
- * 全局样式对话框分区，
- * 18dp 圆角 + surface 底色（与对话框同色，看不见卡片边界）、
- * 标题 16sp 常规字重、minHeight 52dp、padding 16dp、▾/▸ 在文字左侧。
- * trailingChip：标题栏右端芯片槽位（仅状态栏图标分区用，
- * 显示「跟随开／关」状态芯片；其余分区不传）。
- * titleSingleLine：仅状态栏图标分区用——标题强制单行不折行
- * （超宽时尾部省略，芯片始终可见）；其余分区不传，不动原行为。
+ * 全局样式对话框分区（2026-11-07 按视频定稿重设计）：
+ * 18dp 圆角 + surface 底色、标题 16sp 常规字重、minHeight 52dp、
+ * padding 16dp、▾/▸ 在文字左侧；标题全称（含限定词），标题栏
+ * 不带任何状态芯片（跟随状态就是分区内的开关行本身）。
  *
  * 排布预算（S24 Ultra 真机：屏宽 1440px ÷ 3.75＝384dp；Dialog
  * 默认左右各留 24dp，对话框卡宽 336dp；body 左右 12dp、分
- * 区左右 16dp 后标题栏可用 280dp；展开内容左右 12dp 后摘
- * 要芯片行可用 288dp；字号按代码值 16sp／14sp，fontScale＝1.0，
- * CJK 字宽按 1em 计）：
- * - 标题栏：「▾ 」约 16dp＋「状态栏图标」6 字×16dp＝96dp＋
- *   间距 8dp＋「跟随开」芯片（3 字×14dp＋左右 12dp＋描边
- *   2dp＝68dp）≈188dp ≤280dp，余 92dp；旧 12 字标题约
- *   284dp＞280dp，正是 2026-11-06 真机折行的根因。
- *   字号放大到约 1.49 倍才到临界，三星最大字号约 1.3 倍仍放得下。
- * - 摘要芯片行：单枚「背景·跟随」芯片约 86dp（4 字×14dp＋
- *   间隔号约 4dp＋左右 12dp＋描边 2dp），三枚＋两道 8dp 间距
- *   约 274dp ≤288dp；再加「独立设置已收起」8 字×14dp＝112dp
- *   共约 394dp＞288dp，故注记必定另起一行（FlowRow＋占满整行
- *   宽度右对齐）。若间隔号按全宽 14dp 计，三枚芯片约 304dp，
- *   第三枚先换行，注记仍自成一行右对齐，两种计量下均无截断。
+ * 区左右 16dp 后标题栏可用 280dp；字号按代码值 16sp，
+ * fontScale＝1.0，CJK 字宽按 1em 计）：
+ * - 最长标题「状态栏图标·独立或跟随按键」13 字×16dp＝208dp＋
+ *   「▾ 」约 16dp ≈224dp ≤280dp，余 56dp；字号放大到约
+ *   1.25 倍才到临界（三星最大字号约 1.3 倍时标题折两行显示，
+ *   不截断）。
  */
 @Composable
 private fun GlobalStyleSection(
     title: String,
     expanded: Boolean,
     onToggle: () -> Unit,
-    titleSingleLine: Boolean = false,
-    trailingChip: (@Composable () -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     Column(
@@ -980,13 +1187,7 @@ private fun GlobalStyleSection(
                 lineHeight = 22.sp,
                 color = MaterialTheme.colorScheme.onSurface,
                 modifier = Modifier.weight(1f),
-                maxLines = if (titleSingleLine) 1 else Int.MAX_VALUE,
-                overflow = TextOverflow.Ellipsis,
             )
-            if (trailingChip != null) {
-                Spacer(Modifier.width(8.dp))
-                trailingChip()
-            }
         }
         if (expanded) {
             Column(
@@ -1001,86 +1202,96 @@ private fun GlobalStyleSection(
 }
 
 /**
- * 行内芯片（描边药丸，1dp 描边＋圆角 50＋主色文字）：
- * 颜色行／三态选择行的取值芯片、跟随开摘要芯片共用。
- * color 缺省＝主色；跟随关标题芯片传 onSurfaceVariant（灰）。
+ * 三标签分段药丸（按键／工具栏／整体）：
+ * 容器描边 outline；选中段底 primaryContainer、文字 onPrimaryContainer；
+ * 未选中段文字 onSurface；段间分隔线 outline。
  */
 @Composable
-private fun DenseChip(
+private fun GlobalStyleTabBar(
+    selected: GlobalStyleTab,
+    onSelect: (GlobalStyleTab) -> Unit,
+) {
+    val tabs = listOf(
+        GlobalStyleTab.KEYS to stringResource(R.string.global_section_keys),
+        GlobalStyleTab.TOOLBAR to stringResource(R.string.global_section_toolbar),
+        GlobalStyleTab.OVERALL to stringResource(R.string.global_style_tab_overall),
+    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(50))
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50)),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        tabs.forEachIndexed { index, (tab, label) ->
+            if (index > 0) {
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .height(24.dp)
+                        .background(MaterialTheme.colorScheme.outline),
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(50))
+                    .background(
+                        if (tab == selected) MaterialTheme.colorScheme.primaryContainer
+                        else Color.Transparent,
+                    )
+                    .clickable { onSelect(tab) }
+                    .padding(vertical = 10.dp),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = label,
+                    fontSize = 16.sp,
+                    color = if (tab == selected) {
+                        MaterialTheme.colorScheme.onPrimaryContainer
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                    maxLines = 1,
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 取值整宽药丸（颜色／三态取值共用）：outline 描边、居中 primary 文字；
+ * 点药丸开现有 SingleChoiceDialog（取值逻辑不动）。
+ */
+@Composable
+private fun GlobalStyleValuePill(
     text: String,
-    color: Color = MaterialTheme.colorScheme.primary,
+    onClick: () -> Unit,
 ) {
     Box(
         modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
             .clip(RoundedCornerShape(50))
-            .border(
-                width = 1.dp,
-                color = color,
-                shape = RoundedCornerShape(50),
-            )
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(50))
+            .clickable { onClick() }
+            .padding(vertical = 12.dp, horizontal = 16.dp),
         contentAlignment = Alignment.Center,
     ) {
         Text(
             text = text,
-            fontSize = 14.sp,
-            fontWeight = FontWeight.Medium,
-            letterSpacing = 0.1.sp,
-            color = color,
-            maxLines = 1,
-        )
-    }
-}
-
-/**
- * 状态栏图标分区标题栏芯片：跟随开＝主色「跟随开」，
- * 跟随关＝灰色「跟随关」（纯展示，不可点；开关在分区内）。
- */
-@Composable
-private fun FollowStateChip(followOn: Boolean) {
-    DenseChip(
-        text = stringResource(iconsFollowStateChipRes(followOn)),
-        color = if (followOn) MaterialTheme.colorScheme.primary
-        else MaterialTheme.colorScheme.onSurfaceVariant,
-    )
-}
-
-/**
- * 行内选择芯片行：字段在左、当前值芯片在右，整行可点开单选
- * （按键分区动态模糊三态用；与原 NavRow 同一动作、同一对话框，
- * 只改排布）。
- */
-@Composable
-private fun DenseChoiceChipRow(
-    field: String,
-    value: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = field,
             fontSize = 16.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
+            color = MaterialTheme.colorScheme.primary,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
-        DenseChip(text = value)
     }
 }
 
 /**
- * 状态栏图标分区密集版（2026-11-04 精简口径，仅本分区用；
- * 其余分区沿用 ScreenComponent 的标准行，不动已核对的布局）：
- * 开关行纵向 6dp（标准行 12dp）；颜色行字段在左、取值芯片在右
- * （芯片＝1dp 描边圆角 50 描边药丸，取值为跟随／预设色名）；
- * 滑杆行标签与数值同行（标题在左、数值在右），滑块下方紧接。
+ * 开关行（标准 M3 Switch）：开态 primary 轨＋onPrimary 钮、
+ * 关态 surfaceVariant 轨均为 M3 缺省；关态钮按定稿为白钮
+ * （三方案同色，见施工单 7 第 7 条）。
  */
 @Composable
 private fun DenseSwitchRow(
@@ -1103,38 +1314,22 @@ private fun DenseSwitchRow(
         androidx.compose.material3.Switch(
             checked = checked,
             onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                uncheckedThumbColor = Color.White,
+            ),
         )
     }
 }
 
+/**
+ * 行内圆点滑杆（2026-11-07 按视频定稿重设计）：
+ * 标签在上（「标题 · 值」单行）；圆点轨道＋已填段＋竖线旋钮；
+ * 点按跳值、横向拖动改值；步进与 M3 Slider 的 steps 口径一致；
+ * enabled＝false 时置灰不可调（值保留）。
+ */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun GlobalStyleColorChipRow(
-    field: String,
-    colorName: String,
-    onClick: () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable { onClick() }
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = field,
-            fontSize = 16.sp,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.weight(1f),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-        DenseChip(text = colorName)
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun DenseSliderRow(
+private fun DottedSliderRow(
     title: String,
     value: Float,
     valueLabel: String,
@@ -1143,46 +1338,226 @@ private fun DenseSliderRow(
     steps: Int = 0,
     enabled: Boolean = true,
 ) {
+    val scheme = MaterialTheme.colorScheme
+    val label = sliderLabel(title, valueLabel)
+    val fraction = sliderFraction(value, range)
+    val labelColor = if (enabled) scheme.onSurface else scheme.onSurface.copy(alpha = 0.38f)
+    val fillColor = if (enabled) scheme.primary else scheme.onSurface.copy(alpha = 0.38f)
+    val dotColor = if (enabled) {
+        scheme.onSurfaceVariant
+    } else {
+        scheme.onSurfaceVariant.copy(alpha = 0.38f)
+    }
+    var trackWidthPx by remember { mutableStateOf(0) }
+    val density = LocalDensity.current
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
     ) {
-        // 滑杆标签：标题靠左、数值靠右，同行（标准行是
-        // 「标题 · 值」单文本居左）。
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                text = title,
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f),
-                color = if (enabled) MaterialTheme.colorScheme.onSurface
-                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-            )
-            Text(
-                text = valueLabel,
-                fontSize = 14.sp,
-                lineHeight = 20.sp,
-                maxLines = 1,
-                color = if (enabled) MaterialTheme.colorScheme.onSurfaceVariant
-                else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
-            )
-        }
-        Spacer(modifier = Modifier.height(2.dp))
-        androidx.compose.material3.Slider(
-            value = value,
-            onValueChange = onValueChange,
-            valueRange = range,
-            steps = steps,
-            enabled = enabled,
+        Text(
+            text = label,
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            color = labelColor,
+        )
+        Spacer(modifier = Modifier.height(6.dp))
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(48.dp),
+                .height(48.dp)
+                .onSizeChanged { trackWidthPx = it.width }
+                .semantics {
+                    progressBarRangeInfo = ProgressBarRangeInfo(value, range, steps)
+                    contentDescription = label
+                    if (!enabled) disabled()
+                }
+                .pointerInput(enabled, trackWidthPx) {
+                    if (!enabled) return@pointerInput
+                    awaitEachGesture {
+                        val down = awaitFirstDown()
+                        if (trackWidthPx > 0) {
+                            onValueChange(
+                                sliderValueAtFraction(
+                                    down.position.x / trackWidthPx,
+                                    range,
+                                    steps,
+                                ),
+                            )
+                        }
+                        var drag = awaitHorizontalDragOrCancellation(down.id)
+                        while (drag != null) {
+                            drag.consume()
+                            if (trackWidthPx > 0) {
+                                onValueChange(
+                                    sliderValueAtFraction(
+                                        drag.position.x / trackWidthPx,
+                                        range,
+                                        steps,
+                                    ),
+                                )
+                            }
+                            drag = awaitHorizontalDragOrCancellation(down.id)
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Canvas(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(28.dp),
+            ) {
+                val w = size.width
+                val h = size.height
+                val cy = h / 2f
+                val spacingPx = with(density) { 20.dp.toPx() }
+                val dotRadius = with(density) { 3.dp.toPx() }
+                val barHalf = with(density) { 4.dp.toPx() }
+                val knobHalf = with(density) { 2.dp.toPx() }
+                // 圆点轨道：每 20dp 一点（先画，已填段盖住左侧的点）。
+                var x = 0f
+                while (x <= w) {
+                    drawCircle(color = dotColor, radius = dotRadius, center = Offset(x, cy))
+                    x += spacingPx
+                }
+                // 已填段：起点到旋钮。
+                val knobX = fraction * w
+                if (knobX > 0f) {
+                    drawRoundRect(
+                        color = fillColor,
+                        topLeft = Offset(0f, cy - barHalf),
+                        size = Size(knobX, barHalf * 2f),
+                        cornerRadius = CornerRadius(barHalf),
+                    )
+                }
+                // 竖线旋钮。
+                val knobLeft = (knobX - knobHalf).coerceIn(0f, (w - knobHalf * 2f).coerceAtLeast(0f))
+                drawRoundRect(
+                    color = fillColor,
+                    topLeft = Offset(knobLeft, 0f),
+                    size = Size(knobHalf * 2f, h),
+                    cornerRadius = CornerRadius(knobHalf),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * 顶部实时预览（2026-11-07 按视频定稿重设计）：
+ * 迷你键盘两行（上行 ··· ／ 中/EN ／ ∨；下行 Q／W／E），
+ * 颜色取草稿键盘样式（背景、键背景、边框、圆角跟草稿值走，
+ * 未设时取当前键盘主题底色）；按住任一格查看按压反馈
+ * （取键盘按压色）；预览随草稿值实时变。
+ * 预览背景取键盘底色实色（定稿图的渐变仅为示意，提示文案亦言明
+ * 「预览背景仅为示例」）。
+ */
+@Composable
+private fun GlobalStylePreview(style: GlobalStylePreviewStyle) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(20.dp))
+            .background(Color(style.background))
+            .padding(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            GlobalStylePreviewCell(
+                style = style,
+                label = "···",
+                isKey = false,
+                modifier = Modifier.weight(1f),
+            )
+            GlobalStylePreviewCell(
+                style = style,
+                label = "中 / EN",
+                isKey = false,
+                modifier = Modifier.weight(1f),
+            )
+            GlobalStylePreviewCell(
+                style = style,
+                label = "∨",
+                isKey = false,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        Spacer(Modifier.height(12.dp))
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            GlobalStylePreviewCell(
+                style = style,
+                label = "Q",
+                isKey = true,
+                modifier = Modifier.weight(1f),
+            )
+            GlobalStylePreviewCell(
+                style = style,
+                label = "W",
+                isKey = true,
+                modifier = Modifier.weight(1f),
+            )
+            GlobalStylePreviewCell(
+                style = style,
+                label = "E",
+                isKey = true,
+                modifier = Modifier.weight(1f),
+            )
+        }
+    }
+}
+
+@Composable
+private fun GlobalStylePreviewCell(
+    style: GlobalStylePreviewStyle,
+    label: String,
+    isKey: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    var pressed by remember { mutableStateOf(false) }
+    val cellColor = Color(previewKeyCellColor(pressed, style))
+    val shape = if (isKey) {
+        RoundedCornerShape(style.keyCornerRadiusDp.dp)
+    } else {
+        RoundedCornerShape(50)
+    }
+    val borderWidth = style.keyBorderWidthDp.dp
+    val borderColor = Color(style.keyBorderStroke)
+    Box(
+        modifier = modifier
+            .height(if (isKey) 56.dp else 44.dp)
+            .clip(shape)
+            .background(cellColor)
+            .then(
+                if (borderWidth > 0.dp && borderColor.alpha > 0f) {
+                    Modifier.border(borderWidth, borderColor, shape)
+                } else {
+                    Modifier
+                },
+            )
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onPress = {
+                        pressed = true
+                        tryAwaitRelease()
+                        pressed = false
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = label,
+            fontSize = if (isKey) 22.sp else 16.sp,
+            color = Color(style.keyText),
+            maxLines = 1,
         )
     }
 }

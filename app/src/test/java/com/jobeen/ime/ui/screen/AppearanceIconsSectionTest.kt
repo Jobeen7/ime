@@ -7,11 +7,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 状态栏图标分区行清单（设计图 settings-redesign.png，
- * 2026-11-06 重做版）：
- * 跟随开仍只留开关＋说明两行（摘要芯片是说明行渲染的一部分，
- * 不另占行），独立行全部收起；跟随关全行按密集版出现；
- * 说明文案开＝完整说明（逐字与设计图一致），关＝旧合并句后半句。
+ * 状态栏图标分区行清单（2026-11-07 按视频定稿重设计）：
+ * 跟随开仍只留开关＋说明两行，独立行全部收起；跟随关全行按密集版出现；
+ * 说明开／关同一句；标题栏芯片与摘要芯片行已删除。
  */
 class AppearanceIconsSectionTest {
 
@@ -45,38 +43,14 @@ class AppearanceIconsSectionTest {
     }
 
     @Test
-    fun followNote_onIsFullOffIsUnchanged() {
+    fun followNote_sameSentenceBothStates() {
         assertEquals(
-            R.string.bar_icon_follow_on_note,
+            R.string.bar_icon_follow_note,
             iconsFollowNoteRes(true),
         )
         assertEquals(
-            R.string.bar_icon_follow_off_note,
+            R.string.bar_icon_follow_note,
             iconsFollowNoteRes(false),
-        )
-    }
-
-    @Test
-    fun followSummaryChips_backgroundBorderRadiusInOrder() {
-        assertEquals(
-            listOf(
-                R.string.bar_icon_summary_background,
-                R.string.bar_icon_summary_border,
-                R.string.bar_icon_summary_radius,
-            ),
-            iconsFollowSummaryChips(),
-        )
-    }
-
-    @Test
-    fun followStateChip_onIsFollowOnOffIsFollowOff() {
-        assertEquals(
-            R.string.bar_icon_follow_on_chip,
-            iconsFollowStateChipRes(true),
-        )
-        assertEquals(
-            R.string.bar_icon_follow_off_chip,
-            iconsFollowStateChipRes(false),
         )
     }
 }

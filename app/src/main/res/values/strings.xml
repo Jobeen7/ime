@@ -745,9 +745,13 @@
     <string name="global_section_frost">磨砂效果</string>
     <string name="global_section_keyboard_full">键盘整体·四角圆角</string>
     <string name="global_section_keys_full">按键·背景、边框与模糊</string>
-    <string name="global_section_icons_full">状态栏图标</string>
+    <string name="global_section_icons_full">状态栏图标·独立或跟随按键</string>
     <string name="global_section_bar_full">整条状态栏·背景与模糊</string>
     <string name="global_section_frost_full">磨砂效果·强度与叠加</string>
+    <!-- 主题键盘·外观对话框（2026-11-07 按视频定稿重设计）：标题／三标签／实时预览提示。 -->
+    <string name="global_style_dialog_title">主题键盘·外观</string>
+    <string name="global_style_tab_overall">整体</string>
+    <string name="global_style_preview_hint">按住预览查看反馈 · 预览背景仅为示例</string>
     <string name="global_corner_custom">自定义键盘四角</string>
     <string name="global_border_custom">自定义边框粗细</string>
     <string name="global_radius_custom">自定义圆角</string>
@@ -757,14 +761,8 @@
     <string name="global_blur_off">关</string>
     <string name="global_toolbar_radius">工具栏圆角</string>
     <string name="bar_icon_follow">跟随按键外观</string>
-    <string name="bar_icon_follow_on_note">开启后，状态栏图标跟随按键的背景、边框与圆角。</string>
-    <string name="bar_icon_follow_off_note">关闭后用下方独立设置。</string>
-    <string name="bar_icon_follow_on_chip">跟随开</string>
-    <string name="bar_icon_follow_off_chip">跟随关</string>
-    <string name="bar_icon_summary_background">背景·跟随</string>
-    <string name="bar_icon_summary_border">边框·跟随</string>
-    <string name="bar_icon_summary_radius">圆角·跟随</string>
-    <string name="bar_icon_independent_collapsed">独立设置已收起</string>
+    <!-- 跟随说明（2026-11-07 按视频定稿重设计）：开／关同一句说明，不再分两句。 -->
+    <string name="bar_icon_follow_note">开启后，状态栏图标共用按键的背景、边框、圆角和模糊设置；关闭后恢复独立设置。</string>
     <string name="frost_overlay">背景叠加强度</string>
     <string name="frost_overlay_note">在键盘背景上叠加一层半透明遮罩，强度越高背景越柔和。</string>
     <string name="global_apply">应用</string>

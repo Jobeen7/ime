@@ -240,6 +240,8 @@ data class SettingsDialogAction(
  * 正文由 bodyPadding 决定——外观编辑器按
  * 内边距（左右 12dp，上 4dp，下 12dp）传 12dp，
  * 其余对话框保持 24dp；操作字外层 12dp，叠加 TextButton 自带 12dp 后文字对齐 24dp。
+ * containerColor 缺省＝surfaceContainerHigh；框内分区卡 surface，恢复色阶区分。
+ * 调用方可显式覆盖。
  */
 @Composable
 fun SettingsDialog(
@@ -251,14 +253,15 @@ fun SettingsDialog(
     actions: List<SettingsDialogAction>,
     scrollable: Boolean = true,
     bodyPadding: PaddingValues = PaddingValues(horizontal = 24.dp),
+    containerColor: Color? = null,
 ) {
     Dialog(onDismissRequest = onDismissRequest) {
         Card(
             shape = RoundedCornerShape(28.dp),
             colors = CardDefaults.cardColors(
-                // 弹出卡片面＝surfaceContainerHigh；框内分区卡为 surface，
-                // 两层色阶区分（分组卡仍用 LocalMonetCardColor＝surface，不动）。
-                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                // 弹出卡片面＝surfaceContainerHigh（缺省）；调用方可显式覆盖。
+                // 框内分区卡为 surface，两层色阶区分。
+                containerColor = containerColor ?: MaterialTheme.colorScheme.surfaceContainerHigh,
             ),
         ) {
             val scroll = rememberScrollState()
