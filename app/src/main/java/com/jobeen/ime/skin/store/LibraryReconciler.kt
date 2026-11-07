@@ -102,6 +102,27 @@ class LibraryReconciler(
             is ActiveResolver.Resolution.KeepPending -> Unit
         }
 
+        // 3b. 待回退标记收敛：步骤 3 已把 active 裁决为默认／Last-Good，
+        // 或该皮肤已重新导入且有效——标记不再有效，清掉（库页提示
+        // 随之消失）。步骤 3 之后 active 不可能仍滞后指一个无效代次
+        // （无效必回退），所以此处只在「仍指该 id 且该 id 又有效」
+        // 之外清标记是防御性写法：重导入后旧回退也不再欠着，同样清。
+        runCatching {
+            val pendingId = layout.readPendingFallbackSkinId()
+            if (pendingId != null) {
+                val activeNow =
+                    (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value?.skinId
+                val reimported = skinGens[pendingId].orEmpty().any { it.complete }
+                if (activeNow != pendingId || reimported) {
+                    layout.clearPendingFallback()
+                    DiagLog.i(
+                        "store", "pending_fallback_cleared",
+                        mapOf("skinId" to pendingId),
+                    )
+                }
+            }
+        }
+
         // 受保护代次（永不回收）：生效代次 + Last-Good 代次（§2.5.4）
         // 保留的 pending 代次同样受保护，否则回收会毁掉待验证目标。
         val protectedGens = mutableSetOf<Pair<String, Int>>()

@@ -3,6 +3,7 @@ package com.jobeen.ime.skin.admin
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.SkinJson
 import com.jobeen.ime.skin.store.ActiveRecord
+import com.jobeen.ime.skin.store.AtomicFiles
 import com.jobeen.ime.skin.store.LastGoodPointer
 import com.jobeen.ime.skin.store.LibraryIndex
 import com.jobeen.ime.skin.store.SkinLibraryLayout
@@ -12,8 +13,10 @@ import java.io.File
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -32,7 +35,8 @@ import kotlinx.serialization.json.longOrNull
  * - 删生效中的皮肤：先删（tombstone + 原子索引提交），提交
  *   成功后再经应用事务回退内置默认（运行态永不指向已删代次）；
  *   提交前任一步失败则删除如同没发生；回退失败不翻案（皮肤确
- *   已删，滞后记录由下次启动对账收敛，见 deleteSkinInner 第 4 步）。
+ *   已删，滞后记录由下次启动对账收敛，见 deleteSkinInner 第 4 步），
+ *   但也不谎报 Done——返回 DoneFallbackPending 并留待回退标记。
  * - Last-Good 指针指向被删皮肤：一并清除（指针不得悬空）。
  * - 连带删除其草稿（草稿归属该 id，一并失效）。
  * - 删布局（B3 §4.6 按定稿改）：不再因被引用而拒绝——调用方先经
@@ -58,9 +62,11 @@ import kotlinx.serialization.json.longOrNull
  *    Refused（index_write_failed），索引与目录都保持删除前状态。
  * 3. 索引成功后才清 Last-Good（现读现判），并异步清理 tombstone。
  * 4. 删的是生效皮肤时才回退内置默认（提交后现读 active 判定）；
- *    回退先重试一次，两次失败仍返回 Done（皮肤确已删干净）并记
- *    日志：active 记录滞后指向已删皮肤，下次启动对账按
- *    ActiveResolver 裁决收敛为默认，不悬空；修剪放回退之后，
+ *    回退先重试一次，两次失败返回 DoneFallbackPending（不是
+ *    Done：删除确已提交，但 active 记录／运行快照仍滞后指向
+ *    已删皮肤），并落盘待回退标记、调度一次进程内重试；收敛
+ *    后清标记；收敛前下次启动对账（LibraryReconciler 步骤 3）
+ *    按 ActiveResolver 裁决收敛为默认，不悬空；修剪放回退之后，
  *    回退失败时跳过（孤儿资产由下次启动异步回收）。
  *
  * 进程在四处被杀的收敛（[recoverPendingDeletes]，每次删除前与
@@ -75,6 +81,8 @@ import kotlinx.serialization.json.longOrNull
  * - 回退进行中被杀：切换与写记录各至多完成其一；记录若已是
  *   默认则一致，若仍指已删皮肤则下次启动对账收敛为默认；
  *   运行态随进程重建，不残留。
+ * - 回退两次失败后被杀：待回退标记已在盘上，下次启动对账
+ *   收敛 active 为默认并清标记（LibraryReconciler 步骤 3 后）。
  * 若同一 id 在崩溃后又被重新导入（目标目录已存在），tombstone
  * 视为过期残留、直接清理，不覆盖新目录。
  *
@@ -84,6 +92,8 @@ import kotlinx.serialization.json.longOrNull
 class SkinLibraryAdmin internal constructor(
     private val layout: SkinLibraryLayout,
     private val store: AdminStore,
+    /** 待回退重试延迟：默认 5 秒；测试传 0 令重试立即跑。 */
+    private val fallbackRetryDelayMs: Long = FALLBACK_RETRY_DELAY_MS,
 ) {
 
     /** 生产入口：包一层真实 store，调用方签名不变。 */
@@ -92,6 +102,13 @@ class SkinLibraryAdmin internal constructor(
 
     sealed interface Result {
         data class Done(val id: String) : Result
+
+        /**
+         * 删除已提交、但回退两次失败：active 记录／运行快照仍滞后
+         * 指向已删皮肤。标记已落盘（pending_fallback.json），进程
+         * 内一次重试已调度，收敛后清标记；下次启动对账必收敛。
+         */
+        data class DoneFallbackPending(val id: String) : Result
         data class Refused(val reason: String) : Result
     }
 
@@ -100,6 +117,12 @@ class SkinLibraryAdmin internal constructor(
 
     /** tombstone 异步清理作用域（SupervisorJob：清理失败不牵连其它任务）。 */
     private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+    /** 待回退重试任务：同一时刻至多一个；新标记登记时先取消旧的。 */
+    private var pendingFallbackRetry: Job? = null
+
+    /** 待回退重试回调：与标记同一 id 的回退 lambda；收敛后清。 */
+    private var pendingFallbackRevert: (suspend () -> Boolean)? = null
 
     /** 崩溃恢复区：与 skins/layouts 平级的 trash/，对账扫描不到它。 */
     private val trashDir: File get() = File(layout.root, "trash")
@@ -226,17 +249,96 @@ class SkinLibraryAdmin internal constructor(
         } else {
             true
         }
-        if (revertOk) {
-            // 删皮肤后清无主视频资产（2026-10-29 外观轮）：共享资产
-            // 目录不随皮肤目录走，末引用者删后视频即成孤儿。
-            VideoAssetPruner.pruneUnreferencedVideos(layout)
-            // 第 5 批 §1：同口径清无主非视频资产（模型引用 + 剩余
-            // 引用计数为零 + canonical 落在素材根内才删；图片缓存
-            // 不全局清，见 SkinAssetPruner 注释——生效皮肤的键图
-            // 字节源随快照，删非生效皮肤不得断它）。
-            com.jobeen.ime.skin.store.SkinAssetPruner.pruneUnreferenced(layout)
+        if (!revertOk) {
+            // 回退两次失败：删除已提交不翻案，但不谎报 Done——
+            // 返回 DoneFallbackPending，落盘待回退标记并调度一次
+            // 进程内重试；收敛后清标记，启动对账必收敛（见第 4 步
+            // KDoc）。修剪仍跳过：旧快照仍在装，孤儿资产由下次
+            // 启动异步 pruneOrphanAssets 回收。
+            recordPendingFallback(skinId, revertToDefault)
+            return@withLock Result.DoneFallbackPending(skinId)
         }
+        // 删皮肤后清无主视频资产（2026-10-29 外观轮）：共享资产
+        // 目录不随皮肤目录走，末引用者删后视频即成孤儿。
+        VideoAssetPruner.pruneUnreferencedVideos(layout)
+        // 第 5 批 §1：同口径清无主非视频资产（模型引用 + 剩余
+        // 引用计数为零 + canonical 落在素材根内才删；图片缓存
+        // 不全局清，见 SkinAssetPruner 注释——生效皮肤的键图
+        // 字节源随快照，删非生效皮肤不得断它）。
+        com.jobeen.ime.skin.store.SkinAssetPruner.pruneUnreferenced(layout)
         Result.Done(skinId)
+    }
+
+    /**
+     * 回退两次失败后的待回退登记：落盘标记 + 调度一次进程内重试。
+     * 同一时刻至多一个待回退（生效皮肤唯一），新标记覆盖旧的：
+     * 旧重试取消，旧标记由启动对账收敛时清。
+     */
+    private fun recordPendingFallback(
+        skinId: String,
+        revertToDefault: suspend () -> Boolean,
+    ) {
+        pendingFallbackRetry?.cancel()
+        pendingFallbackRetry = null
+        pendingFallbackRevert = revertToDefault
+        val payload = Json.encodeToString(
+            JsonObject.serializer(),
+            JsonObject(
+                mapOf(
+                    "skinId" to JsonPrimitive(skinId),
+                    "atMs" to JsonPrimitive(System.currentTimeMillis()),
+                ),
+            ),
+        )
+        runCatching {
+            AtomicFiles.write(
+                layout.pendingFallbackFile,
+                payload.toByteArray(Charsets.UTF_8),
+            )
+        }.onFailure {
+            // 标记写失败也不翻案：删除已提交；启动对账仍按 active
+            // 记录收敛（标记只是提示，缺失不阻塞收敛）。
+            DiagLog.w(
+                "admin", "pending_fallback_write_failed",
+                mapOf("kind" to "skin", "id" to skinId),
+            )
+        }
+        pendingFallbackRetry = cleanupScope.launch {
+            delay(fallbackRetryDelayMs)
+            retryPendingFallbackOnce()
+        }
+    }
+
+    /**
+     * 待回退重试（调度任务与测试共用同一入口）：现读 active 再判——
+     * 用户已另应用皮肤或已收敛时跳过并清标记，绝不把新皮肤回退掉；
+     * 回调成功则清标记；再失败留标记，等下次启动对账收敛。
+     * 回调异常只记日志、不让清理作用域崩掉。
+     */
+    internal suspend fun retryPendingFallbackOnce(): Boolean {
+        val markerId = layout.readPendingFallbackSkinId() ?: return true
+        val current = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
+        if (current?.skinId != markerId) {
+            layout.clearPendingFallback()
+            pendingFallbackRevert = null
+            return true
+        }
+        val revert = pendingFallbackRevert
+        val ok = runCatching { revert?.invoke() ?: false }.getOrDefault(false)
+        if (ok) {
+            layout.clearPendingFallback()
+            pendingFallbackRevert = null
+            DiagLog.i(
+                "admin", "delete_revert_retry_succeeded",
+                mapOf("kind" to "skin", "id" to markerId),
+            )
+        } else {
+            DiagLog.w(
+                "admin", "delete_revert_retry_failed",
+                mapOf("kind" to "skin", "id" to markerId),
+            )
+        }
+        return ok
     }
 
     /** 引用某布局的全部皮肤（删除警告与删后回退判定共用此一份事实）。 */
@@ -531,6 +633,9 @@ class SkinLibraryAdmin internal constructor(
     companion object {
         private const val INTENT_FILE = "delete-intent.json"
         private val TOMBSTONE_NAME_REGEX = Regex("^([a-z]+)-(.+)-(\\d+)$")
+
+        /** 待回退进程内重试延迟（回退两次失败后才调度）。 */
+        const val FALLBACK_RETRY_DELAY_MS = 5_000L
     }
 
     /**

@@ -5,6 +5,7 @@ import com.jobeen.ime.skin.store.ActiveRecord
 import com.jobeen.ime.skin.store.ApplyState
 import com.jobeen.ime.skin.store.LastGoodPointer
 import com.jobeen.ime.skin.store.LibraryIndex
+import com.jobeen.ime.skin.store.LibraryReconciler
 import com.jobeen.ime.skin.store.LayoutIndexEntry
 import com.jobeen.ime.skin.store.SkinIndexEntry
 import com.jobeen.ime.skin.store.SkinLibraryLayout
@@ -13,6 +14,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -74,12 +76,17 @@ class SkinLibraryAdminTest {
         val fake: FakeAdminStore,
     )
 
-    private fun fixture(): Fixture {
+    /**
+     * @param fallbackRetryDelayMs 待回退重试延迟：默认 60 秒——
+     * 回退失败的测试不希望调度重试在断言期间跑起来；要测调度
+     * 路径的测试显式传 0。
+     */
+    private fun fixture(fallbackRetryDelayMs: Long = 60_000L): Fixture {
         val root = Files.createTempDirectory("jime-admin").toFile()
         val layout = SkinLibraryLayout(root).apply { ensureDirs() }
         val store = SkinLibraryStore(layout)
         val fake = FakeAdminStore(store)
-        return Fixture(layout, store, SkinLibraryAdmin(layout, fake), fake)
+        return Fixture(layout, store, SkinLibraryAdmin(layout, fake, fallbackRetryDelayMs), fake)
     }
 
     /** tombstone 残留：手造一次崩溃后的中间态（rename 已做、索引未提交）。 */
@@ -152,8 +159,10 @@ class SkinLibraryAdminTest {
     fun deleteActiveSkinCommitsFirstThenReverts() = runBlocking {
         // 审计问题 1 新顺序（原“先回退”口径已废止，测试随口径改，
         // 见施工单 5 第 4 条）：提交在回退之前；回退两次失败也不
-        // 翻案——皮肤确已删干净，返回 Done；active 记录滞后指向
-        // 已删皮肤（下次启动对账按 ActiveResolver 裁决收敛为默认）。
+        // 翻案——皮肤确已删干净，但不再谎报 Done：返回
+        // DoneFallbackPending 并落盘待回退标记（施工单 6 第 4 条，
+        // 用户定口径）；active 记录滞后指向已删皮肤（下次启动对账
+        // 按 ActiveResolver 裁决收敛为默认）。
         val f = fixture()
         addSkin(f, "s1", "hash1")
         f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
@@ -163,8 +172,9 @@ class SkinLibraryAdminTest {
             revertCalls++
             false
         }
-        assertEquals(SkinLibraryAdmin.Result.Done("s1"), result)
+        assertEquals(SkinLibraryAdmin.Result.DoneFallbackPending("s1"), result)
         assertEquals(2, revertCalls) // 失败重试一次
+        assertEquals("s1", f.layout.readPendingFallbackSkinId())
         val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
         assertTrue(index.skins.isEmpty())
         assertFalse(File(f.layout.skinsDir, "s1").exists())
@@ -282,13 +292,14 @@ class SkinLibraryAdminTest {
     @Test
     fun deleteActiveSkin_revertFailure_skipsPruneKeepsSharedVideo() = runBlocking {
         // 回退失败时跳过修剪：旧快照仍在装，共享视频不断粮；
-        // 回退成功时正常修剪。
+        // 回退成功时正常修剪。失败支按施工单 6 第 4 条返回
+        // DoneFallbackPending（原 Done 期望随口径改）。
         val f = fixture()
         addSkin(f, "s1", "hash1")
         writeVideoManifest(f, "s1", "vidsha1")
         f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
         val failed = f.admin.deleteSkin("s1") { false }
-        assertEquals(SkinLibraryAdmin.Result.Done("s1"), failed)
+        assertEquals(SkinLibraryAdmin.Result.DoneFallbackPending("s1"), failed)
         assertTrue(File(f.layout.assetsDir, "vidsha1.mp4").isFile)
 
         val f2 = fixture()
@@ -301,6 +312,127 @@ class SkinLibraryAdminTest {
         }
         assertEquals(SkinLibraryAdmin.Result.Done("s1"), ok)
         assertFalse(File(f2.layout.assetsDir, "vidsha1.mp4").exists())
+    }
+
+    @Test
+    fun deleteActiveSkin_revertTwiceFailed_retrySucceeds_clearsMarker() = runBlocking {
+        // 施工单 6 第 4 条：两次回退失败返回 DoneFallbackPending，
+        // 标记落盘；进程内重试成功后标记清除。回调是测试替身：
+        // 生产里 revertToDefault 内部写默认记录，此处第三次调用
+        // 模拟它——写默认记录后 active 收敛为默认。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f.store.writeLastGood(LastGoodPointer("s1", "hash1", 1))
+        var calls = 0
+        val result = f.admin.deleteSkin("s1") {
+            calls++
+            if (calls <= 2) {
+                false
+            } else {
+                f.store.writeActive(ActiveRecord(appliedAt = 0L))
+                true
+            }
+        }
+        assertEquals(SkinLibraryAdmin.Result.DoneFallbackPending("s1"), result)
+        assertEquals(2, calls)
+        assertEquals("s1", f.layout.readPendingFallbackSkinId())
+        val activeBeforeRetry =
+            (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals("s1", activeBeforeRetry.skinId) // 回退前滞后记录仍指已删皮肤
+        assertTrue(f.admin.retryPendingFallbackOnce())
+        assertEquals(3, calls)
+        assertEquals(null, f.layout.readPendingFallbackSkinId())
+        val active = (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(null, active.skinId)
+    }
+
+    @Test
+    fun deleteActiveSkin_revertTwiceFailed_scheduledRetryRuns() = runBlocking {
+        // 调度路径：延迟 0 时删除返回后重试任务自行跑起来，清标记；
+        // 只轮询标记文件（上限 10 秒），与 awaitTrashEmpty 同口径。
+        val f = fixture(fallbackRetryDelayMs = 0L)
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        var calls = 0
+        val result = f.admin.deleteSkin("s1") {
+            calls++
+            if (calls <= 2) {
+                false
+            } else {
+                f.store.writeActive(ActiveRecord(appliedAt = 0L))
+                true
+            }
+        }
+        assertEquals(SkinLibraryAdmin.Result.DoneFallbackPending("s1"), result)
+        assertEquals("s1", f.layout.readPendingFallbackSkinId())
+        val deadline = System.currentTimeMillis() + 10_000
+        while (System.currentTimeMillis() < deadline &&
+            f.layout.readPendingFallbackSkinId() != null
+        ) {
+            delay(50)
+        }
+        assertEquals(null, f.layout.readPendingFallbackSkinId())
+        assertEquals(3, calls)
+    }
+
+    @Test
+    fun deleteActiveSkin_revertTwiceFailed_retryFailsAgain_markerStays() = runBlocking {
+        // 重试也失败：标记保留，等下次启动对账收敛；结果仍是
+        // DoneFallbackPending，不翻案。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        var calls = 0
+        val result = f.admin.deleteSkin("s1") {
+            calls++
+            false
+        }
+        assertEquals(SkinLibraryAdmin.Result.DoneFallbackPending("s1"), result)
+        assertEquals(2, calls)
+        assertFalse(f.admin.retryPendingFallbackOnce())
+        assertEquals(3, calls)
+        assertEquals("s1", f.layout.readPendingFallbackSkinId())
+        val active = (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals("s1", active.skinId)
+    }
+
+    @Test
+    fun deleteActiveSkin_revertTwiceFailed_processKilled_reconcilerConverges() = runBlocking {
+        // 进程被杀模拟：删除返回 DoneFallbackPending 后丢掉 Admin
+        // （重试延迟 60 秒，本测试内不跑），全新对账器对同一目录
+        // 做启动对账——active 收敛为默认，标记清除。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        f.store.writeLastGood(LastGoodPointer("s1", "hash1", 1))
+        val result = f.admin.deleteSkin("s1") { false }
+        assertEquals(SkinLibraryAdmin.Result.DoneFallbackPending("s1"), result)
+        assertEquals("s1", f.layout.readPendingFallbackSkinId())
+        LibraryReconciler(f.layout, f.store).reconcile()
+        val active = (f.store.readActive() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(null, active.skinId)
+        assertEquals(null, f.layout.readPendingFallbackSkinId())
+    }
+
+    @Test
+    fun deleteActiveSkin_revertTwiceFailed_applyOtherSkin_retrySkips() = runBlocking {
+        // 用户在重试前另应用了皮肤：重试现读 active 已指他皮肤，
+        // 跳过并清标记，绝不把新皮肤回退掉；回调不再调用。
+        val f = fixture()
+        addSkin(f, "s1", "hash1")
+        f.store.writeActive(ActiveRecord("s1", "hash1", 1, ApplyState.VERIFIED, 0L))
+        var calls = 0
+        val result = f.admin.deleteSkin("s1") {
+            calls++
+            false
+        }
+        assertEquals(SkinLibraryAdmin.Result.DoneFallbackPending("s1"), result)
+        assertEquals(2, calls)
+        f.store.writeActive(ActiveRecord("s2", "hash2", 1, ApplyState.VERIFIED, 0L))
+        assertTrue(f.admin.retryPendingFallbackOnce())
+        assertEquals(2, calls)
+        assertEquals(null, f.layout.readPendingFallbackSkinId())
     }
 
     /** 代次清单里挂一个视频资产（复用 VideoAssetPrunerTest 的写法）。 */

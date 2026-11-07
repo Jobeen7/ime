@@ -130,6 +130,8 @@ private data class LibraryUiState(
     val layoutNames: Map<String, String> = emptyMap(),
     /** 生效皮肤绑定的布局当前不可解析（已删除/无效）——回退状态的常驻提示面（B3 §4.6）。 */
     val activeLayoutMissing: Boolean = false,
+    /** 待回退标记的皮肤 id：删生效皮肤后两次回退失败时置位，库页顶部常驻提示直到收敛。 */
+    val pendingFallbackSkinId: String? = null,
 )
 
 /** 长按菜单“查看错误日志”对话框的数据：皮肤显示名＋过滤后的错误行。 */
@@ -196,6 +198,7 @@ private suspend fun loadLibraryState(): LibraryUiState = withContext(Dispatchers
                 com.jobeen.ime.skin.model.LayoutResolution.MISSING,
                 com.jobeen.ime.skin.model.LayoutResolution.INVALID,
             ),
+        pendingFallbackSkinId = SkinLibrary.layout.readPendingFallbackSkinId(),
     )
 }
 
@@ -697,6 +700,18 @@ fun SkinLibraryScreen(
                 .padding(horizontal = 16.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
+            // 待回退常驻提示：删生效皮肤后两次回退失败时置位，标记
+            // 在盘上期间一直显示；收敛（进程内重试成功或下次启动
+            // 对账）后 loadLibraryState 重读即消失。
+            item {
+                if (state.pendingFallbackSkinId != null) {
+                    Text(
+                        "皮肤已从库中删除，当前键盘正在回退／仍显示旧皮肤",
+                        fontSize = 13.sp,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
             // 内置主题卡（主题设置页脱钩后，库页为内置主题唯一切换入口）：
             // 2026-10-29 批量第 6 项：暗夜＋素白合并为一张“默认”卡
             // （浅素白／深暗夜双槽）；落日已删（旧存值由读入口迁移，
@@ -1136,6 +1151,8 @@ fun SkinLibraryScreen(
                                 .RevertedToDefault
                     }) {
                         is SkinLibraryAdmin.Result.Done -> toast("已删除")
+                        is SkinLibraryAdmin.Result.DoneFallbackPending ->
+                            toast("皮肤已从库中删除，当前键盘正在回退／仍显示旧皮肤")
                         is SkinLibraryAdmin.Result.Refused ->
                             toast("删除被拒绝：${result.reason}")
                     }
@@ -1262,6 +1279,7 @@ fun SkinLibraryScreen(
                 selectedIds = emptySet()
                 runBusy {
                     var done = 0
+                    var pending = 0
                     var refused = 0
                     for (id in ids) {
                         when (admin.deleteSkin(id) {
@@ -1270,6 +1288,10 @@ fun SkinLibraryScreen(
                                     .RevertedToDefault
                         }) {
                             is SkinLibraryAdmin.Result.Done -> done++
+                            is SkinLibraryAdmin.Result.DoneFallbackPending -> {
+                                done++
+                                pending++
+                            }
                             is SkinLibraryAdmin.Result.Refused -> refused++
                         }
                     }
@@ -1278,10 +1300,17 @@ fun SkinLibraryScreen(
                         mapOf(
                             "requested" to ids.size,
                             "done" to done,
+                            "pending" to pending,
                             "refused" to refused,
                             ),
                         )
-                    toast("批量删除完成：成功 $done 个，失败 $refused 个")
+                    toast(
+                        if (pending > 0) {
+                            "批量删除完成：成功 $done 个（其中 $pending 个正在回退），失败 $refused 个"
+                        } else {
+                            "批量删除完成：成功 $done 个，失败 $refused 个"
+                        },
+                    )
                 }
             },
             dismissText = "取消",

@@ -1,6 +1,9 @@
 package com.jobeen.ime.skin.store
 
 import java.io.File
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonObject
 
 /**
  * 皮肤库目录结构（详设 §2.1，根目录名 `skin_library` 已裁定）。
@@ -10,6 +13,8 @@ import java.io.File
  * ```
  * skin_library/
  * ├─ index.json / active.json / last_good.json
+ * ├─ pending_fallback.json   删生效皮肤后回退两次失败的待回退标记
+ * │                          （{"skinId","atMs"}；启动对账收敛后清）
  * ├─ skins/<skinId>/gen-<n>/   一代一目录，只读不改（skin.json + manifest.json + prepared/）
  * ├─ layouts/<layoutId>/gen-<n>/layout.json   B1 只存不用
  * ├─ assets/<sha256>.<ext>     资产实体（内容寻址，定稿七.5）
@@ -21,6 +26,24 @@ class SkinLibraryLayout(val root: File) {
     val indexFile: File get() = File(root, "index.json")
     val activeFile: File get() = File(root, "active.json")
     val lastGoodFile: File get() = File(root, "last_good.json")
+
+    /** 待回退标记文件：删生效皮肤后两次回退都失败时落盘，收敛后清。 */
+    val pendingFallbackFile: File get() = File(root, "pending_fallback.json")
+
+    /**
+     * 待回退标记读：缺失/损坏/字段不全一律按无标记处理——标记只是
+     * 回退未收敛的提示，绝不因它阻塞启动或删除。
+     */
+    fun readPendingFallbackSkinId(): String? = runCatching {
+        val text = pendingFallbackFile.takeIf { it.isFile }?.readText() ?: return null
+        (Json.parseToJsonElement(text).jsonObject["skinId"] as? JsonPrimitive)
+            ?.takeIf { it.isString }?.content
+    }.getOrNull()
+
+    /** 清待回退标记（收敛/失效时调用；失败只忽略、不抛）。 */
+    fun clearPendingFallback() {
+        runCatching { pendingFallbackFile.delete() }
+    }
 
     val skinsDir: File get() = File(root, "skins")
     val layoutsDir: File get() = File(root, "layouts")
