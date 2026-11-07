@@ -7,6 +7,7 @@ import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.CyclicBarrier
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -32,8 +33,12 @@ class ImportTransactionTest {
         val root: File = Files.createTempDirectory("skin-import").toFile()
         val layout = SkinLibraryLayout(root)
         val store = SkinLibraryStore(layout)
-        var uuidSeq = 0
-        val tx = ImportTransaction(layout, store, uuid = { "uuid-${uuidSeq++}" }, clock = { 5_000L })
+        // uuid 供两路并发导入取 staging 目录名：必须原子递增——
+        //  plain var 的 uuidSeq++ 在两线程同时读到同一值时会分到
+        //  同一 staging 目录，后写覆盖先写、校验 hash 对不上
+        //  （第 4 项全量第 13 轮偶发失败的根因；单跑不复现）。
+        val uuidSeq = AtomicInteger(0)
+        val tx = ImportTransaction(layout, store, uuid = { "uuid-${uuidSeq.getAndIncrement()}" }, clock = { 5_000L })
 
         init {
             layout.ensureDirs()

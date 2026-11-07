@@ -3,7 +3,9 @@
 package com.jobeen.ime.skin.runtime
 
 import android.graphics.Bitmap
+import com.jobeen.ime.skin.image.ImageDecodePolicy
 import java.util.Collections
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -11,6 +13,7 @@ import kotlin.concurrent.thread
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -42,6 +45,9 @@ class SkinKeyImageStoreTest {
         SkinKeyImageStore.decoder = SkinKeyImageStore::decode
         SkinKeyImageStore.bitmapRecycler = { bitmap ->
             if (!bitmap.isRecycled) bitmap.recycle()
+        }
+        SkinKeyImageStore.bitmapByteSize = { bitmap ->
+            runCatching { bitmap.allocationByteCount.toLong() }.getOrDefault(0L)
         }
         SkinKeyImageStore.clear()
     }
@@ -155,5 +161,205 @@ class SkinKeyImageStoreTest {
             listOf("a", "b"),
             decoded.map { String(it) },
         )
+    }
+
+    /**
+     * 施工单 6 第 5 条：200 个唯一资产，预热只覆盖前 128 条
+     * （PREWARM_MAX_KEYS）；第 129 条起走 request 异步解码——
+     * request 在调用线程立即返回（解码器睡 300ms 也拦不住），
+     * 回调随后拿到位图并入缓存。
+     */
+    @Test
+    fun prewarmCoversFirst128OnlyAndRestResolveAsyncWithoutBlocking() {
+        val ids = (0 until 200).map { "asset-$it" }
+        SkinKeyImageStore.decoder = { fakeBitmap() }
+        SkinKeyImageStore.installProvider { assetId -> assetId.toByteArray() }
+        SkinKeyImageStore.prewarm(ids)
+        val (count, _) = SkinKeyImageStore.cacheStats()
+        assertEquals(ImageDecodePolicy.PREWARM_MAX_KEYS, count)
+        assertEquals(null, SkinKeyImageStore.peek("asset-150"))
+
+        val decodeStarted = CountDownLatch(1)
+        SkinKeyImageStore.decoder = {
+            decodeStarted.countDown()
+            Thread.sleep(300)
+            fakeBitmap()
+        }
+        var delivered: Bitmap? = null
+        val start = System.nanoTime()
+        SkinKeyImageStore.request("asset-150") { delivered = it }
+        val elapsedMs = (System.nanoTime() - start) / 1_000_000
+        assertTrue(
+            "request must return without decoding on the calling thread",
+            elapsedMs < 100,
+        )
+        assertTrue(decodeStarted.await(5, TimeUnit.SECONDS))
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5)
+        while (delivered == null && System.nanoTime() < deadline) {
+            Thread.sleep(10)
+        }
+        assertNotNull(delivered)
+        assertSame(delivered, SkinKeyImageStore.peek("asset-150"))
+    }
+
+    /**
+     * 施工单 6 第 5 条：预热与键盘创建（request）并发——同一资产
+     * 只解码一次、无死锁，全部回调都拿到同一位图。
+     */
+    @Test
+    fun prewarmConcurrentWithRequestsDecodesEachAssetOnce() {
+        val ids = (0 until 20).map { "asset-$it" }
+        val decodeCounts = ConcurrentHashMap<String, AtomicInteger>()
+        SkinKeyImageStore.decoder = { bytes ->
+            val id = String(bytes)
+            decodeCounts.computeIfAbsent(id) { AtomicInteger(0) }.incrementAndGet()
+            Thread.sleep(20)
+            fakeBitmap()
+        }
+        SkinKeyImageStore.installProvider { assetId -> assetId.toByteArray() }
+        val done = CountDownLatch(ids.size)
+        val results = ConcurrentHashMap<String, Bitmap?>()
+        val prewarmThread = thread { SkinKeyImageStore.prewarm(ids) }
+        val requestThreads = ids.map { id ->
+            thread {
+                SkinKeyImageStore.request(id) { bitmap ->
+                    results[id] = bitmap
+                    done.countDown()
+                }
+            }
+        }
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        prewarmThread.join(10_000)
+        requestThreads.forEach { it.join(10_000) }
+        assertEquals(ids.size, results.size)
+        assertTrue(results.values.all { it != null })
+        for (id in ids) {
+            assertEquals("asset $id decoded once", 1, decodeCounts[id]?.get())
+        }
+    }
+
+    /**
+     * 施工单 6 第 5 条：迟到结果不污染新代次。旧代次解码完成时
+     * 新皮肤已安装——调用方仍得旧位图（旧口径），但缓存里绝无
+     * 旧内容（peek 仍是新代次的位图）。
+     */
+    @Test
+    fun lateResultFromOldGenerationIsNotCached() {
+        val bytesA = "A-content".toByteArray()
+        val bmpB = fakeBitmap()
+        val providerEntered = CountDownLatch(1)
+        val releaseA = CountDownLatch(1)
+        SkinKeyImageStore.installProvider { _ ->
+            providerEntered.countDown()
+            releaseA.await(10, TimeUnit.SECONDS)
+            bytesA
+        }
+        SkinKeyImageStore.decoder = { fakeBitmap() }
+        var first: Bitmap? = null
+        val resolveA = thread { first = SkinKeyImageStore.resolve("k") }
+        assertTrue(providerEntered.await(10, TimeUnit.SECONDS))
+        // 切到 B（位图由 put 直接注入，避免再走解码）。
+        SkinKeyImageStore.installProvider { null }
+        SkinKeyImageStore.put("k", bmpB)
+        releaseA.countDown()
+        resolveA.join(10_000)
+        assertFalse(resolveA.isAlive)
+        assertNotNull(first)
+        assertFalse("late result must not overwrite new generation", first === bmpB)
+        assertSame(bmpB, SkinKeyImageStore.peek("k"))
+    }
+
+    /**
+     * 施工单 6 第 5 条：同一资产 5 路并发 request 只解码一次，
+     * 全部回调拿到同一位图实例。
+     */
+    @Test
+    fun requestMergesConcurrentCallersIntoOneDecode() {
+        val decodeCalls = AtomicInteger(0)
+        val decoding = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        SkinKeyImageStore.decoder = {
+            decodeCalls.incrementAndGet()
+            decoding.countDown()
+            release.await(10, TimeUnit.SECONDS)
+            fakeBitmap()
+        }
+        SkinKeyImageStore.installProvider { "x".toByteArray() }
+        val done = CountDownLatch(5)
+        val results = Collections.synchronizedList(mutableListOf<Bitmap?>())
+        val threads = (1..5).map {
+            thread {
+                SkinKeyImageStore.request("k") { bitmap ->
+                    results += bitmap
+                    done.countDown()
+                }
+            }
+        }
+        assertTrue(decoding.await(10, TimeUnit.SECONDS))
+        Thread.sleep(200)
+        release.countDown()
+        assertTrue(done.await(10, TimeUnit.SECONDS))
+        threads.forEach { it.join(10_000) }
+        assertEquals(1, decodeCalls.get())
+        assertEquals(5, results.size)
+        assertTrue(results.all { it != null })
+        assertTrue(results.all { it === results[0] })
+    }
+
+    /**
+     * 施工单 6 第 5 条：已缓存资产 request 在调用线程立即回调，
+     * 不走解码器。
+     */
+    @Test
+    fun requestDeliversCachedImmediatelyWithoutDecode() {
+        val bmp = fakeBitmap()
+        SkinKeyImageStore.put("k", bmp)
+        val decodeCalls = AtomicInteger(0)
+        SkinKeyImageStore.decoder = {
+            decodeCalls.incrementAndGet()
+            fakeBitmap()
+        }
+        var delivered: Bitmap? = null
+        var callbackThread: Thread? = null
+        SkinKeyImageStore.request("k") {
+            delivered = it
+            callbackThread = Thread.currentThread()
+        }
+        assertSame(bmp, delivered)
+        assertSame(Thread.currentThread(), callbackThread)
+        assertEquals(0, decodeCalls.get())
+    }
+
+    /**
+     * 施工单 6 第 5 条：总预算 128MB，每张 40MB，4 张共 160MB
+     * → 最旧一张按 FIFO 退役，其余三张仍在缓存；单张超预算
+     * 不缓存（调用方仍拿到本次位图）。
+     */
+    @Test
+    fun cacheBudgetEvictsOldestFirst() {
+        SkinKeyImageStore.bitmapByteSize = { 40L * 1024 * 1024 }
+        SkinKeyImageStore.decoder = { fakeBitmap() }
+        SkinKeyImageStore.installProvider { assetId -> assetId.toByteArray() }
+        for (id in listOf("a", "b", "c", "d")) {
+            SkinKeyImageStore.resolve(id)
+        }
+        val (count, bytes) = SkinKeyImageStore.cacheStats()
+        assertEquals(3, count)
+        assertTrue(bytes <= ImageDecodePolicy.MAX_CACHE_BYTES)
+        assertEquals(null, SkinKeyImageStore.peek("a"))
+        assertNotNull(SkinKeyImageStore.peek("b"))
+        assertNotNull(SkinKeyImageStore.peek("c"))
+        assertNotNull(SkinKeyImageStore.peek("d"))
+    }
+
+    @Test
+    fun singleBitmapOverBudgetIsReturnedButNotCached() {
+        SkinKeyImageStore.bitmapByteSize = { 200L * 1024 * 1024 }
+        val bmp = fakeBitmap()
+        SkinKeyImageStore.decoder = { bmp }
+        SkinKeyImageStore.installProvider { "x".toByteArray() }
+        assertSame(bmp, SkinKeyImageStore.resolve("k"))
+        assertEquals(null, SkinKeyImageStore.peek("k"))
+        assertEquals(0 to 0L, SkinKeyImageStore.cacheStats())
     }
 }

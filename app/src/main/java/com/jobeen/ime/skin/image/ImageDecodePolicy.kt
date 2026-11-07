@@ -43,7 +43,15 @@ object ImageDecodePolicy {
     /** 解码并行度：2（对方 R34）。 */
     const val DECODE_PARALLELISM = 2
 
-    /** 快照安装时 IO 预热的键图上限：超出者仍走首次构建解码（旧口径），不阻塞安装。 */
+    /**
+     * 键图缓存总字节上限（施工单 6 第 5 条）：单张键面 ≤512 边
+     * ARGB_8888 至多 1MB，128MB 可容约 128 张满尺寸键图（典型
+     * 键图远小于此）；超限按 FIFO 退役最旧条目（滞留一代再回收），
+     * 单张超限不缓存。见 [com.jobeen.ime.skin.runtime.SkinKeyImageStore]。
+     */
+    const val MAX_CACHE_BYTES = 128L * 1024 * 1024
+
+    /** 快照安装时 IO 预热的键图上限：超出者走键盘构建期异步解码（施工单 6 第 5 条），不阻塞安装。 */
     const val PREWARM_MAX_KEYS = 128
 
     /** 文件名白名单（对方 K14）。 */

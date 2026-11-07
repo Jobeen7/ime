@@ -7,6 +7,7 @@ import android.animation.ValueAnimator
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.res.ColorStateList
+import android.graphics.Bitmap
 import android.graphics.Color
 import android.graphics.Rect
 import android.graphics.Typeface
@@ -52,6 +53,7 @@ import splitties.views.imageResource
 import splitties.views.padding
 import kotlin.math.min
 import kotlin.math.roundToInt
+import java.util.concurrent.atomic.AtomicInteger
 
 // 对齐计算复用的边界矩形：调用都在主线程、bounds 取到后立即消费，
 // 共享一份即可，不再每次按键文本定位新建 Rect
@@ -217,6 +219,199 @@ abstract class KeyView(
         val rotation: Float,
     )
 
+    /**
+     * 异步图片回填（施工单 6 第 5 条）：构造期先 [peek]，命中即
+     * 同步应用（主线程构造期）；未命中走 [request]，解码完成后
+     * 切主线程应用——仅当仍属请求时代次时生效（切换皮肤后的
+     * 迟到结果直接丢弃）。位图 null（无图／解码失败）时以 null
+     * 落定、不应用，颜色／文字占位即回退结果；多图收集仍计入
+     * 落定（失败帧跳过、不卡住整组，旧口径 mapNotNull 同理）。
+     */
+    private fun requestKeyImage(assetId: String, onBitmap: (Bitmap?) -> Unit) {
+        val generationAtRequest =
+            com.jobeen.ime.skin.runtime.SkinKeyImageStore.currentGeneration
+        com.jobeen.ime.skin.runtime.SkinKeyImageStore.peek(assetId)?.let {
+            onBitmap(it)
+            return
+        }
+        com.jobeen.ime.skin.runtime.SkinKeyImageStore.request(assetId) { bitmap ->
+            if (bitmap == null) {
+                // 无图／解码失败：以 null 落定，无视图可刷，无需切主线程。
+                onBitmap(null)
+                return@request
+            }
+            post {
+                if (com.jobeen.ime.skin.runtime.SkinKeyImageStore.currentGeneration !=
+                    generationAtRequest
+                ) {
+                    return@post
+                }
+                onBitmap(bitmap)
+            }
+        }
+    }
+
+    /** 多图异步集齐（卡通帧／物理位图）：按原顺序收集已解出的位图，全部落定（成功或失败）后回调一次；代次已变时不回调。 */
+    private fun requestKeyImages(
+        assetIds: List<String>,
+        onSettled: (List<Bitmap>) -> Unit,
+    ) {
+        if (assetIds.isEmpty()) return
+        val results = arrayOfNulls<Bitmap>(assetIds.size)
+        val pending = AtomicInteger(assetIds.size)
+        assetIds.forEachIndexed { index, assetId ->
+            requestKeyImage(assetId) { bitmap ->
+                results[index] = bitmap
+                if (pending.decrementAndGet() == 0) {
+                    // 落定回调一律切主线程（onSettled 建视图）；
+                    // 失败帧已记 null，filterNotNull 跳过。
+                    post { onSettled(results.filterNotNull()) }
+                }
+            }
+        }
+    }
+
+    /** 常态图片面请求（无精灵图引用、或精灵图 sheet 解失败时回落）。 */
+    private fun requestFaceBitmap() {
+        def.skinImageAssetId?.let { assetId ->
+            requestKeyImage(assetId) { bitmap ->
+                bitmap?.let { addFaceImageView(it, def.skinFaceContentMode) }
+            }
+        }
+    }
+
+    /** 常态图片面层（位图已就绪时建层；无图时不加层，颜色键面即回退）。 */
+    private fun addFaceImageView(bitmap: Bitmap, mode: com.jobeen.ime.skin.model.ImageContentMode?) {
+        val faceView = android.widget.ImageView(context).apply {
+            isClickable = false
+            isFocusable = false
+            // 审计 D 项：覆写指定模式时用描述模式，否则旧口径 CENTER_CROP。
+            scaleType = mode?.toScaleType()
+                ?: android.widget.ImageView.ScaleType.CENTER_CROP
+            setImageBitmap(bitmap)
+        }
+        this.faceView = faceView
+        appearanceView.apply {
+            add(faceView, lParams(0, 0) {
+                startToStart = parentId
+                endToEnd = parentId
+                topToTop = parentId
+                bottomToBottom = parentId
+            })
+        }
+    }
+
+    /** 精灵图面层（drawable 自带 contentMode 绘制，bounds 即键面，不再经 ImageView scaleType 二次缩放）。 */
+    private fun addFaceSpriteView(drawable: Drawable) {
+        val faceView = android.view.View(context).apply {
+            isClickable = false
+            isFocusable = false
+            background = drawable
+        }
+        this.faceView = faceView
+        appearanceView.apply {
+            add(faceView, lParams(0, 0) {
+                startToStart = parentId
+                endToEnd = parentId
+                topToTop = parentId
+                bottomToBottom = parentId
+            })
+        }
+    }
+
+    /** 按压图片面请求（无精灵图引用、或精灵图 sheet 解失败时回落）。 */
+    private fun requestPressedFaceBitmap() {
+        def.skinPressedImageAssetId?.let { assetId ->
+            requestKeyImage(assetId) { bitmap ->
+                bitmap?.let { addPressedFaceImageView(it, def.skinPressedFaceContentMode) }
+            }
+        }
+    }
+
+    /** 按压图片面层（位图已就绪时建层；无图时不加层，按压态即颜色键面）。 */
+    private fun addPressedFaceImageView(
+        bitmap: Bitmap,
+        mode: com.jobeen.ime.skin.model.ImageContentMode?,
+    ) {
+        val pressedFaceView = android.widget.ImageView(context).apply {
+            isClickable = false
+            isFocusable = false
+            // 审计 D 项：覆写指定模式时用描述模式，否则旧口径 CENTER_CROP。
+            scaleType = mode?.toScaleType()
+                ?: android.widget.ImageView.ScaleType.CENTER_CROP
+            setImageBitmap(bitmap)
+            visibility = android.view.View.GONE
+        }
+        this.pressedFaceView = pressedFaceView
+        appearanceView.apply {
+            add(pressedFaceView, lParams(0, 0) {
+                startToStart = parentId
+                endToEnd = parentId
+                topToTop = parentId
+                bottomToBottom = parentId
+            })
+        }
+    }
+
+    /** 按压精灵图面层（drawable 自带 contentMode 绘制，bounds 即键面）。 */
+    private fun addPressedFaceSpriteView(drawable: Drawable) {
+        val pressedFaceView = android.view.View(context).apply {
+            isClickable = false
+            isFocusable = false
+            background = drawable
+            visibility = android.view.View.GONE
+        }
+        this.pressedFaceView = pressedFaceView
+        appearanceView.apply {
+            add(pressedFaceView, lParams(0, 0) {
+                startToStart = parentId
+                endToEnd = parentId
+                topToTop = parentId
+                bottomToBottom = parentId
+            })
+        }
+    }
+
+    /**
+     * 精灵图面异步请求（施工单 6 第 5 条）：sheet 位图先 peek，
+     * 未命中走异步解码、完成后在主线程裁剪成 drawable 回调；
+     * sheet 解失败时回调 null（调用方回落图片面）。裁剪用的
+     * spriteMaps 取回调时刻的当前快照——代次已变时请求层已丢
+     * 弃回调，不会用新快照的表裁旧 sheet。
+     */
+    private fun requestSpriteFace(
+        ref: com.jobeen.ime.skin.model.SkinImageRef,
+        mode: com.jobeen.ime.skin.model.ImageContentMode?,
+        onDrawable: (Drawable?) -> Unit,
+    ) {
+        val cached = com.jobeen.ime.skin.runtime.SkinKeyImageStore.peek(ref.file)
+        if (cached != null) {
+            onDrawable(spriteDrawableFor(cached, ref, mode))
+            return
+        }
+        requestKeyImage(ref.file) { bitmap ->
+            onDrawable(bitmap?.let { spriteDrawableFor(it, ref, mode) })
+        }
+    }
+
+    /** 精灵图裁剪（sheet 位图＋描述＋当前快照精灵图表；帧脏时 null）。 */
+    private fun spriteDrawableFor(
+        bitmap: Bitmap,
+        ref: com.jobeen.ime.skin.model.SkinImageRef,
+        mode: com.jobeen.ime.skin.model.ImageContentMode?,
+    ): Drawable? {
+        val spriteMaps =
+            com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()?.spriteMaps ?: emptyMap()
+        val descriptor = com.jobeen.ime.skin.model.SkinImageDescriptor.File(
+            normal = ref,
+            highlight = null,
+            contentMode = mode
+                ?: com.jobeen.ime.skin.model.ImageContentMode.SCALE_ASPECT_FILL,
+            insets = null,
+        )
+        return com.jobeen.ime.skin.image.drawableFor(bitmap, descriptor, spriteMaps, false)
+    }
+
     init {
         isEnabled = true
         isHapticFeedbackEnabled = false
@@ -251,99 +446,38 @@ abstract class KeyView(
         // 颜色键面即回退结果（失败日志由 SkinKeyImageStore 记一次）。
         // 精灵图键面（工具项 8）：sheet+子图经 drawable 路径裁剪
         // （帧矩形＋cap 边框），不再整图铺面；帧脏/解码失败时无面层。
-        val faceSpriteDrawable = def.skinFaceSpriteRef?.let { ref ->
-            spriteFaceDrawable(ref, def.skinFaceContentMode)
-        }
-        if (faceSpriteDrawable != null) {
-            // 背景式面层：drawable 自带 contentMode 绘制，bounds 即键面，
-            // 不再经 ImageView scaleType 二次缩放。
-            val faceView = android.view.View(ctx).apply {
-                isClickable = false
-                isFocusable = false
-                background = faceSpriteDrawable
-            }
-            this.faceView = faceView
-            appearanceView.apply {
-                add(faceView, lParams(0, 0) {
-                    startToStart = parentId
-                    endToEnd = parentId
-                    topToTop = parentId
-                    bottomToBottom = parentId
-                })
+        // 施工单 6 第 5 条：构造期只读缓存 peek、未命中异步回填，
+        // 绝不同步解码；精灵图优先、图片次之（sheet 解失败才回落）。
+        val faceSpriteRef = def.skinFaceSpriteRef
+        if (faceSpriteRef != null) {
+            requestSpriteFace(faceSpriteRef, def.skinFaceContentMode) { drawable ->
+                if (drawable != null) {
+                    addFaceSpriteView(drawable)
+                } else {
+                    requestFaceBitmap()
+                }
             }
         } else {
-            val faceBitmap = def.skinImageAssetId?.let {
-                com.jobeen.ime.skin.runtime.SkinKeyImageStore.resolve(it)
-            }
-            if (faceBitmap != null) {
-                val faceView = android.widget.ImageView(ctx).apply {
-                    isClickable = false
-                    isFocusable = false
-                    // 审计 D 项：覆写指定模式时用描述模式，否则旧口径 CENTER_CROP。
-                    scaleType = def.skinFaceContentMode?.toScaleType()
-                        ?: android.widget.ImageView.ScaleType.CENTER_CROP
-                    setImageBitmap(faceBitmap)
-                }
-                this.faceView = faceView
-                appearanceView.apply {
-                    add(faceView, lParams(0, 0) {
-                        startToStart = parentId
-                        endToEnd = parentId
-                        topToTop = parentId
-                        bottomToBottom = parentId
-                    })
-                }
-            }
+            requestFaceBitmap()
         }
         // 按压态独立图片键面（重点候选 8-2）：与常态图片同层叠、同裁剪，
         // 压在常态层之上、初始隐藏；按压显、抬起隐（解码失败则无此层，
         // 按压回退常态图片／颜色键面）。
         // 按压态精灵图键面（工具项 8）：与常态精灵图面同口径。
-        val pressedSpriteDrawable = def.skinPressedFaceSpriteRef?.let { ref ->
-            spriteFaceDrawable(ref, def.skinPressedFaceContentMode)
-        }
-        if (pressedSpriteDrawable != null) {
-            val pressedFaceView = android.view.View(ctx).apply {
-                isClickable = false
-                isFocusable = false
-                background = pressedSpriteDrawable
-                visibility = android.view.View.GONE
-            }
-            this.pressedFaceView = pressedFaceView
-            appearanceView.apply {
-                add(pressedFaceView, lParams(0, 0) {
-                    startToStart = parentId
-                    endToEnd = parentId
-                    topToTop = parentId
-                    bottomToBottom = parentId
-                })
+        // 施工单 6 第 5 条：同常态面，构造期只 peek、未命中异步回填。
+        val pressedSpriteRef = def.skinPressedFaceSpriteRef
+        if (pressedSpriteRef != null) {
+            requestSpriteFace(pressedSpriteRef, def.skinPressedFaceContentMode) { drawable ->
+                if (drawable != null) {
+                    addPressedFaceSpriteView(drawable)
+                } else {
+                    requestPressedFaceBitmap()
+                }
             }
         } else {
-            val pressedFaceBitmap = def.skinPressedImageAssetId?.let {
-                com.jobeen.ime.skin.runtime.SkinKeyImageStore.resolve(it)
-            }
-            if (pressedFaceBitmap != null) {
-                val pressedFaceView = android.widget.ImageView(ctx).apply {
-                    isClickable = false
-                    isFocusable = false
-                    // 审计 D 项：覆写指定模式时用描述模式，否则旧口径 CENTER_CROP。
-                    scaleType = def.skinPressedFaceContentMode?.toScaleType()
-                        ?: android.widget.ImageView.ScaleType.CENTER_CROP
-                    setImageBitmap(pressedFaceBitmap)
-                    visibility = android.view.View.GONE
-                }
-                this.pressedFaceView = pressedFaceView
-                appearanceView.apply {
-                    add(pressedFaceView, lParams(0, 0) {
-                        startToStart = parentId
-                        endToEnd = parentId
-                        topToTop = parentId
-                        bottomToBottom = parentId
-                    })
-                }
-            }
+            requestPressedFaceBitmap()
         }
-        // 审计 H 项动效层（构造期解码、初始隐藏；无样式动效时零附加层）：
+        // 审计 H 项动效层（异步集齐、初始隐藏；无样式动效时零附加层）：
         // cartoon 帧铺满键面（与常态图片同裁剪），physics 位图按定义
         // 备用（按压时生成粒子视图，构造期不加层）。
         val styleAnimations = def.skinAnimations
@@ -351,36 +485,39 @@ abstract class KeyView(
             for (animation in styleAnimations) {
                 when (animation) {
                     is com.jobeen.ime.skin.model.KeyAnimationDef.Cartoon -> {
-                        val frames = animation.images.mapNotNull {
-                            com.jobeen.ime.skin.runtime.SkinKeyImageStore.resolve(it)
-                        }
-                        if (frames.isEmpty()) continue
-                        val frameView = android.widget.ImageView(ctx).apply {
-                            isClickable = false
-                            isFocusable = false
-                            scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
-                            visibility = android.view.View.GONE
-                            animation.targetScale?.let { scale ->
-                                scaleX = scale
-                                scaleY = scale
+                        // 施工单 6 第 5 条：帧位图异步集齐后才建播放器
+                        // （构造期不阻塞；全解失败时无此层，颜色键面
+                        // 即回退；帧集齐前按压不播放动画）。
+                        requestKeyImages(animation.images) { frames ->
+                            if (frames.isEmpty()) return@requestKeyImages
+                            val frameView = android.widget.ImageView(ctx).apply {
+                                isClickable = false
+                                isFocusable = false
+                                scaleType = android.widget.ImageView.ScaleType.CENTER_CROP
+                                visibility = android.view.View.GONE
+                                animation.targetScale?.let { scale ->
+                                    scaleX = scale
+                                    scaleY = scale
+                                }
                             }
-                        }
-                        cartoonPlayers += CartoonPlayer(frameView, frames, animation.fps)
-                        appearanceView.apply {
-                            add(frameView, lParams(0, 0) {
-                                startToStart = parentId
-                                endToEnd = parentId
-                                topToTop = parentId
-                                bottomToBottom = parentId
-                            })
+                            cartoonPlayers += CartoonPlayer(frameView, frames, animation.fps)
+                            appearanceView.apply {
+                                add(frameView, lParams(0, 0) {
+                                    startToStart = parentId
+                                    endToEnd = parentId
+                                    topToTop = parentId
+                                    bottomToBottom = parentId
+                                })
+                            }
                         }
                     }
                     is com.jobeen.ime.skin.model.KeyAnimationDef.Physics -> {
-                        val bitmaps = animation.images.mapNotNull {
-                            com.jobeen.ime.skin.runtime.SkinKeyImageStore.resolve(it)
-                        }
-                        if (bitmaps.isNotEmpty()) {
-                            physicsBitmaps += animation to bitmaps
+                        // 施工单 6 第 5 条：同 cartoon，异步集齐后备用
+                        // （集齐前按压不生成粒子）。
+                        requestKeyImages(animation.images) { bitmaps ->
+                            if (bitmaps.isNotEmpty()) {
+                                physicsBitmaps += animation to bitmaps
+                            }
                         }
                     }
                     else -> Unit
@@ -448,54 +585,36 @@ abstract class KeyView(
                     }
                 }
                 "image" -> {
-                    val bitmap = layer.imageAssetId?.let {
-                        com.jobeen.ime.skin.runtime.SkinKeyImageStore.resolve(it)
-                    } ?: continue
-                    val imageView = android.widget.ImageView(context).apply {
-                        isClickable = false
-                        isFocusable = false
-                        // 审计 D 项：层指定模式时用描述模式，否则旧口径 FIT_CENTER。
-                        scaleType = layer.contentMode?.toScaleType()
-                            ?: android.widget.ImageView.ScaleType.FIT_CENTER
-                        setImageBitmap(bitmap)
-                    }
-                    appearanceView.apply {
-                        add(imageView, lParams(dp(24), dp(24)) {
-                            startToStart = parentId
-                            endToEnd = parentId
-                            topToTop = parentId
-                            bottomToBottom = parentId
-                            horizontalBias = layer.biasX
-                            verticalBias = layer.biasY
-                        })
+                    // 施工单 6 第 5 条：位图异步回填（构造期不阻塞；
+                    // 解失败时无此层）。attach 在视图建成后调一次，
+                    // 此时视图已挂载，post 回调即时执行。
+                    layer.imageAssetId?.let { assetId ->
+                        requestKeyImage(assetId) { bitmap ->
+                            if (bitmap == null) return@requestKeyImage
+                            val imageView = android.widget.ImageView(context).apply {
+                                isClickable = false
+                                isFocusable = false
+                                // 审计 D 项：层指定模式时用描述模式，否则旧口径 FIT_CENTER。
+                                scaleType = layer.contentMode?.toScaleType()
+                                    ?: android.widget.ImageView.ScaleType.FIT_CENTER
+                                setImageBitmap(bitmap)
+                            }
+                            appearanceView.apply {
+                                add(imageView, lParams(dp(24), dp(24)) {
+                                    startToStart = parentId
+                                    endToEnd = parentId
+                                    topToTop = parentId
+                                    bottomToBottom = parentId
+                                    horizontalBias = layer.biasX
+                                    verticalBias = layer.biasY
+                                })
+                            }
+                        }
                     }
                 }
                 else -> Unit
             }
         }
-    }
-
-    /**
-     * 精灵图面 drawable（工具项 8）：sheet 位图 + 描述 + 快照精灵
-     * 图表经 drawableFor 裁剪（帧矩形＋cap 边框，缺帧按整图计）；
-     * sheet 解码失败或帧脏数据时返回 null（渲染无面层，回退颜色键面）。
-     */
-    private fun spriteFaceDrawable(
-        ref: com.jobeen.ime.skin.model.SkinImageRef,
-        mode: com.jobeen.ime.skin.model.ImageContentMode?,
-    ): Drawable? {
-        val bitmap =
-            com.jobeen.ime.skin.runtime.SkinKeyImageStore.resolve(ref.file) ?: return null
-        val spriteMaps =
-            com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()?.spriteMaps ?: emptyMap()
-        val descriptor = com.jobeen.ime.skin.model.SkinImageDescriptor.File(
-            normal = ref,
-            highlight = null,
-            contentMode = mode
-                ?: com.jobeen.ime.skin.model.ImageContentMode.SCALE_ASPECT_FILL,
-            insets = null,
-        )
-        return com.jobeen.ime.skin.image.drawableFor(bitmap, descriptor, spriteMaps, false)
     }
 
     private var swipeIndicatorsAttached = false

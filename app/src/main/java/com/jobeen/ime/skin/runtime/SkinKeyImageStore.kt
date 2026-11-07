@@ -4,6 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.image.ImageDecodePolicy
+import java.util.concurrent.CountDownLatch
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * 单键图片键面位图解析（G1）：
@@ -23,11 +28,29 @@ import com.jobeen.ime.skin.image.ImageDecodePolicy
  * 经 [installProvider] 在同一把锁下原子完成。旧位图不立即
  * recycle（仍可能被旧 KeyView 绘制）：退役后保留一个代次，
  * 再切换时回收（见 [retireCurrentLocked]）。
+ *
+ * 异步解码（施工单 6 第 5 条，.23 审计问题 6）：KeyView 构造
+ * 路径只读缓存 [peek]、先渲染文字／颜色占位，未命中走
+ * [request] 异步解码、完成后只刷新仍属当前代次的键——构造
+ * 期绝不在调用线程解码。全部键图字节读＋解码（同步 [resolve]、
+ * 异步 [request]、[prewarm]）共用同一有界通道
+ * [decodeDispatcher]（`Dispatchers.IO.limitedParallelism(2)`，
+ * [ImageDecodePolicy.DECODE_PARALLELISM] 落地于此，不再只是
+ * 常量）；缓存总字节受 [ImageDecodePolicy.MAX_CACHE_BYTES]
+ * 约束，超限按 FIFO 退役最旧条目（退役口径与切换一致，滞留
+ * 一代再回收）。同步 [resolve] 不得在解码通道线程上调用
+ * （调用线程等解码任务落槽——解码任务本身不等待调用方，无
+ * 死锁；但通道线程上调会白占一个槽位）。
  */
 object SkinKeyImageStore {
 
     /** 键面解码最长边上限（px）：键面小图不需要原图尺寸，超限降采样。 */
     const val MAX_SIDE_PX = 512
+
+    /** 有界解码通道：全部键图字节读＋解码共用，至多 2 路并发。 */
+    private val decodeDispatcher =
+        Dispatchers.IO.limitedParallelism(ImageDecodePolicy.DECODE_PARALLELISM)
+    private val decodeScope = CoroutineScope(SupervisorJob() + decodeDispatcher)
 
     @Volatile
     var bytesProvider: ((String) -> ByteArray?)? = null
@@ -47,6 +70,11 @@ object SkinKeyImageStore {
     private val logged = HashSet<CacheKey>()
     private val inFlight = HashSet<CacheKey>()
     private val retired = ArrayDeque<Pair<Long, Bitmap>>()
+    /** 异步等待回调：键 → 回调表（同一键多处并发只解码一次，回调逐个投递）。 */
+    private val waiters = HashMap<CacheKey, MutableList<(Bitmap?) -> Unit>>()
+    /** 缓存总字节记账（与 cache／cacheOrder 同步维护，见 [cacheWithBudget]）。 */
+    private var cachedBytes = 0L
+    private val cacheOrder = ArrayDeque<CacheKey>()
 
     /** 测试缝：解码器（默认 [decode]）；生产不改。 */
     internal var decoder: (ByteArray) -> Bitmap? = ::decode
@@ -56,7 +84,12 @@ object SkinKeyImageStore {
         if (!bitmap.isRecycled) bitmap.recycle()
     }
 
-    /** 当前代次（测试用）。 */
+    /** 测试缝：位图字节数（默认 allocationByteCount；桩上取不到时按 0 计）。 */
+    internal var bitmapByteSize: (Bitmap) -> Long = { bitmap ->
+        runCatching { bitmap.allocationByteCount.toLong() }.getOrDefault(0L)
+    }
+
+    /** 当前代次（测试用；KeyView 构造期捕获，异步回填时核对）。 */
     internal val currentGeneration: Long
         get() = synchronized(lock) { generation }
 
@@ -67,9 +100,45 @@ object SkinKeyImageStore {
     fun cacheStats(): Pair<Int, Long> = synchronized(lock) {
         var bytes = 0L
         for (bitmap in cache.values) {
-            bytes += runCatching { bitmap.allocationByteCount.toLong() }.getOrDefault(0L)
+            bytes += bitmapByteSize(bitmap)
         }
         cache.size to bytes
+    }
+
+    /**
+     * 只读缓存窥视（KeyView 构造路径用）：命中返回位图，未命中
+     * （含失败已缓存）返回 null；绝不解码、绝不等待——构造期
+     * 在调用线程解码的旧口径已废止。
+     */
+    fun peek(assetId: String): Bitmap? = synchronized(lock) {
+        cache[CacheKey(generation, assetId)]
+    }
+
+    /**
+     * 异步解码请求（KeyView 构造路径用）：已解析（含失败）时在
+     * 调用线程立即回调；未解析时在有界解码通道上解码一次，完
+     * 成后回调——同一键并发只解码一次（后来者登记为等待回调）。
+     * 回调线程：已解析时为调用线程，未解析时为解码通道线程；
+     * 调用方触视图前须自行切主线程。代次已变（请求发出后切换
+     * 皮肤）时回调仍得解出的位图（与 [resolve] 同口径），但绝
+     * 不入缓存；KeyView 侧另有代次门，迟到结果不刷新旧键。
+     */
+    fun request(assetId: String, onDecoded: (Bitmap?) -> Unit) {
+        val (key, provider, launchDecode) = synchronized(lock) {
+            val k = CacheKey(generation, assetId)
+            if (k in resolved) {
+                return onDecoded(cache[k])
+            }
+            waiters.getOrPut(k) { mutableListOf() } += onDecoded
+            val launch = k !in inFlight
+            if (launch) inFlight += k
+            Triple(k, bytesProvider, launch)
+        }
+        if (launchDecode) {
+            decodeScope.launch {
+                completeDecode(key, decodeNow(key, provider))
+            }
+        }
     }
 
     /**
@@ -77,65 +146,105 @@ object SkinKeyImageStore {
      * 第 5 批 §2：在途合并——同一键并发调用只解码一次（后来者等
      * 首个解码者完成后再重取，代次可能已变）；失败结果亦缓存，
      * 快照切换前不再重试（世代变更语义由代次承载）。
-     * 解码在锁外进行：切换安装不被在途解码阻塞；过期结果不入缓存。
+     * 解码在有界通道上进行（施工单 6 第 5 条），调用线程只等待
+     * 结果；生产调用方只剩 IO 线程的 [prewarm]，主线程调用方
+     * 一律走 [peek]＋[request]。
+     * 代次口径：请求发出后切换皮肤的，解出的位图仍返回给调用
+     * 方（旧 KeyView 仍可用它绘制，预热调用方丢弃后由 GC 回收），
+     * 但绝不入缓存——迟到结果不污染新代次（审计 #1 项 3 已核实
+     * 口径，施工单 6 第 5 条不改）。
      */
     fun resolve(assetId: String): Bitmap? {
-        while (true) {
-            val key: CacheKey
-            val provider: ((String) -> ByteArray?)?
-            synchronized(lock) {
-                key = CacheKey(generation, assetId)
-                if (key in resolved) return cache[key]
-                if (key in inFlight) {
-                    // 等首个解码者完成（wait 释放锁，安装可并行），
-                    // 再从头重取：代次／字节源可能已变。
-                    try {
-                        (lock as Object).wait()
-                    } catch (e: InterruptedException) {
-                        Thread.currentThread().interrupt()
-                        return null
-                    }
-                    continue
-                }
-                inFlight += key
-                provider = bytesProvider
+        val latch = CountDownLatch(1)
+        var result: Bitmap? = null
+        val (key, provider, launchDecode) = synchronized(lock) {
+            val k = CacheKey(generation, assetId)
+            if (k in resolved) return cache[k]
+            waiters.getOrPut(k) { mutableListOf() } += { bitmap ->
+                result = bitmap
+                latch.countDown()
             }
-            val bitmap = try {
-                val bytes = runCatching { provider?.invoke(assetId) }.getOrNull()
-                if (bytes == null) {
-                    null
-                } else {
-                    runCatching { decoder(bytes) }.getOrNull()
-                }
-            } finally {
-                synchronized(lock) {
-                    inFlight -= key
-                    (lock as Object).notifyAll()
-                }
-            }
-            synchronized(lock) {
-                if (generation != key.generation) {
-                    // 切换已发生：过期解码结果不入缓存、不记 resolved；
-                    // 位图本身返回给调用方（旧 KeyView 仍可用它绘制，
-                    // 预热调用方丢弃后由 GC 回收），绝不回收在用位图。
-                    return bitmap
-                }
-                resolved += key
-                if (bitmap != null) cache[key] = bitmap
-                if (bitmap == null && logged.add(key)) {
-                    DiagLog.w("keymap", "key_image_decode_fallback", mapOf("asset" to assetId))
-                }
-            }
-            return bitmap
+            val launch = k !in inFlight
+            if (launch) inFlight += k
+            Triple(k, bytesProvider, launch)
         }
+        if (launchDecode) {
+            decodeScope.launch {
+                completeDecode(key, decodeNow(key, provider))
+            }
+        }
+        latch.await()
+        return result
+    }
+
+    /** 锁外解码一段（字节读＋解码；调用方不得在锁内调本函数）。 */
+    private fun decodeNow(key: CacheKey, provider: ((String) -> ByteArray?)?): Bitmap? {
+        val bytes = runCatching { provider?.invoke(key.assetId) }.getOrNull() ?: return null
+        return runCatching { decoder(bytes) }.getOrNull()
+    }
+
+    /**
+     * 解码完成收尾（解码协程调，唯一写回点）：在途标记清掉、
+     * 代次仍相同才写缓存＋记 resolved（失败亦记，避免重解）、
+     * 投递等待回调。回调在锁外投递（回调内可能再调本 Store）。
+     * 代次已变：不写缓存、不记 resolved，但等待回调仍得解出
+     * 的位图（与旧口径一致，调用方自行决定用不用；KeyView 侧
+     * 有代次门丢弃迟到结果）。
+     */
+    private fun completeDecode(key: CacheKey, bitmap: Bitmap?) {
+        val callbacks: List<(Bitmap?) -> Unit>
+        synchronized(lock) {
+            inFlight -= key
+            if (generation == key.generation) {
+                resolved += key
+                if (bitmap != null) cacheWithBudget(key, bitmap)
+                if (bitmap == null && logged.add(key)) {
+                    DiagLog.w("keymap", "key_image_decode_fallback", mapOf("asset" to key.assetId))
+                }
+            }
+            callbacks = waiters.remove(key) ?: emptyList()
+        }
+        for (callback in callbacks) runCatching { callback(bitmap) }
+    }
+
+    /**
+     * 预算内写缓存（须持 lock）：单张超预算不缓存（调用方仍可
+     * 绘制本次结果）；超总额时按 FIFO 退役最旧条目直至容下——
+     * 退役位图进 retired 队列（滞留一代再回收，与切换口径一致，
+     * 在用视图不受影响）。同一键重写时先扣旧账。
+     */
+    private fun cacheWithBudget(key: CacheKey, bitmap: Bitmap) {
+        val size = bitmapByteSize(bitmap)
+        if (size > ImageDecodePolicy.MAX_CACHE_BYTES) return
+        val old = cache[key]
+        if (old != null) {
+            cachedBytes -= bitmapByteSize(old)
+            cacheOrder.remove(key)
+        }
+        while (cachedBytes + size > ImageDecodePolicy.MAX_CACHE_BYTES &&
+            cacheOrder.isNotEmpty()
+        ) {
+            val oldest = cacheOrder.removeFirst()
+            val evicted = cache.remove(oldest)
+            if (evicted != null) {
+                cachedBytes -= bitmapByteSize(evicted)
+                retired += oldest.generation to evicted
+            }
+        }
+        cache[key] = bitmap
+        cacheOrder += key
+        cachedBytes += size
     }
 
     /**
      * IO 预热（第 5 批 §2）：快照安装后在 IO 段把常用键图先解进
-     * 缓存，使后续键盘构建期 resolve 命中缓存、不在 UI 线程解码。
+     * 缓存，使后续键盘构建期 peek 命中缓存、不在 UI 线程解码。
      * 上限 [ImageDecodePolicy.PREWARM_MAX_KEYS] 条，超出者仍走
-     * 首次构建解码（旧口径）；调用方必须在 IO 线程调本函数。
+     * 键盘构建期异步解码（施工单 6 第 5 条：peek 未命中＋request
+     * 回填，构造不阻塞）；调用方必须在 IO 线程调本函数。
      * [shouldStop] 为真时提前停（安装方取消上一代次预热时用）。
+     * 解码走有界通道（见 [resolve]），与构建期异步请求共用
+     * 2 路并行预算。
      */
     fun prewarm(assetIds: Iterable<String>, shouldStop: () -> Boolean = { false }) {
         for (assetId in assetIds.take(ImageDecodePolicy.PREWARM_MAX_KEYS)) {
@@ -150,9 +259,13 @@ object SkinKeyImageStore {
             val key = CacheKey(generation, assetId)
             resolved += key
             if (bitmap != null) {
-                cache[key] = bitmap
+                cacheWithBudget(key, bitmap)
             } else {
-                cache.remove(key)
+                val old = cache.remove(key)
+                if (old != null) {
+                    cachedBytes -= bitmapByteSize(old)
+                    cacheOrder.remove(key)
+                }
             }
         }
     }
@@ -188,6 +301,8 @@ object SkinKeyImageStore {
             retired += key.generation to bitmap
         }
         cache.clear()
+        cacheOrder.clear()
+        cachedBytes = 0L
         resolved.clear()
         logged.clear()
         val iterator = retired.iterator()
