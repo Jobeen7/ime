@@ -239,6 +239,100 @@ class WanxiangUpdateManagerTest {
         assertTrue(info(schemaLocal = local).schemaUpdateAvailable)
     }
 
+    // ---- 远端词库指纹三级回落：实时 > 记录（版本一致） > 本地兜底（版本一致） ----
+
+    @Test
+    fun dictRemote_liveWinsOverRecordAndLocal() {
+        val fp = WanxiangUpdateManager.resolveDictRemoteFingerprint(
+            liveFingerprint = "live",
+            recordedFingerprint = "recorded",
+            recordedVersion = "v18.1.9",
+            remoteTag = "v18.1.9",
+            localFingerprint = "local",
+            localVersion = "v18.1.9",
+        )
+        assertEquals("live", fp)
+    }
+
+    @Test
+    fun dictRemote_recordWinsWhenVersionMatches() {
+        val fp = WanxiangUpdateManager.resolveDictRemoteFingerprint(
+            liveFingerprint = null,
+            recordedFingerprint = "recorded",
+            recordedVersion = "v18.1.9",
+            remoteTag = "v18.1.9",
+            localFingerprint = "local",
+            localVersion = "v18.1.9",
+        )
+        assertEquals("recorded", fp)
+    }
+
+    @Test
+    fun dictRemote_staleRecordIgnored_localFallbackWhenVersionMatches() {
+        // 记录是旧版本（下载过 18.1.8 后的残留）：不作数；本地已是
+        // 远端版本，同版本即同内容，本地指纹兜底
+        val fp = WanxiangUpdateManager.resolveDictRemoteFingerprint(
+            liveFingerprint = null,
+            recordedFingerprint = "old-record",
+            recordedVersion = "v18.1.8",
+            remoteTag = "v18.1.9",
+            localFingerprint = "local",
+            localVersion = "v18.1.9",
+        )
+        assertEquals("local", fp)
+    }
+
+    @Test
+    fun dictRemote_staleRecordAndStaleLocal_returnsNull() {
+        // 内置用户场景：从未下载、无记录，本地版本也落后远端——
+        // 远端指纹未知，界面显示"—"（只能等实时取数成功）
+        val fp = WanxiangUpdateManager.resolveDictRemoteFingerprint(
+            liveFingerprint = null,
+            recordedFingerprint = "old-record",
+            recordedVersion = "v18.1.8",
+            remoteTag = "v18.1.9",
+            localFingerprint = "local",
+            localVersion = "v18.1.8",
+        )
+        assertNull(fp)
+    }
+
+    @Test
+    fun dictRemote_noSources_returnsNull() {
+        val fp = WanxiangUpdateManager.resolveDictRemoteFingerprint(
+            liveFingerprint = null,
+            recordedFingerprint = null,
+            recordedVersion = null,
+            remoteTag = "v18.1.9",
+            localFingerprint = null,
+            localVersion = null,
+        )
+        assertNull(fp)
+    }
+
+    @Test
+    fun dictRemote_emptyStringsTreatedAsMissing() {
+        // 空串永不作数：实时空串不遮挡记录，记录空串不遮挡本地兜底
+        val withRecord = WanxiangUpdateManager.resolveDictRemoteFingerprint(
+            liveFingerprint = "",
+            recordedFingerprint = "recorded",
+            recordedVersion = "v18.1.9",
+            remoteTag = "v18.1.9",
+            localFingerprint = "local",
+            localVersion = "v18.1.9",
+        )
+        assertEquals("recorded", withRecord)
+        val allEmpty = WanxiangUpdateManager.resolveDictRemoteFingerprint(
+            liveFingerprint = "",
+            recordedFingerprint = "",
+            recordedVersion = "v18.1.9",
+            remoteTag = "v18.1.9",
+            localFingerprint = "",
+            localVersion = "v18.1.9",
+        )
+        assertNull(allEmpty)
+    }
+
     // ---- 整包下载 client 不得带总时长上限（4.1 守护） ----
 
     @Test

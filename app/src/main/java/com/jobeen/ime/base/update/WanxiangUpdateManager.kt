@@ -384,6 +384,31 @@ object WanxiangUpdateManager {
         bundledVersion: String?,
     ): String? = recordedVersion ?: bundledVersion
 
+    /**
+     * 远端词库指纹的三级回落（纯函数）：实时取数 > 下载记录（记录版本
+     * 与远端标签一致才作数）> 版本一致兜底（本地版本 == 远端标签时，
+     * 本地词库即该版本内容）。返回 null = 远端指纹未知，界面显示"—"。
+     * 空串一律按缺失处理（内容指纹永不为空串；空串只来自旧记录残留
+     * 或空词库目录的本地计算）。
+     */
+    internal fun resolveDictRemoteFingerprint(
+        liveFingerprint: String?,
+        recordedFingerprint: String?,
+        recordedVersion: String?,
+        remoteTag: String,
+        localFingerprint: String?,
+        localVersion: String?,
+    ): String? {
+        if (!liveFingerprint.isNullOrEmpty()) return liveFingerprint
+        if (!recordedFingerprint.isNullOrEmpty() && recordedVersion == remoteTag) {
+            return recordedFingerprint
+        }
+        if (!localFingerprint.isNullOrEmpty() && localVersion == remoteTag) {
+            return localFingerprint
+        }
+        return null
+    }
+
     data class LocalInfo(
         /** 本地方案版本，未更新过则为内置版本 */
         val schemaVersion: String,
@@ -860,12 +885,71 @@ object WanxiangUpdateManager {
                 },
             )
 
-            // 远端词库指纹：不再实时取数（原 Range 抠 zip 中央目录
-            // 的整套机器已按 S3 退役）——只有下载流程留下的记录、
-            // 且记录版本与远端标签一致时才作数，其余为未知，界面
-            // 显示「—」；远端是否有更新由版本号比对判定
-            val dictRemoteFp = prefs.getString(scopedKey(target, KEY_DICT_REMOTE_FP), null)
-                .takeIf { prefs.getString(scopedKey(target, KEY_DICT_REMOTE_FP_VER), null) == schemaRelease.tag_name }
+            // 远端词库指纹：优先实时取方案包的 zip 中央目录算出
+            // （只读包尾、不整包下载，元组口径与本地一致）；实时取
+            // 到即刷新下载记录。取不到才回落既有记录（下载过该版
+            // 本时下载流程留下的内容指纹），再取不到且本地版本与
+            // 远端标签一致时用本地指纹兜底（同版本即同内容）并回填
+            // 记录。实时取数曾按 S3 退役，退役后内置用户（从未经过
+            // 本管理器下载）无任何记录可回落，远程词库恒显示"—"，
+            // 2026-11-07 起恢复。
+            // 资产大小取自本次 Release 响应（GhAsset.size）：实时取
+            // 指纹要按它发显式区间 Range——GitHub 资产 CDN 对后缀
+            // Range（bytes=-N）回 501，只有显式区间可用
+            val schemaZipSize = schemaRelease.assets
+                .firstOrNull { it.name == source.assetName }?.size ?: 0L
+            val liveDictRemoteFp = try {
+                fetchRemoteDictFingerprint(
+                    schemaUrl(schemaRelease.tag_name, source.assetName),
+                    schemaZipSize,
+                )
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Timber.w(e, "远端词库指纹实时获取失败，回落记录")
+                null
+            }
+            if (liveDictRemoteFp != null) {
+                prefs.edit {
+                    putString(scopedKey(target, KEY_DICT_REMOTE_FP), liveDictRemoteFp)
+                    putString(scopedKey(target, KEY_DICT_REMOTE_FP_VER), schemaRelease.tag_name)
+                }
+            }
+            // 版本一致兜底需要本地指纹：只在实时取数失败且本地版本
+            // 与远端标签一致时才算（不多做无用哈希）
+            val localDictFpForFallback = if (
+                liveDictRemoteFp == null &&
+                localSchemaVersion == schemaRelease.tag_name
+            ) {
+                try {
+                    cachedDictsFingerprint(prefs, targetDictsDir(target), target)
+                        .takeIf { it.isNotEmpty() }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    Timber.w(e, "本地词库指纹计算失败，远端词库指纹保持未知")
+                    null
+                }
+            } else {
+                null
+            }
+            val dictRemoteFp = resolveDictRemoteFingerprint(
+                liveFingerprint = liveDictRemoteFp,
+                recordedFingerprint = prefs.getString(scopedKey(target, KEY_DICT_REMOTE_FP), null),
+                recordedVersion = prefs.getString(scopedKey(target, KEY_DICT_REMOTE_FP_VER), null),
+                remoteTag = schemaRelease.tag_name,
+                localFingerprint = localDictFpForFallback,
+                localVersion = localSchemaVersion,
+            )
+            if (liveDictRemoteFp == null && dictRemoteFp != null &&
+                dictRemoteFp == localDictFpForFallback
+            ) {
+                // 版本一致兜底命中：回填记录，后续检查直接走记录
+                prefs.edit {
+                    putString(scopedKey(target, KEY_DICT_REMOTE_FP), dictRemoteFp)
+                    putString(scopedKey(target, KEY_DICT_REMOTE_FP_VER), schemaRelease.tag_name)
+                }
+            }
             // 远端模型指纹：以本次检查响应拿到的远端登记摘要为准
             // （非空即用）——它就是远端当前文件的真实指纹。下载记录
             // 只说明「上次下载时」的值：远端原地换包后记录仍是旧值，
@@ -1287,6 +1371,109 @@ object WanxiangUpdateManager {
 
     private fun isAllowedEntry(name: String): Boolean =
         ALLOWED_PREFIXES.any { name.startsWith(it) } && name.endsWith(ALLOWED_SUFFIX)
+
+    /** 实时取远端词库指纹时读取的包尾长度：须覆盖 EOCD＋常见中央目录。 */
+    private const val RANGE_TAIL_BYTES = 256 * 1024
+
+    /** 中央目录大小上限：超出说明包结构异常，放弃实时指纹。 */
+    private const val MAX_CENTRAL_DIR_BYTES = 8 * 1024 * 1024L
+
+    /**
+     * 实时计算远端方案包的词库指纹：按资产总长（Release 接口的
+     * GhAsset.size）发显式区间 Range 只取包尾定位 EOCD，中央目录
+     * 不在包尾段内时再按其偏移精确取一段；条目过滤与元组口径同
+     * [dictsContentFingerprint]，同内容必同指纹。任一步失败
+     * （服务器不支持 Range、包结构异常等）返回 null，调用方回落
+     * 既有记录。
+     */
+    private fun fetchRemoteDictFingerprint(url: String, assetSize: Long): String? {
+        if (assetSize <= 0) return null
+        val tailLen = minOf(RANGE_TAIL_BYTES.toLong(), assetSize)
+        val tailStart = assetSize - tailLen
+        val tail = rangeGet(url, tailStart, assetSize - 1, assetSize) ?: return null
+        val eocd = ZipCentralDirectory.findEocd(tail, tailStart) ?: return null
+        val cdStartInTail = eocd.cdOffset - tailStart
+        val cdBytes = if (
+            cdStartInTail >= 0 &&
+            cdStartInTail + eocd.cdSize <= tail.size.toLong()
+        ) {
+            tail.copyOfRange(
+                cdStartInTail.toInt(),
+                (cdStartInTail + eocd.cdSize).toInt(),
+            )
+        } else {
+            if (eocd.cdSize > MAX_CENTRAL_DIR_BYTES) return null
+            rangeGet(url, eocd.cdOffset, eocd.cdOffset + eocd.cdSize - 1, assetSize)
+                ?: return null
+        }
+        // 条目数与 EOCD 声明核对：中央目录被截断/错位时解析可能
+        // 「成功」出半份条目，算出的指纹会与本地假比对
+        val entries = ZipCentralDirectory.parseEntries(cdBytes, eocd.totalEntries) ?: return null
+        val parts = entries.asSequence()
+            .filter { !it.name.endsWith("/") && isAllowedEntry(it.name) }
+            .map {
+                DictFingerprint.entryPart(
+                    it.name.removePrefix("dicts/"),
+                    it.size,
+                    it.crc32,
+                )
+            }
+            .toList()
+        if (parts.isEmpty()) return null
+        return DictFingerprint.combine(parts.sorted())
+    }
+
+    /**
+     * 显式区间 Range GET：请求 [start]..[endInclusive]（含端点），
+     * [totalSize] 是调用方已知的资产总长。必须用显式区间：GitHub
+     * 资产 CDN 对后缀 Range（bytes=-N）回 501 Unsupported。
+     * 校验从严：非 206、Content-Range 的起点/终点/总长任一与请求
+     * 不符即失败；响应体按期望长度流式读，读超期望或不足都判
+     * 失败——绝不无界读入（声明合规但返回更大的 206 体时，旧实现
+     * 整段 bytes() 入内存，上限检查形同虚设）。
+     */
+    private fun rangeGet(
+        url: String,
+        start: Long,
+        endInclusive: Long,
+        totalSize: Long,
+    ): ByteArray? {
+        if (start < 0 || endInclusive < start || endInclusive >= totalSize) return null
+        val expected = endInclusive - start + 1
+        if (expected > Int.MAX_VALUE) return null
+        return runCatching {
+            client.newCall(
+                okhttp3.Request.Builder().url(url)
+                    .header("Range", "bytes=$start-$endInclusive").build()
+            ).execute().use { response ->
+                if (response.code != 206) return null
+                val contentRange = response.header("Content-Range") ?: return null
+                val total = contentRange.substringAfterLast('/')
+                    .toLongOrNull() ?: return null
+                if (total != totalSize) return null
+                val rangeNums = contentRange.substringBefore('/')
+                    .removePrefix("bytes").trim().split('-')
+                val respStart = rangeNums.getOrNull(0)?.trim()?.toLongOrNull() ?: return null
+                val respEnd = rangeNums.getOrNull(1)?.trim()?.toLongOrNull() ?: return null
+                if (respStart != start || respEnd != endInclusive) return null
+                val body = response.body ?: return null
+                body.byteStream().use { input ->
+                    val out = java.io.ByteArrayOutputStream(expected.toInt())
+                    val buf = ByteArray(BUFFER_SIZE)
+                    var read = 0L
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n < 0) break
+                        read += n
+                        if (read > expected) return null
+                        out.write(buf, 0, n)
+                    }
+                    if (read != expected) return null
+                    out.toByteArray()
+                }
+            }
+        }.getOrNull()
+    }
 
     private suspend fun downloadFile(
         url: String,
