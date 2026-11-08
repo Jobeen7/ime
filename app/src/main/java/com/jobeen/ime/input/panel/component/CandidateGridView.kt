@@ -30,6 +30,7 @@ import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.skin.model.AreaInsets
 import com.jobeen.ime.skin.model.VerticalBottomRowNames
 import com.jobeen.ime.skin.model.VerticalBottomRowSpec
+import com.jobeen.ime.input.panel.CandidateFlingPolicy
 import com.jobeen.ime.input.panel.panelColorScheme
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import splitties.views.dsl.core.lParams
@@ -334,7 +335,11 @@ class CandidateGridView(
         private var horizontalDrag = -1
 
         private var visibleRows = 0
-        private val scroller = OverScroller(context)
+        private val scroller = OverScroller(context).apply {
+            // 施工单 10 H2-10：展开候选甩动摩擦 ×4，同一下甩更快停下
+            // （CandidateFlingPolicy，CyIME D24 同款倍数）。
+            setFriction(CandidateFlingPolicy.candidateFriction())
+        }
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
         private val minFlingVelocity = ViewConfiguration.get(context).scaledMinimumFlingVelocity
         private val maxFlingVelocity = ViewConfiguration.get(context).scaledMaximumFlingVelocity
