@@ -5,6 +5,7 @@ package com.jobeen.ime
 import com.jobeen.ime.data.manager.CandidateLinePolicy
 import com.jobeen.ime.data.manager.ClipboardManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -124,5 +125,67 @@ class Batch4PolicyTest {
     fun truncate_zeroWidth_ellipsisOnly() {
         val measure: (String) -> Float = { it.length.toFloat() }
         assertEquals("…", CandidateLinePolicy.truncateWithEllipsis("hello", 0f, measure))
+    }
+
+    @Test
+    fun longCandidate_fits_unchanged() {
+        val measure: (String) -> Float = { it.length.toFloat() }
+        val layout = CandidateLinePolicy.layoutLongCandidate("hello", 5f, measure)
+        assertEquals(listOf("hello"), layout.lines)
+        assertEquals(1f, layout.scale)
+    }
+
+    @Test
+    fun longCandidate_shrinkOneLine() {
+        val measure: (String) -> Float = { it.length.toFloat() }
+        // 宽 10，可用 8：缩到 0.8 一行放下（不低于下限 0.7）
+        val layout = CandidateLinePolicy.layoutLongCandidate("0123456789", 8f, measure)
+        assertEquals(listOf("0123456789"), layout.lines)
+        assertEquals(0.8f, layout.scale, 0.001f)
+    }
+
+    @Test
+    fun longCandidate_twoLines_atFloor() {
+        val measure: (String) -> Float = { it.length.toFloat() }
+        // 宽 10，可用 6：缩到 0.6 < 0.7，改两行（0.7 字号下每行 ≤ 8 字）
+        val layout = CandidateLinePolicy.layoutLongCandidate("0123456789", 6f, measure)
+        assertEquals(listOf("01234567", "89"), layout.lines)
+        assertEquals(0.7f, layout.scale, 0.001f)
+    }
+
+    @Test
+    fun longCandidate_twoLines_secondLineEllipsis() {
+        val measure: (String) -> Float = { it.length.toFloat() }
+        // 20 字，可用 4：第一行 0.7 字号下 5 字，第二行剩 15 字仍超长 → 截断加省略号
+        val layout = CandidateLinePolicy.layoutLongCandidate("01234567890123456789", 4f, measure)
+        assertEquals(2, layout.lines.size)
+        assertEquals("01234", layout.lines[0])
+        assertEquals("5678…", layout.lines[1])
+        assertEquals(0.7f, layout.scale, 0.001f)
+    }
+
+    @Test
+    fun longCandidate_spaceSplit_preferred() {
+        val measure: (String) -> Float = { it.length.toFloat() }
+        // "hello world" 宽 11，可用 6：贪心断点 8（"hello wo"），空格在 5，改在空格断
+        val layout = CandidateLinePolicy.layoutLongCandidate("hello world", 6f, measure)
+        assertEquals(listOf("hello", "world"), layout.lines)
+        assertEquals(0.7f, layout.scale, 0.001f)
+    }
+
+    @Test
+    fun longCandidate_empty_unchanged() {
+        val measure: (String) -> Float = { it.length.toFloat() }
+        val layout = CandidateLinePolicy.layoutLongCandidate("", 10f, measure)
+        assertEquals(listOf(""), layout.lines)
+        assertEquals(1f, layout.scale)
+    }
+
+    @Test
+    fun longCandidate_tinyWidth_ellipsis() {
+        val measure: (String) -> Float = { it.length.toFloat() }
+        val layout = CandidateLinePolicy.layoutLongCandidate("hello", 0f, measure)
+        assertEquals(listOf("…"), layout.lines)
+        assertTrue(layout.scale >= 0.7f)
     }
 }

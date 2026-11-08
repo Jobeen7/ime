@@ -212,4 +212,63 @@ object CandidateLinePolicy {
         }
         return text.substring(0, lo) + "…"
     }
+
+    /** 长候选先缩字号再两行（纯函数）：字形 advance 随字号线性变，缩放宽度 = 原宽 × scale。 */
+    data class LongCandidateLayout(val lines: List<String>, val scale: Float)
+
+    /**
+     * 长候选排版（纯函数）：能放下原样返回；一行缩字号能放下且不低于
+     * minScale 就缩字号单行；否则下限字号下分两行；第二行仍放不下才
+     * 截断加省略号（最后手段）。measure 为基准字号下的文本测量。
+     */
+    fun layoutLongCandidate(
+        text: String,
+        maxWidth: Float,
+        measure: (String) -> Float,
+        minScale: Float = 0.7f,
+    ): LongCandidateLayout {
+        if (text.isEmpty()) return LongCandidateLayout(listOf(""), 1f)
+        val fullW = measure(text)
+        if (fullW <= maxWidth) return LongCandidateLayout(listOf(text), 1f)
+        val floor = minScale.coerceIn(0.1f, 1f)
+        // 1. 先缩字号：一行能放下且不低于下限
+        val fitScale = maxWidth / fullW
+        if (fitScale >= floor) return LongCandidateLayout(listOf(text), fitScale)
+        // 2. 再分两行：下限字号下取最长能放下的前缀为第一行
+        val scaled: (String) -> Float = { measure(it) * floor }
+        var first = longestFittingPrefix(text, maxWidth, scaled)
+        if (first <= 0) {
+            return LongCandidateLayout(listOf(truncateWithEllipsis(text, maxWidth, scaled)), floor)
+        }
+        // 英文短语优先在空格处断行（中文无空格，走贪心断点）；
+        // 第一行不能缩得太短（不低于可用宽的 40%），否则宁可贪心断。
+        val spaceIdx = text.lastIndexOf(' ', first - 1)
+        if (spaceIdx > 0 && scaled(text.substring(0, spaceIdx)) >= maxWidth * 0.4f) {
+            first = spaceIdx
+        }
+        val firstLine = text.substring(0, first)
+        val rest = text.substring(first).trimStart()
+        val secondLine = when {
+            rest.isEmpty() -> ""
+            scaled(rest) <= maxWidth -> rest
+            else -> truncateWithEllipsis(rest, maxWidth, scaled)
+        }
+        val lines = if (secondLine.isEmpty()) listOf(firstLine) else listOf(firstLine, secondLine)
+        return LongCandidateLayout(lines, floor)
+    }
+
+    /** 最长能放下的前缀长度（二分，与 truncateWithEllipsis 同形）。 */
+    private fun longestFittingPrefix(
+        text: String,
+        maxWidth: Float,
+        measure: (String) -> Float,
+    ): Int {
+        var lo = 0
+        var hi = text.length
+        while (lo < hi) {
+            val mid = (lo + hi + 1) / 2
+            if (measure(text.substring(0, mid)) <= maxWidth) lo = mid else hi = mid - 1
+        }
+        return lo
+    }
 }

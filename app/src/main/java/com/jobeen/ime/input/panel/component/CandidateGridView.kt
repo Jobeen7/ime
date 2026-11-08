@@ -501,6 +501,24 @@ class CandidateGridView(
             invalidate()
         }
 
+        /** 单行候选绘制（含拖动抖动旋转）：两行排版时每行各调一次。 */
+        private fun drawCandidateLine(
+            canvas: Canvas,
+            text: String,
+            x: Float,
+            y: Float,
+            w: Float,
+            shakeAngle: Float,
+        ) {
+            if (shakeAngle != 0f) {
+                canvas.withRotation(shakeAngle, x + w / 2f, y) {
+                    drawText(text, x, y, textPaint)
+                }
+            } else {
+                canvas.drawText(text, x, y, textPaint)
+            }
+        }
+
         override fun onDraw(canvas: Canvas) {
             if (width <= 0 || height <= 0) return
             canvas.drawRect(0f, 0f, width.toFloat(), height.toFloat(), bgPaint)
@@ -517,6 +535,8 @@ class CandidateGridView(
             val yOff = -(scrollOffsetY - firstRow * rowH) + stretch
             // 一帧内恒定：行基线偏移在循环外算一次（此前每候选重复求值）
             val textCenterDy = (textPaint.descent() + textPaint.ascent()) / 2f
+            // 行高（基准字号）：两行缩放的上限据此算
+            val baseLineH = textPaint.descent() - textPaint.ascent()
             val densityF = resources.displayMetrics.density
 
             canvas.withSave {
@@ -599,29 +619,40 @@ class CandidateGridView(
                                     rectLeft, y, rectRight, y + rowH, candidateRadiusDp * d, candidateRadiusDp * d, pressPaint
                                 )
                             }
-                            // 完整显示关：普通格内超宽词截断加省略号
-                            // （超宽独行词走横向滚动，不截）
-                            val displayText = if (fullDisplay) {
-                                c.text
+                            // 完整显示开：整词原样画（格宽已按文本伸展）。
+                            // 完整显示关：长候选先缩字号再两行，不截断
+                            // （超宽独行词走横向滚动，不进这里）。
+                            if (fullDisplay) {
+                                val textX = (pos.xStart + shakeOff + (pos.width - tw) / 2f)
+                                    .coerceAtLeast(rectLeft)
+                                val textY = y + rowH / 2f - textCenterDy
+                                drawCandidateLine(canvas, c.text, textX, textY, tw, shakeAngle)
                             } else {
                                 val avail = pos.width - cellPad * 2f
-                                CandidateLinePolicy.truncateWithEllipsis(
-                                    c.text, avail, textPaint::measureText
+                                // 两行须塞进单行格：下限字号按行高再钳一次
+                                // （行高 32dp、行高 21.5dp 时下限约 0.7；行矮
+                                // 时下限再降，底线 0.5，保证两行能塞下）
+                                val twoLineCap = if (baseLineH > 0f) rowH / (2f * baseLineH) else 0.7f
+                                val floor = minOf(0.7f, twoLineCap).coerceAtLeast(0.5f)
+                                val layout = CandidateLinePolicy.layoutLongCandidate(
+                                    c.text, avail, textPaint::measureText, minScale = floor,
                                 )
-                            }
-                            val displayW = if (displayText === c.text) tw
-                                else textPaint.measureText(displayText)
-                            val txtLeft = pos.xStart + shakeOff + (pos.width - displayW) / 2f
-                            val textX = txtLeft.coerceAtLeast(rectLeft)
-                            val textY = y + rowH / 2f - textCenterDy
-                            if (shakeAngle != 0f) {
-                                val cx = textX + displayW / 2f
-                                val cy = textY
-                                canvas.withRotation(shakeAngle, cx, cy) {
-                                    drawText(displayText, textX, textY, textPaint)
+                                val savedSize = textPaint.textSize
+                                textPaint.textSize = savedSize * layout.scale
+                                val lineH = baseLineH * layout.scale
+                                val centerDyS = textCenterDy * layout.scale
+                                layout.lines.forEachIndexed { li, line ->
+                                    val lw = textPaint.measureText(line)
+                                    val lx = (pos.xStart + shakeOff + (pos.width - lw) / 2f)
+                                        .coerceAtLeast(rectLeft)
+                                    val ly = if (layout.lines.size == 1) {
+                                        y + rowH / 2f - centerDyS
+                                    } else {
+                                        y + rowH / 2f + (li - 0.5f) * lineH - centerDyS
+                                    }
+                                    drawCandidateLine(canvas, line, lx, ly, lw, shakeAngle)
                                 }
-                            } else {
-                                canvas.drawText(displayText, textX, textY, textPaint)
+                                textPaint.textSize = savedSize
                             }
                         }
                         textPaint.color = savedTextColor
