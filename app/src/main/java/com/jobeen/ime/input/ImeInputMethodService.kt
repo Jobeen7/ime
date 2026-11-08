@@ -221,6 +221,27 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     /**
+     * 展开候选页返回（施工单 10 H2-6）：展开态下 BACK 先收起展开页
+     * （走现有 collapse()，与点收起按钮同一路径），本次不收键盘；
+     * 未展开时放行，系统默认收键盘，行为与改前一致。
+     * 系统把 BACK 先送到输入法服务的 onKeyDown，返回 true 即消费。
+     */
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        val panelView = keyboardWindow?.view?.panel?.view
+        if (ExpandBackPolicy.shouldCollapseOnBack(
+                keyCode,
+                event.action,
+                event.repeatCount,
+                panelView?.isExpanded == true,
+            )
+        ) {
+            panelView?.collapse()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    /**
      * 接线轮 R7：键盘内“部署／同步”点按入口。
      * 无组字直接执行；有组字先弹确认框（明示丢字风险），
      * 确认才继续；运行中重复请求直接忽略，不排队。
