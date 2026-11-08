@@ -13,6 +13,7 @@ import com.jobeen.ime.data.manager.PhraseManager
 import com.jobeen.ime.data.manager.takeCodePoints
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.manager.CandidateManager
+import com.jobeen.ime.data.manager.RareCharPolicy
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.EngineMessage.Candidate
@@ -1417,8 +1418,13 @@ class KawaiiPanel(
         // 同口径判定是否到底；过滤后条数与 total 比会多打空往返
         rawCandidateLoaded = list.size
         // 本机字体无字形的单字候选（扩展区生僻字）不进列表：显示出来
-        // 是方框、点选打出对方也看不到。条带与网格共用此列表，一致
-        val displayList = list.filter { candidateGrid.isDisplayable(it) }
+        // 是方框、点选打出对方也看不到。生僻字开关关时扩展区单字一律
+        // 不进列表（与无字形过滤同口径、共用原始计数）。条带与网格
+        // 共用此列表，一致
+        val showRare = CandidateManager.isRareCharactersEnabled(context)
+        val displayList = list.filter {
+            candidateGrid.isDisplayable(it) && (showRare || !RareCharPolicy.isRareChar(it.text))
+        }
         // 高亮下标经字形过滤重映射：高亮项被滤掉时无可见高亮（-1），
         // 不把绿标错给另一候选（空格提交的仍是 Rime 侧原高亮项）。
         val visibleHighlighted = list.getOrNull(highlightedIndex)
@@ -1516,10 +1522,14 @@ class KawaiiPanel(
         }
         // 原始口径累计（过滤前），与引擎侧 total 同口径判定是否到底
         rawCandidateLoaded += list.size
-        // 同 setCandidates：先滤掉本机无字形的单字。整页被滤光说明正处
-        // 在一整带无字形生僻字里——不收尾，直接续取下一页穿过去（引擎
-        // 侧有 200 封顶，续取链有界；真到底时引擎回空页走上面的收尾）
-        val displayable = list.filter { candidateGrid.isDisplayable(it) }
+        // 同 setCandidates：先滤掉本机无字形的单字与（开关关时）扩展区
+        // 生僻字。整页被滤光说明正处在一整带无字形生僻字里——不收尾，
+        // 直接续取下一页穿过去（引擎侧有 200 封顶，续取链有界；真到底
+        // 时引擎回空页走上面的收尾）
+        val showRare = CandidateManager.isRareCharactersEnabled(context)
+        val displayable = list.filter {
+            candidateGrid.isDisplayable(it) && (showRare || !RareCharPolicy.isRareChar(it.text))
+        }
         if (displayable.isEmpty()) {
             // 先按原始口径收口「还有更多」：这一页若已是末页（total 已
             // 确定且原始计数已达），整页滤光也只是到底，不该多打一次

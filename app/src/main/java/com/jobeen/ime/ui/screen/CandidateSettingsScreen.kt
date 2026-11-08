@@ -2,6 +2,7 @@ package com.jobeen.ime.ui.screen
 
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -13,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.CandidateManager
+import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 import com.jobeen.ime.ui.screen.ScreenComponent.SliderRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
@@ -29,6 +31,9 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
     }
     var emailSuffixEnabled by remember {
         mutableStateOf(CandidateManager.isEmailSuffixEnabled(context))
+    }
+    var rareCharactersEnabled by remember {
+        mutableStateOf(CandidateManager.isRareCharactersEnabled(context))
     }
     var showIndex by remember {
         mutableStateOf(CandidateManager.isShowIndex(context))
@@ -98,6 +103,20 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                     onCheckedChange = {
                         emailSuffixEnabled = it
                         CandidateManager.setEmailSuffixEnabled(context, it)
+                    },
+                    showDivider = true,
+                )
+                ActionRow(
+                    title = stringResource(R.string.rare_characters_enable),
+                    subtitle = stringResource(R.string.rare_characters_enable_desc),
+                    trailing = {
+                        Switch(
+                            checked = rareCharactersEnabled,
+                            onCheckedChange = {
+                                rareCharactersEnabled = it
+                                CandidateManager.setRareCharactersEnabled(context, it)
+                            },
+                        )
                     },
                 )
             }

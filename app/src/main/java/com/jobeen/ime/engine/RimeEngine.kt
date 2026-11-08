@@ -23,6 +23,7 @@ import com.jobeen.ime.input.isInputFieldChanged
 import com.jobeen.ime.engine.rime.behavior.Segmentation
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.manager.CandidateManager
+import com.jobeen.ime.data.manager.RareCharPolicy
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.CandidateSortingManager
 import com.jobeen.ime.data.manager.applySavedCandidateOrder
@@ -49,6 +50,7 @@ import com.jobeen.ime.engine.rime.behavior.SelectPinYin
 import com.jobeen.ime.engine.rime.behavior.Selection
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.core.RimeApi
+import com.jobeen.ime.engine.rime.core.SyllableProto
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.manager.CandidateRerankManager
@@ -1021,6 +1023,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             emitMessage(EngineMessage.Commit(candidate.text))
             invalidateBeforeCursorCache()
             // 预测候选点选属于打字流上屏：参与搭配学习
+            requestPrediction(candidate.text, learnable = true)
+            return
+        }
+        if (candidate.type == Candidate.TYPE_RARE_CHAR) {
+            // 生僻字补字点选：合成候选不在 Rime 菜单里，不进 Rime 选词；
+            // 文本直接上屏（与联想候选同口径），不进用户词库、不记偏好
+            emitMessage(EngineMessage.Commit(candidate.text))
+            invalidateBeforeCursorCache()
             requestPrediction(candidate.text, learnable = true)
             return
         }
@@ -2233,6 +2243,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         }
                     }
                 }
+                // 生僻字补字只在打满一个完整音节时触发：音节读组字缓存，
+                // 与排序键同源（RimeApi 作用域内经 awaitJob 一次取齐；
+                // compositionCached 只在 sendJob/awaitJob 块内可读，
+                // 普通函数里直接读编译不过）。开关关着时不取——热路径
+                // 无感。awaitJob 排队期间后续按键可能已把组字推进到
+                // 下一批：落地前验本批代次，已被新批取代时不用这份
+                // 音节（与保存顺序同口径）。
+                val rareSyllables = if (CandidateManager.isRareCharactersEnabled(ctx)) {
+                    val syllables = awaitJob(emptyList<SyllableProto>()) {
+                        compositionCached.syllables.toList()
+                    }
+                    if (state.latestCandidateRequestId.get() != requestId) emptyList() else syllables
+                } else {
+                    emptyList()
+                }
                 val rerankEnabled = CandidateManager.isRerankEnabled(ctx)
                 if (rerankEnabled) {
                     // 隐私模式下不读光标前文（gramDb 为空时前文本来也不参与打分）；
@@ -2257,23 +2282,28 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         filteredMsg.list, inputContext, predictionManager?.gramDb(), prefers
                     )
                     val baseList = sortedList ?: filteredMsg.list
+                    val ordered = if (savedOrder.isNullOrEmpty()) baseList
+                        else applySavedCandidateOrder(baseList, savedOrder)
                     actions.send(
                         Action.CandidatesReady(
-                            requestId, EngineMessage.Candidates(
-                                if (savedOrder.isNullOrEmpty()) baseList
-                                else applySavedCandidateOrder(baseList, savedOrder),
-                                0, 0, total = filteredMsg.total
-                            )
+                            requestId,
+                            supplementedCandidates(ordered, 0, filteredMsg.total, rareSyllables)
+                                ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
                         )
                     )
                 } else {
                     actions.send(
                         Action.CandidatesReady(
-                            requestId, if (savedOrder.isNullOrEmpty()) filteredMsg
-                            else EngineMessage.Candidates(
-                                applySavedCandidateOrder(filteredMsg.list, savedOrder), 0, 0,
-                                total = filteredMsg.total
-                            )
+                            requestId, if (savedOrder.isNullOrEmpty()) {
+                                supplementedCandidates(
+                                    filteredMsg.list, filteredMsg.highlighted, filteredMsg.total,
+                                    rareSyllables,
+                                ) ?: filteredMsg
+                            } else {
+                                val ordered = applySavedCandidateOrder(filteredMsg.list, savedOrder)
+                                supplementedCandidates(ordered, 0, filteredMsg.total, rareSyllables)
+                                    ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
+                            }
                         )
                     )
                 }
@@ -2284,6 +2314,38 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 actions.send(Action.CandidatesReady(requestId, filteredMsg))
             }
         }
+    }
+
+    /**
+     * 生僻字补字帧（R2＋D17）：开关开着且打满一个完整音节时，粤语常用字
+     * 补到第 10 位；未补时返回 null（调用方原样发出旧帧，高亮／总数口
+     * 径与旧行为一致）；补后 total +1（仅 total >= 0 时），保持
+     * 「list.size 与 total 比」的还有更多判定与原始条数口径一致；
+     * 高亮下标随插入／移位重映射。音节由调用方在 restoreCandidates 内
+     * 经 awaitJob 取齐传入（compositionCached 只在 RimeApi 作用域内
+     * 可读，普通函数里直接读编译不过）；迟到批次由 CandidatesReady
+     * 的 requestId 门控丢弃。
+     */
+    private fun supplementedCandidates(
+        list: List<EngineMessage.Candidate>,
+        highlighted: Int,
+        total: Int,
+        syllables: List<SyllableProto>,
+    ): EngineMessage.Candidates? {
+        val outcome = RareCharPolicy.applySupplement(
+            list,
+            syllables.map { it.spelling },
+            syllables.firstOrNull()?.rawInput.orEmpty(),
+            enabled = true,
+            isDeleted = DeletedWordsStore::isDeleted,
+        )
+        if (outcome.insertedAt < 0) return null
+        return EngineMessage.Candidates(
+            outcome.list,
+            RareCharPolicy.remapHighlight(highlighted, outcome),
+            0,
+            total = if (total >= 0) total + 1 else total,
+        )
     }
 
     /** 取消在途的候选还原并推进代次：迟到的旧还原结果会被 CandidatesReady 门控丢弃。 */

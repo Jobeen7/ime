@@ -154,6 +154,7 @@ fun catalogRows(): List<CatalogRow> = listOf(
     // 候选：内容组／窗口组。
     CatalogRow(R.string.model_prediction_enable, "candidates", R.string.candidate_content),
     CatalogRow(R.string.model_rerank_enable, "candidates", R.string.candidate_content),
+    CatalogRow(R.string.rare_characters_enable, "candidates", R.string.candidate_content),
     CatalogRow(R.string.candidate_show_index, "candidates", R.string.candidate_window),
     CatalogRow(R.string.candidate_show_comment, "candidates", R.string.candidate_window),
     CatalogRow(R.string.candidate_border, "candidates", R.string.candidate_window),
