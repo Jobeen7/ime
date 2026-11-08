@@ -1041,14 +1041,21 @@ object KeyOverrideApplier {
                 SoundPlan.Muted -> copy.skinSoundMuted = true
                 SoundPlan.Inherit -> Unit
             }
-            // 样式原始引用随副本保留（再解析幂等）。
-            copy.skinStyleRef = def.skinStyleRef
+            // 样式原始引用随副本保留（再解析幂等）；覆写样式名
+            // 优先（通知按该名命中，运行层凭它认出本键的锁定通知）。
+            copy.skinStyleRef = override?.styleRef ?: def.skinStyleRef
             copy.skinStyleOverrides = def.skinStyleOverrides
             // G1 动态文字运行时跟随：来源与静态回退随副本保留，
             // 键盘层据此在候选/组字变化时刷新主显文本。
-            override?.dynamicText?.let { source ->
-                copy.appearance.skinDynamicText = source.jsonName
-                copy.appearance.skinDynamicFallback = staticText
+            // 组字态通知 label 冻结：锁定 label 命中时不写动态
+            // 来源——否则下一轮 pushDynamicTexts 会以动态值盖掉
+            // 通知文字，组字态回车“确认”到不了屏；锁清除后下一
+            // 次重建恢复动态跟随。label 为 null 时零改动。
+            if (latched?.label == null) {
+                override?.dynamicText?.let { source ->
+                    copy.appearance.skinDynamicText = source.jsonName
+                    copy.appearance.skinDynamicFallback = staticText
+                }
             }
             // 长按符号样式名与短按气泡样式随副本保留：前者供
             // 未来长按面板按名取样式，后者供预览弹窗取尺寸与溢出。

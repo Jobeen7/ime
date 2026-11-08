@@ -459,10 +459,20 @@ abstract class BaseKeyboard(
             // 的文本回车键（Press ReturnAction 的文本键）记下刷新器，
             // updateEditorInfo 按编辑框动作改文案；内置图标回车键
             // 另走图标（textSetter 对 ImageKeyView 为空，自然排除）。
+            // 组字态通知 label 冻结：本键样式正被带 label 的通知锁定
+            // 时不登记刷新器——updateEditorInfo 在每次重建后 switchTo
+            // 里都会重发，登记了就会以“换行”盖掉锁定的通知文字
+            // （如组字态“确认”）；锁清除后下一次重建恢复登记。
             if (def.behaviors.any { b ->
                     b is KeyDef.Behavior.Press && b.action is KeyboardAction.ReturnAction
                 }) {
-                textSetter(this)?.let { enterTextSetters += it }
+                val labelLatched = def.skinStyleRef?.let { styleRef ->
+                    com.jobeen.ime.skin.runtime.SkinRuntimeState
+                        .latchedNotifications()[styleRef]?.label
+                } != null
+                if (!labelLatched) {
+                    textSetter(this)?.let { enterTextSetters += it }
+                }
             }
             // G1 动态文字运行时跟随：记下可刷新文本的动态键
             // （来源 + 静态回退），供 updateDynamicTexts 原地刷新。

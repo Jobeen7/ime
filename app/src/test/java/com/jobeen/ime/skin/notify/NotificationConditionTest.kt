@@ -93,6 +93,28 @@ class NotificationConditionTest {
     }
 
     @Test
+    fun preeditLabel_latchesOnNonemptyAndClearsOnEmpty() {
+        // Bin-2 diff #3：组字态通知 label（回车“发送”→“确认”）。
+        val (rules, dropped) = SkinNotificationParser.parse(
+            notificationArray(
+                """[{"source": "preedit", "matchValue": "nonempty",
+                     "targetStyle": "enter", "label": "确认"}]""",
+            ),
+        )
+        assertEquals(0, dropped)
+        assertEquals("确认", rules[0].label)
+        val state = NotificationState(rules)
+        // 组字开始：锁定，label 到位
+        assertTrue(state.onEvent(NotificationEvent(NotificationSource.PREEDIT, null, "nonempty")))
+        assertEquals("确认", state.latchedFor("enter")?.label)
+        // 重复组字事件：无变化，不重建
+        assertFalse(state.onEvent(NotificationEvent(NotificationSource.PREEDIT, null, "nonempty")))
+        // 组字结束：失配清除，label 回落
+        assertTrue(state.onEvent(NotificationEvent(NotificationSource.PREEDIT, null, "empty")))
+        assertNull(state.latchedFor("enter"))
+    }
+
+    @Test
     fun parser_dropsBadEntriesAndBadActionFields() {
         val (rules, dropped) = SkinNotificationParser.parse(
             notificationArray(

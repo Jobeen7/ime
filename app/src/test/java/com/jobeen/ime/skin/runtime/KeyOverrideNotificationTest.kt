@@ -7,6 +7,8 @@ import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
+import com.jobeen.ime.skin.model.DynamicTextSource
+import com.jobeen.ime.skin.model.KeyOverride
 import com.jobeen.ime.skin.model.KeyStyleRole
 import com.jobeen.ime.skin.model.SkinAction
 import com.jobeen.ime.skin.model.SkinSnapshot
@@ -130,5 +132,121 @@ class KeyOverrideNotificationTest {
         // 通知目标不是本键样式名：样式表红色照常生效
         assertEquals(0xFFFF0000.toInt(), result[0][0].appearance.skinFaceColor)
         assertTrue(result[0][0].pressAction() !is KeyboardAction.CapsAction)
+    }
+
+    // ---- 组字态通知 label（Bin-2 diff #3）：回车“发送”→“确认” ----
+
+    /** 单键文本回车（源包 enterButton 形态）：出厂文案“发送”。 */
+    private fun enterLayout(): List<List<KeyDef>> = listOf(
+        listOf(
+            KeyDef(
+                appearance = KeyDef.Appearance.Text(displayText = "发送", textSize = 16f),
+                behaviors = setOf(
+                    KeyDef.Behavior.Press(KeyboardAction.ReturnAction()),
+                ),
+                id = "enter",
+            ),
+        ),
+    )
+
+    private fun enterSnapshot(override: KeyOverride) = SkinSnapshot(
+        ref = SkinGenRef("skin-1", "h".repeat(64), 1),
+        name = "test",
+        colorScheme = scheme,
+        geometryPresence = emptySet(),
+        effectiveGeometry = emptyMap(),
+        background = null,
+        degradations = emptySet(),
+        layoutId = null,
+        keyOverrides = mapOf("enter" to override),
+        soundBindings = SoundBindings.EMPTY,
+        keyStyles = mapOf(
+            "enterStyle" to mapOf(
+                KeyStyleRole.FACE to "#FF0000",
+                KeyStyleRole.TEXT to "#00FF00",
+            ),
+        ),
+    )
+
+    private fun KeyDef.displayText(): String = when (val a = appearance) {
+        is KeyDef.Appearance.Text -> a.displayText
+        is KeyDef.Appearance.AltText -> a.displayText
+        is KeyDef.Appearance.ImageText -> a.displayText
+        else -> ""
+    }
+
+    private fun preeditLabelNotification(label: String) = SkinNotification(
+        source = NotificationSource.PREEDIT, matchKey = null, matchValue = "nonempty",
+        targetStyle = "enterStyle", backgroundStyle = null, foregroundStyle = null,
+        action = null, swipeUpAction = null, swipeDownAction = null, label = label,
+    )
+
+    @Test
+    fun latchedLabel_overridesDynamicTextAndFreezesRefresh() {
+        val override = KeyOverride(
+            label = "发送",
+            styleRef = "enterStyle",
+            dynamicText = DynamicTextSource.RETURN_KEY_TYPE,
+        )
+        val result = KeyOverrideApplier.apply(
+            "T9", enterLayout(), enterSnapshot(override), emptyMap(),
+            scheme = scheme,
+            dynamicTexts = mapOf(DynamicTextSource.RETURN_KEY_TYPE to "搜索"),
+            notifications = mapOf("enterStyle" to preeditLabelNotification("确认")),
+        )
+        val key = result[0][0]
+        // 锁定 label 优先于动态值：组字态回车显示“确认”
+        assertEquals("确认", key.displayText())
+        // 冻结：不注册动态刷新，下一轮 pushDynamicTexts 不会盖回“搜索”
+        assertNull(key.appearance.skinDynamicText)
+        // 生效样式名随副本保留（运行层凭它认出本键的锁定通知）
+        assertEquals("enterStyle", key.skinStyleRef)
+    }
+
+    @Test
+    fun unlatched_dynamicTextPreserved() {
+        val override = KeyOverride(
+            label = "发送",
+            styleRef = "enterStyle",
+            dynamicText = DynamicTextSource.RETURN_KEY_TYPE,
+        )
+        val result = KeyOverrideApplier.apply(
+            "T9", enterLayout(), enterSnapshot(override), emptyMap(),
+            scheme = scheme,
+            dynamicTexts = mapOf(DynamicTextSource.RETURN_KEY_TYPE to "搜索"),
+            notifications = emptyMap(),
+        )
+        val key = result[0][0]
+        // 无锁定时动态值照常（回车跟 returnKeyType）
+        assertEquals("搜索", key.displayText())
+        assertEquals("returnKeyType", key.appearance.skinDynamicText)
+        assertEquals("发送", key.appearance.skinDynamicFallback)
+    }
+
+    @Test
+    fun latchedLabel_overridesStaticLabel() {
+        // 静态键形态（t91“@/. ”→“分词”、clearPreedit“换行”→“重输”同款）：
+        // 无动态来源，锁定 label 直接盖静态 label。
+        val override = KeyOverride(label = "发送", styleRef = "enterStyle")
+        val latched = KeyOverrideApplier.apply(
+            "T9", enterLayout(), enterSnapshot(override), emptyMap(),
+            scheme = scheme,
+            notifications = mapOf("enterStyle" to preeditLabelNotification("确认")),
+        )
+        assertEquals("确认", latched[0][0].displayText())
+        val unlatched = KeyOverrideApplier.apply(
+            "T9", enterLayout(), enterSnapshot(override), emptyMap(),
+            scheme = scheme, notifications = emptyMap(),
+        )
+        assertEquals("发送", unlatched[0][0].displayText())
+    }
+
+    @Test
+    fun assembledDef_carriesFactoryStyleRefWithoutOverride() {
+        // 无覆写时沿用出厂引用（旧行为不变）。
+        val result = KeyOverrideApplier.apply(
+            "Qwerty", accentedLayout(), snapshot(), emptyMap(), scheme = scheme,
+        )
+        assertEquals("accent", result[0][0].skinStyleRef)
     }
 }
