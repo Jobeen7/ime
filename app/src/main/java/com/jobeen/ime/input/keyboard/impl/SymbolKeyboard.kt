@@ -35,6 +35,7 @@ import com.jobeen.ime.skin.symbol.HorizontalSymbolStripState
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.skin.symbol.SharedPrefsSymbolBarTypeStore
+import com.jobeen.ime.skin.symbol.SharedPrefsUserSymbolBarStore
 import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolBarState
@@ -43,6 +44,8 @@ import com.jobeen.ime.skin.symbol.SymbolGridResolver
 import com.jobeen.ime.skin.symbol.SymbolGridSpec
 import com.jobeen.ime.skin.symbol.SymbolParentCategory
 import com.jobeen.ime.skin.symbol.SymbolSubCategory
+import com.jobeen.ime.skin.symbol.UserSymbolBarOps
+import com.jobeen.ime.skin.symbol.UserSymbolBarStore
 import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -128,6 +131,14 @@ class SymbolKeyboard(
     private var barView: LinearLayout? = null
     private var barSwitchBtn: TextView? = null
     private val barPopup = KeyboardPopup(context)
+
+    /** 用户自定义常用符号置顶条（H2-5）：48dp 横条，置顶于皮肤栏之上；无配置时隐藏。 */
+    private val userStripStore: UserSymbolBarStore = SharedPrefsUserSymbolBarStore(context)
+    private val userStripView: LinearLayout = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setBackgroundColor(colors.specialKeyBackground)
+        visibility = View.GONE
+    }
 
     /**
      * 二级面板数据源：皮肤定义二级表时用皮肤表，否则既有一级表
@@ -226,6 +237,7 @@ class SymbolKeyboard(
         }
         rebuildSubStrip()
         rebuildHorizontalStrip()
+        rebuildUserStrip()
 
         // 接线轮 R5：符号栏条（皮肤规格驱动；关闭钮恒贴外缘，
         // 切换钮居内；栏键点按提交、长按出角标格）。
@@ -347,6 +359,7 @@ class SymbolKeyboard(
         addView(gridView, lParams(0, matchParent))
         addView(subStripView, lParams(matchParent, 0))
         addView(hStripView, lParams(matchParent, 0))
+        addView(userStripView, lParams(matchParent, 0))
         barView?.let { addView(it, lParams(matchParent, 0)) }
         addView(rippleView, LayoutParams(matchParent, matchParent))
     }
@@ -492,6 +505,38 @@ class SymbolKeyboard(
         if (action is KeyboardAction.CommitAction) maybeAutoReturn()
     }
 
+    /**
+     * 用户自定义符号置顶条重建（H2-5）：置顶开且有符号时横排该列
+     * （点格提交，提交后自动返回，与横条同口径）；否则隐藏。
+     * init 与 onAttach 都调用——板实例复用时设置改动下次打开
+     * 符号面板即生效。
+     */
+    private fun rebuildUserStrip() {
+        val symbols = UserSymbolBarOps.topStrip(userStripStore.load())
+        if (symbols == null) {
+            userStripView.visibility = View.GONE
+            userStripView.removeAllViews()
+            return
+        }
+        userStripView.visibility = View.VISIBLE
+        userStripView.removeAllViews()
+        for (symbol in symbols) {
+            val cell = TextView(context).apply {
+                gravity = Gravity.CENTER
+                setTextSize(15f)
+                setTextColor(colors.specialKeyText)
+                text = symbol
+                setOnClickListener { dispatchBoardCommit(symbol) }
+            }
+            userStripView.addView(
+                cell,
+                LinearLayout.LayoutParams(
+                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f,
+                ),
+            )
+        }
+    }
+
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val tw = MeasureSpec.getSize(widthMeasureSpec)
         val th = MeasureSpec.getSize(heightMeasureSpec)
@@ -499,10 +544,12 @@ class SymbolKeyboard(
         val gw = tw - sw
         // 接线轮 R5：栏可见时占顶 48dp，其余内容整体下移并压缩；
         // 栏隐藏时 barH=0，与旧布局完全一致。子条同口径占顶 48dp。
+        // H2-5：用户置顶条在皮肤栏之上再占顶 48dp；隐藏时 userH=0。
+        val userH = if (userStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val barH = if (barView?.visibility == View.VISIBLE) context.dp(48) else 0
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val hH = if (hStripView.visibility == View.VISIBLE) context.dp(48) else 0
-        val contentH = th - barH - subH - hH
+        val contentH = th - userH - barH - subH - hH
         val sidePanelH = contentH * 3 / 4
         // 侧栏底区整段归返回钮（板锁已删）。
         val returnRegionH = contentH - sidePanelH
@@ -513,6 +560,7 @@ class SymbolKeyboard(
         gridView.measure(mES(gw, MeasureSpec.EXACTLY), mES(contentH, MeasureSpec.EXACTLY))
         subStripView.measure(mES(tw, MeasureSpec.EXACTLY), mES(subH, MeasureSpec.EXACTLY))
         hStripView.measure(mES(tw, MeasureSpec.EXACTLY), mES(hH, MeasureSpec.EXACTLY))
+        userStripView.measure(mES(tw, MeasureSpec.EXACTLY), mES(userH, MeasureSpec.EXACTLY))
         barView?.measure(mES(tw, MeasureSpec.EXACTLY), mES(barH, MeasureSpec.EXACTLY))
         // 同 EmojiKeyboard：波纹层补 measure/layout，否则宽高恒 0、
         // 波纹从不显示（L1）
@@ -522,15 +570,17 @@ class SymbolKeyboard(
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val sw = ((r - l) * 0.15f).toInt()
+        val userH = if (userStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val barH = if (barView?.visibility == View.VISIBLE) context.dp(48) else 0
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val hH = if (hStripView.visibility == View.VISIBLE) context.dp(48) else 0
-        val contentH = (b - t) - barH - subH - hH
+        val contentH = (b - t) - userH - barH - subH - hH
         val sidePanelH = contentH * 3 / 4
-        barView?.layout(0, 0, r - l, barH)
-        subStripView.layout(0, barH, r - l, barH + subH)
-        hStripView.layout(0, barH + subH, r - l, barH + subH + hH)
-        val top = barH + subH + hH
+        userStripView.layout(0, 0, r - l, userH)
+        barView?.layout(0, userH, r - l, userH + barH)
+        subStripView.layout(0, userH + barH, r - l, userH + barH + subH)
+        hStripView.layout(0, userH + barH + subH, r - l, userH + barH + subH + hH)
+        val top = userH + barH + subH + hH
         sidePanelKey.layout(0, top, sw, top + sidePanelH)
         sideReturnBtn.layout(0, top + sidePanelH, sw, top + contentH)
         gridView.layout(sw, top, r - l, top + contentH)
@@ -585,6 +635,9 @@ class SymbolKeyboard(
             barView?.visibility = View.VISIBLE
             requestLayout()
         }
+        // H2-5：用户置顶条每附着重建（设置改动下次打开符号面板即生效）。
+        rebuildUserStrip()
+        requestLayout()
     }
 
     override fun onDetach() {

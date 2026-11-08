@@ -212,12 +212,12 @@ class MainSettingsCatalogTest {
     }
 
     @Test
-    fun catalogPages_sixteenKeysInOrder() {
+    fun catalogPages_seventeenKeysInOrder() {
         val keys = catalogPages().map { it.key }
         assertEquals(
             listOf(
                 "schema", "scheme_update", "rime", "candidates", "skin", "scripts", "keyboard",
-                "toolbar", "appearance", "clipboard", "voice", "stats", "userdict",
+                "toolbar", "symbol_bar", "appearance", "clipboard", "voice", "stats", "userdict",
                 "backup", "files", "about",
             ),
             keys,

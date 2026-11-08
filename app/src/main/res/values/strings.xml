@@ -869,6 +869,20 @@
     <string name="toolbar_name_empty">栏名不能为空</string>
     <string name="toolbar_delete_toolbar_title">删除自定义工具栏？</string>
     <string name="toolbar_delete_toolbar_note">删除后，正在使用该栏的皮肤将回到默认工具栏。</string>
+    <!-- 自定义符号栏（施工单 10 H2-5）：页名／置顶／列表 -->
+    <string name="symbol_bar_title">自定义符号栏</string>
+    <string name="row_sub_symbol_bar">常用符号与置顶</string>
+    <string name="symbol_bar_pin_group">置顶</string>
+    <string name="symbol_bar_pin">置顶显示</string>
+    <string name="symbol_bar_pin_desc">开启后，自定义符号栏固定在符号面板顶部。</string>
+    <string name="symbol_bar_custom">自定义符号</string>
+    <string name="symbol_bar_add_hint">输入要添加的符号</string>
+    <string name="symbol_bar_add">添加</string>
+    <string name="symbol_bar_empty">未添加自定义符号</string>
+    <string name="symbol_bar_note">修改在下次打开符号面板时生效。</string>
+    <string name="symbol_bar_move_up">上移</string>
+    <string name="symbol_bar_move_down">下移</string>
+    <string name="symbol_bar_delete">删除</string>
     <string name="action_commit_direct">提交文字</string>
     <string name="action_literal_newline">换行</string>
     <string name="action_enter">回车</string>

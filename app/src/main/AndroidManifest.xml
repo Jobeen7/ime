@@ -84,6 +84,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.SymbolBarSettingsActivity"
+            android:exported="false"
+            android:label="@string/symbol_bar_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.AppearanceActivity"
             android:exported="false"
             android:label="@string/appearance_title"

@@ -140,6 +140,11 @@ class MainActivity : ComponentActivity() {
                             Intent(this@MainActivity, ToolbarActivity::class.java)
                         )
                     },
+                    onOpenSymbolBar = {
+                        startActivity(
+                            Intent(this@MainActivity, SymbolBarSettingsActivity::class.java)
+                        )
+                    },
                     onOpenInputStats = {
                         startActivity(
                             Intent(this@MainActivity, InputStatsActivity::class.java)
