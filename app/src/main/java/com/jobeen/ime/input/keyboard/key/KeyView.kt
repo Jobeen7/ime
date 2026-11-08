@@ -1473,7 +1473,21 @@ class TextKeyView(
     // 抬起贴回常态字形；任一未配则不切换。注：按压中若 updateText 触发，
     // 会先贴回常态字形（既有行为），下一次状态变化时再按当前态贴一次，
     // 属短暂显示差异、无状态残留。
+    // 按压态主文字色（Bin-2 补项）：配了 pressedText 时按压换色；
+    // 抬起贴回按压前颜色（按压前已是滑动／大写态色的，贴回该色，
+    // 不直接回默认色；与滑动暂显清除的恢复口径一致）。
+    private var pressedTextRestoreColor: Int? = null
+
     override fun onPressedContentChanged(pressed: Boolean) {
+        def.skinPressedTextColor?.let { pressedColor ->
+            if (pressed) {
+                pressedTextRestoreColor = mainText.currentTextColor
+                mainText.setTextColor(pressedColor)
+            } else {
+                pressedTextRestoreColor?.let { mainText.setTextColor(it) }
+                pressedTextRestoreColor = null
+            }
+        }
         val normal = def.skinIconSymbol ?: return
         val pressedSymbol = def.skinPressedIconSymbol ?: return
         MaterialSymbols.applyToTextView(
@@ -1658,7 +1672,20 @@ class AltTextKeyView(
     }
 
     // 按压态独立图标（重点候选 8-2，同 TextKeyView）：双配时切换字形。
+    // 按压态主文字色（Bin-2 补项，同 TextKeyView）：配了 pressedText
+    // 时按压换色、抬起贴回按压前颜色。
+    private var pressedTextRestoreColor: Int? = null
+
     override fun onPressedContentChanged(pressed: Boolean) {
+        def.skinPressedTextColor?.let { pressedColor ->
+            if (pressed) {
+                pressedTextRestoreColor = mainText.currentTextColor
+                mainText.setTextColor(pressedColor)
+            } else {
+                pressedTextRestoreColor?.let { mainText.setTextColor(it) }
+                pressedTextRestoreColor = null
+            }
+        }
         val normal = def.skinIconSymbol ?: return
         val pressedSymbol = def.skinPressedIconSymbol ?: return
         MaterialSymbols.applyToTextView(
@@ -1927,7 +1954,20 @@ class ImageTextKeyView(
     }
 
     // 按压态独立图标（重点候选 8-2，同 TextKeyView）：双配时切换字形。
+    // 按压态主文字色（Bin-2 补项，同 TextKeyView）：配了 pressedText
+    // 时按压换色、抬起贴回按压前颜色。
+    private var pressedTextRestoreColor: Int? = null
+
     override fun onPressedContentChanged(pressed: Boolean) {
+        def.skinPressedTextColor?.let { pressedColor ->
+            if (pressed) {
+                pressedTextRestoreColor = mainText.currentTextColor
+                mainText.setTextColor(pressedColor)
+            } else {
+                pressedTextRestoreColor?.let { mainText.setTextColor(it) }
+                pressedTextRestoreColor = null
+            }
+        }
         val normal = def.skinIconSymbol ?: return
         val pressedSymbol = def.skinPressedIconSymbol ?: return
         MaterialSymbols.applyToTextView(

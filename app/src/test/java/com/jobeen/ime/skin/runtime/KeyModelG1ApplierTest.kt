@@ -286,6 +286,41 @@ class KeyModelG1ApplierTest {
     }
 
     @Test
+    fun pressedTextRoleCarriedToAppearance() {
+        val rows = listOf(listOf(textKey("K1", "a", 1f)))
+        val snap = snapshot(
+            keyStyles = mapOf(
+                "gold" to mapOf(
+                    KeyStyleRole.TEXT to "#FF111111",
+                    KeyStyleRole.PRESSED_TEXT to "#FF222222",
+                ),
+            ),
+            overrides = mapOf("K1" to KeyOverride(styleRef = "gold")),
+        )
+        val out = apply(rows, snap)
+        assertEquals(0xFF111111.toInt(), out[0][0].appearance.skinTextColor)
+        assertEquals(0xFF222222.toInt(), out[0][0].appearance.skinPressedTextColor)
+    }
+
+    @Test
+    fun pressedTextOverrideWinsOverStyleTable() {
+        val rows = listOf(listOf(textKey("K1", "a", 1f)))
+        val snap = snapshot(
+            keyStyles = mapOf(
+                "gold" to mapOf(KeyStyleRole.PRESSED_TEXT to "#FF222222"),
+            ),
+            overrides = mapOf(
+                "K1" to KeyOverride(
+                    styleRef = "gold",
+                    styleOverrides = mapOf(KeyStyleRole.PRESSED_TEXT to "#FF333333"),
+                ),
+            ),
+        )
+        val out = apply(rows, snap)
+        assertEquals(0xFF333333.toInt(), out[0][0].appearance.skinPressedTextColor)
+    }
+
+    @Test
     fun geometryFieldsCarriedToAppearance() {
         val rows = listOf(listOf(textKey("K1", "a", 1f)))
         val snap = snapshot(

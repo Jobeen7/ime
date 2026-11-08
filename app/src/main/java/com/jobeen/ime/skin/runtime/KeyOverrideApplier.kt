@@ -1305,6 +1305,7 @@ object KeyOverrideApplier {
         rebuilt.skinFaceColor = style?.face
         rebuilt.skinPressedColor = style?.pressed
         rebuilt.skinTextColor = style?.text
+        rebuilt.skinPressedTextColor = style?.pressedText
         rebuilt.skinAltTextColor = style?.altText
         // 审计 A 项：描边/下边缘取几何面字面值优先、角色值其次
         // （几何面是对端字面色，角色是 Jime 令牌/字面色；两者

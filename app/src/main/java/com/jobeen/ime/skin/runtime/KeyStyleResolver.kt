@@ -35,11 +35,13 @@ object KeyStyleResolver {
         val lowerEdge: Int? = null,
         /** 审计 A 项：按压态下边缘色（null = 按压沿用常态下边缘）。 */
         val pressedLowerEdge: Int? = null,
+        /** Bin-2 补项：按压态主文字色（null = 按压沿用常态文字色）。 */
+        val pressedText: Int? = null,
     ) {
         val isEmpty: Boolean get() =
             face == null && pressed == null && text == null && altText == null &&
                 border == null && iconTint == null && pressedBorder == null &&
-                lowerEdge == null && pressedLowerEdge == null
+                lowerEdge == null && pressedLowerEdge == null && pressedText == null
     }
 
     data class Resolution(
@@ -89,6 +91,7 @@ object KeyStyleResolver {
             pressedBorder = valueFor(KeyStyleRole.PRESSED_BORDER),
             lowerEdge = valueFor(KeyStyleRole.LOWER_EDGE),
             pressedLowerEdge = valueFor(KeyStyleRole.PRESSED_LOWER_EDGE),
+            pressedText = valueFor(KeyStyleRole.PRESSED_TEXT),
         )
         return Resolution(resolved.takeIf { !it.isEmpty }, warnings)
     }

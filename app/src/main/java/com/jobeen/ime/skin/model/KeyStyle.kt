@@ -18,6 +18,8 @@ import kotlinx.serialization.json.contentOrNull
  * 6 角色（渲染面，与 KeyDef 皮肤色槽一一对应）：
  * face=键面，pressed=按压面，text=主文字，altText=副文字，border=描边，
  * icon=图标染色（G1 补：Image/ImageText 键的图标 tint；无图标的键忽略该角色）。
+ * 审计 A 项补：pressedBorder=按压描边，lowerEdge=下边缘，
+ * pressedLowerEdge=按压下边缘；Bin-2 补项：pressedText=按压态主文字。
  */
 enum class KeyStyleRole(val jsonName: String) {
     FACE("face"),
@@ -32,6 +34,8 @@ enum class KeyStyleRole(val jsonName: String) {
     LOWER_EDGE("lowerEdge"),
     /** 按压态下边缘色（审计 A 项：highlightLowerEdgeColor 的角色面）。 */
     PRESSED_LOWER_EDGE("pressedLowerEdge"),
+    /** 按压态主文字色（Bin-2 补项：text 样式 highlightColor 的角色面）。 */
+    PRESSED_TEXT("pressedText"),
     ;
 
     companion object {

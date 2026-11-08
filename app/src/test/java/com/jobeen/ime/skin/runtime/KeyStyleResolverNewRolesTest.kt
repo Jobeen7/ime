@@ -1,7 +1,10 @@
 package com.jobeen.ime.skin.runtime
 
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.skin.model.KeyStyleParser
 import com.jobeen.ime.skin.model.KeyStyleRole
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -53,5 +56,58 @@ class KeyStyleResolverNewRolesTest {
         val result = KeyStyleResolver.resolve("s", null, keyStyles, scheme)
         assertEquals(9, result.style?.pressedBorder)
         assertEquals(3, result.style?.lowerEdge)
+    }
+
+    /** 按压态主文字色（Bin-2 补项）：字面色与令牌路径都能解析。 */
+    @Test
+    fun pressedTextResolvesAsLiteralAndToken() {
+        val keyStyles = mapOf(
+            "s" to mapOf(KeyStyleRole.PRESSED_TEXT to "#FF112233"),
+            "t" to mapOf(KeyStyleRole.PRESSED_TEXT to "accentKeyText"),
+        )
+        val literal = KeyStyleResolver.resolve("s", null, keyStyles, scheme)
+        assertEquals(0xFF112233.toInt(), literal.style?.pressedText)
+        assertTrue(literal.warnings.isEmpty())
+        val token = KeyStyleResolver.resolve("t", null, keyStyles, scheme)
+        assertEquals(12, token.style?.pressedText)
+    }
+
+    /** 按压态主文字色：逐键覆盖优先于样式表（与 text 角色同优先序）。 */
+    @Test
+    fun pressedTextOverrideWinsOverStyleTable() {
+        val keyStyles = mapOf(
+            "s" to mapOf(
+                KeyStyleRole.TEXT to "#FF111111",
+                KeyStyleRole.PRESSED_TEXT to "#FF222222",
+            ),
+        )
+        val overrides = mapOf(KeyStyleRole.PRESSED_TEXT to "#FF333333")
+        val result = KeyStyleResolver.resolve("s", overrides, keyStyles, scheme)
+        assertEquals(0xFF111111.toInt(), result.style?.text)
+        assertEquals(0xFF333333.toInt(), result.style?.pressedText)
+    }
+
+    /** 转换器写出的 pressedText 不再被当 unknown_role 丢弃。 */
+    @Test
+    fun pressedTextParsesFromJsonName() {
+        val node = JsonObject(
+            mapOf(
+                "text" to JsonPrimitive("#FF111111"),
+                "pressedText" to JsonPrimitive("#FF222222"),
+            ),
+        )
+        val (roles, warnings) = KeyStyleParser.parseRoles("s", node)
+        assertEquals("#FF222222", roles[KeyStyleRole.PRESSED_TEXT])
+        assertTrue(warnings.isEmpty())
+    }
+
+    /** 只有 pressedText 的样式不算空样式（isEmpty 须计入新角色）。 */
+    @Test
+    fun styleWithOnlyPressedTextIsNotEmpty() {
+        val keyStyles = mapOf(
+            "s" to mapOf(KeyStyleRole.PRESSED_TEXT to "#FF112233"),
+        )
+        val result = KeyStyleResolver.resolve("s", null, keyStyles, scheme)
+        assertEquals(0xFF112233.toInt(), result.style?.pressedText)
     }
 }

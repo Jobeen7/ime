@@ -62,6 +62,8 @@ open class KeyDef(
         var skinFaceColor: Int? = null
         var skinPressedColor: Int? = null
         var skinTextColor: Int? = null
+        /** Bin-2 补项：按压态主文字色（null = 按压沿用常态文字色）。 */
+        var skinPressedTextColor: Int? = null
         var skinAltTextColor: Int? = null
         var skinBorderColor: Int? = null
         /**
