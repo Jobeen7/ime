@@ -30,6 +30,7 @@
     <string name="kb_cat_gesture_desc">滑动触发距离</string>
     <string name="kb_cat_display">按键显示</string>
     <string name="kb_cat_display_desc">边框、圆角、间隔与视觉效果</string>
+    <string name="settings_legend_caption">图例按当前键盘配色绘制；边框、圆角、间距、提示字与符号跟随本页设置</string>
     <string name="kb_cat_layout_desc">高度、边距与系统边距</string>
     <string name="kb_cat_behavior">输入行为</string>
     <string name="kb_cat_behavior_desc">符号自动成对</string>

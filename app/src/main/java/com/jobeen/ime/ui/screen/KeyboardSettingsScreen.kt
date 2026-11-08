@@ -446,6 +446,15 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                             )
                         }
                         KeyboardCategory.DISPLAY -> {
+                            SettingsLegend(
+                                keyCornerRadiusDp = keyRadius,
+                                keyHorizontalGapDp = keyXGap,
+                                keyVerticalGapDp = keyYGap,
+                                borderEnabled = keyBorderEnabled,
+                                showSymbol = !hideSymbol,
+                                showHint = !hideHint,
+                            )
+                            Spacer(Modifier.height(8.dp))
                             SwitchRow(
                                 title = stringResource(R.string.mnemonic_hints),
                                 checked = mnemonicEnabled,
