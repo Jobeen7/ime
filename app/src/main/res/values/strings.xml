@@ -977,6 +977,14 @@
     <string name="font_mono">系统 Mono</string>
     <string name="font_import">导入文件…</string>
     <string name="font_imported">已导入字体文件</string>
+    <string name="font_manage_imported">管理已导入字体</string>
+    <string name="font_manage_imported_desc">查看与删除已导入的字体文件</string>
+    <string name="font_manage_empty">暂无已导入字体。</string>
+    <string name="font_delete">删除</string>
+    <string name="font_delete_confirm">确定要删除“%1$s”吗？删除后文件将被移除。</string>
+    <string name="font_delete_used_by">以下角色正在使用该字体，删除后将改回跟随：%1$s。</string>
+    <string name="font_manage_used_by">在用：%1$s</string>
+    <string name="font_manage_unused">未被使用</string>
     <string name="export_diag_logs">导出诊断日志</string>
     <string name="diag_export_failed">诊断日志导出失败</string>
 </resources>

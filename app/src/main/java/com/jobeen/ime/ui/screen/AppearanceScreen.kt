@@ -29,10 +29,13 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessMedium
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.VideoLibrary
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -67,6 +70,7 @@ import com.jobeen.ime.data.keyboard.theme.FontChoice
 import com.jobeen.ime.data.keyboard.theme.FontRole
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import android.content.Context
+import android.text.format.Formatter
 import com.jobeen.ime.data.keyboard.theme.GlobalStyle
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
@@ -141,6 +145,10 @@ fun AppearanceScreen(
     }
     var fontTarget by remember { mutableStateOf<FontRole?>(null) }
     var fontImportError by remember { mutableStateOf(false) }
+    // 导入字体管理（施工单 9 特征 2）：列表在点行时现取，不在组合中做文件 IO。
+    var showManageFonts by remember { mutableStateOf(false) }
+    var managedFonts by remember { mutableStateOf<List<GlobalFonts.ImportedFont>>(emptyList()) }
+    var fontDeleteTarget by remember { mutableStateOf<GlobalFonts.ImportedFont?>(null) }
     var pendingFontRole by remember { mutableStateOf<FontRole?>(null) }
     val skinFamily = remember {
         SkinFonts.resolveFamily(SkinSnapshotProvider.peek()?.fontFamily)
@@ -298,6 +306,14 @@ fun AppearanceScreen(
                                 onClick = { fontTarget = role },
                             )
                         }
+                        NavRow(
+                            title = stringResource(R.string.font_manage_imported),
+                            subtitle = stringResource(R.string.font_manage_imported_desc),
+                            onClick = {
+                                managedFonts = GlobalFonts.listImported(context)
+                                showManageFonts = true
+                            },
+                        )
                     }
                 }
                 AppearanceCategory.APP -> {
@@ -341,6 +357,99 @@ fun AppearanceScreen(
                 showModeDialog = false
             },
             onDismiss = { showModeDialog = false },
+        )
+    }
+
+    // 导入字体管理（施工单 9 特征 2）：列表＋逐个删除确认；删除后 purge
+    // 由 GlobalFonts.deleteImported 一次完成（删文件＋清引用＋版本＋1＋清缓存）。
+    if (showManageFonts) {
+        SettingsDialog(
+            onDismissRequest = { showManageFonts = false },
+            title = stringResource(R.string.font_manage_imported),
+            body = {
+                Column {
+                    if (managedFonts.isEmpty()) {
+                        Text(
+                            text = stringResource(R.string.font_manage_empty),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        for (font in managedFonts) {
+                            val usedByLabels = mutableListOf<String>()
+                            for (role in font.usedBy) usedByLabels.add(fontRoleLabel(role))
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Column(
+                                    modifier = Modifier.weight(1f),
+                                ) {
+                                    Text(
+                                        text = font.fileId,
+                                        style = MaterialTheme.typography.bodyLarge,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                    Text(
+                                        text = Formatter.formatFileSize(context, font.sizeBytes) +
+                                            " · " + if (usedByLabels.isEmpty()) {
+                                                stringResource(R.string.font_manage_unused)
+                                            } else {
+                                                stringResource(
+                                                    R.string.font_manage_used_by,
+                                                    usedByLabels.joinToString("、"),
+                                                )
+                                            },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                IconButton(onClick = { fontDeleteTarget = font }) {
+                                    Icon(
+                                        Icons.Filled.Delete,
+                                        contentDescription = stringResource(R.string.font_delete),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            actions = listOf(
+                SettingsDialogAction(
+                    text = stringResource(R.string.cancel),
+                    onClick = { showManageFonts = false },
+                ),
+            ),
+        )
+    }
+
+    val deleteTarget = fontDeleteTarget
+    if (deleteTarget != null) {
+        val usedByLabels = mutableListOf<String>()
+        for (role in deleteTarget.usedBy) usedByLabels.add(fontRoleLabel(role))
+        SettingsConfirmDialog(
+            onDismissRequest = { fontDeleteTarget = null },
+            title = deleteTarget.fileId,
+            text = stringResource(R.string.font_delete_confirm, deleteTarget.fileId) +
+                if (usedByLabels.isEmpty()) {
+                    ""
+                } else {
+                    "\n" + stringResource(
+                        R.string.font_delete_used_by,
+                        usedByLabels.joinToString("、"),
+                    )
+                },
+            confirmText = stringResource(R.string.font_delete),
+            onConfirm = {
+                GlobalFonts.deleteImported(context, deleteTarget.fileId)
+                managedFonts = GlobalFonts.listImported(context)
+                fontChoices = FontRole.entries.associateWith { GlobalFonts.getChoice(context, it) }
+                fontDeleteTarget = null
+            },
+            dismissText = stringResource(R.string.cancel),
+            confirmColor = MaterialTheme.colorScheme.error,
         )
     }
 

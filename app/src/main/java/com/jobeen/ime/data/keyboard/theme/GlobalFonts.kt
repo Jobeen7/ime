@@ -79,6 +79,13 @@ object GlobalFonts {
     const val MAX_IMPORT_BYTES = 32L * 1024 * 1024
     val IMPORT_EXTENSIONS: Set<String> = setOf("ttf", "otf")
 
+    /**
+     * 可删除的导入字体扩展名（Mie 增量①口径：ttf/otf/ttc/otc；
+     * 导入只收 ttf/otf，ttc/otc 可能随备份恢复落盘，列表同样
+     * 覆盖，删时一并清理）。
+     */
+    val DELETABLE_EXTENSIONS: Set<String> = setOf("ttf", "otf", "ttc", "otc")
+
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
 
@@ -143,6 +150,107 @@ object GlobalFonts {
     sealed class ImportResult {
         data class Ok(val fileId: String) : ImportResult()
         data class Failed(val reason: String) : ImportResult()
+    }
+
+    /** 已导入字体文件（管理列表用）。 */
+    data class ImportedFont(
+        val fileId: String,
+        val sizeBytes: Long,
+        val lastModifiedMs: Long,
+        /** 引用该文件的角色（为空＝无角色在用，删后不影响当前选择）。 */
+        val usedBy: List<FontRole>,
+    )
+
+    sealed class DeleteResult {
+        /** 文件已删；resetRoles＝被改回跟随的角色（空＝无角色在用）。 */
+        data class Deleted(val resetRoles: List<FontRole>) : DeleteResult()
+        /** 文件不存在，但残留引用已清理（resetRoles 同上；都不存在时为空）。 */
+        data class NotFound(val resetRoles: List<FontRole>) : DeleteResult()
+        data class Failed(val reason: String) : DeleteResult()
+    }
+
+    /**
+     * 导入字体文件名校验（纯函数）：单段文件名、无路径穿越、
+     * 扩展名在可删除集合内。导入 id 是内容寻址（sha12＋扩展名），
+     * 手动落盘的同扩展名文件同样可管。
+     */
+    fun isDeletableFileName(fileId: String): Boolean {
+        if (fileId.isEmpty()) return false
+        if (fileId.contains('/') || fileId.contains('\\') || fileId.contains("..")) {
+            return false
+        }
+        val ext = fileId.substringAfterLast('.', "").lowercase()
+        if (ext !in DELETABLE_EXTENSIONS) return false
+        return fileId.substringBeforeLast('.', "").isNotEmpty()
+    }
+
+    /**
+     * 删除后的引用清理（纯函数）：把引用该文件的所有角色改回跟随，
+     * 返回（新选择表，被重置的角色）。文件不存在但有引用时同样清理，
+     * 残留引用不留死角。
+     */
+    fun purgeReferences(
+        choices: Map<FontRole, FontChoice>,
+        fileId: String,
+    ): Pair<Map<FontRole, FontChoice>, List<FontRole>> {
+        val reset = choices.filter { (_, choice) ->
+            choice is FontChoice.Imported && choice.fileId == fileId
+        }.keys.toList()
+        if (reset.isEmpty()) return choices to emptyList()
+        val updated = choices.toMutableMap()
+        reset.forEach { updated[it] = FontChoice.Follow }
+        return updated to reset
+    }
+
+    /**
+     * 列出已导入字体文件（管理列表用）：fonts 目录下四种扩展名的
+     * 文件，按文件名排序，附引用角色。Jime 只有一个导入目录
+     * （filesDir/fonts），Mie 的 custom_fonts＋rime fonts 两目录
+     * 在此合为一处。
+     */
+    fun listImported(context: Context): List<ImportedFont> {
+        val dir = fontsDir(context)
+        val files = dir.listFiles()?.toList().orEmpty()
+        val choices = FontRole.entries.associateWith { getChoice(context, it) }
+        return files
+            .filter { it.isFile && isDeletableFileName(it.name) }
+            .sortedBy { it.name }
+            .map { file ->
+                ImportedFont(
+                    fileId = file.name,
+                    sizeBytes = file.length(),
+                    lastModifiedMs = file.lastModified(),
+                    usedBy = choices.filter { (_, choice) ->
+                        choice is FontChoice.Imported && choice.fileId == file.name
+                    }.keys.toList(),
+                )
+            }
+    }
+
+    /**
+     * 删除已导入字体＋purge（Mie 增量①）：
+     * 删文件（不存在也继续）→ 引用该文件的全部角色改回跟随
+     * → 版本＋1（一次编辑提交）→ 清缓存（刷新 fallback）。
+     * 文件名非法（路径穿越）直接拒绝，不动任何状态。
+     */
+    fun deleteImported(context: Context, fileId: String): DeleteResult {
+        if (!isDeletableFileName(fileId)) return DeleteResult.Failed("invalid_name")
+        val dir = fontsDir(context)
+        val target = File(dir, fileId)
+        val existed = target.isFile
+        if (existed && !target.delete()) return DeleteResult.Failed("delete_failed")
+        val choices = FontRole.entries.associateWith { getChoice(context, it) }
+        val (_, reset) = purgeReferences(choices, fileId)
+        if (existed || reset.isNotEmpty()) {
+            val p = prefs(context)
+            p.edit {
+                reset.forEach { putString(keyFor(it), FontChoice.store(FontChoice.Follow)) }
+                putInt(KEY_VERSION, p.getInt(KEY_VERSION, 0) + 1)
+            }
+            clearCaches()
+            loggedMissingFiles.remove(fileId)
+        }
+        return if (existed) DeleteResult.Deleted(reset) else DeleteResult.NotFound(reset)
     }
 
     // ---- 解析 ----
