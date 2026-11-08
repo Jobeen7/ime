@@ -487,6 +487,23 @@
     <string name="clipboard_reorder_done">完成</string>
     <string name="phrase_item_actions">对这条常用语</string>
 
+    <!-- Clipboard groups -->
+    <string name="clipboard_move_to_group">移至分组…</string>
+    <string name="clipboard_group_all">全部</string>
+    <string name="clipboard_group_ungrouped">未分组</string>
+    <string name="clipboard_group_new">新建分组…</string>
+    <string name="clipboard_group_create_title">新建分组</string>
+    <string name="clipboard_group_rename_title">重命名分组</string>
+    <string name="clipboard_group_name_hint">分组名称</string>
+    <string name="clipboard_group_create">创建</string>
+    <string name="clipboard_group_rename">重命名</string>
+    <string name="clipboard_group_delete">删除分组</string>
+    <string name="clipboard_group_delete_confirm">确定要删除分组“%1$s”吗？组内条目将移回未分组。</string>
+    <string name="clipboard_group_exists">已有同名分组</string>
+    <string name="clipboard_group_name_invalid">分组名称不能为空</string>
+    <string name="clipboard_group_limit">分组已达上限（%1$d 个）</string>
+    <string name="clipboard_group_failed">操作失败，请重试</string>
+
     <!-- Clipboard / Phrase capsule -->
     <string name="clipboard_tab">剪切板</string>
     <string name="phrase_tab">常用语</string>

@@ -11,6 +11,7 @@ import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.ClipboardDatabase
 import com.jobeen.ime.data.database.ClipboardDao
+import com.jobeen.ime.data.database.ClipboardGroup
 import com.jobeen.ime.data.database.ClipboardRecord
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -173,6 +174,8 @@ object ClipboardManager {
         val timestamp: Long = System.currentTimeMillis(),
         val cloud: Boolean = false,
         val pinned: Boolean = false,
+        /** 自定义分组归属（H2-4）：0 = 未分组 */
+        val groupId: Long = 0,
     )
 
     /**
@@ -185,7 +188,7 @@ object ClipboardManager {
     suspend fun getEntriesOrNull(context: Context): List<Entry>? = db(context) { db ->
         val cutoff = System.currentTimeMillis() - getRetentionDays(context) * 86400000L
         db.clipboardDao().getAllActiveSince(cutoff)
-            .map { Entry(it.text, it.timestamp, it.cloud, it.pinned) }
+            .map { Entry(it.text, it.timestamp, it.cloud, it.pinned, it.groupId) }
     }
 
     /** 旧契约兼容：失败按真空返回。不关心成败的调用方用，新消费方用 [getEntriesOrNull]。 */
@@ -224,6 +227,119 @@ object ClipboardManager {
         }
     }
 
+    // ── 自定义分组（H2-4） ──
+
+    /** 分组个数上限：分组条是横排药丸，过多既占行高又难选 */
+    const val MAX_GROUPS = 20
+
+    /** 分组名称长度上限：超限按此截断（与单条文本 MAX_TEXT_LENGTH 同口径） */
+    const val MAX_GROUP_NAME_LENGTH = 20
+
+    /**
+     * 分组名规整（纯函数）：去首尾空白、空名返回 null、超长截断。
+     * 与写入侧 [createGroup]/[renameGroup] 同口径，单测覆盖。
+     */
+    fun normalizeGroupName(raw: String): String? {
+        val clean = raw.trim()
+        if (clean.isEmpty()) return null
+        return clean.take(MAX_GROUP_NAME_LENGTH)
+    }
+
+    /** 按分组过滤条目（纯函数）：null = 全部，0 = 未分组，其余 = 指定分组。 */
+    fun filterByGroup(entries: List<Entry>, groupId: Long?): List<Entry> = when (groupId) {
+        null -> entries
+        0L -> entries.filter { it.groupId == 0L }
+        else -> entries.filter { it.groupId == groupId }
+    }
+
+    /** 全部自定义分组（按新建顺序）。 */
+    suspend fun getGroups(context: Context): List<ClipboardGroup> =
+        db(context) { db -> db.clipboardDao().getAllGroups() } ?: emptyList()
+
+    /** [createGroup] 的结果：成功带新分组 id；其余四态调用方分别提示。 */
+    sealed class CreateGroupResult {
+        class Ok(val id: Long) : CreateGroupResult()
+        object Duplicate : CreateGroupResult()
+        object Invalid : CreateGroupResult()
+        object Limit : CreateGroupResult()
+        object Error : CreateGroupResult()
+    }
+
+    /** 新建分组：重名、空名、达上限、数据库失败分别回不同结果。 */
+    suspend fun createGroup(context: Context, rawName: String): CreateGroupResult {
+        val name = normalizeGroupName(rawName) ?: return CreateGroupResult.Invalid
+        val id = db(context) { db ->
+            val dao = db.clipboardDao()
+            if (dao.getGroupByName(name) != null) return@db -1L
+            if (dao.countGroups() >= MAX_GROUPS) return@db -2L
+            dao.insertGroup(
+                ClipboardGroup(
+                    name = name,
+                    sortOrder = (dao.maxGroupSortOrder() ?: -1L) + 1L,
+                )
+            )
+        } ?: return CreateGroupResult.Error
+        return when (id) {
+            -1L -> CreateGroupResult.Duplicate
+            -2L -> CreateGroupResult.Limit
+            else -> CreateGroupResult.Ok(id)
+        }
+    }
+
+    /** [renameGroup] 的结果：成功／空名／重名／数据库失败（不存在的 id 也算失败）。 */
+    sealed class RenameGroupResult {
+        object Ok : RenameGroupResult()
+        object Invalid : RenameGroupResult()
+        object Duplicate : RenameGroupResult()
+        object Error : RenameGroupResult()
+    }
+
+    /** 重命名分组：改成已存在的名字被拒；改成原名是无操作成功。 */
+    suspend fun renameGroup(context: Context, id: Long, rawName: String): RenameGroupResult {
+        val name = normalizeGroupName(rawName) ?: return RenameGroupResult.Invalid
+        val rows = db(context) { db ->
+            val dao = db.clipboardDao()
+            val current = dao.getGroupById(id) ?: return@db -1
+            if (current.name == name) return@db 0
+            if (dao.getGroupByName(name) != null) return@db -2
+            dao.renameGroupById(id, name)
+        } ?: return RenameGroupResult.Error
+        return when (rows) {
+            -1 -> RenameGroupResult.Error
+            -2 -> RenameGroupResult.Duplicate
+            else -> RenameGroupResult.Ok
+        }
+    }
+
+    /**
+     * 删除分组：组内条目回落未分组（不随组删除），见 [ClipboardDao.clearGroupById]。
+     * @return 落库成功为 true；数据库操作失败为 false。
+     */
+    suspend fun deleteGroup(context: Context, id: Long): Boolean =
+        db(context) { db ->
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                dao.clearGroupById(id)
+                dao.deleteGroupById(id)
+            }
+        } != null
+
+    /**
+     * 把一条记录移进/移出分组（groupId = 0 为未分组）。
+     * @return 落库成功为 true；目标分组不存在或数据库失败为 false。
+     */
+    suspend fun setGroup(context: Context, text: String, groupId: Long): Boolean {
+        if (groupId != 0L) {
+            val exists = db(context) { db ->
+                db.clipboardDao().getGroupById(groupId) != null
+            } ?: return false
+            if (!exists) return false
+        }
+        return db(context) { db ->
+            db.clipboardDao().setGroupByText(text, groupId)
+        } != null
+    }
+
     /**
      * @return 条目已落库（或空文本无需落库）为 true；数据库操作失败
      * 为 false——旧实现静默 return，监听侧会冒充「有新条目」触发无谓刷新。
@@ -242,12 +358,14 @@ object ClipboardManager {
             db.withTransaction {
                 val dao = db.clipboardDao()
                 val existed = dao.existsByText(clipped)
-                // 同文本重入（再次复制）会删旧行重插，置顶状态要保留下来
+                // 同文本重入（再次复制）会删旧行重插，置顶状态与分组归属要保留下来
                 val wasPinned = dao.pinnedByText(clipped) ?: false
+                val wasGroupId = dao.getGroupByText(clipped) ?: 0L
                 dao.deleteByText(clipped)
                 dao.insert(
                     ClipboardRecord(
                         text = clipped, timestamp = now, cloud = false, pinned = wasPinned,
+                        groupId = wasGroupId,
                         // 新条目排到最前：取当前最小排序序号再减一
                         sortOrder = (dao.minSortOrder() ?: 0L) - 1L,
                     )

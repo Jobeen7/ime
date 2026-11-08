@@ -26,6 +26,8 @@ data class ClipboardRecord(
     val deleted: Boolean = false,
     val deletedAt: Long = 0,
     val pinned: Boolean = false,
+    /** 自定义分组归属（H2-4）：0 = 未分组，其余为 clipboard_groups.id */
+    val groupId: Long = 0,
     /** 手动排序序号（拖动排序写入，越小越靠前）；未手动排过时由 -timestamp 保持时间倒序 */
     val sortOrder: Long = 0,
 )

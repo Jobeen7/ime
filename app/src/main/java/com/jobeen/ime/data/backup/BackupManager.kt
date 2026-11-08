@@ -8,6 +8,7 @@ import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.CandidatePrefer
 import com.jobeen.ime.data.database.CandidateSorting
 import com.jobeen.ime.data.database.ClipboardDatabase
+import com.jobeen.ime.data.database.ClipboardGroup
 import com.jobeen.ime.data.database.ClipboardRecord
 import com.jobeen.ime.data.database.dedupeClipboardByText
 import com.jobeen.ime.data.database.PhraseRecord
@@ -176,9 +177,21 @@ object BackupManager {
                     .put("id", r.id).put("text", r.text).put("timestamp", r.timestamp)
                     .put("cloud", r.cloud).put("deleted", r.deleted).put("deletedAt", r.deletedAt)
                     .put("pinned", r.pinned).put("sortOrder", r.sortOrder)
+                    .put("groupId", r.groupId)
             )
         }
         root.put("clipboard", clips)
+
+        // 自定义分组（H2-4）：与剪贴板行一起出包，还原时按名称合并、条目 groupId 重映射
+        val groups = JSONArray()
+        for (g in clipDb.clipboardDao().getAllGroups()) {
+            groups.put(
+                JSONObject()
+                    .put("id", g.id).put("name", g.name)
+                    .put("sortOrder", g.sortOrder).put("createdAt", g.createdAt)
+            )
+        }
+        root.put("clipboard_groups", groups)
 
         val phrases = JSONArray()
         for (r in db.phraseDao().getAll()) {
@@ -512,6 +525,8 @@ object BackupManager {
     private class ParsedBackup(
         val prefs: Map<String, Map<String, Any>>,
         val clipboard: List<ClipboardRecord>,
+        /** 自定义分组（H2-4；旧备份无此段时为空列表，还原不碰现分组） */
+        val clipboardGroups: List<ClipboardGroup>,
         val phrases: List<PhraseRecord>,
         val prefers: List<CandidatePrefer>,
         val sortings: List<CandidateSorting>,
@@ -571,9 +586,26 @@ object BackupManager {
                     deletedAt = o.optLong("deletedAt"),
                     // 旧备份无此字段，按未置顶还原
                     pinned = o.optBoolean("pinned"),
+                    // 旧备份无此字段，按未分组还原
+                    groupId = o.optLong("groupId"),
                     // 旧备份无排序序号：用 -timestamp 派生，保持备份内的时间倒序
                     sortOrder = if (o.has("sortOrder")) o.optLong("sortOrder")
                     else -o.optLong("timestamp"),
+                )
+            }
+
+            // 自定义分组（H2-4）：旧备份无此段时为空列表，还原不碰现分组
+            val groupList = ArrayList<ClipboardGroup>()
+            val groupsJson = root.optJSONArray("clipboard_groups") ?: JSONArray()
+            for (i in 0 until groupsJson.length()) {
+                val o = groupsJson.getJSONObject(i)
+                val name = o.optString("name").trim()
+                if (name.isEmpty()) continue
+                groupList += ClipboardGroup(
+                    id = o.optLong("id", 0),
+                    name = name.take(ClipboardManager.MAX_GROUP_NAME_LENGTH),
+                    sortOrder = o.optLong("sortOrder"),
+                    createdAt = o.optLong("createdAt"),
                 )
             }
 
@@ -626,6 +658,7 @@ object BackupManager {
                 // 先按统一口径去重（pinned 优先、timestamp 最新、
                 // id 最大，与库内迁移去重一致）
                 clipboard = dedupeClipboardByText(clipList),
+                clipboardGroups = groupList,
                 phrases = phraseList,
                 prefers = preferList,
                 sortings = sortingList,
@@ -801,11 +834,21 @@ object BackupManager {
      * 只在备份里有的行补进来（备份后删掉的内容还原时回来）。prefs、
      * 输入统计、皮肤脚本不在此列：prefs 整表覆盖是设置还原的本意，
      * 统计只是计数，脚本是快照语义（见类 KDoc）。
+     * 分组（H2-4）同口径按名称合并；补入的剪贴板行按分组重映射
+     * 改 groupId，当前行 groupId 不动。
      */
-    private fun mergeForRestore(current: ParsedBackup, backup: ParsedBackup): ParsedBackup =
-        ParsedBackup(
+    private fun mergeForRestore(current: ParsedBackup, backup: ParsedBackup): ParsedBackup {
+        val (mergedGroups, groupRemap) =
+            mergeGroupsForRestore(current.clipboardGroups, backup.clipboardGroups)
+        val currentTexts = current.clipboard.mapTo(HashSet()) { it.text }
+        return ParsedBackup(
             prefs = backup.prefs,
-            clipboard = mergeClipboardForRestore(current.clipboard, backup.clipboard),
+            clipboard = remapBackupRecordGroups(
+                mergeClipboardForRestore(current.clipboard, backup.clipboard),
+                currentTexts,
+                groupRemap,
+            ),
+            clipboardGroups = mergedGroups,
             phrases = mergePhrasesForRestore(current.phrases, backup.phrases),
             prefers = mergePrefersForRestore(current.prefers, backup.prefers),
             sortings = mergeSortingsForRestore(current.sortings, backup.sortings),
@@ -813,6 +856,51 @@ object BackupManager {
             skinLibrary = backup.skinLibrary,
             skinScripts = backup.skinScripts,
         )
+    }
+
+    /**
+     * 分组合并（H2-4）：名称是合并键，当前组优先；备份独有的组补进来，
+     * id 重排（自增 id 是本机代次，跨设备直插会撞主键——与剪贴板行同理）。
+     * @return 合并后的分组表＋备份组 id 到合并后 id 的重映射（id 不变的组不在映射里）。
+     */
+    internal fun mergeGroupsForRestore(
+        current: List<ClipboardGroup>,
+        backup: List<ClipboardGroup>,
+    ): Pair<List<ClipboardGroup>, Map<Long, Long>> {
+        if (backup.isEmpty()) return current to emptyMap()
+        val out = current.toMutableList()
+        val remap = HashMap<Long, Long>()
+        var nextId = (current.maxOfOrNull { it.id } ?: 0L) + 1L
+        for (g in backup) {
+            val existing = out.firstOrNull { it.name == g.name }
+            if (existing != null) {
+                // 同名：当前组优先，备份 id 映射到当前组 id
+                if (g.id != existing.id) remap[g.id] = existing.id
+            } else {
+                val newId = nextId++
+                out += g.copy(id = newId)
+                if (g.id != newId) remap[g.id] = newId
+            }
+        }
+        return out to remap
+    }
+
+    /**
+     * 补入的剪贴板行按分组重映射（H2-4）：只有备份来源的行（text 不在
+     * 当前表里）才改 groupId；当前行 groupId 不动。映射不到的组
+     * （备份组在合并表里不存在）回落未分组。
+     */
+    internal fun remapBackupRecordGroups(
+        records: List<ClipboardRecord>,
+        currentTexts: Set<String>,
+        groupRemap: Map<Long, Long>,
+    ): List<ClipboardRecord> {
+        if (groupRemap.isEmpty()) return records
+        return records.map { r ->
+            if (r.text in currentTexts || r.groupId == 0L) r
+            else r.copy(groupId = groupRemap[r.groupId] ?: 0L)
+        }
+    }
 
     /**
      * 剪贴板合并：text 是唯一键（v4 起唯一索引），当前行优先；备份
@@ -900,6 +988,14 @@ object BackupManager {
                     }
                 )
                 clipDb.clipboardDao().insertAll(clipped)
+            }
+            // 自定义分组（H2-4）：与剪贴板行同一事务整表替换；
+            // 旧备份无此段时 parsed.clipboardGroups 为空列表，还原
+            // 不碰现分组（见 parsePayload）；groupId 已在合并阶段
+            // 按合并后的分组表重映射（见 mergeForRestore）
+            if (parsed.clipboardGroups.isNotEmpty()) {
+                clipDb.clipboardDao().deleteAllGroups()
+                clipDb.clipboardDao().insertGroups(parsed.clipboardGroups)
             }
         }
         db.withTransaction {

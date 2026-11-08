@@ -130,6 +130,49 @@ interface ClipboardDao {
     @Query("DELETE FROM clipboard_records WHERE text IN (:texts)")
     suspend fun deleteByTexts(texts: List<String>)
 
+    // —— 自定义分组（H2-4） ——
+
+    @Query("SELECT * FROM clipboard_groups ORDER BY sortOrder ASC, id ASC")
+    suspend fun getAllGroups(): List<ClipboardGroup>
+
+    @Query("SELECT * FROM clipboard_groups WHERE id = :id LIMIT 1")
+    suspend fun getGroupById(id: Long): ClipboardGroup?
+
+    @Query("SELECT * FROM clipboard_groups WHERE name = :name LIMIT 1")
+    suspend fun getGroupByName(name: String): ClipboardGroup?
+
+    @Insert
+    suspend fun insertGroup(group: ClipboardGroup): Long
+
+    @Insert
+    suspend fun insertGroups(groups: List<ClipboardGroup>)
+
+    @Query("UPDATE clipboard_groups SET name = :name WHERE id = :id")
+    suspend fun renameGroupById(id: Long, name: String): Int
+
+    @Query("DELETE FROM clipboard_groups WHERE id = :id")
+    suspend fun deleteGroupById(id: Long)
+
+    @Query("DELETE FROM clipboard_groups")
+    suspend fun deleteAllGroups()
+
+    @Query("SELECT COUNT(*) FROM clipboard_groups")
+    suspend fun countGroups(): Int
+
+    @Query("SELECT MAX(sortOrder) FROM clipboard_groups")
+    suspend fun maxGroupSortOrder(): Long?
+
+    /** 把一条记录移进/移出分组（groupId = 0 为未分组）。 */
+    @Query("UPDATE clipboard_records SET groupId = :groupId WHERE text = :text AND deleted = 0")
+    suspend fun setGroupByText(text: String, groupId: Long)
+
+    @Query("SELECT groupId FROM clipboard_records WHERE text = :text AND deleted = 0 LIMIT 1")
+    suspend fun getGroupByText(text: String): Long?
+
+    /** 分组删除时组内条目回落未分组（不随组删除）。 */
+    @Query("UPDATE clipboard_records SET groupId = 0 WHERE groupId = :groupId AND deleted = 0")
+    suspend fun clearGroupById(groupId: Long)
+
     // 只淘汰未置顶有效行；软删除行由 purgeDeletedOlderThan 按保留期清理。
     // 淘汰口径按显示序的末尾先删：显示序为 sortOrder 升序（越小越靠前），
     // 故 sortOrder 大的先淘汰——被用户拖到顶部的条目 sortOrder 小，

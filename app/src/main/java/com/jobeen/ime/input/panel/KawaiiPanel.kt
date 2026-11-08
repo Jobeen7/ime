@@ -7,6 +7,7 @@ import android.content.Context
 import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.data.database.ClipboardGroup
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.PhraseManager
 import com.jobeen.ime.data.manager.takeCodePoints
@@ -167,6 +168,7 @@ class KawaiiPanel(
             if (value is State.Menu) {
                 view.setExpanded(false)
             }
+            if (value is State.Clipboard) refreshClipGroups()
             if (field == State.Idle) checkPendingCopy()
         }
 
@@ -459,6 +461,9 @@ class KawaiiPanel(
                             clipboardView.refresh()
                         }
                     },
+                    context.getString(R.string.clipboard_move_to_group) to {
+                        showMoveToGroupMenu(entry)
+                    },
                     context.getString(R.string.clipboard_edit) to {
                         enterClipEdit(entry)
                     },
@@ -542,6 +547,8 @@ class KawaiiPanel(
         clipboardView.onPhrasesReordered = { ids ->
             appScope.launch { PhraseManager.applyOrder(context, ids) }
         }
+        clipboardView.onCreateGroupClick = { showCreateGroupDialog(assignText = null) }
+        clipboardView.onGroupChipLongClick = { group, _, _ -> showGroupActions(group) }
         PhraseManager.onContentChanged = phraseContentChangedCallback
 
     }
@@ -585,6 +592,174 @@ class KawaiiPanel(
             ClipboardManager.removeEntry(context, entry.text)
             clipboardView.refresh()
         }
+    }
+
+    // ── 剪贴板自定义分组（H2-4） ────────────────────────────────
+    // 分组表由面板持有（clipGroups，供长按菜单与分组条长按菜单用），
+    // 视图只拿它画药丸与过滤。新建／重命名走服务 showDialog 的输入框
+    // 弹窗（与部署确认／打开链接确认同口径）；移组与删组直接落库。
+
+    /** 面板侧分组缓存：长按菜单列分组用；视图侧另有一份（画药丸）。 */
+    private var clipGroups: List<ClipboardGroup> = emptyList()
+
+    private fun refreshClipGroups() {
+        appScope.launch {
+            val gs = ClipboardManager.getGroups(context)
+            clipGroups = gs
+            clipboardView.setGroups(gs)
+        }
+    }
+
+    private fun showGroupToast(message: String) {
+        (context as? ImeInputMethodService)?.keyboardWindow?.showToast(message)
+    }
+
+    /** 长按菜单「移至分组…」：第二张动作卡列未分组／各分组／新建分组。 */
+    private fun showMoveToGroupMenu(entry: ClipboardManager.Entry) {
+        val items = mutableListOf<Pair<String, () -> Unit>>()
+        items += context.getString(R.string.clipboard_group_ungrouped) to {
+            moveEntryToGroup(entry, 0L)
+        }
+        for (g in clipGroups) {
+            items += g.name to { moveEntryToGroup(entry, g.id) }
+        }
+        items += context.getString(R.string.clipboard_group_new) to {
+            showCreateGroupDialog(assignText = entry.text)
+        }
+        // 延后一帧再弹：动作卡的点击处理在回调后会 dismiss，同步弹
+        // 新卡会被随后的 dismiss 一起关掉（与删除确认同口径）
+        confirmOverlay.post {
+            confirmOverlay.actions(
+                message = context.getString(R.string.clipboard_move_to_group),
+                items = items,
+                cardX = Float.NaN,
+                cardY = 0f,
+            )
+        }
+    }
+
+    private fun moveEntryToGroup(entry: ClipboardManager.Entry, groupId: Long) {
+        appScope.launch {
+            ClipboardManager.setGroup(context, entry.text, groupId)
+            clipboardView.refresh()
+        }
+    }
+
+    /** 分组药丸长按：重命名／删除。 */
+    private fun showGroupActions(group: ClipboardGroup) {
+        confirmOverlay.actions(
+            message = group.name,
+            items = listOf(
+                context.getString(R.string.clipboard_group_rename) to {
+                    showRenameGroupDialog(group)
+                },
+                context.getString(R.string.clipboard_group_delete) to {
+                    confirmOverlay.post {
+                        confirmOverlay.confirm(
+                            message = context.getString(
+                                R.string.clipboard_group_delete_confirm, group.name
+                            ),
+                            onConfirm = {
+                                appScope.launch {
+                                    ClipboardManager.deleteGroup(context, group.id)
+                                    refreshClipGroups()
+                                    clipboardView.refresh()
+                                }
+                            },
+                            cardX = Float.NaN,
+                            cardY = 0f,
+                        )
+                    }
+                },
+            ),
+            cardX = Float.NaN,
+            cardY = 0f,
+        )
+    }
+
+    private fun groupNameInput(initial: String): android.widget.EditText {
+        val pad = (16 * context.resources.displayMetrics.density).toInt()
+        return android.widget.EditText(context).apply {
+            hint = context.getString(R.string.clipboard_group_name_hint)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT
+            setSingleLine()
+            setText(initial)
+            setPadding(pad, pad, pad, pad)
+        }
+    }
+
+    /**
+     * 新建分组输入框：assignText 非空时建好后直接把该条移进新分组
+     * （从「移至分组」里新建的语义）。服务未就绪（context 不是
+     * ImeInputMethodService）时静默放弃——键盘窗口无 token 时
+     * showDialog 本就会放弃显示。
+     */
+    private fun showCreateGroupDialog(assignText: String? = null) {
+        val service = context as? ImeInputMethodService ?: return
+        val input = groupNameInput("")
+        val dialog = android.app.AlertDialog.Builder(service)
+            .setTitle(R.string.clipboard_group_create_title)
+            .setView(input)
+            .setPositiveButton(R.string.clipboard_group_create) { _, _ ->
+                val raw = input.text?.toString().orEmpty()
+                appScope.launch {
+                    when (val result = ClipboardManager.createGroup(context, raw)) {
+                        is ClipboardManager.CreateGroupResult.Ok -> {
+                            refreshClipGroups()
+                            if (assignText != null) {
+                                ClipboardManager.setGroup(context, assignText, result.id)
+                            }
+                            clipboardView.refresh()
+                        }
+                        ClipboardManager.CreateGroupResult.Duplicate ->
+                            showGroupToast(context.getString(R.string.clipboard_group_exists))
+                        ClipboardManager.CreateGroupResult.Invalid ->
+                            showGroupToast(context.getString(R.string.clipboard_group_name_invalid))
+                        ClipboardManager.CreateGroupResult.Limit ->
+                            showGroupToast(
+                                context.getString(
+                                    R.string.clipboard_group_limit,
+                                    ClipboardManager.MAX_GROUPS,
+                                )
+                            )
+                        ClipboardManager.CreateGroupResult.Error ->
+                            showGroupToast(context.getString(R.string.clipboard_group_failed))
+                    }
+                }
+            }
+            .setNegativeButton(R.string.clipboard_cancel, null)
+            .create()
+        service.showDialog(dialog)
+    }
+
+    /** 重命名分组输入框（预填原名）。 */
+    private fun showRenameGroupDialog(group: ClipboardGroup) {
+        val service = context as? ImeInputMethodService ?: return
+        val input = groupNameInput(group.name)
+        input.setSelection(input.text?.length ?: 0)
+        val dialog = android.app.AlertDialog.Builder(service)
+            .setTitle(R.string.clipboard_group_rename_title)
+            .setView(input)
+            .setPositiveButton(R.string.clipboard_group_rename) { _, _ ->
+                val raw = input.text?.toString().orEmpty()
+                appScope.launch {
+                    when (ClipboardManager.renameGroup(context, group.id, raw)) {
+                        ClipboardManager.RenameGroupResult.Ok -> {
+                            refreshClipGroups()
+                            clipboardView.refresh()
+                        }
+                        ClipboardManager.RenameGroupResult.Duplicate ->
+                            showGroupToast(context.getString(R.string.clipboard_group_exists))
+                        ClipboardManager.RenameGroupResult.Invalid ->
+                            showGroupToast(context.getString(R.string.clipboard_group_name_invalid))
+                        ClipboardManager.RenameGroupResult.Error ->
+                            showGroupToast(context.getString(R.string.clipboard_group_failed))
+                    }
+                }
+            }
+            .setNegativeButton(R.string.clipboard_cancel, null)
+            .create()
+        service.showDialog(dialog)
     }
 
     // ── 剪贴板搜索态 ──────────────────────────────────────────────

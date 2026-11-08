@@ -14,7 +14,11 @@ import androidx.room.TypeConverters
  * 旧数据当年由 ClipboardManager 一次性迁入（迁移本体已随清点 Q2 退场，
  * 现行设备早已迁完）；ime_database 侧的同名残表已于 AppDatabase v14 DROP。
  */
-@Database(entities = [ClipboardRecord::class], version = 4, exportSchema = true)
+@Database(
+    entities = [ClipboardRecord::class, ClipboardGroup::class],
+    version = 5,
+    exportSchema = true,
+)
 @TypeConverters(Converters::class)
 abstract class ClipboardDatabase : RoomDatabase() {
 
@@ -77,6 +81,21 @@ abstract class ClipboardDatabase : RoomDatabase() {
             }
         }
 
+        /** v5：自定义分组（H2-4）：新建 clipboard_groups 表；clipboard_records 加 groupId 列（默认 0 = 未分组）。 */
+        private val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `clipboard_groups` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS `index_clipboard_groups_name` ON `clipboard_groups` (`name`)"
+                )
+                db.execSQL(
+                    "ALTER TABLE clipboard_records ADD COLUMN groupId INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         fun getInstance(context: Context): ClipboardDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: build(context.applicationContext, "clipboard_database")
@@ -94,7 +113,7 @@ abstract class ClipboardDatabase : RoomDatabase() {
 
         private fun build(context: Context, name: String): ClipboardDatabase =
             Room.databaseBuilder(context, ClipboardDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build()
     }
 }

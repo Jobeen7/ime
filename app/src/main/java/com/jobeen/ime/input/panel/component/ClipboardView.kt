@@ -15,6 +15,7 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.ClipboardManager
+import com.jobeen.ime.data.database.ClipboardGroup
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -41,6 +42,10 @@ class ClipboardView(
     var onSelectionChanged: (() -> Unit)? = null
     var onPhraseClick: ((PhraseManager.Phrase) -> Unit)? = null
     var onPhraseDelete: ((PhraseManager.Phrase) -> Unit)? = null
+    /** 分组条上长按某个分组药丸：面板弹重命名／删除菜单。 */
+    var onGroupChipLongClick: ((ClipboardGroup, Float, Float) -> Unit)? = null
+    /** 分组条上点「＋」：面板弹新建分组输入框。 */
+    var onCreateGroupClick: (() -> Unit)? = null
 
     private val density = resources.displayMetrics.density
 
@@ -64,10 +69,11 @@ class ClipboardView(
         thumbScrolling = false
         removeCallbacks(reorderAutoScrollRunnable)
         removeCallbacks(longPressRunnable)
+        removeCallbacks(stripLongPressRunnable)
         super.onDetachedFromWindow()
     }
 
-    private val headerH = 0f
+    private var headerH = 0f
     private val hMargin = 10f * density
     private val gap = 6f * density
     private val topPad = 6f * density
@@ -75,8 +81,202 @@ class ClipboardView(
     private val pillPad = 10f * density
 
     var clipTab: ClipboardTab = ClipboardTab.CLIPBOARD
+        set(value) {
+            if (field == value) return
+            field = value
+            updateHeaderH()
+            computeRowLayouts()
+            resetScroll()
+            invalidate()
+        }
     private var clipboardEntries = listOf<ClipboardManager.Entry>()
     private var phrases = listOf<PhraseManager.Phrase>()
+
+    // ── 自定义分组（H2-4）：分组条只在剪贴板标签且已有分组时占位 ──
+    // 过滤：null = 全部，0 = 未分组，其余 = 分组 id。过滤只影响显示，
+    // 不动 clipboardEntries 本体；搜索与分组过滤可叠加。
+    var groups: List<ClipboardGroup> = emptyList()
+        private set
+    var groupFilter: Long? = null
+        private set
+
+    /** 分组条药丸高度（headerH 取此值或 0）。 */
+    private val groupStripH = 40f * density
+    private val chipGap = 8f * density
+    private val chipH = 28f * density
+
+    private data class GroupChip(
+        val filter: Long?,
+        val label: String,
+        val group: ClipboardGroup?,
+        val isCreate: Boolean = false,
+        val rect: RectF = RectF(),
+    )
+
+    private var groupChips = listOf<GroupChip>()
+    private var groupStripScrollX = 0f
+    private var groupStripMaxScroll = 0f
+
+    // 分组条手势：点按选过滤、横拖滚药丸行、长按分组药丸出管理菜单
+    private var stripTouchChip: GroupChip? = null
+    private var stripDownX = 0f
+    private var stripScrollStartX = 0f
+    private var stripDragging = false
+    private var stripLongPressFired = false
+    private val stripLongPressRunnable = Runnable {
+        val chip = stripTouchChip
+        if (chip != null && chip.group != null && !stripDragging) {
+            stripLongPressFired = true
+            pressedIndex = -1
+            invalidate()
+            onGroupChipLongClick?.invoke(chip.group, chip.rect.centerX(), headerH)
+        }
+    }
+
+    /** 分组条占位：只在剪贴板标签且已有分组时占位，其余态为 0、行区顶满。 */
+    private fun updateHeaderH() {
+        headerH = if (clipTab == ClipboardTab.CLIPBOARD && groups.isNotEmpty()) groupStripH else 0f
+    }
+
+    /** 面板传入最新分组表：被删分组正被过滤时回落到全部并重算显示。 */
+    fun setGroups(groups: List<ClipboardGroup>) {
+        this.groups = groups
+        if (groupFilter != null && groupFilter != 0L &&
+            groups.none { it.id == groupFilter }
+        ) {
+            groupFilter = null
+        }
+        groupStripScrollX = groupStripScrollX.coerceIn(0f, groupStripMaxScroll)
+        updateHeaderH()
+        // 分组表变化本身不改条目归属，但过滤回落时必须重算显示：
+        // refresh() 的 reload 可能已先跑完（仍按旧过滤算出空子集），
+        // 只改 groupFilter 不重算会让列表一直空着
+        applyGroupFilter()
+    }
+
+    /** 点分组药丸切换过滤（＋药丸不走这里，走 onCreateGroupClick）。 */
+    fun setGroupFilter(filter: Long?) {
+        if (groupFilter == filter) return
+        groupFilter = filter
+        applyGroupFilter()
+    }
+
+    private fun applyGroupFilter() {
+        displayedEntries = ClipboardManager.filterByGroup(
+            filterEntries(clipboardEntries, searchQuery), groupFilter
+        )
+        computeRowLayouts()
+        resetScroll()
+        invalidate()
+    }
+
+    /** 按当前宽排分组药丸（横排，超出可横拖滚动）；无分组条时清空。 */
+    private fun layoutGroupChips() {
+        groupChips = emptyList()
+        groupStripMaxScroll = 0f
+        if (headerH <= 0f || width <= 0) return
+        val top = (groupStripH - chipH) / 2f
+        var x = hMargin
+        val chips = mutableListOf<GroupChip>()
+        val items = mutableListOf<Triple<Long?, String, ClipboardGroup?>>()
+        items += Triple(null, context.getString(R.string.clipboard_group_all), null)
+        items += Triple(0L, context.getString(R.string.clipboard_group_ungrouped), null)
+        for (g in groups) items += Triple(g.id, g.name, g)
+        for ((filter, label, group) in items) {
+            val w = chipTextPaint.measureText(label) + 24f * density
+            chips += GroupChip(filter, label, group, rect = RectF(x, top, x + w, top + chipH))
+            x += w + chipGap
+        }
+        val plusLabel = "＋"
+        val pw = chipTextPaint.measureText(plusLabel) + 24f * density
+        chips += GroupChip(
+            filter = -1L, label = plusLabel, group = null, isCreate = true,
+            rect = RectF(x, top, x + pw, top + chipH),
+        )
+        x += pw
+        groupChips = chips
+        groupStripMaxScroll = maxOf(0f, x - chipGap - (width - hMargin))
+        groupStripScrollX = groupStripScrollX.coerceIn(0f, groupStripMaxScroll)
+    }
+
+    private fun drawGroupStrip(canvas: Canvas) {
+        canvas.save()
+        canvas.clipRect(0f, 0f, width.toFloat(), headerH)
+        canvas.translate(-groupStripScrollX, 0f)
+        val radius = chipH / 2f
+        val fm = chipTextPaint.fontMetrics
+        val baseline = groupStripH / 2f - (fm.ascent + fm.descent) / 2f
+        for (chip in groupChips) {
+            val selected = !chip.isCreate && chip.filter == groupFilter
+            canvas.drawRoundRect(
+                chip.rect, radius, radius,
+                if (selected) pinBarPaint else bgPaint,
+            )
+            chipTextPaint.color = if (selected) accentTextColor else textPaint.color
+            val tx = chip.rect.centerX() - chipTextPaint.measureText(chip.label) / 2f
+            canvas.drawText(chip.label, tx, baseline, chipTextPaint)
+        }
+        canvas.restore()
+    }
+
+    /** 分组条手势：点按选过滤／＋新建、横拖滚药丸行、长按分组药丸出管理菜单。 */
+    private fun onGroupStripTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                stripDragging = false
+                stripLongPressFired = false
+                stripDownX = event.x
+                stripScrollStartX = groupStripScrollX
+                stripTouchChip = groupChips.firstOrNull {
+                    event.x + groupStripScrollX in it.rect.left..it.rect.right &&
+                        event.y in it.rect.top..it.rect.bottom
+                }
+                if (stripTouchChip?.group != null) {
+                    postDelayed(stripLongPressRunnable, longPressTimeout.toLong())
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.x - stripDownX
+                if (!stripDragging && abs(dx) > touchSlop) {
+                    stripDragging = true
+                    removeCallbacks(stripLongPressRunnable)
+                }
+                if (stripDragging) {
+                    groupStripScrollX =
+                        (stripScrollStartX - dx).coerceIn(0f, groupStripMaxScroll)
+                    invalidate()
+                }
+                return true
+            }
+
+            MotionEvent.ACTION_UP -> {
+                removeCallbacks(stripLongPressRunnable)
+                val chip = stripTouchChip
+                stripTouchChip = null
+                if (!stripDragging && !stripLongPressFired && chip != null) {
+                    if (chip.isCreate) {
+                        onCreateGroupClick?.invoke()
+                    } else {
+                        setGroupFilter(chip.filter)
+                    }
+                }
+                stripDragging = false
+                stripLongPressFired = false
+                return true
+            }
+
+            MotionEvent.ACTION_CANCEL -> {
+                removeCallbacks(stripLongPressRunnable)
+                stripTouchChip = null
+                stripDragging = false
+                stripLongPressFired = false
+                return true
+            }
+        }
+        return true
+    }
 
     /** 搜索查询（仅剪贴板标签）：非空时列表只显示文本包含查询的条目。 */
     var searchQuery: String = ""
@@ -115,6 +315,8 @@ class ClipboardView(
     fun setReorderMode(active: Boolean) {
         if (reorderActive == active) return
         if (active && clipTab == ClipboardTab.CLIPBOARD && searchQuery.isNotBlank()) return
+        // 分组过滤中（显示的是子集）同样禁止进入：与搜索过滤同口径
+        if (active && clipTab == ClipboardTab.CLIPBOARD && groupFilter != null) return
         if (!active) finishReorderDrag(persist = true)
         reorderActive = active
         pressedIndex = -1
@@ -717,7 +919,10 @@ class ClipboardView(
     private val thumbPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL }
     // 置顶标记色（强调色），随主题在 updateColors 刷新
     private var accentColor = 0
+    private var accentTextColor = 0
     private var checkBgColor = 0
+    // 分组药丸文字（颜色随选中态在绘制时给，字号随主题刷新）
+    private val chipTextPaint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private val emptyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         textAlign = Paint.Align.CENTER
@@ -811,7 +1016,10 @@ class ClipboardView(
                     // 读失败（DB 异常）时保留现有列表，不再按真空整表替换出
                     // 「剪贴板被清空」的假象（§5.3）
                     val entries = ClipboardManager.getEntriesOrNull(context) ?: clipboardEntries
-                    val displayed = filterEntries(entries, searchQuery)
+                    // 搜索与分组过滤可叠加：先按查询、再按分组
+                    val displayed = ClipboardManager.filterByGroup(
+                        filterEntries(entries, searchQuery), groupFilter
+                    )
                     ReloadOutcome(
                         entries, displayed, phrases,
                         buildRowLayouts(tab, w, measureTextPaint, measureIndexPaint, displayed, phrases),
@@ -863,7 +1071,9 @@ class ClipboardView(
         if (searchQuery == query) return
         searchQuery = query
         if (clipTab != ClipboardTab.CLIPBOARD) return
-        displayedEntries = filterEntries(clipboardEntries, query)
+        displayedEntries = ClipboardManager.filterByGroup(
+            filterEntries(clipboardEntries, query), groupFilter
+        )
         computeRowLayouts()
         resetScroll()
         invalidate()
@@ -885,6 +1095,8 @@ class ClipboardView(
         indexPaint.textSize = 13f * density
         pressPaint.color = scheme.specialKeyPressed
         accentColor = scheme.accentKeyBackground
+        accentTextColor = scheme.accentKeyText
+        chipTextPaint.textSize = 14f * density
         pinBarPaint.color = accentColor
         thumbPaint.color = panel.candidateIndex
         checkBgColor = scheme.keyBackground
@@ -903,6 +1115,7 @@ class ClipboardView(
             return
         }
         val w = width
+        layoutGroupChips()
         if (w <= 0) {
             rowLayouts = emptyList()
             totalContentH = 0f
@@ -1026,6 +1239,9 @@ class ClipboardView(
             drawEditContent(canvas)
             return
         }
+
+        // 分组条固定在顶（不随列表滚动），空列表时也画——过滤入口不因无条目消失
+        if (headerH > 0f) drawGroupStrip(canvas)
 
         if (rowLayouts.isEmpty()) {
             // 空态 Paint 此前每帧新建并现解析主题色；提为字段，颜色随主题刷新
@@ -1267,6 +1483,8 @@ class ClipboardView(
         if (editDisplayActive) return onEditTouchEvent(event)
         if (multiSelectActive && clipTab == ClipboardTab.CLIPBOARD) return onMultiTouchEvent(event)
         if (reorderActive) return onReorderTouchEvent(event)
+        // 分组条在列表区之上：落在其内的手势归药丸（点选／横拖／长按），不进列表
+        if (headerH > 0f && event.y < headerH) return onGroupStripTouchEvent(event)
         velocityTracker?.addMovement(event)
 
         when (event.actionMasked) {
