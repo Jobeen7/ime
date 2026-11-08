@@ -45,8 +45,12 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
 import com.jobeen.ime.base.speech.cloud.BuiltinPlugins
+import com.jobeen.ime.base.speech.cloud.CloudVoiceGate
+import com.jobeen.ime.base.speech.cloud.InterfaceProbeFailure
 import com.jobeen.ime.base.speech.cloud.KeystoreSecretStore
 import com.jobeen.ime.base.speech.cloud.PluginContract
+import com.jobeen.ime.base.speech.cloud.PluginInterfaceTest
+import com.jobeen.ime.base.speech.cloud.PluginInterfaceTestResult
 import com.jobeen.ime.base.speech.cloud.PluginImportError
 import com.jobeen.ime.base.speech.cloud.PluginMeta
 import com.jobeen.ime.base.speech.cloud.PluginMetaDiff
@@ -54,6 +58,7 @@ import com.jobeen.ime.base.speech.cloud.PluginSettingDecl
 import com.jobeen.ime.base.speech.cloud.PluginStore
 import com.jobeen.ime.base.speech.cloud.SettingType
 import com.jobeen.ime.base.speech.cloud.SharedPrefsStore
+import com.jobeen.ime.base.speech.cloud.TlsHostProber
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
@@ -139,6 +144,12 @@ fun CloudVoicePluginsScreen(
     var selectDecl by remember { mutableStateOf<PluginSettingDecl?>(null) }
     var refreshTick by remember { mutableStateOf(0) }
     var targetConsumed by remember { mutableStateOf(false) }
+
+    // 接口测试态：按详情插件 id 计键，切插件即重置（不把上个插件的结果带过来）。
+    var testRunning by remember(detailPlugin?.id) { mutableStateOf(false) }
+    var testResult by remember(detailPlugin?.id) {
+        mutableStateOf<PluginInterfaceTestResult?>(null)
+    }
 
     fun refresh() {
         plugins = store.list()
@@ -385,6 +396,75 @@ fun CloudVoicePluginsScreen(
                                 )
                             }
                         }
+                    }
+                    NavRow(
+                        title = stringResource(R.string.cloud_voice_test_interface),
+                        subtitle = if (testRunning) {
+                            stringResource(R.string.cloud_voice_test_testing)
+                        } else {
+                            null
+                        },
+                        onClick = {
+                            if (testRunning) return@NavRow
+                            val detail = detailPlugin ?: return@NavRow
+                            val testedId = detail.id
+                            testRunning = true
+                            testResult = null
+                            scope.launch {
+                                val result = withContext(Dispatchers.IO) {
+                                    PluginInterfaceTest.run(
+                                        hosts = detail.hosts,
+                                        secretsMissing = missingKeys,
+                                        networkAvailable = CloudVoiceGate.networkAvailable(context),
+                                        prober = TlsHostProber,
+                                    )
+                                }
+                                // 测试中切了插件：结果不写进新插件的槽位。
+                                if (detailPlugin?.id == testedId) {
+                                    testRunning = false
+                                    testResult = result
+                                }
+                            }
+                        },
+                    )
+                    val testOutcome = testResult
+                    if (testOutcome != null) {
+                        Text(
+                            text = when (testOutcome) {
+                                PluginInterfaceTestResult.Reachable ->
+                                    stringResource(R.string.cloud_voice_test_ok)
+                                PluginInterfaceTestResult.MissingSecrets ->
+                                    stringResource(R.string.cloud_voice_test_missing_secrets)
+                                PluginInterfaceTestResult.NoNetwork ->
+                                    stringResource(R.string.cloud_voice_test_no_network)
+                                PluginInterfaceTestResult.NoHosts ->
+                                    stringResource(R.string.cloud_voice_test_no_hosts)
+                                is PluginInterfaceTestResult.Unreachable ->
+                                    stringResource(
+                                        R.string.cloud_voice_test_unreachable,
+                                        testOutcome.host,
+                                        stringResource(
+                                            when (testOutcome.failure) {
+                                                InterfaceProbeFailure.DNS ->
+                                                    R.string.cloud_voice_test_dns
+                                                InterfaceProbeFailure.TIMEOUT ->
+                                                    R.string.cloud_voice_test_timeout
+                                                InterfaceProbeFailure.TLS ->
+                                                    R.string.cloud_voice_test_tls
+                                                InterfaceProbeFailure.CONNECT ->
+                                                    R.string.cloud_voice_test_connect
+                                            },
+                                        ),
+                                    )
+                            },
+                            fontSize = rowSubFontSize,
+                            color = if (testOutcome == PluginInterfaceTestResult.Reachable) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.error
+                            },
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
                     }
                     if (!isPreferred) {
                         NavRow(

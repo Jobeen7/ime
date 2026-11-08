@@ -648,6 +648,17 @@
     <string name="cloud_voice_error_invalid_auth">凭证声明无效</string>
     <string name="cloud_voice_error_unsupported_sample_rate">采样率须为 16000</string>
     <string name="cloud_voice_need_keys">请先填写密钥</string>
+    <string name="cloud_voice_test_interface">测试接口</string>
+    <string name="cloud_voice_test_testing">测试中…</string>
+    <string name="cloud_voice_test_ok">结果：接口可达，密钥未验证</string>
+    <string name="cloud_voice_test_missing_secrets">结果：请先填写密钥</string>
+    <string name="cloud_voice_test_no_network">结果：无网络</string>
+    <string name="cloud_voice_test_no_hosts">结果：未声明域名</string>
+    <string name="cloud_voice_test_unreachable">结果：%1$s 不可达（%2$s）</string>
+    <string name="cloud_voice_test_dns">域名解析失败</string>
+    <string name="cloud_voice_test_timeout">连接超时</string>
+    <string name="cloud_voice_test_tls">TLS 握手失败</string>
+    <string name="cloud_voice_test_connect">连接失败</string>
     <string name="cloud_voice_deleted">已删除</string>
     <string name="cloud_voice_unavailable_message">云端语音暂不可用（插件缺失、密钥未填、已停用或无网络），是否前往语音设置检查，或关闭云端语音回到离线识别？</string>
     <string name="cloud_voice_failed">云端语音失败，请重试或在语音设置中切换回离线识别</string>
