@@ -24,14 +24,29 @@ object InputFieldPolicy {
     @SuppressLint("NewApi")
     fun isNoPersonalizedLearning(info: EditorInfo?): Boolean {
         if (info == null) return false
-        if (isPasswordField(info)) return true
-        return (info.imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
+        return isNoPersonalizedLearning(info.inputType, info.imeOptions)
+    }
+
+    /**
+     * 纯函数：位掩码判定，可单测（EditorInfo 本身不进 JVM 单测）。
+     * 密码框不学习回归测试即测此表：密码类（文本三种变体＋数字 PIN）
+     * 或声明 IME_FLAG_NO_PERSONALIZED_LEARNING 时一律禁学习。
+     */
+    @SuppressLint("NewApi")
+    internal fun isNoPersonalizedLearning(inputType: Int, imeOptions: Int): Boolean {
+        if (isPasswordField(inputType)) return true
+        return (imeOptions and EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING) != 0
     }
 
     fun isPasswordField(info: EditorInfo?): Boolean {
         if (info == null) return false
-        val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
-        val variation = info.inputType and InputType.TYPE_MASK_VARIATION
+        return isPasswordField(info.inputType)
+    }
+
+    /** 纯函数：位掩码判定，可单测。 */
+    internal fun isPasswordField(inputType: Int): Boolean {
+        val inputClass = inputType and InputType.TYPE_MASK_CLASS
+        val variation = inputType and InputType.TYPE_MASK_VARIATION
         return when (inputClass) {
             InputType.TYPE_CLASS_TEXT ->
                 variation == InputType.TYPE_TEXT_VARIATION_PASSWORD ||
