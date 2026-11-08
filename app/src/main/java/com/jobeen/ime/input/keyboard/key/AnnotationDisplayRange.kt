@@ -4,9 +4,9 @@ import kotlin.math.min
 import kotlin.math.sqrt
 
 /**
- * 注解显示范围（E3 G44，Trime-Mie AnnotationInsets 的 Jime 版）。
+ * 注解显示范围（E3 G44，对端 AnnotationInsets 的 Jime 版）。
  *
- * Mie 的机制（trime-mie v3.3.9，KeyAppearance.kt / Key.kt / KeyView.kt）：
+ * 对端机制（v3.3.9，KeyAppearance.kt / Key.kt / KeyView.kt）：
  * 每键 4 个内边距字段——symbolInsetX/Y（上方符号／顶部小字）、
  * hintInsetX/Y（下方注解／副文字），null = 继承，合法范围 0~48dp；
  * 显示区 = 键背景 bounds 按内边距内缩（缺省 4dp 横向／2dp 纵向，
@@ -14,14 +14,14 @@ import kotlin.math.sqrt
  * 墨迹越贴近键顶／键底，圆角帽处的可用宽度越小。
  *
  * Jime 的等价物是副文字（altText，下方注解）与顶部小字（topText，
- * 上方符号）；主文字不是注解，不走这套内边距。内边距目前取 Mie
+ * 上方符号）；主文字不是注解，不走这套内边距。内边距目前取对端
  * 缺省值（未接皮肤逐键配置）；parse/resolve 已就位，待皮肤模型
  * 加字段后接线。本模块只用 Kotlin 标准库，不碰 Android 框架，
  * 可在主机单测里直接跑。
  */
 object AnnotationDisplayRange {
 
-    /** 单个内边距合法上限（dp），与 Mie 的解析口径一致。 */
+    /** 单个内边距合法上限（dp），与对端的解析口径一致。 */
     const val MAX_INSET_DP = 48f
 
     const val DEFAULT_SYMBOL_INSET_X_DP = 4f
@@ -31,7 +31,7 @@ object AnnotationDisplayRange {
 
     /**
      * 逐键注解内边距（dp）。null = 继承缺省；显式 0 会覆盖非零缺省
-     * （与 Mie 的 merge 口径一致：空白继承、0 是有效值）。
+     * （与对端的 merge 口径一致：空白继承、0 是有效值）。
      */
     data class Insets(
         val symbolInsetXDp: Float? = null,
@@ -62,9 +62,9 @@ object AnnotationDisplayRange {
     )
 
     /**
-     * 解析内边距表（键名同 Mie：symbolInsetX/Y、hintInsetX/Y）。
+     * 解析内边距表（键名同对端：symbolInsetX/Y、hintInsetX/Y）。
      * 空白 = 继承（null）；非数字、非有限、<0、>48 一律抛
-     * IllegalArgumentException（与 Mie 的 AnnotationInsetsTest 口径一致）。
+     * IllegalArgumentException（与对端的 AnnotationInsetsTest 口径一致）。
      */
     fun parse(values: Map<String, String?>): Insets {
         fun parseField(name: String): Float? {
@@ -96,7 +96,7 @@ object AnnotationDisplayRange {
     /**
      * 注解显示区：键 bounds 按内边距内缩。isTop = true 取 symbol
      * （上方）内边距，否则取 hint（下方）内边距；每向内边距钳制
-     * 在半宽／半高减 0.5px 以内（与 Mie 的 annotationArea 一致），
+     * 在半宽／半高减 0.5px 以内（与对端的 annotationArea 一致），
      * 保证显示区永不为空。
      */
     fun displayRect(
@@ -115,7 +115,7 @@ object AnnotationDisplayRange {
 
     /**
      * 圆角间隙（px）：墨迹所在高度上，圆角帽吃掉的横向宽度。
-     * 与 Mie 的 roundedClearance 同式——半径钳制在半宽／半高以内；
+     * 与对端的 roundedClearance 同式——半径钳制在半宽／半高以内；
      * 墨迹离键顶／键底越近（distance 越小），间隙越大；墨迹在
      * 中部（distance >= radius）时间隙为 0。
      */

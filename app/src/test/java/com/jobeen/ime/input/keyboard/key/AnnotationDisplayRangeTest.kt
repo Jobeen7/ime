@@ -5,7 +5,7 @@ import org.junit.Assert.assertThrows
 import org.junit.Test
 
 /**
- * 注解显示范围（E3 G44）：对标 Trime-Mie 的 AnnotationInsetsTest——
+ * 注解显示范围（E3 G44）：对标 对端 的 AnnotationInsetsTest——
  * 4 个内边距字段独立解析、空白继承、显式 0 覆盖、非法值拒绝，
  * 外加 Jime 的显示区／圆角间隙／可用宽度几何。
  */
