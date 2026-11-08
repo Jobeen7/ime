@@ -19,6 +19,7 @@ import com.jobeen.ime.base.util.PinYinUtil
 import com.jobeen.ime.base.util.TextUtil
 import com.jobeen.ime.engine.behavior.IBehavior
 import com.jobeen.ime.input.InputFieldKey
+import com.jobeen.ime.input.InputDropLog
 import com.jobeen.ime.input.isInputFieldChanged
 import com.jobeen.ime.engine.rime.behavior.Segmentation
 import com.jobeen.ime.data.database.AppDatabase
@@ -460,6 +461,32 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     // 弱引用：EngineFactory 单例持有 RimeEngine，强引用 service 会导致 service 销毁后泄漏
     private var serviceRef: WeakReference<ImeInputMethodService>? = null
 
+    /**
+     * 丢字日志（施工单 10 H2-16，CyIME J4 对口）：键盘无声拒掉输入时
+     * 记一行（WARN 级进 DiagLog 文件＋诊断导出）；窗口内多余的只
+     * 计数。只记原因与门状态，绝不记按键与任何文本。
+     */
+    private val inputDrops = InputDropLog(
+        uptimeMillis = SystemClock::uptimeMillis,
+        write = { line -> DiagLog.w("input", "input_dropped", mapOf("detail" to line)) },
+    )
+
+    /**
+     * 无声拒掉输入时记一行（见 [InputDropLog]）。service 为空时只记
+     * 门状态（部署／初始化），不记编辑框信息。
+     */
+    internal fun noteInputDropped(reason: String, service: InputMethodService? = null) =
+        inputDrops.drop(reason) {
+            val editor = service?.currentInputEditorInfo
+            "deploying=${EngineDeployState.isRunning()} " +
+                "orphan=${EngineDeployState.isOrphanRunning()} " +
+                "initialized=${state.initialized} " +
+                "app=${editor?.packageName} " +
+                "inputType=0x${Integer.toHexString(editor?.inputType ?: 0)} " +
+                "connection=${service?.currentInputConnection != null} " +
+                "shown=${service?.isInputViewShown}"
+        }
+
     //引擎相关配置监控
     private var prefs: SharedPreferences? = null
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
@@ -736,6 +763,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             // 之前——键一旦入动作队列，就会在部署作业之后执行。
             // 只记日志不弹提示：部署中连续打字时提示会刷屏。
             if (DeployKeyGate.shouldDrop()) {
+                noteInputDropped("key_deploy", service)
                 Timber.d("processKey dropped during deploy")
                 return@measureStage
             }
@@ -752,6 +780,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 与 processKey 同口径的部署期按键门：部署中回车键同样丢弃，
         // 不单独放行（分发点在主线程，字段属性已由调用方映射好）。
         if (DeployKeyGate.shouldDrop()) {
+            noteInputDropped("enter_deploy", service)
             Timber.d("processEnter dropped during deploy")
             return
         }
@@ -785,6 +814,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private fun processKeyInternal(key: KeyEvent) {
         if (!state.initialized) {
+            // 部署 Start 刚把 initialized 复位、门还没来得及拦住的键：
+            // 与部署期门同口径记丢字日志，不静默丢。
+            noteInputDropped("key_not_initialized", serviceRef?.get())
             return
         }
         when (key) {
