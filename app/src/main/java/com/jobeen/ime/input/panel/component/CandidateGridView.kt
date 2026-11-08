@@ -21,6 +21,7 @@ import com.jobeen.ime.base.util.slideUpCollapse
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateLinePolicy
 import com.jobeen.ime.data.manager.CandidateManager
+import com.jobeen.ime.data.manager.CandidateSpacingPolicy
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.keyboard.key.KeyDef
@@ -92,6 +93,13 @@ class CandidateGridView(
     var lineMax: Int = 5
     var lineAutoShrink: Boolean = true
     var fullDisplay: Boolean = true
+    /**
+     * 候选间距／缩放（H2-3）：syncLinePolicy 按偏好同步；未设定
+     * 间距时 null，refreshAreaGeometry 回落皮肤值／竖网格默认 8dp；
+     * 缩放默认 1.0（旧行为）。
+     */
+    var userWordSpaceDp: Float? = null
+    var candidateScale: Float = 1f
 
     /** 按偏好同步行策略（候选到达时调用，偏好变化下次候选到达生效） */
     private fun syncLinePolicy() {
@@ -99,6 +107,15 @@ class CandidateGridView(
         lineMax = CandidateManager.getMaxLines(context)
         lineAutoShrink = CandidateManager.isAutoShrinkEnabled(context)
         fullDisplay = CandidateManager.isFullDisplayEnabled(context)
+        // 候选间距／缩放（H2-3）：与行策略同 funnel 同步；变化时
+        // 立即重算画布几何（未布局时 refreshAreaGeometry 空转守卫）。
+        val newSpacing = CandidateManager.getCandidateSpacingDp(context)
+        val newScale = CandidateManager.getCandidateScale(context)
+        if (newSpacing != userWordSpaceDp || newScale != candidateScale) {
+            userWordSpaceDp = newSpacing
+            candidateScale = newScale
+            gridCanvas.refreshAreaGeometry()
+        }
         // 皮肤行列上限优先（审计 I 项）：皮肤未定义时回落用户偏好／默认。
         val limits = effectiveGridLimits(
             skinMaxRows,
@@ -469,7 +486,6 @@ class CandidateGridView(
             super.onSizeChanged(w, h, oldw, oldh)
             maxScrollCache = null
             val d = resources.displayMetrics.density
-            textPaint.textSize = com.jobeen.ime.input.panel.Paints.CANDIDATE_TEXT_DP * d
             sepPaint.strokeWidth = 1f * d
             updateColors(colors.panel)
             refreshAreaGeometry()
@@ -487,10 +503,18 @@ class CandidateGridView(
             val h = height
             if (w <= 0 || h <= 0) return
             val d = resources.displayMetrics.density
+            // 候选字号（H2-3）：缩放后字号单源在此写（onSizeChanged
+            // 同走这里；1.0 时与旧写死值逐值一致）。
+            textPaint.textSize = CandidateSpacingPolicy.scaledTextSizeDp(
+                com.jobeen.ime.input.panel.Paints.CANDIDATE_TEXT_DP, candidateScale,
+            ) * d
             // 候选项内边距单源：尺寸变化与主题刷新都走这里重算，
             // 避免 onSizeChanged 与 refreshTheme 各写一份漂移。
             cellPad = (cellPadDp ?: 6f) * d
-            minWordSpace = (minWordSpaceDp ?: 8f) * d   // 词间最小间距，保证分隔线可绘制
+            // 候选间距（H2-3）：用户显式值 > 皮肤值 > 竖网格默认 8dp。
+            minWordSpace = CandidateSpacingPolicy.resolveSpacing(
+                userWordSpaceDp, minWordSpaceDp, 8f,
+            ) * d
             effW = (w - (areaInsets.left + areaInsets.right) * d).coerceAtLeast(0f)
             effH = (h - (areaInsets.top + areaInsets.bottom) * d).coerceAtLeast(0f)
             val minRowH = (minRowHeightDp ?: 32f) * d

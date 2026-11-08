@@ -134,6 +134,7 @@ class ComposingStateRender(
             areaStyle = snapshot?.horizontalCandidatesStyle,
             maxColumns = snapshot?.horizontalMaxColumns,
             expandLeft = snapshot?.horizontalExpandLeft ?: false,
+            wordSpacingDp = settings.wordSpacingDp,
         ).also {
             it.recording = ctx.recording
             it.highlightedIndex = highlightedIndex
@@ -177,6 +178,7 @@ class PredictionStateRender(
             preferredEnabled = false,
             // 取消钮画 ×（H2-2）：与组字态展开 chevron 区分开。
             cancelDrawable = ctx.cancelDrawable,
+            wordSpacingDp = settings.wordSpacingDp,
         ).also {
             it.recording = ctx.recording
             it.highlightedIndex = highlightedIndex

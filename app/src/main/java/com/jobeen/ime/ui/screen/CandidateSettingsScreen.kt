@@ -48,6 +48,15 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
     var maxLines by remember {
         mutableFloatStateOf(CandidateManager.getMaxLines(context).toFloat())
     }
+    var spacing by remember {
+        mutableFloatStateOf(
+            CandidateManager.getCandidateSpacingDp(context)
+                ?: CandidateManager.CANDIDATE_SPACING_DEFAULT_DP,
+        )
+    }
+    var candidateScale by remember {
+        mutableFloatStateOf(CandidateManager.getCandidateScale(context))
+    }
     var autoShrinkEnabled by remember {
         mutableStateOf(CandidateManager.isAutoShrinkEnabled(context))
     }
@@ -150,6 +159,32 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                         CandidateManager.setMaxLines(context, it.toInt())
                     },
                     showDivider = true,
+                )
+                SliderRow(
+                    title = stringResource(R.string.candidate_spacing),
+                    value = spacing,
+                    valueLabel = "${spacing.toInt()} dp",
+                    range = CandidateManager.CANDIDATE_SPACING_MIN_DP..
+                        CandidateManager.CANDIDATE_SPACING_MAX_DP,
+                    onValueChange = {
+                        spacing = it
+                        CandidateManager.setCandidateSpacingDp(context, it)
+                    },
+                    showDivider = true,
+                    steps = 23,
+                )
+                SliderRow(
+                    title = stringResource(R.string.candidate_scale),
+                    value = candidateScale,
+                    valueLabel = "${(candidateScale * 100).toInt()}%",
+                    range = CandidateManager.CANDIDATE_SCALE_MIN..
+                        CandidateManager.CANDIDATE_SCALE_MAX,
+                    onValueChange = {
+                        candidateScale = it
+                        CandidateManager.setCandidateScale(context, it)
+                    },
+                    showDivider = true,
+                    steps = 13,
                 )
                 SwitchRow(
                     title = stringResource(R.string.candidate_auto_shrink),

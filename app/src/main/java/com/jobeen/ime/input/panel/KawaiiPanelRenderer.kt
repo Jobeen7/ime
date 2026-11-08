@@ -9,6 +9,7 @@ import android.graphics.drawable.Drawable
 import androidx.core.graphics.withClip
 import androidx.core.graphics.withRotation
 import androidx.core.graphics.withSave
+import com.jobeen.ime.data.manager.CandidateSpacingPolicy
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.skin.model.CandidateAreaStyleSpec
 
@@ -66,6 +67,13 @@ class ComposingRenderer(
      * 组字态不传，边缘钮仍是展开／收起。
      */
     var cancelDrawable: Drawable? = null,
+    /**
+     * 候选间距（dp）：用户显式设定时胜过皮肤 pillGapDp
+     * （App > 皮肤 > 横条默认 6dp）；null = 未设定。
+     * 构造期经 StateRenderContext 传入；设置页改完下次进
+     * 组字／预测态即生效（与 areaStyle 同口径）。
+     */
+    var wordSpacingDp: Float? = null,
 ) : IRenderer {
 
     /** 边缘钮图标种：预测态为取消（×），组字态为展开（chevron）。 */
@@ -173,6 +181,7 @@ class ComposingRenderer(
     private var cachedShowComment: Boolean = false
     private var cachedAreaStyle: CandidateAreaStyleSpec? = null
     private var cachedMaxColumns: Int? = null
+    private var cachedWordSpacingDp: Float? = null
 
     // 渐变缓存：只在尺寸/颜色变化时重建
     private var fadeKey: FadeKey? = null
@@ -227,7 +236,10 @@ class ComposingRenderer(
         val rightPad = effRightPadPx(density)
         // 候选项内边距（审计 I 项）：横条样式节点未定义时走旧写死值。
         val pillPad = (areaStyle?.pillPadDp ?: 8f) * density
-        val gap = (areaStyle?.pillGapDp ?: 6f) * density
+        // 候选间距（H2-3）：用户显式值 > 皮肤 pillGapDp > 横条默认 6dp。
+        val gap = CandidateSpacingPolicy.resolveSpacing(
+            wordSpacingDp, areaStyle?.pillGapDp, 6f,
+        ) * density
 
         val expandBtnW = 32f * density
         val expandBtnGap = 16f * density
@@ -264,6 +276,7 @@ class ComposingRenderer(
             && showComment == cachedShowComment
             && areaStyle === cachedAreaStyle
             && maxColumns == cachedMaxColumns
+            && wordSpacingDp == cachedWordSpacingDp
         // 横条上限（审计 I 项）：布局与绘制共用截断列表；截断后
         // 位置编号（1. 2. …）与引擎下标皆与原列表前 N 项一致。
         val layoutCandidates = maxColumns?.let { candidates.take(it) } ?: candidates
@@ -344,6 +357,7 @@ class ComposingRenderer(
             cachedShowComment = showComment
             cachedAreaStyle = areaStyle
             cachedMaxColumns = maxColumns
+            cachedWordSpacingDp = wordSpacingDp
         }
 
         // 分隔线与渐隐镜像（审计 I 项）：左钮时分隔线在钮区与

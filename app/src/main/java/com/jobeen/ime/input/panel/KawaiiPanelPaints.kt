@@ -8,6 +8,7 @@ import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.data.manager.CandidateSpacingPolicy
 import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
@@ -101,6 +102,12 @@ class Paints(context: Context) {
      * 与 CandidateSizeResolution.JIME_DEFAULT_TEXT_DP 同值）。
      */
     var candidateTextSizeDp: Float = CANDIDATE_TEXT_DP
+    /**
+     * 候选栏缩放（H2-3，倍率 0.8~1.5，默认 1.0）：updateColors
+     * 从 CandidateManager 同步；applyDensity 写画笔字号时乘
+     * 倍率（主文字／序号／注释同乘，保相对比例）。1.0 时与旧行为一致。
+     */
+    var candidateScale: Float = 1f
     // （候选字重不设变量：updateFonts 直接从快照现取，避免
     // updateColors／updateFonts 调用顺序依赖，见下。）
     /** 横条分隔线可见（S10）：默认可见，皮肤写 false 时隐藏。 */
@@ -152,6 +159,9 @@ class Paints(context: Context) {
         // 候选主文字字号（S9；主文字无旧顶层字段，只读横条样式）。
         candidateTextSizeDp =
             snapshot?.horizontalCandidateStyleFor(type)?.textSizeDp ?: CANDIDATE_TEXT_DP
+        // 候选栏缩放（H2-3）：用户倍率，读 prefs（updateColors
+        // 只同步变量，实际画笔字号由 applyDensity 写）。
+        candidateScale = com.jobeen.ime.data.manager.CandidateManager.getCandidateScale(context)
         // 字重在 updateFonts 现取（避免与 updateColors 的调用顺序依赖）。
         candidatePressedColor = panel.candidatePressed
         preferredBackground = panel.preferredBackground
@@ -212,9 +222,19 @@ class Paints(context: Context) {
     fun applyDensity(density: Float) {
         dividerPaint.strokeWidth = 1f * density
         toolbarTextPaint.textSize = 16f * density
-        candidateTextPaint.textSize = candidateTextSizeDp * density
-        selectedCandidateTextPaint.textSize = candidateTextSizeDp * density
-        candidateIndexPaint.textSize = candidateIndexSizeDp * density
-        candidateCommentPaint.textSize = candidateCommentSizeDp * density
+        // 候选栏缩放（H2-3）：三角色字号同乘倍率；纯函数钳范围，
+        // 1.0 时与旧行为逐值一致。
+        candidateTextPaint.textSize = CandidateSpacingPolicy.scaledTextSizeDp(
+            candidateTextSizeDp, candidateScale,
+        ) * density
+        selectedCandidateTextPaint.textSize = CandidateSpacingPolicy.scaledTextSizeDp(
+            candidateTextSizeDp, candidateScale,
+        ) * density
+        candidateIndexPaint.textSize = CandidateSpacingPolicy.scaledTextSizeDp(
+            candidateIndexSizeDp, candidateScale,
+        ) * density
+        candidateCommentPaint.textSize = CandidateSpacingPolicy.scaledTextSizeDp(
+            candidateCommentSizeDp, candidateScale,
+        ) * density
     }
 }

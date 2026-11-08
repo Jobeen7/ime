@@ -14,6 +14,16 @@ object CandidateManager {
     const val KEY_SHOW_INDEX = "show_index"
     const val KEY_SHOW_COMMENT = "show_comment"
     const val KEY_BORDER = "show_border"
+    private const val KEY_CANDIDATE_SPACING = "candidate.spacing_dp"
+    private const val KEY_CANDIDATE_SCALE = "candidate.scale"
+    /** 候选间距范围（dp）与滑块中位值（= 竖网格旧写死默认值 8dp）。 */
+    const val CANDIDATE_SPACING_MIN_DP = 0f
+    const val CANDIDATE_SPACING_MAX_DP = 24f
+    const val CANDIDATE_SPACING_DEFAULT_DP = 8f
+    /** 候选栏缩放范围（倍率）与默认值（1.0 = 旧行为）。 */
+    const val CANDIDATE_SCALE_MIN = 0.8f
+    const val CANDIDATE_SCALE_MAX = 1.5f
+    const val CANDIDATE_SCALE_DEFAULT = 1.0f
 
     fun isPredictionEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -183,6 +193,41 @@ object CandidateManager {
             putBoolean("candidate.inline_input_mode", enabled)
         }
     }
+
+    /**
+     * 候选间距（dp，0~24）：用户显式设定时胜过皮肤值
+     * （App > 皮肤 > Jime 默认，见 CandidateSizeResolution 口径）；
+     * 未设定时返回 null，由消费点回落皮肤值／各面默认值
+     * （竖网格 8dp、横条 6dp）。写入时钳到范围。
+     */
+    fun getCandidateSpacingDp(context: Context): Float? {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (!prefs.contains(KEY_CANDIDATE_SPACING)) return null
+        return prefs.getFloat(KEY_CANDIDATE_SPACING, CANDIDATE_SPACING_DEFAULT_DP)
+            .coerceIn(CANDIDATE_SPACING_MIN_DP, CANDIDATE_SPACING_MAX_DP)
+    }
+
+    fun setCandidateSpacingDp(context: Context, dp: Float) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putFloat(
+                KEY_CANDIDATE_SPACING,
+                dp.coerceIn(CANDIDATE_SPACING_MIN_DP, CANDIDATE_SPACING_MAX_DP),
+            )
+        }
+    }
+
+    /** 候选栏缩放（倍率，0.8~1.5，默认 1.0）：1.0 时渲染与旧行为一致。写入时钳到范围。 */
+    fun getCandidateScale(context: Context): Float {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getFloat(KEY_CANDIDATE_SCALE, CANDIDATE_SCALE_DEFAULT)
+            .coerceIn(CANDIDATE_SCALE_MIN, CANDIDATE_SCALE_MAX)
+    }
+
+    fun setCandidateScale(context: Context, scale: Float) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putFloat(KEY_CANDIDATE_SCALE, scale.coerceIn(CANDIDATE_SCALE_MIN, CANDIDATE_SCALE_MAX))
+        }
+    }
 }
 
 /**
@@ -284,4 +329,25 @@ object CandidateLinePolicy {
         }
         return lo
     }
+}
+
+/**
+ * 候选间距／缩放解析（纯函数，可单测）：
+ * 间距按 App > 皮肤 > 各面默认（竖网格 8dp、横条 6dp）；
+ * 用户值与皮肤值均已在各自入口钳过范围，解析本身不再钳，
+ * 不改任何未设定／皮肤已定值的渲染。
+ */
+object CandidateSpacingPolicy {
+    fun resolveSpacing(userDp: Float?, skinDp: Float?, defaultDp: Float): Float =
+        userDp ?: skinDp ?: defaultDp
+
+    /**
+     * 缩放后字号（纯函数）：基准字号 × 倍率；倍率钳到
+     * 0.8~1.5，结果钳到 8~48dp 防极端值撑破药丸／行高。
+     */
+    fun scaledTextSizeDp(baseDp: Float, scale: Float): Float =
+        (baseDp * scale.coerceIn(
+            CandidateManager.CANDIDATE_SCALE_MIN,
+            CandidateManager.CANDIDATE_SCALE_MAX,
+        )).coerceIn(8f, 48f)
 }

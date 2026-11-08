@@ -58,6 +58,8 @@
     <string name="candidate_max_lines">最大行数</string>
     <string name="candidate_auto_shrink">自动收缩</string>
     <string name="candidate_full_display">完整显示</string>
+    <string name="candidate_spacing">候选间距</string>
+    <string name="candidate_scale">候选栏缩放</string>
     <!-- 批量第 4 项：剪贴板补齐 -->
     <string name="clipboard_listening">剪贴板监听</string>
     <string name="clipboard_rules">规则</string>
