@@ -113,6 +113,11 @@ class ImeInputMethodService : InputMethodService() {
         getSharedPreferences(com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs.PREFS_NAME, MODE_PRIVATE)
     }
 
+    /** 按键符号偏好（施工单 10 H2-14）：角标覆盖改动经同一监听进窗口重建。 */
+    private val keySymbolPrefs: SharedPreferences by lazy {
+        getSharedPreferences(com.jobeen.ime.skin.symbol.KeySymbolOps.PREFS_NAME, MODE_PRIVATE)
+    }
+
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         keyboardWindow?.onConfigChanged(key.orEmpty())
     }
@@ -156,6 +161,7 @@ class ImeInputMethodService : InputMethodService() {
         candidatePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         skinColorPrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         appearancePrefs.registerOnSharedPreferenceChangeListener(prefsListener)
+        keySymbolPrefs.registerOnSharedPreferenceChangeListener(prefsListener)
         InputFeedbacks.initFeedbackCache(this)
     }
 
@@ -584,6 +590,7 @@ class ImeInputMethodService : InputMethodService() {
         // 销毁残留——SharedPreferences 强持有监听、监听持有 keyboardWindow。
         skinColorPrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         appearancePrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
+        keySymbolPrefs.unregisterOnSharedPreferenceChangeListener(prefsListener)
         // 销毁时若有弹窗在展示必须主动关掉，否则窗口泄漏（WindowLeaked）。
         // 先置空字段再 dismiss：弹窗自带的 onDismiss 回调见字段已空即 no-op，
         // 销毁路径不会因此再跑一次用户回调。

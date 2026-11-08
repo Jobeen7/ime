@@ -891,6 +891,16 @@
     <string name="symbol_bar_move_up">上移</string>
     <string name="symbol_bar_move_down">下移</string>
     <string name="symbol_bar_delete">删除</string>
+    <!-- 按键符号（施工单 10 H2-14）：页名／迷你键盘／改键弹框 -->
+    <string name="key_symbol_title">按键符号</string>
+    <string name="row_sub_key_symbol">26 键字母键角标</string>
+    <string name="key_symbol_group">26 键字母键</string>
+    <string name="key_symbol_note">点按按键可改角标符号（长按该键提交的符号），改完即保存，下次打开 26 键键盘生效。</string>
+    <string name="key_symbol_modified">已修改 %1$d 个按键</string>
+    <string name="key_symbol_reset_all">全部恢复默认</string>
+    <string name="key_symbol_edit_title">按键 %1$s 的符号</string>
+    <string name="key_symbol_edit_hint">输入一个符号</string>
+    <string name="key_symbol_save">保存</string>
     <string name="action_commit_direct">提交文字</string>
     <string name="action_literal_newline">换行</string>
     <string name="action_enter">回车</string>

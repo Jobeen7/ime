@@ -18,6 +18,8 @@ import com.jobeen.ime.input.keyboard.key.TextKeyView
 import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.StyleStatePriority
+import com.jobeen.ime.skin.symbol.KeySymbolOps
+import com.jobeen.ime.skin.symbol.SharedPrefsKeySymbolStore
 import com.jobeen.ime.skin.layout.BuiltinLayoutApplier
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.PlaceholderValues
@@ -70,11 +72,10 @@ class QwertyKeyboard(
         fun effectiveLayout(context: Context, returnVariant: Variant): List<List<KeyDef>> {
             val snapshot = SkinSnapshotProvider.current(context)
             val raw = buildLayout(returnVariant)
-            if (snapshot == null) return raw
             // 内置布局覆盖（2026-10-28）：皮肤含本键盘的内置布局文件时
             // 按文件重排（出厂键本体 + 文件排版/动作槽），再走既有覆写
             // 装配（样式/图片/字号等）；无覆盖/排空时恒用出厂布局。
-            val arranged = snapshot.builtinLayouts[NAME]?.let { override ->
+            val arranged = snapshot?.builtinLayouts?.get(NAME)?.let { override ->
                 BuiltinLayoutApplier.apply(
                     raw, override,
                     landscape = context.resources.configuration.orientation ==
@@ -82,8 +83,16 @@ class QwertyKeyboard(
                     placeholders = PlaceholderValues.current(context),
                 )
             } ?: raw
+            // 按键符号用户覆盖（施工单 10 H2-14）：字母键角标＋长按提交
+            // 在皮肤覆写装配前套用；装配器无显式写入时两槽原样保留，
+            // 故用户覆盖优先于皮肤文件、劣后于皮肤显式 subLabel/longPress。
+            val withUserSymbols = KeySymbolOps.applyToLayout(
+                arranged,
+                SharedPrefsKeySymbolStore(context).load(),
+            )
+            if (snapshot == null) return withUserSymbols
             return KeyOverrideApplier.apply(
-                NAME, arranged, snapshot, PlaceholderValues.current(context),
+                NAME, withUserSymbols, snapshot, PlaceholderValues.current(context),
                 scheme = snapshot.effectiveColorScheme(SkinColorMode.isDark(context)),
                 // 接线轮 R1/R2：构建期取当前锁定通知与条件门控集。
                 notifications = com.jobeen.ime.skin.runtime.SkinRuntimeState.latchedNotifications(),

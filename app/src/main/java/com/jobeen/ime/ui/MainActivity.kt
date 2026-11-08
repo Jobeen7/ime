@@ -145,6 +145,11 @@ class MainActivity : ComponentActivity() {
                             Intent(this@MainActivity, SymbolBarSettingsActivity::class.java)
                         )
                     },
+                    onOpenKeySymbol = {
+                        startActivity(
+                            Intent(this@MainActivity, KeySymbolSettingsActivity::class.java)
+                        )
+                    },
                     onOpenInputStats = {
                         startActivity(
                             Intent(this@MainActivity, InputStatsActivity::class.java)

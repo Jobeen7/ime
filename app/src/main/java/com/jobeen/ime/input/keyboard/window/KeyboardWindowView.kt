@@ -668,6 +668,10 @@ class KeyboardWindowView(
             CandidateManager.KEY_SHOW_COMMENT,
                 -> scheduleRefreshDisplaySettings()
 
+            // 按键符号覆盖（施工单 10 H2-14）：角标在键盘构建期套用，
+            // 改动须重建键盘才生效，走强制刷新直达 refreshColors()。
+            com.jobeen.ime.skin.symbol.KeySymbolOps.KEY_CONFIG -> scheduleRefreshDisplaySettings()
+
             // 外观轮全局样式：模糊键与拉伸模式键走背景重建专路
             // （只换背景位图，不重建键盘）；其余键走强制刷新
             // （圆角/栏开关不在配色内，普通路的配色门控会把它们挡下）。
