@@ -7,7 +7,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 板提交后自动返回决策（审计 G）：板锁已删，两块板提交恒返回。 */
+/** 板提交后自动返回决策（审计 G）：板锁已删，三块板提交恒返回。 */
 class BoardAutoReturnTest {
 
     @Test
@@ -17,6 +17,9 @@ class BoardAutoReturnTest {
         )
         assertTrue(
             BoardAutoReturn.shouldReturnAfterCommit(KeyboardTypes.EMOJIS),
+        )
+        assertTrue(
+            BoardAutoReturn.shouldReturnAfterCommit(KeyboardTypes.KAOMOJI),
         )
     }
 

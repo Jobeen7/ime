@@ -186,6 +186,18 @@ class SubClassifiedBoardState(
         return true
     }
 
+    /**
+     * 下一父类（H2-7 颜文字左右滑）：已是末类时返回 false
+     * （索引不动，不循环绕回；与 nextPage 同口径）。
+     */
+    fun nextParent(): Boolean = selectParent(parentIndex + 1)
+
+    /**
+     * 上一父类（H2-7 颜文字左右滑）：已是首类时返回 false
+     * （索引不动；与 prevPage 同口径）。
+     */
+    fun prevParent(): Boolean = selectParent(parentIndex - 1)
+
     fun selectSub(index: Int): Boolean {
         if (currentParent?.subCategories?.getOrNull(index) == null) return false
         subIndex = index

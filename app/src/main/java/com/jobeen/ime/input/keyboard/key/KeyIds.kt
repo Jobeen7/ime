@@ -185,11 +185,30 @@ object KeyIds {
         val ALL: Set<String> = setOf(EMOJI_RETURN) + CATS
     }
 
+    /** 颜文字面板锚点（定稿五.6）：分类序号 = data/Kaomoji.kt 分类表顺序，只增不重排。 */
+    object Kaomoji {
+        const val KAOMOJI_RETURN = "KAOMOJI_RETURN"
+        const val KAOMOJI_CAT_1 = "KAOMOJI_CAT_1"
+        const val KAOMOJI_CAT_2 = "KAOMOJI_CAT_2"
+        const val KAOMOJI_CAT_3 = "KAOMOJI_CAT_3"
+        const val KAOMOJI_CAT_4 = "KAOMOJI_CAT_4"
+        const val KAOMOJI_CAT_5 = "KAOMOJI_CAT_5"
+        const val KAOMOJI_CAT_6 = "KAOMOJI_CAT_6"
+
+        /** 分类锚点按序号排列：下标 0 = 第 1 分类。 */
+        val CATS: List<String> = listOf(
+            KAOMOJI_CAT_1, KAOMOJI_CAT_2, KAOMOJI_CAT_3, KAOMOJI_CAT_4,
+            KAOMOJI_CAT_5, KAOMOJI_CAT_6,
+        )
+
+        val ALL: Set<String> = setOf(KAOMOJI_RETURN) + CATS
+    }
+
     /** 全部可覆写键 ID（四布局）。 */
     val OVERRIDABLE: Set<String> = Qwerty.ALL + T9.ALL + T15.ALL + Number.ALL
 
     /** 全部功能锚点 ID（只登记不覆写）。 */
-    val ANCHORS: Set<String> = Symbol.ALL + Emoji.ALL
+    val ANCHORS: Set<String> = Symbol.ALL + Emoji.ALL + Kaomoji.ALL
 
     /** 已废弃但保留登记的 ID（定稿五.1 治理）：命中按未知 ID 处理。 */
     val DEPRECATED: Set<String> = emptySet()

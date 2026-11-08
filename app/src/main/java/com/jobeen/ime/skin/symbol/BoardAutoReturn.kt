@@ -7,7 +7,7 @@ import com.jobeen.ime.skin.model.KeyboardTypes
 /**
  * 板提交后自动返回决策（审计 G，纯函数）：
  *
- * - 只有符号/表情两块板参与自动返回；主键盘与数字等类型
+ * - 只有符号/表情/颜文字三块板参与自动返回；主键盘与数字等类型
  *   的提交永不触发（调用方只在板内调用，类型再守一道）。
  * - 板锁已删（.22）：提交恒返回，不再有“锁定时常驻”分支。
  * - 返回目标不在此决定：窗口层经
@@ -18,5 +18,6 @@ import com.jobeen.ime.skin.model.KeyboardTypes
 object BoardAutoReturn {
 
     fun shouldReturnAfterCommit(boardType: String): Boolean =
-        boardType == KeyboardTypes.SYMBOLIC || boardType == KeyboardTypes.EMOJIS
+        boardType == KeyboardTypes.SYMBOLIC || boardType == KeyboardTypes.EMOJIS ||
+            boardType == KeyboardTypes.KAOMOJI
 }

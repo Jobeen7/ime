@@ -311,9 +311,9 @@ object KeyboardTypes {
     const val NUMBER_PAD = "numberPad"
     const val SYMBOLIC = "symbolic"
     /**
-     * 颜文字板（P1-6）：对端独立键盘类型；Jime 无内置颜文字
-     * 数据源，先回落符号板（builtinKeyboardName），不丢键；
-     * 内置颜文字表到位后再改回落目标。
+     * 颜文字板（P1-6，H2-7 已落内置表）：对端独立键盘类型；
+     * 内置颜文字数据源为 data/Kaomoji.kt，无皮肤绑定时回落
+     * 内置颜文字板（KaomojiKeyboard），不丢键。
      */
     const val KAOMOJI = "kaomoji"
 
