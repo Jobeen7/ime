@@ -27,6 +27,9 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
     var rerankEnabled by remember {
         mutableStateOf(CandidateManager.isRerankEnabled(context))
     }
+    var emailSuffixEnabled by remember {
+        mutableStateOf(CandidateManager.isEmailSuffixEnabled(context))
+    }
     var showIndex by remember {
         mutableStateOf(CandidateManager.isShowIndex(context))
     }
@@ -77,6 +80,15 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                     onCheckedChange = {
                         rerankEnabled = it
                         CandidateManager.setRerankEnabled(context, it)
+                    },
+                    showDivider = true,
+                )
+                SwitchRow(
+                    title = stringResource(R.string.email_suffix_enable),
+                    checked = emailSuffixEnabled,
+                    onCheckedChange = {
+                        emailSuffixEnabled = it
+                        CandidateManager.setEmailSuffixEnabled(context, it)
                     },
                 )
             }

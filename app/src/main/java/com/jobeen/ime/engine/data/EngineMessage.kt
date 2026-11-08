@@ -76,6 +76,8 @@ sealed class EngineMessage {
         companion object {
             const val TYPE_IME_PREDICTION = "imePrediction"
             const val TYPE_USER_PHRASE = "user_phrase"
+            /** 邮箱后缀候选（打 @ 后给出的域名，见 EmailSuffixes）：点选走替换上屏，不进 Rime 选词 */
+            const val TYPE_EMAIL_SUFFIX = "emailSuffix"
         }
     }
 }

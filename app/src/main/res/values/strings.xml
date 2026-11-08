@@ -527,6 +527,7 @@
     <string name="model_prediction">候选词预测</string>
     <string name="menu_candidate_comment">候选词注释</string>
     <string name="model_prediction_enable">启用预测</string>
+    <string name="email_suffix_enable">邮箱后缀候选</string>
     <string name="menu_traditional_chinese">繁体输入</string>
     <string name="menu_emoji_input">表情输入</string>
     <string name="menu_ascii_mode">英文输入</string>

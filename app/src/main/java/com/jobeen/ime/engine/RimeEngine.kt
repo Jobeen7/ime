@@ -13,6 +13,7 @@ import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.R
 import com.jobeen.ime.base.ngram.UpdateImportGate
 import com.jobeen.ime.base.speech.VoiceUndoLedger
+import com.jobeen.ime.base.util.EmailSuffixes
 import com.jobeen.ime.base.util.InputConnectionUtil
 import com.jobeen.ime.base.util.PinYinUtil
 import com.jobeen.ime.base.util.TextUtil
@@ -257,6 +258,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // @Volatile 的可见性即足够，不需要 AtomicBoolean
         @Volatile
         var predictionVisible: Boolean = false,
+        /**
+         * 邮箱后缀候选正在候选栏显示：与 predictionVisible 同进退
+         * （Rime 组字候选接管、退格 dismiss、清框、切框时一并复位）。
+         * 读点在 jobs（续打拦截）与 reduce（选词分支），与
+         * predictionVisible 同为单写单读的布尔标志，@Volatile 即足够。
+         */
+        @Volatile
+        var emailSuffixVisible: Boolean = false,
         var suppressNextEmptyCandidates: Boolean = false,
         var initHookTriggered: Boolean = false,
         // 代次计数器被主线程（切框失效）与 jobs/协程并发推进：普通
@@ -781,7 +790,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 序列键在分类 job 内原本即无条件转发、不读任何状态：
                 // 直接分发 Behavior，省去纯转发的一跳。行为的 native
                 // 工作仍由 Behavior 经 sendJob 入 jobs 队列执行。
-                dispatchAction(Action.Behavior(InputString(key.sequence)))
+                // 例外——邮箱后缀续打：列表正显示、单字是后缀可续字符
+                // （字母／数字／点）时先判后走，对得上字面上屏（不进
+                // 拼音）、对不上照常进 Rime。判定在 jobs 里做（读前文
+                // 与查方案都是挂起调用），见 handleEmailDomainKey。
+                val sequence = key.sequence
+                if (state.emailSuffixVisible &&
+                    EmailSuffixes.normalizeDomainChar(sequence) != null
+                ) {
+                    sendJob { handleEmailDomainKey(sequence) }
+                } else {
+                    dispatchAction(Action.Behavior(InputString(sequence)))
+                }
             }
 
             is KeyEvent.CodeEvent -> {
@@ -837,6 +857,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 含 rime-main 补取）时，直送会超车它先落屏，
                         // 上屏顺序错乱（如「你好」未落、空格先行）
                         emitCommit(" ")
+                        // 邮箱后缀续打被空格打断：直送空格不触发预测复核，
+                        // 列表不会自动收起，这里直接收起（与 CyIME
+                        // 「对不上就收起」同口径；空帧被
+                        // suppressNextEmptyCandidates 残留吞掉时迟一轮
+                        // 收起，选词侧 completion-null 兜底不误提交）
+                        if (state.emailSuffixVisible) {
+                            state.emailSuffixVisible = false
+                            state.predictionVisible = false
+                            emitMessage(EngineMessage.Candidates(emptyList(), 0, 0, total = 0))
+                        }
                         return@sendJob
                     }
                 }
@@ -868,6 +898,42 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 key.isVirtual,
             )
             return@sendJob
+        }
+    }
+
+    /**
+     * 邮箱后缀续打（jobs 串行线）：列表正显示时，单字序列键先到这里判定。
+     * 对得上就字面上屏（不进拼音），落屏后经前端预测认领重新给后缀；
+     * 对不上照常进 Rime——同时把可见标志清掉（序列已断，后续键不再拦截，
+     * 列表随后由 Rime 组字候选接管或预测空结果收起）。
+     * 九宫格数字是拼音编码，不参与续打；全角点按半角 . 算。
+     * 前文现读（列表出现时 @ 已落屏，不存在读到 @ 之前的前文）；光标
+     * 已挪走时 typedDomain 为 null，照常进 Rime。
+     */
+    private suspend fun RimeApi.handleEmailDomainKey(text: String) {
+        if (!state.emailSuffixVisible) {
+            dispatchAction(Action.Behavior(InputString(text)))
+            return
+        }
+        val normalized = EmailSuffixes.normalizeDomainChar(text) ?: run {
+            dispatchAction(Action.Behavior(InputString(text)))
+            return
+        }
+        if (normalized[0] in '0'..'9') {
+            val schemaId = runCatching { currentSchema().schemaId }.getOrNull().orEmpty()
+            if (EmailSuffixes.isT9SchemaId(schemaId)) {
+                dispatchAction(Action.Behavior(InputString(text)))
+                return
+            }
+        }
+        val before = peekTextBeforeCursor(EmailSuffixes.CONTEXT_LENGTH)
+        if (before == null || !EmailSuffixes.continues(before, normalized)) {
+            state.emailSuffixVisible = false
+            dispatchAction(Action.Behavior(InputString(text)))
+            return
+        }
+        pendingFrontendPredictions.offerAndEmit(normalized, predictionFieldGen.get()) {
+            emitCommit(normalized)
         }
     }
 
@@ -941,6 +1007,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 隐私：密码框 / 声明 IME_FLAG_NO_PERSONALIZED_LEARNING 的输入框不做任何学习
         //（不读前文、不写偏好表、不跑预测上下文）；正常上屏不受影响
         val noLearn = isNoPersonalizedLearning(editorInfo)
+        if (candidate.type == Candidate.TYPE_EMAIL_SUFFIX) {
+            // 邮箱后缀点选：把光标前「@已打」换成「@整个后缀」，不进 Rime 选词、
+            // 不记偏好、不学搭配；落屏后重新评估（完成后缀一般无剩余匹配，列表收起）
+            selectEmailSuffix(candidate.text)
+            return
+        }
         if (candidate.type == Candidate.TYPE_IME_PREDICTION) {
             // 落屏之后再发起预测（与打字上屏路径同口径）：job 内
             // 读到的是落屏后的真实前文，已含本次点选词，不在
@@ -984,6 +1056,39 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
         }
         flowBehavior(Selection(candidate.index))
+    }
+
+    /**
+     * 邮箱后缀点选：把光标前「@已打」换成「@整个后缀」（全角 ＠ 一并换成半角）。
+     * 删段走主线程直连 IC（与 Undo 分支同口径），上屏走 emitCommit 的 FIFO 路径；
+     * 完成后以前端预测认领重新评估——完成后缀一般无剩余匹配，空结果收起列表。
+     * 光标前已对不上（挪了光标、改了字）只收起列表，什么都不改。
+     */
+    private suspend fun selectEmailSuffix(domain: String) {
+        invalidatePendingCandidates()
+        val before = peekTextBeforeCursor(EmailSuffixes.CONTEXT_LENGTH)
+        val completion = before?.let { EmailSuffixes.completion(it, domain) }
+        if (completion == null) {
+            state.emailSuffixVisible = false
+            state.predictionVisible = false
+            emitMessage(EngineMessage.Candidates(emptyList(), 0, 0, total = 0))
+            return
+        }
+        val (typed, full) = completion
+        withContext(Dispatchers.Main.immediate) {
+            runCatching {
+                inputConnection()?.deleteSurroundingText(typed.length, 0)
+            }
+        }
+        invalidateBeforeCursorCache()
+        // reduce 上下文没有 RimeApi 接收者，emitCommit 只能在 jobs
+        // 里调：删段已在主线程 await 完成，入队提交必在其后（与
+        // requestCommit 同模式——入队在 emit 之前，认领在落屏后）
+        sendJob {
+            pendingFrontendPredictions.offerAndEmit(full, predictionFieldGen.get()) {
+                emitCommit(full)
+            }
+        }
     }
 
     /**
@@ -1343,6 +1448,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 预测路径同样要过滤已删除词（删除过滤不能只挂在 Rime 候选还原上）
                     val visible = action.candidates.filterNot { DeletedWordsStore.isDeleted(it.text) }
                     state.predictionVisible = visible.isNotEmpty()
+                    // 邮箱后缀是预测通道上的一组特殊联想：全员都是后缀类型时才记可见，
+                    // 续打拦截与退格 dismiss 以此为准；普通联想不置位
+                    state.emailSuffixVisible = visible.isNotEmpty() &&
+                        visible.all { it.type == Candidate.TYPE_EMAIL_SUFFIX }
                     // 预测候选是本地联想的完整列表、没有分页：total 显式给
                     // 确切条数，避免下游按 -1（未知）误判"还有更多"而在
                     // 预测态触发引擎分页补取、把组字候选拼进联想列表
@@ -1398,6 +1507,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 invalidatePendingPrediction()
                 if (state.predictionVisible) {
                     state.predictionVisible = false
+                    state.emailSuffixVisible = false
                     emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
                 }
             }
@@ -1486,6 +1596,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         if (state.predictionVisible) {
             state.predictionVisible = false
+            state.emailSuffixVisible = false
             emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
             return
         }
@@ -1712,6 +1823,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 if (msg.list.isNotEmpty()) {
                     // Rime candidates take over the panel from prediction candidates.
                     state.predictionVisible = false
+                    state.emailSuffixVisible = false
                     invalidatePendingPrediction()
                 }
                 if (state.suppressNextEmptyCandidates) {
@@ -1858,6 +1970,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         invalidatePendingPrediction()
         val clearPredictions = state.predictionVisible
         state.predictionVisible = false
+        state.emailSuffixVisible = false
         if (clearPredictions) {
             emitMessage(EngineMessage.Candidates(emptyList(), 0, 0))
         }
@@ -2200,6 +2313,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         // 这个残留标志而不删字。invalidatePendingPrediction 只取消
         // 在途预测、不动此标志，故在此与连接/缓存一并收尾
         state.predictionVisible = false
+        state.emailSuffixVisible = false
         invalidateBeforeCursorCache()
         invalidatePendingCandidates()
         invalidatePendingPrediction()
@@ -2326,6 +2440,27 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         predictionJob?.cancel()
         predictionJob = scope.launch {
             try {
+                // 邮箱后缀（默认开，独立开关，不受预测开关影响）：
+                // 光标前是「邮箱名@…」时给对得上的后缀，走同一
+                // PredictionReady 通道上候选栏。放预测开关检查之前：
+                // 预测关着时邮箱后缀照常给。peek 自带代次与隐私复检
+                // （切框／密码框返回 null、整轮作废）。组字中不另设
+                // 门：组字码在 preedit 里、不在编辑器前文，正则对不
+                // 上自然落空；组字候选随后到达时会接管候选栏并取消
+                // 本 job，与普通预测路径同口径。
+                if (context?.let { CandidateManager.isEmailSuffixEnabled(it) } != false) {
+                    val emailBefore = peekTextBeforeCursor(
+                        EmailSuffixes.CONTEXT_LENGTH, expectedGen = startFieldGen,
+                    ) ?: return@launch
+                    val emailDomains = EmailSuffixes.suggestions(emailBefore)
+                    if (emailDomains.isNotEmpty()) {
+                        val emailCandidates = emailDomains.mapIndexed { index, domain ->
+                            Candidate(index, domain, type = Candidate.TYPE_EMAIL_SUFFIX)
+                        }
+                        actions.send(Action.PredictionReady(requestId, emailCandidates, startFieldGen))
+                        return@launch
+                    }
+                }
                 if (context?.let { !CandidateManager.isPredictionEnabled(it) } == true) {
                     actions.send(Action.PredictionReady(requestId, emptyList(), startFieldGen))
                     return@launch
@@ -2829,6 +2964,28 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             // 消息在 emit 返回前就已对消费者可见，认领可能抢先到
             // 达，入队在后则认领落空、条目滞留队首；emitCommit
             // 抛错时按令牌回滚本条目（消息不会产生、无人认领）
+            // 邮箱后缀续打（单字前端提交：符号面板、长按提交）：
+            // 列表正显示、单字对得上就字面上屏（全角点按半角），
+            // 落屏后认领重新给后缀；九宫格数字是拼音编码不续打；
+            // 对不上照常提交，随后预测复核收起列表。多字粘贴不走这里。
+            if (state.emailSuffixVisible) {
+                val normalized = EmailSuffixes.normalizeDomainChar(text)
+                if (normalized != null) {
+                    val isT9Digit = normalized[0] in '0'..'9' &&
+                        EmailSuffixes.isT9SchemaId(
+                            runCatching { currentSchema().schemaId }.getOrNull().orEmpty(),
+                        )
+                    val before = peekTextBeforeCursor(EmailSuffixes.CONTEXT_LENGTH)
+                    if (!isT9Digit && before != null &&
+                        EmailSuffixes.continues(before, normalized)
+                    ) {
+                        pendingFrontendPredictions.offerAndEmit(
+                            normalized, predictionFieldGen.get(),
+                        ) { emitCommit(normalized) }
+                        return@sendJob
+                    }
+                }
+            }
             pendingFrontendPredictions.offerAndEmit(
                 text, predictionFieldGen.get(),
             ) { emitCommit(text) }

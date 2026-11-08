@@ -10,6 +10,7 @@ object CandidateManager {
     const val KEY_ASCII_MODE_ENABLED = "ascii_mode_enabled"
     private const val KEY_PREDICTION_ENABLED = "prediction_enabled"
     private const val KEY_RERANK_ENABLED = "rerank_enabled"
+    const val KEY_EMAIL_SUFFIX_ENABLED = "email_suffix_enabled"
     const val KEY_SHOW_INDEX = "show_index"
     const val KEY_SHOW_COMMENT = "show_comment"
     const val KEY_BORDER = "show_border"
@@ -17,6 +18,18 @@ object CandidateManager {
     fun isPredictionEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_PREDICTION_ENABLED, true)
+    }
+
+    /** 邮箱后缀候选（默认开，独立开关，不受预测开关影响）：打 @ 后给 qq.com 这类后缀 */
+    fun isEmailSuffixEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_EMAIL_SUFFIX_ENABLED, true)
+    }
+
+    fun setEmailSuffixEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_EMAIL_SUFFIX_ENABLED, enabled)
+        }
     }
 
     fun setPredictionEnabled(context: Context, enabled: Boolean) {
