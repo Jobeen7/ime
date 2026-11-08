@@ -67,10 +67,13 @@ import javax.crypto.spec.SecretKeySpec
  * 口径），原始字节超 32MB 整段跳过只记日志（不阻塞整包，
  * 此时该包还原不碰脚本）。
  *
- * 还原是整体覆盖，且严格分两段：先把解密后的内容完整解析为内存对象
- * （此阶段零写入，任何结构/类型错误直接拒绝，不留半还原状态），再执行
- * 写入——Room 四表各自在单事务内整表替换，prefs 随后逐文件同步提交。
- * 各管理器有内存缓存，因此 UI 层在还原成功后应引导重启应用使全部生效。
+ * 还原严格分两段：先把解密后的内容完整解析为内存对象（此阶段零写
+ * 入，任何结构/类型错误直接拒绝，不留半还原状态），再执行写入。
+ * Room 四表是合并写回（D31）：备份与当前状态按“当前优先、备份补缺”
+ * 取并集——备份后新学的内容留在当前表里，不会被整表覆盖丢掉；备份
+ * 里有、当前已删的内容则补回来。prefs 随后逐文件同步提交（仍整表
+ * 覆盖，设置还原即回到备份时点）。各管理器有内存缓存，因此 UI 层
+ * 在还原成功后应引导重启应用使全部生效。
  */
 object BackupManager {
 
@@ -336,12 +339,13 @@ object BackupManager {
     // ---------------- 还原 ----------------
 
     /**
-     * 解密并整体覆盖还原。口令错误/文件损坏/结构非法抛 [BackupException]，
-     * 且解密与完整结构解析全部通过后才开始写任何数据（不会半还原）。
-     * 写入前先采一份当前状态的内存快照：写入阶段任一步失败都用它整
-     * 体回滚，绝不留下新旧混杂的半还原状态。原「加密快照落盘以防进
-     * 程被杀」的第二层已随清点 S7 退场——进程被杀的还原中断无自动
-     * 恢复，用户重导备份即可。
+     * 解密并还原。Room 四表合并写回（见类 KDoc 的 D31 口径）。
+     * 口令错误/文件损坏/结构非法抛 [BackupException]，且解密与完整
+     * 结构解析全部通过后才开始写任何数据（不会半还原）。写入前先采
+     * 一份当前状态的内存快照：写入阶段任一步失败都用它整体回滚，
+     * 绝不留下新旧混杂的半还原状态。原「加密快照落盘以防进程被杀」
+     * 的第二层已随清点 S7 退场——进程被杀的还原中断无自动恢复，
+     * 用户重导备份即可。
      */
     suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
         val payload = decryptPayload(bytes, password)
@@ -350,10 +354,15 @@ object BackupManager {
         // 自己的完整状态写回去；也不再对快照二次解密重解析（省掉一
         // 轮 60 万次 PBKDF2）
         val snapshotParsed = parsePayload(collectPayload())
+        // 合并语义（D31）：四表先取“当前 ∪ 备份”（当前优先），再整表
+        // 写回合并结果——备份后新学的内容保留，备份里有、当前已删的
+        // 内容补回来。合并只发生在还原入口这一处，applyPayload 本体
+        // 仍是整表替换，因此失败回滚仍用快照原样写回，回滚口径不变。
+        val merged = mergeForRestore(snapshotParsed, parsed)
         try {
             // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
             // 半途而废比继续写完更糟——半还原状态正是快照机制要防的
-            withContext(NonCancellable) { applyPayload(parsed) }
+            withContext(NonCancellable) { applyPayload(merged) }
         } catch (e: Exception) {
             val rolledBack = runCatching {
                 withContext(NonCancellable) { applyPayload(snapshotParsed) }
@@ -785,6 +794,89 @@ object BackupManager {
      */
     internal fun isSkippedPrefsFile(name: String): Boolean =
         name in DEVICE_LOCAL_PREFS || name == "scheme_dirs"
+
+    /**
+     * 还原合并语义（D31）：四表“当前优先、备份补缺”取并集。冲突键
+     * 以当前行为准（备份后新学／新改的内容不被备份时点的旧行覆盖）；
+     * 只在备份里有的行补进来（备份后删掉的内容还原时回来）。prefs、
+     * 输入统计、皮肤脚本不在此列：prefs 整表覆盖是设置还原的本意，
+     * 统计只是计数，脚本是快照语义（见类 KDoc）。
+     */
+    private fun mergeForRestore(current: ParsedBackup, backup: ParsedBackup): ParsedBackup =
+        ParsedBackup(
+            prefs = backup.prefs,
+            clipboard = mergeClipboardForRestore(current.clipboard, backup.clipboard),
+            phrases = mergePhrasesForRestore(current.phrases, backup.phrases),
+            prefers = mergePrefersForRestore(current.prefers, backup.prefers),
+            sortings = mergeSortingsForRestore(current.sortings, backup.sortings),
+            inputStatsJson = backup.inputStatsJson,
+            skinLibrary = backup.skinLibrary,
+            skinScripts = backup.skinScripts,
+        )
+
+    /**
+     * 剪贴板合并：text 是唯一键（v4 起唯一索引），当前行优先；备份
+     * 独有的行补进来，id 清零重排——自增 id 是本机代次，跨设备还原
+     * 时备份 id 可能撞当前行 id，直插会触发主键冲突、整事务回滚。
+     */
+    internal fun mergeClipboardForRestore(
+        current: List<ClipboardRecord>,
+        backup: List<ClipboardRecord>,
+    ): List<ClipboardRecord> {
+        if (backup.isEmpty()) return current
+        val seen = current.mapTo(HashSet(current.size + backup.size)) { it.text }
+        val out = current.toMutableList()
+        for (r in backup) {
+            if (seen.add(r.text)) out += r.copy(id = 0)
+        }
+        return out
+    }
+
+    /**
+     * 常用语合并：text 上无唯一约束，同文不同 label 是合法的两条，
+     * 故合并键取（text, label）；当前行优先，备份独有行补进来，
+     * id 清零重排（与剪贴板同理，防跨设备 id 碰撞）。
+     */
+    internal fun mergePhrasesForRestore(
+        current: List<PhraseRecord>,
+        backup: List<PhraseRecord>,
+    ): List<PhraseRecord> {
+        if (backup.isEmpty()) return current
+        val seen = current.mapTo(HashSet(current.size + backup.size)) { it.text to it.label }
+        val out = current.toMutableList()
+        for (r in backup) {
+            if (seen.add(r.text to r.label)) out += r.copy(id = 0)
+        }
+        return out
+    }
+
+    /** 选词偏好合并：text 是主键，当前行优先，备份独有行补进来。 */
+    internal fun mergePrefersForRestore(
+        current: List<CandidatePrefer>,
+        backup: List<CandidatePrefer>,
+    ): List<CandidatePrefer> {
+        if (backup.isEmpty()) return current
+        val seen = current.mapTo(HashSet(current.size + backup.size)) { it.text }
+        val out = current.toMutableList()
+        for (r in backup) {
+            if (seen.add(r.text)) out += r
+        }
+        return out
+    }
+
+    /** 候选排序合并：key 是主键，当前行优先，备份独有行补进来。 */
+    internal fun mergeSortingsForRestore(
+        current: List<CandidateSorting>,
+        backup: List<CandidateSorting>,
+    ): List<CandidateSorting> {
+        if (backup.isEmpty()) return current
+        val seen = current.mapTo(HashSet(current.size + backup.size)) { it.key }
+        val out = current.toMutableList()
+        for (r in backup) {
+            if (seen.add(r.key)) out += r
+        }
+        return out
+    }
 
     private suspend fun applyPayload(parsed: ParsedBackup) {
         val db = AppDatabase.getInstance(appContext)
