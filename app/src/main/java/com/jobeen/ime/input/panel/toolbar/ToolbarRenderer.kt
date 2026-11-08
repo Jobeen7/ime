@@ -178,6 +178,13 @@ class ToolbarRenderer(
      * refreshTheme 时同步；null = 不解析样式覆盖，只换动作）。
      */
     var scheme: KeyboardColors.ColorScheme? = null,
+    /**
+     * 语音入口可见判定（H2-13）：构造点注入（StateRenders /
+     * KawaiiPanelView，以 voiceInputEnabled 绑定上下文）；null =
+     * 无判定（旧口径：语音键一律可见）。函数型参数置末。
+     * 绘制／命中时逐次求值，开关切换后下次绘制即生效。
+     */
+    var voiceEnabled: (() -> Boolean)? = null,
 ) : IRenderer {
 
     var textEditingMode: Boolean = false
@@ -317,6 +324,16 @@ class ToolbarRenderer(
 
     private var centerButtons: List<ImageButton> = buildCenterButtons()
 
+    /** 语音总开关当前值（未注入＝旧口径：开）。 */
+    private fun isVoiceEnabledNow(): Boolean = voiceEnabled?.invoke() ?: true
+
+    /**
+     * 当前可见的中央池钮（皮肤／默认路）：绘制与命中同取此表，
+     * 几何一致；开关关时语音键不占槽位，其余钮重新均分。
+     */
+    private fun visibleCenterButtons(): List<ImageButton> =
+        centerButtons.filter { isToolbarActionVisible(it.action, isVoiceEnabledNow()) }
+
     /**
      * 用户覆盖中央区（工具栏编辑轮）：非空时整段替换 [centerButtons]
      * （池钮与自定义钮按用户列顺序混排）。池钮复用 [ImageButton]
@@ -368,18 +385,25 @@ class ToolbarRenderer(
     private fun userCenterSlots(width: Int, density: Float): List<UserCenterSlot>? {
         val items = userCenter ?: return null
         if (items.isEmpty()) return emptyList()
+        // H2-13：语音总开关关时池钮语音键不占槽位（自定义钮不走此口，
+        // 见 ToolbarVoiceVisibility）；其余池钮重新均分。
+        val visibleItems = items.filter { item ->
+            item !is UserCenterItem.Pool ||
+                isToolbarActionVisible(item.action, isVoiceEnabledNow())
+        }
+        if (visibleItems.isEmpty()) return emptyList()
         val (areaLeft, areaW) = centerArea(width, density)
         var customTotal = 0f
-        for (item in items) {
+        for (item in visibleItems) {
             if (item is UserCenterItem.Custom) customTotal += item.def.widthDp * density
         }
-        val poolCount = items.count { it is UserCenterItem.Pool }
+        val poolCount = visibleItems.count { it is UserCenterItem.Pool }
         val poolW = if (poolCount > 0) {
             ((areaW - customTotal) / poolCount).coerceAtLeast(0f)
         } else 0f
         val slots = mutableListOf<UserCenterSlot>()
         var x = areaLeft
-        for (item in items) {
+        for (item in visibleItems) {
             val w = if (item is UserCenterItem.Custom) item.def.widthDp * density else poolW
             slots += UserCenterSlot(item, x, x + w)
             x += w
@@ -880,10 +904,13 @@ class ToolbarRenderer(
             canvas.drawText(ellipsized, drawX, textY, textPaint)
         } else if (userCenter != null) {
             drawUserCenter(canvas, height, width, paints, density)
-        } else if (centerButtons.isNotEmpty() && ToolbarSlot.CENTER in slots) {
+        } else if (ToolbarSlot.CENTER in slots) {
             // 布局无中央槽时池钮行不画（用户自定义区是用户层，仍画跨度）。
-            val otherW = centerAreaW / centerButtons.size
-            for ((i, btn) in centerButtons.withIndex()) {
+            // H2-13：只画可见钮（语音键关时不占槽位，其余钮重新均分；
+            // 全隐藏时循环不执行）。
+            val visibleButtons = visibleCenterButtons()
+            val otherW = if (visibleButtons.isEmpty()) 0f else centerAreaW / visibleButtons.size
+            for ((i, btn) in visibleButtons.withIndex()) {
                 val savedColor = paints.toolbarIconColor
                 val disabled = (textEditingMode && btn.action in TEXT_EDIT_DISABLED) || recording
                 // 开关着色（E6）：开关且启用 → 启用色；禁用优先变暗
@@ -1384,7 +1411,9 @@ class ToolbarRenderer(
         val geo = toolbarSlotGeometry(width, density, effHPad, effRPad, centerPad, slots)
         val centerAreaLeft = geo.centerLeft
         val centerAreaW = geo.centerWidth
-        val otherW = centerAreaW / centerButtons.size
+        // H2-13：命中与绘制同取可见表（语音键关时不占槽位）。
+        val visibleButtons = visibleCenterButtons()
+        val otherW = if (visibleButtons.isEmpty()) 0f else centerAreaW / visibleButtons.size
 
         // 隐藏时中间区命中一律压制（首尾槽照常）；分区几何与上文同口径。
         if (toolbarCenterHitSuppressed(
@@ -1451,14 +1480,14 @@ class ToolbarRenderer(
                 // 布局无中央槽时池钮行不命中（与绘制一致）。
                 if (ToolbarSlot.CENTER !in slots) return null
                 val index = ((x - centerAreaLeft) / otherW).toInt()
-                    .takeIf { it in centerButtons.indices } ?: return null
-                if (textEditingMode && centerButtons[index].action in TEXT_EDIT_DISABLED) return null
+                    .takeIf { it in visibleButtons.indices } ?: return null
+                if (textEditingMode && visibleButtons[index].action in TEXT_EDIT_DISABLED) return null
                 pressCx = centerAreaLeft + otherW * index + otherW / 2f
                 pressCy = barCy
                 pressRadiusMax = height * 0.55f
                 pressRadius = 0f
                 return KawaiiPanel.TouchResult.ToolbarAction(
-                    centerButtons[index].action,
+                    visibleButtons[index].action,
                     tapX = x,
                     tapY = y,
                 )

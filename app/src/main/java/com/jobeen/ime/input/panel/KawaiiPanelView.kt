@@ -28,6 +28,7 @@ import com.jobeen.ime.input.panel.toolbar.ToolbarBackground
 import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
 import com.jobeen.ime.input.panel.toolbar.ToolbarToggleState
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserStore
+import com.jobeen.ime.input.panel.toolbar.voiceInputEnabled
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.input.panel.toolbar.ToolbarConfig
@@ -298,6 +299,8 @@ class KawaiiPanelView(context: Context) : View(context) {
             },
             // 开关启用判定（E6）：与菜单网格同口径。
             toggleActive = { action -> ToolbarToggleState.isActive(context, action) },
+            // 语音入口可见判定（H2-13）：总开关关时工具栏语音键隐藏。
+            voiceEnabled = { voiceInputEnabled(context) },
         ).also { renderer ->
             // 初始渲染器即应用皮肤工具栏（若快照有构成）；无皮肤时
             // 用出厂默认（构造参数已传入）。其后用户覆盖层再压一层

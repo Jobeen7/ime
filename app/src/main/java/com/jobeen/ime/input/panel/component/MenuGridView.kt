@@ -19,6 +19,8 @@ import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.input.panel.PanelAction
 import com.jobeen.ime.input.panel.menu.KeyboardMenuEntries
+import com.jobeen.ime.input.panel.toolbar.isToolbarActionVisible
+import com.jobeen.ime.input.panel.toolbar.voiceInputEnabled
 import splitties.dimensions.dp
 import splitties.views.dsl.constraintlayout.centerHorizontally
 import splitties.views.dsl.constraintlayout.constraintLayout
@@ -45,15 +47,43 @@ class MenuGridView(
     // 菜单页入口（重点候选 8-10）：顺序与动作取 KeyboardMenuEntries
     // 注册表；标签与图标由本视图按 id 映射（新增入口只改注册表＋
     // 本映射，不动分页逻辑；页内行数自适应，6 项页为 4＋2 两行）。
-    private val items: Array<Array<MenuItem>> = KeyboardMenuEntries.PAGES.map { page ->
-        page.map { entry ->
-            MenuItem(
-                context.getString(labelResFor(entry.id)),
-                iconResFor(entry.id),
-                entry.action,
-            )
-        }.toTypedArray()
-    }.toTypedArray()
+    // H2-13：语音总开关关时语音格隐藏——构造时按当前开关过滤，
+    // 开关在设置页切换后，下次打开菜单时 refreshVoiceVisibility 重建。
+    private var items: Array<Array<MenuItem>> = buildMenuItems()
+    private var voiceVisibleBuilt: Boolean = voiceInputEnabled(context)
+
+    private fun buildMenuItems(): Array<Array<MenuItem>> {
+        val voiceOn = voiceInputEnabled(context)
+        return KeyboardMenuEntries.PAGES.map { page ->
+            page.filter { entry ->
+                isToolbarActionVisible(entry.action, voiceOn)
+            }.map { entry ->
+                MenuItem(
+                    context.getString(labelResFor(entry.id)),
+                    iconResFor(entry.id),
+                    entry.action,
+                )
+            }.toTypedArray()
+        }.filter { it.isNotEmpty() }.toTypedArray()
+    }
+
+    /**
+     * 菜单打开前调用（MenuStateRender.showExpand）：语音可见性翻转
+     * 时重建分页（指示点与当前页一并重置）；未翻转时不做事。
+     */
+    fun refreshVoiceVisibility() {
+        val visibleNow = voiceInputEnabled(context)
+        if (visibleNow == voiceVisibleBuilt) return
+        voiceVisibleBuilt = visibleNow
+        items = buildMenuItems()
+        currentPage = 0
+        pages.removeAllViews()
+        items.forEach { pageItems -> pages.addView(createPage(pageItems)) }
+        indicators.removeAllViews()
+        repeat(items.size) { index -> indicators.addView(createIndicator(index)) }
+        updateIndicators()
+        requestLayout()
+    }
 
     private fun labelResFor(id: String): Int = when (id) {
         "emoji" -> R.string.menu_emoji

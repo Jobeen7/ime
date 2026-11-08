@@ -13,6 +13,7 @@ import com.jobeen.ime.input.panel.toolbar.ToolbarConfig
 import com.jobeen.ime.input.panel.toolbar.ToolbarRenderer
 import com.jobeen.ime.input.panel.toolbar.ToolbarRendererResources
 import com.jobeen.ime.input.panel.toolbar.ToolbarToggleState
+import com.jobeen.ime.input.panel.toolbar.voiceInputEnabled
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
@@ -59,6 +60,8 @@ private fun StateRenderContext.buildToolbarRenderer(
         toolbarLayout = SkinSnapshotProvider.peek()?.toolbarLayout,
         // 开关启用判定（E6）：与菜单网格同口径。
         toggleActive = { action -> ToolbarToggleState.isActive(context, action) },
+        // 语音入口可见判定（H2-13）：总开关关时工具栏语音键隐藏。
+        voiceEnabled = { voiceInputEnabled(context) },
     ).apply {
         this.showArrow = showArrow
         this.textEditingMode = textEditingMode
@@ -205,6 +208,8 @@ class MenuStateRender(
         )
 
     override fun showExpand(isExpanded: Boolean) {
+        // H2-13：打开菜单前按语音总开关当前值刷新语音格显隐。
+        ctx.menuGridView.refreshVoiceVisibility()
         ctx.menuGridView.show()
     }
 
