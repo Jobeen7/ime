@@ -175,6 +175,8 @@ class PredictionStateRender(
             edgeTapClosesPredictions = true,
             // 预测首项不是 RIME 首选候选：首选色在此态关闭。
             preferredEnabled = false,
+            // 取消钮画 ×（H2-2）：与组字态展开 chevron 区分开。
+            cancelDrawable = ctx.cancelDrawable,
         ).also {
             it.recording = ctx.recording
             it.highlightedIndex = highlightedIndex

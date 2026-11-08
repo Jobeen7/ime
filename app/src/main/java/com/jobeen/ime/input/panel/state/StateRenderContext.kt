@@ -22,6 +22,8 @@ class StateRenderContext(
     val performanceView: PerformancePanelView,
     val menuGridView: MenuGridView,
     var recording: Boolean = false,
+    /** 预测态边缘取消钮图标（×，H2-2）；null = 回落展开图。 */
+    val cancelDrawable: Drawable? = null,
 ) {
     /** 候选条显示设置四项（构造渲染器时此前每次都同步读一遍 prefs 背书值） */
     data class CandidateDisplaySettings(

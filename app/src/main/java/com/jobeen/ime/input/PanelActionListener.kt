@@ -156,6 +156,10 @@ class PanelActionListener(
         service.engine?.loadMoreCandidates()
     }
 
+    override fun onDismissPredictions() {
+        service.engine?.dismissPredictions()
+    }
+
     override fun onCandidateForget(candidate: EngineMessage.Candidate) {
         DeletedWordsStore.add(candidate.text)
         // 预测候选的 index 不是 Rime 组字序号，给它写墓碑会误伤同序号的真实候选；

@@ -30,6 +30,13 @@ interface PanelListener {
     /** 候选网格滚动到底且引擎侧还有更多候选时，请求分页补取下一页 */
     fun onRequestMoreCandidates() {}
 
+    /**
+     * 关闭联想（H2-2 候选栏取消按钮）：面板点取消钮时调用；
+     * 引擎侧取消在途联想并清联想可见态，防迟到联想把已关的
+     * 栏重新顶出来。缺省空实现。
+     */
+    fun onDismissPredictions() {}
+
     fun onCandidateForget(candidate: EngineMessage.Candidate) {}
 
     fun onEnterAddPhraseMode() {}

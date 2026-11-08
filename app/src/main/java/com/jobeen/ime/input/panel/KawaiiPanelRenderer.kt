@@ -59,7 +59,21 @@ class ComposingRenderer(
      * 首选候选，不得染首选色（此前共用渲染器致预测首项误染）。
      */
     var preferredEnabled: Boolean = true,
+    /**
+     * 取消图标（H2-2 候选栏取消按钮）：预测态边缘钮点按即
+     * 关闭联想，画 × 而非展开 chevron；null 时回落展开图
+     * （旧口径：行为是关闭、样子仍是展开，属无可见取消按钮）。
+     * 组字态不传，边缘钮仍是展开／收起。
+     */
+    var cancelDrawable: Drawable? = null,
 ) : IRenderer {
+
+    /** 边缘钮图标种：预测态为取消（×），组字态为展开（chevron）。 */
+    enum class EdgeButtonIcon { EXPAND, CANCEL }
+
+    /** 边缘钮图标抉择（纯函数，供单测）：关预测标志开即取消。 */
+    fun edgeButtonIconKind(): EdgeButtonIcon =
+        if (edgeTapClosesPredictions) EdgeButtonIcon.CANCEL else EdgeButtonIcon.EXPAND
 
     private fun dimColor(color: Int): Int {
         return if (recording) (color and 0x00FFFFFF) or 0x5A000000.toInt() else color
@@ -486,7 +500,9 @@ class ComposingRenderer(
         }
         val cx = expandBtnLeft + expandBtnW / 2f
         val cy = pillY + pillH / 2f
-        val d = expandDrawable
+        // 取消态画 ×（缺图回落展开图）；取消图不随展开态旋转。
+        val isCancel = edgeButtonIconKind() == EdgeButtonIcon.CANCEL
+        val d = if (isCancel) cancelDrawable ?: expandDrawable else expandDrawable
         if (d != null) {
             d.setTint(paints.toolbarIconColor)
             val iw = d.intrinsicWidth.toFloat() * iconScale
@@ -495,7 +511,7 @@ class ComposingRenderer(
                 (cx - iw / 2f).toInt(), (cy - ih / 2f).toInt(),
                 (cx + iw / 2f).toInt(), (cy + ih / 2f).toInt(),
             )
-            if (isExpanded) {
+            if (isExpanded && !isCancel) {
                 canvas.withRotation(180f, cx, cy) {
                     d.draw(this)
                 }

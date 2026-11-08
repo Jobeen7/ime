@@ -43,4 +43,21 @@ class PredictCloseTest {
             .hitTest(50f, 100f, 1000, 200, 0f, false, 2f)
         assertTrue(result is KawaiiPanel.TouchResult.ClosePredictions)
     }
+
+    /**
+     * H2-2 候选栏取消按钮：预测态边缘钮画 ×（取消），组字态
+     * 仍画展开 chevron；图标抉择只看关预测标志，与图标是否
+     * 传入无关（缺图时绘制期回落展开图，抉择本身不变）。
+     */
+    @Test
+    fun edgeButtonShowsCancelIconInPredictionMode() {
+        val kind = renderer(closeOnEdgeTap = true).edgeButtonIconKind()
+        assertTrue(kind == ComposingRenderer.EdgeButtonIcon.CANCEL)
+    }
+
+    @Test
+    fun edgeButtonShowsExpandIconInComposingMode() {
+        val kind = renderer(closeOnEdgeTap = false).edgeButtonIconKind()
+        assertTrue(kind == ComposingRenderer.EdgeButtonIcon.EXPAND)
+    }
 }

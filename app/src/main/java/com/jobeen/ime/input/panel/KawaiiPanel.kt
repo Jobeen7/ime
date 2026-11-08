@@ -326,6 +326,7 @@ class KawaiiPanel(
             traditionalChinese = context.getDrawable(R.drawable.ic_keyboard_traditional_ch),
         ),
         expandDrawable = context.getDrawable(R.drawable.ic_keyboard_expand_more),
+        cancelDrawable = context.getDrawable(R.drawable.ic_keyboard_close),
         candidateGrid = candidateGrid,
         textEditingView = textEditingView,
         clipboardView = clipboardView,
@@ -1086,7 +1087,12 @@ class KawaiiPanel(
                         val allPredictions = candidates.all {
                             it.type == Candidate.TYPE_IME_PREDICTION
                         }
-                        if (allPredictions) setCandidates(emptyList(), false, 0)
+                        if (allPredictions) {
+                            // 引擎侧一并取消在途联想：迟到联想不再
+                            // 把已关的栏重新顶出来（H2-2）。
+                            listener?.onDismissPredictions()
+                            setCandidates(emptyList(), false, 0)
+                        }
                         else v.setExpanded(true)
                     }
                 }
