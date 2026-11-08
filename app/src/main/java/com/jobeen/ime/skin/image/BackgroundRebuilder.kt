@@ -38,6 +38,7 @@ object BackgroundRebuilder {
                 targetHeightPx = background.targetHeightPx,
                 blurRadiusDp = background.blurRadius,
                 imageAdjust = background.imageAdjust,
+                scaleMode = background.scaleMode,
                 overlayColorArgb = overlayColorArgb,
                 overlayAlpha = background.overlayAlpha,
                 preparedKey = background.preparedKey,

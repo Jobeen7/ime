@@ -6,6 +6,7 @@ import com.jobeen.ime.data.keyboard.theme.BackgroundBlurMode
 import com.jobeen.ime.data.keyboard.theme.BackgroundBlurOverride
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.model.BackgroundSnapshot
+import com.jobeen.ime.skin.model.ImageContentMode
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SoundBindings
 import com.jobeen.ime.skin.store.SkinGenRef
@@ -27,8 +28,8 @@ import org.junit.Test
  * 的代次比对也在 install 内原子完成。
  *
  * 测的是 [SkinSnapshotProvider.install] 的提交裁决（经
- * backgroundDecoder／bitmapRecycler／blurOverrideProvider 三个
- * 测试缝注入可控解码与回收观测）：旧请求在解码期被新请求超
+ * backgroundDecoder／bitmapRecycler／blurOverrideProvider／
+ * scaleModeProvider 四个测试缝注入可控解码与回收观测）：旧请求在解码期被新请求超
  * 越时，旧请求的位图必须回收、不得覆盖新快照；启动加载在解
  * 码期被用户应用超越时同样被拒；陈旧的 blur 重建不得盖掉同
  * 皮肤重装带入的新背景；背景解码并发有上限（2 路）。
@@ -101,6 +102,7 @@ class SkinSnapshotProviderInstallRaceTest {
     private lateinit var savedDecoder: (Context, SkinSnapshot) -> Bitmap?
     private lateinit var savedRecycler: (Bitmap) -> Unit
     private lateinit var savedBlurOverride: (Context) -> BackgroundBlurOverride
+    private lateinit var savedScaleMode: (Context) -> ImageContentMode
     private val recycled = Collections.synchronizedList(mutableListOf<Bitmap>())
 
     @Before
@@ -109,6 +111,7 @@ class SkinSnapshotProviderInstallRaceTest {
         savedDecoder = SkinSnapshotProvider.backgroundDecoder
         savedRecycler = SkinSnapshotProvider.bitmapRecycler
         savedBlurOverride = SkinSnapshotProvider.blurOverrideProvider
+        savedScaleMode = SkinSnapshotProvider.scaleModeProvider
         recycled.clear()
         SkinSnapshotProvider.bitmapRecycler = { recycled += it }
         SkinSnapshotProvider.invalidate()
@@ -123,6 +126,7 @@ class SkinSnapshotProviderInstallRaceTest {
         SkinSnapshotProvider.backgroundDecoder = savedDecoder
         SkinSnapshotProvider.bitmapRecycler = savedRecycler
         SkinSnapshotProvider.blurOverrideProvider = savedBlurOverride
+        SkinSnapshotProvider.scaleModeProvider = savedScaleMode
     }
 
     @Test
@@ -284,9 +288,13 @@ class SkinSnapshotProviderInstallRaceTest {
         SkinSnapshotProvider.blurOverrideProvider = {
             BackgroundBlurOverride(BackgroundBlurMode.ON, 12f)
         }
+        // 拉伸模式缝同样打桩：桩 Context 调 getSharedPreferences
+        // 会触 android.jar 桩方法抛错；本用例只测 blur 竞态，
+        // 拉伸取快照默认值（与 blur 变化不相干）。
+        SkinSnapshotProvider.scaleModeProvider = { ImageContentMode.SCALE_TO_FILL }
         assertTrue(SkinSnapshotProvider.install(context, snap, SkinSnapshotProvider.allocateInstallToken()))
         assertEquals(bmpFirst, SkinSnapshotProvider.currentBackgroundBitmap())
-        val blurThread = thread { SkinSnapshotProvider.refreshBackgroundBlur(context) }
+        val blurThread = thread { SkinSnapshotProvider.refreshBackground(context) }
         assertTrue(blurDecodeEntered.await(10, TimeUnit.SECONDS))
         assertTrue(SkinSnapshotProvider.install(context, snap, SkinSnapshotProvider.allocateInstallToken()))
         // 同键重装：旧位图保留、新解份回收（既有口径），当前仍为首份。

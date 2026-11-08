@@ -411,6 +411,7 @@ object SkinSnapshotFactory {
             }.toMap(),
             builtinLayouts = builtinResolution.layouts,
             globalBlur = GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundBlur,
+            backgroundScaleMode = GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundScaleMode,
         )
         logBatch2Events(ref, validated, snapshot)
         return snapshot

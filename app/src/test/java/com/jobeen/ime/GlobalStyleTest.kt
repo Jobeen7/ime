@@ -11,6 +11,7 @@ import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.SurfaceOverride
 import com.jobeen.ime.data.keyboard.theme.resolveGlobalStyleMode
 import com.jobeen.ime.skin.model.ImageAdjust
+import com.jobeen.ime.skin.model.ImageContentMode
 import com.jobeen.ime.skin.model.StyleField
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -179,6 +180,31 @@ class GlobalStyleTest {
                 GlobalStylePrefs.keyFor(GlobalStyleMode.CUSTOM, "frost_overlay"),
             ),
         )
+    }
+
+    @Test
+    fun scaleMode_parseFallsBackToFillAndKeysCoverBothModes() {
+        assertEquals(ImageContentMode.SCALE_TO_FILL, GlobalStylePrefs.parseScaleMode(null))
+        assertEquals(ImageContentMode.SCALE_TO_FILL, GlobalStylePrefs.parseScaleMode("bogus"))
+        assertEquals(
+            ImageContentMode.SCALE_ASPECT_FIT,
+            GlobalStylePrefs.parseScaleMode("scaleAspectFit"),
+        )
+        assertEquals(ImageContentMode.CENTER, GlobalStylePrefs.parseScaleMode("center"))
+        assertEquals("global_style.bg_scale_mode", GlobalStylePrefs.KEY_BG_SCALE_MODE)
+        assertTrue(GlobalStylePrefs.ALL_KEYS.contains(GlobalStylePrefs.KEY_BG_SCALE_MODE))
+        assertTrue(
+            GlobalStylePrefs.ALL_KEYS.contains(
+                GlobalStylePrefs.keyFor(GlobalStyleMode.CUSTOM, "bg_scale_mode"),
+            ),
+        )
+        assertTrue(GlobalStylePrefs.SCALE_MODE_KEYS.contains(GlobalStylePrefs.KEY_BG_SCALE_MODE))
+        assertTrue(
+            GlobalStylePrefs.SCALE_MODE_KEYS.contains(
+                GlobalStylePrefs.keyFor(GlobalStyleMode.CUSTOM, "bg_scale_mode"),
+            ),
+        )
+        assertEquals(ImageContentMode.SCALE_TO_FILL, GlobalStyle().backgroundScaleMode)
     }
 
     @Test

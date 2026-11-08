@@ -1,5 +1,7 @@
 package com.jobeen.ime.skin.image
 
+import com.jobeen.ime.skin.model.ImageContentMode
+
 /**
  * 像素级纯函数（背景预处理的数学部分，与 Bitmap 解耦以便单测）：
  * 叠加合成与 stack blur 均在 ARGB IntArray 上原地运算。
@@ -145,6 +147,35 @@ object PixelOps {
             for (y in 0 until height) {
                 pixels[y * width + x] = tmp[y]
             }
+        }
+    }
+
+    /**
+     * 等比填充的源裁剪矩形（纯函数）：按目标宽高比在源图中心裁一刀，
+     * 返回 (x, y, w, h)；非等比填充模式或非法尺寸返回 null
+     * （调用方不裁剪）。等比时裁出全图。
+     */
+    fun backgroundCropRect(
+        srcWidth: Int,
+        srcHeight: Int,
+        targetWidth: Int,
+        targetHeight: Int,
+        mode: ImageContentMode,
+    ): IntArray? {
+        if (mode != ImageContentMode.SCALE_ASPECT_FILL) return null
+        if (srcWidth <= 0 || srcHeight <= 0 || targetWidth <= 0 || targetHeight <= 0) return null
+        val srcAspect = srcWidth.toDouble() / srcHeight
+        val targetAspect = targetWidth.toDouble() / targetHeight
+        return if (srcAspect > targetAspect) {
+            // 源图更宽：裁左右。
+            val w = (srcHeight * targetAspect).toInt().coerceIn(1, srcWidth)
+            val x = ((srcWidth - w) / 2).coerceAtLeast(0)
+            intArrayOf(x, 0, w, srcHeight)
+        } else {
+            // 源图更高：裁上下；等比时裁出全图。
+            val h = (srcWidth / targetAspect).toInt().coerceIn(1, srcHeight)
+            val y = ((srcHeight - h) / 2).coerceAtLeast(0)
+            intArrayOf(0, y, srcWidth, h)
         }
     }
 

@@ -2,6 +2,7 @@ package com.jobeen.ime.skin.image
 
 import com.jobeen.ime.skin.model.BackgroundSnapshot
 import com.jobeen.ime.skin.model.ImageAdjust
+import com.jobeen.ime.skin.model.ImageContentMode
 import java.io.File
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
@@ -16,11 +17,12 @@ class BackgroundRebuilderTest {
         assetSha256 = "0de5bd68b0d0c7ab6a691609d0741960224e8a43ba1a7897bb0a7d50fc8b8eb6",
         blurRadius = 6f,
         overlayAlpha = 0f,
-        preparedKey = "bg_0de5bd68_1080x561_b6_adj_bri8500_blr600_rot0_cl800_cr800",
+        preparedKey = "bg_0de5bd68_1080x561_b6_adj_bri8500_blr600_rot0_cl800_cr800_mscaleAspectFit",
         imageAdjust = ImageAdjust(
             brightnessPercent = 85f, blurRadiusDp = 6f, rotationDegrees = 0f,
             cropLeft = 0.08f, cropRight = 0.08f,
         ),
+        scaleMode = ImageContentMode.SCALE_ASPECT_FIT,
         targetWidthPx = 1080,
         targetHeightPx = 561,
     )
@@ -56,6 +58,7 @@ class BackgroundRebuilderTest {
         assertEquals(6f, req.blurRadiusDp)
         assertEquals(background().preparedKey, req.preparedKey)
         assertEquals(85f, req.imageAdjust?.brightnessPercent)
+        assertEquals(ImageContentMode.SCALE_ASPECT_FIT, req.scaleMode)
         assertEquals(0xFF2E3440.toInt(), req.overlayColorArgb)
         assertEquals(background().assetSha256, req.assetSha256)
     }

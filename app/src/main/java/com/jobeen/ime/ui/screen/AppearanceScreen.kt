@@ -82,6 +82,7 @@ import com.jobeen.ime.data.keyboard.theme.SurfaceOverride
 import com.jobeen.ime.data.keyboard.theme.VideoPrefs
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.skin.model.GeometryField
+import com.jobeen.ime.skin.model.ImageContentMode
 import com.jobeen.ime.skin.model.KeyboardGeometryField
 import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
@@ -577,7 +578,8 @@ private enum class AppearanceCategory { VIDEO, GLOBAL, FONTS, APP }
  * - 键盘整体：自定义键盘四角开关＋顶角滑杆（关＝顶角跟随）。
  * - 按键：背景（预设色，含跟随）／自定义边框粗细＋滑杆＋边框颜色／
  *   自定义圆角＋滑杆／动态模糊背景三态（跟随／开／关，关＝强制关）
- *   ＋模糊半径滑杆（仅开时可用）。
+ *   ＋模糊半径滑杆（仅开时可用）／背景图拉伸四态（拉伸／等比适应／
+ *   等比填充／居中，默认拉伸）。
  * - 状态栏图标：跟随按键外观（＝旧工具栏跟随按键开关）＋说明／
  *   自定义边框粗细＋滑杆／自定义圆角＋滑杆／工具栏背景＋工具栏边框颜色
  *   （旧工具栏组控制项，保留）／动态模糊背景（＝顶部栏模糊同一字段，
@@ -699,6 +701,10 @@ internal fun colorPresetValueAt(index: Int): Int? = COLOR_PRESETS[index].second
 internal fun blurModeForOptionIndex(index: Int): BackgroundBlurMode =
     BackgroundBlurMode.entries[index]
 
+/** 四态药丸提交：选项下标 → 背景图拉伸模式（拉伸／等比适应／等比填充／居中）。 */
+internal fun backgroundScaleModeForOptionIndex(index: Int): ImageContentMode =
+    ImageContentMode.entries[index]
+
 /** 颜色药丸当前值：按选择目标取草稿对应字段。 */
 internal fun currentColorForTarget(draft: GlobalStyle, target: ColorTarget): Int? =
     when (target) {
@@ -760,6 +766,7 @@ private fun GlobalStyleDialog(
     val state = remember { GlobalStyleDialogState(initial) }
     var colorTarget by remember { mutableStateOf<ColorTarget?>(null) }
     var blurChoiceOpen by remember { mutableStateOf(false) }
+    var scaleChoiceOpen by remember { mutableStateOf(false) }
     // 预览底色：对话框打开时取一次当前键盘主题（模式决定取主题
     // 还是快照）；草稿只覆盖其上的键面字段，预览随草稿实时变。
     val previewBase = remember { previewBase(context, mode) }
@@ -938,6 +945,23 @@ private fun GlobalStyleDialog(
                                     ),
                                 ),
                                 onClick = { blurChoiceOpen = true },
+                            )
+                            // 背景图拉伸四态（拉伸／等比适应／等比填充／居中）：
+                            // 默认拉伸＝现行口径（皮肤背景预缩放整幅拉满）；
+                            // 其余三态按内容模式放图，留白填皮肤底色。
+                            GlobalStyleValuePill(
+                                text = valuePillText(
+                                    stringResource(R.string.background_scale_mode),
+                                    stringResource(
+                                        when (state.draft.backgroundScaleMode) {
+                                            ImageContentMode.SCALE_TO_FILL -> R.string.background_scale_fill
+                                            ImageContentMode.SCALE_ASPECT_FIT -> R.string.background_scale_fit
+                                            ImageContentMode.SCALE_ASPECT_FILL -> R.string.background_scale_fill_aspect
+                                            ImageContentMode.CENTER -> R.string.background_scale_center
+                                        },
+                                    ),
+                                ),
+                                onClick = { scaleChoiceOpen = true },
                             )
                         }
                         GlobalStyleSectionId.ICONS -> GlobalStyleSection(
@@ -1249,6 +1273,24 @@ private fun GlobalStyleDialog(
                 blurChoiceOpen = false
             },
             onDismiss = { blurChoiceOpen = false },
+        )
+    }
+    if (scaleChoiceOpen) {
+        SingleChoiceDialog(
+            title = stringResource(R.string.background_scale_mode),
+            options = listOf(
+                stringResource(R.string.background_scale_fill),
+                stringResource(R.string.background_scale_fit),
+                stringResource(R.string.background_scale_fill_aspect),
+                stringResource(R.string.background_scale_center),
+            ),
+            selectedIndex = ImageContentMode.entries.indexOf(state.draft.backgroundScaleMode),
+            onSelect = { index ->
+                val mode = backgroundScaleModeForOptionIndex(index)
+                state.updateDraft { it.copy(backgroundScaleMode = mode) }
+                scaleChoiceOpen = false
+            },
+            onDismiss = { scaleChoiceOpen = false },
         )
     }
 }

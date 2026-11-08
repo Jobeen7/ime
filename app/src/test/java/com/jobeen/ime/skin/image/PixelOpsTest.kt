@@ -1,5 +1,6 @@
 package com.jobeen.ime.skin.image
 
+import com.jobeen.ime.skin.model.ImageContentMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -100,5 +101,53 @@ class PixelOpsTest {
         assertEquals(1, PixelOps.computeCappedSampleSize(100, 0, side, pixels))
         assertEquals(1, PixelOps.computeCappedSampleSize(100, 100, 0, pixels))
         assertEquals(1, PixelOps.computeCappedSampleSize(100, 100, side, 0))
+    }
+
+    @Test
+    fun backgroundCropRect_wideSourceCropsSides() {
+        val crop = PixelOps.backgroundCropRect(
+            2000, 1000, 1000, 1000, ImageContentMode.SCALE_ASPECT_FILL,
+        )
+        assertEquals(listOf(500, 0, 1000, 1000), crop!!.toList())
+    }
+
+    @Test
+    fun backgroundCropRect_tallSourceCropsTopBottom() {
+        val crop = PixelOps.backgroundCropRect(
+            1000, 2000, 1000, 1000, ImageContentMode.SCALE_ASPECT_FILL,
+        )
+        assertEquals(listOf(0, 500, 1000, 1000), crop!!.toList())
+    }
+
+    @Test
+    fun backgroundCropRect_sameAspectCropsFullFrame() {
+        val crop = PixelOps.backgroundCropRect(
+            1600, 900, 800, 450, ImageContentMode.SCALE_ASPECT_FILL,
+        )
+        assertEquals(listOf(0, 0, 1600, 900), crop!!.toList())
+    }
+
+    @Test
+    fun backgroundCropRect_nonFillModesAndInvalidInputAreNull() {
+        assertEquals(
+            null,
+            PixelOps.backgroundCropRect(2000, 1000, 1000, 1000, ImageContentMode.SCALE_TO_FILL),
+        )
+        assertEquals(
+            null,
+            PixelOps.backgroundCropRect(2000, 1000, 1000, 1000, ImageContentMode.SCALE_ASPECT_FIT),
+        )
+        assertEquals(
+            null,
+            PixelOps.backgroundCropRect(2000, 1000, 1000, 1000, ImageContentMode.CENTER),
+        )
+        assertEquals(
+            null,
+            PixelOps.backgroundCropRect(0, 1000, 1000, 1000, ImageContentMode.SCALE_ASPECT_FILL),
+        )
+        assertEquals(
+            null,
+            PixelOps.backgroundCropRect(1000, 1000, 0, 1000, ImageContentMode.SCALE_ASPECT_FILL),
+        )
     }
 }

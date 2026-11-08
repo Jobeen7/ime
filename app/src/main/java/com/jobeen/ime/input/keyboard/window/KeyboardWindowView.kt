@@ -668,12 +668,14 @@ class KeyboardWindowView(
             CandidateManager.KEY_SHOW_COMMENT,
                 -> scheduleRefreshDisplaySettings()
 
-            // 外观轮全局样式：模糊键走背景重建专路（只换背景位图，
-            // 不重建键盘）；其余键走强制刷新（圆角/栏开关不在配色内，
-            // 普通路的配色门控会把它们挡下）。
+            // 外观轮全局样式：模糊键与拉伸模式键走背景重建专路
+            // （只换背景位图，不重建键盘）；其余键走强制刷新
+            // （圆角/栏开关不在配色内，普通路的配色门控会把它们挡下）。
             in GlobalStylePrefs.ALL_KEYS -> {
-                if (key in GlobalStylePrefs.BLUR_KEYS) {
-                    SkinSnapshotProvider.refreshBackgroundBlur(context)
+                if (key in GlobalStylePrefs.BLUR_KEYS ||
+                    key in GlobalStylePrefs.SCALE_MODE_KEYS
+                ) {
+                    SkinSnapshotProvider.refreshBackground(context)
                 } else {
                     scheduleRefreshDisplaySettings()
                 }

@@ -780,6 +780,11 @@
     <string name="global_blur_follow">跟随</string>
     <string name="global_blur_on">开</string>
     <string name="global_blur_off">关</string>
+    <string name="background_scale_mode">背景图拉伸</string>
+    <string name="background_scale_fill">拉伸</string>
+    <string name="background_scale_fit">等比适应</string>
+    <string name="background_scale_fill_aspect">等比填充</string>
+    <string name="background_scale_center">居中</string>
     <string name="global_toolbar_radius">工具栏圆角</string>
     <string name="bar_icon_follow">跟随按键外观</string>
     <!-- 跟随说明（2026-11-07 按视频定稿重设计）：开／关同一句说明，不再分两句。 -->

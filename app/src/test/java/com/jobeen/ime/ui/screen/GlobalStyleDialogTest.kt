@@ -7,6 +7,7 @@ import com.jobeen.ime.data.keyboard.theme.BackgroundBlurOverride
 import com.jobeen.ime.data.keyboard.theme.GlobalStyle
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.keyboard.theme.SurfaceOverride
+import com.jobeen.ime.skin.model.ImageContentMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -228,6 +229,14 @@ class GlobalStyleDialogTest {
         assertEquals(BackgroundBlurMode.FOLLOW, blurModeForOptionIndex(0))
         assertEquals(BackgroundBlurMode.ON, blurModeForOptionIndex(1))
         assertEquals(BackgroundBlurMode.OFF, blurModeForOptionIndex(2))
+    }
+
+    @Test
+    fun backgroundScaleMode_optionIndexOrder() {
+        assertEquals(ImageContentMode.SCALE_TO_FILL, backgroundScaleModeForOptionIndex(0))
+        assertEquals(ImageContentMode.SCALE_ASPECT_FIT, backgroundScaleModeForOptionIndex(1))
+        assertEquals(ImageContentMode.SCALE_ASPECT_FILL, backgroundScaleModeForOptionIndex(2))
+        assertEquals(ImageContentMode.CENTER, backgroundScaleModeForOptionIndex(3))
     }
 
     @Test

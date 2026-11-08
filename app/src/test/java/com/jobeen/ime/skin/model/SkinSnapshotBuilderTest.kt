@@ -75,7 +75,31 @@ class SkinSnapshotBuilderTest {
         sha: (String) -> String? = { "a".repeat(64) },
         targetW: Int = 1000,
         targetH: Int = 400,
-    ) = SkinSnapshotBuilder.build(validated(json), ref, defaultScheme, tier, sha, targetW, targetH)
+        scaleMode: ImageContentMode = ImageContentMode.SCALE_TO_FILL,
+    ) = SkinSnapshotBuilder.build(
+        validated(json), ref, defaultScheme, tier, sha, targetW, targetH,
+        backgroundScaleMode = scaleMode,
+    )
+
+    @Test
+    fun preparedKeyCarriesScaleModeOnlyWhenNonDefault() {
+        val json = """
+            {"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"}, "appearance": {"background":
+              {"type": "asset", "asset": "bg_main", "blurRadius": 0}}}
+        """.trimIndent()
+        val fill = build(json, targetW = 1000, targetH = 400)
+        assertEquals("bg_${"a".repeat(64)}_1000x400_b0", fill.background!!.preparedKey)
+        assertEquals(ImageContentMode.SCALE_TO_FILL, fill.background!!.scaleMode)
+        val fit = build(
+            json, targetW = 1000, targetH = 400,
+            scaleMode = ImageContentMode.SCALE_ASPECT_FIT,
+        )
+        assertEquals(
+            "bg_${"a".repeat(64)}_1000x400_b0_mscaleAspectFit",
+            fit.background!!.preparedKey,
+        )
+        assertEquals(ImageContentMode.SCALE_ASPECT_FIT, fit.background!!.scaleMode)
+    }
 
     @Test
     fun partialStylesComposeOverDefault() {

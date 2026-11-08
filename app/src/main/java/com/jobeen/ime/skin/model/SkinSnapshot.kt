@@ -432,6 +432,12 @@ data class BackgroundSnapshot(
      */
     val imageAdjust: ImageAdjust? = null,
     /**
+     * 生效背景图拉伸模式（D15，全局样式覆盖）：默认拉伸＝现行口径；
+     * 非默认时进产物键（见 [SkinSnapshotBuilder.preparedKey]），
+     * 旧产物键逐字节不变。
+     */
+    val scaleMode: ImageContentMode = ImageContentMode.SCALE_TO_FILL,
+    /**
      * 文件原值（2026-10-29 外观轮：全局模糊重建用，不受全局
      * 覆盖与降级改写影响；运行期重算生效模糊的输入）。
      */

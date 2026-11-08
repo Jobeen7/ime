@@ -13,6 +13,7 @@ import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.image.AndroidBackgroundPreparer
 import com.jobeen.ime.skin.image.BackgroundRebuilder
 import com.jobeen.ime.skin.image.BoundedBitmapDecoder
+import com.jobeen.ime.skin.model.ImageContentMode
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
 import com.jobeen.ime.skin.store.ActiveResolver
@@ -80,7 +81,7 @@ object SkinSnapshotProvider {
      * 时分配（快照构建／解码之前），提交时才分配无法区分新旧
      * （后开始的旧请求会在提交时拿到更新的 token 而错误胜出）。
      * 只读提交方（blur 重建）不分配、只捕获当前最新 token，
-     * 提交时核对未变才换背景（见 [refreshBackgroundBlur]）。
+     * 提交时核对未变才换背景（见 [refreshBackground]）。
      * 全部读写都在 [lock] 内，无需 @Volatile。
      */
     private var installRequestSequence = 0L
@@ -102,6 +103,11 @@ object SkinSnapshotProvider {
     /** 测试缝：位图回收（默认未回收才 recycle）；生产不改。 */
     internal var bitmapRecycler: (Bitmap) -> Unit = { bitmap ->
         if (!bitmap.isRecycled) bitmap.recycle()
+    }
+
+    /** 测试缝：背景图拉伸全局覆盖（默认读 [GlobalStylePrefs]）；生产不改。 */
+    internal var scaleModeProvider: (Context) -> ImageContentMode = { context ->
+        GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundScaleMode
     }
 
     /** 测试缝：背景模糊全局覆盖（默认读 [GlobalStylePrefs]）；生产不改。 */
@@ -410,7 +416,7 @@ object SkinSnapshotProvider {
 
     /**
      * 背景位图安装（锁内只做指针交换与回收，绝不解码——解码
-     * 在 [install]/[refreshBackgroundBlur] 的锁外先行，审计 #2）：
+     * 在 [install]/[refreshBackground] 的锁外先行，审计 #2）：
      * 产物键变化时释放旧位图、装入锁外已解的位图；产物缺失时
      * 走异步自愈重建。锁外解出的位图若到锁内时键已未变（并发
      * 安装抢先装了同键位图），且当前已有位图，回收冗余份；
@@ -444,15 +450,15 @@ object SkinSnapshotProvider {
     }
 
     /**
-     * 全局背景模糊重建（2026-10-29 外观轮）：只换当前快照的
-     * 背景段（模糊半径＋调节＋产物键），不碰音效／图片／通知
-     * 状态、不重建快照；产物键变化走同一自愈重建链路，成功后
-     * 刷新窗口。无快照／无背景／生效值不变时直接返回。
+     * 全局背景重建（2026-10-29 外观轮模糊，2026-11-08 加拉伸模式）：
+     * 只换当前快照的背景段（模糊半径＋调节＋拉伸模式＋产物键），
+     * 不碰音效／图片／通知状态、不重建快照；产物键变化走同一自愈
+     * 重建链路，成功后刷新窗口。无快照／无背景／生效值不变时直接返回。
      * 只记元数据（皮肤 id＋产物键），不记图片内容。
      */
-    fun refreshBackgroundBlur(context: Context) {
+    fun refreshBackground(context: Context) {
         // 只捕获、不分配（与 refreshIfOverlayChanged 同款口径）：
-        // blur 重建只是对当前快照背景段的更新，不得否决在它之后
+        // 背景重建只是对当前快照背景段的更新，不得否决在它之后
         // 开始的完整安装；提交时 token 变了就丢弃。
         val tokenAtStart = synchronized(lock) { latestInstallToken }
         val snapshot = synchronized(lock) { currentSnapshot } ?: return
@@ -461,12 +467,16 @@ object SkinSnapshotProvider {
             bg.specBlurRadius, bg.specImageAdjust, bg.blurDisabled,
             blurOverrideProvider(context),
         )
-        if (blur == bg.blurRadius && adjust == bg.imageAdjust) return
+        val scaleMode = scaleModeProvider(context)
+        if (blur == bg.blurRadius && adjust == bg.imageAdjust &&
+            scaleMode == bg.scaleMode
+        ) return
         val newBg = bg.copy(
             blurRadius = blur,
             imageAdjust = adjust,
+            scaleMode = scaleMode,
             preparedKey = SkinSnapshotBuilder.preparedKey(
-                bg.assetSha256, bg.targetWidthPx, bg.targetHeightPx, blur, adjust,
+                bg.assetSha256, bg.targetWidthPx, bg.targetHeightPx, blur, adjust, scaleMode,
             ),
         )
         // 背景解码先行（锁外）：新产物键对应的位图在锁外解出，
@@ -653,7 +663,7 @@ object SkinSnapshotProvider {
      * 最多 2 路在解（[backgroundDecodePermits]）。中断时按解码失败
      * 计（返回 null，调用方走缺失／重建口径），并恢复中断标志。
      * 调用方均在 IO 线程，阻塞等许可可接受；主线程不得调 install
-     * 与 refreshBackgroundBlur（见各函数文档）。
+     * 与 refreshBackground（见各函数文档）。
      */
     private fun decodeBackgroundBounded(context: Context, snapshot: SkinSnapshot): Bitmap? {
         try {

@@ -5,6 +5,7 @@ package com.jobeen.ime.data.keyboard.theme
 import android.content.Context
 import androidx.core.content.edit
 import com.jobeen.ime.skin.model.ImageAdjust
+import com.jobeen.ime.skin.model.ImageContentMode
 import com.jobeen.ime.skin.model.StyleField
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.ui.theme.AppAppearance
@@ -68,6 +69,8 @@ data class GlobalStyle(
     val toolbar: SurfaceOverride = SurfaceOverride(),
     val keyboardTopCornerDp: Float? = null,
     val backgroundBlur: BackgroundBlurOverride = BackgroundBlurOverride(),
+    /** 背景图拉伸模式（D15）：默认拉伸＝现行口径（皮肤背景预缩放整幅拉满）。 */
+    val backgroundScaleMode: ImageContentMode = ImageContentMode.SCALE_TO_FILL,
     val barBackground: Int? = null,
     val barBlur: Boolean = false,
     val sharedBackground: Boolean = false,
@@ -92,6 +95,7 @@ object GlobalStylePrefs {
     private const val S_TOP_CORNER = "top_corner"
     private const val S_BLUR_MODE = "blur_mode"
     private const val S_BLUR_RADIUS = "blur_radius"
+    private const val S_BG_SCALE_MODE = "bg_scale_mode"
     private const val S_BAR_BG = "bar_bg"
     private const val S_BAR_BLUR = "bar_blur"
     private const val S_SHARED_BG = "shared_bg"
@@ -109,6 +113,7 @@ object GlobalStylePrefs {
     const val KEY_TOP_CORNER = "global_style.top_corner"
     const val KEY_BLUR_MODE = "global_style.blur_mode"
     const val KEY_BLUR_RADIUS = "global_style.blur_radius"
+    const val KEY_BG_SCALE_MODE = "global_style.bg_scale_mode"
     const val KEY_BAR_BG = "global_style.bar_bg"
     const val KEY_BAR_BLUR = "global_style.bar_blur"
     const val KEY_SHARED_BG = "global_style.shared_bg"
@@ -120,7 +125,7 @@ object GlobalStylePrefs {
         S_KEY_BG, S_KEY_BORDER_WIDTH, S_KEY_BORDER_COLOR, S_KEY_RADIUS,
         S_LINK_TOOLBAR, S_TOOLBAR_BG, S_TOOLBAR_BORDER_WIDTH,
         S_TOOLBAR_BORDER_COLOR, S_TOOLBAR_RADIUS, S_TOP_CORNER,
-        S_BLUR_MODE, S_BLUR_RADIUS, S_BAR_BG, S_BAR_BLUR, S_SHARED_BG,
+        S_BLUR_MODE, S_BLUR_RADIUS, S_BG_SCALE_MODE, S_BAR_BG, S_BAR_BLUR, S_SHARED_BG,
         S_FROST_OVERLAY,
     )
 
@@ -133,6 +138,15 @@ object GlobalStylePrefs {
     val BLUR_KEYS: Set<String> = GlobalStyleMode.entries.flatMap { mode ->
         listOf(mode.prefix + S_BLUR_MODE, mode.prefix + S_BLUR_RADIUS)
     }.toSet()
+
+    /** 背景图拉伸相关键（两模式；与模糊键同走背景重建专路，只换背景位图）。 */
+    val SCALE_MODE_KEYS: Set<String> = GlobalStyleMode.entries.flatMap { mode ->
+        listOf(mode.prefix + S_BG_SCALE_MODE)
+    }.toSet()
+
+    /** 拉伸模式解析（纯函数）：非法／缺失回落默认拉伸＝现行口径。 */
+    fun parseScaleMode(raw: String?): ImageContentMode =
+        ImageContentMode.byJsonName(raw) ?: ImageContentMode.SCALE_TO_FILL
 
     private fun prefs(context: Context) =
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -170,6 +184,7 @@ object GlobalStylePrefs {
                 mode = BackgroundBlurMode.parse(p.getString(k(S_BLUR_MODE), null)),
                 radiusDp = floatOrNull(p, k(S_BLUR_RADIUS)),
             ),
+            backgroundScaleMode = parseScaleMode(p.getString(k(S_BG_SCALE_MODE), null)),
             barBackground = intOrNull(p, k(S_BAR_BG)),
             barBlur = p.getBoolean(k(S_BAR_BLUR), false),
             sharedBackground = p.getBoolean(k(S_SHARED_BG), false),
@@ -197,6 +212,7 @@ object GlobalStylePrefs {
             putOrRemoveFloat(k(S_TOP_CORNER), style.keyboardTopCornerDp)
             putString(k(S_BLUR_MODE), style.backgroundBlur.mode.stored)
             putOrRemoveFloat(k(S_BLUR_RADIUS), style.backgroundBlur.radiusDp)
+            putString(k(S_BG_SCALE_MODE), style.backgroundScaleMode.jsonName)
             putOrRemoveInt(k(S_BAR_BG), style.barBackground)
             putBoolean(k(S_BAR_BLUR), style.barBlur)
             putBoolean(k(S_SHARED_BG), style.sharedBackground)

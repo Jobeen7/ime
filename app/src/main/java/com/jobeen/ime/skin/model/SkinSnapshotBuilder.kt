@@ -45,6 +45,11 @@ object SkinSnapshotBuilder {
          * 默认跟随＝现行口径（降级关模糊时仍为 0，见解析函数）。
          */
         globalBlur: BackgroundBlurOverride = BackgroundBlurOverride(),
+        /**
+         * 全局背景图拉伸覆盖（D15）：工厂层从偏好读入；
+         * 默认拉伸＝现行口径（皮肤背景预缩放整幅拉满）。
+         */
+        backgroundScaleMode: ImageContentMode = ImageContentMode.SCALE_TO_FILL,
         /** 布局解析结论：默认按有无已解析布局推定，工厂层可显式给出失败结论。 */
         layoutResolution: LayoutResolution =
             if (resolvedLayout != null) LayoutResolution.RESOLVED else LayoutResolution.NOT_SET,
@@ -105,8 +110,9 @@ object SkinSnapshotBuilder {
                 assetSha256 = sha,
                 blurRadius = effectiveBlur,
                 overlayAlpha = spec.overlayAlpha,
-                preparedKey = preparedKey(sha, scaledW, scaledH, effectiveBlur, effectiveAdjust),
+                preparedKey = preparedKey(sha, scaledW, scaledH, effectiveBlur, effectiveAdjust, backgroundScaleMode),
                 imageAdjust = effectiveAdjust,
+                scaleMode = backgroundScaleMode,
                 targetWidthPx = scaledW,
                 targetHeightPx = scaledH,
                 specBlurRadius = spec.blurRadius,
@@ -402,7 +408,8 @@ object SkinSnapshotBuilder {
     /**
      * 预处理产物键（详设 §2.6）：bg_<assetHash>_<w>x<h>_b<blur>，
      * blur 取整入键；有调节时追加调节后缀（无调节时后缀为空，
-     * 旧产物键逐字节不变，存量产物可复用）。
+     * 旧产物键逐字节不变，存量产物可复用）；拉伸模式非默认时
+     * 追加 `_m<jsonName>`（默认拉伸不追加，旧产物键逐字节不变）。
      */
     fun preparedKey(
         assetSha256: String,
@@ -410,9 +417,11 @@ object SkinSnapshotBuilder {
         heightPx: Int,
         blurRadius: Float,
         imageAdjust: ImageAdjust? = null,
+        scaleMode: ImageContentMode = ImageContentMode.SCALE_TO_FILL,
     ): String =
         "bg_${assetSha256}_${widthPx}x${heightPx}_b${blurRadius.roundToInt()}" +
-            (imageAdjust?.preparedKeySuffix() ?: "")
+            (imageAdjust?.preparedKeySuffix() ?: "") +
+            if (scaleMode == ImageContentMode.SCALE_TO_FILL) "" else "_m${scaleMode.jsonName}"
 
     /** 把一个配色叶子写进方案（嵌套字段走 copy 链）。 */
     fun KeyboardColors.ColorScheme.withStyle(

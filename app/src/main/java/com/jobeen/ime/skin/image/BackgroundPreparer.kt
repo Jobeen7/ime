@@ -2,8 +2,12 @@ package com.jobeen.ime.skin.image
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.Canvas
 import android.graphics.Matrix
+import android.graphics.RectF
+import com.jobeen.ime.skin.model.ImageContentMode
 import com.jobeen.ime.skin.model.ImageAdjust
+import com.jobeen.ime.skin.model.contentModeDstRect
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -30,6 +34,8 @@ interface BackgroundPreparer {
          * 只消费亮度/旋转/裁剪三项；产物键由调用方按快照口径算好。
          */
         val imageAdjust: ImageAdjust? = null,
+        /** 背景图拉伸模式（D15）：默认拉伸＝现行口径（整幅拉满目标尺寸）。 */
+        val scaleMode: ImageContentMode = ImageContentMode.SCALE_TO_FILL,
         /** styles.background 合成值：压平底色与 overlay 混合目标。 */
         val overlayColorArgb: Int,
         val overlayAlpha: Float,
@@ -108,13 +114,41 @@ class AndroidBackgroundPreparer(
                     working = rotated
                 }
             }
-            val scaled = if (working.width == request.targetWidthPx &&
-                working.height == request.targetHeightPx
-            ) {
-                working
+            // 拉伸模式（D15）：等比填充先按目标宽高比中心裁剪源图；
+            // 等比适应／居中按 contentMode 目标矩形放置，其余留白
+            // 由后续压平填底色（与整幅拉满同一管线序，不改亮度／
+            // 模糊／压平／混合的执行顺序与参数）。
+            val mode = request.scaleMode
+            var placed = working
+            if (mode == ImageContentMode.SCALE_ASPECT_FILL) {
+                val crop = PixelOps.backgroundCropRect(
+                    working.width, working.height,
+                    request.targetWidthPx, request.targetHeightPx, mode,
+                )
+                if (crop != null &&
+                    !(crop[0] == 0 && crop[1] == 0 &&
+                        crop[2] == working.width && crop[3] == working.height)
+                ) {
+                    val cropped = Bitmap.createBitmap(
+                        working, crop[0], crop[1], crop[2], crop[3],
+                    )
+                    if (cropped !== working) working.recycle()
+                    placed = cropped
+                }
+            }
+            val dst = contentModeDstRect(
+                mode, placed.width, placed.height,
+                request.targetWidthPx.toFloat(), request.targetHeightPx.toFloat(),
+            )
+            val dstW = (dst.right - dst.left).roundToInt().coerceAtLeast(1)
+            val dstH = (dst.bottom - dst.top).roundToInt().coerceAtLeast(1)
+            val scaled = if (mode == ImageContentMode.CENTER) {
+                placed
+            } else if (placed.width == dstW && placed.height == dstH) {
+                placed
             } else {
-                Bitmap.createScaledBitmap(working, request.targetWidthPx, request.targetHeightPx, true)
-                    .also { if (it !== working) working.recycle() }
+                Bitmap.createScaledBitmap(placed, dstW, dstH, true)
+                    .also { if (it !== placed) placed.recycle() }
             }
             val pixels = IntArray(scaled.width * scaled.height)
             scaled.getPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
@@ -128,6 +162,29 @@ class AndroidBackgroundPreparer(
             PixelOps.flattenOver(pixels, request.overlayColorArgb)
             PixelOps.tintToward(pixels, request.overlayColorArgb, request.overlayAlpha)
             scaled.setPixels(pixels, 0, scaled.width, 0, 0, scaled.width, scaled.height)
+            // 放置：整幅（拉伸／等比填充）即产物；等比适应／居中把
+            // 处理后的图画到目标尺寸底色板上，留白即底色（压平已
+            // 保证图本身不透明，留白不经亮度／模糊，与整幅口径一致）。
+            val product = if (scaled.width == request.targetWidthPx &&
+                scaled.height == request.targetHeightPx
+            ) {
+                scaled
+            } else {
+                val board = Bitmap.createBitmap(
+                    request.targetWidthPx, request.targetHeightPx,
+                    Bitmap.Config.ARGB_8888,
+                )
+                Canvas(board).apply {
+                    drawColor(request.overlayColorArgb)
+                    drawBitmap(
+                        scaled, null,
+                        RectF(dst.left, dst.top, dst.right, dst.bottom),
+                        null,
+                    )
+                }
+                scaled.recycle()
+                board
+            }
             val format = if (android.os.Build.VERSION.SDK_INT >= 30) {
                 Bitmap.CompressFormat.WEBP_LOSSY
             } else {
@@ -135,9 +192,9 @@ class AndroidBackgroundPreparer(
                 Bitmap.CompressFormat.WEBP
             }
             outFile.outputStream().buffered().use { out ->
-                check(scaled.compress(format, 88, out)) { "compress_failed" }
+                check(product.compress(format, 88, out)) { "compress_failed" }
             }
-            scaled.recycle()
+            product.recycle()
             writePreparedIndex(preparedDir, key, request)
             BackgroundPreparer.Result.Done(key, request.targetWidthPx, request.targetHeightPx)
         }.getOrElse {
