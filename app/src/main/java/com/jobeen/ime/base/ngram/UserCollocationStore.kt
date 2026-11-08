@@ -18,8 +18,24 @@ import java.io.File
  * 线程安全：内部状态全部在锁内访问；落盘由内部单线程执行器
  * 串行执行。任何 IO 异常都被吞掉（runCatching），学习失败静默
  * 降级，绝不向上抛。
+ *
+ * 写盘节奏（H2-1，2026-11-08）：按量攒批＋按时间节流，二者取先到者——
+ * - 脏学习满 [FLUSH_EVERY] 条且距上次写盘已满 [FLUSH_DELAY_MS] 时立即写盘；
+ * - 否则只挂一个延时写盘任务，写盘时刻为上次写盘后满 [FLUSH_DELAY_MS]
+ *   （从未写盘时为首次脏学习后满一个间隔），保证突发学习下写盘
+ *   次数有上界（每 30 秒至多一次），稀疏打字的数据也不在内存里
+ *   无限期滞留；
+ * - 键盘收起（PredictionManager.flushCollocations，经
+ *   RimeEngine.onFinishInputView）与销毁时立即写盘（flush()，
+ *   无脏数据时零开销）。
+ * 不丢数据的底线：进程被杀时最多丢一个节流间隔内的学习（见下文
+ * 已知差距）；正常收起／销毁路径不丢。
  */
-class UserCollocationStore(private val file: File) {
+class UserCollocationStore(
+    private val file: File,
+    /** 写盘最小间隔（单测可注短；生产 30 秒）。 */
+    private val flushDelayMs: Long = FLUSH_DELAY_MS,
+) {
 
     data class Entry(var count: Int, var lastDay: Long)
 
@@ -31,9 +47,21 @@ class UserCollocationStore(private val file: File) {
     private var loadFailed = false
     private var dirtyCount = 0
 
-    private val flushExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
-        Thread(r, "collocation-flush").apply { isDaemon = true }
-    }
+    /** 上次实际写盘的时刻（0 = 从未写盘）；写盘间隔的节流基准。 */
+    private var lastFlushMs = 0L
+
+    /** 已挂起的延时写盘任务（仅当 dirtyCount > 0 时存在）；锁内访问。 */
+    private var pendingFlush: java.util.concurrent.ScheduledFuture<*>? = null
+
+    /** 已完成的实际写盘次数（单测观测用；锁外 @Volatile 可见）。 */
+    @Volatile
+    var flushCount = 0
+        private set
+
+    private val flushScheduler =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r ->
+            Thread(r, "collocation-flush").apply { isDaemon = true }
+        }
 
     private fun today(): Long = System.currentTimeMillis() / MILLIS_PER_DAY
 
@@ -76,9 +104,13 @@ class UserCollocationStore(private val file: File) {
                 e.lastDay = day
             }
             dirtyCount++
-            if (dirtyCount >= FLUSH_EVERY) {
-                dirtyCount = 0
-                scheduleFlushLocked()
+            val now = System.currentTimeMillis()
+            if (dirtyCount >= FLUSH_EVERY && isFlushDueLocked(now)) {
+                // 量 cap 到了且节流间隔已满：立即写盘
+                scheduleFlushLocked(now)
+            } else {
+                // 否则只保证挂一个延时写盘，不在打字路径上多写
+                ensureDelayedFlushLocked(now)
             }
         }
     }
@@ -99,19 +131,65 @@ class UserCollocationStore(private val file: File) {
         }
     }
 
-    /** 立即落盘（进程内异步串行执行，重复调用安全）。 */
+    /**
+     * 立即落盘（进程内异步串行执行，重复调用安全）。
+     * 无脏数据时零开销：键盘收起／销毁等高频调用点可放心直调。
+     */
     fun flush() {
-        synchronized(lock) { scheduleFlushLocked() }
+        synchronized(lock) {
+            if (dirtyCount == 0) return
+            scheduleFlushLocked(System.currentTimeMillis())
+        }
     }
 
-    private fun scheduleFlushLocked() {
+    /** 距上次写盘已满一个节流间隔（或从未写盘）时才允许立即写盘。 */
+    private fun isFlushDueLocked(now: Long): Boolean =
+        lastFlushMs == 0L || now - lastFlushMs >= flushDelayMs
+
+    /**
+     * 保证挂一个延时写盘任务：写盘时刻为上次写盘后满一个间隔
+     * （从未写盘时为首次脏学习后满一个间隔）。已挂起时不重复挂。
+     */
+    private fun ensureDelayedFlushLocked(now: Long) {
+        if (loadFailed || dirtyCount == 0 || pendingFlush != null) return
+        val delay = if (lastFlushMs == 0L) {
+            flushDelayMs
+        } else {
+            maxOf(0L, lastFlushMs + flushDelayMs - now)
+        }
+        pendingFlush = flushScheduler.schedule(
+            { onDelayedFlush() },
+            delay,
+            java.util.concurrent.TimeUnit.MILLISECONDS,
+        )
+    }
+
+    /** 延时写盘任务到时：锁内复核脏数据，仍有才写盘。 */
+    private fun onDelayedFlush() {
+        synchronized(lock) {
+            pendingFlush = null
+            if (dirtyCount == 0 || loadFailed) return
+            scheduleFlushLocked(System.currentTimeMillis())
+        }
+    }
+
+    /**
+     * 安排一次实际写盘：取消挂起的延时任务、清脏计数、记写盘时刻，
+     * 锁内序列化成文本，写文件在执行器线程做，不阻塞调用方。
+     * 调用方须持 lock。
+     */
+    private fun scheduleFlushLocked(now: Long) {
         if (loadFailed) return // 读未成功前不落盘，仅留内存状态
+        pendingFlush?.cancel(false)
+        pendingFlush = null
+        dirtyCount = 0
+        lastFlushMs = now
         // 快照在锁内序列化成文本，写文件在执行器线程做，不阻塞调用方
         val text = runCatching {
             pruneLocked()
             serialize(table)
         }.getOrNull() ?: return
-        flushExecutor.execute {
+        flushScheduler.execute {
             runCatching {
                 file.parentFile?.mkdirs()
                 val tmp = File(file.parentFile, file.name + ".tmp")
@@ -120,6 +198,7 @@ class UserCollocationStore(private val file: File) {
                     file.writeText(text, Charsets.UTF_8)
                     tmp.delete()
                 }
+                flushCount++
             }
         }
     }
@@ -161,6 +240,8 @@ class UserCollocationStore(private val file: File) {
     companion object {
         const val MAX_PAIRS = 20_000
         const val FLUSH_EVERY = 40
+        /** 写盘最小间隔：两次实际写盘之间至少隔这么久（突发学习节流用）。 */
+        const val FLUSH_DELAY_MS = 30_000L
         const val STALE_DAYS = 90L
         private const val MILLIS_PER_DAY = 86_400_000L
 

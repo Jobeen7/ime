@@ -81,6 +81,14 @@ class PredictionManager(private val context: Context) {
         prediction?.destroy()
         prediction = null
         gramDb = null
+        flushCollocations()
+    }
+
+    /**
+     * 键盘收起／销毁时落盘用户搭配学习：有未写盘的学习才写，
+     * 无脏数据时零开销。存储未初始化时不触发懒加载。
+     */
+    fun flushCollocations() {
         if (collocationStoreDelegate.isInitialized()) collocationStore.flush()
     }
 

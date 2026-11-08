@@ -2317,6 +2317,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         invalidateBeforeCursorCache()
         invalidatePendingCandidates()
         invalidatePendingPrediction()
+        // 键盘收起：把本轮打字学到的搭配落盘（无脏数据时零开销）；
+        // 进程被杀前的最后一道写盘机会，不走节流延时
+        predictionManager?.flushCollocations()
     }
 
     override fun onSelectionChanged() {
