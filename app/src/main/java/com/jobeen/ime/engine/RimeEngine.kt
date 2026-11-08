@@ -3008,9 +3008,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         sendJob {
             // 直接上屏：前文缓存失效，后续预测读新鲜前文
             invalidateBeforeCursorCache()
-            if (compositionCached.preedit?.isNotEmpty() == true) {
+            if (SymbolComposeOrder.shouldCommitSelectionFirst(getRawInput())) {
                 // 门与作业之间组字已起：退化为普通单字提交（与直接
-                // 敲开符号一致），不成对、不丢字。
+                // 敲开符号一致），不成对、不丢字。组字判定读本 job
+                // 执行时点的实时原始输入，不读展示串缓存（缓存由分发
+                // 队列回写，可能滞后于在途按键；见 SymbolComposeOrder）。
                 commitCurrentSelection(opener)
                 return@sendJob
             }
@@ -3038,13 +3040,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         sendJob {
             // 直接上屏：前文缓存失效，后续预测读新鲜前文
             invalidateBeforeCursorCache()
-            if (compositionCached.preedit?.isNotEmpty() == true) {
+            if (SymbolComposeOrder.shouldCommitSelectionFirst(getRawInput())) {
                 // 组字中：选中词与 text 由 native 合成一条 Commit
                 // 落屏，其在 handleRimeMessage 的 Commit 分支按打
                 // 字上屏路径于落屏后发起预测——job 内读到的前文
                 // 已含「选中词+text」，是最终结果；此处不再另发
                 // 预测（另发一轮的上下文只能在落屏前拼装，必缺刚
-                // 上屏的组字词）
+                // 上屏的组字词）。组字判定读本 job 执行时点的实时
+                // 原始输入（getRawInput），不读展示串缓存（见
+                // SymbolComposeOrder）。
                 commitCurrentSelection(text)
                 return@sendJob
             }
