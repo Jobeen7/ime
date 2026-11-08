@@ -145,14 +145,17 @@ class KeyIdReconciliationTest {
     @Test
     fun registryGovernance() {
         assertEquals(91, KeyIds.OVERRIDABLE.size)
-        assertEquals(18, KeyIds.ANCHORS.size)
+        // H2-7：颜文字锚点新增 7 个（RETURN + CAT_1~6），18 → 25。
+        assertEquals(25, KeyIds.ANCHORS.size)
         assertTrue(KeyIds.OVERRIDABLE.intersect(KeyIds.ANCHORS).isEmpty())
         assertTrue(KeyIds.DEPRECATED.intersect(KeyIds.OVERRIDABLE + KeyIds.ANCHORS).isEmpty())
         assertEquals(7, KeyIds.Symbol.CATS.size)
         assertEquals(9, KeyIds.Emoji.CATS.size)
+        assertEquals(6, KeyIds.Kaomoji.CATS.size)
         // 分类表计数与锚点序号上限同账（序号随表序，增删走五.1 治理）
         assertEquals(7, com.jobeen.ime.data.Symbol.Symbol.size)
         assertEquals(9, com.jobeen.ime.data.Symbol.Emoji.size)
+        assertEquals(6, com.jobeen.ime.data.Kaomoji.Categories.size)
     }
 
     @Test
