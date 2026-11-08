@@ -40,7 +40,7 @@ import kotlinx.coroutines.withContext
  */
 object AppReset {
     /** 内置 Lite 方案集，顺序与默认 default.yaml 的 schema_list 一致。 */
-    val BUILTIN_LITE_IDS = listOf("wanxiang_t9", "wanxiang_lite", "wanxiang_english")
+    val BUILTIN_LITE_IDS = listOf("wanxiang_t9", "wanxiang_lite", "wanxiang_english", "wanxiang_mixedcode")
 
     /** 内置 Lite 主方案（回内置 Lite 的切换目标）。 */
     const val BUILTIN_LITE_ID = "wanxiang_lite"

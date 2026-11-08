@@ -9,6 +9,7 @@ schema_list:
   - schema: wanxiang_t9
   - schema: wanxiang_lite
   - schema: wanxiang_english
+  - schema: wanxiang_mixedcode
 #  - schema: wanxiang_t9i
 #  - schema: wanxiang_lite
 # 菜单

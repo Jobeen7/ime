@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "zipSha256": "23e801747ea8fb69fa8dee2d491dca2ab54479acdc50bac578fe3f8ddad4e58e",
+  "zipSha256": "9a19e358482c4a5050890768164a0af2a0fb1c24c03305a4759bbd85508a9de8",
   "preserve": [
     "shared/opencc/wanxiang/Custom_"
   ],
@@ -67,8 +67,8 @@
     },
     {
       "path": "shared/default.yaml",
-      "size": 6393,
-      "crc": "0115b509"
+      "size": 6424,
+      "crc": "6ec60146"
     },
     {
       "path": "shared/dicts/abbrev.dict.yaml",
@@ -382,8 +382,8 @@
     },
     {
       "path": "shared/wanxiang_mixedcode.schema.yaml",
-      "size": 1008,
-      "crc": "8cf6abb2"
+      "size": 1411,
+      "crc": "c86eb3eb"
     },
     {
       "path": "shared/wanxiang_phrase.schema.yaml",

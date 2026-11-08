@@ -220,6 +220,29 @@ class SchemeImportTest {
     }
 
     @Test
+    fun injectT9Fields_mixedcode_insertsQwertyHalfWidthPinYin() {
+        runWithTempDir { root ->
+            val file = File(root, "wanxiang_mixedcode.schema.yaml")
+            file.writeText(
+                "schema:\n" +
+                    "  schema_id: wanxiang_mixedcode\n" +
+                    "  name: \"mixed\"\n" +
+                    "  version: \"LTS\"\n"
+            )
+            val result = injectT9Fields(root, listOf("wanxiang_mixedcode"))
+            assertEquals(1, result.injected)
+            assertTrue(result.skipped.isEmpty())
+            val text = file.readText()
+            assertTrue(text.contains("  layout: \"Qwerty\"\n"))
+            assertTrue(text.contains("  punctuation: \"HalfWidth\"\n"))
+            assertTrue(text.contains("  kind: \"PinYin\"\n"))
+            // candidateKind 落在文件末行、joinToString 不补尾换行，故不断言尾 \n。
+            assertTrue(text.contains("  candidateKind: \"PinYin\""))
+            assertTrue(text.trimEnd().endsWith("  candidateKind: \"PinYin\""))
+        }
+    }
+
+    @Test
     fun injectT9Fields_nonTarget_untouched_noSchemaSkipped() {
         runWithTempDir { root ->
             val other = File(root, "other.schema.yaml")

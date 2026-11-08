@@ -251,6 +251,14 @@ private val T9_FIELD_INJECTIONS: Map<String, Map<String, String>> = mapOf(
         "punctuation" to "HalfWidth",
         "kind" to "English",
     ),
+    // 混合编码与 lite 同为全键盘拼音系：英文直输、标点半角、候选拼音；
+    // 上游无 switches，故无 options 注入（见 OPTIONS_INJECTIONS 注释）。
+    "wanxiang_mixedcode" to mapOf(
+        "layout" to "Qwerty",
+        "punctuation" to "HalfWidth",
+        "kind" to "PinYin",
+        "candidateKind" to "PinYin",
+    ),
 )
 
 /** 一次注入的汇总：注入后正确的文件数（已改写或原本已正确），与读/写失败而跳过的文件主干名。 */
@@ -333,6 +341,8 @@ private data class OptionItem(
  * options 段注入映射：开关到引擎的唯一桥。导入的上游包本来就没有
  * options: 段，不补则英文方案的 ascii_mode 等开关再次脱节（2026-10-19
  * 旧修在多目录下的复发）。t9i 取与 t9 相同的口径。
+ * wanxiang_mixedcode 不在映射内：上游无 switches 段，options 无桥可接；
+ * 内置适配源同样不写 options（见 tools/wanxiang-builtin/README.md）。
  */
 private val OPTIONS_INJECTIONS: Map<String, List<OptionItem>> = mapOf(
     "wanxiang_t9" to listOf(
