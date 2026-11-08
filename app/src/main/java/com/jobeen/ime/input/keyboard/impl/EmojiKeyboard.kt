@@ -7,6 +7,7 @@ import android.graphics.Typeface
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.text.TextUtils
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -217,6 +218,8 @@ class EmojiKeyboard(
                 gravity = Gravity.CENTER
                 setTextSize(15f)
                 setTextColor(colors.specialKeyText)
+                maxLines = 1
+                ellipsize = TextUtils.TruncateAt.END
                 text = sub.label
             }
             cell.addView(

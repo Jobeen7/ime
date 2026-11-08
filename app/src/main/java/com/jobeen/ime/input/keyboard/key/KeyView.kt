@@ -14,6 +14,7 @@ import android.graphics.Typeface
 import android.graphics.drawable.Drawable
 import android.graphics.drawable.InsetDrawable
 import android.graphics.drawable.LayerDrawable
+import android.text.TextUtils
 import android.util.TypedValue
 import android.view.animation.AccelerateDecelerateInterpolator
 import android.view.animation.DecelerateInterpolator
@@ -71,6 +72,21 @@ private fun TextView.alignVisibleTextCenter() {
     paint.getTextBounds(text, 0, text.length, bounds)
     val glyphCenter = left + (bounds.left + bounds.right) / 2f
     translationX = container.width / 2f - glyphCenter
+}
+
+/**
+ * 省略号感知居中：文字被截断（layout 首行有省略号）时，可见行
+ * 已占满视图宽度、本身居中，translationX 归零；否则沿用
+ * [alignVisibleTextCenter] 的可见字形居中。截断时若仍按全文
+ * 字形 bounds 算位移，会把前缀＋“…”整体推出键面。
+ */
+private fun TextView.alignVisibleTextCenterOrReset() {
+    val layout = layout
+    if (layout != null && layout.lineCount > 0 && layout.getEllipsisCount(0) > 0) {
+        translationX = 0f
+        return
+    }
+    alignVisibleTextCenter()
 }
 
 abstract class KeyView(
@@ -1410,6 +1426,8 @@ class TextKeyView(
         isFocusable = false
         background = null
         includeFontPadding = false
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
         text = def.displayText
         setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.skinTextSize ?: def.textSize)
         gravity = android.view.Gravity.CENTER
@@ -1532,6 +1550,7 @@ class AltTextKeyView(
         background = null
         includeFontPadding = true
         maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
         text = def.displayText
         setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.skinTextSize ?: def.textSize)
         gravity = android.view.Gravity.CENTER
@@ -1553,6 +1572,7 @@ class AltTextKeyView(
         background = null
         includeFontPadding = true
         maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
         setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.skinAltTextSize ?: def.altTextSize)
         setTypeface(GlobalFonts.typefaceFor(context, FontRole.KEY, Typeface.BOLD) ?: typeface, Typeface.BOLD)
         text = def.altText
@@ -1571,6 +1591,7 @@ class AltTextKeyView(
         background = null
         includeFontPadding = true
         maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
         setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.skinAltTextSize ?: def.altTextSize)
         setTypeface(GlobalFonts.typefaceFor(context, FontRole.KEY, Typeface.BOLD) ?: typeface, Typeface.BOLD)
         text = def.skinTopText ?: ""
@@ -1712,15 +1733,43 @@ class AltTextKeyView(
     }
 
     private fun updateMainTextPosition() {
-        mainText.alignVisibleTextCenter()
+        mainText.alignVisibleTextCenterOrReset()
     }
 
     private fun updateAltTextPosition() {
-        altText.alignVisibleTextCenter()
+        altText.alignVisibleTextCenterOrReset()
+        applyAnnotationPadding(altText, isTop = false)
     }
 
     private fun updateTopTextPosition() {
-        topText.alignVisibleTextCenter()
+        topText.alignVisibleTextCenterOrReset()
+        applyAnnotationPadding(topText, isTop = true)
+    }
+
+    /**
+     * 注解显示范围（G44）：副文字／顶部小字只能在键内缩进后的
+     * 区域内显示。横向留白 = 内边距（缺省 4dp）＋圆角间隙——
+     * 行越贴近键顶／键底，可用宽度越小；超宽由 ellipsize 以
+     * 省略号截断。左右对称留白，不动视图盒与偏置，短文本的
+     * 布局与改前一致。只在留白变化时重设，避免布局循环。
+     */
+    private fun applyAnnotationPadding(view: TextView, isTop: Boolean) {
+        val keyWidth = appearanceView.width
+        val keyHeight = appearanceView.height
+        if (keyWidth <= 0 || keyHeight <= 0 || view.height <= 0) return
+        val density = resources.displayMetrics.density
+        val area = AnnotationDisplayRange.displayRect(
+            keyWidth.toFloat(), keyHeight.toFloat(), isTop,
+            AnnotationDisplayRange.DEFAULT, density,
+        )
+        val available = AnnotationDisplayRange.availableWidth(
+            area, view.top.toFloat(), view.bottom.toFloat(),
+            radius.toFloat(), keyWidth.toFloat(), keyHeight.toFloat(),
+        )
+        val padding = ((keyWidth - available) / 2f).toInt().coerceAtLeast(0)
+        if (view.paddingLeft != padding || view.paddingRight != padding) {
+            view.setPadding(padding, view.paddingTop, padding, view.paddingBottom)
+        }
     }
 }
 
@@ -1859,6 +1908,8 @@ class ImageTextKeyView(
         isFocusable = false
         background = null
         includeFontPadding = false
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
         text = def.displayText
         setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.skinTextSize ?: def.textSize)
         gravity = android.view.Gravity.CENTER
@@ -1976,6 +2027,6 @@ class ImageTextKeyView(
     }
 
     private fun updateTextPosition() {
-        mainText.alignVisibleTextCenter()
+        mainText.alignVisibleTextCenterOrReset()
     }
 }
