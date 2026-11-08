@@ -124,13 +124,70 @@ class MainSettingsCatalogTest {
     @Test
     fun searchCatalog_rowMatch_pathAndFocus() {
         // 页副标题含“按键音”时页结果在前，行结果随后；行结果带路径与分类定位。
+        // “按键圆角”与“按键音”差一字，作为容错结果排在精确结果之后。
         val got = searchCatalog("按键音", pages, rows)
-        assertEquals(listOf("键盘设置", "按键音", "按键音量"), got.map { it.title })
+        assertEquals(listOf("键盘设置", "按键音", "按键音量", "按键圆角"), got.map { it.title })
         val row = got[1]
         assertEquals("键盘 › 键盘设置 › 声音", row.path)
         assertEquals("keyboard", row.pageKey)
         // 键盘行定位到所在分类行，不是行本身。
         assertEquals("声音", row.focusTitle)
+    }
+
+    @Test
+    fun searchCatalog_fuzzyTypoSubstitution_findsRow() {
+        // 替错一字（健→键）仍搜到；“按键圆角”与查询差两字（健→键、圆→音），不命中。
+        // 容错只看标题，页标题“键盘设置”不命中，故无页结果。
+        val got = searchCatalog("按健音", pages, rows)
+        assertEquals(listOf("按键音", "按键音量"), got.map { it.title })
+    }
+
+    @Test
+    fun searchCatalog_fuzzyMissingChar_findsRow() {
+        // 少打一字（按音）仍搜到。
+        val got = searchCatalog("按音", pages, rows)
+        assertEquals(listOf("按键音", "按键音量", "按键圆角"), got.map { it.title })
+    }
+
+    @Test
+    fun searchCatalog_fuzzyExtraChar_findsRow() {
+        // 多打一字（按键音音）仍搜到；“按键圆角”与查询差两字，不命中。
+        val got = searchCatalog("按键音音", pages, rows)
+        assertEquals(listOf("按键音", "按键音量"), got.map { it.title })
+    }
+
+    @Test
+    fun searchCatalog_fuzzyExactResults_first() {
+        // 精确结果在前、容错结果在后：按键圆角只差一字，不插队。
+        val got = searchCatalog("按键音", pages, rows)
+        assertEquals("按键音", got[1].title)
+        assertEquals("按键音量", got[2].title)
+        assertEquals("按键圆角", got[3].title)
+    }
+
+    @Test
+    fun searchCatalog_fuzzySingleCharQuery_noFuzzy() {
+        // 单字查询不做容错：错一字等于任意字，噪声太大。
+        assertTrue(searchCatalog("健", pages, rows).isEmpty())
+    }
+
+    @Test
+    fun searchCatalog_fuzzyTwoErrors_noMatch() {
+        // 错两字不命中。
+        assertTrue(searchCatalog("按健因", pages, rows).isEmpty())
+    }
+
+    @Test
+    fun searchCatalog_traditionalQuery_matchesViaSimplify() {
+        // 繁体查询经注入的 simplify 折成简体后命中；生产调用方传
+        // TraditionalConverter::toSimplified，主机单测用假函数。
+        // “按键圆角”与折后查询只差一字，同为容错命中。
+        val got = searchCatalog("按鍵音", pages, rows) { it.replace("鍵", "键") }
+        assertEquals(listOf("键盘设置", "按键音", "按键音量", "按键圆角"), got.map { it.title })
+        // 不传 simplify 时繁体查询仍以“错一字”走容错命中行（无页结果，
+        // 页标题不含该词）；simplify 的作用是把它升为精确命中、补上页结果。
+        val fuzzyOnly = searchCatalog("按鍵音", pages, rows)
+        assertEquals(listOf("按键音", "按键音量"), fuzzyOnly.map { it.title })
     }
 
     @Test

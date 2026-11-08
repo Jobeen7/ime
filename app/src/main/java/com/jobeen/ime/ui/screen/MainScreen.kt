@@ -114,6 +114,7 @@ import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.jobeen.ime.R
+import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
@@ -352,7 +353,12 @@ fun MainScreen(
             focusTitle = row.focusTitleRes?.let { stringResource(it) },
         )
     }
-    val searchResults = searchCatalog(searchQuery, resolvedPages, resolvedRows)
+    val searchResults = searchCatalog(
+        searchQuery,
+        resolvedPages,
+        resolvedRows,
+        TraditionalConverter::toSimplified,
+    )
 
     Scaffold(
         topBar = {

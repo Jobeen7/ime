@@ -3,6 +3,7 @@
 package com.jobeen.ime.ui.screen
 
 import com.jobeen.ime.R
+import com.jobeen.ime.base.util.TextUtil
 
 /**
  * 主设置页分组：固定顺序即主页呈现顺序；搜索后空组自动隐藏。
@@ -250,21 +251,52 @@ fun buildSearchPath(
 }
 
 /**
+ * 错别字容错：字段内任一与查询等长 ±1 的窗口与查询的编辑距离 ≤1 即命中，
+ * 覆盖替错一字／多打一字／少打一字。查询短于 2 字不做容错（单字错一字
+ * 等于任意字，噪声太大）；单字字段只走精确匹配。
+ */
+internal fun fuzzyContains(field: String, query: String): Boolean {
+    val f = field.lowercase()
+    val q = query.lowercase()
+    if (q.length < 2 || f.length < 2) return false
+    if (f.contains(q)) return true
+    for (len in listOf(q.length - 1, q.length, q.length + 1)) {
+        if (len < 1) continue
+        if (len >= f.length) {
+            if (TextUtil.levenshtein(f, q) <= 1) return true
+        } else {
+            for (i in 0..f.length - len) {
+                if (TextUtil.levenshtein(f.substring(i, i + len), q) <= 1) return true
+            }
+        }
+    }
+    return false
+}
+
+/**
  * 跨目录搜索：空查询返回空（搜索页等输入）；否则页标题／副标题、
  * 行标题／页标题／分段标题含查询（去首尾空白、不区分大小写）。
  * 页结果在前、行结果在后，各按目录顺序；行结果带定位标题。
+ * 错别字容错：精确未命中的页／行再走 fuzzyContains，容错结果排在
+ * 全部精确结果之后、各自按目录顺序；容错只看标题字段（页标题／行
+ * 标题），副标题／分段标题保持精确匹配——副标题窗口太容易误撞
+ * （如“声音”撞上副标题里的“键音”）。同义词映射 CyIME 原文未给
+ * 映射表，不做。simplify 缺省恒等，生产调用方传繁→简转换，
+ * 使繁体查询能命中简体标题（主机单测不碰 Android 资产）。
  */
 fun searchCatalog(
     query: String,
     pages: List<ResolvedPage>,
     rows: List<ResolvedRow>,
+    simplify: (String) -> String = { it },
 ): List<SearchResult> {
     val q = query.trim()
     if (q.isEmpty()) return emptyList()
-    val folded = q.lowercase()
-    val pageResults = pages.filter {
-        it.title.lowercase().contains(folded) || it.subtitle.lowercase().contains(folded)
-    }.map {
+    val folded = simplify(q).lowercase()
+    fun exact(text: String): Boolean = simplify(text).lowercase().contains(folded)
+    fun fuzzy(text: String): Boolean = fuzzyContains(simplify(text), folded)
+    val (exactPages, restPages) = pages.partition { exact(it.title) || exact(it.subtitle) }
+    val pageResults = exactPages.map {
         SearchResult(
             title = it.title,
             path = buildSearchPath(it.groupTitle, it.title, null),
@@ -272,11 +304,18 @@ fun searchCatalog(
             focusTitle = null,
         )
     }
-    val rowResults = rows.filter {
-        it.title.lowercase().contains(folded) ||
-            it.pageTitle.lowercase().contains(folded) ||
-            (it.sectionTitle?.lowercase()?.contains(folded) == true)
-    }.map {
+    val fuzzyPageResults = restPages.filter { fuzzy(it.title) }.map {
+        SearchResult(
+            title = it.title,
+            path = buildSearchPath(it.groupTitle, it.title, null),
+            pageKey = it.key,
+            focusTitle = null,
+        )
+    }
+    val (exactRows, restRows) = rows.partition {
+        exact(it.title) || exact(it.pageTitle) || (it.sectionTitle?.let { s -> exact(s) } == true)
+    }
+    val rowResults = exactRows.map {
         SearchResult(
             title = it.title,
             path = buildSearchPath(it.groupTitle, it.pageTitle, it.sectionTitle),
@@ -284,7 +323,15 @@ fun searchCatalog(
             focusTitle = it.focusTitle ?: it.title,
         )
     }
-    return pageResults + rowResults
+    val fuzzyRowResults = restRows.filter { fuzzy(it.title) }.map {
+        SearchResult(
+            title = it.title,
+            path = buildSearchPath(it.groupTitle, it.pageTitle, it.sectionTitle),
+            pageKey = it.pageKey,
+            focusTitle = it.focusTitle ?: it.title,
+        )
+    }
+    return pageResults + rowResults + fuzzyPageResults + fuzzyRowResults
 }
 
 /**
