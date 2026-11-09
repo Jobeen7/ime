@@ -8,6 +8,7 @@ import android.graphics.drawable.StateListDrawable
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.text.TextUtils
 import android.widget.FrameLayout
@@ -33,6 +34,7 @@ import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BarSide
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.skin.symbol.HorizontalSymbolStripState
+import com.jobeen.ime.skin.symbol.KaomojiSwipe
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.skin.symbol.SharedPrefsSymbolBarTypeStore
@@ -51,6 +53,7 @@ import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
 import com.jobeen.ime.data.Symbol.Category
+import kotlin.math.abs
 
 @SuppressLint("ViewConstructor")
 class SymbolKeyboard(
@@ -62,6 +65,9 @@ class SymbolKeyboard(
         const val NAME = "Symbol"
         private const val COLUMNS = 5
         private const val ROWS = 5
+
+        /** 左右滑翻页的最小横移（dp）；未达此距离只算点按／竖滚（与颜文字板同口径）。 */
+        private const val SWIPE_MIN_DISTANCE_DP = 48
         /** P1-7 附加父类标签：数字符号集／九宫格符号集（各一“全部”子类）。 */
         private const val NUMERIC_PARENT_LABEL = "数字"
         private const val T9_PARENT_LABEL = "九宫格"
@@ -200,6 +206,13 @@ class SymbolKeyboard(
     }
 
     private val sidePanelItemDefs: List<KeyDef>
+
+    /** 左右滑判定用：系统触摸 slop 与翻页最小横移。 */
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val swipeMinDistancePx = context.dp(SWIPE_MIN_DISTANCE_DP).toFloat()
+    private var downX = 0f
+    private var downY = 0f
+    private var swipingHorizontally = false
 
     init {
         sideReturnBtn.borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
@@ -388,6 +401,63 @@ class SymbolKeyboard(
         val changed = if (forward) boardState.nextPage() else boardState.prevPage()
         if (changed) gridView.setItems(boardState.visibleItems.map { keyDef(it) })
         return changed
+    }
+
+    /**
+     * 左右滑翻页（施工单 18，与 emoji 板同款接线）：横向位移超
+     * touchSlop 且横向占优时拦截（子键收 ACTION_CANCEL，点按
+     * 不触发）；竖向位移归网格滚动，不拦截；抬手时按
+     * [KaomojiSwipe.directionFor] 判定方向翻页；到端停（不循环
+     * 绕回，pageSubCollection 返回 false 即无动作）。
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                swipingHorizontally = false
+                return false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!swipingHorizontally) {
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    if (abs(dx) > touchSlop && abs(dx) > abs(dy)) {
+                        swipingHorizontally = true
+                        return true
+                    }
+                }
+                return swipingHorizontally
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                swipingHorizontally = false
+                return false
+            }
+        }
+        return super.onInterceptTouchEvent(event)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_UP -> {
+                if (swipingHorizontally) {
+                    swipingHorizontally = false
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    KaomojiSwipe.directionFor(dx, dy, swipeMinDistancePx)?.let { direction ->
+                        pageSubCollection(direction == KaomojiSwipe.Direction.NEXT)
+                    }
+                    return true
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                swipingHorizontally = false
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
     }
 
     /**
