@@ -325,6 +325,9 @@ class ImeInputMethodService : InputMethodService() {
      */
     private var fieldChangedPending = false
 
+    /** 最后一次已展示字段（W17-6）：onStartInputView 每次弹出更新，待投递标志只在展示字段真变时才消费。 */
+    private var lastShownFieldKey: InputFieldKey? = null
+
     private fun trackInputField(info: EditorInfo?): Boolean {
         val changed = inputFieldTracker.track(InputFieldKey.of(info))
         if (changed) {
@@ -361,8 +364,15 @@ class ImeInputMethodService : InputMethodService() {
         // 字段身份跟踪（R3）：同步投递，先于下方 engine 与窗口
         // 对新连接的使用。新窗口复位（施工单 12）：onStartInput
         // 已先行投递过时此处 track 返回 false，故与待投递标志取
-        // 或；消费后清零，同框重启不再复位。
-        val fieldChanged = fieldChangedPending || trackInputField(info)
+        // 或；消费后清零，同框重启不再复位。待投递标志只在展示字
+        // 段相对上次已展示字段真变时才消费（W17-6）：跨会话残留
+        // 的 pending 不在同框重启时误触发复位。
+        val shownKey = InputFieldKey.of(info)
+        val shownChanged = shouldConsumePendingFieldChange(
+            fieldChangedPending, lastShownFieldKey, shownKey,
+        )
+        if (shownKey != null) lastShownFieldKey = shownKey
+        val fieldChanged = shownChanged || trackInputField(info)
         fieldChangedPending = false
         keyboardWindow?.onStartInputView(info, restarting, fieldChanged)
         engine?.onStartInputView(currentInputConnection, info, restarting)
@@ -374,6 +384,12 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onFinishInput() {
+        // 输入会话结束：待投递的字段变化标志同步清零（W17-6）——
+        // onStartInput 置位后若视图未弹出，会话结束时 pending 残留，
+        // 下一会话同框重启会在 onStartInputView 误消费、误触发新窗
+        // 口复位；与“最后一次已展示字段”门（见 onStartInputView）
+        // 共同兜底。
+        fieldChangedPending = false
         // 输入会话结束（W2）：待就绪整句的作废只认真正的输入结
         // 束信号——本回调与 onFinishInputView(true)（投递判定
         // 见 advancesEditorEpoch）。onFinishInput 按 AOSP 语义

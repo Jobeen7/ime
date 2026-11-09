@@ -551,8 +551,6 @@ fun CloudVoicePluginsScreen(
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
             Spacer(Modifier.height(4.dp))
-            // 隐私说明全文已移至“关于我们”页（本页不再重复贴出）；
-            // 选服务商时的确认披露（音频发送对象）不受影响，仍在选择流程内。
             SettingsGroup(
                 title = stringResource(R.string.cloud_voice_plugins),
             ) {

@@ -2,10 +2,12 @@
 
 package com.jobeen.ime.data.manager
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
 /** 键盘内执行部署／同步（重点候选 8-4）：确认门、单飞、终态与失败原因。 */
@@ -128,5 +130,37 @@ class KeyboardDeployControllerTest {
         assertTrue(c.requestDeploy())
         assertTrue(c.execute())
         assertEquals(KeyboardDeployPhase.SUCCESS, c.progress.phase)
+    }
+
+    @Test
+    fun deployCancelled_resetsPhaseToIdleAndCanRedeploy() = runBlocking {
+        val c = controller(deployThrows = CancellationException("cancelled"))
+        assertTrue(c.requestDeploy())
+        try {
+            c.execute()
+            fail("应重抛 CancellationException")
+        } catch (_: CancellationException) {
+            // 预期：取消不吞
+        }
+        assertEquals(KeyboardDeployPhase.IDLE, c.progress.phase)
+        assertTrue(c.requestDeploy())
+    }
+
+    @Test
+    fun syncCancelled_resetsPhaseToIdleAndCanRedeploy() = runBlocking {
+        val c = KeyboardDeployController(
+            deploy = { DeployAwaitResult.COMPLETED },
+            sync = { throw CancellationException("cancelled") },
+            hasPreedit = { false },
+        )
+        assertTrue(c.requestDeploy())
+        try {
+            c.execute()
+            fail("应重抛 CancellationException")
+        } catch (_: CancellationException) {
+            // 预期：取消不吞
+        }
+        assertEquals(KeyboardDeployPhase.IDLE, c.progress.phase)
+        assertTrue(c.requestDeploy())
     }
 }

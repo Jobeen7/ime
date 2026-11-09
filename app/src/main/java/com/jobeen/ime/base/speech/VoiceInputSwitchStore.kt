@@ -57,7 +57,7 @@ class VoiceInputSwitchStore(private val file: File) {
             sharedByPath.getOrPut(file.absolutePath) { VoiceInputSwitchStore(file) }
         }
 
-        /** filesDir 下文件名，与纠错词表文件同目录。 */
+        /** filesDir 下文件名。 */
         const val FILE_NAME = "voice_input_enabled"
     }
 }

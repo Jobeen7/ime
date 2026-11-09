@@ -22,13 +22,14 @@ import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibrary
 import com.jobeen.ime.skin.store.SkinOverlayStore
 import java.io.File
-import java.util.concurrent.Semaphore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Semaphore
 
 /**
  * 运行态快照持有者（详设 §2.7）：resolve() 的分流依据。
@@ -106,6 +107,19 @@ object SkinSnapshotProvider {
         latestInstallToken = ++installRequestSequence
         latestInstallToken
     }
+
+    /**
+     * 背景重建请求是否仍为当前（纯决策，可单测）：代次与安装 token
+     * 任一过期即已被更新的请求／安装取代。提交段的裁决与此同口径
+     * （代次＋token 双重核对）；解码前先按同一口径复核，旧请求
+     * 不再整张解完才丢。
+     */
+    internal fun isBackgroundRequestCurrent(
+        generation: Long,
+        latestGeneration: Long,
+        tokenAtStart: Long,
+        latestToken: Long,
+    ): Boolean = generation == latestGeneration && tokenAtStart == latestToken
 
     /** 测试缝：背景位图预解码（默认 [decodePrepared]）；生产不改。 */
     internal var backgroundDecoder: (Context, SkinSnapshot) -> Bitmap? = ::decodePrepared
@@ -294,8 +308,11 @@ object SkinSnapshotProvider {
         // 背景解码先行：无条件解（锁外读 currentBitmapKey 是过期
         // 读，绝不能据此跳过——快照可能已被替换；锁内对键未变的
         // 冗余位图回收，行为与改前一致）。解码受并发上限约束
-        //（见 decodeBackgroundBounded）。
-        val prepared = snapshot?.let { decodeBackgroundBounded(context, it) }
+        //（见 decodeBackgroundBounded）。install 本身同步（调用
+        // 方契约在 IO 线程）：挂起解码经 runBlocking 桥接；协程
+        // 路径（refreshBackground／triggerBackgroundRebuild）
+        // 直调挂起函数、等许可可取消。
+        val prepared = snapshot?.let { runBlocking { decodeBackgroundBounded(context, it) } }
         var accepted = false
         synchronized(lock) {
             val tokenCurrent = requestToken == latestInstallToken
@@ -509,6 +526,15 @@ object SkinSnapshotProvider {
         val appContext = context.applicationContext
         val targetSnapshot = snapshot.copy(background = newBg)
         return rebuildScope.launch {
+            // 解码前复核代次：发起后若有更新的刷新请求或完整安装
+            // 开始，本请求已被取代——直接跳过，不再整张解完才丢
+            // （提交段仍按同一口径裁决，见下）。
+            val currentAtDecode = synchronized(lock) {
+                isBackgroundRequestCurrent(
+                    generation, latestBackgroundGeneration, tokenAtStart, latestInstallToken,
+                )
+            }
+            if (!currentAtDecode) return@launch
             // 背景解码在 IO 线程跑（锁外）：新产物键对应的位图在
             // 锁外解出，再持锁换背景装入（审计 #2）；快照若已被替
             // 换、代次已过期，冗余位图回收。
@@ -693,10 +719,11 @@ object SkinSnapshotProvider {
 
     /**
      * 背景产物解码（有界）：经 [backgroundDecoder] 解出，同一时刻
-     * 最多 2 路在解（[backgroundDecodePermits]）。中断时按解码失败
-     * 计（返回 null，调用方走缺失／重建口径），并恢复中断标志。
-     * IO 强制约束（审计 #10 问题 1）：本函数在调用线程阻塞等许可
-     * 并解码，只允许出现在以下三条 IO 路径——[install]（调用方契
+     * 最多 2 路在解（[backgroundDecodePermits]）。等许可为挂起
+     * 操作：等待被取消时抛 CancellationException（调用方协程按
+     * 取消处理），不按解码失败计；解码抛错仍按失败计（返回 null，
+     * 调用方走缺失／重建口径）。
+     * IO 强制约束（审计 #10 问题 1）：本函数只允许出现在以下三条 IO 路径——[install]（调用方契
      * 约：应用事务经 IO 包装、启动加载经 startupScope，文档已禁
      * 主线程直接调）、[refreshBackground] 发起的 [rebuildScope]
      * 协程、[triggerBackgroundRebuild] 的 [rebuildScope] 协程。
@@ -704,13 +731,8 @@ object SkinSnapshotProvider {
      * 已是异步发射（调用线程绝不解码），不存在经它进入主线程解
      * 码的路径；其余两条的调用方本身就在 IO 作用域内。
      */
-    private fun decodeBackgroundBounded(context: Context, snapshot: SkinSnapshot): Bitmap? {
-        try {
-            backgroundDecodePermits.acquire()
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            return null
-        }
+    private suspend fun decodeBackgroundBounded(context: Context, snapshot: SkinSnapshot): Bitmap? {
+        backgroundDecodePermits.acquire()
         try {
             return backgroundDecoder(context, snapshot)
         } finally {
@@ -720,16 +742,11 @@ object SkinSnapshotProvider {
 
     /**
      * 文件产物解码（有界）：与 [decodeBackgroundBounded] 同界（最多
-     * 2 路在解）；中断时恢复中断标志并返回 null，解码抛错也按
+     * 2 路在解）；等待被取消时抛 CancellationException，解码抛错也按
      * 失败计（返回 null，调用方走缺失／重建口径）。
      */
-    private fun decodeFileBounded(file: File, widthPx: Int, heightPx: Int): Bitmap? {
-        try {
-            backgroundDecodePermits.acquire()
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            return null
-        }
+    private suspend fun decodeFileBounded(file: File, widthPx: Int, heightPx: Int): Bitmap? {
+        backgroundDecodePermits.acquire()
         try {
             return runCatching { BoundedBitmapDecoder.decodeFile(file, widthPx, heightPx) }.getOrNull()
         } finally {

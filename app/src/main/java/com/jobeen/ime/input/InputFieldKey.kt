@@ -53,6 +53,23 @@ internal fun isInputFieldChanged(previous: InputFieldKey?, current: InputFieldKe
 }
 
 /**
+ * 待投递的字段变化是否应在本次视图弹出时消费（纯决策，可单测）：
+ * 仅当展示字段相对上次已展示字段真变时才消费；首次展示（无上
+ * 次已展示字段）或展示字段未知时按变化消费（保旧行为）。配合
+ * onFinishInput 的同步清零，跨会话残留的 pending 不会在同框
+ * 重启时误触发新窗口复位。
+ */
+internal fun shouldConsumePendingFieldChange(
+    pending: Boolean,
+    lastShown: InputFieldKey?,
+    shown: InputFieldKey?,
+): Boolean {
+    if (!pending) return false
+    if (lastShown == null || shown == null) return true
+    return lastShown != shown
+}
+
+/**
  * 字段身份跟踪器：持有一份最近快照，每次输入开始（onStartInput /
  * onStartInputView）喂入本框身份，关键字段与上次不同（实为逻辑换
  * 框，无论宿主以 restarting 真假哪种形式投递）时返回 true，调用

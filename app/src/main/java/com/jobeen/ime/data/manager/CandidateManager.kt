@@ -282,7 +282,21 @@ object CandidateLinePolicy {
             val mid = (lo + hi + 1) / 2
             if (measure(text.substring(0, mid) + "…") <= maxWidth) lo = mid else hi = mid - 1
         }
-        return text.substring(0, lo) + "…"
+        return text.substring(0, unsplitSurrogatePair(text, lo)) + "…"
+    }
+
+    /**
+     * 切分点回退（纯函数）：切分点落在高代理与低代理之间时退一格，
+     * 整对排除在外——星号平面字符（如 emoji）不拦腰切断。
+     */
+    private fun unsplitSurrogatePair(text: String, cut: Int): Int {
+        var lo = cut
+        while (lo > 0 && lo < text.length &&
+            text[lo - 1].isHighSurrogate() && text[lo].isLowSurrogate()
+        ) {
+            lo--
+        }
+        return lo
     }
 
     /** 长候选先缩字号再两行（纯函数）：字形 advance 随字号线性变，缩放宽度 = 原宽 × scale。 */
@@ -329,7 +343,7 @@ object CandidateLinePolicy {
         return LongCandidateLayout(lines, floor)
     }
 
-    /** 最长能放下的前缀长度（二分，与 truncateWithEllipsis 同形）。 */
+    /** 最长能放下的前缀长度（二分，与 truncateWithEllipsis 同形；返回前回退代理对切分）。 */
     private fun longestFittingPrefix(
         text: String,
         maxWidth: Float,
@@ -341,7 +355,7 @@ object CandidateLinePolicy {
             val mid = (lo + hi + 1) / 2
             if (measure(text.substring(0, mid)) <= maxWidth) lo = mid else hi = mid - 1
         }
-        return lo
+        return unsplitSurrogatePair(text, lo)
     }
 }
 

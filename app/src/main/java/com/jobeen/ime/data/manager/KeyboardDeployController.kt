@@ -123,6 +123,9 @@ class KeyboardDeployController(
      * （true = 到达 SUCCESS／FAILED 终态；false = 态不对，未跑）。
      * TIMEOUT_RUNNING 视为 FAILED（原因 deploy_timeout_running，
      * 后台部署继续、引擎守门阻止重入，直至作业收尾）。
+     * 取消（CancellationException）时 phase 复位到 IDLE 再重抛：
+     * 不复位会钉死 DEPLOYING、requestDeploy 恒 false，再也发不
+     * 起部署。
      */
     suspend fun execute(): Boolean {
         if (progress.phase != KeyboardDeployPhase.DEPLOYING) return false
@@ -164,6 +167,7 @@ class KeyboardDeployController(
             setProgress(KeyboardDeployProgress(KeyboardDeployPhase.SUCCESS, null, null))
             return true
         } catch (error: CancellationException) {
+            setProgress(KeyboardDeployProgress(KeyboardDeployPhase.IDLE, null, null))
             throw error
         } catch (error: Throwable) {
             setProgress(

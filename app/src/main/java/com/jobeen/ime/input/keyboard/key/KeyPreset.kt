@@ -281,7 +281,7 @@ fun returnKey(
     appearance = if (useTextLabel) {
         // 26 键文字回车（2026-11-06 施工单 3：源包 enterButton 按
         // $returnKeyType 出文字；初始文案“换行”，首个 updateEditorInfo
-        // 按编辑框动作改写；绿/灰分色由 QwertyKeyboard 覆写）。
+        // 按编辑框动作改写；灰分色由 QwertyKeyboard 覆写）。
         KeyDef.Appearance.Text(
             displayText = "换行",
             textSize = 16f,
