@@ -225,8 +225,10 @@ object KeyboardStateManager {
             val stored = skinId?.let {
                 runCatching { SkinTypePrefs.getType(appContext, it) }.getOrNull()
             }
-            val ascii = runCatching {
-                CandidateManager.isAsciiModeEnabled(appContext)
+            // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）：
+            // 偏好 true＝中文，Rime ascii_mode true＝英文；出错默认中文。
+            val asciiMode = runCatching {
+                asciiModeFromPreference(CandidateManager.isAsciiModeEnabled(appContext))
             }.getOrDefault(false)
             // 首挂恢复只认主类型：进程重建时存过的工具类型
             // （如收起前停在符号/表情板上留下的 symbolic/emojis）
@@ -234,7 +236,7 @@ object KeyboardStateManager {
             // 同进程内 currentName 被清空后重走首挂时，存活的
             // 非主类型（如之前点 123 留下的 numeric）同口径过滤；
             // 换肤分支的存过类型恢复不受此限（见下方的换肤复位）。
-            val rawType = resolveFirstAttachRaw(typeState.current, stored, ascii)
+            val rawType = resolveFirstAttachRaw(typeState.current, stored, asciiMode)
             // 首挂同样对账（进程重建时存过的类型也可能是上个方案留下的）；
             // 方案布局未知时 typeForLayoutName 为空，对账不动原值。
             val type = reconcileOpenType(
@@ -242,7 +244,7 @@ object KeyboardStateManager {
                     CustomLayoutRuntime.typeForLayoutName(snapshot, it, landscape)
                 },
                 rawType,
-                ascii,
+                asciiMode,
             ) ?: rawType
             typeState.establish(type)
             lastTypeSkinId = skinId
@@ -268,10 +270,11 @@ object KeyboardStateManager {
                 return
             }
             if (stored == null) {
-                val ascii = runCatching {
-                    CandidateManager.isAsciiModeEnabled(appContext)
+                // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）。
+                val asciiMode = runCatching {
+                    asciiModeFromPreference(CandidateManager.isAsciiModeEnabled(appContext))
                 }.getOrDefault(false)
-                val initial = typeState.initialType(ascii)
+                val initial = typeState.initialType(asciiMode)
                 if (initial != typeState.current) {
                     switchKeyboardType(initial)
                     return
@@ -291,10 +294,13 @@ object KeyboardStateManager {
         // 方案留下的陈旧类型（打开即 26 键＋万象九键之类）；ascii
         // 开着是主动英文，保留；否则以方案为准回主类型。工具板、
         // 自定义类型与未知方案布局不动；切换后写盘，下次打开即正。
+        // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）。
         val reconciledType = reconcileOpenType(
             CustomLayoutRuntime.typeForLayoutName(snapshot, targetLayout, landscape),
             typeState.current,
-            runCatching { CandidateManager.isAsciiModeEnabled(appContext) }.getOrDefault(false),
+            runCatching {
+                asciiModeFromPreference(CandidateManager.isAsciiModeEnabled(appContext))
+            }.getOrDefault(false),
         )
         if (reconciledType != null && reconciledType != typeState.current) {
             switchKeyboardType(reconciledType)
@@ -335,10 +341,11 @@ object KeyboardStateManager {
         keyboardAttached = false
         // 临时类型收起复位：temp_pinyin 不跨收起存活，回到主类型
         // （无主类型时按输入模式初始类型）；下次附着不再回到临时板。
-        val ascii = runCatching {
-            CandidateManager.isAsciiModeEnabled(appContext)
+        // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）。
+        val asciiMode = runCatching {
+            asciiModeFromPreference(CandidateManager.isAsciiModeEnabled(appContext))
         }.getOrDefault(false)
-        typeState.clearTemp(typeState.primary ?: typeState.initialType(ascii))
+        typeState.clearTemp(typeState.primary ?: typeState.initialType(asciiMode))
     }
 
     fun onConfigChanged(key: String) {
@@ -681,8 +688,10 @@ object KeyboardStateManager {
     fun isMainTypeAlphabetic(context: Context): Boolean {
         val primary = typeState.primary
         if (primary != null) return primary == KeyboardTypes.ALPHABETIC
-        return typeState.initialType(CandidateManager.isAsciiModeEnabled(context)) ==
-            KeyboardTypes.ALPHABETIC
+        // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）。
+        return typeState.initialType(
+            asciiModeFromPreference(CandidateManager.isAsciiModeEnabled(context))
+        ) == KeyboardTypes.ALPHABETIC
     }
 
     fun onInputChanged(info: EditorInfo?, text: String, virtualInputConnection: Boolean = false) {
@@ -907,6 +916,17 @@ internal class KeyboardTypeState {
         last = null
     }
 }
+
+/**
+ * 偏好 → Rime ascii_mode（纯函数，可单测）：两者极性相反。
+ * 偏好 true＝中文（CandidateManager 默认 true），Rime ascii_mode
+ * true＝直输英文（ascii_composer.cc:129 ascii_mode=true 时直接
+ * 提交 ASCII）；引擎侧映射见 OptionsApplier.kt:18
+ * （ascii_mode = !isAsciiModeEnabled）。调用点一律经本函数取反，
+ * 不得把偏好值直接当 ascii_mode 传给类型决策。
+ */
+internal fun asciiModeFromPreference(preferenceEnabled: Boolean): Boolean =
+    !preferenceEnabled
 
 /** 类型是否写持久化（纯决策，可单测）：临时类型永不写盘。 */
 internal fun shouldPersistType(type: String): Boolean = !KeyboardTypes.isTemp(type)
