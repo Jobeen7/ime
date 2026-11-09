@@ -1060,10 +1060,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
         if (candidate.type == Candidate.TYPE_RARE_CHAR) {
             // 生僻字补字点选：合成候选不在 Rime 菜单里，不进 Rime 选词；
-            // 文本直接上屏（与联想候选同口径），不进用户词库、不记偏好
+            // 文本直接上屏（与联想候选同口径），不进用户词库、不记偏好、
+            // 不学搭配；补字不进学习链（断链，与前端提交同口径），
+            // 下一打字词不跨补字配对
             emitMessage(EngineMessage.Commit(candidate.text))
             invalidateBeforeCursorCache()
-            requestPrediction(candidate.text, learnable = true)
+            lastLearnSegment = null
+            requestPrediction(candidate.text, learnable = false)
             return
         }
 
