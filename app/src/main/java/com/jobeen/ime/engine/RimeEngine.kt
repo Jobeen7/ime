@@ -2354,9 +2354,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     /**
      * 生僻字补字帧（R2＋D17）：开关开着且打满一个完整音节时，粤语常用字
      * 补到第 10 位；未补时返回 null（调用方原样发出旧帧，高亮／总数口
-     * 径与旧行为一致）；补后 total +1（仅 total >= 0 时），保持
-     * 「list.size 与 total 比」的还有更多判定与原始条数口径一致；
-     * 高亮下标随插入／移位重映射。音节由调用方在 restoreCandidates 内
+     * 径与旧行为一致）；只有确实插入新项时 total +1，移位时表长不变、
+     * 总数不变（否则 hasMore 恒真，面板多发一次分页请求），未知总数
+     *（-1）保持；高亮下标随插入／移位重映射。音节由调用方在 restoreCandidates 内
      * 经 awaitJob 取齐传入（compositionCached 只在 RimeApi 作用域内
      * 可读，普通函数里直接读编译不过）；迟到批次由 CandidatesReady
      * 的 requestId 门控丢弃。
@@ -2379,7 +2379,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             outcome.list,
             RareCharPolicy.remapHighlight(highlighted, outcome),
             0,
-            total = if (total >= 0) total + 1 else total,
+            total = RareCharPolicy.adjustedTotal(total, outcome),
         )
     }
 

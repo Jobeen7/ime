@@ -222,4 +222,54 @@ class RareCharPolicyTest {
         assertEquals(5, RareCharPolicy.remapHighlight(5, outcome))
         assertEquals(-1, RareCharPolicy.remapHighlight(-1, outcome))
     }
+
+    @Test
+    fun adjustedTotal_newInsertIncrementsTotal() {
+        val outcome = RareCharPolicy.applySupplement(
+            bulk(24), listOf("qu"), "qu", enabled = true, isDeleted = { false },
+        )
+        assertEquals(9, outcome.insertedAt)
+        assertEquals(-1, outcome.movedFrom)
+        assertEquals(25, outcome.list.size)
+        assertEquals(25, RareCharPolicy.adjustedTotal(24, outcome))
+    }
+
+    @Test
+    fun adjustedTotal_moveKeepsTotal() {
+        val list = bulk(24).toMutableList()
+        list[20] = EngineMessage.Candidate(index = 20, text = "佢")
+        val outcome = RareCharPolicy.applySupplement(
+            list, listOf("qu"), "qu", enabled = true, isDeleted = { false },
+        )
+        assertEquals(9, outcome.insertedAt)
+        assertEquals(20, outcome.movedFrom)
+        assertEquals(24, outcome.list.size)
+        // 移位不加总数：否则 hasMore = list.size < total 恒真，面板多发一次分页
+        assertEquals(24, RareCharPolicy.adjustedTotal(24, outcome))
+    }
+
+    @Test
+    fun adjustedTotal_alreadyAtTargetKeepsTotal() {
+        val list = bulk(24).toMutableList()
+        list[2] = EngineMessage.Candidate(index = 2, text = "佢")
+        val outcome = RareCharPolicy.applySupplement(
+            list, listOf("qu"), "qu", enabled = true, isDeleted = { false },
+        )
+        assertEquals(-1, outcome.insertedAt)
+        assertEquals(24, RareCharPolicy.adjustedTotal(24, outcome))
+    }
+
+    @Test
+    fun adjustedTotal_unknownTotalStaysUnknown() {
+        val inserted = RareCharPolicy.applySupplement(
+            bulk(24), listOf("qu"), "qu", enabled = true, isDeleted = { false },
+        )
+        assertEquals(-1, RareCharPolicy.adjustedTotal(-1, inserted))
+        val list = bulk(24).toMutableList()
+        list[20] = EngineMessage.Candidate(index = 20, text = "佢")
+        val moved = RareCharPolicy.applySupplement(
+            list, listOf("qu"), "qu", enabled = true, isDeleted = { false },
+        )
+        assertEquals(-1, RareCharPolicy.adjustedTotal(-1, moved))
+    }
 }

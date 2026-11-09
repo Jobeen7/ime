@@ -496,4 +496,16 @@ object RareCharPolicy {
             else -> highlighted
         }
     }
+
+    /**
+     * 补字后总数（纯函数）：只有确实插入新项时总数 +1；移位时表长不变、
+     * 总数不变（否则 hasMore 恒真，面板多发一次分页请求）；未知总数
+     *（-1）保持；未动时原样。
+     */
+    fun adjustedTotal(total: Int, outcome: SupplementOutcome): Int {
+        if (total < 0) return total
+        if (outcome.insertedAt < 0) return total
+        if (outcome.movedFrom >= 0) return total
+        return total + 1
+    }
 }
