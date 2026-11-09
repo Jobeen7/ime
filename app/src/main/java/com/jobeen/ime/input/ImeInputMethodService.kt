@@ -316,11 +316,21 @@ class ImeInputMethodService : InputMethodService() {
      * 引擎联想的代次仍由引擎在自己 onStartInputView 内自算推
      * 进（其快照只在该入口滚动，与改前逐字一致），本跟踪不碰
      * 预测代次，不存在双重推进。
+     *
+     * 返回值（施工单 12）：本次喂入是否实为逻辑换框。onStartInput
+     * 可能先于 onStartInputView 投递一次换框（键盘隐藏中换框时
+     * 只有本入口能先行），新窗口复位须在视图弹出时才执行，故变
+     * 化先记在 [fieldChangedPending]、由 onStartInputView 消费；
+     * 同框 restarting 两入口都返回 false，标志恒不置位。
      */
-    private fun trackInputField(info: EditorInfo?) {
-        if (inputFieldTracker.track(InputFieldKey.of(info))) {
+    private var fieldChangedPending = false
+
+    private fun trackInputField(info: EditorInfo?): Boolean {
+        val changed = inputFieldTracker.track(InputFieldKey.of(info))
+        if (changed) {
             invalidateSpeechAfterInputEnd()
         }
+        return changed
     }
 
     override fun onStartInput(attribute: EditorInfo?, restarting: Boolean) {
@@ -330,7 +340,7 @@ class ImeInputMethodService : InputMethodService() {
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
         // 字段身份跟踪（R3）：视图尚未弹出时（如键盘隐藏中换框）
         // 只有本入口能先于结算路径更新身份，故两入口都喂
-        trackInputField(attribute)
+        fieldChangedPending = fieldChangedPending || trackInputField(attribute)
         super.onStartInput(attribute, restarting)
     }
 
@@ -349,9 +359,12 @@ class ImeInputMethodService : InputMethodService() {
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
         // 字段身份跟踪（R3）：同步投递，先于下方 engine 与窗口
-        // 对新连接的使用
-        trackInputField(info)
-        keyboardWindow?.onStartInputView(info, restarting)
+        // 对新连接的使用。新窗口复位（施工单 12）：onStartInput
+        // 已先行投递过时此处 track 返回 false，故与待投递标志取
+        // 或；消费后清零，同框重启不再复位。
+        val fieldChanged = fieldChangedPending || trackInputField(info)
+        fieldChangedPending = false
+        keyboardWindow?.onStartInputView(info, restarting, fieldChanged)
         engine?.onStartInputView(currentInputConnection, info, restarting)
         // 直调即时探针前先撤掉合并通道里排队的那次：它捕获的是旧
         // 输入框的待发任务，再跑一次只会在新框上多做一轮无用探针

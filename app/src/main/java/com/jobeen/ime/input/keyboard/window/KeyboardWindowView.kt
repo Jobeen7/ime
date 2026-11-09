@@ -1226,7 +1226,7 @@ class KeyboardWindowView(
     /** 当前输入框是否为密码框（onStartInput 时更新）：密码框禁用语音与粘贴横幅。 */
     private var passwordField = false
 
-    fun onStartInput(info: EditorInfo) {
+    fun onStartInput(info: EditorInfo, fieldChanged: Boolean = false) {
         // 新输入会话：旧字段的内联胶囊过期，先清；会话标志随即置真。
         hideInlineAutofill()
         inlineFieldActive = true
@@ -1238,7 +1238,7 @@ class KeyboardWindowView(
         // onStartInput 必经；在此重读 hideToolbar，开关当次回聊天即生效。
         refreshToolbarHidden()
         panel.onStartInputView()
-        keyboardStateManager.startInput(info)
+        keyboardStateManager.startInput(info, fieldChanged)
         videoController.onInputStarted()
     }
 

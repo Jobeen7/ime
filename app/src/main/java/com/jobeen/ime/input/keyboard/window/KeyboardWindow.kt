@@ -83,12 +83,12 @@ class KeyboardWindow(
         messageHandler.handle(message)
     }
 
-    fun onStartInputView(info: EditorInfo, restarting: Boolean) {
+    fun onStartInputView(info: EditorInfo, restarting: Boolean, fieldChanged: Boolean = false) {
         if (!restarting) {
             view.refreshColorsIfChanged()
         }
         currentEditorInfo = info
-        view.onStartInput(info)
+        view.onStartInput(info, fieldChanged)
         view.refreshLayout()
     }
 

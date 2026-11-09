@@ -596,7 +596,7 @@ object KeyboardStateManager {
         }
     }
 
-    fun startInput(info: EditorInfo) {
+    fun startInput(info: EditorInfo, fieldChanged: Boolean = false) {
         val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
         val variation = info.inputType and InputType.TYPE_MASK_VARIATION
         // 文本类密码框自动切英文键盘（Qwerty + engine 侧强制 ascii_mode 直输）；
@@ -612,7 +612,43 @@ object KeyboardStateManager {
                 inputClass == InputType.TYPE_CLASS_PHONE ->
                 switchToResolved(NumberKeyboard.NAME)
             isPasswordText -> switchToResolved(QwertyKeyboard.NAME)
-            else -> switchTo(currentSchema?.layout ?: defaultKeyboardName)
+            else -> {
+                // 新窗口复位（施工单 12）：字段身份变化时先回列表第一
+                // 个方案（含类型复位），再按当前方案切布局；数字／
+                // 密码框走直达分支，不复位。
+                if (fieldChanged) resetToFirstSchema()
+                switchTo(currentSchema?.layout ?: defaultKeyboardName)
+            }
+        }
+    }
+
+    /**
+     * 新窗口复位到列表第一个方案（施工单 12）：方案切回启用列表
+     * 第一个，并把类型复位到该方案的布局类型。只改方案不改类型
+     * 落不了地（粘性类型会把方案布局名解析回旧类型的主键盘）；
+     * ascii 偏好本身不动，只复位新窗口的初始类型。部署进行中
+     * 不复位，记待补齐标志、部署结束补齐一次（与
+     * refreshSchemasOnce 同口径）。
+     */
+    fun resetToFirstSchema() {
+        if (EngineDeployState.isRunning()) {
+            refreshPolicy.markPending()
+            return
+        }
+        val first = schemas.firstOrNull() ?: return
+        val snapshot = SkinSnapshotProvider.current(appContext)
+        val landscape = appContext.resources.configuration.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
+        val schemeType = CustomLayoutRuntime.typeForLayoutName(snapshot, first.layout, landscape)
+        when (val decision = decideWindowReset(currentSchema?.id, first.id, typeState.current, schemeType)) {
+            WindowReset.None -> return
+            is WindowReset.Apply -> {
+                if (decision.resetScheme) {
+                    updateCurrentSchema(first)
+                    first.id?.let { EngineFactory.current()?.selectSchema(it) }
+                }
+                decision.targetType?.let { switchKeyboardType(it) }
+            }
         }
     }
 
@@ -913,6 +949,30 @@ internal fun reconcileOpenType(schemeType: String?, current: String?, asciiMode:
         return schemeType
     }
     return current
+}
+
+/** 新窗口复位决策（纯决策，可单测）。 */
+internal sealed interface WindowReset {
+    data object None : WindowReset
+    data class Apply(val resetScheme: Boolean, val targetType: String?) : WindowReset
+}
+
+/**
+ * 新窗口复位决策（纯决策，可单测）：首个方案不存在时不复位；
+ * 当前方案不是首个则切方案；当前类型不是首个方案的布局类型
+ * 则切类型（方案布局未知时类型不动）；两项都不用动时不复位。
+ */
+internal fun decideWindowReset(
+    currentSchemaId: String?,
+    firstSchemaId: String?,
+    currentType: String?,
+    schemeType: String?,
+): WindowReset {
+    if (firstSchemaId == null) return WindowReset.None
+    val resetScheme = currentSchemaId != firstSchemaId
+    val targetType = if (schemeType != null && schemeType != currentType) schemeType else null
+    if (!resetScheme && targetType == null) return WindowReset.None
+    return WindowReset.Apply(resetScheme, targetType)
 }
 
 /** 重挂决策（[KeyboardStateManager.onAttach] 的纯决策部分，可单测）。 */
