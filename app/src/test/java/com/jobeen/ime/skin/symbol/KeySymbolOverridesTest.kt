@@ -54,6 +54,30 @@ class KeySymbolOverridesTest {
     }
 
     @Test
+    fun isValidSymbol_acceptsSingleCodePointBeyondBmp() {
+        // 😀 U+1F600、𠀀 U+20000：UTF-16 代理对（length==2），码点数 1。
+        assertTrue(KeySymbolOps.isValidSymbol("\uD83D\uDE00"))
+        assertTrue(KeySymbolOps.isValidSymbol("\uD800\uDC00"))
+        assertTrue(KeySymbolOps.isValidSymbol("!"))
+        assertTrue(KeySymbolOps.isValidSymbol("。"))
+        assertTrue(!KeySymbolOps.isValidSymbol(""))
+        assertTrue(!KeySymbolOps.isValidSymbol("  "))
+        assertTrue(!KeySymbolOps.isValidSymbol("ab"))
+        // ZWJ 一家三口（4 码点）与组合附加符 e+U+0301（2 码点）仍拒绝。
+        assertTrue(!KeySymbolOps.isValidSymbol("\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67"))
+        assertTrue(!KeySymbolOps.isValidSymbol("e\u0301"))
+    }
+
+    @Test
+    fun set_storesEmojiAndSupplementaryPlaneChar() {
+        assertEquals(mapOf('q' to "\uD83D\uDE00"), KeySymbolOps.set(emptyMap(), 'q', "\uD83D\uDE00"))
+        assertEquals(mapOf('q' to "\uD800\uDC00"), KeySymbolOps.set(emptyMap(), 'q', "\uD800\uDC00"))
+        val base = mapOf('q' to "!")
+        assertSame(base, KeySymbolOps.set(base, 'q', "\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67"))
+        assertSame(base, KeySymbolOps.set(base, 'q', "e\u0301"))
+    }
+
+    @Test
     fun reset_clearsAllOverrides() {
         assertEquals(emptyMap<Char, String>(), KeySymbolOps.reset())
     }
@@ -61,6 +85,12 @@ class KeySymbolOverridesTest {
     @Test
     fun serializeAndParse_roundTrip() {
         val overrides = mapOf('q' to "!", 'a' to "。")
+        assertEquals(overrides, KeySymbolOps.parse(KeySymbolOps.serialize(overrides)))
+    }
+
+    @Test
+    fun serializeAndParse_roundTripWithEmoji() {
+        val overrides = mapOf('q' to "\uD83D\uDE00", 'a' to "\uD800\uDC00")
         assertEquals(overrides, KeySymbolOps.parse(KeySymbolOps.serialize(overrides)))
     }
 
@@ -74,6 +104,13 @@ class KeySymbolOverridesTest {
         assertEquals(
             mapOf('q' to "!"),
             KeySymbolOps.parse("""{"q":"!","1":"x","a":"ab","z":5}"""),
+        )
+        // emoji 留下，ZWJ 序列与组合附加符逐项丢弃。
+        assertEquals(
+            mapOf('q' to "\uD83D\uDE00"),
+            KeySymbolOps.parse(
+                """{"q":"\uD83D\uDE00","a":"\uD83D\uDC68\u200D\uD83D\uDC69\u200D\uD83D\uDC67","z":"e\u0301"}""",
+            ),
         )
     }
 
@@ -114,6 +151,16 @@ class KeySymbolOverridesTest {
         // m 也改了。
         val m = flat.single { (it.appearance as? KeyDef.Appearance.AltText)?.displayText == "m" }
         assertEquals("？", (m.appearance as KeyDef.Appearance.AltText).altText)
+    }
+
+    @Test
+    fun applyToLayout_appliesEmojiOverride() {
+        val layout = QwertyKeyboard.buildLayout(KeyDef.Appearance.Variant.Accent)
+        val next = KeySymbolOps.applyToLayout(layout, mapOf('q' to "\uD83D\uDE00"))
+        val q = next.flatten().single { (it.appearance as? KeyDef.Appearance.AltText)?.displayText == "q" }
+        assertEquals("\uD83D\uDE00", (q.appearance as KeyDef.Appearance.AltText).altText)
+        val longPress = q.behaviors.filterIsInstance<KeyDef.Behavior.LongPress>().single()
+        assertEquals(KeyboardAction.CommitAction("\uD83D\uDE00"), longPress.action)
     }
 
     @Test

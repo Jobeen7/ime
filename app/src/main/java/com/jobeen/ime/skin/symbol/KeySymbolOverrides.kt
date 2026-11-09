@@ -56,8 +56,18 @@ object KeySymbolOps {
         return overrides[lower] ?: DEFAULT_SYMBOLS.getValue(lower)
     }
 
-    /** 合法符号：去空白后恰好 1 字。角标格只容一字，多字会溢出裁切。 */
-    fun isValidSymbol(symbol: String): Boolean = symbol.trim().length == 1
+    /**
+     * 合法符号：去空白后恰好一个码点（codePointCount==1，与
+     * RareCharPolicy.isRareChar 同口径）。emoji 与补充平面汉字
+     * （UTF-16 代理对，length==2）可存；ZWJ 序列／组合附加符是
+     * 多码点，仍不支持。角标格只容一字，多字会溢出裁切。
+     */
+    fun isValidSymbol(symbol: String): Boolean =
+        isSingleCodePoint(symbol.trim())
+
+    /** 单个码点判定（供 isValidSymbol／set／parse 共用）。 */
+    private fun isSingleCodePoint(text: String): Boolean =
+        text.codePointCount(0, text.length) == 1
 
     /**
      * 改一键：非法符号原样返回；改回出厂值即删覆盖（只存不同位置）；
@@ -67,7 +77,7 @@ object KeySymbolOps {
         val lower = letter.lowercaseChar()
         if (lower !in DEFAULT_SYMBOLS) return overrides
         val clean = symbol.trim()
-        if (clean.length != 1) return overrides
+        if (!isSingleCodePoint(clean)) return overrides
         if (clean == DEFAULT_SYMBOLS.getValue(lower)) return overrides - lower
         return overrides + (lower to clean)
     }
@@ -85,7 +95,7 @@ object KeySymbolOps {
 
     /**
      * 解析：损坏／非对象时回落空；逐项丢弃非法项（键非单个 a–z 字母、
-     * 值非单字）。未知字段容忍。
+     * 值非单个码点）。未知字段容忍。
      */
     fun parse(raw: String?): Map<Char, String> {
         if (raw.isNullOrBlank()) return emptyMap()
@@ -98,7 +108,7 @@ object KeySymbolOps {
                     if (letter !in 'a'..'z') continue
                     val symbol = (value as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
                         ?: continue
-                    if (symbol.length != 1) continue
+                    if (!isSingleCodePoint(symbol)) continue
                     put(letter, symbol)
                 }
             }

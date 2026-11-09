@@ -40,7 +40,8 @@ import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
  *
  * - 迷你键盘预览（与出厂 26 键三行一致）：点按一键弹框改它的角标符号，
  *   改完即写偏好，无保存按钮；已改的键描边标出。
- * - 角标只容一字（多字会溢出裁切，见 KeySymbolOps.isValidSymbol）。
+ * - 角标只容单个码点（多码点会溢出裁切，见 KeySymbolOps.isValidSymbol；
+ *   emoji／补充平面汉字可存，ZWJ／组合序列不支持）。
  * - 恢复默认：弹框内恢复本键、页内全部恢复默认；只清覆盖，不动出厂表。
  * - 生效：下次打开 26 键键盘（服务侧偏好监听走重建）。
  */
@@ -174,7 +175,7 @@ private fun KeySymbolKey(
     }
 }
 
-/** 改键弹框：只容一字输入；非法（空／多字）时保存不可点。 */
+/** 改键弹框：只容单个码点输入（emoji／补充平面汉字可存，ZWJ／组合序列仍不支持）；非法（空／多码点）时保存不可点。 */
 @Composable
 private fun KeySymbolEditDialog(
     letter: Char,
@@ -192,7 +193,7 @@ private fun KeySymbolEditDialog(
             Column {
                 OutlinedTextField(
                     value = draft,
-                    onValueChange = { if (it.length <= 1) draft = it },
+                    onValueChange = { if (it.codePointCount(0, it.length) <= 1) draft = it },
                     singleLine = true,
                     label = { Text(stringResource(R.string.key_symbol_edit_hint)) },
                     modifier = Modifier.fillMaxWidth(),
