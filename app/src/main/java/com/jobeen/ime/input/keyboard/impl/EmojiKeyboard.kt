@@ -5,7 +5,9 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.text.TextUtils
 import android.widget.FrameLayout
@@ -26,11 +28,13 @@ import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
+import com.jobeen.ime.skin.symbol.KaomojiSwipe
 import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import kotlin.math.abs
 import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -46,6 +50,7 @@ class EmojiKeyboard(
         const val NAME = "Emoji"
         private const val COLUMNS = 5
         private const val ROWS = 5
+        private const val SWIPE_MIN_DISTANCE_DP = 48
         private var categorys: List<Pair<Category, Array<String>>> = Symbol.Emoji
 
         private fun keyDef(item: SymbolItem): KeyDef {
@@ -114,6 +119,13 @@ class EmojiKeyboard(
         SkinSnapshotProvider.peek()?.subClassifiedSymbols
             ?: SubClassifiedSymbols.fromSingleLevel(categorys)
     private val boardState = SubClassifiedBoardState(twoStageSymbols)
+
+    /** 横滑翻页（W13-1）：与颜文字板同口径，见 onInterceptTouchEvent。 */
+    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    private val swipeMinDistancePx = context.dp(SWIPE_MIN_DISTANCE_DP).toFloat()
+    private var downX = 0f
+    private var downY = 0f
+    private var swipingHorizontally = false
 
     /** 二级子条（48dp 横条，网格之上；单子类时隐藏）。 */
     private val subStripView: LinearLayout = LinearLayout(context).apply {
@@ -184,6 +196,65 @@ class EmojiKeyboard(
         val changed = if (forward) boardState.nextPage() else boardState.prevPage()
         if (changed) gridView.setItems(boardState.visibleItems.map { keyDef(it) })
         return changed
+    }
+
+    /**
+     * 左右滑翻页（W13-1，回归修复）：左滑下一页、右滑上一页，
+     * 到端停、不循环；只换网格，父类／子类选中与子条不动
+     * （与按键翻页 pageSubCollection 同一入口）。
+     * 拦截口径与颜文字板一致：横向位移超 touchSlop 且横向
+     * 占优时拦截（子键收 ACTION_CANCEL，点按不触发）；竖向
+     * 位移归网格滚动，不拦截；抬手在 onTouchEvent 里按位移
+     * 判定方向（复用 KaomojiSwipe.directionFor）。
+     */
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.x
+                downY = event.y
+                swipingHorizontally = false
+                return false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (!swipingHorizontally) {
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    if (abs(dx) > touchSlop && abs(dx) > abs(dy)) {
+                        swipingHorizontally = true
+                        return true
+                    }
+                }
+                return swipingHorizontally
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                swipingHorizontally = false
+                return false
+            }
+        }
+        return super.onInterceptTouchEvent(event)
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_UP -> {
+                if (swipingHorizontally) {
+                    swipingHorizontally = false
+                    val dx = event.x - downX
+                    val dy = event.y - downY
+                    KaomojiSwipe.directionFor(dx, dy, swipeMinDistancePx)?.let { direction ->
+                        pageSubCollection(direction == KaomojiSwipe.Direction.NEXT)
+                    }
+                    return true
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> {
+                swipingHorizontally = false
+                return true
+            }
+        }
+        return super.onTouchEvent(event)
     }
 
     /**
