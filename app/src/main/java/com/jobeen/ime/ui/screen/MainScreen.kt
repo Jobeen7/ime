@@ -820,10 +820,13 @@ fun MainScreen(
                         contentColor = MaterialTheme.colorScheme.onSurface,
                     ) {
                         if (fabAnyRunning) {
+                            // 运行态只留旋转弧：默认底圈会在玻璃钮上画成实心白块
+                            //（同步白块），置透明去掉。
                             CircularProgressIndicator(
                                 modifier = Modifier.size(26.dp),
                                 color = MaterialTheme.colorScheme.onSurface,
                                 strokeWidth = 2.dp,
+                                trackColor = Color.Transparent,
                             )
                         } else {
                             // 收起与展开同一图标（iPhone 辅助触控样式）：
@@ -1041,10 +1044,12 @@ private fun FabAction(
             contentAlignment = Alignment.Center,
         ) {
             if (running) {
+                // 运行态只留旋转弧：默认底圈会在玻璃钮上画成实心白块，置透明去掉。
                 CircularProgressIndicator(
                     modifier = Modifier.size(26.dp),
                     color = MaterialTheme.colorScheme.onSurface,
                     strokeWidth = 2.dp,
+                    trackColor = Color.Transparent,
                 )
             } else {
                 val glyphColor = MaterialTheme.colorScheme.onSurface
