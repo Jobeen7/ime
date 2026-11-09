@@ -15,6 +15,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -170,6 +171,9 @@ fun MainScreen(
     syncRunning: Boolean = false,
 ) {
     var fabExpanded by remember { mutableStateOf(false) }
+    // 空白点按收起 FAB 的指示源（W14-1）：无指示、无涟漪。
+    // 必须无条件 remember——不可放在条件分支里。
+    val fabDismissInteraction = remember { MutableInteractionSource() }
     // 分组重组：主页只列 6 组卡片，点组进子页；搜索按行标题＋副标题
     // 过滤，无匹配的组自动隐藏；子页只列本组过滤后的行。
     var searchQuery by remember { mutableStateOf("") }
@@ -482,16 +486,11 @@ fun MainScreen(
                 .padding(padding)
                 .onSizeChanged { containerSize = it },
         ) {
-            // 收起层在内容之下：空白处点按透过内容落到本层收起
-            // （行点按则照常导航）；FAB 覆盖层在内容之后（高于
-            // 内容），不受本层影响，展开动作点按正常。
-            if (fabExpanded && openGroup == null && !searchOpen) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .clickable { fabExpanded = false },
-                )
-            }
+            // 点空白收起 FAB（W14-1）：收起探测挂在内容列本身。
+            // 此前收起层放在内容列之下，Compose 点按不落到下面的
+            // 兄弟层，该层自始至终收不到点按（已删）。列级点按只
+            // 在无子项消费时触发：设置行点按仍导航，拖动仍滚动；
+            // 仅主页展开时生效（子页／搜索页不在本次范围）。
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -501,7 +500,17 @@ fun MainScreen(
                         else if (openGroup == null) homeScroll
                         else subScroll,
                     )
-                    .padding(horizontal = 16.dp),
+                    .padding(horizontal = 16.dp)
+                    .then(
+                        if (fabExpanded && openGroup == null && !searchOpen) {
+                            Modifier.clickable(
+                                interactionSource = fabDismissInteraction,
+                                indication = null,
+                            ) { fabExpanded = false }
+                        } else {
+                            Modifier
+                        },
+                    ),
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
             Spacer(Modifier.height(4.dp))
