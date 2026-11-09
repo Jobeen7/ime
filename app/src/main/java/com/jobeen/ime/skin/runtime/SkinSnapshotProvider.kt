@@ -88,6 +88,16 @@ object SkinSnapshotProvider {
     private var latestInstallToken = 0L
 
     /**
+     * 背景重建请求代次：每次 [refreshBackground] 在发起时分配一个
+     * 单调递增的代次并记为最新；异步解码完成时只认最新代次——
+     * 快速连切时旧请求即使后完成也被丢弃，绝不覆盖最新设定。
+     * 与安装 token 同款口径：代次必须在发起时分配，提交时才分
+     * 配无法区分新旧。全部读写都在 [lock] 内，无需 @Volatile。
+     */
+    private var backgroundRequestSequence = 0L
+    private var latestBackgroundGeneration = 0L
+
+    /**
      * 开始一次安装请求：分配单调递增的 request token 并记为最新。
      * 调用点：用户应用／回退／重装入口、覆盖层刷新开始、启动
      * 加载发起时——一律在准备开始时调，绝不在提交时调。
@@ -450,19 +460,29 @@ object SkinSnapshotProvider {
     }
 
     /**
-     * 全局背景重建（2026-10-29 外观轮模糊，2026-11-08 加拉伸模式）：
+     * 全局背景重建（2026-10-29 外观轮模糊，2026-11-08 加拉伸模式，
+     * 2026-11-09 移出主线程）：
      * 只换当前快照的背景段（模糊半径＋调节＋拉伸模式＋产物键），
      * 不碰音效／图片／通知状态、不重建快照；产物键变化走同一自愈
-     * 重建链路，成功后刷新窗口。无快照／无背景／生效值不变时直接返回。
+     * 重建链路。无快照／无背景／生效值不变时直接返回 null（无工作）。
      * 只记元数据（皮肤 id＋产物键），不记图片内容。
+     *
+     * 异步契约（审计 #10 问题 1，改异步签名）：本函数在调用线程
+     * 只取不可变参数快照（token、当前快照、生效模糊／调节／拉伸
+     * 模式、新背景段），绝不解码，任何线程可调、立即返回；解码
+     * 在 [rebuildScope]（IO）上跑，完成时按代次提交。返回已发起
+     * 的任务（无工作时为 null），调用方不得假设返回时背景已换入
+     * ——换入发生在 IO 完成后的锁内提交；窗口下次取背景时自然读
+     * 到新值（与改前同步版的可见口径一致，不另发全量刷新）。
+     * 快速连切时只有最新一次代次能提交，旧解码结果一律回收。
      */
-    fun refreshBackground(context: Context) {
-        // 只捕获、不分配（与 refreshIfOverlayChanged 同款口径）：
+    fun refreshBackground(context: Context): Job? {
+        // 同步段（调用线程，不解码）：只捕获不可变参数快照。
         // 背景重建只是对当前快照背景段的更新，不得否决在它之后
-        // 开始的完整安装；提交时 token 变了就丢弃。
+        // 开始的完整安装；提交时 token 变了就丢弃（见下）。
         val tokenAtStart = synchronized(lock) { latestInstallToken }
-        val snapshot = synchronized(lock) { currentSnapshot } ?: return
-        val bg = snapshot.background ?: return
+        val snapshot = synchronized(lock) { currentSnapshot } ?: return null
+        val bg = snapshot.background ?: return null
         val (blur, adjust) = GlobalStyleResolver.effectiveBlur(
             bg.specBlurRadius, bg.specImageAdjust, bg.blurDisabled,
             blurOverrideProvider(context),
@@ -470,7 +490,7 @@ object SkinSnapshotProvider {
         val scaleMode = scaleModeProvider(context)
         if (blur == bg.blurRadius && adjust == bg.imageAdjust &&
             scaleMode == bg.scaleMode
-        ) return
+        ) return null
         val newBg = bg.copy(
             blurRadius = blur,
             imageAdjust = adjust,
@@ -479,23 +499,36 @@ object SkinSnapshotProvider {
                 bg.assetSha256, bg.targetWidthPx, bg.targetHeightPx, blur, adjust, scaleMode,
             ),
         )
-        // 背景解码先行（锁外）：新产物键对应的位图在锁外解出，
-        // 再持锁换背景装入（审计 #2）；快照若已被替换，冗余位图回收。
-        val prepared = decodeBackgroundBounded(context, snapshot.copy(background = newBg))
-        synchronized(lock) {
-            // 换背景期间快照可能已被其它安装替换：只在 token 仍
-            // 为最新且仍为同一 ref 时换背景，否则丢弃（新快照构
-            // 建期已含最新全局值）。只核 ref 不够：同皮肤重装
-            //（同一 ref、新 token）后，旧 blur 值会盖掉重装带入
-            // 的新值。
-            val current = currentSnapshot
-            if (current != null && tokenAtStart == latestInstallToken &&
-                current.ref == snapshot.ref
-            ) {
-                currentSnapshot = current.copy(background = newBg)
-                setBackgroundBitmapLocked(context, currentSnapshot!!, prepared)
-            } else if (prepared != null) {
-                runCatching { bitmapRecycler(prepared) }
+        // 代次在发起时分配：提交时才分配无法区分新旧——后发起
+        // 的请求会在提交时拿到新代次而错误胜出。只认最新代次
+        // 提交，旧请求解完即回收（见提交段）。
+        val generation = synchronized(lock) {
+            latestBackgroundGeneration = ++backgroundRequestSequence
+            latestBackgroundGeneration
+        }
+        val appContext = context.applicationContext
+        val targetSnapshot = snapshot.copy(background = newBg)
+        return rebuildScope.launch {
+            // 背景解码在 IO 线程跑（锁外）：新产物键对应的位图在
+            // 锁外解出，再持锁换背景装入（审计 #2）；快照若已被替
+            // 换、代次已过期，冗余位图回收。
+            val prepared = decodeBackgroundBounded(appContext, targetSnapshot)
+            synchronized(lock) {
+                // 换背景期间快照可能已被其它安装替换：只在代次仍
+                // 为最新、token 仍为最新且仍为同一 ref 时换背景，
+                // 否则丢弃（新快照构建期已含最新全局值）。只核 ref
+                // 不够：同皮肤重装（同一 ref、新 token）后，旧 blur
+                // 值会盖掉重装带入的新值。
+                val current = currentSnapshot
+                if (generation == latestBackgroundGeneration &&
+                    current != null && tokenAtStart == latestInstallToken &&
+                    current.ref == snapshot.ref
+                ) {
+                    currentSnapshot = current.copy(background = newBg)
+                    setBackgroundBitmapLocked(appContext, currentSnapshot!!, prepared)
+                } else if (prepared != null) {
+                    runCatching { bitmapRecycler(prepared) }
+                }
             }
         }
     }
@@ -662,8 +695,14 @@ object SkinSnapshotProvider {
      * 背景产物解码（有界）：经 [backgroundDecoder] 解出，同一时刻
      * 最多 2 路在解（[backgroundDecodePermits]）。中断时按解码失败
      * 计（返回 null，调用方走缺失／重建口径），并恢复中断标志。
-     * 调用方均在 IO 线程，阻塞等许可可接受；主线程不得调 install
-     * 与 refreshBackground（见各函数文档）。
+     * IO 强制约束（审计 #10 问题 1）：本函数在调用线程阻塞等许可
+     * 并解码，只允许出现在以下三条 IO 路径——[install]（调用方契
+     * 约：应用事务经 IO 包装、启动加载经 startupScope，文档已禁
+     * 主线程直接调）、[refreshBackground] 发起的 [rebuildScope]
+     * 协程、[triggerBackgroundRebuild] 的 [rebuildScope] 协程。
+     * 强制点是结构性的：唯一可达的公开入口 [refreshBackground]
+     * 已是异步发射（调用线程绝不解码），不存在经它进入主线程解
+     * 码的路径；其余两条的调用方本身就在 IO 作用域内。
      */
     private fun decodeBackgroundBounded(context: Context, snapshot: SkinSnapshot): Bitmap? {
         try {

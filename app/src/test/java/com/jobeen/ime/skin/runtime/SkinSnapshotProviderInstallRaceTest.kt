@@ -15,6 +15,7 @@ import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
+import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -294,15 +295,17 @@ class SkinSnapshotProviderInstallRaceTest {
         SkinSnapshotProvider.scaleModeProvider = { ImageContentMode.SCALE_TO_FILL }
         assertTrue(SkinSnapshotProvider.install(context, snap, SkinSnapshotProvider.allocateInstallToken()))
         assertEquals(bmpFirst, SkinSnapshotProvider.currentBackgroundBitmap())
-        val blurThread = thread { SkinSnapshotProvider.refreshBackground(context) }
+        // 异步版 refreshBackground 立即返回任务（不再占调用线程解码），
+        // 用返回的 Job 等待完成；线程 join 已无意义。
+        val blurJob = SkinSnapshotProvider.refreshBackground(context)
         assertTrue(blurDecodeEntered.await(10, TimeUnit.SECONDS))
         assertTrue(SkinSnapshotProvider.install(context, snap, SkinSnapshotProvider.allocateInstallToken()))
         // 同键重装：旧位图保留、新解份回收（既有口径），当前仍为首份。
         assertEquals(bmpFirst, SkinSnapshotProvider.currentBackgroundBitmap())
         assertEquals(listOf(bmpReinstall), recycled)
         blurDecodeRelease.countDown()
-        blurThread.join(10_000)
-        assertFalse("blur 线程应在放行后退出", blurThread.isAlive)
+        runBlocking { blurJob?.join() }
+        assertTrue("blur 任务应在放行后完成", blurJob == null || blurJob.isCompleted)
         assertEquals("skin-1", SkinSnapshotProvider.peek()?.ref?.skinId)
         assertTrue(SkinSnapshotProvider.peek()?.background?.blurRadius == 0f)
         assertEquals(bmpFirst, SkinSnapshotProvider.currentBackgroundBitmap())
@@ -344,5 +347,122 @@ class SkinSnapshotProviderInstallRaceTest {
         val current = SkinSnapshotProvider.currentBackgroundBitmap()
         assertTrue(bitmaps.contains(current))
         assertEquals(2, bitmaps.count { it in recycled })
+    }
+
+    @Test
+    fun refreshBackgroundReturnsImmediatelyWhileBothDecodePermitsHeld() {
+        // 审计 #10 问题 1 回归：两路解码各占一个许可并阻塞时，偏好
+        // 回调（refreshBackground）仍须立即返回——调用线程只取参
+        // 数快照、绝不解码；第三次调用即便拿不到许可也只发射任务。
+        val snap = snapshot("skin-1", "key-1")
+        val bmpFirst = fakeBitmap()
+        val bmp12 = fakeBitmap()
+        val bmp24 = fakeBitmap()
+        val bmp30 = fakeBitmap()
+        val entered12 = CountDownLatch(1)
+        val release12 = CountDownLatch(1)
+        val entered24 = CountDownLatch(1)
+        val release24 = CountDownLatch(1)
+        SkinSnapshotProvider.backgroundDecoder = { _, s ->
+            when (s.background?.blurRadius) {
+                12f -> {
+                    entered12.countDown()
+                    assertTrue(release12.await(10, TimeUnit.SECONDS))
+                    bmp12
+                }
+                24f -> {
+                    entered24.countDown()
+                    assertTrue(release24.await(10, TimeUnit.SECONDS))
+                    bmp24
+                }
+                30f -> bmp30
+                else -> bmpFirst
+            }
+        }
+        SkinSnapshotProvider.scaleModeProvider = { ImageContentMode.SCALE_TO_FILL }
+        assertTrue(SkinSnapshotProvider.install(context, snap, SkinSnapshotProvider.allocateInstallToken()))
+        assertEquals(bmpFirst, SkinSnapshotProvider.currentBackgroundBitmap())
+
+        SkinSnapshotProvider.blurOverrideProvider = {
+            BackgroundBlurOverride(BackgroundBlurMode.ON, 12f)
+        }
+        val job1 = SkinSnapshotProvider.refreshBackground(context)
+        assertTrue(entered12.await(10, TimeUnit.SECONDS))
+        SkinSnapshotProvider.blurOverrideProvider = {
+            BackgroundBlurOverride(BackgroundBlurMode.ON, 24f)
+        }
+        val job2 = SkinSnapshotProvider.refreshBackground(context)
+        assertTrue(entered24.await(10, TimeUnit.SECONDS))
+        // 此时两路许可均被占满（两路解码都在等放行）。
+        SkinSnapshotProvider.blurOverrideProvider = {
+            BackgroundBlurOverride(BackgroundBlurMode.ON, 30f)
+        }
+        val startNs = System.nanoTime()
+        val job3 = SkinSnapshotProvider.refreshBackground(context)
+        val elapsedMs = (System.nanoTime() - startNs) / 1_000_000
+        assertTrue("两路许可占满时调用仍须立即返回，实测=${elapsedMs}ms", elapsedMs < 1_000)
+
+        release12.countDown()
+        release24.countDown()
+        runBlocking {
+            job1?.join()
+            job2?.join()
+            job3?.join()
+        }
+        // 只有最后一次设定胜出：旧两路的位图回收（顺序竞态，只
+        // 断集合），新键提交时旧首份位图同样回收。
+        assertTrue(SkinSnapshotProvider.peek()?.background?.blurRadius == 30f)
+        assertEquals(bmp30, SkinSnapshotProvider.currentBackgroundBitmap())
+        assertEquals(3, recycled.size)
+        assertEquals(setOf(bmpFirst, bmp12, bmp24), recycled.toSet())
+    }
+
+    @Test
+    fun rapidRefreshBackgroundOnlyLatestWins() {
+        // 快速连切 blur：先发起的 12f 解码被阻塞，后发起的 24f
+        // 先完成并提交；12f 解码随后完成时按代次被丢弃，不得
+        // 覆盖最新设定，其位图回收。
+        val snap = snapshot("skin-1", "key-1")
+        val bmpFirst = fakeBitmap()
+        val bmp12 = fakeBitmap()
+        val bmp24 = fakeBitmap()
+        val entered12 = CountDownLatch(1)
+        val release12 = CountDownLatch(1)
+        SkinSnapshotProvider.backgroundDecoder = { _, s ->
+            when (s.background?.blurRadius) {
+                12f -> {
+                    entered12.countDown()
+                    assertTrue(release12.await(10, TimeUnit.SECONDS))
+                    bmp12
+                }
+                24f -> bmp24
+                else -> bmpFirst
+            }
+        }
+        SkinSnapshotProvider.scaleModeProvider = { ImageContentMode.SCALE_TO_FILL }
+        assertTrue(SkinSnapshotProvider.install(context, snap, SkinSnapshotProvider.allocateInstallToken()))
+        assertEquals(bmpFirst, SkinSnapshotProvider.currentBackgroundBitmap())
+
+        SkinSnapshotProvider.blurOverrideProvider = {
+            BackgroundBlurOverride(BackgroundBlurMode.ON, 12f)
+        }
+        val job1 = SkinSnapshotProvider.refreshBackground(context)
+        assertTrue(entered12.await(10, TimeUnit.SECONDS))
+        SkinSnapshotProvider.blurOverrideProvider = {
+            BackgroundBlurOverride(BackgroundBlurMode.ON, 24f)
+        }
+        val job2 = SkinSnapshotProvider.refreshBackground(context)
+        runBlocking { job2?.join() }
+        assertTrue(SkinSnapshotProvider.peek()?.background?.blurRadius == 24f)
+        assertEquals(bmp24, SkinSnapshotProvider.currentBackgroundBitmap())
+
+        release12.countDown()
+        runBlocking { job1?.join() }
+        assertTrue("旧 12f 请求完成后不得覆盖最新 24f 设定",
+            SkinSnapshotProvider.peek()?.background?.blurRadius == 24f)
+        assertEquals(bmp24, SkinSnapshotProvider.currentBackgroundBitmap())
+        // 新键提交时旧首份位图已回收（job2 提交时），随后旧 12f
+        // 请求的位图按代次回收；顺序由 join／放行次序固定。
+        assertEquals(listOf(bmpFirst, bmp12), recycled)
     }
 }
