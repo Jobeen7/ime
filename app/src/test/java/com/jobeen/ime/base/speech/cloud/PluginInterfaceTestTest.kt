@@ -13,20 +13,24 @@ import javax.net.ssl.SSLServerSocket
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.X509TrustManager
 import kotlin.concurrent.thread
+import kotlinx.coroutines.CancellationException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Test
 
-/** 插件接口测试：前置判定顺序、探针短路、异常分类。 */
+/** 插件接口测试：前置判定顺序、探针短路、异常分类、总时限、取消。 */
 class PluginInterfaceTestTest {
 
     private class RecordingProber(
         private val failures: Map<String, InterfaceProbeFailure> = emptyMap(),
+        private val onProbe: () -> Unit = {},
     ) : HostProber {
         val probed = mutableListOf<String>()
         override fun probe(host: String): InterfaceProbeFailure? {
             probed.add(host)
+            onProbe()
             return failures[host]
         }
     }
@@ -36,7 +40,12 @@ class PluginInterfaceTestTest {
         secretsMissing: Boolean = false,
         networkAvailable: Boolean = true,
         prober: HostProber = RecordingProber(),
-    ) = PluginInterfaceTest.run(hosts, secretsMissing, networkAvailable, prober)
+        deadlineMs: Long = PluginInterfaceTest.TOTAL_DEADLINE_MS,
+        clockMs: () -> Long = { System.currentTimeMillis() },
+        isCancelled: () -> Boolean = { false },
+    ) = PluginInterfaceTest.run(
+        hosts, secretsMissing, networkAvailable, prober, deadlineMs, clockMs, isCancelled,
+    )
 
     @Test
     fun test_missingSecretsWinsAndProbesNothing() {
@@ -184,5 +193,91 @@ class PluginInterfaceTestTest {
             override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) = Unit
             override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
         }
+    }
+
+    @Test
+    fun test_deadlineStopsProbingAfterTotalDeadline() {
+        // 32 个慢 host：每探一个假时钟走 10 秒；总时限 30 秒。
+        var nowMs = 0L
+        val hosts = (1..32).map { "h$it.example.com" }
+        val prober = RecordingProber(onProbe = { nowMs += 10_000 })
+        val result = run(
+            hosts = hosts,
+            prober = prober,
+            deadlineMs = PluginInterfaceTest.TOTAL_DEADLINE_MS,
+            clockMs = { nowMs },
+        )
+        assertEquals(
+            PluginInterfaceTestResult.Unreachable("h4.example.com", InterfaceProbeFailure.TIMEOUT),
+            result,
+        )
+        // 只探了时限内的 3 个，第 4 个起不再探。
+        assertEquals(
+            listOf("h1.example.com", "h2.example.com", "h3.example.com"),
+            prober.probed,
+        )
+    }
+
+    @Test
+    fun test_deadlineNotReached_probesAllHosts() {
+        var nowMs = 0L
+        val hosts = (1..32).map { "h$it.example.com" }
+        val prober = RecordingProber(onProbe = { nowMs += 500 })
+        assertEquals(
+            PluginInterfaceTestResult.Reachable,
+            run(
+                hosts = hosts,
+                prober = prober,
+                deadlineMs = PluginInterfaceTest.TOTAL_DEADLINE_MS,
+                clockMs = { nowMs },
+            ),
+        )
+        assertEquals(hosts, prober.probed)
+    }
+
+    @Test
+    fun test_firstFailureShortCircuitsEvenWithDeadline() {
+        val prober = RecordingProber(
+            mapOf("a.example.com" to InterfaceProbeFailure.TIMEOUT),
+        )
+        assertEquals(
+            PluginInterfaceTestResult.Unreachable("a.example.com", InterfaceProbeFailure.TIMEOUT),
+            run(prober = prober),
+        )
+        assertEquals(listOf("a.example.com"), prober.probed)
+    }
+
+    @Test
+    fun test_cancelStopsProbingAfterTwoHosts() {
+        val hosts = (1..32).map { "h$it.example.com" }
+        val prober = RecordingProber()
+        try {
+            PluginInterfaceTest.run(
+                hosts = hosts,
+                secretsMissing = false,
+                networkAvailable = true,
+                prober = prober,
+                isCancelled = { prober.probed.size >= 2 },
+            )
+            fail("expected CancellationException")
+        } catch (e: CancellationException) {
+            // 取消即停，无结果可写。
+        }
+        assertEquals(2, prober.probed.size)
+    }
+
+    @Test
+    fun test_prechecksWinOverZeroDeadline() {
+        val prober = RecordingProber()
+        assertEquals(
+            PluginInterfaceTestResult.MissingSecrets,
+            run(secretsMissing = true, prober = prober, deadlineMs = 0),
+        )
+        assertTrue(prober.probed.isEmpty())
+        assertEquals(
+            PluginInterfaceTestResult.NoHosts,
+            run(hosts = emptyList(), prober = prober, deadlineMs = 0),
+        )
+        assertTrue(prober.probed.isEmpty())
     }
 }

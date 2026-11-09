@@ -8,6 +8,7 @@ import javax.net.ssl.SSLException
 import javax.net.ssl.SSLParameters
 import javax.net.ssl.SSLSocket
 import javax.net.ssl.SSLSocketFactory
+import kotlinx.coroutines.CancellationException
 
 /**
  * 插件接口测试（CyIME H9 对口：设置里填好接口就能直接点测试）。
@@ -45,19 +46,40 @@ object PluginInterfaceTest {
     const val PROBE_TIMEOUT_MS = 5_000
 
     /**
+     * 整次探测总时限 30 秒：插件最多声明 32 个 host，慢但成功时
+     * 逐个探会累计到数分钟；总时限只在 host 间检查，单次总耗时
+     * 上限为总时限＋一个在途探针的耗时（连接 5 秒＋握手 5 秒，DNS 不计）。
+     */
+    const val TOTAL_DEADLINE_MS = 30_000L
+
+    /**
      * 判定顺序（与 [CloudVoiceGate] 同口径，首个不满足即定）：
      * 密钥未填 → 无网络 → 无域名 → 逐域名探针，首个不可达即定。
+     *
+     * host 间查两件事，任一命中即停，不再往后探：
+     * ① [isCancelled] 为真时抛 [CancellationException]（调用方取消，
+     * 无结果可写——UI 的 Job 取消即走此路）；
+     * ② 超过 [deadlineMs] 时把当前 host 记为超时不可达。
+     * [clockMs] 可注入，便于单测用假时钟定量验总耗时。
      */
     fun run(
         hosts: List<String>,
         secretsMissing: Boolean,
         networkAvailable: Boolean,
         prober: HostProber,
+        deadlineMs: Long = TOTAL_DEADLINE_MS,
+        clockMs: () -> Long = { System.currentTimeMillis() },
+        isCancelled: () -> Boolean = { false },
     ): PluginInterfaceTestResult {
         if (secretsMissing) return PluginInterfaceTestResult.MissingSecrets
         if (!networkAvailable) return PluginInterfaceTestResult.NoNetwork
         if (hosts.isEmpty()) return PluginInterfaceTestResult.NoHosts
+        val startMs = clockMs()
         for (host in hosts) {
+            if (isCancelled()) throw CancellationException("probe cancelled")
+            if (clockMs() - startMs >= deadlineMs) {
+                return PluginInterfaceTestResult.Unreachable(host, InterfaceProbeFailure.TIMEOUT)
+            }
             val failure = prober.probe(host)
             if (failure != null) return PluginInterfaceTestResult.Unreachable(host, failure)
         }
@@ -83,6 +105,15 @@ fun buildProbeParameters(host: String): SSLParameters {
 
 /** 真实探针：TCP 连接＋TLS 握手到 host:443，超时即失败；握手校验主机名。 */
 object TlsHostProber : HostProber {
+    /** 在途探针的 socket：UI 取消时关掉它，阻塞的连接／握手随即抛错返回。 */
+    @Volatile
+    private var activeSocket: SSLSocket? = null
+
+    /** 取消在途探针（无在途探针时为空操作）。 */
+    fun cancelActiveProbe() {
+        runCatching { activeSocket?.close() }
+    }
+
     override fun probe(host: String): InterfaceProbeFailure? {
         // getDefault() 声明返回 SocketFactory，实际恒为 SSLSocketFactory。
         return probe(host, SSLSocketFactory.getDefault() as SSLSocketFactory, 443)
@@ -96,6 +127,7 @@ object TlsHostProber : HostProber {
     ): InterfaceProbeFailure? {
         return try {
             val socket = socketFactory.createSocket() as SSLSocket
+            activeSocket = socket
             try {
                 socket.sslParameters = buildProbeParameters(host)
                 socket.connect(
@@ -105,6 +137,7 @@ object TlsHostProber : HostProber {
                 socket.soTimeout = PluginInterfaceTest.PROBE_TIMEOUT_MS
                 socket.startHandshake()
             } finally {
+                if (activeSocket === socket) activeSocket = null
                 runCatching { socket.close() }
             }
             null

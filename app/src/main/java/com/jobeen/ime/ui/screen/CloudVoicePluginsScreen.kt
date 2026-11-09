@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +67,8 @@ import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 import com.jobeen.ime.ui.screen.ScreenComponent.barFontSize
 import com.jobeen.ime.ui.screen.ScreenComponent.rowSubFontSize
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -149,6 +152,19 @@ fun CloudVoicePluginsScreen(
     var testRunning by remember(detailPlugin?.id) { mutableStateOf(false) }
     var testResult by remember(detailPlugin?.id) {
         mutableStateOf<PluginInterfaceTestResult?>(null)
+    }
+    // 在途探测的 Job：不跟 detailPlugin?.id 计键——切插件时
+    // DisposableEffect 的 onDispose 还要靠它取消旧任务。
+    var testJob by remember { mutableStateOf<Job?>(null) }
+
+    // 接口测试取消：切插件（id 变）或离页（组合离开）时取消在途探测，
+    // 并关掉正在握手／连接的 socket；无在途探测时两者皆为空操作。
+    // 注意：Job 取消只拦得住挂起点，阻塞的 socket 调用靠关 socket 打断。
+    DisposableEffect(detailPlugin?.id) {
+        onDispose {
+            testJob?.cancel()
+            TlsHostProber.cancelActiveProbe()
+        }
     }
 
     fun refresh() {
@@ -410,21 +426,33 @@ fun CloudVoicePluginsScreen(
                             val testedId = detail.id
                             testRunning = true
                             testResult = null
-                            scope.launch {
-                                val result = withContext(Dispatchers.IO) {
-                                    PluginInterfaceTest.run(
-                                        hosts = detail.hosts,
-                                        secretsMissing = missingKeys,
-                                        networkAvailable = CloudVoiceGate.networkAvailable(context),
-                                        prober = TlsHostProber,
-                                    )
-                                }
-                                // 测试中切了插件：结果不写进新插件的槽位。
-                                if (detailPlugin?.id == testedId) {
-                                    testRunning = false
-                                    testResult = result
+                            val job = scope.launch {
+                                try {
+                                    val result = withContext(Dispatchers.IO) {
+                                        PluginInterfaceTest.run(
+                                            hosts = detail.hosts,
+                                            secretsMissing = missingKeys,
+                                            networkAvailable = CloudVoiceGate.networkAvailable(context),
+                                            prober = TlsHostProber,
+                                            // Job 取消后不再起新探针：阻塞调用无挂起点，
+                                            // 只靠 Job 取消拦不住 host 间的循环。
+                                            isCancelled = { !isActive },
+                                        )
+                                    }
+                                    // 测试中切了插件：结果不写进新插件的槽位。
+                                    if (detailPlugin?.id == testedId) {
+                                        testResult = result
+                                    }
+                                } finally {
+                                    // 完成／取消都落下运行态：取消时写回分支不执行，
+                                    // finally 保证按钮不卡在“测试中…”。
+                                    if (detailPlugin?.id == testedId) {
+                                        testRunning = false
+                                    }
+                                    if (testJob === coroutineContext[Job]) testJob = null
                                 }
                             }
+                            testJob = job
                         },
                     )
                     val testOutcome = testResult
