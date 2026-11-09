@@ -418,9 +418,12 @@ object RareCharPolicy {
 
     /**
      * 由组字音节定补字目标（纯函数）：单音节时解析出的音节在表里即补；
-     * 音节未解析时原始输入为纯数字码且在数字码表里即补；多音节／空组字／
-     * 对不上表一律不补。spellings 为各音节的 spelling，rawInput 为首音
-     * 节的原始输入（九宫格未解析时为数字码、可带分词符 '）。
+     * spelling 未解析（不含任何字母：为空或全数字，与
+     * hasUnresolvedDigitSegment 同口径）且原始输入为纯数字码在数字
+     * 码表里即补；spelling 含字母（已解析出音节、只是不在补字表内）
+     * 时不走数字码；多音节／空组字一律不补。spellings 为各音节的
+     * spelling，rawInput 为首音节的原始输入（九宫格未解析时为数字
+     * 码、可带分词符 '）。
      */
     fun targetSupplement(spellings: List<String>, rawInput: String): SupplementTarget? {
         if (spellings.size != 1) return null
@@ -428,6 +431,10 @@ object RareCharPolicy {
         if (COMMON_BY_SYLLABLE.containsKey(spelling)) {
             return SupplementTarget(spelling, fromDigits = false)
         }
+        // 数字码路径只在 spelling 未解析时启用：未解析 = 不含任何字母
+        // （为空或全数字）；spelling 含字母时已解析出音节，只是不在补
+        // 字表内，不从“不在表内”推断未解析（审计问题 6）。
+        if (spelling.any { it.isLetter() }) return null
         val digits = rawInput.trimEnd('\'')
         if (digits.isNotEmpty() && digits.all { it.isDigit() }) {
             val syllable = SYLLABLE_BY_DIGITS[digits] ?: return null

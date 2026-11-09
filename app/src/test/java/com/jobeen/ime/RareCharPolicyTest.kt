@@ -129,6 +129,12 @@ class RareCharPolicyTest {
     }
 
     @Test
+    fun targetSupplement_nonEmptyUnmatchedSpellingDoesNotFallBackToDigits() {
+        // spelling 含字母（已解析出音节、只是不在补字表内）不走数字码（审计问题 6）。
+        assertNull(RareCharPolicy.targetSupplement(listOf("ni"), "78"))
+    }
+
+    @Test
     fun applySupplement_movesExistingCharToTarget() {
         val list = bulk(24).toMutableList()
         list[20] = EngineMessage.Candidate(index = 20, text = "佢")
