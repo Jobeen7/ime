@@ -42,15 +42,17 @@ class PeriodicSyncJobService : JobService() {
                     }
                     if (ready == true) {
                         val dicts = session.runOnReady { getUserDictList() }
+                        val toSync = dictsToSync(dicts)
                         allOk = dicts.isNotEmpty()
-                        for (dict in dicts) {
+                        for (dict in toSync) {
                             val result = WebDavSync.upload(dict, session)
                             if (result.isFailure) {
                                 Timber.w("Periodic sync upload failed for $dict")
                                 allOk = false
                             }
                         }
-                        // 词典表为空时不算成功（未同步任何内容）
+                        // 词典表为空时不算成功（未同步任何内容）；
+                        // 仅含跳过词典（如 stats）时无上传、无失败即成功。
                         if (dicts.isEmpty()) allOk = false
                     } else {
                         Timber.w("Periodic sync: Rime session timeout")
@@ -76,5 +78,12 @@ class PeriodicSyncJobService : JobService() {
 
     companion object {
         private const val SESSION_NAME = "periodic-sync"
+
+        /**
+         * 待同步词典表：与 syncAllDicts 同口径，滤掉 stats（输入统计数据库，
+         * 导出恒 -1，非用户词库）。纯函数，供单测。
+         */
+        internal fun dictsToSync(dicts: List<String>): List<String> =
+            dicts.filterNot { WebDavSync.isSyncSkippedDict(it) }
     }
 }
