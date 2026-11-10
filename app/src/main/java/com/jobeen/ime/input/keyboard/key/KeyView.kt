@@ -60,6 +60,21 @@ import java.util.concurrent.atomic.AtomicInteger
 // 共享一份即可，不再每次按键文本定位新建 Rect
 private val alignBoundsScratch = Rect()
 
+/**
+ * 可见字形居中位移（纯函数）：字形中心应落在容器中心。
+ * 字形在父容器中的中心 = viewLeft + paddingLeft + (boundsLeft + boundsRight) / 2。
+ * paddingLeft 不可省：副文字／顶部小字的注解留白（applyAnnotationPadding）
+ * 加在 TextView 的 padding 上，省了它，居中就多算一个留白量、整体推右
+ * （实测约 4px，见 key-sublabel-not-centered-20261110.md）。
+ */
+internal fun visibleTextCenterOffset(
+    containerWidth: Float,
+    viewLeft: Float,
+    paddingLeft: Float,
+    boundsLeft: Float,
+    boundsRight: Float,
+): Float = containerWidth / 2f - (viewLeft + paddingLeft + (boundsLeft + boundsRight) / 2f)
+
 private fun TextView.alignVisibleTextCenter() {
     val text = text?.toString().orEmpty()
     val container = parent as? android.view.View ?: return
@@ -70,8 +85,13 @@ private fun TextView.alignVisibleTextCenter() {
 
     val bounds = alignBoundsScratch
     paint.getTextBounds(text, 0, text.length, bounds)
-    val glyphCenter = left + (bounds.left + bounds.right) / 2f
-    translationX = container.width / 2f - glyphCenter
+    translationX = visibleTextCenterOffset(
+        container.width.toFloat(),
+        left.toFloat(),
+        paddingLeft.toFloat(),
+        bounds.left.toFloat(),
+        bounds.right.toFloat(),
+    )
 }
 
 /**
@@ -1737,13 +1757,15 @@ class AltTextKeyView(
     }
 
     private fun updateAltTextPosition() {
-        altText.alignVisibleTextCenterOrReset()
+        // 先加留白、后对齐：对齐按当前 paddingLeft 算，首帧即居中；
+        // 先对齐后加留白，首帧会把副文字推右一个留白量，直到下次文本更新才纠正。
         applyAnnotationPadding(altText, isTop = false)
+        altText.alignVisibleTextCenterOrReset()
     }
 
     private fun updateTopTextPosition() {
-        topText.alignVisibleTextCenterOrReset()
         applyAnnotationPadding(topText, isTop = true)
+        topText.alignVisibleTextCenterOrReset()
     }
 
     /**
