@@ -57,6 +57,21 @@ import timber.log.Timber
 // 长按弹窗选中条目的高亮蓝（新定值；全仓无现行选中蓝可复用）
 private const val LONG_PRESS_HIGHLIGHT_BLUE: Int = 0xFF0A84FF.toInt()
 
+/**
+ * 回车显示文案（纯函数，W19-2a）：组字中（上屏候选）显示“确认”；
+ * 单行动作按编辑框动作（发送／搜索／完成…）；其余（插换行／无动作）显示“换行”。
+ * 只改显示，行为（EnterDecision）不动。图标回车键（数字／符号板等）无文案
+ * 可改，文案只作用于文字回车键（enterTextSetters 登记的键）。
+ */
+internal fun enterDisplayLabel(outcome: EnterOutcome): String = when (outcome) {
+    is EnterOutcome.PerformAction ->
+        com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(
+            EnterFieldBoundary.toEditorAction(outcome.action),
+        )
+    is EnterOutcome.CommitCandidate -> "确认"
+    else -> "换行"
+}
+
 abstract class BaseKeyboard(
     context: Context,
     protected val colors: KeyboardColors.ColorScheme,
@@ -1206,12 +1221,12 @@ abstract class BaseKeyboard(
         // 回车精简决策反推显示：显示与行为同一来源（EnterDecision），
         // 不再由空探针或图标单独定。empty 参数只为接口兼容而保留，
         // 空框不再把回车翻回换行。isComposing 在此仅作显示时点的
-        // 预测输入（组字中显示为换行图标，与旧口径一致）；按键时
-        // 的组字以引擎 job 执行时点的原始输入为准，两者时点不同
-        // 但决策函数同一，逻辑不再各定各的。残余：状态管理器的
-        // 去重三元组（动作／空／组字）不含多行与不要换行标志，
-        // 同动作的单行↔多行换框时显示可能滞后一次输入变化，
-        // 按键行为本身在按键时点现算，不受显示滞后影响。
+        // 预测输入（组字中文字回车键显示“确认”，图标回车键仍为
+        // 回车箭头）；按键时的组字以引擎 job 执行时点的原始输入
+        // 为准，两者时点不同但决策函数同一，逻辑不再各定各的。残余：
+        // 状态管理器的去重三元组（动作／空／组字）不含多行与不要
+        // 换行标志，同动作的单行↔多行换框时显示可能滞后一次输入
+        // 变化，按键行为本身在按键时点现算，不受显示滞后影响。
         // empty 参数只为接口兼容而保留，不再参与决策。
         val field = EnterFieldBoundary.fromEditorInfo(info)
         val displayOutcome = EnterDecision.decide(
@@ -1220,10 +1235,10 @@ abstract class BaseKeyboard(
             hasDedicatedNewlineKey = hasDedicatedNewlineKey,
             isLongPress = false,
         )
-        val (icon, enterLabel) = when (displayOutcome) {
+        val icon = when (displayOutcome) {
             is EnterOutcome.PerformAction -> {
                 val editorAction = EnterFieldBoundary.toEditorAction(displayOutcome.action)
-                val iconForAction = when (editorAction) {
+                when (editorAction) {
                     EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
                     EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
                     EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
@@ -1232,14 +1247,12 @@ abstract class BaseKeyboard(
                     EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
                     else -> R.drawable.ic_keyboard_return
                 }
-                iconForAction to
-                    com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(editorAction)
             }
-            // 上屏候选、插换行、无动作在显示上都落回车图标／换行文案：
-            // 无动作（九宫格多行无标志）显示上无法再区分，按键时无动作，
-            // 换行走专用换行键，此处不另发明图标。
-            else -> R.drawable.ic_keyboard_return to "换行"
+            // 组字中（上屏候选）／插换行／无动作：图标回车键仍用回车箭头
+            // （图标键无文案可改）；文字回车键的文案见 enterDisplayLabel。
+            else -> R.drawable.ic_keyboard_return
         }
+        val enterLabel = enterDisplayLabel(displayOutcome)
         if (icon != returnKeyIcon) {
             returnKeyIcon = icon
             returnKeyView?.img?.imageResource = returnKeyIcon

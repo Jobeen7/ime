@@ -130,7 +130,7 @@ class T9Keyboard(
                 mixedAlphabetKey("7", "PQRS", 0.22333f, id = KeyIds.T9.T9_KEY_7),
                 mixedAlphabetKey("8", "TUV", 0.22333f, id = KeyIds.T9.T9_KEY_8),
                 mixedAlphabetKey("9", "WXYZ", 0.22333f, id = KeyIds.T9.T9_KEY_9),
-                returnKey(percentWidth = 0.18f, rowSpan = 2, variant = returnVariant, id = KeyIds.T9.T9_ENTER),
+                returnKey(percentWidth = 0.18f, rowSpan = 2, variant = returnVariant, id = KeyIds.T9.T9_ENTER, useTextLabel = true),
             ),
             listOf(
                 layoutSwitchKey("?123", NumberKeyboard.NAME, percentWidth = 0.15f, id = KeyIds.T9.T9_LAYOUT_NUMBER),

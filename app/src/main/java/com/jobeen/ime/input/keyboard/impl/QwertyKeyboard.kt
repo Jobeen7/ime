@@ -204,7 +204,7 @@ class QwertyKeyboard(
                     peroidKey(percentWidth = 0.13f, id = KeyIds.Qwerty.KEY_PERIOD),
                     spaceKey(percentWidth = 0.44f, id = KeyIds.Qwerty.KEY_SPACE),
                     schemaSwitchKey(0.13f, id = KeyIds.Qwerty.KEY_SCHEMA),
-                    returnKey(percentWidth = 0.15f, variant = returnVariant, id = KeyIds.Qwerty.KEY_ENTER),
+                    returnKey(percentWidth = 0.15f, variant = returnVariant, id = KeyIds.Qwerty.KEY_ENTER, useTextLabel = true),
                 ),
             )
         }
