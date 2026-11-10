@@ -158,16 +158,14 @@ class QwertyLayout26KeyTest {
             KeyboardAction.ShowInputMethodPickerAction,
             longPressOf(schema),
         )
-        // 回车（文字键，W19-2a：组字中显示“确认”需文字键，图标改文字是用户定的；
-        // 旧断言为图标键）：0.15、Accent（buildLayout 传入 Accent）、初始文案“换行”、16f。
+        // 回车（图标键）：0.15、Accent（buildLayout 传入 Accent）。
         val enter = row[4]
         assertEquals(KeyIds.Qwerty.KEY_ENTER, enter.id)
         assertEquals(0.15f, enter.appearance.percentWidth, 0.0001f)
-        val enterText = enter.appearance as KeyDef.Appearance.Text
-        assertEquals("换行", enterText.displayText)
-        assertEquals(16f, enterText.textSize, 0.001f)
-        assertEquals(Variant.Accent, enterText.variant)
-        assertEquals(KeyView.button_return, enterText.viewId)
+        val enterImage = enter.appearance as KeyDef.Appearance.Image
+        assertEquals(R.drawable.ic_keyboard_return, enterImage.src)
+        assertEquals(Variant.Accent, enterImage.variant)
+        assertEquals(KeyView.button_return, enterImage.viewId)
         assertEquals(KeyboardAction.ReturnAction(), pressOf(enter))
         assertEquals(KeyboardAction.ReturnAction(true), longPressOf(enter))
     }
