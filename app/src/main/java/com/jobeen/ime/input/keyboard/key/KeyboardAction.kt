@@ -281,4 +281,23 @@ sealed class KeyboardAction {
      * 抬起钩子（非点击分发）；直接分发到监听时为空操作。
      */
     data object MomentaryShiftAction : KeyboardAction()
+
+    /** 面板快捷入口目标（W19-6 panel 板 8 钮）。 */
+    enum class PanelShortcutTarget {
+        /** 皮肤库页。 */
+        SKIN_LIBRARY,
+        /** WebDAV 词典同步。 */
+        SYNC_DICTS,
+        /** 检查更新（VersionChecker，查到新版开 Release 页）。 */
+        CHECK_UPDATE,
+        /** 震动设置（键盘设置页，含震动分段）。 */
+        VIBRATION_SETTINGS,
+        /** 编辑器：打开皮肤布局文件（W19-7 实现）。 */
+        EDIT_LAYOUTS,
+        /** 编辑器：打开 skin.json（W19-7 实现）。 */
+        EDIT_SKIN_JSON,
+    }
+
+    /** 面板快捷入口（W19-6 panel 板 8 钮之一）：目标由 [PanelShortcutTarget] 定。 */
+    data class PanelShortcutAction(val target: PanelShortcutTarget) : KeyboardAction()
 }

@@ -1359,7 +1359,7 @@ class ToolbarRenderer(
             if (x in clipMenuTouchLeft..clipMenuTouchRight) {
                 setPress(clipMenuCenter)
                 return KawaiiPanel.TouchResult.ToolbarAction(
-                    PanelAction.SwitchKeyboard, tapX = x, tapY = y
+                    PanelAction.ShortcutPanel, tapX = x, tapY = y
                 )
             }
             if (x in g.capsuleLeft..g.capsuleRight && y in g.capsuleTop..(g.capsuleTop + g.capsuleH)) {
@@ -1449,7 +1449,7 @@ class ToolbarRenderer(
             pressRadiusMax = height * 0.55f
             pressRadius = 0f
             return KawaiiPanel.TouchResult.ToolbarAction(
-                PanelAction.SwitchKeyboard,
+                PanelAction.ShortcutPanel,
                 tapX = x,
                 tapY = y,
             )

@@ -1224,6 +1224,16 @@ class KawaiiPanel(
                                 }
                             }
 
+                            // 快捷面板（W19-6）：与 SwitchKeyboard 同口径——
+                            // 浮层态先收浮层（再点一次才开面板），其余直发监听开面板。
+                            PanelAction.ShortcutPanel -> {
+                                when (state) {
+                                    State.Menu, State.Clipboard, State.TextEditing, State.Copy, State.Performance -> state = State.Idle
+
+                                    else -> listener?.onToolbarAction(result.action)
+                                }
+                            }
+
                             else -> listener?.onToolbarAction(result.action)
                         }
                     }

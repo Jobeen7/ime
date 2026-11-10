@@ -58,6 +58,7 @@ import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.input.keyboard.impl.FloatPanelKeyboard
 import com.jobeen.ime.input.keyboard.impl.LayoutSwitchKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
+import com.jobeen.ime.input.keyboard.impl.PanelKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.impl.ReturnPathKeyboard
 import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
@@ -728,6 +729,7 @@ class KeyboardWindowView(
                 LayoutSwitchKeyboard.NAME -> LayoutSwitchKeyboard(context, cachedColors)
                 ReturnPathKeyboard.NAME -> ReturnPathKeyboard(context, cachedColors)
                 FloatPanelKeyboard.NAME -> FloatPanelKeyboard(context, cachedColors)
+                PanelKeyboard.NAME -> PanelKeyboard(context, cachedColors)
                 else -> QwertyKeyboard(context, cachedColors)
             }
         }
@@ -883,6 +885,19 @@ class KeyboardWindowView(
 
     fun toggleMenu() {
         panel.toggleMenu()
+    }
+
+    /**
+     * 快捷面板开关（W19-6，工具栏 MENU 槽位）：已在面板上则回主键盘，
+     * 否则切到面板。面板由名直达（resolveSwitchTarget 对非主布局名
+     * 原样放行，createKeyboard 按名建板）。
+     */
+    fun toggleShortcutPanel() {
+        if (currentKeyboard?.name() == PanelKeyboard.NAME) {
+            keyboardStateManager.resumeToPrimary()
+        } else {
+            switchKeyboard(PanelKeyboard.NAME)
+        }
     }
 
     var addPhraseActive = false

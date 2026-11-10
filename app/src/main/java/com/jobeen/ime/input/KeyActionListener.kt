@@ -497,6 +497,9 @@ class KeyActionListener(
                 )
             }
 
+            // 面板快捷入口（W19-6 panel 板 8 钮）：目标见 handlePanelShortcut。
+            is KeyboardAction.PanelShortcutAction -> handlePanelShortcut(action.target)
+
             // 隐藏键盘（审计 E：dismissKeyboard）：窗口路径由
             // transformed 拦截；此处接应无窗口的直接分发路径。
             is KeyboardAction.HideKeyboardAction -> {
@@ -664,6 +667,101 @@ class KeyActionListener(
         com.jobeen.ime.skin.perf.PerfMonitor.noteStage(
             com.jobeen.ime.skin.perf.PerfMonitor.Event.KEY_DISPATCH, dispatchStart,
         )
+    }
+
+    /**
+     * 面板快捷入口（W19-6 panel 板）：各目标只接已有等价操作，
+     * 不另发明机制。同步与检查更新走 appScope 后台跑、完成时
+     * Toast 报结果；面板本身由按键的 CombineAction 收尾回主键盘。
+     */
+    private fun handlePanelShortcut(target: KeyboardAction.PanelShortcutTarget) {
+        when (target) {
+            KeyboardAction.PanelShortcutTarget.SKIN_LIBRARY -> {
+                service.startActivity(
+                    android.content.Intent(
+                        service, com.jobeen.ime.ui.SkinLibraryActivity::class.java,
+                    ).apply {
+                        addFlags(
+                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                        )
+                    },
+                )
+            }
+            KeyboardAction.PanelShortcutTarget.VIBRATION_SETTINGS -> {
+                service.startActivity(
+                    android.content.Intent(
+                        service, com.jobeen.ime.ui.KeyboardSettingsActivity::class.java,
+                    ).apply {
+                        addFlags(
+                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP,
+                        )
+                    },
+                )
+            }
+            KeyboardAction.PanelShortcutTarget.SYNC_DICTS -> {
+                com.jobeen.ime.ui.FabActions.sync(
+                    service,
+                    appScope,
+                    sessionProvider = {
+                        com.jobeen.ime.engine.rime.daemon.RimeDaemon.createSession("panel-sync")
+                    },
+                    onNotConfigured = {
+                        service.startActivity(
+                            android.content.Intent(
+                                service,
+                                com.jobeen.ime.ui.UserDictActivity::class.java,
+                            ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    },
+                )
+            }
+            KeyboardAction.PanelShortcutTarget.CHECK_UPDATE -> {
+                // 与 AboutScreen 检查更新同口径：DEBUG 包不查（非 GitHub 渠道）。
+                if (com.jobeen.ime.BuildConfig.DEBUG) {
+                    com.jobeen.ime.base.util.ToastUtil.showToast(
+                        service, service.getString(R.string.debug_update_unsupported),
+                    )
+                    return
+                }
+                appScope.launch {
+                    when (val result = com.jobeen.ime.base.net.VersionChecker.check(
+                        com.jobeen.ime.BuildConfig.VERSION_NAME,
+                    )) {
+                        is com.jobeen.ime.base.net.UpdateCheckResult.Available -> {
+                            com.jobeen.ime.base.util.ToastUtil.showToast(
+                                service, service.getString(R.string.update_available),
+                            )
+                            runCatching {
+                                service.startActivity(
+                                    android.content.Intent(
+                                        android.content.Intent.ACTION_VIEW,
+                                        android.net.Uri.parse(result.pageUrl),
+                                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                                )
+                            }
+                        }
+                        com.jobeen.ime.base.net.UpdateCheckResult.Latest -> {
+                            com.jobeen.ime.base.util.ToastUtil.showToast(
+                                service, service.getString(R.string.update_latest),
+                            )
+                        }
+                        com.jobeen.ime.base.net.UpdateCheckResult.Failed -> {
+                            com.jobeen.ime.base.util.ToastUtil.showToast(
+                                service, service.getString(R.string.update_check_failed),
+                            )
+                        }
+                    }
+                }
+            }
+            KeyboardAction.PanelShortcutTarget.EDIT_LAYOUTS ->
+                com.jobeen.ime.skin.library.SkinEditorEntry.openLayouts(service)
+            KeyboardAction.PanelShortcutTarget.EDIT_SKIN_JSON ->
+                com.jobeen.ime.skin.library.SkinEditorEntry.openSkinJson(service)
+        }
     }
 
     /**

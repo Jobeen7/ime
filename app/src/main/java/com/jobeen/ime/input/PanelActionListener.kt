@@ -40,6 +40,7 @@ class PanelActionListener(
         when (action) {
             PanelAction.CloseKeyboard -> service.requestHideSelf(0)
             PanelAction.SwitchKeyboard -> service.keyboardWindow?.view?.toggleMenu()
+            PanelAction.ShortcutPanel -> service.keyboardWindow?.view?.toggleShortcutPanel()
             PanelAction.EmojiKeyboard -> service.keyboardWindow?.view?.switchKeyboard(
                 EmojiKeyboard.NAME
             )

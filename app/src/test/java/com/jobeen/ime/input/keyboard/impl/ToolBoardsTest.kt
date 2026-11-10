@@ -74,4 +74,81 @@ class ToolBoardsTest {
             pressActions(layout),
         )
     }
+
+    @Test
+    fun panelBoard_twoRowsOfFourAndShortcutActions() {
+        val layout = PanelKeyboard.buildLayout()
+        assertEquals(listOf(1f, 1f), rowWidths(layout))
+        assertEquals(
+            listOf("设置", "按键", "震动", "更新", "皮肤", "微调", "同步", "内嵌"),
+            texts(layout),
+        )
+        // 每钮先做事、再回主键盘（CombineAction + ResumeAction）。
+        assertEquals(
+            listOf(
+                KeyboardAction.CombineAction(
+                    listOf(KeyboardAction.SettingsAction, KeyboardAction.ResumeAction),
+                ),
+                KeyboardAction.CombineAction(
+                    listOf(
+                        KeyboardAction.PanelShortcutAction(
+                            KeyboardAction.PanelShortcutTarget.EDIT_LAYOUTS,
+                        ),
+                        KeyboardAction.ResumeAction,
+                    ),
+                ),
+                KeyboardAction.CombineAction(
+                    listOf(
+                        KeyboardAction.PanelShortcutAction(
+                            KeyboardAction.PanelShortcutTarget.VIBRATION_SETTINGS,
+                        ),
+                        KeyboardAction.ResumeAction,
+                    ),
+                ),
+                KeyboardAction.CombineAction(
+                    listOf(
+                        KeyboardAction.PanelShortcutAction(
+                            KeyboardAction.PanelShortcutTarget.CHECK_UPDATE,
+                        ),
+                        KeyboardAction.ResumeAction,
+                    ),
+                ),
+                KeyboardAction.CombineAction(
+                    listOf(
+                        KeyboardAction.PanelShortcutAction(
+                            KeyboardAction.PanelShortcutTarget.SKIN_LIBRARY,
+                        ),
+                        KeyboardAction.ResumeAction,
+                    ),
+                ),
+                KeyboardAction.CombineAction(
+                    listOf(
+                        KeyboardAction.PanelShortcutAction(
+                            KeyboardAction.PanelShortcutTarget.EDIT_SKIN_JSON,
+                        ),
+                        KeyboardAction.ResumeAction,
+                    ),
+                ),
+                KeyboardAction.CombineAction(
+                    listOf(
+                        KeyboardAction.PanelShortcutAction(
+                            KeyboardAction.PanelShortcutTarget.SYNC_DICTS,
+                        ),
+                        KeyboardAction.ResumeAction,
+                    ),
+                ),
+                KeyboardAction.CombineAction(
+                    listOf(
+                        KeyboardAction.ToggleEmbeddedInputAction,
+                        KeyboardAction.ResumeAction,
+                    ),
+                ),
+            ),
+            pressActions(layout),
+        )
+        // 面板钮只有点击动作，无长按误触。
+        assertTrue(layout.flatten().all { key ->
+            key.behaviors.none { it is KeyDef.Behavior.LongPress }
+        })
+    }
 }

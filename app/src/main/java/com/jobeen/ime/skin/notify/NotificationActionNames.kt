@@ -66,6 +66,7 @@ object NotificationActionNames {
         is KeyboardAction.ShowPhraseViewAction -> "ShowPhraseViewAction"
         is KeyboardAction.CandidatesBarToggleAction -> "CandidatesBarToggleAction"
         is KeyboardAction.MomentaryShiftAction -> "MomentaryShiftAction"
+        is KeyboardAction.PanelShortcutAction -> "PanelShortcutAction"
         is KeyboardAction.SwitchKeyboardTypeAction -> "SwitchKeyboardTypeAction"
         is KeyboardAction.KeyboardMenuAction -> "KeyboardMenuAction"
         is KeyboardAction.ToggleSymbolBarAction -> "ToggleSymbolBarAction"

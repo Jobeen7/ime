@@ -2,6 +2,10 @@ package com.jobeen.ime.input.panel
 
 sealed class PanelAction {
     data object SwitchKeyboard : PanelAction()
+
+    /** 快捷面板（W19-6）：工具栏 MENU 槽位打开的 8 钮面板。 */
+    data object ShortcutPanel : PanelAction()
+
     data object EmojiKeyboard : PanelAction()
     data object SymbolKeyboard : PanelAction()
     data object Clipboard : PanelAction()
