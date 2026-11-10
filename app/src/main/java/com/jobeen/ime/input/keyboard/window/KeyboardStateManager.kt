@@ -70,6 +70,11 @@ object KeyboardStateManager {
 
     /** 当前引擎是否处于组字中（剪贴板搜索的退格分流要据此决定归属）。 */
     val isComposingNow: Boolean get() = isComposing
+
+    /** 新输入会话开始时复位组字态（startInput 调用，见该处注释）。 */
+    internal fun resetComposingForNewInput() {
+        isComposing = false
+    }
     private var lastEditorInfo: EditorInfo? = null
     private var lastInputEmpty = true
     // 上次实际应用到键盘的回车键入参，用于避免无变化时的重复刷新
@@ -189,6 +194,9 @@ object KeyboardStateManager {
         keyboardFactory = null
         lastEditorInfo = null
         keyActionListener = KeyActionListener.Empty
+        // 组字态是跨输入框的残留态：服务销毁后不再有效，复位避免
+        // 下一服务实例沿用旧组字态钉住回车键图标（↵）。
+        isComposing = false
     }
 
     fun setKeyboardFactory(factory: (String) -> IKeyboard) {
@@ -602,6 +610,15 @@ object KeyboardStateManager {
     }
 
     fun startInput(info: EditorInfo, fieldChanged: Boolean = false) {
+        // 新输入会话开始：上个输入框的组字态已失效，复位 isComposing。
+        // 组字态只由引擎 Status/Commit 消息推进，换框时引擎不发清零
+        // Status（onStartInputView 只推代次、不清组字；onFinishInputView
+        // 也不清组字），旧值会一直钉住回车键显示为“上屏候选”（↵），
+        // 换什么框都不变（2026-11-11，文件传输助手 ↵ 钉死即此因；
+        // 微信各聊天框字段身份相同，fieldChanged 门控拦不住，必须
+        // 无条件复位）。行为不受影响：按键时组字取引擎 job 执行时
+        // 点的原始输入，不取本值；新框内一打字引擎 Status 即重新置真。
+        resetComposingForNewInput()
         val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
         val variation = info.inputType and InputType.TYPE_MASK_VARIATION
         // 文本类密码框自动切英文键盘（Qwerty + engine 侧强制 ascii_mode 直输）；
