@@ -258,6 +258,7 @@ object SkinSnapshotBuilder {
             toolbarHeight = validated.toolbarHeight,
             toolbarStyle = validated.toolbarStyle,
             toolbarLayout = validated.toolbarLayout,
+            menuAction = validated.menuAction,
             preeditHeight = validated.preeditHeight,
             preeditStyle = validated.preeditStyle,
             horizontalCandidatesStyle = validated.horizontalCandidatesStyle,

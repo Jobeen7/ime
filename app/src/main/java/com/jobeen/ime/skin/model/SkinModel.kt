@@ -570,6 +570,8 @@ data class ValidatedSkin(
     val toolbarStyle: ToolbarStyleSpec? = null,
     /** 工具栏布局（审计 B 项）：顶层 toolbarLayout；null = 未定义（出厂排列）。 */
     val toolbarLayout: ToolbarLayoutSpec? = null,
+    /** MENU 槽位动作（W19-6b）：顶层 menuAction；缺省 MENU（原 16 项菜单）。 */
+    val menuAction: MenuAction = MenuAction.MENU,
     /**
      * 工具栏钮背景图（审计 D 项）：顶层 toolbarButtonBackgroundStyle
      * 解析结果；null = 未定义（钮无背景图，旧口径）。

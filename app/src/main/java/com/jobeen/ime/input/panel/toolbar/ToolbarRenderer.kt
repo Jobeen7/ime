@@ -16,6 +16,7 @@ import com.jobeen.ime.input.panel.component.ClipboardTab
 import com.jobeen.ime.skin.icon.IconAlias
 import com.jobeen.ime.skin.icon.MaterialSymbols
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
+import com.jobeen.ime.skin.model.MenuAction
 import com.jobeen.ime.skin.model.SkinToolbarSnapshot
 import com.jobeen.ime.skin.model.ToolbarLayoutSpec
 import com.jobeen.ime.skin.model.ToolbarSlot
@@ -56,6 +57,13 @@ internal fun toolbarHitRegion(
 ): ToolbarHitRegion = toolbarHitRegionPads(
     x, width, density, horizontalPaddingDp, horizontalPaddingDp, centerHorizontalPaddingDp,
 )
+
+/**
+ * MENU 槽位动作（W19-6b，纯函数）：皮肤 menuAction 决定 MENU 钮开什么——
+ * panel → 8 钮快捷面板（ShortcutPanel）；menu（缺省）→ 原 16 项菜单（SwitchKeyboard）。
+ */
+internal fun menuSlotAction(menuAction: MenuAction): PanelAction =
+    if (menuAction == MenuAction.PANEL) PanelAction.ShortcutPanel else PanelAction.SwitchKeyboard
 
 /**
  * 工具栏触摸分区（左右内边距可不对称版）：皮肤 toolbarStyle
@@ -1359,7 +1367,8 @@ class ToolbarRenderer(
             if (x in clipMenuTouchLeft..clipMenuTouchRight) {
                 setPress(clipMenuCenter)
                 return KawaiiPanel.TouchResult.ToolbarAction(
-                    PanelAction.ShortcutPanel, tapX = x, tapY = y
+                    menuSlotAction(SkinSnapshotProvider.peek()?.menuAction ?: MenuAction.MENU),
+                    tapX = x, tapY = y
                 )
             }
             if (x in g.capsuleLeft..g.capsuleRight && y in g.capsuleTop..(g.capsuleTop + g.capsuleH)) {
@@ -1449,7 +1458,7 @@ class ToolbarRenderer(
             pressRadiusMax = height * 0.55f
             pressRadius = 0f
             return KawaiiPanel.TouchResult.ToolbarAction(
-                PanelAction.ShortcutPanel,
+                menuSlotAction(SkinSnapshotProvider.peek()?.menuAction ?: MenuAction.MENU),
                 tapX = x,
                 tapY = y,
             )

@@ -253,6 +253,38 @@ fun ToolbarStyleSpec.contentRect(
  */
 enum class ToolbarSlot { MENU, CENTER, CLOSE }
 
+/**
+ * MENU 槽位动作（W19-6b，2026-11-10 用户定）：工具栏 MENU 钮开什么，由皮肤顶层
+ * `menuAction` 决定——缺失／非法回落 MENU（原 16 项菜单；默认皮肤无此字段，故不改），
+ * 自定义皮肤写 `"panel"` 即把 MENU 绑到 8 钮快捷面板（皮肤可配）。
+ */
+enum class MenuAction { MENU, PANEL }
+
+/**
+ * 解析顶层 `menuAction`：null → MENU；"menu" → MENU；"panel" → PANEL；
+ * 非字符串／其他值 → 记 issue 并回落 MENU（不拒包）。
+ */
+fun parseMenuAction(
+    node: JsonElement?,
+    path: String,
+    issues: MutableList<SkinIssue>,
+): MenuAction {
+    if (node == null) return MenuAction.MENU
+    val raw = (node as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
+        ?: run {
+            issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "menu_action_bad_value")
+            return MenuAction.MENU
+        }
+    return when (raw) {
+        "menu" -> MenuAction.MENU
+        "panel" -> MenuAction.PANEL
+        else -> {
+            issues += SkinIssue(path, SkinIssue.Kind.FIELD_FALLBACK, "menu_action_bad_value")
+            MenuAction.MENU
+        }
+    }
+}
+
 /** 工具栏布局规格：去重后的槽位排列；空排列不出现（解析失败返回 null）。 */
 data class ToolbarLayoutSpec(val slots: List<ToolbarSlot>) {
     companion object {

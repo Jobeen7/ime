@@ -112,7 +112,7 @@ object SkinValidator {
         "horizontalCandidatesStyle", "horizontalSymbolsRtl", "keyAnimation", "keyAnimations",
         "keyMappings", "keyShadow", "keySound", "keyStyles", "keyboards", "layoutId",
         "layoutIdLandscape",
-        "meta", "minAppVersion", "notifications", "predictionCloseBg",
+        "meta", "menuAction", "minAppVersion", "notifications", "predictionCloseBg",
         "predictionCloseRadiusDp", "preeditHeight", "preeditStyle", "roleFonts",
         "spaceAnimation", "sprites", "styleSets", "styles", "stylesDark",
         "subClassifiedSymbols", "suppressKeyboard", "suppressToolbar", "swipeThresholdDp",
@@ -502,6 +502,9 @@ object SkinValidator {
 
         // ---- 工具栏布局（审计 B 项） ----
         val toolbarLayout = parseToolbarLayout(tree["toolbarLayout"], "toolbarLayout", issues)
+
+        // ---- MENU 槽位动作（W19-6b） ----
+        val menuAction = parseMenuAction(tree["menuAction"], "menuAction", issues)
 
         // ---- 工具栏钮背景图（审计 D 项） + 精灵图映射表 ----
         // 顶层 `toolbarButtonBackgroundStyle`（对端同名）为全体工具栏
@@ -1256,6 +1259,7 @@ object SkinValidator {
                 toolbarHeight = toolbarHeight,
                 toolbarStyle = toolbarStyle,
                 toolbarLayout = toolbarLayout,
+                menuAction = menuAction,
                 toolbarButtonBackground = toolbarButtonBackground,
                 spriteMaps = spriteMaps,
                 preeditHeight = preeditHeight,

@@ -150,6 +150,43 @@ class AreaStylesTest {
     }
 
     @Test
+    fun menuActionAbsentIsMenu() {
+        val issues = mutableListOf<SkinIssue>()
+        assertEquals(MenuAction.MENU, parseMenuAction(null, "menuAction", issues))
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun menuActionPanelIsPanel() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement(""""panel"""")
+        assertEquals(MenuAction.PANEL, parseMenuAction(node, "menuAction", issues))
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun menuActionMenuIsMenu() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement(""""menu"""")
+        assertEquals(MenuAction.MENU, parseMenuAction(node, "menuAction", issues))
+        assertTrue(issues.isEmpty())
+    }
+
+    @Test
+    fun menuActionBadValueFallsBackToMenuWithIssue() {
+        val issues = mutableListOf<SkinIssue>()
+        val node = Json.parseToJsonElement(""""bogus"""")
+        assertEquals(MenuAction.MENU, parseMenuAction(node, "menuAction", issues))
+        assertTrue(issues.any { it.detail == "menu_action_bad_value" })
+        val nonStringIssues = mutableListOf<SkinIssue>()
+        assertEquals(
+            MenuAction.MENU,
+            parseMenuAction(Json.parseToJsonElement("42"), "menuAction", nonStringIssues),
+        )
+        assertTrue(nonStringIssues.any { it.detail == "menu_action_bad_value" })
+    }
+
+    @Test
     fun toolbarSlotGeometryDefaultMatchesOldRow() {
         // 旧固定行：左菜单（内边距 12dp + 固定 32dp）、中央区、右收起。
         val geo = toolbarSlotGeometry(1080, 3f, 36f, 36f, 36f, ToolbarLayoutSpec.DEFAULT.slots)

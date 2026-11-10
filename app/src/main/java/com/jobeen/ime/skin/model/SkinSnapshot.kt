@@ -148,6 +148,8 @@ data class SkinSnapshot(
     val suppressKeyboard: Boolean = false,
     /** 工具栏布局（审计 B 项）：null = 未定义（出厂排列）。 */
     val toolbarLayout: ToolbarLayoutSpec? = null,
+    /** MENU 槽位动作（W19-6b）：缺省 MENU（原 16 项菜单）。 */
+    val menuAction: MenuAction = MenuAction.MENU,
     /**
      * 精灵图映射表（审计 D 项）：快照直传校验结果（sheet 资产
      * 逻辑 id → 子图名 → 帧）；空表 = 未定义（描述按整图计）。
