@@ -90,6 +90,7 @@
     <string name="skin_diag_diagnostic_mode">诊断模式</string>
     <string name="skin_diag_diagnostic_mode_desc">开启后才记录逐键面色诊断与分段探针（启动步骤、按键分发、引擎处理、提交上屏、主线程卡顿），用于定位皮肤与性能问题；关闭后不记录。</string>
     <string name="skin_editor_not_ready">皮肤编辑器未就绪</string>
+    <string name="skin_editor_no_active_skin">无生效皮肤</string>
     <!-- 应用级脚本管理 -->
     <string name="skin_script_title">脚本管理</string>
     <string name="skin_script_empty">暂无脚本</string>

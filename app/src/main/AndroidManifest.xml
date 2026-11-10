@@ -211,6 +211,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.SkinEditorActivity"
+            android:exported="false"
+            android:label="皮肤文件编辑器"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.SkinDevActivity"
             android:exported="false"
             android:label="皮肤开发模式"
