@@ -254,6 +254,20 @@ class SkinKeyMappingsParserTest {
     }
 
     @Test
+    fun switchLayoutEmojiTargetAccepted() {
+        // W19-4：切表情板。switch_layout "Emoji" 是出厂六布局之一
+        // （LAYOUT_TARGETS），解析后应为 Command(SWITCH_LAYOUT, "Emoji")，不被剔除。
+        val result = parseEntry(
+            """{"tap": {"type": "command", "action": "switch_layout", "value": "Emoji"}}""",
+        )
+        assertTrue("Emoji 不应被剔除: ${result.rejections}", result.rejections.isEmpty())
+        assertEquals(
+            SkinAction.Command(WhitelistAction.SWITCH_LAYOUT, "Emoji"),
+            result.overrides.getValue("KEY_Q").tap,
+        )
+    }
+
+    @Test
     fun switchLayoutMissingValueRejected() {
         val rejection = singleRejection(
             """{"tap": {"type": "command", "action": "switch_layout"}}""",

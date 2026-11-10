@@ -535,6 +535,8 @@ class KeyOverrideApplierTest {
             SkinAction.Command(WhitelistAction.CAPS) to KeyboardAction.CapsAction,
             SkinAction.Command(WhitelistAction.SWITCH_LAYOUT, "T9") to
                 KeyboardAction.LayoutSwitchAction("T9"),
+            SkinAction.Command(WhitelistAction.SWITCH_LAYOUT, "Emoji") to
+                KeyboardAction.LayoutSwitchAction("Emoji"),
             SkinAction.Command(WhitelistAction.RESUME) to KeyboardAction.ResumeAction,
             SkinAction.Command(WhitelistAction.CLEAR) to KeyboardAction.ClearAction,
             SkinAction.Command(WhitelistAction.UNDO) to KeyboardAction.UndoAction,
