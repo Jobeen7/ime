@@ -14,6 +14,8 @@ import com.jobeen.ime.data.manager.discoverSchemes
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.rime.data.DataManager
+import com.jobeen.ime.input.EnterField
+import com.jobeen.ime.input.EnterFieldBoundary
 import com.jobeen.ime.input.keyboard.impl.IKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
@@ -75,6 +77,29 @@ object KeyboardStateManager {
     internal fun resetComposingForNewInput() {
         isComposing = false
     }
+
+    /**
+     * 当前字段的决策输入（回车键刷新用，纯数据可单测）：
+     * startInput 确立、onInputChanged 以 effectiveInfo 覆盖、
+     * onDestroy 清空。与 lastEditorInfo 同步维护——刷新键
+     * （updateReturnKeyIfNeeded）读它，不再只读 lastEditorInfo，
+     * 否则 startInput→switchTo 的刷新会读到上个字段的信息。
+     */
+    private var lastEnterField: EnterField? = null
+
+    /** 当前字段的决策输入（回车键刷新用）。 */
+    internal val currentEnterField: EnterField? get() = lastEnterField
+
+    /**
+     * 新输入会话开始时确立当前字段（startInput 调用，见该处注释）：
+     * 组字态复位＋字段确立一起做——只复位组字态不够，字段信息
+     * 若还留着上个字段，回车刷新就按上个字段算图标。
+     */
+    internal fun beginInputSession(field: EnterField) {
+        resetComposingForNewInput()
+        lastEnterField = field
+    }
+
     private var lastEditorInfo: EditorInfo? = null
     private var lastInputEmpty = true
     // 上次实际应用到键盘的回车键入参，用于避免无变化时的重复刷新
@@ -193,6 +218,7 @@ object KeyboardStateManager {
         // 服务销毁后不再需要，全部释放避免小泄漏
         keyboardFactory = null
         lastEditorInfo = null
+        lastEnterField = null
         keyActionListener = KeyActionListener.Empty
         // 组字态是跨输入框的残留态：服务销毁后不再有效，复位避免
         // 下一服务实例沿用旧组字态钉住回车键图标（↵）。
@@ -618,7 +644,17 @@ object KeyboardStateManager {
         // 微信各聊天框字段身份相同，fieldChanged 门控拦不住，必须
         // 无条件复位）。行为不受影响：按键时组字取引擎 job 执行时
         // 点的原始输入，不取本值；新框内一打字引擎 Status 即重新置真。
-        resetComposingForNewInput()
+        //
+        // 同一会话开始还要确立当前字段信息（2026-11-11，.4 下同一
+        // 字段传输助手一张纸飞机一张 ↵）：回车刷新只读 lastEditorInfo，
+        // 而它此前只在 onInputChanged 里更新；startInput→switchTo
+        // 的刷新若读到上个字段的信息，会把上个字段的回车图标
+        // （单行 SEND 的纸飞机／NEXT 的 ＞）带到新字段，且
+        // onInputChanged 未必随后纠正（连接为空／窗口未建时直接
+        // 跳过），旧图标就钉住。beginInputSession 在此确立新字段，
+        // lastEditorInfo 同步更新，刷新即按新字段算。
+        beginInputSession(EnterFieldBoundary.fromEditorInfo(info))
+        lastEditorInfo = info
         val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
         val variation = info.inputType and InputType.TYPE_MASK_VARIATION
         // 文本类密码框自动切英文键盘（Qwerty + engine 侧强制 ascii_mode 直输）；
@@ -642,6 +678,11 @@ object KeyboardStateManager {
                 switchTo(currentSchema?.layout ?: defaultKeyboardName)
             }
         }
+        // 换框即按新字段刷一次回车键：switchTo 在同键盘同类型同
+        // 方案时早退、不刷新，早退路径也要按新字段刷，否则新
+        // 字段沿用旧图标；非早退路径 switchTo 已刷过，本次去重
+        // 跳过、不重复下发。
+        updateReturnKeyIfNeeded()
     }
 
     /**
@@ -720,6 +761,7 @@ object KeyboardStateManager {
                 info
             }
             lastEditorInfo = effectiveInfo
+            lastEnterField = EnterFieldBoundary.fromEditorInfo(effectiveInfo)
             lastInputEmpty = text.isEmpty()
             updateReturnKeyIfNeeded()
         }
@@ -780,12 +822,16 @@ object KeyboardStateManager {
     private fun updateReturnKeyIfNeeded() {
         val info = lastEditorInfo ?: return
         val keyboard = currentKeyboardName?.let { keyboards[it] } ?: return
+        // 刷新键按当前字段算：优先读 startInput / onInputChanged
+        // 确立的 lastEnterField（纯数据）；未确立时才从
+        // lastEditorInfo 现算——两者同步维护，正常恒走前者。
+        val field = lastEnterField ?: EnterFieldBoundary.fromEditorInfo(info)
         val next = ReturnKeyRefreshKey(
-            action = info.imeOptions and EditorInfo.IME_MASK_ACTION,
+            action = EnterFieldBoundary.toEditorAction(field.action),
             empty = lastInputEmpty,
             composing = isComposing,
-            isMultiLine = (info.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0,
-            noEnterAction = (info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0,
+            isMultiLine = field.isMultiLine,
+            noEnterAction = field.noEnterAction,
         )
         if (!returnKeyNeedsRefresh(lastAppliedReturnKey, next)) {
             return
