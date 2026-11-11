@@ -15,7 +15,6 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -39,13 +38,11 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.jobeen.ime.R
 import com.jobeen.ime.base.speech.ModelDownloader
 import com.jobeen.ime.base.speech.SherpaSpeechClient
-import com.jobeen.ime.base.speech.VoiceAutoPunctuationStore
 import com.jobeen.ime.base.speech.VoiceInputSwitchStore
 import com.jobeen.ime.base.speech.cloud.BuiltinPlugins
 import com.jobeen.ime.base.speech.cloud.KeystoreSecretStore
 import com.jobeen.ime.base.speech.cloud.PluginStore
 import com.jobeen.ime.base.speech.cloud.SharedPrefsStore
-import com.jobeen.ime.ui.screen.ScreenComponent.ActionRow
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
@@ -97,13 +94,6 @@ fun VoiceSettingsScreen(
         VoiceInputSwitchStore.shared(File(context.filesDir, VoiceInputSwitchStore.FILE_NAME))
     }
     var voiceEnabled by remember { mutableStateOf(voiceSwitchStore.enabled) }
-
-    // 语音自动加标点开关：默认开；只影响本地识别的最终上屏文本
-    // （云端插件用模型自带标点，不走本开关）。
-    val autoPunctuationStore = remember {
-        VoiceAutoPunctuationStore.shared(File(context.filesDir, VoiceAutoPunctuationStore.FILE_NAME))
-    }
-    var autoPunctuation by remember { mutableStateOf(autoPunctuationStore.enabled) }
 
     // 识别服务商：与云端插件管理页同一份偏好（cloud_voice）＋同一插件库；
     // 本页只做选择＋状态，不重复造管理页（导入／密钥／设置仍进管理页）。
@@ -368,34 +358,12 @@ fun VoiceSettingsScreen(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        // 语音自动加标点：标题＋一行说明＋右侧 Switch（设置开关家规）。
-        ActionRow(
-            title = stringResource(R.string.voice_auto_punctuation),
-            subtitle = stringResource(R.string.voice_auto_punctuation_desc),
-            trailing = {
-                Switch(
-                    checked = autoPunctuation,
-                    onCheckedChange = {
-                        autoPunctuation = it
-                        autoPunctuationStore.setEnabled(it)
-                    },
-                )
-            },
-        )
         NavRow(
             title = stringResource(R.string.voice_js_plugins),
             subtitle = stringResource(R.string.cloud_voice_plugins_desc),
             onClick = { onOpenCloudVoicePlugins(null) },
         )
         }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            text = stringResource(R.string.voice_usage),
-            fontSize = rowSubFontSize,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(vertical = 6.dp),
-        )
-        Spacer(Modifier.height(20.dp))
             if (providerDialog) {
                 // 服务商选择对话框：Jime 通用对话框样式（深色跟随 Jime 深色主题），
                 // 在线／本地离线两组（本地只放自带模型＋远程三家）；行副标题＝状态＋真实能力标签（不搬对方标签集）。

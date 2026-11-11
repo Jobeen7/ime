@@ -44,6 +44,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jobeen.ime.skin.library.ActiveSkinFiles
 import com.jobeen.ime.skin.library.EditorFile
+import com.jobeen.ime.skin.library.ResolveActiveResult
 import com.jobeen.ime.skin.library.SkinEditorSaveResult
 import com.jobeen.ime.skin.library.SkinEditorSaver
 import kotlinx.coroutines.launch
@@ -96,18 +97,41 @@ fun SkinEditorScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    fun resolveReasonText(reason: String): String = when (reason) {
+        "skin_json_missing" -> "皮肤文件缺失"
+        "skin_json_unreadable" -> "皮肤文件读取失败"
+        "skin_json_unparseable" -> "皮肤文件无法解析"
+        "manifest_missing" -> "皮肤清单缺失，请重新导入皮肤"
+        "manifest_unparseable" -> "皮肤清单损坏，请重新导入皮肤"
+        "manifest_version_unsupported" -> "皮肤清单版本过高，请重新导入皮肤"
+        "manifest_skin_entry_missing" -> "皮肤清单缺少 skin.json 条目，请重新导入皮肤"
+        "manifest_duplicate_path" -> "皮肤清单路径重复，请重新导入皮肤"
+        "manifest_skin_hash_mismatch" -> "皮肤清单与文件不一致，请重新导入皮肤"
+        else -> "无生效皮肤"
+    }
+
+    suspend fun reload() {
+        loading = true
+        loadError = null
         val resolved = saver.resolveActiveFiles()
         loading = false
-        if (resolved == null) {
-            loadError = "无生效皮肤"
-            return@LaunchedEffect
+        when (resolved) {
+            is ResolveActiveResult.Unavailable -> {
+                active = null
+                loadError = resolveReasonText(resolved.reason)
+            }
+            is ResolveActiveResult.Ok -> {
+                active = resolved.files
+                val initial = resolved.files.files.firstOrNull { it.file.absolutePath == initialFilePath }
+                    ?: resolved.files.files.firstOrNull { it.kind == EditorFile.Kind.SKIN_JSON }
+                    ?: resolved.files.files.firstOrNull()
+                if (initial != null) loadFile(initial)
+            }
         }
-        active = resolved
-        val initial = resolved.files.firstOrNull { it.file.absolutePath == initialFilePath }
-            ?: resolved.files.firstOrNull { it.kind == EditorFile.Kind.SKIN_JSON }
-            ?: resolved.files.firstOrNull()
-        if (initial != null) loadFile(initial)
+    }
+
+    LaunchedEffect(Unit) {
+        reload()
     }
 
     fun requestBack() {
@@ -138,6 +162,9 @@ fun SkinEditorScreen(
             result = saved
             if (saved is SkinEditorSaveResult.Saved) {
                 originalText = text
+            } else if (saved is SkinEditorSaveResult.Stale) {
+                // 活动皮肤已变化：未保存，刷新页面为新皮肤（旧目标的未保存修改已失效）。
+                reload()
             }
         }
     }
@@ -195,19 +222,32 @@ fun SkinEditorScreen(
                 Text(loadError ?: "无生效皮肤")
                 return@Column
             }
-            // 文件切换：skin.json＋该皮肤的布局文件。
+            // 文件切换：skin.json＋该皮肤实际引用的布局文件（问题 6）。
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(active!!.files) { file ->
+                    val label = file.displayName + if (file.isShared) "（共享）" else ""
                     if (file == selected) {
                         Button(onClick = { requestSwitch(file) }, enabled = !busy) {
-                            Text(file.displayName)
+                            Text(label)
                         }
                     } else {
                         OutlinedButton(onClick = { requestSwitch(file) }, enabled = !busy) {
-                            Text(file.displayName)
+                            Text(label)
                         }
                     }
                 }
+            }
+            if (active!!.primaryLayoutId == null) {
+                Text("主布局：未绑定布局", color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            val selectedFile = selected
+            if (selectedFile != null &&
+                selectedFile.kind == EditorFile.Kind.LAYOUT && selectedFile.isShared
+            ) {
+                Text(
+                    "该布局被其他皮肤共用，修改会影响所有引用它的皮肤。",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
             if (loadError != null) {
                 Text(loadError!!, color = MaterialTheme.colorScheme.error)
@@ -243,6 +283,9 @@ fun SkinEditorScreen(
                             }
                             is SkinEditorSaveResult.Failed -> {
                                 Text("保存失败：${currentResult.reason}")
+                            }
+                            is SkinEditorSaveResult.Stale -> {
+                                Text("活动皮肤已变化，未保存：${currentResult.reason}，已刷新为新皮肤。")
                             }
                         }
                     }

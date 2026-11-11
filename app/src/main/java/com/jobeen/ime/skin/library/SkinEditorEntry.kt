@@ -29,13 +29,20 @@ object SkinEditorEntry {
     fun openLayouts(context: Context) {
         scope.launch {
             val saver = SkinEditorSaver(context.applicationContext)
-            val active = saver.resolveActiveFiles()
-            val file = active?.files?.firstOrNull { it.id == active.primaryLayoutId }
-                ?: active?.files?.firstOrNull { it.kind == EditorFile.Kind.LAYOUT }
-                ?: active?.files?.firstOrNull()
+            val active = when (val resolved = saver.resolveActiveFiles()) {
+                is ResolveActiveResult.Unavailable -> {
+                    Timber.w("skin editor: resolve failed: ${resolved.reason}")
+                    ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_active_skin))
+                    return@launch
+                }
+                is ResolveActiveResult.Ok -> resolved.files
+            }
+            // 回退链（问题 6）：主布局→首个绑定布局；无绑定布局不默认选全局首项。
+            val file = active.files.firstOrNull { it.id == active.primaryLayoutId }
+                ?: active.files.firstOrNull { it.kind == EditorFile.Kind.LAYOUT }
             if (file == null) {
-                Timber.w("skin editor: no active skin for openLayouts")
-                ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_active_skin))
+                Timber.w("skin editor: no bound layout")
+                ToastUtil.showToast(context, "未绑定布局")
                 return@launch
             }
             openEditor(context, file.file.absolutePath)
@@ -46,8 +53,15 @@ object SkinEditorEntry {
     fun openSkinJson(context: Context) {
         scope.launch {
             val saver = SkinEditorSaver(context.applicationContext)
-            val active = saver.resolveActiveFiles()
-            val file = active?.files?.firstOrNull { it.kind == EditorFile.Kind.SKIN_JSON }
+            val active = when (val resolved = saver.resolveActiveFiles()) {
+                is ResolveActiveResult.Unavailable -> {
+                    Timber.w("skin editor: resolve failed: ${resolved.reason}")
+                    ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_active_skin))
+                    return@launch
+                }
+                is ResolveActiveResult.Ok -> resolved.files
+            }
+            val file = active.files.firstOrNull { it.kind == EditorFile.Kind.SKIN_JSON }
             if (file == null) {
                 Timber.w("skin editor: no active skin for openSkinJson")
                 ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_active_skin))

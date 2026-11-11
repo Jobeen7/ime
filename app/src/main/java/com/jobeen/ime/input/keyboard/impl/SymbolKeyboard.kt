@@ -2,6 +2,7 @@ package com.jobeen.ime.input.keyboard.impl
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.StateListDrawable
@@ -14,6 +15,7 @@ import android.text.TextUtils
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
@@ -47,8 +49,8 @@ import com.jobeen.ime.skin.symbol.SymbolGridResolver
 import com.jobeen.ime.skin.symbol.SymbolGridSpec
 import com.jobeen.ime.skin.symbol.SymbolParentCategory
 import com.jobeen.ime.skin.symbol.SymbolSubCategory
-import com.jobeen.ime.skin.symbol.UserSymbolBarOps
 import com.jobeen.ime.skin.symbol.UserSymbolBarStore
+import com.jobeen.ime.ui.SymbolBarSettingsActivity
 import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -89,14 +91,19 @@ class SymbolKeyboard(
 
     override var keyActionListener: KeyActionListener? = null
 
+    /**
+     * 左侧竖栏（2026-11-12 符号栏重做）：显示用户自定义符号列（默认 16），
+     * 上下滑动换符号；可见 7 行（另 1 行高固定留给底部“自定义”入口）。
+     * 不再显示分类——分类切换走顶部栏的类型切换钮。
+     */
     private val sidePanelKey = SidePanelKeyView(
         context, colors,
         KeyDef.Appearance.SidePannel(
-            rowSpan = 4, visableRow = 4, margin = false,
+            rowSpan = 4, visableRow = 7, margin = false,
             variant = KeyDef.Appearance.Variant.Alternative,
             border = KeyDef.Appearance.Border.On,
         ),
-        keepSelection = true,
+        keepSelection = false,
     )
 
     private val gridView = GridKeyboardView(context, colors, COLUMNS, ROWS).apply {
@@ -139,12 +146,23 @@ class SymbolKeyboard(
     private var barSwitchBtn: TextView? = null
     private val barPopup = KeyboardPopup(context)
 
-    /** 用户自定义常用符号置顶条（H2-5）：48dp 横条，置顶于皮肤栏之上；无配置时隐藏。 */
-    private val userStripStore: UserSymbolBarStore = SharedPrefsUserSymbolBarStore(context)
-    private val userStripView: LinearLayout = LinearLayout(context).apply {
-        orientation = LinearLayout.HORIZONTAL
+    /** 用户自定义符号（2026-11-12 符号栏重做）：竖栏数据源，设置页改动下次打开即生效。 */
+    private val userSymbolStore: UserSymbolBarStore = SharedPrefsUserSymbolBarStore(context)
+
+    /** 左侧竖栏底部“自定义”入口（固定不滚动，点开设置页）。 */
+    private val customEntryView: TextView = TextView(context).apply {
+        gravity = Gravity.CENTER
+        setTextSize(14f)
+        setTextColor(colors.specialKeyText)
         setBackgroundColor(colors.specialKeyBackground)
-        visibility = View.GONE
+        maxLines = 2
+        text = context.getString(R.string.symbol_bar_customize)
+        isClickable = true
+        setOnClickListener {
+            val intent = Intent(context, SymbolBarSettingsActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(intent) }
+        }
     }
 
     /**
@@ -205,7 +223,8 @@ class SymbolKeyboard(
         visibility = View.GONE
     }
 
-    private val sidePanelItemDefs: List<KeyDef>
+    /** 左侧竖栏项（用户自定义符号列；设置改动后由 rebuildSidePanelSymbols 重建）。 */
+    private var sidePanelItemDefs: List<KeyDef> = emptyList()
 
     /** 左右滑判定用：系统触摸 slop 与翻页最小横移。 */
     private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
@@ -227,31 +246,18 @@ class SymbolKeyboard(
 
         isClickable = true
 
-        sidePanelItemDefs = boardState.parentLabels.mapIndexed { index, label ->
-            KeyDef(
-                appearance = KeyDef.Appearance.Text(
-                    displayText = label, textSize = 15f, percentWidth = 0.5f,
-                    margin = false, variant = KeyDef.Appearance.Variant.Alternative,
-                ),
-                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(label))),
-                // 功能锚点（定稿五.6）：序号 = 分类表顺序，只登记不覆写
-                id = KeyIds.Symbol.CATS.getOrNull(index),
-            )
-        }
-        sidePanelKey.updateItems(sidePanelItemDefs)
+        rebuildSidePanelSymbols()
 
         sidePanelKey.setOnItemActionListener { action ->
-            if (action is KeyboardAction.CommitAction && boardState.parentLabels.any { it == action.text }) {
-                applyCategory(action.text)
-                // 接线轮 R5：侧栏选类同样持久化（与栏上切换同一记忆）。
-                barState.switchType(action.text)
+            if (action is KeyboardAction.CommitAction) {
+                // 竖栏符号：点按提交，提交后自动返回（与网格／横条同口径）。
+                dispatchBoardCommit(action.text)
             } else {
                 keyActionListener?.onKeyAction(action)
             }
         }
         rebuildSubStrip()
         rebuildHorizontalStrip()
-        rebuildUserStrip()
 
         // 接线轮 R5：符号栏条（皮肤规格驱动；关闭钮恒贴外缘，
         // 切换钮居内；栏键点按提交、长按出角标格）。
@@ -371,11 +377,11 @@ class SymbolKeyboard(
         }
 
         addView(sidePanelKey, lParams(0, matchParent))
+        addView(customEntryView, lParams(0, matchParent))
         addView(sideReturnBtn, lParams(0, matchParent))
         addView(gridView, lParams(0, matchParent))
         addView(subStripView, lParams(matchParent, 0))
         addView(hStripView, lParams(matchParent, 0))
-        addView(userStripView, lParams(matchParent, 0))
         barView?.let { addView(it, lParams(matchParent, 0)) }
         addView(rippleView, LayoutParams(matchParent, matchParent))
     }
@@ -387,7 +393,8 @@ class SymbolKeyboard(
         if (index < 0) return
         boardState.selectParent(index)
         gridView.setItems(boardState.visibleItems.map { keyDef(it) })
-        sidePanelKey.selectIndex(index)
+        // 2026-11-12：竖栏不再显示分类，无需 selectIndex；分类切换
+        // 只走顶部栏类型切换钮。
         barSwitchBtn?.text = label
         rebuildSubStrip()
     }
@@ -583,37 +590,22 @@ class SymbolKeyboard(
     }
 
     /**
-     * 用户自定义符号置顶条重建（H2-5）：置顶开且有符号时横排该列
-     * （点格提交，提交后自动返回，与横条同口径）；否则隐藏。
-     * init 与 onAttach 都调用——板实例复用时设置改动下次打开
-     * 符号面板即生效。
+     * 左侧竖栏重建（2026-11-12 符号栏重做）：显示用户自定义符号列
+     * （默认 16 符号），点格提交。init 与 onAttach 都调用——板实例
+     * 复用时设置改动下次打开符号面板即生效。
      */
-    private fun rebuildUserStrip() {
-        val symbols = UserSymbolBarOps.topStrip(userStripStore.load())
-        if (symbols == null) {
-            userStripView.visibility = View.GONE
-            userStripView.removeAllViews()
-            return
-        }
-        userStripView.visibility = View.VISIBLE
-        userStripView.removeAllViews()
-        for (symbol in symbols) {
-            val cell = TextView(context).apply {
-                gravity = Gravity.CENTER
-                setTextSize(15f)
-                setTextColor(colors.specialKeyText)
-                maxLines = 1
-                ellipsize = TextUtils.TruncateAt.END
-                text = symbol
-                setOnClickListener { dispatchBoardCommit(symbol) }
-            }
-            userStripView.addView(
-                cell,
-                LinearLayout.LayoutParams(
-                    0, LinearLayout.LayoutParams.MATCH_PARENT, 1f,
+    private fun rebuildSidePanelSymbols() {
+        val symbols = userSymbolStore.load().symbols
+        sidePanelItemDefs = symbols.map { symbol ->
+            KeyDef(
+                appearance = KeyDef.Appearance.Text(
+                    displayText = symbol, textSize = 15f, percentWidth = 0.5f,
+                    margin = false, variant = KeyDef.Appearance.Variant.Alternative,
                 ),
+                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(symbol))),
             )
         }
+        sidePanelKey.updateItems(sidePanelItemDefs)
     }
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -623,23 +615,24 @@ class SymbolKeyboard(
         val gw = tw - sw
         // 接线轮 R5：栏可见时占顶 48dp，其余内容整体下移并压缩；
         // 栏隐藏时 barH=0，与旧布局完全一致。子条同口径占顶 48dp。
-        // H2-5：用户置顶条在皮肤栏之上再占顶 48dp；隐藏时 userH=0。
-        val userH = if (userStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val barH = if (barView?.visibility == View.VISIBLE) context.dp(48) else 0
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val hH = if (hStripView.visibility == View.VISIBLE) context.dp(48) else 0
-        val contentH = th - userH - barH - subH - hH
+        val contentH = th - barH - subH - hH
         val sidePanelH = contentH * 3 / 4
+        // 2026-11-12：竖栏区 8 行高——上 7 行是可滚符号列，下 1 行是
+        // 固定“自定义”入口；行高一致（sidePanelH/8）。
+        val customH = sidePanelH / 8
         // 侧栏底区整段归返回钮（板锁已删）。
         val returnRegionH = contentH - sidePanelH
-        sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH, MeasureSpec.EXACTLY))
+        sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH - customH, MeasureSpec.EXACTLY))
+        customEntryView.measure(mES(sw, MeasureSpec.EXACTLY), mES(customH, MeasureSpec.EXACTLY))
         sideReturnBtn.measure(
             mES(sw, MeasureSpec.EXACTLY), mES(returnRegionH, MeasureSpec.EXACTLY)
         )
         gridView.measure(mES(gw, MeasureSpec.EXACTLY), mES(contentH, MeasureSpec.EXACTLY))
         subStripView.measure(mES(tw, MeasureSpec.EXACTLY), mES(subH, MeasureSpec.EXACTLY))
         hStripView.measure(mES(tw, MeasureSpec.EXACTLY), mES(hH, MeasureSpec.EXACTLY))
-        userStripView.measure(mES(tw, MeasureSpec.EXACTLY), mES(userH, MeasureSpec.EXACTLY))
         barView?.measure(mES(tw, MeasureSpec.EXACTLY), mES(barH, MeasureSpec.EXACTLY))
         // 同 EmojiKeyboard：波纹层补 measure/layout，否则宽高恒 0、
         // 波纹从不显示（L1）
@@ -649,18 +642,18 @@ class SymbolKeyboard(
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val sw = ((r - l) * 0.15f).toInt()
-        val userH = if (userStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val barH = if (barView?.visibility == View.VISIBLE) context.dp(48) else 0
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val hH = if (hStripView.visibility == View.VISIBLE) context.dp(48) else 0
-        val contentH = (b - t) - userH - barH - subH - hH
+        val contentH = (b - t) - barH - subH - hH
         val sidePanelH = contentH * 3 / 4
-        userStripView.layout(0, 0, r - l, userH)
-        barView?.layout(0, userH, r - l, userH + barH)
-        subStripView.layout(0, userH + barH, r - l, userH + barH + subH)
-        hStripView.layout(0, userH + barH + subH, r - l, userH + barH + subH + hH)
-        val top = userH + barH + subH + hH
-        sidePanelKey.layout(0, top, sw, top + sidePanelH)
+        val customH = sidePanelH / 8
+        barView?.layout(0, 0, r - l, barH)
+        subStripView.layout(0, barH, r - l, barH + subH)
+        hStripView.layout(0, barH + subH, r - l, barH + subH + hH)
+        val top = barH + subH + hH
+        sidePanelKey.layout(0, top, sw, top + sidePanelH - customH)
+        customEntryView.layout(0, top + sidePanelH - customH, sw, top + sidePanelH)
         sideReturnBtn.layout(0, top + sidePanelH, sw, top + contentH)
         gridView.layout(sw, top, r - l, top + contentH)
         rippleView.layout(0, 0, r - l, b - t)
@@ -714,8 +707,8 @@ class SymbolKeyboard(
             barView?.visibility = View.VISIBLE
             requestLayout()
         }
-        // H2-5：用户置顶条每附着重建（设置改动下次打开符号面板即生效）。
-        rebuildUserStrip()
+        // 2026-11-12：竖栏符号每附着重建（设置改动下次打开符号面板即生效）。
+        rebuildSidePanelSymbols()
         requestLayout()
     }
 
@@ -732,7 +725,7 @@ class SymbolKeyboard(
         } else {
             boardState.selectParent(0)
             gridView.setItems(boardState.visibleItems.map { keyDef(it) })
-            sidePanelKey.selectIndex(0)
+            // 2026-11-12：竖栏不再显示分类，无需 selectIndex。
             barSwitchBtn?.text = boardState.parentLabels.firstOrNull()
                 ?: categorys.first().first.label
             rebuildSubStrip()

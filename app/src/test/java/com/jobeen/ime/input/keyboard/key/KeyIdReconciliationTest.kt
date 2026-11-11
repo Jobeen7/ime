@@ -163,7 +163,10 @@ class KeyIdReconciliationTest {
         // 面板为 View 类、JVM 单测无法实例化：以源码守卫钉住标注点
         val symbol = sourceText("app/src/main/java/com/jobeen/ime/input/keyboard/impl/SymbolKeyboard.kt")
         assertTrue(symbol.contains("id = KeyIds.Symbol.SYM_RETURN"))
-        assertTrue(symbol.contains("id = KeyIds.Symbol.CATS.getOrNull(index)"))
+        // 2026-11-12 符号栏重做：竖栏改显示用户自定义符号列，不再注
+        // 册分类锚点（分类切换只走顶部栏类型切换钮）；CATS 常量与
+        // registryGovernance 的 7 分类计数仍保留，Emoji 侧不变。
+        assertFalse(symbol.contains("id = KeyIds.Symbol.CATS.getOrNull(index)"))
         val emoji = sourceText("app/src/main/java/com/jobeen/ime/input/keyboard/impl/EmojiKeyboard.kt")
         assertTrue(emoji.contains("id = KeyIds.Emoji.EMOJI_RETURN"))
         assertTrue(emoji.contains("id = KeyIds.Emoji.CATS.getOrNull(index)"))

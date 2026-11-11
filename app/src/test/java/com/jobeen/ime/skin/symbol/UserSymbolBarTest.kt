@@ -3,17 +3,28 @@
 package com.jobeen.ime.skin.symbol
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Test
 
-/** 用户自定义常用符号栏（施工单 10 H2-5）：纯函数＋内存存储。 */
+/** 用户自定义常用符号栏（施工单 10 H2-5；2026-11-12 符号栏重做：删置顶、默认 16 符号）：纯函数＋内存存储。 */
 class UserSymbolBarTest {
 
     private val config = UserSymbolBarConfig(
         symbols = listOf("。", "，", "、"),
-        pinned = true,
     )
+
+    @Test
+    fun defaultSymbols_hasSixteen() {
+        assertEquals(16, UserSymbolBarOps.DEFAULT_SYMBOLS.size)
+        assertEquals(
+            listOf("，", "。", "？", "！", "…", "～", "、", "=", "+", "-", "*", "/", "%", "#", "@", "&"),
+            UserSymbolBarOps.DEFAULT_SYMBOLS,
+        )
+        assertEquals(
+            UserSymbolBarConfig(symbols = UserSymbolBarOps.DEFAULT_SYMBOLS),
+            UserSymbolBarOps.defaultConfig(),
+        )
+    }
 
     @Test
     fun normalize_trimsDropsBlanksDedupesCaps() {
@@ -38,7 +49,7 @@ class UserSymbolBarTest {
 
     @Test
     fun add_atCapIsNoop() {
-        val full = UserSymbolBarConfig((1..20).map { "符$it" }, pinned = true)
+        val full = UserSymbolBarConfig((1..20).map { "符$it" })
         assertSame(full, UserSymbolBarOps.add(full, "新"))
     }
 
@@ -68,20 +79,6 @@ class UserSymbolBarTest {
     }
 
     @Test
-    fun setPinned_isNoopWhenUnchanged() {
-        assertEquals(false, UserSymbolBarOps.setPinned(config, false).pinned)
-        assertSame(config, UserSymbolBarOps.setPinned(config, true))
-    }
-
-    @Test
-    fun topStrip_onlyWhenPinnedAndNonEmpty() {
-        assertEquals(listOf("。", "，", "、"), UserSymbolBarOps.topStrip(config))
-        assertNull(UserSymbolBarOps.topStrip(config.copy(pinned = false)))
-        assertNull(UserSymbolBarOps.topStrip(UserSymbolBarConfig()))
-        assertNull(UserSymbolBarOps.topStrip(UserSymbolBarConfig(pinned = false)))
-    }
-
-    @Test
     fun serializeParse_roundTrip() {
         val parsed = UserSymbolBarOps.parse(UserSymbolBarOps.serialize(config))
         assertEquals(config, parsed)
@@ -89,25 +86,35 @@ class UserSymbolBarTest {
 
     @Test
     fun parse_invalidFallsBackToDefault() {
-        assertEquals(UserSymbolBarConfig(), UserSymbolBarOps.parse(null))
-        assertEquals(UserSymbolBarConfig(), UserSymbolBarOps.parse(""))
-        assertEquals(UserSymbolBarConfig(), UserSymbolBarOps.parse("not json"))
-        assertEquals(UserSymbolBarConfig(), UserSymbolBarOps.parse("[]"))
-        // 缺失 pinned 时默认置顶开；非法符号项丢弃。
+        val defaults = UserSymbolBarOps.defaultConfig()
+        assertEquals(defaults, UserSymbolBarOps.parse(null))
+        assertEquals(defaults, UserSymbolBarOps.parse(""))
+        assertEquals(defaults, UserSymbolBarOps.parse("not json"))
+        assertEquals(defaults, UserSymbolBarOps.parse("[]"))
+        // 非法符号项丢弃；旧 pinned 字段直接忽略。
         assertEquals(
-            UserSymbolBarConfig(symbols = listOf("。"), pinned = true),
+            UserSymbolBarConfig(symbols = listOf("。")),
             UserSymbolBarOps.parse("""{"symbols":["。", "", 1]}"""),
         )
         assertEquals(
-            UserSymbolBarConfig(symbols = listOf("。"), pinned = false),
+            UserSymbolBarConfig(symbols = listOf("。")),
             UserSymbolBarOps.parse("""{"pinned":false,"symbols":["。"]}"""),
+        )
+        assertEquals(
+            UserSymbolBarConfig(symbols = listOf("。")),
+            UserSymbolBarOps.parse("""{"pinned":true,"symbols":["。"]}"""),
+        )
+        // 用户主动删空的已存空列原样保留，不补默认。
+        assertEquals(
+            UserSymbolBarConfig(symbols = emptyList()),
+            UserSymbolBarOps.parse("""{"symbols":[]}"""),
         )
     }
 
     @Test
     fun inMemoryStore_roundTrip() {
         val store = InMemoryUserSymbolBarStore()
-        assertEquals(UserSymbolBarConfig(), store.load())
+        assertEquals(UserSymbolBarOps.defaultConfig(), store.load())
         store.save(config)
         assertEquals(config, store.load())
     }

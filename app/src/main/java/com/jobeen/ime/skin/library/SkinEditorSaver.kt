@@ -7,14 +7,19 @@ import com.jobeen.ime.skin.layout.LayoutValidator
 import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.SkinJson
 import com.jobeen.ime.skin.model.SkinValidator
+import com.jobeen.ime.skin.runtime.SkinApplier
 import com.jobeen.ime.skin.runtime.SkinSnapshotFactory
-import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.store.ActiveRecord
+import com.jobeen.ime.skin.store.ApplyTransaction
 import com.jobeen.ime.skin.store.AtomicFiles
+import com.jobeen.ime.skin.store.LibraryIndex
 import com.jobeen.ime.skin.store.SkinGenRef
+import com.jobeen.ime.skin.store.SkinIndexEntry
 import com.jobeen.ime.skin.store.SkinLibrary
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -28,81 +33,112 @@ data class EditorFile(
     val displayName: String,
     val file: File,
     val kind: Kind,
+    /** 该布局是否被当前皮肤之外的皮肤共用（问题 6：共用布局须标注）。 */
+    val isShared: Boolean = false,
 ) {
     enum class Kind { SKIN_JSON, LAYOUT }
 }
 
-/** 当前生效皮肤的可编辑文件集（skin.json＋该皮肤的布局文件）。 */
+/** 当前生效皮肤的可编辑文件集（skin.json＋该皮肤实际引用的布局文件）。 */
 data class ActiveSkinFiles(
     val skinId: String,
     val generation: Int,
+    /** 解析时活动记录的 skin.json hash（保存前 CAS 的比对基准）。 */
+    val hash: String?,
     val files: List<EditorFile>,
-    /** 主布局 id（skin.json keyboards.pinyin.layoutId，缺失时回落首个布局）。 */
+    /** 主布局 id（skin.json keyboards.pinyin.layoutId，缺失时为 null＝未绑定布局）。 */
     val primaryLayoutId: String?,
 )
+
+/** 解析当前生效皮肤的结果（问题 5：manifest 不合格时 fail closed 并给出原因）。 */
+sealed interface ResolveActiveResult {
+    data class Ok(val files: ActiveSkinFiles) : ResolveActiveResult
+    data class Unavailable(val reason: String) : ResolveActiveResult
+}
 
 sealed interface SkinEditorSaveResult {
     /** 已保存并重载生效；issues 为校验回落项（逐条页内明示）。 */
     data class Saved(val issues: List<String>) : SkinEditorSaveResult
     /** 校验未通过：文件未写、旧快照仍生效、文本留在编辑器里。 */
     data class Blocked(val reason: String, val issues: List<String>) : SkinEditorSaveResult
-    /** 保存／重载过程失败（文件／清单／记录已尽力回滚，见实现注释）。 */
+    /** 保存／重载过程失败（新代已丢弃、旧版未动，见实现注释）。 */
     data class Failed(val reason: String) : SkinEditorSaveResult
+    /** 活动皮肤已变化：编辑页读到的版本已过期，未写任何文件，须刷新页面重读。 */
+    data class Stale(val reason: String) : SkinEditorSaveResult
 }
 
 /**
- * App 内置皮肤文件编辑器保存编排（W19-7）：
+ * App 内置皮肤文件编辑器保存编排（W19-7；2026-11-12 审计 7 问题事务化重构）：
  *
- * 口径（已核实，见汇报）：manifest.json sha256 只在**导入时**校验
- * （JimeImporter.validateManifestContents）；运行时重载只认
- * active.json 的 hash（ActiveResolver.isTargetValid）。原地改文件
- * 若不同步更新 manifest 与 active 记录，重启后会回滚到默认皮肤。
- * 所以保存顺序是**先校验、再落盘**（与任务字面「保存后校验」不同，
- * 原因：校验失败时不写文件才能保住旧快照；若先写后校验失败，
- * 旧文件已丢、回滚无从谈起）：
- * 1. decide（纯函数，见 SkinEditorSave）：解析＋限长＋校验器；
- * 2. 原子写文件（AtomicFiles.writeAtomically）；
- * 3. 同步更新 manifest.json 对应项 sha256＋sizeBytes；
- * 4. 同步更新 active.json（skin.json 的 hash）／index.json（布局的 hash）；
- * 5. SkinSnapshotFactory.buildFromGenDir 重建＋SkinSnapshotProvider.install，
- *    改完即刻生效，不重启键盘。
- * 任何一步失败：已改的项尽力还原为旧值，返回 Failed；Last-Good
- * 指针**不**动（旧内容仍是回滚目标）。
+ * 口径（已核实）：manifest.json sha256 只在导入时校验；运行时重载只认
+ * active.json 的 hash。保存顺序是先校验、再落盘：
+ * 1. decide（纯函数，见 SkinEditorSave）：解析＋限长＋校验器（用与快照
+ *    工厂同一口径的 manifest resolver，问题 7）；
+ * 2. copy-on-write（问题 1）：新 generation 目录＝旧代全量复制＋新文件
+ *    覆写，旧代只读不改；新代完整落盘＋校验后才切换；
+ * 3. 走 SkinApplier.applySkin（问题 1/2/3）：应用事务承接串行锁、
+ *    请求 token、安装、刷新、首帧等待、VERIFIED 提交与 Last-Good 晋升；
+ *    首帧成功后才提交，失败由事务回滚运行态与活动记录；
+ * 4. 成功后索引皮肤条目指向新代；失败只丢弃新代（问题 4：回滚后读回
+ *    磁盘核对旧 hash，“已恢复”只建立在校验成功上）。
+ * 布局编辑同理：新布局代次＋索引先指新代（快照构建经索引解析布局），
+ * 失败恢复旧索引并删新代，切换阶段失败时重装当前生效快照收敛运行态。
  */
 class SkinEditorSaver(private val context: Context) {
 
     private val library: SkinLibrary = SkinLibrary
     private val store: SkinLibraryStore = library.store
     private val layout = library.layout
+    private val applier: SkinApplier = SkinApplier(context)
 
-    /** 解析当前生效皮肤：skin.json＋该皮肤引用的全部布局文件。 */
-    suspend fun resolveActiveFiles(): ActiveSkinFiles? = withContext(Dispatchers.IO) {
+    companion object {
+        /** 编辑器保存串行锁：同一时间只一笔编辑保存（代次分配与索引更新不被并发保存交错）。 */
+        private val saveMutex = Mutex()
+    }
+
+    /** 解析当前生效皮肤：skin.json＋该皮肤实际引用的布局文件（问题 6）。 */
+    suspend fun resolveActiveFiles(): ResolveActiveResult = withContext(Dispatchers.IO) {
         val record = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
-            ?: return@withContext null
-        val skinId = record.skinId ?: return@withContext null
+            ?: return@withContext ResolveActiveResult.Unavailable("no_active_skin")
+        val skinId = record.skinId ?: return@withContext ResolveActiveResult.Unavailable("no_active_skin")
         val genDir = layout.skinGenDir(skinId, record.generation)
         val skinFile = File(genDir, "skin.json")
-        if (!skinFile.isFile) return@withContext null
-        val skinText = runCatching { skinFile.readText() }.getOrNull() ?: return@withContext null
-        val tree = SkinJson.parseObject(skinText) ?: return@withContext null
-        val primaryLayoutId = primaryLayoutId(tree)
-        val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
-        val layoutFiles = (index?.layouts ?: emptyList()).mapNotNull { entry ->
-            val file = File(layout.fileFromRelative(entry.dir), "layout.json")
-            if (!file.isFile) null else EditorFile(
-                id = entry.id,
-                displayName = entry.id,
-                file = file,
-                kind = EditorFile.Kind.LAYOUT,
-            )
+        if (!skinFile.isFile) return@withContext ResolveActiveResult.Unavailable("skin_json_missing")
+        val skinBytes = runCatching { skinFile.readBytes() }.getOrNull()
+            ?: return@withContext ResolveActiveResult.Unavailable("skin_json_unreadable")
+        val skinHash = sha256Hex(skinBytes)
+        val tree = SkinJson.parseObject(skinBytes.toString(Charsets.UTF_8))
+            ?: return@withContext ResolveActiveResult.Unavailable("skin_json_unparseable")
+        // Manifest fail-closed（问题 5）：缺失／损坏／缺 skin 条目／路径重复／hash 不符都拒绝打开。
+        val manifestText = runCatching { File(genDir, "manifest.json").readText() }.getOrNull()
+        when (val check = SkinEditorSave.validateManifestForEdit(manifestText, skinHash)) {
+            is ManifestCheck.Invalid -> return@withContext ResolveActiveResult.Unavailable(check.reason)
+            is ManifestCheck.Valid -> Unit
         }
-        ActiveSkinFiles(
-            skinId = skinId,
-            generation = record.generation,
-            files = listOf(
-                EditorFile(skinId, "skin.json", skinFile, EditorFile.Kind.SKIN_JSON),
-            ) + layoutFiles,
-            primaryLayoutId = primaryLayoutId,
+        val primaryLayoutId = primaryLayoutId(tree)
+        val boundIds = SkinEditorSave.boundLayoutIds(tree)
+        val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
+        val layoutFiles = SkinEditorSave.filterBoundLayouts(index?.layouts ?: emptyList(), boundIds)
+            .mapNotNull { entry ->
+                val file = File(layout.fileFromRelative(entry.dir), "layout.json")
+                if (!file.isFile) null else EditorFile(
+                    id = entry.id,
+                    displayName = entry.id,
+                    file = file,
+                    kind = EditorFile.Kind.LAYOUT,
+                    isShared = isLayoutSharedByOtherSkin(skinId, entry.id, index),
+                )
+            }
+        ResolveActiveResult.Ok(
+            ActiveSkinFiles(
+                skinId = skinId,
+                generation = record.generation,
+                hash = record.hash,
+                files = listOf(
+                    EditorFile(skinId, "skin.json", skinFile, EditorFile.Kind.SKIN_JSON),
+                ) + layoutFiles,
+                primaryLayoutId = primaryLayoutId,
+            ),
         )
     }
 
@@ -111,143 +147,219 @@ class SkinEditorSaver(private val context: Context) {
         runCatching { file.readText() }.getOrNull()
     }
 
-    /** 保存 skin.json：校验→原子写→清单／记录 hash 更新→重建＋安装快照。 */
+    /** 保存 skin.json：校验→新代落盘→应用事务切换→成功更新索引。 */
     suspend fun saveSkinJson(active: ActiveSkinFiles, text: String): SkinEditorSaveResult =
         withContext(Dispatchers.IO) {
-            val outcome = SkinEditorSave.decideSkinJson(text) { tree ->
-                SkinValidator.validate(
-                    tree,
-                    SkinSnapshotFactory.currentVersionCode(context),
-                    SkinSnapshotFactory.geometryFallbacks(context),
-                    assetKind = { null },
-                )
-            }
-            if (outcome is EditorSaveOutcome.Block) {
-                return@withContext SkinEditorSaveResult.Blocked(outcome.reason, outcome.issues)
-            }
-            val issues = (outcome as EditorSaveOutcome.Commit).issues
-            val genDir = layout.skinGenDir(active.skinId, active.generation)
-            val skinFile = File(genDir, "skin.json")
-            val manifestFile = File(genDir, "manifest.json")
-            val oldBytes = runCatching { skinFile.readBytes() }.getOrNull()
-            val oldManifestText = runCatching { manifestFile.readText() }.getOrNull()
-            val oldRecord = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
-            val newBytes = text.toByteArray(Charsets.UTF_8)
-            val newHash = sha256Hex(newBytes)
-            try {
-                AtomicFiles.writeAtomically(genDir, "skin.json", newBytes)
-                updateManifestSha(manifestFile, "skin.json", newHash, newBytes.size.toLong())
-                store.writeActive(
-                    (oldRecord ?: ActiveRecord()).copy(
-                        skinId = active.skinId,
-                        hash = newHash,
-                        generation = active.generation,
-                    ),
-                )
-            } catch (e: Exception) {
-                restoreSkinJson(skinFile, oldBytes, manifestFile, oldManifestText, oldRecord)
-                return@withContext SkinEditorSaveResult.Failed("write_failed:${e.message}")
-            }
-            val snapshot = runCatching {
-                SkinSnapshotFactory.buildFromGenDir(
-                    context,
-                    layout,
-                    SkinGenRef(active.skinId, newHash, active.generation),
-                )
-            }.getOrNull()
-            if (snapshot == null) {
-                restoreSkinJson(skinFile, oldBytes, manifestFile, oldManifestText, oldRecord)
-                return@withContext SkinEditorSaveResult.Failed("snapshot_rebuild_failed")
-            }
-            if (!SkinSnapshotProvider.install(context, snapshot)) {
-                // 安装失败亦回滚已改的文件／清单／记录（旧代码直接 Failed，
-                // live 与磁盘分叉、失败提示与事实不符）；原因串如实说明回滚结果。
-                val restored = restoreSkinJson(
-                    skinFile, oldBytes, manifestFile, oldManifestText, oldRecord,
-                )
-                return@withContext SkinEditorSaveResult.Failed(
-                    if (restored) "snapshot_install_failed，已恢复旧版"
-                    else "snapshot_install_failed，恢复旧版失败",
-                )
-            }
-            SkinEditorSaveResult.Saved(issues)
+            saveMutex.withLock { saveSkinJsonLocked(active, text) }
         }
 
-    /** 保存布局文件：校验→原子写→index hash 更新→重建＋安装快照。 */
+    /** 保存布局文件：校验→新布局代次＋索引→应用事务切换。 */
     suspend fun saveLayout(
         active: ActiveSkinFiles,
         file: EditorFile,
         text: String,
     ): SkinEditorSaveResult = withContext(Dispatchers.IO) {
+        saveMutex.withLock { saveLayoutLocked(active, file, text) }
+    }
+
+    private suspend fun saveSkinJsonLocked(active: ActiveSkinFiles, text: String): SkinEditorSaveResult {
+        val genDir = layout.skinGenDir(active.skinId, active.generation)
+        // 1. Fail-closed 备份（问题 4）：旧文件、清单、活动记录缺一不可，否则不开始写。
+        val backups = SkinEditorSave.readSkinBackups(store, genDir)
+        if (!backups.isComplete()) {
+            return SkinEditorSaveResult.Failed("backup_missing")
+        }
+        val oldBytes = backups.skinBytes!!
+        val oldManifestText = backups.manifestText!!
+        val oldRecord = backups.record!!
+        // 2. CAS（问题 3）：活动记录须与编辑页读到的版本一致，否则中止、页面刷新。
+        if (!SkinEditorSave.casMatches(oldRecord, active.skinId, active.generation, active.hash)) {
+            return SkinEditorSaveResult.Stale("active_changed")
+        }
+        // 3. Manifest 再校验（问题 5）：入口已验，保存时重验防中途损坏；缺项不写 active。
+        val oldHash = sha256Hex(oldBytes)
+        val manifest = when (val check = SkinEditorSave.validateManifestForEdit(oldManifestText, oldHash)) {
+            is ManifestCheck.Invalid -> return SkinEditorSaveResult.Failed("manifest_invalid:${check.reason}")
+            is ManifestCheck.Valid -> check.manifest
+        }
+        // 4. 校验新文本，用与快照工厂同一口径的 manifest resolver（问题 7）。
+        val assetKindById = SkinEditorSave.manifestAssetKindById(manifest)
+        val assetShaById = SkinEditorSave.manifestAssetShaById(manifest)
+        val outcome = SkinEditorSave.decideSkinJson(text) { tree ->
+            SkinValidator.validate(
+                tree,
+                SkinSnapshotFactory.currentVersionCode(context),
+                SkinSnapshotFactory.geometryFallbacks(context),
+                assetKind = { assetKindById[it] },
+                assetBytes = { id ->
+                    assetShaById[id]?.let { sha ->
+                        layout.assetFiles(sha).firstOrNull { it.isFile }?.length()
+                    }
+                },
+            )
+        }
+        if (outcome is EditorSaveOutcome.Block) {
+            return SkinEditorSaveResult.Blocked(outcome.reason, outcome.issues)
+        }
+        val issues = (outcome as EditorSaveOutcome.Commit).issues
+        // 5. Copy-on-write（问题 1）：新 generation＝旧代全量复制＋新 skin.json 覆写＋新代清单同步。
+        val newBytes = text.toByteArray(Charsets.UTF_8)
+        val newHash = sha256Hex(newBytes)
+        val newGen = SkinEditorSave.nextGeneration(
+            indexGeneration = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
+                ?.skins?.firstOrNull { it.id == active.skinId }?.generation,
+            diskGenerations = SkinEditorSave.diskGenerations(layout.skinsDir, active.skinId),
+        )
+        val newGenDir = layout.skinGenDir(active.skinId, newGen)
+        if (!SkinEditorSave.copyGenDir(genDir, newGenDir)) {
+            deleteDirBestEffort(newGenDir)
+            return SkinEditorSaveResult.Failed("new_generation_copy_failed")
+        }
+        try {
+            AtomicFiles.writeAtomically(newGenDir, "skin.json", newBytes)
+        } catch (e: Exception) {
+            deleteDirBestEffort(newGenDir)
+            return SkinEditorSaveResult.Failed("write_failed:${e.message}")
+        }
+        val newManifest = SkinEditorSave.manifestWithUpdatedSha(manifest, "skin.json", newHash, newBytes.size.toLong())
+        if (newManifest === manifest) {
+            // 入口校验已保证清单有 skin.json 条目；防御性失败，不留半成品新代。
+            deleteDirBestEffort(newGenDir)
+            return SkinEditorSaveResult.Failed("manifest_skin_entry_missing")
+        }
+        try {
+            AtomicFiles.writeAtomically(newGenDir, "manifest.json", PackageManifest.toJson(newManifest))
+        } catch (e: Exception) {
+            deleteDirBestEffort(newGenDir)
+            return SkinEditorSaveResult.Failed("write_failed:${e.message}")
+        }
+        if (!layout.isSkinGenComplete(newGenDir)) {
+            deleteDirBestEffort(newGenDir)
+            return SkinEditorSaveResult.Failed("new_generation_incomplete")
+        }
+        // 6. 应用事务切换（问题 1/2/3）：token 在构建前分配、刷新＋首帧等待、成功才提交 VERIFIED／Last-Good。
+        //    内联判据须在主线程快照（读窗口视图状态），故切回 Main 调 applySkin。
+        val newRef = SkinGenRef(active.skinId, newHash, newGen)
+        val result = withContext(Dispatchers.Main) { applier.applySkin(newRef) }
+        return when (result) {
+            is ApplyTransaction.Result.Applied,
+            is ApplyTransaction.Result.AppliedPending -> {
+                // 成功才把索引皮肤条目指向新代；索引写失败只记问题，不推翻已生效的保存。
+                val indexOk = updateIndexSkinEntry(active.skinId, newHash, newGen, newGenDir)
+                val allIssues = if (indexOk) {
+                    issues
+                } else {
+                    issues + "index_update_failed：皮肤已生效，但库索引未同步（重启对账会修复）"
+                }
+                SkinEditorSaveResult.Saved(allIssues)
+            }
+            else -> {
+                // 失败只丢弃新代；旧代未动，事务已回滚运行态与活动记录。
+                deleteDirBestEffort(newGenDir)
+                val intact = SkinEditorSave.genSkinHashMatches(genDir, oldHash)
+                SkinEditorSaveResult.Failed(
+                    "apply_failed:${applyResultReason(result)}:old_gen_${if (intact) "intact" else "check_failed"}",
+                )
+            }
+        }
+    }
+
+    private suspend fun saveLayoutLocked(
+        active: ActiveSkinFiles,
+        file: EditorFile,
+        text: String,
+    ): SkinEditorSaveResult {
+        // 1. Fail-closed 备份（问题 4）。
+        val backups = SkinEditorSave.readLayoutBackups(store, file.file)
+        if (!backups.isComplete()) {
+            return SkinEditorSaveResult.Failed("backup_missing")
+        }
+        val oldBytes = backups.layoutBytes!!
+        val oldIndex = backups.index!!
+        val oldRecord = backups.record!!
+        // 2. CAS（问题 3）。
+        if (!SkinEditorSave.casMatches(oldRecord, active.skinId, active.generation, active.hash)) {
+            return SkinEditorSaveResult.Stale("active_changed")
+        }
+        // 3. 校验新布局文本。
         val outcome = SkinEditorSave.decideLayout(text, file.id) { tree, id ->
             LayoutValidator.validate(tree, id)
         }
         if (outcome is EditorSaveOutcome.Block) {
-            return@withContext SkinEditorSaveResult.Blocked(outcome.reason, outcome.issues)
+            return SkinEditorSaveResult.Blocked(outcome.reason, outcome.issues)
         }
         val issues = (outcome as EditorSaveOutcome.Commit).issues
-        val oldBytes = runCatching { file.file.readBytes() }.getOrNull()
-        // index 缺失时在写文件前即失败：旧代码先写 layout.json 再查
-        // oldIndex，该 return 不抛异常、不进 catch 回滚，致新布局已落盘、
-        // index.json 仍旧。先查后写，任何一步失败都按“已改项尽力还原”走。
-        val oldIndex = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
-            ?: return@withContext SkinEditorSaveResult.Failed("index_missing")
+        val oldEntry = oldIndex.layouts.firstOrNull { it.id == file.id }
+            ?: return SkinEditorSaveResult.Failed("layout_index_entry_missing")
+        val oldHash = sha256Hex(oldBytes)
+        // 4. Copy-on-write：新布局代次，旧代不动；索引先指新代（快照构建经索引解析布局）。
         val newBytes = text.toByteArray(Charsets.UTF_8)
         val newHash = sha256Hex(newBytes)
+        val newGen = SkinEditorSave.nextGeneration(
+            indexGeneration = oldEntry.generation,
+            diskGenerations = SkinEditorSave.diskGenerations(layout.layoutsDir, file.id),
+        )
+        val newGenDir = layout.layoutGenDir(file.id, newGen)
         try {
-            AtomicFiles.writeAtomically(file.file.parentFile!!, "layout.json", newBytes)
-            store.writeIndex(
-                oldIndex.copy(
-                    layouts = oldIndex.layouts.map { entry ->
-                        if (entry.id == file.id) {
-                            entry.copy(hash = newHash, sizeBytes = newBytes.size.toLong())
-                        } else {
-                            entry
-                        }
-                    },
-                ),
-            )
+            newGenDir.mkdirs()
+            AtomicFiles.writeAtomically(newGenDir, "layout.json", newBytes)
         } catch (e: Exception) {
-            runCatching {
-                if (oldBytes != null) {
-                    AtomicFiles.writeAtomically(file.file.parentFile!!, "layout.json", oldBytes)
-                }
-                if (oldIndex != null) store.writeIndex(oldIndex)
+            deleteDirBestEffort(newGenDir)
+            return SkinEditorSaveResult.Failed("write_failed:${e.message}")
+        }
+        if (!layout.isLayoutGenComplete(newGenDir)) {
+            deleteDirBestEffort(newGenDir)
+            return SkinEditorSaveResult.Failed("new_generation_incomplete")
+        }
+        val newEntry = oldEntry.copy(
+            hash = newHash,
+            generation = newGen,
+            dir = layout.layoutGenRelative(file.id, newGen),
+            sizeBytes = layout.dirBytes(newGenDir),
+            updatedAt = System.currentTimeMillis(),
+        )
+        val newIndex = oldIndex.copy(
+            layouts = oldIndex.layouts.map { if (it.id == file.id) newEntry else it },
+        )
+        try {
+            store.writeIndex(newIndex)
+        } catch (e: Exception) {
+            deleteDirBestEffort(newGenDir)
+            return SkinEditorSaveResult.Failed("write_failed:${e.message}")
+        }
+        // 5. 应用事务切换（同一皮肤 ref；内容因索引指向新布局而更新）。
+        //    布局改动无颜色自愈路径，事务的显式刷新＋首帧等待是唯一即时生效通道。
+        val ref = SkinGenRef(active.skinId, oldRecord.hash ?: "", active.generation)
+        val result = withContext(Dispatchers.Main) { applier.applySkin(ref) }
+        return when (result) {
+            is ApplyTransaction.Result.Applied,
+            is ApplyTransaction.Result.AppliedPending -> {
+                SkinEditorSaveResult.Saved(issues)
             }
-            return@withContext SkinEditorSaveResult.Failed("write_failed:${e.message}")
-        }
-        val record = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
-        val snapshot = runCatching {
-            SkinSnapshotFactory.buildFromGenDir(
-                context,
-                layout,
-                SkinGenRef(active.skinId, record?.hash ?: "", active.generation),
-            )
-        }.getOrNull()
-        if (snapshot == null) {
-            runCatching {
-                if (oldBytes != null) {
-                    AtomicFiles.writeAtomically(file.file.parentFile!!, "layout.json", oldBytes)
+            else -> {
+                // 失败：恢复旧索引、删新代；各恢复项各自执行、汇总结果（问题 4：不顺序一抛即断）。
+                var indexRestored = false
+                var genDeleted = false
+                runCatching { store.writeIndex(oldIndex); indexRestored = true }
+                runCatching { newGenDir.deleteRecursively(); genDeleted = true }
+                val oldLayoutIntact = runCatching {
+                    val bytes = File(layout.fileFromRelative(oldEntry.dir), "layout.json").readBytes()
+                    sha256Hex(bytes) == oldHash
+                }.getOrDefault(false)
+                // 切换／首帧阶段失败时，事务回滚可能已按新索引装了旧皮＋新布局快照；
+                // 索引已恢复，须重装当前生效快照收敛运行态。
+                if (result is ApplyTransaction.Result.SwitchFailedRolledBack ||
+                    result is ApplyTransaction.Result.FirstRenderFailedRolledBack ||
+                    result is ApplyTransaction.Result.RollbackFailed
+                ) {
+                    runCatching { withContext(Dispatchers.Main) { applier.reinstallActiveSnapshot() } }
                 }
-                if (oldIndex != null) store.writeIndex(oldIndex)
+                val restored = indexRestored && genDeleted && oldLayoutIntact
+                SkinEditorSaveResult.Failed(
+                    "apply_failed:${applyResultReason(result)}:restored_${if (restored) "ok" else "partial"}",
+                )
             }
-            return@withContext SkinEditorSaveResult.Failed("snapshot_rebuild_failed")
         }
-        if (!SkinSnapshotProvider.install(context, snapshot)) {
-            // 安装失败亦回滚已改的文件／索引（旧代码直接 Failed，
-            // live 与磁盘分叉、失败提示与事实不符）；原因串如实说明回滚结果。
-            val restored = runCatching {
-                if (oldBytes != null) {
-                    AtomicFiles.writeAtomically(file.file.parentFile!!, "layout.json", oldBytes)
-                }
-                if (oldIndex != null) store.writeIndex(oldIndex)
-            }.isSuccess
-            return@withContext SkinEditorSaveResult.Failed(
-                if (restored) "snapshot_install_failed，已恢复旧版"
-                else "snapshot_install_failed，恢复旧版失败",
-            )
-        }
-        SkinEditorSaveResult.Saved(issues)
     }
 
     private fun primaryLayoutId(tree: JsonObject): String? {
@@ -256,35 +368,69 @@ class SkinEditorSaver(private val context: Context) {
         return (pinyin["layoutId"] as? JsonPrimitive)?.contentOrNull
     }
 
-    private fun updateManifestSha(manifestFile: File, path: String, sha: String, size: Long) {
-        val text = runCatching { manifestFile.readText() }.getOrNull() ?: return
-        val manifest = PackageManifest.parse(text) ?: return
-        val updated = SkinEditorSave.manifestWithUpdatedSha(manifest, path, sha, size)
-        if (updated !== manifest) {
-            AtomicFiles.writeAtomically(
-                manifestFile.parentFile!!,
-                "manifest.json",
-                PackageManifest.toJson(updated),
-            )
+    /** 该布局是否被当前皮肤之外的皮肤引用（问题 6：共用布局须标注）。 */
+    private fun isLayoutSharedByOtherSkin(
+        currentSkinId: String,
+        layoutId: String,
+        index: LibraryIndex?,
+    ): Boolean {
+        val skins = index?.skins ?: return false
+        for (entry in skins) {
+            if (entry.id == currentSkinId) continue
+            val otherTree = runCatching {
+                SkinJson.parseObject(File(layout.fileFromRelative(entry.dir), "skin.json").readText())
+            }.getOrNull() ?: continue
+            if (layoutId in SkinEditorSave.boundLayoutIds(otherTree)) return true
         }
+        return false
     }
 
-    private suspend fun restoreSkinJson(
-        skinFile: File,
-        oldBytes: ByteArray?,
-        manifestFile: File,
-        oldManifestText: String?,
-        oldRecord: ActiveRecord?,
+    /** 成功后把索引皮肤条目指向新代（失败返回 false，调用方记问题、不推翻保存）。 */
+    private suspend fun updateIndexSkinEntry(
+        skinId: String,
+        hash: String,
+        generation: Int,
+        genDir: File,
     ): Boolean {
         return runCatching {
-            if (oldBytes != null) {
-                AtomicFiles.writeAtomically(skinFile.parentFile!!, "skin.json", oldBytes)
+            val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
+                ?: return false
+            val existing = index.skins.firstOrNull { it.id == skinId }
+            val entry = SkinIndexEntry(
+                id = skinId,
+                name = existing?.name ?: skinId,
+                hash = hash,
+                generation = generation,
+                dir = layout.skinGenRelative(skinId, generation),
+                sizeBytes = layout.dirBytes(genDir),
+                updatedAt = System.currentTimeMillis(),
+            )
+            val skins = if (existing == null) {
+                index.skins + entry
+            } else {
+                index.skins.map { if (it.id == skinId) entry else it }
             }
-            if (oldManifestText != null) {
-                AtomicFiles.writeAtomically(manifestFile.parentFile!!, "manifest.json", oldManifestText)
-            }
-            if (oldRecord != null) store.writeActive(oldRecord)
-        }.isSuccess
+            store.writeIndex(index.copy(skins = skins))
+            true
+        }.getOrDefault(false)
+    }
+
+    private fun applyResultReason(result: ApplyTransaction.Result): String = when (result) {
+        is ApplyTransaction.Result.Applied -> "applied"
+        is ApplyTransaction.Result.AppliedPending -> "applied_pending"
+        is ApplyTransaction.Result.BuildFailed -> "snapshot_rebuild_failed"
+        is ApplyTransaction.Result.TargetInvalid -> "target_invalid"
+        is ApplyTransaction.Result.SwitchFailedRolledBack -> "switch_failed_rolled_back"
+        is ApplyTransaction.Result.FirstRenderFailedRolledBack -> "first_render_failed_rolled_back"
+        is ApplyTransaction.Result.RollbackFailed -> "rollback_failed:${result.reason}"
+        is ApplyTransaction.Result.Superseded -> "superseded"
+        is ApplyTransaction.Result.RollbackUnavailable -> "rollback_unavailable:${result.reason}"
+        is ApplyTransaction.Result.RolledBackToLastGood -> "rolled_back_to_last_good"
+        is ApplyTransaction.Result.RevertedToDefault -> "reverted_to_default"
+    }
+
+    private fun deleteDirBestEffort(dir: File) {
+        runCatching { dir.deleteRecursively() }
     }
 
     private fun sha256Hex(bytes: ByteArray): String =

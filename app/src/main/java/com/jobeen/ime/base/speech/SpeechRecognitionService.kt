@@ -29,7 +29,6 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import android.util.Log
-import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.concurrent.ArrayBlockingQueue
@@ -48,17 +47,6 @@ class SpeechRecognitionService : Service() {
 
     private val recognizerRef = AtomicReference<OnlineRecognizer?>(null)
     private val streamRef = AtomicReference<OnlineStream?>(null)
-
-    /**
-     * 语音自动加标点开关（filesDir 单行文件，默认开）：识别服务跑在
-     * 独立 :speech 进程，读值每次现读磁盘（VoiceAutoPunctuationStore
-     * 的 enabled 不缓存），设置页改了即生效、无需重启服务。
-     */
-    private val autoPunctuationStore by lazy {
-        VoiceAutoPunctuationStore.shared(
-            File(filesDir, VoiceAutoPunctuationStore.FILE_NAME),
-        )
-    }
 
     /**
      * 销毁短路标志：onDestroy 在主线程置位并封消息入口后，在飞的消息
@@ -622,14 +610,9 @@ class SpeechRecognitionService : Service() {
                                 while (engine.isReady(myStream) && loops++ < 512) {
                                     engine.decode(myStream)
                                 }
-                                val rawFinal = engine.getResult(myStream).text
-                                val finalText = if (autoPunctuationStore.enabled) {
-                                    FinalTextNormalizer.normalizeFinal(rawFinal)
-                                } else {
-                                    // 开关关：只做间距规整（与实时预览同口径），
-                                    // 不加标点；模型自带的标点原样保留。
-                                    FinalTextNormalizer.normalizeSpacing(rawFinal)
-                                }
+                                val finalText = FinalTextNormalizer.normalizeFinal(
+                                    engine.getResult(myStream).text
+                                )
                                 finalText.takeIf { it.isNotEmpty() }?.let {
                                     sendClient(SpeechIpc.MSG_FINAL, it, gen = myClientGen)
                                 }

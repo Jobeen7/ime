@@ -577,8 +577,6 @@
     <string name="voice_mic_on">麦克风权限已开启</string>
     <string name="voice_mic_request">去授权</string>
     <string name="voice_input_enable">启用语音输入（长按空格说话）</string>
-    <string name="voice_auto_punctuation">语音自动加标点</string>
-    <string name="voice_auto_punctuation_desc">本地识别结果自动补标点；关闭后仅保留模型自带的标点</string>
     <string name="voice_provider">识别服务商</string>
     <string name="voice_provider_local">本地离线模型</string>
     <string name="voice_provider_plugin_ready">已安装</string>
@@ -586,7 +584,6 @@
     <string name="voice_provider_hint_unavailable">已选插件不可用：请重新选择服务商</string>
     <string name="voice_provider_hint_not_enabled">已选云端插件，但云端语音未开启：请在云端语音插件中开启</string>
     <string name="voice_provider_hint_keys">已选插件需填密钥：请进云端语音插件管理配置</string>
-    <string name="voice_usage">长按空格说话，松开结束；点工具栏语音键可锁定录音，再点结束。密码框内不可用。首次使用需授予麦克风权限；本地模型未下载时，可先下载模型或选择云端插件。</string>
     <string name="voice_provider_cloud_confirm_title">开启云端语音？</string>
     <string name="voice_provider_cloud_confirm_text">使用云端插件时，语音音频将发送到所选插件的服务方处理。是否开启云端语音并使用该插件？</string>
     <string name="voice_provider_cloud_confirm_ok">开启并使用</string>
@@ -894,19 +891,15 @@
     <string name="toolbar_name_empty">栏名不能为空</string>
     <string name="toolbar_delete_toolbar_title">删除自定义工具栏？</string>
     <string name="toolbar_delete_toolbar_note">删除后，正在使用该栏的皮肤将回到默认工具栏。</string>
-    <!-- 自定义符号栏（施工单 10 H2-5）：页名／置顶／列表 -->
+    <!-- 自定义符号栏（施工单 10 H2-5；2026-11-12 符号栏重做：删置顶） -->
     <string name="symbol_bar_title">自定义符号栏</string>
-    <string name="row_sub_symbol_bar">常用符号与置顶</string>
-    <string name="symbol_bar_pin_group">置顶</string>
-    <string name="symbol_bar_pin">置顶显示</string>
-    <string name="symbol_bar_pin_desc">开启后，自定义符号栏固定在符号面板顶部。</string>
-    <string name="symbol_bar_custom">自定义符号</string>
-    <string name="symbol_bar_add_hint">输入要添加的符号</string>
-    <string name="symbol_bar_add">添加</string>
+    <string name="symbol_bar_customize">⊕\n自定义</string>
+    <string name="row_sub_symbol_bar">常用符号</string>
+    <string name="symbol_bar_add_hint">新增符号</string>
+    <string name="symbol_bar_save">保存</string>
+    <string name="symbol_bar_list_desc">列表就是符号面板上那排符号，拖动手柄排序，点垃圾桶删除。</string>
     <string name="symbol_bar_empty">未添加自定义符号</string>
     <string name="symbol_bar_note">修改在下次打开符号面板时生效。</string>
-    <string name="symbol_bar_move_up">上移</string>
-    <string name="symbol_bar_move_down">下移</string>
     <string name="symbol_bar_delete">删除</string>
     <!-- 按键符号（施工单 10 H2-14）：页名／迷你键盘／改键弹框 -->
     <string name="key_symbol_title">按键符号</string>

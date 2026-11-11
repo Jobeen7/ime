@@ -7,29 +7,39 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 /**
- * 用户自定义常用符号栏（施工单 10 H2-5，CyIME R11）：
+ * 用户自定义常用符号栏（施工单 10 H2-5，CyIME R11；2026-11-12 符号栏重做）：
  *
  * - 皮肤 SymbolBar 只有皮肤定义、无用户自定义入口；本栏是用户级
- *   覆盖：用户自填常用符号列＋置顶开关，存在偏好里，不碰皮肤文件。
- * - 置顶语义：置顶开且符号列非空时，该列固定在符号面板最顶部
- *   （皮肤栏／子条／横条之上）；置顶关或列空时不显示。
+ *   覆盖：用户自填常用符号列，存在偏好里，不碰皮肤文件。
+ * - 列表即左侧竖栏显示内容：设置页改了，竖栏下次打开符号面板即跟变。
+ * - 置顶已删（2026-11-12）：新设计里列表本身就是面板那排符号，
+ *   没东西可置顶；旧数据里的 pinned 字段解析时直接忽略。
+ * - 默认 16 符号：首次使用（无保存记录）即带，不再是空表。
  * - 本文件纯逻辑＋偏好读写，不碰 View；单测直接覆盖。
  */
 data class UserSymbolBarConfig(
     val symbols: List<String> = emptyList(),
-    val pinned: Boolean = true,
 )
 
 object UserSymbolBarOps {
 
     /** 自定义符号上限（条内一格一符号，超限截断）。 */
     const val MAX_SYMBOLS = 20
+
+    /** 默认 16 符号（首次使用即带；顺序即竖栏显示顺序）。 */
+    val DEFAULT_SYMBOLS: List<String> = listOf(
+        "，", "。", "？", "！", "…", "～", "、", "=", "+",
+        "-", "*", "/", "%", "#", "@", "&",
+    )
+
+    /** 默认配置（16 默认符号）。 */
+    fun defaultConfig(): UserSymbolBarConfig =
+        UserSymbolBarConfig(symbols = DEFAULT_SYMBOLS)
 
     /**
      * 归一化：逐项去空白、空项丢弃、重复取首次出现、上限截断。
@@ -71,53 +81,45 @@ object UserSymbolBarOps {
         return config.copy(symbols = next)
     }
 
-    fun setPinned(config: UserSymbolBarConfig, pinned: Boolean): UserSymbolBarConfig =
-        if (config.pinned == pinned) config else config.copy(pinned = pinned)
-
-    /**
-     * 置顶生效条：置顶开且符号列非空时返回该列，否则 null（不显示）。
-     * 调用方只在非 null 时建条。
-     */
-    fun topStrip(config: UserSymbolBarConfig): List<String>? =
-        if (config.pinned && config.symbols.isNotEmpty()) config.symbols else null
-
     fun serialize(config: UserSymbolBarConfig): String =
         Json.encodeToString(
             JsonObject.serializer(),
             buildJsonObject {
-                put("pinned", JsonPrimitive(config.pinned))
                 put("symbols", JsonArray(config.symbols.map { JsonPrimitive(it) }))
             },
         )
 
-    /** 解析：损坏／非对象／字段缺失时回落默认（空列、置顶开），未知字段容忍。 */
+    /**
+     * 解析：无记录／损坏／非对象时回落默认 16 符号；旧数据里的
+     * pinned 字段直接忽略（不读、不报错）；未知字段容忍。
+     * 已存的空符号列是用户主动删空的结果，原样保留（不补默认）。
+     */
     fun parse(raw: String?): UserSymbolBarConfig {
-        if (raw.isNullOrBlank()) return UserSymbolBarConfig()
+        if (raw.isNullOrBlank()) return defaultConfig()
         return try {
             val root = Json.parseToJsonElement(raw) as? JsonObject
-                ?: return UserSymbolBarConfig()
-            val pinned = (root["pinned"] as? JsonPrimitive)?.booleanOrNull ?: true
+                ?: return defaultConfig()
             val symbols = (root["symbols"] as? JsonArray)
                 ?.mapNotNull { element ->
                     (element as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
                 }
                 .orEmpty()
-            UserSymbolBarConfig(symbols = normalize(symbols), pinned = pinned)
+            UserSymbolBarConfig(symbols = normalize(symbols))
         } catch (e: Exception) {
-            UserSymbolBarConfig()
+            defaultConfig()
         }
     }
 }
 
-/** 用户自定义符号栏存储：加载失败即默认（空列、置顶开）。 */
+/** 用户自定义符号栏存储：加载失败即默认 16 符号。 */
 interface UserSymbolBarStore {
     fun load(): UserSymbolBarConfig
     fun save(config: UserSymbolBarConfig)
 }
 
-/** 内存实现（默认；单测用）。 */
+/** 内存实现（默认即 16 默认符号，与偏好实现首 load 一致；单测用）。 */
 class InMemoryUserSymbolBarStore(
-    initial: UserSymbolBarConfig = UserSymbolBarConfig(),
+    initial: UserSymbolBarConfig = UserSymbolBarOps.defaultConfig(),
 ) : UserSymbolBarStore {
     private var stored = initial
     override fun load(): UserSymbolBarConfig = stored
