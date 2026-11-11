@@ -116,6 +116,7 @@ import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.TraditionalConverter
+import com.jobeen.ime.skin.library.SkinEditorEntry
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
@@ -320,6 +321,7 @@ fun MainScreen(
         "toolbar" to onOpenToolbar,
         "symbol_bar" to onOpenSymbolBar,
         "key_symbol" to onOpenKeySymbol,
+        "skin_editor" to { SkinEditorEntry.openLayouts(context) },
         "appearance" to onOpenAppearance,
         "clipboard" to onOpenClipboard,
         "voice" to onOpenVoiceSettings,

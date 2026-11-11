@@ -324,6 +324,13 @@ class KeyboardWindowView(
     private val cloudVoiceGeneration = CloudVoiceGeneration()
     private var cloudVoiceActive = false
 
+    /**
+     * 云端会话是否已开始录音（onStarted 到达）：中途失败回落本地的
+     * 判定依据——已开始录音才回落；启动失败（无网络／录音器初始化
+     * 失败，onStarted 未到）不回落，只提示。
+     */
+    private var cloudVoiceStarted = false
+
     private var isVoiceRecording = false
         set(value) {
             field = value
@@ -2082,6 +2089,7 @@ class KeyboardWindowView(
             sink = ServiceTextSink(service, service.activeInputConnection()),
             listener = object : CloudVoiceSession.Listener {
                 override fun onStarted() {
+                    cloudVoiceStarted = true
                     voiceOverlay.bringToFront()
                 }
 
@@ -2092,6 +2100,7 @@ class KeyboardWindowView(
                 override fun onDone() {
                     cloudVoiceActive = false
                     cloudVoiceSession = null
+                    cloudVoiceStarted = false
                     isVoiceRecording = false
                     panel.recording = false
                     if (!voiceOverlay.isLocked) {
@@ -2100,12 +2109,27 @@ class KeyboardWindowView(
                 }
 
                 override fun onFailed(reason: CloudSessionFailure) {
+                    // 先快照后清态：isVoiceRecording=false 会把
+                    // voicePointerId 复位为 -1（见其 setter），回落本地
+                    // 要用原指针 id，必须在清态前取。
+                    val wasRecording = cloudVoiceStarted
+                    val wasLocked = voiceOverlay.isLocked
+                    val pointerId = voicePointerId
                     cloudVoiceActive = false
                     cloudVoiceSession = null
+                    cloudVoiceStarted = false
                     isVoiceRecording = false
                     panel.recording = false
                     voiceOverlay.hide()
-                    showImeToast(context.getString(R.string.cloud_voice_failed))
+                    if (wasRecording) {
+                        // 中途失败回落本地：先提示（不静默），再用本地
+                        // Zipformer 重新开始本次录音会话（复用本地启动
+                        // 路径）；锁定态随 overlay 现状保留。
+                        showImeToast(context.getString(R.string.cloud_voice_failed_fallback))
+                        startLocalVoiceInput(pointerId, locked = wasLocked)
+                    } else {
+                        showImeToast(context.getString(R.string.cloud_voice_failed))
+                    }
                 }
             },
             markBudgetDisabled = { store.setBudgetDisabled(installed.meta.id, true) },
@@ -2127,6 +2151,7 @@ class KeyboardWindowView(
         )
         cloudVoiceSession = session
         cloudVoiceActive = true
+        cloudVoiceStarted = false
         isVoiceRecording = true
         panel.recording = true
         voiceOverlay.unlock()
@@ -2141,12 +2166,16 @@ class KeyboardWindowView(
         }
         voiceOverlay.show()
         voiceOverlay.bringToFront()
+        // 组字中启动语音先清组字态（见 startLocalVoiceInput 同款注释）：
+        // 否则 Rime 旧组字残留，语音上屏后下一按键会续进旧组字。
+        service.engine?.resetComposition()
         session.start()
     }
 
     /** 云端退出统一口：文本结算在会话内，界面收尾在这里。 */
     private fun stopCloudVoice(discard: Boolean) {
         cloudVoiceActive = false
+        cloudVoiceStarted = false
         isVoiceRecording = false
         panel.recording = false
         cloudVoiceSession?.stop(discard)
@@ -2228,6 +2257,17 @@ class KeyboardWindowView(
             voicePointerId = pointerId
             return
         }
+        startLocalVoiceInput(pointerId)
+    }
+
+    /**
+     * 本地语音启动（Zipformer）：按住与锁定两入口共用，云端中途失败
+     * 回落本地也走这里。调用前须已过全部守门（录音态／密码框／总开关／
+     * 权限／云端路由）；模型缺失时弹下载提示、不进录音态。
+     * pointerId：启动本次语音的指针 id；locked=true 时锁定浮层
+     * （工具栏锁定启动／云端回落时保留锁定态）。
+     */
+    private fun startLocalVoiceInput(pointerId: Int, locked: Boolean = false) {
         // 模型缺失时直接弹下载提示，不进入录音态：
         // 避免工具栏闪一下变暗、语音动画又永远不出现。
         if (!SherpaSpeechClient.isModelReady(context)) {
@@ -2249,9 +2289,21 @@ class KeyboardWindowView(
         if (voiceOverlay.parent == null) {
             addView(voiceOverlay)
         }
+        if (locked) voiceOverlay.setDragLocked()
 
         registerSpeechCallbacks()
 
+        // 组字中启动语音先清组字态：Rime 旧组字（preedit）不随语音
+        // 直写 InputConnection 而消失——SherpaSpeechClient 与
+        // CloudVoiceSession 均不碰引擎，notifyInputChanged 又只在
+        // 文本为空时调 onInputCleared（且 onInputCleared 只清候选／
+        // 预测、不清 Rime 组字）。不清的后果：语音上屏后下一按键
+        // 无条件续进旧组字（字母进 librime 续拼、空格／退格按旧组字
+        // 分流），与用户刚说完的内容错位。用现有 resetComposition
+        // （Action.Reset → clearComposition，与 onFinishInputView、
+        // MultiReturnAction 同口径）；无组字时为空操作。jobs 串行，
+        // 复位一定落在后续按键之前。
+        (context as ImeInputMethodService).engine?.resetComposition()
         SherpaSpeechClient.startHoldSession(context as ImeInputMethodService)
         // 启动即显示浮层：录音已在本地开始，引擎冷启动期间浮层先
         // 在（动画本体不变、不加任何文字），就绪后由回调带到最前
@@ -2294,31 +2346,9 @@ class KeyboardWindowView(
         if (!ensureRecordAudioPermission()) return
         // 云端路由与按住录音同一口径（见 startVoiceInput）。
         if (tryStartCloudVoice()) return
-        // 模型缺失时直接弹下载提示，不进入录音态（同 startVoiceInput）
-        if (!SherpaSpeechClient.isModelReady(context)) {
-            showModelDownloadPrompt()
-            return
-        }
-        isVoiceRecording = true
-        panel.recording = true
-        voiceOverlay.unlock()
-        voiceOverlay.applyColors(
-            cachedColors.background,
-            cachedColors.specialKeyBackground,
-            cachedColors.specialKeyPressed,
-            cachedColors.specialKeyText
-        )
-        if (voiceOverlay.parent == null) {
-            addView(voiceOverlay)
-        }
-        voiceOverlay.setDragLocked()
-
-        registerSpeechCallbacks()
-
-        SherpaSpeechClient.startHoldSession(context as ImeInputMethodService)
-        // 同 startVoiceInput：锁定录音同样启动即显示浮层
-        voiceOverlay.show()
-        voiceOverlay.bringToFront()
+        // 本地启动与按住共用（锁定浮层）；指针 id 沿用现状（本入口
+        // 原本不记指针，传现值即不改）。
+        startLocalVoiceInput(voicePointerId, locked = true)
     }
 
     fun onInputChanged(

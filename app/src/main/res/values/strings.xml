@@ -89,8 +89,9 @@
     <string name="skin_diag_suggestion">修复建议</string>
     <string name="skin_diag_diagnostic_mode">诊断模式</string>
     <string name="skin_diag_diagnostic_mode_desc">开启后才记录逐键面色诊断与分段探针（启动步骤、按键分发、引擎处理、提交上屏、主线程卡顿），用于定位皮肤与性能问题；关闭后不记录。</string>
-    <string name="skin_editor_not_ready">皮肤编辑器未就绪</string>
     <string name="skin_editor_no_active_skin">无生效皮肤</string>
+    <string name="skin_editor_title">皮肤编辑器</string>
+    <string name="row_sub_skin_editor">编辑当前皮肤的布局文件</string>
     <!-- 应用级脚本管理 -->
     <string name="skin_script_title">脚本管理</string>
     <string name="skin_script_empty">暂无脚本</string>
@@ -576,6 +577,8 @@
     <string name="voice_mic_on">麦克风权限已开启</string>
     <string name="voice_mic_request">去授权</string>
     <string name="voice_input_enable">启用语音输入（长按空格说话）</string>
+    <string name="voice_auto_punctuation">语音自动加标点</string>
+    <string name="voice_auto_punctuation_desc">本地识别结果自动补标点；关闭后仅保留模型自带的标点</string>
     <string name="voice_provider">识别服务商</string>
     <string name="voice_provider_local">本地离线模型</string>
     <string name="voice_provider_plugin_ready">已安装</string>
@@ -664,6 +667,7 @@
     <string name="cloud_voice_deleted">已删除</string>
     <string name="cloud_voice_unavailable_message">云端语音暂不可用（插件缺失、密钥未填、已停用或无网络），是否前往语音设置检查，或关闭云端语音回到离线识别？</string>
     <string name="cloud_voice_failed">云端语音失败，请重试或在语音设置中切换回离线识别</string>
+    <string name="cloud_voice_failed_fallback">云端语音失败，已切换本地继续录音</string>
     <string name="download">下载</string>
     <string name="downloading">下载中</string>
     <string name="model_enhance">模型增强</string>

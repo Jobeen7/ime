@@ -106,6 +106,7 @@ fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("toolbar", R.string.toolbar_title, R.string.toolbar_settings_desc, MainSettingGroup.KEYBOARD),
     CatalogPage("symbol_bar", R.string.symbol_bar_title, R.string.row_sub_symbol_bar, MainSettingGroup.KEYBOARD),
     CatalogPage("key_symbol", R.string.key_symbol_title, R.string.row_sub_key_symbol, MainSettingGroup.KEYBOARD),
+    CatalogPage("skin_editor", R.string.skin_editor_title, R.string.row_sub_skin_editor, MainSettingGroup.KEYBOARD),
     CatalogPage("appearance", R.string.appearance_title, R.string.row_sub_appearance, MainSettingGroup.APPEARANCE),
     CatalogPage("clipboard", R.string.clipboard_manager, R.string.row_sub_clipboard, MainSettingGroup.CONVENIENCE),
     CatalogPage("voice", R.string.voice_settings, R.string.row_sub_voice, MainSettingGroup.CONVENIENCE),

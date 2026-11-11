@@ -212,16 +212,48 @@ class MainSettingsCatalogTest {
     }
 
     @Test
-    fun catalogPages_eighteenKeysInOrder() {
+    fun catalogPages_nineteenKeysInOrder() {
         val keys = catalogPages().map { it.key }
         assertEquals(
             listOf(
                 "schema", "scheme_update", "rime", "candidates", "skin", "scripts", "keyboard",
-                "toolbar", "symbol_bar", "key_symbol", "appearance", "clipboard", "voice", "stats", "userdict",
+                "toolbar", "symbol_bar", "key_symbol", "skin_editor", "appearance", "clipboard", "voice", "stats", "userdict",
                 "backup", "files", "about",
             ),
             keys,
         )
+    }
+
+    @Test
+    fun catalogPages_skinEditorPage_isKeyboardGroupAfterKeySymbol() {
+        // 皮肤文件编辑器进目录：键盘组、紧跟按键符号页（键盘组末尾），
+        // 标题资源即“皮肤编辑器”；键盘组仍为多页，不影响单页组直达判定。
+        val pages = catalogPages()
+        val page = pages.single { it.key == "skin_editor" }
+        assertEquals(MainSettingGroup.KEYBOARD, page.group)
+        assertEquals(com.jobeen.ime.R.string.skin_editor_title, page.titleRes)
+        assertEquals(com.jobeen.ime.R.string.row_sub_skin_editor, page.subtitleRes)
+        assertEquals("key_symbol", pages[pages.indexOf(page) - 1].key)
+        assertEquals("appearance", pages[pages.indexOf(page) + 1].key)
+        assertNull(directPageForGroup(
+            pages.map { MainSettingEntry(it.key, "", "", it.group) },
+            MainSettingGroup.KEYBOARD,
+        ))
+    }
+
+    @Test
+    fun searchCatalog_skinEditorTitle_hitsSkinEditorPage() {
+        // 解析后的标题即“皮肤编辑器”，搜该词命中 skin_editor 页结果。
+        val pages = catalogPages().map {
+            ResolvedPage(
+                it.key,
+                if (it.key == "skin_editor") "皮肤编辑器" else it.key,
+                "",
+                "",
+            )
+        }
+        val got = searchCatalog("皮肤编辑器", pages, emptyList())
+        assertEquals(listOf("skin_editor"), got.map { it.pageKey })
     }
 
     @Test

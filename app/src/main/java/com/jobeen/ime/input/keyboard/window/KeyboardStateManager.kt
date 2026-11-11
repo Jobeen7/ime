@@ -72,10 +72,8 @@ object KeyboardStateManager {
     val isComposingNow: Boolean get() = isComposing
     private var lastEditorInfo: EditorInfo? = null
     private var lastInputEmpty = true
-    // 上次实际应用到键盘的入参，用于避免无变化时的重复刷新
-    private var lastImeAction = -1
-    private var lastAppliedEmpty = true
-    private var lastAppliedComposing = false
+    // 上次实际应用到键盘的回车键入参，用于避免无变化时的重复刷新
+    private var lastAppliedReturnKey: ReturnKeyRefreshKey? = null
 
     var keyActionListener: KeyActionListener = KeyActionListener.Empty
         set(value) {
@@ -548,10 +546,10 @@ object KeyboardStateManager {
         kb?.updatePunctuationMode(PunctuationMode.from(currentSchema?.punctuation.orEmpty()))
         kb?.let { callback?.onKeyboardChanged(it) }
         // 切到的键盘实例（新切换或 rebuild 后重建的）还没被下发过 imeAction，
-        // 而 updateReturnKeyIfNeeded 的三元组去重会把重发拦下，新实例的回车键
+        // 而 updateReturnKeyIfNeeded 的去重会把重发拦下，新实例的回车键
         // 在下一次输入变化前恒为默认换行行为：重置去重缓存并立即重发一次
         // （rebuild 也走 switchTo，一并覆盖）
-        lastImeAction = -1
+        lastAppliedReturnKey = null
         updateReturnKeyIfNeeded()
     }
 
@@ -761,20 +759,21 @@ object KeyboardStateManager {
         }
     }
 
-    // 仅当 (imeAction, empty, isComposing) 三者有实际变化时才刷新回车键。
+    // 仅当（动作、空、组字、单行多行、不要换行标志）五者有实际变化时才刷新回车键。
     private fun updateReturnKeyIfNeeded() {
         val info = lastEditorInfo ?: return
         val keyboard = currentKeyboardName?.let { keyboards[it] } ?: return
-        val action = info.imeOptions and EditorInfo.IME_MASK_ACTION
-        if (action == lastImeAction &&
-            lastInputEmpty == lastAppliedEmpty &&
-            isComposing == lastAppliedComposing
-        ) {
+        val next = ReturnKeyRefreshKey(
+            action = info.imeOptions and EditorInfo.IME_MASK_ACTION,
+            empty = lastInputEmpty,
+            composing = isComposing,
+            isMultiLine = (info.inputType and InputType.TYPE_TEXT_FLAG_MULTI_LINE) != 0,
+            noEnterAction = (info.imeOptions and EditorInfo.IME_FLAG_NO_ENTER_ACTION) != 0,
+        )
+        if (!returnKeyNeedsRefresh(lastAppliedReturnKey, next)) {
             return
         }
-        lastImeAction = action
-        lastAppliedEmpty = lastInputEmpty
-        lastAppliedComposing = isComposing
+        lastAppliedReturnKey = next
         keyboard.updateEditorInfo(info, lastInputEmpty, isComposing)
     }
 }
@@ -915,6 +914,30 @@ internal class KeyboardTypeState {
         primary = null
         last = null
     }
+}
+
+/**
+ * 回车键刷新去重键（纯数据，可单测）：动作／空／组字＋单行多行＋不要换行标志。
+ * 旧三元组漏了后两项，同动作的单行↔多行换框时不刷新，图标滞后一次输入变化
+ * （2026-11-10 文件传输助手 ＞/↵ 之争的根因；诊断 233025 确认 1.1.17.2 在装，
+ * 日志无 EditorInfo 字段数据，根因由代码核定）。
+ */
+internal data class ReturnKeyRefreshKey(
+    val action: Int,
+    val empty: Boolean,
+    val composing: Boolean,
+    val isMultiLine: Boolean,
+    val noEnterAction: Boolean,
+)
+
+/** 回车键是否需要刷新（纯决策，可单测）：五元组任一变化即刷新；无上次记录时刷新。 */
+internal fun returnKeyNeedsRefresh(prev: ReturnKeyRefreshKey?, next: ReturnKeyRefreshKey): Boolean {
+    if (prev == null) return true
+    return prev.action != next.action ||
+        prev.empty != next.empty ||
+        prev.composing != next.composing ||
+        prev.isMultiLine != next.isMultiLine ||
+        prev.noEnterAction != next.noEnterAction
 }
 
 /**

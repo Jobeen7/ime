@@ -160,7 +160,15 @@ class SkinEditorSaver(private val context: Context) {
                 return@withContext SkinEditorSaveResult.Failed("snapshot_rebuild_failed")
             }
             if (!SkinSnapshotProvider.install(context, snapshot)) {
-                return@withContext SkinEditorSaveResult.Failed("snapshot_install_failed")
+                // 安装失败亦回滚已改的文件／清单／记录（旧代码直接 Failed，
+                // live 与磁盘分叉、失败提示与事实不符）；原因串如实说明回滚结果。
+                val restored = restoreSkinJson(
+                    skinFile, oldBytes, manifestFile, oldManifestText, oldRecord,
+                )
+                return@withContext SkinEditorSaveResult.Failed(
+                    if (restored) "snapshot_install_failed，已恢复旧版"
+                    else "snapshot_install_failed，恢复旧版失败",
+                )
             }
             SkinEditorSaveResult.Saved(issues)
         }
@@ -179,15 +187,18 @@ class SkinEditorSaver(private val context: Context) {
         }
         val issues = (outcome as EditorSaveOutcome.Commit).issues
         val oldBytes = runCatching { file.file.readBytes() }.getOrNull()
+        // index 缺失时在写文件前即失败：旧代码先写 layout.json 再查
+        // oldIndex，该 return 不抛异常、不进 catch 回滚，致新布局已落盘、
+        // index.json 仍旧。先查后写，任何一步失败都按“已改项尽力还原”走。
         val oldIndex = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
+            ?: return@withContext SkinEditorSaveResult.Failed("index_missing")
         val newBytes = text.toByteArray(Charsets.UTF_8)
         val newHash = sha256Hex(newBytes)
         try {
             AtomicFiles.writeAtomically(file.file.parentFile!!, "layout.json", newBytes)
-            val index = oldIndex ?: return@withContext SkinEditorSaveResult.Failed("index_missing")
             store.writeIndex(
-                index.copy(
-                    layouts = index.layouts.map { entry ->
+                oldIndex.copy(
+                    layouts = oldIndex.layouts.map { entry ->
                         if (entry.id == file.id) {
                             entry.copy(hash = newHash, sizeBytes = newBytes.size.toLong())
                         } else {
@@ -223,7 +234,18 @@ class SkinEditorSaver(private val context: Context) {
             return@withContext SkinEditorSaveResult.Failed("snapshot_rebuild_failed")
         }
         if (!SkinSnapshotProvider.install(context, snapshot)) {
-            return@withContext SkinEditorSaveResult.Failed("snapshot_install_failed")
+            // 安装失败亦回滚已改的文件／索引（旧代码直接 Failed，
+            // live 与磁盘分叉、失败提示与事实不符）；原因串如实说明回滚结果。
+            val restored = runCatching {
+                if (oldBytes != null) {
+                    AtomicFiles.writeAtomically(file.file.parentFile!!, "layout.json", oldBytes)
+                }
+                if (oldIndex != null) store.writeIndex(oldIndex)
+            }.isSuccess
+            return@withContext SkinEditorSaveResult.Failed(
+                if (restored) "snapshot_install_failed，已恢复旧版"
+                else "snapshot_install_failed，恢复旧版失败",
+            )
         }
         SkinEditorSaveResult.Saved(issues)
     }
@@ -253,8 +275,8 @@ class SkinEditorSaver(private val context: Context) {
         manifestFile: File,
         oldManifestText: String?,
         oldRecord: ActiveRecord?,
-    ) {
-        runCatching {
+    ): Boolean {
+        return runCatching {
             if (oldBytes != null) {
                 AtomicFiles.writeAtomically(skinFile.parentFile!!, "skin.json", oldBytes)
             }
@@ -262,7 +284,7 @@ class SkinEditorSaver(private val context: Context) {
                 AtomicFiles.writeAtomically(manifestFile.parentFile!!, "manifest.json", oldManifestText)
             }
             if (oldRecord != null) store.writeActive(oldRecord)
-        }
+        }.isSuccess
     }
 
     private fun sha256Hex(bytes: ByteArray): String =

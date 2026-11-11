@@ -242,4 +242,18 @@ class EnterDecisionTest {
             EnterDecision.decide(false, field(), true, true),
         )
     }
+
+    @Test
+    fun longPressWithDedicatedKeyMultiLineSendPerformsAction() {
+        // 九宫格长按同点按：多行＋声明动作（无标志）时发该动作。
+        assertEquals(
+            EnterOutcome.PerformAction(EnterFieldAction.SEND),
+            EnterDecision.decide(
+                false,
+                field(isMultiLine = true, action = EnterFieldAction.SEND),
+                true,
+                true,
+            ),
+        )
+    }
 }
