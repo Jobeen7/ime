@@ -103,8 +103,9 @@ class EnterDecisionTest {
     fun decisionMatrixSingleMultiByActionFlagAndDedicatedKey() {
         // 回归矩阵：单行/多行 × SEND/DONE/UNSPECIFIED × 有无
         // NO_ENTER_ACTION × 有无专用换行键（点按、非组字）。
-        // 单行恒发动作（标志不影响单行）；多行恒不发动作——无专
-        // 用换行键插换行、有专用换行键无动作，与标志、声明动作无关。
+        // 单行恒发动作（标志不影响单行）；多行：未带标志且声明了动作时发该动作
+        // （2026-11-11 修订，双开微信多行 SEND 回车发纸飞机），带标志或未声明
+        // 动作时才落换行／无动作——无专用换行键插换行、有专用换行键无动作。
         val actions = listOf(
             EnterFieldAction.SEND, EnterFieldAction.DONE, EnterFieldAction.UNSPECIFIED,
         )
@@ -124,7 +125,13 @@ class EnterDecisionTest {
                         ),
                     )
                     val expectedMulti: EnterOutcome =
-                        if (dedicated) EnterOutcome.NoOp else EnterOutcome.InsertNewline
+                        if (!noEnterAction && action != EnterFieldAction.UNSPECIFIED) {
+                            EnterOutcome.PerformAction(action)
+                        } else if (dedicated) {
+                            EnterOutcome.NoOp
+                        } else {
+                            EnterOutcome.InsertNewline
+                        }
                     assertEquals(
                         expectedMulti,
                         EnterDecision.decide(
@@ -145,22 +152,49 @@ class EnterDecisionTest {
 
     @Test
     fun multiLineWithoutFlagInsertsNewlineOnlyWithoutDedicatedKey() {
-        // 非九宫格（26 键等）：多行无标志点按换行。
+        // 非九宫格（26 键等）：多行无标志且未声明动作时点按换行。
         assertEquals(
             EnterOutcome.InsertNewline,
             EnterDecision.decide(false, field(isMultiLine = true), false, false),
         )
-        // 九宫格对照：多行无标志点按无动作，换行走专用换行键。
+        // 九宫格对照：多行无标志且未声明动作时点按无动作，换行走专用换行键。
         assertEquals(
             EnterOutcome.NoOp,
             EnterDecision.decide(false, field(isMultiLine = true), true, false),
         )
-        // 九宫格多行无标志时即使声明了动作也不发动作（无标志即换行口径，
-        // 九宫格上换行功能已去，落点为无动作）。
+        // 九宫格多行无标志但声明了 SEND 时发该动作（2026-11-11 修订：
+        // 双开微信文件传输助手报多行＋SEND，回车应为纸飞机、点按发送，
+        // 与单行微信一致；换行仍走专用换行键）。
         assertEquals(
-            EnterOutcome.NoOp,
+            EnterOutcome.PerformAction(EnterFieldAction.SEND),
             EnterDecision.decide(
                 false,
+                field(isMultiLine = true, action = EnterFieldAction.SEND),
+                true,
+                false,
+            ),
+        )
+    }
+
+    @Test
+    fun multiLineSendMatchesSingleLineSend() {
+        // 两微信一致：单行 SEND 与多行 SEND（均未带不要换行标志）
+        // 回车都是纸飞机、点按都发送；组字中时仍先上屏候选。
+        for (multiLine in listOf(false, true)) {
+            assertEquals(
+                EnterOutcome.PerformAction(EnterFieldAction.SEND),
+                EnterDecision.decide(
+                    false,
+                    field(isMultiLine = multiLine, action = EnterFieldAction.SEND),
+                    true,
+                    false,
+                ),
+            )
+        }
+        assertEquals(
+            EnterOutcome.CommitCandidate,
+            EnterDecision.decide(
+                true,
                 field(isMultiLine = true, action = EnterFieldAction.SEND),
                 true,
                 false,

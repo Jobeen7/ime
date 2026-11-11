@@ -13,14 +13,17 @@ package com.jobeen.ime.input
  * - 组字中 → 上屏候选（走现有 Rime 回车路径），点按长按都一样。
  * - 单行＋声明了动作（SEARCH/SEND/GO/NEXT/PREVIOUS/DONE）→ 发该动作。
  * - 单行＋没声明动作（UNSPECIFIED，含 NONE）→ 发 DONE。
+ * - 多行＋声明了动作且未带不要换行标志 → 发该动作（2026-11-11 修订：
+ *   双开微信文件传输助手报多行＋SEND，回车原为无动作、点按不能发送，
+ *   与单行微信的纸飞机不一致；用户要两微信回车一致为纸飞机、点按发送。
+ *   专用换行键仍负责插换行，换行功能不受影响）。
  * - 多行＋带不要换行标志 → 同无标志：无专用换行键插换行，
  *   有专用换行键（九宫格）无动作。IME_FLAG_NO_ENTER_ACTION 的
  *   平台含义是“回车不得被 action 取代”（多行字段需要回车插
- *   换行），绝不是“按回车执行该 action”——声明了 SEND/DONE
- *   也不得覆盖多行回车；显式发送走独立的发送键
+ *   换行），带该标志时声明了 SEND/DONE 也不发动作；显式发送走独立的发送键
  *   （MultiReturnAction 绑定），不走本决策。
- * - 多行＋没带标志＋无专用换行键 → 插换行。
- * - 多行＋没带标志＋有专用换行键（九宫格）→ 无动作（换行走专用换行键）。
+ * - 多行＋没带标志＋没声明动作（UNSPECIFIED）→ 无专用换行键插换行，
+ *   有专用换行键（九宫格）无动作（换行走专用换行键）。
  * - 长按：无专用换行键时等于插换行（手机上的 Shift+Enter 口子，
  *   组字中时仍先上屏候选）；有专用换行键时同点按。
  *
@@ -90,8 +93,11 @@ object EnterDecision {
                 },
             )
         }
-        // 多行：noEnterAction 不改变回车去向（见文件头决策表）——
-        // 标志只说“回车不得被 action 取代”，多行回车恒为换行／无动作。
+        // 多行：声明了动作且未带不要换行标志时发该动作（2026-11-11 修订，
+        // 见文件头决策表）；带不要换行标志或未声明动作时才落换行／无动作。
+        if (!field.noEnterAction && field.action != EnterFieldAction.UNSPECIFIED) {
+            return EnterOutcome.PerformAction(field.action)
+        }
         if (!hasDedicatedNewlineKey) {
             return EnterOutcome.InsertNewline
         }
