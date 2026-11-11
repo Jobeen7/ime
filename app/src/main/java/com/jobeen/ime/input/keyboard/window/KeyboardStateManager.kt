@@ -14,8 +14,6 @@ import com.jobeen.ime.data.manager.discoverSchemes
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.rime.data.DataManager
-import com.jobeen.ime.input.EnterField
-import com.jobeen.ime.input.EnterFieldBoundary
 import com.jobeen.ime.input.keyboard.impl.IKeyboard
 import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
@@ -72,38 +70,12 @@ object KeyboardStateManager {
 
     /** 当前引擎是否处于组字中（剪贴板搜索的退格分流要据此决定归属）。 */
     val isComposingNow: Boolean get() = isComposing
-
-    /** 新输入会话开始时复位组字态（startInput 调用，见该处注释）。 */
-    internal fun resetComposingForNewInput() {
-        isComposing = false
-    }
-
-    /**
-     * 当前字段的决策输入（回车键刷新用，纯数据可单测）：
-     * startInput 确立、onInputChanged 以 effectiveInfo 覆盖、
-     * onDestroy 清空。与 lastEditorInfo 同步维护——刷新键
-     * （updateReturnKeyIfNeeded）读它，不再只读 lastEditorInfo，
-     * 否则 startInput→switchTo 的刷新会读到上个字段的信息。
-     */
-    private var lastEnterField: EnterField? = null
-
-    /** 当前字段的决策输入（回车键刷新用）。 */
-    internal val currentEnterField: EnterField? get() = lastEnterField
-
-    /**
-     * 新输入会话开始时确立当前字段（startInput 调用，见该处注释）：
-     * 组字态复位＋字段确立一起做——只复位组字态不够，字段信息
-     * 若还留着上个字段，回车刷新就按上个字段算图标。
-     */
-    internal fun beginInputSession(field: EnterField) {
-        resetComposingForNewInput()
-        lastEnterField = field
-    }
-
     private var lastEditorInfo: EditorInfo? = null
     private var lastInputEmpty = true
-    // 上次实际应用到键盘的回车键入参，用于避免无变化时的重复刷新
-    private var lastAppliedReturnKey: ReturnKeyRefreshKey? = null
+    // 上次实际应用到键盘的入参，用于避免无变化时的重复刷新
+    private var lastImeAction = -1
+    private var lastAppliedEmpty = true
+    private var lastAppliedComposing = false
 
     var keyActionListener: KeyActionListener = KeyActionListener.Empty
         set(value) {
@@ -218,11 +190,7 @@ object KeyboardStateManager {
         // 服务销毁后不再需要，全部释放避免小泄漏
         keyboardFactory = null
         lastEditorInfo = null
-        lastEnterField = null
         keyActionListener = KeyActionListener.Empty
-        // 组字态是跨输入框的残留态：服务销毁后不再有效，复位避免
-        // 下一服务实例沿用旧组字态钉住回车键图标（↵）。
-        isComposing = false
     }
 
     fun setKeyboardFactory(factory: (String) -> IKeyboard) {
@@ -580,10 +548,10 @@ object KeyboardStateManager {
         kb?.updatePunctuationMode(PunctuationMode.from(currentSchema?.punctuation.orEmpty()))
         kb?.let { callback?.onKeyboardChanged(it) }
         // 切到的键盘实例（新切换或 rebuild 后重建的）还没被下发过 imeAction，
-        // 而 updateReturnKeyIfNeeded 的去重会把重发拦下，新实例的回车键
+        // 而 updateReturnKeyIfNeeded 的三元组去重会把重发拦下，新实例的回车键
         // 在下一次输入变化前恒为默认换行行为：重置去重缓存并立即重发一次
         // （rebuild 也走 switchTo，一并覆盖）
-        lastAppliedReturnKey = null
+        lastImeAction = -1
         updateReturnKeyIfNeeded()
     }
 
@@ -636,25 +604,6 @@ object KeyboardStateManager {
     }
 
     fun startInput(info: EditorInfo, fieldChanged: Boolean = false) {
-        // 新输入会话开始：上个输入框的组字态已失效，复位 isComposing。
-        // 组字态只由引擎 Status/Commit 消息推进，换框时引擎不发清零
-        // Status（onStartInputView 只推代次、不清组字；onFinishInputView
-        // 也不清组字），旧值会一直钉住回车键显示为“上屏候选”（↵），
-        // 换什么框都不变（2026-11-11，文件传输助手 ↵ 钉死即此因；
-        // 微信各聊天框字段身份相同，fieldChanged 门控拦不住，必须
-        // 无条件复位）。行为不受影响：按键时组字取引擎 job 执行时
-        // 点的原始输入，不取本值；新框内一打字引擎 Status 即重新置真。
-        //
-        // 同一会话开始还要确立当前字段信息（2026-11-11，.4 下同一
-        // 字段传输助手一张纸飞机一张 ↵）：回车刷新只读 lastEditorInfo，
-        // 而它此前只在 onInputChanged 里更新；startInput→switchTo
-        // 的刷新若读到上个字段的信息，会把上个字段的回车图标
-        // （单行 SEND 的纸飞机／NEXT 的 ＞）带到新字段，且
-        // onInputChanged 未必随后纠正（连接为空／窗口未建时直接
-        // 跳过），旧图标就钉住。beginInputSession 在此确立新字段，
-        // lastEditorInfo 同步更新，刷新即按新字段算。
-        beginInputSession(EnterFieldBoundary.fromEditorInfo(info))
-        lastEditorInfo = info
         val inputClass = info.inputType and InputType.TYPE_MASK_CLASS
         val variation = info.inputType and InputType.TYPE_MASK_VARIATION
         // 文本类密码框自动切英文键盘（Qwerty + engine 侧强制 ascii_mode 直输）；
@@ -678,11 +627,6 @@ object KeyboardStateManager {
                 switchTo(currentSchema?.layout ?: defaultKeyboardName)
             }
         }
-        // 换框即按新字段刷一次回车键：switchTo 在同键盘同类型同
-        // 方案时早退、不刷新，早退路径也要按新字段刷，否则新
-        // 字段沿用旧图标；非早退路径 switchTo 已刷过，本次去重
-        // 跳过、不重复下发。
-        updateReturnKeyIfNeeded()
     }
 
     /**
@@ -761,7 +705,6 @@ object KeyboardStateManager {
                 info
             }
             lastEditorInfo = effectiveInfo
-            lastEnterField = EnterFieldBoundary.fromEditorInfo(effectiveInfo)
             lastInputEmpty = text.isEmpty()
             updateReturnKeyIfNeeded()
         }
@@ -818,25 +761,20 @@ object KeyboardStateManager {
         }
     }
 
-    // 仅当（动作、空、组字、单行多行、不要换行标志）五者有实际变化时才刷新回车键。
+    // 仅当 (imeAction, empty, isComposing) 三者有实际变化时才刷新回车键。
     private fun updateReturnKeyIfNeeded() {
         val info = lastEditorInfo ?: return
         val keyboard = currentKeyboardName?.let { keyboards[it] } ?: return
-        // 刷新键按当前字段算：优先读 startInput / onInputChanged
-        // 确立的 lastEnterField（纯数据）；未确立时才从
-        // lastEditorInfo 现算——两者同步维护，正常恒走前者。
-        val field = lastEnterField ?: EnterFieldBoundary.fromEditorInfo(info)
-        val next = ReturnKeyRefreshKey(
-            action = EnterFieldBoundary.toEditorAction(field.action),
-            empty = lastInputEmpty,
-            composing = isComposing,
-            isMultiLine = field.isMultiLine,
-            noEnterAction = field.noEnterAction,
-        )
-        if (!returnKeyNeedsRefresh(lastAppliedReturnKey, next)) {
+        val action = info.imeOptions and EditorInfo.IME_MASK_ACTION
+        if (action == lastImeAction &&
+            lastInputEmpty == lastAppliedEmpty &&
+            isComposing == lastAppliedComposing
+        ) {
             return
         }
-        lastAppliedReturnKey = next
+        lastImeAction = action
+        lastAppliedEmpty = lastInputEmpty
+        lastAppliedComposing = isComposing
         keyboard.updateEditorInfo(info, lastInputEmpty, isComposing)
     }
 }
@@ -977,30 +915,6 @@ internal class KeyboardTypeState {
         primary = null
         last = null
     }
-}
-
-/**
- * 回车键刷新去重键（纯数据，可单测）：动作／空／组字＋单行多行＋不要换行标志。
- * 旧三元组漏了后两项，同动作的单行↔多行换框时不刷新，图标滞后一次输入变化
- * （2026-11-10 文件传输助手 ＞/↵ 之争的根因；诊断 233025 确认 1.1.17.2 在装，
- * 日志无 EditorInfo 字段数据，根因由代码核定）。
- */
-internal data class ReturnKeyRefreshKey(
-    val action: Int,
-    val empty: Boolean,
-    val composing: Boolean,
-    val isMultiLine: Boolean,
-    val noEnterAction: Boolean,
-)
-
-/** 回车键是否需要刷新（纯决策，可单测）：五元组任一变化即刷新；无上次记录时刷新。 */
-internal fun returnKeyNeedsRefresh(prev: ReturnKeyRefreshKey?, next: ReturnKeyRefreshKey): Boolean {
-    if (prev == null) return true
-    return prev.action != next.action ||
-        prev.empty != next.empty ||
-        prev.composing != next.composing ||
-        prev.isMultiLine != next.isMultiLine ||
-        prev.noEnterAction != next.noEnterAction
 }
 
 /**
