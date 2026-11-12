@@ -109,14 +109,6 @@ abstract class SidePanelRender(
     var visibleItemCount: Int = visibleItemCount.coerceAtLeast(1)
         private set
 
-    /**
-     * 底部固定入口（2026-11-12 九宫格左竖栏“自定义”）：不参与滚动，
-     * 恒贴面板底部；为 null 时面板与旧行为完全一致。footerHeightFraction
-     * 为入口占面板高度的比例（默认 1/6，两行 12sp 字放得下）。
-     */
-    var footer: Item? = null
-    var footerHeightFraction: Float = 1f / 6f
-
     fun updateItems(items: List<Item>) {
         this.items = items
     }
@@ -125,26 +117,14 @@ abstract class SidePanelRender(
         visibleItemCount = count.coerceAtLeast(1)
     }
 
-    /** 入口高度（无入口时为 0）。 */
-    fun footerHeight(panelHeight: Float): Float =
-        if (footer != null) panelHeight * footerHeightFraction else 0f
-
-    /** 可滚区高度（面板高减入口高）。 */
-    fun scrollAreaHeight(panelHeight: Float): Float = panelHeight - footerHeight(panelHeight)
-
-    fun itemHeight(panelHeight: Float): Float = scrollAreaHeight(panelHeight) / visibleItemCount
+    fun itemHeight(panelHeight: Float): Float = panelHeight / visibleItemCount
 
     fun contentHeight(panelHeight: Float): Float = itemHeight(panelHeight) * items.size
 
-    fun maxScroll(panelHeight: Float): Float = max(0f, contentHeight(panelHeight) - scrollAreaHeight(panelHeight))
+    fun maxScroll(panelHeight: Float): Float = max(0f, contentHeight(panelHeight) - panelHeight)
 
-    /**
-     * 触点所在条目下标；落在底部固定入口内时返回 [items].size（入口哨兵，
-     * 调用方据此取 [footer] 的动作，禁止直接拿它下标 [items]）。
-     */
+    /** 触点所在条目下标；不在任何条目内时返回 -1。 */
     fun itemIndexAt(panel: RectF, y: Float, scrollOffset: Float): Int {
-        val fh = footerHeight(panel.height())
-        if (footer != null && fh > 0f && y >= panel.bottom - fh) return items.size
         val itemHeight = itemHeight(panel.height())
         if (itemHeight <= 0f || !panel.contains(panel.centerX(), y)) return -1
         return ((y - panel.top + scrollOffset) / itemHeight).toInt().takeIf { it in items.indices }
@@ -164,7 +144,6 @@ abstract class SidePanelRender(
         drawPanel(canvas, panel)
         drawItems(canvas, panel, scrollOffset, pressedIndex, stretch, pressedAlpha, selectedIndex)
         drawScrollbar(canvas, panel, scrollOffset)
-        drawFooter(canvas, panel, pressedIndex, pressedAlpha)
     }
 
     private fun drawPanel(canvas: Canvas, panel: RectF) {
@@ -219,8 +198,8 @@ abstract class SidePanelRender(
                     translate(0f, -panel.bottom)
                 }
             }
-            // 条目只画在可滚区（入口区不参与滚动，条目不得画进入口区）。
-            val scrollArea = RectF(panel.left, panel.top, panel.right, panel.bottom - footerHeight(panel.height()))
+            // 条目只画在面板内。
+            val scrollArea = RectF(panel.left, panel.top, panel.right, panel.bottom)
             val clipRadius = cornerRadius()
             if (clipRadius > 0f) {
                 clipPath.reset()
@@ -234,7 +213,7 @@ abstract class SidePanelRender(
             items.forEachIndexed { index, item ->
                 val top = panel.top + itemHeight * index - scrollOffset
                 val bottom = top + itemHeight
-                if (bottom < panel.top || top > panel.bottom - footerHeight(panel.height())) return@forEachIndexed
+                if (bottom < panel.top || top > panel.bottom) return@forEachIndexed
 
                 //disabled selection background color
                 val isSelected = index == selectedIndex
@@ -272,13 +251,13 @@ abstract class SidePanelRender(
         if (items.size <= visibleItemCount || maxScroll <= 0f) return
         val itemHeight = itemHeight(panel.height())
         if (itemHeight <= 0f) return
-        val scrollBottom = panel.bottom - footerHeight(panel.height())
+        val scrollBottom = panel.bottom
         val trackTop = panel.top + dp(style.scrollbarTrackInsetDp)
         val trackBottom = scrollBottom - dp(style.scrollbarTrackInsetDp)
         val trackHeight = trackBottom - trackTop
         if (trackHeight <= 0f) return
         val thumbHeight =
-            (trackHeight * scrollAreaHeight(panel.height()) / contentHeight(panel.height()) * 0.6f).coerceAtLeast(
+            (trackHeight * panel.height() / contentHeight(panel.height()) * 0.6f).coerceAtLeast(
                 dp(
                     style.scrollbarMinThumbHeightDp
                 )
@@ -291,52 +270,6 @@ abstract class SidePanelRender(
         scrollbarPaint.color = items.firstOrNull()?.textColor ?: style.scrollbarColor
         val radius = width / 2f
         canvas.drawRoundRect(scrollbarRect, radius, radius, scrollbarPaint)
-    }
-
-    /**
-     * 底部固定入口：分隔线＋两行字（“⊕”／“自定义”，label 按 \n 分行，
-     * 每行居中）。无入口时不画。按压态（pressedIndex 为入口哨兵）时
-     * 入口区铺按压底色。
-     */
-    private fun drawFooter(canvas: Canvas, panel: RectF, pressedIndex: Int, pressedAlpha: Int) {
-        val foot = footer ?: return
-        val fh = footerHeight(panel.height())
-        if (fh <= 0f) return
-        val top = panel.bottom - fh
-        val bottom = panel.bottom
-        if (pressedIndex == items.size) {
-            val c = style.pressedItemColor
-            panelPaint.color = Color.rgb(Color.red(c), Color.green(c), Color.blue(c))
-            panelPaint.alpha = pressedAlpha
-            canvas.drawRect(panel.left, top, panel.right, bottom, panelPaint)
-            panelPaint.alpha = 255
-        }
-        // 分隔线（入口区顶部）。
-        panelPaint.color = style.scrollbarColor
-        panelPaint.alpha = 60
-        canvas.drawRect(panel.left + dp(6f), top, panel.right - dp(6f), top + dp(1f), panelPaint)
-        panelPaint.alpha = 255
-        // 两行字：label 按 \n 分行，行高均分入口高，各行居中。
-        val lines = foot.label.split("\n")
-        textPaint.color = foot.textColor
-        textPaint.textSize = dp(foot.textSize)
-        textPaint.typeface = typefaceCache.getOrPut(foot.textStyle) {
-            GlobalFonts.typefaceFor(context, FontRole.SIDEPANEL, foot.textStyle)
-                ?: Typeface.create(Typeface.DEFAULT, foot.textStyle)
-        }
-        val lineH = fh / lines.size
-        val originalAlign = textPaint.textAlign
-        textPaint.textAlign = Paint.Align.LEFT
-        lines.forEachIndexed { i, line ->
-            val bounds = textBounds
-            textPaint.getTextBounds(line, 0, line.length, bounds)
-            val centerX = panel.centerX()
-            val centerY = top + lineH * i + lineH * 0.5f
-            val x = centerX - bounds.exactCenterX()
-            val y = centerY - bounds.exactCenterY() + 5
-            canvas.drawText(line, x, y, textPaint)
-        }
-        textPaint.textAlign = originalAlign
     }
 
     protected fun dp(value: Float): Float = value * density

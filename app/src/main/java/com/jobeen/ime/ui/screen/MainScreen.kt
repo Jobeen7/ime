@@ -29,7 +29,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -49,7 +48,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import com.jobeen.ime.ui.theme.LocalMonetCardColor
@@ -797,25 +795,27 @@ fun MainScreen(
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    FloatingActionButton(
-                        onClick = {
-                            touch()
-                            if (!fabAnyRunning) fabExpanded = !fabExpanded
-                        },
-                        modifier = Modifier.drawBackdrop(
-                            backdrop = fabBackdrop,
-                            // 圆角 50% 在方形钮面上即圆形；lens 只支持
-                            // CornerBasedShape，CircleShape 会抛异常，故不用它。
-                            shape = { RoundedCornerShape(50) },
-                            effects = {
-                                blur(2.dp.toPx())
-                                lens(12.dp.toPx(), 24.dp.toPx())
+                    // 主钮与同步/部署动作钮同一做法：普通 Box＋drawBackdrop 玻璃层。
+                    // 不用 FloatingActionButton——它在钮面另画一层白色八角
+                    //（同步/部署两钮是 Box＋玻璃，没有白块，主钮改成同样结构）。
+                    Box(
+                        modifier = Modifier
+                            .size(56.dp)
+                            .drawBackdrop(
+                                backdrop = fabBackdrop,
+                                // 圆角 50% 在方形钮面上即圆形；lens 只支持
+                                // CornerBasedShape，CircleShape 会抛异常，故不用它。
+                                shape = { RoundedCornerShape(50) },
+                                effects = {
+                                    blur(2.dp.toPx())
+                                    lens(12.dp.toPx(), 24.dp.toPx())
+                                },
+                            )
+                            .clickable {
+                                touch()
+                                if (!fabAnyRunning) fabExpanded = !fabExpanded
                             },
-                        ),
-                        shape = CircleShape,
-                        // 玻璃底：钮面即 Backdrop 模糊＋折射层，container 透明。
-                        containerColor = Color.Transparent,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        contentAlignment = Alignment.Center,
                     ) {
                         if (fabAnyRunning) {
                             // 运行态只留旋转弧：默认底圈会在玻璃钮上画成实心白块
@@ -826,11 +826,8 @@ fun MainScreen(
                                 strokeWidth = 2.dp,
                                 trackColor = Color.Transparent,
                             )
-                        } else {
-                            // 方案 A（2026-11-12 他定）：纯玻璃圆钮——
-                            // 4 层实心圆全删，只留磨砂玻璃底，无白块也不发黑。
-                            // 内容为空，钮面即 drawBackdrop 的玻璃层。
                         }
+                        // 静止态内容为空，钮面即 drawBackdrop 的玻璃层。
                     }
                 }
             }

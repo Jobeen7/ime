@@ -1800,14 +1800,6 @@ class SidePanelKeyView(
     ctx: Context, colors: KeyboardColors.ColorScheme, def: KeyDef.Appearance.SidePannel,
     keepSelection: Boolean = false,
 ) : SidePanelView(ctx, colors, def, keepSelection) {
-    /**
-     * 底部固定入口（2026-11-12 九宫格左竖栏“自定义”）：KeyDef 转
-     * Item 后交父类；为 null 时清除入口。
-     */
-    fun setFooter(itemDef: KeyDef?) {
-        setFooter(itemDef?.let { render.toItem(it) })
-    }
-
     override val render: SidePanelRender = object : SidePanelRender(
         ctx,
         colors,

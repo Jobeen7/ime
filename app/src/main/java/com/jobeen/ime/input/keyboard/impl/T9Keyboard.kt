@@ -64,9 +64,10 @@ class T9Keyboard(
     }
 
     /**
-     * 左竖栏“自定义”固定入口（2026-11-12 他定）：两行字（⊕／自定义），
-     * 字色取 Variant.Normal（默认键字色，不加颜色），点开符号设置页。
-     * 候选拼音态不显示（入口清除）。
+     * 左竖栏“自定义”入口（2026-11-12 他定，12-12 改）：不是固定底栏，
+     * 是符号列表最后一项——放在最后一个符号（＆）后面，随列表一起滑；
+     * 滑到底才看见。两行字（⊕／自定义），字色取 Variant.Normal
+     *（默认键字色，不加颜色），点开符号设置页。候选拼音态不显示。
      */
     private fun customEntryDef(): KeyDef = KeyDef(
         appearance = KeyDef.Appearance.Text(
@@ -79,7 +80,7 @@ class T9Keyboard(
         behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.OpenSymbolBarSettingsAction)),
     )
 
-    /** 左竖栏符号 KeyDef（用户 16 符号；空列时用户主动删空，原样留空）。 */
+    /** 左竖栏符号 KeyDef：用户 16 符号＋末尾“自定义”入口（共 17 项，可滑）。 */
     private fun symbolItemDefs(): List<KeyDef> =
         userSymbolStore.load().symbols.map { ch ->
             KeyDef(
@@ -92,17 +93,15 @@ class T9Keyboard(
                 ),
                 behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(ch))),
             )
-        }
+        } + customEntryDef()
 
     override fun onPossibleCandidatePinYin(data: List<CandidatePinYin>) {
         if (data.isEmpty()) {
-            // 无候选：左竖栏改用户 16 符号（替 7 标点）＋底部固定“自定义”入口。
+            // 无候选：左竖栏改用户 16 符号（替 7 标点），末尾跟“自定义”入口。
             super.updateSidePanel(symbolItemDefs())
-            super.updateSidePanelFooter(customEntryDef())
             return
         }
-        // 有候选拼音：竖栏显示拼音候选，“自定义”入口清除。
-        super.updateSidePanelFooter(null)
+        // 有候选拼音：竖栏显示拼音候选。
         // 与候选网格侧栏共用同一份构建缓存，避免同批数据每键重复全量构建
         super.updateSidePanel(com.jobeen.ime.input.panel.component.PinYinKeyDefCache.get(data))
     }

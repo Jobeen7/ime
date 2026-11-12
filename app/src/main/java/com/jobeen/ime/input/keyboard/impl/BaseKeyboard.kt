@@ -212,14 +212,6 @@ abstract class BaseKeyboard(
         spanPanelViews.filterIsInstance<SidePanelKeyView>().firstOrNull()?.updateItems(items)
     }
 
-    /**
-     * 侧栏底部固定入口（2026-11-12 九宫格左竖栏“自定义”）：为 null
-     * 时清除入口。仅 T9 在无候选时设置，候选拼音态清除。
-     */
-    protected open fun updateSidePanelFooter(itemDef: KeyDef?) {
-        spanPanelViews.filterIsInstance<SidePanelKeyView>().firstOrNull()?.setFooter(itemDef)
-    }
-
     protected open fun resetSidePanelPosition() {
         spanPanelViews.filterIsInstance<SidePanelKeyView>().firstOrNull()?.resetPosition()
     }
