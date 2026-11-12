@@ -55,6 +55,15 @@ abstract class SidePanelView(
         contentView.resetPosition(true)
     }
 
+    /**
+     * 底部固定入口（2026-11-12 九宫格左竖栏“自定义”）：为 null 时清除
+     * 入口，面板与旧行为一致。入口动作经既有 onItemAction 分发。
+     */
+    fun setFooter(item: SidePanelRender.Item?) {
+        render.footer = item
+        contentView.invalidate()
+    }
+
     fun refreshTheme(newColors: KeyboardColors.ColorScheme) {
         colors = newColors
         radius = dp(newColors.cornerRadius)
@@ -274,7 +283,12 @@ abstract class SidePanelView(
 
                     parent.requestDisallowInterceptTouchEvent(false)
                     if (click) {
-                        render.items[index].action?.let { onItemAction?.invoke(it) }
+                        // 入口哨兵（index == 条目数）取入口动作，禁止下标取条目。
+                        if (index == render.items.size && render.footer != null) {
+                            render.footer?.action?.let { onItemAction?.invoke(it) }
+                        } else {
+                            render.items[index].action?.let { onItemAction?.invoke(it) }
+                        }
                     } else if (springBackIfNeeded()) {
                         invalidate()
                     } else if (abs(velocityY) >= minFlingVelocity) {

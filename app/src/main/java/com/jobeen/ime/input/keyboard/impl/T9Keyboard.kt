@@ -2,6 +2,7 @@ package com.jobeen.ime.input.keyboard.impl
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
@@ -12,6 +13,9 @@ import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.PlaceholderValues
 import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
+import com.jobeen.ime.skin.symbol.SharedPrefsUserSymbolBarStore
+import com.jobeen.ime.skin.symbol.UserSymbolBarStore
+import com.jobeen.ime.ui.SymbolBarSettingsActivity
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyDef
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -48,30 +52,70 @@ class T9Keyboard(
     var punctuations = fullWidthPunctuations
     private var state: PunctuationMode = PunctuationMode.FullWidth
 
+    /**
+     * 左竖栏符号源（2026-11-12 九宫格左竖栏重做）：与符号面板共用
+     * 同一份用户符号偏好；设置页改动后下次无候选即跟变。
+     */
+    private val userSymbolStore: UserSymbolBarStore = SharedPrefsUserSymbolBarStore(context)
+
     init {
         this.updatePunctuationMode(state)
         this.setSidePanelItemListener { action -> this.onAction(action) }
     }
 
+    /**
+     * 左竖栏“自定义”固定入口（2026-11-12 他定）：两行字（⊕／自定义），
+     * 字色取 Variant.Normal（默认键字色，不加颜色），点开符号设置页。
+     * 候选拼音态不显示（入口清除）。
+     */
+    private fun customEntryDef(): KeyDef = KeyDef(
+        appearance = KeyDef.Appearance.Text(
+            displayText = "⊕\n自定义",
+            textSize = 12f,
+            percentWidth = 0.5f,
+            margin = false,
+            variant = Variant.Normal,
+        ),
+        behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.OpenSymbolBarSettingsAction)),
+    )
+
+    /** 左竖栏符号 KeyDef（用户 16 符号；空列时用户主动删空，原样留空）。 */
+    private fun symbolItemDefs(): List<KeyDef> =
+        userSymbolStore.load().symbols.map { ch ->
+            KeyDef(
+                appearance = KeyDef.Appearance.Text(
+                    displayText = ch,
+                    textSize = 15f,
+                    percentWidth = 0.5f,
+                    margin = false,
+                    variant = Variant.Alternative
+                ),
+                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(ch))),
+            )
+        }
+
     override fun onPossibleCandidatePinYin(data: List<CandidatePinYin>) {
         if (data.isEmpty()) {
-            super.updateSidePanel(
-                punctuations.map { ch ->
-                    KeyDef(
-                        appearance = KeyDef.Appearance.Text(
-                            displayText = ch,
-                            textSize = 15f,
-                            percentWidth = 0.5f,
-                            margin = false,
-                            variant = Variant.Alternative
-                        ),
-                        behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(ch))),
-                    )
-                })
+            // 无候选：左竖栏改用户 16 符号（替 7 标点）＋底部固定“自定义”入口。
+            super.updateSidePanel(symbolItemDefs())
+            super.updateSidePanelFooter(customEntryDef())
             return
         }
+        // 有候选拼音：竖栏显示拼音候选，“自定义”入口清除。
+        super.updateSidePanelFooter(null)
         // 与候选网格侧栏共用同一份构建缓存，避免同批数据每键重复全量构建
         super.updateSidePanel(com.jobeen.ime.input.panel.component.PinYinKeyDefCache.get(data))
+    }
+
+    /** “自定义”入口就地处理：直接起符号设置页，不下发引擎、不进服务分发。 */
+    override fun onAction(action: KeyboardAction) {
+        if (action is KeyboardAction.OpenSymbolBarSettingsAction) {
+            val intent = Intent(context, SymbolBarSettingsActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            runCatching { context.startActivity(intent) }
+            return
+        }
+        super.onAction(action)
     }
 
     companion object {

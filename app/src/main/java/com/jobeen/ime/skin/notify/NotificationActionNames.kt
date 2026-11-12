@@ -79,6 +79,7 @@ object NotificationActionNames {
         is KeyboardAction.ShowPerformanceAction -> "ShowPerformanceAction"
         is KeyboardAction.SubCollectionPageUpAction -> "SubCollectionPageUpAction"
         is KeyboardAction.SubCollectionPageDownAction -> "SubCollectionPageDownAction"
+        is KeyboardAction.OpenSymbolBarSettingsAction -> "OpenSymbolBarSettingsAction"
     }
 
     /**

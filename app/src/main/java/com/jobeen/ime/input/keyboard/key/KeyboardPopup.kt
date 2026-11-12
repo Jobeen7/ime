@@ -255,5 +255,6 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.ShowPerformanceAction -> "ShowPerformanceAction"
         is KeyboardAction.SubCollectionPageUpAction -> "SubCollectionPageUpAction"
         is KeyboardAction.SubCollectionPageDownAction -> "SubCollectionPageDownAction"
+        is KeyboardAction.OpenSymbolBarSettingsAction -> "OpenSymbolBarSettingsAction"
     }
 }

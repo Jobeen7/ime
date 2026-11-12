@@ -182,6 +182,13 @@ sealed class KeyboardAction {
     data object SettingsAction : KeyboardAction()
 
     /**
+     * 打开自定义符号栏设置页（2026-11-12 九宫格左竖栏“自定义”入口）：
+     * 仅由 T9 左竖栏底部固定入口发出；T9Keyboard.onAction 就地拦截、
+     * 直接起 SymbolBarSettingsActivity，不下发引擎、不进服务分发。
+     */
+    data object OpenSymbolBarSettingsAction : KeyboardAction()
+
+    /**
      * 应用级脚本动作（脚本接线波次）：
      * - [RunScriptAction]：运行应用级脚本库中的一个脚本（值 = 脚本 id）；
      *   执行在后台线程，返回值按脚本桥接规则转动作（见 SkinScriptKeyBridge）。
