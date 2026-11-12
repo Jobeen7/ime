@@ -108,12 +108,6 @@ import kotlinx.coroutines.delay
 import kotlin.math.roundToInt
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.kyant.backdrop.Backdrop
-import com.kyant.backdrop.backdrops.layerBackdrop
-import com.kyant.backdrop.backdrops.rememberLayerBackdrop
-import com.kyant.backdrop.drawBackdrop
-import com.kyant.backdrop.effects.blur
-import com.kyant.backdrop.effects.lens
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.skin.library.SkinEditorEntry
@@ -201,8 +195,6 @@ fun MainScreen(
     val fabSizePx = with(density) { 60.dp.toPx() }
     val fabMarginPx = with(density) { 16.dp.toPx() }
     var containerSize by remember { mutableStateOf(IntSize.Zero) }
-    // FAB 玻璃背景层：记录设置页内容，供三钮做液态玻璃折射＋模糊。
-    val fabBackdrop = rememberLayerBackdrop()
     var fabFrac by remember {
         mutableStateOf(
             Offset(
@@ -488,7 +480,6 @@ fun MainScreen(
             Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .layerBackdrop(fabBackdrop)
                     .verticalScroll(
                         if (searchOpen) searchScroll
                         else if (openGroup == null) homeScroll
@@ -749,7 +740,6 @@ fun MainScreen(
                                 FabAction(
                                     label = stringResource(R.string.fab_deploy),
                                     glyph = FabGlyph.DEPLOY,
-                                    backdrop = fabBackdrop,
                                     running = deployRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -761,7 +751,6 @@ fun MainScreen(
                                 FabAction(
                                     label = stringResource(R.string.fab_sync),
                                     glyph = FabGlyph.SYNC,
-                                    backdrop = fabBackdrop,
                                     running = syncRunning,
                                     enabled = !fabAnyRunning,
                                     onClick = {
@@ -807,6 +796,7 @@ fun MainScreen(
                     // Canvas 画的 8 条臂（每条末端一个圆点），与他给的图一致。
                     // 星芒平时静止，点按后转一圈（360°）。
                     var spinDegrees by remember { mutableFloatStateOf(0f) }
+                    val fabInteractionSource = remember { MutableInteractionSource() }
                     val asteriskRotation by animateFloatAsState(
                         targetValue = spinDegrees,
                         animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
@@ -816,7 +806,12 @@ fun MainScreen(
                         modifier = Modifier
                             .size(56.dp)
                             .background(Color(0xFF54A0B8), CircleShape)
-                            .clickable {
+                            // 去涟漪：默认涟漪按 56dp 方形裁剪，点按会在圆圈外露一圈
+                            // 方形阴影；点按反馈只留星芒转一圈。
+                            .clickable(
+                                indication = null,
+                                interactionSource = fabInteractionSource,
+                            ) {
                                 touch()
                                 spinDegrees += 360f
                                 if (!fabAnyRunning) fabExpanded = !fabExpanded
@@ -994,9 +989,8 @@ private fun TestInputPanelSheet(
     }
 }
 
-/** FAB 栈展开后的单个动作：圆形玻璃钮（52dp）＋小字标签在下；
- * 图标 32dp。Backdrop 玻璃底（模糊＋折射，圆角 50% 即圆形），字形与进度圈均为
- * onSurface（SrcIn 染色）。两动作字形为等尺寸圆箭头 PNG
+/** FAB 栈展开后的单个动作：实心蓝绿圆钮（52dp）＋小字标签在下；
+ * 图标 32dp，米白箭头。两动作字形为等尺寸圆箭头 PNG
  *（内容 120×120，128 框）：部署单向、同步双向。 */
 private enum class FabGlyph { DEPLOY, SYNC }
 
@@ -1007,39 +1001,36 @@ private fun FabAction(
     running: Boolean,
     enabled: Boolean,
     onClick: () -> Unit,
-    backdrop: Backdrop,
 ) {
-    // 动作钮：Backdrop 玻璃底（模糊＋折射），字形与进度圈均为 onSurface；不再用深色实心底。
+    // 动作钮（2026-11-12 他定）：与主钮同一套，52dp 实心蓝绿圆钮＋米白箭头，
+    // 不再用玻璃（drawBackdrop）。点按也不留涟漪，与主钮一致。
+    val actionInteractionSource = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(
+                enabled = enabled,
+                indication = null,
+                interactionSource = actionInteractionSource,
+                onClick = onClick,
+            ),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier = Modifier
                 .size(52.dp)
-                .drawBackdrop(
-                    backdrop = backdrop,
-                    // 圆角 50% 在方形钮面上即圆形；lens 只支持
-                    // CornerBasedShape，CircleShape 会抛异常，故不用它。
-                    shape = { RoundedCornerShape(50) },
-                    effects = {
-                        blur(2.dp.toPx())
-                        lens(12.dp.toPx(), 24.dp.toPx())
-                    },
-                ),
+                .background(Color(0xFF54A0B8), CircleShape),
             contentAlignment = Alignment.Center,
         ) {
             if (running) {
-                // 运行态只留旋转弧：默认底圈会在玻璃钮上画成实心白块，置透明去掉。
+                // 运行态只留旋转弧：默认底圈会在钮上画成实心白块，置透明去掉。
                 CircularProgressIndicator(
                     modifier = Modifier.size(26.dp),
-                    color = MaterialTheme.colorScheme.onSurface,
+                    color = Color.White,
                     strokeWidth = 2.dp,
                     trackColor = Color.Transparent,
                 )
             } else {
-                val glyphColor = MaterialTheme.colorScheme.onSurface
+                val glyphColor = Color(0xFFDBD9C5)
                 Image(
                     painter = painterResource(
                         if (glyph == FabGlyph.DEPLOY) R.drawable.ic_fab_deploy
