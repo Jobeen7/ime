@@ -31,8 +31,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -145,13 +143,11 @@ private fun SymbolList(
     onMove: (fromIndex: Int, toIndex: Int) -> Unit,
     onDelete: (index: Int) -> Unit,
 ) {
-    var dragIndex by remember { mutableIntStateOf(-1) }
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    var itemHeight by remember { mutableFloatStateOf(0f) }
+    val dragState = remember { DragReorderState() }
 
     Column {
         symbols.forEachIndexed { index, symbol ->
-            val isDragging = dragIndex == index
+            val isDragging = dragState.dragIndex == index
             val dragScale by animateFloatAsState(
                 targetValue = if (isDragging) 1.03f else 1f,
                 animationSpec = spring(
@@ -164,35 +160,31 @@ private fun SymbolList(
             Box(
                 modifier = Modifier
                     .zIndex(if (isDragging) 1f else 0f)
-                    .offset { IntOffset(0, if (isDragging) dragOffset.roundToInt() else 0) }
+                    .offset { IntOffset(0, if (isDragging) dragState.dragOffset.roundToInt() else 0) }
                     .scale(dragScale)
                     .graphicsLayer {
                         this.shadowElevation = if (isDragging) 8f else 0f
                     }
                     .onGloballyPositioned {
-                        if (itemHeight == 0f) itemHeight = it.size.height.toFloat()
+                        if (dragState.itemHeight == 0f) {
+                            dragState.itemHeight = it.size.height.toFloat()
+                        }
                     }
                     .pointerInput(index) {
                         detectDragGesturesAfterLongPress(
-                            onDragStart = {
-                                dragIndex = index
-                                dragOffset = 0f
-                            },
+                            onDragStart = { dragState.onDragStart(index) },
                             onDragEnd = {
-                                if (dragIndex < 0) return@detectDragGesturesAfterLongPress
-                                if (itemHeight > 0f) {
-                                    val target = (dragIndex + (dragOffset / itemHeight).roundToInt())
-                                        .coerceIn(0, symbols.size - 1)
-                                    if (target != dragIndex) {
-                                        onMove(dragIndex, target)
-                                    }
+                                dragState.onDragEnd(symbols.size)?.let { (from, target) ->
+                                    onMove(from, target)
                                 }
-                                dragIndex = -1
                             },
+                            // U-S7：取消同样复位拖拽态，否则被打断的行永久卡在
+                            // 放大＋阴影＋偏移态。
+                            onDragCancel = { dragState.onDragCancel() },
                             onDrag = { change, amount ->
-                                if (dragIndex < 0) return@detectDragGesturesAfterLongPress
+                                if (!dragState.isDragging) return@detectDragGesturesAfterLongPress
                                 change.consume()
-                                dragOffset += amount.y
+                                dragState.onDrag(amount.y)
                             },
                         )
                     },

@@ -46,8 +46,16 @@ class PredictionManager(private val context: Context) {
     // 引入 Mutex 锁，防止并发重复加载导致冲突
     private val mutex = Mutex()
 
+    /**
+     * destroy() 已调用：此后 loadModels 不得再赋值新模型（E-L5）。
+     * 先于 tryLock 置位——在途 loadModels 靠收尾复检看到它。
+     */
+    @Volatile
+    private var destroyed = false
+
     suspend fun loadModels(modelDir: File, sharedDataDir: File, language: String?) =
         mutex.withLock {
+            if (destroyed) return@withLock
             destroyLocked()
 
             //预测模型
@@ -55,18 +63,34 @@ class PredictionManager(private val context: Context) {
             if (predictGram.isFile) {
                 prediction = Prediction(predictGram).apply { load() }
             }
-            if (language.isNullOrEmpty()) {
-                return@withLock
+            if (!language.isNullOrEmpty()) {
+                val gram = File(sharedDataDir, "$language.gram")
+                if (gram.isFile) {
+                    // B-S3 跨包补漏：GramDb 构造时校验损坏模型会抛
+                    // IllegalArgumentException；此处接住并降级为无语法模型
+                    // （gramDb 保持 null，预测继续），不让一次坏模型打断部署。
+                    gramDb = runCatching { GramDb(gram.absolutePath) }
+                        .onFailure {
+                            Timber.w(it, "corrupted gram model, continuing without it")
+                        }
+                        .getOrNull()
+                }
             }
-            val gram = File(sharedDataDir, "$language.gram")
-            if (gram.isFile) {
-                gramDb = GramDb(gram.absolutePath)
-            }
+            // 收尾复检（E-L5）：destroy() 可能在本轮加载期间置位（tryLock
+            // 未拿到锁）；已销毁时本轮新赋值的模型须随即销毁，不滞留在
+            // 已销毁的引擎里。destroyLocked 也清 gramDb 字段——GramDb
+            // 本身是内存映射文件、无显式释放接口，由 GC 回收映射，
+            // 故“只置空”即全部可做的释放，无泄漏口可补。
+            if (destroyed) destroyLocked()
         }
 
     fun destroy() {
-        // tryLock：拿不到锁说明正有 loadModels 在跑，旧模型即将被替换，跳过销毁是安全的；
-        // 避免在 finalizer 线程 runBlocking 等锁
+        // 先置销毁标志、再抢锁（E-L5）：拿不到锁说明正有 loadModels 在跑，
+        // 跳过销毁不再安全——旧注释称“旧模型即将被替换”并不成立，
+        // loadModels 完成后会把新模型写回已销毁引擎的字段；标志让在途
+        // loadModels 在收尾复检时自行销毁新模型。仍用 tryLock、不在
+        // finalizer 线程 runBlocking 等锁。
+        destroyed = true
         if (mutex.tryLock()) {
             try {
                 destroyLocked()

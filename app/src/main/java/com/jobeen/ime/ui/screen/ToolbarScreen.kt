@@ -36,6 +36,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -88,6 +90,25 @@ private enum class ToolbarPage {
     MAIN, EDIT, TOOLBARS,
 }
 
+/**
+ * 编辑草稿列的保存器（U-M1）：ToolbarButtonEntry 只有 ref＋enabled，
+ * 展平成字符串表保存（不拼分隔符，ref 含任意字符也安全），按对还原。
+ */
+private val toolbarEntryListSaver: Saver<List<ToolbarButtonEntry>, List<String>> = Saver(
+    save = { entries -> entries.flatMap { listOf(it.ref, it.enabled.toString()) } },
+    restore = { flat ->
+        flat.chunked(2).mapNotNull { pair ->
+            pair.getOrNull(0)?.let { ToolbarButtonEntry(it, pair.getOrNull(1).toBoolean()) }
+        }
+    },
+)
+private val nullableToolbarEntryListSaver: Saver<List<ToolbarButtonEntry>?, List<String>> = Saver(
+    // 不直接调 toolbarEntryListSaver.save：Saver.save 是 SaverScope 上的
+    // 成员扩展，let 内收不到接收者；直接内联同一段扁平化逻辑。
+    save = { entries -> entries?.flatMap { listOf(it.ref, it.enabled.toString()) } },
+    restore = { flat -> toolbarEntryListSaver.restore(flat) },
+)
+
 @Composable
 fun ToolbarScreen(onBack: () -> Unit) {
     val context = LocalContext.current
@@ -103,25 +124,32 @@ fun ToolbarScreen(onBack: () -> Unit) {
     // 皮肤栏按钮 id（与 ToolbarMainPage 同口径）：列表行回落计数用。
     val skinButtonIds = SkinSnapshotProvider.current(context)?.toolbar?.buttons?.map { it.id }
     var data by remember { mutableStateOf(ToolbarUserStore.load(storeFile).data) }
-    var page by remember { mutableStateOf(ToolbarPage.MAIN) }
+    // U-M1：页内导航与编辑草稿随页内态保存——旋转不再丢编辑页与未保存
+    // 的草稿（data 本身由防抖盘＋退出刷盘覆盖，不进 rememberSaveable）。
+    // ToolbarPage 是枚举（Serializable），直接保存；草稿列用上方的保存器。
+    var page by rememberSaveable { mutableStateOf(ToolbarPage.MAIN) }
     // 编辑目标列：null＝当前皮肤默认列；toolbarId＝该自定义栏的列。
-    var editToolbarId by remember { mutableStateOf<String?>(null) }
+    var editToolbarId by rememberSaveable { mutableStateOf<String?>(null) }
     // 编辑草稿（仅皮肤默认列起步情形）：seed == null 表示非起步
     // （用户列非空或自定义栏编辑），草稿即当前列；seed 非空时
     // 草稿起步于生效列，且仅草稿与起步列不同时才写盘。
-    var editSeed by remember { mutableStateOf<List<ToolbarButtonEntry>?>(null) }
-    var editDraft by remember { mutableStateOf<List<ToolbarButtonEntry>>(emptyList()) }
+    var editSeed by rememberSaveable(stateSaver = nullableToolbarEntryListSaver) {
+        mutableStateOf<List<ToolbarButtonEntry>?>(null)
+    }
+    var editDraft by rememberSaveable(stateSaver = toolbarEntryListSaver) {
+        mutableStateOf<List<ToolbarButtonEntry>>(emptyList())
+    }
     // 自定义按钮表单目标：null＝新建；id＝编辑既有定义。
-    var customFormId by remember { mutableStateOf<String?>(null) }
+    var customFormId by rememberSaveable { mutableStateOf<String?>(null) }
     // 自定义栏表单目标：null＝新建；id＝编辑既有栏。
-    var toolbarFormId by remember { mutableStateOf<String?>(null) }
+    var toolbarFormId by rememberSaveable { mutableStateOf<String?>(null) }
     // 对话框态：添加／自定义按钮表单／自定义栏表单均为对话框（页式入口已拆除）；
     // customFormId／toolbarFormId 沿用“null＝新建、id＝编辑”语义。
-    var addDialog by remember { mutableStateOf(false) }
-    var customFormOpen by remember { mutableStateOf(false) }
-    var toolbarFormOpen by remember { mutableStateOf(false) }
+    var addDialog by rememberSaveable { mutableStateOf(false) }
+    var customFormOpen by rememberSaveable { mutableStateOf(false) }
+    var toolbarFormOpen by rememberSaveable { mutableStateOf(false) }
     // 选择自定义工具栏对话框（切换唯一入口；管理页不再行内切换）。
-    var selectDialog by remember { mutableStateOf(false) }
+    var selectDialog by rememberSaveable { mutableStateOf(false) }
 
     fun persist(next: ToolbarUserData) {
         data = next

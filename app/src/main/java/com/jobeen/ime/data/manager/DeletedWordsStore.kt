@@ -11,16 +11,60 @@ data class DeletedWordEntry(
 )
 
 /**
+ * 转义删词中的保留字符：`\`→`\\`、制表符→`\t`、换行→`\n`、
+ * 回车→`\r`；其余原样。未知转义序列（如旧数据里的字面 `\b`）
+ * 原样保留，不破坏旧数据。旧数据里字面的 `\t`／`\n`／`\r`
+ * 两字符序列与转义歧义（解码时会当成转义还原）——候选词实际
+ * 不含反斜杠，该歧义可忽略。
+ */
+internal fun escapeDeletedWord(word: String): String {
+    if (word.none { it == '\\' || it == '\t' || it == '\n' || it == '\r' }) return word
+    val sb = StringBuilder(word.length)
+    for (c in word) {
+        when (c) {
+            '\\' -> sb.append("\\\\")
+            '\t' -> sb.append("\\t")
+            '\n' -> sb.append("\\n")
+            '\r' -> sb.append("\\r")
+            else -> sb.append(c)
+        }
+    }
+    return sb.toString()
+}
+
+/** [escapeDeletedWord] 的逆变换：未知转义序列原样保留。 */
+internal fun unescapeDeletedWord(escaped: String): String {
+    if ('\\' !in escaped) return escaped
+    val sb = StringBuilder(escaped.length)
+    var i = 0
+    while (i < escaped.length) {
+        val c = escaped[i]
+        if (c == '\\' && i + 1 < escaped.length) {
+            when (escaped[i + 1]) {
+                '\\' -> { sb.append('\\'); i += 2 }
+                't' -> { sb.append('\t'); i += 2 }
+                'n' -> { sb.append('\n'); i += 2 }
+                'r' -> { sb.append('\r'); i += 2 }
+                else -> { sb.append(c); i += 1 }
+            }
+        } else {
+            sb.append(c)
+            i += 1
+        }
+    }
+    return sb.toString()
+}
+
+/**
  * 编码一条删词记录为单行文本：`词<TAB>状态(1=已删/0=已恢复)<TAB>时间戳`。
- * 词本身含制表符/换行时无法编码，返回 null（候选词实际不会出现这类字符，
- * 同步与落盘时跳过即可）。
+ * 词含制表符／换行时先转义再编码（见 [escapeDeletedWord]），不再
+ * 返回 null——旧实现遇这类词直接丢弃，落盘时跳过，删除从不持久（D-M10）。
  */
 internal fun encodeDeletedWordEntry(
     word: String,
     entry: DeletedWordEntry,
-): String? {
-    if (word.contains('\t') || word.contains('\n')) return null
-    return "$word\t${if (entry.deleted) 1 else 0}\t${entry.updatedAt}"
+): String {
+    return "${escapeDeletedWord(word)}\t${if (entry.deleted) 1 else 0}\t${entry.updatedAt}"
 }
 
 /**
@@ -32,8 +76,10 @@ internal fun decodeDeletedWordEntry(line: String): Pair<String, DeletedWordEntry
     val text = line.trim()
     if (text.isEmpty()) return null
     val parts = text.split('\t')
-    if (parts.size < 3) return text to DeletedWordEntry(deleted = true, updatedAt = 0L)
-    val word = parts[0]
+    if (parts.size < 3) {
+        return unescapeDeletedWord(text) to DeletedWordEntry(deleted = true, updatedAt = 0L)
+    }
+    val word = unescapeDeletedWord(parts[0])
     if (word.isEmpty()) return null
     val deleted = parts[1] != "0"
     // 时间戳必须钳制：同步文件来自其他设备/对端写入，不设上限时一个
@@ -47,8 +93,9 @@ internal fun decodeDeletedWordEntry(line: String): Pair<String, DeletedWordEntry
 
 /**
  * 合并两台设备的删词记录：逐词取时间戳较新的一方；时间相同（多为
- * 旧格式的时间 0）时「已删」优先，保证删除不被旧状态覆盖、恢复也
- * 不被旧删除覆盖——恢复是一次带新时间戳的显式操作，天然会赢。
+ * 旧格式的时间 0，或两台设备的毫秒时钟撞车）时「已恢复」优先——
+ * 恢复在因果上必然晚于删除（只有删过的词才能被恢复），时间戳相同
+ * 只是时钟撞车，不能据此让旧删除压过恢复（D-M10）。
  */
 internal fun mergeDeletedWordEntries(
     local: Map<String, DeletedWordEntry>,
@@ -61,7 +108,9 @@ internal fun mergeDeletedWordEntries(
             l == null -> r
             r.updatedAt > l.updatedAt -> r
             r.updatedAt < l.updatedAt -> l
-            else -> if (r.deleted) r else l
+            !r.deleted -> r
+            !l.deleted -> l
+            else -> r
         }
     }
     return merged
@@ -107,9 +156,34 @@ object DeletedWordsStore {
     private fun persistLocked(map: Map<String, DeletedWordEntry>) {
         val lines = HashSet<String>()
         for ((word, entry) in map) {
-            encodeDeletedWordEntry(word, entry)?.let { lines.add(it) }
+            lines.add(encodeDeletedWordEntry(word, entry))
         }
         prefs.edit().putStringSet(KEY_WORDS, lines).apply()
+    }
+
+    /**
+     * 本机单调时间戳（D-M10）：同一毫秒内的连续删除／恢复取
+     * System.currentTimeMillis() 会撞成同一时间戳、合并时走平局分支。
+     * 本进程内单调递增（max(墙钟, 上次+1)），同设备操作不再同毫秒；
+     * 跨设备同毫秒仍可能，由合并的“恢复赢”平局分支兜底。这不是
+     * 清点 S20 否掉的 maxSeen 棘轮（不采信远端时间戳、不跨设备养
+     * 时钟），只是本机操作的本地序号。调用方须持本对象锁（add／
+     * remove 内）；本函数自身也加锁，可重入。
+     */
+    private var lastIssuedTs = 0L
+
+    private fun nextTimestamp(): Long = synchronized(this) {
+        val now = System.currentTimeMillis()
+        lastIssuedTs = maxOf(now, lastIssuedTs + 1)
+        lastIssuedTs
+    }
+
+    /**
+     * 丢弃内存缓存（重置应用后调用，D-M11）：偏好已被清空，不丢缓存
+     * 的话 isDeleted() 会继续按旧记录过滤候选、直到进程重启。
+     */
+    fun invalidate() {
+        synchronized(this) { cache = null }
     }
 
     fun isDeleted(text: String): Boolean = load()[text]?.deleted == true
@@ -124,9 +198,10 @@ object DeletedWordsStore {
     /** 已删词列表（按词排序），供设置页展示与恢复。 */
     fun deletedWords(): List<String> = all().sorted()
 
-    // 新记录时间戳直接取本机墙钟（清点 S20 定论：maxSeen 棘轮已删
-    // ——三台自有设备 NTP 同步，为「对端时钟中毒」养逻辑时钟不值；
-    // 解码侧的钳制保留，防坏数据本职）
+    // 新记录时间戳取本机单调时间戳（见 nextTimestamp）：墙钟＋本进程
+    // 内单调递增。清点 S20 否掉的是 maxSeen 棘轮（采信远端时间戳、
+    // 跨设备养时钟，为「对端时钟中毒」养逻辑时钟不值），本地单调
+    // 不在此列；解码侧的钳制保留，防坏数据本职。
 
     /**
      * 把一次同步拿到的远端记录合并进本地并返回合并结果（供上传）。
@@ -155,7 +230,7 @@ object DeletedWordsStore {
             if (map[word]?.deleted != true) {
                 map[word] = DeletedWordEntry(
                     deleted = true,
-                    updatedAt = System.currentTimeMillis(),
+                    updatedAt = nextTimestamp(),
                 )
                 persistLocked(map)
             }
@@ -171,7 +246,7 @@ object DeletedWordsStore {
             if (map[word]?.deleted == true) {
                 map[word] = DeletedWordEntry(
                     deleted = false,
-                    updatedAt = System.currentTimeMillis(),
+                    updatedAt = nextTimestamp(),
                 )
                 persistLocked(map)
             }

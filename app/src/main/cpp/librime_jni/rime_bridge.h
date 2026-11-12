@@ -35,6 +35,13 @@ namespace rime_jni {
                                           const std::vector<SchemaEntry> &items) {
         jobjectArray arr = env->NewObjectArray(static_cast<int>(items.size()),
                                                jni::g_refs->SchemaItem, nullptr);
+        // N-L2：OOM 时 NewObjectArray 返回 null，继续 Set 即未定义行为
+        // （ART 直接 abort）。当场清掉 OOM 异常、返回 null，交 Kotlin
+        // 侧以可控失败处理；以下各数组构造同此口径。
+        if (arr == nullptr) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return nullptr;
+        }
         for (int i = 0; i < static_cast<int>(items.size()); ++i) {
             jni::LocalRef<> ref(env, toJavaSchemaItem(env, items[i]));
             env->SetObjectArrayElement(arr, i, ref.get());
@@ -63,6 +70,10 @@ namespace rime_jni {
                                                 const std::vector<std::string> &v) {
         jobjectArray arr = env->NewObjectArray(static_cast<int>(v.size()),
                                                jni::g_refs->String, nullptr);
+        if (arr == nullptr) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return nullptr;
+        }
         for (int i = 0; i < static_cast<int>(v.size()); ++i) {
             jni::LocalRef<jstring> ref(env, jni::makeString(env, v[i]));
             env->SetObjectArrayElement(arr, i, ref.get());
@@ -92,6 +103,10 @@ namespace rime_jni {
                                              const std::vector<CandidateData> &list) {
         jobjectArray arr = env->NewObjectArray(static_cast<int>(list.size()),
                                                jni::g_refs->CandidateProto, nullptr);
+        if (arr == nullptr) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return nullptr;
+        }
         for (int i = 0; i < static_cast<int>(list.size()); ++i) {
             jni::LocalRef<> ref(env, toJavaCandidate(env, list[i]));
             env->SetObjectArrayElement(arr, i, ref.get());
@@ -121,6 +136,12 @@ namespace rime_jni {
         jni::LocalRef<jobjectArray> syllableArray(
                 env, env->NewObjectArray(static_cast<int>(comp.syllables.size()),
                                          jni::g_refs->SyllableProto, nullptr));
+        // N-L2：音节数组 OOM 为 null 时直接返回 null，不再构造
+        // 带 null 数组的 CompositionProto。
+        if (syllableArray.get() == nullptr) {
+            if (env->ExceptionCheck()) env->ExceptionClear();
+            return nullptr;
+        }
         for (int i = 0; i < static_cast<int>(comp.syllables.size()); ++i) {
             jni::LocalRef<> ref(env, toJavaSyllable(env, comp.syllables[i]));
             env->SetObjectArrayElement(syllableArray.get(), i, ref.get());

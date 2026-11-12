@@ -29,3 +29,16 @@ object SwipeThresholds {
         return DEFAULT_DP
     }
 }
+
+/**
+ * 板级横滑拦截判定（纯函数，可 JVM 单测；I-M2）：只有横向位移达到
+ * 翻页最小距离且横向占优时才拦截——未达翻页距离的横向小拖动不拦
+ * 截，仍归子键点按（子键在键界内抬手即点按，见 CustomGestureView
+ * 的 handleRelease）；竖向位移归网格滚动。旧口径以 touchSlop
+ * （约 8dp）拦截、却以 48dp 才翻页，8～48dp 的拖动既被取消点按
+ * 又翻不了页，手势无任何效果。
+ */
+internal fun shouldInterceptHorizontalSwipe(dxPx: Float, dyPx: Float, minDistancePx: Float): Boolean {
+    val adx = kotlin.math.abs(dxPx)
+    return adx > minDistancePx && adx > kotlin.math.abs(dyPx)
+}

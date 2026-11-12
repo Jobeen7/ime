@@ -214,12 +214,31 @@ class PluginStore(
         prefs.putString(SETTINGS_PREF_PREFIX + id + "_" + key, value)
     }
 
+    /**
+     * 落盘脚本＋元数据（B-L1：tmp 文件＋rename 原子替换，替代直接写盘）。
+     * 写入顺序即提交顺序：脚本先落盘、元数据后落盘——[get]/[list] 以
+     * 元数据文件为准识别插件，元数据出现即代表本次安装已完整；两写
+     * 之间被杀最多留一个无元数据的孤儿脚本（不可见，下次安装覆盖），
+     * 不再出现“有脚本无元数据”且 confirmInstall 抛错的中断态；
+     * 单文件写一半被杀也不留撕裂内容（tmp 未 rename，旧文件原样在）。
+     * rename 失败时回落直接写，仍失败则抛错、调用方不认安装成功。
+     */
     private fun writeInstall(meta: PluginMeta, scriptBytes: ByteArray) {
         val dir = pluginDir(meta.id)
         dir.mkdirs()
-        File(dir, SCRIPT_FILE).writeBytes(scriptBytes)
-        File(dir, META_FILE).writeText(json.encodeToString(meta))
+        writeAtomically(File(dir, SCRIPT_FILE), scriptBytes)
+        writeAtomically(File(dir, META_FILE), json.encodeToString(meta).toByteArray(Charsets.UTF_8))
         sandboxDir(meta.id).mkdirs()
+    }
+
+    /** 单文件 tmp＋rename 原子写；rename 失败回落直接写并清 tmp 残留。 */
+    private fun writeAtomically(target: File, bytes: ByteArray) {
+        val tmp = File(target.parentFile, target.name + ".tmp")
+        tmp.writeBytes(bytes)
+        if (!tmp.renameTo(target)) {
+            tmp.delete()
+            target.writeBytes(bytes)
+        }
     }
 
     private fun readMeta(dir: File): PluginMeta? {

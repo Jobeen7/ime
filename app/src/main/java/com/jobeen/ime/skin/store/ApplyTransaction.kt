@@ -43,6 +43,15 @@ class ApplyTransaction(
         suspend fun switchRuntime(ref: SkinGenRef?): Boolean
 
         /**
+         * 最近一次 [switchRuntime] 返回 false 是否因被更新的安装请求
+         * 取代（2026-11-12 审计 K-S4）：取代时事务层不得走回滚恢复——
+         * 回滚用的旧 token 同样过期、必再被拒，还会把已生效的获胜请求
+         * 误报为回滚失败。默认 false（真切换失败）；真实端口
+         * （SkinApplier）在 install 因 token 过期被拒时返回 true。
+         */
+        fun wasSuperseded(): Boolean = false
+
+        /**
          * 等待切换后的首帧渲染完成；false = 未完成或异常，按未验证处理（A-3/A-4 口径）。
          * 挂起函数：真实实现须把阻塞等待移出调用线程（见 SkinApplier），
          * 否则调用线程若是主线程，窗口刷新 post 将无法执行、等待必然超时。
@@ -133,11 +142,27 @@ class ApplyTransaction(
         )
 
         if (!runPort("switch", ref) { ports.switchRuntime(ref) }) {
+            if (ports.wasSuperseded()) {
+                // 被更新请求取代：获胜请求已生效（或正在生效），本请求
+                // 不做回滚恢复——恢复用的旧 token 同样过期，必再被拒。
+                // 只把本请求刚写的 PENDING 记录收敛回切换前状态，且
+                // 仅当它仍是当前记录时才写（获胜方已写记录时不动它）。
+                restorePendingRecord(pending, previous)
+                DiagLog.i(
+                    "store", "apply_superseded",
+                    mapOf("skinId" to ref.skinId, "gen" to ref.generation),
+                )
+                return Result.Superseded(ref)
+            }
             return when (val restored = restorePrevious(previous, "switch_failed", ref)) {
                 is RestoreOutcome.Restored ->
                     Result.SwitchFailedRolledBack(ref, restored.ref)
                 is RestoreOutcome.Failed ->
                     Result.RollbackFailed(ref, "switch_failed", restored.reason)
+                is RestoreOutcome.Superseded -> {
+                    restorePendingRecord(pending, previous)
+                    Result.Superseded(ref)
+                }
             }
         }
         SkinFaultHooks.hit(SkinFaultHooks.Point.A3)
@@ -148,6 +173,13 @@ class ApplyTransaction(
                     Result.FirstRenderFailedRolledBack(ref, restored.ref)
                 is RestoreOutcome.Failed ->
                     Result.RollbackFailed(ref, "first_render_failed", restored.reason)
+                is RestoreOutcome.Superseded -> {
+                    // 恢复途中被取代：同 switch 分支口径，把本请求刚写
+                    // 的 PENDING 记录收敛回切换前状态（仅当它仍是当前
+                    // 记录时才写，获胜方已写记录时不动它）。
+                    restorePendingRecord(pending, previous)
+                    Result.Superseded(ref)
+                }
             }
         }
         SkinFaultHooks.hit(SkinFaultHooks.Point.A4)
@@ -204,6 +236,7 @@ class ApplyTransaction(
             }
         }
         if (!runPort("rollback_switch", ref) { ports.switchRuntime(ref) }) {
+            if (ports.wasSuperseded()) return Result.Superseded(ref)
             return Result.RollbackUnavailable("switch_failed").also {
                 DiagLog.w(
                     "store", "rollback_unavailable",
@@ -311,11 +344,16 @@ class ApplyTransaction(
         } else if (
             !runPort("restore_switch", previous.ref) { ports.switchRuntime(previous.ref) }
         ) {
-            DiagLog.w(
-                "store", "restore_previous_failed",
-                mapOf("reason" to "restore_switch_failed", "skinId" to previous.ref.skinId),
-            )
-            restoreDefault()
+            if (ports.wasSuperseded()) {
+                // 恢复途中被更新请求取代：获胜请求已生效，不再退默认。
+                RestoreOutcome.Superseded
+            } else {
+                DiagLog.w(
+                    "store", "restore_previous_failed",
+                    mapOf("reason" to "restore_switch_failed", "skinId" to previous.ref.skinId),
+                )
+                restoreDefault()
+            }
         } else if (!writeActiveChecked(previous.record)) {
             // 运行态已切回上一好、记录未落盘：不声称已恢复。
             RestoreOutcome.Failed("restore_active_write_failed")
@@ -343,6 +381,7 @@ class ApplyTransaction(
      */
     private suspend fun restoreDefault(): RestoreOutcome {
         if (!runPort("restore_switch_default", null) { ports.switchRuntime(null) }) {
+            if (ports.wasSuperseded()) return RestoreOutcome.Superseded
             return RestoreOutcome.Failed("restore_default_switch_failed")
         }
         return if (writeActiveChecked(ActiveRecord(appliedAt = clock()))) {
@@ -352,10 +391,34 @@ class ApplyTransaction(
         }
     }
 
-    /** 恢复内部结果：已恢复（运行态与记录一致）／失败（均未获确认）。 */
+    /** 恢复内部结果：已恢复（运行态与记录一致）／失败（均未获确认）／恢复途中被更新请求取代。 */
     private sealed interface RestoreOutcome {
         data class Restored(val ref: SkinGenRef?) : RestoreOutcome
         data class Failed(val reason: String) : RestoreOutcome
+        /** 恢复切换时被更新的安装请求取代：获胜请求已生效，不再恢复。 */
+        data object Superseded : RestoreOutcome
+    }
+
+    /**
+     * 取代后的记录收敛（2026-11-12 审计 K-S3／K-S4 同源修复）：
+     * 本请求写下的 PENDING 记录若仍是当前记录（获胜方尚未写记录），
+     * 把它写回切换前状态；获胜方已写记录时一律不动。只写这一条
+     * active 记录，绝不盲写整份索引。写失败只记日志（启动对账收敛）。
+     */
+    private suspend fun restorePendingRecord(pending: ActiveRecord, previous: PreviousState) {
+        val current = (store.readActive() as? SkinLibraryStore.ReadResult.Ok)?.value
+            ?: return
+        if (current.skinId == pending.skinId && current.hash == pending.hash &&
+            current.generation == pending.generation && current.state == ApplyState.PENDING
+        ) {
+            runCatching { store.writeActive(previous.record) }
+                .onFailure {
+                    DiagLog.w(
+                        "store", "superseded_pending_restore_failed",
+                        mapOf("skinId" to pending.skinId),
+                    )
+                }
+        }
     }
 
     /**
@@ -429,6 +492,10 @@ class ApplyTransaction(
     private suspend fun runPort(stage: String, ref: SkinGenRef?, block: suspend () -> Boolean): Boolean {
         return try {
             block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            // 取消原样穿透：按失败计会把取消改写为回滚，并吞掉取消语义
+            // （2026-11-12 审计 K-S1：编辑器保存取消后仍复活的帮凶之一）。
+            throw e
         } catch (e: Exception) {
             DiagLog.w(
                 "store", "apply_port_failed",

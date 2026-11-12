@@ -129,6 +129,20 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 ).also { runCatching { it.initCause(e) } }
             }
             throw e
+        } catch (e: IllegalStateException) {
+            // 停机竞态下 dispatcher.dispatch 抛 IllegalStateException
+            // （"Dispatcher is not in running state!"）：调用方约定的
+            // 停机异常是 RimeStoppedException，不是 dispatcher 的
+            // IllegalStateException（E-M7）。只转未就绪态下的那一种——
+            // 块内在就绪态自抛的 IllegalStateException 保持原样。
+            if (callerJob?.isActive == true &&
+                lifecycle.currentState != RimeLifecycle.State.READY
+            ) {
+                throw RimeStoppedException(
+                    "rime dispatcher stopped"
+                ).also { runCatching { it.initCause(e) } }
+            }
+            throw e
         }
     }
 
@@ -176,32 +190,33 @@ class Rime : RimeApi, RimeLifecycleOwner {
         try {
             startRime(true)
         } catch (t: Throwable) {
-            // native 已 shutdown 但重启失败：状态不能停留在 READY，否则上层
-            // 以为引擎可用、实际每次调用都打到已关闭的 native。打回 STOPPED
-            // 让状态与实际一致，并允许后续 startup() 重试。
-            lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
-            throw t
+            onNativeRestartFailed(t)
         }
     }
 
-    override suspend fun updateConfig() = withRimeContext {
-        shutdown()
-        try {
-            startRime(false)
-        } catch (t: Throwable) {
-            lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
-            throw t
-        }
+    /**
+     * native 重启失败的收尾（E-S2）：只打回 STOPPED 不够——dispatcher
+     * 的消费循环仍在跑，下一次 startup() 的 compareAndSet 失败、
+     * nativeStartup 永不执行，引擎卡死在 STARTING、全部按键永久挂起。
+     * 状态不能停留在 READY（上层会以为引擎可用、实际每次调用都打到
+     * 已关闭的 native），打回 STOPPED 让状态与实际一致；停机异步发到
+     * 另一作用域：本函数跑在 rime-main 任务内，同步 stop() 会等自己的
+     * 任务结束（最长 2 秒超时），异步停机让循环在当前任务结束后退出、
+     * 走 finally 的 nativeFinalize（二次 finalize 经核实是幂等的：
+     * JoinMaintenanceThread 有 valid 守卫，StopService／Registry::Clear／
+     * UnloadModules 均可重入）并排空队列，等待方以 RimeStoppedException
+     * 收尾。startup() 入口另有防御性 stop()，任何来源的残余循环都能自愈。
+     */
+    private fun onNativeRestartFailed(t: Throwable): Nothing {
+        lifecycleRegistry.emitState(RimeLifecycle.State.STOPPED)
+        deferredFinalizeScope.launch { dispatcher.stop() }
+        throw t
     }
 
     override suspend fun joinMaintenanceThread() {
         withContext(Dispatchers.IO) {
             Companion.joinMaintenanceThread()
         }
-    }
-
-    override suspend fun syncUserData(): Boolean = withRimeContext {
-        Companion.syncUserData()
     }
 
     override suspend fun getUserDictList(): List<String> = withRimeContext {
@@ -361,7 +376,12 @@ class Rime : RimeApi, RimeLifecycleOwner {
         // OpenCC 文本词典先同步转成 .ocd2 再 bootstrap：异步转换与
         // 部署并发时 librime 会先加载旧 .ocd2，新词典要到下次部署
         // 才生效（方案更新后繁简转换沿用旧词典一整代）
-        OpenCCDictManager.buildOpenCCDict()
+        // 转换失败时部署不得报成功（E-L2）：旧 .ocd2 仍在盘上，本次部署
+        // 沿用旧词典却无任何失败信号。仅 fullCheck（部署）路径抛错——
+        // 普通启动仍用旧词典起键盘，不因一本繁简词典损坏整机无键盘。
+        if (!OpenCCDictManager.buildOpenCCDict() && fullCheck) {
+            throw IllegalStateException("OpenCC dictionary conversion failed")
+        }
         val sharedDataDir = DataManager.sharedDataDir.absolutePath
         val userDataDir = DataManager.userDataDir.absolutePath
         Timber.d("Starting rime: shared=$sharedDataDir user=$userDataDir fullCheck=$fullCheck")
@@ -382,8 +402,8 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     private fun emitResponse(commit: (() -> CommitProto)? = null) {
-        // 一次 JNI 快照取代三次往返（getCommit + getContext +
-        // getBulkCandidates）：快照内 commit/context/bulk 同批取，
+        // 一次 JNI 快照取代三次往返（commit + context + bulk 首屏）：
+        // 快照内 commit/context/bulk 同批取，
         // bulk 的 highlighted 直接取自同批 context（此前由 Kotlin 侧从
         // context 转交，不再重复取 context）。自定义 commit 传入时
         // （如 simulateKeySequence 已先取 commit），快照的 commit 被
@@ -585,6 +605,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
         registerMessageHandler(::handleRimeMessage)
         startupGeneration.incrementAndGet()
         lifecycleRegistry.emitState(RimeLifecycle.State.STARTING)
+        // 部署失败打回 STOPPED 时 dispatcher 可能仍在跑（见
+        // onNativeRestartFailed）：STOPPED 态本应无活循环，先停掉残余
+        // 循环再启动，否则 start() 的 compareAndSet 失败、nativeStartup
+        // 永不执行、引擎卡死在 STARTING。已停时 stop() 是空操作。
+        dispatcher.stop()
         dispatcher.start()
     }
 
@@ -643,7 +668,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
         private const val SNAPSHOT_TIMEOUT_MS = 2_000L
 
         // 消息流不丢消息：这里走的是 Schema/Option/Deploy 等状态消息，
-        // 丢一条 Deploy 成功或 Schema 变更，awaitMessage 的等待方会永久挂起、
+        // 丢一条 Deploy 成功或 Schema 变更，部署等待方会永久挂起、
         // 守护进程的部署通知也会缺失。旧配置 DROP_OLDEST 在收集方卡顿时
         // 直接把最旧的未消费消息扔掉。现为 SUSPEND 语义，且全部分发都经
         // notificationQueue 的单线程消费者串行完成（见 dispatchMessage），
@@ -724,15 +749,6 @@ class Rime : RimeApi, RimeLifecycleOwner {
         external fun joinMaintenanceThread()
 
         @JvmStatic
-        external fun deploySchemaFile(schemaFile: String): Boolean
-
-        @JvmStatic
-        external fun deployConfigFile(fileName: String, versionKey: String): Boolean
-
-        @JvmStatic
-        external fun syncUserData(): Boolean
-
-        @JvmStatic
         external fun processKey(keycode: Int, mask: Int): Boolean
 
         @JvmStatic
@@ -749,9 +765,6 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
         @JvmStatic
         external fun getCommit(): CommitProto
-
-        @JvmStatic
-        external fun getContext(): ContextProto
 
         @JvmStatic
         external fun getStatus(): StatusProto
@@ -797,9 +810,6 @@ class Rime : RimeApi, RimeLifecycleOwner {
         external fun appendInput(keySequence: String): Boolean
 
         @JvmStatic
-        external fun getCaretPos(): Int
-
-        @JvmStatic
         external fun setCaretPos(caretPos: Int)
 
         @JvmStatic
@@ -823,14 +833,10 @@ class Rime : RimeApi, RimeLifecycleOwner {
         @JvmStatic
         external fun getCandidates(startIndex: Int, limit: Int): Array<CandidateProto>
 
-        @JvmStatic
-        external fun getBulkCandidates(highlighted: Int): Array<Any>
-
         /**
-         * 一次 JNI 取回按键响应全量：[commit, context, bulk] 三元数组，
-         * bulk 与 getBulkCandidates 同形（[size, highlighted, candidates]）。
-         * 供 emitResponse 一次往返取代三次；getCommit/getContext/
-         * getBulkCandidates 各自保留（simulateKeySequence 仍直调 getCommit）。
+         * 一次 JNI 取回按键响应全量：[commit, context, bulk] 三元数组。
+         * 供 emitResponse 一次往返取代三次；getCommit 各自保留
+         * （simulateKeySequence 仍直调 getCommit）。
          */
         @JvmStatic
         external fun getSnapshotAfterKey(): Array<Any>

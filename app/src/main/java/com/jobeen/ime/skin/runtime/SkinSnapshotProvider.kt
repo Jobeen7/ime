@@ -20,7 +20,6 @@ import com.jobeen.ime.skin.store.ActiveResolver
 import com.jobeen.ime.skin.store.ApplyState
 import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibrary
-import com.jobeen.ime.skin.store.SkinOverlayStore
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -290,15 +289,11 @@ object SkinSnapshotProvider {
      * 解出的位图安全回收，运行态纹丝不动。调用方不得把被拒当
      * 成功（事务层据此走失败／回退分支；启动加载被拒时不武装
      * pending 验证、不请求重绘，见 RealStartupLoadDeps）。
-     * 无 token 的调用在本函数入口分配——只适用于准备全在
-     * install 内（仅背景解码）的调用方；快照构建在外的请求
-     *（应用事务、启动加载）必须在请求开始时调
-     * [allocateInstallToken] 并传 token，否则“后开始、先完成”
-     * 的新请求会被“先开始、后完成”的旧请求在提交时反超。
+     * 全部调用方必须在请求开始准备时调 [allocateInstallToken]
+     * 并传 token（2026-11-12 审计 K-L3：提交时才分配 token 的单参
+     * 便捷入口已删除——它无法区分“先开始、后完成”的旧请求，
+     * 后开始的新请求会在提交时被旧请求反超）。
      */
-    fun install(context: Context, snapshot: SkinSnapshot?): Boolean =
-        install(context, snapshot, allocateInstallToken(), expectedGeneration = null)
-
     internal fun install(
         context: Context,
         snapshot: SkinSnapshot?,
@@ -362,39 +357,6 @@ object SkinSnapshotProvider {
             SkinKeyImageStore.clear()
             SkinRuntimeState.reset()
         }
-    }
-
-    /**
-     * 覆盖层版本过期检查（2026-10-29 item-1 D1）：当前快照的
-     * overlayVersion 与磁盘覆盖层版本不一致时重建并安装，返回
-     * true；无快照、无变化或重建失败时返回 false（失败只记
-     * 日志，不崩）。供覆盖层写入方（后续设置 UI）在防抖落盘后
-     * 调用；运行态本身不轮询磁盘。挂起函数：重建含文件读＋
-     * 解析，调用方不得在主线程同步等它（审计 #2）。
-     */
-    suspend fun refreshIfOverlayChanged(context: Context): Boolean {
-        // 只捕获、不分配：覆盖层刷新只是对当前快照的更新，不
-        // 是完整安装——它开始后若有完整安装请求开始，刷新在提
-        // 交时按捕获的 token 被拒；反过来刷新本身绝不能否决在
-        // 它之后开始的完整安装（分配 token 会让后开始的应用在
-        // 提交时被判过期）。
-        val tokenAtStart = synchronized(lock) { latestInstallToken }
-        val current = synchronized(lock) { currentSnapshot } ?: return false
-        val layout = SkinLibrary.layout
-        val diskVersion = runCatching {
-            SkinOverlayStore(layout.skinsDir).read(current.ref.skinId)?.version ?: 0L
-        }.getOrNull() ?: return false
-        if (diskVersion == current.overlayVersion) return false
-        val rebuilt = runCatching {
-            SkinSnapshotFactory.buildFromGenDir(context.applicationContext, layout, current.ref)
-        }.getOrNull() ?: run {
-            DiagLog.w(
-                "overlay", "overlay_refresh_rebuild_failed",
-                mapOf("skinId" to current.ref.skinId),
-            )
-            return false
-        }
-        return install(context, rebuilt, tokenAtStart)
     }
 
     // ---- 编辑器预览位图槽（定稿十一.3 的第二份） ----

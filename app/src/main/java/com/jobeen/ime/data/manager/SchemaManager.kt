@@ -16,7 +16,8 @@ object SchemaManager {
      * 的顺序；设置侧不再读写分目录键（见 SchemeEnabled.writeEnabledMirror，
      * 只写镜像键），键盘侧只读镜像键。
      * 分目录键现仅由重置（AppReset）与单目录迁移（SchemeDirs，初始目录）
-     * 写入，备份还原按包内原样写回；生产侧已无 [readEnabledIds] 调用方。
+     * 写入，备份还原按包内原样写回；读分目录键的入口已随 D-L3 删除
+     * （生产侧早已无调用方）。
      */
     fun enabledKeyFor(dir: String): String = "${KEY_ENABLED_IDS}_$dir"
 
@@ -32,16 +33,6 @@ object SchemaManager {
             putString(enabledKeyFor(dir), joined)
             putString(KEY_ENABLED_IDS, joined)
         }
-    }
-
-    /**
-     * 读某目录的已启用顺序：只读分目录键，缺失即空。
-     * 注意：现行模型下生产侧已无调用方（顺序以各目录 custom 的
-     * schema_list 与全局镜像键为准）；本函数仅作历史兼容保留。
-     */
-    fun readEnabledIds(prefs: SharedPreferences, dir: String): List<String> {
-        val raw = prefs.getString(enabledKeyFor(dir), null) ?: return emptyList()
-        return raw.split(",").filter { it.isNotBlank() }
     }
 
     fun isGrammarModelEnabled(context: Context): Boolean {

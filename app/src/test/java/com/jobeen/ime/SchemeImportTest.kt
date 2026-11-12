@@ -2,14 +2,9 @@
 
 package com.jobeen.ime
 
-import com.jobeen.ime.data.manager.DeployAwaitResult
-import com.jobeen.ime.data.manager.ImportFailure
-import com.jobeen.ime.data.manager.ImportOutcome
-import com.jobeen.ime.data.manager.MAX_IMPORT_ZIP_BYTES
 import com.jobeen.ime.data.manager.SchemeEnabled
 import com.jobeen.ime.data.manager.determineDirName
 import com.jobeen.ime.data.manager.extractZip
-import com.jobeen.ime.data.manager.importPackage
 import com.jobeen.ime.data.manager.injectOptionsSegments
 import com.jobeen.ime.data.manager.injectT9Fields
 import com.jobeen.ime.data.manager.isProtectedEntry
@@ -19,7 +14,6 @@ import java.io.RandomAccessFile
 import java.nio.file.Files
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
-import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -266,184 +260,6 @@ class SchemeImportTest {
         assertEquals("imported", determineDirName("", ""))
     }
 
-    @Test
-    fun importPackage_success_newDir() = runBlocking {
-        runWithTempDirSuspend { root ->
-            val schemeDirsRoot = File(root, "root")
-            val sharedDir = File(root, "shared")
-            val zipFile = File(root, "newpkg.zip")
-            writeZip(
-                zipFile,
-                mapOf(
-                    "newpkg/wanxiang_lite.schema.yaml" to liteSchema(),
-                    "newpkg/wanxiang_lite.dict.yaml" to "dict",
-                ),
-            )
-            var mirrored: List<String>? = null
-            var pointer: String? = null
-            var deployTimeout: Long? = null
-            var selected: String? = null
-            val outcome = importPackage(
-                zipFile = zipFile,
-                fallbackName = "newpkg.zip",
-                schemeDirsRoot = schemeDirsRoot,
-                sharedDir = sharedDir,
-                writeMirror = { mirrored = it },
-                setCurrentDir = { pointer = it },
-                deploy = { timeout ->
-                    deployTimeout = timeout
-                    DeployAwaitResult.COMPLETED
-                },
-                selectSchema = { selected = it },
-            )
-            val success = outcome as ImportOutcome.Success
-            assertEquals("newpkg", success.dirName)
-            assertEquals(listOf("wanxiang_lite"), success.newSchemaIds)
-            assertEquals(1, success.injected)
-            assertEquals(listOf("wanxiang_lite"), mirrored)
-            assertEquals("newpkg", pointer)
-            assertEquals(180_000L, deployTimeout)
-            assertEquals("wanxiang_lite", selected)
-            val custom = File(File(schemeDirsRoot, "newpkg"), "default.custom.yaml")
-            assertTrue(custom.readText().contains("    - schema: wanxiang_lite\n"))
-        }
-    }
-
-    @Test
-    fun importPackage_merge_prependsNew_keepsUniqueFiles() = runBlocking {
-        runWithTempDirSuspend { root ->
-            val schemeDirsRoot = File(root, "root")
-            val sharedDir = File(root, "shared")
-            val existing = File(schemeDirsRoot, "newpkg")
-            existing.mkdirs()
-            File(existing, "old_one.schema.yaml").writeText(
-                "schema:\n  schema_id: old_one\n"
-            )
-            File(existing, "unique.txt").writeText("keep")
-            SchemeEnabled.writeEnabledCustomFile(
-                File(existing, "default.custom.yaml"),
-                listOf("old_one"),
-            )
-            val zipFile = File(root, "newpkg.zip")
-            writeZip(
-                zipFile,
-                mapOf("newpkg/wanxiang_lite.schema.yaml" to liteSchema()),
-            )
-            var mirrored: List<String>? = null
-            val outcome = importPackage(
-                zipFile = zipFile,
-                fallbackName = "newpkg.zip",
-                schemeDirsRoot = schemeDirsRoot,
-                sharedDir = sharedDir,
-                writeMirror = { mirrored = it },
-                setCurrentDir = {},
-                deploy = { DeployAwaitResult.COMPLETED },
-                selectSchema = {},
-            )
-            assertTrue(outcome is ImportOutcome.Success)
-            assertEquals(listOf("wanxiang_lite", "old_one"), mirrored)
-            assertEquals("keep", File(existing, "unique.txt").readText())
-            val customText = File(existing, "default.custom.yaml").readText()
-            assertTrue(customText.indexOf("wanxiang_lite") < customText.indexOf("old_one"))
-        }
-    }
-
-    @Test
-    fun importPackage_tooLarge_sparse() = runBlocking {
-        runWithTempDirSuspend { root ->
-            val schemeDirsRoot = File(root, "root")
-            val sharedDir = File(root, "shared")
-            val zipFile = File(root, "big.zip")
-            RandomAccessFile(zipFile, "rw").use { it.setLength(MAX_IMPORT_ZIP_BYTES + 1) }
-            val outcome = importPackage(
-                zipFile = zipFile,
-                fallbackName = "big.zip",
-                schemeDirsRoot = schemeDirsRoot,
-                sharedDir = sharedDir,
-                writeMirror = {},
-                setCurrentDir = {},
-                deploy = { DeployAwaitResult.COMPLETED },
-                selectSchema = {},
-            )
-            assertEquals(
-                ImportOutcome.Failed(ImportFailure.TOO_LARGE),
-                outcome,
-            )
-            assertFalse(schemeDirsRoot.exists())
-        }
-    }
-
-    @Test
-    fun importPackage_notZip() = runBlocking {
-        runWithTempDirSuspend { root ->
-            val schemeDirsRoot = File(root, "root")
-            val sharedDir = File(root, "shared")
-            val zipFile = File(root, "note.zip")
-            zipFile.writeText("this is not a zip")
-            val outcome = importPackage(
-                zipFile = zipFile,
-                fallbackName = "note.zip",
-                schemeDirsRoot = schemeDirsRoot,
-                sharedDir = sharedDir,
-                writeMirror = {},
-                setCurrentDir = {},
-                deploy = { DeployAwaitResult.COMPLETED },
-                selectSchema = {},
-            )
-            assertEquals(ImportOutcome.Failed(ImportFailure.NOT_ZIP), outcome)
-        }
-    }
-
-    @Test
-    fun importPackage_noSchema_precheckLeavesNoDir() = runBlocking {
-        runWithTempDirSuspend { root ->
-            val schemeDirsRoot = File(root, "root")
-            val sharedDir = File(root, "shared")
-            val zipFile = File(root, "pkg.zip")
-            writeZip(zipFile, mapOf("pkg/only.dict.yaml" to "dict"))
-            val outcome = importPackage(
-                zipFile = zipFile,
-                fallbackName = "pkg.zip",
-                schemeDirsRoot = schemeDirsRoot,
-                sharedDir = sharedDir,
-                writeMirror = {},
-                setCurrentDir = {},
-                deploy = { DeployAwaitResult.COMPLETED },
-                selectSchema = {},
-            )
-            assertEquals(ImportOutcome.Failed(ImportFailure.NO_SCHEMA), outcome)
-            assertFalse(File(schemeDirsRoot, "pkg").exists())
-        }
-    }
-
-    @Test
-    fun importPackage_deployFailed_leavesPointer_noSelect() = runBlocking {
-        runWithTempDirSuspend { root ->
-            val schemeDirsRoot = File(root, "root")
-            val sharedDir = File(root, "shared")
-            val zipFile = File(root, "newpkg.zip")
-            writeZip(
-                zipFile,
-                mapOf("newpkg/wanxiang_lite.schema.yaml" to liteSchema()),
-            )
-            var pointer: String? = null
-            var selected: String? = null
-            val outcome = importPackage(
-                zipFile = zipFile,
-                fallbackName = "newpkg.zip",
-                schemeDirsRoot = schemeDirsRoot,
-                sharedDir = sharedDir,
-                writeMirror = {},
-                setCurrentDir = { pointer = it },
-                deploy = { DeployAwaitResult.FAILED },
-                selectSchema = { selected = it },
-            )
-            assertEquals(ImportOutcome.Failed(ImportFailure.DEPLOY_FAILED), outcome)
-            assertEquals("newpkg", pointer)
-            assertEquals(null, selected)
-            assertTrue(File(File(schemeDirsRoot, "newpkg"), "default.custom.yaml").isFile)
-        }
-    }
 
     @Test
     fun injectT9Fields_t9i_addsCandidateKind() {
@@ -575,65 +391,4 @@ class SchemeImportTest {
         }
     }
 
-    @Test
-    fun importPackage_deployTimeout_returnsDeployTimeout() = runBlocking {
-        runWithTempDirSuspend { root ->
-            val schemeDirsRoot = File(root, "root")
-            val sharedDir = File(root, "shared")
-            val zipFile = File(root, "newpkg.zip")
-            writeZip(
-                zipFile,
-                mapOf("newpkg/wanxiang_lite.schema.yaml" to liteSchema()),
-            )
-            var pointer: String? = null
-            val outcome = importPackage(
-                zipFile = zipFile,
-                fallbackName = "newpkg.zip",
-                schemeDirsRoot = schemeDirsRoot,
-                sharedDir = sharedDir,
-                writeMirror = {},
-                setCurrentDir = { pointer = it },
-                deploy = { DeployAwaitResult.TIMEOUT_RUNNING },
-                selectSchema = {},
-            )
-            assertEquals(ImportOutcome.Failed(ImportFailure.DEPLOY_TIMEOUT), outcome)
-            assertEquals("newpkg", pointer)
-        }
-    }
-
-    @Test
-    fun importPackage_noOptionsUpstream_getsOptionsSegments() = runBlocking {
-        runWithTempDirSuspend { root ->
-            val schemeDirsRoot = File(root, "root")
-            val sharedDir = File(root, "shared")
-            val zipFile = File(root, "newpkg.zip")
-            writeZip(
-                zipFile,
-                mapOf("newpkg/wanxiang_lite.schema.yaml" to liteSchema()),
-            )
-            val outcome = importPackage(
-                zipFile = zipFile,
-                fallbackName = "newpkg.zip",
-                schemeDirsRoot = schemeDirsRoot,
-                sharedDir = sharedDir,
-                writeMirror = {},
-                setCurrentDir = {},
-                deploy = { DeployAwaitResult.COMPLETED },
-                selectSchema = {},
-            )
-            assertTrue(outcome is ImportOutcome.Success)
-            val imported = File(File(schemeDirsRoot, "newpkg"), "wanxiang_lite.schema.yaml")
-                .readText()
-            // lite：ascii lock:true（与内置旧值一致），开关桥不再缺段。
-            assertTrue(
-                imported.contains(
-                    "  - name: ascii_mode_enabled\n" +
-                        "    key: ascii_mode\n" +
-                        "    keys: [ascii_mode]\n" +
-                        "    lock: true\n" +
-                        "    value: false"
-                )
-            )
-        }
-    }
 }

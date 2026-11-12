@@ -86,9 +86,6 @@ interface ClipboardDao {
     @Query("SELECT pinned FROM clipboard_records WHERE text = :text AND deleted = 0 LIMIT 1")
     suspend fun pinnedByText(text: String): Boolean?
 
-    @Query("SELECT * FROM clipboard_records WHERE deleted = 0 ORDER BY timestamp DESC LIMIT 1")
-    suspend fun getLatest(): ClipboardRecord?
-
     @Query("SELECT EXISTS(SELECT 1 FROM clipboard_records WHERE text = :text AND deleted = 0 LIMIT 1)")
     suspend fun existsByText(text: String): Boolean
 
@@ -123,12 +120,20 @@ interface ClipboardDao {
     @Query("UPDATE clipboard_records SET text = :newText, timestamp = :ts, sortOrder = :sortOrder WHERE text = :oldText AND deleted = 0")
     suspend fun updateTextByText(oldText: String, newText: String, ts: Long, sortOrder: Long): Int
 
+    /**
+     * 返回受影响行数：调用方据此判定删除是否真的落库——0 行即文本
+     * 本就不在表里，防复活抑制不得为此记录（见 ClipboardManager）。
+     */
     @Query("DELETE FROM clipboard_records WHERE text = :text")
-    suspend fun deleteByText(text: String)
+    suspend fun deleteByText(text: String): Int
 
-    /** 多选批量删除（物理删，与单条删除一致） */
+    /**
+     * 多选批量删除（物理删，与单条删除一致），返回受影响总行数。
+     * 注意：返回值是总行数、不是逐条结果，调用方需要“哪些文本真
+     * 被删了”时须先查存在性或逐条删（见 ClipboardManager.removeEntries）。
+     */
     @Query("DELETE FROM clipboard_records WHERE text IN (:texts)")
-    suspend fun deleteByTexts(texts: List<String>)
+    suspend fun deleteByTexts(texts: List<String>): Int
 
     // —— 自定义分组（H2-4） ——
 
@@ -191,4 +196,14 @@ interface ClipboardDao {
     /** 一次性清理全部软删行（物理删除切换前的存量墓碑），返回删除行数 */
     @Query("DELETE FROM clipboard_records WHERE deleted = 1")
     suspend fun purgeAllDeleted(): Int
+
+    /**
+     * 存量软删行的文本列（时间倒序）：一次性清理前先取文本，供防复活
+     * 抑制接管墓碑行的作用——墓碑删掉后系统剪贴板里若仍是该文本，
+     * 无抑制会把它当新内容重新入库。只取 text 列，不整行读全文；
+     * 调用方须先跑超限截断，否则超限墓碑行在此处读出即抛
+     * SQLiteBlobTooBigException（见 ClipboardManager.sanitizeOversizedOnce）。
+     */
+    @Query("SELECT text FROM clipboard_records WHERE deleted = 1 ORDER BY timestamp DESC")
+    suspend fun getDeletedTexts(): List<String>
 }

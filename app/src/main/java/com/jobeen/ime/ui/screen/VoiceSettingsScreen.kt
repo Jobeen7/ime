@@ -529,6 +529,9 @@ private fun VoiceStaticRow(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            // U-M3：静态行同样登记定位锚点——模型未就绪时模型行是静态行，
+            // 不登记则搜索“本地语音模型”在该状态下定位失败。
+            .rowAnchor(title)
             .padding(vertical = 12.dp),
     ) {
         Text(

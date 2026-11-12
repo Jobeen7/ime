@@ -33,7 +33,14 @@ class MainActivity : ComponentActivity() {
 
     private val initLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
-    ) {
+    ) { result ->
+        // U-S6：初始化超时点“退出”回 RESULT_CANCELED 时，旧代码不看
+        // resultCode、照常打开主页——引擎未就绪却提供部署／同步入口。
+        // 未完成即关本页（重进应用会再次等初始化），不再当作已完成。
+        if (result.resultCode != RESULT_OK) {
+            finish()
+            return@registerForActivityResult
+        }
         if (!isImeConfigured()) {
             setupImeLauncher.launch(Intent(this, SetupActivity::class.java))
         }

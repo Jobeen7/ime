@@ -25,6 +25,14 @@ object CrashTrap {
     private const val FILE_PREFIX = "last_crash-"
     private const val FILE_SUFFIX = ".txt"
 
+    /**
+     * 已安装标记（B-L7）：调两次即双层 handler，一次崩溃写两份文件、
+     * 崩溃日志追加两行，CrashBreaker 的 10 秒 3 次熔断阈值实际 2 次
+     * 真实崩溃即触发。第二次起直接返回（与 AppLogBuffer.install
+     * 的 installed 守卫同口径）。
+     */
+    private val installed = java.util.concurrent.atomic.AtomicBoolean(false)
+
     /** 崩溃文件子目录名（filesDir/crash）：备份规则按目录整体排除 */
     private const val CRASH_DIR_NAME = "crash"
 
@@ -56,6 +64,7 @@ object CrashTrap {
     }
 
     fun install(context: Context) {
+        if (!installed.compareAndSet(false, true)) return
         val appContext = context.applicationContext
         val previous = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->

@@ -114,7 +114,7 @@ fun isProtectedEntry(rel: String): Boolean {
  * - ZipFile 必须可靠关闭。
  *
  * @deprecated 旧编排入口：唯一入口为 SchemePackageImport.importPackageTransaction，
- * 新代码勿用；本文件内旧 importPackage 仍内部调用它。本文件的 injectT9Fields、
+ * 新代码勿用；旧 importPackage 已随 D-L2 删除。本文件的 injectT9Fields、
  * injectOptionsSegments、repairSchemeFiles、determineDirName 仍在生产使用，不受此影响。
  */
 @Deprecated(
@@ -622,95 +622,3 @@ fun repairSchemeFiles(dir: File) {
     injectOptionsSegments(dir, stems)
 }
 
-/**
- * 导入编排：校验→定目录→（合并时读旧启用）→解压→T9 注入＋options 注入→写启用表→切指针→部署→选首位。
- *
- * 契约：
- * - 大小上限与魔数在写盘前检查；无根级方案在写盘前拦（预检），不留孤文件。
- * - 同名目录已存在则合并覆盖：解压不删目标独有文件；启用表＝(新方案＋旧启用).distinct()。
- * - 启用表写新目录 custom＋镜像（镜像经 [writeMirror]，调用方接偏好）。
- * - 指针经 [setCurrentDir] 切到新目录后才部署；部署超时沿用
- *   [SchemePackageImport.deployTimeoutMs]（写出字节数）。
- * - 部署失败返回 [ImportFailure.DEPLOY_FAILED]、超时返回
- *   [ImportFailure.DEPLOY_TIMEOUT]，指针回滚由调用方负责（见 runImport，
- *   与切换失败同口径）；成功才选首个新方案。
- * - zipFile 本身由调用方负责删除（暂存）；取消（[CancellationException]）重抛。
- *
- * @deprecated 旧编排入口：唯一入口为 SchemePackageImport.importPackageTransaction，
- * 新代码勿用；本文件内的 injectT9Fields、injectOptionsSegments、repairSchemeFiles、
- * determineDirName 仍在生产使用，不受此影响。
- */
-@Deprecated(
-    message = "旧导入入口，唯一入口为 SchemePackageImport.importPackageTransaction",
-    level = DeprecationLevel.WARNING,
-)
-suspend fun importPackage(
-    zipFile: File,
-    fallbackName: String,
-    schemeDirsRoot: File,
-    sharedDir: File,
-    writeMirror: (List<String>) -> Unit,
-    setCurrentDir: (String) -> Unit,
-    deploy: suspend (Long) -> DeployAwaitResult,
-    selectSchema: (String) -> Unit,
-): ImportOutcome {
-    try {
-        if (!zipFile.isFile) return ImportOutcome.Failed(ImportFailure.IO_ERROR)
-        if (zipFile.length() > MAX_IMPORT_ZIP_BYTES) {
-            return ImportOutcome.Failed(ImportFailure.TOO_LARGE)
-        }
-        val header = ByteArray(4)
-        var read = 0
-        zipFile.inputStream().use { input ->
-            while (read < 4) {
-                val n = input.read(header, read, 4 - read)
-                if (n < 0) break
-                read += n
-            }
-        }
-        if (!hasZipMagic(header.copyOf(read))) {
-            return ImportOutcome.Failed(ImportFailure.NOT_ZIP)
-        }
-        val (topDir, rootStems) = inspectZip(zipFile)
-        if (rootStems.isEmpty()) return ImportOutcome.Failed(ImportFailure.NO_SCHEMA)
-        val dirName = determineDirName(topDir, fallbackName)
-        val targetDir = File(schemeDirsRoot, dirName)
-        val oldEnabled = if (targetDir.isDirectory) {
-            val diskIds = discoverSchemes(targetDir, sharedDir).map { it.id }
-            effectiveEnabledIds(targetDir, sharedDir, diskIds)
-        } else {
-            emptyList()
-        }
-        val extract = extractZip(zipFile, targetDir)
-        if (extract.newSchemaIds.isEmpty()) {
-            return ImportOutcome.Failed(ImportFailure.NO_SCHEMA)
-        }
-        val inject = injectT9Fields(targetDir, extract.newSchemaIds)
-        val optionsInject = injectOptionsSegments(targetDir, extract.newSchemaIds)
-        val enabled = (extract.newSchemaIds + oldEnabled).distinct()
-        SchemeEnabled.writeEnabledCustomFile(
-            File(targetDir, "default.custom.yaml"),
-            enabled,
-        )
-        writeMirror(enabled)
-        setCurrentDir(dirName)
-        val deployed = deploy(SchemePackageImport.deployTimeoutMs(extract.totalBytes))
-        if (deployed == DeployAwaitResult.TIMEOUT_RUNNING) {
-            return ImportOutcome.Failed(ImportFailure.DEPLOY_TIMEOUT)
-        }
-        if (deployed != DeployAwaitResult.COMPLETED) {
-            return ImportOutcome.Failed(ImportFailure.DEPLOY_FAILED)
-        }
-        selectSchema(enabled[0])
-        return ImportOutcome.Success(
-            dirName,
-            extract.newSchemaIds,
-            inject.injected,
-            inject.skipped + optionsInject.skipped,
-        )
-    } catch (e: CancellationException) {
-        throw e
-    } catch (e: Exception) {
-        return ImportOutcome.Failed(ImportFailure.IO_ERROR, e)
-    }
-}

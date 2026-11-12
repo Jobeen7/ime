@@ -14,6 +14,7 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -42,6 +43,7 @@ class SkinKeyImageStoreTest {
 
     @After
     fun tearDown() {
+        SkinKeyImageStore.resolveTimeoutMs = SkinKeyImageStore.RESOLVE_TIMEOUT_MS
         SkinKeyImageStore.decoder = SkinKeyImageStore::decode
         SkinKeyImageStore.bitmapRecycler = { bitmap ->
             if (!bitmap.isRecycled) bitmap.recycle()
@@ -361,5 +363,44 @@ class SkinKeyImageStoreTest {
         assertSame(bmp, SkinKeyImageStore.resolve("k"))
         assertEquals(null, SkinKeyImageStore.peek("k"))
         assertEquals(0 to 0L, SkinKeyImageStore.cacheStats())
+    }
+
+    // ---- 2026-11-12 审计 K-M5：同步 resolve 有界等待 ----
+
+    @Test
+    fun resolveTimeoutReturnsNullWhenDecodeStalls() {
+        val release = CountDownLatch(1)
+        SkinKeyImageStore.resolveTimeoutMs = 200L
+        SkinKeyImageStore.decoder = { bytes ->
+            decoded += bytes
+            // 解码通道停滞（字节源／解码器挂住）：resolve 不得无限等。
+            release.await(10, TimeUnit.SECONDS)
+            null
+        }
+        SkinKeyImageStore.installProvider { "x".toByteArray() }
+        try {
+            val startMs = System.currentTimeMillis()
+            assertNull(SkinKeyImageStore.resolve("k"))
+            val elapsedMs = System.currentTimeMillis() - startMs
+            assertTrue("resolve must time out, took ${elapsedMs}ms", elapsedMs < 4_000L)
+        } finally {
+            release.countDown()
+        }
+    }
+
+    // ---- 2026-11-12 审计 K-L2：失败集由 DecodeGate 承载 ----
+
+    @Test
+    fun failedKeyNotRetriedUntilGenerationChanges() {
+        SkinKeyImageStore.installProvider { "x".toByteArray() }
+        assertNull(SkinKeyImageStore.resolve("k"))
+        assertEquals(1, decoded.size)
+        // 同世代内失败不再重试（失败已缓存／进失败集）。
+        assertNull(SkinKeyImageStore.resolve("k"))
+        assertEquals(1, decoded.size)
+        // 世代变更（安装新快照）后重获一次重试机会。
+        SkinKeyImageStore.installProvider { "x".toByteArray() }
+        assertNull(SkinKeyImageStore.resolve("k"))
+        assertEquals(2, decoded.size)
     }
 }

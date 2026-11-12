@@ -29,6 +29,13 @@ import timber.log.Timber
  * - 用户下载的模型豁免修剪：shared/ 根下 *.gram（含旧流程备份
  *   *.gram.update-backup）与 model/speech/（含安装备份 speech.old/），
  *   见 [isUserDownloadedModel]——内置包不含、无从再生，删了须重下。
+ * - 中断恢复残留豁免修剪：shared/dicts.staging/ 与 shared/dicts.trash/
+ *   下的文件，见 [isInterruptedUpdateResidue]——启动顺序是修剪
+ *   （releaseResourcesIfNeeded）在前、中断恢复
+ *   （recoverInterruptedUpdate）在后（AppStartup.initialize），
+ *   修剪若删掉 trash 里的旧词库，恢复即失去唯一的恢复来源；
+ *   staging 是未切换的半成品、删了无妨，但同样豁免（恢复流程
+ *   自己清 staging，修剪不越俎代庖）。
  * - 修剪双重否定：目标文件仅当既不在清单内、又不在本遍 zip 流里时才删。
  *   清单若过期（zip 已换、清单未再生）：新文件在流里出现过——
  *   解压时按“清单外条目照常解压”（只朝多写偏）已写入，修剪又因流内
@@ -94,13 +101,15 @@ internal fun isPreserved(path: String, preserve: List<String>): Boolean =
  *   当前方案，语言不止默认一种（见 WanxiangUpdateManager.recoverGramRoot
  *   注释），故按顶层 `*.gram` 后缀匹配；同理其旧流程备份
  *   `<...>.gram.update-backup`——修剪跑在 recoverInterruptedUpdate
- *   之前，备份是 gram 缺位时唯一的恢复来源。
+ *   之前（AppStartup 先 releaseResourcesIfNeeded、后
+ *   recoverInterruptedUpdate），备份是 gram 缺位时唯一的恢复来源。
  * - model/speech/：本地语音模型（tokens.txt＋encoder/decoder/joiner.onnx），
  *   及其安装备份 model/speech.old/（换名中断后跨重启自愈的唯一来源，
  *   见 ModelDownloader.replaceModelDirectory）。
  * 其余一律不豁免：shared/build/（Rime 编译输出，重部署再生；旧 build
- * 留存反可能让部署读到过期编译结果）、dicts.staging/trash（恢复流程
- * 自理）、*.part 半成品（下载重建）。
+ * 留存反可能让部署读到过期编译结果）、*.part 半成品（下载重建）。
+ * dicts.staging/trash 不在此列：它们另由 [isInterruptedUpdateResidue]
+ * 豁免（同为中断恢复来源，与用户模型豁免分开表述、避免口径混淆）。
  */
 internal fun isUserDownloadedModel(path: String): Boolean {
     if (path.startsWith("model/speech/") || path.startsWith("model/speech.old/")) return true
@@ -109,6 +118,22 @@ internal fun isUserDownloadedModel(path: String): Boolean {
     if ('/' in name) return false
     return name.endsWith(".gram") || name.endsWith(".gram.update-backup")
 }
+
+/**
+ * 路径是否为中断恢复残留（修剪豁免；路径为 destDir 下的 `/` 相对路径）。
+ *
+ * B-L6：shared/dicts.staging/ 与 shared/dicts.trash/ 下的文件是
+ * 更新中断后恢复的唯一来源——trash 里是被换下的旧词库整目录
+ * （dicts 缺位时靠它回位），staging 是未完成切换的半成品。启动
+ * 顺序是修剪在前、恢复在后（AppStartup.initialize 先
+ * releaseResourcesIfNeeded、后 recoverInterruptedUpdate），修剪若
+ * 按“清单外即残留”删掉它们，恢复即无物可恢；且修剪只在资源需要
+ * 重解时才跑（App 升版／资源目录缺失），与一次中断更新撞在同一
+ * 次启动即造成旧词库灭失。故此处显式豁免，不依赖“恢复先行”
+ * 的时序假设；恢复流程自己清 staging、按状态处置 trash。
+ */
+internal fun isInterruptedUpdateResidue(path: String): Boolean =
+    path.startsWith("shared/dicts.staging/") || path.startsWith("shared/dicts.trash/")
 
 private fun crc32Of(file: File): Long {
     val crc = CRC32()
@@ -182,7 +207,8 @@ internal fun extractDifferential(
         }
     }
     // 修剪：只走 shared/ 与 model/ 两个子树、只删文件；清单内、
-    // 本遍流内、preserve 前缀内、用户下载模型内的文件一律保留；修剪失败同样整体失败。
+    // 本遍流内、preserve 前缀内、用户下载模型内、中断恢复残留内的
+    // 文件一律保留；修剪失败同样整体失败。
     for (subtree in listOf("shared", "model")) {
         val root = File(destDir, subtree)
         if (!root.isDirectory) continue
@@ -192,7 +218,8 @@ internal fun extractDifferential(
             .filter { path ->
                 path !in byPath && path !in streamPaths &&
                     !isPreserved(path, manifest.preserve) &&
-                    !isUserDownloadedModel(path)
+                    !isUserDownloadedModel(path) &&
+                    !isInterruptedUpdateResidue(path)
             }
             .toList()
         for (path in surplus) {

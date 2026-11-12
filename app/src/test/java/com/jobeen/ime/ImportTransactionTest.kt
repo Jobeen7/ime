@@ -16,6 +16,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -24,7 +25,7 @@ import org.junit.Test
  * 导入事务编排（importPackageTransaction）测试：按 2026-10-27 七项决议
  * （union、共享无条件覆盖、patch custom、FAILED 内容回滚＋TIMEOUT 只回滚
  * 指针、BAD_PACKAGE、256MiB、SWAPPED 扫尾）。
- * 旧 importPackage 不动（SchemeImportTest 覆盖），本文件只测新编排；
+ * 旧 importPackage 已随 D-L2 删除，本文件只测新编排；
  * toast 映射是 Composable 内局部函数、JVM 测不了，以代码核对为准
  * （BAD_PACKAGE → schema_import_error_invalid_package，见 runImport）。
  */
@@ -161,6 +162,44 @@ class ImportTransactionTest {
             assertTrue(File(target, "c.schema.yaml").isFile)
             assertTrue(File(target, "c.dict.yaml").isFile)
             noLeftovers(roots, cache)
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun injectSkipped_failsBeforePointerSwitch() {
+        // D-S4：注入失败时指针与镜像不得已切新目录。方案文件无顶格
+        // schema: 段 → parseSchemaFile 返回 null → 注入 skipped →
+        // 整体失败；指针（currentDir）、镜像、部署、选方案一律未动。
+        // 旧版先切指针再注入，失败后用户留在 T9 字段未注入的新目录上。
+        val root = Files.createTempDirectory("import-tx-test").toFile()
+        try {
+            val roots = File(root, "dirs").apply { mkdirs() }
+            val shared = File(root, "shared").apply { mkdirs() }
+            val cache = File(root, "cache").apply { mkdirs() }
+            val zip = File(root, "pkg.zip")
+            writeZip(
+                zip,
+                listOf(
+                    // 无顶格 schema: 段：规划按文件名认方案，注入解析失败。
+                    "foo.schema.yaml" to "name: foo\nversion: 1\n".toByteArray(),
+                ),
+            )
+            val (outcome, cap) = runTx(zip, "newdir", roots, shared, cache)
+            val failed = outcome as ImportOutcome.Failed
+            assertEquals(ImportFailure.IO_ERROR, failed.failure)
+            assertNull(cap.currentDir)
+            assertNull(cap.mirror)
+            assertNull(cap.deployTimeoutMs)
+            assertNull(cap.selected)
+            // 换位已完成（新目录与 SWAPPED 日志原样保留，与
+            // DEPLOY_FAILED 的孤儿口径一致），只是指针没切过去。
+            assertTrue(File(roots, "newdir/foo.schema.yaml").isFile)
+            val journal = roots.listFiles()
+                ?.singleOrNull { it.name.endsWith(".journal") }
+            assertTrue(journal?.isFile == true)
+            assertTrue(journal!!.readText().contains("stage=SWAPPED"))
         } finally {
             root.deleteRecursively()
         }
@@ -884,7 +923,10 @@ class ImportTransactionTest {
             )
             val results = SchemePackageImport.recoverIncompleteTransactions(roots)
             assertEquals(1, results.size)
-            assertTrue(results[0].restoredOld)
+            // D-S3：目标已是新内容（同进程重试导入成功后的残留态），
+            // 本次恢复没有把任何东西恢复到旧版——restoredOld 须为
+            // false，报 true 是谎报“恢复到完整旧版”。
+            assertFalse(results[0].restoredOld)
             assertFalse(candidate.exists())
             assertFalse(File(roots, ".install-op1.journal").exists())
             assertFalse(backup.exists())

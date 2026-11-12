@@ -2,11 +2,13 @@ package com.jobeen.ime.engine
 
 import com.jobeen.ime.engine.data.EngineMessage
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 /**
  * 引擎 UI 消息的统一出口（RimeEngine 的全部 UI 消息经此投递）。
@@ -124,12 +126,24 @@ internal class EngineMessageChannel {
      * 在 [scope] 内收集并逐条交付；每交付一条后立即补发一次待
      * 补发槽——收集者排空缓冲的每一步都腾出位置，突发末尾滞留
      * 的最新帧靠这一笔达成，不必等下一条生产消息。
+     *
+     * 单条 onMessage 抛错不得杀死整条通道（E-M1）：收集侧
+     * （KeyboardStateManager.handleEngineMessage）一次偶发异常，
+     * 原先会让 collect 抛错、launch 作业失败，UI 从此再也收不到
+     * Commit／候选／组字／联想。逐条捕获（只放行取消），记日志后
+     * 继续下一条；补发照常执行。
      */
     fun observe(
         scope: CoroutineScope, onMessage: suspend (EngineMessage) -> Unit
     ): Job = scope.launch {
         flow.collect { message ->
-            onMessage(message)
+            try {
+                onMessage(message)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Timber.w(e, "EngineMessageChannel consumer failed; keeping channel alive")
+            }
             synchronized(volatileLock) { flushPendingLocked() }
         }
     }

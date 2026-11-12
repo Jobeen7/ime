@@ -88,9 +88,18 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         // 先记 id 再触发：performLongClick 内同步回调监听方，届时即可取到
         longPressPointerId = activePointerId
         longPressTriggered = performLongClick()
+        // 长按／连发互斥（I-L6）：长按动作已触发时连发不再起跑——
+        // 两者同键双声明时一次长按不得既发长按动作又开始连发。
+        // 长按未触发（监听返回 false）时不摘连发，连发照常接管。
+        if (shouldCancelRepeatOnLongPress(longPressTriggered)) {
+            repeatHandler.removeCallbacks(repeatRunnable)
+        }
     }
 
     private fun fireRepeat() {
+        // 长按已触发时不连发（I-L6 的另一半：与长按 Runnable 的摘除
+        // 互为兜底，时序上谁先跑到都不让两者同存）。
+        if (!shouldStartRepeat(longPressTriggered, repeatEnabled)) return
         if (isEnabled) {
             repeatStarted = true
             onRepeatListener?.invoke(this@CustomGestureView)
@@ -476,3 +485,17 @@ open class CustomGestureView(ctx: Context) : FrameLayout(ctx) {
         const val RepeatInterval = 100L
     }
 }
+
+/**
+ * 长按触发后是否摘除待发连发（纯函数，可单测；I-L6）：长按动作
+ * 已触发即摘除，否则（监听返回 false、长按未生效）保留连发。
+ */
+internal fun shouldCancelRepeatOnLongPress(longPressTriggered: Boolean): Boolean =
+    longPressTriggered
+
+/**
+ * 连发是否可起跑（纯函数，可单测；I-L6）：未声明连发、或长按已
+ * 触发时都不起跑——同键双声明时一次长按只发长按动作，不连发。
+ */
+internal fun shouldStartRepeat(longPressTriggered: Boolean, repeatEnabled: Boolean): Boolean =
+    repeatEnabled && !longPressTriggered

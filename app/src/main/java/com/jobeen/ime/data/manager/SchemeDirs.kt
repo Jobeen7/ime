@@ -117,9 +117,13 @@ object SchemeDirs {
     )
 
     /**
-     * 迁移规划（纯函数）：根的每个孩子（build/、初始目录自身、备份目录
-     * 除外）→ 初始目录下同名位置；目标已存在时进冲突表（不覆盖、
-     * 不删除，由执行侧按内容比对处置）。空根或已是纯目录根时返回空表。
+     * 迁移规划（纯函数）：根的每个孩子（build/、初始目录自身、备份目录、
+     * 全部隐藏目录除外）→ 初始目录下同名位置；目标已存在时进冲突表
+     * （不覆盖、不删除，由执行侧按内容比对处置）。空根或已是纯目录根
+     * 时返回空表。隐藏目录必须排除：方案事务目录（.install-* 候选、
+     * .backup-* 备份、.install-*.journal 日志）与迁移备份目录都住
+     * 在根下，搬进初始目录即把事务中间态当成方案集、还会让后续
+     * 恢复按日志找不到原路径；与 [listDirs] 的隐藏目录排除同口径。
      * 根是目录但枚举失败（listFiles() 返回 null）时抛错，不按空表处理：
      * 空表会被执行侧当成“无待迁移文件”而置位，导致旧方案永久丢失；
      * 抛错后 ensureMigrated 记错误、不置位，下次读取重试。
@@ -134,7 +138,8 @@ object SchemeDirs {
         for (child in children) {
             if (child.name == "build" ||
                 child.name == INITIAL_DIR ||
-                child.name == MIGRATION_BACKUP_DIR
+                child.name == MIGRATION_BACKUP_DIR ||
+                child.name.startsWith(".")
             ) {
                 continue
             }
@@ -302,17 +307,21 @@ object SchemeDirs {
             }
             if (dirAfterCopy != legacy) return "enabled ids verify failed"
         }
-        // 终检查：源平铺目录除 build/、初始目录自身、备份目录外无未处理文件；
-        // 分目录启用列表与迁移前状态一致（旧值存在且本轮复制时须等于旧值）。
-        // 枚举失败（listFiles() 返回 null）与“无剩余文件”是两回事：前者
-        // 必须返回失败、不置位，否则会把未处理文件误当成已处理。
+        // 终检查：源平铺目录除 build/、初始目录自身、备份目录、隐藏目录
+        // 外无未处理文件；分目录启用列表与迁移前状态一致（旧值存在且
+        // 本轮复制时须等于旧值）。隐藏目录排除与 migrationPlan 同口径：
+        // 事务目录（.install-*／.backup-*）不参与迁移，也不得在此被
+        // 当成“未处理文件”让迁移永久失败。枚举失败（listFiles() 返回
+        // null）与“无剩余文件”是两回事：前者必须返回失败、不置位，
+        // 否则会把未处理文件误当成已处理。
         if (root.isDirectory) {
             val listed = root.listFiles()
                 ?: return "leftover check failed: cannot list root"
             val leftover = listed.filter { child ->
                 child.name != "build" &&
                     child.name != INITIAL_DIR &&
-                    child.name != MIGRATION_BACKUP_DIR
+                    child.name != MIGRATION_BACKUP_DIR &&
+                    !child.name.startsWith(".")
             }
             if (leftover.isNotEmpty()) {
                 return "leftover files: ${leftover.joinToString { it.name }}"

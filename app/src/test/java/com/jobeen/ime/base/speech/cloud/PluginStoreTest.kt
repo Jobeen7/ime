@@ -161,4 +161,31 @@ class PluginStoreTest {
         assertFalse(secrets.has("example.asr", "api_key"))
         assertTrue(store.getSettings("example.asr").isEmpty())
     }
+
+    // B-L1：原子写盘——安装后不留 .tmp 残留，脚本与元数据双双完整；
+    // 只有脚本、无元数据的孤儿目录不可见。
+    @Test
+    fun writeInstall_atomic_noTmpResidue() {
+        val dir = tempDir()
+        val store = PluginStore(dir, MapPrefsStore())
+        val seeded = store.seedBuiltin(script(id = "builtin.test"))
+        assertTrue(seeded is PluginStore.SeedResult.Seeded)
+        val pluginDir = File(dir, "cloud_plugins/builtin.test")
+        assertTrue(File(pluginDir, "plugin.js").isFile)
+        assertTrue(File(pluginDir, "meta.json").isFile)
+        assertFalse(File(pluginDir, "plugin.js.tmp").exists())
+        assertFalse(File(pluginDir, "meta.json.tmp").exists())
+        assertNotNull(store.get("builtin.test"))
+        assertEquals(listOf("builtin.test"), store.list().map { it.id })
+    }
+
+    @Test
+    fun orphanScriptWithoutMeta_isInvisible() {
+        val dir = tempDir()
+        val store = PluginStore(dir, MapPrefsStore())
+        val pluginDir = File(dir, "cloud_plugins/orphan.asr").apply { mkdirs() }
+        File(pluginDir, "plugin.js").writeText("register({});")
+        assertNull(store.get("orphan.asr"))
+        assertTrue(store.list().isEmpty())
+    }
 }

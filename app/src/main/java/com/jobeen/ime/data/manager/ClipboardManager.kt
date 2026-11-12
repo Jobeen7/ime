@@ -185,15 +185,57 @@ object ClipboardManager {
      * 覆盖现有列表。消费方拿到 null 应保留现有数据/给出提示，
      * 不要用空列表覆盖。
      */
-    suspend fun getEntriesOrNull(context: Context): List<Entry>? = db(context) { db ->
-        val cutoff = System.currentTimeMillis() - getRetentionDays(context) * 86400000L
-        db.clipboardDao().getAllActiveSince(cutoff)
-            .map { Entry(it.text, it.timestamp, it.cloud, it.pinned, it.groupId) }
+    suspend fun getEntriesOrNull(context: Context): List<Entry>? {
+        // 读前先跑一次遗留超限清理（进程内只跑一次）：超限行不截断，
+        // 本次读取本身就会抛 SQLiteBlobTooBigException。
+        sanitizeOversizedOnce(context)
+        return db(context) { db ->
+            val cutoff = System.currentTimeMillis() - getRetentionDays(context) * 86400000L
+            db.clipboardDao().getAllActiveSince(cutoff)
+                .map { Entry(it.text, it.timestamp, it.cloud, it.pinned, it.groupId) }
+        }
     }
 
     /** 旧契约兼容：失败按真空返回。不关心成败的调用方用，新消费方用 [getEntriesOrNull]。 */
     suspend fun getEntries(context: Context): List<Entry> =
         getEntriesOrNull(context) ?: emptyList()
+
+    /**
+     * 遗留超限行一次性清理（D-S5）：写入侧早已限长，但限长前的遗留
+     * 超限行（约 2MB 起）读出即抛 SQLiteBlobTooBigException、一行
+     * 毒化整表。顺序：先按截断键去重、再 SQL 内截断、再读软删墓碑
+     * 文本、最后清墓碑——截断后的文本才安全可读，墓碑文本随即记
+     * 入防复活抑制、墓碑行才可删。同一事务内完成，中途失败整批
+     * 回滚；进程内只跑一次，失败不置标志、下次访问重试。
+     */
+    private val oversizedSanitized = java.util.concurrent.atomic.AtomicBoolean(false)
+
+    suspend fun sanitizeOversizedOnce(context: Context) {
+        if (!oversizedSanitized.compareAndSet(false, true)) return
+        val purgedTexts = db(context) { db ->
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                dao.dedupeOversizedByTruncatedKey(MAX_TEXT_LENGTH)
+                dao.truncateOversizedTexts(MAX_TEXT_LENGTH)
+                val deleted = dao.getDeletedTexts()
+                dao.purgeAllDeleted()
+                deleted
+            }
+        }
+        if (purgedTexts == null) {
+            // 清理失败不置标志，下次访问重试（db() 已记日志）；
+            // 本次读取照常走，超限行仍可能毒化本次读取——清理是
+            // 遗留数据的兜底，不是读前置条件。
+            oversizedSanitized.set(false)
+            return
+        }
+        if (purgedTexts.isNotEmpty()) {
+            // 墓碑文本记入防复活抑制（接管被删墓碑行的作用），在事务
+            // 提交之后记——抑制写 prefs，不参与 DB 事务回滚，记早了
+            // 会与回滚的墓碑行脱节。
+            noteRemovedTexts(context, purgedTexts)
+        }
+    }
 
     /** [setPinned] 的结果三态：落库成功 / 达上限被拒 / 数据库失败。 */
     enum class PinResult { Ok, Limit, Error }
@@ -207,17 +249,21 @@ object ClipboardManager {
      */
     suspend fun setPinned(context: Context, text: String, pinned: Boolean): PinResult {
         val result = db(context) { db ->
-            val dao = db.clipboardDao()
-            if (pinned && dao.pinnedByText(text) != true &&
-                dao.countPinned() >= MAX_PINNED
-            ) {
-                // 已置顶条目重复置顶是幂等操作、不占新名额（上面按
-                // pinnedByText 放行）；未置顶条目在置顶数已达上限时
-                // 拒绝，不落库。取消置顶永远放行
-                false
-            } else {
-                dao.setPinnedByText(text, pinned)
-                true
+            // “是否已置顶→计数→置顶”同事务：分开时并发置顶可在计数
+            // 后、落库前再挤进一条，置顶数悄悄超过上限。
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                if (pinned && dao.pinnedByText(text) != true &&
+                    dao.countPinned() >= MAX_PINNED
+                ) {
+                    // 已置顶条目重复置顶是幂等操作、不占新名额（上面按
+                    // pinnedByText 放行）；未置顶条目在置顶数已达上限时
+                    // 拒绝，不落库。取消置顶永远放行
+                    false
+                } else {
+                    dao.setPinnedByText(text, pinned)
+                    true
+                }
             }
         }
         return when (result) {
@@ -269,15 +315,23 @@ object ClipboardManager {
     suspend fun createGroup(context: Context, rawName: String): CreateGroupResult {
         val name = normalizeGroupName(rawName) ?: return CreateGroupResult.Invalid
         val id = db(context) { db ->
-            val dao = db.clipboardDao()
-            if (dao.getGroupByName(name) != null) return@db -1L
-            if (dao.countGroups() >= MAX_GROUPS) return@db -2L
-            dao.insertGroup(
-                ClipboardGroup(
-                    name = name,
-                    sortOrder = (dao.maxGroupSortOrder() ?: -1L) + 1L,
-                )
-            )
+            // “重名检查→计数→插入”同事务：分开时并发新建可在检查后
+            // 各插一条同名分组，或双双越过上限。
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                if (dao.getGroupByName(name) != null) {
+                    -1L
+                } else if (dao.countGroups() >= MAX_GROUPS) {
+                    -2L
+                } else {
+                    dao.insertGroup(
+                        ClipboardGroup(
+                            name = name,
+                            sortOrder = (dao.maxGroupSortOrder() ?: -1L) + 1L,
+                        )
+                    )
+                }
+            }
         } ?: return CreateGroupResult.Error
         return when (id) {
             -1L -> CreateGroupResult.Duplicate
@@ -298,11 +352,19 @@ object ClipboardManager {
     suspend fun renameGroup(context: Context, id: Long, rawName: String): RenameGroupResult {
         val name = normalizeGroupName(rawName) ?: return RenameGroupResult.Invalid
         val rows = db(context) { db ->
-            val dao = db.clipboardDao()
-            val current = dao.getGroupById(id) ?: return@db -1
-            if (current.name == name) return@db 0
-            if (dao.getGroupByName(name) != null) return@db -2
-            dao.renameGroupById(id, name)
+            // “读当前名→重名检查→改名”同事务：分开时并发改名可在检查
+            // 后各改成同一个名字，造出重名分组。
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                val current = dao.getGroupById(id) ?: return@withTransaction -1
+                if (current.name == name) {
+                    0
+                } else if (dao.getGroupByName(name) != null) {
+                    -2
+                } else {
+                    dao.renameGroupById(id, name)
+                }
+            }
         } ?: return RenameGroupResult.Error
         return when (rows) {
             -1 -> RenameGroupResult.Error
@@ -329,15 +391,20 @@ object ClipboardManager {
      * @return 落库成功为 true；目标分组不存在或数据库失败为 false。
      */
     suspend fun setGroup(context: Context, text: String, groupId: Long): Boolean {
-        if (groupId != 0L) {
-            val exists = db(context) { db ->
-                db.clipboardDao().getGroupById(groupId) != null
-            } ?: return false
-            if (!exists) return false
-        }
+        // 存在性检查与移组同事务：分开时分组可在检查后被删，条目会
+        // 被移进一个已不存在的分组；返回口径不变（目标分组不存在
+        // 或数据库失败为 false，其余成功为 true）。
         return db(context) { db ->
-            db.clipboardDao().setGroupByText(text, groupId)
-        } != null
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                if (groupId != 0L && dao.getGroupById(groupId) == null) {
+                    false
+                } else {
+                    dao.setGroupByText(text, groupId)
+                    true
+                }
+            }
+        } ?: false
     }
 
     /**
@@ -422,31 +489,37 @@ object ClipboardManager {
     /** @return 清空落库成功为 true；数据库操作失败为 false。 */
     suspend fun clearAll(context: Context): Boolean {
         val now = System.currentTimeMillis()
-        val ok = db(context) { db ->
+        // 抑制在事务提交后记：抑制写 prefs，不参与 DB 事务回滚——
+        // 记在事务内时清空失败回滚，抑制却留下来屏蔽仍在表里的
+        // 文本，使其永不再入库。
+        val removedTexts = db(context) { db ->
             db.withTransaction {
                 val dao = db.clipboardDao()
-                // 物理清空前把全部条目记入防复活抑制（替代软删墓碑行的作用）。
+                // 物理清空前取全部条目文本（替代软删墓碑行的作用）。
                 // 抑制集上限 200 条：按时间倒序取最新 200 条截断，保证最新
                 // 条目（含当前系统剪贴板内容）不被丢掉——乱序截断时可能
                 // 恰好丢掉当前剪贴板那条，清空后它又复活回来。排序截断
                 // 在 SQL 内完成、只取 text 列，不再全量读全文进内存
-                noteRemovedTexts(
-                    context,
-                    dao.getRecentTexts(MAX_REMOVED_HASHES),
-                )
+                val texts = dao.getRecentTexts(MAX_REMOVED_HASHES)
                 dao.deleteAllRaw()
+                texts
             }
-        } != null
+        }
+        if (removedTexts != null) noteRemovedTexts(context, removedTexts)
         lastCopyText = null
         lastCopyTimestamp = 0L
         clearTimestamp = now
-        return ok
+        return removedTexts != null
     }
 
     /** @return 删除落库成功为 true；数据库操作失败为 false。 */
     suspend fun removeEntry(context: Context, text: String): Boolean {
-        noteRemovedTexts(context, listOf(text))
-        return db(context) { db -> db.clipboardDao().deleteByText(text) } != null
+        // 先删后记抑制：删库失败或文本本就不在表里时不记抑制——
+        // 记早了会让一次失败的删除永久屏蔽该文本的重新入库。
+        val deleted = db(context) { db -> db.clipboardDao().deleteByText(text) }
+            ?: return false
+        if (deleted > 0) noteRemovedTexts(context, listOf(text))
+        return true
     }
 
     /**
@@ -455,8 +528,20 @@ object ClipboardManager {
      */
     suspend fun removeEntries(context: Context, texts: Collection<String>): Boolean {
         if (texts.isEmpty()) return true
-        noteRemovedTexts(context, texts)
-        return db(context) { db -> db.clipboardDao().deleteByTexts(texts.toList()) } != null
+        // 逐条删、只记真被删的文本：批量删只回总行数，分不清哪条
+        // 被删了；先记抑制再删则失败的删除同样会永久屏蔽文本。
+        val deleted = db(context) { db ->
+            db.withTransaction {
+                val dao = db.clipboardDao()
+                val removed = mutableListOf<String>()
+                for (text in texts) {
+                    if (dao.deleteByText(text) > 0) removed.add(text)
+                }
+                removed
+            }
+        } ?: return false
+        if (deleted.isNotEmpty()) noteRemovedTexts(context, deleted)
+        return true
     }
 
     /**

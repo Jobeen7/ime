@@ -103,14 +103,19 @@ namespace {
                 std::lock_guard<std::mutex> lock(session_mutex_);
                 session_.reset();
             }
+            // N-S1：finalize() 内部就是 JoinMaintenanceThread（对同一
+            // future 调 get），必须与 joinMaintenanceThread() 持同一把
+            // join_mutex_ 串行，否则并发 get 第二次抛 std::future_error
+            // 穿过 JNI。锁顺序固定为 session_mutex_ → join_mutex_，
+            // joinMaintenanceThread() 只取后一把，无逆序死锁。
+            std::lock_guard<std::mutex> lock(join_mutex_);
             api_->finalize();
         }
 
+        // N-S1 之后 joinMaintenanceThread() 仍保留本方法：部署等待
+        // 路径在 IO 线程上 join，与 rime-main 的 shutdown() 串行于
+        // 同一把 join_mutex_（见 shutdown()）。
         void joinMaintenanceThread() {
-            // librime Deployer::JoinWorkThread 对同一个 std::future 并发 get()
-            // 会抛 std::future_error（第二次 get 时状态已被消费）。
-            // Kotlin 侧有两个调用点（引擎启动与部署路径），可能跨线程并发到这里，
-            // 用互斥把 join 串行化：串行重复 join 时 valid() 已为 false，天然无操作。
             std::lock_guard<std::mutex> lock(join_mutex_);
             api_->join_maintenance_thread();
         }
@@ -121,14 +126,6 @@ namespace {
                 session_.reset();
             }
             return api_->sync_user_data();
-        }
-
-        bool deploySchema(const std::string &file) {
-            return api_->deploy_schema(file.c_str());
-        }
-
-        bool deployConfig(const std::string &file, const std::string &versionKey) {
-            return api_->deploy_config_file(file.c_str(), versionKey.c_str());
         }
 
         bool processKey(int keycode, int mask) {
@@ -256,7 +253,11 @@ namespace {
 
         std::vector<CandidateData> candidates(int start, int limit) {
             std::vector<CandidateData> out;
-            out.reserve(limit);
+            // N-M2：limit 未校验即 reserve(limit)，负值转 size_t 为极大值，
+            // reserve 抛 std::length_error 穿过 JNI。limit <= 0 即空页，
+            // 与 Kotlin 侧 getCandidates 的 limit <= 0 守卫同口径。
+            if (limit <= 0) return out;
+            out.reserve(static_cast<size_t>(limit));
             RimeCandidateListIterator iter{};
             if (api_->candidate_list_from_index(sessionId(), &iter, start)) {
                 int count = 0;
@@ -445,10 +446,14 @@ Java_com_jobeen_ime_engine_rime_core_Rime_bootstrap(
         } else if (std::strcmp(type, "deploy") == 0) {
             code = 3;
         }
-        // 未知通知类型不转发：code 0 在 Kotlin 侧是 Key 消息，
-        // 拿字符串参数去构造会抛类型转换异常并污染本线程的 JNI 状态。
-        if (code == 0) return;
-        auto env = jni::g_refs->attach();
+        // N-L1：未知类型（含 librime 的 "property"，name=value 串）
+        // 不再丢弃，照 code 0 转发；Kotlin 侧 types[0] 是 Unknown
+        //（Key 是 ordinal 10），nativeCreate 的 else 分支产
+        // UnknownMessage，不会如旧注释所称去构造 Key 消息。
+        jni::ScopedEnv scoped = jni::g_refs->attach();
+        JNIEnv *env = scoped;
+        // N-L3：attach 失败时 env 为 null，绝不能在空 env 上调 JNI。
+        if (env == nullptr) return;
         jobjectArray args =
                 env->NewObjectArray(1, jni::g_refs->Object, nullptr);
         jni::LocalRef<jstring> ref(env, jni::makeString(env, value));
@@ -473,28 +478,27 @@ Java_com_jobeen_ime_engine_rime_core_Rime_bootstrap(
 }
 
 JNIEXPORT void JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_shutdown(JNIEnv *, jclass) {
-    RimeEngine::instance().shutdown();
+Java_com_jobeen_ime_engine_rime_core_Rime_shutdown(JNIEnv *env, jclass) {
+    // N-S1 纵深防线：锁已串行 finalize 与 join（见 shutdown()），
+    // 此处再兜住任何 C++ 异常转 Java 异常，绝不让它穿过 JNI 边界。
+    try {
+        RimeEngine::instance().shutdown();
+    } catch (const std::exception &e) {
+        jni::throwException(env, e.what());
+    } catch (...) {
+        jni::throwException(env, "rime_jni: unknown error in shutdown");
+    }
 }
 
 JNIEXPORT void JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_joinMaintenanceThread(JNIEnv *, jclass) {
-    RimeEngine::instance().joinMaintenanceThread();
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_deploySchemaFile(
-        JNIEnv *env, jclass, jstring schema_file) {
-    jni::StringChars path(env, schema_file);
-    return RimeEngine::instance().deploySchema(path.str());
-}
-
-JNIEXPORT jboolean JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_deployConfigFile(
-        JNIEnv *env, jclass, jstring file_name, jstring version_key) {
-    jni::StringChars file(env, file_name);
-    jni::StringChars key(env, version_key);
-    return RimeEngine::instance().deployConfig(file.str(), key.str());
+Java_com_jobeen_ime_engine_rime_core_Rime_joinMaintenanceThread(JNIEnv *env, jclass) {
+    try {
+        RimeEngine::instance().joinMaintenanceThread();
+    } catch (const std::exception &e) {
+        jni::throwException(env, e.what());
+    } catch (...) {
+        jni::throwException(env, "rime_jni: unknown error in joinMaintenanceThread");
+    }
 }
 
 JNIEXPORT jboolean JNICALL
@@ -538,13 +542,6 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getCommit(JNIEnv *env,
                                                        jclass) {
     auto c = RimeEngine::instance().commit();
     return toJavaCommit(env, *c);
-}
-
-JNIEXPORT jobject JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_getContext(JNIEnv *env,
-                                                        jclass) {
-    auto ctx = RimeEngine::instance().context();
-    return toJavaContext(env, *ctx);
 }
 
 JNIEXPORT jobject JNICALL
@@ -622,11 +619,6 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getInputConfirmedPosition(JNIEnv *env,
     return static_cast<jint>(RimeEngine::instance().getInputConfirmedPosition());
 }
 
-JNIEXPORT jint JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_getCaretPos(JNIEnv *, jclass) {
-    return static_cast<jint>(RimeEngine::instance().caretPos());
-}
-
 JNIEXPORT void JNICALL
 Java_com_jobeen_ime_engine_rime_core_Rime_setCaretPos(JNIEnv *, jclass,
                                                          jint caret_pos) {
@@ -662,8 +654,8 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getCandidates(
 
 namespace {
 
-// bulk 三元数组 [size, highlighted, candidates]：getBulkCandidates 与
-// 快照共用同一构造，保证两路形状一致（Kotlin 侧 Candidate 消息解析只认此形）。
+// bulk 三元数组 [size, highlighted, candidates]：快照专用构造
+//（Kotlin 侧 Candidate 消息解析只认此形）。
 jobjectArray toJavaBulkArray(JNIEnv *env, int size, int highlighted,
                              const std::vector<CandidateData> &list) {
     jni::LocalRef<> sizeObj(
@@ -671,6 +663,13 @@ jobjectArray toJavaBulkArray(JNIEnv *env, int size, int highlighted,
     jni::LocalRef<> hlObj(env, env->NewObject(jni::g_refs->Integer,
                                               jni::g_refs->IntegerCtor, highlighted));
     jni::LocalRef<jobjectArray> listObj(env, toJavaCandidateArray(env, list));
+    // N-L2：任一子对象 OOM 为 null 时不得继续往数组里塞 null 再调 JNI——
+    // 当场清掉 OOM 异常、返回 null 交 Kotlin 侧以可控失败处理。
+    if (sizeObj.get() == nullptr || hlObj.get() == nullptr ||
+        listObj.get() == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
 
     jobjectArray result =
             env->NewObjectArray(3, jni::g_refs->Object, nullptr);
@@ -687,13 +686,6 @@ jobjectArray toJavaBulkArray(JNIEnv *env, int size, int highlighted,
 }  // namespace
 
 JNIEXPORT jobjectArray JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_getBulkCandidates(
-        JNIEnv *env, jclass, jint highlighted) {
-    auto [size, hl, list] = RimeEngine::instance().bulkCandidates(highlighted);
-    return toJavaBulkArray(env, size, hl, list);
-}
-
-JNIEXPORT jobjectArray JNICALL
 Java_com_jobeen_ime_engine_rime_core_Rime_getSnapshotAfterKey(JNIEnv *env,
                                                                jclass) {
     // 一次 JNI 取回按键响应全量：commit + context + bulk 首屏。
@@ -708,6 +700,13 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getSnapshotAfterKey(JNIEnv *env,
     jni::LocalRef<> commitObj(env, toJavaCommit(env, *commit));
     jni::LocalRef<> contextObj(env, toJavaContext(env, *ctx));
     jni::LocalRef<jobjectArray> bulkObj(env, toJavaBulkArray(env, size, hl, list));
+    // N-L2：同 toJavaBulkArray，任一子对象为 null 即整体返回 null，
+    // 不把 null 塞进结果数组（Kotlin 侧对 null 元素做非空强转会失败）。
+    if (commitObj.get() == nullptr || contextObj.get() == nullptr ||
+        bulkObj.get() == nullptr) {
+        if (env->ExceptionCheck()) env->ExceptionClear();
+        return nullptr;
+    }
 
     jobjectArray result =
             env->NewObjectArray(3, jni::g_refs->Object, nullptr);

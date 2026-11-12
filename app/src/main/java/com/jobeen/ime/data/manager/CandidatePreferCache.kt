@@ -96,11 +96,15 @@ object CandidatePreferCache {
     )
 
     /**
-     * 返回 text → click_count。首次调用在本类串行通道上全量加载
-     * （读库与回写合并同段执行，不与点击对子交错）。
+     * 返回 text → click_count 的快照副本（D-M13）：旧实现返回活 Map，
+     * 调用方拿到的是缓存本体，可改动甚至破坏缓存。首次调用在本类串行
+     * 通道上全量加载（读库与回写合并同段执行，不与点击对子交错）。
      */
     suspend fun snapshot(context: Context): Map<String, Int> {
-        if (loaded) return cache
+        // HashMap 而非 toMap()：缓存只有 0/1 条时 toMap() 返回不可变的
+        // emptyMap/singletonMap，调用方按 MutableMap 改写即抛
+        // UnsupportedOperationException；HashMap 恒为全新可变拷贝。
+        if (loaded) return HashMap(cache)
         return loadSnapshot(AppDatabase.getInstance(context).candidatePreferDao())
     }
 
@@ -115,8 +119,10 @@ object CandidatePreferCache {
         return withContext(serialDispatcher) {
             transactionMutex.withLock {
                 // 锁外的一次 loaded 检查只是快速路径：进锁后先复查，
-                // 排队期间已由另一段完成加载时直接返回，不重复读库
-                if (loaded) return@withLock cache
+                // 排队期间已由另一段完成加载时直接返回，不重复读库。
+                // 返回的仍是拷贝（调用方拿到活 Map 会破坏缓存，见 D-M13；
+                // 用 HashMap 而非 toMap()，见 snapshot 的注释）。
+                if (loaded) return@withLock HashMap(cache)
                 val gen = generation          // 加载前记下代次
                 // 不用 runCatching：它会连 CancellationException 一起
                 // 吞掉——加载协程在读库挂起时被取消（候选批到达即
@@ -134,7 +140,7 @@ object CandidatePreferCache {
                 }
                 // 加载失败不能置 loaded：否则本进程内偏好永远为空且不再重试
                 finishLoad(loadedMap, gen)
-                cache
+                HashMap(cache)
             }
         }
     }
@@ -235,8 +241,12 @@ object CandidatePreferCache {
     /** 偏好快照是否已加载完成（加载后 [snapshot] 为内存直读、不会等写事务）。 */
     fun isLoaded(): Boolean = loaded
 
-    /** 当前缓存的实时视图（未加载完成时可能为空或只有落点直写计数）。 */
-    fun currentCache(): Map<String, Int> = cache
+    /**
+     * 当前缓存的快照副本（未加载完成时可能为空或只有落点直写计数）。
+     * 返回副本而非活 Map（与 [snapshot] 同口径，D-M13）：调用方改不
+     * 动缓存本体。
+     */
+    fun currentCache(): Map<String, Int> = HashMap(cache)
 
     /** 加载完成监听集合：置 loaded 的一刻在锁外通知（监听方可能回调引擎管线）。 */
     private val loadListeners =
@@ -301,11 +311,11 @@ object CandidatePreferCache {
     /**
      * 落点原语：把一次已落库点击的计数投递到串行通道异步合并。
      * 生产写路径走 [recordClick]（upsert 与落点同段完成）；本入口
-     * 保留给测试直接驱动落点时序，以及任何无法走 [recordClick]
-     * 的调用方——注意单独调用它不构成「upsert → 落点」对子的串
-     * 行保证（见 [serialDispatcher] 的不变量说明）。
+     * 仅供测试直接驱动落点时序。注意单独调用它不构成「upsert →
+     * 落点」对子的串行保证（见 [serialDispatcher] 的不变量说明），
+     * 故只对模块内可见——公开它会让生产调用方绕过对子（D-M13）。
      */
-    fun noteUpsert(text: String) {
+    internal fun noteUpsert(text: String) {
         val gen = generation
         landingScope.launch {
             // 落点段同在跨挂起互斥内：与加载段、点击对子段统一口径，
@@ -338,13 +348,16 @@ object CandidatePreferCache {
     /**
      * 测试用：等已投递的增量落点全部执行完。落点与本调用同在
      * [serialDispatcher] 上 FIFO 排队，本段执行到时先于它投递的
-     * 落点必然已执行——此结论仅在无并发持锁时成立：落点段还要
-     * 先取 [transactionMutex]，等锁期间会让出通道的唯一 worker，
-     * 本调用可能抢先跑完、越过尚未取得锁的落点。现有用例都是串
-     * 行驱动、锁恒空闲，不触发这一交错。
+     * 落点必然已执行；再取一次 [transactionMutex]——落点段还要先
+     * 取该锁，等锁期间会让出通道的唯一 worker，本调用若只等通道
+     * 可能抢先跑完、越过尚未取得锁的落点（旧实现即此缺口，注释
+     * 自认“仅在无并发持锁时成立”）。取锁后返回时，先于本调用投
+     * 递的落点必然已取过锁并执行完。
      */
     internal suspend fun flushLandings() {
-        withContext(serialDispatcher) { }
+        withContext(serialDispatcher) {
+            transactionMutex.withLock { }
+        }
     }
 }
 

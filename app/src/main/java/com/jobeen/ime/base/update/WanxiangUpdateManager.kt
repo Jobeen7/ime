@@ -177,8 +177,9 @@ object WanxiangUpdateManager {
     const val PREFS_NAME = "wanxiang_update"
     internal const val KEY_SCHEMA_VERSION = "schema_version"
     // 内置随 App 打包的万象 Lite 数据版本（仅作落盘 version.txt 读不到时的
-    // 兜底；展示优先读 shared/version.txt，见 readBundledSchemaVersion）
-    const val BUILTIN_SCHEMA_VERSION = "v18.1.8"
+    // 兜底；展示优先读 shared/version.txt，见 readBundledSchemaVersion）。
+    // 以实际内置版本为准：resource.zip 内 shared/version.txt 为 18.1.11。
+    const val BUILTIN_SCHEMA_VERSION = "v18.1.11"
     internal const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"
     // 下载时计算的内容指纹（用于本地/远端比对）
     private const val KEY_DICT_REMOTE_FP = "dict_remote_fp"
@@ -306,15 +307,34 @@ object WanxiangUpdateManager {
         val gramContentVerified: Boolean get() = gramSha256.isNotEmpty()
     }
 
-    /** "v18.0.15" 风格版本号逐段数字比较。 */
-    private fun compareVersions(left: String, right: String): Int {
-        fun parts(v: String) = v.trim().removePrefix("v").removePrefix("V")
-            .split('.', '-', '_').map { it.toIntOrNull() ?: 0 }
+    /**
+     * "v18.0.15" 风格版本号逐段比较（internal 供单测）。
+     * 每段取前导数字比大小；数字相等时，有后缀（预发布）者小于无后缀
+     * 的正式版（B-L4：此前非数字段一律当 0，"18.1.12-rc1" 与
+     * "18.1.12" 会判相等，预发布用户收不到正式版提示）；后缀之间
+     * 按字典序。纯数字版本号的比较结果与旧口径一致。
+     */
+    internal fun compareVersions(left: String, right: String): Int {
+        fun parts(v: String): List<Pair<Long, String>> =
+            v.trim().removePrefix("v").removePrefix("V")
+                .split('.', '-', '_')
+                .map { seg ->
+                    val digits = seg.takeWhile { it.isDigit() }
+                    (digits.toLongOrNull() ?: 0L) to seg.substring(digits.length)
+                }
         val a = parts(left)
         val b = parts(right)
         for (i in 0 until maxOf(a.size, b.size)) {
-            val r = (a.getOrElse(i) { 0 }).compareTo(b.getOrElse(i) { 0 })
+            val (an, aSuffix) = a.getOrElse(i) { 0L to "" }
+            val (bn, bSuffix) = b.getOrElse(i) { 0L to "" }
+            val r = an.compareTo(bn)
             if (r != 0) return r
+            if (aSuffix != bSuffix) {
+                if (aSuffix.isEmpty()) return 1
+                if (bSuffix.isEmpty()) return -1
+                val s = aSuffix.compareTo(bSuffix)
+                if (s != 0) return s
+            }
         }
         return 0
     }
@@ -579,13 +599,16 @@ object WanxiangUpdateManager {
     }
 
     private fun recoverInterruptedUpdateInternal() {
-        // 词库切换残留：共享根 + 当前目录根（目录目标更新中断时
-        // staging/trash 在目录内）；模型残留只在共享根（模型全局共享）。
+        // 词库切换残留：共享根 + 全部方案目录根（B-M3：此前只扫共享根
+        // 与当前目录，已切走的目录中断在两次 rename 之间时，trash 里
+        // 的旧词库无人恢复、dicts 持续缺位，直到切回该目录才自愈）。
+        // 模型残留只在共享根（模型全局共享）。
         recoverDictsRoot(DataManager.sharedDataDir)
-        val currentDir = runCatching { SchemeDirs.currentDirName() }.getOrNull()
-        if (currentDir != null) {
-            val dirFile = File(DataManager.schemeDirsRoot, currentDir)
-            if (dirFile.isDirectory) recoverDictsRoot(dirFile)
+        val schemeDirs = runCatching { SchemeDirs.listDirs(DataManager.schemeDirsRoot) }
+            .onFailure { Timber.w(it, "Failed to list scheme dirs for interrupted-update recovery") }
+            .getOrDefault(emptyList())
+        for (dirFile in schemeDirs) {
+            recoverDictsRoot(dirFile)
         }
         recoverGramRoot()
         // 旧版事务日志/提交标记残留（S11 后不再读写）：直接清掉（仅共享根）
@@ -597,8 +620,8 @@ object WanxiangUpdateManager {
         File(root, "$GRAM_BACKUP_FILE.restore").delete()
     }
 
-    /** 按状态修复某根目录下的词库切换残留（不碰模型文件）。 */
-    private fun recoverDictsRoot(root: File) {
+    /** 按状态修复某根目录下的词库切换残留（不碰模型文件）。internal 供单测。 */
+    internal fun recoverDictsRoot(root: File) {
         val dicts = File(root, "dicts")
         val trash = File(root, DICTS_TRASH_DIR)
 
@@ -1292,9 +1315,10 @@ object WanxiangUpdateManager {
             // Cancellation may arrive after the first resource was switched.
             // Clean any leftover update state before cleaning temporary data.
             runCatching { recoverInterruptedUpdate() }
-            // 清理临时文件，避免占用存储空间
-            runCatching { File(workDir, "rime-wanxiang-lite.zip$PART_SUFFIX").delete() }
-            runCatching { File(workDir, "rime-wanxiang-lite.zip").delete() }
+            // 清理临时文件，避免占用存储空间。按本次实际变体名删
+            // （B-M6）：此前只删 Lite 名，Base／Pure 每次更新残留
+            // 一份约 32MB 旧包。
+            runCatching { deleteTempPackageFiles(workDir, info.assetName) }
             // staging 未切换（失败/取消）时清掉；切换成功后该路径已 rename
             // 为现用 dicts、不存在，此处是空操作。trash 不在此清：切换中断
             // 时它可能是旧词库的唯一副本，留给上方按状态的启动清理处理
@@ -1304,6 +1328,12 @@ object WanxiangUpdateManager {
             // gram 成功时已 rename 走；失败/取消时清掉 .part 残留
             runCatching { gramPartial?.delete() }
         }
+    }
+
+    /** 本次下载的方案包临时文件（.part 半成品＋落盘后的整包），按变体名取；internal 供单测。 */
+    internal fun deleteTempPackageFiles(workDir: File, assetName: String) {
+        File(workDir, "$assetName$PART_SUFFIX").delete()
+        File(workDir, assetName).delete()
     }
 
     /**
@@ -1481,7 +1511,10 @@ object WanxiangUpdateManager {
         maxBytes: Long,
         onProgress: (downloaded: Long, total: Long) -> Unit,
     ): Boolean {
-        return runCatching {
+        // 取消必须以 CancellationException 穿透（B-S2）：循环内的
+        // isActive 检查若只 return false，取消会被 runCatching 吞成
+        // “下载失败”，调用方记失败态、界面报失败而非静默取消。
+        return try {
             // 整包下载走无总时长上限的 downloadClient：共用带
             // callTimeout 的检查用 client 会在 20 秒处掐断读流
             downloadClient.newCall(Request.Builder().url(url).build()).execute().use { response ->
@@ -1503,7 +1536,7 @@ object WanxiangUpdateManager {
                         var downloaded = 0L
                         var reported = 0L
                         while (true) {
-                            if (!currentCoroutineContext().isActive) return false
+                            currentCoroutineContext().ensureActive()
                             val count = input.read(buffer)
                             if (count < 0) break
                             if (count == 0) continue
@@ -1535,10 +1568,11 @@ object WanxiangUpdateManager {
                 }
                 true
             }
-        }.onFailure {
-            if (it !is kotlinx.coroutines.CancellationException) {
-                Timber.e(it, "方案更新下载失败")
-            }
-        }.getOrDefault(false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e, "方案更新下载失败")
+            false
+        }
     }
 }

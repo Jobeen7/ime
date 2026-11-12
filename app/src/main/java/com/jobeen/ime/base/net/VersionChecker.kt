@@ -87,12 +87,33 @@ object VersionChecker {
         return v.trim()
     }
 
-    private fun compareVersions(left: String, right: String): Int {
-        val a = left.split('.', '-', '_').map { it.toIntOrNull() ?: 0 }
-        val b = right.split('.', '-', '_').map { it.toIntOrNull() ?: 0 }
+    /**
+     * 版本号逐段比较（internal 供单测）。每段取前导数字比大小；
+     * 数字相等时，有后缀（预发布）者小于无后缀的正式版（B-L4：
+     * 此前非数字段一律当 0，"1.1.18-beta" 与 "1.1.18" 会判相等，
+     * 预发布用户收不到正式版提示）；后缀之间按字典序。纯数字
+     * 版本号的比较结果与旧口径一致。
+     */
+    internal fun compareVersions(left: String, right: String): Int {
+        fun parts(v: String): List<Pair<Long, String>> =
+            v.trim().split('.', '-', '_')
+                .map { seg ->
+                    val digits = seg.takeWhile { it.isDigit() }
+                    (digits.toLongOrNull() ?: 0L) to seg.substring(digits.length)
+                }
+        val a = parts(left)
+        val b = parts(right)
         for (index in 0 until maxOf(a.size, b.size)) {
-            val result = (a.getOrElse(index) { 0 }).compareTo(b.getOrElse(index) { 0 })
+            val (an, aSuffix) = a.getOrElse(index) { 0L to "" }
+            val (bn, bSuffix) = b.getOrElse(index) { 0L to "" }
+            val result = an.compareTo(bn)
             if (result != 0) return result
+            if (aSuffix != bSuffix) {
+                if (aSuffix.isEmpty()) return 1
+                if (bSuffix.isEmpty()) return -1
+                val s = aSuffix.compareTo(bSuffix)
+                if (s != 0) return s
+            }
         }
         return 0
     }

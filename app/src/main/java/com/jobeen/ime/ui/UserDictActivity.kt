@@ -27,6 +27,7 @@ import com.jobeen.ime.ui.theme.AppAppearanceMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -189,8 +190,13 @@ class UserDictActivity : ComponentActivity() {
         // 配置变化（旋转等）重建时跳过销毁：会话按名共享且无持有者计数，
         // 新实例正用着同名会话，此处销毁会让新界面拿到失效会话
         if (!isChangingConfigurations) {
-            // fire-and-forget：若本界面是唯一的会话持有者，顺手停掉 Rime 释放资源
+            // U-M2：在途作业（加载／导入／导出／上传／下载均经本会话做原生
+            // 调用）先落定再销毁会话——旧代码用无结构作用域 fire-and-forget
+            // 销毁，与在途原生调用竞跑，结果未定义。作业挂在 lifecycleScope
+            // 下，销毁时取消随之到达，joinAll 只等取消收尾，不等原操作跑完。
+            val inFlight = lifecycleScope.coroutineContext[Job]?.children?.toList().orEmpty()
             CoroutineScope(Dispatchers.IO).launch {
+                inFlight.joinAll()
                 runCatching { RimeDaemon.destroySession(SESSION_NAME) }
             }
         }

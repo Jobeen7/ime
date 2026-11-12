@@ -34,141 +34,142 @@ class MarisaTrie {
 
     private var nativePtr: Long = 0
 
-    fun isEmpty() = nativePtr == 0L
+    /**
+     * native 指针锁（B-L3）：create／destroy 与全部 native 调用共用
+     * 同一把锁——此前 create／destroy 只以 nativePtr != 0L 检查后
+     * 赋值、无任何同步，并发 destroy 可两次释放同一指针；其余方法
+     * 在 require 与 native 调用之间同样可能撞上 destroy。用同一把
+     * 锁罩住“取指针＋调 native”，destroy 期间任何调用都在锁外等，
+     * 等到锁时指针已是 0、require 拦下，不再调已释放的指针。
+     */
+    private val ptrLock = Any()
+
+    fun isEmpty(): Boolean = synchronized(ptrLock) { nativePtr == 0L }
 
     fun create() {
-        if (nativePtr == 0L) {
-            nativePtr = MarisaJNI.create()
+        synchronized(ptrLock) {
+            if (nativePtr == 0L) {
+                nativePtr = MarisaJNI.create()
+            }
         }
     }
 
     fun destroy() {
-        if (nativePtr != 0L) {
-            MarisaJNI.destroy(nativePtr)
-            nativePtr = 0
+        synchronized(ptrLock) {
+            if (nativePtr != 0L) {
+                MarisaJNI.destroy(nativePtr)
+                nativePtr = 0
+            }
         }
     }
 
+    /** 锁内取指针并调 native：指针非 0 才调，destroy 无法插进中间。 */
+    private inline fun <T> withPtr(block: (Long) -> T): T = synchronized(ptrLock) {
+        val ptr = nativePtr
+        require(ptr != 0L) { "Trie not created" }
+        block(ptr)
+    }
+
     fun clear() {
-        require(nativePtr != 0L) { "Trie not created" }
-        MarisaJNI.clear(nativePtr)
+        withPtr { MarisaJNI.clear(it) }
     }
 
     fun build(keys: Array<String>, weights: FloatArray? = null, configFlags: Int = 0) {
-        require(nativePtr != 0L) { "Trie not created" }
-        MarisaJNI.build(nativePtr, keys, weights, configFlags)
+        withPtr { MarisaJNI.build(it, keys, weights, configFlags) }
     }
 
     fun mmap(filename: String) {
-        require(nativePtr != 0L) { "Trie not created" }
-        MarisaJNI.mmap(nativePtr, filename)
+        withPtr { MarisaJNI.mmap(it, filename) }
     }
 
     fun load(filename: String) {
-        require(nativePtr != 0L) { "Trie not created" }
-        MarisaJNI.load(nativePtr, filename)
+        withPtr { MarisaJNI.load(it, filename) }
     }
 
     fun save(filename: String) {
-        require(nativePtr != 0L) { "Trie not created" }
-        MarisaJNI.save(nativePtr, filename)
+        withPtr { MarisaJNI.save(it, filename) }
     }
 
     fun lookup(query: String): Int {
-        require(nativePtr != 0L) { "Trie not created" }
-        return MarisaJNI.lookup(nativePtr, query)
+        return withPtr { MarisaJNI.lookup(it, query) }
     }
 
     fun commonPrefixSearch(query: String): List<MatchResult> {
-        require(nativePtr != 0L) { "Trie not created" }
-        return parseSearchResults(MarisaJNI.commonPrefixSearch(nativePtr, query))
+        return parseSearchResults(withPtr { MarisaJNI.commonPrefixSearch(it, query) })
     }
 
     fun commonPrefixSearchBytes(query: ByteArray): List<ByteArray> {
-        require(nativePtr != 0L) { "Trie not created" }
-        return MarisaJNI.commonPrefixSearchBytes(nativePtr, query)?.toList() ?: emptyList()
+        return withPtr { MarisaJNI.commonPrefixSearchBytes(it, query) }?.toList() ?: emptyList()
     }
 
     fun predictiveSearchBytes(query: ByteArray, limit: Int = 0): List<ByteArray> {
-        require(nativePtr != 0L) { "Trie not created" }
-        return MarisaJNI.predictiveSearchBytes(nativePtr, query, limit)?.toList() ?: emptyList()
+        return withPtr { MarisaJNI.predictiveSearchBytes(it, query, limit) }?.toList() ?: emptyList()
     }
 
     fun lookupBytes(query: ByteArray): ByteArray? {
-        require(nativePtr != 0L) { "Trie not created" }
-        return MarisaJNI.lookupBytes(nativePtr, query)
+        return withPtr { MarisaJNI.lookupBytes(it, query) }
     }
 
     fun dumpKeys(limit: Int = 10): List<ByteArray> {
-        require(nativePtr != 0L) { "Trie not created" }
-        return MarisaJNI.dumpKeys(nativePtr, limit)?.toList() ?: emptyList()
+        return withPtr { MarisaJNI.dumpKeys(it, limit) }?.toList() ?: emptyList()
     }
 
     fun predictiveSearch(query: String, limit: Int = 0): List<MatchResult> {
-        require(nativePtr != 0L) { "Trie not created" }
-        return parseSearchResults(MarisaJNI.predictiveSearch(nativePtr, query, limit))
+        return parseSearchResults(withPtr { MarisaJNI.predictiveSearch(it, query, limit) })
     }
 
     @Throws(IllegalArgumentException::class)
     fun reverseLookup(keyId: Int): String {
-        require(nativePtr != 0L) { "Trie not created" }
-        return MarisaJNI.reverseLookupKey(nativePtr, keyId)
+        return withPtr { MarisaJNI.reverseLookupKey(it, keyId) }
             ?: throw IllegalArgumentException("Key ID $keyId not found")
     }
 
     val numKeys: Int
-        get() {
-            require(nativePtr != 0L) { "Trie not created" }
-            return MarisaJNI.numKeys(nativePtr)
-        }
+        get() = withPtr { MarisaJNI.numKeys(it) }
 
     val numTries: Int
-        get() {
-            require(nativePtr != 0L) { "Trie not created" }
-            return MarisaJNI.numTries(nativePtr)
-        }
+        get() = withPtr { MarisaJNI.numTries(it) }
 
     val numNodes: Int
-        get() {
-            require(nativePtr != 0L) { "Trie not created" }
-            return MarisaJNI.numNodes(nativePtr)
-        }
+        get() = withPtr { MarisaJNI.numNodes(it) }
 
     val empty: Boolean
-        get() {
-            require(nativePtr != 0L) { "Trie not created" }
-            return MarisaJNI.empty(nativePtr)
-        }
+        get() = withPtr { MarisaJNI.empty(it) }
 
     val size: Long
-        get() {
-            require(nativePtr != 0L) { "Trie not created" }
-            return MarisaJNI.size(nativePtr)
-        }
+        get() = withPtr { MarisaJNI.size(it) }
 
     val totalSize: Long
-        get() {
-            require(nativePtr != 0L) { "Trie not created" }
-            return MarisaJNI.totalSize(nativePtr)
-        }
+        get() = withPtr { MarisaJNI.totalSize(it) }
 
     val ioSize: Long
-        get() {
-            require(nativePtr != 0L) { "Trie not created" }
-            return MarisaJNI.ioSize(nativePtr)
-        }
+        get() = withPtr { MarisaJNI.ioSize(it) }
 
     protected fun finalize() {
         destroy()
     }
 
-    private fun parseSearchResults(arr: Array<Any>?): List<MatchResult> {
+    /**
+     * 解析 native 返回的 [key, id, key, id, …] 数组（internal 供单测）。
+     * 不再假设数组形态合法（B-L3）：长度须为偶数、偶位须为 String、
+     * 奇位须为可解析为 Int 的 String，否则抛 IllegalArgumentException，
+     * 不走到 ArrayIndexOutOfBounds／ClassCast／NumberFormat 的
+     * 原生崩溃形态。
+     */
+    internal fun parseSearchResults(arr: Array<Any>?): List<MatchResult> {
         if (arr == null) return emptyList()
-        val results = mutableListOf<MatchResult>()
+        require(arr.size % 2 == 0) {
+            "Marisa search result has odd length: ${arr.size}"
+        }
+        val results = ArrayList<MatchResult>(arr.size / 2)
         var i = 0
         while (i < arr.size) {
-            val key = arr[i] as String
-            val id = (arr[i + 1] as String).toInt()
+            val key = arr[i] as? String
+                ?: throw IllegalArgumentException("Marisa search result [$i] is not a String")
+            val idText = arr[i + 1] as? String
+                ?: throw IllegalArgumentException("Marisa search result [${i + 1}] is not a String")
+            val id = idText.toIntOrNull()
+                ?: throw IllegalArgumentException("Marisa search result id is not an integer: $idText")
             results.add(MatchResult(key, id))
             i += 2
         }

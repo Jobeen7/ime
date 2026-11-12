@@ -17,7 +17,9 @@ import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinIndexEntry
 import com.jobeen.ime.skin.store.SkinLibrary
 import com.jobeen.ime.skin.store.SkinLibraryStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -239,8 +241,25 @@ class SkinEditorSaver(private val context: Context) {
         }
         // 6. 应用事务切换（问题 1/2/3）：token 在构建前分配、刷新＋首帧等待、成功才提交 VERIFIED／Last-Good。
         //    内联判据须在主线程快照（读窗口视图状态），故切回 Main 调 applySkin。
+        //    取消清理（2026-11-12 审计 K-S1）：取消抛 CancellationException
+        //    直接穿出时，新代目录必须删掉——否则启动对账按磁盘最新完整
+        //    代次修复索引，被取消的修改下次启动复活；同时重装当前生效
+        //    快照收敛运行态（应用可能已部分切换）。清理在 NonCancellable
+        //    下跑，完成后把取消重抛（取消语义不改写为失败）。
         val newRef = SkinGenRef(active.skinId, newHash, newGen)
-        val result = withContext(Dispatchers.Main) { applier.applySkin(newRef) }
+        val result = try {
+            withContext(Dispatchers.Main) { applier.applySkin(newRef) }
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) {
+                deleteDirBestEffort(newGenDir)
+                // 事务可能已把 active 写成新代 PENDING：先写回保存前
+                // 的旧记录（否则重装会去读已被删的新代、收敛失败），
+                // 再重装当前生效快照收敛运行态。
+                runCatching { store.writeActive(oldRecord) }
+                runCatching { withContext(Dispatchers.Main) { applier.reinstallActiveSnapshot() } }
+            }
+            throw e
+        }
         return when (result) {
             is ApplyTransaction.Result.Applied,
             is ApplyTransaction.Result.AppliedPending -> {
@@ -318,29 +337,49 @@ class SkinEditorSaver(private val context: Context) {
             sizeBytes = layout.dirBytes(newGenDir),
             updatedAt = System.currentTimeMillis(),
         )
-        val newIndex = oldIndex.copy(
-            layouts = oldIndex.layouts.map { if (it.id == file.id) newEntry else it },
-        )
-        try {
-            store.writeIndex(newIndex)
-        } catch (e: Exception) {
+        // 索引先指新代是快照构建可见新布局的前提（K-S2 的取舍）：
+        // 提交锁内重读核对——旧条目已被他人改动时不写（不盲写整份
+        // 索引），返回失败并删新代；索引写本身仍在应用之前，取消／
+        // 失败时下文统一恢复旧条目并删新代。
+        val indexCommitted = store.updateIndex { current ->
+            val currentEntry = current.layouts.firstOrNull { it.id == file.id }
+            if (currentEntry != oldEntry) null else current.copy(
+                layouts = current.layouts.map { if (it.id == file.id) newEntry else it },
+            )
+        }
+        if (indexCommitted == null) {
             deleteDirBestEffort(newGenDir)
-            return SkinEditorSaveResult.Failed("write_failed:${e.message}")
+            return SkinEditorSaveResult.Failed("index_changed_concurrently")
         }
         // 5. 应用事务切换（同一皮肤 ref；内容因索引指向新布局而更新）。
         //    布局改动无颜色自愈路径，事务的显式刷新＋首帧等待是唯一即时生效通道。
+        //    取消清理（2026-11-12 审计 K-S1／K-S2）：取消穿出时恢复
+        //    旧索引条目（只写该条目，不盲写整份旧索引）、删新代、重装
+        //    当前生效快照收敛运行态；清理在 NonCancellable 下跑，完
+        //    成后把取消重抛。
         val ref = SkinGenRef(active.skinId, oldRecord.hash ?: "", active.generation)
-        val result = withContext(Dispatchers.Main) { applier.applySkin(ref) }
+        val result = try {
+            withContext(Dispatchers.Main) { applier.applySkin(ref) }
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) {
+                restoreLayoutIndexEntry(file.id, oldEntry)
+                deleteDirBestEffort(newGenDir)
+                runCatching { withContext(Dispatchers.Main) { applier.reinstallActiveSnapshot() } }
+            }
+            throw e
+        }
         return when (result) {
             is ApplyTransaction.Result.Applied,
             is ApplyTransaction.Result.AppliedPending -> {
                 SkinEditorSaveResult.Saved(issues)
             }
             else -> {
-                // 失败：恢复旧索引、删新代；各恢复项各自执行、汇总结果（问题 4：不顺序一抛即断）。
+                // 失败：恢复旧索引条目（只写该条目，不盲写整份旧索引，
+                // 避免覆盖并发导入／编辑的其它条目）、删新代；各恢复项
+                // 各自执行、汇总结果（问题 4：不顺序一抛即断）。
                 var indexRestored = false
                 var genDeleted = false
-                runCatching { store.writeIndex(oldIndex); indexRestored = true }
+                runCatching { indexRestored = restoreLayoutIndexEntry(file.id, oldEntry) }
                 runCatching { newGenDir.deleteRecursively(); genDeleted = true }
                 val oldLayoutIntact = runCatching {
                     val bytes = File(layout.fileFromRelative(oldEntry.dir), "layout.json").readBytes()
@@ -392,26 +431,44 @@ class SkinEditorSaver(private val context: Context) {
         generation: Int,
         genDir: File,
     ): Boolean {
+        // 提交锁内重读→变换→写回（2026-11-12 审计 K-M2）：只改本皮肤
+        // 一条，不盲写调用前读到的整份旧索引。
         return runCatching {
-            val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
-                ?: return false
-            val existing = index.skins.firstOrNull { it.id == skinId }
-            val entry = SkinIndexEntry(
-                id = skinId,
-                name = existing?.name ?: skinId,
-                hash = hash,
-                generation = generation,
-                dir = layout.skinGenRelative(skinId, generation),
-                sizeBytes = layout.dirBytes(genDir),
-                updatedAt = System.currentTimeMillis(),
-            )
-            val skins = if (existing == null) {
-                index.skins + entry
-            } else {
-                index.skins.map { if (it.id == skinId) entry else it }
-            }
-            store.writeIndex(index.copy(skins = skins))
-            true
+            store.updateIndex { index ->
+                val existing = index.skins.firstOrNull { it.id == skinId }
+                val entry = SkinIndexEntry(
+                    id = skinId,
+                    name = existing?.name ?: skinId,
+                    hash = hash,
+                    generation = generation,
+                    dir = layout.skinGenRelative(skinId, generation),
+                    sizeBytes = layout.dirBytes(genDir),
+                    updatedAt = System.currentTimeMillis(),
+                )
+                val skins = if (existing == null) {
+                    index.skins + entry
+                } else {
+                    index.skins.map { if (it.id == skinId) entry else it }
+                }
+                index.copy(skins = skins)
+            } != null
+        }.getOrDefault(false)
+    }
+
+    /**
+     * 把某布局的索引条目恢复为旧值（K-S2 回滚）：提交锁内只改该条目，
+     * 不盲写整份旧索引；返回是否写回成功。
+     */
+    private suspend fun restoreLayoutIndexEntry(
+        layoutId: String,
+        oldEntry: com.jobeen.ime.skin.store.LayoutIndexEntry,
+    ): Boolean {
+        return runCatching {
+            store.updateIndex { index ->
+                index.copy(
+                    layouts = index.layouts.map { if (it.id == layoutId) oldEntry else it },
+                )
+            } != null
         }.getOrDefault(false)
     }
 

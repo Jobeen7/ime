@@ -28,25 +28,6 @@ object UserDictManager {
      *  超限基本是选错文件或服务器返回异常内容，直接拒绝避免撑爆磁盘/内存 */
     const val MAX_DICT_FILE_BYTES = 64L * 1024 * 1024
 
-    fun restoreUserDict(stream: InputStream, snapshotFile: String): Result<Unit> {
-        val tempFile = File(appContext.cacheDir, snapshotFile)
-        try {
-            tempFile.outputStream().use {
-                stream.copyToWithLimit(it, MAX_DICT_FILE_BYTES)
-            }
-            val success = restoreUserDict(tempFile.absolutePath)
-            return if (success) {
-                Result.success(Unit)
-            } else {
-                Result.failure(Exception("Failed to restore"))
-            }
-        } finally {
-            if (tempFile.exists()) {
-                tempFile.delete()
-            }
-        }
-    }
-
     /**
      * 把待导入的词库流落盘为临时文件（带大小上限），返回临时文件。
      * 只负责文件 IO；真正的导入必须经 RimeApi 在引擎线程串行执行
@@ -169,16 +150,7 @@ object UserDictManager {
     external fun getUserDictList(): Array<String>
 
     @JvmStatic
-    external fun backupUserDict(dictName: String): Boolean
-
-    @JvmStatic
-    external fun restoreUserDict(snapshotFile: String): Boolean
-
-    @JvmStatic
     external fun exportUserDict(dictName: String, textFile: String): Int
-
-    @JvmStatic
-    external fun importUserDict(dictName: String, textFile: String): Int
 
     /**
      * 热导入/热导出：直接对运行中引擎已打开的共享词库句柄做合并/读取，

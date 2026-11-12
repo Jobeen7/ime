@@ -50,6 +50,8 @@ fun LicenseScreen(onBack: () -> Unit) {
     }
     LaunchedEffect(selected) {
         val name = selected ?: return@LaunchedEffect
+        // U-L1：先清旧内容再读新文件，否则点开 B 的瞬间仍看到 A 全文。
+        detailText = ""
         detailText = withContext(Dispatchers.IO) {
             runCatching {
                 context.assets.open("licenses/$name").bufferedReader().use { it.readText() }

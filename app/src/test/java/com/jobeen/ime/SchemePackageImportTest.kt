@@ -13,8 +13,11 @@ import com.jobeen.ime.data.manager.SchemePackageImport.StagedEntry
 import com.jobeen.ime.data.manager.SchemePackageImport.StagedPackage
 import java.io.File
 import java.nio.file.Files
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.concurrent.thread
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -510,86 +513,6 @@ class SchemePackageImportTest {
     }
 
     @Test
-    fun applyPlan_wrappedZipInstallsFromWrapperDir() {
-        // codeload 式包装包：暂存盘保留 wrapper/ 前缀，规划路径已剥；
-        // 落盘须拼回前缀，否则全部静默跳过（零落盘、无报错）。
-        val root = Files.createTempDirectory("scheme-import-test").toFile()
-        try {
-            val userDir = File(root, "user").apply { mkdirs() }
-            val staging = File(root, "staging").apply { mkdirs() }
-            File(staging, "rime-ice-main").mkdirs()
-            File(staging, "rime-ice-main/wanxiang_pro.schema.yaml").writeText("wrapped schema")
-            val plan = SchemePackageImport.SchemeImportPlan(
-                packageName = "wrapped-pro",
-                packageVersion = "18.1.7",
-                schemes = listOf(
-                    SchemePackageImport.ImportedScheme("wanxiang_pro", "Pro", "18.1.7", ""),
-                ),
-                installFiles = listOf("wanxiang_pro.schema.yaml"),
-                wrapperPrefix = "rime-ice-main/",
-                skippedFiles = emptyList(),
-                sharedDecisions = emptyList(),
-                replacements = emptyList(),
-                defaultCustomSchemaIds = emptyList(),
-                overwrittenExisting = emptyList(),
-                totalBytes = 100L,
-            )
-            val installed = SchemePackageImport.applyPlan(staging, userDir, plan)
-            assertEquals(listOf("wanxiang_pro.schema.yaml"), installed)
-            assertEquals(
-                "wrapped schema",
-                File(userDir, "wanxiang_pro.schema.yaml").readText(),
-            )
-        } finally {
-            root.deleteRecursively()
-        }
-    }
-
-    @Test
-    fun applyPlan_installsNewOverOldWithoutTouchingUserdb() {
-        val root = Files.createTempDirectory("scheme-import-test").toFile()
-        try {
-            val userDir = File(root, "user").apply { mkdirs() }
-            val staging = File(root, "staging").apply { mkdirs() }
-            File(userDir, "wanxiang_pro.schema.yaml").writeText("old schema")
-            File(userDir, "wanxiang_pro.userdb").writeText("user learning data")
-            File(staging, "wanxiang_pro.schema.yaml").writeText("new schema")
-            File(staging, "wanxiang_pro.dict.yaml").writeText("dict")
-            val plan = SchemePackageImport.SchemeImportPlan(
-                packageName = "new-pro",
-                packageVersion = "18.1.7",
-                schemes = listOf(
-                    SchemePackageImport.ImportedScheme("wanxiang_pro", "Pro", "18.1.7", ""),
-                ),
-                installFiles = listOf("wanxiang_pro.schema.yaml", "wanxiang_pro.dict.yaml"),
-                skippedFiles = emptyList(),
-                sharedDecisions = emptyList(),
-                replacements = listOf(
-                    SchemePackageImport.ReplacementInfo(
-                        schemeId = "wanxiang_pro",
-                        previousPackage = "old-pro",
-                        overridesBuiltin = false,
-                    ),
-                ),
-                defaultCustomSchemaIds = emptyList(),
-                overwrittenExisting = listOf("wanxiang_pro.schema.yaml"),
-                totalBytes = 100L,
-            )
-            val installed = SchemePackageImport.applyPlan(staging, userDir, plan)
-            assertEquals(
-                listOf("wanxiang_pro.schema.yaml", "wanxiang_pro.dict.yaml"),
-                installed,
-            )
-            assertEquals("new schema", File(userDir, "wanxiang_pro.schema.yaml").readText())
-            assertEquals("dict", File(userDir, "wanxiang_pro.dict.yaml").readText())
-            // 旧版直接被新版覆盖，不再归档；userdb 绝不碰。
-            assertEquals("user learning data", File(userDir, "wanxiang_pro.userdb").readText())
-        } finally {
-            root.deleteRecursively()
-        }
-    }
-
-    @Test
     fun classifyEntry_coversKinds() {
         assertEquals(EntryKind.SCHEMA, SchemePackageImport.classifyEntry("x.schema.yaml"))
         assertEquals(EntryKind.DICT, SchemePackageImport.classifyEntry("x.dict.yaml"))
@@ -938,6 +861,79 @@ class SchemePackageImportTest {
             assertEquals("new3", File(target3, "new.txt").readText())
             assertTrue(backup3.isDirectory)
             assertTrue(File(root, ".install-op7.journal").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun recoverIncompleteTransactions_targetMovedWithTargetPresentKeepsNewVersion() {
+        // D-S3：TARGET_MOVED 且目标已就位——换位已成功，只是写 SWAPPED
+        // 日志失败。目标里是新版，不得谎报 restoredOld=true（那会让
+        // 调用方以为已回滚到旧版）；旧备份是孤儿，随日志一并清理。
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target").apply { mkdirs() }
+            File(target, "new.txt").writeText("new")
+            val candidate = File(root, ".install-op6")
+            val backup = File(root, ".backup-op6").apply { mkdirs() }
+            File(backup, "keep.txt").writeText("old")
+            writeJournal(root, "op6", target, candidate, backup, "TARGET_MOVED")
+            val recovered = SchemePackageImport.recoverIncompleteTransactions(root)
+            assertEquals(1, recovered.size)
+            assertFalse(recovered[0].restoredOld)
+            assertEquals("new", File(target, "new.txt").readText())
+            assertFalse(backup.exists())
+            assertFalse(File(root, ".install-op6.journal").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun installTransaction_concurrentSameTargetBothSucceed() {
+        // D-M6：installTransaction 无并发互斥时，两路同目标安装会在
+        // 换位处互相踩（预检都通过、rename 抢输一路报 SWAP_FAILED）。
+        // 同一 installLock 串行后，两路都应成功、目标内容完整。
+        val root = Files.createTempDirectory("scheme-import-tx").toFile()
+        try {
+            val target = File(root, "target").apply { mkdirs() }
+            File(target, "wanxiang_pro.schema.yaml").writeText("old schema")
+            val staging = File(root, "staging").apply { mkdirs() }
+            File(staging, "wanxiang_pro.schema.yaml")
+                .writeText("schema:\n  name: Pro\n  version: 18.1.7\n")
+            val entries = listOf(
+                StagedEntry(
+                    "wanxiang_pro.schema.yaml",
+                    File(staging, "wanxiang_pro.schema.yaml").length(),
+                ),
+            )
+            val plan = transactionPlan(listOf("wanxiang_pro.schema.yaml"))
+            val gate = CountDownLatch(1)
+            val results = List(2) { AtomicReference<SchemePackageImport.InstallTransactionResult>() }
+            val threads = results.mapIndexed { index, ref ->
+                thread {
+                    gate.await()
+                    ref.set(
+                        SchemePackageImport.installTransaction(
+                            stagingDir = staging,
+                            targetDir = target,
+                            plan = plan,
+                            stagedEntries = entries,
+                            operationId = "op-conc-$index",
+                        ),
+                    )
+                }
+            }
+            gate.countDown()
+            threads.forEach { it.join(10_000) }
+            for (ref in results) {
+                assertTrue(ref.get() is SchemePackageImport.InstallTransactionResult.Success)
+            }
+            assertEquals(
+                "schema:\n  name: Pro\n  version: 18.1.7\n",
+                File(target, "wanxiang_pro.schema.yaml").readText(),
+            )
         } finally {
             root.deleteRecursively()
         }

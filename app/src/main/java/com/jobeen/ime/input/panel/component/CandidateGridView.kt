@@ -334,6 +334,15 @@ class CandidateGridView(
         private var downX = 0f
         private var horizontalDrag = -1
 
+        /**
+         * 点按／长按的本体跟踪（I-S3）：下标只表示本体在列表中的
+         * 当前位置，列表整表替换时按下述 resetPressIfOutOfBounds
+         * 按本体重新定位——只按下标记忆下标会让同位置的另一个
+         * 候选被误点／误遗忘（与拖拽的 dragItem 同口径）。
+         */
+        private var pressedCandidate: EngineMessage.Candidate? = null
+        private var longPressCandidate: EngineMessage.Candidate? = null
+
         private var visibleRows = 0
         private val scroller = OverScroller(context).apply {
             // 施工单 10 H2-10：展开候选甩动摩擦 ×4，同一下甩更快停下
@@ -367,6 +376,7 @@ class CandidateGridView(
         private val longPressRunnable = Runnable {
             longPressTriggered = true
             longPressIndex = if (!dragging && horizontalDrag < 0) downIndex else -1
+            longPressCandidate = allCandidates.getOrNull(longPressIndex)
             invalidate()
         }
         private var stretch = 0f
@@ -812,11 +822,13 @@ class CandidateGridView(
                     downX = event.x
                     downIndex = hitTest(event.x, event.y)
                     pressedIndex = downIndex
+                    pressedCandidate = allCandidates.getOrNull(downIndex)
                     horizontalDrag = -1
                     dragging = false
                     longPressTriggered = false
                     longPressMoved = false
                     longPressIndex = -1
+                    longPressCandidate = null
                     invalidate()
                     postDelayed(
                         longPressRunnable, ViewConfiguration.getLongPressTimeout().toLong()
@@ -862,22 +874,42 @@ class CandidateGridView(
                         val moved = absDy > touchSlop || absDx > touchSlop
                         if (moved) longPressMoved = true
                         if (moved && longPressIndex >= 0) {
-                            dragIndex = longPressIndex
-                            // 拖动图从本帧起就按手指位置画：不同步的话
-                            // 进入拖动的第一帧（及停住不动的抖动帧）仍用
-                            // 上一次拖动的落点，首次拖动时画在 (0,0)
-                            dragFingerX = ex
-                            dragFingerY = ey
-                            dragItem = allCandidates.getOrNull(longPressIndex)
-                            dragTargetIndex = longPressIndex
-                            pressedIndex = -1
-                            longPressTriggered = false
-                            removeCallbacks(longPressRunnable)
-                            startShake()
-                            invalidate()
+                            // 按本体重新定位（I-S3）：长按触发后列表被
+                            // 替换时旧下标多半已指向别的候选；本体已不
+                            // 在新表中则本次长按作废、退化为普通滑动，
+                            // 不拖错条目、不遗忘错词。
+                            val resolvedDragIndex =
+                                relocateCandidateIndex(longPressCandidate, allCandidates)
+                            if (resolvedDragIndex < 0) {
+                                longPressTriggered = false
+                                longPressIndex = -1
+                                longPressCandidate = null
+                                pressedIndex = -1
+                                pressedCandidate = null
+                            } else {
+                                dragIndex = resolvedDragIndex
+                                // 拖动图从本帧起就按手指位置画：不同步的话
+                                // 进入拖动的第一帧（及停住不动的抖动帧）仍用
+                                // 上一次拖动的落点，首次拖动时画在 (0,0)
+                                dragFingerX = ex
+                                dragFingerY = ey
+                                dragItem = allCandidates[resolvedDragIndex]
+                                dragTargetIndex = resolvedDragIndex
+                                pressedIndex = -1
+                                pressedCandidate = null
+                                longPressTriggered = false
+                                removeCallbacks(longPressRunnable)
+                                startShake()
+                                invalidate()
+                                lastY = ey
+                                return true
+                            }
                         }
-                        lastY = ey
-                        return true
+                        if (longPressTriggered) {
+                            lastY = ey
+                            return true
+                        }
+                        // 长按本体已失效：不 return，继续走下方普通滑动判定。
                     }
 
                     if (!dragging && !longPressTriggered) {
@@ -886,6 +918,7 @@ class CandidateGridView(
                             // 已进入滚动：长按计时必须取消，否则滚动中途长按触发会把手势劫持成拖拽排序
                             removeCallbacks(longPressRunnable)
                             pressedIndex = -1
+                            pressedCandidate = null
                             stretch = 0f
                             if (!scroller.isFinished) scroller.abortAnimation()
                         } else if (absDx > touchSlop && absDx > absDy) {
@@ -894,6 +927,7 @@ class CandidateGridView(
                                 horizontalDrag = pressedIndex
                                 removeCallbacks(longPressRunnable)
                                 pressedIndex = -1
+                                pressedCandidate = null
                                 invalidate()
                             }
                         }
@@ -906,6 +940,7 @@ class CandidateGridView(
                         val n = hitTest(ex, ey)
                         if (n != pressedIndex) {
                             pressedIndex = n
+                            pressedCandidate = allCandidates.getOrNull(n)
                             invalidate()
                         }
                     }
@@ -934,6 +969,8 @@ class CandidateGridView(
                         dragItem = null
                     dragTargetIndex = -1
                     pressedIndex = -1
+                    pressedCandidate = null
+                    longPressCandidate = null
                     horizontalDrag = -1
                     dragging = false
                     longPressTriggered = false
@@ -971,6 +1008,34 @@ class CandidateGridView(
                 dragTargetIndex = -1
                 stopShake()
                 invalidate()
+            }
+        }
+
+        /**
+         * 候选列表被替换后校准点按／长按跟踪（I-S3）：与拖拽的
+         * resetDragIfOutOfBounds 同口径——按 DOWN／长按时刻捕获的
+         * 本体在新列表中重新定位；本体已不在新列表中才取消本次
+         * 点按／长按（抬手时不点错词、不遗忘错词）。由外层在替换
+         * allCandidates 后调用（与 resetDragIfOutOfBounds 同批）。
+         */
+        fun resetPressIfOutOfBounds() {
+            if (pressedIndex >= 0) {
+                val newIndex = relocateCandidateIndex(pressedCandidate, allCandidates)
+                if (newIndex >= 0) {
+                    pressedIndex = newIndex
+                } else {
+                    pressedIndex = -1
+                    pressedCandidate = null
+                }
+            }
+            if (longPressIndex >= 0) {
+                val newIndex = relocateCandidateIndex(longPressCandidate, allCandidates)
+                if (newIndex >= 0) {
+                    longPressIndex = newIndex
+                } else {
+                    longPressIndex = -1
+                    longPressCandidate = null
+                }
             }
         }
 
@@ -1015,14 +1080,20 @@ class CandidateGridView(
 
                     if (longPressTriggered) {
                         pressedIndex = -1
+                        pressedCandidate = null
                         longPressTriggered = false
                         // 防御性复位：长按分支提前 return，不能把滚动状态留到下一个手势
                         if (dragging) {
                             dragging = false
                             springBackIfNeeded()
                         }
-                        if (!longPressMoved && longPressIndex >= 0 && longPressIndex in allCandidates.indices) {
-                            val candidate = allCandidates[longPressIndex]
+                        // 抬手时再按本体定位一次（I-S3）：长按触发后到抬
+                        // 手之间列表仍可能被替换，下标已不可信；本体不
+                        // 在新表中即放弃本次遗忘／菜单，不遗忘错词。
+                        val resolvedLongPressIndex =
+                            relocateCandidateIndex(longPressCandidate, allCandidates)
+                        if (!longPressMoved && resolvedLongPressIndex >= 0) {
+                            val candidate = allCandidates[resolvedLongPressIndex]
                             // 候选菜单（审计 I 项）：皮肤定义菜单时走菜单，
                             // 菜单可自含遗忘，功能不丢；未定义时旧遗忘确认不变。
                             val menu = SkinSnapshotProvider.peek()?.candidateContextMenu.orEmpty()
@@ -1031,7 +1102,7 @@ class CandidateGridView(
                             } else {
                                 val firstRow = (scrollOffsetY / rowH).toInt().coerceAtLeast(0)
                                 val yOff = -(scrollOffsetY - firstRow * rowH) + stretch
-                                val pos = positions[longPressIndex]
+                                val pos = positions[resolvedLongPressIndex]
                                 val rowY = (pos.row - firstRow) * rowH + yOff
                                 val rightEdge = if (pos.extraWide) width.toFloat() else pos.xStart + pos.width
                                 val d = resources.displayMetrics.density
@@ -1058,6 +1129,7 @@ class CandidateGridView(
                     } else {
                         val i = pressedIndex
                         pressedIndex = -1
+                        pressedCandidate = null
                         invalidate()
                         if (i in allCandidates.indices) {
                             onCandidateSelected?.invoke(allCandidates[i])
@@ -1102,6 +1174,8 @@ class CandidateGridView(
             dragItem = null
             dragTargetIndex = -1
             pressedIndex = -1
+            pressedCandidate = null
+            longPressCandidate = null
             horizontalDrag = -1
             dragging = false
             longPressTriggered = false
@@ -1311,6 +1385,8 @@ class CandidateGridView(
         allCandidates = list
         // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽
         gridCanvas.resetDragIfOutOfBounds()
+        // 点按／长按跟踪同口径复位（I-S3）：按本体重新定位，丢了本体的点按作废
+        gridCanvas.resetPressIfOutOfBounds()
         needMoreRequested = false
         gridCanvas.recomputeLayout()
         gridCanvas.resetScroll()
@@ -1337,6 +1413,8 @@ class CandidateGridView(
         allCandidates = list
         // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽
         gridCanvas.resetDragIfOutOfBounds()
+        // 点按／长按跟踪同口径复位（I-S3）
+        gridCanvas.resetPressIfOutOfBounds()
         // 列表已更新（新批次或追加页到达）：允许再次在滚到底时请求下一页
         needMoreRequested = false
         gridCanvas.recomputeLayout()
@@ -1351,6 +1429,8 @@ class CandidateGridView(
             allCandidates = emptyList()
             // 列表清空同样是替换：残留拖拽下标一并复位
             gridCanvas.resetDragIfOutOfBounds()
+            // 点按／长按跟踪同口径复位（I-S3）：清空后残留点按一并作废
+            gridCanvas.resetPressIfOutOfBounds()
             gridCanvas.resetScroll()
         }
     }
@@ -1383,6 +1463,21 @@ class CandidateGridView(
 internal fun dragOrigin(finger: Float, size: Float, viewport: Float): Float {
     val effective = minOf(size, viewport)
     return (finger - effective / 2f).coerceIn(0f, viewport - effective)
+}
+
+/**
+ * 按本体重新定位（纯函数，可单测；I-S3）：与拖拽的
+ * resetDragIfOutOfBounds 同口径——列表整表替换后下标多半已
+ * 指向别的候选，按 DOWN／长按时刻捕获的本体在新表中重新定位；
+ * 本体为空或已不在新表中返回 -1（本次点按／遗忘放弃）。
+ * 比对用 Candidate 的 data class 相等性（与拖拽路径一致）。
+ */
+internal fun relocateCandidateIndex(
+    item: EngineMessage.Candidate?,
+    list: List<EngineMessage.Candidate>,
+): Int {
+    if (item == null) return -1
+    return list.indexOf(item)
 }
 
 /**

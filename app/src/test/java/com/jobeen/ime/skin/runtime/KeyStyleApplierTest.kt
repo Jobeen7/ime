@@ -92,6 +92,24 @@ class KeyStyleApplierTest {
     }
 
     @Test
+    fun inlineKeyStyleOverridesApplyWithNoSnapshotTriggers() {
+        // 2026-11-12 审计 K-S6：布局键只带内联逐键样式、无任何快照级
+        // 触发项（keyOverrides／keyStyles／textSizes 等全空）时，旧入口
+        // 守卫会整布局原样返回，内联覆写永不解析。修复后装配必须触发。
+        val layout = QwertyKeyboard.buildLayout(Variant.Accent)
+        val target = layout.flatten().firstOrNull { it.id != null }
+        assertNotNull(target)
+        target!!.skinStyleOverrides = mapOf("face" to "#FF112233")
+        val result = KeyOverrideApplier.apply(
+            "Qwerty", layout, snapshot(), emptyMap(),
+        )
+        val styled = result.flatten().first { it.id == target.id }
+        assertEquals(0xFF112233.toInt(), styled.appearance.skinFaceColor)
+        // 输入布局不被改动（复制纪律）
+        assertNull(target.appearance.skinFaceColor)
+    }
+
+    @Test
     fun missingStyleFallsBackToSchemeDefault() {
         val layout = QwertyKeyboard.buildLayout(Variant.Accent)
         val target = layout.flatten().firstOrNull { it.id != null }

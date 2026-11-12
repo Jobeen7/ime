@@ -102,9 +102,11 @@ object SkinSnapshotFactory {
     }
 
     /**
-     * 从代次目录构建快照。manifest 副本缺失/损坏时退化为空清单
-     * （背景/布局引用随之按缺失处理——校验器会逐项回退并报告，
-     * 但工厂路径只记日志，不出报告）。
+     * 从代次目录构建快照。manifest 缺失／损坏时拒绝构建（返回
+     * null，调用方按构建失败处理：应用事务回滚、启动加载回退默认
+     * ——2026-11-12 审计 K-M3，与编辑器侧 fail-closed 同口径；
+     * 旧口径退化为空清单会让清单损坏的皮肤带病安装、全部资产
+     * 引用按缺失回落且无任何提示）。
      */
     suspend fun buildFromGenDir(
         context: Context,
@@ -149,9 +151,21 @@ object SkinSnapshotFactory {
             DiagLog.w("runtime", "snapshot_skin_unparseable", mapOf("skinId" to ref.skinId))
             return null
         }
+        // 清单是资产引用的唯一可信索引：文件缺失／不可读／解析失败
+        // 一律拒绝构建（K-M3 fail-closed），不得退化为空清单。
+        // 调用方（应用事务／启动加载／预览）均已按 null=构建失败处理。
         val manifest = runCatching {
             PackageManifest.parse(manifestFile.readText())
-        }.getOrNull() ?: PackageManifest()
+        }.getOrNull() ?: run {
+            DiagLog.w(
+                "runtime", "snapshot_manifest_invalid",
+                mapOf(
+                    "skinId" to ref.skinId,
+                    "missing" to !manifestFile.isFile,
+                ),
+            )
+            return null
+        }
         // 覆盖层（2026-10-29 item-1 D1）：有覆盖文件即叠加在基础
         // 树上再走同一校验管线，基础文件本身不改；覆盖层损坏 =
         // 无覆盖（降级，不崩）。全部运行态入口（启动加载、应用

@@ -20,6 +20,7 @@ import com.jobeen.ime.ui.theme.ImeTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -76,7 +77,11 @@ class WordCreationActivity : ComponentActivity() {
     override fun onDestroy() {
         super.onDestroy()
         if (!isChangingConfigurations) {
+            // U-M2：与用户词典页同口径——在途作业（加载／造词导入均经本会话
+            // 做原生调用）先落定再销毁会话，不与在途原生调用竞跑。
+            val inFlight = lifecycleScope.coroutineContext[Job]?.children?.toList().orEmpty()
             CoroutineScope(Dispatchers.IO).launch {
+                inFlight.joinAll()
                 runCatching { RimeDaemon.destroySession(SESSION_NAME) }
             }
         }

@@ -234,12 +234,29 @@ abstract class SidePanelRender(
                 textPaint.textAlign = Paint.Align.LEFT
                 val bounds = textBounds
                 val text = item.label
-                textPaint.getTextBounds(text, 0, text.length, bounds)
                 val centerX = panel.centerX()
                 val centerY = (top + bottom) * 0.5f
-                val x = centerX - bounds.exactCenterX()
-                val y = centerY - bounds.exactCenterY() + 5
-                drawText(text, x, y, textPaint)
+                // 多行标签（⊕\n自定义）按 '\n' 拆行逐行绘制、垂直居中
+                // （I-⊕）：单行 drawText 不拆行，'\n' 会被当成行内
+                // 空白画在一行里；单行标签走原口径，逐字不动。
+                val lines = text.split('\n')
+                if (lines.size == 1) {
+                    textPaint.getTextBounds(text, 0, text.length, bounds)
+                    val x = centerX - bounds.exactCenterX()
+                    val y = centerY - bounds.exactCenterY() + 5
+                    drawText(text, x, y, textPaint)
+                } else {
+                    val metrics = textPaint.fontMetrics
+                    val baselines = multiLineBaselines(
+                        lines.size, centerY, textPaint.fontSpacing,
+                        metrics.ascent, metrics.descent,
+                    )
+                    lines.forEachIndexed { lineIndex, line ->
+                        textPaint.getTextBounds(line, 0, line.length, bounds)
+                        val x = centerX - bounds.exactCenterX()
+                        drawText(line, x, baselines[lineIndex], textPaint)
+                    }
+                }
             }
             // 恢复原始对齐方式
             textPaint.textAlign = originalAlign
@@ -275,4 +292,23 @@ abstract class SidePanelRender(
     protected fun dp(value: Float): Float = value * density
 
     abstract fun toItem(itemDef: KeyDef): Item?
+}
+
+/**
+ * 多行标签各行的基线 Y（纯函数，可单测；I-⊕）：行块整体以
+ * centerY 为中心垂直居中，行间距取 fontSpacing；每行基线 =
+ * 行中心 Y － (ascent＋descent)/2。单行时退化为标准垂直居中。
+ */
+internal fun multiLineBaselines(
+    lineCount: Int,
+    centerY: Float,
+    lineHeightPx: Float,
+    ascent: Float,
+    descent: Float,
+): List<Float> {
+    if (lineCount <= 0) return emptyList()
+    val mid = (lineCount - 1) / 2f
+    return (0 until lineCount).map { i ->
+        centerY + (i - mid) * lineHeightPx - (ascent + descent) / 2f
+    }
 }

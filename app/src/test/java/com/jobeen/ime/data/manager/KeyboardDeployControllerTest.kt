@@ -2,8 +2,14 @@
 
 package com.jobeen.ime.data.manager
 
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
+import kotlin.concurrent.thread
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -162,5 +168,49 @@ class KeyboardDeployControllerTest {
         }
         assertEquals(KeyboardDeployPhase.IDLE, c.progress.phase)
         assertTrue(c.requestDeploy())
+    }
+
+    @Test
+    fun concurrentRequestDeploy_exactlyOneWins() {
+        // D-M7：requestDeploy 的“检查＋置位”须原子——两路并发只应
+        // 有一路拿到 true（旧版单飞无锁，并发下两路都能进入 DEPLOYING）。
+        val c = controller()
+        val gate = CountDownLatch(1)
+        val wins = AtomicInteger(0)
+        val threads = List(2) {
+            thread {
+                gate.await()
+                if (c.requestDeploy()) wins.incrementAndGet()
+            }
+        }
+        gate.countDown()
+        threads.forEach { it.join(10_000) }
+        assertEquals(1, wins.get())
+        assertEquals(KeyboardDeployPhase.DEPLOYING, c.progress.phase)
+    }
+
+    @Test
+    fun concurrentExecute_exactlyOneRuns() = runBlocking {
+        // D-M7：execute 的抢占须原子——两路并发执行只应有一路真正
+        // 跑部署，另一路返回 false；部署本体只调用一次。
+        val deployCalls = AtomicInteger(0)
+        val c = KeyboardDeployController(
+            deploy = {
+                deployCalls.incrementAndGet()
+                delay(200)
+                DeployAwaitResult.COMPLETED
+            },
+            sync = null,
+            hasPreedit = { false },
+        )
+        assertTrue(c.requestDeploy())
+        val first = async { c.execute() }
+        val second = async { c.execute() }
+        withTimeout(10_000) {
+            val results = listOf(first.await(), second.await())
+            assertEquals(1, results.count { it })
+        }
+        assertEquals(1, deployCalls.get())
+        assertEquals(KeyboardDeployPhase.SUCCESS, c.progress.phase)
     }
 }

@@ -335,4 +335,70 @@ class CandidatePreferCacheDeltaTest {
         assertEquals(9, cache["丙"]) // 两边都有取较大者（纯 maxOf，无增量叠加）
         assertEquals(3, cache["新词"]) // 不在快照里的键不动
     }
+
+    @Test
+    fun loadSnapshotReturnsCopyNotLiveMap() {
+        // D-M13：snapshot/loadSnapshot/currentCache 返回的必须是拷贝，
+        // 调用方改动返回的 Map 不得破坏缓存（旧版直接返回了活 Map）。
+        // 新鲜加载与已加载快路径两条返回路径都要是拷贝。
+        runBlocking {
+            val dao = FakePreferDao()
+            repeat(3) { dao.upsert("甲", "", 0L) }
+            val fresh = CandidatePreferCache.loadSnapshot(dao)
+            assertEquals(3, fresh["甲"])
+            (fresh as MutableMap<String, Int>)["甲"] = 999
+            fresh["乙"] = 1
+            assertEquals(3, CandidatePreferCache.cacheCopy()["甲"])
+            assertFalse(CandidatePreferCache.cacheCopy().containsKey("乙"))
+
+            val cached = CandidatePreferCache.loadSnapshot(dao)
+            assertEquals(3, cached["甲"])
+            (cached as MutableMap<String, Int>)["甲"] = 999
+            assertEquals(3, CandidatePreferCache.cacheCopy()["甲"])
+
+            val current = CandidatePreferCache.currentCache()
+            (current as MutableMap<String, Int>)["甲"] = 999
+            assertEquals(3, CandidatePreferCache.cacheCopy()["甲"])
+        }
+    }
+
+    @Test
+    fun flushLandingsWaitsForLandingBehindHeldMutex() {
+        // D-M13：flushLandings 必须等到被互斥锁挡住的落点真正执行完。
+        // 旧版只等串行通道排空：一次点击的 upsert 挂起持有互斥锁时，
+        // 后到的落点排在锁后，flush 却已返回，调用方以为落点已落地。
+        runBlocking {
+            val dao = FakePreferDao()
+            repeat(10) { dao.upsert("甲", "", 0L) }
+            val committed = CompletableDeferred<Unit>()
+            val gate = CompletableDeferred<Unit>()
+            dao.onUpsertCommitted = { committed.complete(Unit) }
+            dao.upsertGate = gate
+
+            val click = async { CandidatePreferCache.recordClick("甲", dao) }
+            withTimeout(10_000) { committed.await() }
+            // 门闩窗口内：DB 已是 11，点击对子持有互斥锁未返回。
+            assertEquals(11, dao.countOf("甲"))
+
+            // 另一个词的落点（与甲不同词，避免双计干扰）：排在互斥锁后。
+            CandidatePreferCache.noteUpsert("乙")
+            val flushed = async { CandidatePreferCache.flushLandings() }
+            delay(300)
+            // 落点尚未执行，flush 不得先行完成。
+            assertFalse(flushed.isCompleted)
+
+            gate.complete(Unit)
+            withTimeout(10_000) {
+                click.await()
+                flushed.await()
+            }
+            assertEquals(11, dao.countOf("甲"))
+            // 缓存里甲只有点击落点的 +1：本用例不做加载，DB 里的 10 条
+            // 存量从未读进缓存（与 suspendedUpsert… 用例不同，那里随后
+            // 做了 loadSnapshot 才合并成 11）。乙的落点已执行是本用例
+            // 真正要钉的（flush 等到了互斥锁后的落点）。
+            assertEquals(1, CandidatePreferCache.cacheCopy()["甲"])
+            assertEquals(1, CandidatePreferCache.cacheCopy()["乙"])
+        }
+    }
 }

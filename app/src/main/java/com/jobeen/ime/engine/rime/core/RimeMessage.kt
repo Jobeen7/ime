@@ -130,8 +130,28 @@ sealed class RimeMessage<T>(val data: T) {
     companion object {
         private val types = MessageType.entries.toTypedArray()
 
+        /**
+         * native 通知的原始数据记录（不在本线程调 native）。
+         *
+         * 未知类型码／未知部署状态串／参数形态不符时不丢整条通知
+         * （E-L1）：退化为 UnknownMessage 交给下游忽略，而不是在
+         * dispatchMessage 的通用 catch 里整条丢弃（丢 Deploy 通知会
+         * 让 deployAndAwait 靠 10 秒超时按成功处理；丢 Schema/Option
+         * 则缓存滞后一轮）。本函数永不抛错。
+         */
         @Suppress("UNCHECKED_CAST")
-        fun nativeCreate(type: Int, params: Array<Any>): RimeMessage<*> = when (types[type]) {
+        fun nativeCreate(type: Int, params: Array<Any>): RimeMessage<*> {
+            if (type !in types.indices) return UnknownMessage(params)
+            return try {
+                nativeCreateUnchecked(type, params)
+            } catch (e: RuntimeException) {
+                UnknownMessage(params)
+            }
+        }
+
+        @Suppress("UNCHECKED_CAST")
+        private fun nativeCreateUnchecked(type: Int, params: Array<Any>): RimeMessage<*> =
+            when (types[type]) {
             MessageType.Schema -> {
                 // 本函数在通知分发线程上执行，只记录原始数据（方案通知的
                 // 原始串只有 id/name 两段）：此前在这里调 cachedSchemaList()

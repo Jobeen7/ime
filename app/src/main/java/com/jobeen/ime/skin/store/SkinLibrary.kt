@@ -2,6 +2,7 @@ package com.jobeen.ime.skin.store
 
 import com.jobeen.ime.data.App
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -29,16 +30,6 @@ object SkinLibrary {
     val store: SkinLibraryStore by lazy { SkinLibraryStore(layout) }
     val reconciler: LibraryReconciler by lazy { LibraryReconciler(layout, store) }
 
-    /**
-     * 启动对账入口（详设 §2.8）：主进程冷启动时异步跑一遍对账，
-     * 只动 skin_library 目录；失败只记日志，绝不阻塞启动。
-     */
-    fun bootstrapIn(scope: CoroutineScope) {
-        scope.launch(Dispatchers.IO) {
-            runReconcileOnce()
-        }
-    }
-
     /** 进程内单飞启动作用域（SupervisorJob：子任务失败不牵连其它任务）。 */
     private val bootstrapScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val bootstrapLock = Any()
@@ -52,6 +43,15 @@ object SkinLibrary {
     /** 重试前延迟：给瞬时 IO 错误（如存储刚就绪）留恢复窗口。 */
     private const val BOOTSTRAP_RETRY_DELAY_MS = 5_000L
 
+    /**
+     * 耗尽后的进程内重试冷却（2026-11-12 审计 K-L4）：两次失败后
+     * 本进程内不再重试会让一次瞬时 IO 故障导致整节会话的库状态
+     * 未经收敛。冷却期过后下一次 ensureBootstrapped() 重新计数，
+     * 再给两次尝试机会。
+     */
+    private const val BOOTSTRAP_RETRY_COOLDOWN_MS = 60_000L
+    private var bootstrapLastAttemptMs = 0L
+
     /** 快照首次加载等待对账收敛的上限：超时放行，对账继续后台跑。 */
     const val BOOTSTRAP_AWAIT_TIMEOUT_MS = 3_000L
 
@@ -60,10 +60,22 @@ object SkinLibrary {
      * reconcile_failed 日志并返回 false，永不抛（调用方按返回值
      * 决定是否重试，启动路径绝不因对账失败崩进程）。
      */
-    private suspend fun runReconcileOnce(): Boolean =
-        runCatching { reconciler.reconcile() }
+    private suspend fun runReconcileOnce(): Boolean {
+        val report = runCatching { reconciler.reconcile() }
             .onFailure { DiagLog.e("store", "reconcile_failed", throwable = it) }
-            .isSuccess
+            .getOrNull() ?: return false
+        // 运行态收敛（2026-11-12 审计 K-M1）：对账把 active 裁决回滚
+        // 后只改了磁盘，运行态快照仍显示已被裁决无效的皮肤——失效
+        // 当前快照，下次 current() 按回滚后的记录重载。Verified／
+        // KeepPending 时不动运行态（快照与记录一致）。
+        when (report.activeResolution) {
+            is ActiveResolver.Resolution.RollbackToLastGood,
+            is ActiveResolver.Resolution.RollbackToDefault,
+            is ActiveResolver.Resolution.NoSkin -> SkinSnapshotProvider.invalidate()
+            else -> Unit
+        }
+        return true
+    }
 
     /**
      * 触发进程级单飞启动对账（幂等）：已成功、已在跑、或已耗尽
@@ -76,8 +88,14 @@ object SkinLibrary {
         synchronized(bootstrapLock) {
             if (bootstrapSucceeded) return
             if (bootstrapJob?.isActive == true) return
-            if (bootstrapAttempts >= BOOTSTRAP_MAX_ATTEMPTS) return
+            if (bootstrapAttempts >= BOOTSTRAP_MAX_ATTEMPTS) {
+                // 耗尽后冷却期已过：重新计数，给进程内重试留口子（K-L4）。
+                val now = System.currentTimeMillis()
+                if (now - bootstrapLastAttemptMs < BOOTSTRAP_RETRY_COOLDOWN_MS) return
+                bootstrapAttempts = 0
+            }
             bootstrapAttempts++
+            bootstrapLastAttemptMs = System.currentTimeMillis()
             bootstrapJob = bootstrapScope.launch {
                 if (runReconcileOnce()) {
                     synchronized(bootstrapLock) { bootstrapSucceeded = true }

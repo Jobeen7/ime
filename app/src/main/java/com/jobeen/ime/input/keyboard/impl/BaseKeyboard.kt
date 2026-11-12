@@ -509,12 +509,27 @@ abstract class BaseKeyboard(
                     rippleView.startRipple(screenX - boardLoc[0], screenY - boardLoc[1], this)
                 }
             }
+            // 单槽位监听的合成（审计 I-M1）：同一键上的 Popup 长按与
+            // LongPress 行为、Swipe 与 SwipeMoveCursor 各自共用一个
+            // 监听槽位，直接赋值会让后者覆盖前者。本处只收集，到循环
+            // 后统一装一个合成监听（见文末安装点）；弹窗优先于长按
+            // 动作（弹窗接管长按槽，见 layoutSwitchKey 注释），滑动
+            // 与慢滑移光标分属不同手势相位、两者都跑。
+            val longClickHandlers = mutableListOf<View.OnLongClickListener>()
+            // 手势 handler 只取 Event（不取 View）：合成核是纯函数，
+            // 可 JVM 单测；安装点再包一层 OnGestureListener。
+            val gestureHandlers = mutableListOf<(CustomGestureView.Event) -> Boolean>()
+            // Swipe 分支解出的纵向阈值（双声明时 SwipeMoveCursor 的
+            // 800dp 不得盖掉它，见文末阈值调和）。
+            var swipeThresholdYFromSwipe: Float? = null
+            var hasSwipeBehavior = false
+            var hasMoveCursorBehavior = false
             def.popups?.forEach { popup ->
                 when (popup) {
                     is KeyDef.Popup.Preview -> {
-                        setOnLongClickListener {
+                        longClickHandlers += View.OnLongClickListener {
                             showPreview(it as KeyView)
-                            return@setOnLongClickListener true
+                            true
                         }
                         onTouchUpListener = { previewPopup.dismiss() }
                     }
@@ -564,11 +579,11 @@ abstract class BaseKeyboard(
                             }
                             false
                         }
-                        setOnLongClickListener {
+                        longClickHandlers += View.OnLongClickListener {
                             showKeyboardPopup(it as KeyView, popup.keys, popup.initialSelectedIndex)
                             gridHighlight = keyboardPopup.selectedIndex
                             initialMove = true
-                            return@setOnLongClickListener true
+                            true
                         }
                         onTouchUpListener = {
                             if (keyboardPopup.isShowing()) {
@@ -616,7 +631,7 @@ abstract class BaseKeyboard(
 
                     is KeyDef.Behavior.LongPress -> {
                         longPressEnabled = true
-                        setOnLongClickListener {
+                        longClickHandlers += View.OnLongClickListener {
                             val action = behavior.action
                             if (action is KeyboardAction.VoiceInputAction) {
                                 // 语音长按穿线：把触发瞬间记下的指针 id 带上，
@@ -629,7 +644,7 @@ abstract class BaseKeyboard(
                             } else {
                                 onAction(action)
                             }
-                            return@setOnLongClickListener true
+                            true
                         }
                         if (behavior.action is KeyboardAction.VoiceInputAction) {
                             // 语音拖拽需要 swipeEnabled=true，否则 MOVE 在 longPressTriggered
@@ -672,7 +687,9 @@ abstract class BaseKeyboard(
                         )
                         swipeThresholdX = dp(if (hasHorizontal) threshold else 800f)
                         swipeThresholdY = dp(threshold)
-                        onGestureListener = CustomGestureView.OnGestureListener { _, event ->
+                        hasSwipeBehavior = true
+                        swipeThresholdYFromSwipe = swipeThresholdY
+                        gestureHandlers += { event ->
                             when (event.type) {
                                 // 滑动方向前景色（审计 E）：滑动中按方向
                                 // 暂显该方向色（仅上/下有样式槽），抬手/
@@ -726,10 +743,11 @@ abstract class BaseKeyboard(
 
                     is KeyDef.Behavior.SwipeMoveCursor -> {
                         swipeEnabled = true
+                        hasMoveCursorBehavior = true
                         swipeThresholdX = dp(32f)
                         // 纵向滑动不处理，阈值设大等效禁用
                         swipeThresholdY = dp(800f)
-                        onGestureListener = CustomGestureView.OnGestureListener { _, event ->
+                        gestureHandlers += { event ->
                             if (event.type == CustomGestureView.GestureType.Move && event.countX != 0) {
                                 val direction = if (event.countX > 0) 1 else -1
                                 // 滑动步长：每步进移动 slideStepChars 个字符（默认 1）
@@ -839,6 +857,26 @@ abstract class BaseKeyboard(
                         }
                     }
                 }
+            }
+            // 单槽位监听合成安装（审计 I-M1）：循环里只收集、到此才
+            // 装一个合成监听，弹窗／长按、滑动／移光标不再互相覆盖。
+            // 面板挂载（mountGridPanel／旧版单行）只在无工厂长按时
+            // 才跑，与本合成监听互斥，不会盖掉它。
+            if (longClickHandlers.isNotEmpty()) {
+                setOnLongClickListener(combineLongClickListeners(longClickHandlers))
+            }
+            if (gestureHandlers.isNotEmpty()) {
+                val composedGestures = composeGestureHandlers(gestureHandlers)
+                onGestureListener = CustomGestureView.OnGestureListener { _, event ->
+                    composedGestures(event)
+                }
+            }
+            // 双声明阈值调和：SwipeMoveCursor 的 800dp 纵向禁用不得
+            // 盖掉 Swipe 的纵向阈值；横向取两者较小值（移光标 32dp
+            // 与滑动阈值谁更灵敏听谁的）。
+            if (hasSwipeBehavior && hasMoveCursorBehavior) {
+                swipeThresholdX = minOf(swipeThresholdX, dp(32f))
+                swipeThresholdYFromSwipe?.let { swipeThresholdY = it }
             }
             if (hasMomentaryShift) {
                 // 按住上档链式接线：popups/语音分支已占位时
@@ -1220,26 +1258,14 @@ abstract class BaseKeyboard(
             hasDedicatedNewlineKey = hasDedicatedNewlineKey,
             isLongPress = false,
         )
-        val (icon, enterLabel) = when (displayOutcome) {
-            is EnterOutcome.PerformAction -> {
-                val editorAction = EnterFieldBoundary.toEditorAction(displayOutcome.action)
-                val iconForAction = when (editorAction) {
-                    EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
-                    EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
-                    EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
-                    EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
-                    EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
-                    EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
-                    else -> R.drawable.ic_keyboard_return
-                }
-                iconForAction to
-                    com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(editorAction)
-            }
-            // 上屏候选、插换行、无动作在显示上都落回车图标／换行文案：
-            // 无动作（九宫格多行无标志）显示上无法再区分，按键时无动作，
-            // 换行走专用换行键，此处不另发明图标。
-            else -> R.drawable.ic_keyboard_return to "换行"
-        }
+        // 显示与行为同一来源（returnKeyDisplay，I-L2）：无动作
+        // （九宫格多行）文案为空，不再谎称“换行”；非 PerformAction
+        // 时 editorAction 不参与映射，传 UNSPECIFIED 占位。
+        val editorAction =
+            (displayOutcome as? EnterOutcome.PerformAction)?.let {
+                EnterFieldBoundary.toEditorAction(it.action)
+            } ?: EditorInfo.IME_ACTION_UNSPECIFIED
+        val (icon, enterLabel) = returnKeyDisplay(displayOutcome, editorAction)
         if (icon != returnKeyIcon) {
             returnKeyIcon = icon
             returnKeyView?.img?.imageResource = returnKeyIcon
@@ -1322,3 +1348,62 @@ internal fun resolveSwipeAction(
         SwipeDirection.RIGHT -> behavior.rightAction
     }
 }
+
+/**
+ * 长按监听合成（纯函数，可单测；I-M1）：多个长按 handler 按注册
+ * 顺序依次调用，首个返回 true 的胜出、其余不再调用——弹窗优先
+ * 于长按动作（弹窗接管长按槽，见 layoutSwitchKey 注释），长按
+ * 动作只在无弹窗认领时触发；都返回 false 时合成监听返回 false。
+ */
+internal fun combineLongClickListeners(
+    listeners: List<View.OnLongClickListener>,
+): View.OnLongClickListener = View.OnLongClickListener { view ->
+    for (listener in listeners) {
+        if (listener.onLongClick(view)) return@OnLongClickListener true
+    }
+    false
+}
+
+/**
+ * 手势 handler 合成（纯函数，可单测；I-M1）：滑动与慢滑移光标分属
+ * 不同手势相位（Move 计步移光标、Up 触发滑动动作），两者都须
+ * 看到同一事件，故全部调用、返回值取或——任一消费即本次手势
+ * 已被消费。调用顺序即注册顺序（behaviors 集合的声明顺序）。
+ */
+internal fun composeGestureHandlers(
+    handlers: List<(CustomGestureView.Event) -> Boolean>,
+): (CustomGestureView.Event) -> Boolean = { event ->
+    var consumed = false
+    for (handler in handlers) {
+        if (handler(event)) consumed = true
+    }
+    consumed
+}
+
+/**
+ * 回车键显示映射（纯决策，可单测；I-L2）：显示与行为同一来源
+ * （EnterDecision），四种决策各有显示——
+ * - PerformAction：按编辑器动作取图标与文案；
+ * - CommitCandidate（组字中点按上屏候选）：沿旧口径显示换行图标／文案；
+ * - InsertNewline：换行图标／“换行”文案；
+ * - NoOp（九宫格多行无动作，换行走专用换行键）：图标沿用通用回车
+ *   图标（不另发明图标），文案为空——不再谎称“换行”。
+ */
+internal fun returnKeyDisplay(outcome: EnterOutcome, editorAction: Int): Pair<Int, String> =
+    when (outcome) {
+        is EnterOutcome.PerformAction -> {
+            val iconForAction = when (editorAction) {
+                EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
+                EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
+                EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
+                EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
+                EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
+                EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
+                else -> R.drawable.ic_keyboard_return
+            }
+            iconForAction to
+                com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(editorAction)
+        }
+        is EnterOutcome.NoOp -> R.drawable.ic_keyboard_return to ""
+        else -> R.drawable.ic_keyboard_return to "换行"
+    }

@@ -21,7 +21,6 @@ import com.jobeen.ime.skin.store.SkinAssetPruner
 import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinOverlayMerge
-import com.jobeen.ime.ui.FabBackdropRefreshGate
 import java.io.File
 import java.nio.file.Files
 import kotlinx.serialization.json.JsonObject
@@ -35,7 +34,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 第 5 批定向单测：纯 JVM 护栏（§1 归档／§2 图片／§3 切换／§4 组开关／§5 节流门／§6 三态与宽度）。 */
+/** 第 5 批定向单测：纯 JVM 护栏（§1 归档／§2 图片／§3 切换／§4 组开关／§6 三态与宽度）。§5 节流门（FabBackdropRefreshGate）随玻璃基础设施删除而删除。 */
 class Batch5SkinGuardsTest {
 
     private fun scheme(): KeyboardColors.ColorScheme = KeyboardColors.ColorScheme(
@@ -305,28 +304,6 @@ class Batch5SkinGuardsTest {
         assertEquals("normal", SkinGroupFollow.styleRoleName(false, true, 5))
         assertEquals("normal", SkinGroupFollow.styleRoleName(false, false, 1))
         assertEquals("function", SkinGroupFollow.styleRoleName(false, false, 3))
-    }
-
-    // ---- §5 节流门 ----
-
-    @Test
-    fun fabGate_throttleAndSingleFlight() {
-        var now = 0L
-        val gate = FabBackdropRefreshGate(clockMs = { now })
-        assertEquals(FabBackdropRefreshGate.Verdict.GRANTED, gate.request())
-        assertEquals(FabBackdropRefreshGate.Verdict.IN_FLIGHT, gate.request())
-        assertTrue(gate.hasPending())
-        gate.finish()
-        // 距上次授权未满 100ms：节流，不立即补刷。
-        now = 50L
-        assertFalse(gate.pollDue())
-        now = 100L
-        assertTrue(gate.pollDue())
-        // pollDue 已占位：pending 清零，再 poll 不重复授权。
-        assertFalse(gate.hasPending())
-        assertFalse(gate.pollDue())
-        gate.finish()
-        assertFalse(gate.pollDue())
     }
 
     // ---- §6 三态／数值／宽度／图标槽／覆盖层语义 ----

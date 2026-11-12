@@ -35,6 +35,9 @@ class CloudVoiceSettle(
     fun onFinal(text: String) {
         if (settled || failed) return
         if (text.isEmpty()) return
+        // final 即收尾：此后迟到的 partial 一律丢弃，不再覆写已提交文本，
+        // onEnded 也不再把陈旧 partial 二次提交（B-S1）。
+        settled = true
         latestPartial = null
         hasPartial = false
         sink.commit(display(text))

@@ -40,7 +40,12 @@ interface CandidatePreferDao {
         incrementExisting(text, context, now)
     }
 
-    /** 仅供 [upsert] 事务调用：行不存在时以 0 计数建行，已存在则不动。 */
+    /**
+     * 仅供 [upsert] 事务调用：行不存在时以 0 计数建行，已存在则不动。
+     * internal——公开它会让调用方单独调子语句（D-L5）：单独调
+     * incrementExisting 时首行丢失且无报错，单独调 insert 落的 0
+     * 计数不是有效偏好。
+     */
     @Query(
         """
         INSERT OR IGNORE INTO candidate_prefers (text, context, click_count, created_at, updated_at)
@@ -49,7 +54,7 @@ interface CandidatePreferDao {
     )
     suspend fun insertOrIgnoreZero(text: String, context: String, now: Long)
 
-    /** 仅供 [upsert] 事务调用：对已存在的行累加计数并刷新 context/时间。 */
+    /** 仅供 [upsert] 事务调用：对已存在的行累加计数并刷新 context/时间（同上，internal）。 */
     @Query(
         """
         UPDATE candidate_prefers SET

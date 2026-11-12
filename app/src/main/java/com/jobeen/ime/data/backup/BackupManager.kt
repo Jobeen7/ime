@@ -163,15 +163,26 @@ object BackupManager {
         // 口令加密，不再需要剔键＋独立字段迁移通道
         root.put("prefs", prefsJson)
 
-        // —— Room 四表
+        // —— Room 四表：每库一次事务内读出，快照在单库内取自同一时点
+        // （D-M1：此前两表分两次读，打字/复制并发写入时两表可取自不
+        // 同时点；跨库与 prefs 之间仍无统一快照点——真原子快照需全局
+        // 写锁，超出本次修复范围，见 collectPayload 的 KDoc 补充）。
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
         // 拆库迁移本体已随清点 Q2 退场（现行设备早已迁完），采集直接
         // 读新库；原「迁移不成中止备份」的耦合随之解除
 
+        // 遗留超限行先清理（D-S5）：限长前的超限行读出即抛
+        // SQLiteBlobTooBigException，备份导出会被一行毒化整包。
+        ClipboardManager.sanitizeOversizedOnce(appContext)
+
+        val (clipRows, groupRows) = clipDb.withTransaction {
+            clipDb.clipboardDao().getAllActive() to
+                clipDb.clipboardDao().getAllGroups()
+        }
         val clips = JSONArray()
         // 只导出有效行：历史软删除存量不进备份（删除已改物理删，此为存量兜底）
-        for (r in clipDb.clipboardDao().getAllActive()) {
+        for (r in clipRows) {
             clips.put(
                 JSONObject()
                     .put("id", r.id).put("text", r.text).put("timestamp", r.timestamp)
@@ -184,7 +195,7 @@ object BackupManager {
 
         // 自定义分组（H2-4）：与剪贴板行一起出包，还原时按名称合并、条目 groupId 重映射
         val groups = JSONArray()
-        for (g in clipDb.clipboardDao().getAllGroups()) {
+        for (g in groupRows) {
             groups.put(
                 JSONObject()
                     .put("id", g.id).put("name", g.name)
@@ -193,8 +204,15 @@ object BackupManager {
         }
         root.put("clipboard_groups", groups)
 
+        val (phraseRows, preferRows, sortingRows) = db.withTransaction {
+            Triple(
+                db.phraseDao().getAll(),
+                db.candidatePreferDao().getAllFull(),
+                db.candidateSortingDao().getAllFull(),
+            )
+        }
         val phrases = JSONArray()
-        for (r in db.phraseDao().getAll()) {
+        for (r in phraseRows) {
             phrases.put(
                 JSONObject()
                     .put("id", r.id).put("text", r.text)
@@ -205,7 +223,7 @@ object BackupManager {
         root.put("phrases", phrases)
 
         val prefers = JSONArray()
-        for (r in db.candidatePreferDao().getAllFull()) {
+        for (r in preferRows) {
             prefers.put(
                 JSONObject()
                     .put("text", r.text).put("count", r.count).put("context", "")
@@ -215,7 +233,7 @@ object BackupManager {
         root.put("candidatePrefers", prefers)
 
         val sortings = JSONArray()
-        for (r in db.candidateSortingDao().getAllFull()) {
+        for (r in sortingRows) {
             sortings.put(
                 JSONObject()
                     .put("key", r.key)
@@ -367,19 +385,49 @@ object BackupManager {
         // 自己的完整状态写回去；也不再对快照二次解密重解析（省掉一
         // 轮 60 万次 PBKDF2）
         val snapshotParsed = parsePayload(collectPayload())
+        // 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
+        // 脚本段缺失且还原前确有脚本（超 32MB 跳段或采集失败），或皮肤
+        // 库段缺失且还原前确有皮肤文件（同理），回滚后这些数据即永久丢
+        // 失——此时绝不能报“已恢复到还原前状态”，必须如实报回滚未成功。
+        // 皮肤库段缺失且还原前本就无皮肤文件时，快照即“空库”，回滚清
+        // 空皮肤即恢复（clearSkinsForRollback），覆盖成立。
+        val scriptsPresentBefore = hasSkinScripts()
+        val skinsPresentBefore = hasSkinFiles()
+        val rollbackCovered = rollbackCovered(
+            snapshotHasScripts = snapshotParsed.skinScripts != null,
+            scriptsPresent = scriptsPresentBefore,
+            snapshotHasSkins = snapshotParsed.skinLibrary != null,
+            skinsPresentBefore = skinsPresentBefore,
+        )
+        val clearSkinsForRollback = snapshotParsed.skinLibrary == null && !skinsPresentBefore
         // 合并语义（D31）：四表先取“当前 ∪ 备份”（当前优先），再整表
         // 写回合并结果——备份后新学的内容保留，备份里有、当前已删的
         // 内容补回来。合并只发生在还原入口这一处，applyPayload 本体
         // 仍是整表替换，因此失败回滚仍用快照原样写回，回滚口径不变。
         val merged = mergeForRestore(snapshotParsed, parsed)
+        // 失败还原新建的偏好文件（在备份包里、不在还原前快照里）：
+        // 回滚时删掉，否则还原后多出失败还原写入的设置文件（D-M2）。
+        // 整表跳过的文件（设备本地表、scheme_dirs）从不被回写，不在此列。
+        val rollbackExtraPrefsFiles = (merged.prefs.keys - snapshotParsed.prefs.keys)
+            .filter { !isSkippedPrefsFile(it) }.toSet()
         try {
             // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
             // 半途而废比继续写完更糟——半还原状态正是快照机制要防的
             withContext(NonCancellable) { applyPayload(merged) }
         } catch (e: Exception) {
-            val rolledBack = runCatching {
-                withContext(NonCancellable) { applyPayload(snapshotParsed) }
+            val replayed = runCatching {
+                withContext(NonCancellable) {
+                    applyPayload(
+                        snapshotParsed,
+                        forRollback = true,
+                        clearSkinsForRollback,
+                        rollbackExtraPrefsFiles,
+                    )
+                }
             }.isSuccess
+            // 回放成功才算回滚成功；缺段快照盖不住的源（脚本/皮肤）
+            // 只要还原前存在，回滚即不完整——如实报失败，不谎报成功。
+            val rolledBack = replayed && rollbackCovered
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw BackupException(
                 if (rolledBack) "还原失败，已恢复到还原前状态：${e.message ?: "未知错误"}"
@@ -410,6 +458,13 @@ object BackupManager {
         java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
+     * 还原代次（D-M12）：每次 startRestore 自增。延迟杀进程只杀本代次
+     * 的还原完成后的进程——600ms 内若用户又发起一次还原（代次已变），
+     * 旧的延迟杀进程必须作废，否则会杀掉正在进行的新还原。
+     */
+    private val restoreGeneration = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
      * 在应用级作用域启动还原：旋转/退出备份页都不会取消它（旧实现挂在
      * 界面作用域上，旋转即取消，还原会遭腰斩）。重复启动忽略。
      */
@@ -418,12 +473,13 @@ object BackupManager {
             password.fill(' ')
             return
         }
+        val generation = restoreGeneration.incrementAndGet()
         _restoreState.value = RestoreState.Running
         restoreScope.launch {
             try {
                 restoreBackup(bytes, password)
                 _restoreState.value = RestoreState.Done
-                scheduleProcessRestart()
+                scheduleProcessRestart(generation)
             } catch (e: Exception) {
                 Timber.w(e, "Restore failed")
                 _restoreState.value =
@@ -440,10 +496,14 @@ object BackupManager {
      * 旧实现把杀进程挂在备份页的 Done 观察者上：用户中途离开页面
      * 就无人触发，旧缓存继续运行、还可能把旧数据回写覆盖已还原的
      * 结果。延迟 600ms 与旧行为一致（给完成提示留显示时间）。
+     * 杀进程前核对代次与还原状态（D-M12）：代次已变（600ms 内又
+     * 起一次还原）或正有还原在跑时不杀，双重守门。
      */
-    private fun scheduleProcessRestart() {
+    private fun scheduleProcessRestart(generation: Int) {
         android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-            android.os.Process.killProcess(android.os.Process.myPid())
+            if (restoreGeneration.get() == generation && !restoreRunning.get()) {
+                android.os.Process.killProcess(android.os.Process.myPid())
+            }
         }, 600)
     }
 
@@ -799,7 +859,6 @@ object BackupManager {
         else -> throw BackupException("备份内容解析失败")
     }
 
-    /** 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误 */
     /**
      * 判定偏好条目是否属于旧多目录状态残留，命中则不还原。
      * 只有 prefsName 为 scheme_dirs 时为 true——该文件整表已由
@@ -966,7 +1025,44 @@ object BackupManager {
         return out
     }
 
-    private suspend fun applyPayload(parsed: ParsedBackup) {
+    /** 还原前脚本库是否确有脚本文件（任一文件即算，含半写 .tmp——回滚覆盖判定取保守口径）。 */
+    private fun hasSkinScripts(): Boolean {
+        val dir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
+        return dir.isDirectory && dir.walkTopDown().any { it.isFile }
+    }
+
+    /** 还原前皮肤库是否确有文件（index.json 或 skins/、assets/ 下任一文件）。 */
+    private fun hasSkinFiles(): Boolean {
+        val dir = App.skinLibraryDir
+        return dir.isDirectory && dir.walkTopDown().any { it.isFile }
+    }
+
+    /**
+     * 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
+     * 脚本段缺失且还原前确有脚本、或皮肤库段缺失且还原前确有皮肤文件
+     * 时，回滚后这些数据即永久丢失——此时绝不能报“已恢复到还原前状态”。
+     */
+    private fun rollbackCovered(
+        snapshotHasScripts: Boolean,
+        scriptsPresent: Boolean,
+        snapshotHasSkins: Boolean,
+        skinsPresentBefore: Boolean,
+    ): Boolean =
+        (snapshotHasScripts || !scriptsPresent) &&
+            (snapshotHasSkins || !skinsPresentBefore)
+
+    /**
+     * 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误。
+     * @param forRollback 回滚回放：快照即还原前状态，分组恒整表替换、
+     *   失败还原新建的偏好文件删掉、皮肤库整表替换（或快照即空库时
+     *   清空）；正常还原走合并写回口径，不碰快照里没有的现数据。
+     */
+    private suspend fun applyPayload(
+        parsed: ParsedBackup,
+        forRollback: Boolean = false,
+        clearSkinsForRollback: Boolean = false,
+        rollbackExtraPrefsFiles: Set<String> = emptySet(),
+    ) {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
         // 拆库迁移本体已随清点 Q2 退场（现行设备早已迁完）：原「迁移
@@ -992,8 +1088,11 @@ object BackupManager {
             // 自定义分组（H2-4）：与剪贴板行同一事务整表替换；
             // 旧备份无此段时 parsed.clipboardGroups 为空列表，还原
             // 不碰现分组（见 parsePayload）；groupId 已在合并阶段
-            // 按合并后的分组表重映射（见 mergeForRestore）
-            if (parsed.clipboardGroups.isNotEmpty()) {
+            // 按合并后的分组表重映射（见 mergeForRestore）。回滚
+            // 模式下恒替换：快照里的分组表就是还原前状态，空表即
+            // “还原前无分组”，必须把失败还原新建的分组清掉，而
+            // 不是只在非空时才替换（D-M2 的分组残留）。
+            if (forRollback || parsed.clipboardGroups.isNotEmpty()) {
                 clipDb.clipboardDao().deleteAllGroups()
                 clipDb.clipboardDao().insertGroups(parsed.clipboardGroups)
             }
@@ -1031,6 +1130,16 @@ object BackupManager {
             // 会留下数据库是新数据、偏好是旧数据的混杂状态
             if (!editor.commit()) throw BackupException("设置写入失败（$name），还原中止")
         }
+        // 回滚模式：删掉失败还原新建的偏好文件（D-M2 的偏好残留）。
+        // deleteSharedPreferences 同时清内存缓存实例（API 24+，minSdk 24）；
+        // 残留的 .bak 一并清掉。
+        if (forRollback) {
+            val prefsDir = File(appContext.applicationInfo.dataDir, "shared_prefs")
+            for (name in rollbackExtraPrefsFiles) {
+                appContext.deleteSharedPreferences(name)
+                File(prefsDir, "$name.xml.bak").delete()
+            }
+        }
 
         // 引擎侧候选偏好有内存快照，还原后显式失效，不依赖随后的杀进程重启
         CandidatePreferCache.invalidate()
@@ -1049,16 +1158,22 @@ object BackupManager {
             }
         }
 
-        // —— 皮肤库文件（合并写回，非整表覆盖）：只覆盖备份中同路径的
-        // 文件，不删除备份中没有的现文件；无字段（旧备份）时不碰现
-        // 皮肤。写回后还原流程末尾重启进程，下次启动对账会把磁盘
-        // 孤儿代次重新登记、把损坏索引重建，因此此处不做索引一致性
-        // 校验。临时文件＋改名：中途失败不留半截文件；失败回滚会
-        // 写回旧文件内容，但不删除失败还原中途新增的文件（残留由
-        // 下次启动对账登记，不损坏库）。
+        // —— 皮肤库文件（正常还原合并写回，非整表覆盖）：只覆盖备份中
+        // 同路径的文件，不删除备份中没有的现文件；无字段（旧备份）时
+        // 不碰现皮肤。写回后还原流程末尾重启进程，下次启动对账会把
+        // 磁盘孤儿代次重新登记、把损坏索引重建，因此此处不做索引一
+        // 致性校验。临时文件＋改名：中途失败不留半截文件。回滚模式
+        // 下整表替换（D-M2 的皮肤残留）：先清掉现库再写回快照，失败
+        // 还原中途新增的文件在此清掉；快照即空库时（clearSkinsForRollback）
+        // 只清不写。
         parsed.skinLibrary?.let { skin ->
             val rootDir = App.skinLibraryDir
             runCatching { rootDir.mkdirs() }
+            if (forRollback) {
+                File(rootDir, "index.json").delete()
+                File(rootDir, "skins").deleteRecursively()
+                File(rootDir, "assets").deleteRecursively()
+            }
             skin.index?.let { indexText ->
                 val tmp = File(rootDir, "index.json.tmp")
                 tmp.writeText(indexText, Charsets.UTF_8)
@@ -1078,29 +1193,66 @@ object BackupManager {
                 }
             }
         }
+        // 回滚模式 + 快照无皮肤段 + 还原前本就无皮肤文件：快照即“空库”，
+        // 失败还原新增的皮肤文件必须清干净（clearSkinsForRollback）。
+        // 快照无段但还原前确有皮肤时（超限跳段）不碰皮肤，由回滚覆盖
+        // 判定如实报回滚未成功。
+        if (forRollback && clearSkinsForRollback) {
+            val rootDir = App.skinLibraryDir
+            File(rootDir, "index.json").delete()
+            File(rootDir, "skins").deleteRecursively()
+            File(rootDir, "assets").deleteRecursively()
+        }
 
-        // —— 皮肤脚本文件（整表替换，非合并写回，见 KDoc）：先删
-        // 整树再写备份内文件；无字段（旧备份）时不碰现脚本。
-        // 临时文件＋改名：中途失败不留半截文件；失败回滚走同一
-        // 整表替换路径写回还原前快照，故失败还原不留孤儿脚本
-        // （快照由新版采集产生，恒带此段；超限跳段的快照除外，
-        // 见 KDoc——该情形下回放不碰脚本）。
+        // —— 皮肤脚本文件（整表替换，非合并写回，见 KDoc）：换位写，
+        // 先把新脚本写进临时目录、再整体换位；无字段（旧备份）时不
+        // 碰现脚本。旧实现“先删整树再写”，写盘中途失败即把还原前
+        // 的脚本全毁（D-S1），且回滚回放走同一路径同样先删后写。
+        // 换位写失败只丢临时目录，旧脚本原样保留；换位本身是同目
+        // 录 rename，原子完成。失败回滚走同一换位路径写回还原前
+        // 快照，故失败还原不留孤儿脚本（快照由新版采集产生，恒带
+        // 此段；超限跳段的快照除外，见 KDoc——该情形下回放不碰脚本）。
         parsed.skinScripts?.let { scripts ->
             val scriptsDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
-            if (scriptsDir.exists() && !scriptsDir.deleteRecursively()) {
+            val tmpDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR + ".tmp")
+            val oldDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR + ".old")
+            if (tmpDir.exists()) tmpDir.deleteRecursively()
+            if (oldDir.exists()) oldDir.deleteRecursively()
+            try {
+                runCatching { tmpDir.mkdirs() }
+                for ((rel, bytes) in scripts.files) {
+                    // 解析阶段已白名单校验，此处只做落盘。
+                    val target = File(tmpDir, rel)
+                    runCatching { target.parentFile?.mkdirs() }
+                    val tmp = File(target.parentFile, "${target.name}.tmp")
+                    tmp.writeBytes(bytes)
+                    if (!tmp.renameTo(target)) {
+                        throw BackupException("脚本文件写入失败（$rel），还原中止")
+                    }
+                }
+            } catch (e: Exception) {
+                if (e is InterruptedException) throw e
+                if (e is kotlinx.coroutines.CancellationException) throw e
+                tmpDir.deleteRecursively()
+                throw e
+            }
+            // 换位：旧目录 → .old，临时目录 → 脚本目录，再删 .old。
+            // 旧目录不存在（还原前无脚本）时直接换位。
+            val hadOld = scriptsDir.exists()
+            if (hadOld && !scriptsDir.renameTo(oldDir)) {
+                tmpDir.deleteRecursively()
                 throw BackupException("脚本库写入失败，还原中止")
             }
-            runCatching { scriptsDir.mkdirs() }
-            for ((rel, bytes) in scripts.files) {
-                // 解析阶段已白名单校验，此处只做落盘。
-                val target = File(scriptsDir, rel)
-                runCatching { target.parentFile?.mkdirs() }
-                val tmp = File(target.parentFile, "${target.name}.tmp")
-                tmp.writeBytes(bytes)
-                if (!tmp.renameTo(target)) {
-                    throw BackupException("脚本文件写入失败（$rel），还原中止")
-                }
+            if (!tmpDir.renameTo(scriptsDir)) {
+                // 换位失败：尽力把旧目录挪回来，临时目录清掉；旧目录
+                // 恢复失败时 .old 原样保留（下次备份采集只认脚本目录，
+                // 不会误读它；下次还原先清残留 .old），还原判失败、
+                // 由回滚回放处置。
+                if (hadOld) oldDir.renameTo(scriptsDir)
+                tmpDir.deleteRecursively()
+                throw BackupException("脚本库写入失败，还原中止")
             }
+            oldDir.deleteRecursively()
         }
     }
 

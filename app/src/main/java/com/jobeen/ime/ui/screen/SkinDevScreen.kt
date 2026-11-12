@@ -169,6 +169,8 @@ fun SkinDevScreen(onBack: () -> Unit) {
             detail = null
             return@LaunchedEffect
         }
+        // U-L1：先清旧内容再读新皮肤，否则点开 B 的瞬间仍看到 A 的检视。
+        detail = null
         detailBusy = true
         detail = withContext(Dispatchers.IO) {
             runCatching {

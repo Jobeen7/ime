@@ -126,6 +126,16 @@ internal fun inlinePreeditJoined(
     items: List<EngineMessage.DynamicPreedit.DynamicPreeditItem>,
 ): String = items.joinToString("") { it.text }
 
+/**
+ * 追加页版本号放行判定（纯函数，可单测；I-S2）：追加页 revision
+ * 与已应用首屏同源（引擎侧批次号＝首屏 requestId）。
+ * - revision 0（未版本化合成帧）恒放行；
+ * - 尚未应用任何版本化首屏（lastApplied < 0）时版本化追加页无处可合，丢弃；
+ * - 版本号与已应用首屏不等（迟到旧页）丢弃；相等才合入。
+ */
+internal fun shouldApplyCandidateAppend(revision: Long, lastAppliedRevision: Long): Boolean =
+    revision <= 0L || (lastAppliedRevision >= 0L && revision == lastAppliedRevision)
+
 @SuppressLint("ViewConstructor")
 class KeyboardWindowView(
     context: Context,
@@ -1249,6 +1259,13 @@ class KeyboardWindowView(
     private var passwordField = false
 
     fun onStartInput(info: EditorInfo, fieldChanged: Boolean = false) {
+        // 换框时云端会话须停（I-M3）：restarting 型换框不经任何
+        // FINISH 回调，服务侧只停了本地录音；云端会话若继续录，
+        // ServiceTextSink 会凭“当前连接已不是捕获的连接”丢弃全部
+        // 写入——整段白录。字段未变（同框重启）时会话属于本框，不断。
+        if (fieldChanged && cloudVoiceSession != null) {
+            stopCloudVoice(discard = true)
+        }
         // 新输入会话：旧字段的内联胶囊过期，先清；会话标志随即置真。
         hideInlineAutofill()
         inlineFieldActive = true
@@ -1761,8 +1778,17 @@ class KeyboardWindowView(
         }
     }
 
-    fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int) =
+    /**
+     * 追加页（I-S2）：版本号与首屏同源（引擎侧 revision 取批次号＝
+     * 首屏 requestId），只合入与已应用首屏同一批次的页；迟到旧页
+     * （新组字首屏已应用、版本号对不上）与无首屏可合的页一律丢弃。
+     * 未版本化（revision 0，合成帧）恒放行——与首屏 revision 0
+     * 口径一致。
+     */
+    fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int, revision: Long = 0L) {
+        if (!shouldApplyCandidateAppend(revision, lastAppliedCandidateRevision)) return
         panel.appendCandidates(list, total)
+    }
 
     fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>) {
         panel.onPossibleCandidatePinYin(pinyins)
@@ -1820,6 +1846,8 @@ class KeyboardWindowView(
         // A4：事件带空／非空布尔信号，matchKey 仍禁，文本绝不
         // 进入匹配与日志；精确变化检测去重，同空否重复事件不重建）。
         val joined = items.joinToString("") { it.text }
+        // 藏 span 校验的比对基线（I-S4）：组字串以此为准，空串即清除。
+        TypedUndoLedger.noteComposingText(joined)
         if (joined != lastFedPreedit) {
             lastFedPreedit = joined
             SkinRuntimeState.onEvent(

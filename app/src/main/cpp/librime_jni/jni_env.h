@@ -197,16 +197,27 @@ namespace jni {
     class ScopedEnv {
     public:
         explicit ScopedEnv(JavaVM *vm) : vm_(vm), env_(nullptr), attached_(false) {
+            if (vm_ == nullptr) return;
             if (vm_->GetEnv(reinterpret_cast<void **>(&env_), JNI_VERSION_1_6) ==
                 JNI_EDETACHED) {
-                vm_->AttachCurrentThread(&env_, nullptr);
-                attached_ = true;
+                // N-L3：旧实现丢弃 AttachCurrentThread 返回值且无条件置
+                // attached_=true，失败时 env_ 为 null，调用方随即在空
+                // env 上调 JNI。失败时 env_ 保持 null、attached_ 保持
+                // false，调用方凭空 env 判定（析构也不 detach）。
+                env_ = nullptr;
+                if (vm_->AttachCurrentThread(&env_, nullptr) == JNI_OK) {
+                    attached_ = true;
+                } else {
+                    env_ = nullptr;
+                }
             }
         }
 
         ~ScopedEnv() {
             if (attached_) vm_->DetachCurrentThread();
         }
+
+        bool valid() const { return env_ != nullptr; }
 
         operator JNIEnv *() const { return env_; }
 
@@ -224,48 +235,56 @@ namespace jni {
     public:
         JavaVM *vm = nullptr;
 
-        jclass Object;
-        jclass String;
+        jclass Object = nullptr;
+        jclass String = nullptr;
 
-        jclass Integer;
-        jmethodID IntegerCtor;
+        jclass Integer = nullptr;
+        jmethodID IntegerCtor = nullptr;
 
-        jclass Boolean;
-        jmethodID BooleanCtor;
+        jclass Boolean = nullptr;
+        jmethodID BooleanCtor = nullptr;
 
-        jclass Rime;
-        jmethodID HandleRimeMessage;
+        jclass Rime = nullptr;
+        jmethodID HandleRimeMessage = nullptr;
 
-        jclass CandidateProto;
-        jmethodID CandidateProtoCtor;
+        jclass CandidateProto = nullptr;
+        jmethodID CandidateProtoCtor = nullptr;
 
-        jclass CommitProto;
-        jmethodID CommitProtoCtor;
+        jclass CommitProto = nullptr;
+        jmethodID CommitProtoCtor = nullptr;
 
-        jclass ContextProto;
-        jmethodID ContextProtoCtor;
+        jclass ContextProto = nullptr;
+        jmethodID ContextProtoCtor = nullptr;
 
-        jclass SyllableProto;
-        jmethodID SyllableProtoCtor;
+        jclass SyllableProto = nullptr;
+        jmethodID SyllableProtoCtor = nullptr;
 
-        jclass CompositionProto;
-        jmethodID CompositionProtoCtor;
+        jclass CompositionProto = nullptr;
+        jmethodID CompositionProtoCtor = nullptr;
 
-        jclass MenuProto;
-        jmethodID MenuProtoCtor;
+        jclass MenuProto = nullptr;
+        jmethodID MenuProtoCtor = nullptr;
 
-        jclass StatusProto;
-        jmethodID StatusProtoCtor;
+        jclass StatusProto = nullptr;
+        jmethodID StatusProtoCtor = nullptr;
 
-        jclass SchemaItem;
-        jmethodID SchemaItemCtor;
+        jclass SchemaItem = nullptr;
+        jmethodID SchemaItemCtor = nullptr;
 
-        jclass KeyEvent;
-        jmethodID KeyEventCtor;
+        jclass KeyEvent = nullptr;
+        jmethodID KeyEventCtor = nullptr;
 
         explicit GlobalRefs(JavaVM *vm_) : vm(vm_) {
-            JNIEnv *env;
-            vm->AttachCurrentThread(&env, nullptr);
+            JNIEnv *env = nullptr;
+            // N-L3：旧实现不检查 AttachCurrentThread 返回值，失败时
+            // env 未初始化即交 initRefs。失败时无可用 env 可抛异常，
+            // 直接返回，各字段保持上面的 null 初始化，不留未初始化
+            // 的野指针潜伏到首次使用才崩。
+            if (vm == nullptr ||
+                vm->AttachCurrentThread(&env, nullptr) != JNI_OK ||
+                env == nullptr) {
+                return;
+            }
             // 任一按名查找失败（类/方法被改名或被 R8 删除——986 事故
             // 正是此类）都在这里收口：清掉查找自身的异常，改抛带明确
             // 信息的 RuntimeException，让问题在库加载期以可读形式显形，

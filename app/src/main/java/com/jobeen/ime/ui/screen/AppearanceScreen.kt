@@ -40,11 +40,15 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -129,12 +133,27 @@ fun AppearanceScreen(
 
     // ---- 视频背景 ----
     var videoEnabled by remember { mutableStateOf(VideoPrefs.isEnabled(context)) }
-    val videoSnapshot = remember { SkinSnapshotProvider.peek() }
+    var videoSnapshot by remember { mutableStateOf(SkinSnapshotProvider.peek()) }
+    // videoSnapshot 是委托属性、不可智能转型：先取到局部变量再判空。
+    val snapshot = videoSnapshot
     val videoStatus = when {
-        videoSnapshot == null -> stringResource(R.string.video_status_noskin)
-        videoSnapshot.background?.videoSha256 != null ->
+        snapshot == null -> stringResource(R.string.video_status_noskin)
+        snapshot.background?.videoSha256 != null ->
             stringResource(R.string.video_status_with)
         else -> stringResource(R.string.video_status_without)
+    }
+
+    // U-M7：视频背景有无只在首次组合读一次——去皮肤库换完皮肤再返回，
+    // 本页仍显示旧快照的视频态；回页（ON_RESUME）即重读当前快照。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                videoSnapshot = SkinSnapshotProvider.peek()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // ---- 全局样式：2 行＋对话框编辑器（改动 staged，应用才写偏好） ----

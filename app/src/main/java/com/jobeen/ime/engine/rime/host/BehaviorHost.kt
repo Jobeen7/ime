@@ -186,7 +186,14 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
      * 返回 true 表示已在队列内消化掉 BackSpace（不转交 Rime）；false 表示转交 Rime 处理。
      */
     private fun recontrolBackspace(): Boolean {
-        if (behaviorQueue.isEmpty()) return false
+        if (behaviorQueue.isEmpty()) {
+            // E-M6 补漏：一条 InputString 行为可含多个码点（多字序列键），
+            // 行为条目先耗尽不等于输入已删空；队列仍有内容时继续删一
+            // 个码点，仍返回 false 照常转交 Rime——队列与 native 各删
+            // 一字，保持同步。两队皆空时无事可做，同样转交 Rime。
+            if (inputStringQueue.isNotEmpty()) trimLastInputCodePoint()
+            return false
+        }
         return when (behaviorQueue.removeLast()) {
             is SelectPinYin -> {
                 if (selectedPinYinQueue.isNotEmpty()) {
@@ -200,9 +207,33 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
             is Selection -> false
 
             else -> {
-                inputStringQueue.removeLast()
+                // native 的 BackSpace 只删一个字：队列侧同样只删末条末尾
+                // 一个码点，而不是整条丢弃（E-M6）。多字序列键（如皮肤
+                // 自定义序列）一次退格丢整条后，下次重建输入会把 native
+                // 组字里多余的字静默截掉；单字条目删后为空即整条消失，
+                // 与旧行为一致。
+                trimLastInputCodePoint()
                 false
             }
+        }
+    }
+
+    /**
+     * 删 inputStringQueue 末条末尾一个码点（代理对按一字算）：末条被删空
+     * 即整条移除；空条目跳过继续向前找。队列为空时无事可做。只在
+     * queueLock 内调用（见 recontrolBackspace）。
+     */
+    private fun trimLastInputCodePoint() {
+        while (inputStringQueue.isNotEmpty()) {
+            val last = inputStringQueue.removeLast()
+            if (last.isEmpty()) continue
+            val drop = if (last.length >= 2 &&
+                Character.isLowSurrogate(last.last()) &&
+                Character.isHighSurrogate(last[last.length - 2])
+            ) 2 else 1
+            val trimmed = last.dropLast(drop)
+            if (trimmed.isNotEmpty()) inputStringQueue.addLast(trimmed)
+            return
         }
     }
 

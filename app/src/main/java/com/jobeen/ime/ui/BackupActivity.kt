@@ -35,8 +35,17 @@ class BackupActivity : ComponentActivity() {
     private var createdAppearanceMode: AppAppearanceMode? = null
 
     private val uiState = BackupUiState()
+    // U-S4：备份口令／还原 URI 是 SAF 回调的待办输入，必须随实例状态保存——
+    // 原先只是 Activity 普通字段，旋转或外观 recreate() 时丢失，SAF 回调
+    // 随后静默丢单（备份什么都没写、还原不弹口令框）。
     private var pendingBackupPassword: CharArray? = null
     private var pendingRestoreUri: Uri? = null
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        pendingBackupPassword?.let { outState.putCharArray(KEY_PENDING_PASSWORD, it) }
+        pendingRestoreUri?.let { outState.putParcelable(KEY_PENDING_RESTORE_URI, it) }
+    }
 
     private val createDocumentLauncher = registerForActivityResult(
         ActivityResultContracts.CreateDocument("application/octet-stream")
@@ -75,6 +84,14 @@ class BackupActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // U-S4：重建时恢复 SAF 待办输入；还原 URI 在则重弹口令框，
+        // 否则用户选好文件后无处输口令。
+        pendingBackupPassword = savedInstanceState?.getCharArray(KEY_PENDING_PASSWORD)
+        @Suppress("DEPRECATION")
+        pendingRestoreUri = savedInstanceState?.getParcelable(KEY_PENDING_RESTORE_URI)
+        if (pendingRestoreUri != null) {
+            uiState.showRestorePasswordDialog = true
+        }
         createdAppearanceMode = AppAppearance.getMode(this)
         enableEdgeToEdge()
         observeRestoreState()
@@ -153,6 +170,11 @@ class BackupActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    companion object {
+        private const val KEY_PENDING_PASSWORD = "pending_backup_password"
+        private const val KEY_PENDING_RESTORE_URI = "pending_restore_uri"
     }
 
     /** 观察应用级还原状态：终态统一在这里提示/重启并消费掉。 */

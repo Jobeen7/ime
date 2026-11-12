@@ -7,7 +7,6 @@ import android.graphics.Typeface
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.text.TextUtils
 import android.widget.FrameLayout
@@ -34,7 +33,7 @@ import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.input.keyboard.key.TextKeyView
-import kotlin.math.abs
+import com.jobeen.ime.input.keyboard.key.shouldInterceptHorizontalSwipe
 import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -121,7 +120,6 @@ class EmojiKeyboard(
     private val boardState = SubClassifiedBoardState(twoStageSymbols)
 
     /** 横滑翻页（W13-1）：与颜文字板同口径，见 onInterceptTouchEvent。 */
-    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
     private val swipeMinDistancePx = context.dp(SWIPE_MIN_DISTANCE_DP).toFloat()
     private var downX = 0f
     private var downY = 0f
@@ -202,10 +200,13 @@ class EmojiKeyboard(
      * 左右滑翻页（W13-1，回归修复）：左滑下一页、右滑上一页，
      * 到端停、不循环；只换网格，父类／子类选中与子条不动
      * （与按键翻页 pageSubCollection 同一入口）。
-     * 拦截口径与颜文字板一致：横向位移超 touchSlop 且横向
-     * 占优时拦截（子键收 ACTION_CANCEL，点按不触发）；竖向
-     * 位移归网格滚动，不拦截；抬手在 onTouchEvent 里按位移
-     * 判定方向（复用 KaomojiSwipe.directionFor）。
+     * 拦截口径与颜文字板一致：横向位移达到翻页最小距离
+     * （48dp）且横向占优时才拦截（子键收 ACTION_CANCEL，点按
+     * 不触发）；未达翻页距离的横向小拖动不拦截、仍归子键点按
+     * （I-M2：旧口径以 touchSlop 约 8dp 拦截，8～48dp 的拖动
+     * 既被取消点按又翻不了页）；竖向位移归网格滚动，不拦截；
+     * 抬手在 onTouchEvent 里按位移判定方向（复用
+     * KaomojiSwipe.directionFor）。
      */
     @SuppressLint("ClickableViewAccessibility")
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -220,7 +221,7 @@ class EmojiKeyboard(
                 if (!swipingHorizontally) {
                     val dx = event.x - downX
                     val dy = event.y - downY
-                    if (abs(dx) > touchSlop && abs(dx) > abs(dy)) {
+                    if (shouldInterceptHorizontalSwipe(dx, dy, swipeMinDistancePx)) {
                         swipingHorizontally = true
                         return true
                     }

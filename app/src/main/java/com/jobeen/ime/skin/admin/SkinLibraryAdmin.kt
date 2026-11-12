@@ -188,9 +188,11 @@ class SkinLibraryAdmin internal constructor(
         // 且取消被吞。取消单独处理：重读索引核对 id 是否仍在，已提
         // 交不恢复（留 tombstone 给恢复流程清理），未提交才恢复，
         // 随后把取消重抛。
+        // 索引提交走统一提交锁内的单条目删除（2026-11-12 审计 K-M2）：
+        // 真实 store 在锁内重读索引再删条目写回，不盲写删除前读到的
+        // 整份旧索引——并发导入的滞后写回不再复活刚删的条目。
         val committed = try {
-            store.writeIndex(index.copy(skins = index.skins.filterNot { it.id == skinId }))
-            true
+            store.removeSkinFromIndex(skinId)
         } catch (e: CancellationException) {
             if (isIdStillReferenced("skin", skinId) == true) {
                 if (restoreTombstone(tombstone, "skin", skinId)) {
@@ -393,9 +395,9 @@ class SkinLibraryAdmin internal constructor(
         }
         // 取消不走 runCatching（与删皮肤同口径）：重读索引核对 id
         // 是否仍在，已提交不恢复 tombstone，未提交才恢复，随后重抛。
+        // 索引提交走统一提交锁内的单条目删除（K-M2，同删皮肤口径）。
         val committed = try {
-            store.writeIndex(index.copy(layouts = index.layouts.filterNot { it.id == layoutId }))
-            true
+            store.removeLayoutFromIndex(layoutId)
         } catch (e: CancellationException) {
             if (isIdStillReferenced("layout", layoutId) == true) {
                 if (restoreTombstone(tombstone, "layout", layoutId)) {
@@ -652,6 +654,29 @@ class SkinLibraryAdmin internal constructor(
         suspend fun readLastGood(): SkinLibraryStore.ReadResult<LastGoodPointer>
         suspend fun writeIndex(index: LibraryIndex)
         suspend fun clearLastGood()
+
+        /**
+         * 提交锁内删一条皮肤索引条目（2026-11-12 审计 K-M2）：
+         * 成功（已删或索引中已无该条目）返回 true；索引不可读／写
+         * 失败返回 false。默认实现直读写（供单测假 store 用，单线程）；
+         * 真实实现走 [SkinLibraryStore.updateIndex] 的提交锁重读-删-写回。
+         */
+        suspend fun removeSkinFromIndex(skinId: String): Boolean {
+            val read = readIndex()
+            if (read !is SkinLibraryStore.ReadResult.Ok) return false
+            val index = read.value
+            writeIndex(index.copy(skins = index.skins.filterNot { it.id == skinId }))
+            return true
+        }
+
+        /** 与 [removeSkinFromIndex] 同口径的布局条目删除。 */
+        suspend fun removeLayoutFromIndex(layoutId: String): Boolean {
+            val read = readIndex()
+            if (read !is SkinLibraryStore.ReadResult.Ok) return false
+            val index = read.value
+            writeIndex(index.copy(layouts = index.layouts.filterNot { it.id == layoutId }))
+            return true
+        }
     }
 
     private class RealAdminStore(private val store: SkinLibraryStore) : AdminStore {
@@ -665,6 +690,16 @@ class SkinLibraryAdmin internal constructor(
             store.readLastGood()
 
         override suspend fun writeIndex(index: LibraryIndex) = store.writeIndex(index)
+
+        override suspend fun removeSkinFromIndex(skinId: String): Boolean =
+            store.updateIndex { index ->
+                index.copy(skins = index.skins.filterNot { it.id == skinId })
+            } != null
+
+        override suspend fun removeLayoutFromIndex(layoutId: String): Boolean =
+            store.updateIndex { index ->
+                index.copy(layouts = index.layouts.filterNot { it.id == layoutId })
+            } != null
 
         override suspend fun clearLastGood() = store.clearLastGood()
     }

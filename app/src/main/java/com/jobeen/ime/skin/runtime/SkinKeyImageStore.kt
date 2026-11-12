@@ -3,8 +3,10 @@ package com.jobeen.ime.skin.runtime
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import com.jobeen.ime.skin.diag.DiagLog
+import com.jobeen.ime.skin.image.DecodeGate
 import com.jobeen.ime.skin.image.ImageDecodePolicy
 import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -29,6 +31,11 @@ import kotlinx.coroutines.launch
  * recycle（仍可能被旧 KeyView 绘制）：退役后保留一个代次，
  * 再切换时回收（见 [retireCurrentLocked]）。
  *
+ * 在途合并与失败集（2026-11-12 审计 K-L2）：本 Store 原先自带
+ * 一套 inFlight／resolved 实现，与 [DecodeGate] 重复——现以
+ * DecodeGate 为唯一在途／失败门：同一键在途只解码一次，失败后
+ * 不再重试直到世代变更（安装／清空时 nextGeneration）。
+ *
  * 异步解码（施工单 6 第 5 条，.23 审计问题 6）：KeyView 构造
  * 路径只读缓存 [peek]、先渲染文字／颜色占位，未命中走
  * [request] 异步解码、完成后只刷新仍属当前代次的键——构造
@@ -47,6 +54,15 @@ object SkinKeyImageStore {
     /** 键面解码最长边上限（px）：键面小图不需要原图尺寸，超限降采样。 */
     const val MAX_SIDE_PX = 512
 
+    /**
+     * 同步 [resolve] 的阻塞等待上限（2026-11-12 审计 K-M5）：
+     * 旧实现 latch.await() 无超时、无取消，解码通道一旦停滞即
+     * 长期占用 IO 线程、预热永不完成。超时后返回已得结果
+     * （未解出为 null，调用方回退颜色键面）；迟到的解码完成时
+     * 回调仍投递、但不入缓存（代次守卫不变）。
+     */
+    const val RESOLVE_TIMEOUT_MS = 5_000L
+
     /** 有界解码通道：全部键图字节读＋解码共用，至多 2 路并发。 */
     private val decodeDispatcher =
         Dispatchers.IO.limitedParallelism(ImageDecodePolicy.DECODE_PARALLELISM)
@@ -63,12 +79,13 @@ object SkinKeyImageStore {
 
     // 以下容器一律由 lock 守卫（HashMap/HashSet 非线程安全）：
     // cache 只存成功位图，resolved 记已解析过的键（含失败），
-    // inFlight 记正在解码的键（在途合并），retired 记已退役、
-    // 待延迟回收的位图（代次，位图）。
+    // 在途／失败由 decodeGate 守卫，retired 记已退役、待延迟回收
+    // 的位图（代次，位图）。
     private val cache = HashMap<CacheKey, Bitmap>()
     private val resolved = HashSet<CacheKey>()
     private val logged = HashSet<CacheKey>()
-    private val inFlight = HashSet<CacheKey>()
+    /** 在途合并＋失败集（K-L2：与本 Store 原先的 inFlight 手写实现合一）。 */
+    private val decodeGate = DecodeGate()
     private val retired = ArrayDeque<Pair<Long, Bitmap>>()
     /** 异步等待回调：键 → 回调表（同一键多处并发只解码一次，回调逐个投递）。 */
     private val waiters = HashMap<CacheKey, MutableList<(Bitmap?) -> Unit>>()
@@ -88,6 +105,9 @@ object SkinKeyImageStore {
     internal var bitmapByteSize: (Bitmap) -> Long = { bitmap ->
         runCatching { bitmap.allocationByteCount.toLong() }.getOrDefault(0L)
     }
+
+    /** 测试缝：同步 resolve 的等待上限（默认 [RESOLVE_TIMEOUT_MS]；单测可缩短）。 */
+    internal var resolveTimeoutMs: Long = RESOLVE_TIMEOUT_MS
 
     /** 当前代次（测试用；KeyView 构造期捕获，异步回填时核对）。 */
     internal val currentGeneration: Long
@@ -124,22 +144,37 @@ object SkinKeyImageStore {
      * 不入缓存；KeyView 侧另有代次门，迟到结果不刷新旧键。
      */
     fun request(assetId: String, onDecoded: (Bitmap?) -> Unit) {
-        val (key, provider, launchDecode) = synchronized(lock) {
+        val (key, provider, launchDecode, gateGeneration) = synchronized(lock) {
             val k = CacheKey(generation, assetId)
             if (k in resolved) {
                 return onDecoded(cache[k])
             }
-            waiters.getOrPut(k) { mutableListOf() } += onDecoded
-            val launch = k !in inFlight
-            if (launch) inFlight += k
-            Triple(k, bytesProvider, launch)
+            // DecodeGate 裁决：已失败（本世代内）直接回落、不再发起
+            // 解码；已在途则只登记等待回调、不重复解码。
+            val gen = decodeGate.begin(k.assetId)
+            if (gen == null) {
+                if (decodeGate.isFailed(k.assetId)) return onDecoded(cache[k])
+                waiters.getOrPut(k) { mutableListOf() } += onDecoded
+                DecodeDecision(k, bytesProvider, false, null)
+            } else {
+                waiters.getOrPut(k) { mutableListOf() } += onDecoded
+                DecodeDecision(k, bytesProvider, true, gen)
+            }
         }
         if (launchDecode) {
             decodeScope.launch {
-                completeDecode(key, decodeNow(key, provider))
+                completeDecode(key, decodeNow(key, provider), gateGeneration)
             }
         }
     }
+
+    /** 解码发起裁决（锁内一次判定：键＋字节源＋是否发起＋门世代）。 */
+    private data class DecodeDecision(
+        val key: CacheKey,
+        val provider: ((String) -> ByteArray?)?,
+        val launchDecode: Boolean,
+        val gateGeneration: Long?,
+    )
 
     /**
      * 按资产 id 取位图（null = 无图/解码失败，调用方回退颜色键面）。
@@ -157,23 +192,41 @@ object SkinKeyImageStore {
     fun resolve(assetId: String): Bitmap? {
         val latch = CountDownLatch(1)
         var result: Bitmap? = null
-        val (key, provider, launchDecode) = synchronized(lock) {
+        val (key, provider, launchDecode, gateGeneration) = synchronized(lock) {
             val k = CacheKey(generation, assetId)
             if (k in resolved) return cache[k]
-            waiters.getOrPut(k) { mutableListOf() } += { bitmap ->
-                result = bitmap
-                latch.countDown()
+            // DecodeGate 裁决（同 request）：已失败直接回落；在途只等
+            // 首个解码者，不重复解码。
+            val gen = decodeGate.begin(k.assetId)
+            if (gen == null) {
+                if (decodeGate.isFailed(k.assetId)) return cache[k]
+                waiters.getOrPut(k) { mutableListOf() } += { bitmap ->
+                    result = bitmap
+                    latch.countDown()
+                }
+                DecodeDecision(k, bytesProvider, false, null)
+            } else {
+                waiters.getOrPut(k) { mutableListOf() } += { bitmap ->
+                    result = bitmap
+                    latch.countDown()
+                }
+                DecodeDecision(k, bytesProvider, true, gen)
             }
-            val launch = k !in inFlight
-            if (launch) inFlight += k
-            Triple(k, bytesProvider, launch)
         }
         if (launchDecode) {
             decodeScope.launch {
-                completeDecode(key, decodeNow(key, provider))
+                completeDecode(key, decodeNow(key, provider), gateGeneration)
             }
         }
-        latch.await()
+        // 有界等待（K-M5）：解码通道停滞时最多等 RESOLVE_TIMEOUT_MS，
+        // 超时按解码失败回落（返回 null），不长期占用调用线程；
+        // 迟到的解码完成时回调仍投递（result 已无人读，无害）。
+        if (!latch.await(resolveTimeoutMs, TimeUnit.MILLISECONDS)) {
+            DiagLog.w(
+                "keymap", "key_image_resolve_timeout",
+                mapOf("asset" to assetId),
+            )
+        }
         return result
     }
 
@@ -191,10 +244,14 @@ object SkinKeyImageStore {
      * 的位图（与旧口径一致，调用方自行决定用不用；KeyView 侧
      * 有代次门丢弃迟到结果）。
      */
-    private fun completeDecode(key: CacheKey, bitmap: Bitmap?) {
+    private fun completeDecode(key: CacheKey, bitmap: Bitmap?, gateGeneration: Long? = null) {
         val callbacks: List<(Bitmap?) -> Unit>
         synchronized(lock) {
-            inFlight -= key
+            // 门世代归还：成功／失败由 begin 时的世代裁决——安装已
+            // 推进世代时，旧世代的失败不记入新世代失败集。
+            if (gateGeneration != null) {
+                decodeGate.finish(key.assetId, bitmap != null, gateGeneration)
+            }
             if (generation == key.generation) {
                 resolved += key
                 if (bitmap != null) cacheWithBudget(key, bitmap)
@@ -279,6 +336,7 @@ object SkinKeyImageStore {
     fun installProvider(provider: ((String) -> ByteArray?)?) {
         synchronized(lock) {
             retireCurrentLocked()
+            decodeGate.nextGeneration()
             bytesProvider = provider
         }
     }
@@ -287,6 +345,7 @@ object SkinKeyImageStore {
     fun clear() {
         synchronized(lock) {
             retireCurrentLocked()
+            decodeGate.nextGeneration()
             bytesProvider = null
         }
     }

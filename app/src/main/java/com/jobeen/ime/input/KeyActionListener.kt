@@ -5,6 +5,7 @@ import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputConnection
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.engine.EngineFactory
@@ -353,8 +354,14 @@ class KeyActionListener(
 
             is KeyboardAction.MultiReturnAction -> {
                 engine?.resetComposition()
-
+                // 顺序保证（I-S5）：清组字走引擎异步通道，直发按键是
+                // 同步调用——performEditorAction 若抢在清组字 job 前
+                // 到达编辑器，编辑器侧组字 span 仍在，动作偶发失效。
+                // 先在同一连接上同步清掉编辑器侧组字 span（与引擎
+                // Reset job 随后做的事相同、幂等），再直发动作；
+                // 未组字时不碰编辑器（不干扰语音等其他组字态）。
                 val ic = (service as ImeInputMethodService).activeInputConnection() ?: return
+                clearEditorComposingSpanSync(ic)
                 ic.performEditorAction(
                     when (action.text) {
                         "GO" -> EditorInfo.IME_ACTION_GO
@@ -393,8 +400,9 @@ class KeyActionListener(
             // 语义前置：先清组字（不提交）、先关联想；焦点在
             // 本键盘自有输入框（当前字段属本包）时空操作；坏键名
             // 解析期已剔除（VALUE_INVALID），到此恒为合法键码。
-            // 顺序残余：清组字／关联想走引擎通道、按键直发同步，
-            // 正常路径前置先行；极端交错下需真机复核。
+            // 顺序保证（I-S5）：与 MultiReturnAction 同理——先在
+            // 直发目标连接上同步清编辑器侧组字 span，再直发按键，
+            // 不让按键抢在异步清组字 job 前到达编辑器。
             is KeyboardAction.AppKeyEventAction -> {
                 val ownField =
                     service.currentInputEditorInfo?.packageName == service.packageName
@@ -403,6 +411,7 @@ class KeyActionListener(
                 } else {
                     engine?.resetComposition()
                     engine?.dismissPredictions()
+                    service.currentInputConnection?.let { clearEditorComposingSpanSync(it) }
                     com.jobeen.ime.base.util.InputConnectionUtil.sendCombinationKeyEvent(
                         service, action.keyCode,
                         ctrl = action.ctrl, shift = action.shift,
@@ -841,21 +850,45 @@ class KeyActionListener(
     }
 
     /**
+     * 直发前的同步清组字（I-S5）：组字中时在直发目标连接上先发空
+     * 组字串，把编辑器侧组字 span 同步清掉，再直发按键／动作——
+     * 与引擎 Reset job 随后做的事相同、幂等。未组字时不碰连接
+     * （不干扰语音等其他组字态）。只清 span、不提交组字（绝不
+     * 用 finishComposingText）。尽力而为：发送失败时不阻断直发，
+     * 引擎异步清组字仍在后面兜底。
+     */
+    private fun clearEditorComposingSpanSync(ic: InputConnection) {
+        if (!KeyboardStateManager.isComposingNow) return
+        runCatching { ic.setComposingText("", 1) }
+    }
+
+    /**
      * 藏起编辑器侧组字 span（藏 span 解第一步，只被 UndoAction
      * 的 HIDE_SPAN 格调用）：经与内嵌直送同一连接
      * （activeInputConnection，桥接态写虚拟连接）发空组字串，
      * 组字串移出编辑器显示；Rime 组字状态不动，下一次组字更
      * 新重发即恢复。绝不用 finishComposingText（会把组字提
-     * 交为正文，与「只藏不录」相反）；连接为空或发送失败时
-     * 不置藏态，本次下滑即 .17 空操作格（不补发引擎撤销——
-     * 污染会话内引擎分支同样空操作，可见结果一致）。
+     * 交为正文，与「只藏不录」相反）。
+     * 藏没藏住不凭返回值（I-S4）：部分编辑器忽略空组字串、或
+     * 当作结束组字，返回值本身不可靠——发完按组字串长度读回
+     * 光标前文本复核，组字串仍在才置藏态；读回失败／组字仍在
+     * 时不置藏态，本次下滑即 .17 空操作格（不补发引擎撤销——
+     * 污染会话内引擎分支同样空操作，可见结果一致），下次下滑
+     * 重试藏步，绝不在组字仍在屏上时进账本删已上屏文字。
      * 日志只记成败，不记组字文本。
      */
     private fun hideComposingSpan() {
         val ic = (service as? ImeInputMethodService)?.activeInputConnection()
             ?: service.currentInputConnection
-        val hidden = ic != null &&
+        val composing = TypedUndoLedger.composingText()
+        val sent = ic != null &&
             runCatching { ic.setComposingText("", 1) }.getOrDefault(false)
+        val hidden = sent && runCatching {
+            TypedUndoLedger.isComposingSpanGone(
+                ic?.getTextBeforeCursor(composing.length, 0),
+                composing,
+            )
+        }.getOrDefault(false)
         if (hidden) {
             TypedUndoLedger.markComposingSpanHidden()
             DiagLog.d("undo", "composing_span_hidden")

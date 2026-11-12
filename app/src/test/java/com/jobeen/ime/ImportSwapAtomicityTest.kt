@@ -98,10 +98,12 @@ class ImportSwapAtomicityTest {
             // 部署前失败：部署未启动、方案未选。
             assertFalse(cap.deployCalled)
             assertNull(cap.selected)
-            // 本路径不回滚指针/镜像（调用方仅在 DEPLOY_* 时回滚）：
-            // 指针与镜像已切新目录，写死此契约，改动此处须同步改调用方。
-            assertEquals("newdir", cap.currentDir)
-            assertEquals(listOf("bad"), cap.mirror)
+            // D-S4：注入在切指针之前，注入失败时指针与镜像仍在旧目录、
+            // 本路径无需回滚（旧版先切指针再注入，失败后用户留在未注入
+            // 的新目录上；该旧契约已随 D-S4 作废，见 ImportTransactionTest
+            // .injectSkipped_failsBeforePointerSwitch）。
+            assertNull(cap.currentDir)
+            assertNull(cap.mirror)
             // 已换位内容原样保留（非截断半写），无 tmp 残留。
             val target = File(roots, "newdir")
             assertEquals("not a schema file\n", File(target, "bad.schema.yaml").readText())

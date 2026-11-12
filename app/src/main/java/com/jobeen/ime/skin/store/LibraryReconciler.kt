@@ -44,7 +44,9 @@ class LibraryReconciler(
         val complete: Boolean,
     )
 
-    suspend fun reconcile(): Report {
+    suspend fun reconcile(): Report = store.withCommitLock { reconcileLocked() }
+
+    private suspend fun reconcileLocked(): Report {
         layout.ensureDirs()
         // 1. 清 staging 残留（崩溃点 I-1/I-2：未走完的导入不留痕）
         runCatching {
@@ -248,12 +250,10 @@ class LibraryReconciler(
             }
         }
         if (orphanShas.isNotEmpty()) {
-            val current = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
-            if (current != null) {
+            // 索引读-改-写进统一提交锁（K-M2）：只改资产条目，不盲写旧索引。
+            store.updateIndex { current ->
                 val kept = current.assets.filter { it.sha256 !in orphanShas }
-                if (kept.size != current.assets.size) {
-                    store.writeIndex(current.copy(assets = kept))
-                }
+                if (kept.size == current.assets.size) null else current.copy(assets = kept)
             }
             DiagLog.i("store", "orphan_assets_pruned", mapOf("count" to orphanShas.size))
         }

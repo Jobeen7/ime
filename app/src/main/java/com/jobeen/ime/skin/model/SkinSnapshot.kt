@@ -222,8 +222,8 @@ data class SkinSnapshot(
     /**
      * 覆盖层版本（2026-10-29 item-1 D1）：构建本快照时叠加的
      * 覆盖层文件版本；0 = 无覆盖层。进程内覆盖层变化后重建的
-     * 快照版本号不同，调用方以此判过期（见
-     * SkinSnapshotProvider.refreshIfOverlayChanged）。
+     * 快照版本号不同，调用方以此判过期（须重建快照；刷新入口
+     * refreshIfOverlayChanged 已随死写路径删除，见 K-L1）。
      */
     val overlayVersion: Long = 0L,
     /**

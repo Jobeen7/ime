@@ -5,13 +5,10 @@ import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.fault.SkinFaultHooks
 import java.io.File
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -36,20 +33,6 @@ class ImportTransaction(
     private val uuid: () -> String = { UUID.randomUUID().toString() },
     private val clock: () -> Long = { System.currentTimeMillis() },
 ) {
-    companion object {
-        /**
-         * 提交锁按库根目录共享：生产每次 import 都新建 ImportTransaction
-         * （见 SkinPackages.importer），实例级锁拦不住跨实例并行导入；
-         * 锁只罩读索引→改名→写索引一段（构建与校验只碰本笔 staging，
-         * 不进锁）。单把锁、无嵌套，故无死锁；表项按库根数增长
-         * （生产 1 个），不回收。
-         */
-        private val commitLocks = ConcurrentHashMap<String, Mutex>()
-
-        private fun commitLockFor(root: File): Mutex =
-            commitLocks.getOrPut(root.absolutePath) { Mutex() }
-    }
-
     data class StagedSkin(val id: String, val name: String, val dir: File, val hash: String)
     data class StagedLayout(val id: String, val dir: File, val hash: String)
     data class StagedAsset(val sha256: String, val file: File)
@@ -102,7 +85,7 @@ class ImportTransaction(
             // 同 id 会撞同一代次目录（rename 失败），异 id 会各自拿旧索引
             // 快照写回、丢对方条目。构建回调与校验只碰本笔 staging
             // （uuid 唯一），不进锁。
-            commitLockFor(layout.root).withLock {
+            store.withCommitLock {
                 val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
                     ?: LibraryIndex()
 
@@ -292,11 +275,11 @@ class ImportTransaction(
         newLayouts: List<LayoutIndexEntry>,
         assetShas: List<String>,
     ): Boolean? = withContext(NonCancellable) {
-        commitLockFor(layout.root).withLock {
+        store.withCommitLock {
             val current = when (val read = store.readIndex()) {
                 is SkinLibraryStore.ReadResult.Ok -> read.value
-                is SkinLibraryStore.ReadResult.Missing -> return@withLock false
-                is SkinLibraryStore.ReadResult.Corrupt -> return@withLock null
+                is SkinLibraryStore.ReadResult.Missing -> return@withCommitLock false
+                is SkinLibraryStore.ReadResult.Corrupt -> return@withCommitLock null
             }
             val skinsOk = newSkins.all { e ->
                 current.skins.any { it.id == e.id && it.generation == e.generation && it.dir == e.dir }

@@ -231,14 +231,6 @@ Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_getUserDictList(
 }
 
 JNIEXPORT jboolean JNICALL
-Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_backupUserDict(
-        JNIEnv *env, jclass, jstring dict_name) {
-    jni::StringChars name(env, dict_name);
-    auto *api = leversApi();
-    return api ? api->backup_user_dict(name.get()) : JNI_FALSE;
-}
-
-JNIEXPORT jboolean JNICALL
 Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_restoreUserDict(
         JNIEnv *env, jclass, jstring snapshot_file) {
     jni::StringChars path(env, snapshot_file);
@@ -254,16 +246,6 @@ Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_exportUserDict(
     auto *api = leversApi();
     return api ? api->export_user_dict(name.get(), file.get()) : -1;
 }
-
-JNIEXPORT jint JNICALL
-Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_importUserDict(
-        JNIEnv *env, jclass, jstring dict_name, jstring text_file) {
-    jni::StringChars name(env, dict_name);
-    jni::StringChars file(env, text_file);
-    auto *api = leversApi();
-    return api ? api->import_user_dict(name.get(), file.get()) : -1;
-}
-
 
 JNIEXPORT jint JNICALL
 Java_com_jobeen_ime_engine_rime_data_userdict_UserDictManager_importUserDictLive(

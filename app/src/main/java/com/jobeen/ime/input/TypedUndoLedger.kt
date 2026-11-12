@@ -66,6 +66,40 @@ object TypedUndoLedger {
      */
     private var composingSpanHidden = false
 
+    /**
+     * 当前组字串（I-S4）：内嵌直送时由窗口层每次组字更新记入，
+     * 空串即清除——藏 span 校验的比对基线。只记最新一次组字文本，
+     * 不进日志、不参与撤销账本。
+     */
+    private var lastComposingText: String = ""
+
+    /** 记入当前组字串（空串即清除）；由组字呈现刷新调用。 */
+    @Synchronized
+    fun noteComposingText(text: String) {
+        lastComposingText = text
+    }
+
+    /** 当前组字串（空串＝无组字文本在屏）。 */
+    @Synchronized
+    fun composingText(): String = lastComposingText
+
+    /**
+     * 藏 span 效果判定（纯函数，可单测；I-S4）：setComposingText("", 1)
+     * 的返回值不可信（部分编辑器忽略空组字串、或当作结束组字），
+     * 藏没藏住须凭光标前文本复核——
+     * - 组字串为空：屏上无物可护，恒判已藏；
+     * - 读回为空（编辑器不支持该调用）：无法证实，按未藏处理
+     *   （fail-closed：不置藏态，绝不凭猜测进账本撤销）；
+     * - 读回仍以组字串结尾：组字还在屏上，未藏；
+     * - 其余：组字串已不在光标前，已藏。
+     * [beforeText] 为 getTextBeforeCursor(组字串长度) 的读回。
+     */
+    internal fun isComposingSpanGone(beforeText: CharSequence?, composingText: String): Boolean {
+        if (composingText.isEmpty()) return true
+        if (beforeText == null) return false
+        return !beforeText.endsWith(composingText)
+    }
+
     /** 登记一段刚真正落到编辑器里的打字上屏文字；空串忽略 */
     @Synchronized
     fun record(text: String) {
@@ -113,6 +147,7 @@ object TypedUndoLedger {
         redoUnits.clear()
         composingSentToEditor = false
         composingSpanHidden = false
+        lastComposingText = ""
     }
 
     /**

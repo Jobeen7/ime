@@ -115,10 +115,21 @@ object AppReset {
                 if (prefsDir.exists() && prefsDir.listFiles() == null) {
                     throw IOException("无法列出偏好目录")
                 }
+                // 偏好清除返回值不得忽略（D-M11）：commit 失败即偏好未清，
+                // 静默继续会让重置报成功、旧设置却还在——失败即中止，
+                // 由 Result 失败口径上报调用方。
+                val failedPrefs = mutableListOf<String>()
                 for (name in RESET_PREFS_NAMES) {
-                    context.getSharedPreferences(name, Context.MODE_PRIVATE)
+                    val cleared = context.getSharedPreferences(name, Context.MODE_PRIVATE)
                         .edit().clear().commit()
+                    if (!cleared) failedPrefs += name
                 }
+                if (failedPrefs.isNotEmpty()) {
+                    throw IOException("偏好清除失败：${failedPrefs.joinToString("、")}")
+                }
+                // 删词内存缓存失效（D-M11）：偏好已清，不丢缓存的话
+                // DeletedWordsStore 会继续按旧记录过滤候选、直到进程重启。
+                DeletedWordsStore.invalidate()
                 // 偏好已清（白名单内）：当前目录回落初始目录；启用表写初始目录键 + 镜像。
                 SchemeDirs.setCurrentDirName(context, SchemeDirs.INITIAL_DIR)
                 val schemaPrefs = context.getSharedPreferences(

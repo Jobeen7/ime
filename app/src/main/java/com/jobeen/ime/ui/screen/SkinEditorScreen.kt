@@ -36,6 +36,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -47,7 +49,35 @@ import com.jobeen.ime.skin.library.EditorFile
 import com.jobeen.ime.skin.library.ResolveActiveResult
 import com.jobeen.ime.skin.library.SkinEditorSaveResult
 import com.jobeen.ime.skin.library.SkinEditorSaver
+import java.io.File
 import kotlinx.coroutines.launch
+
+/**
+ * 所选文件的保存器（U-M1）：EditorFile 不是 Serializable／Parcelable，
+ * 按 id／显示名／绝对路径／种类／共用还原；损坏的保存值返回 null（走首选文件）。
+ */
+private val editorFileSaver = Saver<EditorFile?, List<String>>(
+    save = { file ->
+        file?.let {
+            listOf(it.id, it.displayName, it.file.absolutePath, it.kind.name, it.isShared.toString())
+        }
+    },
+    restore = { saved ->
+        if (saved.size < 3) {
+            null
+        } else {
+            EditorFile(
+                saved[0],
+                saved[1],
+                File(saved[2]),
+                saved.getOrNull(3)?.let {
+                    runCatching { EditorFile.Kind.valueOf(it) }.getOrNull()
+                } ?: EditorFile.Kind.SKIN_JSON,
+                saved.getOrNull(4).toBoolean(),
+            )
+        }
+    },
+)
 
 /**
  * App 内置皮肤文件编辑器页（W19-7）：
@@ -69,9 +99,13 @@ fun SkinEditorScreen(
     var active by remember { mutableStateOf<ActiveSkinFiles?>(null) }
     var loading by remember { mutableStateOf(true) }
     var loadError by remember { mutableStateOf<String?>(null) }
-    var selected by remember { mutableStateOf<EditorFile?>(null) }
-    var text by remember { mutableStateOf("") }
-    var originalText by remember { mutableStateOf("") }
+    // U-M1：编辑草稿（文本／原文／所选文件）随页内态保存——旋转不再静默
+    // 清零未保存的修改，且 dirty 判断随之保留。
+    var selected by rememberSaveable(stateSaver = editorFileSaver) {
+        mutableStateOf<EditorFile?>(null)
+    }
+    var text by rememberSaveable { mutableStateOf("") }
+    var originalText by rememberSaveable { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<SkinEditorSaveResult?>(null) }
     var confirmLeave by remember { mutableStateOf(false) }
@@ -125,7 +159,10 @@ fun SkinEditorScreen(
                 val initial = resolved.files.files.firstOrNull { it.file.absolutePath == initialFilePath }
                     ?: resolved.files.files.firstOrNull { it.kind == EditorFile.Kind.SKIN_JSON }
                     ?: resolved.files.files.firstOrNull()
-                if (initial != null) loadFile(initial)
+                // U-M1：重建后所选文件已由 rememberSaveable 恢复时不重载——
+                // loadFile 会用盘上内容覆盖恢复的未保存草稿；全新打开时
+                // selected 为 null，照旧载入首选文件。
+                if (initial != null && selected == null) loadFile(initial)
             }
         }
     }

@@ -201,10 +201,19 @@ object KeyOverrideApplier {
         // 皮肤会整布局原样返回，提示派生不到）。
         val needsTabHintPass = mnemonicEnabled &&
             factoryLayout.any { row -> row.any { needsTabHint(it) } }
+        // 布局键自带的逐键样式（2026-11-12 审计 K-S6）：入口守卫只查
+        // 快照级触发项时，只写了逐键样式、无任何快照级触发项的布局
+        // 会被整布局原样返回，resolveKeyStyle 里的内联覆写解析永不
+        // 执行。键自带 styleRef／skinStyleOverrides 任一存在即触发装配
+        // （内联覆写在 keyStyles 为空时仍可解析，见 KeyStyleResolver）。
+        val hasInlineKeyStyle = factoryLayout.any { row ->
+            row.any { it.skinStyleRef != null || !it.skinStyleOverrides.isNullOrEmpty() }
+        }
         if (overrides.isEmpty() && !hasGlobalSound && snapshot.keyStyles.isEmpty() &&
             snapshot.keyGeometries.isEmpty() && snapshot.textSizes.isEmpty() &&
             notifications.isEmpty() &&
-            keyAnim == null && spaceAnim == null && !needsTabHintPass
+            keyAnim == null && spaceAnim == null && !needsTabHintPass &&
+            !hasInlineKeyStyle
         ) {
             return factoryLayout
         }

@@ -63,10 +63,16 @@ object PhraseManager {
     } ?: emptyList()
 
     suspend fun getById(context: Context, id: Long): Phrase? = db(context) { db ->
+        // 播种不只走 getAll（D-L7）：首次访问若是按 id 取，默认常用语
+        // 同样须已播种，否则 id 指向的默认条目查不到。
+        ensureSeeded(context, db)
         db.phraseDao().getById(id)?.let { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder, it.pinned) }
     }
 
     suspend fun search(context: Context, query: String): List<Phrase> = db(context) { db ->
+        // 播种不只走 getAll（D-L7）：首次访问若是搜索，默认常用语
+        // 须已播种，否则搜“谢谢”无结果。
+        ensureSeeded(context, db)
         db.phraseDao().search(query).map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder, it.pinned) }
     } ?: emptyList()
 
@@ -80,6 +86,10 @@ object PhraseManager {
         if (t.isEmpty()) return -1
         val l = label.trim().ifEmpty { t.takeCodePoints(12) }
         val id = db(context) { db ->
+            // 播种不只走 getAll（D-L7）：首次访问若是新增，默认常用语
+            // 须先播种，否则用户的新增排在默认条目之前、默认条目随后
+            // 才由 getAll 补种，顺序与“新建在前”的语义脱节。
+            ensureSeeded(context, db)
             // 「读最小序号→插入」必须同事务：并发新增时两条会算出
             // 同一 sortOrder、次序不稳定（与剪贴板侧 addEntry 同口径）
             db.withTransaction {

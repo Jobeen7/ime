@@ -150,10 +150,13 @@ inline jstring makeString(JNIEnv *env, const std::string &s) {
 
 class GlobalRefs {
 public:
-    jclass Object;
-    jclass String;
+    jclass Object = nullptr;
+    jclass String = nullptr;
 
     explicit GlobalRefs(JNIEnv *env) {
+        // N-L3：env 为 null 时直接返回，不调 FindClass（空 env 上
+        // 调 JNI 即崩溃）；Object/String 保持 null 初始化。
+        if (env == nullptr) return;
         // 逐步查找、逐步判空（与 librime_jni 的 initRefs 同纪律）：任一步
         // 失败立即停手，清掉查找异常后改抛带明确信息的 RuntimeException，
         // 让问题在库加载期显形，而不是把 null 全局引用潜伏到首次使用才崩

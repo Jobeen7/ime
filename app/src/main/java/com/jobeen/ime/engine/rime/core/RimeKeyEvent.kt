@@ -19,11 +19,5 @@ data class RimeKeyEvent(
 
         @JvmStatic
         external fun parse(repr: String): RimeKeyEvent
-
-        @JvmStatic
-        external fun getKeycodeByName(name: String): Int
-
-        @JvmStatic
-        external fun getModifierByName(name: String): Int
     }
 }

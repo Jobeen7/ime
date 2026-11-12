@@ -30,11 +30,17 @@ import kotlin.coroutines.resumeWithException
 object HttpUtil {
     // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
     // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
+    // 总时长上限（B-L10）：readTimeout 只约束两次读之间的间隔，慢速
+    // 涓流能让小 JSON 请求无限拖长；120 秒封顶足够覆盖正常响应。
     private val client = OkHttpClient.Builder()
         .followSslRedirects(false)
         .connectTimeout(ApiConfig.CONNECT_TIMEOUT, TimeUnit.MILLISECONDS)
         .readTimeout(ApiConfig.READ_TIMEOUT, TimeUnit.MILLISECONDS)
+        .callTimeout(120, TimeUnit.SECONDS)
         .build()
+
+    /** 供单测断言总时长上限存在（B-L10 回归守门）。 */
+    internal val clientCallTimeoutMs: Long get() = client.callTimeoutMillis.toLong()
 
     private val json = Json { ignoreUnknownKeys = true }
 

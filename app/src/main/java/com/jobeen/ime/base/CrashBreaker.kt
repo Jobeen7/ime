@@ -37,8 +37,15 @@ internal const val CRASH_THRESHOLD = 3
 /** 熔断冷却：10 分钟。 */
 internal const val COOLDOWN_MS = 600_000L
 
-/** 日志保留行数上限（Java 追加侧修整；Native 追加侧不修整，崩溃即死进程、熔断又拦重启，故增长有界）。 */
+/** 日志保留行数上限（Java 追加侧修整；Native 追加侧不修整，由每次熔断
+ * 判定入口的 [trimCrashJournal] 顺带截断，见 B-L8，故增长仍有界）。 */
 internal const val JOURNAL_MAX_LINES = 100
+
+/** 计数／修整只读文件尾部的字节上限：行按时间追加，尾部足够覆盖判定窗口。 */
+private const val JOURNAL_TAIL_BYTES = 64 * 1024L
+
+/** 尾部读取最多保留的行数（远超熔断窗口内可能的行数）。 */
+private const val JOURNAL_TAIL_MAX_LINES = 1000
 
 /** 每进程崩溃文件保留份数（含当前文件）。 */
 internal const val ROTATION_KEEP = 3
@@ -109,7 +116,10 @@ internal fun countRecentCrashes(
     windowMs: Long = CRASH_WINDOW_MS,
 ): Int {
     if (!journalFile.isFile) return 0
-    val lines = runCatching { journalFile.readLines() }.getOrElse { return 0 }
+    // 只读尾部（B-L8）：native 崩溃可把日志写得很长，全量 readLines
+    // 让每次引擎启动都读入整个文件；行按时间追加，只关心最近窗口，
+    // 尾部 64KB（>1000 行）足够判定。
+    val lines = readTailLines(journalFile, JOURNAL_TAIL_BYTES, JOURNAL_TAIL_MAX_LINES)
     var count = 0
     for (line in lines) {
         val ms = line.substringBefore(' ').toLongOrNull() ?: continue
@@ -119,10 +129,55 @@ internal fun countRecentCrashes(
 }
 
 /**
+ * 读文件尾部最多 [maxLines] 行（按字节截尾、按行切分；首行可能是不完整
+ * 的半行，调用方按“行首 epoch 解析失败即跳过”处理，计数不受影响）。
+ * 文件不存在／读失败返回空表。
+ */
+internal fun readTailLines(file: File, maxBytes: Long, maxLines: Int): List<String> {
+    return runCatching {
+        java.io.RandomAccessFile(file, "r").use { raf ->
+            val length = raf.length()
+            val start = maxOf(0L, length - maxBytes)
+            raf.seek(start)
+            val size = (length - start).toInt()
+            val bytes = ByteArray(size)
+            raf.readFully(bytes)
+            val text = String(bytes, Charsets.UTF_8)
+            val lines = text.split('\n').filter { it.isNotEmpty() }
+            lines.takeLast(maxLines)
+        }
+    }.getOrDefault(emptyList())
+}
+
+/**
+ * Java 侧修整崩溃日志到 [maxLines] 行（B-L8）：Native 信号处理器
+ * 直接 O_APPEND 写同一文件且不修整，纯 native 崩溃反复发生时日志
+ * 无界增长；每次熔断判定入口（引擎启动必经）顺带截断，增长即有界。
+ * 行数未超上限时不写盘；修整失败静默（不挡熔断判定）。
+ */
+internal fun trimCrashJournal(journalFile: File, maxLines: Int = JOURNAL_MAX_LINES) {
+    runCatching {
+        if (!journalFile.isFile) return
+        val lines = readTailLines(journalFile, JOURNAL_TAIL_BYTES, JOURNAL_TAIL_MAX_LINES)
+        // 尾部已是最后 maxLines 行：只有文件行数确实超上限才重写。
+        // 行数判断用文件字节估算——行短于 64KB 尾部时，尾部行数即
+        // 全文件行数；尾部被截断（文件 >64KB）时行数必超上限。
+        val truncated = journalFile.length() > JOURNAL_TAIL_BYTES ||
+            lines.size > maxLines
+        if (!truncated) return
+        val kept = lines.takeLast(maxLines)
+        journalFile.writeText(kept.joinToString("\n") + "\n")
+    }
+}
+
+/**
  * 熔断判定（副作用：新熔断时写 trip，冷却过期时删 trip）。
  * trip 未过期（即使日志已空）仍熔断；trip 过期后按日志重算，日志仍 ≥ 阈值则立即重新熔断。
  */
 internal fun crashBreakerGated(journalFile: File, tripFile: File, nowMs: Long): Boolean {
+    // 顺带修整日志（B-L8）：native 追加侧不修整，纯 native 崩溃反复
+    // 发生时日志无界增长；引擎启动每次都经这里，增长即有界。
+    trimCrashJournal(journalFile)
     val tripMs = runCatching {
         tripFile.takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull()
     }.getOrNull()

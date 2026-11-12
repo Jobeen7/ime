@@ -11,6 +11,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.OkHttpClient
@@ -30,14 +31,31 @@ object AppUpdateManager {
 
     // 这些客户端只访问写死的 HTTPS 地址：禁止 https↔http 重定向，
     // 避免全局放开明文后被降级（明文仅供 WebDAV 在用户显式开启后使用）
+    // 总时长上限（B-L10）：readTimeout 只约束两次读之间的间隔，慢速
+    // 涓流能让整次下载无限拖长；30 分钟封顶仍容得下慢速网络下几十 MB
+    // 的 APK，涓流挂起不再无界。
     private val client = OkHttpClient.Builder()
         .followSslRedirects(false)
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(120, TimeUnit.SECONDS)
+        .callTimeout(30, TimeUnit.MINUTES)
         .build()
+
+    /** 供单测断言总时长上限存在（B-L10 回归守门）。 */
+    internal val clientCallTimeoutMs: Long get() = client.callTimeoutMillis.toLong()
 
     @Volatile
     private var activeCall: Call? = null
+
+    /**
+     * 进程内下载互斥（B-M4）：同一时间只允许一路 downloadApk 在跑。
+     * 此前只有 @Volatile 的 activeCall：两路并发时后一路覆盖前一路，
+     * 先结束者的 finally 再把 activeCall 置空，后一路仍在下载时
+     * cancelDownload() 成空操作。tryLock 抢不到即直接返回 null
+     * （调用方按失败处理，UI 层已有 downloading 守门，正常路径
+     * 不会并发到这里）。
+     */
+    private val downloadMutex = Mutex()
 
     fun updateDir(context: Context): File =
         File(context.cacheDir, "update").apply { mkdirs() }
@@ -71,13 +89,21 @@ object AppUpdateManager {
         }
         val target = targetFile(context, apkName)
         val partial = File(target.parentFile, target.name + ".part")
+        var call: Call? = null
+        var locked = false
         try {
+            // 已有下载在跑：直接拒绝，不覆盖在途下载的 activeCall（B-M4）
+            if (!downloadMutex.tryLock()) {
+                Timber.w("App update download already running, ignoring duplicate call")
+                return@withContext null
+            }
+            locked = true
             val request = Request.Builder()
                 .url(url)
                 .header("User-Agent", "Jime-Updater")
                 .get()
                 .build()
-            val call = client.newCall(request)
+            call = client.newCall(request)
             activeCall = call
             call.execute().use { response ->
                 if (!response.isSuccessful) {
@@ -85,7 +111,8 @@ object AppUpdateManager {
                     return@withContext null
                 }
                 val body = response.body ?: return@withContext null
-                val total = body.contentLength().takeIf { it > 0 } ?: expectedSize
+                val contentLength = body.contentLength()
+                val total = contentLength.takeIf { it > 0 } ?: expectedSize
                 var downloaded = 0L
                 val digest = if (expectedSha256.isNotBlank()) {
                     DigestUtil.newSha256Digest()
@@ -106,9 +133,16 @@ object AppUpdateManager {
                         }
                     }
                 }
-                // 大小对不上（截断/多传）视为下载失败，不进入安装
-                if (expectedSize > 0 && downloaded != expectedSize) {
-                    Timber.w("App update size mismatch: got %d, want %d", downloaded, expectedSize)
+                // 大小对不上（截断/多传）视为下载失败，不进入安装。
+                // 两道关（B-M5）：Content-Length 是服务端实收口径，
+                // expectedSize 是资产元数据口径；任一道对不上即拒。
+                // 此前只验 expectedSize，元数据缺失（apkSize=0）且
+                // 登记 SHA 为空时，截断包无任何长度关卡即进安装器。
+                if (!sizeCheckPassed(downloaded, contentLength, expectedSize)) {
+                    Timber.w(
+                        "App update size mismatch: got %d, contentLength=%d expectedSize=%d",
+                        downloaded, contentLength, expectedSize,
+                    )
                     partial.delete()
                     return@withContext null
                 }
@@ -143,8 +177,23 @@ object AppUpdateManager {
             partial.delete()
             null
         } finally {
-            activeCall = null
+            // 只清自己的 call（B-M4 的另一半：无条件置空会清掉后一路
+            // 的 call）；互斥锁随本次下载结束释放（未抢到锁时不解）。
+            if (call != null && activeCall === call) activeCall = null
+            if (locked) downloadMutex.unlock()
         }
+    }
+
+    /**
+     * 下载大小校验（纯函数，供单测）：实收字节必须同时对上服务端
+     * 声明的 Content-Length（>0 时）与资产元数据的 expectedSize
+     * （>0 时）；任一口径缺失（<=0）时只验另一道，不因此放行
+     * （B-M5：expectedSize==0 时 Content-Length 仍是有效关卡）。
+     */
+    internal fun sizeCheckPassed(downloaded: Long, contentLength: Long, expectedSize: Long): Boolean {
+        if (contentLength > 0 && downloaded != contentLength) return false
+        if (expectedSize > 0 && downloaded != expectedSize) return false
+        return true
     }
 
     // 安装前不再本地读包验签（Q12 已拆）：下载环节已做大小＋登记

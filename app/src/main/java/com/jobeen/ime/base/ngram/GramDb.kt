@@ -16,6 +16,9 @@ class GramDb(filePath: String) {
         val file = RandomAccessFile(filePath, "r")
         val mapped = try {
             val size = file.length()
+            // 文件头校验（B-S3）：格式串 32 字节＋36 处与 40 处的两个
+            // int，文件不足 44 字节时直接判无效，不走到 mmap 越界读。
+            require(size >= HEADER_SIZE) { "gram db too small: $size bytes" }
             file.channel.map(FileChannel.MapMode.READ_ONLY, 0, size)
                 .order(ByteOrder.LITTLE_ENDIAN)
         } finally {
@@ -32,11 +35,23 @@ class GramDb(filePath: String) {
         mapped.position(40)
         val arrayOffset = mapped.int
 
-        val arrayStart = 40 + arrayOffset
+        // 数组边界校验（B-S3）：偏移／长度为负、越出文件、长度×4
+        // 溢出时判无效，不走到 slice.limit 越界抛错。长度乘法按
+        // Long 算，避免 Int 溢出绕过检查。
+        require(arraySize >= 0) { "gram db has negative array size: $arraySize" }
+        require(arrayOffset >= 0) { "gram db has negative array offset: $arrayOffset" }
+        val arrayStart = 40L + arrayOffset
+        val capacity = mapped.capacity().toLong()
+        require(arrayStart <= capacity) {
+            "gram db array start out of bounds: start=$arrayStart capacity=$capacity"
+        }
+        require(arraySize.toLong() * INT_BYTES <= capacity - arrayStart) {
+            "gram db array out of bounds: size=$arraySize start=$arrayStart capacity=$capacity"
+        }
         mapped.limit(mapped.capacity())
-        mapped.position(arrayStart)
+        mapped.position(arrayStart.toInt())
         val slice = mapped.slice().order(ByteOrder.LITTLE_ENDIAN)
-        slice.limit(arraySize * 4)
+        slice.limit(arraySize * INT_BYTES)
         trie = DoubleArrayTrie(slice.asIntBuffer())
     }
 
@@ -152,6 +167,17 @@ class GramDb(filePath: String) {
         const val MAX_RESULTS = 8
         private const val FORMAT_MAX_LEN = 32
         private const val PREFIX = "Rime::Grammar/"
+        /** 文件头最小长度：32 字节格式串＋36 处 int＋40 处 int。 */
+        private const val HEADER_SIZE = 44L
+        private const val INT_BYTES = 4
+
+        /**
+         * 损坏／截断文件不抛错的加载口：校验失败返回 null，调用方
+         * 按“无语法模型”降级（B-S3）。构造器本身仍抛
+         * IllegalArgumentException，便于诊断时拿到明确原因。
+         */
+        fun loadOrNull(filePath: String): GramDb? =
+            runCatching { GramDb(filePath) }.getOrNull()
 
         fun scaleValue(raw: Int): Double =
             if (raw >= 0) raw.toDouble() / DoubleArrayTrie.VALUE_SCALE else -1.0

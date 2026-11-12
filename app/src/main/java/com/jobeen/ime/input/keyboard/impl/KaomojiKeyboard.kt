@@ -9,7 +9,6 @@ import android.graphics.Typeface
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.text.TextUtils
 import android.widget.FrameLayout
@@ -28,6 +27,7 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import com.jobeen.ime.input.keyboard.key.shouldInterceptHorizontalSwipe
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
@@ -39,7 +39,6 @@ import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
-import kotlin.math.abs
 
 /**
  * 内置颜文字板（H2-7，D17 颜文字面板左右滑切换分类）：
@@ -145,8 +144,7 @@ class KaomojiKeyboard(
 
     private val sidePanelItemDefs: List<KeyDef>
 
-    /** 左右滑判定用：系统触摸 slop 与切分类最小横移。 */
-    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    /** 左右滑判定用：切分类的最小横移。 */
     private val swipeMinDistancePx = context.dp(SWIPE_MIN_DISTANCE_DP).toFloat()
     private var downX = 0f
     private var downY = 0f
@@ -218,9 +216,11 @@ class KaomojiKeyboard(
     }
 
     /**
-     * 左右滑拦截：横向位移超 touchSlop 且横向占优时拦截（子键
-     * 收 ACTION_CANCEL，点按不触发）；竖向位移归网格滚动，不拦截；
-     * 抬手在 onTouchEvent 里按位移判定方向。
+     * 左右滑拦截：横向位移达到切分类最小横移（48dp）且横向占优
+     * 时才拦截（子键收 ACTION_CANCEL，点按不触发）；未达最小横移
+     * 的横向小拖动不拦截、仍归子键点按（I-M2，见 EmojiKeyboard
+     * 同款注释）；竖向位移归网格滚动，不拦截；抬手在 onTouchEvent
+     * 里按位移判定方向。
      */
     @SuppressLint("ClickableViewAccessibility")
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -235,7 +235,7 @@ class KaomojiKeyboard(
                 if (!swipingHorizontally) {
                     val dx = event.x - downX
                     val dy = event.y - downY
-                    if (abs(dx) > touchSlop && abs(dx) > abs(dy)) {
+                    if (shouldInterceptHorizontalSwipe(dx, dy, swipeMinDistancePx)) {
                         swipingHorizontally = true
                         return true
                     }

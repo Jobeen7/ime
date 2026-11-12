@@ -55,11 +55,15 @@ class CandidateSortingManager(private val db: AppDatabase) {
     suspend fun isTableEmpty(): Boolean = dao.count() == 0
 
     /**
-     * 旧格式行一次性清理（进程内只跑一次，首次访问排序表时触发）：
+     * 旧格式行一次性清理（每库只跑一次，首次访问排序表时触发）：
      * 集合指纹键的行自键格式变更后永不再命中，留着只会随备份来回
      * 搬运。失败不置标志、下次访问重试；清理本身失败不影响读写主
-     * 路径，故吞异常只记日志。
+     * 路径，故吞异常只记日志。标志必须是实例字段（D-L4）：放伴生
+     * 对象里会跨库共享——两个 Manager 各连不同的库时，一个库清过
+     * 即让另一个库跳过清理，旧键永久残留。
      */
+    private val legacyKeysPurged = AtomicBoolean(false)
+
     private suspend fun purgeLegacyKeysOnce() {
         if (!legacyKeysPurged.compareAndSet(false, true)) return
         try {
@@ -68,10 +72,6 @@ class CandidateSortingManager(private val db: AppDatabase) {
             legacyKeysPurged.set(false)
             Timber.w(e, "Failed to purge legacy candidate sorting keys")
         }
-    }
-
-    private companion object {
-        private val legacyKeysPurged = AtomicBoolean(false)
     }
 }
 

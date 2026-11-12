@@ -43,7 +43,6 @@ import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Keyboard
-import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Style
 import androidx.compose.material.icons.filled.Tune
@@ -60,8 +59,6 @@ import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.TextButton
@@ -72,6 +69,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -120,7 +118,7 @@ import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 
 /**
  * 设置 home（Lee 2026-10-29 开工，分组重组）：顶栏（返回＋Jime＋
- * 键盘图标＋⋮）＋搜索框＋“设置”区 6 组卡片（图标＋标题＋副标题），
+ * 键盘图标）＋搜索框＋“设置”区 6 组卡片（图标＋标题＋副标题），
  * 点组进分组子页（顶栏返回＋组标题，行＝标题＋副标题，返回回主页）；
  * 搜索按行标题＋副标题过滤，无匹配的组自动隐藏。
  * 应用外观（Lee 2026-10-29 定，2026-11-01 默认改跟随系统）：
@@ -157,16 +155,22 @@ fun MainScreen(
     deployRunning: Boolean = false,
     syncRunning: Boolean = false,
 ) {
-    var fabExpanded by remember { mutableStateOf(false) }
+    // U-M1：页内态用 rememberSaveable——旋转／recreate 不丢展开态、
+    // 搜索词与打开的分组。枚举 MainSettingGroup 可进 Bundle
+    //（Serializable），无需自定义 Saver。
+    var fabExpanded by rememberSaveable { mutableStateOf(false) }
     // 空白点按收起 FAB 的指示源（W14-1）：无指示、无涟漪。
     // 必须无条件 remember——不可放在条件分支里。
     val fabDismissInteraction = remember { MutableInteractionSource() }
     // 分组重组：主页只列 6 组卡片，点组进子页；搜索按行标题＋副标题
     // 过滤，无匹配的组自动隐藏；子页只列本组过滤后的行。
-    var searchQuery by remember { mutableStateOf("") }
-    var openGroup by remember { mutableStateOf<MainSettingGroup?>(null) }
-    var searchOpen by remember { mutableStateOf(false) }
-    var showTopMenu by remember { mutableStateOf(false) }
+    var searchQuery by rememberSaveable { mutableStateOf("") }
+    var openGroup by rememberSaveable { mutableStateOf<MainSettingGroup?>(null) }
+    var searchOpen by rememberSaveable { mutableStateOf(false) }
+    // 星芒旋转角度（U-L4）：必须在 FAB 覆盖层条件之外持有——覆盖层只在
+    // 主页组合，进组页／搜索页即离开组合，角度放钮内会归零；旋转进度
+    // 随页内态保存，点按后未转完就离页再回来继续转完。
+    var spinDegrees by rememberSaveable { mutableFloatStateOf(0f) }
     val homeScroll = rememberScrollState()
     val subScroll = rememberScrollState()
     val searchScroll = rememberScrollState()
@@ -182,6 +186,9 @@ fun MainScreen(
     val searchFocusRequester = remember { FocusRequester() }
     LaunchedEffect(searchOpen) {
         if (searchOpen) {
+            // U-S8：进搜索页即收起 FAB 扇出——覆盖层在搜索期间不渲染，
+            // 展开态原样保留会让退出搜索后扇出无故重现。
+            fabExpanded = false
             searchFocusRequester.requestFocus()
             keyboardController?.show()
         }
@@ -407,40 +414,9 @@ fun MainScreen(
                                 tint = MaterialTheme.colorScheme.onSurface,
                             )
                         }
-                        Box {
-                            IconButton(onClick = { showTopMenu = true }) {
-                                Icon(
-                                    Icons.Filled.MoreVert,
-                                    contentDescription = stringResource(R.string.schema_menu_more),
-                                    tint = MaterialTheme.colorScheme.onSurface,
-                                )
-                            }
-                            DropdownMenu(
-                                expanded = showTopMenu,
-                                onDismissRequest = { showTopMenu = false },
-                                // 菜单卡面＝莫奈色（2026-10-30 莫奈色轮）。
-                                containerColor = LocalMonetCardColor.current,
-                            ) {
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.fab_deploy)) },
-                                    enabled = !fabAnyRunning,
-                                    onClick = {
-                                        showTopMenu = false
-                                        touch()
-                                        onDeploy()
-                                    },
-                                )
-                                DropdownMenuItem(
-                                    text = { Text(stringResource(R.string.fab_sync)) },
-                                    enabled = !fabAnyRunning,
-                                    onClick = {
-                                        showTopMenu = false
-                                        touch()
-                                        onSync()
-                                    },
-                                )
-                            }
-                        }
+                        // 2026-11-12 Jobeen 明说去掉：右上角 ⋮ 菜单整个删除——
+                        // 菜单里只有同步／部署两项，与 FAB 的同步／部署完全重叠；
+                        // 键盘图标保留，同步／部署只走 FAB。
                     },
                 )
             } else {
@@ -582,9 +558,17 @@ fun MainScreen(
                                     subtitle = result.path,
                                     onClick = {
                                         searchOpen = false
-                                        if (result.focusTitle != null) {
-                                            PendingFocus.title = result.focusTitle
-                                        }
+                                        // U-M4：只给真正消费定位请求的页写标题——
+                                        // 不消费的页（皮肤编辑器等无脚手架页）会让
+                                        // 标题残留到下一个设置页；不消费时清掉残留标题。
+                                        PendingFocus.title =
+                                            if (result.focusTitle != null &&
+                                                result.pageKey in FOCUS_CONSUMING_PAGE_KEYS
+                                            ) {
+                                                result.focusTitle
+                                            } else {
+                                                null
+                                            }
                                         rowClicks.getValue(result.pageKey)()
                                     },
                                 )
@@ -794,8 +778,8 @@ fun MainScreen(
                     // 不用 FloatingActionButton——它在钮面另画一层白色八角；
                     // 也不用玻璃／渐变——浅色页上看不见。实心圆钮，星芒是
                     // Canvas 画的 8 条臂（每条末端一个圆点），与他给的图一致。
-                    // 星芒平时静止，点按后转一圈（360°）。
-                    var spinDegrees by remember { mutableFloatStateOf(0f) }
+                    // 星芒平时静止，点按后转一圈（360°）；旋转角度在页顶持有
+                    //（U-L4），不在此处 remember，否则离页即归零。
                     val fabInteractionSource = remember { MutableInteractionSource() }
                     val asteriskRotation by animateFloatAsState(
                         targetValue = spinDegrees,
@@ -1003,7 +987,7 @@ private fun FabAction(
     onClick: () -> Unit,
 ) {
     // 动作钮（2026-11-12 他定）：与主钮同一套，52dp 实心蓝绿圆钮＋米白箭头，
-    // 不再用玻璃（drawBackdrop）。点按也不留涟漪，与主钮一致。
+    // 点按也不留涟漪，与主钮一致。
     val actionInteractionSource = remember { MutableInteractionSource() }
     Column(
         modifier = Modifier

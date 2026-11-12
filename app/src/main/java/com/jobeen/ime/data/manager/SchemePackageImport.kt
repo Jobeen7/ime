@@ -27,7 +27,8 @@ import timber.log.Timber
  *   期数卸载按集合清；schema_list 只合并、不整文件覆盖。
  *
  * 版本比较口径与 WanxiangUpdateManager.compareVersions 一致：去 v/V 前缀，
- * 按 . - _ 切段，非数字段按 0 计，逐段数值比较。
+ * 按 . - _ 切段，每段取前导数字比大小；数字相等时，有后缀（预发布）者
+ * 小于无后缀的正式版，后缀之间按字典序。纯数字版本号的比较结果与旧口径一致。
  */
 object SchemePackageImport {
 
@@ -294,15 +295,34 @@ object SchemePackageImport {
         return out.toString()
     }
 
-    /** 版本比较：与 WanxiangUpdateManager.compareVersions 同口径。 */
+    /**
+     * 版本比较：与 WanxiangUpdateManager.compareVersions 同口径。
+     * 每段取前导数字比大小；数字相等时，有后缀（预发布）者小于无后缀
+     * 的正式版（B-L4：此前非数字段一律当 0，"18.1.12-rc1" 与
+     * "18.1.12" 会判相等，正式版包盖不住预发布共享文件）；后缀之间
+     * 按字典序。纯数字版本号的比较结果与旧口径一致。
+     */
     fun compareVersions(left: String, right: String): Int {
-        fun parts(v: String) = v.trim().removePrefix("v").removePrefix("V")
-            .split('.', '-', '_').map { it.toIntOrNull() ?: 0 }
+        fun parts(v: String): List<Pair<Long, String>> =
+            v.trim().removePrefix("v").removePrefix("V")
+                .split('.', '-', '_')
+                .map { seg ->
+                    val digits = seg.takeWhile { it.isDigit() }
+                    (digits.toLongOrNull() ?: 0L) to seg.substring(digits.length)
+                }
         val a = parts(left)
         val b = parts(right)
         for (i in 0 until maxOf(a.size, b.size)) {
-            val r = (a.getOrElse(i) { 0 }).compareTo(b.getOrElse(i) { 0 })
+            val (an, aSuffix) = a.getOrElse(i) { 0L to "" }
+            val (bn, bSuffix) = b.getOrElse(i) { 0L to "" }
+            val r = an.compareTo(bn)
             if (r != 0) return r
+            if (aSuffix != bSuffix) {
+                if (aSuffix.isEmpty()) return 1
+                if (bSuffix.isEmpty()) return -1
+                val s = aSuffix.compareTo(bSuffix)
+                if (s != 0) return s
+            }
         }
         return 0
     }
@@ -981,35 +1001,6 @@ object SchemePackageImport {
         }.toSet()
     }
 
-    /**
-     * 执行安装规划：直接落盘（同 ID 替换的旧版文件直接被新版覆盖，
-     * 不再归档）。落盘双侧 canonical 守卫，逃出 user 目录的条目
-     * 直接跳过。返回实际落盘文件（供登记记录用）。
-     * 本函数不写登记偏好（调用方在成功后写），不碰引擎与部署。
-     * 兼容保留：后续屏幕施工员改写 confirmImport 时改用下面的
-     * [installTransaction]，本函数不动，供旧流程与单测继续使用。
-     */
-    fun applyPlan(
-        stagingDir: File,
-        userDir: File,
-        plan: SchemeImportPlan,
-    ): List<String> {
-        val userCanonical = userDir.canonicalPath
-        val installed = mutableListOf<String>()
-        for (rel in plan.installFiles) {
-            // 暂存盘保留原始路径（含包装目录），落盘路径已剥包装：
-            // 读源须拼回 wrapperPrefix，否则带包装的包会静默零落盘。
-            val src = File(stagingDir, plan.wrapperPrefix + rel).canonicalFile
-            val dest = File(userDir, rel).canonicalFile
-            if (!dest.path.startsWith(userCanonical + File.separator)) continue
-            if (!src.isFile) continue
-            dest.parentFile?.mkdirs()
-            src.copyTo(dest, overwrite = true)
-            installed.add(rel)
-        }
-        return installed
-    }
-
     // ---- 事务化安装（供后续屏幕施工员调用，confirmImport 改写用） ----
     //
     // 调用顺序（屏幕侧）：
@@ -1202,7 +1193,34 @@ object SchemePackageImport {
      * 规划 installFiles 非空但实际落盘为零时整体失败（NOTHING_INSTALLED）；
      * 中途任一文件拷失败即整体失败，不存在部分成功。
      */
+    /**
+     * 安装互斥锁（D-M6）：安装事务是多步文件换位，两路并发同目标安装
+     * 会交错 rename（预校验各自通过、换位互相踩），必须串行。锁只
+     * 护 installTransaction 本体（纯阻塞文件操作，不挂起）。
+     */
+    private val installLock = Any()
+
+    /**
+     * 事务化安装（并发互斥入口）：同一进程内一次只跑一个安装事务，
+     * 其余调用方排队等待。本体见 [installTransactionLocked]。
+     */
     fun installTransaction(
+        stagingDir: File,
+        targetDir: File,
+        plan: SchemeImportPlan,
+        stagedEntries: List<StagedEntry>,
+        schemaList: List<String>? = null,
+        operationId: String? = null,
+        existingCustomText: String? = null,
+        unionMerge: Boolean = false,
+    ): InstallTransactionResult = synchronized(installLock) {
+        installTransactionLocked(
+            stagingDir, targetDir, plan, stagedEntries, schemaList,
+            operationId, existingCustomText, unionMerge,
+        )
+    }
+
+    private fun installTransactionLocked(
         stagingDir: File,
         targetDir: File,
         plan: SchemeImportPlan,
@@ -1310,8 +1328,15 @@ object SchemePackageImport {
             failure: TransactionFailure,
             message: String,
         ): InstallTransactionResult.Failed {
-            candidateDir.deleteRecursively()
-            journalFile.delete()
+            // 换位前清理结果不得静默忽略（D-M6）：候选／日志删不掉即残留
+            // 事务目录（.install-<op>），下次同 operationId 预校验会
+            // 撞名失败、迁移规划也可能误搬——删不掉必须大声记日志。
+            if (!candidateDir.deleteRecursively() && candidateDir.exists()) {
+                Timber.w("install $opId: failed to clean candidate dir after $failure")
+            }
+            if (!journalFile.delete() && journalFile.exists()) {
+                Timber.w("install $opId: failed to clean journal after $failure")
+            }
             return InstallTransactionResult.Failed(failure, message)
         }
         writeJournal(
@@ -1471,10 +1496,21 @@ object SchemePackageImport {
                 "rename candidate to target failed",
             )
         }
-        writeJournal(
-            journalFile, opId, targetDir, candidateDir, backupDir,
-            JournalStage.SWAPPED,
-        )
+        // 换位已成功：SWAPPED 日志只是事后记账，写失败不得把一次成功
+        // 的安装判成失败（D-S3）——旧实现抛错直出，调用方报 IO_ERROR，
+        // 而下次启动恢复见 TARGET_MOVED＋目标已在，又把旧备份当孤儿
+        // 删掉。日志写失败只记诊断日志、按成功返回；日志仍停在
+        // TARGET_MOVED，成功路径的 cleanupBackup 会按备份路径删掉它。
+        try {
+            writeJournal(
+                journalFile, opId, targetDir, candidateDir, backupDir,
+                JournalStage.SWAPPED,
+            )
+        } catch (e: Exception) {
+            if (e is InterruptedException) throw e
+            if (e is CancellationException) throw e
+            Timber.w(e, "install journal SWAPPED write failed for $opId, install already swapped")
+        }
         return InstallTransactionResult.Success(
             InstallTransaction(
                 operationId = opId,
@@ -1560,6 +1596,9 @@ object SchemePackageImport {
      * - 目标已存在时（任一非 SWAPPED 阶段）：删候选与日志；若是
      *   TARGET_MOVED 且备份还在，备份随日志一并清掉——目标已重建，
      *   旧备份已无人认领（sweep 只认 SWAPPED），不删即成永久孤儿；
+     *   TARGET_MOVED＋目标已在时目标里是新版（换位已成功、只是
+     *   SWAPPED 日志没写上，或重试导入已重建），上报 restoredOld
+     *   须为 false——报 true 是谎报“恢复到完整旧版”（D-S3）；
      * - 阶段 SWAPPED：已是完整新版，备份与日志原样保留（供回滚/清理用）；
      * - 未知阶段：按“目标在则删候选、目标缺失且备份在则备份移回”处置；
      * - 日志无法解析：保留文件并记诊断日志，不上报、不阻塞其他日志。
@@ -1602,8 +1641,15 @@ object SchemePackageImport {
                         }
                         if (parsed.candidate.exists()) parsed.candidate.deleteRecursively()
                         journal.delete()
+                        // TARGET_MOVED＋目标已在：目标里是新版（换位已
+                        // 成功、只是 SWAPPED 日志没写上，或重试导入已
+                        // 重建），不是恢复到旧版——restoredOld 须为 false。
+                        // 其余换位前阶段目标仍是旧版，恢复到旧版为 true。
                         results.add(
-                            RecoveredTransaction(parsed.operationId, restoredOld = true),
+                            RecoveredTransaction(
+                                parsed.operationId,
+                                restoredOld = parsed.stage != JournalStage.TARGET_MOVED.name,
+                            ),
                         )
                     } else if (parsed.backup.exists()) {
                         // 备份移回失败时绝不删日志：否则备份失去日志索引、
@@ -1710,12 +1756,13 @@ object SchemePackageImport {
     }
 
     /**
-     * UI 导入统一事务编排（runImport 唯一入口，替代原位 importPackage）：
+     * UI 导入统一事务编排（runImport 唯一入口，旧 importPackage 已删）：
      * 解压→规划→事务换位→切指针→镜像→换位后注入→部署→选首位新方案。
      * 失败语义：换位前任何失败目标原样；换位后注入任一文件 skipped 时
-     * 在部署前返回 IO_ERROR（不部署、不选方案，不静默成功）；此时已换位
-     * 内容与 SWAPPED 备份/日志原样保留，指针＋镜像已切新目录且本路径
-     * 不回滚（调用方仅在 DEPLOY_FAILED/DEPLOY_TIMEOUT 时回滚指针＋镜像）。
+     * 在部署前返回 IO_ERROR（不部署、不选方案，不静默成功）；注入在切
+     * 指针之前，失败时指针＋镜像仍在旧目录、本路径无需回滚（D-S4），
+     * 已换位内容与 SWAPPED 备份/日志原样保留；调用方仅在
+     * DEPLOY_FAILED/DEPLOY_TIMEOUT 时回滚指针＋镜像。
      * 部署 FAILED 时内容回滚（备份恢复）；部署超时只由调用方回滚指针+镜像，
      * 内容不动（孤儿仍在跑，绝不能删它脚下的目录）。超时孤儿随后完成时
      * 由引擎侧孤儿收尾当场对齐（RimeEngine deployAndAwait 作业体在发
@@ -1823,16 +1870,19 @@ object SchemePackageImport {
                     )
                 }
                 val transaction = (tx as InstallTransactionResult.Success).transaction
-                // 换位后、部署前：切指针→镜像（D2 顺序），再注入（D13a）。
-                setCurrentDir(dirName)
-                writeMirror(enabled)
+                // 换位后、部署前：先注入（D13a），再切指针→镜像（D2）。
+                // 注入只改目标目录内的方案文件、不依赖指针状态，顺序可
+                // 换；注入失败时指针与镜像仍在旧目录（D-S4）——旧实现
+                // 先切指针再注入，注入失败返回 IO_ERROR 时指针已指新
+                // 目录、镜像已写新表，用户留在一个 T9 字段未注入的新
+                // 目录上；本路径不回滚，顺序本身即修复。
                 val inject = injectT9Fields(targetDir, newSchemaIds)
                 val optionsInject = injectOptionsSegments(targetDir, newSchemaIds)
-                // 换位后注入成功路径校验：任一文件 skipped 即整体失败，
-                // 不静默成功、不部署、不选方案。此时部署尚未启动，故无
-                // 孤儿风险；已换位内容与 SWAPPED 备份/日志原样保留
-                // （与 DEPLOY_FAILED 的新目录孤儿口径一致）；指针＋镜像
-                // 已切新目录，本路径不回滚（调用方仅在 DEPLOY_* 时回滚）。
+                // 注入成功路径校验：任一文件 skipped 即整体失败，不静默
+                // 成功、不部署、不选方案。此时部署尚未启动，故无孤儿风
+                // 险；已换位内容与 SWAPPED 备份/日志原样保留（与
+                // DEPLOY_FAILED 的新目录孤儿口径一致）；指针＋镜像仍
+                // 在旧目录，本路径无需回滚（调用方仅在 DEPLOY_* 时回滚）。
                 val injectSkipped = (inject.skipped + optionsInject.skipped).distinct()
                 if (injectSkipped.isNotEmpty()) {
                     return ImportOutcome.Failed(
@@ -1840,6 +1890,8 @@ object SchemePackageImport {
                         RuntimeException("inject skipped: ${injectSkipped.joinToString(",")}"),
                     )
                 }
+                setCurrentDir(dirName)
+                writeMirror(enabled)
                 // 部署超时按已安装字节和（D3b），不含跳过文件与注入增量。
                 val sizeByRaw = extracted.entries.associate { it.relPath to it.sizeBytes }
                 val installedBytes = transaction.installedFiles.sumOf {

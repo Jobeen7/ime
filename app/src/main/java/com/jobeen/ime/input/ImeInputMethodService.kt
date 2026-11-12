@@ -8,6 +8,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
 import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.ExtractedTextRequest
 import java.io.File
 import kotlin.math.roundToInt
 import com.jobeen.ime.ImeApplication
@@ -722,8 +723,12 @@ class ImeInputMethodService : InputMethodService() {
 
             TextEditView.Action.CancelSelection -> {
                 if (ic != null) {
+                    // 实时选区（I-L4）：桥接模式读虚拟连接的实时选区，
+                    // 其余优先读连接当下的选区，读不到才回落快照——快照
+                    // 只在异步 onUpdateSelection 里更新，紧跟提交／光标
+                    // 移动后点“取消选择”会把光标送回旧位置。
                     val selection = if (phraseAddBridgeActive) virtualInputConnection.selection
-                    else lastSelectionStart to lastSelectionEnd
+                    else liveSelectionOrFallback(ic, lastSelectionStart to lastSelectionEnd)
                     if (selection.first != selection.second) {
                         ic.setSelection(selection.second, selection.second)
                     }
@@ -798,27 +803,73 @@ class ImeInputMethodService : InputMethodService() {
         // 下整篇文档跨进程过一遍），改为每次直探的 1 字符探针（帧缓存已于
         // 清点 S14 拆除：直探永远新鲜，原「空框首上屏后被误判已清空」故障
         // 由此天然不成立；高频连发的降本由 24ms 合并通道承担）
-        keyboardWindow?.onInputChanged(
-            probeAroundCursorText(ic),
-            virtualInputConnection = phraseAddBridgeActive,
-        )
+        // 探针未知（I-M6）时不投递：不把未知当成空，不清联想、不碰语音。
+        probeAroundCursorText(ic)?.let { text ->
+            keyboardWindow?.onInputChanged(
+                text,
+                virtualInputConnection = phraseAddBridgeActive,
+            )
+        }
     }
 
     /**
      * 光标前后各取 1 字符作「输入框是否有内容」的探针：下游全部消费方只用
      * 空/非空。前文非空即可短路，省掉第二次 Binder 调用（打字常态路径）。
+     * 返回 null = 内容未知（I-M6）：两路任一路返回 null 时不能证明框空，
+     * 绝不能把 null 当成空串——部分编辑器（不支持该调用、或密码类字段）
+     * 返回 null 而非空串，明明非空的框会被当成空框（联想被清、回车键按
+     * “空”态显示、语音会话被误杀）。调用方见 null 即跳过本次投递。
      */
-    private fun probeAroundCursorText(ic: android.view.inputmethod.InputConnection): String {
-        val before = ic.getTextBeforeCursor(1, 0)?.toString().orEmpty()
-        if (before.isNotEmpty()) return before
-        return ic.getTextAfterCursor(1, 0)?.toString().orEmpty()
+    private fun probeAroundCursorText(ic: android.view.inputmethod.InputConnection): String? {
+        val before = ic.getTextBeforeCursor(1, 0)?.toString()
+        if (!before.isNullOrEmpty()) return before
+        val after = ic.getTextAfterCursor(1, 0)?.toString()
+        return mergeProbeResults(before, after)
     }
 
     fun notifyInputChanged() {
         val ic = activeInputConnection() ?: return
-        val text = probeAroundCursorText(ic)
+        // 探针未知（I-M6）时不投递、不清联想：未知不是空。
+        val text = probeAroundCursorText(ic) ?: return
         keyboardWindow?.onInputChanged(text, virtualInputConnection = phraseAddBridgeActive)
         if (text.isEmpty()) engine?.onInputCleared()
 
     }
+}
+
+/**
+ * 1 字符探针的两路结果合并（纯函数，可单测；I-M6）：任一路非空即
+ * 框非空（取该路的 1 字符）；两路都返回空串才判空；任一路返回 null
+ * 且无一路证明非空时内容未知——返回 null，绝不把 null 等同于空文本。
+ */
+internal fun mergeProbeResults(before: CharSequence?, after: CharSequence?): String? {
+    if (!before.isNullOrEmpty()) return before.toString()
+    if (!after.isNullOrEmpty()) return after.toString()
+    if (before == null || after == null) return null
+    return ""
+}
+
+/**
+ * getExtractedText 的选区解析（纯函数，可单测；I-L4）：选区端点
+ * 任一小于 0 即读不到有效选区，返回 null（调用方回落快照）；否则
+ * 返回起止端点原值（不归一化 min/max——折叠判定由调用方按原值做）。
+ */
+internal fun selectionFromExtracted(selectionStart: Int, selectionEnd: Int): Pair<Int, Int>? =
+    if (selectionStart < 0 || selectionEnd < 0) null else selectionStart to selectionEnd
+
+/**
+ * 文本编辑取消选择的实时选区（I-L4）：优先读连接当下的选区
+ * （getExtractedText），读不到才回落调用方给的快照——快照只在异步
+ * Binder 回调 onUpdateSelection 里更新，紧跟提交／光标移动后点
+ * “取消选择”会把光标 setSelection 回旧位置。桥接模式不在此列
+ * （调用方直接读虚拟连接的实时选区）。
+ */
+internal fun liveSelectionOrFallback(
+    ic: android.view.inputmethod.InputConnection,
+    fallback: Pair<Int, Int>,
+): Pair<Int, Int> {
+    val extracted = runCatching {
+        ic.getExtractedText(ExtractedTextRequest(), 0)
+    }.getOrNull() ?: return fallback
+    return selectionFromExtracted(extracted.selectionStart, extracted.selectionEnd) ?: fallback
 }

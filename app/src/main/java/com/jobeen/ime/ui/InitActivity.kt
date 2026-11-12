@@ -1,6 +1,7 @@
 package com.jobeen.ime.ui
 
 import android.os.Bundle
+import android.os.SystemClock
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -26,12 +27,13 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -76,7 +78,7 @@ class InitActivity : ComponentActivity() {
         val app = ImeApplication.getInstance()
 
         setContent {
-            val initState by app.state.collectAsState()
+            val initState by app.state.collectAsStateWithLifecycle()
 
             // 应-O8：初始化失败/超时态。AppState 只有
             // Starting/ResourcePreparing/EngineStarting/Finished 四态、
@@ -86,17 +88,27 @@ class InitActivity : ComponentActivity() {
             // 不再永久转圈。超时只改本页显示，绝不取消后台初始化：
             // 超时后后台若完成，Finished 分支仍会 finish 本页；超时
             // 本身不杀部署、不动引擎状态。
-            var timedOut by remember { mutableStateOf(false) }
-            var timeoutAttempt by remember { mutableIntStateOf(0) }
+            // U-M6：超时计时必须跨重建——旧代码用 remember，旋转即重计
+            // 30 分钟；改记本轮超时的起始 elapsedRealtime
+            //（rememberSaveable），重建后只等剩余时间；重试重设计时起点。
+            var timedOut by rememberSaveable { mutableStateOf(false) }
+            var timeoutAttempt by rememberSaveable { mutableIntStateOf(0) }
+            var timeoutStartMs by rememberSaveable {
+                mutableLongStateOf(SystemClock.elapsedRealtime())
+            }
             LaunchedEffect(timeoutAttempt) {
-                delay(INIT_TIMEOUT_MS)
+                val remaining = INIT_TIMEOUT_MS -
+                    (SystemClock.elapsedRealtime() - timeoutStartMs)
+                if (remaining > 0) delay(remaining)
                 if (app.state.value != ImeApplication.AppState.Finished) {
                     timedOut = true
                 }
             }
 
-            if (initState == ImeApplication.AppState.Finished) {
-                LaunchedEffect(Unit) {
+            // U-M6：LaunchedEffect 不可条件调用——重组时序会决定副作用
+            // 是否进入／退出；改无条件调用、内部分支。
+            LaunchedEffect(initState) {
+                if (initState == ImeApplication.AppState.Finished) {
                     setResult(RESULT_OK)
                     finish()
                 }
@@ -150,6 +162,7 @@ class InitActivity : ComponentActivity() {
                                 Button(
                                     onClick = {
                                         timedOut = false
+                                        timeoutStartMs = SystemClock.elapsedRealtime()
                                         timeoutAttempt++
                                     },
                                 ) {

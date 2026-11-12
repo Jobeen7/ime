@@ -426,7 +426,11 @@ fun CloudVoicePluginsScreen(
                             val testedId = detail.id
                             testRunning = true
                             testResult = null
-                            val job = scope.launch {
+                            // U-M9：赋值必须与 launch 同一条语句——旧代码先
+                            // val job = scope.launch{...} 再 testJob = job，
+                            // 中间窗口内切插件／离页时 onDispose 只取消到旧值，
+                            // 新 Job 逃过取消继续跑探针。
+                            testJob = scope.launch {
                                 try {
                                     val result = withContext(Dispatchers.IO) {
                                         PluginInterfaceTest.run(
@@ -452,7 +456,6 @@ fun CloudVoicePluginsScreen(
                                     if (testJob === coroutineContext[Job]) testJob = null
                                 }
                             }
-                            testJob = job
                         },
                     )
                     val testOutcome = testResult

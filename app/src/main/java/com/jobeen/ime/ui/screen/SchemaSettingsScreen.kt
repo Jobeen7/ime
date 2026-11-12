@@ -63,8 +63,6 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
@@ -440,6 +438,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 }
                 succeeded = true
             } catch (e: Exception) {
+                if (e is kotlinx.coroutines.CancellationException) {
+                    // U-M5：取消不是失败——不回滚、不 Toast、不 loadSchemas，
+                    // 直接重抛（与管理页保存部署的 catch 同口径）；但
+                    // dirSwitching 必须先复位，否则目录切换永久锁死（catch
+                    // 后的复位句走不到）。指针与内存态已一致指在目标目录，
+                    // 部署结果未知，不擅自回滚。
+                    dirSwitching = false
+                    throw e
+                }
                 // 失败：指针＋镜像回滚；目标 custom 已写可留，下次切过去
                 // 即用；不 reload 回滚部署、不自动重试。
                 runCatching {
@@ -1807,13 +1814,11 @@ private fun ManageEnabledList(
     items: MutableList<SchemaItem>,
     onUncheck: (SchemaItem) -> Unit,
 ) {
-    var dragIndex by remember { mutableIntStateOf(-1) }
-    var dragOffset by remember { mutableFloatStateOf(0f) }
-    var itemHeight by remember { mutableFloatStateOf(0f) }
+    val dragState = remember { DragReorderState() }
 
     Column {
         items.forEachIndexed { index, schema ->
-            val isDragging = dragIndex == index
+            val isDragging = dragState.dragIndex == index
             val dragScale by animateFloatAsState(
                 targetValue = if (isDragging) 1.03f else 1f,
                 animationSpec = spring(
@@ -1826,34 +1831,32 @@ private fun ManageEnabledList(
             Box(
                 modifier = Modifier
                     .zIndex(if (isDragging) 1f else 0f)
-                    .offset { IntOffset(0, if (isDragging) dragOffset.roundToInt() else 0) }
+                    .offset { IntOffset(0, if (isDragging) dragState.dragOffset.roundToInt() else 0) }
                     .scale(dragScale)
                     .graphicsLayer {
                         this.shadowElevation = if (isDragging) 8f else 0f
                     }
                     .onGloballyPositioned {
-                        if (itemHeight == 0f) itemHeight = it.size.height.toFloat()
+                        if (dragState.itemHeight == 0f) {
+                            dragState.itemHeight = it.size.height.toFloat()
+                        }
                     }
                     .pointerInput(index) {
                         detectDragGesturesAfterLongPress(
-                            onDragStart = {
-                                dragIndex = index
-                                dragOffset = 0f
-                            },
+                            onDragStart = { dragState.onDragStart(index) },
                             onDragEnd = {
-                                if (dragIndex < 0) return@detectDragGesturesAfterLongPress
-                                val target = (dragIndex + (dragOffset / itemHeight).roundToInt())
-                                    .coerceIn(0, items.size - 1)
-                                if (target != dragIndex) {
-                                    val item = items.removeAt(dragIndex)
+                                dragState.onDragEnd(items.size)?.let { (from, target) ->
+                                    val item = items.removeAt(from)
                                     items.add(target, item)
                                 }
-                                dragIndex = -1
                             },
+                            // U-S7：取消同样复位拖拽态，否则被打断的行永久卡在
+                            // 放大＋阴影＋偏移态。
+                            onDragCancel = { dragState.onDragCancel() },
                             onDrag = { change, amount ->
-                                if (dragIndex < 0) return@detectDragGesturesAfterLongPress
+                                if (!dragState.isDragging) return@detectDragGesturesAfterLongPress
                                 change.consume()
-                                dragOffset += amount.y
+                                dragState.onDrag(amount.y)
                             },
                         )
                     },

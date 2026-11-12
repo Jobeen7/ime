@@ -6,6 +6,7 @@ import com.jobeen.ime.data.theme.ReadableTheme
 import kotlinx.serialization.json.Json
 import java.io.File
 import com.jobeen.ime.base.util.appScope
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -79,13 +80,22 @@ object ThemeStore {
     /** 落盘串行：写 tmp 与 rename 在同一把锁内整体执行，防并发写交错 */
     private val writeMutex = Mutex()
 
+    /**
+     * 落盘单线程通道（D-M9）：保存是用户节奏的低频操作，但两次快速
+     * 保存仍须按调用顺序落盘。旧实现在 Dispatchers.IO 多线程池上
+     * launch，只靠 writeMutex 串行临界区——launch 的执行顺序本身
+     * 不保证，后保存的协程可先跑、旧快照后写覆盖新主题。单线程
+     * 通道保证 FIFO：先 launch 的先写完。
+     */
+    private val writeDispatcher = Dispatchers.IO.limitedParallelism(1)
+
     private fun applyCustomThemes(themes: List<KeyboardTheme>) {
         KeyboardThemePresets.setCustomThemes(themes.take(MAX_CUSTOM_THEMES))
         val snapshot = themes.map { ReadableTheme.from(it) }
         // 文件写放 IO 线程，避免阻塞主线程
-        appScope.launch(Dispatchers.IO) {
+        appScope.launch(writeDispatcher) {
             val file = File(App.themesDir, THEMES_FILE)
-            runCatching {
+            try {
                 // 原子写：锁内先写临时文件再 rename，进程在写一半时被杀
                 // 不会留下截断的 themes.json（writeText 直写会丢全部自
                 // 定义主题）；原「写入序号＋比序号作废旧快照」装置已于
@@ -96,6 +106,15 @@ object ThemeStore {
                     tmp.writeText(readableJson.encodeToString(snapshot))
                     check(tmp.renameTo(file)) { "rename themes file failed" }
                 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // 落盘失败不得静默吞掉（D-M9）：旧实现 runCatching 全吞，
+                // 内存以为新主题已保存、磁盘仍是旧主题，下次启动悄悄
+                // 回到旧主题。大声记日志，并把内存从磁盘重读回来——
+                // 磁盘仍是旧内容，内存与磁盘重新一致。
+                Timber.e(e, "ThemeStore: failed to persist custom themes")
+                refresh()
             }
         }
     }

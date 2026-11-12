@@ -10,8 +10,8 @@ import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.TarBz2ExtractorUtil
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -105,7 +105,7 @@ object ModelDownloader {
      * （"gh:<资产名>:<登记摘要>"）：以摘要为版本事实，原地换包
      * 不换名也判得出更新（与语法模型只比发布时间的教训同理）。
      */
-    private data class SpeechModelTarget(
+    internal data class SpeechModelTarget(
         val name: String,
         val sha256: String,
         /** 目标是否来自实时 GitHub 资产清单（否＝服务端不可达时回落钉死表选出） */
@@ -142,15 +142,14 @@ object ModelDownloader {
         val assets = com.jobeen.ime.base.net.fetchGithubReleaseAssets(
             client, GITHUB_OWNER, GITHUB_REPO, ASR_MODELS_TAG,
         )
-        val picked = selectSpeechModelAsset(assets.map { it.first })
-        if (picked != null) {
-            val registered = assets.firstOrNull { it.first == picked }?.second
-                ?.ifEmpty { null }
-            if (registered != null) return SpeechModelTarget(picked, registered, fromLiveApi = true)
-            val pinned = PINNED_SPEECH_SHA256[picked]
-            if (!pinned.isNullOrEmpty()) {
-                return SpeechModelTarget(picked, pinned, shaFromPinned = true, fromLiveApi = true)
-            }
+        resolveLiveTarget(assets)?.let { return it }
+        // 实时清单点名了新资产、但其登记摘要与钉死表里都没有：
+        // fail-closed，绝不静默回落装钉死旧包（B-M2）——回落会
+        // 让新模型永久不可达，且检查更新恒报 Unverified。返回
+        // null 由调用方报检查失败／中止下载，等上游登记摘要后再试。
+        if (selectSpeechModelAsset(assets.map { it.first }) != null) {
+            Timber.w("Speech model target has no verifiable digest, refusing pinned fallback")
+            return null
         }
         val pinnedPicked = selectSpeechModelAsset(PINNED_SPEECH_SHA256.keys.toList())
         if (pinnedPicked != null) {
@@ -159,6 +158,23 @@ object ModelDownloader {
                 PINNED_SPEECH_SHA256.getValue(pinnedPicked),
                 shaFromPinned = true,
             )
+        }
+        return null
+    }
+
+    /**
+     * 实时清单选出的目标（纯函数，供单测）：清单点名资产且摘要可得
+     * （清单登记值优先，缺失时退钉死表同名值）才返回目标；清单未点
+     * 名资产、或点名了但摘要无处可得时返回 null——后者由调用方
+     * fail-closed，不回落钉死旧包（B-M2）。
+     */
+    internal fun resolveLiveTarget(assets: List<Pair<String, String?>>): SpeechModelTarget? {
+        val picked = selectSpeechModelAsset(assets.map { it.first }) ?: return null
+        val registered = assets.firstOrNull { it.first == picked }?.second?.ifEmpty { null }
+        if (registered != null) return SpeechModelTarget(picked, registered, fromLiveApi = true)
+        val pinned = PINNED_SPEECH_SHA256[picked]
+        if (!pinned.isNullOrEmpty()) {
+            return SpeechModelTarget(picked, pinned, shaFromPinned = true, fromLiveApi = true)
         }
         return null
     }
@@ -314,13 +330,15 @@ object ModelDownloader {
         val stageDir = File(tempDir, STAGE_DIR)
         val archiveFile = File(tempDir, target.name)
         val link = target.downloadUrl
-        if (!currentCoroutineContext().isActive) return@withContext false
+        // 取消必须以 CancellationException 穿透（B-S2）：此前三处
+        // isActive 检查只 return false，取消会被当成“下载失败”。
+        currentCoroutineContext().ensureActive()
         // 期望摘要直接复用 resolveTarget 已取得的 target.sha256
         // （GitHub 登记值或钉死回落值），不为同一资产二次查询
         val expectedSha = ExpectedSha256(target.sha256, fromGithubLink = !target.shaFromPinned)
-        if (!currentCoroutineContext().isActive) return@withContext false
+        currentCoroutineContext().ensureActive()
         if (!ensureArchive(link, archiveFile, expectedSha, onProgress)) return@withContext false
-        if (!currentCoroutineContext().isActive) return@withContext false
+        currentCoroutineContext().ensureActive()
         // 摘要失配即删包并明确失败（S21）：不再猜测上游原地换包、
         // 在同一次下载内换目标整轮重下——请用户重新检查更新后再来
         if (!verifyArchiveSha256(archiveFile, expectedSha, mismatchToast = shaMismatchToast(expectedSha))) {
@@ -691,7 +709,9 @@ object ModelDownloader {
                         var downloaded = startAt
                         var lastReported = 0L
                         while (true) {
-                            if (!currentCoroutineContext().isActive) return false
+                            // 取消抛 CancellationException 穿透（B-S2），
+                            // 不再 return false 把取消写成失败。
+                            currentCoroutineContext().ensureActive()
                             val count = input.read(buffer)
                             if (count < 0) break
                             output.write(buffer, 0, count)

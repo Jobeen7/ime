@@ -49,6 +49,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -118,6 +119,8 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 private data class LibraryUiState(
@@ -236,7 +239,9 @@ fun SkinLibraryScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var state by remember { mutableStateOf(LibraryUiState()) }
-    var busy by remember { mutableStateOf(false) }
+    // U-M8：忙态按计数持有（见 BusyCounter）；读处仍用 busy，不动调用点。
+    val busyCounter = remember { BusyCounter() }
+    val busy by remember { derivedStateOf { busyCounter.isBusy } }
     var dialogText by remember { mutableStateOf<Pair<String, String>?>(null) }
     var qrBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var qrCodeText by remember { mutableStateOf<String?>(null) }
@@ -301,11 +306,20 @@ fun SkinLibraryScreen(
         }
     }
 
-    fun refresh() {
-        scope.launch { state = loadLibraryState() }
+    // 列表重载串行化（U-M8）：初次加载／ON_RESUME 刷新／各 runBusy 的
+    // 末次重载都可能并发跑，最后完成的重载未必最新；同一把锁串行，
+    // 按请求顺序执行，末次完成即最新。
+    val loadMutex = remember { Mutex() }
+
+    suspend fun loadSerialized() {
+        loadMutex.withLock { state = loadLibraryState() }
     }
 
-    LaunchedEffect(Unit) { state = loadLibraryState() }
+    fun refresh() {
+        scope.launch { loadSerialized() }
+    }
+
+    LaunchedEffect(Unit) { loadSerialized() }
     LaunchedEffect(switchCheck) {
         if (switchCheck != null) {
             delay(500)
@@ -371,13 +385,19 @@ fun SkinLibraryScreen(
     }
 
     fun runBusy(block: suspend () -> Unit) {
+        // 同步抢占计数（调用在主线程）：置位发生在 launch 之外，
+        // 两路并发 runBusy 不会互相丢计数；释放放在内层 finally，
+        // 末次重载抛错也不会把计数钉死。
+        busyCounter.acquire()
         scope.launch {
-            busy = true
             try {
                 block()
             } finally {
-                busy = false
-                state = loadLibraryState()
+                try {
+                    loadSerialized()
+                } finally {
+                    busyCounter.release()
+                }
             }
         }
     }

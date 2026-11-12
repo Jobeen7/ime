@@ -329,4 +329,44 @@ class ResourceDifferentialTest {
             assertTrue(File(dest, "shared/stale.txt").exists())
         }
     }
+
+    // ---- B-L6：中断恢复残留豁免修剪 ----
+
+    @Test
+    fun interruptedUpdateResidue_paths() {
+        assertTrue(isInterruptedUpdateResidue("shared/dicts.trash/wanxiang.dict.yaml"))
+        assertTrue(isInterruptedUpdateResidue("shared/dicts.staging/wanxiang.dict.yaml"))
+        assertTrue(isInterruptedUpdateResidue("shared/dicts.trash/sub/x.dict.yaml"))
+        assertFalse(isInterruptedUpdateResidue("shared/dicts/wanxiang.dict.yaml"))
+        assertFalse(isInterruptedUpdateResidue("shared/dicts.trash"))
+        assertFalse(isInterruptedUpdateResidue("shared/dicts.staging"))
+        assertFalse(isInterruptedUpdateResidue("shared/stale.txt"))
+        assertFalse(isInterruptedUpdateResidue("model/speech/tokens.txt"))
+    }
+
+    @Test
+    fun prune_keepsInterruptedUpdateResidue() {
+        runWithTempDir { dest ->
+            val entries = mapOf("shared/a.txt" to "a".toByteArray())
+            val zip = zipBytes(entries)
+            // 中断恢复的唯一来源：trash 里的旧词库、staging 半成品
+            File(dest, "shared/dicts.trash/old.dict.yaml").apply {
+                parentFile.mkdirs()
+                writeText("old")
+            }
+            File(dest, "shared/dicts.staging/new.dict.yaml").apply {
+                parentFile.mkdirs()
+                writeText("new")
+            }
+            // 真残留仍应修剪
+            File(dest, "shared/stale.txt").apply { parentFile.mkdirs(); writeText("s") }
+            assertEquals(
+                DifferentialResult.OK,
+                runDifferential(zip, entries, dest),
+            )
+            assertEquals("old", File(dest, "shared/dicts.trash/old.dict.yaml").readText())
+            assertEquals("new", File(dest, "shared/dicts.staging/new.dict.yaml").readText())
+            assertFalse(File(dest, "shared/stale.txt").exists())
+        }
+    }
 }

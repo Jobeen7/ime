@@ -51,6 +51,14 @@ class KawaiiPanel(
     /** 当前批次已从引擎加载的候选原始条数（字形过滤前），与 total 同口径 */
     private var rawCandidateLoaded: Int = 0
 
+    /**
+     * 候选表代次（I-M4）：每次 setCandidates 进入即递增；未布局时
+     * 延迟重投的 runnable 只当捕获代次仍是最新时才执行——旧帧先被
+     * post、随后新帧直接应用、再轮到旧 runnable 时，旧表不再覆盖
+     * 新表。窗口层的 revision 门只拦直接调用，拦不住这条旁路。
+     */
+    private var candidateGeneration: Int = 0
+
     sealed class TouchResult {
         data class ToolbarAction(
             val action: PanelAction,
@@ -1419,8 +1427,14 @@ class KawaiiPanel(
         hasMore: Boolean,
         highlightedIndex: Int,
     ) {
+        // 代次重投（I-M4）：延迟重投只执行仍是最新代次的帧。
+        val generation = ++candidateGeneration
         if (!view.isLaidOut) {
-            view.post { setCandidates(list, hasMore, highlightedIndex) }
+            view.post {
+                if (shouldApplyDeferredCandidates(generation, candidateGeneration)) {
+                    setCandidates(list, hasMore, highlightedIndex)
+                }
+            }
             return
         }
         candidateGrid.hasMoreCandidates = hasMore
@@ -1599,3 +1613,11 @@ class KawaiiPanel(
         confirmOverlay.refreshTheme(colors)
     }
 }
+
+/**
+ * 延迟重投的代次判定（纯函数，可单测；I-M4）：只有捕获代次仍
+ * 是最新代次时才执行重投——期间已有更新的 setCandidates 进入，
+ * 旧帧即过期丢弃，不覆盖新表。
+ */
+internal fun shouldApplyDeferredCandidates(capturedGeneration: Int, currentGeneration: Int): Boolean =
+    capturedGeneration == currentGeneration

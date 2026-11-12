@@ -35,6 +35,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -77,8 +78,19 @@ fun LogScreen(onBack: () -> Unit) {
     }
     val scope = rememberCoroutineScope()
 
+    // 跟随尾部只在用户本就在看尾部时（U-L2）：旧代码每来一条新日志就
+    // 强制滚到底，正在翻旧日志也会被拽走。prevEntriesSize 是上一次的
+    // 条数——拿新条数到达前的可见末行与它比，才能判断用户之前是否在尾部。
+    var prevEntriesSize by remember { mutableIntStateOf(0) }
     LaunchedEffect(entries.size) {
-        if (entries.isNotEmpty()) listState.animateScrollToItem(entries.lastIndex)
+        val followTail = shouldFollowTail(
+            listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index,
+            prevEntriesSize,
+        )
+        prevEntriesSize = entries.size
+        if (entries.isNotEmpty() && followTail) {
+            listState.animateScrollToItem(entries.lastIndex)
+        }
     }
 
     Scaffold(
@@ -214,6 +226,17 @@ fun LogScreen(onBack: () -> Unit) {
         }
     }
 }
+
+/**
+ * 日志页是否应跟随尾部（U-L2）：尚未布局（lastVisibleIndex 为 null，
+ * 首次打开）或上次可见末行已是旧表尾部、或仅在尾部上方一行时跟随；
+ * 用户正翻旧日志（可见末行在尾部上方两行或更早）时不跟随。
+ * 尾部上方一行也算尾部：Lazy 列布局上报的可见末行常比实际底端
+ * 滞后一行，严卡末行本身会让正在看尾部的用户漏跟随。
+ * previousSize 是本次新条数到达前的条数。
+ */
+internal fun shouldFollowTail(lastVisibleIndex: Int?, previousSize: Int): Boolean =
+    lastVisibleIndex == null || lastVisibleIndex >= previousSize - 2
 
 @Composable
 private fun LogLine(entry: AppLogEntry) {

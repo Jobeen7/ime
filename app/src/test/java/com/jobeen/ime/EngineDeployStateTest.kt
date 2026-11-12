@@ -83,9 +83,23 @@ class EngineDeployStateTest {
         }
     }
 
+    /**
+     * JVM 单测用单调时钟：System.nanoTime，不碰未 mock 的
+     * android.os.SystemClock（直接调会抛 “not mocked”）。
+     * 生产默认仍走 SystemClock.elapsedRealtime（D-L6），不退回墙钟。
+     */
+    private fun fakeMonotonicClock(): () -> Long = { System.nanoTime() / 1_000_000L }
+
     @Test
     fun awaitReady_returnsTrueImmediately() = runBlocking {
-        assertTrue(awaitSchemasReady(poll = { true }, timeoutMs = 1000L, intervalMs = 10L))
+        assertTrue(
+            awaitSchemasReady(
+                poll = { true },
+                timeoutMs = 1000L,
+                intervalMs = 10L,
+                nowMs = fakeMonotonicClock(),
+            )
+        )
     }
 
     @Test
@@ -95,6 +109,7 @@ class EngineDeployStateTest {
             poll = { ++calls >= 3 },
             timeoutMs = 1000L,
             intervalMs = 10L,
+            nowMs = fakeMonotonicClock(),
         )
         assertTrue(ready)
         assertEquals(3, calls)
@@ -102,7 +117,14 @@ class EngineDeployStateTest {
 
     @Test
     fun awaitReady_returnsFalseOnTimeout() = runBlocking {
-        assertFalse(awaitSchemasReady(poll = { false }, timeoutMs = 50L, intervalMs = 10L))
+        assertFalse(
+            awaitSchemasReady(
+                poll = { false },
+                timeoutMs = 50L,
+                intervalMs = 10L,
+                nowMs = fakeMonotonicClock(),
+            )
+        )
     }
 
     @Test
@@ -115,6 +137,7 @@ class EngineDeployStateTest {
             },
             timeoutMs = 1000L,
             intervalMs = 10L,
+            nowMs = fakeMonotonicClock(),
         )
         assertTrue(ready)
         assertEquals(3, calls)

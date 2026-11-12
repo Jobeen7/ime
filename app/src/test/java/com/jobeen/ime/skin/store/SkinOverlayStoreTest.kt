@@ -11,7 +11,10 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 覆盖层存储工程（2026-10-29 item-1 D1）：三态合并＋存储＋防抖＋版本。 */
+/**
+ * 覆盖层存储工程（2026-10-29 item-1 D1）：三态合并＋读＋损坏降级。
+ * 写路径已随 K-L1 删除（生产零调用方）：本文件只保留合并与读的测试。
+ */
 class SkinOverlayStoreTest {
 
     private fun base(): JsonObject = buildJsonObject {
@@ -100,34 +103,6 @@ class SkinOverlayStoreTest {
     }
 
     @Test
-    fun storeVersionIncrementsAndRoundTrips() {
-        val root = Files.createTempDirectory("skin-overlay").toFile()
-        val store = SkinOverlayStore(File(root, "skins"))
-        try {
-            assertNull(store.read("skin-1"))
-            val v1 = store.saveNow("skin-1", buildJsonObject { put("fontFamily", "serif") })
-            assertEquals(1L, v1)
-            val read1 = store.read("skin-1")!!
-            assertEquals(1L, read1.version)
-            assertEquals(
-                "serif",
-                read1.overrides["fontFamily"].toString().trim('"'),
-            )
-            val v2 = store.saveNow("skin-1", buildJsonObject { put("fontFamily", "mono") })
-            assertEquals(2L, v2)
-            // 同 id 覆盖层与代次无关：UPDATE（新代次）后仍读得到
-            assertEquals(2L, store.read("skin-1")!!.version)
-            // COPY（换新 id）下无覆盖层：从干净基础开始
-            assertNull(store.read("skin-1-copy"))
-            store.clear("skin-1")
-            assertNull(store.read("skin-1"))
-        } finally {
-            store.shutdown()
-            root.deleteRecursively()
-        }
-    }
-
-    @Test
     fun storeCorruptFileDegradesToNull() {
         val root = Files.createTempDirectory("skin-overlay-bad").toFile()
         val store = SkinOverlayStore(File(root, "skins"))
@@ -141,29 +116,8 @@ class SkinOverlayStoreTest {
             file.writeText("""{"version": 1}""")
             assertNull(store.read("skin-1"))
         } finally {
-            store.shutdown()
             root.deleteRecursively()
         }
     }
 
-    @Test
-    fun debouncedSavesCoalesceToOneWrite() {
-        val root = Files.createTempDirectory("skin-overlay-debounce").toFile()
-        val store = SkinOverlayStore(File(root, "skins"))
-        try {
-            store.saveDebounced("skin-1", buildJsonObject { put("fontFamily", "a") })
-            store.saveDebounced("skin-1", buildJsonObject { put("fontFamily", "b") })
-            store.saveDebounced("skin-1", buildJsonObject { put("fontFamily", "c") })
-            store.flush()
-            val read = store.read("skin-1")!!
-            assertEquals(1L, read.version) // 三次调用只落盘一次
-            assertEquals("c", read.overrides["fontFamily"].toString().trim('"'))
-            store.saveDebounced("skin-1", buildJsonObject { put("fontFamily", "d") })
-            store.flush()
-            assertEquals(2L, store.read("skin-1")!!.version)
-        } finally {
-            store.shutdown()
-            root.deleteRecursively()
-        }
-    }
 }

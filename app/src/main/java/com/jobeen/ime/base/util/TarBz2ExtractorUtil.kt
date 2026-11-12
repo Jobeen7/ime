@@ -58,16 +58,27 @@ object TarBz2ExtractorUtil {
                                 // 严格路径穿越防护
                                 if (!outPath.startsWith(destPath) && outPath != destDir.canonicalPath) {
                                     Timber.w("Skip unsafe archive entry: %s", entryName)
+                                } else if (entry.isSymbolicLink || entry.isLink) {
+                                    // 符号链接／硬链接条目一律跳过（B-L9）：不创建
+                                    // 链接，否则其后同名文件条目的写出会跟随链接
+                                    // 写到链接目标处（包外任意路径）。
+                                    Timber.w("Skip link archive entry: %s", entryName)
                                 } else {
                                     val shouldExtract = filter(entryName)
                                     if (entry.isDirectory) {
                                         if (shouldExtract) {
+                                            // 目标位置已是符号链接时不跟随建目录：
+                                            // 先删链接、再建真实目录。
+                                            deleteStaleLinks(outFile, destDir)
                                             outFile.mkdirs()
                                             // 恢复目录的修改时间
                                             setEntryTime(outFile, entry)
                                         }
                                     } else {
                                         if (shouldExtract) {
+                                            // 目标位置已是符号链接时不跟随写出：
+                                            // 先删链接、再写真实文件。
+                                            deleteStaleLinks(outFile, destDir)
                                             outFile.parentFile?.mkdirs()
                                             BufferedOutputStream(
                                                 outFile.outputStream(), STREAM_BUFFER
@@ -90,6 +101,23 @@ object TarBz2ExtractorUtil {
             }
         }
         onProgress(counting.bytesRead.coerceAtMost(total), total)
+    }
+
+    /**
+     * 删掉 [file] 自身及其到 [destDir] 之间祖先链上的符号链接（B-L9）：
+     * 写出不跟随链接。指向 dest 外的链接早被 canonical 前缀检查拦下；
+     * 这里处理指向 dest 内的链接（写出会落到错误位置、覆盖目标文件）。
+     * destDir 本身不碰；真实目录／文件原样保留。
+     */
+    private fun deleteStaleLinks(file: File, destDir: File) {
+        val destPath = destDir.absolutePath
+        var current: File? = file.absoluteFile
+        while (current != null && current.absolutePath != destPath) {
+            if (java.nio.file.Files.isSymbolicLink(current.toPath())) {
+                current.delete()
+            }
+            current = current.parentFile
+        }
     }
 
     private fun setEntryTime(file: File, entry: TarArchiveEntry) {

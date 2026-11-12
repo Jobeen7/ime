@@ -134,6 +134,47 @@ class SchemeDirsTest {
     }
 
     @Test
+    fun migrationPlan_excludesTransactionDotDirs() {
+        // D-M8：方案事务目录（.install-*/.backup-*）与事务日志是点目录／
+        // 点文件，规划不得把它們搬进 default/，也不得当作冲突。
+        val root = Files.createTempDirectory("schemedirs-txdot").toFile()
+        try {
+            File(root, "plain.schema.yaml").writeText("plain")
+            File(root, ".install-op1").mkdirs()
+            File(root, ".install-op1/new.txt").writeText("new")
+            File(root, ".backup-op2").mkdirs()
+            File(root, ".backup-op2/keep.txt").writeText("old")
+            File(root, ".install-op3.journal").writeText("stage=SWAPPED")
+            File(root, "default").mkdirs()
+            val plan = SchemeDirs.migrationPlan(root)
+            assertEquals(listOf("plain.schema.yaml"), plan.moves.map { it.first.name })
+            assertTrue(plan.conflicts.isEmpty())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun ensureMigrated_ignoresTransactionDotDirLeftovers() {
+        // D-M8：终检查同样跳过事务点目录——残留的 .install-* 不得
+        // 拦截迁移置位，目录本身原样保留（由 recoverIncompleteTransactions 清理）。
+        val root = Files.createTempDirectory("schemedirs-txleftover").toFile()
+        try {
+            File(root, "a.schema.yaml").writeText("a")
+            File(root, ".install-op1").mkdirs()
+            File(root, ".install-op1/new.txt").writeText("new")
+            val store = FakeMigrationStore(legacy = null, dir = null)
+            SchemeDirs.ensureMigrated(root, store)
+            assertTrue(store.migrated)
+            assertEquals(null, store.error)
+            assertEquals("a", File(root, "default/a.schema.yaml").readText())
+            assertTrue(File(root, ".install-op1/new.txt").exists())
+        } finally {
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
     fun listDirs_excludesBuildHiddenAndFiles() {
         val root = Files.createTempDirectory("schemedirs-list").toFile()
         try {

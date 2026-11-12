@@ -9,6 +9,7 @@ import com.jobeen.ime.ui.screen.MainSettingGroup
 import com.jobeen.ime.ui.screen.ResolvedPage
 import com.jobeen.ime.ui.screen.ResolvedRow
 import com.jobeen.ime.ui.screen.buildSearchPath
+import com.jobeen.ime.ui.screen.FOCUS_CONSUMING_PAGE_KEYS
 import com.jobeen.ime.ui.screen.catalogPages
 import com.jobeen.ime.ui.screen.catalogRows
 import com.jobeen.ime.ui.screen.directPageForGroup
@@ -17,6 +18,7 @@ import com.jobeen.ime.ui.screen.groupMainSettings
 import com.jobeen.ime.ui.screen.searchCatalog
 import com.jobeen.ime.ui.screen.validateCatalog
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -326,6 +328,35 @@ class MainSettingsCatalogTest {
         assertEquals(null, video.focusTitleRes)
         val app = rows.single { it.titleRes == R.string.app_appearance }
         assertEquals(null, app.focusTitleRes)
+    }
+
+    // ── U-M3：语音行定位标题须是页内真实渲染的行 ──
+
+    @Test
+    fun realCatalog_voiceModelRow_focusesRenderedLocalModelRow() {
+        // “识别模型”在语音页不存在（模型行标题是“本地语音模型”），
+        // 旧值永不到达、3 秒超时后静默放弃；搜索结果标题仍为行标题本身。
+        val row = catalogRows().single { it.titleRes == R.string.voice_recognition_model }
+        assertEquals("voice", row.pageKey)
+        assertEquals(R.string.voice_local_model, row.focusTitleRes)
+    }
+
+    // ── U-M4：定位标题只写给消费页 ──
+
+    @Test
+    fun focusConsumingPages_coverEveryRowTarget() {
+        // 全部目录行的目标页都消费定位请求；否则标题残留到下一个设置页。
+        val uncovered = catalogRows().map { it.pageKey }.toSet() - FOCUS_CONSUMING_PAGE_KEYS
+        assertTrue(uncovered.isEmpty())
+    }
+
+    @Test
+    fun focusConsumingPages_excludeNonScaffoldPages() {
+        // 无脚手架的页（方案管理、皮肤库、脚本、皮肤编辑器、系统文件、
+        // 输入统计）不消费标题，写给它们即泄漏。
+        for (key in listOf("schema", "skin", "scripts", "skin_editor", "files", "stats")) {
+            assertFalse(FOCUS_CONSUMING_PAGE_KEYS.contains(key))
+        }
     }
 
     @Test

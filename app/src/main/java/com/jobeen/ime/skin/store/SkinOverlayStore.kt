@@ -3,9 +3,6 @@ package com.jobeen.ime.skin.store
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.SkinJson
 import java.io.File
-import java.util.concurrent.Executors
-import java.util.concurrent.ScheduledFuture
-import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -25,12 +22,13 @@ import kotlinx.serialization.json.put
  *   空串（覆盖层此键为 ""，对象内同理）＝显式解绑，即从合并
  *   结果中删掉该键，解析器随后取内置默认；
  *   有值＝覆盖（对象按键递归合并，数组整体替换）。
- * - 500ms 防抖原子保存：[saveDebounced] 取消待写任务、500ms
- *   后一次落盘；[flush] 立即写出待写项（测试与关机路径用）。
+ * - 写路径已删除（2026-11-12 审计 K-L1）：saveNow／saveDebounced／
+ *   clear／flush／shutdown 在生产代码中零调用方，覆盖层编辑 UI 从未
+ *   建成——覆盖层在运行时永远建不出来、改了也永远不刷新，留着只会
+ *   误导后续以为该功能可用。读路径保留（快照工厂构建期叠加）。
  * - 版本号防缓存过期：文件内 `version` 每次落盘 +1；快照携
  *   带 [overlayVersion][com.jobeen.ime.skin.model.SkinSnapshot.overlayVersion]，
- *   与快照生成时的版本不一致即视为过期（见
- *   SkinSnapshotProvider.refreshIfOverlayChanged）。
+ *   与快照生成时的版本不一致即视为过期（须重建快照）。
  * - 导入语义（无额外代码，由存放位置自然保证）：
  *   UPDATE（同 id 入新代次）→ 覆盖层文件不动，继续叠加在新
  *   基础之上（可合并）；COPY（冲突换新 id）→ 新 id 下无覆盖层
@@ -109,19 +107,8 @@ object SkinOverlayMerge {
 class SkinOverlayStore(private val skinsDir: File) {
 
     companion object {
-        /** 防抖窗口：连续写入 500ms 内无新写入时落盘一次。 */
-        const val DEBOUNCE_MS = 500L
         const val OVERLAY_FILE = "overlay.json"
     }
-
-    private val lock = Any()
-    private val schedulerLazy = lazy {
-        Executors.newSingleThreadScheduledExecutor { runnable ->
-            Thread(runnable, "skin-overlay-writer").apply { isDaemon = true }
-        }
-    }
-    private val pending = mutableMapOf<String, JsonObject>()
-    private val pendingTasks = mutableMapOf<String, ScheduledFuture<*>>()
 
     fun overlayFile(skinId: String): File = File(skinsDir, "$skinId/$OVERLAY_FILE")
 
@@ -149,74 +136,4 @@ class SkinOverlayStore(private val skinsDir: File) {
         return OverlayData(version, overrides)
     }
 
-    /** 立即原子保存：版本号 = 现有版本 +1（无文件时为 1）。 */
-    fun saveNow(skinId: String, overrides: JsonObject): Long {
-        synchronized(lock) {
-            val version = (readLocked(skinId)?.version ?: 0L) + 1L
-            val file = overlayFile(skinId)
-            val text = buildJsonObject {
-                put("version", version)
-                put("overrides", overrides)
-            }.toString()
-            runCatching {
-                AtomicFiles.writeAtomically(file.parentFile, OVERLAY_FILE, text)
-            }.onFailure {
-                DiagLog.e(
-                    "overlay", "overlay_save_failed",
-                    mapOf("skinId" to skinId, "error" to it.javaClass.simpleName),
-                )
-                throw it
-            }
-            return version
-        }
-    }
-
-    /** 防抖保存：500ms 内重复调用只落盘最后一次；版本号在落盘时确定。 */
-    fun saveDebounced(skinId: String, overrides: JsonObject) {
-        synchronized(lock) {
-            pending[skinId] = overrides
-            pendingTasks[skinId]?.cancel(false)
-            pendingTasks[skinId] = schedulerLazy.value.schedule(
-                { flushOne(skinId) },
-                DEBOUNCE_MS, TimeUnit.MILLISECONDS,
-            )
-        }
-    }
-
-    /** 立即写出全部待写项（测试与进程退出前用）。 */
-    fun flush() {
-        val ids = synchronized(lock) { pending.keys.toList() }
-        for (skinId in ids) flushOne(skinId)
-    }
-
-    /** 清除覆盖层：文件删除后该皮肤回到纯基础状态。 */
-    fun clear(skinId: String) {
-        synchronized(lock) {
-            pendingTasks[skinId]?.cancel(false)
-            pendingTasks.remove(skinId)
-            pending.remove(skinId)
-            runCatching { overlayFile(skinId).delete() }
-        }
-    }
-
-    fun shutdown() {
-        if (schedulerLazy.isInitialized()) schedulerLazy.value.shutdown()
-    }
-
-    private fun flushOne(skinId: String) {
-        val overrides = synchronized(lock) {
-            pendingTasks.remove(skinId)
-            pending.remove(skinId)
-        } ?: return
-        runCatching { saveNow(skinId, overrides) }
-            .onFailure {
-                DiagLog.e(
-                    "overlay", "overlay_flush_failed",
-                    mapOf("skinId" to skinId, "error" to it.javaClass.simpleName),
-                )
-            }
-    }
-
-    /** 锁内读：避免 saveNow 与并发读之间版本竞态（仅版本号用）。 */
-    private fun readLocked(skinId: String): OverlayData? = read(skinId)
 }

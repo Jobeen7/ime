@@ -9,7 +9,6 @@ import android.graphics.drawable.StateListDrawable
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
-import android.view.ViewConfiguration
 import android.view.inputmethod.EditorInfo
 import android.text.TextUtils
 import android.widget.FrameLayout
@@ -31,6 +30,7 @@ import com.jobeen.ime.input.keyboard.key.KeyboardPopup
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import com.jobeen.ime.input.keyboard.key.shouldInterceptHorizontalSwipe
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BarSide
@@ -55,7 +55,6 @@ import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
 import com.jobeen.ime.data.Symbol.Category
-import kotlin.math.abs
 
 @SuppressLint("ViewConstructor")
 class SymbolKeyboard(
@@ -228,8 +227,7 @@ class SymbolKeyboard(
     /** 左侧竖栏项（用户自定义符号列；设置改动后由 rebuildSidePanelSymbols 重建）。 */
     private var sidePanelItemDefs: List<KeyDef> = emptyList()
 
-    /** 左右滑判定用：系统触摸 slop 与翻页最小横移。 */
-    private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
+    /** 左右滑判定用：翻页最小横移。 */
     private val swipeMinDistancePx = context.dp(SWIPE_MIN_DISTANCE_DP).toFloat()
     private var downX = 0f
     private var downY = 0f
@@ -413,11 +411,12 @@ class SymbolKeyboard(
     }
 
     /**
-     * 左右滑翻页（施工单 18，与 emoji 板同款接线）：横向位移超
-     * touchSlop 且横向占优时拦截（子键收 ACTION_CANCEL，点按
-     * 不触发）；竖向位移归网格滚动，不拦截；抬手时按
-     * [KaomojiSwipe.directionFor] 判定方向翻页；到端停（不循环
-     * 绕回，pageSubCollection 返回 false 即无动作）。
+     * 左右滑翻页（施工单 18，与 emoji 板同款接线）：横向位移达到
+     * 翻页最小距离（48dp）且横向占优时才拦截（子键收 ACTION_CANCEL，
+     * 点按不触发）；未达翻页距离的横向小拖动不拦截、仍归子键点按
+     * （I-M2，见 EmojiKeyboard 同款注释）；竖向位移归网格滚动，
+     * 不拦截；抬手时按 [KaomojiSwipe.directionFor] 判定方向翻页；
+     * 到端停（不循环绕回，pageSubCollection 返回 false 即无动作）。
      */
     @SuppressLint("ClickableViewAccessibility")
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -432,7 +431,7 @@ class SymbolKeyboard(
                 if (!swipingHorizontally) {
                     val dx = event.x - downX
                     val dy = event.y - downY
-                    if (abs(dx) > touchSlop && abs(dx) > abs(dy)) {
+                    if (shouldInterceptHorizontalSwipe(dx, dy, swipeMinDistancePx)) {
                         swipingHorizontally = true
                         return true
                     }

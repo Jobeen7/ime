@@ -21,11 +21,7 @@ interface RimeApi {
 
     suspend fun deploy()
 
-    suspend fun updateConfig()
-
     suspend fun joinMaintenanceThread()
-
-    suspend fun syncUserData(): Boolean
 
     /** 用户词典名列表 */
     suspend fun getUserDictList(): List<String>

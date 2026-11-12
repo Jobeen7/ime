@@ -8,28 +8,12 @@ import kotlinx.coroutines.CoroutineScope
  */
 interface RimeSession {
     /**
-     * Run an operation immediately
-     * The suspended [block] will be executed in caller's thread.
-     * Use this function only for non-blocking operations like
-     * accessing [RimeApi.messageFlow].
-     */
-    fun <T> run(block: suspend RimeApi.() -> T): T
-
-    /**
      * Run an operation immediately if rime is at ready state.
      * Otherwise, caller will be suspended until rime is ready and operation is done.
      * The [block] will be executed in caller's thread.
      * Client should use this function in most cases.
      */
     suspend fun <T> runOnReady(block: suspend RimeApi.() -> T): T
-
-    /**
-     * Run an operation if rime is at ready state.
-     * Otherwise, do nothing.
-     * The [block] will be executed in thread pool.
-     * This function does not block or suspend the caller.
-     */
-    fun runIfReady(block: suspend RimeApi.() -> Unit)
 
     val lifecycleScope: CoroutineScope
 }

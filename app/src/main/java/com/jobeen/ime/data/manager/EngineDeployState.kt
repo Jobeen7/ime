@@ -2,6 +2,7 @@
 
 package com.jobeen.ime.data.manager
 
+import android.os.SystemClock
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +23,23 @@ object EngineDeployState {
 
     fun isRunning(): Boolean = _running.value
 
+    /**
+     * 原子抢占部署位：仅当未运行时置位并返回 true，已在跑时返回 false
+     * （不改状态）。部署入口应走本函数而非先查 [isRunning] 再
+     * [setRunning]——两步之间另一路可同时抢进，双部署并跑。
+     */
+    fun tryAcquireRunning(): Boolean = _running.compareAndSet(false, true)
+
+    /** 释放部署位：仅由抢到部署位的持有方调用（见 [tryAcquireRunning]）。 */
+    fun releaseRunning() {
+        _running.value = false
+    }
+
+    @Deprecated(
+        message = "部署位只由 deployAndAwait 持有：抢占走 tryAcquireRunning，释放走 releaseRunning；" +
+            "任意置位会误清标志、使 DeployKeyGate 在部署中途放行按键",
+        level = DeprecationLevel.WARNING,
+    )
     fun setRunning(running: Boolean) {
         _running.value = running
     }
@@ -36,6 +54,22 @@ object EngineDeployState {
 
     fun isOrphanRunning(): Boolean = _orphanRunning.value
 
+    /**
+     * 原子抢占孤儿部署位：仅当未置位时置位并返回 true（与
+     * [tryAcquireRunning] 同口径，供 deployAndAwait 的超时孤儿收尾用）。
+     */
+    fun tryAcquireOrphanRunning(): Boolean = _orphanRunning.compareAndSet(false, true)
+
+    /** 释放孤儿部署位：仅由置位方调用（见 [tryAcquireOrphanRunning]）。 */
+    fun releaseOrphanRunning() {
+        _orphanRunning.value = false
+    }
+
+    @Deprecated(
+        message = "孤儿部署位只由 deployAndAwait 置位／复位：抢占走 tryAcquireOrphanRunning，" +
+            "释放走 releaseOrphanRunning；任意置位会误清标志、使 DeployKeyGate 放行按键",
+        level = DeprecationLevel.WARNING,
+    )
     fun setOrphanRunning(running: Boolean) {
         _orphanRunning.value = running
     }
@@ -67,16 +101,24 @@ enum class DeployAwaitResult { COMPLETED, FAILED, TIMEOUT_RUNNING }
  * 用于 FAB 部署“真实完成”判定：deploy() 返回只代表引擎刚启动，
  * 不代表部署编完（日志实证：启动后 7ms 即有 Depoly 消息，方案
  * apply 却要 20 秒后才来，Base 全量更久）。
+ *
+ * @param nowMs 单调时钟读数（毫秒）。默认走 [SystemClock.elapsedRealtime]：
+ * 截止时间走单调时钟，墙钟拨快会提前判失败、拨慢会超期等待，超时口径
+ * 必须与系统时间设置无关（D-L6）。JVM 单测里 android.os.SystemClock
+ * 是未 mock 的桩，直接调会抛，故测试注入假时钟（如 System.nanoTime）。
  */
 suspend fun awaitSchemasReady(
     poll: suspend () -> Boolean,
     timeoutMs: Long = 600_000L,
     intervalMs: Long = 2000L,
+    nowMs: () -> Long = SystemClock::elapsedRealtime,
 ): Boolean {
-    val deadline = System.currentTimeMillis() + timeoutMs
+    // 截止时间走单调时钟：墙钟拨快会提前判失败、拨慢会超期等待，
+    // 超时口径必须与系统时间设置无关。
+    val deadline = nowMs() + timeoutMs
     while (true) {
         if (runCatching { poll() }.getOrDefault(false)) return true
-        if (System.currentTimeMillis() >= deadline) return false
+        if (nowMs() >= deadline) return false
         delay(intervalMs)
     }
 }

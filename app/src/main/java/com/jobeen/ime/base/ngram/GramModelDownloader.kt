@@ -5,7 +5,7 @@ import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
 import okhttp3.OkHttpClient
@@ -184,6 +184,13 @@ object GramModelDownloader {
         language: String,
         onProgress: (downloaded: Long, total: Long) -> Unit = { _, _ -> },
     ): DownloadResult {
+        // 路径校验（B-L2）：language 直接拼进目标文件名，未校验时
+        // 含 "/" 或 ".." 即可逃出 sharedDataDir 写盘。调用方是应用内
+        // 固定语言列表，非法值直接拒单、不触碰任何文件。
+        if (!isValidGramLanguage(language)) {
+            Timber.w("Invalid ngram model language rejected")
+            return DownloadResult.FAILED
+        }
         // 交叉守门（先于一切状态置位与文件写入）：部署进行中
         // （含超时孤儿）或导入事务进行中时一律 BUSY，不触碰
         // 运行状态与完成记录——被拒不得表现为失败。锁序固定：
@@ -345,7 +352,10 @@ object GramModelDownloader {
         expectedSha256: String,
         onProgress: (Long, Long) -> Unit,
     ): Boolean {
-        return runCatching {
+        // 取消必须以 CancellationException 穿透（B-S2）：循环内的
+        // isActive 检查若只 return false，runCatching 会把它吞成
+        // “下载失败”，lastResult 记失败、界面报失败而非静默取消。
+        return try {
             client.newCall(Request.Builder().url(url).build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     Timber.w("Ngram model download failed: HTTP %d", response.code)
@@ -369,7 +379,7 @@ object GramModelDownloader {
                         var downloaded = 0L
                         var reported = 0L
                         while (true) {
-                            if (!currentCoroutineContext().isActive) return false
+                            currentCoroutineContext().ensureActive()
                             val count = input.read(buffer)
                             if (count < 0) break
                             if (count == 0) continue
@@ -408,12 +418,13 @@ object GramModelDownloader {
                 }
                 true
             }
-        }.onFailure {
-            Timber.e(it, "Ngram model download failed")
-            if (it !is kotlinx.coroutines.CancellationException) {
-                HttpUtil.showToast("模型增强下载失败：${it.message ?: "网络错误"}")
-            }
-        }.getOrDefault(false)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.e(e, "Ngram model download failed")
+            HttpUtil.showToast("模型增强下载失败：${e.message ?: "网络错误"}")
+            false
+        }
     }
 
 }
@@ -423,6 +434,17 @@ private object GramModelApi {
         val encoded = java.net.URLEncoder.encode(language, Charsets.UTF_8.name())
         return HttpUtil.get("model/grammar?language=$encoded")
     }
+}
+
+/**
+ * 语法模型语言名是否可安全拼进目标文件名（B-L2，供单测）：只含
+ * 字母数字与 . _ -，不含 ".."、不为 "."／".."、长度有上限。
+ * 形如 "wanxiang-lts-zh-hans" 的合法语言名全部通过。
+ */
+internal fun isValidGramLanguage(language: String): Boolean {
+    if (language.isEmpty() || language.length > 64) return false
+    if (language == "." || language == ".." || language.contains("..")) return false
+    return language.all { it.isLetterOrDigit() || it == '-' || it == '_' || it == '.' }
 }
 
 /** 归一化 sha256 文本（可带 "sha256:" 前缀）：合法时返回小写 64 位十六进制，否则空串 */

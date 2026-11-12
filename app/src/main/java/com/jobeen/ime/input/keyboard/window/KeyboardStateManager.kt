@@ -52,6 +52,14 @@ object KeyboardStateManager {
     private var keyboardFactory: ((String) -> IKeyboard)? = null
     private var currentKeyboardName: String? = null
     private var keyboardAttached = false
+    /**
+     * 场景强制键盘名（I-S1）：startInput 的数字／电话／密码直达分支
+     * 置位——当前键盘是字段强制的（不被自创布局替换，B3 §3.3），
+     * 收起重挂时按名重显，不再按陈旧类型翻回主键盘。非强制切换
+     * （switchToResolvedWithType 目标与之不同）与文本字段接管时
+     * 清除；onDetach 不清除（重挂判定要读它）。
+     */
+    private var forcedKeyboardName: String? = null
     private var schemas: List<EngineMessage.Schema> = emptyList()
     private var currentSchema: EngineMessage.Schema? = null
 
@@ -181,6 +189,7 @@ object KeyboardStateManager {
         keyboards.clear()
         callback = null
         currentKeyboardName = null
+        forcedKeyboardName = null
         keyboardAttached = false
         typeState.reset()
         lastTypeSkinId = null
@@ -304,12 +313,20 @@ object KeyboardStateManager {
             switchKeyboardType(reconciledType)
             return
         }
-        when (
-            val action = decideReattach(
-                snapshot, currentKeyboardName!!, typeState.current, targetLayout, landscape,
-                SkinColorMode.isDark(appContext),
-            )
-        ) {
+        // 场景强制键盘优先重显（I-S1）：当前名仍是 startInput 记下
+        // 的强制键盘时不走类型解析（密码框＋自定义 alphabetic 绑定
+        // 时类型解析目标是自创布局，会把 Qwerty 切走）；其余走
+        // decideReattach（非主类型重显、主类型按类型切）。
+        val reattachAction =
+            if (isForcedKeyboardReshow(forcedKeyboardName, currentKeyboardName)) {
+                ReattachAction.Reshow
+            } else {
+                decideReattach(
+                    snapshot, currentKeyboardName!!, typeState.current, targetLayout, landscape,
+                    SkinColorMode.isDark(appContext),
+                )
+            }
+        when (val action = reattachAction) {
             is ReattachAction.SwitchType -> switchKeyboardType(action.type)
             is ReattachAction.SwitchName -> switchTo(action.name)
             ReattachAction.Reshow -> {
@@ -524,7 +541,15 @@ object KeyboardStateManager {
      */
     fun spaceFallbackText(): String = currentSchema?.name.orEmpty()
 
-    private fun switchToResolvedWithType(name: String, type: String?) {
+    private fun switchToResolvedWithType(
+        name: String,
+        type: String?,
+        persist: Boolean = true,
+    ) {
+        // 场景强制标记只认当前名：切向别的键盘即不再是强制键盘
+        // （用户主动切走／换字段／切方案都经此漏斗），标记失效；
+        // 同名切换（重建／早返）不动标记。
+        if (name != forcedKeyboardName) forcedKeyboardName = null
         // 同键盘 + 同类型 + 同方案的重复切换直接早退：旧实现每次都重设空格键文案/
         // 标点模式并回调 onKeyboardChanged（触发窗口侧重排），而调用方
         // （refreshSchemas、resume 等）经常同参数连调多次
@@ -539,7 +564,7 @@ object KeyboardStateManager {
         // 当前）才提交；factory 未注入致 attachNew 空转时名未
         // 变，类型亦不动。类型实际变化时记 last、主类型与持久化。
         if (currentKeyboardName == name && type != null && typeState.switchTo(type)) {
-            persistType(type)
+            if (persist) persistType(type)
         }
         val kb = keyboards[name]
         kb?.updateSpaceKeyText(spaceFallbackText())
@@ -612,12 +637,30 @@ object KeyboardStateManager {
                 variation == InputType.TYPE_TEXT_VARIATION_WEB_PASSWORD)
         // 场景强制键盘（数字/电话/密码）不被自创布局替换（B3
         // §3.3 优先级表第一行）：走直达通道；主键盘位走 switchTo 解析
+        // （I-S1：直达分支同时交代类型状态——数字／电话进 numeric
+        // 类型、文本密码进 alphabetic 类型，否则类型仍留主类型、
+        // 收起重挂时 decideReattach 按主类型把字段键盘翻回主键盘；
+        // 强制类型不写持久化：字段属性不是用户的语言选择，写盘会
+        // 把密码框的 alphabetic 留成下次进程启动的首挂类型。
+        // 强制名另记 forcedKeyboardName：密码框＋自定义 alphabetic
+        // 绑定时类型解析目标是自创布局、仍会切走，强制名兜底重显）。
         when {
             inputClass == InputType.TYPE_CLASS_NUMBER ||
-                inputClass == InputType.TYPE_CLASS_PHONE ->
-                switchToResolved(NumberKeyboard.NAME)
-            isPasswordText -> switchToResolved(QwertyKeyboard.NAME)
+                inputClass == InputType.TYPE_CLASS_PHONE -> {
+                switchToResolvedWithType(
+                    NumberKeyboard.NAME, KeyboardTypes.NUMERIC, persist = false,
+                )
+                forcedKeyboardName = NumberKeyboard.NAME
+            }
+            isPasswordText -> {
+                switchToResolvedWithType(
+                    QwertyKeyboard.NAME, KeyboardTypes.ALPHABETIC, persist = false,
+                )
+                forcedKeyboardName = QwertyKeyboard.NAME
+            }
             else -> {
+                // 文本字段接管：不再是场景强制键盘。
+                forcedKeyboardName = null
                 // 新窗口复位（施工单 12）：字段身份变化时先回列表第一
                 // 个方案（含类型复位），再按当前方案切布局；数字／
                 // 密码框走直达分支，不复位。
@@ -1017,6 +1060,10 @@ internal fun decideWindowReset(
     if (!resetScheme && targetType == null) return WindowReset.None
     return WindowReset.Apply(resetScheme, targetType)
 }
+
+/** 场景强制键盘是否应按名重显（纯决策，可单测）：强制名非空且等于当前名时重显。 */
+internal fun isForcedKeyboardReshow(forcedName: String?, currentName: String?): Boolean =
+    forcedName != null && forcedName == currentName
 
 /** 重挂决策（[KeyboardStateManager.onAttach] 的纯决策部分，可单测）。 */
 internal sealed interface ReattachAction {

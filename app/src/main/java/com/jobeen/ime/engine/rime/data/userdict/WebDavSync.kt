@@ -288,9 +288,17 @@ object WebDavSync {
      * 本次上传，不在未核实的情况下覆盖远端）。只做比较用，不
      * 做写入，不带任何前置条件。必须在后台线程调用。
      */
-    private fun fetchRemoteDictHash(fileName: String): String? {
+    private fun fetchRemoteDictHash(fileName: String): String? =
+        fetchRemoteUrlHash(remoteUrl(fileName), UserDictManager.MAX_DICT_FILE_BYTES)
+
+    /**
+     * 复读远端文件的 SHA-256（按完整 URL）：fetchRemoteDictHash 的
+     * 通用版，供目录同步（dirUrl）复用上传侧的复读口径（E-M3）。
+     * 404 返回 null；其余失败抛错；超限拒绝哈希。
+     */
+    private fun fetchRemoteUrlHash(url: String, maxBytes: Long): String? {
         val request = Request.Builder()
-            .url(remoteUrl(fileName))
+            .url(url)
             .header("Authorization", authHeader())
             .header("Accept-Encoding", "identity")
             .get()
@@ -299,10 +307,10 @@ object WebDavSync {
             if (response.code == 404) return null
             if (!response.isSuccessful) throw httpError("复读远端", response.code, errorDetail(response))
             val body = response.body ?: throw IllegalStateException("复读远端内容为空")
-            if (body.contentLength() > UserDictManager.MAX_DICT_FILE_BYTES) {
+            if (body.contentLength() > maxBytes) {
                 throw IllegalStateException("远端文件过大，拒绝复读")
             }
-            return body.byteStream().use { sha256Stream(it, UserDictManager.MAX_DICT_FILE_BYTES) }
+            return body.byteStream().use { sha256Stream(it, maxBytes) }
         }
     }
 
@@ -581,14 +589,17 @@ object WebDavSync {
      * 导入接口（UserDictManager::Import）要的是「词⇥码⇥权重」。
      * `#` 开头的注释行原样保留，读取时会被跳过。
      */
-    private fun convertUserDbSnapshot(bytes: ByteArray): ByteArray {
-        var text = bytes.toString(Charsets.UTF_8)
-        if (text.startsWith("\uFEFF")) text = text.substring(1)
-        // 先采样投票判定文件列序：多数行第一列像拼音且第二列含汉字 → 「码在前」
+    /**
+     * 判定 .userdb.txt 的列序（E-L3，纯函数，供单测）：全文件特征行
+     * 投票，多数行第一列像拼音且第二列含汉字 → 「码在前」。旧实现
+     * 200 票即停采，文件前部特征行不足或前后列序不一致时，整文件
+     * 按错误列序转置导入；现全量采样、多数为准。平票或无特征行时
+     * 默认 Rime 原生「码在前」——此时文件本身无法判定列序，沿用旧默认口径。
+     */
+    internal fun decideUserDbColumnOrder(text: String): Boolean {
         var codeFirstVotes = 0
         var phraseFirstVotes = 0
         text.lineSequence().forEach { raw ->
-            if (codeFirstVotes + phraseFirstVotes >= 200) return@forEach
             val line = raw.trimEnd()
             if (line.isEmpty() || line.startsWith("#")) return@forEach
             val cols = line.split('\t')
@@ -606,6 +617,14 @@ object WebDavSync {
         val codeFirst = codeFirstVotes >= phraseFirstVotes
         Timber.i("userdb snapshot column order: codeFirst=$codeFirst " +
                 "(votes code-first=$codeFirstVotes, phrase-first=$phraseFirstVotes)")
+        return codeFirst
+    }
+
+    private fun convertUserDbSnapshot(bytes: ByteArray): ByteArray {
+        var text = bytes.toString(Charsets.UTF_8)
+        if (text.startsWith("\uFEFF")) text = text.substring(1)
+        // 先采样投票判定文件列序：多数行第一列像拼音且第二列含汉字 → 「码在前」
+        val codeFirst = decideUserDbColumnOrder(text)
         val out = StringBuilder(text.length)
         text.lineSequence().forEach { raw ->
             val line = raw.trimEnd()
@@ -1639,6 +1658,42 @@ object WebDavSync {
      * 不动已存词典位置；与方案上传/下载共用 syncMutex。
      * 成功时返回失败词典文件名清单（空＝全部成功）。
      */
+    /**
+     * 目录同步的下载合并一步（E-M3 的复读重合并复用）：GET 远端词典文件
+     * 并合并导入本地，返回下载到的远端裸字节哈希（复读比较的基准）；
+     * 远端无此文件时返回 null（首次上传）；真失败抛错。临时文件用后即删。
+     */
+    private suspend fun downloadAndImportDict(
+        session: RimeSession,
+        dict: String,
+        remoteDictUrl: String,
+    ): String? {
+        val tmpIn = File(appContext.cacheDir, "dirsync-download-$dict-${System.nanoTime()}.txt")
+        try {
+            return when (dictDownloadAction(httpGetToFile(remoteDictUrl, tmpIn))) {
+                DictDownloadAction.IMPORT -> {
+                    val snapshotHash = tmpIn.inputStream().use {
+                        sha256Stream(it, MAX_SYNC_FILE_BYTES)
+                    }
+                    val count = session.runOnReady {
+                        UserDictManager.importUserDictInChunks(tmpIn) { chunk ->
+                            importUserDictLive(dict, chunk.absolutePath)
+                        }
+                    }
+                    if (count < 0) {
+                        throw IllegalStateException("导入用户词典失败：$dict")
+                    }
+                    snapshotHash
+                }
+                DictDownloadAction.SKIP -> null // 首次上传，跳过合并
+                DictDownloadAction.FAIL ->
+                    throw IllegalStateException("下载词典失败：$dict")
+            }
+        } finally {
+            tmpIn.delete()
+        }
+    }
+
     suspend fun syncAllDicts(session: RimeSession): Result<List<String>> = syncMutex.withLock {
         withContext(Dispatchers.IO) {
             runCatching {
@@ -1659,26 +1714,9 @@ object WebDavSync {
                     }
                     runCatching {
                         val remoteDictUrl = dirUrl(base, remoteFileName(dict))
-                        val tmpIn = File(appContext.cacheDir, "dirsync-download-$dict-${System.nanoTime()}.txt")
-                        try {
-                            when (dictDownloadAction(httpGetToFile(remoteDictUrl, tmpIn))) {
-                                DictDownloadAction.IMPORT -> {
-                                    val count = session.runOnReady {
-                                        UserDictManager.importUserDictInChunks(tmpIn) { chunk ->
-                                            importUserDictLive(dict, chunk.absolutePath)
-                                        }
-                                    }
-                                    if (count < 0) {
-                                        throw IllegalStateException("导入用户词典失败：$dict")
-                                    }
-                                }
-                                DictDownloadAction.SKIP -> Unit // 首次上传，跳过合并
-                                DictDownloadAction.FAIL ->
-                                    throw IllegalStateException("下载词典失败：$dict")
-                            }
-                        } finally {
-                            tmpIn.delete()
-                        }
+                        // 下载合并进本地（基准哈希 = 刚下载的远端裸字节）
+                        val snapshotHash =
+                            downloadAndImportDict(session, dict, remoteDictUrl)
                         val tmpOut = File(appContext.cacheDir, "dirsync-upload-$dict-${System.nanoTime()}.txt")
                         try {
                             val count = session.runOnReady {
@@ -1687,7 +1725,30 @@ object WebDavSync {
                             if (count < 0) {
                                 throw IllegalStateException("导出用户词典失败：$dict")
                             }
-                            httpPutFile(remoteDictUrl, tmpOut)
+                            // PUT 前复读（E-M3，与 upload() 同口径）：下载合并
+                            // 与 PUT 之间远端又被改过时，重合并重导出再试
+                            // （有限次）；复读／合并抛错即本词典失败，不在
+                            // 未核实的情况下覆盖远端。
+                            putWithRereadRetry(
+                                initialHash = snapshotHash,
+                                fetchHash = {
+                                    fetchRemoteUrlHash(remoteDictUrl, MAX_SYNC_FILE_BYTES)
+                                },
+                                mergeAndReexport = {
+                                    val newHash = downloadAndImportDict(
+                                        session, dict, remoteDictUrl
+                                    )
+                                    tmpOut.delete()
+                                    val newCount = session.runOnReady {
+                                        exportUserDictLive(dict, tmpOut.absolutePath)
+                                    }
+                                    if (newCount < 0) {
+                                        throw IllegalStateException("导出用户词典失败：$dict")
+                                    }
+                                    newHash
+                                },
+                                put = { httpPutFile(remoteDictUrl, tmpOut) },
+                            )
                         } finally {
                             tmpOut.delete()
                         }

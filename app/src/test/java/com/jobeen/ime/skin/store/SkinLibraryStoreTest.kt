@@ -2,8 +2,11 @@ package com.jobeen.ime.skin.store
 
 import java.io.File
 import java.nio.file.Files
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -81,5 +84,53 @@ class SkinLibraryStoreTest {
         assertTrue(text.contains("\"skinId\": null"))
         val read = (store.readActive() as SkinLibraryStore.ReadResult.Ok).value
         assertEquals(null, read.skinId)
+    }
+
+    // ---- 2026-11-12 审计 K-M2：索引读-改-写统一提交锁 ----
+
+    @Test
+    fun concurrentUpdateIndexTransformsDoNotLoseEntries() = runBlocking {
+        val (_, store) = newStore()
+        coroutineScope {
+            repeat(20) { i ->
+                launch {
+                    store.updateIndex { index ->
+                        index.copy(
+                            skins = index.skins + SkinIndexEntry(
+                                "s$i", "S$i", "h".repeat(64), 1,
+                                "skins/s$i/gen-1", 10, 1,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+        val read = store.readIndex()
+        assertTrue(read is SkinLibraryStore.ReadResult.Ok)
+        val ids = (read as SkinLibraryStore.ReadResult.Ok).value.skins.map { it.id }.toSet()
+        assertEquals((0 until 20).map { "s$it" }.toSet(), ids)
+    }
+
+    @Test
+    fun updateIndexAbortOnNullLeavesIndexUntouched() = runBlocking {
+        val (_, store) = newStore()
+        val before = LibraryIndex(
+            skins = listOf(
+                SkinIndexEntry("s1", "One", "h".repeat(64), 1, "skins/s1/gen-1", 1, 1),
+            ),
+        )
+        store.writeIndex(before)
+        assertNull(store.updateIndex { null })
+        val read = store.readIndex()
+        assertTrue(read is SkinLibraryStore.ReadResult.Ok)
+        assertEquals(before, (read as SkinLibraryStore.ReadResult.Ok).value)
+    }
+
+    @Test
+    fun updateIndexCorruptReturnsNullWithoutWriting() = runBlocking {
+        val (layout, store) = newStore()
+        layout.indexFile.writeText("{not valid json")
+        assertNull(store.updateIndex { it })
+        assertTrue(store.readIndex() is SkinLibraryStore.ReadResult.Corrupt)
     }
 }

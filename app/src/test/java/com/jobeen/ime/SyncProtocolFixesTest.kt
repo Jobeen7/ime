@@ -47,7 +47,13 @@ class SyncProtocolFixesTest {
         assertEquals("旧词", word)
         assertEquals(DeletedWordEntry(true, 0L), entry)
         assertNull(decodeDeletedWordEntry("  "))
-        assertNull(encodeDeletedWordEntry("带\t制表符", DeletedWordEntry(true, 1L)))
+        // D-M10：含制表符的词不再因编码返回 null 而丢删除记录——转义
+        // 后正常编码，解码往返还原。
+        val encoded = encodeDeletedWordEntry("带\t制表符", DeletedWordEntry(true, 1L))
+        assertEquals("带\\t制表符\t1\t1", encoded)
+        val (decodedWord, decodedEntry) = decodeDeletedWordEntry(encoded)!!
+        assertEquals("带\t制表符", decodedWord)
+        assertEquals(DeletedWordEntry(true, 1L), decodedEntry)
     }
 
     // ---- 删词合并（墓碑协议）----
@@ -68,7 +74,9 @@ class SyncProtocolFixesTest {
     }
 
     @Test
-    fun mergeDeletedWords_tiePrefersDeleted_andUnion() {
+    fun mergeDeletedWords_tiePrefersRestored_andUnion() {
+        // D-M10：同毫秒平局恢复赢（旧版“删赢”是审计定性的 bug，见
+        // DataAuditFixesTest.deletedWord_mergeTiePrefersRestored）。
         val local = mapOf(
             "甲" to DeletedWordEntry(false, 50L),
             "乙" to DeletedWordEntry(true, 0L),
@@ -78,7 +86,7 @@ class SyncProtocolFixesTest {
             "丙" to DeletedWordEntry(true, 10L),
         )
         val merged = mergeDeletedWordEntries(local, remote)
-        assertEquals(DeletedWordEntry(true, 50L), merged["甲"])
+        assertEquals(DeletedWordEntry(false, 50L), merged["甲"])
         assertEquals(DeletedWordEntry(true, 0L), merged["乙"])
         assertEquals(DeletedWordEntry(true, 10L), merged["丙"])
     }

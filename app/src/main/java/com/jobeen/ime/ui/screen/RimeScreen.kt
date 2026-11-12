@@ -16,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +27,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.AppReset
 import com.jobeen.ime.data.manager.RimeSyncPrefs
@@ -85,16 +89,27 @@ fun RimeScreen(
         }
     }
 
-    LaunchedEffect(Unit) {
+    /** 全部显示态重读（通知开关／WebDAV 配置／同步文件夹／远程路径）。 */
+    fun refreshAll() {
         noticeEnabled = RimeSyncPrefs.isNoticeEnabled(context)
         webdavConfigured = UserDictPrefs.isConfigured()
-        // 首次打开即生成并持久化 UUID（之后重置会清掉它，见 RimeSyncPrefs）。
-        syncFolderUuid = RimeSyncPrefs.syncFolderUuid(context)
-        syncRemotePath = if (webdavConfigured) {
-            WebDavSync.dirSyncRemoteUrl(context)
-        } else {
-            ""
+        refreshSyncDisplay()
+    }
+
+    LaunchedEffect(Unit) {
+        refreshAll()
+    }
+
+    // U-M7：显示态只在首次组合读一次时，去用户词典页改完 WebDAV 配置、
+    // 去皮肤库换完皮肤再返回，本页仍显示旧值；回页（ON_RESUME）即重读。
+    // 首次打开即生成并持久化 UUID（之后重置会清掉它，见 RimeSyncPrefs）。
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) refreshAll()
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     fun toast(msg: String) {

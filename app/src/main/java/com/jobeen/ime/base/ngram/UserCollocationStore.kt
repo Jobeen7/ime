@@ -16,8 +16,8 @@ import java.io.File
  *   低频旧搭配在加载时清掉，避免旧习惯无限累积。
  *
  * 线程安全：内部状态全部在锁内访问；落盘由内部单线程执行器
- * 串行执行。任何 IO 异常都被吞掉（runCatching），学习失败静默
- * 降级，绝不向上抛。
+ * 串行执行。写盘失败不静默丢数据：脏计数恢复并挂延时重试
+ * （B-M1），失败的 tmp 残留清掉；读失败仍静默降级，绝不向上抛。
  *
  * 写盘节奏（H2-1，2026-11-08）：按量攒批＋按时间节流，二者取先到者——
  * - 脏学习满 [FLUSH_EVERY] 条且距上次写盘已满 [FLUSH_DELAY_MS] 时立即写盘；
@@ -47,8 +47,17 @@ class UserCollocationStore(
     private var loadFailed = false
     private var dirtyCount = 0
 
-    /** 上次实际写盘的时刻（0 = 从未写盘）；写盘间隔的节流基准。 */
+    /** 上次安排写盘的时刻（0 = 从未安排）；写盘间隔的节流基准。成功后
+     * 刷新为完成时刻；失败时保留安排时刻——脏计数已恢复、延时重试接手，
+     * 不因“刚安排过”丢数据。 */
     private var lastFlushMs = 0L
+
+    /**
+     * 成功写盘的代次：每次成功写盘后递增。写盘失败时只当快照之后
+     * 没有更新的成功写盘，才把脏计数恢复并重试——其后已有成功写盘
+     * 覆盖本批快照内容时，不再重复恢复（避免无害的重写盘）。
+     */
+    private var flushGeneration = 0L
 
     /** 已挂起的延时写盘任务（仅当 dirtyCount > 0 时存在）；锁内访问。 */
     private var pendingFlush: java.util.concurrent.ScheduledFuture<*>? = null
@@ -174,23 +183,40 @@ class UserCollocationStore(
     }
 
     /**
-     * 安排一次实际写盘：取消挂起的延时任务、清脏计数、记写盘时刻，
-     * 锁内序列化成文本，写文件在执行器线程做，不阻塞调用方。
-     * 调用方须持 lock。
+     * 安排一次实际写盘：取消挂起的延时任务、锁内序列化成文本，写文件
+     * 在执行器线程做，不阻塞调用方。调用方须持 lock。
+     *
+     * 失败不丢数据（B-M1）：写盘失败（序列化失败／磁盘满／权限／
+     * tmp rename 与回落写盘双败）时脏计数恢复、挂延时重试；显式
+     * flush()（键盘收起／销毁）同样靠恢复后的脏计数再次触发。
+     * 脏计数只在快照取走时清零；[lastFlushMs] 在安排时即更新（节流
+     * 基准）——写盘是异步执行的，若只在成功后更新，安排与完成之间
+     * 的窗口内 isFlushDueLocked 恒为真（lastFlushMs 仍为 0），突发
+     * 学习每满 40 条就再安排一次立即写盘，节流失效。
+     * 成功后 [lastFlushMs] 再刷新为完成时刻。失败的那批学习不再因
+     * “已清零”而永久丢失。
      */
     private fun scheduleFlushLocked(now: Long) {
         if (loadFailed) return // 读未成功前不落盘，仅留内存状态
         pendingFlush?.cancel(false)
         pendingFlush = null
-        dirtyCount = 0
-        lastFlushMs = now
-        // 快照在锁内序列化成文本，写文件在执行器线程做，不阻塞调用方
+        // 快照在锁内序列化成文本；序列化失败即保留脏数据、挂延时重试
         val text = runCatching {
             pruneLocked()
             serialize(table)
-        }.getOrNull() ?: return
+        }.getOrNull()
+        if (text == null) {
+            ensureDelayedFlushLocked(now)
+            return
+        }
+        val pendingDirty = dirtyCount
+        val generationAtSchedule = flushGeneration
+        dirtyCount = 0
+        // 节流基准在安排时即更新（见本函数注释）：异步写盘完成前
+        // lastFlushMs 若仍为旧值，突发学习会反复撞上“已满间隔”。
+        lastFlushMs = now
         flushScheduler.execute {
-            runCatching {
+            val ok = runCatching {
                 file.parentFile?.mkdirs()
                 val tmp = File(file.parentFile, file.name + ".tmp")
                 tmp.writeText(text, Charsets.UTF_8)
@@ -198,7 +224,20 @@ class UserCollocationStore(
                     file.writeText(text, Charsets.UTF_8)
                     tmp.delete()
                 }
-                flushCount++
+            }.onFailure {
+                // 失败的 tmp 残留清掉，避免下次写盘误认
+                runCatching { File(file.parentFile, file.name + ".tmp").delete() }
+            }.isSuccess
+            synchronized(lock) {
+                if (ok) {
+                    flushCount++
+                    lastFlushMs = System.currentTimeMillis()
+                    flushGeneration++
+                } else if (flushGeneration == generationAtSchedule) {
+                    // 本批快照之后无成功写盘覆盖：脏计数恢复、挂延时重试
+                    dirtyCount += pendingDirty
+                    ensureDelayedFlushLocked(System.currentTimeMillis())
+                }
             }
         }
     }

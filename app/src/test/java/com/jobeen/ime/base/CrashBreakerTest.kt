@@ -160,4 +160,52 @@ class CrashBreakerTest {
         assertTrue(crashBreakerGated(journal, trip, now))
         assertEquals(now.toString(), trip.readText())
     }
+
+    // ---- B-L8：native 追加侧不修整，Java 侧在熔断判定入口顺带截断；
+    // 计数只读尾部，长日志不再全量读入 ----
+
+    @Test
+    fun journal_countRecent_longJournalReadsTailOnly() {
+        val journal = File(tmp.newFolder("crash-long"), JOURNAL_FILE_NAME)
+        val now = 5_000_000L
+        // 2500 行旧崩溃（窗口外）＋3 行窗口内：计数只关心尾部
+        val lines = buildString {
+            repeat(2500) { append("${now - 1_000_000 - it} java\n") }
+            append("${now - 1000} java\n")
+            append("${now - 2000} native:11:0\n")
+            append("${now - 3000} java\n")
+        }
+        journal.writeText(lines)
+        assertEquals(3, countRecentCrashes(journal, now))
+    }
+
+    @Test
+    fun journal_trimCrashJournal_trimsToMaxLines() {
+        val journal = File(tmp.newFolder("crash-trim"), JOURNAL_FILE_NAME)
+        val lines = (1..150).joinToString("\n") { "$it java" } + "\n"
+        journal.writeText(lines)
+        trimCrashJournal(journal)
+        val kept = journal.readLines()
+        assertEquals(100, kept.size)
+        assertEquals("51 java", kept.first())
+        assertEquals("150 java", kept.last())
+    }
+
+    @Test
+    fun journal_trimCrashJournal_shortJournalUntouched() {
+        val journal = File(tmp.newFolder("crash-short"), JOURNAL_FILE_NAME)
+        journal.writeText("1 java\n2 java\n")
+        trimCrashJournal(journal)
+        assertEquals(listOf("1 java", "2 java"), journal.readLines())
+    }
+
+    @Test
+    fun gate_trimsOvergrownJournalOnEntry() {
+        val (journal, trip) = gateFiles()
+        val now = 5_000_000L
+        val lines = (1..150).joinToString("\n") { "${now - 1_000_000} java" } + "\n"
+        journal.writeText(lines)
+        assertFalse(crashBreakerGated(journal, trip, now))
+        assertEquals(100, journal.readLines().size)
+    }
 }

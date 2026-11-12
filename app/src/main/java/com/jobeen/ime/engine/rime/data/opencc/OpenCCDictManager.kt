@@ -61,9 +61,14 @@ object OpenCCDictManager {
      * .ocd2，异步构建与部署并发时新词典要等下一次部署才被读到
      * （方案更新后繁简转换沿用旧词典）。Rime.startRime 在 bootstrap
      * 之前同步调用本函数，保证本次部署即用新词典。
+     *
+     * @return 全部词典转换成功（或无须转换）时为 true；任一本转换失败
+     *   时为 false——调用方（部署路径）据此判定部署成败，不得静默沿用
+     *   旧 .ocd2 并报成功（E-L2）。失败的词典不记指纹，下次启动／部署重试。
      */
     @JvmStatic
-    fun buildOpenCCDict() = synchronized(buildLock) {
+    fun buildOpenCCDict(): Boolean = synchronized(buildLock) {
+        var allOk = true
         for (d in getAllDictionaries()) {
             if (d is TextDictionary) {
                 val src = d.file
@@ -82,11 +87,13 @@ object OpenCCDictManager {
                         convertedFingerprints[src.absolutePath] = fingerprint
                         Timber.d("Took $it to convert to $r")
                     }.onFailure {
+                        allOk = false
                         Timber.e(it, "Failed to convert $d")
                     }
                 }
             }
         }
+        allOk
     }
 
     // 已删除 importFromInputStream：全仓零调用方的死代码，且其无上限 copyTo

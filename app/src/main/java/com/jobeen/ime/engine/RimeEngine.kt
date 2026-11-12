@@ -439,7 +439,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 不挂起、不抛错。作业体执行中抛错时消费循环同样会调它，
      * 此时作业体自身的 finally/完成已先行，重复调用必须无害。
      */
-    private class QueuedJob(
+    internal class QueuedJob(
         val block: suspend RimeApi.() -> Unit,
         val onDropped: (() -> Unit)? = null,
     )
@@ -643,8 +643,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         }
 
         //observe engine Messages at first.
+        // 背压隔离（E-M2）：不用挂起的 actions.send——UI 消费一慢会向上
+        // 传导，native 通知分发整条停摆、部署结果通知被堵在无界队列后；
+        // dispatchAction 在队列满时丢易变类、控制类转异步补投，收集器永不挂起。
         scope.launch {
-            daemon.observeMessages { actions.send(Action.RimeMessage(it)) }
+            daemon.observeMessages { dispatchAction(Action.RimeMessage(it)) }
         }
         session = daemon.createSession(javaClass.name)
         scope.launch {
@@ -676,6 +679,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         job()
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
+                    // 取消到达时作业体未执行（正挂在 runOnReady 或 receive
+                    // 上）：丢弃回调是等待方的唯一复位方，须在循环死亡前
+                    // 调用，否则 deployAndAwait 的等待方空等满整个超时（E-S3）。
+                    entry.onDropped?.invoke()
                     throw e
                 } catch (e: Exception) {
                     // 单个 job 失败（如引擎在就绪前被停掉，whenReady 抛
@@ -710,17 +717,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 try {
                     withTimeout(600_000) { joinMaintenanceThread() }
                 } catch (e: TimeoutCancellationException) {
-                    EngineDeployState.setRunning(false)
+                    EngineDeployState.releaseRunning()
                     throw IllegalStateException("deploy join timeout")
                 }
-                actions.send(
+                // 与部署结果通知同一投递口径（E-M2）：Finish 与在途的
+                // Success/Failure 走同一 dispatchAction/resend 通道保序，
+                // 不因队列满被后者超车、让 Finish 处理器误判本轮结果。
+                dispatchAction(
                     Action.RimeMessage(
                         RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
                     )
                 )
                 currentSchema().applyOptions(this)
             } finally {
-                EngineDeployState.setRunning(false)
+                EngineDeployState.releaseRunning()
             }
         }
     }
@@ -730,6 +740,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         prefs = null
         actions.close()
         jobs.close()
+        // 关库后通道里残留的作业永不会被消费循环取走：逐条调丢弃回调，
+        // 让部署等待方快速失败而不是空等超时（E-S3）。消费循环并发取走
+        // 的条目走它自己的取消路径（见上），同一条目只会被一方取走，不重复。
+        drainJobsOnFinalize(jobs)
         // 引擎死后排队未执行的部署作业永不会跑：其入口置位
         // （reload/deployAndAwait）与超时孤儿在此统一清零，否则
         // 进程级单例标志会把下一个引擎实例也堵死。锁内先取消
@@ -743,8 +757,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         synchronized(deployGateLock) {
             scope.cancel()
             resendScope.cancel()
-            EngineDeployState.setRunning(false)
-            EngineDeployState.setOrphanRunning(false)
+            EngineDeployState.releaseRunning()
+            EngineDeployState.releaseOrphanRunning()
         }
         preferDbScope.cancel()
         predictionManager?.destroy()
@@ -1597,7 +1611,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                 try {
                                     withTimeout(600_000) { joinMaintenanceThread() }
                                 } catch (e: TimeoutCancellationException) {
-                                    EngineDeployState.setRunning(false)
+                                    EngineDeployState.releaseRunning()
                                     throw IllegalStateException("deploy join timeout")
                                 }
                                 // 成功且部署前后指纹稳定时才存（部署中输入变了则不存）。
@@ -1610,16 +1624,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                     }
                                 }
                             }
-                            actions.send(
+                            // 与部署结果通知同一投递口径（E-M2，见 initialize 作业）。
+                            dispatchAction(
                                 Action.RimeMessage(
                                     RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
                                 )
                             )
                         } finally {
-                            EngineDeployState.setRunning(false)
+                            EngineDeployState.releaseRunning()
                         }
                     },
-                    onDropped = { EngineDeployState.setRunning(false) },
+                    onDropped = { EngineDeployState.releaseRunning() },
                 )
             }
         }
@@ -1892,7 +1907,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
             is EngineMessage.Depoly -> {
                 when (msg.state) {
-                    EngineMessage.Depoly.State.Start -> state.initialized = false
+                    EngineMessage.Depoly.State.Start -> {
+                        state.initialized = false
+                        deployRunTracker.onStart()
+                    }
                     // native 部署结果：Success/Failure 到达时完成部署作业
                     // 等待的 outcome（无 waiter 时为空操作）。Failure 除
                     // 完成 outcome 外还做两件 waiter 无关的事：标记单发
@@ -1903,6 +1921,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     EngineMessage.Depoly.State.Success ->
                         pendingDeployOutcome?.complete(true)
                     EngineMessage.Depoly.State.Failure -> {
+                        deployRunTracker.onFailure()
                         pendingDeployOutcome?.complete(false)
                         pendingRedeploy.markFailed()
                         context?.let {
@@ -1913,6 +1932,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         }
                     }
                     EngineMessage.Depoly.State.Finish -> {
+                        // 合成的 Finish 必须查本轮实际结果（E-S1）：native
+                        // 部署已明确失败时不置 initialized、不刷新方案表与
+                        // 选项，也不再向 UI 发一条 Finish 与先到的 Failure
+                        // 自相矛盾；补跑标记与失败通知已由 Failure 处理器
+                        // 记下，此处幂等再记一次。
+                        if (deployRunTracker.consumeFinishFailed()) {
+                            pendingRedeploy.markFailed()
+                            return
+                        }
                         state.initialized = true
                         val triggerHook = !state.initHookTriggered
                         state.initHookTriggered = true
@@ -1960,6 +1988,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             // 重放（下行）覆盖密码框等字段特例，与偏好监听
                             // 同口径。
                             currentSchema().applyOptions(this)
+                            // 部署窗口内到达的 Schema 通知丢 kind 更新（E-M4）：
+                            // snapshotOnRimeMain 在部署窗口内返回 null，
+                            // applySchemaKind 不被调用；Finish 是窗口关闭后
+                            // 的第一个收尾点，按当前方案的 kind 重刷音节
+                            // 切分器，否则切分一直用旧方案的切分器直到下
+                            // 次切方案。无部署窗口丢失时本调用是幂等重刷。
+                            EngineMessageConverter.applySchemaKind(currentSchema.kind)
                             editorInfo?.let { applyFieldOptions(it) }
                         }
                     }
@@ -2043,7 +2078,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      */
     private fun dispatchAction(action: Action) {
         if (actions.trySend(action).isSuccess) return
-        if (action.isDroppable()) return
+        if (action.isDroppable()) {
+            // 被丢的候选帧若正是 Commit 后等的那帧空候选，suppress 标志
+            // 须随丢弃同步清掉，否则滞留吞掉下一帧合法空候选（E-L6）。
+            // 先到先得：Commit 之后的第一帧候选必先到，它被丢即标志
+            // 的消费对象已丢；其余丢弃不触标志。
+            if (action is Action.RimeMessage &&
+                shouldClearSuppressOnDrop(
+                    action.message.messageType, state.suppressNextEmptyCandidates
+                )
+            ) {
+                state.suppressNextEmptyCandidates = false
+            }
+            return
+        }
         resendScope.launch { actions.send(action) }
     }
 
@@ -2064,15 +2112,28 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             // 通道已关（引擎 finalize 后旧引用仍调 sendJob）：直接丢弃，
             // 不许再异步补投——已关通道的 send 必抛 ClosedSendChannelException，
             // 无 handler 时会走默认未捕获异常处理杀进程。关库后的作业
-            // 本就无处执行，丢弃是正确语义（finalize 已清全部置位，
-            // 丢弃回调只由消费循环调，不由本路径调，见消费循环注释）。
-            if (jobs.isClosedForSend) return
+            // 本就无处执行，丢弃是正确语义（finalize 已清全部置位）；
+            // 丢弃回调仍须调（E-S3）：它是部署等待方快速失败的唯一路径，
+            // 不调则等待方空等满整个超时。
+            if (jobs.isClosedForSend) {
+                entry.onDropped?.invoke()
+                return
+            }
             // 队列满说明引擎正被长任务堵住：任务都是控制类（导词典、
             // 清屏、切方案等），不许丢，转异步挂起入队等空位；补投仍
-            // 可能撞上关库窗口，故用 runCatching 兜底（handler 是第三层）。
-            // 补投走单并发重发域（见 createResendDispatcher），保满队列
-            // 边界的严格 FIFO。
-            resendScope.launch { runCatching { jobs.send(entry) } }
+            // 可能撞上关库窗口，故失败时调丢弃回调（E-S3），取消则
+            // 重抛（不吞取消语义）；补投走单并发重发域（见
+            // createResendDispatcher），保满队列边界的严格 FIFO。
+            resendScope.launch {
+                try {
+                    jobs.send(entry)
+                } catch (e: CancellationException) {
+                    entry.onDropped?.invoke()
+                    throw e
+                } catch (e: Exception) {
+                    entry.onDropped?.invoke()
+                }
+            }
         }
     }
 
@@ -2649,7 +2710,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     scope.isActive,
                 )
             ) return
-            EngineDeployState.setRunning(true)
+            // 门内抢占（D-L6 跟进）：查—置之间另一路部署作业可能已
+            // 置位，CAS 抢不到即已有部署在跑，本次 Reload 不再重复派发
+            // （丢弃不补跑，Finish 必触发方案刷新）。
+            if (!EngineDeployState.tryAcquireRunning()) return
         }
         // 丢弃不补跑的定论：调用方是 fire-and-forget（返回 Unit），
         // 触发点（工具栏、方案更新/语法模型下载完成回调、FAB）均
@@ -2688,6 +2752,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     // 无 waiter 的 reload/initialize 路径不挂，处理器完成调用为空操作。
     @Volatile
     private var pendingDeployOutcome: CompletableDeferred<Boolean>? = null
+
+    // 本轮部署的 Start/Failure 跟踪（E-S1）：initialize/Reload 合成的
+    // Finish 在此查本轮实际结果。只在 reduce 串行点读写（Depoly 分支），无需加锁。
+    private val deployRunTracker = DeployRunTracker()
 
     /** 下次键盘出现时消费一次失败补跑：true = 本次出现应补跑一次。 */
     fun consumePendingRedeploy(): Boolean = pendingRedeploy.consumeForRetry()
@@ -2777,8 +2845,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      *   waitingGaveUp 放闸——孤儿仍在编译，放闸会让更新换位撞上它。
      *   凭证 CAS 使重复释放无害，丢弃回调与等待方 finally 的双放不
      *   会误清后来的持有者。
-     * - 置位 EngineDeployState.setRunning(true)，
-     *   标志由部署作业收尾复位（先复位再 complete，等待方醒来时状态已一致）。
+     * - 门内以 EngineDeployState.tryAcquireRunning() 抢占部署位
+     *   （抢不到按门禁失败返回 FAILED），标志由部署作业收尾复位
+     *   （先复位再 complete，等待方醒来时状态已一致）。
      * - 通过 sendDeployJob 串行投递任务：deploy() -> joinMaintenanceThread() ->
      *   等 native 成功/失败通知（上限 DEPLOY_OUTCOME_TIMEOUT_MS，超时按未知
      *   走既有成功路径）-> 失败不合成 Finish、返回 FAILED 并记单发补跑
@@ -2834,13 +2903,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             return DeployAwaitResult.FAILED
         }
         val gateOk = synchronized(deployGateLock) {
-            val ok = deployGateAllows(
+            var ok = deployGateAllows(
                 EngineDeployState.isRunning(),
                 EngineDeployState.isOrphanRunning(),
                 scope.isActive,
             )
             if (ok) {
-                EngineDeployState.setRunning(true)
+                // 门内抢占（D-L6 跟进）：查—置之间另一路可能已抢进，
+                // CAS 抢不到按门禁失败处理（返回 FAILED，不并发部署）。
+                ok = EngineDeployState.tryAcquireRunning()
             }
             ok
         }
@@ -2913,7 +2984,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                     deploy()
                                     joinMaintenanceThread()
                                 }
-                                actions.send(
+                                // 与部署结果通知同一投递口径（E-M2，见 initialize 作业）。
+                                dispatchAction(
                                     Action.RimeMessage(
                                         RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
                                     )
@@ -2933,15 +3005,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 标志先于 complete 复位：等待方醒来时状态已一致，
                         // 不会把刚完成的部署误判为忙；以下均为非挂起调用，
                         // 作业取消也不会打断这段收尾。
-                        EngineDeployState.setRunning(false)
-                        EngineDeployState.setOrphanRunning(false)
+                        EngineDeployState.releaseRunning()
+                        EngineDeployState.releaseOrphanRunning()
                         deferred.complete(result)
                     } finally {
                         // 兜底复位（幂等）：complete 前后的任何异常路径都不滞留标志。
                         // 等待方已放弃时（超时/取消，孤儿仍在跑）由作业体放闸；
                         // 否则放闸归等待方 finally——凭证 CAS 使双放无害。
-                        EngineDeployState.setRunning(false)
-                        EngineDeployState.setOrphanRunning(false)
+                        EngineDeployState.releaseRunning()
+                        EngineDeployState.releaseOrphanRunning()
                         if (waitingGaveUp.get()) UpdateImportGate.release(gateToken)
                     }
                 },
@@ -2952,8 +3024,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 串行的，native 部署永不并发，新部署至多多一次排队
                 // 执行，远好于孤儿永久钉死（见报告契约审计）。
                 onDropped = {
-                    EngineDeployState.setRunning(false)
-                    EngineDeployState.setOrphanRunning(false)
+                    EngineDeployState.releaseRunning()
+                    EngineDeployState.releaseOrphanRunning()
                     deferred.complete(DeployAwaitResult.FAILED)
                 },
             )
@@ -2964,10 +3036,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 时为 FAILED 且不记孤儿，见 deployWaitTimeoutResult。
                 val timeoutResult = deployWaitTimeoutResult(scope.isActive)
                 if (timeoutResult == DeployAwaitResult.FAILED) {
-                    EngineDeployState.setRunning(false)
-                    EngineDeployState.setOrphanRunning(false)
+                    EngineDeployState.releaseRunning()
+                    EngineDeployState.releaseOrphanRunning()
                 } else {
-                    EngineDeployState.setOrphanRunning(true)
+                    // 记孤儿（D-L6 跟进）：CAS 抢占，已记过即 no-op。
+                    EngineDeployState.tryAcquireOrphanRunning()
                     // 孤儿仍在编译：等待方不放闸，放闸归作业体收尾。
                     waitingGaveUp.set(true)
                 }
@@ -2975,10 +3048,11 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             }
         } catch (e: CancellationException) {
             if (!scope.isActive) {
-                EngineDeployState.setRunning(false)
-                EngineDeployState.setOrphanRunning(false)
+                EngineDeployState.releaseRunning()
+                EngineDeployState.releaseOrphanRunning()
             } else {
-                EngineDeployState.setOrphanRunning(true)
+                // 记孤儿（D-L6 跟进）：CAS 抢占，已记过即 no-op。
+                EngineDeployState.tryAcquireOrphanRunning()
                 // 与超时同理：孤儿仍在编译，放闸归作业体收尾。
                 waitingGaveUp.set(true)
             }
@@ -3189,3 +3263,66 @@ internal fun orphanDeployNeedsRealign(
     before: OrphanDeployTarget?,
     after: OrphanDeployTarget?,
 ): Boolean = waitingGaveUp && before != null && after != null && before != after
+
+/**
+ * 部署轮次的成功/失败跟踪（E-S1）：native 部署以 Start 开始、
+ * Success/Failure 结束；initialize/Reload 在 join 后合成 Finish——
+ * 合成的 Finish 必须查本轮的实际结果，不能无条件报成功。
+ * - Start 打开一轮；Failure 记下本轮失败；Finish 消费一次判定。
+ * - 失败只毒化其后的第一个 Finish：同一轮的第二个 Finish（跳过部署
+ *   的补发等）不再受牵连；新一轮 Start 后旧失败按轮次失效。
+ * - 无 Start 的 Failure 同样记在本轮（部署未及发 Start 即失败时，
+ *   下一个 Finish 仍应按失败处理）；从未部署过时失败标志为 -1，
+ *   与轮次 0 不相等，Finish 恒按成功处理。
+ * 只在 reduce 串行点调用（handleEngineMessage 的 Depoly 分支），无需加锁。
+ */
+internal class DeployRunTracker {
+    private var runId = 0L
+    private var failedRunId = -1L
+    private var consumedRunId = -1L
+
+    fun onStart() {
+        runId++
+    }
+
+    fun onFailure() {
+        failedRunId = runId
+    }
+
+    /**
+     * 消费一次 Finish 判定：本轮明确失败且尚未被 Finish 消费过时
+     * 返回 true；否则返回 false。无论结果都记下本轮已消费。
+     */
+    fun consumeFinishFailed(): Boolean {
+        val failed = failedRunId == runId && consumedRunId != runId
+        consumedRunId = runId
+        return failed
+    }
+}
+
+/**
+ * 动作队列满时丢弃 RimeMessage 的 suppress 标志清理判定（E-L6，纯函数）：
+ * Commit 置起的 suppressNextEmptyCandidates 由随后第一帧 Candidates
+ * 消费；该帧若在队列满时被丢弃，标志须随丢弃同步清掉，否则滞留吞掉
+ * 下一帧合法空候选。只有产出 EngineMessage.Candidates 的两类
+ * （Candidate 首屏／Menu 菜单）是标志的消费对象，其余类型不触标志。
+ */
+internal fun shouldClearSuppressOnDrop(
+    messageType: RimeMessage.MessageType,
+    suppressSet: Boolean,
+): Boolean = suppressSet &&
+    (messageType == RimeMessage.MessageType.Candidate ||
+        messageType == RimeMessage.MessageType.Menu)
+
+/**
+ * finalize 时排空 jobs 通道（E-S3）：关库后残留的作业永不会被消费循环
+ * 取走，逐条调丢弃回调让等待方快速失败。单条回调抛错不得阻断其余
+ * 条目（回调契约本是不抛错，此处是纵深防御）。tryReceive 只取已入队
+ * 条目：消费循环并发取走的条目走它自己的取消路径，两边不重复。
+ */
+internal fun drainJobsOnFinalize(jobs: Channel<RimeEngine.QueuedJob>) {
+    while (true) {
+        val entry = jobs.tryReceive().getOrNull() ?: break
+        runCatching { entry.onDropped?.invoke() }
+    }
+}

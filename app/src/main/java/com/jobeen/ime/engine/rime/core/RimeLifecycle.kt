@@ -2,15 +2,11 @@
 
 package com.jobeen.ime.engine.rime.core
 
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancelChildren
-import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.concurrent.ConcurrentLinkedQueue
-import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.coroutines.Continuation
-import kotlin.coroutines.resume
 
 interface RimeLifecycle {
     val currentState: State
@@ -70,50 +66,47 @@ suspend fun <T> RimeLifecycle.whenReady(block: suspend CoroutineScope.() -> T): 
     }
     val registry = this as? RimeLifecycleRegistry
         ?: throw IllegalStateException("whenReady requires a RimeLifecycleRegistry")
-    val signalled = AtomicBoolean(false)
-    val failed = AtomicBoolean(false)
-    val continuation = AtomicReference<Continuation<Unit>?>()
-    val observer = LifecycleObserver { s ->
-        when (s) {
-            RimeLifecycle.State.READY -> {
-                signalled.set(true)
-                continuation.getAndSet(null)?.resume(Unit)
-            }
-            RimeLifecycle.State.STOPPED -> {
-                // 等待期间引擎被完全停掉：唤醒等待方并让它失败，
-                // 而不是无限期等一个不会再来的 READY。
-                failed.set(true)
-                continuation.getAndSet(null)?.resume(Unit)
-            }
-            else -> Unit
-        }
-    }
-    registry.addObserver(observer)
-    try {
-        // READY/STOPPED may have been emitted between the initial check and observer registration.
-        when (currentState) {
-            RimeLifecycle.State.READY -> {
-                signalled.set(true)
-                continuation.getAndSet(null)?.resume(Unit)
-            }
-            RimeLifecycle.State.STOPPED -> {
-                failed.set(true)
-                continuation.getAndSet(null)?.resume(Unit)
-            }
-            else -> Unit
-        }
-        suspendCancellableCoroutine { cont ->
-            continuation.set(cont)
-            if ((signalled.get() || failed.get()) && continuation.compareAndSet(cont, null)) {
-                cont.resume(Unit)
+    // STOPPED 后紧跟一次重启时，该 STOPPED 不是终态（E-M5）：STOPPING 期
+    // createSession 登记的 startupPending 由 finalize 末尾消费、同步重走
+    // startup——等待方若在 STOPPED 上直接失败，停机窗口内建的会话注定
+    // 失败一次。失败判定后复检当前态：已在重走启动（STARTING／STOPPING／
+    // READY）时继续等下一轮信号；仍为 STOPPED 时才是真终态，再抛。
+    // 每轮都挂起等信号，不空转；重启本身失败会再发 STOPPED，届时再抛。
+    //
+    // 信号用 CompletableDeferred 承接：观察者只 complete 它，不直接
+    // resume 等待方手存的 Continuation——后者恢复后抛错时，异常会越过
+    // 等待协程的 Deferred、直接逃到外层作用域（waiterFailsWhenStopped-
+    // WithoutRestart 实证：RimeStoppedException 从 runBlocking 逃出，
+    // 而不是由 deferred.await() 捕获）；await() 是库管理的挂起，之后
+    // 抛错走正常协程失败路径，可被调用方按单条失败捕获。
+    while (true) {
+        val signal = CompletableDeferred<RimeLifecycle.State>()
+        val observer = LifecycleObserver { s ->
+            if (s == RimeLifecycle.State.READY || s == RimeLifecycle.State.STOPPED) {
+                signal.complete(s)
             }
         }
-        if (failed.get()) {
-            throw RimeStoppedException()
+        registry.addObserver(observer)
+        try {
+            // READY/STOPPED 可能在注册观察者之前已发出：复检当前态，
+            // 已是终态信号时直接完成，避免挂死在不会再来的信号上
+            // （complete 已完成时是 no-op，不会覆盖先到的信号值）。
+            when (val cur = currentState) {
+                RimeLifecycle.State.READY -> signal.complete(RimeLifecycle.State.READY)
+                RimeLifecycle.State.STOPPED -> signal.complete(RimeLifecycle.State.STOPPED)
+                else -> Unit
+            }
+            when (signal.await()) {
+                RimeLifecycle.State.READY -> return block(lifecycleScope)
+                RimeLifecycle.State.STOPPED -> {
+                    if (currentState != RimeLifecycle.State.STOPPED) continue
+                    throw RimeStoppedException()
+                }
+                else -> continue
+            }
+        } finally {
+            registry.removeObserver(observer)
         }
-        return block(lifecycleScope)
-    } finally {
-        registry.removeObserver(observer)
     }
 }
 

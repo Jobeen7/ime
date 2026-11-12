@@ -80,8 +80,16 @@ class SetupActivity : ComponentActivity() {
                     onOpenImeSettings = { openImeSettings() },
                     onShowImePicker = { showImePicker() },
                     onFinish = {
-                        setResult(RESULT_OK)
-                        finish()
+                        if (isImeEnabled && isImeDefault) {
+                            setResult(RESULT_OK)
+                            finish()
+                        } else {
+                            // U-S5：未配置时按钮文案是“进入设置”，旧行为却返回
+                            // RESULT_OK、直接送回主页——主 Activity 误以为向导
+                            // 已完成。未配置时真正去系统输入法设置（与文案一致），
+                            // 留在向导里；配好后按钮变“开始使用”，点按才返回 OK。
+                            openImeSettings()
+                        }
                     },
                 )
             }

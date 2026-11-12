@@ -4,13 +4,10 @@ import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeApi
 import com.jobeen.ime.engine.rime.core.RimeLifecycle
 import com.jobeen.ime.engine.rime.core.RimeMessage
-import com.jobeen.ime.engine.rime.core.lifecycleScope
 import com.jobeen.ime.engine.rime.core.whenReady
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
-import kotlinx.coroutines.flow.first
 import timber.log.Timber
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -46,20 +43,8 @@ object RimeDaemon {
             throw IllegalStateException("Session $name is not established")
         }
 
-        override fun <T> run(block: suspend RimeApi.() -> T): T = ensureEstablished {
-            runBlocking { block(rimeImpl) }
-        }
-
         override suspend fun <T> runOnReady(block: suspend RimeApi.() -> T): T = ensureEstablished {
             realRime.lifecycle.whenReady { block(rimeImpl) }
-        }
-
-        override fun runIfReady(block: suspend RimeApi.() -> Unit) {
-            ensureEstablished {
-                if (realRime.isReady) {
-                    realRime.lifecycleScope.launch { block(rimeImpl) }
-                }
-            }
         }
 
         override val lifecycleScope: CoroutineScope
@@ -70,7 +55,13 @@ object RimeDaemon {
         if (name in sessions) {
             return@withLock sessions.getValue(name)
         }
-        if (realRime.lifecycle.currentState == RimeLifecycle.State.STOPPED) {
+        // STOPPING 期同样触发启动（E-M5）：Rime.startup() 会把请求登记
+        // 为 startupPending、停机完成时重走 startup；只在 STOPPED 时
+        // 启动会让停机窗口内建的会话注定失败（runOnReady 等到 STOPPED
+        // 即抛 RimeStoppedException），下一次 createSession 才会自愈。
+        if (realRime.lifecycle.currentState == RimeLifecycle.State.STOPPED ||
+            realRime.lifecycle.currentState == RimeLifecycle.State.STOPPING
+        ) {
             realRime.startup()
         }
         val session = establish(name)
@@ -87,9 +78,6 @@ object RimeDaemon {
             realRime.finalize()
         }
     }
-
-    suspend fun awaitMessage(predicate: (RimeMessage<*>) -> Boolean): RimeMessage<*> =
-        realRime.messageFlow.first(predicate)
 
     suspend fun observeMessages(onMessage: suspend (RimeMessage<*>) -> Unit) {
         realRime.messageFlow.collect { onMessage(it) }

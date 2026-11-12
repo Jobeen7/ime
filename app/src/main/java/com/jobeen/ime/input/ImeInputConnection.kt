@@ -133,6 +133,7 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     private fun replaceAndSpan(
         text: CharSequence?,
         useComposing: Boolean,
+        newCursorPosition: Int = 1,
     ) {
         val incoming = text ?: ""
         val (s, e) = composingRange() ?: (selStart() to selEnd())
@@ -148,7 +149,11 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
                 Spanned.SPAN_INCLUSIVE_INCLUSIVE,
             )
         }
-        val pos = (s + fitted.length).coerceIn(0, editable.length)
+        // 光标按 newCursorPosition 落位（I-L1，AOSP 口径）：>0 时相对
+        // 插入文本末尾（1 = 紧贴末尾，与旧实现一致），<=0 时相对插入
+        // 文本开头（0 = 紧贴开头）；钳回文本内。旧实现恒落末尾，
+        // 忽略该参数，成对符号等调用方拿不到括号中间的光标。
+        val pos = cursorAfterCommit(s, fitted.length, newCursorPosition, editable.length)
         Selection.setSelection(editable, pos)
         selectionAnchor = null
         selectionCursor = null
@@ -248,7 +253,21 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     override fun getExtractedText(
         request: ExtractedTextRequest?,
         flags: Int,
-    ): ExtractedText? = null
+    ): ExtractedText? {
+        // 恒 null 偏离契约（I-L1）：调用方（ClearedTextLedger
+        // .isAtFieldHead、成对提交的光标回退兜底）读不到选区，位置
+        // 判定退化。返回真实全文与选区；request 为空时返回 null。
+        if (request == null) return null
+        return ExtractedText().apply {
+            text = editable.toString()
+            startOffset = 0
+            selectionStart = selStart()
+            selectionEnd = selEnd()
+            this.flags = 0
+            partialStartOffset = 0
+            partialEndOffset = editable.length
+        }
+    }
 
     override fun deleteSurroundingText(inLength: Int, outLength: Int): Boolean {
         // 系统契约里长度为负无意义且不予执行：直接返回 false——钳为 0
@@ -320,17 +339,20 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
     override fun setComposingText(text: CharSequence?, newCursorPosition: Int): Boolean {
         // 组字中间态不入 undo 栈：桥接编辑时每键一次全文快照纯属浪费，
         // 撤销的粒度应该是已提交/已删除的文本（commit/delete 仍记录）
-        replaceAndSpan(text, useComposing = true)
+        replaceAndSpan(text, useComposing = true, newCursorPosition = newCursorPosition)
         return true
     }
 
     override fun setComposingRegion(start: Int, end: Int): Boolean {
         editable.removeSpan(composingSpan)
-        if (end > start) {
+        // 越界钳制（I-L1）：非法区间直接 setSpan 会抛
+        // IndexOutOfBoundsException；钳后空区间即只清 span。
+        val (s, e) = clampComposingRegion(start, end, editable.length)
+        if (e > s) {
             editable.setSpan(
                 composingSpan,
-                start,
-                end,
+                s,
+                e,
                 Spanned.SPAN_INCLUSIVE_INCLUSIVE,
             )
         }
@@ -346,7 +368,7 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
 
     override fun commitText(text: CharSequence?, newCursorPosition: Int): Boolean {
         recordHistory()
-        replaceAndSpan(text, useComposing = false)
+        replaceAndSpan(text, useComposing = false, newCursorPosition = newCursorPosition)
         return true
     }
 
@@ -389,7 +411,11 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
                 return true
             }
             android.R.id.paste -> {
-                val clip = clipboard()?.primaryClip?.getItemAt(0)?.coerceToText(context ?: return false)
+                // 空剪贴板守卫（I-L1）：primaryClip 非空但条目数为 0
+                // 时 getItemAt(0) 抛 IndexOutOfBoundsException。
+                val primaryClip = clipboard()?.primaryClip
+                if (pasteItemIndex(primaryClip?.itemCount ?: 0) < 0) return false
+                val clip = primaryClip?.getItemAt(0)?.coerceToText(context ?: return false)
                 if (clip != null) {
                     recordHistory()
                     replaceAndSpan(clip, useComposing = false)
@@ -485,8 +511,8 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
      *   真实编辑器隔离”的桥接不变量，二者都不可取。
      * - 因此不调用 inputContentInfo.requestPermission：不读内容就
      *   不取授权，不给发送方留下一个无人释放的临时授权。
-     * - 给真实编辑器发图片走 [ImageContentCommit]（以真实连接为目标，
-     *   桥接态下它同样如实得到这里的 false）；本方法只负责桥接态的
+     * - 本连接只写内部 Editable 文本，不负责向真实编辑器发图片
+     *   （图片提交无生产调用方，见 I-L3）；本方法只负责桥接态的
      *   诚实拒绝。行为与此前一致（恒 false），改动仅为说明原因。
      */
     override fun commitContent(
@@ -563,3 +589,40 @@ class ImeInputConnection(private val context: Context? = null) : InputConnection
         return index
     }
 }
+
+/**
+ * 组字区间的越界钳制（纯函数，可单测；I-L1）：起止下标先钳回
+ * [0, length]，再保证 end >= start——钳后空区间（s == e）即
+ * “只清 span、不建新区”，setSpan 永不越界抛错。
+ */
+internal fun clampComposingRegion(start: Int, end: Int, length: Int): Pair<Int, Int> {
+    val s = start.coerceIn(0, length)
+    val e = end.coerceIn(s, length)
+    return s to e
+}
+
+/**
+ * 提交／组字后的光标落位（纯函数，可单测；I-L1，AOSP 口径）：
+ * newCursorPosition > 0 时相对插入文本末尾（1 = 紧贴末尾），
+ * <= 0 时相对插入文本开头（0 = 紧贴开头、-1 = 开头前一格）；
+ * 结果钳回 [0, textLength]。
+ */
+internal fun cursorAfterCommit(
+    start: Int,
+    insertedLength: Int,
+    newCursorPosition: Int,
+    textLength: Int,
+): Int {
+    val raw = if (newCursorPosition > 0) {
+        start + insertedLength + newCursorPosition - 1
+    } else {
+        start + newCursorPosition
+    }
+    return raw.coerceIn(0, textLength)
+}
+
+/**
+ * 粘贴的首条目下标（纯函数，可单测；I-L1）：剪贴板有条目时取
+ * 第 0 条，否则返回 -1（调用方直接返回 false，不调 getItemAt）。
+ */
+internal fun pasteItemIndex(itemCount: Int): Int = if (itemCount > 0) 0 else -1

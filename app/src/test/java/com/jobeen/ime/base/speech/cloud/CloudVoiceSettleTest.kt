@@ -105,4 +105,30 @@ class CloudVoiceSettleTest {
         settle.stop(discard = true)
         assertEquals(listOf("preview:一句", "commit:一句"), sink.calls)
     }
+
+    // B-S1：final 即收尾，迟到的 partial 不再覆写已提交文本，
+    // onEnded 也不再把陈旧 partial 二次提交。
+    @Test
+    fun settle_finalSettles_latePartialDropped_noDoubleCommit() {
+        val sink = RecordingSink()
+        val settle = CloudVoiceSettle(sink)
+        settle.onPartial("你好")
+        settle.onFinal("你好世界")
+        settle.onPartial("你好世界旧尾巴")
+        settle.onEnded()
+        settle.onFinal("再来一次终态")
+        assertEquals(listOf("preview:你好", "commit:你好世界"), sink.calls)
+        assertFalse(settle.hasPartial)
+    }
+
+    // 空 final 不收尾（旧口径）：其后的 partial 仍有效，onEnded 照常结算。
+    @Test
+    fun settle_emptyFinalDoesNotSettle() {
+        val sink = RecordingSink()
+        val settle = CloudVoiceSettle(sink)
+        settle.onFinal("")
+        settle.onPartial("随后")
+        settle.onEnded()
+        assertEquals(listOf("preview:随后", "commit:随后"), sink.calls)
+    }
 }

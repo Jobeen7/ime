@@ -173,7 +173,13 @@ fun catalogRows(): List<CatalogRow> = listOf(
     CatalogRow(R.string.clipboard_output_rule, "clipboard", R.string.clipboard_rules),
     CatalogRow(R.string.clipboard_return_after_paste, "clipboard", R.string.clipboard_rules),
     // 语音：模型组／插件组。
-    CatalogRow(R.string.voice_recognition_model, "voice", R.string.voice_model_group),
+    // U-M3：定位标题须是页内真实渲染的行标题——“识别模型”在语音页
+    // 不存在（模型行标题是“本地语音模型”），旧值永不到达、3 秒超时后
+    // 静默放弃；改指定真实行标题，搜索结果标题本身仍为“识别模型”。
+    CatalogRow(
+        R.string.voice_recognition_model, "voice", R.string.voice_model_group,
+        R.string.voice_local_model,
+    ),
     CatalogRow(R.string.cloud_voice_plugins, "voice", R.string.cloud_voice_plugins),
     // 词典：造词／手动备份／定期同步／高级。
     CatalogRow(R.string.word_creation_title, "userdict", R.string.word_creation_title),
@@ -209,6 +215,18 @@ fun catalogRows(): List<CatalogRow> = listOf(
     CatalogRow(R.string.shared_background, "appearance", R.string.global_style, R.string.global_style),
     CatalogRow(R.string.reset_default, "appearance", R.string.global_style, R.string.global_style),
     CatalogRow(R.string.app_appearance, "appearance", R.string.app_appearance),
+)
+
+/**
+ * 消费行定位请求的页键（U-M4）：这些页的屏用 [SettingsPageScaffold]，
+ * 首次组合即消费 [PendingFocus]。其余页（方案管理、皮肤库、脚本、
+ * 皮肤编辑器、系统文件页、输入统计）不用脚手架，标题写给它们会
+ * 残留到下一个脚手架页——搜索跳转只给消费页写标题。
+ */
+val FOCUS_CONSUMING_PAGE_KEYS: Set<String> = setOf(
+    "about", "appearance", "backup", "candidates", "clipboard",
+    "key_symbol", "keyboard", "rime", "scheme_update", "symbol_bar",
+    "toolbar", "userdict", "voice", "word_creation",
 )
 
 /** 解析后的页：搜索与渲染直接用字符串，不再碰资源。 */

@@ -5,6 +5,7 @@ import java.io.File
 import java.nio.file.Files
 import java.util.Collections
 import java.util.concurrent.Executors
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -22,7 +23,11 @@ class ApplyTransactionTest {
     private class FakePorts : ApplyTransaction.Ports {
         var buildResult = true
         var buildBehavior: (SkinGenRef) -> Boolean = { buildResult }
-        var switchBehavior: (SkinGenRef?) -> Boolean = { true }
+        var switchBehavior: suspend (SkinGenRef?) -> Boolean = { true }
+        /** 最近一次切换返回 false 时是否为被取代（K-S4 故障注入）。 */
+        var supersededOnSwitch: Boolean = false
+        private var lastSwitchSuperseded: Boolean = false
+        override fun wasSuperseded(): Boolean = lastSwitchSuperseded
         var firstRenderResult = true
         val switchCalls = mutableListOf<SkinGenRef?>()
         var buildCalls = 0
@@ -44,6 +49,7 @@ class ApplyTransactionTest {
             val peek = peekState
             if (peek != null) stateAtSwitch = peek()
             val ok = switchBehavior(ref)
+            lastSwitchSuperseded = !ok && supersededOnSwitch
             if (ok) installed = ref
             return ok
         }
@@ -455,6 +461,95 @@ class ApplyTransactionTest {
             result,
         )
         assertEquals(null, f.ports.installed)
+        assertEquals(2, f.active().generation)
+        assertEquals(ApplyState.PENDING, f.active().state)
+    }
+
+    // ---- 2026-11-12 审计 K-S4／K-S3：取代不是失败，不回滚、不盲写 ----
+
+    @Test
+    fun switchSupersededReturnsSupersededWithoutRollback() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        // 切换被更新请求取代：返回 Superseded，不重建上一好、不退默认。
+        f.ports.switchBehavior = { ref -> ref?.generation != 2 }
+        f.ports.supersededOnSwitch = true
+        val result = f.tx.apply(ref2)
+        assertEquals(ApplyTransaction.Result.Superseded(ref2), result)
+        // 运行态仍在上一好，记录收敛回切换前状态（非失败皮肤的 PENDING）。
+        assertEquals(ref1, f.ports.installed)
+        assertEquals(1, f.active().generation)
+        assertEquals(ApplyState.VERIFIED, f.active().state)
+        assertEquals(listOf(ref1, ref2), f.ports.switchCalls)
+        val lastGood = (f.store.readLastGood() as SkinLibraryStore.ReadResult.Ok).value
+        assertEquals(1, lastGood.generation)
+    }
+
+    @Test
+    fun switchSupersededDoesNotClobberWinnerRecord() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        val winner = f.skinGen("s1", 3, salt = "winner")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        // 获胜请求在本请求切换期间写下自己的 PENDING 记录，随后
+        // 本请求切换被拒：收敛时不得把获胜记录写回上一好。
+        f.ports.switchBehavior = { ref ->
+            if (ref?.generation == 2) {
+                f.store.writeActive(
+                    ActiveRecord(winner.skinId, winner.hash, winner.generation, ApplyState.PENDING, 8),
+                )
+                f.ports.supersededOnSwitch = true
+                false
+            } else {
+                true
+            }
+        }
+        val result = f.tx.apply(ref2)
+        assertEquals(ApplyTransaction.Result.Superseded(ref2), result)
+        val active = f.active()
+        assertEquals(3, active.generation)
+        assertEquals(ApplyState.PENDING, active.state)
+    }
+
+    @Test
+    fun rollbackSwitchSupersededReturnsSuperseded() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        f.store.writeActive(ActiveRecord(ref2.skinId, ref2.hash, ref2.generation, ApplyState.VERIFIED, 9))
+        f.ports.switchBehavior = { false }
+        f.ports.supersededOnSwitch = true
+        val result = f.tx.rollbackToLastGood()
+        assertEquals(ApplyTransaction.Result.Superseded(ref1), result)
+    }
+
+    // ---- 2026-11-12 审计 K-S1：取消原样穿透，不改写为回滚 ----
+
+    @Test
+    fun switchCancellationPropagatesWithoutRollback() = runBlocking {
+        val f = Fixture()
+        val ref1 = f.skinGen("s1", 1)
+        val ref2 = f.skinGen("s1", 2, salt = "new")
+        assertEquals(ApplyTransaction.Result.Applied(ref1), f.tx.apply(ref1))
+        f.ports.switchBehavior = { throw CancellationException("editor left") }
+        var thrown: CancellationException? = null
+        try {
+            f.tx.apply(ref2)
+        } catch (e: CancellationException) {
+            thrown = e
+        }
+        assertTrue("cancellation must propagate", thrown != null)
+        // 取消不触发回滚恢复：切换只被调两次（ref1 成功＋ref2 抛取消），
+        // 运行态仍在上一好（切换从未成功移动）。
+        assertEquals(listOf(ref1, ref2), f.ports.switchCalls)
+        assertEquals(ref1, f.ports.installed)
+        // 取消发生在切换阶段：本请求已写的 PENDING 记录按原样残留，
+        // 由调用方（编辑器保存的 NonCancellable 清理）或启动对账收敛，
+        // 事务层不擅自把它改写为失败。
         assertEquals(2, f.active().generation)
         assertEquals(ApplyState.PENDING, f.active().state)
     }
