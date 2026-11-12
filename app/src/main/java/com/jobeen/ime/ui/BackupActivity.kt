@@ -95,6 +95,7 @@ class BackupActivity : ComponentActivity() {
         createdAppearanceMode = AppAppearance.getMode(this)
         enableEdgeToEdge()
         observeRestoreState()
+        observeInterruptedRestore()
 
         val themeMode = AppAppearance.themeMode(this)
 
@@ -116,6 +117,12 @@ class BackupActivity : ComponentActivity() {
                         pendingRestoreUri = null
                         if (uri != null) doRestore(uri, password.toCharArray())
                     },
+                    onRollbackInterruptedRestore = {
+                        BackupManager.startRollbackInterruptedRestore()
+                    },
+                    onDismissInterruptedRestore = {
+                        BackupManager.dismissInterruptedRestore()
+                    },
                 )
             }
         }
@@ -134,7 +141,7 @@ class BackupActivity : ComponentActivity() {
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null
                     ToastUtil.showToast(
-                        if (written) getString(R.string.backup_done) else "备份写入失败"
+                        if (written) getString(R.string.backup_done) else getString(R.string.backup_write_failed)
                     )
                 }
             } catch (e: Exception) {
@@ -142,7 +149,7 @@ class BackupActivity : ComponentActivity() {
                 Timber.w(e, "Create backup failed")
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null
-                    ToastUtil.showToast("备份失败：${e.message ?: "未知错误"}")
+                    ToastUtil.showToast(getString(R.string.backup_failed, e.message ?: getString(R.string.error_unknown)))
                 }
             }
         }
@@ -166,7 +173,7 @@ class BackupActivity : ComponentActivity() {
                 Timber.w(e, "Read backup file failed")
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null
-                    ToastUtil.showToast("还原失败：${e.message ?: "未知错误"}")
+                    ToastUtil.showToast(getString(R.string.backup_restore_failed, e.message ?: getString(R.string.error_unknown)))
                 }
             }
         }
@@ -194,10 +201,19 @@ class BackupActivity : ComponentActivity() {
                     is BackupManager.RestoreState.Failed -> {
                         BackupManager.consumeRestoreState()
                         uiState.busyText = null
-                        ToastUtil.showToast("还原失败：${state.message}")
+                        ToastUtil.showToast(getString(R.string.backup_restore_failed, state.message))
                     }
                     BackupManager.RestoreState.Idle -> Unit
                 }
+            }
+        }
+    }
+
+    /** 观察中断还原提示（D-S2）：启动对账检出 REPLACING journal 时置位，本页顶部显示横幅。 */
+    private fun observeInterruptedRestore() {
+        lifecycleScope.launch {
+            BackupManager.interruptedRestore.collect { info ->
+                uiState.interruptedRestore = info
             }
         }
     }

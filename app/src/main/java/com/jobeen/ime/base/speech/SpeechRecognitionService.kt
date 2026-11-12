@@ -15,6 +15,7 @@ import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
+import com.jobeen.ime.R
 import com.jobeen.ime.data.App
 import com.jobeen.ime.base.util.appContext
 import kotlinx.coroutines.CancellationException
@@ -630,7 +631,7 @@ class SpeechRecognitionService : Service() {
                 // 路径同口径：发 ERROR、不再补 DONE）
                 Log.e("SpeechSvc", "Stream decode failed", t)
                 withContext(NonCancellable + Dispatchers.Main) {
-                    toast("录音异常")
+                    toast(getString(R.string.speech_recorder_error))
                 }
                 sendClient(SpeechIpc.MSG_ERROR, gen = myClientGen)
             } finally {

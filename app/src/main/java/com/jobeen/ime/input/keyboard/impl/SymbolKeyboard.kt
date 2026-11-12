@@ -41,6 +41,7 @@ import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.skin.symbol.SharedPrefsSymbolBarTypeStore
 import com.jobeen.ime.skin.symbol.SharedPrefsUserSymbolBarStore
+import com.jobeen.ime.skin.symbol.UserSymbolBarOps
 import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolBarState
@@ -147,6 +148,13 @@ class SymbolKeyboard(
 
     /** 用户自定义符号（2026-11-12 符号栏重做）：竖栏数据源，设置页改动下次打开即生效。 */
     private val userSymbolStore: UserSymbolBarStore = SharedPrefsUserSymbolBarStore(context)
+
+    /**
+     * 标点模式（WO30 §3(9) 续）：竖栏显示／提交按此换算；默认全角，
+     * 与九宫格竖栏同口径（T9Keyboard.state）；唯一写入方是
+     * updatePunctuationMode（KeyboardStateManager.switchTo 下发）。
+     */
+    private var punctuationMode: PunctuationMode = PunctuationMode.FullWidth
 
     /** 左侧竖栏底部“自定义”入口（固定不滚动，点开设置页）。 */
     private val customEntryView: TextView = TextView(context).apply {
@@ -411,12 +419,28 @@ class SymbolKeyboard(
     }
 
     /**
+     * 左右滑切分类（WO30 §3(5)，颜文字板 swipeCategory 同款）：
+     * 翻页（pageSubCollection）到端无动作时才走到这里；到端停，
+     * 不循环绕回。与顶栏按钮同款：先记 barState.currentType 再
+     * applyCategory（网格＋切换钮文案＋子条一起换）。
+     */
+    fun swipeCategory(forward: Boolean): Boolean {
+        val changed = if (forward) boardState.nextParent() else boardState.prevParent()
+        if (changed) {
+            val label = boardState.parentLabels[boardState.parentIndex]
+            barState.switchType(label)
+            applyCategory(label)
+        }
+        return changed
+    }
+
+    /**
      * 左右滑翻页（施工单 18，与 emoji 板同款接线）：横向位移达到
      * 翻页最小距离（48dp）且横向占优时才拦截（子键收 ACTION_CANCEL，
      * 点按不触发）；未达翻页距离的横向小拖动不拦截、仍归子键点按
      * （I-M2，见 EmojiKeyboard 同款注释）；竖向位移归网格滚动，
      * 不拦截；抬手时按 [KaomojiSwipe.directionFor] 判定方向翻页；
-     * 到端停（不循环绕回，pageSubCollection 返回 false 即无动作）。
+     * 翻页到端时改切分类（WO30 §3(5)），首／末分类到端才无动作。
      */
     @SuppressLint("ClickableViewAccessibility")
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -455,7 +479,12 @@ class SymbolKeyboard(
                     val dx = event.x - downX
                     val dy = event.y - downY
                     KaomojiSwipe.directionFor(dx, dy, swipeMinDistancePx)?.let { direction ->
-                        pageSubCollection(direction == KaomojiSwipe.Direction.NEXT)
+                        // WO30 §3(5)：先翻页；到端无动作时改切分类，
+                        // 首／末分类到端才无动作（不循环绕回）。
+                        val forward = direction == KaomojiSwipe.Direction.NEXT
+                        if (!pageSubCollection(forward)) {
+                            swipeCategory(forward)
+                        }
                     }
                     return true
                 }
@@ -593,17 +622,22 @@ class SymbolKeyboard(
     /**
      * 左侧竖栏重建（2026-11-12 符号栏重做）：显示用户自定义符号列
      * （默认 16 符号），点格提交。init 与 onAttach 都调用——板实例
-     * 复用时设置改动下次打开符号面板即生效。
+     * 复用时设置改动下次打开符号面板即生效。WO30 §3(9) 续：显示与
+     * 提交都按标点模式换算（与九宫格竖栏同口径）；「、」两模式都
+     * 原样（无单字符半角形）。
      */
     private fun rebuildSidePanelSymbols() {
-        val symbols = userSymbolStore.load().symbols
-        sidePanelItemDefs = symbols.map { symbol ->
+        val displays = UserSymbolBarOps.sidePanelSymbols(
+            userSymbolStore.load().symbols,
+            punctuationMode,
+        )
+        sidePanelItemDefs = displays.map { display ->
             KeyDef(
                 appearance = KeyDef.Appearance.Text(
-                    displayText = symbol, textSize = 15f, percentWidth = 0.5f,
+                    displayText = display, textSize = 15f, percentWidth = 0.5f,
                     margin = false, variant = KeyDef.Appearance.Variant.Alternative,
                 ),
-                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(symbol))),
+                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(display))),
             )
         }
         sidePanelKey.updateItems(sidePanelItemDefs)
@@ -665,7 +699,14 @@ class SymbolKeyboard(
     override fun name(): String = NAME
     override fun updateSpaceKeyText(text: String) {}
     override fun updateDynamicTexts(values: Map<String, String>) {}
-    override fun updatePunctuationMode(mode: PunctuationMode) {}
+    override fun updatePunctuationMode(mode: PunctuationMode) {
+        // 与九宫格同口径（T9Keyboard.updatePunctuationMode）：模式变了
+        // 才重建竖栏（init 与 onAttach 的重建不受影响）；本板是
+        // FrameLayout 而非 BaseKeyboard，IKeyboard 的该方法无超类实现可调。
+        val changed = mode != punctuationMode
+        punctuationMode = mode
+        if (changed) rebuildSidePanelSymbols()
+    }
     override fun updateEditorInfo(info: EditorInfo, empty: Boolean, isComposing: Boolean) {}
 
     override fun setRippleEnabled(enabled: Boolean) {

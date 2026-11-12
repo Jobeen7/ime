@@ -984,7 +984,9 @@ private fun GlobalStyleDialog(
                             )
                         }
                         GlobalStyleSectionId.ICONS -> GlobalStyleSection(
-                            title = stringResource(R.string.global_section_icons_full),
+                            title = stringResource(
+                                iconsSectionTitleRes(state.draft.linkToolbar),
+                            ),
                             expanded = state.isExpanded(GlobalStyleSectionId.ICONS),
                             onToggle = {
                                 state.toggleSection(GlobalStyleSectionId.ICONS)
@@ -1646,7 +1648,7 @@ private fun GlobalStylePreview(style: GlobalStylePreviewStyle) {
             )
             GlobalStylePreviewCell(
                 style = style,
-                label = "中 / EN",
+                label = stringResource(R.string.global_preview_lang),
                 isKey = false,
                 modifier = Modifier.weight(1f),
             )

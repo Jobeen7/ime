@@ -147,4 +147,53 @@ class SymbolSwipeTest {
         assertTrue(s.selectParent(1))
         assertEquals(0, s.page)
     }
+
+    // ── 滑动切分类（WO30 §3(5)）：先翻页，到端改切分类 ──
+    // 接线（SymbolKeyboard.onTouchEvent）需 View/MotionEvent，走真机
+    // 验收；这里钉死接线依赖的状态机跃迁口径。
+
+    @Test
+    fun swipeFallthrough_lastPageNext_goesToNextCategory() {
+        val s = state()
+        repeat(3) { assertTrue(s.nextPage()) }
+        assertEquals(3, s.page)
+        assertFalse(s.nextPage())
+        assertTrue(s.nextParent())
+        assertEquals(1, s.parentIndex)
+        assertEquals(0, s.page)
+        assertEquals("数字", s.currentParent?.label)
+        assertEquals(25, s.visibleItems.size)
+    }
+
+    @Test
+    fun swipeFallthrough_firstPagePrev_goesToPrevCategory() {
+        val s = state()
+        assertTrue(s.selectParent(1))
+        assertFalse(s.prevPage())
+        assertTrue(s.prevParent())
+        assertEquals(0, s.parentIndex)
+        assertEquals(0, s.page)
+        assertEquals("常规", s.currentParent?.label)
+    }
+
+    @Test
+    fun swipeFallthrough_lastCategoryLastPage_isNoOp() {
+        val s = state()
+        assertTrue(s.selectParent(6))
+        repeat(4) { assertTrue(s.nextPage()) }
+        assertEquals(4, s.page)
+        assertFalse(s.nextPage())
+        assertFalse(s.nextParent())
+        assertEquals(6, s.parentIndex)
+        assertEquals(4, s.page)
+    }
+
+    @Test
+    fun swipeFallthrough_firstCategoryFirstPage_isNoOp() {
+        val s = state()
+        assertFalse(s.prevPage())
+        assertFalse(s.prevParent())
+        assertEquals(0, s.parentIndex)
+        assertEquals(0, s.page)
+    }
 }

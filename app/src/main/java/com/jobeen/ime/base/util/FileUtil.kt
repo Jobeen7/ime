@@ -7,6 +7,7 @@ import android.os.Environment
 import android.provider.Settings
 import android.widget.Toast
 import androidx.core.net.toUri
+import com.jobeen.ime.R
 import java.io.File
 import java.io.IOException
 
@@ -61,6 +62,6 @@ fun Context.requestExternalStoragePermission() {
             startActivity(intent)
         }
     } else {
-        Toast.makeText(this, "该版本无需申请此特殊权限", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, getString(R.string.storage_permission_not_needed), Toast.LENGTH_SHORT).show()
     }
 }

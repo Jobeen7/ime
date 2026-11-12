@@ -24,7 +24,7 @@ APK="${1:?usage: verify_release.sh <apk> <versionName> <versionCode>}"
 EXPECTED_VERSION_NAME="${2:?usage: verify_release.sh <apk> <versionName> <versionCode>}"
 EXPECTED_VERSION_CODE="${3:?usage: verify_release.sh <apk> <versionName> <versionCode>}"
 EXPECTED_SIGNER_SHA256="511831cbb45c4248d15508c0ca1fe563799b31be2b45ac07b40ded6bf9a44744"
-EXPECTED_RESOURCE_SHA256="1719856205e149cb39e2df60c128fbe97863cc0fda4d531058b486f73034d8be"
+EXPECTED_RESOURCE_SHA256="b2f59efb39fb579fb94646c212c5c8a87c4c40b2de1f7ff63b52de6ae1bbfaee"
 # 自编 sherpa-onnx 库（关 TTS）在 APK lib/arm64-v8a 下的未压缩字节数
 EXPECTED_SHERPA_JNI=3514248
 EXPECTED_SHERPA_CAPI=3265488

@@ -2,6 +2,7 @@ package com.jobeen.ime.base.speech
 
 import android.content.Context
 import androidx.core.content.edit
+import com.jobeen.ime.R
 import com.jobeen.ime.base.net.HttpUtil
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.appScope
@@ -400,9 +401,9 @@ object ModelDownloader {
     /** 普通校验失败的提示措辞：按期望摘要来源区分官方登记/内置钉死 */
     private fun shaMismatchToast(expected: ExpectedSha256): String =
         if (expected.fromGithubLink) {
-            "语音模型校验失败：文件与官方摘要不一致，已拒绝安装"
+            appContext.getString(R.string.voice_model_sha_mismatch_official)
         } else {
-            "语音模型校验失败：文件与内置摘要不一致，已拒绝安装"
+            appContext.getString(R.string.voice_model_sha_mismatch_builtin)
         }
 
     /**
@@ -678,7 +679,7 @@ object ModelDownloader {
                 }
                 if (!response.isSuccessful) {
                     Timber.w("Model download failed: HTTP %d", response.code)
-                    HttpUtil.showToast("语音模型下载失败：HTTP ${response.code}")
+                    HttpUtil.showToast(appContext.getString(R.string.voice_model_download_failed_http, response.code))
                     return false
                 }
                 val body = response.body ?: return false
@@ -739,7 +740,7 @@ object ModelDownloader {
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Speech model download failed")
-            HttpUtil.showToast("语音模型下载失败：${e.message ?: "网络错误"}")
+            HttpUtil.showToast(appContext.getString(R.string.voice_model_download_failed_detail, e.message ?: appContext.getString(R.string.error_network)))
             false
         }
     }

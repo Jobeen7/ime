@@ -1,6 +1,8 @@
 package com.jobeen.ime.base.ngram
 
+import com.jobeen.ime.R
 import com.jobeen.ime.base.net.HttpUtil
+import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.Dispatchers
@@ -243,7 +245,7 @@ object GramModelDownloader {
             if (it !is kotlinx.coroutines.CancellationException &&
                 it !is HttpUtil.ApiException
             ) {
-                HttpUtil.showToast("模型增强下载失败：${it.message ?: "网络错误"}")
+                HttpUtil.showToast(appContext.getString(R.string.gram_download_failed, it.message ?: appContext.getString(R.string.error_network)))
             }
         }.getOrNull()
             ?: return@withContext false
@@ -359,7 +361,7 @@ object GramModelDownloader {
             client.newCall(Request.Builder().url(url).build()).execute().use { response ->
                 if (!response.isSuccessful) {
                     Timber.w("Ngram model download failed: HTTP %d", response.code)
-                    HttpUtil.showToast("模型增强下载失败：HTTP ${response.code}")
+                    HttpUtil.showToast(appContext.getString(R.string.gram_download_failed_http, response.code))
                     return false
                 }
                 val body = response.body ?: return false
@@ -412,7 +414,7 @@ object GramModelDownloader {
                         // 校验不一致要让用户明确知道是「被拒绝」而不是
                         // 普通下载失败：文件可能已被替换/篡改
                         Timber.w("Ngram model SHA-256 mismatch")
-                        HttpUtil.showToast("模型增强下载失败：文件校验不一致，已拒绝安装")
+                        HttpUtil.showToast(appContext.getString(R.string.gram_download_failed_checksum))
                         return false
                     }
                 }
@@ -422,7 +424,7 @@ object GramModelDownloader {
             throw e
         } catch (e: Exception) {
             Timber.e(e, "Ngram model download failed")
-            HttpUtil.showToast("模型增强下载失败：${e.message ?: "网络错误"}")
+            HttpUtil.showToast(appContext.getString(R.string.gram_download_failed, e.message ?: appContext.getString(R.string.error_network)))
             false
         }
     }

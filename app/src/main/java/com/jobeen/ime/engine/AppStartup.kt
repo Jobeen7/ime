@@ -12,6 +12,7 @@ import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.data.ThemeStore
+import com.jobeen.ime.data.backup.BackupManager
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.SchemePackageImport
 import com.jobeen.ime.engine.rime.data.DataManager
@@ -73,6 +74,13 @@ object AppStartup {
                     root,
                     SchemeDirs.currentDirName(context),
                 )
+            }
+            // 还原中断对账（D-S2）：读还原 journal——完成（COMMITTED）
+            // 或尚未写盘（STAGING）即清理；中断（REPLACING）留 journal、
+            // 置 interruptedRestore，备份页提示用户重导或回滚。启动从
+            // 不自动回滚；对账自身不抛错。
+            runStep("recoverInterruptedRestore") {
+                BackupManager.reconcileInterruptedRestore()
             }
             if (resourcesReady) {
                 runStep("setupEngine") { setupEngine(context) }

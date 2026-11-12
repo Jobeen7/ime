@@ -155,6 +155,64 @@ class InputFieldPolicyTest {
         )
     }
 
+    // ---- isAccountField（WO30 §4：登录账号框豁免新窗口复位） ----
+
+    @Test
+    fun emailAddressIsAccountField() {
+        assertTrue(InputFieldPolicy.isAccountField(text(InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS)))
+    }
+
+    @Test
+    fun webEmailAddressIsAccountField() {
+        assertTrue(InputFieldPolicy.isAccountField(text(InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS)))
+    }
+
+    @Test
+    fun personNameIsAccountField() {
+        assertTrue(InputFieldPolicy.isAccountField(text(InputType.TYPE_TEXT_VARIATION_PERSON_NAME)))
+    }
+
+    @Test
+    fun uriIsAccountField() {
+        assertTrue(InputFieldPolicy.isAccountField(text(InputType.TYPE_TEXT_VARIATION_URI)))
+    }
+
+    @Test
+    fun normalTextIsNotAccountField() {
+        assertFalse(InputFieldPolicy.isAccountField(text(InputType.TYPE_TEXT_VARIATION_NORMAL)))
+    }
+
+    @Test
+    fun emailSubjectIsNotAccountField() {
+        assertFalse(InputFieldPolicy.isAccountField(text(InputType.TYPE_TEXT_VARIATION_EMAIL_SUBJECT)))
+    }
+
+    @Test
+    fun postalAddressIsNotAccountField() {
+        assertFalse(InputFieldPolicy.isAccountField(text(InputType.TYPE_TEXT_VARIATION_POSTAL_ADDRESS)))
+    }
+
+    @Test
+    fun passwordIsNotAccountField() {
+        // 密码框走自己的豁免分支（直达英文键盘），不归账号口径管。
+        assertFalse(InputFieldPolicy.isAccountField(text(InputType.TYPE_TEXT_VARIATION_PASSWORD)))
+    }
+
+    @Test
+    fun phoneClassIsNotAccountField() {
+        assertFalse(InputFieldPolicy.isAccountField(InputType.TYPE_CLASS_PHONE))
+    }
+
+    @Test
+    fun numberClassIsNotAccountField() {
+        assertFalse(InputFieldPolicy.isAccountField(number(InputType.TYPE_NUMBER_VARIATION_NORMAL)))
+    }
+
+    @Test
+    fun nullEditorInfoIsNotAccountField() {
+        assertFalse(InputFieldPolicy.isAccountField(null))
+    }
+
     // ---- EditorInfo 薄包装（空 EditorInfo 不禁学习） ----
 
     @Test

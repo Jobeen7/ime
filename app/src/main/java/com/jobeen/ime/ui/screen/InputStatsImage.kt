@@ -6,6 +6,7 @@ import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
+import com.jobeen.ime.R
 import com.jobeen.ime.input.stats.InputStats
 import java.io.File
 import java.io.FileOutputStream
@@ -45,17 +46,17 @@ object InputStatsImage {
         val barBgPaint = Paint().apply { color = Color.LTGRAY }
         val barPaint = Paint().apply { color = Color.rgb(46, 125, 50) }
         var y = 120f
-        canvas.drawText("Jime 输入统计", 80f, y, titlePaint)
+        canvas.drawText(context.getString(R.string.input_stats_title), 80f, y, titlePaint)
         y += 80f
         val periodLabel = when (period) {
-            InputStats.Period.DAY -> "当日"
-            InputStats.Period.WEEK -> "近 7 天"
-            InputStats.Period.MONTH -> "本月"
-            InputStats.Period.YEAR -> "今年"
+            InputStats.Period.DAY -> context.getString(R.string.stats_img_period_day)
+            InputStats.Period.WEEK -> context.getString(R.string.stats_img_period_week)
+            InputStats.Period.MONTH -> context.getString(R.string.stats_img_period_month)
+            InputStats.Period.YEAR -> context.getString(R.string.stats_img_period_year)
         }
         canvas.drawText(periodLabel, 80f, y, textPaint)
         y += 110f
-        canvas.drawText("段位：${rank.name} · 累计 ${rank.xp} 字", 80f, y, textPaint)
+        canvas.drawText(context.getString(R.string.stats_img_rank, rank.name, rank.xp), 80f, y, textPaint)
         y += 70f
         canvas.drawRect(RectF(80f, y, WIDTH - 80f, y + 24f), barBgPaint)
         canvas.drawRect(
@@ -64,19 +65,19 @@ object InputStatsImage {
         )
         y += 100f
         val t = stats.total
-        canvas.drawText("提交 ${t.commits} 次 · ${t.chars} 字 · 按键 ${t.keypresses} 次", 80f, y, textPaint)
+        canvas.drawText(context.getString(R.string.stats_img_totals, t.commits, t.chars, t.keypresses), 80f, y, textPaint)
         y += 70f
         canvas.drawText(
-            "平均速度：" + (stats.avgSpeed?.let { "%.0f 字／分钟".format(it) } ?: "—"),
+            context.getString(R.string.stats_img_avg_speed, stats.avgSpeed?.let { context.getString(R.string.stats_speed_format, it) } ?: "—"),
             80f, y, textPaint,
         )
         y += 70f
         canvas.drawText(
-            "准确率（推断值）：" + (stats.accuracy?.let { "%.1f%%".format(it * 100) } ?: "—"),
+            context.getString(R.string.stats_img_accuracy, stats.accuracy?.let { "%.1f%%".format(it * 100) } ?: "—"),
             80f, y, textPaint,
         )
         y += 110f
-        canvas.drawText("按键类别热力", 80f, y, titlePaint)
+        canvas.drawText(context.getString(R.string.stats_img_category_heat), 80f, y, titlePaint)
         y += 80f
         val max = stats.categories.values.maxOrNull() ?: 0L
         if (max > 0L) {
@@ -94,7 +95,7 @@ object InputStatsImage {
             }
         }
         y += 30f
-        canvas.drawText("键盘热力", 80f, y, titlePaint)
+        canvas.drawText(context.getString(R.string.stats_keyboard_heat), 80f, y, titlePaint)
         y += 80f
         val heatTotal = stats.heat.values.sum()
         for (rowKeys in InputStats.HEAT_GRID) {
@@ -107,17 +108,17 @@ object InputStatsImage {
             y += 70f
         }
         y += 30f
-        canvas.drawText("按方案分", 80f, y, titlePaint)
+        canvas.drawText(context.getString(R.string.stats_img_by_scheme), 80f, y, titlePaint)
         y += 80f
         for ((id, c) in stats.schemes) {
             canvas.drawText(
-                "${id.ifBlank { "未知方案" }}：提交 ${c.commits} 次 · ${c.chars} 字",
+                context.getString(R.string.stats_img_scheme_line, id.ifBlank { context.getString(R.string.stats_unknown_scheme) }, c.commits, c.chars),
                 80f, y, textPaint,
             )
             y += 70f
         }
         canvas.drawText(
-            "数据仅存本机 · 只记数量与耗时，不记输入内容",
+            context.getString(R.string.stats_img_privacy),
             80f, HEIGHT - 80f, smallPaint,
         )
         val dir = File(context.cacheDir, "shared").apply { mkdirs() }

@@ -176,7 +176,7 @@ internal fun SettingsLegend(
                     style = style,
                     backgroundColor = style.accentKeyBackground,
                     textColor = style.accentKeyText,
-                    label = "确认",
+                    label = stringResource(R.string.settings_legend_confirm),
                     borderEnabled = borderEnabled,
                     modifier = Modifier.weight(1f),
                 )
@@ -186,7 +186,7 @@ internal fun SettingsLegend(
                 style = style,
                 backgroundColor = style.keyBackground,
                 textColor = style.keyText,
-                label = "空格",
+                label = stringResource(R.string.settings_legend_space),
                 borderEnabled = borderEnabled,
                 keyHeightDp = 44f,
                 labelFontSizeSp = 16f,

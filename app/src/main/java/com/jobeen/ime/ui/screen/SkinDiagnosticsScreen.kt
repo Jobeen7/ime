@@ -118,26 +118,26 @@ private fun buildDiagRows(context: Context): List<DiagRow> {
             "diag", "diag_check_failed",
             mapOf("check" to title, "error" to e.javaClass.simpleName),
         )
-        DiagRow(title, "检查失败", warn = true)
+        DiagRow(title, context.getString(R.string.skin_diag_check_failed), warn = true)
     }
 
     val rows = mutableListOf<DiagRow>()
     rows += check(tActive) {
         if (snapshot != null) {
-            DiagRow(tActive, "自定义皮肤：${snapshot.name}（${snapshot.ref.skinId}）", warn = false)
+            DiagRow(tActive, context.getString(R.string.skin_diag_custom_skin, snapshot.name, snapshot.ref.skinId), warn = false)
         } else {
             // 生效主题（非存储主题 id）：默认双槽下跟随系统取槽位，莫奈色与导入固定主题取本身。
             val effective = KeyboardColors.themeFor(context)
-            DiagRow(tActive, "内置主题：${effective.name}（${effective.id}）", warn = false)
+            DiagRow(tActive, context.getString(R.string.skin_diag_builtin_theme, effective.name, effective.id), warn = false)
         }
     }
     rows += check(tDual) {
         if (snapshot != null) {
             if (snapshot.hasDarkPalette) {
-                DiagRow(tDual, "完整（浅色＋深色）", warn = false)
+                DiagRow(tDual, context.getString(R.string.skin_diag_dual_full), warn = false)
             } else {
-                suggestions += "请用编辑器补齐深色板后重新导入"
-                DiagRow(tDual, "缺深色板：深色下沿用浅色板", warn = true)
+                suggestions += context.getString(R.string.skin_diag_dual_suggestion)
+                DiagRow(tDual, context.getString(R.string.skin_diag_dual_missing_dark), warn = true)
             }
         } else {
             // 深浅唯一由颜色模式决定（见 KeyboardColors.effectiveBuiltinThemeId）：
@@ -149,21 +149,21 @@ private fun buildDiagRows(context: Context): List<DiagRow> {
             val darkId = KeyboardManager.Keyboard.getDarkThemeId(context)
             when (mode) {
                 SkinColorMode.LIGHT ->
-                    DiagRow(tDual, "强制浅色：${KeyboardTheme.byId(lightId).name}", warn = false)
+                    DiagRow(tDual, context.getString(R.string.skin_diag_force_light, KeyboardTheme.byId(lightId).name), warn = false)
                 SkinColorMode.DARK ->
-                    DiagRow(tDual, "强制深色：${KeyboardTheme.byId(darkId).name}", warn = false)
+                    DiagRow(tDual, context.getString(R.string.skin_diag_force_dark, KeyboardTheme.byId(darkId).name), warn = false)
                 SkinColorMode.SYSTEM -> when {
                     themeId == lightId || themeId == darkId -> {
                         val light = KeyboardTheme.byId(lightId).name
                         val dark = KeyboardTheme.byId(darkId).name
-                        DiagRow(tDual, "完整（跟随系统：浅色 $light／深色 $dark）", warn = false)
+                        DiagRow(tDual, context.getString(R.string.skin_diag_system_full, light, dark), warn = false)
                     }
                     themeId == MonetPalette.ID ->
-                        DiagRow(tDual, "完整（随系统动态取色）", warn = false)
+                        DiagRow(tDual, context.getString(R.string.skin_diag_monet_full), warn = false)
                     else ->
                         DiagRow(
                             tDual,
-                            "单色板（固定主题 ${KeyboardTheme.byId(themeId).name}）",
+                            context.getString(R.string.skin_diag_single_theme, KeyboardTheme.byId(themeId).name),
                             warn = false,
                         )
                 }
@@ -174,26 +174,26 @@ private fun buildDiagRows(context: Context): List<DiagRow> {
         if (snapshot != null) {
             val mode = SkinLibraryPrefs.getColorMode(context)
             val label = when (mode) {
-                SkinColorMode.SYSTEM -> "跟随系统"
-                SkinColorMode.LIGHT -> "浅色"
-                SkinColorMode.DARK -> "深色"
+                SkinColorMode.SYSTEM -> context.getString(R.string.keyboard_theme_follow_system)
+                SkinColorMode.LIGHT -> context.getString(R.string.color_mode_light)
+                SkinColorMode.DARK -> context.getString(R.string.color_mode_dark)
             }
-            val effective = if (mode.effectiveDark(isSystemDark)) "深色" else "浅色"
-            DiagRow(tColor, "$label（当前生效：$effective）", warn = false)
+            val effective = if (mode.effectiveDark(isSystemDark)) context.getString(R.string.color_mode_dark) else context.getString(R.string.color_mode_light)
+            DiagRow(tColor, context.getString(R.string.skin_diag_color_mode_current, label, effective), warn = false)
         } else {
             val mode = SkinLibraryPrefs.getColorMode(context)
             val themeId = KeyboardManager.Keyboard.getThemeId(context)
             val lightId = KeyboardManager.Keyboard.getLightThemeId(context)
             val darkId = KeyboardManager.Keyboard.getDarkThemeId(context)
             when (mode) {
-                SkinColorMode.LIGHT -> DiagRow(tColor, "强制浅色", warn = false)
-                SkinColorMode.DARK -> DiagRow(tColor, "强制深色", warn = false)
+                SkinColorMode.LIGHT -> DiagRow(tColor, context.getString(R.string.skin_diag_force_light_label), warn = false)
+                SkinColorMode.DARK -> DiagRow(tColor, context.getString(R.string.skin_diag_force_dark_label), warn = false)
                 SkinColorMode.SYSTEM -> {
-                    val effective = if (isSystemDark) "深色" else "浅色"
+                    val effective = if (isSystemDark) context.getString(R.string.color_mode_dark) else context.getString(R.string.color_mode_light)
                     if (themeId == lightId || themeId == darkId || themeId == MonetPalette.ID) {
-                        DiagRow(tColor, "跟随系统（当前生效：$effective）", warn = false)
+                        DiagRow(tColor, context.getString(R.string.skin_diag_follow_system_current, effective), warn = false)
                     } else {
-                        DiagRow(tColor, "固定：${KeyboardTheme.byId(themeId).name}", warn = false)
+                        DiagRow(tColor, context.getString(R.string.skin_diag_fixed_theme, KeyboardTheme.byId(themeId).name), warn = false)
                     }
                 }
             }
@@ -202,69 +202,69 @@ private fun buildDiagRows(context: Context): List<DiagRow> {
     rows += check(tBg) {
         val bg = snapshot?.background
         when {
-            bg != null -> DiagRow(tBg, "背景图已接纳（资产 ${bg.assetId}）", warn = false)
-            snapshot != null -> DiagRow(tBg, "无背景图（纯色）", warn = false)
-            else -> DiagRow(tBg, "无自定义背景（内置配色）", warn = false)
+            bg != null -> DiagRow(tBg, context.getString(R.string.skin_diag_bg_accepted, bg.assetId), warn = false)
+            snapshot != null -> DiagRow(tBg, context.getString(R.string.skin_diag_bg_none_solid), warn = false)
+            else -> DiagRow(tBg, context.getString(R.string.skin_diag_bg_none_builtin), warn = false)
         }
     }
     rows += check(tLayout) {
         if (snapshot == null) {
-            DiagRow(tLayout, "出厂布局", warn = false)
+            DiagRow(tLayout, context.getString(R.string.skin_diag_layout_factory), warn = false)
         } else {
             val portrait = when (snapshot.layoutResolution) {
-                LayoutResolution.NOT_SET -> "竖屏：未绑定（出厂布局）"
+                LayoutResolution.NOT_SET -> context.getString(R.string.skin_diag_portrait_not_set)
                 LayoutResolution.RESOLVED ->
-                    "竖屏：已解析（${snapshot.resolvedLayout?.layoutId ?: "?"}）"
+                    context.getString(R.string.skin_diag_portrait_resolved, snapshot.resolvedLayout?.layoutId ?: "?")
                 LayoutResolution.MISSING -> {
-                    suggestions += "竖屏布局绑定缺失：请重新导入皮肤"
-                    "竖屏：绑定缺失（已回退出厂布局）"
+                    suggestions += context.getString(R.string.skin_diag_portrait_missing_sugg)
+                    context.getString(R.string.skin_diag_portrait_missing)
                 }
                 LayoutResolution.INVALID -> {
-                    suggestions += "竖屏布局绑定无效：请重新导入皮肤"
-                    "竖屏：绑定无效（已回退出厂布局）"
+                    suggestions += context.getString(R.string.skin_diag_portrait_invalid_sugg)
+                    context.getString(R.string.skin_diag_portrait_invalid)
                 }
             }
             val portraitWarn = snapshot.layoutResolution == LayoutResolution.MISSING ||
                 snapshot.layoutResolution == LayoutResolution.INVALID
             val landscape = when (snapshot.landscapeLayoutResolution) {
-                LayoutResolution.NOT_SET -> "横屏：未绑定（沿用竖屏）"
-                LayoutResolution.RESOLVED -> "横屏：已解析"
+                LayoutResolution.NOT_SET -> context.getString(R.string.skin_diag_landscape_not_set)
+                LayoutResolution.RESOLVED -> context.getString(R.string.skin_diag_landscape_resolved)
                 LayoutResolution.MISSING -> {
-                    suggestions += "横屏布局绑定缺失：请重新导入皮肤"
-                    "横屏：绑定缺失（已回退）"
+                    suggestions += context.getString(R.string.skin_diag_landscape_missing_sugg)
+                    context.getString(R.string.skin_diag_landscape_missing)
                 }
                 LayoutResolution.INVALID -> {
-                    suggestions += "横屏布局绑定无效：请重新导入皮肤"
-                    "横屏：绑定无效（已回退）"
+                    suggestions += context.getString(R.string.skin_diag_landscape_invalid_sugg)
+                    context.getString(R.string.skin_diag_landscape_invalid)
                 }
             }
             val landscapeWarn = snapshot.landscapeLayoutResolution == LayoutResolution.MISSING ||
                 snapshot.landscapeLayoutResolution == LayoutResolution.INVALID
-            DiagRow(tLayout, "$portrait；$landscape", warn = portraitWarn || landscapeWarn)
+            DiagRow(tLayout, context.getString(R.string.skin_diag_layout_combined, portrait, landscape), warn = portraitWarn || landscapeWarn)
         }
     }
     rows += check(tDeg) {
         val degradations = snapshot?.degradations ?: emptySet()
         if (degradations.isEmpty()) {
-            DiagRow(tDeg, "无降级", warn = false)
+            DiagRow(tDeg, context.getString(R.string.skin_diag_no_degradation), warn = false)
         } else {
             DiagRow(
                 tDeg,
-                "降级：" + degradations.joinToString("、") { degradationLabel(it) },
+                context.getString(R.string.skin_diag_degradations, degradations.joinToString("、") { degradationLabel(context, it) }),
                 warn = false,
             )
         }
     }
     rows += DiagRow(
         tSugg,
-        if (suggestions.isEmpty()) "无待处理项" else suggestions.joinToString("；"),
+        if (suggestions.isEmpty()) context.getString(R.string.skin_diag_no_suggestions) else suggestions.joinToString("；"),
         warn = suggestions.isNotEmpty(),
     )
     return rows
 }
 
-private fun degradationLabel(degradation: Degradation): String = when (degradation) {
-    Degradation.BLUR_DISABLED -> "模糊关闭"
-    Degradation.BACKGROUND_DOWNSAMPLED -> "背景降采样"
-    Degradation.ANIMATIONS_DISABLED -> "动效关闭"
+private fun degradationLabel(context: Context, degradation: Degradation): String = when (degradation) {
+    Degradation.BLUR_DISABLED -> context.getString(R.string.skin_diag_deg_blur)
+    Degradation.BACKGROUND_DOWNSAMPLED -> context.getString(R.string.skin_diag_deg_bg)
+    Degradation.ANIMATIONS_DISABLED -> context.getString(R.string.skin_diag_deg_anim)
 }

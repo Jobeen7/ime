@@ -4,10 +4,12 @@ package com.jobeen.ime.skin.library
 
 import android.content.Context
 import com.jobeen.ime.skin.layout.LayoutValidator
+import com.jobeen.ime.skin.model.GeometryFallbacks
 import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.SkinJson
 import com.jobeen.ime.skin.model.SkinValidator
 import com.jobeen.ime.skin.runtime.SkinApplier
+import com.jobeen.ime.skin.runtime.SkinApplyPort
 import com.jobeen.ime.skin.runtime.SkinSnapshotFactory
 import com.jobeen.ime.skin.store.ActiveRecord
 import com.jobeen.ime.skin.store.ApplyTransaction
@@ -16,8 +18,10 @@ import com.jobeen.ime.skin.store.LibraryIndex
 import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinIndexEntry
 import com.jobeen.ime.skin.store.SkinLibrary
+import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinLibraryStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.sync.Mutex
@@ -85,13 +89,22 @@ sealed interface SkinEditorSaveResult {
  *    磁盘核对旧 hash，“已恢复”只建立在校验成功上）。
  * 布局编辑同理：新布局代次＋索引先指新代（快照构建经索引解析布局），
  * 失败恢复旧索引并删新代，切换阶段失败时重装当前生效快照收敛运行态。
+ *
+ * 依赖以构造参数注入（缺省即生产接线），单测可传假件／临时库：
+ * [store]/[layout] 指向临时库根，[applier] 为假应用事务，
+ * [currentVersionCode]/[fallbacks] 为显式校验口径，
+ * [mainDispatcher] 为应用事务的执行线程（JVM 单测无 Main）。
+ * 其余仍为生产行为：IO 线程不变，保存互斥仍为伴生对象共享锁。
  */
-class SkinEditorSaver(private val context: Context) {
-
-    private val library: SkinLibrary = SkinLibrary
-    private val store: SkinLibraryStore = library.store
-    private val layout = library.layout
-    private val applier: SkinApplier = SkinApplier(context)
+class SkinEditorSaver(
+    private val context: Context,
+    private val store: SkinLibraryStore = SkinLibrary.store,
+    private val layout: SkinLibraryLayout = SkinLibrary.layout,
+    private val applier: SkinApplyPort = SkinApplier(context),
+    private val currentVersionCode: Int = SkinSnapshotFactory.currentVersionCode(context),
+    private val fallbacks: GeometryFallbacks = SkinSnapshotFactory.geometryFallbacks(context),
+    private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
+) {
 
     companion object {
         /** 编辑器保存串行锁：同一时间只一笔编辑保存（代次分配与索引更新不被并发保存交错）。 */
@@ -111,6 +124,14 @@ class SkinEditorSaver(private val context: Context) {
         val skinHash = sha256Hex(skinBytes)
         val tree = SkinJson.parseObject(skinBytes.toString(Charsets.UTF_8))
             ?: return@withContext ResolveActiveResult.Unavailable("skin_json_unparseable")
+        // 记录 hash 门（WO30 §2 项 4，与 ActiveResolver 启动口径一致）：
+        // 活动记录的 hash 须与磁盘 skin.json 实际 hash 一致。不一致
+        // 说明记录已过期（文件被外部改动／恢复后未同步记录），编辑器
+        // 不静默沿用旧 hash——否则后续 CAS 基准就是错的，保存会把
+        // 外部改动当场覆盖。明确报 active_hash_mismatch，不打开。
+        if (record.hash != skinHash) {
+            return@withContext ResolveActiveResult.Unavailable("active_hash_mismatch")
+        }
         // Manifest fail-closed（问题 5）：缺失／损坏／缺 skin 条目／路径重复／hash 不符都拒绝打开。
         val manifestText = runCatching { File(genDir, "manifest.json").readText() }.getOrNull()
         when (val check = SkinEditorSave.validateManifestForEdit(manifestText, skinHash)) {
@@ -184,15 +205,30 @@ class SkinEditorSaver(private val context: Context) {
             is ManifestCheck.Invalid -> return SkinEditorSaveResult.Failed("manifest_invalid:${check.reason}")
             is ManifestCheck.Valid -> check.manifest
         }
-        // 4. 校验新文本，用与快照工厂同一口径的 manifest resolver（问题 7）。
+        // 4. 校验新文本，用与快照工厂同一口径的 manifest resolver（问题 7）
+        //    与 isOverridable 口径（WO30 §2 项 2）：新皮肤绑定布局的
+        //    坐标 ID 另行可覆写，坐标并集取自新树（校验前 Best-effort；
+        //    布局缺失／损坏只跳过该布局，不拖垮校验）。
         val assetKindById = SkinEditorSave.manifestAssetKindById(manifest)
         val assetShaById = SkinEditorSave.manifestAssetShaById(manifest)
+        val newTree = SkinJson.parseObject(text)
+        val coordIds = if (newTree != null) {
+            runCatching {
+                SkinSnapshotFactory.layoutCoordIds(
+                    newTree,
+                    SkinSnapshotFactory.LayoutLookup(layout),
+                )
+            }.getOrDefault(emptySet())
+        } else {
+            emptySet()
+        }
         val outcome = SkinEditorSave.decideSkinJson(text) { tree ->
             SkinValidator.validate(
                 tree,
-                SkinSnapshotFactory.currentVersionCode(context),
-                SkinSnapshotFactory.geometryFallbacks(context),
+                currentVersionCode,
+                fallbacks,
                 assetKind = { assetKindById[it] },
+                isOverridable = SkinEditorSave.editorIsOverridable(coordIds),
                 assetBytes = { id ->
                     assetShaById[id]?.let { sha ->
                         layout.assetFiles(sha).firstOrNull { it.isFile }?.length()
@@ -248,7 +284,7 @@ class SkinEditorSaver(private val context: Context) {
         //    下跑，完成后把取消重抛（取消语义不改写为失败）。
         val newRef = SkinGenRef(active.skinId, newHash, newGen)
         val result = try {
-            withContext(Dispatchers.Main) { applier.applySkin(newRef) }
+            withContext(mainDispatcher) { applier.applySkin(newRef) }
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
                 deleteDirBestEffort(newGenDir)
@@ -256,7 +292,7 @@ class SkinEditorSaver(private val context: Context) {
                 // 的旧记录（否则重装会去读已被删的新代、收敛失败），
                 // 再重装当前生效快照收敛运行态。
                 runCatching { store.writeActive(oldRecord) }
-                runCatching { withContext(Dispatchers.Main) { applier.reinstallActiveSnapshot() } }
+                runCatching { withContext(mainDispatcher) { applier.reinstallActiveSnapshot() } }
             }
             throw e
         }
@@ -359,12 +395,12 @@ class SkinEditorSaver(private val context: Context) {
         //    成后把取消重抛。
         val ref = SkinGenRef(active.skinId, oldRecord.hash ?: "", active.generation)
         val result = try {
-            withContext(Dispatchers.Main) { applier.applySkin(ref) }
+            withContext(mainDispatcher) { applier.applySkin(ref) }
         } catch (e: CancellationException) {
             withContext(NonCancellable) {
                 restoreLayoutIndexEntry(file.id, oldEntry)
                 deleteDirBestEffort(newGenDir)
-                runCatching { withContext(Dispatchers.Main) { applier.reinstallActiveSnapshot() } }
+                runCatching { withContext(mainDispatcher) { applier.reinstallActiveSnapshot() } }
             }
             throw e
         }
@@ -391,7 +427,7 @@ class SkinEditorSaver(private val context: Context) {
                     result is ApplyTransaction.Result.FirstRenderFailedRolledBack ||
                     result is ApplyTransaction.Result.RollbackFailed
                 ) {
-                    runCatching { withContext(Dispatchers.Main) { applier.reinstallActiveSnapshot() } }
+                    runCatching { withContext(mainDispatcher) { applier.reinstallActiveSnapshot() } }
                 }
                 val restored = indexRestored && genDeleted && oldLayoutIntact
                 SkinEditorSaveResult.Failed(

@@ -6,7 +6,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 输入丢字日志（施工单 10 H2-16，CyIME J4 对口）：限流＋只记原因与门状态。 */
+/** 输入丢字日志（施工单 10 H2-16）：限流＋只记原因与门状态。 */
 class InputDropLogTest {
 
     private class Fixture {

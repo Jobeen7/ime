@@ -36,6 +36,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.jobeen.ime.R
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -178,8 +180,8 @@ fun SkinDevScreen(onBack: () -> Unit) {
                 val raw = File(genDir, "skin.json").readText()
                 val tree = SkinJson.parseObject(raw)
                     ?: return@runCatching DevDetail(
-                        prettyJson = "skin.json 解析失败（结构性损坏，校验口径与导入一致）。",
-                        validation = "已拒绝：skin_unparseable",
+                        prettyJson = context.getString(R.string.skin_dev_json_parse_failed),
+                        validation = context.getString(R.string.skin_dev_rejected, "skin_unparseable"),
                         issueLines = emptyList(),
                         snapshotOk = false,
                     )
@@ -228,8 +230,8 @@ fun SkinDevScreen(onBack: () -> Unit) {
                     ),
                 )
                 DevDetail(
-                    prettyJson = "检视失败（仅记元数据，见诊断日志）。",
-                    validation = "检视失败",
+                    prettyJson = context.getString(R.string.skin_dev_inspect_failed),
+                    validation = context.getString(R.string.skin_dev_inspect_failed_label),
                     issueLines = emptyList(),
                     snapshotOk = false,
                 )
@@ -256,16 +258,16 @@ fun SkinDevScreen(onBack: () -> Unit) {
                 val ctx = SkinPackages.importContext(context)
                 when (val outcome = importer.importZip(temp, ctx, JimeImporter.ConflictMode.FAIL)) {
                     is JimeImporter.Outcome.Imported -> {
-                        dialogText = "导入完成" to
-                            "已导入皮肤：${outcome.report.importedSkinIds.joinToString()}"
+                        dialogText = context.getString(R.string.skin_import_done) to
+                            context.getString(R.string.skin_lib_import_report_skins, outcome.report.importedSkinIds.joinToString())
                         refreshIndex()
                     }
                     is JimeImporter.Outcome.ConflictPending -> {
                         pendingConflictFile = temp
-                        dialogText = "发现同名皮肤" to "包内皮肤与库中已有版本不同，可取消，或以副本（新 id）导入。"
+                        dialogText = context.getString(R.string.skin_import_conflict_title) to context.getString(R.string.skin_dev_import_conflict_body)
                     }
                     is JimeImporter.Outcome.Rejected ->
-                        dialogText = "导入被拒绝" to outcome.reason
+                        dialogText = context.getString(R.string.skin_import_rejected_title) to outcome.reason
                 }
             } finally {
                 busy = false
@@ -278,10 +280,10 @@ fun SkinDevScreen(onBack: () -> Unit) {
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("皮肤开发模式") },
+                title = { Text(stringResource(R.string.skin_dev_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
             )
@@ -296,11 +298,9 @@ fun SkinDevScreen(onBack: () -> Unit) {
         ) {
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("开发模式已开启", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.skin_dev_enabled), fontWeight = FontWeight.Bold)
                     Text(
-                        "本屏只做检视、校验查看、日志查看、重载与正常导入。" +
-                            "不做什么：不绕过校验、不加开放动作、不直接改写皮肤文件、" +
-                            "不削弱导入安全；改皮肤请用网页版编辑器。",
+stringResource(R.string.skin_dev_scope_note),
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -310,22 +310,22 @@ fun SkinDevScreen(onBack: () -> Unit) {
                                 importLauncher.launch(arrayOf("application/octet-stream", "*/*"))
                             },
                             enabled = !busy,
-                        ) { Text("导入 .jime") }
+                        ) { Text(stringResource(R.string.skin_dev_import_jime)) }
                         OutlinedButton(
                             onClick = { refreshLogs() },
                             enabled = !busy,
-                        ) { Text("刷新日志") }
+                        ) { Text(stringResource(R.string.skin_dev_refresh_logs)) }
                         OutlinedButton(
                             onClick = {
                                 SkinLibraryPrefs.setDevMode(context, false)
                                 onBack()
                             },
-                        ) { Text("关闭开发模式") }
+                        ) { Text(stringResource(R.string.skin_dev_close)) }
                     }
                 }
             }
             item {
-                Text("皮肤（${skins.size}），点“检视”查看解析与校验", fontWeight = FontWeight.Bold)
+                Text(stringResource(R.string.skin_dev_skin_count, skins.size), fontWeight = FontWeight.Bold)
             }
             item {
                 // 性能（2026-10-29 item-1 B）：进程内聚合数字；
@@ -336,18 +336,17 @@ fun SkinDevScreen(onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Text("性能（本进程累计）", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.skin_dev_perf_title), fontWeight = FontWeight.Bold)
                         OutlinedButton(
                             onClick = {
                                 perfAggregates =
                                     com.jobeen.ime.skin.perf.PerfMonitor.aggregates()
                             },
-                        ) { Text("刷新性能") }
+                        ) { Text(stringResource(R.string.skin_dev_refresh_perf)) }
                     }
                     if (perfAggregates.isEmpty()) {
                         Text(
-                            "暂无数据（点“刷新性能”读取；冷启动／按键提交／" +
-                                "皮肤应用／掉帧／内存五项随使用累计）",
+stringResource(R.string.skin_dev_perf_empty),
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -357,14 +356,20 @@ fun SkinDevScreen(onBack: () -> Unit) {
                                 com.jobeen.ime.skin.perf.PerfMonitor.Event.MEMORY
                             ) "KB" else "ms"
                             Text(
-                                "${event.name}：${agg.count} 次，均值 " +
-                                    "%.1f".format(agg.avg) + " $unit，最大 ${agg.max} $unit",
+                                stringResource(
+                                    R.string.skin_dev_perf_row,
+                                    event.name,
+                                    agg.count,
+                                    "%.1f".format(agg.avg),
+                                    unit,
+                                    agg.max,
+                                ),
                                 fontSize = 13.sp,
                             )
                         }
                     }
                     Text(
-                        "明细文件：Logs/performance/perf-日期.jsonl（只记元数据与耗时）",
+                        stringResource(R.string.skin_dev_perf_file_note),
                         fontSize = 13.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -378,8 +383,8 @@ fun SkinDevScreen(onBack: () -> Unit) {
                     Column(modifier = Modifier.weight(1f)) {
                         Text(entry.name.ifBlank { entry.id }, fontSize = 14.sp)
                         Text(
-                            (if (entry.id == activeId) "生效中 · " else "") +
-                                "第 ${entry.generation} 版",
+                            (if (entry.id == activeId) stringResource(R.string.skin_dev_active_prefix) else "") +
+                                stringResource(R.string.skin_dev_skin_version, entry.generation),
                             fontSize = 12.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -388,7 +393,7 @@ fun SkinDevScreen(onBack: () -> Unit) {
                         TextButton(
                             onClick = { selectedId = entry.id },
                             enabled = !busy,
-                        ) { Text("检视") }
+                        ) { Text(stringResource(R.string.skin_dev_inspect)) }
                         // 快速重载只对生效皮肤：非生效皮肤的应用归库页，
                         // 开发屏不重复造一个应用入口（简洁克制，不扩范围）。
                         if (entry.id == activeId) {
@@ -404,7 +409,7 @@ fun SkinDevScreen(onBack: () -> Unit) {
                                                     mapOf("skinId" to entry.id),
                                                 )
                                             }
-                                            toast(if (ok) "已重载" else "重载失败")
+                                            toast(if (ok) context.getString(R.string.skin_dev_reloaded) else context.getString(R.string.skin_dev_reload_failed))
                                             refreshIndex()
                                         } finally {
                                             busy = false
@@ -412,7 +417,7 @@ fun SkinDevScreen(onBack: () -> Unit) {
                                     }
                                 },
                                 enabled = !busy,
-                            ) { Text("快速重载") }
+                            ) { Text(stringResource(R.string.skin_dev_quick_reload)) }
                         }
                     }
                 }
@@ -420,23 +425,23 @@ fun SkinDevScreen(onBack: () -> Unit) {
             selectedId?.let {
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Text("检视：$it", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.skin_dev_inspect_title, it), fontWeight = FontWeight.Bold)
                         if (detailBusy) {
-                            Text("正在解析与校验…", fontSize = 13.sp)
+                            Text(stringResource(R.string.skin_dev_parsing), fontSize = 13.sp)
                         } else {
                             detail?.let { d ->
-                                Text("校验：${d.validation}", fontSize = 13.sp)
+                                Text(stringResource(R.string.skin_dev_validation, d.validation), fontSize = 13.sp)
                                 Text(
-                                    "快照可构建：" + if (d.snapshotOk) "是" else "否",
+                                    stringResource(R.string.skin_dev_snapshot_ok, if (d.snapshotOk) stringResource(R.string.yes) else stringResource(R.string.no)),
                                     fontSize = 13.sp,
                                 )
                                 // 检视区预览：配色取本皮肤快照，几何随布局切换；
                                 // 快照失败时只显示占位文字，不阻塞校验与 JSON 检视。
-                                Text("预览（配色取本皮肤）：", fontSize = 13.sp)
+                                Text(stringResource(R.string.skin_dev_preview_label), fontSize = 13.sp)
                                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
                                     TextButton(onClick = { devPreviewLayout = null }) {
                                         Text(
-                                            "绑定布局",
+                                            stringResource(R.string.skin_dev_bound_layout),
                                             fontWeight = if (devPreviewLayout == null) {
                                                 FontWeight.Bold
                                             } else {
@@ -467,13 +472,13 @@ fun SkinDevScreen(onBack: () -> Unit) {
                                     }
                                     SkinMiniPreview(d.preview.palette, rows)
                                 } else {
-                                    Text("预览不可用（快照构建失败）", fontSize = 13.sp)
+                                    Text(stringResource(R.string.skin_dev_preview_unavailable), fontSize = 13.sp)
                                 }
                                 for (line in d.issueLines) {
                                     Text("· $line", fontSize = 13.sp)
                                 }
                                 Spacer(Modifier.height(4.dp))
-                                Text("skin.json（只读，超长截断）：", fontSize = 13.sp)
+                                Text(stringResource(R.string.skin_dev_json_label), fontSize = 13.sp)
                                 Column(
                                     modifier = Modifier
                                         .fillMaxWidth()
@@ -489,9 +494,9 @@ fun SkinDevScreen(onBack: () -> Unit) {
             }
             item {
                 Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text("诊断日志", fontWeight = FontWeight.Bold)
+                    Text(stringResource(R.string.skin_dev_diag_log_title), fontWeight = FontWeight.Bold)
                     Text(
-                        logFileName?.let { "最新文件：$it（尾 200 行）" } ?: "暂无诊断日志文件",
+                        logFileName?.let { stringResource(R.string.skin_dev_latest_log, it) } ?: stringResource(R.string.skin_dev_no_log_file),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -506,7 +511,7 @@ fun SkinDevScreen(onBack: () -> Unit) {
                         }
                     }
                     Text(
-                        "完整导出请走设置页“导出诊断日志”（与错误日志同一缓冲链路）。",
+                        stringResource(R.string.skin_dev_export_hint),
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -526,15 +531,15 @@ fun SkinDevScreen(onBack: () -> Unit) {
             body = { Text(body) },
             actions = listOf(
                 SettingsDialogAction(
-                    text = "取消",
+                    text = stringResource(R.string.cancel),
                     onClick = {
                         dialogText = null
                         pendingConflictFile = null
                     },
                 ),
-                if (pendingConflictFile != null && title == "发现同名皮肤") {
+                if (pendingConflictFile != null && title == stringResource(R.string.skin_import_conflict_title)) {
                     SettingsDialogAction(
-                        text = "以副本导入",
+                        text = stringResource(R.string.skin_import_copy),
                         onClick = {
                             val file = pendingConflictFile!!
                             pendingConflictFile = null
@@ -546,21 +551,21 @@ fun SkinDevScreen(onBack: () -> Unit) {
                                     file, ctx, JimeImporter.ConflictMode.COPY,
                                 )) {
                                     is JimeImporter.Outcome.Imported -> {
-                                        dialogText = "导入完成" to
-                                            "已导入皮肤：${outcome.report.importedSkinIds.joinToString()}"
+                                        dialogText = context.getString(R.string.skin_import_done) to
+                                            context.getString(R.string.skin_lib_import_report_skins, outcome.report.importedSkinIds.joinToString())
                                         refreshIndex()
                                     }
                                     is JimeImporter.Outcome.Rejected ->
-                                        dialogText = "导入被拒绝" to outcome.reason
+                                        dialogText = context.getString(R.string.skin_import_rejected_title) to outcome.reason
                                     is JimeImporter.Outcome.ConflictPending ->
-                                        dialogText = "导入失败" to "副本导入仍遇冲突"
+                                        dialogText = context.getString(R.string.import_failed) to context.getString(R.string.skin_import_copy_conflict)
                                 }
                             }
                         },
                     )
                 } else {
                     SettingsDialogAction(
-                        text = "好",
+                        text = stringResource(R.string.ok),
                         onClick = { dialogText = null },
                     )
                 },

@@ -5,10 +5,13 @@ import android.text.InputType
 import android.view.inputmethod.EditorInfo
 
 /**
- * 输入框字段策略：密码类与「禁止个性化学习」的统一判定。
+ * 输入框字段策略：密码类与「禁止个性化学习」的统一判定；登录
+ * 账号框的新窗口复位豁免。
  *
  * 密码框内禁用：粘贴提示横幅（避免复制过的密码明文露出）、语音输入。
  * 覆盖文本密码（普通/可见/Web）与数字 PIN 密码。
+ * 登录账号框（邮箱／人名／网址类标识字段）与密码框一样豁免新窗口
+ * 复位（WO30 §4）：点这类框不回九宫格，停在当前键盘。
  */
 object InputFieldPolicy {
 
@@ -58,5 +61,28 @@ object InputFieldPolicy {
 
             else -> false
         }
+    }
+
+    fun isAccountField(info: EditorInfo?): Boolean {
+        if (info == null) return false
+        return isAccountField(info.inputType)
+    }
+
+    /**
+     * 登录账号框（纯函数：位掩码判定，可单测）：邮箱／人名／网址类
+     * 标识字段，与密码框一样豁免新窗口复位（WO30 §4）。
+     * 只认 EditorInfo 声明的账号类 variation：普通文本（NORMAL）
+     * 无法与一般文本框区分，不豁免；邮寄地址／邮件主题／消息类
+     * 不是账号标识，不豁免。对端参照：CyIME 的 address_fields_english
+     * 把网址与邮箱归为一组自动切英文。
+     */
+    internal fun isAccountField(inputType: Int): Boolean {
+        val inputClass = inputType and InputType.TYPE_MASK_CLASS
+        if (inputClass != InputType.TYPE_CLASS_TEXT) return false
+        val variation = inputType and InputType.TYPE_MASK_VARIATION
+        return variation == InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS ||
+            variation == InputType.TYPE_TEXT_VARIATION_WEB_EMAIL_ADDRESS ||
+            variation == InputType.TYPE_TEXT_VARIATION_PERSON_NAME ||
+            variation == InputType.TYPE_TEXT_VARIATION_URI
     }
 }

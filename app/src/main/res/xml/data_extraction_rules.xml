@@ -8,6 +8,8 @@
   - 崩溃自捕获文件（filesDir/crash/ 子目录，含异常堆栈；按目录整体排除）
   - 设备本地状态偏好（speech_model_prefs、wanxiang_update：下载/更新
     记录与本机文件绑定，带去新设备会让检查误判「已装/已最新」）
+  - 还原 journal 与还原前快照（filesDir/restore_journal/：本机中断
+    还原的恢复记录，带去新设备会误报中断、且快照是还原前本机状态）
   其余（用户词典、主题、设置、常用语、选词偏好等）照常迁移。
 -->
 <data-extraction-rules>
@@ -22,6 +24,7 @@
         <exclude domain="file" path="user_collocations.tsv" />
         <exclude domain="file" path="user_collocations.tsv.tmp" />
         <exclude domain="file" path="crash/" />
+        <exclude domain="file" path="restore_journal/" />
         <exclude domain="database" path="clipboard_database" />
         <exclude domain="database" path="clipboard_database-wal" />
         <exclude domain="database" path="clipboard_database-shm" />
@@ -38,6 +41,7 @@
         <exclude domain="file" path="user_collocations.tsv" />
         <exclude domain="file" path="user_collocations.tsv.tmp" />
         <exclude domain="file" path="crash/" />
+        <exclude domain="file" path="restore_journal/" />
         <exclude domain="database" path="clipboard_database" />
         <exclude domain="database" path="clipboard_database-wal" />
         <exclude domain="database" path="clipboard_database-shm" />

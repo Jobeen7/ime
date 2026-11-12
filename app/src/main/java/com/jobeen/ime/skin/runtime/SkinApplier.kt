@@ -36,6 +36,17 @@ internal suspend fun awaitFirstDrawLatch(latch: CountDownLatch, timeoutMs: Long)
     }
 
 /**
+ * SkinEditorSaver 调用的应用事务端口（可注入假件供单测）：
+ * 仅含编辑器实际调用的两个入口。实现为具名类 [SkinApplier] 的
+ * 显式 override（无 `by` 委托对象，故不触发接口委托增量陷阱——
+ * 详见 ~/workspace/AGENTS.md；新增方法须同步检查委托点）。
+ */
+interface SkinApplyPort {
+    suspend fun applySkin(ref: SkinGenRef): ApplyTransaction.Result
+    suspend fun reinstallActiveSnapshot(): Boolean
+}
+
+/**
  * 应用事务的真实端口装配（详设 §2.4/§2.7）：
  *
  * - 窗口正在绘制（键盘正显示）：走 [ApplyTransaction] 全状态机，
@@ -48,7 +59,7 @@ internal suspend fun awaitFirstDrawLatch(latch: CountDownLatch, timeoutMs: Long)
  * - 回退 Last-Good 的目标是已验证代次，无窗口时直接以 verified
  *   写回（无须再验证）；回默认不依赖窗口，两种情形同路。
  */
-class SkinApplier(context: Context) {
+class SkinApplier(context: Context) : SkinApplyPort {
 
     private val appContext = context.applicationContext
     private val layout get() = SkinLibrary.layout
@@ -116,7 +127,7 @@ class SkinApplier(context: Context) {
      * 离主线程；快照后窗口若消失，首帧等待最多 2s 超时回滚，
      * 结果与改前一致（仅等待变长，见 [ports]）。
      */
-    suspend fun applySkin(ref: SkinGenRef): ApplyTransaction.Result = applyMutex.withLock {
+    override suspend fun applySkin(ref: SkinGenRef): ApplyTransaction.Result = applyMutex.withLock {
         // 性能埋点（2026-10-29 item-1 B）：皮肤应用事务耗时
         // （含首帧验证等待；失败路径同样记时，只记元数据）。
         val startMs = android.os.SystemClock.elapsedRealtime()
@@ -230,7 +241,7 @@ class SkinApplier(context: Context) {
      * 快照按未绑定布局构建（回退默认布局），运行态即时收敛。
      * 无 active 皮肤时返回 true（无事可做）。
      */
-    suspend fun reinstallActiveSnapshot(): Boolean = applyMutex.withLock {
+    override suspend fun reinstallActiveSnapshot(): Boolean = applyMutex.withLock {
         val requestToken = SkinSnapshotProvider.allocateInstallToken()
         withContext(Dispatchers.IO) { reinstallActiveSnapshotOnIo(requestToken) }
     }

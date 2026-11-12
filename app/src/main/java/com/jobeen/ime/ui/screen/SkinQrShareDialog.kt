@@ -21,7 +21,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.asImageBitmap
+import android.content.Context
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.jobeen.ime.R
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import com.jobeen.ime.base.util.DigestUtil
@@ -125,7 +128,7 @@ fun QrShareDialog(
                     putExtra(Intent.EXTRA_STREAM, uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
-                context.startActivity(Intent.createChooser(intent, "分享二维码"))
+                context.startActivity(Intent.createChooser(intent, context.getString(R.string.skin_qr_share_title)))
             }.onFailure { error ->
                 DiagLog.w(
                     "library", "qr_share_image_failed",
@@ -137,40 +140,38 @@ fun QrShareDialog(
 
     SettingsDialog(
         onDismissRequest = onDismiss,
-        title = "分享二维码",
+        title = stringResource(R.string.skin_qr_share_title),
         body = {
             Column {
                 when (val current = state) {
                     is QrShareUiState.Loading -> {
                         CircularProgressIndicator(modifier = Modifier.size(32.dp))
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("正在准备二维码…")
+                        Text(stringResource(R.string.skin_qr_preparing))
                     }
                     is QrShareUiState.Inline -> {
                         Image(
                             bitmap = current.bitmap.asImageBitmap(),
-                            contentDescription = "皮肤二维码",
+                            contentDescription = stringResource(R.string.skin_qr_content_desc),
                             modifier = Modifier.size(256.dp),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
-                        Text("内联二维码（无资产皮肤，${current.skinJsonBytes} 字节）。")
+                        Text(stringResource(R.string.skin_qr_inline, current.skinJsonBytes))
                         if (current.skinJsonBytes > 3072) {
-                            Text("码内容较大，扫码时请靠近些、光线充足。")
+                            Text(stringResource(R.string.skin_qr_large_note))
                         }
                         Spacer(modifier = Modifier.height(8.dp))
-                        Button(onClick = { shareBitmap(current.bitmap) }) { Text("分享图片") }
+                        Button(onClick = { shareBitmap(current.bitmap) }) { Text(stringResource(R.string.skin_qr_share_image)) }
                     }
                     is QrShareUiState.NeedsUrl -> {
                         Text(
-                            "该皮肤含资产/布局，内联码装不下。请把 .jime 文件" +
-                                "托管到 https 直链后填入，生成可验 URL 型码；" +
-                                "或直接分享 .jime 文件。",
+stringResource(R.string.skin_qr_needs_url),
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         OutlinedTextField(
                             value = urlInput,
                             onValueChange = { urlInput = it; urlError = null; urlBitmap = null },
-                            label = { Text("https 直链") },
+                            label = { Text(stringResource(R.string.skin_qr_url_label)) },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -182,11 +183,11 @@ fun QrShareDialog(
                             Spacer(modifier = Modifier.height(8.dp))
                             Image(
                                 bitmap = bitmap.asImageBitmap(),
-                                contentDescription = "皮肤二维码",
+                                contentDescription = stringResource(R.string.skin_qr_content_desc),
                                 modifier = Modifier.size(256.dp),
                             )
                             Spacer(modifier = Modifier.height(8.dp))
-                            Button(onClick = { shareBitmap(bitmap) }) { Text("分享图片") }
+                            Button(onClick = { shareBitmap(bitmap) }) { Text(stringResource(R.string.skin_qr_share_image)) }
                         }
                         Spacer(modifier = Modifier.height(8.dp))
                         Button(onClick = {
@@ -206,24 +207,24 @@ fun QrShareDialog(
                                                 "error" to (error::class.simpleName ?: "Unknown"),
                                             ),
                                         )
-                                        urlError = "二维码生成失败，请用 .jime 文件分享"
+                                        urlError = context.getString(R.string.skin_qr_generate_failed)
                                         null
                                     }
                                 }
                                 is SkinQrPayload.ParseResult.Rejected ->
-                                    urlError = urlRejectionText(parsed.reason)
+                                    urlError = urlRejectionText(context, parsed.reason)
                             }
-                        }) { Text("生成二维码") }
+                        }) { Text(stringResource(R.string.skin_qr_generate)) }
                     }
                     is QrShareUiState.Failed -> {
-                        Text("二维码生成失败，请用 .jime 文件分享。")
+                        Text(stringResource(R.string.skin_qr_generate_failed_text))
                     }
                 }
             }
         },
         actions = listOf(
-            SettingsDialogAction(text = "分享 .jime 文件", onClick = onShareJime),
-            SettingsDialogAction(text = "关闭", onClick = onDismiss),
+            SettingsDialogAction(text = stringResource(R.string.skin_qr_share_jime), onClick = onShareJime),
+            SettingsDialogAction(text = stringResource(R.string.close), onClick = onDismiss),
         ),
     )
 }
@@ -235,11 +236,11 @@ private sealed interface QrShareUiState {
     data object Failed : QrShareUiState
 }
 
-private fun urlRejectionText(reason: String): String = when (reason) {
-    "qr_url_not_https" -> "须为 https 直链"
-    "qr_url_userinfo_rejected" -> "链接不能含 @（不接受带账号信息的链接）"
-    "qr_url_too_long" -> "链接过长"
-    "qr_url_invalid_chars" -> "链接含空白或非法字符"
-    "qr_url_fragment_invalid" -> "不要自己加 # 片段（sha 由 App 附加）"
-    else -> "链接无效：$reason"
+private fun urlRejectionText(context: Context, reason: String): String = when (reason) {
+    "qr_url_not_https" -> context.getString(R.string.skin_qr_url_not_https)
+    "qr_url_userinfo_rejected" -> context.getString(R.string.skin_qr_url_userinfo)
+    "qr_url_too_long" -> context.getString(R.string.skin_qr_url_too_long)
+    "qr_url_invalid_chars" -> context.getString(R.string.skin_qr_url_invalid_chars)
+    "qr_url_fragment_invalid" -> context.getString(R.string.skin_qr_url_fragment)
+    else -> context.getString(R.string.skin_qr_url_invalid, reason)
 }

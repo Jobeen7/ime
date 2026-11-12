@@ -97,8 +97,10 @@ import com.jobeen.ime.skin.library.genericPreviewRows
 import com.jobeen.ime.skin.library.miniPreviewPalette
 import com.jobeen.ime.skin.library.shareSkin
 import com.jobeen.ime.skin.model.Degradation
+import com.jobeen.ime.skin.model.LayoutResolution
 import com.jobeen.ime.skin.model.SkinPackageDocs
 import com.jobeen.ime.skin.model.SkinPackageDocsParser
+import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.pkg.JimeImporter
 import com.jobeen.ime.skin.pkg.SkinPackages
 import com.jobeen.ime.skin.qr.SkinQrImporter
@@ -168,6 +170,15 @@ private fun decodeDemoBitmap(genDir: File): Bitmap? = runCatching {
     file.inputStream().use { BitmapFactory.decodeStream(it, null, opts) }
 }.getOrNull()
 
+/**
+ * 生效皮肤绑定的布局是否不可解析（B3 §4.6 回退状态的常驻提示面）：
+ * 快照属于当前生效皮肤且布局解析结论为 MISSING/INVALID 时为 true。
+ * 纯函数，可单测；[loadLibraryState] 的取值与横幅可见性同口径。
+ */
+internal fun activeLayoutMissing(snapshot: SkinSnapshot?, activeSkinId: String?): Boolean =
+    snapshot?.takeIf { it.ref.skinId == activeSkinId }
+        ?.layoutResolution in setOf(LayoutResolution.MISSING, LayoutResolution.INVALID)
+
 private suspend fun loadLibraryState(): LibraryUiState = withContext(Dispatchers.IO) {
     val store = SkinLibrary.store
     val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
@@ -195,12 +206,9 @@ private suspend fun loadLibraryState(): LibraryUiState = withContext(Dispatchers
             }.getOrNull()
             name?.let { entry.id to it }
         }.toMap(),
-        activeLayoutMissing = SkinSnapshotProvider.peek()
-            ?.takeIf { it.ref.skinId == active?.skinId }
-            ?.layoutResolution in setOf(
-                com.jobeen.ime.skin.model.LayoutResolution.MISSING,
-                com.jobeen.ime.skin.model.LayoutResolution.INVALID,
-            ),
+        activeLayoutMissing = activeLayoutMissing(
+            SkinSnapshotProvider.peek(), active?.skinId,
+        ),
         pendingFallbackSkinId = SkinLibrary.layout.readPendingFallbackSkinId(),
     )
 }
@@ -424,16 +432,15 @@ fun SkinLibraryScreen(
             val ctx = SkinPackages.importContext(context)
             when (val outcome = importer.importZip(temp, ctx, JimeImporter.ConflictMode.FAIL)) {
                 is JimeImporter.Outcome.Imported -> {
-                    dialogText = "导入完成" to formatImportReport(outcome.report)
+                    dialogText = context.getString(R.string.skin_import_done) to formatImportReport(context, outcome.report)
                 }
                 is JimeImporter.Outcome.ConflictPending -> {
                     pendingConflictFile = temp
-                    dialogText = "发现同名皮肤" to
-                        "包内皮肤与库中已有版本不同：${outcome.conflicts.joinToString()}。" +
-                        "可取消，或以副本（新 id）导入。"
+                    dialogText = context.getString(R.string.skin_import_conflict_title) to
+                        context.getString(R.string.skin_import_conflict_body, outcome.conflicts.joinToString())
                 }
                 is JimeImporter.Outcome.Rejected -> {
-                    dialogText = "导入被拒绝" to outcome.reason
+                    dialogText = context.getString(R.string.skin_import_rejected_title) to outcome.reason
                 }
             }
         }
@@ -449,7 +456,7 @@ fun SkinLibraryScreen(
     val qrScanOptions = remember {
         ScanOptions().apply {
             setDesiredBarcodeFormats(ScanOptions.QR_CODE)
-            setPrompt("扫描皮肤二维码")
+            setPrompt(context.getString(R.string.skin_lib_scan_prompt))
             setOrientationLocked(false)
             setBeepEnabled(false)
         }
@@ -460,8 +467,8 @@ fun SkinLibraryScreen(
         if (contents.trim().startsWith(ThemeCode.PREFIX)) {
             val importedTheme = ThemeCode.decode(contents.trim())
             if (importedTheme == null) {
-                dialogText = "旧主题二维码无效" to
-                    "该二维码不是有效的旧主题配色码。"
+                dialogText = context.getString(R.string.skin_lib_legacy_qr_invalid_title) to
+                    context.getString(R.string.skin_lib_legacy_qr_invalid_body)
                 return@rememberLauncherForActivityResult
             }
             runBusy {
@@ -469,12 +476,11 @@ fun SkinLibraryScreen(
                     is ThemeImport.Outcome.Applied -> {
                         ThemeImport.apply(context, importedTheme)
                         themeId = importedTheme.id
-                        dialogText = "已导入旧主题" to
+                        dialogText = context.getString(R.string.skin_lib_legacy_imported_title) to
                             if (state.active?.skinId != null) {
-                                "已导入“${importedTheme.name}”，并设为当前主题；" +
-                                    "当前有皮肤生效，主题在皮肤移除后生效。"
+                                context.getString(R.string.skin_lib_legacy_imported_active, importedTheme.name)
                             } else {
-                                "已导入“${importedTheme.name}”，并设为当前主题。"
+                                context.getString(R.string.skin_lib_legacy_imported, importedTheme.name)
                             }
                     }
                     is ThemeImport.Outcome.NeedsOverwriteSlot -> {
@@ -489,16 +495,15 @@ fun SkinLibraryScreen(
             val qrResult = SkinQrImporter.importFromQrText(context, contents)
             when (val outcome = qrResult.outcome) {
                 is JimeImporter.Outcome.Imported -> {
-                    dialogText = "导入完成" to formatImportReport(outcome.report)
+                    dialogText = context.getString(R.string.skin_import_done) to formatImportReport(context, outcome.report)
                 }
                 is JimeImporter.Outcome.ConflictPending -> {
                     pendingConflictFile = qrResult.packageFile
-                    dialogText = "发现同名皮肤" to
-                        "包内皮肤与库中已有版本不同：${outcome.conflicts.joinToString()}。" +
-                        "可取消，或以副本（新 id）导入。"
+                    dialogText = context.getString(R.string.skin_import_conflict_title) to
+                        context.getString(R.string.skin_import_conflict_body, outcome.conflicts.joinToString())
                 }
                 is JimeImporter.Outcome.Rejected -> {
-                    dialogText = "导入被拒绝" to outcome.reason
+                    dialogText = context.getString(R.string.skin_import_rejected_title) to outcome.reason
                 }
             }
         }
@@ -510,7 +515,7 @@ fun SkinLibraryScreen(
             qrScanLauncher.launch(qrScanOptions)
         } else {
             DiagLog.w("qr", "qr_camera_denied", emptyMap())
-            toast("需要相机权限才能扫码导入")
+            toast(context.getString(R.string.skin_lib_camera_permission_needed))
         }
     }
     fun launchQrScan() {
@@ -538,9 +543,9 @@ fun SkinLibraryScreen(
             }
             toast(
                 when (result) {
-                    is JimeExporter.Result.Exported -> "已导出"
-                    is JimeExporter.Result.Failed -> "导出失败：${result.reason}"
-                    null -> "导出失败：无法写入目标文件"
+                    is JimeExporter.Result.Exported -> context.getString(R.string.skin_lib_exported)
+                    is JimeExporter.Result.Failed -> context.getString(R.string.skin_lib_export_failed, result.reason)
+                    null -> context.getString(R.string.skin_lib_export_failed_write)
                 },
             )
         }
@@ -559,16 +564,16 @@ fun SkinLibraryScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("键盘皮肤") },
+                title = { Text(stringResource(R.string.skin_lib_title)) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
                     Box {
                         IconButton(onClick = { showTopMenu = true }) {
-                            Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                            Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more))
                         }
                         DropdownMenu(
                             expanded = showTopMenu,
@@ -578,7 +583,7 @@ fun SkinLibraryScreen(
                             // 此处不再另设一个跟随开关：默认主题点卡即置内部跟随标记，
                             // 莫奈色与导入旧主题点卡／导入即置固定标记，行为见 KeyboardColors.themeFor。
                             DropdownMenuItem(
-                                text = { Text("导入皮肤") },
+                                text = { Text(stringResource(R.string.skin_lib_import_skin)) },
                                 onClick = {
                                     showTopMenu = false
                                     importLauncher.launch(
@@ -591,7 +596,7 @@ fun SkinLibraryScreen(
                             // 经 SkinQrImporter 走同一 JimeImporter 校验链路
                             // （清单/sha256/上限全在），不得绕过校验。
                             DropdownMenuItem(
-                                text = { Text("扫码导入") },
+                                text = { Text(stringResource(R.string.skin_lib_scan_import)) },
                                 onClick = {
                                     showTopMenu = false
                                     launchQrScan()
@@ -601,24 +606,24 @@ fun SkinLibraryScreen(
                             // 皮肤时只提示，不崩不空转；与卡片 ⋮ 的同名单项共用
                             // shareSkin / exportLauncher 链路）。
                             DropdownMenuItem(
-                                text = { Text("分享皮肤") },
+                                text = { Text(stringResource(R.string.skin_lib_share_skin)) },
                                 onClick = {
                                     showTopMenu = false
                                     val appliedId = state.active?.skinId
                                     if (appliedId == null) {
-                                        toast("没有生效中的自定义皮肤")
+                                        toast(context.getString(R.string.skin_lib_no_active_custom_skin))
                                     } else {
                                         runBusy {
                                             when (shareSkin(context, appliedId)) {
-                                                is SkinShareResult.Shared -> toast("已打开分享")
-                                                is SkinShareResult.Failed -> toast("分享失败")
+                                                is SkinShareResult.Shared -> toast(context.getString(R.string.share_opened))
+                                                is SkinShareResult.Failed -> toast(context.getString(R.string.share_failed))
                                             }
                                         }
                                     }
                                 },
                             )
                             DropdownMenuItem(
-                                text = { Text("导出皮肤") },
+                                text = { Text(stringResource(R.string.skin_lib_export_skin)) },
                                 onClick = {
                                     showTopMenu = false
                                     val appliedId = state.active?.skinId
@@ -626,7 +631,7 @@ fun SkinLibraryScreen(
                                         state.index.skins.firstOrNull { it.id == id }
                                     }
                                     if (appliedId == null || appliedEntry == null) {
-                                        toast("没有生效中的自定义皮肤")
+                                        toast(context.getString(R.string.skin_lib_no_active_custom_skin))
                                     } else {
                                         pendingExportSkinId = appliedId
                                         exportLauncher.launch(
@@ -638,11 +643,11 @@ fun SkinLibraryScreen(
                             // 批量删除（菜单内，顺序在颜色模式之前）：
                             // 只进多选模式，退出/删除见下方多选行。
                             DropdownMenuItem(
-                                text = { Text("批量删除") },
+                                text = { Text(stringResource(R.string.skin_lib_batch_delete)) },
                                 onClick = {
                                     showTopMenu = false
                                     if (state.index.skins.isEmpty()) {
-                                        toast("库中没有皮肤")
+                                        toast(context.getString(R.string.skin_lib_empty_library))
                                     } else {
                                         multiSelect = true
                                     }
@@ -652,9 +657,9 @@ fun SkinLibraryScreen(
                             // 由 Activity 重建使本页主题生效，见行为矩阵）。
                             for (mode in SkinColorMode.entries) {
                                 val label = when (mode) {
-                                    SkinColorMode.SYSTEM -> "跟随系统"
-                                    SkinColorMode.LIGHT -> "浅色"
-                                    SkinColorMode.DARK -> "深色"
+                                    SkinColorMode.SYSTEM -> stringResource(R.string.keyboard_theme_follow_system)
+                                    SkinColorMode.LIGHT -> stringResource(R.string.color_mode_light)
+                                    SkinColorMode.DARK -> stringResource(R.string.color_mode_dark)
                                 }
                                 DropdownMenuItem(
                                     text = {
@@ -677,7 +682,7 @@ fun SkinLibraryScreen(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        if (devMode) "停止皮肤开发模式" else "启动皮肤开发模式",
+                                        if (devMode) stringResource(R.string.skin_lib_dev_mode_stop) else stringResource(R.string.skin_lib_dev_mode_start),
                                     )
                                 },
                                 onClick = {
@@ -686,7 +691,7 @@ fun SkinLibraryScreen(
                                         SkinLibraryPrefs.setDevMode(context, false)
                                         devMode = false
                                         DiagLog.i("library", "dev_mode_closed", emptyMap())
-                                        toast("已停止皮肤开发模式")
+                                        toast(context.getString(R.string.skin_lib_dev_mode_stopped))
                                     } else {
                                         SkinLibraryPrefs.setDevMode(context, true)
                                         devMode = true
@@ -698,7 +703,7 @@ fun SkinLibraryScreen(
                             DropdownMenuItem(
                                 text = {
                                     Text(
-                                        "重置内置键盘",
+                                        stringResource(R.string.skin_lib_reset_builtin),
                                         color = MaterialTheme.colorScheme.error,
                                     )
                                 },
@@ -726,7 +731,19 @@ fun SkinLibraryScreen(
             item {
                 if (state.pendingFallbackSkinId != null) {
                     Text(
-                        "皮肤已从库中删除，当前键盘正在回退／仍显示旧皮肤",
+                        stringResource(R.string.skin_lib_pending_fallback),
+                        fontSize = 13.sp,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                }
+            }
+            // 布局回退常驻提示（B3 §4.6，K-M4）：生效皮肤绑定的自定义布局
+            // 缺失／无效、已回退出厂布局时一直显示，直到重新导入皮肤或
+            // 换皮肤；loadLibraryState 重读后结论变了即消失。
+            item {
+                if (state.activeLayoutMissing) {
+                    Text(
+                        stringResource(R.string.skin_library_layout_missing_banner),
                         fontSize = 13.sp,
                         modifier = Modifier.fillMaxWidth(),
                     )
@@ -769,7 +786,7 @@ fun SkinLibraryScreen(
                                 if (state.active?.skinId != null) {
                                     val reverted = applier.revertToDefault()
                                     if (reverted !is ApplyTransaction.Result.RevertedToDefault) {
-                                        toast("切换失败：回退内置失败")
+                                        toast(context.getString(R.string.skin_lib_switch_failed_fallback))
                                         return@runBusy
                                     }
                                 }
@@ -802,7 +819,7 @@ fun SkinLibraryScreen(
                                 if (state.active?.skinId != null) {
                                     val reverted = applier.revertToDefault()
                                     if (reverted !is ApplyTransaction.Result.RevertedToDefault) {
-                                        toast("切换失败：回退内置失败")
+                                        toast(context.getString(R.string.skin_lib_switch_failed_fallback))
                                         return@runBusy
                                     }
                                 }
@@ -824,7 +841,7 @@ fun SkinLibraryScreen(
             item {
                 if (multiSelect) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("已选 ${selectedIds.size} 个", fontSize = 13.sp)
+                        Text(stringResource(R.string.skin_lib_selected_count, selectedIds.size), fontSize = 13.sp)
                         Spacer(Modifier.weight(1f))
                         TextButton(
                             onClick = {
@@ -832,11 +849,11 @@ fun SkinLibraryScreen(
                                 selectedIds = emptySet()
                             },
                             enabled = !busy,
-                        ) { Text("取消") }
+                        ) { Text(stringResource(R.string.cancel)) }
                         Button(
                             onClick = { showBatchDeleteConfirm = true },
                             enabled = !busy && selectedIds.isNotEmpty(),
-                        ) { Text("删除所选") }
+                        ) { Text(stringResource(R.string.skin_lib_delete_selected)) }
                     }
                 }
             }
@@ -902,8 +919,8 @@ fun SkinLibraryScreen(
                             onShare = {
                                 runBusy {
                                     when (shareSkin(context, entry.id)) {
-                                        is SkinShareResult.Shared -> toast("已打开分享")
-                                        is SkinShareResult.Failed -> toast("分享失败")
+                                        is SkinShareResult.Shared -> toast(context.getString(R.string.share_opened))
+                                        is SkinShareResult.Failed -> toast(context.getString(R.string.share_failed))
                                     }
                                 }
                             },
@@ -917,7 +934,7 @@ fun SkinLibraryScreen(
                                         )
                                     }
                                     if (snapshot == null) {
-                                        toast("该皮肤无法解析，不能生成配色码")
+                                        toast(context.getString(R.string.skin_lib_unparseable_no_color_code))
                                     } else {
                                         val theme = KeyboardTheme(
                                             entry.id, entry.name, snapshot.colorScheme,
@@ -987,11 +1004,11 @@ fun SkinLibraryScreen(
                                                         ?: "Unknown"),
                                                 ),
                                             )
-                                            dialogText = "重新加载失败" to
+                                            dialogText = context.getString(R.string.skin_lib_reload_failed) to
                                                 applyResultMessage(result) { id ->
                                                     state.index.skins.firstOrNull { it.id == id }
                                                         ?.name?.ifBlank { null }
-                                                } + "。错误已记入诊断日志，可从该皮肤长按菜单的“查看错误日志”查看。"
+                                                } + context.getString(R.string.skin_lib_reload_failed_suffix)
                                         }
                                     } catch (error: Exception) {
                                         DiagLog.e(
@@ -1003,8 +1020,8 @@ fun SkinLibraryScreen(
                                                 "error" to (error::class.simpleName ?: "Unknown"),
                                             ),
                                         )
-                                        dialogText = "重新加载失败" to
-                                            "重新加载时出现异常，已记入诊断日志，可从该皮肤长按菜单的“查看错误日志”查看。"
+                                        dialogText = context.getString(R.string.skin_lib_reload_failed) to
+                                            context.getString(R.string.skin_lib_reload_exception)
                                     }
                                 }
                             },
@@ -1054,15 +1071,15 @@ fun SkinLibraryScreen(
             body = { Text(body) },
             actions = listOf(
                 SettingsDialogAction(
-                    text = "取消",
+                    text = stringResource(R.string.cancel),
                     onClick = {
                         dialogText = null
                         pendingConflictFile = null
                     },
                 ),
-                if (pendingConflictFile != null && title == "发现同名皮肤") {
+                if (pendingConflictFile != null && title == stringResource(R.string.skin_import_conflict_title)) {
                     SettingsDialogAction(
-                        text = "以副本导入",
+                        text = stringResource(R.string.skin_import_copy),
                         onClick = {
                             val file = pendingConflictFile!!
                             pendingConflictFile = null
@@ -1074,19 +1091,19 @@ fun SkinLibraryScreen(
                                     file, ctx, JimeImporter.ConflictMode.COPY,
                                 )) {
                                     is JimeImporter.Outcome.Imported -> {
-                                        dialogText = "导入完成" to formatImportReport(outcome.report)
+                                        dialogText = context.getString(R.string.skin_import_done) to formatImportReport(context, outcome.report)
                                     }
                                     is JimeImporter.Outcome.Rejected ->
-                                        dialogText = "导入被拒绝" to outcome.reason
+                                        dialogText = context.getString(R.string.skin_import_rejected_title) to outcome.reason
                                     is JimeImporter.Outcome.ConflictPending ->
-                                        dialogText = "导入失败" to "副本导入仍遇冲突"
+                                        dialogText = context.getString(R.string.import_failed) to context.getString(R.string.skin_import_copy_conflict)
                                 }
                             }
                         },
                     )
                 } else {
                     SettingsDialogAction(
-                        text = "好",
+                        text = stringResource(R.string.ok),
                         onClick = { dialogText = null },
                     )
                 },
@@ -1100,36 +1117,35 @@ fun SkinLibraryScreen(
                 qrBitmap = null
                 qrCodeText = null
             },
-            title = "配色二维码",
+            title = stringResource(R.string.skin_lib_qr_title),
             body = {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Image(
                         bitmap = qrBitmap!!.asImageBitmap(),
-                        contentDescription = "配色二维码",
+                        contentDescription = stringResource(R.string.skin_lib_qr_title),
                         modifier = Modifier.fillMaxWidth(),
                     )
                     Text(
-                        "当前分享仅包含配色；改键、背景图、音效、布局与底距" +
-                            "请通过完整 .jime 文件导出分享。",
+                        stringResource(R.string.skin_lib_qr_note),
                         fontSize = 13.sp,
                     )
                 }
             },
             actions = listOf(
                 SettingsDialogAction(
-                    text = "关闭",
+                    text = stringResource(R.string.close),
                     onClick = {
                         qrBitmap = null
                         qrCodeText = null
                     },
                 ),
                 SettingsDialogAction(
-                    text = "复制短码",
+                    text = stringResource(R.string.skin_lib_copy_short_code),
                     onClick = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
                             as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("theme", qrCodeText ?: ""))
-                        toast("短码已复制")
+                        toast(context.getString(R.string.skin_lib_short_code_copied))
                     },
                 ),
             ),
@@ -1144,8 +1160,8 @@ fun SkinLibraryScreen(
                 qrShareSkinId = null
                 runBusy {
                     when (shareSkin(context, target)) {
-                        is SkinShareResult.Shared -> toast("已打开分享")
-                        is SkinShareResult.Failed -> toast("分享失败")
+                        is SkinShareResult.Shared -> toast(context.getString(R.string.share_opened))
+                        is SkinShareResult.Failed -> toast(context.getString(R.string.share_failed))
                     }
                 }
             },
@@ -1155,13 +1171,13 @@ fun SkinLibraryScreen(
     deleteSkinId?.let { target ->
         SettingsConfirmDialog(
             onDismissRequest = { deleteSkinId = null },
-            title = "删除皮肤？",
+            title = stringResource(R.string.skin_lib_delete_skin_title),
             text = if (state.active?.skinId == target) {
-                "该皮肤正在生效，删除后将回退到内置默认主题。删除不可恢复。"
+                stringResource(R.string.skin_lib_delete_active_message)
             } else {
-                "删除不可恢复。"
+                stringResource(R.string.skin_lib_delete_message)
             },
-            confirmText = "删除",
+            confirmText = stringResource(R.string.delete),
             onConfirm = {
                 deleteSkinId = null
                 runBusy {
@@ -1170,22 +1186,22 @@ fun SkinLibraryScreen(
                             com.jobeen.ime.skin.store.ApplyTransaction.Result
                                 .RevertedToDefault
                     }) {
-                        is SkinLibraryAdmin.Result.Done -> toast("已删除")
+                        is SkinLibraryAdmin.Result.Done -> toast(context.getString(R.string.deleted))
                         is SkinLibraryAdmin.Result.DoneFallbackPending ->
-                            toast("皮肤已从库中删除，当前键盘正在回退／仍显示旧皮肤")
+                            toast(context.getString(R.string.skin_lib_pending_fallback))
                         is SkinLibraryAdmin.Result.Refused ->
-                            toast("删除被拒绝：${result.reason}")
+                            toast(context.getString(R.string.skin_lib_delete_refused, result.reason))
                     }
                 }
             },
-            dismissText = "取消",
+            dismissText = stringResource(R.string.cancel),
         )
     }
 
     skinDetails?.let { details ->
         SettingsDialog(
             onDismissRequest = { skinDetails = null },
-            title = "皮肤详情",
+            title = stringResource(R.string.skin_lib_details_title),
             body = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     for ((label, value) in SkinCardMenuSupport.skinDetailRows(
@@ -1207,7 +1223,7 @@ fun SkinLibraryScreen(
                     details.demoBitmap?.let { bitmap ->
                         Image(
                             bitmap = bitmap.asImageBitmap(),
-                            contentDescription = "演示图",
+                            contentDescription = stringResource(R.string.skin_lib_demo_image),
                             contentScale = ContentScale.FillWidth,
                             modifier = Modifier.fillMaxWidth(),
                         )
@@ -1215,7 +1231,7 @@ fun SkinLibraryScreen(
                 }
             },
             actions = listOf(
-                SettingsDialogAction(text = "好", onClick = { skinDetails = null }),
+                SettingsDialogAction(text = stringResource(R.string.ok), onClick = { skinDetails = null }),
             ),
         )
     }
@@ -1223,17 +1239,17 @@ fun SkinLibraryScreen(
     skinLogView?.let { view ->
         SettingsDialog(
             onDismissRequest = { skinLogView = null },
-            title = "错误日志",
+            title = stringResource(R.string.skin_lib_error_log_title),
             scrollable = false,
             body = {
                 Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(
-                        "皮肤“${view.name}”的最近错误日志（WARN/ERROR，最多 50 条，新→旧）：",
+                        stringResource(R.string.skin_lib_error_log_header, view.name),
                         fontSize = 13.sp,
                     )
                     if (view.lines.isEmpty()) {
                         Text(
-                            "暂无错误日志。完整日志可通过设置页导出诊断日志查看。",
+                            stringResource(R.string.skin_lib_no_error_log),
                             fontSize = 13.sp,
                         )
                     } else {
@@ -1255,7 +1271,7 @@ fun SkinLibraryScreen(
                 }
             },
             actions = listOf(
-                SettingsDialogAction(text = "好", onClick = { skinLogView = null }),
+                SettingsDialogAction(text = stringResource(R.string.ok), onClick = { skinLogView = null }),
             ),
         )
     }
@@ -1263,11 +1279,9 @@ fun SkinLibraryScreen(
     if (showResetConfirm) {
         SettingsConfirmDialog(
             onDismissRequest = { showResetConfirm = false },
-            title = "重置内置键盘？",
-            text = "仅将当前生效皮肤切回内置默认主题。你的皮肤、布局" +
-                "与各项设置（包括颜色模式选择）不受影响，" +
-                "不会删除任何用户皮肤与数据。",
-            confirmText = "重置",
+            title = stringResource(R.string.skin_lib_reset_builtin_title),
+            text = stringResource(R.string.skin_lib_reset_builtin_message),
+            confirmText = stringResource(R.string.skin_lib_reset_confirm),
             onConfirm = {
                 showResetConfirm = false
                 runBusy {
@@ -1277,10 +1291,10 @@ fun SkinLibraryScreen(
                         "library", "builtin_reset",
                         mapOf("previousSkinId" to (previous ?: "builtin")),
                     )
-                    toast("已恢复内置默认主题")
+                    toast(context.getString(R.string.skin_lib_reset_done))
                 }
             },
-            dismissText = "取消",
+            dismissText = stringResource(R.string.cancel),
         )
     }
 
@@ -1288,10 +1302,9 @@ fun SkinLibraryScreen(
         val targets = state.index.skins.filter { it.id in selectedIds }
         SettingsConfirmDialog(
             onDismissRequest = { showBatchDeleteConfirm = false },
-            title = "删除所选皮肤？",
-            text = "将删除 ${targets.size} 个皮肤，不可恢复。生效中的皮肤会在删除后" +
-                "回退内置默认；布局与其他皮肤不受影响。",
-            confirmText = "删除",
+            title = stringResource(R.string.skin_lib_delete_selected_title),
+            text = stringResource(R.string.skin_lib_delete_selected_message, targets.size),
+            confirmText = stringResource(R.string.delete),
             onConfirm = {
                 showBatchDeleteConfirm = false
                 val ids = selectedIds.toList()
@@ -1326,14 +1339,14 @@ fun SkinLibraryScreen(
                         )
                     toast(
                         if (pending > 0) {
-                            "批量删除完成：成功 $done 个（其中 $pending 个正在回退），失败 $refused 个"
+                            context.getString(R.string.skin_lib_batch_delete_done_pending, done, pending, refused)
                         } else {
-                            "批量删除完成：成功 $done 个，失败 $refused 个"
+                            context.getString(R.string.skin_lib_batch_delete_done, done, refused)
                         },
                     )
                 }
             },
-            dismissText = "取消",
+            dismissText = stringResource(R.string.cancel),
         )
     }
 
@@ -1347,13 +1360,13 @@ fun SkinLibraryScreen(
                 showLegacyOverwriteDialog = false
                 pendingLegacyImport = null
             },
-            title = "自定义主题已满",
+            title = stringResource(R.string.skin_lib_custom_theme_full),
             body = {
                 if (existing.isEmpty()) {
-                    Text("没有可覆盖的自定义主题。")
+                    Text(stringResource(R.string.skin_lib_no_theme_to_overwrite))
                 } else {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        Text("请选择一个要覆盖的自定义主题：")
+                        Text(stringResource(R.string.skin_lib_choose_theme_to_overwrite))
                         for ((index, theme) in existing.withIndex()) {
                             TextButton(
                                 onClick = {
@@ -1363,8 +1376,8 @@ fun SkinLibraryScreen(
                                         ThemeStore.overwrite(index, pending)
                                         ThemeImport.apply(context, pending)
                                         themeId = pending.id
-                                        dialogText = "已导入旧主题" to
-                                            "已覆盖“${theme.name}”，并设“${pending.name}”为当前主题。"
+                                        dialogText = context.getString(R.string.skin_lib_legacy_imported_title) to
+                                            context.getString(R.string.skin_lib_legacy_overwritten, theme.name, pending.name)
                                     }
                                 },
                                 modifier = Modifier.fillMaxWidth(),
@@ -1380,7 +1393,7 @@ fun SkinLibraryScreen(
             },
             actions = listOf(
                 SettingsDialogAction(
-                    text = "取消",
+                    text = stringResource(R.string.cancel),
                     onClick = {
                         showLegacyOverwriteDialog = false
                         pendingLegacyImport = null
@@ -1392,29 +1405,29 @@ fun SkinLibraryScreen(
 
 }
 
-private fun formatImportReport(report: JimeImporter.ImportReport): String = buildString {
+private fun formatImportReport(context: Context, report: JimeImporter.ImportReport): String = buildString {
     if (report.importedSkinIds.isNotEmpty()) {
-        appendLine("已导入皮肤：${report.importedSkinIds.joinToString()}")
+        appendLine(context.getString(R.string.skin_lib_import_report_skins, report.importedSkinIds.joinToString()))
     }
     if (report.importedLayoutIds.isNotEmpty()) {
-        appendLine("已导入布局：${report.importedLayoutIds.joinToString()}")
+        appendLine(context.getString(R.string.skin_lib_import_report_layouts, report.importedLayoutIds.joinToString()))
     }
     if (report.skippedSkinIds.isNotEmpty()) {
-        appendLine("已跳过（内容相同）：${report.skippedSkinIds.joinToString()}")
+        appendLine(context.getString(R.string.skin_lib_import_report_skipped, report.skippedSkinIds.joinToString()))
     }
     if (report.copies.isNotEmpty()) {
-        appendLine("冲突副本：${report.copies.entries.joinToString { "${it.key} → ${it.value}" }}")
+        appendLine(context.getString(R.string.skin_lib_import_report_copies, report.copies.entries.joinToString { "${it.key} → ${it.value}" }))
     }
     if (report.backgroundDropped) {
-        appendLine("注意：背景图因资源问题已回退为纯色")
+        appendLine(context.getString(R.string.skin_lib_import_report_bg_dropped))
     }
     if (report.unmappedKeys.isNotEmpty()) {
-        appendLine("未映射的按键（请在编辑器里重绑）：${report.unmappedKeys.joinToString()}")
+        appendLine(context.getString(R.string.skin_lib_import_report_unmapped, report.unmappedKeys.joinToString()))
     }
     for (issue in report.issues) {
-        appendLine("· ${issue.path}：${issue.detail}")
+        appendLine(context.getString(R.string.skin_lib_import_report_issue, issue.path, issue.detail))
     }
-    if (isEmpty()) append("无变化")
+    if (isEmpty()) append(context.getString(R.string.skin_lib_import_report_empty))
 }
 
 /**
@@ -1460,7 +1473,7 @@ private fun SkinLibraryCard(
                 enabled = enabled,
                 onClick = onCardClick,
                 onLongClick = { if (!multiSelect) showLongPressMenu = true },
-                onLongClickLabel = "更多操作",
+                onLongClickLabel = stringResource(R.string.schema_menu_more),
             ),
     ) {
         Column(modifier = Modifier.padding(8.dp)) {
@@ -1486,7 +1499,7 @@ private fun SkinLibraryCard(
                     ) {
                         Icon(
                             Icons.Filled.Check,
-                            contentDescription = if (multiSelect) "已选" else "生效中",
+                            contentDescription = if (multiSelect) stringResource(R.string.skin_lib_selected) else stringResource(R.string.skin_lib_active),
                             tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(14.dp),
                         )
@@ -1499,7 +1512,7 @@ private fun SkinLibraryCard(
                 ) {
                     Icon(
                         Icons.Filled.MoreVert,
-                        contentDescription = "皮肤菜单",
+                        contentDescription = stringResource(R.string.skin_lib_skin_menu),
                         tint = MaterialTheme.colorScheme.onSurface,
                     )
                 }
@@ -1508,28 +1521,28 @@ private fun SkinLibraryCard(
                     onDismissRequest = { showMenu = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("应用") },
+                        text = { Text(stringResource(R.string.global_apply)) },
                         onClick = { showMenu = false; onApply() },
                         enabled = !isActive,
                     )
                     DropdownMenuItem(
-                        text = { Text("导出") },
+                        text = { Text(stringResource(R.string.skin_lib_export)) },
                         onClick = { showMenu = false; onExport() },
                     )
                     DropdownMenuItem(
-                        text = { Text("分享皮肤") },
+                        text = { Text(stringResource(R.string.skin_lib_share_skin)) },
                         onClick = { showMenu = false; onShare() },
                     )
                     DropdownMenuItem(
-                        text = { Text("分享二维码") },
+                        text = { Text(stringResource(R.string.skin_lib_share_qr)) },
                         onClick = { showMenu = false; onShareQr() },
                     )
                     DropdownMenuItem(
-                        text = { Text("配色码") },
+                        text = { Text(stringResource(R.string.skin_lib_color_code)) },
                         onClick = { showMenu = false; onColorCode() },
                     )
                     DropdownMenuItem(
-                        text = { Text("删除") },
+                        text = { Text(stringResource(R.string.delete)) },
                         onClick = { showMenu = false; onDelete() },
                     )
                 }
@@ -1538,27 +1551,27 @@ private fun SkinLibraryCard(
                     onDismissRequest = { showLongPressMenu = false },
                 ) {
                     DropdownMenuItem(
-                        text = { Text("详情") },
+                        text = { Text(stringResource(R.string.skin_lib_details)) },
                         onClick = { showLongPressMenu = false; onDetails() },
                     )
                     DropdownMenuItem(
-                        text = { Text("分享皮肤") },
+                        text = { Text(stringResource(R.string.skin_lib_share_skin)) },
                         onClick = { showLongPressMenu = false; onShare() },
                     )
                     DropdownMenuItem(
-                        text = { Text("导出") },
+                        text = { Text(stringResource(R.string.skin_lib_export)) },
                         onClick = { showLongPressMenu = false; onExport() },
                     )
                     DropdownMenuItem(
-                        text = { Text("重新加载") },
+                        text = { Text(stringResource(R.string.skin_lib_reload)) },
                         onClick = { showLongPressMenu = false; onReload() },
                     )
                     DropdownMenuItem(
-                        text = { Text("查看错误日志") },
+                        text = { Text(stringResource(R.string.skin_lib_view_error_log)) },
                         onClick = { showLongPressMenu = false; onViewLog() },
                     )
                     DropdownMenuItem(
-                        text = { Text("删除") },
+                        text = { Text(stringResource(R.string.delete)) },
                         onClick = { showLongPressMenu = false; onDelete() },
                     )
                 }
@@ -1624,7 +1637,7 @@ private fun BuiltinThemeCard(
                     ) {
                         Icon(
                             Icons.Filled.Check,
-                            contentDescription = "生效中",
+                            contentDescription = stringResource(R.string.skin_lib_active),
                             tint = MaterialTheme.colorScheme.onPrimary,
                             modifier = Modifier.size(14.dp),
                         )

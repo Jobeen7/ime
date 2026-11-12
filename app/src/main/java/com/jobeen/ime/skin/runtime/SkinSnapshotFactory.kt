@@ -516,9 +516,11 @@ object SkinSnapshotFactory {
      * 器当成未知键剔掉。旧口径只取顶层竖屏绑定：仅主类型绑
      * 定的布局坐标可覆写，其余类型专属布局的坐标在校验期即
      * 被当成未知键剔掉（导入端早已按包内全布局并集接纳，
-     * 快照端与之脱节）；本并集补齐该脱节。
+     * 快照端与之脱节）；本并集补齐该脱节。编辑器保存期亦用
+     * 同一口径（[com.jobeen.ime.skin.library.SkinEditorSaver]，
+     * 校验前 Best-effort 计算坐标并集），故为 internal。
      */
-    private suspend fun layoutCoordIds(
+    internal suspend fun layoutCoordIds(
         tree: kotlinx.serialization.json.JsonObject,
         lookup: LayoutLookup,
     ): Set<String> {

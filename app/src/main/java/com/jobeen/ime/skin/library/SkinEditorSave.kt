@@ -2,6 +2,7 @@
 
 package com.jobeen.ime.skin.library
 
+import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.skin.layout.LayoutValidation
 import com.jobeen.ime.skin.model.AssetKind
 import com.jobeen.ime.skin.model.PackageManifest
@@ -181,6 +182,22 @@ object SkinEditorSave {
         indexLayouts: List<LayoutIndexEntry>,
         boundIds: Set<String>,
     ): List<LayoutIndexEntry> = indexLayouts.filter { it.id in boundIds }
+
+    /**
+     * 编辑器 isOverridable 口径（WO30 §2 项 2）：与快照工厂
+     * 完全一致——出厂键 ID（[KeyIds.isOverridable]）或任一绑定
+     * 布局的坐标 ID（[SkinSnapshotFactory.layoutCoordIds] 算出
+     * 的并集，顶层竖屏／横屏＋keyboards 表各绑定）。只传坐标
+     * 并集、不传布局树：谓词本身是纯函数，可直接单测。
+     *
+     * 注意：今日行为上与旧缺省口径无差别——[SkinValidator] 在
+     * 校验 keyMappings 前已把可解析的坐标 ID 另行放行
+     * （`parseLogicalId(id) != null`，2026-10-30 口径），故
+     * 旧编辑器也不会把坐标覆写当未知键剔掉。本函数是口径对齐
+     * （去双重标准、防将来任一侧收紧时脱节），不是行为修复。
+     */
+    fun editorIsOverridable(coordIds: Set<String>): (String) -> Boolean =
+        { it in coordIds || KeyIds.isOverridable(it) }
 
     /**
      * 下一代次号（问题 1，copy-on-write）：与导入端同口径，

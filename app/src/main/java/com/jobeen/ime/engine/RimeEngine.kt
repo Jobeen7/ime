@@ -462,7 +462,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var serviceRef: WeakReference<ImeInputMethodService>? = null
 
     /**
-     * 丢字日志（施工单 10 H2-16，CyIME J4 对口）：键盘无声拒掉输入时
+     * 丢字日志（施工单 10 H2-16）：键盘无声拒掉输入时
      * 记一行（WARN 级进 DiagLog 文件＋诊断导出）；窗口内多余的只
      * 计数。只记原因与门状态，绝不记按键与任何文本。
      */
@@ -1580,7 +1580,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // running：不记孤儿。
                 sendDeployJob(
                     block = {
-                        EngineDeployState.setRunning(true)
                         try {
                             // 输入未变时跳过 deploy()+join（与
                             // deployAndAwaitIfChanged 同口径）：Finish 收尾

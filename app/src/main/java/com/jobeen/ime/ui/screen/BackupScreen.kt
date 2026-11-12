@@ -32,6 +32,8 @@ class BackupUiState {
     var busyText: String? by mutableStateOf(null)
     var showCreatePasswordDialog: Boolean by mutableStateOf(false)
     var showRestorePasswordDialog: Boolean by mutableStateOf(false)
+    /** 启动对账检出的中断还原（D-S2）：非空时本页顶部显示提示横幅。 */
+    var interruptedRestore: com.jobeen.ime.data.backup.BackupManager.InterruptedRestoreInfo? by mutableStateOf(null)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -42,12 +44,77 @@ fun BackupScreen(
     onCreateBackup: (password: String) -> Unit,
     onPickRestoreFile: () -> Unit,
     onRestoreWithPassword: (password: String) -> Unit,
+    onRollbackInterruptedRestore: () -> Unit = {},
+    onDismissInterruptedRestore: () -> Unit = {},
 ) {
     val barFontSize = 18.sp
     SettingsPageScaffold(
         title = stringResource(R.string.backup_title),
         onBack = onBack,
     ) {
+            // 中断还原提示（D-S2）：上次还原被进程杀死中断，journal 仍在。
+            state.interruptedRestore?.let { info ->
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                    ),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            text = stringResource(R.string.backup_restore_interrupted_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        Text(
+                            text = stringResource(
+                                R.string.backup_restore_interrupted_message,
+                                java.text.SimpleDateFormat(
+                                    "yyyy-MM-dd HH:mm",
+                                    java.util.Locale.getDefault(),
+                                ).format(java.util.Date(info.startedAt)),
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                        )
+                        if (!info.snapshotAvailable) {
+                            Text(
+                                text = stringResource(R.string.backup_restore_interrupted_no_snapshot),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                            )
+                        }
+                        androidx.compose.foundation.layout.Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Button(
+                                onClick = onPickRestoreFile,
+                                enabled = state.busyText == null,
+                            ) {
+                                Text(stringResource(R.string.backup_restore_interrupted_reimport))
+                            }
+                            OutlinedButton(
+                                onClick = onRollbackInterruptedRestore,
+                                enabled = state.busyText == null && info.snapshotAvailable,
+                            ) {
+                                Text(stringResource(R.string.backup_restore_interrupted_rollback))
+                            }
+                            OutlinedButton(
+                                onClick = onDismissInterruptedRestore,
+                                enabled = state.busyText == null,
+                            ) {
+                                Text(stringResource(R.string.backup_restore_interrupted_dismiss))
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(20.dp))
+            }
 
             Card(
                 modifier = Modifier.fillMaxWidth(),

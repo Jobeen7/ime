@@ -1,5 +1,6 @@
 package com.jobeen.ime.base.net
 
+import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.base.util.appContext
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -60,7 +61,7 @@ object HttpUtil {
             // 服务端文案不直接原样上屏：压缩空白并截断（完整原文已进日志），
             // 防止异常服务端用长文案/伪造提示误导用户
             showToast(
-                sanitizeServerMessage(msg).ifEmpty { "请求失败：业务错误 $code" },
+                sanitizeServerMessage(msg).ifEmpty { appContext.getString(R.string.http_request_failed_business, code) },
             )
             throw ApiException(code, msg)
         }
@@ -107,7 +108,7 @@ object HttpUtil {
                         val raw = response.use {
                             if (!it.isSuccessful) {
                                 Timber.w("HTTP %d for %s", it.code, request.url)
-                                if (!silent) showToast("请求失败：HTTP ${it.code}")
+                                if (!silent) showToast(appContext.getString(R.string.http_request_failed_http, it.code))
                                 throw ApiException(it.code, "HTTP ${it.code}")
                             }
                             readBoundedBody(it)

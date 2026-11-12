@@ -41,6 +41,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import com.jobeen.ime.R
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -121,7 +123,7 @@ fun SkinEditorScreen(
             val loaded = saver.loadText(file.file)
             busy = false
             if (loaded == null) {
-                loadError = "读取失败：${file.displayName}"
+                loadError = context.getString(R.string.skin_editor_load_failed, file.displayName)
                 return@launch
             }
             loadError = null
@@ -132,16 +134,16 @@ fun SkinEditorScreen(
     }
 
     fun resolveReasonText(reason: String): String = when (reason) {
-        "skin_json_missing" -> "皮肤文件缺失"
-        "skin_json_unreadable" -> "皮肤文件读取失败"
-        "skin_json_unparseable" -> "皮肤文件无法解析"
-        "manifest_missing" -> "皮肤清单缺失，请重新导入皮肤"
-        "manifest_unparseable" -> "皮肤清单损坏，请重新导入皮肤"
-        "manifest_version_unsupported" -> "皮肤清单版本过高，请重新导入皮肤"
-        "manifest_skin_entry_missing" -> "皮肤清单缺少 skin.json 条目，请重新导入皮肤"
-        "manifest_duplicate_path" -> "皮肤清单路径重复，请重新导入皮肤"
-        "manifest_skin_hash_mismatch" -> "皮肤清单与文件不一致，请重新导入皮肤"
-        else -> "无生效皮肤"
+        "skin_json_missing" -> context.getString(R.string.skin_editor_reason_skin_json_missing)
+        "skin_json_unreadable" -> context.getString(R.string.skin_editor_reason_skin_json_unreadable)
+        "skin_json_unparseable" -> context.getString(R.string.skin_editor_reason_skin_json_unparseable)
+        "manifest_missing" -> context.getString(R.string.skin_editor_reason_manifest_missing)
+        "manifest_unparseable" -> context.getString(R.string.skin_editor_reason_manifest_unparseable)
+        "manifest_version_unsupported" -> context.getString(R.string.skin_editor_reason_manifest_version)
+        "manifest_skin_entry_missing" -> context.getString(R.string.skin_editor_reason_manifest_entry_missing)
+        "manifest_duplicate_path" -> context.getString(R.string.skin_editor_reason_manifest_dup_path)
+        "manifest_skin_hash_mismatch" -> context.getString(R.string.skin_editor_reason_manifest_hash_mismatch)
+        else -> context.getString(R.string.skin_editor_no_active_skin)
     }
 
     suspend fun reload() {
@@ -209,19 +211,19 @@ fun SkinEditorScreen(
     if (confirmLeave) {
         AlertDialog(
             onDismissRequest = { confirmLeave = false; pendingFile = null },
-            title = { Text("未保存的修改") },
-            text = { Text("离开将丢失未保存的修改，确定离开？") },
+            title = { Text(stringResource(R.string.skin_editor_unsaved_title)) },
+            text = { Text(stringResource(R.string.skin_editor_unsaved_message)) },
             confirmButton = {
                 TextButton(onClick = {
                     confirmLeave = false
                     val next = pendingFile
                     pendingFile = null
                     if (next != null) loadFile(next) else onBack()
-                }) { Text("离开") }
+                }) { Text(stringResource(R.string.skin_editor_leave)) }
             },
             dismissButton = {
                 TextButton(onClick = { confirmLeave = false; pendingFile = null }) {
-                    Text("继续编辑")
+                    Text(stringResource(R.string.skin_editor_keep_editing))
                 }
             },
         )
@@ -230,15 +232,15 @@ fun SkinEditorScreen(
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text(selected?.displayName ?: "皮肤文件编辑器") },
+                title = { Text(selected?.displayName ?: stringResource(R.string.skin_editor_title)) },
                 navigationIcon = {
                     IconButton(onClick = ::requestBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = stringResource(R.string.back))
                     }
                 },
                 actions = {
                     TextButton(onClick = ::save, enabled = !busy && selected != null) {
-                        Text("保存")
+                        Text(stringResource(R.string.save))
                     }
                 },
             )
@@ -256,13 +258,13 @@ fun SkinEditorScreen(
                 return@Column
             }
             if (active == null) {
-                Text(loadError ?: "无生效皮肤")
+                Text(loadError ?: stringResource(R.string.skin_editor_no_active_skin))
                 return@Column
             }
             // 文件切换：skin.json＋该皮肤实际引用的布局文件（问题 6）。
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(active!!.files) { file ->
-                    val label = file.displayName + if (file.isShared) "（共享）" else ""
+                    val label = file.displayName + if (file.isShared) stringResource(R.string.skin_editor_shared_suffix) else ""
                     if (file == selected) {
                         Button(onClick = { requestSwitch(file) }, enabled = !busy) {
                             Text(label)
@@ -275,14 +277,14 @@ fun SkinEditorScreen(
                 }
             }
             if (active!!.primaryLayoutId == null) {
-                Text("主布局：未绑定布局", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(stringResource(R.string.skin_editor_no_primary_layout), color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val selectedFile = selected
             if (selectedFile != null &&
                 selectedFile.kind == EditorFile.Kind.LAYOUT && selectedFile.isShared
             ) {
                 Text(
-                    "该布局被其他皮肤共用，修改会影响所有引用它的皮肤。",
+                    stringResource(R.string.skin_editor_shared_layout_warn),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
@@ -311,18 +313,18 @@ fun SkinEditorScreen(
                     ) {
                         when (currentResult) {
                             is SkinEditorSaveResult.Saved -> {
-                                Text("已保存并生效")
+                                Text(stringResource(R.string.skin_editor_saved))
                                 currentResult.issues.forEach { Text(it, fontSize = 13.sp) }
                             }
                             is SkinEditorSaveResult.Blocked -> {
-                                Text("校验未通过，未保存：${currentResult.reason}")
+                                Text(stringResource(R.string.skin_editor_blocked, currentResult.reason))
                                 currentResult.issues.forEach { Text(it, fontSize = 13.sp) }
                             }
                             is SkinEditorSaveResult.Failed -> {
-                                Text("保存失败：${currentResult.reason}")
+                                Text(stringResource(R.string.skin_editor_save_failed, currentResult.reason))
                             }
                             is SkinEditorSaveResult.Stale -> {
-                                Text("活动皮肤已变化，未保存：${currentResult.reason}，已刷新为新皮肤。")
+                                Text(stringResource(R.string.skin_editor_stale, currentResult.reason))
                             }
                         }
                     }

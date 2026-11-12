@@ -72,8 +72,8 @@ class UserDictUiState {
     var dictsLoadFailed by mutableStateOf(false)
 }
 
-private fun formatTime(time: Long): String {
-    if (time <= 0L) return "从未"
+private fun formatTime(time: Long, neverText: String): String {
+    if (time <= 0L) return neverText
     return SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date(time))
 }
 
@@ -280,9 +280,9 @@ fun UserDictScreen(
                             onClick = { showIntervalDialog = true },
                         )
                         val lastSyncText = if (state.lastPeriodicSync <= 0L) {
-                            formatTime(0L)
+                            formatTime(0L, stringResource(R.string.user_dict_never))
                         } else {
-                            formatTime(state.lastPeriodicSync) + "（" +
+                            formatTime(state.lastPeriodicSync, stringResource(R.string.user_dict_never)) + "（" +
                                 stringResource(
                                     if (state.lastPeriodicSyncOk) {
                                         R.string.user_dict_periodic_last_ok
@@ -322,14 +322,14 @@ fun UserDictScreen(
                         }
                         NavRow(
                             title = stringResource(R.string.user_dict_upload),
-                            subtitle = "上次上传：${formatTime(state.lastUpload)}",
+                            subtitle = stringResource(R.string.user_dict_last_upload, formatTime(state.lastUpload, stringResource(R.string.user_dict_never))),
                             onClick = { if (enabled) onUpload() },
                         )
                         NavRow(
                             title = stringResource(R.string.user_dict_download),
                             subtitle = stringResource(
                                 R.string.user_dict_download_hint,
-                                formatTime(state.lastDownload),
+                                formatTime(state.lastDownload, stringResource(R.string.user_dict_never)),
                             ),
                             onClick = { if (enabled) onDownload() },
                         )

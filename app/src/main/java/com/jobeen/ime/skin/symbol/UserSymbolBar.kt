@@ -3,6 +3,7 @@
 package com.jobeen.ime.skin.symbol
 
 import android.content.Context
+import com.jobeen.ime.data.PunctuationMode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -70,6 +71,15 @@ object UserSymbolBarOps {
         return config.copy(symbols = next)
     }
 
+    /**
+     * 删一项；删到空即恢复默认 16 符号（WO30 §3(7)，与 parse 的
+     * 空列口径一致）：删空不留空列表，设置页删最后一项后立刻回默认。
+     */
+    fun removeAtOrRestoreDefault(config: UserSymbolBarConfig, index: Int): UserSymbolBarConfig {
+        val next = removeAt(config, index)
+        return if (next.symbols.isEmpty()) defaultConfig() else next
+    }
+
     /** 移动指定下标到目标下标：任一下标越界或同位时原样返回。 */
     fun move(config: UserSymbolBarConfig, fromIndex: Int, toIndex: Int): UserSymbolBarConfig {
         val symbols = config.symbols
@@ -90,9 +100,9 @@ object UserSymbolBarOps {
         )
 
     /**
-     * 解析：无记录／损坏／非对象时回落默认 16 符号；旧数据里的
+     * 解析：无记录／损坏／非对象／已存空列时回落默认 16 符号；旧数据里的
      * pinned 字段直接忽略（不读、不报错）；未知字段容忍。
-     * 已存的空符号列是用户主动删空的结果，原样保留（不补默认）。
+     * 已存的空符号列视为已删空，恢复默认（WO30 §3(7)，不留空列表）。
      */
     fun parse(raw: String?): UserSymbolBarConfig {
         if (raw.isNullOrBlank()) return defaultConfig()
@@ -104,11 +114,40 @@ object UserSymbolBarOps {
                     (element as? JsonPrimitive)?.takeIf { it.isString }?.contentOrNull
                 }
                 .orEmpty()
-            UserSymbolBarConfig(symbols = normalize(symbols))
+            val normalized = normalize(symbols)
+            if (normalized.isEmpty()) defaultConfig() else UserSymbolBarConfig(symbols = normalized)
         } catch (e: Exception) {
             defaultConfig()
         }
     }
+
+    /**
+     * 按标点模式换算符号栏显示／提交的符号（WO30 §3(9)）：
+     * 半角模式出半角标点，全角模式出全角标点；非标点原样。
+     * 换算口径用 PunctuationMode.CharacterSet（与模式系统同款）；
+     * 「…」↔「...」按九宫格旧全角／半角标点表配对（T9Keyboard 旧
+     * punctuations）；「、」无单字符半角形，两模式都原样。
+     */
+    fun displaySymbol(symbol: String, mode: PunctuationMode): String {
+        return when (mode) {
+            PunctuationMode.HalfWidth -> when (symbol) {
+                "…" -> "..."
+                else -> PunctuationMode.CharacterSet.halfWidth(symbol)
+            }
+            PunctuationMode.FullWidth -> when (symbol) {
+                "..." -> "…"
+                else -> PunctuationMode.CharacterSet.fullWidth(symbol)
+            }
+        }
+    }
+
+    /**
+     * 左竖栏显示／提交列（WO30 §3(9) 续）：逐项按标点模式换算，顺序
+     * 不变；九宫格竖栏与符号面板竖栏共用本函数，显示与提交同一列。
+     * 「、」两模式都原样（无单字符半角形）；非标点原样。
+     */
+    fun sidePanelSymbols(symbols: List<String>, mode: PunctuationMode): List<String> =
+        symbols.map { displaySymbol(it, mode) }
 }
 
 /** 用户自定义符号栏存储：加载失败即默认 16 符号。 */

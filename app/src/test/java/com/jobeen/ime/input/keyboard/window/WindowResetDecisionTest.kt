@@ -23,6 +23,16 @@ class WindowResetDecisionTest {
     }
 
     @Test
+    fun deployEndRefreshResetsStickyTypeOnly() {
+        // 部署结束（WO30 §4）：方案已是第一个，只复位粘住的类型；
+        // 与切框复位走同一决策，部署结束刷新（resetType=true）即此情形。
+        assertEquals(
+            WindowReset.Apply(resetScheme = false, targetType = "pinyin"),
+            decideWindowReset("wanxiang_t9", "wanxiang_t9", "alphabetic", "pinyin"),
+        )
+    }
+
+    @Test
     fun alreadyFirstSchemeAndTypeIsNoop() {
         assertEquals(
             WindowReset.None,

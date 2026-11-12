@@ -15,6 +15,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.skin.perf.PerfMonitor
@@ -65,7 +66,7 @@ class PerformancePanelView(
     private var currentReportText: String = ""
 
     private val titleView = TextView(context).apply {
-        text = "键盘性能"
+        text = context.getString(R.string.perf_panel_title)
         setTextSize(17f)
         typeface = Typeface.DEFAULT_BOLD
         setTextColor(colors.panel.candidateText)
@@ -75,7 +76,7 @@ class PerformancePanelView(
         text = "✈"
         setTextSize(20f)
         setTextColor(SEND_BLUE)
-        contentDescription = "发送"
+        contentDescription = context.getString(R.string.perf_send)
         val pad = (8 * context.resources.displayMetrics.density).toInt()
         setPadding(pad, pad / 2, pad, pad / 2)
         setOnClickListener { onSendReport?.invoke(currentReportText) }
@@ -85,7 +86,7 @@ class PerformancePanelView(
         text = "✕"
         setTextSize(20f)
         setTextColor(CLOSE_RED)
-        contentDescription = "关闭"
+        contentDescription = context.getString(R.string.close)
         val pad = (8 * context.resources.displayMetrics.density).toInt()
         setPadding(pad, pad / 2, pad, pad / 2)
         setOnClickListener { onClose?.invoke() }

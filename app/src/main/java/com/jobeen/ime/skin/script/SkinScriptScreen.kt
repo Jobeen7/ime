@@ -32,6 +32,8 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
@@ -71,6 +73,7 @@ fun SkinScriptScreen(
     var runningTestId by remember { mutableStateOf<String?>(null) }
     val runner = remember { SkinScriptRunner(store) }
     val scope = rememberCoroutineScope()
+    val context = LocalContext.current
 
     fun refresh() {
         scope.launch {
@@ -137,7 +140,7 @@ fun SkinScriptScreen(
                                     newSource = ""
                                     refresh()
                                 }
-                                else -> addError = addFailureText(result)
+                                else -> addError = addFailureText(context, result)
                             }
                         }
                     },
@@ -192,7 +195,7 @@ fun SkinScriptScreen(
                                             val result = withContext(Dispatchers.Default) {
                                                 runner.runScript(meta.id, "test")
                                             }
-                                            runResult = meta.id to runResultText(result)
+                                            runResult = meta.id to runResultText(context, result)
                                         } finally {
                                             if (runningTestId == meta.id) runningTestId = null
                                         }
@@ -231,18 +234,18 @@ fun SkinScriptScreen(
     }
 }
 
-private fun addFailureText(result: SkinScriptAddResult): String = when (result) {
+private fun addFailureText(context: Context, result: SkinScriptAddResult): String = when (result) {
     is SkinScriptAddResult.Added -> ""
-    SkinScriptAddResult.InvalidId -> "ID 不合法"
-    SkinScriptAddResult.InvalidName -> "名称不合法"
-    SkinScriptAddResult.EmptySource -> "源码为空"
-    SkinScriptAddResult.TooLarge -> "源码过大"
-    SkinScriptAddResult.AlreadyExists -> "ID 已存在"
-    SkinScriptAddResult.WriteFailed -> "写入失败"
+    SkinScriptAddResult.InvalidId -> context.getString(R.string.skin_script_invalid_id)
+    SkinScriptAddResult.InvalidName -> context.getString(R.string.skin_script_invalid_name)
+    SkinScriptAddResult.EmptySource -> context.getString(R.string.skin_script_empty_source)
+    SkinScriptAddResult.TooLarge -> context.getString(R.string.skin_script_too_large)
+    SkinScriptAddResult.AlreadyExists -> context.getString(R.string.skin_script_id_exists)
+    SkinScriptAddResult.WriteFailed -> context.getString(R.string.skin_script_write_failed)
 }
 
-private fun runResultText(result: SkinScriptResult): String = when (result) {
-    is SkinScriptResult.Ok -> result.value ?: "(无返回值)"
-    is SkinScriptResult.Skipped -> "未运行：${result.reason}"
-    is SkinScriptResult.Failed -> "失败：${result.failure}"
+private fun runResultText(context: Context, result: SkinScriptResult): String = when (result) {
+    is SkinScriptResult.Ok -> result.value ?: context.getString(R.string.skin_script_no_return)
+    is SkinScriptResult.Skipped -> context.getString(R.string.skin_script_skipped, result.reason)
+    is SkinScriptResult.Failed -> context.getString(R.string.skin_script_failed, result.failure)
 }

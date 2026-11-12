@@ -15,6 +15,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import com.jobeen.ime.base.util.TraditionalConverter
+import com.jobeen.ime.R
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.data.App
 import com.jobeen.ime.data.manager.CandidateManager
@@ -480,11 +481,6 @@ object SherpaSpeechClient {
     private val probeHandler = Handler(Looper.getMainLooper())
 
     private const val START_DEADLINE_MS = 12_000L
-    private const val START_FAILURE_HINT = "语音启动失败，请重试"
-    private const val RECORDER_FAILURE_HINT = "录音异常，请检查麦克风"
-    private const val AUDIO_TOO_LONG_HINT = "录音过长，已识别已录部分"
-    private const val NO_SOUND_HINT = "未检测到声音，请检查麦克风"
-    private const val INPUT_SWITCHED_HINT = "已切换输入框，上一句语音已作废"
 
     /** 当前启动截止所属代次（0＝未武装）；READY/收尾时解除 */
     @Volatile
@@ -529,7 +525,7 @@ object SherpaSpeechClient {
             if (noPong) "no-pong" else "no-ready",
             SystemClock.uptimeMillis() - sessionStartUptimeMs,
         )
-        startFailureHint = START_FAILURE_HINT
+        startFailureHint = appContext.getString(R.string.voice_hint_start_failed)
         // 本代已有文本真正显示过（慢机上自愈重绑＋模型重载耗尽
         // 截止、READY 迟迟不来）：走 finishSession 定稿——屏上
         // 组字由其尾部 finishComposingText 转正、快照文本不丢，
@@ -679,7 +675,7 @@ object SherpaSpeechClient {
                 )
                 mainHandler.post {
                     if (tag == activeGen && tag != settledGen) {
-                        startFailureHint = AUDIO_TOO_LONG_HINT
+                        startFailureHint = appContext.getString(R.string.voice_hint_audio_too_long)
                         stopHoldSession(discard = false)
                     }
                 }
@@ -849,7 +845,7 @@ object SherpaSpeechClient {
         mainHandler.post {
             // 已结算或已被新会话取代的迟到失败不处理
             if (tag != activeGen || tag == settledGen) return@post
-            startFailureHint = RECORDER_FAILURE_HINT
+            startFailureHint = appContext.getString(R.string.voice_hint_recorder_failed)
             cancelSession()
         }
     }
@@ -859,7 +855,7 @@ object SherpaSpeechClient {
         mainHandler.post {
             // 已结算或已被新会话取代的迟到失败不处理
             if (tag != activeGen || tag == settledGen) return@post
-            startFailureHint = RECORDER_FAILURE_HINT
+            startFailureHint = appContext.getString(R.string.voice_hint_recorder_failed)
             // 采集中途失败（read 报错/被外部停录）：已推送的音频
             // 是好的，按焦点被抢同口径走正常松手结算（flush＋STOP
             // 定稿已录部分），不整场作废；失败提示已置上，结算完成
@@ -938,7 +934,7 @@ object SherpaSpeechClient {
             // 即在新框再按时，提示随新会话入口清理不残留。仅在
             // 确有保留音频被清时才置：无块可废（如按下即松手、
             // 一块未录到）属无损作废，置提示是误报
-            if (hadRetainedAudio) startFailureHint = INPUT_SWITCHED_HINT
+            if (hadRetainedAudio) startFailureHint = appContext.getString(R.string.voice_hint_input_switched)
             Timber.i("SpeechCli pending-finish audio discarded on input view finish")
         }
     }
@@ -1549,7 +1545,7 @@ object SherpaSpeechClient {
         if (!discard && sessionMaxAmp == 0f && startFailureHint == null &&
             synchronized(audioSendLock) { sessionAudio.isNotEmpty() }
         ) {
-            startFailureHint = NO_SOUND_HINT
+            startFailureHint = appContext.getString(R.string.voice_hint_no_sound)
         }
         resetState()
         if (service == null) return

@@ -22,6 +22,8 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -58,7 +60,8 @@ import kotlin.math.roundToInt
  *
  * - 无置顶：列表本身就是符号面板左侧竖栏那排符号，没东西可置顶；
  * - 顶部整行输入框（新增符号＋保存）→ 说明 → 符号列表直接排在
- *   背景上（不包卡片），每行左侧 ⋮⋮ 拖动手柄、中间符号、右侧垃圾桶；
+ *   背景上（不包卡片），每行左侧 ⋮⋮ 拖动手柄、中间符号、右侧上移／
+ *   下移按钮＋垃圾桶；删到空即恢复默认 16 符号（WO30 §3(7)）；
  * - 列表默认 16 符号，不再是空表；拖动排序、删除、新增都即改即存；
  * - 改动在下次打开符号面板时生效（键盘侧每附着重建竖栏）。
  * 拖拽机制与 SchemaSettingsScreen 的 ManageEnabledList 同款
@@ -123,7 +126,7 @@ fun SymbolBarSettingsScreen(onBack: () -> Unit) {
             SymbolList(
                 symbols = config.symbols,
                 onMove = { from, to -> persist(UserSymbolBarOps.move(config, from, to)) },
-                onDelete = { index -> persist(UserSymbolBarOps.removeAt(config, index)) },
+                onDelete = { index -> persist(UserSymbolBarOps.removeAtOrRestoreDefault(config, index)) },
             )
         }
         Text(
@@ -136,7 +139,7 @@ fun SymbolBarSettingsScreen(onBack: () -> Unit) {
     }
 }
 
-/** 符号列表：拖动手柄排序（长按拖动）＋垃圾桶删除。 */
+/** 符号列表：拖动手柄排序（长按拖动）＋上下移动按钮＋垃圾桶删除。 */
 @Composable
 private fun SymbolList(
     symbols: List<String>,
@@ -201,6 +204,26 @@ private fun SymbolList(
                             .weight(1f)
                             .padding(start = 12.dp),
                     )
+                    // WO30 §3(6)：上下移动按钮（拖动保留）；两端禁用，
+                    // 与 onMove 同款 move(index, index±1)。
+                    IconButton(
+                        onClick = { onMove(index, index - 1) },
+                        enabled = index > 0,
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowUp,
+                            contentDescription = stringResource(R.string.toolbar_move_up),
+                        )
+                    }
+                    IconButton(
+                        onClick = { onMove(index, index + 1) },
+                        enabled = index < symbols.lastIndex,
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.toolbar_move_down),
+                        )
+                    }
                     IconButton(
                         onClick = { onDelete(index) },
                     ) {

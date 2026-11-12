@@ -112,7 +112,7 @@ class WordCreationActivity : ComponentActivity() {
                 Timber.w(e, "Failed to load user dict list for word creation")
                 withContext(Dispatchers.Main) {
                     uiState.dicts = emptyList()
-                    ToastUtil.showToast("词典列表加载失败")
+                    ToastUtil.showToast(getString(R.string.user_dict_list_failed))
                 }
             }
         }

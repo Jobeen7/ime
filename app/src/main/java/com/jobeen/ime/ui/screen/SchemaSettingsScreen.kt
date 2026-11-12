@@ -1553,12 +1553,13 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     Column {
                         enabledSchemas.forEachIndexed { index, schema ->
                             val isCurrentRow = index == 0
+                            val schemaCurrentText = stringResource(R.string.schema_current)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .semantics(mergeDescendants = true) {
                                         if (isCurrentRow) {
-                                            stateDescription = "当前方案"
+                                            stateDescription = schemaCurrentText
                                         }
                                     }
                                     .padding(horizontal = 16.dp, vertical = 12.dp),

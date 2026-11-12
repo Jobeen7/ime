@@ -170,7 +170,7 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                 SliderRow(
                     title = stringResource(R.string.candidate_max_lines),
                     value = maxLines,
-                    valueLabel = "${maxLines.toInt()} 行",
+                    valueLabel = stringResource(R.string.candidate_max_lines_value, maxLines.toInt()),
                     range = 1f..10f,
                     enabled = lineLimitEnabled,
                     onValueChange = {

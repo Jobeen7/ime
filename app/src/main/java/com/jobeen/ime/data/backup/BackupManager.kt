@@ -16,6 +16,7 @@ import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.skin.script.SkinScriptIds
 import com.jobeen.ime.skin.script.SkinScriptStore
+import com.jobeen.ime.skin.store.AtomicFiles
 import androidx.room.withTransaction
 import org.json.JSONArray
 import org.json.JSONObject
@@ -27,7 +28,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.UUID
 import javax.crypto.Cipher
 import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.GCMParameterSpec
@@ -75,6 +78,12 @@ import javax.crypto.spec.SecretKeySpec
  * 里有、当前已删的内容则补回来。prefs 随后逐文件同步提交（仍整表
  * 覆盖，设置还原即回到备份时点）。各管理器有内存缓存，因此 UI 层
  * 在还原成功后应引导重启应用使全部生效。
+ *
+ * 包内清单（D-M1，payload v2）：载荷末尾带 `manifest` 字段（版本＋
+ * 各源计数／存在标记），恢复前逐项核对；外层头部 FORMAT_VERSION
+ * 仍为 1（旧备份的解密通道不变），无 `manifest` 字段的旧备份跳过
+ * 校验直接兼容，`manifest.payloadVersion` 不是 2 或清单损坏时明确
+ * 报错（见 [BackupManifest]）。
  */
 object BackupManager {
 
@@ -107,13 +116,21 @@ object BackupManager {
     private val DEVICE_LOCAL_PREFS =
         setOf("speech_model_prefs", "wanxiang_update", "db_maintenance", WEBDAV_PREFS)
 
-    class BackupException(message: String) : Exception(message)
+    open class BackupException(message: String) : Exception(message)
+
+    /**
+     * 采集中途数据变了：逐文件改动检测（[BackupChangeGuard]）或
+     * Room 快照读到一半失败时抛。消息直接面向用户（备份页 Toast
+     * 原样显示），告诉用户重做一次即可。
+     */
+    class BackupDataChangedException(operation: String) :
+        BackupException("${operation}中数据变了，请重试")
 
     // ---------------- 备份 ----------------
 
     /** 采集当前数据并加密，返回完整备份文件字节（头部行 + 密文） */
     suspend fun createBackup(password: CharArray): ByteArray =
-        encryptPayload(collectPayload(), password)
+        encryptPayload(collectPayload("备份"), password)
 
     /** 把已收集的载荷 JSON 加密为备份文件字节。 */
     private fun encryptPayload(payloadJson: JSONObject, password: CharArray): ByteArray {
@@ -139,23 +156,34 @@ object BackupManager {
         return headerBytes + byteArrayOf('\n'.code.toByte()) + encrypted
     }
 
-    private suspend fun collectPayload(): JSONObject {
+    private suspend fun collectPayload(operation: String = "备份"): JSONObject {
         val root = JSONObject()
+        val guard = BackupChangeGuard()
 
         // —— SharedPreferences：枚举 shared_prefs 目录全部文件整表导出
         val prefsDir = File(appContext.applicationInfo.dataDir, "shared_prefs")
         val prefsJson = JSONObject()
+        var prefsEntries = 0
         val names = prefsDir.listFiles { f -> f.extension == "xml" }
             ?.map { it.nameWithoutExtension }
             ?.sorted()
             .orEmpty()
         for (name in names) {
-            val sp = appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
-            val entries = JSONObject()
-            for ((key, value) in sp.all) {
-                if (value == null) continue
-                entries.put(key, encodePrefValue(value))
+            val file = File(prefsDir, "$name.xml")
+            // 枚举到但读前已消失 = 采集中途被删，整包失败，不静默丢一表。
+            if (!file.isFile) throw BackupDataChangedException(operation)
+            // 逐文件改动检测（D-M1）：读前取元数据，读后重验，变了即
+            // 整个备份失败、不产残包（见 BackupChangeGuard）。
+            val entries = guard.guard(file, operation) {
+                val sp = appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
+                val entries = JSONObject()
+                for ((key, value) in sp.all) {
+                    if (value == null) continue
+                    entries.put(key, encodePrefValue(value))
+                }
+                entries
             }
+            prefsEntries += entries.length()
             prefsJson.put(name, entries)
         }
         // WebDAV 整表照常采集进包（S8）：还原侧按设备本地表整表跳过，
@@ -163,10 +191,16 @@ object BackupManager {
         // 口令加密，不再需要剔键＋独立字段迁移通道
         root.put("prefs", prefsJson)
 
-        // —— Room 四表：每库一次事务内读出，快照在单库内取自同一时点
-        // （D-M1：此前两表分两次读，打字/复制并发写入时两表可取自不
-        // 同时点；跨库与 prefs 之间仍无统一快照点——真原子快照需全局
-        // 写锁，超出本次修复范围，见 collectPayload 的 KDoc 补充）。
+        // —— Room 五表：跨库一致快照（D-M1，fcitx SqliteSnapshots 形状）——
+        // 另开一条原生 SQLite 连接（RoomSnapshotReader），ATTACH 两库后
+        // 在一个事务内读出五张表，事务外 PRAGMA quick_check(1) 校验；
+        // 失败即备份失败，不回落旧的 DAO 逐表读（回落会掩盖系统性
+        // SQL 错误）。旧实现是两库各一次 Room 事务（库内一致、跨库
+        // 可取自不同时点），且与 prefs 之间无统一快照点；新实现里
+        // 两库取自同一事务时点，prefs／文件类另由逐文件改动检测兜底
+        // （见 BackupChangeGuard）。全局写锁／停写总闸仍无（写盘方
+        // 散在数十处，造闸是跨组件架构活，记已知差距）。
+        // 先开库（迁移已跑完）再裸读：裸读旧版库文件会因缺列失败。
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
         // 拆库迁移本体已随清点 Q2 退场（现行设备早已迁完），采集直接
@@ -176,10 +210,13 @@ object BackupManager {
         // SQLiteBlobTooBigException，备份导出会被一行毒化整包。
         ClipboardManager.sanitizeOversizedOnce(appContext)
 
-        val (clipRows, groupRows) = clipDb.withTransaction {
-            clipDb.clipboardDao().getAllActive() to
-                clipDb.clipboardDao().getAllGroups()
-        }
+        val appDbFile = db.openHelper.writableDatabase.path?.let { File(it) }
+            ?: throw BackupException("备份读取数据库失败：无法定位主库文件")
+        val clipDbFile = clipDb.openHelper.writableDatabase.path?.let { File(it) }
+            ?: throw BackupException("备份读取数据库失败：无法定位剪贴板库文件")
+        val room = RoomSnapshotReader(appDbFile, clipDbFile).read()
+        val clipRows = room.clipboard
+        val groupRows = room.groups
         val clips = JSONArray()
         // 只导出有效行：历史软删除存量不进备份（删除已改物理删，此为存量兜底）
         for (r in clipRows) {
@@ -204,13 +241,9 @@ object BackupManager {
         }
         root.put("clipboard_groups", groups)
 
-        val (phraseRows, preferRows, sortingRows) = db.withTransaction {
-            Triple(
-                db.phraseDao().getAll(),
-                db.candidatePreferDao().getAllFull(),
-                db.candidateSortingDao().getAllFull(),
-            )
-        }
+        val phraseRows = room.phrases
+        val preferRows = room.prefers
+        val sortingRows = room.sortings
         val phrases = JSONArray()
         for (r in phraseRows) {
             phrases.put(
@@ -245,9 +278,15 @@ object BackupManager {
         // —— 输入统计（2026-10-29 批量第 4 项）：文件型数据不进 prefs
         // 枚举，须显式采集；内容仅计数与时长、无输入内容（InputStats
         // 自身口径）。超 1MB 的异常文件跳过（不阻塞整包备份）。
+        // 改动检测（见 BackupChangeGuard）：读前取元数据，读后重验，
+        // 变了即整个备份失败、不产残包（统计文件在采集窗口内被改写时
+        // 旧实现会无声地导出读到一半的 JSON）。旧实现直接 readBytes
+        // 读整文件（统计文件只在写盘方写盘时可能被读到一半）。
         val statsFile = File(appContext.filesDir, "input_stats/stats.json")
         if (statsFile.isFile) {
-            val bytes = runCatching { statsFile.readBytes() }.getOrNull()
+            val bytes = guard.guard(statsFile, operation) {
+                runCatching { statsFile.readBytes() }.getOrNull()
+            }
             if (bytes != null) {
                 if (bytes.size <= 1_048_576) {
                     root.put("input_stats_json", String(bytes, Charsets.UTF_8))
@@ -259,12 +298,36 @@ object BackupManager {
 
         // —— 皮肤库文件：index.json + skins/ + assets/（合并写回，见 KDoc）；
         // 空库或超限时 collectSkinLibraryJson 返回 null，即不写该段。
-        collectSkinLibraryJson()?.let { root.put("skin_library", it) }
+        collectSkinLibraryJson(guard, operation)?.let { root.put("skin_library", it) }
 
         // —— 皮肤脚本文件：filesDir/skin_scripts（整表替换写回，见 KDoc）；
         // 超限时 collectSkinScriptsJson 返回 null，即不写该段；无脚本
         // 时带空段，使还原失败回放能恢复到“还原前无脚本”状态。
-        collectSkinScriptsJson()?.let { root.put("skin_scripts", it) }
+        collectSkinScriptsJson(guard, operation)?.let { root.put("skin_scripts", it) }
+
+        // —— 包内清单（D-M1，fcitx 清单 v2 形状）：各源计数／存在标记，
+        // 恢复前 [parsePayload] 逐项核对；旧备份无此字段，解析时跳过
+        // 校验直接兼容（外层 FORMAT_VERSION 仍为 1，见类 KDoc）。
+        val manifest = BackupManifest(
+            payloadVersion = BackupManifest.CURRENT_PAYLOAD_VERSION,
+            counts = ManifestCounts(
+                prefsFiles = prefsJson.length(),
+                prefsEntries = prefsEntries,
+                clipboardCount = clipRows.size,
+                clipboardGroupsCount = groupRows.size,
+                phrasesCount = phraseRows.size,
+                prefersCount = preferRows.size,
+                sortingsCount = sortingRows.size,
+                inputStatsPresent = root.has("input_stats_json"),
+                skinLibraryPresent = root.has("skin_library"),
+                skinLibraryFiles = root.optJSONObject("skin_library")
+                    ?.optJSONObject("files")?.length() ?: 0,
+                skinScriptsPresent = root.has("skin_scripts"),
+                skinScriptsFiles = root.optJSONObject("skin_scripts")
+                    ?.optJSONObject("files")?.length() ?: 0,
+            ),
+        )
+        root.put("manifest", manifest.toJsonObject())
         return root
     }
 
@@ -278,13 +341,21 @@ object BackupManager {
      * （无 index 且无文件）返回 null，即不写该段；原始字节总量超
      * 32MB 整段跳过只记日志（不阻塞整包）。
      */
-    private fun collectSkinLibraryJson(): JSONObject? {
+    private fun collectSkinLibraryJson(
+        guard: BackupChangeGuard,
+        operation: String,
+    ): JSONObject? {
         val rootDir = App.skinLibraryDir
         val indexFile = File(rootDir, "index.json")
         val indexText = if (indexFile.isFile) {
-            runCatching { indexFile.readText(Charsets.UTF_8) }.onFailure {
-                Timber.w("skin index unreadable, skipped in backup")
-            }.getOrNull()
+            // 逐文件改动检测（D-M1）：读前取元数据，读后重验，变了即
+            // 整个备份失败、不产残包（见 BackupChangeGuard）。
+            guard.guard(indexFile, operation) {
+                if (!indexFile.isFile) throw BackupDataChangedException(operation)
+                runCatching { indexFile.readText(Charsets.UTF_8) }.onFailure {
+                    Timber.w("skin index unreadable, skipped in backup")
+                }.getOrNull()
+            }
         } else {
             null
         }
@@ -299,7 +370,11 @@ object BackupManager {
                 if (!canonical.startsWith(canonicalRoot + File.separator)) continue
                 val rel = "$sub/" + file.relativeTo(subDir).path.replace(File.separatorChar, '/')
                 if (!isValidSkinRelPath(rel)) continue
-                val bytes = runCatching { file.readBytes() }.getOrNull() ?: continue
+                // 枚举到但读前已消失 = 采集中途被删，整包失败，不静默丢一文件。
+                if (!file.isFile) throw BackupDataChangedException(operation)
+                val bytes = guard.guard(file, operation) {
+                    runCatching { file.readBytes() }.getOrNull()
+                } ?: continue
                 totalBytes += bytes.size
                 if (totalBytes > SKIN_BACKUP_MAX_RAW_BYTES) {
                     Timber.w("skin library too large, skipped in backup")
@@ -327,7 +402,10 @@ object BackupManager {
      * 时返回空 files 段（非 null，见 KDoc 回放口径）；原始字节
      * 总量超限返回 null，即不写该段。
      */
-    private fun collectSkinScriptsJson(): JSONObject? {
+    private fun collectSkinScriptsJson(
+        guard: BackupChangeGuard,
+        operation: String,
+    ): JSONObject? {
         val rootDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
         val filesJson = JSONObject()
         if (rootDir.isDirectory) {
@@ -339,7 +417,11 @@ object BackupManager {
                 if (!canonical.startsWith(canonicalRoot + File.separator)) continue
                 val rel = file.relativeTo(rootDir).path.replace(File.separatorChar, '/')
                 if (!isValidSkinScriptRelPath(rel)) continue
-                val bytes = runCatching { file.readBytes() }.getOrNull() ?: continue
+                // 枚举到但读前已消失 = 采集中途被删，整包失败，不静默丢一文件。
+                if (!file.isFile) throw BackupDataChangedException(operation)
+                val bytes = guard.guard(file, operation) {
+                    runCatching { file.readBytes() }.getOrNull()
+                } ?: continue
                 totalBytes += bytes.size
                 if (totalBytes > SKIN_SCRIPTS_BACKUP_MAX_RAW_BYTES) {
                     Timber.w("skin scripts too large, skipped in backup")
@@ -370,21 +452,28 @@ object BackupManager {
     // ---------------- 还原 ----------------
 
     /**
-     * 解密并还原。Room 四表合并写回（见类 KDoc 的 D31 口径）。
+     * 解密并还原。Room 五表合并写回（见类 KDoc 的 D31 口径）。
      * 口令错误/文件损坏/结构非法抛 [BackupException]，且解密与完整
      * 结构解析全部通过后才开始写任何数据（不会半还原）。写入前先采
      * 一份当前状态的内存快照：写入阶段任一步失败都用它整体回滚，
-     * 绝不留下新旧混杂的半还原状态。原「加密快照落盘以防进程被杀」
-     * 的第二层已随清点 S7 退场——进程被杀的还原中断无自动恢复，
-     * 用户重导备份即可。
+     * 绝不留下新旧混杂的半还原状态。快照落盘的第二层曾随清点 S7
+     * 退场（进程被杀的还原中断无自动恢复，用户重导备份即可）；
+     * WO28 已推翻该定论——还原前把当前状态快照＋journal 落盘
+     * （见 [RestoreJournal]），启动时 AppStartup.recoverInterruptedRestore
+     * 对账：完成／尚未写盘即清理，中断则备份页提示用户重导或回滚。
+     * 快照是明文 JSON（见 RestoreJournal 的 KDoc：进程死后备份口令
+     * 已不在内存，加密快照无法解密；应用沙箱私有权＋云备份排除，
+     * 保护级别与现库／prefs 同级）。
      */
     suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
         val payload = decryptPayload(bytes, password)
         val parsed = parsePayload(payload)
         // 快照解析结构直接取自当前状态的采集结果——回滚回放是把我们
         // 自己的完整状态写回去；也不再对快照二次解密重解析（省掉一
-        // 轮 60 万次 PBKDF2）
-        val snapshotParsed = parsePayload(collectPayload())
+        // 轮 60 万次 PBKDF2）。采集本身可能因采集中途数据变了而失败
+        // （BackupDataChangedException），此时尚未写任何数据，直接失败。
+        val snapshotJson = collectPayload("还原")
+        val snapshotParsed = parsePayload(snapshotJson)
         // 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
         // 脚本段缺失且还原前确有脚本（超 32MB 跳段或采集失败），或皮肤
         // 库段缺失且还原前确有皮肤文件（同理），回滚后这些数据即永久丢
@@ -410,10 +499,80 @@ object BackupManager {
         // 整表跳过的文件（设备本地表、scheme_dirs）从不被回写，不在此列。
         val rollbackExtraPrefsFiles = (merged.prefs.keys - snapshotParsed.prefs.keys)
             .filter { !isSkippedPrefsFile(it) }.toSet()
+
+        // —— 还原 journal（D-S2，fcitx journal 形状）：快照落盘＋
+        // STAGING journal 写在一切写盘之前；写盘中途被杀，下次启动
+        // 凭 journal 对账（见 reconcileInterruptedRestore）。
+        // 顺序：先写快照文件（新 token 名，不与旧快照冲突），再原子
+        // 覆盖 journal（AtomicFiles 写失败时旧 journal 原样保留），
+        // 最后清掉旧 token 的孤儿快照——旧 journal 只在新 journal
+        // 成功落盘后才被取代。
+        val journalDir = RestoreJournal.dir(appContext.filesDir)
+        val token = UUID.randomUUID().toString()
+        val snapshotFile = RestoreJournal.snapshotFile(journalDir, token)
         try {
+            AtomicFiles.write(
+                snapshotFile,
+                snapshotJson.toString().toByteArray(Charsets.UTF_8),
+            )
+        } catch (e: Exception) {
+            throw BackupException("还原准备失败：无法保存还原前快照（${e.message ?: "写盘失败"}）")
+        }
+        val journalEntry = RestoreJournal.Entry(
+            token = token,
+            phase = RestoreJournal.Phase.STAGING,
+            startedAt = System.currentTimeMillis(),
+            backupFingerprint = sha256Hex(bytes),
+            snapshotFile = snapshotFile.name,
+            completedSections = emptySet(),
+        )
+        try {
+            RestoreJournal.write(journalDir, journalEntry)
+        } catch (e: Exception) {
+            runCatching { snapshotFile.delete() }
+            throw BackupException("还原准备失败：无法写入还原记录（${e.message ?: "写盘失败"}）")
+        }
+        RestoreJournal.sweepOrphanSnapshots(journalDir, token)
+        try {
+            // REPLACING 是强制推进：journal 推进不了就不开始写盘——
+            // 没有 journal 兜底的写盘，中断后无从对账。
+            RestoreJournal.write(journalDir, journalEntry.copy(phase = RestoreJournal.Phase.REPLACING))
             // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
             // 半途而废比继续写完更糟——半还原状态正是快照机制要防的
-            withContext(NonCancellable) { applyPayload(merged) }
+            withContext(NonCancellable) {
+                applyPayload(
+                    merged,
+                    onSectionDone = { section ->
+                        // 段进度是尽力而为的记录：journal 写失败不阻断
+                        // 还原本体（阶段已是 REPLACING，中断后照常提示）；
+                        // 段进度丢了也不影响回滚覆盖判定（见
+                        // uncoveredSectionsForRollback 的 KDoc：可部分写
+                        // 的段要么原子、要么快照恒覆盖）。
+                        runCatching {
+                            val current = RestoreJournal.read(journalDir)
+                                ?: journalEntry.copy(phase = RestoreJournal.Phase.REPLACING)
+                            RestoreJournal.write(
+                                journalDir,
+                                current.copy(completedSections = current.completedSections + section),
+                            )
+                        }.onFailure { Timber.w(it, "restore journal progress update failed") }
+                    },
+                )
+            }
+            // 成功：先记 COMMITTED（给“写完数据、未及删 journal 就被
+            // 杀”的窗口留标记），再删 journal＋快照；COMMITTED 写失败
+            // 也不阻断——删 journal 本就是目标，删不掉时 COMMITTED 标
+            // 记让启动直接清理、不误报。
+            runCatching {
+                RestoreJournal.write(
+                    journalDir,
+                    journalEntry.copy(phase = RestoreJournal.Phase.COMMITTED),
+                )
+            }
+            RestoreJournal.clear(
+                journalDir,
+                journalEntry.copy(phase = RestoreJournal.Phase.COMMITTED),
+            )
         } catch (e: Exception) {
             val replayed = runCatching {
                 withContext(NonCancellable) {
@@ -428,12 +587,24 @@ object BackupManager {
             // 回放成功才算回滚成功；缺段快照盖不住的源（脚本/皮肤）
             // 只要还原前存在，回滚即不完整——如实报失败，不谎报成功。
             val rolledBack = replayed && rollbackCovered
+            if (rolledBack) {
+                // 内存回滚已把状态恢复到还原前：中断记录不再有意义，
+                // 清掉，下次启动不提示。
+                RestoreJournal.clear(journalDir, journalEntry)
+            }
+            // 回滚未成功时 journal 保留（仍是 REPLACING）：下次启动
+            // 提示用户重导／回滚，快照仍在、可走磁盘回滚。
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw BackupException(
                 if (rolledBack) "还原失败，已恢复到还原前状态：${e.message ?: "未知错误"}"
                 else "还原失败且自动回滚未成功，数据可能不完整：${e.message ?: "未知错误"}"
             )
         }
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String {
+        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
+        return digest.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
     }
 
     // —— 应用级还原执行（不随界面销毁取消） ——
@@ -452,6 +623,22 @@ object BackupManager {
     private val _restoreState =
         kotlinx.coroutines.flow.MutableStateFlow<RestoreState>(RestoreState.Idle)
     val restoreState: kotlinx.coroutines.flow.StateFlow<RestoreState> = _restoreState
+
+    /**
+     * 中断的还原（启动对账检出）：备份页据此提示用户重导／回滚。
+     * snapshotAvailable=false 时回滚入口禁用，只能重导备份文件。
+     */
+    data class InterruptedRestoreInfo(
+        val token: String,
+        val startedAt: Long,
+        val completedSections: Set<String>,
+        val snapshotAvailable: Boolean,
+    )
+
+    private val _interruptedRestore =
+        kotlinx.coroutines.flow.MutableStateFlow<InterruptedRestoreInfo?>(null)
+    val interruptedRestore: kotlinx.coroutines.flow.StateFlow<InterruptedRestoreInfo?> =
+        _interruptedRestore
 
     /** 还原互斥：check-then-set 靠状态值判断不是原子操作，用 CAS 守门。 */
     private val restoreRunning =
@@ -479,11 +666,17 @@ object BackupManager {
             try {
                 restoreBackup(bytes, password)
                 _restoreState.value = RestoreState.Done
+                // 正常还原成功：旧的中断记录已随新 journal 被取代／清掉，
+                // 提示随之消失。
+                _interruptedRestore.value = null
                 scheduleProcessRestart(generation)
             } catch (e: Exception) {
                 Timber.w(e, "Restore failed")
                 _restoreState.value =
                     RestoreState.Failed(e.message ?: "未知错误")
+                // 失败还原若留下了 REPLACING journal（回滚未成功），
+                // 立即刷新中断提示，不必等下次启动才出现。
+                reconcileInterruptedRestore()
             } finally {
                 password.fill(' ')
                 restoreRunning.set(false)
@@ -512,6 +705,207 @@ object BackupManager {
         if (_restoreState.value != RestoreState.Running) {
             _restoreState.value = RestoreState.Idle
         }
+    }
+
+    // ---------------- 中断还原对账（D-S2） ----------------
+
+    /**
+     * 启动对账（AppStartup.recoverInterruptedRestore 调用）：
+     * STAGING／COMMITTED 自动清理（前者尚未写盘，后者已写完）；
+     * REPLACING 留 journal，置 [interruptedRestore] 供备份页提示。
+     * 启动从不自动回滚（回滚是用户发起的动作）。
+     * 自身不抛错：损坏的 journal 按无 journal 处理。
+     */
+    fun reconcileInterruptedRestore() {
+        val dir = RestoreJournal.dir(appContext.filesDir)
+        val entry = runCatching { RestoreJournal.read(dir) }.getOrNull()
+        val action = RestoreJournal.decide(
+            entry,
+            entry?.let { RestoreJournal.snapshotExists(dir, it) } ?: false,
+        )
+        when (action) {
+            RestoreJournal.RecoveryAction.NONE -> {
+                RestoreJournal.sweepOrphanSnapshots(dir, null)
+                _interruptedRestore.value = null
+            }
+            RestoreJournal.RecoveryAction.CLEANUP_COMPLETED,
+            RestoreJournal.RecoveryAction.CLEANUP_STAGING -> {
+                if (entry != null) RestoreJournal.clear(dir, entry)
+                RestoreJournal.sweepOrphanSnapshots(dir, null)
+                _interruptedRestore.value = null
+                Timber.i("Interrupted restore cleaned up: phase=${entry?.phase}")
+            }
+            RestoreJournal.RecoveryAction.PROMPT_USER -> {
+                if (entry != null) {
+                    _interruptedRestore.value = InterruptedRestoreInfo(
+                        token = entry.token,
+                        startedAt = entry.startedAt,
+                        completedSections = entry.completedSections,
+                        snapshotAvailable = RestoreJournal.snapshotExists(dir, entry),
+                    )
+                    RestoreJournal.sweepOrphanSnapshots(dir, entry.token)
+                    Timber.w(
+                        "Interrupted restore detected: token=${entry.token} " +
+                            "completed=${entry.completedSections}",
+                    )
+                }
+            }
+        }
+    }
+
+    /** 用户在备份页点“忽略”：删 journal＋快照，接受当前状态。 */
+    fun dismissInterruptedRestore() {
+        val dir = RestoreJournal.dir(appContext.filesDir)
+        val entry = runCatching { RestoreJournal.read(dir) }.getOrNull()
+        if (entry != null) RestoreJournal.clear(dir, entry)
+        RestoreJournal.sweepOrphanSnapshots(dir, null)
+        _interruptedRestore.value = null
+    }
+
+    /** 磁盘回滚结果（见 [startRollbackInterruptedRestore]）。 */
+    sealed interface DiskRollbackResult {
+        data object NoJournal : DiskRollbackResult
+        data object SnapshotMissing : DiskRollbackResult
+        data class RolledBack(val uncoveredSections: List<String>) : DiskRollbackResult
+        data class Failed(val message: String) : DiskRollbackResult
+    }
+
+    /**
+     * 从备份页发起磁盘回滚：读 journal＋快照，把还原前状态写回。
+     * 与 [startRestore] 同一套应用级执行（restoreRunning 互斥、
+     * restoreState 回报、成功后 600ms 杀进程重启）。
+     * 回滚覆盖判定：快照里缺段、且 journal 显示该段已被失败还原
+     * 写过的，列入 uncovered——回滚成功但 uncovered 非空时按失败
+     * 报（journal 保留，用户重导才是正解），不谎报“已恢复”。
+     */
+    fun startRollbackInterruptedRestore() {
+        if (!restoreRunning.compareAndSet(false, true)) return
+        val generation = restoreGeneration.incrementAndGet()
+        _restoreState.value = RestoreState.Running
+        restoreScope.launch {
+            try {
+                when (val result = rollbackInterruptedRestore()) {
+                    is DiskRollbackResult.RolledBack -> {
+                        if (result.uncoveredSections.isEmpty()) {
+                            _interruptedRestore.value = null
+                            _restoreState.value = RestoreState.Done
+                            scheduleProcessRestart(generation)
+                        } else {
+                            throw BackupException(
+                                "回滚未完全成功：${
+                                    result.uncoveredSections.joinToString("、") {
+                                        sectionDisplayName(it)
+                                    }
+                                }未能恢复（还原前快照中没有），请重新导入备份文件",
+                            )
+                        }
+                    }
+                    DiskRollbackResult.NoJournal -> throw BackupException("没有未完成的还原记录")
+                    DiskRollbackResult.SnapshotMissing ->
+                        throw BackupException("还原前快照已丢失，请重新导入备份文件")
+                    is DiskRollbackResult.Failed -> throw BackupException(result.message)
+                }
+            } catch (e: Exception) {
+                Timber.w(e, "Disk rollback failed")
+                _restoreState.value = RestoreState.Failed(e.message ?: "未知错误")
+            } finally {
+                restoreRunning.set(false)
+            }
+        }
+    }
+
+    private suspend fun rollbackInterruptedRestore(): DiskRollbackResult {
+        val dir = RestoreJournal.dir(appContext.filesDir)
+        val entry = RestoreJournal.read(dir) ?: return DiskRollbackResult.NoJournal
+        if (entry.phase != RestoreJournal.Phase.REPLACING) {
+            // STAGING/COMMITTED 的 journal 不应走到这里（启动对账已清
+            // 理）；撞上即清掉、按无记录处理。
+            RestoreJournal.clear(dir, entry)
+            return DiskRollbackResult.NoJournal
+        }
+        val snapshotFile = File(dir, entry.snapshotFile)
+        if (entry.snapshotFile.isEmpty() || !snapshotFile.isFile) {
+            return DiskRollbackResult.SnapshotMissing
+        }
+        val snapshotJson = try {
+            JSONObject(snapshotFile.readText(Charsets.UTF_8))
+        } catch (e: Exception) {
+            return DiskRollbackResult.Failed("还原前快照损坏，无法回滚：${e.message ?: "读取失败"}")
+        }
+        val snapshotParsed = try {
+            parsePayload(snapshotJson)
+        } catch (e: Exception) {
+            return DiskRollbackResult.Failed("还原前快照解析失败，无法回滚：${e.message ?: "解析失败"}")
+        }
+        val uncovered = uncoveredSectionsForRollback(
+            entry.completedSections,
+            snapshotHasInputStats = snapshotParsed.inputStatsJson != null,
+            snapshotHasSkinLibrary = snapshotParsed.skinLibrary != null,
+            snapshotHasSkinScripts = snapshotParsed.skinScripts != null,
+        )
+        // 失败还原新建的偏好文件：以当前 shared_prefs 目录为准（磁盘
+        // 回滚没有内存里的 merged 目标可比）。
+        val rollbackExtraPrefsFiles = currentPrefsFilesNotInSnapshot(snapshotParsed)
+        return try {
+            withContext(NonCancellable) {
+                applyPayload(
+                    snapshotParsed,
+                    forRollback = true,
+                    clearSkinsForRollback = false,
+                    rollbackExtraPrefsFiles = rollbackExtraPrefsFiles,
+                )
+            }
+            // 全覆盖才清 journal；uncovered 非空时 journal 保留，
+            // 提示继续存在，用户重导或忽略。
+            if (uncovered.isEmpty()) RestoreJournal.clear(dir, entry)
+            DiskRollbackResult.RolledBack(uncovered)
+        } catch (e: Exception) {
+            if (e is kotlinx.coroutines.CancellationException) throw e
+            DiskRollbackResult.Failed("回滚失败：${e.message ?: "未知错误"}")
+        }
+    }
+
+    /** 磁盘回滚用：当前 shared_prefs 里有、快照里没有、且非跳过文件的偏好文件（失败还原新建的）。 */
+    private fun currentPrefsFilesNotInSnapshot(snapshotParsed: ParsedBackup): Set<String> {
+        val prefsDir = File(appContext.applicationInfo.dataDir, "shared_prefs")
+        val live = prefsDir.listFiles { f -> f.extension == "xml" }
+            ?.map { it.nameWithoutExtension }?.toSet().orEmpty()
+        return (live - snapshotParsed.prefs.keys).filter { !isSkippedPrefsFile(it) }.toSet()
+    }
+
+    /**
+     * 磁盘回滚覆盖判定（纯函数）：快照里缺段、且 journal 显示该段已被
+     * 失败还原写过的，列入 uncovered。
+     * Room 两库与 prefs 在快照里恒有（collectPayload 必写），永不缺段；
+     * 输入统计／皮肤库／脚本三段是条件段，缺段且被写过即 uncovered。
+     * 段写盘本身的原子性（Room 事务、tmp＋rename、目录整换）保证：
+     * 快照里没有的段，还原也不会写它——journal 里没记的段不可能处于
+     * 半写状态（applyPayload 的 onSectionDone 只在真实写完后记）。
+     */
+    internal fun uncoveredSectionsForRollback(
+        completedSections: Set<String>,
+        snapshotHasInputStats: Boolean,
+        snapshotHasSkinLibrary: Boolean,
+        snapshotHasSkinScripts: Boolean,
+    ): List<String> {
+        val uncovered = ArrayList<String>()
+        if (RestoreJournal.SECTION_INPUT_STATS in completedSections && !snapshotHasInputStats) {
+            uncovered += RestoreJournal.SECTION_INPUT_STATS
+        }
+        if (RestoreJournal.SECTION_SKIN_LIBRARY in completedSections && !snapshotHasSkinLibrary) {
+            uncovered += RestoreJournal.SECTION_SKIN_LIBRARY
+        }
+        if (RestoreJournal.SECTION_SKIN_SCRIPTS in completedSections && !snapshotHasSkinScripts) {
+            uncovered += RestoreJournal.SECTION_SKIN_SCRIPTS
+        }
+        return uncovered
+    }
+
+    private fun sectionDisplayName(section: String): String = when (section) {
+        RestoreJournal.SECTION_INPUT_STATS -> "输入统计"
+        RestoreJournal.SECTION_SKIN_LIBRARY -> "皮肤库"
+        RestoreJournal.SECTION_SKIN_SCRIPTS -> "皮肤脚本"
+        else -> section
     }
 
     private fun decryptPayload(bytes: ByteArray, password: CharArray): JSONObject {
@@ -710,6 +1104,29 @@ object BackupManager {
                 )
             }
 
+            // 包内清单校验（D-M1，payload v2）：清单在场时逐项核对
+            // 计数与存在性，任一不符整包判失败（解析阶段拦截，不写
+            // 脏数据）；旧备份无清单字段时跳过（兼容 v1）。注意计数
+            // 以载荷原始数组长度为准（剪贴板去重前——清单记的是采集
+            // 时的原始行数）。
+            if (root.has("manifest")) {
+                val manifestJson = try {
+                    root.getJSONObject("manifest")
+                } catch (e: Exception) {
+                    throw BackupException("备份清单损坏")
+                }
+                val manifest = BackupManifest.fromJsonObject(manifestJson)
+                    ?: throw BackupException("备份清单损坏")
+                if (manifest.payloadVersion != BackupManifest.CURRENT_PAYLOAD_VERSION) {
+                    throw BackupException("备份版本不受支持")
+                }
+                val mismatches = manifest.validate(countsFromPayload(root))
+                if (mismatches.isNotEmpty()) {
+                    Timber.w("backup manifest mismatch: ${mismatches.joinToString("; ")}")
+                    throw BackupException("备份清单与内容不符，请重新备份")
+                }
+            }
+
             return ParsedBackup(
                 prefs = prefs,
                 // 剪贴板表 text 唯一（ClipboardDatabase v4 起）：备份内
@@ -804,6 +1221,36 @@ object BackupManager {
         } catch (e: Exception) {
             throw BackupException("备份内容解析失败")
         }
+    }
+
+    /**
+     * 从解密后的载荷 JSON 读实际计数（清单校验用；纯 JSONObject
+     * 长度统计，与采集侧 [BackupManifest] 的计数口径逐项对应：
+     * prefs 条目数 = 各表对象长度之和，行数 = 原始数组长度）。
+     */
+    private fun countsFromPayload(root: JSONObject): ManifestCounts {
+        val prefsJson = root.optJSONObject("prefs") ?: JSONObject()
+        var prefsEntries = 0
+        val prefsNames = prefsJson.keys()
+        while (prefsNames.hasNext()) {
+            prefsEntries += prefsJson.optJSONObject(prefsNames.next())?.length() ?: 0
+        }
+        return ManifestCounts(
+            prefsFiles = prefsJson.length(),
+            prefsEntries = prefsEntries,
+            clipboardCount = root.optJSONArray("clipboard")?.length() ?: 0,
+            clipboardGroupsCount = root.optJSONArray("clipboard_groups")?.length() ?: 0,
+            phrasesCount = root.optJSONArray("phrases")?.length() ?: 0,
+            prefersCount = root.optJSONArray("candidatePrefers")?.length() ?: 0,
+            sortingsCount = root.optJSONArray("candidateSortings")?.length() ?: 0,
+            inputStatsPresent = root.has("input_stats_json"),
+            skinLibraryPresent = root.has("skin_library"),
+            skinLibraryFiles = root.optJSONObject("skin_library")
+                ?.optJSONObject("files")?.length() ?: 0,
+            skinScriptsPresent = root.has("skin_scripts"),
+            skinScriptsFiles = root.optJSONObject("skin_scripts")
+                ?.optJSONObject("files")?.length() ?: 0,
+        )
     }
 
     // prefs 名白名单：字母/数字/点/下划线/连字符，且不许是 "." / ".."
@@ -1057,18 +1504,27 @@ object BackupManager {
      *   失败还原新建的偏好文件删掉、皮肤库整表替换（或快照即空库时
      *   清空）；正常还原走合并写回口径，不碰快照里没有的现数据。
      */
+    /**
+     * 把解析后的备份写回各存储。失败时由调用方用快照回放整体回滚。
+     * [onSectionDone]：每写完一段（剪贴板库／主库／prefs／输入统计／
+     * 皮肤库／皮肤脚本）回调一次，供还原 journal 记段进度；条件段
+     * （输入统计／皮肤库／皮肤脚本）只在真实写盘后才回调，跳过的段
+     * 不记（见 [uncoveredSectionsForRollback] 的 KDoc）。回滚回放
+     * 不传回调（journal 正在被处置，不记进度）。
+     */
     private suspend fun applyPayload(
         parsed: ParsedBackup,
         forRollback: Boolean = false,
         clearSkinsForRollback: Boolean = false,
         rollbackExtraPrefsFiles: Set<String> = emptySet(),
+        onSectionDone: ((String) -> Unit)? = null,
     ) {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
         // 拆库迁移本体已随清点 Q2 退场（现行设备早已迁完）：原「迁移
         // 不成中止还原」的耦合随之解除，直接整表替换
 
-        // —— Room 四表：各自单事务内整表替换，中途失败整表回滚
+        // —— Room 五表：各自单事务内整表替换，中途失败整表回滚
         clipDb.withTransaction {
             clipDb.clipboardDao().deleteAllRaw()
             if (parsed.clipboard.isNotEmpty()) {
@@ -1097,6 +1553,7 @@ object BackupManager {
                 clipDb.clipboardDao().insertGroups(parsed.clipboardGroups)
             }
         }
+        onSectionDone?.invoke(RestoreJournal.SECTION_CLIPBOARD)
         db.withTransaction {
             db.phraseDao().deleteAll()
             if (parsed.phrases.isNotEmpty()) db.phraseDao().insertAll(parsed.phrases)
@@ -1105,6 +1562,7 @@ object BackupManager {
             db.candidateSortingDao().deleteAll()
             if (parsed.sortings.isNotEmpty()) db.candidateSortingDao().insertAll(parsed.sortings)
         }
+        onSectionDone?.invoke(RestoreJournal.SECTION_APPDB)
 
         // —— prefs 整表覆盖（先清后写，与备份时点的一致状态）
         for ((name, entries) in parsed.prefs) {
@@ -1140,6 +1598,7 @@ object BackupManager {
                 File(prefsDir, "$name.xml.bak").delete()
             }
         }
+        onSectionDone?.invoke(RestoreJournal.SECTION_PREFS)
 
         // 引擎侧候选偏好有内存快照，还原后显式失效，不依赖随后的杀进程重启
         CandidatePreferCache.invalidate()
@@ -1156,6 +1615,7 @@ object BackupManager {
             if (!tmp.renameTo(File(dir, "stats.json"))) {
                 throw BackupException("输入统计写入失败，还原中止")
             }
+            onSectionDone?.invoke(RestoreJournal.SECTION_INPUT_STATS)
         }
 
         // —— 皮肤库文件（正常还原合并写回，非整表覆盖）：只覆盖备份中
@@ -1192,6 +1652,7 @@ object BackupManager {
                     throw BackupException("皮肤文件写入失败（$rel），还原中止")
                 }
             }
+            onSectionDone?.invoke(RestoreJournal.SECTION_SKIN_LIBRARY)
         }
         // 回滚模式 + 快照无皮肤段 + 还原前本就无皮肤文件：快照即“空库”，
         // 失败还原新增的皮肤文件必须清干净（clearSkinsForRollback）。
@@ -1253,6 +1714,7 @@ object BackupManager {
                 throw BackupException("脚本库写入失败，还原中止")
             }
             oldDir.deleteRecursively()
+            onSectionDone?.invoke(RestoreJournal.SECTION_SKIN_SCRIPTS)
         }
     }
 

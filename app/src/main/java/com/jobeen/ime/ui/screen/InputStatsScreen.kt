@@ -35,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import com.jobeen.ime.R
 import com.jobeen.ime.ui.theme.LocalMonetCardColor
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -48,6 +49,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -136,7 +138,8 @@ fun InputStatsScreen(onBack: () -> Unit) {
             }
             Toast.makeText(
                 context,
-                if (ok) "导入成功" else "导入失败：文件格式不正确，现有数据未改动",
+                if (ok) context.getString(R.string.import_success)
+                else context.getString(R.string.stats_import_failed_format),
                 Toast.LENGTH_SHORT,
             ).show()
             refreshTick++
@@ -168,7 +171,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                     writeText(InputStats.exportJson(), Charsets.UTF_8)
                 }
             }
-            shareFile(file, "application/json", "导出输入统计")
+            shareFile(file, "application/json", context.getString(R.string.stats_export_json_title))
         }
     }
 
@@ -178,9 +181,9 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 InputStatsImage.renderToFile(context, period, heroStats, rank)
             }
             if (file == null) {
-                toast("分享图生成失败")
+                toast(context.getString(R.string.stats_share_image_failed))
             } else {
-                shareFile(file, "image/png", "分享输入统计")
+                shareFile(file, "image/png", context.getString(R.string.stats_share_image_title))
             }
         }
     }
@@ -191,28 +194,28 @@ fun InputStatsScreen(onBack: () -> Unit) {
             putExtra(Intent.EXTRA_TEXT, text)
             if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         }
-        context.startActivity(Intent.createChooser(intent, "分享输入统计"))
+        context.startActivity(Intent.createChooser(intent, context.getString(R.string.stats_share_image_title)))
     }
 
     fun copyText(text: String) {
         val manager = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         if (manager == null) {
-            toast("复制失败：剪贴板不可用")
+            toast(context.getString(R.string.stats_copy_failed))
         } else {
-            manager.setPrimaryClip(ClipData.newPlainText("输入统计", text))
-            toast("已复制")
+            manager.setPrimaryClip(ClipData.newPlainText(context.getString(R.string.input_stats_title), text))
+            toast(context.getString(R.string.copied))
         }
     }
 
     SettingsPageLazyScaffold(
-        title = "输入统计",
+        title = stringResource(R.string.input_stats_title),
         onBack = onBack,
         actions = {
             IconButton(onClick = { showShareDialog = true }) {
-                Icon(Icons.Filled.Share, contentDescription = "分享")
+                Icon(Icons.Filled.Share, contentDescription = stringResource(R.string.share))
             }
             IconButton(onClick = { showMenu = true }) {
-                Icon(Icons.Filled.MoreVert, contentDescription = "更多")
+                Icon(Icons.Filled.MoreVert, contentDescription = stringResource(R.string.more))
             }
             DropdownMenu(
                 expanded = showMenu,
@@ -221,21 +224,21 @@ fun InputStatsScreen(onBack: () -> Unit) {
                 containerColor = LocalMonetCardColor.current,
             ) {
                 DropdownMenuItem(
-                    text = { Text("清空统计数据") },
+                    text = { Text(stringResource(R.string.stats_clear_data)) },
                     onClick = {
                         showMenu = false
                         showClearConfirm = true
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("清除极速记录") },
+                    text = { Text(stringResource(R.string.stats_clear_fastest)) },
                     onClick = {
                         showMenu = false
                         showClearFastestConfirm = true
                     },
                 )
                 DropdownMenuItem(
-                    text = { Text("备份与恢复") },
+                    text = { Text(stringResource(R.string.stats_backup_restore)) },
                     onClick = {
                         showMenu = false
                         showBackupDialog = true
@@ -311,15 +314,15 @@ fun InputStatsScreen(onBack: () -> Unit) {
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    "${rank.xp} 字",
+                                    stringResource(R.string.stats_xp_words, rank.xp),
                                     fontWeight = FontWeight.Bold,
                                     color = onHero,
                                 )
-                                Text("累计输入", fontSize = 12.sp, color = onHero)
+                                Text(stringResource(R.string.stats_total_input), fontSize = 12.sp, color = onHero)
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    "${speedRating(fastest)} · 迅速",
+                                    stringResource(R.string.stats_speed_rating, speedRating(fastest)),
                                     fontWeight = FontWeight.Bold,
                                     color = onHero,
                                 )
@@ -331,7 +334,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    "${accuracyRating(yearStats.accuracy)} · 精准",
+                                    stringResource(R.string.stats_accuracy_rating, accuracyRating(yearStats.accuracy)),
                                     fontWeight = FontWeight.Bold,
                                     color = onHero,
                                 )
@@ -343,7 +346,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                             }
                         }
                         Text(
-                            "注：准确率＝提交字数 ÷（提交字数＋删除数），删除不一定都是纠错，仅供参考。",
+                            stringResource(R.string.stats_accuracy_note),
                             fontSize = 12.sp,
                             color = onHero.copy(alpha = 0.8f),
                         )
@@ -361,14 +364,18 @@ fun InputStatsScreen(onBack: () -> Unit) {
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
                     Text(
-                        text = "方案：" + (scheme?.ifBlank { "未知方案" } ?: "全部方案") +
+                        text = stringResource(
+                            R.string.stats_scheme_line,
+                            scheme?.ifBlank { stringResource(R.string.stats_unknown_scheme) }
+                                ?: stringResource(R.string.schema_manage_all),
                             if (period == InputStats.Period.DAY &&
                                 stats.total.chars == 0L
                             ) {
-                                " · 🐢 今天刚起步～"
+                                stringResource(R.string.stats_just_started)
                             } else {
                                 ""
                             },
+                        ),
                         fontSize = 14.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -405,24 +412,24 @@ fun InputStatsScreen(onBack: () -> Unit) {
                         Text(segmentLabel(period), fontWeight = FontWeight.Bold)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StatMetric(
-                                "上屏次数",
+                                stringResource(R.string.stats_commits),
                                 if (t.commits == 0L) "—" else "${t.commits}",
                                 Modifier.weight(1f),
                             )
                             StatMetric(
-                                "输入字数",
+                                stringResource(R.string.stats_chars),
                                 if (t.chars == 0L) "—" else "${t.chars}",
                                 Modifier.weight(1f),
                             )
                         }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StatMetric(
-                                "击键次数",
+                                stringResource(R.string.stats_keypresses),
                                 if (t.keypresses == 0L) "—" else "${t.keypresses}",
                                 Modifier.weight(1f),
                             )
                             StatMetric(
-                                "误触率",
+                                stringResource(R.string.stats_mistouch_rate),
                                 formatMistouchRate(t.corrections, t.keypresses),
                                 Modifier.weight(1f),
                             )
@@ -443,15 +450,15 @@ fun InputStatsScreen(onBack: () -> Unit) {
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text("输入速度", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.stats_input_speed), fontWeight = FontWeight.Bold)
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             StatMetric(
-                                "极速",
+                                stringResource(R.string.stats_fastest),
                                 formatSpeed(fastest),
                                 Modifier.weight(1f),
                             )
                             StatMetric(
-                                "均速",
+                                stringResource(R.string.stats_avg_speed),
                                 formatSpeed(heroStats.avgSpeed),
                                 Modifier.weight(1f),
                             )
@@ -477,11 +484,11 @@ fun InputStatsScreen(onBack: () -> Unit) {
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text("词长分布", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.stats_word_len_dist), fontWeight = FontWeight.Bold)
                         for ((label, count) in listOf(
-                            "单字" to single,
-                            "双字词" to double,
-                            "多字词" to multi,
+                            stringResource(R.string.stats_word_len_1) to single,
+                            stringResource(R.string.stats_word_len_2) to double,
+                            stringResource(R.string.stats_word_len_multi) to multi,
                         )) {
                             val fraction =
                                 if (wlTotal > 0L) count.toFloat() / wlTotal else 0f
@@ -505,7 +512,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                         }
                         if (wlTotal <= 0L) {
                             Text(
-                                "暂无数据",
+                                stringResource(R.string.stats_no_data),
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -525,9 +532,9 @@ fun InputStatsScreen(onBack: () -> Unit) {
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text("码长分布", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.stats_code_len_dist), fontWeight = FontWeight.Bold)
                         Text(
-                            "暂无数据",
+                            stringResource(R.string.stats_no_data),
                             fontSize = 13.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -549,7 +556,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(10.dp),
                     ) {
-                        Text("键盘热力", fontWeight = FontWeight.Bold)
+                        Text(stringResource(R.string.stats_keyboard_heat), fontWeight = FontWeight.Bold)
                         for (rowKeys in InputStats.HEAT_GRID) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -578,7 +585,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                         }
                         if (heatTotal <= 0L) {
                             Text(
-                                "暂无数据",
+                                stringResource(R.string.stats_no_data),
                                 fontSize = 13.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -588,7 +595,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
             }
             item {
                 Text(
-                    "所有统计均在本地计算与存储，不会上传任何数据。",
+                    stringResource(R.string.stats_privacy_note),
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -599,43 +606,43 @@ fun InputStatsScreen(onBack: () -> Unit) {
     if (showClearConfirm) {
         SettingsConfirmDialog(
             onDismissRequest = { showClearConfirm = false },
-            title = "清统计",
-            text = "清除全部周期统计数据吗？生涯段位与累计字数保留，此操作不可撤销。",
-            confirmText = "清除",
+            title = stringResource(R.string.stats_clear_title),
+            text = stringResource(R.string.stats_clear_message),
+            confirmText = stringResource(R.string.stats_clear_confirm),
             onConfirm = {
                 InputStats.clearPeriods()
                 showClearConfirm = false
                 refreshTick++
-                toast("已清统计，段位保留")
+                toast(context.getString(R.string.stats_cleared))
             },
-            dismissText = "取消",
+            dismissText = stringResource(R.string.cancel),
         )
     }
 
     if (showClearFastestConfirm) {
         SettingsConfirmDialog(
             onDismissRequest = { showClearFastestConfirm = false },
-            title = "清除极速记录",
-            text = "仅清除最快速度记录，周期数据与段位不受影响。清除后需出现新的合格单日（≥50 字）才重新显示最快速度。",
-            confirmText = "清除",
+            title = stringResource(R.string.stats_clear_fastest),
+            text = stringResource(R.string.stats_clear_fastest_message),
+            confirmText = stringResource(R.string.stats_clear_confirm),
             onConfirm = {
                 InputStats.clearFastest()
                 showClearFastestConfirm = false
                 refreshTick++
-                toast("已清除极速记录")
+                toast(context.getString(R.string.stats_fastest_cleared))
             },
-            dismissText = "取消",
+            dismissText = stringResource(R.string.cancel),
         )
     }
 
     if (showSchemeDialog) {
         SettingsDialog(
             onDismissRequest = { showSchemeDialog = false },
-            title = "选择方案",
+            title = stringResource(R.string.stats_choose_scheme),
             body = {
                 Column {
                     SchemeRow(
-                        label = "全部方案",
+                        label = stringResource(R.string.schema_manage_all),
                         selected = scheme == null,
                         onClick = {
                             scheme = null
@@ -644,7 +651,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
                     )
                     for (id in schemes) {
                         SchemeRow(
-                            label = id.ifBlank { "未知方案" },
+                            label = id.ifBlank { stringResource(R.string.stats_unknown_scheme) },
                             selected = scheme == id,
                             onClick = {
                                 scheme = id
@@ -656,7 +663,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
             },
             actions = listOf(
                 SettingsDialogAction(
-                    text = "取消",
+                    text = stringResource(R.string.cancel),
                     onClick = { showSchemeDialog = false },
                 ),
             ),
@@ -666,32 +673,31 @@ fun InputStatsScreen(onBack: () -> Unit) {
     if (showBackupDialog) {
         SettingsDialog(
             onDismissRequest = { showBackupDialog = false },
-            title = "备份与恢复",
+            title = stringResource(R.string.stats_backup_restore),
             body = {
                 Text(
-                    "导出整份统计状态为 JSON 文件，或从 JSON 文件恢复；" +
-                        "恢复会替换现有统计数据，格式非法时拒绝且不改动现有数据。",
+                    stringResource(R.string.stats_backup_desc),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             },
             actions = listOf(
                 SettingsDialogAction(
-                    text = "导出 JSON",
+                    text = stringResource(R.string.stats_export_json),
                     onClick = {
                         showBackupDialog = false
                         shareJson()
                     },
                 ),
                 SettingsDialogAction(
-                    text = "导入 JSON",
+                    text = stringResource(R.string.stats_import_json),
                     onClick = {
                         showBackupDialog = false
                         importLauncher.launch("*/*")
                     },
                 ),
                 SettingsDialogAction(
-                    text = "取消",
+                    text = stringResource(R.string.cancel),
                     onClick = { showBackupDialog = false },
                 ),
             ),
@@ -703,21 +709,21 @@ fun InputStatsScreen(onBack: () -> Unit) {
         val longText = longStatsReport(segmentLabel(period), rank, stats, fastest)
         SettingsDialog(
             onDismissRequest = { showShareDialog = false },
-            title = "分享统计",
+            title = stringResource(R.string.stats_share_title),
             body = {
                 Column {
                     ShareOptionRow(
-                        label = "短版报告",
+                        label = stringResource(R.string.stats_share_short),
                         selected = shareOption == ShareOption.SHORT,
                         onClick = { shareOption = ShareOption.SHORT },
                     )
                     ShareOptionRow(
-                        label = "长版报告",
+                        label = stringResource(R.string.stats_share_long),
                         selected = shareOption == ShareOption.LONG,
                         onClick = { shareOption = ShareOption.LONG },
                     )
                     ShareOptionRow(
-                        label = "分享统计图片（含热力图）",
+                        label = stringResource(R.string.stats_share_image),
                         selected = shareOption == ShareOption.IMAGE,
                         onClick = { shareOption = ShareOption.IMAGE },
                     )
@@ -725,7 +731,7 @@ fun InputStatsScreen(onBack: () -> Unit) {
             },
             actions = listOf(
                 SettingsDialogAction(
-                    text = "复制",
+                    text = stringResource(R.string.copy),
                     onClick = {
                         when (shareOption) {
                             ShareOption.SHORT -> {
@@ -737,13 +743,13 @@ fun InputStatsScreen(onBack: () -> Unit) {
                                 showShareDialog = false
                             }
                             ShareOption.IMAGE -> {
-                                toast("统计图片请用分享发送")
+                                toast(context.getString(R.string.stats_image_share_only))
                             }
                         }
                     },
                 ),
                 SettingsDialogAction(
-                    text = "分享",
+                    text = stringResource(R.string.share),
                     onClick = {
                         when (shareOption) {
                             ShareOption.SHORT -> {

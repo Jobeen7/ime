@@ -71,7 +71,7 @@ fun ClipboardScreen(onBack: () -> Unit) {
                 SliderRow(
                     title = stringResource(R.string.clipboard_max_entries),
                     value = maxEntries,
-                    valueLabel = "${maxEntries.toInt()} 条",
+                    valueLabel = stringResource(R.string.clipboard_max_entries_value, maxEntries.toInt()),
                     range = 20f..100f,
                     // 拖动只更新本地显示：setMaxEntries 会立即按新上限裁剪历史，
                     // 逐帧调用会把途经低点的裁剪全打出去（拖回高位也恢复不了）
@@ -84,7 +84,7 @@ fun ClipboardScreen(onBack: () -> Unit) {
                 SliderRow(
                     title = stringResource(R.string.clipboard_retention_days),
                     value = retentionDays,
-                    valueLabel = "${retentionDays.toInt()} 天",
+                    valueLabel = stringResource(R.string.clipboard_retention_days_value, retentionDays.toInt()),
                     range = 1f..365f,
                     onValueChange = {
                         retentionDays = it

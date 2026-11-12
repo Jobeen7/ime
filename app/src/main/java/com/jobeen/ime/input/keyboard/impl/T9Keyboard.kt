@@ -14,6 +14,7 @@ import com.jobeen.ime.skin.runtime.PlaceholderValues
 import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.SharedPrefsUserSymbolBarStore
+import com.jobeen.ime.skin.symbol.UserSymbolBarOps
 import com.jobeen.ime.skin.symbol.UserSymbolBarStore
 import com.jobeen.ime.ui.SymbolBarSettingsActivity
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
@@ -83,15 +84,18 @@ class T9Keyboard(
     /** 左竖栏符号 KeyDef：用户 16 符号＋末尾“自定义”入口（共 17 项，可滑）。 */
     private fun symbolItemDefs(): List<KeyDef> =
         userSymbolStore.load().symbols.map { ch ->
+            // WO30 §3(9)：符号按标点模式换算后显示与提交（半角模式出半角
+            // 标点，全角模式出全角标点）；自定义入口与拼音候选条不受影响。
+            val display = UserSymbolBarOps.displaySymbol(ch, state)
             KeyDef(
                 appearance = KeyDef.Appearance.Text(
-                    displayText = ch,
+                    displayText = display,
                     textSize = 15f,
                     percentWidth = 0.5f,
                     margin = false,
                     variant = Variant.Alternative
                 ),
-                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(ch))),
+                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(display))),
             )
         } + customEntryDef()
 
@@ -157,7 +161,7 @@ class T9Keyboard(
         // 经 EnterKeyVariant 传入，静态单例会在主题间串色
         fun buildLayout(returnVariant: Variant): List<List<KeyDef>> = listOf(
             listOf(
-                sidePannelKey(rowSpan = 3, visableRow = 4),
+                sidePannelKey(rowSpan = 3, visableRow = 7),
                 segmentKey(percentWidth = 0.22333f, id = KeyIds.T9.T9_SEGMENT),
                 mixedAlphabetKey("2", "ABC", 0.22333f, id = KeyIds.T9.T9_KEY_2),
                 mixedAlphabetKey("3", "DEF", 0.22333f, id = KeyIds.T9.T9_KEY_3),

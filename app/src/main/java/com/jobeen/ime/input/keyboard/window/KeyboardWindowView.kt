@@ -96,6 +96,7 @@ import com.jobeen.ime.skin.notify.ConditionCurrent
 import com.jobeen.ime.skin.notify.ConditionStyleParser
 import com.jobeen.ime.skin.notify.NotificationEvent
 import com.jobeen.ime.skin.notify.NotificationSource
+import com.jobeen.ime.skin.runtime.BuiltinFallbackLayout
 import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
 import com.jobeen.ime.skin.runtime.PlaceholderValues
 import com.jobeen.ime.skin.runtime.SkinColorMode
@@ -108,6 +109,7 @@ import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.core.RimeSchema
 import com.jobeen.ime.engine.rime.util.OptionsApplier
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import com.jobeen.ime.input.keyboard.impl.T15Keyboard
@@ -375,7 +377,7 @@ class KeyboardWindowView(
         val loaded: Pair<SymbolBarConfig, String> = if (skinSpec != null) {
             val types = skinSymbolBarTypes()
             if (types.isEmpty()) {
-                showImeToast("符号栏配置无效")
+                showImeToast(context.getString(R.string.symbol_bar_config_invalid))
                 return
             }
             val config = symbolBarConfigFromSkinSpec(skinSpec, types)
@@ -383,18 +385,18 @@ class KeyboardWindowView(
         } else {
             when (val result = SymbolBarConfigLoader.load(SymbolBarConfigLoader.defaultFile(context))) {
                 SymbolBarLoadResult.Missing -> {
-                    showImeToast("符号栏未配置")
+                    showImeToast(context.getString(R.string.symbol_bar_not_configured))
                     return
                 }
                 SymbolBarLoadResult.Invalid -> {
-                    showImeToast("符号栏配置无效")
+                    showImeToast(context.getString(R.string.symbol_bar_config_invalid))
                     return
                 }
                 is SymbolBarLoadResult.Ok -> {
                     val config = result.config
                     val type = resolveCurrentType(config.types, symbolBarTypeStore.load())
                         ?: run {
-                            showImeToast("符号栏配置无效")
+                            showImeToast(context.getString(R.string.symbol_bar_config_invalid))
                             return
                         }
                     config to type
@@ -732,25 +734,49 @@ class KeyboardWindowView(
     }
 
     private fun createKeyboard(name: String): IKeyboard {
-        val b = when {
-            // 自创布局在 else 兜底之前显式认领（B3 §3.3）：认领失败
-            // 走 buildCustomKeyboard 的回退链，绝不静默变 Qwerty 而不留痕
-            name.startsWith(CustomLayoutRuntime.PREFIX) -> buildCustomKeyboard(name)
-            else -> when (name) {
-                T15Keyboard.NAME -> T15Keyboard(context, cachedColors)
-                T9Keyboard.NAME -> T9Keyboard(context, cachedColors)
-                SymbolKeyboard.NAME -> SymbolKeyboard(context, cachedColors)
-                EmojiKeyboard.NAME -> EmojiKeyboard(context, cachedColors)
-                KaomojiKeyboard.NAME -> KaomojiKeyboard(context, cachedColors)
-                NumberKeyboard.NAME -> NumberKeyboard(context, cachedColors)
-                LayoutSwitchKeyboard.NAME -> LayoutSwitchKeyboard(context, cachedColors)
-                ReturnPathKeyboard.NAME -> ReturnPathKeyboard(context, cachedColors)
-                FloatPanelKeyboard.NAME -> FloatPanelKeyboard(context, cachedColors)
-                PanelKeyboard.NAME -> PanelKeyboard(context, cachedColors)
-                else -> QwertyKeyboard(context, cachedColors)
+        val b = try {
+            when {
+                // 自创布局在 else 兜底之前显式认领（B3 §3.3）：认领失败
+                // 走 buildCustomKeyboard 的回退链，绝不静默变 Qwerty 而不留痕
+                name.startsWith(CustomLayoutRuntime.PREFIX) -> buildCustomKeyboard(name)
+                else -> when (name) {
+                    T15Keyboard.NAME -> T15Keyboard(context, cachedColors)
+                    T9Keyboard.NAME -> T9Keyboard(context, cachedColors)
+                    SymbolKeyboard.NAME -> SymbolKeyboard(context, cachedColors)
+                    EmojiKeyboard.NAME -> EmojiKeyboard(context, cachedColors)
+                    KaomojiKeyboard.NAME -> KaomojiKeyboard(context, cachedColors)
+                    NumberKeyboard.NAME -> NumberKeyboard(context, cachedColors)
+                    LayoutSwitchKeyboard.NAME -> LayoutSwitchKeyboard(context, cachedColors)
+                    ReturnPathKeyboard.NAME -> ReturnPathKeyboard(context, cachedColors)
+                    FloatPanelKeyboard.NAME -> FloatPanelKeyboard(context, cachedColors)
+                    PanelKeyboard.NAME -> PanelKeyboard(context, cachedColors)
+                    else -> QwertyKeyboard(context, cachedColors)
+                }
             }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // 内置最后一层（K-M4，fcitx 式 builtin）：出厂键盘构建失败时
+            // （默认布局本身缺失／无效，如皮肤覆写装配、偏好读取抛错）
+            // 回退硬编码内置布局，键盘仍可用，绝不空白／崩溃。
+            DiagLog.e(
+                "layout", "layout_keyboard_build_failed",
+                mapOf(
+                    "layout" to name,
+                    "stage" to "builtin_fallback",
+                    "error" to "${e.javaClass.simpleName}: ${e.message}",
+                ),
+            )
+            GenericLayoutKeyboard(
+                context, cachedColors,
+                BuiltinFallbackLayout.NAME, BuiltinFallbackLayout.layout(),
+            )
         }
-        b.setRippleEnabled(KeyboardManager.Keyboard.RippleEffect.isEnabled(context))
+        b.setRippleEnabled(
+            runCatching {
+                KeyboardManager.Keyboard.RippleEffect.isEnabled(context)
+            }.getOrDefault(false),
+        )
         return b
     }
 
@@ -2255,7 +2281,7 @@ class KeyboardWindowView(
         voiceOverlay.hide()
         // 失败必须可见（旧实现静默收起，用户无从知道发生了什么）：
         // 客户端留了具体文案用文案，否则用通用文案
-        showImeToast(SherpaSpeechClient.consumeStartFailureHint() ?: "语音启动失败，请重试")
+        showImeToast(SherpaSpeechClient.consumeStartFailureHint() ?: context.getString(R.string.voice_hint_start_failed))
     }
     private val speechModelMissingCallback: () -> Unit =
         { showModelDownloadPrompt() }

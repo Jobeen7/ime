@@ -92,13 +92,13 @@ class UserDictActivity : ComponentActivity() {
                         uiState.webdavUsername = UserDictPrefs.username
                         uiState.webdavPassword = UserDictPrefs.password
                         uiState.webdavSyncPath = UserDictPrefs.syncPath
-                        ToastUtil.showToast("已保存")
+                        ToastUtil.showToast(getString(R.string.user_dict_saved))
                     },
                     onAllowHttpChange = { allowed ->
                         UserDictPrefs.allowHttp = allowed
                         uiState.webdavAllowHttp = allowed
                         ToastUtil.showToast(
-                            if (allowed) "已允许明文 HTTP（高级）" else "已恢复仅允许 HTTPS"
+                            if (allowed) getString(R.string.user_dict_http_allowed) else getString(R.string.user_dict_http_restored)
                         )
                     },
                     onUpload = { doUpload() },
@@ -142,7 +142,7 @@ class UserDictActivity : ComponentActivity() {
                             PeriodicSyncScheduler.cancel(this@UserDictActivity)
                         }
                         ToastUtil.showToast(
-                            if (enabled) "已开启后台定期同步" else "已关闭后台定期同步"
+                            if (enabled) getString(R.string.user_dict_periodic_on) else getString(R.string.user_dict_periodic_off)
                         )
                     },
                     onPeriodicIntervalChange = { hours ->
@@ -231,7 +231,7 @@ class UserDictActivity : ComponentActivity() {
                 Timber.w(e, "Failed to load user dict list")
                 withContext(Dispatchers.Main) {
                     uiState.dictsLoadFailed = true
-                    ToastUtil.showToast("词典列表加载失败")
+                    ToastUtil.showToast(getString(R.string.user_dict_list_failed))
                 }
             }
         }
@@ -241,7 +241,7 @@ class UserDictActivity : ComponentActivity() {
 
     private fun doExport() {
         val dict = selectedDict() ?: return
-        setBusy("正在导出…")
+        setBusy(getString(R.string.user_dict_exporting))
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val sharedDir = File(cacheDir, "shared").apply { mkdirs() }
@@ -253,8 +253,8 @@ class UserDictActivity : ComponentActivity() {
                 withContext(Dispatchers.Main) {
                     setIdle()
                     when {
-                        count < 0 -> ToastUtil.showToast("导出失败")
-                        count == 0 -> ToastUtil.showToast("用户词典为空")
+                        count < 0 -> ToastUtil.showToast(getString(R.string.user_dict_export_failed))
+                        count == 0 -> ToastUtil.showToast(getString(R.string.user_dict_empty))
                         else -> shareFile(file, dict, count)
                     }
                 }
@@ -262,7 +262,7 @@ class UserDictActivity : ComponentActivity() {
                 Timber.w(e, "Export user dict failed")
                 withContext(Dispatchers.Main) {
                     setIdle()
-                    ToastUtil.showToast("导出失败")
+                    ToastUtil.showToast(getString(R.string.user_dict_export_failed))
                 }
             }
         }
@@ -273,15 +273,15 @@ class UserDictActivity : ComponentActivity() {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_STREAM, uri)
-            putExtra(Intent.EXTRA_SUBJECT, "用户词典（$dict，共 $count 个词）")
+            putExtra(Intent.EXTRA_SUBJECT, getString(R.string.user_dict_share_subject, dict, count))
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
-        startActivity(Intent.createChooser(intent, "导出用户词（$dict）"))
+        startActivity(Intent.createChooser(intent, getString(R.string.user_dict_export_chooser, dict)))
     }
 
     private fun doImport(uri: Uri) {
         val dict = selectedDict() ?: return
-        setBusy("正在导入…")
+        setBusy(getString(R.string.user_dict_importing))
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val s = session
@@ -305,17 +305,17 @@ class UserDictActivity : ComponentActivity() {
                     when {
                         count < 0 -> {
                             Timber.w("Import user dict failed: native returned $count")
-                            ToastUtil.showToast("导入失败")
+                            ToastUtil.showToast(getString(R.string.import_failed))
                         }
-                        count == 0 -> ToastUtil.showToast("文件中没有可导入的词")
-                        else -> ToastUtil.showToast("已导入 $count 个词")
+                        count == 0 -> ToastUtil.showToast(getString(R.string.user_dict_no_words_in_file))
+                        else -> ToastUtil.showToast(getString(R.string.user_dict_imported_count, count))
                     }
                 }
             } catch (e: Exception) {
                 Timber.w(e, "Import user dict failed")
                 withContext(Dispatchers.Main) {
                     setIdle()
-                    ToastUtil.showToast("导入失败")
+                    ToastUtil.showToast(getString(R.string.import_failed))
                 }
             }
         }
@@ -324,25 +324,25 @@ class UserDictActivity : ComponentActivity() {
     private fun doUpload() {
         val dict = selectedDict() ?: return
         if (!UserDictPrefs.isConfigured()) {
-            ToastUtil.showToast("请先填写 WebDAV 服务器地址、用户名和密码并保存")
+            ToastUtil.showToast(getString(R.string.user_dict_not_configured))
             return
         }
         val s = session ?: run {
-            ToastUtil.showToast("词典服务未就绪，请稍后重试")
+            ToastUtil.showToast(getString(R.string.user_dict_service_not_ready))
             return
         }
-        setBusy("正在上传…")
+        setBusy(getString(R.string.user_dict_uploading))
         lifecycleScope.launch {
             val result = WebDavSync.upload(dict, s)
             setIdle()
             uiState.lastUpload = UserDictPrefs.lastUploadTime
             result
                 .onSuccess { count ->
-                    ToastUtil.showToast("已上传 $count 个词到 ${WebDavSync.remoteFileName(dict)}")
+                    ToastUtil.showToast(getString(R.string.user_dict_uploaded_count, count, WebDavSync.remoteFileName(dict)))
                 }
                 .onFailure {
                     Timber.w(it, "WebDAV upload failed")
-                    showNotice("操作失败", it.message ?: "上传失败")
+                    showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_upload_failed))
                 }
         }
     }
@@ -350,12 +350,12 @@ class UserDictActivity : ComponentActivity() {
     private fun doDownload() {
         val dict = selectedDict() ?: return
         if (!UserDictPrefs.isConfigured()) {
-            ToastUtil.showToast("请先填写 WebDAV 服务器地址、用户名和密码并保存")
+            ToastUtil.showToast(getString(R.string.user_dict_not_configured))
             return
         }
         // 先列出服务器上的备份文件：电脑端（万象 base，wanxiang）与手机端
         // （lite/T9，wanxiang_lite）词典名不同，需让用户选择下载哪一个
-        setBusy("正在获取服务器文件列表…")
+        setBusy(getString(R.string.user_dict_fetching_files))
         lifecycleScope.launch {
             val listResult = WebDavSync.listRemoteFiles()
             listResult
@@ -377,7 +377,7 @@ class UserDictActivity : ComponentActivity() {
                         // 直接把目录问题告诉用户，不做无意义的回退
                         setIdle()
                         Timber.w(e, "WebDAV sync dir unavailable")
-                        showNotice("操作失败", e.message ?: "同步目录不可用")
+                        showNotice(getString(R.string.user_dict_op_failed_title), e.message ?: getString(R.string.user_dict_sync_dir_unavailable))
                     } else {
                         // 某些 WebDAV 服务器不支持 PROPFIND，回退到同名文件直接下载
                         Timber.w(e, "List remote files failed, fallback to same-name download")
@@ -389,38 +389,38 @@ class UserDictActivity : ComponentActivity() {
 
     private fun doUploadSchemes() {
         if (!UserDictPrefs.isConfigured()) {
-            ToastUtil.showToast("请先填写 WebDAV 服务器地址、用户名和密码并保存")
+            ToastUtil.showToast(getString(R.string.user_dict_not_configured))
             return
         }
-        setBusy("正在上传方案目录…")
+        setBusy(getString(R.string.user_dict_uploading_schemes))
         lifecycleScope.launch {
             val result = WebDavSync.uploadSchemes()
             setIdle()
             result.onSuccess { count ->
-                ToastUtil.showToast("已上传 $count 个方案文件")
+                ToastUtil.showToast(getString(R.string.user_dict_uploaded_schemes, count))
             }.onFailure {
                 Timber.w(it, "uploadSchemes failed")
-                showNotice("操作失败", it.message ?: "上传失败")
+                showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_upload_failed))
             }
         }
     }
 
     private fun doDownloadSchemes() {
         if (!UserDictPrefs.isConfigured()) {
-            ToastUtil.showToast("请先填写 WebDAV 服务器地址、用户名和密码并保存")
+            ToastUtil.showToast(getString(R.string.user_dict_not_configured))
             return
         }
-        setBusy("正在下载方案目录…")
+        setBusy(getString(R.string.user_dict_downloading_schemes))
         lifecycleScope.launch {
             val result = WebDavSync.downloadSchemes()
             setIdle()
             result.onSuccess { summary ->
                 val skipNote =
-                    if (summary.skippedEmpty.isNotEmpty()) "，${summary.skippedEmpty.size} 个空文件已跳过" else ""
-                ToastUtil.showToast("已下载 ${summary.count} 个方案文件$skipNote")
+                    if (summary.skippedEmpty.isNotEmpty()) getString(R.string.user_dict_skip_empty_suffix, summary.skippedEmpty.size) else ""
+                ToastUtil.showToast(getString(R.string.user_dict_downloaded_schemes, summary.count, skipNote))
             }.onFailure {
                 Timber.w(it, "downloadSchemes failed")
-                showNotice("操作失败", it.message ?: "下载失败")
+                showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_download_failed))
             }
         }
     }
@@ -432,10 +432,10 @@ class UserDictActivity : ComponentActivity() {
 
     private fun doTestConnection() {
         if (!UserDictPrefs.isConfigured()) {
-            ToastUtil.showToast("请先填写 WebDAV 服务器地址、用户名和密码并保存")
+            ToastUtil.showToast(getString(R.string.user_dict_not_configured))
             return
         }
-        setBusy("正在测试连接…")
+        setBusy(getString(R.string.user_dict_testing_connection))
         lifecycleScope.launch {
             val result = WebDavSync.testConnection()
             setIdle()
@@ -443,28 +443,28 @@ class UserDictActivity : ComponentActivity() {
                 .onSuccess { entries ->
                     val dir = UserDictPrefs.syncDirUrl()
                     val msg = buildString {
-                        appendLine("同步目录：$dir")
+                        appendLine(getString(R.string.user_dict_test_dir, dir))
                         if (entries.isEmpty()) {
-                            append("目录是空的，没有任何文件")
+                            append(getString(R.string.user_dict_test_dir_empty))
                         } else {
-                            appendLine("共 ${entries.size} 项：")
+                            appendLine(getString(R.string.user_dict_test_dir_count, entries.size))
                             entries.forEach {
                                 appendLine("• ${it.name}${if (it.isDirectory) "/" else ""}")
                             }
                         }
                     }.trimEnd()
-                    showNotice("连接正常", msg)
+                    showNotice(getString(R.string.user_dict_test_ok), msg)
                 }
                 .onFailure {
                     Timber.w(it, "WebDAV test connection failed")
-                    showNotice("操作失败", it.message ?: "连接失败")
+                    showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_connect_failed))
                 }
         }
     }
 
     private fun doDownloadFile(dict: String, remoteFile: String) {
         val s = session ?: run {
-            ToastUtil.showToast("词典服务未就绪，请稍后重试")
+            ToastUtil.showToast(getString(R.string.user_dict_service_not_ready))
             return
         }
         setBusy(getString(R.string.user_dict_downloading_from, remoteFile))
@@ -475,12 +475,12 @@ class UserDictActivity : ComponentActivity() {
             result
                 .onSuccess { count ->
                     ToastUtil.showToast(
-                        if (count == 0) "文件中没有可导入的词" else "已下载并导入 $count 个词"
+                        if (count == 0) getString(R.string.user_dict_no_words_in_file) else getString(R.string.user_dict_downloaded_imported, count)
                     )
                 }
                 .onFailure {
                     Timber.w(it, "WebDAV download failed")
-                    showNotice("操作失败", it.message ?: "下载失败")
+                    showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_download_failed))
                 }
         }
     }

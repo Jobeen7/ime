@@ -4,6 +4,7 @@ import android.content.Context
 import android.text.InputType
 import android.view.inputmethod.EditorInfo
 import com.jobeen.ime.R
+import com.jobeen.ime.base.util.InputFieldPolicy
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.PunctuationMode
@@ -410,12 +411,18 @@ object KeyboardStateManager {
     private val refreshPolicy = DeployRefreshPolicy()
     private val deployWatcherStarted = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    fun refreshSchemas() {
+    /**
+     * 方案刷新：重读启用列表与磁盘方案表，部署结束时回第一个方案。
+     * [resetType] 只在部署结束的刷新里为 true——此时与切框路径一致，
+     * 方案回第一个的同时类型也复位到首个方案的布局类型（WO30 §4）；
+     * attach／改启用列表的刷新不补类型，沿用已确立的类型。
+     */
+    fun refreshSchemas(resetType: Boolean = false) {
         ensureDeployWatcher()
         if (!refreshPolicy.tryStart(isDeploying = EngineDeployState.isRunning())) return
         appScope.launch {
             try {
-                refreshSchemasOnce()
+                refreshSchemasOnce(resetType)
             } finally {
                 refreshPolicy.release()
                 tryAlignRefresh()
@@ -428,7 +435,8 @@ object KeyboardStateManager {
         if (!refreshPolicy.tryStartAlignment(isDeploying = EngineDeployState.isRunning())) return
         appScope.launch {
             try {
-                refreshSchemasOnce()
+                // 补齐跑本身就是部署结束的刷新，补类型复位（WO30 §4）。
+                refreshSchemasOnce(resetType = true)
             } finally {
                 refreshPolicy.release()
                 tryAlignRefresh()
@@ -449,7 +457,7 @@ object KeyboardStateManager {
         }
     }
 
-    private suspend fun refreshSchemasOnce() {
+    private suspend fun refreshSchemasOnce(resetType: Boolean = false) {
             val prefs = appContext.getSharedPreferences(SchemaManager.PREFS_NAME, Context.MODE_PRIVATE)
             val schemaIds = prefs.getString(SchemaManager.KEY_ENABLED_IDS, "")?.split(",")
                 ?.filter { it.isNotBlank() } ?: emptyList()
@@ -473,6 +481,11 @@ object KeyboardStateManager {
             }
             updateCurrentSchema(schemas.firstOrNull())
             currentSchema?.id?.let { EngineFactory.current()?.selectSchema(it) }
+            // 部署结束复位与切框路径一致（WO30 §4）：只在部署结束
+            // 的刷新里补类型复位——resetToFirstSchema 与 startInput
+            // 的切框复位走同一 decideWindowReset，方案已是第一个
+            // 时只复位粘住的类型；attach／改启用列表的刷新不补。
+            if (resetType) resetToFirstSchema()
 
             // 只有在已经挂载到窗口时才切换键盘布局，避免在 factory 尚未注入、
             if (keyboardAttached) {
@@ -663,8 +676,9 @@ object KeyboardStateManager {
                 forcedKeyboardName = null
                 // 新窗口复位（施工单 12）：字段身份变化时先回列表第一
                 // 个方案（含类型复位），再按当前方案切布局；数字／
-                // 密码框走直达分支，不复位。
-                if (fieldChanged) resetToFirstSchema()
+                // 密码框走直达分支，不复位。登录账号框（邮箱／人名／
+                // 网址类）与密码框一样豁免复位（WO30 §4），停在当前键盘。
+                if (fieldChanged && !InputFieldPolicy.isAccountField(info)) resetToFirstSchema()
                 switchTo(currentSchema?.layout ?: defaultKeyboardName)
             }
         }
@@ -768,7 +782,8 @@ object KeyboardStateManager {
             is EngineMessage.Depoly -> {
                 Timber.d("handleEngineMessage EngineMessage.Depoly ")
                 if (message.state == EngineMessage.Depoly.State.Finish) {
-                    refreshSchemas()
+                    // 部署结束的刷新：方案回第一个的同时类型也复位（WO30 §4）。
+                    refreshSchemas(resetType = true)
                 }
             }
 

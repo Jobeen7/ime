@@ -2,6 +2,7 @@
 
 package com.jobeen.ime.skin.symbol
 
+import com.jobeen.ime.data.PunctuationMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
 import org.junit.Test
@@ -104,10 +105,139 @@ class UserSymbolBarTest {
             UserSymbolBarConfig(symbols = listOf("。")),
             UserSymbolBarOps.parse("""{"pinned":true,"symbols":["。"]}"""),
         )
-        // 用户主动删空的已存空列原样保留，不补默认。
+        // WO30 §3(7)：已存空列视为删空，恢复默认，不再原样保留空列。
         assertEquals(
-            UserSymbolBarConfig(symbols = emptyList()),
+            defaults,
             UserSymbolBarOps.parse("""{"symbols":[]}"""),
+        )
+    }
+
+    @Test
+    fun removeAtOrRestoreDefault_deleteLastRestoresDefault() {
+        val single = UserSymbolBarConfig(symbols = listOf("。"))
+        assertEquals(
+            UserSymbolBarOps.defaultConfig(),
+            UserSymbolBarOps.removeAtOrRestoreDefault(single, 0),
+        )
+    }
+
+    @Test
+    fun removeAtOrRestoreDefault_deleteNonLastKeepsRest() {
+        assertEquals(
+            listOf("。", "、"),
+            UserSymbolBarOps.removeAtOrRestoreDefault(config, 1).symbols,
+        )
+    }
+
+    @Test
+    fun removeAtOrRestoreDefault_outOfBoundsIsNoop() {
+        assertSame(config, UserSymbolBarOps.removeAtOrRestoreDefault(config, 3))
+        assertSame(config, UserSymbolBarOps.removeAtOrRestoreDefault(config, -1))
+    }
+
+    @Test
+    fun move_byOne_isUpDownButtonSemantics() {
+        // WO30 §3(6)：上下移动按钮 = move(index, index±1)。
+        assertEquals(
+            listOf("，", "。", "、"),
+            UserSymbolBarOps.move(config, 1, 0).symbols,
+        )
+        assertEquals(
+            listOf("，", "。", "、"),
+            UserSymbolBarOps.move(config, 0, 1).symbols,
+        )
+        assertEquals(
+            listOf("。", "、", "，"),
+            UserSymbolBarOps.move(config, 1, 2).symbols,
+        )
+    }
+
+    // ── 标点模式换算（WO30 §3(9)）──
+
+    @Test
+    fun displaySymbol_halfWidth_convertsDefaultPunctuation() {
+        val half = UserSymbolBarOps.DEFAULT_SYMBOLS.map {
+            UserSymbolBarOps.displaySymbol(it, PunctuationMode.HalfWidth)
+        }
+        assertEquals(
+            listOf(",", ".", "?", "!", "...", "~", "、", "=", "+", "-", "*", "/", "%", "#", "@", "&"),
+            half,
+        )
+    }
+
+    @Test
+    fun displaySymbol_fullWidth_convertsAsciiPunctuation() {
+        val full = UserSymbolBarOps.DEFAULT_SYMBOLS.map {
+            UserSymbolBarOps.displaySymbol(it, PunctuationMode.FullWidth)
+        }
+        assertEquals(
+            listOf("，", "。", "？", "！", "…", "～", "、", "＝", "＋", "－", "＊", "／", "％", "＃", "＠", "＆"),
+            full,
+        )
+    }
+
+    @Test
+    fun displaySymbol_ellipsisPairAndNonPunctuation() {
+        assertEquals("...", UserSymbolBarOps.displaySymbol("…", PunctuationMode.HalfWidth))
+        assertEquals("…", UserSymbolBarOps.displaySymbol("...", PunctuationMode.FullWidth))
+        // 「、」无单字符半角形，两模式都原样；非标点原样。
+        assertEquals("、", UserSymbolBarOps.displaySymbol("、", PunctuationMode.HalfWidth))
+        assertEquals("、", UserSymbolBarOps.displaySymbol("、", PunctuationMode.FullWidth))
+        assertEquals("★", UserSymbolBarOps.displaySymbol("★", PunctuationMode.HalfWidth))
+        assertEquals("★", UserSymbolBarOps.displaySymbol("★", PunctuationMode.FullWidth))
+        // 已是目标形态的符号原样；全角形在半角模式下还原。
+        assertEquals("＝", UserSymbolBarOps.displaySymbol("＝", PunctuationMode.FullWidth))
+        assertEquals("=", UserSymbolBarOps.displaySymbol("＝", PunctuationMode.HalfWidth))
+        assertEquals(",", UserSymbolBarOps.displaySymbol("，", PunctuationMode.HalfWidth))
+    }
+
+    // ── 左竖栏显示／提交列（WO30 §3(9) 续：符号面板竖栏与九宫格竖栏同口径）──
+
+    @Test
+    fun sidePanelSymbols_halfWidth_convertsDefaultList() {
+        assertEquals(
+            listOf(",", ".", "?", "!", "...", "~", "、", "=", "+", "-", "*", "/", "%", "#", "@", "&"),
+            UserSymbolBarOps.sidePanelSymbols(
+                UserSymbolBarOps.DEFAULT_SYMBOLS,
+                PunctuationMode.HalfWidth,
+            ),
+        )
+    }
+
+    @Test
+    fun sidePanelSymbols_fullWidth_convertsDefaultList() {
+        assertEquals(
+            listOf("，", "。", "？", "！", "…", "～", "、", "＝", "＋", "－", "＊", "／", "％", "＃", "＠", "＆"),
+            UserSymbolBarOps.sidePanelSymbols(
+                UserSymbolBarOps.DEFAULT_SYMBOLS,
+                PunctuationMode.FullWidth,
+            ),
+        )
+    }
+
+    @Test
+    fun sidePanelSymbols_ellipsisPairAndNonPunctuation() {
+        // 省略号配对：半角出 "..."，全角回 "…"；已是目标形态的原样。
+        assertEquals(
+            listOf("...", "..."),
+            UserSymbolBarOps.sidePanelSymbols(listOf("…", "..."), PunctuationMode.HalfWidth),
+        )
+        assertEquals(
+            listOf("…", "…"),
+            UserSymbolBarOps.sidePanelSymbols(listOf("…", "..."), PunctuationMode.FullWidth),
+        )
+        // 「、」无单字符半角形，两模式都原样；非标点原样；空列仍空。
+        assertEquals(
+            listOf("、", "★"),
+            UserSymbolBarOps.sidePanelSymbols(listOf("、", "★"), PunctuationMode.HalfWidth),
+        )
+        assertEquals(
+            listOf("、", "★"),
+            UserSymbolBarOps.sidePanelSymbols(listOf("、", "★"), PunctuationMode.FullWidth),
+        )
+        assertEquals(
+            emptyList<String>(),
+            UserSymbolBarOps.sidePanelSymbols(emptyList(), PunctuationMode.HalfWidth),
         )
     }
 

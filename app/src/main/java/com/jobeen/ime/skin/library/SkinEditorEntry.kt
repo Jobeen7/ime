@@ -42,7 +42,7 @@ object SkinEditorEntry {
                 ?: active.files.firstOrNull { it.kind == EditorFile.Kind.LAYOUT }
             if (file == null) {
                 Timber.w("skin editor: no bound layout")
-                ToastUtil.showToast(context, "未绑定布局")
+                ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_bound_layout))
                 return@launch
             }
             openEditor(context, file.file.absolutePath)

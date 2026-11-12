@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import androidx.core.content.FileProvider
+import com.jobeen.ime.R
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.export.JimeExporter
 import com.jobeen.ime.skin.store.SkinLibrary
@@ -44,7 +45,7 @@ suspend fun shareSkin(context: Context, skinId: String): SkinShareResult =
                 addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 if (context !is Activity) addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
-            context.startActivity(Intent.createChooser(intent, "分享皮肤"))
+            context.startActivity(Intent.createChooser(intent, context.getString(R.string.skin_lib_share_skin)))
             SkinShareResult.Shared
         }.getOrElse { error ->
             // 导出失败本身已由 JimeExporter 记日志；此处只补分享侧异常。
