@@ -7,9 +7,12 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -29,6 +32,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -65,6 +69,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -72,7 +77,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -80,6 +84,7 @@ import androidx.compose.foundation.border
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.ColorFilter
@@ -109,7 +114,6 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
-import com.kyant.backdrop.effects.vibrancy
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.skin.library.SkinEditorEntry
@@ -797,62 +801,70 @@ fun MainScreen(
                         },
                     contentAlignment = Alignment.Center,
                 ) {
-                    // 主钮与同步/部署动作钮同一做法：普通 Box＋drawBackdrop 玻璃层。
-                    // 不用 FloatingActionButton——它在钮面另画一层白色八角
-                    //（同步/部署两钮是 Box＋玻璃，没有白块，主钮改成同样结构）。
+                    // 主钮（2026-11-12 他定）：蓝绿圆钮＋米白八臂星芒。
+                    // 不用 FloatingActionButton——它在钮面另画一层白色八角；
+                    // 也不用玻璃／渐变——浅色页上看不见。实心圆钮，星芒是
+                    // Canvas 画的 8 条臂（每条末端一个圆点），与他给的图一致。
+                    // 星芒平时静止，点按后转一圈（360°）。
+                    var spinDegrees by remember { mutableFloatStateOf(0f) }
+                    val asteriskRotation by animateFloatAsState(
+                        targetValue = spinDegrees,
+                        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+                        label = "fabAsteriskSpin",
+                    )
                     Box(
                         modifier = Modifier
                             .size(56.dp)
-                            .drawBackdrop(
-                                backdrop = fabBackdrop,
-                                // 圆角 50% 在方形钮面上即圆形；lens 只支持
-                                // CornerBasedShape，CircleShape 会抛异常，故不用它。
-                                shape = { RoundedCornerShape(50) },
-                                effects = {
-                                    vibrancy()
-                                    blur(8.dp.toPx())
-                                    lens(18.dp.toPx(), 30.dp.toPx())
-                                },
-                                onDrawSurface = {
-                                    // 渐变色（以前那种）：中心白 → 浅灰 → 深灰 → 外缘深色，
-                                    // 让钮在浅色设置页上看得见；白亮面整片盖上去会洗掉渐变，
-                                    // 改只留白边圆环。拖动时用偏亮的一组（沿用旧四层圆配色）。
-                                    val outer = if (dragging) Color(0xFF354C56) else Color(0xFF182023)
-                                    val deep = if (dragging) Color(0xFFA6B8BB) else Color(0xFF4D5357)
-                                    val light = if (dragging) Color(0xFFC0D1D9) else Color(0xFF787C80)
-                                    drawCircle(
-                                        brush = Brush.radialGradient(
-                                            0.0f to Color.White,
-                                            0.45f to light,
-                                            0.75f to deep,
-                                            1.0f to outer,
-                                        ),
-                                    )
-                                    val edgeWidth = 1.dp.toPx()
-                                    drawCircle(
-                                        color = Color.White.copy(alpha = if (dragging) 0.72f else 0.50f),
-                                        radius = size.minDimension / 2f - edgeWidth / 2f,
-                                        style = androidx.compose.ui.graphics.drawscope.Stroke(edgeWidth),
-                                    )
-                                },
-                            )
+                            .background(Color(0xFF54A0B8), CircleShape)
                             .clickable {
                                 touch()
+                                spinDegrees += 360f
                                 if (!fabAnyRunning) fabExpanded = !fabExpanded
                             },
                         contentAlignment = Alignment.Center,
                     ) {
                         if (fabAnyRunning) {
-                            // 运行态只留旋转弧：默认底圈会在玻璃钮上画成实心白块
-                            //（同步白块），置透明去掉。
+                            // 运行态只留旋转弧：默认底圈会在钮上画成实心白块，置透明去掉。
                             CircularProgressIndicator(
                                 modifier = Modifier.size(26.dp),
-                                color = MaterialTheme.colorScheme.onSurface,
+                                color = Color.White,
                                 strokeWidth = 2.dp,
                                 trackColor = Color.Transparent,
                             )
+                        } else {
+                            Canvas(
+                                modifier = Modifier
+                                    .size(32.dp)
+                                    .rotate(asteriskRotation),
+                            ) {
+                                val cream = Color(0xFFDBD9C5)
+                                val c = androidx.compose.ui.geometry.Offset(
+                                    size.width / 2f,
+                                    size.height / 2f,
+                                )
+                                val dotR = 12.2.dp.toPx()
+                                val dotRadius = 2.3.dp.toPx()
+                                val armWidth = 2.5.dp.toPx()
+                                for (i in 0 until 8) {
+                                    val angle = Math.toRadians((i * 45 - 90).toDouble())
+                                    val dx = (dotR * kotlin.math.cos(angle)).toFloat()
+                                    val dy = (dotR * kotlin.math.sin(angle)).toFloat()
+                                    val end = androidx.compose.ui.geometry.Offset(c.x + dx, c.y + dy)
+                                    drawLine(
+                                        color = cream,
+                                        start = c,
+                                        end = end,
+                                        strokeWidth = armWidth,
+                                        cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                                    )
+                                    drawCircle(
+                                        color = cream,
+                                        radius = dotRadius,
+                                        center = end,
+                                    )
+                                }
+                            }
                         }
-                        // 静止态内容为空，钮面即 drawBackdrop 的玻璃层。
                     }
                 }
             }
