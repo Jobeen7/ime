@@ -72,6 +72,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -813,7 +814,20 @@ fun MainScreen(
                                     lens(18.dp.toPx(), 30.dp.toPx())
                                 },
                                 onDrawSurface = {
-                                    drawRect(Color.White.copy(alpha = if (dragging) 0.22f else 0.12f))
+                                    // 渐变色（以前那种）：中心白 → 浅灰 → 深灰 → 外缘深色，
+                                    // 让钮在浅色设置页上看得见；白亮面整片盖上去会洗掉渐变，
+                                    // 改只留白边圆环。拖动时用偏亮的一组（沿用旧四层圆配色）。
+                                    val outer = if (dragging) Color(0xFF354C56) else Color(0xFF182023)
+                                    val deep = if (dragging) Color(0xFFA6B8BB) else Color(0xFF4D5357)
+                                    val light = if (dragging) Color(0xFFC0D1D9) else Color(0xFF787C80)
+                                    drawCircle(
+                                        brush = Brush.radialGradient(
+                                            0.0f to Color.White,
+                                            0.45f to light,
+                                            0.75f to deep,
+                                            1.0f to outer,
+                                        ),
+                                    )
                                     val edgeWidth = 1.dp.toPx()
                                     drawCircle(
                                         color = Color.White.copy(alpha = if (dragging) 0.72f else 0.50f),
