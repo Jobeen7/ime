@@ -108,6 +108,7 @@ import com.kyant.backdrop.backdrops.rememberLayerBackdrop
 import com.kyant.backdrop.drawBackdrop
 import com.kyant.backdrop.effects.blur
 import com.kyant.backdrop.effects.lens
+import com.kyant.backdrop.effects.vibrancy
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.TraditionalConverter
 import com.jobeen.ime.skin.library.SkinEditorEntry
@@ -807,8 +808,18 @@ fun MainScreen(
                                 // CornerBasedShape，CircleShape 会抛异常，故不用它。
                                 shape = { RoundedCornerShape(50) },
                                 effects = {
-                                    blur(2.dp.toPx())
-                                    lens(12.dp.toPx(), 24.dp.toPx())
+                                    vibrancy()
+                                    blur(8.dp.toPx())
+                                    lens(18.dp.toPx(), 30.dp.toPx())
+                                },
+                                onDrawSurface = {
+                                    drawRect(Color.White.copy(alpha = if (dragging) 0.22f else 0.12f))
+                                    val edgeWidth = 1.dp.toPx()
+                                    drawCircle(
+                                        color = Color.White.copy(alpha = if (dragging) 0.72f else 0.50f),
+                                        radius = size.minDimension / 2f - edgeWidth / 2f,
+                                        style = androidx.compose.ui.graphics.drawscope.Stroke(edgeWidth),
+                                    )
                                 },
                             )
                             .clickable {
