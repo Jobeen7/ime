@@ -152,7 +152,9 @@ class SymbolKeyboard(
     /** 左侧竖栏底部“自定义”入口（固定不滚动，点开设置页）。 */
     private val customEntryView: TextView = TextView(context).apply {
         gravity = Gravity.CENTER
-        setTextSize(14f)
+        // 12sp：两行（⊕／自定义）在 customH（sidePanelH/8，约 28dp）内放得下；
+        // 14sp 两行约 34dp 会被裁掉下半行。
+        setTextSize(12f)
         setTextColor(colors.specialKeyText)
         setBackgroundColor(colors.specialKeyBackground)
         maxLines = 2

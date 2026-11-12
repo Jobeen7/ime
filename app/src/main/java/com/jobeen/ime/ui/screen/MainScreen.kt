@@ -122,15 +122,14 @@ import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 
 /** 辅助触控式 FAB 深色：参考图外盘色，固定深灰，双主题同色（不跟随主题）。 */
-// 主钮 4 层实心圆颜色（原版录屏实测）：静止外盘/深环/浅环/
-// 中心，拖动时外盘/深环/浅环变亮、中心恒纯白。
+// 主钮 3 层实心圆颜色（原版录屏实测）：静止外盘/深环/浅环，
+// 拖动时外盘/深环/浅环变亮。2026-11-12 去掉纯白中心圆（白色多角形色块）。
 private val FabOuterRest = Color(0xFF182023)
 private val FabOuterDrag = Color(0xFF354C56)
 private val FabDeepRest = Color(0xFF4D5357)
 private val FabDeepDrag = Color(0xFFA6B8BB)
 private val FabLightRest = Color(0xFF787C80)
 private val FabLightDrag = Color(0xFFC0D1D9)
-private val FabCenterColor = Color(0xFFFFFFFF)
 
 /**
  * 设置 home（Lee 2026-10-29 开工，分组重组）：顶栏（返回＋Jime＋
@@ -1008,11 +1007,6 @@ private fun AssistiveTouchIcon(dragging: Boolean) {
         drawCircle(
             color = lerp(FabLightRest, FabLightDrag, dragProgress),
             radius = lerp(0.298f, 0.317f, dragProgress) * side,
-            center = c,
-        )
-        drawCircle(
-            color = FabCenterColor,
-            radius = lerp(0.226f, 0.282f, dragProgress) * side,
             center = c,
         )
     }

@@ -98,7 +98,7 @@ class ConfirmOverlay(
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         background = PillBg(colors.panel.background, colors.keyBorderStroke, pillR)
-        setPadding(dp(12), dp(10), dp(12), dp(10))
+        setPadding(dp(12), dp(8), dp(12), dp(8))
         isClickable = true
         setOnClickListener { }
 
@@ -181,7 +181,10 @@ class ConfirmOverlay(
                 setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
                 gravity = Gravity.CENTER
                 background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
-                setPadding(dp(12), dp(8), dp(12), dp(8))
+                // 紧凑排布：剪贴板 6 项菜单在面板高内放不下会滚
+                // 动（末项「删除」被挤出）；纵向内边距 8→5dp、
+                // 项间距 8→6dp，6 项一页完整显示、不滚动。
+                setPadding(dp(12), dp(5), dp(12), dp(5))
                 setOnClickListener {
                     action()
                     dismiss()
@@ -190,7 +193,7 @@ class ConfirmOverlay(
             actionsContainer.addView(
                 btn,
                 LinearLayout.LayoutParams(matchParent, wrapContent).apply {
-                    if (index > 0) topMargin = dp(8)
+                    if (index > 0) topMargin = dp(6)
                 }
             )
             actionButtons += btn
