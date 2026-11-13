@@ -53,9 +53,6 @@ object SchemePackageImport {
     /** 跳过条目只保留的样例条数（其余只计总数，不无限存列表）。 */
     const val MAX_SKIPPED_TRAVERSAL_SAMPLES = 20
 
-    /** 导入前剩余空间检查的额外余量（部署还会写 build 产物）。 */
-    const val FREE_SPACE_MARGIN_BYTES = 16L * 1024 * 1024
-
     /** 包登记偏好文件名（与方案列表偏好分开，避免键冲突）。 */
     const val PREFS_NAME = "scheme_import"
 

@@ -3,10 +3,8 @@ package com.jobeen.ime.ui
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.Composable
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
@@ -22,9 +20,6 @@ import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.error.DeepErrorMapper
 import com.jobeen.ime.ui.screen.UserDictScreen
 import com.jobeen.ime.ui.screen.UserDictUiState
-import com.jobeen.ime.ui.theme.ImeTheme
-import com.jobeen.ime.ui.theme.AppAppearance
-import com.jobeen.ime.ui.theme.AppAppearanceMode
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,10 +36,7 @@ import java.io.File
  * 打开时创建 Rime 会话以加载词典列表；导入（本地文件/WebDAV 下载）为合并操作，
  * 导入/导出使用热路径直接操作运行中引擎的词库，无需停止 Rime，导入后立即生效。
  */
-class UserDictActivity : ComponentActivity() {
-    // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
-    private var createdAppearanceMode: AppAppearanceMode? = null
-
+class UserDictActivity : ImeActivity() {
     private val uiState = UserDictUiState()
     private var session: RimeSession? = null
     private var loadJob: Job? = null
@@ -57,11 +49,7 @@ class UserDictActivity : ComponentActivity() {
         }
     }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        createdAppearanceMode = AppAppearance.getMode(this)
-        enableEdgeToEdge()
-
+    override fun onCreateBeforeContent(savedInstanceState: Bundle?) {
         uiState.webdavServer = UserDictPrefs.server
         uiState.webdavUsername = UserDictPrefs.username
         uiState.webdavPassword = UserDictPrefs.password
@@ -74,95 +62,94 @@ class UserDictActivity : ComponentActivity() {
         if (PeriodicSyncPrefs.enabled && !PeriodicSyncScheduler.isScheduled(this)) {
             PeriodicSyncScheduler.schedule(this)
         }
+    }
 
-        val themeMode = AppAppearance.themeMode(this)
-
-        setContent {
-            ImeTheme(themeMode = themeMode, dynamicColor = AppAppearance.useDynamicColor(this)) {
-                UserDictScreen(
-                    state = uiState,
-                    onBack = { finish() },
-                    onExport = { doExport() },
-                    onImport = { importLauncher.launch(arrayOf("*/*")) },
-                    onSaveWebDav = { server, username, password, syncPath ->
-                        UserDictPrefs.server = server
-                        UserDictPrefs.username = username
-                        UserDictPrefs.password = password
-                        UserDictPrefs.syncPath = syncPath
-                        uiState.webdavServer = UserDictPrefs.server
-                        uiState.webdavUsername = UserDictPrefs.username
-                        uiState.webdavPassword = UserDictPrefs.password
-                        uiState.webdavSyncPath = UserDictPrefs.syncPath
-                        ToastUtil.showToast(getString(R.string.user_dict_saved))
-                    },
-                    onAllowHttpChange = { allowed ->
-                        UserDictPrefs.allowHttp = allowed
-                        uiState.webdavAllowHttp = allowed
-                        ToastUtil.showToast(
-                            if (allowed) getString(R.string.user_dict_http_allowed) else getString(R.string.user_dict_http_restored)
-                        )
-                    },
-                    onUpload = { doUpload() },
-                    onDownload = { doDownload() },
-                    onUploadSchemes = { doUploadSchemes() },
-                    onDownloadSchemes = { doDownloadSchemes() },
-                    onTestConnection = { doTestConnection() },
-                    onPickRemoteFile = { file ->
-                        uiState.remoteFiles = null
-                        selectedDict()?.let { doDownloadFile(it, file) }
-                    },
-                    onDismissRemoteFiles = { uiState.remoteFiles = null },
-                    onDismissNotice = { uiState.noticeMessage = null },
-                    onShowDeletedWords = {
-                        uiState.deletedWords =
-                            com.jobeen.ime.data.manager.DeletedWordsStore.deletedWords()
-                    },
-                    onRestoreDeletedWord = { word ->
-                        com.jobeen.ime.data.manager.DeletedWordsStore.remove(word)
-                        uiState.deletedWords =
-                            com.jobeen.ime.data.manager.DeletedWordsStore.deletedWords()
-                        ToastUtil.showToast(
-                            getString(R.string.user_dict_deleted_words_restored),
-                        )
-                    },
-                    onDismissDeletedWords = { uiState.deletedWords = null },
-                    onOpenWordCreation = {
-                        startActivity(
-                            android.content.Intent(
-                                this@UserDictActivity,
-                                WordCreationActivity::class.java,
-                            )
-                        )
-                    },
-                    onPeriodicSyncEnabledChange = { enabled ->
-                        PeriodicSyncPrefs.enabled = enabled
-                        uiState.periodicSyncEnabled = enabled
-                        if (enabled) {
-                            PeriodicSyncScheduler.schedule(this@UserDictActivity)
-                        } else {
-                            PeriodicSyncScheduler.cancel(this@UserDictActivity)
-                        }
-                        ToastUtil.showToast(
-                            if (enabled) getString(R.string.user_dict_periodic_on) else getString(R.string.user_dict_periodic_off)
-                        )
-                    },
-                    onPeriodicIntervalChange = { hours ->
-                        PeriodicSyncPrefs.intervalHours = hours
-                        uiState.periodicIntervalHours = hours
-                        if (PeriodicSyncPrefs.enabled) {
-                            PeriodicSyncScheduler.schedule(this@UserDictActivity)
-                        }
-                    },
-                    onRetryDictList = { loadDictList() },
-                )
-            }
-        }
-
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
         loadDictList()
     }
 
-    override fun onResume() {
-        super.onResume()
+    @Composable
+    override fun Content() {
+        UserDictScreen(
+            state = uiState,
+            onBack = { finish() },
+            onExport = { doExport() },
+            onImport = { importLauncher.launch(arrayOf("*/*")) },
+            onSaveWebDav = { server, username, password, syncPath ->
+                UserDictPrefs.server = server
+                UserDictPrefs.username = username
+                UserDictPrefs.password = password
+                UserDictPrefs.syncPath = syncPath
+                uiState.webdavServer = UserDictPrefs.server
+                uiState.webdavUsername = UserDictPrefs.username
+                uiState.webdavPassword = UserDictPrefs.password
+                uiState.webdavSyncPath = UserDictPrefs.syncPath
+                ToastUtil.showToast(getString(R.string.user_dict_saved))
+            },
+            onAllowHttpChange = { allowed ->
+                UserDictPrefs.allowHttp = allowed
+                uiState.webdavAllowHttp = allowed
+                ToastUtil.showToast(
+                    if (allowed) getString(R.string.user_dict_http_allowed) else getString(R.string.user_dict_http_restored)
+                )
+            },
+            onUpload = { doUpload() },
+            onDownload = { doDownload() },
+            onUploadSchemes = { doUploadSchemes() },
+            onDownloadSchemes = { doDownloadSchemes() },
+            onTestConnection = { doTestConnection() },
+            onPickRemoteFile = { file ->
+                uiState.remoteFiles = null
+                selectedDict()?.let { doDownloadFile(it, file) }
+            },
+            onDismissRemoteFiles = { uiState.remoteFiles = null },
+            onDismissNotice = { uiState.noticeMessage = null },
+            onShowDeletedWords = {
+                uiState.deletedWords =
+                    com.jobeen.ime.data.manager.DeletedWordsStore.deletedWords()
+            },
+            onRestoreDeletedWord = { word ->
+                com.jobeen.ime.data.manager.DeletedWordsStore.remove(word)
+                uiState.deletedWords =
+                    com.jobeen.ime.data.manager.DeletedWordsStore.deletedWords()
+                ToastUtil.showToast(
+                    getString(R.string.user_dict_deleted_words_restored),
+                )
+            },
+            onDismissDeletedWords = { uiState.deletedWords = null },
+            onOpenWordCreation = {
+                startActivity(
+                    android.content.Intent(
+                        this@UserDictActivity,
+                        WordCreationActivity::class.java,
+                    )
+                )
+            },
+            onPeriodicSyncEnabledChange = { enabled ->
+                PeriodicSyncPrefs.enabled = enabled
+                uiState.periodicSyncEnabled = enabled
+                if (enabled) {
+                    PeriodicSyncScheduler.schedule(this@UserDictActivity)
+                } else {
+                    PeriodicSyncScheduler.cancel(this@UserDictActivity)
+                }
+                ToastUtil.showToast(
+                    if (enabled) getString(R.string.user_dict_periodic_on) else getString(R.string.user_dict_periodic_off)
+                )
+            },
+            onPeriodicIntervalChange = { hours ->
+                PeriodicSyncPrefs.intervalHours = hours
+                uiState.periodicIntervalHours = hours
+                if (PeriodicSyncPrefs.enabled) {
+                    PeriodicSyncScheduler.schedule(this@UserDictActivity)
+                }
+            },
+            onRetryDictList = { loadDictList() },
+        )
+    }
+
+    override fun onResumeExtra() {
         // 曾加载失败（重置后引擎重启/部署窗口内打开正撞上超时）时，
         // 回到本页自动重载，不再靠用户重进页面才恢复。
         if (uiState.dicts == null) {
@@ -170,12 +157,6 @@ class UserDictActivity : ComponentActivity() {
         }
         // 后台任务可能在外跑过：回来时刷新上次同步显示
         refreshPeriodicSyncState()
-        val recordedAppearanceMode = createdAppearanceMode
-        if (recordedAppearanceMode != null &&
-            AppAppearance.appearanceModeChanged(recordedAppearanceMode, AppAppearance.getMode(this))
-        ) {
-            recreate()
-        }
     }
 
     /** 后台定期同步状态 → 界面状态（开关／间隔／上次结果） */

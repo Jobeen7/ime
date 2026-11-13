@@ -5,8 +5,6 @@ import android.content.Intent
 import android.os.Bundle
 import android.provider.Settings
 import android.view.inputmethod.InputMethodManager
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
@@ -37,7 +35,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -53,58 +50,41 @@ import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.ui.theme.ExpressiveShapes
-import com.jobeen.ime.ui.theme.ImeTheme
-import com.jobeen.ime.ui.theme.AppAppearance
-import com.jobeen.ime.ui.theme.AppAppearanceMode
 
-class SetupActivity : ComponentActivity() {
-    // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
-    private var createdAppearanceMode: AppAppearanceMode? = null
+class SetupActivity : ImeActivity() {
+    override val useEdgeToEdge = false
 
     private var isImeEnabled by mutableStateOf(false)
     private var isImeDefault by mutableStateOf(false)
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        createdAppearanceMode = AppAppearance.getMode(this)
-
+    override fun onCreateBeforeContent(savedInstanceState: Bundle?) {
         checkImeStatus()
-
-        setContent {
-            val themeMode = remember { mutableIntStateOf(AppAppearance.themeMode(this)) }
-
-            ImeTheme(themeMode = themeMode.intValue, dynamicColor = AppAppearance.useDynamicColor(this)) {
-                SetupScreen(
-                    isImeEnabled = isImeEnabled,
-                    isImeDefault = isImeDefault,
-                    onOpenImeSettings = { openImeSettings() },
-                    onShowImePicker = { showImePicker() },
-                    onFinish = {
-                        if (isImeEnabled && isImeDefault) {
-                            setResult(RESULT_OK)
-                            finish()
-                        } else {
-                            // U-S5：未配置时按钮文案是“进入设置”，旧行为却返回
-                            // RESULT_OK、直接送回主页——主 Activity 误以为向导
-                            // 已完成。未配置时真正去系统输入法设置（与文案一致），
-                            // 留在向导里；配好后按钮变“开始使用”，点按才返回 OK。
-                            openImeSettings()
-                        }
-                    },
-                )
-            }
-        }
     }
 
-    override fun onResume() {
-        super.onResume()
+    @Composable
+    override fun Content() {
+        SetupScreen(
+            isImeEnabled = isImeEnabled,
+            isImeDefault = isImeDefault,
+            onOpenImeSettings = { openImeSettings() },
+            onShowImePicker = { showImePicker() },
+            onFinish = {
+                if (isImeEnabled && isImeDefault) {
+                    setResult(RESULT_OK)
+                    finish()
+                } else {
+                    // U-S5：未配置时按钮文案是“进入设置”，旧行为却返回
+                    // RESULT_OK、直接送回主页——主 Activity 误以为向导
+                    // 已完成。未配置时真正去系统输入法设置（与文案一致），
+                    // 留在向导里；配好后按钮变“开始使用”，点按才返回 OK。
+                    openImeSettings()
+                }
+            },
+        )
+    }
+
+    override fun onResumeExtra() {
         checkImeStatus()
-        val recordedAppearanceMode = createdAppearanceMode
-        if (recordedAppearanceMode != null &&
-            AppAppearance.appearanceModeChanged(recordedAppearanceMode, AppAppearance.getMode(this))
-        ) {
-            recreate()
-        }
     }
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {

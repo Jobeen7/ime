@@ -84,9 +84,29 @@ class ZipSafeExtractorTest {
     }
 
     @Test
-    fun compressionBombRejected() {
-        // 2MB 全零数据压缩后仅约 2KB，压缩比远超 100:1
-        val reason = rejected(zipOf(listOf("bomb.bin" to ByteArray(2 * 1024 * 1024))))
-        assertTrue(reason.contains("compression_ratio"))
+    fun highRatioLegitimatePackageExtracts() {
+        // WO42 E-1：压缩比规则已删——2MB 全零数据压缩后仅约 2KB、
+        // 压缩比远超旧 100:1 上限，旧规则会误拒；绝对上限（单条 8MB／
+        // 总量 40MB）才是内存上界，此包远未触线，应正常解包。
+        val file = zipOf(listOf("bg.bin" to ByteArray(2 * 1024 * 1024)))
+        val result = ZipSafeExtractor.extract(file)
+        assertTrue("expected Ok, got $result", result is ZipSafeExtractor.Result.Ok)
+        assertEquals(2 * 1024 * 1024, (result as ZipSafeExtractor.Result.Ok).files.single().bytes.size)
+    }
+
+    @Test
+    fun entryTooLargeRejected() {
+        // 单条目 9MB（> 8MB 单条上限）：压缩比规则已删，绝对上限仍挡。
+        val reason = rejected(zipOf(listOf("big.bin" to ByteArray(9 * 1024 * 1024))))
+        assertTrue(reason.contains("entry_too_large"))
+    }
+
+    @Test
+    fun expandedTotalTooLargeRejected() {
+        // 总量 6×7MB＝42MB（> 40MB 总量上限），单条均未超 8MB：
+        // 压缩比规则已删，总量上限仍挡。
+        val entries = (1..6).map { "f$it.bin" to ByteArray(7 * 1024 * 1024) }
+        val reason = rejected(zipOf(entries))
+        assertTrue(reason.contains("expanded_too_large"))
     }
 }

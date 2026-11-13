@@ -16,6 +16,7 @@ import com.jobeen.ime.skin.symbol.SymbolBarSpec
 import com.jobeen.ime.skin.symbol.T9HorizontalSymbolsParser
 import com.jobeen.ime.skin.symbol.T9SymbolsParser
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
@@ -96,32 +97,11 @@ object SkinValidator {
     const val MAX_KEY_IMAGE_BYTES = 1024L * 1024L
 
     /**
-     * 校验消费的顶层键集合（未知节点透传的补集口径）：
-     * 校验器从树上读取并落入类型化字段的全部顶层键；
-     * 树上除此之外的键即“未知节点”，原样透传到快照
-     * （不做任何语义解读；未来校验新增键时须同步补进本表，
-     * 否则新键会被误归为未知节点）。
+     * 未知节点口径（WO42 O-4）：校验实际消费的顶层键在解析时收进
+     * [validate] 内的 consumed 集，末尾 `tree.keys - consumed` 即未知节点、
+     * 原样透传到快照（不做任何语义解读）。不再维护常量表——新键漏补
+     * 即静默透传的债从根上消失（旧 66 键表已删）。
      */
-    private val KNOWN_TOP_LEVEL_KEYS = setOf(
-        "appearance", "audio", "bubbleOverflowCheck",
-        "candidateCommentSizeDp", "candidateContextMenu", "candidateIndexSizeDp",
-        "candidateRadiusDp", "conditionStyles", "derivation", "derivationDark",
-        "derivationFormulas", "fontFamily", "formatVersion", "geometry",
-        "hintSymbolNodes", "hintSymbolsGridStyles", "hintSymbolsStyles",
-        "horizontalCandidateStyle", "horizontalCandidates", "horizontalCandidatesLayout",
-        "horizontalCandidatesStyle", "horizontalSymbolsRtl", "keyAnimation", "keyAnimations",
-        "keyMappings", "keyRipple", "keyShadow", "keySound", "keyStyles", "keyboards", "layoutId",
-        "layoutIdLandscape",
-        "meta", "menuAction", "minAppVersion", "notifications", "predictionCloseBg",
-        "predictionCloseRadiusDp", "preeditHeight", "preeditStyle", "roleFonts",
-        "spaceAnimation", "sprites", "styleSets", "styles", "stylesDark",
-        "subClassifiedSymbols", "suppressKeyboard", "suppressToolbar", "swipeThresholdDp",
-        "symbolBadge", "symbolBar",
-        "t9HorizontalSymbols", "t9Symbols", "numericSymbols", "horizontalSymbols",
-        "textSizes", "toolbar", "toolbarButtonBackgroundStyle", "toolbarHeight",
-        "toolbarLayout", "toolbarStyle", "verticalBottomRow", "verticalCandidateStyle",
-        "verticalCandidates", "verticalCandidatesLayout", "verticalCandidatesStyle",
-    )
 
     /**
      * @param currentVersionCode 当前 App versionCode（minAppVersion 门）。
@@ -140,6 +120,12 @@ object SkinValidator {
         isOverridable: (String) -> Boolean = KeyIds::isOverridable,
         assetBytes: (String) -> Long? = { null },
     ): Result {
+        // WO42 O-4：解析时收实际消费的顶层键；末尾 tree.keys - consumed 即未知节点。
+        val consumedTopLevelKeys = mutableSetOf<String>()
+        fun readTopLevel(key: String): JsonElement? {
+            consumedTopLevelKeys += key
+            return tree[key]
+        }
         // ---- 结构性门（九.3 / 十一.5）：命中即整包拒绝 ----
         if (SkinJson.depth(tree) > MAX_JSON_DEPTH) {
             return Result.Rejected("json_depth_exceeded")
@@ -147,12 +133,12 @@ object SkinValidator {
         if (SkinJson.maxStringLength(tree) > MAX_STRING_LENGTH) {
             return Result.Rejected("json_string_too_long")
         }
-        val formatVersion = (tree["formatVersion"] as? JsonPrimitive).strictIntOrNull()
+        val formatVersion = (readTopLevel("formatVersion") as? JsonPrimitive).strictIntOrNull()
             ?: return Result.Rejected("format_version_missing_or_invalid")
-        if (formatVersion > SUPPORTED_FORMAT_VERSION) {
+        if (formatVersion != SUPPORTED_FORMAT_VERSION) {
             return Result.Rejected("format_version_unsupported:$formatVersion")
         }
-        val minAppVersion = tree["minAppVersion"]
+        val minAppVersion = readTopLevel("minAppVersion")
         if (minAppVersion != null) {
             val required = (minAppVersion as? JsonPrimitive).strictIntOrNull()
                 ?: return Result.Rejected("min_app_version_invalid")
@@ -160,7 +146,7 @@ object SkinValidator {
                 return Result.Rejected("app_version_too_low:$required>$currentVersionCode")
             }
         }
-        val keyMappings = tree["keyMappings"] as? JsonObject
+        val keyMappings = readTopLevel("keyMappings") as? JsonObject
         if (keyMappings != null && keyMappings.size > MAX_KEY_MAPPINGS) {
             return Result.Rejected("key_mappings_too_many:${keyMappings.size}")
         }
@@ -168,8 +154,8 @@ object SkinValidator {
         val issues = mutableListOf<SkinIssue>()
 
         // ---- meta ----
-        val meta = tree["meta"] as? JsonObject
-        if (tree["meta"] != null && meta == null) {
+        val meta = readTopLevel("meta") as? JsonObject
+        if (readTopLevel("meta") != null && meta == null) {
             issues += SkinIssue("meta", SkinIssue.Kind.FIELD_FALLBACK, "meta_not_object")
         }
         val metaId = (meta?.get("id") as? JsonPrimitive)?.contentOrNull
@@ -191,7 +177,7 @@ object SkinValidator {
 
         // ---- layoutId（B3 起由快照工厂解析生效；此处只验字符串形态） ----
         var layoutId: String? = null
-        val layoutPrimitive = tree["layoutId"] as? JsonPrimitive
+        val layoutPrimitive = readTopLevel("layoutId") as? JsonPrimitive
         if (layoutPrimitive != null) {
             val raw = layoutPrimitive.contentOrNull
             if (raw == null) {
@@ -204,7 +190,7 @@ object SkinValidator {
         // ---- layoutIdLandscape（2026-10-27 第一组：横屏专属布局绑定，
         // 与 layoutId 同口径只验字符串形态；引用解析与回退在快照工厂层） ----
         var layoutIdLandscape: String? = null
-        val layoutLandscapePrimitive = tree["layoutIdLandscape"] as? JsonPrimitive
+        val layoutLandscapePrimitive = readTopLevel("layoutIdLandscape") as? JsonPrimitive
         if (layoutLandscapePrimitive != null) {
             // 数字/布尔也是 JsonPrimitive，contentOrNull 会把 42
             // 读成 "42"——必须以 isString 为准，否则非字符串
@@ -220,8 +206,8 @@ object SkinValidator {
         }
 
         // ---- appearance ----
-        val appearance = tree["appearance"] as? JsonObject
-        if (tree["appearance"] != null && appearance == null) {
+        val appearance = readTopLevel("appearance") as? JsonObject
+        if (readTopLevel("appearance") != null && appearance == null) {
             issues += SkinIssue("appearance", SkinIssue.Kind.FIELD_FALLBACK, "appearance_not_object")
         }
         val presence = mutableSetOf<GeometryField>()
@@ -261,7 +247,7 @@ object SkinValidator {
         // 记一条 INFO 明示，不静默覆盖。
         val keyboardPresence = mutableSetOf<KeyboardGeometryField>()
         val keyboardValues = mutableMapOf<KeyboardGeometryField, Float>()
-        val geometryNode = tree["geometry"]
+        val geometryNode = readTopLevel("geometry")
         if (geometryNode != null) {
             val geometryObj = geometryNode as? JsonObject
             if (geometryObj == null) {
@@ -339,7 +325,7 @@ object SkinValidator {
         // "default" = 该项跟随（不记 issue），未知／非字符串项
         // 逐项丢弃并记 issue，绝不拒包。
         val parsedFontFamily = SkinFontParser.parseCandidates(
-            tree["fontFamily"], "fontFamily", faceByLower, SYSTEM_FONT_FAMILIES,
+            readTopLevel("fontFamily"), "fontFamily", faceByLower, SYSTEM_FONT_FAMILIES,
             "font_family_empty", "font_family_unknown", "font_family_not_string",
         )
         issues += parsedFontFamily.issues
@@ -354,7 +340,7 @@ object SkinValidator {
         val roleFonts = mutableMapOf<com.jobeen.ime.data.keyboard.theme.FontRole, String>()
         val roleFontFamilies =
             mutableMapOf<com.jobeen.ime.data.keyboard.theme.FontRole, List<String>>()
-        val roleFontsNode = tree["roleFonts"]
+        val roleFontsNode = readTopLevel("roleFonts")
         if (roleFontsNode != null) {
             val roleFontsObj = roleFontsNode as? JsonObject
             if (roleFontsObj == null) {
@@ -401,7 +387,7 @@ object SkinValidator {
         // ---- 气泡溢出检测（2026-10-28 截图 6 项：默认开） ----
         // 严格布尔：非布尔值记 FIELD_FALLBACK 并保持默认开，不拒包。
         var bubbleOverflowCheck = true
-        val bubblePrimitive = tree["bubbleOverflowCheck"] as? JsonPrimitive
+        val bubblePrimitive = readTopLevel("bubbleOverflowCheck") as? JsonPrimitive
         if (bubblePrimitive != null) {
             val parsed = bubblePrimitive.booleanOrNull
             if (parsed != null) {
@@ -417,7 +403,7 @@ object SkinValidator {
         // ---- 滑动阈值（2026-10-28 截图 6 项） ----
         // 严格数值 + 区间校验，非法记 FIELD_FALLBACK 并视为未指定。
         var swipeThresholdDp: Float? = null
-        val swipePrimitive = tree["swipeThresholdDp"] as? JsonPrimitive
+        val swipePrimitive = readTopLevel("swipeThresholdDp") as? JsonPrimitive
         if (swipePrimitive != null) {
             val value = swipePrimitive.strictDoubleOrNull()?.toFloat()
             if (value != null && value.isFinite() &&
@@ -436,7 +422,7 @@ object SkinValidator {
         // 圆角区间 0..32dp，非法记 FIELD_FALLBACK 并取默认/复用值；
         // 关闭键背景只认 #RRGGBB/#AARRGGBB，非法同样回退不拒包。
         var candidateRadiusDp: Float = 6f
-        val radiusPrimitive = tree["candidateRadiusDp"] as? JsonPrimitive
+        val radiusPrimitive = readTopLevel("candidateRadiusDp") as? JsonPrimitive
         if (radiusPrimitive != null) {
             val value = radiusPrimitive.strictDoubleOrNull()?.toFloat()
             if (value != null && value.isFinite() && value in 0f..32f) {
@@ -449,7 +435,7 @@ object SkinValidator {
             }
         }
         var predictionCloseBg: Int? = null
-        val closeBgNode = tree["predictionCloseBg"] as? JsonPrimitive
+        val closeBgNode = readTopLevel("predictionCloseBg") as? JsonPrimitive
         if (closeBgNode != null) {
             val parsed = if (closeBgNode.isString) {
                 closeBgNode.contentOrNull?.let { SkinJson.parseColor(it) }
@@ -466,7 +452,7 @@ object SkinValidator {
             }
         }
         var predictionCloseRadiusDp: Float? = null
-        val closeRadiusPrimitive = tree["predictionCloseRadiusDp"] as? JsonPrimitive
+        val closeRadiusPrimitive = readTopLevel("predictionCloseRadiusDp") as? JsonPrimitive
         if (closeRadiusPrimitive != null) {
             val value = closeRadiusPrimitive.strictDoubleOrNull()?.toFloat()
             if (value != null && value.isFinite() && value in 0f..32f) {
@@ -483,15 +469,15 @@ object SkinValidator {
         // 数字 = dp（16..120），字符串 "Nvh" = 视口高度百分比（0..50）；
         // 非法记 issue 并回落旧 48dp（不拒包）。
         val toolbarHeight = parseVhLength(
-            tree["toolbarHeight"], "toolbarHeight", issues, 16f..120f,
+            readTopLevel("toolbarHeight"), "toolbarHeight", issues, 16f..120f,
         )
 
         // ---- 工具栏样式（审计 B 项） ----
-        val toolbarStyle = parseToolbarStyle(tree["toolbarStyle"], "toolbarStyle", issues)
+        val toolbarStyle = parseToolbarStyle(readTopLevel("toolbarStyle"), "toolbarStyle", issues)
 
         // ---- 区域压制（区域门控）：非布尔值记 issue 并按不压制计。 ----
         fun suppressFlag(name: String): Boolean {
-            val raw = tree[name] as? JsonPrimitive ?: return false
+            val raw = readTopLevel(name) as? JsonPrimitive ?: return false
             return raw.booleanOrNull ?: run {
                 issues += SkinIssue(name, SkinIssue.Kind.FIELD_FALLBACK, "suppress_not_bool")
                 false
@@ -501,10 +487,10 @@ object SkinValidator {
         val suppressKeyboard = suppressFlag("suppressKeyboard")
 
         // ---- 工具栏布局（审计 B 项） ----
-        val toolbarLayout = parseToolbarLayout(tree["toolbarLayout"], "toolbarLayout", issues)
+        val toolbarLayout = parseToolbarLayout(readTopLevel("toolbarLayout"), "toolbarLayout", issues)
 
         // ---- MENU 槽位动作（W19-6b） ----
-        val menuAction = parseMenuAction(tree["menuAction"], "menuAction", issues)
+        val menuAction = parseMenuAction(readTopLevel("menuAction"), "menuAction", issues)
 
         // ---- 工具栏钮背景图（审计 D 项） + 精灵图映射表 ----
         // 顶层 `toolbarButtonBackgroundStyle`（对端同名）为全体工具栏
@@ -512,67 +498,67 @@ object SkinValidator {
         // 两者缺失皆为 null/空表（旧口径：钮无背景图）；非法记 issue
         // 并丢弃对应节点（不拒包）。
         val toolbarButtonBackground = parseImageDescriptor(
-            tree["toolbarButtonBackgroundStyle"], "toolbarButtonBackgroundStyle", issues,
+            readTopLevel("toolbarButtonBackgroundStyle"), "toolbarButtonBackgroundStyle", issues,
         )
-        val spriteMaps = parseSpriteMaps(tree["sprites"], "sprites", issues)
+        val spriteMaps = parseSpriteMaps(readTopLevel("sprites"), "sprites", issues)
 
         // ---- 预编辑高度（审计 B 项） ----
         // 数字 = dp（12..64），字符串 "Nvh" = 视口高度百分比；
         // 非法记 issue 并回落旧 30dp（不拒包）。
         val preeditHeight = parseVhLength(
-            tree["preeditHeight"], "preeditHeight", issues, 12f..64f,
+            readTopLevel("preeditHeight"), "preeditHeight", issues, 12f..64f,
         )
 
         // ---- 预编辑样式（审计 B 项） ----
-        val preeditStyle = parsePreeditStyle(tree["preeditStyle"], "preeditStyle", issues)
+        val preeditStyle = parsePreeditStyle(readTopLevel("preeditStyle"), "preeditStyle", issues)
 
         // ---- 候选序号／注释字号（审计 I 项） ----
         val candidateIndexSizeDp = parseDpField(
-            tree["candidateIndexSizeDp"], "candidateIndexSizeDp", issues, 8f..32f,
+            readTopLevel("candidateIndexSizeDp"), "candidateIndexSizeDp", issues, 8f..32f,
         )
         val candidateCommentSizeDp = parseDpField(
-            tree["candidateCommentSizeDp"], "candidateCommentSizeDp", issues, 8f..32f,
+            readTopLevel("candidateCommentSizeDp"), "candidateCommentSizeDp", issues, 8f..32f,
         )
 
         // ---- 横条候选上限（审计 I 项） ----
         val horizontalMaxColumns = parseHorizontalCandidates(
-            tree["horizontalCandidates"], "horizontalCandidates", issues,
+            readTopLevel("horizontalCandidates"), "horizontalCandidates", issues,
         )?.maxColumns
         val horizontalExpandLeft = parseHorizontalLayout(
-            tree["horizontalCandidatesLayout"], "horizontalCandidatesLayout", issues,
+            readTopLevel("horizontalCandidatesLayout"), "horizontalCandidatesLayout", issues,
         )?.expandLeft ?: false
         // S11：横向符号 RTL（未写 = LTR）。
         val horizontalSymbolsRtl =
-            (tree["horizontalSymbolsRtl"] as? JsonPrimitive)?.booleanOrNull ?: false
+            (readTopLevel("horizontalSymbolsRtl") as? JsonPrimitive)?.booleanOrNull ?: false
         val verticalCandidates = parseVerticalCandidates(
-            tree["verticalCandidates"], "verticalCandidates", issues,
+            readTopLevel("verticalCandidates"), "verticalCandidates", issues,
         )
         val verticalSidePanel = parseVerticalLayout(
-            tree["verticalCandidatesLayout"], "verticalCandidatesLayout", issues,
+            readTopLevel("verticalCandidatesLayout"), "verticalCandidatesLayout", issues,
         )?.sidePanel ?: true
         val candidateContextMenu = parseCandidateContextMenu(
-            tree["candidateContextMenu"], "candidateContextMenu", issues,
+            readTopLevel("candidateContextMenu"), "candidateContextMenu", issues,
         )
 
         // ---- 候选区样式（审计 B 项） ----
         val horizontalCandidatesStyle = parseCandidateAreaStyle(
-            tree["horizontalCandidatesStyle"], "horizontalCandidatesStyle", issues,
+            readTopLevel("horizontalCandidatesStyle"), "horizontalCandidatesStyle", issues,
         )
         val verticalCandidatesStyle = parseCandidateAreaStyle(
-            tree["verticalCandidatesStyle"], "verticalCandidatesStyle", issues,
+            readTopLevel("verticalCandidatesStyle"), "verticalCandidatesStyle", issues,
         )
 
         // ---- 竖网格底部钮行（翻页／返回或收起／退格） ----
         val verticalBottomRow = parseVerticalBottomRow(
-            tree["verticalBottomRow"], "verticalBottomRow", issues,
+            readTopLevel("verticalBottomRow"), "verticalBottomRow", issues,
         )
 
         // ---- 候选单元格样式全字段（字号／字重／内边距／背景内边距／圆角） ----
         val horizontalCandidateStyle = parseCandidateCellStyle(
-            tree["horizontalCandidateStyle"], "horizontalCandidateStyle", issues,
+            readTopLevel("horizontalCandidateStyle"), "horizontalCandidateStyle", issues,
         )
         val verticalCandidateStyle = parseCandidateCellStyle(
-            tree["verticalCandidateStyle"], "verticalCandidateStyle", issues,
+            readTopLevel("verticalCandidateStyle"), "verticalCandidateStyle", issues,
         )
 
         // ---- styles（浅色板） ----
@@ -583,6 +569,7 @@ object SkinValidator {
             stylesKey = "styles",
             derivationKey = "derivation",
             issues = issues,
+            consumed = consumedTopLevelKeys,
         )
 
 
@@ -604,8 +591,8 @@ object SkinValidator {
         // （即使最终全等于浅色板，快照仍记 darkStyles，模式切换
         // 行为与未声明一致、无可见差异）。
         var darkStyles: StylesSpec? = null
-        val darkStylesNode = tree["stylesDark"]
-        val darkDerivationNode = tree["derivationDark"]
+        val darkStylesNode = readTopLevel("stylesDark")
+        val darkDerivationNode = readTopLevel("derivationDark")
         val darkDeclared = darkStylesNode is JsonObject || darkDerivationNode is JsonObject
         // ---- 双模式硬要求（2026-10-29 批量第 6 项）：此后所有皮肤
         // 须同时声明深浅两板；深色段对象整体缺失即整包拒绝（不静默
@@ -621,6 +608,7 @@ object SkinValidator {
                 stylesKey = "stylesDark",
                 derivationKey = "derivationDark",
                 issues = issues,
+            consumed = consumedTopLevelKeys,
             )
             val darkColors = colors.toMutableMap()
             // parseColorSection 已按「显式 > 派生」合成深色段内值；
@@ -639,7 +627,7 @@ object SkinValidator {
         // ---- G1 皮肤级分档字号（textSizes：角色 → 数值 8..40） ----
         // 非法角色/值逐项丢弃并记 issue，不拒整包；缺失角色回落出厂字号。
         val skinTextSizes = mutableMapOf<KeyTextRole, Float>()
-        val textSizesNode = tree["textSizes"]
+        val textSizesNode = readTopLevel("textSizes")
         if (textSizesNode != null) {
             val textSizesObj = textSizesNode as? JsonObject
             if (textSizesObj == null) {
@@ -682,7 +670,7 @@ object SkinValidator {
         // （抽取为 parseKeyStylesSection：主段与 G1 样式集共用，
         // 行为与抽取前一致，issue 路径由 path 参数决定。）
         val (keyStyles, keyGeometries) =
-            parseKeyStylesSection(tree["keyStyles"], "keyStyles", issues)
+            parseKeyStylesSection(readTopLevel("keyStyles"), "keyStyles", issues)
 
         // ---- styleSets（G1）：顶层样式集，逐集与主段同口径解析 ----
         // 非对象整段丢弃记 issue；集内 styles 缺失时该集无效（只记
@@ -690,7 +678,7 @@ object SkinValidator {
         // 时该集无深色板（深色沿用浅色板，与主段 darkStyles 为 null
         // 同口径）；单键样式表复用主段解析（issue 路径带集名前缀）。
         val styleSets = LinkedHashMap<String, StyleSetRaw>()
-        val styleSetsNode = tree["styleSets"]
+        val styleSetsNode = readTopLevel("styleSets")
         if (styleSetsNode != null) {
             val styleSetsObj = styleSetsNode as? JsonObject
             if (styleSetsObj == null) {
@@ -756,9 +744,9 @@ object SkinValidator {
         // ---- keyAnimations（审计 H 项：动效表） ----
         // 非对象/未知类型/缺关键字段的项整项丢弃并记 issue，不拒整包。
         var keyAnimations: Map<String, KeyAnimationDef> = emptyMap()
-        if (tree["keyAnimations"] != null) {
+        if (readTopLevel("keyAnimations") != null) {
             val (table, tableWarnings) =
-                KeyAnimationDefParser.parseTable(tree["keyAnimations"])
+                KeyAnimationDefParser.parseTable(readTopLevel("keyAnimations"))
             keyAnimations = table
             for (warning in tableWarnings) {
                 issues += SkinIssue(
@@ -772,7 +760,7 @@ object SkinValidator {
         // 非对象整段记 issue；单项无效（无 symbolStyles 等）逐项
         // 丢弃并记 issue，不拒整包；旧 form 节点在此整体无效。
         var hintSymbolsStyles: Map<String, HintSymbolsStyle> = emptyMap()
-        val hintSymbolsStylesNode = tree["hintSymbolsStyles"]
+        val hintSymbolsStylesNode = readTopLevel("hintSymbolsStyles")
         if (hintSymbolsStylesNode != null) {
             val hintSymbolsStylesObj = hintSymbolsStylesNode as? JsonObject
             if (hintSymbolsStylesObj == null) {
@@ -800,7 +788,7 @@ object SkinValidator {
         // ---- hintSymbolsGridStyles（网格版：长按符号网格样式表） ----
         // 口径与旧版表一致：非对象整段记 issue；单项无效逐项丢弃。
         var hintSymbolsGridStyles: Map<String, HintSymbolsGridStyle> = emptyMap()
-        val hintSymbolsGridStylesNode = tree["hintSymbolsGridStyles"]
+        val hintSymbolsGridStylesNode = readTopLevel("hintSymbolsGridStyles")
         if (hintSymbolsGridStylesNode != null) {
             val hintSymbolsGridStylesObj = hintSymbolsGridStylesNode as? JsonObject
             if (hintSymbolsGridStylesObj == null) {
@@ -829,7 +817,7 @@ object SkinValidator {
         // 非对象整段记 issue；单项无动作／动作非法逐项丢弃并记
         // issue，不拒整包；颜色／几何按同名查 keyStyles 表。
         var hintSymbolNodes: Map<String, HintSymbolNode> = emptyMap()
-        val hintSymbolNodesNode = tree["hintSymbolNodes"]
+        val hintSymbolNodesNode = readTopLevel("hintSymbolNodes")
         if (hintSymbolNodesNode != null) {
             val hintSymbolNodesObj = hintSymbolNodesNode as? JsonObject
             if (hintSymbolNodesObj == null) {
@@ -859,7 +847,7 @@ object SkinValidator {
         var keyOverrides: Map<String, KeyOverride> = emptyMap()
         var keyRejections: List<KeyBindingRejection> = emptyList()
         var sequenceBindingCount = 0
-        if (tree["keyMappings"] != null) {
+        if (readTopLevel("keyMappings") != null) {
             if (keyMappings == null) {
                 issues += SkinIssue(
                     "keyMappings", SkinIssue.Kind.FIELD_FALLBACK, "key_mappings_not_object",
@@ -916,8 +904,8 @@ object SkinValidator {
 
         // ---- audio（B2 应用；此处只做引用存在性提示，接纳判定在快照构建期） ----
         val audioRefs = mutableMapOf<String, String>()
-        val audio = tree["audio"] as? JsonObject
-        if (tree["audio"] != null && audio == null) {
+        val audio = readTopLevel("audio") as? JsonObject
+        if (readTopLevel("audio") != null && audio == null) {
             issues += SkinIssue("audio", SkinIssue.Kind.FIELD_FALLBACK, "audio_not_object")
         }
         if (audio != null) {
@@ -939,8 +927,8 @@ object SkinValidator {
         // ---- keySound（按键音；与 audio 同口径：只做引用存在性提示，
         // 接纳判定在快照构建期；非法引用逐项丢弃，不影响其它槽） ----
         val keySoundActions = mutableMapOf<String, String>()
-        val keySoundNode = tree["keySound"] as? JsonObject
-        if (tree["keySound"] != null && keySoundNode == null) {
+        val keySoundNode = readTopLevel("keySound") as? JsonObject
+        if (readTopLevel("keySound") != null && keySoundNode == null) {
             issues += SkinIssue("keySound", SkinIssue.Kind.FIELD_FALLBACK, "keysound_not_object")
         }
         fun keySoundSlot(name: String): String? {
@@ -993,7 +981,7 @@ object SkinValidator {
         // 按钮池判定复用 ToolbarConfig（未知 id 即非法）；资产类别沿用
         // 传入的 manifest 口径（IMAGE 资产机制，与背景同口径）。
         val (toolbarSpec, toolbarIssues) = SkinToolbarParser.parse(
-            node = tree["toolbar"],
+            node = readTopLevel("toolbar"),
             assetKind = assetKind,
             isKnownButton = { id -> ToolbarConfig.item(id) != null },
         )
@@ -1003,7 +991,7 @@ object SkinValidator {
         // 顶层数组，逐项丢弃不拒包（坏项只记 issue）；非数组记一次
         // issue 并视为空；未定义即空表（旧皮肤无行为变化）。
         var notifications: List<SkinNotification> = emptyList()
-        val notificationsNode = tree["notifications"]
+        val notificationsNode = readTopLevel("notifications")
         if (notificationsNode != null) {
             val arr = notificationsNode as? JsonArray
             if (arr == null) {
@@ -1022,7 +1010,7 @@ object SkinValidator {
             }
         }
         var conditionStyles: List<ConditionStyle> = emptyList()
-        val conditionStylesNode = tree["conditionStyles"]
+        val conditionStylesNode = readTopLevel("conditionStyles")
         if (conditionStylesNode != null) {
             val arr = conditionStylesNode as? JsonArray
             if (arr == null) {
@@ -1044,7 +1032,7 @@ object SkinValidator {
 
         // ---- symbolBar（重点候选 8-6）：顶层对象，非法键项逐项丢弃不拒包 ----
         var symbolBar: SymbolBarSpec? = null
-        val symbolBarNode = tree["symbolBar"]
+        val symbolBarNode = readTopLevel("symbolBar")
         if (symbolBarNode != null) {
             if (symbolBarNode !is JsonObject) {
                 issues += SkinIssue(
@@ -1064,7 +1052,7 @@ object SkinValidator {
 
         // ---- subClassifiedSymbols：顶层数组或 {parents}，非法父／子类逐项丢弃不拒包 ----
         var subClassifiedSymbols: com.jobeen.ime.skin.symbol.SubClassifiedSymbols? = null
-        val subClassifiedNode = tree["subClassifiedSymbols"]
+        val subClassifiedNode = readTopLevel("subClassifiedSymbols")
         if (subClassifiedNode != null) {
             if (subClassifiedNode !is JsonObject && subClassifiedNode !is JsonArray) {
                 issues += SkinIssue(
@@ -1089,7 +1077,7 @@ object SkinValidator {
         // 快照（非法项逐项丢弃、只记 issue，不拒包），渲染见
         // SymbolKeyboard（九宫格／数字作附加父类、横向条作横条）。
         var t9Symbols: com.jobeen.ime.skin.symbol.T9SymbolsSpec? = null
-        val t9SymbolsNode = tree["t9Symbols"]
+        val t9SymbolsNode = readTopLevel("t9Symbols")
         if (t9SymbolsNode != null) {
             val (parsed, dropped) = T9SymbolsParser.parse(t9SymbolsNode)
             t9Symbols = parsed
@@ -1101,7 +1089,7 @@ object SkinValidator {
             }
         }
         var t9HorizontalSymbols: com.jobeen.ime.skin.symbol.HorizontalSymbolsSpec? = null
-        val t9HorizontalNode = tree["t9HorizontalSymbols"]
+        val t9HorizontalNode = readTopLevel("t9HorizontalSymbols")
         if (t9HorizontalNode != null) {
             val (parsed, dropped) = T9HorizontalSymbolsParser.parse(t9HorizontalNode)
             t9HorizontalSymbols = parsed
@@ -1113,14 +1101,14 @@ object SkinValidator {
             }
         }
         var numericSymbols: com.jobeen.ime.skin.symbol.NumericSymbolsCollection? = null
-        val numericSymbolsNode = tree["numericSymbols"]
+        val numericSymbolsNode = readTopLevel("numericSymbols")
         if (numericSymbolsNode != null) {
             // 节点存在即解析（无 dataSource／空源时回落内置数字集，
             // 与 NumericSymbols.parse 的既有口径一致）。
             numericSymbols = NumericSymbols.parse(numericSymbolsNode)
         }
         var horizontalSymbols: com.jobeen.ime.skin.symbol.HorizontalSymbolsSpec? = null
-        val horizontalSymbolsNode = tree["horizontalSymbols"]
+        val horizontalSymbolsNode = readTopLevel("horizontalSymbols")
         if (horizontalSymbolsNode != null) {
             val (parsed, dropped) = HorizontalSymbolsParser.parse(horizontalSymbolsNode)
             horizontalSymbols = parsed
@@ -1137,7 +1125,7 @@ object SkinValidator {
         // 非对象／空对象均视为未声明（不记 issue、不占位）；
         // 面板接线属后续轮，本批只落数据层与快照透传。
         val typeAreas = LinkedHashMap<String, TypeAreaSet>()
-        val keyboardsNode = tree["keyboards"] as? JsonObject
+        val keyboardsNode = readTopLevel("keyboards") as? JsonObject
         if (keyboardsNode != null) {
             for ((type, entryNode) in keyboardsNode) {
                 if (type.isBlank()) continue
@@ -1175,7 +1163,7 @@ object SkinValidator {
         }
 
         // ---- symbolBadge（S12）：顶层对象，非法字段逐项回落渲染缺省 ----
-        val badgeObj = tree["symbolBadge"] as? JsonObject
+        val badgeObj = readTopLevel("symbolBadge") as? JsonObject
         val symbolBadgeFontSizeDp = parseDpField(
             badgeObj?.get("fontSizeDp"), "symbolBadge.fontSizeDp", issues, 6f..20f,
         )
@@ -1187,22 +1175,22 @@ object SkinValidator {
         )
 
         // ---- keyShadow（2026-10-29 item-1 拟态）：顶层对象，非法字段逐项回退默认值 ----
-        val (keyShadow, keyShadowIssues) = KeyShadowParser.parse(tree["keyShadow"])
+        val (keyShadow, keyShadowIssues) = KeyShadowParser.parse(readTopLevel("keyShadow"))
         issues += keyShadowIssues
 
         // ---- keyAnimation / spaceAnimation（2026-10-29 item-1 动效）：同口径 ----
         val (keyAnimation, keyAnimationIssues) =
-            KeyAnimationParser.parse(tree["keyAnimation"], "keyAnimation")
+            KeyAnimationParser.parse(readTopLevel("keyAnimation"), "keyAnimation")
         issues += keyAnimationIssues
         val (spaceAnimation, spaceAnimationIssues) =
-            KeyAnimationParser.parse(tree["spaceAnimation"], "spaceAnimation")
+            KeyAnimationParser.parse(readTopLevel("spaceAnimation"), "spaceAnimation")
         issues += spaceAnimationIssues
         // spaceAnimation 未写节点 = 跟随 keyAnimation（null 哨兵）；
         // 写了节点（即使 enabled=false）= 空格专属规格（取代 keyAnimation）。
-        val spaceAnimationOrNull = if (tree["spaceAnimation"] == null) null else spaceAnimation
+        val spaceAnimationOrNull = if (readTopLevel("spaceAnimation") == null) null else spaceAnimation
 
         // ---- keyRipple（WO38 涟漪参数）：顶层对象，非法字段逐项回退默认值 ----
-        val (keyRipple, keyRippleIssues) = KeyRippleParser.parse(tree["keyRipple"])
+        val (keyRipple, keyRippleIssues) = KeyRippleParser.parse(readTopLevel("keyRipple"))
         issues += keyRippleIssues
 
         return Result.Valid(
@@ -1224,7 +1212,7 @@ object SkinValidator {
                 darkStyles = darkStyles,
                 styleSets = styleSets,
                 typeAreas = typeAreas,
-                keyMappingsPresent = tree["keyMappings"] != null,
+                keyMappingsPresent = readTopLevel("keyMappings") != null,
                 keyMappingsCount = keyMappingsCount,
                 keyOverrides = keyOverrides,
                 keyRejections = keyRejections,
@@ -1300,7 +1288,7 @@ object SkinValidator {
                 spaceAnimation = spaceAnimationOrNull,
                 // 未知节点原样透传（快照层；文件层本就逐字节保留，
                 // 快照→skin.json 再生成器未来落地后才构成完整往返）。
-                unknownNodes = tree.filterKeys { it !in KNOWN_TOP_LEVEL_KEYS },
+                unknownNodes = tree.filterKeys { it !in consumedTopLevelKeys },
             ),
             issues = issues,
         )
@@ -1363,9 +1351,16 @@ object SkinValidator {
         stylesKey: String,
         derivationKey: String,
         issues: MutableList<SkinIssue>,
+        consumed: MutableSet<String>? = null,
     ): Pair<Map<StyleField, Int>, KeyboardColors.SurfaceStyle?> {
-        val styles = tree[stylesKey] as? JsonObject
-        if (tree[stylesKey] != null && styles == null) {
+        // WO42 O-4：顶层调用传 consumed 集（记录 styles/derivation/derivationFormulas）；
+        // 样式集子对象调用不传（子对象键不是顶层键）。
+        fun readTopLevel(key: String): JsonElement? {
+            if (consumed != null) consumed += key
+            return tree[key]
+        }
+        val styles = readTopLevel(stylesKey) as? JsonObject
+        if (readTopLevel(stylesKey) != null && styles == null) {
             issues += SkinIssue(stylesKey, SkinIssue.Kind.FIELD_FALLBACK, "styles_not_object")
         }
         val colors = mutableMapOf<StyleField, Int>()
@@ -1394,7 +1389,7 @@ object SkinValidator {
                 )
             }
         }
-        val derivationNode = tree[derivationKey]
+        val derivationNode = readTopLevel(derivationKey)
         if (derivationNode != null) {
             val derivation = derivationNode as? JsonObject
             if (derivation == null) {
@@ -1420,8 +1415,8 @@ object SkinValidator {
                     // 整条回退固定映射并记 issue（并入 parseColorSection
                     // 是为与双色板共用同一合成口径，不再另起内联展开）。
                     if (stylesKey == "styles") {
-                        val formulasNode = tree["derivationFormulas"] as? JsonObject
-                        if (tree["derivationFormulas"] != null && formulasNode == null) {
+                        val formulasNode = readTopLevel("derivationFormulas") as? JsonObject
+                        if (readTopLevel("derivationFormulas") != null && formulasNode == null) {
                             issues += SkinIssue(
                                 "derivationFormulas", SkinIssue.Kind.FIELD_FALLBACK,
                                 "derivation_formulas_not_object",
@@ -1473,8 +1468,8 @@ object SkinValidator {
             }
         }
         // G1：有公式段但无有效 6 基色时，公式无求值基准，整段不生效并明示。
-        if (stylesKey == "styles" && tree["derivationFormulas"] is JsonObject) {
-            val derivationObj = tree[derivationKey] as? JsonObject
+        if (stylesKey == "styles" && readTopLevel("derivationFormulas") is JsonObject) {
+            val derivationObj = readTopLevel(derivationKey) as? JsonObject
             val baseValid = derivationObj != null &&
                 ColorDerivation.BaseColors.FIELD_NAMES.all {
                     ColorDerivation.parseField(derivationObj, it) != null

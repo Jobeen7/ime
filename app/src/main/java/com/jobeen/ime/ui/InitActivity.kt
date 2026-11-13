@@ -1,10 +1,6 @@
 package com.jobeen.ime.ui
 
-import android.os.Bundle
 import android.os.SystemClock
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -33,9 +29,8 @@ import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import kotlinx.coroutines.delay
 import androidx.compose.ui.Alignment
+import kotlinx.coroutines.delay
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -46,177 +41,151 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.R
-import com.jobeen.ime.ui.theme.ImeTheme
-import com.jobeen.ime.ui.theme.AppAppearance
-import com.jobeen.ime.ui.theme.AppAppearanceMode
 
-class InitActivity : ComponentActivity() {
-    // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
-    private var createdAppearanceMode: AppAppearanceMode? = null
-
-    /**
-     * 返回即刷新：从外观页返回时，若应用外观模式已变则重建本页，
-     * 主题立即生效；模式未变不重建；重建后新模式即记录值，不循环。
-     */
-    override fun onResume() {
-        super.onResume()
-        val recordedAppearanceMode = createdAppearanceMode
-        if (recordedAppearanceMode != null &&
-            AppAppearance.appearanceModeChanged(recordedAppearanceMode, AppAppearance.getMode(this))
-        ) {
-            recreate()
-        }
-    }
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        createdAppearanceMode = AppAppearance.getMode(this)
-        enableEdgeToEdge()
-
+class InitActivity : ImeActivity() {
+    @Composable
+    override fun Content() {
         val app = ImeApplication.getInstance()
 
-        setContent {
-            val initState by app.state.collectAsStateWithLifecycle()
+        val initState by app.state.collectAsStateWithLifecycle()
 
-            // 应-O8：初始化失败/超时态。AppState 只有
-            // Starting/ResourcePreparing/EngineStarting/Finished 四态、
-            // 且 AppStartup 各步失败只记日志不置失败态（失败与挂起在
-            // 本页都只表现为 Finished 永不到达），故本页内唯一可观测
-            // 的失败信号就是超时：Finished 在时限内未到达即进超时态，
-            // 不再永久转圈。超时只改本页显示，绝不取消后台初始化：
-            // 超时后后台若完成，Finished 分支仍会 finish 本页；超时
-            // 本身不杀部署、不动引擎状态。
-            // U-M6：超时计时必须跨重建——旧代码用 remember，旋转即重计
-            // 30 分钟；改记本轮超时的起始 elapsedRealtime
-            //（rememberSaveable），重建后只等剩余时间；重试重设计时起点。
-            var timedOut by rememberSaveable { mutableStateOf(false) }
-            var timeoutAttempt by rememberSaveable { mutableIntStateOf(0) }
-            var timeoutStartMs by rememberSaveable {
-                mutableLongStateOf(SystemClock.elapsedRealtime())
+        // 应-O8：初始化失败/超时态。AppState 只有
+        // Starting/ResourcePreparing/EngineStarting/Finished 四态、
+        // 且 AppStartup 各步失败只记日志不置失败态（失败与挂起在
+        // 本页都只表现为 Finished 永不到达），故本页内唯一可观测
+        // 的失败信号就是超时：Finished 在时限内未到达即进超时态，
+        // 不再永久转圈。超时只改本页显示，绝不取消后台初始化：
+        // 超时后后台若完成，Finished 分支仍会 finish 本页；超时
+        // 本身不杀部署、不动引擎状态。
+        // U-M6：超时计时必须跨重建——旧代码用 remember，旋转即重计
+        // 30 分钟；改记本轮超时的起始 elapsedRealtime
+        //（rememberSaveable），重建后只等剩余时间；重试重设计时起点。
+        var timedOut by rememberSaveable { mutableStateOf(false) }
+        var timeoutAttempt by rememberSaveable { mutableIntStateOf(0) }
+        var timeoutStartMs by rememberSaveable {
+            mutableLongStateOf(SystemClock.elapsedRealtime())
+        }
+        LaunchedEffect(timeoutAttempt) {
+            val remaining = INIT_TIMEOUT_MS -
+                (SystemClock.elapsedRealtime() - timeoutStartMs)
+            if (remaining > 0) delay(remaining)
+            if (app.state.value != ImeApplication.AppState.Finished) {
+                timedOut = true
             }
-            LaunchedEffect(timeoutAttempt) {
-                val remaining = INIT_TIMEOUT_MS -
-                    (SystemClock.elapsedRealtime() - timeoutStartMs)
-                if (remaining > 0) delay(remaining)
-                if (app.state.value != ImeApplication.AppState.Finished) {
-                    timedOut = true
-                }
+        }
+
+        // U-M6：LaunchedEffect 不可条件调用——重组时序会决定副作用
+        // 是否进入／退出；改无条件调用、内部分支。
+        LaunchedEffect(initState) {
+            if (initState == ImeApplication.AppState.Finished) {
+                setResult(RESULT_OK)
+                finish()
+            }
+        }
+
+            val (titleRes, descRes) = when (initState) {
+                ImeApplication.AppState.ResourcePreparing -> R.string.initializing to R.string.initializing_desc
+                ImeApplication.AppState.EngineStarting -> R.string.starting_engine to R.string.starting_engine_desc
+                else -> R.string.initializing to R.string.initializing_desc
             }
 
-            // U-M6：LaunchedEffect 不可条件调用——重组时序会决定副作用
-            // 是否进入／退出；改无条件调用、内部分支。
-            LaunchedEffect(initState) {
-                if (initState == ImeApplication.AppState.Finished) {
-                    setResult(RESULT_OK)
-                    finish()
-                }
-            }
-
-            ImeTheme(themeMode = AppAppearance.themeMode(this), dynamicColor = AppAppearance.useDynamicColor(this)) {
-                val (titleRes, descRes) = when (initState) {
-                    ImeApplication.AppState.ResourcePreparing -> R.string.initializing to R.string.initializing_desc
-                    ImeApplication.AppState.EngineStarting -> R.string.starting_engine to R.string.starting_engine_desc
-                    else -> R.string.initializing to R.string.initializing_desc
-                }
-
-                Surface(
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                color = MaterialTheme.colorScheme.background,
+            ) {
+                Box(
                     modifier = Modifier.fillMaxSize(),
-                    color = MaterialTheme.colorScheme.background,
+                    contentAlignment = Alignment.Center,
                 ) {
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        if (timedOut && initState != ImeApplication.AppState.Finished) {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(horizontal = 32.dp),
+                    if (timedOut && initState != ImeApplication.AppState.Finished) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 32.dp),
+                        ) {
+                            Text(
+                                text = stringResource(R.string.init_timeout_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Medium,
+                            )
+
+                            Spacer(Modifier.height(8.dp))
+
+                            Text(
+                                text = stringResource(R.string.init_timeout_message),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                textAlign = TextAlign.Center,
+                            )
+
+                            Spacer(Modifier.height(24.dp))
+
+                            // 重试 = 重新计时再等一轮：进程内重跑初始化
+                            // 不安全（AppStartup 步骤失败被吞、引擎切换
+                            // 不可重入），故不重启引擎；若后台仍在跑，
+                            // 本轮内完成仍会走 Finished 分支正常退出。
+                            Button(
+                                onClick = {
+                                    timedOut = false
+                                    timeoutStartMs = SystemClock.elapsedRealtime()
+                                    timeoutAttempt++
+                                },
                             ) {
-                                Text(
-                                    text = stringResource(R.string.init_timeout_title),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.Medium,
-                                )
-
-                                Spacer(Modifier.height(8.dp))
-
-                                Text(
-                                    text = stringResource(R.string.init_timeout_message),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                    textAlign = TextAlign.Center,
-                                )
-
-                                Spacer(Modifier.height(24.dp))
-
-                                // 重试 = 重新计时再等一轮：进程内重跑初始化
-                                // 不安全（AppStartup 步骤失败被吞、引擎切换
-                                // 不可重入），故不重启引擎；若后台仍在跑，
-                                // 本轮内完成仍会走 Finished 分支正常退出。
-                                Button(
-                                    onClick = {
-                                        timedOut = false
-                                        timeoutStartMs = SystemClock.elapsedRealtime()
-                                        timeoutAttempt++
-                                    },
-                                ) {
-                                    Text(stringResource(R.string.schema_switch_retry))
-                                }
-
-                                Spacer(Modifier.height(8.dp))
-
-                                // 退出 = 关本页回主页面（RESULT_CANCELED）：
-                                // 不杀后台初始化、不重启应用；要全新重跑
-                                // 初始化需退出应用后重新打开（进程重建时
-                                // AppStartup 自然重走全程）。
-                                TextButton(
-                                    onClick = {
-                                        setResult(RESULT_CANCELED)
-                                        finish()
-                                    },
-                                ) {
-                                    Text(stringResource(R.string.schema_banner_close))
-                                }
+                                Text(stringResource(R.string.schema_switch_retry))
                             }
-                        } else {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                verticalArrangement = Arrangement.Center,
+
+                            Spacer(Modifier.height(8.dp))
+
+                            // 退出 = 关本页回主页面（RESULT_CANCELED）：
+                            // 不杀后台初始化、不重启应用；要全新重跑
+                            // 初始化需退出应用后重新打开（进程重建时
+                            // AppStartup 自然重走全程）。
+                            TextButton(
+                                onClick = {
+                                    setResult(RESULT_CANCELED)
+                                    finish()
+                                },
                             ) {
-                                LoadingIndicator(
-                                    modifier = Modifier.size(72.dp),
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-
-                                Spacer(Modifier.height(24.dp))
-
-                                Text(
-                                    text = stringResource(titleRes),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    fontWeight = FontWeight.Medium,
-                                )
-
-                                Spacer(Modifier.height(8.dp))
-
-                                Text(
-                                    text = stringResource(descRes),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                                    textAlign = TextAlign.Center,
-                                )
+                                Text(stringResource(R.string.schema_banner_close))
                             }
+                        }
+                    } else {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center,
+                        ) {
+                            LoadingIndicator(
+                                modifier = Modifier.size(72.dp),
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+
+                            Spacer(Modifier.height(24.dp))
+
+                            Text(
+                                text = stringResource(titleRes),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                fontWeight = FontWeight.Medium,
+                            )
+
+                            Spacer(Modifier.height(8.dp))
+
+                            Text(
+                                text = stringResource(descRes),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                textAlign = TextAlign.Center,
+                            )
                         }
                     }
                 }
             }
-        }
     }
 
     companion object {

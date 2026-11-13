@@ -64,6 +64,5 @@ class OpenCCDictionary(
 
     companion object {
         const val NEW_FORMAT = "ocd2"
-        const val OLD_FORMAT = "ocd"
     }
 }

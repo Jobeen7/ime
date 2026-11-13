@@ -113,10 +113,6 @@ abstract class SidePanelRender(
         this.items = items
     }
 
-    fun updateVisibleItemCount(count: Int) {
-        visibleItemCount = count.coerceAtLeast(1)
-    }
-
     fun itemHeight(panelHeight: Float): Float = panelHeight / visibleItemCount
 
     fun contentHeight(panelHeight: Float): Float = itemHeight(panelHeight) * items.size

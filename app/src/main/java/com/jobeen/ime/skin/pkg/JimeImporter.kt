@@ -228,16 +228,11 @@ class JimeImporter(
         PortableSkinArchive.validate(manifest, byPath, skinTree).rejected?.let {
             return rejected(it.reason, issues, skinId = skinContent.id)
         }
-        // 身份权威在 manifest：皮肤树自报 id 与清单不一致即身份含混，整包拒绝
-        val validatedPreview = SkinValidator.validate(
-            skinTree, ctx.currentVersionCode, ctx.fallbacks, { null },
-        )
-        val previewSkin = when (validatedPreview) {
-            is SkinValidator.Result.Rejected ->
-                return rejected(validatedPreview.reason, issues, skinId = skinContent.id)
-            is SkinValidator.Result.Valid -> validatedPreview.skin
-        }
-        if (previewSkin.metaId != null && previewSkin.metaId != skinContent.id) {
+        // 身份权威在 manifest：皮肤树自报 id 与清单不一致即身份含混，整包拒绝。
+        // meta.id 直读树节点，不再为此跑一遍全量校验（H-1：第一遍 validate
+        // 只为读 metaId；结构性门由下方第二遍权威校验同一口径守）。
+        val metaId = ((skinTree["meta"] as? JsonObject)?.get("id") as? JsonPrimitive)?.contentOrNull
+        if (metaId != null && metaId != skinContent.id) {
             return rejected("skin_meta_id_mismatch", issues, skinId = skinContent.id)
         }
 

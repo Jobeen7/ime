@@ -1931,46 +1931,6 @@ private fun ManageEnabledList(
     }
 }
 
-@Composable
-private fun SchemaListItem(
-    schema: SchemaItem,
-    onClick: (() -> Unit)? = null,
-    leadingIcon: @Composable () -> Unit,
-    trailingIcon: @Composable () -> Unit,
-) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        leadingIcon()
-        Spacer(Modifier.width(12.dp))
-        Column(Modifier.weight(1f)) {
-            Text(
-                schema.name.ifBlank { schema.id },
-                fontSize = 16.sp,
-                lineHeight = 21.sp,
-                fontWeight = FontWeight.Medium,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
-            if (schema.name.isNotBlank()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    schema.id,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
-        trailingIcon()
-    }
-}
 
 private fun saveOrder(prefs: SharedPreferences, dir: String, schemas: List<SchemaItem>) {
     val ids = schemas.map { it.id }

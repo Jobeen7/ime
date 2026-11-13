@@ -8,7 +8,9 @@ import java.util.zip.ZipInputStream
  * .jime zip 安全解包（定稿十一.1/11.2，B1 新实现）：
  *
  * - 包级上限：原始 ≤10MB、展开 ≤40MB、单条目 ≤8MB、条目 ≤100、
- *   整体压缩比 ≤100:1，任一超限整包拒绝。
+ *   任一超限整包拒绝。（WO42 E-1：压缩比规则已删——绝对上限已钉死
+ *   内存上界，压缩比挡不住任何绝对上限挡不住的东西，反而误拒
+ *   高压缩比合法包，如纯色背景 PNG 250:1。）
  * - 路径：归一化后校验——拒 ../、绝对路径、盘符、反斜杠、归一化
  *   重名（NFC + 大小写不敏感）、嵌套 zip/.jime。
  * - 符号链接：java.util.zip 不暴露条目 unix 模式，无从判别；本实现
@@ -23,7 +25,6 @@ object ZipSafeExtractor {
     const val MAX_EXPANDED_BYTES = 40L * 1024 * 1024
     const val MAX_ENTRY_BYTES = 8L * 1024 * 1024
     const val MAX_ENTRIES = 100
-    const val MAX_RATIO = 100.0
 
     data class ExtractedFile(val path: String, val bytes: ByteArray) {
         override fun equals(other: Any?): Boolean =
@@ -84,9 +85,6 @@ object ZipSafeExtractor {
             }
         } catch (e: Exception) {
             return Result.Rejected("zip_unreadable:${e.javaClass.simpleName}")
-        }
-        if (rawBytes > 0 && totalExpanded.toDouble() / rawBytes > MAX_RATIO) {
-            return Result.Rejected("compression_ratio_too_high")
         }
         if (files.isEmpty()) return Result.Rejected("zip_empty")
         return Result.Ok(files)

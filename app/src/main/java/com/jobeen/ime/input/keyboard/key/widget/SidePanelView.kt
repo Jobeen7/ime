@@ -68,12 +68,6 @@ abstract class SidePanelView(
         contentView.invalidate()
     }
 
-    fun updateVisibleItemCount(count: Int) {
-        render.updateVisibleItemCount(count)
-        contentView.clampScroll()
-        contentView.invalidate()
-    }
-
     fun resetPosition() {
         contentView.resetPosition(false)
     }

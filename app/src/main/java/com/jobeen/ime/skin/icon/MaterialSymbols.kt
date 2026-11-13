@@ -53,9 +53,6 @@ object MaterialSymbols {
     /** 子集字体在 assets 内的路径。 */
     const val ASSET_PATH = "fonts/material-symbols-subset.ttf"
 
-    /** Apache 2.0 全文在 assets 内的路径（与子集字体同目录，随 APK 分发）。 */
-    const val LICENSE_ASSET_PATH = "fonts/material-symbols-subset-LICENSE.txt"
-
     /** 精选符号集：Symbol 名 → 码位（与子集字体 cmap 一一对应）。 */
     val NAMES: Map<String, Int> = mapOf(
         "backspace" to 0xE14A,

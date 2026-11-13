@@ -2,10 +2,8 @@ package com.jobeen.ime.ui
 
 import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.runtime.Composable
 import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
@@ -15,9 +13,6 @@ import com.jobeen.ime.data.backup.readBackupBytes
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.ui.screen.BackupScreen
 import com.jobeen.ime.ui.screen.BackupUiState
-import com.jobeen.ime.ui.theme.ImeTheme
-import com.jobeen.ime.ui.theme.AppAppearance
-import com.jobeen.ime.ui.theme.AppAppearanceMode
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -32,10 +27,7 @@ import java.util.Locale
  * 还原成功后杀掉主进程重启——各设置管理器有内存缓存、键盘服务也在本
  * 进程，重启是让覆盖后的设置整体生效的最可靠方式（系统会自动拉起键盘）。
  */
-class BackupActivity : ComponentActivity() {
-    // 返回即刷新：创建时记下的外观模式；onResume 比对，变了才重建。
-    private var createdAppearanceMode: AppAppearanceMode? = null
-
+class BackupActivity : ImeActivity() {
     private val uiState = BackupUiState()
     // U-S4：备份口令／还原 URI 是 SAF 回调的待办输入，必须随实例状态保存——
     // 原先只是 Activity 普通字段，旋转或外观 recreate() 时丢失，SAF 回调
@@ -70,22 +62,8 @@ class BackupActivity : ComponentActivity() {
         }
     }
 
-    /**
-     * 返回即刷新：从外观页返回时，若应用外观模式已变则重建本页，
-     * 主题立即生效；模式未变不重建；重建后新模式即记录值，不循环。
-     */
-    override fun onResume() {
-        super.onResume()
-        val recordedAppearanceMode = createdAppearanceMode
-        if (recordedAppearanceMode != null &&
-            AppAppearance.appearanceModeChanged(recordedAppearanceMode, AppAppearance.getMode(this))
-        ) {
-            recreate()
-        }
-    }
 
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
+    override fun onCreateBeforeContent(savedInstanceState: Bundle?) {
         // U-S4：重建时恢复 SAF 待办输入；还原 URI 在则重弹口令框，
         // 否则用户选好文件后无处输口令。
         pendingBackupPassword = savedInstanceState?.getCharArray(KEY_PENDING_PASSWORD)
@@ -94,40 +72,35 @@ class BackupActivity : ComponentActivity() {
         if (pendingRestoreUri != null) {
             uiState.showRestorePasswordDialog = true
         }
-        createdAppearanceMode = AppAppearance.getMode(this)
-        enableEdgeToEdge()
         observeRestoreState()
         observeInterruptedRestore()
+    }
 
-        val themeMode = AppAppearance.themeMode(this)
-
-        setContent {
-            ImeTheme(themeMode = themeMode, dynamicColor = AppAppearance.useDynamicColor(this)) {
-                BackupScreen(
-                    state = uiState,
-                    onBack = { finish() },
-                    onCreateBackup = { password ->
-                        pendingBackupPassword = password.toCharArray()
-                        val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
-                        createDocumentLauncher.launch("jime-backup-$stamp.${BackupManager.FILE_EXTENSION}")
-                    },
-                    onPickRestoreFile = {
-                        openDocumentLauncher.launch(arrayOf("*/*"))
-                    },
-                    onRestoreWithPassword = { password ->
-                        val uri = pendingRestoreUri
-                        pendingRestoreUri = null
-                        if (uri != null) doRestore(uri, password.toCharArray())
-                    },
-                    onRollbackInterruptedRestore = {
-                        BackupManager.startRollbackInterruptedRestore()
-                    },
-                    onDismissInterruptedRestore = {
-                        BackupManager.dismissInterruptedRestore()
-                    },
-                )
-            }
-        }
+    @Composable
+    override fun Content() {
+        BackupScreen(
+            state = uiState,
+            onBack = { finish() },
+            onCreateBackup = { password ->
+                pendingBackupPassword = password.toCharArray()
+                val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
+                createDocumentLauncher.launch("jime-backup-$stamp.${BackupManager.FILE_EXTENSION}")
+            },
+            onPickRestoreFile = {
+                openDocumentLauncher.launch(arrayOf("*/*"))
+            },
+            onRestoreWithPassword = { password ->
+                val uri = pendingRestoreUri
+                pendingRestoreUri = null
+                if (uri != null) doRestore(uri, password.toCharArray())
+            },
+            onRollbackInterruptedRestore = {
+                BackupManager.startRollbackInterruptedRestore()
+            },
+            onDismissInterruptedRestore = {
+                BackupManager.dismissInterruptedRestore()
+            },
+        )
     }
 
     private fun doCreateBackup(uri: Uri, password: CharArray) {

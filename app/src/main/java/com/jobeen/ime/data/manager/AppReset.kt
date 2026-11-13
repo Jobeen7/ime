@@ -42,9 +42,6 @@ object AppReset {
     /** 内置 Lite 方案集，顺序与默认 default.yaml 的 schema_list 一致。 */
     val BUILTIN_LITE_IDS = listOf("wanxiang_t9", "wanxiang_lite", "wanxiang_english", "wanxiang_mixedcode")
 
-    /** 内置 Lite 主方案（回内置 Lite 的切换目标）。 */
-    const val BUILTIN_LITE_ID = "wanxiang_lite"
-
     /**
      * 重置时清空的偏好文件名白名单（只列全树实际存在的，不凭空编造；
      * 公开常量直接引用，私有常量以字面值列出并注明归属对象）。

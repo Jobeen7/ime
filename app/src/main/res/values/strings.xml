@@ -904,7 +904,6 @@
     <string name="toolbar_delete_toolbar_note">删除后，正在使用该栏的皮肤将回到默认工具栏。</string>
     <!-- 自定义符号栏（施工单 10 H2-5；2026-11-12 符号栏重做：删置顶） -->
     <string name="symbol_bar_title">自定义符号栏</string>
-    <string name="symbol_bar_customize">⊕\n自定义</string>
     <string name="row_sub_symbol_bar">常用符号</string>
     <string name="symbol_bar_add_hint">新增符号</string>
     <string name="symbol_bar_save">保存</string>

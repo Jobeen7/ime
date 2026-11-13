@@ -3,6 +3,7 @@ package com.jobeen.ime.input.keyboard.impl
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.StateListDrawable
@@ -14,7 +15,6 @@ import android.text.TextUtils
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
-import com.jobeen.ime.R
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
@@ -72,74 +72,49 @@ class SymbolKeyboard(
         private const val SWIPE_MIN_DISTANCE_DP = 48
 
         /**
-         * 侧栏单项最小行高（WO36 P-低2，预算口径）：15sp 墨水实测
-         * 最 tall 约 15.26dp（Noto Sans CJK SC，'j' 含降部／全角括号；
-         * 常用字“中”13.79dp），加约 1.2dp 呼吸量取 16.5dp。旧口径
-         * 18dp 取自 Roboto 行盒 1.171875×15＝17.58dp 取整——行盒含
-         * 字体内部 leading，但渲染层按墨水 bounds 居中绘制
-         * （SidePanelRender.drawItems）、不按行盒排布，故行盒高估
-         * 约 2.3dp；16.5dp 仍盖住最 tall 墨水、上下各留约 0.6dp。
-         * 渲染层按字号画墨水（SidePanelRender.textSize＝dp(15)），
-         * 不跟系统字号倍率走，故行高不乘字号倍率。
+         * 侧栏列高几何（WO43 v7，纯函数，可 JVM 单测）：左侧竖栏占
+         * contentH 的 4/5，底部返回区占 1/5；每格高恒等于主行高
+         * （contentH/5，主格 5 行），与主行逐格对齐；格间无分割线
+         * （渲染层本就不画分割线）。返回区高取余数
+         * （contentH − sidePanelH），两区之和恒等于 contentH，
+         * 整除余数不留 1px 缝。
          */
-        internal const val SIDE_ITEM_MIN_HEIGHT_DP = 16.5f
-
-        /**
-         * 「⊕／自定义」入口固定高（P-低2）：两行 12sp 行高 28.1dp
-         * ＋字体内边距约 1.9dp ≈ 30dp，取 32dp 留余量。旧口径
-         * sidePanelH/8 在默认竖屏 24% 只有 18.7dp，两行字上下各裁
-         * 约 4.7dp。入口是 TextView（setTextSize 按 SP 计），字号
-         * 倍率＞1 时按倍率放大（见 [layoutSideColumn]）。
-         */
-        internal const val CUSTOM_ENTRY_HEIGHT_DP = 32f
-
-        /** 侧栏可见行数上限：.1 定为 7 行；高度不足时按行盒折算下调。 */
-        internal const val SIDE_MAX_VISIBLE_ROWS = 7
-
-        /** 侧栏列高分配结果（P-低2，单位 dp）。 */
-        internal data class SideColumnLayout(
-            val customEntryHDp: Float,
-            val visibleRows: Int,
-            val itemHDp: Float,
-        )
-
-        /**
-         * 侧栏列高分配（P-低2，纯函数，可 JVM 单测；单位 dp）：
-         * 自定义入口先拿两行 12sp 的固定高度；剩余高度
-         * 按每项不低于 [SIDE_ITEM_MIN_HEIGHT_DP] 折算可见行数，上限
-         * [SIDE_MAX_VISIBLE_ROWS] 行、下限 1 行；算出的每项高恒 ≥
-         * 最小行高（除非列高本身小于入口高＋一行，此时仍保 1 行）。
-         * 列高小于入口高时入口钳到列高（WO36：旧口径入口恒 32dp，
-         * 列高 10dp 时 onMeasure 会量出负高；钳后入口不溢出、余高
-         * 不为负；列高 ≤0 时入口 0、仍保 1 行×0dp）。钳制只在极值
-         * 生效：列高 ≥ 入口高时入口仍为足额 32dp×字号倍率。
-         *
-         * 预算（S24 Ultra 384×832dp，字号倍率 1.0）：
-         * 竖屏 24%（列高 149.8dp）→ 入口 32dp＋7 行×16.8dp；
-         * 竖屏 24%＋子条（列高 113.8dp）→ 4 行×20.4dp；
-         * 横屏 44%（列高 126.7dp）→ 5 行×18.9dp；
-         * 横屏 30%（列高 86.4dp）→ 3 行×18.1dp；
-         * 横屏 30%＋子条（列高 50.4dp）→ 1 行×18.4dp。
-         * WO36 下限 16.5dp 只改动竖屏 24% 一档（6→7 行），其余四档
-         * 行数与每项高与 WO34 完全一致（16.5dp 落在 (16.35, 16.82]
-         * 区间内：＞81.76/5 保住子条档 4 行，≤117.76/7 恢复 7 行）。
-         * 旧口径 7 行固定：竖屏 18.7dp、横屏 30% 仅 10.8dp、
-         * 横屏 30%＋子条 6.3dp，墨水溢出相邻行。
-         * 未选的方案：visableRow 固定改回 4（竖屏白白少看 2 行，
-         * 横屏 30%＋子条仍只有 11.0dp）；字号随高度缩放（横屏 30%
-         * 时要缩到约 9sp，不可读）。动态折算在各档都保住行盒。
-         */
-        internal fun layoutSideColumn(sidePanelHDp: Float, fontScale: Float = 1f): SideColumnLayout {
-            // 负列高（横条全开＋键盘拉到最小的极值）钳到 0：不量出负高。
-            val panelH = sidePanelHDp.coerceAtLeast(0f)
-            // 入口钳到列高：列高小于入口高时入口不再溢出列外，
-            // onMeasure/onLayout 量出的侧栏区高（列高−入口高）恒 ≥0。
-            val customH = (CUSTOM_ENTRY_HEIGHT_DP * fontScale).coerceAtMost(panelH)
-            val itemAreaH = (panelH - customH).coerceAtLeast(0f)
-            val rows = (itemAreaH / SIDE_ITEM_MIN_HEIGHT_DP).toInt()
-                .coerceIn(1, SIDE_MAX_VISIBLE_ROWS)
-            return SideColumnLayout(customH, rows, itemAreaH / rows)
+        internal fun sidePanelGeometry(contentH: Int): Pair<Int, Int> {
+            val sidePanelH = contentH * 4 / 5
+            return sidePanelH to (contentH - sidePanelH)
         }
+
+        /**
+         * 左侧竖栏项（WO43 v7，纯函数，可 JVM 单测）：用户符号
+         * （15sp、Variant.Alternative）＋末尾“自定义”入口（第 17 项，
+         * 12sp、Variant.Normal，点开符号设置页），与九宫格左竖栏
+         * 同口径；入口随列表一起滑，滑到底才看见。
+         */
+        internal fun buildSidePanelItemDefs(
+            displays: List<String>,
+            landscape: Boolean,
+        ): List<KeyDef> =
+            displays.map { display ->
+                KeyDef(
+                    appearance = KeyDef.Appearance.Text(
+                        displayText = display, textSize = 15f, percentWidth = 0.5f,
+                        margin = false, variant = KeyDef.Appearance.Variant.Alternative,
+                    ),
+                    behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(display))),
+                )
+            } + customEntryDef(landscape)
+
+        /** 左竖栏“自定义”入口（WO43 v7）：与九宫格左竖栏同口径（见 T9Keyboard.customEntryDef）。 */
+        internal fun customEntryDef(landscape: Boolean): KeyDef = KeyDef(
+            appearance = KeyDef.Appearance.Text(
+                displayText = customEntryLabel(landscape),
+                textSize = 12f,
+                percentWidth = 0.5f,
+                margin = false,
+                variant = KeyDef.Appearance.Variant.Normal,
+            ),
+            behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.OpenSymbolBarSettingsAction)),
+        )
         /** P1-7 附加父类标签：数字符号集／九宫格符号集（各一“全部”子类）。 */
         private const val NUMERIC_PARENT_LABEL = "数字"
         private const val T9_PARENT_LABEL = "九宫格"
@@ -162,16 +137,16 @@ class SymbolKeyboard(
     override var keyActionListener: KeyActionListener? = null
 
     /**
-     * 左侧竖栏（2026-11-12 符号栏重做）：显示用户自定义符号列（默认 16），
-     * 上下滑动换符号；可见行数上限 7 行，实际按列高折算（P-低2，见
-     * [layoutSideColumn]，高度不足时下调、每项不低于 16.5dp 墨水下限）；
-     * 底部“自定义”入口固定高、另占一行。
+     * 左侧竖栏（2026-11-12 符号栏重做，WO43 v7）：显示用户自定义符号列
+     * （默认 16 符号＋末尾“自定义”入口，共 17 项，随列表一起滑）；
+     * 一屏 4 格，每格高等于主行高（contentH/5），与主行逐格对齐，
+     * 格间无分割线；底部返回钮固定占一格（contentH/5）。
      * 不再显示分类——分类切换走顶部栏的类型切换钮。
      */
     private val sidePanelKey = SidePanelKeyView(
         context, colors,
         KeyDef.Appearance.SidePannel(
-            rowSpan = 4, visableRow = 7, margin = false,
+            rowSpan = 4, visableRow = 4, margin = false,
             variant = KeyDef.Appearance.Variant.Alternative,
             border = KeyDef.Appearance.Border.On,
         ),
@@ -227,26 +202,6 @@ class SymbolKeyboard(
      * updatePunctuationMode（KeyboardStateManager.switchTo 下发）。
      */
     private var punctuationMode: PunctuationMode = PunctuationMode.FullWidth
-
-    /** 左侧竖栏底部“自定义”入口（固定不滚动，点开设置页）。 */
-    private val customEntryView: TextView = TextView(context).apply {
-        gravity = Gravity.CENTER
-        // 12sp：两行（⊕／自定义）需 28.1dp 行高＋字体内边距，入口高按
-        // CUSTOM_ENTRY_HEIGHT_DP 取 32dp（P-低2）；旧口径 sidePanelH/8
-        // 在默认竖屏 24% 只有 18.7dp，两行字会被上下各裁约 4.7dp。
-        // 14sp 两行约 34dp 会被裁掉下半行。
-        setTextSize(12f)
-        setTextColor(colors.specialKeyText)
-        setBackgroundColor(colors.specialKeyBackground)
-        maxLines = 2
-        text = context.getString(R.string.symbol_bar_customize)
-        isClickable = true
-        setOnClickListener {
-            val intent = Intent(context, SymbolBarSettingsActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            runCatching { context.startActivity(intent) }
-        }
-    }
 
     /**
      * 二级面板数据源：皮肤定义二级表时用皮肤表，否则既有一级表
@@ -322,28 +277,6 @@ class SymbolKeyboard(
      */
     private var swipeLatchedDx: Float? = null
 
-    /** 已下发给侧栏的可见行数（P-低2）：只在变化时调 updateVisibleItemCount。 */
-    private var appliedSideRows = -1
-
-    /**
-     * 侧栏列高分配（P-低2）：px→dp 算预算、再回 px；onMeasure 与
-     * onLayout 共用同一口径，避免两处算出的入口高／行数漂移。
-     * 可见行数只在变化时下发（updateVisibleItemCount 会 clamp＋
-     * invalidate，每次 measure 都调会多余刷新）。
-     */
-    private fun sideColumnLayout(sidePanelHPx: Int): SideColumnLayout {
-        val density = context.resources.displayMetrics.density
-        val layout = layoutSideColumn(
-            sidePanelHPx / density,
-            context.resources.configuration.fontScale,
-        )
-        if (layout.visibleRows != appliedSideRows) {
-            appliedSideRows = layout.visibleRows
-            sidePanelKey.updateVisibleItemCount(layout.visibleRows)
-        }
-        return layout
-    }
-
     init {
         sideReturnBtn.borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
         sideReturnBtn.hMargin = 0
@@ -360,7 +293,13 @@ class SymbolKeyboard(
         rebuildSidePanelSymbols()
 
         sidePanelKey.setOnItemActionListener { action ->
-            if (action is KeyboardAction.CommitAction) {
+            if (action is KeyboardAction.OpenSymbolBarSettingsAction) {
+                // “自定义”入口就地处理：直接起符号设置页，不下发引擎、
+                // 不进服务分发（与 T9Keyboard.onAction 同口径）。
+                val intent = Intent(context, SymbolBarSettingsActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                runCatching { context.startActivity(intent) }
+            } else if (action is KeyboardAction.CommitAction) {
                 // 竖栏符号：点按提交，提交后自动返回（与网格／横条同口径）。
                 dispatchBoardCommit(action.text)
             } else {
@@ -488,7 +427,6 @@ class SymbolKeyboard(
         }
 
         addView(sidePanelKey, lParams(0, matchParent))
-        addView(customEntryView, lParams(0, matchParent))
         addView(sideReturnBtn, lParams(0, matchParent))
         addView(gridView, lParams(0, matchParent))
         addView(subStripView, lParams(matchParent, 0))
@@ -729,10 +667,10 @@ class SymbolKeyboard(
     }
 
     /**
-     * 左侧竖栏重建（2026-11-12 符号栏重做）：显示用户自定义符号列
-     * （默认 16 符号），点格提交。init 与 onAttach 都调用——板实例
-     * 复用时设置改动下次打开符号面板即生效。WO30 §3(9) 续：显示与
-     * 提交都按标点模式换算（与九宫格竖栏同口径）；「、」半角出「､」
+     * 左侧竖栏重建（2026-11-12 符号栏重做，WO43 v7）：显示用户自定义符号列
+     * （默认 16 符号＋末尾“自定义”入口，共 17 项），点格提交。init 与 onAttach
+     * 都调用——板实例复用时设置改动下次打开符号面板即生效。WO30 §3(9) 续：
+     * 显示与提交都按标点模式换算（与九宫格竖栏同口径）；「、」半角出「､」
      * （U+FF64，WO33 核实补入换算表）、全角回「、」。
      */
     private fun rebuildSidePanelSymbols() {
@@ -740,15 +678,11 @@ class SymbolKeyboard(
             userSymbolStore.load().symbols,
             punctuationMode,
         )
-        sidePanelItemDefs = displays.map { display ->
-            KeyDef(
-                appearance = KeyDef.Appearance.Text(
-                    displayText = display, textSize = 15f, percentWidth = 0.5f,
-                    margin = false, variant = KeyDef.Appearance.Variant.Alternative,
-                ),
-                behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(display))),
-            )
-        }
+        sidePanelItemDefs = buildSidePanelItemDefs(
+            displays,
+            context.resources.configuration.orientation ==
+                Configuration.ORIENTATION_LANDSCAPE,
+        )
         sidePanelKey.updateItems(sidePanelItemDefs)
     }
 
@@ -763,16 +697,9 @@ class SymbolKeyboard(
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val hH = if (hStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val contentH = th - barH - subH - hH
-        val sidePanelH = contentH * 3 / 4
-        // P-低2：竖栏区列高按 layoutSideColumn 分配——自定义入口先拿
-        // 足两行 12sp 的固定高，剩余高度按 16.5dp 墨水下限折算可见行数
-        // （上限 7 行）；旧口径 8 等分（sidePanelH/8）在默认竖屏
-        // 24% 每项只有 18.7dp、横屏 30% 仅 10.8dp。
-        val customH = context.dp(sideColumnLayout(sidePanelH).customEntryHDp).toInt()
-        // 侧栏底区整段归返回钮（板锁已删）。
-        val returnRegionH = contentH - sidePanelH
-        sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH - customH, MeasureSpec.EXACTLY))
-        customEntryView.measure(mES(sw, MeasureSpec.EXACTLY), mES(customH, MeasureSpec.EXACTLY))
+        // WO43 v7：侧栏 4/5、返回区 1/5（见 sidePanelGeometry）。
+        val (sidePanelH, returnRegionH) = sidePanelGeometry(contentH)
+        sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH, MeasureSpec.EXACTLY))
         sideReturnBtn.measure(
             mES(sw, MeasureSpec.EXACTLY), mES(returnRegionH, MeasureSpec.EXACTLY)
         )
@@ -792,15 +719,13 @@ class SymbolKeyboard(
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val hH = if (hStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val contentH = (b - t) - barH - subH - hH
-        val sidePanelH = contentH * 3 / 4
-        // P-低2：与 onMeasure 同一口径（见 sideColumnLayout）。
-        val customH = context.dp(sideColumnLayout(sidePanelH).customEntryHDp).toInt()
+        // WO43 v7：与 onMeasure 同一口径（见 sidePanelGeometry）。
+        val sidePanelH = sidePanelGeometry(contentH).first
         barView?.layout(0, 0, r - l, barH)
         subStripView.layout(0, barH, r - l, barH + subH)
         hStripView.layout(0, barH + subH, r - l, barH + subH + hH)
         val top = barH + subH + hH
-        sidePanelKey.layout(0, top, sw, top + sidePanelH - customH)
-        customEntryView.layout(0, top + sidePanelH - customH, sw, top + sidePanelH)
+        sidePanelKey.layout(0, top, sw, top + sidePanelH)
         sideReturnBtn.layout(0, top + sidePanelH, sw, top + contentH)
         gridView.layout(sw, top, r - l, top + contentH)
         rippleView.layout(0, 0, r - l, b - t)
