@@ -43,6 +43,12 @@ data class KeyAnimationSpec(
     val releaseDurationMs: Int? = null,
     /** 抬起是否自动回弹到 1.0（对端 isAutoReverse）；缺省 true。 */
     val autoReverse: Boolean = true,
+    /**
+     * WO38 按压下沉（对端 KeyEffects.pressSink，0..8dp）：压下时
+     * 键面整体下移，抬起回 0；0 = 不下沉（缺省，旧皮肤行为不变）。
+     * 与 pressedScale 同一动画器、同一分段时长跑（见 KeyView 接线差距）。
+     */
+    val pressedSinkDp: Float = DEFAULT_PRESSED_SINK_DP,
 ) {
     companion object {
         const val DEFAULT_PRESSED_SCALE: Float = 0.96f
@@ -50,6 +56,8 @@ data class KeyAnimationSpec(
         const val DEFAULT_DURATION_MS: Int = 120
         const val MIN_DURATION_MS: Int = 50
         const val MAX_DURATION_MS: Int = 300
+        const val DEFAULT_PRESSED_SINK_DP: Float = 0f
+        const val MAX_PRESSED_SINK_DP: Float = 8f
     }
 }
 
@@ -186,9 +194,29 @@ object KeyAnimationParser {
             }
         }
 
+        // WO38 下沉：主字段 `pressedSinkDp`，兼容对端名 `pressSink`；
+        // 两者皆有时主字段优先；非法／越界（0..8dp 外）回退 0。
+        var pressedSinkDp = KeyAnimationSpec.DEFAULT_PRESSED_SINK_DP
+        val sinkNode = obj["pressedSinkDp"] ?: obj["pressSink"]
+        if (sinkNode != null) {
+            val primitive = sinkNode as? JsonPrimitive
+            val value = if (primitive != null && !primitive.isString) {
+                primitive.content.toFloatOrNull()
+            } else {
+                null
+            }
+            if (value == null || !value.isFinite() || value < 0f ||
+                value > KeyAnimationSpec.MAX_PRESSED_SINK_DP
+            ) {
+                fallback("pressedSinkDp", "key_animation_sink_invalid")
+            } else {
+                pressedSinkDp = value
+            }
+        }
+
         return KeyAnimationSpec(
             enabled, pressedScale, durationMs, easing,
-            pressDurationMs, releaseDurationMs, autoReverse,
+            pressDurationMs, releaseDurationMs, autoReverse, pressedSinkDp,
         ) to issues
     }
 }

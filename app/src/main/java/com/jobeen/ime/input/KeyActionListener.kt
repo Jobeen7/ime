@@ -59,6 +59,14 @@ class KeyActionListener(
      */
     private val scriptJobs = ConcurrentHashMap<String, Job>()
 
+    /**
+     * 统一会话门控（WO38 E1-9）：延迟分发的纪元复检走本门。同步按键
+     * 按下即分发、恒为当前会话，不经门控；门控只拦跨会话延迟分发
+     * （本文件内即 RunScriptAction 的回切分发）。长按连发的按下戳
+     * 不在本文件内，见 [InputKeyGate] 的已知缺口。
+     */
+    private val inputKeyGate = InputKeyGate()
+
     override fun onKeyAction(action: KeyboardAction) {
         // P4 分段探针（分发段）：起点标记；门控关时 stageStart 返回 -1，
         // 末尾 noteStage 即 no-op。早返回路径（MultiReturnAction 取不到
@@ -618,6 +626,11 @@ class KeyActionListener(
             // 或字段身份已变，过期结果直接丢弃并只记元数据，绝不
             // 把旧框脚本的动作写进新框。无输入框时身份为空、纪元
             // 仍比对（纪元推进仍能拦住旧会话结果）。
+            // WO38 E1-9：纪元一半走统一门控 InputKeyGate（启动时
+            // capture、分发时 check，拒绝记原因 stale_key_rejected）；
+            // 字段身份一半仍由 ScriptRunSession 复检（原行为不动：
+            // 纪元已过时门控先记原因，字段已变而纪元未动时仍记旧的
+            // script_key_stale_session；两者任一不过即不分发）。
             // 全局并发（审计 #1-10）：全部皮肤脚本共用 4 个并发槽
             // （见 SkinScriptSandbox）。本任务先取许可再进沙箱：
             // 排队等许可可取消——同 scriptId 再按取消旧任务时，
@@ -626,11 +639,13 @@ class KeyActionListener(
             // 同 scriptId 单飞取消口径不变（取消只拦分发，Rhino
             // 求值本身不可中断，在途求值仍跑完但不落地）。
             is KeyboardAction.RunScriptAction -> {
+                val capturedEpoch = inputKeyGate.capture()
                 val captured = ScriptRunSession.capture(
                     service.currentInputEditorInfo,
-                    SherpaSpeechClient.currentEditorEpoch(),
+                    capturedEpoch,
                 )
                 scriptJobs[action.scriptId]?.cancel()
+                scriptRunner.cancelRun(action.scriptId)
                 val job = appScope.launch(Dispatchers.Default) {
                     if (!SkinScriptSandbox.acquireRunPermit()) {
                         DiagLog.w(
@@ -645,13 +660,20 @@ class KeyActionListener(
                         ) {
                             is SkinScriptKeyBridge.KeyRunOutcome.Dispatch -> {
                                 withContext(Dispatchers.Main) {
-                                    if (ScriptRunSession.isCurrent(
+                                    val gateResult = inputKeyGate.check(
+                                        capturedEpoch,
+                                        "run_script:${action.scriptId}",
+                                    )
+                                    if (gateResult is InputKeyGateResult.Allow &&
+                                        ScriptRunSession.isCurrent(
                                             captured,
                                             service.currentInputEditorInfo,
                                             SherpaSpeechClient.currentEditorEpoch(),
                                         )
                                     ) {
                                         onKeyAction(outcome.action)
+                                    } else if (gateResult is InputKeyGateResult.Deny) {
+                                        // 门控已记拒绝原因（stale_key_rejected），不再另记。
                                     } else {
                                         DiagLog.w(
                                             "keymap", "script_key_stale_session",

@@ -213,9 +213,17 @@ class SkinEditorReasonsTest {
     }
 
     @Test
-    fun unknownCodeFallsBackToGenericText() {
-        assertEquals(unknown, SkinEditorReasons.reasonResId("bogus_code_xyz"))
-        assertEquals(unknown, SkinEditorReasons.reasonResId(""))
+    fun unknownCodeFallsBackToNoActiveSkin() {
+        // WO36：未知码回落改回具体提示“无生效皮肤”（WO33 前口径），
+        // 不再是通用“操作失败，请重试”。
+        assertEquals(
+            R.string.skin_editor_no_active_skin,
+            SkinEditorReasons.reasonResId("bogus_code_xyz"),
+        )
+        assertEquals(
+            R.string.skin_editor_no_active_skin,
+            SkinEditorReasons.reasonResId(""),
+        )
     }
 
     @Test

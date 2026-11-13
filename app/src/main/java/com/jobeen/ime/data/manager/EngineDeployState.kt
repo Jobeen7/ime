@@ -35,11 +35,11 @@ object EngineDeployState {
      *
      * 本函数是普通置位、不是凭证 CAS：两次释放之间另一路抢到部
      * 署位会被第二放误删。双放安全不在本函数内、而在调用点保证
-     * （I-L1）：同一持有只在一处释放（部署作业体只在 finally
-     * 复位），消费循环的 onDropped 只在作业体未执行时才调
-     * （QueuedJob.started 守卫）；finalize 的统一清零只在引擎
-     * 已死（作用域取消后）时执行。不要在本函数外再以“多调一次
-     * 复位兜底”为由补释放——兜底即双放。
+     * （I-L1）：deployAndAwait 的三方释放点（部署作业体 finally、
+     * onDropped、等待方的作用域已死／超时／取消分支）共用同一认领
+     * （RimeEngine.kt 的 claimDeployReleaseOnce），任一方认领后其
+     * 余方跳过；finalize 的统一清零只在引擎已死（作用域取消后）时
+     * 执行。不要在本函数外再以“多调一次复位兜底”为由补释放——兜底即双放。
      */
     fun releaseRunning() {
         _running.value = false
@@ -73,8 +73,8 @@ object EngineDeployState {
     /**
      * 释放孤儿部署位：仅由置位方调用（见 [tryAcquireOrphanRunning]）。
      * 与 [releaseRunning] 同口径：普通置位、无凭证 CAS，双放安全
-     * 靠调用点（部署作业体只在 finally 一处释放、消费循环的
-     * onDropped 只在作业体未执行时才调）保证。
+     * 靠调用点（deployAndAwait 三方释放点共用同一认领，见
+     * [releaseRunning]）保证。
      */
     fun releaseOrphanRunning() {
         _orphanRunning.value = false

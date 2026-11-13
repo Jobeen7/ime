@@ -1,6 +1,10 @@
 package com.jobeen.ime.input.stats
 
+import android.content.Context
+import android.content.SharedPreferences
 import android.os.SystemClock
+import androidx.core.content.edit
+import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.store.AtomicFiles
@@ -55,7 +59,10 @@ import kotlinx.serialization.json.put
  * - 存储：filesDir/input_stats/stats.json（AtomicFiles 原子写，
  *   5s 防抖落盘＋窗口 detach 时 flush）；本地存储，不上传；
  *   JSON 导出／导入整份状态（导入校验 version＝1，非法拒绝
- *   且不改动现有数据）。
+ *   且不改动现有数据）。启动加载遇损坏文件时隔离改名
+ *   （stats.json.corrupt-<时间戳>，保留证据）＋内存重置为空。
+ * - 总开关：偏好 input_stats.enabled（默认开），关时
+ *   noteKeyPress/noteCommit 不记录，已有数据仍可看／导出／清除。
  */
 object InputStats {
 
@@ -192,6 +199,50 @@ object InputStats {
     const val STATS_FILE = "stats.json"
     const val FLUSH_DEBOUNCE_MS = 5000L
 
+    /** 输入统计总开关偏好键（与键盘设置同文件，键名自带 input_stats 前缀隔离）。 */
+    internal const val KEY_STATS_ENABLED = "input_stats.enabled"
+
+    /**
+     * 总开关缓存（默认开＝现行行为；关时 noteKeyPress/noteCommit
+     * 直接返回，不记不落盘，已有数据仍可看／导出／清除）。
+     */
+    @Volatile
+    internal var statsEnabled = true
+
+    /** 门控监听强持有（SharedPreferences 弱持有监听，不持有会被 GC 掉）。 */
+    private var gateListener: SharedPreferences.OnSharedPreferenceChangeListener? = null
+
+    /** 仅测试用：直接置缓存（不写偏好）。 */
+    fun setStatsEnabled(enabled: Boolean) {
+        statsEnabled = enabled
+    }
+
+    /** 设置页用：读偏好现值（默认开）。 */
+    fun isStatsEnabled(context: Context): Boolean =
+        prefs(context).getBoolean(KEY_STATS_ENABLED, true)
+
+    /** 设置页用：写偏好并同步缓存（监听未装时也能立即生效）。 */
+    fun setStatsEnabled(context: Context, enabled: Boolean) {
+        statsEnabled = enabled
+        prefs(context).edit { putBoolean(KEY_STATS_ENABLED, enabled) }
+    }
+
+    /** 绑定总开关到偏好：启动时读一次现值，之后键变化经监听刷新缓存。 */
+    fun bindStatsGate(context: Context) {
+        val prefs = prefs(context)
+        statsEnabled = prefs.getBoolean(KEY_STATS_ENABLED, true)
+        val listener = SharedPreferences.OnSharedPreferenceChangeListener { changed, key ->
+            if (key == KEY_STATS_ENABLED) {
+                statsEnabled = changed.getBoolean(KEY_STATS_ENABLED, true)
+            }
+        }
+        gateListener = listener
+        prefs.registerOnSharedPreferenceChangeListener(listener)
+    }
+
+    private fun prefs(context: Context): SharedPreferences =
+        context.getSharedPreferences(KeyboardManager.PREFS_NAME, Context.MODE_PRIVATE)
+
     internal var clockMs: () -> Long = { SystemClock.elapsedRealtime() }
     internal var wallMs: () -> Long = { System.currentTimeMillis() }
 
@@ -237,6 +288,7 @@ object InputStats {
      * 按键；语音拖动探针不算按键；删除类动作另记删除数。
      */
     fun noteKeyPress(action: KeyboardAction) {
+        if (!statsEnabled) return
         if (action is KeyboardAction.VoiceDragPosition ||
             action is KeyboardAction.VoiceDragUp
         ) {
@@ -286,6 +338,7 @@ object InputStats {
      * 词长分档（提交串长度：1／2／3／4以上；空串不记）。
      */
     fun noteCommit(text: String) {
+        if (!statsEnabled) return
         if (text.isEmpty()) return
         val hour = hourOfDay()
         val wordLenBucket = when (text.length) {
@@ -455,7 +508,7 @@ object InputStats {
         return true
     }
 
-    /** 仅测试用：清全部内存状态（不碰磁盘配置）。 */
+    /** 仅测试用：清全部内存状态（含统计目录指针与总开关缓存，不碰磁盘文件）。 */
     internal fun resetForTest() {
         synchronized(lock) {
             days.clear()
@@ -464,7 +517,11 @@ object InputStats {
             currentScheme = ""
             lastKeyMs = 0L
             pendingDeleteMs = 0L
+            pendingFlush?.cancel(false)
+            pendingFlush = null
+            statsDir = null
         }
+        statsEnabled = true
     }
 
     // ---- 内部 ----
@@ -599,7 +656,19 @@ object InputStats {
         if (!file.isFile) return
         val parsed = runCatching { parseLocked(file.readText()) }.getOrNull()
         if (parsed == null) {
-            DiagLog.w("stats", "stats_corrupt_fallback_empty")
+            // 损坏文件隔离改名（保留证据）＋内存重置为空；下次启动
+            // 不再反复读坏文件。改名失败时也只记日志、不堵启动。
+            val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US)
+                .format(Date(wallMs()))
+            val quarantine = File(dir, "$STATS_FILE.corrupt-$stamp")
+            val moved = runCatching { file.renameTo(quarantine) }.getOrDefault(false)
+            days.clear()
+            lifetimeChars = 0L
+            fastestBaseline = null
+            DiagLog.w(
+                "stats", "stats_corrupt_fallback_empty",
+                mapOf("quarantine" to if (moved) quarantine.name else "rename_failed"),
+            )
             return
         }
         days = parsed.first

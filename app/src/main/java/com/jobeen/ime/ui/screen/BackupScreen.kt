@@ -27,6 +27,17 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
 
+/**
+ * 中断还原横幅主文案是否提回滚（D-L1，WO36）：回滚入口禁用时
+ * （快照不可用——损坏 journal 或快照丢失，回滚钮已禁用）主文案
+ * 不再提回滚，只说重新导入备份文件；快照在位时主文案保留“或回滚
+ * 到还原前的状态”。回滚钮的启用条件与此同值（snapshotAvailable，
+ * 见下文按钮 enabled），文案与按钮永不同步错位。
+ */
+internal fun interruptedRestoreMessageMentionsRollback(
+    info: com.jobeen.ime.data.backup.BackupManager.InterruptedRestoreInfo,
+): Boolean = info.snapshotAvailable
+
 /** 备份与还原页的 UI 状态与动作：文件读写与加解密在 BackupActivity 中完成 */
 class BackupUiState {
     var busyText: String? by mutableStateOf(null)
@@ -72,7 +83,11 @@ fun BackupScreen(
                         )
                         Text(
                             text = stringResource(
-                                R.string.backup_restore_interrupted_message,
+                                if (interruptedRestoreMessageMentionsRollback(info)) {
+                                    R.string.backup_restore_interrupted_message
+                                } else {
+                                    R.string.backup_restore_interrupted_message_no_rollback
+                                },
                                 java.text.SimpleDateFormat(
                                     "yyyy-MM-dd HH:mm",
                                     java.util.Locale.getDefault(),

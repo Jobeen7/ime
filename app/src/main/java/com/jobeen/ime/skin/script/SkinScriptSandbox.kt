@@ -4,7 +4,9 @@ import com.jobeen.ime.base.speech.cloud.BridgeFunction
 import com.jobeen.ime.base.speech.cloud.PluginContract
 import com.jobeen.ime.base.speech.cloud.RhinoSession
 import com.jobeen.ime.base.speech.cloud.ScriptBudgetExceeded
+import com.jobeen.ime.base.speech.cloud.ScriptCancelled
 import com.jobeen.ime.base.speech.cloud.sanitizeScriptError
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withTimeoutOrNull
@@ -52,6 +54,12 @@ import org.mozilla.javascript.NativeObject
  *   (The host register setup eval inside RhinoSession.create is host
  *   code with its own constant budget, not script time, and is not
  *   charged to the script deadline.)
+ * - Cancellable in-flight run: the host may call [cancelRun] with the
+ *   runId passed to [run] (the runner passes the scriptId); the
+ *   in-flight eval dies at the next instruction sample with
+ *   [SkinScriptFailure.Cancelled]. Cancel is a host decision, not a
+ *   script fault, so it never counts toward the runner's circuit
+ *   breaker. Without a runId a run cannot be cancelled by id.
  * - No unbounded input/output: source size is re-checked here even
  *   though the store already caps it; log lines and return values are
  *   capped; script source and error messages are never logged (only the
@@ -102,6 +110,7 @@ class SkinScriptSandbox {
         event: String,
         args: Map<String, String>,
         onLog: (String) -> Unit = {},
+        runId: String? = null,
     ): SkinScriptRunOutcome {
         if (source.toByteArray(Charsets.UTF_8).size > PluginContract.MAX_SCRIPT_BYTES) {
             return SkinScriptRunOutcome.Failed(SkinScriptFailure.TooLarge)
@@ -116,9 +125,38 @@ class SkinScriptSandbox {
             return SkinScriptRunOutcome.Failed(SkinScriptFailure.TooManyConcurrent)
         }
         try {
-            return runInner(source, event, args, onLog)
+            return runInner(source, event, args, onLog, runId)
         } finally {
             activeRuns.decrementAndGet()
+        }
+    }
+
+    /**
+     * 取消一次在途运行（线程安全，可从任意线程调）。返回 true 当
+     * 且仅当该 runId 正有一场运行在途且已收到取消信号；无在途运
+     * 行或运行已结束时返回 false。同一 runId 同时只应有一场运行
+     * （分发层单飞保证）；若重叠，取消命中的是最新登记的那一场。
+     */
+    fun cancelRun(runId: String): Boolean {
+        val session = liveSessions[runId] ?: return false
+        session.cancel()
+        return true
+    }
+
+    /**
+     * 在途会话登记：runId → 活会话。取消时按 runId 找到会话调
+     * cancel；运行结束（无论成败）即摘除，绝不跨运行复用。
+     */
+    private inline fun <T> runWithRegistration(
+        runId: String?,
+        session: RhinoSession,
+        block: () -> T,
+    ): T {
+        if (runId != null) liveSessions[runId] = session
+        try {
+            return block()
+        } finally {
+            if (runId != null) liveSessions.remove(runId, session)
         }
     }
 
@@ -140,10 +178,12 @@ class SkinScriptSandbox {
         event: String,
         args: Map<String, String>,
         onLog: (String) -> Unit,
+        runId: String?,
     ): SkinScriptRunOutcome {
         val logs = ArrayList<String>()
         return try {
             RhinoSession.create().use { session ->
+                runWithRegistration(runId, session) {
                 session.putBridge("skin", buildSkinBridge(logs, onLog))
                 // 单一墙钟预算：eval 与 onEvent 调用共享同一截止
                 // 时间，每段开始前按剩余时间重算预算；任一段超限
@@ -167,9 +207,12 @@ class SkinScriptSandbox {
                     value = capReturn(raw),
                     logLines = logs.toList(),
                 )
+                }
             }
         } catch (e: ScriptBudgetExceeded) {
             SkinScriptRunOutcome.Failed(SkinScriptFailure.BudgetExceeded)
+        } catch (e: ScriptCancelled) {
+            SkinScriptRunOutcome.Failed(SkinScriptFailure.Cancelled)
         } catch (e: Exception) {
             // Sanitized kind only: never the message (it may quote source).
             SkinScriptRunOutcome.Failed(
@@ -252,6 +295,9 @@ class SkinScriptSandbox {
         /** 全局在途运行计数（全部沙箱实例共用；硬上限的执行点）。 */
         private val activeRuns = AtomicInteger(0)
 
+        /** 在途会话登记（全部沙箱实例共用；见 [SkinScriptSandbox.cancelRun]）。 */
+        private val liveSessions = ConcurrentHashMap<String, RhinoSession>()
+
         /**
          * 分发层排队许可（与 [activeRuns] 同值 4 槽）：按键脚本
          * 在后台任务里先取许可再进沙箱，取不到（超时）即放弃；
@@ -294,6 +340,15 @@ sealed interface SkinScriptFailure {
 
     /** Script error, carrying only the sanitized exception kind, never source text. */
     data class Error(val kind: String) : SkinScriptFailure
+
+    /** 宿主取消了在途运行（同 scriptId 再按／管理页取消）：不是脚本故障，不计入熔断。 */
+    data object Cancelled : SkinScriptFailure
+
+    /**
+     * 熔断已开：同一脚本连续故障达上限，后续运行直接拒绝、不再
+     * 执行，直到应用重启、脚本重载（源码变化）或手动复位。
+     */
+    data object CircuitOpen : SkinScriptFailure
 
     companion object {
         fun error(kind: String): SkinScriptFailure = Error(kind)

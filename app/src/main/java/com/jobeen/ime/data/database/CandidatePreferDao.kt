@@ -33,6 +33,14 @@ interface CandidatePreferDao {
      * context/updated_at、created_at 不动。两条子语句仅供本事
      * 务方法调用，不得单独使用（单独调 increment 会丢首次建行，
      * 单独调 insert 落的 0 计数不是有效偏好）。
+     *
+     * WO36 复核（D-L5，保留）：单语句 UPSERT 仍走不通——官方
+     * SQLite 版本表：API 24→3.9、API 28→3.22、API 30→3.28，
+     * UPSERT 须 3.24＋ 即 API 30＋，minSdk 24 覆盖的 API 24–29
+     * 设备会直接语法错误；接 sqlite-bundled 是新依赖，不在精简
+     * 方向内。移子语句进包装／仓库层亦不做：那是新机制（且丢
+     * Room 编译期 SQL 检查），与“照旧精简”相背。残余：两子语句
+     * 继续公开、仅以本文档约束，误调后果同上。
      */
     @Transaction
     suspend fun upsert(text: String, context: String, now: Long = System.currentTimeMillis()) {

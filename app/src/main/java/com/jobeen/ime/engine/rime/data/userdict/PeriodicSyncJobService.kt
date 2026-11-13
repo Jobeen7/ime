@@ -5,6 +5,7 @@ package com.jobeen.ime.engine.rime.data.userdict
 import android.app.job.JobParameters
 import android.app.job.JobService
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
+import com.jobeen.ime.input.ImeInputMethodService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -27,9 +28,21 @@ class PeriodicSyncJobService : JobService() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     override fun onStartJob(params: JobParameters): Boolean {
-        if (!PeriodicSyncPrefs.enabled) {
-            jobFinished(params, false)
-            return false
+        // E2（WO39-9）可见性门：开关关→不跑；键盘隐藏→不跑同步、
+        // jobFinished(params, true) 要求系统重排；可见→跑。门判定
+        // 是纯函数 decideSyncStart（见 companion），本段只做分发，
+        // 原同步体原样保留在 RUN 分支之后、不重缩进。
+        when (decideSyncStart(PeriodicSyncPrefs.enabled, ImeInputMethodService.isKeyboardVisible)) {
+            SyncGateDecision.SKIP_DISABLED -> {
+                jobFinished(params, false)
+                return false
+            }
+            SyncGateDecision.RESCHEDULE -> {
+                Timber.i("Periodic sync deferred: keyboard not visible")
+                jobFinished(params, true)
+                return false
+            }
+            SyncGateDecision.RUN -> Unit
         }
         scope.launch {
             var allOk = false
@@ -76,8 +89,25 @@ class PeriodicSyncJobService : JobService() {
         return true
     }
 
+    /**
+     * E2（WO39-9）可见性门判定结果：RUN 跑同步；RESCHEDULE 键盘
+     * 隐藏、不跑并要求系统重排；SKIP_DISABLED 开关关、不跑不重排。
+     */
+    internal enum class SyncGateDecision { RUN, RESCHEDULE, SKIP_DISABLED }
+
     companion object {
         private const val SESSION_NAME = "periodic-sync"
+
+        /**
+         * 可见性门判定（纯函数，供单测）：开关关→不跑；键盘隐藏→重排；
+         * 可见→跑。开关关优先于可见性（关时无论可见与否都不跑）。
+         */
+        internal fun decideSyncStart(enabled: Boolean, keyboardVisible: Boolean): SyncGateDecision =
+            when {
+                !enabled -> SyncGateDecision.SKIP_DISABLED
+                !keyboardVisible -> SyncGateDecision.RESCHEDULE
+                else -> SyncGateDecision.RUN
+            }
 
         /**
          * 待同步词典表：与 syncAllDicts 同口径，滤掉 stats（输入统计数据库，

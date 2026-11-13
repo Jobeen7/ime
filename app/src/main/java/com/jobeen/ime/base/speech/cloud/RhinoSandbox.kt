@@ -18,6 +18,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 class ScriptBudgetExceeded : RuntimeException()
 
 /**
+ * 脚本会话被宿主取消：在途求值在下一个指令采样点中断，绝不重试。
+ * 只由宿主显式调 [RhinoSession.cancel] 产生；从不由脚本自身触发，
+ * 语音插件侧永不调 cancel，故语音行为与此前完全一致。
+ */
+class ScriptCancelled : RuntimeException()
+
+/**
  * 已消毒的脚本错误信息：只含异常类名与行号。
  * 绝不含脚本源码、行内容、输入文本与网络体（Rhino 原始报错可能带行内容，
  * 故调用方只许记本对象，绝不直接记原始异常消息）。
@@ -41,6 +48,9 @@ fun sanitizeScriptError(e: Throwable): ScriptErrorInfo {
  * - 每会话独立 Context 与顶层作用域，会话间、插件间无共享全局态；
  * - 每次脚本调用都带墙钟预算（见 [eval]／[callFunction] 的 budgetMs），
  *   超限抛 [ScriptBudgetExceeded]，宿主杀实例。
+ * - 可取消：宿主可随时调 [RhinoSession.cancel] 中断在途求值（下一
+ *   指令采样点抛 [ScriptCancelled]）；未调 cancel 的会话行为与此
+ *   前完全一致（标志默认 false，观察器只多一次线程本地读）。
  *
  * 线程纪律：一个会话只活在一个线程上（引擎 Context 线程绑定）；
  * 非属主线程调用一律抛错，宿主以串行工作线程持有本会话。
@@ -54,6 +64,22 @@ class RhinoSession private constructor(
 
     @Volatile
     private var closed = false
+
+    /**
+     * 取消标志：宿主从任意线程置位，解释器在下一采样点抛
+     * [ScriptCancelled]。标志只进不退（会话用完即弃，不复用）。
+     */
+    private val cancelFlag = AtomicBoolean(false)
+
+    /**
+     * 取消在途求值（线程安全，可从非属主线程调）。在途求值在下一
+     * 指令采样点（≤4096 条指令）中断抛 [ScriptCancelled]；未在
+     * 途时本次会话的后续求值一进解释器即取消。语音插件侧永不调
+     * 本方法，故其行为不受影响。
+     */
+    fun cancel() {
+        cancelFlag.set(true)
+    }
 
     private fun checkThread() {
         check(Thread.currentThread() === ownerThread) {
@@ -126,6 +152,7 @@ class RhinoSession private constructor(
         closed = true
         // Context.exit 必须在进入线程上调用；宿主保证从工作线程关闭。
         if (Thread.currentThread() === ownerThread) {
+            runCatching { cx.removeThreadLocal(CANCEL_KEY) }
             runCatching { Context.exit() }
         }
     }
@@ -134,6 +161,9 @@ class RhinoSession private constructor(
         const val REGISTER_CAPTURE_NAME = "__registerArg"
 
         private const val DEADLINE_KEY = "cloudVoiceDeadlineNanos"
+
+        /** 取消标志的线程本地键：与 [DEADLINE_KEY] 同机制（见 [RhinoSession.cancel]）。 */
+        private const val CANCEL_KEY = "cloudVoiceCancelFlag"
 
         /** 指令观察粒度：解释器每执行这么多指令查一次墙钟。 */
         private const val OBSERVER_THRESHOLD = 4096
@@ -159,6 +189,11 @@ class RhinoSession private constructor(
             }
 
             override fun observeInstructionCount(cx: Context, instructionCount: Int) {
+                // 取消优先于预算：取消是宿主的显式意图；未调 cancel
+                // 时标志恒 false，本分支恒不触发，语音侧行为不变。
+                if ((cx.getThreadLocal(CANCEL_KEY) as? AtomicBoolean)?.get() == true) {
+                    throw ScriptCancelled()
+                }
                 val deadline = cx.getThreadLocal(DEADLINE_KEY) as? Long ?: return
                 if (System.nanoTime() > deadline) throw ScriptBudgetExceeded()
             }
@@ -178,6 +213,9 @@ class RhinoSession private constructor(
                 scope.delete(name)
             }
             val session = RhinoSession(cx, scope)
+            // 取消标志进线程本地：观察器（同一属主线程）每 4096 条
+            // 指令读它；置位由宿主从任意线程经 AtomicBoolean 完成。
+            cx.putThreadLocal(CANCEL_KEY, session.cancelFlag)
             // register 捕获是宿主代码，先于插件源码执行。
             session.eval(REGISTER_SETUP, "host-register", 500L)
             return session

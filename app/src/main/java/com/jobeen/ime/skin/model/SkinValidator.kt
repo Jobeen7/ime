@@ -110,7 +110,7 @@ object SkinValidator {
         "hintSymbolNodes", "hintSymbolsGridStyles", "hintSymbolsStyles",
         "horizontalCandidateStyle", "horizontalCandidates", "horizontalCandidatesLayout",
         "horizontalCandidatesStyle", "horizontalSymbolsRtl", "keyAnimation", "keyAnimations",
-        "keyMappings", "keyShadow", "keySound", "keyStyles", "keyboards", "layoutId",
+        "keyMappings", "keyRipple", "keyShadow", "keySound", "keyStyles", "keyboards", "layoutId",
         "layoutIdLandscape",
         "meta", "menuAction", "minAppVersion", "notifications", "predictionCloseBg",
         "predictionCloseRadiusDp", "preeditHeight", "preeditStyle", "roleFonts",
@@ -1201,6 +1201,10 @@ object SkinValidator {
         // 写了节点（即使 enabled=false）= 空格专属规格（取代 keyAnimation）。
         val spaceAnimationOrNull = if (tree["spaceAnimation"] == null) null else spaceAnimation
 
+        // ---- keyRipple（WO38 涟漪参数）：顶层对象，非法字段逐项回退默认值 ----
+        val (keyRipple, keyRippleIssues) = KeyRippleParser.parse(tree["keyRipple"])
+        issues += keyRippleIssues
+
         return Result.Valid(
             skin = ValidatedSkin(
                 tree = tree,
@@ -1292,6 +1296,7 @@ object SkinValidator {
                 symbolBadgeHighlightColor = symbolBadgeHighlightColor,
                 keyShadow = keyShadow,
                 keyAnimation = keyAnimation,
+                keyRipple = keyRipple,
                 spaceAnimation = spaceAnimationOrNull,
                 // 未知节点原样透传（快照层；文件层本就逐字节保留，
                 // 快照→skin.json 再生成器未来落地后才构成完整往返）。

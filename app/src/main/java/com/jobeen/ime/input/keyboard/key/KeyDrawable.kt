@@ -218,6 +218,8 @@ fun highlightMaskDrawable(
  *   须配合视图软件层（KeyView 在有阴影时设置）；无阴影时
  *   不画此层、不碰图层类型。
  * - 下边缘：裁剪到键形内再画底部窄条，圆角处不溢出。
+ * - 内阴影（WO38）：填充与下边缘之上、描边之下，沿键形内侧一圈
+ *   模糊描边（见 KeyEffectPainter）；无内阴影时不画此层。
  * - 连续圆角：三次贝塞尔近似（控制距 0.75r，比圆弧更贴角、
  *   过渡更平滑）；圆弧仍走系统 addRoundRect。
  * - 透明度：setAlpha 作用于填充/描边/阴影/下边缘全部画笔，
@@ -237,6 +239,14 @@ class StyledKeyDrawable(
     private val shadowDyPx: Float = 0f,
     @ColorInt private val lowerEdgeColor: Int? = null,
     private val lowerEdgeHeightPx: Int = 0,
+    /**
+     * WO38 内阴影（已乘不透明度的阴影色，见 KeyShadowLayer.effectiveColor）；
+     * null = 无内阴影。常态／按压各一支由调用方按态取 layer 传入。
+     */
+    @ColorInt private val innerShadowColor: Int? = null,
+    private val innerShadowRadiusPx: Float = 0f,
+    private val innerShadowDxPx: Float = 0f,
+    private val innerShadowDyPx: Float = 0f,
 ) : Drawable() {
 
     private val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -250,6 +260,13 @@ class StyledKeyDrawable(
     }
     private val lowerEdgePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.FILL
+    }
+    private val innerShadowPaint: Paint? = if (innerShadowColor != null) {
+        Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            KeyEffectPainter.configureInnerShadowPaint(this, innerShadowColor, innerShadowRadiusPx)
+        }
+    } else {
+        null
     }
     private var drawableAlpha = 255
     private var fillShader: Shader? = null
@@ -296,6 +313,11 @@ class StyledKeyDrawable(
             )
             canvas.restore()
         }
+        innerShadowPaint?.let {
+            KeyEffectPainter.drawInnerShadow(
+                canvas, path, it, innerShadowDxPx, innerShadowDyPx,
+            )
+        }
         if (strokeWidthPx > 0 && strokeColor != Color.TRANSPARENT) {
             val half = strokeWidthPx / 2f
             val inset = RectF(
@@ -340,6 +362,7 @@ class StyledKeyDrawable(
         strokePaint.alpha = drawableAlpha
         shadowPaint.alpha = drawableAlpha
         lowerEdgePaint.alpha = drawableAlpha
+        innerShadowPaint?.alpha = drawableAlpha
     }
 
     override fun setAlpha(alpha: Int) {

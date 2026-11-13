@@ -152,6 +152,20 @@ endif()
 
 option(BUILD_TEST "" OFF)
 option(BUILD_STATIC "" ON)
+
+# Jime: lock the vendored librime version (WO38 E1-10/5). The version lives
+# only inside the untracked nested checkout deps/librime/CMakeLists.txt
+# (set(rime_version ...)) — no Gradle version catalog / build.gradle.kts
+# pin exists, and that nested tree is not tracked by the Jime repo.
+# Fail configure when the vendored tree drifts from the pinned version,
+# so a librime bump is always an explicit change of JIME_RIME_VERSION
+# below (plus the two vendored patches above), never a silent checkout.
+set(JIME_RIME_VERSION "1.17.0")
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/deps/librime/CMakeLists.txt" _jime_librime_cmake)
+string(REGEX MATCH "set\\(rime_version ([0-9]+\\.[0-9]+\\.[0-9]+)\\)" _jime_rime_ver_match "${_jime_librime_cmake}")
+if(NOT CMAKE_MATCH_1 STREQUAL JIME_RIME_VERSION)
+  message(FATAL_ERROR "Jime: vendored librime version mismatch: expected ${JIME_RIME_VERSION}, found '${CMAKE_MATCH_1}' in deps/librime/CMakeLists.txt — update JIME_RIME_VERSION deliberately or restore the vendored tree")
+endif()
 add_subdirectory(deps/librime)
 target_compile_options(
   rime-static PRIVATE "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=." "-Wno-error=deprecated-declarations")

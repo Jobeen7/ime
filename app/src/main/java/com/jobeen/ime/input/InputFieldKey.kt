@@ -21,6 +21,26 @@ import android.view.inputmethod.EditorInfo
  *
  * 本类自第十四批起自引擎抽出共享：引擎（联想代次）与 IMS（语
  * 音纪元的字段身份投递）共用同一份字段口径，避免两处各表。
+ *
+ * WO36（2026-11-13）再查新信号：restarting=true＋四项全同的逻辑
+ * 换框仍无可靠信号，盲区保留——候选逐个核查（证据见
+ * Wo36FieldGateTest 的 KDoc 与汇报）：
+ * - EditorInfo 扩展字段（autofillId、fieldName、hintText、label、
+ *   privateImeOptions）：十六/十七批已试过、按 D6 拆除——WebView
+ *   里常为 null，动态文案变会误判换框、误杀在途语音；再加是把已
+ *   知回归请回来，收益未经证实（微信侧是否区分无真机证据）。
+ * - InputConnection 身份：每次 startInput 都重新绑定，同框重开
+ *   也换新实例，不能当信号。EditorInfo 对象同一性同理（旧实现
+ *   已证有同一问题）。引擎 predictionFieldGen 走同一四项比对，
+ *   同盲区。
+ * - initialSelStart/End、onUpdateSelection：光标态不是字段身份，
+ *   同框内也会变；空框两边都是 0/0，分不出。
+ * - 框架回调：restarting 型换框不经任何 FINISH 回调（doStartInput
+ *   只在 !restarting 时先 doFinishInput）；onStartInputView 的
+ *   restarting 在同框收起再开时为 false，不可信。
+ * 结论：无新信号可加，盲区记残余，不硬造。门（LatinIME 公式）与
+ * 锁存的并集已覆盖其余全部情形：门补 !restarting、锁存补四项变，
+ * 两路任一为真即换框；盲区是两路同假的唯一情形。
  */
 internal data class InputFieldKey(
     val packageName: String?,

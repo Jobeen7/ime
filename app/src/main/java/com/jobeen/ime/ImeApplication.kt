@@ -120,6 +120,8 @@ class ImeApplication : Application() {
         // 守卫（statsDir 为空时 flush／scheduleFlush 直接返回，计数
         // 只走内存 map），故后台配置不丢行为、不改口径；键盘窗口在
         // Application.onCreate 返回后才可能出现，配置远在首键前完成。
+        // 总开关（E2）：主线程先绑偏好门控，首键前缓存必已是偏好现值。
+        com.jobeen.ime.input.stats.InputStats.bindStatsGate(this)
         applicationScope.launch(Dispatchers.IO) {
             com.jobeen.ime.input.stats.InputStats.configure(filesDir)
         }

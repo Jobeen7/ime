@@ -65,12 +65,15 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
             EngineMessage.Commit(message.data.text.orEmpty(), direct = message.direct)
         }
 
+        // 上屏落屏栅栏（WO40）：id 原样透传，等待方凭它配对。
+        is RimeMessage.BarrierMessage -> EngineMessage.CommitBarrier(message.id)
+
         is RimeMessage.CompositionMessage -> {
             KeycapFilterState.onComposition(
                 compositionHasUnresolvedDigitSegment(message.data)
             )
             val preedit = message.data.preedit.orEmpty()
-            val cursor = message.data.cursorPos
+            val cursor = mapPreeditCursor(preedit, message.data.cursorPos)
             EngineMessage.Composition(preedit, cursor)
         }
 
@@ -336,6 +339,17 @@ internal object KeycapFilterState {
             candidates
         }
 }
+
+/**
+ * 预编辑光标映射（纯函数，WO38 E1-10/2）：Rime 原生 caret 是 preedit
+ * 串内的字符下标（preedit 为组字码，ASCII；下标与字符下标同一口
+ * 径），原地直通。钳制只防越界脏值：有效输入（0..preedit.length）
+ * 一字不动，与旧内联直通行为逐值一致；负值／超长值收敛到串内，
+ * 不再把非法光标透传给下游（下游按光标取 preedit 子串／判定删码
+ * 右侧时越界即错位）。
+ */
+internal fun mapPreeditCursor(preedit: String, cursorPos: Int): Int =
+    cursorPos.coerceIn(0, preedit.length)
 
 /**
  * 键帽序列判定：单个基字符（0-9、#、*）＋可选的 U+FE0F（变体选择符）

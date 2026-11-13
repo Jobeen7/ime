@@ -54,6 +54,16 @@ class GridKeyboardView(
     private var downY = 0f
     private var dragging = false
     private var stretch = 0f
+    // I-L6 回弹内再拖的拖动基线（WO36）：拦截成功时按当前拉伸反推的
+    // 未钳制滚动位置（scrollOffset − 越界量），拖动在其上累积手指
+    // 位移、再经 resolveDragOffset 一次解析——残余拉伸是基线的一
+    // 部分，首帧不清零、不跳变。非拖动时无意义，下次拦截重锚。
+    private var dragBaseVirtualOffset = 0f
+    // 本次拖动自拦截起累积的手指位移（dy 之和）：旧 dragBy 拿当前
+    // 偏移＋单帧 dy 去解析，越界钉住后拉伸恒等于单帧 dy 的橡皮筋
+    // 量、从不随总越界量累积（与 resolveDragOffset 的越界量口径
+    // 不符）；现改基线＋累计位移一次解析，拉伸随总越界量渐近趋近上限。
+    private var dragAccumulatedDy = 0f
     // 已通过 offsetTopAndBottom 应用到子 View 位置的拉伸偏移
     // （与 appliedScrollOffset 同口径的增量基准）：onLayout
     // 与 applyScrollOffset 都按它同步，动画每帧只推增量。
@@ -158,6 +168,8 @@ class GridKeyboardView(
         }
         scrollOffsetY = 0f
         stretch = 0f
+        dragBaseVirtualOffset = 0f
+        dragAccumulatedDy = 0f
         appliedStretch = 0
         stretchAnimator?.cancel()
         stretchAnimator = null
@@ -308,8 +320,14 @@ class GridKeyboardView(
     }
 
     private fun dragBy(deltaY: Float) {
-        val proposed = scrollOffsetY + deltaY
-        val resolved = resolveDragOffset(proposed, maxScroll, overScrollLimit)
+        // WO36 I-L6：基线＋累计位移一次解析——提议位置是拦截时锚定
+        // 的虚拟位置（已含残余拉伸反推的越界量）＋自拦截起的手指总
+        // 位移，不是当前偏移＋单帧 dy；首帧 dy=0 时解析结果即锚定
+        // 状态本身，残余拉伸连续过渡、不清零、不跳变。
+        dragAccumulatedDy += deltaY
+        val resolved = resolveDragOffset(
+            dragBaseVirtualOffset + dragAccumulatedDy, maxScroll, overScrollLimit
+        )
         scrollOffsetY = resolved.scrollOffset
         stretch = resolved.stretch
     }
@@ -380,7 +398,7 @@ class GridKeyboardView(
                 // I-L6：新按下即接管——回弹动画若在跑须停掉，否则它
                 // 会继续改 stretch、与本次拖动的 dragBy 打架；stretch
                 // 值本身保留（已落地位移与 appliedStretch 同步），
-                // 拖回界内时 dragBy 再把它收回 0。
+                // 拦截成功时由拖动基线带上（见下），不是清零。
                 stretchAnimator?.cancel()
                 stretchAnimator = null
                 velocityTracker = VelocityTracker.obtain()
@@ -406,7 +424,16 @@ class GridKeyboardView(
                     )
                 ) {
                     dragging = true
-                    stretch = 0f
+                    // WO36 I-L6：回弹内再按住拖动——进行中的残余拉伸
+                    // 是拖动基线，不清零：按当前 stretch 反推未钳制
+                    // 的越界量、与滚动偏移合成虚拟位置锚定，累计位移
+                    // 归零；随后 dragBy 在基线＋累计位移上解析，首帧
+                    // 残余拉伸连续过渡。旧口径此处 stretch = 0f，
+                    // 但子 View 仍带旧位移（appliedStretch），下一帧
+                    // applyScrollOffset 一次推回整段残余拉伸、首帧跳几 px。
+                    dragBaseVirtualOffset =
+                        scrollOffsetY - overshootFromStretch(stretch, overScrollLimit)
+                    dragAccumulatedDy = 0f
                     if (!scroller.isFinished) scroller.abortAnimation()
                     // I-L2：拦截成功的 MOVE 即本次拖动的首帧——
                     // 同一事件随后进 onTouchEvent 时 dy 按 lastY
@@ -494,6 +521,22 @@ class GridKeyboardView(
  */
 internal fun rubberBandValue(overshoot: Float, limit: Float): Float =
     limit * overshoot / (limit + overshoot)
+
+/**
+ * 橡皮筋反推（WO36 I-L6 纯函数）：由已钳制的拉伸量反推未钳制的
+ * 越界量，即 [rubberBandValue] 的反函数——
+ * overshoot = limit·stretch／(limit − |stretch|)，符号与 stretch
+ * 同号（顶下拉正、底上拉负）。stretch 恒小于 limit（渐近线）；
+ * 非法输入（|stretch| ≥ limit 或 limit ≤ 0）钳制后反推，不把
+ * 分母压到 0、不返回无穷。round-trip：对任意越界量 o，
+ * overshootFromStretch(rubberBandValue(o, limit), limit) ≈ o。
+ */
+internal fun overshootFromStretch(stretch: Float, limit: Float): Float {
+    if (limit <= 0f || stretch == 0f) return 0f
+    val clamped = stretch.coerceIn(-limit * 0.999f, limit * 0.999f)
+    val magnitude = limit * abs(clamped) / (limit - abs(clamped))
+    return if (clamped < 0f) -magnitude else magnitude
+}
 
 /** [resolveDragOffset] 的返回：拖动解析后的滚动偏移与拉伸位移。 */
 internal data class DragResolve(

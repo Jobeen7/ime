@@ -36,11 +36,11 @@ class ConfirmOverlay(
         /** 动作菜单与确认按钮共用的字号。 */
         internal const val TEXT_SIZE_SP = 13f
 
-        /** 动作菜单项上下内边距（P-中1：5→4dp）。 */
-        internal const val ACTION_ITEM_PADDING_V_DP = 4f
+        /** 动作菜单项上下内边距（WO36 P-中1：4→2dp，省 6 项×4dp＝24dp）。 */
+        internal const val ACTION_ITEM_PADDING_V_DP = 2f
 
-        /** 动作菜单项间距（P-中1：6→4dp）。 */
-        internal const val ACTION_ITEM_GAP_DP = 4f
+        /** 动作菜单项间距（WO36 P-中1：4→3dp，省 5×1dp＝5dp）。 */
+        internal const val ACTION_ITEM_GAP_DP = 3f
 
         /** 卡片上下内边距（card.setPadding 纵向 8dp）。 */
         internal const val CARD_PADDING_V_DP = 8f
@@ -54,9 +54,13 @@ class ConfirmOverlay(
         /**
          * 动作菜单卡片自然高（dp，P-中1 预算口径，字号倍率 1.0）：
          * 项数×（行高＋上下内边距）＋（项数−1）×间距＋卡片上下内边距
-         * ＋滚动区顶边距。6 项＝191.5dp：竖屏默认 24%（可用 199.68dp）
-         * 一页放得下、余 8.2dp；横屏默认 44%（可用 168.96dp）仍短约
-         * 22.5dp，末项靠 showCard 钳制在卡内滚动保底（见 [actions]）。
+         * ＋滚动区顶边距。6 项＝162.5dp：竖屏默认 24%（可用 199.68dp）
+         * 一页放得下、余 37.2dp；横屏默认 44%（可用 168.96dp）一页
+         * 放得下、余 6.4dp（WO36：项内边距 4→2dp 省 24dp、项间距
+         * 4→3dp 省 5dp，共省 29dp；字号 13sp、卡片边距 8dp、滚动区
+         * 顶边距 4dp 全不动。行盒 17.25dp 内已有约 4dp 内部 leading，
+         * 2dp 内边距不挤字面）。7 项以上／大字号仍超高时靠 showCard
+         * 钳制在卡内滚动保底（见 [actions]）。
          * 布局常量与本函数同源，改一处即改预算，不会漂移。
          */
         internal fun actionsMenuNaturalHeightDp(itemCount: Int): Float {
@@ -192,11 +196,11 @@ class ConfirmOverlay(
      * 纵向布局按上限截断后最后一项会被挤出卡外不可见（剪贴板
      * 菜单的「删除」就这样消失过）；去掉标题后单列放得下。
      *
-     * 高度预算（P-中1，字号倍率 1.0，见 [actionsMenuNaturalHeightDp]）：
-     * 剪贴板 6 项菜单自然高 191.5dp，竖屏默认 24%（可用 199.68dp）
-     * 一页完整显示、不滚动；横屏默认 44%（可用 168.96dp）仍短约
-     * 22.5dp，末项靠 showCard 钳制在卡内滚动保底——横屏放不下 6 项
-     * 是已知取舍（再省需把字号砍到约 10sp，不做）。
+     * 高度预算（WO36 P-中1，字号倍率 1.0，见 [actionsMenuNaturalHeightDp]）：
+     * 剪贴板 6 项菜单自然高 162.5dp，竖屏默认 24%（可用 199.68dp）
+     * 一页完整显示、不滚动，余 37.2dp；横屏默认 44%（可用 168.96dp）
+     * 一页完整显示、不滚动，余 6.4dp。7 项以上／大字号仍超高时靠
+     * showCard 钳制在卡内滚动保底。
      * [message] 参数保留仅为与 [confirm] 签名对称，本模式不展示。
      */
     fun actions(
@@ -222,10 +226,10 @@ class ConfirmOverlay(
                 setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
                 gravity = Gravity.CENTER
                 background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
-                // 紧凑排布（P-中1）：纵向内边距 5→4dp、项间距 6→4dp，
-                // 6 项自然高 191.5dp，竖屏默认 24%（199.68dp）一页完整
-                // 显示、不滚动；横屏默认 44%（168.96dp）仍短约 22.5dp，
-                // 靠 showCard 钳制滚动保底。
+                // 紧凑排布（WO36 P-中1）：纵向内边距 4→2dp、项间距 4→3dp，
+                // 6 项自然高 162.5dp，竖屏默认 24%（199.68dp）余 37.2dp、
+                // 横屏默认 44%（168.96dp）余 6.4dp，一页完整显示、不滚动；
+                // 字号 13sp、卡片边距 8dp 不动。
                 setPadding(dp(12), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(12), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
                     action()

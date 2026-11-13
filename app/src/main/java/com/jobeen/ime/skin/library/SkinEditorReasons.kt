@@ -16,8 +16,9 @@ import com.jobeen.ime.R
  *   复合码只按冒号前的 base 码匹配（`manifest_invalid:<子码>`、
  *   `apply_failed:<内码>:<尾巴>`、`write_failed:<异常消息>` 等），
  *   其中 manifest_invalid 与 apply_failed 会递归进子码映射。
- * - 未知码回落通用文案（不抛、不露原始码）；当前生产者无遗漏，
- *   回落只作防御——新增 reason 码时须同步补映射与单测
+ * - 未知码回落具体提示（WO36 改回 WO33 前口径：防御分支“无生效皮肤”，
+ *   不抛、不露原始码）；当前生产者无遗漏，回落只作防御——新增 reason
+ *   码时须同步补映射与单测
  *   （[SkinEditorReasonsTest] 按来源清单逐码断言）。
  *
  * 来源清单（码 → 生产者；括号内为去重 base 码数，2026-11-13 逐码数过，
@@ -112,7 +113,11 @@ object SkinEditorReasons {
             "reverted_to_default" -> R.string.skin_editor_reason_reverted_to_default
             // ---- Stale ----
             "active_changed" -> R.string.skin_editor_reason_active_changed
-            else -> R.string.skin_editor_reason_unknown
+            // 未知码回落（WO36）：改回具体提示“无生效皮肤”（WO33 前口径），
+            // 不用通用“操作失败，请重试”。当前无生产者产未知码，走不到；
+            // skin_editor_reason_unknown 串随之闲置（删串须直接改
+            // strings.xml，不在本批动）。
+            else -> R.string.skin_editor_no_active_skin
         }
     }
 

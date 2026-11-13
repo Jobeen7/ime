@@ -78,7 +78,9 @@ import com.jobeen.ime.input.EnterSession
 import com.jobeen.ime.input.ImeInputMethodService
 import com.jobeen.ime.input.TypedUndoLedger
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
@@ -129,6 +131,15 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         /** 动作/任务队列容量：远超正常深度，仅作异常堆积兜底 */
         private const val ACTION_QUEUE_CAPACITY = 512
         private const val JOB_QUEUE_CAPACITY = 256
+        /**
+         * CommitAndAct 上屏落屏完成等待上限（WO40）。各跳延迟量级：
+         * notificationQueue→分发→actions→reduce→messageChannel→IMS
+         * 观察者→commitText 均为亚毫秒～数毫秒内存传递，Binder IPC
+         * 一次数毫秒；健康链路总耗时 <10ms，最差健康态约 50ms；
+         * 200ms ≈ 4× 最差健康态。超时不卡键、放行执行动作（仅记
+         * 日志）。**未经真机实测**：若真机上超时频发，按日志调大。
+         */
+        private const val COMMIT_LANDED_TIMEOUT_MS = 200L
         /** 清空输入框时的分段删除：每段字符数与最大段数 */
         private const val CLEAR_CHUNK_CHARS = 1000
         private const val MAX_CLEAR_CHUNKS = 64
@@ -405,6 +416,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     /**
+     * 引擎作用域死亡信号（I-L1）：finalize 完成它；deployAndAwait 的
+     * 等待方以它与部署 deferred 竞速，作用域已死时立即 FAILED，不等
+     * 作业体 native 收尾——作业体跑在 rime-main 单线程上，取消恢复
+     * 须排在阻塞 native 调用之后，作业体 finally 到不了等待方。
+     * 进程级单例：EngineFactory 按进程缓存同一实例，finalize 后同
+     * 进程内不再复用该实例；initialize 重建它，防将来同实例重初始
+     * 化时拿着已完成的旧信号让全部署立即 FAILED。
+     */
+    private var scopeDeathSignal = CompletableDeferred<Unit>()
+
+    /**
      * 选词偏好写的发起通道：实际落库、裁剪与计数落点由
      * [CandidatePreferCache.recordClick] 在缓存侧的串行通道内成对
      * 执行，本 scope 只负责把调用投递出去（不占 jobs 队列，慢盘
@@ -457,6 +479,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     private val jobs by lazy { Channel<QueuedJob>(JOB_QUEUE_CAPACITY) }
+
+    /**
+     * 上屏落屏完成等待的配对门（WO40）：CommitAndAct 武装后，把栅栏
+     * 随 Commit 投进 notificationQueue，待 IMS 观察者按序处理到栅栏
+     * 再执行动作。串行作业队列保证同一时刻至多一个等待方。
+     */
+    private val commitBarrierGate = CommitBarrierGate()
     private var session: RimeSession? = null
     private var behaviorHosted: BehaviorHost? = null
     private var context: Context? = null
@@ -643,6 +672,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun initialize(context: Context) {
+        // I-L1：新一轮初始化重建作用域死亡信号——finalize 已完成旧
+        // 信号，同实例重初始化时旧信号会让 deployAndAwait 立即 FAILED。
+        scopeDeathSignal = CompletableDeferred()
         val appContext = context.applicationContext
         this@RimeEngine.context = appContext
 
@@ -757,6 +789,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     override fun finalize() {
+        // I-L1：先完成作用域死亡信号——deployAndAwait 的等待方据此
+        // 立即 FAILED，不等作业体 native 收尾（complete 幂等，多次
+        // finalize 无害；等待方在调用方作用域，不被本处 scope.cancel 影响）。
+        scopeDeathSignal.complete(Unit)
         prefs?.unregisterOnSharedPreferenceChangeListener(prefsListener)
         prefs = null
         actions.close()
@@ -1007,6 +1043,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     /**
+     * 完成一轮上屏落屏等待（WO40）：由 MessageHandler 在 IMS 观察者
+     * 按序处理到栅栏时调用；id 不匹配当前武装时忽略（超时后迟到的
+     * 栅栏不得完成下一轮等待）。internal：UI 层经 EngineFactory
+     * 取到本引擎后调用，不新增接口方法。
+     */
+    internal fun completeCommitBarrier(id: Long) = commitBarrierGate.complete(id)
+
+    /**
      * 回车键精简决策执行（与下滑 Undo 分支无关，不动其账本与门）：
      * 组字只读本 job 执行时点的原始输入（getRawInput），与空格／
      * 退格同纪律——分发时点先行按键的 job 可能尚未执行，分发侧
@@ -1015,6 +1059,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * job 内挂起等主线程执行完才放行后续 job，不超车）；
      * 插换行走 emitCommit("\n") 的 FIFO 路径；无动作为空操作。
      * 组字中上屏候选与旧回车非空分支同口径：同步转交 Rime。
+     * 组字中一按完成（CommitAndAct，2026-11-13 用户定）：先上屏候选
+     * （现有 Rime 回车路径），再执行编辑器动作（现有 PerformAction
+     * 路径），同一次按键内按语句顺序执行。上屏落屏与动作之间有
+     * WO40 落屏完成等待：栅栏随 Commit 同 notificationQueue 投递，
+     * 观察者处理到栅栏即证明 Commit 已落屏；有界超时
+     * COMMIT_LANDED_TIMEOUT_MS，放行后复检会话再执行动作。
      */
     private fun sendEnterJob(enter: Action.Enter) {
         sendJob {
@@ -1046,6 +1096,52 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         0u,
                         true,
                     )
+                }
+
+                is EnterOutcome.CommitAndAct -> {
+                    // 组字中一按完成（2026-11-13 用户定）：先上屏候选
+                    // （现有 Rime 回车路径），再执行编辑器动作（现有
+                    // PerformAction 路径）。上屏落屏本身走
+                    // notificationQueue→messageChannel 异步投递，与
+                    // 本处 performEditorAction 无跨队列时序保证——
+                    // WO40 落屏完成等待：先武装栅栏、把栅栏随 Commit
+                    // 投进同一条 notificationQueue，待 IMS 观察者按序
+                    // 处理到栅栏（即 Commit 已落屏）再执行动作；
+                    // 超时放行（退化为 WO37 行为，仅记日志），永不卡键。
+                    processKey(
+                        KeyMapping.keyCodeToVal(KEYCODE_ENTER),
+                        0u,
+                        true,
+                    )
+                    val barrierId = commitBarrierGate.arm()
+                    Rime.handleMessage(
+                        RimeMessage.MessageType.Barrier.ordinal,
+                        arrayOf<Any>(barrierId),
+                    )
+                    val landed = commitBarrierGate.await(
+                        barrierId,
+                        COMMIT_LANDED_TIMEOUT_MS,
+                    )
+                    if (!landed) {
+                        Timber.d(
+                            "CommitAndAct commit-landing wait timed out after ${COMMIT_LANDED_TIMEOUT_MS}ms; proceeding with action",
+                        )
+                    }
+                    // 执行时点复检：等待期间换框／输入结束时，动作一律
+                    // 丢弃（与入队复检同口径，见本函数首段）。
+                    if (!enter.session.isCurrent(
+                            InputFieldKey.of(editorInfo),
+                            predictionFieldGen.get(),
+                        )
+                    ) {
+                        Timber.d("CommitAndAct dropped stale session after commit-landing wait")
+                        return@sendJob
+                    }
+                    withContext(Dispatchers.Main.immediate) {
+                        inputConnection()?.performEditorAction(
+                            EnterFieldBoundary.toEditorAction(outcome.action),
+                        )
+                    }
                 }
 
                 is EnterOutcome.PerformAction -> {
@@ -3019,6 +3115,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 )
             }.getOrNull()
         }
+        // I-L1：部署标志的单次释放权——作业体 finally、onDropped、
+        // 等待方（作用域已死／超时／取消）三方共用同一认领，任一方
+        // 认领后其余方跳过；releaseRunning／releaseOrphanRunning 是
+        // 普通置位，多放一次之间另一路抢到部署位会被误删。
+        val releaseClaimed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val releaseDeployFlagsOnce: () -> Unit = {
+            if (claimDeployReleaseOnce(releaseClaimed)) {
+                EngineDeployState.releaseRunning()
+                EngineDeployState.releaseOrphanRunning()
+            }
+        }
+        // 作用域死亡信号快照（finalize 完成它）：等待方据此立即
+        // FAILED，不等作业体 native 收尾（见 awaitDeployOutcome）。
+        val deathSignal = scopeDeathSignal
         try {
             val deferred = CompletableDeferred<DeployAwaitResult>()
             sendDeployJob(
@@ -3097,45 +3207,52 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 否则放闸归等待方 finally。双放安全不靠释放本身
                         // （releaseRunning 是普通置位、无凭证 CAS）——
                         // 靠本作业体只在此一处释放、且消费循环的 onDropped
-                        // 只在作业体未执行时才调（QueuedJob.started 守卫）。
-                        EngineDeployState.releaseRunning()
-                        EngineDeployState.releaseOrphanRunning()
+                        // 只在作业体未执行时才调（QueuedJob.started 守卫），
+                        // 再加等待方共用同一认领（claimDeployReleaseOnce）：
+                        // 等待方已因作用域已死先行认领时，本处跳过、不双放。
+                        releaseDeployFlagsOnce()
                         if (waitingGaveUp.get()) UpdateImportGate.release(gateToken)
                     }
                 },
                 // 作业体被就绪门丢弃：等待方立即得 FAILED，不空等超时、
-                // 不记孤儿；两项标志复位。孤儿复位在此是安全的：孤儿
+                // 不记孤儿；两项标志复位（与作业体 finally／等待方共用
+                // 同一认领，只放一次）。孤儿复位在此是安全的：孤儿
                 // 标志的本意是“可能有部署在跑”，而被丢弃的作业已死；
                 // 即使另一路等待方此前已因超时记了孤儿，jobs 消费是
                 // 串行的，native 部署永不并发，新部署至多多一次排队
                 // 执行，远好于孤儿永久钉死（见报告契约审计）。
                 onDropped = {
-                    EngineDeployState.releaseRunning()
-                    EngineDeployState.releaseOrphanRunning()
+                    releaseDeployFlagsOnce()
                     deferred.complete(DeployAwaitResult.FAILED)
                 },
             )
-            return withTimeoutOrNull(timeoutMs) {
-                deferred.await()
-            } ?: run {
+            // I-L1：等待方与部署 deferred、作用域死亡信号、超时三者
+            // 竞速——finalize 取消作用域时立即 FAILED，不等作业体
+            // native 收尾（旧口径只等 deferred，作业体卡在 rime-main
+            // 阻塞 native 调用里时等待方等满整个超时）。
+            val awaited = awaitDeployOutcome(deferred, deathSignal, timeoutMs)
+            if (awaited == null) {
                 // 结果判定走共用纯函数（单元测试覆盖）：作用域已死
                 // 时为 FAILED 且不记孤儿，见 deployWaitTimeoutResult。
                 val timeoutResult = deployWaitTimeoutResult(scope.isActive)
                 if (timeoutResult == DeployAwaitResult.FAILED) {
-                    EngineDeployState.releaseRunning()
-                    EngineDeployState.releaseOrphanRunning()
+                    releaseDeployFlagsOnce()
                 } else {
                     // 记孤儿（D-L6 跟进）：CAS 抢占，已记过即 no-op。
                     EngineDeployState.tryAcquireOrphanRunning()
                     // 孤儿仍在编译：等待方不放闸，放闸归作业体收尾。
                     waitingGaveUp.set(true)
                 }
-                timeoutResult
+                return timeoutResult
             }
+            // 作业体 FAILED 时等待方认领释放（作业体 finally 可能已
+            // 先认领，认领本身保证只放一次）；COMPLETED 时不认领，
+            // 释放归作业体 finally。
+            if (awaited == DeployAwaitResult.FAILED) releaseDeployFlagsOnce()
+            return awaited
         } catch (e: CancellationException) {
             if (!scope.isActive) {
-                EngineDeployState.releaseRunning()
-                EngineDeployState.releaseOrphanRunning()
+                releaseDeployFlagsOnce()
             } else {
                 // 记孤儿（D-L6 跟进）：CAS 抢占，已记过即 no-op。
                 EngineDeployState.tryAcquireOrphanRunning()
@@ -3323,6 +3440,38 @@ internal class PendingRedeploy {
  */
 internal fun deployWaitTimeoutResult(scopeActive: Boolean): DeployAwaitResult =
     if (scopeActive) DeployAwaitResult.TIMEOUT_RUNNING else DeployAwaitResult.FAILED
+
+/**
+ * 部署等待竞速（I-L1）：等部署 deferred、引擎作用域死亡信号、超时
+ * 三者先到者。作用域已死（finalize 已调）时立即 FAILED，不等作业
+ * 体 native 收尾——作业体跑在 rime-main 单线程上，取消恢复须排在
+ * 阻塞 native 调用之后，作业体 finally 到不了等待方；超时返回 null
+ * （调用方走既有超时分支）。返回 FAILED 时调用方须经
+ * [claimDeployReleaseOnce] 只释放一次标志（作业体 finally 与
+ * onDropped 共用同一认领）。
+ */
+internal suspend fun awaitDeployOutcome(
+    deferred: Deferred<DeployAwaitResult>,
+    scopeDeath: Deferred<Unit>,
+    timeoutMs: Long,
+): DeployAwaitResult? = withTimeoutOrNull(timeoutMs) {
+    select {
+        deferred.onAwait { it }
+        scopeDeath.onAwait { DeployAwaitResult.FAILED }
+    }
+}
+
+/**
+ * 部署标志释放权的单次认领（I-L1）：同一 deployAndAwait 调用的
+ * 三方释放点（作业体 finally、onDropped、等待方的作用域已死／
+ * 超时／取消分支）共用一个认领，首次调用返回 true（调用方执行
+ * 释放），之后恒 false。releaseRunning／releaseOrphanRunning 是
+ * 普通置位，多放一次之间另一路抢到部署位会被误删，单次性不在
+ * 释放函数内、而在此认领保证。
+ */
+internal fun claimDeployReleaseOnce(
+    claimed: java.util.concurrent.atomic.AtomicBoolean,
+): Boolean = claimed.compareAndSet(false, true)
 
 /**
  * 超时孤儿部署的目标快照：作业启动时读到的指针目录名＋镜像原始串。

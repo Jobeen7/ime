@@ -69,6 +69,8 @@ data class SkinSnapshot(
     val keyShadow: KeyShadowSpec = KeyShadowSpec(),
     /** 按键动效（2026-10-29 item-1）：全部键动效规格；缺省关闭。 */
     val keyAnimation: KeyAnimationSpec = KeyAnimationSpec(),
+    /** WO38 按压涟漪参数：只参数化颜色与时长；缺省既有硬编码值。 */
+    val keyRipple: KeyRippleSpec = KeyRippleSpec(),
     /** 空格专属动效（2026-10-29 item-1）：null = 空格键跟随 keyAnimation。 */
     val spaceAnimation: KeyAnimationSpec? = null,
     /** 气泡溢出检测（2026-10-28 截图 6 项）：false = 关闭自动调位；默认开。 */

@@ -8,6 +8,8 @@ import android.graphics.RectF
 import com.jobeen.ime.skin.model.ImageContentMode
 import com.jobeen.ime.skin.model.ImageAdjust
 import com.jobeen.ime.skin.model.contentModeDstRect
+import com.jobeen.ime.error.DeepErrorMapper
+import com.jobeen.ime.skin.diag.DiagLog
 import java.io.File
 import kotlin.math.roundToInt
 
@@ -198,7 +200,22 @@ class AndroidBackgroundPreparer(
             writePreparedIndex(preparedDir, key, request)
             BackgroundPreparer.Result.Done(key, request.targetWidthPx, request.targetHeightPx)
         }.getOrElse {
-            BackgroundPreparer.Result.Failed(it.message ?: it.javaClass.simpleName)
+            // 失败原因只进日志：用户可见的 Result.Failed.reason 只放
+            // 稳定码（见 backgroundFailureCode），不放原始异常消息——
+            // 后者经 JimeImporter 的 SkinIssue 详情会进导入报告对话框
+            // 原样上屏（运行期重建那路只记 DiagLog，不上屏）。
+            // 此处是该异常唯一的落日志点（此前只靠 reason 透传才留痕），
+            // 故记一行 DiagLog.e，码化后诊断信息不丢。
+            DiagLog.e(
+                "image", "background_prepare_failed",
+                mapOf(
+                    "key" to key,
+                    "error" to it.javaClass.simpleName,
+                    "message" to (it.message ?: ""),
+                ),
+                it,
+            )
+            BackgroundPreparer.Result.Failed(backgroundFailureCode(it))
         }
     }
 
@@ -222,3 +239,24 @@ class AndroidBackgroundPreparer(
         runCatching { indexFile.writeText(merged) }
     }
 }
+
+/**
+ * 背景预处理失败码（WO36，纯函数可单测）：用户可见的
+ * [BackgroundPreparer.Result.Failed] 只放稳定码，不放原始异常消息。
+ *
+ * - 本类自写的三处稳定码原样保留（undecodable／decode_failed／
+ *   compress_failed——它们已是码，不是消息）；
+ * - 其余先走 [DeepErrorMapper] 既有分类口径（NO_SPACE／IO／CORRUPT 等）；
+ * - Error（如 OutOfMemoryError）用类名小写（稳定、无路径）；
+ * - 其余一律 failed。完整异常只进 DiagLog（见 prepare 的 getOrElse），不上屏。
+ * 码 → 用户文案的映射须在导入报告层另行接，本层只保证 reason 是稳定码。
+ */
+internal fun backgroundFailureCode(t: Throwable): String {
+    val message = t.message
+    if (message == "undecodable" || message == "decode_failed" || message == "compress_failed") {
+        return message
+    }
+    return DeepErrorMapper.classify(t)?.name?.lowercase()
+        ?: if (t is Error) t.javaClass.simpleName.lowercase() else "failed"
+}
+

@@ -1,6 +1,8 @@
 package com.jobeen.ime.input.stats
 
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
+import java.io.File
+import java.nio.file.Files
 import java.util.Calendar
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -310,5 +312,87 @@ class InputStatsTest {
         val reloaded = InputStats.snapshot(InputStats.Period.DAY).total
         assertEquals(1L, reloaded.wordLen2)
         assertEquals(1L, reloaded.corrections)
+    }
+
+    // ---- E2：总开关与损坏文件自动重置 ----
+
+    @Test
+    fun masterSwitchOffRecordsNothingOnRecordsNormally() {
+        setup(wallMs(2026, 10, 29), 1000L)
+        try {
+            InputStats.setStatsEnabled(false)
+            InputStats.noteKeyPress(KeyboardAction.KeySequenceAction("a"))
+            InputStats.noteCommit("你好")
+            val off = InputStats.snapshot(InputStats.Period.DAY).total
+            assertEquals(0L, off.keypresses)
+            assertEquals(0L, off.commits)
+            assertEquals(0L, off.chars)
+            assertEquals(0L, InputStats.rank().xp)
+            InputStats.setStatsEnabled(true)
+            InputStats.noteKeyPress(KeyboardAction.KeySequenceAction("b"))
+            InputStats.noteCommit("你好")
+            val on = InputStats.snapshot(InputStats.Period.DAY).total
+            assertEquals(1L, on.keypresses)
+            assertEquals(1L, on.commits)
+            assertEquals(2L, on.chars)
+        } finally {
+            InputStats.setStatsEnabled(true)
+        }
+    }
+
+    @Test
+    fun corruptFileLoadQuarantinesAndResetsToEmpty() {
+        InputStats.resetForTest()
+        InputStats.wallMs = { wallMs(2026, 10, 29, 12) }
+        InputStats.clockMs = { 1000L }
+        val root = Files.createTempDirectory("input-stats").toFile()
+        try {
+            val dir = File(root, "input_stats").apply { mkdirs() }
+            File(dir, InputStats.STATS_FILE).writeText("{broken json")
+            InputStats.configure(root)
+            // 内存重置为空
+            val total = InputStats.snapshot(InputStats.Period.DAY).total
+            assertEquals(0L, total.commits)
+            assertEquals(0L, total.chars)
+            assertEquals(0L, InputStats.rank().xp)
+            // 损坏文件已隔离改名（保留证据），原文件不在了
+            assertFalse(File(dir, InputStats.STATS_FILE).exists())
+            val quarantined = dir.listFiles { f ->
+                f.name.startsWith(InputStats.STATS_FILE + ".corrupt-")
+            }!!
+            assertEquals(1, quarantined.size)
+            assertEquals("stats.json.corrupt-20261029-120000", quarantined.single().name)
+            assertEquals("{broken json", quarantined.single().readText())
+        } finally {
+            InputStats.resetForTest()
+            root.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun validFileStillLoadsAndIsNotQuarantined() {
+        // 先攒一份合法导出，再当作磁盘文件加载：回归防护，隔离逻辑不得误伤好文件。
+        setup(wallMs(2026, 10, 29), 1000L)
+        InputStats.noteCommit("你好")
+        val json = InputStats.exportJson()
+        InputStats.resetForTest()
+        InputStats.wallMs = { wallMs(2026, 10, 29, 12) }
+        InputStats.clockMs = { 1000L }
+        val root = Files.createTempDirectory("input-stats").toFile()
+        try {
+            val dir = File(root, "input_stats").apply { mkdirs() }
+            File(dir, InputStats.STATS_FILE).writeText(json)
+            InputStats.configure(root)
+            assertEquals(2L, InputStats.snapshot(InputStats.Period.DAY).total.chars)
+            assertEquals(2L, InputStats.rank().xp)
+            assertTrue(File(dir, InputStats.STATS_FILE).exists())
+            val quarantined = dir.listFiles { f ->
+                f.name.startsWith(InputStats.STATS_FILE + ".corrupt-")
+            }!!
+            assertEquals(0, quarantined.size)
+        } finally {
+            InputStats.resetForTest()
+            root.deleteRecursively()
+        }
     }
 }

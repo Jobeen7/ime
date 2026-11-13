@@ -84,7 +84,8 @@ object SkinEditorEntry {
     /**
      * 失配布局被排除的提示（S-L3）：编辑器照常打开、该布局不在文件列表
      * 里，用户在页内看不到它，入口处提示一次（恢复靠重新导入皮肤）。
-     * 页内提示须 SkinEditorScreen 另行接 unavailableLayouts（不在本次范围）。
+     * 页内提示由 SkinEditorScreen 接 unavailableLayouts 另行显示
+     * （WO36 补上，与入口 toast 同文案口径）。
      */
     private fun toastUnavailableLayouts(context: Context, unavailableLayouts: List<String>) {
         val first = unavailableLayouts.firstOrNull() ?: return

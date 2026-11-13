@@ -3,7 +3,10 @@ package com.jobeen.ime.base.ngram
 import com.jobeen.ime.R
 import com.jobeen.ime.base.net.HttpUtil
 import com.jobeen.ime.base.util.appContext
+import com.jobeen.ime.base.util.availableBytes
 import com.jobeen.ime.base.util.DigestUtil
+import com.jobeen.ime.base.util.hasEnoughSpace
+import com.jobeen.ime.base.util.mirrorDownloadUrl
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.error.DeepErrorMapper
 import kotlinx.coroutines.Dispatchers
@@ -279,7 +282,7 @@ object GramModelDownloader {
         if (manifestSha.isNotEmpty() && manifestSha != expectedSha) {
             Timber.w("Ngram manifest sha256 differs from GitHub registry, trusting GitHub")
         }
-        if (!downloadFile(link, partial, expectedSha, onProgress)) {
+        if (!downloadFileWithMirror(link, partial, expectedSha, onProgress)) {
             partial.delete()
             return@withContext false
         }
@@ -349,6 +352,24 @@ object GramModelDownloader {
         }.onFailure { Timber.w(it, "Directory fsync failed: %s", dir) }
     }
 
+    /**
+     * 主 URL 失败后试一次国内镜像（E2）：只加 fallback，不改下载
+     * 逻辑——单次尝试、大小上限与 SHA 校验都在 [downloadFile] 内
+     * 原样走；取消以 CancellationException 穿透，不会走到镜像
+     * 尝试；无镜像候选（manifest 链接非 GitHub 形态）时直接返回失败。
+     */
+    private suspend fun downloadFileWithMirror(
+        url: String,
+        target: File,
+        expectedSha256: String,
+        onProgress: (Long, Long) -> Unit,
+    ): Boolean {
+        if (downloadFile(url, target, expectedSha256, onProgress)) return true
+        val mirror = mirrorDownloadUrl(url) ?: return false
+        Timber.w("Ngram model download failed on primary URL, retrying via mirror")
+        return downloadFile(mirror, target, expectedSha256, onProgress)
+    }
+
     private suspend fun downloadFile(
         url: String,
         target: File,
@@ -374,6 +395,20 @@ object GramModelDownloader {
                 }
                 if (total > MAX_MODEL_BYTES) {
                     Timber.w("Ngram model exceeds size limit: %d > %d", total, MAX_MODEL_BYTES)
+                    return false
+                }
+                // 存储守卫（E2）：落第一个字节前核对目标目录余量。
+                // 预算＝待下体积＋等体积预留（旧 .gram 在 rename 前
+                // 仍在盘，需一份整包量级的空间）；总量未知或余量未知
+                // 时不拦（见 hasEnoughSpace）。余量不足按原有失败口
+                // 径报（日志＋toast），不写半个文件。
+                val available = availableBytes(target.parentFile)
+                if (!hasEnoughSpace(available, total, total)) {
+                    Timber.w(
+                        "Ngram model download refused: insufficient space (available=%d need=%d reserve=%d)",
+                        available, total, total,
+                    )
+                    HttpUtil.showToast(appContext.getString(R.string.gram_download_failed, "存储空间不足"))
                     return false
                 }
                 body.byteStream().use { input ->

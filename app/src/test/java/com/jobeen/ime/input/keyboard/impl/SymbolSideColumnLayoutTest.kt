@@ -9,7 +9,10 @@ import org.junit.Test
 
 /**
  * 符号板侧栏列高分配（P-低2）：自定义入口先拿足两行 12sp 的固定高，
- * 剩余高度按每项不低于 15sp 行盒（17.58dp）折算可见行数，上限 7 行。
+ * 剩余高度按每项不低于 16.5dp 墨水下限（WO36：渲染层按墨水 bounds
+ * 居中绘制、不按行盒排布，行盒高估约 2.3dp；最 tall 墨水 15.26dp
+ * ＋约 1.2dp 呼吸量）折算可见行数，上限 7 行；列高小于入口高时
+ * 入口钳到列高、余高恒 ≥0。
  * 列高取 S24 Ultra 384×832dp 的 contentH×3/4：
  * 竖屏 24%→149.76dp，竖屏 24%＋子条→113.76dp，横屏 44%→126.72dp，
  * 横屏 30%→86.4dp，横屏 30%＋子条→50.4dp。字号倍率 1.0。
@@ -23,13 +26,13 @@ class SymbolSideColumnLayoutTest {
         SymbolKeyboard.layoutSideColumn(sidePanelHDp, fontScale)
 
     @Test
-    fun portraitDefault_sixRowsAndFixedEntry() {
-        // 列高 149.76dp：入口 32dp＋6 行×19.63dp（旧口径 7 行×18.7dp，
-        // 入口行只有 18.7dp、两行字被裁）。
+    fun portraitDefault_sevenRowsAndFixedEntry() {
+        // 列高 149.76dp：入口 32dp＋7 行×16.82dp（WO36：行高下限
+        // 18→16.5dp 墨水口径，竖屏恢复 7 行）。
         val l = layout(149.76f)
         assertEquals(32f, l.customEntryHDp, 0.001f)
-        assertEquals(6, l.visibleRows)
-        assertEquals(19.63f, l.itemHDp, 0.01f)
+        assertEquals(7, l.visibleRows)
+        assertEquals(16.82f, l.itemHDp, 0.01f)
     }
 
     @Test
@@ -68,10 +71,10 @@ class SymbolSideColumnLayoutTest {
 
     @Test
     fun allBudgetCases_itemHeightCoversLineBox() {
-        // 每项高恒 ≥ 15sp 行盒 17.58dp（取整口径 18dp 下限）。
+        // 每项高恒 ≥ 16.5dp 墨水下限（WO36 口径；竖屏档 16.82dp）。
         for (h in listOf(149.76f, 113.76f, 126.72f, 86.4f, 50.4f)) {
             val l = layout(h)
-            assertTrue("列高 $h 每项高 ${l.itemHDp}", l.itemHDp >= 18f)
+            assertTrue("列高 $h 每项高 ${l.itemHDp}", l.itemHDp >= 16.5f)
             assertTrue("列高 $h 行数 ${l.visibleRows}", l.visibleRows <= 7)
         }
     }
@@ -90,23 +93,21 @@ class SymbolSideColumnLayoutTest {
 
     @Test
     fun degenerateColumn_stillOneRow() {
-        // 列高 10dp：入口固定 32dp，剩余高度钳到 0、仍保 1 行×0dp——
-        // 极值下不崩，只是不够行盒（旧测试按 min(32, 列高/2) 断言入口
-        // 5dp，已按复查规约“固定 32dp”改回）。
+        // 列高 10dp：入口钳到列高 10dp（WO36 P-低2 钳制：入口不再
+        // 溢出列外），剩余高度 0、仍保 1 行×0dp——极值下不崩，
+        // 只是不够行盒，真机列高不可能这么小。
         val l = layout(10f)
-        assertEquals(32f, l.customEntryHDp, 0.001f)
+        assertEquals(10f, l.customEntryHDp, 0.001f)
         assertEquals(1, l.visibleRows)
     }
 
     @Test
     fun negativeOrZeroColumn_neverNegativeHeight() {
-        // 横条全开＋键盘拉到最小的极值：列高 ≤0 时列高钳到 0，入口仍为
-        // 固定 32dp、每项高 0，不量出负高（旧口径 sidePanelH/8 同样为负，
-        // 是既有极值问题；旧测试按 min(32, 列高/2) 断言入口 0dp，已按
-        // 复查规约“固定 32dp”改回）。
+        // 横条全开＋键盘拉到最小的极值：列高 ≤0 时列高钳到 0，入口
+        // 同样钳到 0dp、每项高 0，不量出负高（WO36 P-低2 钳制）。
         for (h in listOf(0f, -10f)) {
             val l = layout(h)
-            assertEquals(32f, l.customEntryHDp, 0.001f)
+            assertEquals(0f, l.customEntryHDp, 0.001f)
             assertEquals(1, l.visibleRows)
             assertEquals(0f, l.itemHDp, 0.001f)
         }

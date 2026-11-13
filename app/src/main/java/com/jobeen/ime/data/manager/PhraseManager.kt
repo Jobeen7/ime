@@ -189,7 +189,18 @@ object PhraseManager {
                     }
                 }
             }
-            prefs.edit().putBoolean(KEY_SEEDED, true).apply()
+            // D-P2（WO36）：这是全仓唯一的真 Room＋prefs 配对写（WO34
+            // 已核实）：Room 先提交、prefs 后标记。旧实现用 apply()
+            // 异步落盘，flush 挂在 QueuedWork 里跨过备份结算点时，
+            // 备份会读到“Room 已播种、prefs 仍未标记”的撕裂对。改
+            // 同步 commit()：本函数只在 [db] 的 Dispatchers.IO 内
+            // 跑（见下），同步写一个小 prefs 文件无 ANR 风险；返回
+            // 即 Room 与 prefs 双双落盘，配对窗口闭合。commit 失败
+            // （返回 false）时 seeded 仍为 false，下次调用重进本
+            // 函数：表已非空故跳过插入、只重标 seeded，自愈，不丢数。
+            if (!prefs.edit().putBoolean(KEY_SEEDED, true).commit()) {
+                Timber.w("phrase seeded flag commit failed, will retry on next access")
+            }
         }
     }
 

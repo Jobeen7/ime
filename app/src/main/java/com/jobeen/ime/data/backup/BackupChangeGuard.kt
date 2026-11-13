@@ -20,11 +20,13 @@ import java.util.concurrent.TimeUnit
  * （prefs／Room／文件）至此第一次有了统一的复核点。残余窗口由
  * “整个采集时长”缩到“最后一次重验之后”：只有一次写盘的落盘
  * 时刻落在最终重验之后、且其效果已进更早读到的另一源时才逃得过
- * （典型是 prefs 的 apply()：内存已改、Room 已提交、磁盘 flush
- * 仍挂在 QueuedWork 队列里跨过结算点；正常 flush 延迟为毫秒级，
- * 逃过须写盘线程被拖住横跨剩余采集，见 BackupManager 的注释）。
- * 彻底消除仍需跨组件全局写锁／停写总闸（写盘方散在百余处，
- * 见 BackupManager 的注释），不在本批。
+ * （典型曾是 prefs 的 apply()：内存已改、Room 已提交、磁盘 flush
+ * 仍挂在 QueuedWork 队列里跨过结算点）。WO36（D-P2）已把全仓
+ * 唯一的真配对写逐个收口（PhraseManager.ensureSeeded 与
+ * ClipboardManager.setMaxEntries 的 prefs 侧改同步 commit，见
+ * BackupManager 的结算注释），配对撕裂不再逃逸；单源写晚落盘
+ * 只是合法的更早快照。彻底消除仍需跨组件全局写锁／停写总闸
+ * （写盘方散在百余处，见 BackupManager 的注释），不在本批。
  *
  * 口径：
  * - 元数据读不到（文件不存在或属性不可读）时快照为 null：调用方
@@ -33,8 +35,8 @@ import java.util.concurrent.TimeUnit
  *   fileKey 在部分文件系统上为 null，该维即不参与比较。
  * - SharedPreferences 的 apply() 是异步落盘：写盘落在快照与重验
  *   之间即被检出，落在重验之后则进不了本次检测——单次 guard 的
- *   残余由结算点 [reverifyAll] 收窄（见类头注释），彻底消除需
- *   全局写锁（已知差距，不在本批）。
+ *   残余由结算点 [reverifyAll] 收窄（见类头注释）；配对写一侧
+ *   （WO36 已收口，见类头注释）之外，单源晚落盘只是更早快照。
  */
 internal class BackupChangeGuard {
 
@@ -111,9 +113,9 @@ internal class BackupChangeGuard {
      * 调一次；无跟踪文件时直接通过。
      *
      * 边界：本次调用返回之后才落盘的写，不在本次检测内——那是
-     * 结算点之后的写，按快照语义本就不属于本次备份；只有“效果
-     * 已进更早读到的源、落盘却跨过结算点”的配对写才是残余
-     * （见类 KDoc），单测 [BackupSettlePassTest] 把这条边界钉死。
+     * 结算点之后的写，按快照语义本就不属于本次备份；配对写撕裂
+     * 的残余已由 WO36 在写盘侧收口（见类 KDoc），单测
+     * [BackupSettlePassTest] 把这条边界钉死。
      */
     fun reverifyAll(operation: String) {
         for ((file, before) in tracked) {

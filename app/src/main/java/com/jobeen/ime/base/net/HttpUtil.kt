@@ -124,7 +124,7 @@ object HttpUtil {
     private fun readBoundedBody(response: Response): String {
         val body = response.body ?: return ""
         if (body.contentLength() > MAX_RESPONSE_BYTES) {
-            throw ApiException(-1, "响应体过大")
+            throw ApiException(-1, appContext.getString(R.string.http_response_too_large))
         }
         val out = ByteArrayOutputStream()
         body.byteStream().use { input ->
@@ -134,7 +134,7 @@ object HttpUtil {
                 val n = input.read(buf)
                 if (n < 0) break
                 total += n
-                if (total > MAX_RESPONSE_BYTES) throw ApiException(-1, "响应体过大")
+                if (total > MAX_RESPONSE_BYTES) throw ApiException(-1, appContext.getString(R.string.http_response_too_large))
                 out.write(buf, 0, n)
             }
         }

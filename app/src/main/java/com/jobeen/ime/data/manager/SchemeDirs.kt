@@ -24,8 +24,14 @@ import timber.log.Timber
  *   目录按相对路径逐文件比对）只清理源；内容不同则目标与源双方保留，
  *   源移进根下 [MIGRATION_BACKUP_DIR]；任一步失败都不写总标志，
  *   并把原因写进 [KEY_MIGRATION_ERROR] 供设置页显示（成功时清除）；
+ * - 多目录改名／切换凭证（WO38 E1-5，见 [DirectoryMoveJournal]）：
+ *   改名唯一入口 [renameDirectory]、切换凭证三钩
+ *   [beginDirSwitch]／[markDirSwitchMoved]／[finishDirSwitch]、
+ *   恢复入口 [recoverPendingMoves]（启动首访 [ensureMigrated]
+ *   先跑恢复再跑迁移；恢复只动指针与凭证，绝不删用户目录）。
  * - 本文件只有 [migrationPlan]、[migrationMoves]、[sanitizeDirName]、
- *   [isValidDirName]、[schemesInDir]、[sameContent] 是纯逻辑（可 JVM 单测），其余走 SharedPreferences /
+ *   [isValidDirName]、[schemesInDir]、[sameContent]、[renameDirectory]
+ *   与 [DirectoryMoveJournal] 的文件操作是纯逻辑（可 JVM 单测），其余走 SharedPreferences /
  *   磁盘，需 Android 环境；[ensureMigrated] 的 JVM 可测核心是接受
  *   [MigrationStore] 的内部重载。
  */
@@ -66,6 +72,110 @@ object SchemeDirs {
     fun setCurrentDirName(context: Context, name: String) {
         val safe = if (isValidDirName(name)) name else INITIAL_DIR
         prefs(context).edit().putString(KEY_CURRENT_DIR, safe).apply()
+    }
+
+    /**
+     * 多目录改名结果（WO38 E1-5）：改名唯一入口是本函数，凭证包裹
+     * 全程——落盘前写 INTENT 凭证、改名后推进 MOVED、提交清凭证；
+     * 任一崩溃点下次启动由 [recoverPendingMoves] 按目录现状两向恢复。
+     * 拒绝类结果（非法名／源不存在／目标已存在）不写凭证、不动磁盘。
+     */
+    sealed class RenameDirectoryResult {
+        /** 改名完成、凭证已清（清凭证失败时凭证残留，下次恢复向前完成）。 */
+        object Success : RenameDirectoryResult()
+
+        /** 非法名或新旧同名。 */
+        object InvalidName : RenameDirectoryResult()
+
+        /** 源目录不存在或不是目录。 */
+        object NotFound : RenameDirectoryResult()
+
+        /** 目标名已被占用（改名绝不覆盖已有目录）。 */
+        object AlreadyExists : RenameDirectoryResult()
+
+        /** renameTo 失败：源目录原样、凭证已清（清不掉时下次恢复回旧态）。 */
+        object MoveFailed : RenameDirectoryResult()
+    }
+
+    /**
+     * 多目录改名（WO38 E1-5）：先写凭证再 renameTo，renameTo 是同父
+     * 目录原子移动；MOVED 推进或提交清凭证失败不影响一致性（恢复按
+     * 目录现状判定，与阶段无关）。当前目录被改名时指针不自动跟随——
+     * 指针仍指旧名、目录由调用方 mkdirs 重建为空目录，调用方须在
+     * 成功后自行把指针拨到新名（或先切走再改名）；本函数只动目录。
+     */
+    @Synchronized
+    fun renameDirectory(root: File, oldName: String, newName: String): RenameDirectoryResult {
+        if (!isValidDirName(oldName) || !isValidDirName(newName) || oldName == newName) {
+            return RenameDirectoryResult.InvalidName
+        }
+        val oldDir = File(root, oldName)
+        val newDir = File(root, newName)
+        if (!oldDir.isDirectory) return RenameDirectoryResult.NotFound
+        if (newDir.exists()) return RenameDirectoryResult.AlreadyExists
+        val operationId = DirectoryMoveJournal.begin(
+            root, DirectoryMoveJournal.MoveKind.RENAME, oldName, newName,
+        )
+        if (!oldDir.renameTo(newDir)) {
+            runCatching { DirectoryMoveJournal.commit(root, operationId) }
+            return RenameDirectoryResult.MoveFailed
+        }
+        runCatching { DirectoryMoveJournal.markMoved(root, operationId) }
+            .onFailure {
+                Timber.w(it, "dir-move $operationId: markMoved failed after rename")
+            }
+        runCatching { DirectoryMoveJournal.commit(root, operationId) }
+            .onFailure {
+                Timber.w(it, "dir-move $operationId: journal cleanup failed, recovery will clear it")
+            }
+        return RenameDirectoryResult.Success
+    }
+
+    /**
+     * 切换凭证三钩（WO38 E1-5）：供切换流程调用——指针翻转前
+     * [beginDirSwitch] 写 INTENT 凭证、指针翻转后 [markDirSwitchMoved]
+     * 推进 MOVED、部署成功后 [finishDirSwitch] 清凭证。切换流程文件
+     * 尚未接线（SchemaSettingsScreen.switchDirectory 在 WO36 手中），
+     * 接线前切换仍走原有失败回滚；凭证与恢复本身已就绪，恢复由
+     * [recoverPendingMoves] 在启动首访执行。
+     */
+    fun beginDirSwitch(root: File, from: String, to: String): String =
+        DirectoryMoveJournal.begin(root, DirectoryMoveJournal.MoveKind.SWITCH, from, to)
+
+    fun markDirSwitchMoved(root: File, operationId: String): Boolean =
+        runCatching { DirectoryMoveJournal.markMoved(root, operationId) }.getOrDefault(false)
+
+    fun finishDirSwitch(root: File, operationId: String): Boolean =
+        runCatching { DirectoryMoveJournal.commit(root, operationId) }.getOrDefault(false)
+
+    /**
+     * 恢复根下全部改名／切换残留凭证（WO38 E1-5，两向、幂等；只动
+     * 指针与凭证，绝不删用户目录）。失败只记日志、返回空表，绝不
+     * 挡调用方（启动首访）继续走。指针回滚用同步 commit 写盘：
+     * 凭证在回滚成功后立即删除，指针若只经 apply() 异步落盘、进程
+     * 再崩一次会丢回滚（凭证已无、指针仍指已失的目标目录）。
+     */
+    fun recoverPendingMoves(
+        root: File,
+        context: Context = appContext,
+    ): List<DirectoryMoveJournal.RecoveredMove> {
+        return runCatching {
+            DirectoryMoveJournal.recover(
+                root,
+                currentDir = { currentDirName(context) },
+                setCurrentDir = { name ->
+                    val safe = if (isValidDirName(name)) name else INITIAL_DIR
+                    val committed = prefs(context).edit()
+                        .putString(KEY_CURRENT_DIR, safe).commit()
+                    if (!committed) {
+                        throw IllegalStateException("dir-move rollback pointer commit failed")
+                    }
+                },
+            )
+        }.getOrElse {
+            Timber.w(it, "dir-move recovery failed")
+            emptyList()
+        }
     }
 
     /** 最近一次迁移失败的原因，成功或从未失败时为 null（设置页显示接线见后续屏幕施工）。 */
@@ -237,6 +347,11 @@ object SchemeDirs {
      */
     @Synchronized
     fun ensureMigrated(root: File, context: Context = appContext) {
+        // 启动首访先清多目录改名／切换残留凭证（WO38 E1-5）：失败只记
+        // 日志（recoverPendingMoves 内部已吞错），绝不挡迁移；无凭证
+        // 时只是一次根目录枚举。放 isMigrated 早退之前——迁移早已置位
+        // 的稳态启动也要跑恢复（每进程首次 userDataDir 访问即到此处）。
+        recoverPendingMoves(root, context)
         ensureMigrated(root, SharedPreferencesMigrationStore(context))
     }
 

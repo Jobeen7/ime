@@ -20,6 +20,7 @@ import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.skin.perf.PerfMonitor
 import com.jobeen.ime.skin.perf.PerfPanelLabels
+import com.jobeen.ime.skin.perf.PerfReportLabels
 import com.jobeen.ime.skin.perf.PerfRow
 import com.jobeen.ime.skin.perf.PerfSnapshot
 import com.jobeen.ime.skin.perf.buildPerfSections
@@ -161,6 +162,9 @@ class PerformancePanelView(
         val prev = lastSnapshot
         val snapshot = collectSnapshot()
         lastSnapshot = snapshot
+        // WO36：报告文案走 strings.xml（PerfReportLabels.resolve），
+        // 不再用 PerfReportLabels.DEFAULT 常量。
+        val reportLabels = PerfReportLabels.resolve(context)
         val sections = buildPerfSections(
             snapshot,
             prev,
@@ -169,8 +173,9 @@ class PerformancePanelView(
                 PerfPanelLabels.resolve(context),
                 PerfPanelLabels.aggregateTemplate(context),
             ),
+            reportLabels,
         )
-        currentReportText = formatPerfReport(sections, prev == null)
+        currentReportText = formatPerfReport(sections, prev == null, reportLabels)
         writeReportFile(snapshot.reportPath, currentReportText)
         rowsContainer.removeAllViews()
         for (section in sections) {

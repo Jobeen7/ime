@@ -249,6 +249,7 @@ object SkinSnapshotBuilder {
             fontRanges = validated.fontRanges,
             keyShadow = validated.keyShadow,
             keyAnimation = validated.keyAnimation,
+            keyRipple = validated.keyRipple,
             spaceAnimation = validated.spaceAnimation,
             bubbleOverflowCheck = validated.bubbleOverflowCheck,
             swipeThresholdDp = validated.swipeThresholdDp,

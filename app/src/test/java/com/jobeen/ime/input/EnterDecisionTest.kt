@@ -3,6 +3,7 @@
 package com.jobeen.ime.input
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** 回车键精简决策表逐行覆盖（纯决策，不碰 Android 框架方法）。 */
@@ -16,21 +17,169 @@ class EnterDecisionTest {
 
     @Test
     fun composingBeatsEverything() {
-        // 组字中优先于动作、长按、专用换行键三者。
+        // 组字中一按完成（WO37）：有动作则上屏＋执行动作，点按长按
+        // 一样、字段与专用键都不影响“有动作就执行”这一半。
         assertEquals(
-            EnterOutcome.CommitCandidate,
+            EnterOutcome.CommitAndAct(EnterFieldAction.SEARCH),
             EnterDecision.decide(true, field(action = EnterFieldAction.SEARCH), false, false),
         )
         assertEquals(
-            EnterOutcome.CommitCandidate,
+            EnterOutcome.CommitAndAct(EnterFieldAction.SEARCH),
             EnterDecision.decide(true, field(action = EnterFieldAction.SEARCH), false, true),
         )
         assertEquals(
-            EnterOutcome.CommitCandidate,
+            EnterOutcome.CommitAndAct(EnterFieldAction.SEARCH),
             EnterDecision.decide(
                 true, field(isMultiLine = true, action = EnterFieldAction.SEARCH), true, false,
             ),
         )
+    }
+
+    @Test
+    fun composingWithoutActionOnlyCommitsCandidate() {
+        // 组字中无动作时只上屏候选（WO37）：多行未声明动作、带不要
+        // 换行标志时都没有动作可执行，长按不改变它；单行未声明动作
+        // 时动作是 DONE（非组字分支同一口径），故上屏＋执行 DONE。
+        assertEquals(
+            EnterOutcome.CommitCandidate,
+            EnterDecision.decide(
+                true,
+                field(isMultiLine = true, action = EnterFieldAction.UNSPECIFIED),
+                false,
+                false,
+            ),
+        )
+        assertEquals(
+            EnterOutcome.CommitCandidate,
+            EnterDecision.decide(
+                true,
+                field(isMultiLine = true, action = EnterFieldAction.UNSPECIFIED),
+                true,
+                true,
+            ),
+        )
+        assertEquals(
+            EnterOutcome.CommitCandidate,
+            EnterDecision.decide(
+                true,
+                field(isMultiLine = true, noEnterAction = true, action = EnterFieldAction.SEND),
+                false,
+                false,
+            ),
+        )
+        assertEquals(
+            EnterOutcome.CommitCandidate,
+            EnterDecision.decide(
+                true,
+                field(isMultiLine = true, noEnterAction = true, action = EnterFieldAction.SEND),
+                true,
+                true,
+            ),
+        )
+        assertEquals(
+            EnterOutcome.CommitAndAct(EnterFieldAction.DONE),
+            EnterDecision.decide(
+                true,
+                field(action = EnterFieldAction.UNSPECIFIED),
+                false,
+                false,
+            ),
+        )
+    }
+
+    @Test
+    fun composingActionMatrix() {
+        // 组字中一按完成（WO37）全矩阵：动作口径与非组字分支同一来源
+        // ——单行恒有动作（未声明→DONE）；多行仅未带标志且声明了
+        // 动作时有动作；其余只上屏。
+        val actions = listOf(
+            EnterFieldAction.SEARCH,
+            EnterFieldAction.SEND,
+            EnterFieldAction.GO,
+            EnterFieldAction.NEXT,
+            EnterFieldAction.PREVIOUS,
+            EnterFieldAction.DONE,
+            EnterFieldAction.UNSPECIFIED,
+        )
+        for (action in actions) {
+            for (multiLine in listOf(false, true)) {
+                for (noEnterAction in listOf(false, true)) {
+                    for (dedicated in listOf(false, true)) {
+                        val expectedAction: EnterFieldAction? =
+                            if (!multiLine) {
+                                if (action == EnterFieldAction.UNSPECIFIED) {
+                                    EnterFieldAction.DONE
+                                } else {
+                                    action
+                                }
+                            } else if (!noEnterAction && action != EnterFieldAction.UNSPECIFIED) {
+                                action
+                            } else {
+                                null
+                            }
+                        val expected: EnterOutcome =
+                            expectedAction?.let { EnterOutcome.CommitAndAct(it) }
+                                ?: EnterOutcome.CommitCandidate
+                        assertEquals(
+                            expected,
+                            EnterDecision.decide(
+                                true,
+                                field(
+                                    isMultiLine = multiLine,
+                                    noEnterAction = noEnterAction,
+                                    action = action,
+                                ),
+                                dedicated,
+                                false,
+                            ),
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun t9NeverInsertsNewline() {
+        // 九宫格回车永不插换行（2026-11-13 用户定，只限九宫格）：
+        // 决策表现有 hasDedicatedNewlineKey 分支已实现，本测试只钉
+        // 住行为——组字中／单行／多行有动作／多行无动作／长按，九宫格
+        // 一律走不到 InsertNewline 分支。26 键等无专用键键盘保留
+        // 原样，对照见
+        // multiLineWithoutFlagInsertsNewlineOnlyWithoutDedicatedKey
+        // 与 longPressWithoutDedicatedKeyIsNewlineExceptComposing。
+        val actions = listOf(
+            EnterFieldAction.SEARCH,
+            EnterFieldAction.SEND,
+            EnterFieldAction.DONE,
+            EnterFieldAction.UNSPECIFIED,
+        )
+        for (composing in listOf(false, true)) {
+            for (multiLine in listOf(false, true)) {
+                for (noEnterAction in listOf(false, true)) {
+                    for (action in actions) {
+                        for (longPress in listOf(false, true)) {
+                            val outcome = EnterDecision.decide(
+                                composing,
+                                field(
+                                    isMultiLine = multiLine,
+                                    noEnterAction = noEnterAction,
+                                    action = action,
+                                ),
+                                true,
+                                longPress,
+                            )
+                            assertTrue(
+                                "T9 must never InsertNewline: composing=$composing " +
+                                    "multiLine=$multiLine noEnterAction=$noEnterAction " +
+                                    "action=$action longPress=$longPress",
+                                outcome != EnterOutcome.InsertNewline,
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @Test
@@ -179,7 +328,7 @@ class EnterDecisionTest {
     @Test
     fun multiLineSendMatchesSingleLineSend() {
         // 两微信一致：单行 SEND 与多行 SEND（均未带不要换行标志）
-        // 回车都是纸飞机、点按都发送；组字中时仍先上屏候选。
+        // 回车都是纸飞机、点按都发送；组字中时一按完成：上屏候选＋发送。
         for (multiLine in listOf(false, true)) {
             assertEquals(
                 EnterOutcome.PerformAction(EnterFieldAction.SEND),
@@ -192,7 +341,7 @@ class EnterDecisionTest {
             )
         }
         assertEquals(
-            EnterOutcome.CommitCandidate,
+            EnterOutcome.CommitAndAct(EnterFieldAction.SEND),
             EnterDecision.decide(
                 true,
                 field(isMultiLine = true, action = EnterFieldAction.SEND),

@@ -5,6 +5,50 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+import java.util.zip.ZipFile
+
+/**
+ * D-L3（WO36）构建期盖戳：内置万象方案版本取自随包 resource.zip
+ * 内的 shared/version.txt，不再手写常量（常量曾停在 v18.0.15 与
+ * 实际内置 18.1.0 脱节，方案页本地版本错报）。配置期读取：zip
+ * 不在／条目缺失／内容非法时回落到上一个已知版本并告警，不让
+ * 构建失败——resource.zip 是 gitignored 生成物，干净检出时可
+ * 能不在；回落值须与当前包内版本一致，换版时以 zip 内容为准。
+ * 盖戳验证：unzip -p app/src/main/assets/resource.zip
+ * shared/version.txt 应为 18.1.12，且 WanxiangUpdateManagerTest
+ * 钉住 BUILTIN_SCHEMA_VERSION == "v18.1.12"（该测试只在盖戳值
+ * 正确时通过）。
+ * 注意：构建脚本里 `java` 会解析到 Java 插件扩展，不能写
+ * `java.util.zip.ZipFile` 全限定名，故用上面 import；`try` 不作
+ * 返回值表达式，用语句形式＋显式 return。
+ */
+fun readBundledWanxiangVersionForStamp(): String {
+    val fallback = "18.1.12"
+    val zipFile = file("src/main/assets/resource.zip")
+    if (!zipFile.isFile) {
+        logger.warn("D-L3: resource.zip 缺失，BUILTIN_SCHEMA_VERSION 回落到 v$fallback")
+        return fallback
+    }
+    try {
+        ZipFile(zipFile).use { zip ->
+            val entry = zip.getEntry("shared/version.txt")
+            if (entry == null) {
+                logger.warn("D-L3: resource.zip 内无 shared/version.txt，BUILTIN_SCHEMA_VERSION 回落到 v$fallback")
+                return fallback
+            }
+            val text = zip.getInputStream(entry).bufferedReader().readText().trim()
+            if (!text.matches(Regex("\\d+\\.\\d+\\.\\d+.*"))) {
+                logger.warn("D-L3: shared/version.txt 内容非法（'$text'），BUILTIN_SCHEMA_VERSION 回落到 v$fallback")
+                return fallback
+            }
+            return text
+        }
+    } catch (e: Exception) {
+        logger.warn("D-L3: 读 resource.zip 失败（${e.message}），BUILTIN_SCHEMA_VERSION 回落到 v$fallback")
+        return fallback
+    }
+}
+
 @Suppress("UnstableApiUsage") android {
     namespace = "com.jobeen.ime"
     compileSdk = 37
@@ -17,13 +61,22 @@ plugins {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 209
-        versionName = "1.1.18.13"
+        versionCode = 210
+        versionName = "1.1.18.14"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 应用名/输入法名不写在 strings.xml 里：debug 需要在同一资源名上
         // 覆盖成不同值（见 buildTypes.debug），resValue 按构建类型生成
         resValue("string", "app_name", "Jime")
+
+        // D-L3 构建期盖戳：内置万象版本由构建期从 resource.zip 内
+        // shared/version.txt 取值生成（见文件头 readBundledWanxiangVersionForStamp），
+        // 运行时只作 shared/version.txt 读不到时的兜底。
+        buildConfigField(
+            "String",
+            "BUILTIN_SCHEMA_VERSION",
+            "\"v${readBundledWanxiangVersionForStamp()}\"",
+        )
 
         ndk {
             //noinspection ChromeOsAbiSupport

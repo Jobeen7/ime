@@ -4,6 +4,7 @@ package com.jobeen.ime.data.backup
 
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
+import com.jobeen.ime.R
 import com.jobeen.ime.data.database.CandidatePrefer
 import com.jobeen.ime.data.database.CandidateSorting
 import com.jobeen.ime.data.database.ClipboardGroup
@@ -60,7 +61,7 @@ internal class RoomSnapshotReader(
                 SQLiteDatabase.OPEN_READONLY,
             )
         } catch (e: Exception) {
-            throw BackupManager.BackupException("备份读取数据库失败：${e.message ?: "无法打开数据库"}")
+            throw BackupManager.BackupException(backupString(R.string.backup_read_db_failed, e.message ?: backupString(R.string.backup_db_open_failed)))
         }
         try {
             if (attachClip) {
@@ -69,7 +70,7 @@ internal class RoomSnapshotReader(
                         "ATTACH DATABASE '${attachFile!!.absolutePath.replace("'", "''")}' AS clip",
                     )
                 } catch (e: Exception) {
-                    throw BackupManager.BackupException("备份读取数据库失败：${e.message ?: "无法关联剪贴板库"}")
+                    throw BackupManager.BackupException(backupString(R.string.backup_read_db_failed, e.message ?: backupString(R.string.backup_db_attach_failed)))
                 }
             }
             // 主库 schema 名：ATTACH 后主库仍叫 main，剪贴板库叫 clip；
@@ -93,11 +94,11 @@ internal class RoomSnapshotReader(
             } catch (e: BackupManager.BackupException) {
                 throw e
             } catch (e: Exception) {
-                throw BackupManager.BackupException("备份读取数据库失败：${e.message ?: "读取失败"}")
+                throw BackupManager.BackupException(backupString(R.string.backup_read_db_failed, e.message ?: backupString(R.string.backup_db_read_failed)))
             }
             // 事务外校验两库完整性：任一库 first 行不是 "ok" 即损坏。
-            if (appExists) checkQuickCheck(db, "main", "主库")
-            if (clipExists) checkQuickCheck(db, clipSchema, "剪贴板库")
+            if (appExists) checkQuickCheck(db, "main", backupString(R.string.backup_db_main))
+            if (clipExists) checkQuickCheck(db, clipSchema, backupString(R.string.backup_db_clipboard))
             return snapshot
         } finally {
             runCatching { if (attachClip) db.execSQL("DETACH DATABASE clip") }
@@ -111,10 +112,10 @@ internal class RoomSnapshotReader(
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             }
         } catch (e: Exception) {
-            throw BackupManager.BackupException("备份读取数据库失败：${e.message ?: "$label 校验失败"}")
+            throw BackupManager.BackupException(backupString(R.string.backup_read_db_failed, e.message ?: backupString(R.string.backup_db_check_failed, label)))
         }
         if (result != "ok") {
-            throw BackupManager.BackupException("数据库完整性校验失败（$label）：${result ?: "无结果"}")
+            throw BackupManager.BackupException(backupString(R.string.backup_db_integrity_failed, label, result ?: backupString(R.string.backup_no_result)))
         }
     }
 

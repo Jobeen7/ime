@@ -72,12 +72,17 @@ class SymbolKeyboard(
         private const val SWIPE_MIN_DISTANCE_DP = 48
 
         /**
-         * 侧栏单项最小行高（P-低2，预算口径）：侧栏项 15sp，Roboto 行盒
-         * 1.171875×15＝17.58dp，取整 18dp。渲染层按字号画墨水
-         * （SidePanelRender.textSize＝dp(15)），不跟系统字号倍率走，
-         * 故行高不乘字号倍率。
+         * 侧栏单项最小行高（WO36 P-低2，预算口径）：15sp 墨水实测
+         * 最 tall 约 15.26dp（Noto Sans CJK SC，'j' 含降部／全角括号；
+         * 常用字“中”13.79dp），加约 1.2dp 呼吸量取 16.5dp。旧口径
+         * 18dp 取自 Roboto 行盒 1.171875×15＝17.58dp 取整——行盒含
+         * 字体内部 leading，但渲染层按墨水 bounds 居中绘制
+         * （SidePanelRender.drawItems）、不按行盒排布，故行盒高估
+         * 约 2.3dp；16.5dp 仍盖住最 tall 墨水、上下各留约 0.6dp。
+         * 渲染层按字号画墨水（SidePanelRender.textSize＝dp(15)），
+         * 不跟系统字号倍率走，故行高不乘字号倍率。
          */
-        internal const val SIDE_ITEM_MIN_HEIGHT_DP = 18f
+        internal const val SIDE_ITEM_MIN_HEIGHT_DP = 16.5f
 
         /**
          * 「⊕／自定义」入口固定高（P-低2）：两行 12sp 行高 28.1dp
@@ -104,13 +109,20 @@ class SymbolKeyboard(
          * 按每项不低于 [SIDE_ITEM_MIN_HEIGHT_DP] 折算可见行数，上限
          * [SIDE_MAX_VISIBLE_ROWS] 行、下限 1 行；算出的每项高恒 ≥
          * 最小行高（除非列高本身小于入口高＋一行，此时仍保 1 行）。
+         * 列高小于入口高时入口钳到列高（WO36：旧口径入口恒 32dp，
+         * 列高 10dp 时 onMeasure 会量出负高；钳后入口不溢出、余高
+         * 不为负；列高 ≤0 时入口 0、仍保 1 行×0dp）。钳制只在极值
+         * 生效：列高 ≥ 入口高时入口仍为足额 32dp×字号倍率。
          *
          * 预算（S24 Ultra 384×832dp，字号倍率 1.0）：
-         * 竖屏 24%（列高 149.8dp）→ 入口 32dp＋6 行×19.6dp；
+         * 竖屏 24%（列高 149.8dp）→ 入口 32dp＋7 行×16.8dp；
          * 竖屏 24%＋子条（列高 113.8dp）→ 4 行×20.4dp；
          * 横屏 44%（列高 126.7dp）→ 5 行×18.9dp；
          * 横屏 30%（列高 86.4dp）→ 3 行×18.1dp；
          * 横屏 30%＋子条（列高 50.4dp）→ 1 行×18.4dp。
+         * WO36 下限 16.5dp 只改动竖屏 24% 一档（6→7 行），其余四档
+         * 行数与每项高与 WO34 完全一致（16.5dp 落在 (16.35, 16.82]
+         * 区间内：＞81.76/5 保住子条档 4 行，≤117.76/7 恢复 7 行）。
          * 旧口径 7 行固定：竖屏 18.7dp、横屏 30% 仅 10.8dp、
          * 横屏 30%＋子条 6.3dp，墨水溢出相邻行。
          * 未选的方案：visableRow 固定改回 4（竖屏白白少看 2 行，
@@ -120,7 +132,9 @@ class SymbolKeyboard(
         internal fun layoutSideColumn(sidePanelHDp: Float, fontScale: Float = 1f): SideColumnLayout {
             // 负列高（横条全开＋键盘拉到最小的极值）钳到 0：不量出负高。
             val panelH = sidePanelHDp.coerceAtLeast(0f)
-            val customH = CUSTOM_ENTRY_HEIGHT_DP * fontScale
+            // 入口钳到列高：列高小于入口高时入口不再溢出列外，
+            // onMeasure/onLayout 量出的侧栏区高（列高−入口高）恒 ≥0。
+            val customH = (CUSTOM_ENTRY_HEIGHT_DP * fontScale).coerceAtMost(panelH)
             val itemAreaH = (panelH - customH).coerceAtLeast(0f)
             val rows = (itemAreaH / SIDE_ITEM_MIN_HEIGHT_DP).toInt()
                 .coerceIn(1, SIDE_MAX_VISIBLE_ROWS)
@@ -150,7 +164,7 @@ class SymbolKeyboard(
     /**
      * 左侧竖栏（2026-11-12 符号栏重做）：显示用户自定义符号列（默认 16），
      * 上下滑动换符号；可见行数上限 7 行，实际按列高折算（P-低2，见
-     * [layoutSideColumn]，高度不足时下调、每项不低于 15sp 行盒）；
+     * [layoutSideColumn]，高度不足时下调、每项不低于 16.5dp 墨水下限）；
      * 底部“自定义”入口固定高、另占一行。
      * 不再显示分类——分类切换走顶部栏的类型切换钮。
      */
@@ -751,7 +765,7 @@ class SymbolKeyboard(
         val contentH = th - barH - subH - hH
         val sidePanelH = contentH * 3 / 4
         // P-低2：竖栏区列高按 layoutSideColumn 分配——自定义入口先拿
-        // 足两行 12sp 的固定高，剩余高度按 15sp 行盒折算可见行数
+        // 足两行 12sp 的固定高，剩余高度按 16.5dp 墨水下限折算可见行数
         // （上限 7 行）；旧口径 8 等分（sidePanelH/8）在默认竖屏
         // 24% 每项只有 18.7dp、横屏 30% 仅 10.8dp。
         val customH = context.dp(sideColumnLayout(sidePanelH).customEntryHDp).toInt()

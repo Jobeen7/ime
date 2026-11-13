@@ -2,9 +2,11 @@
 
 package com.jobeen.ime.skin.perf
 
+import android.content.Context
+import com.jobeen.ime.R
+
 /**
-* 键盘性能报告（纯 Kotlin，不碰 Android 框架，可 JVM 单测）：
-* 一次面板打开的采样快照 → 分区行 → 发送上屏用的纯文本报告。
+* 键盘性能报告：一次面板打开的采样快照 → 分区行 → 发送上屏用的纯文本报告。
 *
 * 口径（诚实项，勿“补”数字）：
 * - 「脚本」行对应 Rhino 脚本宿主（SkinScriptSandbox）：Rhino 堆
@@ -17,10 +19,170 @@ package com.jobeen.ime.skin.perf
 * 内内存（PerformancePanelView 伴生对象），跨进程不保留。
 * - CPU 是 /proc/self/stat 采样值（两次采样间的 utime+stime
 * 增量／墙钟增量；首次采样用进程启动至今的累计平均）。
+*
+* 文案来源（WO36 抽串，与 PerfPanelLabels 同款做法）：
+* 用户可见的分区标题／行标签／值模板一律走 [PerfReportLabels]——
+* 运行时由调用方从 strings.xml（`perf_report_*`）解析后注入，
+* 纯函数缺省值 [PerfReportLabels.DEFAULT] 与资源同值，供无 Context
+* 的纯函数与单测使用；两处同值由 Wo36SkinPerfReportTest 逐项比对
+* strings.xml 源码钉住，改串时两边必须一起改。本文件除
+* [PerfReportLabels.resolve] 外仍是纯 Kotlin，不碰 Android 框架。
 */
 data class PerfRow(val label: String, val value: String, val delta: String? = null)
 
 data class PerfSection(val title: String, val rows: List<PerfRow>)
+
+/**
+ * 性能报告文案（WO36）：全部用户可见串的唯一来源。
+ *
+ * - [DEFAULT]：与 strings.xml `perf_report_*` 同值的 canonical 文案，
+ *   纯函数缺省值与单测期望的唯一来源；单测不再硬编码中文，改串不改测试。
+ * - [resolve]：运行时从资源解析（面板显示与发送文本共用同一份）。
+ */
+data class PerfReportLabels(
+    val sectionTiming: String,
+    val sectionOverview: String,
+    val sectionAttribution: String,
+    val sectionMemtype: String,
+    val sectionMalloc: String,
+    val sectionProcess: String,
+    val sectionStorage: String,
+    val rowNoData: String,
+    val rowTotalMemory: String,
+    val rowAvailMemory: String,
+    val rowCpu: String,
+    val rowSinceLast: String,
+    val rowScript: String,
+    val rowKeyboardUi: String,
+    val rowSkinCache: String,
+    val rowViewCount: String,
+    val rowOther: String,
+    val rowMallocHeap: String,
+    val rowGraphics: String,
+    val rowStack: String,
+    val rowCode: String,
+    val rowOtherMem: String,
+    val rowMallocAllocated: String,
+    val rowRimeFiles: String,
+    val rowLeveldb: String,
+    val rowUptime: String,
+    val rowReportFile: String,
+    val noDataValue: String,
+    val cpuSampled: String,
+    val firstCollection: String,
+    val scriptValue: String,
+    val keyboardUiValue: String,
+    val skinCacheValue: String,
+    val mallocAllocatedValue: String,
+    val rimeFilesValue: String,
+    val leveldbEmpty: String,
+    val leveldbValue: String,
+    val leveldbSeparator: String,
+    val durationHoursMinutes: String,
+    val durationMinutesSeconds: String,
+    val durationSeconds: String,
+    val seconds: String,
+    val reportTitle: String,
+    val firstSampleNote: String,
+) {
+    companion object {
+        /** 与 strings.xml `perf_report_*` 同值的 canonical 文案。 */
+        val DEFAULT = PerfReportLabels(
+            sectionTiming = "耗时",
+            sectionOverview = "总览",
+            sectionAttribution = "按归属（估算）",
+            sectionMemtype = "按内存类型",
+            sectionMalloc = "malloc",
+            sectionProcess = "进程",
+            sectionStorage = "存储位置",
+            rowNoData = "暂无数据",
+            rowTotalMemory = "总内存",
+            rowAvailMemory = "距上限剩余",
+            rowCpu = "CPU",
+            rowSinceLast = "距上次采集",
+            rowScript = "脚本",
+            rowKeyboardUi = "键盘界面",
+            rowSkinCache = "皮肤图片缓存（估算）",
+            rowViewCount = "视图数量",
+            rowOther = "其余",
+            rowMallocHeap = "malloc 堆",
+            rowGraphics = "图形",
+            rowStack = "栈",
+            rowCode = "代码与映射文件",
+            rowOtherMem = "其他",
+            rowMallocAllocated = "已分配",
+            rowRimeFiles = "RIME 打开的数据文件",
+            rowLeveldb = "打开的 LevelDB",
+            rowUptime = "运行时长",
+            rowReportFile = "报告文件",
+            noDataValue = "冷启动／按键提交／皮肤应用／掉帧／内存五项随使用累计",
+            cpuSampled = "%1\$.1f%%（采样值）",
+            firstCollection = "首次打开",
+            scriptValue = "Rhino 宿主，堆不可计量",
+            keyboardUiValue = "%1\$d 个视图 · 图形 %2\$s",
+            skinCacheValue = "%1\$d 项 · 约 %2\$s",
+            mallocAllocatedValue = "%1\$s（脚本部分不可计量，未扣除）",
+            rimeFilesValue = "%1\$d 个 · 共 %2\$s（目录统计口径，非 fd 口径）",
+            leveldbEmpty = "0 个",
+            leveldbValue = "%1\$d 个：%2\$s",
+            leveldbSeparator = "、",
+            durationHoursMinutes = "%1\$d小时%2\$d分",
+            durationMinutesSeconds = "%1\$d分%2\$d秒",
+            durationSeconds = "%1\$d秒",
+            seconds = "%1\$.1f 秒",
+            reportTitle = "键盘性能",
+            firstSampleNote = "首次采集（无差值）",
+        )
+
+        /** 运行时从资源解析全部报告文案（面板显示与发送文本共用同一份）。 */
+        fun resolve(context: Context): PerfReportLabels = PerfReportLabels(
+            sectionTiming = context.getString(R.string.perf_report_section_timing),
+            sectionOverview = context.getString(R.string.perf_report_section_overview),
+            sectionAttribution = context.getString(R.string.perf_report_section_attribution),
+            sectionMemtype = context.getString(R.string.perf_report_section_memtype),
+            sectionMalloc = context.getString(R.string.perf_report_section_malloc),
+            sectionProcess = context.getString(R.string.perf_report_section_process),
+            sectionStorage = context.getString(R.string.perf_report_section_storage),
+            rowNoData = context.getString(R.string.perf_report_row_no_data),
+            rowTotalMemory = context.getString(R.string.perf_report_row_total_memory),
+            rowAvailMemory = context.getString(R.string.perf_report_row_avail_memory),
+            rowCpu = context.getString(R.string.perf_report_row_cpu),
+            rowSinceLast = context.getString(R.string.perf_report_row_since_last),
+            rowScript = context.getString(R.string.perf_report_row_script),
+            rowKeyboardUi = context.getString(R.string.perf_report_row_keyboard_ui),
+            rowSkinCache = context.getString(R.string.perf_report_row_skin_cache),
+            rowViewCount = context.getString(R.string.perf_report_row_view_count),
+            rowOther = context.getString(R.string.perf_report_row_other),
+            rowMallocHeap = context.getString(R.string.perf_report_row_malloc_heap),
+            rowGraphics = context.getString(R.string.perf_report_row_graphics),
+            rowStack = context.getString(R.string.perf_report_row_stack),
+            rowCode = context.getString(R.string.perf_report_row_code),
+            rowOtherMem = context.getString(R.string.perf_report_row_other_mem),
+            rowMallocAllocated = context.getString(R.string.perf_report_row_malloc_allocated),
+            rowRimeFiles = context.getString(R.string.perf_report_row_rime_files),
+            rowLeveldb = context.getString(R.string.perf_report_row_leveldb),
+            rowUptime = context.getString(R.string.perf_report_row_uptime),
+            rowReportFile = context.getString(R.string.perf_report_row_report_file),
+            noDataValue = context.getString(R.string.perf_report_no_data_value),
+            cpuSampled = context.getString(R.string.perf_report_cpu_sampled),
+            firstCollection = context.getString(R.string.perf_report_first_collection),
+            scriptValue = context.getString(R.string.perf_report_script_value),
+            keyboardUiValue = context.getString(R.string.perf_report_keyboard_ui_value),
+            skinCacheValue = context.getString(R.string.perf_report_skin_cache_value),
+            mallocAllocatedValue = context.getString(R.string.perf_report_malloc_allocated_value),
+            rimeFilesValue = context.getString(R.string.perf_report_rime_files_value),
+            leveldbEmpty = context.getString(R.string.perf_report_leveldb_empty),
+            leveldbValue = context.getString(R.string.perf_report_leveldb_value),
+            leveldbSeparator = context.getString(R.string.perf_report_leveldb_separator),
+            durationHoursMinutes = context.getString(R.string.perf_report_duration_hours_minutes),
+            durationMinutesSeconds = context.getString(R.string.perf_report_duration_minutes_seconds),
+            durationSeconds = context.getString(R.string.perf_report_duration_seconds),
+            seconds = context.getString(R.string.perf_report_seconds),
+            reportTitle = context.getString(R.string.perf_report_title),
+            firstSampleNote = context.getString(R.string.perf_report_first_sample_note),
+        )
+    }
+}
 
 /**
 * 一次面板采样的全部原始数（采集逻辑在 PerformancePanelView，
@@ -80,20 +242,21 @@ else -> "0"
 }
 
 /** ms → "2小时15分" / "45分32秒" / "12秒"（不足 1 秒显 "0秒"）。 */
-fun formatDuration(ms: Long): String {
+fun formatDuration(ms: Long, labels: PerfReportLabels = PerfReportLabels.DEFAULT): String {
 val totalSeconds = ms / 1000
 val hours = totalSeconds / 3600
 val minutes = (totalSeconds % 3600) / 60
 val seconds = totalSeconds % 60
 return when {
-hours > 0 -> "${hours}小时${minutes}分"
-minutes > 0 -> "${minutes}分${seconds}秒"
-else -> "${seconds}秒"
+hours > 0 -> labels.durationHoursMinutes.format(hours, minutes)
+minutes > 0 -> labels.durationMinutesSeconds.format(minutes, seconds)
+else -> labels.durationSeconds.format(seconds)
 }
 }
 
 /** 秒（1 位小数）→ "12.3 秒"。 */
-fun formatSeconds(seconds: Double): String = "%.1f 秒".format(seconds)
+fun formatSeconds(seconds: Double, labels: PerfReportLabels = PerfReportLabels.DEFAULT): String =
+    labels.seconds.format(seconds)
 
 /**
 * 分区行（纯函数）：[timingRows] 为已有的耗时聚合行
@@ -105,28 +268,29 @@ fun buildPerfSections(
 snapshot: PerfSnapshot,
 prev: PerfSnapshot?,
 timingRows: List<Pair<String, String>>,
+labels: PerfReportLabels = PerfReportLabels.DEFAULT,
 ): List<PerfSection> {
 val sections = ArrayList<PerfSection>()
 
 // 耗时：只加不减，现有 5 项＋诊断探针原样保留，无差值
 // （累计聚合，单次差值无意义）。
 val timing = if (timingRows.isEmpty()) {
-listOf(PerfRow("暂无数据", "冷启动／按键提交／皮肤应用／掉帧／内存五项随使用累计"))
+listOf(PerfRow(labels.rowNoData, labels.noDataValue))
 } else {
 timingRows.map { (label, value) -> PerfRow(label, value)}
 }
-sections += PerfSection("耗时", timing)
+sections += PerfSection(labels.sectionTiming, timing)
 
 // 总览
 val sinceLast = prev?.let { (snapshot.openedAtMs - it.openedAtMs) / 1000.0}
 sections += PerfSection(
-"总览",
+labels.sectionOverview,
 listOf(
-PerfRow("总内存", formatMb(snapshot.totalPssKb), prev?.let { formatDeltaMb(snapshot.totalPssKb - it.totalPssKb)}),
-PerfRow("距上限剩余", formatMb(snapshot.availMemKb), prev?.let { formatDeltaMb(snapshot.availMemKb - it.availMemKb)}),
+PerfRow(labels.rowTotalMemory, formatMb(snapshot.totalPssKb), prev?.let { formatDeltaMb(snapshot.totalPssKb - it.totalPssKb)}),
+PerfRow(labels.rowAvailMemory, formatMb(snapshot.availMemKb), prev?.let { formatDeltaMb(snapshot.availMemKb - it.availMemKb)}),
 PerfRow(
-"CPU",
-snapshot.cpuPercent?.let { "%.1f%%（采样值）".format(it)}?: "—",
+labels.rowCpu,
+snapshot.cpuPercent?.let { labels.cpuSampled.format(it)}?: "—",
 prev?.let {
 val cur = snapshot.cpuPercent
 val old = it.cpuPercent
@@ -138,7 +302,7 @@ null
 }
 },
 ),
-PerfRow("距上次采集", sinceLast?.let { formatSeconds(it)}?: "首次打开"),
+PerfRow(labels.rowSinceLast, sinceLast?.let { formatSeconds(it, labels)}?: labels.firstCollection),
 ),
 )
 
@@ -148,29 +312,32 @@ val graphicsKb = snapshot.graphicsKb?: 0L
 val otherKb = snapshot.totalPssKb - graphicsKb - skinCacheKb
 val prevOtherKb = prev?.let { it.totalPssKb - (it.graphicsKb?: 0L) - it.skinCacheBytes / 1024}
 sections += PerfSection(
-"按归属（估算）",
+labels.sectionAttribution,
 listOf(
 // Rhino 堆无法直接计量：只写口径，不编数字，无差值。
-PerfRow("脚本", "Rhino 宿主，堆不可计量"),
+PerfRow(labels.rowScript, labels.scriptValue),
 PerfRow(
-"键盘界面",
-"${snapshot.viewCount} 个视图 · 图形 ${snapshot.graphicsKb?.let { formatMb(it)}?: "—"}",
+labels.rowKeyboardUi,
+labels.keyboardUiValue.format(
+snapshot.viewCount,
+snapshot.graphicsKb?.let { formatMb(it)}?: "—",
+),
 prev?.let {
 formatDeltaCount(snapshot.viewCount - it.viewCount)
 },
 ),
 PerfRow(
-"皮肤图片缓存（估算）",
-"${snapshot.skinCacheCount} 项 · 约 ${formatBytesMb(snapshot.skinCacheBytes)}",
+labels.rowSkinCache,
+labels.skinCacheValue.format(snapshot.skinCacheCount, formatBytesMb(snapshot.skinCacheBytes)),
 prev?.let { formatDeltaMb(skinCacheKb - it.skinCacheBytes / 1024)},
 ),
 PerfRow(
-"视图数量",
+labels.rowViewCount,
 "${snapshot.viewCount}",
 prev?.let { formatDeltaCount(snapshot.viewCount - it.viewCount)},
 ),
 PerfRow(
-"其余",
+labels.rowOther,
 formatMb(otherKb),
 prevOtherKb?.let { formatDeltaMb(otherKb - it)},
 ),
@@ -184,46 +351,49 @@ cur?.let { formatMb(it)}?: "—",
 if (cur!= null && old!= null) formatDeltaMb(cur - old) else null,
 )
 sections += PerfSection(
-"按内存类型",
+labels.sectionMemtype,
 listOf(
-memRow("malloc 堆", snapshot.nativeHeapKb, prev?.nativeHeapKb),
-memRow("图形", snapshot.graphicsKb, prev?.graphicsKb),
-memRow("栈", snapshot.stackKb, prev?.stackKb),
-memRow("代码与映射文件", snapshot.codeKb, prev?.codeKb),
-memRow("其他", snapshot.otherKb, prev?.otherKb),
+memRow(labels.rowMallocHeap, snapshot.nativeHeapKb, prev?.nativeHeapKb),
+memRow(labels.rowGraphics, snapshot.graphicsKb, prev?.graphicsKb),
+memRow(labels.rowStack, snapshot.stackKb, prev?.stackKb),
+memRow(labels.rowCode, snapshot.codeKb, prev?.codeKb),
+memRow(labels.rowOtherMem, snapshot.otherKb, prev?.otherKb),
 ),
 )
 
 // malloc（已分配口径）：脚本部分不可计量，只写已分配一行并注明。
 sections += PerfSection(
-"malloc",
+labels.sectionMalloc,
 listOf(
-PerfRow("已分配", "${formatMb(snapshot.mallocAllocatedKb)}（脚本部分不可计量，未扣除）"),
+PerfRow(labels.rowMallocAllocated, labels.mallocAllocatedValue.format(formatMb(snapshot.mallocAllocatedKb))),
 ),
 )
 
 // 进程：RIME 行是目录统计口径（*.userdb 条目数与大小合计），非 fd 口径。
 sections += PerfSection(
-"进程",
+labels.sectionProcess,
 listOf(
 PerfRow(
-"RIME 打开的数据文件",
-"${snapshot.userdbCount} 个 · 共 ${formatBytesMb(snapshot.userdbBytes)}（目录统计口径，非 fd 口径）",
+labels.rowRimeFiles,
+labels.rimeFilesValue.format(snapshot.userdbCount, formatBytesMb(snapshot.userdbBytes)),
 prev?.let { formatDeltaCount(snapshot.userdbCount - it.userdbCount)},
 ),
 PerfRow(
-"打开的 LevelDB",
-if (snapshot.leveldbNames.isEmpty()) "0 个"
-else "${snapshot.leveldbNames.size} 个：${snapshot.leveldbNames.joinToString("、")}",
+labels.rowLeveldb,
+if (snapshot.leveldbNames.isEmpty()) labels.leveldbEmpty
+else labels.leveldbValue.format(
+snapshot.leveldbNames.size,
+snapshot.leveldbNames.joinToString(labels.leveldbSeparator),
 ),
-PerfRow("运行时长", formatDuration(snapshot.uptimeMs)),
+),
+PerfRow(labels.rowUptime, formatDuration(snapshot.uptimeMs, labels)),
 ),
 )
 
 // 存储位置：末行显示本次报告落盘路径。
 sections += PerfSection(
-"存储位置",
-listOf(PerfRow("报告文件", snapshot.reportPath)),
+labels.sectionStorage,
+listOf(PerfRow(labels.rowReportFile, snapshot.reportPath)),
 )
 
 return sections
@@ -234,9 +404,13 @@ return sections
 * [PerfSection] 列表逐行拼出，分区标题＋每行「标签 值（差值）」；
 * 首次采集（无上次快照）时标题下加一行说明。
 */
-fun formatPerfReport(sections: List<PerfSection>, firstSample: Boolean): String {
-val out = StringBuilder("键盘性能\n")
-if (firstSample) out.append("首次采集（无差值）\n")
+fun formatPerfReport(
+sections: List<PerfSection>,
+firstSample: Boolean,
+labels: PerfReportLabels = PerfReportLabels.DEFAULT,
+): String {
+val out = StringBuilder(labels.reportTitle).append("\n")
+if (firstSample) out.append(labels.firstSampleNote).append("\n")
 for (section in sections) {
 out.append("\n\n")
 for (row in section.rows) {

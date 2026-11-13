@@ -83,6 +83,18 @@ private val editorFileSaver = Saver<EditorFile?, List<String>>(
 )
 
 /**
+ * 被排除布局的页内提示文案（S-L3，纯函数可单测）：
+ * 无被排除布局时返回 null（不显示提示）；否则按模板填入以“、”连接的布局 id。
+ * 模板来自 strings.xml（skin_editor_unavailable_layouts，含 %1$s 占位）。
+ */
+internal fun unavailableLayoutsHint(template: String, unavailableLayouts: List<String>): String? =
+    if (unavailableLayouts.isEmpty()) {
+        null
+    } else {
+        template.format(unavailableLayouts.joinToString("、"))
+    }
+
+/**
  * App 内置皮肤文件编辑器页（W19-7）：
  *
  * 编辑当前生效皮肤的文件文本（skin.json＋布局文件），保存后
@@ -137,7 +149,8 @@ fun SkinEditorScreen(
     // WO33 第 4(b) 项：reason 码 → 用户可读文案走唯一共享映射
     // SkinEditorReasons（与入口 toast 同款做法、同一份映射）；
     // 覆盖 resolve 码与全部保存结果码（Blocked／Failed／Stale），
-    // 未知码回落通用文案，不再原样显示错误码。
+    // 未知码回落具体提示“无生效皮肤”（WO36 改回 WO33 前口径），
+    // 不再原样显示错误码。
     fun resolveReasonText(reason: String): String =
         context.getString(SkinEditorReasons.reasonResId(reason))
 
@@ -273,6 +286,16 @@ fun SkinEditorScreen(
             }
             if (active!!.primaryLayoutId == null) {
                 Text(stringResource(R.string.skin_editor_no_primary_layout), color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            // S-L3：被排除的布局页内提示——入口 toast 只提示一次，进页后
+            // 仍须在页内可见（否则用户在文件列表里找不到它又无说法）。
+            // 文案与布局失配 reason 同口径（重新导入皮肤可恢复）。
+            val unavailableHint = unavailableLayoutsHint(
+                stringResource(R.string.skin_editor_unavailable_layouts),
+                active!!.unavailableLayouts,
+            )
+            if (unavailableHint != null) {
+                Text(unavailableHint, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             val selectedFile = selected
             if (selectedFile != null &&

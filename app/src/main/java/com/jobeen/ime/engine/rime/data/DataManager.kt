@@ -1,18 +1,19 @@
 package com.jobeen.ime.engine.rime.data
 
 import com.jobeen.ime.base.util.appContext
+import com.jobeen.ime.data.UserFiles
 import com.jobeen.ime.data.manager.SchemeDirs
 import java.io.File
 
 object DataManager {
-    val sharedDataDir = File(appContext.getExternalFilesDir(null), "shared").also { it.mkdirs() }
+    val sharedDataDir = File(appContext.getExternalFilesDir(null), UserFiles.SHARED_DIR_NAME).also { it.mkdirs() }
 
     /**
      * 方案目录根：原 user/，现为各方案目录的父目录（多目录模型，
      * Lee 2026-10-25 定）。存量平铺内容首次读取时迁进初始目录。
      */
     val schemeDirsRoot: File
-        get() = File(appContext.getExternalFilesDir(null), "user").also { it.mkdirs() }
+        get() = File(appContext.getExternalFilesDir(null), UserFiles.SCHEME_DIRS_ROOT_NAME).also { it.mkdirs() }
 
     /**
      * 引擎 user 目录 = 根 / 当前目录名。迁移初始化只跑一次（once-guard）：
@@ -38,8 +39,8 @@ object DataManager {
             }
             return File(root, SchemeDirs.currentDirName()).also { it.mkdirs() }
         }
-    val prebuiltDataDir = File(sharedDataDir, "build")
-    val stagingDir get() = File(userDataDir, "build")
+    val prebuiltDataDir = File(sharedDataDir, UserFiles.BUILD_DIR_NAME)
+    val stagingDir get() = File(userDataDir, UserFiles.BUILD_DIR_NAME)
 
     /**
      * Return the absolute path of the compiled config file

@@ -1324,6 +1324,7 @@ object KeyOverrideApplier {
         rebuilt.skinGradient = styleGeometry?.gradientNormal
         rebuilt.skinPressedGradient = styleGeometry?.gradientHighlight
         rebuilt.skinShadow = styleGeometry?.shadow
+        rebuilt.skinInnerShadow = styleGeometry?.innerShadow
         rebuilt.skinBorderWidthDp = styleGeometry?.borderWidthDp
         rebuilt.skinPressedBorderColor =
             styleGeometry?.highlightBorderColor ?: style?.pressedBorder
@@ -1331,6 +1332,7 @@ object KeyOverrideApplier {
             styleGeometry?.normalLowerEdgeColor ?: style?.lowerEdge
         rebuilt.skinPressedLowerEdgeColor =
             styleGeometry?.highlightLowerEdgeColor ?: style?.pressedLowerEdge
+        rebuilt.skinLowerEdgeHeightDp = styleGeometry?.lowerEdgeHeightDp
         rebuilt.skinCornerRadiusDp = styleGeometry?.cornerRadiusDp
         rebuilt.skinCornerCurve = styleGeometry?.cornerCurve
         rebuilt.skinVisibleBounds = styleGeometry?.bounds

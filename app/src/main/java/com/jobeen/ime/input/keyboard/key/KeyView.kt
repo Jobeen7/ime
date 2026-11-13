@@ -1831,6 +1831,38 @@ class SidePanelKeyView(
     }
 }
 
+/**
+ * 组字态文字标签字号（dp）：与 returnKey(useTextLabel=true) 的文字回车键同值；
+ * 皮肤 G1 分档字号（skinTextSize）有值时优先用它（见 [ImageKeyView.textLabel]）。
+ */
+internal const val RETURN_KEY_TEXT_LABEL_SIZE_DP = 16f
+
+/**
+ * 组字态文字标签字号下限（dp，WO36 大字号边界）：键宽固定时请求字号
+ * 放不下，标签字号只缩到此下限为止；再小即不可读，宁可保持下限＋
+ * ellipsize END 兜底（显示残缺是已知差距，不静默缩成看不见的字）。
+ */
+internal const val RETURN_KEY_TEXT_LABEL_MIN_SIZE_DP = 10f
+
+/**
+ * “确认”标签适配字号（纯函数，可单测；WO36 大字号边界，与
+ * [com.jobeen.ime.input.keyboard.impl.confirmLabelFits] 同模型）：
+ * CJK 字宽按 1em 计（两字 = 2 × 字号），键宽固定时请求字号放不下
+ * 即缩小到放得下为止，只缩不放；键宽未知（<=0）时不缩、沿用请求
+ * 字号；放不下且已触下限时返回下限（仍放不下，调用方 ellipsize
+ * 兜底）。字号按 DIP 计（与 TextKeyView 同口径）。
+ */
+internal fun confirmLabelFitSize(
+    keyWidthDp: Float,
+    textSizeDp: Float,
+    horizontalPaddingDp: Float = 8f,
+    minTextSizeDp: Float = RETURN_KEY_TEXT_LABEL_MIN_SIZE_DP,
+): Float {
+    if (keyWidthDp <= 0f || textSizeDp <= 0f) return textSizeDp
+    val maxFitting = (keyWidthDp - horizontalPaddingDp) / 2f
+    return minOf(textSizeDp, maxOf(maxFitting, minTextSizeDp))
+}
+
 @SuppressLint("ViewConstructor")
 class ImageKeyView(
     ctx: Context,
@@ -1852,36 +1884,123 @@ class ImageKeyView(
         imageResource = def.src
     }
 
-    init {
-        // 单键图标（参考项）：图片键无文本面，符号字形取
-        // 代工厂图片居中显示；未知名/字体失败时沿用工厂图片。
-        val iconView = def.skinIconSymbol?.let { name ->
-            TextView(ctx).apply {
-                isClickable = false
-                isFocusable = false
-                background = null
-                gravity = android.view.Gravity.CENTER
-                // S1：图标字形字号取样式，缺省 24。
-                setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.skinIconSizeDp ?: 24f)
-                setTextColor(
-                    // 集成接线：图片键符号字形同样走 icon 角色，无则回落文字色。
-                    def.skinIconTintColor ?: def.skinTextColor ?: when (def.variant) {
-                        Variant.Normal, Variant.AltForeground -> colors.keyText
-                        Variant.Alternative -> colors.specialKeyText
-                        Variant.Accent -> colors.accentKeyText
-                        Variant.None -> colors.keyText
-                    },
-                )
-            }.takeIf { MaterialSymbols.applyToTextView(it, ctx, name) }
+    /** 组字态文字标签请求字号（dp）：skinTextSize 优先、缺省 16f；WO36 缩字号只缩不放，永不改它。 */
+    private val labelRequestedSizeDp: Float = def.skinTextSize ?: RETURN_KEY_TEXT_LABEL_SIZE_DP
+
+    /** 组字态文字标签当前已应用字号（dp）：初值即请求字号，WO36 缩字号后记缩小值。 */
+    private var labelAppliedSizeDp: Float = labelRequestedSizeDp
+
+    /**
+     * 组字态文字标签（WO35 I-L3 渲染）：默认 GONE——图标键外观与旧行为一致；
+     * 组字中时由 [showTextLabel] 显示“确认”、隐藏图标，键面变文字键。
+     * 只改显示：displayText 仍为 null（短按不弹气泡），行为与 EnterDecision 不动。
+     * 字号与文字回车键同值（skinTextSize 优先），颜色与 TextKeyView 同口径。
+     * WO36 大字号边界：请求字号放不下时 [showTextLabel] 按实测键宽
+     * 自动缩小到放得下为止（只缩不放，下限 10dp），[labelAppliedSizeDp]
+     * 记当前已应用字号。
+     */
+    val textLabel = TextView(ctx).apply {
+        isClickable = false
+        isFocusable = false
+        background = null
+        includeFontPadding = false
+        maxLines = 1
+        ellipsize = TextUtils.TruncateAt.END
+        setTextSize(TypedValue.COMPLEX_UNIT_DIP, labelRequestedSizeDp)
+        gravity = android.view.Gravity.CENTER
+        textDirection = TEXT_DIRECTION_FIRST_STRONG_LTR
+        setTypeface(GlobalFonts.typefaceFor(context, FontRole.KEY, Typeface.NORMAL) ?: typeface, Typeface.NORMAL)
+        setTextColor(
+            def.skinTextColor ?: when (def.variant) {
+                Variant.Normal, Variant.AltForeground -> colors.keyText
+                Variant.Alternative -> colors.specialKeyText
+                Variant.Accent -> colors.accentKeyText
+                Variant.None -> colors.keyText
+            },
+        )
+        visibility = android.view.View.GONE
+    }
+
+    // 单键图标（参考项）：图片键无文本面，符号字形取
+    // 代工厂图片居中显示；未知名/字体失败时沿用工厂图片。
+    /** 皮肤图标字形视图（有则显示它，无则显示 img；两者只一其）。 */
+    private val symbolView: TextView? = def.skinIconSymbol?.let { name ->
+        TextView(ctx).apply {
+            isClickable = false
+            isFocusable = false
+            background = null
+            gravity = android.view.Gravity.CENTER
+            // S1：图标字形字号取样式，缺省 24。
+            setTextSize(TypedValue.COMPLEX_UNIT_DIP, def.skinIconSizeDp ?: 24f)
+            setTextColor(
+                // 集成接线：图片键符号字形同样走 icon 角色，无则回落文字色。
+                def.skinIconTintColor ?: def.skinTextColor ?: when (def.variant) {
+                    Variant.Normal, Variant.AltForeground -> colors.keyText
+                    Variant.Alternative -> colors.specialKeyText
+                    Variant.Accent -> colors.accentKeyText
+                    Variant.None -> colors.keyText
+                },
+            )
+        }.takeIf { MaterialSymbols.applyToTextView(it, ctx, name) }
+    }
+
+    /** 隐藏按键符号设置（建键时取值，下次键盘重建生效）。 */
+    private val hideSymbol: Boolean = KeyboardManager.Keyboard.Display.isHideSymbol(ctx)
+
+    /** 图标初始可见性（隐藏符号设置下为 INVISIBLE，showIcon 恢复它、不擅自改回 VISIBLE）。 */
+    private val initialIconVisibility: Int =
+        if (hideSymbol) android.view.View.INVISIBLE else android.view.View.VISIBLE
+
+    /** 当前显示的图标视图（字形优先于 img，两者只一其在位）。 */
+    private val displayedIconView: android.view.View get() = symbolView ?: img
+
+    /** 文字标签是否正在显示（组字态）。 */
+    val isTextLabelShown: Boolean get() = textLabel.visibility == android.view.View.VISIBLE
+
+    /**
+     * 显示文字标签、隐藏图标（组字态）：只切换可见性，不动图标资源——
+     * 切回图标态时 [showIcon] 只恢复可见性，图标资源本身从未换过，
+     * 故 BaseKeyboard 的 returnKeyIcon 缓存仍有效、纸飞机等图标不丢。
+     *
+     * WO36 大字号边界：键宽固定，请求字号放不下时按本视图实测宽
+     * （[confirmLabelFitSize]）自动缩小标签字号到放得下为止（只缩
+     * 不放，下限 10dp）；仍放不下时保持下限＋ellipsize END 兜底。
+     * 组字中调本函数时键盘已布局，width>0；未布局（width==0）时
+     * 不缩、沿用请求字号，下次组字态重调时再算。
+     */
+    fun showTextLabel(text: String) {
+        if (textLabel.text.toString() != text) textLabel.text = text
+        val density = resources.displayMetrics.density
+        if (density > 0f && width > 0) {
+            val fitted = confirmLabelFitSize(width / density, labelRequestedSizeDp)
+            if (fitted != labelAppliedSizeDp) {
+                labelAppliedSizeDp = fitted
+                textLabel.setTextSize(TypedValue.COMPLEX_UNIT_DIP, fitted)
+            }
         }
+        if (!isTextLabelShown) {
+            textLabel.visibility = android.view.View.VISIBLE
+            displayedIconView.visibility = android.view.View.GONE
+        }
+    }
+
+    /** 显示图标、隐藏文字标签（非组字态）：恢复建键时的图标可见性。 */
+    fun showIcon() {
+        if (isTextLabelShown) {
+            textLabel.visibility = android.view.View.GONE
+            displayedIconView.visibility = initialIconVisibility
+        }
+    }
+
+    init {
         appearanceView.apply {
-            if (iconView != null) {
-                add(iconView, lParams(wrapContent, wrapContent) {
+            if (symbolView != null) {
+                add(symbolView, lParams(wrapContent, wrapContent) {
                     centerInParent()
                 })
                 // 隐藏按键符号：符号字形不绘制（键面空白，仍可点按）
-                if (KeyboardManager.Keyboard.Display.isHideSymbol(ctx)) {
-                    iconView.visibility = android.view.View.INVISIBLE
+                if (hideSymbol) {
+                    symbolView.visibility = android.view.View.INVISIBLE
                 }
             } else {
                 // iconSizeDp 非空时按指定边布局（26 键对端图标尺寸），
@@ -1897,10 +2016,13 @@ class ImageKeyView(
                     })
                 }
                 // 隐藏按键符号：工厂图标同样不绘制（键面空白，仍可点按）
-                if (KeyboardManager.Keyboard.Display.isHideSymbol(ctx)) {
+                if (hideSymbol) {
                     img.visibility = android.view.View.INVISIBLE
                 }
             }
+            add(textLabel, lParams(wrapContent, wrapContent) {
+                centerInParent()
+            })
         }
     }
 }

@@ -120,6 +120,9 @@ class ComposingStateRender(
     // var：同态新批次复用本对象时原地更新，展开时 showExpand 读到的才是最新批次
     var candidates: List<EngineMessage.Candidate>,
     var highlightedIndex: Int = 0,
+    // 候选帧代次（WO38 E1-10/1）：与 candidates 同批原地更新；
+    // showExpand 凭它调网格代次门，迟到的旧 render 不再覆盖新表
+    var revision: Long = 0L,
 ) : IStateRender {
 
     override fun createToolbarRenderer(): ComposingRenderer {
@@ -145,7 +148,7 @@ class ComposingStateRender(
     }
 
     override fun showExpand(isExpanded: Boolean) {
-        if (isExpanded) ctx.candidateGrid.show(candidates)
+        if (isExpanded) ctx.candidateGrid.show(candidates, revision = revision)
     }
 
     override fun hideExpand() {
@@ -158,6 +161,8 @@ class PredictionStateRender(
     private val ctx: StateRenderContext,
     var candidates: List<EngineMessage.Candidate>,
     var highlightedIndex: Int = 0,
+    // 候选帧代次（WO38 E1-10/1）：与组字态同口径，随 candidates 同批原地更新
+    var revision: Long = 0L,
 ) : IStateRender {
     override fun createToolbarRenderer(): ComposingRenderer {
         val settings = ctx.candidateDisplaySettings()
@@ -190,7 +195,7 @@ class PredictionStateRender(
 
     override fun showExpand(isExpanded: Boolean) {
         // 预测展开同样不是 RIME 候选：首选色关闭。
-        if (isExpanded) ctx.candidateGrid.show(candidates, preferredEnabled = false)
+        if (isExpanded) ctx.candidateGrid.show(candidates, preferredEnabled = false, revision = revision)
     }
 
     override fun hideExpand() {

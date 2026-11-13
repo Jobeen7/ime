@@ -487,6 +487,8 @@ data class ValidatedSkin(
     val keyShadow: KeyShadowSpec = KeyShadowSpec(),
     /** 按键动效（2026-10-29 item-1）：顶层 keyAnimation 校验结果；缺省关闭。 */
     val keyAnimation: KeyAnimationSpec = KeyAnimationSpec(),
+    /** WO38 按压涟漪（顶层 keyRipple 校验结果）：只参数化颜色与时长；缺省既有硬编码值。 */
+    val keyRipple: KeyRippleSpec = KeyRippleSpec(),
     /**
      * 空格专属动效（2026-10-29 item-1）：顶层 spaceAnimation；
      * null = 空格键跟随 keyAnimation（不单独指定）。

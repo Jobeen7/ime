@@ -2,6 +2,7 @@ package com.jobeen.ime.data.backup
 
 import android.content.Context
 import android.os.Build
+import com.jobeen.ime.R
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.data.App
 import com.jobeen.ime.data.database.AppDatabase
@@ -236,9 +237,9 @@ object BackupManager {
         ClipboardManager.sanitizeOversizedOnce(appContext)
 
         val appDbFile = db.openHelper.writableDatabase.path?.let { File(it) }
-            ?: throw BackupException("备份读取数据库失败：无法定位主库文件")
+            ?: throw BackupException(backupString(R.string.backup_read_db_failed_locate_main))
         val clipDbFile = clipDb.openHelper.writableDatabase.path?.let { File(it) }
-            ?: throw BackupException("备份读取数据库失败：无法定位剪贴板库文件")
+            ?: throw BackupException(backupString(R.string.backup_read_db_failed_locate_clip))
         // 结算标记（WO33 第 1 项）：在清理之后、快照读之前取——
         // sanitizeOversizedOnce 自身的写是备份操作的一部分，不计入
         // “采集中途数据变了”；只读快照连接不改 db／-wal 文件
@@ -346,11 +347,14 @@ object BackupManager {
         // 即整个备份失败、不产残包。这是三类源第一次有统一复核点，
         // 残余窗口由“整个采集时长”缩到“结算点之后”。
         // 结算点之后才落盘的写不属于本次快照（快照语义上正确排除）；
-        // 唯一逃得过的，是配对写里 prefs 的 apply() flush 仍挂在
-        // QueuedWork 队列里跨过结算点、而配对的 Room 提交已进快照
-        // 的情形——正常 flush 延迟毫秒级，逃过须写盘线程被拖住横跨
-        // [prefs 读，结算] 这段采集（皮肤段大时可达百毫秒以上）。
-        // 全局写锁／停写总闸未做：写盘方约 130 处 prefs 编辑点
+        // 单源写晚落盘只是合法的更早快照，不撕裂。WO36（D-P2）已把
+        // 全仓唯一的真 Room＋prefs 配对写逐个收口，不再留“配对撕裂”
+        // 的逃逸情形：PhraseManager.ensureSeeded 改同步 commit()
+        // （IO 线程，无 ANR 风险；失败留 seeded=false 自愈），
+        // ClipboardManager.setMaxEntries 的 prefs 侧改同步 commit()
+        // （小文件；库内裁剪仍异步，备份多带的只是裁剪前合法存量，
+        // 下次新增即收敛）。其余配对写不存在（WO34 已核实）。
+        // 全局写锁／停写总闸仍未做：写盘方约 130 处 prefs 编辑点
         // （39 处 .edit(＋91 处 edit{}，17＋ 文件）＋157 处 DAO 写
         // 调用（43 文件）＋60 处文件直写（AtomicFiles 16＋
         // writeText／writeBytes 44），无单一收口（190 处
@@ -580,7 +584,7 @@ object BackupManager {
                 snapshotJson.toString().toByteArray(Charsets.UTF_8),
             )
         } catch (e: Exception) {
-            throw BackupException("还原准备失败：无法保存还原前快照（${e.message ?: "写盘失败"}）")
+            throw BackupException(backupString(R.string.backup_restore_prepare_snapshot_failed, e.message ?: backupString(R.string.backup_disk_write_failed)))
         }
         val journalEntry = RestoreJournal.Entry(
             token = token,
@@ -598,7 +602,7 @@ object BackupManager {
             RestoreJournal.write(journalDir, journalEntry)
         } catch (e: Exception) {
             runCatching { snapshotFile.delete() }
-            throw BackupException("还原准备失败：无法写入还原记录（${e.message ?: "写盘失败"}）")
+            throw BackupException(backupString(R.string.backup_restore_prepare_journal_failed, e.message ?: backupString(R.string.backup_disk_write_failed)))
         }
         RestoreJournal.sweepOrphanSnapshots(journalDir, token)
         try {
@@ -611,18 +615,29 @@ object BackupManager {
                 applyPayload(
                     merged,
                     onSectionStart = { section ->
-                        // D-P1：皮肤段开始写前先记“已开始未完成”——杀在
-                        // 皮肤文件循环中途时 journal 里留有该段，磁盘回滚
-                        // 据此报 uncovered 而非成功。与 onSectionDone 同
-                        // 口径：尽力而为，写失败不阻断还原本体。
-                        runCatching {
-                            val current = RestoreJournal.read(journalDir)
-                                ?: journalEntry.copy(phase = RestoreJournal.Phase.REPLACING)
-                            RestoreJournal.write(
+                        // D-P1（WO36）：皮肤段开始标记是强制推进——标记
+                        // 写失败即中止还原本体（触发快照回滚），绝不静
+                        // 默吞：标记丢了，杀在皮肤循环中途时磁盘回滚会
+                        // 把半写段误判为“没写过”而谎报成功。与上文
+                        // REPLACING 推进同口径（journal 推进不了就不
+                        // 开始写盘）。标记经 [markSectionStarted] 同步
+                        // 落盘（AtomicFiles：tmp＋fsync＋rename＋目录
+                        // fsync）后 applyPayload 才进皮肤段；kill 在标
+                        // 记写中途只留旧版或新版完整 journal，而皮肤写
+                        // 盘尚未开始，旧 journal 同样判得对。
+                        try {
+                            markSectionStarted(
                                 journalDir,
-                                current.copy(inProgressSections = current.inProgressSections + section),
+                                section,
+                                journalEntry.copy(phase = RestoreJournal.Phase.REPLACING),
                             )
-                        }.onFailure { Timber.w(it, "restore journal progress update failed") }
+                        } catch (e: Exception) {
+                            if (e is kotlinx.coroutines.CancellationException) throw e
+                            Timber.e(e, "restore journal section-start mark failed, aborting restore")
+                            throw BackupException(
+                                backupString(R.string.backup_restore_journal_write_failed),
+                            )
+                        }
                     },
                     onSectionDone = { section ->
                         // 段进度是尽力而为的记录：journal 写失败不阻断
@@ -631,6 +646,9 @@ object BackupManager {
                         // uncoveredSectionsForRollback 的 KDoc：可部分写
                         // 的段要么原子、要么快照恒覆盖）——皮肤库除外，
                         // 其半写态由 inProgressSections 记（D-P1）。
+                        // 失败只记日志（WO36：onSectionStart 已改强制，
+                        // 此处仍尽力而为；失败改 Timber.e 大声上报，
+                        // 不再静默 w）。
                         runCatching {
                             val current = RestoreJournal.read(journalDir)
                                 ?: journalEntry.copy(phase = RestoreJournal.Phase.REPLACING)
@@ -641,7 +659,7 @@ object BackupManager {
                                     inProgressSections = current.inProgressSections - section,
                                 ),
                             )
-                        }.onFailure { Timber.w(it, "restore journal progress update failed") }
+                        }.onFailure { Timber.e(it, "restore journal progress update failed") }
                     },
                 )
             }
@@ -682,8 +700,8 @@ object BackupManager {
             // 提示用户重导／回滚，快照仍在、可走磁盘回滚。
             if (e is kotlinx.coroutines.CancellationException) throw e
             throw BackupException(
-                if (rolledBack) "还原失败，已恢复到还原前状态：${e.message ?: "未知错误"}"
-                else "还原失败且自动回滚未成功，数据可能不完整：${e.message ?: "未知错误"}"
+                if (rolledBack) backupString(R.string.backup_restore_failed_rolled_back, e.message ?: backupString(R.string.backup_unknown_error))
+                else backupString(R.string.backup_restore_failed_rollback_failed, e.message ?: backupString(R.string.backup_unknown_error))
             )
         }
     }
@@ -760,7 +778,7 @@ object BackupManager {
             } catch (e: Exception) {
                 Timber.w(e, "Restore failed")
                 _restoreState.value =
-                    RestoreState.Failed(e.message ?: "未知错误")
+                    RestoreState.Failed(e.message ?: backupString(R.string.backup_unknown_error))
                 // 失败还原若留下了 REPLACING journal（回滚未成功），
                 // 立即刷新中断提示，不必等下次启动才出现。
                 reconcileInterruptedRestore()
@@ -914,22 +932,23 @@ object BackupManager {
                             scheduleProcessRestart(generation)
                         } else {
                             throw BackupException(
-                                "回滚未完全成功：${
+                                backupString(
+                                    R.string.backup_rollback_partial,
                                     result.uncoveredSections.joinToString("、") {
                                         sectionDisplayName(it)
-                                    }
-                                }未能恢复（还原前快照中没有），请重新导入备份文件",
+                                    },
+                                ),
                             )
                         }
                     }
-                    DiskRollbackResult.NoJournal -> throw BackupException("没有未完成的还原记录")
+                    DiskRollbackResult.NoJournal -> throw BackupException(backupString(R.string.backup_no_interrupted_restore))
                     DiskRollbackResult.SnapshotMissing ->
-                        throw BackupException("还原前快照已丢失，请重新导入备份文件")
+                        throw BackupException(backupString(R.string.backup_snapshot_missing))
                     is DiskRollbackResult.Failed -> throw BackupException(result.message)
                 }
             } catch (e: Exception) {
                 Timber.w(e, "Disk rollback failed")
-                _restoreState.value = RestoreState.Failed(e.message ?: "未知错误")
+                _restoreState.value = RestoreState.Failed(e.message ?: backupString(R.string.backup_unknown_error))
             } finally {
                 restoreRunning.set(false)
             }
@@ -952,12 +971,12 @@ object BackupManager {
         val snapshotJson = try {
             JSONObject(snapshotFile.readText(Charsets.UTF_8))
         } catch (e: Exception) {
-            return DiskRollbackResult.Failed("还原前快照损坏，无法回滚：${e.message ?: "读取失败"}")
+            return DiskRollbackResult.Failed(backupString(R.string.backup_snapshot_corrupt, e.message ?: backupString(R.string.backup_read_failed)))
         }
         val snapshotParsed = try {
             parsePayload(snapshotJson)
         } catch (e: Exception) {
-            return DiskRollbackResult.Failed("还原前快照解析失败，无法回滚：${e.message ?: "解析失败"}")
+            return DiskRollbackResult.Failed(backupString(R.string.backup_snapshot_parse_failed, e.message ?: backupString(R.string.backup_parse_failed)))
         }
         val uncovered = uncoveredSectionsForRollback(
             entry.completedSections,
@@ -992,7 +1011,7 @@ object BackupManager {
             DiskRollbackResult.RolledBack(uncovered)
         } catch (e: Exception) {
             if (e is kotlinx.coroutines.CancellationException) throw e
-            DiskRollbackResult.Failed("回滚失败：${e.message ?: "未知错误"}")
+            DiskRollbackResult.Failed(backupString(R.string.backup_rollback_failed, e.message ?: backupString(R.string.backup_unknown_error)))
         }
     }
 
@@ -1058,37 +1077,64 @@ object BackupManager {
         return uncovered
     }
 
+    /**
+     * 皮肤段开始标记（D-P1，WO36）：段开始写前把该段记入 journal 的
+     * inProgressSections，同步落盘后调用方才进皮肤段。
+     *
+     * 同步性：[RestoreJournal.write] 经 [AtomicFiles] 原子写（tmp＋
+     * 文件 fsync＋rename＋目录 fsync），本函数返回即标记已落盘；
+     * kill 在写中途只留旧版或新版完整 journal，而皮肤写盘尚未开始，
+     * 故旧 journal（无此段）同样判得对——“开始标记落盘前 kill 仍走
+     * 旧路径”的残余即此闭合。
+     *
+     * 失败直接抛（调用方按还原失败处理、触发快照回滚），绝不静默吞：
+     * 标记丢了，磁盘回滚会把半写皮肤段误判为“没写过”而谎报成功。
+     * journal 读不出（损坏／丢失）时用 [fallbackEntry]（REPLACING
+     * 态的本次 journal）重建整行，不拿空 journal 覆盖已有进度。
+     */
+    internal fun markSectionStarted(
+        journalDir: File,
+        section: String,
+        fallbackEntry: RestoreJournal.Entry,
+    ) {
+        val current = RestoreJournal.read(journalDir) ?: fallbackEntry
+        RestoreJournal.write(
+            journalDir,
+            current.copy(inProgressSections = current.inProgressSections + section),
+        )
+    }
+
     private fun sectionDisplayName(section: String): String = when (section) {
-        RestoreJournal.SECTION_INPUT_STATS -> "输入统计"
-        RestoreJournal.SECTION_SKIN_LIBRARY -> "皮肤库"
-        RestoreJournal.SECTION_SKIN_SCRIPTS -> "皮肤脚本"
+        RestoreJournal.SECTION_INPUT_STATS -> backupString(R.string.backup_section_input_stats)
+        RestoreJournal.SECTION_SKIN_LIBRARY -> backupString(R.string.backup_section_skin_library)
+        RestoreJournal.SECTION_SKIN_SCRIPTS -> backupString(R.string.backup_section_skin_scripts)
         else -> section
     }
 
     private fun decryptPayload(bytes: ByteArray, password: CharArray): JSONObject {
         val nl = bytes.indexOf('\n'.code.toByte())
-        if (nl <= 0) throw BackupException("备份文件格式不正确")
+        if (nl <= 0) throw BackupException(backupString(R.string.backup_file_bad_format))
         val headerBytes = bytes.copyOfRange(0, nl)
         val header = try {
             JSONObject(String(headerBytes, Charsets.UTF_8))
         } catch (e: Exception) {
-            throw BackupException("备份文件格式不正确")
+            throw BackupException(backupString(R.string.backup_file_bad_format))
         }
-        if (header.optString("format") != FORMAT) throw BackupException("不是 Jime 备份文件")
+        if (header.optString("format") != FORMAT) throw BackupException(backupString(R.string.backup_not_jime_file))
         if (header.optInt("version", -1) != FORMAT_VERSION) {
-            throw BackupException("备份版本不受支持")
+            throw BackupException(backupString(R.string.backup_version_unsupported))
         }
         val kdf = header.optString("kdf")
-        if (kdf != KDF_SHA256 && kdf != KDF_SHA1) throw BackupException("备份加密参数不受支持")
+        if (kdf != KDF_SHA256 && kdf != KDF_SHA1) throw BackupException(backupString(R.string.backup_kdf_unsupported))
         // iterations 完全来自文件头，必须钳制：极大值会让 PBKDF2 长时间挂死
         val iterations = header.optInt("iterations", ITERATIONS)
         if (iterations !in MIN_ITERATIONS..MAX_ITERATIONS) {
-            throw BackupException("备份加密参数不受支持")
+            throw BackupException(backupString(R.string.backup_kdf_unsupported))
         }
         val salt = header.optString("salt").fromBase64()
         val iv = header.optString("iv").fromBase64()
         if (salt == null || iv == null || salt.isEmpty() || iv.isEmpty()) {
-            throw BackupException("备份文件格式不正确")
+            throw BackupException(backupString(R.string.backup_file_bad_format))
         }
         val key = deriveKey(password, salt, iterations, kdf)
         val cipherText = bytes.copyOfRange(nl + 1, bytes.size)
@@ -1096,11 +1142,11 @@ object BackupManager {
         // 随清点 D19 退场（997 版为一年前内部版本，存量旧包已清）。
         // GCM 校验失败：口令错误与文件篡改在加密上不可区分，统一提示
         val plain = decryptGcm(key, iv, cipherText, headerBytes)
-            ?: throw BackupException("口令错误或备份文件已损坏")
+            ?: throw BackupException(backupString(R.string.backup_password_or_corrupt))
         return try {
             JSONObject(String(plain, Charsets.UTF_8))
         } catch (e: Exception) {
-            throw BackupException("备份内容解析失败")
+            throw BackupException(backupString(R.string.backup_content_parse_failed))
         }
     }
 
@@ -1165,7 +1211,7 @@ object BackupManager {
                 // shared_prefs 目录写到任意位置，解析阶段先按白名单拒绝。
                 // 本应用的 prefs 名均为字母/数字/下划线/点/连字符，兼容不受影响
                 if (!isValidPrefsName(name)) {
-                    throw BackupException("备份包含非法 prefs 名称")
+                    throw BackupException(backupString(R.string.backup_illegal_prefs_name))
                 }
                 val entries = prefsJson.getJSONObject(name)
                 val map = LinkedHashMap<String, Any>()
@@ -1270,17 +1316,17 @@ object BackupManager {
                 val manifestJson = try {
                     root.getJSONObject("manifest")
                 } catch (e: Exception) {
-                    throw BackupException("备份清单损坏")
+                    throw BackupException(backupString(R.string.backup_manifest_corrupt))
                 }
                 val manifest = BackupManifest.fromJsonObject(manifestJson)
-                    ?: throw BackupException("备份清单损坏")
+                    ?: throw BackupException(backupString(R.string.backup_manifest_corrupt))
                 if (manifest.payloadVersion != BackupManifest.CURRENT_PAYLOAD_VERSION) {
-                    throw BackupException("备份版本不受支持")
+                    throw BackupException(backupString(R.string.backup_version_unsupported))
                 }
                 val mismatches = manifest.validate(countsFromPayload(root))
                 if (mismatches.isNotEmpty()) {
                     Timber.w("backup manifest mismatch: ${mismatches.joinToString("; ")}")
-                    throw BackupException("备份清单与内容不符，请重新备份")
+                    throw BackupException(backupString(R.string.backup_manifest_mismatch))
                 }
             }
 
@@ -1305,7 +1351,7 @@ object BackupManager {
                     try {
                         JSONObject(raw)
                     } catch (e: Exception) {
-                        throw BackupException("输入统计内容不是合法 JSON")
+                        throw BackupException(backupString(R.string.backup_input_stats_not_json))
                     }
                     raw
                 },
@@ -1321,24 +1367,24 @@ object BackupManager {
                     val index = when (val v = section.opt("index")) {
                         null -> null
                         is String -> v
-                        else -> throw BackupException("皮肤备份索引不是文本")
+                        else -> throw BackupException(backupString(R.string.backup_skin_index_not_text))
                     }
                     val filesJson = when (val v = section.opt("files")) {
                         null -> JSONObject()
                         is JSONObject -> v
-                        else -> throw BackupException("皮肤备份文件表不是对象")
+                        else -> throw BackupException(backupString(R.string.backup_skin_files_not_object))
                     }
                     val files = LinkedHashMap<String, ByteArray>()
                     val keys = filesJson.keys()
                     while (keys.hasNext()) {
                         val rel = keys.next()
                         if (!isValidSkinRelPath(rel)) {
-                            throw BackupException("皮肤备份包含非法相对路径")
+                            throw BackupException(backupString(R.string.backup_skin_illegal_path))
                         }
                         files[rel] = when (val v = filesJson.opt(rel)) {
                             is String -> v.fromBase64()
-                                ?: throw BackupException("皮肤备份文件内容损坏")
-                            else -> throw BackupException("皮肤备份文件内容损坏")
+                                ?: throw BackupException(backupString(R.string.backup_skin_file_corrupt))
+                            else -> throw BackupException(backupString(R.string.backup_skin_file_corrupt))
                         }
                     }
                     SkinBackup(index = index, files = files)
@@ -1355,19 +1401,19 @@ object BackupManager {
                     val filesJson = when (val v = section.opt("files")) {
                         null -> JSONObject()
                         is JSONObject -> v
-                        else -> throw BackupException("脚本备份文件表不是对象")
+                        else -> throw BackupException(backupString(R.string.backup_scripts_files_not_object))
                     }
                     val files = LinkedHashMap<String, ByteArray>()
                     val keys = filesJson.keys()
                     while (keys.hasNext()) {
                         val rel = keys.next()
                         if (!isValidSkinScriptRelPath(rel)) {
-                            throw BackupException("脚本备份包含非法相对路径")
+                            throw BackupException(backupString(R.string.backup_scripts_illegal_path))
                         }
                         files[rel] = when (val v = filesJson.opt(rel)) {
                             is String -> v.fromBase64()
-                                ?: throw BackupException("脚本备份文件内容损坏")
-                            else -> throw BackupException("脚本备份文件内容损坏")
+                                ?: throw BackupException(backupString(R.string.backup_scripts_file_corrupt))
+                            else -> throw BackupException(backupString(R.string.backup_scripts_file_corrupt))
                         }
                     }
                     SkinScriptsBackup(files = files)
@@ -1376,7 +1422,7 @@ object BackupManager {
         } catch (e: BackupException) {
             throw e
         } catch (e: Exception) {
-            throw BackupException("备份内容解析失败")
+            throw BackupException(backupString(R.string.backup_content_parse_failed))
         }
     }
 
@@ -1460,7 +1506,7 @@ object BackupManager {
             val arr = obj.getJSONArray("v")
             (0 until arr.length()).map { arr.getString(it) }.toSet()
         }
-        else -> throw BackupException("备份内容解析失败")
+        else -> throw BackupException(backupString(R.string.backup_content_parse_failed))
     }
 
     /**
@@ -1671,7 +1717,8 @@ object BackupManager {
      * [onSectionStart]：段开始写前回调一次，目前只对皮肤库触发——它
      * 是唯一多文件逐文件写的段，杀在循环中途即半写、[onSectionDone]
      * 永远到不了；其余段是事务或单文件原子写／整目录换位写，无半写
-     * 态可记（D-P1）。回滚回放不传回调。
+     * 态可记（D-P1）。回滚回放不传回调。回调抛错即中止还原本体
+     * （开始标记是强制推进，见 [markSectionStarted]，WO36）。
      */
     private suspend fun applyPayload(
         parsed: ParsedBackup,
@@ -1748,7 +1795,7 @@ object BackupManager {
             // prefs 回写必须同步落盘：随后可能马上重启进程，异步 apply 有丢失窗口；
             // 同步提交失败必须让整个还原判失败（触发快照回滚），只记日志继续
             // 会留下数据库是新数据、偏好是旧数据的混杂状态
-            if (!editor.commit()) throw BackupException("设置写入失败（$name），还原中止")
+            if (!editor.commit()) throw BackupException(backupString(R.string.backup_prefs_write_failed, name))
         }
         // 回滚模式：删掉失败还原新建的偏好文件（D-M2 的偏好残留）。
         // deleteSharedPreferences 同时清内存缓存实例（API 24+，minSdk 24）；
@@ -1775,7 +1822,7 @@ object BackupManager {
             val tmp = File(dir, "stats.json.tmp")
             tmp.writeText(json, Charsets.UTF_8)
             if (!tmp.renameTo(File(dir, "stats.json"))) {
-                throw BackupException("输入统计写入失败，还原中止")
+                throw BackupException(backupString(R.string.backup_input_stats_write_failed))
             }
             onSectionDone?.invoke(RestoreJournal.SECTION_INPUT_STATS)
         }
@@ -1803,7 +1850,7 @@ object BackupManager {
                 val tmp = File(rootDir, "index.json.tmp")
                 tmp.writeText(indexText, Charsets.UTF_8)
                 if (!tmp.renameTo(File(rootDir, "index.json"))) {
-                    throw BackupException("皮肤索引写入失败，还原中止")
+                    throw BackupException(backupString(R.string.backup_skin_index_write_failed))
                 }
             }
             for ((rel, bytes) in skin.files) {
@@ -1814,7 +1861,7 @@ object BackupManager {
                 val tmp = File(target.parentFile, "${target.name}.tmp")
                 tmp.writeBytes(bytes)
                 if (!tmp.renameTo(target)) {
-                    throw BackupException("皮肤文件写入失败（$rel），还原中止")
+                    throw BackupException(backupString(R.string.backup_skin_file_write_failed, rel))
                 }
             }
             onSectionDone?.invoke(RestoreJournal.SECTION_SKIN_LIBRARY)
@@ -1853,7 +1900,7 @@ object BackupManager {
                     val tmp = File(target.parentFile, "${target.name}.tmp")
                     tmp.writeBytes(bytes)
                     if (!tmp.renameTo(target)) {
-                        throw BackupException("脚本文件写入失败（$rel），还原中止")
+                        throw BackupException(backupString(R.string.backup_script_file_write_failed, rel))
                     }
                 }
             } catch (e: Exception) {
@@ -1867,7 +1914,7 @@ object BackupManager {
             val hadOld = scriptsDir.exists()
             if (hadOld && !scriptsDir.renameTo(oldDir)) {
                 tmpDir.deleteRecursively()
-                throw BackupException("脚本库写入失败，还原中止")
+                throw BackupException(backupString(R.string.backup_script_library_write_failed))
             }
             if (!tmpDir.renameTo(scriptsDir)) {
                 // 换位失败：尽力把旧目录挪回来，临时目录清掉；旧目录
@@ -1876,7 +1923,7 @@ object BackupManager {
                 // 由回滚回放处置。
                 if (hadOld) oldDir.renameTo(scriptsDir)
                 tmpDir.deleteRecursively()
-                throw BackupException("脚本库写入失败，还原中止")
+                throw BackupException(backupString(R.string.backup_script_library_write_failed))
             }
             oldDir.deleteRecursively()
             onSectionDone?.invoke(RestoreJournal.SECTION_SKIN_SCRIPTS)

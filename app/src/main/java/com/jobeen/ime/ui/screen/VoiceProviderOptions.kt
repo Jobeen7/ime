@@ -153,3 +153,14 @@ fun voiceProviderHint(
     preferredId != null && preferredId in secretsMissingIds -> VoiceProviderHint.PLUGIN_SECRETS_MISSING
     else -> VoiceProviderHint.NONE
 }
+
+/**
+ * V-低1（WO36）：语音总开关落盘失败是否给 toast。
+ * 入参即 [com.jobeen.ime.base.speech.VoiceInputSwitchStore.setEnabled] 的
+ * 返回值（成功／同值 true，落盘失败 false）：只有失败才 toast，成功与
+ * 同值（无需写盘）都不 toast。Toast 调用本身在 Compose 页
+ * （VoiceSettingsScreen.onCheckedChange）里接线，JVM 测不了；本函数
+ * 是该接线的可测前提——页内只按它决定弹不弹，UI 回弹仍靠重读 store
+ * 真值（见该处注释），与 toast 判定无关。
+ */
+fun voiceSwitchSaveFailed(setEnabledResult: Boolean): Boolean = !setEnabledResult

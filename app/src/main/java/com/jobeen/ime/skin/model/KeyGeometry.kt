@@ -352,6 +352,18 @@ data class KeyStyleGeometry(
     val highlightBorderColor: Int? = null,
     val normalLowerEdgeColor: Int? = null,
     val highlightLowerEdgeColor: Int? = null,
+    /**
+     * WO38 3D 底边厚度（dp，对端 KeyEffects.edgeDepth 口径 0..8）：
+     * null = 未指定（渲染沿用既有 1dp，旧皮肤行为不变）。
+     * 常态／按压两态共用同一厚度（对端亦为单值）。
+     */
+    val lowerEdgeHeightDp: Float? = null,
+    /**
+     * WO38 内阴影（对端 KeyEffects.innerShadow 口径）：逐样式内阴影，
+     * 常态层与按压层各一支；null = 无内阴影。渲染见 KeyEffectPainter：
+     * 沿键形边缘画一圈模糊描边、裁切到键形内部（描边宽 = 模糊半径 ×2）。
+     */
+    val innerShadow: KeyPerStyleShadow? = null,
     val bounds: KeyVisibleBounds? = null,
     val animationNames: List<String> = emptyList(),
     /** 逐样式字号（S1）：主文字／副文字／图标字形，dp；null = 回落键覆写／全局档位。 */
@@ -372,6 +384,7 @@ data class KeyStyleGeometry(
             borderWidthDp == null && cornerRadiusDp == null && cornerCurve == null &&
             normalBorderColor == null && highlightBorderColor == null &&
             normalLowerEdgeColor == null && highlightLowerEdgeColor == null &&
+            lowerEdgeHeightDp == null && innerShadow == null &&
             bounds == null && animationNames.isEmpty() &&
             fontSizeDp == null && altFontSizeDp == null && iconSizeDp == null &&
             hInsetDp == null && vInsetDp == null &&
@@ -405,6 +418,10 @@ object KeyStyleGeometryParser {
         warnings += gradientWarnings
         val (shadow, shadowWarnings) = KeyPerStyleShadowParser.parse(geometry)
         warnings += shadowWarnings
+        val (innerShadow, innerShadowWarnings) = KeyPerStyleInnerShadowParser.parse(geometry)
+        warnings += innerShadowWarnings
+        // WO38 3D 底边厚度（对端 edgeDepth 0..8dp；非法只警告、不丢整项）。
+        val lowerEdgeHeightDp = parseDp(geometry, "lowerEdgeHeight", 0f, 8f, warnings)
         val borderWidthDp = parseDp(geometry, "borderSize", 0f, 8f, warnings)
         val cornerRadiusDp = parseDp(geometry, "cornerRadius", 0f, 40f, warnings)
         // S1／S2：逐样式字号与内边距（与文字档位同值域 8..40，
@@ -449,6 +466,8 @@ object KeyStyleGeometryParser {
             highlightBorderColor = peerColor("highlightBorderColor"),
             normalLowerEdgeColor = peerColor("normalLowerEdgeColor"),
             highlightLowerEdgeColor = peerColor("highlightLowerEdgeColor"),
+            lowerEdgeHeightDp = lowerEdgeHeightDp,
+            innerShadow = innerShadow,
             bounds = bounds,
             animationNames = animationNames,
             fontSizeDp = fontSizeDp,
@@ -659,6 +678,93 @@ object KeyPerStyleShadowParser {
         val opacity = opacity("shadowOpacity", 1f)
         val highlightOpacity = opacity("highlightShadowOpacity", opacity)
         val radius = dpField("shadowRadius", 3f, 0f, 64f)
+        val (offsetX, offsetY) = offset()
+        fun layer(color: Int?, layerOpacity: Float): KeyShadowLayer? =
+            color?.let {
+                KeyShadowLayer(it, layerOpacity, radius, offsetX, offsetY)
+            }
+        return KeyPerStyleShadow(
+            normal = layer(normalColor, opacity),
+            pressed = layer(highlightColor, highlightOpacity),
+        ) to warnings
+    }
+}
+
+object KeyPerStyleInnerShadowParser {
+
+    /**
+     * WO38：解析逐样式内阴影（对端 KeyEffects.innerShadow 口径，
+     * 字段与外阴影平行、缺省值取对端缺省）：
+     * normalInnerShadowColor / highlightInnerShadowColor（对端口径）、
+     * innerShadowOpacity（两支共用，缺省 1.0）、
+     * highlightInnerShadowOpacity（按压支覆盖）、
+     * innerShadowRadius（dp，缺省 4；对端 blur 0..24）、
+     * innerShadowOffset {x, y}（dp，缺省 0,2；对端 ±12）。
+     * 两支颜色皆无 → 无内阴影（null）；单支有色时另一支为 null（渲染层回落）。
+     */
+    fun parse(
+        geometry: JsonObject,
+    ): Pair<KeyPerStyleShadow?, List<String>> {
+        val warnings = mutableListOf<String>()
+        fun color(field: String): Int? {
+            val raw = (geometry[field] as? JsonPrimitive)?.takeIf { it.isString }?.content
+                ?: return null
+            return parsePeerColor(raw) ?: run {
+                warnings += "style_geometry_${field}_invalid"
+                null
+            }
+        }
+        fun opacity(field: String, default: Float): Float {
+            val node = geometry[field] ?: return default
+            val primitive = node as? JsonPrimitive
+            val value = if (primitive != null && !primitive.isString) {
+                primitive.content.toFloatOrNull()
+            } else {
+                null
+            }
+            if (value == null || !value.isFinite() || value < 0f || value > 1f) {
+                warnings += "style_geometry_${field}_invalid"
+                return default
+            }
+            return value
+        }
+        fun dpField(field: String, default: Float, min: Float, max: Float): Float {
+            val node = geometry[field] ?: return default
+            val primitive = node as? JsonPrimitive
+            val value = if (primitive != null && !primitive.isString) {
+                primitive.content.toFloatOrNull()
+            } else {
+                null
+            }
+            if (value == null || !value.isFinite() || value < min || value > max) {
+                warnings += "style_geometry_${field}_invalid"
+                return default
+            }
+            return value
+        }
+        fun offset(): Pair<Float, Float> {
+            val obj = geometry["innerShadowOffset"] as? JsonObject ?: return 0f to 2f
+            fun axis(name: String, default: Float): Float {
+                val primitive = obj[name] as? JsonPrimitive
+                val value = if (primitive != null && !primitive.isString) {
+                    primitive.content.toFloatOrNull()
+                } else {
+                    null
+                }
+                if (value == null || !value.isFinite() || value < -12f || value > 12f) {
+                    warnings += "style_geometry_inner_shadow_offset_invalid"
+                    return default
+                }
+                return value
+            }
+            return axis("x", 0f) to axis("y", 2f)
+        }
+        val normalColor = color("normalInnerShadowColor")
+        val highlightColor = color("highlightInnerShadowColor")
+        if (normalColor == null && highlightColor == null) return null to warnings
+        val opacity = opacity("innerShadowOpacity", 1f)
+        val highlightOpacity = opacity("highlightInnerShadowOpacity", opacity)
+        val radius = dpField("innerShadowRadius", 4f, 0f, 24f)
         val (offsetX, offsetY) = offset()
         fun layer(color: Int?, layerOpacity: Float): KeyShadowLayer? =
             color?.let {

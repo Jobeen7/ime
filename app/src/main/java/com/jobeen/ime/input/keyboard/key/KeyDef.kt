@@ -75,10 +75,20 @@ open class KeyDef(
         var skinGradient: com.jobeen.ime.skin.model.KeyGradient? = null
         var skinPressedGradient: com.jobeen.ime.skin.model.KeyGradient? = null
         var skinShadow: com.jobeen.ime.skin.model.KeyPerStyleShadow? = null
+        /**
+         * WO38 内阴影（只由覆写装配器写）：逐样式内阴影，常态／按压各一支；
+         * null = 无内阴影。渲染见 KeyEffectPainter（模糊描边裁切到键形内）。
+         */
+        var skinInnerShadow: com.jobeen.ime.skin.model.KeyPerStyleShadow? = null
         var skinBorderWidthDp: Float? = null
         var skinPressedBorderColor: Int? = null
         var skinLowerEdgeColor: Int? = null
         var skinPressedLowerEdgeColor: Int? = null
+        /**
+         * WO38 3D 底边厚度 dp（只由覆写装配器写）：null = 沿用既有 1dp；
+         * 常态／按压两态共用（对端 edgeDepth 为单值，0..8）。
+         */
+        var skinLowerEdgeHeightDp: Float? = null
         var skinCornerRadiusDp: Float? = null
         var skinCornerCurve: com.jobeen.ime.skin.model.KeyCornerCurve? = null
         var skinVisibleBounds: com.jobeen.ime.skin.model.KeyVisibleBounds? = null

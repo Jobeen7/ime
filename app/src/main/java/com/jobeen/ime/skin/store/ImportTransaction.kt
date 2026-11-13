@@ -1,6 +1,7 @@
 package com.jobeen.ime.skin.store
 
 import com.jobeen.ime.base.util.DigestUtil
+import com.jobeen.ime.error.DeepErrorMapper
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.fault.SkinFaultHooks
 import java.io.File
@@ -258,7 +259,11 @@ class ImportTransaction(
                 ),
                 e,
             )
-            Result.Failed(stage, e.message ?: e.javaClass.simpleName)
+            // 失败原因只进日志（上文 DiagLog.e 已记完整异常）：用户可见的
+            // Result.Failed.reason 只放稳定码（见 importFailureCode），
+            // 不放原始异常消息——后者是英文技术文本（可能含 id／路径），
+            // 经 JimeImporter → 皮肤库页拒绝对话框会原样上屏。
+            Result.Failed(stage, importFailureCode(e))
         }
     }
 
@@ -341,3 +346,27 @@ class ImportTransaction(
         return existing.filter { idOf(it) !in incomingIds } + incoming
     }
 }
+
+/**
+ * 导入失败码（WO36，纯函数可单测）：用户可见的 [ImportTransaction.Result.Failed]
+ * 只放稳定码，不放原始异常消息。
+ *
+ * - 先走 [DeepErrorMapper] 既有分类口径（NO_SPACE／IO／CORRUPT 等，
+ *   含 cause 链与消息特征；取消不进这里——取消另有分支重抛）；
+ * - 归类不出的 IllegalStateException 按本类自写的 check 文案前缀
+ *   定码：verifyStaged 的 "staged …" → verify_failed，
+ *   rename 段的 "rename …" → rename_failed；
+ * - 其余一律 failed。完整异常（含 id／消息）只进 DiagLog，不上屏。
+ * 码 → 用户文案的映射须在拒绝对话框层（皮肤库页）另行接，
+ * 本层只保证 reason 是稳定码（见汇报跟进项）。
+ */
+internal fun importFailureCode(e: Exception): String =
+    DeepErrorMapper.classify(e)?.name?.lowercase()
+        ?: when {
+            e is IllegalStateException &&
+                (e.message?.startsWith("rename ") == true) -> "rename_failed"
+            e is IllegalStateException &&
+                (e.message?.startsWith("staged ") == true) -> "verify_failed"
+            else -> "failed"
+        }
+

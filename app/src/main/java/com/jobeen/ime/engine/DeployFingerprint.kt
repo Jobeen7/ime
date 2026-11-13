@@ -7,15 +7,20 @@ import com.jobeen.ime.base.util.DigestUtil
 import java.io.File
 
 /**
- * 部署输入指纹：目录名＋启用镜像串＋两棵树（用户目录、共享目录）
- * 的文件清单。清单每条为「相对路径|长度|mtime」，顶层 yaml 再加
- * 内容 SHA（防纯 mtime 误判：解压/导入重写同内容文件只改 mtime
- * 时，没有 SHA 会误 hit；内容变而 mtime 不变时，没有 SHA 同样误 hit）。
- * 判定方向宁可误 miss（多编一次）不可误 hit（漏编一次）：
+ * 部署输入指纹：目录名＋启用镜像串＋三棵树（用户目录、共享目录、
+ * 主题目录）的文件清单。清单每条为「相对路径|长度|mtime」，顶层 yaml
+ * 与主题文件再加内容 SHA（防纯 mtime 误判：解压/导入重写同内容文件
+ * 只改 mtime 时，没有 SHA 会误 hit；内容变而 mtime 不变时，没有 SHA
+ * 同样误 hit）。判定方向宁可误 miss（多编一次）不可误 hit（漏编一次）：
  * 任何读失败都返回 null，按 miss 处理。
+ *
+ * 主题树（WO38 E1-6）：主题本体 themes.json 住在外部根的 themes/
+ *（App.themesDir），与用户／共享两棵树是同一外部根下的兄弟树；
+ * 此前指纹只扫用户／共享两棵树，主题切换改 themes.json 指纹不变，
+ * 部署跳过判定会跳过一次必需的重编——是真缺口，本文件补上。
  */
 
-/** 部署输入文件一条：相对路径带 user/ 或 shared/ 根前缀。 */
+/** 部署输入文件一条：相对路径带 user/、shared/ 或 theme/ 根前缀。 */
 internal data class DeployInputFile(
     val relPath: String,
     val length: Long,
@@ -50,8 +55,9 @@ private fun needsContentSha(relPath: String): Boolean {
 }
 
 /**
- * 收集两棵树的部署输入清单。任一根不是目录、遍历或读摘要失败都
+ * 收集三棵树的部署输入清单。任一根不是目录、遍历或读摘要失败都
  * 返回 null（调用方按 miss 处理）。清单顺序不敏感：指纹计算时排序。
+ * 主题目录不存在（旧版数据／布局外路径）时主题树不计入，与旧行为一致。
  */
 internal fun collectDeployInputs(userDir: File, sharedDir: File): List<DeployInputFile>? {
     if (!userDir.isDirectory || !sharedDir.isDirectory) return null
@@ -59,8 +65,44 @@ internal fun collectDeployInputs(userDir: File, sharedDir: File): List<DeployInp
         val out = mutableListOf<DeployInputFile>()
         collectRoot(userDir, "user", out)
         collectRoot(sharedDir, "shared", out)
+        // 主题树（WO38 E1-6）：主题切换改 themes.json 必须让指纹变，
+        // 否则部署跳过判定会跳过一次必需的重编；主题树读失败则整体
+        // 返回 null（按 miss 处理，绝不误 hit）。
+        val themesDir = resolveThemesDir(userDir)
+        if (themesDir != null && themesDir.isDirectory) {
+            out += collectThemeInputs(themesDir)
+        }
         out
     }.getOrNull()
+}
+
+/**
+ * 主题目录定位（WO38 E1-6）：主题文件住在外部根的 themes/
+ *（App.themesDir = extDir("themes")），引擎 user 目录是外部根的
+ * user/＜目录名＞（DataManager.schemeDirsRoot／userDataDir），
+ * 故从 userDir 上溯两级即外部根。推不出来（布局外路径，如单测的
+ * 孤立临时目录）时返回 null，主题树不计入（与旧行为一致）。
+ */
+internal fun resolveThemesDir(userDir: File): File? {
+    val extRoot = userDir.parentFile?.parentFile ?: return null
+    return File(extRoot, "themes")
+}
+
+/**
+ * 收集主题树输入（WO38 E1-6，前缀 theme/）：themes.json 是主题本体，
+ * 内容 SHA 计入（小文件；与顶层 yaml 同口径——内容变而 mtime 不变
+ * 时也不误 hit）。`*.tmp` 是保存中途的临时文件（ThemeStore 写 tmp
+ * 再 rename），不计入：残留 tmp 本不是主题输入，计入只会让指纹多 miss。
+ */
+internal fun collectThemeInputs(themesDir: File): List<DeployInputFile> {
+    val out = mutableListOf<DeployInputFile>()
+    themesDir.walkTopDown().filter { it.isFile }.forEach { file ->
+        if (file.name.endsWith(".tmp")) return@forEach
+        val rel = "theme/${file.relativeTo(themesDir).invariantSeparatorsPath}"
+        val sha = if (file.name == "themes.json") DigestUtil.sha256Hex(file) else null
+        out.add(DeployInputFile(rel, file.length(), file.lastModified(), sha))
+    }
+    return out
 }
 
 private fun collectRoot(root: File, prefix: String, out: MutableList<DeployInputFile>) {

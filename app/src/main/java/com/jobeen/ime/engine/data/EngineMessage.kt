@@ -8,6 +8,18 @@ sealed class EngineMessage {
      * 构造的 Commit（选词上屏、前端提交等）不经该记账路径，恒缺省。
      */
     data class Commit(val text: String, val direct: Boolean = false) : EngineMessage()
+
+    /**
+     * 上屏落屏栅栏（WO40）：与 Commit 同一条 notificationQueue→
+     * messageChannel 链、同一观察者顺序处理。观察者处理到它时，
+     * 其前的 Commit 必已落屏（见 [com.jobeen.ime.engine.rime.core.RimeMessage.BarrierMessage]）。
+     * 控制类消息：通道永不丢弃／合并；除 MessageHandler 的等待
+     * 完成外，其余处理点一律忽略（各 when 的 else 分支）。
+     *
+     * @property id 配对令牌，与等待方的武装 id 一致才完成等待。
+     */
+    data class CommitBarrier(val id: Long) : EngineMessage()
+
     data class Composition(val preedit: String, val cursorPos: Int) : EngineMessage()
     data class Candidates(
         val list: List<Candidate>,

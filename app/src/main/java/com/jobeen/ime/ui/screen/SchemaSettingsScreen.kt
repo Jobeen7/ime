@@ -567,11 +567,11 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
      * runCatching 吞成 COPY_FAILED）；先写 .part、成功关闭后 rename
      * 为固定名，finally 只删 .part（成功时它已被 rename 走），失败 /
      * 取消不留残留；暂存 zip 由外层 finally 删（runImport 内已读完）。
-     * 错误区分：超限 → TOO_LARGE；空间不足（ENOSPC，凭 IOException
-     * 信息启发式判定）→ IO_ERROR；其余读取失败 → COPY_FAILED；
-     * 用户取消 → 不 toast。启发式判定的局限：异常信息文本依赖平台
-     * 与封装层，不含 errno 字样时会把空间不足误判为 COPY_FAILED，
-     * 两者都是 toast、仅文案不同，不影响导入安全。
+     * 错误区分：超限 → TOO_LARGE；空间不足（走 DeepErrorMapper 分类，
+     * 见 isImportCopyNoSpace）→ IO_ERROR；其余读取失败 → COPY_FAILED；
+     * 用户取消 → 不 toast。分类口径与 DeepErrorMapper 一致（"No space
+     * left"／"ENOSPC"／"disk full" 等特征）；不含特征的空间不足仍可能
+     * 误判为 COPY_FAILED，两者都是 toast、仅文案不同，不影响导入安全。
      */
     fun runImportPick(uri: Uri) {
         if (importBusy || EngineDeployState.isRunning() || dirSwitching || updateBusy()) return
@@ -626,12 +626,9 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                     )
                     return@launch
                 } catch (e: java.io.IOException) {
-                    val msg = e.message.orEmpty()
                     ToastUtil.showToast(
                         context.getString(
-                            if (msg.contains("No space left", ignoreCase = true) ||
-                                msg.contains("ENOSPC")
-                            ) {
+                            if (isImportCopyNoSpace(e)) {
                                 R.string.schema_import_error_io
                             } else {
                                 R.string.schema_import_error_copy
@@ -2032,6 +2029,17 @@ private fun downloadErrorText(error: DownloadErrorState): String = when (error.k
 
 /** SAF 选包后复制到的临时 zip 文件名（cacheDir 下，用完即删）。 */
 private const val IMPORT_TMP_ZIP_NAME = "scheme-import.zip"
+
+/**
+ * SAF 复制失败是否空间不足（WO36，纯函数可单测）：
+ * 不用内联关键词匹配（"No space left"／"ENOSPC"），走
+ * [DeepErrorMapper] 既有分类口径——NO_SPACE 含 "No space left"／
+ * "ENOSPC"／"disk full" 等特征（见 DeepErrorMapper.classifyMessage
+ * 与 S-L7），其余 IOException 仍按复制失败报。取消不进这里
+ * （调用方在 IOException 之前已重抛 CancellationException）。
+ */
+internal fun isImportCopyNoSpace(e: java.io.IOException): Boolean =
+    DeepErrorMapper.classify(e) == DeepErrorMapper.DeepErrorCode.NO_SPACE
 
 /** 有界复制中超限的内部信号（与 IOException 分开映射为 TOO_LARGE）。 */
 private class ZipTooLargeException : Exception()

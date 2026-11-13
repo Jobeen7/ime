@@ -63,9 +63,17 @@ object ClipboardManager {
 
     fun setMaxEntries(context: Context, max: Int) {
         val value = max.coerceIn(20, 500)
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putInt(KEY_MAX_ENTRIES, value)
-        }
+        // D-P2（WO36）：上限值同步落盘（commit）：旧 apply() 的 flush
+        // 挂在 QueuedWork 里跨过备份结算点时，备份会读到“新上限＋
+        // 旧超限行”的撕裂对。commit 写的是 clipboard_settings 这一个
+        // 小文件（毫秒级），本函数由设置页主线程调用亦无 ANR 风险。
+        // 残余：库内超限行的裁剪仍在下面 appScope 异步做——备份若在
+        // 裁剪前采集，包里会多带本应被裁的行；那是裁剪前的合法存量
+        // （非撕裂数据），下次新增即收敛，不影响恢复正确性。
+        // 注意不用 androidx edit{} 扩展：它在 lambda 后自动 apply()，
+        // 同步落盘须用显式 editor.commit()。
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit().putInt(KEY_MAX_ENTRIES, value).commit()
         // 上限调低后立即清理存量：旧实现只在下一次新增条目时才顺带 trimExcess，
         // 不再复制新内容的话超限条目会一直留着，设置看起来不生效
         val app = context.applicationContext

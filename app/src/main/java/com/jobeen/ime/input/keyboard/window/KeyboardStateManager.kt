@@ -567,7 +567,7 @@ object KeyboardStateManager {
         // 标点模式并回调 onKeyboardChanged（触发窗口侧重排），而调用方
         // （refreshSchemas、resume 等）经常同参数连调多次
         val key = Triple(name, type, currentSchema?.id)
-        if (name == currentKeyboardName && key == lastSwitchKey) return
+        if (isDuplicateSwitch(currentKeyboardName, lastSwitchKey, name, type, currentSchema?.id)) return
         lastSwitchKey = key
         if (name != currentKeyboardName) {
             detachCurrent()
@@ -1079,6 +1079,25 @@ internal fun decideWindowReset(
 /** 场景强制键盘是否应按名重显（纯决策，可单测）：强制名非空且等于当前名时重显。 */
 internal fun isForcedKeyboardReshow(forcedName: String?, currentName: String?): Boolean =
     forcedName != null && forcedName == currentName
+
+/**
+ * 模式切换去重判定（纯决策，可单测）：同名＋同类型＋同方案时
+ * 早退。名必须与当前名相等——attachNew 失败（factory 未注入）
+ * 时 lastSwitchKey 已记新键而当前名仍是旧名，下一次同参调用
+ * 必须重试而非早退；Triple 本身含名，仅比 Triple 会把这次重
+ * 试吞掉。去重 2026-10-06 提交 29178189 引入（Pair 名＋方案），
+ * 多主槽一期扩展为 Triple（名＋类型＋方案，2026-11-01 提交
+ * 4e59b858）。全部切换入口（switchTo／switchKeyboardType／
+ * startInput／refreshSchemas 的异步跑）皆汇入
+ * switchToResolvedWithType 这一条漏斗，去重覆盖同步与异步两路。
+ */
+internal fun isDuplicateSwitch(
+    currentName: String?,
+    lastKey: Triple<String, String?, String?>?,
+    name: String,
+    type: String?,
+    schemaId: String?,
+): Boolean = name == currentName && Triple(name, type, schemaId) == lastKey
 
 /** 重挂决策（[KeyboardStateManager.onAttach] 的纯决策部分，可单测）。 */
 internal sealed interface ReattachAction {

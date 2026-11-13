@@ -50,12 +50,35 @@ class ReturnKeyDisplayTest {
     }
 
     @Test
+    fun commitAndActMapsToActionIconAndLabel() {
+        // 组字中一按完成（WO37）：显示跟行为走，与 PerformAction 同显示。
+        assertEquals(
+            R.drawable.ic_keyboard_send to "发送",
+            returnKeyDisplay(EnterOutcome.CommitAndAct(EnterFieldAction.SEND), EditorInfo.IME_ACTION_SEND),
+        )
+        assertEquals(
+            R.drawable.ic_keyboard_search to "搜索",
+            returnKeyDisplay(EnterOutcome.CommitAndAct(EnterFieldAction.SEARCH), EditorInfo.IME_ACTION_SEARCH),
+        )
+        assertEquals(
+            R.drawable.ic_keyboard_done to "完成",
+            returnKeyDisplay(EnterOutcome.CommitAndAct(EnterFieldAction.DONE), EditorInfo.IME_ACTION_DONE),
+        )
+        assertEquals(
+            R.drawable.ic_keyboard_arrow_right to "前往",
+            returnKeyDisplay(EnterOutcome.CommitAndAct(EnterFieldAction.NEXT), EditorInfo.IME_ACTION_NEXT),
+        )
+    }
+
+    @Test
     fun insertNewlineKeepsNewlineLabelAndCommitCandidateShowsConfirm() {
         assertEquals(
             R.drawable.ic_keyboard_return to "换行",
             returnKeyDisplay(EnterOutcome.InsertNewline, EditorInfo.IME_ACTION_UNSPECIFIED),
         )
-        // 组字中点按上屏候选：显示“确认”（Jobeen 已定决定，WO34 I-L3）。
+        // 组字中只上屏候选（无动作）：显示“确认”（Jobeen 已定决定，
+        // WO34 I-L3；WO37：一按完成有动作时走 CommitAndAct、显示
+        // 动作图标，见 commitAndActMapsToActionIconAndLabel）。
         assertEquals(
             R.drawable.ic_keyboard_return to "确认",
             returnKeyDisplay(EnterOutcome.CommitCandidate, EditorInfo.IME_ACTION_UNSPECIFIED),

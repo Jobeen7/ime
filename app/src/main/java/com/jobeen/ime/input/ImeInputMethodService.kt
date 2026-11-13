@@ -46,6 +46,21 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class ImeInputMethodService : InputMethodService() {
+    companion object {
+        /**
+         * E2（WO39-9）键盘可见标志（进程内静态，供 PeriodicSyncJobService 读）：
+         * onWindowShown 置真、onWindowHidden 置假——框架自身的窗口可见
+         * 回调（KeyboardWindowView.isVisibleNow() 是视图级同义判定，
+         * 但 JobService 拿不到视图实例）。与 JobService 同进程
+         * （manifest 未给 PeriodicSyncJobService 配 android:process），
+         * 故静态可见；进程新起只跑 job 时服务未跑过、默认假——键盘
+         * 确实未可见，重排正确。
+         */
+        @Volatile
+        var isKeyboardVisible: Boolean = false
+            private set
+    }
+
     internal val engine: IEngine? get() = EngineFactory.current()
     internal var keyboardWindow: KeyboardWindow? = null
     private var lastOrientation = Configuration.ORIENTATION_UNDEFINED
@@ -607,6 +622,8 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onWindowHidden() {
+        // E2（WO39-9）：键盘收起→定期同步可见性门置假。
+        isKeyboardVisible = false
         keyboardWindow?.onWindowHidden()
         // 重点候选 8-5：键盘收起时不再停监听——提示条需在下次出现时
         // 显示收起期间复制的最新剪贴板／验证码；监听只在 onDestroy 停。
@@ -614,6 +631,8 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onWindowShown() {
+        // E2（WO39-9）：键盘弹出→定期同步可见性门置真。
+        isKeyboardVisible = true
         super.onWindowShown()
         keyboardWindow?.onWindowShown()
         ClipboardManager.startMonitoring(this)

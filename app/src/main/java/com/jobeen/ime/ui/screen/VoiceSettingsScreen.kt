@@ -43,6 +43,7 @@ import com.jobeen.ime.base.speech.cloud.BuiltinPlugins
 import com.jobeen.ime.base.speech.cloud.KeystoreSecretStore
 import com.jobeen.ime.base.speech.cloud.PluginStore
 import com.jobeen.ime.base.speech.cloud.SharedPrefsStore
+import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
@@ -244,7 +245,15 @@ fun VoiceSettingsScreen(
             title = stringResource(R.string.voice_input_enable),
             checked = voiceEnabled,
             onCheckedChange = {
-                voiceSwitchStore.setEnabled(it)
+                // V-低1（WO36）：落盘失败时给 toast 明示，不再静默回弹；
+                // toast 做法与相邻设置页同款（ToastUtil.showToast）。
+                // 回弹逻辑本身不动：UI 永远显示 store 真值。
+                if (voiceSwitchSaveFailed(voiceSwitchStore.setEnabled(it))) {
+                    ToastUtil.showToast(
+                        context,
+                        context.getString(R.string.voice_input_switch_save_failed),
+                    )
+                }
                 // V-低1：UI 永远显示 store 真值——写盘失败时 setEnabled
                 // 不翻内存，重读回滚本地态，不无条件跟随拨动值。
                 voiceEnabled = voiceSwitchStore.enabled

@@ -109,10 +109,19 @@ class KawaiiPanel(
             val candidates: List<EngineMessage.Candidate>,
             /** Rime 高亮候选在 candidates 中的下标（经字形过滤重映射后；-1 = 无可见高亮）。 */
             val highlightedIndex: Int = 0,
+            /**
+             * 候选帧代次（WO38 E1-10/1）：取 setCandidates 的
+             * candidateGeneration（面板内单调递增）；网格代次门凭
+             * 它丢迟到旧帧。0 = 未版本化（拖拽重排等旧调用点沿用
+             * 缺省，恒放行）。
+             */
+            val revision: Long = 0L,
         ) : State()
         data class Prediction(
             val candidates: List<EngineMessage.Candidate>,
             val highlightedIndex: Int = 0,
+            /** 候选帧代次（WO38 E1-10/1）：与组字态同口径。 */
+            val revision: Long = 0L,
         ) : State()
         data object Menu : State()
         data object Clipboard : State()
@@ -133,10 +142,11 @@ class KawaiiPanel(
                 (currentStateRender as? ComposingStateRender)?.candidates = value.candidates
                 (currentStateRender as? ComposingStateRender)?.highlightedIndex =
                     value.highlightedIndex
+                (currentStateRender as? ComposingStateRender)?.revision = value.revision
                 (view.currentRenderer as? ComposingRenderer)?.candidates = value.candidates
                 (view.currentRenderer as? ComposingRenderer)?.highlightedIndex =
                     value.highlightedIndex
-                if (view.isExpanded) candidateGrid.updateCandidates(value.candidates)
+                if (view.isExpanded) candidateGrid.updateCandidates(value.candidates, value.revision)
                 confirmOverlay.dismiss()
                 field = value
                 return
@@ -145,10 +155,11 @@ class KawaiiPanel(
                 (currentStateRender as? PredictionStateRender)?.candidates = value.candidates
                 (currentStateRender as? PredictionStateRender)?.highlightedIndex =
                     value.highlightedIndex
+                (currentStateRender as? PredictionStateRender)?.revision = value.revision
                 (view.currentRenderer as? ComposingRenderer)?.candidates = value.candidates
                 (view.currentRenderer as? ComposingRenderer)?.highlightedIndex =
                     value.highlightedIndex
-                if (view.isExpanded) candidateGrid.updateCandidates(value.candidates)
+                if (view.isExpanded) candidateGrid.updateCandidates(value.candidates, value.revision)
                 confirmOverlay.dismiss()
                 field = value
                 return
@@ -210,10 +221,10 @@ class KawaiiPanel(
     private fun createStateRender(state: State): IStateRender = when (state) {
         State.Idle -> IdleStateRender(renderContext)
         is State.Composing -> ComposingStateRender(
-            renderContext, state.candidates, state.highlightedIndex,
+            renderContext, state.candidates, state.highlightedIndex, state.revision,
         )
         is State.Prediction -> PredictionStateRender(
-            renderContext, state.candidates, state.highlightedIndex,
+            renderContext, state.candidates, state.highlightedIndex, state.revision,
         )
             State.Menu -> MenuStateRender(renderContext)
             State.Clipboard -> ClipboardStateRender(renderContext, clipboardTab)
@@ -288,8 +299,10 @@ class KawaiiPanel(
             // 一次同态候选刷新走 setter 都会用拖前列表覆盖网格，拖拽
             // 结果当场或下个按键即被打回原位
             when (state) {
-                is State.Composing -> state = State.Composing(candidates, newHighlighted)
-                is State.Prediction -> state = State.Prediction(candidates, newHighlighted)
+                // 拖拽重排是同批次内的顺序调整：代次沿用旧态（0 缺省即
+                // 未版本化放行；已版本化则同代次放行，不被网格门误拦）
+                is State.Composing -> state = State.Composing(candidates, newHighlighted, (state as? State.Composing)?.revision ?: 0L)
+                is State.Prediction -> state = State.Prediction(candidates, newHighlighted, (state as? State.Prediction)?.revision ?: 0L)
                 else -> {}
             }
             this@KawaiiPanel.listener?.onCandidateGridDragComplete(candidates)
@@ -1465,7 +1478,7 @@ class KawaiiPanel(
                     } else {
                         view.currentRenderer =
                             ComposingStateRender(
-                                renderContext, displayList, visibleHighlighted,
+                                renderContext, displayList, visibleHighlighted, generation.toLong(),
                             ).createToolbarRenderer()
                     }
                 }
@@ -1497,7 +1510,7 @@ class KawaiiPanel(
             // 无字形带，不要清成 Idle——那样追加页回来会因非组字态被
             // 丢弃、候选就此消失。续取链由引擎侧 200 封顶收口，真到底
             // 时追加空页关闭 hasMore。原始列表为空是真清空信号，不走此路
-            state = State.Composing(emptyList())
+            state = State.Composing(emptyList(), revision = generation.toLong())
             view.post { listener?.onRequestMoreCandidates() }
             view.invalidate()
             return
@@ -1523,9 +1536,9 @@ class KawaiiPanel(
                 }
             }
             state = if (predictions) {
-                State.Prediction(list, visibleHighlighted)
+                State.Prediction(list, visibleHighlighted, generation.toLong())
             } else {
-                State.Composing(list, visibleHighlighted)
+                State.Composing(list, visibleHighlighted, generation.toLong())
             }
             // 展开态的网格更新已由 state setter 的同态复用分支（或跨态时
             // applyStateRender 的 showExpand）完成，此处再调一次是每键全量
@@ -1571,12 +1584,14 @@ class KawaiiPanel(
                 val merged = s.candidates + displayable
                 candidateGrid.hasMoreCandidates = total < 0 || rawCandidateLoaded < total
                 // 追加页接在后面，前页下标不变，高亮原样保留
-                state = State.Composing(merged, s.highlightedIndex)
+                // 追加页与首屏同代次：代次沿用基帧（网格门等号放行），
+                // 缺省 0 会使合并态跌回未版本化、迟到旧追加页失去代次约束
+                state = State.Composing(merged, s.highlightedIndex, s.revision)
             }
             is State.Prediction -> {
                 val merged = s.candidates + displayable
                 candidateGrid.hasMoreCandidates = total < 0 || rawCandidateLoaded < total
-                state = State.Prediction(merged, s.highlightedIndex)
+                state = State.Prediction(merged, s.highlightedIndex, s.revision)
             }
             else -> {}
         }

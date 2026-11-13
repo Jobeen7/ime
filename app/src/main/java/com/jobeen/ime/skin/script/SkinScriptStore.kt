@@ -1,6 +1,7 @@
 package com.jobeen.ime.skin.script
 
 import com.jobeen.ime.base.speech.cloud.PluginContract
+import com.jobeen.ime.data.UserFiles
 import com.jobeen.ime.skin.store.AtomicFiles
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -119,7 +120,7 @@ class SkinScriptStore(
     }
 
     companion object {
-        const val SCRIPTS_DIR = "skin_scripts"
+        const val SCRIPTS_DIR = UserFiles.SKIN_SCRIPTS_DIR_NAME
         const val SCRIPT_FILE = "script.js"
         const val META_FILE = "meta.json"
         const val MAX_NAME_CHARS = 128

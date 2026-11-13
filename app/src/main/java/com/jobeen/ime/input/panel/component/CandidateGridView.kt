@@ -1379,7 +1379,20 @@ class CandidateGridView(
     /** 收起动画进行中：此间 visibility 仍为 VISIBLE，show() 需特殊处理 */
     private var collapseAnimating = false
 
-    fun show(list: List<EngineMessage.Candidate>, preferredEnabled: Boolean = true) {
+    /**
+     * 候选帧代次门（WO38 E1-10/1）：show／updateCandidates 入口凭
+     * 它丢迟到旧帧。门内只记已应用的最大代次；hide() 不复位——收
+     * 起后迟到的旧展开重显仍被拦住。revision 0 = 未版本化旧调用
+     * 点，恒放行（见 CandidateGridRevision）。
+     */
+    private val revisionGate = CandidateGridRevisionGate()
+
+    fun show(
+        list: List<EngineMessage.Candidate>,
+        preferredEnabled: Boolean = true,
+        revision: Long = 0L,
+    ) {
+        if (!revisionGate.tryApply(revision)) return
         syncLinePolicy()
         gridCanvas.preferredEnabled = preferredEnabled
         allCandidates = list
@@ -1408,7 +1421,8 @@ class CandidateGridView(
         pendingPinYinData?.let { applyPossibleCandidatePinYin(it) }
     }
 
-    fun updateCandidates(list: List<EngineMessage.Candidate>) {
+    fun updateCandidates(list: List<EngineMessage.Candidate>, revision: Long = 0L) {
+        if (!revisionGate.tryApply(revision)) return
         syncLinePolicy()
         allCandidates = list
         // 列表已替换：拖拽中整表更新时旧下标可能越界，先就地复位拖拽

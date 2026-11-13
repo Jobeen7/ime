@@ -9,6 +9,9 @@ import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.data.App
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.TarBz2ExtractorUtil
+import com.jobeen.ime.base.util.availableBytes
+import com.jobeen.ime.base.util.hasEnoughSpace
+import com.jobeen.ime.base.util.mirrorDownloadUrl
 import com.jobeen.ime.error.DeepErrorMapper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -376,7 +379,7 @@ object ModelDownloader {
         Timber.i("Speech model download start: %s", url)
         // downloadFile 本身不算摘要：完整性由 download() 随后以目
         // 标 SHA-256 统一校验
-        val ok = downloadFile(url, archiveFile) { read, total ->
+        val ok = downloadWithMirror(url, archiveFile) { read, total ->
             onProgress(
                 Progress(DOWNLOAD_FILE_INDEX, DOWNLOAD_FILE_COUNT, archiveFile.name, read, total)
             )
@@ -652,6 +655,23 @@ object ModelDownloader {
     }
 
     /**
+     * 主 URL 失败后试一次国内镜像（E2）：只加 fallback，不改下载
+     * 逻辑——单次尝试、断点续传与 SHA 校验都在 [downloadFile] 内
+     * 原样走；取消以 CancellationException 穿透，不会走到镜像
+     * 尝试；无镜像候选（非 GitHub 形态）时直接返回失败。
+     */
+    private suspend fun downloadWithMirror(
+        url: String,
+        archiveFile: File,
+        onRead: (Long, Long) -> Unit,
+    ): Boolean {
+        if (downloadFile(url, archiveFile, onRead)) return true
+        val mirror = mirrorDownloadUrl(url) ?: return false
+        Timber.w("Speech model download failed on primary URL, retrying via mirror")
+        return downloadFile(mirror, archiveFile, onRead)
+    }
+
+    /**
      * 下载到 `target.part` 临时文件，支持断点续传：中断（取消/失败）保留
      * 已下部分，下次请求带 Range 续传；服务器不支持 Range（回 200）时
      * 自动从零重下。完整下完后才 rename 到 target；返回是否成功。
@@ -705,6 +725,21 @@ object ModelDownloader {
                 }
                 val startAt = if (append) resumeFrom else 0L
                 val total = if (append) startAt + body.contentLength() else body.contentLength()
+                // 存储守卫（E2）：落第一个字节前核对目标目录余量。
+                // 预算＝剩余待下体积＋等体积预留（解压＋换装 staging
+                // 各需一份整包量级的空间）；总量未知（分块传输）或余
+                // 量未知（StatFs 失败）时不拦——判不出就别把可下的
+                // 也拒了。余量不足按原有失败口径报（日志＋toast），
+                // 不写半个文件。
+                val available = availableBytes(target.parentFile)
+                if (!hasEnoughSpace(available, total - startAt, total)) {
+                    Timber.w(
+                        "Speech model download refused: insufficient space (available=%d need=%d reserve=%d)",
+                        available, total - startAt, total,
+                    )
+                    HttpUtil.showToast(appContext.getString(R.string.voice_model_download_failed_detail, "存储空间不足"))
+                    return false
+                }
                 java.io.FileOutputStream(part, append).use { output ->
                     body.byteStream().use { input ->
                         val buffer = ByteArray(BUFFER_SIZE)
