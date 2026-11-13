@@ -19,9 +19,9 @@ import org.junit.Test
 
 /**
  * 回车键组字中改文字键（WO35 I-L3 渲染，Jobeen 2026-11-13 定）：
- * 组字中只上屏（无动作）时默认图标回车键变文字键显示“确认”；
- * 组字中一按完成有动作时（WO37 CommitAndAct）显示动作图标
- * （纸飞机等不动）；非组字态一律图标。显示跟行为走。
+ * 组字中一律变文字键显示“确认”，无论有无动作（组字中一按完成有动作
+ * 时行为仍是上屏＋执行动作，WO37 不动；显示不再跟动作图标走）。
+ * 非组字态一律图标。
  *
  * 覆盖分工：视图层切换（ImageKeyView.showTextLabel/showIcon）无
  * Robolectric、测不了实例化 View，JVM 只钉纯决策＋放得下预算＋
@@ -48,10 +48,10 @@ class ReturnKeyTextLabelTest {
         )
     }
 
-    // 组字中＋SEND（Qwerty：无专用换行键）：一按完成，显示纸飞机
-    // 图标、不变文字键（WO37，显示跟行为走）。
+    // 组字中＋SEND（Qwerty：无专用换行键）：一按完成，行为仍上屏＋
+    // 执行动作；显示一律文字键“确认”（2026-11-13 用户定）。
     @Test
-    fun composingWithSendShowsIconNotTextLabel() {
+    fun composingWithSendShowsTextLabel() {
         val outcome = EnterDecision.decide(
             composing = true,
             field = EnterField(isMultiLine = false, noEnterAction = false, action = EnterFieldAction.SEND),
@@ -59,9 +59,9 @@ class ReturnKeyTextLabelTest {
             isLongPress = false,
         )
         assertEquals(EnterOutcome.CommitAndAct(EnterFieldAction.SEND), outcome)
-        assertFalse(returnKeyShowsTextLabel(outcome))
+        assertTrue(returnKeyShowsTextLabel(outcome))
         assertEquals(
-            R.drawable.ic_keyboard_send to "发送",
+            R.drawable.ic_keyboard_send to "确认",
             returnKeyDisplay(outcome, EditorInfo.IME_ACTION_SEND),
         )
     }
@@ -83,9 +83,10 @@ class ReturnKeyTextLabelTest {
         )
     }
 
-    // 组字中＋SEND（T9 多行）：一按完成，显示纸飞机图标（WO37）。
+    // 组字中＋SEND（T9 多行）：一按完成，行为仍上屏＋执行动作；
+    // 显示一律文字键“确认”（2026-11-13 用户定）。
     @Test
-    fun composingT9WithSendShowsPaperPlaneNotTextLabel() {
+    fun composingT9WithSendShowsTextLabel() {
         val outcome = EnterDecision.decide(
             composing = true,
             field = EnterField(isMultiLine = true, noEnterAction = false, action = EnterFieldAction.SEND),
@@ -93,9 +94,9 @@ class ReturnKeyTextLabelTest {
             isLongPress = false,
         )
         assertEquals(EnterOutcome.CommitAndAct(EnterFieldAction.SEND), outcome)
-        assertFalse(returnKeyShowsTextLabel(outcome))
+        assertTrue(returnKeyShowsTextLabel(outcome))
         assertEquals(
-            R.drawable.ic_keyboard_send to "发送",
+            R.drawable.ic_keyboard_send to "确认",
             returnKeyDisplay(outcome, EditorInfo.IME_ACTION_SEND),
         )
     }

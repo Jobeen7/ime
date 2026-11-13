@@ -11,11 +11,10 @@ import org.junit.Test
 
 /**
  * 回车键组字中显示“确认”（I-L3，Jobeen 已定决定：组字中点按回车
- * 是上屏候选，键面显示“确认”）。WO37：一按完成有动作时走
- * CommitAndAct、显示动作图标，不再显示“确认”；本文件钉的是组字中
- * 只上屏（无动作）时 CommitCandidate → “确认”这一半。EnterDecision
- * 与按键行为一律不动；不恢复 useTextLabel（当前
- * T9/Qwerty 回车键均为 Image 键，改文字键会丢掉已定的纸飞机图标）。
+ * 是上屏候选，键面显示“确认”）。2026-11-13 用户定：组字中一律显示
+ * “确认”，无论有无动作（CommitAndAct 行为仍是一按上屏＋执行动作，
+ * 只改显示）。EnterDecision 与按键行为一律不动；不恢复 useTextLabel
+ * （当前 T9/Qwerty 回车键均为 Image 键，改文字键会丢掉已定的纸飞机图标）。
  *
  * 既有测试冲突（按简报要求明说、不悄悄改）：
  * ReturnKeyDisplayTest.insertNewlineAndCommitCandidateKeepNewlineLabel
@@ -33,6 +32,16 @@ class ReturnKeyConfirmLabelTest {
         assertEquals(
             R.drawable.ic_keyboard_return to "确认",
             returnKeyDisplay(EnterOutcome.CommitCandidate, EditorInfo.IME_ACTION_UNSPECIFIED),
+        )
+    }
+
+    @Test
+    fun commitAndActShowsConfirm() {
+        // 组字中一按完成有动作时同样显示“确认”（2026-11-13 用户定）；
+        // 行为仍是上屏＋执行动作，见 EnterDecisionTest。
+        assertEquals(
+            R.drawable.ic_keyboard_send to "确认",
+            returnKeyDisplay(EnterOutcome.CommitAndAct(EnterFieldAction.SEND), EditorInfo.IME_ACTION_SEND),
         )
     }
 

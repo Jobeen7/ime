@@ -1245,9 +1245,9 @@ abstract class BaseKeyboard(
         // 回车精简决策反推显示：显示与行为同一来源（EnterDecision），
         // 不再由空探针或图标单独定。empty 参数只为接口兼容而保留，
         // 空框不再把回车翻回换行。isComposing 在此仅作显示时点的
-        // 预测输入（组字中有动作显示动作图标、只上屏显示为“确认”，
-        // I-L3 已定决定，WO35 渲染：默认图标键变文字键；WO37 显示
-        // 跟行为走）；按键时
+        // 预测输入（组字中一律显示“确认”，有动作也显示“确认”，
+        // 2026-11-13 用户定；WO35 渲染：默认图标键变文字键）；
+        // 按键时
         // 的组字以引擎 job 执行时点的原始输入为准，两者时点不同
         // 但决策函数同一，逻辑不再各定各的。残余：状态管理器的
         // 去重三元组（动作／空／组字）不含多行与不要换行标志，
@@ -1271,12 +1271,11 @@ abstract class BaseKeyboard(
                 else -> EditorInfo.IME_ACTION_UNSPECIFIED
             }
         val (icon, enterLabel) = returnKeyDisplay(displayOutcome, editorAction)
-        // WO35 I-L3 渲染：组字中只上屏时默认图标回车键变文字键显示
-        // “确认”（CommitCandidate，ImageKeyView.showTextLabel 只切
-        // 可见性、不动图标资源，故 returnKeyIcon 缓存仍有效、切回时
-        // 纸飞机等图标不丢）；一按完成有动作时走图标（CommitAndAct，
-        // WO37 显示跟行为走）；非组字态一律走图标（皮肤文字回车键
-        // 仍走 enterTextSetters）。
+        // WO35 I-L3 渲染：组字中默认图标回车键变文字键显示“确认”
+        // （CommitCandidate／CommitAndAct，ImageKeyView.showTextLabel
+        // 只切可见性、不动图标资源，故 returnKeyIcon 缓存仍有效、
+        // 切回时纸飞机等图标不丢）；非组字态一律走图标（皮肤文字
+        // 回车键仍走 enterTextSetters）。
         if (returnKeyShowsTextLabel(displayOutcome)) {
             returnKeyView?.showTextLabel(enterLabel)
         } else {
@@ -1399,56 +1398,55 @@ internal fun composeGestureHandlers(
 /**
  * 回车键显示映射（纯决策，可单测；I-L2）：显示与行为同一来源
  * （EnterDecision），五种决策各有显示——
- * - PerformAction：按编辑器动作取图标与文案；
- * - CommitAndAct（组字中上屏＋执行动作）：与 PerformAction 同显示，
- *   按动作取图标与文案（WO37，显示跟行为走）；
- * - CommitCandidate（组字中只上屏候选，无动作）：显示“确认”文案
- *   （I-L3，Jobeen 已定决定；WO35 渲染：
- *   默认图标回车键在组字态变文字键——ImageKeyView 显示文字标签、
- *   隐藏图标，非组字态切回图标，纸飞机等图标不丢；皮肤文字回车键
- *   仍走 enterTextSetters 刷新文案）；
+ * - PerformAction（非组字态）：按编辑器动作取图标与文案；
+ * - CommitAndAct／CommitCandidate（组字中）：一律显示“确认”文案
+ *   （2026-11-13 用户定：组字中回车显示“确认”，无论有无动作；
+ *   行为仍按 EnterDecision，WO37 一按上屏＋执行动作不动；WO35
+ *   渲染：默认图标回车键在组字态变文字键——ImageKeyView 显示文字
+ *   标签、隐藏图标，非组字态切回图标，纸飞机等图标不丢；皮肤文字
+ *   回车键仍走 enterTextSetters 刷新文案）；
  * - InsertNewline：换行图标／“换行”文案；
  * - NoOp（九宫格多行无动作，换行走专用换行键）：图标沿用通用回车
  *   图标（不另发明图标），文案为空——不再谎称“换行”。
  */
+/** 编辑器动作取图标（PerformAction／CommitAndAct 共用；文字标签态下图标隐藏、只作切回缓存）。 */
+private fun iconForEditorAction(editorAction: Int): Int =
+    when (editorAction) {
+        EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
+        EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
+        EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
+        EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
+        EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
+        EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
+        else -> R.drawable.ic_keyboard_return
+    }
+
 internal fun returnKeyDisplay(outcome: EnterOutcome, editorAction: Int): Pair<Int, String> =
     when (outcome) {
-        // 组字中上屏＋执行动作（CommitAndAct）与 PerformAction 同显示：
-        // 按动作取图标与文案（2026-11-13 用户定，显示跟行为走）。
-        is EnterOutcome.PerformAction, is EnterOutcome.CommitAndAct -> {
-            val iconForAction = when (editorAction) {
-                EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
-                EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
-                EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
-                EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
-                EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
-                EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
-                else -> R.drawable.ic_keyboard_return
-            }
-            iconForAction to
+        // 非组字态执行动作：按动作取图标与文案。
+        is EnterOutcome.PerformAction ->
+            iconForEditorAction(editorAction) to
                 com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(editorAction)
-        }
         is EnterOutcome.NoOp -> R.drawable.ic_keyboard_return to ""
-        // I-L3：组字中只上屏候选（无动作）时键面显示“确认”。
-        // WO37：一按完成有动作时走 CommitAndAct、显示动作图标，
-        // 不再显示“确认”。WO35 渲染：默认图标回车键在组字态显示
-        // 文字标签（见 updateEditorInfo 的 returnKeyShowsTextLabel
-        // 分支，图标资源本身不换、只切可见性）；皮肤文字回车键仍走
-        // enterTextSetters 刷新文案。
+        // 组字中（CommitAndAct／CommitCandidate）一律显示“确认”
+        // （2026-11-13 用户定；行为不动，WO37 一按上屏＋执行动作
+        // 仍走 EnterDecision）。图标仍按动作取（文字标签态下隐藏，
+        // 切回图标态时直接用，不丢纸飞机等图标）。
+        is EnterOutcome.CommitAndAct -> iconForEditorAction(editorAction) to "确认"
         is EnterOutcome.CommitCandidate -> R.drawable.ic_keyboard_return to "确认"
         else -> R.drawable.ic_keyboard_return to "换行"
     }
 
 /**
  * 回车键渲染模式（纯决策，可单测；WO35 I-L3 渲染）：
- * 组字中只上屏（CommitCandidate）→ 文字标签（默认图标回车键显示“确认”、
- * 皮肤文字回车键走 enterTextSetters）；组字中上屏＋执行动作
- * （CommitAndAct）→ 动作图标（WO37，显示跟行为走）；其余一律 → 图标
+ * 组字中（CommitCandidate／CommitAndAct）→ 文字标签（默认图标回车键
+ * 显示“确认”、皮肤文字回车键走 enterTextSetters；2026-11-13 用户定：
+ * 组字中回车显示“确认”，无论有无动作）；其余一律 → 图标
  * （PerformAction 各动作图标、插换行／无动作回车箭头）。
  * 只决定显示，不碰 EnterDecision 与按键行为。
  */
 internal fun returnKeyShowsTextLabel(outcome: EnterOutcome): Boolean =
-    outcome is EnterOutcome.CommitCandidate
+    outcome is EnterOutcome.CommitCandidate || outcome is EnterOutcome.CommitAndAct
 
 /**
  * “确认”放得下判定（纯函数，可单测；WO35 I-L3 渲染）：
