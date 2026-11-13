@@ -16,7 +16,7 @@ import java.io.File
 /**
  * 跨库一致快照（D-M1，fcitx `SqliteSnapshots.kt` 形状）：
  * 另开一条原生 SQLite 连接，ATTACH 两个 Room 库文件，在一个
- * 事务（beginTransactionNonExclusive，WAL 下读到同一时点）内
+ * 事务（beginTransaction，WAL 下读到同一时点）内
  * 读出五张表，事务外再对两库各跑 `PRAGMA quick_check(1)` 校验。
  * 读出的行与各 DAO 的全量查询口径逐字一致（WHERE／ORDER BY 照抄），
  * 只是执行位置从两个 Room 事务换成了一个跨库事务。
@@ -79,7 +79,7 @@ internal class RoomSnapshotReader(
             val clipSchema = if (appExists) "clip" else "main"
             val appSchema = if (appExists) "main" else "clip"
             val snapshot = try {
-                db.beginTransactionNonExclusive()
+                db.beginTransaction()
                 try {
                     RoomSnapshot(
                         clipboard = if (clipExists) readClipboard(db, clipSchema) else emptyList(),

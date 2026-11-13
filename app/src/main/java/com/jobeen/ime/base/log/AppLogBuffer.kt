@@ -14,6 +14,7 @@ data class AppLogEntry(
     val priority: Int,
     val tag: String,
     val message: String,
+    val seq: Long = 0L,
 )
 
 /**
@@ -39,6 +40,7 @@ object AppLogBuffer {
      */
     private val buffer = ArrayDeque<AppLogEntry>()
     private var installed = false
+    private var nextSeq = 0L
 
     fun install(context: android.content.Context, enableLogging: Boolean = true) {
         synchronized(lock) {
@@ -76,8 +78,9 @@ object AppLogBuffer {
             if (buffer.lastOrNull()?.let {
                     it.priority == entry.priority && it.tag == entry.tag && it.message == entry.message
                 } == true) return
+            val sequenced = entry.copy(seq = nextSeq++)
             if (buffer.size >= MAX_ENTRIES) buffer.removeFirst()
-            buffer.addLast(entry)
+            buffer.addLast(sequenced)
             _entries.value = ArrayList(buffer)
         }
     }

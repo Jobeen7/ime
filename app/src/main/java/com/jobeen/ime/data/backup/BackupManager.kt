@@ -3,6 +3,7 @@ package com.jobeen.ime.data.backup
 import android.content.Context
 import android.os.Build
 import com.jobeen.ime.R
+import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.data.App
 import com.jobeen.ime.data.database.AppDatabase
@@ -29,7 +30,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.io.File
-import java.security.MessageDigest
 import java.security.SecureRandom
 import java.util.UUID
 import javax.crypto.Cipher
@@ -590,7 +590,7 @@ object BackupManager {
             token = token,
             phase = RestoreJournal.Phase.STAGING,
             startedAt = System.currentTimeMillis(),
-            backupFingerprint = sha256Hex(bytes),
+            backupFingerprint = DigestUtil.sha256Hex(bytes),
             snapshotFile = snapshotFile.name,
             completedSections = emptySet(),
             // D-P1：磁盘回滚据此区分“快照缺皮肤段是还原前本就无皮肤”
@@ -704,11 +704,6 @@ object BackupManager {
                 else backupString(R.string.backup_restore_failed_rollback_failed, e.message ?: backupString(R.string.backup_unknown_error))
             )
         }
-    }
-
-    private fun sha256Hex(bytes: ByteArray): String {
-        val digest = MessageDigest.getInstance("SHA-256").digest(bytes)
-        return digest.joinToString("") { "%02x".format(it.toInt() and 0xFF) }
     }
 
     // —— 应用级还原执行（不随界面销毁取消） ——
@@ -1817,11 +1812,12 @@ object BackupManager {
         // 临时文件＋改名：中途失败不留半截 stats.json（启动侧损坏
         // 本就容错为空，但能不脏就不脏）
         parsed.inputStatsJson?.let { json ->
-            val dir = File(appContext.filesDir, "input_stats")
-            runCatching { dir.mkdirs() }
-            val tmp = File(dir, "stats.json.tmp")
-            tmp.writeText(json, Charsets.UTF_8)
-            if (!tmp.renameTo(File(dir, "stats.json"))) {
+            try {
+                AtomicFiles.write(
+                    File(File(appContext.filesDir, "input_stats"), "stats.json"),
+                    json.toByteArray(Charsets.UTF_8),
+                )
+            } catch (e: java.io.IOException) {
                 throw BackupException(backupString(R.string.backup_input_stats_write_failed))
             }
             onSectionDone?.invoke(RestoreJournal.SECTION_INPUT_STATS)
@@ -1847,9 +1843,9 @@ object BackupManager {
                 File(rootDir, "assets").deleteRecursively()
             }
             skin.index?.let { indexText ->
-                val tmp = File(rootDir, "index.json.tmp")
-                tmp.writeText(indexText, Charsets.UTF_8)
-                if (!tmp.renameTo(File(rootDir, "index.json"))) {
+                try {
+                    AtomicFiles.write(File(rootDir, "index.json"), indexText.toByteArray(Charsets.UTF_8))
+                } catch (e: java.io.IOException) {
                     throw BackupException(backupString(R.string.backup_skin_index_write_failed))
                 }
             }
@@ -1857,10 +1853,9 @@ object BackupManager {
                 // 解析阶段已白名单校验，此处只做落盘（与 prefs 名口径一致：
                 // 输入已在解析阶段全量校验，写入段不再有解析错误）。
                 val target = File(rootDir, rel)
-                runCatching { target.parentFile?.mkdirs() }
-                val tmp = File(target.parentFile, "${target.name}.tmp")
-                tmp.writeBytes(bytes)
-                if (!tmp.renameTo(target)) {
+                try {
+                    AtomicFiles.write(target, bytes)
+                } catch (e: java.io.IOException) {
                     throw BackupException(backupString(R.string.backup_skin_file_write_failed, rel))
                 }
             }
@@ -1896,10 +1891,9 @@ object BackupManager {
                 for ((rel, bytes) in scripts.files) {
                     // 解析阶段已白名单校验，此处只做落盘。
                     val target = File(tmpDir, rel)
-                    runCatching { target.parentFile?.mkdirs() }
-                    val tmp = File(target.parentFile, "${target.name}.tmp")
-                    tmp.writeBytes(bytes)
-                    if (!tmp.renameTo(target)) {
+                    try {
+                        AtomicFiles.write(target, bytes)
+                    } catch (e: java.io.IOException) {
                         throw BackupException(backupString(R.string.backup_script_file_write_failed, rel))
                     }
                 }

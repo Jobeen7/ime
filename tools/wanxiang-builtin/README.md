@@ -1,12 +1,13 @@
 # 内置万象方案（app/src/main/assets/resource.zip）的可复现来源
 
-`app/src/main/assets/resource.zip` 不入版本库（.gitignore 排除），本目录保存其中**经 Jime 适配的五个文件**，使内置方案可审计、可复现：
+`app/src/main/assets/resource.zip` 不入版本库（.gitignore 排除），本目录保存其中**经 Jime 适配的五个文件**与**预测模型文件 predict.marisa**，使内置方案可审计、可复现：
 
 - `default.yaml`
 - `wanxiang_t9.schema.yaml`
 - `wanxiang_lite.schema.yaml`
 - `wanxiang_english.schema.yaml`
 - `wanxiang_mixedcode.schema.yaml`
+- `predict.marisa`（预测模型，来源见下节）
 
 ## 重打包步骤
 
@@ -21,7 +22,7 @@
 
 ## model/ 的来源
 
-`model/predict.marisa`（37,366,176 字节，sha256 `bcd55c3e7b149a5611cde4d027781710f50533c90e67ab9fc7824e96ff62701d`）不在官方 lite zip 内，是沿用自此前内置包的预测模型文件，历次换方案包时原样保留、不随官方包更换。`build-resource.sh` 打包时从现有 resource.zip 中取它；首次无现有包可用时需人工放入并核对上述 sha256。
+`model/predict.marisa`（37,366,176 字节，sha256 `bcd55c3e7b149a5611cde4d027781710f50533c90e67ab9fc7824e96ff62701d`）不在官方 lite zip 内，是 Jime 自有的预测模型文件，历次换方案包时原样保留、不随官方包更换。本目录的 `predict.marisa` 即受控副本，随版本库一起检出（resource.zip 不入版本库的例外：该文件不可重建，故与 sherpa AAR 同属入版本库的二进制输入）；`build-resource.sh` 打包时从本目录取它并按上述 sha256 校验，不符即停。
 
 ## 当前成品登记
 

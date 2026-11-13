@@ -100,10 +100,21 @@ object WebDavSync {
      * 把错误响应的正文（去空白、截断到 400 字）拼进错误信息，
      * 坚果云等会在正文里写明 403 的具体原因，只看状态码定位不到。
      */
+    /** 错误正文只读前 16KB：异常大的错误体不整段进内存。 */
+    private const val MAX_ERROR_BODY_BYTES = 16L * 1024
+
     private fun errorDetail(response: Response): String {
-        val body = runCatching { response.body?.string()?.trim().orEmpty() }.getOrDefault("")
+        val body = runCatching {
+            val responseBody = response.body ?: return@runCatching ""
+            val charset = responseBody.contentType()?.charset(Charsets.UTF_8) ?: Charsets.UTF_8
+            responseBody.source().use { source ->
+                source.request(MAX_ERROR_BODY_BYTES)
+                val bytes = source.buffer.readByteArray(minOf(source.buffer.size, MAX_ERROR_BODY_BYTES))
+                String(bytes, charset)
+            }
+        }.getOrDefault("")
         if (body.isEmpty()) return ""
-        return body.replace(Regex("\\s+"), " ").take(400)
+        return body.trim().replace(Regex("\\s+"), " ").take(400)
     }
 
     private fun httpError(action: String, code: Int, detail: String, url: String = ""): WebDavHttpException {
@@ -455,9 +466,6 @@ object WebDavSync {
                 }
                 UserDictPrefs.setLastUploadTime(fileName, System.currentTimeMillis())
                 Timber.i("User dict '$dictName' uploaded: $exportedCount entries")
-                // 删除词表随词典同步一起走（并集合并，失败不影响词典同步结果）
-                runCatching { syncDeletedWords() }
-                    .onFailure { Timber.w(it, "Deleted words sync failed") }
                 exportedCount
             } finally {
                 tempFile.delete()

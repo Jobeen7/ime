@@ -67,9 +67,6 @@ fun LogScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val entries by AppLogBuffer.entries.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
-    val logText = remember(entries) {
-        entries.joinToString("\n") { "${it.time} ${it.tag} ${it.message}" }
-    }
     // 最近崩溃记录（CrashTrap 落盘）：有内容才显示复制入口与发生
     // 时间，纯手动取回——复制带敏感标记，不进自家剪贴板历史
     var pendingCrash by remember { mutableStateOf<CrashTrap.PendingCrash?>(null) }
@@ -167,7 +164,7 @@ fun LogScreen(onBack: () -> Unit) {
                         )
                     }
                     val logsLabel = stringResource(R.string.app_logs)
-                    IconButton(onClick = { copyLogs(context, logText, logsLabel) }, enabled = entries.isNotEmpty()) {
+                    IconButton(onClick = { copyLogs(context, entries.joinToString("\n") { "${it.time} ${it.tag} ${it.message}" }, logsLabel) }, enabled = entries.isNotEmpty()) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = stringResource(R.string.copy_logs))
                     }
                     IconButton(
@@ -219,7 +216,7 @@ fun LogScreen(onBack: () -> Unit) {
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(8.dp),
                 verticalArrangement = Arrangement.spacedBy(3.dp),
             ) {
-                itemsIndexed(entries, key = { index, _ -> index }) { _, entry ->
+                itemsIndexed(entries, key = { _, entry -> entry.seq }) { _, entry ->
                     LogLine(entry)
                 }
             }

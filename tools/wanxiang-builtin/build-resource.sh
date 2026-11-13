@@ -3,8 +3,8 @@
 #
 # 流程：下载官方 lite zip → 校验大小与 sha256 → 解压（官方包为根目录
 # 平铺）→ 整体放入 shared/ → 用本目录四个适配文件覆盖 shared/ 同名
-# 文件 → 加入 model/predict.marisa（沿用自现有 resource.zip，官方
-# lite 包不含此文件，取出后按 MARISA_SHA256 校验，不符即停）→ 以
+# 文件 → 加入 model/predict.marisa（本目录受控文件 predict.marisa，
+# 官方 lite 包不含此文件，取后按 MARISA_SHA256 校验，不符即停）→ 以
 # 固定排序、固定时间戳打包 → 输出成品路径与 sha256。
 #
 # 依赖：bash、curl、python3（大小与 sha256 均走 python3，不依赖 GNU
@@ -66,20 +66,14 @@ for f in default.yaml wanxiang_t9.schema.yaml wanxiang_lite.schema.yaml wanxiang
     cp "${SCRIPT_DIR}/${f}" "${WORK}/tree/shared/${f}"
 done
 
-# model/predict.marisa 沿用自现有 resource.zip（官方 lite 包没有
-# model/）；现有包缺失或不含该文件时直接失败，不静默产出残包
+# model/predict.marisa 取自本目录受控文件（官方 lite 包没有 model/）；
+# 文件缺失时直接失败，不静默产出残包
 mkdir -p "${WORK}/tree/model"
-python3 - "${OUT}" "${WORK}/tree/model/predict.marisa" <<'PY'
-import sys, zipfile
-src, dest = sys.argv[1], sys.argv[2]
-try:
-    with zipfile.ZipFile(src) as z:
-        data = z.read("model/predict.marisa")
-except Exception as e:
-    sys.exit(f"无法从现有 resource.zip 取 model/predict.marisa：{e}")
-with open(dest, "wb") as fh:
-    fh.write(data)
-PY
+if [ ! -f "${SCRIPT_DIR}/predict.marisa" ]; then
+    echo "缺少本目录 predict.marisa，无法打包" >&2
+    exit 1
+fi
+cp "${SCRIPT_DIR}/predict.marisa" "${WORK}/tree/model/predict.marisa"
 
 # 取出的 predict.marisa 必须与登记值一致，任何内容不符都不进新包
 MARISA_ACTUAL_SHA256="$(sha256_of "${WORK}/tree/model/predict.marisa")"

@@ -452,7 +452,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 CommandSymbol
             ) && !hasUnresolvedDigitSegment(context.composition.syllables)
         ) {
-            var commitText = ""
+            val commitText = StringBuilder()
             var confirmedProto: SyllableProto? = null
             context.composition.syllables.forEachIndexed { index, proto ->
                 if (confirmedProto != null) {
@@ -463,14 +463,14 @@ class Rime : RimeApi, RimeLifecycleOwner {
                 }
                 if (proto.text.isNotEmpty()) {
                     confirmedProto = proto
-                    commitText += proto.text
+                    commitText.append(proto.text)
                     return@forEachIndexed
                 }
-                commitText += proto.rawInput
+                commitText.append(proto.rawInput)
             }
             Companion.clearComposition()
             handleMessage(
-                RimeMessage.MessageType.Commit.ordinal, arrayOf(CommitProto(commitText))
+                RimeMessage.MessageType.Commit.ordinal, arrayOf(CommitProto(commitText.toString()))
             )
             handleComposition(CompositionProto())
             handleMessage(

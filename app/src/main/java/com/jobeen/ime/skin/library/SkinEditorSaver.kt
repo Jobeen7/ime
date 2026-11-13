@@ -4,6 +4,7 @@ package com.jobeen.ime.skin.library
 
 import android.content.Context
 import com.jobeen.ime.R
+import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.skin.layout.LayoutValidator
 import com.jobeen.ime.skin.model.GeometryFallbacks
 import com.jobeen.ime.skin.model.PackageManifest
@@ -32,7 +33,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
-import java.security.MessageDigest
 import timber.log.Timber
 
 /** 编辑器可打开的文件（skin.json 或布局文件）。 */
@@ -137,7 +137,7 @@ class SkinEditorSaver(
         if (!skinFile.isFile) return@withContext ResolveActiveResult.Unavailable("skin_json_missing")
         val skinBytes = runCatching { skinFile.readBytes() }.getOrNull()
             ?: return@withContext ResolveActiveResult.Unavailable("skin_json_unreadable")
-        val skinHash = sha256Hex(skinBytes)
+        val skinHash = DigestUtil.sha256Hex(skinBytes)
         val tree = SkinJson.parseObject(skinBytes.toString(Charsets.UTF_8))
             ?: return@withContext ResolveActiveResult.Unavailable("skin_json_unparseable")
         // 记录 hash 门（WO30 §2 项 4，与 ActiveResolver 启动口径一致）：
@@ -178,7 +178,7 @@ class SkinEditorSaver(
                 Timber.w("skin editor: layout unreadable: ${entry.id}")
                 return@withContext ResolveActiveResult.Unavailable("layout_unreadable:${entry.id}")
             }
-            if (sha256Hex(layoutBytes) != entry.hash) {
+            if (DigestUtil.sha256Hex(layoutBytes) != entry.hash) {
                 Timber.w("skin editor: layout hash mismatch, excluded: ${entry.id}")
                 unavailableLayouts += entry.id
                 continue
@@ -240,7 +240,7 @@ class SkinEditorSaver(
             return SkinEditorSaveResult.Stale("active_changed")
         }
         // 3. Manifest 再校验（问题 5）：入口已验，保存时重验防中途损坏；缺项不写 active。
-        val oldHash = sha256Hex(oldBytes)
+        val oldHash = DigestUtil.sha256Hex(oldBytes)
         val manifest = when (val check = SkinEditorSave.validateManifestForEdit(oldManifestText, oldHash)) {
             is ManifestCheck.Invalid -> return SkinEditorSaveResult.Failed("manifest_invalid:${check.reason}")
             is ManifestCheck.Valid -> check.manifest
@@ -282,7 +282,7 @@ class SkinEditorSaver(
         val issues = (outcome as EditorSaveOutcome.Commit).issues
         // 5. Copy-on-write（问题 1）：新 generation＝旧代全量复制＋新 skin.json 覆写＋新代清单同步。
         val newBytes = text.toByteArray(Charsets.UTF_8)
-        val newHash = sha256Hex(newBytes)
+        val newHash = DigestUtil.sha256Hex(newBytes)
         val newGen = SkinEditorSave.nextGeneration(
             indexGeneration = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
                 ?.skins?.firstOrNull { it.id == active.skinId }?.generation,
@@ -405,10 +405,10 @@ class SkinEditorSaver(
         val issues = (outcome as EditorSaveOutcome.Commit).issues
         val oldEntry = oldIndex.layouts.firstOrNull { it.id == file.id }
             ?: return SkinEditorSaveResult.Failed("layout_index_entry_missing")
-        val oldHash = sha256Hex(oldBytes)
+        val oldHash = DigestUtil.sha256Hex(oldBytes)
         // 4. Copy-on-write：新布局代次，旧代不动；索引先指新代（快照构建经索引解析布局）。
         val newBytes = text.toByteArray(Charsets.UTF_8)
-        val newHash = sha256Hex(newBytes)
+        val newHash = DigestUtil.sha256Hex(newBytes)
         val newGen = SkinEditorSave.nextGeneration(
             indexGeneration = oldEntry.generation,
             diskGenerations = SkinEditorSave.diskGenerations(layout.layoutsDir, file.id),
@@ -477,7 +477,7 @@ class SkinEditorSaver(
                 runCatching { newGenDir.deleteRecursively(); genDeleted = true }
                 val oldLayoutIntact = runCatching {
                     val bytes = File(layout.fileFromRelative(oldEntry.dir), "layout.json").readBytes()
-                    sha256Hex(bytes) == oldHash
+                    DigestUtil.sha256Hex(bytes) == oldHash
                 }.getOrDefault(false)
                 // 切换／首帧阶段失败时，事务回滚可能已按新索引装了旧皮＋新布局快照；
                 // 索引已恢复，须重装当前生效快照收敛运行态。
@@ -636,7 +636,4 @@ class SkinEditorSaver(
     private fun deleteDirBestEffort(dir: File) {
         runCatching { dir.deleteRecursively() }
     }
-
-    private fun sha256Hex(bytes: ByteArray): String =
-        MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
 }

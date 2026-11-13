@@ -64,8 +64,8 @@ fun readBundledWanxiangVersionForStamp(): String {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 212
-        versionName = "1.1.19"
+        versionCode = 213
+        versionName = "1.1.19.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 应用名/输入法名不写在 strings.xml 里：debug 需要在同一资源名上
@@ -244,7 +244,9 @@ ksp {
 }
 
 dependencies {
-    implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.jar", "*.aar"))))
+    // sherpa-onnx 1.13.5-qnn：唯一本地 AAR，来源 k2-fsa/sherpa-onnx releases；
+    // sha256: 49fb0cb0e8ff126471080886f47cae6e71fc253ce0e348036da4c7ca7dd74f3a
+    implementation(files("libs/sherpa-onnx-1.13.5-qnn.aar"))
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.timber)
     implementation(libs.okhttp)
@@ -252,12 +254,8 @@ dependencies {
     implementation(libs.commons.compress)
     implementation(libs.zxing.android.embedded)
     implementation(libs.splitties.bitflags)
-    implementation(libs.splitties.systemservices)
     implementation(libs.splitties.views.dsl)
     implementation(libs.splitties.views.dsl.constraintlayout)
-    implementation(libs.splitties.views.dsl.coordinatorlayout)
-    implementation(libs.splitties.views.dsl.recyclerview)
-    implementation(libs.splitties.views.recyclerview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.autofill)
     implementation(libs.androidx.lifecycle.runtime.ktx)
@@ -265,7 +263,6 @@ dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.compose.ui)
     implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.compose.material3)
     implementation(libs.material)
     implementation(libs.androidx.compose.material.icons.extended)
@@ -275,9 +272,6 @@ dependencies {
     ksp(libs.androidx.room.compiler)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
-    androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(platform(libs.androidx.compose.bom))
-    androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
-    debugImplementation(libs.androidx.compose.ui.test.manifest)
 }

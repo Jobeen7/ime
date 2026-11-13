@@ -8,8 +8,6 @@ import com.jobeen.ime.base.log.AppLogBuffer
 import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.util.ResourceExtractorUtil
 import com.jobeen.ime.base.util.extractWithManifest
-import com.jobeen.ime.base.util.TraditionalConverter
-import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.data.ThemeStore
 import com.jobeen.ime.data.backup.BackupManager
@@ -18,7 +16,6 @@ import com.jobeen.ime.data.manager.SchemePackageImport
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import com.jobeen.ime.BuildConfig
 import timber.log.Timber
@@ -90,7 +87,6 @@ object AppStartup {
                     "step setupEngine skipped, blocked by incomplete step: releaseResourcesIfNeeded"
                 )
             }
-            runStep("prewarmOpencc") { prewarmOpencc(context) }
         }
     }
 
@@ -158,13 +154,6 @@ object AppStartup {
 
     private fun setupInputFeedbacks(context: Context) {
         InputFeedbacks.initSoundPool(context)
-    }
-
-    private fun prewarmOpencc(context: Context) {
-        appScope.launch(Dispatchers.IO) {
-            // 触发一次简繁词库加载，避免首次繁体转换卡顿
-            runCatching { TraditionalConverter.toTraditional("汉字") }
-        }
     }
 
     private fun releaseResourcesIfNeeded(context: Context) {
