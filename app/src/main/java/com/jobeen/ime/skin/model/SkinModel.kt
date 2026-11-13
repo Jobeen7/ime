@@ -480,7 +480,7 @@ data class ValidatedSkin(
     val symbolBadgeHighlightColor: Int? = null,
     /**
      * 未知顶层节点（原样透传）：校验未消费的顶层键 → 原始 JsonElement；
-     * 已知键不进入本表（见 SkinValidator.KNOWN_TOP_LEVEL_KEYS）。
+     * 已知键不进入本表（见 SkinValidator.validate：解析时收进 consumed 集的顶层键即已知键）。
      */
     val unknownNodes: Map<String, JsonElement> = emptyMap(),
     /** 拟态双阴影（2026-10-29 item-1）：顶层 keyShadow 校验结果；缺省关闭。 */

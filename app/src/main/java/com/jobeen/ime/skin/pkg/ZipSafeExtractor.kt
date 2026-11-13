@@ -7,10 +7,15 @@ import java.util.zip.ZipInputStream
 /**
  * .jime zip 安全解包（定稿十一.1/11.2，B1 新实现）：
  *
- * - 包级上限：原始 ≤10MB、展开 ≤40MB、单条目 ≤8MB、条目 ≤100、
+ * - 包级上限：原始 ≤10MB、展开 ≤16MB、单条目 ≤8MB、条目 ≤100、
  *   任一超限整包拒绝。（WO42 E-1：压缩比规则已删——绝对上限已钉死
  *   内存上界，压缩比挡不住任何绝对上限挡不住的东西，反而误拒
- *   高压缩比合法包，如纯色背景 PNG 250:1。）
+ *   高压缩比合法包，如纯色背景 PNG 250:1。WO45 P3：展开总量
+ *   由 40MB 降到 16MB——全量内存缓冲（ByteArrayOutputStream＋
+ *   toByteArray＋files 列表）下 40MB 在低内存设备上 GC 压力大；
+ *   16MB 仍远超单皮肤包的实际体量（背景＋音频通常 <5MB），
+ *   流式暂存重构面大（ExtractedFile 全仓按 bytes 取用），
+ *   不在正式版批内做。）
  * - 路径：归一化后校验——拒 ../、绝对路径、盘符、反斜杠、归一化
  *   重名（NFC + 大小写不敏感）、嵌套 zip/.jime。
  * - 符号链接：java.util.zip 不暴露条目 unix 模式，无从判别；本实现
@@ -22,7 +27,7 @@ import java.util.zip.ZipInputStream
 object ZipSafeExtractor {
 
     const val MAX_RAW_BYTES = 10L * 1024 * 1024
-    const val MAX_EXPANDED_BYTES = 40L * 1024 * 1024
+    const val MAX_EXPANDED_BYTES = 16L * 1024 * 1024
     const val MAX_ENTRY_BYTES = 8L * 1024 * 1024
     const val MAX_ENTRIES = 100
 
@@ -45,15 +50,19 @@ object ZipSafeExtractor {
         val files = mutableListOf<ExtractedFile>()
         val seenNormalized = mutableSetOf<String>()
         var totalExpanded = 0L
+        var entryCount = 0
         try {
             ZipInputStream(zipFile.inputStream().buffered()).use { zip ->
                 while (true) {
                     val entry = zip.nextEntry ?: break
-                    val name = entry.name
-                    if (entry.isDirectory) continue
-                    if (files.size >= MAX_ENTRIES) {
+                    // 条目计数含目录项（在跳过目录之前递增）：上限限制的是
+                    // 处理的 ZIP 条目总数，不只是输出文件数。
+                    entryCount++
+                    if (entryCount > MAX_ENTRIES) {
                         return Result.Rejected("too_many_entries")
                     }
+                    val name = entry.name
+                    if (entry.isDirectory) continue
                     validateEntryName(name)?.let { return Result.Rejected(it) }
                     val normalized = normalizePath(name)
                     if (!seenNormalized.add(normalized)) {

@@ -3,20 +3,14 @@
 package com.jobeen.ime.input
 
 /**
- * 回车键精简决策（2026-11-03 用户定，九宫格去换行、26 键等保留原样；
- * 2026-11-13 用户定：九宫格回车永不插换行——决策表现有
- * hasDedicatedNewlineKey 分支已实现，九宫格走不到 InsertNewline
- * 分支，只加单测钉住，26 键等其他键盘保留原样；组字中一按完成，
- * 上屏候选＋执行动作）。
+ * 回车键精简决策（2026-11-03 用户定，九宫格去换行、26 键等保留原样）。
  *
  * 纯决策，不调 Android 框架方法、不读偏好、不读键盘状态：
  * 调用方在边界处把 EditorInfo 映射成 [EnterField]（见 EnterFieldBoundary），
  * 把组字中取自引擎 job 执行时点的原始输入是否非空。
  *
  * 决策表（逐行实现，不许增减分支）：
- * - 组字中 → 先按字段算非组字态的动作：有动作则上屏候选＋执行
- *   动作（CommitAndAct），无动作则只上屏候选（CommitCandidate），
- *   点按长按都一样。
+ * - 组字中 → 上屏候选（走现有 Rime 回车路径），点按长按都一样。
  * - 单行＋声明了动作（SEARCH/SEND/GO/NEXT/PREVIOUS/DONE）→ 发该动作。
  * - 单行＋没声明动作（UNSPECIFIED，含 NONE）→ 发 DONE。
  * - 多行＋声明了动作且未带不要换行标志 → 发该动作（2026-11-11 修订：
@@ -31,7 +25,7 @@ package com.jobeen.ime.input
  * - 多行＋没带标志＋没声明动作（UNSPECIFIED）→ 无专用换行键插换行，
  *   有专用换行键（九宫格）无动作（换行走专用换行键）。
  * - 长按：无专用换行键时等于插换行（手机上的 Shift+Enter 口子，
- *   组字中时按组字中分支走）；有专用换行键时同点按。
+ *   组字中时仍先上屏候选）；有专用换行键时同点按。
  *
  * 刻意不在决策里的量：框空不空（空探针已退出回车决策，空框点按
  * 不再翻回换行）、回车键图标（图标不再决定行为，显示改由本决策
@@ -58,13 +52,10 @@ data class EnterField(
     val action: EnterFieldAction,
 )
 
-/** 回车键决策输出，五种之一。 */
+/** 回车键决策输出，四种之一。 */
 sealed interface EnterOutcome {
     /** 组字中：走现有 Rime 回车路径上屏候选。 */
     data object CommitCandidate : EnterOutcome
-
-    /** 组字中一按完成：先上屏候选、再执行编辑器动作（同一次按键内）。 */
-    data class CommitAndAct(val action: EnterFieldAction) : EnterOutcome
 
     /** 发编辑器动作（边界处再映射回 EditorInfo 动作常量）。 */
     data class PerformAction(val action: EnterFieldAction) : EnterOutcome
@@ -88,14 +79,7 @@ object EnterDecision {
         isLongPress: Boolean,
     ): EnterOutcome {
         if (composing) {
-            // 组字中一按完成（2026-11-13 用户定）：先按字段算非组字态
-            // 的动作，有动作则上屏后执行，无动作则只上屏。点按长按都一样。
-            val action = actionFor(field)
-            return if (action != null) {
-                EnterOutcome.CommitAndAct(action)
-            } else {
-                EnterOutcome.CommitCandidate
-            }
+            return EnterOutcome.CommitCandidate
         }
         if (isLongPress && !hasDedicatedNewlineKey) {
             return EnterOutcome.InsertNewline
@@ -118,26 +102,6 @@ object EnterDecision {
             return EnterOutcome.InsertNewline
         }
         return EnterOutcome.NoOp
-    }
-
-    /**
-     * 非组字态的动作（有则发，无则空）：单行恒有动作（未声明→DONE）；
-     * 多行仅在未带不要换行标志且声明了动作时有动作；其余一律无动作。
-     * 组字中分支与非组字分支共用同一口径，显示与行为同一来源。
-     */
-    private fun actionFor(field: EnterField): EnterFieldAction? {
-        if (!field.isMultiLine) {
-            return if (field.action == EnterFieldAction.UNSPECIFIED) {
-                EnterFieldAction.DONE
-            } else {
-                field.action
-            }
-        }
-        return if (!field.noEnterAction && field.action != EnterFieldAction.UNSPECIFIED) {
-            field.action
-        } else {
-            null
-        }
     }
 }
 

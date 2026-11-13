@@ -65,9 +65,6 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
             EngineMessage.Commit(message.data.text.orEmpty(), direct = message.direct)
         }
 
-        // 上屏落屏栅栏（WO40）：id 原样透传，等待方凭它配对。
-        is RimeMessage.BarrierMessage -> EngineMessage.CommitBarrier(message.id)
-
         is RimeMessage.CompositionMessage -> {
             KeycapFilterState.onComposition(
                 compositionHasUnresolvedDigitSegment(message.data)

@@ -57,7 +57,7 @@ import javax.crypto.spec.SecretKeySpec
  *
  * 皮肤库文件（index.json + skins/ + assets/）随包走、合并写回：
  * 只覆盖同路径文件，不删除备份中没有的现文件；空库不写该段、
- * 原始字节超 32MB 整段跳过只记日志（不阻塞整包）；旧备份无此段
+ * 原始字节超 8MB 整段跳过只记日志（不阻塞整包）；旧备份无此段
  * 时还原不碰现皮肤。写回后重启进程，下次启动对账收敛索引。
  *
  * 皮肤脚本文件（filesDir/skin_scripts/<id>/script.js + meta.json）
@@ -69,7 +69,7 @@ import javax.crypto.spec.SecretKeySpec
  * 前无脚本时删干净，而非留下失败还原中途新增的孤儿脚本）。
  * 采集只认 <id>/script.js 与 <id>/meta.json（半写 .tmp 与其它
  * 文件跳过不进包）；相对路径逐项白名单校验（id 须过脚本 id
- * 口径），原始字节超 32MB 整段跳过只记日志（不阻塞整包，
+ * 口径），原始字节超 8MB 整段跳过只记日志（不阻塞整包，
  * 此时该包还原不碰脚本）。
  *
  * 还原严格分两段：先把解密后的内容完整解析为内存对象（此阶段零写
@@ -360,7 +360,7 @@ object BackupManager {
         // writeText／writeBytes 44），无单一收口（190 处
         // getSharedPreferences 直取实例）；造闸须全数改走持锁
         // 写，跨组件架构活，非一批可做。且锁本身有风险：主线程
-        // 的设置开关 apply() 会被采集全程阻塞（皮肤段 32MB 时可
+        // 的设置开关 apply() 会被采集全程阻塞（皮肤段 8MB 时可
         // 达秒级，ANR 线 5 秒）；采集持 Room 快照事务等写锁、写
         // 方持 Room 写事务等闸锁即构成死锁环。彻底消除仍是已知差距。
         // —— 结算点重枚举 prefs 目录（D-L2）：采集中途新建的 prefs
@@ -378,7 +378,7 @@ object BackupManager {
         // 校验直接兼容（外层 FORMAT_VERSION 仍为 1，见类 KDoc）。
         val manifest = BackupManifest(
             payloadVersion = BackupManifest.CURRENT_PAYLOAD_VERSION,
-            counts = ManifestCounts(
+            counts = manifestCounts(
                 prefsFiles = prefsJson.length(),
                 prefsEntries = prefsEntries,
                 clipboardCount = clipRows.size,
@@ -400,14 +400,14 @@ object BackupManager {
     }
 
     /** 皮肤库备份原始字节上限：超限整段跳过只记日志（仿 input_stats 跳过模式）。 */
-    private const val SKIN_BACKUP_MAX_RAW_BYTES = 32L * 1024 * 1024
+    private const val SKIN_BACKUP_MAX_RAW_BYTES = 8L * 1024 * 1024
 
     /**
      * 皮肤库段采集：index.json（文本，读不到则 null）+ skins/ 与 assets/
      * 下全部文件（相对路径 → Base64）。只认 App.skinLibraryDir 这一唯一
      * 目录来源；相对路径须过 canonical 校验（防符号链接逃逸）；空库
      * （无 index 且无文件）返回 null，即不写该段；原始字节总量超
-     * 32MB 整段跳过只记日志（不阻塞整包）。
+     * 8MB 整段跳过只记日志（不阻塞整包）。
      */
     private fun collectSkinLibraryJson(
         guard: BackupChangeGuard,
@@ -459,7 +459,7 @@ object BackupManager {
     }
 
     /** 皮肤脚本备份原始字节上限：超限整段跳过只记日志（仿皮肤库跳过模式）。 */
-    private const val SKIN_SCRIPTS_BACKUP_MAX_RAW_BYTES = 32L * 1024 * 1024
+    private const val SKIN_SCRIPTS_BACKUP_MAX_RAW_BYTES = 8L * 1024 * 1024
 
     /**
      * 皮肤脚本段采集：filesDir/skin_scripts 下全部有效文件
@@ -543,7 +543,7 @@ object BackupManager {
         val snapshotJson = collectPayload("还原")
         val snapshotParsed = parsePayload(snapshotJson)
         // 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
-        // 脚本段缺失且还原前确有脚本（超 32MB 跳段或采集失败），或皮肤
+        // 脚本段缺失且还原前确有脚本（超 8MB 跳段或采集失败），或皮肤
         // 库段缺失且还原前确有皮肤文件（同理），回滚后这些数据即永久丢
         // 失——此时绝不能报“已恢复到还原前状态”，必须如实报回滚未成功。
         // 皮肤库段缺失且还原前本就无皮肤文件时，快照即“空库”，回滚清
@@ -1431,14 +1431,14 @@ object BackupManager {
      * 长度统计，与采集侧 [BackupManifest] 的计数口径逐项对应：
      * prefs 条目数 = 各表对象长度之和，行数 = 原始数组长度）。
      */
-    private fun countsFromPayload(root: JSONObject): ManifestCounts {
+    private fun countsFromPayload(root: JSONObject): Map<String, Any> {
         val prefsJson = root.optJSONObject("prefs") ?: JSONObject()
         var prefsEntries = 0
         val prefsNames = prefsJson.keys()
         while (prefsNames.hasNext()) {
             prefsEntries += prefsJson.optJSONObject(prefsNames.next())?.length() ?: 0
         }
-        return ManifestCounts(
+        return manifestCounts(
             prefsFiles = prefsJson.length(),
             prefsEntries = prefsEntries,
             clipboardCount = root.optJSONArray("clipboard")?.length() ?: 0,

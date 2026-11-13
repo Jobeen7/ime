@@ -18,8 +18,11 @@ import org.junit.Test
  */
 class ClipboardGroupTest {
 
+    // 时间戳固定：Entry 缺省取 System.currentTimeMillis()，期望与
+    // 实际分两次构造会差几毫秒，assertEquals 全字段比对必抖
+    // （WO45 全量跑两次连挂同一用例）；本文件只测分组，时间戳无关。
     private fun entry(text: String, groupId: Long = 0L) =
-        ClipboardManager.Entry(text = text, groupId = groupId)
+        ClipboardManager.Entry(text = text, timestamp = 100L, groupId = groupId)
 
     private fun group(id: Long, name: String, sortOrder: Long = 0L) =
         ClipboardGroup(id = id, name = name, sortOrder = sortOrder, createdAt = 100L)

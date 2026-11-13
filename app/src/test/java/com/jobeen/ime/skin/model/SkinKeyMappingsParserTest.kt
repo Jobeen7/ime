@@ -200,14 +200,20 @@ class SkinKeyMappingsParserTest {
     }
 
     @Test
-    fun lockToggleNamesRejectedAsUnknown() {
-        // 板锁已删（.22）：锁切换名不再是白名单动作，按未知动作剔除。
+    fun lockToggleNamesAcceptedAsNoOp() {
+        // 板锁已删（.22），但旧皮肤仍含锁切换名：作兼容别名映射到
+        // 无操作 NONE，不再按未知动作剔除（WO45 P2-3；旧测试钉死的
+        // 拒绝口径随他“按最优解修”令改了，见工作单）。
         for (name in listOf("symbolic_lock_toggle", "emoji_lock_toggle")) {
-            val rejection = singleRejection(
+            val result = parseEntry(
                 """{"tap": {"type": "command", "action": "$name"}}""",
             )
-            assertEquals("$name 应按未知动作剔除", BindingRejectReason.UNKNOWN_ACTION, rejection.reason)
-            assertEquals(KeySlot.TAP, rejection.slot)
+            assertTrue("$name 应接受、不剔除: ${result.rejections}", result.rejections.isEmpty())
+            assertEquals(
+                "$name 应解析为无操作",
+                SkinAction.Command(WhitelistAction.NONE),
+                result.overrides["KEY_Q"]?.tap,
+            )
         }
     }
 

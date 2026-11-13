@@ -15,94 +15,77 @@ import org.json.JSONObject
  * 校验直接兼容（见 BackupManager.parsePayload）。清单字段一律
  * 平铺、无嵌套。
  *
+ * 计数表是 Map<String, Any>（Int 计数＋Boolean 存在标记共用一张
+ * 表）：校验按 [MANIFEST_KEYS] 遍历，不再逐字段手抄；JSON 写出
+ * 遍历 counts map 本身（手写 map 须恰好 12 键，否则往返不一致）。
+ * 加字段需在 [manifestCounts] 与 [MANIFEST_KEYS] 各加一行，
+ * Boolean 键另进 BOOLEAN_KEYS、显示名不同另进 [MANIFEST_DISPLAY]。
+ *
  * JSON 转换（toJsonObject／fromJsonObject）走 org.json，本地 JVM
  * 单测跑不通（android.jar 的 org.json 是桩）；可测的是纯逻辑
  * [validate]，见 BackupManifestTest。
  */
 internal data class BackupManifest(
     val payloadVersion: Int,
-    val counts: ManifestCounts,
+    val counts: Map<String, Any>,
 ) {
     /** 逐项核对清单与实际计数，返回不符项描述（空 = 一致）。 */
-    fun validate(actual: ManifestCounts): List<String> {
-        val expected = counts
+    fun validate(actual: Map<String, Any>): List<String> {
         val mismatches = ArrayList<String>()
-        if (expected.prefsFiles != actual.prefsFiles) {
-            mismatches += "prefsFiles: manifest=${expected.prefsFiles} actual=${actual.prefsFiles}"
-        }
-        if (expected.prefsEntries != actual.prefsEntries) {
-            mismatches += "prefsEntries: manifest=${expected.prefsEntries} actual=${actual.prefsEntries}"
-        }
-        if (expected.clipboardCount != actual.clipboardCount) {
-            mismatches += "clipboard: manifest=${expected.clipboardCount} actual=${actual.clipboardCount}"
-        }
-        if (expected.clipboardGroupsCount != actual.clipboardGroupsCount) {
-            mismatches += "clipboardGroups: manifest=${expected.clipboardGroupsCount} actual=${actual.clipboardGroupsCount}"
-        }
-        if (expected.phrasesCount != actual.phrasesCount) {
-            mismatches += "phrases: manifest=${expected.phrasesCount} actual=${actual.phrasesCount}"
-        }
-        if (expected.prefersCount != actual.prefersCount) {
-            mismatches += "candidatePrefers: manifest=${expected.prefersCount} actual=${actual.prefersCount}"
-        }
-        if (expected.sortingsCount != actual.sortingsCount) {
-            mismatches += "candidateSortings: manifest=${expected.sortingsCount} actual=${actual.sortingsCount}"
-        }
-        if (expected.inputStatsPresent != actual.inputStatsPresent) {
-            mismatches += "inputStats: manifest=${expected.inputStatsPresent} actual=${actual.inputStatsPresent}"
-        }
-        if (expected.skinLibraryPresent != actual.skinLibraryPresent) {
-            mismatches += "skinLibrary: manifest=${expected.skinLibraryPresent} actual=${actual.skinLibraryPresent}"
-        }
-        if (expected.skinLibraryFiles != actual.skinLibraryFiles) {
-            mismatches += "skinLibraryFiles: manifest=${expected.skinLibraryFiles} actual=${actual.skinLibraryFiles}"
-        }
-        if (expected.skinScriptsPresent != actual.skinScriptsPresent) {
-            mismatches += "skinScripts: manifest=${expected.skinScriptsPresent} actual=${actual.skinScriptsPresent}"
-        }
-        if (expected.skinScriptsFiles != actual.skinScriptsFiles) {
-            mismatches += "skinScriptsFiles: manifest=${expected.skinScriptsFiles} actual=${actual.skinScriptsFiles}"
+        for (key in MANIFEST_KEYS) {
+            val expected = counts[key]
+            val got = actual[key]
+            if (expected != got) {
+                mismatches += "${MANIFEST_DISPLAY[key] ?: key}: manifest=$expected actual=$got"
+            }
         }
         return mismatches
     }
 
-    fun toJsonObject(): JSONObject = JSONObject()
-        .put("payloadVersion", payloadVersion)
-        .put("prefsFiles", counts.prefsFiles)
-        .put("prefsEntries", counts.prefsEntries)
-        .put("clipboardCount", counts.clipboardCount)
-        .put("clipboardGroupsCount", counts.clipboardGroupsCount)
-        .put("phrasesCount", counts.phrasesCount)
-        .put("prefersCount", counts.prefersCount)
-        .put("sortingsCount", counts.sortingsCount)
-        .put("inputStatsPresent", counts.inputStatsPresent)
-        .put("skinLibraryPresent", counts.skinLibraryPresent)
-        .put("skinLibraryFiles", counts.skinLibraryFiles)
-        .put("skinScriptsPresent", counts.skinScriptsPresent)
-        .put("skinScriptsFiles", counts.skinScriptsFiles)
+    fun toJsonObject(): JSONObject {
+        val obj = JSONObject().put("payloadVersion", payloadVersion)
+        for ((key, value) in counts) obj.put(key, value)
+        return obj
+    }
 
     companion object {
         const val CURRENT_PAYLOAD_VERSION = 2
+
+        /** 清单字段键（JSON 键＝校验键），顺序即校验顺序。 */
+        val MANIFEST_KEYS: List<String> = listOf(
+            "prefsFiles", "prefsEntries",
+            "clipboardCount", "clipboardGroupsCount",
+            "phrasesCount", "prefersCount", "sortingsCount",
+            "inputStatsPresent", "skinLibraryPresent", "skinLibraryFiles",
+            "skinScriptsPresent", "skinScriptsFiles",
+        )
+
+        /** 不符时的显示名（与 JSON 键不同的几项；未列出的即键本身）。 */
+        val MANIFEST_DISPLAY: Map<String, String> = mapOf(
+            "clipboardCount" to "clipboard",
+            "clipboardGroupsCount" to "clipboardGroups",
+            "phrasesCount" to "phrases",
+            "prefersCount" to "candidatePrefers",
+            "sortingsCount" to "candidateSortings",
+            "inputStatsPresent" to "inputStats",
+            "skinLibraryPresent" to "skinLibrary",
+            "skinScriptsPresent" to "skinScripts",
+        )
+
+        /** Boolean 存在标记键（其余一律为 Int 计数）。 */
+        private val BOOLEAN_KEYS: Set<String> = setOf(
+            "inputStatsPresent", "skinLibraryPresent", "skinScriptsPresent",
+        )
 
         /**
          * 解析清单 JSON：字段缺失或类型不符返回 null（调用方按
          * “清单损坏”判整包失败）。payloadVersion 由调用方核对。
          */
         fun fromJsonObject(obj: JSONObject): BackupManifest? = try {
-            val counts = ManifestCounts(
-                prefsFiles = obj.getInt("prefsFiles"),
-                prefsEntries = obj.getInt("prefsEntries"),
-                clipboardCount = obj.getInt("clipboardCount"),
-                clipboardGroupsCount = obj.getInt("clipboardGroupsCount"),
-                phrasesCount = obj.getInt("phrasesCount"),
-                prefersCount = obj.getInt("prefersCount"),
-                sortingsCount = obj.getInt("sortingsCount"),
-                inputStatsPresent = obj.getBoolean("inputStatsPresent"),
-                skinLibraryPresent = obj.getBoolean("skinLibraryPresent"),
-                skinLibraryFiles = obj.getInt("skinLibraryFiles"),
-                skinScriptsPresent = obj.getBoolean("skinScriptsPresent"),
-                skinScriptsFiles = obj.getInt("skinScriptsFiles"),
-            )
+            val counts = LinkedHashMap<String, Any>()
+            for (key in MANIFEST_KEYS) {
+                counts[key] = if (key in BOOLEAN_KEYS) obj.getBoolean(key) else obj.getInt(key)
+            }
             BackupManifest(payloadVersion = obj.getInt("payloadVersion"), counts = counts)
         } catch (e: Exception) {
             null
@@ -110,18 +93,31 @@ internal data class BackupManifest(
     }
 }
 
-/** 清单计数字段（采集侧填期望值，解析侧填实际值，逐项核对）。 */
-internal data class ManifestCounts(
-    val prefsFiles: Int,
-    val prefsEntries: Int,
-    val clipboardCount: Int,
-    val clipboardGroupsCount: Int,
-    val phrasesCount: Int,
-    val prefersCount: Int,
-    val sortingsCount: Int,
-    val inputStatsPresent: Boolean,
-    val skinLibraryPresent: Boolean,
-    val skinLibraryFiles: Int,
-    val skinScriptsPresent: Boolean,
-    val skinScriptsFiles: Int,
+/** 构造清单计数表（命名参数，调用点与旧 ManifestCounts 同形）。 */
+internal fun manifestCounts(
+    prefsFiles: Int,
+    prefsEntries: Int,
+    clipboardCount: Int,
+    clipboardGroupsCount: Int,
+    phrasesCount: Int,
+    prefersCount: Int,
+    sortingsCount: Int,
+    inputStatsPresent: Boolean,
+    skinLibraryPresent: Boolean,
+    skinLibraryFiles: Int,
+    skinScriptsPresent: Boolean,
+    skinScriptsFiles: Int,
+): Map<String, Any> = linkedMapOf(
+    "prefsFiles" to prefsFiles,
+    "prefsEntries" to prefsEntries,
+    "clipboardCount" to clipboardCount,
+    "clipboardGroupsCount" to clipboardGroupsCount,
+    "phrasesCount" to phrasesCount,
+    "prefersCount" to prefersCount,
+    "sortingsCount" to sortingsCount,
+    "inputStatsPresent" to inputStatsPresent,
+    "skinLibraryPresent" to skinLibraryPresent,
+    "skinLibraryFiles" to skinLibraryFiles,
+    "skinScriptsPresent" to skinScriptsPresent,
+    "skinScriptsFiles" to skinScriptsFiles,
 )

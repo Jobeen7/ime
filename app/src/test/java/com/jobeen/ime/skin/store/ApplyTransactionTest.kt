@@ -168,7 +168,7 @@ class ApplyTransactionTest {
         f.tx.apply(ref1)
         f.ports.buildResult = false
         val result = f.tx.apply(ref2)
-        assertEquals(ApplyTransaction.Result.BuildFailed(ref2), result)
+        assertEquals(ApplyTransaction.Result.Failed(ref2, ApplyTransaction.Result.Stage.BUILD, "snapshot_rebuild_failed"), result)
         assertEquals(1, f.active().generation)
         assertEquals(ApplyState.VERIFIED, f.active().state)
         // 切换从未发生（只有第一次 apply 的一次切换）
@@ -184,7 +184,7 @@ class ApplyTransactionTest {
         val before = f.active()
         f.ports.switchBehavior = { ref -> ref?.generation != 2 }
         val result = f.tx.apply(ref2)
-        assertEquals(ApplyTransaction.Result.SwitchFailedRolledBack(ref2, ref1), result)
+        assertEquals(ApplyTransaction.Result.Failed(ref2, ApplyTransaction.Result.Stage.SWITCH, "switch_failed", rolledBackTo = ref1), result)
         assertEquals(before, f.active())
         assertEquals(listOf(ref1, ref2, ref1), f.ports.switchCalls)
     }
@@ -198,7 +198,7 @@ class ApplyTransactionTest {
         val before = f.active()
         f.ports.firstRenderResult = false
         val result = f.tx.apply(ref2)
-        assertEquals(ApplyTransaction.Result.FirstRenderFailedRolledBack(ref2, ref1), result)
+        assertEquals(ApplyTransaction.Result.Failed(ref2, ApplyTransaction.Result.Stage.FIRST_RENDER, "first_render_failed", rolledBackTo = ref1), result)
         assertEquals(before, f.active())
         // Last-Good 不被未验证代次污染
         val lastGood = (f.store.readLastGood() as SkinLibraryStore.ReadResult.Ok).value
@@ -211,7 +211,7 @@ class ApplyTransactionTest {
         val ref = f.skinGen("s1", 1)
         f.ports.firstRenderResult = false
         val result = f.tx.apply(ref)
-        assertEquals(ApplyTransaction.Result.FirstRenderFailedRolledBack(ref), result)
+        assertEquals(ApplyTransaction.Result.Failed(ref, ApplyTransaction.Result.Stage.FIRST_RENDER, "first_render_failed"), result)
         assertEquals(null, f.active().skinId)
         assertTrue(f.store.readLastGood() is SkinLibraryStore.ReadResult.Missing)
     }
@@ -222,7 +222,7 @@ class ApplyTransactionTest {
         f.skinGen("s1", 1)
         val bogus = SkinGenRef("s1", "0".repeat(64), 1)
         val result = f.tx.apply(bogus)
-        assertTrue(result is ApplyTransaction.Result.TargetInvalid)
+        assertTrue(result is ApplyTransaction.Result.Failed && result.stage == ApplyTransaction.Result.Stage.TARGET)
         assertEquals(0, f.ports.buildCalls)
         assertTrue(f.store.readActive() is SkinLibraryStore.ReadResult.Missing)
     }
@@ -249,7 +249,7 @@ class ApplyTransactionTest {
         val f = Fixture()
         f.skinGen("s1", 1)
         val result = f.tx.rollbackToLastGood()
-        assertTrue(result is ApplyTransaction.Result.RollbackUnavailable)
+        assertTrue(result is ApplyTransaction.Result.Failed && result.stage == ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE)
     }
 
     /**
@@ -294,7 +294,7 @@ class ApplyTransactionTest {
         assertEquals(ref1, ports.installed)
         ports.firstRenderResult = false
         val result = tx.apply(ref2)
-        assertEquals(ApplyTransaction.Result.FirstRenderFailedRolledBack(ref2, ref1), result)
+        assertEquals(ApplyTransaction.Result.Failed(ref2, ApplyTransaction.Result.Stage.FIRST_RENDER, "first_render_failed", rolledBackTo = ref1), result)
         // 运行态必须真切回上一好，而非只把记录写回（旧实现此处仍停在 ref2）
         assertEquals(ref1, ports.installed)
         assertEquals(1, f.active().generation)
@@ -312,7 +312,7 @@ class ApplyTransactionTest {
         ports.buildBehavior = { ref -> ref != ref1 }
         ports.firstRenderResult = false
         val result = tx.apply(ref2)
-        assertEquals(ApplyTransaction.Result.FirstRenderFailedRolledBack(ref2, null), result)
+        assertEquals(ApplyTransaction.Result.Failed(ref2, ApplyTransaction.Result.Stage.FIRST_RENDER, "first_render_failed"), result)
         assertEquals(null, ports.installed)
         assertEquals(null, f.active().skinId)
     }
@@ -346,7 +346,7 @@ class ApplyTransactionTest {
         // 新皮肤切换失败，且切回上一好也返回 false：退默认。
         f.ports.switchBehavior = { ref -> ref == null }
         val result = f.tx.apply(ref2)
-        assertEquals(ApplyTransaction.Result.SwitchFailedRolledBack(ref2, null), result)
+        assertEquals(ApplyTransaction.Result.Failed(ref2, ApplyTransaction.Result.Stage.SWITCH, "switch_failed"), result)
         assertEquals(null, f.ports.installed)
         assertEquals(null, f.active().skinId)
     }
@@ -362,7 +362,7 @@ class ApplyTransactionTest {
             if (ref == null) true else throw IllegalStateException("switch boom")
         }
         val result = f.tx.apply(ref2)
-        assertEquals(ApplyTransaction.Result.SwitchFailedRolledBack(ref2, null), result)
+        assertEquals(ApplyTransaction.Result.Failed(ref2, ApplyTransaction.Result.Stage.SWITCH, "switch_failed"), result)
         assertEquals(null, f.ports.installed)
         assertEquals(null, f.active().skinId)
     }
@@ -377,8 +377,8 @@ class ApplyTransactionTest {
         f.ports.switchBehavior = { false }
         val result = f.tx.apply(ref2)
         assertEquals(
-            ApplyTransaction.Result.RollbackFailed(
-                ref2, "switch_failed", "restore_default_switch_failed",
+            ApplyTransaction.Result.Failed(
+                ref2, ApplyTransaction.Result.Stage.ROLLBACK, "restore_default_switch_failed",
             ),
             result,
         )
@@ -398,8 +398,8 @@ class ApplyTransactionTest {
         f.ports.switchBehavior = { false }
         val result = f.tx.apply(ref)
         assertEquals(
-            ApplyTransaction.Result.RollbackFailed(
-                ref, "switch_failed", "restore_default_switch_failed",
+            ApplyTransaction.Result.Failed(
+                ref, ApplyTransaction.Result.Stage.ROLLBACK, "restore_default_switch_failed",
             ),
             result,
         )
@@ -424,8 +424,8 @@ class ApplyTransactionTest {
             f.unblockActiveWrite()
         }
         assertEquals(
-            ApplyTransaction.Result.RollbackFailed(
-                ref2, "first_render_failed", "restore_active_write_failed",
+            ApplyTransaction.Result.Failed(
+                ref2, ApplyTransaction.Result.Stage.ROLLBACK, "restore_active_write_failed",
             ),
             result,
         )
@@ -455,8 +455,8 @@ class ApplyTransactionTest {
             f.unblockActiveWrite()
         }
         assertEquals(
-            ApplyTransaction.Result.RollbackFailed(
-                ref2, "first_render_failed", "restore_default_write_failed",
+            ApplyTransaction.Result.Failed(
+                ref2, ApplyTransaction.Result.Stage.ROLLBACK, "restore_default_write_failed",
             ),
             result,
         )
@@ -567,7 +567,7 @@ class ApplyTransactionTest {
             f.unblockActiveWrite()
         }
         assertEquals(
-            ApplyTransaction.Result.RollbackUnavailable("active_write_failed"),
+            ApplyTransaction.Result.Failed(null, ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE, "active_write_failed"),
             result,
         )
         assertEquals(null, f.ports.installed)

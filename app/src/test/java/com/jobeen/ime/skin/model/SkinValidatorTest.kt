@@ -177,6 +177,22 @@ class SkinValidatorTest {
     }
 
     @Test
+    fun formatVersionMatrixOnlyV3Accepted() {
+        // 终止支持：只接受恰好 3；v1/v2 旧格式与 v4 未来格式一律拒绝
+        // （2026-11-13 他定终止支持；WO42 把“只拒未来”改为“!=3 即拒”）。
+        for (v in listOf(0, 1, 2, 4)) {
+            val result = validate("""{"formatVersion": $v}""")
+            assertTrue("v$v should be rejected, got $result", result is SkinValidator.Result.Rejected)
+            assertEquals(
+                "format_version_unsupported:$v",
+                (result as SkinValidator.Result.Rejected).reason,
+            )
+        }
+        // v3 接受（带一色，避开无配色拒绝门）。
+        valid("""{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"}}""")
+    }
+
+    @Test
     fun minAppVersionTooHighRejected() {
         val result = validate("""{"formatVersion": 3, "minAppVersion": 144}""", 143)
         assertTrue(result is SkinValidator.Result.Rejected)

@@ -245,6 +245,26 @@ class JimeImporterTest {
     }
 
     @Test
+    fun formatVersionMatrixImportOnlyV3Accepted() = runBlocking {
+        // 终止支持（2026-11-13 他定）：导入口径与校验器一致，只接受 3。
+        for (v in listOf(1, 2, 4)) {
+            val f = fixture()
+            val files = packageFiles(
+                skinJson = """{"formatVersion":$v,"meta":{"id":"skin-a","name":"A"},"styles":{"keyBackground":"#FF112233"},"stylesDark":{"keyBackground":"#FF222222"}}""",
+            )
+            val outcome = f.importer.importFiles(files, ctx, JimeImporter.ConflictMode.FAIL)
+            assertTrue("v$v import should be rejected, got $outcome", outcome is JimeImporter.Outcome.Rejected)
+            assertTrue(
+                (outcome as JimeImporter.Outcome.Rejected).reason.contains("format_version_unsupported"),
+            )
+        }
+        // v3（默认夹具）正常导入。
+        val f = fixture()
+        val outcome = f.importer.importFiles(packageFiles(), ctx, JimeImporter.ConflictMode.FAIL)
+        assertTrue("v3 import should succeed, got $outcome", outcome is JimeImporter.Outcome.Imported)
+    }
+
+    @Test
     fun backgroundPreparedOnImport() = runBlocking {
         val f = fixture()
         val imageBytes = byteArrayOf('I'.code.toByte(), 1, 2, 3)

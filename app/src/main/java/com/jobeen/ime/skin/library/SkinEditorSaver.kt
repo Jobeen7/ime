@@ -337,8 +337,7 @@ class SkinEditorSaver(
             throw e
         }
         return when (result) {
-            is ApplyTransaction.Result.Applied,
-            is ApplyTransaction.Result.AppliedPending -> {
+            is ApplyTransaction.Result.Applied -> {
                 // 成功才把索引皮肤条目指向新代；索引写失败只记问题，不推翻已生效的保存。
                 val indexOk = updateIndexSkinEntry(active.skinId, newHash, newGen, newGenDir)
                 val allIssues = if (indexOk) {
@@ -353,13 +352,15 @@ class SkinEditorSaver(
                 // 失败只丢弃新代；旧代未动，事务已回滚运行态与活动记录。
                 deleteDirBestEffort(newGenDir)
                 val intact = SkinEditorSave.genSkinHashMatches(genDir, oldHash)
-                // S-M2：RollbackFailed 表示事务回滚本身失败——运行态可能
+                // S-M2：Failed/ROLLBACK 表示事务回滚本身失败——运行态可能
                 // 仍在新快照上、active 记录可能仍为 PENDING 新代，而新代
                 // 目录已被删。按取消路径先例收敛：先写回保存前的旧记录
                 // （否则重装会去读已删的新代），再重装当前生效快照；恢复
                 // 结果进原因尾巴（recovery_ok／recovery_failed），不吞掉。
                 // 其余结果事务已回滚（或未切换），不另行恢复。
-                val recovery = if (result is ApplyTransaction.Result.RollbackFailed) {
+                val recovery = if (result is ApplyTransaction.Result.Failed &&
+                    result.stage == ApplyTransaction.Result.Stage.ROLLBACK
+                ) {
                     recoverAfterRollbackFailed(oldRecord)
                 } else {
                     null
@@ -463,8 +464,7 @@ class SkinEditorSaver(
             throw e
         }
         return when (result) {
-            is ApplyTransaction.Result.Applied,
-            is ApplyTransaction.Result.AppliedPending -> {
+            is ApplyTransaction.Result.Applied -> {
                 SkinEditorSaveResult.Saved(issues)
             }
             else -> {
@@ -483,15 +483,18 @@ class SkinEditorSaver(
                 // 索引已恢复，须重装当前生效快照收敛运行态。
                 // S-M2：重装结果不再被 runCatching 吞掉——收敛与否进
                 // restored 汇总（restored_ok 只在全部恢复项都成功时写）；
-                // RollbackFailed 时事务回滚本身失败，active 记录可能仍为
+                // Failed/ROLLBACK 时事务回滚本身失败，active 记录可能仍为
                 // PENDING，先写回保存前的旧记录再重装（与 skin 路径同款）。
                 var recordRepaired: Boolean? = null
                 var reinstallOk: Boolean? = null
-                if (result is ApplyTransaction.Result.SwitchFailedRolledBack ||
-                    result is ApplyTransaction.Result.FirstRenderFailedRolledBack ||
-                    result is ApplyTransaction.Result.RollbackFailed
+                if (result is ApplyTransaction.Result.Failed &&
+                    result.stage in setOf(
+                        ApplyTransaction.Result.Stage.SWITCH,
+                        ApplyTransaction.Result.Stage.FIRST_RENDER,
+                        ApplyTransaction.Result.Stage.ROLLBACK,
+                    )
                 ) {
-                    if (result is ApplyTransaction.Result.RollbackFailed) {
+                    if (result.stage == ApplyTransaction.Result.Stage.ROLLBACK) {
                         recordRepaired = try {
                             store.writeActive(oldRecord)
                             true
@@ -615,15 +618,17 @@ class SkinEditorSaver(
     }
 
     private fun applyResultReason(result: ApplyTransaction.Result): String = when (result) {
-        is ApplyTransaction.Result.Applied -> "applied"
-        is ApplyTransaction.Result.AppliedPending -> "applied_pending"
-        is ApplyTransaction.Result.BuildFailed -> "snapshot_rebuild_failed"
-        is ApplyTransaction.Result.TargetInvalid -> "target_invalid"
-        is ApplyTransaction.Result.SwitchFailedRolledBack -> "switch_failed_rolled_back"
-        is ApplyTransaction.Result.FirstRenderFailedRolledBack -> "first_render_failed_rolled_back"
-        is ApplyTransaction.Result.RollbackFailed -> "rollback_failed:${result.reason}"
+        is ApplyTransaction.Result.Applied ->
+            if (result.pending) "applied_pending" else "applied"
+        is ApplyTransaction.Result.Failed -> when (result.stage) {
+            ApplyTransaction.Result.Stage.BUILD -> "snapshot_rebuild_failed"
+            ApplyTransaction.Result.Stage.TARGET -> "target_invalid"
+            ApplyTransaction.Result.Stage.SWITCH -> "switch_failed_rolled_back"
+            ApplyTransaction.Result.Stage.FIRST_RENDER -> "first_render_failed_rolled_back"
+            ApplyTransaction.Result.Stage.ROLLBACK -> "rollback_failed:${result.reason}"
+            ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE -> "rollback_unavailable:${result.reason}"
+        }
         is ApplyTransaction.Result.Superseded -> "superseded"
-        is ApplyTransaction.Result.RollbackUnavailable -> "rollback_unavailable:${result.reason}"
         is ApplyTransaction.Result.RolledBackToLastGood -> "rolled_back_to_last_good"
         is ApplyTransaction.Result.RevertedToDefault -> "reverted_to_default"
     }

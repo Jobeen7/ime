@@ -20,7 +20,6 @@ sealed class RimeMessage<T>(val data: T) {
             is CandidateListMessage -> MessageType.Candidate
             is KeyMessage -> MessageType.Key
             is DynamicPreeditMessage -> MessageType.DynamicPreedit
-            is BarrierMessage -> MessageType.Barrier
         }
 
     data class UnknownMessage(val params: Array<Any>) : RimeMessage<Array<Any>>(params) {
@@ -124,21 +123,8 @@ sealed class RimeMessage<T>(val data: T) {
         )
     }
 
-    /**
-     * 上屏落屏栅栏（WO40，引擎内部信标、非 native 通知）：
-     * CommitAndAct 在上屏 Commit 入队后，用 [Rime.handleMessage] 把
-     * 它投进同一条 notificationQueue——与 Commit 同 FIFO、同一
-     * 单线程消费者、同一条 messageChannel 观察者链；观察者按序
-     * 处理到它时，其前的 Commit 必已落屏（同一观察者顺序处理、
-     * 同一通道内控制类消息保序）。id 是配对令牌：超时后迟到的
-     * 栅栏不得完成下一轮等待（见 [com.jobeen.ime.engine.CommitBarrierGate]）。
-     * native 层永不产此类通知；参数形态不符时 id 取 -1（永不与
-     * 真实等待配对，见 [nativeCreate]）。
-     */
-    data class BarrierMessage(val id: Long) : RimeMessage<Long>(id)
-
     enum class MessageType {
-        Unknown, Schema, Option, Deploy, Commit, InlinePreedit, Composition, Menu, Status, Candidate, Key, DynamicPreedit, Barrier
+        Unknown, Schema, Option, Deploy, Commit, InlinePreedit, Composition, Menu, Status, Candidate, Key, DynamicPreedit
     }
 
     companion object {
@@ -222,12 +208,6 @@ sealed class RimeMessage<T>(val data: T) {
 
             MessageType.DynamicPreedit -> DynamicPreeditMessage(
                 params[0] as CompositionProto
-            )
-
-            // 内部栅栏：native 永不发 Barrier 类型码；参数形态不符时
-            // id 取 -1，永不与真实等待配对（等待方 id 自 1 起递增）。
-            MessageType.Barrier -> BarrierMessage(
-                (params.getOrNull(0) as? Long) ?: -1L
             )
 
             else -> UnknownMessage(params)

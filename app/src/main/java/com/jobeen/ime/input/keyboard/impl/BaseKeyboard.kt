@@ -459,7 +459,6 @@ abstract class BaseKeyboard(
             // 的文本回车键（Press ReturnAction 的文本键）记下刷新器，
             // updateEditorInfo 按编辑框动作改文案；内置图标回车键
             // 另走图标（textSetter 对 ImageKeyView 为空，自然排除）。
-            // 组字态文字标签另由 updateEditorInfo 经 returnKeyView 切换（WO35）。
             // 组字态通知 label 冻结：本键样式正被带 label 的通知锁定
             // 时不登记刷新器——updateEditorInfo 在每次重建后 switchTo
             // 里都会重发，登记了就会以“换行”盖掉锁定的通知文字
@@ -1245,9 +1244,7 @@ abstract class BaseKeyboard(
         // 回车精简决策反推显示：显示与行为同一来源（EnterDecision），
         // 不再由空探针或图标单独定。empty 参数只为接口兼容而保留，
         // 空框不再把回车翻回换行。isComposing 在此仅作显示时点的
-        // 预测输入（组字中一律显示“确认”，有动作也显示“确认”，
-        // 2026-11-13 用户定；WO35 渲染：默认图标键变文字键）；
-        // 按键时
+        // 预测输入（组字中显示为换行图标，与旧口径一致）；按键时
         // 的组字以引擎 job 执行时点的原始输入为准，两者时点不同
         // 但决策函数同一，逻辑不再各定各的。残余：状态管理器的
         // 去重三元组（动作／空／组字）不含多行与不要换行标志，
@@ -1261,29 +1258,34 @@ abstract class BaseKeyboard(
             hasDedicatedNewlineKey = hasDedicatedNewlineKey,
             isLongPress = false,
         )
-        // 显示与行为同一来源（returnKeyDisplay，I-L2）：无动作
-        // （九宫格多行）文案为空，不再谎称“换行”；非 PerformAction／
-        // CommitAndAct 时 editorAction 不参与映射，传 UNSPECIFIED 占位。
-        val editorAction =
-            when (val o = displayOutcome) {
-                is EnterOutcome.PerformAction -> EnterFieldBoundary.toEditorAction(o.action)
-                is EnterOutcome.CommitAndAct -> EnterFieldBoundary.toEditorAction(o.action)
-                else -> EditorInfo.IME_ACTION_UNSPECIFIED
+        // 显示与行为同一来源（I-L2）：非 PerformAction 时 editorAction
+        // 不参与映射。组字中（CommitCandidate）与插换行、无动作在显示
+        // 上都落回车图标／“换行”文案——不显示“确认”（2026-11-13 用户
+        // 定 WO35/37/41 全删，恢复 1.1.18 正式版原样）。
+        val (icon, enterLabel) = when (displayOutcome) {
+            is EnterOutcome.PerformAction -> {
+                val editorAction = EnterFieldBoundary.toEditorAction(displayOutcome.action)
+                val iconForAction = when (editorAction) {
+                    EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
+                    EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
+                    EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
+                    EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
+                    EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
+                    EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
+                    else -> R.drawable.ic_keyboard_return
+                }
+                iconForAction to
+                    com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(editorAction)
             }
-        val (icon, enterLabel) = returnKeyDisplay(displayOutcome, editorAction)
-        // WO35 I-L3 渲染：组字中默认图标回车键变文字键显示“确认”
-        // （CommitCandidate／CommitAndAct，ImageKeyView.showTextLabel
-        // 只切可见性、不动图标资源，故 returnKeyIcon 缓存仍有效、
-        // 切回时纸飞机等图标不丢）；非组字态一律走图标（皮肤文字
-        // 回车键仍走 enterTextSetters）。
-        if (returnKeyShowsTextLabel(displayOutcome)) {
-            returnKeyView?.showTextLabel(enterLabel)
-        } else {
-            returnKeyView?.showIcon()
-            if (icon != returnKeyIcon) {
-                returnKeyIcon = icon
-                returnKeyView?.img?.imageResource = returnKeyIcon
-            }
+            // 无动作（九宫格多行无标志）文案为空，不再谎称“换行”
+            // （I-L2，.10 审计修复，WO35/37/41 删除不碰它）。
+            is EnterOutcome.NoOp -> R.drawable.ic_keyboard_return to ""
+            // 上屏候选、插换行在显示上都落回车图标／换行文案。
+            else -> R.drawable.ic_keyboard_return to "换行"
+        }
+        if (icon != returnKeyIcon) {
+            returnKeyIcon = icon
+            returnKeyView?.img?.imageResource = returnKeyIcon
         }
         enterTextSetters.forEach { it(enterLabel) }
         // 回车底色跟皮肤走：不设 backgroundOverride（分色已撤）。
@@ -1394,73 +1396,3 @@ internal fun composeGestureHandlers(
     }
     consumed
 }
-
-/**
- * 回车键显示映射（纯决策，可单测；I-L2）：显示与行为同一来源
- * （EnterDecision），五种决策各有显示——
- * - PerformAction（非组字态）：按编辑器动作取图标与文案；
- * - CommitAndAct／CommitCandidate（组字中）：一律显示“确认”文案
- *   （2026-11-13 用户定：组字中回车显示“确认”，无论有无动作；
- *   行为仍按 EnterDecision，WO37 一按上屏＋执行动作不动；WO35
- *   渲染：默认图标回车键在组字态变文字键——ImageKeyView 显示文字
- *   标签、隐藏图标，非组字态切回图标，纸飞机等图标不丢；皮肤文字
- *   回车键仍走 enterTextSetters 刷新文案）；
- * - InsertNewline：换行图标／“换行”文案；
- * - NoOp（九宫格多行无动作，换行走专用换行键）：图标沿用通用回车
- *   图标（不另发明图标），文案为空——不再谎称“换行”。
- */
-/** 编辑器动作取图标（PerformAction／CommitAndAct 共用；文字标签态下图标隐藏、只作切回缓存）。 */
-private fun iconForEditorAction(editorAction: Int): Int =
-    when (editorAction) {
-        EditorInfo.IME_ACTION_SEARCH -> R.drawable.ic_keyboard_search
-        EditorInfo.IME_ACTION_SEND -> R.drawable.ic_keyboard_send
-        EditorInfo.IME_ACTION_GO -> R.drawable.ic_keyboard_go
-        EditorInfo.IME_ACTION_PREVIOUS -> R.drawable.ic_keyboard_arrow_left
-        EditorInfo.IME_ACTION_NEXT -> R.drawable.ic_keyboard_arrow_right
-        EditorInfo.IME_ACTION_DONE -> R.drawable.ic_keyboard_done
-        else -> R.drawable.ic_keyboard_return
-    }
-
-internal fun returnKeyDisplay(outcome: EnterOutcome, editorAction: Int): Pair<Int, String> =
-    when (outcome) {
-        // 非组字态执行动作：按动作取图标与文案。
-        is EnterOutcome.PerformAction ->
-            iconForEditorAction(editorAction) to
-                com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(editorAction)
-        is EnterOutcome.NoOp -> R.drawable.ic_keyboard_return to ""
-        // 组字中（CommitAndAct／CommitCandidate）一律显示“确认”
-        // （2026-11-13 用户定；行为不动，WO37 一按上屏＋执行动作
-        // 仍走 EnterDecision）。图标仍按动作取（文字标签态下隐藏，
-        // 切回图标态时直接用，不丢纸飞机等图标）。
-        is EnterOutcome.CommitAndAct -> iconForEditorAction(editorAction) to "确认"
-        is EnterOutcome.CommitCandidate -> R.drawable.ic_keyboard_return to "确认"
-        else -> R.drawable.ic_keyboard_return to "换行"
-    }
-
-/**
- * 回车键渲染模式（纯决策，可单测；WO35 I-L3 渲染）：
- * 组字中（CommitCandidate／CommitAndAct）→ 文字标签（默认图标回车键
- * 显示“确认”、皮肤文字回车键走 enterTextSetters；2026-11-13 用户定：
- * 组字中回车显示“确认”，无论有无动作）；其余一律 → 图标
- * （PerformAction 各动作图标、插换行／无动作回车箭头）。
- * 只决定显示，不碰 EnterDecision 与按键行为。
- */
-internal fun returnKeyShowsTextLabel(outcome: EnterOutcome): Boolean =
-    outcome is EnterOutcome.CommitCandidate || outcome is EnterOutcome.CommitAndAct
-
-/**
- * “确认”放得下判定（纯函数，可单测；WO35 I-L3 渲染）：
- * CJK 字宽按 1em 计（两字 = 2 × 字号），键宽 = 键宽占比 × 键盘宽，
- * 另留水平内边距（键间距＋标签留白）。字号按 DIP 计（与 TextKeyView
- * 同口径，不跟系统字号倍率走）；皮肤 G1 分档字号（skinTextSize）
- * 有值时以它为准（调用方传入）。
- * 缺省内边距 8dp：S24 Ultra 竖屏（键盘 376dp＝屏宽 384dp − 两侧
- * 内边距各 4dp）下，T9 回车 0.18 → 67.7dp、Qwerty 0.15 → 56.4dp，
- * “确认”16dp 字号占 32dp，余量充足。
- */
-internal fun confirmLabelFits(
-    keyPercentWidth: Float,
-    keyboardWidthDp: Float,
-    textSizeDp: Float,
-    horizontalPaddingDp: Float = 8f,
-): Boolean = 2f * textSizeDp + horizontalPaddingDp <= keyPercentWidth * keyboardWidthDp

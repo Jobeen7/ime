@@ -204,7 +204,7 @@ class SkinSnapshotProviderInstallRaceTest {
                 snapshot: SkinSnapshot,
                 pending: Boolean,
                 requestToken: Long,
-                expectedGeneration: Int,
+                expectedGeneration: Long,
             ) {
                 accepted += SkinSnapshotProvider.install(
                     context, snapshot, requestToken, expectedGeneration,
@@ -245,7 +245,7 @@ class SkinSnapshotProviderInstallRaceTest {
                 snapshot: SkinSnapshot,
                 pending: Boolean,
                 requestToken: Long,
-                expectedGeneration: Int,
+                expectedGeneration: Long,
             ) {
                 installCalls.incrementAndGet()
             }

@@ -3,7 +3,7 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.data.backup.BackupManifest
-import com.jobeen.ime.data.backup.ManifestCounts
+import com.jobeen.ime.data.backup.manifestCounts
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -14,10 +14,13 @@ import org.junit.Test
  * 可主机单测。JSON 转换（toJsonObject／fromJsonObject）与
  * “无清单旧备份跳过校验”的接线在 BackupManager.parsePayload，
  * 走 Android，不在本地单测覆盖内。
+ *
+ * 计数表是 Map<String, Any>（WO45 P2-2：旧 ManifestCounts 数据类
+ * 已改为 manifestCounts 工厂＋Map，构造、验证、JSON 各一遍遍历）。
  */
 class BackupManifestTest {
 
-    private fun fullCounts() = ManifestCounts(
+    private fun fullCounts(): Map<String, Any> = manifestCounts(
         prefsFiles = 12,
         prefsEntries = 345,
         clipboardCount = 100,
@@ -32,7 +35,7 @@ class BackupManifestTest {
         skinScriptsFiles = 5,
     )
 
-    private fun manifest(counts: ManifestCounts = fullCounts()) =
+    private fun manifest(counts: Map<String, Any> = fullCounts()) =
         BackupManifest(
             payloadVersion = BackupManifest.CURRENT_PAYLOAD_VERSION,
             counts = counts,
@@ -45,49 +48,49 @@ class BackupManifestTest {
 
     @Test
     fun prefsFilesMismatch_reported() {
-        val mismatches = manifest().validate(fullCounts().copy(prefsFiles = 11))
+        val mismatches = manifest().validate(fullCounts() + ("prefsFiles" to 11))
         assertEquals(1, mismatches.size)
         assertTrue(mismatches[0].contains("prefsFiles"))
     }
 
     @Test
     fun prefsEntriesMismatch_reported() {
-        val mismatches = manifest().validate(fullCounts().copy(prefsEntries = 344))
+        val mismatches = manifest().validate(fullCounts() + ("prefsEntries" to 344))
         assertEquals(1, mismatches.size)
         assertTrue(mismatches[0].contains("prefsEntries"))
     }
 
     @Test
     fun clipboardCountMismatch_reported() {
-        val mismatches = manifest().validate(fullCounts().copy(clipboardCount = 99))
+        val mismatches = manifest().validate(fullCounts() + ("clipboardCount" to 99))
         assertEquals(1, mismatches.size)
         assertTrue(mismatches[0].contains("clipboard"))
     }
 
     @Test
     fun groupsPhrasesPrefersSortingsMismatch_eachReported() {
-        val actual = fullCounts().copy(
-            clipboardGroupsCount = 2,
-            phrasesCount = 19,
-            prefersCount = 499,
-            sortingsCount = 9,
+        val actual = fullCounts() + mapOf(
+            "clipboardGroupsCount" to 2,
+            "phrasesCount" to 19,
+            "prefersCount" to 499,
+            "sortingsCount" to 9,
         )
         val mismatches = manifest().validate(actual)
         assertEquals(4, mismatches.size)
-        assertTrue(mismatches.any { it.contains("clipboardGroups") })
-        assertTrue(mismatches.any { it.contains("phrases") })
+        assertTrue(mismatches.any { it.startsWith("clipboardGroups:") })
+        assertTrue(mismatches.any { it.startsWith("phrases:") })
         assertTrue(mismatches.any { it.contains("candidatePrefers") })
         assertTrue(mismatches.any { it.contains("candidateSortings") })
     }
 
     @Test
     fun optionalSectionsMismatch_reported() {
-        val actual = fullCounts().copy(
-            inputStatsPresent = false,
-            skinLibraryPresent = false,
-            skinLibraryFiles = 0,
-            skinScriptsPresent = false,
-            skinScriptsFiles = 0,
+        val actual = fullCounts() + mapOf(
+            "inputStatsPresent" to false,
+            "skinLibraryPresent" to false,
+            "skinLibraryFiles" to 0,
+            "skinScriptsPresent" to false,
+            "skinScriptsFiles" to 0,
         )
         val mismatches = manifest().validate(actual)
         assertEquals(5, mismatches.size)
@@ -100,7 +103,7 @@ class BackupManifestTest {
 
     @Test
     fun emptyBackup_allZero_validateEmpty() {
-        val empty = ManifestCounts(
+        val empty = manifestCounts(
             prefsFiles = 0,
             prefsEntries = 0,
             clipboardCount = 0,

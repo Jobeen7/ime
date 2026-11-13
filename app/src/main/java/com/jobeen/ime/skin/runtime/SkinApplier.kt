@@ -153,8 +153,18 @@ class SkinApplier(context: Context) : SkinApplyPort {
             }
             // 皮肤应用诊断（2026-11-02 修复批）：每次应用记结果类型
             // 与代次，与 undo_guard / voice_wave 同批进诊断日志。
+            // 事件名取稳定标签：旧 7 个结果名在 Result 11→5 合并后只剩
+            // Applied/Failed 两类名，pending 与失败级会丢进同一名
+            // （WO45 自审 B-F1）；按结果派生标签，诊断粒度与旧口径一致。
+            val resultLabel = when (val r = result) {
+                is ApplyTransaction.Result.Applied -> if (r.pending) "AppliedPending" else "Applied"
+                is ApplyTransaction.Result.Failed -> "Failed:${r.stage}"
+                is ApplyTransaction.Result.Superseded -> "Superseded"
+                is ApplyTransaction.Result.RolledBackToLastGood -> "RolledBackToLastGood"
+                is ApplyTransaction.Result.RevertedToDefault -> "RevertedToDefault"
+            }
             DiagLog.d(
-                "skin_apply", result::class.simpleName ?: "unknown",
+                "skin_apply", resultLabel,
                 mapOf("skinId" to ref.skinId, "gen" to ref.generation),
             )
             result
@@ -182,12 +192,12 @@ class SkinApplier(context: Context) : SkinApplyPort {
             return transaction(verifyInline, requestToken).rollbackToLastGood()
         }
         val pointer = (store.readLastGood() as? SkinLibraryStore.ReadResult.Ok)?.value
-            ?: return ApplyTransaction.Result.RollbackUnavailable("no_last_good").also {
+            ?: return ApplyTransaction.Result.Failed(null, ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE, "no_last_good").also {
                 DiagLog.w("runtime", "rollback_unavailable", mapOf("reason" to "no_last_good"))
             }
         val ref = SkinGenRef(pointer.skinId, pointer.hash, pointer.generation)
         if (!isTargetValid(ref)) {
-            return ApplyTransaction.Result.RollbackUnavailable("last_good_target_invalid")
+            return ApplyTransaction.Result.Failed(null, ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE, "last_good_target_invalid")
                 .also {
                     DiagLog.w(
                         "runtime", "rollback_unavailable",
@@ -199,7 +209,7 @@ class SkinApplier(context: Context) : SkinApplyPort {
                 }
         }
         val snapshot = SkinSnapshotFactory.buildFromGenDir(appContext, layout, ref)
-            ?: return ApplyTransaction.Result.RollbackUnavailable("build_failed").also {
+            ?: return ApplyTransaction.Result.Failed(null, ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE, "build_failed").also {
                 DiagLog.w(
                     "runtime", "rollback_unavailable",
                     mapOf(
@@ -213,7 +223,7 @@ class SkinApplier(context: Context) : SkinApplyPort {
         // 仍在更新的皮肤上，写记录会把 active 指到未生效的皮肤。
         if (!SkinSnapshotProvider.install(appContext, snapshot, requestToken)) {
             // 被更新请求取代：获胜请求已生效，回退本次未生效不是
-            // 失败（K-S4 同口径）；不得报 RollbackUnavailable。
+            // 失败（K-S4 同口径）；不得报回退不可用（Failed/ROLLBACK_UNAVAILABLE）。
             return ApplyTransaction.Result.Superseded(ref)
         }
         store.writeActive(
@@ -273,10 +283,10 @@ class SkinApplier(context: Context) : SkinApplyPort {
                 "runtime", "apply_target_invalid",
                 mapOf("skinId" to ref.skinId, "gen" to ref.generation, "path" to "deferred"),
             )
-            return ApplyTransaction.Result.TargetInvalid("target_missing_or_hash_mismatch")
+            return ApplyTransaction.Result.Failed(null, ApplyTransaction.Result.Stage.TARGET, "target_missing_or_hash_mismatch")
         }
         val snapshot = SkinSnapshotFactory.buildFromGenDir(appContext, layout, ref)
-            ?: return ApplyTransaction.Result.BuildFailed(ref)
+            ?: return ApplyTransaction.Result.Failed(ref, ApplyTransaction.Result.Stage.BUILD, "snapshot_rebuild_failed")
         // 写 PENDING 前先记切换前记录（K-S3）：安装被取代时把它
         // 写回——只当它仍是当前记录时（获胜方已写记录时不动它），
         // 绝不盲写整份索引；否则被取代皮肤的 PENDING 残留磁盘，
@@ -287,7 +297,7 @@ class SkinApplier(context: Context) : SkinApplyPort {
             ActiveRecord(ref.skinId, ref.hash, ref.generation, ApplyState.PENDING,
                 System.currentTimeMillis()),
         )
-        // 被更新的请求取代时不武装、不报 AppliedPending：运行态
+        // 被更新的请求取代时不武装、不报 Applied(pending)：运行态
         // 仍在更新的皮肤上，武装旧 ref 会让下次首帧把旧皮肤晋升
         // 为 verified；同时收敛本请求刚写的 PENDING 记录（见上）。
         if (!SkinSnapshotProvider.install(appContext, snapshot, requestToken)) {
@@ -299,7 +309,7 @@ class SkinApplier(context: Context) : SkinApplyPort {
             "runtime", "apply_pending_deferred",
             mapOf("skinId" to ref.skinId, "gen" to ref.generation),
         )
-        return ApplyTransaction.Result.AppliedPending(ref)
+        return ApplyTransaction.Result.Applied(ref, pending = true)
     }
 
     /**

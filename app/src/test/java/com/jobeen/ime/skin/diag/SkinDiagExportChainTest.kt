@@ -433,7 +433,11 @@ class SkinDiagExportChainTest {
         ports.buildResult = false
         val tx = ApplyTransaction(layout, store, ports) { 7_000L }
         val ref = skinGen(layout, "s1", 1)
-        assertTrue(tx.apply(ref) is ApplyTransaction.Result.BuildFailed)
+        val result = tx.apply(ref)
+        assertTrue(
+            result is ApplyTransaction.Result.Failed &&
+                result.stage == ApplyTransaction.Result.Stage.BUILD,
+        )
         val entry = mirroredEvent(mirrored, "apply_build_failed")
         assertEquals("s1", entry.context["skinId"])
         assertEquals(1, entry.context["gen"])
@@ -450,10 +454,14 @@ class SkinDiagExportChainTest {
         val tx = ApplyTransaction(layout, store, ports) { 7_000L }
         val ref = skinGen(layout, "s1", 1)
         val result = tx.apply(ref)
-        assertTrue(result is ApplyTransaction.Result.RollbackFailed)
-        result as ApplyTransaction.Result.RollbackFailed
-        assertEquals("switch_failed", result.stage)
-        assertEquals("restore_default_switch_failed", result.reason)
+        assertTrue(
+            result is ApplyTransaction.Result.Failed &&
+                result.stage == ApplyTransaction.Result.Stage.ROLLBACK,
+        )
+        assertEquals(
+            "restore_default_switch_failed",
+            (result as ApplyTransaction.Result.Failed).reason,
+        )
         val entry = mirroredEvent(mirrored, "apply_rolled_back")
         assertEquals("switch_failed", entry.context["reason"])
         assertEquals("s1", entry.context["failedSkinId"])
@@ -469,7 +477,11 @@ class SkinDiagExportChainTest {
         ports.switchBehavior = { it == null }
         val tx = ApplyTransaction(layout, store, ports) { 7_000L }
         val ref = skinGen(layout, "s1", 1)
-        assertTrue(tx.apply(ref) is ApplyTransaction.Result.SwitchFailedRolledBack)
+        val result = tx.apply(ref)
+        assertTrue(
+            result is ApplyTransaction.Result.Failed &&
+                result.stage == ApplyTransaction.Result.Stage.SWITCH,
+        )
         val entry = mirroredEvent(mirrored, "apply_rolled_back")
         assertEquals("switch_failed", entry.context["reason"])
         assertEquals("s1", entry.context["failedSkinId"])
@@ -481,7 +493,8 @@ class SkinDiagExportChainTest {
         val mirrored = captureDiagLog()
         val (layout, store, ports) = applyFixture()
         val tx = ApplyTransaction(layout, store, ports) { 7_000L }
-        assertTrue(tx.rollbackToLastGood() is ApplyTransaction.Result.RollbackUnavailable)
+        val rollbackResult = tx.rollbackToLastGood()
+        assertTrue(rollbackResult is ApplyTransaction.Result.Failed && rollbackResult.stage == ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE)
         val entry = mirroredEvent(mirrored, "rollback_unavailable")
         assertEquals("no_last_good", entry.context["reason"])
     }

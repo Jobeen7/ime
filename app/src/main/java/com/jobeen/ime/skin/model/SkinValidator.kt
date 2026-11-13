@@ -314,7 +314,9 @@ object SkinValidator {
         // ---- 皮肤内嵌字体（审计 C 项：顶层 fontFaces） ----
         // 在 fontFamily / roleFonts 之前解析：两者取值可引用
         // 此处声明的内嵌字体名（大小写不敏感，存声明原文）。
-        val parsedFontFaces = SkinFontParser.parse(tree, assetKind, assetBytes)
+        val parsedFontFaces = SkinFontParser.parse(
+            tree, assetKind, assetBytes, consumed = consumedTopLevelKeys,
+        )
         issues += parsedFontFaces.issues
         val skinFontFaces = parsedFontFaces.faces
         val faceByLower: Map<String, String> =
@@ -374,13 +376,17 @@ object SkinValidator {
         // ---- 按码位区间指派字体（审计 C 项：顶层 fontRanges） ----
         // family 与 fontFamily 同口径：系统白名单或已声明内嵌
         // 字体名；单项非法只剔该项。声明顺序即优先级（先胜出）。
-        val parsedFontRanges = SkinFontParser.parseRanges(tree) { raw ->
-            val lower = raw.lowercase()
-            when {
-                lower in SYSTEM_FONT_FAMILIES -> lower
-                else -> faceByLower[lower]
-            }
-        }
+        val parsedFontRanges = SkinFontParser.parseRanges(
+            tree,
+            resolveFamily = { raw ->
+                val lower = raw.lowercase()
+                when {
+                    lower in SYSTEM_FONT_FAMILIES -> lower
+                    else -> faceByLower[lower]
+                }
+            },
+            consumed = consumedTopLevelKeys,
+        )
         issues += parsedFontRanges.issues
         val fontRanges = parsedFontRanges.ranges
 

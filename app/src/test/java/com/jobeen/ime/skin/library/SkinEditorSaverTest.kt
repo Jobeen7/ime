@@ -315,7 +315,7 @@ class SkinEditorSaverTest {
         val (root, layout, store) = newStore()
         val seed = seedSkin(layout, store)
         val applier = FakeApplier(
-            ApplyTransaction.Result.BuildFailed(SkinGenRef(seed.skinId, "", 2)),
+            ApplyTransaction.Result.Failed(SkinGenRef(seed.skinId, "", 2), ApplyTransaction.Result.Stage.BUILD, "snapshot_rebuild_failed"),
         )
         val s = saver(layout, store, applier)
         val active = resolveOk(s)
@@ -374,7 +374,7 @@ class SkinEditorSaverTest {
         val (root, layout, store) = newStore()
         val seed = seedSkin(layout, store)
         val applier = FakeApplier(
-            ApplyTransaction.Result.BuildFailed(SkinGenRef(seed.skinId, "", 1)),
+            ApplyTransaction.Result.Failed(SkinGenRef(seed.skinId, "", 1), ApplyTransaction.Result.Stage.BUILD, "snapshot_rebuild_failed"),
         )
         val s = saver(layout, store, applier)
         val active = resolveOk(s)

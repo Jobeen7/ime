@@ -84,10 +84,43 @@ class ZipSafeExtractorTest {
     }
 
     @Test
+    fun tooManyDirectoryEntriesRejected() {
+        // 目录条目计入上限：101 个目录、0 文件也应拒绝（旧逻辑先 continue
+        // 再计数，目录不计入，101 个目录可蒙混过关）。
+        val file = File(Files.createTempDirectory("zip-safe").toFile(), "test.jime")
+        ZipOutputStream(file.outputStream()).use { zip ->
+            for (i in 1..101) {
+                zip.putNextEntry(ZipEntry("d$i/"))
+                zip.closeEntry()
+            }
+        }
+        val reason = rejected(file)
+        assertTrue(reason.contains("too_many_entries"))
+    }
+
+    @Test
+    fun directoryEntriesAtBoundaryAccepted() {
+        // 边界：99 目录＋1 文件＝100 条目，恰好在上限内，应正常解包。
+        val file = File(Files.createTempDirectory("zip-safe").toFile(), "test.jime")
+        ZipOutputStream(file.outputStream()).use { zip ->
+            for (i in 1..99) {
+                zip.putNextEntry(ZipEntry("d$i/"))
+                zip.closeEntry()
+            }
+            zip.putNextEntry(ZipEntry("f.txt"))
+            zip.write(byteArrayOf(1))
+            zip.closeEntry()
+        }
+        val result = ZipSafeExtractor.extract(file)
+        assertTrue("expected Ok, got $result", result is ZipSafeExtractor.Result.Ok)
+        assertEquals(1, (result as ZipSafeExtractor.Result.Ok).files.size)
+    }
+
+    @Test
     fun highRatioLegitimatePackageExtracts() {
         // WO42 E-1：压缩比规则已删——2MB 全零数据压缩后仅约 2KB、
         // 压缩比远超旧 100:1 上限，旧规则会误拒；绝对上限（单条 8MB／
-        // 总量 40MB）才是内存上界，此包远未触线，应正常解包。
+        // 总量 16MB）才是内存上界，此包远未触线，应正常解包。
         val file = zipOf(listOf("bg.bin" to ByteArray(2 * 1024 * 1024)))
         val result = ZipSafeExtractor.extract(file)
         assertTrue("expected Ok, got $result", result is ZipSafeExtractor.Result.Ok)
@@ -103,10 +136,19 @@ class ZipSafeExtractorTest {
 
     @Test
     fun expandedTotalTooLargeRejected() {
-        // 总量 6×7MB＝42MB（> 40MB 总量上限），单条均未超 8MB：
+        // 总量 3×6MB＝18MB（> 16MB 总量上限），单条均未超 8MB：
         // 压缩比规则已删，总量上限仍挡。
-        val entries = (1..6).map { "f$it.bin" to ByteArray(7 * 1024 * 1024) }
+        val entries = (1..3).map { "f$it.bin" to ByteArray(6 * 1024 * 1024) }
         val reason = rejected(zipOf(entries))
         assertTrue(reason.contains("expanded_too_large"))
+    }
+
+    @Test
+    fun expandedTotalAtBoundaryAccepted() {
+        // 边界：总量 2×8MB＝16MB，恰好在上限内，应正常解包。
+        val entries = (1..2).map { "f$it.bin" to ByteArray(8 * 1024 * 1024) }
+        val result = ZipSafeExtractor.extract(zipOf(entries))
+        assertTrue("expected Ok, got $result", result is ZipSafeExtractor.Result.Ok)
+        assertEquals(2, (result as ZipSafeExtractor.Result.Ok).files.size)
     }
 }

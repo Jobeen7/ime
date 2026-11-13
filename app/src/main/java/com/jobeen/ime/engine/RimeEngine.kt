@@ -131,15 +131,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         /** 动作/任务队列容量：远超正常深度，仅作异常堆积兜底 */
         private const val ACTION_QUEUE_CAPACITY = 512
         private const val JOB_QUEUE_CAPACITY = 256
-        /**
-         * CommitAndAct 上屏落屏完成等待上限（WO40）。各跳延迟量级：
-         * notificationQueue→分发→actions→reduce→messageChannel→IMS
-         * 观察者→commitText 均为亚毫秒～数毫秒内存传递，Binder IPC
-         * 一次数毫秒；健康链路总耗时 <10ms，最差健康态约 50ms；
-         * 200ms ≈ 4× 最差健康态。超时不卡键、放行执行动作（仅记
-         * 日志）。**未经真机实测**：若真机上超时频发，按日志调大。
-         */
-        private const val COMMIT_LANDED_TIMEOUT_MS = 200L
         /** 清空输入框时的分段删除：每段字符数与最大段数 */
         private const val CLEAR_CHUNK_CHARS = 1000
         private const val MAX_CLEAR_CHUNKS = 64
@@ -480,12 +471,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
 
     private val jobs by lazy { Channel<QueuedJob>(JOB_QUEUE_CAPACITY) }
 
-    /**
-     * 上屏落屏完成等待的配对门（WO40）：CommitAndAct 武装后，把栅栏
-     * 随 Commit 投进 notificationQueue，待 IMS 观察者按序处理到栅栏
-     * 再执行动作。串行作业队列保证同一时刻至多一个等待方。
-     */
-    private val commitBarrierGate = CommitBarrierGate()
     private var session: RimeSession? = null
     private var behaviorHosted: BehaviorHost? = null
     private var context: Context? = null
@@ -1043,14 +1028,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     }
 
     /**
-     * 完成一轮上屏落屏等待（WO40）：由 MessageHandler 在 IMS 观察者
-     * 按序处理到栅栏时调用；id 不匹配当前武装时忽略（超时后迟到的
-     * 栅栏不得完成下一轮等待）。internal：UI 层经 EngineFactory
-     * 取到本引擎后调用，不新增接口方法。
-     */
-    internal fun completeCommitBarrier(id: Long) = commitBarrierGate.complete(id)
-
-    /**
      * 回车键精简决策执行（与下滑 Undo 分支无关，不动其账本与门）：
      * 组字只读本 job 执行时点的原始输入（getRawInput），与空格／
      * 退格同纪律——分发时点先行按键的 job 可能尚未执行，分发侧
@@ -1059,12 +1036,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * job 内挂起等主线程执行完才放行后续 job，不超车）；
      * 插换行走 emitCommit("\n") 的 FIFO 路径；无动作为空操作。
      * 组字中上屏候选与旧回车非空分支同口径：同步转交 Rime。
-     * 组字中一按完成（CommitAndAct，2026-11-13 用户定）：先上屏候选
-     * （现有 Rime 回车路径），再执行编辑器动作（现有 PerformAction
-     * 路径），同一次按键内按语句顺序执行。上屏落屏与动作之间有
-     * WO40 落屏完成等待：栅栏随 Commit 同 notificationQueue 投递，
-     * 观察者处理到栅栏即证明 Commit 已落屏；有界超时
-     * COMMIT_LANDED_TIMEOUT_MS，放行后复检会话再执行动作。
      */
     private fun sendEnterJob(enter: Action.Enter) {
         sendJob {
@@ -1096,52 +1067,6 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         0u,
                         true,
                     )
-                }
-
-                is EnterOutcome.CommitAndAct -> {
-                    // 组字中一按完成（2026-11-13 用户定）：先上屏候选
-                    // （现有 Rime 回车路径），再执行编辑器动作（现有
-                    // PerformAction 路径）。上屏落屏本身走
-                    // notificationQueue→messageChannel 异步投递，与
-                    // 本处 performEditorAction 无跨队列时序保证——
-                    // WO40 落屏完成等待：先武装栅栏、把栅栏随 Commit
-                    // 投进同一条 notificationQueue，待 IMS 观察者按序
-                    // 处理到栅栏（即 Commit 已落屏）再执行动作；
-                    // 超时放行（退化为 WO37 行为，仅记日志），永不卡键。
-                    processKey(
-                        KeyMapping.keyCodeToVal(KEYCODE_ENTER),
-                        0u,
-                        true,
-                    )
-                    val barrierId = commitBarrierGate.arm()
-                    Rime.handleMessage(
-                        RimeMessage.MessageType.Barrier.ordinal,
-                        arrayOf<Any>(barrierId),
-                    )
-                    val landed = commitBarrierGate.await(
-                        barrierId,
-                        COMMIT_LANDED_TIMEOUT_MS,
-                    )
-                    if (!landed) {
-                        Timber.d(
-                            "CommitAndAct commit-landing wait timed out after ${COMMIT_LANDED_TIMEOUT_MS}ms; proceeding with action",
-                        )
-                    }
-                    // 执行时点复检：等待期间换框／输入结束时，动作一律
-                    // 丢弃（与入队复检同口径，见本函数首段）。
-                    if (!enter.session.isCurrent(
-                            InputFieldKey.of(editorInfo),
-                            predictionFieldGen.get(),
-                        )
-                    ) {
-                        Timber.d("CommitAndAct dropped stale session after commit-landing wait")
-                        return@sendJob
-                    }
-                    withContext(Dispatchers.Main.immediate) {
-                        inputConnection()?.performEditorAction(
-                            EnterFieldBoundary.toEditorAction(outcome.action),
-                        )
-                    }
                 }
 
                 is EnterOutcome.PerformAction -> {

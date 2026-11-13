@@ -65,13 +65,44 @@ object SkinSnapshotProvider {
     private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
-     * 安装代次：[install]/[invalidate] 每次递增。异步启动加载在
+     * 单调代次（LatestWins）：分配即最新，提交时只认最新。
+     * 三套代次（启动加载、安装 token、背景重建）共用本类，不再
+     * 各自手写 sequence/latest 两变量（WO45 P3）。
+     * 本类不自带锁：全部读写都在 SkinSnapshotProvider.lock 内；
+     * 调用方须在持锁的 lock 段内做 check 与 bump（同一段内原子
+     * 完成，换锁会破坏该原子性）。allocateInstallToken 等入口
+     * 自己加锁，不属于此类调用方。
+     */
+    internal class LatestWins {
+        private var sequence = 0L
+        private var latest = 0L
+
+        /** 分配一个新代次并记为最新，返回它。 */
+        fun allocate(): Long {
+            latest = ++sequence
+            return latest
+        }
+
+        /** 使当前最新过期（下次分配前，所有已发代次一律过期）。 */
+        fun bump() {
+            latest = ++sequence
+        }
+
+        /** 该代次是否仍为最新。 */
+        fun isCurrent(token: Long): Boolean = token == latest
+
+        /** 当前最新代次。 */
+        fun current(): Long = latest
+    }
+
+    /**
+     * 启动加载代次：[install]/[invalidate] 每次递增。异步启动加载在
      * 完成时比对代次——其间若有一次安装（用户应用皮肤、覆盖层
      * 刷新、回退默认等）发生，启动加载的旧快照直接丢弃，绝不
      * 覆盖用户的新选择。代次比对是快路径，最终裁决在 [install]
      * 的锁内提交（token + 预期代次双重核对，见下）。
      */
-    private var startupLoadGeneration = 0
+    private val startupGenerations = LatestWins()
 
     /**
      * 安装请求代次（.23 审计问题 2）：每次安装请求在开始准备
@@ -84,8 +115,7 @@ object SkinSnapshotProvider {
      * 提交时核对未变才换背景（见 [refreshBackground]）。
      * 全部读写都在 [lock] 内，无需 @Volatile。
      */
-    private var installRequestSequence = 0L
-    private var latestInstallToken = 0L
+    private val installTokens = LatestWins()
 
     /**
      * 背景重建请求代次：每次 [refreshBackground] 在发起时分配一个
@@ -94,8 +124,7 @@ object SkinSnapshotProvider {
      * 与安装 token 同款口径：代次必须在发起时分配，提交时才分
      * 配无法区分新旧。全部读写都在 [lock] 内，无需 @Volatile。
      */
-    private var backgroundRequestSequence = 0L
-    private var latestBackgroundGeneration = 0L
+    private val backgroundGenerations = LatestWins()
 
     /**
      * 开始一次安装请求：分配单调递增的 request token 并记为最新。
@@ -103,8 +132,7 @@ object SkinSnapshotProvider {
      * 加载发起时——一律在准备开始时调，绝不在提交时调。
      */
     internal fun allocateInstallToken(): Long = synchronized(lock) {
-        latestInstallToken = ++installRequestSequence
-        latestInstallToken
+        installTokens.allocate()
     }
 
     /**
@@ -161,7 +189,7 @@ object SkinSnapshotProvider {
             snapshot: SkinSnapshot,
             pending: Boolean,
             requestToken: Long,
-            expectedGeneration: Int,
+            expectedGeneration: Long,
         )
     }
 
@@ -178,7 +206,7 @@ object SkinSnapshotProvider {
             snapshot: SkinSnapshot,
             pending: Boolean,
             requestToken: Long,
-            expectedGeneration: Int,
+            expectedGeneration: Long,
         ) {
             // 提交裁决在 install 内原子完成：被更新的请求取代时
             // 返回 false，不得武装 pending 验证、不得请求重绘——
@@ -249,15 +277,14 @@ object SkinSnapshotProvider {
      */
     fun ensureLoaded(context: Context) {
         val token: Long
-        val generation: Int
+        val generation: Long
         synchronized(lock) {
             if (loadAttempted) return
             loadAttempted = true
             // 与 allocateInstallToken() 同款递增（此处已持锁，直接
             // 内联，不再调一次 synchronized 方法）。
-            token = ++installRequestSequence
-            latestInstallToken = token
-            generation = startupLoadGeneration
+            token = installTokens.allocate()
+            generation = startupGenerations.current()
         }
         // context 原样传进协程：applicationContext 的解析留在
         // 依赖实现里（生产路径才需要；单测的假依赖不碰它，
@@ -267,8 +294,8 @@ object SkinSnapshotProvider {
             val loaded = runCatching { startupLoadDeps.loadSnapshot(context) }.getOrNull()
                 ?: return@launch
             val stillCurrent = synchronized(lock) {
-                token == latestInstallToken &&
-                    generation == startupLoadGeneration && currentSnapshot == null
+                installTokens.isCurrent(token) &&
+                    startupGenerations.isCurrent(generation) && currentSnapshot == null
             }
             if (!stillCurrent) return@launch
             runCatching {
@@ -298,7 +325,7 @@ object SkinSnapshotProvider {
         context: Context,
         snapshot: SkinSnapshot?,
         requestToken: Long,
-        expectedGeneration: Int? = null,
+        expectedGeneration: Long? = null,
     ): Boolean {
         // 背景解码先行：无条件解（锁外读 currentBitmapKey 是过期
         // 读，绝不能据此跳过——快照可能已被替换；锁内对键未变的
@@ -310,14 +337,14 @@ object SkinSnapshotProvider {
         val prepared = snapshot?.let { runBlocking { decodeBackgroundBounded(context, it) } }
         var accepted = false
         synchronized(lock) {
-            val tokenCurrent = requestToken == latestInstallToken
+            val tokenCurrent = installTokens.isCurrent(requestToken)
             val generationCurrent =
-                expectedGeneration == null || expectedGeneration == startupLoadGeneration
+                expectedGeneration == null || startupGenerations.isCurrent(expectedGeneration)
             if (tokenCurrent && generationCurrent) {
                 loadAttempted = true
                 // 安装代次递增：在途的异步启动加载完成时按代次丢弃，
                 // 不覆盖本次安装。
-                startupLoadGeneration++
+                startupGenerations.bump()
                 if (snapshot == null) {
                     currentSnapshot = null
                     releaseBitmapLocked()
@@ -346,10 +373,10 @@ object SkinSnapshotProvider {
             loadAttempted = false
             // 代次递增：在途的异步启动加载完成时按代次丢弃，
             // 下次 ensureLoaded 重新发起加载。
-            startupLoadGeneration++
+            startupGenerations.bump()
             // token 同步推进：在途的安装请求（token 在失效前分配）
             // 提交时按 token 被拒，不得在失效后又把旧快照装回来。
-            latestInstallToken = ++installRequestSequence
+            installTokens.bump()
             currentSnapshot = null
             releaseBitmapLocked()
             InputFeedbacks.clearSkinSounds()
@@ -459,7 +486,7 @@ object SkinSnapshotProvider {
         // 同步段（调用线程，不解码）：只捕获不可变参数快照。
         // 背景重建只是对当前快照背景段的更新，不得否决在它之后
         // 开始的完整安装；提交时 token 变了就丢弃（见下）。
-        val tokenAtStart = synchronized(lock) { latestInstallToken }
+        val tokenAtStart = synchronized(lock) { installTokens.current() }
         val snapshot = synchronized(lock) { currentSnapshot } ?: return null
         val bg = snapshot.background ?: return null
         val (blur, adjust) = GlobalStyleResolver.effectiveBlur(
@@ -481,10 +508,7 @@ object SkinSnapshotProvider {
         // 代次在发起时分配：提交时才分配无法区分新旧——后发起
         // 的请求会在提交时拿到新代次而错误胜出。只认最新代次
         // 提交，旧请求解完即回收（见提交段）。
-        val generation = synchronized(lock) {
-            latestBackgroundGeneration = ++backgroundRequestSequence
-            latestBackgroundGeneration
-        }
+        val generation = synchronized(lock) { backgroundGenerations.allocate() }
         val appContext = context.applicationContext
         val targetSnapshot = snapshot.copy(background = newBg)
         return rebuildScope.launch {
@@ -493,7 +517,7 @@ object SkinSnapshotProvider {
             // （提交段仍按同一口径裁决，见下）。
             val currentAtDecode = synchronized(lock) {
                 isBackgroundRequestCurrent(
-                    generation, latestBackgroundGeneration, tokenAtStart, latestInstallToken,
+                    generation, backgroundGenerations.current(), tokenAtStart, installTokens.current(),
                 )
             }
             if (!currentAtDecode) return@launch
@@ -508,9 +532,9 @@ object SkinSnapshotProvider {
                 // 不够：同皮肤重装（同一 ref、新 token）后，旧 blur
                 // 值会盖掉重装带入的新值。
                 val current = currentSnapshot
-                if (generation == latestBackgroundGeneration &&
-                    current != null && tokenAtStart == latestInstallToken &&
-                    current.ref == snapshot.ref
+                if (isBackgroundRequestCurrent(
+                        generation, backgroundGenerations.current(), tokenAtStart, installTokens.current(),
+                    ) && current != null && current.ref == snapshot.ref
                 ) {
                     currentSnapshot = current.copy(background = newBg)
                     setBackgroundBitmapLocked(appContext, currentSnapshot!!, prepared)

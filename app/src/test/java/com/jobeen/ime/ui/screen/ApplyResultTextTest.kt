@@ -23,7 +23,7 @@ class ApplyResultTextTest {
         // 2026-11-02 用户定：点下即报“已切换到”（快照已装好），不再报“已暂存”。
         assertEquals(
             "已切换到：皮肤A",
-            applyResultMessage(ApplyTransaction.Result.AppliedPending(refA), resolve),
+            applyResultMessage(ApplyTransaction.Result.Applied(refA, pending = true), resolve),
         )
     }
 
@@ -32,7 +32,7 @@ class ApplyResultTextTest {
         assertEquals(
             "首次渲染失败，已回退到：皮肤B",
             applyResultMessage(
-                ApplyTransaction.Result.FirstRenderFailedRolledBack(refA, refB), resolve,
+                ApplyTransaction.Result.Failed(refA, ApplyTransaction.Result.Stage.FIRST_RENDER, "first_render_failed", rolledBackTo = refB), resolve,
             ),
         )
     }
@@ -42,7 +42,7 @@ class ApplyResultTextTest {
         assertEquals(
             "切换失败，已回退到：内置键盘",
             applyResultMessage(
-                ApplyTransaction.Result.SwitchFailedRolledBack(refA, null), resolve,
+                ApplyTransaction.Result.Failed(refA, ApplyTransaction.Result.Stage.SWITCH, "switch_failed"), resolve,
             ),
         )
     }
@@ -64,7 +64,7 @@ class ApplyResultTextTest {
         assertEquals(
             "回滚失败：皮肤状态不确定，请重启键盘",
             applyResultMessage(
-                ApplyTransaction.Result.RollbackFailed(refA, "switch_failed", "restore_default_switch_failed"),
+                ApplyTransaction.Result.Failed(refA, ApplyTransaction.Result.Stage.ROLLBACK, "restore_default_switch_failed"),
                 resolve,
             ),
         )
@@ -73,14 +73,14 @@ class ApplyResultTextTest {
     @Test
     fun otherResultsMapped() {
         assertEquals("已恢复内置键盘", applyResultMessage(ApplyTransaction.Result.RevertedToDefault, resolve))
-        assertEquals("皮肤无效，无法应用", applyResultMessage(ApplyTransaction.Result.TargetInvalid("x"), resolve))
+        assertEquals("皮肤无效，无法应用", applyResultMessage(ApplyTransaction.Result.Failed(null, ApplyTransaction.Result.Stage.TARGET, "x"), resolve))
         assertEquals(
             "回退不可用：没有可回退的皮肤",
-            applyResultMessage(ApplyTransaction.Result.RollbackUnavailable("no_last_good"), resolve),
+            applyResultMessage(ApplyTransaction.Result.Failed(null, ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE, "no_last_good"), resolve),
         )
         assertEquals(
             "回退不可用：记录写入失败",
-            applyResultMessage(ApplyTransaction.Result.RollbackUnavailable("active_write_failed"), resolve),
+            applyResultMessage(ApplyTransaction.Result.Failed(null, ApplyTransaction.Result.Stage.ROLLBACK_UNAVAILABLE, "active_write_failed"), resolve),
         )
     }
 }

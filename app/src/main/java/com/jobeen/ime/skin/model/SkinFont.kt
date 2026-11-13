@@ -188,7 +188,9 @@ object SkinFontParser {
         tree: JsonObject,
         assetKind: (String) -> AssetKind?,
         assetBytes: (String) -> Long? = { null },
+        consumed: MutableSet<String>? = null,
     ): ParsedSkinFontFaces {
+        consumed?.add("fontFaces")
         val node = tree["fontFaces"] ?: return ParsedSkinFontFaces(emptyList(), emptyList())
         val array = node as? JsonArray
         if (array == null) {
@@ -284,7 +286,9 @@ object SkinFontParser {
     fun parseRanges(
         tree: JsonObject,
         resolveFamily: (String) -> String?,
+        consumed: MutableSet<String>? = null,
     ): ParsedSkinFontRanges {
+        consumed?.add("fontRanges")
         val node = tree["fontRanges"] ?: return ParsedSkinFontRanges(emptyList(), emptyList())
         val array = node as? JsonArray
         if (array == null) {

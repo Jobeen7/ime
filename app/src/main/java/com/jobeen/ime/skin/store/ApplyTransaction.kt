@@ -60,33 +60,32 @@ class ApplyTransaction(
     }
 
     sealed interface Result {
-        data class Applied(val ref: SkinGenRef) : Result
+        /** 失败阶段（类型安全，替代原来 6 个失败分支：WO45 P3 收敛）。 */
+        enum class Stage { BUILD, TARGET, SWITCH, FIRST_RENDER, ROLLBACK, ROLLBACK_UNAVAILABLE }
+
         /**
-         * 延迟路径暂存（键盘隐藏时应用）：记录已是 PENDING、快照已安装，
-         * 下次绘制时验证（通过则晋升 VERIFIED + Last-Good，失败则回滚）。
-         * 与已验证 [Applied] 严格区分，UI 不得显示为普通“已应用”。
+         * 已应用（pending=false）／已暂存待验证（pending=true，键盘
+         * 隐藏时应用：记录已是 PENDING、快照已安装，下次绘制时验证，
+         * 通过则晋升 VERIFIED + Last-Good，失败则回滚）。两者严格
+         * 区分，UI 不得把暂存显示为普通“已应用”。
          */
-        data class AppliedPending(val ref: SkinGenRef) : Result
-        data class BuildFailed(val ref: SkinGenRef) : Result
+        data class Applied(val ref: SkinGenRef, val pending: Boolean = false) : Result
         /**
-         * 回滚后实际生效的引用：null = 内置默认皮肤。
-         * 调用方须据此提示用户实际生效的皮肤，不得只报失败皮肤。
+         * 应用／回退失败。stage 标明失败点：BUILD 构建失败、
+         * TARGET 目标无效、SWITCH 切换失败（已回退到 rolledBackTo）、
+         * FIRST_RENDER 首渲失败（已回退到 rolledBackTo）、ROLLBACK
+         * 回滚本身失败（运行态与记录均未获确认）、
+         * ROLLBACK_UNAVAILABLE 回退不可用（无 Last-Good／目标无效／
+         * 构建或切换失败，reason 见文案映射）。
+         * rolledBackTo=null 表示回退到内置默认键盘（SWITCH／
+         * FIRST_RENDER）或无回退目标。
          */
-        data class SwitchFailedRolledBack(val ref: SkinGenRef, val restoredRef: SkinGenRef? = null) : Result
-        data class FirstRenderFailedRolledBack(val ref: SkinGenRef, val restoredRef: SkinGenRef? = null) : Result
-        /**
-         * 回滚失败／持久状态不确定（2026-11-05 审计 #1 项 2）：
-         * 恢复上一代或默认的任一步失败时返回本结果，绝不返回声称
-         * 已恢复的 RolledBack 结果。[stage] 为触发回滚的应用阶段
-         * （switch_failed / first_render_failed），[reason] 为失败
-         * 的恢复步骤（restore_default_switch_failed /
-         * restore_active_write_failed / restore_default_write_failed；
-         * 上一好构建／切换失败本身只记日志、随后退默认，默认步骤
-         * 成功时仍按已恢复默认计）。调用方不得按默认理解当前
-         * 皮肤：运行态与磁盘记录以诊断日志与实际状态为准。
-         */
-        data class RollbackFailed(val ref: SkinGenRef, val stage: String, val reason: String) : Result
-        data class TargetInvalid(val reason: String) : Result
+        data class Failed(
+            val ref: SkinGenRef?,
+            val stage: Stage,
+            val reason: String,
+            val rolledBackTo: SkinGenRef? = null,
+        ) : Result
         /**
          * 被更新的安装请求取代（.23 审计问题 2）：本请求开始后有
          * 更新的安装请求开始并提交，本请求的安装被 provider 拒绝，
@@ -96,7 +95,6 @@ class ApplyTransaction(
         data class Superseded(val ref: SkinGenRef) : Result
         data class RolledBackToLastGood(val ref: SkinGenRef) : Result
         object RevertedToDefault : Result
-        data class RollbackUnavailable(val reason: String) : Result
     }
 
     /** 当前生效状态的内部视图：回退目标记录与其引用。 */
@@ -117,7 +115,7 @@ class ApplyTransaction(
                 "store", "apply_target_invalid",
                 mapOf("skinId" to ref.skinId, "gen" to ref.generation),
             )
-            return Result.TargetInvalid("target_missing_or_hash_mismatch")
+            return Result.Failed(null, Result.Stage.TARGET, "target_missing_or_hash_mismatch")
         }
         val previous = currentPreviousState()
 
@@ -127,7 +125,7 @@ class ApplyTransaction(
                 "store", "apply_build_failed",
                 mapOf("skinId" to ref.skinId, "gen" to ref.generation),
             )
-            return Result.BuildFailed(ref)
+            return Result.Failed(ref, Result.Stage.BUILD, "snapshot_rebuild_failed")
         }
 
         val pending = ActiveRecord(
@@ -156,9 +154,9 @@ class ApplyTransaction(
             }
             return when (val restored = restorePrevious(previous, "switch_failed", ref)) {
                 is RestoreOutcome.Restored ->
-                    Result.SwitchFailedRolledBack(ref, restored.ref)
+                    Result.Failed(ref, Result.Stage.SWITCH, "switch_failed", rolledBackTo = restored.ref)
                 is RestoreOutcome.Failed ->
-                    Result.RollbackFailed(ref, "switch_failed", restored.reason)
+                    Result.Failed(ref, Result.Stage.ROLLBACK, restored.reason)
                 is RestoreOutcome.Superseded -> {
                     restorePendingRecord(pending, previous)
                     Result.Superseded(ref)
@@ -170,9 +168,9 @@ class ApplyTransaction(
         if (!runPort("first_render", ref) { ports.awaitFirstRender() }) {
             return when (val restored = restorePrevious(previous, "first_render_failed", ref)) {
                 is RestoreOutcome.Restored ->
-                    Result.FirstRenderFailedRolledBack(ref, restored.ref)
+                    Result.Failed(ref, Result.Stage.FIRST_RENDER, "first_render_failed", rolledBackTo = restored.ref)
                 is RestoreOutcome.Failed ->
-                    Result.RollbackFailed(ref, "first_render_failed", restored.reason)
+                    Result.Failed(ref, Result.Stage.ROLLBACK, restored.reason)
                 is RestoreOutcome.Superseded -> {
                     // 恢复途中被取代：同 switch 分支口径，把本请求刚写
                     // 的 PENDING 记录收敛回切换前状态（仅当它仍是当前
@@ -201,12 +199,12 @@ class ApplyTransaction(
 
     private suspend fun rollbackToLastGoodOnIo(): Result {
         val pointer = (store.readLastGood() as? SkinLibraryStore.ReadResult.Ok)?.value
-            ?: return Result.RollbackUnavailable("no_last_good").also {
+            ?: return Result.Failed(null, Result.Stage.ROLLBACK_UNAVAILABLE, "no_last_good").also {
                 DiagLog.w("store", "rollback_unavailable", mapOf("reason" to "no_last_good"))
             }
         val ref = SkinGenRef(pointer.skinId, pointer.hash, pointer.generation)
         if (!isTargetValidOnDisk(ref)) {
-            return Result.RollbackUnavailable("last_good_target_invalid").also {
+            return Result.Failed(null, Result.Stage.ROLLBACK_UNAVAILABLE, "last_good_target_invalid").also {
                 DiagLog.w(
                     "store", "rollback_unavailable",
                     mapOf(
@@ -225,7 +223,7 @@ class ApplyTransaction(
             return Result.RolledBackToLastGood(ref)
         }
         if (!runPort("rollback_build", ref) { ports.buildSnapshot(ref) }) {
-            return Result.RollbackUnavailable("build_failed").also {
+            return Result.Failed(null, Result.Stage.ROLLBACK_UNAVAILABLE, "build_failed").also {
                 DiagLog.w(
                     "store", "rollback_unavailable",
                     mapOf(
@@ -237,7 +235,7 @@ class ApplyTransaction(
         }
         if (!runPort("rollback_switch", ref) { ports.switchRuntime(ref) }) {
             if (ports.wasSuperseded()) return Result.Superseded(ref)
-            return Result.RollbackUnavailable("switch_failed").also {
+            return Result.Failed(null, Result.Stage.ROLLBACK_UNAVAILABLE, "switch_failed").also {
                 DiagLog.w(
                     "store", "rollback_unavailable",
                     mapOf(
@@ -260,7 +258,7 @@ class ApplyTransaction(
                     mapOf("reason" to restored.reason, "skinId" to ref.skinId),
                 )
             }
-            return Result.RollbackUnavailable("first_render_failed").also {
+            return Result.Failed(null, Result.Stage.ROLLBACK_UNAVAILABLE, "first_render_failed").also {
                 DiagLog.w(
                     "store", "rollback_unavailable",
                     mapOf(
@@ -291,14 +289,14 @@ class ApplyTransaction(
 
     private suspend fun revertToDefaultOnIo(): Result {
         if (!runPort("revert_switch", null) { ports.switchRuntime(null) }) {
-            return Result.RollbackUnavailable("switch_failed").also {
+            return Result.Failed(null, Result.Stage.ROLLBACK_UNAVAILABLE, "switch_failed").also {
                 DiagLog.w("store", "revert_unavailable", mapOf("reason" to "switch_failed"))
             }
         }
         // 切换成功后写记录失败：运行态已是默认、记录仍指旧皮肤，
         // 不得返回声称已恢复的成功结果（与 restorePrevious 同口径）。
         if (!writeActiveChecked(ActiveRecord(appliedAt = clock()))) {
-            return Result.RollbackUnavailable("active_write_failed").also {
+            return Result.Failed(null, Result.Stage.ROLLBACK_UNAVAILABLE, "active_write_failed").also {
                 DiagLog.w("store", "revert_unavailable", mapOf("reason" to "active_write_failed"))
             }
         }

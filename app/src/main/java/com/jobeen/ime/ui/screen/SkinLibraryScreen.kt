@@ -304,7 +304,6 @@ fun SkinLibraryScreen(
     fun showSwitchResult(result: ApplyTransaction.Result, resolveName: (String) -> String?) {
         val ref = when (result) {
             is ApplyTransaction.Result.Applied -> result.ref
-            is ApplyTransaction.Result.AppliedPending -> result.ref
             else -> null
         }
         if (ref != null) {
@@ -982,8 +981,7 @@ fun SkinLibraryScreen(
                                             entry.id, entry.hash, entry.generation,
                                         )
                                         val result = applier.applySkin(ref)
-                                        if (result is ApplyTransaction.Result.Applied ||
-                                            result is ApplyTransaction.Result.AppliedPending
+                                        if (result is ApplyTransaction.Result.Applied
                                         ) {
                                             val key = "${entry.id}@${entry.generation}"
                                             previewCache.remove(key)

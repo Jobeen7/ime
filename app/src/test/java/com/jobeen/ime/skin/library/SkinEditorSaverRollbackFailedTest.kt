@@ -154,10 +154,10 @@ class SkinEditorSaverRollbackFailedTest {
         return (read as SkinLibraryStore.ReadResult.Ok).value
     }
 
-    private fun rollbackFailed(): ApplyTransaction.Result.RollbackFailed =
-        ApplyTransaction.Result.RollbackFailed(
+    private fun rollbackFailed(): ApplyTransaction.Result.Failed =
+        ApplyTransaction.Result.Failed(
             SkinGenRef("s1", "", 2),
-            "switch_failed",
+            ApplyTransaction.Result.Stage.ROLLBACK,
             "restore_default_switch_failed",
         )
 
@@ -215,7 +215,7 @@ class SkinEditorSaverRollbackFailedTest {
         val (root, layout, store) = newStore()
         val oldHash = seedSkin(layout, store)
         val applier = FakeApplier(
-            ApplyTransaction.Result.SwitchFailedRolledBack(SkinGenRef("s1", "", 2)),
+            ApplyTransaction.Result.Failed(SkinGenRef("s1", "", 2), ApplyTransaction.Result.Stage.SWITCH, "switch_failed"),
             store = store,
         )
         val s = saver(layout, store, applier)
@@ -284,7 +284,7 @@ class SkinEditorSaverRollbackFailedTest {
         val (root, layout, store) = newStore()
         seedSkin(layout, store)
         val applier = FakeApplier(
-            ApplyTransaction.Result.BuildFailed(SkinGenRef("s1", "", 1)),
+            ApplyTransaction.Result.Failed(SkinGenRef("s1", "", 1), ApplyTransaction.Result.Stage.BUILD, "snapshot_rebuild_failed"),
             store = store,
         )
         val s = saver(layout, store, applier)

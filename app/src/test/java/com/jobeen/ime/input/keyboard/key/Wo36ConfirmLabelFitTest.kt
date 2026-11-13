@@ -7,12 +7,11 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * “确认”标签适配字号（WO36 大字号边界，[confirmLabelFitSize]）：
+ * 文字标签适配字号（WO36 大字号边界，[confirmLabelFitSize]）：
  * 键宽固定、请求字号放不下时自动缩小到放得下为止，只缩不放、
  * 下限 10dp；仍放不下保持下限＋ellipsize 兜底。
  *
- * 键宽口径与 WO35 [com.jobeen.ime.input.keyboard.impl.confirmLabelFits]
- * 同源：S24 Ultra 竖屏键盘 376dp（屏宽 384dp − 两侧内边距各 4dp），
+ * 键宽口径沿用 WO35 定稿：S24 Ultra 竖屏键盘 376dp（屏宽 384dp − 两侧内边距各 4dp），
  * T9 回车 0.18 → 67.68dp、Qwerty 回车 0.15 → 56.4dp；窄屏 360dp
  * 键盘 352dp，T9 → 63.36dp、Qwerty → 52.8dp。字宽按 1em 计。
  *
@@ -20,9 +19,8 @@ import org.junit.Test
  * - 放得下 → 原样；边界恰好放得下 → 原样；放不下 → 缩到恰好放得下。
  * - 极窄键 → 下限 10dp（仍放不下，ellipsize 兜底）；键宽未知 → 不缩。
  * - 永不放大；内边距／下限参数可配。
- * 视图层接线（ImageKeyView.showTextLabel 按实测宽调本函数）无
- * Robolectric、JVM 测不了，需真机验收：大字号皮肤组字中“确认”
- * 完整显示、无截断。
+ * 视图层接线（ImageKeyView.showTextLabel 按实测宽调本函数）现无生产
+ * 调用方（WO45 回车键删除后）；本测试只钉纯函数本身。
  */
 class Wo36ConfirmLabelFitTest {
 

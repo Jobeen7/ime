@@ -201,12 +201,21 @@ enum class WhitelistAction(
         get() = when (this) {
             VOICE_INPUT -> setOf(KeySlot.LONG_PRESS)
             MOMENTARY_SHIFT -> setOf(KeySlot.TAP)
-            else -> KeySlot.entries.toSet()
+            else -> ALL_SLOTS
         }
 
     companion object {
+        /** 全部槽位（默认口径：任意槽均可绑定）。 */
+        val ALL_SLOTS: Set<KeySlot> = KeySlot.entries.toSet()
+
         fun fromFormatName(name: String): WhitelistAction? =
-            entries.firstOrNull { it.formatName == name }
+            when (name) {
+                // 板锁已删（.22）：旧皮肤里的锁切换名作兼容别名，映射到
+                // 无操作 NONE（分发已是 NoOpAction），不再整布局拒绝
+                // （WO45 P2-3；旧口径“未知动作剔除”会随皮肤更新而破坏）。
+                "symbolic_lock_toggle", "emoji_lock_toggle" -> NONE
+                else -> entries.firstOrNull { it.formatName == name }
+            }
 
         /** switch_layout 的合法目标 = 出厂六布局 NAME（详设 §3.2）。 */
         val LAYOUT_TARGETS: Set<String> = setOf("Qwerty", "T9", "T15", "Number", "Symbol", "Emoji")

@@ -55,7 +55,7 @@ class SkinSnapshotProviderStartupLoadTest {
             snapshot: SkinSnapshot,
             pending: Boolean,
             requestToken: Long,
-            expectedGeneration: Int,
+            expectedGeneration: Long,
         ) {
             synchronized(installed) { installed += snapshot }
             installedPending = pending

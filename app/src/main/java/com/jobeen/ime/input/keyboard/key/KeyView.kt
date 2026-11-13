@@ -1845,10 +1845,9 @@ internal const val RETURN_KEY_TEXT_LABEL_SIZE_DP = 16f
 internal const val RETURN_KEY_TEXT_LABEL_MIN_SIZE_DP = 10f
 
 /**
- * “确认”标签适配字号（纯函数，可单测；WO36 大字号边界，与
- * [com.jobeen.ime.input.keyboard.impl.confirmLabelFits] 同模型）：
- * CJK 字宽按 1em 计（两字 = 2 × 字号），键宽固定时请求字号放不下
- * 即缩小到放得下为止，只缩不放；键宽未知（<=0）时不缩、沿用请求
+ * 文字标签适配字号（纯函数，可单测；WO36 大字号边界，字宽模型
+ * 沿用 WO35 定稿——CJK 字宽按 1em 计，两字 = 2 × 字号）：
+ * 键宽固定时请求字号放不下即缩小到放得下为止，只缩不放；键宽未知（<=0）时不缩、沿用请求
  * 字号；放不下且已触下限时返回下限（仍放不下，调用方 ellipsize
  * 兜底）。字号按 DIP 计（与 TextKeyView 同口径）。
  */
@@ -1891,13 +1890,12 @@ class ImageKeyView(
     private var labelAppliedSizeDp: Float = labelRequestedSizeDp
 
     /**
-     * 组字态文字标签（WO35 I-L3 渲染）：默认 GONE——图标键外观与旧行为一致；
-     * 组字中时由 [showTextLabel] 显示“确认”、隐藏图标，键面变文字键。
-     * 只改显示：displayText 仍为 null（短按不弹气泡），行为与 EnterDecision 不动。
-     * 字号与文字回车键同值（skinTextSize 优先），颜色与 TextKeyView 同口径。
-     * WO36 大字号边界：请求字号放不下时 [showTextLabel] 按实测键宽
-     * 自动缩小到放得下为止（只缩不放，下限 10dp），[labelAppliedSizeDp]
-     * 记当前已应用字号。
+     * 文字标签视图（WO35 I-L3 遗留，WO45 回车键删除后无生产调用方）：
+     * 默认 GONE；[showTextLabel] 可显示任意文字并隐藏图标，[showIcon]
+     * 切回图标态。字号与文字回车键同值（skinTextSize 优先），颜色与
+     * TextKeyView 同口径。WO36 大字号边界：请求字号放不下时
+     * [showTextLabel] 按实测键宽自动缩小到放得下为止（只缩不放，
+     * 下限 10dp），[labelAppliedSizeDp] 记当前已应用字号。
      */
     val textLabel = TextView(ctx).apply {
         isClickable = false
@@ -1958,15 +1956,16 @@ class ImageKeyView(
     val isTextLabelShown: Boolean get() = textLabel.visibility == android.view.View.VISIBLE
 
     /**
-     * 显示文字标签、隐藏图标（组字态）：只切换可见性，不动图标资源——
+     * 显示文字标签、隐藏图标：只切换可见性，不动图标资源——
      * 切回图标态时 [showIcon] 只恢复可见性，图标资源本身从未换过，
      * 故 BaseKeyboard 的 returnKeyIcon 缓存仍有效、纸飞机等图标不丢。
+     * （WO45 回车键删除后无生产调用方，机制保留。）
      *
      * WO36 大字号边界：键宽固定，请求字号放不下时按本视图实测宽
      * （[confirmLabelFitSize]）自动缩小标签字号到放得下为止（只缩
      * 不放，下限 10dp）；仍放不下时保持下限＋ellipsize END 兜底。
-     * 组字中调本函数时键盘已布局，width>0；未布局（width==0）时
-     * 不缩、沿用请求字号，下次组字态重调时再算。
+     * 调用时键盘已布局，width>0；未布局（width==0）时
+     * 不缩、沿用请求字号，下次重调时再算。
      */
     fun showTextLabel(text: String) {
         if (textLabel.text.toString() != text) textLabel.text = text

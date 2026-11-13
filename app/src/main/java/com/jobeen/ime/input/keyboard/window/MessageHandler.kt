@@ -4,8 +4,6 @@ import android.inputmethodservice.InputMethodService
 import android.view.KeyEvent
 import android.view.inputmethod.ExtractedTextRequest
 import android.view.inputmethod.InputConnection
-import com.jobeen.ime.engine.EngineFactory
-import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.engine.data.PairCommitQueue
 import com.jobeen.ime.input.ClearedTextLedger
@@ -24,14 +22,6 @@ class MessageHandler(
 
     suspend fun handle(message: EngineMessage) {
         when (message) {
-            is EngineMessage.CommitBarrier -> {
-                // 上屏落屏栅栏（WO40）：IMS 观察者按序处理到本栅栏时，
-                // 其前的 Commit 必已落屏（同一观察者顺序处理、同一通道
-                // 内控制类消息保序）——完成引擎侧等待。引擎非 RimeEngine
-                // 时忽略（等待方超时放行）。
-                EngineFactory.currentAs<RimeEngine>()?.completeCommitBarrier(message.id)
-            }
-
             is EngineMessage.Commit -> {
                 // P4 分段探针（提交段）：量 Commit 分支同步处理的耗时；
                 // 拦截态早返回不产生样本（拦截的提交本就不走提交处理）。
