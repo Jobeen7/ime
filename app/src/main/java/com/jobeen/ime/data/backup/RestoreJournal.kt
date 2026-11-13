@@ -63,6 +63,14 @@ internal object RestoreJournal {
         CLEANUP_STAGING,
         /** 中途被杀：留 journal，备份页提示用户重导／回滚。 */
         PROMPT_USER,
+        /**
+         * journal 文件存在但解析失败（损坏）：按“疑似中断还原”处理——
+         * 快照全部保留、不清扫，备份页提示用户（回滚不可用，只能重导／
+         * 忽略）。损坏 journal 对应的还原前快照是唯一副本，静默清扫即
+         * 永久丢失回滚能力（D-L1）；损坏文件本身随下次成功还原被覆盖，
+         * 或由用户点“忽略”时删掉。
+         */
+        PROMPT_CORRUPT,
     }
 
     data class Entry(
@@ -75,6 +83,21 @@ internal object RestoreJournal {
         val snapshotFile: String,
         /** 已完成的写盘段（SECTION_*）。 */
         val completedSections: Set<String>,
+        /**
+         * 已开始但未完成的写盘段（SECTION_*，D-P1）：皮肤库是多文件逐文件
+         * 写，杀在循环中途即半写、completedSections 里没有它——只记完成
+         * 段会把半写段漏判为“没写过”，磁盘回滚谎报成功。段开始写前记入、
+         * 整段写完后移出（见 BackupManager.applyPayload 的 onSectionStart／
+         * onSectionDone）。旧 journal 无此行时读作空集。
+         */
+        val inProgressSections: Set<String> = emptySet(),
+        /**
+         * 还原前皮肤库是否确有文件（D-P1）：磁盘回滚据此区分“快照缺段是
+         * 还原前本就无皮肤（可清零恢复，全覆盖）”与“还原前有皮肤但快照
+         * 没装下（清不掉，须报 uncovered）”。旧 journal 无此行时读作
+         * true——保守口径：按“有”处理，不清、不谎报全覆盖。
+         */
+        val skinsPresentBefore: Boolean = true,
     )
 
     fun dir(filesDir: File): File = File(filesDir, JOURNAL_DIR_NAME)
@@ -93,16 +116,28 @@ internal object RestoreJournal {
             appendLine("backupFingerprint=${entry.backupFingerprint}")
             appendLine("snapshotFile=${entry.snapshotFile}")
             appendLine("completedSections=${entry.completedSections.sorted().joinToString(",")}")
+            appendLine("inProgressSections=${entry.inProgressSections.sorted().joinToString(",")}")
+            appendLine("skinsPresentBefore=${entry.skinsPresentBefore}")
         }
         AtomicFiles.write(journalFile(dir), content)
     }
 
     /**
-     * 读 journal：不存在或损坏返回 null（损坏按“无 journal”处理，
-     * 不阻塞启动；损坏的 journal 文件本身随下次成功还原被覆盖）。
-     * token 与 phase 是必需项，其余缺失即取缺省（startedAt=0、
-     * 指纹空、快照空、完成段空）——缺省的 journal 仍可用于提示，
-     * 只是回滚入口不可用。
+     * journal 文件存在但解析失败（损坏）时为 true；文件不存在或可解析时
+     * 为 false。损坏不得按“无 journal”处理（见 [decide]）：损坏 journal
+     * 对应的还原前快照是唯一副本，NONE 分支的清扫会把它删掉。
+     */
+    fun isCorrupt(dir: File): Boolean =
+        journalFile(dir).isFile && read(dir) == null
+
+    /**
+     * 读 journal：不存在或损坏返回 null。
+     * 损坏只返回 null、不阻塞启动；调用方须以 [isCorrupt] 区分“无
+     * journal”与“journal 损坏”——损坏按疑似中断还原处理（保留快照、
+     * 走横幅），不得按无 journal 清扫快照（D-L1）。token 与 phase 是
+     * 必需项，其余缺失即取缺省（startedAt=0、指纹空、快照空、完成段空、
+     * 进行段空、还原前有皮肤按 true 保守取）——缺省的 journal 仍可用
+     * 于提示，只是回滚入口不可用。
      */
     fun read(dir: File): Entry? {
         val values = mutableMapOf<String, String>()
@@ -125,6 +160,14 @@ internal object RestoreJournal {
             snapshotFile = values["snapshotFile"].orEmpty(),
             completedSections = values["completedSections"].orEmpty()
                 .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
+            inProgressSections = values["inProgressSections"].orEmpty()
+                .split(",").map { it.trim() }.filter { it.isNotEmpty() }.toSet(),
+            // 未写／写坏时一律按 true 保守取：按 false 会让磁盘回滚清掉
+            // 还原前皮肤，而快照里并没有它们可恢复。
+            skinsPresentBefore = when (values["skinsPresentBefore"]) {
+                "false" -> false
+                else -> true
+            },
         )
     }
 
@@ -170,13 +213,22 @@ internal object RestoreJournal {
 
     /**
      * 启动对账决策（纯函数）：
-     * - 无 journal → NONE；
+     * - 无 journal 且 journal 文件本身不存在／可解析 → NONE；
+     * - 无 journal 但 journal 文件存在且解析失败（[journalCorrupt]）
+     *   → PROMPT_CORRUPT（疑似中断还原，快照全部保留）；
      * - COMMITTED → CLEANUP_COMPLETED（已写完，只差删 journal）；
      * - STAGING → CLEANUP_STAGING（尚未写任何数据）；
      * - REPLACING → PROMPT_USER（可能已写部分数据，快照在与不在
      *   都提示；快照不在时回滚入口不可用，只给重导）。
+     * [journalCorrupt] 只在 entry 为 null 时才有意义：entry 能解析
+     * 出来即 journal 未损坏。
      */
-    fun decide(entry: Entry?, snapshotExists: Boolean): RecoveryAction = when {
+    fun decide(
+        entry: Entry?,
+        snapshotExists: Boolean,
+        journalCorrupt: Boolean = false,
+    ): RecoveryAction = when {
+        entry == null && journalCorrupt -> RecoveryAction.PROMPT_CORRUPT
         entry == null -> RecoveryAction.NONE
         entry.phase == Phase.COMMITTED -> RecoveryAction.CLEANUP_COMPLETED
         entry.phase == Phase.STAGING -> RecoveryAction.CLEANUP_STAGING

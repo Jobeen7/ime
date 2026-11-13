@@ -83,7 +83,13 @@ fun BackupScreen(
                         )
                         if (!info.snapshotAvailable) {
                             Text(
-                                text = stringResource(R.string.backup_restore_interrupted_no_snapshot),
+                                text = stringResource(
+                                    if (info.journalCorrupt) {
+                                        R.string.backup_restore_interrupted_journal_corrupt
+                                    } else {
+                                        R.string.backup_restore_interrupted_no_snapshot
+                                    },
+                                ),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                             )

@@ -715,6 +715,7 @@
     <string name="backup_restore_interrupted_rollback">回滚到还原前</string>
     <string name="backup_restore_interrupted_dismiss">忽略</string>
     <string name="backup_restore_interrupted_no_snapshot">还原前快照已丢失，只能重新导入备份文件。</string>
+    <string name="backup_restore_interrupted_journal_corrupt">还原记录已损坏，快照已保留；回滚暂不可用，请重新导入备份文件或忽略。</string>
     <string name="user_dict_manual_backup">手动备份</string>
     <string name="user_dict_export">导出用户词</string>
     <string name="user_dict_export_desc">导出为文本文件，可发送到另一台设备导入</string>
@@ -1320,6 +1321,8 @@
     <string name="skin_editor_reason_manifest_hash_mismatch">皮肤清单与文件不一致，请重新导入皮肤</string>
     <string name="skin_editor_reason_active_hash_mismatch">活动皮肤记录与文件不一致，请重新导入皮肤</string>
     <string name="skin_editor_reason_layout_hash_mismatch">布局文件与库索引不一致，请重新导入皮肤</string>
+    <string name="skin_editor_reason_layout_unreadable">布局文件读取失败</string>
+    <string name="skin_editor_reason_index_update_failed">index_update_failed：皮肤已生效，但库索引未同步（重启对账会修复）</string>
     <string name="skin_editor_reason_skin_unparseable">皮肤文件无法解析</string>
     <string name="skin_editor_reason_skin_json_limits_exceeded">皮肤内容超出结构上限，无法保存</string>
     <string name="skin_editor_reason_json_depth_exceeded">皮肤 JSON 层级过深，无法保存</string>

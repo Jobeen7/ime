@@ -16,6 +16,11 @@ import java.io.File
  * 写盘失败口径（B-L11）：内存值只在写盘成功后才翻转——写盘失败
  * （tmp rename 与回落写盘双败）时内存保持旧值，与磁盘一致，进程
  * 重启后开关不回跳；失败的 tmp 残留清掉，下次 setEnabled 可重试。
+ *
+ * 返回值口径（V-低1）：setEnabled 返回最终值是否等于请求值——
+ * 写盘成功／请求值与当前值相同（无需写盘）时 true，写盘失败时
+ * false。调用方不得无条件按拨动值改 UI：须按返回值或重读
+ * [enabled] 回写，否则写盘失败时 UI 与 store 分叉。
  */
 class VoiceInputSwitchStore(private val file: File) {
 
@@ -29,13 +34,20 @@ class VoiceInputSwitchStore(private val file: File) {
             enabledField
         }
 
-    fun setEnabled(value: Boolean) {
+    /**
+     * 请求值写入成功（或已是当前值、无需写盘）返回 true；
+     * 写盘失败返回 false，内存保持旧值（B-L11）。
+     * 返回值即“最终值是否等于请求值”，调用方据此回写 UI。
+     */
+    fun setEnabled(value: Boolean): Boolean {
         synchronized(lock) {
             ensureLoadedLocked()
-            if (enabledField == value) return
+            if (enabledField == value) return true
             if (persistLocked(value)) {
                 enabledField = value
+                return true
             }
+            return false
         }
     }
 

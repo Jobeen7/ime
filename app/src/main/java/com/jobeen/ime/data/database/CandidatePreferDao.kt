@@ -42,9 +42,12 @@ interface CandidatePreferDao {
 
     /**
      * 仅供 [upsert] 事务调用：行不存在时以 0 计数建行，已存在则不动。
-     * internal——公开它会让调用方单独调子语句（D-L5）：单独调
-     * incrementExisting 时首行丢失且无报错，单独调 insert 落的 0
-     * 计数不是有效偏好。
+     * 公开是 Kotlin 语言所限——`internal` 修饰符不允许用在接口成员上
+     * （编译器报错 "modifier 'internal' is not applicable inside
+     * 'interface'"，已用 kotlinc 对 suspend／非 suspend 两种写法实测；
+     * 该规则与项目 Kotlin 版本无关），故两子语句保持公开、仅以本文
+     * 档约束：不得单独调用（D-L5）。单独调 incrementExisting 时首行
+     * 丢失且无报错，单独调 insert 落的 0 计数不是有效偏好。
      */
     @Query(
         """
@@ -54,7 +57,7 @@ interface CandidatePreferDao {
     )
     suspend fun insertOrIgnoreZero(text: String, context: String, now: Long)
 
-    /** 仅供 [upsert] 事务调用：对已存在的行累加计数并刷新 context/时间（同上，internal）。 */
+    /** 仅供 [upsert] 事务调用：对已存在的行累加计数并刷新 context/时间（公开原因同上，不得单独调用）。 */
     @Query(
         """
         UPDATE candidate_prefers SET

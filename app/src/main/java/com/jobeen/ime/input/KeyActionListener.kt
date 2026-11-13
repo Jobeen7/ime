@@ -400,9 +400,11 @@ class KeyActionListener(
             // 语义前置：先清组字（不提交）、先关联想；焦点在
             // 本键盘自有输入框（当前字段属本包）时空操作；坏键名
             // 解析期已剔除（VALUE_INVALID），到此恒为合法键码。
-            // 顺序保证（I-S5）：与 MultiReturnAction 同理——先在
-            // 直发目标连接上同步清编辑器侧组字 span，再直发按键，
-            // 不让按键抢在异步清组字 job 前到达编辑器。
+            // 顺序保证（I-S5）：与 MultiReturnAction 同理——先同步清
+            // 编辑器侧组字 span，再直发按键，不让按键抢在异步清组字
+            // job 前到达编辑器。清 span 的连接与直发目标未必同一：
+            // 桥接激活时组字 span 在虚拟连接上（见下，I-L4），按键
+            // 目标仍是真实连接；顺序保证只认先后，不认同连接。
             is KeyboardAction.AppKeyEventAction -> {
                 val ownField =
                     service.currentInputEditorInfo?.packageName == service.packageName
@@ -411,7 +413,18 @@ class KeyActionListener(
                 } else {
                     engine?.resetComposition()
                     engine?.dismissPredictions()
-                    service.currentInputConnection?.let { clearEditorComposingSpanSync(it) }
+                    // 清组字 span 走 activeInputConnection()（I-L4）：
+                    // 桥接激活时组字 span 位于虚拟连接上，
+                    // currentInputConnection 指向真实连接、清错对象；
+                    // 与 MultiReturnAction／hideComposingSpan／
+                    // undoHiddenComposing 同口径。键直发
+                    // （sendCombinationKeyEvent）仍走真实连接——那是
+                    // 按键目标，有意不动；无连接时不清 span、按键照发。
+                    val ic = resolveSpanClearConnection(
+                        (service as? ImeInputMethodService)?.activeInputConnection(),
+                        service.currentInputConnection,
+                    )
+                    ic?.let { clearEditorComposingSpanSync(it) }
                     com.jobeen.ime.base.util.InputConnectionUtil.sendCombinationKeyEvent(
                         service, action.keyCode,
                         ctrl = action.ctrl, shift = action.shift,
@@ -968,3 +981,16 @@ internal data class ScriptRunSession(
         ): Boolean = isCurrent(captured, InputFieldKey.of(editorInfo), epoch)
     }
 }
+
+/**
+ * 清组字 span 的连接选择（I-L4 纯函数）：桥接激活时组字 span 在
+ * 虚拟连接上（active），否则在真实连接上（current）。active 为空
+ * 即非桥接态，退回 current；两者皆空返回 null（调用方不清 span、
+ * 按键照发）。键直发目标不在此函数内——它恒走真实连接（见
+ * InputConnectionUtil.sendCombinationKeyEvent），有意与清 span
+ * 的连接分开。
+ */
+internal fun resolveSpanClearConnection(
+    active: InputConnection?,
+    current: InputConnection?,
+): InputConnection? = active ?: current

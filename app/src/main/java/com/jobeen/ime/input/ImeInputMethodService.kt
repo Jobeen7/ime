@@ -330,12 +330,37 @@ class ImeInputMethodService : InputMethodService() {
      * LatinIME 公式（`!restarting || inputTypeChanged`），门在
      * onStartInput 算、pending 由 onStartInputView 消费；本跟踪
      * 只保留语音作废（R3）一途。
+     *
+     * 语音作废与复位门统一（I-M2）：R3 不再只吃四项比对——四项在
+     * 微信各会话上恒判不变，复位门已用 LatinIME 公式逃出同一盲
+     * 区，语音门须跟同一信号。调用方把门值（onStartInput 的
+     * noteStartInput 返回、onStartInputView 的 consumePending
+     * 返回）以 gateChanged 传入：任一路为真即作废。门真只在
+     * !restarting 或 inputType 变时成立，同框 restarting＋同
+     * inputType 时门为假、不误杀同框待结算整句；restarting 型
+     * 逻辑换框且 inputType 全同时两门都判不变——那是 LatinIME
+     * 公式本身的盲区（复位与语音同限），不由本处掩盖。
+     *
+     * 锁存（V-中1）：返回值同时是停云端会话的独立身份信号——
+     * onStartInput 的判变经 [fieldIdentityLatch] 锁存，留到视图
+     * 弹出时由窗口层消费；与复位门分开传下，复位逻辑不动。
      */
     private val windowResetGate = WindowResetGate()
 
-    private fun trackInputField(info: EditorInfo?): Boolean {
+    /** I-M3 停云端会话的独立身份信号锁存（V-中1）：见 [FieldIdentityChangeLatch]。 */
+    private val fieldIdentityLatch = FieldIdentityChangeLatch()
+
+    /**
+     * 窗口层消费一次锁存的字段身份变化（V-中1）：由
+     * KeyboardWindowView.onStartInput 在视图弹出时调用；返回本次
+     * 弹出前 onStartInput 是否判过字段身份变化。消费即清零。
+     */
+    internal fun consumeFieldIdentityChangeForCloudVoice(): Boolean =
+        fieldIdentityLatch.consume()
+
+    private fun trackInputField(info: EditorInfo?, gateChanged: Boolean = false): Boolean {
         val changed = inputFieldTracker.track(InputFieldKey.of(info))
-        if (changed) {
+        if (changed || gateChanged) {
             invalidateSpeechAfterInputEnd()
         }
         return changed
@@ -346,9 +371,6 @@ class ImeInputMethodService : InputMethodService() {
         // 发起，等用户点开键盘、长按语音时冷加载多半已经完成（函数内
         // 部按连接状态与节流自判，重复调用无副作用）
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
-        // 字段身份跟踪（R3）：视图尚未弹出时（如键盘隐藏中换框）
-        // 只有本入口能先于结算路径更新身份，故两入口都喂
-        trackInputField(attribute)
         // 新窗口复位门（WO32，LatinIME 公式）：门在 onStartInput
         // 算——该入口每会话必调、restarting 是框架契约（新会话
         // 必 false，同框重开才 true）；门为真即置位待投递，由
@@ -357,6 +379,12 @@ class ImeInputMethodService : InputMethodService() {
         // 切两次微信聊天框后导诊断包，应见两行 restarting=false、
         // gate=true。
         val resetGate = windowResetGate.noteStartInput(restarting, attribute?.inputType)
+        // 字段身份跟踪（R3，I-M2）：视图尚未弹出时（如键盘隐藏中换框）
+        // 只有本入口能先于结算路径更新身份，故两入口都喂；门值一并
+        // 传入——四项比对在微信各会话上恒判不变，复位门已逃出该盲区，
+        // 语音作废须跟同一信号。判变同时锁存（V-中1），留到视图弹出
+        // 时供窗口层停云端会话。
+        fieldIdentityLatch.note(trackInputField(attribute, resetGate))
         DiagLog.i(
             "wo12reset",
             "start_input",
@@ -386,17 +414,21 @@ class ImeInputMethodService : InputMethodService() {
         // 语音预热/存活预检（onStartInput 已先行一步，这里再兜一次）：
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
-        // 字段身份跟踪（R3）：同步投递，先于下方 engine 与窗口
-        // 对新连接的使用。onStartInput 已先行投递过时此处 track
-        // 返回 false，返回值不再参与复位门（WO32：复位门改走
-        // LatinIME 公式，见 onStartInput），只保留语音作废一途。
-        trackInputField(info)
         // 新窗口复位（施工单 12／WO32）：消费 onStartInput 算好
         // 的待投递。门不在本层重算——同框收起再打开走本回调且
         // restarting=false，在此按 restarting 算会误复位；本层只
         // 消费 onStartInput 的权威判定。键盘未显示时框架不调本
         // 回调，pending 留到下次弹出时消费，复位不丢。
+        // 消费在身份跟踪之前：门只动复位 pending，与跟踪互不干扰；
+        // 先消费可保跟踪的作废投递万一抛错时 pending 不残留。
         val fieldChanged = windowResetGate.consumePending()
+        // 字段身份跟踪（R3，I-M2）：同步投递，先于下方 engine 与窗口
+        // 对新连接的使用。onStartInput 已先行投递过时此处 track
+        // 返回 false，门值一并传入——onStartInput 未跑到的会话
+        // （同框收起再打开无新 startInput）门恒为假，不误杀同框
+        // 待结算整句。返回值不再参与复位门（WO32），只保留语音作废
+        // 一途；四项判变另由锁存供窗口层停云端会话（V-中1，见 onStartInput）。
+        trackInputField(info, fieldChanged)
         DiagLog.i(
             "wo12reset",
             "start_input_view",
@@ -424,6 +456,9 @@ class ImeInputMethodService : InputMethodService() {
         // 下一会话同框重启会在 onStartInputView 误消费、误触发新窗
         // 口复位；清零后残留不再跨会话。
         windowResetGate.clearPending()
+        // 字段身份锁存同理清零（V-中1）：onStartInput 锁存后若视图
+        // 未弹出，残留会在下一会话同框重显时被窗口层消费、误停云端会话。
+        fieldIdentityLatch.clear()
         // 输入会话结束（W2）：待就绪整句的作废只认真正的输入结
         // 束信号——本回调与 onFinishInputView(true)（投递判定
         // 见 advancesEditorEpoch）。onFinishInput 按 AOSP 语义

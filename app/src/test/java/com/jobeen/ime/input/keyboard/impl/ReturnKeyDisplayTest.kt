@@ -50,14 +50,14 @@ class ReturnKeyDisplayTest {
     }
 
     @Test
-    fun insertNewlineAndCommitCandidateKeepNewlineLabel() {
+    fun insertNewlineKeepsNewlineLabelAndCommitCandidateShowsConfirm() {
         assertEquals(
             R.drawable.ic_keyboard_return to "换行",
             returnKeyDisplay(EnterOutcome.InsertNewline, EditorInfo.IME_ACTION_UNSPECIFIED),
         )
-        // 组字中点按上屏候选：沿旧口径显示换行图标／文案。
+        // 组字中点按上屏候选：显示“确认”（Jobeen 已定决定，WO34 I-L3）。
         assertEquals(
-            R.drawable.ic_keyboard_return to "换行",
+            R.drawable.ic_keyboard_return to "确认",
             returnKeyDisplay(EnterOutcome.CommitCandidate, EditorInfo.IME_ACTION_UNSPECIFIED),
         )
     }

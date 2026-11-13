@@ -207,33 +207,41 @@ object ClipboardManager {
      * 文本、最后清墓碑——截断后的文本才安全可读，墓碑文本随即记
      * 入防复活抑制、墓碑行才可删。同一事务内完成，中途失败整批
      * 回滚；进程内只跑一次，失败不置标志、下次访问重试。
+     *
+     * 并发口径（D-L6）：清理经 [SanitizeOnceGate] 串行化——并发调用方
+     * 等待正在进行的清理完成，而不是与它竞速（旧 AtomicBoolean
+     * CAS 一次置位、无等待语义，并发读会撞上尚未清掉的超限行）。
+     * 入口除面板读路径与备份外，剪贴板监听 intake 也走这里
+     * （见 [checkCurrentClipboard]，P-中2）。
      */
-    private val oversizedSanitized = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val sanitizeGate = SanitizeOnceGate()
 
     suspend fun sanitizeOversizedOnce(context: Context) {
-        if (!oversizedSanitized.compareAndSet(false, true)) return
-        val purgedTexts = db(context) { db ->
-            db.withTransaction {
-                val dao = db.clipboardDao()
-                dao.dedupeOversizedByTruncatedKey(MAX_TEXT_LENGTH)
-                dao.truncateOversizedTexts(MAX_TEXT_LENGTH)
-                val deleted = dao.getDeletedTexts()
-                dao.purgeAllDeleted()
-                deleted
+        sanitizeGate.runOnce {
+            val purgedTexts = db(context) { db ->
+                db.withTransaction {
+                    val dao = db.clipboardDao()
+                    dao.dedupeOversizedByTruncatedKey(MAX_TEXT_LENGTH)
+                    dao.truncateOversizedTexts(MAX_TEXT_LENGTH)
+                    val deleted = dao.getDeletedTexts()
+                    dao.purgeAllDeleted()
+                    deleted
+                }
             }
-        }
-        if (purgedTexts == null) {
-            // 清理失败不置标志，下次访问重试（db() 已记日志）；
-            // 本次读取照常走，超限行仍可能毒化本次读取——清理是
-            // 遗留数据的兜底，不是读前置条件。
-            oversizedSanitized.set(false)
-            return
-        }
-        if (purgedTexts.isNotEmpty()) {
-            // 墓碑文本记入防复活抑制（接管被删墓碑行的作用），在事务
-            // 提交之后记——抑制写 prefs，不参与 DB 事务回滚，记早了
-            // 会与回滚的墓碑行脱节。
-            noteRemovedTexts(context, purgedTexts)
+            if (purgedTexts == null) {
+                // 清理失败不置标志，下次访问重试（db() 已记日志）；
+                // 本次读取照常走：intake 已改走截断投影读（不抛超限
+                // 异常），面板读失败仍按 null 保留现有数据。
+                false
+            } else {
+                if (purgedTexts.isNotEmpty()) {
+                    // 墓碑文本记入防复活抑制（接管被删墓碑行的作用），在事务
+                    // 提交之后记——抑制写 prefs，不参与 DB 事务回滚，记早了
+                    // 会与回滚的墓碑行脱节。
+                    noteRemovedTexts(context, purgedTexts)
+                }
+                true
+            }
         }
     }
 
@@ -717,16 +725,29 @@ object ClipboardManager {
         if (ts > 0) lastClipTimestamp = ts
         lastText = text
 
+        // P-中2：intake 先过遗留超限清理（进程内只跑一次，见
+        // [sanitizeOversizedOnce]）再读最新行——此前 intake 裸读最新行，
+        // 库里有遗留超限行时新复制静默丢失。清理在决策锁之外跑：
+        // 写入侧早已限长，清理完成后不可能再出现超限行，清理与读
+        // 之间没有可插队的写；并发清理由门内 Mutex 串行化等待。
+        sanitizeOversizedOnce(context)
+
         // 以下决策段（读最新行/判存在→判抑制→插入）过 intakeMutex
         // 串行化，见锁的注释
         return intakeMutex.withLock {
             // 与“最新一条记录（含软删除）”比对：若仍与系统剪贴板内容一致，
             // 则视为没有新记录，避免重复插入。删除已改物理删，原墓碑行的
             // 作用由 prefs 里的防复活抑制集合接替（见 noteRemovedTexts）。
-            // 两项判断合并进一次 db{} 往返（每次剪贴板变化都走这里）
-            val (latest, exists) = db(context) { db ->
-                db.clipboardDao().getLatestIncludingDeleted() to db.clipboardDao().existsByText(text)
-            } ?: (null to true)
+            // 两项判断合并进一次 db{} 往返（每次剪贴板变化都走这里）。
+            // P-中2：最新行只取截断后的文本（不整行读全文），遗留超限行
+            // 不会再让本次读抛 SQLiteBlobTooBigException；读库失败不再
+            // 当成“已存在”（旧 `?: (null to true)` 会让新复制静默丢失），
+            // 而是按“未知”返回 false、内容仍在系统剪贴板里，下次变化
+            // 事件／补偿检查重试。
+            val (latestText, exists) = db(context) { db ->
+                db.clipboardDao().getLatestTextIncludingDeleted(MAX_TEXT_LENGTH) to
+                    db.clipboardDao().existsByText(text)
+            } ?: return@withLock false
             // 防复活抑制命中：先判「重新复制」放行，再判与最新行是否一致——
             // 已被物理删的文本不在有效行里，顺序反过来会让软删存量行把放行短路。
             // 放行判据只有一条（清点 S6 定论）：本次检查由剪贴板变更监听
@@ -739,7 +760,7 @@ object ClipboardManager {
             if (suppressionHash != null) {
                 if (!fromClipChangedEvent) return@withLock false
                 liftRemovedSuppression(context, suppressionHash)
-            } else if (latest?.text == text) {
+            } else if (latestText == text) {
                 // 去重关：重复复制不再静默忽略，顶到最前并刷新时间（仍只留一行）
                 if (!dedup) return@withLock addEntry(context, text, notify = true)
                 return@withLock false
@@ -846,4 +867,30 @@ object ClipboardManager {
             Timber.e(e, "clipboard database operation failed")
             null
         }
+}
+
+/**
+ * 一次性清理的进程内门（D-L6，纯协调逻辑，可 JVM 单测）：
+ * [runOnce] 只让第一个调用方执行清理，其余并发调用方在门内等待
+ * 清理完成、而不是与它竞速去读尚未清掉的超限行；清理成功后
+ * 置完成标志、后续调用直接返回；清理失败（[block] 回 false）
+ * 不置标志，下次调用重试。取消不会把标志置成完成：[Mutex.withLock]
+ * 在取消时释放锁，[done] 仍为 false。
+ */
+internal class SanitizeOnceGate {
+    private val mutex = Mutex()
+
+    @Volatile
+    private var done = false
+
+    /**
+     * @param block 清理本体，成功回 true、失败回 false。
+     */
+    suspend fun runOnce(block: suspend () -> Boolean) {
+        if (done) return
+        mutex.withLock {
+            if (done) return
+            if (block()) done = true
+        }
+    }
 }

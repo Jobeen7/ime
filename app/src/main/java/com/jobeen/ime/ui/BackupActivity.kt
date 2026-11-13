@@ -18,6 +18,7 @@ import com.jobeen.ime.ui.screen.BackupUiState
 import com.jobeen.ime.ui.theme.ImeTheme
 import com.jobeen.ime.ui.theme.AppAppearance
 import com.jobeen.ime.ui.theme.AppAppearanceMode
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -147,6 +148,8 @@ class BackupActivity : ComponentActivity() {
                 }
             } catch (e: Exception) {
                 password.fill(' ')
+                // 取消重抛（S-M1）：不吞取消、不报失败 toast（口令已清）。
+                if (e is CancellationException) throw e
                 Timber.w(e, "Create backup failed")
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null
@@ -171,6 +174,8 @@ class BackupActivity : ComponentActivity() {
                 BackupManager.startRestore(bytes, password)
             } catch (e: Exception) {
                 password.fill(' ')
+                // 取消重抛（S-M1）：不吞取消、不报失败 toast（口令已清）。
+                if (e is CancellationException) throw e
                 Timber.w(e, "Read backup file failed")
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null

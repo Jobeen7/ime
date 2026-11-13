@@ -1244,7 +1244,7 @@ abstract class BaseKeyboard(
         // 回车精简决策反推显示：显示与行为同一来源（EnterDecision），
         // 不再由空探针或图标单独定。empty 参数只为接口兼容而保留，
         // 空框不再把回车翻回换行。isComposing 在此仅作显示时点的
-        // 预测输入（组字中显示为换行图标，与旧口径一致）；按键时
+        // 预测输入（组字中显示为“确认”，I-L3 已定决定）；按键时
         // 的组字以引擎 job 执行时点的原始输入为准，两者时点不同
         // 但决策函数同一，逻辑不再各定各的。残余：状态管理器的
         // 去重三元组（动作／空／组字）不含多行与不要换行标志，
@@ -1384,7 +1384,9 @@ internal fun composeGestureHandlers(
  * 回车键显示映射（纯决策，可单测；I-L2）：显示与行为同一来源
  * （EnterDecision），四种决策各有显示——
  * - PerformAction：按编辑器动作取图标与文案；
- * - CommitCandidate（组字中点按上屏候选）：沿旧口径显示换行图标／文案；
+ * - CommitCandidate（组字中点按上屏候选）：显示“确认”文案
+ *   （I-L3，Jobeen 已定决定：只改显示、不改行为；图标仍为通用
+ *   回车图标——默认键为 Image 键，不渲染文案，见下）；
  * - InsertNewline：换行图标／“换行”文案；
  * - NoOp（九宫格多行无动作，换行走专用换行键）：图标沿用通用回车
  *   图标（不另发明图标），文案为空——不再谎称“换行”。
@@ -1405,5 +1407,12 @@ internal fun returnKeyDisplay(outcome: EnterOutcome, editorAction: Int): Pair<In
                 com.jobeen.ime.input.keyboard.window.ReturnKeyTypeText.labelFor(editorAction)
         }
         is EnterOutcome.NoOp -> R.drawable.ic_keyboard_return to ""
+        // I-L3：组字中点按回车是上屏候选，键面显示“确认”——只改
+        // 显示、不改行为（EnterDecision 与按键行为一律不动）。
+        // 已知差距：默认回车键是 Image 键（textSetter 对它为
+        // null），“确认”文案只在皮肤定义的文字回车键上可见；要在
+        // 默认图标键面上显示“确认”，须另定渲染方式（文字键／图标＋
+        // 文字），且与主微信框的纸飞机图标冲突——不由本处擅自改。
+        is EnterOutcome.CommitCandidate -> R.drawable.ic_keyboard_return to "确认"
         else -> R.drawable.ic_keyboard_return to "换行"
     }

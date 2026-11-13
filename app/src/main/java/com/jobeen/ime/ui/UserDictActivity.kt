@@ -342,6 +342,8 @@ class UserDictActivity : ComponentActivity() {
                     ToastUtil.showToast(getString(R.string.user_dict_uploaded_count, count, WebDavSync.remoteFileName(dict)))
                 }
                 .onFailure {
+                    // 取消不是失败（S-M1）：不报失败提示。
+                    if (DeepErrorMapper.isCancellation(it)) return@onFailure
                     Timber.w(it, "WebDAV upload failed")
                     showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
                 }
@@ -372,6 +374,11 @@ class UserDictActivity : ComponentActivity() {
                     }
                 }
                 .onFailure { e ->
+                    // 取消不是失败（S-M1）：不报提示、不走同名文件回退。
+                    if (DeepErrorMapper.isCancellation(e)) {
+                        setIdle()
+                        return@onFailure
+                    }
                     val code = (e as? WebDavSync.WebDavHttpException)?.httpCode
                     if (code == 403 || code == 404) {
                         // 同步目录本身不可用，此时再去 GET 同名文件注定也是 403/404，
@@ -400,6 +407,8 @@ class UserDictActivity : ComponentActivity() {
             result.onSuccess { count ->
                 ToastUtil.showToast(getString(R.string.user_dict_uploaded_schemes, count))
             }.onFailure {
+                // 取消不是失败（S-M1）：不报失败提示。
+                if (DeepErrorMapper.isCancellation(it)) return@onFailure
                 Timber.w(it, "uploadSchemes failed")
                 showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
             }
@@ -420,6 +429,8 @@ class UserDictActivity : ComponentActivity() {
                     if (summary.skippedEmpty.isNotEmpty()) getString(R.string.user_dict_skip_empty_suffix, summary.skippedEmpty.size) else ""
                 ToastUtil.showToast(getString(R.string.user_dict_downloaded_schemes, summary.count, skipNote))
             }.onFailure {
+                // 取消不是失败（S-M1）：不报失败提示。
+                if (DeepErrorMapper.isCancellation(it)) return@onFailure
                 Timber.w(it, "downloadSchemes failed")
                 showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
             }
@@ -457,6 +468,8 @@ class UserDictActivity : ComponentActivity() {
                     showNotice(getString(R.string.user_dict_test_ok), msg)
                 }
                 .onFailure {
+                    // 取消不是失败（S-M1）：不报失败提示。
+                    if (DeepErrorMapper.isCancellation(it)) return@onFailure
                     Timber.w(it, "WebDAV test connection failed")
                     showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
                 }
@@ -480,6 +493,8 @@ class UserDictActivity : ComponentActivity() {
                     )
                 }
                 .onFailure {
+                    // 取消不是失败（S-M1）：不报失败提示。
+                    if (DeepErrorMapper.isCancellation(it)) return@onFailure
                     Timber.w(it, "WebDAV download failed")
                     showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
                 }

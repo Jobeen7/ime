@@ -443,18 +443,19 @@ class SkinEditorSaverTest {
     // ---- WO33 第 2(a) 项：布局索引 hash 门 ----
 
     @Test
-    fun resolveActiveFilesRejectsLayoutHashMismatch() = runBlocking<Unit> {
+    fun resolveActiveFilesExcludesLayoutHashMismatch() = runBlocking<Unit> {
         val (root, layout, store) = newStore()
         seedSkin(layout, store)
-        // 外部改动布局文件、索引未同步：拒因须是 layout_hash_mismatch:lay1，
-        // 不静默打开旧索引指向的布局。
+        // 外部改动布局文件、索引未同步（S-L3 降级）：该布局被排除在列表
+        // 外，编辑器照常打开（skin.json 仍可编辑），不再整个拒开；
+        // 被排除的布局不在列表里，无法保存，不会用过期索引覆盖外部改动。
         File(layout.layoutGenDir("lay1", 1), "layout.json").writeText(layoutTextV2)
         val resolved = saver(layout, store, FakeApplier()).resolveActiveFiles()
-        assertTrue(resolved is ResolveActiveResult.Unavailable)
-        assertEquals(
-            "layout_hash_mismatch:lay1",
-            (resolved as ResolveActiveResult.Unavailable).reason,
-        )
+        assertTrue("expected Ok, got $resolved", resolved is ResolveActiveResult.Ok)
+        val active = (resolved as ResolveActiveResult.Ok).files
+        assertEquals(1, active.files.size)
+        assertTrue(active.files.all { it.kind == EditorFile.Kind.SKIN_JSON })
+        assertEquals(listOf("lay1"), active.unavailableLayouts)
         root.deleteRecursively()
     }
 

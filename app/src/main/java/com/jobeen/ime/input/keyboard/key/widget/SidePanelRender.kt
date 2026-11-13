@@ -214,6 +214,13 @@ abstract class SidePanelRender(
                 val top = panel.top + itemHeight * index - scrollOffset
                 val bottom = top + itemHeight
                 if (bottom < panel.top || top > panel.bottom) return@forEachIndexed
+                // I-L5：每条目只画在自己格内——多行标签越格时不叠到
+                // 相邻条目上（横屏“⊕／自定义”两行溢出即此；竖屏两行
+                // 放得下，裁剪无影响）。裁剪在已有 stretch 变换内、
+                // 与绘制同坐标空间，拉伸态下仍一致；与面板裁剪取交集，
+                // 滑出面板的部分仍不画。选中／按下底色同在格内，不另扩。
+                canvas.save()
+                canvas.clipRect(panel.left, top, panel.right, bottom)
 
                 //disabled selection background color
                 val isSelected = index == selectedIndex
@@ -257,6 +264,7 @@ abstract class SidePanelRender(
                         drawText(line, x, baselines[lineIndex], textPaint)
                     }
                 }
+                canvas.restore()
             }
             // 恢复原始对齐方式
             textPaint.textAlign = originalAlign

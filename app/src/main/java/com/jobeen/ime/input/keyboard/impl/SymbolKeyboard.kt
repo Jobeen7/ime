@@ -30,13 +30,13 @@ import com.jobeen.ime.input.keyboard.key.KeyboardPopup
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import com.jobeen.ime.input.keyboard.key.resolveSwipeReleaseForward
 import com.jobeen.ime.input.keyboard.key.shouldInterceptHorizontalSwipe
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BarSide
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.skin.symbol.HorizontalSymbolStripState
-import com.jobeen.ime.skin.symbol.KaomojiSwipe
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.skin.symbol.SharedPrefsSymbolBarTypeStore
@@ -70,6 +70,62 @@ class SymbolKeyboard(
 
         /** 左右滑翻页的最小横移（dp）；未达此距离只算点按／竖滚（与颜文字板同口径）。 */
         private const val SWIPE_MIN_DISTANCE_DP = 48
+
+        /**
+         * 侧栏单项最小行高（P-低2，预算口径）：侧栏项 15sp，Roboto 行盒
+         * 1.171875×15＝17.58dp，取整 18dp。渲染层按字号画墨水
+         * （SidePanelRender.textSize＝dp(15)），不跟系统字号倍率走，
+         * 故行高不乘字号倍率。
+         */
+        internal const val SIDE_ITEM_MIN_HEIGHT_DP = 18f
+
+        /**
+         * 「⊕／自定义」入口固定高（P-低2）：两行 12sp 行高 28.1dp
+         * ＋字体内边距约 1.9dp ≈ 30dp，取 32dp 留余量。旧口径
+         * sidePanelH/8 在默认竖屏 24% 只有 18.7dp，两行字上下各裁
+         * 约 4.7dp。入口是 TextView（setTextSize 按 SP 计），字号
+         * 倍率＞1 时按倍率放大（见 [layoutSideColumn]）。
+         */
+        internal const val CUSTOM_ENTRY_HEIGHT_DP = 32f
+
+        /** 侧栏可见行数上限：.1 定为 7 行；高度不足时按行盒折算下调。 */
+        internal const val SIDE_MAX_VISIBLE_ROWS = 7
+
+        /** 侧栏列高分配结果（P-低2，单位 dp）。 */
+        internal data class SideColumnLayout(
+            val customEntryHDp: Float,
+            val visibleRows: Int,
+            val itemHDp: Float,
+        )
+
+        /**
+         * 侧栏列高分配（P-低2，纯函数，可 JVM 单测；单位 dp）：
+         * 自定义入口先拿两行 12sp 的固定高度；剩余高度
+         * 按每项不低于 [SIDE_ITEM_MIN_HEIGHT_DP] 折算可见行数，上限
+         * [SIDE_MAX_VISIBLE_ROWS] 行、下限 1 行；算出的每项高恒 ≥
+         * 最小行高（除非列高本身小于入口高＋一行，此时仍保 1 行）。
+         *
+         * 预算（S24 Ultra 384×832dp，字号倍率 1.0）：
+         * 竖屏 24%（列高 149.8dp）→ 入口 32dp＋6 行×19.6dp；
+         * 竖屏 24%＋子条（列高 113.8dp）→ 4 行×20.4dp；
+         * 横屏 44%（列高 126.7dp）→ 5 行×18.9dp；
+         * 横屏 30%（列高 86.4dp）→ 3 行×18.1dp；
+         * 横屏 30%＋子条（列高 50.4dp）→ 1 行×18.4dp。
+         * 旧口径 7 行固定：竖屏 18.7dp、横屏 30% 仅 10.8dp、
+         * 横屏 30%＋子条 6.3dp，墨水溢出相邻行。
+         * 未选的方案：visableRow 固定改回 4（竖屏白白少看 2 行，
+         * 横屏 30%＋子条仍只有 11.0dp）；字号随高度缩放（横屏 30%
+         * 时要缩到约 9sp，不可读）。动态折算在各档都保住行盒。
+         */
+        internal fun layoutSideColumn(sidePanelHDp: Float, fontScale: Float = 1f): SideColumnLayout {
+            // 负列高（横条全开＋键盘拉到最小的极值）钳到 0：不量出负高。
+            val panelH = sidePanelHDp.coerceAtLeast(0f)
+            val customH = CUSTOM_ENTRY_HEIGHT_DP * fontScale
+            val itemAreaH = (panelH - customH).coerceAtLeast(0f)
+            val rows = (itemAreaH / SIDE_ITEM_MIN_HEIGHT_DP).toInt()
+                .coerceIn(1, SIDE_MAX_VISIBLE_ROWS)
+            return SideColumnLayout(customH, rows, itemAreaH / rows)
+        }
         /** P1-7 附加父类标签：数字符号集／九宫格符号集（各一“全部”子类）。 */
         private const val NUMERIC_PARENT_LABEL = "数字"
         private const val T9_PARENT_LABEL = "九宫格"
@@ -93,7 +149,9 @@ class SymbolKeyboard(
 
     /**
      * 左侧竖栏（2026-11-12 符号栏重做）：显示用户自定义符号列（默认 16），
-     * 上下滑动换符号；可见 7 行（另 1 行高固定留给底部“自定义”入口）。
+     * 上下滑动换符号；可见行数上限 7 行，实际按列高折算（P-低2，见
+     * [layoutSideColumn]，高度不足时下调、每项不低于 15sp 行盒）；
+     * 底部“自定义”入口固定高、另占一行。
      * 不再显示分类——分类切换走顶部栏的类型切换钮。
      */
     private val sidePanelKey = SidePanelKeyView(
@@ -159,7 +217,9 @@ class SymbolKeyboard(
     /** 左侧竖栏底部“自定义”入口（固定不滚动，点开设置页）。 */
     private val customEntryView: TextView = TextView(context).apply {
         gravity = Gravity.CENTER
-        // 12sp：两行（⊕／自定义）在 customH（sidePanelH/8，约 28dp）内放得下；
+        // 12sp：两行（⊕／自定义）需 28.1dp 行高＋字体内边距，入口高按
+        // CUSTOM_ENTRY_HEIGHT_DP 取 32dp（P-低2）；旧口径 sidePanelH/8
+        // 在默认竖屏 24% 只有 18.7dp，两行字会被上下各裁约 4.7dp。
         // 14sp 两行约 34dp 会被裁掉下半行。
         setTextSize(12f)
         setTextColor(colors.specialKeyText)
@@ -240,6 +300,35 @@ class SymbolKeyboard(
     private var downX = 0f
     private var downY = 0f
     private var swipingHorizontally = false
+
+    /**
+     * 拦截瞬间锁存的横向位移（P-低1）：拦截时位移已越过 48dp 且横向
+     * 占优，翻页／切分类方向即已锁定；抬手时按它决议，不再按抬手
+     * 瞬间位移重判（否则回缩再抬手落入死区）。null＝本次手势未拦截。
+     */
+    private var swipeLatchedDx: Float? = null
+
+    /** 已下发给侧栏的可见行数（P-低2）：只在变化时调 updateVisibleItemCount。 */
+    private var appliedSideRows = -1
+
+    /**
+     * 侧栏列高分配（P-低2）：px→dp 算预算、再回 px；onMeasure 与
+     * onLayout 共用同一口径，避免两处算出的入口高／行数漂移。
+     * 可见行数只在变化时下发（updateVisibleItemCount 会 clamp＋
+     * invalidate，每次 measure 都调会多余刷新）。
+     */
+    private fun sideColumnLayout(sidePanelHPx: Int): SideColumnLayout {
+        val density = context.resources.displayMetrics.density
+        val layout = layoutSideColumn(
+            sidePanelHPx / density,
+            context.resources.configuration.fontScale,
+        )
+        if (layout.visibleRows != appliedSideRows) {
+            appliedSideRows = layout.visibleRows
+            sidePanelKey.updateVisibleItemCount(layout.visibleRows)
+        }
+        return layout
+    }
 
     init {
         sideReturnBtn.borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
@@ -439,8 +528,9 @@ class SymbolKeyboard(
      * 翻页最小距离（48dp）且横向占优时才拦截（子键收 ACTION_CANCEL，
      * 点按不触发）；未达翻页距离的横向小拖动不拦截、仍归子键点按
      * （I-M2，见 EmojiKeyboard 同款注释）；竖向位移归网格滚动，
-     * 不拦截；抬手时按 [KaomojiSwipe.directionFor] 判定方向翻页；
-     * 翻页到端时改切分类（WO30 §3(5)），首／末分类到端才无动作。
+     * 不拦截；抬手时按拦截瞬间锁存的方向翻页（P-低1，不再按抬手
+     * 瞬间位移重判）；翻页到端时改切分类（WO30 §3(5)），首／末分类
+     * 到端才无动作。
      */
     @SuppressLint("ClickableViewAccessibility")
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -449,6 +539,7 @@ class SymbolKeyboard(
                 downX = event.x
                 downY = event.y
                 swipingHorizontally = false
+                swipeLatchedDx = null
                 return false
             }
             MotionEvent.ACTION_MOVE -> {
@@ -457,6 +548,7 @@ class SymbolKeyboard(
                     val dy = event.y - downY
                     if (shouldInterceptHorizontalSwipe(dx, dy, swipeMinDistancePx)) {
                         swipingHorizontally = true
+                        swipeLatchedDx = dx
                         return true
                     }
                 }
@@ -464,6 +556,7 @@ class SymbolKeyboard(
             }
             MotionEvent.ACTION_CANCEL -> {
                 swipingHorizontally = false
+                swipeLatchedDx = null
                 return false
             }
         }
@@ -478,10 +571,11 @@ class SymbolKeyboard(
                     swipingHorizontally = false
                     val dx = event.x - downX
                     val dy = event.y - downY
-                    KaomojiSwipe.directionFor(dx, dy, swipeMinDistancePx)?.let { direction ->
+                    val latchedDx = swipeLatchedDx
+                    swipeLatchedDx = null
+                    resolveSwipeReleaseForward(latchedDx, dx, dy, swipeMinDistancePx)?.let { forward ->
                         // WO30 §3(5)：先翻页；到端无动作时改切分类，
                         // 首／末分类到端才无动作（不循环绕回）。
-                        val forward = direction == KaomojiSwipe.Direction.NEXT
                         if (!pageSubCollection(forward)) {
                             swipeCategory(forward)
                         }
@@ -491,6 +585,7 @@ class SymbolKeyboard(
             }
             MotionEvent.ACTION_CANCEL -> {
                 swipingHorizontally = false
+                swipeLatchedDx = null
                 return true
             }
         }
@@ -655,9 +750,11 @@ class SymbolKeyboard(
         val hH = if (hStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val contentH = th - barH - subH - hH
         val sidePanelH = contentH * 3 / 4
-        // 2026-11-12：竖栏区 8 行高——上 7 行是可滚符号列，下 1 行是
-        // 固定“自定义”入口；行高一致（sidePanelH/8）。
-        val customH = sidePanelH / 8
+        // P-低2：竖栏区列高按 layoutSideColumn 分配——自定义入口先拿
+        // 足两行 12sp 的固定高，剩余高度按 15sp 行盒折算可见行数
+        // （上限 7 行）；旧口径 8 等分（sidePanelH/8）在默认竖屏
+        // 24% 每项只有 18.7dp、横屏 30% 仅 10.8dp。
+        val customH = context.dp(sideColumnLayout(sidePanelH).customEntryHDp).toInt()
         // 侧栏底区整段归返回钮（板锁已删）。
         val returnRegionH = contentH - sidePanelH
         sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH - customH, MeasureSpec.EXACTLY))
@@ -682,7 +779,8 @@ class SymbolKeyboard(
         val hH = if (hStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val contentH = (b - t) - barH - subH - hH
         val sidePanelH = contentH * 3 / 4
-        val customH = sidePanelH / 8
+        // P-低2：与 onMeasure 同一口径（见 sideColumnLayout）。
+        val customH = context.dp(sideColumnLayout(sidePanelH).customEntryHDp).toInt()
         barView?.layout(0, 0, r - l, barH)
         subStripView.layout(0, barH, r - l, barH + subH)
         hStripView.layout(0, barH + subH, r - l, barH + subH + hH)

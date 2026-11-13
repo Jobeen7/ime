@@ -39,6 +39,7 @@ object SkinEditorEntry {
             // 回退链（问题 6）：主布局→首个绑定布局；无绑定布局不默认选全局首项。
             val file = active.files.firstOrNull { it.id == active.primaryLayoutId }
                 ?: active.files.firstOrNull { it.kind == EditorFile.Kind.LAYOUT }
+            toastUnavailableLayouts(context, active.unavailableLayouts)
             if (file == null) {
                 Timber.w("skin editor: no bound layout")
                 ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_bound_layout))
@@ -60,6 +61,7 @@ object SkinEditorEntry {
                 is ResolveActiveResult.Ok -> resolved.files
             }
             val file = active.files.firstOrNull { it.kind == EditorFile.Kind.SKIN_JSON }
+            toastUnavailableLayouts(context, active.unavailableLayouts)
             if (file == null) {
                 Timber.w("skin editor: no active skin for openSkinJson")
                 ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_active_skin))
@@ -70,13 +72,29 @@ object SkinEditorEntry {
     }
 
     /**
-     * resolve 失败提示（WO33 第 2(b) 项）：具体原因进 Timber 日志；
+     * resolve 失败提示（WO33 第 2(b) 项；S-L1）：具体原因进 Timber 日志；
      * 用户侧 toast 按 [SkinEditorReasons.entryToastResId] 取文案——
-     * 只有 active_hash_mismatch 给具体提示，其余沿用通用 toast。
+     * 活动记录／布局索引两类 hash 失配给具体提示，其余沿用通用 toast。
      */
     private fun toastResolveFailed(context: Context, reason: String) {
         Timber.w("skin editor: resolve failed: $reason")
         ToastUtil.showToast(context, context.getString(SkinEditorReasons.entryToastResId(reason)))
+    }
+
+    /**
+     * 失配布局被排除的提示（S-L3）：编辑器照常打开、该布局不在文件列表
+     * 里，用户在页内看不到它，入口处提示一次（恢复靠重新导入皮肤）。
+     * 页内提示须 SkinEditorScreen 另行接 unavailableLayouts（不在本次范围）。
+     */
+    private fun toastUnavailableLayouts(context: Context, unavailableLayouts: List<String>) {
+        val first = unavailableLayouts.firstOrNull() ?: return
+        Timber.w("skin editor: layout unavailable (hash mismatch, excluded): $first")
+        ToastUtil.showToast(
+            context,
+            context.getString(
+                SkinEditorReasons.reasonResId("layout_hash_mismatch:$first"),
+            ),
+        )
     }
 
     private fun openEditor(context: Context, filePath: String) {

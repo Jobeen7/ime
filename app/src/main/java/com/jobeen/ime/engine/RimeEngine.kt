@@ -62,6 +62,7 @@ import com.jobeen.ime.engine.rime.core.KeycapFilterState
 import com.jobeen.ime.engine.rime.core.Rime
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.RimeMessage
+import com.jobeen.ime.engine.rime.core.RimeStoppedException
 import com.jobeen.ime.data.App.modelDir
 import com.jobeen.ime.engine.rime.data.DataManager.sharedDataDir
 import com.jobeen.ime.engine.rime.data.DataManager.userDataDir
@@ -442,7 +443,18 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     internal class QueuedJob(
         val block: suspend RimeApi.() -> Unit,
         val onDropped: (() -> Unit)? = null,
-    )
+    ) {
+        /**
+         * 作业体是否已开始执行（I-L1）：消费循环在 runOnReady 块内、
+         * 紧贴 [block] 调用前置真。丢弃回调只在作业体未执行时才是
+         * 标志／等待方的唯一复位方；作业体已执行时其 finally 已复
+         * 位，再调 onDropped 即双放（releaseRunning 是普通置位，
+         * 两次释放之间另一路抢到部署位会被第二放误删）。跨线程：
+         * 置位在 rime-main（作业体执行线程）、读取在消费循环的
+         * catch（作业体抛错后），故用 AtomicBoolean。
+         */
+        internal val started = java.util.concurrent.atomic.AtomicBoolean(false)
+    }
 
     private val jobs by lazy { Channel<QueuedJob>(JOB_QUEUE_CAPACITY) }
     private var session: RimeSession? = null
@@ -676,13 +688,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 写成 entry.block() 时编译器要求显式传接收者
                         // （原实现 job() 即此形态）。
                         val job = entry.block
+                        // I-L1：紧贴作业体调用前置位——此前的补设段
+                        // 被取消时作业体未执行，丢弃回调仍须跑；置位
+                        // 之后作业体自身的 finally 即复位方，消费循
+                        // 环不再补调 onDropped。
+                        entry.started.set(true)
                         job()
                     }
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     // 取消到达时作业体未执行（正挂在 runOnReady 或 receive
                     // 上）：丢弃回调是等待方的唯一复位方，须在循环死亡前
                     // 调用，否则 deployAndAwait 的等待方空等满整个超时（E-S3）。
-                    entry.onDropped?.invoke()
+                    // 作业体已执行时不调（I-L1）：其 finally 已复位标志，
+                    // 再调 onDropped 即双放——releaseRunning 是普通置位，
+                    // 两次释放之间另一路抢到部署位会被第二放误删。
+                    if (!entry.started.get()) entry.onDropped?.invoke()
                     throw e
                 } catch (e: Exception) {
                     // 单个 job 失败（如引擎在就绪前被停掉，whenReady 抛
@@ -692,8 +712,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     // 消费循环是 jobs 唯一的串行执行点，丢弃回调跑在本
                     // 循环内，与作业体执行点同一线程/队列，回调只做幂等
                     // 复位与 deferred 完成，故与作业体 finally 的保证等价。
+                    // 作业体已执行时不调（I-L1）：其 finally 已复位，见上。
                     Timber.w(e, "Rime job failed")
-                    entry.onDropped?.invoke()
+                    if (!entry.started.get()) entry.onDropped?.invoke()
                 }
             }
         }
@@ -1610,7 +1631,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                                 try {
                                     withTimeout(600_000) { joinMaintenanceThread() }
                                 } catch (e: TimeoutCancellationException) {
-                                    EngineDeployState.releaseRunning()
+                                    // 复位只在 finally 一处（I-L1）：此处预先释放再叠 finally 即双放。
                                     throw IllegalStateException("deploy join timeout")
                                 }
                                 // 成功且部署前后指纹稳定时才存（部署中输入变了则不存）。
@@ -2797,7 +2818,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 且部署前后指纹稳定时才存新指纹（部署中输入变了则不存，下次再编）。
      * forceFull=true 时永不跳过（切换/导入误调时的硬约束；切换/导入
      * 本身仍直调 deployAndAwait，不走本函数）。冷启动无维护快速启动
-     * 已由 librime mtime 跳过覆盖，不在本函数处理。
+     * 已由 librime mtime 跳过覆盖，不在本函数处理。引擎已停时不跳过
+     * （H-1）：合成的 Finish 会把已停的引擎标为 initialized=true，
+     * 而方案表读回的 job 在就绪门即被丢；此时走 deployAndAwait
+     * （其入口先重启再部署）。
      * 异步维护旧表打字不做（需产品决策：与部署期按键门禁矛盾——维护
      * 中的键要么被门丢弃、要么在旧表上打，两种语义只能取其一）。
      */
@@ -2811,6 +2835,12 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         val pre = withContext(Dispatchers.IO) { computeCurrentDeployFingerprint(ctx) }
         val stored = readStoredDeployFingerprint(ctx)
         if (shouldSkipDeploy(stored, pre, deployProductsPresent(), forceFull)) {
+            // H-1：引擎已停时跳过是错的——合成的 Finish 会把已停的
+            // 引擎标为 initialized=true、刷新方案表，而方案表读回
+            // 的 job 在就绪门即被丢、实际什么都没刷新。探到 STOPPED
+            // 即不跳过，走 deployAndAwait（其入口先重启再部署；
+            // 上次部署既已失败，本次即补跑，不算多余重编）。
+            if (restartEngineIfStopped()) return deployAndAwait(timeoutMs)
             dispatchAction(
                 Action.RimeMessage(
                     RimeMessage.DeployMessage(RimeMessage.DeployMessage.State.Finish)
@@ -2846,7 +2876,14 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      *   会误清后来的持有者。
      * - 门内以 EngineDeployState.tryAcquireRunning() 抢占部署位
      *   （抢不到按门禁失败返回 FAILED），标志由部署作业收尾复位
-     *   （先复位再 complete，等待方醒来时状态已一致）。
+     *   （只在作业体 finally 一处复位；complete() 只分派等待方恢复、
+     *   不内联执行等待方，故等待方醒来时状态已一致）。
+     * - H-1 自愈：门过之后、作业发出之前，先探引擎是否已停
+     *   （见 [restartEngineIfStopped]）：上次部署在 deploy() 内
+     *   抛错致 lifecycle 打回 STOPPED 时，作业在 runOnReady 即被
+     *   拒、本次部署本身也跑不起来；探到 STOPPED 即先重启（普通
+     *   启动，旧 .ocd2 可用）再发作业，瞬时失败可自愈、持续失败
+     *   每次出现都重试并可见报错，不再静默死停。
      * - 通过 sendDeployJob 串行投递任务：deploy() -> joinMaintenanceThread() ->
      *   等 native 成功/失败通知（上限 DEPLOY_OUTCOME_TIMEOUT_MS，超时按未知
      *   走既有成功路径）-> 失败不合成 Finish、返回 FAILED 并记单发补跑
@@ -2887,6 +2924,41 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * - 超时系数说明：Base 冷编译实测约 20 秒、热编译约 12 秒，
      *   180 秒起步已有 9 倍余量，不改系数；超时是语义问题不是时限问题。
      */
+    /**
+     * H-1 自愈探针：部署作业发出之前，探一次引擎是否已停（STOPPED）。
+     * 探针是空 runOnReady：READY 时即时返回（部署作业无影响）；
+     * STARTING/STOPPING 时等到就绪或真停（与作业体本身的等待同一
+     * 语义，不另造等待）；STOPPED 时立即抛 RimeStoppedException，
+     * 此时先走一次 [RimeDaemon.restartRime] 再发作业——重启是普通
+     * 启动（fullCheck=false，旧 .ocd2 可用），随后本次部署照常重编。
+     * 会话尚未建立（session 为 null）时不探：作业随后在消费循环的
+     * 空会话分支按丢弃处理，沿既有口径。调用方取消原样重抛，不吞
+     * 取消语义；其它异常（会话未建立等）按“未知”处理、直接发作业。
+     * 探针与重启之间无挂起：并发的他路重启若恰落进该微秒窗口，
+     * 最坏结果是一次多余的引擎弹跳（finalize＋startup），无状态错乱。
+     *
+     * @return 是否探到 STOPPED 并已发起重启。
+     */
+    private suspend fun restartEngineIfStopped(): Boolean {
+        val currentSession = session ?: return false
+        val stopped = try {
+            currentSession.runOnReady { }
+            false
+        } catch (e: RimeStoppedException) {
+            true
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Timber.w(e, "Engine stop probe failed; proceeding without restart")
+            false
+        }
+        if (stopped) {
+            Timber.w("Engine stopped before deploy; restarting before deploy job")
+            daemon.restartRime()
+        }
+        return stopped
+    }
+
     suspend fun deployAndAwait(
         timeoutMs: Long,
         acquireUpdateImportGate: Boolean = true,
@@ -2919,6 +2991,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             deployMutex.unlock()
             return DeployAwaitResult.FAILED
         }
+        // H-1 自愈：门已过、作业未发之前，先探一次引擎是否已停
+        // （上次部署在 deploy() 内抛错、lifecycle 打回 STOPPED 后，
+        // 作业在 runOnReady 即被拒，本次部署本身也跑不起来——正是
+        // H-1“连下一次部署也被拒”的死锁）。探到 STOPPED 即先重启
+        // 再发作业；重启走 fullCheck=false 的普通启动（旧 .ocd2
+        // 可用，不因一本繁简词典损坏整机无键盘），随后本次部署照
+        // 常重编。探针是空 runOnReady：READY 时即时返回、STARTING
+        // 时等到就绪（与作业体本身的等待同一语义）、STOPPED 时立
+        // 即抛 RimeStoppedException；调用方取消原样重抛。
+        restartEngineIfStopped()
         // 等待方是否已放弃等待（超时/取消）：放弃后作业仍在跑，
         // 放闸归作业体收尾；未放弃时放闸归等待方 finally。
         val waitingGaveUp = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -3001,16 +3083,21 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                             pendingRedeploy.markFailed()
                             DeployAwaitResult.FAILED
                         }
-                        // 标志先于 complete 复位：等待方醒来时状态已一致，
-                        // 不会把刚完成的部署误判为忙；以下均为非挂起调用，
-                        // 作业取消也不会打断这段收尾。
-                        EngineDeployState.releaseRunning()
-                        EngineDeployState.releaseOrphanRunning()
+                        // 标志只在 finally 复位一处（I-L1）：此前此处先复位、
+                        // finally 再复位，两次普通置位之间另一路抢到部署位
+                        // 会被第二放误删。complete() 只把等待方的恢复分派
+                        // 到其调度器、从不内联执行等待方，故 finally 的复
+                        // 位仍先于等待方醒来时观测到的状态——“先复位再
+                        // complete”的排序保证不变，只是复位点合而为一。
+                        // 以下均为非挂起调用，作业取消也不会打断这段收尾。
                         deferred.complete(result)
                     } finally {
-                        // 兜底复位（幂等）：complete 前后的任何异常路径都不滞留标志。
+                        // 唯一复位点：complete 前后的任何异常路径都不滞留标志。
                         // 等待方已放弃时（超时/取消，孤儿仍在跑）由作业体放闸；
-                        // 否则放闸归等待方 finally——凭证 CAS 使双放无害。
+                        // 否则放闸归等待方 finally。双放安全不靠释放本身
+                        // （releaseRunning 是普通置位、无凭证 CAS）——
+                        // 靠本作业体只在此一处释放、且消费循环的 onDropped
+                        // 只在作业体未执行时才调（QueuedJob.started 守卫）。
                         EngineDeployState.releaseRunning()
                         EngineDeployState.releaseOrphanRunning()
                         if (waitingGaveUp.get()) UpdateImportGate.release(gateToken)
@@ -3268,8 +3355,15 @@ internal fun orphanDeployNeedsRealign(
  * Success/Failure 结束；initialize/Reload 在 join 后合成 Finish——
  * 合成的 Finish 必须查本轮的实际结果，不能无条件报成功。
  * - Start 打开一轮；Failure 记下本轮失败；Finish 消费一次判定。
- * - 失败只毒化其后的第一个 Finish：同一轮的第二个 Finish（跳过部署
- *   的补发等）不再受牵连；新一轮 Start 后旧失败按轮次失效。
+ * - 失败毒化本轮的全部 Finish，直到下一轮 Start 为止（I-M1，
+ *   2026-11-13 复查修正旧口径）：旧口径“失败只毒化其后的第一
+ *   个 Finish”之前提不成立——跳部署的 Reload 合成的第二个
+ *   Finish 不是“只是补发”，它跑的是完整收尾（含方案表刷新），
+ *   此时磁盘产物可能是失败部署留下的半成品；若第二个 Finish
+ *   按成功处理，引擎会被重新标为 initialized=true 并用半成品
+ *   方案表工作。毒化期内任何 Finish 都按失败处理（不置
+ *   initialized、不刷新方案表），pendingRedeploy 亦不被清除，
+ *   下次键盘出现仍补跑。下一轮 Start 到达即开新轮次，旧失败失效。
  * - 无 Start 的 Failure 同样记在本轮（部署未及发 Start 即失败时，
  *   下一个 Finish 仍应按失败处理）；从未部署过时失败标志为 -1，
  *   与轮次 0 不相等，Finish 恒按成功处理。
@@ -3278,7 +3372,6 @@ internal fun orphanDeployNeedsRealign(
 internal class DeployRunTracker {
     private var runId = 0L
     private var failedRunId = -1L
-    private var consumedRunId = -1L
 
     fun onStart() {
         runId++
@@ -3289,13 +3382,12 @@ internal class DeployRunTracker {
     }
 
     /**
-     * 消费一次 Finish 判定：本轮明确失败且尚未被 Finish 消费过时
-     * 返回 true；否则返回 false。无论结果都记下本轮已消费。
+     * 消费一次 Finish 判定：本轮明确失败时返回 true；否则返回 false。
+     * 同一失败轮次的第二次及以后的 Finish 同样返回 true（I-M1）——
+     * 判定是轮次属性，不是“一次性票据”，不再设已消费标记。
      */
     fun consumeFinishFailed(): Boolean {
-        val failed = failedRunId == runId && consumedRunId != runId
-        consumedRunId = runId
-        return failed
+        return failedRunId == runId
     }
 }
 

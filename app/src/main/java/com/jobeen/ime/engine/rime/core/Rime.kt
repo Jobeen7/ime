@@ -190,6 +190,24 @@ class Rime : RimeApi, RimeLifecycleOwner {
         try {
             startRime(true)
         } catch (t: Throwable) {
+            // H-1（2026-11-13 复查）：转换失败不得走静默死路——抛错
+            // 之前先把部署结果合成一条 native Deploy Failure 消息、
+            // 走正常失败通道（DeployRunTracker 记失败、pendingRedeploy
+            // 标补跑、失败通知投递），再由 onNativeRestartFailed 打回
+            // STOPPED 并重抛。消息经 notificationQueue（trySend，
+            // 不挂起、不抛错）：即使引擎随后停机，分发线程仍独立、
+            // 失败通道不受影响。Failure 先于 STOPPED 发出——
+            // onNativeRestartFailed 之后 lifecycle 已是 STOPPED，
+            // withRimeContext 会把后续异常转写，消息仍须在此之前入队。
+            // 转换失败仍不报成功：本处只补失败信号，不改抛错本身。
+            runCatching {
+                handleMessage(
+                    RimeMessage.MessageType.Deploy.ordinal,
+                    arrayOf<Any>("failure"),
+                )
+            }.onFailure { emitError ->
+                Timber.w(emitError, "Failed to emit synthetic deploy Failure")
+            }
             onNativeRestartFailed(t)
         }
     }

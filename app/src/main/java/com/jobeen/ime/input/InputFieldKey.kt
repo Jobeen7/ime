@@ -151,3 +151,43 @@ internal class InputFieldTracker {
         return changed
     }
 }
+
+/**
+ * 跨 onStartInput／onStartInputView 两入口锁存的字段身份变化
+ * （V-中1，I-M3 停云端会话的独立信号）：
+ *
+ * - 锁存原因：[InputFieldTracker.track] 只在第一次喂入新身份时
+ *   返回 true；onStartInput 已消费过后，onStartInputView 再调
+ *   返回 false——直接复用返回值不够，需把 onStartInput 的判变
+ *   锁存一次、留到视图弹出时消费。
+ * - 与复位门分开：复位门走 LatinIME 公式（WO32），本锁存只走
+ *   四项身份比对；两路门分别传下，复位逻辑不动。锁存为真只说明
+ *   “四项身份变过”，微信各会话四项全同的切换仍锁存不到——那是
+ *   四项口径本身的盲区，与 WO32 复位门同限（见
+ *   [shouldResetWindowOnStartInput]），不由本类掩盖。
+ * - 生命周期：onStartInput 记入（或累积）、onStartInputView 链路
+ *   消费一次、onFinishInput 清零残留；三处缺一不可，否则跨会话
+ *   残留会在同框重显时误停云端会话。
+ * 仅主线程（IMS 回调线程）使用，与 [WindowResetGate] 同口径，
+ * 无需同步。
+ */
+internal class FieldIdentityChangeLatch {
+    private var latched: Boolean = false
+
+    /** 记入一次判变；已锁存时保持真（多次换框累积不丢）。 */
+    fun note(changed: Boolean) {
+        if (changed) latched = true
+    }
+
+    /** 消费一次并清零；无锁存时返回 false。 */
+    fun consume(): Boolean {
+        val value = latched
+        latched = false
+        return value
+    }
+
+    /** 会话结束清零残留。 */
+    fun clear() {
+        latched = false
+    }
+}

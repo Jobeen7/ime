@@ -89,8 +89,19 @@ interface ClipboardDao {
     @Query("SELECT EXISTS(SELECT 1 FROM clipboard_records WHERE text = :text AND deleted = 0 LIMIT 1)")
     suspend fun existsByText(text: String): Boolean
 
-    @Query("SELECT * FROM clipboard_records ORDER BY timestamp DESC LIMIT 1")
-    suspend fun getLatestIncludingDeleted(): ClipboardRecord?
+    /**
+     * intake 路径专用（P-中2）：只取最新行截断后的文本，不整行读全文。
+     * 遗留超限行（限长前写入，约 2MB 起）用 `SELECT *` 读出即抛
+     * SQLiteBlobTooBigException；截断投影在 SQL 内把文本压到 [limit]
+     * 字以内再返回，永不触发该异常。比对口径与写入侧一致：入库文本
+     * 本就按 [com.jobeen.ime.data.manager.ClipboardManager.MAX_TEXT_LENGTH]
+     * 截断（见 checkCurrentClipboard），截断后比对等价于清理后的行比对。
+     * 残余：SQLite substr 按码点计、Kotlin take 按 UTF-16 单元计，
+     * 含代理对的超限文本在边界处可差一个单元——只影响“与最新行一致”
+     * 的快 path（失配时落到 existsByText 全值判定，不会误判新旧）。
+     */
+    @Query("SELECT substr(text, 1, :limit) FROM clipboard_records ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestTextIncludingDeleted(limit: Int): String?
 
     // 只数有效行：软删除行会保留一段时间，计入上限会提前误删最旧的有效记录
     @Query("SELECT COUNT(*) FROM clipboard_records WHERE deleted = 0")

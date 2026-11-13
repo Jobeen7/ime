@@ -27,11 +27,11 @@ import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.keyboard.key.KeyboardRippleView
 import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import com.jobeen.ime.input.keyboard.key.resolveSwipeReleaseForward
 import com.jobeen.ime.input.keyboard.key.shouldInterceptHorizontalSwipe
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
-import com.jobeen.ime.skin.symbol.KaomojiSwipe
 import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolItem
@@ -49,8 +49,9 @@ import splitties.views.dsl.core.matchParent
  *   5×5 网格＋返回钮；提交后自动返回（BoardAutoReturn 含 KAOMOJI）。
  * - 左右滑切换分类（本项核心）：板级 onInterceptTouchEvent
  *   拦截横向主导的滑动（竖向仍归网格滚动，短移仍归点按），
- *   抬手时按 [KaomojiSwipe.directionFor] 判定方向，切到相邻
- *   分类；到端不循环绕回（与翻页同口径），到端时滑了也无动作。
+ *   拦截瞬间锁存方向、抬手时按锁存方向切到相邻分类（P-低1，
+ *   不再按抬手瞬间位移重判）；到端不循环绕回（与翻页同口径），
+ *   到端时滑了也无动作。
  * - 颜文字键字号 15f（表情／符号板 18f 是单字形；颜文字是
  *   多字串，15f 能多放两字；超长项仍可能显示不全，网格无缩
  *   字号机制，属通用限制，不在本项内修）。
@@ -150,6 +151,14 @@ class KaomojiKeyboard(
     private var downY = 0f
     private var swipingHorizontally = false
 
+    /**
+     * 拦截瞬间锁存的横向位移（P-低1，与符号板同款）：拦截时位移已
+     * 越过 48dp 且横向占优，切分类方向即已锁定；抬手时按它决议，
+     * 不再按抬手瞬间位移重判（否则回缩再抬手落入死区）。null＝本次
+     * 手势未拦截。
+     */
+    private var swipeLatchedDx: Float? = null
+
     init {
         sideReturnBtn.borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
         sideReturnBtn.hMargin = 0
@@ -219,8 +228,8 @@ class KaomojiKeyboard(
      * 左右滑拦截：横向位移达到切分类最小横移（48dp）且横向占优
      * 时才拦截（子键收 ACTION_CANCEL，点按不触发）；未达最小横移
      * 的横向小拖动不拦截、仍归子键点按（I-M2，见 EmojiKeyboard
-     * 同款注释）；竖向位移归网格滚动，不拦截；抬手在 onTouchEvent
-     * 里按位移判定方向。
+     * 同款注释）；竖向位移归网格滚动，不拦截；抬手时按拦截瞬间
+     * 锁存的方向切分类（P-低1，不再按抬手瞬间位移重判）。
      */
     @SuppressLint("ClickableViewAccessibility")
     override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
@@ -229,6 +238,7 @@ class KaomojiKeyboard(
                 downX = event.x
                 downY = event.y
                 swipingHorizontally = false
+                swipeLatchedDx = null
                 return false
             }
             MotionEvent.ACTION_MOVE -> {
@@ -237,6 +247,7 @@ class KaomojiKeyboard(
                     val dy = event.y - downY
                     if (shouldInterceptHorizontalSwipe(dx, dy, swipeMinDistancePx)) {
                         swipingHorizontally = true
+                        swipeLatchedDx = dx
                         return true
                     }
                 }
@@ -244,6 +255,7 @@ class KaomojiKeyboard(
             }
             MotionEvent.ACTION_CANCEL -> {
                 swipingHorizontally = false
+                swipeLatchedDx = null
                 return false
             }
         }
@@ -258,14 +270,17 @@ class KaomojiKeyboard(
                     swipingHorizontally = false
                     val dx = event.x - downX
                     val dy = event.y - downY
-                    KaomojiSwipe.directionFor(dx, dy, swipeMinDistancePx)?.let { direction ->
-                        swipeCategory(direction == KaomojiSwipe.Direction.NEXT)
+                    val latchedDx = swipeLatchedDx
+                    swipeLatchedDx = null
+                    resolveSwipeReleaseForward(latchedDx, dx, dy, swipeMinDistancePx)?.let { forward ->
+                        swipeCategory(forward)
                     }
                     return true
                 }
             }
             MotionEvent.ACTION_CANCEL -> {
                 swipingHorizontally = false
+                swipeLatchedDx = null
                 return true
             }
         }

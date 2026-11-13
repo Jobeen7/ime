@@ -783,7 +783,7 @@ fun MainScreen(
                     val fabInteractionSource = remember { MutableInteractionSource() }
                     val asteriskRotation by animateFloatAsState(
                         targetValue = spinDegrees,
-                        animationSpec = tween(durationMillis = 600, easing = FastOutSlowInEasing),
+                        animationSpec = tween(durationMillis = FAB_SPIN_DURATION_MS, easing = FastOutSlowInEasing),
                         label = "fabAsteriskSpin",
                     )
                     Box(
@@ -797,8 +797,9 @@ fun MainScreen(
                                 interactionSource = fabInteractionSource,
                             ) {
                                 touch()
-                                spinDegrees += 360f
-                                if (!fabAnyRunning) fabExpanded = !fabExpanded
+                                val next = nextFabMainState(spinDegrees, fabExpanded, fabAnyRunning)
+                                spinDegrees = next.spinDegrees
+                                fabExpanded = next.expanded
                             },
                         contentAlignment = Alignment.Center,
                     ) {
@@ -824,10 +825,8 @@ fun MainScreen(
                                 val dotR = 12.2.dp.toPx()
                                 val dotRadius = 2.3.dp.toPx()
                                 val armWidth = 2.5.dp.toPx()
-                                for (i in 0 until 8) {
-                                    val angle = Math.toRadians((i * 45 - 90).toDouble())
-                                    val dx = (dotR * kotlin.math.cos(angle)).toFloat()
-                                    val dy = (dotR * kotlin.math.sin(angle)).toFloat()
+                                for (i in 0 until FAB_ASTERISK_ARM_COUNT) {
+                                    val (dx, dy) = fabAsteriskArmEnd(i, dotR)
                                     val end = androidx.compose.ui.geometry.Offset(c.x + dx, c.y + dy)
                                     drawLine(
                                         color = cream,
@@ -971,6 +970,43 @@ private fun TestInputPanelSheet(
             Spacer(Modifier.height(16.dp))
         }
     }
+}
+
+/**
+ * FAB 最终态的可测模型（S-L6）：主钮点按后的状态推导，与 MainScreen 内联
+ * onClick 同口径——点按恒转一圈（spinDegrees += 360f），展开只在空闲时
+ * 切换；运行态下旋转照常累加（Canvas 已被进度弧取代，转动等运行结束
+ * 才兑现一次），展开态不动（不重复展开）。Compose 主机无截图手段，
+ * 星芒坐标／600ms tween／点按转一圈由此处的纯函数钉住，星芒与旋转
+ * 手感仍须真机验收。
+ */
+internal const val FAB_SPIN_STEP_DEGREES = 360f
+internal const val FAB_SPIN_DURATION_MS = 600
+internal const val FAB_ASTERISK_ARM_COUNT = 8
+
+internal data class FabMainClickResult(val spinDegrees: Float, val expanded: Boolean)
+
+internal fun nextFabMainState(
+    spinDegrees: Float,
+    expanded: Boolean,
+    anyRunning: Boolean,
+): FabMainClickResult = FabMainClickResult(
+    spinDegrees = spinDegrees + FAB_SPIN_STEP_DEGREES,
+    expanded = if (anyRunning) expanded else !expanded,
+)
+
+/** 星芒第 i 臂的角度（度）：首臂朝上（-90°），每臂 45°，共 8 臂。 */
+internal fun fabAsteriskArmAngleDegrees(index: Int): Double = index * 45.0 - 90.0
+
+/**
+ * 星芒第 i 臂末端相对圆心的偏移（dotR 为末端圆点到圆心的距离，
+ * 单位与调用方一致；定稿 dotR=12.2dp、圆点半径 2.3dp、臂宽 2.5dp、
+ * 画布 32dp、米白 #DBD9C5）。
+ */
+internal fun fabAsteriskArmEnd(index: Int, dotR: Float): Pair<Float, Float> {
+    val angle = Math.toRadians(fabAsteriskArmAngleDegrees(index))
+    return (dotR * kotlin.math.cos(angle)).toFloat() to
+        (dotR * kotlin.math.sin(angle)).toFloat()
 }
 
 /** FAB 栈展开后的单个动作：实心蓝绿圆钮（52dp）＋小字标签在下；

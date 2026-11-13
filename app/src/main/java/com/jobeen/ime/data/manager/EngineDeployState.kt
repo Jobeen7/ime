@@ -30,7 +30,17 @@ object EngineDeployState {
      */
     fun tryAcquireRunning(): Boolean = _running.compareAndSet(false, true)
 
-    /** 释放部署位：仅由抢到部署位的持有方调用（见 [tryAcquireRunning]）。 */
+    /**
+     * 释放部署位：仅由抢到部署位的持有方调用（见 [tryAcquireRunning]）。
+     *
+     * 本函数是普通置位、不是凭证 CAS：两次释放之间另一路抢到部
+     * 署位会被第二放误删。双放安全不在本函数内、而在调用点保证
+     * （I-L1）：同一持有只在一处释放（部署作业体只在 finally
+     * 复位），消费循环的 onDropped 只在作业体未执行时才调
+     * （QueuedJob.started 守卫）；finalize 的统一清零只在引擎
+     * 已死（作用域取消后）时执行。不要在本函数外再以“多调一次
+     * 复位兜底”为由补释放——兜底即双放。
+     */
     fun releaseRunning() {
         _running.value = false
     }
@@ -60,7 +70,12 @@ object EngineDeployState {
      */
     fun tryAcquireOrphanRunning(): Boolean = _orphanRunning.compareAndSet(false, true)
 
-    /** 释放孤儿部署位：仅由置位方调用（见 [tryAcquireOrphanRunning]）。 */
+    /**
+     * 释放孤儿部署位：仅由置位方调用（见 [tryAcquireOrphanRunning]）。
+     * 与 [releaseRunning] 同口径：普通置位、无凭证 CAS，双放安全
+     * 靠调用点（部署作业体只在 finally 一处释放、消费循环的
+     * onDropped 只在作业体未执行时才调）保证。
+     */
     fun releaseOrphanRunning() {
         _orphanRunning.value = false
     }

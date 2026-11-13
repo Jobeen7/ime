@@ -1289,7 +1289,19 @@ class KeyboardWindowView(
         // FINISH 回调，服务侧只停了本地录音；云端会话若继续录，
         // ServiceTextSink 会凭“当前连接已不是捕获的连接”丢弃全部
         // 写入——整段白录。字段未变（同框重启）时会话属于本框，不断。
-        if (fieldChanged && cloudVoiceSession != null) {
+        // 停会话的条件不只依赖复位门（V-中1）：复位门是 LatinIME
+        // 公式（WO32），restarting=true＋同 inputType 时为假；但
+        // 四项身份确变的换框（如字段 id／包名变了）仍须停。本处另
+        // 吃一路独立信号——onStartInput 锁存的四项身份变化（服务
+        // 侧 FieldIdentityChangeLatch）：两路任一为真即停。复位
+        // 本身仍只由 fieldChanged 驱动（下行 startInput），本信号
+        // 不进复位逻辑。锁存与复位门同限：微信各会话四项全同的
+        // restarting 型切换两路都判不变，仍停不到——那是四项口径
+        // 本身的盲区（见 FieldIdentityChangeLatch），不是本处漏消费。
+        val identityChanged =
+            (context as? ImeInputMethodService)?.consumeFieldIdentityChangeForCloudVoice()
+                ?: false
+        if ((fieldChanged || identityChanged) && cloudVoiceSession != null) {
             stopCloudVoice(discard = true)
         }
         // 新输入会话：旧字段的内联胶囊过期，先清；会话标志随即置真。

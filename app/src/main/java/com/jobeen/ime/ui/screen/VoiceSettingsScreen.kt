@@ -116,6 +116,9 @@ fun VoiceSettingsScreen(
     var optInConfirmTarget by remember { mutableStateOf<String?>(null) }
 
     fun refreshProviderState() {
+        // V-低1：总开关也重读 store 真值——写盘失败回滚／外部改动后
+        // ON_RESUME 自愈，不只刷新插件／首选／麦克风权限。
+        voiceEnabled = voiceSwitchStore.enabled
         plugins = pluginStore.list()
         preferred = pluginStore.getPreferred()
         optIn = pluginStore.isOptIn()
@@ -241,8 +244,10 @@ fun VoiceSettingsScreen(
             title = stringResource(R.string.voice_input_enable),
             checked = voiceEnabled,
             onCheckedChange = {
-                voiceEnabled = it
                 voiceSwitchStore.setEnabled(it)
+                // V-低1：UI 永远显示 store 真值——写盘失败时 setEnabled
+                // 不翻内存，重读回滚本地态，不无条件跟随拨动值。
+                voiceEnabled = voiceSwitchStore.enabled
             },
         )
         Spacer(Modifier.height(12.dp))

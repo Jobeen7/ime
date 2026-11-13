@@ -52,10 +52,11 @@ object SkinRuntime {
 
     /**
      * 内存压力入口（2026-11-12 审计 K-L2：trimEscalated 此前零写入方，
-     * 降档逻辑是死逻辑）：应用收到 onTrimMemory（RUNNING_LOW 及以上）
-     * 时置位，下一次快照构建（SkinSnapshotFactory.evaluateTier）消费
-     * 一次后复位。接线在应用侧（ImeApplication.onTrimMemory 须调本函数，
-     * 该文件不在 skin 范围内，另行处理）。
+     * 降档逻辑是死逻辑；S-M3 接线）：应用收到 onTrimMemory（RUNNING_LOW
+     * 及以上）时置位，下一次快照构建（SkinSnapshotFactory.evaluateTier）
+     * 消费一次后复位。接线在应用侧 ImeApplication.onTrimMemory。
+     * level 语义与系统一致（ComponentCallbacks2：RUNNING_LOW=10，
+     * 含 UI_HIDDEN／BACKGROUND／MODERATE／COMPLETE 等更高档位）。
      */
     fun onTrimMemory(level: Int) {
         if (level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW) {

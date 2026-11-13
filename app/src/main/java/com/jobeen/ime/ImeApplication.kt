@@ -6,6 +6,7 @@ import android.content.Context
 import android.os.Build
 import com.jobeen.ime.base.CrashTrap
 import com.jobeen.ime.engine.AppStartup
+import com.jobeen.ime.skin.runtime.SkinRuntime
 import java.io.File
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineName
@@ -143,6 +144,10 @@ class ImeApplication : Application() {
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        // S-M3：内存压力降档接线（K-L2 入口此前零写入方）。SkinRuntime
+        // 自带 level >= RUNNING_LOW 的门，低档位调用无动作；置位后下一次
+        // 快照构建降一档、消费一次后复位（SkinSnapshotFactory.evaluateTier）。
+        SkinRuntime.onTrimMemory(level)
         // 内存紧张时释放简繁转换词表（数 MB 级），下次转换按需重建
         if (level >= TRIM_MEMORY_RUNNING_LOW) {
             runCatching { com.jobeen.ime.base.util.TraditionalConverter.releaseCaches() }

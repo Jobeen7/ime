@@ -20,12 +20,16 @@ import com.jobeen.ime.R
  *   回落只作防御——新增 reason 码时须同步补映射与单测
  *   （[SkinEditorReasonsTest] 按来源清单逐码断言）。
  *
- * 来源清单（码 → 生产者）：
- * - resolve：no_active_skin／skin_json_missing／skin_json_unreadable／
- *   skin_json_unparseable／active_hash_mismatch／layout_hash_mismatch
+ * 来源清单（码 → 生产者；括号内为去重 base 码数，2026-11-13 逐码数过，
+ * 与 [reasonResId] 的映射分支一一对应）：
+ * - resolve（13 码）：no_active_skin／skin_json_missing／skin_json_unreadable／
+ *   skin_json_unparseable／layout_unreadable／active_hash_mismatch／layout_hash_mismatch
  *   （SkinEditorSaver.resolveActiveFiles），manifest_* 六码
  *   （SkinEditorSave.validateManifestForEdit）。
- * - Blocked：skin_unparseable／skin_json_limits_exceeded／
+ *   （S-L3 起 layout_hash_mismatch 不再作 resolve 失败码返回——失配布局
+ *   改为排除＋入口提示，见 SkinEditorEntry.toastUnavailableLayouts；
+ *   映射仍保留，供该提示与入口 toast 复用；13 码按映射分支计。）
+ * - Blocked（14 码）：skin_unparseable／skin_json_limits_exceeded／
  *   layout_unparseable／layout_json_limits_exceeded／layout_invalid
  *   （SkinEditorSave.decideSkinJson／decideLayout），
  *   json_depth_exceeded／json_string_too_long／
@@ -33,17 +37,17 @@ import com.jobeen.ime.R
  *   min_app_version_invalid／app_version_too_low／key_mappings_too_many／
  *   no_color_scheme／skin_missing_dark_mode
  *   （SkinValidator.Result.Rejected）。
- * - Failed：backup_missing／manifest_invalid／
+ * - Failed（9 码）：backup_missing／manifest_invalid／
  *   new_generation_copy_failed／write_failed／
  *   manifest_skin_entry_missing／new_generation_incomplete／
  *   layout_index_entry_missing／index_changed_concurrently／
  *   apply_failed（SkinEditorSaver.saveSkinJsonLocked／saveLayoutLocked）。
- * - apply 内码（apply_failed 的子码，SkinEditorSaver.applyResultReason）：
+ * - apply 内码（9 码，apply_failed 的子码，SkinEditorSaver.applyResultReason）：
  *   snapshot_rebuild_failed／target_invalid／
  *   switch_failed_rolled_back／first_render_failed_rolled_back／
  *   rollback_failed／superseded／rollback_unavailable／
  *   rolled_back_to_last_good／reverted_to_default。
- * - Stale：active_changed（CAS 未命中）。
+ * - Stale（1 码）：active_changed（CAS 未命中）。
  * - applied／applied_pending 不进 UI（成功路径无 reason 展示），不在映射内。
  */
 object SkinEditorReasons {
@@ -66,6 +70,7 @@ object SkinEditorReasons {
             "manifest_skin_hash_mismatch" -> R.string.skin_editor_reason_manifest_hash_mismatch
             "active_hash_mismatch" -> R.string.skin_editor_reason_active_hash_mismatch
             "layout_hash_mismatch" -> R.string.skin_editor_reason_layout_hash_mismatch
+            "layout_unreadable" -> R.string.skin_editor_reason_layout_unreadable
             // ---- Blocked：保存裁决 ----
             "skin_unparseable" -> R.string.skin_editor_reason_skin_unparseable
             "skin_json_limits_exceeded" -> R.string.skin_editor_reason_skin_json_limits_exceeded
@@ -112,17 +117,22 @@ object SkinEditorReasons {
     }
 
     /**
-     * 编辑器入口 resolve 失败时的 toast 文案（WO33 第 2(b) 项）：
-     * 只有 active_hash_mismatch 给具体提示，其余沿用通用 toast
-     * （skin_editor_no_active_skin），与改动前行为一致。
+     * 编辑器入口 resolve 失败时的 toast 文案（WO33 第 2(b) 项；S-L1）：
+     * 皮肤实际生效、只是活动记录／布局索引过期时给具体提示（恢复动作
+     * 同为重新导入皮肤），其余沿用通用 toast
+     * （skin_editor_no_active_skin）。按冒号前 base 码匹配（与
+     * [reasonResId] 同款做法），`layout_hash_mismatch:<布局 id>` 这类
+     * 复合码也能拿到具体提示，不再落通用分支。
      */
     @StringRes
-    fun entryToastResId(reason: String): Int =
-        if (reason == "active_hash_mismatch") {
+    fun entryToastResId(reason: String): Int {
+        val base = reason.substringBefore(":")
+        return if (base == "active_hash_mismatch" || base == "layout_hash_mismatch") {
             reasonResId(reason)
         } else {
             R.string.skin_editor_no_active_skin
         }
+    }
 
     private fun manifestInvalidResId(reason: String): Int {
         val sub = reason.substringAfter("manifest_invalid:", "")

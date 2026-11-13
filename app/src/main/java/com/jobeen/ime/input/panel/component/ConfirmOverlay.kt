@@ -28,9 +28,45 @@ class ConfirmOverlay(
     private var onCancel: (() -> Unit)? = null
 
     private val pillR = dp(10f)
-    private val textSize = 13f
+    private val textSize = TEXT_SIZE_SP
     private val marginH = dp(12)
     private val marginV = dp(0)
+
+    companion object {
+        /** 动作菜单与确认按钮共用的字号。 */
+        internal const val TEXT_SIZE_SP = 13f
+
+        /** 动作菜单项上下内边距（P-中1：5→4dp）。 */
+        internal const val ACTION_ITEM_PADDING_V_DP = 4f
+
+        /** 动作菜单项间距（P-中1：6→4dp）。 */
+        internal const val ACTION_ITEM_GAP_DP = 4f
+
+        /** 卡片上下内边距（card.setPadding 纵向 8dp）。 */
+        internal const val CARD_PADDING_V_DP = 8f
+
+        /** 动作列表滚动区顶边距（actionsScroll topMargin 4dp）。 */
+        internal const val ACTIONS_SCROLL_TOP_MARGIN_DP = 4f
+
+        /** Roboto 含字体内边距行高系数（复查报告算术口径，字号倍率 1.0）。 */
+        internal const val ROBOTO_LINE_HEIGHT_WITH_PADDING = 1.32714844f
+
+        /**
+         * 动作菜单卡片自然高（dp，P-中1 预算口径，字号倍率 1.0）：
+         * 项数×（行高＋上下内边距）＋（项数−1）×间距＋卡片上下内边距
+         * ＋滚动区顶边距。6 项＝191.5dp：竖屏默认 24%（可用 199.68dp）
+         * 一页放得下、余 8.2dp；横屏默认 44%（可用 168.96dp）仍短约
+         * 22.5dp，末项靠 showCard 钳制在卡内滚动保底（见 [actions]）。
+         * 布局常量与本函数同源，改一处即改预算，不会漂移。
+         */
+        internal fun actionsMenuNaturalHeightDp(itemCount: Int): Float {
+            if (itemCount <= 0) return 2 * CARD_PADDING_V_DP + ACTIONS_SCROLL_TOP_MARGIN_DP
+            val itemH =
+                TEXT_SIZE_SP * ROBOTO_LINE_HEIGHT_WITH_PADDING + 2 * ACTION_ITEM_PADDING_V_DP
+            return itemCount * itemH + (itemCount - 1) * ACTION_ITEM_GAP_DP +
+                2 * CARD_PADDING_V_DP + ACTIONS_SCROLL_TOP_MARGIN_DP
+        }
+    }
 
     private val messageView = TextView(context).apply {
         setTextColor(colors.panel.toolbarText)
@@ -98,7 +134,7 @@ class ConfirmOverlay(
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.CENTER_HORIZONTAL
         background = PillBg(colors.panel.background, colors.keyBorderStroke, pillR)
-        setPadding(dp(12), dp(8), dp(12), dp(8))
+        setPadding(dp(12), dp(CARD_PADDING_V_DP).toInt(), dp(12), dp(CARD_PADDING_V_DP).toInt())
         isClickable = true
         setOnClickListener { }
 
@@ -113,7 +149,7 @@ class ConfirmOverlay(
         })
 
         addView(actionsScroll, LinearLayout.LayoutParams(matchParent, wrapContent).apply {
-            topMargin = dp(4)
+            topMargin = dp(ACTIONS_SCROLL_TOP_MARGIN_DP).toInt()
         })
     }
 
@@ -154,9 +190,14 @@ class ConfirmOverlay(
      *
      * 不显示标题行：5 项菜单带标题时总高会超过面板可用高度，
      * 纵向布局按上限截断后最后一项会被挤出卡外不可见（剪贴板
-     * 菜单的「删除」就这样消失过）；去掉标题后单列 5 项完整
-     * 放得下。[message] 参数保留仅为与 [confirm] 签名对称，
-     * 本模式不展示。
+     * 菜单的「删除」就这样消失过）；去掉标题后单列放得下。
+     *
+     * 高度预算（P-中1，字号倍率 1.0，见 [actionsMenuNaturalHeightDp]）：
+     * 剪贴板 6 项菜单自然高 191.5dp，竖屏默认 24%（可用 199.68dp）
+     * 一页完整显示、不滚动；横屏默认 44%（可用 168.96dp）仍短约
+     * 22.5dp，末项靠 showCard 钳制在卡内滚动保底——横屏放不下 6 项
+     * 是已知取舍（再省需把字号砍到约 10sp，不做）。
+     * [message] 参数保留仅为与 [confirm] 签名对称，本模式不展示。
      */
     fun actions(
         message: String,
@@ -181,10 +222,11 @@ class ConfirmOverlay(
                 setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
                 gravity = Gravity.CENTER
                 background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
-                // 紧凑排布：剪贴板 6 项菜单在面板高内放不下会滚
-                // 动（末项「删除」被挤出）；纵向内边距 8→5dp、
-                // 项间距 8→6dp，6 项一页完整显示、不滚动。
-                setPadding(dp(12), dp(5), dp(12), dp(5))
+                // 紧凑排布（P-中1）：纵向内边距 5→4dp、项间距 6→4dp，
+                // 6 项自然高 191.5dp，竖屏默认 24%（199.68dp）一页完整
+                // 显示、不滚动；横屏默认 44%（168.96dp）仍短约 22.5dp，
+                // 靠 showCard 钳制滚动保底。
+                setPadding(dp(12), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(12), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
                     action()
                     dismiss()
@@ -193,7 +235,7 @@ class ConfirmOverlay(
             actionsContainer.addView(
                 btn,
                 LinearLayout.LayoutParams(matchParent, wrapContent).apply {
-                    if (index > 0) topMargin = dp(6)
+                    if (index > 0) topMargin = dp(ACTION_ITEM_GAP_DP).toInt()
                 }
             )
             actionButtons += btn

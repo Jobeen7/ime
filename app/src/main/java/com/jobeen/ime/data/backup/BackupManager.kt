@@ -359,6 +359,14 @@ object BackupManager {
         // 的设置开关 apply() 会被采集全程阻塞（皮肤段 32MB 时可
         // 达秒级，ANR 线 5 秒）；采集持 Room 快照事务等写锁、写
         // 方持 Room 写事务等闸锁即构成死锁环。彻底消除仍是已知差距。
+        // —— 结算点重枚举 prefs 目录（D-L2）：采集中途新建的 prefs
+        // 文件不在跟踪表里，reverifyAll 无从比对；新文件出现即整包
+        // 失败（与“枚举到但读前消失”的口径对称）。不纳入本次备份：
+        // 新文件的内容未经守卫在一致点上验过，收入包会把一次可能
+        // 撕裂的读装进快照；失败即 loud 失败，用户重做一次即可。
+        // 删文件不走这里：被删的已跟踪文件由 reverifyAll 抓住。
+        val newPrefsFiles = newPrefsFilesSince(names.toSet(), prefsDir)
+        if (newPrefsFiles.isNotEmpty()) throw BackupDataChangedException(operation)
         guard.reverifyAll(operation)
 
         // —— 包内清单（D-M1，fcitx 清单 v2 形状）：各源计数／存在标记，
@@ -581,6 +589,10 @@ object BackupManager {
             backupFingerprint = sha256Hex(bytes),
             snapshotFile = snapshotFile.name,
             completedSections = emptySet(),
+            // D-P1：磁盘回滚据此区分“快照缺皮肤段是还原前本就无皮肤”
+            // 与“还原前有皮肤但快照没装下”，与内存回滚的
+            // rollbackCovered／clearSkinsForRollback 取同一位。
+            skinsPresentBefore = skinsPresentBefore,
         )
         try {
             RestoreJournal.write(journalDir, journalEntry)
@@ -598,18 +610,36 @@ object BackupManager {
             withContext(NonCancellable) {
                 applyPayload(
                     merged,
-                    onSectionDone = { section ->
-                        // 段进度是尽力而为的记录：journal 写失败不阻断
-                        // 还原本体（阶段已是 REPLACING，中断后照常提示）；
-                        // 段进度丢了也不影响回滚覆盖判定（见
-                        // uncoveredSectionsForRollback 的 KDoc：可部分写
-                        // 的段要么原子、要么快照恒覆盖）。
+                    onSectionStart = { section ->
+                        // D-P1：皮肤段开始写前先记“已开始未完成”——杀在
+                        // 皮肤文件循环中途时 journal 里留有该段，磁盘回滚
+                        // 据此报 uncovered 而非成功。与 onSectionDone 同
+                        // 口径：尽力而为，写失败不阻断还原本体。
                         runCatching {
                             val current = RestoreJournal.read(journalDir)
                                 ?: journalEntry.copy(phase = RestoreJournal.Phase.REPLACING)
                             RestoreJournal.write(
                                 journalDir,
-                                current.copy(completedSections = current.completedSections + section),
+                                current.copy(inProgressSections = current.inProgressSections + section),
+                            )
+                        }.onFailure { Timber.w(it, "restore journal progress update failed") }
+                    },
+                    onSectionDone = { section ->
+                        // 段进度是尽力而为的记录：journal 写失败不阻断
+                        // 还原本体（阶段已是 REPLACING，中断后照常提示）；
+                        // 段进度丢了也不影响回滚覆盖判定（见
+                        // uncoveredSectionsForRollback 的 KDoc：可部分写
+                        // 的段要么原子、要么快照恒覆盖）——皮肤库除外，
+                        // 其半写态由 inProgressSections 记（D-P1）。
+                        runCatching {
+                            val current = RestoreJournal.read(journalDir)
+                                ?: journalEntry.copy(phase = RestoreJournal.Phase.REPLACING)
+                            RestoreJournal.write(
+                                journalDir,
+                                current.copy(
+                                    completedSections = current.completedSections + section,
+                                    inProgressSections = current.inProgressSections - section,
+                                ),
                             )
                         }.onFailure { Timber.w(it, "restore journal progress update failed") }
                     },
@@ -689,6 +719,7 @@ object BackupManager {
         val startedAt: Long,
         val completedSections: Set<String>,
         val snapshotAvailable: Boolean,
+        val journalCorrupt: Boolean = false,
     )
 
     private val _interruptedRestore =
@@ -770,19 +801,45 @@ object BackupManager {
      * STAGING／COMMITTED 自动清理（前者尚未写盘，后者已写完）；
      * REPLACING 留 journal，置 [interruptedRestore] 供备份页提示。
      * 启动从不自动回滚（回滚是用户发起的动作）。
-     * 自身不抛错：损坏的 journal 按无 journal 处理。
+     * 自身不抛错：journal 文件不存在即无记录；journal 损坏（文件
+     * 在、解析失败）按疑似中断还原处理（D-L1）——快照全部保留、
+     * 不清扫，备份页提示用户（回滚不可用，只能重导／忽略），不得
+     * 按“无 journal”静默清扫损坏 journal 对应的还原前快照。
      */
     fun reconcileInterruptedRestore() {
         val dir = RestoreJournal.dir(appContext.filesDir)
         val entry = runCatching { RestoreJournal.read(dir) }.getOrNull()
+        val journalCorrupt = entry == null && runCatching {
+            RestoreJournal.isCorrupt(dir)
+        }.getOrDefault(false)
         val action = RestoreJournal.decide(
             entry,
             entry?.let { RestoreJournal.snapshotExists(dir, it) } ?: false,
+            journalCorrupt = journalCorrupt,
         )
         when (action) {
             RestoreJournal.RecoveryAction.NONE -> {
                 RestoreJournal.sweepOrphanSnapshots(dir, null)
                 _interruptedRestore.value = null
+            }
+            RestoreJournal.RecoveryAction.PROMPT_CORRUPT -> {
+                // 损坏 journal 对应的还原前快照无法归属到任一 token，
+                // 全部保留、不清扫；损坏文件本身留待下次成功还原覆盖
+                // 或用户点“忽略”时删掉。下次启动仍走同一分支，直到
+                // 用户处置为止——不静默、不丢失回滚能力。
+                _interruptedRestore.value = InterruptedRestoreInfo(
+                    token = "",
+                    // 横幅按 startedAt 展示日期：损坏 journal 无可信
+                    // 的 startedAt，取 journal 文件最后写盘时间。
+                    startedAt = RestoreJournal.journalFile(dir).lastModified(),
+                    completedSections = emptySet(),
+                    snapshotAvailable = false,
+                    journalCorrupt = true,
+                )
+                Timber.e(
+                    "Restore journal is corrupt, keeping all snapshots " +
+                        "and prompting user (rollback unavailable)",
+                )
             }
             RestoreJournal.RecoveryAction.CLEANUP_COMPLETED,
             RestoreJournal.RecoveryAction.CLEANUP_STAGING -> {
@@ -813,7 +870,14 @@ object BackupManager {
     fun dismissInterruptedRestore() {
         val dir = RestoreJournal.dir(appContext.filesDir)
         val entry = runCatching { RestoreJournal.read(dir) }.getOrNull()
-        if (entry != null) RestoreJournal.clear(dir, entry)
+        if (entry != null) {
+            RestoreJournal.clear(dir, entry)
+        } else {
+            // D-L1：损坏 journal 读不出 entry，clear 无从删文件；用户
+            // 已明确点“忽略”，此处删掉损坏的 journal 文件本身，否则
+            // 下次启动仍走 PROMPT_CORRUPT、横幅永不消失。
+            runCatching { RestoreJournal.journalFile(dir).delete() }
+        }
         RestoreJournal.sweepOrphanSnapshots(dir, null)
         _interruptedRestore.value = null
     }
@@ -831,8 +895,10 @@ object BackupManager {
      * 与 [startRestore] 同一套应用级执行（restoreRunning 互斥、
      * restoreState 回报、成功后 600ms 杀进程重启）。
      * 回滚覆盖判定：快照里缺段、且 journal 显示该段已被失败还原
-     * 写过的，列入 uncovered——回滚成功但 uncovered 非空时按失败
-     * 报（journal 保留，用户重导才是正解），不谎报“已恢复”。
+     * 写过（含皮肤库已开始未完成的半写段，D-P1）的，列入 uncovered——
+     * 回滚成功但 uncovered 非空时按失败报（journal 保留，用户重导
+     * 才是正解），不谎报“已恢复”。快照无皮肤段且还原前本就无皮肤时
+     * 回滚清掉失败还原新增的孤儿皮肤文件，全覆盖、不列入。
      */
     fun startRollbackInterruptedRestore() {
         if (!restoreRunning.compareAndSet(false, true)) return
@@ -898,16 +964,25 @@ object BackupManager {
             snapshotHasInputStats = snapshotParsed.inputStatsJson != null,
             snapshotHasSkinLibrary = snapshotParsed.skinLibrary != null,
             snapshotHasSkinScripts = snapshotParsed.skinScripts != null,
+            // D-P1：半写段（杀在皮肤文件循环中途）与“还原前确有皮肤”
+            // 这一位都进判定——否则皮肤半写段 uncovered 为空、报成功。
+            inProgressSections = entry.inProgressSections,
+            skinsPresentBefore = entry.skinsPresentBefore,
         )
         // 失败还原新建的偏好文件：以当前 shared_prefs 目录为准（磁盘
         // 回滚没有内存里的 merged 目标可比）。
         val rollbackExtraPrefsFiles = currentPrefsFilesNotInSnapshot(snapshotParsed)
+        // D-P1：clearSkins 与内存回滚取同一判定（快照无皮肤段且还原前
+        // 本就无皮肤 → 快照即空库，清掉失败还原新增的孤儿皮肤文件）；
+        // 还原前确有皮肤时绝不清——快照里没有它们可恢复，清了即丢数据。
+        val clearSkinsForRollback =
+            snapshotParsed.skinLibrary == null && !entry.skinsPresentBefore
         return try {
             withContext(NonCancellable) {
                 applyPayload(
                     snapshotParsed,
                     forRollback = true,
-                    clearSkinsForRollback = false,
+                    clearSkinsForRollback = clearSkinsForRollback,
                     rollbackExtraPrefsFiles = rollbackExtraPrefsFiles,
                 )
             }
@@ -930,28 +1005,54 @@ object BackupManager {
     }
 
     /**
-     * 磁盘回滚覆盖判定（纯函数）：快照里缺段、且 journal 显示该段已被
-     * 失败还原写过的，列入 uncovered。
+     * 结算点重枚举（D-L2，纯函数）：shared_prefs 目录当前文件集减去采集
+     * 开始时的文件集，即采集中途新建的 prefs 文件。新建文件不在守卫
+     * 跟踪表里，[BackupChangeGuard.reverifyAll] 抓不到；调用方见非空
+     * 即整包失败。只认 `.xml` 文件，与采集枚举的过滤口径一致。
+     */
+    internal fun newPrefsFilesSince(initialNames: Set<String>, prefsDir: File): Set<String> {
+        val current = prefsDir.listFiles { f -> f.extension == "xml" }
+            ?.map { it.nameWithoutExtension }?.toSet().orEmpty()
+        return current - initialNames
+    }
+
+    /**
+     * 磁盘回滚覆盖判定（纯函数）：快照里缺段、且失败还原写过该段的，列入 uncovered。
      * Room 两库与 prefs 在快照里恒有（collectPayload 必写），永不缺段；
      * 输入统计／皮肤库／脚本三段是条件段，缺段且被写过即 uncovered。
-     * 段写盘本身的原子性（Room 事务、tmp＋rename、目录整换）保证：
-     * 快照里没有的段，还原也不会写它——journal 里没记的段不可能处于
-     * 半写状态（applyPayload 的 onSectionDone 只在真实写完后记）。
+     * “写过”含两类（D-P1）：journal 已记的完成段（completedSections），
+     * 与已开始未完成的段（inProgressSections）——皮肤库是多文件逐文件
+     * 写，杀在循环中途即半写（index 已换新、部分文件已换新），completed
+     * 里没有它；旧 KDoc 称“没记的段不可能半写”对皮肤库不成立，已纠正。
+     * 皮肤库另须 skinsPresentBefore 配合：快照缺段且还原前确有皮肤时
+     * 被写过即 uncovered（快照里没有，恢复不了）；还原前本就无皮肤时
+     * 不列入——磁盘回滚以 clearSkinsForRollback 清掉失败还原新增的孤儿
+     * 文件即回到还原前状态，全覆盖。skinsPresentBefore 默认为 true：
+     * 旧 journal 无此行时按“有”保守处理（不清、不谎报）。
+     * 其余两段的原子性（输入统计单文件 tmp＋rename、脚本整目录换位写）
+     * 使“开始过”只可能来自未来才加的段开始标记，统一按写过计亦保守。
      */
     internal fun uncoveredSectionsForRollback(
         completedSections: Set<String>,
         snapshotHasInputStats: Boolean,
         snapshotHasSkinLibrary: Boolean,
         snapshotHasSkinScripts: Boolean,
+        inProgressSections: Set<String> = emptySet(),
+        skinsPresentBefore: Boolean = true,
     ): List<String> {
         val uncovered = ArrayList<String>()
-        if (RestoreJournal.SECTION_INPUT_STATS in completedSections && !snapshotHasInputStats) {
+        val touched = { section: String ->
+            section in completedSections || section in inProgressSections
+        }
+        if (touched(RestoreJournal.SECTION_INPUT_STATS) && !snapshotHasInputStats) {
             uncovered += RestoreJournal.SECTION_INPUT_STATS
         }
-        if (RestoreJournal.SECTION_SKIN_LIBRARY in completedSections && !snapshotHasSkinLibrary) {
+        if (!snapshotHasSkinLibrary && skinsPresentBefore &&
+            touched(RestoreJournal.SECTION_SKIN_LIBRARY)
+        ) {
             uncovered += RestoreJournal.SECTION_SKIN_LIBRARY
         }
-        if (RestoreJournal.SECTION_SKIN_SCRIPTS in completedSections && !snapshotHasSkinScripts) {
+        if (touched(RestoreJournal.SECTION_SKIN_SCRIPTS) && !snapshotHasSkinScripts) {
             uncovered += RestoreJournal.SECTION_SKIN_SCRIPTS
         }
         return uncovered
@@ -1567,12 +1668,17 @@ object BackupManager {
      * （输入统计／皮肤库／皮肤脚本）只在真实写盘后才回调，跳过的段
      * 不记（见 [uncoveredSectionsForRollback] 的 KDoc）。回滚回放
      * 不传回调（journal 正在被处置，不记进度）。
+     * [onSectionStart]：段开始写前回调一次，目前只对皮肤库触发——它
+     * 是唯一多文件逐文件写的段，杀在循环中途即半写、[onSectionDone]
+     * 永远到不了；其余段是事务或单文件原子写／整目录换位写，无半写
+     * 态可记（D-P1）。回滚回放不传回调。
      */
     private suspend fun applyPayload(
         parsed: ParsedBackup,
         forRollback: Boolean = false,
         clearSkinsForRollback: Boolean = false,
         rollbackExtraPrefsFiles: Set<String> = emptySet(),
+        onSectionStart: ((String) -> Unit)? = null,
         onSectionDone: ((String) -> Unit)? = null,
     ) {
         val db = AppDatabase.getInstance(appContext)
@@ -1683,6 +1789,9 @@ object BackupManager {
         // 还原中途新增的文件在此清掉；快照即空库时（clearSkinsForRollback）
         // 只清不写。
         parsed.skinLibrary?.let { skin ->
+            // D-P1：段开始标记必须先于任何皮肤写盘——杀在循环中途时
+            // journal 里留有该段，磁盘回滚据此报 uncovered 而非成功。
+            onSectionStart?.invoke(RestoreJournal.SECTION_SKIN_LIBRARY)
             val rootDir = App.skinLibraryDir
             runCatching { rootDir.mkdirs() }
             if (forRollback) {

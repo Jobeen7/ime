@@ -219,11 +219,16 @@ class SkinEditorReasonsTest {
     }
 
     @Test
-    fun entryToastOnlyActiveHashMismatchIsSpecific() {
-        // (b)：只有 active_hash_mismatch 给具体提示，其余沿用通用 toast。
+    fun entryToastHashMismatchIsSpecific() {
+        // (b)：活动记录／布局索引两类 hash 失配给具体提示（S-L1），
+        // 其余沿用通用 toast。复合码按冒号前 base 匹配。
         assertEquals(
             R.string.skin_editor_reason_active_hash_mismatch,
             SkinEditorReasons.entryToastResId("active_hash_mismatch"),
+        )
+        assertEquals(
+            R.string.skin_editor_reason_layout_hash_mismatch,
+            SkinEditorReasons.entryToastResId("layout_hash_mismatch:lay1"),
         )
         assertEquals(
             R.string.skin_editor_no_active_skin,
@@ -232,10 +237,6 @@ class SkinEditorReasonsTest {
         assertEquals(
             R.string.skin_editor_no_active_skin,
             SkinEditorReasons.entryToastResId("skin_json_missing"),
-        )
-        assertEquals(
-            R.string.skin_editor_no_active_skin,
-            SkinEditorReasons.entryToastResId("layout_hash_mismatch:lay1"),
         )
         assertEquals(
             R.string.skin_editor_no_active_skin,

@@ -44,8 +44,9 @@ class WanxiangUpdateManagerTest {
 
     @Test
     fun builtinVersion_matchesBundledResource() {
-        // resource.zip 内 shared/version.txt 为 18.1.11
-        assertEquals("v18.1.11", WanxiangUpdateManager.BUILTIN_SCHEMA_VERSION)
+        // resource.zip 内 shared/version.txt 为 18.1.12
+        // （D-L3：内置已升 .12，常量曾滞后一版停在 v18.1.11）
+        assertEquals("v18.1.12", WanxiangUpdateManager.BUILTIN_SCHEMA_VERSION)
     }
 
     // ---- B-M6 ----

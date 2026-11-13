@@ -256,6 +256,8 @@ fun RimeScreen(
                                         cleanupEntries = entries
                                     }
                                 }.onFailure {
+                                    // 取消不是失败（S-M1）：不报失败提示。
+                                    if (DeepErrorMapper.isCancellation(it)) return@onFailure
                                     Timber.w(it, "Rime sync cleanup list failed")
                                     toast(
                                         DeepErrorMapper.userMessage(context, it),

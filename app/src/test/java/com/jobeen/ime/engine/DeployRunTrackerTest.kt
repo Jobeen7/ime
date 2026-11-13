@@ -34,12 +34,14 @@ class DeployRunTrackerTest {
     }
 
     @Test
-    fun failurePoisonsOnlyFirstFinishOfTheRound() {
+    fun failurePoisonsAllFinishesOfTheRound() {
         val tracker = DeployRunTracker()
         tracker.onStart()
         tracker.onFailure()
         assertTrue(tracker.consumeFinishFailed())
-        assertFalse("second Finish of the same round must not be poisoned",
+        // I-M1：失败毒化本轮全部 Finish，第二次 Finish 同样返回 true
+        //（判定是轮次属性，不是“一次性票据”）。
+        assertTrue("second Finish of the same round is poisoned too",
             tracker.consumeFinishFailed())
     }
 
@@ -53,21 +55,23 @@ class DeployRunTrackerTest {
     }
 
     @Test
-    fun failureWithoutStartStillPoisonsNextFinish() {
+    fun failureWithoutStartPoisonsAllFinishes() {
         val tracker = DeployRunTracker()
         tracker.onFailure()
         assertTrue(tracker.consumeFinishFailed())
-        assertFalse(tracker.consumeFinishFailed())
+        // I-M1：同上，无 Start 的失败同样毒化本轮全部 Finish。
+        assertTrue(tracker.consumeFinishFailed())
     }
 
     @Test
-    fun doubleFailureInOneRoundPoisonsOnce() {
+    fun doubleFailureInOneRoundPoisonsAllFinishes() {
         val tracker = DeployRunTracker()
         tracker.onStart()
         tracker.onFailure()
         tracker.onFailure()
         assertTrue(tracker.consumeFinishFailed())
-        assertFalse(tracker.consumeFinishFailed())
+        // I-M1：同上，双失败同样毒化本轮全部 Finish。
+        assertTrue(tracker.consumeFinishFailed())
     }
 
     @Test

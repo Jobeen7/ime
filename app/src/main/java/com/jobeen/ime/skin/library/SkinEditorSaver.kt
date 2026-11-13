@@ -3,6 +3,7 @@
 package com.jobeen.ime.skin.library
 
 import android.content.Context
+import com.jobeen.ime.R
 import com.jobeen.ime.skin.layout.LayoutValidator
 import com.jobeen.ime.skin.model.GeometryFallbacks
 import com.jobeen.ime.skin.model.PackageManifest
@@ -32,6 +33,7 @@ import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import java.io.File
 import java.security.MessageDigest
+import timber.log.Timber
 
 /** 编辑器可打开的文件（skin.json 或布局文件）。 */
 data class EditorFile(
@@ -54,6 +56,13 @@ data class ActiveSkinFiles(
     val files: List<EditorFile>,
     /** 主布局 id（skin.json keyboards.pinyin.layoutId，缺失时为 null＝未绑定布局）。 */
     val primaryLayoutId: String?,
+    /**
+     * 因索引 hash 失配被排除的布局 id（S-L3）：文件本身可读、只是索引
+     * 过期，编辑器照常打开、该布局不在 [files] 里（无法编辑／保存，
+     * 不会用过期索引覆盖外部改动）；恢复靠重新导入皮肤。入口据此
+     * 给提示（见 SkinEditorEntry）。
+     */
+    val unavailableLayouts: List<String> = emptyList(),
 )
 
 /** 解析当前生效皮肤的结果（问题 5：manifest 不合格时 fail closed 并给出原因）。 */
@@ -104,6 +113,13 @@ class SkinEditorSaver(
     private val currentVersionCode: Int = SkinSnapshotFactory.currentVersionCode(context),
     private val fallbacks: GeometryFallbacks = SkinSnapshotFactory.geometryFallbacks(context),
     private val mainDispatcher: CoroutineDispatcher = Dispatchers.Main,
+    /**
+     * 取 strings.xml 串的解析器（S-L4）：默认走 context；JVM 单测无真实
+     * 资源时由调用方显式传入——保存器直调 final 的 Context.getString
+     * 在桩 jar 下抛错且不可覆盖，与本类“版本号／几何回落均由构造参数
+     * 显式传入”的做法一致。
+     */
+    private val resolveString: (Int) -> String = context::getString,
 ) {
 
     companion object {
@@ -142,19 +158,30 @@ class SkinEditorSaver(
         val boundIds = SkinEditorSave.boundLayoutIds(tree)
         val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
         // 布局索引 hash 门（WO33 第 2(a) 项，与上文 skin.json 记录 hash 门
-        // 同款 fail-closed）：索引条目的 hash 是 layout.json 内容 sha256，
+        // 同款比对）：索引条目的 hash 是 layout.json 内容 sha256，
         // 须与磁盘实算 hash 一致。不一致说明索引已过期（布局被外部改动／
         // 恢复后未同步索引），编辑器不静默沿用旧值——否则编辑页读到的
-        // 布局代次就是错的，保存会把外部改动当场覆盖。明确报
-        // layout_hash_mismatch:<布局 id>（id 进 Timber 日志，见
-        // SkinEditorEntry），不打开。缺失文件沿用旧行为跳过（不在本次范围）。
+        // 布局代次就是错的，保存会把外部改动当场覆盖。
+        // 失配处理（S-L3，2026-11-13 复查）：不整个拒开——文件本身可读、
+        // 只是索引过期，把该布局排除在列表外（见 unavailableLayouts），
+        // 编辑器照常打开、skin.json 仍可编辑；被排除的布局不在列表里，
+        // 无法保存，不会覆盖外部改动。读失败则相反（S-L2）：文件存在却
+        // 读不出来时无法确认内容，fail-closed（与 skin.json 门对齐）；
+        // 缺失文件沿用旧行为跳过（不在本次范围）。
         val layoutFiles = mutableListOf<EditorFile>()
+        val unavailableLayouts = mutableListOf<String>()
         for (entry in SkinEditorSave.filterBoundLayouts(index?.layouts ?: emptyList(), boundIds)) {
             val file = File(layout.fileFromRelative(entry.dir), "layout.json")
             if (!file.isFile) continue
-            val layoutBytes = runCatching { file.readBytes() }.getOrNull() ?: continue
+            val layoutBytes = runCatching { file.readBytes() }.getOrNull()
+            if (layoutBytes == null) {
+                Timber.w("skin editor: layout unreadable: ${entry.id}")
+                return@withContext ResolveActiveResult.Unavailable("layout_unreadable:${entry.id}")
+            }
             if (sha256Hex(layoutBytes) != entry.hash) {
-                return@withContext ResolveActiveResult.Unavailable("layout_hash_mismatch:${entry.id}")
+                Timber.w("skin editor: layout hash mismatch, excluded: ${entry.id}")
+                unavailableLayouts += entry.id
+                continue
             }
             layoutFiles += EditorFile(
                 id = entry.id,
@@ -173,6 +200,7 @@ class SkinEditorSaver(
                     EditorFile(skinId, "skin.json", skinFile, EditorFile.Kind.SKIN_JSON),
                 ) + layoutFiles,
                 primaryLayoutId = primaryLayoutId,
+                unavailableLayouts = unavailableLayouts,
             ),
         )
     }
@@ -316,7 +344,8 @@ class SkinEditorSaver(
                 val allIssues = if (indexOk) {
                     issues
                 } else {
-                    issues + "index_update_failed：皮肤已生效，但库索引未同步（重启对账会修复）"
+                    // S-L4：索引未同步的提示走 strings.xml，不再硬编码中文。
+                    issues + resolveString(R.string.skin_editor_reason_index_update_failed)
                 }
                 SkinEditorSaveResult.Saved(allIssues)
             }
@@ -324,8 +353,25 @@ class SkinEditorSaver(
                 // 失败只丢弃新代；旧代未动，事务已回滚运行态与活动记录。
                 deleteDirBestEffort(newGenDir)
                 val intact = SkinEditorSave.genSkinHashMatches(genDir, oldHash)
+                // S-M2：RollbackFailed 表示事务回滚本身失败——运行态可能
+                // 仍在新快照上、active 记录可能仍为 PENDING 新代，而新代
+                // 目录已被删。按取消路径先例收敛：先写回保存前的旧记录
+                // （否则重装会去读已删的新代），再重装当前生效快照；恢复
+                // 结果进原因尾巴（recovery_ok／recovery_failed），不吞掉。
+                // 其余结果事务已回滚（或未切换），不另行恢复。
+                val recovery = if (result is ApplyTransaction.Result.RollbackFailed) {
+                    recoverAfterRollbackFailed(oldRecord)
+                } else {
+                    null
+                }
+                val tail = "old_gen_${if (intact) "intact" else "check_failed"}" +
+                    when (recovery) {
+                        null -> ""
+                        true -> ":recovery_ok"
+                        false -> ":recovery_failed"
+                    }
                 SkinEditorSaveResult.Failed(
-                    "apply_failed:${applyResultReason(result)}:old_gen_${if (intact) "intact" else "check_failed"}",
+                    "apply_failed:${applyResultReason(result)}:$tail",
                 )
             }
         }
@@ -435,13 +481,36 @@ class SkinEditorSaver(
                 }.getOrDefault(false)
                 // 切换／首帧阶段失败时，事务回滚可能已按新索引装了旧皮＋新布局快照；
                 // 索引已恢复，须重装当前生效快照收敛运行态。
+                // S-M2：重装结果不再被 runCatching 吞掉——收敛与否进
+                // restored 汇总（restored_ok 只在全部恢复项都成功时写）；
+                // RollbackFailed 时事务回滚本身失败，active 记录可能仍为
+                // PENDING，先写回保存前的旧记录再重装（与 skin 路径同款）。
+                var recordRepaired: Boolean? = null
+                var reinstallOk: Boolean? = null
                 if (result is ApplyTransaction.Result.SwitchFailedRolledBack ||
                     result is ApplyTransaction.Result.FirstRenderFailedRolledBack ||
                     result is ApplyTransaction.Result.RollbackFailed
                 ) {
-                    runCatching { withContext(mainDispatcher) { applier.reinstallActiveSnapshot() } }
+                    if (result is ApplyTransaction.Result.RollbackFailed) {
+                        recordRepaired = try {
+                            store.writeActive(oldRecord)
+                            true
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            false
+                        }
+                    }
+                    reinstallOk = try {
+                        withContext(mainDispatcher) { applier.reinstallActiveSnapshot() }
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        false
+                    }
                 }
-                val restored = indexRestored && genDeleted && oldLayoutIntact
+                val restored = indexRestored && genDeleted && oldLayoutIntact &&
+                    (reinstallOk ?: true) && (recordRepaired ?: true)
                 SkinEditorSaveResult.Failed(
                     "apply_failed:${applyResultReason(result)}:restored_${if (restored) "ok" else "partial"}",
                 )
@@ -518,6 +587,31 @@ class SkinEditorSaver(
                 )
             } != null
         }.getOrDefault(false)
+    }
+
+    /**
+     * RollbackFailed 后的收敛恢复（S-M2，skin 路径）：事务回滚本身失败时
+     * 运行态与 active 记录可能仍指已删的新代。先写回保存前的旧记录
+     * （否则重装会去读已删的新代），再重装当前生效快照；两步都成功
+     * 才返回 true。取消原样重抛（不把取消改写为恢复失败）。
+     */
+    private suspend fun recoverAfterRollbackFailed(oldRecord: ActiveRecord): Boolean {
+        val recordOk = try {
+            store.writeActive(oldRecord)
+            true
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        if (!recordOk) return false
+        return try {
+            withContext(mainDispatcher) { applier.reinstallActiveSnapshot() }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
     }
 
     private fun applyResultReason(result: ApplyTransaction.Result): String = when (result) {

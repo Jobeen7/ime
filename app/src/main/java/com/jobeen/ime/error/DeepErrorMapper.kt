@@ -37,8 +37,11 @@ import kotlinx.serialization.SerializationException
  *   已恢复到还原前状态”这类）保留，只把带深层特征的尾段换成映射
  *   文案；无特征时原文不动。
  *
- * 取消不映射：调用方须在到这里之前把 [CancellationException] 排除
- * （各调用点已按既有口径重抛／跳过 toast），不要把取消当失败报给用户。
+ * 取消不映射（S-M1）：[classify] 遇 [CancellationException]（含 cause
+ * 链上被包住的）直接返回 null，绝不解包 cause 继续归类——取消不是
+ * 失败，不得按 cause 错报成“请求超时”之类；[userMessage] 同理，
+ * 链上有取消时返回空串。调用方仍须在到这里之前把取消排除（各调用
+ * 点按既有口径重抛／跳过 toast），不要把取消当失败报给用户。
  */
 object DeepErrorMapper {
 
@@ -81,16 +84,16 @@ object DeepErrorMapper {
      * 按异常归类（纯函数，可单测）：沿 cause 链逐层先看类型、再看
      * 消息特征；任一层命中即返回；全链无特征返回 null（调用方保留
      * 原消息，不硬套通用文案）。
+     *
+     * 取消永不映射（S-M1）：链上任一层是 [CancellationException]
+     * （直接或被包在 cause 里）即返回 null，不解包 cause 继续归类。
+     * 取消不是失败：解包会把取消按 cause 错归类（如报“请求超时”）。
      */
     fun classify(throwable: Throwable?): DeepErrorCode? {
         var current = throwable
         var depth = 0
         while (current != null && depth < 6) {
-            if (current is CancellationException) {
-                current = current.cause
-                depth++
-                continue
-            }
+            if (current is CancellationException) return null
             classifyByType(current)?.let { return it }
             classifyMessage(current.message)?.let { return it }
             // 通用 IOException（已排除掉上面能认出的具体类型与消息特征）
@@ -101,13 +104,31 @@ object DeepErrorMapper {
         return null
     }
 
+    /**
+     * 链上是否含取消（S-M1）：直接是 [CancellationException]，或
+     * cause 链任一层是。调用方在 `Result.onFailure`／catch 里先用
+     * 它判取消、跳过失败提示；catch (e: Exception) 里仍只对直接
+     * 是取消的重抛（被包住的取消不是协程取消信号，重抛会改写异常类型）。
+     */
+    fun isCancellation(throwable: Throwable?): Boolean {
+        var current = throwable
+        var depth = 0
+        while (current != null && depth < 6) {
+            if (current is CancellationException) return true
+            current = current.cause
+            depth++
+        }
+        return false
+    }
+
     /** 只按消息文本归类（纯函数，可单测）：无特征返回 null。 */
     fun classifyMessage(message: String?): DeepErrorCode? {
         val text = message?.lowercase().orEmpty()
         if (text.isBlank()) return null
         httpCode(text)?.let { return it }
         return when {
-            text.contains("no space left") || text.contains("enospc") -> DeepErrorCode.NO_SPACE
+            isDiskFullText(text) || text.contains("no space left") ||
+                text.contains("enospc") -> DeepErrorCode.NO_SPACE
             text.contains("timed out") || text.contains("timeout") ||
                 text.contains("etimedout") -> DeepErrorCode.TIMEOUT
             text.contains("permission denied") || text.contains("eacces") ||
@@ -134,9 +155,12 @@ object DeepErrorMapper {
     /**
      * Throwable 入口：归类成功取映射文案；归类失败时对原消息做
      * [sanitizeTail]（组合消息只换尾巴）；原消息为空才回落 UNKNOWN。
+     * 链上有取消时返回空串（S-M1）：取消不是失败，无可显示的失败文案；
+     * 调用方须先用 [isCancellation] 跳过，本分支只是防漏网的兜底。
      */
     fun userMessage(context: Context, throwable: Throwable?): String {
         if (throwable == null) return context.getString(messageResId(DeepErrorCode.UNKNOWN))
+        if (isCancellation(throwable)) return ""
         classify(throwable)?.let { return context.getString(messageResId(it)) }
         val raw = throwable.message?.trim().orEmpty()
         if (raw.isEmpty()) return context.getString(messageResId(DeepErrorCode.UNKNOWN))
@@ -210,13 +234,21 @@ object DeepErrorMapper {
         is AccessDeniedException -> DeepErrorCode.PERMISSION
         is SecurityException -> DeepErrorCode.PERMISSION
         is SQLiteException ->
-            if (t.message?.contains("malformed", ignoreCase = true) == true) {
-                DeepErrorCode.CORRUPT
-            } else {
-                DeepErrorCode.IO
+            when {
+                // S-L7：磁盘满时 SQLite 报 "database or disk is full"，
+                // 写盘报 "disk full"——此前只认 "no space left"／"enospc"，
+                // 这类消息会落到 IO，用户看到“读写失败”而非“存储空间不足”。
+                isDiskFullText(t.message?.lowercase().orEmpty()) -> DeepErrorCode.NO_SPACE
+                t.message?.contains("malformed", ignoreCase = true) == true -> DeepErrorCode.CORRUPT
+                else -> DeepErrorCode.IO
             }
         else -> if (isJsonParseException(t)) DeepErrorCode.CORRUPT else null
     }
+
+    /** “磁盘满”消息特征（S-L7；入参须已小写）：SQLite 的
+     * "database or disk is full" 与写盘的 "disk full"。 */
+    private fun isDiskFullText(lowercased: String): Boolean =
+        lowercased.contains("disk full") || lowercased.contains("disk is full")
 
     /** gson／org.json 的解析异常（主工程未引 gson，按类名认，不新增依赖）。 */
     private fun isJsonParseException(t: Throwable): Boolean =
