@@ -174,10 +174,28 @@ object BackupManager {
             if (!file.isFile) throw BackupDataChangedException(operation)
             // 逐文件改动检测（D-M1）：读前取元数据，读后重验，变了即
             // 整个备份失败、不产残包（见 BackupChangeGuard）。
+            // WO33 第 1 项：值从磁盘文件解析（PrefsXml），不读
+            // SharedPreferences.all——all 是内存，守卫验的是磁盘，
+            // 一次 apply() 在读时已改内存、落盘却在重验之后时，旧
+            // 读法会把“未来的值”装进包而守卫看不出；磁盘读让值
+            // 与守卫验的是同一份字节。文件损坏／形状异常才回落
+            // 到 all 内存读（旧行为，见 PrefsXml 的 KDoc）。
             val entries = guard.guard(file, operation) {
-                val sp = appContext.getSharedPreferences(name, Context.MODE_PRIVATE)
+                if (!file.isFile) throw BackupDataChangedException(operation)
+                val bytes = try {
+                    file.readBytes()
+                } catch (e: Exception) {
+                    // 读到一半文件消失／不可读 = 采集中途被改，按变了处理。
+                    throw BackupDataChangedException(operation)
+                }
+                val all: Map<String, *> = try {
+                    PrefsXml.parse(bytes)
+                } catch (e: Exception) {
+                    Timber.w(e, "prefs xml parse failed ($name), fallback to in-memory read")
+                    appContext.getSharedPreferences(name, Context.MODE_PRIVATE).all
+                }
                 val entries = JSONObject()
-                for ((key, value) in sp.all) {
+                for ((key, value) in all) {
                     if (value == null) continue
                     entries.put(key, encodePrefValue(value))
                 }
@@ -200,6 +218,13 @@ object BackupManager {
         // 两库取自同一事务时点，prefs／文件类另由逐文件改动检测兜底
         // （见 BackupChangeGuard）。全局写锁／停写总闸仍无（写盘方
         // 散在数十处，造闸是跨组件架构活，记已知差距）。
+        // WO33 第 1 项的缓解（全局写锁未做，原因见本函数末尾的结算
+        // 注释）：① prefs 改磁盘读（上）；② 两库的 db 文件与 -wal
+        // 文件在快照读前记标记、结算时重验——两库未显式设
+        // journalMode，走 Room 默认（WAL 下写先落 -wal，主文件只在
+        // checkpoint 时变；非 WAL 下写直接落主文件），两文件都盯
+        // 即覆盖两种模式；-shm 只随连接开关变，不盯。③ 采集末尾
+        // 一次结算重验（见下），三类源第一次有了统一复核点。
         // 先开库（迁移已跑完）再裸读：裸读旧版库文件会因缺列失败。
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
@@ -214,6 +239,15 @@ object BackupManager {
             ?: throw BackupException("备份读取数据库失败：无法定位主库文件")
         val clipDbFile = clipDb.openHelper.writableDatabase.path?.let { File(it) }
             ?: throw BackupException("备份读取数据库失败：无法定位剪贴板库文件")
+        // 结算标记（WO33 第 1 项）：在清理之后、快照读之前取——
+        // sanitizeOversizedOnce 自身的写是备份操作的一部分，不计入
+        // “采集中途数据变了”；只读快照连接不改 db／-wal 文件
+        // （只读恢复只重建 -shm），标记不会被本次读本身触发。
+        // -wal 不存在时记 null 标记：采集中途出现即变了。
+        guard.markForSettle(appDbFile)
+        guard.markForSettle(File(appDbFile.path + "-wal"))
+        guard.markForSettle(clipDbFile)
+        guard.markForSettle(File(clipDbFile.path + "-wal"))
         val room = RoomSnapshotReader(appDbFile, clipDbFile).read()
         val clipRows = room.clipboard
         val groupRows = room.groups
@@ -304,6 +338,28 @@ object BackupManager {
         // 超限时 collectSkinScriptsJson 返回 null，即不写该段；无脚本
         // 时带空段，使还原失败回放能恢复到“还原前无脚本”状态。
         collectSkinScriptsJson(guard, operation)?.let { root.put("skin_scripts", it) }
+
+        // —— 结算重验（WO33 第 1 项，D-M1 残余窗口的缓解）——
+        // 采集全部结束、清单附上之前，把本次读过的全部文件（prefs
+        // 各表、Room 两库 db＋-wal、统计文件、皮肤库／脚本文件）
+        // 在同一个点上再验一遍：任一文件自其读前标记之后变了，
+        // 即整个备份失败、不产残包。这是三类源第一次有统一复核点，
+        // 残余窗口由“整个采集时长”缩到“结算点之后”。
+        // 结算点之后才落盘的写不属于本次快照（快照语义上正确排除）；
+        // 唯一逃得过的，是配对写里 prefs 的 apply() flush 仍挂在
+        // QueuedWork 队列里跨过结算点、而配对的 Room 提交已进快照
+        // 的情形——正常 flush 延迟毫秒级，逃过须写盘线程被拖住横跨
+        // [prefs 读，结算] 这段采集（皮肤段大时可达百毫秒以上）。
+        // 全局写锁／停写总闸未做：写盘方约 130 处 prefs 编辑点
+        // （39 处 .edit(＋91 处 edit{}，17＋ 文件）＋157 处 DAO 写
+        // 调用（43 文件）＋60 处文件直写（AtomicFiles 16＋
+        // writeText／writeBytes 44），无单一收口（190 处
+        // getSharedPreferences 直取实例）；造闸须全数改走持锁
+        // 写，跨组件架构活，非一批可做。且锁本身有风险：主线程
+        // 的设置开关 apply() 会被采集全程阻塞（皮肤段 32MB 时可
+        // 达秒级，ANR 线 5 秒）；采集持 Room 快照事务等写锁、写
+        // 方持 Room 写事务等闸锁即构成死锁环。彻底消除仍是已知差距。
+        guard.reverifyAll(operation)
 
         // —— 包内清单（D-M1，fcitx 清单 v2 形状）：各源计数／存在标记，
         // 恢复前 [parsePayload] 逐项核对；旧备份无此字段，解析时跳过

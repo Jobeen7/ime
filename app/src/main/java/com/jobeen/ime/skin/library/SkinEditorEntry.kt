@@ -31,8 +31,7 @@ object SkinEditorEntry {
             val saver = SkinEditorSaver(context.applicationContext)
             val active = when (val resolved = saver.resolveActiveFiles()) {
                 is ResolveActiveResult.Unavailable -> {
-                    Timber.w("skin editor: resolve failed: ${resolved.reason}")
-                    ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_active_skin))
+                    toastResolveFailed(context, resolved.reason)
                     return@launch
                 }
                 is ResolveActiveResult.Ok -> resolved.files
@@ -55,8 +54,7 @@ object SkinEditorEntry {
             val saver = SkinEditorSaver(context.applicationContext)
             val active = when (val resolved = saver.resolveActiveFiles()) {
                 is ResolveActiveResult.Unavailable -> {
-                    Timber.w("skin editor: resolve failed: ${resolved.reason}")
-                    ToastUtil.showToast(context, context.getString(R.string.skin_editor_no_active_skin))
+                    toastResolveFailed(context, resolved.reason)
                     return@launch
                 }
                 is ResolveActiveResult.Ok -> resolved.files
@@ -69,6 +67,16 @@ object SkinEditorEntry {
             }
             openEditor(context, file.file.absolutePath)
         }
+    }
+
+    /**
+     * resolve 失败提示（WO33 第 2(b) 项）：具体原因进 Timber 日志；
+     * 用户侧 toast 按 [SkinEditorReasons.entryToastResId] 取文案——
+     * 只有 active_hash_mismatch 给具体提示，其余沿用通用 toast。
+     */
+    private fun toastResolveFailed(context: Context, reason: String) {
+        Timber.w("skin editor: resolve failed: $reason")
+        ToastUtil.showToast(context, context.getString(SkinEditorReasons.entryToastResId(reason)))
     }
 
     private fun openEditor(context: Context, filePath: String) {

@@ -439,4 +439,56 @@ class SkinEditorSaverTest {
         assertTrue(valid.skin.keyRejections.none { it.keyId == "lay1:K-1" })
         root.deleteRecursively()
     }
+
+    // ---- WO33 第 2(a) 项：布局索引 hash 门 ----
+
+    @Test
+    fun resolveActiveFilesRejectsLayoutHashMismatch() = runBlocking<Unit> {
+        val (root, layout, store) = newStore()
+        seedSkin(layout, store)
+        // 外部改动布局文件、索引未同步：拒因须是 layout_hash_mismatch:lay1，
+        // 不静默打开旧索引指向的布局。
+        File(layout.layoutGenDir("lay1", 1), "layout.json").writeText(layoutTextV2)
+        val resolved = saver(layout, store, FakeApplier()).resolveActiveFiles()
+        assertTrue(resolved is ResolveActiveResult.Unavailable)
+        assertEquals(
+            "layout_hash_mismatch:lay1",
+            (resolved as ResolveActiveResult.Unavailable).reason,
+        )
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun resolveActiveFilesAcceptsConsistentLayoutEdit() = runBlocking<Unit> {
+        val (root, layout, store) = newStore()
+        seedSkin(layout, store)
+        // 外部改动布局＋索引同步更新：hash 门是比对，不是 blanket 拒绝。
+        File(layout.layoutGenDir("lay1", 1), "layout.json").writeText(layoutTextV2)
+        val newLayoutHash = sha256Hex(layoutTextV2.toByteArray(Charsets.UTF_8))
+        val index = readIndex(store)
+        store.writeIndex(
+            index.copy(
+                layouts = index.layouts.map {
+                    if (it.id == "lay1") it.copy(hash = newLayoutHash) else it
+                },
+            ),
+        )
+        val active = resolveOk(saver(layout, store, FakeApplier()))
+        assertTrue(active.files.any { it.kind == EditorFile.Kind.LAYOUT && it.id == "lay1" })
+        assertEquals(newLayoutHash, readIndex(store).layouts.single { it.id == "lay1" }.hash)
+        root.deleteRecursively()
+    }
+
+    @Test
+    fun resolveActiveFilesSkipsMissingLayoutFile() = runBlocking<Unit> {
+        val (root, layout, store) = newStore()
+        seedSkin(layout, store)
+        // 布局文件缺失沿用旧行为：跳过该布局、仍打开 skin.json（本次只补
+        // hash 比对，不改缺失分支）。
+        File(layout.layoutGenDir("lay1", 1), "layout.json").delete()
+        val active = resolveOk(saver(layout, store, FakeApplier()))
+        assertEquals(1, active.files.size)
+        assertTrue(active.files.all { it.kind == EditorFile.Kind.SKIN_JSON })
+        root.deleteRecursively()
+    }
 }

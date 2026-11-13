@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
 import android.view.Gravity
-import android.view.MotionEvent
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.text.TextUtils
@@ -27,13 +26,11 @@ import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
-import com.jobeen.ime.skin.symbol.KaomojiSwipe
 import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.input.keyboard.key.TextKeyView
-import com.jobeen.ime.input.keyboard.key.shouldInterceptHorizontalSwipe
 import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -49,7 +46,6 @@ class EmojiKeyboard(
         const val NAME = "Emoji"
         private const val COLUMNS = 5
         private const val ROWS = 5
-        private const val SWIPE_MIN_DISTANCE_DP = 48
         private var categorys: List<Pair<Category, Array<String>>> = Symbol.Emoji
 
         private fun keyDef(item: SymbolItem): KeyDef {
@@ -79,6 +75,9 @@ class EmojiKeyboard(
     )
 
     private val gridView = GridKeyboardView(context, colors, COLUMNS, ROWS).apply {
+        // WO31 连续竖滑：竖向拦截只在内容可滚且竖向占优时才生效
+        // （短分类 maxScroll=0 时不拦截，点按不受影响，不变死手势）。
+        verticalScrollOnlyWhenScrollable = true
         onKeyAction = { action ->
             keyActionListener?.onKeyAction(action)
             // 板内提交：提交后自动返回；
@@ -119,11 +118,16 @@ class EmojiKeyboard(
             ?: SubClassifiedSymbols.fromSingleLevel(categorys)
     private val boardState = SubClassifiedBoardState(twoStageSymbols)
 
-    /** 横滑翻页（W13-1）：与颜文字板同口径，见 onInterceptTouchEvent。 */
-    private val swipeMinDistancePx = context.dp(SWIPE_MIN_DISTANCE_DP).toFloat()
-    private var downX = 0f
-    private var downY = 0f
-    private var swipingHorizontally = false
+    /**
+     * WO31 连续竖滑：网格一次喂当前子类的全部项（currentItems），
+     * 不再按 25 个一页切 visibleItems。GridKeyboardView 按
+     * 5 列 × 5 行视口排布，超出部分由竖向滚动呈现；切分类／子
+     * 类／reset 时 setItems 把滚动归零（回首屏，与旧 page=0 同效）。
+     * boardState 的 page 字段自此在 emoji 板上恒为 0，不再驱动网格。
+     */
+    private fun refreshGrid() {
+        gridView.setItems(boardState.currentItems.map { keyDef(it) })
+    }
 
     /** 二级子条（48dp 横条，网格之上；单子类时隐藏）。 */
     private val subStripView: LinearLayout = LinearLayout(context).apply {
@@ -180,83 +184,17 @@ class EmojiKeyboard(
         val index = boardState.parentLabels.indexOf(label)
         if (index < 0) return
         boardState.selectParent(index)
-        gridView.setItems(boardState.visibleItems.map { keyDef(it) })
+        refreshGrid()
         sidePanelKey.selectIndex(index)
         rebuildSubStrip()
     }
 
     /**
-     * 二级集合翻页（P1-5）：当前子类按页翻；页内无更多时
-     * 返回 false（窗口层空操作，不换父类）。翻页后只换网格，
-     * 父类／子类选中与子条不动。
+     * WO31 连续竖滑，无分页可翻：窗口层 #subCollectionPageUp/Down
+     * 在 emoji 板上恒为空操作（不换页、不换分类、不下发引擎）。
+     * 接口保留（ISubCollectionPageable 契约，颜文字／符号板仍用）。
      */
-    override fun pageSubCollection(forward: Boolean): Boolean {
-        val changed = if (forward) boardState.nextPage() else boardState.prevPage()
-        if (changed) gridView.setItems(boardState.visibleItems.map { keyDef(it) })
-        return changed
-    }
-
-    /**
-     * 左右滑翻页（W13-1，回归修复）：左滑下一页、右滑上一页，
-     * 到端停、不循环；只换网格，父类／子类选中与子条不动
-     * （与按键翻页 pageSubCollection 同一入口）。
-     * 拦截口径与颜文字板一致：横向位移达到翻页最小距离
-     * （48dp）且横向占优时才拦截（子键收 ACTION_CANCEL，点按
-     * 不触发）；未达翻页距离的横向小拖动不拦截、仍归子键点按
-     * （I-M2：旧口径以 touchSlop 约 8dp 拦截，8～48dp 的拖动
-     * 既被取消点按又翻不了页）；竖向位移归网格滚动，不拦截；
-     * 抬手在 onTouchEvent 里按位移判定方向（复用
-     * KaomojiSwipe.directionFor）。
-     */
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_DOWN -> {
-                downX = event.x
-                downY = event.y
-                swipingHorizontally = false
-                return false
-            }
-            MotionEvent.ACTION_MOVE -> {
-                if (!swipingHorizontally) {
-                    val dx = event.x - downX
-                    val dy = event.y - downY
-                    if (shouldInterceptHorizontalSwipe(dx, dy, swipeMinDistancePx)) {
-                        swipingHorizontally = true
-                        return true
-                    }
-                }
-                return swipingHorizontally
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                swipingHorizontally = false
-                return false
-            }
-        }
-        return super.onInterceptTouchEvent(event)
-    }
-
-    @SuppressLint("ClickableViewAccessibility")
-    override fun onTouchEvent(event: MotionEvent): Boolean {
-        when (event.actionMasked) {
-            MotionEvent.ACTION_UP -> {
-                if (swipingHorizontally) {
-                    swipingHorizontally = false
-                    val dx = event.x - downX
-                    val dy = event.y - downY
-                    KaomojiSwipe.directionFor(dx, dy, swipeMinDistancePx)?.let { direction ->
-                        pageSubCollection(direction == KaomojiSwipe.Direction.NEXT)
-                    }
-                    return true
-                }
-            }
-            MotionEvent.ACTION_CANCEL -> {
-                swipingHorizontally = false
-                return true
-            }
-        }
-        return super.onTouchEvent(event)
-    }
+    override fun pageSubCollection(forward: Boolean): Boolean = false
 
     /**
      * 二级子条重建：当前父类子类少于 2 个时隐藏（既有一级表
@@ -281,7 +219,7 @@ class EmojiKeyboard(
                 )
                 setOnClickListener {
                     if (boardState.selectSub(index)) {
-                        gridView.setItems(boardState.visibleItems.map { keyDef(it) })
+                        refreshGrid()
                         rebuildSubStrip()
                     }
                 }
@@ -413,7 +351,7 @@ class EmojiKeyboard(
 
     fun reset() {
         boardState.selectParent(0)
-        gridView.setItems(boardState.visibleItems.map { keyDef(it) })
+        refreshGrid()
         sidePanelKey.selectIndex(0)
         rebuildSubStrip()
         sidePanelKey.resetPosition()

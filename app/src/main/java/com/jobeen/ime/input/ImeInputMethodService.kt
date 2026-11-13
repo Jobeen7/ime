@@ -33,6 +33,7 @@ import com.jobeen.ime.engine.IEngine
 import com.jobeen.ime.input.keyboard.window.KeyboardWindow
 import com.jobeen.ime.input.keyboard.window.KeyboardStateManager
 import com.jobeen.ime.input.panel.component.TextEditView
+import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.symbolbar.shouldResetSymbolBarOnOrientationChange
 import com.jobeen.ime.ui.FabActions
 import timber.log.Timber
@@ -321,13 +322,16 @@ class ImeInputMethodService : InputMethodService() {
      * 返回值（施工单 12）：本次喂入是否实为逻辑换框。onStartInput
      * 可能先于 onStartInputView 投递一次换框（键盘隐藏中换框时
      * 只有本入口能先行），新窗口复位须在视图弹出时才执行，故变
-     * 化先记在 [fieldChangedPending]、由 onStartInputView 消费；
+     * 化先记在 [windowResetGate]、由 onStartInputView 消费；
      * 同框 restarting 两入口都返回 false，标志恒不置位。
+     *
+     * 新窗口复位门（WO32）：复位门不再走本跟踪的四项比对（微信
+     * 各会话四项全同、恒判不变），改走 [WindowResetGate] 的
+     * LatinIME 公式（`!restarting || inputTypeChanged`），门在
+     * onStartInput 算、pending 由 onStartInputView 消费；本跟踪
+     * 只保留语音作废（R3）一途。
      */
-    private var fieldChangedPending = false
-
-    /** 最后一次已展示字段（W17-6）：onStartInputView 每次弹出更新，待投递标志只在展示字段真变时才消费。 */
-    private var lastShownFieldKey: InputFieldKey? = null
+    private val windowResetGate = WindowResetGate()
 
     private fun trackInputField(info: EditorInfo?): Boolean {
         val changed = inputFieldTracker.track(InputFieldKey.of(info))
@@ -344,7 +348,27 @@ class ImeInputMethodService : InputMethodService() {
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
         // 字段身份跟踪（R3）：视图尚未弹出时（如键盘隐藏中换框）
         // 只有本入口能先于结算路径更新身份，故两入口都喂
-        fieldChangedPending = fieldChangedPending || trackInputField(attribute)
+        trackInputField(attribute)
+        // 新窗口复位门（WO32，LatinIME 公式）：门在 onStartInput
+        // 算——该入口每会话必调、restarting 是框架契约（新会话
+        // 必 false，同框重开才 true）；门为真即置位待投递，由
+        // onStartInputView 在窗口弹出时消费。取证行（INFO 级，
+        // 无条件落盘、随诊断导出可见，不依赖诊断模式开关）：
+        // 切两次微信聊天框后导诊断包，应见两行 restarting=false、
+        // gate=true。
+        val resetGate = windowResetGate.noteStartInput(restarting, attribute?.inputType)
+        DiagLog.i(
+            "wo12reset",
+            "start_input",
+            mapOf(
+                "pkg" to attribute?.packageName,
+                "fieldId" to attribute?.fieldId,
+                "inputType" to attribute?.inputType?.let { "0x%08x".format(it) },
+                "imeOptions" to attribute?.imeOptions?.let { "0x%08x".format(it) },
+                "restarting" to restarting,
+                "gate" to resetGate,
+            ),
+        )
         super.onStartInput(attribute, restarting)
     }
 
@@ -363,18 +387,28 @@ class ImeInputMethodService : InputMethodService() {
         // App 冷启动时不再 eager 拉起 :speech 进程
         com.jobeen.ime.base.speech.SherpaSpeechClient.preStartSync(this)
         // 字段身份跟踪（R3）：同步投递，先于下方 engine 与窗口
-        // 对新连接的使用。新窗口复位（施工单 12）：onStartInput
-        // 已先行投递过时此处 track 返回 false，故与待投递标志取
-        // 或；消费后清零，同框重启不再复位。待投递标志只在展示字
-        // 段相对上次已展示字段真变时才消费（W17-6）：跨会话残留
-        // 的 pending 不在同框重启时误触发复位。
-        val shownKey = InputFieldKey.of(info)
-        val shownChanged = shouldConsumePendingFieldChange(
-            fieldChangedPending, lastShownFieldKey, shownKey,
+        // 对新连接的使用。onStartInput 已先行投递过时此处 track
+        // 返回 false，返回值不再参与复位门（WO32：复位门改走
+        // LatinIME 公式，见 onStartInput），只保留语音作废一途。
+        trackInputField(info)
+        // 新窗口复位（施工单 12／WO32）：消费 onStartInput 算好
+        // 的待投递。门不在本层重算——同框收起再打开走本回调且
+        // restarting=false，在此按 restarting 算会误复位；本层只
+        // 消费 onStartInput 的权威判定。键盘未显示时框架不调本
+        // 回调，pending 留到下次弹出时消费，复位不丢。
+        val fieldChanged = windowResetGate.consumePending()
+        DiagLog.i(
+            "wo12reset",
+            "start_input_view",
+            mapOf(
+                "pkg" to info.packageName,
+                "fieldId" to info.fieldId,
+                "inputType" to "0x%08x".format(info.inputType),
+                "imeOptions" to "0x%08x".format(info.imeOptions),
+                "restarting" to restarting,
+                "fieldChanged" to fieldChanged,
+            ),
         )
-        if (shownKey != null) lastShownFieldKey = shownKey
-        val fieldChanged = shownChanged || trackInputField(info)
-        fieldChangedPending = false
         keyboardWindow?.onStartInputView(info, restarting, fieldChanged)
         engine?.onStartInputView(currentInputConnection, info, restarting)
         // 直调即时探针前先撤掉合并通道里排队的那次：它捕获的是旧
@@ -385,12 +419,11 @@ class ImeInputMethodService : InputMethodService() {
     }
 
     override fun onFinishInput() {
-        // 输入会话结束：待投递的字段变化标志同步清零（W17-6）——
+        // 输入会话结束：待投递的复位标志同步清零（WO32）——
         // onStartInput 置位后若视图未弹出，会话结束时 pending 残留，
         // 下一会话同框重启会在 onStartInputView 误消费、误触发新窗
-        // 口复位；与“最后一次已展示字段”门（见 onStartInputView）
-        // 共同兜底。
-        fieldChangedPending = false
+        // 口复位；清零后残留不再跨会话。
+        windowResetGate.clearPending()
         // 输入会话结束（W2）：待就绪整句的作废只认真正的输入结
         // 束信号——本回调与 onFinishInputView(true)（投递判定
         // 见 advancesEditorEpoch）。onFinishInput 按 AOSP 语义

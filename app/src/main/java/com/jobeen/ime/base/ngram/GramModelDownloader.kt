@@ -5,6 +5,7 @@ import com.jobeen.ime.base.net.HttpUtil
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.engine.rime.data.DataManager
+import com.jobeen.ime.error.DeepErrorMapper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -245,7 +246,7 @@ object GramModelDownloader {
             if (it !is kotlinx.coroutines.CancellationException &&
                 it !is HttpUtil.ApiException
             ) {
-                HttpUtil.showToast(appContext.getString(R.string.gram_download_failed, it.message ?: appContext.getString(R.string.error_network)))
+                HttpUtil.showToast(appContext.getString(R.string.gram_download_failed, DeepErrorMapper.userMessage(appContext, it)))
             }
         }.getOrNull()
             ?: return@withContext false
@@ -424,7 +425,7 @@ object GramModelDownloader {
             throw e
         } catch (e: Exception) {
             Timber.e(e, "Ngram model download failed")
-            HttpUtil.showToast(appContext.getString(R.string.gram_download_failed, e.message ?: appContext.getString(R.string.error_network)))
+            HttpUtil.showToast(appContext.getString(R.string.gram_download_failed, DeepErrorMapper.userMessage(appContext, e)))
             false
         }
     }

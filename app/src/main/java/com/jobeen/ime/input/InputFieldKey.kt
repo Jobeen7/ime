@@ -53,20 +53,84 @@ internal fun isInputFieldChanged(previous: InputFieldKey?, current: InputFieldKe
 }
 
 /**
- * 待投递的字段变化是否应在本次视图弹出时消费（纯决策，可单测）：
- * 仅当展示字段相对上次已展示字段真变时才消费；首次展示（无上
- * 次已展示字段）或展示字段未知时按变化消费（保旧行为）。配合
- * onFinishInput 的同步清零，跨会话残留的 pending 不会在同框
- * 重启时误触发新窗口复位。
+ * 新窗口复位门（WO32，LatinIME 公式）：`!restarting || inputTypeChanged`。
+ *
+ * LatinIME（LatinIME.java:988）`isDifferentTextField = !restarting ||
+ * inputTypeChanged`：`restarting` 是框架契约——切到新输入框必为
+ * false（新会话），同框重开才为 true。Gboard 照此判定换框（它不
+ * 复位语言，Jime 只照搬检测方法、不照搬策略）。
+ *
+ * inputTypeChanged 是当前 [EditorInfo.inputType] 与上次应用值
+ * 的全等比对（整型逐位相等，不拆 class/variation）。上次应用值
+ * 缺失（进程内首次输入开始）时按变化处理，与 LatinIME 的
+ * mInputEditorInfo 为空时 inputTypeChanged=true 一致。
+ *
+ * 本函数不比包名／字段 id／imeOptions：微信各会话共用同一布局
+ * 与字段 id，四项全同，旧门（四项比对）在此恒为 false、
+ * resetToFirstSchema() 一次也没跑——正是 WO12 复位失效的根因。
+ * 纯决策，可单测。
  */
-internal fun shouldConsumePendingFieldChange(
-    pending: Boolean,
-    lastShown: InputFieldKey?,
-    shown: InputFieldKey?,
+internal fun shouldResetWindowOnStartInput(
+    restarting: Boolean,
+    inputType: Int?,
+    lastAppliedInputType: Int?,
 ): Boolean {
-    if (!pending) return false
-    if (lastShown == null || shown == null) return true
-    return lastShown != shown
+    if (!restarting) return true
+    if (inputType == null) return false
+    return lastAppliedInputType == null || lastAppliedInputType != inputType
+}
+
+/**
+ * 新窗口复位门的待投递状态（WO32）：门在 onStartInput 算（该入口
+ * 每会话必调、restarting 可信），复位在 onStartInputView 链路
+ * 执行（窗口弹出时才有可复位的窗口；键盘未显示时框架只调
+ * onStartInput、不调 onStartInputView，见 IMS 注释）。
+ *
+ * 三坑：
+ * - 转屏：转屏第一次 onStartInput 的 restarting=true 且 inputType
+ *   不变 → 门为 false，pending 不置位，不误复位；pending 只由门
+ *   为真时置位、永不由门为假时清零（转屏不能把先前换框攒下的
+ *   pending 抹掉）。
+ * - 同框隐藏再点开：框架上 served view 没变，checkFocusInternalLocked
+ *   直接返回，不产生新 startInput，pending 保持 false，复位不误
+ *   触发；onStartInputView 自身的 restarting 在此路径上不可信
+ *   （同框收起再打开该回调 restarting=false），故门不在该层重算。
+ * - onStartInputView 不一定被调：门不依赖它，只由它消费 pending。
+ *
+ * 旧 W17-6 的展示字段比对门（shouldConsumePendingFieldChange）
+ * 已随本门删除：它拿展示字段与上次已展示字段的四项全等比对，
+ * 微信切聊天框时两边全同、恒不消费，正是旧门失效的另一半；
+ * 跨会话残留 pending 改由 onFinishInput 的 [clearPending] 兜底。
+ *
+ * 仅主线程（IMS 回调线程）使用，与旧 fieldChangedPending 同口径，
+ * 无需同步。
+ */
+internal class WindowResetGate {
+    private var lastAppliedInputType: Int? = null
+    private var pending: Boolean = false
+
+    /**
+     * onStartInput 到达时算门并滚动上次应用值；门为真时置位待投递。
+     * 返回本次算得的门值（供取证日志）。
+     */
+    fun noteStartInput(restarting: Boolean, inputType: Int?): Boolean {
+        val gate = shouldResetWindowOnStartInput(restarting, inputType, lastAppliedInputType)
+        if (inputType != null) lastAppliedInputType = inputType
+        if (gate) pending = true
+        return gate
+    }
+
+    /** onStartInputView 消费一次待投递；无待投递时返回 false。 */
+    fun consumePending(): Boolean {
+        val value = pending
+        pending = false
+        return value
+    }
+
+    /** 会话结束（onFinishInput）清零残留待投递。 */
+    fun clearPending() {
+        pending = false
+    }
 }
 
 /**

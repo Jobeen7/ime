@@ -161,7 +161,7 @@ class T9Keyboard(
         // 经 EnterKeyVariant 传入，静态单例会在主题间串色
         fun buildLayout(returnVariant: Variant): List<List<KeyDef>> = listOf(
             listOf(
-                sidePannelKey(rowSpan = 3, visableRow = 7),
+                sidePannelKey(rowSpan = 3, visableRow = 4),
                 segmentKey(percentWidth = 0.22333f, id = KeyIds.T9.T9_SEGMENT),
                 mixedAlphabetKey("2", "ABC", 0.22333f, id = KeyIds.T9.T9_KEY_2),
                 mixedAlphabetKey("3", "DEF", 0.22333f, id = KeyIds.T9.T9_KEY_3),

@@ -26,6 +26,7 @@ import com.jobeen.ime.skin.model.WhitelistAction
 import com.jobeen.ime.skin.notify.NotificationSource
 import com.jobeen.ime.skin.notify.SkinNotification
 import com.jobeen.ime.skin.perf.PerfMonitor
+import com.jobeen.ime.skin.perf.PerfPanelLabels
 import com.jobeen.ime.skin.runtime.CustomLayoutRuntime
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.store.SkinGenRef
@@ -684,6 +685,9 @@ class BatchCSkinFidelityTest {
     }
 
     // ---------- P2-10：性能面板 ----------
+    // WO33 第 4(a) 项：期望标签／文案不再硬编码中文，改走与生产代码
+    // 同一来源 [PerfPanelLabels]（缺省值与 strings.xml `perf_event_*`／
+    // `perf_aggregate_format` 同值，由 PerfPanelLabelsTest 钉住）。
 
     @Test
     fun performanceRows_baseOrderThenProbesOnlyIfPresent() {
@@ -694,12 +698,26 @@ class BatchCSkinFidelityTest {
                 PerfMonitor.Event.KEY_ENGINE to PerfMonitor.Aggregate(5L, 2.0, 9L),
             ),
         )
+        val expectedLabels = listOf(
+            PerfMonitor.Event.COLD_START,
+            PerfMonitor.Event.MEMORY,
+            PerfMonitor.Event.KEY_ENGINE,
+        ).map { PerfPanelLabels.DEFAULT_LABELS.getValue(it) }
+        assertEquals(expectedLabels, rows.map { it.first })
         assertEquals(
-            listOf("冷启动", "内存", "引擎处理"),
-            rows.map { it.first },
+            String.format(
+                PerfPanelLabels.DEFAULT_AGGREGATE_TEMPLATE,
+                1L, 300.0, "ms", 300L,
+            ),
+            rows[0].second,
         )
-        assertEquals("1 次，均值 300.0 ms，最大 300 ms", rows[0].second)
-        assertEquals("2 次，均值 100.0 KB，最大 120 KB", rows[1].second)
+        assertEquals(
+            String.format(
+                PerfPanelLabels.DEFAULT_AGGREGATE_TEMPLATE,
+                2L, 100.0, "KB", 120L,
+            ),
+            rows[1].second,
+        )
     }
 
     @Test

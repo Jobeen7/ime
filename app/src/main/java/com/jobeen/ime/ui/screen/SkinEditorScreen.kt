@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.sp
 import com.jobeen.ime.skin.library.ActiveSkinFiles
 import com.jobeen.ime.skin.library.EditorFile
 import com.jobeen.ime.skin.library.ResolveActiveResult
+import com.jobeen.ime.skin.library.SkinEditorReasons
 import com.jobeen.ime.skin.library.SkinEditorSaveResult
 import com.jobeen.ime.skin.library.SkinEditorSaver
 import java.io.File
@@ -133,18 +134,12 @@ fun SkinEditorScreen(
         }
     }
 
-    fun resolveReasonText(reason: String): String = when (reason) {
-        "skin_json_missing" -> context.getString(R.string.skin_editor_reason_skin_json_missing)
-        "skin_json_unreadable" -> context.getString(R.string.skin_editor_reason_skin_json_unreadable)
-        "skin_json_unparseable" -> context.getString(R.string.skin_editor_reason_skin_json_unparseable)
-        "manifest_missing" -> context.getString(R.string.skin_editor_reason_manifest_missing)
-        "manifest_unparseable" -> context.getString(R.string.skin_editor_reason_manifest_unparseable)
-        "manifest_version_unsupported" -> context.getString(R.string.skin_editor_reason_manifest_version)
-        "manifest_skin_entry_missing" -> context.getString(R.string.skin_editor_reason_manifest_entry_missing)
-        "manifest_duplicate_path" -> context.getString(R.string.skin_editor_reason_manifest_dup_path)
-        "manifest_skin_hash_mismatch" -> context.getString(R.string.skin_editor_reason_manifest_hash_mismatch)
-        else -> context.getString(R.string.skin_editor_no_active_skin)
-    }
+    // WO33 第 4(b) 项：reason 码 → 用户可读文案走唯一共享映射
+    // SkinEditorReasons（与入口 toast 同款做法、同一份映射）；
+    // 覆盖 resolve 码与全部保存结果码（Blocked／Failed／Stale），
+    // 未知码回落通用文案，不再原样显示错误码。
+    fun resolveReasonText(reason: String): String =
+        context.getString(SkinEditorReasons.reasonResId(reason))
 
     suspend fun reload() {
         loading = true
@@ -317,14 +312,14 @@ fun SkinEditorScreen(
                                 currentResult.issues.forEach { Text(it, fontSize = 13.sp) }
                             }
                             is SkinEditorSaveResult.Blocked -> {
-                                Text(stringResource(R.string.skin_editor_blocked, currentResult.reason))
+                                Text(stringResource(R.string.skin_editor_blocked, resolveReasonText(currentResult.reason)))
                                 currentResult.issues.forEach { Text(it, fontSize = 13.sp) }
                             }
                             is SkinEditorSaveResult.Failed -> {
-                                Text(stringResource(R.string.skin_editor_save_failed, currentResult.reason))
+                                Text(stringResource(R.string.skin_editor_save_failed, resolveReasonText(currentResult.reason)))
                             }
                             is SkinEditorSaveResult.Stale -> {
-                                Text(stringResource(R.string.skin_editor_stale, currentResult.reason))
+                                Text(stringResource(R.string.skin_editor_stale, resolveReasonText(currentResult.reason)))
                             }
                         }
                     }

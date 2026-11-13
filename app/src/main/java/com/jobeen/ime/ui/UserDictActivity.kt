@@ -19,6 +19,7 @@ import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncPrefs
 import com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncScheduler
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
+import com.jobeen.ime.error.DeepErrorMapper
 import com.jobeen.ime.ui.screen.UserDictScreen
 import com.jobeen.ime.ui.screen.UserDictUiState
 import com.jobeen.ime.ui.theme.ImeTheme
@@ -342,7 +343,7 @@ class UserDictActivity : ComponentActivity() {
                 }
                 .onFailure {
                     Timber.w(it, "WebDAV upload failed")
-                    showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_upload_failed))
+                    showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
                 }
         }
     }
@@ -377,7 +378,7 @@ class UserDictActivity : ComponentActivity() {
                         // 直接把目录问题告诉用户，不做无意义的回退
                         setIdle()
                         Timber.w(e, "WebDAV sync dir unavailable")
-                        showNotice(getString(R.string.user_dict_op_failed_title), e.message ?: getString(R.string.user_dict_sync_dir_unavailable))
+                        showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, e))
                     } else {
                         // 某些 WebDAV 服务器不支持 PROPFIND，回退到同名文件直接下载
                         Timber.w(e, "List remote files failed, fallback to same-name download")
@@ -400,7 +401,7 @@ class UserDictActivity : ComponentActivity() {
                 ToastUtil.showToast(getString(R.string.user_dict_uploaded_schemes, count))
             }.onFailure {
                 Timber.w(it, "uploadSchemes failed")
-                showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_upload_failed))
+                showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
             }
         }
     }
@@ -420,7 +421,7 @@ class UserDictActivity : ComponentActivity() {
                 ToastUtil.showToast(getString(R.string.user_dict_downloaded_schemes, summary.count, skipNote))
             }.onFailure {
                 Timber.w(it, "downloadSchemes failed")
-                showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_download_failed))
+                showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
             }
         }
     }
@@ -457,7 +458,7 @@ class UserDictActivity : ComponentActivity() {
                 }
                 .onFailure {
                     Timber.w(it, "WebDAV test connection failed")
-                    showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_connect_failed))
+                    showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
                 }
         }
     }
@@ -480,7 +481,7 @@ class UserDictActivity : ComponentActivity() {
                 }
                 .onFailure {
                     Timber.w(it, "WebDAV download failed")
-                    showNotice(getString(R.string.user_dict_op_failed_title), it.message ?: getString(R.string.user_dict_download_failed))
+                    showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
                 }
         }
     }

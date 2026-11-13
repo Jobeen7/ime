@@ -160,7 +160,7 @@ class UserSymbolBarTest {
             UserSymbolBarOps.displaySymbol(it, PunctuationMode.HalfWidth)
         }
         assertEquals(
-            listOf(",", ".", "?", "!", "...", "~", "、", "=", "+", "-", "*", "/", "%", "#", "@", "&"),
+            listOf(",", ".", "?", "!", "...", "~", "､", "=", "+", "-", "*", "/", "%", "#", "@", "&"),
             half,
         )
     }
@@ -180,9 +180,12 @@ class UserSymbolBarTest {
     fun displaySymbol_ellipsisPairAndNonPunctuation() {
         assertEquals("...", UserSymbolBarOps.displaySymbol("…", PunctuationMode.HalfWidth))
         assertEquals("…", UserSymbolBarOps.displaySymbol("...", PunctuationMode.FullWidth))
-        // 「、」无单字符半角形，两模式都原样；非标点原样。
-        assertEquals("、", UserSymbolBarOps.displaySymbol("、", PunctuationMode.HalfWidth))
+        // WO33 核实：顿号有单字符半角形「､」(U+FF64，NFKC→U+3001)，
+        // 半角出「､」、全角回「、」；非标点原样。
+        assertEquals("､", UserSymbolBarOps.displaySymbol("、", PunctuationMode.HalfWidth))
         assertEquals("、", UserSymbolBarOps.displaySymbol("、", PunctuationMode.FullWidth))
+        assertEquals("、", UserSymbolBarOps.displaySymbol("､", PunctuationMode.FullWidth))
+        assertEquals("､", UserSymbolBarOps.displaySymbol("､", PunctuationMode.HalfWidth))
         assertEquals("★", UserSymbolBarOps.displaySymbol("★", PunctuationMode.HalfWidth))
         assertEquals("★", UserSymbolBarOps.displaySymbol("★", PunctuationMode.FullWidth))
         // 已是目标形态的符号原样；全角形在半角模式下还原。
@@ -191,12 +194,27 @@ class UserSymbolBarTest {
         assertEquals(",", UserSymbolBarOps.displaySymbol("，", PunctuationMode.HalfWidth))
     }
 
+    @Test
+    fun dunhaoHalfWidthForm_isInCharacterSetTable() {
+        // WO33：换算表 CharacterSet.half2full 补「､」→「、」一对，
+        // full2half 由反推得「、」→「､」；两向都锁死。
+        assertEquals("､", PunctuationMode.CharacterSet.halfWidth("、"))
+        assertEquals("、", PunctuationMode.CharacterSet.fullWidth("､"))
+        assertEquals("、", PunctuationMode.CharacterSet.fullWidth("、"))
+        assertEquals("､", PunctuationMode.CharacterSet.halfWidth("､"))
+        // 不对称口径（有意）：「。」已有 ASCII 半角等价形 "."，仍走
+        // 既有映射，不补 U+FF61「｡」；「。」半角出 "." 不是 "｡"。
+        assertEquals(".", PunctuationMode.CharacterSet.halfWidth("。"))
+        assertEquals("。", PunctuationMode.CharacterSet.fullWidth("."))
+        assertEquals("｡", PunctuationMode.CharacterSet.fullWidth("｡"))
+    }
+
     // ── 左竖栏显示／提交列（WO30 §3(9) 续：符号面板竖栏与九宫格竖栏同口径）──
 
     @Test
     fun sidePanelSymbols_halfWidth_convertsDefaultList() {
         assertEquals(
-            listOf(",", ".", "?", "!", "...", "~", "、", "=", "+", "-", "*", "/", "%", "#", "@", "&"),
+            listOf(",", ".", "?", "!", "...", "~", "､", "=", "+", "-", "*", "/", "%", "#", "@", "&"),
             UserSymbolBarOps.sidePanelSymbols(
                 UserSymbolBarOps.DEFAULT_SYMBOLS,
                 PunctuationMode.HalfWidth,
@@ -226,14 +244,22 @@ class UserSymbolBarTest {
             listOf("…", "…"),
             UserSymbolBarOps.sidePanelSymbols(listOf("…", "..."), PunctuationMode.FullWidth),
         )
-        // 「、」无单字符半角形，两模式都原样；非标点原样；空列仍空。
+        // 「、」↔「､」：半角出「､」、全角回「、」；非标点原样；空列仍空。
         assertEquals(
-            listOf("、", "★"),
+            listOf("､", "★"),
             UserSymbolBarOps.sidePanelSymbols(listOf("、", "★"), PunctuationMode.HalfWidth),
         )
         assertEquals(
             listOf("、", "★"),
-            UserSymbolBarOps.sidePanelSymbols(listOf("、", "★"), PunctuationMode.FullWidth),
+            UserSymbolBarOps.sidePanelSymbols(listOf("､", "★"), PunctuationMode.FullWidth),
+        )
+        assertEquals(
+            listOf("､", "､"),
+            UserSymbolBarOps.sidePanelSymbols(listOf("、", "､"), PunctuationMode.HalfWidth),
+        )
+        assertEquals(
+            listOf("、", "、"),
+            UserSymbolBarOps.sidePanelSymbols(listOf("、", "､"), PunctuationMode.FullWidth),
         )
         assertEquals(
             emptyList<String>(),

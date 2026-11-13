@@ -623,8 +623,8 @@ class SymbolKeyboard(
      * 左侧竖栏重建（2026-11-12 符号栏重做）：显示用户自定义符号列
      * （默认 16 符号），点格提交。init 与 onAttach 都调用——板实例
      * 复用时设置改动下次打开符号面板即生效。WO30 §3(9) 续：显示与
-     * 提交都按标点模式换算（与九宫格竖栏同口径）；「、」两模式都
-     * 原样（无单字符半角形）。
+     * 提交都按标点模式换算（与九宫格竖栏同口径）；「、」半角出「､」
+     * （U+FF64，WO33 核实补入换算表）、全角回「、」。
      */
     private fun rebuildSidePanelSymbols() {
         val displays = UserSymbolBarOps.sidePanelSymbols(

@@ -141,17 +141,29 @@ class SkinEditorSaver(
         val primaryLayoutId = primaryLayoutId(tree)
         val boundIds = SkinEditorSave.boundLayoutIds(tree)
         val index = (store.readIndex() as? SkinLibraryStore.ReadResult.Ok)?.value
-        val layoutFiles = SkinEditorSave.filterBoundLayouts(index?.layouts ?: emptyList(), boundIds)
-            .mapNotNull { entry ->
-                val file = File(layout.fileFromRelative(entry.dir), "layout.json")
-                if (!file.isFile) null else EditorFile(
-                    id = entry.id,
-                    displayName = entry.id,
-                    file = file,
-                    kind = EditorFile.Kind.LAYOUT,
-                    isShared = isLayoutSharedByOtherSkin(skinId, entry.id, index),
-                )
+        // 布局索引 hash 门（WO33 第 2(a) 项，与上文 skin.json 记录 hash 门
+        // 同款 fail-closed）：索引条目的 hash 是 layout.json 内容 sha256，
+        // 须与磁盘实算 hash 一致。不一致说明索引已过期（布局被外部改动／
+        // 恢复后未同步索引），编辑器不静默沿用旧值——否则编辑页读到的
+        // 布局代次就是错的，保存会把外部改动当场覆盖。明确报
+        // layout_hash_mismatch:<布局 id>（id 进 Timber 日志，见
+        // SkinEditorEntry），不打开。缺失文件沿用旧行为跳过（不在本次范围）。
+        val layoutFiles = mutableListOf<EditorFile>()
+        for (entry in SkinEditorSave.filterBoundLayouts(index?.layouts ?: emptyList(), boundIds)) {
+            val file = File(layout.fileFromRelative(entry.dir), "layout.json")
+            if (!file.isFile) continue
+            val layoutBytes = runCatching { file.readBytes() }.getOrNull() ?: continue
+            if (sha256Hex(layoutBytes) != entry.hash) {
+                return@withContext ResolveActiveResult.Unavailable("layout_hash_mismatch:${entry.id}")
             }
+            layoutFiles += EditorFile(
+                id = entry.id,
+                displayName = entry.id,
+                file = file,
+                kind = EditorFile.Kind.LAYOUT,
+                isShared = isLayoutSharedByOtherSkin(skinId, entry.id, index),
+            )
+        }
         ResolveActiveResult.Ok(
             ActiveSkinFiles(
                 skinId = skinId,

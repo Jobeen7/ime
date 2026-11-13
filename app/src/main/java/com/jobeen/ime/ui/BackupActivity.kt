@@ -10,6 +10,7 @@ import androidx.lifecycle.lifecycleScope
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.backup.BackupManager
+import com.jobeen.ime.error.DeepErrorMapper
 import com.jobeen.ime.data.backup.readBackupBytes
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.ui.screen.BackupScreen
@@ -149,7 +150,7 @@ class BackupActivity : ComponentActivity() {
                 Timber.w(e, "Create backup failed")
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null
-                    ToastUtil.showToast(getString(R.string.backup_failed, e.message ?: getString(R.string.error_unknown)))
+                    ToastUtil.showToast(getString(R.string.backup_failed, DeepErrorMapper.userMessage(this@BackupActivity, e)))
                 }
             }
         }
@@ -173,7 +174,7 @@ class BackupActivity : ComponentActivity() {
                 Timber.w(e, "Read backup file failed")
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null
-                    ToastUtil.showToast(getString(R.string.backup_restore_failed, e.message ?: getString(R.string.error_unknown)))
+                    ToastUtil.showToast(getString(R.string.backup_restore_failed, DeepErrorMapper.userMessage(this@BackupActivity, e)))
                 }
             }
         }
@@ -201,7 +202,7 @@ class BackupActivity : ComponentActivity() {
                     is BackupManager.RestoreState.Failed -> {
                         BackupManager.consumeRestoreState()
                         uiState.busyText = null
-                        ToastUtil.showToast(getString(R.string.backup_restore_failed, state.message))
+                        ToastUtil.showToast(getString(R.string.backup_restore_failed, DeepErrorMapper.userMessageForMessage(this@BackupActivity, state.message)))
                     }
                     BackupManager.RestoreState.Idle -> Unit
                 }

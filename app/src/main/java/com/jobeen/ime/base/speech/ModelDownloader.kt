@@ -9,6 +9,7 @@ import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.data.App
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.TarBz2ExtractorUtil
+import com.jobeen.ime.error.DeepErrorMapper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -740,7 +741,7 @@ object ModelDownloader {
         } catch (e: Throwable) {
             if (e is kotlinx.coroutines.CancellationException) throw e
             Timber.e(e, "Speech model download failed")
-            HttpUtil.showToast(appContext.getString(R.string.voice_model_download_failed_detail, e.message ?: appContext.getString(R.string.error_network)))
+            HttpUtil.showToast(appContext.getString(R.string.voice_model_download_failed_detail, DeepErrorMapper.userMessage(appContext, e)))
             false
         }
     }

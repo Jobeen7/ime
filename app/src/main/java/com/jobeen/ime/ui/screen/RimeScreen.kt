@@ -37,11 +37,13 @@ import com.jobeen.ime.data.manager.SchemeDirs
 import java.net.URLEncoder
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
+import com.jobeen.ime.error.DeepErrorMapper
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
 import com.jobeen.ime.ui.screen.ScreenComponent.ResetConfirmDialogs
 import com.jobeen.ime.ui.screen.ScreenComponent.SwitchRow
 import kotlinx.coroutines.launch
+import timber.log.Timber
 
 /**
  * RIME 页：只含 Lee 定的 6 项，不加日志、不加简繁切换。
@@ -254,9 +256,9 @@ fun RimeScreen(
                                         cleanupEntries = entries
                                     }
                                 }.onFailure {
+                                    Timber.w(it, "Rime sync cleanup list failed")
                                     toast(
-                                        it.message
-                                            ?: context.getString(R.string.rime_sync_cleanup_failed)
+                                        DeepErrorMapper.userMessage(context, it),
                                     )
                                 }
                             }

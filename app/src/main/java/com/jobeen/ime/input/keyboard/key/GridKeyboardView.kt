@@ -24,6 +24,15 @@ class GridKeyboardView(
     var onKeyAction: ((KeyboardAction) -> Unit)? = null
     var onKeyPressed: ((KeyView) -> Unit)? = null
 
+    /**
+     * WO31（仅 emoji 板开）：竖向拦截只在内容真正可滚且竖向占优时
+     * 才生效。默认 false＝旧口径（|dy|>touchSlop 即拦截），颜文字／
+     * 符号板保持旧行为不动。开 true 时：短内容 maxScroll=0 不拦截
+     * （点按不受影响，不变死手势）；横向占优的拖动不拦截（仍归子
+     * 键点按／出界取消，不再有横滑翻页可接）。
+     */
+    var verticalScrollOnlyWhenScrollable: Boolean = false
+
     private var scrollOffsetY = 0f
     // 已通过 offsetTopAndBottom 应用到子 View 位置的滚动偏移：滚动时增量
     // 平移子 View 代替每帧 requestLayout 的整批 measure/layout 遍历
@@ -41,6 +50,7 @@ class GridKeyboardView(
     private val maxFlingVelocity = ViewConfiguration.get(context).scaledMaximumFlingVelocity
     private var velocityTracker: VelocityTracker? = null
     private var lastY = 0f
+    private var downX = 0f
     private var downY = 0f
     private var dragging = false
     private var stretch = 0f
@@ -345,6 +355,7 @@ class GridKeyboardView(
                 if (!scroller.isFinished) scroller.abortAnimation()
                 velocityTracker = VelocityTracker.obtain()
                 velocityTracker?.addMovement(event)
+                downX = event.x
                 downY = event.y
                 lastY = event.y
                 dragging = false
@@ -355,7 +366,11 @@ class GridKeyboardView(
                 velocityTracker?.addMovement(event)
                 val dy = lastY - event.y
                 val absDy = abs(event.y - downY)
-                if (!dragging && absDy > touchSlop) {
+                // WO31 开关开时：内容滚不动（maxScroll=0）或横向占优
+                // 时不拦截——点按照常走子键，不变死手势。
+                val mayIntercept = !verticalScrollOnlyWhenScrollable ||
+                    (maxScroll > 0 && absDy > abs(event.x - downX))
+                if (!dragging && mayIntercept && absDy > touchSlop) {
                     dragging = true
                     stretch = 0f
                     if (!scroller.isFinished) scroller.abortAnimation()

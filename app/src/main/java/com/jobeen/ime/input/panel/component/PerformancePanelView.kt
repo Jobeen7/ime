@@ -19,6 +19,7 @@ import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.skin.perf.PerfMonitor
+import com.jobeen.ime.skin.perf.PerfPanelLabels
 import com.jobeen.ime.skin.perf.PerfRow
 import com.jobeen.ime.skin.perf.PerfSnapshot
 import com.jobeen.ime.skin.perf.buildPerfSections
@@ -160,7 +161,15 @@ class PerformancePanelView(
         val prev = lastSnapshot
         val snapshot = collectSnapshot()
         lastSnapshot = snapshot
-        val sections = buildPerfSections(snapshot, prev, rowsFor(PerfMonitor.aggregates()))
+        val sections = buildPerfSections(
+            snapshot,
+            prev,
+            rowsFor(
+                PerfMonitor.aggregates(),
+                PerfPanelLabels.resolve(context),
+                PerfPanelLabels.aggregateTemplate(context),
+            ),
+        )
         currentReportText = formatPerfReport(sections, prev == null)
         writeReportFile(snapshot.reportPath, currentReportText)
         rowsContainer.removeAllViews()
@@ -235,37 +244,47 @@ class PerformancePanelView(
             PerfMonitor.Event.MAIN_LAG,
         )
 
-        private fun labelFor(event: PerfMonitor.Event): String = when (event) {
-            PerfMonitor.Event.COLD_START -> "冷启动"
-            PerfMonitor.Event.KEY_TO_COMMIT -> "按键提交"
-            PerfMonitor.Event.SKIN_APPLY -> "皮肤应用"
-            PerfMonitor.Event.SLOW_FRAME -> "掉帧"
-            PerfMonitor.Event.MEMORY -> "内存"
-            PerfMonitor.Event.STARTUP_STEP -> "启动步骤"
-            PerfMonitor.Event.KEY_DISPATCH -> "按键分发"
-            PerfMonitor.Event.KEY_ENGINE -> "引擎处理"
-            PerfMonitor.Event.KEY_COMMIT -> "提交上屏"
-            PerfMonitor.Event.MAIN_LAG -> "主线程卡顿"
-        }
+        /**
+         * 事件标签（WO33 第 4(a) 项已抽串）：运行时标签由调用方从
+         * [PerfPanelLabels.resolve]（strings.xml `perf_event_*`）传入；
+         * 纯函数缺省值 [PerfPanelLabels.DEFAULT_LABELS] 与资源同值；
+         * 映射缺项时回落事件名，不抛错。
+         */
+        private fun labelFor(
+            event: PerfMonitor.Event,
+            labels: Map<PerfMonitor.Event, String> = PerfPanelLabels.DEFAULT_LABELS,
+        ): String = labels[event] ?: event.name
 
-        /** 单项文案（纯函数，可单测）：内存 KB，其余 ms；均值 1 位小数。 */
-        fun formatAggregate(event: PerfMonitor.Event, agg: PerfMonitor.Aggregate): String {
+        /**
+         * 单项文案（纯函数，可单测）：内存 KB，其余 ms；均值 1 位小数。
+         * 模板由调用方从 [PerfPanelLabels.aggregateTemplate]
+         * （strings.xml `perf_aggregate_format`）传入；缺省值
+         * [PerfPanelLabels.DEFAULT_AGGREGATE_TEMPLATE] 与资源同值。
+         */
+        fun formatAggregate(
+            event: PerfMonitor.Event,
+            agg: PerfMonitor.Aggregate,
+            template: String = PerfPanelLabels.DEFAULT_AGGREGATE_TEMPLATE,
+        ): String {
             val unit = if (event == PerfMonitor.Event.MEMORY) "KB" else "ms"
-            return "${agg.count} 次，均值 ${"%.1f".format(agg.avg)} $unit，最大 ${agg.max} $unit"
+            return String.format(template, agg.count, agg.avg, unit, agg.max)
         }
 
         /**
          * 行顺序（纯函数，可单测）：基础 5 项固定顺序在前（缺失项
          * 跳过），探针项在后（仅已有项显示）；空聚合返回空列表
-         * （调用方显示“暂无数据”）。
+         * （调用方显示“暂无数据”）。标签与聚合模板由调用方注入
+         * （运行时走资源，单测走 [PerfPanelLabels] 同值常量）。
          */
         fun rowsFor(
             aggregates: Map<PerfMonitor.Event, PerfMonitor.Aggregate>,
+            labels: Map<PerfMonitor.Event, String> = PerfPanelLabels.DEFAULT_LABELS,
+            aggregateTemplate: String = PerfPanelLabels.DEFAULT_AGGREGATE_TEMPLATE,
         ): List<Pair<String, String>> {
             val rows = ArrayList<Pair<String, String>>()
             for (event in BASE_ORDER + PROBE_ORDER) {
                 val agg = aggregates[event] ?: continue
-                rows += labelFor(event) to formatAggregate(event, agg)
+                rows += labelFor(event, labels) to formatAggregate(event, agg, aggregateTemplate)
             }
             return rows
         }

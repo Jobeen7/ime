@@ -99,6 +99,7 @@ import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
 import com.jobeen.ime.engine.rime.data.DataManager
+import com.jobeen.ime.error.DeepErrorMapper
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.SchemaManager
@@ -1408,7 +1409,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                             color = MaterialTheme.colorScheme.onErrorContainer,
                         )
                         Text(
-                            migrationError,
+                            DeepErrorMapper.userMessageForMessage(context, migrationError),
                             fontSize = 14.sp,
                             lineHeight = 20.sp,
                             color = MaterialTheme.colorScheme.onErrorContainer,

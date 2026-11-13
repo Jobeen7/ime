@@ -126,7 +126,8 @@ object UserSymbolBarOps {
      * 半角模式出半角标点，全角模式出全角标点；非标点原样。
      * 换算口径用 PunctuationMode.CharacterSet（与模式系统同款）；
      * 「…」↔「...」按九宫格旧全角／半角标点表配对（T9Keyboard 旧
-     * punctuations）；「、」无单字符半角形，两模式都原样。
+     * punctuations）；「、」↔「､」（U+FF64 半角顿号，WO33 核实补入
+     * CharacterSet 换算表；「。」仍走 ASCII "."，不走 U+FF61）。
      */
     fun displaySymbol(symbol: String, mode: PunctuationMode): String {
         return when (mode) {
@@ -144,7 +145,7 @@ object UserSymbolBarOps {
     /**
      * 左竖栏显示／提交列（WO30 §3(9) 续）：逐项按标点模式换算，顺序
      * 不变；九宫格竖栏与符号面板竖栏共用本函数，显示与提交同一列。
-     * 「、」两模式都原样（无单字符半角形）；非标点原样。
+     * 「、」半角出「､」、全角回「、」；非标点原样。
      */
     fun sidePanelSymbols(symbols: List<String>, mode: PunctuationMode): List<String> =
         symbols.map { displaySymbol(it, mode) }
