@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "zipSha256": "b2f59efb39fb579fb94646c212c5c8a87c4c40b2de1f7ff63b52de6ae1bbfaee",
+  "zipSha256": "90c8eb4ebacc0554ed20a2e152d21b731678780f074b03f492a37ffde40db91e",
   "preserve": [
     "shared/opencc/wanxiang/Custom_"
   ],
@@ -83,7 +83,7 @@
     {
       "path": "shared/dicts/diming.lite.dict.yaml",
       "size": 2953385,
-      "crc": "57d0156b"
+      "crc": "f5f2f8d7"
     },
     {
       "path": "shared/dicts/duoyin.lite.dict.yaml",
@@ -97,8 +97,8 @@
     },
     {
       "path": "shared/dicts/jichu.lite.dict.yaml",
-      "size": 45565636,
-      "crc": "52e2ab60"
+      "size": 46380219,
+      "crc": "f15e3aac"
     },
     {
       "path": "shared/dicts/mingren.lite.dict.yaml",
@@ -117,13 +117,13 @@
     },
     {
       "path": "shared/dicts/yiren.lite.dict.yaml",
-      "size": 379980,
-      "crc": "7d0821e4"
+      "size": 380002,
+      "crc": "9140bb77"
     },
     {
       "path": "shared/dicts/zi.lite.dict.yaml",
       "size": 547162,
-      "crc": "77db3d64"
+      "crc": "eebf7d5f"
     },
     {
       "path": "shared/lua/data/chaifen.txt",
@@ -268,7 +268,7 @@
     {
       "path": "shared/lua/wanxiang/wanxiang.lua",
       "size": 13588,
-      "crc": "16df3405"
+      "crc": "c9d798dc"
     },
     {
       "path": "shared/opencc/wanxiang/Custom_Emoji.txt",
@@ -328,7 +328,7 @@
     {
       "path": "shared/version.txt",
       "size": 8,
-      "crc": "7ecf780a"
+      "crc": "67d4494b"
     },
     {
       "path": "shared/wanxiang_abbrev.dict.yaml",
