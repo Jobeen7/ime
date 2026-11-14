@@ -162,6 +162,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.PhraseActivity"
+            android:exported="false"
+            android:label="@string/phrase_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.SplitWordsActivity"
             android:exported="false"
             android:label="@string/split_words_title"

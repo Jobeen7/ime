@@ -155,6 +155,11 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, ClipboardActivity::class.java)
                 )
             },
+            onOpenPhrase = {
+                startActivity(
+                    Intent(this@MainActivity, PhraseActivity::class.java)
+                )
+            },
             onOpenModelSettings = {
                 startActivity(
                     Intent(this@MainActivity, PredictionSettingsActivity::class.java)

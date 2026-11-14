@@ -1,9 +1,12 @@
 package com.jobeen.ime.data.manager
 
 import android.content.Context
+import androidx.core.content.edit
 import androidx.room.withTransaction
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.PhraseRecord
+import com.jobeen.ime.data.database.PhraseVariable
+import com.jobeen.ime.data.database.PhraseVariables
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import com.jobeen.ime.base.util.WeakProperty
@@ -41,6 +44,51 @@ object PhraseManager {
     private const val PREFS_NAME = "phrase_prefs"
     private const val KEY_SEEDED = "seeded"
 
+    /**
+     * 常用语输入码开关（WO52 6.1，04 §2.2 `phrase_shortcut_mode`“常用语
+     * 输入码”／`isPhraseShortcutEnabled`）：开时完整匹配输入码才在候选
+     * 前显示常用语；关时不显示输入码候选，保留已设置的输入码。
+     * 默认开——单子定的输入码行为出厂即生效，关是用户的显式选择。
+     */
+    const val KEY_SHORTCUT_ENABLED = "isPhraseShortcutEnabled"
+
+    /**
+     * 自动排序开关（WO52 6.1，04 §2.3 `isPhraseAutoSortEnabled`）：
+     * 开时最近使用的排在前面（`phrase_auto_sort_info`）；关时按手动
+     * 拖动顺序。默认关——保原有行为（现行列表即手动顺序）。
+     */
+    const val KEY_AUTO_SORT_ENABLED = "isPhraseAutoSortEnabled"
+
+    fun isShortcutEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_SHORTCUT_ENABLED, true)
+
+    fun setShortcutEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit { putBoolean(KEY_SHORTCUT_ENABLED, enabled) }
+    }
+
+    fun isAutoSortEnabled(context: Context): Boolean =
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_AUTO_SORT_ENABLED, false)
+
+    fun setAutoSortEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .edit { putBoolean(KEY_AUTO_SORT_ENABLED, enabled) }
+    }
+
+    /**
+     * 输入码校验（WO52 6.1，04 §2.2 报错字符串原文口径）：
+     * 可留空；非空须为 2–10 位英文字母 a–z。返回 null＝合法，
+     * 否则返回应显示的报错文案。
+     */
+    fun validateShortcut(code: String): String? {
+        if (code.isEmpty()) return null
+        if (code.length !in 2..10) return "输入码须为 2–10 位英文字母，也可以留空。"
+        if (!code.all { it in 'a'..'z' }) return "输入码只能包含英文字母 a–z，不能有空格或数字。"
+        return null
+    }
+
     // 播种是"检查空表→插入→写标记"的非原子序列，并发 getAll 时必须串行，
     // 否则默认常用语会被重复插入
     private val seedMutex = Mutex()
@@ -55,35 +103,76 @@ object PhraseManager {
         val createdAt: Long,
         val sortOrder: Long = 0,
         val pinned: Boolean = false,
+        val shortcut: String = "",
+        val category: String = "",
+        val tags: String = "",
+        val variables: List<PhraseVariable> = emptyList(),
+        val lastUsedAt: Long = 0,
     )
+
+    private fun PhraseRecord.toPhrase(): Phrase =
+        Phrase(
+            id, text, label, createdAt, sortOrder, pinned,
+            shortcut, category, tags, PhraseVariables.decode(variables), lastUsedAt,
+        )
 
     suspend fun getAll(context: Context): List<Phrase> = db(context) { db ->
         ensureSeeded(context, db)
-        db.phraseDao().getAll().map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder, it.pinned) }
+        val dao = db.phraseDao()
+        val records = if (isAutoSortEnabled(context)) dao.getAllAutoSorted() else dao.getAll()
+        records.map { it.toPhrase() }
     } ?: emptyList()
 
     suspend fun getById(context: Context, id: Long): Phrase? = db(context) { db ->
         // 播种不只走 getAll（D-L7）：首次访问若是按 id 取，默认常用语
         // 同样须已播种，否则 id 指向的默认条目查不到。
         ensureSeeded(context, db)
-        db.phraseDao().getById(id)?.let { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder, it.pinned) }
+        db.phraseDao().getById(id)?.toPhrase()
     }
 
     suspend fun search(context: Context, query: String): List<Phrase> = db(context) { db ->
         // 播种不只走 getAll（D-L7）：首次访问若是搜索，默认常用语
         // 须已播种，否则搜“谢谢”无结果。
         ensureSeeded(context, db)
-        db.phraseDao().search(query).map { Phrase(it.id, it.text, it.label, it.createdAt, it.sortOrder, it.pinned) }
+        db.phraseDao().search(query).map { it.toPhrase() }
     } ?: emptyList()
+
+    /** 输入码精确查询（WO52 6.1）：开关关着或输入码非法时直接返回空，不查库。 */
+    suspend fun getByShortcut(context: Context, code: String): List<Phrase> {
+        if (!isShortcutEnabled(context)) return emptyList()
+        val normalized = code.lowercase()
+        if (validateShortcut(normalized) != null) return emptyList()
+        return db(context) { db ->
+            ensureSeeded(context, db)
+            db.phraseDao().getByShortcut(normalized).map { it.toPhrase() }
+        } ?: emptyList()
+    }
+
+    /** 最近使用打点（自动排序的排序键；上屏成功后由调用方记一次）。 */
+    suspend fun markUsed(context: Context, id: Long) {
+        db(context) { db ->
+            db.phraseDao().setLastUsedById(id, System.currentTimeMillis())
+        }
+    }
 
     suspend fun setPinned(context: Context, id: Long, pinned: Boolean) {
         val rows = db(context) { db -> db.phraseDao().setPinnedById(id, pinned) } ?: 0
         if (rows > 0) withContext(Dispatchers.Main) { onContentChanged?.invoke() }
     }
 
-    suspend fun insert(context: Context, text: String, label: String): Long {
+    suspend fun insert(
+        context: Context,
+        text: String,
+        label: String,
+        shortcut: String = "",
+        category: String = "",
+        tags: String = "",
+        variables: List<PhraseVariable> = emptyList(),
+    ): Long {
         val t = text.trim()
         if (t.isEmpty()) return -1
+        // 非法输入码不落库（编辑页已先行校验，此处是第二道关）
+        if (validateShortcut(shortcut) != null) return -1
         val l = label.trim().ifEmpty { t.takeCodePoints(12) }
         val id = db(context) { db ->
             // 播种不只走 getAll（D-L7）：首次访问若是新增，默认常用语
@@ -98,6 +187,10 @@ object PhraseManager {
                         text = t, label = l, createdAt = System.currentTimeMillis(),
                         // 新常用语排到最前（与此前「新建在前」的顺序语义一致）
                         sortOrder = (db.phraseDao().minSortOrder() ?: 0L) - 1L,
+                        shortcut = shortcut,
+                        category = category.trim(),
+                        tags = tags.trim(),
+                        variables = PhraseVariables.encode(variables),
                     )
                 )
             }
@@ -109,10 +202,11 @@ object PhraseManager {
     suspend fun update(context: Context, phrase: Phrase) {
         val t = phrase.text.trim()
         if (t.isEmpty()) return
+        if (validateShortcut(phrase.shortcut) != null) return
         val l = phrase.label.trim().ifEmpty { t.takeCodePoints(12) }
         // 只有真的改到行（且数据库操作没失败）才通知刷新：
         // 旧实现无条件发回调，失败/目标不存在时 UI 也照常当成功处理。
-        // sortOrder/pinned 必须回读保留：整行 @Update 会把它们重置为默认值
+        // sortOrder/pinned/lastUsedAt 必须回读保留：整行 @Update 会把它们重置为默认值
         val rows = db(context) { db ->
             // 「回读保留字段→整行回写」必须同事务：与置顶切换并发时，
             // 事务外的旧快照会把刚改的置顶状态覆盖回去
@@ -123,6 +217,11 @@ object PhraseManager {
                         id = phrase.id, text = t, label = l, createdAt = phrase.createdAt,
                         sortOrder = existing?.sortOrder ?: phrase.sortOrder,
                         pinned = existing?.pinned ?: phrase.pinned,
+                        shortcut = phrase.shortcut,
+                        category = phrase.category.trim(),
+                        tags = phrase.tags.trim(),
+                        variables = PhraseVariables.encode(phrase.variables),
+                        lastUsedAt = existing?.lastUsedAt ?: phrase.lastUsedAt,
                     )
                 )
             }

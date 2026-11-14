@@ -9,7 +9,7 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CandidateSorting::class, CandidatePrefer::class, PhraseRecord::class], version = 14, exportSchema = true)
+@Database(entities = [CandidateSorting::class, CandidatePrefer::class, PhraseRecord::class], version = 15, exportSchema = true)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 
@@ -43,7 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun build(context: Context, name: String): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
                 .addCallback(VACUUM_CALLBACK)
                 .build()
 
@@ -340,6 +340,24 @@ abstract class AppDatabase : RoomDatabase() {
             endVersion = 14,
         ) { db ->
             db.execSQL("DROP TABLE IF EXISTS `clipboard_records`")
+        }
+
+        // v15：常用语输入码（WO52 6.1）。phrase_records 加 5 列：
+        // shortcut（输入码，TEXT NOT NULL DEFAULT ''）、category、
+        // tags、variables（JSON 数组串）、lastUsedAt（自动排序键，
+        // 0＝从未使用）；shortcut 建独立查询索引
+        // `index_phrase_records_shortcut`（与 Room 按实体 @Index 生成
+        // 的名称一致）。纯加列＋建索引，旧行数据一字不动。
+        private val MIGRATION_14_15: Migration = Migration(
+            startVersion = 14,
+            endVersion = 15,
+        ) { db ->
+            db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `shortcut` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `category` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `tags` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `variables` TEXT NOT NULL DEFAULT ''")
+            db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `lastUsedAt` INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_phrase_records_shortcut` ON `phrase_records` (`shortcut`)")
         }
     }
 }

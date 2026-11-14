@@ -79,6 +79,12 @@ sealed class EngineMessage {
         val comment: String = "",
         val type: String = "",
         var score: Double = 0.0,
+        /**
+         * 常用语输入码候选所属的常用语 id（WO52 6.1）：仅
+         * [TYPE_PHRASE_SHORTCUT] 候选携带（>=0），其余恒为 -1；
+         * 点选上屏后凭它记一次最近使用（自动排序键）。
+         */
+        val phraseId: Long = -1L,
     ) {
         companion object {
             const val TYPE_IME_PREDICTION = "imePrediction"
@@ -86,6 +92,20 @@ sealed class EngineMessage {
             const val TYPE_EMAIL_SUFFIX = "emailSuffix"
             /** 生僻字补字候选（粤语常用字佢／嘅／咗／冇，见 RareCharPolicy）：点选走文本上屏，不进 Rime 选词 */
             const val TYPE_RARE_CHAR = "rareChar"
+            /**
+             * 常用语输入码候选（WO52 6.1）：组字码与常用语 shortcut
+             * 完整匹配时拼到候选前；点选只把常用语文本上屏，不进
+             * Rime 选词、不记偏好、不学搭配。
+             */
+            const val TYPE_PHRASE_SHORTCUT = "phraseShortcut"
+            /**
+             * 输入码候选序号基数：横条按 `Candidate.index` 做按压／
+             * 命中身份（`KawaiiPanelRenderer`），同码多条必须各占
+             * 不同序号；Rime 序号占 0..n-1，故输入码候选用此基数
+             * 往上排，永不与 Rime 序号相撞，也永不进 `Selection`
+             * （点选先按 type 分流）。
+             */
+            const val PHRASE_SHORTCUT_INDEX_BASE = 1_000_000
         }
     }
 }

@@ -548,6 +548,26 @@
     <string name="phrase_delete_confirm">确定要删除 \"%1$s\" 吗？</string>
     <string name="phrase_clear_confirm">确定要删除全部常用语吗？</string>
     <string name="candidate_forget_confirm">确定要忘记 \"%1$s\" 吗？</string>
+    <!-- 常用语管理页（WO52 6.1；校验文案取 04 §2.2 原文） -->
+    <string name="phrase_title">常用语</string>
+    <string name="row_sub_phrase">常用语及其变量、标签、分类管理</string>
+    <string name="phrase_search_hint">搜索标题、内容、输入码、分类或标签</string>
+    <string name="phrase_no_match">没有符合的常用语</string>
+    <string name="phrase_shortcut_title">常用语输入码</string>
+    <string name="phrase_shortcut_on_info">完整匹配输入码时，在候选前显示常用语，仅点击上屏。</string>
+    <string name="phrase_shortcut_off_info">不显示输入码候选，保留已设置的输入码。</string>
+    <string name="phrase_shortcut_label">输入码</string>
+    <string name="phrase_shortcut_hint">例如：rq（可留空）</string>
+    <string name="phrase_shortcut_length_error">输入码须为 2–10 位英文字母，也可以留空。</string>
+    <string name="phrase_shortcut_characters_error">输入码只能包含英文字母 a–z，不能有空格或数字。</string>
+    <string name="phrase_category_label">分类</string>
+    <string name="phrase_tags_label">标签</string>
+    <string name="phrase_tags_hint">多个标签用逗号分隔</string>
+    <string name="phrase_variables_label">变量</string>
+    <string name="phrase_variables_hint">键与值；敏感值勾选后在列表中打码显示</string>
+    <string name="phrase_auto_sort_title">自动排序</string>
+    <string name="phrase_auto_sort_info">开启时最近使用的排在前面；关闭后按手动顺序排列。</string>
+    <string name="phrase_delete">删除</string>
 
     <!-- Menu Grid -->
     <string name="menu_emoji">表情</string>

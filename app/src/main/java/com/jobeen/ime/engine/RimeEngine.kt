@@ -24,6 +24,7 @@ import com.jobeen.ime.input.isInputFieldChanged
 import com.jobeen.ime.engine.rime.behavior.Segmentation
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.manager.CandidateManager
+import com.jobeen.ime.data.manager.PhraseManager
 import com.jobeen.ime.data.manager.RareCharPolicy
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.CandidateSortingManager
@@ -1156,6 +1157,28 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             requestPrediction(candidate.text, learnable = false)
             return
         }
+        if (candidate.type == Candidate.TYPE_PHRASE_SHORTCUT) {
+            // 常用语输入码点选（WO52 6.1）：仅点击上屏，不参与 Rime
+            // 组字、不进 Rime 选词；文本直接上屏（与生僻字补字同口径），
+            // 不记偏好、不学搭配；记一次最近使用（自动排序键）。
+            emitMessage(EngineMessage.Commit(candidate.text))
+            invalidateBeforeCursorCache()
+            lastLearnSegment = null
+            val ctx = context
+            if (ctx != null && candidate.phraseId >= 0) {
+                preferDbScope.launch {
+                    try {
+                        PhraseManager.markUsed(ctx, candidate.phraseId)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        Timber.w(e, "Failed to record phrase usage")
+                    }
+                }
+            }
+            requestPrediction(candidate.text, learnable = false)
+            return
+        }
 
         // Only Rime selection produces the empty candidate response that must be hidden.
         // Prediction candidates bypass Rime and must not arm this flag.
@@ -1323,7 +1346,13 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             val key = candidateSortingKey(
                 compositionCached.preedit.orEmpty(), schemaCached.schemaId
             )
-            val snapshot = candidates.toList()
+            // 输入码候选是按组字码临时拼到帧首的合成项，不进 Rime 菜单：
+            // 不随拖拽保存进排序表，否则它的文本哈希会套到以后的
+            // 真实候选上（与长按删除的墓碑排除同口径）。
+            val snapshot = candidates.filterNot {
+                it.type == Candidate.TYPE_PHRASE_SHORTCUT
+            }.toList()
+            if (snapshot.isEmpty()) return@sendJob
             // 写库与选词偏好同走 preferDbScope 串行 IO 通道（与 28
             // 号原则一致：Room 写不占 jobs、不堵后续按键）。代价是
             // 保存与还原之间不再有 jobs FIFO 的先后保证：还原端
@@ -2438,6 +2467,42 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     return@launch
                 }
 
+                // 常用语输入码候选（WO52 6.1）：组字码与输入码完整匹配时，
+                // 拼到候选前。组字码经 awaitJob 一次取齐（与排序键同源）；
+                // 开关关着或码非法时 PhraseManager 短路不查库；查库失败
+                // 只丢输入码候选，不影响本批 Rime 候选落地。迟到批次
+                // （代次已被新批取代）不用这份匹配，与保存顺序同口径。
+                val phrasePrefix: List<Candidate> = runCatching {
+                    val preedit = awaitJob("") { compositionCached.preedit.orEmpty() }
+                    if (state.latestCandidateRequestId.get() != requestId) {
+                        emptyList()
+                    } else {
+                        PhraseManager.getByShortcut(ctx, preedit).mapIndexed { position, phrase ->
+                            Candidate(
+                                index = Candidate.PHRASE_SHORTCUT_INDEX_BASE + position,
+                                text = phrase.text,
+                                comment = phrase.label,
+                                type = Candidate.TYPE_PHRASE_SHORTCUT,
+                                phraseId = phrase.id,
+                            )
+                        }
+                    }
+                }.getOrDefault(emptyList())
+
+                /** 输入码候选拼到帧首：高亮下标后移，总数未知（-1）时保持，未知以外加条数。 */
+                fun withPhrasePrefix(msg: EngineMessage.Candidates): EngineMessage.Candidates {
+                    if (phrasePrefix.isEmpty()) return msg
+                    return EngineMessage.Candidates(
+                        phrasePrefix + msg.list,
+                        msg.highlighted + phrasePrefix.size,
+                        msg.page,
+                        total = if (msg.total < 0) msg.total else msg.total + phrasePrefix.size,
+                        append = msg.append,
+                        revision = msg.revision,
+                        isLastPage = msg.isLastPage,
+                    )
+                }
+
                 val db = AppDatabase.getInstance(ctx)
                 // 用户拖拽保存的顺序是对该候选集的显式意愿：无论是否开启
                 // 智能重排都要应用（此前重排分支直接丢弃保存顺序，而重排
@@ -2521,23 +2586,27 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     actions.send(
                         Action.CandidatesReady(
                             requestId,
-                            supplementedCandidates(ordered, 0, filteredMsg.total, rareSyllables)
-                                ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
+                            withPhrasePrefix(
+                                supplementedCandidates(ordered, 0, filteredMsg.total, rareSyllables)
+                                    ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
+                            )
                         )
                     )
                 } else {
                     actions.send(
                         Action.CandidatesReady(
-                            requestId, if (savedOrder.isNullOrEmpty()) {
-                                supplementedCandidates(
-                                    filteredMsg.list, filteredMsg.highlighted, filteredMsg.total,
-                                    rareSyllables,
-                                ) ?: filteredMsg
-                            } else {
-                                val ordered = applySavedCandidateOrder(filteredMsg.list, savedOrder)
-                                supplementedCandidates(ordered, 0, filteredMsg.total, rareSyllables)
-                                    ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
-                            }
+                            requestId, withPhrasePrefix(
+                                if (savedOrder.isNullOrEmpty()) {
+                                    supplementedCandidates(
+                                        filteredMsg.list, filteredMsg.highlighted, filteredMsg.total,
+                                        rareSyllables,
+                                    ) ?: filteredMsg
+                                } else {
+                                    val ordered = applySavedCandidateOrder(filteredMsg.list, savedOrder)
+                                    supplementedCandidates(ordered, 0, filteredMsg.total, rareSyllables)
+                                        ?: EngineMessage.Candidates(ordered, 0, 0, total = filteredMsg.total)
+                                }
+                            )
                         )
                     )
                 }

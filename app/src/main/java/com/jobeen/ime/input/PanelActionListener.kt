@@ -177,11 +177,12 @@ class PanelActionListener(
 
     override fun onCandidateForget(candidate: EngineMessage.Candidate) {
         DeletedWordsStore.add(candidate.text)
-        // 预测候选、生僻字补字候选与邮箱后缀候选的 index 不是 Rime 组字序号，
+        // 预测候选、生僻字补字候选、邮箱后缀候选与常用语输入码候选的 index 不是 Rime 组字序号，
         // 给它写墓碑会误伤同序号的真实候选；这类词只靠上面的 App 层过滤隐藏即可
         if (candidate.type != EngineMessage.Candidate.TYPE_IME_PREDICTION &&
             candidate.type != EngineMessage.Candidate.TYPE_RARE_CHAR &&
-            candidate.type != EngineMessage.Candidate.TYPE_EMAIL_SUFFIX
+            candidate.type != EngineMessage.Candidate.TYPE_EMAIL_SUFFIX &&
+            candidate.type != EngineMessage.Candidate.TYPE_PHRASE_SHORTCUT
         ) {
             service.engine?.deleteCandidate(candidate.index)
         }
