@@ -180,7 +180,7 @@ object WanxiangUpdateManager {
     // 兜底；展示优先读 shared/version.txt，见 readBundledSchemaVersion）。
     // 构建期盖戳（D-L3，WO36）：值由 Gradle 从 resource.zip 内
     // shared/version.txt 取值生成 BuildConfig 字段，不再手写常量；
-    // 现包内 version.txt 为 18.1.12，盖戳值即 v18.1.12（见
+    // 现包内 version.txt 为 18.1.13，盖戳值即 v18.1.13（见
     // WanxiangUpdateManagerTest 的钉住断言）。
     val BUILTIN_SCHEMA_VERSION: String = com.jobeen.ime.BuildConfig.BUILTIN_SCHEMA_VERSION
     internal const val KEY_GRAM_PUBLISHED_AT = "gram_published_at"

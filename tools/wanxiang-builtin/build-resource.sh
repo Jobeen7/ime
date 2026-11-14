@@ -16,11 +16,11 @@
 # 列表读取），并同步核对六处适配是否仍成立（见 README.md）。
 set -euo pipefail
 
-VERSION="v18.1.12"
+VERSION="v18.1.13"
 ASSET="rime-wanxiang-lite.zip"
 URL="https://github.com/amzxyz/rime-wanxiang/releases/download/${VERSION}/${ASSET}"
-EXPECTED_SIZE=23834731
-EXPECTED_SHA256="cad0c45189f4f8c0a394b370f6d2055d7ecf3c670cbdfa7db60838abe587e400"
+EXPECTED_SIZE=24124757
+EXPECTED_SHA256="1c9f893ee347c34b00b9a42604ab2782e3f25226c5099cbb5c72dbfea76e4e2a"
 # model/predict.marisa 的登记 sha256（与 README.md「model/ 的来源」一致）
 MARISA_SHA256="bcd55c3e7b149a5611cde4d027781710f50533c90e67ab9fc7824e96ff62701d"
 

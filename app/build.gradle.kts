@@ -13,13 +13,13 @@ import java.util.zip.ZipFile
  * 实际内置 18.1.0 脱节，方案页本地版本错报）。配置期读取：zip
  * 不在／条目缺失／内容非法时回落到哨兵值并告警，不让
  * 构建失败——resource.zip 是 gitignored 生成物，干净检出时可
- * 能不在。回落值是哨兵（WO45 P3：旧回落值 18.1.12 与真实
- * 18.1.12 无法区分，WanxiangUpdateManagerTest 钉住
- * BUILTIN_SCHEMA_VERSION == "v18.1.12" 时 zip 缺失也照过；
+ * 能不在。回落值是哨兵（WO45 P3：旧回落值 18.1.13 与真实
+ * 18.1.13 无法区分，WanxiangUpdateManagerTest 钉住
+ * BUILTIN_SCHEMA_VERSION == "v18.1.13" 时 zip 缺失也照过；
  * 哨兵使测试在 zip 缺失时失败，显式告警）。
  * 盖戳验证：unzip -p app/src/main/assets/resource.zip
- * shared/version.txt 应为 18.1.12，且 WanxiangUpdateManagerTest
- * 钉住 BUILTIN_SCHEMA_VERSION == "v18.1.12"（该测试只在盖戳值
+ * shared/version.txt 应为 18.1.13，且 WanxiangUpdateManagerTest
+ * 钉住 BUILTIN_SCHEMA_VERSION == "v18.1.13"（该测试只在盖戳值
  * 正确时通过）。
  * 注意：构建脚本里 `java` 会解析到 Java 插件扩展，不能写
  * `java.util.zip.ZipFile` 全限定名，故用上面 import；`try` 不作
@@ -64,8 +64,8 @@ fun readBundledWanxiangVersionForStamp(): String {
         minSdk = 24
         //noinspection OldTargetApi
         targetSdk = 36
-        versionCode = 213
-        versionName = "1.1.19.1"
+        versionCode = 214
+        versionName = "1.1.20"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         // 应用名/输入法名不写在 strings.xml 里：debug 需要在同一资源名上
