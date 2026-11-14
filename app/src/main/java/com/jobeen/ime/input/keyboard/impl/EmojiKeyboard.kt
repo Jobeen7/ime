@@ -4,13 +4,18 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Color
 import android.graphics.Typeface
+import android.text.Editable
+import android.text.InputType
+import android.text.TextUtils
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.inputmethod.EditorInfo
-import android.text.TextUtils
+import android.widget.EditText
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
+import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.PunctuationMode
@@ -26,6 +31,7 @@ import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.skin.symbol.EmojiBoardBuilder
+import com.jobeen.ime.skin.symbol.EmojiSearchIndex
 import com.jobeen.ime.skin.symbol.RecentEmojiOps
 import com.jobeen.ime.skin.symbol.RecentEmojiStore
 import com.jobeen.ime.skin.symbol.SharedPrefsRecentEmojiStore
@@ -127,6 +133,62 @@ class EmojiKeyboard(
     private var boardState = SubClassifiedBoardState(twoStageSymbols)
 
     /**
+     * 搜索（7.2）：顶栏 EditText＋过滤。索引首次输入时才从资产加载
+     * （531KB JSON，构造期不读）；查询非空时网格只喂搜索结果
+     * （分类／子条暂隐），清空即回分类浏览。
+     */
+    private var searchQuery: String = ""
+    private var searchResults: List<SymbolItem> = emptyList()
+    private var searchIndex: List<com.jobeen.ime.skin.symbol.EmojiIndexEntry>? = null
+
+    private val searchView = EditText(context).apply {
+        hint = context.getString(R.string.emoji_search_hint)
+        inputType = InputType.TYPE_CLASS_TEXT
+        setSingleLine()
+        imeOptions = EditorInfo.IME_ACTION_DONE
+        setTextSize(15f)
+        setTextColor(colors.keyText)
+        setHintTextColor(colors.altText)
+        setBackgroundColor(colors.specialKeyBackground)
+        val pad = context.dp(12)
+        setPadding(pad, 0, pad, 0)
+        addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: Editable?) {
+                applySearchQuery(s?.toString().orEmpty())
+            }
+        })
+    }
+
+    private fun applySearchQuery(query: String) {
+        searchQuery = query
+        if (query.isBlank()) {
+            searchResults = emptyList()
+            refreshGrid()
+            rebuildSubStrip()
+            return
+        }
+        if (searchIndex == null) {
+            searchIndex = EmojiSearchIndex.loadFromAssets(context)
+        }
+        searchResults = EmojiSearchIndex.search(searchIndex.orEmpty(), query)
+            .map { SymbolItem.Plain(it) }
+        refreshGrid()
+        subStripView.visibility = View.GONE
+    }
+
+    /** 清搜索（切分类／重置时调用；不触发重复过滤）。 */
+    private fun clearSearch() {
+        if (searchQuery.isNotEmpty()) {
+            searchView.setText("")
+        } else {
+            searchQuery = ""
+            searchResults = emptyList()
+        }
+    }
+
+    /**
      * WO31 连续竖滑：网格一次喂当前子类的全部项（currentItems），
      * 不再按 25 个一页切 visibleItems。GridKeyboardView 按
      * 5 列 × 5 行视口排布，超出部分由竖向滚动呈现；切分类／子
@@ -134,7 +196,8 @@ class EmojiKeyboard(
      * boardState 的 page 字段自此在 emoji 板上恒为 0，不再驱动网格。
      */
     private fun refreshGrid() {
-        gridView.setItems(boardState.currentItems.map { keyDef(it) })
+        val items = if (searchQuery.isNotBlank()) searchResults else boardState.currentItems
+        gridView.setItems(items.map { keyDef(it) })
     }
 
     /** 二级子条（48dp 横条，网格之上；单子类时隐藏）。 */
@@ -168,6 +231,7 @@ class EmojiKeyboard(
         }
         rebuildBoard()
 
+        addView(searchView, lParams(matchParent, 0))
         addView(sidePanelKey, lParams(0, matchParent))
         addView(sideReturnBtn, lParams(0, matchParent))
         addView(gridView, lParams(0, matchParent))
@@ -212,7 +276,8 @@ class EmojiKeyboard(
      * （分类切换的提交走侧栏、不经过此处；皮肤动作项不记）。
      */
     private fun recordRecent(text: String) {
-        val hit = boardState.currentItems.any {
+        val effective = if (searchQuery.isNotBlank()) searchResults else boardState.currentItems
+        val hit = effective.any {
             val resolved = SymbolItemActionResolver.resolve(it)
             resolved is KeyboardAction.CommitAction && resolved.text == text
         }
@@ -222,6 +287,7 @@ class EmojiKeyboard(
     }
 
     private fun applyCategory(label: String) {
+        clearSearch()
         val index = boardState.parentLabels.indexOf(label)
         if (index < 0) return
         boardState.selectParent(index)
@@ -322,12 +388,15 @@ class EmojiKeyboard(
         val th = MeasureSpec.getSize(heightMeasureSpec)
         val sw = (tw * 0.15f).toInt()
         val gw = tw - sw
+        // 搜索条 48dp 置顶（411dp 真机宽：整行一个输入框＋左右 12dp 内边距，放得下）。
+        val searchH = context.dp(48)
         // 子条占顶 48dp（隐藏时 0），其余内容整体下移并压缩。
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
-        val contentH = th - subH
+        val contentH = th - searchH - subH
         // WO48：侧栏 4/5、返回区 1/5，与符号页同口径（sidePanelGeometry）。
         val (sidePanelH, returnRegionH) = SymbolKeyboard.sidePanelGeometry(contentH)
         // 侧栏底区整段归返回钮（板锁已删）。
+        searchView.measure(mES(tw, MeasureSpec.EXACTLY), mES(searchH, MeasureSpec.EXACTLY))
         sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH, MeasureSpec.EXACTLY))
         sideReturnBtn.measure(
             mES(sw, MeasureSpec.EXACTLY), mES(returnRegionH, MeasureSpec.EXACTLY)
@@ -342,13 +411,16 @@ class EmojiKeyboard(
 
     override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
         val sw = ((r - l) * 0.15f).toInt()
+        val searchH = context.dp(48)
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
-        val contentH = (b - t) - subH
+        val top = searchH + subH
+        val contentH = (b - t) - searchH - subH
         val sidePanelH = SymbolKeyboard.sidePanelGeometry(contentH).first
-        subStripView.layout(0, 0, r - l, subH)
-        sidePanelKey.layout(0, subH, sw, subH + sidePanelH)
-        sideReturnBtn.layout(0, subH + sidePanelH, sw, subH + contentH)
-        gridView.layout(sw, subH, r - l, subH + contentH)
+        searchView.layout(0, 0, r - l, searchH)
+        subStripView.layout(0, searchH, r - l, top)
+        sidePanelKey.layout(0, top, sw, top + sidePanelH)
+        sideReturnBtn.layout(0, top + sidePanelH, sw, top + contentH)
+        gridView.layout(sw, top, r - l, top + contentH)
         rippleView.layout(0, 0, r - l, b - t)
     }
 
@@ -391,6 +463,7 @@ class EmojiKeyboard(
     }
 
     fun reset() {
+        clearSearch()
         rebuildBoard()
         sidePanelKey.resetPosition()
     }

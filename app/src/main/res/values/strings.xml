@@ -1000,6 +1000,7 @@
     <string name="emoji_reset_recent_desc">清空最近使用的 Emoji，首组恢复为默认内容。</string>
     <string name="emoji_reset_done">已重置常用 Emoji</string>
     <string name="emoji_recent_note">点一个 Emoji 就会记进最近使用，拼在第一个分组前面。</string>
+    <string name="emoji_search_hint">搜索 Emoji（中文／拼音／英文）</string>
     <!-- 按键符号（施工单 10 H2-14）：页名／迷你键盘／改键弹框 -->
     <string name="key_symbol_title">按键符号</string>
     <string name="row_sub_key_symbol">26 键字母键角标</string>
