@@ -13,8 +13,11 @@ import android.view.Choreographer
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Path
+import android.graphics.Rect
+import android.graphics.RectF
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.LayerDrawable
+import android.view.inputmethod.CursorAnchorInfo
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewOutlineProvider
@@ -65,8 +68,12 @@ import com.jobeen.ime.input.keyboard.impl.T9Keyboard
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.input.keyboard.key.KeyboardAction
 import com.jobeen.ime.input.panel.KawaiiPanel
+import com.jobeen.ime.input.panel.component.FloatingCandidateController
+import com.jobeen.ime.input.panel.component.FloatingCandidatePositioning
+import com.jobeen.ime.input.panel.component.FloatingCandidateWindow
 import com.jobeen.ime.input.pinner.PreeditPinner
 import com.jobeen.ime.input.speech.SpeechOverlayView
+import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.base.speech.SherpaSpeechClient
 import com.jobeen.ime.base.speech.SpeechUiBridge
 import com.jobeen.ime.base.speech.VoiceInputSwitchStore
@@ -143,6 +150,29 @@ class KeyboardWindowView(
     private val keyboardStateManager: KeyboardStateManager,
     private val panelListener: PanelListener? = null,
 ) : FrameLayout(context), IManagedView, SkinRuntime.SkinWindow {
+
+    // ── 浮动候选窗（WO52 1.4） ──
+    /** 浮动候选窗控制器（纯状态＋决策）；窗口本体见 floatingWindow。 */
+    private val floatingController = FloatingCandidateController()
+
+    /** 浮动候选窗（PopupWindow＋复用候选网格）；内嵌不开时不建。 */
+    private var floatingWindow: FloatingCandidateWindow? = null
+
+    private fun ensureFloatingWindow(): FloatingCandidateWindow =
+        floatingWindow ?: FloatingCandidateWindow(
+            context = context,
+            onCandidateSelected = { candidate ->
+                InputFeedbacks.hapticFeedback(this)
+                InputFeedbacks.soundEffect(context, InputFeedbacks.SoundEffect.Standard)
+                panelListener?.onCandidateSelected(candidate)
+            },
+            onSidePanelAction = { panelListener?.onSidePanelAction(it) },
+            onPageCandidates = { backward -> panelListener?.onPageCandidates(backward) },
+        ).also { floatingWindow = it }
+
+    /** 浮动窗帧（屏幕坐标，onComputeInsets 可触区用）；未显示时 null。 */
+    internal var floatingFrameScreenRect: Rect? = null
+        private set
 
     companion object {
         /** 选项态刷新竞态重试上限（切方案/会话未就绪时重读次数）。 */
@@ -1323,6 +1353,9 @@ class KeyboardWindowView(
         inlineFieldActive = false
         hideInlineAutofill()
         videoController.onInputFinished()
+        // 浮动候选窗随输入框关闭（无内容关闭的另一路）。
+        dismissFloatingWindow()
+        setEngineFloatingActive(false)
     }
 
     // 设置变化触发的配色刷新走防抖合并（清点 Q4 起两条通道并成一条带
@@ -1802,13 +1835,26 @@ class KeyboardWindowView(
         lastCandidateList = list.toList()
         lastCandidateHasMore = hasMore
         lastCandidateHighlightedIndex = highlightedIndex
-        panel.setCandidates(list, hasMore, highlightedIndex, pageNo, isLastPage, pagingMode)
+        // 浮动候选窗（WO52 1.4）：内嵌开且有候选时路由到浮动窗，
+        // 内嵌栏清空候选（不与浮动窗重复显示）；否则关浮动窗走内嵌栏。
+        // 引擎浮动激活态与之一致（激活时 1.1 强制 native 分页）。
+        val embedded = CandidateManager.isInlineInputModeEnabled(context)
+        floatingController.updateCandidates(list.isEmpty(), pageNo, isLastPage, pagingMode)
+        if (floatingController.shouldShow(embedded)) {
+            panel.setCandidates(emptyList(), false, 0, 0, false, pagingMode)
+            updateFloatingCandidates(list, revision)
+            setEngineFloatingActive(true)
+        } else {
+            dismissFloatingWindow()
+            setEngineFloatingActive(false)
+            panel.setCandidates(list, hasMore, highlightedIndex, pageNo, isLastPage, pagingMode)
+        }
         lastCandidateFirst = list.firstOrNull()?.text
         lastCandidateComment = list.firstOrNull()?.comment?.takeIf { it.isNotEmpty() }
         pushDynamicTexts()
         // 内嵌输入模式：组字串已直送输入框，悬浮药丸（含行内联想幽灵文本）不显示。
         // （关中药丸半途切开时，候选到达先于下一次组字更新，此门把旧药丸挡下。）
-        if (!CandidateManager.isInlineInputModeEnabled(context)) {
+        if (!embedded) {
             // 行内联想：首选到后刷新气泡幽灵文本；气泡正显示时重测宽重显
             refreshInlineSuggestion()
             if (preeditPinner.view.preeditItems.isNotEmpty()) {
@@ -1827,12 +1873,146 @@ class KeyboardWindowView(
      */
     fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int, revision: Long = 0L) {
         if (!shouldApplyCandidateAppend(revision, lastAppliedCandidateRevision)) return
+        if (floatingWindow?.isShowing == true) {
+            // 浮动窗只走整表替换（native 模式正常无追加）；有追加则并入浮动表。
+            floatingWindow?.appendCandidates(list)
+            repositionFloatingWindow()
+            return
+        }
         panel.appendCandidates(list, total)
     }
 
     fun onPossibleCandidatePinYin(pinyins: List<CandidatePinYin>) {
         panel.onPossibleCandidatePinYin(pinyins)
         (currentKeyboard as? ISidePanelKeyboard)?.onPossibleCandidatePinYin(pinyins)
+        if (floatingWindow?.isShowing == true) {
+            floatingWindow?.onPossibleCandidatePinYin(pinyins)
+        }
+    }
+
+    // ── 浮动候选窗（WO52 1.4） ──
+
+    /** 引擎浮动激活态（服务层经 engine 置位；非 Ime 服务上下文时忽略）。 */
+    private fun setEngineFloatingActive(active: Boolean) {
+        (context as? ImeInputMethodService)?.engine?.setFloatingCandidateActive(active)
+    }
+
+    /** 浮动窗按当前列表更新＋定位＋显示（调用方已确认应显示）。 */
+    private fun updateFloatingCandidates(list: List<EngineMessage.Candidate>, revision: Long) {
+        val window = ensureFloatingWindow()
+        floatingController.style = window.currentStyle()
+        window.setCandidates(list, revision)
+        val (prevVisible, nextVisible) = floatingController.pagingButtonsVisible()
+        window.setPagingButtons(prevVisible, nextVisible)
+        val widthPx = width.takeIf { it > 0 } ?: return
+        val heightPx = window.measureHeight(widthPx)
+        val placement = computeFloatingPlacement(widthPx, heightPx)
+        window.show(this, placement.x, placement.y, widthPx, heightPx)
+        floatingFrameScreenRect = Rect(
+            placement.x, placement.y,
+            placement.x + widthPx, placement.y + heightPx,
+        )
+    }
+
+    /** 浮动窗已显示时按最新光标／列表重算位置尺寸（光标移动／追加页时）。 */
+    private fun repositionFloatingWindow() {
+        val window = floatingWindow ?: return
+        if (!window.isShowing) return
+        val widthPx = width.takeIf { it > 0 } ?: return
+        val heightPx = window.measureHeight(widthPx)
+        val placement = computeFloatingPlacement(widthPx, heightPx)
+        window.updatePlacement(placement.x, placement.y, widthPx, heightPx)
+        floatingFrameScreenRect = Rect(
+            placement.x, placement.y,
+            placement.x + widthPx, placement.y + heightPx,
+        )
+    }
+
+    /** 关闭浮动窗并复位控制器候选态与引擎激活态。 */
+    private fun dismissFloatingWindow() {
+        val window = floatingWindow
+        if (window == null || !window.isShowing) {
+            floatingController.onHidden()
+            floatingFrameScreenRect = null
+            return
+        }
+        window.dismiss()
+        floatingController.onHidden()
+        floatingFrameScreenRect = null
+    }
+
+    /**
+     * 按控制器算浮动窗摆放（屏幕坐标）：键盘矩形取本视图屏上位置，
+     * 屏尺寸取显示度量，间隙 4dp。
+     */
+    private fun computeFloatingPlacement(
+        windowWidth: Int,
+        windowHeight: Int,
+    ): FloatingCandidatePositioning.Placement {
+        val loc = IntArray(2).also { getLocationOnScreen(it) }
+        val metrics = resources.displayMetrics
+        return floatingController.resolvePlacement(
+            keyboardLeft = loc[0],
+            keyboardTop = loc[1],
+            keyboardRight = loc[0] + width,
+            windowWidth = windowWidth,
+            windowHeight = windowHeight,
+            screenWidth = metrics.widthPixels,
+            screenHeight = metrics.heightPixels,
+            gapPx = (4f * metrics.density).roundToInt(),
+        )
+    }
+
+    /**
+     * 光标锚点到达（服务层 onUpdateCursorAnchorInfo 转发）：组字起始
+     * 字符框优先，取不到用插入标记矩形；都取不到记光标不可用（走回退）。
+     * 矩形经 getMatrix() 换算到屏幕坐标（CursorAnchorInfo 口径）。
+     * 浮动窗已显示时立即重定位。
+     */
+    fun onCursorAnchorInfo(info: CursorAnchorInfo) {
+        val local = extractCursorRect(info)
+        if (local == null) {
+            floatingController.markCursorUnavailable()
+        } else {
+            val screen = RectF(local).also { info.matrix.mapRect(it) }
+            floatingController.updateCursorAnchor(
+                FloatingCandidateController.AnchorRect(
+                    left = screen.left.roundToInt(),
+                    top = screen.top.roundToInt(),
+                    right = screen.right.roundToInt(),
+                    bottom = screen.bottom.roundToInt(),
+                ),
+            )
+        }
+        repositionFloatingWindow()
+    }
+
+    private fun extractCursorRect(info: CursorAnchorInfo): RectF? {
+        // 组字起始字符框（API 33+ 才有 getCharacterBounds；低版本走插入标记）。
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            val start = info.composingTextStart
+            if (start >= 0) {
+                val text = info.composingText
+                if (text != null && start < text.length) {
+                    info.getCharacterBounds(start)?.let { return it }
+                }
+            }
+        }
+        val top = info.insertionMarkerTop
+        val bottom = info.insertionMarkerBottom
+        if (bottom > top) {
+            val horizontal = info.insertionMarkerHorizontal
+            return RectF(horizontal, top, horizontal, bottom)
+        }
+        return null
+    }
+
+    /** requestCursorUpdates 结果（服务层 onStartInputView 转发）：失败走回退。 */
+    fun onCursorUpdatesRequested(ok: Boolean) {
+        floatingController.cursorUpdatesAvailable = ok
+        if (!ok) {
+            floatingController.markCursorUnavailable()
+        }
     }
 
     /** 行内联想（2026-10-29 批量第 5 项）：开关开且组字非空时，
@@ -2037,6 +2217,8 @@ class KeyboardWindowView(
         lastCandidateFirst = null
         lastComposing = null
         pushDynamicTexts()
+        dismissFloatingWindow()
+        setEngineFloatingActive(false)
         if (cloudVoiceActive) {
             stopCloudVoice(discard = true)
         } else if (isVoiceRecording) {

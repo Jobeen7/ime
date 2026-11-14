@@ -79,6 +79,8 @@ data class SkinSnapshot(
     val swipeThresholdDp: Float? = null,
     /** 候选字背景圆角（2026-10-28 截图 6 项）：dp；默认 6。 */
     val candidateRadiusDp: Float = 6f,
+    /** 浮动候选窗样式（WO52 1.4）：顶层 floatingCandidate* 五键的校验结果。 */
+    val floatingCandidate: FloatingCandidateStyle = FloatingCandidateStyle(),
     /** 预测态关闭键独立样式（2026-10-28 截图 6 项）：null = 复用候选背景。 */
     val predictionCloseBg: Int? = null,
     val predictionCloseRadiusDp: Float? = null,

@@ -254,6 +254,7 @@ object SkinSnapshotBuilder {
             bubbleOverflowCheck = validated.bubbleOverflowCheck,
             swipeThresholdDp = validated.swipeThresholdDp,
             candidateRadiusDp = validated.candidateRadiusDp,
+            floatingCandidate = validated.floatingCandidate,
             predictionCloseBg = validated.predictionCloseBg,
             predictionCloseRadiusDp = validated.predictionCloseRadiusDp,
             toolbarHeight = validated.toolbarHeight,

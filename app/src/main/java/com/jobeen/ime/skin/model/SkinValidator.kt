@@ -406,6 +406,114 @@ object SkinValidator {
             }
         }
 
+        // ---- 浮动候选窗（WO52 1.4：顶层 floatingCandidate* 五键） ----
+        // 字段级回退口径：非法单字段记 FIELD_FALLBACK 并取缺省，不拒包。
+        var floatingPosition: String? = null
+        val floatingPositionPrimitive =
+            readTopLevel("floatingCandidatePosition") as? JsonPrimitive
+        if (floatingPositionPrimitive != null) {
+            val parsed = floatingPositionPrimitive.contentOrNull?.takeIf { it.isNotBlank() }
+            if (parsed != null) {
+                floatingPosition = parsed
+            } else {
+                issues += SkinIssue(
+                    "floatingCandidatePosition", SkinIssue.Kind.FIELD_FALLBACK,
+                    "floating_candidate_position_invalid",
+                )
+            }
+        }
+        var floatingFallbackPosition: String? = null
+        val floatingFallbackPrimitive =
+            readTopLevel("floating_fallback_position") as? JsonPrimitive
+        if (floatingFallbackPrimitive != null) {
+            val parsed = floatingFallbackPrimitive.contentOrNull?.takeIf { it.isNotBlank() }
+            if (parsed != null) {
+                floatingFallbackPosition = parsed
+            } else {
+                issues += SkinIssue(
+                    "floating_fallback_position", SkinIssue.Kind.FIELD_FALLBACK,
+                    "floating_candidate_fallback_position_invalid",
+                )
+            }
+        }
+        // 背景色：字符串 "#RRGGBB" 或 ARGB Int 字面量；非法取缺省。
+        var floatingBgDark = FloatingCandidateStyle.DEFAULT_BACKGROUND_DARK
+        val floatingBgDarkNode = readTopLevel("floatingCandidateBackgroundColorDark")
+        if (floatingBgDarkNode is JsonPrimitive) {
+            val parsed = if (floatingBgDarkNode.isString) {
+                floatingBgDarkNode.contentOrNull?.let { SkinJson.parseColor(it) }
+            } else {
+                floatingBgDarkNode.strictIntOrNull()
+            }
+            if (parsed != null) {
+                floatingBgDark = parsed
+            } else {
+                issues += SkinIssue(
+                    "floatingCandidateBackgroundColorDark", SkinIssue.Kind.FIELD_FALLBACK,
+                    "floating_candidate_background_dark_invalid",
+                )
+            }
+        }
+        var floatingBgLight = FloatingCandidateStyle.DEFAULT_BACKGROUND_LIGHT
+        val floatingBgLightNode = readTopLevel("floatingCandidateBackgroundColorLight")
+        if (floatingBgLightNode is JsonPrimitive) {
+            val parsed = if (floatingBgLightNode.isString) {
+                floatingBgLightNode.contentOrNull?.let { SkinJson.parseColor(it) }
+            } else {
+                floatingBgLightNode.strictIntOrNull()
+            }
+            if (parsed != null) {
+                floatingBgLight = parsed
+            } else {
+                issues += SkinIssue(
+                    "floatingCandidateBackgroundColorLight", SkinIssue.Kind.FIELD_FALLBACK,
+                    "floating_candidate_background_light_invalid",
+                )
+            }
+        }
+        // 圆角：数值 + 区间 0–24，非法取缺省 12。
+        var floatingCornerRadiusDp = FloatingCandidateStyle.DEFAULT_CORNER_RADIUS_DP
+        val floatingCornerPrimitive =
+            readTopLevel("floatingCandidateCornerRadius") as? JsonPrimitive
+        if (floatingCornerPrimitive != null) {
+            val value = floatingCornerPrimitive.strictDoubleOrNull()?.toFloat()
+            if (value != null && value.isFinite() &&
+                value in FloatingCandidateStyle.MIN_CORNER_RADIUS_DP..
+                    FloatingCandidateStyle.MAX_CORNER_RADIUS_DP
+            ) {
+                floatingCornerRadiusDp = value
+            } else {
+                issues += SkinIssue(
+                    "floatingCandidateCornerRadius", SkinIssue.Kind.FIELD_FALLBACK,
+                    "floating_candidate_corner_radius_invalid",
+                )
+            }
+        }
+        // 翻页钮显示：严格布尔，非法取缺省 true。
+        var floatingPagingDisplayed = true
+        val floatingPagingPrimitive =
+            readTopLevel("floatingCandidatePagingButtonDisplayed") as? JsonPrimitive
+        if (floatingPagingPrimitive != null) {
+            val parsed = floatingPagingPrimitive.booleanOrNull
+            if (parsed != null) {
+                floatingPagingDisplayed = parsed
+            } else {
+                issues += SkinIssue(
+                    "floatingCandidatePagingButtonDisplayed", SkinIssue.Kind.FIELD_FALLBACK,
+                    "floating_candidate_paging_button_invalid",
+                )
+            }
+        }
+        val floatingCandidate = FloatingCandidateStyle(
+            position = floatingPosition ?: FloatingCandidateStyle.DEFAULT_POSITION,
+            fallbackPosition = floatingFallbackPosition
+                ?: FloatingCandidateStyle.DEFAULT_FALLBACK_POSITION,
+            backgroundColorDark = floatingBgDark,
+            backgroundColorLight = floatingBgLight,
+            cornerRadiusDp = floatingCornerRadiusDp,
+            pagingButtonDisplayed = floatingPagingDisplayed,
+        )
+
         // ---- 滑动阈值（2026-10-28 截图 6 项） ----
         // 严格数值 + 区间校验，非法记 FIELD_FALLBACK 并视为未指定。
         var swipeThresholdDp: Float? = null
@@ -1249,6 +1357,7 @@ object SkinValidator {
                 bubbleOverflowCheck = bubbleOverflowCheck,
                 swipeThresholdDp = swipeThresholdDp,
                 candidateRadiusDp = candidateRadiusDp,
+                floatingCandidate = floatingCandidate,
                 predictionCloseBg = predictionCloseBg,
                 predictionCloseRadiusDp = predictionCloseRadiusDp,
                 toolbar = toolbarSpec,

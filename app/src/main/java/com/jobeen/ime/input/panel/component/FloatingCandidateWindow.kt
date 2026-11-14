@@ -1,0 +1,229 @@
+package com.jobeen.ime.input.panel.component
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.drawable.GradientDrawable
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.View
+import android.view.View.MeasureSpec
+import android.widget.LinearLayout
+import android.widget.PopupWindow
+import android.widget.TextView
+import com.jobeen.ime.skin.runtime.SkinColorMode
+import com.jobeen.ime.engine.data.EngineMessage
+import com.jobeen.ime.input.keyboard.key.KeyboardAction
+import com.jobeen.ime.input.panel.panelColorScheme
+import com.jobeen.ime.skin.model.FloatingCandidateStyle
+import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
+
+/**
+ * 浮动候选窗（WO52 1.4）：PopupWindow＋控制器无关的 Android 壳。
+ *
+ * - 内容复用 [CandidateGridView]（与内嵌栏同一渲染，不另写一套候选 UI；
+ *   字形即内嵌栏的候选字形——Jime 皮肤模型无 `text.bubble` 节点，
+ *   复用网格即复用候选字形）。
+ * - 底部自带上一页/下一页行（皮肤键 floatingCandidatePagingButtonDisplayed
+ *   门控、pageNo>0／!isLastPage 可见性由调用方经 [setPagingButtons] 下发）；
+ *   网格自身的皮肤底部钮行不启用（不调 refreshTheme(context)，bottomRowSpec
+ *   恒 null），不与自带翻页行重复。
+ * - 宽 = 键盘宽；高按内容行数现算（至多 5 行×32dp＋翻页行 40dp，
+ *   411dp 真机宽下两钮各半宽，放得下）。
+ * - PopupWindow 沿用本仓 KeyPreviewPopup 范式（focusable=false，
+ *   touchable=true：点候选可点按，键盘焦点仍在编辑框）。
+ */
+@SuppressLint("ViewConstructor")
+class FloatingCandidateWindow(
+    context: Context,
+    var onCandidateSelected: ((EngineMessage.Candidate) -> Unit)? = null,
+    var onSidePanelAction: ((KeyboardAction) -> Unit)? = null,
+    var onPageCandidates: ((backward: Boolean) -> Unit)? = null,
+) {
+
+    /** 翻页行高（dp）：两钮一排。 */
+    companion object {
+        const val PAGING_ROW_HEIGHT_DP = 40
+        const val MAX_ROWS = 5
+    }
+
+    private val density = context.resources.displayMetrics.density
+    private val colors = panelColorScheme(context, null)
+    // 注意：GradientDrawable 自带 colors 属性（API 29），按钮背景的
+    // apply 块内写 colors.keyBackground 会被遮成 IntArray——先取局部量。
+    private val keyBackgroundColor: Int = colors.keyBackground
+    private val keyTextColor: Int = colors.keyText
+
+    private val grid = CandidateGridView(
+        context = context,
+        colors = colors,
+        onCandidateSelected = { onCandidateSelected?.invoke(it) },
+        onSidePanelAction = { onSidePanelAction?.invoke(it) },
+    ).apply {
+        // 浮动窗内翻页钮门改皮肤键（网格自身底部钮行未启用，此覆写只
+        // 防将来某路又把皮肤钮行带进来时门错）。
+        pagingButtonsEnabledOverride = currentStyle().pagingButtonDisplayed
+    }
+
+    private val prevButton = TextView(context).apply {
+        text = "上一页"
+        gravity = Gravity.CENTER
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        setIncludeFontPadding(false)
+        setTextColor(keyTextColor)
+        isClickable = true
+        isFocusable = false
+        background = GradientDrawable().apply {
+            setColor(keyBackgroundColor)
+            cornerRadius = 6f * density
+        }
+        setOnClickListener { onPageCandidates?.invoke(true) }
+    }
+
+    private val nextButton = TextView(context).apply {
+        text = "下一页"
+        gravity = Gravity.CENTER
+        setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
+        setIncludeFontPadding(false)
+        setTextColor(keyTextColor)
+        isClickable = true
+        isFocusable = false
+        background = GradientDrawable().apply {
+            setColor(keyBackgroundColor)
+            cornerRadius = 6f * density
+        }
+        setOnClickListener { onPageCandidates?.invoke(false) }
+    }
+
+    private val pagingRow = LinearLayout(context).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = Gravity.CENTER_VERTICAL
+        visibility = View.GONE
+        addView(prevButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
+        addView(nextButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.MATCH_PARENT, 1f))
+    }
+
+    private val containerBg = GradientDrawable()
+
+    private val container = LinearLayout(context).apply {
+        orientation = LinearLayout.VERTICAL
+        background = containerBg
+        addView(
+            grid,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+            ),
+        )
+        addView(
+            pagingRow,
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                (PAGING_ROW_HEIGHT_DP * density).toInt(),
+            ),
+        )
+    }
+
+    private var popupWindow: PopupWindow? = null
+    private var lastList: List<EngineMessage.Candidate> = emptyList()
+    private var lastRevision: Long = 0L
+
+    val isShowing: Boolean get() = popupWindow?.isShowing == true
+
+    /** 当前皮肤浮动窗样式（快照缺失时取缺省）。 */
+    fun currentStyle(): FloatingCandidateStyle =
+        SkinSnapshotProvider.peek()?.floatingCandidate ?: FloatingCandidateStyle()
+
+    /** 刷新容器背景（深浅＋圆角，皮肤键）。 */
+    fun refreshStyle() {
+        val style = currentStyle()
+        val bg = if (SkinColorMode.isDark(container.context)) {
+            style.backgroundColorDark
+        } else {
+            style.backgroundColorLight
+        }
+        containerBg.setColor(bg)
+        containerBg.cornerRadius = style.cornerRadiusDp * density
+        grid.pagingButtonsEnabledOverride = style.pagingButtonDisplayed
+    }
+
+    /** 候选整表替换（native 模式）；revision 0 = 未版本化恒放行。 */
+    fun setCandidates(list: List<EngineMessage.Candidate>, revision: Long = 0L) {
+        lastList = list
+        lastRevision = revision
+        grid.updateCandidates(list, revision)
+    }
+
+    /** 追加页并入（浮动窗只在 native 模式出现、正常无追加；有则合并）。 */
+    fun appendCandidates(list: List<EngineMessage.Candidate>) {
+        lastList = lastList + list
+        grid.updateCandidates(lastList, 0L)
+    }
+
+    /** T9 拼音侧栏（与内嵌网格同一路）。 */
+    fun onPossibleCandidatePinYin(data: List<com.jobeen.ime.engine.data.CandidatePinYin>) {
+        grid.onPossibleCandidatePinYin(data)
+    }
+
+    /** 翻页钮可见性（控制器算好下发；两钮全隐时整行 GONE）。 */
+    fun setPagingButtons(prevVisible: Boolean, nextVisible: Boolean) {
+        prevButton.visibility = if (prevVisible) View.VISIBLE else View.GONE
+        nextButton.visibility = if (nextVisible) View.VISIBLE else View.GONE
+        pagingRow.visibility =
+            if (prevVisible || nextVisible) View.VISIBLE else View.GONE
+    }
+
+    private fun pagingRowHeightPx(): Int =
+        if (pagingRow.visibility == View.VISIBLE) {
+            (PAGING_ROW_HEIGHT_DP * density).toInt()
+        } else {
+            0
+        }
+
+    /**
+     * 按当前列表算窗高（离线量＋排后重算行布局）：行数取内容行与
+     * [MAX_ROWS] 的较小值（多出行内滚动），＋翻页行高。
+     */
+    fun measureHeight(widthPx: Int): Int {
+        val maxHeight = MAX_ROWS * grid.naturalRowHeightPx() + pagingRowHeightPx()
+        container.measure(
+            MeasureSpec.makeMeasureSpec(widthPx, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(maxHeight, MeasureSpec.AT_MOST),
+        )
+        container.layout(0, 0, widthPx, maxHeight)
+        // 离线排过后画布已有真实宽度，重算行布局再读行数。
+        grid.updateCandidates(lastList, lastRevision)
+        val rows = grid.contentRowCount().coerceIn(1, MAX_ROWS)
+        return rows * grid.naturalRowHeightPx() + pagingRowHeightPx()
+    }
+
+    /** 显示（已显示时只改位置尺寸）。 */
+    fun show(anchor: View, x: Int, y: Int, width: Int, height: Int) {
+        refreshStyle()
+        val popup = popupWindow ?: PopupWindow(
+            container,
+            width,
+            height,
+            false,
+        ).apply {
+            isTouchable = true
+            isOutsideTouchable = true
+            elevation = 8f * density
+        }.also { popupWindow = it }
+        if (popup.isShowing) {
+            popup.update(x, y, width, height)
+        } else {
+            popup.width = width
+            popup.height = height
+            popup.showAtLocation(anchor, Gravity.TOP or Gravity.START, x, y)
+        }
+    }
+
+    /** 已显示时改位置尺寸。 */
+    fun updatePlacement(x: Int, y: Int, width: Int, height: Int) {
+        popupWindow?.takeIf { it.isShowing }?.update(x, y, width, height)
+    }
+
+    fun dismiss() {
+        popupWindow?.dismiss()
+    }
+}

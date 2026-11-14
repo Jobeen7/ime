@@ -660,7 +660,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var floatingCandidateActiveFlag: Boolean = false
 
     /** 供服务层（1.4 浮动窗控制器）置位／复位浮动窗激活态。 */
-    fun setFloatingCandidateActive(active: Boolean) {
+    override fun setFloatingCandidateActive(active: Boolean) {
         floatingCandidateActiveFlag = active
     }
 

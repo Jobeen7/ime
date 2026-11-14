@@ -7,8 +7,12 @@ import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.graphics.Rect
+import android.graphics.Region
+import android.view.inputmethod.CursorAnchorInfo
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.ExtractedTextRequest
+import android.view.inputmethod.InputConnection
 import java.io.File
 import kotlin.math.roundToInt
 import com.jobeen.ime.ImeApplication
@@ -458,6 +462,16 @@ class ImeInputMethodService : InputMethodService() {
         )
         keyboardWindow?.onStartInputView(info, restarting, fieldChanged)
         engine?.onStartInputView(currentInputConnection, info, restarting)
+        // 浮动候选窗（WO52 1.4）：内嵌开时请求光标锚点更新（跟随光标
+        // 定位用）；编辑器不支持返回 false 时浮动窗走回退位置。
+        if (CandidateManager.isInlineInputModeEnabled(this)) {
+            val ok = runCatching {
+                currentInputConnection?.requestCursorUpdates(
+                    InputConnection.CURSOR_UPDATE_MONITOR,
+                ) == true
+            }.getOrDefault(false)
+            keyboardWindow?.view?.onCursorUpdatesRequested(ok)
+        }
         // 直调即时探针前先撤掉合并通道里排队的那次：它捕获的是旧
         // 输入框的待发任务，再跑一次只会在新框上多做一轮无用探针
         mainHandler.removeCallbacks(pendingNotifyInputChanged)
@@ -547,7 +561,45 @@ class ImeInputMethodService : InputMethodService() {
         engine?.resetComposition()
         keyboardWindow?.onFinishInputView(finishingInput)
         engine?.onFinishInputView()
+        // 浮动候选窗（WO52 1.4）：停光标锚点更新（0 = 不再请求）。
+        runCatching { currentInputConnection?.requestCursorUpdates(0) }
         super.onFinishInputView(finishingInput)
+    }
+
+    /**
+     * 浮动候选窗（WO52 1.4）：光标锚点到达，转给键盘窗口换算＋重定位
+     * （组字起始字符框优先，取不到用插入标记矩形；见 view 层）。
+     */
+    override fun onUpdateCursorAnchorInfo(info: CursorAnchorInfo) {
+        super.onUpdateCursorAnchorInfo(info)
+        keyboardWindow?.view?.onCursorAnchorInfo(info)
+    }
+
+    /**
+     * 浮动候选窗（WO52 1.4）：浮动窗在键盘窗口之外（屏幕坐标），须把
+     * 它的帧并入可触区，否则窗上点按落不到浮动窗。未显示时不动 super
+     * 的缺省口径。REGION 语义下须把键盘可视区一并并入（缺省为
+     * VISIBLE 语义、键盘区本身可触），否则键盘会失触。
+     * 真机待验：主机无法验证触摸路由。
+     */
+    override fun onComputeInsets(outInsets: Insets) {
+        super.onComputeInsets(outInsets)
+        val view = keyboardWindow?.view ?: return
+        val frame = view.floatingFrameScreenRect ?: return
+        val viewWidth = view.width.takeIf { it > 0 } ?: return
+        val viewHeight = view.height.takeIf { it > 0 } ?: return
+        val loc = IntArray(2).also { view.getLocationOnScreen(it) }
+        val region = Region(0, 0, viewWidth, viewHeight)
+        region.union(
+            Rect(
+                frame.left - loc[0],
+                frame.top - loc[1],
+                frame.right - loc[0],
+                frame.bottom - loc[1],
+            ),
+        )
+        outInsets.touchableInsets = Insets.TOUCHABLE_INSETS_REGION
+        outInsets.touchableRegion.set(region)
     }
 
     /**

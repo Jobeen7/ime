@@ -49,6 +49,8 @@ interface IEngine {
      * native 分页。缺省 false（无浮动窗的引擎恒走开关模式）。
      */
     fun isFloatingCandidateActive(): Boolean = false
+    /** 置浮动候选窗激活态（WO52 1.4）：服务层在浮动窗开／关时调用。 */
+    fun setFloatingCandidateActive(active: Boolean) {}
     suspend fun schemasList(): List<EngineMessage.Schema>
     fun clear(service: InputMethodService)
     fun resetComposition()

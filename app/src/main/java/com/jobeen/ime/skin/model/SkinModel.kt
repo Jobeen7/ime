@@ -20,6 +20,37 @@ import kotlinx.serialization.json.JsonObject
  * 解读），随存储与导出原样往返。
  */
 
+/**
+ * 浮动候选窗样式（WO52 1.4）：皮肤顶层 floatingCandidate* 五键。
+ * 位置值是原始字符串（跟随光标／左下／右下），消费点经
+ * FloatingCandidatePosition.parse 解析，未知值回落跟随光标；
+ * 背景色接受 "#RRGGBB" 字符串或 ARGB Int 字面量。
+ */
+data class FloatingCandidateStyle(
+    /** 位置：缺省跟随光标（lc1.i 对应项未确认，先按跟随光标写死）。 */
+    val position: String = DEFAULT_POSITION,
+    /** 回退位置：光标取不到／被键盘盖住／窗口放不下时用，缺省左下。 */
+    val fallbackPosition: String = DEFAULT_FALLBACK_POSITION,
+    /** 深色背景，缺省 −13882322。 */
+    val backgroundColorDark: Int = DEFAULT_BACKGROUND_DARK,
+    /** 浅色背景，缺省 −855305。 */
+    val backgroundColorLight: Int = DEFAULT_BACKGROUND_LIGHT,
+    /** 圆角 dp，钳制 0–24，缺省 12。 */
+    val cornerRadiusDp: Float = DEFAULT_CORNER_RADIUS_DP,
+    /** 翻页按钮显示，缺省 true。 */
+    val pagingButtonDisplayed: Boolean = true,
+) {
+    companion object {
+        const val DEFAULT_POSITION = "cursor"
+        const val DEFAULT_FALLBACK_POSITION = "bottomLeft"
+        const val DEFAULT_BACKGROUND_DARK = -13882322
+        const val DEFAULT_BACKGROUND_LIGHT = -855305
+        const val DEFAULT_CORNER_RADIUS_DP = 12f
+        const val MIN_CORNER_RADIUS_DP = 0f
+        const val MAX_CORNER_RADIUS_DP = 24f
+    }
+}
+
 /** 配色叶子字段注册表（定稿十章）：路径与 ColorScheme 取值口径一一对应。 */
 enum class StyleField(val path: String) {
     KEY_BACKGROUND("keyBackground"),
@@ -541,6 +572,12 @@ data class ValidatedSkin(
      * dp；默认 6（与旧写死值一致），区间 0..32。
      */
     val candidateRadiusDp: Float = 6f,
+    /**
+     * 浮动候选窗（WO52 1.4）：顶层 floatingCandidate* 五键的校验结果。
+     * 缺省 = 跟随光标／回退左下／深色 −13882322／浅色 −855305／
+     * 圆角 12dp／翻页钮显示。
+     */
+    val floatingCandidate: FloatingCandidateStyle = FloatingCandidateStyle(),
     /**
      * 预测态关闭键独立样式（2026-10-28 截图 6 项）：顶层
      * predictionCloseBg（ARGB Int）与 predictionCloseRadiusDp（dp）；
