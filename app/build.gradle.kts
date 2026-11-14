@@ -183,6 +183,13 @@ fun readBundledWanxiangVersionForStamp(): String {
             }
         }
     }
+
+    // Lint 基线（WO47）：107 个 LocalContextGetResourceValueCall 存量冻结——
+    // 回调 lambda 里调不了 stringResource()，换语言不刷新对本应用零影响；
+    // 新增的同类错误仍会拦 CI。真缺陷（16 NewApi＋1 NonObservableLocale）已修掉，不在基线里。
+    lint {
+        baseline = file("lint-baseline.xml")
+    }
 }
 
 // 许可证单源：根目录 THIRD_PARTY_NOTICES.md 与 licenses/ 是唯一维护源，

@@ -86,7 +86,7 @@ fun QrShareDialog(
                         val out = ByteArrayOutputStream()
                         zip.copyTo(out)
                         when (entry.name) {
-                            "manifest.json" -> manifest = PackageManifest.parse(out.toString(Charsets.UTF_8))
+                            "manifest.json" -> manifest = PackageManifest.parse(out.toString(Charsets.UTF_8.name()))
                             "skin.json" -> skinJson = out.toByteArray()
                         }
                     }

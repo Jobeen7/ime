@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -59,6 +60,7 @@ fun BackupScreen(
     onDismissInterruptedRestore: () -> Unit = {},
 ) {
     val barFontSize = 18.sp
+    val locale = LocalConfiguration.current.locales[0]
     SettingsPageScaffold(
         title = stringResource(R.string.backup_title),
         onBack = onBack,
@@ -90,7 +92,7 @@ fun BackupScreen(
                                 },
                                 java.text.SimpleDateFormat(
                                     "yyyy-MM-dd HH:mm",
-                                    java.util.Locale.getDefault(),
+                                    locale,
                                 ).format(java.util.Date(info.startedAt)),
                             ),
                             style = MaterialTheme.typography.bodyMedium,

@@ -33,6 +33,9 @@ import java.util.concurrent.TimeUnit
  *   按“文件不存在”处理——读后文件仍不存在即未变，读后出现即变了。
  * - 长度、mtime（纳秒精度）、inode（fileKey）任一不同即变了；
  *   fileKey 在部分文件系统上为 null，该维即不参与比较。
+ * - java.nio.file 只在 API 26+ 存在（WO47）：mark() 先探活，
+ *   探不到走 io 回落（长度＋毫秒 mtime，无 inode；同毫秒内
+ *   等长替换检不出，仅 API 24/25 受影响，见 mark 的注释）。
  * - SharedPreferences 的 apply() 是异步落盘：写盘落在快照与重验
  *   之间即被检出，落在重验之后则进不了本次检测——单次 guard 的
  *   残余由结算点 [reverifyAll] 收窄（见类头注释）；配对写一侧
@@ -65,15 +68,41 @@ internal class BackupChangeGuard {
         tracked += file to mark(file)
     }
 
+    // java.nio.file 只在 API 26+ 存在；24/25 上探活失败，走 io 回落。
+    // 主机单测跑在 JDK 上，nio 恒可用，走 nio 路径（单测钉的是这条路）。
+    private val hasNioFile: Boolean = try {
+        Class.forName("java.nio.file.Files")
+        true
+    } catch (e: Exception) {
+        false
+    }
+
     fun mark(file: File): FileMark? = try {
+        if (hasNioFile) nioMark(file) else ioMark(file)
+    } catch (e: Exception) {
+        null
+    }
+
+    // 探活已保证：hasNioFile 为 false 时不进此方法；lint 认不出探活，故压掉 NewApi。
+    //noinspection NewApi
+    private fun nioMark(file: File): FileMark {
         val attrs = Files.readAttributes(file.toPath(), BasicFileAttributes::class.java)
-        FileMark(
+        return FileMark(
             length = attrs.size(),
             lastModifiedNanos = attrs.lastModifiedTime().to(TimeUnit.NANOSECONDS),
             fileKey = attrs.fileKey(),
         )
-    } catch (e: Exception) {
-        null
+    }
+
+    // API 24/25 回落：java.io 只能给毫秒 mtime、无 inode；不存在的文件
+    // length()/lastModified() 返回 0 不抛错，故先判存在（否则快照应为 null）。
+    private fun ioMark(file: File): FileMark? {
+        if (!file.exists()) return null
+        return FileMark(
+            length = file.length(),
+            lastModifiedNanos = TimeUnit.MILLISECONDS.toNanos(file.lastModified()),
+            fileKey = null,
+        )
     }
 
     /** 与快照比对：文件消失、元数据读不到、任一维不同都算变了。 */

@@ -12,8 +12,6 @@ import java.net.NoRouteToHostException
 import java.net.SocketException
 import java.net.SocketTimeoutException
 import java.net.UnknownHostException
-import java.nio.file.AccessDeniedException
-import java.nio.file.NoSuchFileException
 import java.util.zip.ZipException
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
@@ -228,10 +226,9 @@ object DeepErrorMapper {
         is SocketTimeoutException -> DeepErrorCode.TIMEOUT
         is UnknownHostException, is ConnectException, is NoRouteToHostException,
         is SocketException -> DeepErrorCode.NETWORK
-        is FileNotFoundException, is NoSuchFileException -> DeepErrorCode.NOT_FOUND
+        is FileNotFoundException -> DeepErrorCode.NOT_FOUND
         is ZipException -> DeepErrorCode.CORRUPT
         is SerializationException -> DeepErrorCode.CORRUPT
-        is AccessDeniedException -> DeepErrorCode.PERMISSION
         is SecurityException -> DeepErrorCode.PERMISSION
         is SQLiteException ->
             when {
@@ -242,7 +239,14 @@ object DeepErrorMapper {
                 t.message?.contains("malformed", ignoreCase = true) == true -> DeepErrorCode.CORRUPT
                 else -> DeepErrorCode.IO
             }
-        else -> if (isJsonParseException(t)) DeepErrorCode.CORRUPT else null
+        else -> nioFileErrorCode(t) ?: if (isJsonParseException(t)) DeepErrorCode.CORRUPT else null
+    }
+
+    /** nio 文件异常（API 26 类，minSdk 24 不能直接 is；按类名认，同 isJsonParseException）。 */
+    private fun nioFileErrorCode(t: Throwable): DeepErrorCode? = when (t.javaClass.simpleName) {
+        "NoSuchFileException" -> DeepErrorCode.NOT_FOUND
+        "AccessDeniedException" -> DeepErrorCode.PERMISSION
+        else -> null
     }
 
     /** “磁盘满”消息特征（S-L7；入参须已小写）：SQLite 的

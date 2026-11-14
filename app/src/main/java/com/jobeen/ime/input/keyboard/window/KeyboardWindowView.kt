@@ -1025,7 +1025,7 @@ class KeyboardWindowView(
         // （平时 5s 防抖写，detach 是兜底 flush）。
         com.jobeen.ime.input.stats.InputStats.flush()
         videoController.onDetached()
-        gifDrawable?.stop()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.stop()
         gifDrawable = null
         SkinRuntime.detachWindow(this)
         SkinRuntimeState.removeStateChangedListener(runtimeStateListener)
@@ -1413,9 +1413,9 @@ class KeyboardWindowView(
             VideoPrefs.isEnabled(context),
         )
         if (videoActive) {
-            gifDrawable?.stop()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.stop()
         } else {
-            gifDrawable?.start()
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.start()
         }
     }
 
@@ -1423,7 +1423,7 @@ class KeyboardWindowView(
         // 动画 GIF（SDK≥28）：解原文件成 AnimatedImageDrawable 按
         // 自身帧率重绘；模糊／调节不作用动图帧（见控制器注释）；
         // 解码失败回落制备位图（原有口径）；28 以下静态首帧。
-        gifDrawable?.stop()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.stop()
         gifDrawable = null
         val bg = SkinSnapshotProvider.peek()?.background
         if (bg != null && bg.backgroundAssetExt == "gif" &&

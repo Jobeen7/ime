@@ -113,7 +113,7 @@ object TarBz2ExtractorUtil {
         val destPath = destDir.absolutePath
         var current: File? = file.absoluteFile
         while (current != null && current.absolutePath != destPath) {
-            if (java.nio.file.Files.isSymbolicLink(current.toPath())) {
+            if (current.canonicalFile != current.absoluteFile) {
                 current.delete()
             }
             current = current.parentFile
