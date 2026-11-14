@@ -42,12 +42,7 @@ abstract class SidePanelRender(
         @ColorInt val backgroundColor: Int,
         @ColorInt val panelColor: Int,
         @ColorInt val pressedItemColor: Int,
-        @ColorInt val scrollbarColor: Int,
         val cornerRadiusDp: Float = 8f,
-        val scrollbarInsetDp: Float = 3f,
-        val scrollbarWidthDp: Float = 1.5f,
-        val scrollbarTrackInsetDp: Float = 8f,
-        val scrollbarMinThumbHeightDp: Float = 8f,
         val textHeightRatio: Float = 0.42f,
     ) {
         companion object {
@@ -63,7 +58,7 @@ abstract class SidePanelRender(
                     Variant.Alternative -> theme.specialKeyPressed
                     Variant.Accent -> theme.accentKeyPressed
                     Variant.None -> theme.specialKeyPressed
-                }, scrollbarColor = theme.keyText
+                }
             )
         }
     }
@@ -83,10 +78,6 @@ abstract class SidePanelRender(
         textAlign = Paint.Align.CENTER
         style = Paint.Style.FILL
     }
-    private val scrollbarPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        style = Paint.Style.FILL
-    }
-    private val scrollbarRect = RectF()
 
     // 绘制期复用对象：draw 在手势/动画期以 60-120fps 调用，旧实现每帧新建
     // Path、每条目新建 Rect 与 Typeface（Typeface.create 走系统缓存查找也不便宜）
@@ -139,7 +130,6 @@ abstract class SidePanelRender(
         if (panel.isEmpty) return
         drawPanel(canvas, panel)
         drawItems(canvas, panel, scrollOffset, pressedIndex, stretch, pressedAlpha, selectedIndex)
-        drawScrollbar(canvas, panel, scrollOffset)
     }
 
     private fun drawPanel(canvas: Canvas, panel: RectF) {
@@ -153,10 +143,6 @@ abstract class SidePanelRender(
     }
 
     protected open fun cornerRadius(): Float = dp(style.cornerRadiusDp)
-
-    protected open fun scrollbarInset(): Float = dp(style.scrollbarInsetDp)
-
-    protected open fun scrollbarWidth(): Float = dp(style.scrollbarWidthDp)
 
     @SuppressLint("UseKtx")
     private fun drawItems(
@@ -265,32 +251,6 @@ abstract class SidePanelRender(
             // 恢复原始对齐方式
             textPaint.textAlign = originalAlign
         }
-    }
-
-    private fun drawScrollbar(canvas: Canvas, panel: RectF, scrollOffset: Float) {
-        val maxScroll = maxScroll(panel.height())
-        if (items.size <= visibleItemCount || maxScroll <= 0f) return
-        val itemHeight = itemHeight(panel.height())
-        if (itemHeight <= 0f) return
-        val scrollBottom = panel.bottom
-        val trackTop = panel.top + dp(style.scrollbarTrackInsetDp)
-        val trackBottom = scrollBottom - dp(style.scrollbarTrackInsetDp)
-        val trackHeight = trackBottom - trackTop
-        if (trackHeight <= 0f) return
-        val thumbHeight =
-            (trackHeight * panel.height() / contentHeight(panel.height()) * 0.6f).coerceAtLeast(
-                dp(
-                    style.scrollbarMinThumbHeightDp
-                )
-            )
-        val clampedScroll = scrollOffset.coerceIn(0f, maxScroll)
-        val thumbTop = trackTop + (trackHeight - thumbHeight) * clampedScroll / maxScroll
-        val width = scrollbarWidth()
-        val left = panel.right - scrollbarInset()
-        scrollbarRect.set(left, thumbTop, left + width, thumbTop + thumbHeight)
-        scrollbarPaint.color = items.firstOrNull()?.textColor ?: style.scrollbarColor
-        val radius = width / 2f
-        canvas.drawRoundRect(scrollbarRect, radius, radius, scrollbarPaint)
     }
 
     protected fun dp(value: Float): Float = value * density

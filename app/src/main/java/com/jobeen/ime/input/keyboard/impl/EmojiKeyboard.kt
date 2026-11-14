@@ -284,9 +284,9 @@ class EmojiKeyboard(
         // 子条占顶 48dp（隐藏时 0），其余内容整体下移并压缩。
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val contentH = th - subH
-        val sidePanelH = contentH * 3 / 4
+        // WO48：侧栏 4/5、返回区 1/5，与符号页同口径（sidePanelGeometry）。
+        val (sidePanelH, returnRegionH) = SymbolKeyboard.sidePanelGeometry(contentH)
         // 侧栏底区整段归返回钮（板锁已删）。
-        val returnRegionH = contentH - sidePanelH
         sidePanelKey.measure(mES(sw, MeasureSpec.EXACTLY), mES(sidePanelH, MeasureSpec.EXACTLY))
         sideReturnBtn.measure(
             mES(sw, MeasureSpec.EXACTLY), mES(returnRegionH, MeasureSpec.EXACTLY)
@@ -303,7 +303,7 @@ class EmojiKeyboard(
         val sw = ((r - l) * 0.15f).toInt()
         val subH = if (subStripView.visibility == View.VISIBLE) context.dp(48) else 0
         val contentH = (b - t) - subH
-        val sidePanelH = contentH * 3 / 4
+        val sidePanelH = SymbolKeyboard.sidePanelGeometry(contentH).first
         subStripView.layout(0, 0, r - l, subH)
         sidePanelKey.layout(0, subH, sw, subH + sidePanelH)
         sideReturnBtn.layout(0, subH + sidePanelH, sw, subH + contentH)
