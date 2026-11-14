@@ -26,6 +26,9 @@ interface IPanel {
     /** 粘贴后返回键盘（默认空实现）：剪贴板态 → Idle，其余态不动 */
     fun returnToKeyboard() {}
 
+    /** WO52 5.4 锁定：操作后刷新剪贴板列表、面板停留（默认空实现）。 */
+    fun refreshClipboardList() {}
+
     /** 剪贴板搜索态是否激活（窗口布局要据此拉高窗口、插入结果列表区）。 */
     val clipSearchActive: Boolean get() = false
 

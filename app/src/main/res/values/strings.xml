@@ -88,6 +88,8 @@
     <string name="split_words_copy">复制</string>
     <string name="split_words_done">完成</string>
     <string name="split_words_empty">没有可拆分的文字</string>
+    <string name="clipboard_lock_panel">Lock panel</string>
+    <string name="clipboard_unlock_panel">Unlock panel</string>
     <string name="clipboard_return_note">粘贴后收起剪贴板面板回键盘</string>
     <!-- 批量第 5 项：主题诊断 -->
     <string name="skin_diag_title">主题诊断</string>

@@ -2,6 +2,7 @@ package com.jobeen.ime.input
 
 import android.content.Intent
 import com.jobeen.ime.data.manager.CandidateManager
+import com.jobeen.ime.data.manager.ClipboardLockPolicy
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.DeletedWordsStore
 import com.jobeen.ime.data.manager.PhraseManager
@@ -128,9 +129,17 @@ class PanelActionListener(
             entry.text, ClipboardManager.getOutputRule(service)
         )
         service.keyActionListener?.onKeyAction(KeyboardAction.CommitAction(text))
-        // 粘贴后返回：收起剪贴板面板回键盘（默认关，不动旧行为）
-        if (ClipboardManager.isReturnAfterPasteEnabled(service)) {
+        // WO52 5.4 面板锁定：锁定 → 刷新列表、面板停留（搜索态保持）；
+        // 未锁定 → 走现有 clipboard.return_after_paste 口径（开才回键盘），
+        // 不另写返回逻辑。
+        val locked = ClipboardManager.isViewLocked(service)
+        if (ClipboardLockPolicy.shouldReturnToKeyboard(
+                locked, ClipboardManager.isReturnAfterPasteEnabled(service),
+            )
+        ) {
             service.keyboardWindow?.panel?.returnToKeyboard()
+        } else if (locked) {
+            service.keyboardWindow?.panel?.refreshClipboardList()
         }
     }
 

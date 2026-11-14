@@ -161,6 +161,21 @@ object ClipboardManager {
             .getBoolean("clipboard.return_after_paste", false)
     }
 
+    /**
+     * 剪贴板面板锁定（WO52 5.4，偏好键 `clipboardViewLockState`，默认 false）：
+     * 开 = 操作后刷新列表、面板停留；关 = 走现有 return_after_paste 口径。
+     */
+    fun isViewLocked(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("clipboardViewLockState", false)
+    }
+
+    fun setViewLocked(context: Context, locked: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean("clipboardViewLockState", locked)
+        }
+    }
+
     /** 剪贴板提示条开关（WO52 5.2，默认开）：关 = 不显示复制提示条（含验证码提示）。 */
     fun isPromptEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

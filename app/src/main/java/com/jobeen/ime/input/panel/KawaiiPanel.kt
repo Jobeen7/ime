@@ -1223,6 +1223,7 @@ class KawaiiPanel(
 
                             PanelAction.ClipSearch -> enterClipSearch()
                             PanelAction.ClipSearchExit -> exitClipSearch()
+                            PanelAction.ClipOverflow -> showClipOverflowMenu()
                             PanelAction.ClipSearchClear -> {
                                 if (clipboardView.searchQuery.isEmpty()) {
                                     exitClipSearch()
@@ -1373,6 +1374,29 @@ class KawaiiPanel(
      */
     override fun returnToKeyboard() {
         if (state == State.Clipboard || state == State.Performance) state = State.Idle
+    }
+
+    /** WO52 5.4 锁定：操作后刷新列表、面板停留；搜索态一并保持（不收起）。 */
+    override fun refreshClipboardList() {
+        if (state == State.Clipboard) clipboardView.refresh()
+    }
+
+    /** WO52 5.4：剪贴板面板溢出菜单（⋮）——面板锁定开关。 */
+    private fun showClipOverflowMenu() {
+        val locked = ClipboardManager.isViewLocked(context)
+        confirmOverlay.actions(
+            message = context.getString(R.string.clipboard_manager),
+            items = listOf(
+                context.getString(
+                    if (locked) R.string.clipboard_unlock_panel
+                    else R.string.clipboard_lock_panel
+                ) to {
+                    ClipboardManager.setViewLocked(context, !locked)
+                },
+            ),
+            cardX = Float.NaN,
+            cardY = 0f,
+        )
     }
 
     private var addPhraseActive = false
