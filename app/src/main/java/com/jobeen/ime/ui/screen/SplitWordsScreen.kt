@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.onSizeChanged
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
@@ -166,8 +165,10 @@ fun SplitWordsScreen(text: String, onDone: () -> Unit) {
                 Modifier
                     .fillMaxWidth()
                     .weight(1f)
-                    .onSizeChanged { viewportHeightPx = it.height.toFloat() }
-                    .onGloballyPositioned { containerTopLeft = it.positionInWindow() }
+                    .onGloballyPositioned {
+                        viewportHeightPx = it.size.height.toFloat()
+                        containerTopLeft = it.positionInWindow()
+                    }
                     .verticalScroll(scrollState)
                     .pointerInput(words) {
                         awaitPointerEventScope {
