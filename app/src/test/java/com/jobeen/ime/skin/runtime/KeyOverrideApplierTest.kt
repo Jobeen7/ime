@@ -605,10 +605,12 @@ class KeyOverrideApplierTest {
                 KeyboardAction.ShowPhraseViewAction,
             SkinAction.Command(WhitelistAction.HASH_CANDIDATES_BAR_TOGGLE) to
                 KeyboardAction.CandidatesBarToggleAction,
+            // WO52 1.1：#rimePrevPage/#rimeNextPage 按模式分派
+            // （PageCandidatesAction），不再直发 KeyCode 92/93。
             SkinAction.Command(WhitelistAction.HASH_RIME_PREV_PAGE) to
-                KeyboardAction.KeyCodeAction(92),
+                KeyboardAction.PageCandidatesAction(backward = true),
             SkinAction.Command(WhitelistAction.HASH_RIME_NEXT_PAGE) to
-                KeyboardAction.KeyCodeAction(93),
+                KeyboardAction.PageCandidatesAction(backward = false),
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT) to
                 KeyboardAction.ToggleEmbeddedInputAction,
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW) to
