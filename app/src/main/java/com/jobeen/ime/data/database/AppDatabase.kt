@@ -9,7 +9,15 @@ import androidx.room.TypeConverters
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [CandidateSorting::class, CandidatePrefer::class, PhraseRecord::class], version = 15, exportSchema = true)
+@Database(
+    entities = [
+        CandidateSorting::class, CandidatePrefer::class, PhraseRecord::class,
+        AIProvider::class, AIProviderModel::class, AISystemPrompt::class, AIUserPrompt::class,
+        AIInstruction::class, AIConversation::class, AIMessage::class,
+    ],
+    version = 16,
+    exportSchema = true,
+)
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
 
@@ -18,6 +26,20 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun candidatePreferDao(): CandidatePreferDao
 
     abstract fun phraseDao(): PhraseDao
+
+    abstract fun aiProviderDao(): AiProviderDao
+
+    abstract fun aiProviderModelDao(): AiProviderModelDao
+
+    abstract fun aiSystemPromptDao(): AiSystemPromptDao
+
+    abstract fun aiUserPromptDao(): AiUserPromptDao
+
+    abstract fun aiInstructionDao(): AiInstructionDao
+
+    abstract fun aiConversationDao(): AiConversationDao
+
+    abstract fun aiMessageDao(): AiMessageDao
 
     companion object {
         @Volatile
@@ -43,9 +65,24 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun build(context: Context, name: String): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16)
                 .addCallback(VACUUM_CALLBACK)
+                .addCallback(AI_SEED_CALLBACK)
                 .build()
+
+        /**
+         * AI 种子回调（WO52 9.1）：新库建表后播种（onCreate 只在库文件
+         * 首次创建时跑一次）。升级库走 MIGRATION_15_16 播种；播种失败
+         * 只记日志不抛——AiRepository.ensureSeeded 会在首次访问时补种，
+         * 首启不因种子失败而崩。
+         */
+        private val AI_SEED_CALLBACK = object : RoomDatabase.Callback() {
+            override fun onCreate(db: SupportSQLiteDatabase) {
+                super.onCreate(db)
+                runCatching { AiSeeds.insertAll(db) }
+                    .onFailure { timber.log.Timber.w(it, "AI seeds insert onCreate failed") }
+            }
+        }
 
         private const val MAINTENANCE_PREFS = "db_maintenance"
         private const val KEY_VACUUM_V10_DONE = "vacuum_after_v10_done"
@@ -358,6 +395,36 @@ abstract class AppDatabase : RoomDatabase() {
             db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `variables` TEXT NOT NULL DEFAULT ''")
             db.execSQL("ALTER TABLE `phrase_records` ADD COLUMN `lastUsedAt` INTEGER NOT NULL DEFAULT 0")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_phrase_records_shortcut` ON `phrase_records` (`shortcut`)")
+        }
+
+        // v16：AI 七表（WO52 9.1）。建表＋索引 SQL 逐字照元书 `kd3.java`
+        // （Room 生成的建表语句，与本库实体声明的字段顺序／类型／
+        // 外键／索引逐项对过；AIMessage 无 updatedAt 列——原表即无，
+        // 不要补）。随后播种（AiSeeds.insertAll，INSERT OR IGNORE，
+        // 可重复跑）：DeepSeek 服务商＋模型、系统提示词 5 条、用户
+        // 提示词 3 条、指令 4 条。旧表数据不动。
+        private val MIGRATION_15_16: Migration = Migration(
+            startVersion = 15,
+            endVersion = 16,
+        ) { db ->
+            db.execSQL("CREATE TABLE IF NOT EXISTS `AIConversation` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `isTitleUserEdited` INTEGER NOT NULL, `systemPromptID` TEXT, `providerID` TEXT, `modelID` TEXT, `snapshotJSON` TEXT, PRIMARY KEY(`id`))")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIConversation_updatedAt` ON `AIConversation` (`updatedAt`)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS `AIInstruction` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `detail` TEXT NOT NULL, `systemPromptID` TEXT, `userPromptID` TEXT, `providerID` TEXT, `sort` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_AIInstruction_name` ON `AIInstruction` (`name`)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS `AIMessage` (`id` TEXT NOT NULL, `conversationId` TEXT, `role` TEXT NOT NULL, `status` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `originalInput` TEXT, `renderedRequest` TEXT, `userPromptName` TEXT, `content` TEXT NOT NULL, `tokenEstimate` INTEGER NOT NULL, `usageJSON` TEXT, `errorCategory` TEXT, `requestID` TEXT, `regenerationOfID` TEXT, `isSuperseded` INTEGER NOT NULL, `configSnapshotJSON` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`conversationId`) REFERENCES `AIConversation`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIMessage_conversationId` ON `AIMessage` (`conversationId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIMessage_sequence` ON `AIMessage` (`sequence`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIMessage_status` ON `AIMessage` (`status`)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS `AIProvider` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `type` TEXT NOT NULL, `sort` INTEGER NOT NULL, `isDefault` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, `isBuiltIn` INTEGER NOT NULL, `builtInCanBeDelete` INTEGER NOT NULL, `baseURL` TEXT NOT NULL, `apiPath` TEXT NOT NULL, `apiToken` TEXT NOT NULL, `requestTimeout` REAL NOT NULL, `maxOutputTokens` INTEGER NOT NULL, `contextWindow` INTEGER NOT NULL, `temperature` REAL, `presencePenalty` REAL, `frequencyPenalty` REAL, `customParametersJSON` TEXT, `defaultModelId` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`defaultModelId`) REFERENCES `AIProviderModel`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIProvider_defaultModelId` ON `AIProvider` (`defaultModelId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIProvider_sort` ON `AIProvider` (`sort`)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS `AIProviderModel` (`id` TEXT NOT NULL, `providerId` TEXT, `displayName` TEXT NOT NULL, `modelID` TEXT NOT NULL, `sort` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`providerId`) REFERENCES `AIProvider`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIProviderModel_providerId` ON `AIProviderModel` (`providerId`)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS `AISystemPrompt` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `iconName` TEXT NOT NULL, `purpose` TEXT NOT NULL, `body` TEXT NOT NULL, `generationOverridesJSON` TEXT, `sort` INTEGER NOT NULL, `isDefault` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, `isBuiltIn` INTEGER NOT NULL, `builtInCanBeDelete` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_AISystemPrompt_name` ON `AISystemPrompt` (`name`)")
+            db.execSQL("CREATE TABLE IF NOT EXISTS `AIUserPrompt` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `iconName` TEXT NOT NULL, `purpose` TEXT NOT NULL, `templateBody` TEXT NOT NULL DEFAULT '{{input}}', `sort` INTEGER NOT NULL, `isDefault` INTEGER NOT NULL, `isEnabled` INTEGER NOT NULL, `isBuiltIn` INTEGER NOT NULL, `builtInCanBeDelete` INTEGER NOT NULL, PRIMARY KEY(`id`))")
+            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_AIUserPrompt_name` ON `AIUserPrompt` (`name`)")
+            AiSeeds.insertAll(db)
         }
     }
 }

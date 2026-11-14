@@ -160,6 +160,11 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, PhraseActivity::class.java)
                 )
             },
+            onOpenAi = {
+                startActivity(
+                    Intent(this@MainActivity, AiActivity::class.java)
+                )
+            },
             onOpenModelSettings = {
                 startActivity(
                     Intent(this@MainActivity, PredictionSettingsActivity::class.java)

@@ -568,6 +568,41 @@
     <string name="phrase_auto_sort_title">自动排序</string>
     <string name="phrase_auto_sort_info">开启时最近使用的排在前面；关闭后按手动顺序排列。</string>
     <string name="phrase_delete">删除</string>
+    <string name="edit">编辑</string>
+
+    <!-- 命令面板（WO52 9.1；副标题取元书 SETTINGS-UI.md 原文） -->
+    <string name="ai_title">命令面板</string>
+    <string name="row_sub_ai">管理命令面板、AI 与子模式设置</string>
+    <string name="ai_providers">服务商</string>
+    <string name="ai_new_provider">新服务商</string>
+    <string name="ai_provider_add">新增服务商</string>
+    <string name="ai_provider_edit">编辑服务商</string>
+    <string name="ai_provider_name">名称</string>
+    <string name="ai_provider_base_url">服务地址（baseURL）</string>
+    <string name="ai_provider_api_path">接口路径（apiPath）</string>
+    <string name="ai_provider_token">API Token</string>
+    <string name="ai_provider_token_hint">在此填写 API Token（仅保存在本机）</string>
+    <string name="ai_provider_token_info">Token 只保存在本机，不进入备份文件；还原备份后需重新填写。</string>
+    <string name="ai_provider_model">默认模型</string>
+    <string name="ai_provider_timeout">请求超时（秒）</string>
+    <string name="ai_provider_temperature">温度（留空为默认）</string>
+    <string name="ai_provider_enabled">启用</string>
+    <string name="ai_provider_delete">删除服务商</string>
+    <string name="ai_provider_delete_confirm">确定要删除服务商 \\\"%1$s\\\" 吗？其模型与对话一并删除。</string>
+    <string name="ai_instructions">指令</string>
+    <string name="ai_run">运行</string>
+    <string name="ai_running">正在生成…</string>
+    <string name="ai_copy_result">复制结果</string>
+    <string name="ai_run_failed">指令不存在，无法运行</string>
+    <string name="ai_missing_token">请先在服务商设置里填写 API Token</string>
+    <string name="ai_reset_instructions">重置指令模板</string>
+    <string name="ai_reset_instructions_confirm">4 条指令将改回初始定义，你改过的指令会被覆盖。确定要重置吗？</string>
+    <string name="ai_system_prompts">系统提示词</string>
+    <string name="ai_user_prompts">用户提示词</string>
+    <string name="ai_prefix_title">命令面板前缀</string>
+    <string name="ai_prefix">AI 前缀</string>
+    <string name="ai_history_prefix">AI 历史前缀</string>
+    <string name="ai_history_limit">对话历史上限（条）</string>
 
     <!-- Menu Grid -->
     <string name="menu_emoji">表情</string>

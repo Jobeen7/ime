@@ -6,6 +6,15 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.data.App
+import com.jobeen.ime.data.ai.AiBackupCodec
+import com.jobeen.ime.data.ai.AiBackupData
+import com.jobeen.ime.data.database.AIConversation
+import com.jobeen.ime.data.database.AIInstruction
+import com.jobeen.ime.data.database.AIMessage
+import com.jobeen.ime.data.database.AIProvider
+import com.jobeen.ime.data.database.AIProviderModel
+import com.jobeen.ime.data.database.AISystemPrompt
+import com.jobeen.ime.data.database.AIUserPrompt
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.CandidatePrefer
 import com.jobeen.ime.data.database.CandidateSorting
@@ -309,6 +318,121 @@ object BackupManager {
             )
         }
         root.put("candidateSortings", sortings)
+
+        // —— AI 七表（WO52 9.1）：经 AiBackupCodec 脱敏后出包——服务商
+        // apiToken 一律清空，且 JSON 里**不写 `apiToken` 键**（token
+        // 永不进备份文件；元书备份明文存 AI Token 是缺陷，不照搬）。
+        // 清单（manifest）不加 AI 计数键（旧备份无这些键会校验失败）。
+        // DAO 直读（导出在后台协程内；AI 表在备份窗口内几乎不动，
+        // 与 prefs 段同口径，不走 RoomSnapshotReader 的快照读）。
+        val aiDb = AppDatabase.getInstance(appContext)
+        val aiExport = AiBackupCodec.forExport(
+            AiBackupData(
+                providers = aiDb.aiProviderDao().getAll(),
+                models = aiDb.aiProviderModelDao().getAll(),
+                systemPrompts = aiDb.aiSystemPromptDao().getAll(),
+                userPrompts = aiDb.aiUserPromptDao().getAll(),
+                instructions = aiDb.aiInstructionDao().getAll(),
+                conversations = aiDb.aiConversationDao().getAll(),
+                messages = aiDb.aiMessageDao().getAll(),
+            ),
+        )
+        val aiProvidersJson = JSONArray()
+        for (p in aiExport.providers) {
+            val o = JSONObject()
+                .put("id", p.id).put("name", p.name).put("type", p.type)
+                .put("sort", p.sort).put("isDefault", p.isDefault)
+                .put("isEnabled", p.isEnabled).put("isBuiltIn", p.isBuiltIn)
+                .put("builtInCanBeDelete", p.builtInCanBeDelete)
+                .put("baseURL", p.baseURL).put("apiPath", p.apiPath)
+                .put("requestTimeout", p.requestTimeout)
+                .put("maxOutputTokens", p.maxOutputTokens)
+                .put("contextWindow", p.contextWindow)
+            p.temperature?.let { o.put("temperature", it) }
+            p.presencePenalty?.let { o.put("presencePenalty", it) }
+            p.frequencyPenalty?.let { o.put("frequencyPenalty", it) }
+            p.customParametersJSON?.let { o.put("customParametersJSON", it) }
+            p.defaultModelId?.let { o.put("defaultModelId", it) }
+            aiProvidersJson.put(o)
+        }
+        root.put("ai_providers", aiProvidersJson)
+        val aiModelsJson = JSONArray()
+        for (m in aiExport.models) {
+            val o = JSONObject()
+                .put("id", m.id).put("displayName", m.displayName)
+                .put("modelID", m.modelID).put("sort", m.sort)
+                .put("isEnabled", m.isEnabled)
+            m.providerId?.let { o.put("providerId", it) }
+            aiModelsJson.put(o)
+        }
+        root.put("ai_provider_models", aiModelsJson)
+        val aiSysJson = JSONArray()
+        for (p in aiExport.systemPrompts) {
+            val o = JSONObject()
+                .put("id", p.id).put("name", p.name).put("iconName", p.iconName)
+                .put("purpose", p.purpose).put("body", p.body)
+                .put("sort", p.sort).put("isDefault", p.isDefault)
+                .put("isEnabled", p.isEnabled).put("isBuiltIn", p.isBuiltIn)
+                .put("builtInCanBeDelete", p.builtInCanBeDelete)
+            p.generationOverridesJSON?.let { o.put("generationOverridesJSON", it) }
+            aiSysJson.put(o)
+        }
+        root.put("ai_system_prompts", aiSysJson)
+        val aiUserJson = JSONArray()
+        for (p in aiExport.userPrompts) {
+            aiUserJson.put(
+                JSONObject()
+                    .put("id", p.id).put("name", p.name).put("iconName", p.iconName)
+                    .put("purpose", p.purpose).put("templateBody", p.templateBody)
+                    .put("sort", p.sort).put("isDefault", p.isDefault)
+                    .put("isEnabled", p.isEnabled).put("isBuiltIn", p.isBuiltIn)
+                    .put("builtInCanBeDelete", p.builtInCanBeDelete),
+            )
+        }
+        root.put("ai_user_prompts", aiUserJson)
+        val aiInsJson = JSONArray()
+        for (i in aiExport.instructions) {
+            val o = JSONObject()
+                .put("id", i.id).put("name", i.name).put("detail", i.detail)
+                .put("sort", i.sort)
+            i.systemPromptID?.let { o.put("systemPromptID", it) }
+            i.userPromptID?.let { o.put("userPromptID", it) }
+            i.providerID?.let { o.put("providerID", it) }
+            aiInsJson.put(o)
+        }
+        root.put("ai_instructions", aiInsJson)
+        val aiConvJson = JSONArray()
+        for (c in aiExport.conversations) {
+            val o = JSONObject()
+                .put("id", c.id).put("title", c.title)
+                .put("createdAt", c.createdAt).put("updatedAt", c.updatedAt)
+                .put("isTitleUserEdited", c.isTitleUserEdited)
+            c.systemPromptID?.let { o.put("systemPromptID", it) }
+            c.providerID?.let { o.put("providerID", it) }
+            c.modelID?.let { o.put("modelID", it) }
+            c.snapshotJSON?.let { o.put("snapshotJSON", it) }
+            aiConvJson.put(o)
+        }
+        root.put("ai_conversations", aiConvJson)
+        val aiMsgJson = JSONArray()
+        for (m in aiExport.messages) {
+            val o = JSONObject()
+                .put("id", m.id).put("role", m.role).put("status", m.status)
+                .put("sequence", m.sequence).put("createdAt", m.createdAt)
+                .put("content", m.content).put("tokenEstimate", m.tokenEstimate)
+                .put("isSuperseded", m.isSuperseded)
+            m.conversationId?.let { o.put("conversationId", it) }
+            m.originalInput?.let { o.put("originalInput", it) }
+            m.renderedRequest?.let { o.put("renderedRequest", it) }
+            m.userPromptName?.let { o.put("userPromptName", it) }
+            m.usageJSON?.let { o.put("usageJSON", it) }
+            m.errorCategory?.let { o.put("errorCategory", it) }
+            m.requestID?.let { o.put("requestID", it) }
+            m.regenerationOfID?.let { o.put("regenerationOfID", it) }
+            m.configSnapshotJSON?.let { o.put("configSnapshotJSON", it) }
+            aiMsgJson.put(o)
+        }
+        root.put("ai_messages", aiMsgJson)
 
         // —— 输入统计（2026-10-29 批量第 4 项）：文件型数据不进 prefs
         // 枚举，须显式采集；内容仅计数与时长、无输入内容（InputStats
@@ -1188,6 +1312,8 @@ object BackupManager {
         val skinLibrary: SkinBackup?,
         /** 皮肤脚本段（null = 旧备份无此字段，还原时不碰现脚本） */
         val skinScripts: SkinScriptsBackup?,
+        /** AI 七表（null = 旧备份无此段，还原不碰现 AI 表；有段即整表替换，见 applyPayload） */
+        val ai: AiBackupData?,
     )
 
     /**
@@ -1302,6 +1428,154 @@ object BackupManager {
                 )
             }
 
+            // AI 七表（WO52 9.1）：无 ai_providers 段 = 旧备份，还原
+            // 不碰现 AI 表；有段即整表替换（空数组 = 备份时表就是空的）。
+            // 服务商还原时强制 apiToken = ""（AiBackupCodec 规则：外来
+            // 备份带 token 也丢弃，还原后由使用者重新自填）。
+            val ai = if (!root.has("ai_providers")) {
+                null
+            } else {
+                val providersJson = root.optJSONArray("ai_providers") ?: JSONArray()
+                val providerList = ArrayList<AIProvider>(providersJson.length())
+                for (i in 0 until providersJson.length()) {
+                    val o = providersJson.getJSONObject(i)
+                    providerList += AiBackupCodec.providerForRestore(
+                        AIProvider(
+                            id = o.optString("id"),
+                            name = o.optString("name"),
+                            type = o.optString("type", "openai"),
+                            sort = o.optInt("sort"),
+                            isDefault = o.optBoolean("isDefault"),
+                            isEnabled = o.optBoolean("isEnabled", true),
+                            isBuiltIn = o.optBoolean("isBuiltIn"),
+                            builtInCanBeDelete = o.optBoolean("builtInCanBeDelete", true),
+                            baseURL = o.optString("baseURL"),
+                            apiPath = o.optString("apiPath"),
+                            apiToken = "",
+                            requestTimeout = o.optDouble("requestTimeout", 60.0),
+                            maxOutputTokens = o.optInt("maxOutputTokens"),
+                            contextWindow = o.optInt("contextWindow"),
+                            temperature = if (o.has("temperature")) o.optDouble("temperature") else null,
+                            presencePenalty = if (o.has("presencePenalty")) o.optDouble("presencePenalty") else null,
+                            frequencyPenalty = if (o.has("frequencyPenalty")) o.optDouble("frequencyPenalty") else null,
+                            customParametersJSON = if (o.has("customParametersJSON")) o.optString("customParametersJSON") else null,
+                            defaultModelId = if (o.has("defaultModelId")) o.optString("defaultModelId") else null,
+                        ),
+                    )
+                }
+                val modelsJson = root.optJSONArray("ai_provider_models") ?: JSONArray()
+                val modelList = ArrayList<AIProviderModel>(modelsJson.length())
+                for (i in 0 until modelsJson.length()) {
+                    val o = modelsJson.getJSONObject(i)
+                    modelList += AIProviderModel(
+                        id = o.optString("id"),
+                        providerId = if (o.has("providerId")) o.optString("providerId") else null,
+                        displayName = o.optString("displayName"),
+                        modelID = o.optString("modelID"),
+                        sort = o.optInt("sort"),
+                        isEnabled = o.optBoolean("isEnabled", true),
+                    )
+                }
+                val sysJson = root.optJSONArray("ai_system_prompts") ?: JSONArray()
+                val sysList = ArrayList<AISystemPrompt>(sysJson.length())
+                for (i in 0 until sysJson.length()) {
+                    val o = sysJson.getJSONObject(i)
+                    sysList += AISystemPrompt(
+                        id = o.optString("id"),
+                        name = o.optString("name"),
+                        iconName = o.optString("iconName"),
+                        purpose = o.optString("purpose"),
+                        body = o.optString("body"),
+                        generationOverridesJSON = if (o.has("generationOverridesJSON")) o.optString("generationOverridesJSON") else null,
+                        sort = o.optInt("sort"),
+                        isDefault = o.optBoolean("isDefault"),
+                        isEnabled = o.optBoolean("isEnabled", true),
+                        isBuiltIn = o.optBoolean("isBuiltIn"),
+                        builtInCanBeDelete = o.optBoolean("builtInCanBeDelete", true),
+                    )
+                }
+                val userJson = root.optJSONArray("ai_user_prompts") ?: JSONArray()
+                val userList = ArrayList<AIUserPrompt>(userJson.length())
+                for (i in 0 until userJson.length()) {
+                    val o = userJson.getJSONObject(i)
+                    userList += AIUserPrompt(
+                        id = o.optString("id"),
+                        name = o.optString("name"),
+                        iconName = o.optString("iconName"),
+                        purpose = o.optString("purpose"),
+                        templateBody = o.optString("templateBody", "{{input}}"),
+                        sort = o.optInt("sort"),
+                        isDefault = o.optBoolean("isDefault"),
+                        isEnabled = o.optBoolean("isEnabled", true),
+                        isBuiltIn = o.optBoolean("isBuiltIn"),
+                        builtInCanBeDelete = o.optBoolean("builtInCanBeDelete", true),
+                    )
+                }
+                val insJson = root.optJSONArray("ai_instructions") ?: JSONArray()
+                val insList = ArrayList<AIInstruction>(insJson.length())
+                for (i in 0 until insJson.length()) {
+                    val o = insJson.getJSONObject(i)
+                    insList += AIInstruction(
+                        id = o.optString("id"),
+                        name = o.optString("name"),
+                        detail = o.optString("detail"),
+                        systemPromptID = if (o.has("systemPromptID")) o.optString("systemPromptID") else null,
+                        userPromptID = if (o.has("userPromptID")) o.optString("userPromptID") else null,
+                        providerID = if (o.has("providerID")) o.optString("providerID") else null,
+                        sort = o.optInt("sort"),
+                    )
+                }
+                val convJson = root.optJSONArray("ai_conversations") ?: JSONArray()
+                val convList = ArrayList<AIConversation>(convJson.length())
+                for (i in 0 until convJson.length()) {
+                    val o = convJson.getJSONObject(i)
+                    convList += AIConversation(
+                        id = o.optString("id"),
+                        title = o.optString("title"),
+                        createdAt = o.optLong("createdAt"),
+                        updatedAt = o.optLong("updatedAt"),
+                        isTitleUserEdited = o.optBoolean("isTitleUserEdited"),
+                        systemPromptID = if (o.has("systemPromptID")) o.optString("systemPromptID") else null,
+                        providerID = if (o.has("providerID")) o.optString("providerID") else null,
+                        modelID = if (o.has("modelID")) o.optString("modelID") else null,
+                        snapshotJSON = if (o.has("snapshotJSON")) o.optString("snapshotJSON") else null,
+                    )
+                }
+                val msgJson = root.optJSONArray("ai_messages") ?: JSONArray()
+                val msgList = ArrayList<AIMessage>(msgJson.length())
+                for (i in 0 until msgJson.length()) {
+                    val o = msgJson.getJSONObject(i)
+                    msgList += AIMessage(
+                        id = o.optString("id"),
+                        conversationId = if (o.has("conversationId")) o.optString("conversationId") else null,
+                        role = o.optString("role"),
+                        status = o.optString("status"),
+                        sequence = o.optInt("sequence"),
+                        createdAt = o.optLong("createdAt"),
+                        originalInput = if (o.has("originalInput")) o.optString("originalInput") else null,
+                        renderedRequest = if (o.has("renderedRequest")) o.optString("renderedRequest") else null,
+                        userPromptName = if (o.has("userPromptName")) o.optString("userPromptName") else null,
+                        content = o.optString("content"),
+                        tokenEstimate = o.optInt("tokenEstimate"),
+                        usageJSON = if (o.has("usageJSON")) o.optString("usageJSON") else null,
+                        errorCategory = if (o.has("errorCategory")) o.optString("errorCategory") else null,
+                        requestID = if (o.has("requestID")) o.optString("requestID") else null,
+                        regenerationOfID = if (o.has("regenerationOfID")) o.optString("regenerationOfID") else null,
+                        isSuperseded = o.optBoolean("isSuperseded"),
+                        configSnapshotJSON = if (o.has("configSnapshotJSON")) o.optString("configSnapshotJSON") else null,
+                    )
+                }
+                AiBackupData(
+                    providers = providerList,
+                    models = modelList,
+                    systemPrompts = sysList,
+                    userPrompts = userList,
+                    instructions = insList,
+                    conversations = convList,
+                    messages = msgList,
+                )
+            }
+
             // 包内清单校验（D-M1，payload v2）：清单在场时逐项核对
             // 计数与存在性，任一不符整包判失败（解析阶段拦截，不写
             // 脏数据）；旧备份无清单字段时跳过（兼容 v1）。注意计数
@@ -1413,6 +1687,7 @@ object BackupManager {
                     }
                     SkinScriptsBackup(files = files)
                 },
+                ai = ai,
             )
         } catch (e: BackupException) {
             throw e
@@ -1559,6 +1834,7 @@ object BackupManager {
             inputStatsJson = backup.inputStatsJson,
             skinLibrary = backup.skinLibrary,
             skinScripts = backup.skinScripts,
+            ai = backup.ai,
         )
     }
 
@@ -1765,6 +2041,26 @@ object BackupManager {
             if (parsed.prefers.isNotEmpty()) db.candidatePreferDao().insertAll(parsed.prefers)
             db.candidateSortingDao().deleteAll()
             if (parsed.sortings.isNotEmpty()) db.candidateSortingDao().insertAll(parsed.sortings)
+            // —— AI 七表（WO52 9.1）：有段即整表替换（与导出段对应；
+            // 旧备份无段时 parsed.ai 为 null，不碰现 AI 表）。同一事务
+            // 内先清后写；provider↔model 外键为 DEFERRABLE，提交时才
+            // 校验，清／写顺序不限。服务商 token 在解析段已强制清空。
+            parsed.ai?.let { ai ->
+                db.aiProviderModelDao().deleteAll()
+                db.aiProviderDao().deleteAll()
+                db.aiSystemPromptDao().deleteAll()
+                db.aiUserPromptDao().deleteAll()
+                db.aiInstructionDao().deleteAll()
+                db.aiMessageDao().deleteAll()
+                db.aiConversationDao().deleteAll()
+                if (ai.providers.isNotEmpty()) db.aiProviderDao().insertAll(ai.providers)
+                if (ai.models.isNotEmpty()) db.aiProviderModelDao().insertAll(ai.models)
+                if (ai.systemPrompts.isNotEmpty()) db.aiSystemPromptDao().insertAll(ai.systemPrompts)
+                if (ai.userPrompts.isNotEmpty()) db.aiUserPromptDao().insertAll(ai.userPrompts)
+                if (ai.instructions.isNotEmpty()) db.aiInstructionDao().insertAll(ai.instructions)
+                if (ai.conversations.isNotEmpty()) db.aiConversationDao().insertAll(ai.conversations)
+                if (ai.messages.isNotEmpty()) db.aiMessageDao().insertAll(ai.messages)
+            }
         }
         onSectionDone?.invoke(RestoreJournal.SECTION_APPDB)
 

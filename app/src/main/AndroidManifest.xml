@@ -169,6 +169,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.AiActivity"
+            android:exported="false"
+            android:label="@string/ai_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.SplitWordsActivity"
             android:exported="false"
             android:label="@string/split_words_title"
