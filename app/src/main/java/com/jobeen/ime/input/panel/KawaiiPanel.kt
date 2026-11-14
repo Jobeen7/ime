@@ -10,6 +10,7 @@ import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.database.ClipboardGroup
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.PhraseManager
+import com.jobeen.ime.data.manager.VerificationCodeExtractor
 import com.jobeen.ime.data.manager.takeCodePoints
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.manager.CandidateManager
@@ -453,68 +454,44 @@ class KawaiiPanel(
         clipboardView.onItemLongClick = { entry, x, y ->
             Timber.d("clipboard longClick: cardX=$x cardY=$y")
             val summary = if (entry.text.length > 5) entry.text.take(5) + "..." else entry.text
+            // WO52 5.3：7 项（元书口径）＋保留现有项；搜索结果长按仅 Delete result。
+            val menuItems = ClipboardItemMenu.itemsFor(
+                text = entry.text,
+                isFavorite = entry.isFavorite,
+                isSearchResult = clipboardView.searchQuery.isNotBlank(),
+                isPinned = entry.pinned,
+            )
             confirmOverlay.actions(
                 message = context.getString(R.string.clipboard_item_actions),
-                items = listOf(
-                    context.getString(
-                        if (entry.pinned) R.string.clipboard_unpin else R.string.clipboard_pin
-                    ) to {
-                        appScope.launch {
-                            val result = ClipboardManager.setPinned(
-                                context, entry.text, !entry.pinned
-                            )
-                            // 三态分别反馈（契约见 ClipboardManager.setPinned）：
-                            // 达上限与数据库失败文案不同，取消置顶失败
-                            // （Error）旧实现完全没反馈。走键盘内置提示，
-                            // 与 PanelActionListener 同口径（面板 context
-                            // 即输入法服务本体）
-                            val message = when (result) {
-                                ClipboardManager.PinResult.Limit ->
-                                    context.getString(
-                                        R.string.clipboard_pin_limit,
-                                        ClipboardManager.MAX_PINNED,
-                                    )
-                                ClipboardManager.PinResult.Error ->
-                                    context.getString(R.string.clipboard_pin_failed)
-                                ClipboardManager.PinResult.Ok -> null
-                            }
-                            if (message != null) {
-                                (context as? ImeInputMethodService)
-                                    ?.keyboardWindow?.showToast(message)
-                            }
-                            clipboardView.refresh()
-                        }
-                    },
-                    context.getString(R.string.clipboard_move_to_group) to {
-                        showMoveToGroupMenu(entry)
-                    },
-                    context.getString(R.string.clipboard_edit) to {
-                        enterClipEdit(entry)
-                    },
-                    context.getString(R.string.clipboard_multi_select) to {
-                        enterClipMulti(entry)
-                    },
-                    context.getString(R.string.clipboard_reorder) to {
-                        enterClipReorder()
-                    },
-                    context.getString(R.string.clipboard_delete) to {
-                        // 延后一帧再弹删除确认：动作卡的点击处理在回调后会 dismiss，
-                        // 同步弹新卡会被随后的 dismiss 一起关掉
-                        confirmOverlay.post {
-                            confirmOverlay.confirm(
-                                message = context.getString(
-                                    R.string.clipboard_delete_confirm, summary
-                                ),
-                                onConfirm = { handleClipboardDelete(entry) },
-                                cardX = Float.NaN,
-                                cardY = 0f,
-                            )
-                        }
-                    },
-                ),
+                items = menuItems.map { item ->
+                    ConfirmOverlay.ActionItem(
+                        label = context.getString(item.labelRes),
+                        destructive = item.destructive,
+                    ) { onClipboardMenuAction(item.id, entry, summary) }
+                },
                 cardX = Float.NaN,
                 cardY = 0f,
             )
+        }
+        // WO52 5.3 行内三钮：Split 打开分词页；Copy 写系统剪贴板＋toast。
+        clipboardView.onRowSplit = { text -> listener?.onOpenSplitWords(text) }
+        clipboardView.onRowCopy = { text ->
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                as? SystemClipboardManager
+            clipboard?.setPrimaryClip(ClipData.newPlainText("text", text))
+            (context as? ImeInputMethodService)
+                ?.keyboardWindow?.showToast(context.getString(R.string.copied))
+        }
+        // WO52 5.3 编辑页（详情页）内 URL 可点走系统浏览器。
+        clipboardView.onEditLinkClick = { url ->
+            runCatching {
+                context.startActivity(
+                    android.content.Intent(
+                        android.content.Intent.ACTION_VIEW,
+                        android.net.Uri.parse(url),
+                    ).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
         }
 
         ClipboardManager.onNewEntry = clipNewEntryCallback
@@ -614,6 +591,94 @@ class KawaiiPanel(
         // 同 handleClipboardClear：先写库、后 refresh，串行保证读到新数据
         appScope.launch {
             ClipboardManager.removeEntry(context, entry.text)
+            clipboardView.refresh()
+        }
+    }
+
+    /** WO52 5.3 长按菜单分派（模型见 [ClipboardItemMenu]）。 */
+    private fun onClipboardMenuAction(
+        id: ClipboardItemMenu.Id,
+        entry: ClipboardManager.Entry,
+        summary: String,
+    ) {
+        when (id) {
+            ClipboardItemMenu.Id.OPEN_LINK -> {
+                // 详情页复用现有剪贴板编辑页；页内 URL 可点走系统浏览器
+                // （编辑区点链接，见 clipboardView.onEditLinkClick 接线）。
+                enterClipEdit(entry)
+            }
+            ClipboardItemMenu.Id.EXTRACT_CODE -> {
+                val code = VerificationCodeExtractor.extract(entry.text) ?: return
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE)
+                    as? SystemClipboardManager
+                clipboard?.setPrimaryClip(ClipData.newPlainText("code", code))
+                (context as? ImeInputMethodService)
+                    ?.keyboardWindow?.showToast(
+                        context.getString(R.string.verification_code_copied)
+                    )
+            }
+            ClipboardItemMenu.Id.SPLIT_WORDS -> {
+                listener?.onOpenSplitWords(entry.text)
+            }
+            ClipboardItemMenu.Id.SAVE_AS_PHRASE -> {
+                appScope.launch {
+                    PhraseManager.insert(
+                        context, entry.text, entry.text.takeCodePoints(12)
+                    )
+                }
+            }
+            ClipboardItemMenu.Id.FAVORITE -> {
+                appScope.launch {
+                    ClipboardManager.setFavorite(context, entry.text, !entry.isFavorite)
+                    clipboardView.refresh()
+                }
+            }
+            ClipboardItemMenu.Id.PIN -> handleClipboardPinToggle(entry)
+            ClipboardItemMenu.Id.MOVE_TO_GROUP -> showMoveToGroupMenu(entry)
+            ClipboardItemMenu.Id.EDIT -> enterClipEdit(entry)
+            ClipboardItemMenu.Id.MULTI_SELECT -> enterClipMulti(entry)
+            ClipboardItemMenu.Id.REORDER -> enterClipReorder()
+            ClipboardItemMenu.Id.DELETE,
+            ClipboardItemMenu.Id.DELETE_RESULT -> {
+                // 延后一帧再弹删除确认：动作卡的点击处理在回调后会 dismiss，
+                // 同步弹新卡会被随后的 dismiss 一起关掉
+                confirmOverlay.post {
+                    confirmOverlay.confirm(
+                        message = context.getString(
+                            R.string.clipboard_delete_confirm, summary
+                        ),
+                        onConfirm = { handleClipboardDelete(entry) },
+                        cardX = Float.NaN,
+                        cardY = 0f,
+                    )
+                }
+            }
+        }
+    }
+
+    /** 置顶／取消置顶（三态分别反馈，契约见 ClipboardManager.setPinned）。 */
+    private fun handleClipboardPinToggle(entry: ClipboardManager.Entry) {
+        appScope.launch {
+            val result = ClipboardManager.setPinned(
+                context, entry.text, !entry.pinned
+            )
+            // 达上限与数据库失败文案不同，取消置顶失败（Error）旧实现
+            // 完全没反馈。走键盘内置提示，与 PanelActionListener 同口径
+            // （面板 context 即输入法服务本体）。
+            val message = when (result) {
+                ClipboardManager.PinResult.Limit ->
+                    context.getString(
+                        R.string.clipboard_pin_limit,
+                        ClipboardManager.MAX_PINNED,
+                    )
+                ClipboardManager.PinResult.Error ->
+                    context.getString(R.string.clipboard_pin_failed)
+                ClipboardManager.PinResult.Ok -> null
+            }
+            if (message != null) {
+                (context as? ImeInputMethodService)
+                    ?.keyboardWindow?.showToast(message)
+            }
             clipboardView.refresh()
         }
     }
@@ -959,7 +1024,8 @@ class KawaiiPanel(
     private fun multiLabelText(): String {
         val n = clipboardView.selectedCount
         return if (n > 0) context.getString(R.string.clipboard_selected_count, n)
-        else context.getString(R.string.clipboard_select_none)
+        // 多选模式提示（WO52 5.3）：点条目即复制，长按进入多选。
+        else context.getString(R.string.clipboard_tap_to_copy)
     }
 
     private fun syncMultiRenderer() {

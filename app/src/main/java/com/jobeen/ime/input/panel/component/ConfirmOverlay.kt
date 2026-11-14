@@ -203,9 +203,35 @@ class ConfirmOverlay(
      * showCard 钳制在卡内滚动保底。
      * [message] 参数保留仅为与 [confirm] 签名对称，本模式不展示。
      */
+    /**
+     * 动作菜单项：[destructive] 为真时文字标红（WO52 5.3 Delete 项）。
+     * 键盘配色无 error 角色，用 Material 标准红 0xFFD32F2F。
+     */
+    data class ActionItem(
+        val label: String,
+        val destructive: Boolean = false,
+        val action: () -> Unit,
+    )
+
     fun actions(
         message: String,
         items: List<Pair<String, () -> Unit>>,
+        cardX: Float = Float.NaN,
+        cardY: Float = Float.NaN,
+        centerHorizontal: Boolean = false,
+        centerVertical: Boolean = false,
+    ) {
+        actions(
+            message,
+            items.map { (label, action) -> ActionItem(label, action = action) },
+            cardX, cardY, centerHorizontal, centerVertical,
+        )
+    }
+
+    @JvmName("actionsWithItems")
+    fun actions(
+        message: String,
+        items: List<ActionItem>,
         cardX: Float = Float.NaN,
         cardY: Float = Float.NaN,
         centerHorizontal: Boolean = false,
@@ -219,10 +245,13 @@ class ConfirmOverlay(
         actionsScroll.scrollTo(0, 0)
         actionsContainer.removeAllViews()
         actionButtons.clear()
-        items.forEachIndexed { index, (label, action) ->
+        items.forEachIndexed { index, item ->
             val btn = TextView(context).apply {
-                text = label
-                setTextColor(colors.panel.toolbarText)
+                text = item.label
+                setTextColor(
+                    if (item.destructive) 0xFFD32F2F.toInt()
+                    else colors.panel.toolbarText
+                )
                 setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, this@ConfirmOverlay.textSize)
                 gravity = Gravity.CENTER
                 background = PillBg(colors.keyBackground, colors.keyBorderStroke, pillR)
@@ -232,7 +261,7 @@ class ConfirmOverlay(
                 // 字号 13sp、卡片边距 8dp 不动。
                 setPadding(dp(12), dp(ACTION_ITEM_PADDING_V_DP).toInt(), dp(12), dp(ACTION_ITEM_PADDING_V_DP).toInt())
                 setOnClickListener {
-                    action()
+                    item.action()
                     dismiss()
                 }
             }

@@ -236,6 +236,8 @@ object ClipboardManager {
         val pinned: Boolean = false,
         /** 自定义分组归属（H2-4）：0 = 未分组 */
         val groupId: Long = 0,
+        /** 收藏（WO52 5.3）：与置顶并存 */
+        val isFavorite: Boolean = false,
     )
 
     /**
@@ -252,7 +254,7 @@ object ClipboardManager {
         return db(context) { db ->
             val cutoff = System.currentTimeMillis() - getRetentionDays(context) * 86400000L
             db.clipboardDao().getAllActiveSince(cutoff)
-                .map { Entry(it.text, it.timestamp, it.cloud, it.pinned, it.groupId) }
+                .map { Entry(it.text, it.timestamp, it.cloud, it.pinned, it.groupId, it.isFavorite) }
         }
     }
 
@@ -340,6 +342,15 @@ object ClipboardManager {
             false -> PinResult.Limit
         }
     }
+
+    /**
+     * 收藏或取消收藏（WO52 5.3）：独立列，与置顶并存。
+     * @return 落库成功为 true；数据库操作失败为 false。
+     */
+    suspend fun setFavorite(context: Context, text: String, favorite: Boolean): Boolean =
+        db(context) { db ->
+            db.clipboardDao().setFavoriteByText(text, favorite)
+        } != null
 
     // ── 自定义分组（H2-4） ──
 
@@ -495,12 +506,13 @@ object ClipboardManager {
                 val existed = dao.existsByText(clipped)
                 // 同文本重入（再次复制）会删旧行重插，置顶状态与分组归属要保留下来
                 val wasPinned = dao.pinnedByText(clipped) ?: false
+                val wasFavorite = dao.favoriteByText(clipped) ?: false
                 val wasGroupId = dao.getGroupByText(clipped) ?: 0L
                 dao.deleteByText(clipped)
                 dao.insert(
                     ClipboardRecord(
                         text = clipped, timestamp = now, cloud = false, pinned = wasPinned,
-                        groupId = wasGroupId,
+                        groupId = wasGroupId, isFavorite = wasFavorite,
                         // 新条目排到最前：取当前最小排序序号再减一
                         sortOrder = (dao.minSortOrder() ?: 0L) - 1L,
                     )

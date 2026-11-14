@@ -90,6 +90,18 @@
     <string name="split_words_empty">没有可拆分的文字</string>
     <string name="clipboard_lock_panel">Lock panel</string>
     <string name="clipboard_unlock_panel">Unlock panel</string>
+    <!-- WO52 5.3 长按菜单与行内三钮 -->
+    <string name="clipboard_open_link">Open link</string>
+    <string name="clipboard_extract_code">Extract verification code</string>
+    <string name="clipboard_split_words">Split words</string>
+    <string name="clipboard_save_as_phrase">Save as phrase</string>
+    <string name="clipboard_favorite">Favorite</string>
+    <string name="clipboard_remove_favorite">Remove from favorites</string>
+    <string name="clipboard_delete_result">Delete result</string>
+    <string name="clipboard_row_split">Split</string>
+    <string name="clipboard_row_copy">Copy</string>
+    <string name="clipboard_row_expand">Expand</string>
+    <string name="clipboard_row_collapse">Collapse</string>
     <string name="clipboard_return_note">粘贴后收起剪贴板面板回键盘</string>
     <!-- 批量第 5 项：主题诊断 -->
     <string name="skin_diag_title">主题诊断</string>

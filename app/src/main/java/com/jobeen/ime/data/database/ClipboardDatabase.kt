@@ -16,7 +16,7 @@ import androidx.room.TypeConverters
  */
 @Database(
     entities = [ClipboardRecord::class, ClipboardGroup::class],
-    version = 5,
+    version = 6,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -96,6 +96,15 @@ abstract class ClipboardDatabase : RoomDatabase() {
             }
         }
 
+        /** v6：收藏（WO52 5.3）：clipboard_records 加 isFavorite 列（默认 0 = 未收藏）。 */
+        private val MIGRATION_5_6 = object : androidx.room.migration.Migration(5, 6) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                db.execSQL(
+                    "ALTER TABLE clipboard_records ADD COLUMN isFavorite INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         fun getInstance(context: Context): ClipboardDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: build(context.applicationContext, "clipboard_database")
@@ -113,7 +122,7 @@ abstract class ClipboardDatabase : RoomDatabase() {
 
         private fun build(context: Context, name: String): ClipboardDatabase =
             Room.databaseBuilder(context, ClipboardDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build()
     }
 }

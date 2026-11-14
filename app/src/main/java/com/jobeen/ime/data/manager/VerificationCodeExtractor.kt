@@ -72,6 +72,18 @@ object VerificationCodeExtractor {
             )?.value
     }
 
+    /** 文本中第一个 URL（j90.a 正则），无则 null；供长按菜单 Open link 条件用。 */
+    fun findUrl(text: String): String? =
+        URL_REGEX.find(text.take(MAX_SCAN_CHARS))?.value
+
+    /** 字符下标落在哪个 URL 内就返回该 URL（编辑页点链接用），无则 null。 */
+    fun findUrlAt(text: String, index: Int): String? {
+        if (index < 0 || index > text.length) return null
+        return URL_REGEX.findAll(text.take(MAX_SCAN_CHARS)).firstOrNull { match ->
+            index in match.range.first..match.range.last + 1
+        }?.value
+    }
+
     /** 两段之间的字符距离：相邻／重叠为 0，否则为间隔字符数。 */
     private fun gap(a: Span, b: Span): Int = when {
         a.end <= b.start -> b.start - a.end
