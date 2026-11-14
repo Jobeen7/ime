@@ -71,6 +71,12 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
     var inlineSuggestionEnabled by remember {
         mutableStateOf(CandidateManager.isInlineSuggestionEnabled(context))
     }
+    var swipePagingEnabled by remember {
+        mutableStateOf(CandidateManager.isSwipePagingEnabled(context))
+    }
+    var manualPagingButtonEnabled by remember {
+        mutableStateOf(CandidateManager.isManualPagingButtonEnabled(context))
+    }
 
     SettingsPageScaffold(
         title = stringResource(R.string.prediction_candidates),
@@ -229,6 +235,28 @@ fun CandidateSettingsScreen(onBack: () -> Unit) {
                     onCheckedChange = {
                         inlineSuggestionEnabled = it
                         CandidateManager.setInlineSuggestionEnabled(context, it)
+                    },
+                    showDivider = true,
+                )
+                ActionRow(
+                    title = stringResource(R.string.candidate_swipe_paging),
+                    subtitle = stringResource(R.string.candidate_swipe_paging_desc),
+                    trailing = {
+                        Switch(
+                            checked = swipePagingEnabled,
+                            onCheckedChange = {
+                                swipePagingEnabled = it
+                                CandidateManager.setSwipePagingEnabled(context, it)
+                            },
+                        )
+                    },
+                )
+                SwitchRow(
+                    title = stringResource(R.string.candidate_manual_paging_button),
+                    checked = manualPagingButtonEnabled,
+                    onCheckedChange = {
+                        manualPagingButtonEnabled = it
+                        CandidateManager.setManualPagingButtonEnabled(context, it)
                     },
                 )
                 Text(

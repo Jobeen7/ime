@@ -19,6 +19,7 @@ object NotificationActionNames {
         is KeyboardAction.ClearAction -> "ClearAction"
         is KeyboardAction.CommitAction -> "CommitAction"
         is KeyboardAction.SelectCandidatePinYin -> "SelectCandidatePinYin"
+        is KeyboardAction.PageCandidatesAction -> "PageCandidatesAction"
         is KeyboardAction.CapsAction -> "CapsAction"
         is KeyboardAction.LayoutSwitchAction -> "LayoutSwitchAction"
         is KeyboardAction.ResumeAction -> "ResumeAction"

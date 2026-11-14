@@ -80,6 +80,13 @@ interface RimeApi {
 
     suspend fun changeCandidatePage(backward: Boolean): Boolean
 
+    /**
+     * 候选高亮（WO52 1.1，librime highlight_candidate）：
+     * 只移动高亮、不提交。onCurrentPage=true 时下标是当前页内下标，
+     * false 时是全局下标。
+     */
+    suspend fun highlightCandidate(index: Int, onCurrentPage: Boolean): Boolean
+
     suspend fun moveCursorPos(position: Int)
 
     suspend fun availableSchemata(): Array<SchemaItem>

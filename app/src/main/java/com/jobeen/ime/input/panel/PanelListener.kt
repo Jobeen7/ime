@@ -31,6 +31,12 @@ interface PanelListener {
     fun onRequestMoreCandidates() {}
 
     /**
+     * 候选翻页（WO52 1.1）：#rimeNextPage/#rimePreviousPage 与翻页钮
+     * 的统一入口；backward=true 为上一页。缺省空实现。
+     */
+    fun onPageCandidates(backward: Boolean) {}
+
+    /**
      * 关闭联想（H2-2 候选栏取消按钮）：面板点取消钮时调用；
      * 引擎侧取消在途联想并清联想可见态，防迟到联想把已关的
      * 栏重新顶出来。缺省空实现。

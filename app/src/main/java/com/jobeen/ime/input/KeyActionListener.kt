@@ -258,6 +258,10 @@ class KeyActionListener(
                 engine?.selectCandidatePinYin(action.pinYin)
             }
 
+            is KeyboardAction.PageCandidatesAction -> {
+                engine?.pageCandidates(action.backward)
+            }
+
             is KeyboardAction.UndoAction -> {
                 // 组字中下滑藏 span（2026-11-05 藏 span 解）：组字中＋
                 // 内嵌开那一格 .17 是空操作——先藏起编辑器侧组字

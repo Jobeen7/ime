@@ -56,8 +56,12 @@ class KeyboardWindow(
         hasMore: Boolean = false,
         revision: Long = 0L,
         highlightedIndex: Int = 0,
+        pageNo: Int = 0,
+        isLastPage: Boolean = false,
+        pagingMode: com.jobeen.ime.engine.CandidatePagingMode =
+            com.jobeen.ime.engine.CandidatePagingMode.SWIPE,
     ) {
-        view.setCandidates(list, hasMore, revision, highlightedIndex)
+        view.setCandidates(list, hasMore, revision, highlightedIndex, pageNo, isLastPage, pagingMode)
     }
 
     /** 剪贴板搜索态截获上屏文本，转发给面板决定是否消费。 */

@@ -269,6 +269,8 @@ class KawaiiPanel(
         onSidePanelAction = { listener?.onSidePanelAction(it) },
     ).apply {
         onNeedMoreCandidates = { this@KawaiiPanel.listener?.onRequestMoreCandidates() }
+        // 翻页钮（WO52 1.1）：native 模式走引擎翻页，滑动模式走网格滚动。
+        onPageCandidates = { backward -> this@KawaiiPanel.listener?.onPageCandidates(backward) }
         onWordForget = { candidate, x, y ->
             confirmOverlay.confirm(
                 message = candidateForgetMessage(candidate),
@@ -1278,7 +1280,7 @@ class KawaiiPanel(
                                 return@forEach
                             }
                         }
-                        if (predictions) setCandidates(emptyList(), false, 0) else v.setExpanded(true)
+                        if (predictions) setCandidates(emptyList(), false, 0, 0, false, com.jobeen.ime.engine.CandidatePagingMode.SWIPE) else v.setExpanded(true)
                     }
                 }
 
@@ -1298,7 +1300,7 @@ class KawaiiPanel(
                             // 引擎侧一并取消在途联想：迟到联想不再
                             // 把已关的栏重新顶出来（H2-2）。
                             listener?.onDismissPredictions()
-                            setCandidates(emptyList(), false, 0)
+                            setCandidates(emptyList(), false, 0, 0, false, com.jobeen.ime.engine.CandidatePagingMode.SWIPE)
                         }
                         else v.setExpanded(true)
                     }
@@ -1439,18 +1441,23 @@ class KawaiiPanel(
         list: List<EngineMessage.Candidate>,
         hasMore: Boolean,
         highlightedIndex: Int,
+        pageNo: Int,
+        isLastPage: Boolean,
+        pagingMode: com.jobeen.ime.engine.CandidatePagingMode,
     ) {
         // 代次重投（I-M4）：延迟重投只执行仍是最新代次的帧。
         val generation = ++candidateGeneration
         if (!view.isLaidOut) {
             view.post {
                 if (shouldApplyDeferredCandidates(generation, candidateGeneration)) {
-                    setCandidates(list, hasMore, highlightedIndex)
+                    setCandidates(list, hasMore, highlightedIndex, pageNo, isLastPage, pagingMode)
                 }
             }
             return
         }
         candidateGrid.hasMoreCandidates = hasMore
+        // 翻页钮态（WO52 1.1）：native 模式按页号／末页过滤上一页／下一页。
+        candidateGrid.setPagingState(pageNo, isLastPage, pagingMode)
         // 「已加载原始条数」按引擎口径累计（过滤前），供追加时与 total
         // 同口径判定是否到底；过滤后条数与 total 比会多打空往返
         rawCandidateLoaded = list.size

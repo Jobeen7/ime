@@ -671,6 +671,9 @@
     <string name="candidate_layout">候选词布局</string>
     <string name="candidate_show_index">显示序列号</string>
     <string name="candidate_show_comment">显示注释</string>
+    <string name="candidate_swipe_paging">滑动翻页</string>
+    <string name="candidate_swipe_paging_desc">开：滑动翻页（批量追加候选）；关：原生分页（按页切换候选）。浮动候选窗开启时始终用原生分页。</string>
+    <string name="candidate_manual_paging_button">手动翻页按钮</string>
     <string name="candidate_inline_input_mode">内嵌输入模式</string>
     <string name="candidate_border">绘制候选词边框</string>
     <string name="menu_reload_engine">重启引擎</string>

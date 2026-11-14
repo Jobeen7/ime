@@ -28,6 +28,14 @@ sealed class KeyboardAction {
 
     data class SelectCandidatePinYin(val pinYin: CandidatePinYin) : KeyboardAction()
 
+    /**
+     * 候选翻页（WO52 1.1）：#rimeNextPage/#rimePreviousPage 的统一动作，
+     * 不再直发 KeyCode 92/93。backward=true 为上一页。引擎按模式分派：
+     * 滑动模式走批量追加、native 模式走 changeCandidatePage、浮动窗
+     * 激活时强制 native。
+     */
+    data class PageCandidatesAction(val backward: Boolean) : KeyboardAction()
+
     data object CapsAction : KeyboardAction()
 
     data class LayoutSwitchAction(val target: String) : KeyboardAction()

@@ -22,6 +22,8 @@ import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateLinePolicy
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.CandidateSpacingPolicy
+import com.jobeen.ime.engine.CandidatePagingMode
+import com.jobeen.ime.engine.CandidatePagingPolicy
 import com.jobeen.ime.engine.data.CandidatePinYin
 import com.jobeen.ime.engine.data.EngineMessage
 import com.jobeen.ime.input.keyboard.key.KeyDef
@@ -141,9 +143,32 @@ class CandidateGridView(
      */
     var bottomRowSpec: VerticalBottomRowSpec? = null
 
-    /** 底部钮行高度：有钮行时一自然行，否则 0。 */
+    /**
+     * 候选分页双模式翻页钮态（WO52 1.1）：native 模式下底部钮行
+     * 的上一页/下一页按页号可见性过滤（pageNo>0／!isLastPage），
+     * 滑动模式保持旧行为（皮肤定义即显示）；手动翻页按钮开关
+     * 关时两钮全隐。浮动窗实例用 [pagingButtonsEnabledOverride]
+     * 改门为皮肤键 floatingCandidatePagingButtonDisplayed。
+     */
+    var pagingMode: CandidatePagingMode = CandidatePagingMode.SWIPE
+    var pagingPageNo: Int = 0
+    var pagingIsLastPage: Boolean = false
+    var onPageCandidates: ((backward: Boolean) -> Unit)? = null
+    var pagingButtonsEnabledOverride: Boolean? = null
+    private var bottomButtonsVisible: Boolean = false
+
+    /** native 模式页号／末页变化时刷新翻页钮可见性（无变化不重建）。 */
+    fun setPagingState(pageNo: Int, isLastPage: Boolean, mode: CandidatePagingMode) {
+        if (pageNo == pagingPageNo && isLastPage == pagingIsLastPage && mode == pagingMode) return
+        pagingPageNo = pageNo
+        pagingIsLastPage = isLastPage
+        pagingMode = mode
+        rebuildBottomStrip()
+    }
+
+    /** 底部钮行高度：有可见钮行时一自然行，否则 0。 */
     fun bottomRowHeightPx(): Int =
-        if (bottomRowSpec != null) naturalRowHeightPx() else 0
+        if (bottomRowSpec != null && bottomButtonsVisible) naturalRowHeightPx() else 0
 
     private val bottomStrip = LinearLayout(context).apply {
         orientation = LinearLayout.HORIZONTAL
@@ -153,7 +178,28 @@ class CandidateGridView(
 
     /** 按当前钮行规范重建钮条（钮表纯函数见 [bottomRowButtons]）。 */
     private fun rebuildBottomStrip() {
-        val buttons = bottomRowButtons(bottomRowSpec)
+        // 翻页钮门（WO52 1.1）：浮动窗实例用皮肤键覆写，否则用设置开关；
+        // native 模式再按页号过滤（上一页 pageNo>0、下一页 !isLastPage），
+        // 滑动模式保持旧行为（皮肤定义即显示）。
+        val manualEnabled = pagingButtonsEnabledOverride
+            ?: CandidateManager.isManualPagingButtonEnabled(context)
+        val (prevVisible, nextVisible) = if (pagingMode == CandidatePagingMode.NATIVE) {
+            CandidatePagingPolicy.pagingButtonsVisible(
+                pagingButtonsEnabled = manualEnabled,
+                pageNo = pagingPageNo,
+                isLastPage = pagingIsLastPage,
+            )
+        } else {
+            manualEnabled to manualEnabled
+        }
+        val buttons = bottomRowButtons(bottomRowSpec).filter { button ->
+            when (button.kind) {
+                BottomRowButtonKind.PAGE_UP -> prevVisible
+                BottomRowButtonKind.PAGE_DOWN -> nextVisible
+                else -> true
+            }
+        }
+        bottomButtonsVisible = buttons.isNotEmpty()
         bottomStrip.removeAllViews()
         if (buttons.isEmpty()) {
             bottomStrip.visibility = View.GONE
@@ -191,8 +237,20 @@ class CandidateGridView(
                 }
                 setOnClickListener {
                     when (button.kind) {
-                        BottomRowButtonKind.PAGE_UP -> gridCanvas.pageUp()
-                        BottomRowButtonKind.PAGE_DOWN -> gridCanvas.pageDown()
+                        // native 模式翻页钮走引擎翻页（换页整表替换），
+                        // 滑动模式保持旧行为（网格内整页滚动）。
+                        BottomRowButtonKind.PAGE_UP ->
+                            if (pagingMode == CandidatePagingMode.NATIVE) {
+                                onPageCandidates?.invoke(true)
+                            } else {
+                                gridCanvas.pageUp()
+                            }
+                        BottomRowButtonKind.PAGE_DOWN ->
+                            if (pagingMode == CandidatePagingMode.NATIVE) {
+                                onPageCandidates?.invoke(false)
+                            } else {
+                                gridCanvas.pageDown()
+                            }
                         BottomRowButtonKind.RETURN_OR_COLLAPSE ->
                             onSidePanelAction?.invoke(
                                 KeyboardAction.CandidatesBarToggleAction,

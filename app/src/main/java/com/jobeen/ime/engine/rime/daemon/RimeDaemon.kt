@@ -25,6 +25,10 @@ object RimeDaemon {
             override suspend fun emitKey(value: Int, modifiers: Int, isVirtual: Boolean) {
                 realRime.emitKey(value, modifiers, isVirtual)
             }
+
+            override suspend fun highlightCandidate(index: Int, onCurrentPage: Boolean): Boolean {
+                return realRime.highlightCandidate(index, onCurrentPage)
+            }
         }
     }
 

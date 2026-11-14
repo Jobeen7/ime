@@ -1481,8 +1481,8 @@ object KeyOverrideApplier {
             WhitelistAction.HASH_VERTICAL_PAGE_DOWN -> KeyboardAction.KeyCodeAction(93)
             WhitelistAction.HASH_SHOW_PHRASE_VIEW -> KeyboardAction.ShowPhraseViewAction
             WhitelistAction.HASH_CANDIDATES_BAR_TOGGLE -> KeyboardAction.CandidatesBarToggleAction
-            WhitelistAction.HASH_RIME_PREV_PAGE -> KeyboardAction.KeyCodeAction(92)
-            WhitelistAction.HASH_RIME_NEXT_PAGE -> KeyboardAction.KeyCodeAction(93)
+            WhitelistAction.HASH_RIME_PREV_PAGE -> KeyboardAction.PageCandidatesAction(true)
+            WhitelistAction.HASH_RIME_NEXT_PAGE -> KeyboardAction.PageCandidatesAction(false)
             WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT -> KeyboardAction.ToggleEmbeddedInputAction
             WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW -> KeyboardAction.ToggleScriptViewAction
             WhitelistAction.HASH_CLEAR_CLIPBOARD ->

@@ -195,6 +195,7 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.KeyCodeAction -> "KeyCodeAction"
         is KeyboardAction.ClearAction -> "ClearAction"
         is KeyboardAction.SelectCandidatePinYin -> "SelectCandidatePinYin"
+        is KeyboardAction.PageCandidatesAction -> "PageCandidatesAction"
         is KeyboardAction.CapsAction -> "CapsAction"
         is KeyboardAction.LayoutSwitchAction -> "LayoutSwitchAction"
         is KeyboardAction.ResumeAction -> "ResumeAction"

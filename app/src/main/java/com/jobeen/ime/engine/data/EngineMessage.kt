@@ -24,6 +24,12 @@ sealed class EngineMessage {
          * 追加页不走 setCandidates，版本号不与首屏混比。
          */
         val revision: Long = 0L,
+        /**
+         * native 分页末页标志（WO52 1.1）：引擎按页号×页宽与 total 算出，
+         * 供翻页钮可见性（下一页仅非末页可见）；滑动模式恒 false
+         * （末页由 hasMore 判定）。
+         */
+        val isLastPage: Boolean = false,
     ) : EngineMessage() {}
 
     data class Status(val isComposing: Boolean = false) : EngineMessage()

@@ -16,6 +16,10 @@ object CandidateManager {
     const val KEY_SHOW_INDEX = "show_index"
     const val KEY_SHOW_COMMENT = "show_comment"
     const val KEY_BORDER = "show_border"
+    /** 候选分页双模式（WO52 1.1）：滑动翻页开关，默认 true（与元书一致）。 */
+    const val KEY_SWIPE_PAGING_ENABLED = "swipe_paging_enabled"
+    /** 手动翻页按钮开关（WO52 1.1）：默认 true；关则内嵌栏翻页钮全隐。 */
+    const val KEY_MANUAL_PAGING_BUTTON_ENABLED = "manual_paging_button_enabled"
     private const val KEY_CANDIDATE_SPACING = "candidate.spacing_dp"
     private const val KEY_CANDIDATE_SCALE = "candidate.scale"
     /** 候选间距范围（dp）与滑块中位值（= 竖网格旧写死默认值 8dp）。 */
@@ -122,6 +126,30 @@ object CandidateManager {
     fun setShowComment(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
             putBoolean(KEY_SHOW_COMMENT, enabled)
+        }
+    }
+
+    /** 滑动翻页模式（默认 true）：开 = 滑动翻页（批量追加），关 = native 分页。 */
+    fun isSwipePagingEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_SWIPE_PAGING_ENABLED, true)
+    }
+
+    fun setSwipePagingEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_SWIPE_PAGING_ENABLED, enabled)
+        }
+    }
+
+    /** 手动翻页按钮（默认 true）：关则内嵌候选栏的上一页/下一页钮全隐。 */
+    fun isManualPagingButtonEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean(KEY_MANUAL_PAGING_BUTTON_ENABLED, true)
+    }
+
+    fun setManualPagingButtonEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean(KEY_MANUAL_PAGING_BUTTON_ENABLED, enabled)
         }
     }
 

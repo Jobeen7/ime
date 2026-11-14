@@ -32,6 +32,23 @@ interface IEngine {
     fun selectCandidate(candidate: EngineMessage.Candidate)
     /** 分页补取下一页候选（首屏只取少量，UI 滚动到底时请求）；无更多时应为空操作 */
     fun loadMoreCandidates() {}
+    /**
+     * 候选翻页（WO52 1.1 双模式）：滑动模式向前走批量追加、向后空操作
+     * （网格自行上滚）；native 模式走 changeCandidatePage；浮动候选窗
+     * 激活时强制 native。缺省空实现（非 Rime 引擎无此通道时不崩溃）。
+     */
+    fun pageCandidates(backward: Boolean) {}
+    /**
+     * 候选高亮（WO52 1.1）：下标口径按模式分派（见 CandidatePagingPolicy
+     * .highlightOnCurrentPage：native 模式页内下标、滑动模式全局下标）。
+     * 缺省空实现。
+     */
+    fun highlightCandidate(index: Int) {}
+    /**
+     * 浮动候选窗是否激活（WO52 1.4）：激活时 pageCandidates 强制走
+     * native 分页。缺省 false（无浮动窗的引擎恒走开关模式）。
+     */
+    fun isFloatingCandidateActive(): Boolean = false
     suspend fun schemasList(): List<EngineMessage.Schema>
     fun clear(service: InputMethodService)
     fun resetComposition()

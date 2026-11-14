@@ -251,6 +251,12 @@ namespace {
             return api_->change_page(sessionId(), backward);
         }
 
+        bool highlightCandidate(size_t index, bool onCurrentPage) {
+            return onCurrentPage
+                       ? api_->highlight_candidate_on_current_page(sessionId(), index)
+                       : api_->highlight_candidate(sessionId(), index);
+        }
+
         std::vector<CandidateData> candidates(int start, int limit) {
             std::vector<CandidateData> out;
             // N-M2：limit 未校验即 reserve(limit)，负值转 size_t 为极大值，
@@ -643,6 +649,13 @@ JNIEXPORT jboolean JNICALL
 Java_com_jobeen_ime_engine_rime_core_Rime_changeCandidatePage(
         JNIEnv *, jclass, jboolean backward) {
     return RimeEngine::instance().changePage(backward);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_jobeen_ime_engine_rime_core_Rime_highlightCandidate(
+        JNIEnv *, jclass, jint index, jboolean onCurrentPage) {
+    return RimeEngine::instance().highlightCandidate(
+            static_cast<size_t>(index), onCurrentPage);
 }
 
 JNIEXPORT jobjectArray JNICALL

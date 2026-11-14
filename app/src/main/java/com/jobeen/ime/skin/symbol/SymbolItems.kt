@@ -130,10 +130,10 @@ object SymbolItemActionResolver {
             "#Enter" -> KeyboardAction.ReturnAction()
             "#重输" -> KeyboardAction.ClearAction
             "#candidatesBarStateToggle" -> KeyboardAction.CandidatesBarToggleAction
-            "#rimePreviousPage", "#verticalCandidatesPageUp" ->
-                KeyboardAction.KeyCodeAction(92)
-            "#rimeNextPage", "#verticalCandidatesPageDown" ->
-                KeyboardAction.KeyCodeAction(93)
+            "#rimePreviousPage" -> KeyboardAction.PageCandidatesAction(true)
+            "#verticalCandidatesPageUp" -> KeyboardAction.KeyCodeAction(92)
+            "#rimeNextPage" -> KeyboardAction.PageCandidatesAction(false)
+            "#verticalCandidatesPageDown" -> KeyboardAction.KeyCodeAction(93)
             "#toggleEmbeddedInputMode" -> KeyboardAction.ToggleEmbeddedInputAction
             "#toggleScriptView" -> KeyboardAction.ToggleScriptViewAction
             else -> if (item.action.startsWith("#")) {

@@ -641,6 +641,37 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
     private var candidateBatchTotal: Int = -1
     /** 分页补取在飞标记（批次代次）：-1 = 无在飞，否则为在飞批次的 latestCandidateRequestId */
     private val loadMoreBatch = java.util.concurrent.atomic.AtomicLong(-1L)
+    /**
+     * 候选分页双模式页号记账（WO52 1.1）：native 模式的当前页号；
+     * 滑动模式仅在批量取空时复位 0（取空则回到第 0 页）。首屏帧
+     * 与上屏提交时复位；jobs 与 reduce 串行写，@Volatile 只保
+     * 证服务层读到的浮动窗激活标志可见。
+     */
+    @Volatile
+    private var pagingPageNo: Int = 0
+    /** native 模式首屏页宽（第 0 页帧的条数）：末页判定用 */
+    @Volatile
+    private var nativePageSize: Int = 0
+    /** pageCandidates 发起的 native 翻页待下一帧 Candidates 认领的页号 */
+    @Volatile
+    private var pendingNativePage: Int? = null
+    /** 浮动候选窗激活标志（WO52 1.4，服务层置位）：激活时强制 native 分页 */
+    @Volatile
+    private var floatingCandidateActiveFlag: Boolean = false
+
+    /** 供服务层（1.4 浮动窗控制器）置位／复位浮动窗激活态。 */
+    fun setFloatingCandidateActive(active: Boolean) {
+        floatingCandidateActiveFlag = active
+    }
+
+    override fun isFloatingCandidateActive(): Boolean = floatingCandidateActiveFlag
+
+    /** 当前生效分页模式（纯决策的引擎侧读口：开关＋浮动窗强制分支）。 */
+    internal fun effectivePagingMode(): CandidatePagingMode {
+        val ctx = context
+        val swipeEnabled = ctx?.let { CandidateManager.isSwipePagingEnabled(it) } ?: true
+        return CandidatePagingPolicy.resolveMode(swipeEnabled, floatingCandidateActiveFlag)
+    }
     /** 候选拖拽排序表判空缓存：null 语义用 false+首次查询实现，保存时由 resortCandidates 失效 */
     @Volatile
     private var sortingTableEmpty: Boolean = false
@@ -1907,6 +1938,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     invalidatePendingCandidates()
                     candidateBatchLoaded = 0
                     candidateBatchTotal = -1
+                    pagingPageNo = 0
+                    pendingNativePage = null
                     state.suppressNextEmptyCandidates = true
                     // native 刚上屏：前文缓存失效，后续读到新鲜前文
                     invalidateBeforeCursorCache()
@@ -1921,6 +1954,26 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 取满上限、后面可能还有），供 loadMoreCandidates 续取
                 candidateBatchLoaded = msg.list.size
                 candidateBatchTotal = msg.total
+                // native 分页帧定页号／末页（WO52 1.1）：changePage 挂起的
+                // 页号由下一帧认领；其余首屏帧复位 0；追加页（滑动模式）
+                // 不碰页号。末页 = (页号+1)×页宽 >= 确切总数。
+                val framed = if (effectivePagingMode() == CandidatePagingMode.NATIVE) {
+                    val pending = pendingNativePage
+                    if (pending != null) {
+                        pagingPageNo = pending
+                        pendingNativePage = null
+                    } else if (!msg.append) {
+                        pagingPageNo = 0
+                    }
+                    if (pagingPageNo == 0 && msg.list.isNotEmpty() && !msg.append) {
+                        nativePageSize = msg.list.size
+                    }
+                    val isLast = msg.total >= 0 && nativePageSize > 0 &&
+                        (pagingPageNo + 1) * nativePageSize >= msg.total
+                    msg.copy(page = pagingPageNo, isLastPage = isLast)
+                } else {
+                    msg
+                }
                 if (msg.list.isNotEmpty()) {
                     // Rime candidates take over the panel from prediction candidates.
                     state.predictionVisible = false
@@ -1933,7 +1986,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         return
                     }
                 }
-                restoreCandidates(msg)
+                restoreCandidates(framed)
                 return
             }
 
@@ -2274,6 +2327,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 val raw = page.size
                 if (raw == 0) {
                     candidateBatchTotal = start
+                    // 滑动模式取空则回到第 0 页（WO52 1.1）
+                    pagingPageNo = 0
                     return@sendJob
                 }
                 candidateBatchLoaded = start + raw
@@ -2314,6 +2369,48 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 loadMoreBatch.compareAndSet(batch, -1L)
             }
         }
+    }
+
+    /**
+     * 候选翻页（WO52 1.1）：#rimeNextPage/#rimePreviousPage 与翻页钮
+     * 的统一入口，按模式分派。
+     * - 滑动模式：向前走批量追加（loadMoreCandidates，48 条/批、
+     *   CAP 200 不变）；向后空操作（网格自行上滚）。
+     * - native 模式：调 changeCandidatePage；成功页号±1（下限 0），
+     *   下一帧 Candidates 认领该页号；失败（已到尽头）则回到第 0 页：
+     *   页号复位 0，并把高亮移回全局 0 号（首页首候选）。
+     * - 浮动候选窗激活时 effectivePagingMode() 强制 native。
+     */
+    override fun pageCandidates(backward: Boolean) {
+        if (effectivePagingMode() == CandidatePagingMode.SWIPE) {
+            if (!backward) loadMoreCandidates()
+            return
+        }
+        sendJob {
+            val moved = changeCandidatePage(backward)
+            if (moved) {
+                val next = CandidatePagingPolicy.nextNativePage(pagingPageNo, backward, true)
+                pagingPageNo = next
+                pendingNativePage = next
+            } else {
+                pagingPageNo = 0
+                pendingNativePage = 0
+                // 取空则回到第 0 页：高亮回全局 0 号（onCurrentPage=false）
+                highlightCandidate(0, false)
+            }
+        }
+    }
+
+    /**
+     * 候选高亮（WO52 1.1）：只移动高亮、不提交。下标口径按模式分派
+     * （native 模式页内下标、滑动模式全局下标，见
+     * CandidatePagingPolicy.highlightOnCurrentPage）。
+     */
+    override fun highlightCandidate(index: Int) {
+        val onCurrentPage = CandidatePagingPolicy.highlightOnCurrentPage(
+            effectivePagingMode() == CandidatePagingMode.SWIPE,
+        )
+        sendJob { highlightCandidate(index, onCurrentPage) }
     }
 
     private fun restoreCandidates(msg: EngineMessage.Candidates) {

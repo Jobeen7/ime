@@ -1775,6 +1775,10 @@ class KeyboardWindowView(
         hasMore: Boolean = false,
         revision: Long = 0L,
         highlightedIndex: Int = 0,
+        pageNo: Int = 0,
+        isLastPage: Boolean = false,
+        pagingMode: com.jobeen.ime.engine.CandidatePagingMode =
+            com.jobeen.ime.engine.CandidatePagingMode.SWIPE,
     ) {
         // 版本号先行：旧帧（revision <= 已应用）直接丢弃；revision 0
         // = 未版本化（合成帧如清空、联想），恒放行且不推进版本号。
@@ -1798,7 +1802,7 @@ class KeyboardWindowView(
         lastCandidateList = list.toList()
         lastCandidateHasMore = hasMore
         lastCandidateHighlightedIndex = highlightedIndex
-        panel.setCandidates(list, hasMore, highlightedIndex)
+        panel.setCandidates(list, hasMore, highlightedIndex, pageNo, isLastPage, pagingMode)
         lastCandidateFirst = list.firstOrNull()?.text
         lastCandidateComment = list.firstOrNull()?.comment?.takeIf { it.isNotEmpty() }
         pushDynamicTexts()

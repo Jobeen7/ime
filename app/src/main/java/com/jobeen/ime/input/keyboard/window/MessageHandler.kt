@@ -93,11 +93,21 @@ class MessageHandler(
                     window?.appendCandidates(message.list, message.total, message.revision)
                 } else {
                     val hasMore = message.total < 0 || message.list.size < message.total
+                    // 翻页钮态（WO52 1.1）：模式按开关＋浮动窗强制分支现算，
+                    // 页号／末页由引擎帧携带。
+                    val engine = (service as? ImeInputMethodService)?.engine
+                    val mode = com.jobeen.ime.engine.CandidatePagingPolicy.resolveMode(
+                        com.jobeen.ime.data.manager.CandidateManager.isSwipePagingEnabled(service),
+                        engine?.isFloatingCandidateActive() == true,
+                    )
                     window?.setCandidates(
                         message.list,
                         hasMore,
                         message.revision,
                         message.highlighted,
+                        message.page,
+                        message.isLastPage,
+                        mode,
                     )
                 }
             }

@@ -157,6 +157,10 @@ class PanelActionListener(
         service.engine?.loadMoreCandidates()
     }
 
+    override fun onPageCandidates(backward: Boolean) {
+        service.engine?.pageCandidates(backward)
+    }
+
     override fun onDismissPredictions() {
         service.engine?.dismissPredictions()
     }

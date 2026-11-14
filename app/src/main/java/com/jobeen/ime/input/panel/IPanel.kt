@@ -11,6 +11,10 @@ interface IPanel {
         list: List<EngineMessage.Candidate>,
         hasMore: Boolean = false,
         highlightedIndex: Int = 0,
+        pageNo: Int = 0,
+        isLastPage: Boolean = false,
+        pagingMode: com.jobeen.ime.engine.CandidatePagingMode =
+            com.jobeen.ime.engine.CandidatePagingMode.SWIPE,
     )
     /** 分页补取的追加页并入当前候选列表；total 为引擎侧确切总数（-1=未知） */
     fun appendCandidates(list: List<EngineMessage.Candidate>, total: Int) {}

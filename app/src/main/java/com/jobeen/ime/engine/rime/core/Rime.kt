@@ -311,6 +311,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
         Companion.changeCandidatePage(backward).also { emitResponse() }
     }
 
+    override suspend fun highlightCandidate(index: Int, onCurrentPage: Boolean): Boolean =
+        withRimeContext {
+            Companion.highlightCandidate(index, onCurrentPage).also { emitResponse() }
+        }
+
     override suspend fun moveCursorPos(position: Int) = withRimeContext {
         setCaretPos(position)
         emitResponse()
@@ -838,6 +843,14 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
         @JvmStatic
         external fun changeCandidatePage(backward: Boolean): Boolean
+
+        /**
+         * 候选高亮（WO52 1.1）：只移动高亮、不提交；onCurrentPage=true
+         * 为页内下标（highlight_candidate_on_current_page），false 为
+         * 全局下标（highlight_candidate）。
+         */
+        @JvmStatic
+        external fun highlightCandidate(index: Int, onCurrentPage: Boolean): Boolean
 
         @JvmStatic
         external fun getAvailableSchemaList(): Array<SchemaItem>
