@@ -16,6 +16,7 @@ import com.jobeen.ime.input.panel.PanelListener
 import com.jobeen.ime.input.panel.component.TextEditView
 import com.jobeen.ime.ui.AboutActivity
 import com.jobeen.ime.ui.MainActivity
+import com.jobeen.ime.ui.SplitWordsActivity
 import com.jobeen.ime.ui.SkinLibraryActivity
 import com.jobeen.ime.ui.SchemaSettingsActivity
 import com.jobeen.ime.base.util.appScope
@@ -175,6 +176,19 @@ class PanelActionListener(
         ) {
             service.engine?.deleteCandidate(candidate.index)
         }
+    }
+
+    override fun onOpenSplitWords(text: String) {
+        service.startActivity(
+            Intent(service, SplitWordsActivity::class.java).apply {
+                putExtra(SplitWordsActivity.EXTRA_TEXT, text)
+                addFlags(
+                    Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP
+                )
+            }
+        )
     }
 
     override fun onEnterAddPhraseMode() {

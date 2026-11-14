@@ -162,6 +162,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.SplitWordsActivity"
+            android:exported="false"
+            android:label="@string/split_words_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.SkinDiagnosticsActivity"
             android:exported="false"
             android:label="@string/skin_diag_title"
