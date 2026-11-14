@@ -26,6 +26,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -631,7 +632,7 @@ fun MainScreen(
                 )
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = LocalMonetCardColor.current,
                     ),
@@ -674,7 +675,7 @@ fun MainScreen(
             } else {
                 val group = openGroup
                 if (group != null) {
-                    // 组页行：标题＋副标题，无图标、无箭头，行间发丝线分隔。
+                    // 组页行：标题＋副标题，无图标、无箭头，无分隔线。
                     GroupCard {
                         openRows.forEachIndexed { index, row ->
                             NavRow(
@@ -1075,13 +1076,16 @@ private fun FabAction(
 @Composable
 private fun CategoryRow(
     title: String,
-    subtitle: String,
+    subtitle: String?,
     icon: ImageVector,
     onClick: () -> Unit,
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            // 最小行高 68dp＝两行行高（标题约 19.6dp＋2dp＋副标题行高 18sp＋上下留白 28dp）：
+            // 无副标题行（关于）内容只剩 24dp 图标，自然行高只 52dp，以此下限与五带副标题行等高。
+            .heightIn(min = 68.dp)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -1100,13 +1104,15 @@ private fun CategoryRow(
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = subtitle,
-                fontSize = 13.sp,
-                lineHeight = 18.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (subtitle != null) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = subtitle,
+                    fontSize = 13.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -1122,15 +1128,15 @@ private fun groupTitle(group: MainSettingGroup): String = when (group) {
     MainSettingGroup.ADVANCED_ABOUT -> stringResource(R.string.main_group_advanced_about)
 }
 
-/** 主页组卡片副标题：一目了然写清该组管什么。 */
+/** 主页组卡片副标题：一目了然写清该组管什么；关于组无副标题（null）。 */
 @Composable
-private fun groupSubtitle(group: MainSettingGroup): String = when (group) {
+private fun groupSubtitle(group: MainSettingGroup): String? = when (group) {
     MainSettingGroup.INPUT_CANDIDATE -> stringResource(R.string.main_group_input_candidate_desc)
     MainSettingGroup.KEYBOARD -> stringResource(R.string.main_group_keyboard_desc)
     MainSettingGroup.APPEARANCE -> stringResource(R.string.main_group_appearance_desc)
     MainSettingGroup.CONVENIENCE -> stringResource(R.string.main_group_convenience_desc)
     MainSettingGroup.DATA_BACKUP -> stringResource(R.string.main_group_data_backup_desc)
-    MainSettingGroup.ADVANCED_ABOUT -> stringResource(R.string.main_group_advanced_about_desc)
+    MainSettingGroup.ADVANCED_ABOUT -> null
 }
 
 /** 主页组卡片图标：Jime 自身图标体系，不引新图标。 */

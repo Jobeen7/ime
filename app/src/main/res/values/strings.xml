@@ -199,7 +199,6 @@
     <string name="main_group_data_backup">数据与备份</string>
     <string name="main_group_data_backup_desc">词典、备份与文件</string>
     <string name="main_group_advanced_about">关于我们</string>
-    <string name="main_group_advanced_about_desc">版本、诊断与开发者信息</string>
     <string name="main_search_hint">搜索设置</string>
     <string name="main_search_example">键盘、候选、皮肤、词典、备份…</string>
     <string name="main_search_empty">没有匹配的设置</string>

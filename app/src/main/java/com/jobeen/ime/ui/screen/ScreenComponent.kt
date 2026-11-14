@@ -180,12 +180,8 @@ object ScreenComponent {
     }
 
     /**
-     * 导航行：单色图标 + 标题 + 右箭头，无副标题时只有一行。
-     * 图标不带彩色底块，颜色跟随主题正文色（浅色黑、深色白）。
-     */
-    /**
      * 导航行：图标（可选）＋标题＋副标题，无箭头（可点性由整行点按承担）。
-     * 须放在卡片内：横向留白由卡片提供，行自身只留纵向 12dp。
+     * 须放在卡片内：横向留白由卡片提供，行自身只留纵向 14dp。
      * 图标只用于主页组行；组页与详情页行不传图标（标题＋副标题）。
      */
     @Composable
@@ -201,7 +197,7 @@ object ScreenComponent {
                 .fillMaxWidth()
                 .clickable(onClick = onClick)
                 .rowAnchor(title)
-                .padding(vertical = 12.dp),
+                .padding(vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (icon != null) {
@@ -218,7 +214,7 @@ object ScreenComponent {
                     text = title,
                     fontSize = 16.sp,
                     lineHeight = 21.sp,
-                    fontWeight = FontWeight.Medium,
+                    fontWeight = FontWeight.Bold,
                     color = titleColor,
                     maxLines = 1,
                 )
@@ -226,8 +222,8 @@ object ScreenComponent {
                     Spacer(Modifier.height(2.dp))
                     Text(
                         text = subtitle,
-                        fontSize = 14.sp,
-                        lineHeight = 20.sp,
+                        fontSize = 13.sp,
+                        lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                     )
