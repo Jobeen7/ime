@@ -14,7 +14,6 @@ import android.widget.TextView
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.PunctuationMode
-import com.jobeen.ime.data.Symbol
 import com.jobeen.ime.input.keyboard.key.GridKeyboardView
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
 import com.jobeen.ime.input.keyboard.key.KeyDef
@@ -26,6 +25,10 @@ import com.jobeen.ime.input.keyboard.key.SidePanelKeyView
 import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
+import com.jobeen.ime.skin.symbol.EmojiBoardBuilder
+import com.jobeen.ime.skin.symbol.RecentEmojiOps
+import com.jobeen.ime.skin.symbol.RecentEmojiStore
+import com.jobeen.ime.skin.symbol.SharedPrefsRecentEmojiStore
 import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolItem
@@ -34,7 +37,6 @@ import com.jobeen.ime.input.keyboard.key.TextKeyView
 import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
-import com.jobeen.ime.data.Symbol.Category
 
 @SuppressLint("ViewConstructor")
 class EmojiKeyboard(
@@ -46,7 +48,6 @@ class EmojiKeyboard(
         const val NAME = "Emoji"
         private const val COLUMNS = 5
         private const val ROWS = 5
-        private var categorys: List<Pair<Category, Array<String>>> = Symbol.Emoji
 
         private fun keyDef(item: SymbolItem): KeyDef {
             return KeyDef(
@@ -82,7 +83,10 @@ class EmojiKeyboard(
             keyActionListener?.onKeyAction(action)
             // 板内提交：提交后自动返回；
             // 分类切换的提交由侧栏内部拦截，不经过此处。
-            if (action is KeyboardAction.CommitAction) maybeAutoReturn()
+            if (action is KeyboardAction.CommitAction) {
+                recordRecent(action.text)
+                maybeAutoReturn()
+            }
         }
         onKeyPressed = { key -> triggerRipple(key) }
     }
@@ -110,13 +114,17 @@ class EmojiKeyboard(
         TextKeyView(context, colors, returnKeyDef.appearance as KeyDef.Appearance.Text)
 
     /**
-     * 二级面板数据源：皮肤定义二级表时用皮肤表，否则既有一级表
-     * 转二级（每父仅一“全部”子类，此时子条隐藏、行为与旧板一致）。
+     * 二级面板数据源：用户自定义分组（7.4）＞ 皮肤二级表，否则既有一级表
+     * 转二级（每父仅一“全部”子类，此时子条隐藏、行为与旧板一致）；
+     * 最近使用（7.1）拼到首组前面（见 [EmojiBoardBuilder]）。
+     * 板在每次附着（reset）时重建：最近使用／自定义分组改了，
+     * 下次打开面板即跟变。
      */
-    private val twoStageSymbols: SubClassifiedSymbols =
-        SkinSnapshotProvider.peek()?.subClassifiedSymbols
-            ?: SubClassifiedSymbols.fromSingleLevel(categorys)
-    private val boardState = SubClassifiedBoardState(twoStageSymbols)
+    private val recentStore: RecentEmojiStore = SharedPrefsRecentEmojiStore(context)
+
+    private var twoStageSymbols: SubClassifiedSymbols =
+        EmojiBoardBuilder.build(recentStore.load(), SkinSnapshotProvider.peek()?.subClassifiedSymbols)
+    private var boardState = SubClassifiedBoardState(twoStageSymbols)
 
     /**
      * WO31 连续竖滑：网格一次喂当前子类的全部项（currentItems），
@@ -136,7 +144,7 @@ class EmojiKeyboard(
         visibility = View.GONE
     }
 
-    private val sidePanelItemDefs: List<KeyDef>
+    private var sidePanelItemDefs: List<KeyDef> = emptyList()
 
     init {
         sideReturnBtn.borderStroke = KeyboardManager.Keyboard.KeyBorderStroke.isEnabled(context)
@@ -151,6 +159,40 @@ class EmojiKeyboard(
 
         isClickable = true
 
+        sidePanelKey.setOnItemActionListener { action ->
+            if (action is KeyboardAction.CommitAction && boardState.parentLabels.any { it == action.text }) {
+                applyCategory(action.text)
+            } else {
+                keyActionListener?.onKeyAction(action)
+            }
+        }
+        rebuildBoard()
+
+        addView(sidePanelKey, lParams(0, matchParent))
+        addView(sideReturnBtn, lParams(0, matchParent))
+        addView(gridView, lParams(0, matchParent))
+        addView(subStripView, lParams(matchParent, 0))
+        addView(rippleView, LayoutParams(matchParent, matchParent))
+    }
+
+    /** 板重建（最近使用／自定义分组／皮肤表任一变了，下次附着即跟变）。 */
+    private fun rebuildBoard() {
+        twoStageSymbols = EmojiBoardBuilder.build(
+            recentStore.load(),
+            SkinSnapshotProvider.peek()?.subClassifiedSymbols,
+            // 用户自定义分组（7.4）在此接线；7.1 暂无自定义，传 null 走内置／皮肤板。
+            customGroups = null,
+        )
+        boardState = SubClassifiedBoardState(twoStageSymbols)
+        boardState.selectParent(0)
+        rebuildSidePanel()
+        refreshGrid()
+        sidePanelKey.selectIndex(0)
+        rebuildSubStrip()
+    }
+
+    /** 侧栏分类格重建：父类标签即分类表顺序，只登记不覆写。 */
+    private fun rebuildSidePanel() {
         sidePanelItemDefs = boardState.parentLabels.mapIndexed { index, label ->
             KeyDef(
                 appearance = KeyDef.Appearance.Text(
@@ -163,21 +205,20 @@ class EmojiKeyboard(
             )
         }
         sidePanelKey.updateItems(sidePanelItemDefs)
+    }
 
-        sidePanelKey.setOnItemActionListener { action ->
-            if (action is KeyboardAction.CommitAction && boardState.parentLabels.any { it == action.text }) {
-                applyCategory(action.text)
-            } else {
-                keyActionListener?.onKeyAction(action)
-            }
+    /**
+     * 最近使用记一次（7.1）：只记板内当前子类里真实提交的 Emoji
+     * （分类切换的提交走侧栏、不经过此处；皮肤动作项不记）。
+     */
+    private fun recordRecent(text: String) {
+        val hit = boardState.currentItems.any {
+            val resolved = SymbolItemActionResolver.resolve(it)
+            resolved is KeyboardAction.CommitAction && resolved.text == text
         }
-        rebuildSubStrip()
-
-        addView(sidePanelKey, lParams(0, matchParent))
-        addView(sideReturnBtn, lParams(0, matchParent))
-        addView(gridView, lParams(0, matchParent))
-        addView(subStripView, lParams(matchParent, 0))
-        addView(rippleView, LayoutParams(matchParent, matchParent))
+        if (hit) {
+            recentStore.save(RecentEmojiOps.record(recentStore.load(), text))
+        }
     }
 
     private fun applyCategory(label: String) {
@@ -350,10 +391,7 @@ class EmojiKeyboard(
     }
 
     fun reset() {
-        boardState.selectParent(0)
-        refreshGrid()
-        sidePanelKey.selectIndex(0)
-        rebuildSubStrip()
+        rebuildBoard()
         sidePanelKey.resetPosition()
     }
 }
