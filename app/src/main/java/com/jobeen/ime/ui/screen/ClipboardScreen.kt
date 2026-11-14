@@ -33,6 +33,12 @@ fun ClipboardScreen(onBack: () -> Unit) {
     var listeningEnabled by remember {
         mutableStateOf(ClipboardManager.isListeningEnabled(context))
     }
+    var promptEnabled by remember {
+        mutableStateOf(ClipboardManager.isPromptEnabled(context))
+    }
+    var autoExtractCode by remember {
+        mutableStateOf(ClipboardManager.isAutoExtractCodeEnabled(context))
+    }
     var dedupEnabled by remember {
         mutableStateOf(ClipboardManager.isDedupEnabled(context))
     }
@@ -63,6 +69,23 @@ fun ClipboardScreen(onBack: () -> Unit) {
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                SwitchRow(
+                    title = stringResource(R.string.clipboard_prompt_bar),
+                    checked = promptEnabled,
+                    onCheckedChange = {
+                        promptEnabled = it
+                        ClipboardManager.setPromptEnabled(context, it)
+                    },
+                    enabled = listeningEnabled,
+                    showDivider = true,
+                )
+                if (!listeningEnabled) {
+                    Text(
+                        text = stringResource(R.string.clipboard_banner_requires_listener),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
 
@@ -124,7 +147,37 @@ fun ClipboardScreen(onBack: () -> Unit) {
                         returnAfterPaste = it
                         ClipboardManager.setReturnAfterPasteEnabled(context, it)
                     },
+                    showDivider = true,
                 )
+                SwitchRow(
+                    title = stringResource(R.string.clipboard_auto_extract_code),
+                    checked = autoExtractCode,
+                    onCheckedChange = {
+                        autoExtractCode = it
+                        ClipboardManager.setAutoExtractCodeEnabled(context, it)
+                    },
+                    // 前置提示（WO52 5.2 依赖链：监听 → 提示条 → 自动提取）：
+                    // 任一前置未开时开关不可用，并显示缺哪一项。
+                    enabled = listeningEnabled && promptEnabled,
+                )
+                Text(
+                    text = stringResource(R.string.clipboard_auto_extract_code_summary),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (!listeningEnabled) {
+                    Text(
+                        text = stringResource(R.string.clipboard_banner_requires_listener),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                } else if (!promptEnabled) {
+                    Text(
+                        text = stringResource(R.string.clipboard_auto_extract_code_requires_banner),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
                     text = stringResource(R.string.clipboard_dedup_note),
                     style = MaterialTheme.typography.bodyMedium,

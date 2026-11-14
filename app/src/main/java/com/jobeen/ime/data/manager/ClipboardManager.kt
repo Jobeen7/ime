@@ -161,6 +161,43 @@ object ClipboardManager {
             .getBoolean("clipboard.return_after_paste", false)
     }
 
+    /** 剪贴板提示条开关（WO52 5.2，默认开）：关 = 不显示复制提示条（含验证码提示）。 */
+    fun isPromptEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("clipboard.prompt_enabled", true)
+    }
+
+    fun setPromptEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean("clipboard.prompt_enabled", enabled)
+        }
+    }
+
+    /**
+     * 自动提取验证码（WO52 5.2，默认关，需手动开启）：
+     * 开 = 复制含验证码的文字时只保留验证码（提示条显示验证码并写回
+     * 系统剪贴板，原文不记入剪贴板）。依赖链：监听 → 提示条 → 自动提取。
+     */
+    fun isAutoExtractCodeEnabled(context: Context): Boolean {
+        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+            .getBoolean("clipboard.auto_extract_code", false)
+    }
+
+    fun setAutoExtractCodeEnabled(context: Context, enabled: Boolean) {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
+            putBoolean("clipboard.auto_extract_code", enabled)
+        }
+    }
+
+    /**
+     * 当前内容是否有工具栏（WO52 5.2 门禁 `dc2.getHasToolbar()` 的 Jime
+     * 对应口径）：验证码提示条画在工具栏中央区，工具栏隐藏（皮肤压制
+     * 或用户隐藏）时提示条无处显示，门禁即不通过。由 KawaiiPanelView
+     * 的 toolbarHidden 同步写入；默认 true（工具栏默认显示）。
+     */
+    @Volatile
+    var toolbarVisible: Boolean = true
+
     fun setReturnAfterPasteEnabled(context: Context, enabled: Boolean) {
         context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
             putBoolean("clipboard.return_after_paste", enabled)
@@ -733,6 +770,12 @@ object ClipboardManager {
         if (ts > 0) lastClipTimestamp = ts
         lastText = text
 
+        // 自家回写抑制（WO52 5.2）：自动提取把验证码写回系统剪贴板会
+        // 再次触发监听回调；命中即消费掉，不当新内容（否则验证码会
+        // 再走一次提取流程）。10 秒内有效，过期自动失效，避免把用户
+        // 之后真复制的同一验证码永久屏蔽。
+        if (consumeSelfWrittenCode(text)) return false
+
         // P-中2：intake 先过遗留超限清理（进程内只跑一次，见
         // [sanitizeOversizedOnce]）再读最新行——此前 intake 裸读最新行，
         // 库里有遗留超限行时新复制静默丢失。清理在决策锁之外跑：
@@ -776,15 +819,18 @@ object ClipboardManager {
 
             val isNew = !exists
             if (isNew) {
-                lastCopyText = text
+                // WO52 5.2 只留验证码：自动提取开且七门全过时，只存验证码、
+                // 原文不记入历史，并回写系统剪贴板；任一门不过则走原文旧路。
+                val stored = tryAutoExtractCode(context, text) ?: text
+                lastCopyText = stored
                 lastCopyTimestamp = System.currentTimeMillis()
-                // 提示条状态（重点候选 8-5）：新文本即喂提示态（只读抽取，
-                // 绝不回写历史）；去重／抑制分支不更新（仍是同一文本）。
-                promptState.onClipboardText(text)
+                // 提示条状态：新文本即喂提示态（只读抽取，绝不回写历史）；
+                // 去重／抑制分支不更新（仍是同一文本）。
+                promptState.onClipboardText(stored)
                 // 入库失败不再冒充「有新条目」：内容仍在系统剪贴板里，
                 // 下次变化事件/补偿检查会再试；冒充成功只会让面板
                 // 白刷新一次、还把监听侧的成败口径搅浑
-                return@withLock addEntry(context, text, notify = false)
+                return@withLock addEntry(context, stored, notify = false)
             }
             // 已存在但非最新行：去重关时同样顶到最前
             if (!dedup) return@withLock addEntry(context, text, notify = true)
@@ -842,6 +888,56 @@ object ClipboardManager {
 
     @Volatile private var lastText: String = ""
     @Volatile private var lastClipTimestamp: Long = -1L
+
+    // 自家回写抑制（WO52 5.2）：自动提取成功后写回系统剪贴板的验证码
+    // 文本＋写回时刻；监听回调命中即消费，不当新内容。
+    @Volatile private var selfWrittenCode: String? = null
+    @Volatile private var selfWrittenAt: Long = 0L
+
+    /** 自家回写命中即消费并返回 true；未命中／过期返回 false。 */
+    private fun consumeSelfWrittenCode(text: String): Boolean {
+        val code = selfWrittenCode ?: return false
+        if (text != code) return false
+        if (System.currentTimeMillis() - selfWrittenAt > 10_000L) {
+            selfWrittenCode = null
+            return false
+        }
+        selfWrittenCode = null
+        return true
+    }
+
+    /**
+     * WO52 5.2 自动提取验证码（监听 intake 路径，来源恒为非手动）：
+     * 门禁全为真才回写——监听开（intake 入口已验）＋非手动＋提示条
+     * 开＋文本 ≤300＋当前内容有工具栏＋提取成功＋写系统剪贴板成功。
+     * 成功返回验证码（调用方只存验证码、原文不记入历史）；任一门
+     * 不过返回 null（调用方走原文旧路）。
+     */
+    private fun tryAutoExtractCode(context: Context, text: String): String? {
+        if (!isAutoExtractCodeEnabled(context)) return null
+        val code = VerificationCodeExtractor.extract(text) ?: return null
+        if (!VerificationCodeGate.passesStaticGates(
+                listeningEnabled = true,
+                isManualSource = false,
+                promptEnabled = isPromptEnabled(context),
+                textLength = text.length,
+                hasToolbar = toolbarVisible,
+                extracted = true,
+            )
+        ) return null
+        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE)
+            as? android.content.ClipboardManager ?: return null
+        selfWrittenCode = code
+        selfWrittenAt = System.currentTimeMillis()
+        return try {
+            cm.setPrimaryClip(ClipData.newPlainText("code", code))
+            code
+        } catch (e: Exception) {
+            Timber.e(e, "clipboard auto-extract write-back failed")
+            selfWrittenCode = null
+            null
+        }
+    }
 
     @Volatile var lastCopyText: String? = null
         private set

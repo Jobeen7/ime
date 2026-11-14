@@ -68,6 +68,9 @@ class KawaiiPanelView(context: Context) : View(context) {
             if (field == value) return
             field = value
             (currentRenderer as? ToolbarRenderer)?.toolbarHidden = value
+            // WO52 5.2 门禁：验证码提示条画在工具栏中央区，工具栏隐藏
+            // 时提示条无处显示，同步给剪贴板监听侧的门禁。
+            com.jobeen.ime.data.manager.ClipboardManager.toolbarVisible = !value
             invalidate()
         }
 

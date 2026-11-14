@@ -1155,6 +1155,8 @@ class KawaiiPanel(
 
     private fun showCopyIfRecent(text: String) {
         if (suppressCopyBanner) return
+        // WO52 5.2：提示条开关关时不显示复制提示条（含验证码提示）。
+        if (!ClipboardManager.isPromptEnabled(context)) return
         // 接线轮 R4：提示条显示验证码优先的提示态（跟踪本条时），
         // 去重键仍用原文（提示态与原文是同一条的不同显示）。
         copyText = ClipboardManager.promptState.displayTextFor(text)
@@ -1423,6 +1425,8 @@ class KawaiiPanel(
 
     private fun checkPendingCopy() {
         if (suppressCopyBanner) return
+        // WO52 5.2：提示条开关关时不显示复制提示条（含验证码提示）。
+        if (!ClipboardManager.isPromptEnabled(context)) return
         if (state != State.Idle) return
         val text = ClipboardManager.lastCopyText ?: return
         if (text == lastShownCopyText) return

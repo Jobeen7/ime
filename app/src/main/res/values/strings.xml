@@ -77,6 +77,13 @@
     <string name="display_hide_hint_note">隐藏按键上的副文字（如九宫格字母）</string>
     <string name="clipboard_dedup_note">关 = 重复复制顶到最前并刷新时间（同一文本仍只留一行）</string>
     <string name="clipboard_listening_note">关 = 不记录新的复制内容，历史保留</string>
+    <string name="clipboard_prompt_bar">剪贴板提示条</string>
+    <string name="clipboard_banner_requires_listener">需先开启剪贴板监听。</string>
+    <string name="clipboard_auto_extract_code">自动提取验证码</string>
+    <string name="clipboard_auto_extract_code_summary">复制含验证码的文字时只保留验证码：提示条显示验证码并写入系统剪贴板，原文不记入剪贴板。</string>
+    <string name="clipboard_auto_extract_code_requires_banner">需先开启剪贴板提示条。</string>
+    <string name="clipboard_tap_to_copy">Tap an item to copy it. Long-press to select multiple items.</string>
+    <string name="verification_code_copied">验证码已复制</string>
     <string name="clipboard_return_note">粘贴后收起剪贴板面板回键盘</string>
     <!-- 批量第 5 项：主题诊断 -->
     <string name="skin_diag_title">主题诊断</string>
