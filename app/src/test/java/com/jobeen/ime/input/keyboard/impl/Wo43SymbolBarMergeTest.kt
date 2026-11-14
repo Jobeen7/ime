@@ -56,7 +56,7 @@ class Wo43SymbolBarMergeTest {
 
     @Test
     fun portrait_sixteenSymbolsPlusCustomEntrySeventeenth() {
-        val defs = buildSidePanelItemDefs(symbols16, landscape = false)
+        val defs = buildSidePanelItemDefs(symbols16)
         assertEquals(17, defs.size)
         defs.take(16).forEachIndexed { i, def ->
             assertEquals(symbols16[i], textOf(def).displayText)
@@ -75,11 +75,11 @@ class Wo43SymbolBarMergeTest {
     }
 
     @Test
-    fun landscape_customEntryIsSingleLine() {
-        val defs = buildSidePanelItemDefs(symbols16, landscape = true)
+    fun landscape_customEntryIsTwoLines() {
+        val defs = buildSidePanelItemDefs(symbols16)
         assertEquals(17, defs.size)
         val entry = defs.last()
-        assertEquals("⊕ 自定义", textOf(entry).displayText)
+        assertEquals("⊕\n自定义", textOf(entry).displayText)
         assertEquals(12f, textOf(entry).textSize)
         assertEquals(KeyDef.Appearance.Variant.Normal, textOf(entry).variant)
         assertTrue(pressActionOf(entry) is KeyboardAction.OpenSymbolBarSettingsAction)

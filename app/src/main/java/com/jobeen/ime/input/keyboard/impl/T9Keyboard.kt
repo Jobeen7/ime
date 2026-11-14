@@ -69,15 +69,12 @@ class T9Keyboard(
      * 是符号列表最后一项——放在最后一个符号（＆）后面，随列表一起滑；
      * 滑到底才看见。两行字（⊕／自定义），字色取 Variant.Normal
      *（默认键字色，不加颜色），点开符号设置页。候选拼音态不显示。
-     * 横屏改单行“⊕ 自定义”（I-L5）：横屏面板矮、两行溢出约 8–11dp；
-     * 竖屏两行设计不动。方向按构造时现算，旋转后重建即跟变。
+     * 字号随格高缩放（I-L5，见 SidePanelRender.fitTextSizePx）：格矮
+     * 时缩字号，保证两行在格内显示全；横屏单行 workaround 已删。
      */
     private fun customEntryDef(): KeyDef = KeyDef(
         appearance = KeyDef.Appearance.Text(
-            displayText = customEntryLabel(
-                context.resources.configuration.orientation ==
-                    Configuration.ORIENTATION_LANDSCAPE,
-            ),
+            displayText = customEntryLabel(),
             textSize = 12f,
             percentWidth = 0.5f,
             margin = false,
@@ -217,9 +214,9 @@ class T9Keyboard(
 }
 
 /**
- * 左竖栏“自定义”入口文案（I-L5 纯函数）：竖屏两行“⊕\n自定义”；
- * 横屏面板矮、两行溢出约 8–11dp，改单行“⊕ 自定义”（12sp 不变）。
+ * 左竖栏“自定义”入口文案（I-L5 纯函数）：恒两行“⊕\n自定义”；
+ * 横屏单行 workaround 已删（仍截断），改由绘制期随格高缩字号
+ * （SidePanelRender.fitTextSizePx），保证两行在格内显示全。
  * 字号／字色／行为一律不动，键宽与行和不动。
  */
-internal fun customEntryLabel(landscape: Boolean): String =
-    if (landscape) "⊕ 自定义" else "⊕\n自定义"
+internal fun customEntryLabel(): String = "⊕\n自定义"

@@ -3,8 +3,7 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.data.Symbol
-import com.jobeen.ime.skin.symbol.KaomojiSwipe
-import com.jobeen.ime.skin.symbol.KaomojiSwipe.Direction
+import com.jobeen.ime.input.keyboard.key.resolveSwipeReleaseForward
 import com.jobeen.ime.skin.symbol.SubClassifiedBoardState
 import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import org.junit.Assert.assertEquals
@@ -24,40 +23,40 @@ class SymbolSwipeTest {
         SubClassifiedSymbols.fromSingleLevel(Symbol.Symbol),
     )
 
-    // ── 方向判定（复用 KaomojiSwipe.directionFor，48dp）──
+    // ── 方向判定（生产函数 resolveSwipeReleaseForward，未锁存，48dp）──
 
     @Test
     fun swipe_left_isNextPage() {
-        assertEquals(Direction.NEXT, KaomojiSwipe.directionFor(-120f, 5f, 48f))
+        assertEquals(true, resolveSwipeReleaseForward(null, -120f, 5f, 48f))
     }
 
     @Test
     fun swipe_right_isPrevPage() {
-        assertEquals(Direction.PREV, KaomojiSwipe.directionFor(120f, -5f, 48f))
+        assertEquals(false, resolveSwipeReleaseForward(null, 120f, -5f, 48f))
     }
 
     @Test
     fun swipe_belowMinDistance_isNone() {
         // 短横滑不翻页，归点按。
-        assertNull(KaomojiSwipe.directionFor(-47f, 0f, 48f))
-        assertNull(KaomojiSwipe.directionFor(47f, 0f, 48f))
+        assertNull(resolveSwipeReleaseForward(null, -47f, 0f, 48f))
+        assertNull(resolveSwipeReleaseForward(null, 47f, 0f, 48f))
     }
 
     @Test
     fun swipe_atMinDistance_counts() {
-        assertEquals(Direction.NEXT, KaomojiSwipe.directionFor(-48f, 0f, 48f))
-        assertEquals(Direction.PREV, KaomojiSwipe.directionFor(48f, 0f, 48f))
+        assertEquals(true, resolveSwipeReleaseForward(null, -48f, 0f, 48f))
+        assertEquals(false, resolveSwipeReleaseForward(null, 48f, 0f, 48f))
     }
 
     @Test
     fun swipe_verticalDominant_isNone() {
-        assertNull(KaomojiSwipe.directionFor(-120f, 130f, 48f))
-        assertNull(KaomojiSwipe.directionFor(60f, -80f, 48f))
+        assertNull(resolveSwipeReleaseForward(null, -120f, 130f, 48f))
+        assertNull(resolveSwipeReleaseForward(null, 60f, -80f, 48f))
     }
 
     @Test
     fun swipe_equalAxes_isNone() {
-        assertNull(KaomojiSwipe.directionFor(-100f, 100f, 48f))
+        assertNull(resolveSwipeReleaseForward(null, -100f, 100f, 48f))
     }
 
     // ── 内置表：7 分类全部超一页（25 格／页）──

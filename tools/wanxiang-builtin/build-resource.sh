@@ -2,7 +2,7 @@
 # 可复现打包 app/src/main/assets/resource.zip（内置万象方案）。
 #
 # 流程：下载官方 lite zip → 校验大小与 sha256 → 解压（官方包为根目录
-# 平铺）→ 整体放入 shared/ → 用本目录四个适配文件覆盖 shared/ 同名
+# 平铺）→ 整体放入 shared/ → 用本目录五个适配文件覆盖 shared/ 同名
 # 文件 → 加入 model/predict.marisa（本目录受控文件 predict.marisa，
 # 官方 lite 包不含此文件，取后按 MARISA_SHA256 校验，不符即停）→ 以
 # 固定排序、固定时间戳打包 → 输出成品路径与 sha256。

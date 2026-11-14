@@ -182,7 +182,7 @@ abstract class SidePanelView(
                     // 从侧栏起手的横滑永远到不了父板手势处理。竖向
                     // 拖动开始时才禁（见 ACTION_MOVE），点按与竖滚
                     // 行为不变；横滑越过父板翻页阈值（48dp）时父板
-                    // 接手（符号板／颜文字板的 onInterceptTouchEvent）。
+                    // 接手（符号板的 onInterceptTouchEvent）。
                     if (!scroller.isFinished) scroller.abortAnimation()
 
                     velocityTracker = VelocityTracker.obtain()
@@ -397,7 +397,7 @@ abstract class SidePanelView(
 /**
  * 侧栏竖向拖动开始判定（P-低3，纯函数，可 JVM 单测）：
  * 只有竖向位移超过 touchSlop 才算起拖。横向位移再大也不触发本
- * 判定——横滑归父板（符号板／颜文字板翻页／切分类），不归子栏
+ * 判定——横滑归父板（符号板翻页／切分类），不归子栏
  * 竖滚；竖向未起拖前不禁拦截，父板才有机会在横滑越过翻页阈值
  * 时接手。点按判定（ACTION_UP 的 `|dy| < itemHeight`）不在此
  * 函数内，刻意不动：小于 48dp 的横向小拖动抬手仍按既有口径判

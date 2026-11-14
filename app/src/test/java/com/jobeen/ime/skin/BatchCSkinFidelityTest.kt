@@ -3,7 +3,6 @@
 package com.jobeen.ime.skin
 
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
-import com.jobeen.ime.input.keyboard.impl.KaomojiKeyboard
 import com.jobeen.ime.input.keyboard.impl.QwertyKeyboard
 import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef
@@ -225,20 +224,6 @@ class BatchCSkinFidelityTest {
         state.selectSub(1)
         assertEquals(0, state.page)
         assertEquals(2, state.visibleItems.size)
-    }
-
-    // ---------- P1-6：kaomoji ----------
-
-    @Test
-    fun kaomoji_isBuiltinAndUsesBuiltinBoard() {
-        assertEquals("kaomoji", com.jobeen.ime.skin.model.KeyboardTypes.KAOMOJI)
-        assertTrue(com.jobeen.ime.skin.model.KeyboardTypes.BUILTIN.contains("kaomoji"))
-        // H2-7：内置颜文字表到位后，kaomoji 类型走内置颜文字板，
-        // 不再回落符号板（旧口径已随该功能废止）。
-        assertEquals(
-            KaomojiKeyboard.NAME,
-            CustomLayoutRuntime.builtinKeyboardName("kaomoji", "Qwerty"),
-        )
     }
 
     // ---------- P1-7：死解析器接线 ----------

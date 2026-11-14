@@ -192,7 +192,7 @@ class EmojiKeyboard(
     /**
      * WO31 连续竖滑，无分页可翻：窗口层 #subCollectionPageUp/Down
      * 在 emoji 板上恒为空操作（不换页、不换分类、不下发引擎）。
-     * 接口保留（ISubCollectionPageable 契约，颜文字／符号板仍用）。
+     * 接口保留（ISubCollectionPageable 契约，符号板仍用）。
      */
     override fun pageSubCollection(forward: Boolean): Boolean = false
 

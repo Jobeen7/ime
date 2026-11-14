@@ -6,8 +6,9 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 左竖栏“自定义”入口文案（I-L5）：竖屏两行“⊕\n自定义”；横屏
- * 面板矮、两行溢出约 8–11dp，改单行“⊕ 自定义”（12sp 不变）。
+ * 左竖栏“自定义”入口文案（I-L5）：恒两行“⊕\n自定义”；横屏单行
+ * workaround 已删（仍截断），改由绘制期随格高缩字号
+ * （SidePanelRender.fitTextSizePx），保证两行在格内显示全。
  * 字号／字色／行为一律不动，键宽与行和不动。
  *
  * 条目级裁剪（SidePanelRender.drawItems 每条目 clipRect）是绘制
@@ -17,12 +18,7 @@ import org.junit.Test
 class CustomEntryLabelTest {
 
     @Test
-    fun landscapeIsSingleLine() {
-        assertEquals("⊕ 自定义", customEntryLabel(landscape = true))
-    }
-
-    @Test
-    fun portraitIsTwoLines() {
-        assertEquals("⊕\n自定义", customEntryLabel(landscape = false))
+    fun alwaysTwoLines() {
+        assertEquals("⊕\n自定义", customEntryLabel())
     }
 }

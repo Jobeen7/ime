@@ -3,7 +3,6 @@ package com.jobeen.ime.input.keyboard.impl
 import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
-import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.StateListDrawable
@@ -68,7 +67,7 @@ class SymbolKeyboard(
         private const val COLUMNS = 5
         private const val ROWS = 5
 
-        /** 左右滑翻页的最小横移（dp）；未达此距离只算点按／竖滚（与颜文字板同口径）。 */
+        /** 左右滑翻页的最小横移（dp）；未达此距离只算点按／竖滚。 */
         private const val SWIPE_MIN_DISTANCE_DP = 48
 
         /**
@@ -92,7 +91,6 @@ class SymbolKeyboard(
          */
         internal fun buildSidePanelItemDefs(
             displays: List<String>,
-            landscape: Boolean,
         ): List<KeyDef> =
             displays.map { display ->
                 KeyDef(
@@ -102,12 +100,12 @@ class SymbolKeyboard(
                     ),
                     behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.CommitAction(display))),
                 )
-            } + customEntryDef(landscape)
+            } + customEntryDef()
 
         /** 左竖栏“自定义”入口（WO43 v7）：与九宫格左竖栏同口径（见 T9Keyboard.customEntryDef）。 */
-        internal fun customEntryDef(landscape: Boolean): KeyDef = KeyDef(
+        internal fun customEntryDef(): KeyDef = KeyDef(
             appearance = KeyDef.Appearance.Text(
-                displayText = customEntryLabel(landscape),
+                displayText = customEntryLabel(),
                 textSize = 12f,
                 percentWidth = 0.5f,
                 margin = false,
@@ -460,7 +458,7 @@ class SymbolKeyboard(
     }
 
     /**
-     * 左右滑切分类（WO30 §3(5)，颜文字板 swipeCategory 同款）：
+     * 左右滑切分类（WO30 §3(5)）：
      * 翻页（pageSubCollection）到端无动作时才走到这里；到端停，
      * 不循环绕回。与顶栏按钮同款：先记 barState.currentType 再
      * applyCategory（网格＋切换钮文案＋子条一起换）。
@@ -678,11 +676,7 @@ class SymbolKeyboard(
             userSymbolStore.load().symbols,
             punctuationMode,
         )
-        sidePanelItemDefs = buildSidePanelItemDefs(
-            displays,
-            context.resources.configuration.orientation ==
-                Configuration.ORIENTATION_LANDSCAPE,
-        )
+        sidePanelItemDefs = buildSidePanelItemDefs(displays)
         sidePanelKey.updateItems(sidePanelItemDefs)
     }
 

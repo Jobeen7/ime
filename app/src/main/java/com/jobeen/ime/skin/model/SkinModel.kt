@@ -310,16 +310,10 @@ object KeyboardTypes {
     const val NUMERIC = "numeric"
     const val NUMBER_PAD = "numberPad"
     const val SYMBOLIC = "symbolic"
-    /**
-     * 颜文字板（P1-6，H2-7 已落内置表）：对端独立键盘类型；
-     * 内置颜文字数据源为 data/Kaomoji.kt，无皮肤绑定时回落
-     * 内置颜文字板（KaomojiKeyboard），不丢键。
-     */
-    const val KAOMOJI = "kaomoji"
 
-    /** 8 个内置类型。 */
+    /** 7 个内置类型。 */
     val BUILTIN: Set<String> = setOf(
-        ALPHABETIC, PINYIN, EMOJIS, IMAGES, NUMERIC, NUMBER_PAD, SYMBOLIC, KAOMOJI,
+        ALPHABETIC, PINYIN, EMOJIS, IMAGES, NUMERIC, NUMBER_PAD, SYMBOLIC,
     )
 
     /** 主键盘类型：中英切换只在这两者之间往返。 */

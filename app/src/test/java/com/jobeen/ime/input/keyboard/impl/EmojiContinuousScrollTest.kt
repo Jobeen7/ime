@@ -23,7 +23,7 @@ import org.junit.Test
  * 能测（本文件）：网格喂数的数据层——新喂数 [SubClassifiedBoardState.currentItems]
  * 相对旧喂数 visibleItems 的全量性、page 不再驱动 currentItems、点按解析＋
  * 自动返回决策链、滚动门控的数据前提（≤25 一屏装下／>25 需滚动）、
- * 切类／切子类／重置的状态机、颜文字／符号板共用的分页状态机未动。
+ * 切类／切子类／重置的状态机、符号板共用的分页状态机未动。
  *
  * 测不了（需真机／插桩验收，按仓库惯例见 SymbolSwipeTest 头注）：
  * EmojiKeyboard.pageSubCollection 恒 false、GridKeyboardView.onInterceptTouchEvent
@@ -185,11 +185,11 @@ class EmojiContinuousScrollTest {
     }
 
     @Test
-    fun sharedPagingMachineStillPages_forKaomojiAndSymbolBoards() {
+    fun sharedPagingMachineStillPages_forSymbolBoard() {
         // WO31 只改了 emoji 板的喂数与翻页入口，未动共用状态机：
-        // 颜文字／符号板仍以 visibleItems 为喂数、仍靠 nextPage/prevPage
-        // 翻页（两板 pageSubCollection 实现未变，见 KaomojiKeyboard 与
-        // SymbolKeyboard）。开关默认 false 与两板 pageSubCollection 的
+        // 符号板仍以 visibleItems 为喂数、仍靠 nextPage/prevPage
+        // 翻页（pageSubCollection 实现未变，见 SymbolKeyboard）。
+        // 开关默认 false 与符号板 pageSubCollection 的
         // 行为本身需实例化 View，走真机验收。
         val state = thirtyItemState()
         assertEquals(2, state.pageCount)

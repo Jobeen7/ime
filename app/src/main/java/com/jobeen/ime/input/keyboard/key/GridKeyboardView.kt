@@ -26,8 +26,7 @@ class GridKeyboardView(
 
     /**
      * WO31（仅 emoji 板开）：竖向拦截只在内容真正可滚且竖向占优时
-     * 才生效。默认 false＝旧口径（|dy|>touchSlop 即拦截），颜文字／
-     * 符号板保持旧行为不动。开 true 时：短内容 maxScroll=0 不拦截
+     * 才生效。默认 false＝旧口径（|dy|>touchSlop 即拦截），符号板保持旧行为不动。开 true 时：短内容 maxScroll=0 不拦截
      * （点按不受影响，不变死手势）；横向占优的拖动不拦截（仍归子
      * 键点按／出界取消，不再有横滑翻页可接）。
      */

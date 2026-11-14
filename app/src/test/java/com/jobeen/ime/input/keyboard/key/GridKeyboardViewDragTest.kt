@@ -21,7 +21,7 @@ import org.junit.Test
  *
  * I-L6：stretch 是内容在边界外的真实位移（顶下拉正、底上拉负），
  * 经 onLayout／applyScrollOffset 落地、回弹逐帧播回；本文件钉
- * 解析层，动画与手感需真机验收（三板共用：emoji／颜文字／符号）。
+ * 解析层，动画与手感需真机验收（两板共用：emoji／符号）。
  */
 class GridKeyboardViewDragTest {
 

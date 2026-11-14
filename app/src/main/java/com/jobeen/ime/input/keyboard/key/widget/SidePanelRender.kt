@@ -229,6 +229,20 @@ abstract class SidePanelRender(
                 // （I-⊕）：单行 drawText 不拆行，'\n' 会被当成行内
                 // 空白画在一行里；单行标签走原口径，逐字不动。
                 val lines = text.split('\n')
+                // I-L5：多行标签字号随格高缩放——行块（行数×行距）或
+                // 最宽行超出格子时等比缩字号，保证两行在格内显示全；
+                // 放得下时不缩放，单行标签与 15sp 符号外观不动。
+                if (lines.size > 1) {
+                    val maxLineWidth = lines.maxOf { textPaint.measureText(it) }
+                    textPaint.textSize = fitTextSizePx(
+                        baseTextSizePx = dp(item.textSize),
+                        lineCount = lines.size,
+                        fontSpacingPx = textPaint.fontSpacing,
+                        itemHeightPx = itemHeight,
+                        maxLineWidthPx = maxLineWidth,
+                        cellWidthPx = panel.width(),
+                    )
+                }
                 if (lines.size == 1) {
                     textPaint.getTextBounds(text, 0, text.length, bounds)
                     val x = centerX - bounds.exactCenterX()
@@ -275,4 +289,26 @@ internal fun multiLineBaselines(
     return (0 until lineCount).map { i ->
         centerY + (i - mid) * lineHeightPx - (ascent + descent) / 2f
     }
+}
+
+/**
+ * 多行标签适配字号（纯函数，可单测；I-L5）：行块高（行数×行距）
+ * 与最宽行宽都不超出格子时不缩放；任一超出时等比缩小到刚好
+ * 放下。行距与行宽均随字号线性缩放，故按未缩放度量算出的
+ * 比例直接可用。
+ */
+internal fun fitTextSizePx(
+    baseTextSizePx: Float,
+    lineCount: Int,
+    fontSpacingPx: Float,
+    itemHeightPx: Float,
+    maxLineWidthPx: Float,
+    cellWidthPx: Float,
+): Float {
+    if (baseTextSizePx <= 0f || lineCount <= 0) return baseTextSizePx
+    val heightScale =
+        if (lineCount * fontSpacingPx > 0f) itemHeightPx / (lineCount * fontSpacingPx) else 1f
+    val widthScale =
+        if (maxLineWidthPx > 0f) cellWidthPx / maxLineWidthPx else 1f
+    return baseTextSizePx * minOf(1f, heightScale, widthScale)
 }

@@ -187,13 +187,13 @@ class SubClassifiedBoardState(
     }
 
     /**
-     * 下一父类（H2-7 颜文字左右滑）：已是末类时返回 false
+     * 下一父类（左右滑切分类）：已是末类时返回 false
      * （索引不动，不循环绕回；与 nextPage 同口径）。
      */
     fun nextParent(): Boolean = selectParent(parentIndex + 1)
 
     /**
-     * 上一父类（H2-7 颜文字左右滑）：已是首类时返回 false
+     * 上一父类（左右滑切分类）：已是首类时返回 false
      * （索引不动；与 prevPage 同口径）。
      */
     fun prevParent(): Boolean = selectParent(parentIndex - 1)

@@ -217,6 +217,7 @@ object ScreenComponent {
                     fontWeight = FontWeight.Bold,
                     color = titleColor,
                     maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
                 )
                 if (subtitle != null) {
                     Spacer(Modifier.height(2.dp))
@@ -226,6 +227,7 @@ object ScreenComponent {
                         lineHeight = 18.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

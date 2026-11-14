@@ -1083,7 +1083,7 @@ private fun CategoryRow(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            // 最小行高 68dp＝两行行高（标题约 19.6dp＋2dp＋副标题行高 18sp＋上下留白 28dp）：
+            // 最小行高 68dp＝两行行高（标题行高 20sp＋2dp＋副标题行高 18sp＋上下留白 28dp）：
             // 无副标题行（关于）内容只剩 24dp 图标，自然行高只 52dp，以此下限与五带副标题行等高。
             .heightIn(min = 68.dp)
             .clickable(onClick = onClick)
@@ -1101,6 +1101,7 @@ private fun CategoryRow(
             Text(
                 text = title,
                 fontSize = 16.sp,
+                lineHeight = 20.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurface,
             )
