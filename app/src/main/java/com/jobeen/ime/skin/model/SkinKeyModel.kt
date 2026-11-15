@@ -107,6 +107,7 @@ enum class WhitelistAction(
      * 即指令本身，写在 command 节点的 action 字段）：
      * - 未列入者（#rimeDeploy / #rimeSync：无键动作直达口）
      *   解析期按未知动作剔除，不静默空操作。
+     * （WO52 3.1a：两项已挂白名单，见 HASH_RIME_DEPLOY／HASH_RIME_SYNC。）
      */
     HASH_TRADITIONAL("#简繁切换", ValueRule.FORBIDDEN),
     HASH_RIME_SWITCHER("#RimeSwitcher", ValueRule.FORBIDDEN),
@@ -146,6 +147,13 @@ enum class WhitelistAction(
     HASH_CANDIDATES_BAR_TOGGLE("#candidatesBarStateToggle", ValueRule.FORBIDDEN),
     HASH_RIME_PREV_PAGE("#rimePreviousPage", ValueRule.FORBIDDEN),
     HASH_RIME_NEXT_PAGE("#rimeNextPage", ValueRule.FORBIDDEN),
+    /**
+     * 部署／同步（WO52 3.1a）：挂白名单，走现有部署／同步路径
+     * （#rimeDeploy → FabActions.deployAndAwait 系部署核；
+     * #rimeSync → WebDavSync.syncAllDicts）。无值。
+     */
+    HASH_RIME_DEPLOY("#rimeDeploy", ValueRule.FORBIDDEN),
+    HASH_RIME_SYNC("#rimeSync", ValueRule.FORBIDDEN),
     HASH_TOGGLE_EMBEDDED_INPUT("#toggleEmbeddedInputMode", ValueRule.FORBIDDEN),
     /**
      * 脚本视图切换（脚本接线波次）：Jime 侧 # 名（沿 # 快捷指令

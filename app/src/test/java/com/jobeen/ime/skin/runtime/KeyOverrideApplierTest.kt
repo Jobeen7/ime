@@ -613,6 +613,11 @@ class KeyOverrideApplierTest {
                 KeyboardAction.PageCandidatesAction(backward = false),
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT) to
                 KeyboardAction.ToggleEmbeddedInputAction,
+            // WO52 3.1a：#rimeDeploy／#rimeSync 分派到部署／同步动作。
+            SkinAction.Command(WhitelistAction.HASH_RIME_DEPLOY) to
+                KeyboardAction.RimeDeployAction,
+            SkinAction.Command(WhitelistAction.HASH_RIME_SYNC) to
+                KeyboardAction.RimeSyncAction,
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW) to
                 KeyboardAction.ToggleScriptViewAction,
             SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD) to

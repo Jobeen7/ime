@@ -257,5 +257,7 @@ class KeyboardPopup(private val context: Context) {
         is KeyboardAction.SubCollectionPageUpAction -> "SubCollectionPageUpAction"
         is KeyboardAction.SubCollectionPageDownAction -> "SubCollectionPageDownAction"
         is KeyboardAction.OpenSymbolBarSettingsAction -> "OpenSymbolBarSettingsAction"
+        is KeyboardAction.RimeDeployAction -> "RimeDeployAction"
+        is KeyboardAction.RimeSyncAction -> "RimeSyncAction"
     }
 }

@@ -81,6 +81,8 @@ object NotificationActionNames {
         is KeyboardAction.SubCollectionPageUpAction -> "SubCollectionPageUpAction"
         is KeyboardAction.SubCollectionPageDownAction -> "SubCollectionPageDownAction"
         is KeyboardAction.OpenSymbolBarSettingsAction -> "OpenSymbolBarSettingsAction"
+        is KeyboardAction.RimeDeployAction -> "RimeDeployAction"
+        is KeyboardAction.RimeSyncAction -> "RimeSyncAction"
     }
 
     /**

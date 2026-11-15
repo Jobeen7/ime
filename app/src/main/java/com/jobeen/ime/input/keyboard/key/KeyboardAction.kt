@@ -255,6 +255,18 @@ sealed class KeyboardAction {
     data object ToggleEmbeddedInputAction : KeyboardAction()
 
     /**
+     * RIME 部署（WO52 3.1a：#rimeDeploy）：走现有部署核
+     * FabActions.deploy（deployAndAwait 系），不另写部署逻辑。
+     */
+    data object RimeDeployAction : KeyboardAction()
+
+    /**
+     * 用户词同步（WO52 3.1a：#rimeSync）：走现有同步
+     * WebDavSync.syncAllDicts，不另写同步逻辑。
+     */
+    data object RimeSyncAction : KeyboardAction()
+
+    /**
      * 按序号选候选（审计 E：#次选上屏/#三选上屏）：index 为候选
      * 表顺序（0 = 首选）；窗口层凭上一帧候选表解析，解析不到丢弃。
      */

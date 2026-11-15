@@ -67,6 +67,18 @@ class KeyActionListener(
      */
     private val inputKeyGate = InputKeyGate()
 
+    /**
+     * 键盘侧 FAB 会话（WO52 3.1a #rimeSync 用）：独立会话名，与
+     * 设置页 FAB 会话同口径（进程级持有，不随按键销毁，与
+     * MainActivity.fabSession 同一做法）。
+     */
+    private var keyboardFabSession: com.jobeen.ime.engine.rime.daemon.RimeSession? = null
+
+    private fun keyboardFabSession(): com.jobeen.ime.engine.rime.daemon.RimeSession =
+        keyboardFabSession
+            ?: com.jobeen.ime.engine.rime.daemon.RimeDaemon.createSession("keyboard-fab")
+                .also { keyboardFabSession = it }
+
     override fun onKeyAction(action: KeyboardAction) {
         // P4 分段探针（分发段）：起点标记；门控关时 stageStart 返回 -1，
         // 末尾 noteStage 即 no-op。早返回路径（MultiReturnAction 取不到
@@ -598,6 +610,28 @@ class KeyActionListener(
                 CandidateManager.setInlineInputModeEnabled(
                     service,
                     !CandidateManager.isInlineInputModeEnabled(service),
+                )
+            }
+
+            // RIME 部署／同步（WO52 3.1a：#rimeDeploy／#rimeSync）：
+            // 走现有路径，不另写部署／同步逻辑。键盘侧会话与设置
+            // 页 FAB 会话同口径（独立会话名，不扰动输入会话）。
+            is KeyboardAction.RimeDeployAction -> {
+                com.jobeen.ime.ui.FabActions.deploy(service, appScope)
+            }
+            is KeyboardAction.RimeSyncAction -> {
+                com.jobeen.ime.ui.FabActions.sync(
+                    service,
+                    appScope,
+                    sessionProvider = { keyboardFabSession() },
+                    onNotConfigured = {
+                        service.startActivity(
+                            Intent(
+                                service,
+                                com.jobeen.ime.ui.UserDictActivity::class.java,
+                            ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                        )
+                    },
                 )
             }
 
