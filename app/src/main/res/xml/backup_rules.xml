@@ -3,6 +3,8 @@
   系统备份排除规则（API 31 以下的 Auto Backup 用此文件）：
   - WebDAV 配置（含明文密码）不进备份
   - 剪贴板历史（独立库 clipboard_database）不进备份
+  - 应用数据库（ime_database：常用语／脚本／AI／剪贴板等 Room 表；
+    B-A-1：Auto Backup 不再恢复它，改走 Jime 自有备份全链）
   - 日志与下载缓存（external 的 log/、download/）不进备份
   - 搭配学习表（filesDir 根下 user_collocations.tsv，由打字习惯派生的词对）不进备份
   - 崩溃自捕获文件（filesDir/crash/ 子目录，含异常堆栈）不进备份
@@ -30,4 +32,8 @@
     <exclude domain="database" path="clipboard_database-wal" />
     <exclude domain="database" path="clipboard_database-shm" />
     <exclude domain="database" path="clipboard_database-journal" />
+    <exclude domain="database" path="ime_database" />
+    <exclude domain="database" path="ime_database-wal" />
+    <exclude domain="database" path="ime_database-shm" />
+    <exclude domain="database" path="ime_database-journal" />
 </full-backup-content>

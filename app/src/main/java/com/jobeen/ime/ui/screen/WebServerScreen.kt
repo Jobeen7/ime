@@ -17,9 +17,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.core.app.NotificationManagerCompat
 import com.jobeen.ime.R
 import com.jobeen.ime.base.webserver.WebServerService
 
@@ -36,6 +38,10 @@ fun WebServerScreen(
     onStop: () -> Unit,
 ) {
     val state by WebServerService.state.collectAsState()
+    val context = LocalContext.current
+    // B-N-1：通知被拒时不弹系统通知，改为服务卡片内常驻提示行。
+    // areNotificationsEnabled 覆盖 API 33+ 权限与低版本通道关闭。
+    val notificationsEnabled = NotificationManagerCompat.from(context).areNotificationsEnabled()
     var password by remember { mutableStateOf("") }
 
     SettingsPageScaffold(
@@ -99,6 +105,14 @@ fun WebServerScreen(
                             modifier = Modifier.padding(vertical = 4.dp),
                         )
                     }
+                }
+                if (!notificationsEnabled) {
+                    Text(
+                        text = stringResource(R.string.web_server_no_notification_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
                 }
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(

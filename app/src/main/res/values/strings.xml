@@ -243,6 +243,7 @@
     <string name="web_server_start">启动服务</string>
     <string name="web_server_stop">停止服务</string>
     <string name="web_server_no_password">请先设置 Wi-Fi 传输密码</string>
+    <string name="web_server_no_notification_hint">通知已关闭：服务仍在后台监听，点“停止”关闭服务。</string>
     <string name="web_server_no_storage">存储不可用，无法启动</string>
     <string name="web_server_no_port">端口 8080–8090 均被占用，无法启动</string>
     <string name="web_server_usage_info">同一 Wi-Fi 下的电脑用浏览器打开上方地址，登录后可浏览、上传、下载、删除文件与断点续传；方案目录、皮肤目录与系统文件不可经 Wi-Fi 删除。</string>
@@ -271,6 +272,7 @@
     <string name="fab_dict_sync_success">用户词同步完成</string>
     <string name="fab_dict_sync_partial">用户词同步完成：%1$d 个词典失败</string>
     <string name="fab_sync_failed">同步失败</string>
+    <string name="fab_sync_busy">同步进行中，请稍后再试</string>
     <string name="fab_sync_not_configured">请先到用户词典页填写 WebDAV 配置</string>
     <string name="fab_sync_engine_not_ready">词典服务未就绪，请稍后重试</string>
     <!-- 第一期方案切换：列表编辑 / 切换横幅 -->
