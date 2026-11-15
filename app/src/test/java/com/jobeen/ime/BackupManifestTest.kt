@@ -28,6 +28,14 @@ class BackupManifestTest {
         phrasesCount = 20,
         prefersCount = 500,
         sortingsCount = 10,
+        aiProvidersCount = 2,
+        aiInstructionsCount = 4,
+        aiConversationsCount = 6,
+        aiMessagesCount = 30,
+        scriptItemsCount = 4,
+        scriptVariablesCount = 3,
+        scriptTagsCount = 2,
+        scriptTagCrossRefsCount = 5,
         inputStatsPresent = true,
         skinLibraryPresent = true,
         skinLibraryFiles = 42,
@@ -99,6 +107,53 @@ class BackupManifestTest {
         assertTrue(mismatches.any { it.contains("skinLibraryFiles") })
         assertTrue(mismatches.any { it.contains("skinScripts:") })
         assertTrue(mismatches.any { it.contains("skinScriptsFiles") })
+    }
+
+    @Test
+    fun aiAndScriptCountsMismatch_eachReported() {
+        val actual = fullCounts() + mapOf(
+            "aiProvidersCount" to 1,
+            "aiInstructionsCount" to 3,
+            "aiConversationsCount" to 5,
+            "aiMessagesCount" to 29,
+            "scriptItemsCount" to 3,
+            "scriptVariablesCount" to 2,
+            "scriptTagsCount" to 1,
+            "scriptTagCrossRefsCount" to 4,
+        )
+        val mismatches = manifest().validate(actual)
+        assertEquals(8, mismatches.size)
+        assertTrue(mismatches.any { it.contains("ai_providers") })
+        assertTrue(mismatches.any { it.contains("ai_instructions") })
+        assertTrue(mismatches.any { it.contains("ai_conversations") })
+        assertTrue(mismatches.any { it.contains("ai_messages") })
+        assertTrue(mismatches.any { it.contains("script_items") })
+        assertTrue(mismatches.any { it.contains("script_variables") })
+        assertTrue(mismatches.any { it.contains("script_tags") })
+        assertTrue(mismatches.any { it.contains("script_tag_cross_refs") })
+    }
+
+    @Test
+    fun legacy12KeyManifest_validatesAgainst20KeyActual() {
+        // 旧清单只有 12 键：validate 跳过清单里没有的新键，旧备份
+        // 不因新键缺失被判不符（L-32 兼容性）。旧清单形状直接手写
+        // （manifestCounts 恒出 20 键，造不出旧形状）。
+        val legacy = mapOf<String, Any>(
+            "prefsFiles" to 12,
+            "prefsEntries" to 345,
+            "clipboardCount" to 100,
+            "clipboardGroupsCount" to 3,
+            "phrasesCount" to 20,
+            "prefersCount" to 500,
+            "sortingsCount" to 10,
+            "inputStatsPresent" to true,
+            "skinLibraryPresent" to true,
+            "skinLibraryFiles" to 42,
+            "skinScriptsPresent" to true,
+            "skinScriptsFiles" to 5,
+        )
+        assertEquals(12, legacy.size)
+        assertTrue(manifest(legacy).validate(fullCounts()).isEmpty())
     }
 
     @Test

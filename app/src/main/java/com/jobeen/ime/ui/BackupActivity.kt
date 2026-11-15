@@ -107,16 +107,18 @@ class BackupActivity : ImeActivity() {
         uiState.busyText = getString(R.string.backup_working_create)
         lifecycleScope.launch(Dispatchers.IO) {
             try {
-                val bytes = BackupManager.createBackup(password)
+                val backup = BackupManager.createBackup(password)
                 password.fill(' ')
                 val written = contentResolver.openOutputStream(uri)?.use { out ->
-                    out.write(bytes)
+                    out.write(backup.bytes)
                     true
                 } ?: false
                 withContext(Dispatchers.Main) {
                     uiState.busyText = null
                     ToastUtil.showToast(
-                        if (written) getString(R.string.backup_done) else getString(R.string.backup_write_failed)
+                        if (!written) getString(R.string.backup_write_failed)
+                        else if (backup.skippedSkinSections.isNotEmpty()) getString(R.string.backup_done_skin_skipped)
+                        else getString(R.string.backup_done)
                     )
                 }
             } catch (e: Exception) {
@@ -170,10 +172,16 @@ class BackupActivity : ImeActivity() {
                 when (state) {
                     BackupManager.RestoreState.Running ->
                         uiState.busyText = getString(R.string.backup_working_restore)
-                    BackupManager.RestoreState.Done -> {
+                    is BackupManager.RestoreState.Done -> {
                         BackupManager.consumeRestoreState()
                         uiState.busyText = null
-                        ToastUtil.showToast(getString(R.string.backup_restore_done))
+                        ToastUtil.showToast(
+                            if (state.skippedAiMessages > 0) {
+                                getString(R.string.backup_restore_done_skipped, state.skippedAiMessages)
+                            } else {
+                                getString(R.string.backup_restore_done)
+                            }
+                        )
                         // 进程重启由 BackupManager 在置 Done 时自行安排：
                         // 离开本页的用户收不到这条观察，重启不能只挂在这里
                     }

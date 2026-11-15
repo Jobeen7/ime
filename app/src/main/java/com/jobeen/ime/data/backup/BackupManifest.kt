@@ -17,9 +17,11 @@ import org.json.JSONObject
  *
  * 计数表是 Map<String, Any>（Int 计数＋Boolean 存在标记共用一张
  * 表）：校验按 [MANIFEST_KEYS] 遍历，不再逐字段手抄；JSON 写出
- * 遍历 counts map 本身（手写 map 须恰好 12 键，否则往返不一致）。
+ * 遍历 counts map 本身（手写 map 须恰好 20 键，否则往返不一致）。
  * 加字段需在 [manifestCounts] 与 [MANIFEST_KEYS] 各加一行，
  * Boolean 键另进 BOOLEAN_KEYS、显示名不同另进 [MANIFEST_DISPLAY]。
+ * 旧清单只有 12 键：[fromJsonObject] 对新键缺失时跳过不记，
+ * [validate] 跳过清单里没有的键，旧备份不因此判损坏。
  *
  * JSON 转换（toJsonObject／fromJsonObject）走 org.json，本地 JVM
  * 单测跑不通（android.jar 的 org.json 是桩）；可测的是纯逻辑
@@ -29,10 +31,11 @@ internal data class BackupManifest(
     val payloadVersion: Int,
     val counts: Map<String, Any>,
 ) {
-    /** 逐项核对清单与实际计数，返回不符项描述（空 = 一致）。 */
+    /** 逐项核对清单与实际计数，返回不符项描述（空 = 一致）。清单里没有的键跳过（旧清单只有 12 键）。 */
     fun validate(actual: Map<String, Any>): List<String> {
         val mismatches = ArrayList<String>()
         for (key in MANIFEST_KEYS) {
+            if (key !in counts) continue
             val expected = counts[key]
             val got = actual[key]
             if (expected != got) {
@@ -56,6 +59,10 @@ internal data class BackupManifest(
             "prefsFiles", "prefsEntries",
             "clipboardCount", "clipboardGroupsCount",
             "phrasesCount", "prefersCount", "sortingsCount",
+            "aiProvidersCount", "aiInstructionsCount",
+            "aiConversationsCount", "aiMessagesCount",
+            "scriptItemsCount", "scriptVariablesCount",
+            "scriptTagsCount", "scriptTagCrossRefsCount",
             "inputStatsPresent", "skinLibraryPresent", "skinLibraryFiles",
             "skinScriptsPresent", "skinScriptsFiles",
         )
@@ -67,6 +74,14 @@ internal data class BackupManifest(
             "phrasesCount" to "phrases",
             "prefersCount" to "candidatePrefers",
             "sortingsCount" to "candidateSortings",
+            "aiProvidersCount" to "ai_providers",
+            "aiInstructionsCount" to "ai_instructions",
+            "aiConversationsCount" to "ai_conversations",
+            "aiMessagesCount" to "ai_messages",
+            "scriptItemsCount" to "script_items",
+            "scriptVariablesCount" to "script_variables",
+            "scriptTagsCount" to "script_tags",
+            "scriptTagCrossRefsCount" to "script_tag_cross_refs",
             "inputStatsPresent" to "inputStats",
             "skinLibraryPresent" to "skinLibrary",
             "skinScriptsPresent" to "skinScripts",
@@ -77,14 +92,30 @@ internal data class BackupManifest(
             "inputStatsPresent", "skinLibraryPresent", "skinScriptsPresent",
         )
 
+        /** v2 清单之后新增的计数键（旧清单无这些键，解析与校验都跳过）。 */
+        private val NEW_KEYS: Set<String> = setOf(
+            "aiProvidersCount", "aiInstructionsCount",
+            "aiConversationsCount", "aiMessagesCount",
+            "scriptItemsCount", "scriptVariablesCount",
+            "scriptTagsCount", "scriptTagCrossRefsCount",
+        )
+
         /**
          * 解析清单 JSON：字段缺失或类型不符返回 null（调用方按
          * “清单损坏”判整包失败）。payloadVersion 由调用方核对。
+         * 新键（AI／脚本计数）缺失时跳过不记——旧清单只有 12 键，
+         * 缺新键不是损坏；旧 12 键仍严格读，缺失即损坏。
          */
         fun fromJsonObject(obj: JSONObject): BackupManifest? = try {
             val counts = LinkedHashMap<String, Any>()
             for (key in MANIFEST_KEYS) {
-                counts[key] = if (key in BOOLEAN_KEYS) obj.getBoolean(key) else obj.getInt(key)
+                if (key in NEW_KEYS) {
+                    if (obj.has(key)) counts[key] = obj.getInt(key)
+                } else if (key in BOOLEAN_KEYS) {
+                    counts[key] = obj.getBoolean(key)
+                } else {
+                    counts[key] = obj.getInt(key)
+                }
             }
             BackupManifest(payloadVersion = obj.getInt("payloadVersion"), counts = counts)
         } catch (e: Exception) {
@@ -93,7 +124,7 @@ internal data class BackupManifest(
     }
 }
 
-/** 构造清单计数表（命名参数，调用点与旧 ManifestCounts 同形）。 */
+/** 构造清单计数表（命名参数，调用点与旧 ManifestCounts 同形）。新键默认 0，旧调用点可不传。 */
 internal fun manifestCounts(
     prefsFiles: Int,
     prefsEntries: Int,
@@ -102,6 +133,14 @@ internal fun manifestCounts(
     phrasesCount: Int,
     prefersCount: Int,
     sortingsCount: Int,
+    aiProvidersCount: Int = 0,
+    aiInstructionsCount: Int = 0,
+    aiConversationsCount: Int = 0,
+    aiMessagesCount: Int = 0,
+    scriptItemsCount: Int = 0,
+    scriptVariablesCount: Int = 0,
+    scriptTagsCount: Int = 0,
+    scriptTagCrossRefsCount: Int = 0,
     inputStatsPresent: Boolean,
     skinLibraryPresent: Boolean,
     skinLibraryFiles: Int,
@@ -115,6 +154,14 @@ internal fun manifestCounts(
     "phrasesCount" to phrasesCount,
     "prefersCount" to prefersCount,
     "sortingsCount" to sortingsCount,
+    "aiProvidersCount" to aiProvidersCount,
+    "aiInstructionsCount" to aiInstructionsCount,
+    "aiConversationsCount" to aiConversationsCount,
+    "aiMessagesCount" to aiMessagesCount,
+    "scriptItemsCount" to scriptItemsCount,
+    "scriptVariablesCount" to scriptVariablesCount,
+    "scriptTagsCount" to scriptTagsCount,
+    "scriptTagCrossRefsCount" to scriptTagCrossRefsCount,
     "inputStatsPresent" to inputStatsPresent,
     "skinLibraryPresent" to skinLibraryPresent,
     "skinLibraryFiles" to skinLibraryFiles,

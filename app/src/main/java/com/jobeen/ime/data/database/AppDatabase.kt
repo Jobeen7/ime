@@ -16,7 +16,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         AIInstruction::class, AIConversation::class, AIMessage::class,
         ScriptItem::class, ScriptTag::class, ScriptTagCrossRef::class, ScriptVariable::class,
     ],
-    version = 17,
+    version = 18,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -74,7 +74,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun build(context: Context, name: String): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
                 .addCallback(VACUUM_CALLBACK)
                 .addCallback(AI_SEED_CALLBACK)
                 .addCallback(SCRIPT_SEED_CALLBACK)
@@ -475,6 +475,23 @@ abstract class AppDatabase : RoomDatabase() {
             db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_ScriptVariable_uuid` ON `ScriptVariable` (`uuid`)")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_ScriptVariable_date` ON `ScriptVariable` (`date`)")
             ScriptSeeds.insertAll(db)
+        }
+
+        // v18：AIMessage 外键改 deferred（L-33）。SQLite 不支持改列／
+        // 改外键，整表重建：新表按 18.json 的 createSql（17.json
+        // 原样加 DEFERRABLE INITIALLY DEFERRED 后缀），复制数据、
+        // 删旧表、改名、重建 3 个索引。旧行数据一字不动。
+        private val MIGRATION_17_18: Migration = Migration(
+            startVersion = 17,
+            endVersion = 18,
+        ) { db ->
+            db.execSQL("CREATE TABLE IF NOT EXISTS `AIMessage_new` (`id` TEXT NOT NULL, `conversationId` TEXT, `role` TEXT NOT NULL, `status` TEXT NOT NULL, `sequence` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `originalInput` TEXT, `renderedRequest` TEXT, `userPromptName` TEXT, `content` TEXT NOT NULL, `tokenEstimate` INTEGER NOT NULL, `usageJSON` TEXT, `errorCategory` TEXT, `requestID` TEXT, `regenerationOfID` TEXT, `isSuperseded` INTEGER NOT NULL, `configSnapshotJSON` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`conversationId`) REFERENCES `AIConversation`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED)")
+            db.execSQL("INSERT INTO `AIMessage_new` (`id`, `conversationId`, `role`, `status`, `sequence`, `createdAt`, `originalInput`, `renderedRequest`, `userPromptName`, `content`, `tokenEstimate`, `usageJSON`, `errorCategory`, `requestID`, `regenerationOfID`, `isSuperseded`, `configSnapshotJSON`) SELECT `id`, `conversationId`, `role`, `status`, `sequence`, `createdAt`, `originalInput`, `renderedRequest`, `userPromptName`, `content`, `tokenEstimate`, `usageJSON`, `errorCategory`, `requestID`, `regenerationOfID`, `isSuperseded`, `configSnapshotJSON` FROM `AIMessage`")
+            db.execSQL("DROP TABLE IF EXISTS `AIMessage`")
+            db.execSQL("ALTER TABLE `AIMessage_new` RENAME TO `AIMessage`")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIMessage_conversationId` ON `AIMessage` (`conversationId`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIMessage_sequence` ON `AIMessage` (`sequence`)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIMessage_status` ON `AIMessage` (`status`)")
         }
     }
 }

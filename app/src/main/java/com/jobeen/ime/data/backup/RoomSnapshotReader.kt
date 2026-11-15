@@ -126,7 +126,7 @@ internal class RoomSnapshotReader(
     private fun readClipboard(db: SQLiteDatabase, schema: String): List<ClipboardRecord> {
         val out = ArrayList<ClipboardRecord>()
         db.rawQuery(
-            "SELECT id, text, timestamp, cloud, deleted, deletedAt, pinned, groupId, sortOrder " +
+            "SELECT id, text, timestamp, cloud, deleted, deletedAt, pinned, groupId, sortOrder, isFavorite " +
                 "FROM $schema.clipboard_records WHERE deleted = 0",
             null,
         ).use { cursor ->
@@ -139,6 +139,7 @@ internal class RoomSnapshotReader(
             val pinned = cursor.getColumnIndexOrThrow("pinned")
             val groupId = cursor.getColumnIndexOrThrow("groupId")
             val sortOrder = cursor.getColumnIndexOrThrow("sortOrder")
+            val isFavorite = cursor.getColumnIndexOrThrow("isFavorite")
             while (cursor.moveToNext()) {
                 out += ClipboardRecord(
                     id = cursor.getLong(id),
@@ -150,6 +151,7 @@ internal class RoomSnapshotReader(
                     pinned = cursor.getInt(pinned) != 0,
                     groupId = cursor.getLong(groupId),
                     sortOrder = cursor.getLong(sortOrder),
+                    isFavorite = cursor.getInt(isFavorite) != 0,
                 )
             }
         }
@@ -182,7 +184,7 @@ internal class RoomSnapshotReader(
     private fun readPhrases(db: SQLiteDatabase, schema: String): List<PhraseRecord> {
         val out = ArrayList<PhraseRecord>()
         db.rawQuery(
-            "SELECT id, text, label, createdAt, sortOrder, pinned FROM $schema.phrase_records " +
+            "SELECT id, text, label, createdAt, sortOrder, pinned, shortcut, category, tags, variables, lastUsedAt FROM $schema.phrase_records " +
                 "ORDER BY pinned DESC, sortOrder ASC, createdAt DESC",
             null,
         ).use { cursor ->
@@ -192,6 +194,11 @@ internal class RoomSnapshotReader(
             val createdAt = cursor.getColumnIndexOrThrow("createdAt")
             val sortOrder = cursor.getColumnIndexOrThrow("sortOrder")
             val pinned = cursor.getColumnIndexOrThrow("pinned")
+            val shortcut = cursor.getColumnIndexOrThrow("shortcut")
+            val category = cursor.getColumnIndexOrThrow("category")
+            val tags = cursor.getColumnIndexOrThrow("tags")
+            val variables = cursor.getColumnIndexOrThrow("variables")
+            val lastUsedAt = cursor.getColumnIndexOrThrow("lastUsedAt")
             while (cursor.moveToNext()) {
                 out += PhraseRecord(
                     id = cursor.getLong(id),
@@ -200,6 +207,11 @@ internal class RoomSnapshotReader(
                     createdAt = cursor.getLong(createdAt),
                     sortOrder = cursor.getLong(sortOrder),
                     pinned = cursor.getInt(pinned) != 0,
+                    shortcut = cursor.getString(shortcut) ?: "",
+                    category = cursor.getString(category) ?: "",
+                    tags = cursor.getString(tags) ?: "",
+                    variables = cursor.getString(variables) ?: "",
+                    lastUsedAt = cursor.getLong(lastUsedAt),
                 )
             }
         }

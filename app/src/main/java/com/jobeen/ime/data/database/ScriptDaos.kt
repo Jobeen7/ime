@@ -56,11 +56,17 @@ interface ScriptTagDao {
     @Insert
     suspend fun insert(tag: ScriptTag): Long
 
+    @Insert
+    suspend fun insertAll(tags: List<ScriptTag>): List<Long>
+
     @Update
     suspend fun update(tag: ScriptTag): Int
 
     @Query("DELETE FROM ScriptTag WHERE id = :id")
     suspend fun deleteById(id: Long): Int
+
+    @Query("DELETE FROM ScriptTag")
+    suspend fun deleteAll(): Int
 
     @Query("SELECT COUNT(*) FROM ScriptTag")
     suspend fun count(): Int
@@ -69,6 +75,9 @@ interface ScriptTagDao {
 /** 脚本↔标签交叉引用（WO52 8.1）。 */
 @Dao
 interface ScriptTagCrossRefDao {
+    @Query("SELECT * FROM ScriptTagCrossRef")
+    suspend fun getAll(): List<ScriptTagCrossRef>
+
     @Query("SELECT * FROM ScriptTagCrossRef WHERE scriptId = :scriptId")
     suspend fun getByScriptId(scriptId: Long): List<ScriptTagCrossRef>
 
@@ -78,11 +87,17 @@ interface ScriptTagCrossRefDao {
     @Insert
     suspend fun insert(ref: ScriptTagCrossRef)
 
+    @Insert
+    suspend fun insertAll(refs: List<ScriptTagCrossRef>)
+
     @Query("DELETE FROM ScriptTagCrossRef WHERE scriptId = :scriptId AND tagId = :tagId")
     suspend fun delete(scriptId: Long, tagId: Long): Int
 
     @Query("DELETE FROM ScriptTagCrossRef WHERE scriptId = :scriptId")
     suspend fun deleteByScriptId(scriptId: Long): Int
+
+    @Query("DELETE FROM ScriptTagCrossRef")
+    suspend fun deleteAll(): Int
 }
 
 /** 脚本变量（WO52 8.1）。 */
@@ -100,11 +115,17 @@ interface ScriptVariableDao {
     @Insert
     suspend fun insert(variable: ScriptVariable): Long
 
+    @Insert
+    suspend fun insertAll(variables: List<ScriptVariable>): List<Long>
+
     @Update
     suspend fun update(variable: ScriptVariable): Int
 
     @Query("DELETE FROM ScriptVariable WHERE id = :id")
     suspend fun deleteById(id: Long): Int
+
+    @Query("DELETE FROM ScriptVariable")
+    suspend fun deleteAll(): Int
 
     @Query("SELECT COUNT(*) FROM ScriptVariable")
     suspend fun count(): Int

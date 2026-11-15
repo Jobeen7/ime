@@ -28,8 +28,10 @@ data class AiBackupData(
  *   的 JSON 层据此**不写 `apiToken` 键**（备份文件里既无 token 值，
  *   也无该键名）。
  * - 还原：[providerForRestore] 强制 `apiToken = ""`——即使外来
- *   备份文件里带了 token 字段也丢弃，还原后由使用者重新自填。
- * - 备份清单（manifest）不加 AI 计数键（旧备份无这些键会校验失败）。
+ *   备份文件里带了 token 字段也丢弃；写回时本机 token 保留
+ *   （见 BackupManager.applyPayload，L-31），不靠重新自填恢复。
+ * - 备份清单（manifest）含 AI 计数键（L-32；旧清单无这些键时
+ *   校验跳过，不判损坏）。
  *
  * org.json 的读写只在 BackupManager 里做 plumbing（Android 侧，
  * 不进主机单测）；token 规则本身全在这一层，可单测。

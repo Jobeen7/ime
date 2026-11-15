@@ -771,7 +771,9 @@
     <string name="backup_working_create">正在生成备份…</string>
     <string name="backup_working_restore">正在还原…</string>
     <string name="backup_done">备份已保存</string>
+    <string name="backup_done_skin_skipped">备份完成，皮肤过大，已跳过</string>
     <string name="backup_restore_done">还原完成，应用即将重启</string>
+    <string name="backup_restore_done_skipped">还原完成，%1$d 条 AI 消息无所属会话已跳过，应用即将重启</string>
     <string name="backup_cancel">取消</string>
     <string name="backup_confirm_create">加密并保存</string>
     <string name="backup_confirm_restore">输入口令并还原</string>

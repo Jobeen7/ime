@@ -22,9 +22,9 @@ import org.junit.Test
  * SQLite 引擎，见 [CliSupportSQLiteDatabase]），断言新表结构＋
  * 旧数据不丢＋种子落盘。
  *
- * 范围：schema JSON 只导出到 v10（app/schemas 下 10–17.json），
- * 故执行链从 v10 起跑（10→17 共 7 段）；1→10 无 JSON 建库，仍由
- * [AppDatabaseMigrationTest.migrationChain_covers14to17] 的反射
+ * 范围：schema JSON 只导出到 v10（app/schemas 下 10–18.json），
+ * 故执行链从 v10 起跑（10→18 共 8 段）；1→10 无 JSON 建库，仍由
+ * [AppDatabaseMigrationTest.migrationChain_covers14to18] 的反射
  * 链连续性覆盖。仓库外脚本
  * ~/workspace/system/wo52-g6-migration-check.py 只作补充，不再是
  * 唯一端到端证据。
@@ -172,7 +172,7 @@ class AppDatabaseMigrationExecTest {
             .replace("IF NOT EXISTS ", "")
 
     @Test
-    fun migrate_10to17_fullChain_executesEachSegmentAndPreservesData() {
+    fun migrate_10to18_fullChain_executesEachSegmentAndPreservesData() {
         val db = buildDbAtVersion(10)
         // 种子旧数据：常用语一行（v10 的 phrase_records 只有
         // id／text／label／createdAt 四列）＋偏好一行。
@@ -184,11 +184,11 @@ class AppDatabaseMigrationExecTest {
             "INSERT INTO `candidate_prefers` (`text`,`click_count`,`context`,`created_at`,`updated_at`) " +
                 "VALUES ('测试',3,'ctx',1700000000000,1700000000000)",
         )
-        migrate(db, 10, 17)
+        migrate(db, 10, 18)
         // 新表（AI 七表＋脚本四表）由本次迁移链新建，建表 SQL 逐字比对；
         // 旧表（ALTER 过的 phrase_records 等）只比逐列结构。
         assertSchemaMatches(
-            db, 17,
+            db, 18,
             freshTables = setOf(
                 "AIProvider", "AIProviderModel", "AISystemPrompt", "AIUserPrompt",
                 "AIInstruction", "AIConversation", "AIMessage",
@@ -256,8 +256,8 @@ class AppDatabaseMigrationExecTest {
         assertEquals(3L, db.count("AIUserPrompt"))
         assertEquals(4L, db.count("AIInstruction"))
         // 外键 deferral 与 schema JSON 建表 SQL 一致（L-33 口径：
-        // AIProvider／AIProviderModel 为 deferred，AIMessage 当前
-        // 仍为即时——此处只断与 schema 一致，不另定 L-33 的口径）。
+        // AIProvider／AIProviderModel 为 deferred；AIMessage 在 v18
+        // 才改 deferred，此处 16.json 仍为即时）。
         assertSchemaMatches(
             db, 16,
             freshTables = setOf(
@@ -289,5 +289,29 @@ class AppDatabaseMigrationExecTest {
             db, 17,
             freshTables = setOf("ScriptItem", "ScriptTag", "ScriptTagCrossRef", "ScriptVariable"),
         )
+    }
+
+    @Test
+    fun migrate_17to18_rebuildsAiMessageDeferred_preservesRows() {
+        val db = buildDbAtVersion(17)
+        db.execSQL(
+            "INSERT INTO `AIConversation` (`id`,`title`,`createdAt`,`updatedAt`,`isTitleUserEdited`) " +
+                "VALUES ('conv-1','会话',1700000000000,1700000000000,0)",
+        )
+        db.execSQL(
+            "INSERT INTO `AIMessage` (`id`,`conversationId`,`role`,`status`,`sequence`,`createdAt`,`content`) " +
+                "VALUES ('msg-1','conv-1','user','complete',1,1700000000000,'你好')",
+        )
+        migrate(db, 17, 18)
+        // 旧数据不丢（整表重建只换外键定义，行原样复制）。
+        assertEquals(
+            "你好",
+            db.scalar("SELECT `content` FROM `AIMessage` WHERE `id`='msg-1';"),
+        )
+        // 外键改 deferred：建表 SQL 与 18.json 逐字一致（含后缀）。
+        val messageSql = db.tableSql("AIMessage") ?: ""
+        assertTrue(messageSql.contains("DEFERRABLE INITIALLY DEFERRED"))
+        assertSchemaMatches(db, 18, freshTables = setOf("AIMessage"))
+        assertTrue(db.isDatabaseIntegrityOk)
     }
 }

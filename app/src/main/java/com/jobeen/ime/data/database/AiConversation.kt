@@ -50,6 +50,9 @@ data class AIConversation(
             parentColumns = ["id"],
             childColumns = ["conversationId"],
             onDelete = ForeignKey.CASCADE,
+            // L-33：deferred——还原时消息先于会话插（与 AIProvider／
+            // AIProviderModel 同款），提交时才校验外键。
+            deferred = true,
         ),
     ],
 )

@@ -3,6 +3,8 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.data.backup.BackupManager
+import com.jobeen.ime.data.backup.filterOrphanMessages
+import com.jobeen.ime.data.database.AIMessage
 import com.jobeen.ime.data.database.CandidatePrefer
 import com.jobeen.ime.data.database.CandidateSorting
 import com.jobeen.ime.data.database.ClipboardRecord
@@ -137,5 +139,52 @@ class BackupMergeRestoreTest {
         val merged = BackupManager.mergePhrasesForRestore(emptyList(), backup)
         assertEquals(listOf("你好"), merged.map { it.text })
         assertEquals(0L, merged[0].id)
+    }
+
+    // —— 孤儿 AI 消息（L-33）：conversationId 不在恢复会话集内跳过，
+    // null conversationId 是合法值（FK 不约束 NULL），保留 ——
+
+    private fun aiMessage(id: String, conversationId: String?) = AIMessage(
+        id = id,
+        conversationId = conversationId,
+        role = "user",
+        status = "complete",
+        sequence = 1,
+        createdAt = 100,
+        content = "hi",
+    )
+
+    @Test
+    fun orphanMessages_skipped_nullConversationKept() {
+        val messages = listOf(
+            aiMessage("m1", "c1"),
+            aiMessage("m2", "c9"),
+            aiMessage("m3", null),
+        )
+        val (kept, skipped) = filterOrphanMessages(messages, setOf("c1", "c2"))
+        assertEquals(listOf("m1", "m3"), kept.map { it.id })
+        assertEquals(1, skipped)
+    }
+
+    @Test
+    fun orphanMessages_emptyConversationSet_keepsOnlyNull() {
+        val messages = listOf(
+            aiMessage("m1", "c1"),
+            aiMessage("m3", null),
+        )
+        val (kept, skipped) = filterOrphanMessages(messages, emptySet())
+        assertEquals(listOf("m3"), kept.map { it.id })
+        assertEquals(1, skipped)
+    }
+
+    @Test
+    fun orphanMessages_allKept_skippedZero() {
+        val messages = listOf(
+            aiMessage("m1", "c1"),
+            aiMessage("m2", "c2"),
+        )
+        val (kept, skipped) = filterOrphanMessages(messages, setOf("c1", "c2"))
+        assertEquals(listOf("m1", "m2"), kept.map { it.id })
+        assertEquals(0, skipped)
     }
 }

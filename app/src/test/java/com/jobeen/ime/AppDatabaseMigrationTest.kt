@@ -17,7 +17,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * AppDatabase 迁移链单测（WO52 6.1 v14→15；9.1 v15→16；8.1 v16→17）。
+ * AppDatabase 迁移链单测（WO52 6.1 v14→15；9.1 v15→16；8.1 v16→17；L-33 v17→18）。
  *
  * 本文件只验静态面：Room 编译期生成的 schema JSON（app/schemas
  * 下，用 kotlinx.serialization 解析——org.json 在主机单测里是桩）、
@@ -63,20 +63,44 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun databaseVersion_is17() {
-        assertEquals(17, schemaDb(17)["version"]!!.jsonPrimitive.int)
+    fun databaseVersion_is18() {
+        assertEquals(18, schemaDb(18)["version"]!!.jsonPrimitive.int)
     }
 
     @Test
-    fun migrationChain_covers14to17() {
+    fun migrationChain_covers14to18() {
         val pairs = migrationPairs()
         assertTrue("迁移链应含 14→15（WO52 6.1），实际：$pairs", pairs.contains(14 to 15))
         assertTrue("迁移链应含 15→16（WO52 9.1），实际：$pairs", pairs.contains(15 to 16))
         assertTrue("迁移链应含 16→17（WO52 8.1），实际：$pairs", pairs.contains(16 to 17))
-        // 链连续：1→17 每一步都有迁移（无断链、无跳号）
-        for (v in 1 until 17) {
+        assertTrue("迁移链应含 17→18（L-33），实际：$pairs", pairs.contains(17 to 18))
+        // 链连续：1→18 每一步都有迁移（无断链、无跳号）
+        for (v in 1 until 18) {
             assertTrue("迁移链缺 $v→${v + 1}", pairs.contains(v to v + 1))
         }
+    }
+
+    @Test
+    fun schema18_aiMessageFkDeferred() {
+        // L-33：AIMessage 外键改 deferred（本版 Room 的 schema JSON
+        // 不序列化 deferred 字段，改断建表 SQL 含 DEFERRABLE
+        // INITIALLY DEFERRED，与 schema16 的 provider／model 同口径）。
+        // 其余面（字段、索引、外键指向与级联）与 v17 一字不动。
+        val tables = entities(schemaDb(18)).associateBy {
+            it["tableName"]!!.jsonPrimitive.content
+        }
+        val messageSql = tables["AIMessage"]!!["createSql"]!!.jsonPrimitive.content
+        assertTrue(messageSql.contains("DEFERRABLE INITIALLY DEFERRED"))
+        val fields = tables["AIMessage"]!!["fields"]!!.jsonArray
+            .map { it.jsonObject["columnName"]!!.jsonPrimitive.content }
+        assertEquals(entities(schemaDb(17)).first {
+            it["tableName"]!!.jsonPrimitive.content == "AIMessage"
+        }["fields"]!!.jsonArray.map {
+            it.jsonObject["columnName"]!!.jsonPrimitive.content
+        }, fields)
+        val messageFk = tables["AIMessage"]!!["foreignKeys"]!!.jsonArray.single().jsonObject
+        assertEquals("AIConversation", messageFk["table"]!!.jsonPrimitive.content)
+        assertEquals("CASCADE", messageFk["onDelete"]!!.jsonPrimitive.content)
     }
 
     @Test

@@ -23,6 +23,10 @@ import com.jobeen.ime.data.database.ClipboardGroup
 import com.jobeen.ime.data.database.ClipboardRecord
 import com.jobeen.ime.data.database.dedupeClipboardByText
 import com.jobeen.ime.data.database.PhraseRecord
+import com.jobeen.ime.data.database.ScriptItem
+import com.jobeen.ime.data.database.ScriptTag
+import com.jobeen.ime.data.database.ScriptTagCrossRef
+import com.jobeen.ime.data.database.ScriptVariable
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.skin.script.SkinScriptIds
@@ -138,9 +142,26 @@ object BackupManager {
 
     // ---------------- 备份 ----------------
 
+    /** 备份出包结果：文件字节＋因超限跳过的皮肤段（B-B-7，8MB 上限不动）。 */
+    data class CreatedBackup(
+        val bytes: ByteArray,
+        val skippedSkinSections: Set<String> = emptySet(),
+    )
+
+    /** 采集结果：载荷 JSON＋因超限跳过的皮肤段。 */
+    private data class CollectedPayload(
+        val json: JSONObject,
+        val skippedSkinSections: Set<String> = emptySet(),
+    )
+
     /** 采集当前数据并加密，返回完整备份文件字节（头部行 + 密文） */
-    suspend fun createBackup(password: CharArray): ByteArray =
-        encryptPayload(collectPayload("备份"), password)
+    suspend fun createBackup(password: CharArray): CreatedBackup {
+        val collected = collectPayload("备份")
+        return CreatedBackup(
+            bytes = encryptPayload(collected.json, password),
+            skippedSkinSections = collected.skippedSkinSections,
+        )
+    }
 
     /** 把已收集的载荷 JSON 加密为备份文件字节。 */
     private fun encryptPayload(payloadJson: JSONObject, password: CharArray): ByteArray {
@@ -166,9 +187,11 @@ object BackupManager {
         return headerBytes + byteArrayOf('\n'.code.toByte()) + encrypted
     }
 
-    private suspend fun collectPayload(operation: String = "备份"): JSONObject {
+    private suspend fun collectPayload(operation: String = "备份"): CollectedPayload {
         val root = JSONObject()
         val guard = BackupChangeGuard()
+        // 因超限跳过的皮肤段（B-B-7）：只记名，不阻塞整包；调用方据此提示用户。
+        val skippedSkinSections = HashSet<String>()
 
         // —— SharedPreferences：枚举 shared_prefs 目录全部文件整表导出
         val prefsDir = File(appContext.applicationInfo.dataDir, "shared_prefs")
@@ -269,7 +292,7 @@ object BackupManager {
                     .put("id", r.id).put("text", r.text).put("timestamp", r.timestamp)
                     .put("cloud", r.cloud).put("deleted", r.deleted).put("deletedAt", r.deletedAt)
                     .put("pinned", r.pinned).put("sortOrder", r.sortOrder)
-                    .put("groupId", r.groupId)
+                    .put("groupId", r.groupId).put("isFavorite", r.isFavorite)
             )
         }
         root.put("clipboard", clips)
@@ -295,6 +318,9 @@ object BackupManager {
                     .put("id", r.id).put("text", r.text)
                     .put("label", r.label).put("createdAt", r.createdAt)
                     .put("sortOrder", r.sortOrder).put("pinned", r.pinned)
+                    .put("shortcut", r.shortcut).put("category", r.category)
+                    .put("tags", r.tags).put("variables", r.variables)
+                    .put("lastUsedAt", r.lastUsedAt)
             )
         }
         root.put("phrases", phrases)
@@ -322,7 +348,6 @@ object BackupManager {
         // —— AI 七表（WO52 9.1）：经 AiBackupCodec 脱敏后出包——服务商
         // apiToken 一律清空，且 JSON 里**不写 `apiToken` 键**（token
         // 永不进备份文件；对端备份明文存 AI Token 是缺陷，不照搬）。
-        // 清单（manifest）不加 AI 计数键（旧备份无这些键会校验失败）。
         // DAO 直读（导出在后台协程内；AI 表在备份窗口内几乎不动，
         // 与 prefs 段同口径，不走 RoomSnapshotReader 的快照读）。
         val aiDb = AppDatabase.getInstance(appContext)
@@ -434,6 +459,53 @@ object BackupManager {
         }
         root.put("ai_messages", aiMsgJson)
 
+        // —— 脚本四表（B-B-3）：DAO 直读（与 AI 七表同款，后台协程）。
+        // 脚本是用户数据而非库代次，还原即整表替换（见 applyPayload）；
+        // 旧备份无此段时还原不碰现脚本（ParsedBackup.scripts 为 null）。
+        val scriptItems = aiDb.scriptItemDao().getAll()
+        val scriptVariables = aiDb.scriptVariableDao().getAll()
+        val scriptTags = aiDb.scriptTagDao().getAll()
+        val scriptTagCrossRefs = aiDb.scriptTagCrossRefDao().getAll()
+        val scriptItemsJson = JSONArray()
+        for (s in scriptItems) {
+            val o = JSONObject()
+                .put("id", s.id).put("uuid", s.uuid).put("iconName", s.iconName)
+                .put("iconType", s.iconType).put("name", s.name).put("content", s.content)
+                .put("isFavorite", s.isFavorite).put("sort", s.sort).put("date", s.date)
+                .put("allowPasteboard", s.allowPasteboard)
+                .put("resultInsertState", s.resultInsertState)
+                .put("closeWindowState", s.closeWindowState)
+            s.downloadURL?.let { o.put("downloadURL", it) }
+            scriptItemsJson.put(o)
+        }
+        root.put("script_items", scriptItemsJson)
+        val scriptVariablesJson = JSONArray()
+        for (v in scriptVariables) {
+            scriptVariablesJson.put(
+                JSONObject()
+                    .put("id", v.id).put("uuid", v.uuid).put("key", v.key)
+                    .put("value", v.value).put("isSecure", v.isSecure).put("date", v.date),
+            )
+        }
+        root.put("script_variables", scriptVariablesJson)
+        val scriptTagsJson = JSONArray()
+        for (t in scriptTags) {
+            scriptTagsJson.put(
+                JSONObject()
+                    .put("id", t.id).put("uuid", t.uuid).put("name", t.name)
+                    .put("color", t.color).put("date", t.date),
+            )
+        }
+        root.put("script_tags", scriptTagsJson)
+        val scriptTagCrossRefsJson = JSONArray()
+        for (r in scriptTagCrossRefs) {
+            scriptTagCrossRefsJson.put(
+                JSONObject()
+                    .put("scriptId", r.scriptId).put("tagId", r.tagId),
+            )
+        }
+        root.put("script_tag_cross_refs", scriptTagCrossRefsJson)
+
         // —— 输入统计（2026-10-29 批量第 4 项）：文件型数据不进 prefs
         // 枚举，须显式采集；内容仅计数与时长、无输入内容（InputStats
         // 自身口径）。超 1MB 的异常文件跳过（不阻塞整包备份）。
@@ -456,13 +528,17 @@ object BackupManager {
         }
 
         // —— 皮肤库文件：index.json + skins/ + assets/（合并写回，见 KDoc）；
-        // 空库或超限时 collectSkinLibraryJson 返回 null，即不写该段。
-        collectSkinLibraryJson(guard, operation)?.let { root.put("skin_library", it) }
+        // 空库时不写该段；超限时整段跳过、记入 skippedSkinSections（B-B-7）。
+        val skinLibrary = collectSkinLibraryJson(guard, operation)
+        skinLibrary.json?.let { root.put("skin_library", it) }
+        if (skinLibrary.skippedOverLimit) skippedSkinSections += RestoreJournal.SECTION_SKIN_LIBRARY
 
         // —— 皮肤脚本文件：filesDir/skin_scripts（整表替换写回，见 KDoc）；
-        // 超限时 collectSkinScriptsJson 返回 null，即不写该段；无脚本
+        // 超限时整段跳过、记入 skippedSkinSections（B-B-7）；无脚本
         // 时带空段，使还原失败回放能恢复到“还原前无脚本”状态。
-        collectSkinScriptsJson(guard, operation)?.let { root.put("skin_scripts", it) }
+        val skinScripts = collectSkinScriptsJson(guard, operation)
+        skinScripts.json?.let { root.put("skin_scripts", it) }
+        if (skinScripts.skippedOverLimit) skippedSkinSections += RestoreJournal.SECTION_SKIN_SCRIPTS
 
         // —— 结算重验（WO33 第 1 项，D-M1 残余窗口的缓解）——
         // 采集全部结束、清单附上之前，把本次读过的全部文件（prefs
@@ -510,6 +586,14 @@ object BackupManager {
                 phrasesCount = phraseRows.size,
                 prefersCount = preferRows.size,
                 sortingsCount = sortingRows.size,
+                aiProvidersCount = aiExport.providers.size,
+                aiInstructionsCount = aiExport.instructions.size,
+                aiConversationsCount = aiExport.conversations.size,
+                aiMessagesCount = aiExport.messages.size,
+                scriptItemsCount = scriptItems.size,
+                scriptVariablesCount = scriptVariables.size,
+                scriptTagsCount = scriptTags.size,
+                scriptTagCrossRefsCount = scriptTagCrossRefs.size,
                 inputStatsPresent = root.has("input_stats_json"),
                 skinLibraryPresent = root.has("skin_library"),
                 skinLibraryFiles = root.optJSONObject("skin_library")
@@ -520,23 +604,33 @@ object BackupManager {
             ),
         )
         root.put("manifest", manifest.toJsonObject())
-        return root
+        return CollectedPayload(root, skippedSkinSections)
     }
 
     /** 皮肤库备份原始字节上限：超限整段跳过只记日志（仿 input_stats 跳过模式）。 */
     private const val SKIN_BACKUP_MAX_RAW_BYTES = 8L * 1024 * 1024
 
     /**
+     * 皮肤段采集结果：json 为 null 即不写该段；skippedOverLimit 为真
+     * 表示原始字节超 8MB 整段跳过（B-B-7，调用方据此提示用户），
+     * 与“空库不写段”区分——空库不是跳过，不提示。
+     */
+    private data class SkinSectionResult(
+        val json: JSONObject?,
+        val skippedOverLimit: Boolean,
+    )
+
+    /**
      * 皮肤库段采集：index.json（文本，读不到则 null）+ skins/ 与 assets/
      * 下全部文件（相对路径 → Base64）。只认 App.skinLibraryDir 这一唯一
      * 目录来源；相对路径须过 canonical 校验（防符号链接逃逸）；空库
-     * （无 index 且无文件）返回 null，即不写该段；原始字节总量超
-     * 8MB 整段跳过只记日志（不阻塞整包）。
+     * （无 index 且无文件）返回空段，即不写该段；原始字节总量超
+     * 8MB 整段跳过只记日志（不阻塞整包），skippedOverLimit 为真。
      */
     private fun collectSkinLibraryJson(
         guard: BackupChangeGuard,
         operation: String,
-    ): JSONObject? {
+    ): SkinSectionResult {
         val rootDir = App.skinLibraryDir
         val indexFile = File(rootDir, "index.json")
         val indexText = if (indexFile.isFile) {
@@ -551,7 +645,8 @@ object BackupManager {
         } else {
             null
         }
-        val canonicalRoot = runCatching { rootDir.canonicalPath }.getOrNull() ?: return null
+        val canonicalRoot = runCatching { rootDir.canonicalPath }.getOrNull()
+            ?: return SkinSectionResult(null, false)
         val filesJson = JSONObject()
         var totalBytes = 0L
         for (sub in listOf("skins", "assets")) {
@@ -570,16 +665,16 @@ object BackupManager {
                 totalBytes += bytes.size
                 if (totalBytes > SKIN_BACKUP_MAX_RAW_BYTES) {
                     Timber.w("skin library too large, skipped in backup")
-                    return null
+                    return SkinSectionResult(null, true)
                 }
                 filesJson.put(rel, bytes.toBase64())
             }
         }
-        if (indexText == null && filesJson.length() == 0) return null
+        if (indexText == null && filesJson.length() == 0) return SkinSectionResult(null, false)
         val section = JSONObject()
         if (indexText != null) section.put("index", indexText)
         section.put("files", filesJson)
-        return section
+        return SkinSectionResult(section, false)
     }
 
     /** 皮肤脚本备份原始字节上限：超限整段跳过只记日志（仿皮肤库跳过模式）。 */
@@ -592,17 +687,17 @@ object BackupManager {
      * 与 [isValidSkinScriptRelPath]（仅 <id>/script.js 与
      * <id>/meta.json，半写 .tmp 与其它文件跳过不进包）；无脚本
      * 时返回空 files 段（非 null，见 KDoc 回放口径）；原始字节
-     * 总量超限返回 null，即不写该段。
+     * 总量超限返回跳过段，即不写该段，skippedOverLimit 为真。
      */
     private fun collectSkinScriptsJson(
         guard: BackupChangeGuard,
         operation: String,
-    ): JSONObject? {
+    ): SkinSectionResult {
         val rootDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
         val filesJson = JSONObject()
         if (rootDir.isDirectory) {
             val canonicalRoot = runCatching { rootDir.canonicalPath }.getOrNull()
-                ?: return null
+                ?: return SkinSectionResult(null, false)
             var totalBytes = 0L
             for (file in rootDir.walkTopDown().filter { it.isFile }.sortedBy { it.path }) {
                 val canonical = runCatching { file.canonicalPath }.getOrNull() ?: continue
@@ -617,14 +712,14 @@ object BackupManager {
                 totalBytes += bytes.size
                 if (totalBytes > SKIN_SCRIPTS_BACKUP_MAX_RAW_BYTES) {
                     Timber.w("skin scripts too large, skipped in backup")
-                    return null
+                    return SkinSectionResult(null, true)
                 }
                 filesJson.put(rel, bytes.toBase64())
             }
         }
         val section = JSONObject()
         section.put("files", filesJson)
-        return section
+        return SkinSectionResult(section, false)
     }
 
     private fun encodePrefValue(value: Any): JSONObject {
@@ -657,7 +752,43 @@ object BackupManager {
      * 已不在内存，加密快照无法解密；应用沙箱私有权＋云备份排除，
      * 保护级别与现库／prefs 同级）。
      */
-    suspend fun restoreBackup(bytes: ByteArray, password: CharArray) {
+    /**
+     * 回滚快照内存 token 补丁（L-31）：快照解析后 provider token
+     * 已被强制清空，用现库 token 直接 patch（重构整个 ParsedBackup
+     * 对象，只用于内存回滚；落盘 journal 快照仍不含 token）。
+     * 磁盘回滚路径读 journal 文件，不动，靠 applyPayload 的保留
+     * 逻辑兜底。
+     */
+    private suspend fun patchSnapshotTokens(snapshot: ParsedBackup): ParsedBackup {
+        val ai = snapshot.ai ?: return snapshot
+        val localTokens = AppDatabase.getInstance(appContext)
+            .aiProviderDao().getAll().associate { it.id to it.apiToken }
+        if (localTokens.isEmpty()) return snapshot
+        val patched = ai.copy(
+            providers = ai.providers.map { provider ->
+                provider.copy(apiToken = localTokens[provider.id] ?: provider.apiToken)
+            },
+        )
+        return ParsedBackup(
+            prefs = snapshot.prefs,
+            clipboard = snapshot.clipboard,
+            clipboardGroups = snapshot.clipboardGroups,
+            phrases = snapshot.phrases,
+            prefers = snapshot.prefers,
+            sortings = snapshot.sortings,
+            inputStatsJson = snapshot.inputStatsJson,
+            skinLibrary = snapshot.skinLibrary,
+            skinScripts = snapshot.skinScripts,
+            ai = patched,
+            scripts = snapshot.scripts,
+        )
+    }
+
+    /**
+     * 还原流程主调（解密→解析→快照→合并→写回→回滚兜底）。
+     * 返回还原时跳过的孤儿 AI 消息条数（L-33）。
+     */
+    suspend fun restoreBackup(bytes: ByteArray, password: CharArray): Int {
         val payload = decryptPayload(bytes, password)
         val parsed = parsePayload(payload)
         // 快照解析结构直接取自当前状态的采集结果——回滚回放是把我们
@@ -665,7 +796,7 @@ object BackupManager {
         // 轮 60 万次 PBKDF2）。采集本身可能因采集中途数据变了而失败
         // （BackupDataChangedException），此时尚未写任何数据，直接失败。
         val snapshotJson = collectPayload("还原")
-        val snapshotParsed = parsePayload(snapshotJson)
+        val snapshotParsed = patchSnapshotTokens(parsePayload(snapshotJson.json))
         // 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
         // 脚本段缺失且还原前确有脚本（超 8MB 跳段或采集失败），或皮肤
         // 库段缺失且还原前确有皮肤文件（同理），回滚后这些数据即永久丢
@@ -705,7 +836,7 @@ object BackupManager {
         try {
             AtomicFiles.write(
                 snapshotFile,
-                snapshotJson.toString().toByteArray(Charsets.UTF_8),
+                snapshotJson.json.toString().toByteArray(Charsets.UTF_8),
             )
         } catch (e: Exception) {
             throw BackupException(backupString(R.string.backup_restore_prepare_snapshot_failed, e.message ?: backupString(R.string.backup_disk_write_failed)))
@@ -729,6 +860,7 @@ object BackupManager {
             throw BackupException(backupString(R.string.backup_restore_prepare_journal_failed, e.message ?: backupString(R.string.backup_disk_write_failed)))
         }
         RestoreJournal.sweepOrphanSnapshots(journalDir, token)
+        var skippedAiMessages = 0
         try {
             // REPLACING 是强制推进：journal 推进不了就不开始写盘——
             // 没有 journal 兜底的写盘，中断后无从对账。
@@ -736,7 +868,7 @@ object BackupManager {
             // 写入与回滚都不可取消：调用方协程被取消（界面销毁等）时
             // 半途而废比继续写完更糟——半还原状态正是快照机制要防的
             withContext(NonCancellable) {
-                applyPayload(
+                skippedAiMessages = applyPayload(
                     merged,
                     onSectionStart = { section ->
                         // D-P1（WO36）：皮肤段开始标记是强制推进——标记
@@ -828,6 +960,7 @@ object BackupManager {
                 else backupString(R.string.backup_restore_failed_rollback_failed, e.message ?: backupString(R.string.backup_unknown_error))
             )
         }
+        return skippedAiMessages
     }
 
     // —— 应用级还原执行（不随界面销毁取消） ——
@@ -836,7 +969,8 @@ object BackupManager {
     sealed interface RestoreState {
         data object Idle : RestoreState
         data object Running : RestoreState
-        data object Done : RestoreState
+        /** skippedAiMessages：还原时跳过的孤儿 AI 消息条数（L-33）。 */
+        data class Done(val skippedAiMessages: Int = 0) : RestoreState
         data class Failed(val message: String) : RestoreState
     }
 
@@ -888,8 +1022,8 @@ object BackupManager {
         _restoreState.value = RestoreState.Running
         restoreScope.launch {
             try {
-                restoreBackup(bytes, password)
-                _restoreState.value = RestoreState.Done
+                val skippedAiMessages = restoreBackup(bytes, password)
+                _restoreState.value = RestoreState.Done(skippedAiMessages = skippedAiMessages)
                 // 正常还原成功：旧的中断记录已随新 journal 被取代／清掉，
                 // 提示随之消失。
                 _interruptedRestore.value = null
@@ -1047,7 +1181,7 @@ object BackupManager {
                     is DiskRollbackResult.RolledBack -> {
                         if (result.uncoveredSections.isEmpty()) {
                             _interruptedRestore.value = null
-                            _restoreState.value = RestoreState.Done
+                            _restoreState.value = RestoreState.Done()
                             scheduleProcessRestart(generation)
                         } else {
                             throw BackupException(
@@ -1298,6 +1432,14 @@ object BackupManager {
         val files: Map<String, ByteArray>,
     )
 
+    /** 脚本备份段：四表全量。 */
+    private data class ScriptBackupData(
+        val items: List<ScriptItem>,
+        val variables: List<ScriptVariable>,
+        val tags: List<ScriptTag>,
+        val crossRefs: List<ScriptTagCrossRef>,
+    )
+
     private class ParsedBackup(
         val prefs: Map<String, Map<String, Any>>,
         val clipboard: List<ClipboardRecord>,
@@ -1314,6 +1456,8 @@ object BackupManager {
         val skinScripts: SkinScriptsBackup?,
         /** AI 七表（null = 旧备份无此段，还原不碰现 AI 表；有段即整表替换，见 applyPayload） */
         val ai: AiBackupData?,
+        /** 脚本四表（null = 旧备份无此段，还原不碰现脚本；有段即整表替换，见 applyPayload） */
+        val scripts: ScriptBackupData?,
     )
 
     /**
@@ -1366,6 +1510,8 @@ object BackupManager {
                     pinned = o.optBoolean("pinned"),
                     // 旧备份无此字段，按未分组还原
                     groupId = o.optLong("groupId"),
+                    // 旧备份无此字段，按未收藏还原
+                    isFavorite = o.optBoolean("isFavorite"),
                     // 旧备份无排序序号：用 -timestamp 派生，保持备份内的时间倒序
                     sortOrder = if (o.has("sortOrder")) o.optLong("sortOrder")
                     else -o.optLong("timestamp"),
@@ -1400,6 +1546,12 @@ object BackupManager {
                     else -o.optLong("createdAt"),
                     // 旧备份无此字段，按未置顶还原
                     pinned = o.optBoolean("pinned"),
+                    // 旧备份无此字段，按空／0 还原
+                    shortcut = o.optString("shortcut"),
+                    category = o.optString("category"),
+                    tags = o.optString("tags"),
+                    variables = o.optString("variables"),
+                    lastUsedAt = o.optLong("lastUsedAt"),
                 )
             }
 
@@ -1576,6 +1728,73 @@ object BackupManager {
                 )
             }
 
+            // 脚本四表（B-B-3）：无 script_items 段 = 旧备份，还原不碰
+            // 现脚本；有段即整表替换（空数组 = 备份时表就是空的）。
+            val scripts = if (!root.has("script_items")) {
+                null
+            } else {
+                val itemsJson = root.optJSONArray("script_items") ?: JSONArray()
+                val itemList = ArrayList<ScriptItem>(itemsJson.length())
+                for (i in 0 until itemsJson.length()) {
+                    val o = itemsJson.getJSONObject(i)
+                    itemList += ScriptItem(
+                        id = o.optLong("id", 0),
+                        uuid = o.optString("uuid"),
+                        iconName = o.optString("iconName"),
+                        iconType = o.optInt("iconType"),
+                        name = o.optString("name"),
+                        content = o.optString("content"),
+                        isFavorite = o.optBoolean("isFavorite"),
+                        sort = o.optInt("sort"),
+                        date = o.optLong("date"),
+                        allowPasteboard = o.optBoolean("allowPasteboard"),
+                        resultInsertState = o.optBoolean("resultInsertState"),
+                        closeWindowState = o.optBoolean("closeWindowState"),
+                        downloadURL = if (o.has("downloadURL")) o.optString("downloadURL") else null,
+                    )
+                }
+                val variablesJson = root.optJSONArray("script_variables") ?: JSONArray()
+                val varList = ArrayList<ScriptVariable>(variablesJson.length())
+                for (i in 0 until variablesJson.length()) {
+                    val o = variablesJson.getJSONObject(i)
+                    varList += ScriptVariable(
+                        id = o.optLong("id", 0),
+                        uuid = o.optString("uuid"),
+                        key = o.optString("key"),
+                        value = o.optString("value"),
+                        isSecure = o.optBoolean("isSecure"),
+                        date = o.optLong("date"),
+                    )
+                }
+                val tagsJson = root.optJSONArray("script_tags") ?: JSONArray()
+                val tagList = ArrayList<ScriptTag>(tagsJson.length())
+                for (i in 0 until tagsJson.length()) {
+                    val o = tagsJson.getJSONObject(i)
+                    tagList += ScriptTag(
+                        id = o.optLong("id", 0),
+                        uuid = o.optString("uuid"),
+                        name = o.optString("name"),
+                        color = o.optString("color"),
+                        date = o.optLong("date"),
+                    )
+                }
+                val refsJson = root.optJSONArray("script_tag_cross_refs") ?: JSONArray()
+                val refList = ArrayList<ScriptTagCrossRef>(refsJson.length())
+                for (i in 0 until refsJson.length()) {
+                    val o = refsJson.getJSONObject(i)
+                    refList += ScriptTagCrossRef(
+                        scriptId = o.optLong("scriptId"),
+                        tagId = o.optLong("tagId"),
+                    )
+                }
+                ScriptBackupData(
+                    items = itemList,
+                    variables = varList,
+                    tags = tagList,
+                    crossRefs = refList,
+                )
+            }
+
             // 包内清单校验（D-M1，payload v2）：清单在场时逐项核对
             // 计数与存在性，任一不符整包判失败（解析阶段拦截，不写
             // 脏数据）；旧备份无清单字段时跳过（兼容 v1）。注意计数
@@ -1688,6 +1907,7 @@ object BackupManager {
                     SkinScriptsBackup(files = files)
                 },
                 ai = ai,
+                scripts = scripts,
             )
         } catch (e: BackupException) {
             throw e
@@ -1716,6 +1936,14 @@ object BackupManager {
             phrasesCount = root.optJSONArray("phrases")?.length() ?: 0,
             prefersCount = root.optJSONArray("candidatePrefers")?.length() ?: 0,
             sortingsCount = root.optJSONArray("candidateSortings")?.length() ?: 0,
+            aiProvidersCount = root.optJSONArray("ai_providers")?.length() ?: 0,
+            aiInstructionsCount = root.optJSONArray("ai_instructions")?.length() ?: 0,
+            aiConversationsCount = root.optJSONArray("ai_conversations")?.length() ?: 0,
+            aiMessagesCount = root.optJSONArray("ai_messages")?.length() ?: 0,
+            scriptItemsCount = root.optJSONArray("script_items")?.length() ?: 0,
+            scriptVariablesCount = root.optJSONArray("script_variables")?.length() ?: 0,
+            scriptTagsCount = root.optJSONArray("script_tags")?.length() ?: 0,
+            scriptTagCrossRefsCount = root.optJSONArray("script_tag_cross_refs")?.length() ?: 0,
             inputStatsPresent = root.has("input_stats_json"),
             skinLibraryPresent = root.has("skin_library"),
             skinLibraryFiles = root.optJSONObject("skin_library")
@@ -1834,7 +2062,10 @@ object BackupManager {
             inputStatsJson = backup.inputStatsJson,
             skinLibrary = backup.skinLibrary,
             skinScripts = backup.skinScripts,
+            // AI 七表与脚本四表是整表替换口径（备份原样透传；缺段时
+            // 为 null，下游 applyPayload 不碰现表）
             ai = backup.ai,
+            scripts = backup.scripts,
         )
     }
 
@@ -1991,6 +2222,10 @@ object BackupManager {
      * 态可记（D-P1）。回滚回放不传回调。回调抛错即中止还原本体
      * （开始标记是强制推进，见 [markSectionStarted]，WO36）。
      */
+    /**
+     * 将解析后的备份内容写回各存储（主调）。返回还原时跳过的孤儿
+     * AI 消息条数（L-33；其余段无跳过口径）。
+     */
     private suspend fun applyPayload(
         parsed: ParsedBackup,
         forRollback: Boolean = false,
@@ -1998,9 +2233,11 @@ object BackupManager {
         rollbackExtraPrefsFiles: Set<String> = emptySet(),
         onSectionStart: ((String) -> Unit)? = null,
         onSectionDone: ((String) -> Unit)? = null,
-    ) {
+    ): Int {
         val db = AppDatabase.getInstance(appContext)
         val clipDb = ClipboardDatabase.getInstance(appContext)
+        // 跳过的孤儿 AI 消息条数（L-33；AI 段有段时才写，其余为 0）。
+        var skippedAiMessages = 0
         // 拆库迁移本体已随清点 Q2 退场（现行设备早已迁完）：原「迁移
         // 不成中止还原」的耦合随之解除，直接整表替换
 
@@ -2044,8 +2281,13 @@ object BackupManager {
             // —— AI 七表（WO52 9.1）：有段即整表替换（与导出段对应；
             // 旧备份无段时 parsed.ai 为 null，不碰现 AI 表）。同一事务
             // 内先清后写；provider↔model 外键为 DEFERRABLE，提交时才
-            // 校验，清／写顺序不限。服务商 token 在解析段已强制清空。
+            // 校验，清／写顺序不限。服务商 token 在解析段已强制清空，
+            // 还原无 token 时保留本机 token（L-31：导出文件永不含
+            // token，实际效果恒为保留本机；回滚快照经内存补丁带真
+            // token 时同样不被空 token 盖回）。
             parsed.ai?.let { ai ->
+                val localTokens = db.aiProviderDao().getAll()
+                    .associate { it.id to it.apiToken }
                 db.aiProviderModelDao().deleteAll()
                 db.aiProviderDao().deleteAll()
                 db.aiSystemPromptDao().deleteAll()
@@ -2053,13 +2295,45 @@ object BackupManager {
                 db.aiInstructionDao().deleteAll()
                 db.aiMessageDao().deleteAll()
                 db.aiConversationDao().deleteAll()
-                if (ai.providers.isNotEmpty()) db.aiProviderDao().insertAll(ai.providers)
+                if (ai.providers.isNotEmpty()) {
+                    db.aiProviderDao().insertAll(
+                        ai.providers.map { provider ->
+                            provider.copy(
+                                apiToken = provider.apiToken
+                                    .ifEmpty { localTokens[provider.id] ?: "" },
+                            )
+                        },
+                    )
+                }
                 if (ai.models.isNotEmpty()) db.aiProviderModelDao().insertAll(ai.models)
                 if (ai.systemPrompts.isNotEmpty()) db.aiSystemPromptDao().insertAll(ai.systemPrompts)
                 if (ai.userPrompts.isNotEmpty()) db.aiUserPromptDao().insertAll(ai.userPrompts)
                 if (ai.instructions.isNotEmpty()) db.aiInstructionDao().insertAll(ai.instructions)
                 if (ai.conversations.isNotEmpty()) db.aiConversationDao().insertAll(ai.conversations)
-                if (ai.messages.isNotEmpty()) db.aiMessageDao().insertAll(ai.messages)
+                // 孤儿消息（L-33）：conversationId 不在恢复会话集内
+                // 的跳过（null conversationId 是合法值，FK 不约束
+                // NULL，保留）；跳过数由调用方提示用户。
+                val (keptMessages, skippedMessages) = filterOrphanMessages(
+                    ai.messages,
+                    ai.conversations.mapTo(HashSet()) { it.id },
+                )
+                skippedAiMessages = skippedMessages
+                if (keptMessages.isNotEmpty()) db.aiMessageDao().insertAll(keptMessages)
+            }
+            // —— 脚本四表（B-B-3）：有段即整表替换（与导出段对应；
+            // 旧备份无段时 parsed.scripts 为 null，不碰现脚本）。
+            // 删：先删交叉引用再删三表（FK CASCADE 是双向的，删
+            // item/tag 也会级联清引用，但显式删引用是确定性口径，
+            // 不依赖级联）；插：先插三表再插交叉引用（外键即时校验）。
+            parsed.scripts?.let { scripts ->
+                db.scriptTagCrossRefDao().deleteAll()
+                db.scriptItemDao().deleteAll()
+                db.scriptTagDao().deleteAll()
+                db.scriptVariableDao().deleteAll()
+                if (scripts.items.isNotEmpty()) db.scriptItemDao().insertAll(scripts.items)
+                if (scripts.variables.isNotEmpty()) db.scriptVariableDao().insertAll(scripts.variables)
+                if (scripts.tags.isNotEmpty()) db.scriptTagDao().insertAll(scripts.tags)
+                if (scripts.crossRefs.isNotEmpty()) db.scriptTagCrossRefDao().insertAll(scripts.crossRefs)
             }
         }
         onSectionDone?.invoke(RestoreJournal.SECTION_APPDB)
@@ -2218,6 +2492,7 @@ object BackupManager {
             oldDir.deleteRecursively()
             onSectionDone?.invoke(RestoreJournal.SECTION_SKIN_SCRIPTS)
         }
+        return skippedAiMessages
     }
 
     private fun putPrefValue(
@@ -2280,4 +2555,26 @@ internal fun readBackupBytes(
         out.write(buffer, 0, count)
     }
     return out.toByteArray()
+}
+
+/**
+ * 孤儿 AI 消息过滤（L-33，纯函数）：conversationId 不在恢复会话
+ * id 集内的消息跳过（外键约束会整表回滚）；null conversationId
+ * 是合法值（FK 不约束 NULL），保留。返回（保留的消息，跳过条数）。
+ */
+internal fun filterOrphanMessages(
+    messages: List<com.jobeen.ime.data.database.AIMessage>,
+    conversationIds: Set<String>,
+): Pair<List<com.jobeen.ime.data.database.AIMessage>, Int> {
+    val kept = ArrayList<com.jobeen.ime.data.database.AIMessage>(messages.size)
+    var skipped = 0
+    for (message in messages) {
+        val conversationId = message.conversationId
+        if (conversationId != null && conversationId !in conversationIds) {
+            skipped++
+        } else {
+            kept += message
+        }
+    }
+    return kept to skipped
 }
