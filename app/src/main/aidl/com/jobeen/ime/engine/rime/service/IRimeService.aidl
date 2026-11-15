@@ -2,7 +2,7 @@
 package com.jobeen.ime.engine.rime.service;
 
 // WO52 3.1b：跨进程部署/同步 Binder 面（:ime Service）。
-// 元书链 #rimeDeploy/#rimeSync → Deploy/Sync → 跨进程 → 防重入 →
+// 对端链 #rimeDeploy/#rimeSync → Deploy/Sync → 跨进程 → 防重入 →
 // RimeNative.startMaintenance/syncUserData 的 Jime 对位：部署与
 // librime 用户数据同步都在 :ime 进程内执行，应用进程只经 Binder 调用。
 // deploy()/syncUserData() 均为同步调用：执行在 Service 侧的 Binder

@@ -237,7 +237,7 @@ namespace {
             return s ? s : "";
         }
 
-        // ---- T9 会话访问器（WO52 1.5，自研插件；API 面与元书
+        // ---- T9 会话访问器（WO52 1.5，自研插件；API 面与对端
         // RimeNative.t9PinyinList/t9Preedit/t9SetPinyin 相同）----
         // 列表与定拼音的展开/重写在插件纯函数里（t9_session.h），
         // 本层只负责从会话读写 input/confirmedPos/preedit。

@@ -9,7 +9,7 @@ import org.junit.Test
 
 /**
  * AI 种子数据单测（WO52 9.1）：数量／名称／关键值／引用闭合。
- * 种子正文逐字取自元书 `assets/seeds/ai.json`（生成脚本
+ * 种子正文逐字取自对端 `assets/seeds/ai.json`（生成脚本
  * ~/workspace/system/wo52-g3-gen-aiseeds.py，另有脚本逐字核对）；
  * 本单测只断关键字段与引用关系，不全文比对正文。
  */

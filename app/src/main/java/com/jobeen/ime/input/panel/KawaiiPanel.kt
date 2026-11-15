@@ -454,7 +454,7 @@ class KawaiiPanel(
         clipboardView.onItemLongClick = { entry, x, y ->
             Timber.d("clipboard longClick: cardX=$x cardY=$y")
             val summary = if (entry.text.length > 5) entry.text.take(5) + "..." else entry.text
-            // WO52 5.3：7 项（元书口径）＋保留现有项；搜索结果长按仅 Delete result。
+            // WO52 5.3：7 项（对端口径）＋保留现有项；搜索结果长按仅 Delete result。
             val menuItems = ClipboardItemMenu.itemsFor(
                 text = entry.text,
                 isFavorite = entry.isFavorite,

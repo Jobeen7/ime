@@ -8,7 +8,7 @@ import com.jobeen.ime.data.manager.VerificationCodeExtractor
 /**
  * 剪贴板长按菜单（WO52 5.3，`l22.T` 口径，纯模型）：
  *
- * 7 项（元书口径）＋保留的 Jime 现有项：
+ * 7 项（对端口径）＋保留的 Jime 现有项：
  * 1. Open link（`j90.a` 正则找到 URL 才出现）
  * 2. Extract verification code（`j90.b(str)` 提取到验证码才出现，依赖 5.2）
  * 3. Split words（文本非空时出现，依赖 1.9）

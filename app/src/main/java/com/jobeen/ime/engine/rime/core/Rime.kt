@@ -908,7 +908,7 @@ class Rime : RimeApi, RimeLifecycleOwner {
         /**
          * T9 拼音列表（WO52 1.5，自研 native 插件）：当前未解析数字段
          * 的首音节候选项，以单个空格连接；无组字／无未解析段时为空串。
-         * API 面与元书 RimeNative.t9PinyinList 相同。
+         * API 面与对端 RimeNative.t9PinyinList 相同。
          */
         @JvmStatic
         external fun t9PinyinList(): String

@@ -211,16 +211,16 @@ tasks.named("preBuild") {
 }
 
 // QuickJS 主机 .so（WO52 8.1，仅供主机单元测试）：
-// 设备上的 libhamster_quickjs.so 由 CMake（arm64-v8a）编进 APK；主机
+// 设备上的 libjime_quickjs.so 由 CMake（arm64-v8a）编进 APK；主机
 // JVM 跑 testDebugUnitTest 时载不进 arm64 .so，故用主机 cc 把同一份
 // QuickJS 核心＋同一份 JNI 桥编成主机 .so，单测经系统属性
 // jime.quickjs.hostLib 载它（见 QuickJsNative）。产物只进 build/，不进仓。
 // 任务有 inputs/outputs 声明：源码不变时 Gradle 跳过重编。
 val buildHostQuickJs = tasks.register<Exec>("buildHostQuickJs") {
-    description = "Builds host libhamster_quickjs.so for unit tests"
+    description = "Builds host libjime_quickjs.so for unit tests"
     group = "verification"
     val cppDir = layout.projectDirectory.dir("src/main/cpp")
-    val outFile = layout.buildDirectory.file("host-quickjs/libhamster_quickjs.so")
+    val outFile = layout.buildDirectory.file("host-quickjs/libjime_quickjs.so")
     inputs.files(
         cppDir.file("quickjs/quickjs.c"),
         cppDir.file("quickjs/dtoa.c"),
@@ -257,10 +257,10 @@ tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     if (name != "testDebugUnitTest") return@configureEach
     dependsOn(buildHostQuickJs)
     // 单测 JVM 经该属性载主机 .so（QuickJsNative 回落路径）；设备上
-    // 该属性不存在，只走 System.loadLibrary("hamster_quickjs")。
+    // 该属性不存在，只走 System.loadLibrary("jime_quickjs")。
     systemProperty(
         "jime.quickjs.hostLib",
-        layout.buildDirectory.file("host-quickjs/libhamster_quickjs.so").get().asFile.absolutePath,
+        layout.buildDirectory.file("host-quickjs/libjime_quickjs.so").get().asFile.absolutePath,
     )
 }
 

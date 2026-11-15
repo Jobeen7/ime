@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// QuickJS JNI bridge (WO52 8.1): libhamster_quickjs.so.
+// QuickJS JNI bridge (WO52 8.1): libjime_quickjs.so.
 //
-// Mirrors the Java bridge surface of 元书 QuickJsEngine (decompiled,
-// hamster_quickjs): eval / runJobs / callOutput / outputValue /
+// Mirrors the Java bridge surface of the counterpart QuickJsEngine (decompiled,
+// jime_quickjs): eval / runJobs / callOutput / outputValue /
 // outputState / isFunction / setDeadline / setGlobalString / settle /
 // cancel / destroy / liveCount. The implementation is written from the
-// public QuickJS C API only — no 元书 native code was available or used.
+// public QuickJS C API only — no counterpart native code was available or used.
 //
 // Threading: one QuickJsEngine instance is single-threaded — JS calls
 // must never run concurrently from two threads (the runner thread drives
@@ -26,7 +26,7 @@
 // drained by runJobs() on the engine thread (calling the script's
 // __jimeHttpResult global, if defined).
 //
-// $http delivery contract (Jime-side, documented — 元书's JS-side
+// $http delivery contract (Jime-side, documented — the counterpart's JS-side
 // delivery path was not recoverable from static evidence):
 //   - $http(json) returns an incrementing id (from 1).
 //   - On completion the host posts Completion(id, rejected, payload);
@@ -49,7 +49,7 @@
 
 #define JIME_QJS_UNUSED(x) (void)(x)
 
-// Arg types passed to Java onHostCall (mirrors 元书 hw3 enum order).
+// Arg types passed to Java onHostCall (mirrors the counterpart hw3 enum order).
 #define ARG_UNDEFINED 0
 #define ARG_NULL 1
 #define ARG_STRING 2

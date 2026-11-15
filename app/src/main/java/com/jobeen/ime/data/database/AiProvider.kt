@@ -8,7 +8,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * AI 服务商（WO52 9.1）。建表 SQL 逐字照元书 `kd3.java`：
+ * AI 服务商（WO52 9.1）。建表 SQL 逐字照 `kd3.java`：
  * `defaultModelId` 外键 → `AIProviderModel.id`（ON DELETE SET NULL，
  * DEFERRABLE INITIALLY DEFERRED）；索引 `index_AIProvider_defaultModelId`、
  * `index_AIProvider_sort`（Room 按 @Index 默认命名生成，与原表一致）。

@@ -12,7 +12,7 @@ package com.jobeen.ime.data.database
  * 存法：以 JSON 数组串存在 `PhraseRecord.variables` 列（TEXT），
  * 如 `[{"key":"name","value":"张三","isSecure":false}]`；空串＝无变量。
  * isSecure 只作展示口径（编辑页打码显示），不另做加密——与单子一致，
- * 变量值本身随常用语一起备份（与元书 `backup_plaintext_warning`
+ * 变量值本身随常用语一起备份（与对端 `backup_plaintext_warning`
  * 点名的明文变量同口径，不另造加密机制）。
  *
  * 编解码手写（不用 org.json）：android.jar 的 org.json 在主机单测里

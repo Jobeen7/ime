@@ -29,4 +29,4 @@ The JNI bridge that links this core lives in ../quickjs_jni/.
 Build: `../quickjs_jni/CMakeLists.txt` compiles the core as a static
 lib with `-DCONFIG_VERSION="2026-06-04" -D_GNU_SOURCE` (the same
 defines upstream's Makefile passes) and links it into
-`libhamster_quickjs.so` for arm64-v8a only (the app's only ABI).
+`libjime_quickjs.so` for arm64-v8a only (the app's only ABI).

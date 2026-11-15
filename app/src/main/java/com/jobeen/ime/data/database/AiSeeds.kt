@@ -5,7 +5,7 @@ package com.jobeen.ime.data.database
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
- * AI 种子数据（WO52 9.1）：逐字取自元书包内 `assets/seeds/ai.json`
+ * AI 种子数据（WO52 9.1）：逐字取自对端包内 `assets/seeds/ai.json`
  * （`apktool-out/assets/seeds/ai.json`，由 iOS 源码生成）。
  *
  * - providers 1 条 DeepSeek（baseURL https://api.deepseek.com，apiPath "v1"，

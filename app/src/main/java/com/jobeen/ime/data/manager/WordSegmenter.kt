@@ -3,7 +3,7 @@
 package com.jobeen.ime.data.manager
 
 /**
- * 分词多选（WO52 1.9，元书 split_string_panel）：
+ * 分词多选（WO52 1.9，对端 split_string_panel）：
  *
  * 切分：Android 内置 `android.icu.text.BreakIterator.getWordInstance(ULocale.CHINESE)`
  * 按词切分，不引 ICU4J 库。纯空白片段丢弃，其余片段（词、数字串、

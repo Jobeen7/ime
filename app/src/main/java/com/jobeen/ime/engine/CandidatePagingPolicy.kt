@@ -23,7 +23,7 @@ object CandidatePagingPolicy {
         else CandidatePagingMode.SWIPE
 
     /**
-     * 高亮下标口径（元书 highlightCandidate(session, i, !滑动模式)
+     * 高亮下标口径（对端 highlightCandidate(session, i, !滑动模式)
      * 的第三参）：true = 页内下标（native 模式，进引擎调
      * highlight_candidate_on_current_page）；false = 全局下标
      * （滑动模式，追加列表的全局下标）。

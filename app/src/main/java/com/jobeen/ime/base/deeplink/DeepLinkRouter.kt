@@ -12,7 +12,7 @@ import java.net.URLDecoder
  * scheme `jime://`，host `com.jobeen.ime`；MainActivity 为
  * singleTask，onCreate 与 onNewIntent 均走同一路由函数。
  *
- * 解析口径（与元书一致）：
+ * 解析口径（与对端口径一致）：
  * - 非 ACTION_VIEW 直接丢弃；getDataString() 为空返回；
  *   URI 解析失败返回；scheme 大小写不敏感；
  * - path 去尾部 `/`、取首个 `/` 之后的子串；

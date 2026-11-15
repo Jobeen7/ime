@@ -24,7 +24,7 @@ object RecentEmojiOps {
 
     const val PREFS_NAME = "emoji"
 
-    /** 存储键：与元书 `recentEmojis` 同名。 */
+    /** 存储键：与对端 `recentEmojis` 同名。 */
     const val KEY_RECENT_EMOJIS = "recentEmojis"
 
     /**

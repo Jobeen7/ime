@@ -6,7 +6,7 @@ package com.jobeen.ime.script
  * `QuickJsEngine.java` 一一对应（eval／runJobs／callOutput／
  * outputValue／outputState／isFunction／setDeadline／setGlobalString／
  * settle／cancel／destroy／liveCount）。native 实现见
- * app/src/main/cpp/quickjs_jni/quickjs_jni.c（libhamster_quickjs.so，
+ * app/src/main/cpp/quickjs_jni/quickjs_jni.c（libjime_quickjs.so，
  * QuickJS 2026-06-04 核心，见 app/src/main/cpp/quickjs/README.md）。
  *
  * 线程模型：单线程。一次引擎实例的所有 JS 调用（eval／runJobs／
@@ -145,10 +145,10 @@ class QuickJsEngine private constructor(
     }
 
     companion object {
-        /** 元书执行约定：脚本文件名固定为该 URI。 */
-        const val DEFAULT_FILENAME = "hamster-script://editor.js"
+        /** 对端执行约定：脚本文件名固定为该 URI。 */
+        const val DEFAULT_FILENAME = "jime-script://editor.js"
 
-        /** 30 秒超时（纳秒，与元书 z42 的 setDeadline(30000000000L) 一致）。 */
+        /** 30 秒超时（纳秒，与对端 z42 的 setDeadline(30000000000L) 一致）。 */
         const val TIMEOUT_NANOS = 30_000_000_000L
 
         fun create(): QuickJsEngine {
@@ -166,14 +166,14 @@ class QuickJsEngine private constructor(
     }
 }
 
-/** output Promise 的结算态（与元书 iw3 三态对应）。 */
+/** output Promise 的结算态（与对端 iw3 三态对应）。 */
 enum class OutputState {
     PENDING,
     FULFILLED,
     REJECTED,
 }
 
-/** 脚本失败（与元书 fw3 对应：message＋interrupted／not-thenable 标志折叠为类型）。 */
+/** 脚本失败（与对端 fw3 对应：message＋interrupted／not-thenable 标志折叠为类型）。 */
 sealed interface ScriptFailure {
     /** JS 抛错或宿主错误（message 为异常文本，不含源码）。 */
     data class Error(val message: String) : ScriptFailure
@@ -192,7 +192,7 @@ sealed interface ScriptFailure {
  * JNI 原生方法表（@JvmStatic 使 JNI 名为
  * Java_com_jobeen_ime_script_QuickJsNative_nativeXxx）。
  *
- * 库加载：设备上走 System.loadLibrary("hamster_quickjs")；主机单测
+ * 库加载：设备上走 System.loadLibrary("jime_quickjs")；主机单测
  * 上该库不存在（arm64 .so 载不进主机 JVM），改走系统属性
  * `jime.quickjs.hostLib` 指定的主机编译 .so（见
  * app/build.gradle.kts 的 buildHostQuickJs 任务；属性未设时保持
@@ -200,7 +200,7 @@ sealed interface ScriptFailure {
  */
 internal object QuickJsNative {
     init {
-        val loaded = runCatching { System.loadLibrary("hamster_quickjs") }.isSuccess
+        val loaded = runCatching { System.loadLibrary("jime_quickjs") }.isSuccess
         if (!loaded) {
             val hostLib = System.getProperty("jime.quickjs.hostLib")
             if (!hostLib.isNullOrBlank()) {

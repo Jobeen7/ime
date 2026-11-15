@@ -13,7 +13,7 @@ import kotlinx.coroutines.runBlocking
  * 部署/同步跨进程 Service（WO52 3.1b）：跑在 `:ime` 进程，
  * 对应用进程暴露 [IRimeService] Binder 面。
  *
- * 进程模型（与元书 :ime 进程对位，但不照搬其单进程引擎）：
+ * 进程模型（与对端 :ime 进程对位，但不照搬其单进程引擎）：
  * Jime 引擎仍在应用进程，:ime 进程内另起一份引擎实例执行部署/
  * 同步（同一应用数据目录、同一 userDataDir/sharedDataDir），
  * 执行体即应用进程内直调的既有路径（[RimeMaintenanceOps]），

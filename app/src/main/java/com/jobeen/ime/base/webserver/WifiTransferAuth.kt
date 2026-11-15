@@ -9,7 +9,7 @@ import javax.crypto.spec.SecretKeySpec
 /**
  * Wi-Fi 传输鉴权（WO52 4.4）。
  *
- * 对端（元书）Wi-Fi 传输无鉴权是缺陷，不照搬。本实现：
+ * 对端Wi-Fi 传输无鉴权是缺陷，不照搬。本实现：
  * - 密码由用户在设置页自设，SHA-256 存偏好（明文不落盘）；
  *   未设密码时服务拒绝启动。
  * - /api/login 校验密码后签发 JWT（HMAC-SHA256，key＝密码哈希，

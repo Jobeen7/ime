@@ -25,7 +25,7 @@ std::optional<std::pair<size_t, size_t>> FindUnresolvedDigitRun(
         const std::string& input, size_t confirmedPos);
 
 // t9PinyinList：未解析段的首音节候选项，以单个空格连接；无段或
-// 无候选时返回空串（与元书“按空格切分”同口径）。
+// 无候选时返回空串（与对端“按空格切分”同口径）。
 std::string T9PinyinList(const std::string& input, size_t confirmedPos);
 
 // t9SetPinyin：pinyin 须在当前未解析段的候选项内；命中时把该段

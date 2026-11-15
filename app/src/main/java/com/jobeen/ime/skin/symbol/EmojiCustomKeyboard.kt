@@ -12,7 +12,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 /**
- * 用户自定义 Emoji 键盘（WO52 7.4，新增能力——元书静态层面不存在，
+ * 用户自定义 Emoji 键盘（WO52 7.4，新增能力——对端静态层面不存在，
  * 做出来是新能力不是对齐）：
  *
  * - 用户级（与皮肤 `subClassifiedSymbols` 覆盖分开）：分组／顺序／

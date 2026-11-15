@@ -54,8 +54,8 @@ class ScriptSeedsTest {
     fun seeds_noThirdPartyProductName() {
         // 仓库规矩：第三方输入法产品名不进仓（种子头注释已改品牌字样）。
         val joined = ScriptSeeds.scripts.joinToString("\n") { it.content }
-        assertFalse(joined.contains("元书"))
-        assertFalse(joined.contains("Hamster"))
+        assertFalse(joined.contains("\u5143\u4e66"))
+        assertFalse(joined.contains("\u0048amster"))
         assertFalse(joined.contains("JavaScriptCore"))
     }
 

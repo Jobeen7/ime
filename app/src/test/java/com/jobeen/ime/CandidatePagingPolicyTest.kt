@@ -39,7 +39,7 @@ class CandidatePagingPolicyTest {
 
     @Test
     fun highlightFlagIsNegatedSwipeMode() {
-        // 元书 highlightCandidate(session, i, !滑动模式)：
+        // 对端 highlightCandidate(session, i, !滑动模式)：
         // 滑动模式全局下标（false），native 模式页内下标（true）。
         assertFalse(CandidatePagingPolicy.highlightOnCurrentPage(swipeMode = true))
         assertTrue(CandidatePagingPolicy.highlightOnCurrentPage(swipeMode = false))

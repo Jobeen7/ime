@@ -31,19 +31,19 @@ import okhttp3.Response
 import timber.log.Timber
 
 /**
- * $http 一次完成（与元书 ue4 Completion 对应）：
+ * $http 一次完成（与对端 ue4 Completion 对应）：
  * id＝$http 返回的自增 id；rejected＝true 时 payload 为错误文本，
  * 否则为响应体。
  */
 data class HttpCompletion(val id: Long, val rejected: Boolean, val payload: String)
 
 /**
- * 脚本宿主 API（WO52 8.1）：仅 6 个，与元书 n90.d 的 switch 全集一致：
+ * 脚本宿主 API（WO52 8.1）：仅 6 个，与对端 n90.d 的 switch 全集一致：
  * $log／$http／$setClipboard／$insertText／$openURL／$userNotification。
  * 其余一切（网络白名单、文件、Java 互操作）都不存在——脚本只能调这 6 个。
  *
  * 安全模型（单子定）：
- * - 联网：$http 无白名单（刻意与元书对齐，不是遗漏）——唯一限制是
+ * - 联网：$http 无白名单（刻意与对端对齐，不是遗漏）——唯一限制是
  *   URL 须能被 OkHttp HttpUrl 解析（http/https）与超时钳制 0.1–60 秒；
  * - 剪贴板：$setClipboard 写系统剪贴板（带内部标记，见
  *   [AndroidScriptHost]）；读剪贴板只发生在运行方注入
@@ -93,14 +93,14 @@ interface ScriptHost {
     /**
      * $http(json)：解析参数并异步发请求，返回自增 id（从 1 起）。
      * 参数非法（JSON 坏／URL 不合法）时同样返回 id，并立即投递一次
-     * rejected 完成（与元书 n90 的失败回调口径一致：先拿 id 再回调）。
+     * rejected 完成（与对端 n90 的失败回调口径一致：先拿 id 再回调）。
      */
     fun http(json: String): Long
 
     /** $setClipboard(txt)：写系统剪贴板（带内部标记，不触发自家监听回录）。 */
     fun setClipboard(text: String)
 
-    /** $insertText(txt)：上屏文本；空串忽略（与元书 n90 一致）。 */
+    /** $insertText(txt)：上屏文本；空串忽略（与对端 n90 一致）。 */
     fun insertText(text: String)
 
     /** $openURL(url)：URI 有 scheme 才打开，返回是否打开。 */
@@ -119,7 +119,7 @@ interface ScriptHost {
         const val ARG_PRIMITIVE = 3
         const val ARG_OBJECT = 4
 
-        /** 空实现（元书默认 host y43 的等价物：全部调用返回 null／false）。 */
+        /** 空实现（对端默认 host y43 的等价物：全部调用返回 null／false）。 */
         val NOOP: ScriptHost = object : ScriptHost {
             override fun log(text: String) = Unit
             override fun http(json: String): Long = 0L
@@ -165,7 +165,7 @@ data class PreparedHttpRequest(
 }
 
 /**
- * $http 参数解析（纯函数，可主机单测；口径逐项照元书 xe4.b）：
+ * $http 参数解析（纯函数，可主机单测；口径逐项照 xe4.b）：
  * - 入参为 JSON 对象字符串：{url, method?, header?, body?, timeout?}；
  * - url 必填，须能被 OkHttp HttpUrl 解析（http/https），否则抛
  *   [HttpParamException]（"Invalid HTTP URL"）；
@@ -174,10 +174,10 @@ data class PreparedHttpRequest(
  *   则编 form（k=v&…），否则取其 JSON 文本；body 为字符串时原样用；
  * - GET／HEAD 不带 body；POST／PUT／PATCH／PROPPATCH／REPORT 无 body
  *   时带空 body；其余方法无 body 时不带 body；
- * - timeout 缺省 15 秒，数字或数字串，钳制 0.1–60 秒（与元书
+ * - timeout 缺省 15 秒，数字或数字串，钳制 0.1–60 秒（与对端
  *   cp0.y(d, 0.1, 60.0) 一致）；
  * - 无白名单：任何能被 HttpUrl 解析的 http/https 地址都放行（刻意
- *   与元书对齐，见 [ScriptHost] 安全模型）。
+ *   与对端对齐，见 [ScriptHost] 安全模型）。
  */
 object HttpRequestParser {
     /** 字符串 primitive 取值；非字符串／非 primitive 返回 null。 */

@@ -8,10 +8,10 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * 脚本（WO52 8.1）：字段与建表 SQL 逐字照元书 `kd3.java`（表名／
+ * 脚本（WO52 8.1）：字段与建表 SQL 逐字照 `kd3.java`（表名／
  * 列名／列序／索引与之一致，见 MIGRATION_16_17）。
  *
- * - `iconType`：图标类型（元书静态证据只确认是 Int，未确认枚举值，
+ * - `iconType`：图标类型（对端静态证据只确认是 Int，未确认枚举值，
  *   按原值透传；种子脚本用 0）。
  * - `resultInsertState`：运行后是否插入结果（fo1 按 Boolean 读，
  *   0/1）；`closeWindowState`：运行后是否关闭窗口（同理）。
@@ -45,7 +45,7 @@ data class ScriptItem(
     val downloadURL: String?,
 )
 
-/** 脚本标签（WO52 8.1，照元书 kd3）。 */
+/** 脚本标签（WO52 8.1，照 kd3）。 */
 @Entity(
     tableName = "ScriptTag",
     indices = [
@@ -62,7 +62,7 @@ data class ScriptTag(
     val date: Long,
 )
 
-/** 脚本↔标签交叉引用（WO52 8.1，照元书 kd3；双向级联删除）。 */
+/** 脚本↔标签交叉引用（WO52 8.1，照 kd3；双向级联删除）。 */
 @Entity(
     tableName = "ScriptTagCrossRef",
     primaryKeys = ["scriptId", "tagId"],
@@ -87,7 +87,7 @@ data class ScriptTagCrossRef(
     val tagId: Long,
 )
 
-/** 脚本变量（WO52 8.1，照元书 kd3；key/value/isSecure 与常用语变量同形）。 */
+/** 脚本变量（WO52 8.1，照 kd3；key/value/isSecure 与常用语变量同形）。 */
 @Entity(
     tableName = "ScriptVariable",
     indices = [

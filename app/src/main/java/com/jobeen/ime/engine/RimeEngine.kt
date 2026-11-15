@@ -3683,7 +3683,7 @@ internal fun drainJobsOnFinalize(jobs: Channel<RimeEngine.QueuedJob>) {
 }
 
 /**
- * WO52 1.5：native t9PinyinList 的空格切分（与元书“按空格切分”
+ * WO52 1.5：native t9PinyinList 的空格切分（与对端“按空格切分”
  * 同口径）。空串／纯空白 → 空列表；连续空格不产生空条目。
  */
 internal fun parseT9PinyinList(raw: String): List<String> =

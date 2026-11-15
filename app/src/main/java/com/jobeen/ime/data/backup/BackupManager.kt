@@ -321,7 +321,7 @@ object BackupManager {
 
         // —— AI 七表（WO52 9.1）：经 AiBackupCodec 脱敏后出包——服务商
         // apiToken 一律清空，且 JSON 里**不写 `apiToken` 键**（token
-        // 永不进备份文件；元书备份明文存 AI Token 是缺陷，不照搬）。
+        // 永不进备份文件；对端备份明文存 AI Token 是缺陷，不照搬）。
         // 清单（manifest）不加 AI 计数键（旧备份无这些键会校验失败）。
         // DAO 直读（导出在后台协程内；AI 表在备份窗口内几乎不动，
         // 与 prefs 段同口径，不走 RoomSnapshotReader 的快照读）。

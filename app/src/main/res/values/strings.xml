@@ -596,7 +596,7 @@
     <string name="phrase_delete">删除</string>
     <string name="edit">编辑</string>
 
-    <!-- 命令面板（WO52 9.1；副标题取元书 SETTINGS-UI.md 原文） -->
+    <!-- 命令面板（WO52 9.1；副标题取对端 SETTINGS-UI.md 原文） -->
     <string name="ai_title">命令面板</string>
     <string name="row_sub_ai">管理命令面板、AI 与子模式设置</string>
     <string name="ai_providers">服务商</string>
@@ -615,7 +615,7 @@
     <string name="ai_provider_enabled">启用</string>
     <string name="ai_provider_delete">删除服务商</string>
 
-    <!-- 脚本管理页（WO52 8.1；副标题取元书 SETTINGS-UI.md 原文） -->
+    <!-- 脚本管理页（WO52 8.1；副标题取对端 SETTINGS-UI.md 原文） -->
     <string name="script_title">脚本</string>
     <string name="row_sub_script">JavaScript 脚本管理</string>
     <string name="script_empty">暂无脚本</string>

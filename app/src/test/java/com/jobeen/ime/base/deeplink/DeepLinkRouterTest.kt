@@ -28,7 +28,7 @@ class DeepLinkRouterTest {
 
     @Test
     fun `wrong scheme or host is discarded`() {
-        assertNull(pageOf("hamster3://com.jobeen.ime/rime"))
+        assertNull(pageOf("other://com.jobeen.ime/rime"))
         assertNull(pageOf("jime://other.host/rime"))
         assertNull(pageOf("not-a-uri"))
     }

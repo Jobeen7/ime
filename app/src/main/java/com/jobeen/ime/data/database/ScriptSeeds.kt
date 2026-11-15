@@ -5,7 +5,7 @@ package com.jobeen.ime.data.database
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
- * 脚本种子（WO52 8.1）：4 条内置脚本，逻辑逐字取自元书包内
+ * 脚本种子（WO52 8.1）：4 条内置脚本，逻辑逐字取自对端包内
  * `assets/seeds/scripts.json`（由 iOS 源码生成），与 9.1 的 AI 种子
  * 同一做法（种子落库用 INSERT OR IGNORE，不盖用户改过的数据）。
  *
@@ -23,7 +23,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
  */
 object ScriptSeeds {
 
-    /** 默认新建脚本内容（元书 ch4.c 原文）。 */
+    /** 默认新建脚本内容（对端 ch4.c 原文）。 */
     const val DEFAULT_NEW_SCRIPT_CONTENT =
         "async function output() { return [\"Hello, \" + \$searchText] }"
 

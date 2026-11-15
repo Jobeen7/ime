@@ -9,13 +9,13 @@ import com.jobeen.ime.BuildConfig
 import java.io.File
 
 /**
- * openAppFile 分发（WO52 8.3）：对端（元书）以参数表
+ * openAppFile 分发（WO52 8.3）：对端以参数表
  * {"action":"openAppFile","fileURL":...} 触发打开应用内文件。
  * Jime 无应用内文件浏览器（FolderBrowser），等效落点是经
  * [AppFilesDocumentsProvider] 的 document URI 以 ACTION_VIEW
  * 打开该文件（系统按 MIME 选应用查看）。
  *
- * 校验口径（与元书 yg1 校验一致，且更严）：
+ * 校验口径（与对端 yg1 校验一致，且更严）：
  * - action 必须恰好等于 "openAppFile"，否则丢弃；
  * - fileURL 必须存在且非空；
  * - 解析后文件必须落在应用 external files 根目录内

@@ -16,7 +16,7 @@ object CandidateManager {
     const val KEY_SHOW_INDEX = "show_index"
     const val KEY_SHOW_COMMENT = "show_comment"
     const val KEY_BORDER = "show_border"
-    /** 候选分页双模式（WO52 1.1）：滑动翻页开关，默认 true（与元书一致）。 */
+    /** 候选分页双模式（WO52 1.1）：滑动翻页开关，默认 true（与对端口径一致）。 */
     const val KEY_SWIPE_PAGING_ENABLED = "swipe_paging_enabled"
     /** 手动翻页按钮开关（WO52 1.1）：默认 true；关则内嵌栏翻页钮全隐。 */
     const val KEY_MANUAL_PAGING_BUTTON_ENABLED = "manual_paging_button_enabled"

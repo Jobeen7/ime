@@ -4,7 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * WO52 1.5：native t9PinyinList 的空格切分（与元书“按空格切分”
+ * WO52 1.5：native t9PinyinList 的空格切分（与对端“按空格切分”
  * 同口径）。切分结果直接喂侧栏拼音列表，空条目绝不能漏进 UI。
  */
 class T9PinyinListParseTest {

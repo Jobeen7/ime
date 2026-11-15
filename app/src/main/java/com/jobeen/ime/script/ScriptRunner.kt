@@ -9,7 +9,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-/** 脚本输入（注入变量；与元书 z42 的 Map 逐项 setGlobalString 一致）。 */
+/** 脚本输入（注入变量；与对端 z42 的 Map 逐项 setGlobalString 一致）。 */
 data class ScriptInputs(
     val searchText: String = "",
     val selectedText: String = "",
@@ -17,7 +17,7 @@ data class ScriptInputs(
     val pasteboardContent: String = "",
 )
 
-/** 一次脚本运行的结果（与元书 te4(output 列表，日志列表，耗时秒) 对应）。 */
+/** 一次脚本运行的结果（与对端 te4(output 列表，日志列表，耗时秒) 对应）。 */
 data class ScriptRunResult(
     val output: List<String>,
     val logs: List<String>,
@@ -37,8 +37,8 @@ class ScriptRunException(val failure: ScriptFailure) : Exception(
 )
 
 /**
- * 脚本运行器（WO52 8.1）：执行约定照元书 z42：
- * eval(code, "hamster-script://editor.js") → 必须定义 output 函数 →
+ * 脚本运行器（WO52 8.1）：执行约定照 z42：
+ * eval(code, "jime-script://editor.js") → 必须定义 output 函数 →
  * 等待其 Promise 结算 → 返回（output 列表，日志列表，耗时秒）；
  * 30 秒超时抛错；取消抛错。
  *
@@ -61,7 +61,7 @@ class ScriptRunner {
      * @param inputs 注入变量（$searchText／$selectedText／$pasteboardContent；
      *   pasteboardContent 由调用方按脚本的 allowPasteboard 门控，禁读时传 ""）。
      * @param hostFactory 供 host：参数为（日志 sink，$http 完成回调）。
-     * @param timeoutNanos 执行截止（默认 30 秒，与元书一致）。
+     * @param timeoutNanos 执行截止（默认 30 秒，与对端口径一致）。
      * @return output 列表＋日志列表＋$insertText 文本＋耗时秒。
      * @throws ScriptRunException 脚本失败（eval 错／无 output／结算被拒／超时）。
      * @throws CancellationException 调用方取消（引擎已 cancel）。

@@ -10,7 +10,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
 
 /**
- * Emoji 搜索索引（WO52 7.2，新增能力——元书静态证据倾向不存在，
+ * Emoji 搜索索引（WO52 7.2，新增能力——对端静态证据倾向不存在，
  * 做出来是新能力不是对齐）：
  *
  * - 数据：`assets/data/emoji_index.json`，9 组全量 1925 条（与
@@ -19,7 +19,7 @@ import kotlinx.serialization.json.intOrNull
  *   （中文名／关键词取 Unicode CLDR 注释，拼音由 pypinyin 生成，
  *   繁体由内置简繁表转换）；
  * - 搜索：简／繁中文名与关键词、英文名与关键词、拼音（全拼含查询
- *   或首字母前缀）——与元书 0.1.0(55) 宣称口径一致；
+ *   或首字母前缀）——与对端 0.1.0(55) 宣称口径一致；
  * - 本文件纯逻辑（解析＋检索），不碰 View；资产缺失／损坏时
  *   解析回空表，搜索恒回空（面板退回分类浏览，不崩）。
  */
