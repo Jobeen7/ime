@@ -370,6 +370,11 @@
             android:process=":speech" />
 
         <service
+            android:name=".engine.rime.service.RimeMaintenanceService"
+            android:exported="false"
+            android:process=":ime" />
+
+        <service
             android:name=".engine.rime.data.userdict.PeriodicSyncJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />

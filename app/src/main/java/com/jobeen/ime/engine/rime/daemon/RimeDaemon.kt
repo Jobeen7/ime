@@ -29,6 +29,10 @@ object RimeDaemon {
             override suspend fun highlightCandidate(index: Int, onCurrentPage: Boolean): Boolean {
                 return realRime.highlightCandidate(index, onCurrentPage)
             }
+
+            override suspend fun syncUserData(): Boolean {
+                return realRime.syncUserData()
+            }
         }
     }
 

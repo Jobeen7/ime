@@ -237,6 +237,9 @@ class Rime : RimeApi, RimeLifecycleOwner {
         }
     }
 
+    override suspend fun syncUserData(): Boolean =
+        withRimeContext { Companion.syncUserData() }
+
     override suspend fun getUserDictList(): List<String> = withRimeContext {
         UserDictManager.getUserDictList().toList()
     }
@@ -770,6 +773,14 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
         @JvmStatic
         external fun joinMaintenanceThread()
+
+        /**
+         * librime 用户数据同步（WO52 3.1c）：JNI 导出已存在
+         * （rime_engine.cc:511），Kotlin 侧此前无声明、无调用方。
+         * 只许经 rime-main 调用（见 [RimeApi.syncUserData]），不直调。
+         */
+        @JvmStatic
+        external fun syncUserData(): Boolean
 
         @JvmStatic
         external fun processKey(keycode: Int, mask: Int): Boolean

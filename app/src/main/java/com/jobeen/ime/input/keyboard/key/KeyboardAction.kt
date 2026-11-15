@@ -261,8 +261,9 @@ sealed class KeyboardAction {
     data object RimeDeployAction : KeyboardAction()
 
     /**
-     * 用户词同步（WO52 3.1a：#rimeSync）：走现有同步
-     * WebDavSync.syncAllDicts，不另写同步逻辑。
+     * 用户词同步（WO52 3.1a 挂白名单，3.1b/3.1c 改走 :ime Service
+     * 跨进程链）：librime syncUserData（FabActions.syncUserData），
+     * 与 WebDAV 同步并存；WebDAV 同步仍在 FAB 同步按钮上。
      */
     data object RimeSyncAction : KeyboardAction()
 

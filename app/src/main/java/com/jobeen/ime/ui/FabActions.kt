@@ -7,7 +7,6 @@ import com.jobeen.ime.R
 import com.jobeen.ime.base.notify.CompletionNotifications
 import com.jobeen.ime.base.notify.NotificationChannels
 import com.jobeen.ime.base.util.ToastUtil
-import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.data.manager.SchemeEnabled
@@ -16,10 +15,10 @@ import com.jobeen.ime.data.manager.awaitSchemasReady
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.IEngine
-import com.jobeen.ime.engine.RimeEngine
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
+import com.jobeen.ime.engine.rime.service.rimeMaintenanceClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -100,8 +99,9 @@ object FabActions {
     }
 
     /**
-     * 一次部署并判定成败：以部署作业的 Finish/失败信号为准，方案表
-     * 非空只作辅助条件、不能单独定成功。
+     * 一次部署并判定成败：部署经 :ime Service 跨进程链执行
+     * （WO52 3.1b；绑定失败时回落本进程执行体），以部署作业的
+     * Finish/失败信号为准，方案表非空只作辅助条件、不能单独定成功。
      * deployAndAwaitIfChanged 的 COMPLETED = 部署作业走完 deploy()+join
      * 并发出 Finish，或输入未变时跳过部署直接发出 Finish（见
      * deployAndAwaitIfChanged）；FAILED = 入口被挡（忙/孤儿/交叉闸/
@@ -112,15 +112,18 @@ object FabActions {
      * 产出无效，仍算失败）。部署超时用 deployTimeoutForCurrentDir（与
      * 切换路径同算法）。本函数不捕获 CancellationException（调用方取消
      * 时穿透；sync() 外层 catch 同样重抛取消，见 U-S3）。
+     * 远端部署成功后本进程引擎仍持旧部署：先经 reload() 收敛
+     * （指纹未变即跳过重编、只刷新方案表；指纹已变则重编一次），
+     * 再复核方案表。
      */
     private suspend fun deployAndCheckSchemas(context: Context, engine: IEngine?): Boolean {
-        val result = (engine as? RimeEngine)
-            ?.deployAndAwaitIfChanged(deployTimeoutForCurrentDir(context))
-            ?: DeployAwaitResult.FAILED
-        if (result != DeployAwaitResult.COMPLETED) {
-            Timber.w("FAB deploy not completed: $result")
+        val deployed = context.rimeMaintenanceClient()
+            .deploy(deployTimeoutForCurrentDir(context))
+        if (!deployed) {
+            Timber.w("FAB deploy not completed")
             return false
         }
+        engine?.reload()
         val ready = awaitSchemasReady(
             poll = {
                 runCatching {
@@ -274,6 +277,30 @@ object FabActions {
             } finally {
                 FabSyncState.setRunning(false)
             }
+        }
+    }
+
+    /**
+     * librime 用户数据同步（WO52 3.1b/3.1c：#rimeSync）：走 :ime Service
+     * 跨进程链（sync_user_data），绑定失败时回落本进程执行。
+     * 与 WebDAV 同步（[sync]）并存、互不替代：WebDAV 同步用户词
+     * 文本快照，syncUserData 同步 librime 侧用户数据；FAB 的同步
+     * 按钮仍走 [sync]（WebDAV），不动。
+     */
+    fun syncUserData(context: Context, scope: CoroutineScope) {
+        scope.launch {
+            val runId = runCounter.incrementAndGet()
+            val ok = context.rimeMaintenanceClient().syncUserData()
+            val msg = context.getString(
+                if (ok) R.string.fab_dict_sync_success else R.string.fab_sync_failed,
+            )
+            ToastUtil.showToast(msg)
+            notifySyncDone(
+                context,
+                runId,
+                if (ok) "success" else "failed",
+                msg,
+            )
         }
     }
 }

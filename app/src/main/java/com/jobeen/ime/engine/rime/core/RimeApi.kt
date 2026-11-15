@@ -23,6 +23,13 @@ interface RimeApi {
 
     suspend fun joinMaintenanceThread()
 
+    /**
+     * librime 用户数据同步（WO52 3.1c：sync_user_data）：把本地用户
+     * 词典变动同步到同步目录并取回远端变动。与 WebDAV 文本快照
+     * （WebDavSync）并存、互不替代；走 rime-main 串行执行。
+     */
+    suspend fun syncUserData(): Boolean
+
     /** 用户词典名列表 */
     suspend fun getUserDictList(): List<String>
 

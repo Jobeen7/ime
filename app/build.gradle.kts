@@ -162,6 +162,8 @@ fun readBundledWanxiangVersionForStamp(): String {
     buildFeatures {
         compose = true
         buildConfig = true
+        // WO52 3.1b：IRimeService.aidl（:ime Service Binder 面）
+        aidl = true
         // app_name 走 resValue 按构建类型生成（见 defaultConfig）
         resValues = true
     }
