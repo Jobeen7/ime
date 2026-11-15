@@ -161,6 +161,9 @@ fun MainScreen(
     onSync: () -> Unit,
     deployRunning: Boolean = false,
     syncRunning: Boolean = false,
+    /** deep link 待导航页键（WO52 4.2）：MainActivity 置入，消费后清掉。 */
+    deepLinkPageKey: String? = null,
+    onDeepLinkConsumed: () -> Unit = {},
 ) {
     // U-M1：页内态用 rememberSaveable——旋转／recreate 不丢展开态、
     // 搜索词与打开的分组。枚举 MainSettingGroup 可进 Bundle
@@ -335,6 +338,13 @@ fun MainScreen(
         "webserver" to onOpenWebServer,
         "about" to onOpenAbout,
     )
+    // deep link 导航（WO52 4.2）：页键到即走 rowClicks 的同一回调，
+    // 消费一次；未知键由路由层先拦，此处 getValue 找不到即跳过。
+    LaunchedEffect(deepLinkPageKey) {
+        val key = deepLinkPageKey ?: return@LaunchedEffect
+        rowClicks[key]?.invoke()
+        onDeepLinkConsumed()
+    }
     val allEntries = catalogPages().map { page ->
         MainSettingEntry(
             page.key,

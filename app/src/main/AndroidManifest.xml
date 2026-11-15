@@ -46,8 +46,15 @@
         <activity
             android:name=".ui.MainActivity"
             android:exported="true"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
+            android:launchMode="singleTask"
+            android:theme="@style/Theme.Ime">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="jime" android:host="com.jobeen.ime" />
+            </intent-filter>
+        </activity>
 
         <!-- 桌面图标入口：LAUNCHER 挂在别名上（关于页开关已删，
              别名保留为唯一启动入口；主 Activity 本身不是启动入口，

@@ -12,6 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.jobeen.ime.base.deeplink.DeepLinkRouter
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.data.manager.EngineDeployState
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
@@ -56,6 +57,33 @@ class MainActivity : ImeActivity() {
      */
     private var imeConfiguredState = mutableStateOf(true)
 
+    /** deep link 待导航页键（WO52 4.2）：MainScreen 消费后清掉。 */
+    private var pendingDeepLinkPageKey = mutableStateOf<String?>(null)
+
+    /**
+     * jime:// 路由（WO52 4.2）：onCreate 与 onNewIntent 均走此处。
+     * phrase 带 id 时直接起 PhraseActivity（EXTRA_PHRASE_ID）；
+     * 其余页键交 MainScreen 的 rowClicks（与点按同一回调）。
+     */
+    private fun handleDeepLink(intent: Intent?) {
+        val target = DeepLinkRouter.resolve(intent?.action, intent?.dataString) ?: return
+        if (target.pageKey == "phrase") {
+            val phraseIntent = Intent(this, PhraseActivity::class.java)
+            target.params["id"]?.toLongOrNull()?.let { id ->
+                phraseIntent.putExtra(PhraseActivity.EXTRA_PHRASE_ID, id)
+            }
+            startActivity(phraseIntent)
+            return
+        }
+        pendingDeepLinkPageKey.value = target.pageKey
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
     override fun onResumeExtra() {
         imeConfiguredState.value = isImeConfigured()
     }
@@ -87,6 +115,7 @@ class MainActivity : ImeActivity() {
 
     override fun onCreateBeforeContent(savedInstanceState: Bundle?) {
         requestPostNotificationsOnce()
+        handleDeepLink(intent)
         // 跟随系统主题的迁移已落到共享入口
         // KeyboardManager.Theme（getMode 读即迁移）：此处在
         // setContent 之前再显式迁一次，组合副作用不再留在
@@ -253,6 +282,8 @@ class MainActivity : ImeActivity() {
             },
             deployRunning = deployRunning,
             syncRunning = syncRunning,
+            deepLinkPageKey = pendingDeepLinkPageKey.value,
+            onDeepLinkConsumed = { pendingDeepLinkPageKey.value = null },
         )
     }
 
