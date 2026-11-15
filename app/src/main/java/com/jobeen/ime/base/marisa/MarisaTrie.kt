@@ -1,5 +1,11 @@
 package com.jobeen.ime.base.marisa
 
+/**
+ * JNI 入口只留 native 侧已实现的 5 个（create／destroy／mmap／
+ * empty／predictiveSearchBytes，见 libmarisa_jni/marisa_jni.cc）——
+ * 其余 18 个声明调了不存在的 native 方法（UnsatisfiedLinkError），
+ * 包装方法又无人调用，已随声明一并删掉。
+ */
 private object MarisaJNI {
     init {
         System.loadLibrary("marisa_jni")
@@ -7,27 +13,9 @@ private object MarisaJNI {
 
     external fun create(): Long
     external fun destroy(ptr: Long)
-    external fun clear(ptr: Long)
-    external fun build(ptr: Long, keys: Array<String>, weights: FloatArray?, configFlags: Int)
     external fun mmap(ptr: Long, filename: String)
-    external fun load(ptr: Long, filename: String)
-    external fun save(ptr: Long, filename: String)
-    external fun lookup(ptr: Long, query: String): Int
-    external fun commonPrefixSearch(ptr: Long, query: String): Array<Any>?
-    external fun commonPrefixSearchBytes(ptr: Long, query: ByteArray): Array<ByteArray>?
     external fun predictiveSearchBytes(ptr: Long, query: ByteArray, limit: Int): Array<ByteArray>?
-    external fun lookupBytes(ptr: Long, query: ByteArray): ByteArray?
-    external fun predictiveSearch(ptr: Long, query: String, limit: Int): Array<Any>?
-    external fun reverseLookup(ptr: Long, keyId: Int): Int
-    external fun reverseLookupKey(ptr: Long, keyId: Int): String?
-    external fun numKeys(ptr: Long): Int
-    external fun numTries(ptr: Long): Int
-    external fun numNodes(ptr: Long): Int
     external fun empty(ptr: Long): Boolean
-    external fun size(ptr: Long): Long
-    external fun totalSize(ptr: Long): Long
-    external fun ioSize(ptr: Long): Long
-    external fun dumpKeys(ptr: Long, limit: Int): Array<ByteArray>?
 }
 
 class MarisaTrie {
@@ -70,80 +58,16 @@ class MarisaTrie {
         block(ptr)
     }
 
-    fun clear() {
-        withPtr { MarisaJNI.clear(it) }
-    }
-
-    fun build(keys: Array<String>, weights: FloatArray? = null, configFlags: Int = 0) {
-        withPtr { MarisaJNI.build(it, keys, weights, configFlags) }
-    }
-
     fun mmap(filename: String) {
         withPtr { MarisaJNI.mmap(it, filename) }
-    }
-
-    fun load(filename: String) {
-        withPtr { MarisaJNI.load(it, filename) }
-    }
-
-    fun save(filename: String) {
-        withPtr { MarisaJNI.save(it, filename) }
-    }
-
-    fun lookup(query: String): Int {
-        return withPtr { MarisaJNI.lookup(it, query) }
-    }
-
-    fun commonPrefixSearch(query: String): List<MatchResult> {
-        return parseSearchResults(withPtr { MarisaJNI.commonPrefixSearch(it, query) })
-    }
-
-    fun commonPrefixSearchBytes(query: ByteArray): List<ByteArray> {
-        return withPtr { MarisaJNI.commonPrefixSearchBytes(it, query) }?.toList() ?: emptyList()
     }
 
     fun predictiveSearchBytes(query: ByteArray, limit: Int = 0): List<ByteArray> {
         return withPtr { MarisaJNI.predictiveSearchBytes(it, query, limit) }?.toList() ?: emptyList()
     }
 
-    fun lookupBytes(query: ByteArray): ByteArray? {
-        return withPtr { MarisaJNI.lookupBytes(it, query) }
-    }
-
-    fun dumpKeys(limit: Int = 10): List<ByteArray> {
-        return withPtr { MarisaJNI.dumpKeys(it, limit) }?.toList() ?: emptyList()
-    }
-
-    fun predictiveSearch(query: String, limit: Int = 0): List<MatchResult> {
-        return parseSearchResults(withPtr { MarisaJNI.predictiveSearch(it, query, limit) })
-    }
-
-    @Throws(IllegalArgumentException::class)
-    fun reverseLookup(keyId: Int): String {
-        return withPtr { MarisaJNI.reverseLookupKey(it, keyId) }
-            ?: throw IllegalArgumentException("Key ID $keyId not found")
-    }
-
-    val numKeys: Int
-        get() = withPtr { MarisaJNI.numKeys(it) }
-
-    val numTries: Int
-        get() = withPtr { MarisaJNI.numTries(it) }
-
-    val numNodes: Int
-        get() = withPtr { MarisaJNI.numNodes(it) }
-
     val empty: Boolean
         get() = withPtr { MarisaJNI.empty(it) }
-
-    val size: Long
-        get() = withPtr { MarisaJNI.size(it) }
-
-    val totalSize: Long
-        get() = withPtr { MarisaJNI.totalSize(it) }
-
-    val ioSize: Long
-        get() = withPtr { MarisaJNI.ioSize(it) }
 
     protected fun finalize() {
         destroy()

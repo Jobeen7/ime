@@ -106,6 +106,37 @@ class CloudVoiceSettleTest {
         assertEquals(listOf("preview:一句", "commit:一句"), sink.calls)
     }
 
+    // 按句记账：连续两句 final 均落屏（NLS 每句 SentenceEnd 发一次
+    // final、腾讯每片 slice_type=2 发一次 final）。
+    @Test
+    fun settle_twoFinalsInARow_bothCommit() {
+        val sink = RecordingSink()
+        val settle = CloudVoiceSettle(sink)
+        settle.onPartial("第一句")
+        settle.onFinal("第一句。")
+        settle.onPartial("第二句")
+        settle.onFinal("第二句。")
+        settle.onEnded()
+        assertEquals(
+            listOf("preview:第一句", "commit:第一句。", "preview:第二句", "commit:第二句。"),
+            sink.calls,
+        )
+    }
+
+    @Test
+    fun settle_finalThenNewPartial_endCommitsTailPartial() {
+        val sink = RecordingSink()
+        val settle = CloudVoiceSettle(sink)
+        settle.onPartial("第一句")
+        settle.onFinal("第一句。")
+        settle.onPartial("第二句没说完")
+        settle.onEnded()
+        assertEquals(
+            listOf("preview:第一句", "commit:第一句。", "preview:第二句没说完", "commit:第二句没说完"),
+            sink.calls,
+        )
+    }
+
     // B-S1：final 即收尾，迟到的 partial 不再覆写已提交文本，
     // onEnded 也不再把陈旧 partial 二次提交。
     @Test
