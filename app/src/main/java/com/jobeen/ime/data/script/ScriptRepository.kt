@@ -10,42 +10,77 @@ import com.jobeen.ime.data.database.ScriptTag
 import com.jobeen.ime.data.database.ScriptTagCrossRef
 import com.jobeen.ime.data.database.ScriptVariable
 import java.util.UUID
+import androidx.room.withTransaction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
 
 /**
  * 脚本数据仓库（WO52 8.1）：4 张表的 DAO 门面＋种子兜底。
  *
  * 种子三重保障（与 9.1 的 AI 种子同制，任一层失败都不影响首启）：
  * ① 新库 onCreate 回调播种；② 升级库 MIGRATION_16_17 播种；
- * ③ 首次访问时 [ensureSeeded] 发现 scripts 为空即补种。补种用
- * INSERT OR IGNORE，不盖用户改过的数据。
+ * ③ 首次访问时 [ensureSeeded] 仅首次补种（prefs 记 seeded，删光后
+ * 不再自动恢复，见 C-L-29）。补种用 INSERT OR IGNORE，不盖用户
+ * 改过的数据。
  */
 class ScriptRepository(
     private val db: AppDatabase,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    /** 仅首次补种的 seeded 标记所用 Context；主机单测构造时为 null（走 count 兜底）。 */
+    private val appContext: Context? = null,
 ) {
     private val items get() = db.scriptItemDao()
     private val tags get() = db.scriptTagDao()
     private val refs get() = db.scriptTagCrossRefDao()
     private val variables get() = db.scriptVariableDao()
+    private val seedMutex = Mutex()
 
     companion object {
+        private const val PREFS_NAME = "script_prefs"
+        private const val KEY_SEEDED = "seeded"
+
         @Volatile
         private var INSTANCE: ScriptRepository? = null
 
         fun get(context: Context): ScriptRepository =
             INSTANCE ?: synchronized(this) {
-                INSTANCE ?: ScriptRepository(AppDatabase.getInstance(context.applicationContext))
-                    .also { INSTANCE = it }
+                INSTANCE ?: ScriptRepository(
+                    AppDatabase.getInstance(context.applicationContext),
+                    appContext = context.applicationContext,
+                ).also { INSTANCE = it }
             }
     }
 
+    /**
+     * 仅首次补种（C-L-29／L-30）：已播种过的用户删光脚本后不再自动
+     * 恢复——与 PhraseManager 同款 Room 先提交、prefs 后同步 commit()
+     * 的配对写；无 Context 时（主机单测构造）保留旧的 count 兜底。
+     * 已升级用户首次调用时表非空→只标 seeded 不插入；此前已删光的
+     * 用户会在升级后首次复活一次（无法区分“从未播种”与“删光”）。
+     */
     suspend fun ensureSeeded() {
-        if (items.count() == 0) {
-            db.runInTransaction { db.openHelper.writableDatabase.let { ScriptSeeds.insertAll(it) } }
+        val context = appContext
+        if (context == null) {
+            if (items.count() == 0) {
+                db.withTransaction { db.openHelper.writableDatabase.let { ScriptSeeds.insertAll(it) } }
+            }
+            return
+        }
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_SEEDED, false)) return
+        seedMutex.withLock {
+            if (prefs.getBoolean(KEY_SEEDED, false)) return
+            if (items.count() == 0) {
+                db.withTransaction { db.openHelper.writableDatabase.let { ScriptSeeds.insertAll(it) } }
+            }
+            if (!prefs.edit().putBoolean(KEY_SEEDED, true).commit()) {
+                Timber.w("script seeded flag commit failed, will retry on next access")
+            }
         }
     }
 

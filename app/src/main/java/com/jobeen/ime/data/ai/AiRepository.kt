@@ -10,10 +10,14 @@ import com.jobeen.ime.data.database.AISystemPrompt
 import com.jobeen.ime.data.database.AIUserPrompt
 import com.jobeen.ime.data.database.AiSeeds
 import com.jobeen.ime.data.database.AppDatabase
+import androidx.room.withTransaction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import timber.log.Timber
 
 /**
  * AI 指令执行器读侧口径（AiInstructionRunner 只依赖这 7 个读方法，
@@ -33,12 +37,15 @@ interface AiDataSource {
  * AI 数据仓库（WO52 9.1）：7 张表的 DAO 门面＋种子兜底＋指令重置.
  *
  * 种子三重保障（任一层失败都不影响首启）：① 新库 onCreate 回调播种；
- * ② 升级库 MIGRATION_15_16 播种；③ 首次访问时 [ensureSeeded] 发现
- * providers 为空即补种。补种用 INSERT OR IGNORE，不盖用户改过的数据。
+ * ② 升级库 MIGRATION_15_16 播种；③ 首次访问时 [ensureSeeded] 仅首次
+ * 补种（prefs 记 seeded，删光后不再自动恢复，见 C-L-29）。补种用
+ * INSERT OR IGNORE，不盖用户改过的数据。
  */
 class AiRepository(
     private val db: AppDatabase,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    /** 仅首次补种的 seeded 标记所用 Context；主机单测构造时为 null（走 count 兜底）。 */
+    private val appContext: Context? = null,
 ) : AiDataSource {
     private val providers get() = db.aiProviderDao()
     private val models get() = db.aiProviderModelDao()
@@ -47,10 +54,33 @@ class AiRepository(
     private val instructions get() = db.aiInstructionDao()
     private val conversations get() = db.aiConversationDao()
     private val messages get() = db.aiMessageDao()
+    private val seedMutex = Mutex()
 
+    /**
+     * 仅首次补种（C-L-29／L-30）：与 ScriptRepository 同制——Room 先
+     * 提交、prefs 后同步 commit() 的配对写；无 Context 时（主机单测
+     * 构造）保留旧的 count 兜底。已升级用户首次调用时表非空→只标
+     * seeded 不插入；此前已删光的用户会在升级后首次复活一次（无法
+     * 区分“从未播种”与“删光”）。
+     */
     suspend fun ensureSeeded() {
-        if (providers.count() == 0) {
-            db.runInTransaction { db.openHelper.writableDatabase.let { AiSeeds.insertAll(it) } }
+        val context = appContext
+        if (context == null) {
+            if (providers.count() == 0) {
+                db.withTransaction { db.openHelper.writableDatabase.let { AiSeeds.insertAll(it) } }
+            }
+            return
+        }
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        if (prefs.getBoolean(KEY_SEEDED, false)) return
+        seedMutex.withLock {
+            if (prefs.getBoolean(KEY_SEEDED, false)) return
+            if (providers.count() == 0) {
+                db.withTransaction { db.openHelper.writableDatabase.let { AiSeeds.insertAll(it) } }
+            }
+            if (!prefs.edit().putBoolean(KEY_SEEDED, true).commit()) {
+                Timber.w("ai seeded flag commit failed, will retry on next access")
+            }
         }
     }
 
@@ -91,12 +121,18 @@ class AiRepository(
     }
 
     companion object {
+        private const val PREFS_NAME = "ai_prefs"
+        private const val KEY_SEEDED = "seeded"
+
         @Volatile
         private var instance: AiRepository? = null
 
         fun get(context: Context): AiRepository =
             instance ?: synchronized(this) {
-                instance ?: AiRepository(AppDatabase.getInstance(context)).also { instance = it }
+                instance ?: AiRepository(
+                    AppDatabase.getInstance(context),
+                    appContext = context.applicationContext,
+                ).also { instance = it }
             }
     }
 }

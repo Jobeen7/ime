@@ -33,6 +33,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -53,8 +54,10 @@ import com.jobeen.ime.script.ScriptRunException
 import com.jobeen.ime.script.ScriptRunResult
 import com.jobeen.ime.script.ScriptRunner
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * 脚本管理页（WO52 8.1，设置一级入口 `script`，标题“脚本”）：
@@ -77,15 +80,19 @@ fun ScriptScreen(
     val repository = remember { ScriptRepository.get(context) }
     var scripts by remember { mutableStateOf<List<ScriptItem>>(emptyList()) }
     var variables by remember { mutableStateOf<List<ScriptVariable>>(emptyList()) }
-    var query by remember { mutableStateOf("") }
-    var prefix by remember { mutableStateOf(ScriptPrefs.getCommandViewScriptPrefix(context)) }
+    var query by rememberSaveable { mutableStateOf("") }
+    var prefix by rememberSaveable { mutableStateOf(ScriptPrefs.getCommandViewScriptPrefix(context)) }
     var refreshTick by remember { mutableStateOf(0) }
-    var editing by remember { mutableStateOf<ScriptItem?>(null) }
-    var creating by remember { mutableStateOf(false) }
-    var confirmDelete by remember { mutableStateOf<ScriptItem?>(null) }
+    // UI-2：自定义类型只存 saveable id，再由列表派生（旋转不丢正在编的条目）。
+    var editingId by rememberSaveable { mutableStateOf<Long?>(null) }
+    val editing = scripts.firstOrNull { it.id == editingId }
+    var creating by rememberSaveable { mutableStateOf(false) }
+    var confirmDeleteId by rememberSaveable { mutableStateOf<Long?>(null) }
 
-    fun reload() {
-        scope.launch {
+    // UI-1／L-37：Room 事务（ensureSeeded 内的 withTransaction）与 DAO
+    // 读移出主线程——reload 改 suspend，直挂 LaunchedEffect，不再包 scope.launch。
+    suspend fun reload() {
+        withContext(Dispatchers.IO) {
             repository.ensureSeeded()
             scripts = repository.getScripts()
             variables = repository.getVariables()
@@ -98,9 +105,9 @@ fun ScriptScreen(
         ScriptEditPage(
             script = editing,
             repository = repository,
-            onBack = { editing = null; creating = false; refreshTick++ },
-            onSaved = { editing = null; creating = false; refreshTick++ },
-            onDeleted = { editing = null; creating = false; refreshTick++ },
+            onBack = { editingId = null; creating = false; refreshTick++ },
+            onSaved = { editingId = null; creating = false; refreshTick++ },
+            onDeleted = { editingId = null; creating = false; refreshTick++ },
         )
         return
     }
@@ -200,10 +207,10 @@ fun ScriptScreen(
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        IconButton(onClick = { editing = script }) {
+                        IconButton(onClick = { editingId = script.id }) {
                             Icon(Icons.Filled.Edit, contentDescription = null)
                         }
-                        IconButton(onClick = { confirmDelete = script }) {
+                        IconButton(onClick = { confirmDeleteId = script.id }) {
                             Icon(Icons.Filled.Delete, contentDescription = null)
                         }
                     }
@@ -228,15 +235,15 @@ fun ScriptScreen(
         )
     }
 
-    val toDelete = confirmDelete
+    val toDelete = scripts.firstOrNull { it.id == confirmDeleteId }
     if (toDelete != null) {
         SettingsConfirmDialog(
-            onDismissRequest = { confirmDelete = null },
+            onDismissRequest = { confirmDeleteId = null },
             title = stringResource(R.string.script_delete),
             text = stringResource(R.string.script_delete_confirm, toDelete.name),
             confirmText = stringResource(R.string.script_delete),
             onConfirm = {
-                confirmDelete = null
+                confirmDeleteId = null
                 scope.launch {
                     repository.deleteScript(toDelete.id)
                     refreshTick++
@@ -255,9 +262,9 @@ private fun ScriptVariablesSection(
     onAdd: (String, String, Boolean) -> Unit,
     onDelete: (ScriptVariable) -> Unit,
 ) {
-    var key by remember { mutableStateOf("") }
-    var value by remember { mutableStateOf("") }
-    var isSecure by remember { mutableStateOf(false) }
+    var key by rememberSaveable { mutableStateOf("") }
+    var value by rememberSaveable { mutableStateOf("") }
+    var isSecure by rememberSaveable { mutableStateOf(false) }
     Text(
         text = stringResource(R.string.script_variables_label),
         style = MaterialTheme.typography.titleMedium,
@@ -350,14 +357,15 @@ private fun ScriptEditPage(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val runner = remember { ScriptRunner() }
-    var name by remember { mutableStateOf(script?.name.orEmpty()) }
-    var content by remember { mutableStateOf(script?.content ?: ScriptSeeds.DEFAULT_NEW_SCRIPT_CONTENT) }
-    var allowPasteboard by remember { mutableStateOf(script?.allowPasteboard ?: false) }
+    // UI-2：编辑字段用 rememberSaveable(script?.id)——切另一条脚本时重置，不串草稿。
+    var name by rememberSaveable(script?.id) { mutableStateOf(script?.name.orEmpty()) }
+    var content by rememberSaveable(script?.id) { mutableStateOf(script?.content ?: ScriptSeeds.DEFAULT_NEW_SCRIPT_CONTENT) }
+    var allowPasteboard by rememberSaveable(script?.id) { mutableStateOf(script?.allowPasteboard ?: false) }
     var allTags by remember { mutableStateOf<List<ScriptTag>>(emptyList()) }
     var assignedTagIds by remember { mutableStateOf<Set<Long>>(emptySet()) }
-    var newTagName by remember { mutableStateOf("") }
-    var showDeleteConfirm by remember { mutableStateOf(false) }
-    var runInput by remember { mutableStateOf("") }
+    var newTagName by rememberSaveable(script?.id) { mutableStateOf("") }
+    var showDeleteConfirm by rememberSaveable(script?.id) { mutableStateOf(false) }
+    var runInput by rememberSaveable(script?.id) { mutableStateOf("") }
     var runResult by remember { mutableStateOf<ScriptRunResult?>(null) }
     var runError by remember { mutableStateOf<String?>(null) }
     var running by remember { mutableStateOf(false) }

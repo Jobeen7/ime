@@ -68,11 +68,11 @@ fun PhraseSettingsScreen(
     var creating by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf<PhraseManager.Phrase?>(null) }
 
-    fun reload() {
-        scope.launch {
-            phrases = if (query.isBlank()) PhraseManager.getAll(context)
-            else PhraseManager.search(context, query.trim())
-        }
+    // L-37：删内层 scope.launch，reload 改 suspend 直挂 LaunchedEffect。
+    // DB 调用本身已在 PhraseManager.db() 内切 Dispatchers.IO。
+    suspend fun reload() {
+        phrases = if (query.isBlank()) PhraseManager.getAll(context)
+        else PhraseManager.search(context, query.trim())
     }
 
     LaunchedEffect(refreshTick, query) { reload() }

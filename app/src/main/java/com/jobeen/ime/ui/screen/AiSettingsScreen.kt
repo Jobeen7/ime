@@ -28,6 +28,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -48,7 +49,9 @@ import com.jobeen.ime.data.database.AIProvider
 import com.jobeen.ime.data.database.AIProviderModel
 import com.jobeen.ime.data.database.AIInstruction
 import com.jobeen.ime.data.database.AiSeeds
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 /**
@@ -78,12 +81,16 @@ fun AiSettingsScreen(
     var systemPrompts by remember { mutableStateOf(AiSeeds.systemPrompts) }
     var userPrompts by remember { mutableStateOf(AiSeeds.userPrompts) }
     var refreshTick by remember { mutableStateOf(0) }
-    var editing by remember { mutableStateOf<AIProvider?>(null) }
-    var confirmDelete by remember { mutableStateOf<AIProvider?>(null) }
-    var confirmReset by remember { mutableStateOf(false) }
+    // UI-2：自定义类型只存 saveable id，再由列表派生（旋转不丢正在编的条目）。
+    var editingId by rememberSaveable { mutableStateOf<String?>(null) }
+    val editing = providers.firstOrNull { it.id == editingId }
+    var confirmDeleteId by rememberSaveable { mutableStateOf<String?>(null) }
+    val confirmDelete = providers.firstOrNull { it.id == confirmDeleteId }
+    var confirmReset by rememberSaveable { mutableStateOf(false) }
     // C-L-17：运行前确认——待确认的指令＋点击时快照的剪贴板文本。
-    var confirmRun by remember { mutableStateOf<AIInstruction?>(null) }
-    var confirmRunInput by remember { mutableStateOf("") }
+    var confirmRunId by rememberSaveable { mutableStateOf<String?>(null) }
+    val confirmRun = instructions.firstOrNull { it.id == confirmRunId }
+    var confirmRunInput by rememberSaveable { mutableStateOf("") }
     var runName by remember { mutableStateOf("") }
     var runResult by remember { mutableStateOf("") }
     var runError by remember { mutableStateOf("") }
@@ -91,12 +98,14 @@ fun AiSettingsScreen(
     var running by remember { mutableStateOf(false) }
     val aiRunFailedText = stringResource(R.string.ai_run_failed)
     val aiMissingTokenText = stringResource(R.string.ai_missing_token)
-    var aiPrefix by remember { mutableStateOf(AiPrefs.getCommandViewAiPrefix(context)) }
-    var aiHistoryPrefix by remember { mutableStateOf(AiPrefs.getCommandViewAiHistoryPrefix(context)) }
-    var historyLimit by remember { mutableStateOf(AiPrefs.getConversationHistoryLimit(context).toString()) }
+    var aiPrefix by rememberSaveable { mutableStateOf(AiPrefs.getCommandViewAiPrefix(context)) }
+    var aiHistoryPrefix by rememberSaveable { mutableStateOf(AiPrefs.getCommandViewAiHistoryPrefix(context)) }
+    var historyLimit by rememberSaveable { mutableStateOf(AiPrefs.getConversationHistoryLimit(context).toString()) }
 
-    fun reload() {
-        scope.launch {
+    // UI-1／L-37：Room 事务（ensureSeeded 内的 withTransaction）与 DAO
+    // 读移出主线程——reload 改 suspend，直挂 LaunchedEffect，不再包 scope.launch。
+    suspend fun reload() {
+        withContext(Dispatchers.IO) {
             repository.ensureSeeded()
             val loadedProviders = repository.getProviders()
             val allModels = loadedProviders.flatMap { p ->
@@ -151,11 +160,11 @@ fun AiSettingsScreen(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    IconButton(onClick = { editing = provider }) {
+                    IconButton(onClick = { editingId = provider.id }) {
                         Icon(Icons.Filled.Edit, contentDescription = stringResource(R.string.edit))
                     }
                     if (provider.builtInCanBeDelete) {
-                        IconButton(onClick = { confirmDelete = provider }) {
+                        IconButton(onClick = { confirmDeleteId = provider.id }) {
                             Icon(Icons.Filled.Delete, contentDescription = stringResource(R.string.delete))
                         }
                     }
@@ -172,7 +181,7 @@ fun AiSettingsScreen(
                 scope.launch {
                     repository.insertProvider(fresh)
                     refreshTick++
-                    editing = fresh
+                    editingId = fresh.id
                 }
             }) {
                 Icon(Icons.Filled.Add, contentDescription = null)
@@ -187,15 +196,15 @@ fun AiSettingsScreen(
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(vertical = 8.dp),
                 )
-                var name by remember(provider.id) { mutableStateOf(provider.name) }
-                var baseUrl by remember(provider.id) { mutableStateOf(provider.baseURL) }
-                var apiPath by remember(provider.id) { mutableStateOf(provider.apiPath) }
-                var token by remember(provider.id) { mutableStateOf(provider.apiToken) }
-                var timeout by remember(provider.id) { mutableStateOf(provider.requestTimeout.toString()) }
-                var temperature by remember(provider.id) { mutableStateOf(provider.temperature?.toString().orEmpty()) }
-                var enabled by remember(provider.id) { mutableStateOf(provider.isEnabled) }
-                var modelId by remember(provider.id) { mutableStateOf(models[provider.id]?.modelID.orEmpty()) }
-                var baseUrlError by remember(provider.id) { mutableStateOf(false) }
+                var name by rememberSaveable(provider.id) { mutableStateOf(provider.name) }
+                var baseUrl by rememberSaveable(provider.id) { mutableStateOf(provider.baseURL) }
+                var apiPath by rememberSaveable(provider.id) { mutableStateOf(provider.apiPath) }
+                var token by rememberSaveable(provider.id) { mutableStateOf(provider.apiToken) }
+                var timeout by rememberSaveable(provider.id) { mutableStateOf(provider.requestTimeout.toString()) }
+                var temperature by rememberSaveable(provider.id) { mutableStateOf(provider.temperature?.toString().orEmpty()) }
+                var enabled by rememberSaveable(provider.id) { mutableStateOf(provider.isEnabled) }
+                var modelId by rememberSaveable(provider.id) { mutableStateOf(models[provider.id]?.modelID.orEmpty()) }
+                var baseUrlError by rememberSaveable(provider.id) { mutableStateOf(false) }
                 OutlinedTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text(stringResource(R.string.ai_provider_name)) },
@@ -255,7 +264,7 @@ fun AiSettingsScreen(
                 )
                 Row(modifier = Modifier.fillMaxWidth()) {
                     Spacer(modifier = Modifier.weight(1f))
-                    TextButton(onClick = { editing = null }) {
+                    TextButton(onClick = { editingId = null }) {
                         Text(stringResource(R.string.cancel))
                     }
                     TextButton(onClick = {
@@ -292,7 +301,7 @@ fun AiSettingsScreen(
                                     repository.updateProvider(saved.copy(defaultModelId = row.id))
                                 }
                             }
-                            editing = null
+                            editingId = null
                             refreshTick++
                         }
                     }) {
@@ -335,7 +344,7 @@ fun AiSettingsScreen(
                             // 内容前 200 字），确认后才发；剪贴板文本在
                             // 点击时快照，确认期间变了也不改已确认的内容。
                             confirmRunInput = clipboardText()
-                            confirmRun = instruction
+                            confirmRunId = instruction.id
                         },
                         enabled = !running,
                     ) {
@@ -462,14 +471,14 @@ fun AiSettingsScreen(
 
     confirmDelete?.let { provider ->
         SettingsConfirmDialog(
-            onDismissRequest = { confirmDelete = null },
+            onDismissRequest = { confirmDeleteId = null },
             title = stringResource(R.string.ai_provider_delete),
             text = stringResource(R.string.ai_provider_delete_confirm, provider.name),
             confirmText = stringResource(R.string.delete),
             onConfirm = {
                 scope.launch {
                     repository.deleteProvider(provider.id)
-                    confirmDelete = null
+                    confirmDeleteId = null
                     refreshTick++
                 }
             },
@@ -495,7 +504,7 @@ fun AiSettingsScreen(
     confirmRun?.let { instruction ->
         val targetProvider = providers.firstOrNull { it.id == instruction.providerID }
         SettingsConfirmDialog(
-            onDismissRequest = { confirmRun = null },
+            onDismissRequest = { confirmRunId = null },
             title = stringResource(R.string.ai_run),
             text = stringResource(
                 R.string.ai_run_confirm,
@@ -505,7 +514,7 @@ fun AiSettingsScreen(
             confirmText = stringResource(R.string.ai_run),
             onConfirm = {
                 val text = confirmRunInput
-                confirmRun = null
+                confirmRunId = null
                 runName = instruction.name
                 runResult = ""
                 runError = ""
