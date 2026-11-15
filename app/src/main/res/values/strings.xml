@@ -586,6 +586,7 @@
     <string name="phrase_shortcut_hint">例如：rq（可留空）</string>
     <string name="phrase_shortcut_length_error">输入码须为 2–10 位英文字母，也可以留空。</string>
     <string name="phrase_shortcut_characters_error">输入码只能包含英文字母 a–z，不能有空格或数字。</string>
+    <string name="sensitive_label">敏感</string>
     <string name="phrase_category_label">分类</string>
     <string name="phrase_tags_label">标签</string>
     <string name="phrase_tags_hint">多个标签用逗号分隔</string>
@@ -617,6 +618,7 @@
 
     <!-- 脚本管理页（WO52 8.1；副标题取对端 SETTINGS-UI.md 原文） -->
     <string name="script_title">脚本</string>
+    <string name="script_unnamed">未命名脚本</string>
     <string name="row_sub_script">JavaScript 脚本管理</string>
     <string name="script_empty">暂无脚本</string>
     <string name="script_add">新建脚本</string>
@@ -654,6 +656,8 @@
     <string name="ai_copy_result">复制结果</string>
     <string name="ai_run_failed">指令不存在，无法运行</string>
     <string name="ai_missing_token">请先在服务商设置里填写 API Token</string>
+    <string name="ai_no_provider">未配置 AI 服务商</string>
+    <string name="ai_no_model">服务商未配置模型</string>
     <string name="ai_reset_instructions">重置指令模板</string>
     <string name="ai_reset_instructions_confirm">4 条指令将改回初始定义，你改过的指令会被覆盖。确定要重置吗？</string>
     <string name="ai_system_prompts">系统提示词</string>

@@ -2,6 +2,7 @@
 
 package com.jobeen.ime.data.ai
 
+import com.jobeen.ime.R
 import com.jobeen.ime.data.database.AIInstruction
 import com.jobeen.ime.data.database.AISystemPrompt
 import com.jobeen.ime.data.database.AIUserPrompt
@@ -54,16 +55,16 @@ class AiInstructionRunner(
         val providerId = instruction.providerID
             ?: repository.getDefaultProvider()?.id
             ?: return AiInstructionRun(instruction, systemPrompt, userPrompt, flow {
-                emit(AiStreamEvent.Error("未配置 AI 服务商", "no_provider"))
+                emit(AiStreamEvent.Error(code = "no_provider", messageRes = R.string.ai_no_provider))
             })
         val provider = repository.getProviderById(providerId)
             ?: return AiInstructionRun(instruction, systemPrompt, userPrompt, flow {
-                emit(AiStreamEvent.Error("未配置 AI 服务商", "no_provider"))
+                emit(AiStreamEvent.Error(code = "no_provider", messageRes = R.string.ai_no_provider))
             })
         val modelId = provider.defaultModelId?.let { repository.getModelById(it)?.modelID }
             ?: repository.getModelsByProviderId(provider.id).firstOrNull { it.isEnabled }?.modelID
             ?: return AiInstructionRun(instruction, systemPrompt, userPrompt, flow {
-                emit(AiStreamEvent.Error("服务商未配置模型", "no_model"))
+                emit(AiStreamEvent.Error(code = "no_model", messageRes = R.string.ai_no_model))
             })
         val messages = buildList {
             systemPrompt?.body?.takeIf { it.isNotBlank() }?.let { add(AiChatMessage("system", it)) }

@@ -336,11 +336,12 @@ fun AiSettingsScreen(
                                             runResult = acc.toString()
                                         }
                                         is AiStreamEvent.Error -> {
-                                            runError = if (event.code == "missing_token") {
-                                                aiMissingTokenText
-                                            } else {
-                                                event.message
-                                            }
+                                            runError = event.messageRes?.let { stringResource(it) }
+                                                ?: if (event.code == "missing_token") {
+                                                    aiMissingTokenText
+                                                } else {
+                                                    event.message
+                                                }
                                         }
                                         else -> Unit
                                     }

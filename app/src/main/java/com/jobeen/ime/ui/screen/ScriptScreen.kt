@@ -318,7 +318,7 @@ private fun ScriptVariablesSection(
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Checkbox(checked = isSecure, onCheckedChange = { isSecure = it })
                 Text(
-                    text = "敏感",
+                    text = stringResource(R.string.sensitive_label),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -379,7 +379,7 @@ private fun ScriptEditPage(
         scope.launch {
             if (script == null) {
                 repository.insertScript(
-                    name = name.ifBlank { "未命名脚本" },
+                    name = name.ifBlank { context.getString(R.string.script_unnamed) },
                     content = content,
                     allowPasteboard = allowPasteboard,
                 )

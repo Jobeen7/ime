@@ -2,6 +2,7 @@
 
 package com.jobeen.ime
 
+import com.jobeen.ime.R
 import com.jobeen.ime.data.database.PhraseDao
 import com.jobeen.ime.data.database.PhraseVariable
 import com.jobeen.ime.data.database.PhraseVariables
@@ -39,11 +40,11 @@ class PhraseShortcutTest {
     @Test
     fun validateShortcut_tooShortOrTooLong_errors() {
         assertEquals(
-            "输入码须为 2–10 位英文字母，也可以留空。",
+            R.string.phrase_shortcut_length_error,
             PhraseManager.validateShortcut("r"),
         )
         assertEquals(
-            "输入码须为 2–10 位英文字母，也可以留空。",
+            R.string.phrase_shortcut_length_error,
             PhraseManager.validateShortcut("abcdefghijk"),
         )
     }
@@ -51,11 +52,11 @@ class PhraseShortcutTest {
     @Test
     fun validateShortcut_uppercaseDigitOrSpace_errors() {
         assertEquals(
-            "输入码只能包含英文字母 a–z，不能有空格或数字。",
+            R.string.phrase_shortcut_characters_error,
             PhraseManager.validateShortcut("Rq"),
         )
         assertEquals(
-            "输入码只能包含英文字母 a–z，不能有空格或数字。",
+            R.string.phrase_shortcut_characters_error,
             PhraseManager.validateShortcut("r1"),
         )
         assertEquals(

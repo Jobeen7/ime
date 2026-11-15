@@ -252,7 +252,7 @@ private fun PhraseEditPage(
             phrase?.variables?.forEach { list.add(VariableDraft(it.key, it.value, it.isSecure)) }
         }
     }
-    var shortcutError by remember { mutableStateOf<String?>(null) }
+    var shortcutError by remember { mutableStateOf<Int?>(null) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
 
     fun save() {
@@ -315,7 +315,7 @@ private fun PhraseEditPage(
             placeholder = { Text(stringResource(R.string.phrase_shortcut_hint)) },
             singleLine = true,
             isError = shortcutError != null,
-            supportingText = shortcutError?.let { { Text(it) } },
+            supportingText = shortcutError?.let { { Text(stringResource(it)) } },
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Ascii, imeAction = ImeAction.Done),
             modifier = Modifier.fillMaxWidth(),
         )
@@ -437,7 +437,7 @@ private fun VariableRow(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Checkbox(checked = draft.isSecure, onCheckedChange = { draft.isSecure = it })
             Text(
-                text = "敏感",
+                text = stringResource(R.string.sensitive_label),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

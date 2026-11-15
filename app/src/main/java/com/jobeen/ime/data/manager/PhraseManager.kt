@@ -1,8 +1,10 @@
 package com.jobeen.ime.data.manager
 
 import android.content.Context
+import androidx.annotation.StringRes
 import androidx.core.content.edit
 import androidx.room.withTransaction
+import com.jobeen.ime.R
 import com.jobeen.ime.data.database.AppDatabase
 import com.jobeen.ime.data.database.PhraseRecord
 import com.jobeen.ime.data.database.PhraseVariable
@@ -80,12 +82,12 @@ object PhraseManager {
     /**
      * 输入码校验（WO52 6.1，04 §2.2 报错字符串原文口径）：
      * 可留空；非空须为 2–10 位英文字母 a–z。返回 null＝合法，
-     * 否则返回应显示的报错文案。
+     * 否则返回应显示的报错字符串资源 id（调用方 resolve，L-43）。
      */
-    fun validateShortcut(code: String): String? {
+    fun validateShortcut(code: String): @StringRes Int? {
         if (code.isEmpty()) return null
-        if (code.length !in 2..10) return "输入码须为 2–10 位英文字母，也可以留空。"
-        if (!code.all { it in 'a'..'z' }) return "输入码只能包含英文字母 a–z，不能有空格或数字。"
+        if (code.length !in 2..10) return R.string.phrase_shortcut_length_error
+        if (!code.all { it in 'a'..'z' }) return R.string.phrase_shortcut_characters_error
         return null
     }
 

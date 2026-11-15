@@ -34,12 +34,16 @@ import java.util.concurrent.TimeUnit
 /** Chat Completions 的一条消息（role：system／user／assistant）。 */
 data class AiChatMessage(val role: String, val content: String)
 
-/** 流式事件。`Error.code` 供 UI 映射文案：`missing_token`／`http`／`network`。 */
+/** 流式事件。`Error.code` 供 UI 映射文案：`missing_token`／`http`／`network`；`messageRes` 非空时 UI 优先用它解析文案（L-44）。 */
 sealed interface AiStreamEvent {
     data class Delta(val text: String) : AiStreamEvent
     data class Usage(val promptTokens: Int, val completionTokens: Int, val totalTokens: Int) : AiStreamEvent
     data object Done : AiStreamEvent
-    data class Error(val message: String, val code: String = "network") : AiStreamEvent
+    data class Error(
+        val message: String = "",
+        val code: String = "network",
+        @androidx.annotation.StringRes val messageRes: Int? = null,
+    ) : AiStreamEvent
 }
 
 /**
