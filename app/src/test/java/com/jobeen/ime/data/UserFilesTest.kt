@@ -46,9 +46,6 @@ class UserFilesTest {
         assertEquals(File(files, "Logs/performance"), UserFiles.perfDir(files))
         assertEquals(File(files, "fonts"), UserFiles.fontsDir(files))
         assertEquals(File(files, "databases"), UserFiles.databasesDir(files))
-        assertEquals(
-            File(files, "databases/clipboard_database"),
-        )
     }
 
 

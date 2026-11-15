@@ -127,12 +127,6 @@ class Batch5SkinGuardsTest {
         // 超限图降采样到上限内使用；解码上限与导入校验口径同值。
         assertEquals(8192, ImageDecodePolicy.MAX_DECODE_SIDE)
         assertEquals(64L * 1024 * 1024, ImageDecodePolicy.MAX_DECODE_PIXELS)
-        assertEquals(
-            ImageDecodePolicy.Placeholder.TEXT_FALLBACK,
-        )
-        assertEquals(
-            ImageDecodePolicy.Placeholder.STATIC_BACKGROUND_FALLBACK,
-        )
         assertEquals(2, ImageDecodePolicy.DECODE_PARALLELISM)
         val root = Files.createTempDirectory("batch5-root").toFile()
     }

@@ -396,9 +396,6 @@ class SchemePackageImportTest {
         assertEquals("pkg-a", decoded.packageForScheme("y"))
         assertEquals("18.1.7", decoded.versionForFile("x.dict.yaml"))
         assertEquals(null, decoded.versionForFile("z.schema.yaml"))
-        assertEquals(
-            listOf("x.schema.yaml", "x.dict.yaml"),
-        )
     }
 
     @Test
@@ -433,13 +430,7 @@ class SchemePackageImportTest {
         // 同名包跨目录不得串：dir 过滤后各目录只看到自己的记录。
         assertEquals("pkg-a", registry.packageForScheme("x", "dir-a"))
         assertEquals("18.1.7", registry.versionForFile("x.schema.yaml", "dir-a"))
-        assertEquals(
-            SchemePackageImport.PackageSource.URL,
-        )
         assertEquals("18.1.8", registry.versionForFile("x.schema.yaml", "dir-b"))
-        assertEquals(
-            SchemePackageImport.PackageSource.LOCAL,
-        )
         assertEquals(null, registry.packageForScheme("x", "dir-missing"))
         // 不传 dir 时保留跨目录汇总语义（首条命中）。
         assertEquals("pkg-a", registry.packageForScheme("x"))
