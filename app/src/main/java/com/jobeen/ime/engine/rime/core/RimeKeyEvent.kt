@@ -2,15 +2,12 @@
 
 package com.jobeen.ime.engine.rime.core
 
-import com.jobeen.ime.engine.event.KeyModifiers
 
 data class RimeKeyEvent(
     val value: Int,
     val modifiers: Int,
     val repr: String,
 ) {
-    val keyVal by lazy { KeyValue(value) }
-    val keyModifiers by lazy { KeyModifiers.of(modifiers) }
 
     override fun toString(): String = repr
 

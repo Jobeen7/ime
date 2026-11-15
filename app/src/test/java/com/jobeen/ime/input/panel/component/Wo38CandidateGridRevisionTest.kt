@@ -64,15 +64,6 @@ class Wo38CandidateGridRevisionTest {
         assertTrue(gate.tryApply(6L))
     }
 
-    @Test
-    fun predicate_matchesGate() {
-        // 纯函数版与状态机版同规则：0 恒放行、同代次放行、旧帧丢弃
-        assertTrue(shouldApplyCandidateGridFrame(0L, 5L))
-        assertTrue(shouldApplyCandidateGridFrame(5L, 5L))
-        assertTrue(shouldApplyCandidateGridFrame(6L, 5L))
-        assertFalse(shouldApplyCandidateGridFrame(4L, 5L))
-        assertTrue(shouldApplyCandidateGridFrame(1L, 0L))
-    }
 
     @Test
     fun gate_neverRegresses_acrossInterleavedFrames() {

@@ -9,7 +9,6 @@ import com.jobeen.ime.data.manager.SchemeDownload.HeadersResult
 import com.jobeen.ime.data.manager.SchemeDownload.UrlInvalidReason
 import com.jobeen.ime.data.manager.SchemeDownload.UrlValidation
 import com.jobeen.ime.data.manager.SchemePackageImport
-import com.jobeen.ime.data.manager.SchemePackageImport.PackageSource
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -212,34 +211,12 @@ class SchemeDownloadTest {
 
     // ---- 登记来源：URL 与本地导入区分，向后兼容二期旧行 ----
 
-    @Test
-    fun registrySourceRoundTrip() {
-        val registry = SchemePackageImport.SchemePackageRegistry(
-            listOf(
-                SchemePackageImport.SchemePackageRecord(
-                    "local-pkg", "1.0", listOf("a"), listOf("a.schema.yaml"),
-                    PackageSource.LOCAL,
-                ),
-                SchemePackageImport.SchemePackageRecord(
-                    "url-pkg", "2.0", listOf("b"), listOf("b.schema.yaml"),
-                    PackageSource.URL,
-                ),
-            ),
-        )
-        val decoded = SchemePackageImport.decodeRegistry(
-            SchemePackageImport.encodeRegistry(registry),
-        )
-        assertEquals(PackageSource.LOCAL, decoded.sourceForScheme("a"))
-        assertEquals(PackageSource.URL, decoded.sourceForScheme("b"))
-        assertEquals(null, decoded.sourceForScheme("missing"))
-    }
 
     @Test
     fun legacyFourFieldRegistryLineDecodesAsLocal() {
         val decoded = SchemePackageImport.decodeRegistry(
             "old-pkg\t1.0\ta\t" + "a.schema.yaml",
         )
-        assertEquals(PackageSource.LOCAL, decoded.sourceForScheme("a"))
         assertEquals("old-pkg", decoded.packageForScheme("a"))
     }
 

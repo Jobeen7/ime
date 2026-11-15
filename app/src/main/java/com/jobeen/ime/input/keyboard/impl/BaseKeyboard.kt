@@ -165,24 +165,10 @@ abstract class BaseKeyboard(
     /** 文字回车键刷新器（自定义布局的文本回车键，建键时按行为记下）。 */
     private val enterTextSetters = mutableListOf<(String) -> Unit>()
 
-
     override fun updateSpaceKeyText(text: String) {
         // 参数 text 是回退值（方案名）：皮肤有空格文案时不用它，
         // 只有皮肤未定义空格文案时才写它（现行行为）。
         spaceKeyView?.updateText(resolveSpaceText(spaceKeySkinText, text))
-    }
-
-    /**
-     * 单键失效：只重绘该键视图，不触整窗 requestLayout。
-     * update 可选地先改该键的文本/图标（如 TextKeyView.updateText），
-     * 再由本方法重绘；update 本身已带 invalidate 的键无需再调。
-     * 未知 def 直接返回。函数类型参数在最后，trailing-lambda 可直挂。
-     */
-    fun invalidateKey(def: KeyDef, update: (KeyView) -> Unit = {}) {
-        keyViewsByDef[def]?.let { view ->
-            update(view)
-            view.invalidate()
-        }
     }
 
     override fun updateDynamicTexts(values: Map<String, String>) {
@@ -1238,7 +1224,6 @@ abstract class BaseKeyboard(
         rippleView.rippleEnabled = enabled
         rippleView.visibility = if (enabled) VISIBLE else INVISIBLE
     }
-
 
     override fun updateEditorInfo(info: EditorInfo, empty: Boolean, isComposing: Boolean) {
         // 回车精简决策反推显示：显示与行为同一来源（EnterDecision），

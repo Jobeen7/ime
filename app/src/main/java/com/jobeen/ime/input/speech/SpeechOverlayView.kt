@@ -11,9 +11,6 @@ import android.view.animation.AccelerateInterpolator
 import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.TextView
-import androidx.core.view.doOnPreDraw
-import androidx.core.view.isVisible
 import com.jobeen.ime.R
 
 @SuppressLint("ViewConstructor", "ClickableViewAccessibility")
@@ -67,25 +64,6 @@ class SpeechOverlayView(
     private fun createWaveView(type: WaveViewType, context: Context): ISpeechView = when (type) {
         WaveViewType.PARTICLE -> ParticleWaveView(context)
         WaveViewType.SPECTRUM -> SpectrumWaveView(context)
-    }
-
-    fun switchWaveView(type: WaveViewType) {
-        if (waveViewType == type) return
-        waveViewType = type
-        val wasVisible = isVisible
-        if (wasVisible) {
-            waveView.stopAnim()
-        }
-        removeView(waveView.view)
-        waveView.release()
-        waveView = createWaveView(type, context)
-        waveView.updateColors(Color.TRANSPARENT, cachedWaveformColor, cachedBarColor)
-        addView(
-            waveView.view, 0, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
-        )
-        if (wasVisible) {
-            waveView.startAnim()
-        }
     }
 
     fun unlock() {

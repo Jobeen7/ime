@@ -3,14 +3,11 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.input.stats.InputStats
-import com.jobeen.ime.ui.screen.categoryDistribution
 import com.jobeen.ime.ui.screen.accuracyRating
 import com.jobeen.ime.ui.screen.formatAccuracy
 import com.jobeen.ime.ui.screen.formatMistouchRate
 import com.jobeen.ime.ui.screen.formatSpeed
-import com.jobeen.ime.ui.screen.formatTypingMinutes
 import com.jobeen.ime.ui.screen.longStatsReport
-import com.jobeen.ime.ui.screen.rankCaption
 import com.jobeen.ime.ui.screen.shortStatsReport
 import com.jobeen.ime.ui.screen.speedRating
 import com.jobeen.ime.ui.screen.stageExpText
@@ -30,18 +27,6 @@ class InputStatsFormatTest {
         assertEquals("今年", segmentLabel(InputStats.Period.YEAR))
     }
 
-    @Test
-    fun typingMinutes_zeroIsEmptyNotZero() {
-        assertEquals("—", formatTypingMinutes(0L))
-        assertEquals("—", formatTypingMinutes(-1000L))
-    }
-
-    @Test
-    fun typingMinutes_minutesAndHours() {
-        assertEquals("5分钟", formatTypingMinutes(5L * 60000L))
-        assertEquals("1小时", formatTypingMinutes(60L * 60000L))
-        assertEquals("1小时30分钟", formatTypingMinutes(90L * 60000L))
-    }
 
     @Test
     fun speedAndAccuracy_nullIsEmpty() {
@@ -51,22 +36,7 @@ class InputStatsFormatTest {
         assertEquals("86%", formatAccuracy(0.856))
     }
 
-    @Test
-    fun rankCaption_fullAndNext() {
-        val full = InputStats.Rank("传奇", 6, 1.0, 150000L, null)
-        assertEquals("已满级", rankCaption(full))
-        val next = InputStats.Rank("萌新", 0, 0.2, 100L, 500L)
-        assertEquals("距下一段位还差 400 字", rankCaption(next))
-    }
 
-    @Test
-    fun categoryDistribution_percentsAndEmpty() {
-        assertTrue(categoryDistribution(emptyMap()).isEmpty())
-        val shares = categoryDistribution(mapOf("INPUT" to 3L, "SPACE" to 1L))
-        assertEquals(2, shares.size)
-        val total = shares.sumOf { it.percent }
-        assertEquals(1.0, total, 1e-9)
-    }
 
     @Test
     fun stageExpText_fiveStagesAndFull() {

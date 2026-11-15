@@ -1,12 +1,9 @@
 package com.jobeen.ime.input.keyboard.key
 
-import android.graphics.Typeface
-import android.graphics.Typeface.BOLD
 import android.view.KeyEvent
 import androidx.annotation.DrawableRes
 import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
-import com.jobeen.ime.input.keyboard.impl.NumberKeyboard
 import com.jobeen.ime.input.keyboard.impl.SymbolKeyboard
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Border
 import com.jobeen.ime.input.keyboard.key.KeyDef.Appearance.Variant
@@ -78,16 +75,6 @@ fun sidePannelKey(percentWidth: Float = 0.15f, rowSpan: Int = 3, visableRow: Int
     behaviors = setOf(),
 )
 
-fun sidePannelNormalItem(character: String, percentWidth: Float = 0.15f) = KeyDef(
-    appearance = KeyDef.Appearance.Text(
-        displayText = character,
-        textSize = 15f,
-        percentWidth = percentWidth,
-        variant = Variant.Alternative
-    ),
-    behaviors = setOf(),
-)
-
 fun capsLockKey(id: String? = null, iconSizeDp: Float? = null): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.Image(
@@ -101,7 +88,6 @@ fun capsLockKey(id: String? = null, iconSizeDp: Float? = null): KeyDef = KeyDef(
         KeyDef.Behavior.Press(KeyboardAction.CapsAction),
     ),
 )
-
 
 fun backspaceKey(
     percentWidth: Float = 0.15f,
@@ -156,7 +142,6 @@ fun layoutSwitchKey(
     popups = popup?.let { arrayOf(it) },
 )
 
-
 fun resumeLayoutKey(
     displayText: String,
     percentWidth: Float = 0.15f,
@@ -188,7 +173,6 @@ fun spaceKey(percentWidth: Float = 0.23333f, id: String? = null): KeyDef = KeyDe
     ),
 )
 
-
 fun peroidKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.ImageText(
@@ -204,7 +188,6 @@ fun peroidKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
         KeyDef.Behavior.LongPress(KeyboardAction.LayoutSwitchAction(SymbolKeyboard.NAME))
     ),
 )
-
 
 fun schemaSwitchKey(
     percentWidth: Float,
@@ -314,28 +297,6 @@ fun returnKey(
     )
 )
 
-fun prevPageKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
-    id = id,
-    appearance = KeyDef.Appearance.Image(
-        src = R.drawable.ic_keyboard_arrow_up,
-        percentWidth = percentWidth,
-        variant = Variant.Alternative,
-        border = Border.On,
-    ),
-    behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.ReturnAction())),
-)
-
-fun nextPageKey(percentWidth: Float, id: String? = null): KeyDef = KeyDef(
-    id = id,
-    appearance = KeyDef.Appearance.Image(
-        src = R.drawable.ic_keyboard_arrow_down,
-        percentWidth = percentWidth,
-        variant = Variant.Alternative,
-        border = Border.On,
-    ),
-    behaviors = setOf(KeyDef.Behavior.Press(KeyboardAction.ReturnAction())),
-)
-
 fun segmentKey(percentWidth: Float = 0.23333f, id: String? = null): KeyDef = KeyDef(
     id = id,
     appearance = KeyDef.Appearance.AltText(
@@ -378,7 +339,6 @@ fun newlineKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef
         KeyDef.Behavior.Press(KeyboardAction.CommitAction("\n"))
     ),
 )
-
 
 fun zeroKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
     id = id,
@@ -431,18 +391,3 @@ fun atKey(percentWidth: Float = 0.15f, id: String? = null): KeyDef = KeyDef(
     )
 )
 
-fun textKey(
-    character: String, percentWidth: Float = 0.23333f,
-    variant: Variant = Variant.Normal,
-    fontSize: Float = 20f,
-    id: String? = null,
-) = KeyDef(
-    id = id,
-    appearance = KeyDef.Appearance.Text(
-        displayText = character, textSize = fontSize, variant = variant, percentWidth = percentWidth
-    ), behaviors = setOf(
-        KeyDef.Behavior.Press(KeyboardAction.KeySequenceAction(character)),
-    ), popups = arrayOf(
-        KeyDef.Popup.Preview(character)
-    )
-)

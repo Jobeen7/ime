@@ -43,18 +43,6 @@ object T9SymbolLayout {
 
     fun pageCount(spec: T9SymbolsSpec): Int = pages(spec).size
 
-    fun rowsForPage(pageItems: List<SymbolItem>): List<List<SymbolItem?>> {
-        val rows = pageItems.chunked(T9Symbols.COLUMNS).map { row ->
-            row + List(T9Symbols.COLUMNS - row.size) { null }
-        }
-        return rows
-    }
-
-    fun visiblePage(spec: T9SymbolsSpec, page: Int): List<SymbolItem> {
-        val all = pages(spec)
-        if (all.isEmpty()) return emptyList()
-        return all[page.coerceIn(0, all.lastIndex)]
-    }
 }
 
 object T9HorizontalSymbolsParser {

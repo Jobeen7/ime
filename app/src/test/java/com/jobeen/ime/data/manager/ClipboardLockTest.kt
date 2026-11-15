@@ -92,11 +92,4 @@ class ClipboardLockTest {
         assertFalse(ClipboardLockPolicy.shouldReturnToKeyboard(false, false))
     }
 
-    @Test
-    fun searchKeptOnlyWhenLocked() {
-        // 锁定且搜索视图存在 → 搜索框保持聚焦（搜索态不收起）；
-        // 未锁定 → 收起搜索态（随面板关闭）。
-        assertTrue(ClipboardLockPolicy.shouldKeepSearch(true))
-        assertFalse(ClipboardLockPolicy.shouldKeepSearch(false))
-    }
 }

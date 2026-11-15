@@ -111,11 +111,6 @@ sealed interface SkinImageDescriptor {
     /** App 内置图描述：名由渲染层回调解析，解析层不校验。 */
     data class Asset(val name: String) : SkinImageDescriptor
 
-    /** 本描述引用的精灵图资产逻辑 id（去重保序；内置图为空表）。 */
-    fun sheetFiles(): List<String> = when (this) {
-        is File -> listOfNotNull(normal.file, highlight?.file).distinct()
-        is Asset -> emptyList()
-    }
 }
 
 /** 快照中的精灵图资产引用（内容寻址；与工具栏图标引用同口径）。 */

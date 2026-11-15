@@ -629,19 +629,6 @@ class ParticleWaveView @JvmOverloads constructor(
         }
     }
 
-    fun setMoveSpeed(moveSpeed: Float) {
-        offsetSpeed = moveSpeed
-    }
-
-    fun setSensibility(sensibility: Int) {
-        this.sensibility = sensibility
-        checkSensibilityValue()
-    }
-
-    fun setPolygonSides(sides: Int) {
-        polygonSides = sides.coerceIn(6, 12)
-    }
-
     private fun checkVolumeValue() {
         if (targetVolume > 100) targetVolume = 100
         if (targetVolume < 0) targetVolume = 0

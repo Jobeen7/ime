@@ -94,17 +94,6 @@ object SkinColorMode {
         Mode.SYSTEM -> systemNight
     }
 
-    /**
-     * 纯函数：设置页跟随开关 → 皮肤颜色模式（2026-10-28 跟随系统统一）。
-     * 开 = 跟随系统；关 = 冻结为关那一刻系统深浅对应的固定色板
-     * （此后系统深浅变化不再切换皮肤色板，直到开关重新打开）。
-     */
-    fun fromFollowToggle(checked: Boolean, systemDark: Boolean): Mode = when {
-        checked -> Mode.SYSTEM
-        systemDark -> Mode.DARK
-        else -> Mode.LIGHT
-    }
-
     fun get(context: Context): Mode {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val raw = prefs.getString(KEY, null)

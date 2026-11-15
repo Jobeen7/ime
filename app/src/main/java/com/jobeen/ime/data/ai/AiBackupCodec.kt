@@ -44,7 +44,4 @@ object AiBackupCodec {
     fun providerForRestore(provider: AIProvider): AIProvider =
         provider.copy(apiToken = "")
 
-    /** 导出包里是否含 token（单测断言用：forExport 之后必须为 false）。 */
-    fun containsToken(data: AiBackupData): Boolean =
-        data.providers.any { it.apiToken.isNotEmpty() }
 }

@@ -1,6 +1,5 @@
 package com.jobeen.ime.skin.runtime
 
-import java.security.MessageDigest
 
 /**
  * 切换与缓存策略（第 5 批 §3，纯 JVM 部分）：
@@ -35,18 +34,6 @@ object SkinSwitchPolicy {
     /** 指纹条目：规范路径 + 文件字节 SHA-256；sha256=null = 依赖缺失。 */
     data class FingerprintEntry(val path: String, val sha256: String?)
 
-    /** 内容指纹：按路径排序后逐项 `path\0sha|MISSING\0` 做 SHA-256。 */
-    fun contentFingerprint(entries: List<FingerprintEntry>): String {
-        val digest = MessageDigest.getInstance("SHA-256")
-        for (entry in entries.sortedBy { it.path }) {
-            digest.update(entry.path.toByteArray(Charsets.UTF_8))
-            digest.update(byteArrayOf(0))
-            digest.update((entry.sha256 ?: "MISSING").toByteArray(Charsets.UTF_8))
-            digest.update(byteArrayOf(0))
-        }
-        return digest.digest().joinToString("") { "%02x".format(it) }
-    }
-
     /** 视图缓存失效判定结果。 */
     enum class ViewCacheDecision {
         /** 结构相等：直接 return，不发通知。 */
@@ -62,31 +49,6 @@ object SkinSwitchPolicy {
         REBUILD_ALL,
     }
 
-    /**
-     * 判定缓存动作。调用方按事实传入，优先级：
-     * 结构相等 > 换皮肤 > 布局／样式版本变化 > 换色 > 换键盘 > 已是当前。
-     * 版本变化与换键盘同属“只重建当前”档；未知变化默认重建当前
-     * （安全方向：不静默沿用可能过期的缓存）。
-     */
-    fun decideViewCache(
-        structureEqual: Boolean,
-        skinChanged: Boolean,
-        colorOnly: Boolean,
-        keyboardOnly: Boolean,
-        layoutVersionChanged: Boolean,
-        styleVersionChanged: Boolean,
-        alreadyCurrent: Boolean = false,
-    ): ViewCacheDecision {
-        if (structureEqual) return ViewCacheDecision.NO_NOTIFY
-        if (skinChanged) return ViewCacheDecision.REBUILD_ALL
-        if (layoutVersionChanged || styleVersionChanged) {
-            return ViewCacheDecision.REBUILD_CURRENT
-        }
-        if (colorOnly) return ViewCacheDecision.REDRAW_IN_PLACE
-        if (keyboardOnly) return ViewCacheDecision.REBUILD_CURRENT
-        if (alreadyCurrent) return ViewCacheDecision.NO_NOTIFY
-        return ViewCacheDecision.REBUILD_CURRENT
-    }
 }
 
 /** 小容量 LRU 指纹缓存（默认 8 条，对方 T17 同值）。 */

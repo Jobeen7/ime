@@ -1,6 +1,5 @@
 package com.jobeen.ime.input.keyboard.window
 
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -21,31 +20,5 @@ class InlineAutofillBarTest {
         assertFalse(inlineAutofillShouldShow(false, true, false))
     }
 
-    @Test
-    fun partition_splitsPinnedAndScrollableInOrder() {
-        val (pinned, scrollable) = partitionInlineSuggestions(listOf(true, false, true, false))
-        assertEquals(listOf(0, 2), pinned)
-        assertEquals(listOf(1, 3), scrollable)
-    }
 
-    @Test
-    fun partition_allPinned() {
-        val (pinned, scrollable) = partitionInlineSuggestions(listOf(true, true))
-        assertEquals(listOf(0, 1), pinned)
-        assertEquals(emptyList<Int>(), scrollable)
-    }
-
-    @Test
-    fun partition_nonePinned() {
-        val (pinned, scrollable) = partitionInlineSuggestions(listOf(false, false))
-        assertEquals(emptyList<Int>(), pinned)
-        assertEquals(listOf(0, 1), scrollable)
-    }
-
-    @Test
-    fun partition_empty() {
-        val (pinned, scrollable) = partitionInlineSuggestions(emptyList())
-        assertEquals(emptyList<Int>(), pinned)
-        assertEquals(emptyList<Int>(), scrollable)
-    }
 }

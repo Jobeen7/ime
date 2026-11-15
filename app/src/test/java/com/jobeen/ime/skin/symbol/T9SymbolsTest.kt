@@ -23,22 +23,8 @@ class T9SymbolsTest {
         )
         val spec = parsed!!
         assertEquals(2, T9SymbolLayout.pageCount(spec))
-        assertEquals(9, T9SymbolLayout.visiblePage(spec, 0).size)
-        assertEquals(1, T9SymbolLayout.visiblePage(spec, 1).size)
     }
 
-    @Test
-    fun rowsPadShortLastRowToThreeColumns() {
-        val (parsed, _) = T9SymbolsParser.parse(
-            element("""{"dataSource": ["a", "b", "c", "d", "e"]}"""),
-        )
-        val rows = T9SymbolLayout.rowsForPage(
-            T9SymbolLayout.visiblePage(parsed!!, 0),
-        )
-        assertEquals(2, rows.size)
-        assertEquals(listOf("a", "b", "c"), rows[0].map { it?.displayText })
-        assertEquals(listOf("d", "e", null), rows[1].map { it?.displayText })
-    }
 
     @Test
     fun emptyDataSourceYieldsNoSpec() {

@@ -2,8 +2,6 @@
 
 package com.jobeen.ime
 
-import com.jobeen.ime.ui.screen.CatalogPage
-import com.jobeen.ime.ui.screen.CatalogRow
 import com.jobeen.ime.ui.screen.MainSettingEntry
 import com.jobeen.ime.ui.screen.MainSettingGroup
 import com.jobeen.ime.ui.screen.ResolvedPage
@@ -13,10 +11,7 @@ import com.jobeen.ime.ui.screen.FOCUS_CONSUMING_PAGE_KEYS
 import com.jobeen.ime.ui.screen.catalogPages
 import com.jobeen.ime.ui.screen.catalogRows
 import com.jobeen.ime.ui.screen.directPageForGroup
-import com.jobeen.ime.ui.screen.filterMainSettings
-import com.jobeen.ime.ui.screen.groupMainSettings
 import com.jobeen.ime.ui.screen.searchCatalog
-import com.jobeen.ime.ui.screen.validateCatalog
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -35,57 +30,7 @@ class MainSettingsCatalogTest {
         MainSettingEntry("about", "关于我们", "版本、诊断与开发者信息", MainSettingGroup.ADVANCED_ABOUT),
     )
 
-    @Test
-    fun blankQuery_returnsAllInOrder() {
-        assertEquals(entries, filterMainSettings("", entries))
-        assertEquals(entries, filterMainSettings("   ", entries))
-    }
 
-    @Test
-    fun titleMatch_onlyMatchingRows() {
-        val got = filterMainSettings("皮肤", entries)
-        assertEquals(listOf("skin"), got.map { it.key })
-    }
-
-    @Test
-    fun subtitleMatch_onlyMatchingRows() {
-        val got = filterMainSettings("颜色模式", entries)
-        assertEquals(listOf("skin"), got.map { it.key })
-    }
-
-    @Test
-    fun queryIsTrimmedAndCaseInsensitive() {
-        assertEquals(listOf("rime"), filterMainSettings("  rime  ", entries).map { it.key })
-        assertEquals(listOf("rime"), filterMainSettings("RIME", entries).map { it.key })
-    }
-
-    @Test
-    fun noMatch_returnsEmpty() {
-        assertTrue(filterMainSettings("不存在的设置", entries).isEmpty())
-        assertTrue(groupMainSettings(emptyList()).isEmpty())
-    }
-
-    @Test
-    fun grouping_dropsEmptyGroupsAndKeepsFixedOrder() {
-        // 输入顺序打乱，组顺序仍按枚举固定顺序；只命中键盘组时其余组全部隐藏。
-        val shuffled = listOf(entries[5], entries[3], entries[0])
-        val grouped = groupMainSettings(shuffled)
-        assertEquals(
-            listOf(MainSettingGroup.INPUT_CANDIDATE, MainSettingGroup.KEYBOARD, MainSettingGroup.ADVANCED_ABOUT),
-            grouped.map { it.first },
-        )
-        val keyboardOnly = groupMainSettings(filterMainSettings("皮肤", entries))
-        assertEquals(1, keyboardOnly.size)
-        assertEquals(MainSettingGroup.KEYBOARD, keyboardOnly[0].first)
-        assertEquals(listOf("skin"), keyboardOnly[0].second.map { it.key })
-    }
-
-    @Test
-    fun groupNameAlone_doesNotMatch() {
-        // 只匹配行标题／副标题：组名本身不是匹配源。
-        // “便捷功能”四字不在任何行标题／副标题里，搜它应为空。
-        assertTrue(filterMainSettings("便捷功能", entries).isEmpty())
-    }
 
     // ---- 目录整树＋搜索页 ----
 
@@ -309,10 +254,6 @@ class MainSettingsCatalogTest {
         assertNull(directPageForGroup(real, MainSettingGroup.DATA_BACKUP))
     }
 
-    @Test
-    fun validateCatalog_realCatalog_passes() {
-        assertTrue(validateCatalog(catalogPages(), catalogRows()).isEmpty())
-    }
 
     @Test
     fun realCatalog_appearanceRows_focusToCategoryRow() {
@@ -361,20 +302,4 @@ class MainSettingsCatalogTest {
         }
     }
 
-    @Test
-    fun validateCatalog_detectsProblems() {
-        val dupPages = listOf(
-            CatalogPage("a", 1, 2, MainSettingGroup.KEYBOARD),
-            CatalogPage("a", 3, 4, MainSettingGroup.KEYBOARD),
-        )
-        assertTrue(validateCatalog(dupPages, emptyList()).isNotEmpty())
-        val orphan = listOf(CatalogRow(10, "missing"))
-        assertTrue(validateCatalog(dupPages, orphan).any { it.contains("missing") })
-        val dupRows = listOf(
-            CatalogRow(10, "a"),
-            CatalogRow(10, "a"),
-        )
-        val singlePage = listOf(CatalogPage("a", 1, 2, MainSettingGroup.KEYBOARD))
-        assertTrue(validateCatalog(singlePage, dupRows).any { it.contains("duplicate row") })
-    }
 }

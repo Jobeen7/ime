@@ -4,7 +4,6 @@ package com.jobeen.ime.skin.symbol
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** WO52 7.4：用户自定义 Emoji 键盘——分组／顺序／内容编辑（存储＋加载）。 */
@@ -74,12 +73,6 @@ class EmojiCustomKeyboardTest {
         assertEquals(config(), EmojiCustomOps.removeSymbol(config(), 1, 9))
     }
 
-    @Test
-    fun moveSymbol_reordersWithinGroup() {
-        val moved = EmojiCustomOps.moveSymbol(config(), 0, 0, 1)
-        assertEquals(listOf("😂", "😀"), moved.groups[0].symbols)
-        assertEquals(config(), EmojiCustomOps.moveSymbol(config(), 0, 0, 0))
-    }
 
     @Test
     fun editRoundTrip_storageAndLoad() {

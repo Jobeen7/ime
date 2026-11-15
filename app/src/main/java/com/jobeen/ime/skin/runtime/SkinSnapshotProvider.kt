@@ -396,9 +396,6 @@ object SkinSnapshotProvider {
 
     fun previewBitmap(): Bitmap? = previewBitmap
 
-    /** 内存压力淘汰（详设 §6.3）：先淘汰预览份。 */
-    fun evictPreviewBitmap() = setPreviewBitmap(null)
-
     // ---- 内部 ----
 
     private fun installLocked(context: Context, snapshot: SkinSnapshot, prepared: Bitmap?) {

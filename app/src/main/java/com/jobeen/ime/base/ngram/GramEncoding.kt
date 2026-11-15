@@ -99,14 +99,4 @@ object GramEncoding {
         }
     }
 
-    fun unicodeLength(encoded: ByteArray, offset: Int, byteLen: Int): Int {
-        var p = offset
-        val end = offset + byteLen
-        var len = 0
-        while (p < end) {
-            p = nextUnicode(encoded, p)
-            len++
-        }
-        return len
-    }
 }

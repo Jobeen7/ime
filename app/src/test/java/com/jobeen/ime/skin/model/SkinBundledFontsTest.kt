@@ -1,8 +1,6 @@
 package com.jobeen.ime.skin.model
 
-import com.jobeen.ime.data.keyboard.theme.FontChoice
 import com.jobeen.ime.data.keyboard.theme.FontRole
-import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.pkg.ImportAssetPolicy
 import com.jobeen.ime.skin.store.SkinGenRef
@@ -157,29 +155,4 @@ class SkinBundledFontsTest {
         assertEquals(mapOf("font-a" to "a".repeat(64)), snapshot.skinFontAssets)
     }
 
-    @Test
-    fun effectiveSourcePrefersBundledOverSystemAndGlobal() {
-        assertEquals(
-            GlobalFonts.EffectiveSource.SkinBundled("MyFont"),
-            GlobalFonts.effectiveSource(
-                "MyFont", FontChoice.System("sans-serif"),
-                emptyMap(), FontRole.KEY, listOf("MyFont"),
-            ),
-        )
-        assertEquals(
-            GlobalFonts.EffectiveSource.SkinBundled("MyFont"),
-            GlobalFonts.effectiveSource(
-                "serif", FontChoice.System("sans-serif"),
-                mapOf(FontRole.KEY to "myfont"), FontRole.KEY, listOf("MyFont"),
-            ),
-        )
-        // 未声明为内嵌名时，旧分层不变（系统族名仍胜全局）。
-        assertEquals(
-            GlobalFonts.EffectiveSource.Skin("serif"),
-            GlobalFonts.effectiveSource(
-                "serif", FontChoice.System("sans-serif"),
-                emptyMap(), FontRole.KEY, emptyList(),
-            ),
-        )
-    }
 }

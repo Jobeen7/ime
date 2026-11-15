@@ -41,19 +41,4 @@ class HexColorTest {
         assertEquals(0x11, (SkinJson.parseColor("#11223344")?.ushr(24) ?: 0) and 0xFF)
     }
 
-    @Test
-    fun peerToJimeConversionMovesAlphaToFront() {
-        assertEquals("#44112233", convertPeerHexToJimeHex("#11223344"))
-        assertEquals("#112233", convertPeerHexToJimeHex("#112233"))
-        assertEquals("#44112233", convertPeerHexToJimeHex("11223344"))
-        assertNull(convertPeerHexToJimeHex("#11223"))
-        assertNull(convertPeerHexToJimeHex("#GGGGGG"))
-        assertNull(convertPeerHexToJimeHex(""))
-        // 往返一致：转换后再经 Jime 口径解析 = 对端口径解析。
-        val peer = "#A0B0C0D0"
-        assertEquals(
-            parsePeerColor(peer),
-            convertPeerHexToJimeHex(peer)?.let { SkinJson.parseColor(it) },
-        )
-    }
 }

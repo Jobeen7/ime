@@ -7,8 +7,6 @@ import kotlinx.coroutines.flow.cancellable
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 
-fun subProcess(vararg commands: String): Process = Runtime.getRuntime().exec(commands)
-
 fun Process.asFlow(): Flow<String> = inputStream
     .bufferedReader()
     .lineSequence()

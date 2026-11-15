@@ -3,9 +3,7 @@
 package com.jobeen.ime.data.ai
 
 import android.content.Context
-import com.jobeen.ime.data.database.AIConversation
 import com.jobeen.ime.data.database.AIInstruction
-import com.jobeen.ime.data.database.AIMessage
 import com.jobeen.ime.data.database.AIProvider
 import com.jobeen.ime.data.database.AIProviderModel
 import com.jobeen.ime.data.database.AISystemPrompt
@@ -72,25 +70,15 @@ class AiRepository(
     override suspend fun getModelById(id: String): AIProviderModel? = models.getById(id)
     suspend fun insertModel(model: AIProviderModel) = models.insert(model)
     suspend fun updateModel(model: AIProviderModel) = models.update(model)
-    suspend fun deleteModel(id: String) = models.deleteById(id)
 
     suspend fun getSystemPrompts(): List<AISystemPrompt> = systemPrompts.getAll()
     override suspend fun getSystemPromptById(id: String): AISystemPrompt? = systemPrompts.getById(id)
-    suspend fun insertSystemPrompt(prompt: AISystemPrompt) = systemPrompts.insert(prompt)
-    suspend fun updateSystemPrompt(prompt: AISystemPrompt) = systemPrompts.update(prompt)
-    suspend fun deleteSystemPrompt(id: String) = systemPrompts.deleteById(id)
 
     suspend fun getUserPrompts(): List<AIUserPrompt> = userPrompts.getAll()
     override suspend fun getUserPromptById(id: String): AIUserPrompt? = userPrompts.getById(id)
-    suspend fun insertUserPrompt(prompt: AIUserPrompt) = userPrompts.insert(prompt)
-    suspend fun updateUserPrompt(prompt: AIUserPrompt) = userPrompts.update(prompt)
-    suspend fun deleteUserPrompt(id: String) = userPrompts.deleteById(id)
 
     suspend fun getInstructions(): List<AIInstruction> = instructions.getAll()
     override suspend fun getInstructionById(id: String): AIInstruction? = instructions.getById(id)
-    suspend fun insertInstruction(instruction: AIInstruction) = instructions.insert(instruction)
-    suspend fun updateInstruction(instruction: AIInstruction) = instructions.update(instruction)
-    suspend fun deleteInstruction(id: String) = instructions.deleteById(id)
 
     /**
      * 重置 AI 指令模板（WO52 9.1）：4 条指令改回初始定义——先全删再
@@ -101,16 +89,6 @@ class AiRepository(
         instructions.deleteAll()
         instructions.insertAll(AiSeeds.instructions)
     }
-
-    suspend fun getConversations(limit: Int): List<AIConversation> = conversations.getAll().take(limit)
-    suspend fun getConversationById(id: String): AIConversation? = conversations.getById(id)
-    suspend fun insertConversation(conversation: AIConversation) = conversations.insert(conversation)
-    suspend fun updateConversation(conversation: AIConversation) = conversations.update(conversation)
-    suspend fun deleteConversation(id: String) = conversations.deleteById(id)
-
-    suspend fun getMessages(conversationId: String): List<AIMessage> = messages.getByConversationId(conversationId)
-    suspend fun insertMessage(message: AIMessage) = messages.insert(message)
-    suspend fun updateMessage(message: AIMessage) = messages.update(message)
 
     companion object {
         @Volatile

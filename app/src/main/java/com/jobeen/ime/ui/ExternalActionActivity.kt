@@ -69,8 +69,6 @@ class ExternalActionActivity : Activity() {
         /** SET_CLIPBOARD 的 text 上限（单子定值 4096 字符）。 */
         const val MAX_CLIPBOARD_TEXT_LENGTH = 4096
 
-        const val PERMISSION_EXTERNAL_ACTION = "com.jobeen.ime.permission.EXTERNAL_ACTION"
-
         private const val SESSION_NAME = "external-action"
     }
 }

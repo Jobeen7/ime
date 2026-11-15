@@ -5,7 +5,6 @@ package com.jobeen.ime.data.manager
 import java.io.File
 import java.io.IOException
 import java.util.zip.ZipFile
-import kotlinx.coroutines.CancellationException
 
 /**
  * 多目录方案导入：SAF/下载的 zip 解压到独立新目录（同名合并覆盖），
@@ -20,20 +19,6 @@ import kotlinx.coroutines.CancellationException
 
 /** 导入 zip 上限：256MiB（DESIGN P3；复制期与编排期双重检查）。 */
 const val MAX_IMPORT_ZIP_BYTES = 256L * 1024 * 1024
-
-/**
- * zip magic 纯谓词：PK\x03\x04（普通 zip）、PK\x05\x06（空 zip）、
- * PK\x07\x08（分卷）通过；其余一律不通过。.cskin 本身就是 zip，
- * 过 magic 后走正常校验流程、无方案时应为 NO_SCHEMA，绝不特判为
- * NOT_ZIP。
- */
-fun hasZipMagic(header: ByteArray): Boolean {
-    if (header.size < 4) return false
-    if (header[0] != 0x50.toByte() || header[1] != 0x4B.toByte()) return false
-    return (header[2] == 0x03.toByte() && header[3] == 0x04.toByte()) ||
-        (header[2] == 0x05.toByte() && header[3] == 0x06.toByte()) ||
-        (header[2] == 0x07.toByte() && header[3] == 0x08.toByte())
-}
 
 /**
  * 一次方案包解压的汇总结果。

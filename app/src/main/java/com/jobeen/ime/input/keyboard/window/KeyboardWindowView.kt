@@ -29,7 +29,6 @@ import android.widget.FrameLayout
 import java.io.File
 import com.jobeen.ime.input.keyboard.impl.IKeyboard
 import com.jobeen.ime.input.keyboard.impl.ISubCollectionPageable
-import com.jobeen.ime.input.keyboard.impl.BaseKeyboard
 import com.jobeen.ime.input.keyboard.impl.ISidePanelKeyboard
 import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
@@ -275,9 +274,6 @@ class KeyboardWindowView(
         }
         requestLayout()
     }
-
-    /** 当前是否浮动模式（设置页开关与动作分发共用读口）。 */
-    fun isFloatingKeyboardEnabled(): Boolean = floatingEnabled
 
     /**
      * 悬浮布局决议（onMeasure 用）：浮动时按横竖屏几何算出
@@ -894,7 +890,6 @@ class KeyboardWindowView(
         }
         return transformed
     }
-
 
     fun onConfigChanged(key: String) {
         when (key) {
@@ -1524,7 +1519,6 @@ class KeyboardWindowView(
             Rect(it.first, 0, it.first + it.second, bottom - top)
         }
     }
-
 
     /**
      * 剪贴板文本输入态（搜索/条目编辑）的结果列表区高度（拉高
@@ -2810,7 +2804,6 @@ class KeyboardWindowView(
         SherpaSpeechClient.stopHoldSession(discard = discard)
         voiceOverlay.hide()
     }
-
 
     fun toggleVoiceLocked() {
         if (isVoiceRecording) {

@@ -2,14 +2,6 @@ package com.jobeen.ime.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
-
-val Purple40 = Color(0xFF6650a4)
-val PurpleGrey40 = Color(0xFF625b71)
-val Pink40 = Color(0xFF7D5260)
-
 val PrimaryLight = Color(0xFF00897B)
 val OnPrimaryLight = Color(0xFFFFFFFF)
 val PrimaryContainerLight = Color(0xFFA8EFE6)
@@ -60,15 +52,6 @@ val SurfaceVariantDark = Color(0xFF2A3331)
 val OnSurfaceVariantDark = Color(0xFFB5C5C2)
 val OutlineDark = Color(0xFF4E6560)
 val OutlineVariantDark = Color(0xFF2A3331)
-val SuccessLight = Color(0xFF22C55E)
-val OnSuccessLight = Color(0xFFFFFFFF)
-val SuccessContainerLight = Color(0xFFDCFCE7)
-val OnSuccessContainerLight = Color(0xFF052E16)
-
-val SuccessDark = Color(0xFF4ADE80)
-val OnSuccessDark = Color(0xFF052E16)
-val SuccessContainerDark = Color(0xFF166534)
-val OnSuccessContainerDark = Color(0xFFDCFCE7)
 
 val SurfaceContainerLowestLight = Color(0xFFFFFFFF)
 val SurfaceContainerLowLight = Color(0xFFF8FCFB)

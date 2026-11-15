@@ -192,9 +192,6 @@ object DeletedWordsStore {
     fun all(): Set<String> =
         load().filterValues { it.deleted }.keys.toHashSet()
 
-    /** 当前全部记录（含已恢复的墓碑）的快照，供 WebDAV 同步合并。 */
-    fun entriesSnapshot(): Map<String, DeletedWordEntry> = HashMap(load())
-
     /** 已删词列表（按词排序），供设置页展示与恢复。 */
     fun deletedWords(): List<String> = all().sorted()
 

@@ -139,50 +139,6 @@ object UserFiles {
 
     // ---- 分类：用户可编辑 vs 应用管理（迁移口径） ----
 
-    /**
-     * 用户可编辑条目（相对名，锚点见各解析函数）：Mie N80 意义上的
-     * 迁移候选集。本批只登记、不移动；逐项迁移须另证明读取口径、
-     * 备份口径与回落口径全部跟随，否则丢数据。
-     */
-    val userEditableRelativeNames: Set<String> = setOf(
-        SHARED_DIR_NAME,
-        SCHEME_DIRS_ROOT_NAME,
-        THEMES_DIR_NAME,
-        SKIN_LIBRARY_DIR_NAME,
-        FONTS_DIR_NAME,
-        CLOUD_PLUGINS_DIR_NAME,
-        SKIN_SCRIPTS_DIR_NAME,
-        TOOLBAR_USER_FILE_NAME,
-        TOOLBAR_IMAGES_DIR_NAME,
-        SYMBOL_BAR_FILE_NAME,
-        VOICE_INPUT_SWITCH_FILE_NAME,
-        USER_COLLOCATIONS_FILE_NAME,
-        VOICE_CORRECTIONS_FILE_NAME,
-        // 注意：CUSTOM_KEY_SOUND_PREFIX 是文件名前缀（custom_key_sound.<ext>），
-        // 不是完整相对名，故不进本集合；前缀常量另见 [CUSTOM_KEY_SOUND_PREFIX]。
-    )
-
-    /**
-     * 应用管理条目（相对名）：崩溃、埋点、统计、还原 journal、Room 库、
-     * 日志与历史残留。只登记供备份排除与清理口径引用，不是迁移候选，
-     * 不得随用户文件一起搬。
-     */
-    val appManagedRelativeNames: Set<String> = setOf(
-        CRASH_DIR_NAME,
-        PERF_DIR_NAME,
-        INPUT_STATS_DIR_NAME,
-        RESTORE_JOURNAL_DIR_NAME,
-        DATABASES_DIR_NAME,
-        LOGS_DIR_NAME,
-        LOGS_FALLBACK_DIR_NAME,
-        CDSP_DIR_NAME,
-        LOG_DIR_NAME,
-        DOWNLOAD_DIR_NAME,
-        MODEL_DIR_NAME,
-        VERSION_FILE_NAME,
-        BUILD_DIR_NAME,
-    )
-
     // ---- 外部根解析（纯函数；锚点由调用方传入） ----
 
     fun sharedDir(extRoot: File): File = File(extRoot, SHARED_DIR_NAME)
@@ -207,31 +163,10 @@ object UserFiles {
 
     // ---- 皮肤库子目录解析（纯函数；根由调用方传入） ----
 
-    fun skinLibrarySkinsDir(skinLibraryRoot: File): File = File(skinLibraryRoot, "skins")
-    fun skinLibraryLayoutsDir(skinLibraryRoot: File): File = File(skinLibraryRoot, "layouts")
-    fun skinLibraryAssetsDir(skinLibraryRoot: File): File = File(skinLibraryRoot, "assets")
-    fun skinLibraryStagingDir(skinLibraryRoot: File): File = File(skinLibraryRoot, "staging")
-    fun skinLibraryDraftsDir(skinLibraryRoot: File): File = File(skinLibraryRoot, "drafts")
-
     // ---- filesDir 解析（纯函数；锚点由调用方传入） ----
 
     fun crashDir(filesDir: File): File = File(filesDir, CRASH_DIR_NAME)
     fun perfDir(filesDir: File): File = File(filesDir, PERF_DIR_NAME)
-    fun inputStatsDir(filesDir: File): File = File(filesDir, INPUT_STATS_DIR_NAME)
-    fun skinScriptsDir(filesDir: File): File = File(filesDir, SKIN_SCRIPTS_DIR_NAME)
-    fun restoreJournalDir(filesDir: File): File = File(filesDir, RESTORE_JOURNAL_DIR_NAME)
     fun fontsDir(filesDir: File): File = File(filesDir, FONTS_DIR_NAME)
-    fun cloudPluginsDir(filesDir: File): File = File(filesDir, CLOUD_PLUGINS_DIR_NAME)
-    fun toolbarUserFile(filesDir: File): File = File(filesDir, TOOLBAR_USER_FILE_NAME)
-    fun toolbarImagesDir(filesDir: File): File = File(filesDir, TOOLBAR_IMAGES_DIR_NAME)
-    fun symbolBarFile(filesDir: File): File = File(filesDir, SYMBOL_BAR_FILE_NAME)
-    fun voiceInputSwitchFile(filesDir: File): File = File(filesDir, VOICE_INPUT_SWITCH_FILE_NAME)
-    fun userCollocationsFile(filesDir: File): File = File(filesDir, USER_COLLOCATIONS_FILE_NAME)
-    fun voiceCorrectionsFile(filesDir: File): File = File(filesDir, VOICE_CORRECTIONS_FILE_NAME)
-    fun cdspDir(filesDir: File): File = File(filesDir, CDSP_DIR_NAME)
-    fun logsFallbackDir(filesDir: File): File = File(filesDir, LOGS_FALLBACK_DIR_NAME)
     fun databasesDir(filesDir: File): File = File(filesDir, DATABASES_DIR_NAME)
-    fun imeDatabaseFile(filesDir: File): File = File(databasesDir(filesDir), IME_DATABASE_NAME)
-    fun clipboardDatabaseFile(filesDir: File): File =
-        File(databasesDir(filesDir), CLIPBOARD_DATABASE_NAME)
 }

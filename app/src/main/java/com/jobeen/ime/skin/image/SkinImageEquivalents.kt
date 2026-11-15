@@ -1,11 +1,5 @@
 package com.jobeen.ime.skin.image
 
-import com.jobeen.ime.skin.model.ImageContentMode
-import com.jobeen.ime.skin.model.SkinImageDescriptor
-import com.jobeen.ime.skin.model.SkinImageRef
-import com.jobeen.ime.skin.model.SpriteFrame
-import com.jobeen.ime.skin.model.SpriteInsets
-import com.jobeen.ime.skin.model.SpriteRect
 
 /**
  * 对端 5 图的 Jime 等价形式一览（原图一律不进包；转换器按此表映射）：
@@ -44,20 +38,6 @@ object SkinImageEquivalents {
     /** float_back 投影色（上一轮 XML 几何沿用）。 */
     val floatBackShadow: Int = 0x26000000.toInt()
 
-    /** float_back 精灵描述（常态与高亮同帧；样式层 insets 缺失→用帧 insets）。 */
-    val floatBackDescriptor: SkinImageDescriptor.File = SkinImageDescriptor.File(
-        normal = SkinImageRef("float_back", "IMG1"),
-        highlight = SkinImageRef("float_back", "IMG1"),
-        contentMode = ImageContentMode.SCALE_TO_FILL,
-        insets = null,
-    )
-
-    /** float_back 精灵帧（130×130 全图，9-patch 边框 63）。 */
-    val floatBackFrame: SpriteFrame = SpriteFrame(
-        rect = SpriteRect(0, 0, 130, 130),
-        insets = SpriteInsets(left = 63, top = 63, right = 63, bottom = 63),
-    )
-
     /**
      * float_back 圆角系数：实测圆弧半径 25px / 形体跨度 80px。
      * 固定 16dp 近似（上一轮）已废止：圆角现随绘制形 min 边缩放。
@@ -70,18 +50,4 @@ object SkinImageEquivalents {
         return (minSidePx * FLOAT_BACK_ARC_FRACTION).coerceAtMost(minSidePx / 2f)
     }
 
-    /** toolbar_circle 常态白（IMG1 实测）。 */
-    val toolbarCircleNormal: Int = 0xFFFFFFFF.toInt()
-
-    /** toolbar_circle 高亮灰（IMG2 实测）。 */
-    val toolbarCircleHighlight: Int = 0xFFD0D4DB.toInt()
-
-    /** cnen 字色（黑字形层实测）。 */
-    val cnenText: Int = 0xFF000000.toInt()
-
-    /** encn 字色（绿字实测）。 */
-    val encnText: Int = 0xFF0FBC7A.toInt()
-
-    /** wxicon 笔画绿（主色实测）。 */
-    val wxiconGreen: Int = 0xFF1BC886.toInt()
 }

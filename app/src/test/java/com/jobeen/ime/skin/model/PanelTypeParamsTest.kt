@@ -102,7 +102,6 @@ class PanelTypeParamsTest {
         assertEquals(30f, snap.preeditHeightFor("pinyin")?.dp)
         assertEquals(2000, snap.verticalCandidatesStyleFor("pinyin")?.background)
         assertEquals(18f, snap.horizontalCandidateStyleFor("pinyin")?.textSizeDp)
-        assertEquals(17f, snap.verticalCandidateStyleFor("pinyin")?.textSizeDp)
     }
 
     @Test

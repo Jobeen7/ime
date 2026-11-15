@@ -1,7 +1,6 @@
 package com.jobeen.ime.input.panel
 
 import kotlin.math.abs
-import kotlin.math.exp
 import kotlin.math.ln
 
 /**
@@ -52,22 +51,4 @@ object CandidateFlingPolicy {
         return ln(0.35 * abs(velocityPxPerSec.toDouble()) / (friction.toDouble() * physicalCoeff))
     }
 
-    /** 样条甩动滑过的距离（像素，带方向符号）。 */
-    fun splineFlingDistancePx(velocityPxPerSec: Float, friction: Float, density: Float): Float {
-        if (velocityPxPerSec == 0f) return 0f
-        val l = splineDeceleration(velocityPxPerSec, friction, density)
-        val decelMinusOne = decelerationRate - 1.0
-        val physicalCoeff = density.toDouble() * 160.0 * 0.84
-        val magnitude = friction.toDouble() * physicalCoeff *
-            exp(decelerationRate / decelMinusOne * l)
-        return (if (velocityPxPerSec > 0f) magnitude else -magnitude).toFloat()
-    }
-
-    /** 样条甩动停下用的时长（毫秒，恒为正）。 */
-    fun splineFlingDurationMs(velocityPxPerSec: Float, friction: Float, density: Float): Float {
-        if (velocityPxPerSec == 0f) return 0f
-        val l = splineDeceleration(velocityPxPerSec, friction, density)
-        val decelMinusOne = decelerationRate - 1.0
-        return (1000.0 * exp(l / decelMinusOne)).toFloat()
-    }
 }

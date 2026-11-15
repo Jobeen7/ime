@@ -217,10 +217,6 @@ object InputStats {
         statsEnabled = enabled
     }
 
-    /** 设置页用：读偏好现值（默认开）。 */
-    fun isStatsEnabled(context: Context): Boolean =
-        prefs(context).getBoolean(KEY_STATS_ENABLED, true)
-
     /** 设置页用：写偏好并同步缓存（监听未装时也能立即生效）。 */
     fun setStatsEnabled(context: Context, enabled: Boolean) {
         statsEnabled = enabled

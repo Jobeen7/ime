@@ -258,11 +258,6 @@ object ScreenComponent {
         }
     }
 
-    /** 琥珀色警告卡内的文字色，与 WarningCard 容器配对。 */
-    @Composable
-    fun warningContentColor(): Color =
-        MaterialTheme.colorScheme.onTertiaryContainer
-
     /**
      * 开关行：标题 16sp，纵向 12dp；须放在卡片内，横向留白由卡片提供。
      * showDivider 保留参数以兼容调用点，按对齐要求不再绘制分隔线。
@@ -395,30 +390,6 @@ object ScreenComponent {
         }
     }
 
-    @Composable
-    fun SectionHeader(title: String, icon: ImageVector? = null) {
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
-        ) {
-            if (icon != null) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(16.dp),
-                )
-                Spacer(Modifier.width(4.dp))
-            }
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-
     /**
      * 重置应用设置二次确认（关于页与 RIME 页共用，同一动作、同一文案）：
      * step 1 = 首确认（范围说明 + 不可撤销），step 2 = 再次确认；
@@ -518,141 +489,4 @@ object ScreenComponent {
         )
     }
 
-    @Composable
-    fun ThemeChip(
-        theme: KeyboardTheme,
-        selected: Boolean,
-        isCustom: Boolean = false,
-        onClick: () -> Unit,
-    ) {
-        val colors = theme.colors
-
-        val borderColor by animateColorAsState(
-            targetValue = if (selected) MaterialTheme.colorScheme.primary
-            else Color.Transparent,
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMedium,
-            ),
-            label = "borderColor",
-        )
-        val bgColor by animateColorAsState(
-            targetValue = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
-            else Color.Transparent,
-            animationSpec = spring(
-                dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessMedium,
-            ),
-            label = "bgColor",
-        )
-
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .background(bgColor)
-                .clickable(onClick = onClick)
-                .padding(8.dp),
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(width = 48.dp, height = 40.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(Color(colors.background))
-                    .padding(2.dp),
-            ) {
-                Column(
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        repeat(5) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxSize()
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(Color(colors.keyBackground)),
-                            )
-                        }
-                    }
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Spacer(Modifier.weight(0.4f))
-                        repeat(4) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxSize()
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(Color(colors.keyBackground)),
-                            )
-                        }
-                        Spacer(Modifier.weight(0.4f))
-                    }
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.spacedBy(2.dp),
-                    ) {
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxSize()
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(Color(colors.specialKeyBackground)),
-                        )
-                        repeat(3) {
-                            Box(
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .fillMaxSize()
-                                    .clip(RoundedCornerShape(2.dp))
-                                    .background(Color(colors.specialKeyBackground)),
-                            )
-                        }
-                        Box(
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxSize()
-                                .clip(RoundedCornerShape(2.dp))
-                                .background(Color(colors.keyBackground)),
-                        )
-                    }
-                }
-                if (isCustom) {
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.TopEnd)
-                            .padding(1.dp)
-                            .size(16.dp)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(MaterialTheme.colorScheme.primary),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            painter = painterResource(R.drawable.ic_keyboard_user),
-                            contentDescription = stringResource(R.string.custom_theme_marker),
-                            tint = MaterialTheme.colorScheme.onPrimary,
-                            modifier = Modifier.size(10.dp),
-                        )
-                    }
-                }
-            }
-            Spacer(Modifier.height(6.dp))
-            Text(
-                text = theme.name,
-                style = MaterialTheme.typography.labelSmall,
-                fontSize = 13.sp,
-                textAlign = TextAlign.Center,
-                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
-                color = if (selected) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
 }

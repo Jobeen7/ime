@@ -39,7 +39,6 @@ class SkinRuntimeGatingTest {
         val hidden = FakeWindow(visible = false)
         SkinRuntime.attachWindow(hidden)
         try {
-            assertTrue(SkinRuntime.hasLiveWindow())
             assertFalse(SkinRuntime.isWindowVisible())
             assertFalse(SkinRuntime.canVerifyInline())
 
@@ -49,7 +48,6 @@ class SkinRuntimeGatingTest {
         } finally {
             SkinRuntime.detachWindow(hidden)
         }
-        assertFalse(SkinRuntime.hasLiveWindow())
         assertFalse(SkinRuntime.canVerifyInline())
     }
 

@@ -23,9 +23,6 @@ object EmailSuffixes {
         "foxmail.com", "icloud.com", "hotmail.com", "sina.com", "yahoo.com",
     )
 
-    /** 续打后缀时按半角点算的字符：半角点、中文句号、全角点。 */
-    val DOTS = setOf(".", "。", "．")
-
     /** 邮箱名里能出现的字符：字母、数字和 . _ % + -。 */
     private fun isLocalChar(c: Char): Boolean =
         c in 'a'..'z' || c in 'A'..'Z' || c in '0'..'9' ||
@@ -90,10 +87,6 @@ object EmailSuffixes {
         val typed = typedDomain(before) ?: return false
         return matching(typed + next).isNotEmpty()
     }
-
-    /** 候选栏上现在是邮箱后缀（不是英文补全或中文联想）。 */
-    fun isSuggestionList(words: List<String>): Boolean =
-        words.isNotEmpty() && words.all { it in DOMAINS }
 
     /**
      * 单字续打归一化：字母／数字原样，全角点按半角 . 算；其余（@、多字、符号）返回 null。

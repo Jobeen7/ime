@@ -24,17 +24,6 @@ class SymbolBarGridTest {
         cells, columns, anchorIndex, defaultIndex, cellSizePx, sensitivity, jitterPx,
     )!!
 
-    @Test
-    fun layout_anchorAlignedAndEdgeShifted() {
-        val grid = spec()
-        val centered = SymbolGridResolver.layoutGrid(grid, 500f, 500f, 1000f, 1000f)
-        assertEquals(350f, centered.left)
-        assertEquals(350f, centered.top)
-        val rightEdge = SymbolGridResolver.layoutGrid(grid, 950f, 500f, 1000f, 1000f)
-        assertEquals(700f, rightEdge.left)
-        val bottomEdge = SymbolGridResolver.layoutGrid(grid, 500f, 980f, 1000f, 1000f)
-        assertEquals(700f, bottomEdge.top)
-    }
 
     @Test
     fun highlight_displacementStepsAndJitter() {

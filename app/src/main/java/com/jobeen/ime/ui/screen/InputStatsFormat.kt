@@ -20,16 +20,6 @@ fun segmentLabel(period: InputStats.Period): String = when (period) {
     InputStats.Period.YEAR -> "今年"
 }
 
-/** 打字时长：0 → “—”；不足 1 小时 → “X分钟”；否则 → “X小时Y分钟”。 */
-fun formatTypingMinutes(typingMs: Long): String {
-    if (typingMs <= 0L) return "—"
-    val minutes = typingMs / 60000L
-    if (minutes < 60L) return "${minutes}分钟"
-    val hours = minutes / 60L
-    val rest = minutes % 60L
-    return if (rest == 0L) "${hours}小时" else "${hours}小时${rest}分钟"
-}
-
 /** 速度：null → “—”，否则取整字／分钟。 */
 fun formatSpeed(speed: Double?): String =
     speed?.let { "%.0f 字／分钟".format(it) } ?: "—"
@@ -47,11 +37,7 @@ fun formatMistouchRate(corrections: Long, keypresses: Long): String {
     return "%.1f%%".format(corrections * 100.0 / keypresses)
 }
 
-/** 段位进度说明：已满级或距下一段位还差的字数。 */
-fun rankCaption(rank: InputStats.Rank): String =
-    if (rank.nextThreshold == null) {
-        "已满级"
-    } else {
+ else {
         "距下一段位还差 ${rank.nextThreshold - rank.xp} 字"
     }
 
@@ -161,15 +147,3 @@ data class CategoryShare(
     val percent: Double,
 )
 
-fun categoryDistribution(categories: Map<String, Long>): List<CategoryShare> {
-    val total = categories.values.sum()
-    if (total <= 0L) return emptyList()
-    return InputStats.Category.entries.mapNotNull { cat ->
-        val n = categories[cat.name] ?: 0L
-        if (n <= 0L) {
-            null
-        } else {
-            CategoryShare(cat.label, n, n.toDouble() / total.toDouble())
-        }
-    }
-}

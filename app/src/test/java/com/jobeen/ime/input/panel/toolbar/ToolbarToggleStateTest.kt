@@ -1,7 +1,6 @@
 package com.jobeen.ime.input.panel.toolbar
 
 import com.jobeen.ime.input.panel.PanelAction
-import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -25,21 +24,4 @@ class ToolbarToggleStateTest {
         assertFalse(ToolbarToggleState.isToggle(PanelAction.EmojiKeyboard))
     }
 
-    @Test
-    fun tintForUsesActivedOnlyForActiveToggle() {
-        val actived = 0xFF0A84FF.toInt()
-        val normal = 0xFF000000.toInt()
-        assertEquals(
-            actived,
-            ToolbarToggleState.tintFor(PanelAction.TogglePrediction, true, actived, normal),
-        )
-        assertEquals(
-            normal,
-            ToolbarToggleState.tintFor(PanelAction.TogglePrediction, false, actived, normal),
-        )
-        assertEquals(
-            normal,
-            ToolbarToggleState.tintFor(PanelAction.Clipboard, true, actived, normal),
-        )
-    }
 }

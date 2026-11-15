@@ -12,7 +12,6 @@ import com.jobeen.ime.data.manager.ClipboardManager
 import com.jobeen.ime.data.manager.PhraseManager
 import com.jobeen.ime.data.manager.VerificationCodeExtractor
 import com.jobeen.ime.data.manager.takeCodePoints
-import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.RareCharPolicy
 import com.jobeen.ime.engine.data.CandidatePinYin
@@ -1437,15 +1436,6 @@ class KawaiiPanel(
     /** 打开性能面板（P2-10：#keyboardPerformance 键动作与菜单入口）。 */
     fun showPerformance() {
         state = State.Performance
-    }
-
-    fun showTextEditing() {
-        view.setExpanded(false)
-        state = State.TextEditing
-    }
-
-    fun hideTextEditing() {
-        if (state == State.TextEditing) state = State.Idle
     }
 
     /**

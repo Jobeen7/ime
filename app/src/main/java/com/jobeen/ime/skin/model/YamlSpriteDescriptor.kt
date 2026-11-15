@@ -43,7 +43,7 @@ object YamlSpriteDescriptor {
 
     data class Issue(val entry: String?, val reason: String)
     data class ParseResult(val frames: Map<String, SpriteFrame>, val issues: List<Issue>)
-    data class Conflict(val asset: String, val image: String, val winner: String = "file")
+    data class Conflict(val asset: String, val image: String)
     data class Merged(val maps: Map<String, Map<String, SpriteFrame>>, val conflicts: List<Conflict>)
 
     /** 解析单个 sidecar YAML 文本 → 子图帧表（asset 维度由调用方定）。 */

@@ -131,11 +131,6 @@ class SkinScriptRunner(
         circuits.remove(scriptId)
     }
 
-    /** 复位全部脚本的熔断。 */
-    fun resetAllCircuits() {
-        circuits.clear()
-    }
-
     /** 计一次故障：仅预算超限与脚本错误计入；其余失败一律不计。 */
     private fun recordFailure(scriptId: String, failure: SkinScriptFailure) {
         if (failure != SkinScriptFailure.BudgetExceeded &&

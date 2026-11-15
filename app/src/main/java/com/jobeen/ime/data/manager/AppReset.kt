@@ -76,9 +76,6 @@ object AppReset {
         "jime_fab", // MainScreen 直写 getSharedPreferences("jime_fab")：FAB 位置与展开态（无 PREFS_NAME 常量）
     )
 
-    /** 白名单判定（纯逻辑，可 JVM 单测）：只有白名单内的偏好文件才清空。 */
-    fun shouldClearPrefs(name: String): Boolean = name in RESET_PREFS_NAMES
-
     suspend fun resetToInitialState(context: Context): Result<Unit> =
         withContext(Dispatchers.IO) {
             runCatching {

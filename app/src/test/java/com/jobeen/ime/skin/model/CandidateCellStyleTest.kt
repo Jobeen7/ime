@@ -110,28 +110,5 @@ class CandidateCellStyleTest {
         assertNull(style?.textWeight)
     }
 
-    @Test
-    fun appWinsOverSkinWinsOverJimeDefault() {
-        // App > 皮肤 > Jime 默认（16/16）；App 侧现无设置项，规则以函数钉住。
-        val skin = CandidateCellStyleSpec(indexSizeDp = 10f, commentSizeDp = 10f)
-        val resolved = CandidateSizeResolution.resolveAll(skin = skin)
-        assertEquals(18f, resolved.textDp, 0f)
-        assertEquals(10f, resolved.indexDp, 0f)
-        assertEquals(10f, resolved.commentDp, 0f)
-        val withApp = CandidateSizeResolution.resolveAll(appIndexDp = 14f, skin = skin)
-        assertEquals(14f, withApp.indexDp, 0f)
-        val absent = CandidateSizeResolution.resolveAll()
-        assertEquals(16f, absent.indexDp, 0f)
-        assertEquals(16f, absent.commentDp, 0f)
-    }
 
-    @Test
-    fun legacyTopLevelFieldsStillFeedResolution() {
-        // 旧顶层字号字段在无单元格样式时仍参与解析（兼容旧皮肤）。
-        val resolved = CandidateSizeResolution.resolveAll(
-            skin = null, legacyIndexDp = 13f, legacyCommentDp = 12f,
-        )
-        assertEquals(13f, resolved.indexDp, 0f)
-        assertEquals(12f, resolved.commentDp, 0f)
-    }
 }

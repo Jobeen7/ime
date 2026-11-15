@@ -48,16 +48,6 @@ internal fun customPressedFaceActive(
  */
 internal enum class ToolbarHitRegion { MENU, CLOSE, CENTER }
 
-internal fun toolbarHitRegion(
-    x: Float,
-    width: Int,
-    density: Float,
-    horizontalPaddingDp: Float,
-    centerHorizontalPaddingDp: Float,
-): ToolbarHitRegion = toolbarHitRegionPads(
-    x, width, density, horizontalPaddingDp, horizontalPaddingDp, centerHorizontalPaddingDp,
-)
-
 /**
  * MENU 槽位动作（W19-6b，纯函数）：皮肤 menuAction 决定 MENU 钮开什么——
  * panel → 8 钮快捷面板（ShortcutPanel）；menu（缺省）→ 原 16 项菜单（SwitchKeyboard）。

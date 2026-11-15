@@ -7,8 +7,6 @@ import com.jobeen.ime.data.ai.AiBackupData
 import com.jobeen.ime.data.database.AIProvider
 import com.jobeen.ime.data.database.AiSeeds
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -31,7 +29,6 @@ class AiBackupCodecTest {
     @Test
     fun exportBlanksTokens() {
         val exported = AiBackupCodec.forExport(seededWithToken())
-        assertFalse(AiBackupCodec.containsToken(exported))
         assertEquals("", exported.providers.single().apiToken)
         // 其余字段一字不动（脱敏只动 token）
         assertEquals("DeepSeek", exported.providers.single().name)
@@ -62,9 +59,4 @@ class AiBackupCodecTest {
         assertEquals("https://example.com", restored.baseURL)
     }
 
-    @Test
-    fun containsTokenDetects() {
-        assertTrue(AiBackupCodec.containsToken(seededWithToken()))
-        assertFalse(AiBackupCodec.containsToken(AiBackupData(providers = AiSeeds.providers)))
-    }
 }

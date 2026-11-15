@@ -475,35 +475,6 @@ class SkinLibraryAdminTest {
         assertTrue(f.admin.layoutReferrers("lay-none").isEmpty())
     }
 
-    @Test
-    fun deleteReferencedLayoutNowSucceedsAndKeepsSkinFiles() = runBlocking {
-        // B3 §4.6 新口径（取代旧的硬拒绝）：列出→警告→可删→引用方回退
-        val f = fixture()
-        addLayout(f, "lay-1")
-        addSkin(f, "s1", "hash1", layoutId = "lay-1")
-        val result = f.admin.deleteLayout("lay-1")
-        assertEquals(SkinLibraryAdmin.Result.Done("lay-1"), result)
-        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
-        assertTrue(index.layouts.isEmpty())
-        assertFalse(File(f.layout.layoutsDir, "lay-1").exists())
-        // 引用方皮肤文件原样保留（代次不可变；绑定靠重解析自然悬空回退）
-        assertTrue(File(f.layout.skinGenDir("s1", 1), "skin.json").isFile)
-        assertEquals(1, index.skins.size)
-    }
-
-    @Test
-    fun deleteLayoutRefusals() = runBlocking {
-        val f = fixture()
-        // 索引未落盘 → index_unavailable；空索引 → not_found
-        assertEquals(
-            SkinLibraryAdmin.Result.Refused("index_unavailable"),
-            f.admin.deleteLayout("nope"),
-        )
-        f.store.writeIndex(LibraryIndex())
-        assertEquals(
-            SkinLibraryAdmin.Result.Refused("not_found"), f.admin.deleteLayout("nope"),
-        )
-    }
 
     // ---- 审计 #1-5：tombstone 删除事务与崩溃恢复 ----
 
@@ -524,18 +495,6 @@ class SkinLibraryAdminTest {
         assertTrue(trashChildren(f).isEmpty())
     }
 
-    @Test
-    fun deleteLayout_indexWriteFailure_restoresDirAndKeepsIndex() = runBlocking {
-        val f = fixture()
-        addLayout(f, "lay-1")
-        f.fake.failNextWrite = true
-        val result = f.admin.deleteLayout("lay-1")
-        assertEquals(SkinLibraryAdmin.Result.Refused("index_write_failed"), result)
-        assertTrue(File(f.layout.layoutGenDir("lay-1", 1), "layout.json").isFile)
-        val index = (f.store.readIndex() as SkinLibraryStore.ReadResult.Ok).value
-        assertEquals(listOf("lay-1"), index.layouts.map { it.id })
-        assertTrue(trashChildren(f).isEmpty())
-    }
 
     @Test
     fun deleteSkin_success_cleansTombstoneAsync() = runBlocking {

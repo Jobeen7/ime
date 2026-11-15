@@ -258,10 +258,6 @@ object ClipboardManager {
         }
     }
 
-    /** 旧契约兼容：失败按真空返回。不关心成败的调用方用，新消费方用 [getEntriesOrNull]。 */
-    suspend fun getEntries(context: Context): List<Entry> =
-        getEntriesOrNull(context) ?: emptyList()
-
     /**
      * 遗留超限行一次性清理（D-S5）：写入侧早已限长，但限长前的遗留
      * 超限行（约 2MB 起）读出即抛 SQLiteBlobTooBigException、一行

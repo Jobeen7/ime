@@ -133,19 +133,6 @@ private fun collectSchemas(dir: File, into: MutableMap<String, DiskSchema>) {
     }
 }
 
-/**
- * 求启用列表与磁盘方案的交集。
- *
- * 契约：
- * - 返回 [prefsIds] 中同时出现在 [diskIds] 里的 id，保持 [prefsIds] 的原始顺序并去重。
- * - 若交集为空，返回 [diskIds] 全体（调用方负责在触发兜底时把结果写回存储）。
- */
-fun resolveEnabledIds(prefsIds: List<String>, diskIds: List<String>): List<String> {
-    val diskSet = diskIds.toSet()
-    val enabled = prefsIds.filter { it in diskSet }.distinct()
-    return if (enabled.isEmpty()) diskIds else enabled
-}
-
 /** 脱去一层成对的单引号或双引号；长度不足 2 或两侧引号不匹配时原样返回。 */
 private fun String.unquote(): String {
     if (length >= 2 && ((startsWith("\"") && endsWith("\"")) || (startsWith("'") && endsWith("'")))) {

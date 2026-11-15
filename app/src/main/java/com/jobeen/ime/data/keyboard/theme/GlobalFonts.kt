@@ -490,46 +490,6 @@ object GlobalFonts {
         }
     }
 
-    /** 角色生效说明（纯解析，可单测）：皮肤内嵌／皮肤逐角色／皮肤族名／全局选择／系统默认。 */
-    fun effectiveSource(
-        skinFamilyRaw: String?,
-        choice: FontChoice,
-        roleFonts: Map<FontRole, String> = emptyMap(),
-        role: FontRole? = null,
-        /** 皮肤声明的内嵌字体名（声明原文；匹配大小写不敏感）。 */
-        skinFaceNames: List<String> = emptyList(),
-        /** 审计 C 项：完整候选顺序（空时回落单值字段，同 typefaceFor）。 */
-        skinFamilyCandidates: List<String> = emptyList(),
-        roleFontCandidates: Map<FontRole, List<String>> = emptyMap(),
-    ): EffectiveSource {
-        val roleCandidateList = roleFontCandidates[role]
-            ?: role?.let { roleFonts[it] }?.let { listOf(it) } ?: emptyList()
-        for (candidate in roleCandidateList) {
-            SkinFonts.findFaceName(candidate, skinFaceNames)?.let {
-                return EffectiveSource.SkinBundled(it)
-            }
-            SkinFonts.resolveFamily(candidate)?.let {
-                return EffectiveSource.SkinRole(it)
-            }
-        }
-        val familyCandidateList = skinFamilyCandidates.ifEmpty {
-            skinFamilyRaw?.let { listOf(it) } ?: emptyList()
-        }
-        for (candidate in familyCandidateList) {
-            SkinFonts.findFaceName(candidate, skinFaceNames)?.let {
-                return EffectiveSource.SkinBundled(it)
-            }
-            SkinFonts.resolveFamily(candidate)?.let {
-                return EffectiveSource.Skin(it)
-            }
-        }
-        return when (choice) {
-            FontChoice.Follow -> EffectiveSource.Default
-            is FontChoice.System -> EffectiveSource.Global(choice.family)
-            is FontChoice.Imported -> EffectiveSource.GlobalFile(choice.fileId)
-        }
-    }
-
     sealed class EffectiveSource {
         data class Skin(val family: String) : EffectiveSource()
         /** 皮肤内逐角色（2026-10-29 item-1）：高于皮肤单值 fontFamily。 */

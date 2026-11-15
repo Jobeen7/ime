@@ -135,25 +135,6 @@ object EmojiCustomOps {
         return config.copy(groups = groups)
     }
 
-    /** 移符号：任一下标越界或同位时原样返回。 */
-    fun moveSymbol(
-        config: EmojiCustomConfig,
-        groupIndex: Int,
-        fromIndex: Int,
-        toIndex: Int,
-    ): EmojiCustomConfig {
-        if (groupIndex !in config.groups.indices) return config
-        val symbols = config.groups[groupIndex].symbols
-        if (fromIndex !in symbols.indices || toIndex !in symbols.indices) return config
-        if (fromIndex == toIndex) return config
-        val next = symbols.toMutableList()
-        val item = next.removeAt(fromIndex)
-        next.add(toIndex, item)
-        val groups = config.groups.toMutableList()
-        groups[groupIndex] = config.groups[groupIndex].copy(symbols = next)
-        return config.copy(groups = groups)
-    }
-
     fun serialize(config: EmojiCustomConfig): String =
         kotlinx.serialization.json.Json.encodeToString(
             JsonObject.serializer(),

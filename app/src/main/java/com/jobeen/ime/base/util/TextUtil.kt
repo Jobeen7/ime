@@ -74,30 +74,6 @@ object TextUtil {
         return result.reversed()
     }
 
-    fun <T> mostSimilarToFirst(
-        list: List<T>,
-        target: String,
-        value: (T) -> String,
-    ): List<T> {
-        if (list.isEmpty()) return list
-        var bestIndex = 0
-        var bestScore = -1.0
-        for (i in list.indices) {
-            val score = similarity(value(list[i]), target)
-            if (score > bestScore) {
-                bestScore = score
-                bestIndex = i
-            }
-        }
-        if (bestIndex == 0) return list
-        return buildList(list.size) {
-            add(list[bestIndex])
-            for (i in list.indices) {
-                if (i != bestIndex) add(list[i])
-            }
-        }
-    }
-
     fun similarity(a: String, b: String): Double {
         if (a == b) return 1.0
         if (a.isEmpty() || b.isEmpty()) return 0.0

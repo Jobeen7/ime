@@ -1,7 +1,6 @@
 package com.jobeen.ime.base.ngram
 
 import java.io.RandomAccessFile
-import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.channels.FileChannel
 import kotlin.math.exp
@@ -171,13 +170,7 @@ class GramDb(filePath: String) {
         private const val HEADER_SIZE = 44L
         private const val INT_BYTES = 4
 
-        /**
-         * 损坏／截断文件不抛错的加载口：校验失败返回 null，调用方
-         * 按“无语法模型”降级（B-S3）。构造器本身仍抛
-         * IllegalArgumentException，便于诊断时拿到明确原因。
-         */
-        fun loadOrNull(filePath: String): GramDb? =
-            runCatching { GramDb(filePath) }.getOrNull()
+.getOrNull()
 
         fun scaleValue(raw: Int): Double =
             if (raw >= 0) raw.toDouble() / DoubleArrayTrie.VALUE_SCALE else -1.0

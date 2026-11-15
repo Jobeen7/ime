@@ -20,19 +20,6 @@ internal fun inlineAutofillShouldShow(
 ): Boolean = hasSuggestions && !isComposing && fieldActive
 
 /**
- * 按 pinned 标志把建议下标分区（纯函数，供 JVM 测试）：
- * pinned 进右固定槽，余下进横向滚动区；顺序与原列表一致。
- */
-internal fun partitionInlineSuggestions(pinnedFlags: List<Boolean>): Pair<List<Int>, List<Int>> {
-    val pinned = mutableListOf<Int>()
-    val scrollable = mutableListOf<Int>()
-    pinnedFlags.forEachIndexed { index, isPinned ->
-        if (isPinned) pinned.add(index) else scrollable.add(index)
-    }
-    return pinned to scrollable
-}
-
-/**
  * 内联自动填充（Android 11+ IME Inline Autofill）条区覆盖层。
  *
  * 与 JIME 已有「内联建议」（PreeditPinner 幽灵文本）是两个功能：这里显示的是

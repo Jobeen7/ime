@@ -60,11 +60,6 @@ object WifiTransferAuth {
     fun hashPassword(password: String): String =
         DigestUtil.sha256Hex(password.toByteArray(Charsets.UTF_8))
 
-    fun checkPassword(prefs: SharedPreferences, password: String): Boolean {
-        val stored = prefs.getString(KEY_PASSWORD_HASH, null) ?: return false
-        return constantTimeEquals(stored, hashPassword(password))
-    }
-
     /** 签发 JWT：header.payload.signature，payload 只含 sub／iat／exp（秒）。 */
     fun issueToken(passwordHash: String, nowMs: Long = System.currentTimeMillis()): String {
         val header = Base64Url.encode("""{"alg":"HS256","typ":"JWT"}""".toByteArray(Charsets.UTF_8))

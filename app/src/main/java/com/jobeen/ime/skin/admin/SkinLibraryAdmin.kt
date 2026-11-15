@@ -25,7 +25,6 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.longOrNull
 
 /**
@@ -344,7 +343,7 @@ class SkinLibraryAdmin internal constructor(
     }
 
     /** 引用某布局的全部皮肤（删除警告与删后回退判定共用此一份事实）。 */
-    data class LayoutReferrer(val skinId: String, val skinName: String)
+    data class LayoutReferrer(val skinId: String)
 
     suspend fun layoutReferrers(layoutId: String): List<LayoutReferrer> {
         val index = readIndex() ?: return emptyList()
@@ -361,20 +360,9 @@ class SkinLibraryAdmin internal constructor(
             } else {
                 val metaName = ((tree?.get("meta") as? kotlinx.serialization.json.JsonObject)
                     ?.get("name") as? JsonPrimitive)?.takeIf { it.isString }?.content
-                LayoutReferrer(skin.id, metaName ?: skin.name.ifBlank { skin.id })
+                LayoutReferrer(skin.id)
             }
         }
-    }
-
-    suspend fun deleteLayout(layoutId: String): Result {
-        val result = deleteLayoutInner(layoutId)
-        if (result is Result.Refused) {
-            DiagLog.w(
-                "admin", "delete_refused",
-                mapOf("kind" to "layout", "id" to layoutId, "reason" to result.reason),
-            )
-        }
-        return result
     }
 
     private suspend fun deleteLayoutInner(layoutId: String): Result = deleteMutex.withLock {

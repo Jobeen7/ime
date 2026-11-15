@@ -3,7 +3,6 @@
 package com.jobeen.ime
 
 import com.jobeen.ime.data.manager.SchemePackageImport
-import com.jobeen.ime.data.manager.hasZipMagic
 import com.jobeen.ime.data.manager.SchemePackageImport.EntryKind
 import com.jobeen.ime.data.manager.SchemePackageImport.PlanResult
 import com.jobeen.ime.data.manager.SchemePackageImport.SchemePackageRecord
@@ -371,13 +370,6 @@ class SchemePackageImportTest {
         )
     }
 
-    @Test
-    fun mergeSchemaList_appendsOnlyMissing() {
-        assertEquals(
-            listOf("a", "b", "c"),
-            SchemePackageImport.mergeSchemaList(listOf("a", "b"), listOf("b", "c")),
-        )
-    }
 
     @Test
     fun registryEncodeDecode_roundTripsAndSkipsMalformed() {
@@ -406,15 +398,7 @@ class SchemePackageImportTest {
         assertEquals(null, decoded.versionForFile("z.schema.yaml"))
         assertEquals(
             listOf("x.schema.yaml", "x.dict.yaml"),
-            decoded.filesForPackage("pkg-a"),
         )
-        // 同名重装替换旧记录。
-        val replaced = decoded.withRecord(
-            SchemePackageRecord("pkg-a", "18.1.8", listOf("x"), listOf("x.schema.yaml")),
-        )
-        assertEquals(2, replaced.records.size)
-        assertEquals("pkg-a", replaced.packageForScheme("x"))
-        assertEquals("18.1.8", replaced.versionForFile("x.schema.yaml"))
     }
 
     @Test
@@ -451,14 +435,11 @@ class SchemePackageImportTest {
         assertEquals("18.1.7", registry.versionForFile("x.schema.yaml", "dir-a"))
         assertEquals(
             SchemePackageImport.PackageSource.URL,
-            registry.sourceForScheme("x", "dir-a"),
         )
         assertEquals("18.1.8", registry.versionForFile("x.schema.yaml", "dir-b"))
         assertEquals(
             SchemePackageImport.PackageSource.LOCAL,
-            registry.sourceForScheme("x", "dir-b"),
         )
-        assertEquals(listOf("x.schema.yaml"), registry.filesForPackage("pkg-a", "dir-b"))
         assertEquals(null, registry.packageForScheme("x", "dir-missing"))
         // 不传 dir 时保留跨目录汇总语义（首条命中）。
         assertEquals("pkg-a", registry.packageForScheme("x"))
@@ -1220,16 +1201,6 @@ class SchemePackageImportTest {
         assertEquals(1_800_000L, SchemePackageImport.deployTimeoutMs(Long.MAX_VALUE))
     }
 
-    @Test
-    fun hasZipMagic_acceptsOnlyZipSignatures() {
-        assertTrue(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x03, 0x04)))
-        assertTrue(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x05, 0x06)))
-        assertTrue(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x07, 0x08)))
-        assertFalse(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x01, 0x02)))
-        assertFalse(hasZipMagic(byteArrayOf(0x50, 0x4B, 0x03)))
-        assertFalse(hasZipMagic(byteArrayOf()))
-        assertFalse(hasZipMagic("Rar!".toByteArray()))
-    }
 
     // ---- 日志原子写（tmp＋rename）与三次 rename 回滚 ----
 

@@ -1,6 +1,5 @@
 package com.jobeen.ime.skin.image
 
-import java.io.File
 
 /**
  * 图片管线硬护栏（第 5 批 §2，纯 JVM 部分）：
@@ -57,24 +56,6 @@ object ImageDecodePolicy {
     /** 文件名白名单（对方 K14）。 */
     val FILENAME_PATTERN: Regex = Regex("[A-Za-z0-9_.-]+")
 
-    /** 文件名是否合白名单（≠ `..`，不含路径分隔符）。 */
-    fun isValidAssetFileName(name: String): Boolean =
-        name.isNotEmpty() && name != ".." && FILENAME_PATTERN.matches(name)
-
-    /**
-     * canonical 目录内校验：candidate 的 canonical 路径必须落在
-     * root 的 canonical 路径内；解析失败一律不放行。
-     */
-    fun isInsideRoot(root: File, candidate: File): Boolean {
-        return try {
-            val rootPath = root.canonicalFile
-            val filePath = candidate.canonicalFile
-            filePath == rootPath || filePath.path.startsWith(rootPath.path + File.separator)
-        } catch (_: Exception) {
-            false
-        }
-    }
-
     /** 占位分层（对方 R38）：按角色取回落，不统一成空白。 */
     enum class Role { BACKGROUND, FOREGROUND_ICON, VIDEO }
 
@@ -89,17 +70,9 @@ object ImageDecodePolicy {
         STATIC_BACKGROUND_FALLBACK,
     }
 
-    fun placeholderFor(role: Role): Placeholder = when (role) {
-        Role.BACKGROUND -> Placeholder.TRANSPARENT_OR_SOLID
-        Role.FOREGROUND_ICON -> Placeholder.TEXT_FALLBACK
-        Role.VIDEO -> Placeholder.STATIC_BACKGROUND_FALLBACK
-    }
-
     /** 字体缓存键（对方 R17）：路径 + mtime + 长度；同名文件被替换后自动得新键。 */
     data class FontCacheKey(val path: String, val lastModifiedMs: Long, val lengthBytes: Long)
 
-    fun fontCacheKeyFor(file: File): FontCacheKey =
-        FontCacheKey(file.path, file.lastModified(), file.length())
 }
 
 /**

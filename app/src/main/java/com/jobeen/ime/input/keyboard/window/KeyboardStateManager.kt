@@ -100,12 +100,6 @@ object KeyboardStateManager {
     /** 当前键盘类型；null = 尚未确立（首挂前）。 */
     val currentKeyboardType: String? get() = typeState.current
 
-    /** 主键盘类型（最近一次主类型 pinyin/alphabetic）；工具类型不改它。 */
-    val primaryKeyboardType: String? get() = typeState.primary
-
-    /** 上一键盘类型（最近一次类型切换前的类型）；供 returnLastKeyboard 用。 */
-    val lastKeyboardType: String? get() = typeState.last
-
     /** 当前类型所归属的皮肤 id（换肤复位判定用；null = 无皮肤/未确立）。 */
     private var lastTypeSkinId: String? = null
 
@@ -129,9 +123,6 @@ object KeyboardStateManager {
         }
         resume()
     }
-
-    /** 输入模式 → 初始类型（纯决策，供首挂与换肤复位用）。 */
-    fun initialKeyboardType(asciiMode: Boolean): String = typeState.initialType(asciiMode)
 
     /**
      * 按类型切换键盘（多主槽一期唯一的类型切换入口；中英键、
@@ -175,16 +166,6 @@ object KeyboardStateManager {
     /** 中英切换目标（状态支持；接线轮由中英键调用本函数再切类型）。 */
     fun toggleMainTypeTarget(): String = typeState.toggleMainTarget()
 
-    /**
-     * 主类型往返（纠正 2：keyboardType 动作的引擎，与中英切换
-     * 无关）：在 pinyin↔alphabetic 间切类型。皮肤绑定
-     * keyboardType 动作且目标为主类型往返时经此函数；中英键
-     * （ToggleAsciiModeAction）只翻 ascii 偏好，不走这里。
-     */
-    fun toggleMainType() {
-        switchKeyboardType(toggleMainTypeTarget())
-    }
-
     /** 服务销毁时调用：释放注册表与回调，避免持有已销毁的 View/Context */
     fun onDestroy() {
         keyboards.clear()
@@ -215,7 +196,6 @@ object KeyboardStateManager {
         return ReturnKeyTypeText.fromImeAction(info.imeOptions and EditorInfo.IME_MASK_ACTION)
     }
     fun get(name: String): IKeyboard? = keyboards[name]
-
 
     fun onAttach() {
         if (schemas.isEmpty()) refreshSchemas()
@@ -733,22 +713,6 @@ object KeyboardStateManager {
         }
     }
 
-    /**
-     * 主类型英文态查询（纠正 2：仅供 keyboardType 动作侧读取
-     * 类型态；菜单／工具栏中英开关显示态已恢复为 ascii 偏好，
-     * 不再经此函数）：主类型已确立时以类型为准（alphabetic =
-     * 英文态）；未确立时（首附着前）退偏好派生初始类型（与
-     * onAttach 同口径）。
-     */
-    fun isMainTypeAlphabetic(context: Context): Boolean {
-        val primary = typeState.primary
-        if (primary != null) return primary == KeyboardTypes.ALPHABETIC
-        // 偏好与 Rime ascii_mode 极性相反（见 asciiModeFromPreference）。
-        return typeState.initialType(
-            asciiModeFromPreference(CandidateManager.isAsciiModeEnabled(context))
-        ) == KeyboardTypes.ALPHABETIC
-    }
-
     fun onInputChanged(info: EditorInfo?, text: String, virtualInputConnection: Boolean = false) {
         if (info != null) {
             val effectiveInfo = if (virtualInputConnection) {
@@ -874,7 +838,6 @@ internal class DeployRefreshPolicy {
     private val inFlight = java.util.concurrent.atomic.AtomicBoolean(false)
     private val pending = java.util.concurrent.atomic.AtomicBoolean(false)
 
-    val isInFlight: Boolean get() = inFlight.get()
     val isPending: Boolean get() = pending.get()
 
     /** 正常刷新入口：拿到单飞权返回 true；拿不到时仅当部署中才记待补齐。 */

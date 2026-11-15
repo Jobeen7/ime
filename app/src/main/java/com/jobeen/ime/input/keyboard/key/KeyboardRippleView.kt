@@ -8,7 +8,6 @@ import android.graphics.Paint
 import android.graphics.Path
 import android.view.View
 import android.view.animation.DecelerateInterpolator
-import com.jobeen.ime.skin.model.KeyRippleSpec
 import kotlin.math.sqrt
 
 /**
@@ -47,16 +46,6 @@ class KeyboardRippleView(
 
     /** WO38：皮肤涟漪参数生效后的单程时长（缺省 650ms＝既有硬编码值）。 */
     private var rippleDurationMs: Long = ANIM_DURATION
-
-    /**
-     * WO38：把皮肤 `keyRipple` 参数应用到本视图（颜色＋时长）。
-     * 只改参数，不改是否显示：显示与否仍由 [rippleEnabled]（用户全局开关）决定。
-     * 未调用时保持既有硬编码值，无参数皮肤行为零变化。
-     */
-    fun applyRippleEffect(spec: KeyRippleSpec) {
-        wavePaint.color = spec.color
-        rippleDurationMs = spec.durationMs.toLong()
-    }
 
     fun cancelRipple() {
         animator?.cancel()

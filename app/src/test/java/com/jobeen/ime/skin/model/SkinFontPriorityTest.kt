@@ -1,8 +1,6 @@
 package com.jobeen.ime.skin.model
 
-import com.jobeen.ime.data.keyboard.theme.FontChoice
 import com.jobeen.ime.data.keyboard.theme.FontRole
-import com.jobeen.ime.data.keyboard.theme.GlobalFonts
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -75,42 +73,4 @@ class SkinFontPriorityTest {
         assertTrue(result.issues.any { it.detail == "font_family_not_string" })
     }
 
-    @Test
-    fun effectiveSourceTakesFirstResolvableCandidate() {
-        // 首候选未知 → 跳到次候选；内嵌候选优先于系统候选。
-        assertEquals(
-            GlobalFonts.EffectiveSource.Skin("serif"),
-            GlobalFonts.effectiveSource(
-                null, FontChoice.System("sans-serif"),
-                emptyMap(), FontRole.KEY, emptyList(),
-                listOf("nope", "serif"),
-            ),
-        )
-        assertEquals(
-            GlobalFonts.EffectiveSource.SkinBundled("MyFont"),
-            GlobalFonts.effectiveSource(
-                null, FontChoice.System("sans-serif"),
-                emptyMap(), FontRole.KEY, listOf("MyFont"),
-                emptyList(),
-                mapOf(FontRole.KEY to listOf("MyFont", "serif")),
-            ),
-        )
-        // 角色候选全不可解析 → 回落皮肤单值候选。
-        assertEquals(
-            GlobalFonts.EffectiveSource.Skin("monospace"),
-            GlobalFonts.effectiveSource(
-                "monospace", FontChoice.System("sans-serif"),
-                emptyMap(), FontRole.KEY, emptyList(), emptyList(),
-                mapOf(FontRole.KEY to listOf("nope")),
-            ),
-        )
-        // 旧单值调用（无列表参数）行为不变。
-        assertEquals(
-            GlobalFonts.EffectiveSource.SkinRole("serif"),
-            GlobalFonts.effectiveSource(
-                "monospace", FontChoice.System("sans-serif"),
-                mapOf(FontRole.KEY to "serif"), FontRole.KEY,
-            ),
-        )
-    }
 }

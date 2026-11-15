@@ -111,26 +111,6 @@ object CandidateSizeResolution {
     fun resolve(appDp: Float?, skinDp: Float?, jimeDefaultDp: Float): Float =
         appDp ?: skinDp ?: jimeDefaultDp
 
-    /** 三项一次解析（App 侧三项各自独立优先）。 */
-    fun resolveAll(
-        appTextDp: Float? = null,
-        appIndexDp: Float? = null,
-        appCommentDp: Float? = null,
-        skin: CandidateCellStyleSpec? = null,
-        legacyIndexDp: Float? = null,
-        legacyCommentDp: Float? = null,
-    ): ResolvedCandidateSizes = ResolvedCandidateSizes(
-        textDp = resolve(appTextDp, skin?.textSizeDp, JIME_DEFAULT_TEXT_DP),
-        indexDp = resolve(appIndexDp, skin?.indexSizeDp ?: legacyIndexDp, JIME_DEFAULT_INDEX_DP),
-        commentDp = resolve(
-            appCommentDp, skin?.commentSizeDp ?: legacyCommentDp, JIME_DEFAULT_COMMENT_DP,
-        ),
-        textWeight = skin?.textWeight,
-        indexWeight = skin?.indexWeight,
-        commentWeight = skin?.commentWeight,
-        backgroundInsets = skin?.backgroundInsets ?: AreaInsets(),
-        cornerRadiusDp = skin?.cornerRadiusDp,
-    )
 }
 
 /** 解析后的候选字号全集（渲染消费点读此结构，不再各自回落）。 */

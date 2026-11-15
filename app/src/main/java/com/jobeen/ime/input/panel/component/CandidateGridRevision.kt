@@ -49,9 +49,3 @@ internal class CandidateGridRevisionGate {
     }
 }
 
-/**
- * 网格代次放行判定（纯函数，供单测直接验证口径）：
- * 与 [CandidateGridRevisionGate.tryApply] 同规则、无状态版。
- */
-internal fun shouldApplyCandidateGridFrame(revision: Long, lastAppliedRevision: Long): Boolean =
-    revision <= 0L || revision >= lastAppliedRevision

@@ -153,10 +153,6 @@ object CrashTrap {
         return PendingCrash(text = text, occurredAtMs = latest.lastModified())
     }
 
-    /** 只取正文的兼容读法（见 [readPendingCrashInfo]） */
-    fun readPendingCrash(context: Context): String? =
-        readPendingCrashInfo(context)?.text
-
     /**
      * 清除全部崩溃记录（crash/ 子目录内符合崩溃文件名的文件，含轮转备份）。
      * 崩溃日志与熔断 trip 不在此列：它们是熔断机制的状态，清日志不应

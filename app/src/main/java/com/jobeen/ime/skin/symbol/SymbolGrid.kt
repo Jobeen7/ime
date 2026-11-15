@@ -67,25 +67,6 @@ data class SymbolGridLayout(
 
 object SymbolGridResolver {
 
-    /** 锚格中心对齐按键中心，再整格钳制进可见区。 */
-    fun layoutGrid(
-        spec: SymbolGridSpec,
-        anchorCenterX: Float,
-        anchorCenterY: Float,
-        screenWidth: Float,
-        screenHeight: Float,
-    ): SymbolGridLayout {
-        val gridWidth = spec.columns * spec.cellSizePx
-        val gridHeight = spec.rows * spec.cellSizePx
-        val anchorCol = spec.anchorIndex % spec.columns
-        val anchorRow = spec.anchorIndex / spec.columns
-        val rawLeft = anchorCenterX - (anchorCol + 0.5f) * spec.cellSizePx
-        val rawTop = anchorCenterY - (anchorRow + 0.5f) * spec.cellSizePx
-        val left = if (gridWidth >= screenWidth) 0f else rawLeft.coerceIn(0f, screenWidth - gridWidth)
-        val top = if (gridHeight >= screenHeight) 0f else rawTop.coerceIn(0f, screenHeight - gridHeight)
-        return SymbolGridLayout(left, top, gridWidth, gridHeight, spec.columns, spec.rows)
-    }
-
     /** 位移 → 高亮格下标；出界／全空 → null（取消）。 */
     fun highlightFor(spec: SymbolGridSpec, dx: Float, dy: Float): Int? {
         val stepPx = spec.cellSizePx / spec.sensitivity

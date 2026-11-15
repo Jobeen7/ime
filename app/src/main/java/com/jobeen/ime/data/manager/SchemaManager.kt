@@ -1,6 +1,5 @@
 package com.jobeen.ime.data.manager
 
-import android.content.Context
 import android.content.SharedPreferences
 import androidx.core.content.edit
 
@@ -35,14 +34,4 @@ object SchemaManager {
         }
     }
 
-    fun isGrammarModelEnabled(context: Context): Boolean {
-        return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-            .getBoolean(KEY_GRAMMAR_MODEL, true)
-    }
-
-    fun setGrammarModelEnabled(context: Context, enabled: Boolean) {
-        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-            putBoolean(KEY_GRAMMAR_MODEL, enabled)
-        }
-    }
 }

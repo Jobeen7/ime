@@ -345,11 +345,6 @@ class KawaiiPanelView(context: Context) : View(context) {
         invalidate()
     }
 
-    fun refreshDensity() {
-        paints.applyDensity(resources.displayMetrics.density)
-        invalidate()
-    }
-
     fun updateHorizontalPadding(hPadDp: Float) {
         when (val r = currentRenderer) {
             is ToolbarRenderer -> r.horizontalPaddingDp = hPadDp

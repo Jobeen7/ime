@@ -41,35 +41,6 @@ fun insetRadiusDrawable(
     hInset, vInset, hInset, vInset,
 )
 
-fun insetOvalDrawable(
-    hInset: Int,
-    vInset: Int,
-    @ColorInt color: Int = Color.WHITE,
-): Drawable = InsetDrawable(
-    GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        setColor(color)
-    },
-    hInset, vInset, hInset, vInset,
-)
-
-fun shadowedKeyBackgroundDrawable(
-    @ColorInt bkgColor: Int,
-    @ColorInt shadowColor: Int,
-    radius: Float,
-    shadowWidth: Int,
-    hMargin: Int,
-    vMargin: Int,
-): Drawable = LayerDrawable(
-    arrayOf(
-        radiusDrawable(radius, shadowColor),
-        radiusDrawable(radius, bkgColor),
-    ),
-).apply {
-    setLayerInset(0, hMargin, vMargin, hMargin, vMargin - shadowWidth)
-    setLayerInset(1, hMargin, vMargin, hMargin, vMargin)
-}
-
 fun flatKeyBackgroundDrawable(
     @ColorInt bkgColor: Int,
     @ColorInt strokeColor: Int,
@@ -195,15 +166,7 @@ fun dualShadowKeyBackgroundDrawable(
     }
 }
 
-fun highlightMaskDrawable(
-    @ColorInt color: Int,
-    bordered: Boolean,
-    hMargin: Int,
-    vMargin: Int,
-    radius: Float,
-): Drawable = if (bordered) {
-    insetRadiusDrawable(hMargin, vMargin, radius, color)
-} else {
+ else {
     InsetDrawable(ColorDrawable(color), hMargin, vMargin, hMargin, vMargin)
 }
 

@@ -17,6 +17,4 @@ object ClipboardLockPolicy {
     fun shouldReturnToKeyboard(locked: Boolean, returnAfterPaste: Boolean): Boolean =
         !locked && returnAfterPaste
 
-    /** 搜索态是否保持：仅锁定时保持；未锁定且回键盘时随面板收起。 */
-    fun shouldKeepSearch(locked: Boolean): Boolean = locked
 }

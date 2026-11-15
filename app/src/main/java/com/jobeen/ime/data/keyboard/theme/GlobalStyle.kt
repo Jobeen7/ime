@@ -101,12 +101,10 @@ object GlobalStylePrefs {
     private const val S_SHARED_BG = "shared_bg"
     private const val S_FROST_OVERLAY = "frost_overlay"
 
-    const val KEY_KEY_BG = "global_style.key_bg"
     const val KEY_LINK_TOOLBAR = "global_style.link_toolbar"
     const val KEY_TOP_CORNER = "global_style.top_corner"
     const val KEY_BLUR_MODE = "global_style.blur_mode"
     const val KEY_BLUR_RADIUS = "global_style.blur_radius"
-    const val KEY_BG_SCALE_MODE = "global_style.bg_scale_mode"
     const val KEY_BAR_BG = "global_style.bar_bg"
     const val KEY_BAR_BLUR = "global_style.bar_blur"
     const val KEY_SHARED_BG = "global_style.shared_bg"
@@ -213,22 +211,6 @@ object GlobalStylePrefs {
         }
     }
 
-    fun putSurface(
-        context: Context,
-        bgKey: String,
-        widthKey: String,
-        colorKey: String,
-        radiusKey: String,
-        surface: SurfaceOverride,
-    ) {
-        prefs(context).edit {
-            putOrRemoveInt(bgKey, surface.background)
-            putOrRemoveFloat(widthKey, surface.borderWidthDp)
-            putOrRemoveInt(colorKey, surface.borderColor)
-            putOrRemoveFloat(radiusKey, surface.cornerRadiusDp)
-        }
-    }
-
     private fun android.content.SharedPreferences.Editor.putOrRemoveInt(key: String, value: Int?) {
         if (value == null) remove(key) else putInt(key, value)
     }
@@ -237,28 +219,6 @@ object GlobalStylePrefs {
         if (value == null) remove(key) else putFloat(key, value)
     }
 
-    fun setLinkToolbar(context: Context, value: Boolean) {
-        prefs(context).edit { putBoolean(KEY_LINK_TOOLBAR, value) }
-    }
-
-    fun setTopCorner(context: Context, value: Float?) {
-        prefs(context).edit { putOrRemoveFloat(KEY_TOP_CORNER, value) }
-    }
-
-    fun setBlur(context: Context, mode: BackgroundBlurMode, radiusDp: Float?) {
-        prefs(context).edit {
-            putString(KEY_BLUR_MODE, mode.stored)
-            putOrRemoveFloat(KEY_BLUR_RADIUS, radiusDp)
-        }
-    }
-
-    fun setBar(context: Context, background: Int?, blur: Boolean, shared: Boolean) {
-        prefs(context).edit {
-            putOrRemoveInt(KEY_BAR_BG, background)
-            putBoolean(KEY_BAR_BLUR, blur)
-            putBoolean(KEY_SHARED_BG, shared)
-        }
-    }
 }
 
 /** 全局样式纯解析（可 JVM 单测；presence＝皮肤显式指定的样式字段集）。 */
@@ -308,11 +268,7 @@ object GlobalStyleResolver {
     fun effectiveFrostOverlay(style: GlobalStyle): Float? =
         (style.frostOverlayAlpha ?: 0.25f).coerceIn(0f, 1f).takeIf { it > 0f }
 
-    /** 工具栏表面：跟随按键时取按键生效值，否则取工具栏自有值（工具栏背景无皮肤字段可冲突）。 */
-    fun toolbarSurface(style: GlobalStyle, keySurface: SurfaceOverride): SurfaceOverride =
-        if (style.linkToolbar) {
-            keySurface
-        } else {
+ else {
             style.toolbar
         }
 

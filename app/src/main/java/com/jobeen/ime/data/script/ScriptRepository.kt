@@ -56,10 +56,6 @@ class ScriptRepository(
 
     suspend fun getScripts(): List<ScriptItem> = items.getAll()
 
-    suspend fun getScriptById(id: Long): ScriptItem? = items.getById(id)
-
-    suspend fun getFavoriteScripts(): List<ScriptItem> = items.getFavorites()
-
     /** 新建脚本（默认内容见 [ScriptSeeds.DEFAULT_NEW_SCRIPT_CONTENT]）。 */
     suspend fun insertScript(
         name: String,
@@ -114,8 +110,6 @@ class ScriptRepository(
         )
     }
 
-    suspend fun deleteTag(id: Long): Int = tags.deleteById(id)
-
     suspend fun assignTag(scriptId: Long, tagId: Long) {
         refs.insert(ScriptTagCrossRef(scriptId, tagId))
     }
@@ -124,8 +118,6 @@ class ScriptRepository(
         refs.delete(scriptId, tagId)
 
     suspend fun getVariables(): List<ScriptVariable> = variables.getAll()
-
-    suspend fun getVariableByKey(key: String): ScriptVariable? = variables.getByKey(key)
 
     suspend fun insertVariable(key: String, value: String, isSecure: Boolean): Long {
         return variables.insert(
@@ -138,8 +130,6 @@ class ScriptRepository(
             ),
         )
     }
-
-    suspend fun updateVariable(variable: ScriptVariable): Int = variables.update(variable)
 
     suspend fun deleteVariable(id: Long): Int = variables.deleteById(id)
 }

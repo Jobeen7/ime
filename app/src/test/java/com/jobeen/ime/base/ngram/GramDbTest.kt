@@ -5,8 +5,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Files
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
@@ -66,24 +64,6 @@ class GramDbTest {
         }
     }
 
-    @Test
-    fun truncatedHeader_rejected() {
-        runWithTempDir { root ->
-            // 空文件、10 字节、43 字节（差 1 字节到 40 处 int 末尾）
-            assertNull(GramDb.loadOrNull(File(root, "missing.gram").absolutePath))
-            expectInvalid(File(root, "empty.gram").apply { writeBytes(ByteArray(0)) })
-            expectInvalid(File(root, "tiny.gram").apply { writeBytes(ByteArray(10)) })
-            expectInvalid(gramFile(root, "short.gram", totalSize = 43))
-        }
-    }
-
-    @Test
-    fun badFormatPrefix_rejected() {
-        runWithTempDir { root ->
-            expectInvalid(gramFile(root, "bad.gram", format = "NotAGrammarFile"))
-            assertNull(GramDb.loadOrNull(gramFile(root, "bad2.gram", format = "XXXX").absolutePath))
-        }
-    }
 
     @Test
     fun negativeArraySizeOrOffset_rejected() {
@@ -112,15 +92,4 @@ class GramDbTest {
         }
     }
 
-    @Test
-    fun loadOrNull_validReturnsInstance_invalidReturnsNull() {
-        runWithTempDir { root ->
-            assertNotNull(GramDb.loadOrNull(gramFile(root, "ok.gram").absolutePath))
-            assertNull(
-                GramDb.loadOrNull(
-                    gramFile(root, "bad.gram", arraySize = -5).absolutePath,
-                ),
-            )
-        }
-    }
 }

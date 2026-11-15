@@ -2,9 +2,7 @@
 
 package com.jobeen.ime.ui.screen
 
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 
 /** 测试输入面板输入类型：chip 切换，键盘布局跟随当前布局与输入类型。 */
 enum class TestInputMode { TEXT, NUMBER, PASSWORD }
@@ -35,9 +33,3 @@ class TestInputPanelState {
     }
 }
 
-/**
- * 面板内“当前输入法不是 Jime”提示是否可见：面板打开且 Jime 不是当前输入法时才可见；
- * 面板收起或 Jime 已是当前输入法时不显示，避免静默假装调起的是 Jime。
- */
-fun testInputImeHintVisible(panelOpen: Boolean, isImeConfigured: Boolean): Boolean =
-    panelOpen && !isImeConfigured

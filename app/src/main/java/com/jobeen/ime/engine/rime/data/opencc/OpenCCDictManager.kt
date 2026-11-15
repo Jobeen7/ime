@@ -4,10 +4,8 @@ import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.engine.rime.data.opencc.dict.Dictionary
 import com.jobeen.ime.engine.rime.data.opencc.dict.OpenCCDictionary
 import com.jobeen.ime.engine.rime.data.opencc.dict.TextDictionary
-import com.jobeen.ime.base.util.appContext
 import timber.log.Timber
 import java.io.File
-import java.io.InputStream
 import kotlin.system.measureTimeMillis
 
 object OpenCCDictManager {
@@ -25,21 +23,6 @@ object OpenCCDictManager {
         userDir.listFiles()?.mapNotNull { Dictionary.new(it) } ?: listOf()
 
     fun getAllDictionaries(): List<Dictionary> = sharedDictionaries() + userDictionaries()
-
-    fun importFromFile(file: File): OpenCCDictionary {
-        val raw = Dictionary.new(file)
-            ?: throw IllegalArgumentException("${file.path} is not a opencc/text dictionary")
-        // convert to opencc format in dictionaries dir
-        // preserve original file name
-        val new = raw.toOpenCCDictionary(
-            File(
-                userDir,
-                file.nameWithoutExtension + ".${Dictionary.Type.OCD2.ext}",
-            ),
-        )
-        Timber.d("Converted $raw to $new")
-        return new
-    }
 
     /** 构建串行锁：同步/异步构建共用同一把，避免两份转换同时写同一输出文件 */
     private val buildLock = Any()
@@ -99,22 +82,6 @@ object OpenCCDictManager {
     // 已删除 importFromInputStream：全仓零调用方的死代码，且其无上限 copyTo
     // 落盘 + 以外部 name 直接拼 cacheDir 路径（可穿越目录）都是隐患；
     // 将来若要接回流式导入，先加体积上限与文件名净化再恢复。
-
-    @JvmStatic
-    fun convertLine(
-        input: String,
-        configFileName: String,
-    ): String {
-        if (configFileName.isEmpty()) return input
-        with(File(userDir, configFileName)) {
-            if (exists()) return openCCLineConv(input, path)
-        }
-        with(File(sharedDir, configFileName)) {
-            if (exists()) return openCCLineConv(input, path)
-        }
-        Timber.w("Specified config $configFileName doesn't exist, returning raw input ...")
-        return input
-    }
 
     @JvmStatic
     external fun openCCDictConv(

@@ -116,17 +116,9 @@ object UserDictPrefs {
         return max
     }
 
-    /** 某个远端文件最近一次成功上传的时刻（仅显示用）；从未成功为 0 */
-    fun lastUploadTimeFor(fileName: String): Long =
-        prefs.getLong(KEY_SYNC_UPLOAD_TIME_PREFIX + fileName, 0L)
-
     fun setLastUploadTime(fileName: String, timeMs: Long) {
         prefs.edit().putLong(KEY_SYNC_UPLOAD_TIME_PREFIX + fileName, timeMs).apply()
     }
-
-    /** 某个远端文件最近一次成功下载并合并的时刻（仅显示用）；从未成功为 0 */
-    fun lastDownloadTimeFor(fileName: String): Long =
-        prefs.getLong(KEY_SYNC_DOWNLOAD_TIME_PREFIX + fileName, 0L)
 
     fun setLastDownloadTime(fileName: String, timeMs: Long) {
         prefs.edit().putLong(KEY_SYNC_DOWNLOAD_TIME_PREFIX + fileName, timeMs).apply()

@@ -28,15 +28,4 @@ object ToolbarToggleState {
         else -> false
     }
 
-    /**
-     * 绘制用着色判定（纯函数，可单测）：开关且启用 → 启用色，
-     * 其余（非开关／开关未启用）→ 常态色；禁用态由调用方
-     * 先行变暗（禁用优先于开关着色）。
-     */
-    fun tintFor(
-        action: PanelAction,
-        active: Boolean,
-        activedColor: Int,
-        normalColor: Int,
-    ): Int = if (isToggle(action) && active) activedColor else normalColor
 }

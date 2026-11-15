@@ -271,9 +271,6 @@ data class SkinSnapshot(
     /** 按类型取样式集（G1）：无集或类型未引用时返回 null（调用方回落包级）。 */
     fun styleSetFor(type: String): TypeStyleSet? = typeStyles[type]
 
-    /** 按类型取区域集（G2）：未声明时返回 null（调用方回落包级）。 */
-    fun areaSetFor(type: String): TypeAreaSet? = typeAreas[type]
-
     /**
      * 面板配色按类型取（G1 面板颜色）：该类型有样式集时用其色板
      * （深色板口径与 effectiveColorScheme 一致：深色且有深色板 →
@@ -304,8 +301,7 @@ data class SkinSnapshot(
     fun horizontalCandidateStyleFor(type: String?): CandidateCellStyleSpec? =
         type?.let { typeAreas[it]?.horizontalCandidateStyle } ?: horizontalCandidateStyle
 
-    fun verticalCandidateStyleFor(type: String?): CandidateCellStyleSpec? =
-        type?.let { typeAreas[it]?.verticalCandidateStyle } ?: verticalCandidateStyle
+ ?: verticalCandidateStyle
 
     fun effectiveColorScheme(isDark: Boolean): KeyboardColors.ColorScheme {
         val (palette, _) = VariantResolver.resolvePalette(isDark, darkColorScheme != null)
@@ -391,24 +387,6 @@ data class KeyboardTypeResolved(
             landscapeDark ?: portraitDark ?: this.landscape ?: portrait
         } else {
             portraitDark ?: portrait
-        }
-    }
-
-    /** 按方向取解析结论（横屏回落竖屏布局时结论仍为竖屏项的结论）。 */
-    fun resolutionFor(landscape: Boolean, isDark: Boolean = false): LayoutResolution {
-        if (!isDark) {
-            return if (landscape && this.landscape != null) landscapeResolution
-            else portraitResolution
-        }
-        return if (landscape) {
-            when {
-                landscapeDark != null -> landscapeDarkResolution
-                portraitDark != null -> portraitDarkResolution
-                landscape != null -> landscapeResolution
-                else -> portraitResolution
-            }
-        } else {
-            if (portraitDark != null) portraitDarkResolution else portraitResolution
         }
     }
 

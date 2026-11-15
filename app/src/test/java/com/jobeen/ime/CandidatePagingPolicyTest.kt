@@ -45,13 +45,6 @@ class CandidatePagingPolicyTest {
         assertTrue(CandidatePagingPolicy.highlightOnCurrentPage(swipeMode = false))
     }
 
-    @Test
-    fun swipePageIncrementsAndEmptyReturnsToZero() {
-        assertEquals(1, CandidatePagingPolicy.nextSwipePage(0, batchEmpty = false))
-        assertEquals(3, CandidatePagingPolicy.nextSwipePage(2, batchEmpty = false))
-        assertEquals(0, CandidatePagingPolicy.nextSwipePage(2, batchEmpty = true))
-        assertEquals(0, CandidatePagingPolicy.nextSwipePage(0, batchEmpty = true))
-    }
 
     @Test
     fun nativePageMovesAndClampsAtZero() {

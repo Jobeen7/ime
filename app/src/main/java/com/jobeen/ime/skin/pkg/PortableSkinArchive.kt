@@ -4,8 +4,6 @@ import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.SkinJson
 import java.io.File
 import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.contentOrNull
 
 /**
  * 可移植皮肤归档校验（第 5 批 §1，Jime 形映射）：
@@ -119,29 +117,6 @@ object PortableSkinArchive {
      * “无环已核”有可测的落点，而不是一句注释。
      */
     fun findCycle(skinTree: JsonObject?): List<String>? = null
-
-    /**
-     * 模型引用素材收集（删皮肤用）：在皮肤树全部字符串叶值中
-     * 取与清单资产 id 相交者。交集口径是安全方向——误收只会
-     * 让资产多留（对账／剪枝后处理），绝不会误删未被模型
-     * 引用的资产；权威引用图仍是清单 contents（见 AssetRefcounts）。
-     */
-    fun modelReferencedAssetIds(tree: JsonObject, assetIds: Set<String>): Set<String> {
-        val found = mutableSetOf<String>()
-        fun walk(element: kotlinx.serialization.json.JsonElement) {
-            when (element) {
-                is JsonPrimitive -> {
-                    val text = element.contentOrNull
-                    if (text != null && text in assetIds) found += text
-                }
-                is JsonObject -> element.values.forEach(::walk)
-                is kotlinx.serialization.json.JsonArray -> element.forEach(::walk)
-                else -> Unit
-            }
-        }
-        walk(tree)
-        return found
-    }
 
     /**
      * 所有权判定（删皮肤用）：canonical 路径必须落在自有素材

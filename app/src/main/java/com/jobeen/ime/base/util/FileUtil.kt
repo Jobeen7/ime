@@ -1,13 +1,7 @@
 package com.jobeen.ime.base.util
 
 import android.content.Context
-import android.content.Intent
-import android.os.Build
 import android.os.Environment
-import android.provider.Settings
-import android.widget.Toast
-import androidx.core.net.toUri
-import com.jobeen.ime.R
 import java.io.File
 import java.io.IOException
 
@@ -51,17 +45,3 @@ inline fun Context.isStorageAvailable(): Boolean {
     return Environment.MEDIA_MOUNTED == Environment.getExternalStorageState()
 }
 
-fun Context.requestExternalStoragePermission() {
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-        try {
-            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
-            intent.data = "package:$packageName".toUri()
-            startActivity(intent)
-        } catch (e: Exception) {
-            val intent = Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION)
-            startActivity(intent)
-        }
-    } else {
-        Toast.makeText(this, getString(R.string.storage_permission_not_needed), Toast.LENGTH_SHORT).show()
-    }
-}

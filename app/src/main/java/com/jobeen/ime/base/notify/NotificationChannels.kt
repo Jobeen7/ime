@@ -97,32 +97,6 @@ object NotificationChannels {
         }
     }
 
-    /** 前台服务通知（点按回设置主页；低重要性渠道内不响铃不震动）。 */
-    fun foregroundNotification(
-        context: Context,
-        channelId: String,
-        notificationId: Int,
-        title: String,
-        text: String,
-    ): Notification {
-        val intent = Intent(context, MainActivity::class.java)
-            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        val pending = PendingIntent.getActivity(
-            context,
-            notificationId,
-            intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
-        )
-        return NotificationCompat.Builder(context, channelId)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(title)
-            .setContentText(text)
-            .setContentIntent(pending)
-            .setOngoing(true)
-            .setSilent(true)
-            .build()
-    }
-
     /** 完成通知（非常驻：可划掉，点按回设置主页）。 */
     fun completionNotification(
         context: Context,

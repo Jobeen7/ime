@@ -72,20 +72,6 @@ class GlobalStyleTest {
         assertEquals(2.5f, GlobalStyleResolver.clampBorderWidth(2.5f))
     }
 
-    @Test
-    fun toolbarSurface_linkTakesKeyOtherwiseOwn() {
-        val keySurface = SurfaceOverride(
-            background = 0xFF112233.toInt(),
-            borderWidthDp = 2.5f,
-            borderColor = 0xFF445566.toInt(),
-        )
-        assertEquals(keySurface, GlobalStyleResolver.toolbarSurface(style, keySurface))
-        val unlinked = style.copy(linkToolbar = false)
-        assertEquals(
-            0xFF778899.toInt(),
-            GlobalStyleResolver.toolbarSurface(unlinked, keySurface).background,
-        )
-    }
 
     @Test
     fun barBackground_skinPresenceBlocks() {
@@ -159,7 +145,6 @@ class GlobalStyleTest {
 
     @Test
     fun dualMode_themeKeysKeepLegacyNames_customKeysUseNewPrefix() {
-        assertEquals("global_style.key_bg", GlobalStylePrefs.KEY_KEY_BG)
         assertEquals(
             "global_style.custom.key_bg",
             GlobalStylePrefs.keyFor(GlobalStyleMode.CUSTOM, "key_bg"),
@@ -191,14 +176,11 @@ class GlobalStyleTest {
             GlobalStylePrefs.parseScaleMode("scaleAspectFit"),
         )
         assertEquals(ImageContentMode.CENTER, GlobalStylePrefs.parseScaleMode("center"))
-        assertEquals("global_style.bg_scale_mode", GlobalStylePrefs.KEY_BG_SCALE_MODE)
-        assertTrue(GlobalStylePrefs.ALL_KEYS.contains(GlobalStylePrefs.KEY_BG_SCALE_MODE))
         assertTrue(
             GlobalStylePrefs.ALL_KEYS.contains(
                 GlobalStylePrefs.keyFor(GlobalStyleMode.CUSTOM, "bg_scale_mode"),
             ),
         )
-        assertTrue(GlobalStylePrefs.SCALE_MODE_KEYS.contains(GlobalStylePrefs.KEY_BG_SCALE_MODE))
         assertTrue(
             GlobalStylePrefs.SCALE_MODE_KEYS.contains(
                 GlobalStylePrefs.keyFor(GlobalStyleMode.CUSTOM, "bg_scale_mode"),

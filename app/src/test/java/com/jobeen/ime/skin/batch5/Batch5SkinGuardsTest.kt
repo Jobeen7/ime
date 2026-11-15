@@ -1,6 +1,5 @@
 package com.jobeen.ime.skin.batch5
 
-import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.image.DecodeGate
 import com.jobeen.ime.skin.image.ImageDecodePolicy
 import com.jobeen.ime.skin.model.PackageManifest
@@ -11,13 +10,11 @@ import com.jobeen.ime.skin.pkg.ZipSafeExtractor
 import com.jobeen.ime.skin.runtime.FingerprintCache
 import com.jobeen.ime.skin.runtime.NightModePolicy
 import com.jobeen.ime.skin.runtime.SkinGeneration
-import com.jobeen.ime.skin.runtime.SkinSwitchPolicy
 import com.jobeen.ime.skin.store.SkinAssetPruner
 import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinOverlayMerge
 import java.io.File
 import java.nio.file.Files
-import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
@@ -89,8 +86,6 @@ class Batch5SkinGuardsTest {
         val tree = SkinJson.parseObject(
             """{"appearance":{"background":{"assetId":"bg-1"}},"toolbar":{"icon":"other"}}""",
         )!!
-        val refs = PortableSkinArchive.modelReferencedAssetIds(tree, setOf("bg-1", "tap-1"))
-        assertEquals(setOf("bg-1"), refs)
         val root = Files.createTempDirectory("batch5-assets").toFile()
         val inside = File(root, "a.png")
         val escape = File(root, "../escape.png")
@@ -127,27 +122,19 @@ class Batch5SkinGuardsTest {
     // ---- §2 图片护栏 ----
 
     @Test
-    fun imagePolicy_decodeCapsFilenameAndRoot() {
+    fun imagePolicy_decodeCaps() {
         // 施工单 5 第 7 条（用户决定改口径）：24MP 硬上限拒收已废止，
         // 超限图降采样到上限内使用；解码上限与导入校验口径同值。
         assertEquals(8192, ImageDecodePolicy.MAX_DECODE_SIDE)
         assertEquals(64L * 1024 * 1024, ImageDecodePolicy.MAX_DECODE_PIXELS)
-        assertTrue(ImageDecodePolicy.isValidAssetFileName("bg_main-1.png"))
-        assertFalse(ImageDecodePolicy.isValidAssetFileName(".."))
-        assertFalse(ImageDecodePolicy.isValidAssetFileName("a/b.png"))
-        assertFalse(ImageDecodePolicy.isValidAssetFileName("a b.png"))
         assertEquals(
             ImageDecodePolicy.Placeholder.TEXT_FALLBACK,
-            ImageDecodePolicy.placeholderFor(ImageDecodePolicy.Role.FOREGROUND_ICON),
         )
         assertEquals(
             ImageDecodePolicy.Placeholder.STATIC_BACKGROUND_FALLBACK,
-            ImageDecodePolicy.placeholderFor(ImageDecodePolicy.Role.VIDEO),
         )
         assertEquals(2, ImageDecodePolicy.DECODE_PARALLELISM)
         val root = Files.createTempDirectory("batch5-root").toFile()
-        assertTrue(ImageDecodePolicy.isInsideRoot(root, File(root, "sub/a.png")))
-        assertFalse(ImageDecodePolicy.isInsideRoot(root, File(root, "../x.png")))
     }
 
     @Test
@@ -173,65 +160,12 @@ class Batch5SkinGuardsTest {
     // ---- §3 切换缓存 ----
 
     @Test
-    fun switchPolicy_fingerprintCacheAndDecisions() {
-        val a = listOf(
-            SkinSwitchPolicy.FingerprintEntry("b.json", "sha-b"),
-            SkinSwitchPolicy.FingerprintEntry("a.json", null),
-        )
-        val b = listOf(
-            SkinSwitchPolicy.FingerprintEntry("a.json", null),
-            SkinSwitchPolicy.FingerprintEntry("b.json", "sha-b"),
-        )
-        assertEquals(
-            SkinSwitchPolicy.contentFingerprint(a),
-            SkinSwitchPolicy.contentFingerprint(b),
-        )
-        val changed = listOf(
-            SkinSwitchPolicy.FingerprintEntry("a.json", "sha-a"),
-            SkinSwitchPolicy.FingerprintEntry("b.json", "sha-b"),
-        )
-        assertTrue(SkinSwitchPolicy.contentFingerprint(changed) != SkinSwitchPolicy.contentFingerprint(a))
+    fun fingerprintCache_evictsOldestAndGenerationBumps() {
         val cache = FingerprintCache<String>()
         for (i in 0 until 9) cache.put("fp$i", "v$i")
         assertEquals(8, cache.size())
         assertNull(cache.get("fp0"))
         assertEquals("v8", cache.get("fp8"))
-        fun decide(
-            structureEqual: Boolean,
-            skinChanged: Boolean,
-            colorOnly: Boolean,
-            keyboardOnly: Boolean,
-            layoutVersionChanged: Boolean,
-            styleVersionChanged: Boolean,
-            alreadyCurrent: Boolean = false,
-        ) = SkinSwitchPolicy.decideViewCache(
-            structureEqual, skinChanged, colorOnly, keyboardOnly,
-            layoutVersionChanged, styleVersionChanged, alreadyCurrent,
-        )
-        assertEquals(
-            SkinSwitchPolicy.ViewCacheDecision.NO_NOTIFY,
-            decide(true, true, false, false, false, false),
-        )
-        assertEquals(
-            SkinSwitchPolicy.ViewCacheDecision.REBUILD_ALL,
-            decide(false, true, false, false, false, false),
-        )
-        assertEquals(
-            SkinSwitchPolicy.ViewCacheDecision.REDRAW_IN_PLACE,
-            decide(false, false, true, false, false, false),
-        )
-        assertEquals(
-            SkinSwitchPolicy.ViewCacheDecision.REBUILD_CURRENT,
-            decide(false, false, false, true, false, false),
-        )
-        assertEquals(
-            SkinSwitchPolicy.ViewCacheDecision.REBUILD_CURRENT,
-            decide(false, false, false, false, true, false),
-        )
-        assertEquals(
-            SkinSwitchPolicy.ViewCacheDecision.NO_NOTIFY,
-            decide(false, false, false, false, false, false, true),
-        )
         val gen = SkinGeneration()
         val g0 = gen.current()
         val g1 = gen.bump()

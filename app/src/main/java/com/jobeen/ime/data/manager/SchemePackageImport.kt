@@ -635,10 +635,6 @@ object SchemePackageImport {
         )
     }
 
-    /** schema_list 合并：只追加缺失 id，现有顺序一字不动。 */
-    fun mergeSchemaList(existing: List<String>, added: List<String>): List<String> =
-        existing + added.filter { it !in existing }
-
     /** 包来源：本地导入（SAF）与手动 URL 下载的区分依据（第三期）。 */
     enum class PackageSource {
         LOCAL,
@@ -671,26 +667,13 @@ object SchemePackageImport {
         fun packageForScheme(schemeId: String, dir: String? = null): String? =
             records.firstOrNull { schemeId in it.schemeIds && it.matchesDir(dir) }?.packageName
 
-        /** 方案所属包的来源（URL 包与本地导入在列表来源处区分显示）。 */
-        fun sourceForScheme(schemeId: String, dir: String? = null): PackageSource? =
-            records.firstOrNull { schemeId in it.schemeIds && it.matchesDir(dir) }?.source
+?.source
 
         fun versionForFile(relPath: String, dir: String? = null): String? =
             records.firstOrNull { relPath in it.files && it.matchesDir(dir) }?.version
 
-        fun filesForPackage(packageName: String, dir: String? = null): List<String> =
-            records.firstOrNull {
-                it.packageName == packageName && it.matchesDir(dir)
-            }?.files.orEmpty()
+?.files.orEmpty()
 
-        /** 同名包登记替换旧记录（重装同一包不留两条）。 */
-        fun withRecord(record: SchemePackageRecord): SchemePackageRegistry =
-            SchemePackageRegistry(
-                records.filter { it.packageName != record.packageName } + record,
-            )
-
-        fun withoutPackage(packageName: String): SchemePackageRegistry =
-            SchemePackageRegistry(records.filter { it.packageName != packageName })
     }
 
     /**

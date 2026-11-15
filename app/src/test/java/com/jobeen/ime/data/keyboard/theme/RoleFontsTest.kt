@@ -76,33 +76,4 @@ class RoleFontsTest {
         assertEquals(mapOf(FontRole.KEY to "serif"), snapshot.roleFonts)
     }
 
-    @Test
-    fun effectiveSourceOrdersSkinRoleAboveSkinFamily() {
-        // 皮肤逐角色 ＞ 皮肤单值 ＞ 全局 ＞ 默认。
-        assertEquals(
-            GlobalFonts.EffectiveSource.SkinRole("serif"),
-            GlobalFonts.effectiveSource(
-                "monospace", FontChoice.System("sans-serif"),
-                mapOf(FontRole.KEY to "serif"), FontRole.KEY,
-            ),
-        )
-        assertEquals(
-            GlobalFonts.EffectiveSource.Skin("monospace"),
-            GlobalFonts.effectiveSource(
-                "monospace", FontChoice.System("sans-serif"),
-                mapOf(FontRole.CANDIDATE to "serif"), FontRole.KEY,
-            ),
-        )
-        assertEquals(
-            GlobalFonts.EffectiveSource.Global("sans-serif"),
-            GlobalFonts.effectiveSource(
-                null, FontChoice.System("sans-serif"),
-                emptyMap(), FontRole.KEY,
-            ),
-        )
-        assertEquals(
-            GlobalFonts.EffectiveSource.Default,
-            GlobalFonts.effectiveSource(null, FontChoice.Follow, emptyMap(), FontRole.KEY),
-        )
-    }
 }

@@ -92,12 +92,6 @@ object KeyboardManager {
                 .getBoolean(KEY_FOLLOW_SYSTEM, true)
         }
 
-        fun setFollowSystem(context: Context, followSystem: Boolean) {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE).edit {
-                putBoolean(KEY_FOLLOW_SYSTEM, followSystem)
-            }
-        }
-
         fun getThemeId(context: Context): String {
             migrateRemovedBuiltin(context)
             return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

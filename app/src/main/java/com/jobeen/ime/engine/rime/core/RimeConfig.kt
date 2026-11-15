@@ -35,10 +35,6 @@ class RimeConfig private constructor(
         return result
     }
 
-    fun setBool(key: String, value: Boolean) {
-        peerOrNull()?.let { setRimeConfigBool(it, key, value) }
-    }
-
     override fun close() {
         if (closed.compareAndSet(false, true)) {
             closeRimeConfig(peer)
@@ -48,9 +44,6 @@ class RimeConfig private constructor(
     companion object {
         fun openConfig(configId: String): RimeConfig =
             RimeConfig(openRimeConfig(configId))
-
-        fun openUserConfig(configId: String): RimeConfig =
-            RimeConfig(openRimeUserConfig(configId))
 
         fun openSchema(schemaId: String): RimeConfig =
             RimeConfig(openRimeSchema(schemaId))

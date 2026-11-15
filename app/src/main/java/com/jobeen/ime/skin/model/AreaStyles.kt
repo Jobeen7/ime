@@ -63,44 +63,6 @@ sealed interface HeightPart {
     data class Vh(val percent: Float) : HeightPart
 }
 
-/**
- * 解析混合高度输入：数字 → dp；`'Nvh'` 字符串（大小写不敏感，
- * 前后空白容忍）→ vh 百分比；纯数字字符串 → dp；其余（null、
- * 非法字符串、布尔等）→ null（调用方跳过，不拒包）。
- */
-fun parseHeightPart(raw: Any?): HeightPart? = when (raw) {
-    is Number -> HeightPart.Dp(raw.toFloat())
-    is String -> {
-        val s = raw.trim()
-        when {
-            s.endsWith("vh", ignoreCase = true) ->
-                s.dropLast(2).trim().toFloatOrNull()
-                    ?.takeIf { it.isFinite() }?.let { HeightPart.Vh(it) }
-            else -> s.toFloatOrNull()?.takeIf { it.isFinite() }?.let { HeightPart.Dp(it) }
-        }
-    }
-    else -> null
-}
-
-/**
- * 高度和（纯函数）：各分量按视口高度换算后相加；null 分量
- * 跳过；负分量钳到 0（高度无负值）。Jime 窗口实测仍走 px
- * 整数组合（onMeasure 的 stripH + barH + cHeight + 边距），
- * 本函数供皮肤模型/转换器侧的 dp/vh 混合高度合成，不改
- * 窗口实测路径（单位不同，硬接线只会添乱）。
- */
-fun sumHeights(screenHeightDp: Float, vararg parts: HeightPart?): Float {
-    var total = 0f
-    for (part in parts) {
-        total += when (part) {
-            is HeightPart.Dp -> part.value.coerceAtLeast(0f)
-            is HeightPart.Vh -> (screenHeightDp * part.percent / 100f).coerceAtLeast(0f)
-            null -> 0f
-        }
-    }
-    return total
-}
-
 private val VH_PATTERN = Regex("""^\s*(\d+(?:\.\d+)?)\s*vh\s*$""", RegexOption.IGNORE_CASE)
 
 /**
@@ -341,7 +303,6 @@ data class ToolbarSlotGeometry(
     val centerWidth: Float,
 ) {
     val hasMenu: Boolean get() = menuCenter != null
-    val hasClose: Boolean get() = closeCenter != null
 }
 
 fun toolbarSlotGeometry(
@@ -732,17 +693,7 @@ fun parseVerticalBottomRow(
  *   在渲染时把缺失读成此处默认值。
  */
 object PeerCandidateDefaults {
-    const val HORIZONTAL_MAX_COLUMNS = 7
-    const val VERTICAL_MAX_ROWS = 4
-    const val VERTICAL_MAX_COLUMNS = 5
 }
-
-/** 竖网格行数解析：皮肤值优先，缺失走用户行数偏好（不套用文档默认 4）。 */
-fun resolveVerticalMaxRows(skinMaxRows: Int?, userPolicyRows: Int): Int =
-    skinMaxRows ?: userPolicyRows
-
-/** 横条候选上限解析：皮肤值优先，缺失 = 不限（不套用文档默认 7）。 */
-fun resolveHorizontalMaxColumns(skinMaxColumns: Int?): Int? = skinMaxColumns
 
 /** 候选上下文菜单动作（审计 I 项）：点选／复制／遗忘三者之一。 */
 enum class CandidateMenuAction { SELECT, COPY, FORGET }

@@ -72,8 +72,6 @@ object SkinRuntime {
         if (window === w) window = null
     }
 
-    fun hasLiveWindow(): Boolean = window != null
-
     /** 已挂载窗口当前是否可见（无窗口/查询异常一律按不可见处理）。 */
     fun isWindowVisible(): Boolean =
         runCatching { window?.isVisibleNow() == true }.getOrDefault(false)

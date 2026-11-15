@@ -76,17 +76,6 @@ class VerticalBottomRowTest {
         assertEquals(6, skin.horizontalMaxColumns)
         assertEquals(5, skin.verticalMaxRows)
         assertEquals(5, skin.verticalMaxColumns)
-        assertEquals(7, PeerCandidateDefaults.HORIZONTAL_MAX_COLUMNS)
-        assertEquals(4, PeerCandidateDefaults.VERTICAL_MAX_ROWS)
-        assertEquals(5, PeerCandidateDefaults.VERTICAL_MAX_COLUMNS)
     }
 
-    @Test
-    fun absentLimitsKeepJimeBehavior() {
-        // 缺失不套文档默认：横条不限、竖行数走用户偏好。
-        assertNull(resolveHorizontalMaxColumns(null))
-        assertEquals(6, resolveHorizontalMaxColumns(6))
-        assertEquals(3, resolveVerticalMaxRows(null, 3))
-        assertEquals(5, resolveVerticalMaxRows(5, 3))
-    }
 }

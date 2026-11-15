@@ -27,20 +27,6 @@ data class MainSettingEntry(
 )
 
 /**
- * 搜索过滤：空查询返回全部；否则标题或副标题含查询
- * （去首尾空白、不区分大小写）。只匹配行，不匹配组名：
- * 组是否出现，取决于组内是否有行命中。
- */
-fun filterMainSettings(query: String, entries: List<MainSettingEntry>): List<MainSettingEntry> {
-    val q = query.trim()
-    if (q.isEmpty()) return entries
-    val folded = q.lowercase()
-    return entries.filter {
-        it.title.lowercase().contains(folded) || it.subtitle.lowercase().contains(folded)
-    }
-}
-
-/**
  * 按组归拢：组顺序固定为空组剔除。
  * 主页只渲染非空组卡片；子页只渲染本组过滤后的行。
  */
@@ -364,30 +350,3 @@ fun searchCatalog(
     return pageResults + rowResults + fuzzyPageResults + fuzzyRowResults
 }
 
-/**
- * 目录校验：页键唯一、行有所属页、同页内行标题不重复。
- * 返回问题描述串；空即校验通过。资源解析不在此做。
- */
-fun validateCatalog(
-    pages: List<CatalogPage>,
-    rows: List<CatalogRow>,
-): List<String> {
-    val problems = mutableListOf<String>()
-    val pageKeys = pages.map { it.key }
-    if (pageKeys.size != pageKeys.toSet().size) {
-        problems += "duplicate page key"
-    }
-    val pageKeySet = pageKeys.toSet()
-    rows.forEach { row ->
-        if (row.pageKey !in pageKeySet) {
-            problems += "row without page: ${row.pageKey}"
-        }
-    }
-    rows.groupBy { it.pageKey }.forEach { (pageKey, pageRows) ->
-        val titles = pageRows.map { it.titleRes }
-        if (titles.size != titles.toSet().size) {
-            problems += "duplicate row in page: $pageKey"
-        }
-    }
-    return problems
-}

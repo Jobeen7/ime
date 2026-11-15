@@ -39,12 +39,6 @@ class KeyboardStateManagerSchemaGuardTest {
 
     // ---------- 多主槽一期：类型状态（纯决策部分，不触 Android） ----------
 
-    @Test
-    fun initialKeyboardType_byInputMode() {
-        reset()
-        assertEquals("pinyin", KeyboardStateManager.initialKeyboardType(asciiMode = false))
-        assertEquals("alphabetic", KeyboardStateManager.initialKeyboardType(asciiMode = true))
-    }
 
     @Test
     fun returnPrimaryAndLast_noopWhenUnset() {
@@ -53,15 +47,11 @@ class KeyboardStateManagerSchemaGuardTest {
         KeyboardStateManager.returnPrimaryKeyboard()
         KeyboardStateManager.returnLastKeyboard()
         assertNull(KeyboardStateManager.currentKeyboardType)
-        assertNull(KeyboardStateManager.primaryKeyboardType)
-        assertNull(KeyboardStateManager.lastKeyboardType)
     }
 
     @Test
     fun onDestroy_clearsTypeState() {
         reset()
         assertNull(KeyboardStateManager.currentKeyboardType)
-        assertNull(KeyboardStateManager.primaryKeyboardType)
-        assertNull(KeyboardStateManager.lastKeyboardType)
     }
 }

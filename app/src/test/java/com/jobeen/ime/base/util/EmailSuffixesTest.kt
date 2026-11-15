@@ -74,12 +74,6 @@ class EmailSuffixesTest {
         assertFalse(EmailSuffixes.continues("hello", "q"))
     }
 
-    @Test
-    fun isSuggestionList_onlyAllDomains() {
-        assertTrue(EmailSuffixes.isSuggestionList(listOf("qq.com", "163.com")))
-        assertFalse(EmailSuffixes.isSuggestionList(listOf("qq.com", "hello")))
-        assertFalse(EmailSuffixes.isSuggestionList(emptyList()))
-    }
 
     @Test
     fun normalizeDomainChar_lettersDigitsAndDots() {

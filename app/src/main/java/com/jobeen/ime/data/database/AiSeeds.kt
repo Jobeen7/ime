@@ -34,7 +34,6 @@ object AiSeeds {
 
     const val DEEPSEEK_PROVIDER_ID = "00000000-0000-4000-8000-000000000101"
     const val DEEPSEEK_MODEL_ROW_ID = "00000000-0000-4000-8000-000000000102"
-    const val DEEPSEEK_MODEL_ID = "deepseek-v4-flash"
 
     val providers: List<AIProvider> = listOf(
         AIProvider(

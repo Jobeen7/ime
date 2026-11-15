@@ -43,7 +43,6 @@ abstract class SidePanelRender(
         @ColorInt val panelColor: Int,
         @ColorInt val pressedItemColor: Int,
         val cornerRadiusDp: Float = 8f,
-        val textHeightRatio: Float = 0.42f,
     ) {
         companion object {
             fun fromTheme(theme: KeyboardColors.ColorScheme, appearance: KeyDef.Appearance) = Style(

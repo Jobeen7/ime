@@ -45,28 +45,6 @@ class MultiMainAdditionsTest {
         assertFalse(state.clearTemp(KeyboardTypes.PINYIN))
     }
 
-    @Test
-    fun toolTypesAreTableEntries() {
-        assertEquals(
-            setOf("layoutSwitch", "returnPath", "floatPanel"),
-            KeyboardTypes.TOOL,
-        )
-        assertTrue(KeyboardTypes.isTool("layoutSwitch"))
-        assertFalse(KeyboardTypes.isTool("pinyin"))
-        // keyboards 表接受任意非空键（含工具类型），见 SkinJson.parseKeyboards。
-        val table = SkinJson.parseKeyboards(
-            Json.parseToJsonElement(
-                """{"keyboards": {
-                    "layoutSwitch": "switcher",
-                    "returnPath": {"layoutId": "back"},
-                    "floatPanel": "float"
-                }}""",
-            ) as JsonObject,
-        )
-        assertEquals("switcher", table["layoutSwitch"]?.layoutId)
-        assertEquals("back", table["returnPath"]?.layoutId)
-        assertEquals("float", table["floatPanel"]?.layoutId)
-    }
 
     @Test
     fun swipeKeyboardFieldsSynthesizeTypeSwitch() {

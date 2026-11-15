@@ -4,7 +4,6 @@ package com.jobeen.ime
 
 import com.jobeen.ime.ui.screen.TestInputMode
 import com.jobeen.ime.ui.screen.TestInputPanelState
-import com.jobeen.ime.ui.screen.testInputImeHintVisible
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -64,11 +63,4 @@ class TestInputPanelStateTest {
         assertTrue(state.isOpen)
     }
 
-    @Test
-    fun imeHintVisible_onlyWhenOpenAndNotConfigured() {
-        assertTrue(testInputImeHintVisible(panelOpen = true, isImeConfigured = false))
-        assertFalse(testInputImeHintVisible(panelOpen = true, isImeConfigured = true))
-        assertFalse(testInputImeHintVisible(panelOpen = false, isImeConfigured = false))
-        assertFalse(testInputImeHintVisible(panelOpen = false, isImeConfigured = true))
-    }
 }

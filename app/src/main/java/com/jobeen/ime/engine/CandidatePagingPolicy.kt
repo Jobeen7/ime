@@ -31,14 +31,6 @@ object CandidatePagingPolicy {
     fun highlightOnCurrentPage(swipeMode: Boolean): Boolean = !swipeMode
 
     /**
-     * 滑动模式页号：批量追加成功页号+1；取空（无更多候选）则
-     * 回到第 0 页。页号只作翻页钮可见性与 native 模式的页码
-     * 记账，不改批量路的 48 条/批与 CAP 200。
-     */
-    fun nextSwipePage(page: Int, batchEmpty: Boolean): Int =
-        if (batchEmpty) 0 else page + 1
-
-    /**
      * native 模式页号：翻页成功前后移一页（下限 0）；翻页
      * 失败（已到尽头、无更多页）则回到第 0 页。
      */

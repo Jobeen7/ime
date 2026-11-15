@@ -32,7 +32,6 @@ class SkinImageDescriptorTest {
         assertEquals(SkinImageRef("toolbar_circle", "IMG2"), file.highlight)
         assertEquals(ImageContentMode.SCALE_ASPECT_FIT, file.contentMode)
         assertEquals(SpriteInsets(left = 19, top = 0, right = 19, bottom = 0), file.insets)
-        assertEquals(listOf("toolbar_circle"), file.sheetFiles())
     }
 
     @Test
@@ -152,7 +151,6 @@ class SkinImageDescriptorTest {
         )
         assertTrue(issues.isEmpty())
         assertEquals(SkinImageDescriptor.Asset("toolbar_menu"), descriptor)
-        assertTrue(descriptor!!.sheetFiles().isEmpty())
     }
 
     @Test

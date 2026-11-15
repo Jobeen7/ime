@@ -401,7 +401,6 @@ object KeyboardTypes {
     val TOOL: Set<String> = setOf(LAYOUT_SWITCH, RETURN_PATH, FLOAT_PANEL)
 
     fun isTemp(type: String?): Boolean = type == TEMP_PINYIN
-    fun isTool(type: String?): Boolean = type in TOOL
 }
 
 /**
