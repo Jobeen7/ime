@@ -18,7 +18,9 @@ import com.jobeen.ime.base.feedback.InputFeedbacks
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.input.panel.PanelAction
+import com.jobeen.ime.input.panel.menu.KeyboardMenuConfigOps
 import com.jobeen.ime.input.panel.menu.KeyboardMenuEntries
+import com.jobeen.ime.input.panel.menu.SharedPrefsKeyboardMenuStore
 import com.jobeen.ime.input.panel.toolbar.isToolbarActionVisible
 import com.jobeen.ime.input.panel.toolbar.voiceInputEnabled
 import splitties.dimensions.dp
@@ -54,13 +56,19 @@ class MenuGridView(
 
     private fun buildMenuItems(): Array<Array<MenuItem>> {
         val voiceOn = voiceInputEnabled(context)
-        return KeyboardMenuEntries.PAGES.map { page ->
+        // 菜单顺序取用户配置（12-⑨）：先按存档切页、再按语音可见性
+        // 过滤——默认顺序即旧 PAGES 展平，语音开时分页与旧板一致。
+        val ids = SharedPrefsKeyboardMenuStore(context).load()
+        val entries = ids.mapNotNull { id ->
+            KeyboardMenuEntries.ALL.firstOrNull { it.id == id }
+        }
+        return entries.chunked(KeyboardMenuConfigOps.PAGE_SIZE).map { page ->
             page.filter { entry ->
                 isToolbarActionVisible(entry.action, voiceOn)
             }.map { entry ->
                 MenuItem(
-                    context.getString(labelResFor(entry.id)),
-                    iconResFor(entry.id),
+                    context.getString(KeyboardMenuEntries.labelRes(entry.id)),
+                    KeyboardMenuEntries.iconRes(entry.id),
                     entry.action,
                 )
             }.toTypedArray()
@@ -85,52 +93,9 @@ class MenuGridView(
         requestLayout()
     }
 
-    private fun labelResFor(id: String): Int = when (id) {
-        "emoji" -> R.string.menu_emoji
-        "symbol" -> R.string.menu_symbol
-        "prediction" -> R.string.model_prediction
-        "candidate_comment" -> R.string.menu_candidate_comment
-        "traditional_chinese" -> R.string.menu_traditional_chinese
-        "ascii_mode" -> R.string.menu_ascii_mode
-        "emoji_input" -> R.string.menu_emoji_input
-        "voice" -> R.string.menu_voice
-        "clipboard" -> R.string.menu_clipboard
-        "phrases" -> R.string.phrase_tab
-        "cursor" -> R.string.menu_cursor
-        "schema_settings" -> R.string.menu_schema
-        "settings" -> R.string.menu_settings
-        "theme" -> R.string.menu_theme
-        "reload_engine" -> R.string.menu_reload_engine
-        "about" -> R.string.menu_about
-        "performance" -> R.string.menu_performance
-        // 注：select_all／copy／paste／undo／redo／deploy_sync
-        // 曾在此映射，现无菜单入口产生这些 id（入口唯一来源
-        // KeyboardMenuEntries.PAGES），已随 P2 清理删除；未知 id
-        // 走 else 回落，不再为无入口 id 保留映射。
-        else -> R.string.menu_settings
-    }
+    private fun labelResFor(id: String): Int = KeyboardMenuEntries.labelRes(id)
 
-    private fun iconResFor(id: String): Int = when (id) {
-        "emoji" -> R.drawable.ic_keyboard_emoticon
-        "symbol" -> R.drawable.ic_keyboard_symbol
-        "prediction" -> R.drawable.ic_keyboard_lightbulb_on_outline
-        "candidate_comment" -> R.drawable.ic_keyboard_bubble
-        "traditional_chinese" -> R.drawable.ic_keyboard_traditional_ch
-        "ascii_mode" -> R.drawable.ic_keyboard_english_mode
-        "emoji_input" -> R.drawable.ic_keyboard_sticker_emoji
-        "voice" -> R.drawable.ic_keyboard_voice
-        "clipboard" -> R.drawable.ic_keyboard_clipboard
-        "phrases" -> R.drawable.ic_keyboard_star_david
-        "cursor" -> R.drawable.ic_keyboard_cursor_move
-        "schema_settings" -> R.drawable.ic_keyboard_tune
-        "settings" -> R.drawable.ic_keyboard_setting
-        "theme" -> R.drawable.ic_keyboard_palette
-        "reload_engine" -> R.drawable.ic_keyboard_reload
-        "about" -> R.drawable.ic_keyboard_information_outline
-        "performance" -> R.drawable.ic_keyboard_performance
-        // 注：同上，无入口 id 的图标映射已随 P2 清理删除。
-        else -> R.drawable.ic_keyboard_setting
-    }
+    private fun iconResFor(id: String): Int = KeyboardMenuEntries.iconRes(id)
 
     private val columns = 4
     private val radius = dp(16).toFloat()

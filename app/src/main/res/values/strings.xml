@@ -1012,6 +1012,12 @@
     <string name="emoji_custom_add">添加</string>
     <string name="emoji_custom_delete_group">删除分组</string>
     <string name="emoji_custom_delete_symbol">删除</string>
+    <!-- 键盘菜单管理（WO52 12-⑨） -->
+    <string name="keyboard_menu_title">键盘菜单设置</string>
+    <string name="row_sub_keyboard_menu">键盘菜单选项自定义</string>
+    <string name="keyboard_menu_desc">列表就是键盘菜单里的顺序，点上移／下移调整顺序，点垃圾桶移出菜单。</string>
+    <string name="keyboard_menu_addable">可添加：</string>
+    <string name="keyboard_menu_note">修改在下次打开键盘菜单时生效；全部移出后恢复默认菜单。</string>
     <!-- 按键符号（施工单 10 H2-14）：页名／迷你键盘／改键弹框 -->
     <string name="key_symbol_title">按键符号</string>
     <string name="row_sub_key_symbol">26 键字母键角标</string>

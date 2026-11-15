@@ -2,6 +2,7 @@
 
 package com.jobeen.ime.input.panel.menu
 
+import com.jobeen.ime.R
 import com.jobeen.ime.input.panel.PanelAction
 
 /**
@@ -51,4 +52,53 @@ object KeyboardMenuEntries {
     )
 
     val ALL: List<Entry> get() = PAGES.flatten()
+
+    /**
+     * 标签／图标映射（唯一来源：菜单视图与管理页共用；新增入口
+     * 只改注册表＋本映射，不动分页逻辑）：
+     * - select_all／copy／paste／undo／redo／deploy_sync 曾有映射，
+     *   现无菜单入口产生这些 id，已随 P2 清理删除；未知 id 走 else
+     *   回落，不再为无入口 id 保留映射。
+     */
+    fun labelRes(id: String): Int = when (id) {
+        "emoji" -> R.string.menu_emoji
+        "symbol" -> R.string.menu_symbol
+        "prediction" -> R.string.model_prediction
+        "candidate_comment" -> R.string.menu_candidate_comment
+        "traditional_chinese" -> R.string.menu_traditional_chinese
+        "ascii_mode" -> R.string.menu_ascii_mode
+        "emoji_input" -> R.string.menu_emoji_input
+        "voice" -> R.string.menu_voice
+        "clipboard" -> R.string.menu_clipboard
+        "phrases" -> R.string.phrase_tab
+        "cursor" -> R.string.menu_cursor
+        "schema_settings" -> R.string.menu_schema
+        "settings" -> R.string.menu_settings
+        "theme" -> R.string.menu_theme
+        "reload_engine" -> R.string.menu_reload_engine
+        "about" -> R.string.menu_about
+        "performance" -> R.string.menu_performance
+        else -> R.string.menu_settings
+    }
+
+    fun iconRes(id: String): Int = when (id) {
+        "emoji" -> R.drawable.ic_keyboard_emoticon
+        "symbol" -> R.drawable.ic_keyboard_symbol
+        "prediction" -> R.drawable.ic_keyboard_lightbulb_on_outline
+        "candidate_comment" -> R.drawable.ic_keyboard_bubble
+        "traditional_chinese" -> R.drawable.ic_keyboard_traditional_ch
+        "ascii_mode" -> R.drawable.ic_keyboard_english_mode
+        "emoji_input" -> R.drawable.ic_keyboard_sticker_emoji
+        "voice" -> R.drawable.ic_keyboard_voice
+        "clipboard" -> R.drawable.ic_keyboard_clipboard
+        "phrases" -> R.drawable.ic_keyboard_star_david
+        "cursor" -> R.drawable.ic_keyboard_cursor_move
+        "schema_settings" -> R.drawable.ic_keyboard_tune
+        "settings" -> R.drawable.ic_keyboard_setting
+        "theme" -> R.drawable.ic_keyboard_palette
+        "reload_engine" -> R.drawable.ic_keyboard_reload
+        "about" -> R.drawable.ic_keyboard_information_outline
+        "performance" -> R.drawable.ic_keyboard_performance
+        else -> R.drawable.ic_keyboard_setting
+    }
 }

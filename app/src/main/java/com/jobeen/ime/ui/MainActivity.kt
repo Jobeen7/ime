@@ -124,6 +124,11 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, EmojiSettingsActivity::class.java)
                 )
             },
+            onOpenKeyboardMenu = {
+                startActivity(
+                    Intent(this@MainActivity, KeyboardMenuSettingsActivity::class.java)
+                )
+            },
             onOpenSkinLibrary = {
                 startActivity(
                     Intent(this@MainActivity, SkinLibraryActivity::class.java)
