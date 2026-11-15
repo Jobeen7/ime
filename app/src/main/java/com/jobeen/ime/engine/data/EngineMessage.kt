@@ -30,6 +30,8 @@ sealed class EngineMessage {
          * （末页由 hasMore 判定）。
          */
         val isLastPage: Boolean = false,
+        /** 方案 page_size（快照 context.menu.pageSize）：native 分页末页判定与下标重映射用；0 = 未知 */
+        val pageSize: Int = 0,
     ) : EngineMessage() {}
 
     data class Status(val isComposing: Boolean = false) : EngineMessage()

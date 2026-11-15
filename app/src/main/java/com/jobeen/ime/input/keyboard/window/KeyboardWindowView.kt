@@ -2028,6 +2028,8 @@ class KeyboardWindowView(
     private var lastCandidateList: List<EngineMessage.Candidate>? = null
     private var lastCandidateHasMore: Boolean = false
     private var lastCandidateHighlightedIndex: Int = 0
+    private var lastCandidatePageNo: Int = 0
+    private var lastCandidateIsLastPage: Boolean = false
 
     // 已应用的首屏候选帧版本号（-1 = 尚未应用任何版本化帧）：
     // 窗口生命周期内 requestId 单调递增，迟到旧帧凭它丢弃。
@@ -2055,9 +2057,13 @@ class KeyboardWindowView(
         // 无变化帧丢弃：同一候选表重复分发时跳过面板重绘（末尾无条件
         // invalidate）、动态文本推送与行内联想刷新——每键都有的开销。
         // 组字气泡的显隐由 DynamicPreedit 路径负责，本处不另补 show。
+        // B-P-1/P-2：页号与末页也是帧身份的一部分——同内容不同页
+        // （翻页后候选表相同）必须放行，否则页切换整帧被丢弃。
         val last = lastCandidateList
         if (last != null && hasMore == lastCandidateHasMore &&
             highlightedIndex == lastCandidateHighlightedIndex &&
+            pageNo == lastCandidatePageNo &&
+            isLastPage == lastCandidateIsLastPage &&
             candidatesContentEqual(last, list)
         ) {
             return
@@ -2065,6 +2071,8 @@ class KeyboardWindowView(
         lastCandidateList = list.toList()
         lastCandidateHasMore = hasMore
         lastCandidateHighlightedIndex = highlightedIndex
+        lastCandidatePageNo = pageNo
+        lastCandidateIsLastPage = isLastPage
         // 浮动候选窗（WO52 1.4）：内嵌开且有候选时路由到浮动窗，
         // 内嵌栏清空候选（不与浮动窗重复显示）；否则关浮动窗走内嵌栏。
         // 引擎浮动激活态与之一致（激活时 1.1 强制 native 分页）。

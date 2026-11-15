@@ -83,9 +83,11 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
                     type = c.type,
                 )
             }
-            // 键帽过滤必须在编号之后做：index 是引擎全局下标（bulk 取词
-            // 恒自 0 起），选词按它定位；先滤再编号会让其后每个候选的
-            // 下标错位一位、点选打错词。与 restoreCandidates 里已删词
+            // 键帽过滤必须在编号之后做：index 是 bulk 窗口内下标
+            // （bulk 取词自当前 native 页起，见 B-P-1/P-2；全局下标
+            // 由 RimeEngine 的 native 分页定帧时加页内偏移还原），
+            // 选词按全局下标定位；先滤再编号会让其后每个候选的下标
+            // 错位一位、点选打错词。与 restoreCandidates 里已删词
             // 过滤同口径：只摘条目、保留其余条目的原下标
             val candidates = KeycapFilterState.applyTo(converted)
             EngineMessage.Candidates(
@@ -93,6 +95,7 @@ abstract class BaseRimeMessageConverter : RimeMessageConverter {
                 highlighted = message.data.highlighted,
                 page = 0,
                 total = message.data.total,
+                pageSize = message.data.pageSize,
             )
         }
 

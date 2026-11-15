@@ -305,9 +305,18 @@ namespace {
         }
 
         // highlighted 由 Kotlin 侧从同批已取的 context 传入，不再为它
-        // 在这里重复调一次 get_context 全量查询
-        std::tuple<int, int, std::vector<CandidateData>> bulkCandidates(int highlighted) {
-            auto list = candidates(0, kBulkCandidateLimit);
+        // 在这里重复调一次 get_context 全量查询。页号／页宽取自同一
+        // 批 context 的 menu（librime 自身记账，换组字即归零，无需
+        // 另设 native 记账变量）：快照候选恒为当前 native 页起的
+        // 24 条——此前恒取全局第 0–23 条，翻页后快照仍是首页。
+        // 步长取方案 page_size（非 bulk 上限 24：方案页宽 6 时，
+        // 页号×24 会每翻一页跳过 3 个 native 页）；页宽未知时
+        // 回落 24。
+        std::tuple<int, int, std::vector<CandidateData>> bulkCandidates(
+                int highlighted, int pageNumber, int pageSize) {
+            const int stride = pageSize > 0 ? pageSize : kBulkCandidateLimit;
+            const int start = pageNumber > 0 ? pageNumber * stride : 0;
+            auto list = candidates(start, kBulkCandidateLimit);
             int size = static_cast<int>(list.size()) < kBulkCandidateLimit
                        ? static_cast<int>(list.size())
                        : -1;
@@ -748,8 +757,8 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getSnapshotAfterKey(JNIEnv *env,
     // C++ 内完成，省的是两次 JNI 往返（marshalling 与局部引用管理）。
     auto commit = RimeEngine::instance().commit();
     auto ctx = RimeEngine::instance().context();
-    auto [size, hl, list] =
-            RimeEngine::instance().bulkCandidates(ctx->menu.highlightedIndex);
+    auto [size, hl, list] = RimeEngine::instance().bulkCandidates(
+            ctx->menu.highlightedIndex, ctx->menu.pageNumber, ctx->menu.pageSize);
 
     jni::LocalRef<> commitObj(env, toJavaCommit(env, *commit));
     jni::LocalRef<> contextObj(env, toJavaContext(env, *ctx));

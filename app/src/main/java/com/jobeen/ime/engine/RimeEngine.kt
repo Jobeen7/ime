@@ -129,6 +129,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         private const val CANDIDATE_PAGE_SIZE = 48
         /** 每批候选补取封顶：再深处是字体无字形的扩展区生僻字，不加载 */
         private const val CANDIDATE_BATCH_CAP = 200
+        /** 快照 bulk 窗口条数（与 native kBulkCandidateLimit 同值）：total==-1 时本页条数未满即末页 */
+        private const val NATIVE_BULK_LIMIT = 24
         /** 动作/任务队列容量：远超正常深度，仅作异常堆积兜底 */
         private const val ACTION_QUEUE_CAPACITY = 512
         private const val JOB_QUEUE_CAPACITY = 256
@@ -652,7 +654,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      */
     @Volatile
     private var pagingPageNo: Int = 0
-    /** native 模式首屏页宽（第 0 页帧的条数）：末页判定用 */
+    /** 方案 page_size（快照 context.menu.pageSize）：native 末页判定与下标偏移用 */
     @Volatile
     private var nativePageSize: Int = 0
     /** pageCandidates 发起的 native 翻页待下一帧 Candidates 认领的页号 */
@@ -2007,9 +2009,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                 // 取满上限、后面可能还有），供 loadMoreCandidates 续取
                 candidateBatchLoaded = msg.list.size
                 candidateBatchTotal = msg.total
-                // native 分页帧定页号／末页（WO52 1.1）：changePage 挂起的
-                // 页号由下一帧认领；其余首屏帧复位 0；追加页（滑动模式）
-                // 不碰页号。末页 = (页号+1)×页宽 >= 确切总数。
+                // native 分页帧定页号／末页（WO52 1.1＋B-P-1/P-2）：changePage
+                // 挂起的页号由下一帧认领；其余首屏帧复位 0；追加页（滑动模式）
+                // 不碰页号。末页 = (页号+1)×页宽 >= 确切总数；总数未知
+                // （total==-1，bulk 取满）时本页条数未满即末页。
                 val framed = if (effectivePagingMode() == CandidatePagingMode.NATIVE) {
                     val pending = pendingNativePage
                     if (pending != null) {
@@ -2018,12 +2021,20 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                     } else if (!msg.append) {
                         pagingPageNo = 0
                     }
-                    if (pagingPageNo == 0 && msg.list.isNotEmpty() && !msg.append) {
-                        nativePageSize = msg.list.size
+                    // 页宽取方案 page_size（快照 context.menu.pageSize），
+                    // 不再用首帧 bulk 条数——bulk 窗口恒 24，与方案页宽无关。
+                    if (msg.pageSize > 0) {
+                        nativePageSize = msg.pageSize
                     }
-                    val isLast = msg.total >= 0 && nativePageSize > 0 &&
-                        (pagingPageNo + 1) * nativePageSize >= msg.total
-                    msg.copy(page = pagingPageNo, isLastPage = isLast)
+                    val (framedList, framedPage, framedIsLast) =
+                        frameNativeCandidatePage(
+                            candidates = msg.list,
+                            total = msg.total,
+                            pageSize = nativePageSize,
+                            pageNo = pagingPageNo,
+                            bulkLimit = NATIVE_BULK_LIMIT,
+                        )
+                    msg.copy(list = framedList, page = framedPage, isLastPage = framedIsLast)
                 } else {
                     msg
                 }
@@ -3690,3 +3701,34 @@ internal fun drainJobsOnFinalize(jobs: Channel<RimeEngine.QueuedJob>) {
  */
 internal fun parseT9PinyinList(raw: String): List<String> =
     raw.split(' ').filter { it.isNotEmpty() }
+
+/**
+ * B-P-1/P-2：native 分页帧定帧（纯函数，可单测）。
+ *
+ * - 末页：总数确切时 `(pageNo+1)×pageSize >= total`；总数未知
+ *   （total==-1，bulk 取满）时本页条数未满 bulk 上限即末页。
+ * - 下标：bulk 窗口自当前 native 页起，窗口内下标＋页内偏移
+ *   （pageNo×pageSize）才是全局下标（选词按全局下标定位，见
+ *   Selection）；第 0 页偏移为 0。
+ * @return Triple(定帧后列表, 页号, 是否末页)
+ */
+internal fun frameNativeCandidatePage(
+    candidates: List<Candidate>,
+    total: Int,
+    pageSize: Int,
+    pageNo: Int,
+    bulkLimit: Int,
+): Triple<List<Candidate>, Int, Boolean> {
+    val isLast = when {
+        total >= 0 && pageSize > 0 -> (pageNo + 1) * pageSize >= total
+        total < 0 -> candidates.size < bulkLimit
+        else -> false
+    }
+    val offset = pageNo * pageSize
+    val framed = if (offset > 0) {
+        candidates.map { it.copy(index = it.index + offset) }
+    } else {
+        candidates
+    }
+    return Triple(framed, pageNo, isLast)
+}

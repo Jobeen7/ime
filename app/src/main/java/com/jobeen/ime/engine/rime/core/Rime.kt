@@ -464,6 +464,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
         //转态下拼出的将是整串原始按键数字被写进输入框（第十六
         //批，判定见 hasUnresolvedDigitSegment）；落入下方正常路径
         //照常分发组字（胶囊显示原始数字）与空候选
+        // 候选参数：bulk 三元组＋同批快照的方案 page_size（B-P-1/P-2：
+        // native 分页末页判定与下标重映射用；与 bulk 同批取，不另调 native）。
+        val candidateParams = arrayOf<Any>(
+            bulkCandidates[0], bulkCandidates[1], bulkCandidates[2], context.menu.pageSize,
+        )
         if (context.menu.pageSize <= 0 && context.input.isNotEmpty() && !context.input.startsWith(
                 CommandSymbol
             ) && !hasUnresolvedDigitSegment(context.composition.syllables)
@@ -491,14 +496,14 @@ class Rime : RimeApi, RimeLifecycleOwner {
             handleComposition(CompositionProto())
             handleMessage(
                 RimeMessage.MessageType.Candidate.ordinal,
-                bulkCandidates
+                candidateParams
             )
             return
         }
         handleComposition(context.composition)
         handleMessage(
             RimeMessage.MessageType.Candidate.ordinal,
-            bulkCandidates
+            candidateParams
         )
     }
 

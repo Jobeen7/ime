@@ -71,20 +71,24 @@ sealed class RimeMessage<T>(val data: T) {
         val total: Int = -1,
         val highlighted: Int = 0,
         val candidates: Array<CandidateProto> = arrayOf(),
-    ) : RimeMessage<CandidateListMessage.Data>(Data(total, highlighted, candidates)) {
+        /** 方案 page_size（快照 context.menu.pageSize）：native 分页末页判定与下标重映射用；0 = 未知 */
+        val pageSize: Int = 0,
+    ) : RimeMessage<CandidateListMessage.Data>(Data(total, highlighted, candidates, pageSize)) {
         data class Data(
             val total: Int = -1,
             val highlighted: Int = 0,
             val candidates: Array<CandidateProto> = arrayOf(),
+            val pageSize: Int = 0,
         ) {
             override fun equals(other: Any?): Boolean =
-                this === other || (other is Data && total == other.total && highlighted == other.highlighted && candidates.contentEquals(
+                this === other || (other is Data && total == other.total && highlighted == other.highlighted && pageSize == other.pageSize && candidates.contentEquals(
                     other.candidates
                 ))
 
             override fun hashCode(): Int {
                 var r = total
                 r = 31 * r + highlighted
+                r = 31 * r + pageSize
                 r = 31 * r + candidates.contentHashCode()
                 return r
             }
@@ -198,6 +202,7 @@ sealed class RimeMessage<T>(val data: T) {
                 params[0] as Int,
                 params[1] as Int,
                 params[2] as Array<CandidateProto>,
+                pageSize = (params.getOrNull(3) as? Int) ?: 0,
             )
 
             MessageType.Key -> KeyMessage(
