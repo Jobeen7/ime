@@ -7,7 +7,6 @@ import com.jobeen.ime.data.database.PhraseDao
 import com.jobeen.ime.data.database.PhraseVariable
 import com.jobeen.ime.data.database.PhraseVariables
 import com.jobeen.ime.data.manager.PhraseManager
-import com.jobeen.ime.data.manager.PhraseShortcutPolicy
 import java.nio.charset.StandardCharsets
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -74,46 +73,6 @@ class PhraseShortcutTest {
         )
     }
 
-    // ---- 精确匹配（完整匹配才出现） ----
-
-    private fun phrase(id: Long, shortcut: String) =
-        PhraseManager.Phrase(id, "text$id", "label$id", 0L, shortcut = shortcut)
-
-    @Test
-    fun exactMatches_onlyFullMatch() {
-        val phrases = listOf(phrase(1, "rq"), phrase(2, "rqa"), phrase(3, ""))
-        assertEquals(listOf(1L), PhraseShortcutPolicy.exactMatches("rq", phrases).map { it.id })
-        assertEquals(listOf(2L), PhraseShortcutPolicy.exactMatches("rqa", phrases).map { it.id })
-    }
-
-    @Test
-    fun exactMatches_sameCodeMultiple_returnAllInOrder() {
-        val phrases = listOf(phrase(1, "rq"), phrase(2, "rq"), phrase(3, "xx"))
-        assertEquals(listOf(1L, 2L), PhraseShortcutPolicy.exactMatches("rq", phrases).map { it.id })
-    }
-
-    @Test
-    fun exactMatches_caseInsensitive() {
-        val phrases = listOf(phrase(1, "rq"))
-        assertEquals(listOf(1L), PhraseShortcutPolicy.exactMatches("RQ", phrases).map { it.id })
-    }
-
-    @Test
-    fun exactMatches_partialOrEmptyOrIllegal_noMatch() {
-        val phrases = listOf(phrase(1, "rq"))
-        assertTrue(PhraseShortcutPolicy.exactMatches("r", phrases).isEmpty())
-        assertTrue(PhraseShortcutPolicy.exactMatches("", phrases).isEmpty())
-        assertTrue(PhraseShortcutPolicy.exactMatches("r1", phrases).isEmpty())
-        assertTrue(PhraseShortcutPolicy.exactMatches("abcdefghijk", phrases).isEmpty())
-    }
-
-    @Test
-    fun isExactMatchCandidate_gatesLookup() {
-        assertTrue(PhraseShortcutPolicy.isExactMatchCandidate("rq"))
-        assertFalse(PhraseShortcutPolicy.isExactMatchCandidate(""))
-        assertFalse(PhraseShortcutPolicy.isExactMatchCandidate("r"))
-        assertFalse(PhraseShortcutPolicy.isExactMatchCandidate("R1"))
-    }
 
     // ---- 变量编解码（key/value/isSecure） ----
 

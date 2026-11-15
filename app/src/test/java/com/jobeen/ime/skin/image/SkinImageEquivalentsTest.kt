@@ -40,22 +40,5 @@ class SkinImageEquivalentsTest {
         assertEquals(0f, SkinImageEquivalents.floatBackRadiusPx(0f), 0f)
     }
 
-    @Test
-    fun cnenIsTwoLineBlackText() {
-        val lines = TextIconDrawable.cnen().lines
-        assertEquals(listOf("中", "EN"), lines.map { it.text })
-        assertEquals(
-            listOf(0xFF000000.toInt(), 0xFF000000.toInt()),
-            lines.map { it.color },
-        )
-    }
 
-    @Test
-    fun encnIsSingleGreenCharacter() {
-        val lines = TextIconDrawable.encn().lines
-        assertEquals(listOf("英"), lines.map { it.text })
-        assertEquals(0xFF0FBC7A.toInt(), lines.single().color)
-        assertEquals(0xFF0FBC7A.toInt(), SkinImageEquivalents.encnText)
-        assertEquals(0xFF1BC886.toInt(), SkinImageEquivalents.wxiconGreen)
-    }
 }

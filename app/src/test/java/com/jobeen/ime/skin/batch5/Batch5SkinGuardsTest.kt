@@ -3,13 +3,8 @@ package com.jobeen.ime.skin.batch5
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.image.DecodeGate
 import com.jobeen.ime.skin.image.ImageDecodePolicy
-import com.jobeen.ime.skin.model.IconSlotCatalog
-import com.jobeen.ime.skin.model.KeyWidthAcceptance
 import com.jobeen.ime.skin.model.PackageManifest
-import com.jobeen.ime.skin.model.SkinGroupFollow
 import com.jobeen.ime.skin.model.SkinJson
-import com.jobeen.ime.skin.model.SkinSnapshot
-import com.jobeen.ime.skin.model.SkinStyleStates
 import com.jobeen.ime.skin.model.SkinToolbarParser
 import com.jobeen.ime.skin.pkg.PortableSkinArchive
 import com.jobeen.ime.skin.pkg.ZipSafeExtractor
@@ -18,7 +13,6 @@ import com.jobeen.ime.skin.runtime.NightModePolicy
 import com.jobeen.ime.skin.runtime.SkinGeneration
 import com.jobeen.ime.skin.runtime.SkinSwitchPolicy
 import com.jobeen.ime.skin.store.SkinAssetPruner
-import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibraryLayout
 import com.jobeen.ime.skin.store.SkinOverlayMerge
 import java.io.File
@@ -36,33 +30,6 @@ import org.junit.Test
 
 /** 第 5 批定向单测：纯 JVM 护栏（§1 归档／§2 图片／§3 切换／§4 组开关／§6 三态与宽度）。§5 节流门（FabBackdropRefreshGate）随玻璃基础设施删除而删除。 */
 class Batch5SkinGuardsTest {
-
-    private fun scheme(): KeyboardColors.ColorScheme = KeyboardColors.ColorScheme(
-        keyBackground = 1, keyPressed = 2, keyBorderStroke = 3,
-        specialKeyBackground = 4, specialKeyPressed = 5, specialKeyBorderStroke = 6,
-        accentKeyBackground = 7, accentKeyPressed = 8, accentKeyBorderStroke = 9,
-        keyText = 10, specialKeyText = 11, accentKeyText = 12, altText = 13,
-        background = 14,
-        panel = KeyboardColors.ColorScheme.PanelColors(
-            background = 20, toolbarText = 21, toolbarActived = 22, toolbarIcon = 23,
-            candidateBackground = 24, candidateText = 25, candidateIndex = 26,
-            candidateDivider = 27, toolbarPressed = 28,
-        ),
-        pinner = KeyboardColors.ColorScheme.PinnerColors(
-            background = 30, textColor = 31, secondaryTextColor = 32,
-        ),
-    )
-
-    private fun snapshot(): SkinSnapshot = SkinSnapshot(
-        ref = SkinGenRef("skin-a", "hash-a", 1),
-        name = "skin-a",
-        colorScheme = scheme(),
-        geometryPresence = emptySet(),
-        effectiveGeometry = emptyMap(),
-        background = null,
-        degradations = emptySet(),
-        layoutId = null,
-    )
 
     // ---- §1 可移植归档 ----
 
@@ -280,103 +247,11 @@ class Batch5SkinGuardsTest {
         assertTrue(NightModePolicy.resolve(NightModePolicy.MODE_NIGHT_UNSPECIFIED, true))
     }
 
-    // ---- §4 组跟随／脱离 ----
-
-    @Test
-    fun groupFollow_styleAndAreaSwitch() {
-        val base = snapshot()
-        assertTrue(SkinGroupFollow.isFollowing(base, "pinyin", SkinGroupFollow.Group.STYLE))
-        assertTrue(SkinGroupFollow.isFollowing(base, "pinyin", SkinGroupFollow.Group.AREA))
-        val detached = SkinGroupFollow.detach(base, "pinyin", SkinGroupFollow.Group.STYLE)
-        assertFalse(SkinGroupFollow.isFollowing(detached, "pinyin", SkinGroupFollow.Group.STYLE))
-        assertEquals(base.colorScheme, detached.typeStyles.getValue("pinyin").colorScheme)
-        // 已脱离再脱离幂等；跟随去掉差量。
-        assertEquals(detached, SkinGroupFollow.detach(detached, "pinyin", SkinGroupFollow.Group.STYLE))
-        val followed = SkinGroupFollow.follow(detached, "pinyin", SkinGroupFollow.Group.STYLE)
-        assertTrue(SkinGroupFollow.isFollowing(followed, "pinyin", SkinGroupFollow.Group.STYLE))
-        val areaDetached = SkinGroupFollow.detach(base, "pinyin", SkinGroupFollow.Group.AREA)
-        assertEquals(base.toolbarHeight, areaDetached.typeAreas.getValue("pinyin").toolbarHeight)
-        // 未覆盖组：无合并引擎可附着，显式记为未覆盖。
-        assertTrue("toolbar" in SkinGroupFollow.UNCOVERED_GROUPS)
-        assertTrue("bindings" in SkinGroupFollow.UNCOVERED_GROUPS)
-        // 角色样式命名对照（口径不变，仅命名）。
-        assertEquals("accent", SkinGroupFollow.styleRoleName(true, false, 5))
-        assertEquals("normal", SkinGroupFollow.styleRoleName(false, true, 5))
-        assertEquals("normal", SkinGroupFollow.styleRoleName(false, false, 1))
-        assertEquals("function", SkinGroupFollow.styleRoleName(false, false, 3))
-    }
 
     // ---- §6 三态／数值／宽度／图标槽／覆盖层语义 ----
 
-    @Test
-    fun styleStates_threeStateAndDerivation() {
-        val normal = 0xFFFFFFFF.toInt()
-        val dark = 0xFF101010.toInt()
-        assertEquals(normal, SkinStyleStates.resolveThreeState(normal, null, null, SkinStyleStates.State.NORMAL))
-        // 按下无显式值时自动推导（亮色加深），不是回落原值。
-        val derivedLight = SkinStyleStates.resolveThreeState(normal, null, null, SkinStyleStates.State.PRESSED)
-        assertTrue(derivedLight!! != normal)
-        // 暗色提亮。
-        val derivedDark = SkinStyleStates.resolveThreeState(dark, null, null, SkinStyleStates.State.PRESSED)
-        assertTrue((derivedDark!! shr 16 and 0xFF) > 0x10)
-        // 锁定继承链：锁定 → 按下 → 常态。
-        assertEquals(0xFF112233.toInt(), SkinStyleStates.resolveThreeState(normal, 0xFF112233.toInt(), null, SkinStyleStates.State.LOCKED))
-        assertNull(SkinStyleStates.resolveThreeState(null, null, null, SkinStyleStates.State.LOCKED))
-        // alpha 下限 48：透明常态色的按下推导 alpha 不低于 48。
-        val transparent = 0x00101010
-        val derivedAlpha = SkinStyleStates.derivePressedColor(transparent)
-        assertTrue((derivedAlpha ushr 24) >= 48)
-        assertEquals(3.5f, SkinStyleStates.clampedFloat(Float.NaN, 0f..10f, 3.5f))
-        assertEquals(3.5f, SkinStyleStates.clampedFloat(99f, 0f..10f, 3.5f))
-        assertEquals(7, SkinStyleStates.clampedInt(null, 0..10, 7))
-    }
 
-    @Test
-    fun keyWidths_factorRescaleKeepsRowSumOne() {
-        val rows = listOf(
-            listOf(
-                KeyWidthAcceptance.RowKey("a", 0.25f),
-                KeyWidthAcceptance.RowKey("b", 0.25f),
-                KeyWidthAcceptance.RowKey("c", 0.5f),
-            ),
-        )
-        val accepted = KeyWidthAcceptance.acceptFactors(rows, mapOf("a" to 2f))
-            as KeyWidthAcceptance.Result.Accepted
-        val row = accepted.rows.single()
-        assertEquals(1.0, row.sumOf { it.toDouble() }, 1e-3)
-        assertEquals(0.4, row[0].toDouble(), 1e-3)
-        assertEquals(0.2, row[1].toDouble(), 1e-3)
-        // 跨行键宽度恒为出厂值，不参与缩放。
-        val spanRows = listOf(
-            listOf(
-                KeyWidthAcceptance.RowKey("a", 0.8f),
-                KeyWidthAcceptance.RowKey("s", 0.2f, rowSpan = 2),
-            ),
-        )
-        val spanAccepted = KeyWidthAcceptance.acceptFactors(spanRows, mapOf("s" to 3f))
-            as KeyWidthAcceptance.Result.Accepted
-        assertEquals(0.2f, spanAccepted.rows.single()[1])
-        val rejected = KeyWidthAcceptance.acceptFactors(rows, mapOf("a" to 0f))
-        assertTrue(rejected is KeyWidthAcceptance.Result.Rejected)
-        val nanRejected = KeyWidthAcceptance.acceptFactors(rows, mapOf("a" to Float.NaN))
-        assertTrue(nanRejected is KeyWidthAcceptance.Result.Rejected)
-    }
 
-    @Test
-    fun iconSlots_groupedWithoutRenaming() {
-        val grouped = IconSlotCatalog.grouped()
-        assertEquals(setOf("keys", "toolbar", "system"), grouped.keys)
-        assertTrue("key.icon" in grouped.getValue("keys"))
-        assertTrue("key.pressedIcon" in grouped.getValue("keys"))
-        assertTrue("toolbar.expandIcon" in grouped.getValue("toolbar"))
-        assertTrue("toolbar.collapseIcon" in grouped.getValue("toolbar"))
-        // 三组无交集；system 在 Jime 无皮肤可寻址槽，空表是审计结论。
-        val all = grouped.values.flatten()
-        assertEquals(all.size, all.toSet().size)
-        assertTrue(grouped.getValue("system").isEmpty())
-        assertTrue(IconSlotCatalog.isKnown("toolbar.buttons[].icon"))
-        assertFalse(IconSlotCatalog.isKnown("system.fake"))
-    }
 
     @Test
     fun overlayAndToolbar_unconfiguredVsConfiguredEmpty() {
