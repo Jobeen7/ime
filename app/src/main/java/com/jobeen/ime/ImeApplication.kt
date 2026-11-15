@@ -112,6 +112,9 @@ class ImeApplication : Application() {
         // 性能埋点（2026-10-29 item-1 B）：落盘目录锚定＋进程
         // 启动时刻（冷启动起点，首个键盘窗口挂接时结算）。
         com.jobeen.ime.skin.perf.PerfMonitor.configure(filesDir)
+        // 通知渠道（WO52 13.1）：进程启动即建两条应用自有渠道
+        // （remote_transfer／web_server），前台服务与完成通知共用。
+        com.jobeen.ime.base.notify.NotificationChannels.ensureChannels(this)
         com.jobeen.ime.skin.perf.PerfMonitor.noteProcessStart(
             android.os.Process.getStartElapsedRealtime(),
         )

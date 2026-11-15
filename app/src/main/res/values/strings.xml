@@ -264,6 +264,11 @@
     <string name="fab_deploy">部署</string>
     <string name="fab_sync">同步</string>
     <string name="fab_deploy_done">部署完成</string>
+    <string name="notif_channel_remote_transfer">远程传输</string>
+    <string name="notif_channel_web_server">Wi-Fi 传输</string>
+    <string name="notif_remote_transfer_title">正在同步用户词</string>
+    <string name="notif_web_server_title">Wi-Fi 传输运行中</string>
+    <string name="notif_web_server_text">局域网地址：%1$s</string>
     <string name="fab_deploy_failed">部署失败，请稍后重试</string>
     <string name="fab_deploy_busy">部署进行中，请稍后再试</string>
     <string name="fab_dict_sync_success">用户词同步完成</string>

@@ -4,6 +4,8 @@ package com.jobeen.ime.ui
 
 import android.content.Context
 import com.jobeen.ime.R
+import com.jobeen.ime.base.notify.CompletionNotifications
+import com.jobeen.ime.base.notify.NotificationChannels
 import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.EngineDeployState
@@ -137,6 +139,35 @@ object FabActions {
     /** 部署单飞守门：补 [EngineDeployState.isRunning] 先查后做的窗口。 */
     private val deployClaim = SingleFlightClaim()
 
+    /** 完成通知 runKey 计数（WO52 13.1 去重：一次操作一个实例号）。 */
+    private val runCounter = java.util.concurrent.atomic.AtomicLong(0)
+
+    /** 部署完成通知（remote_transfer 渠道；同一 runKey 只发一次）。 */
+    private fun notifyDeployDone(context: Context, runId: Long, success: Boolean) {
+        CompletionNotifications.post(
+            context,
+            runKey = "deploy#$runId:${if (success) "success" else "failed"}",
+            channelId = NotificationChannels.REMOTE_TRANSFER,
+            notificationId = NotificationChannels.DEPLOY_COMPLETE_NOTIFICATION_ID,
+            title = context.getString(R.string.app_name),
+            text = context.getString(
+                if (success) R.string.fab_deploy_done else R.string.fab_deploy_failed,
+            ),
+        )
+    }
+
+    /** 同步完成通知（remote_transfer 渠道；同一 runKey 只发一次）。 */
+    private fun notifySyncDone(context: Context, runId: Long, outcome: String, text: String) {
+        CompletionNotifications.post(
+            context,
+            runKey = "sync#$runId:$outcome",
+            channelId = NotificationChannels.REMOTE_TRANSFER,
+            notificationId = NotificationChannels.SYNC_COMPLETE_NOTIFICATION_ID,
+            title = context.getString(R.string.app_name),
+            text = text,
+        )
+    }
+
     fun deploy(context: Context, scope: CoroutineScope) {
         if (EngineDeployState.isRunning()) {
             ToastUtil.showToast(context.getString(R.string.fab_deploy_busy))
@@ -163,12 +194,14 @@ object FabActions {
         }
         val job = try {
             scope.launch {
+                val runId = runCounter.incrementAndGet()
                 val deployed = deployAndCheckSchemas(context, engine)
                 if (deployed) {
                     ToastUtil.showToast(context.getString(R.string.fab_deploy_done))
                 } else {
                     ToastUtil.showToast(context.getString(R.string.fab_deploy_failed))
                 }
+                notifyDeployDone(context, runId, deployed)
             }
         } catch (e: Exception) {
             deployClaim.release()
@@ -199,6 +232,7 @@ object FabActions {
         }
         FabSyncState.setRunning(true)
         scope.launch {
+            val runId = runCounter.incrementAndGet()
             try {
                 Timber.d("FAB sync: stage dict start")
                 WebDavSync.syncAllDicts(sessionProvider())
@@ -213,10 +247,22 @@ object FabActions {
                             context.getString(R.string.fab_dict_sync_success)
                         }
                         ToastUtil.showToast(msg)
+                        notifySyncDone(
+                            context,
+                            runId,
+                            if (failedDicts.isEmpty()) "success" else "partial",
+                            msg,
+                        )
                     }.onFailure {
                         Timber.d("FAB sync: stage dict done: failed")
                         Timber.w(it, "FAB dict sync failed")
                         ToastUtil.showToast(context.getString(R.string.fab_sync_failed))
+                        notifySyncDone(
+                            context,
+                            runId,
+                            "failed",
+                            context.getString(R.string.fab_sync_failed),
+                        )
                     }
             } catch (e: CancellationException) {
                 // U-S3：取消不是失败——原样重抛，不报“引擎未就绪”，

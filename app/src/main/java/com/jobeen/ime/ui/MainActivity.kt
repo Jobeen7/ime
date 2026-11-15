@@ -69,7 +69,24 @@ class MainActivity : ImeActivity() {
     private fun fabSession(): RimeSession =
         fabSession ?: RimeDaemon.createSession(FAB_SESSION_NAME).also { fabSession = it }
 
+    // POST_NOTIFICATIONS 申请（WO52 13.1）：Android 13+ 运行时申请，
+    // 每安装只问一次；拒绝不拦任何功能，完成通知静默（见
+    // NotificationChannels 降级行为），前台服务照常跑。
+    private val postNotificationsLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* 结果只决定通知能否发出，不影响任何功能，不再提示 */ }
+
+    private fun requestPostNotificationsOnce() {
+        if (!com.jobeen.ime.base.notify.NotificationChannels.isPermissionRequired()) return
+        if (com.jobeen.ime.base.notify.NotificationChannels.isPostNotificationsGranted(this)) return
+        val prefs = getSharedPreferences("notif_permission", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("post_notifications_requested", false)) return
+        prefs.edit().putBoolean("post_notifications_requested", true).apply()
+        postNotificationsLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+
     override fun onCreateBeforeContent(savedInstanceState: Bundle?) {
+        requestPostNotificationsOnce()
         // 跟随系统主题的迁移已落到共享入口
         // KeyboardManager.Theme（getMode 读即迁移）：此处在
         // setContent 之前再显式迁一次，组合副作用不再留在
