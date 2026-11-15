@@ -4,6 +4,8 @@ package com.jobeen.ime.engine.rime.service
 
 import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.data.manager.EngineDeployState
+import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
+import java.io.File
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -33,13 +35,37 @@ sealed interface MaintenanceResult {
  * （RimeDispatcher mutex）。本守门只拦 Binder 线程并发进入：
  * 两个 Binder 线程同时调 deploy()/syncUserData() 时，后到者
  * 立即返回 [MaintenanceResult.Busy]，不排队、不重入。
+ *
+ * 跨进程互斥（B-X-1）：单飞只拦本实例；两进程间的部署↔导入/
+ * 更新互斥由 [CrossProcessUserDataLock]（userDataDir 下的
+ * `.maintenance.lock`）承担——执行前先取文件锁，锁被占报 Busy、
+ * 取锁异常报 Failed；锁在手时执行体再失败即真失败。同步的
+ * LevelDB 锁失败在 native 侧只回 Boolean、无原因码，故忙／失败
+ * 的区分点就落在文件锁上：合作进程的争用在取锁时即报 Busy，
+ * 持锁后执行体返回 false 按 Failed 计。
  */
 
 class RimeMaintenanceExecutor(
     private val ops: RimeMaintenanceOps,
     private val deployTimeoutMs: Long,
+    /** 跨进程文件锁目录（userDataDir）：null 时不取文件锁（旧行为，供单测）。 */
+    private val lockDir: File? = null,
 ) {
     private val claim = AtomicBoolean(false)
+
+    /** 取跨进程文件锁后执行；锁被占报 Busy、取锁异常报 Failed，不进执行体。 */
+    private suspend fun withUserDataLock(block: suspend () -> MaintenanceResult): MaintenanceResult {
+        if (lockDir == null) return block()
+        return when (CrossProcessUserDataLock.tryAcquire(lockDir)) {
+            CrossProcessUserDataLock.AcquireResult.BUSY -> MaintenanceResult.Busy
+            CrossProcessUserDataLock.AcquireResult.FAILED -> MaintenanceResult.Failed
+            CrossProcessUserDataLock.AcquireResult.ACQUIRED -> try {
+                block()
+            } finally {
+                CrossProcessUserDataLock.release()
+            }
+        }
+    }
 
     /** 是否有部署/同步正在进行（入口守门或引擎部署标志任一置位）。 */
     fun isBusy(): Boolean = claim.get() || EngineDeployState.isRunning()
@@ -52,10 +78,12 @@ class RimeMaintenanceExecutor(
     suspend fun deploy(): MaintenanceResult {
         if (!claim.compareAndSet(false, true)) return MaintenanceResult.Busy
         try {
-            return if (ops.deploy(deployTimeoutMs) == DeployAwaitResult.COMPLETED) {
-                MaintenanceResult.Success
-            } else {
-                MaintenanceResult.Failed
+            return withUserDataLock {
+                if (ops.deploy(deployTimeoutMs) == DeployAwaitResult.COMPLETED) {
+                    MaintenanceResult.Success
+                } else {
+                    MaintenanceResult.Failed
+                }
             }
         } finally {
             claim.set(false)
@@ -66,7 +94,9 @@ class RimeMaintenanceExecutor(
     suspend fun syncUserData(): MaintenanceResult {
         if (!claim.compareAndSet(false, true)) return MaintenanceResult.Busy
         try {
-            return if (ops.syncUserData()) MaintenanceResult.Success else MaintenanceResult.Failed
+            return withUserDataLock {
+                if (ops.syncUserData()) MaintenanceResult.Success else MaintenanceResult.Failed
+            }
         } finally {
             claim.set(false)
         }

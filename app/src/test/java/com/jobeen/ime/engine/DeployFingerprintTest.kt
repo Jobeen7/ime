@@ -113,6 +113,21 @@ class DeployFingerprintTest {
     }
 
     @Test
+    fun fingerprint_ignoresMaintenanceLockFile() {
+        val user = tempDir("fp-user")
+        val shared = tempDir("fp-shared")
+        write(File(user, "default.custom.yaml"), "schema_list: [a]\n")
+        val before = fingerprint("dirA", "a", user, shared)
+        // 跨进程锁文件（B-X-1）不是部署输入：建锁后指纹不变，否则
+        // 每次取锁都会让下一次部署误判输入已变、多编一次。
+        write(
+            File(user, com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock.LOCK_FILE_NAME),
+            "",
+        )
+        assertEquals(before, fingerprint("dirA", "a", user, shared))
+    }
+
+    @Test
     fun fingerprint_ignoresBuildDirChange() {
         val user = tempDir("fp-user")
         val shared = tempDir("fp-shared")

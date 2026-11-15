@@ -4,6 +4,7 @@ package com.jobeen.ime.engine
 
 import com.jobeen.ime.base.update.DictFingerprint
 import com.jobeen.ime.base.util.DigestUtil
+import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
 import java.io.File
 
 /**
@@ -36,12 +37,14 @@ internal fun deployFingerprintKey(dirName: String): String = "deploy_fingerprint
  * - 任意 build/ 段：部署产物目录（用户目录 build/、共享 build/），每次部署都变；
  * - 文件名 user.yaml：librime 每次部署都重写其 last_build_time；
  * - 任意含 .userdb 的段：用户词典运行期数据（LevelDB 目录与 .userdb.txt 快照），学词即变。
+ * - 跨进程文件锁（B-X-1）：锁文件不是部署输入，建锁／放锁不改变部署指纹。
  * 排除之外的新生成文件若出现，只会让指纹 miss（多编一次），不会误 hit。
  */
 internal fun isDeployFingerprintExcluded(relPath: String): Boolean {
     val segments = relPath.split('/')
     if ("build" in segments) return true
     if (segments.lastOrNull() == "user.yaml") return true
+    if (segments.lastOrNull() == CrossProcessUserDataLock.LOCK_FILE_NAME) return true
     if (segments.any { ".userdb" in it }) return true
     return false
 }

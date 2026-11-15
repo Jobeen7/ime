@@ -65,6 +65,7 @@ import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.RimeMessage
 import com.jobeen.ime.engine.rime.core.RimeStoppedException
 import com.jobeen.ime.data.App.modelDir
+import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
 import com.jobeen.ime.engine.rime.data.DataManager.sharedDataDir
 import com.jobeen.ime.engine.rime.data.DataManager.userDataDir
 import com.jobeen.ime.base.util.TraditionalConverter
@@ -3093,6 +3094,9 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      *   读 isHeld 不够：读到空闲与置位运行标志之间，更新仍可抢闸换
      *   位，换位前复核到 rename 的窗口重开。导入事务内部部署传
      *   false：事务全程已持闸，持闸部署再抢必自挡（见 runImport）。
+     *   同位置另取跨进程文件锁（B-X-1，[CrossProcessUserDataLock]）：
+     *   闸只拦本进程，文件锁拦另一进程的部署／同步；取锁失败亦
+     *   按 FAILED 返回，释放归属与闸一致（超时孤儿归作业体收尾）。
      *   释放归属：正常完成/丢弃/作用域已死时由等待方 finally 放闸；
      *   超时/取消时等待方只记孤儿、不放闸，作业体收尾时凭
      *   waitingGaveUp 放闸——孤儿仍在编译，放闸会让更新换位撞上它。
@@ -3214,6 +3218,24 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             UpdateImportGate.release(gateToken)
             deployMutex.unlock()
             return DeployAwaitResult.FAILED
+        }
+        // 跨进程文件锁（B-X-1）：与交叉闸同进同出——闸抢到后取锁，
+        // 锁被占（忙）与取锁异常（失败）在部署口径里都落为 FAILED
+        // （既有争用口径；Busy 只在 MaintenanceResult 层区分，见
+        // 执行体）。释放归属与闸一致：超时/取消孤儿仍在跑时归作业
+        // 体收尾放，否则归等待方 finally 放（见 lockAcquired）。
+        // 导入事务内部署传 false：事务入口已持锁，此处不重取。
+        val lockAcquired = if (acquireUpdateImportGate) {
+            val lockResult = CrossProcessUserDataLock.tryAcquire(userDataDir)
+            if (lockResult != CrossProcessUserDataLock.AcquireResult.ACQUIRED) {
+                Timber.w("Deploy aborted: cross-process user data lock %s", lockResult)
+                UpdateImportGate.release(gateToken)
+                deployMutex.unlock()
+                return DeployAwaitResult.FAILED
+            }
+            true
+        } else {
+            false
         }
         // H-1 自愈：门已过、作业未发之前，先探一次引擎是否已停
         // （上次部署在 deploy() 内抛错、lifecycle 打回 STOPPED 后，
@@ -3339,7 +3361,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 再加等待方共用同一认领（claimDeployReleaseOnce）：
                         // 等待方已因作用域已死先行认领时，本处跳过、不双放。
                         releaseDeployFlagsOnce()
-                        if (waitingGaveUp.get()) UpdateImportGate.release(gateToken)
+                        if (waitingGaveUp.get()) {
+                            if (lockAcquired) CrossProcessUserDataLock.release()
+                            UpdateImportGate.release(gateToken)
+                        }
                     }
                 },
                 // 作业体被就绪门丢弃：等待方立即得 FAILED，不空等超时、
@@ -3391,7 +3416,10 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
         } finally {
             // 先放闸后解互斥：互斥先放会让下一路部署抢到互斥后撞上
             // 本路尚未放的闸、白白 FAILED；放弃等待时不放（作业体放）。
-            if (!waitingGaveUp.get()) UpdateImportGate.release(gateToken)
+            if (!waitingGaveUp.get()) {
+                if (lockAcquired) CrossProcessUserDataLock.release()
+                UpdateImportGate.release(gateToken)
+            }
             deployMutex.unlock()
         }
     }

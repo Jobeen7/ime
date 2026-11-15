@@ -8,10 +8,16 @@ import android.os.Parcel
 import android.os.RemoteException
 import com.jobeen.ime.data.manager.DeployAwaitResult
 import com.jobeen.ime.engine.rime.core.RimeApi
+import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
+import java.io.File
+import java.nio.channels.FileChannel
+import java.nio.file.Files
+import java.nio.file.StandardOpenOption
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -29,6 +35,15 @@ import java.lang.reflect.Modifier
  * 远端部署后本进程引擎收敛、两进程共用用户目录的 LevelDB 行为。
  */
 class RimeMaintenanceTest {
+
+    @After
+    fun releaseLockLeftovers() {
+        // 跨进程锁是进程级单例：锁测试漏放会污染后者，逐个放尽。
+        while (CrossProcessUserDataLock.isHeld) CrossProcessUserDataLock.release()
+    }
+
+    private fun lockTempDir(): File =
+        Files.createTempDirectory("maint-lock").toFile().also { it.deleteOnExit() }
 
     // ---- fakes ----
 
@@ -192,6 +207,72 @@ class RimeMaintenanceTest {
         val states = MaintenanceResult::class.java.declaredClasses
             .map { it.simpleName }.toSet()
         assertEquals(setOf("Busy", "Failed", "Success"), states)
+    }
+
+    // ---- B-X-1 跨进程文件锁：两进程重叠时序 ----
+
+    @Test
+    fun executor_deploy_lockHeldByOtherProcess_returnsBusyWithoutCallingOps() = runBlocking {
+        val dir = lockTempDir()
+        val external = FileChannel.open(
+            File(dir, CrossProcessUserDataLock.LOCK_FILE_NAME).toPath(),
+            StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+        )
+        val externalLock = external.tryLock()
+        try {
+            // 导入进行中（他进程持锁）的远端部署：等锁不成、报 Busy，
+            // 执行体一次不进，不排队、不重入。
+            val ops = FakeOps()
+            val executor = RimeMaintenanceExecutor(ops, 1_000L, lockDir = dir)
+            assertEquals(MaintenanceResult.Busy, executor.deploy())
+            assertEquals(0, ops.deployCalls)
+            assertFalse(CrossProcessUserDataLock.isHeld)
+        } finally {
+            externalLock?.release()
+            external.close()
+        }
+        // 放锁后同一执行体可进。
+        val ops = FakeOps()
+        val executor = RimeMaintenanceExecutor(ops, 1_000L, lockDir = dir)
+        assertEquals(MaintenanceResult.Success, executor.deploy())
+        assertEquals(1, ops.deployCalls)
+    }
+
+    @Test
+    fun executor_sync_lockHeldByOtherProcess_returnsBusyWithoutCallingOps() = runBlocking {
+        val dir = lockTempDir()
+        val external = FileChannel.open(
+            File(dir, CrossProcessUserDataLock.LOCK_FILE_NAME).toPath(),
+            StandardOpenOption.CREATE, StandardOpenOption.WRITE,
+        )
+        val externalLock = external.tryLock()
+        try {
+            val ops = FakeOps()
+            val executor = RimeMaintenanceExecutor(ops, 1_000L, lockDir = dir)
+            assertEquals(MaintenanceResult.Busy, executor.syncUserData())
+            assertEquals(0, ops.syncCalls)
+        } finally {
+            externalLock?.release()
+            external.close()
+        }
+        val ops = FakeOps()
+        val executor = RimeMaintenanceExecutor(ops, 1_000L, lockDir = dir)
+        assertEquals(MaintenanceResult.Success, executor.syncUserData())
+        assertEquals(1, ops.syncCalls)
+    }
+
+    @Test
+    fun executor_deploy_releasesFileLockAfterSuccessAndFailure() = runBlocking {
+        val dir = lockTempDir()
+        val okOps = FakeOps()
+        val okExecutor = RimeMaintenanceExecutor(okOps, 1_000L, lockDir = dir)
+        assertEquals(MaintenanceResult.Success, okExecutor.deploy())
+        assertFalse(CrossProcessUserDataLock.isHeld)
+        // 执行体失败同样放锁：失败不是争用，不滞留锁挡后路。
+        val failingOps = FakeOps(deployResult = DeployAwaitResult.FAILED)
+        val failingExecutor = RimeMaintenanceExecutor(failingOps, 1_000L, lockDir = dir)
+        assertEquals(MaintenanceResult.Failed, failingExecutor.deploy())
+        assertFalse(CrossProcessUserDataLock.isHeld)
     }
 
     // ---- 3.1b 客户端：远端 / 回落 / 调用中失败 ----

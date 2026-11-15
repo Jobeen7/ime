@@ -98,6 +98,7 @@ import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.engine.rime.core.RimeConfig
 import com.jobeen.ime.engine.rime.core.IRimeJob
+import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.error.DeepErrorMapper
 import com.jobeen.ime.data.manager.EngineDeployState
@@ -233,6 +234,12 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
     val msgDirSwitchFailed = stringResource(R.string.schema_dir_switch_failed)
     val msgManageDeployFailed = stringResource(R.string.schema_manage_deploy_failed)
     val msgManageDeployTimeout = stringResource(R.string.schema_deploy_timeout)
+    // SAF 复制失败 toast 同口径：launch 块内 context.getString 是
+    // LocalContextGetResourceValueCall（B-X-1 移行后基线脱钩报出），
+    // 与上三行同法提前解析，不动基线。
+    val msgImportTooLarge = stringResource(R.string.schema_import_error_too_large)
+    val msgImportIo = stringResource(R.string.schema_import_error_io)
+    val msgImportCopy = stringResource(R.string.schema_import_error_copy)
 
     // 方案列表来自磁盘发现（当前目录根＋shared 根，绝不递归），不再读引擎实时表：
     // 部署中列表不变空；导入安装 / 部署完成后重调即刷新。
@@ -507,6 +514,22 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
             ToastUtil.showToast(context.getString(R.string.schema_update_busy))
             return
         }
+        // 跨进程文件锁（B-X-1）：与交叉闸同进同出——闸只拦本进程，
+        // 文件锁拦另一进程（:ime 服务）的部署／同步；锁被占报忙、
+        // 取锁异常按存储读写失败 toast（既有 IO_ERROR 文案，不新增串）。
+        when (CrossProcessUserDataLock.tryAcquire(DataManager.userDataDir)) {
+            CrossProcessUserDataLock.AcquireResult.BUSY -> {
+                ToastUtil.showToast(context.getString(R.string.schema_update_busy))
+                UpdateImportGate.release(gateToken)
+                return
+            }
+            CrossProcessUserDataLock.AcquireResult.FAILED -> {
+                ToastUtil.showToast(context.getString(R.string.schema_import_error_io))
+                UpdateImportGate.release(gateToken)
+                return
+            }
+            CrossProcessUserDataLock.AcquireResult.ACQUIRED -> Unit
+        }
         try {
         // 部署失败回滚用：导入前指针与镜像（与切换失败同口径）。
         val prevDir = currentDir
@@ -556,6 +579,7 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
         }
         loadSchemas()
         } finally {
+            CrossProcessUserDataLock.release()
             UpdateImportGate.release(gateToken)
         }
     }
@@ -621,25 +645,15 @@ fun SchemaSettingsScreen(onBack: () -> Unit) {
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: ZipTooLargeException) {
-                    ToastUtil.showToast(
-                        context.getString(R.string.schema_import_error_too_large)
-                    )
+                    ToastUtil.showToast(msgImportTooLarge)
                     return@launch
                 } catch (e: java.io.IOException) {
                     ToastUtil.showToast(
-                        context.getString(
-                            if (isImportCopyNoSpace(e)) {
-                                R.string.schema_import_error_io
-                            } else {
-                                R.string.schema_import_error_copy
-                            }
-                        )
+                        if (isImportCopyNoSpace(e)) msgImportIo else msgImportCopy
                     )
                     return@launch
                 } catch (e: Exception) {
-                    ToastUtil.showToast(
-                        context.getString(R.string.schema_import_error_copy)
-                    )
+                    ToastUtil.showToast(msgImportCopy)
                     return@launch
                 } finally {
                     // 只删 .part：成功时它已被 rename 走（删空操作），失败 /

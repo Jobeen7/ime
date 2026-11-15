@@ -7,6 +7,7 @@ import com.jobeen.ime.base.util.availableBytes
 import com.jobeen.ime.base.util.DigestUtil
 import com.jobeen.ime.base.util.hasEnoughSpace
 import com.jobeen.ime.base.util.mirrorDownloadUrl
+import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.error.DeepErrorMapper
 import kotlinx.coroutines.Dispatchers
@@ -211,6 +212,20 @@ object GramModelDownloader {
             Timber.w("方案导入进行中，忽略本次语法模型下载调用")
             return DownloadResult.BUSY
         }
+        // 跨进程文件锁（B-X-1）：与交叉闸同进同出，口径同方案更新入口。
+        when (CrossProcessUserDataLock.tryAcquire(DataManager.userDataDir)) {
+            CrossProcessUserDataLock.AcquireResult.BUSY -> {
+                Timber.w("远端部署持有用户目录锁，忽略本次语法模型下载调用")
+                UpdateImportGate.release(gateToken)
+                return DownloadResult.BUSY
+            }
+            CrossProcessUserDataLock.AcquireResult.FAILED -> {
+                Timber.w("用户目录锁取锁失败，忽略本次语法模型下载调用")
+                UpdateImportGate.release(gateToken)
+                return DownloadResult.FAILED
+            }
+            CrossProcessUserDataLock.AcquireResult.ACQUIRED -> Unit
+        }
         try {
             if (!DownloadGate.tryAcquire()) {
                 Timber.w("已有大文件下载在进行中，忽略本次语法模型下载调用")
@@ -234,6 +249,7 @@ object GramModelDownloader {
                 DownloadGate.release()
             }
         } finally {
+            CrossProcessUserDataLock.release()
             UpdateImportGate.release(gateToken)
         }
     }

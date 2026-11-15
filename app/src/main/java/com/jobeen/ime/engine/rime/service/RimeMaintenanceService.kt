@@ -7,6 +7,9 @@ import android.content.Intent
 import android.os.IBinder
 import com.jobeen.ime.engine.EngineFactory
 import com.jobeen.ime.engine.RimeEngine
+import com.jobeen.ime.engine.rime.daemon.RimeDaemon
+import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
+import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.runBlocking
 
 /**
@@ -21,12 +24,14 @@ import kotlinx.coroutines.runBlocking
  * （FabActions）改走 [RimeMaintenanceClient]，绑定失败时
  * 回落本进程执行。
  *
- * 注意（真机待验）：两进程各持一份 librime 实例共用同一用户
- * 目录；部署（start_maintenance）与同步（sync_user_data）
- * 在 :ime 进程执行期间，应用进程引擎的 LevelDB 句柄与内存态
- * 仍在——远端部署成功后调用方经 reload() 收敛本进程引擎；
- * 跨进程的部署↔方案导入/更新互斥未建（UpdateImportGate 是
- * 进程内守门），不要在导入/更新进行中途触发远端部署。
+ * 注意：两进程各持一份 librime 实例共用同一用户目录；部署
+ * （start_maintenance）与同步（sync_user_data）在 :ime 进程
+ * 执行期间，应用进程引擎的 LevelDB 句柄与内存态仍在——远端
+ * 部署成功后调用方经 reload() 收敛本进程引擎。跨进程互斥由
+ * [CrossProcessUserDataLock]（userDataDir 下的 `.maintenance.lock`）
+ * 承担：部署／同步（本服务）与方案导入／更新（应用进程，
+ * UpdateImportGate 持有处）进事务前先取锁，锁被占报 Busy；
+ * 远端部署后本进程引擎收敛、同步假成功是否消除仍真机待验。
  * 前台服务不需要：绑定期间系统按绑定服务进程保活。
  */
 class RimeMaintenanceService : Service() {
@@ -35,6 +40,7 @@ class RimeMaintenanceService : Service() {
         RimeMaintenanceExecutor(
             ops = EngineRimeMaintenanceOps(),
             deployTimeoutMs = maintenanceDeployTimeout(applicationContext),
+            lockDir = DataManager.userDataDir,
         )
     }
 
@@ -56,6 +62,20 @@ class RimeMaintenanceService : Service() {
     }
 
     override fun onBind(intent: Intent): IBinder = binder
+
+    /**
+     * 服务销毁时销维护会话（B-X-1）：同步用的 `rime-maintenance`
+     * 会话只在同步时建、从不销，服务死后残留会话会拖住 Rime 实例
+     * 不 finalize；此处补 [RimeDaemon.destroySession]，会话已销
+     * 时为空操作。引擎自身的输入会话不受影响（名不同；会话表空
+     * 时才 finalize，而输入会话仍在表内）。
+     */
+    override fun onDestroy() {
+        runCatching {
+            RimeDaemon.destroySession(EngineRimeMaintenanceOps.MAINTENANCE_SESSION_NAME)
+        }
+        super.onDestroy()
+    }
 
     /**
      * :ime 进程内建引擎：Application.onCreate 只在主进程跑

@@ -9,6 +9,7 @@ import com.jobeen.ime.base.ngram.UpdateImportGate
 import com.jobeen.ime.base.ngram.deployBlocksUpdate
 import com.jobeen.ime.base.ngram.gramFileInstallLock
 import com.jobeen.ime.data.manager.SchemeDirs
+import com.jobeen.ime.engine.rime.data.CrossProcessUserDataLock
 import com.jobeen.ime.engine.rime.data.DataManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -1089,6 +1090,22 @@ object WanxiangUpdateManager {
             Timber.w("方案导入进行中，忽略本次方案更新调用")
             return DownloadResult.BUSY
         }
+        // 跨进程文件锁（B-X-1）：与交叉闸同进同出——闸只拦本进程，
+        // 文件锁拦另一进程（:ime 服务）的部署／同步；锁被占报 BUSY、
+        // 取锁异常报 FAILED，与 DownloadResult 三态同口径。
+        when (CrossProcessUserDataLock.tryAcquire(DataManager.userDataDir)) {
+            CrossProcessUserDataLock.AcquireResult.BUSY -> {
+                Timber.w("远端部署持有用户目录锁，忽略本次方案更新调用")
+                UpdateImportGate.release(gateToken)
+                return DownloadResult.BUSY
+            }
+            CrossProcessUserDataLock.AcquireResult.FAILED -> {
+                Timber.w("用户目录锁取锁失败，忽略本次方案更新调用")
+                UpdateImportGate.release(gateToken)
+                return DownloadResult.FAILED
+            }
+            CrossProcessUserDataLock.AcquireResult.ACQUIRED -> Unit
+        }
         try {
             if (!DownloadGate.tryAcquire()) {
                 Timber.w("已有大文件下载在进行中，忽略本次方案更新调用")
@@ -1114,6 +1131,7 @@ object WanxiangUpdateManager {
                 DownloadGate.release()
             }
         } finally {
+            CrossProcessUserDataLock.release()
             UpdateImportGate.release(gateToken)
         }
     }
