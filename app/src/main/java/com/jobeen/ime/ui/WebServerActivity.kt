@@ -31,6 +31,7 @@ class WebServerActivity : ImeActivity() {
             },
             onStart = { WebServerService.start(this) },
             onStop = { WebServerService.stop(this) },
+            onRegenerate = { WebServerService.regenerateCertificate(this) },
         )
     }
 }

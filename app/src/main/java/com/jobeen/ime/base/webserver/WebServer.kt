@@ -7,9 +7,10 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.net.InetAddress
 import java.net.NetworkInterface
-import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
+import javax.net.ssl.SSLContext
+import javax.net.ssl.SSLServerSocket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -23,7 +24,9 @@ import kotlinx.coroutines.withContext
 import timber.log.Timber
 
 /**
- * Wi-Fi 传输 HTTP 层（WO52 4.4）：自研极简层（ServerSocket）。
+ * Wi-Fi 传输 HTTPS 层（WO54）：自签名证书，见 WifiTransferCertManager；
+ * 浏览器首次访问报不受信任属预期，靠指纹核对。
+ * 自研极简层（SSLServerSocket）。
  * 本地镜像与依赖中均无 NanoHTTPD／Ktor，故不引入外部依赖。
  *
  * - 仅支持 Content-Length 请求体（tus 分片与文件上传均带长度）；
@@ -36,6 +39,8 @@ import timber.log.Timber
  */
 class WebServer(
     private val router: WebServerRouter,
+    /** 必选、无默认值：防误构造出明文服务；证书见 WifiTransferCertManager。 */
+    private val sslContext: SSLContext,
     private val portRange: IntRange = 8080..8090,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     /** 每处理一个请求调一次（服务层用它刷新“最后请求时间”，B-W-6 空闲自停）。 */
@@ -45,7 +50,7 @@ class WebServer(
     var boundPort: Int? = null
         private set
 
-    private var serverSocket: ServerSocket? = null
+    private var serverSocket: SSLServerSocket? = null
     private var acceptJob: Job? = null
     private val connectionPermits = Semaphore(MAX_CONNECTIONS)
 
@@ -53,7 +58,13 @@ class WebServer(
     fun start(): Int? {
         for (port in portRange) {
             try {
-                val socket = ServerSocket(port, 50, InetAddress.getByName("0.0.0.0"))
+                val socket = sslContext.serverSocketFactory
+                    .createServerSocket(port, 50, InetAddress.getByName("0.0.0.0")) as SSLServerSocket
+                // TLS 版本取 supportedProtocols ∩ {TLSv1.2, TLSv1.3}：
+                // API 24–28 无 TLSv1.3，交集只剩 TLSv1.2，不抛异常。
+                socket.enabledProtocols = selectTlsProtocols(socket.supportedProtocols)
+                // 显式写清：不做双向认证，服务端不校验客户端。
+                socket.needClientAuth = false
                 serverSocket = socket
                 // 端口 0 为临时端口：取系统实际分配的端口号。
                 val bound = socket.localPort
@@ -79,7 +90,7 @@ class WebServer(
         scope.cancel()
     }
 
-    private suspend fun acceptLoop(socket: ServerSocket) {
+    private suspend fun acceptLoop(socket: SSLServerSocket) {
         while (scope.isActive) {
             val client = withContext(Dispatchers.IO) {
                 runCatching { socket.accept() }.getOrNull()
@@ -353,7 +364,11 @@ class WebServer(
                     .firstOrNull { !it.isLoopbackAddress && it is java.net.Inet4Address }
                     ?.hostAddress
             }.getOrNull()
-            return "http://${ip ?: "127.0.0.1"}:$port"
+            return "https://${ip ?: "127.0.0.1"}:$port"
         }
+
+        /** TLS 版本：supportedProtocols ∩ {TLSv1.2, TLSv1.3}（单测直接覆盖）。 */
+        internal fun selectTlsProtocols(supportedProtocols: Array<String>): Array<String> =
+            supportedProtocols.intersect(setOf("TLSv1.2", "TLSv1.3")).toTypedArray()
     }
 }

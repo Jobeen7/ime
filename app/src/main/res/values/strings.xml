@@ -247,6 +247,11 @@
     <string name="web_server_no_notification_hint">通知已关闭：服务仍在后台监听，点“停止”关闭服务。</string>
     <string name="web_server_no_storage">存储不可用，无法启动</string>
     <string name="web_server_no_port">端口 8080–8090 均被占用，无法启动</string>
+    <string name="web_server_cert_failed">证书生成失败，无法启动服务</string>
+    <string name="web_server_fingerprint_title">证书指纹（SHA-256）</string>
+    <string name="web_server_fingerprint_hint">浏览器首次打开会提示证书不受信任：先核对这里的指纹与浏览器显示的一致，再点继续。</string>
+    <string name="web_server_cert_rotated">证书已更换，请重新核对指纹后再继续。</string>
+    <string name="web_server_regenerate_cert">重新生成证书</string>
     <string name="web_server_usage_info">同一 Wi-Fi 下的电脑用浏览器打开上方地址，登录后可浏览、上传、下载、删除文件与断点续传；方案目录、皮肤目录与系统文件不可经 Wi-Fi 删除。</string>
     <string name="row_sub_about">版本、诊断与开发者信息</string>
 

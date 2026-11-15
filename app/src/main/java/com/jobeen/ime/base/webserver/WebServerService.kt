@@ -22,10 +22,12 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import timber.log.Timber
 
-/** Wi-Fi 传输服务状态（设置页显示局域网地址用）。 */
+/** Wi-Fi 传输服务状态（设置页显示局域网地址与证书指纹用）。 */
 data class WebServerState(
     val running: Boolean,
     val address: String? = null,
+    val fingerprint: String? = null,
+    val certificateRotated: Boolean = false,
 )
 
 /**
@@ -37,7 +39,9 @@ data class WebServerState(
  * - 未设密码时拒绝启动并提示设密码（鉴权是本项安全底线，
  *   不照搬对端无鉴权做法）。
  * - 设置页（WebServerActivity）显示局域网地址
- *   http://<ip>:<port>。
+ *   https://<ip>:<port> 与证书 SHA-256 指纹（WO54）。
+ * - 启动时先备好证书再起服务；证书生成／加载失败即停服，
+ *   不降级 http（WO54）。
  */
 class WebServerService : Service() {
 
@@ -69,7 +73,26 @@ class WebServerService : Service() {
             passwordHashProvider = { prefs.getString(WifiTransferAuth.KEY_PASSWORD_HASH, null) },
             revokedBeforeMsProvider = { WifiTransferAuth.revokedBeforeMs(prefs) },
         )
-        val webServer = WebServer(router, onRequest = { lastRequestMs = System.currentTimeMillis() })
+        // WO54：先备好证书再起服务；任一步失败即停服，不降级 http。
+        val cert = try {
+            WifiTransferCertManager.ensureCertificate()
+        } catch (e: Exception) {
+            Timber.w(e, "WebServer: certificate setup failed")
+            ToastUtil.showToast(getString(R.string.web_server_cert_failed))
+            failAndStop(R.string.web_server_cert_failed)
+            return
+        }
+        val sslContext = try {
+            WifiTransferCertManager.sslContext()
+        } catch (e: Exception) {
+            Timber.w(e, "WebServer: SSLContext setup failed")
+            ToastUtil.showToast(getString(R.string.web_server_cert_failed))
+            failAndStop(R.string.web_server_cert_failed)
+            return
+        }
+        val fingerprint = WifiTransferCertManager.fingerprint(cert)
+        val certificateRotated = WifiTransferCertManager.checkRotation(prefs, fingerprint)
+        val webServer = WebServer(router, sslContext, onRequest = { lastRequestMs = System.currentTimeMillis() })
         val port = webServer.start()
         if (port == null) {
             Timber.w("WebServer: no free port in 8080-8090")
@@ -100,7 +123,12 @@ class WebServerService : Service() {
                 }
             }
         }
-        _state.value = WebServerState(running = true, address = address)
+        _state.value = WebServerState(
+            running = true,
+            address = address,
+            fingerprint = fingerprint,
+            certificateRotated = certificateRotated,
+        )
     }
 
     /**
@@ -175,6 +203,13 @@ class WebServerService : Service() {
 
         fun stop(context: Context) {
             context.stopService(Intent(context, WebServerService::class.java))
+        }
+
+        /** 手动重新生成证书（WO54 W54-5）：删条目 → 停服 → 重启服务（新证书在下次启动时生成）。 */
+        fun regenerateCertificate(context: Context) {
+            runCatching { WifiTransferCertManager.deleteCertificate() }
+            stop(context)
+            start(context)
         }
     }
 }

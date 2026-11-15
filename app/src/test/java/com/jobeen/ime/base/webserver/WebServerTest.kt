@@ -1,8 +1,8 @@
 package com.jobeen.ime.base.webserver
 
 import java.io.File
-import java.net.Socket
 import java.nio.file.Files
+import javax.net.ssl.SSLSocket
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -40,7 +40,7 @@ class WebServerTest {
                 if (relativePath == "index.html") "<html>hi</html>".toByteArray(Charsets.UTF_8) else null
         }
         val router = WebServerRouter(store, actions, { passwordHash })
-        server = WebServer(router, portRange = 0..0)
+        server = WebServer(router, TestSslContext.server(), portRange = 0..0)
         port = server.start() ?: error("server did not start")
     }
 
@@ -50,9 +50,17 @@ class WebServerTest {
         tempRoot.deleteRecursively()
     }
 
+    /** TLS 客户端（trust-all：测握手不校验自签名）。 */
+    private fun tlsSocket(): SSLSocket {
+        val socket = TestSslContext.trustAllClient().socketFactory
+            .createSocket("127.0.0.1", port) as SSLSocket
+        socket.soTimeout = 5_000
+        socket.startHandshake()
+        return socket
+    }
+
     private fun rawHttp(request: String): String {
-        Socket("127.0.0.1", port).use { socket ->
-            socket.soTimeout = 5_000
+        tlsSocket().use { socket ->
             socket.getOutputStream().write(request.toByteArray(Charsets.UTF_8))
             socket.getOutputStream().flush()
             return socket.getInputStream().readBytes().toString(Charsets.UTF_8)
@@ -114,9 +122,9 @@ class WebServerTest {
     }
 
     @Test
-    fun `lan address formats http url`() {
+    fun `lan address formats https url`() {
         val address = WebServer.lanAddress(8080)
-        assertTrue(address.startsWith("http://"))
+        assertTrue(address.startsWith("https://"))
         assertTrue(address.endsWith(":8080"))
     }
 
@@ -183,22 +191,24 @@ class WebServerTest {
 
     @Test
     fun `seventeenth concurrent connection is refused`() {
-        val held = mutableListOf<Socket>()
+        val held = mutableListOf<SSLSocket>()
         try {
             repeat(16) {
-                Socket("127.0.0.1", port).also { socket ->
-                    socket.soTimeout = 5_000
+                tlsSocket().also { socket ->
                     socket.getOutputStream().write("GET / HTTP/1.1\r\nHost: x\r\n".toByteArray(Charsets.UTF_8))
                     socket.getOutputStream().flush()
                     held.add(socket)
                 }
             }
-            Socket("127.0.0.1", port).use { extra ->
-                extra.soTimeout = 5_000
-                extra.getOutputStream().write("GET / HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray(Charsets.UTF_8))
-                extra.getOutputStream().flush()
-                assertEquals(-1, extra.getInputStream().read())
-            }
+            // 第 17 个连接：服务端许可耗尽即关闭，客户端握手失败或读到 EOF。
+            val outcome = runCatching {
+                tlsSocket().use { extra ->
+                    extra.getOutputStream().write("GET / HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray(Charsets.UTF_8))
+                    extra.getOutputStream().flush()
+                    extra.getInputStream().read()
+                }
+            }.getOrNull()
+            assertTrue(outcome == null || outcome == -1)
         } finally {
             held.forEach { runCatching { it.close() } }
         }
@@ -206,7 +216,7 @@ class WebServerTest {
 
     @Test
     fun `slow header connection is closed after timeout`() {
-        Socket("127.0.0.1", port).use { socket ->
+        tlsSocket().use { socket ->
             socket.soTimeout = 20_000
             val start = System.currentTimeMillis()
             assertEquals(-1, socket.getInputStream().read())
@@ -217,7 +227,7 @@ class WebServerTest {
     }
 
     private fun rawHttpBytes(headers: String, body: ByteArray): ByteArray {
-        Socket("127.0.0.1", port).use { socket ->
+        tlsSocket().use { socket ->
             socket.soTimeout = 10_000
             socket.getOutputStream().write(headers.toByteArray(Charsets.UTF_8))
             socket.getOutputStream().write(body)

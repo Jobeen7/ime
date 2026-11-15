@@ -36,6 +36,7 @@ fun WebServerScreen(
     onSavePassword: (String) -> Unit,
     onStart: () -> Unit,
     onStop: () -> Unit,
+    onRegenerate: () -> Unit,
 ) {
     val state by WebServerService.state.collectAsState()
     val context = LocalContext.current
@@ -104,6 +105,43 @@ fun WebServerScreen(
                             style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.padding(vertical = 4.dp),
                         )
+                    }
+                }
+                // WO54：证书 SHA-256 指纹（可复制）＋自签名说明；
+                // 换发时指纹上方显示警告行，手动换发按钮放指纹下方。
+                if (state.certificateRotated) {
+                    Text(
+                        text = stringResource(R.string.web_server_cert_rotated),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                }
+                state.fingerprint?.let { fingerprint ->
+                    Text(
+                        text = stringResource(R.string.web_server_fingerprint_title),
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.padding(vertical = 8.dp),
+                    )
+                    SelectionContainer {
+                        Text(
+                            text = fingerprint,
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.padding(vertical = 4.dp),
+                        )
+                    }
+                    Text(
+                        text = stringResource(R.string.web_server_fingerprint_hint),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(vertical = 4.dp),
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Button(
+                        onClick = onRegenerate,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Text(stringResource(R.string.web_server_regenerate_cert))
                     }
                 }
                 if (!notificationsEnabled) {
