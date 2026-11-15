@@ -87,6 +87,7 @@ fun AiSettingsScreen(
     var runName by remember { mutableStateOf("") }
     var runResult by remember { mutableStateOf("") }
     var runError by remember { mutableStateOf("") }
+    var runErrorEvent by remember { mutableStateOf<AiStreamEvent.Error?>(null) }
     var running by remember { mutableStateOf(false) }
     val aiRunFailedText = stringResource(R.string.ai_run_failed)
     val aiMissingTokenText = stringResource(R.string.ai_missing_token)
@@ -348,9 +349,14 @@ fun AiSettingsScreen(
                     style = MaterialTheme.typography.titleSmall,
                     modifier = Modifier.padding(top = 8.dp),
                 )
-                if (runError.isNotEmpty()) {
+                // 错误文案在组合作用域派生（collect 体内调不了 stringResource）。
+                val runErrorText = runErrorEvent?.let { ev ->
+                    ev.messageRes?.let { stringResource(it) }
+                        ?: if (ev.code == "missing_token") aiMissingTokenText else ev.message
+                } ?: runError
+                if (runErrorText.isNotEmpty()) {
                     Text(
-                        text = runError,
+                        text = runErrorText,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.error,
                     )
@@ -503,6 +509,7 @@ fun AiSettingsScreen(
                 runName = instruction.name
                 runResult = ""
                 runError = ""
+                runErrorEvent = null
                 running = true
                 scope.launch {
                     val run = runner.run(
@@ -525,14 +532,7 @@ fun AiSettingsScreen(
                                 runResult = acc.toString()
                             }
                             is AiStreamEvent.Error -> {
-                                // collect 体不是 @Composable 作用域，stringResource
-                                // 调不了；context 已在外层取到，直接 getString。
-                                runError = event.messageRes?.let { context.getString(it) }
-                                    ?: if (event.code == "missing_token") {
-                                        aiMissingTokenText
-                                    } else {
-                                        event.message
-                                    }
+                                runErrorEvent = event
                             }
                             else -> Unit
                         }

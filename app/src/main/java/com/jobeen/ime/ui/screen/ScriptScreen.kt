@@ -364,6 +364,7 @@ private fun ScriptEditPage(
     var runJob by remember { mutableStateOf<Job?>(null) }
     val scriptRunCancelledText = stringResource(R.string.script_run_cancelled)
     val scriptRunErrorFormat = stringResource(R.string.script_run_error)
+    val scriptUnnamedText = stringResource(R.string.script_unnamed)
 
     fun reloadTags() {
         scope.launch {
@@ -379,7 +380,7 @@ private fun ScriptEditPage(
         scope.launch {
             if (script == null) {
                 repository.insertScript(
-                    name = name.ifBlank { context.getString(R.string.script_unnamed) },
+                    name = name.ifBlank { scriptUnnamedText },
                     content = content,
                     allowPasteboard = allowPasteboard,
                 )
