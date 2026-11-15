@@ -154,6 +154,7 @@ fun MainScreen(
     onOpenUserDict: () -> Unit,
     onOpenLevelDb: () -> Unit = {},
     onOpenFiles: () -> Unit,
+    onOpenWebServer: () -> Unit,
     onOpenBackup: () -> Unit,
     onOpenAbout: () -> Unit,
     onDeploy: () -> Unit,
@@ -331,6 +332,7 @@ fun MainScreen(
         "leveldb" to onOpenLevelDb,
         "backup" to onOpenBackup,
         "files" to onOpenFiles,
+        "webserver" to onOpenWebServer,
         "about" to onOpenAbout,
     )
     val allEntries = catalogPages().map { page ->

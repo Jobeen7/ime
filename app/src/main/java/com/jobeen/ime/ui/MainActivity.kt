@@ -228,6 +228,11 @@ class MainActivity : ImeActivity() {
                     ),
                 )
             },
+            onOpenWebServer = {
+                startActivity(
+                    Intent(this@MainActivity, WebServerActivity::class.java)
+                )
+            },
             onOpenAbout = {
                 startActivity(
                     Intent(this@MainActivity, AboutActivity::class.java)

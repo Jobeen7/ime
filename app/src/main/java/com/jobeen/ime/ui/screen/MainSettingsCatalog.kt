@@ -119,6 +119,7 @@ fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("leveldb", R.string.leveldb_title, R.string.row_sub_leveldb, MainSettingGroup.DATA_BACKUP),
     CatalogPage("backup", R.string.backup_restore, R.string.row_sub_backup, MainSettingGroup.DATA_BACKUP),
     CatalogPage("files", R.string.schema_files, R.string.row_sub_files, MainSettingGroup.DATA_BACKUP),
+    CatalogPage("webserver", R.string.web_server_title, R.string.row_sub_web_server, MainSettingGroup.DATA_BACKUP),
     CatalogPage("about", R.string.about_us, R.string.row_sub_about, MainSettingGroup.ADVANCED_ABOUT),
 )
 

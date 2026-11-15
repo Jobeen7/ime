@@ -252,6 +252,25 @@
     <string name="row_sub_userdict">个人词条管理</string>
     <string name="row_sub_backup">设置与数据备份</string>
     <string name="row_sub_files">应用文件目录</string>
+    <string name="row_sub_web_server">局域网传文件</string>
+    <string name="web_server_title">Wi-Fi 传输</string>
+    <string name="web_server_password_title">Wi-Fi 传输密码</string>
+    <string name="web_server_password_label">密码</string>
+    <string name="web_server_password_hint">未设置密码</string>
+    <string name="web_server_password_set">已设置（输入新密码可更换）</string>
+    <string name="web_server_password_save">保存密码</string>
+    <string name="web_server_password_saved">密码已保存</string>
+    <string name="web_server_password_info">密码只存 SHA-256，不存明文；未设密码时服务无法启动。浏览器登录后 24 小时内有效。</string>
+    <string name="web_server_service_title">服务</string>
+    <string name="web_server_running">运行中，同一 Wi-Fi 下的电脑浏览器打开以下地址：</string>
+    <string name="web_server_stopped">服务未运行。</string>
+    <string name="web_server_stopped_no_password">服务未运行：请先设置密码再启动。</string>
+    <string name="web_server_start">启动服务</string>
+    <string name="web_server_stop">停止服务</string>
+    <string name="web_server_no_password">请先设置 Wi-Fi 传输密码</string>
+    <string name="web_server_no_storage">存储不可用，无法启动</string>
+    <string name="web_server_no_port">端口 8080–8090 均被占用，无法启动</string>
+    <string name="web_server_usage_info">同一 Wi-Fi 下的电脑用浏览器打开上方地址，登录后可浏览、上传、下载、删除文件与断点续传；方案目录、皮肤目录与系统文件不可经 Wi-Fi 删除。</string>
     <string name="row_sub_about">版本、诊断与开发者信息</string>
 
     <!-- General -->

@@ -123,6 +123,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.WebServerActivity"
+            android:exported="false"
+            android:label="@string/web_server_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.AppearanceActivity"
             android:exported="false"
             android:label="@string/appearance_title"
@@ -335,6 +342,11 @@
 
         <service
             android:name=".engine.rime.data.userdict.RemoteTransferService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
+        <service
+            android:name=".base.webserver.WebServerService"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
     </application>
