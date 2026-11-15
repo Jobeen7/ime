@@ -13,17 +13,17 @@
 - **v1/v2 已终止支持**：v1、v2、v4 及其他任何非 3 的版本一律拒绝导入与应用，无迁移路径。旧版皮肤需按 v3 重写后重新导入。
 - 生成端（`SkinTreeBuilder.kt:33`、`LegacySkinSaver.kt:56`）只产出 v3。
 
-## 2. 顶层键（72 个）
+## 2. 顶层键（79 个）
 
-校验器用 `readTopLevel(name)` 逐个读取顶层键并记入 consumed 集；未被任何解析器消费的键原样保留在 `unknownNodes` 里（只透传、不解读）。以下 72 个键为校验器实际消费的顶层键（70 个经 `readTopLevel`，另 `fontFaces`／`fontRanges` 由 `SkinFontParser` 直接读树）：
+校验器用 `readTopLevel(name)` 逐个读取顶层键并记入 consumed 集；未被任何解析器消费的键原样保留在 `unknownNodes` 里（只透传、不解读）。以下 79 个键为校验器实际消费的顶层键（77 个经 `readTopLevel`：71 个直接传字面量，另 6 个经变量传入——`styles`／`derivation`（浅色样式／推导）、`suppressKeyboard`／`suppressToolbar`（区域压制）、`floatingKeyboardWindowPortrait`／`floatingKeyboardWindowLandscape`（悬浮键盘横竖屏几何）；另 `fontFaces`／`fontRanges` 由 `SkinFontParser` 直接读树）：
 
 | 分组 | 顶层键 |
 |---|---|
 | 身份与版本 | `formatVersion`、`minAppVersion`、`meta`、`layoutId`、`layoutIdLandscape` |
-| 外观与样式 | `appearance`、`stylesDark`、`derivationDark`、`derivationFormulas`、`geometry`、`fontFamily`、`fontFaces`、`fontRanges`、`roleFonts`、`textSizes`、`keyStyles`、`styleSets`、`keyShadow`、`keyAnimation`、`spaceAnimation`、`keyRipple`、`keyAnimations`、`hintSymbolsStyles`、`hintSymbolsGridStyles`、`hintSymbolNodes` |
-| 键盘与候选 | `keyboards`、`keyMappings`、`notifications`、`conditionStyles`、`swipeThresholdDp`、`bubbleOverflowCheck`、`candidateRadiusDp`、`candidateIndexSizeDp`、`candidateCommentSizeDp`、`preeditHeight`、`preeditStyle`、`toolbar`、`toolbarHeight`、`toolbarStyle`、`toolbarLayout`、`toolbarButtonBackgroundStyle`、`menuAction`、`sprites`、`horizontalCandidates`、`horizontalCandidatesLayout`、`horizontalCandidatesStyle`、`horizontalCandidateStyle`、`verticalCandidates`、`verticalCandidatesLayout`、`verticalCandidatesStyle`、`verticalCandidateStyle`、`verticalBottomRow`、`candidateContextMenu`、`predictionCloseBg`、`predictionCloseRadiusDp`、`audio`、`keySound` |
+| 外观与样式 | `appearance`、`styles`、`stylesDark`、`derivation`、`derivationDark`、`derivationFormulas`、`geometry`、`fontFamily`、`fontFaces`、`fontRanges`、`roleFonts`、`textSizes`、`keyStyles`、`styleSets`、`keyShadow`、`keyAnimation`、`spaceAnimation`、`keyRipple`、`keyAnimations`、`hintSymbolsStyles`、`hintSymbolsGridStyles`、`hintSymbolNodes` |
+| 键盘与候选 | `keyboards`、`keyMappings`、`notifications`、`conditionStyles`、`swipeThresholdDp`、`bubbleOverflowCheck`、`candidateRadiusDp`、`candidateIndexSizeDp`、`candidateCommentSizeDp`、`preeditHeight`、`preeditStyle`、`toolbar`、`toolbarHeight`、`toolbarStyle`、`toolbarLayout`、`toolbarButtonBackgroundStyle`、`menuAction`、`sprites`、`horizontalCandidates`、`horizontalCandidatesLayout`、`horizontalCandidatesStyle`、`horizontalCandidateStyle`、`verticalCandidates`、`verticalCandidatesLayout`、`verticalCandidatesStyle`、`verticalCandidateStyle`、`verticalBottomRow`、`candidateContextMenu`、`predictionCloseBg`、`predictionCloseRadiusDp`、`audio`、`keySound`、`suppressKeyboard`、`suppressToolbar` |
 | 符号 | `symbolBar`、`subClassifiedSymbols`、`t9Symbols`、`t9HorizontalSymbols`、`numericSymbols`、`horizontalSymbols`、`horizontalSymbolsRtl`、`symbolBadge` |
-| 浮动候选窗／悬浮键盘 | `floatingCandidatePosition`、`floatingFallbackPosition`、`floating_fallback_position`（已废弃，用 `floatingFallbackPosition`）、`floatingCandidateBackgroundColorDark`、`floatingCandidateBackgroundColorLight`、`floatingCandidateCornerRadius`、`floatingCandidatePagingButtonDisplayed`、`floatingKeyboardWindowEnabled` |
+| 浮动候选窗／悬浮键盘 | `floatingCandidatePosition`、`floatingFallbackPosition`、`floating_fallback_position`（已废弃，用 `floatingFallbackPosition`）、`floatingCandidateBackgroundColorDark`、`floatingCandidateBackgroundColorLight`、`floatingCandidateCornerRadius`、`floatingCandidatePagingButtonDisplayed`、`floatingKeyboardWindowEnabled`、`floatingKeyboardWindowPortrait`、`floatingKeyboardWindowLandscape` |
 
 各键的值类型与取值范围以 `SkinValidator.kt` 为准（本文档不逐字段复述；校验器对非法值一般记 issue 并回落，不拒包——除 `formatVersion` 与布局动作白名单外，见下）。
 
