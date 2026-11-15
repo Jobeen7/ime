@@ -71,6 +71,7 @@ import kotlin.math.abs
 @Composable
 fun SplitWordsScreen(text: String, onDone: () -> Unit) {
     val context = LocalContext.current
+    val copiedText = stringResource(R.string.copied)
     val density = LocalDensity.current
     val viewConfig = LocalViewConfiguration.current
     val words = remember(text) { WordSegmenter.segment(text) }
@@ -315,7 +316,7 @@ fun SplitWordsScreen(text: String, onDone: () -> Unit) {
                     cm?.setPrimaryClip(ClipData.newPlainText("split", selectedText))
                     Toast.makeText(
                         context,
-                        context.getString(R.string.copied),
+                        copiedText,
                         Toast.LENGTH_SHORT,
                     ).show()
                 },

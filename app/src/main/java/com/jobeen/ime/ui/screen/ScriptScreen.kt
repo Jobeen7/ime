@@ -362,6 +362,8 @@ private fun ScriptEditPage(
     var runError by remember { mutableStateOf<String?>(null) }
     var running by remember { mutableStateOf(false) }
     var runJob by remember { mutableStateOf<Job?>(null) }
+    val scriptRunCancelledText = stringResource(R.string.script_run_cancelled)
+    val scriptRunErrorFormat = stringResource(R.string.script_run_error)
 
     fun reloadTags() {
         scope.launch {
@@ -419,12 +421,12 @@ private fun ScriptEditPage(
                 )
                 runResult = result
             } catch (e: CancellationException) {
-                runError = context.getString(R.string.script_run_cancelled)
+                runError = scriptRunCancelledText
                 throw e
             } catch (e: ScriptRunException) {
-                runError = context.getString(R.string.script_run_error, e.message.orEmpty())
+                runError = scriptRunErrorFormat.format(e.message.orEmpty())
             } catch (e: Exception) {
-                runError = context.getString(R.string.script_run_error, e.message.orEmpty())
+                runError = scriptRunErrorFormat.format(e.message.orEmpty())
             } finally {
                 running = false
                 runJob = null

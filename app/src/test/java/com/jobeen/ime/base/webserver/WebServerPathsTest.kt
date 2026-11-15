@@ -85,4 +85,14 @@ class WebServerPathsTest {
         val normal = File(skinRoot, "plain").also { it.mkdirs() }
         assertFalse(WebServerPaths.isSkinSymlink(skinRoot, File(normal, "skin.json")))
     }
+
+    @Test
+    fun `symlinked skin file itself is detected`() {
+        val realFile = File(root, "real-skin.json").also { it.writeText("{}") }
+        val linkFile = File(skinRoot, "linked.json")
+        Files.createSymbolicLink(linkFile.toPath(), realFile.toPath())
+        assertTrue(WebServerPaths.isSkinSymlink(skinRoot, linkFile))
+        val plainFile = File(skinRoot, "plain.json").also { it.writeText("{}") }
+        assertFalse(WebServerPaths.isSkinSymlink(skinRoot, plainFile))
+    }
 }

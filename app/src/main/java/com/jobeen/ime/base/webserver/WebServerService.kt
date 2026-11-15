@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.jobeen.ime.R
 import com.jobeen.ime.base.notify.NotificationChannels
 import com.jobeen.ime.base.util.ToastUtil
@@ -94,7 +95,8 @@ class WebServerService : Service() {
         val state: StateFlow<WebServerState> = _state.asStateFlow()
 
         fun start(context: Context) {
-            context.startForegroundService(
+            ContextCompat.startForegroundService(
+                context,
                 Intent(context, WebServerService::class.java),
             )
         }

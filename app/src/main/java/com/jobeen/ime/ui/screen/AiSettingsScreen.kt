@@ -83,6 +83,8 @@ fun AiSettingsScreen(
     var runResult by remember { mutableStateOf("") }
     var runError by remember { mutableStateOf("") }
     var running by remember { mutableStateOf(false) }
+    val aiRunFailedText = stringResource(R.string.ai_run_failed)
+    val aiMissingTokenText = stringResource(R.string.ai_missing_token)
     var aiPrefix by remember { mutableStateOf(AiPrefs.getCommandViewAiPrefix(context)) }
     var aiHistoryPrefix by remember { mutableStateOf(AiPrefs.getCommandViewAiHistoryPrefix(context)) }
     var historyLimit by remember { mutableStateOf(AiPrefs.getConversationHistoryLimit(context).toString()) }
@@ -322,7 +324,7 @@ fun AiSettingsScreen(
                                     ),
                                 )
                                 if (run == null) {
-                                    runError = context.getString(R.string.ai_run_failed)
+                                    runError = aiRunFailedText
                                     running = false
                                     return@launch
                                 }
@@ -335,7 +337,7 @@ fun AiSettingsScreen(
                                         }
                                         is AiStreamEvent.Error -> {
                                             runError = if (event.code == "missing_token") {
-                                                context.getString(R.string.ai_missing_token)
+                                                aiMissingTokenText
                                             } else {
                                                 event.message
                                             }

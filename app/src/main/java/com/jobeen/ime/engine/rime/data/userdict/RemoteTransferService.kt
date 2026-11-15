@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
+import androidx.core.content.ContextCompat
 import com.jobeen.ime.R
 import com.jobeen.ime.base.notify.NotificationChannels
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
@@ -138,7 +139,7 @@ class RemoteTransferService : Service() {
                 action = ACTION_UPLOAD
                 putExtra(EXTRA_DICT, dict)
             }
-            context.startForegroundService(intent)
+            ContextCompat.startForegroundService(context, intent)
         }
 
         fun startDownload(context: Context, dict: String, remoteFile: String) {
@@ -147,7 +148,7 @@ class RemoteTransferService : Service() {
                 putExtra(EXTRA_DICT, dict)
                 putExtra(EXTRA_REMOTE_FILE, remoteFile)
             }
-            context.startForegroundService(intent)
+            ContextCompat.startForegroundService(context, intent)
         }
     }
 }

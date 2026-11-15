@@ -2,7 +2,6 @@ package com.jobeen.ime.base.webserver
 
 import android.webkit.MimeTypeMap
 import java.io.File
-import java.nio.file.Files
 
 /**
  * Wi-Fi 传输文件存储（WO52 4.4）：根目录＝应用 external files dir，
@@ -65,7 +64,12 @@ object WebServerPaths {
         while (true) {
             if (current == skinLibraryRoot) return false
             if (current.parentFile == null) return false
-            if (Files.isSymbolicLink(current.toPath())) return true
+            // pre-26 等价判定：canonicalPath 会解析掉符号链接，
+            // absolutePath 只是词法绝对化；两者不等即路径中含符号链接
+            // （或非常规段），保守按链接处理。canonicalPath 取不到时
+            // 同样保守拒绝。
+            val canonical = runCatching { current.canonicalPath }.getOrNull() ?: return true
+            if (canonical != current.absolutePath) return true
             current = current.parentFile ?: return false
             if (!current.path.startsWith(skinLibraryRoot.path)) return false
         }
