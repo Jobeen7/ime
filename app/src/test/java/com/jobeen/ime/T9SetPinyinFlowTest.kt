@@ -89,10 +89,11 @@ class T9SetPinyinFlowTest {
     }
 
     @Test
-    fun prefixPinRewritesInput() {
+    fun prefixPinLeavesTailRaw() {
         val host = BehaviorHost(FakeJob())
         host.pressDigits("726")
-        assertEquals("pa'", host.select("pa"))
+        // "pa" 只钉前两码，尾段 "6" 保持原始数字（与未选尾段同口径）
+        assertEquals("pa'6", host.select("pa"))
     }
 
     @Test
@@ -106,9 +107,10 @@ class T9SetPinyinFlowTest {
     }
 
     @Test
-    fun singleLetterPinsChain() {
+    fun pinsChainAcrossSegments() {
         val host = BehaviorHost(FakeJob())
-        host.pressDigits("45")
+        // "54"→键位码 JG→ji/li；"45" 是 GJ→g/h，不是 ji
+        host.pressDigits("54")
         assertEquals("ji'", host.select("ji"))
         host.flowed(InputString("6"))
         assertEquals("ji'6", host.build())
