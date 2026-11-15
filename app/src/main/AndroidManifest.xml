@@ -18,6 +18,11 @@
     <!-- MANAGE_EXTERNAL_STORAGE 已删除（2026-10-06 审查）：全仓从未请求或行使
          该全文件访问权限，纯增权限面与商店政策风险，无功能收益 -->
     <uses-permission android:name="android.permission.VIBRATE" />
+
+    <!-- 外部调用面（WO52 4.1）：仅与 Jime 同签名的应用可调起 ExternalActionActivity -->
+    <permission
+        android:name="com.jobeen.ime.permission.EXTERNAL_ACTION"
+        android:protectionLevel="signature" />
     <!-- 后台定期同步：跨重启持久化任务需此权限（JobScheduler setPersisted） -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 通知渠道（WO52 13.1）：前台服务声明＋Android 13+ 通知运行时权限 -->
@@ -128,6 +133,21 @@
             android:label="@string/web_server_title"
             android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
+
+        <activity
+            android:name=".ui.ExternalActionActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:permission="com.jobeen.ime.permission.EXTERNAL_ACTION"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="com.jobeen.ime.action.DEPLOY" />
+                <action android:name="com.jobeen.ime.action.SYNC" />
+                <action android:name="com.jobeen.ime.action.SET_CLIPBOARD" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".ui.AppearanceActivity"
