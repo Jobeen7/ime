@@ -621,6 +621,13 @@ class KeyOverrideApplierTest {
             // WO52 1.7：#floatingKeyboardWindowStateToggle 分派到悬浮开关。
             SkinAction.Command(WhitelistAction.HASH_FLOATING_KEYBOARD_WINDOW_STATE_TOGGLE) to
                 KeyboardAction.ToggleFloatingKeyboardWindowAction,
+            // WO52 8.3：三修饰键单按直送应用按键事件。
+            SkinAction.Command(WhitelistAction.COMMAND) to
+                KeyboardAction.AppKeyEventAction(117),
+            SkinAction.Command(WhitelistAction.CONTROL) to
+                KeyboardAction.AppKeyEventAction(113),
+            SkinAction.Command(WhitelistAction.OPTION) to
+                KeyboardAction.AppKeyEventAction(57),
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW) to
                 KeyboardAction.ToggleScriptViewAction,
             SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD) to

@@ -1076,6 +1076,9 @@
     <string name="action_toggle_ascii_mode">中英切换</string>
     <string name="action_tab">制表键</string>
     <string name="action_escape">退出键</string>
+    <string name="action_command">命令键</string>
+    <string name="action_control">控制键</string>
+    <string name="action_option">选项键</string>
     <string name="action_home">行首</string>
     <string name="action_end">行尾</string>
     <string name="action_settings">打开设置</string>

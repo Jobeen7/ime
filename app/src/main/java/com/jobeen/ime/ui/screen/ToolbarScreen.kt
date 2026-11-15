@@ -753,6 +753,9 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.TOGGLE_ASCII_MODE -> R.string.action_toggle_ascii_mode
         WhitelistAction.TAB -> R.string.action_tab
         WhitelistAction.ESCAPE -> R.string.action_escape
+        WhitelistAction.COMMAND -> R.string.action_command
+        WhitelistAction.CONTROL -> R.string.action_control
+        WhitelistAction.OPTION -> R.string.action_option
         WhitelistAction.HOME -> R.string.action_home
         WhitelistAction.END -> R.string.action_end
         WhitelistAction.SETTINGS -> R.string.action_settings

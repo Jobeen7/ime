@@ -84,6 +84,16 @@ enum class WhitelistAction(
     ESCAPE("escape", ValueRule.FORBIDDEN),
     HOME("home", ValueRule.FORBIDDEN),
     END("end", ValueRule.FORBIDDEN),
+    /**
+     * 修饰键单按（WO52 8.3：va2 注册表补齐——Jime 原只有组合键
+     * 里的修饰位，无独立修饰键动作）：直送应用按键事件
+     * （AppKeyEventAction），键码与 SkinKeyCodes 键名表一致
+     * （command=117 META、control=113 CTRL、option=57 ALT）。
+     * function 不补：SkinKeyCodes 已定 Android 侧无可靠等价键码。
+     */
+    COMMAND("command", ValueRule.FORBIDDEN),
+    CONTROL("control", ValueRule.FORBIDDEN),
+    OPTION("option", ValueRule.FORBIDDEN),
     SETTINGS("settings", ValueRule.FORBIDDEN),
     SYSTEM_SETTINGS("system_settings", ValueRule.FORBIDDEN),
     NONE("none", ValueRule.FORBIDDEN),

@@ -88,12 +88,16 @@ class SkinKeyMappingsParserTest {
             "#rimePreviousPage" to SkinAction.Command(WhitelistAction.HASH_RIME_PREV_PAGE),
             "#rimeNextPage" to SkinAction.Command(WhitelistAction.HASH_RIME_NEXT_PAGE),
             // WO52 3.1a：#rimeDeploy／#rimeSync 入白名单；
-            // WO52 1.7：#floatingKeyboardWindowStateToggle 入白名单。
+            // WO52 1.7：#floatingKeyboardWindowStateToggle 入白名单；
+            // WO52 8.3：command／control／option 三修饰键入白名单。
             "#rimeDeploy" to SkinAction.Command(WhitelistAction.HASH_RIME_DEPLOY),
             "#rimeSync" to SkinAction.Command(WhitelistAction.HASH_RIME_SYNC),
             "#floatingKeyboardWindowStateToggle" to SkinAction.Command(
                 WhitelistAction.HASH_FLOATING_KEYBOARD_WINDOW_STATE_TOGGLE,
             ),
+            "command" to SkinAction.Command(WhitelistAction.COMMAND),
+            "control" to SkinAction.Command(WhitelistAction.CONTROL),
+            "option" to SkinAction.Command(WhitelistAction.OPTION),
             "#toggleEmbeddedInputMode" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT),
             "#toggleScriptView" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW),
             "#clearSystemPasteboard" to SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD),

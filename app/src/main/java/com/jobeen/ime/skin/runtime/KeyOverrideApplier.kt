@@ -1437,6 +1437,10 @@ object KeyOverrideApplier {
             WhitelistAction.ESCAPE -> KeyboardAction.AppKeyEventAction(111)
             WhitelistAction.HOME -> KeyboardAction.AppKeyEventAction(122)
             WhitelistAction.END -> KeyboardAction.AppKeyEventAction(123)
+            // 修饰键单按（WO52 8.3）：键码与 SkinKeyCodes 键名表一致。
+            WhitelistAction.COMMAND -> KeyboardAction.AppKeyEventAction(117)
+            WhitelistAction.CONTROL -> KeyboardAction.AppKeyEventAction(113)
+            WhitelistAction.OPTION -> KeyboardAction.AppKeyEventAction(57)
             WhitelistAction.SETTINGS -> KeyboardAction.SettingsAction
             WhitelistAction.SYSTEM_SETTINGS -> KeyboardAction.SystemSettingsAction
             // 应用级脚本动作（脚本接线波次）。
