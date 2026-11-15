@@ -1113,6 +1113,7 @@
     <string name="action_hash_rime_next_page">候选下页</string>
     <string name="action_hash_rime_deploy">部署</string>
     <string name="action_hash_rime_sync">同步</string>
+    <string name="action_hash_floating_keyboard_window_state_toggle">悬浮键盘切换</string>
     <string name="action_hash_toggle_embedded_input">内嵌输入切换</string>
     <string name="action_hash_toggle_script_view">脚本视图切换</string>
     <string name="action_hash_toggle_symbol_bar">符号条切换</string>

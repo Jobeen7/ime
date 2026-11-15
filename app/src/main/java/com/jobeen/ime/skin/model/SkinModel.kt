@@ -51,6 +51,41 @@ data class FloatingCandidateStyle(
     }
 }
 
+/**
+ * 悬浮键盘窗口几何（WO52 1.7）：皮肤键 floatingKeyboardWindowPortrait／
+ * floatingKeyboardWindowLandscape 的对象形态 `{widthRatio, centerX}`；
+ * 两值均为相对屏幕宽度的分数（0..1）。缺省 = 宽比 0.9、中心 0.5。
+ */
+data class FloatingKeyboardGeometry(
+    val widthRatio: Float = DEFAULT_WIDTH_RATIO,
+    val centerX: Float = DEFAULT_CENTER_X,
+) {
+    companion object {
+        const val DEFAULT_WIDTH_RATIO = 0.9f
+        const val DEFAULT_CENTER_X = 0.5f
+        const val MIN_WIDTH_RATIO = 0.3f
+        const val MAX_WIDTH_RATIO = 1.0f
+    }
+
+    /** 钳制到合法区间（非法／越界值在校验期先行回落，见 SkinValidator）。 */
+    fun clamped(): FloatingKeyboardGeometry = copy(
+        widthRatio = widthRatio.coerceIn(MIN_WIDTH_RATIO, MAX_WIDTH_RATIO),
+        centerX = centerX.coerceIn(0f, 1f),
+    )
+}
+
+/**
+ * 悬浮键盘（WO52 1.7）：皮肤顶层 floatingKeyboardWindowEnabled（开关，
+ * 缺省 false）＋ floatingKeyboardWindowPortrait／Landscape（按横竖屏
+ * 的窗口几何）。开关的运行期翻转写偏好覆写（见 FloatingKeyboardPrefs），
+ * 皮肤键只作缺省值。
+ */
+data class FloatingKeyboardWindowStyle(
+    val enabled: Boolean = false,
+    val portrait: FloatingKeyboardGeometry = FloatingKeyboardGeometry(),
+    val landscape: FloatingKeyboardGeometry = FloatingKeyboardGeometry(),
+)
+
 /** 配色叶子字段注册表（定稿十章）：路径与 ColorScheme 取值口径一一对应。 */
 enum class StyleField(val path: String) {
     KEY_BACKGROUND("keyBackground"),
@@ -578,6 +613,12 @@ data class ValidatedSkin(
      * 圆角 12dp／翻页钮显示。
      */
     val floatingCandidate: FloatingCandidateStyle = FloatingCandidateStyle(),
+    /**
+     * 悬浮键盘（WO52 1.7）：顶层 floatingKeyboardWindowEnabled／
+     * floatingKeyboardWindowPortrait／floatingKeyboardWindowLandscape
+     * 的校验结果。缺省 = 关／两方向几何均为宽比 0.9、中心 0.5。
+     */
+    val floatingKeyboardWindow: FloatingKeyboardWindowStyle = FloatingKeyboardWindowStyle(),
     /**
      * 预测态关闭键独立样式（2026-10-28 截图 6 项）：顶层
      * predictionCloseBg（ARGB Int）与 predictionCloseRadiusDp（dp）；

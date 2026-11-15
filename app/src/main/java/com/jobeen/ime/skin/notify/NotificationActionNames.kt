@@ -83,6 +83,7 @@ object NotificationActionNames {
         is KeyboardAction.OpenSymbolBarSettingsAction -> "OpenSymbolBarSettingsAction"
         is KeyboardAction.RimeDeployAction -> "RimeDeployAction"
         is KeyboardAction.RimeSyncAction -> "RimeSyncAction"
+        is KeyboardAction.ToggleFloatingKeyboardWindowAction -> "ToggleFloatingKeyboardWindowAction"
     }
 
     /**

@@ -443,4 +443,63 @@ class SkinValidatorTest {
             },
         )
     }
+
+    // ---------- WO52 1.7：悬浮键盘皮肤键 ----------
+
+    @Test
+    fun floatingKeyboardWindowKeysParsed() {
+        val result = valid(
+            """
+            {"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+             "floatingKeyboardWindowEnabled": true,
+             "floatingKeyboardWindowPortrait": {"widthRatio": 0.8, "centerX": 0.4},
+             "floatingKeyboardWindowLandscape": {"widthRatio": 0.7, "centerX": 0.6}}
+            """.trimIndent(),
+        )
+        val style = result.skin.floatingKeyboardWindow
+        assertTrue(style.enabled)
+        assertEquals(0.8f, style.portrait.widthRatio)
+        assertEquals(0.4f, style.portrait.centerX)
+        assertEquals(0.7f, style.landscape.widthRatio)
+        assertEquals(0.6f, style.landscape.centerX)
+    }
+
+    @Test
+    fun floatingKeyboardWindowDefaultsWhenAbsent() {
+        val result = valid(
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"}}""",
+        )
+        val style = result.skin.floatingKeyboardWindow
+        assertFalse(style.enabled)
+        assertEquals(0.9f, style.portrait.widthRatio)
+        assertEquals(0.5f, style.portrait.centerX)
+        assertEquals(0.9f, style.landscape.widthRatio)
+        assertEquals(0.5f, style.landscape.centerX)
+    }
+
+    @Test
+    fun floatingKeyboardWindowInvalidFieldsFallBack() {
+        val result = valid(
+            """
+            {"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+             "floatingKeyboardWindowEnabled": "yes",
+             "floatingKeyboardWindowPortrait": {"widthRatio": "wide", "centerX": 0.5}}
+            """.trimIndent(),
+        )
+        val style = result.skin.floatingKeyboardWindow
+        assertFalse(style.enabled)
+        assertEquals(0.9f, style.portrait.widthRatio)
+        assertTrue(
+            result.issues.any {
+                it.path == "floatingKeyboardWindowEnabled" &&
+                    it.kind == SkinIssue.Kind.FIELD_FALLBACK
+            },
+        )
+        assertTrue(
+            result.issues.any {
+                it.path == "floatingKeyboardWindowPortrait" &&
+                    it.kind == SkinIssue.Kind.FIELD_FALLBACK
+            },
+        )
+    }
 }

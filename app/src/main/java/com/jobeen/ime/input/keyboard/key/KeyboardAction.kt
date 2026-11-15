@@ -267,6 +267,12 @@ sealed class KeyboardAction {
     data object RimeSyncAction : KeyboardAction()
 
     /**
+     * 悬浮键盘开关（WO52 1.7：#floatingKeyboardWindowStateToggle）：
+     * 读皮肤键取反写回；开→浮动模式，关→恢复停靠。
+     */
+    data object ToggleFloatingKeyboardWindowAction : KeyboardAction()
+
+    /**
      * 按序号选候选（审计 E：#次选上屏/#三选上屏）：index 为候选
      * 表顺序（0 = 首选）；窗口层凭上一帧候选表解析，解析不到丢弃。
      */

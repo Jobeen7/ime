@@ -81,6 +81,8 @@ data class SkinSnapshot(
     val candidateRadiusDp: Float = 6f,
     /** 浮动候选窗样式（WO52 1.4）：顶层 floatingCandidate* 五键的校验结果。 */
     val floatingCandidate: FloatingCandidateStyle = FloatingCandidateStyle(),
+    /** 悬浮键盘（WO52 1.7）：顶层 floatingKeyboardWindow* 三键的校验结果。 */
+    val floatingKeyboardWindow: FloatingKeyboardWindowStyle = FloatingKeyboardWindowStyle(),
     /** 预测态关闭键独立样式（2026-10-28 截图 6 项）：null = 复用候选背景。 */
     val predictionCloseBg: Int? = null,
     val predictionCloseRadiusDp: Float? = null,

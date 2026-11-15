@@ -618,6 +618,9 @@ class KeyOverrideApplierTest {
                 KeyboardAction.RimeDeployAction,
             SkinAction.Command(WhitelistAction.HASH_RIME_SYNC) to
                 KeyboardAction.RimeSyncAction,
+            // WO52 1.7：#floatingKeyboardWindowStateToggle 分派到悬浮开关。
+            SkinAction.Command(WhitelistAction.HASH_FLOATING_KEYBOARD_WINDOW_STATE_TOGGLE) to
+                KeyboardAction.ToggleFloatingKeyboardWindowAction,
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW) to
                 KeyboardAction.ToggleScriptViewAction,
             SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD) to

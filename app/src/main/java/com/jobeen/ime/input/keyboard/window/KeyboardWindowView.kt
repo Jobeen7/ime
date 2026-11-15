@@ -10,6 +10,8 @@ import android.content.res.Configuration
 import android.os.Build
 import android.util.TypedValue
 import android.view.Choreographer
+import android.view.MotionEvent
+import android.view.ViewConfiguration
 import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Path
@@ -173,6 +175,207 @@ class KeyboardWindowView(
     /** 浮动窗帧（屏幕坐标，onComputeInsets 可触区用）；未显示时 null。 */
     internal var floatingFrameScreenRect: Rect? = null
         private set
+
+    // ── 悬浮键盘（WO52 1.7） ──
+    /**
+     * 悬浮键盘布局（view 坐标）：浮动时为（内容左缘，内容宽），
+     * 停靠时为 null。onMeasure 算出、onLayout 消费；浮动内容在
+     * IME 全宽窗口内居左/居中浮动，窗口本身仍全宽（系统输入法
+     * 窗口不可缩），窗口外区域透明、可触区只计浮动矩形（见
+     * ImeInputMethodService.onComputeInsets）。
+     */
+    private var floatingLayout: Pair<Int, Int>? = null
+
+    /** 悬浮键盘帧（view 坐标，onComputeInsets 可触区用）；停靠时 null。 */
+    internal var floatingKeyboardFrameRect: Rect? = null
+        private set
+
+    /** 当前皮肤的悬浮键盘样式（缺省 = 关／宽比 0.9／中心 0.5）。 */
+    private val skinFloatingWindow: com.jobeen.ime.skin.model.FloatingKeyboardWindowStyle
+        get() = SkinSnapshotProvider.peek()?.floatingKeyboardWindow
+            ?: com.jobeen.ime.skin.model.FloatingKeyboardWindowStyle()
+
+    /**
+     * 生效开关：偏好覆写优先，未覆写取皮肤键
+     * floatingKeyboardWindowEnabled。读即生效值，写即写回偏好。
+     */
+    private var floatingEnabled: Boolean
+        get() = FloatingKeyboardPrefs.effectiveEnabled(context, skinFloatingWindow.enabled)
+        set(value) = FloatingKeyboardPrefs.setEnabledOverride(context, value)
+
+    /** 当前方向的生效几何（偏好值优先，未保存时取皮肤键）。 */
+    private fun floatingGeometry(isLandscape: Boolean): com.jobeen.ime.skin.model.FloatingKeyboardGeometry {
+        val skin = skinFloatingWindow
+        val skinGeometry = FloatingKeyboardWindow.geometryFor(
+            isLandscape, skin.portrait, skin.landscape,
+        )
+        val saved = FloatingKeyboardPrefs.geometry(context, isLandscape, skinGeometry)
+        // 拖动中：内存中心 x 优先（跟手），抬手才持久化（见 onTouchEvent）。
+        val dragCenterX = floatingDragCenterXOverride
+        return if (dragCenterX != null) saved.copy(centerX = dragCenterX) else saved
+    }
+
+    /** 拖动中的内存中心 x（null = 未拖动）；抬手时写入偏好并清掉。 */
+    private var floatingDragCenterXOverride: Float? = null
+
+    /** 悬浮键盘是否硬件键盘在用（Jime 无外接键盘支持，恒 false，但保留判断）。 */
+    private fun isHardwareKeyboardInUse(): Boolean {
+        val config = resources.configuration
+        return FloatingKeyboardWindow.isHardwareKeyboardInUse(
+            config.keyboard == Configuration.KEYBOARD_QWERTY,
+            config.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_YES,
+        )
+    }
+
+    /**
+     * 开关动作 #floatingKeyboardWindowStateToggle 的分发入口：
+     * 读键取反写回；硬件键盘在用时不可开并提示；开→浮动模式
+     * （出现动画），关→恢复停靠。返回是否成功翻转。
+     */
+    fun toggleFloatingKeyboardWindow(): Boolean {
+        return when (FloatingKeyboardWindow.toggle(floatingEnabled, isHardwareKeyboardInUse())) {
+            FloatingKeyboardWindow.ToggleOutcome.HardwareKeyboardUnavailable -> {
+                showImeToast(FloatingKeyboardWindow.HARDWARE_KEYBOARD_UNAVAILABLE_MESSAGE)
+                false
+            }
+            FloatingKeyboardWindow.ToggleOutcome.Enabled -> {
+                setFloatingKeyboardEnabled(true)
+                true
+            }
+            FloatingKeyboardWindow.ToggleOutcome.Disabled -> {
+                setFloatingKeyboardEnabled(false)
+                true
+            }
+        }
+    }
+
+    /**
+     * 设悬浮开关：写回偏好覆写后重布局。内容按几何重度量
+     * （requestLayout；各板按 contentW 重测，无缓存宽度的板，
+     * 故不需重建键盘视图——“需重建则重建”在本实现里恒走
+     * requestLayout 分支）。开时做出现动画（淡入＋轻微放大），
+     * 关时直接恢复停靠。
+     */
+    fun setFloatingKeyboardEnabled(enabled: Boolean) {
+        val wasEnabled = floatingEnabled
+        floatingEnabled = enabled
+        if (enabled && !wasEnabled) {
+            alpha = 0f
+            scaleX = 0.97f
+            scaleY = 0.97f
+            animate().alpha(1f).scaleX(1f).scaleY(1f).setDuration(150).start()
+        } else if (!enabled && wasEnabled) {
+            animate().cancel()
+            alpha = 1f
+            scaleX = 1f
+            scaleY = 1f
+        }
+        requestLayout()
+    }
+
+    /** 当前是否浮动模式（设置页开关与动作分发共用读口）。 */
+    fun isFloatingKeyboardEnabled(): Boolean = floatingEnabled
+
+    /**
+     * 悬浮布局决议（onMeasure 用）：浮动时按横竖屏几何算出
+     * （内容左缘，内容宽），停靠时 null。横屏宽按
+     * smallestScreenWidthDp×density，超屏时钳到屏宽；竖屏走宽比。
+     */
+    private fun resolveFloatingLayout(totalWidth: Int, density: Float): Pair<Int, Int>? {
+        if (!floatingEnabled || totalWidth <= 0) return null
+        val isLandscape =
+            resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val geometry = floatingGeometry(isLandscape)
+        val widthPx = (
+            FloatingKeyboardWindow.landscapeWidthPx(
+                isLandscape,
+                resources.configuration.smallestScreenWidthDp.toFloat(),
+                density,
+            ) ?: FloatingKeyboardWindow.portraitWidthPx(totalWidth, geometry)
+            ).coerceIn(1, totalWidth)
+        val leftPx = FloatingKeyboardWindow.resolveLeftPx(totalWidth, widthPx, geometry)
+        return leftPx to widthPx
+    }
+
+    // ── 悬浮拖动（WO52 1.7：拖动结束保存几何） ──
+    private var floatingDragStartX = 0f
+    private var floatingDragStartCenterX = 0.5f
+    private var floatingDragging = false
+    private var floatingDownInBar = false
+
+    /** 候选条矩形（拖动起始区）：条顶 = tPad＋stripH，条高 = panelBarHeightPx。 */
+    private fun floatingDragBarTop(): Int {
+        val stripH = if (addPhraseActive) (fullScreenHeight() * 0.20f).roundToInt() else 0
+        return dpToPx(effectiveTopInsetDp()) + stripH
+    }
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean {
+        if (!floatingEnabled) return super.onInterceptTouchEvent(ev)
+        when (ev.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                val barTop = floatingDragBarTop()
+                val barH = panelBarHeightPx(resources.displayMetrics.density)
+                floatingDownInBar = ev.y >= barTop && ev.y < barTop + barH
+                if (floatingDownInBar) {
+                    floatingDragStartX = ev.x
+                    val isLandscape =
+                        resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+                    floatingDragStartCenterX = floatingGeometry(isLandscape).centerX
+                }
+                floatingDragging = false
+            }
+            MotionEvent.ACTION_MOVE -> {
+                if (floatingDownInBar && !floatingDragging) {
+                    val slop = ViewConfiguration.get(context).scaledTouchSlop
+                    val dx = ev.x - floatingDragStartX
+                    if (kotlin.math.abs(dx) > slop) {
+                        floatingDragging = true
+                        return true
+                    }
+                }
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                floatingDownInBar = false
+                floatingDragging = false
+            }
+        }
+        return super.onInterceptTouchEvent(ev)
+    }
+
+    override fun onTouchEvent(ev: MotionEvent): Boolean {
+        if (floatingDragging) {
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_MOVE -> {
+                    val newCenterX = FloatingKeyboardWindow.dragCenterX(
+                        floatingDragStartCenterX, ev.x - floatingDragStartX, width,
+                    )
+                    // 拖动中只改内存几何（重布局即跟手），抬手才持久化。
+                    floatingDragCenterXOverride = newCenterX
+                    requestLayout()
+                    return true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    floatingDragging = false
+                    floatingDownInBar = false
+                    // 拖动结束保存几何（存宽比与中心 x，按方向分存）。
+                    val endCenterX = floatingDragCenterXOverride
+                    floatingDragCenterXOverride = null
+                    if (ev.actionMasked == MotionEvent.ACTION_UP && endCenterX != null) {
+                        val isLandscape =
+                            resources.configuration.orientation ==
+                                Configuration.ORIENTATION_LANDSCAPE
+                        val geometry = floatingGeometry(isLandscape)
+                        FloatingKeyboardPrefs.saveGeometry(
+                            context, isLandscape, geometry.copy(centerX = endCenterX),
+                        )
+                    }
+                    requestLayout()
+                    return true
+                }
+            }
+        }
+        return super.onTouchEvent(ev)
+    }
 
     companion object {
         /** 选项态刷新竞态重试上限（切方案/会话未就绪时重读次数）。 */
@@ -1133,12 +1336,17 @@ class KeyboardWindowView(
         val cHeight = contentHeight()
         val totalWidth = MeasureSpec.getSize(widthMeasureSpec)
         val bottomInset = resolveBottomInset()
-        val contentW = (totalWidth - lPad - rPad).coerceAtLeast(0)
+        // 悬浮键盘（WO52 1.7）：浮动时内容宽按几何走（横屏
+        // smallestScreenWidthDp×density，竖屏宽比），左缘按中心 x；
+        // 停靠时走原口径（全宽 − 左右内边距）。总宽仍全宽（窗口
+        // 本身全宽，内容在内浮动）。
+        floatingLayout = resolveFloatingLayout(totalWidth, density)
+        val contentW = floatingLayout?.second ?: (totalWidth - lPad - rPad).coerceAtLeast(0)
 
         val stripH = if (addPhraseActive) (fullScreenHeight() * 0.20f).roundToInt() else 0
 
         panel.view.measure(
-            MeasureSpec.makeMeasureSpec(totalWidth, MeasureSpec.EXACTLY),
+            MeasureSpec.makeMeasureSpec(floatingLayout?.second ?: totalWidth, MeasureSpec.EXACTLY),
             MeasureSpec.makeMeasureSpec(barH, MeasureSpec.EXACTLY),
         )
 
@@ -1163,7 +1371,7 @@ class KeyboardWindowView(
         // 内联自动填充覆盖层：与条区同尺寸（全宽×条高），GONE 时不度量。
         if (!inlineAutofillBar.isGone) {
             inlineAutofillBar.measure(
-                MeasureSpec.makeMeasureSpec(totalWidth, MeasureSpec.EXACTLY),
+                MeasureSpec.makeMeasureSpec(floatingLayout?.second ?: totalWidth, MeasureSpec.EXACTLY),
                 MeasureSpec.makeMeasureSpec(barH, MeasureSpec.EXACTLY),
             )
         }
@@ -1232,14 +1440,18 @@ class KeyboardWindowView(
         val tPad = dpToPx(effectiveTopInsetDp())
         val barH = panelBarHeightPx(resources.displayMetrics.density)
         val cHeight = contentHeight()
-        val contentW = right - left - lPad - rPad
+        // 悬浮键盘（WO52 1.7）：浮动时内容左缘／宽按 onMeasure 的
+        // floatingLayout，停靠时走原口径（lPad／全宽 − 左右内边距）。
+        val floating = floatingLayout
+        val baseLeft = floating?.first ?: lPad
+        val contentW = floating?.second ?: (right - left - lPad - rPad)
         val stripH = if (addPhraseActive) (fullScreenHeight() * 0.20f).roundToInt() else 0
         val y0 = tPad + stripH + barH
 
-        panel.view.layout(0, tPad + stripH, right - left, tPad + stripH + barH)
+        panel.view.layout(baseLeft, tPad + stripH, baseLeft + contentW, tPad + stripH + barH)
 
         // 内联自动填充覆盖层：与条区同矩形，画在条区视图之上。
-        inlineAutofillBar.layout(0, tPad + stripH, right - left, tPad + stripH + barH)
+        inlineAutofillBar.layout(baseLeft, tPad + stripH, baseLeft + contentW, tPad + stripH + barH)
 
         // 搜索态：键盘整体下移一段（结果列表区在上），尺寸与行高不变
         val clipStripH = clipSearchStripHeight(
@@ -1250,15 +1462,15 @@ class KeyboardWindowView(
             val child = getChildAt(i)
             if (child === panel.view || child === inlineAutofillBar || child === panel.candidateGrid || child === panel.textEditingView || child === panel.clipboardView || child === panel.performanceView || child === panel.menuGridView || child === panel.confirmOverlay || child === addPhraseLayer || child === imeToastView || child === symbolBarView || child.isGone) continue
             if (clipStripH > 0 && child !== panel.candidateGrid) {
-                child.layout(lPad, y0 + clipStripH + symbolBarHeightPx, lPad + contentW, y0 + clipStripH + symbolBarHeightPx + cHeight)
+                child.layout(baseLeft, y0 + clipStripH + symbolBarHeightPx, baseLeft + contentW, y0 + clipStripH + symbolBarHeightPx + cHeight)
             } else {
-                child.layout(lPad, y0 + symbolBarHeightPx, lPad + contentW, y0 + symbolBarHeightPx + cHeight)
+                child.layout(baseLeft, y0 + symbolBarHeightPx, baseLeft + contentW, y0 + symbolBarHeightPx + cHeight)
             }
         }
 
         // 应用级符号栏：键盘区顶部一栏；覆盖层（候选网格／菜单等）
         // 仍按 y0 布局，栏以后加子视图画在其上。
-        symbolBarView?.layout(lPad, y0, lPad + contentW, y0 + symbolBarHeightPx)
+        symbolBarView?.layout(baseLeft, y0, baseLeft + contentW, y0 + symbolBarHeightPx)
 
         // 候选栏行策略（2026-10-29 批量第 4 项）：展开网格按行策略定高，
         // 内容不足且自动收缩时缩到内容高度，键盘区其余部分照常显示
@@ -1268,15 +1480,15 @@ class KeyboardWindowView(
             candidateGrid.lineLimitEnabled, candidateGrid.lineAutoShrink,
             candidateGrid.naturalRowHeightPx(), cHeight,
         )
-        candidateGrid.layout(lPad, y0, lPad + contentW, y0 + gridH)
-        panel.textEditingView.layout(lPad, y0, lPad + contentW, y0 + cHeight)
+        candidateGrid.layout(baseLeft, y0, baseLeft + contentW, y0 + gridH)
+        panel.textEditingView.layout(baseLeft, y0, baseLeft + contentW, y0 + cHeight)
         panel.clipboardView.layout(
-            lPad, y0, lPad + contentW,
+            baseLeft, y0, baseLeft + contentW,
             y0 + if (clipStripH > 0) clipStripH else cHeight
         )
-        panel.menuGridView.layout(lPad, y0, lPad + contentW, y0 + cHeight)
-        panel.performanceView.layout(lPad, y0, lPad + contentW, y0 + cHeight)
-        panel.confirmOverlay.layout(lPad, y0, lPad + contentW, y0 + cHeight)
+        panel.menuGridView.layout(baseLeft, y0, baseLeft + contentW, y0 + cHeight)
+        panel.performanceView.layout(baseLeft, y0, baseLeft + contentW, y0 + cHeight)
+        panel.confirmOverlay.layout(baseLeft, y0, baseLeft + contentW, y0 + cHeight)
         addPhraseLayer.layout(0, tPad, right - left, tPad + stripH)
         val toastLeft = ((right - left) - imeToastView.measuredWidth) / 2
         val bottomPadding = dpToPx(KeyboardManager.Keyboard.Padding.getBottomDp(context))
@@ -1287,6 +1499,13 @@ class KeyboardWindowView(
             toastLeft + imeToastView.measuredWidth,
             toastBottom,
         )
+
+        // 悬浮键盘帧（WO52 1.7，view 坐标）：浮动时为内容矩形
+        // （条区顶起、整块内容高），停靠时 null；服务侧
+        // onComputeInsets 据此计入可触摸区（框外点按透传给应用）。
+        floatingKeyboardFrameRect = floating?.let {
+            Rect(it.first, 0, it.first + it.second, bottom - top)
+        }
     }
 
 

@@ -87,9 +87,13 @@ class SkinKeyMappingsParserTest {
             "#candidatesBarStateToggle" to SkinAction.Command(WhitelistAction.HASH_CANDIDATES_BAR_TOGGLE),
             "#rimePreviousPage" to SkinAction.Command(WhitelistAction.HASH_RIME_PREV_PAGE),
             "#rimeNextPage" to SkinAction.Command(WhitelistAction.HASH_RIME_NEXT_PAGE),
-            // WO52 3.1a：#rimeDeploy／#rimeSync 入白名单。
+            // WO52 3.1a：#rimeDeploy／#rimeSync 入白名单；
+            // WO52 1.7：#floatingKeyboardWindowStateToggle 入白名单。
             "#rimeDeploy" to SkinAction.Command(WhitelistAction.HASH_RIME_DEPLOY),
             "#rimeSync" to SkinAction.Command(WhitelistAction.HASH_RIME_SYNC),
+            "#floatingKeyboardWindowStateToggle" to SkinAction.Command(
+                WhitelistAction.HASH_FLOATING_KEYBOARD_WINDOW_STATE_TOGGLE,
+            ),
             "#toggleEmbeddedInputMode" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT),
             "#toggleScriptView" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW),
             "#clearSystemPasteboard" to SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD),
@@ -516,6 +520,7 @@ class SkinKeyMappingsParserTest {
         // #subCollectionPageUp、#showPasteboardView、#keyboardPerformance
         // 自 v1.1.16.18 起已入白名单（审计 #2 P1-5/P1-4/P2-10），
         // 不再按未知动作剔除；#rimeDeploy／#rimeSync 自 WO52 3.1a 起
+        // 入白名单，#floatingKeyboardWindowStateToggle 自 WO52 1.7 起
         // 入白名单；仍未列入的才按未知剔除。
         for (name in listOf(
             "#rimeNoSuchAction",

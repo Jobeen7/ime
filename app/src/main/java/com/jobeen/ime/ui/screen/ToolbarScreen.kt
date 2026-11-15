@@ -790,6 +790,8 @@ internal fun whitelistActionLabel(action: WhitelistAction): String = stringResou
         WhitelistAction.HASH_RIME_NEXT_PAGE -> R.string.action_hash_rime_next_page
         WhitelistAction.HASH_RIME_DEPLOY -> R.string.action_hash_rime_deploy
         WhitelistAction.HASH_RIME_SYNC -> R.string.action_hash_rime_sync
+        WhitelistAction.HASH_FLOATING_KEYBOARD_WINDOW_STATE_TOGGLE ->
+            R.string.action_hash_floating_keyboard_window_state_toggle
         WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT -> R.string.action_hash_toggle_embedded_input
         WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW -> R.string.action_hash_toggle_script_view
         WhitelistAction.HASH_TOGGLE_SYMBOL_BAR -> R.string.action_hash_toggle_symbol_bar

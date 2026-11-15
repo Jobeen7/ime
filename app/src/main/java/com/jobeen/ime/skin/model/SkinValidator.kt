@@ -514,6 +514,50 @@ object SkinValidator {
             pagingButtonDisplayed = floatingPagingDisplayed,
         )
 
+        // ---- 悬浮键盘（WO52 1.7：顶层 floatingKeyboardWindow* 三键） ----
+        // 字段级回退口径：非法单字段记 FIELD_FALLBACK 并取缺省，不拒包。
+        // enabled：严格布尔，缺省 false；portrait／landscape：对象
+        // {widthRatio, centerX}，各值非法时该方向整段回落缺省几何。
+        var floatingKeyboardEnabled = false
+        val floatingKeyboardEnabledPrimitive =
+            readTopLevel("floatingKeyboardWindowEnabled") as? JsonPrimitive
+        if (floatingKeyboardEnabledPrimitive != null) {
+            val parsed = floatingKeyboardEnabledPrimitive.booleanOrNull
+            if (parsed != null) {
+                floatingKeyboardEnabled = parsed
+            } else {
+                issues += SkinIssue(
+                    "floatingKeyboardWindowEnabled", SkinIssue.Kind.FIELD_FALLBACK,
+                    "floating_keyboard_window_enabled_invalid",
+                )
+            }
+        }
+        fun parseFloatingGeometry(key: String): FloatingKeyboardGeometry {
+            val node = readTopLevel(key) as? JsonObject
+                ?: return FloatingKeyboardGeometry()
+            val widthRatio = node["widthRatio"]?.let {
+                (it as? JsonPrimitive)?.strictDoubleOrNull()?.toFloat()
+            }
+            val centerX = node["centerX"]?.let {
+                (it as? JsonPrimitive)?.strictDoubleOrNull()?.toFloat()
+            }
+            if (widthRatio == null || centerX == null ||
+                !widthRatio.isFinite() || !centerX.isFinite()
+            ) {
+                issues += SkinIssue(
+                    key, SkinIssue.Kind.FIELD_FALLBACK,
+                    "floating_keyboard_window_geometry_invalid",
+                )
+                return FloatingKeyboardGeometry()
+            }
+            return FloatingKeyboardGeometry(widthRatio, centerX).clamped()
+        }
+        val floatingKeyboardWindow = FloatingKeyboardWindowStyle(
+            enabled = floatingKeyboardEnabled,
+            portrait = parseFloatingGeometry("floatingKeyboardWindowPortrait"),
+            landscape = parseFloatingGeometry("floatingKeyboardWindowLandscape"),
+        )
+
         // ---- 滑动阈值（2026-10-28 截图 6 项） ----
         // 严格数值 + 区间校验，非法记 FIELD_FALLBACK 并视为未指定。
         var swipeThresholdDp: Float? = null
@@ -1358,6 +1402,7 @@ object SkinValidator {
                 swipeThresholdDp = swipeThresholdDp,
                 candidateRadiusDp = candidateRadiusDp,
                 floatingCandidate = floatingCandidate,
+                floatingKeyboardWindow = floatingKeyboardWindow,
                 predictionCloseBg = predictionCloseBg,
                 predictionCloseRadiusDp = predictionCloseRadiusDp,
                 toolbar = toolbarSpec,

@@ -99,6 +99,17 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
     var ignoreInsets by remember {
         mutableStateOf(KeyboardManager.Keyboard.getIgnoreInsets(context))
     }
+    // 悬浮键盘（WO52 1.7）：与皮肤键 floatingKeyboardWindowEnabled
+    // 同值（偏好覆写优先，未覆写取皮肤键）；翻转写回偏好覆写。
+    var floatingKeyboardEnabled by remember {
+        mutableStateOf(
+            com.jobeen.ime.input.keyboard.window.FloatingKeyboardPrefs.effectiveEnabled(
+                context,
+                com.jobeen.ime.skin.runtime.SkinSnapshotProvider.peek()
+                    ?.floatingKeyboardWindow?.enabled == true,
+            ),
+        )
+    }
     var keyRadius by remember {
         mutableFloatStateOf(KeyboardManager.Keyboard.KeyRadius.getDp(context).toFloat())
     }
@@ -612,6 +623,15 @@ fun KeyboardSettingsScreen(onBack: () -> Unit) {
                                 onCheckedChange = {
                                     ignoreInsets = it
                                     KeyboardManager.Keyboard.setIgnoreInsets(context, it)
+                                },
+                            )
+                            SwitchRow(
+                                title = stringResource(R.string.floating_keyboard_title),
+                                checked = floatingKeyboardEnabled,
+                                onCheckedChange = {
+                                    floatingKeyboardEnabled = it
+                                    com.jobeen.ime.input.keyboard.window.FloatingKeyboardPrefs
+                                        .setEnabledOverride(context, it)
                                 },
                             )
                         }

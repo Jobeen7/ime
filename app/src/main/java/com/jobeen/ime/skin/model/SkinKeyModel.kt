@@ -154,6 +154,14 @@ enum class WhitelistAction(
      */
     HASH_RIME_DEPLOY("#rimeDeploy", ValueRule.FORBIDDEN),
     HASH_RIME_SYNC("#rimeSync", ValueRule.FORBIDDEN),
+    /**
+     * 悬浮键盘开关（WO52 1.7）：#floatingKeyboardWindowStateToggle
+     * 挂白名单；读皮肤键取反写回（见 FloatingKeyboardWindow）。
+     */
+    HASH_FLOATING_KEYBOARD_WINDOW_STATE_TOGGLE(
+        "#floatingKeyboardWindowStateToggle",
+        ValueRule.FORBIDDEN,
+    ),
     HASH_TOGGLE_EMBEDDED_INPUT("#toggleEmbeddedInputMode", ValueRule.FORBIDDEN),
     /**
      * 脚本视图切换（脚本接线波次）：Jime 侧 # 名（沿 # 快捷指令

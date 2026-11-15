@@ -157,6 +157,7 @@ fun catalogRows(): List<CatalogRow> = listOf(
     CatalogRow(R.string.horizontal_padding, "keyboard", R.string.keyboard_layout, R.string.keyboard_layout),
     CatalogRow(R.string.bottom_padding, "keyboard", R.string.keyboard_layout, R.string.keyboard_layout),
     CatalogRow(R.string.ignore_system_insets, "keyboard", R.string.keyboard_layout, R.string.keyboard_layout),
+    CatalogRow(R.string.floating_keyboard_title, "keyboard", R.string.keyboard_layout, R.string.keyboard_layout),
     CatalogRow(R.string.symbol_pairing, "keyboard", R.string.kb_cat_behavior, R.string.kb_cat_behavior),
     // 候选：内容组／窗口组。
     CatalogRow(R.string.model_prediction_enable, "candidates", R.string.candidate_content),
