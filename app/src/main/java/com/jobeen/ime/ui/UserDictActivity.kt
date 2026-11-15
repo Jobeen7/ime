@@ -12,6 +12,10 @@ import com.jobeen.ime.base.util.ToastUtil
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.daemon.RimeSession
+import com.jobeen.ime.engine.rime.data.userdict.RemoteTransferEvents
+import com.jobeen.ime.engine.rime.data.userdict.RemoteTransferKind
+import com.jobeen.ime.engine.rime.data.userdict.RemoteTransferService
+import com.jobeen.ime.engine.rime.data.userdict.RemoteTransferStatus
 import com.jobeen.ime.engine.rime.data.userdict.UserDictManager
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncPrefs
@@ -67,6 +71,63 @@ class UserDictActivity : ImeActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         loadDictList()
+        observeRemoteTransfer()
+    }
+
+    /**
+     * 订阅手动传输结果（WO52 4.5）：上传／下载改走前台服务，
+     * 结果经 RemoteTransferEvents 回传；终端态只消费一次
+     * （consumeIfNewTerminal 防旋转重建后重复弹 Toast），
+     * Toast／失败提示口径与原来直调 WebDavSync 时一致。
+     */
+    private fun observeRemoteTransfer() {
+        lifecycleScope.launch {
+            RemoteTransferEvents.state.collect { state ->
+                val done = state ?: return@collect
+                // 过期终端态（发出超过 60 秒，多半是上次打开本页
+                // 时留下的）不再弹结果，只消费新鲜的一次。
+                if (System.currentTimeMillis() - done.postedAtMs > 60_000L) return@collect
+                if (!RemoteTransferEvents.consumeIfNewTerminal(done)) return@collect
+                setIdle()
+                when (done.kind) {
+                    RemoteTransferKind.UPLOAD -> {
+                        uiState.lastUpload = UserDictPrefs.lastUploadTime
+                        if (done.status == RemoteTransferStatus.SUCCESS) {
+                            ToastUtil.showToast(
+                                getString(
+                                    R.string.user_dict_uploaded_count,
+                                    done.count ?: 0,
+                                    WebDavSync.remoteFileName(done.dict),
+                                ),
+                            )
+                        } else {
+                            showNotice(
+                                getString(R.string.user_dict_op_failed_title),
+                                done.error ?: "",
+                            )
+                        }
+                    }
+                    RemoteTransferKind.DOWNLOAD -> {
+                        uiState.lastDownload = UserDictPrefs.lastDownloadTime
+                        if (done.status == RemoteTransferStatus.SUCCESS) {
+                            val count = done.count ?: 0
+                            ToastUtil.showToast(
+                                if (count == 0) {
+                                    getString(R.string.user_dict_no_words_in_file)
+                                } else {
+                                    getString(R.string.user_dict_downloaded_imported, count)
+                                },
+                            )
+                        } else {
+                            showNotice(
+                                getString(R.string.user_dict_op_failed_title),
+                                done.error ?: "",
+                            )
+                        }
+                    }
+                }
+            }
+        }
     }
 
     @Composable
@@ -309,26 +370,10 @@ class UserDictActivity : ImeActivity() {
             ToastUtil.showToast(getString(R.string.user_dict_not_configured))
             return
         }
-        val s = session ?: run {
-            ToastUtil.showToast(getString(R.string.user_dict_service_not_ready))
-            return
-        }
+        // WO52 4.5：上传走前台服务；结果经 RemoteTransferEvents
+        // 回 observeRemoteTransfer，Toast 口径不变。
         setBusy(getString(R.string.user_dict_uploading))
-        lifecycleScope.launch {
-            val result = WebDavSync.upload(dict, s)
-            setIdle()
-            uiState.lastUpload = UserDictPrefs.lastUploadTime
-            result
-                .onSuccess { count ->
-                    ToastUtil.showToast(getString(R.string.user_dict_uploaded_count, count, WebDavSync.remoteFileName(dict)))
-                }
-                .onFailure {
-                    // 取消不是失败（S-M1）：不报失败提示。
-                    if (DeepErrorMapper.isCancellation(it)) return@onFailure
-                    Timber.w(it, "WebDAV upload failed")
-                    showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
-                }
-        }
+        RemoteTransferService.startUpload(this, dict)
     }
 
     private fun doDownload() {
@@ -458,28 +503,10 @@ class UserDictActivity : ImeActivity() {
     }
 
     private fun doDownloadFile(dict: String, remoteFile: String) {
-        val s = session ?: run {
-            ToastUtil.showToast(getString(R.string.user_dict_service_not_ready))
-            return
-        }
+        // WO52 4.5：下载走前台服务；结果经 RemoteTransferEvents
+        // 回 observeRemoteTransfer，Toast 口径不变。
         setBusy(getString(R.string.user_dict_downloading_from, remoteFile))
-        lifecycleScope.launch {
-            val result = WebDavSync.download(dict, s, remoteFile)
-            setIdle()
-            uiState.lastDownload = UserDictPrefs.lastDownloadTime
-            result
-                .onSuccess { count ->
-                    ToastUtil.showToast(
-                        if (count == 0) getString(R.string.user_dict_no_words_in_file) else getString(R.string.user_dict_downloaded_imported, count)
-                    )
-                }
-                .onFailure {
-                    // 取消不是失败（S-M1）：不报失败提示。
-                    if (DeepErrorMapper.isCancellation(it)) return@onFailure
-                    Timber.w(it, "WebDAV download failed")
-                    showNotice(getString(R.string.user_dict_op_failed_title), DeepErrorMapper.userMessage(this@UserDictActivity, it))
-                }
-        }
+        RemoteTransferService.startDownload(this, dict, remoteFile)
     }
 
     private fun setBusy(message: String) {

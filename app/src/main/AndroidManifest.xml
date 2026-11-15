@@ -332,6 +332,11 @@
             android:name=".engine.rime.data.userdict.PeriodicSyncJobService"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
+            android:name=".engine.rime.data.userdict.RemoteTransferService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>
