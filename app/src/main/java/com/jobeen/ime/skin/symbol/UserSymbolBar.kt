@@ -13,7 +13,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 /**
- * 用户自定义常用符号栏（施工单 10 H2-5，CyIME R11；2026-11-12 符号栏重做）：
+ * 用户自定义常用符号栏（施工单 10 H2-5，对端 R11；2026-11-12 符号栏重做）：
  *
  * - 皮肤 SymbolBar 只有皮肤定义、无用户自定义入口；本栏是用户级
  *   覆盖：用户自填常用符号列，存在偏好里，不碰皮肤文件。

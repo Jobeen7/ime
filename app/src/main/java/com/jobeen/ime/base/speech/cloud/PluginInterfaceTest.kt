@@ -11,7 +11,7 @@ import javax.net.ssl.SSLSocketFactory
 import kotlinx.coroutines.CancellationException
 
 /**
- * 插件接口测试（CyIME H9 对口：设置里填好接口就能直接点测试）。
+ * 插件接口测试（对端 H9 对口：设置里填好接口就能直接点测试）。
  *
  * 宿主侧探针，不跑插件脚本：不触脚本预算、不占会话、不需麦克风、不读密钥值。
  * 只验证接口地址可达（域名解析＋TCP＋TLS 握手到声明域名的 443 端口），

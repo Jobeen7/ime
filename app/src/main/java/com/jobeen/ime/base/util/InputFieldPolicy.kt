@@ -73,7 +73,7 @@ object InputFieldPolicy {
      * 标识字段，与密码框一样豁免新窗口复位（WO30 §4）。
      * 只认 EditorInfo 声明的账号类 variation：普通文本（NORMAL）
      * 无法与一般文本框区分，不豁免；邮寄地址／邮件主题／消息类
-     * 不是账号标识，不豁免。对端参照：CyIME 的 address_fields_english
+     * 不是账号标识，不豁免。对端参照：address_fields_english
      * 把网址与邮箱归为一组自动切英文。
      */
     internal fun isAccountField(inputType: Int): Boolean {

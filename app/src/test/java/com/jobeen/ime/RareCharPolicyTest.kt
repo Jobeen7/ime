@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 生僻字开关＋排序（施工单 10 H2-12，CyIME R2＋D17）：
+ * 生僻字开关＋排序（施工单 10 H2-12，对端 R2＋D17）：
  * 纯函数策略单测。事实锚点：佢／嘅／咗在万象 Lite 单字表里没有，
  * 冇只有 mao 读音——D17 的四个字须由开关补，不能只靠提位。
  */

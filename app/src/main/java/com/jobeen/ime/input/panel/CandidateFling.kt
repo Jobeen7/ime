@@ -5,11 +5,11 @@ import kotlin.math.exp
 import kotlin.math.ln
 
 /**
- * 候选甩动减速（施工单 10 H2-10，CyIME 1.15.63 D24 原文：
+ * 候选甩动减速（施工单 10 H2-10，对端 1.15.63 D24 原文：
  * 「候选栏和展开候选甩动后更快停下；去掉横滑的边缘回弹」，
  * 源码 ui/keyboard/CandidateFling.kt）。
  *
- * CyIME 的做法：样条减速的摩擦乘 4 倍（CANDIDATE_FLING_FRICTION = 4f），
+ * 对端的做法：样条减速的摩擦乘 4 倍（CANDIDATE_FLING_FRICTION = 4f），
  * 同样一甩，停下用的时间和滑过的距离都只剩约 36%（4^-0.736，
  * 系统样条减速的距离、时长都跟摩擦的 -0.736 次方成正比）。
  * Jime 是 View 体系，没有 Compose 的 splineBasedDecay；等价点是
@@ -27,11 +27,11 @@ import kotlin.math.ln
  * - GridKeyboardView／SidePanelView／ClipboardView／PreeditPinnerView
  *   的 OverScroller 不是候选区，不动。
  *
- * 手感是固定倍率（与 CyIME 同款常量），未做成设置项滑杆：
- * CyIME 原文也没有用户可调开关。
+ * 手感是固定倍率（与对端同款常量），未做成设置项滑杆：
+ * 对端原文也没有用户可调开关。
  */
 object CandidateFlingPolicy {
-    /** CyIME 同款倍数。 */
+    /** 对端同款倍数。 */
     const val FRICTION_MULTIPLIER = 4f
 
     /** Android ViewConfiguration.getScrollFriction() 的默认值。 */

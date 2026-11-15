@@ -13,12 +13,12 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.put
 
 /**
- * 26 键字母键角标符号（施工单 10 H2-14，CyIME D25/H3「按键符号设置页重做」）：
+ * 26 键字母键角标符号（施工单 10 H2-14，对端 D25/H3「按键符号设置页重做」）：
  *
  * - 出厂 26 键每个字母键右上角一个标点符号（AltText 角标），长按提交它；
- *   本页让用户逐键改这个角标符号（CyIME 的 QwertySymbolEditor 同款：
+ *   本页让用户逐键改这个角标符号（对端的 QwertySymbolEditor 同款：
  *   键盘式预览、点键改、改完即保存、无保存按钮、恢复默认收在页内）。
- * - 只存与出厂不同的位置（CyIME 同口径）；改回出厂值即删覆盖。
+ * - 只存与出厂不同的位置（对端同口径）；改回出厂值即删覆盖。
  * - 生效：QwertyKeyboard.effectiveLayout 在皮肤覆写装配前套用覆盖
  *   （copyWith 无皮肤写入时保留 AltText 与 LongPress 槽，故用户覆盖
  *   优先于皮肤文件、劣后于皮肤显式 subLabel/longPress）；服务侧偏好

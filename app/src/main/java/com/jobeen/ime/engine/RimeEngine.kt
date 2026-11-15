@@ -982,7 +982,7 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         // 上屏顺序错乱（如「你好」未落、空格先行）
                         emitCommit(" ")
                         // 邮箱后缀续打被空格打断：直送空格不触发预测复核，
-                        // 列表不会自动收起，这里直接收起（与 CyIME
+                        // 列表不会自动收起，这里直接收起（与对端
                         // 「对不上就收起」同口径；空帧被
                         // suppressNextEmptyCandidates 残留吞掉时迟一轮
                         // 收起，选词侧 completion-null 兜底不误提交）

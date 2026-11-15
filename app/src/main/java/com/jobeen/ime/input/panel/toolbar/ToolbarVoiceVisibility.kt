@@ -8,7 +8,7 @@ import com.jobeen.ime.input.panel.PanelAction
 import java.io.File
 
 /**
- * 工具栏／菜单语音入口可见性（施工单 10 H2-13，CyIME D22/F7）：
+ * 工具栏／菜单语音入口可见性（施工单 10 H2-13，对端 D22/F7）：
  * 语音总开关关闭时，语音入口（[PanelAction.ToggleVoice]）隐藏；
  * 其余动作一律可见。纯函数，供 JVM 测试与渲染器／菜单共用。
  *

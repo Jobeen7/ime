@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * 语音总开关关闭时语音入口隐藏（H2-13，CyIME D22/F7）：
+ * 语音总开关关闭时语音入口隐藏（H2-13，对端 D22/F7）：
  * 工具栏池钮与菜单格共用同一纯判定；渲染器实例化依赖 Android
  * Paint，JVM 单测只覆盖纯函数，绘制／命中接线以编译＋真机为准
  * （与 ToolbarRendererHiddenTest 同口径）。

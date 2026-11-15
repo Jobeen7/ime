@@ -7,7 +7,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Test
 
 /**
- * 设置页图例（CyIME D23）：白底白键守卫与图例样式解析。
+ * 设置页图例（对端 D23）：白底白键守卫与图例样式解析。
  * 键面色与键盘底色相同时推开一档，保证浅色主题下白键可见；
  * 三类键面色（普通／功能／回车）全部过守卫。
  */

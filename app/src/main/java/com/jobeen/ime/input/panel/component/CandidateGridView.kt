@@ -404,7 +404,7 @@ class CandidateGridView(
         private var visibleRows = 0
         private val scroller = OverScroller(context).apply {
             // 施工单 10 H2-10：展开候选甩动摩擦 ×4，同一下甩更快停下
-            // （CandidateFlingPolicy，CyIME D24 同款倍数）。
+            // （CandidateFlingPolicy，对端 D24 同款倍数）。
             setFriction(CandidateFlingPolicy.candidateFriction())
         }
         private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop

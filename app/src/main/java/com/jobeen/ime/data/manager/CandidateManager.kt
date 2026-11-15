@@ -42,7 +42,7 @@ object CandidateManager {
             .getBoolean(KEY_EMAIL_SUFFIX_ENABLED, true)
     }
 
-    /** 生僻字开关（默认开）：开时显示扩展区生僻字，并按 D17 把粤语常用字佢／嘅／咗／冇补到第一、二页；关时扩展区生僻字不进候选栏。默认开 = 保持旧行为（此前无开关，生僻字有字形即显示）；CyIME 的默认关不照搬——CyIME 主词库本无生僻字、开关是补字，Jime 的万象词库已有生僻字、开关是显隐，默认关会拿掉用户现在能打的字。 */
+    /** 生僻字开关（默认开）：开时显示扩展区生僻字，并按 D17 把粤语常用字佢／嘅／咗／冇补到第一、二页；关时扩展区生僻字不进候选栏。默认开 = 保持旧行为（此前无开关，生僻字有字形即显示）；对端的默认关不照搬——对端主词库本无生僻字、开关是补字，Jime 的万象词库已有生僻字、开关是显隐，默认关会拿掉用户现在能打的字。 */
     fun isRareCharactersEnabled(context: Context): Boolean {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
             .getBoolean(KEY_RARE_CHARACTERS_ENABLED, true)
@@ -409,12 +409,12 @@ object CandidateSpacingPolicy {
 }
 
 /**
- * 生僻字策略（纯函数，可单测；CyIME R2＋D17 的 Jime 版）：
+ * 生僻字策略（纯函数，可单测；对端 R2＋D17 的 Jime 版）：
  *
  * - R2 开关：万象词库本就有生僻字（扩展区字权重 1、在表深处），Jime
  *   此前只滤无字形者（反向过滤）。开关关时扩展区单字一律不进候选栏。
  * - D17 排序：粤语常用字佢／嘅／咗／冇在万象词库单字表里没有（冇只
- *   有 mao 读音），开关开着时按读音补到第 10 位（CyIME「约第 10–14
+ *   有 mao 读音），开关开着时按读音补到第 10 位（对端「约第 10–14
  *   个」的起点）；只在打满一个完整音节时补，多音节／简拼／模糊不补。
  *   26 键按解析出的音节补；九宫格未解析数字码按 T9 数字码表补、读音
  *   写进注释（数字可对多个音节），左栏选定音节后按音节补。
@@ -422,7 +422,7 @@ object CandidateSpacingPolicy {
  *   点选走文本上屏、不进 Rime 选词（见 selectCandidateInternal）。
  */
 object RareCharPolicy {
-    /** 粤语常用字：读音 → 字（CyIME A17 的 COMMON 表）。 */
+    /** 粤语常用字：读音 → 字（对端 A17 的 COMMON 表）。 */
     val COMMON_BY_SYLLABLE: Map<String, String> = mapOf(
         "qu" to "佢",
         "ge" to "嘅",
@@ -438,7 +438,7 @@ object RareCharPolicy {
         "668" to "mou",
     )
 
-    /** 补字目标位（0-based）：第 10 位，CyIME「约第 10–14 个」的起点。 */
+    /** 补字目标位（0-based）：第 10 位，对端「约第 10–14 个」的起点。 */
     const val TARGET_INDEX = 9
 
     /** 生僻字判定：单个扩展区汉字（扩展 A–H）。不能只判码点 ≥ U+3400——那会把常用汉字（U+4E00 起）、韩文音节、emoji 一并判成生僻字。 */

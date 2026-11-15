@@ -37,7 +37,7 @@ import com.jobeen.ime.skin.runtime.SkinColorMode
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 /**
- * 设置页图例（CyIME D23）：按键设置 → 按键显示页顶部的迷你键盘图例。
+ * 设置页图例（对端 D23）：按键设置 → 按键显示页顶部的迷你键盘图例。
  *
  * 图例按真实键盘配色画：底板取键盘底色、键面取键背景色，浅色
  * 主题下白键落在键盘底色上，不再是白底白键；键面色与底色

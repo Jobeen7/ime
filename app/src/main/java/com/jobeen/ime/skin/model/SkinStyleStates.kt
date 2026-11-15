@@ -29,7 +29,7 @@ import kotlin.math.roundToInt
  *   （系统图标是代码内 Material 常量，不属皮肤槽），故为空表
  *   ——空表是审计结论，不是缺槽待补（为 system 编造槽名会
  *   让皮肤写出渲染层不认的字段）。
- * - 逐键宽度覆盖（对方 CyIME widths 的 Jime 形）：只存差量
+ * - 逐键宽度覆盖（对端 widths 的 Jime 形）：只存差量
  *   （factor），同行按比例缩放，落地换算为 Jime 行和 = 1.0 的
  *   percentWidths 语义并校验行和；编辑器侧属父代理所有，本批
  *   只做运行侧接纳与测试（与 KeyOverrideApplier 的

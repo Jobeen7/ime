@@ -36,7 +36,7 @@ import com.jobeen.ime.skin.symbol.SharedPrefsKeySymbolStore
 import com.jobeen.ime.ui.screen.ScreenComponent.SettingsGroup
 
 /**
- * 按键符号设置页（施工单 10 H2-14，CyIME D25/H3）：
+ * 按键符号设置页（施工单 10 H2-14，对端 D25/H3）：
  *
  * - 迷你键盘预览（与出厂 26 键三行一致）：点按一键弹框改它的角标符号，
  *   改完即写偏好，无保存按钮；已改的键描边标出。
