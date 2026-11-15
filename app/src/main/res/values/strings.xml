@@ -5,7 +5,6 @@
     <string name="done">done</string>
 
 
-    <string name="key_feedback">按键设置</string>
     <string name="key_sound">启用按键音</string>
     <string name="key_vibration">点击时振动</string>
     <string name="key_vibration_follow_system">跟随系统振动</string>
@@ -18,7 +17,6 @@
     <string name="key_y_gap">Y轴间隔</string>
     <string name="key_ripple_effect">水波纹特效</string>
     <string name="key_corner_radius">按键圆角</string>
-    <string name="key_border">隐藏键边框</string>
     <string name="key_border_show">绘制按键边框</string>
     <string name="expand_border">绘制展开键边框</string>
     <!-- 键盘设置内部分类（2026-10-29 批量第 3 项） -->
@@ -181,38 +179,14 @@
     <string name="enter_settings">进入设置</string>
 
     <!-- Keyboard Settings -->
-    <string name="input_settings">方案布局</string>
     <string name="keyboard_settings">键盘布局</string>
-    <string name="keyboard_settings_desc">按键设置、按键布局</string>
     <string name="horizontal_padding">两侧边距</string>
     <string name="bottom_padding">底部边距</string>
     <string name="ignore_system_insets">忽略系统边衬区</string>
     <string name="keyboard_theme">键盘皮肤</string>
-    <string name="keyboard_theme_setting">主题设置</string>
     <string name="custom_theme_marker">用户自定义主题</string>
-    <string name="keyboard_theme_desc">主题设置、分享、导入</string>
     <string name="keyboard_theme_follow_system">跟随系统</string>
     <string name="builtin_theme_default">默认</string>
-    <string name="skin_follow_system_note">自定义皮肤生效中：开关控制皮肤浅/深色板（开=跟随系统，关=固定当前浅/深色）</string>
-    <string name="keyboard_theme_light">浅色模式主题</string>
-    <string name="keyboard_theme_dark">深色模式主题</string>
-    <string name="keyboard_theme_scan">扫码</string>
-    <string name="keyboard_theme_refresh">刷新</string>
-    <string name="keyboard_theme_share">分享</string>
-    <string name="keyboard_theme_export_title">选择要导出的主题</string>
-    <string name="keyboard_theme_export_empty">暂无用户主题，请先导入后再导出</string>
-    <string name="keyboard_theme_overwrite_title">用户主题已满，选择要覆盖的主题</string>
-    <string name="keyboard_theme_overwrite_empty">暂无可覆盖的用户主题</string>
-    <string name="keyboard_theme_overwrite_need">用户主题已满，请选择要覆盖的主题</string>
-    <string name="keyboard_theme_scan_prompt">将二维码放入框内，即可自动扫描导入键盘皮肤</string>
-    <string name="keyboard_theme_share_title">键盘皮肤二维码</string>
-    <string name="keyboard_theme_share_subtitle">用另一台设备扫码即可导入该主题</string>
-    <string name="keyboard_theme_share_text">键盘皮肤：%1$s\n主题码：%2$s</string>
-    <string name="keyboard_theme_copy_code">复制主题码</string>
-    <string name="keyboard_theme_copied">主题码已复制</string>
-    <string name="keyboard_theme_refreshed">主题已刷新</string>
-    <string name="keyboard_theme_imported">已导入主题：%1$s</string>
-    <string name="keyboard_theme_invalid_qr">无效的主题二维码</string>
 
     <!-- Main settings regrouping: search + group cards + subtitles -->
     <string name="main_group_input_candidate">输入与候选</string>
@@ -227,7 +201,6 @@
     <string name="main_group_data_backup_desc">词典、备份与文件</string>
     <string name="main_group_advanced_about">关于我们</string>
     <string name="main_search_hint">搜索设置</string>
-    <string name="main_search_example">键盘、候选、皮肤、词典、备份…</string>
     <string name="main_search_empty">没有匹配的设置</string>
     <string name="main_settings_header">设置</string>
     <string name="main_search_empty_hint">换个关键词试试</string>
@@ -300,12 +273,9 @@
     <string name="fab_sync_failed">同步失败</string>
     <string name="fab_sync_not_configured">请先到用户词典页填写 WebDAV 配置</string>
     <string name="fab_sync_engine_not_ready">词典服务未就绪，请稍后重试</string>
-    <string name="schema_settings_desc">启用方案、可选方案</string>
     <!-- 第一期方案切换：列表编辑 / 切换横幅 -->
     <string name="schema_menu_more">更多操作</string>
     <string name="schema_enabled_only_footnote">此处仅显示当前已启用的方案。如需增删或排序，请点击右上角“…”→“方案列表编辑”。</string>
-    <string name="schema_source_builtin">内置</string>
-    <string name="schema_source_user">用户</string>
     <string name="schema_list_edit">方案列表编辑</string>
     <!-- 多目录：方案目录切换 / 管理页全部方案区 / 部署进度 -->
     <string name="schema_dir_switch">方案目录切换</string>
@@ -323,38 +293,23 @@
     <string name="schema_manage_deploying">方案部署中…</string>
     <string name="schema_manage_deploy_failed">部署失败，已恢复原顺序</string>
     <string name="schema_deploy_timeout">部署超时，已回退，稍后可重试</string>
-    <string name="schema_import_replace_dir">已存在同名目录，将替换为新包内容，输入历史与手动配置会被保留</string>
     <string name="schema_dir_migration_failed">方案目录迁移失败</string>
     <!-- 方案列表管理页：勾选卡 + 保存 pill + 拖拽卡 -->
     <string name="schema_manage_selected">已选方案</string>
     <string name="schema_manage_save">保存</string>
     <string name="schema_manage_footnote">取消勾选当前方案后，首位方案接任当前；至少保留一个方案。</string>
-    <string name="schema_switching">正在切换…</string>
-    <string name="schema_deploying">正在部署…（部署期间请勿切换）</string>
-    <string name="schema_deploy_stranded">部署已结束，但方案表为空</string>
-    <string name="schema_rolling_back">正在回退到上一方案…</string>
-    <string name="schema_switch_failed">切换失败</string>
-    <string name="schema_rolled_back">切换失败，已回退到上一方案</string>
     <string name="schema_switch_retry">重试</string>
     <string name="schema_banner_close">关闭</string>
     <string name="init_timeout_title">初始化超时</string>
     <string name="init_timeout_message">初始化没有在预期时间内完成，可能是仍在后台进行，也可能是已经失败。</string>
     <!-- 第二期本地导入：菜单 / 校验结果页 / 安装确认 / 错误 -->
     <string name="schema_import">导入方案</string>
-    <string name="schema_import_validating">正在校验方案包…</string>
     <string name="schema_import_installing">正在安装…</string>
-    <string name="schema_import_summary_schemes">包内方案 %1$d 个</string>
-    <string name="schema_import_summary_replace">将被替换：%1$d 个文件</string>
-    <string name="schema_import_summary_kept">将被保留</string>
-    <string name="schema_import_confirm">确认安装</string>
-    <string name="schema_import_cancel">取消</string>
     <string name="schema_import_error_copy">读取文件失败，请重试</string>
     <string name="schema_import_error_zip">不是有效的方案包 zip</string>
     <string name="schema_import_error_no_schema">包内没有方案文件（*.schema.yaml）</string>
     <string name="schema_import_error_too_large">方案包过大，超过上限</string>
-    <string name="schema_import_error_no_space">存储空间不足，无法导入</string>
     <string name="schema_import_error_install">安装失败，请重试</string>
-    <string name="schema_import_error_validate">校验失败，请重试</string>
     <string name="schema_import_error_invalid_package">方案包内容无效，请检查后重试</string>
     <string name="schema_import_error_io">存储读写失败，请检查空间后重试</string>
     <!-- 第三期远程下载：菜单 / 条目列表 / 表单 / 进度 / 错误 -->
@@ -380,15 +335,8 @@
     <string name="schema_download_error_http">下载失败（HTTP %1$d）</string>
     <string name="schema_download_error_redirect">服务器要求跳转到非加密地址，已拒绝</string>
     <string name="schema_download_error_incomplete">下载不完整，请重试</string>
-    <string name="schema_source_url">URL</string>
-    <string name="remove">移除</string>
-    <string name="add">添加</string>
-    <string name="drag_to_reorder">长按拖动排序</string>
-    <string name="extended_features">组件功能</string>
     <string name="clipboard_manager">剪切板</string>
-    <string name="clipboard_manager_desc">云同步、历史记录</string>
 
-    <string name="about">关于</string>
     <string name="about_us">关于我们</string>
     <!-- 诊断与复位卡 -->
     <string name="about_diag_export">导出诊断日志</string>
@@ -404,7 +352,6 @@
     <string name="rime_sync">同步</string>
     <string name="rime_sync_running">同步中…</string>
     <string name="rime_reset">方案重置</string>
-    <string name="rime_manage">方案列表管理</string>
     <string name="rime_notice">键盘显示 RIME 通知</string>
     <string name="rime_notice_desc">部署/同步完成后，下次打开键盘时在键盘区提示一次。关闭后不再提示。</string>
     <string name="rime_sync_folder">同步文件夹</string>
@@ -413,7 +360,6 @@
     <string name="rime_sync_folder_edit_title">编辑同步文件夹</string>
     <string name="rime_sync_cleanup_orphans">清理旧同步残留</string>
     <string name="rime_sync_cleanup_empty">远端同步文件夹根下没有残留文件</string>
-    <string name="rime_sync_cleanup_failed">列出远端文件失败</string>
     <string name="rime_sync_cleanup_confirm">远端同步文件夹根下有 %1$d 个文件、%2$d 个文件夹。确认只删除这 %1$d 个文件吗？文件夹不会被删除。</string>
     <string name="rime_sync_cleanup_done">已删除 %1$d 个文件，跳过 %2$d 个文件夹</string>
     <string name="rime_sync_cleanup_failed_count">，%1$d 个删除失败</string>
@@ -428,12 +374,8 @@
     <string name="about_reset_confirm">确认重置</string>
     <string name="about_reset_busy">正在重置…</string>
     <string name="about_reset_failed">重置失败，请重试</string>
-    <string name="about_us_desc">应用信息、版本更新</string>
-    <string name="about_app_info">应用信息</string>
-    <string name="about_description">应用简介</string>
     <string name="about_description_text">Jime 是一款简洁、高效的智能拼音输入法，支持多种输入方案，致力于提供流畅舒适的输入体验。</string>
     <string name="check_update">检查更新</string>
-    <string name="current_version">当前版本 v%1$s</string>
     <string name="checking_update">检查中</string>
     <string name="update_available">发现新版本</string>
     <string name="update_latest">当前已是最新版本</string>
@@ -443,16 +385,12 @@
     <string name="update_package_size">安装包 %1$s</string>
     <string name="update_download_install">下载并安装</string>
     <string name="update_cancel_download">取消下载</string>
-    <string name="update_later">稍后再说</string>
     <string name="update_downloading">正在下载… %1$d%%</string>
     <string name="update_download_failed">下载失败，请稍后重试</string>
     <string name="update_install_now">立即安装</string>
     <string name="update_need_permission">需要先开启「允许安装未知应用」，开启后回来点「立即安装」</string>
-    <string name="update_file_invalid">安装包校验失败，请重新下载</string>
     <string name="debug_update_unsupported">调试版不支持应用内更新</string>
     <string name="open_source_licenses">开源许可</string>
-    <string name="open_source_licenses_desc">第三方组件清单与许可证全文</string>
-    <string name="view_licenses">查看</string>
     <string name="licenses_index">第三方组件与许可证</string>
     <string name="app_logs">运行日志</string>
     <string name="copy_logs">复制日志</string>
@@ -463,14 +401,12 @@
     <string name="clipboard_history">历史记录</string>
     <string name="clipboard_max_entries">记录数量上限</string>
     <string name="clipboard_retention_days">保留天数</string>
-    <string name="schema_model">模型管理</string>
     <string name="schema_model_grammar">语法模型</string>
     <string name="schema_grammar_model_desc">启用语法模型以提升整句输入准确率</string>
     <string name="schema_grammar_model_ready">已就绪</string>
     <string name="schema_grammar_model_failed">下载失败，请重试</string>
     <string name="schema_grammar_model_unavailable">当前方案未配置语法模型</string>
     <string name="schema_update_title">方案更新</string>
-    <string name="schema_update_desc">检查词库与语法模型的在线更新</string>
     <string name="schema_update_check">检查更新</string>
     <string name="schema_update_busy">方案更新进行中，请稍后再试</string>
     <string name="schema_update_checking">检查中…</string>
@@ -496,9 +432,6 @@
     <string name="schema_update_deploying">正在重新部署…</string>
     <string name="schema_update_success">更新完成，已重新部署</string>
     <string name="schema_update_failed">更新失败，请重试</string>
-    <string name="schema_update_builtin">内置版本</string>
-    <string name="schema_update_target">更新目标</string>
-    <string name="schema_update_target_shared">共享词库（内置）</string>
     <string name="schema_update_no_source">该目录无官方更新源，不自动检查</string>
     <string name="schema_update_pro_unsupported">Pro 变体辅助码类型无法从目录推断，暂不支持自动更新</string>
 
@@ -516,10 +449,8 @@
     <string name="paste">粘贴</string>
     <string name="newline">换行</string>
     <string name="backspace">删除</string>
-    <string name="clipboard">剪切板</string>
 
     <!-- Clipboard Panel -->
-    <string name="clipboard_clear">清空</string>
     <string name="clipboard_empty">剪切板暂无记录</string>
     <string name="clipboard_clear_confirm_title">确定要清空吗？</string>
     <string name="clipboard_delete_confirm">确定要删除 \"%1$s\" 吗？</string>
@@ -538,7 +469,6 @@
     <string name="clipboard_edit_save">保存</string>
     <string name="clipboard_multi_select">多选</string>
     <string name="clipboard_selected_count">已选 %1$d 项</string>
-    <string name="clipboard_select_none">未选择记录</string>
     <string name="clipboard_reorder">排序</string>
     <string name="clipboard_reorder_hint">拖动条目调整顺序</string>
     <string name="clipboard_reorder_done">完成</string>
@@ -684,7 +614,6 @@
     <string name="menu_settings">设置</string>
     <string name="menu_schema">方案管理</string>
     <string name="schema_files">文件管理</string>
-    <string name="schema_files_desc">浏览、管理文件</string>
     <string name="menu_theme">主题设置</string>
     <string name="menu_about">关于</string>
     <string name="menu_performance">性能</string>
@@ -705,25 +634,18 @@
     <string name="menu_emoji_input">表情输入</string>
     <string name="menu_ascii_mode">英文输入</string>
     <string name="prediction_candidates">候选词</string>
-    <string name="prediction_candidates_desc">候选词预测、模型增强、候选词布局</string>
     <string name="voice_settings">语音输入</string>
     <string name="voice_preferred_input">首选语音输入法</string>
-    <string name="voice_preferred_unset">未设置</string>
     <string name="voice_local_model">本地语音模型</string>
     <string name="voice_js_plugins">JS语音插件</string>
     <string name="voice_dialog_group_local">本地离线</string>
-    <string name="voice_settings_desc">语音识别模型</string>
     <string name="voice_model_group">语音识别模型</string>
     <string name="voice_recognition_model">识别模型</string>
     <string name="voice_model_ready">已就绪</string>
     <string name="voice_model_not_ready">未下载，请先下载模型</string>
-    <string name="voice_model_download_start">模型下载功能即将上线</string>
-    <string name="voice_model_downloading">正在下载 %1$d/%2$d</string>
     <string name="voice_model_download_failed">下载失败，请重试</string>
-    <string name="voice_correction_clear">清除</string>
     <string name="voice_mic_grant">授予麦克风权限</string>
     <string name="voice_mic_on">麦克风权限已开启</string>
-    <string name="voice_mic_request">去授权</string>
     <string name="voice_input_enable">启用语音输入（长按空格说话）</string>
     <string name="voice_provider">识别服务商</string>
     <string name="voice_provider_local">本地离线模型</string>
@@ -741,11 +663,9 @@
     <string name="voice_tag_custom">自定义</string>
     <string name="cloud_voice_plugins">云端语音插件</string>
     <string name="cloud_voice_plugins_desc">可选的云端识别（默认离线）</string>
-    <string name="cloud_voice_open">打开</string>
 
     <string name="cloud_voice_opt_in">开启云端语音</string>
     <string name="cloud_voice_opt_in_desc">关闭时一律使用本机离线识别；开启后仍需选择插件并填写密钥才会走云端。</string>
-    <string name="cloud_voice_group">插件</string>
     <string name="cloud_voice_import">导入插件脚本</string>
     <string name="cloud_voice_no_plugins">尚未导入插件，可从上方导入脚本文件</string>
     <string name="cloud_voice_preferred">已选</string>
@@ -815,9 +735,7 @@
     <string name="cloud_voice_failed_fallback">云端语音失败，已切换本地继续录音</string>
     <string name="download">下载</string>
     <string name="downloading">下载中</string>
-    <string name="model_enhance">模型增强</string>
     <string name="model_rerank_enable">启用重排增强</string>
-    <string name="candidate_layout">候选词布局</string>
     <string name="candidate_show_index">显示序列号</string>
     <string name="candidate_show_comment">显示注释</string>
     <string name="candidate_swipe_paging">滑动翻页</string>
@@ -826,9 +744,6 @@
     <string name="candidate_inline_input_mode">内嵌输入模式</string>
     <string name="candidate_border">绘制候选词边框</string>
     <string name="menu_reload_engine">重启引擎</string>
-    <string name="menu_undo">撤销</string>
-    <string name="menu_redo">重做</string>
-    <string name="menu_deploy_sync">部署／同步</string>
     <string name="deploy_confirm_title">部署</string>
     <string name="deploy_confirm_message">部署将丢弃未提交的组字，是否继续？</string>
     <string name="deploy_confirm_continue">继续部署</string>
@@ -840,9 +755,7 @@
     <string name="empty_attribution_tag"/>
     <string name="attribution_label">键盘震动反馈</string>
     <string name="user_dict">用户词典</string>
-    <string name="user_dict_desc">导出导入、WebDAV 同步用户词</string>
     <string name="backup_restore">备份与还原</string>
-    <string name="backup_restore_desc">加密备份设置与数据、换机还原</string>
     <string name="backup_title">备份与还原</string>
     <string name="backup_intro">把全部设置、剪贴板历史、常用语、选词偏好与输入统计打包成一个加密文件（.jbk）；语音纠错与候选搭配学习记录不在备份内。备份口令经 20 万次迭代派生密钥后 AES-256 加密，口令不保存在任何地方，丢失口令将无法还原。</string>
     <string name="backup_create">创建加密备份</string>
@@ -893,7 +806,6 @@
     <string name="user_dict_restore">恢复</string>
     <string name="user_dict_deleted_words_restored">已恢复，下次同步后其他设备也会恢复</string>
     <string name="user_dict_test_connection">测试连接</string>
-    <string name="user_dict_error_title">操作失败</string>
     <string name="user_dict_dialog_close">关闭</string>
     <string name="user_dict_pick_remote">选择服务器上的备份文件</string>
     <string name="user_dict_remote_empty">服务器上没有备份文件</string>
@@ -924,11 +836,8 @@
     <string name="video_status_without">当前皮肤无视频背景</string>
     <string name="video_note">视频只在键盘显示时播放，不后台播放；关闭后显示静态背景。</string>
     <string name="global_style">全局样式</string>
-    <string name="global_section_keyboard">键盘整体</string>
     <string name="global_section_keys">按键</string>
     <string name="global_section_toolbar">工具栏</string>
-    <string name="global_section_background">背景与模糊</string>
-    <string name="global_section_bar">状态栏</string>
     <string name="global_style_note">全局样式只补皮肤留空处，皮肤已指定的值不受影响。</string>
     <string name="global_style_theme">主题键盘全局外观</string>
     <string name="global_style_theme_desc">内置主题生效时使用</string>
@@ -936,8 +845,6 @@
     <string name="global_style_custom">自定义键盘全局外观</string>
     <string name="global_style_custom_desc">自定义皮肤生效时使用</string>
     <string name="global_style_dialog_custom_desc">只影响自定义键盘，与主题键盘独立。可分别设置按键和状态栏，或让它们共用外观。动态模糊只处理背景。</string>
-    <string name="global_section_bar_icons">状态栏图标</string>
-    <string name="global_section_frost">磨砂效果</string>
     <string name="global_section_keyboard_full">键盘整体·四角圆角</string>
     <string name="global_section_keys_full">按键·背景、边框与模糊</string>
     <string name="global_section_icons_follow">状态栏图标·跟随按键</string>
@@ -1001,14 +908,9 @@
     <string name="toolbar_delete_button_note">该按钮将从列表中移除，自定义按钮定义保留，可再次添加。</string>
     <string name="toolbar_move_up">上移</string>
     <string name="toolbar_move_down">下移</string>
-    <string name="toolbar_pool">按钮池</string>
     <string name="toolbar_added">已添加</string>
-    <string name="toolbar_custom_buttons">自定义按钮</string>
-    <string name="toolbar_no_custom">暂无自定义按钮</string>
     <string name="toolbar_new_custom_button">新建自定义按钮</string>
     <string name="toolbar_image_button">图片按钮</string>
-    <string name="toolbar_edit">编辑</string>
-    <string name="toolbar_button_basic">基本信息</string>
     <string name="toolbar_display_text">显示文字</string>
     <string name="toolbar_display_emoji">表情</string>
     <string name="toolbar_pick_image">选择图片</string>
@@ -1018,7 +920,6 @@
     <string name="toolbar_button_width">按钮宽度</string>
     <string name="toolbar_dp_value">%1$d dp</string>
     <string name="toolbar_button_background">按钮背景</string>
-    <string name="toolbar_button_actions">动作</string>
     <string name="toolbar_unspecified">未指定</string>
     <string name="toolbar_value_missing">需要值</string>
     <string name="toolbar_save">保存</string>
@@ -1031,8 +932,6 @@
     <string name="toolbar_no_toolbars">暂无自定义工具栏</string>
     <string name="toolbar_config_summary">%1$d 个按钮 · 背景：%2$s</string>
     <string name="toolbar_in_use">使用中</string>
-    <string name="toolbar_use">使用</string>
-    <string name="toolbar_toolbar_basic">基本信息</string>
     <string name="toolbar_toolbar_name">栏名</string>
     <string name="toolbar_toolbar_background">栏背景</string>
     <string name="toolbar_bg_color">纯色</string>
@@ -1081,7 +980,6 @@
     <string name="emoji_custom_add_symbol_hint">新增 Emoji</string>
     <string name="emoji_custom_add">添加</string>
     <string name="emoji_custom_delete_group">删除分组</string>
-    <string name="emoji_custom_delete_symbol">删除</string>
     <!-- 键盘菜单管理（WO52 12-⑨） -->
     <string name="keyboard_menu_title">键盘菜单设置</string>
     <string name="row_sub_keyboard_menu">键盘菜单选项自定义</string>
@@ -1207,15 +1105,11 @@
     <string name="value_hint_layout">布局（Qwerty／T9／T15／Number／Symbol／Emoji 或 custom:布局 id）</string>
     <string name="value_hint_generic">值</string>
     <string name="background_blur">背景模糊</string>
-    <string name="blur_follow">跟随</string>
-    <string name="blur_on">开</string>
-    <string name="blur_off">关</string>
     <string name="blur_radius">模糊半径</string>
     <string name="bar_background">顶部栏背景</string>
     <string name="bar_blur">顶部栏模糊</string>
     <string name="shared_background">共享背景</string>
     <string name="shared_background_note">开＝一幅背景横跨键盘与顶部栏，顶部栏不再单独画背景。</string>
-    <string name="reset_follow">恢复跟随</string>
     <string name="reset_default">恢复默认</string>
     <string name="follow">跟随</string>
     <string name="color_white">白色</string>
@@ -1268,8 +1162,6 @@
     <string name="copied">已复制</string>
     <string name="share_failed">分享失败</string>
     <string name="share_opened">已打开分享</string>
-    <string name="error_unknown">未知错误</string>
-    <string name="error_network">网络错误</string>
     <string name="deep_error_network">网络不可用，请检查网络后重试</string>
     <string name="deep_error_timeout">请求超时，请稍后重试</string>
     <string name="deep_error_server">服务器暂时不可用，请稍后重试</string>
@@ -1495,7 +1387,6 @@
     <string name="skin_diag_deg_blur">模糊关闭</string>
     <string name="skin_diag_deg_bg">背景降采样</string>
     <string name="skin_diag_deg_anim">动效关闭</string>
-    <string name="skin_editor_file_title">皮肤文件编辑器</string>
     <string name="skin_editor_load_failed">读取失败：%1$s</string>
     <string name="skin_editor_no_primary_layout">主布局：未绑定布局</string>
     <string name="skin_editor_shared_layout_warn">该布局被其他皮肤共用，修改会影响所有引用它的皮肤。</string>
@@ -1629,14 +1520,9 @@
     <string name="user_dict_no_words_in_file">文件中没有可导入的词</string>
     <string name="user_dict_imported_count">已导入 %1$d 个词</string>
     <string name="user_dict_not_configured">请先填写 WebDAV 服务器地址、用户名和密码并保存</string>
-    <string name="user_dict_service_not_ready">词典服务未就绪，请稍后重试</string>
     <string name="user_dict_uploading">正在上传…</string>
     <string name="user_dict_uploaded_count">已上传 %1$d 个词到 %2$s</string>
     <string name="user_dict_op_failed_title">操作失败</string>
-    <string name="user_dict_upload_failed">上传失败</string>
-    <string name="user_dict_download_failed">下载失败</string>
-    <string name="user_dict_connect_failed">连接失败</string>
-    <string name="user_dict_sync_dir_unavailable">同步目录不可用</string>
     <string name="user_dict_fetching_files">正在获取服务器文件列表…</string>
     <string name="user_dict_uploading_schemes">正在上传方案目录…</string>
     <string name="user_dict_uploaded_schemes">已上传 %1$d 个方案文件</string>
