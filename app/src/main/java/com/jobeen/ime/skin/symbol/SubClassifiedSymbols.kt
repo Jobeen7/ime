@@ -158,7 +158,6 @@ class SubClassifiedBoardState(
     val currentSub: SymbolSubCategory? get() = currentParent?.subCategories?.getOrNull(subIndex)
     val currentItems: List<SymbolItem> get() = currentSub?.items.orEmpty()
     val parentLabels: List<String> get() = symbols.parents.map { it.label }
-        get() = currentParent?.subCategories?.map { it.label }.orEmpty()
 
     /** 当前子类总页数（0 项时为 0 页）。 */
     val pageCount: Int

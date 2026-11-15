@@ -667,12 +667,8 @@ object SchemePackageImport {
         fun packageForScheme(schemeId: String, dir: String? = null): String? =
             records.firstOrNull { schemeId in it.schemeIds && it.matchesDir(dir) }?.packageName
 
-?.source
-
         fun versionForFile(relPath: String, dir: String? = null): String? =
             records.firstOrNull { relPath in it.files && it.matchesDir(dir) }?.version
-
-?.files.orEmpty()
 
     }
 

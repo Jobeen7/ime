@@ -268,10 +268,6 @@ object GlobalStyleResolver {
     fun effectiveFrostOverlay(style: GlobalStyle): Float? =
         (style.frostOverlayAlpha ?: 0.25f).coerceIn(0f, 1f).takeIf { it > 0f }
 
- else {
-            style.toolbar
-        }
-
     /** 栏背景：皮肤指定面板背景则 null，否则全局值。 */
     fun barBackground(style: GlobalStyle, stylePresence: Set<StyleField>): Int? =
         if (StyleField.PANEL_BACKGROUND in stylePresence) null else style.barBackground

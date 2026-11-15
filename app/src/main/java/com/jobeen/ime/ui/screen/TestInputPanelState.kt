@@ -2,7 +2,9 @@
 
 package com.jobeen.ime.ui.screen
 
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 
 /** 测试输入面板输入类型：chip 切换，键盘布局跟随当前布局与输入类型。 */
 enum class TestInputMode { TEXT, NUMBER, PASSWORD }

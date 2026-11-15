@@ -170,8 +170,6 @@ class GramDb(filePath: String) {
         private const val HEADER_SIZE = 44L
         private const val INT_BYTES = 4
 
-.getOrNull()
-
         fun scaleValue(raw: Int): Double =
             if (raw >= 0) raw.toDouble() / DoubleArrayTrie.VALUE_SCALE else -1.0
 

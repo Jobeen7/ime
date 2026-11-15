@@ -37,10 +37,6 @@ fun formatMistouchRate(corrections: Long, keypresses: Long): String {
     return "%.1f%%".format(corrections * 100.0 / keypresses)
 }
 
- else {
-        "距下一段位还差 ${rank.nextThreshold - rank.xp} 字"
-    }
-
 /**
  * 段位内 EXP 条文案：当前段位已获字数 ／ 到下一段位差距；
  * 已满级（化神期顶）显“已满级”。分母取五阶阈值差距（新鲜用户

@@ -166,10 +166,6 @@ fun dualShadowKeyBackgroundDrawable(
     }
 }
 
- else {
-    InsetDrawable(ColorDrawable(color), hMargin, vMargin, hMargin, vMargin)
-}
-
 /**
  * 样式键面（审计 A 项）：单支 Drawable 画完填充（纯色或渐变）、
  * 描边、模糊阴影与下边缘条。只在键带样式几何面时使用；无几何
