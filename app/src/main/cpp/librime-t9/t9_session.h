@@ -28,9 +28,10 @@ std::optional<std::pair<size_t, size_t>> FindUnresolvedDigitRun(
 // 无候选时返回空串。
 std::string T9PinyinList(const std::string& input, size_t confirmedPos);
 
-// t9SetPinyin：pinyin 须在当前未解析段的候选项内；命中时把该段
-// 替换为 "pinyin'" 并写入 newInput，返回 true；否则不写回、返回
-// false（调用方回落到既有 Kotlin 重建输入）。
+// t9SetPinyin：pinyin 须在当前未解析段的候选项内；命中时把该段前
+// pinyin.size() 位替换为 "pinyin'"、余下数字保留，并写入 newInput，
+// 返回 true；断点处已是 ' 时不重复加分隔符；否则不写回、返回 false
+//（调用方回落到既有 Kotlin 重建输入）。
 bool T9SetPinyin(const std::string& input, size_t confirmedPos,
                  const std::string& pinyin, std::string* newInput);
 

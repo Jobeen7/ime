@@ -97,6 +97,14 @@ class T9SetPinyinFlowTest {
     }
 
     @Test
+    fun longRunPinKeepsRemainder() {
+        // B-T9-1：94664486 选 zhong 只钉前 5 码，尾段 486 保留（与 native 同值）。
+        val host = BehaviorHost(FakeJob())
+        host.pressDigits("94664486")
+        assertEquals("zhong'486", host.select("zhong"))
+    }
+
+    @Test
     fun pinAfterPinKeepsFirstPin() {
         val host = BehaviorHost(FakeJob())
         host.pressDigits("726")

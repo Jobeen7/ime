@@ -72,9 +72,20 @@ bool T9SetPinyin(const std::string& input, size_t confirmedPos,
     if (std::find(options.begin(), options.end(), pinyin) == options.end()) {
         return false;
     }
-    // 与 BehaviorHost.build() 同形：钉住的拼音后追加分词分隔符。
-    *newInput = input.substr(0, run->first) + pinyin + kSegmentSeparator +
-                input.substr(run->first + run->second);
+    // 只替换首音节占用的位数（pinyin.size() 个数字），剩余数字保留——
+    // 此前整段替换会吞掉尾巴（如 94664486 选 zhong 会丢 486）。
+    // 与 BehaviorHost.build() 同形：钉住的拼音后追加分词分隔符；断点
+    // 处已是分隔符时不再追加，避免 ''。
+    const size_t consumed = pinyin.size();
+    if (consumed > run->second) {
+        return false;
+    }
+    const std::string tail = input.substr(run->first + consumed);
+    const std::string separator =
+            (!tail.empty() && tail.front() == kSegmentSeparator)
+                    ? std::string()
+                    : std::string(1, kSegmentSeparator);
+    *newInput = input.substr(0, run->first) + pinyin + separator + tail;
     return true;
 }
 
