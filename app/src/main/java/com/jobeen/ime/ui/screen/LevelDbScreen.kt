@@ -120,6 +120,7 @@ fun LevelDbScreen(
         }
         if (selected == null) {
             // 数据库列表。
+            val dictList = dicts
             when {
                 loadFailed -> {
                     Text(
@@ -135,7 +136,7 @@ fun LevelDbScreen(
                         Text(stringResource(R.string.leveldb_retry))
                     }
                 }
-                dicts == null -> {
+                dictList == null -> {
                     Text(
                         text = stringResource(R.string.leveldb_loading),
                         style = MaterialTheme.typography.bodyMedium,
@@ -143,7 +144,7 @@ fun LevelDbScreen(
                         modifier = Modifier.padding(start = 4.dp, top = 8.dp),
                     )
                 }
-                dicts!!.isEmpty() -> {
+                dictList.isEmpty() -> {
                     Text(
                         text = stringResource(R.string.leveldb_empty),
                         style = MaterialTheme.typography.bodyMedium,
@@ -152,7 +153,7 @@ fun LevelDbScreen(
                     )
                 }
                 else -> {
-                    dicts!!.forEachIndexed { index, dict ->
+                    dictList.forEachIndexed { index, dict ->
                         TextButton(
                             onClick = { selected = dict },
                             modifier = Modifier.fillMaxWidth(),
@@ -163,7 +164,7 @@ fun LevelDbScreen(
                                 modifier = Modifier.fillMaxWidth(),
                             )
                         }
-                        if (index < dicts!!.lastIndex) {
+                        if (index < dictList.lastIndex) {
                             HorizontalDivider()
                         }
                     }
@@ -172,7 +173,7 @@ fun LevelDbScreen(
             return@SettingsPageScaffold
         }
         // 键值浏览（分页）。
-        val dict = selected!!
+        val dict = selected ?: return@SettingsPageScaffold
         Text(
             text = dict,
             style = MaterialTheme.typography.titleMedium,
@@ -199,7 +200,7 @@ fun LevelDbScreen(
                 )
             }
             else -> {
-                val current = page!!
+                val current = page ?: return@SettingsPageScaffold
                 if (current.entries.isEmpty()) {
                     Text(
                         text = stringResource(R.string.leveldb_empty),

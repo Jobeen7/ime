@@ -79,7 +79,7 @@ fun EmojiCustomSection() {
         }
         return
     }
-    val current = config!!
+    val current = config ?: return
     Spacer(Modifier.height(8.dp))
     current.groups.forEachIndexed { groupIndex, group ->
         EmojiCustomGroupEditor(

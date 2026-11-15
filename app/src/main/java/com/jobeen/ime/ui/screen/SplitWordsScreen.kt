@@ -79,8 +79,10 @@ fun SplitWordsScreen(text: String, onDone: () -> Unit) {
     var anchor by remember { mutableStateOf<Int?>(null) }
     var current by remember { mutableStateOf<Int?>(null) }
     val selecting = anchor != null
-    val range = if (anchor != null && current != null) {
-        WordSegmenter.selectionRange(anchor!!, current!!, words.size)
+    val a = anchor
+    val c = current
+    val range = if (a != null && c != null) {
+        WordSegmenter.selectionRange(a, c, words.size)
     } else {
         IntRange.EMPTY
     }

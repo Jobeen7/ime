@@ -1612,11 +1612,12 @@ class ClipboardView(
         if (headerH > 0f && event.y < headerH) return onGroupStripTouchEvent(event)
         // WO52 5.3 行内三钮手势：MOVE 悬空（不滚动），UP 在钮内才触发，
         // CANCEL 清掉；整趟不走长按／点选／甩动。
-        if (actionDownHit != null) {
+        val downHit = actionDownHit
+        if (downHit != null) {
             when (event.actionMasked) {
                 MotionEvent.ACTION_MOVE -> return true
                 MotionEvent.ACTION_UP -> {
-                    val (rect, idx, action) = actionDownHit!!
+                    val (rect, idx, action) = downHit
                     actionDownHit = null
                     if (rect.contains(event.x, event.y)) fireRowAction(idx, action)
                     pressedIndex = -1
