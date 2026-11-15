@@ -57,7 +57,10 @@ object DeepLinkRouter {
         "symbolBar" to "symbol_bar",
         "phrase" to "phrase",
         "clipboard" to "clipboard",
-        "script" to "scripts",
+        // 8.1 建了真正的 QuickJS 脚本页（`script`）：4.2 的 "script" →
+        // "scripts"（皮肤脚本页）随单子改——dr.a 的 Script 即脚本管理页。
+        // 旧映射期望随单子改（测试期望与单子相背时按单子改期望）。
+        "script" to "script",
         "rime" to "rime",
         "backup" to "backup",
         "remoteStorage" to "userdict",
@@ -70,12 +73,12 @@ object DeepLinkRouter {
         "ai" to "ai",
     )
 
-    /** 目录页键直配（25 个一级入口；webserver 为 WO52 4.4 新增）。 */
+    /** 目录页键直配（26 个一级入口；script 为 WO52 8.1 新增）。 */
     private val catalogPageKeys: Set<String> = setOf(
         "schema", "scheme_update", "rime", "candidates", "skin", "scripts",
         "keyboard", "emoji", "keyboardMenu", "toolbar", "symbol_bar",
         "key_symbol", "skin_editor", "appearance", "clipboard", "phrase",
-        "ai", "voice", "stats", "userdict", "leveldb", "backup", "files",
+        "ai", "script", "voice", "stats", "userdict", "leveldb", "backup", "files",
         "webserver", "about",
     )
 

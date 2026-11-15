@@ -221,6 +221,11 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, AiActivity::class.java)
                 )
             },
+            onOpenScript = {
+                startActivity(
+                    Intent(this@MainActivity, ScriptActivity::class.java)
+                )
+            },
             onOpenModelSettings = {
                 startActivity(
                     Intent(this@MainActivity, PredictionSettingsActivity::class.java)

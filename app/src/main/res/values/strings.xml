@@ -285,6 +285,7 @@
     <string name="fab_deploy_done">部署完成</string>
     <string name="notif_channel_remote_transfer">远程传输</string>
     <string name="notif_channel_web_server">Wi-Fi 传输</string>
+    <string name="notif_channel_script">脚本通知</string>
     <string name="notif_remote_transfer_title">正在同步用户词</string>
     <string name="notif_web_server_title">Wi-Fi 传输运行中</string>
     <string name="notif_web_server_text">局域网地址：%1$s</string>
@@ -613,6 +614,39 @@
     <string name="ai_provider_temperature">温度（留空为默认）</string>
     <string name="ai_provider_enabled">启用</string>
     <string name="ai_provider_delete">删除服务商</string>
+
+    <!-- 脚本管理页（WO52 8.1；副标题取元书 SETTINGS-UI.md 原文） -->
+    <string name="script_title">脚本</string>
+    <string name="row_sub_script">JavaScript 脚本管理</string>
+    <string name="script_empty">暂无脚本</string>
+    <string name="script_add">新建脚本</string>
+    <string name="script_add_title">新建脚本</string>
+    <string name="script_edit_title">编辑脚本</string>
+    <string name="script_name_hint">名称</string>
+    <string name="script_content_hint">脚本源码</string>
+    <string name="script_search_hint">搜索名称或内容</string>
+    <string name="script_no_match">没有符合的脚本</string>
+    <string name="script_allow_pasteboard_title">允许读取剪贴板</string>
+    <string name="script_allow_pasteboard_info">开启后脚本可读剪贴板内容（$pasteboardContent）；关闭时只读输入框与选中文本。</string>
+    <string name="script_run">运行</string>
+    <string name="script_run_input_hint">输入（$searchText）</string>
+    <string name="script_run_result">运行结果</string>
+    <string name="script_run_logs">日志</string>
+    <string name="script_run_inserted">插入文本</string>
+    <string name="script_run_elapsed">耗时 %1$.2f 秒</string>
+    <string name="script_run_error">运行失败：%1$s</string>
+    <string name="script_run_cancelled">已取消</string>
+    <string name="script_prefix_title">命令面板脚本前缀</string>
+    <string name="script_prefix_hint">例如：/script（可留空）</string>
+    <string name="script_prefix_info">命令面板里以前缀开头的输入会按脚本运行（命令面板接入后生效）。</string>
+    <string name="script_tags_label">标签</string>
+    <string name="script_tags_hint">新建标签名</string>
+    <string name="script_variables_label">变量</string>
+    <string name="script_variables_hint">键与值；敏感值勾选后在列表中打码显示</string>
+    <string name="script_delete">删除</string>
+    <string name="script_delete_confirm">确定要删除 \"%1$s\" 吗？</string>
+    <string name="script_save">保存</string>
+    <string name="script_cancel">取消</string>
     <string name="ai_provider_delete_confirm">确定要删除服务商 \\\"%1$s\\\" 吗？其模型与对话一并删除。</string>
     <string name="ai_instructions">指令</string>
     <string name="ai_run">运行</string>

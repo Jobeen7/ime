@@ -214,14 +214,14 @@ class MainSettingsCatalogTest {
     }
 
     @Test
-    fun catalogPages_twentyFiveKeysInOrder() {
-        // 25 键：WO52 4.4 新增 webserver 一级入口（files 之后）；
-        // 旧 24 键期望随单子改（测试期望与单子相背时按单子改期望）。
+    fun catalogPages_twentySixKeysInOrder() {
+        // 26 键：WO52 8.1 新增 script 一级入口（ai 之后）；
+        // 旧 25 键期望随单子改（测试期望与单子相背时按单子改期望）。
         val keys = catalogPages().map { it.key }
         assertEquals(
             listOf(
                 "schema", "scheme_update", "rime", "candidates", "skin", "scripts", "keyboard",
-                "emoji", "keyboardMenu", "toolbar", "symbol_bar", "key_symbol", "skin_editor", "appearance", "clipboard", "phrase", "ai", "voice", "stats", "userdict",
+                "emoji", "keyboardMenu", "toolbar", "symbol_bar", "key_symbol", "skin_editor", "appearance", "clipboard", "phrase", "ai", "script", "voice", "stats", "userdict",
                 "leveldb", "backup", "files", "webserver", "about",
             ),
             keys,

@@ -113,6 +113,7 @@ fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("clipboard", R.string.clipboard_manager, R.string.row_sub_clipboard, MainSettingGroup.CONVENIENCE),
     CatalogPage("phrase", R.string.phrase_title, R.string.row_sub_phrase, MainSettingGroup.CONVENIENCE),
     CatalogPage("ai", R.string.ai_title, R.string.row_sub_ai, MainSettingGroup.CONVENIENCE),
+    CatalogPage("script", R.string.script_title, R.string.row_sub_script, MainSettingGroup.CONVENIENCE),
     CatalogPage("voice", R.string.voice_settings, R.string.row_sub_voice, MainSettingGroup.CONVENIENCE),
     CatalogPage("stats", R.string.input_stats_title, R.string.row_sub_stats, MainSettingGroup.CONVENIENCE),
     CatalogPage("userdict", R.string.user_dict, R.string.row_sub_userdict, MainSettingGroup.DATA_BACKUP),

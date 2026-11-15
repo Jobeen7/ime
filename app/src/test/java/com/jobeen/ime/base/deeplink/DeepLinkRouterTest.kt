@@ -130,7 +130,9 @@ class DeepLinkRouterTest {
             "symbolBar" to "symbol_bar",
             "phrase" to "phrase",
             "clipboard" to "clipboard",
-            "script" to "scripts",
+            // 8.1 建了真正的 QuickJS 脚本页：旧 "script" → "scripts"
+            // （皮肤脚本页）期望随单子改（测试期望与单子相背时按单子改期望）。
+            "script" to "script",
             "rime" to "rime",
             "backup" to "backup",
             "remoteStorage" to "userdict",
@@ -170,10 +172,10 @@ class DeepLinkRouterTest {
             "schema", "scheme_update", "rime", "candidates", "skin", "scripts",
             "keyboard", "emoji", "keyboardMenu", "toolbar", "symbol_bar",
             "key_symbol", "skin_editor", "appearance", "clipboard", "phrase",
-            "ai", "voice", "stats", "userdict", "leveldb", "backup", "files",
+            "ai", "script", "voice", "stats", "userdict", "leveldb", "backup", "files",
             "webserver", "about",
         )
-        assertEquals(25, keys.size)
+        assertEquals(26, keys.size)
         for (key in keys) {
             assertEquals(key, pageOf("jime://com.jobeen.ime/$key"))
         }

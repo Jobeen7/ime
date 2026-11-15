@@ -235,6 +235,13 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
+            android:name=".ui.ScriptActivity"
+            android:exported="false"
+            android:label="@string/script_title"
+            android:launchMode="singleTop"
+            android:theme="@style/Theme.Ime" />
+
+        <activity
             android:name=".ui.SplitWordsActivity"
             android:exported="false"
             android:label="@string/split_words_title"

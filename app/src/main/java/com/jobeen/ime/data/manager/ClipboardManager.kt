@@ -934,6 +934,17 @@ object ClipboardManager {
     }
 
     /**
+     * 自家回写标记（WO52 8.1 $setClipboard）：脚本写系统剪贴板前先
+     * 登记本次写回的文本＋时刻，复用 5.2 的同一抑制槽位——监听回调
+     * 命中即消费，不当新内容。空串不登记。
+     */
+    fun markSelfWritten(text: String) {
+        if (text.isEmpty()) return
+        selfWrittenCode = text
+        selfWrittenAt = System.currentTimeMillis()
+    }
+
+    /**
      * WO52 5.2 自动提取验证码（监听 intake 路径，来源恒为非手动）：
      * 门禁全为真才回写——监听开（intake 入口已验）＋非手动＋提示条
      * 开＋文本 ≤300＋当前内容有工具栏＋提取成功＋写系统剪贴板成功。

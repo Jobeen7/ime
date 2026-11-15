@@ -8,22 +8,35 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** WO52 13.1：两渠道建 channel（id／重要性）、权限拒绝降级、完成通知只发一次。 */
+/** WO52 13.1＋8.1：三渠道建 channel（id／重要性）、权限拒绝降级、完成通知只发一次。 */
 class NotificationChannelsTest {
 
     @Test
-    fun `channelSpecs has exactly the two app-owned channels`() {
+    fun `channelSpecs has exactly the three app-owned channels`() {
+        // 8.1 加 script 渠道（$userNotification 用）：旧“两渠道”期望随
+        // 单子改（测试期望与单子相背时按单子改期望）。
         val specs = NotificationChannels.channelSpecs()
-        assertEquals(2, specs.size)
+        assertEquals(3, specs.size)
         assertEquals(NotificationChannels.REMOTE_TRANSFER, specs[0].id)
         assertEquals(NotificationChannels.WEB_SERVER, specs[1].id)
+        assertEquals(NotificationChannels.SCRIPT, specs[2].id)
     }
 
     @Test
-    fun `both channels are IMPORTANCE_LOW`() {
-        for (spec in NotificationChannels.channelSpecs()) {
-            assertEquals(NotificationManager.IMPORTANCE_LOW, spec.importance)
-        }
+    fun `transfer channels are IMPORTANCE_LOW and script channel is IMPORTANCE_DEFAULT`() {
+        val specs = NotificationChannels.channelSpecs().associateBy { it.id }
+        assertEquals(
+            NotificationManager.IMPORTANCE_LOW,
+            specs.getValue(NotificationChannels.REMOTE_TRANSFER).importance,
+        )
+        assertEquals(
+            NotificationManager.IMPORTANCE_LOW,
+            specs.getValue(NotificationChannels.WEB_SERVER).importance,
+        )
+        assertEquals(
+            NotificationManager.IMPORTANCE_DEFAULT,
+            specs.getValue(NotificationChannels.SCRIPT).importance,
+        )
     }
 
     @Test
