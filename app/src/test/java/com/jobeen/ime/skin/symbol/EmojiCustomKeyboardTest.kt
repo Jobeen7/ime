@@ -126,11 +126,12 @@ class EmojiCustomKeyboardTest {
 
     @Test
     fun normalize_keepsLargeBuiltinGroupsWhole() {
-        // B-EM-1：删 200 上限后，首次启用的 9 组全量 1925 条，一个不少。
+        // B-EM-1：删 200 上限后，首次启用的 9 组归一化后 1920 条
+        // （源数据 1925 条，组内去空去重 5 条），一个不少。
         val normalized = EmojiCustomOps.normalize(EmojiCustomOps.seedGroups())
         assertEquals(9, normalized.size)
-        assertEquals(1925, normalized.sumOf { it.symbols.size })
-        assertEquals(390, normalized.maxOf { it.symbols.size })
+        assertEquals(1920, normalized.sumOf { it.symbols.size })
+        assertEquals(389, normalized.maxOf { it.symbols.size })
     }
 
     @Test

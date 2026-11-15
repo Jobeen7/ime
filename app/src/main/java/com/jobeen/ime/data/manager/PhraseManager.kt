@@ -84,7 +84,8 @@ object PhraseManager {
      * 可留空；非空须为 2–10 位英文字母 a–z。返回 null＝合法，
      * 否则返回应显示的报错字符串资源 id（调用方 resolve，L-43）。
      */
-    fun validateShortcut(code: String): @StringRes Int? {
+    @StringRes
+    fun validateShortcut(code: String): Int? {
         if (code.isEmpty()) return null
         if (code.length !in 2..10) return R.string.phrase_shortcut_length_error
         if (!code.all { it in 'a'..'z' }) return R.string.phrase_shortcut_characters_error

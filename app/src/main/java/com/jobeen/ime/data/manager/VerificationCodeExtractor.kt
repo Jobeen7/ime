@@ -3,9 +3,9 @@
 package com.jobeen.ime.data.manager
 
 /**
- * 验证码抽取（WO52 5.2，与对端 j90 一致）：
+ * 验证码抽取（WO52 5.2）：
  *
- * 三正则（与对端口径一致）：
+ * 三正则：
  * - a 网址：`(?i)\b(?:https?://|www\.)[^\s<>"'，。；、]+`
  * - b 关键词：简繁中文验证码类＋ `verification|passcode|\b(?:code|otp|pin)\b`
  * - c 数字：`(?<![A-Za-z0-9*])[0-9]{4,6}(?![A-Za-z0-9*])`（4–6 位）
@@ -66,8 +66,13 @@ object VerificationCodeExtractor {
         for (keyword in keywords) {
             spacedAfter(scan, keyword.end)?.let { candidates += it }
         }
-        if (candidates.isEmpty()) return null
-        return candidates
+        // B-V-1：URL 排除对两条取数路径都生效——spacedAfter 绕过了
+        // 上面的 URL 排除，紧贴网址的数字同样不取。
+        val filtered = candidates.filter { candidate ->
+            urls.none { url -> gap(candidate, url) == 0 }
+        }
+        if (filtered.isEmpty()) return null
+        return filtered
             .distinctBy { it.start to it.end }
             .minWithOrNull(
                 compareBy<Span> { candidate ->
@@ -76,7 +81,7 @@ object VerificationCodeExtractor {
             )?.value
     }
 
-    /** 文本中第一个 URL（j90.a 正则），无则 null；供长按菜单 Open link 条件用。 */
+    /** 文本中第一个 URL（网址正则），无则 null；供长按菜单 Open link 条件用。 */
     fun findUrl(text: String): String? =
         URL_REGEX.find(text.take(MAX_SCAN_CHARS))?.value
 
@@ -121,7 +126,7 @@ object VerificationCodeExtractor {
 }
 
 /**
- * 验证码提示门禁（WO52 5.2，与对端 to1 case 2 一致）：
+ * 验证码提示门禁（WO52 5.2）：
  * 全为真才展示——监听开关开＋不是手动来源＋提示条开关开＋文本
  * 长度 ≤300＋当前内容有工具栏＋提取成功＋写入成功。
  *

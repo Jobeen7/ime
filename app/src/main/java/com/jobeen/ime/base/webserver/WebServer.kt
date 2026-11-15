@@ -236,7 +236,9 @@ class WebServer(
         }
         if (headers.containsKey("transfer-encoding")) return null
         val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
-        if (contentLength < 0 || contentLength > MAX_BODY_BYTES) return null
+        // 超限不在这里拒：parseRequest 先跑 preAuth（无鉴权 401），
+        // 再按 contentLength 返 413——顺序错了 401 会变 400（A-25 回归）。
+        if (contentLength < 0) return null
         val (rawPath, rawQuery) = rawTarget.split("?", limit = 2).let {
             it[0] to (it.getOrNull(1).orEmpty())
         }

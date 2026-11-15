@@ -336,7 +336,9 @@ fun AiSettingsScreen(
                                             runResult = acc.toString()
                                         }
                                         is AiStreamEvent.Error -> {
-                                            runError = event.messageRes?.let { stringResource(it) }
+                                            // collect 体不是 @Composable 作用域，stringResource
+                                            // 调不了；context 已在外层取到，直接 getString。
+                                            runError = event.messageRes?.let { context.getString(it) }
                                                 ?: if (event.code == "missing_token") {
                                                     aiMissingTokenText
                                                 } else {
