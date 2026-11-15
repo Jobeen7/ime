@@ -5,27 +5,24 @@ package com.jobeen.ime.data.database
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 /**
- * 脚本种子（WO52 8.1）：4 条内置脚本，逻辑逐字取自对端包内
- * `assets/seeds/scripts.json`（由 iOS 源码生成），与 9.1 的 AI 种子
- * 同一做法（种子落库用 INSERT OR IGNORE，不盖用户改过的数据）。
+ * 脚本种子（WO52 8.1）：4 条内置脚本，均为 Jime 自写实现，与
+ * 9.1 的 AI 种子同一落库做法（INSERT OR IGNORE，不盖用户改过
+ * 的数据）。
  *
- * 两处改动（刻意，非遗漏）：
- * - 种子头注释里的第三方输入法产品名按仓库规矩改掉（发版前扫
- *   第三方名，见 AGENTS.md），只改品牌字样、不改逻辑；
- * - “JavaScriptCore 没有 btoa”改为“QuickJS 核心没有 btoa”——
- *   Jime 的引擎是 QuickJS 核心，同样没有 btoa／atob／TextEncoder，
- *   手写编解码的理由不变。
- * 其余代码（含输入优先级 `$searchText → $selectedText →
- * $pasteboardContent` 与示例输入／输出）一字不改。
+ * 运行环境是 QuickJS 核心，没有浏览器那套 btoa／atob 与
+ * TextEncoder／TextDecoder，所以 Base64 编解码与 UTF-8 互转都
+ * 用手写实现；输入一律按“脚本输入框 $searchText → 键盘选中
+ * 文本 $selectedText → 剪贴板 $pasteboardContent”的顺序取，先
+ * 找到非空的用哪个。
  *
  * 落库：[insertAll] 用绑定参数逐行插；迁移 16→17 与新库 onCreate
  * 共用同一函数。uuid 固定（INSERT OR IGNORE 的幂等键）。
  */
 object ScriptSeeds {
 
-    /** 默认新建脚本内容（对端 ch4.c 原文）。 */
+    /** 默认新建脚本内容（Jime 自写：向输入框文字打招呼的示例）。 */
     const val DEFAULT_NEW_SCRIPT_CONTENT =
-        "async function output() { return [\"Hello, \" + \$searchText] }"
+        "async function output() { return [\"你好，\" + \$searchText] }"
 
     const val UNICODE_QUERY_UUID = "00000000-0000-4000-8000-000000000301"
     const val BASE64_ENCODE_UUID = "00000000-0000-4000-8000-000000000302"
@@ -38,7 +35,7 @@ object ScriptSeeds {
         listOf(
             ScriptItem(
                 uuid = UNICODE_QUERY_UUID,
-            iconName = "text.magnifyingglass",
+            iconName = "unicode",
             iconType = 0,
             name = "Unicode 查询",
             content = UNICODE_QUERY_CONTENT,
@@ -52,7 +49,7 @@ object ScriptSeeds {
         ),
         ScriptItem(
             uuid = BASE64_ENCODE_UUID,
-            iconName = "chevron.left.forwardslash.chevron.right",
+            iconName = "code",
             iconType = 0,
             name = "Base64 编码",
             content = BASE64_ENCODE_CONTENT,
@@ -66,7 +63,7 @@ object ScriptSeeds {
         ),
         ScriptItem(
             uuid = BASE64_DECODE_UUID,
-            iconName = "curlybraces",
+            iconName = "base64",
             iconType = 0,
             name = "Base64 解码",
             content = BASE64_DECODE_CONTENT,
@@ -80,7 +77,7 @@ object ScriptSeeds {
         ),
         ScriptItem(
             uuid = ROLL_UUID,
-            iconName = "die.face.5",
+            iconName = "roll",
             iconType = 0,
             name = "Roll",
             content = ROLL_CONTENT,
@@ -119,72 +116,72 @@ object ScriptSeeds {
     }
 
     val UNICODE_QUERY_CONTENT = """/**
- * Jime · Unicode 查询
+ * Unicode 查询
  *
- * 输入来源（按优先级）：脚本输入框 ${'$'}searchText → 键盘选中文本 ${'$'}selectedText → 剪贴板 ${'$'}pasteboardContent
+ * 从哪里取要查的文字：先找到哪个用哪个——脚本输入框 ${'$'}searchText、
+ * 键盘选中的文本 ${'$'}selectedText、剪贴板 ${'$'}pasteboardContent。
  *
- * 输入：中文
- * 输出：U+4E2D U+6587
+ * 例子：输入“中文”，输出 U+4E2D U+6587。
  */
 
-function hex(cp) {
-  var text = cp.toString(16).toUpperCase();
-  var width = cp > 0xffff ? 5 : 4;
-  while (text.length < width) {
-    text = "0" + text;
-  }
-  return text;
-}
-
-function pickInput() {
+// 取第一个非空输入；全局变量可能未注入，typeof 守住再读。
+function firstText() {
   var sources = [
     typeof ${'$'}searchText === "string" ? ${'$'}searchText : "",
     typeof ${'$'}selectedText === "string" ? ${'$'}selectedText : "",
     typeof ${'$'}pasteboardContent === "string" ? ${'$'}pasteboardContent : "",
   ];
   for (var i = 0; i < sources.length; i++) {
-    if (sources[i] && sources[i].trim().length > 0) {
+    if (sources[i].trim() !== "") {
       return sources[i].trim();
     }
   }
   return "";
 }
 
+// 单个字符 → U+XXXX（平面外字符 5 位，其余 4 位，不足补 0）。
+function codeLabel(ch) {
+  var cp = ch.codePointAt(0);
+  var digits = cp.toString(16).toUpperCase();
+  var width = cp > 0xffff ? 5 : 4;
+  return "U+" + digits.padStart(width, "0");
+}
+
 async function output() {
-  var input = pickInput();
-  if (!input) {
+  var text = firstText();
+  if (text === "") {
     return ["请输入要查询的文字，或选中文本后再运行"];
   }
 
-  // Array.from 按码位切分，补充平面字符的代理对不会被拆散
-  var codePoints = Array.from(input).map(function (ch) {
-    return "U+" + hex(ch.codePointAt(0));
-  });
+  // for...of 按码位走，平面外字符的代理对不会被拆成两半。
+  var labels = [];
+  for (var ch of text) {
+    labels.push(codeLabel(ch));
+  }
 
-  ${'$'}log("查询 " + codePoints.length + " 个码位：" + input);
+  ${'$'}log("查询 " + labels.length + " 个码位：" + text);
 
-  return [codePoints.join(" ")];
+  return [labels.join(" ")];
 }"""
 
     val BASE64_ENCODE_CONTENT = """/**
- * Jime · Base64 编码
+ * Base64 编码
  *
- * 输入来源（按优先级）：脚本输入框 ${'$'}searchText → 键盘选中文本 ${'$'}selectedText → 剪贴板 ${'$'}pasteboardContent
+ * 从哪里取要编的文字：先找到哪个用哪个——脚本输入框 ${'$'}searchText、
+ * 键盘选中的文本 ${'$'}selectedText、剪贴板 ${'$'}pasteboardContent。
+ * 首尾空白只用来判空，编码时原文照留。
  *
- * 输入：中文 abc
- * 输出：5Lit5paHIGFiYw==
+ * 例子：输入“中文 abc”，输出 5Lit5paHIGFiYw==。
  */
 
-var BASE64_CHARS =
+var ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-// QuickJS 核心没有 btoa / TextEncoder，按码位手写 UTF-8 编码
-function utf8Bytes(text) {
+// 文字 → UTF-8 字节：按码位展开，逐个码位拼字节。
+function toUtf8(text) {
   var bytes = [];
-  // Array.from 按码位切分，emoji 等平面外字符的代理对不会被拆散
-  var points = Array.from(text);
-  for (var i = 0; i < points.length; i++) {
-    var cp = points[i].codePointAt(0);
+  for (var ch of text) {
+    var cp = ch.codePointAt(0);
     if (cp < 0x80) {
       bytes.push(cp);
     } else if (cp < 0x800) {
@@ -207,34 +204,36 @@ function utf8Bytes(text) {
   return bytes;
 }
 
-function base64(bytes) {
+// 字节 → Base64：逐字节喂进位缓冲，满 6 位吐一个字符，末尾补 =。
+function toBase64(bytes) {
   var out = "";
-  for (var i = 0; i < bytes.length; i += 3) {
-    var b0 = bytes[i];
-    var b1 = bytes[i + 1];
-    var b2 = bytes[i + 2];
-    var hasB1 = b1 !== undefined;
-    var hasB2 = b2 !== undefined;
-
-    out += BASE64_CHARS[b0 >> 2];
-    out += BASE64_CHARS[((b0 & 0x03) << 4) | (hasB1 ? b1 >> 4 : 0)];
-    out += hasB1
-      ? BASE64_CHARS[((b1 & 0x0f) << 2) | (hasB2 ? b2 >> 6 : 0)]
-      : "=";
-    out += hasB2 ? BASE64_CHARS[b2 & 0x3f] : "=";
+  var acc = 0;
+  var nbits = 0;
+  for (var i = 0; i < bytes.length; i++) {
+    acc = (acc << 8) | bytes[i];
+    nbits += 8;
+    while (nbits >= 6) {
+      nbits -= 6;
+      out += ALPHABET[(acc >> nbits) & 0x3f];
+    }
+  }
+  if (nbits > 0) {
+    out += ALPHABET[(acc << (6 - nbits)) & 0x3f];
+  }
+  while (out.length % 4 !== 0) {
+    out += "=";
   }
   return out;
 }
 
-function pickInput() {
+function firstText() {
   var sources = [
     typeof ${'$'}searchText === "string" ? ${'$'}searchText : "",
     typeof ${'$'}selectedText === "string" ? ${'$'}selectedText : "",
     typeof ${'$'}pasteboardContent === "string" ? ${'$'}pasteboardContent : "",
   ];
   for (var i = 0; i < sources.length; i++) {
-    // 只用 trim 判断是否为空，编码时保留原文首尾空白
-    if (sources[i] && sources[i].trim().length > 0) {
+    if (sources[i].trim() !== "") {
       return sources[i];
     }
   }
@@ -242,98 +241,126 @@ function pickInput() {
 }
 
 async function output() {
-  var input = pickInput();
-  if (!input) {
+  var input = firstText();
+  if (input === "") {
     return ["请输入要编码的文字，或选中文本后再运行"];
   }
 
-  var bytes = utf8Bytes(input);
+  var bytes = toUtf8(input);
   ${'$'}log("编码 " + bytes.length + " 字节：" + input);
 
-  return [base64(bytes)];
+  return [toBase64(bytes)];
 }"""
 
     val BASE64_DECODE_CONTENT = """/**
- * Jime · Base64 解码
+ * Base64 解码
  *
- * 输入来源（按优先级）：脚本输入框 ${'$'}searchText → 键盘选中文本 ${'$'}selectedText → 剪贴板 ${'$'}pasteboardContent
+ * 从哪里取要解的文本：先找到哪个用哪个——脚本输入框 ${'$'}searchText、
+ * 键盘选中的文本 ${'$'}selectedText、剪贴板 ${'$'}pasteboardContent。
+ * URL Safe 写法（- _）照收，换行、空格与结尾的 = 直接忽略。
  *
- * 输入：5Lit5paHIGFiYw==
- * 输出：中文 abc
+ * 例子：输入 5Lit5paHIGFiYw==，输出“中文 abc”。
  */
 
-var BASE64_CHARS =
+var ALPHABET =
   "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-// QuickJS 核心没有 atob / TextDecoder，按字符查表手写解码
-function base64Bytes(text) {
-  // 兼容 URL Safe 变体，并忽略换行、空格与结尾填充
-  var normalized = text
-    .replace(/-/g, "+")
-    .replace(/_/g, "/")
-    .replace(/[\s=]/g, "");
+var LOOKUP = null;
+
+function lookup() {
+  if (LOOKUP !== null) {
+    return LOOKUP;
+  }
+  LOOKUP = {};
+  for (var i = 0; i < ALPHABET.length; i++) {
+    LOOKUP[ALPHABET[i]] = i;
+  }
+  return LOOKUP;
+}
+
+// Base64 文本 → 字节：每 4 个字符一组拼 3 个字节；
+// 字符表外的字符直接判非法，末组只有 1 个字符也判非法。
+function fromBase64(text) {
+  var normalized = text.replace(/-/g, "+").replace(/_/g, "/");
+  if (/[^A-Za-z0-9+/=\s]/.test(normalized)) {
+    return null;
+  }
+  var clean = normalized.replace(/[\s=]/g, "");
+  var table = lookup();
   var bytes = [];
-  var buffer = 0;
-  var bits = 0;
-  for (var i = 0; i < normalized.length; i++) {
-    var value = BASE64_CHARS.indexOf(normalized[i]);
-    if (value < 0) {
+  for (var i = 0; i < clean.length; i += 4) {
+    var group = clean.slice(i, i + 4);
+    if (group.length === 1) {
       return null;
     }
-    buffer = (buffer << 6) | value;
-    bits += 6;
-    if (bits >= 8) {
-      bits -= 8;
-      bytes.push((buffer >> bits) & 0xff);
+    var values = [];
+    for (var j = 0; j < group.length; j++) {
+      var v = table[group[j]];
+      if (v === undefined) {
+        return null;
+      }
+      values.push(v);
+    }
+    var packed =
+      (values[0] << 18) |
+      ((values[1] || 0) << 12) |
+      ((values[2] || 0) << 6) |
+      (values[3] || 0);
+    bytes.push((packed >> 16) & 0xff);
+    if (values.length > 2) {
+      bytes.push((packed >> 8) & 0xff);
+    }
+    if (values.length > 3) {
+      bytes.push(packed & 0xff);
     }
   }
   return bytes;
 }
 
-// 按 UTF-8 规则还原码位，String.fromCodePoint 负责补回代理对
-function utf8Text(bytes) {
-  var out = "";
+// 字节 → 文字：按首字节定长度，再逐个收续字节拼码位。
+function fromUtf8(bytes) {
+  var chars = [];
   var i = 0;
   while (i < bytes.length) {
-    var b0 = bytes[i++];
-    var cp;
-    var extra;
-    if (b0 < 0x80) {
-      cp = b0;
-      extra = 0;
-    } else if ((b0 & 0xe0) === 0xc0) {
-      cp = b0 & 0x1f;
-      extra = 1;
-    } else if ((b0 & 0xf0) === 0xe0) {
-      cp = b0 & 0x0f;
-      extra = 2;
-    } else if ((b0 & 0xf8) === 0xf0) {
-      cp = b0 & 0x07;
-      extra = 3;
+    var first = bytes[i];
+    var size;
+    if (first < 0x80) {
+      size = 1;
+    } else if (first >= 0xc0 && first < 0xe0) {
+      size = 2;
+    } else if (first >= 0xe0 && first < 0xf0) {
+      size = 3;
+    } else if (first >= 0xf0 && first < 0xf8) {
+      size = 4;
     } else {
       return null;
     }
-
-    for (var j = 0; j < extra; j++) {
-      var bn = bytes[i++];
-      if (bn === undefined || (bn & 0xc0) !== 0x80) {
+    if (i + size > bytes.length) {
+      return null;
+    }
+    var mask = size === 1 ? 0x7f : size === 2 ? 0x1f : size === 3 ? 0x0f : 0x07;
+    var cp = first & mask;
+    for (var k = 1; k < size; k++) {
+      var next = bytes[i + k];
+      if ((next & 0xc0) !== 0x80) {
         return null;
       }
-      cp = (cp << 6) | (bn & 0x3f);
+      cp = (cp << 6) | (next & 0x3f);
     }
-    out += String.fromCodePoint(cp);
+    chars.push(String.fromCodePoint(cp));
+    i += size;
   }
-  return out;
+  return chars.join("");
 }
 
-function pickInput() {
+function firstText() {
   var sources = [
     typeof ${'$'}searchText === "string" ? ${'$'}searchText : "",
     typeof ${'$'}selectedText === "string" ? ${'$'}selectedText : "",
     typeof ${'$'}pasteboardContent === "string" ? ${'$'}pasteboardContent : "",
   ];
   for (var i = 0; i < sources.length; i++) {
-    if (sources[i] && sources[i].trim().length > 0) {
+    if (sources[i].trim() !== "") {
       return sources[i].trim();
     }
   }
@@ -341,17 +368,17 @@ function pickInput() {
 }
 
 async function output() {
-  var input = pickInput();
-  if (!input) {
+  var input = firstText();
+  if (input === "") {
     return ["请输入要解码的 Base64 文本，或选中文本后再运行"];
   }
 
-  var bytes = base64Bytes(input);
+  var bytes = fromBase64(input);
   if (bytes === null) {
     return ["不是合法的 Base64 文本"];
   }
 
-  var text = utf8Text(bytes);
+  var text = fromUtf8(bytes);
   if (text === null) {
     return ["解码结果不是合法的 UTF-8 文本"];
   }
@@ -362,11 +389,11 @@ async function output() {
 }"""
 
     val ROLL_CONTENT = """/**
- * Jime · Roll
+ * Roll
  *
- * 无需输入，每次运行返回一个 1 - 100 的随机数
+ * 不用输入，每次运行返回一个 1 到 100 的随机数。
  *
- * 输出：42
+ * 输出例子：42
  */
 
 async function output() {

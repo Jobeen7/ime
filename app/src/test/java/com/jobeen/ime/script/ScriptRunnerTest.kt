@@ -91,13 +91,13 @@ class ScriptRunnerTest {
     }
 
     @Test
-    fun run_defaultNewScript_returnsHello() = runBlocking {
+    fun run_defaultNewScript_returnsGreeting() = runBlocking {
         val result = runner.run(
             source = ScriptSeeds.DEFAULT_NEW_SCRIPT_CONTENT,
             inputs = ScriptInputs(searchText = "世界"),
             hostFactory = fakeFactory(),
         )
-        assertEquals(listOf("Hello, 世界"), result.output)
+        assertEquals(listOf("你好，世界"), result.output)
         assertTrue(result.logs.isEmpty())
         assertTrue(result.elapsedSeconds >= 0.0)
     }

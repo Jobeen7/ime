@@ -16,7 +16,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 的 deployMutex＋[EngineDeployState]，同步由 rime-main 串行
  * （RimeDispatcher mutex）。本守门只拦 Binder 线程并发进入：
  * 两个 Binder 线程同时调 deploy()/syncUserData() 时，后到者
- * 立即返回 false，不排队、不重入（与对端链 v64.g 同位）。
+ * 立即返回 false，不排队、不重入。
  */
 class RimeMaintenanceExecutor(
     private val ops: RimeMaintenanceOps,

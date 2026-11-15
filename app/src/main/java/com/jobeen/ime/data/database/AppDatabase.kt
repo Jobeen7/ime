@@ -422,12 +422,12 @@ abstract class AppDatabase : RoomDatabase() {
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_phrase_records_shortcut` ON `phrase_records` (`shortcut`)")
         }
 
-        // v16：AI 七表（WO52 9.1）。建表＋索引 SQL 逐字照 `kd3.java`
-        // （Room 生成的建表语句，与本库实体声明的字段顺序／类型／
-        // 外键／索引逐项对过；AIMessage 无 updatedAt 列——原表即无，
-        // 不要补）。随后播种（AiSeeds.insertAll，INSERT OR IGNORE，
-        // 可重复跑）：DeepSeek 服务商＋模型、系统提示词 5 条、用户
-        // 提示词 3 条、指令 4 条。旧表数据不动。
+        // v16：AI 七表（WO52 9.1）。建表＋索引 SQL 取自 Room 生成的
+        // schema（`app/schemas/.../AppDatabase/17.json` 的 createSql，
+        // 与本库 @Entity 声明逐项对过；AIMessage 无 updatedAt 列——
+        // 实体声明即无，不要补）。随后播种（AiSeeds.insertAll，
+        // INSERT OR IGNORE，可重复跑）：DeepSeek 服务商＋模型、系统
+        // 提示词 5 条、用户提示词 3 条、指令 4 条。旧表数据不动。
         private val MIGRATION_15_16: Migration = Migration(
             startVersion = 15,
             endVersion = 16,
@@ -452,10 +452,10 @@ abstract class AppDatabase : RoomDatabase() {
             AiSeeds.insertAll(db)
         }
 
-        // v17：脚本四表（WO52 8.1）。建表＋索引 SQL 逐字照 `kd3.java`
-        // （Room 生成的建表语句，与本库实体声明的字段顺序／类型／
-        // 外键／索引逐项对过；resultInsertState／closeWindowState 在
-        // 对端里按 Boolean 读写，故实体用 Boolean，建表仍为 INTEGER）。
+        // v17：脚本四表（WO52 8.1）。建表＋索引 SQL 取自 Room 生成的
+        // schema（`app/schemas/.../AppDatabase/17.json` 的 createSql，
+        // 与本库 @Entity 声明逐项对过；resultInsertState／closeWindowState
+        // 在实体里是 Boolean，建表仍为 INTEGER）。
         // 随后播种（ScriptSeeds.insertAll，INSERT OR IGNORE，可重复跑）：
         // Unicode 查询、Base64 编码、Base64 解码、Roll。旧表数据不动。
         private val MIGRATION_16_17: Migration = Migration(

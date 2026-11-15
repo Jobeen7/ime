@@ -8,10 +8,11 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * AI 服务商（WO52 9.1）。建表 SQL 逐字照 `kd3.java`：
+ * AI 服务商（WO52 9.1）。建表 SQL 取自 Room 生成的 schema
+ * （`app/schemas/.../AppDatabase/17.json`，与本文件 @Entity 声明一致）：
  * `defaultModelId` 外键 → `AIProviderModel.id`（ON DELETE SET NULL，
  * DEFERRABLE INITIALLY DEFERRED）；索引 `index_AIProvider_defaultModelId`、
- * `index_AIProvider_sort`（Room 按 @Index 默认命名生成，与原表一致）。
+ * `index_AIProvider_sort`（Room 按 @Index 默认命名生成）。
  *
  * `type`：OpenAI 兼容类型，种子未给值，Jime 侧默认 `"openai"`。
  * `apiToken`：使用者在服务商行里自填；种子中无此字段、无内置密钥；
@@ -56,7 +57,7 @@ data class AIProvider(
 )
 
 /**
- * 服务商模型（WO52 9.1，`kd3.java` 原表）：
+ * 服务商模型（WO52 9.1）：
  * `providerId` 外键 → `AIProvider.id`（ON DELETE CASCADE，
  * DEFERRABLE INITIALLY DEFERRED）；索引 `index_AIProviderModel_providerId`。
  * `modelID` 是调 API 用的模型字符串（如 `deepseek-v4-flash`），

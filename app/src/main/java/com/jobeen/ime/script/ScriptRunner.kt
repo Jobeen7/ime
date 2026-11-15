@@ -9,7 +9,7 @@ import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
-/** 脚本输入（注入变量；与对端 z42 的 Map 逐项 setGlobalString 一致）。 */
+/** 脚本输入（注入变量：逐项写进引擎全局变量）。 */
 data class ScriptInputs(
     val searchText: String = "",
     val selectedText: String = "",
@@ -17,7 +17,7 @@ data class ScriptInputs(
     val pasteboardContent: String = "",
 )
 
-/** 一次脚本运行的结果（与对端 te4(output 列表，日志列表，耗时秒) 对应）。 */
+/** 一次脚本运行的结果（output 列表，日志列表，耗时秒）。 */
 data class ScriptRunResult(
     val output: List<String>,
     val logs: List<String>,
@@ -37,7 +37,7 @@ class ScriptRunException(val failure: ScriptFailure) : Exception(
 )
 
 /**
- * 脚本运行器（WO52 8.1）：执行约定照 z42：
+ * 脚本运行器（WO52 8.1）：执行约定：
  * eval(code, "jime-script://editor.js") → 必须定义 output 函数 →
  * 等待其 Promise 结算 → 返回（output 列表，日志列表，耗时秒）；
  * 30 秒超时抛错；取消抛错。

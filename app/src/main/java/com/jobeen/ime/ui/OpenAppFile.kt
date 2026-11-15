@@ -15,7 +15,7 @@ import java.io.File
  * [AppFilesDocumentsProvider] 的 document URI 以 ACTION_VIEW
  * 打开该文件（系统按 MIME 选应用查看）。
  *
- * 校验口径（与对端 yg1 校验一致，且更严）：
+ * 校验口径（Jime 自定，且更严）：
  * - action 必须恰好等于 "openAppFile"，否则丢弃；
  * - fileURL 必须存在且非空；
  * - 解析后文件必须落在应用 external files 根目录内

@@ -148,7 +148,7 @@ class QuickJsEngine private constructor(
         /** 对端执行约定：脚本文件名固定为该 URI。 */
         const val DEFAULT_FILENAME = "jime-script://editor.js"
 
-        /** 30 秒超时（纳秒，与对端 z42 的 setDeadline(30000000000L) 一致）。 */
+        /** 30 秒超时（纳秒，setDeadline 的截止值）。 */
         const val TIMEOUT_NANOS = 30_000_000_000L
 
         fun create(): QuickJsEngine {
@@ -166,14 +166,14 @@ class QuickJsEngine private constructor(
     }
 }
 
-/** output Promise 的结算态（与对端 iw3 三态对应）。 */
+/** output Promise 的结算态（三态：等待／已兑现／已拒绝）。 */
 enum class OutputState {
     PENDING,
     FULFILLED,
     REJECTED,
 }
 
-/** 脚本失败（与对端 fw3 对应：message＋interrupted／not-thenable 标志折叠为类型）。 */
+/** 脚本失败（message＋中断／非 thenable 标志折叠为类型）。 */
 sealed interface ScriptFailure {
     /** JS 抛错或宿主错误（message 为异常文本，不含源码）。 */
     data class Error(val message: String) : ScriptFailure

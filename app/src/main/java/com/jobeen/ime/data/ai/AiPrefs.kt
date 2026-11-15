@@ -6,11 +6,11 @@ import android.content.Context
 import androidx.core.content.edit
 
 /**
- * AI 前缀配置（WO52 9.1，键名照 `ot5.java`）：
+ * AI 前缀配置（WO52 9.1）：
  * `commandViewAIPrefix`／`commandViewAIHistoryPrefix`／
  * `aiConversationHistoryLimit`。
  *
- * 默认值在对端源码里不可考（ot5 只存键名）：Jime 侧取前缀空串
+ * 默认值未在别处定过：Jime 侧取前缀空串
  * （未设＝命令面板不设 AI 前缀）、历史上限 50 条。改这里不影响
  * 已存配置——只影响从未改过的新装。
  */

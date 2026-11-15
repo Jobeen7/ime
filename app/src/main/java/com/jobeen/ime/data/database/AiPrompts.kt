@@ -8,7 +8,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * AI 系统提示词（WO52 9.1，`kd3.java` 原表）：
+ * AI 系统提示词（WO52 9.1）：
  * `name` 唯一索引 `index_AISystemPrompt_name`。
  * `generationOverridesJSON` 为空＝不覆盖生成参数。
  */
@@ -32,11 +32,10 @@ data class AISystemPrompt(
 )
 
 /**
- * AI 用户提示词（WO52 9.1，`kd3.java` 原表）：
- * `name` 唯一索引 `index_AIUserPrompt_name`（单子正文只点了系统
- * 提示词与指令的唯一索引，原表上用户提示词同样唯一，照原表建）。
- * `templateBody` 默认 `'{{input}}'`（原表 DEFAULT 值，Room
- * @ColumnInfo defaultValue 照抄）。
+ * AI 用户提示词（WO52 9.1）：
+ * `name` 唯一索引 `index_AIUserPrompt_name`。
+ * `templateBody` 默认 `'{{input}}'`（建表 DEFAULT 值，Room
+ * @ColumnInfo defaultValue 声明）。
  */
 @Entity(
     tableName = "AIUserPrompt",

@@ -64,7 +64,7 @@ class ScriptRepository(
     suspend fun insertScript(
         name: String,
         content: String = ScriptSeeds.DEFAULT_NEW_SCRIPT_CONTENT,
-        iconName: String = "chevron.left.forwardslash.chevron.right",
+        iconName: String = "code",
         allowPasteboard: Boolean = false,
     ): Long {
         val now = System.currentTimeMillis()

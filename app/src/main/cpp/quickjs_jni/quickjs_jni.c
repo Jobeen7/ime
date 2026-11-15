@@ -2,11 +2,11 @@
 
 // QuickJS JNI bridge (WO52 8.1): libjime_quickjs.so.
 //
-// Mirrors the Java bridge surface of the counterpart QuickJsEngine (decompiled,
-// jime_quickjs): eval / runJobs / callOutput / outputValue /
+// Jime 自写的 JNI 桥接层：把 QuickJsEngine（Kotlin）的桥面接到
+// QuickJS C API——eval / runJobs / callOutput / outputValue /
 // outputState / isFunction / setDeadline / setGlobalString / settle /
-// cancel / destroy / liveCount. The implementation is written from the
-// public QuickJS C API only — no counterpart native code was available or used.
+// cancel / destroy / liveCount。实现只用公开的 QuickJS C API 写成，
+// 未参考任何对端原生代码。
 //
 // Threading: one QuickJsEngine instance is single-threaded — JS calls
 // must never run concurrently from two threads (the runner thread drives
@@ -49,7 +49,8 @@
 
 #define JIME_QJS_UNUSED(x) (void)(x)
 
-// Arg types passed to Java onHostCall (mirrors the counterpart hw3 enum order).
+// Arg types passed to Java onHostCall (order matches the ARG_* enum
+// in ScriptHost.kt: undefined / null / string / primitive / object).
 #define ARG_UNDEFINED 0
 #define ARG_NULL 1
 #define ARG_STRING 2

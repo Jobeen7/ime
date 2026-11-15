@@ -8,7 +8,7 @@ import androidx.room.Index
 import androidx.room.PrimaryKey
 
 /**
- * AI 对话（WO52 9.1，`kd3.java` 原表）：
+ * AI 对话（WO52 9.1）：
  * 索引 `index_AIConversation_updatedAt`。
  * `modelID` 是 API 模型字符串（如 `deepseek-v4-flash`），与
  * `AIProviderModel.id`（UUID）不是同一字段。
@@ -31,7 +31,7 @@ data class AIConversation(
 )
 
 /**
- * AI 消息（WO52 9.1，`kd3.java` 原表）：
+ * AI 消息（WO52 9.1）：
  * `conversationId` 外键 → `AIConversation.id`（ON DELETE CASCADE）；
  * 索引 `index_AIMessage_conversationId`、`index_AIMessage_sequence`、
  * `index_AIMessage_status`。

@@ -62,7 +62,7 @@ class ScriptSeedsTest {
     @Test
     fun defaultNewScript_matchesSpec() {
         assertEquals(
-            "async function output() { return [\"Hello, \" + \$searchText] }",
+            "async function output() { return [\"你好，\" + \$searchText] }",
             ScriptSeeds.DEFAULT_NEW_SCRIPT_CONTENT,
         )
     }

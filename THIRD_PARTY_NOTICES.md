@@ -13,6 +13,7 @@ Jime 基于开源组件构建。本文件是随应用分发的第三方组件索
 | librime-octagram | 语法模型（语言模型）支持 | Copyright (c) 2014, RIME Developers | BSD 3-Clause |
 | librime-predict | 预测插件 | librime-predict Developers | BSD 3-Clause |
 | Lua 5.4 | 脚本运行时（随 librime-lua 引入） | Copyright (c) 1994-2024, Lua.org, PUC-Rio | MIT |
+| QuickJS | 脚本引擎（用户脚本的 JS 运行时，`app/src/main/cpp/quickjs/`） | Copyright (c) 2017-2021 Fabrice Bellard, Charlie Gordon | MIT |
 | OpenCC | 简繁转换 | OpenCC 作者 | Apache-2.0 |
 | snappy | 压缩 | Copyright 2011, Google Inc. | BSD 3-Clause |
 | glog | 日志 | Copyright (c) Google Inc. | BSD 3-Clause |
@@ -61,6 +62,7 @@ Jime 基于开源组件构建。本文件是随应用分发的第三方组件索
 | Timber | 日志 | Copyright (C) 2013 Jake Wharton | Apache-2.0 |
 | Splitties | 安卓 DSL 工具集 | Copyright (C) 2015 Louis CAD | Apache-2.0 |
 | zxing-android-embedded（基于 ZXing） | 二维码扫描 | JourneyApps 与 ZXing 作者 | Apache-2.0 |
+| Rhino（Mozilla，`org.mozilla:rhino:1.8.0`） | JS 引擎（语音插件与皮肤脚本的脚本运行时） | Mozilla | MPL-2.0 |
 
 ## 数据与方案
 
@@ -89,6 +91,7 @@ Xiaolai Mono：Copyright 2020-2024 LXGW (https://github.com/lxgw/kose-font)，Co
 | `licenses/BSD-3-Clause.txt` | BSD 3-Clause |
 | `licenses/BSD-2-Clause.txt` | BSD 2-Clause |
 | `licenses/MIT.txt` | MIT License |
+| `licenses/MPL-2.0.txt` | Mozilla Public License 2.0 |
 | `licenses/BSL-1.0.txt` | Boost Software License 1.0 |
 | `licenses/OFL-1.1.txt` | SIL Open Font License 1.1 |
 

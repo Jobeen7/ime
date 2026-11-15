@@ -9,9 +9,8 @@ import org.junit.Test
 
 /**
  * AI 种子数据单测（WO52 9.1）：数量／名称／关键值／引用闭合。
- * 种子正文逐字取自对端 `assets/seeds/ai.json`（生成脚本
- * ~/workspace/system/wo52-g3-gen-aiseeds.py，另有脚本逐字核对）；
- * 本单测只断关键字段与引用关系，不全文比对正文。
+ * 种子措辞为 Jime 自写（B-C-1）；本单测只断关键字段与引用关系，
+ * 不全文比对正文。
  */
 class AiSeedsTest {
 
@@ -54,8 +53,8 @@ class AiSeedsTest {
         assertEquals(listOf("无 System Prompt"), defaults.map { it.name })
         assertTrue(AiSeeds.systemPrompts.first { it.name == "无 System Prompt" }.body.isEmpty())
         val translate = AiSeeds.systemPrompts.first { it.name == "翻译" }
-        assertTrue(translate.body.startsWith("你是一名专业翻译"))
-        assertTrue(translate.purpose.contains("只输出译文"))
+        assertTrue(translate.body.startsWith("你来负责翻译"))
+        assertTrue(translate.purpose.contains("互译"))
     }
 
     @Test
@@ -90,11 +89,11 @@ class AiSeedsTest {
                 ins.providerID in providerIds)
         }
         assertEquals(
-            "中英互译剪贴板中的文本",
+            "翻译剪贴板里的文字",
             AiSeeds.instructions.first { it.name == "翻译" }.detail,
         )
         assertEquals(
-            "为剪贴板中的消息起草一条回复",
+            "替剪贴板里的消息拟一条回复",
             AiSeeds.instructions.first { it.name == "回复" }.detail,
         )
     }
