@@ -10,16 +10,19 @@ package com.jobeen.ime.data.manager
  * - b 关键词：简繁中文验证码类＋ `verification|passcode|\b(?:code|otp|pin)\b`
  * - c 数字：`(?<![A-Za-z0-9*])[0-9]{4,6}(?![A-Za-z0-9*])`（4–6 位）
  *
- * 取数：先找锚点（关键词命中＋网址命中），再取离任一锚点最近的
- * 4–6 位数字（按与网址/关键词的距离取最近者；并列取最早出现者）。
- * 网址内的数字不算候选（URL 排除）。关键词后允许数字间夹空格／
+ * 取数：先找锚点（只认关键词），再取离任一关键词最近的
+ * 4–6 位数字（按与关键词的距离取最近者；并列取最早出现者）。
+ * 网址是排除项：落在网址内、或紧贴网址（与网址无间隔）的数字
+ * 不算候选。关键词后允许数字间夹空格／
  * 横杠（如 "123 456" 计 6 位），与旧口径一致。
  *
  * 改动点（与旧版对照）：
  * - 数字 4–8 位 → 4–6 位是收窄（与对端口径一致）：7–8 位数字串不再命中。
  * - 无锚点时不再抽取：旧版对无关键词的独立数字串（如 "复制这个
- *   123456 粘贴"）也抽取；新版要求必须有关键词或网址锚点，裸数字
+ *   123456 粘贴"）也抽取；新版要求必须有关键词锚点，裸数字
  *   不再命中（日期 "2026-10-29"、版本号 "1.2345" 由此也不再误抽）。
+ * - B-V-1：网址不再是锚点（"网址即锚点"会误提取网址附近的数字），
+ *   改为排除项：紧贴网址的数字不取。
  *
  * 只读入、不写回：输入字符串只作扫描，误抽取的源文本绝不进入
  * 剪贴板历史（历史写入仍走 ClipboardManager.addEntry，与本函数
@@ -47,14 +50,15 @@ object VerificationCodeExtractor {
         val scan = text.take(MAX_SCAN_CHARS)
         val urls = URL_REGEX.findAll(scan).map { Span(it.range.first, it.range.last + 1, it.value) }.toList()
         val keywords = KEYWORD_REGEX.findAll(scan).map { Span(it.range.first, it.range.last + 1, it.value) }.toList()
-        val anchors = urls + keywords
+        // B-V-1：锚点只留关键词；网址是排除项，不再当锚点。
+        val anchors = keywords
         if (anchors.isEmpty()) return null
         val candidates = ArrayList<Span>()
         for (m in DIGIT_REGEX.findAll(scan)) {
             val start = m.range.first
             val end = m.range.last + 1
-            // URL 排除：落在网址内的数字不是验证码
-            if (urls.any { start >= it.start && end <= it.end }) continue
+            // URL 排除：落在网址内、或紧贴网址（与网址无间隔）的数字不是验证码。
+            if (urls.any { gap(Span(start, end, m.value), it) == 0 }) continue
             candidates += Span(start, end, m.value)
         }
         // 关键词后夹空格／横杠的数字组（如 "123 456"）：关键词后跳过至多

@@ -69,9 +69,9 @@ interface ClipboardDao {
     @Query("DELETE FROM clipboard_records")
     suspend fun deleteAllRaw()
 
-    // 置顶项不受保留期过滤（pinned=1 直接入列），排序置顶在前、组内按
+    // 置顶项与收藏项不受保留期过滤（pinned=1 或 isFavorite=1 直接入列），排序置顶在前、组内按
     // 手动排序序号（拖动排序写入；未排过时由 -timestamp 回填保持时间倒序）
-    @Query("SELECT * FROM clipboard_records WHERE deleted = 0 AND (pinned = 1 OR timestamp >= :cutoff) ORDER BY pinned DESC, sortOrder ASC, timestamp DESC")
+    @Query("SELECT * FROM clipboard_records WHERE deleted = 0 AND (pinned = 1 OR isFavorite = 1 OR timestamp >= :cutoff) ORDER BY pinned DESC, sortOrder ASC, timestamp DESC")
     suspend fun getAllActiveSince(cutoff: Long): List<ClipboardRecord>
 
     @Query("SELECT MIN(sortOrder) FROM clipboard_records WHERE deleted = 0")
@@ -201,11 +201,11 @@ interface ClipboardDao {
     // 故 sortOrder 大的先淘汰——被用户拖到顶部的条目 sortOrder 小，
     // 不再因 timestamp 旧而被先删（旧口径纯按 timestamp，与显示序脱钩）；
     // sortOrder 相同（从未拖排的行同为一组）时按 timestamp 最旧先删
-    @Query("DELETE FROM clipboard_records WHERE id IN (SELECT id FROM clipboard_records WHERE deleted = 0 AND pinned = 0 ORDER BY sortOrder DESC, timestamp ASC LIMIT :n)")
+    @Query("DELETE FROM clipboard_records WHERE id IN (SELECT id FROM clipboard_records WHERE deleted = 0 AND pinned = 0 AND isFavorite = 0 ORDER BY sortOrder DESC, timestamp ASC LIMIT :n)")
     suspend fun deleteOldest(n: Int)
 
-    // 保留期清理豁免置顶行
-    @Query("DELETE FROM clipboard_records WHERE timestamp < :cutoff AND pinned = 0")
+    // 保留期清理豁免置顶行与收藏行
+    @Query("DELETE FROM clipboard_records WHERE timestamp < :cutoff AND pinned = 0 AND isFavorite = 0")
     suspend fun deleteOlderThan(cutoff: Long)
 
     @Query("DELETE FROM clipboard_records WHERE deleted = 1 AND deletedAt < :cutoff")

@@ -244,6 +244,9 @@ class WebServerRouter(
 
     private fun writeResource(request: HttpRequest): HttpResponse {
         val path = request.query["path"] ?: return jsonError(400, "missing_path")
+        val file = WebServerPaths.resolveWithin(store.root, path)
+        if (file == null) return jsonError(400, "bad_path")
+        if (WebServerPaths.isProtected(store.root, file)) return jsonError(403, "protected_path")
         val result = request.bodyFile?.let { store.writeFileStream(path, it, override = true) }
             ?: store.writeFile(path, request.body, override = true)
         return when (result) {
@@ -267,6 +270,9 @@ class WebServerRouter(
     private fun createResource(request: HttpRequest): HttpResponse {
         val rawPath = request.query["path"] ?: return jsonError(400, "missing_path")
         val override = request.query["override"] == "true"
+        val target = WebServerPaths.resolveWithin(store.root, rawPath.trimEnd('/'))
+        if (target == null) return jsonError(400, "bad_path")
+        if (WebServerPaths.isProtected(store.root, target)) return jsonError(403, "protected_path")
         if (rawPath.endsWith("/")) {
             val dir = rawPath.trimEnd('/')
             if (dir.isEmpty()) return jsonError(400, "bad_path")
@@ -328,6 +334,9 @@ class WebServerRouter(
     private fun createTusUpload(request: HttpRequest): HttpResponse {
         val path = request.query["path"] ?: return jsonError(400, "missing_path")
         val override = request.query["override"] == "true"
+        val target = WebServerPaths.resolveWithin(store.root, path)
+        if (target == null) return jsonError(400, "bad_path")
+        if (WebServerPaths.isProtected(store.root, target)) return jsonError(403, "protected_path")
         if (store.exists(path) && !override) return jsonError(409, "exists")
         if (store.writeFile(path, ByteArray(0), override) != WriteResult.OK) {
             return jsonError(500, "create_failed")

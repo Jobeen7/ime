@@ -289,6 +289,7 @@
     <string name="notif_remote_transfer_title">正在同步用户词</string>
     <string name="notif_web_server_title">Wi-Fi 传输运行中</string>
     <string name="notif_web_server_text">局域网地址：%1$s</string>
+    <string name="notif_web_server_auto_stopped">Wi-Fi 传输服务已自动停止</string>
     <string name="floating_keyboard_title">悬浮键盘</string>
     <string name="fab_deploy_failed">部署失败，请稍后重试</string>
     <string name="fab_deploy_busy">部署进行中，请稍后再试</string>

@@ -38,6 +38,15 @@ class PhraseShortcutTest {
     }
 
     @Test
+    fun normalizeShortcutCode_stripsSpacesAndApostrophes() {
+        assertEquals("nihao", PhraseManager.normalizeShortcutCode("ni hao"))
+        assertEquals("nihao", PhraseManager.normalizeShortcutCode("ni'hao"))
+        assertEquals("dz", PhraseManager.normalizeShortcutCode("d z"))
+        assertEquals("rq", PhraseManager.normalizeShortcutCode("rq"))
+        assertEquals("rq", PhraseManager.normalizeShortcutCode("RQ"))
+    }
+
+    @Test
     fun validateShortcut_tooShortOrTooLong_errors() {
         assertEquals(
             R.string.phrase_shortcut_length_error,
@@ -60,7 +69,7 @@ class PhraseShortcutTest {
             PhraseManager.validateShortcut("r1"),
         )
         assertEquals(
-            "输入码只能包含英文字母 a–z，不能有空格或数字。",
+            R.string.phrase_shortcut_characters_error,
             PhraseManager.validateShortcut("r q"),
         )
     }

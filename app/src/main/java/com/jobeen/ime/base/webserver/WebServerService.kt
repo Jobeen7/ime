@@ -9,6 +9,14 @@ import androidx.core.content.ContextCompat
 import com.jobeen.ime.R
 import com.jobeen.ime.base.notify.NotificationChannels
 import com.jobeen.ime.base.util.ToastUtil
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -34,6 +42,11 @@ data class WebServerState(
 class WebServerService : Service() {
 
     private var server: WebServer? = null
+    private var startedAtMs = 0L
+    @Volatile
+    private var lastRequestMs = 0L
+    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private var idleJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -55,7 +68,7 @@ class WebServerService : Service() {
             store, actions,
             passwordHashProvider = { prefs.getString(WifiTransferAuth.KEY_PASSWORD_HASH, null) },
         )
-        val webServer = WebServer(router)
+        val webServer = WebServer(router, onRequest = { lastRequestMs = System.currentTimeMillis() })
         val port = webServer.start()
         if (port == null) {
             Timber.w("WebServer: no free port in 8080-8090")
@@ -74,6 +87,18 @@ class WebServerService : Service() {
                 .setOngoing(true)
                 .build(),
         )
+        startedAtMs = System.currentTimeMillis()
+        lastRequestMs = startedAtMs
+        idleJob = serviceScope.launch {
+            while (isActive) {
+                delay(IDLE_CHECK_INTERVAL_MS)
+                if (shouldAutoStop(System.currentTimeMillis(), startedAtMs, lastRequestMs)) {
+                    notifyAutoStopped()
+                    stopSelf()
+                    break
+                }
+            }
+        }
         _state.value = WebServerState(running = true, address = address)
     }
 
@@ -84,15 +109,40 @@ class WebServerService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        idleJob?.cancel()
+        serviceScope.cancel()
         server?.close()
         server = null
         _state.value = WebServerState(running = false)
         super.onDestroy()
     }
 
+    /** 自停前发一次完成通知（走 web_server 渠道；通知权限被拒时系统直接丢弃，不崩）。 */
+    private fun notifyAutoStopped() {
+        val notification = NotificationCompat.Builder(this, NotificationChannels.WEB_SERVER)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle(getString(R.string.notif_web_server_title))
+            .setContentText(getString(R.string.notif_web_server_auto_stopped))
+            .build()
+        runCatching {
+            (getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager)
+                .notify(NotificationChannels.WEB_SERVER_NOTIFICATION_ID + 1, notification)
+        }
+    }
+
     companion object {
         private val _state = MutableStateFlow(WebServerState(running = false))
         val state: StateFlow<WebServerState> = _state.asStateFlow()
+
+        /** 空闲自停：30 分钟无请求（B-W-6）。 */
+        const val IDLE_STOP_MS = 30L * 60L * 1000L
+        /** 绝对自停：5 小时（留 1 小时余量，避开 Android 15 的 6 小时 dataSync 上限）。 */
+        const val ABSOLUTE_STOP_MS = 5L * 60L * 60L * 1000L
+        private const val IDLE_CHECK_INTERVAL_MS = 60_000L
+
+        /** 自停决策（纯函数，单测时间注入）：空闲超限或绝对超限即停。 */
+        fun shouldAutoStop(nowMs: Long, startedAtMs: Long, lastRequestMs: Long): Boolean =
+            nowMs - lastRequestMs >= IDLE_STOP_MS || nowMs - startedAtMs >= ABSOLUTE_STOP_MS
 
         fun start(context: Context) {
             ContextCompat.startForegroundService(

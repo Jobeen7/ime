@@ -35,9 +35,6 @@ object EmojiCustomOps {
     /** 分组上限。 */
     const val MAX_GROUPS = 20
 
-    /** 每组符号上限。 */
-    const val MAX_SYMBOLS_PER_GROUP = 200
-
     const val PREFS_NAME = "emoji"
 
     /** 存储键。 */
@@ -51,7 +48,7 @@ object EmojiCustomOps {
 
     fun defaultConfig(): EmojiCustomConfig = EmojiCustomConfig(seedGroups())
 
-    /** 归一化：组标签去空白、空标签组丢弃、组内去空去重、上限截断；空分组保留（新建后待填符号）；无分组即无配置。 */
+    /** 归一化：组标签去空白、空标签组丢弃、组内去空去重；空分组保留（新建后待填符号）；无分组即无配置。 */
     fun normalize(groups: List<EmojiCustomGroup>): List<EmojiCustomGroup> {
         val out = ArrayList<EmojiCustomGroup>(groups.size)
         for (group in groups) {
@@ -63,7 +60,6 @@ object EmojiCustomOps {
                 if (item.isEmpty()) continue
                 if (item in symbols) continue
                 symbols += item
-                if (symbols.size >= MAX_SYMBOLS_PER_GROUP) break
             }
             out += EmojiCustomGroup(label, symbols)
             if (out.size >= MAX_GROUPS) break
@@ -112,14 +108,13 @@ object EmojiCustomOps {
         return config.copy(groups = next)
     }
 
-    /** 加符号：空白／重复／已满／越界时原样返回。 */
+    /** 加符号：空白／重复／越界时原样返回。 */
     fun addSymbol(config: EmojiCustomConfig, groupIndex: Int, symbol: String): EmojiCustomConfig {
         if (groupIndex !in config.groups.indices) return config
         val item = symbol.trim()
         if (item.isEmpty()) return config
         val group = config.groups[groupIndex]
         if (item in group.symbols) return config
-        if (group.symbols.size >= MAX_SYMBOLS_PER_GROUP) return config
         val groups = config.groups.toMutableList()
         groups[groupIndex] = group.copy(symbols = group.symbols + item)
         return config.copy(groups = groups)

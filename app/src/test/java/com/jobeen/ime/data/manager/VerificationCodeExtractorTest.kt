@@ -80,6 +80,23 @@ class VerificationCodeExtractorTest {
         )
     }
 
+    /** B-V-1：网址不再是锚点；紧贴网址的数字不取；2026 年可命中。 */
+    @Test
+    fun urlNoLongerAnchors() {
+        // 只有网址、无关键词：数字不再命中
+        assertNull(VerificationCodeExtractor.extract("点 https://example.com/ 123456 验证"))
+        // 紧贴网址的数字不取（即使有关键词在别处）
+        assertNull(VerificationCodeExtractor.extract("验证码 123456https://example.com/x"))
+        assertNull(VerificationCodeExtractor.extract("验证码 https://example.com/x123456"))
+        // 与网址隔一个空格即不算紧贴，照常命中
+        assertEquals(
+            "123456",
+            VerificationCodeExtractor.extract("验证码 123456 https://example.com/x"),
+        )
+        // 2026 年可命中（4 位数字＋关键词锚点）
+        assertEquals("2026", VerificationCodeExtractor.extract("验证码 2026年"))
+    }
+
     /** WO52 5.2：数字 4–8 位 → 4–6 位是收窄，7–8 位数字串不再命中。 */
     @Test
     fun fourToSixDigitsOnly() {

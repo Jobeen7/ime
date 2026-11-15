@@ -123,4 +123,21 @@ class EmojiCustomKeyboardTest {
         assertEquals(1, groups.size)
         assertEquals(listOf("😀", "😂"), groups[0].symbols)
     }
+
+    @Test
+    fun normalize_keepsLargeBuiltinGroupsWhole() {
+        // B-EM-1：删 200 上限后，首次启用的 9 组全量 1925 条，一个不少。
+        val normalized = EmojiCustomOps.normalize(EmojiCustomOps.seedGroups())
+        assertEquals(9, normalized.size)
+        assertEquals(1925, normalized.sumOf { it.symbols.size })
+        assertEquals(390, normalized.maxOf { it.symbols.size })
+    }
+
+    @Test
+    fun addSymbol_noLongerCapsAtTwoHundred() {
+        val big = EmojiCustomGroup("大组", (1..250).map { "x$it" })
+        val config = EmojiCustomConfig(listOf(big))
+        val next = EmojiCustomOps.addSymbol(config, 0, "x251")
+        assertEquals(251, next.groups[0].symbols.size)
+    }
 }

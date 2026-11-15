@@ -181,7 +181,6 @@ class EmojiKeyboard(
         subStripView.visibility = View.GONE
     }
 
-    /** 清搜索（切分类／重置时调用；不触发重复过滤）。 */
     private fun clearSearch() {
         if (searchQuery.isNotEmpty()) {
             searchView.setText("")
@@ -189,6 +188,26 @@ class EmojiKeyboard(
             searchQuery = ""
             searchResults = emptyList()
         }
+    }
+
+    /** 搜索框是否聚焦（B-EM-2 改道门：只在聚焦时接字符 commit）。 */
+    val isSearchFocused: Boolean get() = searchView.hasFocus()
+
+    /**
+     * B-EM-2：字符 commit 改道进搜索框（供 KawaiiPanel.interceptCommit
+     * 经 KeyboardWindowView 接线调用，与剪贴板搜索态同构）。
+     * 未聚焦返回 false（调用方继续正常上屏）；聚焦时把清过的文本
+     * 插进光标处（TextWatcher 随即过滤），返回 true。
+     */
+    fun appendSearchText(text: String): Boolean {
+        if (!searchView.hasFocus()) return false
+        val current = searchView.text?.toString().orEmpty()
+        val cursor = searchView.selectionStart.coerceIn(0, current.length)
+        val (next, nextCursor) = insertIntoSearchQuery(current, cursor, text)
+        // setText 会触发 TextWatcher → applySearchQuery；光标复位到插入点后。
+        searchView.setText(next)
+        searchView.setSelection(nextCursor.coerceIn(0, next.length))
+        return true
     }
 
     /**
@@ -470,4 +489,17 @@ class EmojiKeyboard(
         rebuildBoard()
         sidePanelKey.resetPosition()
     }
+}
+
+/**
+ * B-EM-2：搜索框插字纯函数（与剪贴板搜索态的清换行口径同构）：
+ * 换行不进查询，其余文本插进光标处；返回（新查询，光标新位）。
+ * 光标越界时夹到合法范围。
+ */
+internal fun insertIntoSearchQuery(query: String, cursor: Int, text: String): Pair<String, Int> {
+    val clean = text.replace("\n", "").replace("\r", "")
+    if (clean.isEmpty()) return query to cursor.coerceIn(0, query.length)
+    val c = cursor.coerceIn(0, query.length)
+    val next = query.substring(0, c) + clean + query.substring(c)
+    return next to (c + clean.length)
 }

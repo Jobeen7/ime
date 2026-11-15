@@ -139,10 +139,16 @@ object PhraseManager {
         db.phraseDao().search(query).map { it.toPhrase() }
     } ?: emptyList()
 
+    /** 输入码归一化：小写＋去掉多音节 preedit 的空格／' 分隔（B-PH-1）。 */
+    fun normalizeShortcutCode(code: String): String =
+        code.lowercase().replace(" ", "").replace("'", "")
+
     /** 输入码精确查询（WO52 6.1）：开关关着或输入码非法时直接返回空，不查库。 */
     suspend fun getByShortcut(context: Context, code: String): List<Phrase> {
         if (!isShortcutEnabled(context)) return emptyList()
-        val normalized = code.lowercase()
+        // 多音节 preedit 含空格／' 分隔（全拼 "ni hao"、简拼 "d z"）：
+        // 匹配前去掉分隔符再校验（"ni hao"→"nihao"，单音节行为不变；B-PH-1）。
+        val normalized = normalizeShortcutCode(code)
         if (validateShortcut(normalized) != null) return emptyList()
         return db(context) { db ->
             ensureSeeded(context, db)

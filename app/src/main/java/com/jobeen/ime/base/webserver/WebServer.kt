@@ -38,6 +38,8 @@ class WebServer(
     private val router: WebServerRouter,
     private val portRange: IntRange = 8080..8090,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
+    /** 每处理一个请求调一次（服务层用它刷新“最后请求时间”，B-W-6 空闲自停）。 */
+    private val onRequest: () -> Unit = {},
 ) {
     @Volatile
     var boundPort: Int? = null
@@ -101,6 +103,7 @@ class WebServer(
         socket.use { client ->
             var bodyFile: File? = null
             try {
+                onRequest()
                 val outcome = withContext(Dispatchers.IO) {
                     parseRequest(
                         client.getInputStream(), client.getOutputStream(),

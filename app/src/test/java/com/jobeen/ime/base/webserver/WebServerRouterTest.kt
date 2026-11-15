@@ -582,4 +582,27 @@ class WebServerRouterTest {
             source.delete()
         }
     }
+
+    // ---- B-W-4 受保护路径只防删不防写 → 写口同口径 ----
+
+    @Test
+    fun `protected paths reject put create and tus`() {
+        val putUser = authed("PUT", "/api/resources", query = mapOf("path" to "user/evil.yaml"), body = "x".toByteArray())
+        assertEquals(403, putUser.status)
+        val putShared = authed("PUT", "/api/resources", query = mapOf("path" to "shared/evil.txt"), body = "x".toByteArray())
+        assertEquals(403, putShared.status)
+        val mkdirSkin = authed("POST", "/api/resources", query = mapOf("path" to "skin_library/newdir/"))
+        assertEquals(403, mkdirSkin.status)
+        val tusSkin = authed("POST", "/api/tus", query = mapOf("path" to "skin_library/big.bin", "override" to "true"))
+        assertEquals(403, tusSkin.status)
+        assertTrue(!File(tempRoot, "user/evil.yaml").exists())
+        assertTrue(!File(tempRoot, "shared/evil.txt").exists())
+    }
+
+    @Test
+    fun `unprotected paths still writable`() {
+        val put = authed("PUT", "/api/resources", query = mapOf("path" to "plain.txt"), body = "ok".toByteArray())
+        assertEquals(200, put.status)
+        assertEquals("ok", File(tempRoot, "plain.txt").readText())
+    }
 }

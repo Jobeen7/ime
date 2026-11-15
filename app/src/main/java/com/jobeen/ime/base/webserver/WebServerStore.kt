@@ -7,7 +7,7 @@ import java.io.File
  * Wi-Fi 传输文件存储（WO52 4.4）：根目录＝应用 external files dir，
  * 全部操作先规范化再约束在根内；符号链接逃逸与越界一律拒绝。
  *
- * 受保护路径（DELETE → 403，清单见 [PROTECTED_RELATIVE_NAMES]）：
+ * 受保护路径（DELETE／PUT／create／TUS 写口 → 403，清单见 [PROTECTED_RELATIVE_NAMES]）：
  * - `user/`：方案目录子树（多目录方案集，删了丢方案）；
  * - `skin_library/`：皮肤目录子树（删了丢皮肤）；
  * - `shared/`：系统文件（内置共享方案与预编译数据）；

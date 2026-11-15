@@ -1076,11 +1076,13 @@ class KeyboardWindowView(
         addKeyboardView(keyboard)
         feedSchemeAndReturnKeyEvents()
         closeSymbolBar()
+        updateEmojiSearchSink()
     }
 
     fun onHideKeyboard(keyboard: IKeyboard) {
         removeKeyboardView(keyboard)
         if (currentKeyboard === keyboard) currentKeyboard = null
+        updateEmojiSearchSink()
     }
 
     fun onKeyboardChanged(keyboard: IKeyboard) {
@@ -1089,12 +1091,24 @@ class KeyboardWindowView(
         addKeyboardView(keyboard)
         feedSchemeAndReturnKeyEvents()
         closeSymbolBar()
+        updateEmojiSearchSink()
         // G1/G2 面板按类型刷新：键盘按类型切换时面板共享不重建，
         // 此处把当前类型喂给面板（颜色 + 区域按类型样式集/区域集取）。
         val type = keyboardStateManager.currentKeyboardType
         panel.refreshTheme(type)
         preeditPinner.panelType = type
         preeditPinner.refreshTheme(context)
+    }
+
+    /**
+     * B-EM-2：Emoji 搜索改道接线——当前键盘是 EmojiKeyboard 时把
+     * 面板的改道目标接到它的搜索框追加入口，其余时撤掉（字符照常
+     * 上屏）。搜索框本身只在聚焦时接字（EmojiKeyboard.appendSearchText
+     * 内判），失焦即恢复正常上屏。
+     */
+    private fun updateEmojiSearchSink() {
+        panel.emojiSearchCommit =
+            (currentKeyboard as? EmojiKeyboard)?.let { keyboard -> { text: String -> keyboard.appendSearchText(text) } }
     }
 
     init {

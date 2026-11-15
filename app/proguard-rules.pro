@@ -60,6 +60,12 @@
     public static void handleMessage(int, java.lang.Object[]);
     public static void handleNativeNotification(int, java.lang.Object[]);
 }
+# QuickJsEngine.onHostCall 由 native 按名查找（quickjs_jni.c GetMethodID）：
+# R8 会删掉这个“看起来没被调用”的方法（B-Q-1：成品 dex 曾 0 命中）。
+# 签名全写，与 native 侧 "(Ljava/lang/String;[I[Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/Object;" 一致。
+-keep class com.jobeen.ime.script.QuickJsEngine {
+    public java.lang.Object onHostCall(java.lang.String, int[], java.lang.String[], java.lang.String[]);
+}
 -keep class com.jobeen.ime.engine.rime.core.CandidateProto {
     <init>(java.lang.String, java.lang.String, java.lang.String, java.lang.String);
 }

@@ -220,20 +220,38 @@ static JSValue callJavaHost(Engine *e, const char *name, int argc, JSValueConst 
     JSContext *ctx = e->ctx;
     JNIEnv *env = e->env;
     if (!env || !e->hostGlobal) return JS_UNDEFINED;
+    // B-Q-2：一次调用新建的全部 JNI 局部引用（类／数组／每参数两个
+    // jstring／方法名／返回值及类对象）由一帧统一回收，不逐个释放。
+    if ((*env)->PushLocalFrame(env, 32) != 0) return JS_UNDEFINED;
     if (!e->onHostCallId) {
         jclass cls = (*env)->GetObjectClass(env, e->hostGlobal);
-        if (!cls) return JS_UNDEFINED;
+        if (!cls) {
+            (*env)->PopLocalFrame(env, NULL);
+            return JS_UNDEFINED;
+        }
         e->onHostCallId = (*env)->GetMethodID(
             env, cls, "onHostCall",
             "(Ljava/lang/String;[I[Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/Object;");
-        if (!e->onHostCallId) return JS_UNDEFINED;
+        if (!e->onHostCallId) {
+            // B-Q-1：GetMethodID 失败挂起 NoSuchMethodError，清掉再返，
+            // 否则挂起的异常会污染后续 JNI 调用。
+            (*env)->ExceptionClear(env);
+            (*env)->PopLocalFrame(env, NULL);
+            return JS_UNDEFINED;
+        }
     }
     jclass stringClass = (*env)->FindClass(env, "java/lang/String");
-    if (!stringClass) return JS_UNDEFINED;
+    if (!stringClass) {
+        (*env)->PopLocalFrame(env, NULL);
+        return JS_UNDEFINED;
+    }
     jintArray types = (*env)->NewIntArray(env, argc);
     jobjectArray strArgs = (*env)->NewObjectArray(env, argc, stringClass, NULL);
     jobjectArray objJson = (*env)->NewObjectArray(env, argc, stringClass, NULL);
-    if (!types || !strArgs || !objJson) return JS_UNDEFINED;
+    if (!types || !strArgs || !objJson) {
+        (*env)->PopLocalFrame(env, NULL);
+        return JS_UNDEFINED;
+    }
     jint *typeBuf = argc > 0 ? (jint *)malloc(sizeof(jint) * (size_t)argc) : NULL;
     for (int i = 0; i < argc; i++) {
         JSValueConst v = argv[i];
@@ -281,9 +299,13 @@ static JSValue callJavaHost(Engine *e, const char *name, int argc, JSValueConst 
         env, e->hostGlobal, e->onHostCallId, jname, types, strArgs, objJson);
     if ((*env)->ExceptionCheck(env)) {
         (*env)->ExceptionClear(env);
+        (*env)->PopLocalFrame(env, NULL);
         return JS_UNDEFINED;
     }
-    if (!ret) return JS_UNDEFINED;
+    if (!ret) {
+        (*env)->PopLocalFrame(env, NULL);
+        return JS_UNDEFINED;
+    }
     jclass retCls = (*env)->GetObjectClass(env, ret);
     jclass stringCls = (*env)->FindClass(env, "java/lang/String");
     jclass booleanCls = (*env)->FindClass(env, "java/lang/Boolean");
@@ -310,6 +332,7 @@ static JSValue callJavaHost(Engine *e, const char *name, int argc, JSValueConst 
         }
     }
     JIME_QJS_UNUSED(retCls);
+    (*env)->PopLocalFrame(env, NULL);
     return out;
 }
 
@@ -649,7 +672,12 @@ JNIEXPORT jobjectArray JNICALL JNI_FN(nativeOutputValue)(JNIEnv *env, jclass cla
     if (!arr) return NULL;
     for (size_t i = 0; i < e->outputCount; i++) {
         jstring s = (*env)->NewStringUTF(env, e->outputItems[i] ? e->outputItems[i] : "");
-        if (s) (*env)->SetObjectArrayElement(env, arr, (jsize)i, s);
+        if (s) {
+            (*env)->SetObjectArrayElement(env, arr, (jsize)i, s);
+            // 数组已持有该串的引用，本次循环的局部引用即释，
+            // 否则大输出（上万条）会撑爆 JNI 局部引用表。
+            (*env)->DeleteLocalRef(env, s);
+        }
     }
     return arr;
 }

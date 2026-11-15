@@ -206,7 +206,7 @@ class FloatingCandidateWindow(
             false,
         ).apply {
             isTouchable = true
-            isOutsideTouchable = true
+            isOutsideTouchable = false
             elevation = 8f * density
         }.also { popupWindow = it }
         if (popup.isShowing) {

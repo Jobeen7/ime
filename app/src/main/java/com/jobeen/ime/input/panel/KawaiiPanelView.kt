@@ -527,7 +527,6 @@ class KawaiiPanelView(context: Context) : View(context) {
                 isScrolling = false
                 expandLongPressed = false
                 menuLongPressed = false
-                parent.requestDisallowInterceptTouchEvent(true)
                 if (!recording) longPressHandler.postDelayed(longPressRunnable, 500)
                 // 自定义钮 DOWN 探针（仅自定义钮建手势态，池钮不动既有路）。
                 val customHit = (currentRenderer as? ToolbarRenderer)?.userCenterHit(

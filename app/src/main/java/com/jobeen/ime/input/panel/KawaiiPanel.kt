@@ -858,6 +858,13 @@ class KawaiiPanel(
     override var clipSearchActive: Boolean = false
         private set
 
+    /**
+     * B-EM-2：Emoji 搜索框改道目标。由 KeyboardWindowView 在当前键盘
+     * 是 EmojiKeyboard 时接成 `EmojiKeyboard::appendSearchText`，其余
+     * 时置 null。未聚焦时 sink 返回 false，字符照常上屏。
+     */
+    var emojiSearchCommit: ((String) -> Boolean)? = null
+
     private fun newClipToolbarRenderer(): ToolbarRenderer =
         (createStateRender(State.Clipboard) as ClipboardStateRender).createToolbarRenderer()
 
@@ -1109,7 +1116,14 @@ class KawaiiPanel(
             }
             return true
         }
-        if (!clipSearchActive) return false
+        if (!clipSearchActive) {
+            // B-EM-2：Emoji 搜索态（剪贴板态未激活时）：搜索框聚焦
+            // 时字符 commit 进搜索框 EditText；未聚焦时 sink 返回
+            // false，继续正常上屏。失焦／切走键盘后接线即撤（见
+            // KeyboardWindowView.updateEmojiSearchSink）。
+            if (emojiSearchCommit?.invoke(text) == true) return true
+            return false
+        }
         // 换行不进查询（回车在搜索态即无动作），其余文本（含空格）追加到查询尾
         val clean = text.replace("\n", "").replace("\r", "")
         if (clean.isNotEmpty()) {
