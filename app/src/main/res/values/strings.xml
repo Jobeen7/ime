@@ -1001,6 +1001,17 @@
     <string name="emoji_reset_done">已重置常用 Emoji</string>
     <string name="emoji_recent_note">点一个 Emoji 就会记进最近使用，拼在第一个分组前面。</string>
     <string name="emoji_search_hint">搜索 Emoji（中文／拼音／英文）</string>
+    <!-- Emoji 自定义键盘（WO52 7.4） -->
+    <string name="emoji_custom_title">自定义 Emoji 键盘</string>
+    <string name="emoji_custom_desc">打开后，Emoji 面板改用这里的分组；恢复默认即回到内置分组／皮肤分组。</string>
+    <string name="emoji_custom_enable">使用自定义分组</string>
+    <string name="emoji_custom_restore">恢复默认</string>
+    <string name="emoji_custom_add_group">新建分组</string>
+    <string name="emoji_custom_group_name_hint">分组名称</string>
+    <string name="emoji_custom_add_symbol_hint">新增 Emoji</string>
+    <string name="emoji_custom_add">添加</string>
+    <string name="emoji_custom_delete_group">删除分组</string>
+    <string name="emoji_custom_delete_symbol">删除</string>
     <!-- 按键符号（施工单 10 H2-14）：页名／迷你键盘／改键弹框 -->
     <string name="key_symbol_title">按键符号</string>
     <string name="row_sub_key_symbol">26 键字母键角标</string>

@@ -31,6 +31,8 @@ import com.jobeen.ime.skin.model.KeyboardTypes
 import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 import com.jobeen.ime.skin.symbol.BoardAutoReturn
 import com.jobeen.ime.skin.symbol.EmojiBoardBuilder
+import com.jobeen.ime.skin.symbol.EmojiCustomStore
+import com.jobeen.ime.skin.symbol.SharedPrefsEmojiCustomStore
 import com.jobeen.ime.skin.symbol.EmojiSearchIndex
 import com.jobeen.ime.skin.symbol.RecentEmojiOps
 import com.jobeen.ime.skin.symbol.RecentEmojiStore
@@ -127,6 +129,7 @@ class EmojiKeyboard(
      * 下次打开面板即跟变。
      */
     private val recentStore: RecentEmojiStore = SharedPrefsRecentEmojiStore(context)
+    private val customStore: EmojiCustomStore = SharedPrefsEmojiCustomStore(context)
 
     private var twoStageSymbols: SubClassifiedSymbols =
         EmojiBoardBuilder.build(recentStore.load(), SkinSnapshotProvider.peek()?.subClassifiedSymbols)
@@ -244,8 +247,8 @@ class EmojiKeyboard(
         twoStageSymbols = EmojiBoardBuilder.build(
             recentStore.load(),
             SkinSnapshotProvider.peek()?.subClassifiedSymbols,
-            // 用户自定义分组（7.4）在此接线；7.1 暂无自定义，传 null 走内置／皮肤板。
-            customGroups = null,
+            // 用户自定义分组（7.4）：有存档时面板改用自定义分组。
+            customGroups = customStore.load()?.groups?.map { it.label to it.symbols },
         )
         boardState = SubClassifiedBoardState(twoStageSymbols)
         boardState.selectParent(0)

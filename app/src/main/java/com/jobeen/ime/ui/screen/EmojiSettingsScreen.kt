@@ -66,6 +66,6 @@ fun EmojiSettingsScreen(onBack: () -> Unit) {
             modifier = Modifier.padding(start = 4.dp, top = 4.dp),
         )
         Spacer(Modifier.height(20.dp))
-        // 自定义键盘编辑区（7.4）在此接线；7.1 只有最近使用与重置。
+        EmojiCustomSection()
     }
 }
