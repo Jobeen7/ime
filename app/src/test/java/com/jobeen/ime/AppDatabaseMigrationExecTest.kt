@@ -170,6 +170,10 @@ class AppDatabaseMigrationExecTest {
         sql.trim().replace(Regex("\\s+"), " ")
             // SQLite 存建表 SQL 时去掉 IF NOT EXISTS（只比实质定义）。
             .replace("IF NOT EXISTS ", "")
+            // ALTER TABLE RENAME 后 SQLite 把存储的建表 SQL 里表名
+            // 的反引号改写成双引号（列名仍是反引号；L-33 迁移即此
+            // 形），归一化后只比实质定义。
+            .replace("\"", "`")
 
     @Test
     fun migrate_10to18_fullChain_executesEachSegmentAndPreservesData() {
@@ -299,8 +303,10 @@ class AppDatabaseMigrationExecTest {
                 "VALUES ('conv-1','会话',1700000000000,1700000000000,0)",
         )
         db.execSQL(
-            "INSERT INTO `AIMessage` (`id`,`conversationId`,`role`,`status`,`sequence`,`createdAt`,`content`) " +
-                "VALUES ('msg-1','conv-1','user','complete',1,1700000000000,'你好')",
+            // tokenEstimate／isSuperseded 是 NOT NULL 且无默认值
+            // （Kotlin 构造默认值不进建表 SQL），插入须显式给 0。
+            "INSERT INTO `AIMessage` (`id`,`conversationId`,`role`,`status`,`sequence`,`createdAt`,`content`,`tokenEstimate`,`isSuperseded`) " +
+                "VALUES ('msg-1','conv-1','user','complete',1,1700000000000,'你好',0,0)",
         )
         migrate(db, 17, 18)
         // 旧数据不丢（整表重建只换外键定义，行原样复制）。
