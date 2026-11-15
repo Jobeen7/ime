@@ -18,6 +18,7 @@ import com.jobeen.ime.engine.IEngine
 import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.engine.rime.data.userdict.UserDictPrefs
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
+import com.jobeen.ime.engine.rime.service.MaintenanceResult
 import com.jobeen.ime.engine.rime.service.rimeMaintenanceClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -118,12 +119,12 @@ object FabActions {
      * （指纹未变即跳过重编、只刷新方案表；指纹已变则重编一次），
      * 再复核方案表。
      */
-    private suspend fun deployAndCheckSchemas(context: Context, engine: IEngine?): Boolean {
+    private suspend fun deployAndCheckSchemas(context: Context, engine: IEngine?): MaintenanceResult {
         val deployed = context.rimeMaintenanceClient()
             .deploy(deployTimeoutForCurrentDir(context))
-        if (!deployed) {
-            Timber.w("FAB deploy not completed")
-            return false
+        if (deployed != MaintenanceResult.Success) {
+            Timber.w("FAB deploy not completed: $deployed")
+            return deployed
         }
         engine?.reload()
         val ready = awaitSchemasReady(
@@ -138,7 +139,7 @@ object FabActions {
         if (!ready) {
             Timber.w("FAB deploy completed but schemas still empty")
         }
-        return ready
+        return if (ready) MaintenanceResult.Success else MaintenanceResult.Failed
     }
 
     /** 部署单飞守门：补 [EngineDeployState.isRunning] 先查后做的窗口。 */
@@ -205,12 +206,14 @@ object FabActions {
                 }
                 val runId = runCounter.incrementAndGet()
                 val deployed = deployAndCheckSchemas(context, engine)
-                if (deployed) {
-                    ToastUtil.showToast(context.getString(R.string.fab_deploy_done))
-                } else {
-                    ToastUtil.showToast(context.getString(R.string.fab_deploy_failed))
+                val toastRes = when (deployed) {
+                    MaintenanceResult.Success -> R.string.fab_deploy_done
+                    // 忙与等待超时同一提示：服务端仍在跑，稍后再试／查看。
+                    MaintenanceResult.Busy -> R.string.fab_deploy_busy
+                    MaintenanceResult.Failed -> R.string.fab_deploy_failed
                 }
-                notifyDeployDone(context, runId, deployed)
+                ToastUtil.showToast(context.getString(toastRes))
+                notifyDeployDone(context, runId, deployed == MaintenanceResult.Success)
             }
         } catch (e: Exception) {
             deployClaim.release()
@@ -301,17 +304,18 @@ object FabActions {
         scope.launch {
             try {
                 val runId = runCounter.incrementAndGet()
-                val ok = context.rimeMaintenanceClient().syncUserData()
-                val msg = context.getString(
-                    if (ok) R.string.fab_dict_sync_success else R.string.fab_sync_failed,
-                )
+                val result = context.rimeMaintenanceClient().syncUserData()
+                val (msgRes, outcome) = when (result) {
+                    MaintenanceResult.Success ->
+                        R.string.fab_dict_sync_success to "success"
+                    MaintenanceResult.Busy ->
+                        R.string.fab_sync_busy to "busy"
+                    MaintenanceResult.Failed ->
+                        R.string.fab_sync_failed to "failed"
+                }
+                val msg = context.getString(msgRes)
                 ToastUtil.showToast(msg)
-                notifySyncDone(
-                    context,
-                    runId,
-                    if (ok) "success" else "failed",
-                    msg,
-                )
+                notifySyncDone(context, runId, outcome, msg)
             } finally {
                 FabSyncState.setRunning(false)
             }

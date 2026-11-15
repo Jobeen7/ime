@@ -40,9 +40,13 @@ class RimeMaintenanceService : Service() {
 
     private val binder = object : IRimeService.Stub() {
         // Binder 线程上阻塞直至完成（部署可达数十分钟）；单飞
-        // 守门在 executor 内，并发进入者立即返回 false。
-        override fun deploy(): Boolean = runBlocking { executor.deploy() }
-        override fun syncUserData(): Boolean = runBlocking { executor.syncUserData() }
+        // 守门在 executor 内，并发进入者立即返回 Busy（AIDL 只传
+        // Boolean：忙与失败在远端都落为 false，客户端先查 isBusy()
+        // 区分，见 RimeMaintenanceClient）。
+        override fun deploy(): Boolean =
+            runBlocking { executor.deploy() == MaintenanceResult.Success }
+        override fun syncUserData(): Boolean =
+            runBlocking { executor.syncUserData() == MaintenanceResult.Success }
         override fun isBusy(): Boolean = executor.isBusy()
     }
 

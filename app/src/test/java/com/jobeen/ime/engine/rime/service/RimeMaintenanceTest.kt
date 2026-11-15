@@ -73,13 +73,24 @@ class RimeMaintenanceTest {
         var deployResult: Boolean = true,
         var syncResult: Boolean = true,
         var deployThrows: Boolean = false,
+        var busy: Boolean = false,
     ) : IRimeService {
         var deployCalls = 0
         var syncCalls = 0
+        val deployStarted = CompletableDeferred<Unit>()
+        /** 远端部署耗时（毫秒）：模拟慢服务端，超时后自己跑完才返回。 */
+        var slowDeployMs: Long = 0
+        @Volatile
+        var deployFinished = false
 
         override fun deploy(): Boolean {
             deployCalls++
+            deployStarted.complete(Unit)
             if (deployThrows) throw RemoteException("fake remote failure")
+            // 普通阻塞调用（与真实 Binder 调用同构）：超时只断客户端
+            // 等待，不停服务端；调用自己跑完才返回。
+            if (slowDeployMs > 0) Thread.sleep(slowDeployMs)
+            deployFinished = true
             return deployResult
         }
 
@@ -88,7 +99,7 @@ class RimeMaintenanceTest {
             return syncResult
         }
 
-        override fun isBusy(): Boolean = false
+        override fun isBusy(): Boolean = busy
         override fun asBinder(): IBinder = FakeBinder
     }
 
@@ -106,26 +117,26 @@ class RimeMaintenanceTest {
     // ---- 3.1b 执行体：入口单飞 ----
 
     @Test
-    fun executor_deployCompleted_true() = runBlocking {
+    fun executor_deployCompleted_success() = runBlocking {
         val ops = FakeOps()
         val executor = RimeMaintenanceExecutor(ops, 1_000L)
-        assertTrue(executor.deploy())
+        assertEquals(MaintenanceResult.Success, executor.deploy())
         assertEquals(1, ops.deployCalls)
         assertEquals(1_000L, ops.lastTimeoutMs)
     }
 
     @Test
-    fun executor_deployFailed_false() = runBlocking {
+    fun executor_deployFailed_failed() = runBlocking {
         val ops = FakeOps(deployResult = DeployAwaitResult.FAILED)
         val executor = RimeMaintenanceExecutor(ops, 1_000L)
-        assertFalse(executor.deploy())
+        assertEquals(MaintenanceResult.Failed, executor.deploy())
     }
 
     @Test
-    fun executor_deployTimeoutRunning_false() = runBlocking {
+    fun executor_deployTimeoutRunning_failed() = runBlocking {
         val ops = FakeOps(deployResult = DeployAwaitResult.TIMEOUT_RUNNING)
         val executor = RimeMaintenanceExecutor(ops, 1_000L)
-        assertFalse(executor.deploy())
+        assertEquals(MaintenanceResult.Failed, executor.deploy())
     }
 
     @Test
@@ -135,14 +146,14 @@ class RimeMaintenanceTest {
         val first = async(Dispatchers.Default) { executor.deploy() }
         ops.deployStarted.await()
         assertTrue(executor.isBusy())
-        // 第二路不排队、不重入：立即返回 false，执行体只进一次。
-        assertFalse(executor.deploy())
+        // 第二路不排队、不重入：立即返回 Busy，执行体只进一次。
+        assertEquals(MaintenanceResult.Busy, executor.deploy())
         assertEquals(1, ops.deployCalls)
         ops.releaseDeploy.complete(Unit)
-        assertTrue(first.await())
+        assertEquals(MaintenanceResult.Success, first.await())
         assertFalse(executor.isBusy())
         // 释放后可再进。
-        assertTrue(executor.deploy())
+        assertEquals(MaintenanceResult.Success, executor.deploy())
         assertEquals(2, ops.deployCalls)
     }
 
@@ -152,25 +163,35 @@ class RimeMaintenanceTest {
         val executor = RimeMaintenanceExecutor(ops, 1_000L)
         val first = async(Dispatchers.Default) { executor.deploy() }
         ops.deployStarted.await()
-        assertFalse(executor.syncUserData())
+        assertEquals(MaintenanceResult.Busy, executor.syncUserData())
         assertEquals(0, ops.syncCalls)
         ops.releaseDeploy.complete(Unit)
-        assertTrue(first.await())
+        assertEquals(MaintenanceResult.Success, first.await())
     }
 
     @Test
     fun executor_syncDelegatesToOps() = runBlocking {
         val ops = FakeOps(syncResult = true)
         val executor = RimeMaintenanceExecutor(ops, 1_000L)
-        assertTrue(executor.syncUserData())
+        assertEquals(MaintenanceResult.Success, executor.syncUserData())
         assertEquals(1, ops.syncCalls)
     }
 
     @Test
-    fun executor_syncFalse_propagates() = runBlocking {
+    fun executor_syncFalse_propagatesFailed() = runBlocking {
         val ops = FakeOps(syncResult = false)
         val executor = RimeMaintenanceExecutor(ops, 1_000L)
-        assertFalse(executor.syncUserData())
+        assertEquals(MaintenanceResult.Failed, executor.syncUserData())
+    }
+
+    @Test
+    fun maintenanceResult_hasExactlyThreeStates() {
+        // 三态形状契约（B-X-2）：忙／失败／成功，缺一不可、不许多余态。
+        // 用 Java 反射读嵌套类：kotlin-reflect 不在测试 classpath，
+        // sealedSubclasses 会在运行期抛错。
+        val states = MaintenanceResult::class.java.declaredClasses
+            .map { it.simpleName }.toSet()
+        assertEquals(setOf("Busy", "Failed", "Success"), states)
     }
 
     // ---- 3.1b 客户端：远端 / 回落 / 调用中失败 ----
@@ -181,7 +202,7 @@ class RimeMaintenanceTest {
         val local = FakeOps()
         val connector = FakeConnector(remote)
         val client = RimeMaintenanceClient(connector, local)
-        assertTrue(client.deploy(1_000L))
+        assertEquals(MaintenanceResult.Success, client.deploy(1_000L))
         assertEquals(RimeMaintenanceClient.Transport.REMOTE, client.lastTransport)
         assertEquals(1, remote.deployCalls)
         assertEquals(0, local.deployCalls)
@@ -193,7 +214,7 @@ class RimeMaintenanceTest {
         val remote = FakeRemote(deployResult = false)
         val local = FakeOps()
         val client = RimeMaintenanceClient(FakeConnector(remote), local)
-        assertFalse(client.deploy(1_000L))
+        assertEquals(MaintenanceResult.Failed, client.deploy(1_000L))
         assertEquals(RimeMaintenanceClient.Transport.REMOTE, client.lastTransport)
         assertEquals(0, local.deployCalls)
     }
@@ -203,7 +224,7 @@ class RimeMaintenanceTest {
         val remote = FakeRemote(deployThrows = true)
         val local = FakeOps()
         val client = RimeMaintenanceClient(FakeConnector(remote), local)
-        assertFalse(client.deploy(1_000L))
+        assertEquals(MaintenanceResult.Failed, client.deploy(1_000L))
         assertEquals(RimeMaintenanceClient.Transport.REMOTE, client.lastTransport)
         assertEquals(0, local.deployCalls)
     }
@@ -213,7 +234,7 @@ class RimeMaintenanceTest {
         val local = FakeOps(deployResult = DeployAwaitResult.COMPLETED)
         val connector = FakeConnector(null)
         val client = RimeMaintenanceClient(connector, local)
-        assertTrue(client.deploy(2_000L))
+        assertEquals(MaintenanceResult.Success, client.deploy(2_000L))
         assertEquals(RimeMaintenanceClient.Transport.LOCAL_FALLBACK, client.lastTransport)
         assertEquals(1, local.deployCalls)
         assertEquals(2_000L, local.lastTimeoutMs)
@@ -223,7 +244,7 @@ class RimeMaintenanceTest {
     fun client_deploy_bindFails_localFailed_false() = runBlocking {
         val local = FakeOps(deployResult = DeployAwaitResult.FAILED)
         val client = RimeMaintenanceClient(FakeConnector(null), local)
-        assertFalse(client.deploy(1_000L))
+        assertEquals(MaintenanceResult.Failed, client.deploy(1_000L))
         assertEquals(RimeMaintenanceClient.Transport.LOCAL_FALLBACK, client.lastTransport)
     }
 
@@ -232,7 +253,7 @@ class RimeMaintenanceTest {
         val remote = FakeRemote(syncResult = true)
         val local = FakeOps()
         val client = RimeMaintenanceClient(FakeConnector(remote), local)
-        assertTrue(client.syncUserData())
+        assertEquals(MaintenanceResult.Success, client.syncUserData())
         assertEquals(RimeMaintenanceClient.Transport.REMOTE, client.lastTransport)
         assertEquals(1, remote.syncCalls)
         assertEquals(0, local.syncCalls)
@@ -242,9 +263,44 @@ class RimeMaintenanceTest {
     fun client_syncUserData_bindFails_fallsBackToLocal() = runBlocking {
         val local = FakeOps(syncResult = true)
         val client = RimeMaintenanceClient(FakeConnector(null), local)
-        assertTrue(client.syncUserData())
+        assertEquals(MaintenanceResult.Success, client.syncUserData())
         assertEquals(RimeMaintenanceClient.Transport.LOCAL_FALLBACK, client.lastTransport)
         assertEquals(1, local.syncCalls)
+    }
+
+    @Test
+    fun client_deploy_remoteBusy_returnsBusyWithoutCallingDeploy() = runBlocking {
+        val remote = FakeRemote(busy = true)
+        val local = FakeOps()
+        val client = RimeMaintenanceClient(FakeConnector(remote), local)
+        assertEquals(MaintenanceResult.Busy, client.deploy(1_000L))
+        assertEquals(0, remote.deployCalls)
+        assertEquals(0, local.deployCalls)
+    }
+
+    @Test
+    fun client_deploy_remoteTimeout_returnsBusyAndServerKeepsRunning() = runBlocking {
+        // 远端部署 1 秒才完成；客户端 100ms 超时只断等待。
+        // 注意：裸 runBlocking 下超时取消虽在 100ms 准时触发，挂在
+        // await() 的等待要到远端调用自己完成才恢复（事件循环投递
+        // 特性；生产环境 Main/Default dispatcher 下准时投递），故
+        // 此处不断言耗时，只断言：超时报 Busy（而非等来的 Success）、
+        // 远端调用只发一次、服务端跑完未被取消。
+        val remote = FakeRemote().apply { slowDeployMs = 1_000L }
+        val client = RimeMaintenanceClient(FakeConnector(remote), FakeOps(), remoteTimeoutMs = 100L)
+        assertEquals(MaintenanceResult.Busy, client.deploy(1_000L))
+        assertEquals(1, remote.deployCalls)
+        assertTrue(remote.deployFinished)
+    }
+
+    @Test
+    fun client_syncUserData_remoteBusy_returnsBusy() = runBlocking {
+        val remote = FakeRemote(busy = true)
+        val local = FakeOps()
+        val client = RimeMaintenanceClient(FakeConnector(remote), local)
+        assertEquals(MaintenanceResult.Busy, client.syncUserData())
+        assertEquals(0, remote.syncCalls)
+        assertEquals(0, local.syncCalls)
     }
 
     // ---- 3.1c syncUserData：JNI 绑定约定 ----
