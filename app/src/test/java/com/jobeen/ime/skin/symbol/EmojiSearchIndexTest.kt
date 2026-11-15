@@ -144,4 +144,29 @@ class EmojiSearchIndexTest {
         // 英文检索：grinning。
         assertTrue("😀" in EmojiSearchIndex.search(entries, "grinning"))
     }
+
+    @Test
+    fun `C-L-25 english multi-word query hits both spaced and joined`() {
+        val entries = smallIndex()
+        assertTrue("❤️" in EmojiSearchIndex.search(entries, "red heart"))
+        assertTrue("❤️" in EmojiSearchIndex.search(entries, "redheart"))
+        assertTrue("😀" in EmojiSearchIndex.search(entries, "grinning face"))
+        assertTrue("😀" in EmojiSearchIndex.search(entries, "grinningface"))
+        // 中文／拼音照旧。
+        assertTrue("❤️" in EmojiSearchIndex.search(entries, "红心"))
+        assertTrue("❤️" in EmojiSearchIndex.search(entries, "hongxin"))
+    }
+
+    @Test
+    fun `C-L-24 loadAsync runs off the calling thread`() = kotlinx.coroutines.runBlocking {
+        val caller = Thread.currentThread().name
+        var worker: String? = null
+        val out = EmojiSearchIndex.loadAsync {
+            worker = Thread.currentThread().name
+            smallIndex()
+        }
+        assertEquals(2, out.size)
+        assertTrue("解析应在 Default 线程，不在调用线程 $caller", worker != null && worker != caller)
+        assertTrue("解析线程应为 DefaultDispatcher-worker，实际 $worker", worker!!.startsWith("DefaultDispatcher-worker"))
+    }
 }

@@ -18,6 +18,7 @@ import android.widget.TextView
 import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
+import com.jobeen.ime.base.util.InputFieldPolicy
 import com.jobeen.ime.data.PunctuationMode
 import com.jobeen.ime.input.keyboard.key.GridKeyboardView
 import com.jobeen.ime.input.keyboard.key.KeyActionListener
@@ -42,6 +43,11 @@ import com.jobeen.ime.skin.symbol.SubClassifiedSymbols
 import com.jobeen.ime.skin.symbol.SymbolItem
 import com.jobeen.ime.skin.symbol.SymbolItemActionResolver
 import com.jobeen.ime.input.keyboard.key.TextKeyView
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import splitties.dimensions.dp
 import splitties.views.dsl.core.lParams
 import splitties.views.dsl.core.matchParent
@@ -144,6 +150,18 @@ class EmojiKeyboard(
     private var searchResults: List<SymbolItem> = emptyList()
     private var searchIndex: List<com.jobeen.ime.skin.symbol.EmojiIndexEntry>? = null
 
+    /** C-L-24：视图级作用域（主线程）＋首次索引解析任务。 */
+    private val viewScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var searchLoadJob: Job? = null
+
+    /** C-L-26：当前输入框信息（updateEditorInfo 下发）。 */
+    private var currentEditorInfo: EditorInfo? = null
+
+    override fun onDetachedFromWindow() {
+        searchLoadJob?.cancel()
+        super.onDetachedFromWindow()
+    }
+
     private val searchView = EditText(context).apply {
         hint = context.getString(R.string.emoji_search_hint)
         inputType = InputType.TYPE_CLASS_TEXT
@@ -167,18 +185,40 @@ class EmojiKeyboard(
     private fun applySearchQuery(query: String) {
         searchQuery = query
         if (query.isBlank()) {
+            searchLoadJob?.cancel()
+            searchView.hint = context.getString(R.string.emoji_search_hint)
             searchResults = emptyList()
             refreshGrid()
             rebuildSubStrip()
             return
         }
-        if (searchIndex == null) {
-            searchIndex = EmojiSearchIndex.loadFromAssets(context)
+        val index = searchIndex
+        if (index != null) {
+            searchResults = EmojiSearchIndex.search(index, query)
+                .map { SymbolItem.Plain(it) }
+            refreshGrid()
+            subStripView.visibility = View.GONE
+            return
         }
-        searchResults = EmojiSearchIndex.search(searchIndex.orEmpty(), query)
-            .map { SymbolItem.Plain(it) }
+        // C-L-24：首次查询——索引解析放后台线程（loadAsync 内
+        // withContext(Dispatchers.Default)），解析完缓存、再按最新
+        // 查询搜一次；解析期间显示 loading 态（空结果＋搜索框提示），
+        // UI 线程不碰 644KB 全量解析。二次查询走上面缓存分支。
+        if (searchLoadJob?.isActive == true) return
+        searchResults = emptyList()
         refreshGrid()
-        subStripView.visibility = View.GONE
+        searchView.hint = context.getString(R.string.emoji_search_loading)
+        searchLoadJob = viewScope.launch {
+            val loaded = EmojiSearchIndex.loadAsync { EmojiSearchIndex.loadFromAssets(context) }
+            searchIndex = loaded
+            searchView.hint = context.getString(R.string.emoji_search_hint)
+            if (searchQuery.isNotBlank()) {
+                searchResults = EmojiSearchIndex.search(loaded, searchQuery)
+                    .map { SymbolItem.Plain(it) }
+                refreshGrid()
+                subStripView.visibility = View.GONE
+            }
+        }
     }
 
     private fun clearSearch() {
@@ -296,8 +336,11 @@ class EmojiKeyboard(
     /**
      * 最近使用记一次（7.1）：只记板内当前子类里真实提交的 Emoji
      * （分类切换的提交走侧栏、不经过此处；皮肤动作项不记）。
+     * C-L-26：密码框／无痕框不记（复用 RimeEngine 的
+     * isNoPersonalizedLearning 口径，即 InputFieldPolicy）。
      */
     private fun recordRecent(text: String) {
+        if (InputFieldPolicy.isNoPersonalizedLearning(currentEditorInfo)) return
         val effective = if (searchQuery.isNotBlank()) searchResults else boardState.currentItems
         val hit = effective.any {
             val resolved = SymbolItemActionResolver.resolve(it)
@@ -452,7 +495,11 @@ class EmojiKeyboard(
     override fun updateSpaceKeyText(text: String) {}
     override fun updateDynamicTexts(values: Map<String, String>) {}
     override fun updatePunctuationMode(mode: PunctuationMode) {}
-    override fun updateEditorInfo(info: EditorInfo, empty: Boolean, isComposing: Boolean) {}
+    override fun updateEditorInfo(info: EditorInfo, empty: Boolean, isComposing: Boolean) {
+        // C-L-26：记下当前输入框信息，供 recordRecent 复用 RimeEngine
+        // 的 isNoPersonalizedLearning 口径（密码框／无痕框不记最近使用）。
+        currentEditorInfo = info
+    }
 
     override fun setRippleEnabled(enabled: Boolean) {
         rippleView.rippleEnabled = enabled

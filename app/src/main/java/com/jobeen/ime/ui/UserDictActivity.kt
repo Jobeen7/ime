@@ -4,6 +4,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.compose.runtime.Composable
 import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
@@ -23,7 +24,6 @@ import com.jobeen.ime.engine.rime.data.userdict.PeriodicSyncScheduler
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.error.DeepErrorMapper
 import com.jobeen.ime.ui.screen.UserDictScreen
-import com.jobeen.ime.ui.screen.UserDictUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -41,7 +41,11 @@ import java.io.File
  * 导入/导出使用热路径直接操作运行中引擎的词库，无需停止 Rime，导入后立即生效。
  */
 class UserDictActivity : ImeActivity() {
-    private val uiState = UserDictUiState()
+    // C-L-42：uiState 从 Activity 字段移到 ViewModel——旋转重建
+    // 后状态保留（busy／词典列表／对话框等）；SavedStateHandle
+    // 记 busy＋任务 runId，进程被杀后重建仍能恢复“传输进行中”。
+    private val viewModel: UserDictViewModel by viewModels()
+    private val uiState get() = viewModel.uiState
     private var session: RimeSession? = null
     private var loadJob: Job? = null
 
@@ -84,6 +88,12 @@ class UserDictActivity : ImeActivity() {
         lifecycleScope.launch {
             RemoteTransferEvents.state.collect { state ->
                 val done = state ?: return@collect
+                if (done.status == RemoteTransferStatus.RUNNING) {
+                    // C-L-42：传输开始时记 runId（进 SavedStateHandle），
+                    // 重建后核对终端态归属；终端态 60 秒丢弃照旧。
+                    viewModel.noteRunId(done.runId)
+                    return@collect
+                }
                 // 过期终端态（发出超过 60 秒，多半是上次打开本页
                 // 时留下的）不再弹结果，只消费新鲜的一次。
                 if (System.currentTimeMillis() - done.postedAtMs > 60_000L) return@collect
@@ -510,13 +520,11 @@ class UserDictActivity : ImeActivity() {
     }
 
     private fun setBusy(message: String) {
-        uiState.busyMessage = message
-        uiState.busy = true
+        viewModel.setBusy(message)
     }
 
     private fun setIdle() {
-        uiState.busy = false
-        uiState.busyMessage = ""
+        viewModel.setIdle()
     }
 
     companion object {

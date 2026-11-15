@@ -13,8 +13,9 @@ import kotlinx.serialization.json.contentOrNull
  * - 菜单项＝注册表 [KeyboardMenuEntries] 的 id 顺序列；用户在设置页
  *   增删排序，存偏好（`keyboard_menu` 文件，键 `entries`），菜单
  *   打开时按存档顺序分 8 项一页渲染（与旧两页 8＋8 同口径）；
- * - 删光／未知 id／损坏时回落默认全量（菜单永不空白，与工具栏
- *   空表回落同口径）；悬空引用逐项跳过，不拖垮整列；
+ * - C-L-40：删光就是空菜单，不再回落默认全量（恢复默认走设置页
+ *   “恢复默认”按钮）；未配置过（null）仍回落默认——首次安装菜单
+ *   不空白；未知 id／重复逐项跳过，不拖垮整列；
  * - 本文件纯逻辑＋偏好读写，不碰 View；单测直接覆盖。
  */
 object KeyboardMenuConfigOps {
@@ -31,11 +32,12 @@ object KeyboardMenuConfigOps {
     fun defaultIds(): List<String> = KeyboardMenuEntries.ALL.map { it.id }
 
     /**
-     * 抉择：未知 id 与重复（取首次出现）逐项跳过；空表／null 时
-     * 回落默认全量（菜单永不空白）。
+     * 抉择：未知 id 与重复（取首次出现）逐项跳过；空表返空（C-L-40：
+     * 删光就是空菜单）；null（未配置过／损坏）回落默认全量——首次
+     * 安装菜单不空白。
      */
     fun resolve(ids: List<String>?): List<String> {
-        if (ids.isNullOrEmpty()) return defaultIds()
+        if (ids == null) return defaultIds()
         val known = defaultIds().toSet()
         val out = ArrayList<String>(ids.size)
         for (id in ids) {
@@ -43,7 +45,7 @@ object KeyboardMenuConfigOps {
             if (id in out) continue
             out += id
         }
-        return if (out.isEmpty()) defaultIds() else out
+        return out
     }
 
     /** 分页：按 [PAGE_SIZE] 切页（顺序即菜单顺序）。 */
@@ -91,7 +93,7 @@ object KeyboardMenuConfigOps {
     }
 }
 
-/** 键盘菜单配置存储：加载即抉择后顺序（永不空表）。 */
+/** 键盘菜单配置存储：加载即抉择后顺序（删光可为空表）。 */
 interface KeyboardMenuStore {
     fun load(): List<String>
     fun save(ids: List<String>)

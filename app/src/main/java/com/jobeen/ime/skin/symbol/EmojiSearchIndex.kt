@@ -3,6 +3,8 @@
 package com.jobeen.ime.skin.symbol
 
 import android.content.Context
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -99,6 +101,15 @@ object EmojiSearchIndex {
     }
 
     /**
+     * C-L-24：首次加载的后台化入口——读资产＋全量 JSON 解析
+     * （644KB）在 Dispatchers.Default 上跑，调用方在 UI 线程
+     * await；返回后调用方缓存到 searchIndex，二次查询不再加载。
+     * load 参数即 loadFromAssets 的调用，便于主机单测探针线程。
+     */
+    suspend fun loadAsync(load: () -> List<EmojiIndexEntry>): List<EmojiIndexEntry> =
+        withContext(Dispatchers.Default) { load() }
+
+    /**
      * 检索：空查询回空表；命中任一字段即入选（按索引顺序、去重、
      * 截断 [MAX_RESULTS]）：
      * - Emoji 本身、简／繁中文名与关键词、英文名与关键词（含子串）；
@@ -122,8 +133,8 @@ object EmojiSearchIndex {
         if (entry.name.contains(q) || entry.traditionalName.contains(q)) return true
         if (entry.keywords.any { it.contains(q) }) return true
         if (entry.traditionalKeywords.any { it.contains(q) }) return true
-        if (entry.englishName.contains(q)) return true
-        if (entry.englishKeywords.any { it.contains(q) }) return true
+        if (entry.englishName.replace(" ", "").contains(q)) return true
+        if (entry.englishKeywords.any { it.replace(" ", "").contains(q) }) return true
         if (q.all { it in 'a'..'z' }) {
             if (entry.pinyin.isNotEmpty() && entry.pinyin.contains(q)) return true
             if (entry.initials.isNotEmpty() && entry.initials.startsWith(q)) return true

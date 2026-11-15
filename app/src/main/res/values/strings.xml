@@ -84,26 +84,26 @@
     <string name="clipboard_auto_extract_code">自动提取验证码</string>
     <string name="clipboard_auto_extract_code_summary">复制含验证码的文字时只保留验证码：提示条显示验证码并写入系统剪贴板，原文不记入剪贴板。</string>
     <string name="clipboard_auto_extract_code_requires_banner">需先开启剪贴板提示条。</string>
-    <string name="clipboard_tap_to_copy">Tap an item to copy it. Long-press to select multiple items.</string>
+    <string name="clipboard_tap_to_copy">点按条目复制，长按多选。</string>
     <string name="verification_code_copied">验证码已复制</string>
     <string name="split_words_title">拆词</string>
     <string name="split_words_copy">复制</string>
     <string name="split_words_done">完成</string>
     <string name="split_words_empty">没有可拆分的文字</string>
-    <string name="clipboard_lock_panel">Lock panel</string>
-    <string name="clipboard_unlock_panel">Unlock panel</string>
+    <string name="clipboard_lock_panel">锁定面板</string>
+    <string name="clipboard_unlock_panel">解锁面板</string>
     <!-- WO52 5.3 长按菜单与行内三钮 -->
-    <string name="clipboard_open_link">Open link</string>
-    <string name="clipboard_extract_code">Extract verification code</string>
-    <string name="clipboard_split_words">Split words</string>
-    <string name="clipboard_save_as_phrase">Save as phrase</string>
-    <string name="clipboard_favorite">Favorite</string>
-    <string name="clipboard_remove_favorite">Remove from favorites</string>
-    <string name="clipboard_delete_result">Delete result</string>
-    <string name="clipboard_row_split">Split</string>
-    <string name="clipboard_row_copy">Copy</string>
-    <string name="clipboard_row_expand">Expand</string>
-    <string name="clipboard_row_collapse">Collapse</string>
+    <string name="clipboard_open_link">打开链接</string>
+    <string name="clipboard_extract_code">提取验证码</string>
+    <string name="clipboard_split_words">分词</string>
+    <string name="clipboard_save_as_phrase">存为常用语</string>
+    <string name="clipboard_favorite">收藏</string>
+    <string name="clipboard_remove_favorite">取消收藏</string>
+    <string name="clipboard_delete_result">已删除</string>
+    <string name="clipboard_row_split">分词</string>
+    <string name="clipboard_row_copy">复制</string>
+    <string name="clipboard_row_expand">展开</string>
+    <string name="clipboard_row_collapse">收起</string>
     <string name="clipboard_return_note">粘贴后收起剪贴板面板回键盘</string>
     <!-- 批量第 5 项：主题诊断 -->
     <string name="skin_diag_title">主题诊断</string>
@@ -120,7 +120,7 @@
     <string name="skin_editor_title">皮肤编辑器</string>
     <string name="row_sub_skin_editor">编辑当前皮肤的布局文件</string>
     <!-- 应用级脚本管理 -->
-    <string name="skin_script_title">脚本管理</string>
+    <string name="skin_script_title">皮肤脚本</string>
     <string name="skin_script_empty">暂无脚本</string>
     <string name="skin_script_id">脚本 ID</string>
     <string name="skin_script_name">名称</string>
@@ -245,7 +245,7 @@
     <string name="row_sub_candidates">预测、序号与候选显示</string>
     <string name="row_sub_keyboard">按键音、振动、高度与手势</string>
     <string name="row_sub_skin">皮肤库、导入与颜色模式</string>
-    <string name="row_sub_skin_scripts">管理应用级脚本</string>
+    <string name="row_sub_skin_scripts">管理皮肤脚本</string>
     <string name="row_sub_appearance">视频背景、全局样式、字体与应用外观</string>
     <string name="row_sub_clipboard">历史记录与保存规则</string>
     <string name="row_sub_voice">离线识别与云端语音插件</string>
@@ -1070,6 +1070,7 @@
     <string name="emoji_reset_done">已重置常用 Emoji</string>
     <string name="emoji_recent_note">点一个 Emoji 就会记进最近使用，拼在第一个分组前面。</string>
     <string name="emoji_search_hint">搜索 Emoji（中文／拼音／英文）</string>
+    <string name="emoji_search_loading">正在加载 Emoji 索引…</string>
     <!-- Emoji 自定义键盘（WO52 7.4） -->
     <string name="emoji_custom_title">自定义 Emoji 键盘</string>
     <string name="emoji_custom_desc">打开后，Emoji 面板改用这里的分组；恢复默认即回到内置分组／皮肤分组。</string>
@@ -1086,7 +1087,7 @@
     <string name="row_sub_keyboard_menu">键盘菜单选项自定义</string>
     <string name="keyboard_menu_desc">列表就是键盘菜单里的顺序，点上移／下移调整顺序，点垃圾桶移出菜单。</string>
     <string name="keyboard_menu_addable">可添加：</string>
-    <string name="keyboard_menu_note">修改在下次打开键盘菜单时生效；全部移出后恢复默认菜单。</string>
+    <string name="keyboard_menu_note">修改在下次打开键盘菜单时生效；全部移出后菜单为空。</string>
     <!-- LevelDB 查看（WO52 12-⑭） -->
     <string name="leveldb_title">LevelDB</string>
     <string name="row_sub_leveldb">浏览 LevelDB 数据库内容</string>

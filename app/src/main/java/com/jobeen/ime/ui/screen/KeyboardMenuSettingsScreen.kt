@@ -40,8 +40,8 @@ import com.jobeen.ime.input.panel.menu.SharedPrefsKeyboardMenuStore
  *
  * - 列表即菜单顺序：每行标签＋上移／下移／删除（符号栏设置页同款行）；
  * - 下方“可添加”列出未进菜单的入口，点即追加到末尾；
- * - 全部改动即改即存，下次打开键盘菜单时生效；删光回落默认全量
- *   （菜单永不空白，与工具栏空表回落同口径）。
+ * - 全部改动即改即存，下次打开键盘菜单时生效；删光后菜单为空
+ *   （C-L-40，不再回落默认），底部“恢复默认”回 16 项。
  * 排布（411dp 真机宽）：标签占剩余宽，上移／下移／删除各 48dp，
  * 一行共 144dp＋标签，放得下。
  */
@@ -142,6 +142,13 @@ fun KeyboardMenuSettingsScreen(onBack: () -> Unit) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(start = 4.dp, top = 16.dp),
         )
+        // C-L-40：恢复默认入口（删光后菜单为空，点此回 16 项默认菜单）。
+        TextButton(
+            onClick = { persist(KeyboardMenuConfigOps.defaultIds()) },
+            modifier = Modifier.padding(start = 4.dp, top = 8.dp),
+        ) {
+            Text(stringResource(R.string.reset_default))
+        }
         Spacer(Modifier.height(20.dp))
     }
 }

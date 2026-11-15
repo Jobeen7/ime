@@ -19,14 +19,14 @@ import org.junit.Test
 /**
  * AppDatabase 迁移链单测（WO52 6.1 v14→15；9.1 v15→16；8.1 v16→17）。
  *
- * 主机无 Room 运行环境（禁 Robolectric），故分两层验证：
- * 1. 本单测：Room 编译期生成的 schema JSON（app/schemas 下，用
- *    kotlinx.serialization 解析——org.json 在主机单测里是桩）、
- *    迁移链注册（反射读 AppDatabase 的静态 Migration 字段起止版本；
- *    companion 的 private val 编译后落在外层类的静态字段上）；
- * 2. 真实 SQLite 端到端：见 ~/workspace/system/wo52-g6-migration-check.py，
- *    以 sqlite3 从 16.json 建 v16 库、跑迁移 SQL、验数据不丢＋
- *    新结构与 17.json 一致（建表 SQL 逐字比对＋种子＋外键级联）。
+ * 本文件只验静态面：Room 编译期生成的 schema JSON（app/schemas
+ * 下，用 kotlinx.serialization 解析——org.json 在主机单测里是桩）、
+ * 迁移链注册（反射读 AppDatabase 的静态 Migration 字段起止版本；
+ * companion 的 private val 编译后落在外层类的静态字段上）。
+ * 真执行（从 schema JSON 建旧版库、逐段跑 Migration.migrate()、
+ * 断言新结构＋旧数据不丢＋种子落盘）见
+ * [AppDatabaseMigrationExecTest]（C-L-27，sqlite3 CLI 真引擎）；
+ * 仓库外脚本 ~/workspace/system/wo52-g6-migration-check.py 只作补充。
  */
 class AppDatabaseMigrationTest {
 

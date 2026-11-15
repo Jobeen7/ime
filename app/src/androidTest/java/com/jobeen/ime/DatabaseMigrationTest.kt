@@ -80,7 +80,7 @@ class DatabaseMigrationTest {
             while (c.moveToNext()) tables += c.getString(0)
         }
         assertTrue("clipboard_records" !in tables)
-        assertTrue("candidate_sortings" in tables)
+        assertTrue("candidate_sorting_v2" in tables)
         assertTrue("candidate_prefers" in tables)
         assertTrue("phrase_records" in tables)
     }

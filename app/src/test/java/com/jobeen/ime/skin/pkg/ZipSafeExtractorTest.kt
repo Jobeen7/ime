@@ -120,7 +120,7 @@ class ZipSafeExtractorTest {
     fun highRatioLegitimatePackageExtracts() {
         // WO42 E-1：压缩比规则已删——2MB 全零数据压缩后仅约 2KB、
         // 压缩比远超旧 100:1 上限，旧规则会误拒；绝对上限（单条 8MB／
-        // 总量 16MB）才是内存上界，此包远未触线，应正常解包。
+        // 总量 32MB）才是内存上界，此包远未触线，应正常解包。
         val file = zipOf(listOf("bg.bin" to ByteArray(2 * 1024 * 1024)))
         val result = ZipSafeExtractor.extract(file)
         assertTrue("expected Ok, got $result", result is ZipSafeExtractor.Result.Ok)
@@ -135,20 +135,30 @@ class ZipSafeExtractorTest {
     }
 
     @Test
+    fun videoEntryAboveEightMbAccepted() {
+        // C-L-47：视频条目单条上限 128MB——9MB mp4 不触线，应正常解包；
+        // 同体积普通条目（见 entryTooLargeRejected）仍拒。
+        val file = zipOf(listOf("bg.mp4" to ByteArray(9 * 1024 * 1024)))
+        val result = ZipSafeExtractor.extract(file)
+        assertTrue("expected Ok, got $result", result is ZipSafeExtractor.Result.Ok)
+        assertEquals(9 * 1024 * 1024, (result as ZipSafeExtractor.Result.Ok).files.single().bytes.size)
+    }
+
+    @Test
     fun expandedTotalTooLargeRejected() {
-        // 总量 3×6MB＝18MB（> 16MB 总量上限），单条均未超 8MB：
+        // 总量 5×7MB＝35MB（> 32MB 总量上限），单条均未超 8MB：
         // 压缩比规则已删，总量上限仍挡。
-        val entries = (1..3).map { "f$it.bin" to ByteArray(6 * 1024 * 1024) }
+        val entries = (1..5).map { "f$it.bin" to ByteArray(7 * 1024 * 1024) }
         val reason = rejected(zipOf(entries))
         assertTrue(reason.contains("expanded_too_large"))
     }
 
     @Test
     fun expandedTotalAtBoundaryAccepted() {
-        // 边界：总量 2×8MB＝16MB，恰好在上限内，应正常解包。
-        val entries = (1..2).map { "f$it.bin" to ByteArray(8 * 1024 * 1024) }
+        // 边界：总量 4×8MB＝32MB，恰好在上限内，应正常解包。
+        val entries = (1..4).map { "f$it.bin" to ByteArray(8 * 1024 * 1024) }
         val result = ZipSafeExtractor.extract(zipOf(entries))
         assertTrue("expected Ok, got $result", result is ZipSafeExtractor.Result.Ok)
-        assertEquals(2, (result as ZipSafeExtractor.Result.Ok).files.size)
+        assertEquals(4, (result as ZipSafeExtractor.Result.Ok).files.size)
     }
 }

@@ -28,20 +28,30 @@ class KeyboardMenuConfigTest {
     }
 
     @Test
-    fun resolve_emptyOrNull_fallsBackToDefault() {
-        assertEquals(
-            KeyboardMenuConfigOps.defaultIds(),
-            KeyboardMenuConfigOps.resolve(emptyList()),
-        )
+    fun resolve_emptyStaysEmpty_nullFallsBackToDefault() {
+        // C-L-40：删光就是空菜单，不再回落默认。
+        assertEquals(emptyList<String>(), KeyboardMenuConfigOps.resolve(emptyList()))
+        // 全是未知 id 亦为空。
+        assertEquals(emptyList<String>(), KeyboardMenuConfigOps.resolve(listOf("nope")))
+        // 未配置过（null）仍回落默认——首次安装菜单不空白。
         assertEquals(
             KeyboardMenuConfigOps.defaultIds(),
             KeyboardMenuConfigOps.resolve(null),
         )
-        // 全是未知 id 亦回落默认（菜单永不空白）。
-        assertEquals(
-            KeyboardMenuConfigOps.defaultIds(),
-            KeyboardMenuConfigOps.resolve(listOf("nope")),
-        )
+    }
+
+    @Test
+    fun removeLastItem_thenRestoreDefault_returnsSixteen() {
+        // C-L-40：删到最后一项后菜单为空；恢复默认回 16 项。
+        var ids = KeyboardMenuConfigOps.defaultIds()
+        for (id in KeyboardMenuConfigOps.defaultIds()) {
+            ids = KeyboardMenuConfigOps.remove(ids, id)
+        }
+        assertEquals(emptyList<String>(), KeyboardMenuConfigOps.resolve(ids))
+        val store = InMemoryKeyboardMenuStore(ids)
+        assertEquals(emptyList<String>(), store.load())
+        store.save(KeyboardMenuConfigOps.defaultIds())
+        assertEquals(16, store.load().size)
     }
 
     @Test

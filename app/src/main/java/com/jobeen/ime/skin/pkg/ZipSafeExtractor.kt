@@ -1,5 +1,7 @@
 package com.jobeen.ime.skin.pkg
 
+import com.jobeen.ime.skin.model.AssetKind
+import com.jobeen.ime.skin.model.PackageManifest
 import java.io.File
 import java.text.Normalizer
 import java.util.zip.ZipInputStream
@@ -7,15 +9,22 @@ import java.util.zip.ZipInputStream
 /**
  * .jime zip 安全解包（定稿十一.1/11.2，B1 新实现）：
  *
- * - 包级上限：原始 ≤10MB、展开 ≤16MB、单条目 ≤8MB、条目 ≤100、
- *   任一超限整包拒绝。（WO42 E-1：压缩比规则已删——绝对上限已钉死
- *   内存上界，压缩比挡不住任何绝对上限挡不住的东西，反而误拒
- *   高压缩比合法包，如纯色背景 PNG 250:1。WO45 P3：展开总量
- *   由 40MB 降到 16MB——全量内存缓冲（ByteArrayOutputStream＋
- *   toByteArray＋files 列表）下 40MB 在低内存设备上 GC 压力大；
- *   16MB 仍远超单皮肤包的实际体量（背景＋音频通常 <5MB），
- *   流式暂存重构面大（ExtractedFile 全仓按 bytes 取用），
- *   不在正式版批内做。）
+ * - 包级上限：原始 ≤10MB、展开 ≤32MB、单条目 ≤8MB（视频条目
+ *   ≤128MB）、条目 ≤100、任一超限整包拒绝。（WO42 E-1：压缩比
+ *   规则已删——绝对上限已钉死内存上界，压缩比挡不住任何绝对上限
+ *   挡不住的东西，反而误拒高压缩比合法包，如纯色背景 PNG 250:1。
+ *   WO45 P3：展开总量由 40MB 降到 16MB——全量内存缓冲
+ *   （ByteArrayOutputStream＋toByteArray＋files 列表）下 40MB 在
+ *   低内存设备上 GC 压力大；16MB 仍远超单皮肤包的实际体量
+ *   （背景＋音频通常 <5MB），流式暂存重构面大（ExtractedFile
+ *   全仓按 bytes 取用），不在正式版批内做。C-L-47：展开总量由
+ *   16MB 提到 32MB，与配置层 CONFIG_MAX_BYTES（32MB）对齐。）
+ * - 三处数值层级（C-L-47）：解压层展开总量 32MB ≤ 配置层
+ *   skin.json 32MB ≤ 视频单文件 128MB——普通条目 8MB 最严，
+ *   视频条目放宽到与 VideoAssetValidator.MAX_VIDEO_FILE_BYTES
+ *   同值（本层不比校验层更严）；实务上原始包 10MB 与展开总量
+ *   32MB 先行约束，128MB 只是本层上限口径，不是放行 128MB
+ *   视频的承诺。
  * - 路径：归一化后校验——拒 ../、绝对路径、盘符、反斜杠、归一化
  *   重名（NFC + 大小写不敏感）、嵌套 zip/.jime。
  * - 符号链接：java.util.zip 不暴露条目 unix 模式，无从判别；本实现
@@ -27,8 +36,13 @@ import java.util.zip.ZipInputStream
 object ZipSafeExtractor {
 
     const val MAX_RAW_BYTES = 10L * 1024 * 1024
-    const val MAX_EXPANDED_BYTES = 16L * 1024 * 1024
+    // C-L-47：展开总量 32MB（与 PortableSkinArchive.CONFIG_MAX_BYTES 对齐）。
+    const val MAX_EXPANDED_BYTES = 32L * 1024 * 1024
     const val MAX_ENTRY_BYTES = 8L * 1024 * 1024
+    // C-L-47：视频单条目上限 128MB（与 VideoAssetValidator
+    // .MAX_VIDEO_FILE_BYTES 同值；后缀表走 PackageManifest
+    // .VIDEO_EXTENSIONS，即 assetKindOf 的 VIDEO 判定）。
+    const val MAX_VIDEO_ENTRY_BYTES = 128L * 1024 * 1024
     const val MAX_ENTRIES = 100
 
     data class ExtractedFile(val path: String, val bytes: ByteArray) {
@@ -75,11 +89,19 @@ object ZipSafeExtractor {
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     val out = java.io.ByteArrayOutputStream()
                     var entryBytes = 0L
+                    // C-L-47：单条目上限按类型分流——视频条目 128MB，
+                    // 其余 8MB（后缀表走 PackageManifest.assetKindOf）。
+                    val entryLimit =
+                        if (PackageManifest.assetKindOf(name) == AssetKind.VIDEO) {
+                            MAX_VIDEO_ENTRY_BYTES
+                        } else {
+                            MAX_ENTRY_BYTES
+                        }
                     while (true) {
                         val read = zip.read(buffer)
                         if (read < 0) break
                         entryBytes += read
-                        if (entryBytes > MAX_ENTRY_BYTES) {
+                        if (entryBytes > entryLimit) {
                             return Result.Rejected("entry_too_large:$name")
                         }
                         totalExpanded += read

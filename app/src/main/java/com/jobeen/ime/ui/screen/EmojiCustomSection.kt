@@ -29,6 +29,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.ImeAction
@@ -155,17 +156,27 @@ private fun EmojiCustomGroupEditor(
     isFirst: Boolean,
     isLast: Boolean,
 ) {
-    var draft by remember(label) { mutableStateOf("") }
+    // C-L-39：改名框用本地文本态——编辑过程只改 draft（打空格／
+    // 删空／打重名中间态不回弹），完成键／失焦时才调一次 onRename
+    // （即 renameGroup＋persist；renameGroup 本身不动，非法输入
+    // 原样返回、不落盘）。
+    var draft by remember(label) { mutableStateOf(label) }
+    fun commitRename() {
+        if (draft != label) onRename(draft)
+    }
     Column {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier.fillMaxWidth(),
         ) {
             OutlinedTextField(
-                value = label,
-                onValueChange = onRename,
+                value = draft,
+                onValueChange = { draft = it },
                 singleLine = true,
-                modifier = Modifier.weight(1f),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { commitRename() }),
+                modifier = Modifier.weight(1f)
+                    .onFocusChanged { if (!it.isFocused) commitRename() },
             )
             IconButton(onClick = onMoveUp, enabled = !isFirst) {
                 Icon(
