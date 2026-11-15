@@ -7,6 +7,7 @@ import com.jobeen.ime.data.ai.AiStreamEvent
 import com.jobeen.ime.data.ai.OkHttpAiChatClient
 import com.jobeen.ime.data.ai.SseParser
 import com.jobeen.ime.data.ai.buildChatRequest
+import com.jobeen.ime.data.ai.isAllowedBaseUrl
 import com.jobeen.ime.data.database.AIProvider
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
@@ -47,6 +48,38 @@ class AiChatClientTest {
         requestTimeout = 5.0,
         contextWindow = 64000,
     )
+
+    @Test
+    fun `C-L-15 https allowed, public http rejected, lan http allowed`() {
+        assertTrue(isAllowedBaseUrl("https://api.deepseek.com"))
+        assertTrue(isAllowedBaseUrl("https://api.example.com:8443/v1"))
+        assertFalse(isAllowedBaseUrl("http://api.deepseek.com"))
+        assertFalse(isAllowedBaseUrl("http://8.8.8.8"))
+        assertFalse(isAllowedBaseUrl("ftp://192.168.1.1"))
+        assertFalse(isAllowedBaseUrl("api.deepseek.com"))
+        assertFalse(isAllowedBaseUrl(""))
+        assertTrue(isAllowedBaseUrl("http://localhost:8080"))
+        assertTrue(isAllowedBaseUrl("http://127.0.0.1:8080"))
+        assertTrue(isAllowedBaseUrl("http://10.0.0.5"))
+        assertTrue(isAllowedBaseUrl("http://192.168.1.100"))
+        assertTrue(isAllowedBaseUrl("http://172.16.0.1"))
+        assertTrue(isAllowedBaseUrl("http://172.31.255.255"))
+        assertFalse(isAllowedBaseUrl("http://172.32.0.1"))
+        assertFalse(isAllowedBaseUrl("http://172.15.0.1"))
+    }
+
+    @Test
+    fun `C-L-15 buildChatRequest rejects public http base url`() {
+        try {
+            buildChatRequest(provider(baseURL = "http://api.deepseek.com"), "m", emptyList())
+            org.junit.Assert.fail("公网 http 应拒")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message!!.contains("仅支持 https 或局域网 http"))
+        }
+        // 局域网 http 照常拼 URL。
+        val built = buildChatRequest(provider(baseURL = "http://192.168.1.10:8080"), "m", emptyList())
+        assertTrue(built.url.startsWith("http://192.168.1.10:8080/"))
+    }
 
     @Test
     fun buildRequest_urlAndHeaders() {

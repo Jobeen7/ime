@@ -10,6 +10,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
+import org.junit.Before
 import org.junit.Test
 
 /** 主机单测用假宿主：记录调用，$http 完成由测试显式投递。 */
@@ -76,6 +77,9 @@ class FakeScriptHost : ScriptHost {
  * 不在测试依赖里，不为单测加新依赖）。
  */
 class ScriptRunnerTest {
+
+    @Before
+    fun requireHostLib() = assumeHostQuickJsAvailable()
 
     private val runner = ScriptRunner()
 
@@ -282,6 +286,7 @@ class ScriptRunnerTest {
 
     @Test
     fun run_pendingPromise_cancelThrowsCancellation() = runBlocking {
+        val started = System.nanoTime()
         val deferred = async {
             runner.run(
                 source = "async function output() { await new Promise(function() {}); return [\"never\"]; }",
@@ -294,7 +299,10 @@ class ScriptRunnerTest {
             deferred.await()
             fail("应抛 CancellationException")
         } catch (e: CancellationException) {
-            // 预期：取消原样抛出（引擎已销毁）。
+            // 预期：取消原样抛出（引擎已销毁）。C-L-02：取消不须等
+            // 30 秒截止——300ms 后取消，数秒内即返回。
+            val elapsedMs = (System.nanoTime() - started) / 1_000_000
+            assertTrue("取消应在截止前返回，实际 ${elapsedMs}ms", elapsedMs < 5_000)
         }
     }
 }

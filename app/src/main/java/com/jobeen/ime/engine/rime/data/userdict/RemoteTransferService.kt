@@ -67,7 +67,9 @@ class RemoteTransferService : Service() {
             notifyResult(done)
             stopSelf(startId)
         }
-        return START_STICKY
+        // C-L-13：词库传输是一次性任务——被系统杀掉后不应无 intent
+        // 重启再跑一次（会重复传词库）；START_STICKY 改 NOT_STICKY。
+        return START_NOT_STICKY
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

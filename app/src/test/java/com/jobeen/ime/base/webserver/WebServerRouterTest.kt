@@ -4,6 +4,7 @@ import java.io.File
 import java.nio.file.Files
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
@@ -466,9 +467,41 @@ class WebServerRouterTest {
         )
         assertEquals(200, multi.status)
         assertEquals("application/zip", multi.headers["Content-Type"])
-        assertTrue(multi.body.size > 4)
-        assertEquals(0x50, multi.body[0].toInt())
-        assertEquals(0x4B, multi.body[1].toInt())
+        // C-L-11：zip 不再整包进堆——body 为空，bodyWriter 直连输出流。
+        assertEquals(0, multi.body.size)
+        val writer = multi.bodyWriter
+        assertTrue(writer != null)
+        val zipBytes = java.io.ByteArrayOutputStream().also { writer!!(it) }.toByteArray()
+        assertTrue(zipBytes.size > 4)
+        assertEquals(0x50, zipBytes[0].toInt())
+        assertEquals(0x4B, zipBytes[1].toInt())
+        val names = java.util.zip.ZipInputStream(zipBytes.inputStream()).use { zip ->
+            generateSequence { zip.nextEntry }.map { it.name }.toList()
+        }
+        assertEquals(listOf("hello.txt", "inner.txt"), names)
+    }
+
+    @Test
+    fun `C-L-11 recursive listing truncates over 10000 entries`() {
+        val big = File(tempRoot, "big").also { it.mkdirs() }
+        repeat(10_005) { i -> File(big, "f$i.txt").writeText("x") }
+        val response = authed(
+            "GET", "/api/resources/recursive", query = mapOf("path" to "big"),
+        )
+        assertEquals(200, response.status)
+        val json = bodyJson(response)
+        assertEquals(true, json["truncated"]!!.jsonPrimitive.content.toBoolean())
+        assertEquals(10_000, json["items"]!!.jsonArray.size)
+    }
+
+    @Test
+    fun `C-L-11 usage truncates over 10000 files`() {
+        val big = File(tempRoot, "big").also { it.mkdirs() }
+        repeat(10_005) { i -> File(big, "f$i.txt").writeText("x") }
+        val response = authed("GET", "/api/usage")
+        assertEquals(200, response.status)
+        val json = bodyJson(response)
+        assertEquals(true, json["truncated"]!!.jsonPrimitive.content.toBoolean())
     }
 
     @Test
@@ -604,5 +637,12 @@ class WebServerRouterTest {
         val put = authed("PUT", "/api/resources", query = mapOf("path" to "plain.txt"), body = "ok".toByteArray())
         assertEquals(200, put.status)
         assertEquals("ok", File(tempRoot, "plain.txt").readText())
+    }
+
+    @Test
+    fun `C-L-10 disposition filename strips quotes and CRLF`() {
+        assertEquals("ab.txt", router.safeDispositionFilename("a\"b.txt"))
+        assertEquals("ab.txt", router.safeDispositionFilename("a\r\nb.txt"))
+        assertEquals("plain.txt", router.safeDispositionFilename("plain.txt"))
     }
 }

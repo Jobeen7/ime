@@ -148,7 +148,13 @@ static char *takeExceptionText(Engine *e) {
 // JS value -> freshly allocated UTF-8 string (ToString semantics).
 static char *valueToUtf8(Engine *e, JSValueConst val) {
     const char *cstr = JS_ToCString(e->ctx, val);
-    if (!cstr) return strdup("");
+    if (!cstr) {
+        // C-L-04：ToCString 失败时 JS 异常挂起，先取走并释放，
+        // 再返空串——否则挂起的异常会污染后续 JNI 调用。
+        JSValue ex = JS_GetException(e->ctx);
+        JS_FreeValue(e->ctx, ex);
+        return strdup("");
+    }
     char *out = strdup(cstr);
     JS_FreeCString(e->ctx, cstr);
     return out ? out : strdup("");

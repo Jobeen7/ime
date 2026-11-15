@@ -5,8 +5,8 @@
 # 追踪源码（与 deps/ 下 gitignored 的厂商源码不同）：.so 须能从
 # 干净检出构建，无下载步骤。只依赖 librime 公共头（rime_api.h）
 # 与 Jime 自身的 PinYinUtil 数据（t9_pinyin_data.inc 由其机械
-# 生成）；不依赖任何插件源码（参考的开源 t9 插件为 GPL-3.0，仅学
-# 了“纯函数映射表＋首音节选项”的组件划分思路，未抄代码）。
+# 生成）；不依赖任何插件源码。Jime 自研 T9 插件（设计参考开源 t9
+# 插件思路，未复制代码）。
 
 set(T9_PLUGIN_SOURCES
   t9_pinyin_map.cc

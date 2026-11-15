@@ -219,6 +219,10 @@ tasks.named("preBuild") {
 val buildHostQuickJs = tasks.register<Exec>("buildHostQuickJs") {
     description = "Builds host libjime_quickjs.so for unit tests"
     group = "verification"
+    // C-L-06：只在 Linux 上编主机 .so（cc + Linux JNI 头）；非 Linux
+    // 下跳过，相关单测按缺失 native 库口径 Assume 跳过（见
+    // QuickJsTestSupport.assumeHostQuickJsAvailable）。
+    onlyIf { org.gradle.internal.os.OperatingSystem.current().isLinux() }
     val cppDir = layout.projectDirectory.dir("src/main/cpp")
     val outFile = layout.buildDirectory.file("host-quickjs/libjime_quickjs.so")
     inputs.files(
@@ -255,7 +259,11 @@ val buildHostQuickJs = tasks.register<Exec>("buildHostQuickJs") {
 // Task not found，故用 withType 惰性挂接。
 tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
     if (name != "testDebugUnitTest") return@configureEach
-    dependsOn(buildHostQuickJs)
+    // C-L-06：只在 Linux 上依赖主机 .so 构建；非 Linux 下不编，
+    // 相关单测按缺失 native 库口径跳过。
+    if (org.gradle.internal.os.OperatingSystem.current().isLinux()) {
+        dependsOn(buildHostQuickJs)
+    }
     // 单测 JVM 经该属性载主机 .so（QuickJsNative 回落路径）；设备上
     // 该属性不存在，只走 System.loadLibrary("jime_quickjs")。
     systemProperty(

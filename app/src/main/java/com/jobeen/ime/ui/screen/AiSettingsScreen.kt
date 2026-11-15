@@ -43,8 +43,10 @@ import com.jobeen.ime.data.ai.AiInstructionRunner
 import com.jobeen.ime.data.ai.AiPrefs
 import com.jobeen.ime.data.ai.AiRepository
 import com.jobeen.ime.data.ai.AiStreamEvent
+import com.jobeen.ime.data.ai.isAllowedBaseUrl
 import com.jobeen.ime.data.database.AIProvider
 import com.jobeen.ime.data.database.AIProviderModel
+import com.jobeen.ime.data.database.AIInstruction
 import com.jobeen.ime.data.database.AiSeeds
 import kotlinx.coroutines.launch
 import java.util.UUID
@@ -79,6 +81,9 @@ fun AiSettingsScreen(
     var editing by remember { mutableStateOf<AIProvider?>(null) }
     var confirmDelete by remember { mutableStateOf<AIProvider?>(null) }
     var confirmReset by remember { mutableStateOf(false) }
+    // C-L-17：运行前确认——待确认的指令＋点击时快照的剪贴板文本。
+    var confirmRun by remember { mutableStateOf<AIInstruction?>(null) }
+    var confirmRunInput by remember { mutableStateOf("") }
     var runName by remember { mutableStateOf("") }
     var runResult by remember { mutableStateOf("") }
     var runError by remember { mutableStateOf("") }
@@ -189,16 +194,25 @@ fun AiSettingsScreen(
                 var temperature by remember(provider.id) { mutableStateOf(provider.temperature?.toString().orEmpty()) }
                 var enabled by remember(provider.id) { mutableStateOf(provider.isEnabled) }
                 var modelId by remember(provider.id) { mutableStateOf(models[provider.id]?.modelID.orEmpty()) }
+                var baseUrlError by remember(provider.id) { mutableStateOf(false) }
                 OutlinedTextField(
                     value = name, onValueChange = { name = it },
                     label = { Text(stringResource(R.string.ai_provider_name)) },
                     modifier = Modifier.fillMaxWidth(),
                 )
                 OutlinedTextField(
-                    value = baseUrl, onValueChange = { baseUrl = it },
+                    value = baseUrl, onValueChange = { baseUrl = it; baseUrlError = false },
                     label = { Text(stringResource(R.string.ai_provider_base_url)) },
+                    isError = baseUrlError,
                     modifier = Modifier.fillMaxWidth(),
                 )
+                if (baseUrlError) {
+                    Text(
+                        text = stringResource(R.string.ai_base_url_scheme_error),
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
                 OutlinedTextField(
                     value = apiPath, onValueChange = { apiPath = it },
                     label = { Text(stringResource(R.string.ai_provider_api_path)) },
@@ -244,6 +258,12 @@ fun AiSettingsScreen(
                         Text(stringResource(R.string.cancel))
                     }
                     TextButton(onClick = {
+                        // C-L-15：保存时校验 scheme——https 放行，http
+                        // 只放行局域网；不合规则拒存并在地址框下标红提示。
+                        if (!isAllowedBaseUrl(baseUrl.trim())) {
+                            baseUrlError = true
+                            return@TextButton
+                        }
                         scope.launch {
                             val saved = provider.copy(
                                 name = name.trim().ifBlank { provider.name },
@@ -310,46 +330,11 @@ fun AiSettingsScreen(
                     TextButton(
                         onClick = {
                             if (running) return@TextButton
-                            runName = instruction.name
-                            runResult = ""
-                            runError = ""
-                            running = true
-                            scope.launch {
-                                val text = clipboardText()
-                                val run = runner.run(
-                                    instructionId = instruction.id,
-                                    input = text,
-                                    context = AiInstructionContext(
-                                        pasteboardContent = text,
-                                    ),
-                                )
-                                if (run == null) {
-                                    runError = aiRunFailedText
-                                    running = false
-                                    return@launch
-                                }
-                                val acc = StringBuilder()
-                                run.events.collect { event ->
-                                    when (event) {
-                                        is AiStreamEvent.Delta -> {
-                                            acc.append(event.text)
-                                            runResult = acc.toString()
-                                        }
-                                        is AiStreamEvent.Error -> {
-                                            // collect 体不是 @Composable 作用域，stringResource
-                                            // 调不了；context 已在外层取到，直接 getString。
-                                            runError = event.messageRes?.let { context.getString(it) }
-                                                ?: if (event.code == "missing_token") {
-                                                    aiMissingTokenText
-                                                } else {
-                                                    event.message
-                                                }
-                                        }
-                                        else -> Unit
-                                    }
-                                }
-                                running = false
-                            }
+                            // C-L-17：运行先弹确认框（目标服务商名＋将发送
+                            // 内容前 200 字），确认后才发；剪贴板文本在
+                            // 点击时快照，确认期间变了也不改已确认的内容。
+                            confirmRunInput = clipboardText()
+                            confirmRun = instruction
                         },
                         enabled = !running,
                     ) {
@@ -496,6 +481,63 @@ fun AiSettingsScreen(
                     repository.resetInstructionsToSeed()
                     confirmReset = false
                     refreshTick++
+                }
+            },
+            dismissText = stringResource(R.string.cancel),
+        )
+    }
+    confirmRun?.let { instruction ->
+        val targetProvider = providers.firstOrNull { it.id == instruction.providerID }
+        SettingsConfirmDialog(
+            onDismissRequest = { confirmRun = null },
+            title = stringResource(R.string.ai_run),
+            text = stringResource(
+                R.string.ai_run_confirm,
+                targetProvider?.name.orEmpty(),
+                confirmRunInput.take(200),
+            ),
+            confirmText = stringResource(R.string.ai_run),
+            onConfirm = {
+                val text = confirmRunInput
+                confirmRun = null
+                runName = instruction.name
+                runResult = ""
+                runError = ""
+                running = true
+                scope.launch {
+                    val run = runner.run(
+                        instructionId = instruction.id,
+                        input = text,
+                        context = AiInstructionContext(
+                            pasteboardContent = text,
+                        ),
+                    )
+                    if (run == null) {
+                        runError = aiRunFailedText
+                        running = false
+                        return@launch
+                    }
+                    val acc = StringBuilder()
+                    run.events.collect { event ->
+                        when (event) {
+                            is AiStreamEvent.Delta -> {
+                                acc.append(event.text)
+                                runResult = acc.toString()
+                            }
+                            is AiStreamEvent.Error -> {
+                                // collect 体不是 @Composable 作用域，stringResource
+                                // 调不了；context 已在外层取到，直接 getString。
+                                runError = event.messageRes?.let { context.getString(it) }
+                                    ?: if (event.code == "missing_token") {
+                                        aiMissingTokenText
+                                    } else {
+                                        event.message
+                                    }
+                            }
+                            else -> Unit
+                        }
+                    }
+                    running = false
                 }
             },
             dismissText = stringResource(R.string.cancel),

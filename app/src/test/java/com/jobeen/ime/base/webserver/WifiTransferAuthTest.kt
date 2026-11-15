@@ -67,6 +67,27 @@ class WifiTransferAuthTest {
     }
 
     @Test
+    fun `token issued before revocation watermark is rejected`() {
+        val oldToken = WifiTransferAuth.issueToken(passwordHash, nowMs = 1_000L)
+        // 水位 2_000：旧 token（iat=1 秒）被拒。
+        assertFalse(
+            WifiTransferAuth.verifyToken(passwordHash, oldToken, nowMs = 1_000L, revokedBeforeMs = 2_000L),
+        )
+        // 水位恰为签发时刻：iat >= 水位，仍可用。
+        assertTrue(
+            WifiTransferAuth.verifyToken(passwordHash, oldToken, nowMs = 1_000L, revokedBeforeMs = 1_000L),
+        )
+    }
+
+    @Test
+    fun `token issued after restart verifies with watermark set`() {
+        val newToken = WifiTransferAuth.issueToken(passwordHash, nowMs = 3_000L)
+        assertTrue(
+            WifiTransferAuth.verifyToken(passwordHash, newToken, nowMs = 3_000L, revokedBeforeMs = 2_000L),
+        )
+    }
+
+    @Test
     fun `bearer token extraction is case-insensitive on header name`() {
         assertEquals(
             "abc.def.ghi",

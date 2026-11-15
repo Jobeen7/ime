@@ -8,10 +8,9 @@
 // 加载执行）。本插件不向引擎管线注册 processor/translator/
 // filter：数字→拼音的转换归属仍在既有 Kotlin BehaviorHost
 // （Jobeen 日用的 T9 主链路，行为已验证）；插件只提供
-// t9PinyinList/t9Preedit/t9SetPinyin 三个会话访问器（对端
-// plugins/t9 的 API 面），供 Kotlin 侧取列表/组字串/定拼音。
-// t9Preedit 本身只是 native composition.preedit 的直读，实现在
-// rime_engine.cc（与快照同一数据源），不另设组件。
+// t9PinyinList/t9SetPinyin 两个会话访问器（自研实现），
+// 供 Kotlin 侧取列表/定拼音。组字串不再另设访问器：
+// 快照 composition.preedit 即组字串（C-L-18，t9Preedit 已删）。
 
 #include <rime_api.h>
 

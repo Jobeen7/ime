@@ -170,6 +170,9 @@ class KeyboardWindowView(
             },
             onSidePanelAction = { panelListener?.onSidePanelAction(it) },
             onPageCandidates = { backward -> panelListener?.onPageCandidates(backward) },
+            // C-L-21：窗体解散即走 dismissFloatingWindow（清 rect，
+            // 与 B-F-1 的 isOutsideTouchable=false 同文件口径）。
+            onDismissed = { dismissFloatingWindow() },
         ).also { floatingWindow = it }
 
     /** 浮动窗帧（屏幕坐标，onComputeInsets 可触区用）；未显示时 null。 */

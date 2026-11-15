@@ -21,11 +21,13 @@ import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.engine.rime.service.rimeMaintenanceClient
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import timber.log.Timber
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -191,12 +193,16 @@ object FabActions {
         // 部署先行规范化当前目录 custom 文件：旧版写出的裸字符串
         // schema_list 项 librime 读不到，本次部署会编不出词库；
         // 规范化失败也不拦部署（部署本身仍按旧文件走）。
-        runCatching {
-            val dir = java.io.File(DataManager.schemeDirsRoot, SchemeDirs.currentDirName(context))
-            SchemeEnabled.normalizeCustomFileToMapFormat(java.io.File(dir, "default.custom.yaml"))
-        }
         val job = try {
             scope.launch {
+                // C-L-23：规范化是文件 IO——移入 launch 内并走 IO
+                // 分发器（appScope 是 Main，点部署原来卡主线程）。
+                withContext(Dispatchers.IO) {
+                    runCatching {
+                        val dir = java.io.File(DataManager.schemeDirsRoot, SchemeDirs.currentDirName(context))
+                        SchemeEnabled.normalizeCustomFileToMapFormat(java.io.File(dir, "default.custom.yaml"))
+                    }
+                }
                 val runId = runCounter.incrementAndGet()
                 val deployed = deployAndCheckSchemas(context, engine)
                 if (deployed) {
@@ -288,19 +294,27 @@ object FabActions {
      * 按钮仍走 [sync]（WebDAV），不动。
      */
     fun syncUserData(context: Context, scope: CoroutineScope) {
+        // C-L-22：与 sync() 同款单飞守门——连点第二次直接返回，
+        // 不重复跑跨进程同步。
+        if (FabSyncState.isRunning()) return
+        FabSyncState.setRunning(true)
         scope.launch {
-            val runId = runCounter.incrementAndGet()
-            val ok = context.rimeMaintenanceClient().syncUserData()
-            val msg = context.getString(
-                if (ok) R.string.fab_dict_sync_success else R.string.fab_sync_failed,
-            )
-            ToastUtil.showToast(msg)
-            notifySyncDone(
-                context,
-                runId,
-                if (ok) "success" else "failed",
-                msg,
-            )
+            try {
+                val runId = runCounter.incrementAndGet()
+                val ok = context.rimeMaintenanceClient().syncUserData()
+                val msg = context.getString(
+                    if (ok) R.string.fab_dict_sync_success else R.string.fab_sync_failed,
+                )
+                ToastUtil.showToast(msg)
+                notifySyncDone(
+                    context,
+                    runId,
+                    if (ok) "success" else "failed",
+                    msg,
+                )
+            } finally {
+                FabSyncState.setRunning(false)
+            }
         }
     }
 }

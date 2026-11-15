@@ -14,6 +14,7 @@ import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.skin.model.SkinValidator
 import com.jobeen.ime.skin.runtime.SkinSnapshotFactory
+import com.jobeen.ime.skin.store.SkinLibraryLayout
 import java.io.File
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
@@ -29,7 +30,8 @@ import timber.log.Timber
  * - sync：WebDavSync.syncAllDicts（现有同步，不另写）。
  * - applySkin：只收 Jime 格式 skin.json＋manifest.json——
  *   先过 SkinValidator.validate（与导入同口径），再写盘进
- *   skin_library/<name>/；目标路径含符号链接皮肤目录时拒绝。
+ *   skins/<name>/gen-1/（SkinLibraryLayout 口径，与皮肤库
+ *   索引一致）；目标路径含符号链接皮肤目录时拒绝。
  * - switchUserDataDir：映 SchemeDirs 多目录切换——校验目录名、
  *   指针切过去、重新部署。注意：设置页切换另有 enabled 方案
  *   镜像与方案文件修补两步，本口不做（目标目录无
@@ -83,7 +85,7 @@ class WebServerActionsImpl(
         val extRoot = context.getExternalFilesDir(null)
             ?: return Result.failure(IllegalStateException("no_external_files"))
         val skinLibraryRoot = UserFiles.skinLibraryDir(extRoot)
-        val targetDir = File(skinLibraryRoot, name)
+        val targetDir = applySkinTargetDir(skinLibraryRoot, name)
         if (WebServerPaths.isSkinSymlink(skinLibraryRoot, targetDir)) {
             return Result.failure(IllegalArgumentException("symlinked_skin_dir"))
         }
@@ -150,5 +152,14 @@ class WebServerActionsImpl(
 
     companion object {
         private const val SESSION_NAME = "web-server"
+
+        /**
+         * C-L-07：Wi-Fi 传皮肤落盘目标——走 SkinLibraryLayout 口径
+         * `skins/<name>/gen-1/`（与皮肤库索引一致），不再直接写
+         * `skin_library/<name>/`。name 已过 isValidSkinName（只含
+         * 字母数字／.／_／-，拒 "."／".."），gen-1 固定，不会越界写盘。
+         */
+        fun applySkinTargetDir(skinLibraryRoot: File, name: String): File =
+            SkinLibraryLayout(skinLibraryRoot).skinGenDir(name, 1)
     }
 }

@@ -10,6 +10,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -19,6 +20,9 @@ import org.junit.Test
 class QuickJsEngineTest {
 
     private val engines = mutableListOf<QuickJsEngine>()
+
+    @Before
+    fun requireHostLib() = assumeHostQuickJsAvailable()
 
     @After
     fun tearDown() {

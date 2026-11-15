@@ -91,6 +91,15 @@ enum class WriteResult { OK, CONFLICT, FAILED }
 interface WebServerStore {
     val root: File
 
+    companion object {
+        /**
+         * C-L-11：列表／用量统计的条目上限（Jime 自定）——超限截断，
+         * 响应里标 truncated: true。listRecursive 侧取上限＋1 作哨兵
+         * 判断是否截断。
+         */
+        const val MAX_LIST_ENTRIES = 10_000
+    }
+
     fun listDir(rel: String): List<WebEntry>?
     fun listRecursive(rel: String): List<WebEntry>?
     fun readFile(rel: String): File?
@@ -106,9 +115,13 @@ interface WebServerStore {
     fun move(fromRel: String, toRel: String, copy: Boolean): Boolean
     fun exists(rel: String): Boolean
     fun isDir(rel: String): Boolean
-    fun usage(): Pair<Long, Long>
+    /** 用量统计（C-L-11：最多计 MAX_LIST_ENTRIES 个文件，超限截断并标 truncated）。 */
+    fun usage(): StorageUsage
     fun mimeType(rel: String): String
 }
+
+/** 用量统计结果：used 已用字节、total 总容量、truncated 是否因条目上限截断。 */
+data class StorageUsage(val used: Long, val total: Long, val truncated: Boolean = false)
 
 /** 磁盘实现：全部入口先过 [WebServerPaths.resolveWithin]。 */
 class FileWebServerStore(
@@ -128,9 +141,12 @@ class FileWebServerStore(
     override fun listRecursive(rel: String): List<WebEntry>? {
         val dir = WebServerPaths.resolveWithin(root, rel) ?: return null
         if (!dir.isDirectory) return null
+        // C-L-11：惰性 take 上限＋1——walk 到上限＋1 即停，不整树物化；
+        // 路由层据此判 truncated 并截到上限。
         return dir.walkTopDown()
             .filter { it != dir }
             .map { it.toEntry() }
+            .take(WebServerStore.MAX_LIST_ENTRIES + 1)
             .toList()
     }
 
@@ -238,11 +254,15 @@ class FileWebServerStore(
         return file.isDirectory
     }
 
-    override fun usage(): Pair<Long, Long> {
-        val used = runCatching {
-            root.walkTopDown().filter { it.isFile }.sumOf { it.length() }
-        }.getOrDefault(0L)
-        return used to totalBytesProvider()
+    override fun usage(): StorageUsage {
+        // C-L-11：最多计 MAX_LIST_ENTRIES 个文件，超限截断（used 只计
+        // 前 MAX 个）并标 truncated，避免大目录全树求和拖垮服务。
+        val files = runCatching {
+            root.walkTopDown().filter { it.isFile }.take(WebServerStore.MAX_LIST_ENTRIES + 1).toList()
+        }.getOrDefault(emptyList())
+        val truncated = files.size > WebServerStore.MAX_LIST_ENTRIES
+        val used = files.take(WebServerStore.MAX_LIST_ENTRIES).sumOf { it.length() }
+        return StorageUsage(used, totalBytesProvider(), truncated)
     }
 
     override fun mimeType(rel: String): String {

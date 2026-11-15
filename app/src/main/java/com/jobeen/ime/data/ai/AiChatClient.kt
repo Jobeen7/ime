@@ -65,8 +65,36 @@ interface AiChatClient {
 /** [AiChatClient.stream] 的纯请求构造结果（不发请求，可单测）。 */
 data class BuiltChatRequest(val url: String, val authorization: String, val bodyJson: String)
 
+/**
+ * C-L-15：baseURL 准入——https 一律放行；http 只放行局域网
+ * （A-29 口径：localhost／127.0.0.1／::1、10.*、192.168.*、
+ * 172.16–31.*），其余 scheme／无 scheme／公网 http 一律拒绝。
+ * 保存时（AiSettingsScreen）与拼 URL 前（[buildChatRequest]）
+ * 各校验一次。
+ */
+fun isAllowedBaseUrl(raw: String): Boolean {
+    val uri = runCatching { java.net.URI(raw.trim()) }.getOrNull() ?: return false
+    val scheme = uri.scheme?.lowercase() ?: return false
+    if (scheme == "https") return true
+    if (scheme != "http") return false
+    val host = uri.host?.lowercase() ?: return false
+    if (host == "localhost" || host == "127.0.0.1" || host == "::1") return true
+    val parts = host.split('.')
+    if (parts.size != 4) return false
+    val octets = parts.map { it.toIntOrNull() ?: return false }
+    if (octets.any { it < 0 || it > 255 }) return false
+    return when {
+        octets[0] == 10 -> true
+        octets[0] == 192 && octets[1] == 168 -> true
+        octets[0] == 172 && octets[1] in 16..31 -> true
+        else -> false
+    }
+}
+
 /** 拼 Chat Completions 请求：URL、Bearer 头、body JSON。 */
 fun buildChatRequest(provider: AIProvider, modelId: String, messages: List<AiChatMessage>): BuiltChatRequest {
+    // C-L-15：拼 URL 前同样校验（备份还原的老配置也可能带公网 http）。
+    require(isAllowedBaseUrl(provider.baseURL)) { "仅支持 https 或局域网 http" }
     val base = provider.baseURL.trimEnd('/')
     val path = provider.apiPath.trim('/').let { if (it.isEmpty()) "" else "/$it" }
     val url = "$base$path/chat/completions"
@@ -130,6 +158,11 @@ class OkHttpAiChatClient(
 ) : AiChatClient {
 
     override fun stream(provider: AIProvider, modelId: String, messages: List<AiChatMessage>): Flow<AiStreamEvent> = flow {
+        // C-L-15：地址不合规则不发请求（与保存时校验同口径）。
+        if (!isAllowedBaseUrl(provider.baseURL)) {
+            emit(AiStreamEvent.Error("", "bad_base_url", com.jobeen.ime.R.string.ai_base_url_scheme_error))
+            return@flow
+        }
         if (provider.apiToken.isBlank()) {
             // 未填 token：不发请求。message 是兜底文案，UI 按 code
             // `missing_token` 映射 strings.xml 的正式文案。
@@ -142,6 +175,10 @@ class OkHttpAiChatClient(
             .connectTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .readTimeout(timeoutSeconds, TimeUnit.SECONDS)
             .writeTimeout(timeoutSeconds, TimeUnit.SECONDS)
+            // C-L-16：不跟随重定向——重定向会把 Bearer 头带去别站，
+            // 且能把 https 请求降级到 http；要换站由用户改 baseURL。
+            .followRedirects(false)
+            .followSslRedirects(false)
             .build()
         val request = Request.Builder()
             .url(built.url)

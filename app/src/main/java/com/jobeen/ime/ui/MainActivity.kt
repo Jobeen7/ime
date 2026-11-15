@@ -115,7 +115,10 @@ class MainActivity : ImeActivity() {
 
     override fun onCreateBeforeContent(savedInstanceState: Bundle?) {
         requestPostNotificationsOnce()
-        handleDeepLink(intent)
+        // C-L-12：只在全新创建时处理 deep link——重建（旋转等，
+        // savedInstanceState 非空）时 intent 里仍是旧 deep link，
+        // 再跑一次会二次跳转；新 intent 照常走 onNewIntent。
+        if (savedInstanceState == null) handleDeepLink(intent)
         // 跟随系统主题的迁移已落到共享入口
         // KeyboardManager.Theme（getMode 读即迁移）：此处在
         // setContent 之前再显式迁一次，组合副作用不再留在

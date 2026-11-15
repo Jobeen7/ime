@@ -23,6 +23,13 @@ object WifiTransferAuth {
     const val PREFS_NAME = "web_server"
     const val KEY_PASSWORD_HASH = "password_sha256"
 
+    /**
+     * C-L-09：吊销水位（毫秒）——服务停服时记下当时时间；签发早于
+     * 该水位的 token 一律作废（重开后须重新登录）。水位为 0 表示
+     * 从未停服，不影响老 token（无 iat 的旧 token 按 iat=0 计）。
+     */
+    const val KEY_REVOKED_BEFORE_MS = "revoked_before_ms"
+
     /** JWT 有效期：24 小时（单子定值）。 */
     const val TOKEN_TTL_MS = 24L * 3600L * 1000L
 
@@ -37,6 +44,15 @@ object WifiTransferAuth {
     fun hasPassword(prefs: SharedPreferences): Boolean =
         !prefs.getString(KEY_PASSWORD_HASH, null).isNullOrEmpty()
 
+    /** 读吊销水位（未记过为 0）。 */
+    fun revokedBeforeMs(prefs: SharedPreferences): Long =
+        prefs.getLong(KEY_REVOKED_BEFORE_MS, 0L)
+
+    /** 停服时调用：把吊销水位记到现在，之前签发的 token 全部作废。 */
+    fun revokeTokensIssuedBefore(prefs: SharedPreferences, nowMs: Long = System.currentTimeMillis()) {
+        prefs.edit().putLong(KEY_REVOKED_BEFORE_MS, nowMs).apply()
+    }
+
     fun setPassword(prefs: SharedPreferences, password: String) {
         prefs.edit().putString(KEY_PASSWORD_HASH, hashPassword(password)).apply()
     }
@@ -49,19 +65,28 @@ object WifiTransferAuth {
         return constantTimeEquals(stored, hashPassword(password))
     }
 
-    /** 签发 JWT：header.payload.signature，payload 只含 sub 与 exp（秒）。 */
+    /** 签发 JWT：header.payload.signature，payload 只含 sub／iat／exp（秒）。 */
     fun issueToken(passwordHash: String, nowMs: Long = System.currentTimeMillis()): String {
         val header = Base64Url.encode("""{"alg":"HS256","typ":"JWT"}""".toByteArray(Charsets.UTF_8))
+        val iatSeconds = nowMs / 1000L
         val expSeconds = (nowMs + TOKEN_TTL_MS) / 1000L
         val payload = Base64Url.encode(
-            """{"sub":"jime","exp":$expSeconds}""".toByteArray(Charsets.UTF_8),
+            """{"sub":"jime","iat":$iatSeconds,"exp":$expSeconds}""".toByteArray(Charsets.UTF_8),
         )
         val signature = sign(passwordHash, "$header.$payload")
         return "$header.$payload.$signature"
     }
 
-    /** 校验 JWT：结构＋签名＋未过期，三者全过才有效。 */
-    fun verifyToken(passwordHash: String, token: String, nowMs: Long = System.currentTimeMillis()): Boolean {
+    /**
+     * 校验 JWT：结构＋签名＋未过期＋签发不早于吊销水位，四者全过才有效。
+     * 无 iat 的旧 token 按 iat=0 计（水位为 0 时照旧有效）。
+     */
+    fun verifyToken(
+        passwordHash: String,
+        token: String,
+        nowMs: Long = System.currentTimeMillis(),
+        revokedBeforeMs: Long = 0L,
+    ): Boolean {
         val parts = token.split(".")
         if (parts.size != 3) return false
         val (header, payload, signature) = parts
@@ -71,7 +96,9 @@ object WifiTransferAuth {
         }.getOrNull() ?: return false
         val exp = EXP_REGEX.find(payloadJson)?.groupValues?.getOrNull(1)?.toLongOrNull()
             ?: return false
-        return nowMs / 1000L < exp
+        if (nowMs / 1000L >= exp) return false
+        val iat = IAT_REGEX.find(payloadJson)?.groupValues?.getOrNull(1)?.toLongOrNull() ?: 0L
+        return iat * 1000L >= revokedBeforeMs
     }
 
     /** 从 Authorization 请求头取 Bearer token；缺失或非 Bearer 返回 null。 */
@@ -97,6 +124,7 @@ object WifiTransferAuth {
     }
 
     private val EXP_REGEX = Regex(""""exp"\s*:\s*(\d+)""")
+    private val IAT_REGEX = Regex(""""iat"\s*:\s*(\d+)""")
 
     /** Base64url（RFC 4648 §5，无填充），手写以便 JVM 单测。 */
     internal object Base64Url {

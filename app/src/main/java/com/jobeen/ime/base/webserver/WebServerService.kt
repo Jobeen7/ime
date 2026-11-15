@@ -53,13 +53,13 @@ class WebServerService : Service() {
         val prefs = WifiTransferAuth.prefs(this)
         if (!WifiTransferAuth.hasPassword(prefs)) {
             ToastUtil.showToast(getString(R.string.web_server_no_password))
-            stopSelf()
+            failAndStop(R.string.web_server_no_password)
             return
         }
         val extRoot = getExternalFilesDir(null)
         if (extRoot == null) {
             ToastUtil.showToast(getString(R.string.web_server_no_storage))
-            stopSelf()
+            failAndStop(R.string.web_server_no_storage)
             return
         }
         val actions = WebServerActionsImpl(applicationContext)
@@ -67,13 +67,14 @@ class WebServerService : Service() {
         val router = WebServerRouter(
             store, actions,
             passwordHashProvider = { prefs.getString(WifiTransferAuth.KEY_PASSWORD_HASH, null) },
+            revokedBeforeMsProvider = { WifiTransferAuth.revokedBeforeMs(prefs) },
         )
         val webServer = WebServer(router, onRequest = { lastRequestMs = System.currentTimeMillis() })
         val port = webServer.start()
         if (port == null) {
             Timber.w("WebServer: no free port in 8080-8090")
             ToastUtil.showToast(getString(R.string.web_server_no_port))
-            stopSelf()
+            failAndStop(R.string.web_server_no_port)
             return
         }
         server = webServer
@@ -102,6 +103,24 @@ class WebServerService : Service() {
         _state.value = WebServerState(running = true, address = address)
     }
 
+    /**
+     * C-L-08：早退分支先 startForeground 再 stopSelf——以前台方式
+     * 启动的服务在 stopSelf 前未调 startForeground，系统会报
+     * ForegroundServiceDidNotStartInTime。通知文案即失败原因，
+     * 与成功启动的通知同 id／同渠道。
+     */
+    private fun failAndStop(messageRes: Int) {
+        startForeground(
+            NotificationChannels.WEB_SERVER_NOTIFICATION_ID,
+            NotificationCompat.Builder(this, NotificationChannels.WEB_SERVER)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentTitle(getString(R.string.notif_web_server_title))
+                .setContentText(getString(messageRes))
+                .build(),
+        )
+        stopSelf()
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         return START_STICKY
     }
@@ -113,6 +132,9 @@ class WebServerService : Service() {
         serviceScope.cancel()
         server?.close()
         server = null
+        // C-L-09：停服即吊销此前签发的所有 token——重开后须重新登录，
+        // 旧 token（即使未过期）不再可用。
+        WifiTransferAuth.revokeTokensIssuedBefore(WifiTransferAuth.prefs(this))
         _state.value = WebServerState(running = false)
         super.onDestroy()
     }

@@ -37,6 +37,8 @@
     <!-- 候选页分组（2026-10-29 批量第 3 项） -->
     <string name="candidate_content">候选内容</string>
     <string name="candidate_window">窗口显示</string>
+    <string name="floating_candidate_prev">上一页</string>
+    <string name="floating_candidate_next">下一页</string>
     <!-- 批量第 4 项：反馈补齐 -->
     <string name="key_sound_volume">按键音量</string>
     <string name="key_custom_sound">自定义音效</string>
@@ -607,6 +609,7 @@
     <string name="ai_provider_edit">编辑服务商</string>
     <string name="ai_provider_name">名称</string>
     <string name="ai_provider_base_url">服务地址（baseURL）</string>
+    <string name="ai_base_url_scheme_error">仅支持 https 或局域网 http</string>
     <string name="ai_provider_api_path">接口路径（apiPath）</string>
     <string name="ai_provider_token">API Token</string>
     <string name="ai_provider_token_hint">在此填写 API Token（仅保存在本机）</string>
@@ -654,6 +657,7 @@
     <string name="ai_provider_delete_confirm">确定要删除服务商 \\\"%1$s\\\" 吗？其模型与对话一并删除。</string>
     <string name="ai_instructions">指令</string>
     <string name="ai_run">运行</string>
+    <string name="ai_run_confirm">将把以下内容发送到“%1$s”：\n%2$s</string>
     <string name="ai_running">正在生成…</string>
     <string name="ai_copy_result">复制结果</string>
     <string name="ai_run_failed">指令不存在，无法运行</string>

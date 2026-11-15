@@ -133,12 +133,6 @@ interface RimeApi {
     suspend fun t9PinyinList(): String
 
     /**
-     * T9 组字串（WO52 1.5）：native t9Preedit，即会话的
-     * composition.preedit。
-     */
-    suspend fun t9Preedit(): String
-
-    /**
      * T9 定拼音（WO52 1.5）：native t9SetPinyin，把 pinyin 钉为当前
      * 未解析段的首音节后重算候选；pinyin 不在候选项内时返回 false、
      * 会话不动。

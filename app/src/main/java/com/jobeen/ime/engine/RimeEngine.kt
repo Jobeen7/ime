@@ -2428,15 +2428,17 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
      * 候选翻页（WO52 1.1）：#rimeNextPage/#rimePreviousPage 与翻页钮
      * 的统一入口，按模式分派。
      * - 滑动模式：向前走批量追加（loadMoreCandidates，48 条/批、
-     *   CAP 200 不变）；向后空操作（网格自行上滚）。
+     *   CAP 200 不变）；向后走 native 翻页（C-L-19：
+     *   changeCandidatePage(true)，与 native 模式同路——此前向后
+     *   空操作，滑到已加载批次之前就翻不动）。
      * - native 模式：调 changeCandidatePage；成功页号±1（下限 0），
      *   下一帧 Candidates 认领该页号；失败（已到尽头）则回到第 0 页：
      *   页号复位 0，并把高亮移回全局 0 号（首页首候选）。
      * - 浮动候选窗激活时 effectivePagingMode() 强制 native。
      */
     override fun pageCandidates(backward: Boolean) {
-        if (effectivePagingMode() == CandidatePagingMode.SWIPE) {
-            if (!backward) loadMoreCandidates()
+        if (effectivePagingMode() == CandidatePagingMode.SWIPE && !backward) {
+            loadMoreCandidates()
             return
         }
         sendJob {

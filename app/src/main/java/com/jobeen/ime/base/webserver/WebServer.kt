@@ -269,19 +269,28 @@ class WebServer(
     }
 
     private fun writeResponse(output: OutputStream, method: String, response: HttpResponse) {
-        val bodyLength = response.bodyFile?.let { response.bodyFileLength } ?: response.body.size.toLong()
+        val writer = response.bodyWriter
+        val bodyLength = if (writer != null) {
+            null
+        } else {
+            response.bodyFile?.let { response.bodyFileLength } ?: response.body.size.toLong()
+        }
         val header = StringBuilder()
         header.append("HTTP/1.1 ${response.status} ${reason(response.status)}\r\n")
         for ((key, value) in response.headers) {
             header.append("$key: $value\r\n")
         }
-        header.append("Content-Length: $bodyLength\r\n")
+        // C-L-11：流式体（bodyWriter）不发 Content-Length，以
+        // Connection: close 界定体结束（响应本就带 Connection: close）。
+        if (bodyLength != null) header.append("Content-Length: $bodyLength\r\n")
         header.append("Connection: close\r\n")
         header.append("\r\n")
         output.write(header.toString().toByteArray(Charsets.UTF_8))
         if (method != "HEAD") {
             val file = response.bodyFile
-            if (file != null) {
+            if (writer != null) {
+                writer(output)
+            } else if (file != null) {
                 file.inputStream().use { it.copyTo(output, BUFFER_SIZE) }
             } else {
                 output.write(response.body)

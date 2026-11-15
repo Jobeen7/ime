@@ -1,7 +1,7 @@
 package com.jobeen.ime.base.webserver
 
-import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 import java.util.zip.ZipEntry
@@ -39,6 +39,12 @@ data class HttpResponse(
     val body: ByteArray = ByteArray(0),
     val bodyFile: File? = null,
     val bodyFileLength: Long = 0L,
+    /**
+     * C-L-11：流式体写出器（/api/raw 多文件 zip 用）——写出时由
+     * WebServer 直连 socket 输出流调用，不整块进堆；此时不发
+     * Content-Length，以 Connection: close 界定体结束。
+     */
+    val bodyWriter: ((OutputStream) -> Unit)? = null,
 )
 
 /** 路由需调用的应用能力（生产实现见 WebServerActionsImpl；单测用 fake）。 */
@@ -75,6 +81,8 @@ class WebServerRouter(
     private val actions: WebServerActions,
     private val passwordHashProvider: () -> String?,
     private val nowMs: () -> Long = { System.currentTimeMillis() },
+    /** C-L-09：吊销水位（服务停服时记下的时间；早于它的 token 作废）。 */
+    private val revokedBeforeMsProvider: () -> Long = { 0L },
 ) {
     private val tusUploads = TusUploads()
     private val loginFailures = ConcurrentHashMap<String, LoginAttempt>()
@@ -94,8 +102,19 @@ class WebServerRouter(
         if (m == "POST" && path == "/api/renew") return true
         val passwordHash = passwordHashProvider() ?: return false
         val token = WifiTransferAuth.bearerToken(headers) ?: return false
-        return WifiTransferAuth.verifyToken(passwordHash, token, nowMs())
+        return verifyToken(passwordHash, token)
     }
+
+    /** C-L-09：token 校验统一入口——签名＋未过期＋签发不早于吊销水位。 */
+    private fun verifyToken(passwordHash: String, token: String): Boolean =
+        WifiTransferAuth.verifyToken(passwordHash, token, nowMs(), revokedBeforeMsProvider())
+
+    /**
+     * C-L-10：Content-Disposition 用文件名——strip 引号／CR／LF，
+     * 防响应头注入（文件名可由上传方控制）。
+     */
+    internal fun safeDispositionFilename(name: String): String =
+        name.replace("\"", "").replace("\r", "").replace("\n", "")
 
     suspend fun route(request: HttpRequest): HttpResponse {
         val method = request.method.uppercase()
@@ -109,7 +128,7 @@ class WebServerRouter(
         if (method == "POST" && path == "/api/renew") return renew(request)
         val passwordHash = passwordHashProvider() ?: return jsonError(403, "password_not_set")
         val token = WifiTransferAuth.bearerToken(request.headers)
-        if (token == null || !WifiTransferAuth.verifyToken(passwordHash, token, nowMs())) {
+        if (token == null || !verifyToken(passwordHash, token)) {
             return jsonError(401, "unauthorized")
         }
         return when {
@@ -165,7 +184,7 @@ class WebServerRouter(
     private fun renew(request: HttpRequest): HttpResponse {
         val passwordHash = passwordHashProvider() ?: return jsonError(403, "password_not_set")
         val token = WifiTransferAuth.bearerToken(request.headers) ?: return jsonError(401, "unauthorized")
-        if (!WifiTransferAuth.verifyToken(passwordHash, token, nowMs())) {
+        if (!verifyToken(passwordHash, token)) {
             return jsonError(401, "unauthorized")
         }
         val fresh = WifiTransferAuth.issueToken(passwordHash, nowMs())
@@ -220,8 +239,10 @@ class WebServerRouter(
     }
 
     private fun usage(): HttpResponse {
-        val (used, total) = store.usage()
-        return jsonOk("""{"used":$used,"total":$total}""")
+        val usage = store.usage()
+        return jsonOk(
+            """{"used":${usage.used},"total":${usage.total},"truncated":${usage.truncated}}""",
+        )
     }
 
     // ---- /api/resources ----
@@ -288,10 +309,15 @@ class WebServerRouter(
     private fun listRecursive(request: HttpRequest): HttpResponse {
         val path = request.query["path"].orEmpty()
         val entries = store.listRecursive(path) ?: return jsonError(500, "not_found")
+        // C-L-11：超限截断到上限，响应里标 truncated（store 侧已取
+        // 上限＋1 作哨兵，未超限时 truncated 为 false）。
+        val truncated = entries.size > WebServerStore.MAX_LIST_ENTRIES
+        val shown = entries.take(WebServerStore.MAX_LIST_ENTRIES)
         return jsonOk(
             buildJsonObject {
                 put("path", JsonPrimitive(path))
-                put("items", entriesJson(entries))
+                put("truncated", JsonPrimitive(truncated))
+                put("items", entriesJson(shown))
             }.toString(),
         )
     }
@@ -304,7 +330,9 @@ class WebServerRouter(
                 status = 200,
                 headers = mapOf(
                     "Content-Type" to "application/octet-stream",
-                    "Content-Disposition" to "attachment; filename=\"${file.name}\"",
+                    // C-L-10：文件名进 Content-Disposition 前 strip
+                    // 引号／CR／LF——否则可注出第二行响应头。
+                    "Content-Disposition" to "attachment; filename=\"${safeDispositionFilename(file.name)}\"",
                 ),
                 bodyFile = file,
                 bodyFileLength = file.length(),
@@ -407,19 +435,19 @@ class WebServerRouter(
             )
         }
         val files = paths.map { store.readFile(it) ?: return jsonError(404, "not_found") }
-        val zipBytes = ByteArrayOutputStream().also { out ->
-            ZipOutputStream(out).use { zip ->
-                for (file in files) {
-                    zip.putNextEntry(ZipEntry(file.name))
-                    file.inputStream().use { it.copyTo(zip) }
-                    zip.closeEntry()
-                }
-            }
-        }.toByteArray()
+        // C-L-11：zip 直连响应输出流（bodyWriter），不再整包进堆。
         return HttpResponse(
             status = 200,
             headers = mapOf("Content-Type" to "application/zip"),
-            body = zipBytes,
+            bodyWriter = { out ->
+                ZipOutputStream(out).use { zip ->
+                    for (file in files) {
+                        zip.putNextEntry(ZipEntry(file.name))
+                        file.inputStream().use { it.copyTo(zip) }
+                        zip.closeEntry()
+                    }
+                }
+            },
         )
     }
 

@@ -238,7 +238,7 @@ namespace {
         }
 
         // ---- T9 会话访问器（WO52 1.5，自研插件；API 面与对端
-        // RimeNative.t9PinyinList/t9Preedit/t9SetPinyin 相同）----
+        // RimeNative.t9PinyinList/t9SetPinyin 相同）----
         // 列表与定拼音的展开/重写在插件纯函数里（t9_session.h），
         // 本层只负责从会话读写 input/confirmedPos/preedit。
 
@@ -246,13 +246,6 @@ namespace {
         // 或无未解析段时为空串。
         std::string t9PinyinList() {
             return jime::t9::T9PinyinList(rawInput(), getInputConfirmedPosition());
-        }
-
-        // T9 组字串：native 会话的 composition.preedit（与快照
-        // context.composition.preedit 同源同值）。
-        std::string t9Preedit() {
-            auto ctx = context();
-            return ctx->composition.preedit.value_or("");
         }
 
         // 把 pinyin 钉为当前未解析段的首音节后重算候选；pinyin
@@ -664,11 +657,6 @@ Java_com_jobeen_ime_engine_rime_core_Rime_getInputConfirmedPosition(JNIEnv *env,
 JNIEXPORT jstring JNICALL
 Java_com_jobeen_ime_engine_rime_core_Rime_t9PinyinList(JNIEnv *env, jclass) {
     return jni::makeString(env, RimeEngine::instance().t9PinyinList());
-}
-
-JNIEXPORT jstring JNICALL
-Java_com_jobeen_ime_engine_rime_core_Rime_t9Preedit(JNIEnv *env, jclass) {
-    return jni::makeString(env, RimeEngine::instance().t9Preedit());
 }
 
 JNIEXPORT jboolean JNICALL

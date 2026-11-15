@@ -79,9 +79,12 @@ class ScriptRunner {
         val dispatcher = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "script-run").also { it.isDaemon = true }
         }.asCoroutineDispatcher()
+        // C-L-02：取消接线——引擎引用外提，catch 里先 cancel 再重抛。
+        var engineRef: QuickJsEngine? = null
         try {
             return withContext(dispatcher) {
                 val engine = QuickJsEngine.create()
+                engineRef = engine
                 try {
                     val delegate = hostFactory(
                         { text -> appendLog(logs, text) },
@@ -137,8 +140,12 @@ class ScriptRunner {
                 }
             }
         } catch (e: CancellationException) {
-            // 协程取消：引擎已在 withContext 块外——destroy 在 finally
-            // 里已跑；这里只把取消原样抛给调用方（不转 ScriptRunException）。
+            // C-L-02：取消正在跑的脚本时先调 engine.cancel()（native
+            // 中断，下一次字节码检查即停），再原样重抛。引擎已销毁时
+            // cancel() 是空操作（ptr 已为 0），不会掩盖取消异常；
+            // destroy 在内层 finally 里已跑，这里只把取消原样抛给调用方
+            // （不转 ScriptRunException）。
+            engineRef?.cancel()
             throw e
         } finally {
             dispatcher.close()

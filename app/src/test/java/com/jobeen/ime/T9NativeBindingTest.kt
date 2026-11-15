@@ -7,8 +7,9 @@ import org.junit.Test
 import java.lang.reflect.Modifier
 
 /**
- * WO52 1.5：三个 T9 native 访问器的 JNI 绑定约定（与 3.1c
- * syncUserData 的 RimeMaintenanceTest 同口径）。
+ * WO52 1.5：两个 T9 native 访问器的 JNI 绑定约定（与 3.1c
+ * syncUserData 的 RimeMaintenanceTest 同口径；C-L-18 起
+ * t9Preedit 已删，组字串直接取快照 composition.preedit）。
  *
  * JNI 导出名 Java_com_jobeen_ime_engine_rime_core_Rime_<name>
  * 要求 Rime 类上有 public static 的同名方法；RimeApi 侧为同名
@@ -24,12 +25,6 @@ class T9NativeBindingTest {
         assertTrue(
             kotlin.coroutines.Continuation::class.java
                 .isAssignableFrom(list.parameterTypes[0]),
-        )
-        val preedit = RimeApi::class.java.methods.single { it.name == "t9Preedit" }
-        assertEquals(1, preedit.parameterCount)
-        assertTrue(
-            kotlin.coroutines.Continuation::class.java
-                .isAssignableFrom(preedit.parameterTypes[0]),
         )
         val set = RimeApi::class.java.methods.single { it.name == "t9SetPinyin" }
         assertEquals(2, set.parameterCount)
@@ -51,11 +46,6 @@ class T9NativeBindingTest {
         assertTrue(Modifier.isStatic(list.modifiers))
         assertEquals(String::class.java, list.returnType)
         assertEquals(0, list.parameterCount)
-
-        val preedit = rimeClass.getMethod("t9Preedit")
-        assertTrue(Modifier.isStatic(preedit.modifiers))
-        assertEquals(String::class.java, preedit.returnType)
-        assertEquals(0, preedit.parameterCount)
 
         val set = rimeClass.getMethod("t9SetPinyin", String::class.java)
         assertTrue(Modifier.isStatic(set.modifiers))

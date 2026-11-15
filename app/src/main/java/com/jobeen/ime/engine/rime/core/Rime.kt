@@ -390,8 +390,6 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
     override suspend fun t9PinyinList(): String = withRimeContext { Companion.t9PinyinList() }
 
-    override suspend fun t9Preedit(): String = withRimeContext { Companion.t9Preedit() }
-
     override suspend fun t9SetPinyin(pinyin: String): Boolean =
         withRimeContext {
             Companion.t9SetPinyin(pinyin).also { if (it) emitResponse() }
@@ -505,15 +503,11 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     private fun handleComposition(composition: CompositionProto) {
-        // WO52 1.5：T9 组字串取 native t9Preedit——与快照组字 preedit
-        // 同源同值（同一 rime-main 串行点上重读同一会话的
-        // composition.preedit），仅把组字串的来源收敛到 t9 访问器；
-        // 非 T9 方案原样不动。音节表（DynamicPreedit 的拼写段）不受影响。
-        val effective = if (schemaCached.candidateKind == PinYinUtil.CandidateKindT9) {
-            composition.copy(preedit = Companion.t9Preedit())
-        } else {
-            composition
-        }
+        // C-L-18：T9 组字串直接取同一快照的 composition.preedit——
+        // 原先的 native t9Preedit 只是同一会话 composition.preedit
+        // 的直读（与快照同源同值），重读一遍是多余往返；T9 与非 T9
+        // 方案至此同口径。音节表（DynamicPreedit 的拼写段）不受影响。
+        val effective = composition
         // 组字缓存首行同步赋值：emitResponse 的正常分支与「候选页为空→
         // 合成空组字」特殊分支都经此处，赋值对象即本轮真正分发的组字，
         // 与组字产生同步完成。此前靠 CompositionMessage 在通知分发线程
@@ -912,12 +906,6 @@ class Rime : RimeApi, RimeLifecycleOwner {
          */
         @JvmStatic
         external fun t9PinyinList(): String
-
-        /**
-         * T9 组字串（WO52 1.5）：native 会话的 composition.preedit。
-         */
-        @JvmStatic
-        external fun t9Preedit(): String
 
         /**
          * T9 定拼音（WO52 1.5）：把 pinyin 钉为当前未解析段的首音节

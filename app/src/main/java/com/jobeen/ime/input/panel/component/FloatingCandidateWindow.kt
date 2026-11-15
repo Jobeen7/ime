@@ -38,6 +38,8 @@ class FloatingCandidateWindow(
     var onCandidateSelected: ((EngineMessage.Candidate) -> Unit)? = null,
     var onSidePanelAction: ((KeyboardAction) -> Unit)? = null,
     var onPageCandidates: ((backward: Boolean) -> Unit)? = null,
+    /** C-L-21：窗体被解散时回调（点窗外／系统收起），调用方清 rect。 */
+    var onDismissed: (() -> Unit)? = null,
 ) {
 
     /** 翻页行高（dp）：两钮一排。 */
@@ -65,7 +67,7 @@ class FloatingCandidateWindow(
     }
 
     private val prevButton = TextView(context).apply {
-        text = "上一页"
+        text = context.getString(com.jobeen.ime.R.string.floating_candidate_prev)
         gravity = Gravity.CENTER
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
         setIncludeFontPadding(false)
@@ -80,7 +82,7 @@ class FloatingCandidateWindow(
     }
 
     private val nextButton = TextView(context).apply {
-        text = "下一页"
+        text = context.getString(com.jobeen.ime.R.string.floating_candidate_next)
         gravity = Gravity.CENTER
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 16f)
         setIncludeFontPadding(false)
@@ -133,7 +135,7 @@ class FloatingCandidateWindow(
     fun currentStyle(): FloatingCandidateStyle =
         SkinSnapshotProvider.peek()?.floatingCandidate ?: FloatingCandidateStyle()
 
-    /** 刷新容器背景（深浅＋圆角，皮肤键）。 */
+    /** 刷新容器背景（深浅＋圆角，皮肤键）＋当前皮肤配色。 */
     fun refreshStyle() {
         val style = currentStyle()
         val bg = if (SkinColorMode.isDark(container.context)) {
@@ -143,6 +145,15 @@ class FloatingCandidateWindow(
         }
         containerBg.setColor(bg)
         containerBg.cornerRadius = style.cornerRadiusDp * density
+        // C-L-20：配色每次重读当前皮肤（panelColorScheme），不用
+        // 构造时快照的颜色——切皮肤后浮动窗配色跟上。只走颜色重载
+        // （grid.refreshTheme(colors)），不碰网格底部钮行（恒 null）。
+        val colors = panelColorScheme(container.context, null)
+        grid.refreshTheme(colors)
+        prevButton.setTextColor(colors.keyText)
+        nextButton.setTextColor(colors.keyText)
+        (prevButton.background as? GradientDrawable)?.setColor(colors.keyBackground)
+        (nextButton.background as? GradientDrawable)?.setColor(colors.keyBackground)
         grid.pagingButtonsEnabledOverride = style.pagingButtonDisplayed
     }
 
@@ -208,6 +219,9 @@ class FloatingCandidateWindow(
             isTouchable = true
             isOutsideTouchable = false
             elevation = 8f * density
+            // C-L-21：窗体解散（点窗外／系统收起）即回调调用方清 rect，
+            // 否则 rect 残留、可触区一直按浮动窗算。
+            setOnDismissListener { onDismissed?.invoke() }
         }.also { popupWindow = it }
         if (popup.isShowing) {
             popup.update(x, y, width, height)
