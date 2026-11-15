@@ -47,6 +47,18 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
     }
 
     /**
+     * WO52 1.5：点选拼音的输入投递——先调 native t9SetPinyin 把该
+     * 拼音钉为当前段首音节（会话内重算候选）；native 校验失败时
+     * 回落到 [updateRimeInput]（Kotlin 重建输入），行为与旧路一致。
+     */
+    private fun updateRimeInputForPinYin(pinYin: CandidatePinYin): Boolean {
+        rimeJob.sendJob {
+            if (!t9SetPinyin(pinYin.pinYin)) pushBuiltInput()
+        }
+        return true
+    }
+
+    /**
      * 在当前已进入的 rime job 内同步把 [build] 构造的输入投递给 Rime
      * （不另发 sendJob）：[updateRimeInput] 的 job 内版本，供判断与处理
      * 必须落在同一个 job 内的调用方（见 [backspaceInJob]）复用投递逻辑。
@@ -145,11 +157,15 @@ class BehaviorHost(val rimeJob: IRimeJob) : IBehaviorHost {
             }
 
             // 选择候选拼音，对应 fcitx5 SELECT_PINYIN：
-            // 只登记到队列并 updateRimeInput；SelectPinYin.invoke() 为空。
+            // 先走 native t9SetPinyin（WO52 1.5：会话内把该拼音钉为
+            // 当前段首音节、重算候选）；native 校验失败（列表过期等）
+            // 时回落到既有 Kotlin 重建输入（build() → setInput），行为
+            // 与旧路一致。SelectPinYin.invoke() 仍为空（fcitx5 口径：
+            // 队列登记＋输入投递即全部工作）。
             is SelectPinYin -> {
                 selectedPinYinQueue.add(behavior.pinYin)
                 behaviorQueue.add(behavior)
-                return updateRimeInput()
+                return updateRimeInputForPinYin(behavior.pinYin)
             }
 
             // 退格键，对应 fcitx5 SymAction(BackSpace)：

@@ -374,6 +374,8 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             val candidatePinYinType: String,
             val currentInput: String,
             val confirmedLen: Int,
+            /** WO52 1.5：native t9PinyinList 的原始串（空格连接）；非 T9 段为 null。 */
+            val t9ListRaw: String? = null,
         ) : Action
 
         data object Reset : Action
@@ -1404,11 +1406,19 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             if (!PinYinUtil.isValidType(schemaCached.candidateKind)) {
                 return@sendJob
             }
+            // WO52 1.5：T9 段的拼音列表取自 native t9PinyinList（按空格
+            // 切分）；全拼段仍走既有 Kotlin 计算。raw 串随快照动作下发，
+            // 切分与配对在 reduce 里做。
+            val t9ListRaw = if (schemaCached.candidateKind == PinYinUtil.CandidateKindT9) {
+                t9PinyinList()
+            } else {
+                null
+            }
             val currentInput = getRawInput()
             val confirmedLen = getInputConfirmedPosition()
             dispatchAction(
                 Action.PossibleCandidatePinYinSnapshot(
-                    schemaCached.candidateKind, currentInput, confirmedLen
+                    schemaCached.candidateKind, currentInput, confirmedLen, t9ListRaw
                 )
             )
         }
@@ -1623,9 +1633,23 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
             is Action.EmitMessage -> emitMessage(action.message)
 
             is Action.PossibleCandidatePinYinSnapshot -> {
-                val pinYins = behaviorHosted?.possiblePinYin(
-                    action.candidatePinYinType, action.currentInput, action.confirmedLen
-                ) ?: emptyList()
+                // WO52 1.5：T9 段以 native 列表为准绳（按空格切分）；
+                // raw/position 仍取 Kotlin 侧同一段的计算（BehaviorHost
+                // 队列坐标，native 只有会话输入坐标）。两者同源同算法，
+                // 正常恒一致；native 多出的拼音无队列坐标可配对、丢弃
+                // （宁可漏，不可错）。非 T9 段走既有 Kotlin 计算。
+                val pinYins = if (action.t9ListRaw != null) {
+                    val native = parseT9PinyinList(action.t9ListRaw)
+                    val local = behaviorHosted?.possiblePinYin(
+                        action.candidatePinYinType, action.currentInput, action.confirmedLen
+                    ) ?: emptyList()
+                    val byPinYin = local.associateBy { it.pinYin }
+                    native.mapNotNull { byPinYin[it] }
+                } else {
+                    behaviorHosted?.possiblePinYin(
+                        action.candidatePinYinType, action.currentInput, action.confirmedLen
+                    ) ?: emptyList()
+                }
                 emitMessage(EngineMessage.PossibleCandidatePinYin(pinYins))
             }
 
@@ -3657,3 +3681,10 @@ internal fun drainJobsOnFinalize(jobs: Channel<RimeEngine.QueuedJob>) {
         runCatching { entry.onDropped?.invoke() }
     }
 }
+
+/**
+ * WO52 1.5：native t9PinyinList 的空格切分（与元书“按空格切分”
+ * 同口径）。空串／纯空白 → 空列表；连续空格不产生空条目。
+ */
+internal fun parseT9PinyinList(raw: String): List<String> =
+    raw.split(' ').filter { it.isNotEmpty() }

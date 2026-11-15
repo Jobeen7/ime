@@ -6,6 +6,7 @@ import com.jobeen.ime.engine.event.KeyModifiers
 import com.jobeen.ime.engine.rime.data.DataManager
 import com.jobeen.ime.engine.rime.data.opencc.OpenCCDictManager
 import com.jobeen.ime.engine.rime.data.userdict.UserDictManager
+import com.jobeen.ime.base.util.PinYinUtil
 import com.jobeen.ime.base.util.appContext
 import com.jobeen.ime.base.util.isStorageAvailable
 import com.jobeen.ime.data.manager.isDeployWindow
@@ -504,18 +505,27 @@ class Rime : RimeApi, RimeLifecycleOwner {
     }
 
     private fun handleComposition(composition: CompositionProto) {
+        // WO52 1.5：T9 组字串取 native t9Preedit——与快照组字 preedit
+        // 同源同值（同一 rime-main 串行点上重读同一会话的
+        // composition.preedit），仅把组字串的来源收敛到 t9 访问器；
+        // 非 T9 方案原样不动。音节表（DynamicPreedit 的拼写段）不受影响。
+        val effective = if (schemaCached.candidateKind == PinYinUtil.CandidateKindT9) {
+            composition.copy(preedit = Companion.t9Preedit())
+        } else {
+            composition
+        }
         // 组字缓存首行同步赋值：emitResponse 的正常分支与「候选页为空→
         // 合成空组字」特殊分支都经此处，赋值对象即本轮真正分发的组字，
         // 与组字产生同步完成。此前靠 CompositionMessage 在通知分发线程
         // 异步回写，其间读 compositionCached 的 sendJob 会读到上一轮组字。
-        compositionCached = composition
+        compositionCached = effective
         handleMessage(
-            RimeMessage.MessageType.InlinePreedit.ordinal, arrayOf(composition.preedit ?: "")
+            RimeMessage.MessageType.InlinePreedit.ordinal, arrayOf(effective.preedit ?: "")
         )
         handleMessage(
-            RimeMessage.MessageType.DynamicPreedit.ordinal, arrayOf(composition)
+            RimeMessage.MessageType.DynamicPreedit.ordinal, arrayOf(effective)
         )
-        handleMessage(RimeMessage.MessageType.Composition.ordinal, arrayOf(composition))
+        handleMessage(RimeMessage.MessageType.Composition.ordinal, arrayOf(effective))
     }
 
     /**
