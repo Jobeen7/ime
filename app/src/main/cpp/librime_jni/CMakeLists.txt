@@ -24,10 +24,11 @@ add_library(rime_jni SHARED ${RIME_JNI_SOURCES})
 target_compile_options(rime_jni PRIVATE
   -fvisibility=hidden -ffunction-sections -fdata-sections)
 
-target_link_libraries(rime_jni rime-static ${Opencc_LIBRARY})
+target_link_libraries(rime_jni rime-static rime-t9 ${Opencc_LIBRARY})
 target_include_directories(rime_jni PRIVATE
   "${CMAKE_BINARY_DIR}/deps/librime/src"
   "${CMAKE_SOURCE_DIR}/deps/librime/src"
   "${CMAKE_SOURCE_DIR}/deps/librime/include"
+  "${CMAKE_SOURCE_DIR}/librime-t9"
   "${Opencc_INCLUDE_PATH}"
 )

@@ -20,6 +20,7 @@
 #include "jni_env.h"
 #include "rime_bridge.h"
 #include "rime_data.h"
+#include "t9_session.h"
 
 using namespace rime_jni;
 
@@ -31,6 +32,8 @@ extern void rime_require_module_lua();
 extern void rime_require_module_octagram();
 
 extern void rime_require_module_predict();
+
+extern void rime_require_module_t9();
 
 namespace {
 
@@ -45,6 +48,7 @@ namespace {
         rime_require_module_lua();
         rime_require_module_octagram();
         rime_require_module_predict();
+        rime_require_module_t9();
     }
 
     class RimeSession {
@@ -231,6 +235,36 @@ namespace {
         std::string rawInput() {
             const char *s = api_->get_input(sessionId());
             return s ? s : "";
+        }
+
+        // ---- T9 会话访问器（WO52 1.5，自研插件；API 面与元书
+        // RimeNative.t9PinyinList/t9Preedit/t9SetPinyin 相同）----
+        // 列表与定拼音的展开/重写在插件纯函数里（t9_session.h），
+        // 本层只负责从会话读写 input/confirmedPos/preedit。
+
+        // 当前未解析数字段的首音节候选项（单个空格连接）；无组字
+        // 或无未解析段时为空串。
+        std::string t9PinyinList() {
+            return jime::t9::T9PinyinList(rawInput(), getInputConfirmedPosition());
+        }
+
+        // T9 组字串：native 会话的 composition.preedit（与快照
+        // context.composition.preedit 同源同值）。
+        std::string t9Preedit() {
+            auto ctx = context();
+            return ctx->composition.preedit.value_or("");
+        }
+
+        // 把 pinyin 钉为当前未解析段的首音节后重算候选；pinyin
+        // 不在候选项内时返回 false、会话不动（调用方回落到既有
+        // Kotlin 重建输入）。
+        bool t9SetPinyin(const std::string &pinyin) {
+            std::string next;
+            if (!jime::t9::T9SetPinyin(rawInput(), getInputConfirmedPosition(),
+                                      pinyin, &next)) {
+                return false;
+            }
+            return setInput(next);
         }
 
         size_t caretPos() { return api_->get_caret_pos(sessionId()); }
@@ -623,6 +657,25 @@ JNIEXPORT jint JNICALL
 Java_com_jobeen_ime_engine_rime_core_Rime_getInputConfirmedPosition(JNIEnv *env,
                                                       jclass) {
     return static_cast<jint>(RimeEngine::instance().getInputConfirmedPosition());
+}
+
+// ---- T9 会话访问器（WO52 1.5）----
+
+JNIEXPORT jstring JNICALL
+Java_com_jobeen_ime_engine_rime_core_Rime_t9PinyinList(JNIEnv *env, jclass) {
+    return jni::makeString(env, RimeEngine::instance().t9PinyinList());
+}
+
+JNIEXPORT jstring JNICALL
+Java_com_jobeen_ime_engine_rime_core_Rime_t9Preedit(JNIEnv *env, jclass) {
+    return jni::makeString(env, RimeEngine::instance().t9Preedit());
+}
+
+JNIEXPORT jboolean JNICALL
+Java_com_jobeen_ime_engine_rime_core_Rime_t9SetPinyin(JNIEnv *env, jclass,
+                                                      jstring pinyin) {
+    jni::StringChars p(env, pinyin);
+    return RimeEngine::instance().t9SetPinyin(p.str());
 }
 
 JNIEXPORT void JNICALL

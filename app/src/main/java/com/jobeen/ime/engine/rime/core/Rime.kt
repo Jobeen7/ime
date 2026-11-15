@@ -387,6 +387,15 @@ class Rime : RimeApi, RimeLifecycleOwner {
     override suspend fun getInputConfirmedPosition(): Int =
         withRimeContext { Companion.getInputConfirmedPosition() }
 
+    override suspend fun t9PinyinList(): String = withRimeContext { Companion.t9PinyinList() }
+
+    override suspend fun t9Preedit(): String = withRimeContext { Companion.t9Preedit() }
+
+    override suspend fun t9SetPinyin(pinyin: String): Boolean =
+        withRimeContext {
+            Companion.t9SetPinyin(pinyin).also { if (it) emitResponse() }
+        }
+
     override suspend fun setRuntimeOption(option: String, value: Boolean) = withRimeContext {
         setOption(option, value)
     }
@@ -885,6 +894,27 @@ class Rime : RimeApi, RimeLifecycleOwner {
 
         @JvmStatic
         external fun getInputConfirmedPosition(): Int
+
+        /**
+         * T9 拼音列表（WO52 1.5，自研 native 插件）：当前未解析数字段
+         * 的首音节候选项，以单个空格连接；无组字／无未解析段时为空串。
+         * API 面与元书 RimeNative.t9PinyinList 相同。
+         */
+        @JvmStatic
+        external fun t9PinyinList(): String
+
+        /**
+         * T9 组字串（WO52 1.5）：native 会话的 composition.preedit。
+         */
+        @JvmStatic
+        external fun t9Preedit(): String
+
+        /**
+         * T9 定拼音（WO52 1.5）：把 pinyin 钉为当前未解析段的首音节
+         * 后重算候选；pinyin 不在候选项内时返回 false、会话不动。
+         */
+        @JvmStatic
+        external fun t9SetPinyin(pinyin: String): Boolean
 
         /**
          * librime 通知回调的 JNI 入口：只把原始消息入队后立即返回，

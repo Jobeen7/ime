@@ -126,6 +126,25 @@ interface RimeApi {
 
     suspend fun getInputConfirmedPosition(): Int
 
+    /**
+     * T9 拼音列表（WO52 1.5）：native t9PinyinList，当前未解析数字段
+     * 的首音节候选项，以单个空格连接；无组字／无未解析段时为空串。
+     */
+    suspend fun t9PinyinList(): String
+
+    /**
+     * T9 组字串（WO52 1.5）：native t9Preedit，即会话的
+     * composition.preedit。
+     */
+    suspend fun t9Preedit(): String
+
+    /**
+     * T9 定拼音（WO52 1.5）：native t9SetPinyin，把 pinyin 钉为当前
+     * 未解析段的首音节后重算候选；pinyin 不在候选项内时返回 false、
+     * 会话不动。
+     */
+    suspend fun t9SetPinyin(pinyin: String): Boolean
+
     suspend fun setRuntimeOption(
         option: String,
         value: Boolean,

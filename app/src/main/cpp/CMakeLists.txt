@@ -179,6 +179,10 @@ target_compile_options(
 target_compile_options(
   rime-predict-objs PRIVATE "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=.")
 
+# T9 会话访问器插件（WO52 1.5，自研）：追踪源码，静态库链进 rime_jni。
+# 须在 librime_jni 之前加（后者链接 rime-t9 目标）。
+add_subdirectory(librime-t9)
+
 add_subdirectory(librime_jni)
 
 add_subdirectory(libmarisa_jni)

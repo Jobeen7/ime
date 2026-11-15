@@ -33,6 +33,18 @@ object RimeDaemon {
             override suspend fun syncUserData(): Boolean {
                 return realRime.syncUserData()
             }
+
+            override suspend fun t9PinyinList(): String {
+                return realRime.t9PinyinList()
+            }
+
+            override suspend fun t9Preedit(): String {
+                return realRime.t9Preedit()
+            }
+
+            override suspend fun t9SetPinyin(pinyin: String): Boolean {
+                return realRime.t9SetPinyin(pinyin)
+            }
         }
     }
 
