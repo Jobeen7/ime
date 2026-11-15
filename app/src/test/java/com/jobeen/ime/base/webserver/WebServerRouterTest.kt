@@ -491,4 +491,95 @@ class WebServerRouterTest {
         }
         assertEquals(400, response.status)
     }
+
+    // ---- A-27 登录按 IP 限速 ----
+
+    private fun loginAttempt(passwordAttempt: String, ip: String): HttpResponse = runBlocking {
+        router.route(
+            HttpRequest(
+                "POST", "/api/login", emptyMap(), emptyMap(),
+                """{"password":"$passwordAttempt"}""".toByteArray(Charsets.UTF_8),
+                remoteAddress = ip,
+            ),
+        )
+    }
+
+    @Test
+    fun `login five failures then sixth is locked and recovers after 60s`() {
+        var fakeNow = System.currentTimeMillis()
+        val timedRouter = WebServerRouter(store, actions, { passwordHash }, nowMs = { fakeNow })
+        val ip = "10.0.0.9"
+        fun attempt(passwordAttempt: String): HttpResponse = runBlocking {
+            timedRouter.route(
+                HttpRequest(
+                    "POST", "/api/login", emptyMap(), emptyMap(),
+                    """{"password":"$passwordAttempt"}""".toByteArray(Charsets.UTF_8),
+                    remoteAddress = ip,
+                ),
+            )
+        }
+        repeat(5) { assertEquals(401, attempt("nope").status) }
+        assertEquals(429, attempt("nope").status)
+        assertEquals(429, attempt(password).status)
+        fakeNow += 61_000L
+        assertEquals(200, attempt(password).status)
+    }
+
+    @Test
+    fun `login success clears failure count`() {
+        val ip = "10.0.0.10"
+        repeat(4) { assertEquals(401, loginAttempt("nope", ip).status) }
+        assertEquals(200, loginAttempt(password, ip).status)
+        repeat(4) { assertEquals(401, loginAttempt("nope", ip).status) }
+        assertEquals(401, loginAttempt("nope", ip).status)
+    }
+
+    // ---- A-25 体走临时文件（bodyFile）----
+
+    @Test
+    fun `tus patch from bodyFile appends without heap body`() = runBlocking {
+        val created = authed("POST", "/api/tus", query = mapOf("path" to "tus2.bin", "override" to "true"))
+        assertEquals(201, created.status)
+        val id = created.headers["Location"]!!.removePrefix("/api/tus/")
+        val chunk = File.createTempFile("tus-chunk-", ".tmp").also { it.writeBytes(ByteArray(1024) { 7 }) }
+        try {
+            val token = WifiTransferAuth.issueToken(passwordHash)
+            val patched = router.route(
+                HttpRequest(
+                    "PATCH", "/api/tus/$id", emptyMap(),
+                    mapOf(
+                        "Authorization" to "Bearer $token",
+                        "Content-Type" to "application/offset+octet-stream",
+                        "Upload-Offset" to "0",
+                    ),
+                    ByteArray(0), bodyFile = chunk,
+                ),
+            )
+            assertEquals(204, patched.status)
+            assertEquals("1024", patched.headers["Upload-Offset"])
+            assertEquals(1024L, File(tempRoot, "tus2.bin").length())
+            assertEquals(7, File(tempRoot, "tus2.bin").readBytes()[512].toInt())
+        } finally {
+            chunk.delete()
+        }
+    }
+
+    @Test
+    fun `put from bodyFile writes without heap body`() = runBlocking {
+        val source = File.createTempFile("put-src-", ".tmp").also { it.writeText("streamed") }
+        try {
+            val token = WifiTransferAuth.issueToken(passwordHash)
+            val streamed = router.route(
+                HttpRequest(
+                    "PUT", "/api/resources", mapOf("path" to "put2.txt"),
+                    mapOf("Authorization" to "Bearer $token"),
+                    ByteArray(0), bodyFile = source,
+                ),
+            )
+            assertEquals(200, streamed.status)
+            assertEquals("streamed", File(tempRoot, "put2.txt").readText())
+        } finally {
+            source.delete()
+        }
+    }
 }

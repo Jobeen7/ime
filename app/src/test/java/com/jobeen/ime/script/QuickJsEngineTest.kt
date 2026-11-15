@@ -128,6 +128,16 @@ class QuickJsEngineTest {
     }
 
     @Test
+    fun memoryLimit_hugeArrayBuffer_returnsErrorNotCrash() {
+        val engine = newEngine()
+        val failure = engine.eval("new ArrayBuffer(1 << 30)")
+        assertNotNull("1GiB allocation must fail under the 64MiB heap limit", failure)
+        assertTrue(failure is ScriptFailure.Error)
+        // 引擎在超限后仍可用（进程没崩、输入法活着）。
+        assertNull(engine.eval("1 + 1"))
+    }
+
+    @Test
     fun cancel_infiniteLoopFromAnotherThread_returnsCancelled() {
         // 刻意跨线程：主线程创建、子线程 eval、主线程 cancel。曾因此测出
         // QuickJS 栈顶锚定问题（见 quickjs_jni.c enterJs 注释）：不重锚

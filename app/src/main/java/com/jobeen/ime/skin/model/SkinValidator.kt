@@ -424,7 +424,8 @@ object SkinValidator {
         }
         var floatingFallbackPosition: String? = null
         val floatingFallbackPrimitive =
-            readTopLevel("floating_fallback_position") as? JsonPrimitive
+            readTopLevel("floatingFallbackPosition") as? JsonPrimitive
+                ?: readTopLevel("floating_fallback_position") as? JsonPrimitive
         if (floatingFallbackPrimitive != null) {
             val parsed = floatingFallbackPrimitive.contentOrNull?.takeIf { it.isNotBlank() }
             if (parsed != null) {

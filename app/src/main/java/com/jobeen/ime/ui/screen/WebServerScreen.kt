@@ -67,7 +67,7 @@ fun WebServerScreen(
             Spacer(modifier = Modifier.height(8.dp))
             Button(
                 onClick = { onSavePassword(password); password = "" },
-                enabled = password.isNotEmpty(),
+                enabled = password.length >= 4,
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(stringResource(R.string.web_server_password_save))

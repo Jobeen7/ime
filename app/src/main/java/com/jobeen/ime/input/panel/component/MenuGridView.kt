@@ -93,10 +93,6 @@ class MenuGridView(
         requestLayout()
     }
 
-    private fun labelResFor(id: String): Int = KeyboardMenuEntries.labelRes(id)
-
-    private fun iconResFor(id: String): Int = KeyboardMenuEntries.iconRes(id)
-
     private val columns = 4
     private val radius = dp(16).toFloat()
     private val iconSize = dp(28)

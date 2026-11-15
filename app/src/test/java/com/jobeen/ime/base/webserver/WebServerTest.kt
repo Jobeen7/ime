@@ -119,4 +119,110 @@ class WebServerTest {
         assertTrue(address.startsWith("http://"))
         assertTrue(address.endsWith(":8080"))
     }
+
+    // ---- A-25 先鉴权再读体、上限 16MB、流式落盘 ----
+
+    @Test
+    fun `unauthed oversize body is rejected 401 without reading body`() {
+        val response = rawHttp(
+            "POST /api/resources?path=big.bin HTTP/1.1\r\nHost: x\r\n" +
+                "Content-Length: ${17 * 1024 * 1024}\r\nConnection: close\r\n\r\n",
+        )
+        assertTrue(response.startsWith("HTTP/1.1 401"))
+    }
+
+    @Test
+    fun `authed oversize body is rejected 413`() {
+        val token = loginToken()
+        val response = rawHttp(
+            "PUT /api/resources?path=big.bin HTTP/1.1\r\nHost: x\r\n" +
+                "Authorization: Bearer $token\r\n" +
+                "Content-Length: ${17 * 1024 * 1024}\r\nConnection: close\r\n\r\n",
+        )
+        assertTrue(response.startsWith("HTTP/1.1 413"))
+    }
+
+    @Test
+    fun `tus patch streams chunk to disk over socket`() {
+        val token = loginToken()
+        val created = rawHttp(
+            "POST /api/tus?path=tus.bin&override=true HTTP/1.1\r\nHost: x\r\n" +
+                "Authorization: Bearer $token\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        )
+        assertTrue(created.startsWith("HTTP/1.1 201"))
+        val location = created.lines().first { it.startsWith("Location:") }.substringAfter("Location:").trim()
+        val chunk = ByteArray(100 * 1024) { 9 }
+        val patched = rawHttpBytes(
+            "PATCH $location HTTP/1.1\r\nHost: x\r\nAuthorization: Bearer $token\r\n" +
+                "Content-Type: application/offset+octet-stream\r\nUpload-Offset: 0\r\n" +
+                "Content-Length: ${chunk.size}\r\nConnection: close\r\n\r\n",
+            chunk,
+        ).toString(Charsets.UTF_8)
+        assertTrue(patched.startsWith("HTTP/1.1 204"))
+        assertTrue(patched.contains("Upload-Offset: 102400"))
+        assertEquals(102400L, File(tempRoot, "tus.bin").length())
+        assertEquals(9, File(tempRoot, "tus.bin").readBytes()[512].toInt())
+    }
+
+    @Test
+    fun `put streams file to disk over socket`() {
+        val token = loginToken()
+        val body = ByteArray(64 * 1024) { 5 }
+        val response = rawHttpBytes(
+            "PUT /api/resources?path=put.bin HTTP/1.1\r\nHost: x\r\n" +
+                "Authorization: Bearer $token\r\n" +
+                "Content-Length: ${body.size}\r\nConnection: close\r\n\r\n",
+            body,
+        ).toString(Charsets.UTF_8)
+        assertTrue(response.startsWith("HTTP/1.1 200"))
+        assertEquals(65536L, File(tempRoot, "put.bin").length())
+        assertEquals(5, File(tempRoot, "put.bin").readBytes()[1000].toInt())
+    }
+
+    // ---- A-26 并发上限与慢连接断开 ----
+
+    @Test
+    fun `seventeenth concurrent connection is refused`() {
+        val held = mutableListOf<Socket>()
+        try {
+            repeat(16) {
+                Socket("127.0.0.1", port).also { socket ->
+                    socket.soTimeout = 5_000
+                    socket.getOutputStream().write("GET / HTTP/1.1\r\nHost: x\r\n".toByteArray(Charsets.UTF_8))
+                    socket.getOutputStream().flush()
+                    held.add(socket)
+                }
+            }
+            Socket("127.0.0.1", port).use { extra ->
+                extra.soTimeout = 5_000
+                extra.getOutputStream().write("GET / HTTP/1.1\r\nHost: x\r\n\r\n".toByteArray(Charsets.UTF_8))
+                extra.getOutputStream().flush()
+                assertEquals(-1, extra.getInputStream().read())
+            }
+        } finally {
+            held.forEach { runCatching { it.close() } }
+        }
+    }
+
+    @Test
+    fun `slow header connection is closed after timeout`() {
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 20_000
+            val start = System.currentTimeMillis()
+            assertEquals(-1, socket.getInputStream().read())
+            val elapsed = System.currentTimeMillis() - start
+            assertTrue(elapsed >= 14_000L)
+            assertTrue(elapsed < 20_000L)
+        }
+    }
+
+    private fun rawHttpBytes(headers: String, body: ByteArray): ByteArray {
+        Socket("127.0.0.1", port).use { socket ->
+            socket.soTimeout = 10_000
+            socket.getOutputStream().write(headers.toByteArray(Charsets.UTF_8))
+            socket.getOutputStream().write(body)
+            socket.getOutputStream().flush()
+            return socket.getInputStream().readBytes()
+        }
+    }
 }

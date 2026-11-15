@@ -51,11 +51,11 @@ class KeyActionListener(
     /**
      * 同脚本在途运行（单飞，取消上一运行）：同一 scriptId 再按
      * 下时，先取消上一任务再起新任务。取消只拦得住尚未切回主
-     * 线程的分发（withContext 抛取消异常，动作不分发）；Rhino
-     * 求值本身不可中断，在途求值仍会在后台跑完，但其分发已被
-     * 取消、不会落地。串行排队（等上一运行跑完再跑下一运行）
-     * 会把旧结果也分发一次，重复动作更糟，故不取串行。完成
-     * 的任务经 invokeOnCompletion 自清，避免表无限增长。
+     * 线程的分发（withContext 抛取消异常，动作不分发）；QuickJS
+     * 求值可中断，超时／取消时求值被打断、不落地。串行排队
+     * （等上一运行跑完再跑下一运行）会把旧结果也分发一次，
+     * 重复动作更糟，故不取串行。完成的任务经 invokeOnCompletion
+     * 自清，避免表无限增长。
      */
     private val scriptJobs = ConcurrentHashMap<String, Job>()
 
@@ -659,8 +659,7 @@ class KeyActionListener(
             // 排队等许可可取消——同 scriptId 再按取消旧任务时，
             // 排队中的旧任务随取消退出队列，不占槽；超时未取到
             // 即放弃本次执行（不入队、不重试），只记元数据。
-            // 同 scriptId 单飞取消口径不变（取消只拦分发，Rhino
-            // 求值本身不可中断，在途求值仍跑完但不落地）。
+            // 同 scriptId 单飞取消口径不变（取消时 QuickJS 求值被打断、不落地）。
             is KeyboardAction.RunScriptAction -> {
                 val capturedEpoch = inputKeyGate.capture()
                 val captured = ScriptRunSession.capture(

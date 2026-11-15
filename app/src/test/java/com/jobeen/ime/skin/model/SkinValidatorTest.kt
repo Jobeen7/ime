@@ -502,4 +502,34 @@ class SkinValidatorTest {
             },
         )
     }
+
+    // ---------- A-32：floatingFallbackPosition 别名（camel 优先、snake 兜底） ----------
+
+    @Test
+    fun floatingFallbackPositionCamelOnlyIsRead() {
+        val result = valid(
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+             "floatingFallbackPosition": "topRight"}""",
+        )
+        assertEquals("topRight", result.skin.floatingCandidate.fallbackPosition)
+    }
+
+    @Test
+    fun floatingFallbackPositionSnakeOnlyStillWorks() {
+        val result = valid(
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+             "floating_fallback_position": "bottomRight"}""",
+        )
+        assertEquals("bottomRight", result.skin.floatingCandidate.fallbackPosition)
+    }
+
+    @Test
+    fun floatingFallbackPositionCamelWinsWhenBothPresent() {
+        val result = valid(
+            """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
+             "floatingFallbackPosition": "topRight",
+             "floating_fallback_position": "bottomRight"}""",
+        )
+        assertEquals("topRight", result.skin.floatingCandidate.fallbackPosition)
+    }
 }

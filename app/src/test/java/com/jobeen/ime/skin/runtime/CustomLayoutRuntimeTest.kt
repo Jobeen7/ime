@@ -198,4 +198,18 @@ class CustomLayoutRuntimeTest {
         assertTrue(def.skinSoundMuted)
         assertEquals(1, CustomLayoutRuntime.overrideHitCount(snap))
     }
+
+    @Test
+    fun kaomojiMapsToSymbolic() {
+        assertEquals(
+            "Symbol",
+            CustomLayoutRuntime.builtinKeyboardName("kaomoji", "Pinyin"),
+        )
+    }
+
+    @Test
+    fun builtinKeyboardTypesUnchanged() {
+        assertEquals("Symbol", CustomLayoutRuntime.builtinKeyboardName("symbolic", "Pinyin"))
+        assertEquals("Pinyin", CustomLayoutRuntime.builtinKeyboardName("unknown-type", "Pinyin"))
+    }
 }

@@ -97,6 +97,10 @@ interface WebServerStore {
     fun fileSize(rel: String): Long?
     fun writeFile(rel: String, bytes: ByteArray, override: Boolean): WriteResult
     fun appendFile(rel: String, bytes: ByteArray, expectedOffset: Long): Long?
+    /** 流式写盘：从临时文件边读边写，不整块进堆（A-25；与 writeFile 同口径）。 */
+    fun writeFileStream(rel: String, source: File, override: Boolean): WriteResult
+    /** 流式追加：从临时文件边读边写到 offset 处（A-25；与 appendFile 同口径）。 */
+    fun appendFileStream(rel: String, source: File, expectedOffset: Long): Long?
     fun mkdirs(rel: String): Boolean
     fun delete(rel: String): DeleteResult
     fun move(fromRel: String, toRel: String, copy: Boolean): Boolean
@@ -155,6 +159,37 @@ class FileWebServerStore(
         if (!file.isFile || file.length() != expectedOffset) return null
         return runCatching {
             file.appendBytes(bytes)
+            file.length()
+        }.getOrNull()
+    }
+
+    override fun writeFileStream(rel: String, source: File, override: Boolean): WriteResult {
+        val file = WebServerPaths.resolveWithin(root, rel) ?: return WriteResult.FAILED
+        if (file.exists() && !override) return WriteResult.CONFLICT
+        return runCatching {
+            file.parentFile?.mkdirs()
+            source.inputStream().use { input ->
+                file.outputStream().use { output -> input.copyTo(output) }
+            }
+            WriteResult.OK
+        }.getOrDefault(WriteResult.FAILED)
+    }
+
+    override fun appendFileStream(rel: String, source: File, expectedOffset: Long): Long? {
+        val file = WebServerPaths.resolveWithin(root, rel) ?: return null
+        if (!file.isFile || file.length() != expectedOffset) return null
+        return runCatching {
+            java.io.RandomAccessFile(file, "rw").use { raf ->
+                raf.seek(expectedOffset)
+                source.inputStream().use { input ->
+                    val buf = ByteArray(8192)
+                    while (true) {
+                        val n = input.read(buf)
+                        if (n <= 0) break
+                        raf.write(buf, 0, n)
+                    }
+                }
+            }
             file.length()
         }.getOrNull()
     }

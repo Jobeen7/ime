@@ -630,6 +630,7 @@
     <string name="script_no_match">没有符合的脚本</string>
     <string name="script_allow_pasteboard_title">允许读取剪贴板</string>
     <string name="script_allow_pasteboard_info">开启后脚本可读剪贴板内容（$pasteboardContent）；关闭时只读输入框与选中文本。</string>
+    <string name="script_http_notice">此脚本可读取剪贴板并发送到网络。</string>
     <string name="script_run">运行</string>
     <string name="script_run_input_hint">输入（$searchText）</string>
     <string name="script_run_result">运行结果</string>

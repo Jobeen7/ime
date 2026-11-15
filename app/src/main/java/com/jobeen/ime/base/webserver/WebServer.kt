@@ -1,6 +1,7 @@
 package com.jobeen.ime.base.webserver
 
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
@@ -9,6 +10,7 @@ import java.net.NetworkInterface
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.URLDecoder
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -16,6 +18,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.withContext
 import timber.log.Timber
 
@@ -26,7 +29,9 @@ import timber.log.Timber
  * - 仅支持 Content-Length 请求体（tus 分片与文件上传均带长度）；
  *   Transfer-Encoding: chunked 不支持（400）。
  * - 每连接只处理一个请求后关闭（Connection: close），不做 keep-alive。
- * - 请求体上限 512MB；响应文件走流式写盘，不经内存。
+ * - 请求体上限 16MB：先鉴权再读体，体分块流式落临时文件（不整块进堆），
+ *   超限即 413 断开；TUS 分片与 PUT 写盘直接走临时文件边读边写。
+ * - 慢连接 15 秒断开（soTimeout），并发连接上限 16。
  * - 局域网地址取首个非回环 IPv4（无需额外权限）。
  */
 class WebServer(
@@ -40,6 +45,7 @@ class WebServer(
 
     private var serverSocket: ServerSocket? = null
     private var acceptJob: Job? = null
+    private val connectionPermits = Semaphore(MAX_CONNECTIONS)
 
     /** 依次尝试端口段，返回绑定的端口；全被占返回 null。 */
     fun start(): Int? {
@@ -76,35 +82,139 @@ class WebServer(
             val client = withContext(Dispatchers.IO) {
                 runCatching { socket.accept() }.getOrNull()
             } ?: break
-            scope.launch { handleConnection(client) }
+            runCatching { client.soTimeout = SO_TIMEOUT_MS }
+            if (!connectionPermits.tryAcquire()) {
+                runCatching { client.close() }
+                continue
+            }
+            scope.launch {
+                try {
+                    handleConnection(client)
+                } finally {
+                    connectionPermits.release()
+                }
+            }
         }
     }
 
     private suspend fun handleConnection(socket: Socket) {
         socket.use { client ->
+            var bodyFile: File? = null
             try {
-                val request = withContext(Dispatchers.IO) {
-                    parseRequest(client.getInputStream(), client.getOutputStream())
+                val outcome = withContext(Dispatchers.IO) {
+                    parseRequest(
+                        client.getInputStream(), client.getOutputStream(),
+                        client.inetAddress?.hostAddress.orEmpty(),
+                    )
                 }
-                val response = if (request == null) {
-                    HttpResponse(400, body = "bad request".toByteArray(Charsets.UTF_8))
-                } else {
-                    runCatching { router.route(request) }
+                val request = (outcome as? ParseOutcome.Ok)?.request
+                bodyFile = request?.bodyFile
+                val response = when (outcome) {
+                    is ParseOutcome.Ok -> runCatching { router.route(request!!) }
                         .getOrElse {
                             Timber.w(it, "WebServer route failed")
                             HttpResponse(500, body = "internal error".toByteArray(Charsets.UTF_8))
                         }
+                    is ParseOutcome.Reject -> HttpResponse(
+                        outcome.status,
+                        body = "rejected".toByteArray(Charsets.UTF_8),
+                    )
+                    ParseOutcome.BadRequest -> HttpResponse(
+                        400,
+                        body = "bad request".toByteArray(Charsets.UTF_8),
+                    )
                 }
                 withContext(Dispatchers.IO) {
                     writeResponse(client.getOutputStream(), request?.method ?: "GET", response)
                 }
-            } catch (e: Exception) {
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                // OOM 等 Error 也只关本连接，不断服务。
                 Timber.w(e, "WebServer connection failed")
+            } finally {
+                bodyFile?.let { runCatching { it.delete() } }
             }
         }
     }
 
-    private fun parseRequest(input: InputStream, output: OutputStream): HttpRequest? {
+    /** 请求头解析结果（读体前）。 */
+    private data class RequestHead(
+        val method: String,
+        val path: String,
+        val query: Map<String, String>,
+        val headers: Map<String, String>,
+        val contentLength: Int,
+    )
+
+    private sealed interface ParseOutcome {
+        data class Ok(val request: HttpRequest) : ParseOutcome
+        data class Reject(val status: Int) : ParseOutcome
+        data object BadRequest : ParseOutcome
+    }
+
+    private fun parseRequest(input: InputStream, output: OutputStream, remoteIp: String): ParseOutcome {
+        val head = parseHead(input) ?: return ParseOutcome.BadRequest
+        // 先鉴权再读体：公开路径放行，其余无有效 Bearer 直接 401，不读体。
+        if (!router.preAuth(head.method, head.path, head.headers)) {
+            return ParseOutcome.Reject(401)
+        }
+        if (head.contentLength > MAX_BODY_BYTES) return ParseOutcome.Reject(413)
+        if (head.headers["expect"]?.equals("100-continue", ignoreCase = true) == true) {
+            // 客户端（curl 大文件上传）等 100 Continue 才发体：
+            // 先回 interim 响应再读体，否则死锁。
+            output.write("HTTP/1.1 100 Continue\r\n\r\n".toByteArray(Charsets.UTF_8))
+            output.flush()
+        }
+        val bodyFile = readBodyToFile(input, head.contentLength) ?: return ParseOutcome.BadRequest
+        val streamBody = head.method == "PATCH" && head.path.startsWith("/api/tus/") ||
+            head.method == "PUT" && head.path == "/api/resources"
+        return if (streamBody) {
+            ParseOutcome.Ok(
+                HttpRequest(
+                    head.method, head.path, head.query, head.headers,
+                    ByteArray(0), bodyFile = bodyFile, remoteAddress = remoteIp,
+                ),
+            )
+        } else {
+            val body = runCatching { bodyFile.readBytes() }.getOrNull()
+                ?: return ParseOutcome.BadRequest
+            runCatching { bodyFile.delete() }
+            ParseOutcome.Ok(
+                HttpRequest(
+                    head.method, head.path, head.query, head.headers,
+                    body, remoteAddress = remoteIp,
+                ),
+            )
+        }
+    }
+
+    /** 分块读体到临时文件，不整块进堆；读满失败删临时文件返回 null。 */
+    private fun readBodyToFile(input: InputStream, contentLength: Int): File? {
+        val tmp = File.createTempFile("web-body-", ".tmp")
+        try {
+            tmp.outputStream().use { out ->
+                var remaining = contentLength
+                val buf = ByteArray(BUFFER_SIZE)
+                while (remaining > 0) {
+                    val n = input.read(buf, 0, minOf(buf.size, remaining))
+                    if (n <= 0) {
+                        tmp.delete()
+                        return null
+                    }
+                    out.write(buf, 0, n)
+                    remaining -= n
+                }
+            }
+            return tmp
+        } catch (_: IOException) {
+            tmp.delete()
+            return null
+        }
+    }
+
+    /** 只解析请求头，不读体。 */
+    private fun parseHead(input: InputStream): RequestHead? {
         val headerBytes = readUntilDoubleCrlf(input) ?: return null
         val headerText = String(headerBytes, Charsets.UTF_8)
         val lines = headerText.split("\r\n")
@@ -124,30 +234,12 @@ class WebServer(
         if (headers.containsKey("transfer-encoding")) return null
         val contentLength = headers["content-length"]?.toIntOrNull() ?: 0
         if (contentLength < 0 || contentLength > MAX_BODY_BYTES) return null
-        if (headers["expect"]?.equals("100-continue", ignoreCase = true) == true) {
-            // 客户端（curl 大文件上传）等 100 Continue 才发体：
-            // 先回 interim 响应再读体，否则死锁。
-            output.write("HTTP/1.1 100 Continue\r\n\r\n".toByteArray(Charsets.UTF_8))
-            output.flush()
-        }
-        val body = if (contentLength > 0) {
-            val bytes = ByteArray(contentLength)
-            var read = 0
-            while (read < contentLength) {
-                val n = input.read(bytes, read, contentLength - read)
-                if (n <= 0) return null
-                read += n
-            }
-            bytes
-        } else {
-            ByteArray(0)
-        }
         val (rawPath, rawQuery) = rawTarget.split("?", limit = 2).let {
             it[0] to (it.getOrNull(1).orEmpty())
         }
         val path = decodePath(rawPath)
         val query = parseQuery(rawQuery)
-        return HttpRequest(method, path, query, headers, body)
+        return RequestHead(method, path, query, headers, contentLength)
     }
 
     private fun readUntilDoubleCrlf(input: InputStream): ByteArray? {
@@ -225,14 +317,18 @@ class WebServer(
         403 -> "Forbidden"
         404 -> "Not Found"
         409 -> "Conflict"
+        413 -> "Content Too Large"
         415 -> "Unsupported Media Type"
+        429 -> "Too Many Requests"
         500 -> "Internal Server Error"
         else -> ""
     }
 
     companion object {
         const val MAX_HEADER_BYTES = 64 * 1024
-        const val MAX_BODY_BYTES = 512 * 1024 * 1024
+        const val MAX_BODY_BYTES = 16 * 1024 * 1024
+        const val SO_TIMEOUT_MS = 15_000
+        const val MAX_CONNECTIONS = 16
         private const val BUFFER_SIZE = 8192
 
         /** 首个非回环 IPv4 局域网地址；无则回落 127.0.0.1。 */

@@ -13,9 +13,9 @@
 - **v1/v2 已终止支持**：v1、v2、v4 及其他任何非 3 的版本一律拒绝导入与应用，无迁移路径。旧版皮肤需按 v3 重写后重新导入。
 - 生成端（`SkinTreeBuilder.kt:33`、`LegacySkinSaver.kt:56`）只产出 v3。
 
-## 2. 顶层键（65 个）
+## 2. 顶层键（72 个）
 
-校验器用 `readTopLevel(name)` 逐个读取顶层键并记入 consumed 集；未被任何解析器消费的键原样保留在 `unknownNodes` 里（只透传、不解读）。以下 65 个键为校验器实际消费的顶层键（63 个经 `readTopLevel`，另 `fontFaces`／`fontRanges` 由 `SkinFontParser` 直接读树）：
+校验器用 `readTopLevel(name)` 逐个读取顶层键并记入 consumed 集；未被任何解析器消费的键原样保留在 `unknownNodes` 里（只透传、不解读）。以下 72 个键为校验器实际消费的顶层键（70 个经 `readTopLevel`，另 `fontFaces`／`fontRanges` 由 `SkinFontParser` 直接读树）：
 
 | 分组 | 顶层键 |
 |---|---|
@@ -23,26 +23,27 @@
 | 外观与样式 | `appearance`、`stylesDark`、`derivationDark`、`derivationFormulas`、`geometry`、`fontFamily`、`fontFaces`、`fontRanges`、`roleFonts`、`textSizes`、`keyStyles`、`styleSets`、`keyShadow`、`keyAnimation`、`spaceAnimation`、`keyRipple`、`keyAnimations`、`hintSymbolsStyles`、`hintSymbolsGridStyles`、`hintSymbolNodes` |
 | 键盘与候选 | `keyboards`、`keyMappings`、`notifications`、`conditionStyles`、`swipeThresholdDp`、`bubbleOverflowCheck`、`candidateRadiusDp`、`candidateIndexSizeDp`、`candidateCommentSizeDp`、`preeditHeight`、`preeditStyle`、`toolbar`、`toolbarHeight`、`toolbarStyle`、`toolbarLayout`、`toolbarButtonBackgroundStyle`、`menuAction`、`sprites`、`horizontalCandidates`、`horizontalCandidatesLayout`、`horizontalCandidatesStyle`、`horizontalCandidateStyle`、`verticalCandidates`、`verticalCandidatesLayout`、`verticalCandidatesStyle`、`verticalCandidateStyle`、`verticalBottomRow`、`candidateContextMenu`、`predictionCloseBg`、`predictionCloseRadiusDp`、`audio`、`keySound` |
 | 符号 | `symbolBar`、`subClassifiedSymbols`、`t9Symbols`、`t9HorizontalSymbols`、`numericSymbols`、`horizontalSymbols`、`horizontalSymbolsRtl`、`symbolBadge` |
+| 浮动候选窗／悬浮键盘 | `floatingCandidatePosition`、`floatingFallbackPosition`、`floating_fallback_position`（已废弃，用 `floatingFallbackPosition`）、`floatingCandidateBackgroundColorDark`、`floatingCandidateBackgroundColorLight`、`floatingCandidateCornerRadius`、`floatingCandidatePagingButtonDisplayed`、`floatingKeyboardWindowEnabled` |
 
 各键的值类型与取值范围以 `SkinValidator.kt` 为准（本文档不逐字段复述；校验器对非法值一般记 issue 并回落，不拒包——除 `formatVersion` 与布局动作白名单外，见下）。
 
 - `meta`：对象，含 `id`（皮肤唯一标识，校验器不强制）、`name`、`author`、`version`（缺省 `"1.0"`）。
 - `layoutId`／`layoutIdLandscape`：字符串。`layoutId` 取值见 §3.1 的 `switch_layout` 条目（出厂六布局名或 `custom:<id>`）；校验器此处只验字符串形态，引用解析与回退在快照工厂层。
 
-## 3. 动作白名单（76 个）
+## 3. 动作白名单（82 个）
 
-布局键的动作（`keyMappings` 与布局定义中的动作名）必须精确命中白名单，否则**整布局拒绝**（`fromFormatName` 精确匹配返 null → `tap_invalid:unknown_action` → `INVALID_LAYOUT`）。白名单即 `SkinKeyModel.kt` 的 `WhitelistAction` 枚举，共 **76 个**（不是 82 个）。
+布局键的动作（`keyMappings` 与布局定义中的动作名）必须精确命中白名单，否则**整布局拒绝**（`fromFormatName` 精确匹配返 null → `tap_invalid:unknown_action` → `INVALID_LAYOUT`）。白名单即 `SkinKeyModel.kt` 的 `WhitelistAction` 枚举，共 **82 个**。
 
-### 3.1 基础动作（37 个）
+### 3.1 基础动作（40 个）
 
-`commit_direct`（须带值）、`literal_newline`、`enter`、`delete`、`delete_forward`、`space`、`cursor_left`、`cursor_right`、`rotate_schema`、`open_schema_picker`、`switch_schema`（须带值：方案 ID 优先或方案名）、`switch_system_ime`、`open_system_ime_picker`、`hide_keyboard`、`caps`、`switch_layout`（须带值）、`resume`、`clear`、`undo`、`redo`、`voice_input`、`toggle_ascii_mode`、`tab`、`escape`、`home`、`end`、`settings`、`system_settings`、`none`、`dismiss_keyboard`、`open_url`（须带值）、`return_primary_keyboard`、`return_last_keyboard`、`shift`、`symbol`（须带值）、`run_script`（须带值）、`open_script`。
+`commit_direct`（须带值）、`literal_newline`、`enter`、`delete`、`delete_forward`、`space`、`cursor_left`、`cursor_right`、`rotate_schema`、`open_schema_picker`、`switch_schema`（须带值：方案 ID 优先或方案名）、`switch_system_ime`、`open_system_ime_picker`、`hide_keyboard`、`caps`、`switch_layout`（须带值）、`resume`、`clear`、`undo`、`redo`、`voice_input`、`toggle_ascii_mode`、`tab`、`escape`、`home`、`end`、`command`、`control`、`option`、`settings`、`system_settings`、`none`、`dismiss_keyboard`、`open_url`（须带值）、`return_primary_keyboard`、`return_last_keyboard`、`shift`、`symbol`（须带值）、`run_script`（须带值）、`open_script`。
 
 - `switch_layout` 的合法目标：出厂六布局 `Qwerty`、`T9`、`T15`、`Number`、`Symbol`、`Emoji`，或自创布局 `custom:<layoutId>`。
 - `symbolic_lock_toggle`／`emoji_lock_toggle` **不在白名单内**（板锁功能已于 v1.1.16.22 删除，动作随之移除）；但为兼容旧皮肤，`fromFormatName` 把这两个名字作别名映射到 `NONE`（无操作，不拒包；WO45 P2-3）。
 
-### 3.2 `#` 快捷指令（33 个）
+### 3.2 `#` 快捷指令（36 个）
 
-`#简繁切换`、`#RimeSwitcher`、`#次选上屏`、`#三选上屏`、`#方案切换`、`#行首`、`#行尾`、`#换行`、`#Enter`、`#重输`、`#cut`、`#copy`、`#selectText`、`#paste`、`#showPasteboardView`、`#subCollectionPageUp`、`#subCollectionPageDown`、`#deleteText`、`#undo`、`#redo`、`#verticalCandidatesPageUp`、`#verticalCandidatesPageDown`、`#showPhraseView`、`#candidatesBarStateToggle`、`#rimePreviousPage`、`#rimeNextPage`、`#toggleEmbeddedInputMode`、`#toggleScriptView`、`#clearSystemPasteboard`、`#toggleSymbolBar`、`#keyboardMenu`、`#toggleCommandView`、`#keyboardPerformance`。
+`#简繁切换`、`#RimeSwitcher`、`#次选上屏`、`#三选上屏`、`#方案切换`、`#行首`、`#行尾`、`#换行`、`#Enter`、`#重输`、`#cut`、`#copy`、`#selectText`、`#paste`、`#showPasteboardView`、`#subCollectionPageUp`、`#subCollectionPageDown`、`#deleteText`、`#undo`、`#redo`、`#verticalCandidatesPageUp`、`#verticalCandidatesPageDown`、`#showPhraseView`、`#candidatesBarStateToggle`、`#rimePreviousPage`、`#rimeNextPage`、`#rimeDeploy`、`#rimeSync`、`#floatingKeyboardWindowStateToggle`、`#toggleEmbeddedInputMode`、`#toggleScriptView`、`#clearSystemPasteboard`、`#toggleSymbolBar`、`#keyboardMenu`、`#toggleCommandView`、`#keyboardPerformance`。
 
 ### 3.3 序列／脚本动作（6 个，须带值）
 
@@ -93,7 +94,7 @@
 
 ## 8. 符号项动作（分发规则）
 
-`LabelActionStyle` 的 `action` 按 `SymbolItemActionResolver.resolve` 分发（`SymbolItems.kt`），要点如下（完整映射以该文件为准）：
+`LabelActionStyle` 的 `action` 按 `SymbolItemActionResolver.resolve` 分发（`SymbolItems.kt`），共 36 个具名动作，要点如下（完整映射以该文件为准）：
 
 | action | 效果 |
 |---|---|

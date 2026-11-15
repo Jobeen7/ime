@@ -246,6 +246,9 @@ object CustomLayoutRuntime {
         KeyboardTypes.IMAGES -> EmojiKeyboard.NAME
         KeyboardTypes.NUMERIC, KeyboardTypes.NUMBER_PAD -> NumberKeyboard.NAME
         KeyboardTypes.SYMBOLIC -> SymbolKeyboard.NAME
+        // 颜文字板已删，但老皮肤的 keyboards.kaomoji 类型仍应开一块
+        // 语义最接近的板：符号板（A-33；不复活颜文字板）。
+        "kaomoji" -> SymbolKeyboard.NAME
         // 工具类型无绑定时走内置工具板（不再回落方案默认主键盘，
         // 否则用户要点工具板却看到主键盘，且无从察觉切错了类型）。
         KeyboardTypes.LAYOUT_SWITCH -> LayoutSwitchKeyboard.NAME

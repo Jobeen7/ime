@@ -22,6 +22,10 @@ data class HttpRequest(
     val query: Map<String, String>,
     val headers: Map<String, String>,
     val body: ByteArray,
+    /** TUS 分片／PUT 写盘时体在临时文件里（流式落盘，不进堆）；其余请求为 null。 */
+    val bodyFile: File? = null,
+    /** 对端 IP（登录限速用；路由单测直接构造时为空）。 */
+    val remoteAddress: String = "",
 ) {
     /** 请求头不区分大小写取（Socket 层不保证键的大小写）。 */
     fun header(name: String): String? =
@@ -73,6 +77,25 @@ class WebServerRouter(
     private val nowMs: () -> Long = { System.currentTimeMillis() },
 ) {
     private val tusUploads = TusUploads()
+    private val loginFailures = ConcurrentHashMap<String, LoginAttempt>()
+
+    /** 登录失败记账（纯内存，按 IP；成功清零）。 */
+    private data class LoginAttempt(var failures: Int, var lockedUntilMs: Long)
+
+    /**
+     * Socket 层读体前的轻量鉴权预检（A-25）：公开路径放行，其余须有效
+     * Bearer；与 [route] 的鉴权段同口径（route 另有“未设密码 → 403”的
+     * 区分，此处统一按无有效 Bearer 处理，直接 401 不读体）。
+     */
+    fun preAuth(method: String, path: String, headers: Map<String, String>): Boolean {
+        val m = method.uppercase()
+        if (m == "GET" && !path.startsWith("/api/")) return true
+        if (m == "POST" && path == "/api/login") return true
+        if (m == "POST" && path == "/api/renew") return true
+        val passwordHash = passwordHashProvider() ?: return false
+        val token = WifiTransferAuth.bearerToken(headers) ?: return false
+        return WifiTransferAuth.verifyToken(passwordHash, token, nowMs())
+    }
 
     suspend fun route(request: HttpRequest): HttpResponse {
         val method = request.method.uppercase()
@@ -116,11 +139,25 @@ class WebServerRouter(
 
     private fun login(request: HttpRequest): HttpResponse {
         val passwordHash = passwordHashProvider() ?: return jsonError(403, "password_not_set")
+        val now = nowMs()
+        val ip = request.remoteAddress
+        val attempt = loginFailures[ip]
+        if (attempt != null && now < attempt.lockedUntilMs) {
+            return jsonError(429, "too_many_attempts")
+        }
         val body = parseBodyObject(request.body) ?: return jsonError(400, "bad_body")
         val password = body.string("password") ?: return jsonError(400, "missing_password")
         if (!constantTimeEquals(passwordHash, WifiTransferAuth.hashPassword(password))) {
+            loginFailures.compute(ip) { _, old ->
+                val failures = (old?.failures ?: 0) + 1
+                LoginAttempt(
+                    failures,
+                    if (failures >= MAX_LOGIN_FAILURES) now + LOGIN_LOCKOUT_MS else old?.lockedUntilMs ?: 0L,
+                )
+            }
             return jsonError(401, "invalid_password")
         }
+        loginFailures.remove(ip)
         val token = WifiTransferAuth.issueToken(passwordHash, nowMs())
         return jsonOk(buildJsonObject { put("token", JsonPrimitive(token)) }.toString())
     }
@@ -207,7 +244,9 @@ class WebServerRouter(
 
     private fun writeResource(request: HttpRequest): HttpResponse {
         val path = request.query["path"] ?: return jsonError(400, "missing_path")
-        return when (store.writeFile(path, request.body, override = true)) {
+        val result = request.bodyFile?.let { store.writeFileStream(path, it, override = true) }
+            ?: store.writeFile(path, request.body, override = true)
+        return when (result) {
             WriteResult.OK -> jsonOk("""{"ok":true}""")
             WriteResult.CONFLICT -> jsonError(409, "exists")
             WriteResult.FAILED -> jsonError(500, "write_failed")
@@ -330,13 +369,14 @@ class WebServerRouter(
         val offset = offsetHeader.toLongOrNull() ?: return jsonError(400, "bad_offset")
         val current = store.fileSize(relPath) ?: return jsonError(404, "not_found")
         if (offset != current) return jsonError(409, "offset_mismatch")
-        val newLength = store.appendFile(relPath, request.body, offset)
-            ?: return jsonError(500, "append_failed")
+        val newLength = request.bodyFile?.let { store.appendFileStream(relPath, it, offset) }
+            ?: store.appendFile(relPath, request.body, offset)
+        val newLengthValue = newLength ?: return jsonError(500, "append_failed")
         return HttpResponse(
             status = 204,
             headers = mapOf(
                 "Tus-Resumable" to "1.0.0",
-                "Upload-Offset" to newLength.toString(),
+                "Upload-Offset" to newLengthValue.toString(),
                 "Upload-Length" to "-1",
             ),
         )
@@ -467,5 +507,11 @@ class WebServerRouter(
         }
 
         fun getRelPath(id: String): String? = uploads[id]?.relPath
+    }
+
+    companion object {
+        /** 登录限速：同一 IP 5 次失败锁 60 秒（A-27；纯内存，成功清零）。 */
+        const val MAX_LOGIN_FAILURES = 5
+        const val LOGIN_LOCKOUT_MS = 60_000L
     }
 }

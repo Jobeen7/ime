@@ -466,6 +466,9 @@ JNIEXPORT jlong JNICALL JNI_FN(nativeCreate)(JNIEnv *env, jclass clazz, jobject 
     // 256 KiB JS stack: deep recursion fails with a catchable error
     // instead of crashing the process with a native stack overflow.
     JS_SetMaxStackSize(e->rt, 256 * 1024);
+    // 64 MiB JS heap: a single huge allocation no longer bypasses the
+    // interrupt deadline (A-28).
+    JS_SetMemoryLimit(e->rt, 64 * 1024 * 1024);
     installHostFunctions(e);
     atomic_fetch_add(&g_liveCount, 1);
     e->env = NULL;
