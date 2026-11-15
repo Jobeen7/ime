@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -51,9 +52,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.jobeen.ime.R
 import com.jobeen.ime.data.manager.WordSegmenter
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
+
+/** 词格分页步长（B-SW-1）：首屏与每次追加的格数。 */
+private const val SPLIT_WORDS_PAGE_SIZE = 200
 
 /**
  * 分词页（WO52 1.9）：
@@ -74,7 +80,12 @@ fun SplitWordsScreen(text: String, onDone: () -> Unit) {
     val copiedText = stringResource(R.string.copied)
     val density = LocalDensity.current
     val viewConfig = LocalViewConfiguration.current
-    val words = remember(text) { WordSegmenter.segment(text) }
+    // 分词放后台（B-SW-1）：长文 ICU 切分不在主线程做；文本变化时
+    // 经同一 LaunchedEffect(text) 通道重分词（L-34 的 onNewIntent
+    // 更新文本也走这里）。
+    var words by remember { mutableStateOf<List<WordSegmenter.Word>>(emptyList()) }
+    var segmenting by remember { mutableStateOf(false) }
+    var visibleCount by remember { mutableStateOf(SPLIT_WORDS_PAGE_SIZE) }
 
     var anchor by remember { mutableStateOf<Int?>(null) }
     var current by remember { mutableStateOf<Int?>(null) }
@@ -117,6 +128,29 @@ fun SplitWordsScreen(text: String, onDone: () -> Unit) {
         return best
     }
 
+    // 文本变化：重置选择／格位／可见数，后台重分词。
+    LaunchedEffect(text) {
+        anchor = null
+        current = null
+        chipBounds.clear()
+        visibleCount = SPLIT_WORDS_PAGE_SIZE
+        segmenting = true
+        words = withContext(Dispatchers.Default) { WordSegmenter.segment(text) }
+        segmenting = false
+    }
+
+    // 词格分页（B-SW-1）：滑到底追加一页；内容未满一屏时首帧即
+    // 追加到满屏或全部载完（maxValue 小时条件恒成立，逐页加到
+    // maxValue 超出视口或词表耗尽为止，有界）。
+    LaunchedEffect(scrollState) {
+        snapshotFlow { scrollState.value to scrollState.maxValue }
+            .collect { (value, max) ->
+                if (max > 0 && value >= max - 100 && visibleCount < words.size) {
+                    visibleCount = minOf(visibleCount + SPLIT_WORDS_PAGE_SIZE, words.size)
+                }
+            }
+    }
+
     // 拖动中的边缘自动滚动：每帧按距沿距离算步长（至多 12dp），
     // 手指离开边缘区或抬手即停。
     LaunchedEffect(dragActive, dragPositionLocal) {
@@ -151,13 +185,16 @@ fun SplitWordsScreen(text: String, onDone: () -> Unit) {
                 Text(stringResource(R.string.split_words_done))
             }
         }
-        if (words.isEmpty()) {
+        if (segmenting || words.isEmpty()) {
             Box(
                 Modifier.fillMaxWidth().weight(1f),
                 contentAlignment = Alignment.Center,
             ) {
                 Text(
-                    text = stringResource(R.string.split_words_empty),
+                    text = stringResource(
+                        if (segmenting) R.string.split_words_loading
+                        else R.string.split_words_empty
+                    ),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -261,7 +298,7 @@ fun SplitWordsScreen(text: String, onDone: () -> Unit) {
                     .padding(12.dp),
             ) {
                 FlowRow {
-                    for ((index, word) in words.withIndex()) {
+                    for ((index, word) in words.take(visibleCount).withIndex()) {
                         val selected = !range.isEmpty() && index in range
                         Surface(
                             modifier = Modifier

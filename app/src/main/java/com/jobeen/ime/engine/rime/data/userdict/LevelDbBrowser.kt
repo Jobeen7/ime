@@ -120,38 +120,65 @@ class LevelDbBrowser(
     /** 每页条数（浏览分页）。 */
     val pageSize: Int = DEFAULT_PAGE_SIZE
 
+    /**
+     * 导出结果缓存（L-14）：键＝词库名，值＝解析后的条目表；翻页只读
+     * 缓存切片，不再每页导出。窗口即本实例生命周期（LevelDbActivity
+     * 按页创建 browser，离开页面即丢弃）。并发 HashMap：browse 经
+     * 单线程分发器读写，invalidate 由任意线程调。
+     */
+    private val entriesCache = java.util.concurrent.ConcurrentHashMap<String, List<LevelDbEntry>>()
+
+    /**
+     * 清缓存（null=全清）：词库变更（导入／同步／部署）后调用，
+     * 使下次浏览重新导出。调用方须持有 browser 引用；本页内无
+     * 词库变更入口，缓存窗口即页面生命周期。
+     */
+    fun invalidate(dictName: String? = null) {
+        if (dictName == null) entriesCache.clear() else entriesCache.remove(dictName)
+    }
+
     /** 数据库列表（`*.userdb` 名，即 `getUserDictList` 原样）。 */
     suspend fun listDatabases(): List<String> =
         withContext(engineDispatcher) { engine.listDicts() }
 
     /**
-     * 键值浏览（只读）：经引擎线程导出到临时文件、解析、分页、删临时文件。
-     * 导出失败（返回负数）时抛 [IllegalStateException]。
+     * 键值浏览（只读）：首访该词库时经引擎线程导出到临时文件、解析、
+     * 进缓存；再访只读缓存切片、分页，不再导出。导出失败（返回负数）
+     * 时抛 [IllegalStateException]，不进缓存。
      */
     suspend fun browse(dictName: String, page: Int): LevelDbPage =
         withContext(engineDispatcher) {
-            val dir = tempDir().apply { mkdirs() }
-            val file = File(dir, "leveldb-$dictName.txt")
-            try {
-                val count = engine.exportDict(dictName, file.absolutePath)
-                if (count < 0 || !file.exists()) {
-                    throw IllegalStateException("导出词典失败：$dictName")
-                }
-                val entries = LevelDbTextParser.parse(file.readText(Charsets.UTF_8))
-                val totalPages = if (entries.isEmpty()) 0
-                else (entries.size + pageSize - 1) / pageSize
-                val clamped = page.coerceIn(0, (totalPages - 1).coerceAtLeast(0))
-                LevelDbPage(
-                    dictName = dictName,
-                    page = clamped,
-                    pageSize = pageSize,
-                    total = entries.size,
-                    entries = LevelDbTextParser.page(entries, clamped, pageSize),
-                )
-            } finally {
-                runCatching { file.delete() }
+            var entries = entriesCache[dictName]
+            if (entries == null) {
+                entries = exportAndParse(dictName)
+                entriesCache[dictName] = entries
             }
+            val totalPages = if (entries.isEmpty()) 0
+            else (entries.size + pageSize - 1) / pageSize
+            val clamped = page.coerceIn(0, (totalPages - 1).coerceAtLeast(0))
+            LevelDbPage(
+                dictName = dictName,
+                page = clamped,
+                pageSize = pageSize,
+                total = entries.size,
+                entries = LevelDbTextParser.page(entries, clamped, pageSize),
+            )
         }
+
+    /** 导出指定词库到临时文件并解析（读完即删临时文件）。 */
+    private suspend fun exportAndParse(dictName: String): List<LevelDbEntry> {
+        val dir = tempDir().apply { mkdirs() }
+        val file = File(dir, "leveldb-$dictName.txt")
+        try {
+            val count = engine.exportDict(dictName, file.absolutePath)
+            if (count < 0 || !file.exists()) {
+                throw IllegalStateException("导出词典失败：$dictName")
+            }
+            return LevelDbTextParser.parse(file.readText(Charsets.UTF_8))
+        } finally {
+            runCatching { file.delete() }
+        }
+    }
 
     companion object {
         const val DEFAULT_PAGE_SIZE = 50

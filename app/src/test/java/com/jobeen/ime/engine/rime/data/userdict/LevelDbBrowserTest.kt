@@ -116,6 +116,46 @@ class LevelDbBrowserTest {
     }
 
     @Test
+    fun browse_sameDictThreePages_exportsOnce() = runBlocking {
+        val tmp = kotlin.io.path.createTempDirectory("leveldb-test").toFile()
+        try {
+            val text = (1..120).joinToString("\n") { "code$it\t词$it\t$it" }
+            val engine = FakeEngine(exportText = text)
+            val browser = LevelDbBrowser(engine, tempDir = { tmp })
+            browser.browse("wanxiang", 0)
+            browser.browse("wanxiang", 1)
+            browser.browse("wanxiang", 2)
+            // 同一词库翻 3 页只导出 1 次（L-14 缓存），其余读缓存切片。
+            assertEquals(listOf("export:wanxiang"), engine.calls)
+        } finally {
+            tmp.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun browse_invalidate_reExports() = runBlocking {
+        val tmp = kotlin.io.path.createTempDirectory("leveldb-test").toFile()
+        try {
+            val text = (1..120).joinToString("\n") { "code$it\t词$it\t$it" }
+            val engine = FakeEngine(exportText = text)
+            val browser = LevelDbBrowser(engine, tempDir = { tmp })
+            browser.browse("wanxiang", 0)
+            browser.browse("wanxiang", 0)
+            assertEquals(1, engine.calls.count { it == "export:wanxiang" })
+            browser.invalidate("wanxiang")
+            browser.browse("wanxiang", 0)
+            assertEquals(2, engine.calls.count { it == "export:wanxiang" })
+            // 全清：另一词库也不再命中缓存。
+            browser.browse("custom", 0)
+            browser.invalidate()
+            browser.browse("custom", 0)
+            assertEquals(2, engine.calls.count { it == "export:custom" })
+        } finally {
+            tmp.deleteRecursively()
+        }
+    }
+
+    @Test
     fun browse_exportFailure_throws() = runBlocking {
         val tmp = kotlin.io.path.createTempDirectory("leveldb-test").toFile()
         try {

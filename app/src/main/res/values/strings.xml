@@ -88,6 +88,7 @@
     <string name="split_words_copy">复制</string>
     <string name="split_words_done">完成</string>
     <string name="split_words_empty">没有可拆分的文字</string>
+    <string name="split_words_loading">分词中…</string>
     <string name="clipboard_lock_panel">锁定面板</string>
     <string name="clipboard_unlock_panel">解锁面板</string>
     <!-- WO52 5.3 长按菜单与行内三钮 -->
