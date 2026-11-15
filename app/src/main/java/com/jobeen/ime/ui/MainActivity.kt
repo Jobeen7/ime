@@ -190,6 +190,11 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, UserDictActivity::class.java)
                 )
             },
+            onOpenLevelDb = {
+                startActivity(
+                    Intent(this@MainActivity, LevelDbActivity::class.java)
+                )
+            },
             onOpenBackup = {
                 startActivity(
                     Intent(this@MainActivity, BackupActivity::class.java)

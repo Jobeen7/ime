@@ -1018,6 +1018,18 @@
     <string name="keyboard_menu_desc">列表就是键盘菜单里的顺序，点上移／下移调整顺序，点垃圾桶移出菜单。</string>
     <string name="keyboard_menu_addable">可添加：</string>
     <string name="keyboard_menu_note">修改在下次打开键盘菜单时生效；全部移出后恢复默认菜单。</string>
+    <!-- LevelDB 查看（WO52 12-⑭） -->
+    <string name="leveldb_title">LevelDB</string>
+    <string name="row_sub_leveldb">浏览 LevelDB 数据库内容</string>
+    <string name="leveldb_loading">加载中…</string>
+    <string name="leveldb_load_failed">加载失败</string>
+    <string name="leveldb_retry">重试</string>
+    <string name="leveldb_empty">没有内容</string>
+    <string name="leveldb_readonly_note">只读浏览，不写数据库；经引擎线程串行访问。</string>
+    <string name="leveldb_back_to_list">返回数据库列表</string>
+    <string name="leveldb_prev_page">上一页</string>
+    <string name="leveldb_next_page">下一页</string>
+    <string name="leveldb_page_info">第 %1$d / %2$d 页（共 %3$d 条）</string>
     <!-- 按键符号（施工单 10 H2-14）：页名／迷你键盘／改键弹框 -->
     <string name="key_symbol_title">按键符号</string>
     <string name="row_sub_key_symbol">26 键字母键角标</string>
