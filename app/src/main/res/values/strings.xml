@@ -1381,7 +1381,6 @@
     <string name="user_dict_downloaded_imported">已下载并导入 %1$d 个词</string>
     <string name="user_dict_never">从未</string>
     <string name="user_dict_last_upload">上次上传：%1$s</string>
-    <string name="global_preview_lang">中 / EN</string>
     <string name="candidate_max_lines_value">%1$d 行</string>
     <string name="clipboard_max_entries_value">%1$d 条</string>
     <string name="clipboard_retention_days_value">%1$d 天</string>
