@@ -184,11 +184,11 @@ class DeepLinkRouterTest {
         val keys = listOf(
             "schema", "scheme_update", "rime", "candidates", "skin", "scripts",
             "keyboard", "emoji", "keyboardMenu", "toolbar", "symbol_bar",
-            "key_symbol", "skin_editor", "appearance", "clipboard", "phrase",
+            "skin_editor", "appearance", "clipboard", "phrase",
             "ai", "script", "voice", "stats", "userdict", "leveldb", "backup", "files",
             "webserver", "about",
         )
-        assertEquals(26, keys.size)
+        assertEquals(25, keys.size)
         for (key in keys) {
             assertEquals(key, pageOf("jime://com.jobeen.ime/$key"))
         }

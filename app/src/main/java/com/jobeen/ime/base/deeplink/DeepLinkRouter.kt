@@ -74,11 +74,11 @@ object DeepLinkRouter {
         "ai" to "ai",
     )
 
-    /** 目录页键直配（26 个一级入口；script 为 WO52 8.1 新增）。 */
+    /** 目录页键直配（25 个一级入口；script 为 WO52 8.1 新增）。 */
     private val catalogPageKeys: Set<String> = setOf(
         "schema", "scheme_update", "rime", "candidates", "skin", "scripts",
         "keyboard", "emoji", "keyboardMenu", "toolbar", "symbol_bar",
-        "key_symbol", "skin_editor", "appearance", "clipboard", "phrase",
+        "skin_editor", "appearance", "clipboard", "phrase",
         "ai", "script", "voice", "stats", "userdict", "leveldb", "backup", "files",
         "webserver", "about",
     )

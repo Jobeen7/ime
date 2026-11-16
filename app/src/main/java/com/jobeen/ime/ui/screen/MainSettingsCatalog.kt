@@ -93,7 +93,6 @@ fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("keyboardMenu", R.string.keyboard_menu_title, R.string.row_sub_keyboard_menu, MainSettingGroup.KEYBOARD),
     CatalogPage("toolbar", R.string.toolbar_title, R.string.toolbar_settings_desc, MainSettingGroup.KEYBOARD),
     CatalogPage("symbol_bar", R.string.symbol_bar_title, R.string.row_sub_symbol_bar, MainSettingGroup.KEYBOARD),
-    CatalogPage("key_symbol", R.string.key_symbol_title, R.string.row_sub_key_symbol, MainSettingGroup.KEYBOARD),
     CatalogPage("skin_editor", R.string.skin_editor_title, R.string.row_sub_skin_editor, MainSettingGroup.KEYBOARD),
     CatalogPage("appearance", R.string.appearance_title, R.string.row_sub_appearance, MainSettingGroup.APPEARANCE),
     CatalogPage("clipboard", R.string.clipboard_manager, R.string.row_sub_clipboard, MainSettingGroup.CONVENIENCE),
@@ -219,7 +218,7 @@ fun catalogRows(): List<CatalogRow> = listOf(
  */
 val FOCUS_CONSUMING_PAGE_KEYS: Set<String> = setOf(
     "about", "ai", "appearance", "backup", "candidates", "clipboard",
-    "emoji", "key_symbol", "keyboard", "keyboardMenu", "leveldb", "phrase", "rime", "scheme_update", "symbol_bar",
+    "emoji", "keyboard", "keyboardMenu", "leveldb", "phrase", "rime", "scheme_update", "symbol_bar",
     "toolbar", "userdict", "voice", "word_creation",
 )
 

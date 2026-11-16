@@ -74,7 +74,7 @@ class ShuangpinHintTest {
 
     @Test
     fun qwertyLayoutWithoutHintKeepsFactorySubscripts() {
-        // 默认（提示关）：副标仍是出厂标点，与 KeySymbolOps.DEFAULT_SYMBOLS 一致。
+        // 默认（提示关）：副标仍是出厂标点。
         val layout = QwertyKeyboard.buildLayout(KeyDef.Appearance.Variant.Accent)
         val altTexts = layout.flatten()
             .mapNotNull { it.appearance as? KeyDef.Appearance.AltText }

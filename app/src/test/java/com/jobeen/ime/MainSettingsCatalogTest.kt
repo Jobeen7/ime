@@ -159,14 +159,14 @@ class MainSettingsCatalogTest {
     }
 
     @Test
-    fun catalogPages_twentySixKeysInOrder() {
-        // 26 键：WO52 8.1 新增 script 一级入口（ai 之后）；
-        // 旧 25 键期望随单子改（测试期望与单子相背时按单子改期望）。
+    fun catalogPages_twentyFiveKeysInOrder() {
+        // 25 键：按键符号页已删；WO52 8.1 新增 script 一级入口（ai 之后）；
+        // 旧期望随单子改（测试期望与单子相背时按单子改期望）。
         val keys = catalogPages().map { it.key }
         assertEquals(
             listOf(
                 "schema", "scheme_update", "rime", "candidates", "skin", "scripts", "keyboard",
-                "emoji", "keyboardMenu", "toolbar", "symbol_bar", "key_symbol", "skin_editor", "appearance", "clipboard", "phrase", "ai", "script", "voice", "stats", "userdict",
+                "emoji", "keyboardMenu", "toolbar", "symbol_bar", "skin_editor", "appearance", "clipboard", "phrase", "ai", "script", "voice", "stats", "userdict",
                 "leveldb", "backup", "files", "webserver", "about",
             ),
             keys,
@@ -174,15 +174,15 @@ class MainSettingsCatalogTest {
     }
 
     @Test
-    fun catalogPages_skinEditorPage_isKeyboardGroupAfterKeySymbol() {
-        // 皮肤文件编辑器进目录：键盘组、紧跟按键符号页（键盘组末尾），
+    fun catalogPages_skinEditorPage_isKeyboardGroupAfterSymbolBar() {
+        // 皮肤文件编辑器进目录：键盘组、紧跟符号栏页（键盘组末尾），
         // 标题资源即“皮肤编辑器”；键盘组仍为多页，不影响单页组直达判定。
         val pages = catalogPages()
         val page = pages.single { it.key == "skin_editor" }
         assertEquals(MainSettingGroup.KEYBOARD, page.group)
         assertEquals(com.jobeen.ime.R.string.skin_editor_title, page.titleRes)
         assertEquals(com.jobeen.ime.R.string.row_sub_skin_editor, page.subtitleRes)
-        assertEquals("key_symbol", pages[pages.indexOf(page) - 1].key)
+        assertEquals("symbol_bar", pages[pages.indexOf(page) - 1].key)
         assertEquals("appearance", pages[pages.indexOf(page) + 1].key)
         assertNull(directPageForGroup(
             pages.map { MainSettingEntry(it.key, "", "", it.group) },

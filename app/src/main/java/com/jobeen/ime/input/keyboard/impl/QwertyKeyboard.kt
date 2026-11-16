@@ -18,8 +18,6 @@ import com.jobeen.ime.input.keyboard.key.TextKeyView
 import com.jobeen.ime.input.keyboard.key.KeyIds
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.StyleStatePriority
-import com.jobeen.ime.skin.symbol.KeySymbolOps
-import com.jobeen.ime.skin.symbol.SharedPrefsKeySymbolStore
 import com.jobeen.ime.skin.layout.BuiltinLayoutApplier
 import com.jobeen.ime.skin.runtime.KeyOverrideApplier
 import com.jobeen.ime.skin.runtime.PlaceholderValues
@@ -90,16 +88,9 @@ class QwertyKeyboard(
                     placeholders = PlaceholderValues.current(context),
                 )
             } ?: raw
-            // 按键符号用户覆盖（施工单 10 H2-14）：字母键角标＋长按提交
-            // 在皮肤覆写装配前套用；装配器无显式写入时两槽原样保留，
-            // 故用户覆盖优先于皮肤文件、劣后于皮肤显式 subLabel/longPress。
-            val withUserSymbols = KeySymbolOps.applyToLayout(
-                arranged,
-                SharedPrefsKeySymbolStore(context).load(),
-            )
-            if (snapshot == null) return withUserSymbols
+            if (snapshot == null) return arranged
             return KeyOverrideApplier.apply(
-                NAME, withUserSymbols, snapshot, PlaceholderValues.current(context),
+                NAME, arranged, snapshot, PlaceholderValues.current(context),
                 scheme = snapshot.effectiveColorScheme(SkinColorMode.isDark(context)),
                 // 接线轮 R1/R2：构建期取当前锁定通知与条件门控集。
                 notifications = com.jobeen.ime.skin.runtime.SkinRuntimeState.latchedNotifications(),
@@ -171,8 +162,7 @@ class QwertyKeyboard(
          * 小写字母＋副标、?123／!?#／方案名空格、实心图标。
          *
          * @param shuangpinHint 为 true 时字母键副标显示小鹤双拼韵母
-         *   （只显示、不改动作；长按提交仍是标点）；默认 false，
-         *   出厂布局与 KeySymbolOps.DEFAULT_SYMBOLS 逐字一致。
+         *   （只显示、不改动作；长按提交仍是标点）；默认 false。
          */
         fun buildLayout(returnVariant: Variant, shuangpinHint: Boolean = false): List<List<KeyDef>> {
             // 字母键统一入口：提示开时副标换韵母，其余一字不动。

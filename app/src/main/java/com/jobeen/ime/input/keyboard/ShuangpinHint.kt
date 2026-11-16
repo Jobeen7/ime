@@ -11,7 +11,6 @@ package com.jobeen.ime.input.keyboard
  *   提示只显示韵母侧（本项是“韵母提示”）。
  * - 键面只显示、不改动作：[hintFor] 的返回值只用作 26 键字母键
  *   的副标（alphabetKey 的 hintText），点按／长按动作一字不动；
- *   已有自定义角标的键仍显示自定义角标（KeySymbolOps 后套用），
  *   皮肤显式 subLabel 仍优先（装配器后套用），“隐藏按键提示”
  *   开关仍能藏起副标（KeyView 绘制期门控）。
  * - 双韵母键的显示只取首选韵母（角标一格容不下两个）：
