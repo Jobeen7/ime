@@ -56,7 +56,8 @@ import kotlinx.serialization.json.contentOrNull
  * 键面以保存后实际键盘为准）。保存复用皮肤编辑器的 saveLayout
  * 链路（校验→新代→应用切换），本页不另写保存逻辑。
  *
- * 入口：SkinEditorScreen 选中布局文件时的“可视化编辑布局”按钮。
+ * 入口：原为皮肤编辑器选中布局文件时的“可视化编辑布局”按钮
+ * （皮肤编辑器已删，入口待接；本页为松烟可视化布局编辑器对应物，保留）。
  * [onSave] 收到序列化后的布局 JSON 文本（父级据此走保存流程）。
  */
 @OptIn(ExperimentalMaterial3Api::class)

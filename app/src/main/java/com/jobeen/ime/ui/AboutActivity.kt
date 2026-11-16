@@ -12,9 +12,6 @@ class AboutActivity : ImeActivity() {
             onOpenLogs = {
                 startActivity(Intent(this@AboutActivity, LogActivity::class.java))
             },
-            onOpenDiagnostics = {
-                startActivity(Intent(this@AboutActivity, SkinDiagnosticsActivity::class.java))
-            },
         )
     }
 }

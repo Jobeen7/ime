@@ -20,7 +20,6 @@ import com.jobeen.ime.engine.rime.daemon.RimeSession
 import com.jobeen.ime.ImeApplication
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.ImeInputMethodService
-import com.jobeen.ime.skin.script.SkinScriptActivity
 import com.jobeen.ime.ui.screen.MainScreen
 
 class MainActivity : ImeActivity() {
@@ -187,12 +186,6 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, KeyboardMenuSettingsActivity::class.java)
                 )
             },
-            onOpenSkinLibrary = {
-                startActivity(
-                    Intent(this@MainActivity, SkinLibraryActivity::class.java)
-                )
-            },
-            onOpenSkinScripts = { openSkinScripts(this@MainActivity) },
             onOpenToolbar = {
                 startActivity(
                     Intent(this@MainActivity, ToolbarActivity::class.java)
@@ -228,11 +221,6 @@ class MainActivity : ImeActivity() {
                     Intent(this@MainActivity, AiActivity::class.java)
                 )
             },
-            onOpenScript = {
-                startActivity(
-                    Intent(this@MainActivity, ScriptActivity::class.java)
-                )
-            },
             onOpenModelSettings = {
                 startActivity(
                     Intent(this@MainActivity, PredictionSettingsActivity::class.java)
@@ -246,11 +234,6 @@ class MainActivity : ImeActivity() {
             onOpenUserDict = {
                 startActivity(
                     Intent(this@MainActivity, UserDictActivity::class.java)
-                )
-            },
-            onOpenLevelDb = {
-                startActivity(
-                    Intent(this@MainActivity, LevelDbActivity::class.java)
                 )
             },
             onOpenBackup = {
@@ -267,11 +250,6 @@ class MainActivity : ImeActivity() {
                             AppFilesDocumentsProvider.ROOT_ID,
                         ),
                     ),
-                )
-            },
-            onOpenWebServer = {
-                startActivity(
-                    Intent(this@MainActivity, WebServerActivity::class.java)
                 )
             },
             onOpenAbout = {
@@ -313,16 +291,5 @@ class MainActivity : ImeActivity() {
 
     companion object {
         private const val FAB_SESSION_NAME = "home-fab"
-
-        /**
-         * App-level scripts navigation entry (management UI).
-         * The settings-catalog row that calls this is wired in
-         * MainScreen/MainSettingsCatalog; this entry is the exact call
-         * that row uses. Requires the SkinScriptActivity manifest
-         * entry (registered) before it can actually launch.
-         */
-        fun openSkinScripts(context: Context) {
-            context.startActivity(SkinScriptActivity.intent(context))
-        }
     }
 }

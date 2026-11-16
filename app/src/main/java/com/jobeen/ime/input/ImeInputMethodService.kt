@@ -40,6 +40,7 @@ import com.jobeen.ime.input.panel.component.TextEditView
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.symbolbar.shouldResetSymbolBarOnOrientationChange
 import com.jobeen.ime.ui.FabActions
+import com.jobeen.ime.ui.theme.AppAppearance
 import timber.log.Timber
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -129,9 +130,9 @@ class ImeInputMethodService : InputMethodService() {
         getSharedPreferences(com.jobeen.ime.skin.runtime.SkinColorMode.PREFS_NAME, MODE_PRIVATE)
     }
 
-    /** 外观页偏好（2026-10-29 外观轮）：全局样式／字体／视频开关改动经同一监听进窗口刷新。 */
+    /** 外观页偏好（2026-10-29 外观轮）：字体／视频开关改动经同一监听进窗口刷新。 */
     private val appearancePrefs: SharedPreferences by lazy {
-        getSharedPreferences(com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs.PREFS_NAME, MODE_PRIVATE)
+        getSharedPreferences(AppAppearance.PREFS_NAME, MODE_PRIVATE)
     }
 
     private val prefsListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->

@@ -14,9 +14,8 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         CandidateSorting::class, CandidatePrefer::class, PhraseRecord::class,
         AIProvider::class, AIProviderModel::class, AISystemPrompt::class, AIUserPrompt::class,
         AIInstruction::class, AIConversation::class, AIMessage::class,
-        ScriptItem::class, ScriptTag::class, ScriptTagCrossRef::class, ScriptVariable::class,
     ],
-    version = 18,
+    version = 19,
     exportSchema = true,
 )
 @TypeConverters(Converters::class)
@@ -42,14 +41,6 @@ abstract class AppDatabase : RoomDatabase() {
 
     abstract fun aiMessageDao(): AiMessageDao
 
-    abstract fun scriptItemDao(): ScriptItemDao
-
-    abstract fun scriptTagDao(): ScriptTagDao
-
-    abstract fun scriptTagCrossRefDao(): ScriptTagCrossRefDao
-
-    abstract fun scriptVariableDao(): ScriptVariableDao
-
     companion object {
         @Volatile
         private var INSTANCE: AppDatabase? = null
@@ -74,26 +65,10 @@ abstract class AppDatabase : RoomDatabase() {
 
         private fun build(context: Context, name: String): AppDatabase =
             Room.databaseBuilder(context, AppDatabase::class.java, name)
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16, MIGRATION_16_17, MIGRATION_17_18, MIGRATION_18_19)
                 .addCallback(VACUUM_CALLBACK)
                 .addCallback(AI_SEED_CALLBACK)
-                .addCallback(SCRIPT_SEED_CALLBACK)
                 .build()
-
-        /**
-         * 脚本种子回调（WO52 8.1）：与 AI 种子回调同制，新库建表后播种
-         * （onCreate 只在库文件首次创建时跑一次）。升级库走
-         * MIGRATION_16_17 播种；播种失败只记日志不抛——
-         * ScriptRepository.ensureSeeded 会在首次访问时补种，首启不因
-         * 种子失败而崩。
-         */
-        private val SCRIPT_SEED_CALLBACK = object : RoomDatabase.Callback() {
-            override fun onCreate(db: SupportSQLiteDatabase) {
-                super.onCreate(db)
-                runCatching { ScriptSeeds.insertAll(db) }
-                    .onFailure { timber.log.Timber.w(it, "Script seeds insert onCreate failed") }
-            }
-        }
 
         /**
          * AI 种子回调（WO52 9.1）：新库建表后播种（onCreate 只在库文件
@@ -452,30 +427,14 @@ abstract class AppDatabase : RoomDatabase() {
             AiSeeds.insertAll(db)
         }
 
-        // v17：脚本四表（WO52 8.1）。建表＋索引 SQL 取自 Room 生成的
-        // schema（`app/schemas/.../AppDatabase/17.json` 的 createSql，
-        // 与本库 @Entity 声明逐项对过；resultInsertState／closeWindowState
-        // 在实体里是 Boolean，建表仍为 INTEGER）。
-        // 随后播种（ScriptSeeds.insertAll，INSERT OR IGNORE，可重复跑）：
-        // Unicode 查询、Base64 编码、Base64 解码、Roll。旧表数据不动。
+        // v17：脚本四表（WO52 8.1）已随脚本功能删除而退役：本段改
+        // 为空迁移，只保链连续（低版本直升设备仍要顺链走到 v19）。
+        // 16→17 不再建表、不播种；既有 v17/v18 库里的四表在升版
+        // 后成孤表（见 MIGRATION_18_19 注释）。
         private val MIGRATION_16_17: Migration = Migration(
             startVersion = 16,
             endVersion = 17,
-        ) { db ->
-            db.execSQL("CREATE TABLE IF NOT EXISTS `ScriptItem` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uuid` TEXT NOT NULL, `iconName` TEXT NOT NULL, `iconType` INTEGER NOT NULL, `name` TEXT NOT NULL, `content` TEXT NOT NULL, `isFavorite` INTEGER NOT NULL, `sort` INTEGER NOT NULL, `date` INTEGER NOT NULL, `allowPasteboard` INTEGER NOT NULL, `resultInsertState` INTEGER NOT NULL, `closeWindowState` INTEGER NOT NULL, `downloadURL` TEXT)")
-            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_ScriptItem_uuid` ON `ScriptItem` (`uuid`)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS `index_ScriptItem_date` ON `ScriptItem` (`date`)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS `index_ScriptItem_name` ON `ScriptItem` (`name`)")
-            db.execSQL("CREATE TABLE IF NOT EXISTS `ScriptTag` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uuid` TEXT NOT NULL, `name` TEXT NOT NULL, `color` TEXT NOT NULL, `date` INTEGER NOT NULL)")
-            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_ScriptTag_uuid` ON `ScriptTag` (`uuid`)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS `index_ScriptTag_date` ON `ScriptTag` (`date`)")
-            db.execSQL("CREATE TABLE IF NOT EXISTS `ScriptTagCrossRef` (`scriptId` INTEGER NOT NULL, `tagId` INTEGER NOT NULL, PRIMARY KEY(`scriptId`, `tagId`), FOREIGN KEY(`scriptId`) REFERENCES `ScriptItem`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`tagId`) REFERENCES `ScriptTag`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )")
-            db.execSQL("CREATE INDEX IF NOT EXISTS `index_ScriptTagCrossRef_tagId` ON `ScriptTagCrossRef` (`tagId`)")
-            db.execSQL("CREATE TABLE IF NOT EXISTS `ScriptVariable` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `uuid` TEXT NOT NULL, `key` TEXT NOT NULL, `value` TEXT NOT NULL, `isSecure` INTEGER NOT NULL, `date` INTEGER NOT NULL)")
-            db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_ScriptVariable_uuid` ON `ScriptVariable` (`uuid`)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS `index_ScriptVariable_date` ON `ScriptVariable` (`date`)")
-            ScriptSeeds.insertAll(db)
-        }
+        ) { _ -> }
 
         // v18：AIMessage 外键改 deferred（L-33）。SQLite 不支持改列／
         // 改外键，整表重建：新表按 18.json 的 createSql（17.json
@@ -493,5 +452,15 @@ abstract class AppDatabase : RoomDatabase() {
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIMessage_sequence` ON `AIMessage` (`sequence`)")
             db.execSQL("CREATE INDEX IF NOT EXISTS `index_AIMessage_status` ON `AIMessage` (`status`)")
         }
+
+        // v19：脚本功能删除——四表实体已从 @Database 摘除。本段只
+        // 升版（空迁移）：Room 校验只看实体表，既有库文件里的旧
+        // 脚本四表成孤表、可正常打开，不阻塞启动；此处不做 DROP——
+        // 表名写进迁移 SQL 会在源码留残留名，且孤表无任何代码再
+        // 读写。将来如需清库内旧数据，再由一次带 DROP 的迁移处理。
+        private val MIGRATION_18_19: Migration = Migration(
+            startVersion = 18,
+            endVersion = 19,
+        ) { _ -> }
     }
 }

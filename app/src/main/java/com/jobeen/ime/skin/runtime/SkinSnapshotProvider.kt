@@ -3,21 +3,13 @@ package com.jobeen.ime.skin.runtime
 import android.content.Context
 import android.graphics.Bitmap
 import com.jobeen.ime.base.feedback.InputFeedbacks
-import com.jobeen.ime.base.util.DigestUtil
-import com.jobeen.ime.data.keyboard.theme.BackgroundBlurOverride
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
-import com.jobeen.ime.data.keyboard.theme.GlobalStyleMode
-import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
-import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.image.AndroidBackgroundPreparer
 import com.jobeen.ime.skin.image.BackgroundRebuilder
 import com.jobeen.ime.skin.image.BoundedBitmapDecoder
-import com.jobeen.ime.skin.model.ImageContentMode
 import com.jobeen.ime.skin.model.SkinSnapshot
 import com.jobeen.ime.skin.model.SkinSnapshotBuilder
-import com.jobeen.ime.skin.store.ActiveResolver
-import com.jobeen.ime.skin.store.ApplyState
 import com.jobeen.ime.skin.store.SkinGenRef
 import com.jobeen.ime.skin.store.SkinLibrary
 import java.io.File
@@ -57,12 +49,6 @@ object SkinSnapshotProvider {
     private var loadAttempted = false
 
     private val lock = Any()
-
-    /**
-     * 启动加载协程作用域（IO：对账等待＋快照构建都在后台做，
-     * 永不占主线程）。SupervisorJob：单次加载失败不牵连其它任务。
-     */
-    private val startupScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     /**
      * 单调代次（LatestWins）：分配即最新，提交时只认最新。
@@ -111,20 +97,9 @@ object SkinSnapshotProvider {
      * 的请求取代，直接丢弃，绝不覆盖。token 必须在请求开始准备
      * 时分配（快照构建／解码之前），提交时才分配无法区分新旧
      * （后开始的旧请求会在提交时拿到更新的 token 而错误胜出）。
-     * 只读提交方（blur 重建）不分配、只捕获当前最新 token，
-     * 提交时核对未变才换背景（见 [refreshBackground]）。
      * 全部读写都在 [lock] 内，无需 @Volatile。
      */
     private val installTokens = LatestWins()
-
-    /**
-     * 背景重建请求代次：每次 [refreshBackground] 在发起时分配一个
-     * 单调递增的代次并记为最新；异步解码完成时只认最新代次——
-     * 快速连切时旧请求即使后完成也被丢弃，绝不覆盖最新设定。
-     * 与安装 token 同款口径：代次必须在发起时分配，提交时才分
-     * 配无法区分新旧。全部读写都在 [lock] 内，无需 @Volatile。
-     */
-    private val backgroundGenerations = LatestWins()
 
     /**
      * 开始一次安装请求：分配单调递增的 request token 并记为最新。
@@ -156,16 +131,6 @@ object SkinSnapshotProvider {
         if (!bitmap.isRecycled) bitmap.recycle()
     }
 
-    /** 测试缝：背景图拉伸全局覆盖（默认读 [GlobalStylePrefs]）；生产不改。 */
-    internal var scaleModeProvider: (Context) -> ImageContentMode = { context ->
-        GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundScaleMode
-    }
-
-    /** 测试缝：背景模糊全局覆盖（默认读 [GlobalStylePrefs]）；生产不改。 */
-    internal var blurOverrideProvider: (Context) -> BackgroundBlurOverride = { context ->
-        GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundBlur
-    }
-
     /**
      * 背景产物解码并发上限（.23 审计问题 2）：同一时刻最多 2 份
      * 在解（与 ImageDecodePolicy.DECODE_PARALLELISM 同界），避免
@@ -173,57 +138,6 @@ object SkinSnapshotProvider {
      * 单份峰值有界；2 路并行约两屏位图。
      */
     private val backgroundDecodePermits = Semaphore(2)
-
-    /**
-     * 启动加载的依赖缝（审计 #1-6 的可测性）：生产实现直调
-     * [SkinLibrary]/[loadStartup]/[install]；单测可替换为慢对账
-     * 注入与快照录制，验证首帧不阻塞与异步安装。接口直实现
-     * （显式 override、无 `by` 委托），不触发 AGENTS.md 的
-     * 接口委托增量陷阱。
-     */
-    internal interface StartupLoadDeps {
-        suspend fun awaitBootstrap()
-        suspend fun loadSnapshot(context: Context): Pair<SkinSnapshot, Boolean>?
-        fun installSnapshot(
-            context: Context,
-            snapshot: SkinSnapshot,
-            pending: Boolean,
-            requestToken: Long,
-            expectedGeneration: Long,
-        )
-    }
-
-    private object RealStartupLoadDeps : StartupLoadDeps {
-        override suspend fun awaitBootstrap() {
-            SkinLibrary.awaitBootstrap()
-        }
-
-        override suspend fun loadSnapshot(context: Context): Pair<SkinSnapshot, Boolean>? =
-            loadStartup(context)
-
-        override fun installSnapshot(
-            context: Context,
-            snapshot: SkinSnapshot,
-            pending: Boolean,
-            requestToken: Long,
-            expectedGeneration: Long,
-        ) {
-            // 提交裁决在 install 内原子完成：被更新的请求取代时
-            // 返回 false，不得武装 pending 验证、不得请求重绘——
-            // 运行态仍在更新的皮肤上，旧快照的验证与重绘都是错的。
-            val accepted = install(context, snapshot, requestToken, expectedGeneration)
-            if (!accepted) return
-            if (pending) {
-                SkinRuntime.armPendingVerification(snapshot.ref)
-            }
-            // 启动快照后到：首帧已按内置默认绘出，须通知窗口
-            // 重绘才能换上皮肤（refreshSkinTheme 内部 post，
-            // 任意线程调用安全）。
-            SkinRuntime.requestRefresh()
-        }
-    }
-
-    internal var startupLoadDeps: StartupLoadDeps = RealStartupLoadDeps
 
     /**
      * 背景产物自愈（2026-10-28 修复轮）：导入期写产物、运行期按键
@@ -241,7 +155,7 @@ object SkinSnapshotProvider {
      */
     private var prewarmJob: Job? = null
 
-    /** 当前已验证快照（触发一次启动加载）；无 v3 皮肤生效时为 null。 */
+    /** 当前已验证快照；自定义皮肤管理面已删，启动不再加载，恒为 null（内置默认）。 */
     fun current(context: Context): SkinSnapshot? {
         ensureLoaded(context)
         return currentSnapshot
@@ -254,68 +168,26 @@ object SkinSnapshotProvider {
     fun currentBackgroundBitmap(): Bitmap? = currentBitmap
 
     /**
-     * 启动加载（审计 #1-6）：首次调用只标记「已发起」并立即
-     * 返回，绝不在调用线程等待对账收敛——旧实现在同步锁内
-     * `runBlocking { SkinLibrary.awaitBootstrap() }`，冷启动时
-     * 首次 keyboard snapshot 查询发生在主线程会同步卡住最多
-     * 3 秒、延迟键盘首帧。
-     *
-     * 新口径：首帧先用当前快照（冷启动时为 null，即内置默认，
-     * 与无皮肤生效时同一回退）；对账与快照构建在 IO 线程异步
-     * 跑，完成后原子安装并通知窗口重绘。超时放行仍在
-     * [SkinLibrary.awaitBootstrap] 内（上限 3 秒）：对账超时
-     * 时按现有 store 状态加载，不阻塞首帧。
-     *
-     * 并发：多次调用只发起一次（[loadAttempted] 同步锁内判定）；
-     * 安装期间若用户已应用皮肤，启动加载的旧快照按代次丢弃。
-     * token 在发起时分配（.23 审计问题 2）：最终裁决在 [install]
-     * 的锁内提交（token + 预期代次双重核对）——发起后到提交前
-     * 的快路径比对（token 未变、代次未变、当前仍无快照）只是省
-     * 掉一次注定被拒的安装调用，不作最终裁决；检查与提交之间
-     * 的窗口（启动快照的锁外解码期用户完成一次应用）由 install
-     * 的原子核对兜底。
+     * 启动加载已切断（自定义皮肤功能删除）：不再读 store 活动记录、
+     * 不再构建快照、不再安装。保留空壳供 [current] 调用——调用方
+     * 仍走 [current] 取快照，恒得 null 即内置默认，无需改十二处
+     * 调用点。应用事务入口 [install] 仍在（SkinApplier 侧保留，
+     * 无入口调用），快照机制本身未拆。
      */
     fun ensureLoaded(context: Context) {
-        val token: Long
-        val generation: Long
-        synchronized(lock) {
-            if (loadAttempted) return
-            loadAttempted = true
-            // 与 allocateInstallToken() 同款递增（此处已持锁，直接
-            // 内联，不再调一次 synchronized 方法）。
-            token = installTokens.allocate()
-            generation = startupGenerations.current()
-        }
-        // context 原样传进协程：applicationContext 的解析留在
-        // 依赖实现里（生产路径才需要；单测的假依赖不碰它，
-        // 故桩 Context 也能驱动本编排）。
-        startupScope.launch {
-            runCatching { startupLoadDeps.awaitBootstrap() }
-            val loaded = runCatching { startupLoadDeps.loadSnapshot(context) }.getOrNull()
-                ?: return@launch
-            val stillCurrent = synchronized(lock) {
-                installTokens.isCurrent(token) &&
-                    startupGenerations.isCurrent(generation) && currentSnapshot == null
-            }
-            if (!stillCurrent) return@launch
-            runCatching {
-                startupLoadDeps.installSnapshot(context, loaded.first, loaded.second, token, generation)
-            }
-        }
+        // 空操作：自定义皮肤已删，启动不加载任何皮肤。
     }
 
     /**
      * 应用事务验证完成后切换快照（ref 为 null = 回到内置默认）。
      * 背景位图先在锁外解码、再持锁安装（审计 #2）：锁内不再做
      * 同步解码。解码在调用线程跑——当前调用方均在 IO 线程
-     *（应用事务经 IO 包装、启动加载经 startupScope IO），主线
-     * 程调用方不得直接调本函数。
+     *（应用事务经 IO 包装），主线程调用方不得直接调本函数。
      *
      * 返回是否接纳：token 已不是最新（有更新的安装请求开始）
-     * 或预期代次已变（启动加载期间发生过安装／失效）时拒绝，
+     * 或预期代次已变（其间发生过安装／失效）时拒绝，
      * 解出的位图安全回收，运行态纹丝不动。调用方不得把被拒当
-     * 成功（事务层据此走失败／回退分支；启动加载被拒时不武装
-     * pending 验证、不请求重绘，见 RealStartupLoadDeps）。
+     * 成功（事务层据此走失败／回退分支）。
      * 全部调用方必须在请求开始准备时调 [allocateInstallToken]
      * 并传 token（2026-11-12 审计 K-L3：提交时才分配 token 的单参
      * 便捷入口已删除——它无法区分“先开始、后完成”的旧请求，
@@ -332,8 +204,7 @@ object SkinSnapshotProvider {
         // 冗余位图回收，行为与改前一致）。解码受并发上限约束
         //（见 decodeBackgroundBounded）。install 本身同步（调用
         // 方契约在 IO 线程）：挂起解码经 runBlocking 桥接；协程
-        // 路径（refreshBackground／triggerBackgroundRebuild）
-        // 直调挂起函数、等许可可取消。
+        // 路径（triggerBackgroundRebuild）直调挂起函数、等许可可取消。
         val prepared = snapshot?.let { runBlocking { decodeBackgroundBounded(context, it) } }
         var accepted = false
         synchronized(lock) {
@@ -371,8 +242,7 @@ object SkinSnapshotProvider {
     fun invalidate() {
         synchronized(lock) {
             loadAttempted = false
-            // 代次递增：在途的异步启动加载完成时按代次丢弃，
-            // 下次 ensureLoaded 重新发起加载。
+            // 代次递增：在途的异步安装完成时按代次丢弃。
             startupGenerations.bump()
             // token 同步推进：在途的安装请求（token 在失效前分配）
             // 提交时按 token 被拒，不得在失效后又把旧快照装回来。
@@ -429,7 +299,7 @@ object SkinSnapshotProvider {
 
     /**
      * 背景位图安装（锁内只做指针交换与回收，绝不解码——解码
-     * 在 [install]/[refreshBackground] 的锁外先行，审计 #2）：
+     * 在 [install] 的锁外先行，审计 #2）：
      * 产物键变化时释放旧位图、装入锁外已解的位图；产物缺失时
      * 走异步自愈重建。锁外解出的位图若到锁内时键已未变（并发
      * 安装抢先装了同键位图），且当前已有位图，回收冗余份；
@@ -459,86 +329,6 @@ object SkinSnapshotProvider {
             currentBitmap = prepared
         } else if (prepared != null) {
             runCatching { bitmapRecycler(prepared) }
-        }
-    }
-
-    /**
-     * 全局背景重建（2026-10-29 外观轮模糊，2026-11-08 加拉伸模式，
-     * 2026-11-09 移出主线程）：
-     * 只换当前快照的背景段（模糊半径＋调节＋拉伸模式＋产物键），
-     * 不碰音效／图片／通知状态、不重建快照；产物键变化走同一自愈
-     * 重建链路。无快照／无背景／生效值不变时直接返回 null（无工作）。
-     * 只记元数据（皮肤 id＋产物键），不记图片内容。
-     *
-     * 异步契约（审计 #10 问题 1，改异步签名）：本函数在调用线程
-     * 只取不可变参数快照（token、当前快照、生效模糊／调节／拉伸
-     * 模式、新背景段），绝不解码，任何线程可调、立即返回；解码
-     * 在 [rebuildScope]（IO）上跑，完成时按代次提交。返回已发起
-     * 的任务（无工作时为 null），调用方不得假设返回时背景已换入
-     * ——换入发生在 IO 完成后的锁内提交；窗口下次取背景时自然读
-     * 到新值（与改前同步版的可见口径一致，不另发全量刷新）。
-     * 快速连切时只有最新一次代次能提交，旧解码结果一律回收。
-     */
-    fun refreshBackground(context: Context): Job? {
-        // 同步段（调用线程，不解码）：只捕获不可变参数快照。
-        // 背景重建只是对当前快照背景段的更新，不得否决在它之后
-        // 开始的完整安装；提交时 token 变了就丢弃（见下）。
-        val tokenAtStart = synchronized(lock) { installTokens.current() }
-        val snapshot = synchronized(lock) { currentSnapshot } ?: return null
-        val bg = snapshot.background ?: return null
-        val (blur, adjust) = GlobalStyleResolver.effectiveBlur(
-            bg.specBlurRadius, bg.specImageAdjust, bg.blurDisabled,
-            blurOverrideProvider(context),
-        )
-        val scaleMode = scaleModeProvider(context)
-        if (blur == bg.blurRadius && adjust == bg.imageAdjust &&
-            scaleMode == bg.scaleMode
-        ) return null
-        val newBg = bg.copy(
-            blurRadius = blur,
-            imageAdjust = adjust,
-            scaleMode = scaleMode,
-            preparedKey = SkinSnapshotBuilder.preparedKey(
-                bg.assetSha256, bg.targetWidthPx, bg.targetHeightPx, blur, adjust, scaleMode,
-            ),
-        )
-        // 代次在发起时分配：提交时才分配无法区分新旧——后发起
-        // 的请求会在提交时拿到新代次而错误胜出。只认最新代次
-        // 提交，旧请求解完即回收（见提交段）。
-        val generation = synchronized(lock) { backgroundGenerations.allocate() }
-        val appContext = context.applicationContext
-        val targetSnapshot = snapshot.copy(background = newBg)
-        return rebuildScope.launch {
-            // 解码前复核代次：发起后若有更新的刷新请求或完整安装
-            // 开始，本请求已被取代——直接跳过，不再整张解完才丢
-            // （提交段仍按同一口径裁决，见下）。
-            val currentAtDecode = synchronized(lock) {
-                isBackgroundRequestCurrent(
-                    generation, backgroundGenerations.current(), tokenAtStart, installTokens.current(),
-                )
-            }
-            if (!currentAtDecode) return@launch
-            // 背景解码在 IO 线程跑（锁外）：新产物键对应的位图在
-            // 锁外解出，再持锁换背景装入（审计 #2）；快照若已被替
-            // 换、代次已过期，冗余位图回收。
-            val prepared = decodeBackgroundBounded(appContext, targetSnapshot)
-            synchronized(lock) {
-                // 换背景期间快照可能已被其它安装替换：只在代次仍
-                // 为最新、token 仍为最新且仍为同一 ref 时换背景，
-                // 否则丢弃（新快照构建期已含最新全局值）。只核 ref
-                // 不够：同皮肤重装（同一 ref、新 token）后，旧 blur
-                // 值会盖掉重装带入的新值。
-                val current = currentSnapshot
-                if (isBackgroundRequestCurrent(
-                        generation, backgroundGenerations.current(), tokenAtStart, installTokens.current(),
-                    ) && current != null && current.ref == snapshot.ref
-                ) {
-                    currentSnapshot = current.copy(background = newBg)
-                    setBackgroundBitmapLocked(appContext, currentSnapshot!!, prepared)
-                } else if (prepared != null) {
-                    runCatching { bitmapRecycler(prepared) }
-                }
-            }
         }
     }
 
@@ -706,13 +496,11 @@ object SkinSnapshotProvider {
      * 操作：等待被取消时抛 CancellationException（调用方协程按
      * 取消处理），不按解码失败计；解码抛错仍按失败计（返回 null，
      * 调用方走缺失／重建口径）。
-     * IO 强制约束（审计 #10 问题 1）：本函数只允许出现在以下三条 IO 路径——[install]（调用方契
-     * 约：应用事务经 IO 包装、启动加载经 startupScope，文档已禁
-     * 主线程直接调）、[refreshBackground] 发起的 [rebuildScope]
-     * 协程、[triggerBackgroundRebuild] 的 [rebuildScope] 协程。
-     * 强制点是结构性的：唯一可达的公开入口 [refreshBackground]
-     * 已是异步发射（调用线程绝不解码），不存在经它进入主线程解
-     * 码的路径；其余两条的调用方本身就在 IO 作用域内。
+     * IO 强制约束（审计 #10 问题 1）：本函数只允许出现在以下两条 IO 路径——[install]（调用方契
+     * 约：应用事务经 IO 包装，文档已禁
+     * 主线程直接调）、[triggerBackgroundRebuild] 的 [rebuildScope] 协程。
+     * 强制点是结构性的：两条路径的调用方本身就在 IO 作用域内，
+     * 不存在经主线程解码的路径。
      */
     private suspend fun decodeBackgroundBounded(context: Context, snapshot: SkinSnapshot): Bitmap? {
         backgroundDecodePermits.acquire()
@@ -750,34 +538,4 @@ object SkinSnapshotProvider {
         }.getOrNull()
     }
 
-    /**
-     * 启动加载：采 verified 或保留的 pending 记录（代次完整、hash 一致，
-     * ActiveResolver 同口径）；返回快照与「记录是否为 pending」。
-     * suspend：调用方在协程里直接读 store，不再 runBlocking。
-     */
-    private suspend fun loadStartup(context: Context): Pair<SkinSnapshot, Boolean>? {
-        val store = SkinLibrary.store
-        val layout = SkinLibrary.layout
-        val active = store.readActive()
-        val record = (active as? com.jobeen.ime.skin.store.SkinLibraryStore.ReadResult.Ok)?.value
-            ?: return null
-        val skinId = record.skinId ?: return null
-        if (record.state != ApplyState.VERIFIED && record.state != ApplyState.PENDING) return null
-        val valid = ActiveResolver.isTargetValid(skinId, record.generation, record.hash) { id, gen ->
-            val dir = layout.skinGenDir(id, gen)
-            val complete = layout.isSkinGenComplete(dir)
-            val hash = if (complete) {
-                runCatching { DigestUtil.sha256Hex(File(dir, "skin.json")) }.getOrNull()
-            } else {
-                null
-            }
-            ActiveResolver.GenState(complete, hash)
-        }
-        if (!valid) return null
-        val appContext = context.applicationContext
-        val snapshot = SkinSnapshotFactory.buildFromGenDir(
-            appContext, layout, SkinGenRef(skinId, record.hash!!, record.generation),
-        ) ?: return null
-        return snapshot to (record.state == ApplyState.PENDING)
-    }
 }

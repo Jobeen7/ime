@@ -5,8 +5,6 @@ import com.jobeen.ime.skin.image.ImageDecodePolicy
 import com.jobeen.ime.skin.model.PackageManifest
 import com.jobeen.ime.skin.model.SkinJson
 import com.jobeen.ime.skin.model.SkinToolbarParser
-import com.jobeen.ime.skin.pkg.PortableSkinArchive
-import com.jobeen.ime.skin.pkg.ZipSafeExtractor
 import com.jobeen.ime.skin.runtime.FingerprintCache
 import com.jobeen.ime.skin.runtime.NightModePolicy
 import com.jobeen.ime.skin.runtime.SkinGeneration
@@ -25,72 +23,16 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/** 第 5 批定向单测：纯 JVM 护栏（§1 归档／§2 图片／§3 切换／§4 组开关／§6 三态与宽度）。§5 节流门（FabBackdropRefreshGate）随玻璃基础设施删除而删除。 */
+/** 第 5 批定向单测：纯 JVM 护栏（§2 图片／§3 切换／§4 组开关／§6 三态与宽度）。§1 可移植归档随皮肤导入删除而删除；§5 节流门（FabBackdropRefreshGate）随玻璃基础设施删除而删除。 */
 class Batch5SkinGuardsTest {
 
-    // ---- §1 可移植归档 ----
-
     @Test
-    fun portable_manifestSizeRoundTripAndMismatchRejected() {
-        val manifest = PackageManifest(
-            contents = listOf(
-                PackageManifest.Content("skin", "skin-a", "skin.json", "sha-skin", 3L),
-            ),
-        )
-        val parsed = PackageManifest.parse(PackageManifest.toJson(manifest))!!
-        assertEquals(3L, parsed.contents.single().sizeBytes)
-        val files = mapOf(
-            "skin.json" to ZipSafeExtractor.ExtractedFile("skin.json", byteArrayOf(1, 2, 3)),
-        )
-        val tree = SkinJson.parseObject("{}")!!
-        assertTrue(PortableSkinArchive.validate(manifest, files, tree).ok)
-        val wrong = manifest.copy(
-            contents = listOf(
-                PackageManifest.Content("skin", "skin-a", "skin.json", "sha-skin", 99L),
-            ),
-        )
-        val rejected = PortableSkinArchive.validate(wrong, files, tree)
-        assertFalse(rejected.ok)
-        assertEquals("portable_size_mismatch:skin.json", rejected.rejected!!.reason)
-        // 旧清单无 size 字段：只验 SHA 口径，不拒。
-        val legacy = manifest.copy(
-            contents = listOf(
-                PackageManifest.Content("skin", "skin-a", "skin.json", "sha-skin", null),
-            ),
-        )
-        assertTrue(PortableSkinArchive.validate(legacy, files, tree).ok)
-    }
-
-    @Test
-    fun portable_pagesAndKeyMappingsLimits() {
-        val manyKeyboards = buildJsonObject {
-            put("keyboards", buildJsonObject {
-                for (i in 0 until 513) put("type$i", JsonPrimitive("lay-$i"))
-            })
-        }
-        val manifest = PackageManifest(
-            contents = listOf(PackageManifest.Content("skin", "s", "skin.json", "x", 2L)),
-        )
-        val files = mapOf(
-            "skin.json" to ZipSafeExtractor.ExtractedFile("skin.json", byteArrayOf(1, 2)),
-        )
-        val result = PortableSkinArchive.validate(manifest, files, manyKeyboards)
-        assertFalse(result.ok)
-        assertTrue(result.rejected!!.reason.startsWith("portable_pages_exceeded"))
-        // Jime 布局不引用布局，页图天然无环：恒 null，不是拒因。
-        assertNull(PortableSkinArchive.findCycle(manyKeyboards))
-    }
-
-    @Test
-    fun portable_modelRefsAndOwnership() {
-        val tree = SkinJson.parseObject(
-            """{"appearance":{"background":{"assetId":"bg-1"}},"toolbar":{"icon":"other"}}""",
-        )!!
+    fun assetOwnership_insideVsEscape() {
         val root = Files.createTempDirectory("batch5-assets").toFile()
         val inside = File(root, "a.png")
         val escape = File(root, "../escape.png")
-        assertTrue(PortableSkinArchive.isOwnedAssetFile(root, inside))
-        assertFalse(PortableSkinArchive.isOwnedAssetFile(root, escape))
+        assertTrue(SkinAssetPruner.isOwnedAssetFile(root, inside))
+        assertFalse(SkinAssetPruner.isOwnedAssetFile(root, escape))
     }
 
     @Test

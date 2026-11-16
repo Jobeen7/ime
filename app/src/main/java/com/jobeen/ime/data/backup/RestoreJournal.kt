@@ -45,7 +45,6 @@ internal object RestoreJournal {
     const val SECTION_PREFS = "prefs"
     const val SECTION_INPUT_STATS = "input_stats"
     const val SECTION_SKIN_LIBRARY = "skin_library"
-    const val SECTION_SKIN_SCRIPTS = "skin_scripts"
 
     enum class Phase {
         STAGING,

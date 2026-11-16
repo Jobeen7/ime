@@ -210,68 +210,6 @@ tasks.named("preBuild") {
     dependsOn(syncLicenses)
 }
 
-// QuickJS 主机 .so（WO52 8.1，仅供主机单元测试）：
-// 设备上的 libjime_quickjs.so 由 CMake（arm64-v8a）编进 APK；主机
-// JVM 跑 testDebugUnitTest 时载不进 arm64 .so，故用主机 cc 把同一份
-// QuickJS 核心＋同一份 JNI 桥编成主机 .so，单测经系统属性
-// jime.quickjs.hostLib 载它（见 QuickJsNative）。产物只进 build/，不进仓。
-// 任务有 inputs/outputs 声明：源码不变时 Gradle 跳过重编。
-val buildHostQuickJs = tasks.register<Exec>("buildHostQuickJs") {
-    description = "Builds host libjime_quickjs.so for unit tests"
-    group = "verification"
-    // C-L-06：只在 Linux 上编主机 .so（cc + Linux JNI 头）；非 Linux
-    // 下跳过，相关单测按缺失 native 库口径 Assume 跳过（见
-    // QuickJsTestSupport.assumeHostQuickJsAvailable）。
-    onlyIf { org.gradle.internal.os.OperatingSystem.current().isLinux() }
-    val cppDir = layout.projectDirectory.dir("src/main/cpp")
-    val outFile = layout.buildDirectory.file("host-quickjs/libjime_quickjs.so")
-    inputs.files(
-        cppDir.file("quickjs/quickjs.c"),
-        cppDir.file("quickjs/dtoa.c"),
-        cppDir.file("quickjs/libregexp.c"),
-        cppDir.file("quickjs/libunicode.c"),
-        cppDir.file("quickjs/cutils.c"),
-        cppDir.file("quickjs_jni/quickjs_jni.c"),
-    )
-    inputs.property("quickjsVersion", "2026-06-04")
-    outputs.file(outFile)
-    doFirst {
-        outFile.get().asFile.parentFile.mkdirs()
-    }
-    val javaHome = System.getenv("JAVA_HOME") ?: System.getProperty("java.home")
-    commandLine(
-        "cc", "-O2", "-D_GNU_SOURCE", "-DCONFIG_VERSION=\"2026-06-04\"",
-        "-I${cppDir.asFile}/quickjs",
-        "-I$javaHome/include", "-I$javaHome/include/linux",
-        "-fPIC", "-shared",
-        "-o", outFile.get().asFile.absolutePath,
-        "${cppDir.asFile}/quickjs/quickjs.c",
-        "${cppDir.asFile}/quickjs/dtoa.c",
-        "${cppDir.asFile}/quickjs/libregexp.c",
-        "${cppDir.asFile}/quickjs/libunicode.c",
-        "${cppDir.asFile}/quickjs/cutils.c",
-        "${cppDir.asFile}/quickjs_jni/quickjs_jni.c",
-        "-lm", "-lpthread",
-    )
-}
-
-// WO52 8.1：test 任务在 variant 创建后才注册，配置期 named 会报
-// Task not found，故用 withType 惰性挂接。
-tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
-    if (name != "testDebugUnitTest") return@configureEach
-    // C-L-06：只在 Linux 上依赖主机 .so 构建；非 Linux 下不编，
-    // 相关单测按缺失 native 库口径跳过。
-    if (org.gradle.internal.os.OperatingSystem.current().isLinux()) {
-        dependsOn(buildHostQuickJs)
-    }
-    // 单测 JVM 经该属性载主机 .so（QuickJsNative 回落路径）；设备上
-    // 该属性不存在，只走 System.loadLibrary("jime_quickjs")。
-    systemProperty(
-        "jime.quickjs.hostLib",
-        layout.buildDirectory.file("host-quickjs/libjime_quickjs.so").get().asFile.absolutePath,
-    )
-}
-
 // release 构建 fail-fast：JIME 持久签名未配置时，release 的 signingConfig
 // 不会被赋值，AGP 产出未签名包——能装但覆盖不了已发布版本，且构建不报错、
 // 极易误发。仅当本次调用包含 release 产物任务时拦截；debug 构建、单元测试、

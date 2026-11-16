@@ -76,17 +76,5 @@ class NotificationActionNamesTest {
             "MomentaryShiftAction",
             NotificationActionNames.nameOf(KeyboardAction.MomentaryShiftAction),
         )
-        assertEquals(
-            "RunScriptAction",
-            NotificationActionNames.nameOf(KeyboardAction.RunScriptAction("s.one")),
-        )
-        assertEquals(
-            "OpenScriptsAction",
-            NotificationActionNames.nameOf(KeyboardAction.OpenScriptsAction),
-        )
-        assertEquals(
-            "ToggleScriptViewAction",
-            NotificationActionNames.nameOf(KeyboardAction.ToggleScriptViewAction),
-        )
     }
 }

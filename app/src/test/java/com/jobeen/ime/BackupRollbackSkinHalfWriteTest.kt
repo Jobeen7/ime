@@ -28,7 +28,6 @@ class BackupRollbackSkinHalfWriteTest {
         completedSections = completed,
         snapshotHasInputStats = true,
         snapshotHasSkinLibrary = skinLibrary,
-        snapshotHasSkinScripts = true,
         inProgressSections = inProgress,
         skinsPresentBefore = skinsPresentBefore,
     )
@@ -102,23 +101,14 @@ class BackupRollbackSkinHalfWriteTest {
     // ---- 其余条件段：进行中标记统一按写过计（保守） ----
 
     @Test
-    fun inProgressStatsOrScripts_noSnapshotSection_uncovered() {
+    fun inProgressStats_noSnapshotSection_uncovered() {
         val stats = BackupManager.uncoveredSectionsForRollback(
             completedSections = emptySet(),
             snapshotHasInputStats = false,
             snapshotHasSkinLibrary = true,
-            snapshotHasSkinScripts = true,
             inProgressSections = setOf(RestoreJournal.SECTION_INPUT_STATS),
         )
         assertEquals(listOf(RestoreJournal.SECTION_INPUT_STATS), stats)
-        val scripts = BackupManager.uncoveredSectionsForRollback(
-            completedSections = emptySet(),
-            snapshotHasInputStats = true,
-            snapshotHasSkinLibrary = true,
-            snapshotHasSkinScripts = false,
-            inProgressSections = setOf(RestoreJournal.SECTION_SKIN_SCRIPTS),
-        )
-        assertEquals(listOf(RestoreJournal.SECTION_SKIN_SCRIPTS), scripts)
     }
 
     // ---- journal 新字段：写读往返与旧 journal 缺省 ----

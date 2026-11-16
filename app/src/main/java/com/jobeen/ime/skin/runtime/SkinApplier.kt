@@ -36,8 +36,8 @@ internal suspend fun awaitFirstDrawLatch(latch: CountDownLatch, timeoutMs: Long)
     }
 
 /**
- * SkinEditorSaver 调用的应用事务端口（可注入假件供单测）：
- * 仅含编辑器实际调用的两个入口。实现为具名类 [SkinApplier] 的
+ * 皮肤应用事务端口（可注入假件供单测）：
+ * 仅含应用切换的两个入口。实现为具名类 [SkinApplier] 的
  * 显式 override（无 `by` 委托对象，故不触发接口委托增量陷阱——
  * 详见 ~/workspace/AGENTS.md；新增方法须同步检查委托点）。
  */

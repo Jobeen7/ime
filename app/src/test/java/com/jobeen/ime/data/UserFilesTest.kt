@@ -6,7 +6,6 @@ import com.jobeen.ime.base.speech.VoiceInputSwitchStore
 import com.jobeen.ime.data.backup.RestoreJournal
 import com.jobeen.ime.data.manager.SchemeDirs
 import com.jobeen.ime.input.panel.toolbar.ToolbarUserStore
-import com.jobeen.ime.skin.script.SkinScriptStore
 import com.jobeen.ime.skin.symbolbar.SymbolBarConfigLoader
 import java.io.File
 import java.nio.file.Files
@@ -52,7 +51,6 @@ class UserFilesTest {
     @Test
     fun constants_matchExistingCallSiteConstants_noDrift() {
         // 命名空间与实际调用点是同一值：任一处改名/改值都会在这里失败。
-        assertEquals(SkinScriptStore.SCRIPTS_DIR, UserFiles.SKIN_SCRIPTS_DIR_NAME)
         assertEquals(RestoreJournal.JOURNAL_DIR_NAME, UserFiles.RESTORE_JOURNAL_DIR_NAME)
         assertEquals(ToolbarUserStore.FILE_NAME, UserFiles.TOOLBAR_USER_FILE_NAME)
         assertEquals(ToolbarUserStore.IMAGE_DIR, UserFiles.TOOLBAR_IMAGES_DIR_NAME)

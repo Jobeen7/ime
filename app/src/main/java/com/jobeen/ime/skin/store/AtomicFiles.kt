@@ -11,9 +11,9 @@ import java.io.RandomAccessFile
  * I-4/A-5 的防线）。沿用 ThemeStore 的 tmp+rename 先例并补 fsync。
  *
  * 共用实现 [write]（目标文件口径）：SchemeEnabled、SchemePackageImport
- * 的 writeJournal、SkinScriptStore 此前各写一遍 tmp＋rename（且皆
+ * 的 writeJournal 此前各写一遍 tmp＋rename（且皆
  * 无 fsync、tmp 命名与失败口径各异），现统一收成此处，不再另造。
- * 旧三处与本实现的结果语义一致（旧内容或新内容完整二选一），
+ * 旧两处与本实现的结果语义一致（旧内容或新内容完整二选一），
  * 差别只在耐久性补强（fsync）与并发 tmp 隔离（nanoTime 后缀，
  * 沿用 SchemeEnabled 的旧口径：固定 .tmp 名在并发写同一文件时
  * 会互踩）。
@@ -24,7 +24,7 @@ object AtomicFiles {
      * nanoTime 后缀防并发互踩；写满＋文件 fsync 后 rename 覆盖；
      * rename 失败删 tmp 并抛 IOException（旧文件原样保留，调用
      * 方按原失败口径处置——SchemeEnabled/writeJournal 原即抛
-     * IOException，SkinScriptStore 原即以 error 转写失败）。
+     * IOException）。
      */
     fun write(target: File, bytes: ByteArray) {
         val dir = target.parentFile

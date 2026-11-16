@@ -22,17 +22,8 @@ import com.jobeen.ime.base.speech.VoiceUndoLedger
 import com.jobeen.ime.base.util.appScope
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.SnippetExpander
-import com.jobeen.ime.skin.script.SkinScriptActivity
-import com.jobeen.ime.skin.script.SkinScriptKeyBridge
-import com.jobeen.ime.skin.script.SkinScriptRunner
-import com.jobeen.ime.skin.script.SkinScriptSandbox
-import com.jobeen.ime.skin.script.SkinScriptStore
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.util.concurrent.ConcurrentHashMap
 
 class KeyActionListener(
     private val service: InputMethodService,
@@ -41,29 +32,9 @@ class KeyActionListener(
     private val engine: IEngine? get() = EngineFactory.current()
 
     /**
-     * 按键脚本执行器（惰性构造，只包文件目录引用，执行前无 I/O）：
-     * 与管理页用同一脚本库（service.filesDir 下同一目录），故
-     * 管理页的添加／开关即时对按键生效，无需同步。
-     */
-    private val scriptRunner: SkinScriptRunner by lazy {
-        SkinScriptRunner(SkinScriptStore(service.filesDir))
-    }
-
-    /**
-     * 同脚本在途运行（单飞，取消上一运行）：同一 scriptId 再按
-     * 下时，先取消上一任务再起新任务。取消只拦得住尚未切回主
-     * 线程的分发（withContext 抛取消异常，动作不分发）；QuickJS
-     * 求值可中断，超时／取消时求值被打断、不落地。串行排队
-     * （等上一运行跑完再跑下一运行）会把旧结果也分发一次，
-     * 重复动作更糟，故不取串行。完成的任务经 invokeOnCompletion
-     * 自清，避免表无限增长。
-     */
-    private val scriptJobs = ConcurrentHashMap<String, Job>()
-
-    /**
      * 统一会话门控（WO38 E1-9）：延迟分发的纪元复检走本门。同步按键
      * 按下即分发、恒为当前会话，不经门控；门控只拦跨会话延迟分发
-     * （本文件内即 RunScriptAction 的回切分发）。长按连发的按下戳
+     * （本文件内即 CombineAction 的延迟分发）。长按连发的按下戳
      * 不在本文件内，见 [InputKeyGate] 的已知缺口。
      */
     private val inputKeyGate = InputKeyGate()
@@ -632,104 +603,6 @@ class KeyActionListener(
             // 候选表解析；直接分发无候选表，丢弃（transformed 已拦截）。
             is KeyboardAction.SelectCandidateIndexAction -> Unit
 
-            // 打开脚本管理页（open_script）／切换脚本视图
-            // （#toggleScriptView）：两者同目的地、不同动作种类；
-            // 切换的收起方向由管理页返回键承担（见动作注释），
-            // 故分发层同作打开处理。服务上下文起 Activity 必须
-            // 带 NEW_TASK（管理页入口本身是 Activity 上下文入口，
-            // 不带该标志；此处显式补齐，不改入口本身的任务语义）。
-            is KeyboardAction.OpenScriptsAction,
-            is KeyboardAction.ToggleScriptViewAction -> {
-                service.startActivity(
-                    SkinScriptActivity.intent(service)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-            }
-
-            // 运行应用级脚本（run_script）：执行走后台（Runner 预算
-            // 最高 500ms，主线程执行会卡 UI）；返回值转成的动作回
-            // 主线程再分发（与 combine 递归分发同口径）；无动作时
-            // 只记脚本 id 与原因元数据，绝不记返回值与脚本日志行。
-            // 会话绑定：启动时捕获输入目标身份＋输入框纪元（树内
-            // 已有机制：InputFieldKey 字段身份＋SherpaSpeechClient
-            // 的 EditorEpoch，不另造代次），切回主线程分发前复检
-            // 两者仍一致才分发——启动后换框／输入结束推进了纪元，
-            // 或字段身份已变，过期结果直接丢弃并只记元数据，绝不
-            // 把旧框脚本的动作写进新框。无输入框时身份为空、纪元
-            // 仍比对（纪元推进仍能拦住旧会话结果）。
-            // WO38 E1-9：纪元一半走统一门控 InputKeyGate（启动时
-            // capture、分发时 check，拒绝记原因 stale_key_rejected）；
-            // 字段身份一半仍由 ScriptRunSession 复检（原行为不动：
-            // 纪元已过时门控先记原因，字段已变而纪元未动时仍记旧的
-            // script_key_stale_session；两者任一不过即不分发）。
-            // 全局并发（审计 #1-10）：全部皮肤脚本共用 4 个并发槽
-            // （见 SkinScriptSandbox）。本任务先取许可再进沙箱：
-            // 排队等许可可取消——同 scriptId 再按取消旧任务时，
-            // 排队中的旧任务随取消退出队列，不占槽；超时未取到
-            // 即放弃本次执行（不入队、不重试），只记元数据。
-            // 同 scriptId 单飞取消口径不变（取消时 QuickJS 求值被打断、不落地）。
-            is KeyboardAction.RunScriptAction -> {
-                val capturedEpoch = inputKeyGate.capture()
-                val captured = ScriptRunSession.capture(
-                    service.currentInputEditorInfo,
-                    capturedEpoch,
-                )
-                scriptJobs[action.scriptId]?.cancel()
-                scriptRunner.cancelRun(action.scriptId)
-                val job = appScope.launch(Dispatchers.Default) {
-                    if (!SkinScriptSandbox.acquireRunPermit()) {
-                        DiagLog.w(
-                            "keymap", "script_key_queue_timeout",
-                            mapOf("scriptId" to action.scriptId),
-                        )
-                        return@launch
-                    }
-                    try {
-                        when (val outcome =
-                            SkinScriptKeyBridge.runForKey(scriptRunner, action.scriptId)
-                        ) {
-                            is SkinScriptKeyBridge.KeyRunOutcome.Dispatch -> {
-                                withContext(Dispatchers.Main) {
-                                    val gateResult = inputKeyGate.check(
-                                        capturedEpoch,
-                                        "run_script:${action.scriptId}",
-                                    )
-                                    if (gateResult is InputKeyGateResult.Allow &&
-                                        ScriptRunSession.isCurrent(
-                                            captured,
-                                            service.currentInputEditorInfo,
-                                            SherpaSpeechClient.currentEditorEpoch(),
-                                        )
-                                    ) {
-                                        onKeyAction(outcome.action)
-                                    } else if (gateResult is InputKeyGateResult.Deny) {
-                                        // 门控已记拒绝原因（stale_key_rejected），不再另记。
-                                    } else {
-                                        DiagLog.w(
-                                            "keymap", "script_key_stale_session",
-                                            mapOf("scriptId" to action.scriptId),
-                                        )
-                                    }
-                                }
-                            }
-                            is SkinScriptKeyBridge.KeyRunOutcome.NoAction -> {
-                                DiagLog.w(
-                                    "keymap", "script_key_no_action",
-                                    mapOf(
-                                        "scriptId" to action.scriptId,
-                                        "reason" to outcome.reason.name.lowercase(),
-                                    ),
-                                )
-                            }
-                        }
-                    } finally {
-                        SkinScriptSandbox.releaseRunPermit()
-                    }
-                }
-                scriptJobs[action.scriptId] = job
-                job.invokeOnCompletion { scriptJobs.remove(action.scriptId, job) }
-            }
-
             // 常用语／候选栏切换（审计 E：#showPhraseView /
             // #candidatesBarStateToggle）：窗口路径拦截；直接分发
             // 无窗口/面板句柄，丢弃。
@@ -747,8 +620,7 @@ class KeyActionListener(
      * 组合动作分发（2026-11-16 N8）：同步分发首个 delay 之前的子动作；
      * 遇 delay 时余部改走 appScope 挂起延时（delay，不睡线程），到期
      * 后在主线程续分发；多 delay 递归同理。延时中换输入框（纪元推进）
-     * 时门控丢弃余部（与 RunScriptAction 的回切分发同口径），不向
-     * 旧框分发。delay ≤ 0 或余部为空时不启动协程，直接续分发／返回。
+     * 时门控丢弃余部，不向旧框分发。delay ≤ 0 或余部为空时不启动协程，直接续分发／返回。
      */
     private fun dispatchCombine(actions: List<KeyboardAction>) {
         val split = splitCombineAtDelay(actions)
@@ -778,19 +650,6 @@ class KeyActionListener(
      */
     private fun handlePanelShortcut(target: KeyboardAction.PanelShortcutTarget) {
         when (target) {
-            KeyboardAction.PanelShortcutTarget.SKIN_LIBRARY -> {
-                service.startActivity(
-                    android.content.Intent(
-                        service, com.jobeen.ime.ui.SkinLibraryActivity::class.java,
-                    ).apply {
-                        addFlags(
-                            android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
-                                android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or
-                                android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP,
-                        )
-                    },
-                )
-            }
             KeyboardAction.PanelShortcutTarget.VIBRATION_SETTINGS -> {
                 service.startActivity(
                     android.content.Intent(
@@ -859,10 +718,6 @@ class KeyActionListener(
                     }
                 }
             }
-            KeyboardAction.PanelShortcutTarget.EDIT_LAYOUTS ->
-                com.jobeen.ime.skin.library.SkinEditorEntry.openLayouts(service)
-            KeyboardAction.PanelShortcutTarget.EDIT_SKIN_JSON ->
-                com.jobeen.ime.skin.library.SkinEditorEntry.openSkinJson(service)
         }
     }
 

@@ -141,7 +141,6 @@ object SymbolItemActionResolver {
             "#rimeNextPage" -> KeyboardAction.PageCandidatesAction(false)
             "#verticalCandidatesPageDown" -> KeyboardAction.KeyCodeAction(93)
             "#toggleEmbeddedInputMode" -> KeyboardAction.ToggleEmbeddedInputAction
-            "#toggleScriptView" -> KeyboardAction.ToggleScriptViewAction
             else -> if (item.action.startsWith("#")) {
                 // 未知快捷指令：安全默认（不提交 label 文本）。
                 KeyboardAction.NoOpAction

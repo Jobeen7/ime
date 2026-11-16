@@ -7,7 +7,7 @@ package com.jobeen.ime.skin.layout
  * 写死字符串以避免 layout 包反向依赖 input 包；漂移由单测
  * BuiltinLayoutsTest 锁死（断言与四键盘 NAME 常量相等）。
  * 精确匹配：与内置 id 同名的自创布局不再走全局布局索引，
- * 一律按本皮肤的内置覆盖处理（见 JimeImporter 内置分流）。
+ * 一律按本皮肤的内置覆盖处理。
  */
 object BuiltinLayouts {
     val IDS: Set<String> = setOf("T9", "Qwerty", "T15", "T14", "T18", "Number")

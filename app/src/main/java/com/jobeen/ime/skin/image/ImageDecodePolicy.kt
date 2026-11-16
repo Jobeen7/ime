@@ -11,8 +11,7 @@ package com.jobeen.ime.skin.image
  *
  * - 解码上限（施工单 5 第 7 条，2026-11-07 定）：超限图不再
  *   直接拒收，降采样到上限内使用——解码结果边长 ≤
- *   [MAX_DECODE_SIDE]、像素 ≤ [MAX_DECODE_PIXELS]（与导入校验
- *   口径 JimeImporter.MAX_IMAGE_SIDE／MAX_IMAGE_PIXELS 同值）；
+ *   [MAX_DECODE_SIDE]、像素 ≤ [MAX_DECODE_PIXELS]；
  *   解码始终有界（inSampleSize），绝不以原尺寸进内存。
  *   旧口径（第 5 批 §2：bounds 像素超 24MP 硬上限直接拒）
  *   已按该决定废止。
@@ -32,8 +31,7 @@ package com.jobeen.ime.skin.image
 object ImageDecodePolicy {
 
     /**
-     * 解码结果上限：与导入校验口径同值（JimeImporter.MAX_IMAGE_SIDE／
-     * MAX_IMAGE_PIXELS，定稿十一.3）：解码后位图边长 ≤ 8192、像素
+     * 解码结果上限（定稿十一.3）：解码后位图边长 ≤ 8192、像素
      * ≤ 64M；超限原图降采样到上限内使用，不直接拒收。
      */
     const val MAX_DECODE_SIDE = 8192

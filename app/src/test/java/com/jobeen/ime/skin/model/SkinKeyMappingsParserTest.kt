@@ -56,8 +56,6 @@ class SkinKeyMappingsParserTest {
             "end" to SkinAction.Command(WhitelistAction.END),
             "settings" to SkinAction.Command(WhitelistAction.SETTINGS),
             "system_settings" to SkinAction.Command(WhitelistAction.SYSTEM_SETTINGS),
-            "run_script" to SkinAction.Command(WhitelistAction.RUN_SCRIPT, "s.one"),
-            "open_script" to SkinAction.Command(WhitelistAction.OPEN_SCRIPT),
             "none" to SkinAction.Command(WhitelistAction.NONE),
             "dismiss_keyboard" to SkinAction.Command(WhitelistAction.DISMISS_KEYBOARD),
             "open_url" to SkinAction.Command(WhitelistAction.OPEN_URL, "https://example.com"),
@@ -99,7 +97,6 @@ class SkinKeyMappingsParserTest {
             "control" to SkinAction.Command(WhitelistAction.CONTROL),
             "option" to SkinAction.Command(WhitelistAction.OPTION),
             "#toggleEmbeddedInputMode" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT),
-            "#toggleScriptView" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW),
             "#clearSystemPasteboard" to SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD),
             "#toggleSymbolBar" to SkinAction.Command(WhitelistAction.HASH_TOGGLE_SYMBOL_BAR),
             "#keyboardMenu" to SkinAction.Command(WhitelistAction.HASH_KEYBOARD_MENU),
@@ -538,25 +535,6 @@ class SkinKeyMappingsParserTest {
                 result.rejections.single().reason,
             )
         }
-    }
-
-    @Test
-    fun runScriptBlankOrMissingValueRejected() {
-        val blank = parseEntry(
-            """{"tap": {"type": "command", "action": "run_script", "value": "  "}}""",
-        )
-        assertNull(blank.overrides["KEY_Q"]?.tap)
-        assertEquals(BindingRejectReason.VALUE_INVALID, blank.rejections.single().reason)
-        val missing = parseEntry(
-            """{"tap": {"type": "command", "action": "run_script"}}""",
-        )
-        assertNull(missing.overrides["KEY_Q"]?.tap)
-        assertEquals(BindingRejectReason.VALUE_MISSING, missing.rejections.single().reason)
-        val withValue = parseEntry(
-            """{"tap": {"type": "command", "action": "open_script", "value": "x"}}""",
-        )
-        assertNull(withValue.overrides["KEY_Q"]?.tap)
-        assertEquals(BindingRejectReason.VALUE_FORBIDDEN, withValue.rejections.single().reason)
     }
 
     @Test

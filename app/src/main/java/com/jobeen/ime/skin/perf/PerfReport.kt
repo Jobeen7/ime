@@ -9,10 +9,8 @@ import com.jobeen.ime.R
 * 键盘性能报告：一次面板打开的采样快照 → 分区行 → 发送上屏用的纯文本报告。
 *
 * 口径（诚实项，勿“补”数字）：
-* - 「脚本」行对应 Rhino 脚本宿主（SkinScriptSandbox）：Rhino 堆
-* 无法直接计量，该行只写“不可计量”，不编字节数；「其余」=
-* 总内存 − 键盘界面图形 − 皮肤图片缓存，脚本堆按 0 计，故其余
-* 含脚本堆，可为负（对端面板同样会出现负值），照实显示。
+* - 「其余」= 总内存 − 键盘界面图形 − 皮肤图片缓存（估算），
+*   照实显示。
 * - 「按内存类型」不用 ImageIO：那是 iOS 专属，Android 没有，
 * 该行直接不列，不硬凑；Java 堆未单列（对端分区无此行）。
 * - 「其余」与各内存行差值以前次快照为基准；上次快照只放进程
@@ -52,7 +50,6 @@ data class PerfReportLabels(
     val rowAvailMemory: String,
     val rowCpu: String,
     val rowSinceLast: String,
-    val rowScript: String,
     val rowKeyboardUi: String,
     val rowSkinCache: String,
     val rowViewCount: String,
@@ -70,7 +67,6 @@ data class PerfReportLabels(
     val noDataValue: String,
     val cpuSampled: String,
     val firstCollection: String,
-    val scriptValue: String,
     val keyboardUiValue: String,
     val skinCacheValue: String,
     val mallocAllocatedValue: String,
@@ -100,7 +96,6 @@ data class PerfReportLabels(
             rowAvailMemory = "距上限剩余",
             rowCpu = "CPU",
             rowSinceLast = "距上次采集",
-            rowScript = "脚本",
             rowKeyboardUi = "键盘界面",
             rowSkinCache = "皮肤图片缓存（估算）",
             rowViewCount = "视图数量",
@@ -118,10 +113,9 @@ data class PerfReportLabels(
             noDataValue = "冷启动／按键提交／皮肤应用／掉帧／内存五项随使用累计",
             cpuSampled = "%1\$.1f%%（采样值）",
             firstCollection = "首次打开",
-            scriptValue = "Rhino 宿主，堆不可计量",
             keyboardUiValue = "%1\$d 个视图 · 图形 %2\$s",
             skinCacheValue = "%1\$d 项 · 约 %2\$s",
-            mallocAllocatedValue = "%1\$s（脚本部分不可计量，未扣除）",
+            mallocAllocatedValue = "%1\$s",
             rimeFilesValue = "%1\$d 个 · 共 %2\$s（目录统计口径，非 fd 口径）",
             leveldbEmpty = "0 个",
             leveldbValue = "%1\$d 个：%2\$s",
@@ -148,7 +142,6 @@ data class PerfReportLabels(
             rowAvailMemory = context.getString(R.string.perf_report_row_avail_memory),
             rowCpu = context.getString(R.string.perf_report_row_cpu),
             rowSinceLast = context.getString(R.string.perf_report_row_since_last),
-            rowScript = context.getString(R.string.perf_report_row_script),
             rowKeyboardUi = context.getString(R.string.perf_report_row_keyboard_ui),
             rowSkinCache = context.getString(R.string.perf_report_row_skin_cache),
             rowViewCount = context.getString(R.string.perf_report_row_view_count),
@@ -166,7 +159,6 @@ data class PerfReportLabels(
             noDataValue = context.getString(R.string.perf_report_no_data_value),
             cpuSampled = context.getString(R.string.perf_report_cpu_sampled),
             firstCollection = context.getString(R.string.perf_report_first_collection),
-            scriptValue = context.getString(R.string.perf_report_script_value),
             keyboardUiValue = context.getString(R.string.perf_report_keyboard_ui_value),
             skinCacheValue = context.getString(R.string.perf_report_skin_cache_value),
             mallocAllocatedValue = context.getString(R.string.perf_report_malloc_allocated_value),
@@ -306,7 +298,7 @@ PerfRow(labels.rowSinceLast, sinceLast?.let { formatSeconds(it, labels)}?: label
 ),
 )
 
-// 按归属（估算）：脚本不可计量按 0 计，其余含脚本堆，可为负。
+// 按归属（估算）。
 val skinCacheKb = snapshot.skinCacheBytes / 1024
 val graphicsKb = snapshot.graphicsKb?: 0L
 val otherKb = snapshot.totalPssKb - graphicsKb - skinCacheKb
@@ -314,8 +306,6 @@ val prevOtherKb = prev?.let { it.totalPssKb - (it.graphicsKb?: 0L) - it.skinCach
 sections += PerfSection(
 labels.sectionAttribution,
 listOf(
-// Rhino 堆无法直接计量：只写口径，不编数字，无差值。
-PerfRow(labels.rowScript, labels.scriptValue),
 PerfRow(
 labels.rowKeyboardUi,
 labels.keyboardUiValue.format(
@@ -361,7 +351,7 @@ memRow(labels.rowOtherMem, snapshot.otherKb, prev?.otherKb),
 ),
 )
 
-// malloc（已分配口径）：脚本部分不可计量，只写已分配一行并注明。
+// malloc（已分配口径）：只写已分配一行。
 sections += PerfSection(
 labels.sectionMalloc,
 listOf(

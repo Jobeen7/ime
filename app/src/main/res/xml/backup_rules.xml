@@ -2,7 +2,6 @@
 <!--
   系统备份排除规则（API 31 以下的 Auto Backup 用此文件）：
   - WebDAV 配置（含明文密码）不进备份
-  - Wi-Fi 传输认证（web_server.xml，含密码哈希）不进备份
   - 剪贴板历史（独立库 clipboard_database）不进备份
   - 应用数据库（ime_database：常用语／脚本／AI／剪贴板等 Room 表；
     B-A-1：Auto Backup 不再恢复它，改走 Jime 自有备份全链）
@@ -17,7 +16,6 @@
 -->
 <full-backup-content>
     <exclude domain="sharedpref" path="user_dict_sync.xml" />
-    <exclude domain="sharedpref" path="web_server.xml" />
     <exclude domain="sharedpref" path="speech_model_prefs.xml" />
     <exclude domain="sharedpref" path="wanxiang_update.xml" />
     <exclude domain="external" path="shared/" />

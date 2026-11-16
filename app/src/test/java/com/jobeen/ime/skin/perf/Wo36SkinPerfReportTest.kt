@@ -70,7 +70,6 @@ class Wo36SkinPerfReportTest {
             "perf_report_row_avail_memory" to d.rowAvailMemory,
             "perf_report_row_cpu" to d.rowCpu,
             "perf_report_row_since_last" to d.rowSinceLast,
-            "perf_report_row_script" to d.rowScript,
             "perf_report_row_keyboard_ui" to d.rowKeyboardUi,
             "perf_report_row_skin_cache" to d.rowSkinCache,
             "perf_report_row_view_count" to d.rowViewCount,
@@ -88,7 +87,6 @@ class Wo36SkinPerfReportTest {
             "perf_report_no_data_value" to d.noDataValue,
             "perf_report_cpu_sampled" to d.cpuSampled,
             "perf_report_first_collection" to d.firstCollection,
-            "perf_report_script_value" to d.scriptValue,
             "perf_report_keyboard_ui_value" to d.keyboardUiValue,
             "perf_report_skin_cache_value" to d.skinCacheValue,
             "perf_report_malloc_allocated_value" to d.mallocAllocatedValue,
@@ -103,7 +101,7 @@ class Wo36SkinPerfReportTest {
             "perf_report_title" to d.reportTitle,
             "perf_report_first_sample_note" to d.firstSampleNote,
         )
-        assertEquals("perf_report_* 串数", 44, pairs.size)
+        assertEquals("perf_report_* 串数", 42, pairs.size)
         for ((resName, expected) in pairs) {
             assertEquals(
                 "strings.xml $resName 与 PerfReportLabels.DEFAULT 不一致",
@@ -119,8 +117,6 @@ class Wo36SkinPerfReportTest {
             sectionTiming = "X-TIMING",
             sectionOverview = "X-OVERVIEW",
             rowTotalMemory = "X-MEM",
-            rowScript = "X-SCRIPT",
-            scriptValue = "X-SCRIPT-VALUE",
             reportTitle = "X-TITLE",
             firstSampleNote = "X-FIRST",
         )
@@ -128,8 +124,6 @@ class Wo36SkinPerfReportTest {
         assertEquals("X-TIMING", sections[0].title)
         assertEquals("X-OVERVIEW", sections[1].title)
         assertEquals("X-MEM", sections[1].rows.first { it.label == "X-MEM" }.label)
-        val attribution = sections[2].rows.associateBy { it.label }
-        assertEquals("X-SCRIPT-VALUE", attribution.getValue("X-SCRIPT").value)
         val report = formatPerfReport(sections, firstSample = true, custom)
         assertTrue(report.startsWith("X-TITLE\n"))
         assertTrue(report.contains("X-FIRST"))

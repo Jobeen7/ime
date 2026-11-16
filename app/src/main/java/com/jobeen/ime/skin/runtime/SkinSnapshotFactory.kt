@@ -4,8 +4,6 @@ import android.app.ActivityManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
-import com.jobeen.ime.data.keyboard.theme.GlobalStyleMode
-import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.KeyboardTheme
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.input.keyboard.key.KeyIds
@@ -424,8 +422,6 @@ object SkinSnapshotFactory {
                 entry.styleSet?.takeIf { it.isNotBlank() }?.let { type to it }
             }.toMap(),
             builtinLayouts = builtinResolution.layouts,
-            globalBlur = GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundBlur,
-            backgroundScaleMode = GlobalStylePrefs.get(context, GlobalStyleMode.CUSTOM).backgroundScaleMode,
         )
         logBatch2Events(ref, validated, snapshot)
         return snapshot
@@ -517,8 +513,7 @@ object SkinSnapshotFactory {
      * 定的布局坐标可覆写，其余类型专属布局的坐标在校验期即
      * 被当成未知键剔掉（导入端早已按包内全布局并集接纳，
      * 快照端与之脱节）；本并集补齐该脱节。编辑器保存期亦用
-     * 同一口径（[com.jobeen.ime.skin.library.SkinEditorSaver]，
-     * 校验前 Best-effort 计算坐标并集），故为 internal。
+     * 同一口径（校验前 Best-effort 计算坐标并集），故为 internal。
      */
     internal suspend fun layoutCoordIds(
         tree: kotlinx.serialization.json.JsonObject,

@@ -2,7 +2,6 @@ package com.jobeen.ime.skin.model
 
 import com.jobeen.ime.data.keyboard.theme.FontRole
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
-import com.jobeen.ime.skin.pkg.ImportAssetPolicy
 import com.jobeen.ime.skin.store.SkinGenRef
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -37,21 +36,6 @@ class SkinBundledFontsTest {
     private fun baseJson(extra: String): String =
         """{"formatVersion": 3, "styles": {"keyBackground": "#FFFFFFFF"},
            "stylesDark": {"keyBackground": "#FF222222"}, $extra}"""
-
-    @Test
-    fun fontAssetKindAndImportPolicyKeepFontFiles() {
-        assertEquals(AssetKind.FONT, PackageManifest.assetKindOf("fonts/a.ttf"))
-        assertEquals(AssetKind.FONT, PackageManifest.assetKindOf("fonts/b.OTF"))
-        assertEquals(AssetKind.IMAGE, PackageManifest.assetKindOf("x.png"))
-        val manifest = PackageManifest(
-            contents = listOf(
-                PackageManifest.Content("asset", "font-a", "fonts/a.ttf", "s"),
-            ),
-        )
-        val decision = ImportAssetPolicy.evaluate(manifest.assets()) { 1024L }
-        assertEquals(listOf("font-a"), decision.kept.map { it.id })
-        assertTrue(decision.excluded.isEmpty())
-    }
 
     @Test
     fun validFaceParsesAndWrongKindOversizeDuplicateDropIndividually() {

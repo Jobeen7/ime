@@ -18,7 +18,6 @@ import com.jobeen.ime.input.panel.component.TextEditView
 import com.jobeen.ime.ui.AboutActivity
 import com.jobeen.ime.ui.MainActivity
 import com.jobeen.ime.ui.SplitWordsActivity
-import com.jobeen.ime.ui.SkinLibraryActivity
 import com.jobeen.ime.ui.SchemaSettingsActivity
 import com.jobeen.ime.base.util.appScope
 import kotlinx.coroutines.launch
@@ -62,11 +61,9 @@ class PanelActionListener(
             PanelAction.Paste ->
                 service.activeInputConnection()?.performContextMenuAction(android.R.id.paste)
 
-            // 调色板（主题设置页脱钩后改跳库页：内置主题与皮肤卡
-            // 同页切换；原主题设置页不再有任何 UI 入口，仅保留类与
-            // 注册，见报告——旧主题分享/刷新/内置跟随开关随之无 UI 入口）。
+            // 调色板（皮肤库已删）：改跳外观设置页，内置主题在该页切换。
             PanelAction.Palette -> service.startActivity(
-                Intent(service, SkinLibraryActivity::class.java).apply {
+                Intent(service, com.jobeen.ime.ui.AppearanceActivity::class.java).apply {
                     addFlags(
                         Intent.FLAG_ACTIVITY_NEW_TASK or
                             Intent.FLAG_ACTIVITY_CLEAR_TOP or

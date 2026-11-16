@@ -57,9 +57,8 @@ class AiRepository(
     private val seedMutex = Mutex()
 
     /**
-     * 仅首次补种（C-L-29／L-30）：与 ScriptRepository 同制——Room 先
-     * 提交、prefs 后同步 commit() 的配对写；无 Context 时（主机单测
-     * 构造）保留旧的 count 兜底。已升级用户首次调用时表非空→只标
+     * 仅首次补种（C-L-29／L-30）：Room 先提交、prefs 后同步 commit()
+     * 的配对写；无 Context 时（主机单测构造）保留旧的 count 兜底。已升级用户首次调用时表非空→只标
      * seeded 不插入；此前已删光的用户会在升级后首次复活一次（无法
      * 区分“从未播种”与“删光”）。
      */

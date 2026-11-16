@@ -19,8 +19,8 @@ import java.io.File
  * 本批只做命名空间本身，不搬磁盘文件、不改引用语义：
  * - 本对象只含相对名常量＋以锚点根为入参的纯解析函数（可 JVM 单测），
  *   不读 Context、不建目录、不移动、不删除任何文件；
- * - 调用点只做“字面量 → 常量”的等值替换（DataManager、App、
- *   SkinScriptStore 三处未被他人改动的文件），值逐字节相同，
+ * - 调用点只做“字面量 → 常量”的等值替换（DataManager、App
+ *   两处未被他人改动的文件），值逐字节相同，
  *   其余调用点保持原字面量，由 [UserFilesTest] 交叉断言两者一致，
  *   防止命名空间与实际调用点漂移；
  * - 磁盘旧位置迁移本批为零：任一路径都未证明可安全移动（移动即改
@@ -88,9 +88,6 @@ object UserFiles {
 
     /** 输入统计目录（InputStats.configure；filesDir/input_stats/stats.json）。 */
     const val INPUT_STATS_DIR_NAME = "input_stats"
-
-    /** 皮肤脚本库（SkinScriptStore.SCRIPTS_DIR；filesDir/skin_scripts）。 */
-    const val SKIN_SCRIPTS_DIR_NAME = "skin_scripts"
 
     /** 还原 journal 目录（RestoreJournal.JOURNAL_DIR_NAME；filesDir/restore_journal）。 */
     const val RESTORE_JOURNAL_DIR_NAME = "restore_journal"

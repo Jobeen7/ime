@@ -3,11 +3,7 @@
 package com.jobeen.ime.data.database
 
 /**
- * 常用语变量（WO52 6.1）：与脚本 `ScriptVariable` 同形——key/value/isSecure。
- *
- * 注意：脚本侧的 `ScriptVariable` 实体属 8.1（QuickJS 脚本引擎，三段），
- * 本树此刻尚无该类；此处按单子给出的三字段形状独立定义，8.1 落地后
- * 两边形状一致（key/value/isSecure），不再另行对齐。
+ * 常用语变量（WO52 6.1）：key/value/isSecure 三字段形状。
  *
  * 存法：以 JSON 数组串存在 `PhraseRecord.variables` 列（TEXT），
  * 如 `[{"key":"name","value":"张三","isSecure":false}]`；空串＝无变量。

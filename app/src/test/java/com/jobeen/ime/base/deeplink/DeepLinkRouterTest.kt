@@ -126,13 +126,12 @@ class DeepLinkRouterTest {
         assertEquals("7", target?.params?.get("id"))
     }
 
-    // ---- 17 别名 ----
+    // ---- 15 别名 ----
 
     @Test
-    fun `seventeen aliases map to pages`() {
+    fun `fifteen aliases map to pages`() {
         val expected = mapOf(
             "inputSchema" to "schema",
-            "wifi" to "webserver",
             "finder" to "files",
             "keyboardSettings" to "keyboard",
             "inputBehavior" to "keyboard",
@@ -143,14 +142,11 @@ class DeepLinkRouterTest {
             "symbolBar" to "symbol_bar",
             "phrase" to "phrase",
             "clipboard" to "clipboard",
-            // 8.1 建了真正的 QuickJS 脚本页：旧 "script" → "scripts"
-            // （皮肤脚本页）期望随单子改（测试期望与单子相背时按单子改期望）。
-            "script" to "script",
             "rime" to "rime",
             "backup" to "backup",
             "remoteStorage" to "userdict",
         )
-        assertEquals(16, expected.size)
+        assertEquals(14, expected.size)
         for ((alias, page) in expected) {
             assertEquals(
                 "alias $alias",
@@ -158,7 +154,7 @@ class DeepLinkRouterTest {
                 pageOf("jime://com.jobeen.ime/$alias"),
             )
         }
-        // 第 17 项 typingPractice 已定不做：不导航。
+        // 第 15 项 typingPractice 已定不做：不导航。
         assertNull(pageOf("jime://com.jobeen.ime/typingPractice"))
     }
 
@@ -170,8 +166,6 @@ class DeepLinkRouterTest {
             "skins" to "skin",
             "keyboardMenu" to "keyboardMenu",
             "files" to "files",
-            "webServer" to "webserver",
-            "leveldb" to "leveldb",
             "ai" to "ai",
         )
         for ((id, page) in expected) {
@@ -185,10 +179,10 @@ class DeepLinkRouterTest {
             "schema", "scheme_update", "rime", "candidates", "skin", "scripts",
             "keyboard", "emoji", "keyboardMenu", "toolbar", "symbol_bar",
             "skin_editor", "appearance", "clipboard", "phrase",
-            "ai", "script", "voice", "stats", "userdict", "leveldb", "backup", "files",
-            "webserver", "about",
+            "ai", "voice", "stats", "userdict", "backup", "files",
+            "about",
         )
-        assertEquals(25, keys.size)
+        assertEquals(22, keys.size)
         for (key in keys) {
             assertEquals(key, pageOf("jime://com.jobeen.ime/$key"))
         }

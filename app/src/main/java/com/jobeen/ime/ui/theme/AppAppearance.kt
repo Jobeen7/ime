@@ -14,8 +14,8 @@ import com.jobeen.ime.data.manager.KeyboardManager
  * 与库页皮肤颜色模式严格独立：本偏好只决定设置页的 Compose
  * 主题（亮／暗／动态取色），绝不影响键盘服务上下文，也绝不
  * 另设键盘昼夜开关（键盘深浅由皮肤颜色模式管）。
- * 偏好文件 `appearance_settings` 与全局样式、全局字体共用，
- * 键名前缀区分（`app.*`／`global_style.*`／`font.*`）。
+ * 偏好文件 `appearance_settings` 与全局字体共用，
+ * 键名前缀区分（`app.*`／`font.*`）。
  */
 enum class AppAppearanceMode(val stored: String) {
     /** 跟随系统：深浅随系统，不动态取色；存量值 "auto"（恢复其原意）。 */

@@ -20,7 +20,7 @@ import org.json.JSONObject
  * 遍历 counts map 本身（手写 map 须恰好 20 键，否则往返不一致）。
  * 加字段需在 [manifestCounts] 与 [MANIFEST_KEYS] 各加一行，
  * Boolean 键另进 BOOLEAN_KEYS、显示名不同另进 [MANIFEST_DISPLAY]。
- * 旧清单只有 12 键：[fromJsonObject] 对新键缺失时跳过不记，
+ * 旧清单只有 10 键：[fromJsonObject] 对新键缺失时跳过不记，
  * [validate] 跳过清单里没有的键，旧备份不因此判损坏。
  *
  * JSON 转换（toJsonObject／fromJsonObject）走 org.json，本地 JVM
@@ -31,7 +31,7 @@ internal data class BackupManifest(
     val payloadVersion: Int,
     val counts: Map<String, Any>,
 ) {
-    /** 逐项核对清单与实际计数，返回不符项描述（空 = 一致）。清单里没有的键跳过（旧清单只有 12 键）。 */
+    /** 逐项核对清单与实际计数，返回不符项描述（空 = 一致）。清单里没有的键跳过（旧清单只有 10 键）。 */
     fun validate(actual: Map<String, Any>): List<String> {
         val mismatches = ArrayList<String>()
         for (key in MANIFEST_KEYS) {
@@ -61,10 +61,7 @@ internal data class BackupManifest(
             "phrasesCount", "prefersCount", "sortingsCount",
             "aiProvidersCount", "aiInstructionsCount",
             "aiConversationsCount", "aiMessagesCount",
-            "scriptItemsCount", "scriptVariablesCount",
-            "scriptTagsCount", "scriptTagCrossRefsCount",
             "inputStatsPresent", "skinLibraryPresent", "skinLibraryFiles",
-            "skinScriptsPresent", "skinScriptsFiles",
         )
 
         /** 不符时的显示名（与 JSON 键不同的几项；未列出的即键本身）。 */
@@ -78,33 +75,26 @@ internal data class BackupManifest(
             "aiInstructionsCount" to "ai_instructions",
             "aiConversationsCount" to "ai_conversations",
             "aiMessagesCount" to "ai_messages",
-            "scriptItemsCount" to "script_items",
-            "scriptVariablesCount" to "script_variables",
-            "scriptTagsCount" to "script_tags",
-            "scriptTagCrossRefsCount" to "script_tag_cross_refs",
             "inputStatsPresent" to "inputStats",
             "skinLibraryPresent" to "skinLibrary",
-            "skinScriptsPresent" to "skinScripts",
         )
 
         /** Boolean 存在标记键（其余一律为 Int 计数）。 */
         private val BOOLEAN_KEYS: Set<String> = setOf(
-            "inputStatsPresent", "skinLibraryPresent", "skinScriptsPresent",
+            "inputStatsPresent", "skinLibraryPresent",
         )
 
         /** v2 清单之后新增的计数键（旧清单无这些键，解析与校验都跳过）。 */
         private val NEW_KEYS: Set<String> = setOf(
             "aiProvidersCount", "aiInstructionsCount",
             "aiConversationsCount", "aiMessagesCount",
-            "scriptItemsCount", "scriptVariablesCount",
-            "scriptTagsCount", "scriptTagCrossRefsCount",
         )
 
         /**
          * 解析清单 JSON：字段缺失或类型不符返回 null（调用方按
          * “清单损坏”判整包失败）。payloadVersion 由调用方核对。
-         * 新键（AI／脚本计数）缺失时跳过不记——旧清单只有 12 键，
-         * 缺新键不是损坏；旧 12 键仍严格读，缺失即损坏。
+         * 新键（AI 计数）缺失时跳过不记——旧清单只有 10 键，
+         * 缺新键不是损坏；旧 10 键仍严格读，缺失即损坏。
          */
         fun fromJsonObject(obj: JSONObject): BackupManifest? = try {
             val counts = LinkedHashMap<String, Any>()
@@ -137,15 +127,9 @@ internal fun manifestCounts(
     aiInstructionsCount: Int = 0,
     aiConversationsCount: Int = 0,
     aiMessagesCount: Int = 0,
-    scriptItemsCount: Int = 0,
-    scriptVariablesCount: Int = 0,
-    scriptTagsCount: Int = 0,
-    scriptTagCrossRefsCount: Int = 0,
     inputStatsPresent: Boolean,
     skinLibraryPresent: Boolean,
     skinLibraryFiles: Int,
-    skinScriptsPresent: Boolean,
-    skinScriptsFiles: Int,
 ): Map<String, Any> = linkedMapOf(
     "prefsFiles" to prefsFiles,
     "prefsEntries" to prefsEntries,
@@ -158,13 +142,7 @@ internal fun manifestCounts(
     "aiInstructionsCount" to aiInstructionsCount,
     "aiConversationsCount" to aiConversationsCount,
     "aiMessagesCount" to aiMessagesCount,
-    "scriptItemsCount" to scriptItemsCount,
-    "scriptVariablesCount" to scriptVariablesCount,
-    "scriptTagsCount" to scriptTagsCount,
-    "scriptTagCrossRefsCount" to scriptTagCrossRefsCount,
     "inputStatsPresent" to inputStatsPresent,
     "skinLibraryPresent" to skinLibraryPresent,
     "skinLibraryFiles" to skinLibraryFiles,
-    "skinScriptsPresent" to skinScriptsPresent,
-    "skinScriptsFiles" to skinScriptsFiles,
 )

@@ -16,7 +16,6 @@ import android.graphics.Shader
 import android.view.MotionEvent
 import android.view.View
 import com.jobeen.ime.R
-import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.KeyboardManager
 import com.jobeen.ime.engine.data.EngineMessage
@@ -326,9 +325,9 @@ class KawaiiPanelView(context: Context) : View(context) {
         // 实际 Paint 字号由 applyDensity 写；此前 refreshTheme 不刷
         // 密度，皮肤字号字段须追加这一行）。
         paints.applyDensity(resources.displayMetrics.density)
-        val barStyle = GlobalStylePrefs.get(context)
-        barSharedBackground = barStyle.sharedBackground
-        barBlurAlpha = if (barStyle.barBlur) 140 else 255
+        // 全局样式已删：栏共用背景／栏模糊是纯全局值，无主题／皮肤来源，取默认值。
+        barSharedBackground = false
+        barBlurAlpha = 255
         // 工具栏配置可能刚被设置页改过、或皮肤刚应用/切换：长驻
         // 渲染器在此重抉择（有皮肤构成用皮肤，否则回落出厂默认）。
         // 其后用户覆盖层再压一层（工具栏编辑轮，分层：用户＞皮肤＞默认）。

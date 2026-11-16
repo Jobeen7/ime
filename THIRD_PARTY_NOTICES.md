@@ -13,7 +13,6 @@ Jime 基于开源组件构建。本文件是随应用分发的第三方组件索
 | librime-octagram | 语法模型（语言模型）支持 | Copyright (c) 2014, RIME Developers | BSD 3-Clause |
 | librime-predict | 预测插件 | librime-predict Developers | BSD 3-Clause |
 | Lua 5.4 | 脚本运行时（随 librime-lua 引入） | Copyright (c) 1994-2024, Lua.org, PUC-Rio | MIT |
-| QuickJS | 脚本引擎（用户脚本的 JS 运行时，`app/src/main/cpp/quickjs/`） | Copyright (c) 2017-2021 Fabrice Bellard, Charlie Gordon | MIT |
 | OpenCC | 简繁转换 | OpenCC 作者 | Apache-2.0 |
 | snappy | 压缩 | Copyright 2011, Google Inc. | BSD 3-Clause |
 | glog | 日志 | Copyright (c) Google Inc. | BSD 3-Clause |

@@ -196,26 +196,6 @@ sealed class KeyboardAction {
      */
     data object OpenSymbolBarSettingsAction : KeyboardAction()
 
-    /**
-     * 应用级脚本动作（脚本接线波次）：
-     * - [RunScriptAction]：运行应用级脚本库中的一个脚本（值 = 脚本 id）；
-     *   执行在后台线程，返回值按脚本桥接规则转动作（见 SkinScriptKeyBridge）。
-     * - [OpenScriptsAction]：打开脚本管理页。
-     */
-    data class RunScriptAction(val scriptId: String) : KeyboardAction()
-
-    /** 打开脚本管理页（open_script）。 */
-    data object OpenScriptsAction : KeyboardAction()
-
-    /**
-     * 切换脚本视图（#toggleScriptView）：脚本视图即应用级脚本
-     * 管理页。键盘按键只在键盘前台时送达，此时管理页必然不
-     * 在前台，故按键可达的切换方向恒为显示；收起方向由管理
-     * 页自身的返回键承担，不由按键实现。分发上与
-     * [OpenScriptsAction] 同目的地、不同动作种类。
-     */
-    data object ToggleScriptViewAction : KeyboardAction()
-
     /** 打开系统设置（审计 E：systemSettings）：系统设置意图。 */
     data object SystemSettingsAction : KeyboardAction()
 
@@ -316,22 +296,16 @@ sealed class KeyboardAction {
      */
     data object MomentaryShiftAction : KeyboardAction()
 
-    /** 面板快捷入口目标（W19-6 panel 板 8 钮）。 */
+    /** 面板快捷入口目标（W19-6 panel 板 5 钮）。 */
     enum class PanelShortcutTarget {
-        /** 皮肤库页。 */
-        SKIN_LIBRARY,
         /** WebDAV 词典同步。 */
         SYNC_DICTS,
         /** 检查更新（VersionChecker，查到新版开 Release 页）。 */
         CHECK_UPDATE,
         /** 震动设置（键盘设置页，含震动分段）。 */
         VIBRATION_SETTINGS,
-        /** 编辑器：打开皮肤布局文件（W19-7 实现）。 */
-        EDIT_LAYOUTS,
-        /** 编辑器：打开 skin.json（W19-7 实现）。 */
-        EDIT_SKIN_JSON,
     }
 
-    /** 面板快捷入口（W19-6 panel 板 8 钮之一）：目标由 [PanelShortcutTarget] 定。 */
+    /** 面板快捷入口（W19-6 panel 板 5 钮之一）：目标由 [PanelShortcutTarget] 定。 */
     data class PanelShortcutAction(val target: PanelShortcutTarget) : KeyboardAction()
 }

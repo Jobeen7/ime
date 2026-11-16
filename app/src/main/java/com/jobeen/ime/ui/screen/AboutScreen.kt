@@ -56,7 +56,7 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnostics: () -> Unit = {}) {
+fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}) {
     val context = LocalContext.current
     val versionName = remember {
         try {
@@ -451,10 +451,6 @@ fun AboutScreen(onBack: () -> Unit, onOpenLogs: () -> Unit = {}, onOpenDiagnosti
                 NavRow(
                     title = stringResource(R.string.about_diag_export),
                     onClick = { scope.launch { exportDiag() } },
-                )
-                NavRow(
-                    title = stringResource(R.string.skin_diag_title),
-                    onClick = onOpenDiagnostics,
                 )
                 NavRow(
                     title = stringResource(R.string.about_reset),

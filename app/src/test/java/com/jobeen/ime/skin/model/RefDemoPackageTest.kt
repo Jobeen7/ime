@@ -17,7 +17,7 @@ import org.junit.Test
  * toolbar Symbol 名逐项存在；原始树序列化再校验后三项字段一致
  * （即导出搬运形态下的往返一致）。
  *
- * 未覆盖：JimeImporter 整包导入（需 Android 文件/Store 环境）与
+ * 未覆盖：整包导入（需 Android 文件/Store 环境）与
  * 真机渲染像素——列为真机验证项，不在此冒充。
  */
 class RefDemoPackageTest {

@@ -23,14 +23,8 @@ import com.jobeen.ime.data.database.ClipboardGroup
 import com.jobeen.ime.data.database.ClipboardRecord
 import com.jobeen.ime.data.database.dedupeClipboardByText
 import com.jobeen.ime.data.database.PhraseRecord
-import com.jobeen.ime.data.database.ScriptItem
-import com.jobeen.ime.data.database.ScriptTag
-import com.jobeen.ime.data.database.ScriptTagCrossRef
-import com.jobeen.ime.data.database.ScriptVariable
 import com.jobeen.ime.data.manager.CandidatePreferCache
 import com.jobeen.ime.data.manager.ClipboardManager
-import com.jobeen.ime.skin.script.SkinScriptIds
-import com.jobeen.ime.skin.script.SkinScriptStore
 import com.jobeen.ime.skin.store.AtomicFiles
 import androidx.room.withTransaction
 import org.json.JSONArray
@@ -72,18 +66,6 @@ import javax.crypto.spec.SecretKeySpec
  * 只覆盖同路径文件，不删除备份中没有的现文件；空库不写该段、
  * 原始字节超 8MB 整段跳过只记日志（不阻塞整包）；旧备份无此段
  * 时还原不碰现皮肤。写回后重启进程，下次启动对账收敛索引。
- *
- * 皮肤脚本文件（filesDir/skin_scripts/<id>/script.js + meta.json）
- * 随包走、整表替换写回（与皮肤库合并写回不同，见下）：脚本是
- * 用户数据而非库代次，备份即该时点的全部脚本，还原即回到该
- * 时点——段内文件全量写回、段外现文件删除；旧备份无此段时
- * 还原不碰现脚本；新备份即使无脚本也带空段（files 为空），
- * 使还原失败时的快照回放总能把脚本恢复到还原前状态（含还原
- * 前无脚本时删干净，而非留下失败还原中途新增的孤儿脚本）。
- * 采集只认 <id>/script.js 与 <id>/meta.json（半写 .tmp 与其它
- * 文件跳过不进包）；相对路径逐项白名单校验（id 须过脚本 id
- * 口径），原始字节超 8MB 整段跳过只记日志（不阻塞整包，
- * 此时该包还原不碰脚本）。
  *
  * 还原严格分两段：先把解密后的内容完整解析为内存对象（此阶段零写
  * 入，任何结构/类型错误直接拒绝，不留半还原状态），再执行写入。
@@ -459,53 +441,6 @@ object BackupManager {
         }
         root.put("ai_messages", aiMsgJson)
 
-        // —— 脚本四表（B-B-3）：DAO 直读（与 AI 七表同款，后台协程）。
-        // 脚本是用户数据而非库代次，还原即整表替换（见 applyPayload）；
-        // 旧备份无此段时还原不碰现脚本（ParsedBackup.scripts 为 null）。
-        val scriptItems = aiDb.scriptItemDao().getAll()
-        val scriptVariables = aiDb.scriptVariableDao().getAll()
-        val scriptTags = aiDb.scriptTagDao().getAll()
-        val scriptTagCrossRefs = aiDb.scriptTagCrossRefDao().getAll()
-        val scriptItemsJson = JSONArray()
-        for (s in scriptItems) {
-            val o = JSONObject()
-                .put("id", s.id).put("uuid", s.uuid).put("iconName", s.iconName)
-                .put("iconType", s.iconType).put("name", s.name).put("content", s.content)
-                .put("isFavorite", s.isFavorite).put("sort", s.sort).put("date", s.date)
-                .put("allowPasteboard", s.allowPasteboard)
-                .put("resultInsertState", s.resultInsertState)
-                .put("closeWindowState", s.closeWindowState)
-            s.downloadURL?.let { o.put("downloadURL", it) }
-            scriptItemsJson.put(o)
-        }
-        root.put("script_items", scriptItemsJson)
-        val scriptVariablesJson = JSONArray()
-        for (v in scriptVariables) {
-            scriptVariablesJson.put(
-                JSONObject()
-                    .put("id", v.id).put("uuid", v.uuid).put("key", v.key)
-                    .put("value", v.value).put("isSecure", v.isSecure).put("date", v.date),
-            )
-        }
-        root.put("script_variables", scriptVariablesJson)
-        val scriptTagsJson = JSONArray()
-        for (t in scriptTags) {
-            scriptTagsJson.put(
-                JSONObject()
-                    .put("id", t.id).put("uuid", t.uuid).put("name", t.name)
-                    .put("color", t.color).put("date", t.date),
-            )
-        }
-        root.put("script_tags", scriptTagsJson)
-        val scriptTagCrossRefsJson = JSONArray()
-        for (r in scriptTagCrossRefs) {
-            scriptTagCrossRefsJson.put(
-                JSONObject()
-                    .put("scriptId", r.scriptId).put("tagId", r.tagId),
-            )
-        }
-        root.put("script_tag_cross_refs", scriptTagCrossRefsJson)
-
         // —— 输入统计（2026-10-29 批量第 4 项）：文件型数据不进 prefs
         // 枚举，须显式采集；内容仅计数与时长、无输入内容（InputStats
         // 自身口径）。超 1MB 的异常文件跳过（不阻塞整包备份）。
@@ -533,16 +468,9 @@ object BackupManager {
         skinLibrary.json?.let { root.put("skin_library", it) }
         if (skinLibrary.skippedOverLimit) skippedSkinSections += RestoreJournal.SECTION_SKIN_LIBRARY
 
-        // —— 皮肤脚本文件：filesDir/skin_scripts（整表替换写回，见 KDoc）；
-        // 超限时整段跳过、记入 skippedSkinSections（B-B-7）；无脚本
-        // 时带空段，使还原失败回放能恢复到“还原前无脚本”状态。
-        val skinScripts = collectSkinScriptsJson(guard, operation)
-        skinScripts.json?.let { root.put("skin_scripts", it) }
-        if (skinScripts.skippedOverLimit) skippedSkinSections += RestoreJournal.SECTION_SKIN_SCRIPTS
-
         // —— 结算重验（WO33 第 1 项，D-M1 残余窗口的缓解）——
         // 采集全部结束、清单附上之前，把本次读过的全部文件（prefs
-        // 各表、Room 两库 db＋-wal、统计文件、皮肤库／脚本文件）
+        // 各表、Room 两库 db＋-wal、统计文件、皮肤库文件）
         // 在同一个点上再验一遍：任一文件自其读前标记之后变了，
         // 即整个备份失败、不产残包。这是三类源第一次有统一复核点，
         // 残余窗口由“整个采集时长”缩到“结算点之后”。
@@ -590,16 +518,9 @@ object BackupManager {
                 aiInstructionsCount = aiExport.instructions.size,
                 aiConversationsCount = aiExport.conversations.size,
                 aiMessagesCount = aiExport.messages.size,
-                scriptItemsCount = scriptItems.size,
-                scriptVariablesCount = scriptVariables.size,
-                scriptTagsCount = scriptTags.size,
-                scriptTagCrossRefsCount = scriptTagCrossRefs.size,
                 inputStatsPresent = root.has("input_stats_json"),
                 skinLibraryPresent = root.has("skin_library"),
                 skinLibraryFiles = root.optJSONObject("skin_library")
-                    ?.optJSONObject("files")?.length() ?: 0,
-                skinScriptsPresent = root.has("skin_scripts"),
-                skinScriptsFiles = root.optJSONObject("skin_scripts")
                     ?.optJSONObject("files")?.length() ?: 0,
             ),
         )
@@ -677,51 +598,6 @@ object BackupManager {
         return SkinSectionResult(section, false)
     }
 
-    /** 皮肤脚本备份原始字节上限：超限整段跳过只记日志（仿皮肤库跳过模式）。 */
-    private const val SKIN_SCRIPTS_BACKUP_MAX_RAW_BYTES = 8L * 1024 * 1024
-
-    /**
-     * 皮肤脚本段采集：filesDir/skin_scripts 下全部有效文件
-     * （相对路径 → Base64）。只认 filesDir/skin_scripts 这一唯一
-     * 目录来源；相对路径须过 canonical 校验（防符号链接逃逸）
-     * 与 [isValidSkinScriptRelPath]（仅 <id>/script.js 与
-     * <id>/meta.json，半写 .tmp 与其它文件跳过不进包）；无脚本
-     * 时返回空 files 段（非 null，见 KDoc 回放口径）；原始字节
-     * 总量超限返回跳过段，即不写该段，skippedOverLimit 为真。
-     */
-    private fun collectSkinScriptsJson(
-        guard: BackupChangeGuard,
-        operation: String,
-    ): SkinSectionResult {
-        val rootDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
-        val filesJson = JSONObject()
-        if (rootDir.isDirectory) {
-            val canonicalRoot = runCatching { rootDir.canonicalPath }.getOrNull()
-                ?: return SkinSectionResult(null, false)
-            var totalBytes = 0L
-            for (file in rootDir.walkTopDown().filter { it.isFile }.sortedBy { it.path }) {
-                val canonical = runCatching { file.canonicalPath }.getOrNull() ?: continue
-                if (!canonical.startsWith(canonicalRoot + File.separator)) continue
-                val rel = file.relativeTo(rootDir).path.replace(File.separatorChar, '/')
-                if (!isValidSkinScriptRelPath(rel)) continue
-                // 枚举到但读前已消失 = 采集中途被删，整包失败，不静默丢一文件。
-                if (!file.isFile) throw BackupDataChangedException(operation)
-                val bytes = guard.guard(file, operation) {
-                    runCatching { file.readBytes() }.getOrNull()
-                } ?: continue
-                totalBytes += bytes.size
-                if (totalBytes > SKIN_SCRIPTS_BACKUP_MAX_RAW_BYTES) {
-                    Timber.w("skin scripts too large, skipped in backup")
-                    return SkinSectionResult(null, true)
-                }
-                filesJson.put(rel, bytes.toBase64())
-            }
-        }
-        val section = JSONObject()
-        section.put("files", filesJson)
-        return SkinSectionResult(section, false)
-    }
-
     private fun encodePrefValue(value: Any): JSONObject {
         val obj = JSONObject()
         when (value) {
@@ -778,9 +654,7 @@ object BackupManager {
             sortings = snapshot.sortings,
             inputStatsJson = snapshot.inputStatsJson,
             skinLibrary = snapshot.skinLibrary,
-            skinScripts = snapshot.skinScripts,
             ai = patched,
-            scripts = snapshot.scripts,
         )
     }
 
@@ -798,16 +672,12 @@ object BackupManager {
         val snapshotJson = collectPayload("还原")
         val snapshotParsed = patchSnapshotTokens(parsePayload(snapshotJson.json))
         // 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
-        // 脚本段缺失且还原前确有脚本（超 8MB 跳段或采集失败），或皮肤
-        // 库段缺失且还原前确有皮肤文件（同理），回滚后这些数据即永久丢
-        // 失——此时绝不能报“已恢复到还原前状态”，必须如实报回滚未成功。
-        // 皮肤库段缺失且还原前本就无皮肤文件时，快照即“空库”，回滚清
-        // 空皮肤即恢复（clearSkinsForRollback），覆盖成立。
-        val scriptsPresentBefore = hasSkinScripts()
+        // 皮肤库段缺失且还原前确有皮肤文件（超 8MB 跳段或采集失败），
+        // 回滚后这些数据即永久丢失——此时绝不能报“已恢复到还原前状态”，
+        // 必须如实报回滚未成功。皮肤库段缺失且还原前本就无皮肤文件时，
+        // 快照即“空库”，回滚清空皮肤即恢复（clearSkinsForRollback），覆盖成立。
         val skinsPresentBefore = hasSkinFiles()
         val rollbackCovered = rollbackCovered(
-            snapshotHasScripts = snapshotParsed.skinScripts != null,
-            scriptsPresent = scriptsPresentBefore,
             snapshotHasSkins = snapshotParsed.skinLibrary != null,
             skinsPresentBefore = skinsPresentBefore,
         )
@@ -944,7 +814,7 @@ object BackupManager {
                     )
                 }
             }.isSuccess
-            // 回放成功才算回滚成功；缺段快照盖不住的源（脚本/皮肤）
+            // 回放成功才算回滚成功；缺段快照盖不住的源（皮肤）
             // 只要还原前存在，回滚即不完整——如实报失败，不谎报成功。
             val rolledBack = replayed && rollbackCovered
             if (rolledBack) {
@@ -1235,7 +1105,6 @@ object BackupManager {
             entry.completedSections,
             snapshotHasInputStats = snapshotParsed.inputStatsJson != null,
             snapshotHasSkinLibrary = snapshotParsed.skinLibrary != null,
-            snapshotHasSkinScripts = snapshotParsed.skinScripts != null,
             // D-P1：半写段（杀在皮肤文件循环中途）与“还原前确有皮肤”
             // 这一位都进判定——否则皮肤半写段 uncovered 为空、报成功。
             inProgressSections = entry.inProgressSections,
@@ -1291,7 +1160,7 @@ object BackupManager {
     /**
      * 磁盘回滚覆盖判定（纯函数）：快照里缺段、且失败还原写过该段的，列入 uncovered。
      * Room 两库与 prefs 在快照里恒有（collectPayload 必写），永不缺段；
-     * 输入统计／皮肤库／脚本三段是条件段，缺段且被写过即 uncovered。
+     * 输入统计／皮肤库两段是条件段，缺段且被写过即 uncovered。
      * “写过”含两类（D-P1）：journal 已记的完成段（completedSections），
      * 与已开始未完成的段（inProgressSections）——皮肤库是多文件逐文件
      * 写，杀在循环中途即半写（index 已换新、部分文件已换新），completed
@@ -1301,14 +1170,13 @@ object BackupManager {
      * 不列入——磁盘回滚以 clearSkinsForRollback 清掉失败还原新增的孤儿
      * 文件即回到还原前状态，全覆盖。skinsPresentBefore 默认为 true：
      * 旧 journal 无此行时按“有”保守处理（不清、不谎报）。
-     * 其余两段的原子性（输入统计单文件 tmp＋rename、脚本整目录换位写）
+     * 其余段的原子性（输入统计单文件 tmp＋rename）
      * 使“开始过”只可能来自未来才加的段开始标记，统一按写过计亦保守。
      */
     internal fun uncoveredSectionsForRollback(
         completedSections: Set<String>,
         snapshotHasInputStats: Boolean,
         snapshotHasSkinLibrary: Boolean,
-        snapshotHasSkinScripts: Boolean,
         inProgressSections: Set<String> = emptySet(),
         skinsPresentBefore: Boolean = true,
     ): List<String> {
@@ -1323,9 +1191,6 @@ object BackupManager {
             touched(RestoreJournal.SECTION_SKIN_LIBRARY)
         ) {
             uncovered += RestoreJournal.SECTION_SKIN_LIBRARY
-        }
-        if (touched(RestoreJournal.SECTION_SKIN_SCRIPTS) && !snapshotHasSkinScripts) {
-            uncovered += RestoreJournal.SECTION_SKIN_SCRIPTS
         }
         return uncovered
     }
@@ -1360,7 +1225,6 @@ object BackupManager {
     private fun sectionDisplayName(section: String): String = when (section) {
         RestoreJournal.SECTION_INPUT_STATS -> backupString(R.string.backup_section_input_stats)
         RestoreJournal.SECTION_SKIN_LIBRARY -> backupString(R.string.backup_section_skin_library)
-        RestoreJournal.SECTION_SKIN_SCRIPTS -> backupString(R.string.backup_section_skin_scripts)
         else -> section
     }
 
@@ -1426,20 +1290,6 @@ object BackupManager {
         val files: Map<String, ByteArray>,
     )
 
-    /** 皮肤脚本备份段（null = 旧备份无此段，还原时不碰现脚本）。 */
-    private data class SkinScriptsBackup(
-        /** 相对路径（<id>/script.js 或 <id>/meta.json）→ 原始字节（已在解析阶段 Base64 解码） */
-        val files: Map<String, ByteArray>,
-    )
-
-    /** 脚本备份段：四表全量。 */
-    private data class ScriptBackupData(
-        val items: List<ScriptItem>,
-        val variables: List<ScriptVariable>,
-        val tags: List<ScriptTag>,
-        val crossRefs: List<ScriptTagCrossRef>,
-    )
-
     private class ParsedBackup(
         val prefs: Map<String, Map<String, Any>>,
         val clipboard: List<ClipboardRecord>,
@@ -1452,12 +1302,8 @@ object BackupManager {
         val inputStatsJson: String?,
         /** 皮肤库段（null = 旧备份无此字段，还原时不碰现皮肤） */
         val skinLibrary: SkinBackup?,
-        /** 皮肤脚本段（null = 旧备份无此字段，还原时不碰现脚本） */
-        val skinScripts: SkinScriptsBackup?,
         /** AI 七表（null = 旧备份无此段，还原不碰现 AI 表；有段即整表替换，见 applyPayload） */
         val ai: AiBackupData?,
-        /** 脚本四表（null = 旧备份无此段，还原不碰现脚本；有段即整表替换，见 applyPayload） */
-        val scripts: ScriptBackupData?,
     )
 
     /**
@@ -1728,73 +1574,6 @@ object BackupManager {
                 )
             }
 
-            // 脚本四表（B-B-3）：无 script_items 段 = 旧备份，还原不碰
-            // 现脚本；有段即整表替换（空数组 = 备份时表就是空的）。
-            val scripts = if (!root.has("script_items")) {
-                null
-            } else {
-                val itemsJson = root.optJSONArray("script_items") ?: JSONArray()
-                val itemList = ArrayList<ScriptItem>(itemsJson.length())
-                for (i in 0 until itemsJson.length()) {
-                    val o = itemsJson.getJSONObject(i)
-                    itemList += ScriptItem(
-                        id = o.optLong("id", 0),
-                        uuid = o.optString("uuid"),
-                        iconName = o.optString("iconName"),
-                        iconType = o.optInt("iconType"),
-                        name = o.optString("name"),
-                        content = o.optString("content"),
-                        isFavorite = o.optBoolean("isFavorite"),
-                        sort = o.optInt("sort"),
-                        date = o.optLong("date"),
-                        allowPasteboard = o.optBoolean("allowPasteboard"),
-                        resultInsertState = o.optBoolean("resultInsertState"),
-                        closeWindowState = o.optBoolean("closeWindowState"),
-                        downloadURL = if (o.has("downloadURL")) o.optString("downloadURL") else null,
-                    )
-                }
-                val variablesJson = root.optJSONArray("script_variables") ?: JSONArray()
-                val varList = ArrayList<ScriptVariable>(variablesJson.length())
-                for (i in 0 until variablesJson.length()) {
-                    val o = variablesJson.getJSONObject(i)
-                    varList += ScriptVariable(
-                        id = o.optLong("id", 0),
-                        uuid = o.optString("uuid"),
-                        key = o.optString("key"),
-                        value = o.optString("value"),
-                        isSecure = o.optBoolean("isSecure"),
-                        date = o.optLong("date"),
-                    )
-                }
-                val tagsJson = root.optJSONArray("script_tags") ?: JSONArray()
-                val tagList = ArrayList<ScriptTag>(tagsJson.length())
-                for (i in 0 until tagsJson.length()) {
-                    val o = tagsJson.getJSONObject(i)
-                    tagList += ScriptTag(
-                        id = o.optLong("id", 0),
-                        uuid = o.optString("uuid"),
-                        name = o.optString("name"),
-                        color = o.optString("color"),
-                        date = o.optLong("date"),
-                    )
-                }
-                val refsJson = root.optJSONArray("script_tag_cross_refs") ?: JSONArray()
-                val refList = ArrayList<ScriptTagCrossRef>(refsJson.length())
-                for (i in 0 until refsJson.length()) {
-                    val o = refsJson.getJSONObject(i)
-                    refList += ScriptTagCrossRef(
-                        scriptId = o.optLong("scriptId"),
-                        tagId = o.optLong("tagId"),
-                    )
-                }
-                ScriptBackupData(
-                    items = itemList,
-                    variables = varList,
-                    tags = tagList,
-                    crossRefs = refList,
-                )
-            }
-
             // 包内清单校验（D-M1，payload v2）：清单在场时逐项核对
             // 计数与存在性，任一不符整包判失败（解析阶段拦截，不写
             // 脏数据）；旧备份无清单字段时跳过（兼容 v1）。注意计数
@@ -1877,37 +1656,7 @@ object BackupManager {
                     }
                     SkinBackup(index = index, files = files)
                 },
-                // 皮肤脚本段：无字段 = 旧备份，不碰现脚本；有字段则
-                // 相对路径逐项白名单校验、Base64 逐项解码，任一非法
-                // 整包判失败（解析阶段拦截，不写脏文件）。缺 files
-                // 表视为空段（整表替换即清掉现脚本，与采集口径一致：
-                // 采集无脚本时写空段，旧备份则根本无此字段）。
-                skinScripts = if (!root.has("skin_scripts")) {
-                    null
-                } else {
-                    val section = root.getJSONObject("skin_scripts")
-                    val filesJson = when (val v = section.opt("files")) {
-                        null -> JSONObject()
-                        is JSONObject -> v
-                        else -> throw BackupException(backupString(R.string.backup_scripts_files_not_object))
-                    }
-                    val files = LinkedHashMap<String, ByteArray>()
-                    val keys = filesJson.keys()
-                    while (keys.hasNext()) {
-                        val rel = keys.next()
-                        if (!isValidSkinScriptRelPath(rel)) {
-                            throw BackupException(backupString(R.string.backup_scripts_illegal_path))
-                        }
-                        files[rel] = when (val v = filesJson.opt(rel)) {
-                            is String -> v.fromBase64()
-                                ?: throw BackupException(backupString(R.string.backup_scripts_file_corrupt))
-                            else -> throw BackupException(backupString(R.string.backup_scripts_file_corrupt))
-                        }
-                    }
-                    SkinScriptsBackup(files = files)
-                },
                 ai = ai,
-                scripts = scripts,
             )
         } catch (e: BackupException) {
             throw e
@@ -1940,16 +1689,9 @@ object BackupManager {
             aiInstructionsCount = root.optJSONArray("ai_instructions")?.length() ?: 0,
             aiConversationsCount = root.optJSONArray("ai_conversations")?.length() ?: 0,
             aiMessagesCount = root.optJSONArray("ai_messages")?.length() ?: 0,
-            scriptItemsCount = root.optJSONArray("script_items")?.length() ?: 0,
-            scriptVariablesCount = root.optJSONArray("script_variables")?.length() ?: 0,
-            scriptTagsCount = root.optJSONArray("script_tags")?.length() ?: 0,
-            scriptTagCrossRefsCount = root.optJSONArray("script_tag_cross_refs")?.length() ?: 0,
             inputStatsPresent = root.has("input_stats_json"),
             skinLibraryPresent = root.has("skin_library"),
             skinLibraryFiles = root.optJSONObject("skin_library")
-                ?.optJSONObject("files")?.length() ?: 0,
-            skinScriptsPresent = root.has("skin_scripts"),
-            skinScriptsFiles = root.optJSONObject("skin_scripts")
                 ?.optJSONObject("files")?.length() ?: 0,
         )
     }
@@ -1975,22 +1717,6 @@ object BackupManager {
         if (parts[0] != "skins" && parts[0] != "assets") return false
         if (parts.any { it.isEmpty() || it == "." || it == ".." }) return false
         return true
-    }
-
-    /**
-     * 皮肤脚本备份文件相对路径白名单（解析阶段防穿越）：仅
-     * <id>/script.js 与 <id>/meta.json 两段路径放行；id 须过脚本
-     * id 口径（无分隔符、非 . / ..）；段为空、含 . / ..、含反斜杠、
-     * 绝对路径、更深嵌套、半写 .tmp 一律拒绝。
-     */
-    internal fun isValidSkinScriptRelPath(path: String): Boolean {
-        if (path.isEmpty()) return false
-        if (path.startsWith("/") || path.contains('\\')) return false
-        val parts = path.split('/')
-        if (parts.size != 2) return false
-        if (!SkinScriptIds.isValid(parts[0])) return false
-        return parts[1] == SkinScriptStore.SCRIPT_FILE ||
-            parts[1] == SkinScriptStore.META_FILE
     }
 
     /** 严格解析单个 prefs 值：未知类型标签或类型不符直接抛错（解析阶段拦截） */
@@ -2039,8 +1765,7 @@ object BackupManager {
      * 还原合并语义（D31）：四表“当前优先、备份补缺”取并集。冲突键
      * 以当前行为准（备份后新学／新改的内容不被备份时点的旧行覆盖）；
      * 只在备份里有的行补进来（备份后删掉的内容还原时回来）。prefs、
-     * 输入统计、皮肤脚本不在此列：prefs 整表覆盖是设置还原的本意，
-     * 统计只是计数，脚本是快照语义（见类 KDoc）。
+     * 输入统计不在此列：prefs 整表覆盖是设置还原的本意，统计只是计数。
      * 分组（H2-4）同口径按名称合并；补入的剪贴板行按分组重映射
      * 改 groupId，当前行 groupId 不动。
      */
@@ -2061,11 +1786,9 @@ object BackupManager {
             sortings = mergeSortingsForRestore(current.sortings, backup.sortings),
             inputStatsJson = backup.inputStatsJson,
             skinLibrary = backup.skinLibrary,
-            skinScripts = backup.skinScripts,
-            // AI 七表与脚本四表是整表替换口径（备份原样透传；缺段时
+            // AI 七表是整表替换口径（备份原样透传；缺段时
             // 为 null，下游 applyPayload 不碰现表）
             ai = backup.ai,
-            scripts = backup.scripts,
         )
     }
 
@@ -2177,12 +1900,6 @@ object BackupManager {
         return out
     }
 
-    /** 还原前脚本库是否确有脚本文件（任一文件即算，含半写 .tmp——回滚覆盖判定取保守口径）。 */
-    private fun hasSkinScripts(): Boolean {
-        val dir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
-        return dir.isDirectory && dir.walkTopDown().any { it.isFile }
-    }
-
     /** 还原前皮肤库是否确有文件（index.json 或 skins/、assets/ 下任一文件）。 */
     private fun hasSkinFiles(): Boolean {
         val dir = App.skinLibraryDir
@@ -2191,17 +1908,13 @@ object BackupManager {
 
     /**
      * 回滚可覆盖性（D-S1/D-M2）：快照里缺段的源，快照回放恢复不了。
-     * 脚本段缺失且还原前确有脚本、或皮肤库段缺失且还原前确有皮肤文件
-     * 时，回滚后这些数据即永久丢失——此时绝不能报“已恢复到还原前状态”。
+     * 皮肤库段缺失且还原前确有皮肤文件时，回滚后这些数据即永久丢失
+     * ——此时绝不能报“已恢复到还原前状态”。
      */
     private fun rollbackCovered(
-        snapshotHasScripts: Boolean,
-        scriptsPresent: Boolean,
         snapshotHasSkins: Boolean,
         skinsPresentBefore: Boolean,
-    ): Boolean =
-        (snapshotHasScripts || !scriptsPresent) &&
-            (snapshotHasSkins || !skinsPresentBefore)
+    ): Boolean = snapshotHasSkins || !skinsPresentBefore
 
     /**
      * 写入段：输入已在解析阶段全量校验，此处只做落盘，不再有解析错误。
@@ -2212,8 +1925,8 @@ object BackupManager {
     /**
      * 把解析后的备份写回各存储。失败时由调用方用快照回放整体回滚。
      * [onSectionDone]：每写完一段（剪贴板库／主库／prefs／输入统计／
-     * 皮肤库／皮肤脚本）回调一次，供还原 journal 记段进度；条件段
-     * （输入统计／皮肤库／皮肤脚本）只在真实写盘后才回调，跳过的段
+     * 皮肤库）回调一次，供还原 journal 记段进度；条件段
+     * （输入统计／皮肤库）只在真实写盘后才回调，跳过的段
      * 不记（见 [uncoveredSectionsForRollback] 的 KDoc）。回滚回放
      * 不传回调（journal 正在被处置，不记进度）。
      * [onSectionStart]：段开始写前回调一次，目前只对皮肤库触发——它
@@ -2319,21 +2032,6 @@ object BackupManager {
                 )
                 skippedAiMessages = skippedMessages
                 if (keptMessages.isNotEmpty()) db.aiMessageDao().insertAll(keptMessages)
-            }
-            // —— 脚本四表（B-B-3）：有段即整表替换（与导出段对应；
-            // 旧备份无段时 parsed.scripts 为 null，不碰现脚本）。
-            // 删：先删交叉引用再删三表（FK CASCADE 是双向的，删
-            // item/tag 也会级联清引用，但显式删引用是确定性口径，
-            // 不依赖级联）；插：先插三表再插交叉引用（外键即时校验）。
-            parsed.scripts?.let { scripts ->
-                db.scriptTagCrossRefDao().deleteAll()
-                db.scriptItemDao().deleteAll()
-                db.scriptTagDao().deleteAll()
-                db.scriptVariableDao().deleteAll()
-                if (scripts.items.isNotEmpty()) db.scriptItemDao().insertAll(scripts.items)
-                if (scripts.variables.isNotEmpty()) db.scriptVariableDao().insertAll(scripts.variables)
-                if (scripts.tags.isNotEmpty()) db.scriptTagDao().insertAll(scripts.tags)
-                if (scripts.crossRefs.isNotEmpty()) db.scriptTagCrossRefDao().insertAll(scripts.crossRefs)
             }
         }
         onSectionDone?.invoke(RestoreJournal.SECTION_APPDB)
@@ -2442,56 +2140,6 @@ object BackupManager {
             File(rootDir, "assets").deleteRecursively()
         }
 
-        // —— 皮肤脚本文件（整表替换，非合并写回，见 KDoc）：换位写，
-        // 先把新脚本写进临时目录、再整体换位；无字段（旧备份）时不
-        // 碰现脚本。旧实现“先删整树再写”，写盘中途失败即把还原前
-        // 的脚本全毁（D-S1），且回滚回放走同一路径同样先删后写。
-        // 换位写失败只丢临时目录，旧脚本原样保留；换位本身是同目
-        // 录 rename，原子完成。失败回滚走同一换位路径写回还原前
-        // 快照，故失败还原不留孤儿脚本（快照由新版采集产生，恒带
-        // 此段；超限跳段的快照除外，见 KDoc——该情形下回放不碰脚本）。
-        parsed.skinScripts?.let { scripts ->
-            val scriptsDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR)
-            val tmpDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR + ".tmp")
-            val oldDir = File(appContext.filesDir, SkinScriptStore.SCRIPTS_DIR + ".old")
-            if (tmpDir.exists()) tmpDir.deleteRecursively()
-            if (oldDir.exists()) oldDir.deleteRecursively()
-            try {
-                runCatching { tmpDir.mkdirs() }
-                for ((rel, bytes) in scripts.files) {
-                    // 解析阶段已白名单校验，此处只做落盘。
-                    val target = File(tmpDir, rel)
-                    try {
-                        AtomicFiles.write(target, bytes)
-                    } catch (e: java.io.IOException) {
-                        throw BackupException(backupString(R.string.backup_script_file_write_failed, rel))
-                    }
-                }
-            } catch (e: Exception) {
-                if (e is InterruptedException) throw e
-                if (e is kotlinx.coroutines.CancellationException) throw e
-                tmpDir.deleteRecursively()
-                throw e
-            }
-            // 换位：旧目录 → .old，临时目录 → 脚本目录，再删 .old。
-            // 旧目录不存在（还原前无脚本）时直接换位。
-            val hadOld = scriptsDir.exists()
-            if (hadOld && !scriptsDir.renameTo(oldDir)) {
-                tmpDir.deleteRecursively()
-                throw BackupException(backupString(R.string.backup_script_library_write_failed))
-            }
-            if (!tmpDir.renameTo(scriptsDir)) {
-                // 换位失败：尽力把旧目录挪回来，临时目录清掉；旧目录
-                // 恢复失败时 .old 原样保留（下次备份采集只认脚本目录，
-                // 不会误读它；下次还原先清残留 .old），还原判失败、
-                // 由回滚回放处置。
-                if (hadOld) oldDir.renameTo(scriptsDir)
-                tmpDir.deleteRecursively()
-                throw BackupException(backupString(R.string.backup_script_library_write_failed))
-            }
-            oldDir.deleteRecursively()
-            onSectionDone?.invoke(RestoreJournal.SECTION_SKIN_SCRIPTS)
-        }
         return skippedAiMessages
     }
 

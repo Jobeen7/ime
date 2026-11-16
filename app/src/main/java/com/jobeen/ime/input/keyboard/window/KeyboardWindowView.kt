@@ -12,13 +12,10 @@ import android.util.TypedValue
 import android.view.Choreographer
 import android.view.MotionEvent
 import android.view.ViewConfiguration
-import android.graphics.Color
 import android.graphics.Outline
 import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
-import android.graphics.drawable.ColorDrawable
-import android.graphics.drawable.LayerDrawable
 import android.view.inputmethod.CursorAnchorInfo
 import android.view.View
 import android.view.ViewGroup
@@ -36,8 +33,6 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isGone
 import com.jobeen.ime.R
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
-import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
-import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.layout.CompactLayoutGenerator
 import com.jobeen.ime.skin.symbolbar.AppSymbolBarTypeStore
@@ -46,7 +41,6 @@ import com.jobeen.ime.skin.symbolbar.SymbolBarConfigLoader
 import com.jobeen.ime.skin.symbolbar.SymbolBarLoadResult
 import com.jobeen.ime.skin.symbolbar.resolveCurrentType
 import com.jobeen.ime.skin.symbolbar.symbolBarConfigFromSkinSpec
-import com.jobeen.ime.data.keyboard.theme.VideoPrefs
 import com.jobeen.ime.data.manager.CandidateLinePolicy
 import com.jobeen.ime.data.manager.CandidateManager
 import com.jobeen.ime.data.manager.SchemaManager
@@ -433,14 +427,6 @@ class KeyboardWindowView(
     /** 内联自动填充会话有效标志：onStartInput 置真，onFinishInputView 置假。 */
     private var inlineFieldActive: Boolean = false
 
-    /**
-     * 主题视频背景（2026-10-29 外观轮）：懒建，失败回调复评
-     * 视频层状态（失败→静态背景，GIF 层随之恢复）。
-     */
-    private val videoController by lazy {
-        VideoBackgroundController(this) { syncVideoBackground() }
-    }
-
     /** 当前窗口背景 GIF 动图（SDK≥28 时解原文件；无 GIF 时 null）。 */
     private var gifDrawable: android.graphics.drawable.AnimatedImageDrawable? = null
 
@@ -471,8 +457,8 @@ class KeyboardWindowView(
     }
 
     private fun applyWindowCorners() {
-        windowTopCornerRadiusPx = (GlobalStylePrefs.get(context).keyboardTopCornerDp
-            ?.coerceIn(0f, 32f) ?: 0f) * resources.displayMetrics.density
+        // 全局样式已删：顶部圆角无主题／皮肤来源，恒为 0（直角）。
+        windowTopCornerRadiusPx = 0f
         if (outlineProvider !== topCornerOutlineProvider) {
             outlineProvider = topCornerOutlineProvider
         }
@@ -921,25 +907,10 @@ class KeyboardWindowView(
             CandidateManager.KEY_SHOW_COMMENT,
                 -> scheduleRefreshDisplaySettings()
 
-            // 外观轮全局样式：模糊键与拉伸模式键走背景重建专路
-            // （只换背景位图，不重建键盘）；其余键走强制刷新
-            // （圆角/栏开关不在配色内，普通路的配色门控会把它们挡下）。
-            in GlobalStylePrefs.ALL_KEYS -> {
-                if (key in GlobalStylePrefs.BLUR_KEYS ||
-                    key in GlobalStylePrefs.SCALE_MODE_KEYS
-                ) {
-                    SkinSnapshotProvider.refreshBackground(context)
-                } else {
-                    scheduleRefreshDisplaySettings()
-                }
-            }
-
             // 外观轮全局字体：版本＋1 时解析缓存已清，强制刷新
             // 重建按键与面板画笔（字体不在配色内，普通路会被挡下）。
             in GlobalFonts.ALL_KEYS -> scheduleRefreshDisplaySettings()
 
-            // 外观轮视频开关：只同步视频层，不重建键盘。
-            in VideoPrefs.ALL_KEYS -> syncVideoBackground()
         }
     }
 
@@ -1231,10 +1202,6 @@ class KeyboardWindowView(
         // 皮肤运行态注册：应用事务的首帧等待与延迟验证推进挂在本窗口上
         SkinRuntime.attachWindow(this)
         SkinRuntime.onWindowAttached()
-        // 主题视频背景：挂载即进门控，播放门另由输入／可见事件推进。
-        videoController.onAttached()
-        videoController.onViewShownChanged(isShown)
-        syncVideoBackground()
         // 性能埋点（2026-10-29 item-1 B）：冷启动结算（仅首个
         // 窗口）＋掉帧计数（帧间隔＞100ms 记一次，回调本身只做
         // 一次减法比较，不进热路径）。
@@ -1260,32 +1227,11 @@ class KeyboardWindowView(
         }
     }
 
-    /**
-     * 视频层恒居最底：键盘视图总插在 0 位（addKeyboardView），
-     * 会把视频层顶到键盘上；任一子视图加入后都把它复位到 0 位
-     * （已在 0 位时不动，避免递归）。
-     */
-    override fun onViewAdded(child: View) {
-        super.onViewAdded(child)
-        val videoView = videoController.viewIfCreated
-        if (videoView != null && videoView.parent === this && indexOfChild(videoView) != 0) {
-            removeView(videoView)
-            addView(videoView, 0)
-        }
-    }
-
-    override fun onWindowVisibilityChanged(visibility: Int) {
-        super.onWindowVisibilityChanged(visibility)
-        videoController.onWindowVisibilityChanged(visibility == View.VISIBLE)
-        videoController.onViewShownChanged(isShown)
-    }
-
     override fun onDetachedFromWindow() {
         Choreographer.getInstance().removeFrameCallback(frameCallback)
         // 输入统计（2026-10-29 item-1 C）：窗口 detach 时落盘一次
         // （平时 5s 防抖写，detach 是兜底 flush）。
         com.jobeen.ime.input.stats.InputStats.flush()
-        videoController.onDetached()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.stop()
         gifDrawable = null
         SkinRuntime.detachWindow(this)
@@ -1592,15 +1538,13 @@ class KeyboardWindowView(
         refreshToolbarHidden()
         panel.onStartInputView()
         keyboardStateManager.startInput(info, fieldChanged)
-        videoController.onInputStarted()
     }
 
-    /** 输入结束（服务 finishInputView 转发）：视频停解码、静态背景接管。 */
+    /** 输入结束（服务 finishInputView 转发）。 */
     fun onFinishInputView() {
         // 离开输入框：内联胶囊失效，会话标志置假，迟到的建议回调不再显示。
         inlineFieldActive = false
         hideInlineAutofill()
-        videoController.onInputFinished()
         // 浮动候选窗随输入框关闭（无内容关闭的另一路）。
         dismissFloatingWindow()
         setEngineFloatingActive(false)
@@ -1658,7 +1602,6 @@ class KeyboardWindowView(
         panel.view.setExpanded(false)
         cachedColors = KeyboardColors.resolve(context)
         applyWindowBackground()
-        syncVideoBackground()
         applyWindowCorners()
         panel.refreshTheme(keyboardStateManager.currentKeyboardType)
         preeditPinner.panelType = keyboardStateManager.currentKeyboardType
@@ -1682,22 +1625,6 @@ class KeyboardWindowView(
      * 有已解码的预处理背景位图时以位图为窗口背景（位图内已含
      * 模糊与色罩合成），否则回退快照/主题的纯色背景（八.3 不空白）。
      */
-    /**
-     * 视频层与 GIF 层互斥同步（2026-10-29 外观轮）：
-     * 视频在上时停 GIF（省解码）；视频不在时 GIF 按自身帧率跑。
-     */
-    private fun syncVideoBackground() {
-        val videoActive = videoController.sync(
-            SkinSnapshotProvider.peek(),
-            VideoPrefs.isEnabled(context),
-        )
-        if (videoActive) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.stop()
-        } else {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) gifDrawable?.start()
-        }
-    }
-
     private fun applyWindowBackground() {
         // 动画 GIF（SDK≥28）：解原文件成 AnimatedImageDrawable 按
         // 自身帧率重绘；模糊／调节不作用动图帧（见控制器注释）；
@@ -1720,12 +1647,12 @@ class KeyboardWindowView(
             if (animated != null) {
                 gifDrawable = animated
                 background = animated
-                // 是否起播由 syncVideoBackground 定（视频在上时停 GIF）。
+                animated.start()
                 return
             }
         }
         val bitmap = SkinSnapshotProvider.currentBackgroundBitmap()
-        // S8：背景优先级——位图＞渐变＞纯色（视频／GIF 在上层另处理，
+        // S8：背景优先级——位图＞渐变＞纯色（GIF 在上层另处理，
         // 此处只定窗口底；渐变缺省时回落纯色，位图失效时回落渐变）。
         val base: android.graphics.drawable.Drawable? =
             if (bitmap != null && !bitmap.isRecycled) {
@@ -1736,24 +1663,8 @@ class KeyboardWindowView(
                 }
             }
         if (base != null) {
-            // 磨砂叠加层：位图背景上再盖一层半透明遮罩（深色下黑、浅色下白），
-            // 强度为 0 或未设时不盖；动图背景不走此路（与模糊同口径）。
-            val overlay = GlobalStyleResolver.effectiveFrostOverlay(
-                GlobalStylePrefs.get(context),
-            )
-            background = if (overlay != null) {
-                val scrimColor = if (SkinColorMode.isDark(context)) {
-                    Color.BLACK
-                } else {
-                    Color.WHITE
-                }
-                val scrim = ColorDrawable(scrimColor).apply {
-                    alpha = (overlay * 255).roundToInt().coerceIn(0, 255)
-                }
-                LayerDrawable(arrayOf(base, scrim))
-            } else {
-                base
-            }
+            // 全局样式已删：磨砂叠加层是纯全局样式值，无主题／皮肤来源，不再盖遮罩。
+            background = base
         } else {
             background = null
             setBackgroundColor(cachedColors.background)

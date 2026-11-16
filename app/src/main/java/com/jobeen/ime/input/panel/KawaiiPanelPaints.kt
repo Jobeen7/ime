@@ -5,8 +5,6 @@ import android.graphics.Paint
 import android.graphics.Typeface
 import com.jobeen.ime.data.keyboard.theme.FontRole
 import com.jobeen.ime.data.keyboard.theme.GlobalFonts
-import com.jobeen.ime.data.keyboard.theme.GlobalStylePrefs
-import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.data.manager.CandidateSpacingPolicy
 import com.jobeen.ime.skin.runtime.SkinColorMode
@@ -168,30 +166,12 @@ class Paints(context: Context) {
         preferredText = panel.preferredText
         preferredComment = panel.preferredComment
         preferredIndex = panel.preferredIndex
-        // 工具栏按钮表面（全局样式层）：皮肤样式 presence 决定
-        // 全局按键值是否生效；跟随按键时半径取生效键圆角。
-        val global = GlobalStylePrefs.get(context)
-        val stylePresence = snapshot?.let {
-            val dark = SkinColorMode.isDark(context)
-            if (dark) it.darkStylePresence ?: it.stylePresence else it.stylePresence
-        } ?: emptySet()
-        if (global.linkToolbar) {
-            toolbarButtonBg = GlobalStyleResolver.keyBackground(global, stylePresence)
-            toolbarButtonRadiusDp = scheme.cornerRadius
-            toolbarButtonBorderWidthDp =
-                GlobalStyleResolver.clampBorderWidth(global.key.borderWidthDp)
-            toolbarButtonBorderColor =
-                GlobalStyleResolver.keyBorderStroke(global, stylePresence)
-                    ?: scheme.keyBorderStroke
-        } else {
-            toolbarButtonBg = global.toolbar.background
-            toolbarButtonRadiusDp = global.toolbar.cornerRadiusDp
-                ?: scheme.cornerRadius
-            toolbarButtonBorderWidthDp =
-                GlobalStyleResolver.clampBorderWidth(global.toolbar.borderWidthDp)
-            toolbarButtonBorderColor =
-                global.toolbar.borderColor ?: scheme.keyBorderStroke
-        }
+        // 工具栏按钮表面（全局样式已删）：跟随按键，取主题／皮肤本身的值。
+        // 原全局未写时即为：背景 null、半径＝生效键圆角、边框宽 1f、边框色＝键边框色。
+        toolbarButtonBg = null
+        toolbarButtonRadiusDp = scheme.cornerRadius
+        toolbarButtonBorderWidthDp = 1f
+        toolbarButtonBorderColor = scheme.keyBorderStroke
         toolbarButtonBgPaint.color = toolbarButtonBg ?: 0
         toolbarButtonBorderPaint.color = toolbarButtonBorderColor
         toolbarButtonBorderPaint.strokeWidth =

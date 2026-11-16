@@ -23,11 +23,14 @@ import org.junit.Test
  * 旧数据不丢＋种子落盘。
  *
  * 范围：schema JSON 只导出到 v10（app/schemas 下 10–18.json），
- * 故执行链从 v10 起跑（10→18 共 8 段）；1→10 无 JSON 建库，仍由
- * [AppDatabaseMigrationTest.migrationChain_covers14to18] 的反射
+ * 故执行链从 v10 起跑（10→19 共 9 段）；1→10 无 JSON 建库，仍由
+ * [AppDatabaseMigrationTest.migrationChain_covers14to19] 的反射
  * 链连续性覆盖。仓库外脚本
  * ~/workspace/system/wo52-g6-migration-check.py 只作补充，不再是
  * 唯一端到端证据。
+ *
+ * 脚本功能删除后：16→17 与 18→19 均为空迁移（只保链连续／只升
+ * 版）；10→19 全链不再新建脚本四表，18→19 后旧库里的四表成孤表。
  */
 class AppDatabaseMigrationExecTest {
 
@@ -113,10 +116,14 @@ class AppDatabaseMigrationExecTest {
         db: CliSupportSQLiteDatabase,
         version: Int,
         freshTables: Set<String> = emptySet(),
+        // 已退役的表：从期望表集合里排除（迁移后库里不应有这些表，
+        // 但 version 版 schema JSON 仍含它们，如脚本四表在 18.json）。
+        // 按 "Script" 前缀排除，不在源码里逐个写表名。
+        excludeRetiredScriptTables: Boolean = false,
     ) {
         val expected = entities(schemaDb(version)).associateBy {
             it["tableName"]!!.jsonPrimitive.content
-        }
+        }.filterKeys { !excludeRetiredScriptTables || !it.startsWith("Script") }
         assertEquals(expected.keys, db.tableNames())
         for ((table, entity) in expected) {
             val fields = entity["fields"]!!.jsonArray.map { it.jsonObject }
@@ -176,7 +183,7 @@ class AppDatabaseMigrationExecTest {
             .replace("\"", "`")
 
     @Test
-    fun migrate_10to18_fullChain_executesEachSegmentAndPreservesData() {
+    fun migrate_10to19_fullChain_executesEachSegmentAndPreservesData() {
         val db = buildDbAtVersion(10)
         // 种子旧数据：常用语一行（v10 的 phrase_records 只有
         // id／text／label／createdAt 四列）＋偏好一行。
@@ -188,17 +195,20 @@ class AppDatabaseMigrationExecTest {
             "INSERT INTO `candidate_prefers` (`text`,`click_count`,`context`,`created_at`,`updated_at`) " +
                 "VALUES ('测试',3,'ctx',1700000000000,1700000000000)",
         )
-        migrate(db, 10, 18)
-        // 新表（AI 七表＋脚本四表）由本次迁移链新建，建表 SQL 逐字比对；
+        migrate(db, 10, 19)
+        // 新表（AI 七表）由本次迁移链新建，建表 SQL 逐字比对；
         // 旧表（ALTER 过的 phrase_records 等）只比逐列结构。
+        // 脚本四表已退役：18.json 仍含它们，此处排除比对，且
+        // 迁移后库里不应出现（16→17 已改为空迁移）。
         assertSchemaMatches(
             db, 18,
             freshTables = setOf(
                 "AIProvider", "AIProviderModel", "AISystemPrompt", "AIUserPrompt",
                 "AIInstruction", "AIConversation", "AIMessage",
-                "ScriptItem", "ScriptTag", "ScriptTagCrossRef", "ScriptVariable",
             ),
+            excludeRetiredScriptTables = true,
         )
+        assertTrue("脚本四表不应再建", db.tableNames().none { it.startsWith("Script") })
         // 旧数据不丢（13→14 只清 clipboard_records，常用语／偏好不动）。
         assertEquals(
             "旧词",
@@ -209,7 +219,7 @@ class AppDatabaseMigrationExecTest {
             db.scalar("SELECT `click_count` FROM `candidate_prefers` WHERE `text`='测试';"),
         )
         assertTrue("13→14 应清掉 clipboard_records", "clipboard_records" !in db.tableNames())
-        // 播种落盘：AI 服务商＋脚本各 4 条。
+        // 播种落盘：AI 服务商。
         assertTrue(db.count("AIProvider") >= 1)
         assertEquals(
             "DeepSeek",
@@ -218,7 +228,6 @@ class AppDatabaseMigrationExecTest {
                     "WHERE `id`='00000000-0000-4000-8000-000000000101';",
             ),
         )
-        assertEquals(4L, db.count("ScriptItem"))
         assertTrue(db.isDatabaseIntegrityOk)
     }
 
@@ -276,23 +285,24 @@ class AppDatabaseMigrationExecTest {
     }
 
     @Test
-    fun migrate_16to17_createsScriptTablesAndSeeds() {
+    fun migrate_16to17_isEmpty_noScriptTables() {
+        // 脚本功能删除：16→17 已改为空迁移（只保链连续），不再建
+        // 脚本四表、不播种；16.json 建出的旧库直升后也不应出现脚本表。
         val db = buildDbAtVersion(16)
         migrate(db, 16, 17)
-        val scriptTables = setOf("ScriptItem", "ScriptTag", "ScriptTagCrossRef", "ScriptVariable")
-        assertTrue(db.tableNames().containsAll(scriptTables))
-        assertEquals(4L, db.count("ScriptItem"))
-        assertEquals(
-            "Unicode 查询",
-            db.scalar(
-                "SELECT `name` FROM `ScriptItem` " +
-                    "WHERE `uuid`='00000000-0000-4000-8000-000000000301';",
-            ),
-        )
-        assertSchemaMatches(
-            db, 17,
-            freshTables = setOf("ScriptItem", "ScriptTag", "ScriptTagCrossRef", "ScriptVariable"),
-        )
+        assertTrue(db.tableNames().none { it.startsWith("Script") })
+        assertTrue(db.isDatabaseIntegrityOk)
+    }
+
+    @Test
+    fun migrate_18to19_scriptTablesBecomeOrphan() {
+        // 18→19 为空迁移（只升版、更新 Room 身份哈希）：既有库里
+        // 的脚本四表物理上仍在（孤表，无代码再读写），迁移不断言
+        // 删除；Room 校验只看实体表，打开不受影响。
+        val db = buildDbAtVersion(18)
+        migrate(db, 18, 19)
+        assertEquals(4, db.tableNames().count { it.startsWith("Script") })
+        assertTrue(db.isDatabaseIntegrityOk)
     }
 
     @Test

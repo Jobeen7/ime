@@ -104,15 +104,6 @@ enum class WhitelistAction(
     MOMENTARY_SHIFT("shift", ValueRule.FORBIDDEN),
     SYMBOL("symbol", ValueRule.REQUIRED),
     /**
-     * 应用级脚本动作（脚本接线波次；Jime 格式名均为 snake_case）：
-     * - run_script：value = 应用级脚本 id（必填；空值 VALUE_INVALID）；
-     *   皮肤只引用 id，绝不携带脚本源码——皮肤内嵌脚本已废止，
-     *   脚本内容只存在于应用级脚本库，由用户在管理页维护；
-     * - open_script：无值；打开脚本管理页。
-     */
-    RUN_SCRIPT("run_script", ValueRule.REQUIRED),
-    OPEN_SCRIPT("open_script", ValueRule.FORBIDDEN),
-    /**
      * 审计 E # 快捷指令集（对端 §6.3 原名，含中文名；格式名
      * 即指令本身，写在 command 节点的 action 字段）：
      * - 未列入者（#rimeDeploy / #rimeSync：无键动作直达口）
@@ -173,15 +164,6 @@ enum class WhitelistAction(
         ValueRule.FORBIDDEN,
     ),
     HASH_TOGGLE_EMBEDDED_INPUT("#toggleEmbeddedInputMode", ValueRule.FORBIDDEN),
-    /**
-     * 脚本视图切换（脚本接线波次）：Jime 侧 # 名（沿 # 快捷指令
-     * 约定），格式名即指令本身。脚本视图 = 应用级脚本管理页；
-     * 键盘按键只在键盘前台时送达，此时管理页必然不在前台，
-     * 故按键可达的切换方向恒为显示，收起由管理页返回键承担
-     * ——分发上与 open_script 同目的地，但动作种类不同（通知
-     * 匹配与弹窗标签可区分两者）。
-     */
-    HASH_TOGGLE_SCRIPT_VIEW("#toggleScriptView", ValueRule.FORBIDDEN),
     HASH_CLEAR_CLIPBOARD("#clearSystemPasteboard", ValueRule.FORBIDDEN),
     /**
      * 新增 # 快捷指令（多主类型补充）：
@@ -1470,11 +1452,6 @@ object SkinKeyMappingsParser {
                     return reject(BindingRejectReason.VALUE_INVALID)
                 }
                 if (action == WhitelistAction.SWITCH_SCHEMA &&
-                    value.isNullOrBlank()
-                ) {
-                    return reject(BindingRejectReason.VALUE_INVALID)
-                }
-                if (action == WhitelistAction.RUN_SCRIPT &&
                     value.isNullOrBlank()
                 ) {
                     return reject(BindingRejectReason.VALUE_INVALID)

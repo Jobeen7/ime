@@ -1685,10 +1685,6 @@ object KeyOverrideApplier {
             WhitelistAction.OPTION -> KeyboardAction.AppKeyEventAction(57)
             WhitelistAction.SETTINGS -> KeyboardAction.SettingsAction
             WhitelistAction.SYSTEM_SETTINGS -> KeyboardAction.SystemSettingsAction
-            // 应用级脚本动作（脚本接线波次）。
-            WhitelistAction.RUN_SCRIPT ->
-                KeyboardAction.RunScriptAction(requireNotNull(action.value))
-            WhitelistAction.OPEN_SCRIPT -> KeyboardAction.OpenScriptsAction
             WhitelistAction.NONE -> KeyboardAction.NoOpAction
             WhitelistAction.DISMISS_KEYBOARD -> KeyboardAction.HideKeyboardAction
             WhitelistAction.OPEN_URL ->
@@ -1734,7 +1730,6 @@ object KeyOverrideApplier {
             WhitelistAction.HASH_FLOATING_KEYBOARD_WINDOW_STATE_TOGGLE ->
                 KeyboardAction.ToggleFloatingKeyboardWindowAction
             WhitelistAction.HASH_TOGGLE_EMBEDDED_INPUT -> KeyboardAction.ToggleEmbeddedInputAction
-            WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW -> KeyboardAction.ToggleScriptViewAction
             WhitelistAction.HASH_CLEAR_CLIPBOARD ->
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR)
             WhitelistAction.HASH_TOGGLE_SYMBOL_BAR -> KeyboardAction.ToggleSymbolBarAction

@@ -262,7 +262,7 @@ class ImportTransaction(
             // 失败原因只进日志（上文 DiagLog.e 已记完整异常）：用户可见的
             // Result.Failed.reason 只放稳定码（见 importFailureCode），
             // 不放原始异常消息——后者是英文技术文本（可能含 id／路径），
-            // 经 JimeImporter → 皮肤库页拒绝对话框会原样上屏。
+            // 会原样上屏。
             Result.Failed(stage, importFailureCode(e))
         }
     }

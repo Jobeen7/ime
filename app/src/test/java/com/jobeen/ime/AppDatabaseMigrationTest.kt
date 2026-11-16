@@ -17,7 +17,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
- * AppDatabase 迁移链单测（WO52 6.1 v14→15；9.1 v15→16；8.1 v16→17；L-33 v17→18）。
+ * AppDatabase 迁移链单测（WO52 6.1 v14→15；9.1 v15→16；L-33 v17→18；
+ * 脚本功能删除：v16→17 与 v18→19 为空迁移，库版本现为 19）。
  *
  * 本文件只验静态面：Room 编译期生成的 schema JSON（app/schemas
  * 下，用 kotlinx.serialization 解析——org.json 在主机单测里是桩）、
@@ -68,14 +69,23 @@ class AppDatabaseMigrationTest {
     }
 
     @Test
-    fun migrationChain_covers14to18() {
+    fun databaseVersion_is19() {
+        // @Database 注解是 CLASS 保留（只供编译期用），反射读不到
+        // ——原实现恒得 null；现行库版本改读 Room 生成的 schema，
+        // 与本文件其余 schema 断言同机制。
+        assertEquals(19, schemaDb(19)["version"]!!.jsonPrimitive.int)
+    }
+
+    @Test
+    fun migrationChain_covers14to19() {
         val pairs = migrationPairs()
         assertTrue("迁移链应含 14→15（WO52 6.1），实际：$pairs", pairs.contains(14 to 15))
         assertTrue("迁移链应含 15→16（WO52 9.1），实际：$pairs", pairs.contains(15 to 16))
-        assertTrue("迁移链应含 16→17（WO52 8.1），实际：$pairs", pairs.contains(16 to 17))
+        assertTrue("迁移链应含 16→17（脚本删除后为空迁移），实际：$pairs", pairs.contains(16 to 17))
         assertTrue("迁移链应含 17→18（L-33），实际：$pairs", pairs.contains(17 to 18))
-        // 链连续：1→18 每一步都有迁移（无断链、无跳号）
-        for (v in 1 until 18) {
+        assertTrue("迁移链应含 18→19（脚本功能删除，空迁移），实际：$pairs", pairs.contains(18 to 19))
+        // 链连续：1→19 每一步都有迁移（无断链、无跳号）
+        for (v in 1 until 19) {
             assertTrue("迁移链缺 $v→${v + 1}", pairs.contains(v to v + 1))
         }
     }
@@ -215,75 +225,5 @@ class AppDatabaseMigrationTest {
         assertTrue(providerSql.contains("DEFERRABLE INITIALLY DEFERRED"))
         val modelSql = tables["AIProviderModel"]!!["createSql"]!!.jsonPrimitive.content
         assertTrue(modelSql.contains("DEFERRABLE INITIALLY DEFERRED"))
-    }
-
-    @Test
-    fun schema17_scriptTablesPresentWithExactFields() {
-        val tables = entities(schemaDb(17)).associateBy {
-            it["tableName"]!!.jsonPrimitive.content
-        }
-        val expected = mapOf(
-            "ScriptItem" to listOf(
-                "id", "uuid", "iconName", "iconType", "name", "content",
-                "isFavorite", "sort", "date", "allowPasteboard",
-                "resultInsertState", "closeWindowState", "downloadURL",
-            ),
-            "ScriptTag" to listOf("id", "uuid", "name", "color", "date"),
-            "ScriptTagCrossRef" to listOf("scriptId", "tagId"),
-            "ScriptVariable" to listOf("id", "uuid", "key", "value", "isSecure", "date"),
-        )
-        for ((table, fields) in expected) {
-            val entity = tables[table]
-            assertTrue("缺脚本表 $table", entity != null)
-            val actual = entity!!["fields"]!!.jsonArray
-                .map { it.jsonObject["columnName"]!!.jsonPrimitive.content }
-            assertEquals("$table 字段须与单子一字不差", fields, actual)
-        }
-        // ScriptItem.downloadURL 可空（原表即无 NOT NULL），其余列非空
-        val itemFields = tables["ScriptItem"]!!["fields"]!!.jsonArray
-            .map { it.jsonObject }
-        val downloadUrl = itemFields.first {
-            it["columnName"]!!.jsonPrimitive.content == "downloadURL"
-        }
-        // Room 的 schema JSON 里可空列直接省略 notNull 键（只有 true 才写），
-        // 故缺键即 false，不能用 !!。
-        assertEquals(false, downloadUrl["notNull"]?.jsonPrimitive?.boolean ?: false)
-        val nameField = itemFields.first {
-            it["columnName"]!!.jsonPrimitive.content == "name"
-        }
-        assertEquals(true, nameField["notNull"]?.jsonPrimitive?.boolean ?: false)
-    }
-
-    @Test
-    fun schema17_scriptIndicesAndForeignKeys() {
-        val tables = entities(schemaDb(17)).associateBy {
-            it["tableName"]!!.jsonPrimitive.content
-        }
-        fun indexNames(table: String): Set<String> =
-            tables[table]!!["indices"]!!.jsonArray
-                .map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet()
-        fun uniqueIndexNames(table: String): Set<String> =
-            tables[table]!!["indices"]!!.jsonArray
-                .filter { it.jsonObject["unique"]!!.jsonPrimitive.boolean }
-                .map { it.jsonObject["name"]!!.jsonPrimitive.content }.toSet()
-        assertTrue(uniqueIndexNames("ScriptItem").contains("index_ScriptItem_uuid"))
-        assertTrue(indexNames("ScriptItem").containsAll(listOf("index_ScriptItem_date", "index_ScriptItem_name")))
-        assertTrue(uniqueIndexNames("ScriptTag").contains("index_ScriptTag_uuid"))
-        assertTrue(indexNames("ScriptTag").contains("index_ScriptTag_date"))
-        assertTrue(indexNames("ScriptTagCrossRef").contains("index_ScriptTagCrossRef_tagId"))
-        assertTrue(uniqueIndexNames("ScriptVariable").contains("index_ScriptVariable_uuid"))
-        assertTrue(indexNames("ScriptVariable").contains("index_ScriptVariable_date"))
-        // 外键：ScriptTagCrossRef 双向级联删（脚本／标签删了，引用同删）
-        fun foreignKeys(table: String): List<JsonObject> =
-            tables[table]!!["foreignKeys"]!!.jsonArray.map { it.jsonObject }
-        val refFks = foreignKeys("ScriptTagCrossRef")
-        assertEquals(2, refFks.size)
-        assertEquals("ScriptItem", refFks[0]["table"]!!.jsonPrimitive.content)
-        assertEquals("CASCADE", refFks[0]["onDelete"]!!.jsonPrimitive.content)
-        assertEquals("ScriptTag", refFks[1]["table"]!!.jsonPrimitive.content)
-        assertEquals("CASCADE", refFks[1]["onDelete"]!!.jsonPrimitive.content)
-        // 旧表一个不少（v17 只加表，不动旧表）
-        assertTrue(tables.containsKey("AIProvider"))
-        assertTrue(tables.containsKey("phrase_records"))
     }
 }

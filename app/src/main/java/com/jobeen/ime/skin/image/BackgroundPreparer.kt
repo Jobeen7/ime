@@ -202,8 +202,8 @@ class AndroidBackgroundPreparer(
         }.getOrElse {
             // 失败原因只进日志：用户可见的 Result.Failed.reason 只放
             // 稳定码（见 backgroundFailureCode），不放原始异常消息——
-            // 后者经 JimeImporter 的 SkinIssue 详情会进导入报告对话框
-            // 原样上屏（运行期重建那路只记 DiagLog，不上屏）。
+            // 后者会进导入报告对话框原样上屏
+            // （运行期重建那路只记 DiagLog，不上屏）。
             // 此处是该异常唯一的落日志点（此前只靠 reason 透传才留痕），
             // 故记一行 DiagLog.e，码化后诊断信息不丢。
             DiagLog.e(

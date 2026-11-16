@@ -159,64 +159,19 @@ class MainSettingsCatalogTest {
     }
 
     @Test
-    fun catalogPages_twentyFiveKeysInOrder() {
-        // 25 键：按键符号页已删；WO52 8.1 新增 script 一级入口（ai 之后）；
+    fun catalogPages_nineteenKeysInOrder() {
+        // 19 键：按键符号页、皮肤脚本页、皮肤编辑器页、LevelDB 页、
+        // 皮肤库页、脚本页、Wi-Fi 传输页已删；
         // 旧期望随单子改（测试期望与单子相背时按单子改期望）。
         val keys = catalogPages().map { it.key }
         assertEquals(
             listOf(
-                "schema", "scheme_update", "rime", "candidates", "skin", "scripts", "keyboard",
-                "emoji", "keyboardMenu", "toolbar", "symbol_bar", "skin_editor", "appearance", "clipboard", "phrase", "ai", "script", "voice", "stats", "userdict",
-                "leveldb", "backup", "files", "webserver", "about",
+                "schema", "scheme_update", "rime", "candidates", "keyboard",
+                "emoji", "keyboardMenu", "toolbar", "symbol_bar", "appearance", "clipboard", "phrase", "ai", "voice", "stats", "userdict",
+                "backup", "files", "about",
             ),
             keys,
         )
-    }
-
-    @Test
-    fun catalogPages_skinEditorPage_isKeyboardGroupAfterSymbolBar() {
-        // 皮肤文件编辑器进目录：键盘组、紧跟符号栏页（键盘组末尾），
-        // 标题资源即“皮肤编辑器”；键盘组仍为多页，不影响单页组直达判定。
-        val pages = catalogPages()
-        val page = pages.single { it.key == "skin_editor" }
-        assertEquals(MainSettingGroup.KEYBOARD, page.group)
-        assertEquals(com.jobeen.ime.R.string.skin_editor_title, page.titleRes)
-        assertEquals(com.jobeen.ime.R.string.row_sub_skin_editor, page.subtitleRes)
-        assertEquals("symbol_bar", pages[pages.indexOf(page) - 1].key)
-        assertEquals("appearance", pages[pages.indexOf(page) + 1].key)
-        assertNull(directPageForGroup(
-            pages.map { MainSettingEntry(it.key, "", "", it.group) },
-            MainSettingGroup.KEYBOARD,
-        ))
-    }
-
-    @Test
-    fun searchCatalog_skinEditorTitle_hitsSkinEditorPage() {
-        // 解析后的标题即“皮肤编辑器”，搜该词命中 skin_editor 页结果。
-        val pages = catalogPages().map {
-            ResolvedPage(
-                it.key,
-                if (it.key == "skin_editor") "皮肤编辑器" else it.key,
-                "",
-                "",
-            )
-        }
-        val got = searchCatalog("皮肤编辑器", pages, emptyList())
-        assertEquals(listOf("skin_editor"), got.map { it.pageKey })
-    }
-
-    @Test
-    fun catalogPages_scriptsPage_isKeyboardGroupSkinAdjacent() {
-        // 脚本管理挂在键盘组皮肤入口之后：脚本由皮肤键触发，
-        // 入口与皮肤相邻，不另立组、不进单页组直达判定（键盘组
-        // 仍为多页，点组仍进组页）。
-        val page = catalogPages().single { it.key == "scripts" }
-        assertEquals(MainSettingGroup.KEYBOARD, page.group)
-        assertEquals("skin", catalogPages()[catalogPages().indexOf(page) - 1].key)
-        assertNull(directPageForGroup(
-            catalogPages().map { MainSettingEntry(it.key, "", "", it.group) },
-            MainSettingGroup.KEYBOARD,
-        ))
     }
 
     @Test
@@ -257,18 +212,11 @@ class MainSettingsCatalogTest {
 
     @Test
     fun realCatalog_appearanceRows_focusToCategoryRow() {
-        // 外观分类列表化后：全局样式详情行不在主页层，搜索对焦到分类行
-        // （与键盘行同口径）；视频／应用外观行本身就在主页层，
+        // 外观页只剩应用外观一行：视频背景行、全局样式 14 行、
+        // 皮肤行均已删；应用外观行本身就在主页层，
         // 对焦默认行标题即分类行标题，不设显式对焦。
-        // 导航去重后外观页皮肤行已删（留键盘组入口），总数 17→16。
         val rows = catalogRows().filter { it.pageKey == "appearance" }
-        assertEquals(16, rows.size)
-        assertTrue(rows.none { it.titleRes == R.string.keyboard_theme })
-        val global = rows.filter { it.sectionRes == R.string.global_style }
-        assertEquals(14, global.size)
-        assertTrue(global.all { it.focusTitleRes == R.string.global_style })
-        val video = rows.single { it.titleRes == R.string.video_background }
-        assertEquals(null, video.focusTitleRes)
+        assertEquals(1, rows.size)
         val app = rows.single { it.titleRes == R.string.app_appearance }
         assertEquals(null, app.focusTitleRes)
     }
@@ -295,9 +243,9 @@ class MainSettingsCatalogTest {
 
     @Test
     fun focusConsumingPages_excludeNonScaffoldPages() {
-        // 无脚手架的页（方案管理、皮肤库、脚本、皮肤编辑器、系统文件、
+        // 无脚手架的页（方案管理、系统文件、
         // 输入统计）不消费标题，写给它们即泄漏。
-        for (key in listOf("schema", "skin", "scripts", "skin_editor", "files", "stats")) {
+        for (key in listOf("schema", "files", "stats")) {
             assertFalse(FOCUS_CONSUMING_PAGE_KEYS.contains(key))
         }
     }

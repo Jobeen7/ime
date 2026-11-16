@@ -1,7 +1,5 @@
 package com.jobeen.ime.skin.model
 
-import com.jobeen.ime.data.keyboard.theme.BackgroundBlurOverride
-import com.jobeen.ime.data.keyboard.theme.GlobalStyleResolver
 import com.jobeen.ime.data.keyboard.theme.KeyboardColors
 import com.jobeen.ime.skin.layout.LayoutModel
 import com.jobeen.ime.skin.store.SkinGenRef
@@ -40,11 +38,6 @@ object SkinSnapshotBuilder {
         audioFacts: (String) -> AudioAssetFacts? = { null },
         /** 已解析布局（B3 §3.4）：由工厂层引用解析后注入，本类只透传。 */
         resolvedLayout: ResolvedLayout? = null,
-        /**
-         * 全局背景模糊覆盖（2026-10-29 外观轮）：工厂层从偏好读入；
-         * 默认跟随＝现行口径（降级关模糊时仍为 0，见解析函数）。
-         */
-        globalBlur: BackgroundBlurOverride = BackgroundBlurOverride(),
         /**
          * 全局背景图拉伸覆盖（D15）：工厂层从偏好读入；
          * 默认拉伸＝现行口径（皮肤背景预缩放整幅拉满）。
@@ -97,12 +90,17 @@ object SkinSnapshotBuilder {
 
         val background = validated.appearance.background?.let { spec ->
             val sha = assetSha256(spec.assetId) ?: return@let null
-            // 模糊生效口径统一走全局样式解析函数（跟随＝现行口径：
-            // imageAdjust.blurRadiusDp 优先于 blurRadius，不叠加；
-            // 降级关模糊时一律为 0 且调节去模糊，产物键与产物本体一致）。
-            val (effectiveBlur, effectiveAdjust) = GlobalStyleResolver.effectiveBlur(
-                spec.blurRadius, spec.imageAdjust, policy.blurDisabled, globalBlur,
-            )
+            // 模糊生效口径（跟随＝现行口径：imageAdjust.blurRadiusDp
+            // 优先于 blurRadius，不叠加；降级关模糊时一律为 0 且调节
+            // 去模糊，产物键与产物本体一致）。
+            val (effectiveBlur, effectiveAdjust) = if (policy.blurDisabled) {
+                val stripped = spec.imageAdjust?.copy(blurRadiusDp = null)
+                    ?.takeIf { it.hasEffect() }
+                0f to stripped
+            } else {
+                val radius = spec.imageAdjust?.blurRadiusDp ?: spec.blurRadius
+                radius to spec.imageAdjust
+            }
             val scaledW = (targetWidthPx * policy.backgroundScale).roundToInt().coerceAtLeast(1)
             val scaledH = (targetHeightPx * policy.backgroundScale).roundToInt().coerceAtLeast(1)
             BackgroundSnapshot(

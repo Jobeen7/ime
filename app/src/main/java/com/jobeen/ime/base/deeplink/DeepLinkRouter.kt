@@ -41,13 +41,12 @@ object DeepLinkRouter {
     data class Target(val pageKey: String, val params: Map<String, String>)
 
     /**
-     * dr.a 别名表（17 项）＋ bx0 路由 id 回落，值＝设置目录页键。
+     * dr.a 别名表（15 项）＋ bx0 路由 id 回落，值＝设置目录页键。
      * typingPractice／pro／keyboardPreview／appIcon 不在表内（不导航）。
      */
     private val aliasToPageKey: Map<String, String> = mapOf(
         // dr.a 别名
         "inputSchema" to "schema",
-        "wifi" to "webserver",
         "finder" to "files",
         "keyboardSettings" to "keyboard",
         "inputBehavior" to "keyboard",
@@ -58,10 +57,6 @@ object DeepLinkRouter {
         "symbolBar" to "symbol_bar",
         "phrase" to "phrase",
         "clipboard" to "clipboard",
-        // 8.1 建了真正的 QuickJS 脚本页（`script`）：4.2 的 "script" →
-        // "scripts"（皮肤脚本页）随单子改——dr.a 的 Script 即脚本管理页。
-        // 旧映射期望随单子改（测试期望与单子相背时按单子改期望）。
-        "script" to "script",
         "rime" to "rime",
         "backup" to "backup",
         "remoteStorage" to "userdict",
@@ -69,18 +64,16 @@ object DeepLinkRouter {
         "skins" to "skin",
         "keyboardMenu" to "keyboardMenu",
         "files" to "files",
-        "webServer" to "webserver",
-        "leveldb" to "leveldb",
         "ai" to "ai",
     )
 
-    /** 目录页键直配（25 个一级入口；script 为 WO52 8.1 新增）。 */
+    /** 目录页键直配（22 个一级入口）。 */
     private val catalogPageKeys: Set<String> = setOf(
         "schema", "scheme_update", "rime", "candidates", "skin", "scripts",
         "keyboard", "emoji", "keyboardMenu", "toolbar", "symbol_bar",
         "skin_editor", "appearance", "clipboard", "phrase",
-        "ai", "script", "voice", "stats", "userdict", "leveldb", "backup", "files",
-        "webserver", "about",
+        "ai", "voice", "stats", "userdict", "backup", "files",
+        "about",
     )
 
     fun resolve(action: String?, dataString: String?): Target? {

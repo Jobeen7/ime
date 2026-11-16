@@ -6,7 +6,6 @@ import com.jobeen.ime.base.update.WanxiangUpdateManager
 import com.jobeen.ime.data.App
 import com.jobeen.ime.engine.rime.daemon.RimeDaemon
 import com.jobeen.ime.engine.rime.data.DataManager
-import com.jobeen.ime.skin.script.SkinScriptStore
 import java.io.File
 import java.io.IOException
 import kotlinx.coroutines.Dispatchers
@@ -26,16 +25,12 @@ import kotlinx.coroutines.withContext
  * - 学习词清零（各目录用户词库 LevelDB 随目录删除而清）
  * - 皮肤库清掉（skin_library 目录整树删除，与方案目录同序：删方案
  *   目录之后、清偏好之前，失败即中止、不动偏好）
- * - 脚本库清掉（filesDir/skin_scripts 子树删除，与皮肤库同序：
- *   删方案目录之后、清偏好之前，失败即中止、不动偏好；此前
- *   重置漏清，旧脚本会在重置后继续生效）
  *
  * 刻意不动：shared/（内置 Lite 数据住在这里，删了就没兜底）、
  * filesDir 其余部分（语音纠错词对与语音模型不是方案设置，不在
- * 此列；仅 skin_scripts 子树属皮肤设置、随重置删除）、
+ * 此列）、
  * cacheDir（临时文件）。顺序：先删方案目录根的孩子（失败即中止，
- * 不动偏好），再删皮肤库整树（失败即中止，不动偏好），再删脚本库
- * 子树（失败即中止，不动偏好），再清偏好、写回启用表，最后重启引擎（新引擎在空初始目录上启动，shared 层
+ * 不动偏好），再删皮肤库整树（失败即中止，不动偏好），再清偏好、写回启用表，最后重启引擎（新引擎在空初始目录上启动，shared 层
  * Lite 即为全部可用方案）。
  */
 object AppReset {
@@ -94,13 +89,6 @@ object AppReset {
                 // 皮肤库整树删除（删方案目录之后、清偏好之前，失败即中止）。
                 if (App.skinLibraryDir.exists() && !App.skinLibraryDir.deleteRecursively()) {
                     throw IOException("无法清除皮肤库")
-                }
-                // 脚本库子树删除（与皮肤库同序：删方案目录之后、
-                // 清偏好之前，失败即中止、不动偏好；目录不存在
-                // 即无脚本可清，直接通过）。
-                val scriptsDir = File(context.filesDir, SkinScriptStore.SCRIPTS_DIR)
-                if (scriptsDir.exists() && !scriptsDir.deleteRecursively()) {
-                    throw IOException("无法清除脚本库")
                 }
                 val prefsDir = File(context.applicationInfo.dataDir, "shared_prefs")
                 // 偏好目录存在却列不出文件时不得静默照常清偏好：此时无法

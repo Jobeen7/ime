@@ -128,20 +128,6 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
-            android:name=".ui.LevelDbActivity"
-            android:exported="false"
-            android:label="@string/leveldb_title"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
-            android:name=".ui.WebServerActivity"
-            android:exported="false"
-            android:label="@string/web_server_title"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
             android:name=".ui.ExternalActionActivity"
             android:exported="true"
             android:excludeFromRecents="true"
@@ -235,23 +221,9 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
-            android:name=".ui.ScriptActivity"
-            android:exported="false"
-            android:label="@string/script_title"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
             android:name=".ui.SplitWordsActivity"
             android:exported="false"
             android:label="@string/split_words_title"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
-            android:name=".ui.SkinDiagnosticsActivity"
-            android:exported="false"
-            android:label="@string/skin_diag_title"
             android:launchMode="singleTop"
             android:theme="@style/Theme.Ime" />
 
@@ -291,27 +263,6 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
-            android:name=".ui.SkinLibraryActivity"
-            android:exported="false"
-            android:label="皮肤库"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
-            android:name=".ui.SkinEditorActivity"
-            android:exported="false"
-            android:label="皮肤文件编辑器"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
-            android:name=".ui.SkinDevActivity"
-            android:exported="false"
-            android:label="皮肤开发模式"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
             android:name=".ui.InputStatsActivity"
             android:exported="false"
             android:label="输入统计"
@@ -340,13 +291,6 @@
             android:theme="@style/Theme.Ime" />
 
         <activity
-            android:name=".skin.script.SkinScriptActivity"
-            android:exported="false"
-            android:label="@string/skin_script_title"
-            android:launchMode="singleTop"
-            android:theme="@style/Theme.Ime" />
-
-        <activity
             android:name=".base.speech.SpeechPermissionActivity"
             android:exported="false"
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
@@ -369,14 +313,6 @@
             android:exported="false"
             android:process=":speech" />
 
-        <!-- 脚本隔离执行：QuickJS 只在该零权限隔离进程内跑（无 INTERNET
-             权限、读不到应用私有文件）；源码与入参经 Binder 传进，执行
-             结果经 Binder 返回；联网只走主进程里的 @connect 白名单代理。 -->
-        <service
-            android:name=".script.ScriptIsolationService"
-            android:exported="false"
-            android:isolatedProcess="true" />
-
         <service
             android:name=".engine.rime.service.RimeMaintenanceService"
             android:exported="false"
@@ -392,10 +328,6 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
-        <service
-            android:name=".base.webserver.WebServerService"
-            android:exported="false"
-            android:foregroundServiceType="dataSync" />
     </application>
 
 </manifest>

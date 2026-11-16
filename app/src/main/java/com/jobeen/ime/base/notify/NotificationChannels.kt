@@ -17,11 +17,9 @@ import com.jobeen.ime.ui.MainActivity
 import timber.log.Timber
 
 /**
- * 系统通知渠道（WO52 13.1＋8.1）：
- * 应用自有 3 个渠道——remote_transfer（RemoteTransferService，
- * IMPORTANCE_LOW，通知 ID 1002）、web_server（WebServerService，
- * IMPORTANCE_LOW）与 script（WO52 8.1 $userNotification，
- * IMPORTANCE_DEFAULT，使用户看得见脚本通知）。
+ * 系统通知渠道（WO52 13.1）：
+ * 应用自有 1 个渠道——remote_transfer（RemoteTransferService，
+ * IMPORTANCE_LOW，通知 ID 1002）。
  * 另有 1 个第三方库自带（com.google.android.gms.availability），
  * 非应用自有，不建。
  *
@@ -32,16 +30,9 @@ import timber.log.Timber
  */
 object NotificationChannels {
     const val REMOTE_TRANSFER = "remote_transfer"
-    const val WEB_SERVER = "web_server"
-
-    /** 脚本通知渠道（WO52 8.1 $userNotification）：IMPORTANCE_DEFAULT，使用户看得见脚本通知。 */
-    const val SCRIPT = "script"
 
     /** RemoteTransferService 前台通知 ID（单子定值）。 */
     const val REMOTE_TRANSFER_NOTIFICATION_ID = 1002
-
-    /** WebServerService 前台通知 ID（单子未定，取 1003，与 1002 区分）。 */
-    const val WEB_SERVER_NOTIFICATION_ID = 1003
 
     /** 部署完成通知 ID（remote_transfer 渠道，与前台通知区分开）。 */
     const val DEPLOY_COMPLETE_NOTIFICATION_ID = 1010
@@ -52,11 +43,9 @@ object NotificationChannels {
     /** 渠道定义（纯数据，可单测）：id 与重要性。 */
     data class ChannelSpec(val id: String, val importance: Int)
 
-    /** 应用自有渠道全表：三条，remote_transfer 与 web_server 为 IMPORTANCE_LOW，script 为 IMPORTANCE_DEFAULT。 */
+    /** 应用自有渠道全表：一条，IMPORTANCE_LOW。 */
     fun channelSpecs(): List<ChannelSpec> = listOf(
         ChannelSpec(REMOTE_TRANSFER, NotificationManager.IMPORTANCE_LOW),
-        ChannelSpec(WEB_SERVER, NotificationManager.IMPORTANCE_LOW),
-        ChannelSpec(SCRIPT, NotificationManager.IMPORTANCE_DEFAULT),
     )
 
     /** POST_NOTIFICATIONS 运行时权限是否适用（Android 13+ 才有该权限）。 */
@@ -85,8 +74,6 @@ object NotificationChannels {
             as? NotificationManager ?: return
         val names = mapOf(
             REMOTE_TRANSFER to context.getString(R.string.notif_channel_remote_transfer),
-            WEB_SERVER to context.getString(R.string.notif_channel_web_server),
-            SCRIPT to context.getString(R.string.notif_channel_script),
         )
         for (spec in channelSpecs()) {
             if (manager.getNotificationChannel(spec.id) == null) {

@@ -86,26 +86,20 @@ fun catalogPages(): List<CatalogPage> = listOf(
     CatalogPage("scheme_update", R.string.schema_update_title, R.string.row_sub_scheme_update, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("rime", R.string.rime_title, R.string.row_sub_rime, MainSettingGroup.INPUT_CANDIDATE),
     CatalogPage("candidates", R.string.prediction_candidates, R.string.row_sub_candidates, MainSettingGroup.INPUT_CANDIDATE),
-    CatalogPage("skin", R.string.keyboard_theme, R.string.row_sub_skin, MainSettingGroup.KEYBOARD),
-    CatalogPage("scripts", R.string.skin_script_title, R.string.row_sub_skin_scripts, MainSettingGroup.KEYBOARD),
     CatalogPage("keyboard", R.string.keyboard_settings, R.string.row_sub_keyboard, MainSettingGroup.KEYBOARD),
     CatalogPage("emoji", R.string.emoji_title, R.string.row_sub_emoji, MainSettingGroup.KEYBOARD),
     CatalogPage("keyboardMenu", R.string.keyboard_menu_title, R.string.row_sub_keyboard_menu, MainSettingGroup.KEYBOARD),
     CatalogPage("toolbar", R.string.toolbar_title, R.string.toolbar_settings_desc, MainSettingGroup.KEYBOARD),
     CatalogPage("symbol_bar", R.string.symbol_bar_title, R.string.row_sub_symbol_bar, MainSettingGroup.KEYBOARD),
-    CatalogPage("skin_editor", R.string.skin_editor_title, R.string.row_sub_skin_editor, MainSettingGroup.KEYBOARD),
     CatalogPage("appearance", R.string.appearance_title, R.string.row_sub_appearance, MainSettingGroup.APPEARANCE),
     CatalogPage("clipboard", R.string.clipboard_manager, R.string.row_sub_clipboard, MainSettingGroup.CONVENIENCE),
     CatalogPage("phrase", R.string.phrase_title, R.string.row_sub_phrase, MainSettingGroup.CONVENIENCE),
     CatalogPage("ai", R.string.ai_title, R.string.row_sub_ai, MainSettingGroup.CONVENIENCE),
-    CatalogPage("script", R.string.script_title, R.string.row_sub_script, MainSettingGroup.CONVENIENCE),
     CatalogPage("voice", R.string.voice_settings, R.string.row_sub_voice, MainSettingGroup.CONVENIENCE),
     CatalogPage("stats", R.string.input_stats_title, R.string.row_sub_stats, MainSettingGroup.CONVENIENCE),
     CatalogPage("userdict", R.string.user_dict, R.string.row_sub_userdict, MainSettingGroup.DATA_BACKUP),
-    CatalogPage("leveldb", R.string.leveldb_title, R.string.row_sub_leveldb, MainSettingGroup.DATA_BACKUP),
     CatalogPage("backup", R.string.backup_restore, R.string.row_sub_backup, MainSettingGroup.DATA_BACKUP),
     CatalogPage("files", R.string.schema_files, R.string.row_sub_files, MainSettingGroup.DATA_BACKUP),
-    CatalogPage("webserver", R.string.web_server_title, R.string.row_sub_web_server, MainSettingGroup.DATA_BACKUP),
     CatalogPage("about", R.string.about_us, R.string.row_sub_about, MainSettingGroup.ADVANCED_ABOUT),
 )
 
@@ -188,37 +182,21 @@ fun catalogRows(): List<CatalogRow> = listOf(
     CatalogRow(R.string.user_dict_deleted_words, "userdict", R.string.user_dict_advanced),
     // 关于：无分段。
     CatalogRow(R.string.about_diag_export, "about"),
-    CatalogRow(R.string.skin_diag_title, "about"),
     CatalogRow(R.string.about_reset, "about"),
     CatalogRow(R.string.licenses_index, "about"),
-    // 外观：视频背景／全局样式／应用外观（皮肤行已去重，留键盘组入口）。
-    CatalogRow(R.string.video_background, "appearance", R.string.video_background),
-    CatalogRow(R.string.link_toolbar, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.key_radius, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.key_border_width, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.top_corner, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.key_background, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.key_border_color, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.toolbar_background, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.toolbar_border_color, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.background_blur, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.blur_radius, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.bar_background, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.bar_blur, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.shared_background, "appearance", R.string.global_style, R.string.global_style),
-    CatalogRow(R.string.reset_default, "appearance", R.string.global_style, R.string.global_style),
+    // 外观：应用外观。
     CatalogRow(R.string.app_appearance, "appearance", R.string.app_appearance),
 )
 
 /**
  * 消费行定位请求的页键（U-M4）：这些页的屏用 [SettingsPageScaffold]，
- * 首次组合即消费 [PendingFocus]。其余页（方案管理、皮肤库、脚本、
- * 皮肤编辑器、系统文件页、输入统计）不用脚手架，标题写给它们会
+ * 首次组合即消费 [PendingFocus]。其余页（方案管理、
+ * 系统文件页、输入统计）不用脚手架，标题写给它们会
  * 残留到下一个脚手架页——搜索跳转只给消费页写标题。
  */
 val FOCUS_CONSUMING_PAGE_KEYS: Set<String> = setOf(
     "about", "ai", "appearance", "backup", "candidates", "clipboard",
-    "emoji", "keyboard", "keyboardMenu", "leveldb", "phrase", "rime", "scheme_update", "symbol_bar",
+    "emoji", "keyboard", "keyboardMenu", "phrase", "rime", "scheme_update", "symbol_bar",
     "toolbar", "userdict", "voice", "word_creation",
 )
 

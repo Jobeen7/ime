@@ -98,14 +98,11 @@ assertFalse(report.contains("（-"))
 }
 
 @Test
-fun attribution_scriptNotMeasurableAndRemainderCanBeNegative() {
-// 脚本行不编数字；其余 = 总内存 − 图形 − 皮肤缓存，可为负，照实显示。
+fun attribution_remainderCanBeNegative() {
+// 其余 = 总内存 − 图形 − 皮肤缓存，可为负，照实显示（脚本行已随脚本功能删除）。
 val small = snapshot(totalPssKb = 10_240L, graphicsKb = 51_200L, skinCacheBytes = 0L)
 val sections = buildPerfSections(small, null, timingRows)
 val attribution = sections[2].rows.associateBy { it.label}
-val script = attribution.getValue("脚本")
-assertTrue(script.value.contains("不可计量"))
-assertEquals(null, script.delta)
 assertEquals("-40.0 MB", attribution.getValue("其余").value)
 assertTrue(attribution.getValue("键盘界面").value.contains("120 个视图"))
 assertTrue(attribution.getValue("皮肤图片缓存（估算）").value.contains("3 项"))
@@ -121,13 +118,12 @@ assertFalse(labels.any { it.contains("ImageIO", ignoreCase = true)})
 }
 
 @Test
-fun malloc_onlyAllocatedRowWithScriptNote() {
+fun malloc_onlyAllocatedRow() {
 val sections = buildPerfSections(snapshot(), null, timingRows)
 assertEquals(1, sections[4].rows.size)
 val row = sections[4].rows[0]
 assertEquals("已分配", row.label)
 assertTrue(row.value.contains("40.0 MB"))
-assertTrue(row.value.contains("脚本部分不可计量"))
 }
 
 @Test

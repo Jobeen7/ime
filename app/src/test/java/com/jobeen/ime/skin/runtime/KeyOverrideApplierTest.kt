@@ -554,10 +554,6 @@ class KeyOverrideApplierTest {
             SkinAction.Command(WhitelistAction.SETTINGS) to KeyboardAction.SettingsAction,
             SkinAction.Command(WhitelistAction.SYSTEM_SETTINGS) to
                 KeyboardAction.SystemSettingsAction,
-            SkinAction.Command(WhitelistAction.RUN_SCRIPT, "s.one") to
-                KeyboardAction.RunScriptAction("s.one"),
-            SkinAction.Command(WhitelistAction.OPEN_SCRIPT) to
-                KeyboardAction.OpenScriptsAction,
             SkinAction.Command(WhitelistAction.NONE) to KeyboardAction.NoOpAction,
             SkinAction.Command(WhitelistAction.DISMISS_KEYBOARD) to
                 KeyboardAction.HideKeyboardAction,
@@ -630,8 +626,6 @@ class KeyOverrideApplierTest {
                 KeyboardAction.AppKeyEventAction(113),
             SkinAction.Command(WhitelistAction.OPTION) to
                 KeyboardAction.AppKeyEventAction(57),
-            SkinAction.Command(WhitelistAction.HASH_TOGGLE_SCRIPT_VIEW) to
-                KeyboardAction.ToggleScriptViewAction,
             SkinAction.Command(WhitelistAction.HASH_CLEAR_CLIPBOARD) to
                 KeyboardAction.ClipboardAction(KeyboardAction.ClipboardAction.Kind.CLEAR),
             SkinAction.Command(WhitelistAction.HASH_TOGGLE_SYMBOL_BAR) to

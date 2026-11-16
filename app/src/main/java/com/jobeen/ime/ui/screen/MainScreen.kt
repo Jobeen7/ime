@@ -109,7 +109,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.jobeen.ime.R
 import com.jobeen.ime.base.util.TraditionalConverter
-import com.jobeen.ime.skin.library.SkinEditorEntry
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupCard
 import com.jobeen.ime.ui.screen.ScreenComponent.GroupDivider
 import com.jobeen.ime.ui.screen.ScreenComponent.NavRow
@@ -139,8 +138,6 @@ fun MainScreen(
     onOpenKeyboardSettings: () -> Unit,
     onOpenEmoji: () -> Unit = {},
     onOpenKeyboardMenu: () -> Unit = {},
-    onOpenSkinLibrary: () -> Unit,
-    onOpenSkinScripts: () -> Unit = {},
     onOpenToolbar: () -> Unit = {},
     onOpenSymbolBar: () -> Unit = {},
     onOpenAppearance: () -> Unit = {},
@@ -148,13 +145,10 @@ fun MainScreen(
     onOpenClipboard: () -> Unit,
     onOpenPhrase: () -> Unit = {},
     onOpenAi: () -> Unit = {},
-    onOpenScript: () -> Unit = {},
     onOpenModelSettings: () -> Unit,
     onOpenVoiceSettings: () -> Unit,
     onOpenUserDict: () -> Unit,
-    onOpenLevelDb: () -> Unit = {},
     onOpenFiles: () -> Unit,
-    onOpenWebServer: () -> Unit,
     onOpenBackup: () -> Unit,
     onOpenAbout: () -> Unit,
     onDeploy: () -> Unit,
@@ -319,23 +313,17 @@ fun MainScreen(
         "keyboard" to onOpenKeyboardSettings,
         "emoji" to onOpenEmoji,
         "keyboardMenu" to onOpenKeyboardMenu,
-        "skin" to onOpenSkinLibrary,
-        "scripts" to onOpenSkinScripts,
         "toolbar" to onOpenToolbar,
         "symbol_bar" to onOpenSymbolBar,
-        "skin_editor" to { SkinEditorEntry.openLayouts(context) },
         "appearance" to onOpenAppearance,
         "clipboard" to onOpenClipboard,
         "phrase" to onOpenPhrase,
         "ai" to onOpenAi,
-        "script" to onOpenScript,
         "voice" to onOpenVoiceSettings,
         "stats" to onOpenInputStats,
         "userdict" to onOpenUserDict,
-        "leveldb" to onOpenLevelDb,
         "backup" to onOpenBackup,
         "files" to onOpenFiles,
-        "webserver" to onOpenWebServer,
         "about" to onOpenAbout,
     )
     // deep link 导航（WO52 4.2）：页键到即走 rowClicks 的同一回调，

@@ -5,9 +5,6 @@ import com.jobeen.ime.engine.rime.data.userdict.WebDavSync
 import com.jobeen.ime.input.InputFieldKey
 import com.jobeen.ime.input.OpenUrlPolicy
 import com.jobeen.ime.input.ScriptRunSession
-import com.jobeen.ime.skin.script.SkinScriptFailure
-import com.jobeen.ime.skin.script.SkinScriptRunOutcome
-import com.jobeen.ime.skin.script.SkinScriptSandbox
 import com.jobeen.ime.skin.store.AtomicFiles
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -146,39 +143,6 @@ class Batch4NonSkinFixesTest {
         } catch (e: Exception) {
             assertTrue(e is java.io.IOException || e is IllegalStateException)
         }
-    }
-
-    // ---- 第 4 项：脚本全流程单一预算 ----
-
-    @Test
-    fun scriptSandbox_evalPlusCall_shareSingleBudget() {
-        // 顶层 350ms＋onEvent 350ms：每段单看皆 <500ms，旧
-        // 分段预算下能过；共享 500ms 总预算下必超限。
-        val source = """
-            var t0 = Date.now();
-            while (Date.now() - t0 < 350) {}
-            function onEvent(ctx) {
-                var t1 = Date.now();
-                while (Date.now() - t1 < 350) {}
-                return 'done';
-            }
-        """.trimIndent()
-        val outcome = SkinScriptSandbox().run(source, "press", emptyMap())
-        assertEquals(
-            SkinScriptRunOutcome.Failed(SkinScriptFailure.BudgetExceeded),
-            outcome,
-        )
-    }
-
-    @Test
-    fun scriptSandbox_shortScript_underTotalBudget_stillOk() {
-        val outcome = SkinScriptSandbox().run(
-            "function onEvent(ctx) { return 'ok'; }",
-            "press",
-            emptyMap(),
-        )
-        val ok = outcome as SkinScriptRunOutcome.Ok
-        assertEquals("ok", ok.value)
     }
 
     // ---- 第 6 项 a：open_url 长度上限 ----

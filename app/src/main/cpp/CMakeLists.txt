@@ -186,8 +186,3 @@ add_subdirectory(librime-t9)
 add_subdirectory(librime_jni)
 
 add_subdirectory(libmarisa_jni)
-
-# QuickJS script engine (WO52 8.1): libjime_quickjs.so. Vendored core
-# sources are tracked under quickjs/ (unlike deps/, which is gitignored),
-# so this builds from a clean checkout with no download step.
-add_subdirectory(quickjs_jni)

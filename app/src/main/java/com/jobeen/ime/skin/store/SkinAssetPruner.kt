@@ -2,7 +2,6 @@ package com.jobeen.ime.skin.store
 
 import com.jobeen.ime.skin.diag.DiagLog
 import com.jobeen.ime.skin.model.PackageManifest
-import com.jobeen.ime.skin.pkg.PortableSkinArchive
 import java.io.File
 
 /**
@@ -54,7 +53,7 @@ object SkinAssetPruner {
             if (ext in excludedExtensions) continue
             val sha = file.name.substringBeforeLast('.')
             if (sha in referenced) continue
-            if (!PortableSkinArchive.isOwnedAssetFile(layout.assetsDir, file)) continue
+            if (!isOwnedAssetFile(layout.assetsDir, file)) continue
             if (runCatching { file.delete() }.getOrDefault(false)) pruned++
         }
         if (pruned > 0) {
@@ -64,5 +63,20 @@ object SkinAssetPruner {
             )
         }
         return pruned
+    }
+
+    /**
+     * 资产归属判定：候选文件的 canonical 路径必须落在素材根内
+     * （符号链接逃逸即不归属，不删）。原归档删除器的
+     * 同名检查，归档功能删除后随清理方内联于此。
+     */
+    internal fun isOwnedAssetFile(assetsRoot: File, candidate: File): Boolean {
+        return try {
+            val root = assetsRoot.canonicalFile
+            val file = candidate.canonicalFile
+            file == root || file.path.startsWith(root.path + File.separator)
+        } catch (_: Exception) {
+            false
+        }
     }
 }

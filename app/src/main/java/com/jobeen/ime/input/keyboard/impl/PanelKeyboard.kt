@@ -18,12 +18,11 @@ import com.jobeen.ime.skin.runtime.SkinSnapshotProvider
 
 /**
  * 快捷面板（W19-6，源包 panel 板的 Jime 等价物）：
- * 2×4 网格，8 钮——设置／按键／震动／更新／皮肤／微调／同步／内嵌。
+ * 2 行，5 钮——设置／震动／更新／同步／内嵌。
  * 入口为工具栏 MENU 槽位（PanelAction.ShortcutPanel → 本板）；
  * 点任一钮先做该钮的事、再回主键盘（CombineAction + ResumeAction），
  * 面板本身不常驻。源包的对端应用内 URL（设置／文件／商店／同步）
- * 一律不移植，各钮只接 Jime 已有等价操作；「按键」「微调」两钮
- * 经 SkinEditorEntry 进内置编辑器（W19-7 实现，未落成前只提示）。
+ * 一律不移植，各钮只接 Jime 已有等价操作。
  */
 @SuppressLint("ViewConstructor")
 class PanelKeyboard(
@@ -60,58 +59,37 @@ class PanelKeyboard(
             )
         }
 
-        /** 出厂行（纯函数）：2 行 × 4 钮，行宽和恰为 1.0。 */
+        /** 出厂行（纯函数）：2 行（3＋2 钮），行宽和恰为 1.0。 */
         fun buildLayout(): List<List<KeyDef>> = listOf(
             listOf(
-                actionButton("设置", KeyboardAction.SettingsAction, 0.25f),
-                actionButton(
-                    "按键",
-                    KeyboardAction.PanelShortcutAction(
-                        KeyboardAction.PanelShortcutTarget.EDIT_LAYOUTS,
-                    ),
-                    0.25f,
-                ),
+                actionButton("设置", KeyboardAction.SettingsAction, 1f / 3f),
                 actionButton(
                     "震动",
                     KeyboardAction.PanelShortcutAction(
                         KeyboardAction.PanelShortcutTarget.VIBRATION_SETTINGS,
                     ),
-                    0.25f,
+                    1f / 3f,
                 ),
                 actionButton(
                     "更新",
                     KeyboardAction.PanelShortcutAction(
                         KeyboardAction.PanelShortcutTarget.CHECK_UPDATE,
                     ),
-                    0.25f,
+                    1f / 3f,
                 ),
             ),
             listOf(
-                actionButton(
-                    "皮肤",
-                    KeyboardAction.PanelShortcutAction(
-                        KeyboardAction.PanelShortcutTarget.SKIN_LIBRARY,
-                    ),
-                    0.25f,
-                ),
-                actionButton(
-                    "微调",
-                    KeyboardAction.PanelShortcutAction(
-                        KeyboardAction.PanelShortcutTarget.EDIT_SKIN_JSON,
-                    ),
-                    0.25f,
-                ),
                 actionButton(
                     "同步",
                     KeyboardAction.PanelShortcutAction(
                         KeyboardAction.PanelShortcutTarget.SYNC_DICTS,
                     ),
-                    0.25f,
+                    0.5f,
                 ),
                 actionButton(
                     "内嵌",
                     KeyboardAction.ToggleEmbeddedInputAction,
-                    0.25f,
+                    0.5f,
                 ),
             ),
         )

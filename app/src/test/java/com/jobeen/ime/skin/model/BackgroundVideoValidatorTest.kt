@@ -10,7 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /** 主题视频背景校验字段（2026-10-29 外观轮）：只认 VIDEO 类，错类／缺失只丢字段。 */
-class VideoBackgroundValidatorTest {
+class BackgroundVideoValidatorTest {
 
     private val fallbacks = GeometryFallbacks(
         cornerRadius = 12f, keyHMargin = 6f, keyVMargin = 5f, bottomInsetDp = 10f,

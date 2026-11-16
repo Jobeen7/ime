@@ -15,7 +15,7 @@ import org.junit.Test
 
 /**
  * WO36 导入事务失败码：用户可见的 Result.Failed.reason 只放稳定码，
- * 不放原始异常消息（英文技术文本，可能含 id／路径，经 JimeImporter →
+ * 不放原始异常消息（英文技术文本，可能含 id／路径，经导入器 →
  * 皮肤库页拒绝对话框会原样上屏）。完整异常只进 DiagLog。
  * 分类走 DeepErrorMapper 既有口径，归类不出的按本类 check 文案前缀定码。
  */
