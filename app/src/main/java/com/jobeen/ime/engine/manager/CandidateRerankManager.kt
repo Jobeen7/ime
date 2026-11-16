@@ -18,11 +18,15 @@ class CandidateRerankManager(context: Context) {
         const val KEYCAP_SUNK_SCORE = -1.0
 
         /**
-         * 重排窗口上限（2026-11-16 性能 ②）：只重排首屏可见数——
-         * 下标 0 固定，1..11 进窗；窗口外保持引擎原始序。旧值 25
-         * 时每批对 24 个候选各做一次 gram 查询＋偏好查表。
+         * 重排窗口（2026-11-16 性能 ②，2026-11-17 按 Jobeen 定的
+         * 24→10 收紧）：每批只重排 10 个候选——下标 0 固定，
+         * 1..10 进窗；窗口外保持引擎原始序。旧值 25（排他性末
+         * 下标）时每批对 24 个候选各做一次 gram 查询＋偏好查表。
+         * 注意：旧常量 RERANK_WINDOW_END = 11 是“排他性末下标”，
+         * 循环 1 until 11 实际只排 10 个候选，注释“1..11 进窗”
+         * 是错的；现改按个数表达，值即个数，不再误读。
          */
-        const val RERANK_WINDOW_END = 11
+        const val RERANK_WINDOW = 10
 
         /** gram 分缓存上限（条）。 */
         const val GRAM_CACHE_MAX = 512
@@ -58,7 +62,7 @@ class CandidateRerankManager(context: Context) {
         if (candidates.size <= 1) return candidates
 
         val restoreStart = 1
-        val restoreEnd = minOf(RERANK_WINDOW_END, candidates.size)
+        val restoreEnd = minOf(restoreStart + RERANK_WINDOW, candidates.size)
         if (restoreEnd <= restoreStart) return candidates
 
         // 偏好快照由调用方传入：已加载时是内存直读；未加载时调用

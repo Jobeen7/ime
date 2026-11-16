@@ -2706,10 +2706,16 @@ class RimeEngine : IEngine, IBehaviorHost, IRimeJob {
                         CandidatePreferCache.ensureLoadInBackground(ctx)
                         CandidatePreferCache.currentCache()
                     }
-                    // gram 分数此前一直传 null 恒为 0：模型由 PredictionManager
-                    // 加载并持有，这里取同一实例接进重排打分
+                    // gram 不进重排（2026-11-17 性能 ②，按简意）：
+                    // 简意 RimeEngine.restoreCandidates 传 gramDb=null，
+                    // 重排零 gram 工作，只按偏好＋长度排；预测
+                    // （PredictionManager.modelPredictions）仍用 gramDb
+                    // 出联想。重排每批至多 10 个候选的 gram 查询
+                    // （trie 走 ~400MB .gram）就此省掉；gram 分缓存
+                    // 仍保留在 CandidateRerankManager 内（单测覆盖），
+                    // 供重排函数本身的 gramDb 入参使用。
                     val sortedList = rerankManager?.rerank(
-                        filteredMsg.list, inputContext, predictionManager?.gramDb(), prefers
+                        filteredMsg.list, inputContext, null, prefers
                     )
                     val baseList = sortedList ?: filteredMsg.list
                     val ordered = if (savedOrder.isNullOrEmpty()) baseList

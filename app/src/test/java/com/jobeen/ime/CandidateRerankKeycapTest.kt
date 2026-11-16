@@ -15,7 +15,7 @@ import org.junit.Test
  * 它——把它抬到基础字之前的只有 App 侧本重排（组合序列被算成 3 个
  * 码点、长度项虚高，零偏好历史即越过基础字；再叠偏好计数）。故
  * 口径为：键帽候选不参加分数竞争，沉到重排窗口末尾，恒在基础字
- * 之后；其余候选的排序、下标保留与窗口范围（0 固定、1..11）不变。
+ * 之后；其余候选的排序、下标保留与窗口范围（0 固定、1..10）不变。
  *
  * CandidateRerankManager 的构造 Context 在 rerank 路径上不被调用，
  * 用 ContextWrapper(null) 占位（mockable android.jar 下可实例化）。
